@@ -22,7 +22,9 @@ import (
 // ESStorage es storage model
 // gen:qs
 type ESStorage struct {
-	TableID           string                       `json:"table_id" gorm:"primary_key;size:128"`
+	TableID string `json:"table_id" gorm:"primary_key;size:128"`
+	// BkTenantID 用于所有路由查询的租户隔离。
+	BkTenantID        string                       `json:"bk_tenant_id" gorm:"size:256;default:system;comment:租户ID"`
 	DateFormat        string                       `json:"date_format" gorm:"size:64"`
 	SliceSize         uint                         `json:"slice_size" gorm:"column:slice_size"`
 	SliceGap          int                          `json:"slice_gap" gorm:"column:slice_gap"`

@@ -67,23 +67,19 @@ func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
 	return storageList, nil
 }
 
-// GetTableIdCutter 批量获取结果表是否禁用切分模块
-func (r ResultTableSvc) GetTableIdCutter(bkTenantId string, tableIdList []string) (map[string]bool, error) {
+// GetTableIdCutter 根据已加载的 table_id -> data_id 映射，批量获取结果表是否禁用切分模块。
+// 映射由调用方复用当前路由批次的 DataSourceResultTable 查询结果，避免重复查询。
+func (r ResultTableSvc) GetTableIdCutter(
+	bkTenantId string,
+	tableIdList []string,
+	tableIdDataIdMap map[string]uint,
+) (map[string]bool, error) {
 	db := mysql.GetDBSession().DB
-	var dsrtList []resulttable.DataSourceResultTable
-	for _, chunkTableIds := range slicex.ChunkSlice(tableIdList, 0) {
-		var tempList []resulttable.DataSourceResultTable
-		if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.TableId, resulttable.DataSourceResultTableDBSchema.BkDataId).BkTenantIdEq(bkTenantId).TableIdIn(chunkTableIds...).All(&tempList); err != nil {
-			return nil, err
-		}
-		dsrtList = append(dsrtList, tempList...)
-	}
-
-	tableIdDataIdMap := make(map[string]uint)
 	var dataIdList []uint
-	for _, dsrt := range dsrtList {
-		tableIdDataIdMap[dsrt.TableId] = dsrt.BkDataId
-		dataIdList = append(dataIdList, dsrt.BkDataId)
+	for _, tableId := range tableIdList {
+		if dataId, ok := tableIdDataIdMap[tableId]; ok {
+			dataIdList = append(dataIdList, dataId)
+		}
 	}
 	dataIdList = slicex.RemoveDuplicate(&dataIdList)
 	var dsoList []resulttable.DataSourceOption

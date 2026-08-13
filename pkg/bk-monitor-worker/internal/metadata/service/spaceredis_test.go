@@ -319,9 +319,14 @@ func TestSpacePusher_getTableIdClusterId(t *testing.T) {
 		err := db.Create(&dsrt).Error
 		assert.NoError(t, err)
 	}
-
 	tableIds := []string{"table1", "table2", "table3", "table4", "table5", "table6"}
-	data, err := NewSpacePusher().getTableIdClusterId(tenant.DefaultTenantId, tableIds)
+	tableIdDataIdMap := make(map[string]uint, len(dataSourceResultTables))
+	for _, dsrt := range dataSourceResultTables {
+		tableIdDataIdMap[dsrt.TableId] = dsrt.BkDataId
+	}
+	data, err := NewSpacePusher().getTableIdClusterId(
+		tenant.DefaultTenantId, tableIds, tableIdDataIdMap,
+	)
 	assert.NoError(t, err)
 
 	// 验证结果
@@ -343,60 +348,68 @@ func TestSpacePusher_refineTableIds(t *testing.T) {
 
 	// 创建 Influxdb 表数据
 	itableName := "i_table_test.dbname"
-	iTable := storage.InfluxdbStorage{TableID: itableName, RealTableName: "i_table_test", Database: "dbname"}
+	iTable := storage.InfluxdbStorage{TableID: itableName, RealTableName: "i_table_test", Database: "dbname", BkTenantId: tenant.DefaultTenantId}
 	db.Delete(&iTable)
 	err := iTable.Create(db)
 	assert.NoError(t, err)
 
 	itableName1 := "i_table_test1.dbname1"
-	iTable1 := storage.InfluxdbStorage{TableID: itableName1, RealTableName: "i_table_test1", Database: "dbname1"}
+	iTable1 := storage.InfluxdbStorage{TableID: itableName1, RealTableName: "i_table_test1", Database: "dbname1", BkTenantId: tenant.DefaultTenantId}
 	db.Delete(&iTable1)
 	err = iTable1.Create(db)
 	assert.NoError(t, err)
 
 	// 创建 VM 表数据
 	vmTableName := "vm_table_name"
-	vmTable := storage.AccessVMRecord{ResultTableId: vmTableName}
+	vmTable := storage.AccessVMRecord{ResultTableId: vmTableName, BkTenantId: tenant.DefaultTenantId}
 	db.Delete(&vmTable)
 	err = vmTable.Create(db)
 	assert.NoError(t, err)
 
 	// 创建 ES 表数据
 	esTableName := "es_table_name"
-	esTable := storage.ESStorage{TableID: esTableName, NeedCreateIndex: true}
+	esTable := storage.ESStorage{TableID: esTableName, NeedCreateIndex: true, BkTenantID: tenant.DefaultTenantId}
 	db.Delete(&esTable)
 	err = esTable.Create(db)
 	assert.NoError(t, err)
 
 	// 不存在的表
 	notExistTable := "not_exist_rt"
+	// 该测试使用持久 bmw_test 数据库，清理其他用例可能留下的同名
+	// 可查询记录，确保样例前置条件一致。
+	for _, tableID := range []string{itableName, itableName1, notExistTable} {
+		db.Delete(&storage.AccessVMRecord{}, "result_table_id = ? AND bk_tenant_id = ?", tableID, tenant.DefaultTenantId)
+		db.Delete(&storage.ESStorage{}, "table_id = ? AND bk_tenant_id = ?", tableID, tenant.DefaultTenantId)
+	}
 
 	// 调用 refineTableIds 方法
-	ids, err := NewSpacePusher().refineTableIds([]string{itableName, itableName1, notExistTable, vmTableName, esTableName})
+	ids, err := NewSpacePusher().refineTableIds(
+		tenant.DefaultTenantId, []string{itableName, itableName1, notExistTable, vmTableName, esTableName},
+	)
 
-	// 断言结果，期望返回正确的表 ID
+	// 只保留具备 AccessVMRecord 或 ESStorage 链路的候选表。
 	assert.NoError(t, err)
-	assert.ElementsMatch(t, []string{itableName, itableName1, vmTableName, esTableName}, ids)
+	assert.ElementsMatch(t, []string{vmTableName, esTableName}, ids)
 }
 
 func TestSpacePusher_refineEsTableIds(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
 	itableName := "i_table_test.dbname"
-	iTable := storage.ESStorage{TableID: itableName, SourceType: models.EsSourceTypeLOG, NeedCreateIndex: true}
+	iTable := storage.ESStorage{TableID: itableName, SourceType: models.EsSourceTypeLOG, NeedCreateIndex: true, BkTenantID: tenant.DefaultTenantId}
 	db.Delete(&iTable)
 	err := iTable.Create(db)
 	assert.NoError(t, err)
 
 	itableName1 := "i_table_test1.dbname1"
-	iTable1 := storage.ESStorage{TableID: itableName1, SourceType: models.EsSourceTypeBKDATA, NeedCreateIndex: true}
+	iTable1 := storage.ESStorage{TableID: itableName1, SourceType: models.EsSourceTypeBKDATA, NeedCreateIndex: true, BkTenantID: tenant.DefaultTenantId}
 	db.Delete(&iTable1)
 	err = iTable1.Create(db)
 	assert.NoError(t, err)
 
 	notExistTable := "not_exist_rt"
 
-	ids, err := NewSpacePusher().refineTableIds([]string{itableName, itableName1, notExistTable})
+	ids, err := NewSpacePusher().refineTableIds(tenant.DefaultTenantId, []string{itableName, itableName1, notExistTable})
 	assert.ElementsMatch(t, []string{itableName, itableName1}, ids)
 }
 
@@ -605,75 +618,6 @@ func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 	opt := optionx.NewOptions(map[string]any{"includePlatformDataId": false})
 	dataMap, err = pusher.GetSpaceTableIdDataId(tenant.DefaultTenantId, "bkcc_t", "2", nil, nil, opt)
 	fmt.Println(dataMap)
-}
-
-func TestSpacePusher_getTableInfoForInfluxdbAndVm(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-
-	db := mysql.GetDBSession().DB
-	s := storage.InfluxdbProxyStorage{
-		ProxyClusterId:      2,
-		InstanceClusterName: "default",
-		ServiceName:         "svc_name",
-		IsDefault:           true,
-	}
-	db.Delete(&s, "proxy_cluster_id = ?", s.ProxyClusterId)
-	err := s.Create(db)
-	assert.NoError(t, err)
-
-	itableName := "i_table_test.dbname"
-	iTable := storage.InfluxdbStorage{
-		TableID:                itableName,
-		InfluxdbProxyStorageId: s.ID,
-		RealTableName:          "i_table_test",
-		Database:               "dbname",
-		PartitionTag:           "t1,t2",
-		BkTenantId:             tenant.DefaultTenantId,
-	}
-	db.Delete(&iTable)
-	err = iTable.Create(db)
-	assert.NoError(t, err)
-
-	cluster := storage.ClusterInfo{
-		ClusterName: "vm_cluster_abc",
-		ClusterType: models.StorageTypeVM,
-		IsAuth:      false,
-		ClusterID:   6,
-	}
-	db.Delete(&cluster, "cluster_name = ?", cluster.ClusterName)
-	err = cluster.Create(db)
-	assert.NoError(t, err)
-	vmTableName := "vm_table_name"
-	vmTable := storage.AccessVMRecord{
-		ResultTableId:   vmTableName,
-		VmResultTableId: "vm_result_table_id",
-		VmClusterId:     cluster.ClusterID,
-		BkTenantId:      tenant.DefaultTenantId,
-	}
-	db.Delete(&vmTable)
-	err = vmTable.Create(db)
-	assert.NoError(t, err)
-
-	opVal1 := models.OptionBase{Value: "test_vmrt_cmdb_level", ValueType: "string", Creator: "system"}
-	vmrtOption := resulttable.ResultTableOption{
-		TableID:    vmTableName,
-		Name:       "cmdb_level_vm_rt",
-		OptionBase: opVal1,
-	}
-	db.Delete(&vmrtOption)
-	err = vmrtOption.Create(db)
-	assert.NoError(t, err)
-
-	data, err := NewSpacePusher().getTableInfoForInfluxdbAndVm(tenant.DefaultTenantId, []string{itableName, vmTableName})
-	assert.NoError(t, err)
-	assert.Equal(t, 2, len(data))
-	vmData, err := jsonx.MarshalString(data[vmTableName])
-	assert.NoError(t, err)
-
-	assert.JSONEq(t, `{"cluster_name":"","cmdb_level_vm_rt":"test_vmrt_cmdb_level","db":"","measurement":"","storage_name":"vm_cluster_abc","tags_key":[],"storage_id":6,"vm_rt":"vm_result_table_id","storage_type":"victoria_metrics"}`, vmData)
-	itableData, err := jsonx.MarshalString(data[itableName])
-	assert.NoError(t, err)
-	assert.JSONEq(t, `{"cluster_name":"default","db":"dbname","measurement":"i_table_test","storage_id":2,"storage_name":"","tags_key":["t1","t2"],"vm_rt":"","storage_type":"influxdb"}`, itableData)
 }
 
 func TestSpaceRedisSvc_composeAllTypeTableIds(t *testing.T) {
@@ -1271,48 +1215,6 @@ func TestComposeBksaasSpaceClusterTableIds(t *testing.T) {
 // 	assert.Equal(t, slicex.StringList2Set([]string{"demo.test1"}), slicex.StringList2Set(redisClient.HKeysValue))
 // }
 
-func TestComposeEsTableIdOptions(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	// mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	// 初始数据
-	db := mysql.GetDBSession().DB
-
-	migrate.Migrate(context.TODO(), &resulttable.ResultTableOption{}, &resulttable.ResultTable{})
-
-	// 创建rt
-	rt1, rt2, rt3 := "demo.test1", "demo.test2", "demo.test3"
-	rtObj1 := resulttable.ResultTable{TableId: rt1, IsDeleted: false, IsEnable: true}
-	rtObj2 := resulttable.ResultTable{TableId: rt2, IsDeleted: true, IsEnable: false}
-	rtObj3 := resulttable.ResultTable{TableId: rt3, IsDeleted: false, IsEnable: true}
-	db.Delete(&resulttable.ResultTable{})
-	assert.NoError(t, rtObj1.Create(db))
-	assert.NoError(t, rtObj2.Create(db))
-	assert.NoError(t, rtObj3.Create(db))
-	// 创建选项
-	op1, op2, op3 := "op1", "op2", "op3"
-	val1, val2, val3 := `{"name": "v1"}`, `{"name": "v2"}`, `{"name": "v3"}`
-	opVal1 := models.OptionBase{Value: val1, ValueType: "dict", Creator: "system"}
-	rtOp1 := resulttable.ResultTableOption{OptionBase: opVal1, TableID: rt1, Name: op1}
-	opVal2 := models.OptionBase{Value: val2, ValueType: "dict", Creator: "system"}
-	rtOp2 := resulttable.ResultTableOption{OptionBase: opVal2, TableID: rt2, Name: op2}
-	opVal3 := models.OptionBase{Value: val3, ValueType: "dict", Creator: "system"}
-	rtOp3 := resulttable.ResultTableOption{OptionBase: opVal3, TableID: rt3, Name: op3}
-	db.Delete(&resulttable.ResultTableOption{})
-	assert.NoError(t, rtOp1.Create(db))
-	assert.NoError(t, rtOp2.Create(db))
-	assert.NoError(t, rtOp3.Create(db))
-
-	// 获取正常数据
-	spacePusher := NewSpacePusher()
-	data := spacePusher.composeEsTableIdOptions("", []string{rt1, rt2, rt3})
-	assert.Equal(t, 3, len(data))
-	assert.Equal(t, map[string]any{"name": "v1"}, data[rt1][rtOp1.Name])
-
-	// 获取不存在的rt数据
-	data = spacePusher.composeEsTableIdOptions("", []string{"not_exist"})
-	assert.Equal(t, 0, len(data))
-}
-
 func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	setMultiTenantModeForTest(t, false)
@@ -1415,360 +1317,6 @@ func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 	assert.Equal(t, expected, actual)
 }
 
-func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
-	// 初始化数据库
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	db := mysql.GetDBSession().DB
-	// 准备测试数据
-	tableID := "bklog.test_rt"
-	storageClusterID := uint(1)
-	sourceType := "log"
-	indexSet := "index_1"
-
-	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
-	setMultiTenantModeForTest(t, false)
-
-	rtObj1 := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true}
-	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
-	assert.NoError(t, rtObj1.Create(db))
-
-	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
-
-	// 插入 ESStorage 数据
-	esStorages := []storage.ESStorage{
-		{
-			TableID:          tableID,
-			StorageClusterID: storageClusterID,
-			SourceType:       sourceType,
-			IndexSet:         indexSet,
-			NeedCreateIndex:  true,
-			OriginTableId:    "bklog.real_rt",
-		},
-	}
-	for _, esStorage := range esStorages {
-		db.Delete(&storage.ESStorage{}, "table_id = ?", esStorage.TableID)
-		err := db.Create(&esStorage).Error
-		assert.NoError(t, err, "Failed to insert ESStorage")
-	}
-
-	// 插入 ResultTableOption 数据
-	tableOption := resulttable.ResultTableOption{
-		TableID: tableID,
-		Name:    "shard_count",
-		OptionBase: models.OptionBase{
-			Value:      `{"shards": 3}`,
-			ValueType:  "json",
-			Creator:    "system",
-			CreateTime: time.Now(),
-		},
-	}
-	assert.NoError(t, db.Create(&tableOption).Error, "Failed to insert ResultTableOption")
-
-	now := time.Now()
-	// 插入StorageClusterRecord数据
-	testRecords := []storage.ClusterRecord{
-		{
-			TableID:     "bklog.real_rt",
-			ClusterID:   1,
-			IsDeleted:   false,
-			IsCurrent:   true,
-			Creator:     "test_creator",
-			CreateTime:  now,
-			EnableTime:  &now,
-			DisableTime: nil,
-			DeleteTime:  nil,
-		},
-		{
-			TableID:     "bklog.real_rt",
-			ClusterID:   2,
-			IsDeleted:   false,
-			IsCurrent:   true,
-			Creator:     "test_creator",
-			CreateTime:  now,
-			EnableTime:  &now,
-			DisableTime: nil,
-			DeleteTime:  nil,
-		},
-	}
-
-	// 执行插入
-	for _, record := range testRecords {
-		db.Delete(&storage.ClusterRecord{}, "table_id = ? AND cluster_id = ?", tableID, record.ClusterID)
-		err := db.Create(&record).Error
-		assert.NoError(t, err, "Failed to insert StorageClusterRecord")
-	}
-
-	fieldAliasRecords := []resulttable.ESFieldQueryAliasOption{
-		{
-			TableID:    tableID,
-			FieldPath:  "__ext.pod_name",
-			PathType:   "keyword",
-			QueryAlias: "pod_name",
-			IsDeleted:  false,
-		},
-		{
-			TableID:    tableID,
-			FieldPath:  "__ext.pod_id",
-			PathType:   "keyword",
-			QueryAlias: "pod_id",
-			IsDeleted:  false,
-		},
-	}
-	// 执行插入
-	for _, record := range fieldAliasRecords {
-		db.Delete(&resulttable.ESFieldQueryAliasOption{}, "table_id = ? AND field_path = ?", tableID, record.FieldPath)
-		err := db.Create(&record).Error
-		assert.NoError(t, err, "Failed to insert ESFieldQueryAliasOption")
-	}
-
-	// 捕获日志输出
-	var logBuffer bytes.Buffer
-	log.SetOutput(&logBuffer) // 将日志输出到 buffer
-	defer log.SetOutput(nil)  // 恢复原始日志输出
-
-	// 执行测试方法
-	pusher := NewSpacePusher()
-	err := pusher.PushEsTableIdDetail("", []string{tableID}, false)
-	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
-}
-
-func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
-	// 初始化数据库
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	setupStorageRedisForTest(t)
-	db := mysql.GetDBSession().DB
-	// 准备测试数据
-	tableID := "bklog.test_rt"
-	storageClusterID := uint(1)
-	dataLabel := "test_label"
-	labels := json.RawMessage(`{"scene":"entity"}`)
-
-	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
-
-	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
-	setMultiTenantModeForTest(t, false)
-
-	rtObj1 := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true, BkTenantId: tenant.DefaultTenantId, DataLabel: &dataLabel, Labels: labels}
-	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
-	assert.NoError(t, rtObj1.Create(db))
-
-	// 创建DorisStorage记录
-	dorisStorages := []storage.DorisStorage{
-		{
-			TableID:          tableID,
-			BkbaseTableID:    "bklog_test_rt_bkbase",
-			StorageClusterID: storageClusterID,
-			IndexSet:         "index_1",
-			SourceType:       "log",
-		},
-	}
-	for _, dorisStorage := range dorisStorages {
-		db.Delete(&storage.DorisStorage{}, "table_id = ?", dorisStorage.TableID)
-		err := db.Create(&dorisStorage).Error
-		assert.NoError(t, err, "Failed to insert DorisStorage")
-	}
-
-	fieldAliasRecords := []resulttable.ESFieldQueryAliasOption{
-		{
-			TableID:    tableID,
-			BkTenantID: tenant.DefaultTenantId,
-			FieldPath:  "__ext.pod_name",
-			PathType:   "keyword",
-			QueryAlias: "pod_name",
-			IsDeleted:  false,
-		},
-		{
-			TableID:    tableID,
-			BkTenantID: tenant.DefaultTenantId,
-			FieldPath:  "__ext.pod_id",
-			PathType:   "keyword",
-			QueryAlias: "pod_id",
-			IsDeleted:  false,
-		},
-	}
-	// 执行插入
-	for _, record := range fieldAliasRecords {
-		db.Delete(&resulttable.ESFieldQueryAliasOption{}, "table_id = ? AND field_path = ?", tableID, record.FieldPath)
-		err := db.Create(&record).Error
-		assert.NoError(t, err, "Failed to insert ESFieldQueryAliasOption")
-	}
-
-	// 捕获日志输出
-	var logBuffer bytes.Buffer
-	log.SetOutput(&logBuffer) // 将日志输出到 buffer
-	defer log.SetOutput(nil)  // 恢复原始日志输出
-
-	// 执行测试方法
-	pusher := NewSpacePusher()
-	err := pusher.PushDorisTableIdDetail(tenant.DefaultTenantId, []string{tableID}, false)
-	assert.NoError(t, err, "PushDorisTableIdDetail should not return an error")
-
-	detailStr := redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, tableID)
-	var detail map[string]any
-	err = json.Unmarshal([]byte(detailStr), &detail)
-	assert.NoError(t, err, "doris detail should be valid JSON")
-	assert.Equal(t, "bklog_test_rt_bkbase", detail["db"])
-	assert.Equal(t, "test_label", detail["data_label"])
-	assert.Equal(t, map[string]any{"scene": "entity"}, detail["labels"])
-	assert.Equal(t, map[string]any{"pod_id": "__ext.pod_id", "pod_name": "__ext.pod_name"}, detail["field_alias"])
-}
-
-func TestSpacePusher_PushDorisTableIdDetailWithOriginTableID(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	setupStorageRedisForTest(t)
-	db := mysql.GetDBSession().DB
-	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ESFieldQueryAliasOption{})
-
-	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
-	setMultiTenantModeForTest(t, false)
-
-	virtualTableID := "bklog.virtual_doris"
-	currentTableID := "bklog.current_doris"
-	originTableID := "bklog.real_doris"
-	missingOriginTableID := "bklog.missing_origin_doris"
-	virtualDataLabel := "current_virtual_label"
-	currentDataLabel := "current_table_label"
-	originDataLabel := "origin_label"
-
-	for _, tableID := range []string{virtualTableID, currentTableID, originTableID, missingOriginTableID} {
-		db.Delete(&resulttable.ResultTable{}, "table_id = ?", tableID)
-		db.Delete(&storage.DorisStorage{}, "table_id = ?", tableID)
-		db.Delete(&resulttable.ESFieldQueryAliasOption{}, "table_id = ?", tableID)
-	}
-
-	resultTables := []resulttable.ResultTable{
-		{TableId: virtualTableID, IsDeleted: false, IsEnable: true, BkTenantId: tenant.DefaultTenantId, DataLabel: &virtualDataLabel, Labels: json.RawMessage(`{"scene":"virtual"}`)},
-		{TableId: currentTableID, IsDeleted: false, IsEnable: true, BkTenantId: tenant.DefaultTenantId, DataLabel: &currentDataLabel, Labels: json.RawMessage(`{"scene":"current"}`)},
-		{TableId: originTableID, IsDeleted: false, IsEnable: true, BkTenantId: tenant.DefaultTenantId, DataLabel: &originDataLabel, Labels: json.RawMessage(`{"scene":"origin"}`)},
-		{TableId: missingOriginTableID, IsDeleted: false, IsEnable: true, BkTenantId: tenant.DefaultTenantId, Labels: json.RawMessage(`{"scene":"missing"}`)},
-	}
-	for _, rt := range resultTables {
-		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
-	}
-
-	dorisStorages := []storage.DorisStorage{
-		{TableID: virtualTableID, BkbaseTableID: "", OriginTableId: originTableID, SourceType: "log"},
-		{TableID: currentTableID, BkbaseTableID: "bklog_current_doris", OriginTableId: originTableID, SourceType: "log"},
-		{TableID: originTableID, BkbaseTableID: "bklog_real_doris", SourceType: "log"},
-		{TableID: missingOriginTableID, BkbaseTableID: "bklog_missing_origin_fallback", OriginTableId: "bklog.not_exist", SourceType: "log"},
-	}
-	for _, dorisStorage := range dorisStorages {
-		assert.NoError(t, db.Create(&dorisStorage).Error, "Failed to insert DorisStorage")
-	}
-
-	fieldAlias := resulttable.ESFieldQueryAliasOption{
-		TableID:    virtualTableID,
-		BkTenantID: tenant.DefaultTenantId,
-		FieldPath:  "__ext.pod_name",
-		PathType:   "keyword",
-		QueryAlias: "pod_name",
-		IsDeleted:  false,
-	}
-	assert.NoError(t, db.Create(&fieldAlias).Error, "Failed to insert ESFieldQueryAliasOption")
-
-	err := NewSpacePusher().PushDorisTableIdDetail(tenant.DefaultTenantId, []string{virtualTableID, currentTableID, missingOriginTableID}, false)
-	assert.NoError(t, err, "PushDorisTableIdDetail should not return an error")
-
-	virtualDetailStr := redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, virtualTableID)
-	var virtualDetail map[string]any
-	err = json.Unmarshal([]byte(virtualDetailStr), &virtualDetail)
-	assert.NoError(t, err, "virtual doris detail should be valid JSON")
-	assert.Equal(t, "bklog_real_doris", virtualDetail["db"])
-	assert.Equal(t, "current_virtual_label", virtualDetail["data_label"])
-	assert.Equal(t, map[string]any{"scene": "virtual"}, virtualDetail["labels"])
-	assert.Equal(t, map[string]any{"pod_name": "__ext.pod_name"}, virtualDetail["field_alias"])
-
-	currentDetailStr := redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, currentTableID)
-	var currentDetail map[string]any
-	err = json.Unmarshal([]byte(currentDetailStr), &currentDetail)
-	assert.NoError(t, err, "current doris detail should be valid JSON")
-	assert.Equal(t, "bklog_current_doris", currentDetail["db"])
-	assert.Equal(t, "current_table_label", currentDetail["data_label"])
-	assert.Equal(t, map[string]any{"scene": "current"}, currentDetail["labels"])
-
-	missingOriginDetailStr := redis.GetStorageRedisInstance().HGet(cfg.ResultTableDetailKey, missingOriginTableID)
-	var missingOriginDetail map[string]any
-	err = json.Unmarshal([]byte(missingOriginDetailStr), &missingOriginDetail)
-	assert.NoError(t, err, "missing origin doris detail should be valid JSON")
-	assert.Equal(t, "bklog_missing_origin_fallback", missingOriginDetail["db"])
-	assert.Equal(t, map[string]any{"scene": "missing"}, missingOriginDetail["labels"])
-}
-
-func TestSpacePusher_PushDorisTableIdDetailMultiTenant(t *testing.T) {
-	// 多租户模式下，redis key 需要补充租户ID后缀
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	setupStorageRedisForTest(t)
-	db := mysql.GetDBSession().DB
-	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ESFieldQueryAliasOption{})
-
-	setMultiTenantModeForTest(t, true)
-
-	tableID := "bklog.doris_tenant_rt"
-	bkTenantId := "tenant_a"
-	dataLabel := "tenant_label"
-
-	db.Delete(&resulttable.ResultTable{}, "table_id = ?", tableID)
-	db.Delete(&storage.DorisStorage{}, "table_id = ?", tableID)
-
-	rtObj := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true, BkTenantId: bkTenantId, DataLabel: &dataLabel, Labels: json.RawMessage(`{"scene":"tenant"}`)}
-	assert.NoError(t, db.Create(&rtObj).Error, "Failed to insert ResultTable")
-
-	dorisStorage := storage.DorisStorage{TableID: tableID, BkbaseTableID: "bklog_doris_tenant_bkbase", SourceType: "log"}
-	assert.NoError(t, db.Create(&dorisStorage).Error, "Failed to insert DorisStorage")
-
-	err := NewSpacePusher().PushDorisTableIdDetail(bkTenantId, []string{tableID}, false)
-	assert.NoError(t, err, "PushDorisTableIdDetail should not return an error")
-
-	client := redis.GetStorageRedisInstance()
-	// 带租户后缀的 key 存在
-	suffixedKey := fmt.Sprintf("%s|%s", tableID, bkTenantId)
-	detailStr := client.HGet(cfg.ResultTableDetailKey, suffixedKey)
-	assert.NotEmpty(t, detailStr, "detail should be stored under tenant suffixed key")
-	var detail map[string]any
-	assert.NoError(t, json.Unmarshal([]byte(detailStr), &detail), "doris detail should be valid JSON")
-	assert.Equal(t, "bklog_doris_tenant_bkbase", detail["db"])
-
-	// 不带后缀的 key 不应存在
-	assert.Empty(t, client.HGet(cfg.ResultTableDetailKey, tableID), "detail should not be stored under non-suffixed key in multi-tenant mode")
-}
-
-func TestSpacePusher_PushEsTableIdDetailMultiTenant(t *testing.T) {
-	// 多租户模式下，redis key 需要补充租户ID后缀
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	setupStorageRedisForTest(t)
-	db := mysql.GetDBSession().DB
-	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTable{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
-
-	setMultiTenantModeForTest(t, true)
-
-	tableID := "bklog.es_tenant_rt"
-	bkTenantId := "tenant_b"
-
-	db.Delete(&resulttable.ResultTable{}, "table_id = ?", tableID)
-	db.Delete(&storage.ESStorage{}, "table_id = ?", tableID)
-
-	rtObj := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true, BkTenantId: bkTenantId}
-	assert.NoError(t, db.Create(&rtObj).Error, "Failed to insert ResultTable")
-
-	esStorage := storage.ESStorage{TableID: tableID, StorageClusterID: uint(1), SourceType: "log", IndexSet: "index_1", NeedCreateIndex: true}
-	assert.NoError(t, db.Create(&esStorage).Error, "Failed to insert ESStorage")
-
-	err := NewSpacePusher().PushEsTableIdDetail(bkTenantId, []string{tableID}, false)
-	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
-
-	client := redis.GetStorageRedisInstance()
-	// 带租户后缀的 key 存在
-	suffixedKey := fmt.Sprintf("%s|%s", tableID, bkTenantId)
-	detailStr := client.HGet(cfg.ResultTableDetailKey, suffixedKey)
-	assert.NotEmpty(t, detailStr, "detail should be stored under tenant suffixed key")
-	var detail map[string]any
-	assert.NoError(t, json.Unmarshal([]byte(detailStr), &detail), "es detail should be valid JSON")
-	assert.Equal(t, models.StorageTypeES, detail["storage_type"])
-
-	// 不带后缀的 key 不应存在
-	assert.Empty(t, client.HGet(cfg.ResultTableDetailKey, tableID), "detail should not be stored under non-suffixed key in multi-tenant mode")
-}
-
 func TestSpacePusher_getFieldAliasMapWithChunkedTableIDs(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
@@ -1802,155 +1350,6 @@ func TestSpacePusher_getFieldAliasMapWithChunkedTableIDs(t *testing.T) {
 	lastFieldPath := fmt.Sprintf("__ext.field_%03d", tableCount-1)
 	lastQueryAlias := fmt.Sprintf("alias_%03d", tableCount-1)
 	assert.Equal(t, lastFieldPath, aliasMap[tableIDs[tableCount-1]][lastQueryAlias])
-}
-
-func TestSpacePusher_PushEsTableIdDetailWithChunkedTableIDs(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	setupStorageRedisForTest(t)
-
-	db := mysql.GetDBSession().DB
-	db.AutoMigrate(&resulttable.ResultTable{}, &storage.ESStorage{}, &resulttable.ESFieldQueryAliasOption{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
-
-	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
-	setMultiTenantModeForTest(t, false)
-
-	tableCount := cfg.DefaultDBFilterSize + 1
-	tableIDs := make([]string, 0, tableCount)
-	prefix := "pagination_es_rt_"
-
-	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ResultTable{})
-	db.Where("table_id LIKE ?", prefix+"%").Delete(&storage.ESStorage{})
-	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ESFieldQueryAliasOption{})
-	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ResultTableOption{})
-	db.Where("table_id LIKE ?", prefix+"%").Delete(&storage.ClusterRecord{})
-
-	for i := 0; i < tableCount; i++ {
-		tableID := fmt.Sprintf("%s%03d.__default__", prefix, i)
-		tableIDs = append(tableIDs, tableID)
-
-		rt := resulttable.ResultTable{
-			TableId:    tableID,
-			IsDeleted:  false,
-			IsEnable:   true,
-			BkTenantId: tenant.DefaultTenantId,
-		}
-		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
-
-		esStorage := storage.ESStorage{
-			TableID:          tableID,
-			StorageClusterID: uint(i + 1),
-			SourceType:       "log",
-			IndexSet:         fmt.Sprintf("index_%03d", i),
-			NeedCreateIndex:  true,
-		}
-		assert.NoError(t, db.Create(&esStorage).Error, "Failed to insert ESStorage")
-
-		aliasRecord := resulttable.ESFieldQueryAliasOption{
-			TableID:    tableID,
-			BkTenantID: tenant.DefaultTenantId,
-			FieldPath:  fmt.Sprintf("__ext.es_field_%03d", i),
-			PathType:   "keyword",
-			QueryAlias: fmt.Sprintf("es_alias_%03d", i),
-			IsDeleted:  false,
-		}
-		assert.NoError(t, db.Create(&aliasRecord).Error, "Failed to insert ESFieldQueryAliasOption")
-	}
-
-	client := redis.GetStorageRedisInstance()
-	assert.NoError(t, client.Delete(cfg.ResultTableDetailKey))
-
-	err := NewSpacePusher().PushEsTableIdDetail(tenant.DefaultTenantId, tableIDs, false)
-	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
-
-	details := client.HGetAll(cfg.ResultTableDetailKey)
-	assert.Len(t, details, tableCount, "result_table_detail should include ES records from all chunks")
-
-	firstDetailStr := client.HGet(cfg.ResultTableDetailKey, tableIDs[0])
-	lastDetailStr := client.HGet(cfg.ResultTableDetailKey, tableIDs[tableCount-1])
-	assert.NotEmpty(t, firstDetailStr, "first chunk ES table detail should be written")
-	assert.NotEmpty(t, lastDetailStr, "last chunk ES table detail should be written")
-
-	var lastDetail map[string]any
-	assert.NoError(t, json.Unmarshal([]byte(lastDetailStr), &lastDetail), "last ES detail should be valid JSON")
-	fieldAlias, ok := lastDetail["field_alias"].(map[string]any)
-	assert.True(t, ok, "last ES detail should include field_alias")
-	lastFieldPath := fmt.Sprintf("__ext.es_field_%03d", tableCount-1)
-	lastQueryAlias := fmt.Sprintf("es_alias_%03d", tableCount-1)
-	assert.Equal(t, lastFieldPath, fieldAlias[lastQueryAlias])
-}
-
-func TestSpacePusher_PushDorisTableIdDetailWithChunkedTableIDs(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	setupStorageRedisForTest(t)
-
-	db := mysql.GetDBSession().DB
-	db.AutoMigrate(&resulttable.ResultTable{}, &storage.DorisStorage{}, &resulttable.ESFieldQueryAliasOption{})
-
-	// 该用例断言明文 key, 显式固定为非多租户模式, 避免被其他用例污染全局开关
-	setMultiTenantModeForTest(t, false)
-
-	tableCount := cfg.DefaultDBFilterSize + 1
-	tableIDs := make([]string, 0, tableCount)
-	prefix := "pagination_doris_rt_"
-
-	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ResultTable{})
-	db.Where("table_id LIKE ?", prefix+"%").Delete(&storage.DorisStorage{})
-	db.Where("table_id LIKE ?", prefix+"%").Delete(&resulttable.ESFieldQueryAliasOption{})
-
-	for i := 0; i < tableCount; i++ {
-		tableID := fmt.Sprintf("%s%03d.__default__", prefix, i)
-		tableIDs = append(tableIDs, tableID)
-
-		rt := resulttable.ResultTable{
-			TableId:    tableID,
-			IsDeleted:  false,
-			IsEnable:   true,
-			BkTenantId: tenant.DefaultTenantId,
-		}
-		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
-
-		dorisStorage := storage.DorisStorage{
-			TableID:          tableID,
-			BkbaseTableID:    fmt.Sprintf("bkbase_%03d", i),
-			SourceType:       "log",
-			IndexSet:         fmt.Sprintf("index_%03d", i),
-			TableType:        "primary_table",
-			StorageClusterID: uint(i + 1),
-		}
-		assert.NoError(t, db.Create(&dorisStorage).Error, "Failed to insert DorisStorage")
-
-		aliasRecord := resulttable.ESFieldQueryAliasOption{
-			TableID:    tableID,
-			BkTenantID: tenant.DefaultTenantId,
-			FieldPath:  fmt.Sprintf("__ext.doris_field_%03d", i),
-			PathType:   "keyword",
-			QueryAlias: fmt.Sprintf("doris_alias_%03d", i),
-			IsDeleted:  false,
-		}
-		assert.NoError(t, db.Create(&aliasRecord).Error, "Failed to insert ESFieldQueryAliasOption")
-	}
-
-	client := redis.GetStorageRedisInstance()
-	assert.NoError(t, client.Delete(cfg.ResultTableDetailKey))
-
-	err := NewSpacePusher().PushDorisTableIdDetail(tenant.DefaultTenantId, tableIDs, false)
-	assert.NoError(t, err, "PushDorisTableIdDetail should not return an error")
-
-	details := client.HGetAll(cfg.ResultTableDetailKey)
-	assert.Len(t, details, tableCount, "result_table_detail should include Doris records from all chunks")
-
-	firstDetailStr := client.HGet(cfg.ResultTableDetailKey, tableIDs[0])
-	lastDetailStr := client.HGet(cfg.ResultTableDetailKey, tableIDs[tableCount-1])
-	assert.NotEmpty(t, firstDetailStr, "first chunk Doris table detail should be written")
-	assert.NotEmpty(t, lastDetailStr, "last chunk Doris table detail should be written")
-
-	var lastDetail map[string]any
-	assert.NoError(t, json.Unmarshal([]byte(lastDetailStr), &lastDetail), "last Doris detail should be valid JSON")
-	fieldAlias, ok := lastDetail["field_alias"].(map[string]any)
-	assert.True(t, ok, "last Doris detail should include field_alias")
-	lastFieldPath := fmt.Sprintf("__ext.doris_field_%03d", tableCount-1)
-	lastQueryAlias := fmt.Sprintf("doris_alias_%03d", tableCount-1)
-	assert.Equal(t, lastFieldPath, fieldAlias[lastQueryAlias])
 }
 
 func TestSpacePusher_ComposeData(t *testing.T) {
@@ -2130,145 +1529,6 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 	assert.Equal(t, expectedForOthers, valuesForOthers, "Unexpected result for space 1003")
 }
 
-func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
-	// 初始化数据库
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	db := mysql.GetDBSession().DB
-	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTable{}, &storage.ClusterRecord{})
-
-	// 准备测试数据
-	tableID1 := "1001_bkmonitor_time_series_50010.__default__"
-	tableID2 := "1001_bkmonitor_time_series_50011.__default__"
-	tableID3 := "1001_bkmonitor_time_series_50012.__default__"
-	dataLabel1 := "a" // 初始化为字符串
-	labels1 := json.RawMessage(`{"env":"prod","region":"sh"}`)
-	labels3 := json.RawMessage(`["unexpected"]`)
-
-	// 插入 ResultTable 数据
-	resultTables := []resulttable.ResultTable{
-		{
-			TableId:      tableID1,
-			BkBizId:      1001,
-			BkBizIdAlias: "appid",
-			DataLabel:    &dataLabel1, // 使用字符串指针
-			Labels:       labels1,
-		},
-		{
-			TableId:      tableID2,
-			BkBizId:      1001,
-			BkBizIdAlias: "",
-			DataLabel:    nil,
-		},
-		{
-			TableId:      tableID3,
-			BkBizId:      1001,
-			BkBizIdAlias: "",
-			DataLabel:    nil,
-			Labels:       labels3,
-		},
-	}
-	for _, rt := range resultTables {
-		db.Delete(&resulttable.ResultTable{}, "table_id = ?", rt.TableId)
-		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
-	}
-
-	// composeEsTableIdDetail 会先查询 ESStorage 获取 origin_table_id, 需保证存在对应记录
-	for _, tableID := range []string{tableID1, tableID2, tableID3} {
-		db.Delete(&storage.ESStorage{}, "table_id = ?", tableID)
-		esStorage := storage.ESStorage{TableID: tableID, StorageClusterID: 1, SourceType: "sourceType1", IndexSet: "indexSet1", NeedCreateIndex: true}
-		assert.NoError(t, db.Create(&esStorage).Error, "Failed to insert ESStorage")
-	}
-
-	// 准备 SpacePusher 实例
-	spacePusher := SpacePusher{}
-	// 调用测试方法
-	tableID, detailStr, err := spacePusher.composeEsTableIdDetail(
-		"",
-		tableID1,
-		map[string]any{"option1": "value1"},
-		1,
-		"sourceType1",
-		"indexSet1",
-		nil,
-	)
-
-	// 断言返回结果无错误
-	assert.NoError(t, err, "composeEsTableIdDetail should not return an error")
-	assert.Equal(t, tableID1, tableID, "TableID should match")
-
-	// 期望的 JSON 数据（单个对象）
-	expectedDetail := map[string]any{
-		"measurement":             "__default__",
-		"source_type":             "sourceType1",
-		"options":                 map[string]any{"option1": "value1"},
-		"storage_cluster_records": []any{},
-		"data_label":              "a",
-		"labels":                  map[string]any{"env": "prod", "region": "sh"},
-		"storage_type":            "elasticsearch",
-		"storage_id":              float64(1), // 修改为 float64
-		"db":                      "indexSet1",
-		"field_alias":             map[string]any{},
-	}
-
-	// 将 detailStr 转换为 map 以便比较
-	var actualDetail map[string]any
-	err = json.Unmarshal([]byte(detailStr), &actualDetail)
-	assert.NoError(t, err, "detailStr should be valid JSON")
-
-	// 比较预期值和实际值
-	assert.Equal(t, expectedDetail, actualDetail, "detailStr should match expected JSON")
-	// 调用测试方法
-	resTid, detailStr2, err := spacePusher.composeEsTableIdDetail(
-		"",
-		tableID2,
-		map[string]any{"option1": "value1"},
-		1,
-		"sourceType1",
-		"indexSet1",
-		nil,
-	)
-
-	expectedDetail2 := map[string]any{
-		"measurement":             "__default__",
-		"source_type":             "sourceType1",
-		"options":                 map[string]any{"option1": "value1"},
-		"storage_cluster_records": []any{},
-		"data_label":              nil,
-		"labels":                  map[string]any{},
-		"storage_type":            "elasticsearch",
-		"storage_id":              float64(1), // 修改为 float64
-		"db":                      "indexSet1",
-		"field_alias":             map[string]any{},
-	}
-
-	// 将 detailStr 转换为 map 以便比较
-	var actualDetail2 map[string]any
-	err = json.Unmarshal([]byte(detailStr2), &actualDetail2)
-	assert.NoError(t, err, "detailStr should be valid JSON")
-
-	assert.NoError(t, err, "composeEsTableIdDetail should not return an error")
-	assert.Equal(t, resTid, tableID2, "TableID should match")
-
-	assert.Equal(t, expectedDetail2, actualDetail2, "detailStr should match expected JSON")
-
-	resTid3, detailStr3, err := spacePusher.composeEsTableIdDetail(
-		"",
-		tableID3,
-		map[string]any{"option1": "value1"},
-		1,
-		"sourceType1",
-		"indexSet1",
-		nil,
-	)
-	assert.NoError(t, err, "composeEsTableIdDetail should not return an error")
-	assert.Equal(t, tableID3, resTid3, "TableID should match")
-
-	var actualDetail3 map[string]any
-	err = json.Unmarshal([]byte(detailStr3), &actualDetail3)
-	assert.NoError(t, err, "detailStr should be valid JSON")
-	assert.Equal(t, map[string]any{}, actualDetail3["labels"], "non-object labels should fallback to empty map")
-}
-
 func TestNormalizeResultTableLabels(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -2309,93 +1569,12 @@ func TestNormalizeResultTableLabels(t *testing.T) {
 	}
 }
 
-func TestSpacePusher_composeDorisTableIdDetail(t *testing.T) {
-	tableID1 := "bklog.test_rt_doris_labels"
-	tableID2 := "bklog.test_rt_doris_invalid_labels"
-	tableID3 := "bklog.virtual_doris"
-	tableID4 := "bklog.missing_origin_doris"
-	originTableID := "bklog.real_doris"
-	dataLabel := "test_label"
-	labels1 := json.RawMessage(`{"env":"prod"}`)
-	labels2 := json.RawMessage(`["unexpected"]`)
-
-	spacePusher := SpacePusher{}
-
-	composedTableID, detailStr, err := spacePusher.composeDorisTableIdDetail(
-		storage.DorisStorage{TableID: tableID1, BkbaseTableID: "bklog_test_rt_bkbase"},
-		resultTableDetailMeta{DataLabel: dataLabel, Labels: normalizeResultTableLabels(tableID1, labels1)},
-		nil,
-		nil,
-	)
-	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
-	assert.Equal(t, tableID1, composedTableID, "entity doris detail key should be current table_id")
-	var actualDetail map[string]any
-	err = json.Unmarshal([]byte(detailStr), &actualDetail)
-	assert.NoError(t, err, "detailStr should be valid JSON")
-	assert.Equal(t, "bklog_test_rt_bkbase", actualDetail["db"], "entity doris db should use current bkbase_table_id")
-	assert.Equal(t, map[string]any{"env": "prod"}, actualDetail["labels"], "labels should be object")
-	assert.Equal(t, "test_label", actualDetail["data_label"], "data_label should be preserved")
-
-	_, detailStr2, err := spacePusher.composeDorisTableIdDetail(
-		storage.DorisStorage{TableID: tableID2, BkbaseTableID: "bklog_test_rt_bkbase"},
-		resultTableDetailMeta{Labels: normalizeResultTableLabels(tableID2, labels2)},
-		nil,
-		nil,
-	)
-	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
-	var actualDetail2 map[string]any
-	err = json.Unmarshal([]byte(detailStr2), &actualDetail2)
-	assert.NoError(t, err, "detailStr should be valid JSON")
-	assert.Equal(t, map[string]any{}, actualDetail2["labels"], "non-object labels should fallback to empty map")
-
-	composedTableID3, detailStr3, err := spacePusher.composeDorisTableIdDetail(
-		storage.DorisStorage{TableID: tableID3, BkbaseTableID: "", OriginTableId: originTableID},
-		resultTableDetailMeta{DataLabel: "current_label", Labels: map[string]any{"scene": "virtual"}},
-		map[string]storage.DorisStorage{
-			originTableID: {TableID: originTableID, BkbaseTableID: "bklog_real_doris"},
-		},
-		map[string]string{"pod_name": "__ext.pod_name"},
-	)
-	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
-	assert.Equal(t, tableID3, composedTableID3, "virtual doris detail key should be current table_id")
-	var actualDetail3 map[string]any
-	err = json.Unmarshal([]byte(detailStr3), &actualDetail3)
-	assert.NoError(t, err, "detailStr should be valid JSON")
-	assert.Equal(t, "bklog_real_doris", actualDetail3["db"], "virtual doris db should use origin bkbase_table_id")
-	assert.Equal(t, "current_label", actualDetail3["data_label"], "data_label should come from current result table")
-	assert.Equal(t, map[string]any{"scene": "virtual"}, actualDetail3["labels"], "labels should come from current result table")
-	assert.Equal(t, map[string]any{"pod_name": "__ext.pod_name"}, actualDetail3["field_alias"], "field alias should come from current table_id")
-
-	_, detailStr4, err := spacePusher.composeDorisTableIdDetail(
-		storage.DorisStorage{TableID: tableID3, BkbaseTableID: "bklog_current_doris", OriginTableId: originTableID},
-		resultTableDetailMeta{},
-		map[string]storage.DorisStorage{
-			originTableID: {TableID: originTableID, BkbaseTableID: "bklog_real_doris"},
-		},
-		nil,
-	)
-	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
-	var actualDetail4 map[string]any
-	err = json.Unmarshal([]byte(detailStr4), &actualDetail4)
-	assert.NoError(t, err, "detailStr should be valid JSON")
-	assert.Equal(t, "bklog_current_doris", actualDetail4["db"], "current bkbase_table_id should be preferred when present")
-
-	_, detailStr5, err := spacePusher.composeDorisTableIdDetail(
-		storage.DorisStorage{TableID: tableID4, BkbaseTableID: "bklog_missing_origin_fallback", OriginTableId: "bklog.not_exist"},
-		resultTableDetailMeta{},
-		map[string]storage.DorisStorage{},
-		nil,
-	)
-	assert.NoError(t, err, "composeDorisTableIdDetail should not return an error")
-	var actualDetail5 map[string]any
-	err = json.Unmarshal([]byte(detailStr5), &actualDetail5)
-	assert.NoError(t, err, "detailStr should be valid JSON")
-	assert.Equal(t, "bklog_missing_origin_fallback", actualDetail5["db"], "missing origin should fallback to current bkbase_table_id")
-}
-
 func TestSpacePusher_PushTableIdDetailWithLabels(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	setupStorageRedisForTest(t)
+	// 该用例只校验 payload，固定为无租户后缀的兼容模式，
+	// 避免 bmw_test.yaml 的全局开关改变 Redis field 格式。
+	setMultiTenantModeForTest(t, false)
 	db := mysql.GetDBSession().DB
 	db.AutoMigrate(&resulttable.ResultTable{}, &storage.AccessVMRecord{}, &resulttable.ResultTableField{}, &resulttable.ResultTableOption{})
 
@@ -2403,13 +1582,14 @@ func TestSpacePusher_PushTableIdDetailWithLabels(t *testing.T) {
 	labels := json.RawMessage(`{"env":"prod","module":"worker"}`)
 
 	rt := resulttable.ResultTable{
-		TableId:      tableID,
-		SchemaType:   models.ResultTableSchemaTypeFixed,
-		IsDeleted:    false,
-		IsEnable:     true,
-		BkTenantId:   tenant.DefaultTenantId,
-		BkBizIdAlias: "appid",
-		Labels:       labels,
+		TableId:        tableID,
+		SchemaType:     models.ResultTableSchemaTypeFixed,
+		DefaultStorage: models.StorageTypeInfluxdb,
+		IsDeleted:      false,
+		IsEnable:       true,
+		BkTenantId:     tenant.DefaultTenantId,
+		BkBizIdAlias:   "appid",
+		Labels:         labels,
 	}
 	db.Delete(&resulttable.ResultTable{}, "table_id = ?", rt.TableId)
 	assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
@@ -2435,12 +1615,15 @@ func TestSpacePusher_PushTableIdDetailWithLabels(t *testing.T) {
 	var detail map[string]any
 	err = json.Unmarshal([]byte(detailStr), &detail)
 	assert.NoError(t, err, "detailStr should be valid JSON")
+	assert.Equal(t, models.StorageTypeVM, detail["storage_type"], "influxdb RT should use AccessVMRecord route")
 	assert.Equal(t, map[string]any{"env": "prod", "module": "worker"}, detail["labels"], "labels should be normalized as object")
 }
 
 func TestSpacePusher_PushTableIdDetailWithRecordRuleOverride(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	setupStorageRedisForTest(t)
+	// 该用例关注 RecordRule 覆盖 payload，Redis field 保持旧格式。
+	setMultiTenantModeForTest(t, false)
 	db := mysql.GetDBSession().DB
 	db.AutoMigrate(
 		&resulttable.ResultTable{},

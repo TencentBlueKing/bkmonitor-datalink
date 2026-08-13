@@ -36,6 +36,8 @@ type Params struct {
 	IsRegexp bool `json:"is_regexp" example:"false"`
 
 	Conditions structured.Conditions `json:"conditions"`
+	// QueryString 日志查询串，用于在枚举维度值前过滤日志数据集。
+	QueryString string `json:"query_string,omitempty"`
 	// TableIDConditions 表标签条件；与 /query/ts 的 body.table_id_conditions 一致，
 	// 仅在未指定 table_id / data_label 的全空间扫表场景下按结果表 Labels 收窄候选 RT。
 	TableIDConditions structured.AllConditions `json:"table_id_conditions,omitempty"`

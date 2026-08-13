@@ -1539,6 +1539,50 @@ func TestInstance_QueryLabelValuesConcurrentSharedQueryDoesNotMutate(t *testing.
 	assert.Equal(t, originalAggregates, query.Aggregates)
 }
 
+func TestBuildESQuerySourceTagValuesQueryString(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	start := time.Unix(1764074673, 0)
+	end := time.Unix(1764078273, 0)
+
+	for name, tc := range map[string]struct {
+		queryString string
+		expected    string
+	}{
+		"query string filters enum values": {
+			queryString: "level:error",
+			expected:    `{"aggregations":{"level":{"aggregations":{"_value":{"cardinality":{"field":"level"}}},"terms":{"field":"level","missing":" "}}},"query":{"bool":{"filter":[{"exists":{"field":"level"}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1764074673,"include_lower":true,"include_upper":true,"to":1764078273}}},{"term":{"level":"error"}}]}},"size":0}`,
+		},
+		"empty query string keeps enum filters": {
+			expected: `{"aggregations":{"level":{"aggregations":{"_value":{"cardinality":{"field":"level"}}},"terms":{"field":"level","missing":" "}}},"query":{"bool":{"filter":[{"exists":{"field":"level"}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1764074673,"include_lower":true,"include_upper":true,"to":1764078273}}}]}},"size":0}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			query := &metadata.Query{
+				QueryString: tc.queryString,
+				AllConditions: metadata.AllConditions{{{
+					DimensionName: "level",
+					Operator:      metadata.ConditionExisted,
+				}}},
+				Aggregates: metadata.Aggregates{{
+					Name:       Cardinality,
+					Field:      "level",
+					Dimensions: []string{"level"},
+					Without:    true,
+				}},
+			}
+			fact := NewFormatFactory(ctx).
+				WithQuery("level", metadata.TimeField{Name: "dtEventTimeStamp", Type: TimeFieldTypeTime, Unit: "s"}, start, end, "s", 0).
+				WithFieldMap(metadata.FieldsMap{
+					"level": {FieldName: "level", FieldType: KeyWord},
+				})
+
+			_, _, body, err := buildESQuerySource(ctx, query, fact, nil)
+			assert.NoError(t, err)
+			assert.JSONEq(t, tc.expected, body)
+		})
+	}
+}
+
 func TestInstance_QuerySeries(t *testing.T) {
 	mock.Init()
 

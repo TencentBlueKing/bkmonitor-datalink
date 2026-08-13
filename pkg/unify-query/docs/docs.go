@@ -1476,6 +1476,10 @@ const docTemplate = `{
                 "metric_name": {
                     "type": "string"
                 },
+                "query_string": {
+                    "description": "QueryString 日志查询串，用于在枚举维度值前过滤日志数据集。",
+                    "type": "string"
+                },
                 "slimit": {
                     "type": "integer"
                 },

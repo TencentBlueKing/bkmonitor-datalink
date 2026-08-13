@@ -714,6 +714,7 @@ func infoParamsToQueryRef(ctx context.Context, params *Params) (queryRef metadat
 				FieldName:         params.Metric,
 				IsRegexp:          params.IsRegexp,
 				Conditions:        params.Conditions,
+				QueryString:       params.QueryString,
 				TableIDConditions: params.TableIDConditions,
 				Limit:             params.Limit,
 				ReferenceName:     metadata.DefaultReferenceName,

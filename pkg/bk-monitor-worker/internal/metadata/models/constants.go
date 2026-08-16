@@ -49,6 +49,7 @@ const RTFOInfluxdbDisabled = "influxdb_disabled" // influxdb_disabled: influxdbä
 const (
 	OptionCustomReportDimensionValues = "dimension_values"
 	OptionSegmentedQueryEnable        = "segmented_query_enable"
+	OptionQueryRouterConfig           = "query_router_config"
 )
 
 // MeasurementType

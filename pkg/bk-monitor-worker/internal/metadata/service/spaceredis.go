@@ -925,7 +925,7 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 	tableIdList []string,
 	clusterMap map[uint]storage.ClusterInfo,
 ) (map[string]map[string]any, error) {
-logger.Debugf("get table info from access vm records, table_id_list->[%v]", tableIdList)
+	logger.Debugf("get table info from access vm records, table_id_list->[%v]", tableIdList)
 	if len(tableIdList) == 0 {
 		return map[string]map[string]any{}, nil
 	}
@@ -1970,6 +1970,164 @@ func (s *SpacePusher) addVMShortLinkTableIdValue(valuesBySpace SpaceTableIdValue
 	}
 	reformattedTableId := reformatTableId(tableId)
 	valuesBySpace[key][reformattedTableId] = map[string]any{"filters": filters}
+}
+
+// ComposeLogGlobalTableIdValuesBySpace 按 query_router_config 组装 ES/Doris 日志全局表路由。
+// 归属业务继续使用普通 ES/Doris 路由的空 filters；这里只补充其他目标空间的过滤路由。
+func (s *SpacePusher) ComposeLogGlobalTableIdValuesBySpace(
+	options []resulttable.ResultTableOption,
+	resultTables []resulttable.ResultTable,
+	spaceList []space.Space,
+) SpaceTableIdValuesBySpace {
+	valuesBySpace := make(SpaceTableIdValuesBySpace)
+	resultTablesByTenant := make(map[string]map[string]resulttable.ResultTable)
+	for _, rt := range resultTables {
+		if !isEligibleLogGlobalResultTable(rt) {
+			continue
+		}
+		if _, ok := resultTablesByTenant[rt.BkTenantId]; !ok {
+			resultTablesByTenant[rt.BkTenantId] = make(map[string]resulttable.ResultTable)
+		}
+		resultTablesByTenant[rt.BkTenantId][rt.TableId] = rt
+	}
+
+	spacesByTypeAndTenant := make(map[string][]space.Space)
+	spacesByTenant := make(map[string][]space.Space)
+	for _, sp := range spaceList {
+		if !isSupportedLogGlobalSpaceType(sp.SpaceTypeId) {
+			continue
+		}
+		key := vmShortLinkGlobalSpaceKey(sp.SpaceTypeId, sp.BkTenantId)
+		spacesByTypeAndTenant[key] = append(spacesByTypeAndTenant[key], sp)
+		spacesByTenant[sp.BkTenantId] = append(spacesByTenant[sp.BkTenantId], sp)
+	}
+
+	for _, option := range options {
+		rt, ok := resultTablesByTenant[option.BkTenantId][option.TableID]
+		if !ok {
+			continue
+		}
+
+		config, err := parseLogGlobalQueryRouterConfig(option)
+		if err != nil {
+			logger.Warnf(
+				"compose log global table ids: invalid query_router_config skipped, tenant [%s], table_id [%s], error [%s]",
+				option.BkTenantId, option.TableID, err,
+			)
+			continue
+		}
+
+		targetSpaces := spacesByTypeAndTenant[vmShortLinkGlobalSpaceKey(config.SpaceType, option.BkTenantId)]
+		if config.SpaceType == models.SpaceTypeAll {
+			targetSpaces = spacesByTenant[option.BkTenantId]
+		}
+		for _, sp := range targetSpaces {
+			bkBizID, err := getLogGlobalSpaceBkBizID(sp)
+			if err != nil {
+				logger.Warnf(
+					"compose log global table ids: get space bk_biz_id failed, tenant [%s], space_type [%s], space_id [%s], error [%s]",
+					sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId, err,
+				)
+				continue
+			}
+			// 预取路由最后合并。归属业务不能在这里写入，否则会覆盖普通 ES/Doris 的无过滤路由。
+			if rt.BkBizId == bkBizID {
+				continue
+			}
+
+			// space_to_result_table 的查询端按 []map[string]string 反序列化 filters，
+			// bk_biz_id 必须保持字符串，不能照搬 Python 侧的 JSON number。
+			var filterValue any = strconv.Itoa(bkBizID)
+			if config.FilterValue == vmShortLinkFilterValueSpaceID {
+				filterValue = sp.SpaceId
+			}
+			key := SpaceRouteKeyWithTenant(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId)
+			if _, ok := valuesBySpace[key]; !ok {
+				valuesBySpace[key] = make(SpaceTableIdValues)
+			}
+			valuesBySpace[key][reformatTableId(option.TableID)] = map[string]any{
+				"filters": []map[string]any{{config.FilterKey: filterValue}},
+			}
+		}
+	}
+	return valuesBySpace
+}
+
+func isEligibleLogGlobalResultTable(rt resulttable.ResultTable) bool {
+	return rt.IsEnable && !rt.IsDeleted &&
+		(rt.DefaultStorage == models.StorageTypeES || rt.DefaultStorage == models.StorageTypeDoris)
+}
+
+func isSupportedLogGlobalSpaceType(spaceType string) bool {
+	return spaceType == models.SpaceTypeBKCC || spaceType == models.SpaceTypeBKCI || spaceType == models.SpaceTypeBKSAAS
+}
+
+func parseLogGlobalQueryRouterConfig(option resulttable.ResultTableOption) (vmShortLinkQueryRouterConfig, error) {
+	config := vmShortLinkQueryRouterConfig{
+		SpaceType:   models.SpaceTypeAll,
+		FilterKey:   vmShortLinkFilterKeyBkBizID,
+		FilterValue: vmShortLinkFilterValueBkBizID,
+	}
+	if option.ValueType != "dict" {
+		return config, errors.Errorf("value_type [%s] is not dict", option.ValueType)
+	}
+
+	var rawConfig map[string]any
+	if err := jsonx.UnmarshalString(option.Value, &rawConfig); err != nil {
+		return config, errors.Wrap(err, "unmarshal query_router_config")
+	}
+	if rawConfig == nil {
+		return config, errors.New("query_router_config is not a dict")
+	}
+
+	if value, ok := rawConfig["space_type"]; ok && value != nil {
+		spaceType, ok := value.(string)
+		if !ok {
+			return config, errors.Errorf("space_type [%v] is not string", value)
+		}
+		if spaceType != "" {
+			config.SpaceType = spaceType
+		}
+	}
+	if !isSupportedLogGlobalSpaceType(config.SpaceType) && config.SpaceType != models.SpaceTypeAll {
+		return config, errors.Errorf("space_type [%s] is not supported", config.SpaceType)
+	}
+
+	if value, ok := rawConfig["filter_key"]; ok && value != nil {
+		filterKey, ok := value.(string)
+		if !ok {
+			return config, errors.Errorf("filter_key [%v] is not string", value)
+		}
+		if strings.TrimSpace(filterKey) == "" {
+			return config, errors.New("filter_key is empty")
+		}
+		config.FilterKey = filterKey
+	}
+
+	if value, ok := rawConfig["filter_value"]; ok && value != nil {
+		filterValue, ok := value.(string)
+		if !ok {
+			return config, errors.Errorf("filter_value [%v] is not string", value)
+		}
+		if filterValue != "" {
+			config.FilterValue = filterValue
+		}
+	}
+	if config.FilterValue != vmShortLinkFilterValueSpaceID && config.FilterValue != vmShortLinkFilterValueBkBizID {
+		return config, errors.Errorf("filter_value [%s] is not supported", config.FilterValue)
+	}
+	return config, nil
+}
+
+func getLogGlobalSpaceBkBizID(sp space.Space) (int, error) {
+	if sp.SpaceTypeId == models.SpaceTypeBKCC {
+		bkBizID, err := strconv.Atoi(sp.SpaceId)
+		if err != nil {
+			return 0, errors.Wrapf(err, "invalid bkcc space_id [%s]", sp.SpaceId)
+		}
+		return bkBizID, nil
+	}
+	return -sp.Id, nil
 }
 
 // ComposeEsTableIds 组装关联的ES结果表

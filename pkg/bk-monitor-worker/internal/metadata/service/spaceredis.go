@@ -1894,39 +1894,29 @@ const (
 	vmShortLinkFilterValueBkBizID = "bk_biz_id"
 )
 
-type vmShortLinkQueryRouterConfig struct {
+type queryRouterConfig struct {
 	SpaceType   string `json:"space_type"`
 	FilterKey   string `json:"filter_key"`
 	FilterValue string `json:"filter_value"`
 }
 
-func (s *SpacePusher) parseVMShortLinkQueryRouterConfig(record space.VMShortLinkRecord) vmShortLinkQueryRouterConfig {
-	config := vmShortLinkQueryRouterConfig{SpaceType: record.SpaceType}
-	if record.QueryRouterConfig != "" {
-		if err := jsonx.UnmarshalString(record.QueryRouterConfig, &config); err != nil {
-			logger.Errorf("parse vm short link query_router_config failed, table_id [%s], config [%s], err: %s", record.TableId, record.QueryRouterConfig, err)
-			config = vmShortLinkQueryRouterConfig{SpaceType: record.SpaceType}
-		}
+func (s *SpacePusher) parseVMShortLinkQueryRouterConfig(record space.VMShortLinkRecord) queryRouterConfig {
+	config, err := parseQueryRouterConfig(record.QueryRouterConfig, record.SpaceType)
+	if err == nil {
+		return config
 	}
-	if config.SpaceType == "" {
-		config.SpaceType = record.SpaceType
-	}
-	// query_router_config 允许只配置部分字段：space_type/filter_key/filter_value 缺失时分别回退到记录空间类型、bk_biz_id、bk_biz_id。
-	if config.FilterKey == "" {
-		config.FilterKey = vmShortLinkFilterKeyBkBizID
-	}
-	if config.FilterValue == "" {
-		config.FilterValue = vmShortLinkFilterValueBkBizID
-	}
-	if config.FilterValue != "" && config.FilterValue != vmShortLinkFilterValueSpaceID && config.FilterValue != vmShortLinkFilterValueBkBizID {
-		logger.Errorf("unsupported vm short link filter_value [%s], table_id [%s], use default value", config.FilterValue, record.TableId)
-		config.FilterValue = vmShortLinkFilterValueBkBizID
-	}
+
+	// VM 短链路历史上对异常存量配置采用默认路由，保持该容错行为；
+	// 日志全局表则由调用方跳过异常 option，避免错误配置扩大查询范围。
+	logger.Errorf(
+		"parse vm short link query_router_config failed, table_id [%s], config [%s], err: %s, use default value",
+		record.TableId, record.QueryRouterConfig, err,
+	)
 	return config
 }
 
 func (s *SpacePusher) getVMShortLinkTargetSpaces(
-	config vmShortLinkQueryRouterConfig,
+	config queryRouterConfig,
 	bkTenantId string,
 	spacesByTypeAndTenant map[string][]space.Space,
 	spacesByTenant map[string][]space.Space,
@@ -1942,7 +1932,7 @@ func vmShortLinkGlobalSpaceKey(spaceType, bkTenantId string) string {
 	return fmt.Sprintf("%s|%s", spaceType, bkTenantId)
 }
 
-func (s *SpacePusher) buildVMShortLinkGlobalFilters(sp space.Space, config vmShortLinkQueryRouterConfig) []map[string]any {
+func (s *SpacePusher) buildVMShortLinkGlobalFilters(sp space.Space, config queryRouterConfig) []map[string]any {
 	switch config.FilterValue {
 	case vmShortLinkFilterValueSpaceID:
 		return []map[string]any{{config.FilterKey: sp.SpaceId}}
@@ -2062,18 +2052,27 @@ func isSupportedLogGlobalSpaceType(spaceType string) bool {
 	return spaceType == models.SpaceTypeBKCC || spaceType == models.SpaceTypeBKCI || spaceType == models.SpaceTypeBKSAAS
 }
 
-func parseLogGlobalQueryRouterConfig(option resulttable.ResultTableOption) (vmShortLinkQueryRouterConfig, error) {
-	config := vmShortLinkQueryRouterConfig{
-		SpaceType:   models.SpaceTypeAll,
+func defaultQueryRouterConfig(defaultSpaceType string) queryRouterConfig {
+	return queryRouterConfig{
+		SpaceType:   defaultSpaceType,
 		FilterKey:   vmShortLinkFilterKeyBkBizID,
 		FilterValue: vmShortLinkFilterValueBkBizID,
 	}
-	if option.ValueType != "dict" {
-		return config, errors.Errorf("value_type [%s] is not dict", option.ValueType)
+}
+
+// parseQueryRouterConfig 对齐 VMShortLinkRecord.normalize_query_router_config：
+// 缺失或空值使用调用方默认值，space_type/filter_value 仅接受当前协议支持的取值。
+func parseQueryRouterConfig(rawConfigJSON, defaultSpaceType string) (queryRouterConfig, error) {
+	config := defaultQueryRouterConfig(defaultSpaceType)
+	if rawConfigJSON == "" {
+		if !isValidQueryRouterSpaceType(config.SpaceType) {
+			return config, errors.Errorf("space_type [%s] is invalid", config.SpaceType)
+		}
+		return config, nil
 	}
 
 	var rawConfig map[string]any
-	if err := jsonx.UnmarshalString(option.Value, &rawConfig); err != nil {
+	if err := jsonx.UnmarshalString(rawConfigJSON, &rawConfig); err != nil {
 		return config, errors.Wrap(err, "unmarshal query_router_config")
 	}
 	if rawConfig == nil {
@@ -2089,8 +2088,10 @@ func parseLogGlobalQueryRouterConfig(option resulttable.ResultTableOption) (vmSh
 			config.SpaceType = spaceType
 		}
 	}
-	if !isSupportedLogGlobalSpaceType(config.SpaceType) && config.SpaceType != models.SpaceTypeAll {
-		return config, errors.Errorf("space_type [%s] is not supported", config.SpaceType)
+	if !isValidQueryRouterSpaceType(config.SpaceType) {
+		invalidSpaceType := config.SpaceType
+		config.SpaceType = defaultSpaceType
+		return config, errors.Errorf("space_type [%s] is invalid", invalidSpaceType)
 	}
 
 	if value, ok := rawConfig["filter_key"]; ok && value != nil {
@@ -2098,10 +2099,9 @@ func parseLogGlobalQueryRouterConfig(option resulttable.ResultTableOption) (vmSh
 		if !ok {
 			return config, errors.Errorf("filter_key [%v] is not string", value)
 		}
-		if strings.TrimSpace(filterKey) == "" {
-			return config, errors.New("filter_key is empty")
+		if filterKey != "" {
+			config.FilterKey = filterKey
 		}
-		config.FilterKey = filterKey
 	}
 
 	if value, ok := rawConfig["filter_value"]; ok && value != nil {
@@ -2114,7 +2114,31 @@ func parseLogGlobalQueryRouterConfig(option resulttable.ResultTableOption) (vmSh
 		}
 	}
 	if config.FilterValue != vmShortLinkFilterValueSpaceID && config.FilterValue != vmShortLinkFilterValueBkBizID {
-		return config, errors.Errorf("filter_value [%s] is not supported", config.FilterValue)
+		invalidFilterValue := config.FilterValue
+		config.FilterValue = vmShortLinkFilterValueBkBizID
+		return config, errors.Errorf("filter_value [%s] is invalid", invalidFilterValue)
+	}
+	return config, nil
+}
+
+func isValidQueryRouterSpaceType(spaceType string) bool {
+	return spaceType == models.SpaceTypeBKCC || spaceType == models.SpaceTypeBCS ||
+		spaceType == models.SpaceTypeBKCI || spaceType == models.SpaceTypeBKSAAS ||
+		spaceType == models.SpaceTypeDefault || spaceType == models.SpaceTypeAll
+}
+
+func parseLogGlobalQueryRouterConfig(option resulttable.ResultTableOption) (queryRouterConfig, error) {
+	config := defaultQueryRouterConfig(models.SpaceTypeAll)
+	if option.ValueType != "dict" {
+		return config, errors.Errorf("value_type [%s] is not dict", option.ValueType)
+	}
+
+	config, err := parseQueryRouterConfig(option.Value, models.SpaceTypeAll)
+	if err != nil {
+		return config, err
+	}
+	if !isSupportedLogGlobalSpaceType(config.SpaceType) && config.SpaceType != models.SpaceTypeAll {
+		return config, errors.Errorf("space_type [%s] is not supported", config.SpaceType)
 	}
 	return config, nil
 }

@@ -1810,6 +1810,14 @@ func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 			IsGlobal:          true,
 			QueryRouterConfig: `{"filter_key":"custom_biz"}`,
 		},
+		{
+			BkTenantId:        "system",
+			SpaceType:         "bkci",
+			SpaceId:           "project_a",
+			TableId:           "invalid_config_vm_short_link_rt",
+			IsGlobal:          true,
+			QueryRouterConfig: `{"space_type":"all","filter_key":"fallback_biz","filter_value":"space_uid"}`,
+		},
 	}
 	spaceList := []space.Space{
 		{Id: 100, BkTenantId: "system", SpaceTypeId: "bkcc", SpaceId: "1001"},
@@ -1828,6 +1836,9 @@ func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 			"configured_global_vm_short_link_rt.__default__": {
 				"filters": []map[string]any{{"project_id": "1001"}},
 			},
+			"invalid_config_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"fallback_biz": "1001"}},
+			},
 		},
 		SpaceRouteKeyWithTenant("system", "bkci", "project_a"): {
 			"global_vm_short_link_rt.__default__": {
@@ -1837,6 +1848,9 @@ func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 				"filters": []map[string]any{},
 			},
 			"partial_config_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+			"invalid_config_vm_short_link_rt.__default__": {
 				"filters": []map[string]any{},
 			},
 		},
@@ -1849,6 +1863,9 @@ func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 			},
 			"partial_config_vm_short_link_rt.__default__": {
 				"filters": []map[string]any{{"custom_biz": "-102"}},
+			},
+			"invalid_config_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"fallback_biz": "-102"}},
 			},
 		},
 	}, data)
@@ -1882,7 +1899,7 @@ func TestSpacePusher_ComposeLogGlobalTableIdValuesBySpace(t *testing.T) {
 		{BkTenantId: "system", TableID: "owner_global.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{}`}},
 		{BkTenantId: "system", TableID: "invalid_json.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{`}},
 		{BkTenantId: "system", TableID: "invalid_value_type.log", OptionBase: models.OptionBase{ValueType: "string", Value: `{}`}},
-		{BkTenantId: "system", TableID: "empty_filter_key.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{"filter_key":""}`}},
+		{BkTenantId: "system", TableID: "empty_filter_key.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{"space_type":"all","filter_key":"","filter_value":"space_id"}`}},
 		{BkTenantId: "system", TableID: "unsupported_space_type.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{"space_type":"bcs"}`}},
 		{BkTenantId: "system", TableID: "unsupported_filter_value.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{"filter_value":"space_uid"}`}},
 		{BkTenantId: "system", TableID: "disabled.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{}`}},
@@ -1895,12 +1912,14 @@ func TestSpacePusher_ComposeLogGlobalTableIdValuesBySpace(t *testing.T) {
 
 	bkccValues := data[SpaceRouteKeyWithTenant("system", models.SpaceTypeBKCC, "1")]
 	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "1"}}}, bkccValues["global_all.log"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "1"}}}, bkccValues["empty_filter_key.log"])
 	assert.NotContains(t, bkccValues, "global_bkci.log")
 	assert.NotContains(t, bkccValues, "owner_global.log", "owner route must keep the normal unfiltered ES route")
 
 	bkciValues := data[SpaceRouteKeyWithTenant("system", models.SpaceTypeBKCI, "project_a")]
 	assert.Equal(t, map[string]any{"filters": []map[string]any{{"space_id": "project_a"}}}, bkciValues["global_bkci.log"])
 	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "-101"}}}, bkciValues["global_all.log"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "project_a"}}}, bkciValues["empty_filter_key.log"])
 	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "-101"}}}, bkciValues["owner_global.log"])
 	encodedBkciValues, err := json.Marshal(bkciValues)
 	assert.NoError(t, err)
@@ -1915,7 +1934,7 @@ func TestSpacePusher_ComposeLogGlobalTableIdValuesBySpace(t *testing.T) {
 
 	for _, values := range data {
 		for _, tableID := range []string{
-			"invalid_json.log", "invalid_value_type.log", "empty_filter_key.log", "unsupported_space_type.log",
+			"invalid_json.log", "invalid_value_type.log", "unsupported_space_type.log",
 			"unsupported_filter_value.log", "disabled.log", "deleted.log", "vm_storage.log",
 		} {
 			assert.NotContains(t, values, tableID)

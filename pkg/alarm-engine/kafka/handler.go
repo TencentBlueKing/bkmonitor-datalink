@@ -113,14 +113,14 @@ func (h *Handler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama
 				h.fatal(err)
 				return err
 			}
-			if !h.assignment.TryBeginRecord(session, claim) {
+			if !h.assignment.TryBeginObservedRecord(session, claim, message.Offset) {
 				return h.waitForDrainOrSession(session)
 			}
 			record := consumer.Record{
 				Key: message.Key, Value: message.Value, Topic: message.Topic, Partition: message.Partition, Offset: message.Offset,
 			}
 			err := claimProcessor.Process(session.Context(), record)
-			h.assignment.EndRecord()
+			h.assignment.EndObservedRecord(session, claim, message.Offset+1, err == nil)
 			if err != nil {
 				if session.Context().Err() != nil && errors.Is(err, session.Context().Err()) {
 					return nil

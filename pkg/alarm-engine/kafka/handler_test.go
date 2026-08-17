@@ -24,6 +24,44 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/consumer"
 )
 
+func TestConsumeClaimAdvancesLagCursorOnlyAfterCommit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		commit  error
+		wantLag int64
+	}{
+		{name: "committed", wantLag: 5},
+		{name: "commit failed", commit: errors.New("commit failed"), wantLag: 6},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			events := []string{}
+			session := newFakeSession(context.Background(), &events)
+			claim := newFakeClaim("trigger-input", 0, []*sarama.ConsumerMessage{{
+				Topic: "trigger-input", Partition: 0, Offset: 4,
+			}})
+			claim.highWater = 10
+			handler := NewHandler(noopProcessorFactory(), fakeSyncOffsetCommitter{events: &events, err: test.commit}, nil)
+			setupHandler(t, handler, session, claim)
+
+			err := handler.ConsumeClaim(session, claim)
+			if test.commit == nil && err != nil {
+				t.Fatalf("ConsumeClaim() error = %v", err)
+			}
+			if test.commit != nil && !errors.Is(err, test.commit) {
+				t.Fatalf("ConsumeClaim() error = %v, want %v", err, test.commit)
+			}
+			snapshot := handler.assignment.Snapshot()
+			if !snapshot.consumerLagKnown || snapshot.consumerLagRecords != test.wantLag || snapshot.inflightRecords != 0 {
+				t.Fatalf("assignment snapshot = %+v, want known lag %d and no inflight", snapshot, test.wantLag)
+			}
+		})
+	}
+}
+
 func TestConsumeClaimCommitsOffsetAfterProcessing(t *testing.T) {
 	t.Parallel()
 
@@ -495,6 +533,8 @@ type fakeClaim struct {
 	topic     string
 	partition int32
 	messages  chan *sarama.ConsumerMessage
+	initial   int64
+	highWater int64
 }
 
 func newFakeClaim(topic string, partition int32, records []*sarama.ConsumerMessage) *fakeClaim {
@@ -508,8 +548,8 @@ func newFakeClaim(topic string, partition int32, records []*sarama.ConsumerMessa
 
 func (c *fakeClaim) Topic() string                            { return c.topic }
 func (c *fakeClaim) Partition() int32                         { return c.partition }
-func (c *fakeClaim) InitialOffset() int64                     { return 0 }
-func (c *fakeClaim) HighWaterMarkOffset() int64               { return 0 }
+func (c *fakeClaim) InitialOffset() int64                     { return c.initial }
+func (c *fakeClaim) HighWaterMarkOffset() int64               { return c.highWater }
 func (c *fakeClaim) Messages() <-chan *sarama.ConsumerMessage { return c.messages }
 
 type fakeSyncOffsetCommitter struct {

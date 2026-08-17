@@ -21,6 +21,7 @@ import (
 	"github.com/Shopify/sarama"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/consumer"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/lifecycle"
 )
 
 func TestServiceRepeatsConsumeAfterRebalanceAndClosesNormally(t *testing.T) {
@@ -62,6 +63,9 @@ func TestServiceRepeatsConsumeAfterRebalanceAndClosesNormally(t *testing.T) {
 	if !reflect.DeepEqual(order, []string{"group", "client"}) {
 		t.Fatalf("close order = %v, want group/client", order)
 	}
+	if snapshot := service.LifecycleSnapshot(); snapshot.Draining || snapshot.DrainTotal[lifecycle.DrainSuccess] != 1 {
+		t.Fatalf("normal shutdown snapshot = %+v, want one successful drain", snapshot)
+	}
 }
 
 func TestServiceDrainsGroupErrorsBeforeConsume(t *testing.T) {
@@ -82,6 +86,32 @@ func TestServiceDrainsGroupErrorsBeforeConsume(t *testing.T) {
 	service := newTestService(t, group, client, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
 	if err := service.Run(context.Background()); !errors.Is(err, want) {
 		t.Fatalf("Run() error = %v, want %v", err, want)
+	}
+	if snapshot := service.LifecycleSnapshot(); snapshot.FatalTotal != 1 || snapshot.DrainTotal[lifecycle.DrainSuccess] != 1 {
+		t.Fatalf("fatal shutdown snapshot = %+v, want one fatal and successful drain", snapshot)
+	}
+}
+
+func TestServiceNormalCloseFailureRecordsFailedDrain(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("group close failed")
+	group := newFakeConsumerGroup(func(ctx context.Context, _ []string, _ sarama.ConsumerGroupHandler) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	group.closeFunc = func() error { return want }
+	service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
+	runContext, cancelRun := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- service.Run(runContext) }()
+	waitFor(t, func() bool { return group.consumeCalls.Load() == 1 }, "Consume call")
+	cancelRun()
+	if err := waitError(t, done); !errors.Is(err, want) {
+		t.Fatalf("Run() error = %v, want close error %v", err, want)
+	}
+	if snapshot := service.LifecycleSnapshot(); snapshot.Draining || snapshot.DrainTotal[lifecycle.DrainFailed] != 1 {
+		t.Fatalf("normal close failure snapshot = %+v, want one failed drain", snapshot)
 	}
 }
 
@@ -178,6 +208,9 @@ func TestServiceDrainTimeoutClosesClientBeforeGroup(t *testing.T) {
 	if !errors.Is(err, ErrDrainTimeout) {
 		t.Fatalf("Run() error = %v, want ErrDrainTimeout", err)
 	}
+	if snapshot := service.LifecycleSnapshot(); snapshot.Draining || snapshot.DrainTotal[lifecycle.DrainTimeout] != 1 {
+		t.Fatalf("timeout shutdown snapshot = %+v, want one timeout drain", snapshot)
+	}
 	waitFor(t, func() bool {
 		orderMu.Lock()
 		defer orderMu.Unlock()
@@ -212,6 +245,9 @@ func TestServiceRejectsSecondRunAndClosesResourcesOnce(t *testing.T) {
 	}
 	if err := service.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
+	}
+	if snapshot := service.LifecycleSnapshot(); snapshot.Draining || snapshot.DrainTotal[lifecycle.DrainSuccess] != 1 {
+		t.Fatalf("repeated Close changed terminal lifecycle snapshot: %+v", snapshot)
 	}
 	if group.closeCalls.Load() != 1 || client.closeCalls.Load() != 1 {
 		t.Fatalf("close calls group=%d client=%d, want 1/1", group.closeCalls.Load(), client.closeCalls.Load())
@@ -423,6 +459,15 @@ func TestServiceConcurrentForcedCloseNormalizesDerivedClosedClient(t *testing.T)
 	if err := waitError(t, runDone); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+	if snapshot := service.LifecycleSnapshot(); snapshot.DrainTotal[lifecycle.DrainTimeout] != 1 {
+		t.Fatalf("concurrent forced close snapshot = %+v, want one timeout drain", snapshot)
+	}
+	if err := service.Close(); err != nil {
+		t.Fatalf("repeated Close() error = %v", err)
+	}
+	if snapshot := service.LifecycleSnapshot(); snapshot.Draining {
+		t.Fatalf("repeated Close after concurrent forced close restored draining: %+v", snapshot)
+	}
 	if group.closeCalls.Load() != 1 || client.closeCalls.Load() != 1 {
 		t.Fatalf("close calls group=%d client=%d, want 1/1", group.closeCalls.Load(), client.closeCalls.Load())
 	}
@@ -446,6 +491,9 @@ func TestServiceForcedCloseReturnsKnownClientErrorAtDeadline(t *testing.T) {
 	err := service.Close()
 	if !errors.Is(err, ErrDrainTimeout) || !errors.Is(err, want) {
 		t.Fatalf("Close() error = %v, want timeout joined with client error", err)
+	}
+	if snapshot := service.LifecycleSnapshot(); snapshot.Draining || snapshot.DrainTotal[lifecycle.DrainFailed] != 1 {
+		t.Fatalf("failed forced close snapshot = %+v, want one failed drain", snapshot)
 	}
 	close(releaseGroup)
 }

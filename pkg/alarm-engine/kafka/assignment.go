@@ -29,6 +29,21 @@ type assignmentClaim struct {
 	partition int32
 }
 
+type claimCursor struct {
+	nextOffset       int64
+	minimumHighWater int64
+	source           sarama.ConsumerGroupClaim
+}
+
+type assignmentSnapshot struct {
+	ready              bool
+	assignedClaims     int
+	draining           bool
+	inflightRecords    int
+	consumerLagRecords int64
+	consumerLagKnown   bool
+}
+
 type assignmentLifecycle struct {
 	mu sync.Mutex
 
@@ -36,6 +51,7 @@ type assignmentLifecycle struct {
 	active      bool
 	expected    map[assignmentClaim]struct{}
 	initialized map[assignmentClaim]struct{}
+	cursors     map[assignmentClaim]claimCursor
 	inflight    int
 	ready       bool
 	draining    bool
@@ -62,6 +78,7 @@ func (l *assignmentLifecycle) Setup(session sarama.ConsumerGroupSession) error {
 	l.active = true
 	l.expected = expected
 	l.initialized = make(map[assignmentClaim]struct{}, len(expected))
+	l.cursors = make(map[assignmentClaim]claimCursor, len(expected))
 	l.ready = len(expected) == 0 && !l.draining && !l.fatal
 	l.mu.Unlock()
 
@@ -108,6 +125,26 @@ func (l *assignmentLifecycle) ClaimInitialized(session sarama.ConsumerGroupSessi
 }
 
 func (l *assignmentLifecycle) TryBeginRecord(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) bool {
+	return l.tryBeginRecord(session, claim, 0, false)
+}
+
+func (l *assignmentLifecycle) TryBeginObservedRecord(
+	session sarama.ConsumerGroupSession,
+	claim sarama.ConsumerGroupClaim,
+	nextOffset int64,
+) bool {
+	if nextOffset < 0 || claim == nil {
+		return false
+	}
+	return l.tryBeginRecord(session, claim, nextOffset, true)
+}
+
+func (l *assignmentLifecycle) tryBeginRecord(
+	session sarama.ConsumerGroupSession,
+	claim sarama.ConsumerGroupClaim,
+	nextOffset int64,
+	observeCursor bool,
+) bool {
 	if l == nil || session == nil || claim == nil {
 		return false
 	}
@@ -124,6 +161,11 @@ func (l *assignmentLifecycle) TryBeginRecord(session sarama.ConsumerGroupSession
 	if _, ok := l.initialized[claimID]; !ok {
 		return false
 	}
+	if observeCursor {
+		l.cursors[claimID] = claimCursor{
+			nextOffset: nextOffset, minimumHighWater: nextOffset + 1, source: claim,
+		}
+	}
 	l.inflight++
 	return true
 }
@@ -136,6 +178,33 @@ func (l *assignmentLifecycle) EndRecord() {
 	defer l.mu.Unlock()
 	if l.inflight > 0 {
 		l.inflight--
+	}
+	l.closeDrainedIfIdle()
+}
+
+func (l *assignmentLifecycle) EndObservedRecord(
+	session sarama.ConsumerGroupSession,
+	claim sarama.ConsumerGroupClaim,
+	nextOffset int64,
+	committed bool,
+) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.inflight > 0 {
+		l.inflight--
+	}
+	if session != nil && claim != nil && l.active && l.current == sessionAssignmentID(session) {
+		claimID := assignmentClaim{topic: claim.Topic(), partition: claim.Partition()}
+		if cursor, ok := l.cursors[claimID]; ok {
+			if committed {
+				cursor.nextOffset = nextOffset
+				cursor.minimumHighWater = nextOffset
+			}
+			l.cursors[claimID] = cursor
+		}
 	}
 	l.closeDrainedIfIdle()
 }
@@ -180,6 +249,15 @@ func (l *assignmentLifecycle) Ready() bool {
 	return l.ready
 }
 
+func (l *assignmentLifecycle) Snapshot() assignmentSnapshot {
+	if l == nil {
+		return assignmentSnapshot{}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.snapshotLocked()
+}
+
 func (l *assignmentLifecycle) Drained() <-chan struct{} {
 	if l == nil {
 		closed := make(chan struct{})
@@ -199,6 +277,38 @@ func (l *assignmentLifecycle) endAssignment(id assignmentID) {
 	l.ready = false
 	l.expected = nil
 	l.initialized = nil
+	l.cursors = nil
+}
+
+func (l *assignmentLifecycle) snapshotLocked() assignmentSnapshot {
+	snapshot := assignmentSnapshot{
+		ready:           l.ready,
+		draining:        l.draining,
+		inflightRecords: l.inflight,
+	}
+	if !l.active {
+		return snapshot
+	}
+	snapshot.assignedClaims = len(l.expected)
+	if len(l.expected) == 0 {
+		snapshot.consumerLagKnown = true
+		return snapshot
+	}
+	for claim := range l.expected {
+		cursor, ok := l.cursors[claim]
+		if !ok || cursor.source == nil {
+			return snapshot
+		}
+		highWater := cursor.source.HighWaterMarkOffset()
+		if highWater < cursor.minimumHighWater {
+			return snapshot
+		}
+		if highWater > cursor.nextOffset {
+			snapshot.consumerLagRecords += highWater - cursor.nextOffset
+		}
+	}
+	snapshot.consumerLagKnown = true
+	return snapshot
 }
 
 func (l *assignmentLifecycle) closeDrainedIfIdle() {

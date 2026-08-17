@@ -20,6 +20,7 @@ import (
 	"github.com/Shopify/sarama"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/consumer"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/lifecycle"
 )
 
 var (
@@ -63,6 +64,13 @@ type Service struct {
 	started bool
 	running atomic.Bool
 	closing atomic.Bool
+
+	drainOnce     sync.Once
+	drainMu       sync.Mutex
+	draining      bool
+	drainRecorded bool
+	forcedDrain   bool
+	drainTotal    [lifecycle.DrainResultCount]uint64
 
 	cancelMu      sync.Mutex
 	cancelConsume context.CancelFunc
@@ -158,7 +166,7 @@ func (s *Service) Run(ctx context.Context) error {
 	if ctx.Err() != nil {
 		s.closing.Store(true)
 		s.runMu.Unlock()
-		s.handler.BeginDrain()
+		s.beginDrain()
 		return s.closeResourcesWithin(false, time.Now().Add(s.drainTimeout))
 	}
 	s.running.Store(true)
@@ -212,7 +220,30 @@ func (s *Service) Run(ctx context.Context) error {
 }
 
 func (s *Service) Ready() bool {
-	return s != nil && s.running.Load() && !s.closing.Load() && s.firstFatal() == nil && s.handler.Ready()
+	return s.LifecycleSnapshot().Ready
+}
+
+func (s *Service) LifecycleSnapshot() lifecycle.Snapshot {
+	if s == nil || s.handler == nil || s.handler.assignment == nil {
+		return lifecycle.Snapshot{}
+	}
+	assignment := s.handler.assignment.Snapshot()
+	fatal := s.firstFatal()
+	s.drainMu.Lock()
+	snapshot := lifecycle.Snapshot{
+		Ready:              s.running.Load() && !s.closing.Load() && fatal == nil && assignment.ready,
+		AssignedClaims:     assignment.assignedClaims,
+		Draining:           s.draining,
+		DrainTotal:         s.drainTotal,
+		InflightRecords:    assignment.inflightRecords,
+		ConsumerLagRecords: assignment.consumerLagRecords,
+		ConsumerLagKnown:   assignment.consumerLagKnown,
+	}
+	s.drainMu.Unlock()
+	if fatal != nil {
+		snapshot.FatalTotal = 1
+	}
+	return snapshot
 }
 
 // Close is an idempotent forced shutdown. Run context cancellation is the
@@ -226,7 +257,7 @@ func (s *Service) Close() error {
 	s.closing.Store(true)
 	s.runMu.Unlock()
 	if s.handler != nil {
-		s.handler.BeginDrain()
+		s.beginDrain()
 	}
 	s.cancelCurrentConsume()
 	return s.closeResourcesWithin(true, time.Now().Add(s.drainTimeout))
@@ -291,7 +322,7 @@ func (s *Service) reportFatal(err error) {
 		s.fatalErr = err
 		s.fatalMu.Unlock()
 		if s.handler != nil {
-			s.handler.BeginDrain()
+			s.beginDrain()
 		}
 		s.fatal <- err
 	})
@@ -313,7 +344,7 @@ func (s *Service) shutdown(
 	errorsDone <-chan struct{},
 ) error {
 	s.closing.Store(true)
-	drained := s.handler.BeginDrain()
+	drained := s.beginDrain()
 	deadline := time.Now().Add(s.drainTimeout)
 	if force {
 		cancelConsume()
@@ -322,6 +353,7 @@ func (s *Service) shutdown(
 	if !waitUntil(drained, deadline) {
 		cancelConsume()
 		s.startForcedClose()
+		s.recordDrain(lifecycle.DrainTimeout)
 		return ErrDrainTimeout
 	}
 	cancelConsume()
@@ -356,7 +388,9 @@ func (s *Service) waitRuntimeClose(
 			if !force {
 				s.startForcedClose()
 			}
-			return errors.Join(ErrDrainTimeout, closeErr, s.knownForcedClientError())
+			knownCloseErr := s.knownForcedClientError()
+			s.recordDrain(drainResult(force, errors.Join(closeErr, knownCloseErr), true))
+			return errors.Join(ErrDrainTimeout, closeErr, knownCloseErr)
 		}
 		timer := time.NewTimer(wait)
 		select {
@@ -375,7 +409,9 @@ func (s *Service) waitRuntimeClose(
 			if !force {
 				s.startForcedClose()
 			}
-			return errors.Join(ErrDrainTimeout, closeErr, s.knownForcedClientError())
+			knownCloseErr := s.knownForcedClientError()
+			s.recordDrain(drainResult(force, errors.Join(closeErr, knownCloseErr), true))
+			return errors.Join(ErrDrainTimeout, closeErr, knownCloseErr)
 		}
 		if !timer.Stop() {
 			select {
@@ -384,6 +420,7 @@ func (s *Service) waitRuntimeClose(
 			}
 		}
 	}
+	s.recordDrain(drainResult(force, closeErr, false))
 	return closeErr
 }
 
@@ -399,22 +436,78 @@ func (s *Service) closeResourcesWithin(force bool, deadline time.Time) error {
 		if !force {
 			s.startForcedClose()
 		}
-		return errors.Join(ErrDrainTimeout, s.knownForcedClientError())
+		knownCloseErr := s.knownForcedClientError()
+		s.recordDrain(drainResult(force, knownCloseErr, true))
+		return errors.Join(ErrDrainTimeout, knownCloseErr)
 	}
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case <-done:
 		if force {
+			s.recordDrain(drainResult(true, s.forcedCloseErr, false))
 			return s.forcedCloseErr
 		}
+		s.recordDrain(drainResult(false, s.normalCloseErr, false))
 		return s.normalCloseErr
 	case <-timer.C:
 		if !force {
 			s.startForcedClose()
 		}
-		return errors.Join(ErrDrainTimeout, s.knownForcedClientError())
+		knownCloseErr := s.knownForcedClientError()
+		s.recordDrain(drainResult(force, knownCloseErr, true))
+		return errors.Join(ErrDrainTimeout, knownCloseErr)
 	}
+}
+
+func (s *Service) beginDrain() <-chan struct{} {
+	if s == nil || s.handler == nil {
+		closed := make(chan struct{})
+		close(closed)
+		return closed
+	}
+	s.drainMu.Lock()
+	if !s.drainRecorded {
+		s.draining = true
+	}
+	s.drainMu.Unlock()
+	return s.handler.BeginDrain()
+}
+
+func (s *Service) recordDrain(result lifecycle.DrainResult) {
+	if s == nil {
+		return
+	}
+	s.drainOnce.Do(func() {
+		s.drainMu.Lock()
+		if s.forcedDrain && result == lifecycle.DrainSuccess {
+			result = lifecycle.DrainTimeout
+		}
+		select {
+		case <-s.forcedCloseDone:
+			if s.forcedCloseErr != nil {
+				result = lifecycle.DrainFailed
+			}
+		default:
+		}
+		if result >= lifecycle.DrainResultCount {
+			result = lifecycle.DrainOther
+		}
+		s.drainTotal[result]++
+		s.drainRecorded = true
+		s.draining = false
+		s.drainMu.Unlock()
+	})
+}
+
+func drainResult(force bool, closeErr error, timedOut bool) lifecycle.DrainResult {
+	if closeErr != nil {
+		return lifecycle.DrainFailed
+	}
+	if force || timedOut {
+		return lifecycle.DrainTimeout
+	}
+	return lifecycle.DrainSuccess
 }
 
 func (s *Service) startNormalClose() <-chan struct{} {
@@ -429,7 +522,10 @@ func (s *Service) startNormalClose() <-chan struct{} {
 
 func (s *Service) startForcedClose() <-chan struct{} {
 	s.forcedCloseOnce.Do(func() {
+		s.drainMu.Lock()
+		s.forcedDrain = true
 		close(s.forcedCloseStarted)
+		s.drainMu.Unlock()
 		go func() {
 			s.forcedClientErr = s.clientResource.Close()
 			close(s.forcedClientDone)

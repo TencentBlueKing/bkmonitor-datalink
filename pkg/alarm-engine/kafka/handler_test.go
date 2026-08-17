@@ -43,9 +43,9 @@ func TestConsumeClaimCommitsOffsetAfterProcessing(t *testing.T) {
 			})
 		},
 		fakeSyncOffsetCommitter{events: &events},
-		context.Background(),
 		nil,
 	)
+	setupHandler(t, handler, session, claim)
 
 	if err := handler.ConsumeClaim(session, claim); err != nil {
 		t.Fatalf("ConsumeClaim() error = %v", err)
@@ -74,9 +74,9 @@ func TestConsumeClaimDoesNotCommitProcessingFailure(t *testing.T) {
 			})
 		},
 		fakeSyncOffsetCommitter{events: &events},
-		context.Background(),
 		func(err error) { fatal <- err },
 	)
+	setupHandler(t, handler, session, claim)
 
 	if err := handler.ConsumeClaim(session, claim); !errors.Is(err, want) {
 		t.Fatalf("ConsumeClaim() error = %v, want %v", err, want)
@@ -115,9 +115,9 @@ func TestConsumeClaimStopsBeforeNextRecordWhenBrokerCommitFails(t *testing.T) {
 			})
 		},
 		fakeSyncOffsetCommitter{events: &events, err: want},
-		context.Background(),
 		func(err error) { fatal <- err },
 	)
+	setupHandler(t, handler, session, claim)
 
 	if err := handler.ConsumeClaim(session, claim); !errors.Is(err, want) {
 		t.Fatalf("ConsumeClaim() error = %v, want %v", err, want)
@@ -151,9 +151,9 @@ func TestRebalanceDuringOffsetCommitEndsClaimWithoutFatal(t *testing.T) {
 			})
 		},
 		cancelingOffsetCommitter{cancel: cancelSession},
-		context.Background(),
 		func(error) { fatalCount.Add(1) },
 	)
+	setupHandler(t, handler, session, claim)
 
 	if err := handler.ConsumeClaim(session, claim); err != nil {
 		t.Fatalf("ConsumeClaim() rebalance error = %v, want nil", err)
@@ -180,9 +180,9 @@ func TestRebalanceAfterBrokerAckKeepsLocalOffsetMark(t *testing.T) {
 			})
 		},
 		committer,
-		context.Background(),
 		nil,
 	)
+	setupHandler(t, handler, session, claim)
 
 	if err := handler.ConsumeClaim(session, claim); err != nil {
 		t.Fatalf("ConsumeClaim() after successful ack = %v, want nil", err)
@@ -207,18 +207,21 @@ func TestHandlerReportsOnlyFirstFatalAcrossClaims(t *testing.T) {
 			})
 		},
 		fakeSyncOffsetCommitter{},
-		context.Background(),
 		func(error) { fatalCount.Add(1) },
 	)
+	session := newFakeSession(context.Background(), &[]string{})
+	claims := []*fakeClaim{
+		newFakeClaim("trigger-input", 0, []*sarama.ConsumerMessage{{Topic: "trigger-input", Partition: 0, Offset: 1}}),
+		newFakeClaim("trigger-input", 1, []*sarama.ConsumerMessage{{Topic: "trigger-input", Partition: 1, Offset: 1}}),
+	}
+	setupHandler(t, handler, session, claims...)
 	var wait sync.WaitGroup
 	wait.Add(2)
 	for i := 0; i < 2; i++ {
 		i := i
 		go func() {
 			defer wait.Done()
-			session := newFakeSession(context.Background(), &[]string{})
-			claim := newFakeClaim("trigger-input", int32(i), []*sarama.ConsumerMessage{{Topic: "trigger-input", Partition: int32(i), Offset: 1}})
-			if err := handler.ConsumeClaim(session, claim); err == nil {
+			if err := handler.ConsumeClaim(session, claims[i]); err == nil {
 				t.Error("ConsumeClaim() accepted processor failure")
 			}
 		}()
@@ -263,9 +266,9 @@ func TestInvalidClaimMessageIsFatalBeforeProcessing(t *testing.T) {
 					})
 				},
 				fakeSyncOffsetCommitter{events: &events},
-				context.Background(),
 				func(err error) { fatal <- err },
 			)
+			setupHandler(t, handler, session, claim)
 
 			if err := handler.ConsumeClaim(session, claim); err == nil {
 				t.Fatal("ConsumeClaim() accepted invalid message")
@@ -300,9 +303,9 @@ func TestConsumeClaimRejectsInvalidOffsetsBeforeMarking(t *testing.T) {
 					})
 				},
 				fakeSyncOffsetCommitter{events: &events},
-				context.Background(),
 				nil,
 			)
+			setupHandler(t, handler, session, claim)
 
 			if err := handler.ConsumeClaim(session, claim); err == nil {
 				t.Fatal("ConsumeClaim() accepted invalid offset")
@@ -317,7 +320,6 @@ func TestConsumeClaimRejectsInvalidOffsetsBeforeMarking(t *testing.T) {
 func TestStopDrainsCurrentRecordWithoutReadingNext(t *testing.T) {
 	t.Parallel()
 
-	stop, cancelStop := context.WithCancel(context.Background())
 	started := make(chan struct{})
 	release := make(chan struct{})
 	events := make([]string, 0, 3)
@@ -338,9 +340,9 @@ func TestStopDrainsCurrentRecordWithoutReadingNext(t *testing.T) {
 			})
 		},
 		fakeSyncOffsetCommitter{events: &events},
-		stop,
 		nil,
 	)
+	setupHandler(t, handler, session, claim)
 
 	done := make(chan error, 1)
 	go func() { done <- handler.ConsumeClaim(session, claim) }()
@@ -349,7 +351,7 @@ func TestStopDrainsCurrentRecordWithoutReadingNext(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("first record did not start")
 	}
-	cancelStop()
+	handler.BeginDrain()
 	close(release)
 	select {
 	case err := <-done:
@@ -364,10 +366,98 @@ func TestStopDrainsCurrentRecordWithoutReadingNext(t *testing.T) {
 	}
 }
 
+func TestStopDoesNotLetIdleClaimCancelInflightCommit(t *testing.T) {
+	t.Parallel()
+
+	sessionContext, cancelSession := context.WithCancel(context.Background())
+	defer cancelSession()
+	events := make([]string, 0, 3)
+	session := newFakeSession(sessionContext, &events)
+	session.claims = map[string][]int32{"trigger-input": {0, 1}}
+	busyMessages := make(chan *sarama.ConsumerMessage, 1)
+	idleMessages := make(chan *sarama.ConsumerMessage)
+	busyClaim := &fakeClaim{topic: "trigger-input", partition: 0, messages: busyMessages}
+	idleClaim := &fakeClaim{topic: "trigger-input", partition: 1, messages: idleMessages}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	handler := NewHandler(
+		func() consumer.Processor {
+			return consumer.ProcessorFunc(func(context.Context, []byte, []byte) error {
+				events = append(events, "process")
+				close(started)
+				<-release
+				return nil
+			})
+		},
+		fakeSyncOffsetCommitter{events: &events},
+		nil,
+	)
+	if err := handler.Setup(session); err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+
+	errorsByClaim := make(chan error, 2)
+	runClaim := func(claim *fakeClaim) {
+		err := handler.ConsumeClaim(session, claim)
+		cancelSession() // Sarama cancels the whole session when any claim returns.
+		errorsByClaim <- err
+	}
+	go runClaim(busyClaim)
+	go runClaim(idleClaim)
+	deadline := time.Now().Add(time.Second)
+	for !handler.Ready() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !handler.Ready() {
+		t.Fatal("handler did not become ready after both claims initialized")
+	}
+	busyMessages <- &sarama.ConsumerMessage{Topic: "trigger-input", Partition: 0, Offset: 1}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("busy claim did not start processing")
+	}
+
+	handler.BeginDrain()
+	select {
+	case err := <-errorsByClaim:
+		t.Fatalf("a claim returned before the in-flight record completed: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	for range 2 {
+		select {
+		case err := <-errorsByClaim:
+			if err != nil {
+				t.Fatalf("ConsumeClaim() error = %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("claims did not finish after drain")
+		}
+	}
+	if !reflect.DeepEqual(events, []string{"process", "commit", "mark"}) {
+		t.Fatalf("events=%v, want in-flight process/commit/mark before session cancellation", events)
+	}
+}
+
+func setupHandler(t *testing.T, handler *Handler, session *fakeSession, claims ...*fakeClaim) {
+	t.Helper()
+	session.claims = make(map[string][]int32)
+	for _, claim := range claims {
+		session.claims[claim.topic] = append(session.claims[claim.topic], claim.partition)
+	}
+	if err := handler.Setup(session); err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+}
+
 type fakeSession struct {
 	ctx          context.Context
 	events       *[]string
 	markedOffset int64
+	claims       map[string][]int32
+	member       string
+	generation   int32
 	mu           sync.Mutex
 }
 
@@ -375,9 +465,19 @@ func newFakeSession(ctx context.Context, events *[]string) *fakeSession {
 	return &fakeSession{ctx: ctx, events: events}
 }
 
-func (s *fakeSession) Claims() map[string][]int32 { return nil }
-func (s *fakeSession) MemberID() string           { return "member" }
-func (s *fakeSession) GenerationID() int32        { return 1 }
+func (s *fakeSession) Claims() map[string][]int32 { return s.claims }
+func (s *fakeSession) MemberID() string {
+	if s.member == "" {
+		return "member"
+	}
+	return s.member
+}
+func (s *fakeSession) GenerationID() int32 {
+	if s.generation == 0 {
+		return 1
+	}
+	return s.generation
+}
 func (s *fakeSession) MarkOffset(_ string, _ int32, offset int64, _ string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -24,23 +24,54 @@ import (
 type Handler struct {
 	newProcessor consumer.ProcessorFactory
 	offsets      OffsetCommitter
-	stop         context.Context
+	assignment   *assignmentLifecycle
 	reportFatal  func(error)
 	fatalOnce    sync.Once
 }
 
-// NewHandler builds a Sarama claim adapter. Cancel stop to stop taking new
-// records while allowing the record already handed to Processor to finish.
-// reportFatal, when provided, must not block.
-func NewHandler(newProcessor consumer.ProcessorFactory, offsets OffsetCommitter, stop context.Context, reportFatal func(error)) *Handler {
-	if stop == nil {
-		stop = context.Background()
+// NewHandler builds a Sarama claim adapter. Call BeginDrain synchronously to
+// stop taking new records while allowing records already handed to Processors
+// to finish. reportFatal, when provided, must not block.
+func NewHandler(newProcessor consumer.ProcessorFactory, offsets OffsetCommitter, reportFatal func(error)) *Handler {
+	handler := &Handler{
+		newProcessor: newProcessor,
+		offsets:      offsets,
+		assignment:   newAssignmentLifecycle(),
+		reportFatal:  reportFatal,
 	}
-	return &Handler{newProcessor: newProcessor, offsets: offsets, stop: stop, reportFatal: reportFatal}
+	return handler
 }
 
-func (h *Handler) Setup(sarama.ConsumerGroupSession) error   { return nil }
-func (h *Handler) Cleanup(sarama.ConsumerGroupSession) error { return nil }
+func (h *Handler) Setup(session sarama.ConsumerGroupSession) error {
+	if h == nil || h.assignment == nil {
+		return errors.New("kafka claim: initialized handler is required")
+	}
+	if err := h.assignment.Setup(session); err != nil {
+		h.fatal(err)
+		return err
+	}
+	return nil
+}
+
+func (h *Handler) Cleanup(session sarama.ConsumerGroupSession) error {
+	if h == nil || h.assignment == nil {
+		return errors.New("kafka claim: initialized handler is required")
+	}
+	return h.assignment.Cleanup(session)
+}
+
+func (h *Handler) BeginDrain() <-chan struct{} {
+	if h == nil || h.assignment == nil {
+		closed := make(chan struct{})
+		close(closed)
+		return closed
+	}
+	return h.assignment.BeginDrain()
+}
+
+func (h *Handler) Ready() bool {
+	return h != nil && h.assignment != nil && h.assignment.Ready()
+}
 
 func (h *Handler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	if h == nil || session == nil || claim == nil {
@@ -51,14 +82,18 @@ func (h *Handler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama
 		h.fatal(err)
 		return err
 	}
-	for {
-		if err := h.stop.Err(); err != nil {
-			return nil
+	if err := h.assignment.ClaimInitialized(session, claim); err != nil {
+		if errors.Is(err, errAssignmentInactive) {
+			return h.waitForDrainOrSession(session)
 		}
+		h.fatal(err)
+		return err
+	}
+	for {
 		select {
 		case <-session.Context().Done():
 			return nil
-		case <-h.stop.Done():
+		case <-h.assignment.Drained():
 			return nil
 		case message, ok := <-claim.Messages():
 			if !ok {
@@ -74,17 +109,19 @@ func (h *Handler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama
 				h.fatal(err)
 				return err
 			}
-			if err := h.stop.Err(); err != nil {
-				return nil
-			}
 			if err := validateOffset(message.Offset); err != nil {
 				h.fatal(err)
 				return err
 			}
+			if !h.assignment.TryBeginRecord(session, claim) {
+				return h.waitForDrainOrSession(session)
+			}
 			record := consumer.Record{
 				Key: message.Key, Value: message.Value, Topic: message.Topic, Partition: message.Partition, Offset: message.Offset,
 			}
-			if err := claimProcessor.Process(session.Context(), record); err != nil {
+			err := claimProcessor.Process(session.Context(), record)
+			h.assignment.EndRecord()
+			if err != nil {
 				if session.Context().Err() != nil && errors.Is(err, session.Context().Err()) {
 					return nil
 				}
@@ -95,7 +132,19 @@ func (h *Handler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama
 	}
 }
 
+func (h *Handler) waitForDrainOrSession(session sarama.ConsumerGroupSession) error {
+	select {
+	case <-session.Context().Done():
+		return nil
+	case <-h.assignment.Drained():
+		return nil
+	}
+}
+
 func (h *Handler) fatal(err error) {
+	if h.assignment != nil {
+		h.assignment.Fail()
+	}
 	if h.reportFatal != nil {
 		h.fatalOnce.Do(func() { h.reportFatal(err) })
 	}

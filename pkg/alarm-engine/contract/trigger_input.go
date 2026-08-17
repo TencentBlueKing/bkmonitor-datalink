@@ -30,6 +30,7 @@ type TriggerInput struct {
 	PartitionHashVersion string
 	StrategyIR           *TriggerStrategyIR
 	DetectionOutcomes    []*DetectionOutcome
+	partitionKey         []byte
 }
 
 func DecodeTriggerInput(payload []byte) (*TriggerInput, error) {
@@ -71,7 +72,7 @@ func DecodeTriggerInput(payload []byte) (*TriggerInput, error) {
 	inputIDs := make(map[string]struct{}, len(header.DetectionOutcomes))
 	batchID := ""
 	for index, rawOutcome := range header.DetectionOutcomes {
-		outcome, err := DecodeDetectionOutcome(rawOutcome, strategyIR)
+		outcome, err := decodeDetectionOutcome(rawOutcome, strategyIR, false)
 		if err != nil {
 			return nil, invalid("trigger_input.detection_outcomes", err.Error())
 		}
@@ -86,13 +87,19 @@ func DecodeTriggerInput(payload []byte) (*TriggerInput, error) {
 		inputIDs[outcome.InputID] = struct{}{}
 		outcomes = append(outcomes, outcome)
 	}
-	return &TriggerInput{
+	input := &TriggerInput{
 		Schema:               schema,
 		RequiredFeatures:     header.RequiredFeatures,
 		PartitionHashVersion: header.PartitionHashVersion,
 		StrategyIR:           strategyIR,
 		DetectionOutcomes:    outcomes,
-	}, nil
+	}
+	partitionKey, err := input.derivePartitionKey()
+	if err != nil {
+		return nil, err
+	}
+	input.partitionKey = partitionKey
+	return input, nil
 }
 
 func (i *TriggerInput) PartitionKey() ([]byte, error) {
@@ -102,9 +109,16 @@ func (i *TriggerInput) PartitionKey() ([]byte, error) {
 	if i.PartitionHashVersion != PartitionHashVersionV1 {
 		return nil, invalid("trigger_input.partition_hash_version", "unsupported version")
 	}
+	if len(i.partitionKey) != 0 {
+		return append([]byte(nil), i.partitionKey...), nil
+	}
 	if err := i.StrategyIR.Validate(); err != nil {
 		return nil, err
 	}
+	return i.derivePartitionKey()
+}
+
+func (i *TriggerInput) derivePartitionKey() ([]byte, error) {
 	fields := []string{
 		i.PartitionHashVersion,
 		i.StrategyIR.TenantID,

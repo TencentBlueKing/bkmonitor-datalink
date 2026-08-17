@@ -62,24 +62,46 @@ func (e *Evaluator) Process(strategy *contract.TriggerStrategyIR, outcome *contr
 	if !canDrive {
 		return nil, nil
 	}
+	return e.processValidated(newValidatedStrategyHandle(strategy), outcome)
+}
 
+func (e *Evaluator) processValidated(strategy *StrategyHandle, outcome *contract.DetectionOutcome) (*Decision, error) {
+	transaction := e.begin()
+	decision, err := transaction.processValidated(strategy, outcome)
+	if err != nil {
+		transaction.discard()
+		return nil, err
+	}
+	transaction.commit()
+	return decision, nil
+}
+
+type evaluationTransaction struct {
+	evaluator *Evaluator
+	results   map[stateKey]map[int64]bool
+	closed    bool
+}
+
+func (e *Evaluator) begin() *evaluationTransaction {
 	e.mu.Lock()
-	defer e.mu.Unlock()
+	return &evaluationTransaction{evaluator: e, results: make(map[stateKey]map[int64]bool)}
+}
 
-	configs := make(map[int]contract.TriggerConfig, len(strategy.TriggerConfigs))
-	for _, config := range strategy.TriggerConfigs {
+func (t *evaluationTransaction) processValidated(strategy *StrategyHandle, outcome *contract.DetectionOutcome) (*Decision, error) {
+	if strategy.purpose != contract.PurposeDetect {
+		return nil, ErrUnsupportedPurpose
+	}
+
+	configs := make(map[int]contract.TriggerConfig, len(strategy.triggerConfigs))
+	for _, config := range strategy.triggerConfigs {
 		configs[config.Level] = config
 	}
 	currentAnomalies := make(map[int]struct{}, len(outcome.Evaluations))
 	for _, evaluation := range outcome.Evaluations {
 		key := newStateKey(strategy, outcome, evaluation.Level)
-		results := e.results[key]
-		if results == nil {
-			results = make(map[int64]bool)
-			e.results[key] = results
-		}
+		results := t.resultsFor(key)
 		results[outcome.Record.SourceTime] = evaluation.Result == contract.EvaluationAnomalous
-		prune(results, windowStart(outcome.Record.SourceTime, strategy.CheckWindowUnitSeconds, configs[evaluation.Level].CheckWindowSize))
+		prune(results, windowStart(outcome.Record.SourceTime, strategy.checkWindowUnitSeconds, configs[evaluation.Level].CheckWindowSize))
 		if evaluation.Result == contract.EvaluationAnomalous {
 			currentAnomalies[evaluation.Level] = struct{}{}
 		}
@@ -89,14 +111,14 @@ func (e *Evaluator) Process(strategy *contract.TriggerStrategyIR, outcome *contr
 		return nil, nil
 	}
 	var lastAnomalyTimestamps []int64
-	for _, config := range strategy.TriggerConfigs {
+	for _, config := range strategy.triggerConfigs {
 		if _, ok := currentAnomalies[config.Level]; !ok {
 			continue
 		}
 		key := newStateKey(strategy, outcome, config.Level)
 		anomalyTimestamps := anomaliesInWindow(
-			e.results[key],
-			windowStart(outcome.Record.SourceTime, strategy.CheckWindowUnitSeconds, config.CheckWindowSize),
+			t.resultsFor(key),
+			windowStart(outcome.Record.SourceTime, strategy.checkWindowUnitSeconds, config.CheckWindowSize),
 			outcome.Record.SourceTime,
 		)
 		lastAnomalyTimestamps = anomalyTimestamps
@@ -116,14 +138,45 @@ func (e *Evaluator) Process(strategy *contract.TriggerStrategyIR, outcome *contr
 	}, nil
 }
 
-func newStateKey(strategy *contract.TriggerStrategyIR, outcome *contract.DetectionOutcome, level int) stateKey {
+func (t *evaluationTransaction) resultsFor(key stateKey) map[int64]bool {
+	if results, ok := t.results[key]; ok {
+		return results
+	}
+	results := make(map[int64]bool, len(t.evaluator.results[key]))
+	for timestamp, anomalous := range t.evaluator.results[key] {
+		results[timestamp] = anomalous
+	}
+	t.results[key] = results
+	return results
+}
+
+func (t *evaluationTransaction) commit() {
+	if t.closed {
+		return
+	}
+	for key, results := range t.results {
+		t.evaluator.results[key] = results
+	}
+	t.closed = true
+	t.evaluator.mu.Unlock()
+}
+
+func (t *evaluationTransaction) discard() {
+	if t.closed {
+		return
+	}
+	t.closed = true
+	t.evaluator.mu.Unlock()
+}
+
+func newStateKey(strategy *StrategyHandle, outcome *contract.DetectionOutcome, level int) stateKey {
 	return stateKey{
-		tenantID:      strategy.TenantID,
-		purpose:       strategy.Purpose,
-		strategyID:    strategy.StrategyRef.StrategyID,
-		itemID:        strategy.StrategyRef.ItemID,
-		generation:    strategy.StrategyRef.Generation,
-		contentSHA256: strategy.StrategyRef.ContentSHA256,
+		tenantID:      strategy.tenantID,
+		purpose:       strategy.purpose,
+		strategyID:    strategy.strategyRef.StrategyID,
+		itemID:        strategy.strategyRef.ItemID,
+		generation:    strategy.strategyRef.Generation,
+		contentSHA256: strategy.strategyRef.ContentSHA256,
 		dimensionsMD5: outcome.Record.DimensionsMD5,
 		level:         level,
 	}

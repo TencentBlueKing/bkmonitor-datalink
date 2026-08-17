@@ -65,6 +65,10 @@ type DetectionOutcome struct {
 }
 
 func DecodeDetectionOutcome(payload []byte, strategy *TriggerStrategyIR) (*DetectionOutcome, error) {
+	return decodeDetectionOutcome(payload, strategy, true)
+}
+
+func decodeDetectionOutcome(payload []byte, strategy *TriggerStrategyIR, validateStrategy bool) (*DetectionOutcome, error) {
 	schema, object, err := validateContractEnvelope(
 		payload,
 		"detection_outcome",
@@ -138,7 +142,11 @@ func DecodeDetectionOutcome(payload []byte, strategy *TriggerStrategyIR) (*Detec
 	if err := decodeJSONObject(payload, &outcome); err != nil {
 		return nil, err
 	}
-	if err := outcome.Validate(strategy); err != nil {
+	if validateStrategy {
+		if err := outcome.Validate(strategy); err != nil {
+			return nil, err
+		}
+	} else if err := outcome.validateWithStrategy(strategy); err != nil {
 		return nil, err
 	}
 	return &outcome, nil
@@ -151,6 +159,10 @@ func (o *DetectionOutcome) Validate(strategy *TriggerStrategyIR) error {
 	if err := strategy.Validate(); err != nil {
 		return err
 	}
+	return o.validateWithStrategy(strategy)
+}
+
+func (o *DetectionOutcome) validateWithStrategy(strategy *TriggerStrategyIR) error {
 	if err := validateHeader(o.Schema, o.RequiredFeatures, detectionOutcomeSchema, map[string]struct{}{
 		featureFullLevelEvaluations: {},
 		featureRawJSON:              {},

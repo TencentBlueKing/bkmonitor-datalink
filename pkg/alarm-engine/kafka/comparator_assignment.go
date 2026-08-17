@@ -42,6 +42,8 @@ type comparatorGeneration struct {
 	readyClosed bool
 	run         *comparator.Run
 	err         error
+	inflight    int
+	recordOwner bool
 }
 
 type comparatorAssignmentHandle struct {
@@ -364,9 +366,7 @@ func (c *comparatorAssignmentCoordinator) failGenerationLocked(generation *compa
 	}
 	generation.active = false
 	generation.err = err
-	if generation.run != nil && generation.run.Valid() {
-		_ = generation.run.Invalidate(generation.epoch, err)
-	}
+	c.invalidateGenerationIfIdleLocked(generation)
 	c.closeReadyLocked(generation)
 }
 
@@ -387,10 +387,17 @@ func (c *comparatorAssignmentCoordinator) endGenerationLocked(generation *compar
 	if generation.err == nil {
 		generation.err = cause
 	}
-	if generation.run != nil && generation.run.Valid() {
-		_ = generation.run.Invalidate(generation.epoch, cause)
-	}
+	c.invalidateGenerationIfIdleLocked(generation)
 	c.closeReadyLocked(generation)
+}
+
+func (c *comparatorAssignmentCoordinator) invalidateGenerationIfIdleLocked(generation *comparatorGeneration) {
+	if generation.inflight != 0 {
+		return
+	}
+	if generation.run != nil && generation.run.Valid() {
+		_ = generation.run.Invalidate(generation.epoch, generationError(generation))
+	}
 }
 
 func (c *comparatorAssignmentCoordinator) closeReadyLocked(generation *comparatorGeneration) {

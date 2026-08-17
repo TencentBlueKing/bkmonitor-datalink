@@ -14,13 +14,17 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/Shopify/sarama"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/contract"
 )
 
-var ErrDecisionSinkClosed = errors.New("kafka decision sink: closed")
+var (
+	ErrDecisionSinkClosed          = errors.New("kafka decision sink: closed")
+	ErrDecisionSinkShutdownTimeout = errors.New("kafka decision sink: shutdown timeout")
+)
 
 type syncMessageProducer interface {
 	SendMessage(*sarama.ProducerMessage) (int32, int64, error)
@@ -42,8 +46,16 @@ type DecisionSink struct {
 	closing  bool
 	inflight sync.WaitGroup
 
-	closeOnce sync.Once
-	closeErr  error
+	producerResource ownedResource
+	clientResource   ownedResource
+
+	gracefulOnce sync.Once
+	gracefulDone chan struct{}
+	gracefulErr  error
+	forcedOnce   sync.Once
+	forced       atomic.Bool
+	forcedDone   chan struct{}
+	forcedErr    error
 }
 
 // OpenDecisionSink creates the only production DecisionSink implementation.
@@ -75,7 +87,16 @@ func newDecisionSink(outputTopic string, producer syncMessageProducer, client cl
 	if producer == nil || client == nil {
 		return nil, errors.New("kafka decision sink: producer and client are required")
 	}
-	return &DecisionSink{outputTopic: outputTopic, producer: producer, client: client}, nil
+	sink := &DecisionSink{
+		outputTopic:  outputTopic,
+		producer:     producer,
+		client:       client,
+		gracefulDone: make(chan struct{}),
+		forcedDone:   make(chan struct{}),
+	}
+	sink.producerResource.close = producer.Close
+	sink.clientResource.close = client.Close
+	return sink, nil
 }
 
 // WriteBatch returns success only after the synchronous producer reports the
@@ -128,18 +149,81 @@ func (s *DecisionSink) WriteBatch(ctx context.Context, batch *contract.TriggerDe
 	return nil
 }
 
-// Close prevents new writes, waits for registered in-flight sends, then closes
-// the producer before its dedicated client. Concurrent callers share one result.
-func (s *DecisionSink) Close() error {
+// Shutdown prevents new writes and closes the producer before its dedicated
+// client after registered sends finish. If the context ends first, it starts
+// one client-close attempt that may interrupt an in-flight broker call and
+// returns without waiting past the caller's deadline. Resource cleanup can
+// continue asynchronously after that bounded return.
+func (s *DecisionSink) Shutdown(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
-	s.closeOnce.Do(func() {
-		s.mu.Lock()
-		s.closing = true
-		s.mu.Unlock()
-		s.inflight.Wait()
-		s.closeErr = errors.Join(s.producer.Close(), s.client.Close())
+	if ctx == nil {
+		return errors.New("kafka decision sink: context is required")
+	}
+	s.mu.Lock()
+	s.closing = true
+	s.mu.Unlock()
+
+	select {
+	case <-s.gracefulDone:
+		return s.gracefulErr
+	default:
+	}
+	if err := ctx.Err(); err != nil {
+		s.startForcedShutdown()
+		s.startGracefulShutdown()
+		return errors.Join(ErrDecisionSinkShutdownTimeout, err, s.knownForcedError())
+	}
+	s.startGracefulShutdown()
+	select {
+	case <-s.gracefulDone:
+		return s.gracefulErr
+	case <-ctx.Done():
+		select {
+		case <-s.gracefulDone:
+			return s.gracefulErr
+		default:
+		}
+		s.startForcedShutdown()
+		return errors.Join(ErrDecisionSinkShutdownTimeout, ctx.Err(), s.knownForcedError())
+	}
+}
+
+// Close waits without a deadline for the shared shutdown attempt.
+func (s *DecisionSink) Close() error {
+	return s.Shutdown(context.Background())
+}
+
+func (s *DecisionSink) startGracefulShutdown() {
+	s.gracefulOnce.Do(func() {
+		go func() {
+			s.inflight.Wait()
+			producerErr := s.producerResource.Close()
+			if s.forced.Load() && producerErr == sarama.ErrClosedClient {
+				producerErr = nil
+			}
+			s.gracefulErr = errors.Join(producerErr, s.clientResource.Close())
+			close(s.gracefulDone)
+		}()
 	})
-	return s.closeErr
+}
+
+func (s *DecisionSink) startForcedShutdown() {
+	s.forcedOnce.Do(func() {
+		s.forced.Store(true)
+		go func() {
+			s.forcedErr = s.clientResource.Close()
+			close(s.forcedDone)
+		}()
+	})
+}
+
+func (s *DecisionSink) knownForcedError() error {
+	select {
+	case <-s.forcedDone:
+		return s.forcedErr
+	default:
+		return nil
+	}
 }

@@ -75,10 +75,11 @@ type Service struct {
 	cancelMu      sync.Mutex
 	cancelConsume context.CancelFunc
 
-	fatalOnce sync.Once
-	fatalMu   sync.Mutex
-	fatalErr  error
-	fatal     chan error
+	fatalOnce   sync.Once
+	fatalMu     sync.Mutex
+	fatalErr    error
+	fatal       chan error
+	fatalSignal chan struct{}
 
 	closeRequestOnce sync.Once
 	closeRequested   chan struct{}
@@ -138,6 +139,7 @@ func newOwnedService(
 		forcedCloseDone:    make(chan struct{}),
 		forcedClientDone:   make(chan struct{}),
 		fatal:              make(chan error, 1),
+		fatalSignal:        make(chan struct{}),
 		closeRequested:     make(chan struct{}),
 	}
 	service.groupResource.close = group.Close
@@ -221,6 +223,20 @@ func (s *Service) Run(ctx context.Context) error {
 
 func (s *Service) Ready() bool {
 	return s.LifecycleSnapshot().Ready
+}
+
+// FatalSignal is closed after the first fatal error has made the service not
+// ready and started draining. Multiple observers may wait on the same signal.
+func (s *Service) FatalSignal() <-chan struct{} {
+	if s == nil {
+		return nil
+	}
+	return s.fatalSignal
+}
+
+// FatalError returns the first fatal service error, if one has been reported.
+func (s *Service) FatalError() error {
+	return s.firstFatal()
 }
 
 func (s *Service) LifecycleSnapshot() lifecycle.Snapshot {
@@ -324,6 +340,7 @@ func (s *Service) reportFatal(err error) {
 		if s.handler != nil {
 			s.beginDrain()
 		}
+		close(s.fatalSignal)
 		s.fatal <- err
 	})
 }

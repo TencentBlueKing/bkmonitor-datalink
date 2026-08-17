@@ -245,6 +245,203 @@ func TestDecisionSinkCloseWaitsForInflightAndClosesOwnedResourcesOnce(t *testing
 	}
 }
 
+func TestDecisionSinkShutdownDeadlineStartsClientCloseAttempt(t *testing.T) {
+	t.Parallel()
+
+	batch := validDecisionBatch(t, 1)
+	sendStarted := make(chan struct{})
+	clientClosed := make(chan struct{})
+	var closeOrderMu sync.Mutex
+	closeOrder := make([]string, 0, 2)
+	producer := &fakeSyncProducer{
+		send: func(*sarama.ProducerMessage) (int32, int64, error) {
+			close(sendStarted)
+			<-clientClosed
+			return -1, -1, sarama.ErrClosedClient
+		},
+		close: func() error {
+			closeOrderMu.Lock()
+			closeOrder = append(closeOrder, "producer")
+			closeOrderMu.Unlock()
+			return nil
+		},
+	}
+	client := &fakeCloser{close: func() error {
+		closeOrderMu.Lock()
+		closeOrder = append(closeOrder, "client")
+		closeOrderMu.Unlock()
+		close(clientClosed)
+		return nil
+	}}
+	sink := newDecisionSinkForTest(t, producer, client)
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- sink.WriteBatch(context.Background(), batch) }()
+	select {
+	case <-sendStarted:
+	case <-time.After(time.Second):
+		t.Fatal("producer send did not start")
+	}
+
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelShutdown()
+	started := time.Now()
+	err := sink.Shutdown(shutdownContext)
+	if !errors.Is(err, ErrDecisionSinkShutdownTimeout) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Shutdown() error = %v, want shutdown timeout and context deadline", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("Shutdown() exceeded its context deadline: %s", elapsed)
+	}
+	select {
+	case err := <-writeDone:
+		if !errors.Is(err, sarama.ErrClosedClient) {
+			t.Fatalf("inflight WriteBatch() error = %v, want closed client", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("test producer did not observe the client-close attempt")
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatalf("Close() after forced shutdown error = %v", err)
+	}
+
+	closeOrderMu.Lock()
+	defer closeOrderMu.Unlock()
+	if strings.Join(closeOrder, ",") != "client,producer" {
+		t.Fatalf("forced close order = %v, want client then producer", closeOrder)
+	}
+}
+
+func TestDecisionSinkShutdownDeadlineBoundsBlockedClientClose(t *testing.T) {
+	t.Parallel()
+
+	clientCloseStarted := make(chan struct{})
+	releaseClientClose := make(chan struct{})
+	producer := &fakeSyncProducer{
+		send: func(*sarama.ProducerMessage) (int32, int64, error) { return 0, 0, nil },
+	}
+	client := &fakeCloser{close: func() error {
+		close(clientCloseStarted)
+		<-releaseClientClose
+		return nil
+	}}
+	sink := newDecisionSinkForTest(t, producer, client)
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelShutdown()
+	started := time.Now()
+	err := sink.Shutdown(shutdownContext)
+	if !errors.Is(err, ErrDecisionSinkShutdownTimeout) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Shutdown() error = %v, want shutdown timeout and context deadline", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("Shutdown() waited for blocked client close: %s", elapsed)
+	}
+	select {
+	case <-clientCloseStarted:
+	case <-time.After(time.Second):
+		t.Fatal("client close did not start")
+	}
+	if err := sink.WriteBatch(context.Background(), validDecisionBatch(t, 1)); !errors.Is(err, ErrDecisionSinkClosed) {
+		t.Fatalf("WriteBatch() after shutdown error = %v, want closed sink", err)
+	}
+	close(releaseClientClose)
+	if err := sink.Close(); err != nil {
+		t.Fatalf("Close() after blocked client release error = %v", err)
+	}
+}
+
+func TestDecisionSinkForcedShutdownDoesNotHideProducerCloseFailure(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("producer close failed")
+	sendStarted := make(chan struct{})
+	clientClosed := make(chan struct{})
+	producer := &fakeSyncProducer{
+		send: func(*sarama.ProducerMessage) (int32, int64, error) {
+			close(sendStarted)
+			<-clientClosed
+			return -1, -1, sarama.ErrClosedClient
+		},
+		close: func() error { return errors.Join(sarama.ErrClosedClient, want) },
+	}
+	client := &fakeCloser{close: func() error {
+		close(clientClosed)
+		return nil
+	}}
+	sink := newDecisionSinkForTest(t, producer, client)
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- sink.WriteBatch(context.Background(), validDecisionBatch(t, 1)) }()
+	select {
+	case <-sendStarted:
+	case <-time.After(time.Second):
+		t.Fatal("producer send did not start")
+	}
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelShutdown()
+	if err := sink.Shutdown(shutdownContext); !errors.Is(err, ErrDecisionSinkShutdownTimeout) {
+		t.Fatalf("Shutdown() error = %v, want shutdown timeout", err)
+	}
+	select {
+	case <-writeDone:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("test producer did not observe the client-close attempt")
+	}
+	if err := sink.Close(); !errors.Is(err, want) {
+		t.Fatalf("Close() error = %v, want producer close failure %v", err, want)
+	}
+}
+
+func TestDecisionSinkPreCanceledShutdownStillClosesResources(t *testing.T) {
+	t.Parallel()
+
+	producer := &fakeSyncProducer{
+		send: func(*sarama.ProducerMessage) (int32, int64, error) { return 0, 0, nil },
+	}
+	client := &fakeCloser{}
+	sink := newDecisionSinkForTest(t, producer, client)
+	shutdownContext, cancelShutdown := context.WithCancel(context.Background())
+	cancelShutdown()
+	if err := sink.Shutdown(shutdownContext); !errors.Is(err, ErrDecisionSinkShutdownTimeout) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("Shutdown() error = %v, want shutdown timeout and context cancellation", err)
+	}
+	if err := sink.WriteBatch(context.Background(), validDecisionBatch(t, 1)); !errors.Is(err, ErrDecisionSinkClosed) {
+		t.Fatalf("WriteBatch() after pre-canceled shutdown error = %v, want closed sink", err)
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatalf("Close() after pre-canceled shutdown error = %v", err)
+	}
+	producer.mu.Lock()
+	producerCloseCount := producer.closeCount
+	producer.mu.Unlock()
+	client.mu.Lock()
+	clientCloseCount := client.closeCount
+	client.mu.Unlock()
+	if producerCloseCount != 1 || clientCloseCount != 1 {
+		t.Fatalf("close counts = producer:%d client:%d, want 1/1", producerCloseCount, clientCloseCount)
+	}
+}
+
+func TestDecisionSinkCompletedShutdownWinsOverCanceledContext(t *testing.T) {
+	t.Parallel()
+
+	producer := &fakeSyncProducer{
+		send: func(*sarama.ProducerMessage) (int32, int64, error) { return 0, 0, nil },
+	}
+	client := &fakeCloser{}
+	sink := newDecisionSinkForTest(t, producer, client)
+	if err := sink.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	shutdownContext, cancelShutdown := context.WithCancel(context.Background())
+	cancelShutdown()
+	if err := sink.Shutdown(shutdownContext); err != nil {
+		t.Fatalf("Shutdown() after completed close error = %v, want completed result", err)
+	}
+	if sink.forced.Load() {
+		t.Fatal("completed shutdown started the forced close path")
+	}
+}
+
 func TestDecisionSinkSupportsConcurrentClaims(t *testing.T) {
 	t.Parallel()
 

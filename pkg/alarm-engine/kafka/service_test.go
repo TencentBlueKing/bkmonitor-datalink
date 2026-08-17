@@ -302,6 +302,65 @@ func TestServiceStartupFatalDoesNotConsumeAndKeepsFirstError(t *testing.T) {
 	}
 }
 
+func TestServiceFatalSignalBroadcastsAfterReadinessDropsAndBeforeRunReturns(t *testing.T) {
+	t.Parallel()
+
+	setup := make(chan struct{})
+	releaseClose := make(chan struct{})
+	group := newFakeConsumerGroup(func(ctx context.Context, _ []string, handler sarama.ConsumerGroupHandler) error {
+		session := newFakeSession(ctx, &[]string{})
+		session.claims = map[string][]int32{}
+		if err := handler.Setup(session); err != nil {
+			return err
+		}
+		close(setup)
+		<-ctx.Done()
+		return handler.Cleanup(session)
+	})
+	group.closeFunc = func() error {
+		<-releaseClose
+		return nil
+	}
+	service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
+	runDone := make(chan error, 1)
+	go func() { runDone <- service.Run(context.Background()) }()
+	select {
+	case <-setup:
+	case <-time.After(time.Second):
+		t.Fatal("assignment was not set up")
+	}
+	waitFor(t, service.Ready, "service readiness")
+
+	firstObserver := service.FatalSignal()
+	secondObserver := service.FatalSignal()
+	want := errors.New("consumer failed")
+	service.reportFatal(want)
+
+	for index, observer := range []<-chan struct{}{firstObserver, secondObserver} {
+		select {
+		case <-observer:
+		case <-time.After(time.Second):
+			t.Fatalf("fatal observer %d was not notified", index)
+		}
+	}
+	if service.Ready() {
+		t.Fatal("service remained ready after fatal notification")
+	}
+	if err := service.FatalError(); !errors.Is(err, want) {
+		t.Fatalf("FatalError() = %v, want %v", err, want)
+	}
+	select {
+	case err := <-runDone:
+		t.Fatalf("Run() returned before resource close was released: %v", err)
+	default:
+	}
+
+	close(releaseClose)
+	if err := waitError(t, runDone); !errors.Is(err, want) {
+		t.Fatalf("Run() error = %v, want %v", err, want)
+	}
+}
+
 func TestServiceReadyTracksAssignmentAndShutdown(t *testing.T) {
 	t.Parallel()
 

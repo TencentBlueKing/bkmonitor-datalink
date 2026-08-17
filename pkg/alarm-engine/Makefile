@@ -13,16 +13,28 @@ LDFLAGS = -s -w \
 .PHONY: help
 help:
 	@echo "Make Targets:"
-	@echo " test:  Run unit tests with the race detector"
-	@echo " lint:  Run static analysis"
-	@echo " build: Build the linux/amd64 binary"
+	@echo " verify: Verify module dependencies"
+	@echo " test:   Run unit tests"
+	@echo " race:   Run unit tests with the race detector"
+	@echo " lint:   Check formatting and run static analysis"
+	@echo " build:  Build the linux/amd64 binary"
+
+.PHONY: verify
+verify:
+	$(GO) mod verify
+	$(GO) mod tidy -diff
 
 .PHONY: test
 test:
+	$(GO) test -count=1 ./...
+
+.PHONY: race
+race:
 	$(GO) test -race -count=1 ./...
 
 .PHONY: lint
 lint:
+	test -z "$$(gofmt -l .)"
 	$(GO) vet ./...
 
 .PHONY: build

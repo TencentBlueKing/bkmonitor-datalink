@@ -99,9 +99,17 @@ tag: .check_module_vars
 lint:
 	cd $(PWD)/pkg/$(MODULE) && make lint
 
+.PHONY: verify
+verify:
+	cd $(PWD)/pkg/$(MODULE) && make verify
+
 .PHONY: test
 test:
 	cd $(PWD)/pkg/$(MODULE) && make test
+
+.PHONY: race
+race:
+	cd $(PWD)/pkg/$(MODULE) && make race
 
 .PHONY: fmt
 fmt:

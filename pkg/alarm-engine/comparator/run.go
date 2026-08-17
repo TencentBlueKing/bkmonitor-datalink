@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"time"
 )
 
 var ErrRecordInFlight = errors.New("comparator: record is awaiting commit")
@@ -66,21 +67,52 @@ type preparedRecord struct {
 
 // Run serializes observations for one immutable assignment epoch. It exposes
 // Joiner state only after the corresponding broker offset commit succeeds.
-// Deadlines, high-water barriers, persistence and transport ownership are
-// intentionally outside this transport-neutral core.
+// Persistence and transport ownership are intentionally outside this
+// transport-neutral core.
 type Run struct {
-	mu          sync.Mutex
-	epoch       string
-	valid       bool
-	invalidErr  error
-	joiner      *Joiner
-	roleTopics  map[StreamRole]string
-	nextOffsets map[streamPartition]int64
-	inflight    *preparedRecord
-	nextToken   uint64
+	mu              sync.Mutex
+	epoch           string
+	valid           bool
+	invalidErr      error
+	joiner          *Joiner
+	roleTopics      map[StreamRole]string
+	nextOffsets     map[streamPartition]int64
+	inflight        *preparedRecord
+	nextToken       uint64
+	coverageTimeout time.Duration
+	now             func() time.Time
+	lastNow         time.Time
+	coverage        map[string]*coverageEntry
 }
 
-func NewRun(epoch string, maxEntries int, assignments []PartitionAssignment) (*Run, error) {
+type RunOption func(*runOptions) error
+
+type runOptions struct {
+	coverageTimeout time.Duration
+	now             func() time.Time
+}
+
+func WithCoverageTimeout(timeout time.Duration) RunOption {
+	return func(options *runOptions) error {
+		if timeout <= 0 {
+			return fmt.Errorf("comparator: coverage timeout must be positive")
+		}
+		options.coverageTimeout = timeout
+		return nil
+	}
+}
+
+func withRunClock(now func() time.Time) RunOption {
+	return func(options *runOptions) error {
+		if now == nil {
+			return fmt.Errorf("comparator: run clock must be non-nil")
+		}
+		options.now = now
+		return nil
+	}
+}
+
+func NewRun(epoch string, maxEntries int, assignments []PartitionAssignment, options ...RunOption) (*Run, error) {
 	joiner, err := NewJoiner(epoch, maxEntries)
 	if err != nil {
 		return nil, err
@@ -88,13 +120,25 @@ func NewRun(epoch string, maxEntries int, assignments []PartitionAssignment) (*R
 	if len(assignments) == 0 {
 		return nil, fmt.Errorf("comparator: assignments must be non-empty")
 	}
+	configured := runOptions{now: time.Now}
+	for _, option := range options {
+		if option == nil {
+			return nil, fmt.Errorf("comparator: run option must be non-nil")
+		}
+		if err := option(&configured); err != nil {
+			return nil, err
+		}
+	}
 
 	run := &Run{
-		epoch:       epoch,
-		valid:       true,
-		joiner:      joiner,
-		roleTopics:  make(map[StreamRole]string, 3),
-		nextOffsets: make(map[streamPartition]int64, len(assignments)),
+		epoch:           epoch,
+		valid:           true,
+		joiner:          joiner,
+		roleTopics:      make(map[StreamRole]string, 3),
+		nextOffsets:     make(map[streamPartition]int64, len(assignments)),
+		coverageTimeout: configured.coverageTimeout,
+		now:             configured.now,
+		coverage:        make(map[string]*coverageEntry),
 	}
 	topicRoles := make(map[string]StreamRole, 3)
 	for _, assignment := range assignments {
@@ -196,6 +240,9 @@ func (r *Run) CommitSucceeded(prepared Prepared) ([]Update, error) {
 		return nil, r.invalidateLocked(fmt.Errorf("comparator: prepared record mismatch"))
 	}
 	inflight := r.inflight
+	if err := r.commitCoverageLocked(inflight); err != nil {
+		return nil, r.invalidateLocked(err)
+	}
 	r.nextOffsets[inflight.stream] = inflight.offset + 1
 	r.inflight = nil
 	return append([]Update(nil), inflight.updates...), nil
@@ -242,6 +289,7 @@ func (r *Run) Assess(epoch, inputID string, gates Gates) (Assessment, bool, erro
 	if err := r.requireEpochAndCommittedLocked(epoch); err != nil {
 		return Assessment{}, false, err
 	}
+	gates.CoverageComplete = r.coverageComparableLocked(inputID)
 	return r.joiner.Assess(r.epoch, inputID, gates)
 }
 

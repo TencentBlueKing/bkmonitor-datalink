@@ -36,7 +36,8 @@ type ProcessorFactory func() Processor
 
 type Committer interface {
 	// CommitProcessed records that the complete record has been processed. A
-	// Kafka adapter must commit record.Offset+1 and return only after success.
+	// Kafka adapter must commit record.Offset+1 and return only after the broker
+	// acknowledges it, or return the commit error.
 	CommitProcessed(context.Context, Record) error
 }
 
@@ -46,18 +47,48 @@ func (f CommitterFunc) CommitProcessed(ctx context.Context, record Record) error
 	return f(ctx, record)
 }
 
+// Claim owns exactly one Processor for the lifetime of one transport claim.
+type Claim struct {
+	processor Processor
+	committer Committer
+}
+
+func NewClaim(newProcessor ProcessorFactory, committer Committer) (*Claim, error) {
+	if newProcessor == nil || committer == nil {
+		return nil, errors.New("consumer claim: processor factory and committer are required")
+	}
+	processor := newProcessor()
+	if processor == nil {
+		return nil, errors.New("consumer claim: processor factory returned nil")
+	}
+	return &Claim{processor: processor, committer: committer}, nil
+}
+
+func (c *Claim) Process(ctx context.Context, record Record) error {
+	if c == nil || c.processor == nil || c.committer == nil {
+		return errors.New("consumer claim: initialized claim is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := c.processor.Process(ctx, record.Key, record.Value); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.committer.CommitProcessed(ctx, record)
+}
+
 // RunClaim creates and owns one claim-local Processor, then processes one
 // record at a time so rebalance cannot detach window state from ownership.
 func RunClaim(ctx context.Context, records <-chan Record, newProcessor ProcessorFactory, committer Committer) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if newProcessor == nil || committer == nil {
-		return errors.New("consumer claim: processor factory and committer are required")
-	}
-	processor := newProcessor()
-	if processor == nil {
-		return errors.New("consumer claim: processor factory returned nil")
+	claim, err := NewClaim(newProcessor, committer)
+	if err != nil {
+		return err
 	}
 	for {
 		select {
@@ -70,13 +101,7 @@ func RunClaim(ctx context.Context, records <-chan Record, newProcessor Processor
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if err := processor.Process(ctx, record.Key, record.Value); err != nil {
-				return err
-			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if err := committer.CommitProcessed(ctx, record); err != nil {
+			if err := claim.Process(ctx, record); err != nil {
 				return err
 			}
 		}

@@ -12,10 +12,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/consumer"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/lifecycle"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/metric"
 )
 
 func TestRunPrintsVersionWithoutLoadingConfiguration(t *testing.T) {
@@ -61,4 +68,47 @@ func TestRunRejectsUnknownFlag(t *testing.T) {
 	if stderr.Len() == 0 {
 		t.Fatal("run() did not report flag error")
 	}
+}
+
+func TestRunUsesKafkaRuntimeAfterConfigurationLoads(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "alarm-engine.yaml")
+	if err := os.WriteFile(path, []byte(validApplicationYAML()), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	want := errors.New("sink open failed")
+	dependencies := applicationDependencies{
+		openSink: func(config.KafkaConfig) (decisionSinkRuntime, error) { return nil, want },
+		openService: func(config.KafkaConfig, consumer.ProcessorFactory, time.Duration) (serviceRuntime, error) {
+			return nil, errors.New("must not open service")
+		},
+		newHTTP: func(*metric.Recorder, lifecycle.Source) (httpRuntime, error) {
+			return nil, errors.New("must not initialize HTTP")
+		},
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runWithDependencies(context.Background(), []string{"--config", path}, &stdout, &stderr, dependencies)
+	if code != 1 || !strings.Contains(stderr.String(), want.Error()) {
+		t.Fatalf("runWithDependencies() code=%d stderr=%q, want sink open failure", code, stderr.String())
+	}
+}
+
+func validApplicationYAML() string {
+	return `mode: shadow
+http:
+  listen: 127.0.0.1:8080
+shutdown_timeout: 1s
+kafka:
+  brokers:
+    - 127.0.0.1:9092
+  input_topic: alarm-engine-shadow-input
+  output_topic: alarm-engine-shadow-output
+  allowed_output_topics:
+    - alarm-engine-shadow-output
+  group_id: alarm-engine-shadow
+  client_id: alarm-engine
+  broker_version: 2.6.0
+`
 }

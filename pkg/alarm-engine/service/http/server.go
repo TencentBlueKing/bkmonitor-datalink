@@ -20,16 +20,35 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/metric"
 )
 
 type Server struct {
 	handler http.Handler
 	ready   atomic.Bool
+	source  lifecycle.Source
 }
 
 func New(recorder *metric.Recorder) *Server {
-	server := &Server{}
+	return newServer(recorder, nil)
+}
+
+func NewWithLifecycle(recorder *metric.Recorder, source lifecycle.Source) (*Server, error) {
+	if recorder == nil {
+		return nil, errors.New("HTTP service: metric recorder is required")
+	}
+	if source == nil {
+		return nil, errors.New("HTTP service: lifecycle source is required")
+	}
+	if err := recorder.BindLifecycle(source); err != nil {
+		return nil, err
+	}
+	return newServer(recorder, source), nil
+}
+
+func newServer(recorder *metric.Recorder, source lifecycle.Source) *Server {
+	server := &Server{source: source}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", server.health)
 	mux.HandleFunc("/readyz", server.readiness)
@@ -97,7 +116,11 @@ func (s *Server) health(response http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) readiness(response http.ResponseWriter, _ *http.Request) {
-	if !s.ready.Load() {
+	ready := s.ready.Load()
+	if s.source != nil {
+		ready = s.source.LifecycleSnapshot().Ready
+	}
+	if !ready {
 		response.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}

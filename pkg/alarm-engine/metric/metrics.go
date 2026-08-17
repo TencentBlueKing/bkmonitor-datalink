@@ -11,6 +11,7 @@ package metric
 
 import (
 	"math"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -106,6 +107,8 @@ type BuildInfo struct {
 
 type Recorder struct {
 	registry        *prometheus.Registry
+	lifecycleMu     sync.Mutex
+	lifecycleBound  bool
 	processDuration *prometheus.HistogramVec
 	processTotal    *prometheus.CounterVec
 	recordsTotal    *prometheus.CounterVec
@@ -242,7 +245,7 @@ func MaxCustomSeries() int {
 	pipelineLatency := len(allEdges) * len(allModes) * histogramSeries(len(pipelineLatencyBuckets))
 	shadowCompare := len(allComponents) * len(allCompareResults)
 	buildInfo := 1
-	return processTotal + processDuration + recordsTotal + pipelineLatency + shadowCompare + buildInfo
+	return processTotal + processDuration + recordsTotal + pipelineLatency + shadowCompare + buildInfo + lifecycleCustomSeries()
 }
 
 var (

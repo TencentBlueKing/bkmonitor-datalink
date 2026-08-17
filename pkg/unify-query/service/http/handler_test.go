@@ -669,8 +669,10 @@ func TestInfoParamsToQueryRef(t *testing.T) {
 	metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid})
 
 	testCases := map[string]struct {
-		params     *Params
-		expectedRT string
+		params           *Params
+		body             string
+		expectedRT       string
+		expectedQueryStr string
 	}{
 		"route by table_id_conditions when table_id and metric_name empty": {
 			params: &Params{
@@ -684,14 +686,36 @@ func TestInfoParamsToQueryRef(t *testing.T) {
 			},
 			expectedRT: influxdb.ResultTableEs,
 		},
+		"preserve query_string from tag values request": {
+			params: &Params{
+				DataSource: "bklog",
+				TableID:    "nano",
+				Metric:     "_index",
+			},
+			body:             `{"data_source":"bklog","table_id":"nano","metric_name":"_index","query_string":"level:error"}`,
+			expectedQueryStr: "level:error",
+		},
 	}
 
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
+			if c.body != "" {
+				assert.NoError(t, json.NewDecoder(bytes.NewBufferString(c.body)).Decode(c.params))
+			}
 			queryRef, err := infoParamsToQueryRef(ctx, c.params)
 			assert.NoError(t, err)
-			assert.Truef(t, queryRefContainsResultTable(queryRef, c.expectedRT),
-				"expected RT %q to be matched by TableIDConditions", c.expectedRT)
+			if c.expectedRT != "" {
+				assert.Truef(t, queryRefContainsResultTable(queryRef, c.expectedRT),
+					"expected RT %q to be matched by TableIDConditions", c.expectedRT)
+			}
+			if c.expectedQueryStr != "" {
+				queryCount := 0
+				queryRef.Range("", func(query *metadata.Query) {
+					queryCount++
+					assert.Equal(t, c.expectedQueryStr, query.QueryString)
+				})
+				assert.Greater(t, queryCount, 0)
+			}
 		})
 	}
 }

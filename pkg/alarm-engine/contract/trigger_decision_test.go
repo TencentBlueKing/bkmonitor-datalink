@@ -324,6 +324,63 @@ func TestBuildTriggerDecisionBatchRejectsCountOrderAndTriggerCountContradictions
 	}
 }
 
+func TestTriggerInputValidatesOneDecisionAgainstAuthoritativeSource(t *testing.T) {
+	t.Parallel()
+
+	input := decodedTriggerInputForDecision(t)
+	anomalous := input.DetectionOutcomes[0]
+	normal := input.DetectionOutcomes[1]
+
+	valid := newTriggerDecision(
+		t,
+		anomalous,
+		DecisionOutcomeTrigger,
+		DecisionReasonTriggerConditionMet,
+		intPointer(3),
+		[]int64{anomalous.Record.SourceTime},
+	)
+	if err := input.ValidateTriggerDecision(valid); err != nil {
+		t.Fatalf("ValidateTriggerDecision(valid) error = %v", err)
+	}
+
+	wrongNormal := newTriggerDecision(
+		t,
+		normal,
+		DecisionOutcomeTrigger,
+		DecisionReasonTriggerConditionMet,
+		intPointer(3),
+		[]int64{normal.Record.SourceTime},
+	)
+	if err := wrongNormal.Validate(); err != nil {
+		t.Fatalf("wrong-normal fixture is not independently valid: %v", err)
+	}
+	if err := input.ValidateTriggerDecision(wrongNormal); err == nil {
+		t.Fatal("ValidateTriggerDecision() accepted TRIGGER for authoritative NORMAL input")
+	}
+
+	wrongAnomalous := newTriggerDecision(
+		t,
+		anomalous,
+		DecisionOutcomeNoTrigger,
+		DecisionReasonInputNormal,
+		nil,
+		[]int64{},
+	)
+	if err := wrongAnomalous.Validate(); err != nil {
+		t.Fatalf("wrong-anomalous fixture is not independently valid: %v", err)
+	}
+	if err := input.ValidateTriggerDecision(wrongAnomalous); err == nil {
+		t.Fatal("ValidateTriggerDecision() accepted INPUT_NORMAL for authoritative ANOMALOUS input")
+	}
+
+	missing := wrongAnomalous
+	missing.InputID = strings.Repeat("f", 64)
+	missing.DecisionID, _ = DeriveTriggerDecisionID(missing.InputID)
+	if err := input.ValidateTriggerDecision(missing); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("ValidateTriggerDecision(missing) error = %v, want source-not-found rejection", err)
+	}
+}
+
 func TestTriggerDecisionBatchRejectsBusinessOutcomeForUnsupportedPurpose(t *testing.T) {
 	t.Parallel()
 

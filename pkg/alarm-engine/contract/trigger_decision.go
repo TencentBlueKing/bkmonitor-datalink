@@ -82,6 +82,28 @@ func DeriveTriggerDecisionID(inputID string) (string, error) {
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
+// ValidateTriggerDecision validates one independently decoded decision against
+// the authoritative outcome carried by this decoded TriggerInput. Batch shape
+// and batch_id are transport details and are deliberately not compared.
+func (i *TriggerInput) ValidateTriggerDecision(decision TriggerDecision) error {
+	if i == nil || i.StrategyIR == nil || len(i.partitionKey) == 0 {
+		return invalid("trigger_input", "must be produced by DecodeTriggerInput")
+	}
+	if err := decision.Validate(); err != nil {
+		return err
+	}
+	for _, source := range i.DetectionOutcomes {
+		if source == nil || source.InputID != decision.InputID {
+			continue
+		}
+		if source.Record.RecordID != decision.RecordID {
+			return invalid("trigger_decision.record_id", "does not match authoritative input")
+		}
+		return validateDecisionAgainstSource(i.StrategyIR, source, decision)
+	}
+	return invalid("trigger_decision.input_id", "authoritative input not found")
+}
+
 func (i *TriggerInput) BuildTriggerDecisionBatch(decisions []TriggerDecision) (*TriggerDecisionBatch, error) {
 	if i == nil || i.StrategyIR == nil || len(i.partitionKey) == 0 {
 		return nil, invalid("trigger_input", "must be produced by DecodeTriggerInput")

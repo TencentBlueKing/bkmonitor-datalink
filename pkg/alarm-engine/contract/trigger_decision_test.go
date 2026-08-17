@@ -11,12 +11,50 @@ package contract
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestPythonTriggerDecisionGolden(t *testing.T) {
+	t.Parallel()
+
+	payload, err := os.ReadFile("testdata/python_trigger_decision_v1.json")
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	const wantSHA = "982bfd06f5cf3d98fc2f7c965fafd854346601b1a47d74e86e4c7195a1f93f21"
+	if got := fmt.Sprintf("%x", sha256.Sum256(payload)); got != wantSHA {
+		t.Fatalf("golden sha256 = %s, want %s", got, wantSHA)
+	}
+	var fixture struct {
+		SchemaVersion string `json:"schema_version"`
+		Fixtures      []struct {
+			Name  string          `json:"name"`
+			Batch json.RawMessage `json:"batch"`
+		} `json:"fixtures"`
+	}
+	if err := json.Unmarshal(payload, &fixture); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if fixture.SchemaVersion != "trigger-decision-batch/1.0" || len(fixture.Fixtures) != 1 {
+		t.Fatalf("unexpected fixture header: %#v", fixture)
+	}
+	batch, err := DecodeTriggerDecisionBatch(fixture.Fixtures[0].Batch)
+	if err != nil {
+		t.Fatalf("DecodeTriggerDecisionBatch() error = %v", err)
+	}
+	decision := batch.Decisions[0]
+	if fixture.Fixtures[0].Name != "python-trigger-reference" ||
+		decision.DecisionID != "f611274bf630b8921b4b2bf0caa6feb86363f4195012ed57a92b60fff9af7dfa" ||
+		decision.Outcome != DecisionOutcomeTrigger || decision.Level == nil || *decision.Level != 3 {
+		t.Fatalf("unexpected Python reference decision: %#v", decision)
+	}
+}
 
 func TestDeriveTriggerDecisionIDGolden(t *testing.T) {
 	t.Parallel()

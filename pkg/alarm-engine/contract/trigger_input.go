@@ -119,13 +119,17 @@ func (i *TriggerInput) PartitionKey() ([]byte, error) {
 }
 
 func (i *TriggerInput) derivePartitionKey() ([]byte, error) {
-	fields := []string{
+	return deriveTriggerPartitionKey(
 		i.PartitionHashVersion,
 		i.StrategyIR.TenantID,
 		i.StrategyIR.Purpose,
 		i.StrategyIR.StrategyRef.StrategyID,
 		i.StrategyIR.StrategyRef.ItemID,
-	}
+	)
+}
+
+func deriveTriggerPartitionKey(version, tenantID, purpose, strategyID, itemID string) ([]byte, error) {
+	fields := []string{version, tenantID, purpose, strategyID, itemID}
 	digest := sha256.New()
 	var prefix [4]byte
 	for _, field := range fields {

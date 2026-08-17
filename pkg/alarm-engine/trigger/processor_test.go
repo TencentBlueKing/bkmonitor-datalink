@@ -33,11 +33,18 @@ func TestProcessorWritesOneOrderedTerminalBatch(t *testing.T) {
 	if err := processor.Process(context.Background(), key, payload); err != nil {
 		t.Fatalf("Process() error = %v", err)
 	}
-	if len(sink.batches) != 1 || len(sink.batches[0]) != 2 {
+	if len(sink.batches) != 1 || len(sink.batches[0].Decisions) != 2 {
 		t.Fatalf("sink batches = %#v, want one batch with two terminals", sink.batches)
 	}
-	if sink.batches[0][0].Outcome != DecisionNoTrigger || sink.batches[0][1].Outcome != DecisionNoTrigger {
-		t.Fatalf("terminal outcomes = %#v, want ordered NO_TRIGGER decisions", sink.batches[0])
+	first, second := sink.batches[0].Decisions[0], sink.batches[0].Decisions[1]
+	if first.Outcome != DecisionNoTrigger || first.ReasonCode != contract.DecisionReasonInputNormal || first.Level != nil || len(first.AnomalyTimestamps) != 0 {
+		t.Fatalf("normal terminal = %#v, want INPUT_NORMAL NO_TRIGGER", first)
+	}
+	if second.Outcome != DecisionNoTrigger || second.ReasonCode != contract.DecisionReasonTriggerConditionNotMet || second.Level != nil || len(second.AnomalyTimestamps) != 0 {
+		t.Fatalf("anomalous terminal = %#v, want condition-not-met NO_TRIGGER without selected level", second)
+	}
+	if sink.batches[0].BatchID != "batch-1" || sink.batches[0].StrategyRef != strategy.StrategyRef {
+		t.Fatalf("batch identity = %#v, want source batch and strategy", sink.batches[0])
 	}
 }
 
@@ -68,7 +75,7 @@ func TestProcessorMaterializesNonBusinessOutcomesWithoutAdvancingState(t *testin
 			if err := processor.Process(context.Background(), key, payload); err != nil {
 				t.Fatalf("Process(%s outcome) error = %v", test.outcome, err)
 			}
-			if got := sink.batches[0][0]; got.Outcome != test.outcome || got.ErrorCode != test.errorCode {
+			if got := sink.batches[0].Decisions[0]; got.Outcome != test.outcome || got.ReasonCode != test.errorCode {
 				t.Fatalf("non-business terminal = %#v", got)
 			}
 
@@ -76,7 +83,7 @@ func TestProcessorMaterializesNonBusinessOutcomesWithoutAdvancingState(t *testin
 			if err := processor.Process(context.Background(), nextKey, nextPayload); err != nil {
 				t.Fatalf("Process(next anomaly) error = %v", err)
 			}
-			if got := sink.batches[1][0].Outcome; got != DecisionNoTrigger {
+			if got := sink.batches[1].Decisions[0].Outcome; got != DecisionNoTrigger {
 				t.Fatalf("outcome after %s = %q, want NO_TRIGGER", test.outcome, got)
 			}
 		})
@@ -98,16 +105,36 @@ func TestProcessorWindowStateIsClaimLocal(t *testing.T) {
 	if err := sameClaim.Process(context.Background(), secondKey, secondPayload); err != nil {
 		t.Fatalf("Process(second) error = %v", err)
 	}
-	if got := sameClaimSink.batches[1][0].Outcome; got != DecisionTrigger {
-		t.Fatalf("same-claim second outcome = %q, want TRIGGER", got)
+	triggerDecision := sameClaimSink.batches[1].Decisions[0]
+	if triggerDecision.Outcome != DecisionTrigger || triggerDecision.ReasonCode != contract.DecisionReasonTriggerConditionMet || triggerDecision.Level == nil || *triggerDecision.Level != 1 {
+		t.Fatalf("same-claim second decision = %#v, want level-1 TRIGGER", triggerDecision)
 	}
+	assertTimestamps(t, triggerDecision.AnomalyTimestamps, []int64{100, 110})
 
 	newClaimSink := &recordingSink{}
 	if err := NewProcessor(newClaimSink).Process(context.Background(), secondKey, secondPayload); err != nil {
 		t.Fatalf("new claim Process(second) error = %v", err)
 	}
-	if got := newClaimSink.batches[0][0].Outcome; got != DecisionNoTrigger {
+	if got := newClaimSink.batches[0].Decisions[0].Outcome; got != DecisionNoTrigger {
 		t.Fatalf("new-claim outcome = %q, want NO_TRIGGER", got)
+	}
+}
+
+func TestProcessorMaterializesUnsupportedPurpose(t *testing.T) {
+	t.Parallel()
+
+	strategy := newStrategy(t, "generation-1", []contract.TriggerConfig{{Level: 1, CheckWindowSize: 3, TriggerCount: 2}})
+	strategy.Purpose = contract.PurposeNodata
+	outcome := newOutcome(t, strategy, 100, map[int]bool{1: true})
+	payload, key := triggerInputPayload(t, strategy, outcome)
+	sink := &recordingSink{}
+
+	if err := NewProcessor(sink).Process(context.Background(), key, payload); err != nil {
+		t.Fatalf("Process(NODATA) error = %v", err)
+	}
+	decision := sink.batches[0].Decisions[0]
+	if decision.Outcome != contract.OutcomeUnsupported || decision.ReasonCode != "UNSUPPORTED_STRATEGY" || decision.Level != nil || len(decision.AnomalyTimestamps) != 0 {
+		t.Fatalf("unsupported-purpose decision = %#v", decision)
 	}
 }
 
@@ -176,24 +203,33 @@ func TestProcessorRollsBackWindowStateWhenSinkFails(t *testing.T) {
 	if err := processor.Process(context.Background(), key, payload); err == nil {
 		t.Fatal("Process(first attempt) error = nil, want sink failure")
 	}
-	firstAttempt := append([]Terminal(nil), sink.batches[0]...)
+	firstAttempt := append([]byte(nil), sink.payloads[0]...)
 	sink.err = nil
 	if err := processor.Process(context.Background(), key, payload); err != nil {
 		t.Fatalf("Process(replay) error = %v", err)
 	}
-	if !reflect.DeepEqual(sink.batches[1], firstAttempt) {
-		t.Fatalf("replayed terminals = %#v, want %#v", sink.batches[1], firstAttempt)
+	if !reflect.DeepEqual(sink.payloads[1], firstAttempt) {
+		t.Fatalf("replayed decision batch = %s, want %s", sink.payloads[1], firstAttempt)
 	}
 }
 
 type recordingSink struct {
-	batches [][]Terminal
-	err     error
+	batches  []*contract.TriggerDecisionBatch
+	payloads [][]byte
+	err      error
 }
 
-func (s *recordingSink) WriteBatch(_ context.Context, terminals []Terminal) error {
-	copyOfTerminals := append([]Terminal(nil), terminals...)
-	s.batches = append(s.batches, copyOfTerminals)
+func (s *recordingSink) WriteBatch(_ context.Context, batch *contract.TriggerDecisionBatch) error {
+	payload, err := contract.EncodeTriggerDecisionBatch(batch)
+	if err != nil {
+		return err
+	}
+	copyOfBatch, err := contract.DecodeTriggerDecisionBatch(payload)
+	if err != nil {
+		return err
+	}
+	s.payloads = append(s.payloads, append([]byte(nil), payload...))
+	s.batches = append(s.batches, copyOfBatch)
 	return s.err
 }
 

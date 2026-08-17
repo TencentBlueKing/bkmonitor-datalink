@@ -21,17 +21,20 @@ import (
 
 type Terminal struct {
 	InputID           string
-	StrategyRef       contract.StrategyRef
+	RecordID          string
 	Outcome           string
-	ErrorCode         string
+	ReasonCode        string
 	Level             int
 	AnomalyTimestamps []int64
 }
 
 type DecisionSink interface {
-	// WriteBatch must be idempotent by input_id. Returning nil confirms that all
-	// terminals are durable; a consumer may commit its input offset afterwards.
-	WriteBatch(context.Context, []Terminal) error
+	// WriteBatch confirms one complete batch. Delivery is at least once: decision
+	// IDs stay stable across replay, while the payload is only stable when the
+	// evaluator state is the same. Implementations must use
+	// contract.EncodeTriggerDecisionBatch and fail before acknowledgement when
+	// validation or the encoded-size gate rejects the batch.
+	WriteBatch(context.Context, *contract.TriggerDecisionBatch) error
 }
 
 type Processor struct {
@@ -109,8 +112,12 @@ func (p *Processor) Process(ctx context.Context, key, payload []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := p.sink.WriteBatch(ctx, terminals); err != nil {
-		return fmt.Errorf("write trigger terminals: %w", err)
+	batch, err := buildDecisionBatch(input, terminals)
+	if err != nil {
+		return fmt.Errorf("build trigger decision batch: %w", err)
+	}
+	if err := p.sink.WriteBatch(ctx, batch); err != nil {
+		return fmt.Errorf("write trigger decision batch: %w", err)
 	}
 	transaction.commit()
 	committed = true
@@ -119,16 +126,16 @@ func (p *Processor) Process(ctx context.Context, key, payload []byte) error {
 }
 
 func (p *Processor) processOutcome(transaction *evaluationTransaction, handle *StrategyHandle, outcome *contract.DetectionOutcome) (Terminal, error) {
-	terminal := Terminal{InputID: outcome.InputID, StrategyRef: outcome.StrategyRef}
+	terminal := Terminal{InputID: outcome.InputID, RecordID: outcome.Record.RecordID}
 	if handle.purpose != contract.PurposeDetect {
 		terminal.Outcome = contract.OutcomeUnsupported
-		terminal.ErrorCode = "UNSUPPORTED_STRATEGY"
+		terminal.ReasonCode = "UNSUPPORTED_STRATEGY"
 		return terminal, nil
 	}
 	switch outcome.Outcome {
 	case contract.OutcomeError, contract.OutcomeUnsupported:
 		terminal.Outcome = outcome.Outcome
-		if err := json.Unmarshal(outcome.ErrorCode, &terminal.ErrorCode); err != nil {
+		if err := json.Unmarshal(outcome.ErrorCode, &terminal.ReasonCode); err != nil {
 			return Terminal{}, fmt.Errorf("decode terminal error_code: %w", err)
 		}
 		return terminal, nil
@@ -139,13 +146,49 @@ func (p *Processor) processOutcome(transaction *evaluationTransaction, handle *S
 		}
 		if decision == nil {
 			terminal.Outcome = DecisionNoTrigger
+			terminal.ReasonCode = contract.DecisionReasonInputNormal
 			return terminal, nil
 		}
 		terminal.Outcome = decision.Outcome
-		terminal.Level = decision.Level
-		terminal.AnomalyTimestamps = append([]int64(nil), decision.AnomalyTimestamps...)
+		switch decision.Outcome {
+		case DecisionTrigger:
+			terminal.ReasonCode = contract.DecisionReasonTriggerConditionMet
+		case DecisionNoTrigger:
+			terminal.ReasonCode = contract.DecisionReasonTriggerConditionNotMet
+		default:
+			return Terminal{}, fmt.Errorf("trigger processor: unsupported decision %q", decision.Outcome)
+		}
+		if decision.Outcome == DecisionTrigger {
+			terminal.Level = decision.Level
+			terminal.AnomalyTimestamps = append([]int64(nil), decision.AnomalyTimestamps...)
+		}
 		return terminal, nil
 	default:
 		return Terminal{}, fmt.Errorf("trigger processor: unsupported outcome %q", outcome.Outcome)
 	}
+}
+
+func buildDecisionBatch(input *contract.TriggerInput, terminals []Terminal) (*contract.TriggerDecisionBatch, error) {
+	decisions := make([]contract.TriggerDecision, 0, len(terminals))
+	for _, terminal := range terminals {
+		decisionID, err := contract.DeriveTriggerDecisionID(terminal.InputID)
+		if err != nil {
+			return nil, err
+		}
+		var level *int
+		if terminal.Level > 0 {
+			value := terminal.Level
+			level = &value
+		}
+		decisions = append(decisions, contract.TriggerDecision{
+			DecisionID:        decisionID,
+			InputID:           terminal.InputID,
+			RecordID:          terminal.RecordID,
+			Outcome:           terminal.Outcome,
+			ReasonCode:        terminal.ReasonCode,
+			Level:             level,
+			AnomalyTimestamps: append([]int64{}, terminal.AnomalyTimestamps...),
+		})
+	}
+	return input.BuildTriggerDecisionBatch(decisions)
 }

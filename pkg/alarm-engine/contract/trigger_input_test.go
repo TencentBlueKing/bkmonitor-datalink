@@ -10,9 +10,11 @@
 package contract
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -20,12 +22,13 @@ func TestDecodeTriggerInputWrapsPythonGoldenContract(t *testing.T) {
 	t.Parallel()
 
 	fixture := loadPythonGoldenFixture(t, "anomalous")
+	normalFixture := loadPythonGoldenFixture(t, "normal")
 	payload, err := json.Marshal(map[string]any{
 		"schema":                 map[string]any{"name": "trigger-input", "major": 1, "minor": 0},
 		"required_features":      []string{},
 		"partition_hash_version": "trigger-input-partition-v1",
 		"strategy_ir":            fixture.StrategyIR,
-		"detection_outcome":      fixture.Outcome,
+		"detection_outcomes":     []json.RawMessage{fixture.Outcome, normalFixture.Outcome},
 	})
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
@@ -35,8 +38,8 @@ func TestDecodeTriggerInputWrapsPythonGoldenContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeTriggerInput() error = %v", err)
 	}
-	if input.DetectionOutcome.Outcome != OutcomeAnomalous {
-		t.Fatalf("outcome = %q, want %q", input.DetectionOutcome.Outcome, OutcomeAnomalous)
+	if len(input.DetectionOutcomes) != 2 || input.DetectionOutcomes[0].Outcome != OutcomeAnomalous || input.DetectionOutcomes[1].Outcome != OutcomeNormal {
+		t.Fatalf("outcomes = %#v, want %q then %q", input.DetectionOutcomes, OutcomeAnomalous, OutcomeNormal)
 	}
 	partitionKey, err := input.PartitionKey()
 	if err != nil {
@@ -56,7 +59,7 @@ func TestDecodeTriggerInputRejectsUnsupportedPartitionHashVersion(t *testing.T) 
 		"required_features":      []string{},
 		"partition_hash_version": "trigger-input-partition-v2",
 		"strategy_ir":            fixture.StrategyIR,
-		"detection_outcome":      fixture.Outcome,
+		"detection_outcomes":     []json.RawMessage{fixture.Outcome},
 	})
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
@@ -114,12 +117,13 @@ func TestDecodeTriggerInputRejectsNestedStrategyReferenceMismatch(t *testing.T) 
 	t.Parallel()
 
 	document := newTriggerInputDocument(t, "anomalous")
+	outcomes := document["detection_outcomes"].([]json.RawMessage)
 	var outcome map[string]any
-	if err := json.Unmarshal(document["detection_outcome"].(json.RawMessage), &outcome); err != nil {
+	if err := json.Unmarshal(outcomes[0], &outcome); err != nil {
 		t.Fatalf("json.Unmarshal(outcome) error = %v", err)
 	}
 	outcome["strategy_ref"].(map[string]any)["item_id"] = "3"
-	document["detection_outcome"] = outcome
+	document["detection_outcomes"] = []any{outcome}
 	payload, err := json.Marshal(document)
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
@@ -127,6 +131,95 @@ func TestDecodeTriggerInputRejectsNestedStrategyReferenceMismatch(t *testing.T) 
 	if _, err := DecodeTriggerInput(payload); err == nil {
 		t.Fatal("DecodeTriggerInput() accepted mismatched nested strategy reference")
 	}
+}
+
+func TestDecodeTriggerInputRejectsEmptyOrOversizedMicrobatch(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty outcomes", func(t *testing.T) {
+		document := newTriggerInputDocument(t, "anomalous")
+		document["detection_outcomes"] = []json.RawMessage{}
+		payload, err := json.Marshal(document)
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+		if _, err := DecodeTriggerInput(payload); err == nil {
+			t.Fatal("DecodeTriggerInput() accepted empty outcomes")
+		}
+	})
+
+	t.Run("too many outcomes", func(t *testing.T) {
+		document := newTriggerInputDocument(t, "normal")
+		fixture := loadPythonGoldenFixture(t, "normal")
+		outcomes := make([]json.RawMessage, MaxTriggerInputItemsV1+1)
+		for index := range outcomes {
+			outcomes[index] = fixture.Outcome
+		}
+		document["detection_outcomes"] = outcomes
+		payload, err := json.Marshal(document)
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+		if _, err := DecodeTriggerInput(payload); err == nil {
+			t.Fatal("DecodeTriggerInput() accepted too many outcomes")
+		} else if !strings.Contains(err.Error(), "must contain between 1 and 500 outcomes") {
+			t.Fatalf("DecodeTriggerInput() error = %v, want item-count limit", err)
+		}
+	})
+
+	t.Run("encoded bytes exceed limit", func(t *testing.T) {
+		payload, err := json.Marshal(newTriggerInputDocument(t, "anomalous"))
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+		payload = append(payload, bytes.Repeat([]byte(" "), MaxTriggerInputBytesV1-len(payload)+1)...)
+		if _, err := DecodeTriggerInput(payload); err == nil {
+			t.Fatal("DecodeTriggerInput() accepted oversized payload")
+		}
+	})
+}
+
+func TestDecodeTriggerInputRejectsMicrobatchIdentityContradictions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("batch id mismatch", func(t *testing.T) {
+		document := newTriggerInputDocument(t, "anomalous")
+		normal := decodeOutcomeDocument(t, loadPythonGoldenFixture(t, "normal").Outcome)
+		normal["batch_id"] = "another-batch"
+		document["detection_outcomes"] = []any{
+			loadPythonGoldenFixture(t, "anomalous").Outcome,
+			normal,
+		}
+		payload, err := json.Marshal(document)
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+		if _, err := DecodeTriggerInput(payload); err == nil || !strings.Contains(err.Error(), "share one batch_id") {
+			t.Fatalf("DecodeTriggerInput() error = %v, want batch_id mismatch", err)
+		}
+	})
+
+	t.Run("duplicate input id", func(t *testing.T) {
+		document := newTriggerInputDocument(t, "anomalous")
+		fixture := loadPythonGoldenFixture(t, "anomalous")
+		document["detection_outcomes"] = []json.RawMessage{fixture.Outcome, fixture.Outcome}
+		payload, err := json.Marshal(document)
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+		if _, err := DecodeTriggerInput(payload); err == nil || !strings.Contains(err.Error(), "duplicate input_id") {
+			t.Fatalf("DecodeTriggerInput() error = %v, want duplicate input_id", err)
+		}
+	})
+}
+
+func decodeOutcomeDocument(t *testing.T, payload json.RawMessage) map[string]any {
+	t.Helper()
+	var document map[string]any
+	if err := json.Unmarshal(payload, &document); err != nil {
+		t.Fatalf("json.Unmarshal(outcome) error = %v", err)
+	}
+	return document
 }
 
 func newTriggerInputDocument(t *testing.T, fixtureName string) map[string]any {
@@ -138,7 +231,7 @@ func newTriggerInputDocument(t *testing.T, fixtureName string) map[string]any {
 		"required_features":      []string{},
 		"partition_hash_version": "trigger-input-partition-v1",
 		"strategy_ir":            fixture.StrategyIR,
-		"detection_outcome":      fixture.Outcome,
+		"detection_outcomes":     []json.RawMessage{fixture.Outcome},
 	}
 }
 

@@ -12,6 +12,7 @@ package contract
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"math"
 	"unicode/utf8"
 )
@@ -19,6 +20,8 @@ import (
 const (
 	triggerInputSchema     = "trigger-input"
 	PartitionHashVersionV1 = "trigger-input-partition-v1"
+	MaxTriggerInputBytesV1 = 512 * 1024
+	MaxTriggerInputItemsV1 = 500
 )
 
 type TriggerInput struct {
@@ -26,23 +29,27 @@ type TriggerInput struct {
 	RequiredFeatures     []string
 	PartitionHashVersion string
 	StrategyIR           *TriggerStrategyIR
-	DetectionOutcome     *DetectionOutcome
+	DetectionOutcomes    []*DetectionOutcome
 }
 
 func DecodeTriggerInput(payload []byte) (*TriggerInput, error) {
+	if len(payload) > MaxTriggerInputBytesV1 {
+		return nil, invalid("trigger_input", "exceeds encoded byte limit")
+	}
 	schema, object, err := validateContractEnvelope(
 		payload,
 		"trigger_input",
 		triggerInputSchema,
-		[]string{"schema", "required_features", "partition_hash_version", "strategy_ir", "detection_outcome"},
+		[]string{"schema", "required_features", "partition_hash_version", "strategy_ir", "detection_outcomes"},
 		nil,
 	)
 	if err != nil {
 		return nil, err
 	}
 	var header struct {
-		RequiredFeatures     []string `json:"required_features"`
-		PartitionHashVersion string   `json:"partition_hash_version"`
+		RequiredFeatures     []string          `json:"required_features"`
+		PartitionHashVersion string            `json:"partition_hash_version"`
+		DetectionOutcomes    []json.RawMessage `json:"detection_outcomes"`
 	}
 	if err := decodeJSONObject(payload, &header); err != nil {
 		return nil, err
@@ -57,16 +64,34 @@ func DecodeTriggerInput(payload []byte) (*TriggerInput, error) {
 	if err != nil {
 		return nil, err
 	}
-	outcome, err := DecodeDetectionOutcome(object["detection_outcome"], strategyIR)
-	if err != nil {
-		return nil, err
+	if len(header.DetectionOutcomes) == 0 || len(header.DetectionOutcomes) > MaxTriggerInputItemsV1 {
+		return nil, invalid("trigger_input.detection_outcomes", "must contain between 1 and 500 outcomes")
+	}
+	outcomes := make([]*DetectionOutcome, 0, len(header.DetectionOutcomes))
+	inputIDs := make(map[string]struct{}, len(header.DetectionOutcomes))
+	batchID := ""
+	for index, rawOutcome := range header.DetectionOutcomes {
+		outcome, err := DecodeDetectionOutcome(rawOutcome, strategyIR)
+		if err != nil {
+			return nil, invalid("trigger_input.detection_outcomes", err.Error())
+		}
+		if index == 0 {
+			batchID = outcome.BatchID
+		} else if outcome.BatchID != batchID {
+			return nil, invalid("trigger_input.detection_outcomes", "must share one batch_id")
+		}
+		if _, exists := inputIDs[outcome.InputID]; exists {
+			return nil, invalid("trigger_input.detection_outcomes", "must not contain duplicate input_id")
+		}
+		inputIDs[outcome.InputID] = struct{}{}
+		outcomes = append(outcomes, outcome)
 	}
 	return &TriggerInput{
 		Schema:               schema,
 		RequiredFeatures:     header.RequiredFeatures,
 		PartitionHashVersion: header.PartitionHashVersion,
 		StrategyIR:           strategyIR,
-		DetectionOutcome:     outcome,
+		DetectionOutcomes:    outcomes,
 	}, nil
 }
 

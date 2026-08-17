@@ -1,0 +1,512 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package kafka
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/Shopify/sarama"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/consumer"
+)
+
+var (
+	ErrDrainTimeout        = errors.New("kafka service: drain timeout")
+	ErrServiceAlreadyRun   = errors.New("kafka service: Run may only be called once")
+	errErrorsChannelClosed = errors.New("kafka service: consumer group errors channel closed while running")
+	errConsumeStopped      = errors.New("kafka service: consume loop stopped while running")
+)
+
+type consumerGroup interface {
+	Consume(context.Context, []string, sarama.ConsumerGroupHandler) error
+	Errors() <-chan error
+	Close() error
+}
+
+type serviceClient interface {
+	Close() error
+}
+
+type Service struct {
+	topic        string
+	group        consumerGroup
+	client       serviceClient
+	handler      *Handler
+	drainTimeout time.Duration
+
+	groupResource  ownedResource
+	clientResource ownedResource
+
+	normalCloseOnce    sync.Once
+	normalCloseDone    chan struct{}
+	normalCloseErr     error
+	forcedCloseOnce    sync.Once
+	forcedCloseStarted chan struct{}
+	forcedCloseDone    chan struct{}
+	forcedCloseErr     error
+	forcedClientDone   chan struct{}
+	forcedClientErr    error
+
+	runMu   sync.Mutex
+	started bool
+	running atomic.Bool
+	closing atomic.Bool
+
+	cancelMu      sync.Mutex
+	cancelConsume context.CancelFunc
+
+	fatalOnce sync.Once
+	fatalMu   sync.Mutex
+	fatalErr  error
+	fatal     chan error
+
+	closeRequestOnce sync.Once
+	closeRequested   chan struct{}
+}
+
+func OpenService(cfg Config, newProcessor consumer.ProcessorFactory, drainTimeout time.Duration) (*Service, error) {
+	if newProcessor == nil {
+		return nil, errors.New("kafka service: processor factory is required")
+	}
+	if drainTimeout <= 0 {
+		return nil, errors.New("kafka service: drain timeout must be positive")
+	}
+	saramaConfig, err := NewSaramaConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	client, err := sarama.NewClient(cfg.Brokers, saramaConfig)
+	if err != nil {
+		return nil, fmt.Errorf("kafka service: open client: %w", err)
+	}
+	group, err := sarama.NewConsumerGroupFromClient(cfg.GroupID, client)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("kafka service: open consumer group: %w", err), client.Close())
+	}
+	offsets, err := NewSaramaOffsetCommitter(client, cfg.GroupID)
+	if err != nil {
+		return nil, errors.Join(err, group.Close(), client.Close())
+	}
+	service, err := newOwnedService(cfg.Topic, group, client, newProcessor, offsets, drainTimeout)
+	if err != nil {
+		return nil, errors.Join(err, group.Close(), client.Close())
+	}
+	return service, nil
+}
+
+func newOwnedService(
+	topic string,
+	group consumerGroup,
+	client serviceClient,
+	newProcessor consumer.ProcessorFactory,
+	offsets OffsetCommitter,
+	drainTimeout time.Duration,
+) (*Service, error) {
+	if topic == "" || group == nil || client == nil || newProcessor == nil || offsets == nil {
+		return nil, errors.New("kafka service: topic, group, client, processor factory and offset committer are required")
+	}
+	if drainTimeout <= 0 {
+		return nil, errors.New("kafka service: drain timeout must be positive")
+	}
+	service := &Service{
+		topic:              topic,
+		group:              group,
+		client:             client,
+		drainTimeout:       drainTimeout,
+		normalCloseDone:    make(chan struct{}),
+		forcedCloseStarted: make(chan struct{}),
+		forcedCloseDone:    make(chan struct{}),
+		forcedClientDone:   make(chan struct{}),
+		fatal:              make(chan error, 1),
+		closeRequested:     make(chan struct{}),
+	}
+	service.groupResource.close = group.Close
+	service.clientResource.close = client.Close
+	service.handler = NewHandler(newProcessor, offsets, service.reportFatal)
+	return service, nil
+}
+
+func (s *Service) Run(ctx context.Context) error {
+	if s == nil || s.group == nil || s.client == nil || s.handler == nil {
+		return errors.New("kafka service: initialized service is required")
+	}
+	if ctx == nil {
+		return errors.New("kafka service: context is required")
+	}
+	s.runMu.Lock()
+	if s.started {
+		s.runMu.Unlock()
+		return ErrServiceAlreadyRun
+	}
+	s.started = true
+	if s.closing.Load() {
+		s.runMu.Unlock()
+		return errors.New("kafka service: service is closed")
+	}
+	if ctx.Err() != nil {
+		s.closing.Store(true)
+		s.runMu.Unlock()
+		s.handler.BeginDrain()
+		return s.closeResourcesWithin(false, time.Now().Add(s.drainTimeout))
+	}
+	s.running.Store(true)
+	s.runMu.Unlock()
+
+	defer s.running.Store(false)
+	consumeContext, cancelConsume := context.WithCancel(context.Background())
+	s.setCancelConsume(cancelConsume)
+	defer func() {
+		cancelConsume()
+		s.setCancelConsume(nil)
+	}()
+
+	errorsReady := make(chan struct{})
+	errorsDone := make(chan struct{})
+	go s.drainErrors(errorsReady, errorsDone)
+	<-errorsReady
+
+	consumeDone := make(chan struct{})
+	s.runMu.Lock()
+	startConsume := !s.closing.Load() && ctx.Err() == nil && s.firstFatal() == nil
+	if startConsume {
+		go func() {
+			defer close(consumeDone)
+			if err := s.consumeLoop(consumeContext); err != nil {
+				s.reportFatal(err)
+			}
+		}()
+	} else {
+		close(consumeDone)
+	}
+	s.runMu.Unlock()
+
+	force := false
+	select {
+	case <-ctx.Done():
+	case <-s.fatal:
+	case <-s.closeRequested:
+		force = true
+	case <-consumeDone:
+		if consumeContext.Err() == nil && !s.closing.Load() {
+			s.reportFatal(errConsumeStopped)
+		}
+	}
+
+	result := s.shutdown(cancelConsume, force, consumeDone, errorsDone)
+	if fatal := s.firstFatal(); fatal != nil {
+		result = errors.Join(fatal, result)
+	}
+	return result
+}
+
+func (s *Service) Ready() bool {
+	return s != nil && s.running.Load() && !s.closing.Load() && s.firstFatal() == nil && s.handler.Ready()
+}
+
+// Close is an idempotent forced shutdown. Run context cancellation is the
+// graceful path and should be preferred by the process coordinator.
+func (s *Service) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.runMu.Lock()
+	s.closeRequestOnce.Do(func() { close(s.closeRequested) })
+	s.closing.Store(true)
+	s.runMu.Unlock()
+	if s.handler != nil {
+		s.handler.BeginDrain()
+	}
+	s.cancelCurrentConsume()
+	return s.closeResourcesWithin(true, time.Now().Add(s.drainTimeout))
+}
+
+func (s *Service) consumeLoop(ctx context.Context) error {
+	for {
+		if s.firstFatal() != nil {
+			return nil
+		}
+		err := s.group.Consume(ctx, []string{s.topic}, s.handler)
+		if ctx.Err() != nil || s.closing.Load() || s.firstFatal() != nil {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("kafka service: consume group: %w", err)
+		}
+	}
+}
+
+func (s *Service) drainErrors(ready chan<- struct{}, done chan<- struct{}) {
+	defer close(done)
+	errorsChannel := s.group.Errors()
+	if errorsChannel == nil {
+		if !s.closing.Load() {
+			s.reportFatal(errors.New("kafka service: consumer group errors channel is nil"))
+		}
+		close(ready)
+		return
+	}
+	select {
+	case err, ok := <-errorsChannel:
+		if !ok {
+			if !s.closing.Load() {
+				s.reportFatal(errErrorsChannelClosed)
+			}
+			close(ready)
+			return
+		}
+		if err != nil && !s.closing.Load() {
+			s.reportFatal(fmt.Errorf("kafka service: consumer group error: %w", err))
+		}
+	default:
+	}
+	close(ready)
+	for err := range errorsChannel {
+		if err != nil && !s.closing.Load() {
+			s.reportFatal(fmt.Errorf("kafka service: consumer group error: %w", err))
+		}
+	}
+	if !s.closing.Load() {
+		s.reportFatal(errErrorsChannelClosed)
+	}
+}
+
+func (s *Service) reportFatal(err error) {
+	if err == nil {
+		return
+	}
+	s.fatalOnce.Do(func() {
+		s.fatalMu.Lock()
+		s.fatalErr = err
+		s.fatalMu.Unlock()
+		if s.handler != nil {
+			s.handler.BeginDrain()
+		}
+		s.fatal <- err
+	})
+}
+
+func (s *Service) firstFatal() error {
+	if s == nil {
+		return nil
+	}
+	s.fatalMu.Lock()
+	defer s.fatalMu.Unlock()
+	return s.fatalErr
+}
+
+func (s *Service) shutdown(
+	cancelConsume context.CancelFunc,
+	force bool,
+	consumeDone <-chan struct{},
+	errorsDone <-chan struct{},
+) error {
+	s.closing.Store(true)
+	drained := s.handler.BeginDrain()
+	deadline := time.Now().Add(s.drainTimeout)
+	if force {
+		cancelConsume()
+		return s.waitRuntimeClose(true, deadline, consumeDone, errorsDone)
+	}
+	if !waitUntil(drained, deadline) {
+		cancelConsume()
+		s.startForcedClose()
+		return ErrDrainTimeout
+	}
+	cancelConsume()
+	return s.waitRuntimeClose(false, deadline, consumeDone, errorsDone)
+}
+
+func (s *Service) closeNormal() error {
+	groupErr := s.groupResource.Close()
+	clientErr := s.clientResource.Close()
+	if s.forcedCloseHasStarted() && errors.Is(groupErr, sarama.ErrClosedClient) {
+		groupErr = nil
+	}
+	return errors.Join(groupErr, clientErr)
+}
+
+func (s *Service) waitRuntimeClose(
+	force bool,
+	deadline time.Time,
+	consumeDone <-chan struct{},
+	errorsDone <-chan struct{},
+) error {
+	var closeDone <-chan struct{}
+	if force {
+		closeDone = s.startForcedClose()
+	} else {
+		closeDone = s.startNormalClose()
+	}
+	var closeErr error
+	for closeDone != nil || consumeDone != nil || errorsDone != nil {
+		wait := time.Until(deadline)
+		if wait <= 0 {
+			if !force {
+				s.startForcedClose()
+			}
+			return errors.Join(ErrDrainTimeout, closeErr, s.knownForcedClientError())
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-closeDone:
+			if force {
+				closeErr = s.forcedCloseErr
+			} else {
+				closeErr = s.normalCloseErr
+			}
+			closeDone = nil
+		case <-consumeDone:
+			consumeDone = nil
+		case <-errorsDone:
+			errorsDone = nil
+		case <-timer.C:
+			if !force {
+				s.startForcedClose()
+			}
+			return errors.Join(ErrDrainTimeout, closeErr, s.knownForcedClientError())
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+	}
+	return closeErr
+}
+
+func (s *Service) closeResourcesWithin(force bool, deadline time.Time) error {
+	var done <-chan struct{}
+	if force {
+		done = s.startForcedClose()
+	} else {
+		done = s.startNormalClose()
+	}
+	wait := time.Until(deadline)
+	if wait <= 0 {
+		if !force {
+			s.startForcedClose()
+		}
+		return errors.Join(ErrDrainTimeout, s.knownForcedClientError())
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-done:
+		if force {
+			return s.forcedCloseErr
+		}
+		return s.normalCloseErr
+	case <-timer.C:
+		if !force {
+			s.startForcedClose()
+		}
+		return errors.Join(ErrDrainTimeout, s.knownForcedClientError())
+	}
+}
+
+func (s *Service) startNormalClose() <-chan struct{} {
+	s.normalCloseOnce.Do(func() {
+		go func() {
+			s.normalCloseErr = s.closeNormal()
+			close(s.normalCloseDone)
+		}()
+	})
+	return s.normalCloseDone
+}
+
+func (s *Service) startForcedClose() <-chan struct{} {
+	s.forcedCloseOnce.Do(func() {
+		close(s.forcedCloseStarted)
+		go func() {
+			s.forcedClientErr = s.clientResource.Close()
+			close(s.forcedClientDone)
+			groupErr := s.groupResource.Close()
+			if errors.Is(groupErr, sarama.ErrClosedClient) {
+				groupErr = nil
+			}
+			s.forcedCloseErr = errors.Join(s.forcedClientErr, groupErr)
+			close(s.forcedCloseDone)
+		}()
+	})
+	return s.forcedCloseDone
+}
+
+func (s *Service) knownForcedClientError() error {
+	select {
+	case <-s.forcedClientDone:
+		return s.forcedClientErr
+	default:
+		return nil
+	}
+}
+
+func (s *Service) forcedCloseHasStarted() bool {
+	select {
+	case <-s.forcedCloseStarted:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) setCancelConsume(cancel context.CancelFunc) {
+	s.cancelMu.Lock()
+	s.cancelConsume = cancel
+	s.cancelMu.Unlock()
+}
+
+func (s *Service) cancelCurrentConsume() {
+	s.cancelMu.Lock()
+	cancel := s.cancelConsume
+	s.cancelMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func waitUntil(done <-chan struct{}, deadline time.Time) bool {
+	wait := time.Until(deadline)
+	if wait <= 0 {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+type ownedResource struct {
+	once  sync.Once
+	close func() error
+	err   error
+}
+
+func (r *ownedResource) Close() error {
+	if r == nil || r.close == nil {
+		return nil
+	}
+	r.once.Do(func() { r.err = r.close() })
+	return r.err
+}

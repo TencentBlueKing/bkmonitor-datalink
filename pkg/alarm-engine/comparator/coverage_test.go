@@ -97,12 +97,16 @@ func TestCoverageBarrierMarksMissingAndLateRecovery(t *testing.T) {
 	if !run.Valid() {
 		t.Fatal("a pre-deadline HWM snapshot invalidated the Run")
 	}
+	snapshot, _, err := run.Coverage("run-1", inputID)
+	if err != nil || snapshot.Phase != CoverageOverdue || snapshot.BarrierFrozen {
+		t.Fatalf("Coverage(before freeze) = %#v, error=%v", snapshot, err)
+	}
 	barrier = capturedBarrier(clock, PartitionBarrier{Role: StreamGo, Topic: "go", Partition: 0, HighWater: 12})
 	if err := run.FreezeBarrier("run-1", inputID, barrier); err != nil {
 		t.Fatalf("FreezeBarrier() error = %v", err)
 	}
-	snapshot, _, err := run.Coverage("run-1", inputID)
-	if err != nil || snapshot.Phase != CoverageOverdue {
+	snapshot, _, err = run.Coverage("run-1", inputID)
+	if err != nil || snapshot.Phase != CoverageOverdue || !snapshot.BarrierFrozen {
 		t.Fatalf("Coverage(before HWM) = %#v, error=%v", snapshot, err)
 	}
 

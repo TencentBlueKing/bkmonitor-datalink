@@ -40,6 +40,7 @@ type BarrierSnapshot struct {
 type CoverageSnapshot struct {
 	InputID               string
 	Phase                 CoveragePhase
+	BarrierFrozen         bool
 	FirstSeenAt           time.Time
 	DeadlineAt            time.Time
 	MissingRoles          []StreamRole
@@ -271,6 +272,7 @@ func (r *Run) coverageSnapshotLocked(inputID string, item *coverageEntry, now ti
 	return CoverageSnapshot{
 		InputID:               inputID,
 		Phase:                 phase,
+		BarrierFrozen:         item.barriers != nil,
 		FirstSeenAt:           item.firstSeen,
 		DeadlineAt:            deadline,
 		MissingRoles:          missing,

@@ -813,8 +813,26 @@ func (i *Instance) QuerySeriesSet(
 		size = i.maxSize
 	}
 
-	labelMap := function.LabelMap(ctx, query)
+	fact := newSeriesFormatFactory(ctx, query, fieldMap, qo.start, qo.end, unit, size)
 
+	if len(query.Aggregates) == 0 {
+		return storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))
+	}
+
+	return i.queryWithAgg(ctx, qo, fact)
+}
+
+// newSeriesFormatFactory 组装时序聚合查询的字段名转换：
+// 出端把 ES 字段名换成别名再做格式转换，入端反向；aliasFreeEncode 只做格式转换、不认别名，
+// 用于还原请求里写的维度名。这组不对称正是补键逻辑的前提，改动时需连同 agg_format_alias_test.go 一起看。
+func newSeriesFormatFactory(
+	ctx context.Context,
+	query *metadata.Query,
+	fieldMap metadata.FieldsMap,
+	start, end time.Time,
+	unit string,
+	size int,
+) *FormatFactory {
 	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
 	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
@@ -823,7 +841,7 @@ func (i *Instance) QuerySeriesSet(
 		reverseAlias[v] = k
 	}
 
-	fact := NewFormatFactory(ctx).
+	return NewFormatFactory(ctx).
 		WithTransform(func(s string) string {
 			// 别名替换
 			ns := s
@@ -858,17 +876,11 @@ func (i *Instance) QuerySeriesSet(
 			}
 			return s
 		}).
-		WithIncludeValues(labelMap).
+		WithIncludeValues(function.LabelMap(ctx, query)).
 		WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-		WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
+		WithQuery(query.Field, query.TimeField, start, end, unit, size).
 		WithFieldMap(fieldMap).
 		WithOrders(query.Orders)
-
-	if len(query.Aggregates) == 0 {
-		return storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))
-	}
-
-	return i.queryWithAgg(ctx, qo, fact)
 }
 
 func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {

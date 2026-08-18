@@ -342,8 +342,13 @@ func (f *FormatFactory) recordRequestedDimension(requested, field string) {
 		return
 	}
 
+	encoded := field
+	if f.encode != nil {
+		encoded = f.encode(field)
+	}
+
 	key := f.aliasFreeEncode(requested)
-	if key == "" || key == f.encode(field) {
+	if key == "" || key == encoded {
 		return
 	}
 
@@ -535,8 +540,11 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 		timeFormat:     f.toMillisecond,
 	}
 
-	// reference 查询直出存储引擎的聚合结果，不经 PromQL 分组，补键只会凭空多出一列，所以只在走
-	// PromQL 的查询上补。
+	// reference 查询直出存储引擎的聚合结果，不经 PromQL 分组，补键只会凭空多出一列，
+	// 而下游是按结果列的下标位置取值的，多一列会直接错位。所以 reference 保持只返回别名键，
+	// 用原始字段名请求、拿到别名键这个改名行为不变，由下游按别名读取。
+	// 这与 metadata.FieldAlias.AddAliasKeysWhenOriginalFieldPresent 的双键是同一套过渡方案，
+	// 那里带着「等前端适配之后再移除」的 TODO，将来清理时两处应一起处理。
 	if !f.isReference {
 		af.extraLabelKeys = f.extraLabelKeys
 	}

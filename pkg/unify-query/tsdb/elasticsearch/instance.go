@@ -850,6 +850,14 @@ func (i *Instance) QuerySeriesSet(
 			return ns
 		},
 		).
+		// PromQL 的 by 子句只做格式转换、不认别名（见 structured.QueryTs 生成语句处），
+		// 出端若只留别名键，按原始字段名分组就会匹配不上而丢维度，这里补一份同口径的键。
+		WithAliasFreeEncode(func(s string) string {
+			if encodeFunc != nil {
+				return encodeFunc(s)
+			}
+			return s
+		}).
 		WithIncludeValues(labelMap).
 		WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 		WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).

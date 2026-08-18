@@ -42,6 +42,9 @@ type aggFormat struct {
 
 	promDataFormat func(k string) string
 
+	// extraLabelKeys 记录 ES 字段名需要额外补出的维度键，为空表示不补
+	extraLabelKeys map[string][]string
+
 	timeFormat func(i int64) int64
 
 	dims  []string
@@ -63,15 +66,24 @@ func (a *aggFormat) put() {
 }
 
 func (a *aggFormat) addLabel(name, value string) {
+	formatted := name
 	if a.promDataFormat != nil {
-		name = a.promDataFormat(name)
+		formatted = a.promDataFormat(name)
 	}
 
 	newLb := make(map[string]string)
 	for k, v := range a.item.labels {
 		newLb[k] = v
 	}
-	newLb[name] = value
+	newLb[formatted] = value
+
+	// 配了别名的字段在这里会被改写成别名，而 PromQL 的 by 子句用的是请求里写的字段名，
+	// 两者对不上时该维度会被整个聚合掉。所以按请求名再补一份，两种写法都能分组。
+	// 同层的多个桶共用一份 labels，这里必须无条件覆盖，否则会留下上一个桶的值。
+	for _, key := range a.extraLabelKeys[name] {
+		newLb[key] = value
+	}
+
 	a.item.labels = newLb
 }
 

@@ -161,6 +161,11 @@ type FormatFactory struct {
 	decode func(k string) string
 	encode func(k string) string
 
+	// aliasFreeEncode 与 encode 的差别只在于不做别名改写，用于还原请求里写的维度名
+	aliasFreeEncode func(k string) string
+	// extraLabelKeys 记录 ES 字段名需要额外补出的维度键，只有请求名与别名不一致时才有内容
+	extraLabelKeys map[string][]string
+
 	fieldsMap metadata.FieldsMap
 
 	data map[string]any
@@ -321,6 +326,36 @@ func (f *FormatFactory) WithTransform(encode func(string) string, decode func(st
 		f.valueField = decode(f.valueField)
 	}
 	return f
+}
+
+// WithAliasFreeEncode 注册不做别名改写的字段名转换，用于还原请求里写的维度名。
+func (f *FormatFactory) WithAliasFreeEncode(encode func(string) string) *FormatFactory {
+	f.aliasFreeEncode = encode
+	return f
+}
+
+// recordRequestedDimension 记录请求里写的维度名。出端默认把字段名改写成别名，
+// 而 PromQL 的 by 子句用的是请求名，两者不一致时该维度会被整个聚合掉，
+// 所以这里留一份请求名，供聚合结果补出可分组的维度键。
+func (f *FormatFactory) recordRequestedDimension(requested, field string) {
+	if f.aliasFreeEncode == nil {
+		return
+	}
+
+	key := f.aliasFreeEncode(requested)
+	if key == "" || key == f.encode(field) {
+		return
+	}
+
+	if f.extraLabelKeys == nil {
+		f.extraLabelKeys = make(map[string][]string)
+	}
+	for _, exist := range f.extraLabelKeys[field] {
+		if exist == key {
+			return
+		}
+	}
+	f.extraLabelKeys[field] = append(f.extraLabelKeys[field], key)
 }
 
 func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
@@ -498,6 +533,12 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 		items:          make(items, 0),
 		promDataFormat: f.encode,
 		timeFormat:     f.toMillisecond,
+	}
+
+	// reference 查询直出存储引擎的聚合结果，不经 PromQL 分组，补键只会凭空多出一列，所以只在走
+	// PromQL 的查询上补。
+	if !f.isReference {
+		af.extraLabelKeys = f.extraLabelKeys
 	}
 
 	af.get()
@@ -861,9 +902,11 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 				if dim == "" || dim == labels.MetricName {
 					continue
 				}
+				requested := dim
 				if f.decode != nil {
 					dim = f.decode(dim)
 				}
+				f.recordRequestedDimension(requested, dim)
 
 				f.termAgg(dim, idx == 0)
 			}

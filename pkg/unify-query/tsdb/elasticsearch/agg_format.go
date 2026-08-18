@@ -45,6 +45,9 @@ type aggFormat struct {
 	// extraLabelKeys 记录 ES 字段名需要额外补出的维度键，为空表示不补
 	extraLabelKeys map[string][]string
 
+	// renameLabel 为真时，用 extraLabelKeys 里的请求名替换出端的别名键，而不是额外补一份
+	renameLabel bool
+
 	timeFormat func(i int64) int64
 
 	dims  []string
@@ -75,12 +78,16 @@ func (a *aggFormat) addLabel(name, value string) {
 	for k, v := range a.item.labels {
 		newLb[k] = v
 	}
-	newLb[formatted] = value
 
-	// 配了别名的字段在这里会被改写成别名，而 PromQL 的 by 子句用的是请求里写的字段名，
-	// 两者对不上时该维度会被整个聚合掉。所以按请求名再补一份，两种写法都能分组。
+	// 配了别名的字段在这里会被改写成别名，而请求里写的是原始字段名，两者对不上。
+	// 补一份请求名的键，PromQL 的 by 子句和按请求名取值的调用方都能对上；
+	// renameLabel 场景下补键会多出一列，所以换成只留请求名，别名键不再输出。
 	// 同层的多个桶共用一份 labels，这里必须无条件覆盖，否则会留下上一个桶的值。
-	for _, key := range a.extraLabelKeys[name] {
+	keys := a.extraLabelKeys[name]
+	if !a.renameLabel || len(keys) == 0 {
+		newLb[formatted] = value
+	}
+	for _, key := range keys {
 		newLb[key] = value
 	}
 

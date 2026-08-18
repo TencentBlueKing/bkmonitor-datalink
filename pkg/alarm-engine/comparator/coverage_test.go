@@ -176,6 +176,24 @@ func TestCoverageBarrierRejectsFutureCapture(t *testing.T) {
 	}
 }
 
+func TestCoverageBeginBarrierCaptureUsesRunClock(t *testing.T) {
+	t.Parallel()
+
+	run, clock := mustCoverageRun(t, testAssignments())
+	capturedAt, err := run.BeginBarrierCapture("run-1")
+	if err != nil {
+		t.Fatalf("BeginBarrierCapture() error = %v", err)
+	}
+	if !capturedAt.Equal(clock.Now()) {
+		t.Fatalf("BeginBarrierCapture() = %s, want Run clock %s", capturedAt, clock.Now())
+	}
+	clock.Advance(time.Second)
+	capturedAt, err = run.BeginBarrierCapture("run-1")
+	if err != nil || !capturedAt.Equal(clock.Now()) {
+		t.Fatalf("BeginBarrierCapture(second) = %s, error=%v, want %s", capturedAt, err, clock.Now())
+	}
+}
+
 func TestCoverageRecordAfterBarrierWithOffsetGapIsLate(t *testing.T) {
 	t.Parallel()
 

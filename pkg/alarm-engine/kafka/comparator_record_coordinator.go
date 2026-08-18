@@ -104,7 +104,7 @@ func (c *comparatorRecordCoordinator) Process(ctx context.Context, record consum
 	if err != nil {
 		return nil, c.fail(err)
 	}
-	defer c.releaseRecord()
+	defer c.releaseOperation()
 	prepared, err := c.run.Prepare(comparator.StreamRecord{
 		Epoch:     c.epoch,
 		Role:      role,
@@ -148,7 +148,26 @@ func (c *comparatorRecordCoordinator) acquireRecord(record consumer.Record) (com
 	return role, nil
 }
 
-func (c *comparatorRecordCoordinator) releaseRecord() {
+func (c *comparatorRecordCoordinator) acquireBarrierOperation() ([]comparator.PartitionAssignment, error) {
+	id := sessionAssignmentID(c.session)
+	c.assignment.mu.Lock()
+	defer c.assignment.mu.Unlock()
+	generation, err := c.assignment.currentGenerationLocked(c.handle, id)
+	if err != nil {
+		return nil, err
+	}
+	if !generation.active || generation.run != c.run || generation.epoch != c.epoch {
+		return nil, generationError(generation)
+	}
+	assignments := make([]comparator.PartitionAssignment, 0, len(generation.assignments))
+	for _, assignment := range generation.assignments {
+		assignments = append(assignments, assignment)
+	}
+	generation.inflight++
+	return assignments, nil
+}
+
+func (c *comparatorRecordCoordinator) releaseOperation() {
 	c.assignment.mu.Lock()
 	defer c.assignment.mu.Unlock()
 	generation := c.handle.generation

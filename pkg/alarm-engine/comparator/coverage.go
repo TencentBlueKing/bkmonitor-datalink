@@ -97,6 +97,21 @@ func (r *Run) SweepCoverage(epoch string) ([]CoverageSnapshot, error) {
 	return snapshots, nil
 }
 
+// BeginBarrierCapture returns the Run's monotonic capture start before the
+// transport reads any high-water offsets.
+func (r *Run) BeginBarrierCapture(epoch string) (time.Time, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.requireCoverageLocked(epoch); err != nil {
+		return time.Time{}, err
+	}
+	now, err := r.nowLocked()
+	if err != nil {
+		return time.Time{}, r.invalidateLocked(err)
+	}
+	return now, nil
+}
+
 func (r *Run) FreezeBarrier(epoch, inputID string, snapshot BarrierSnapshot) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

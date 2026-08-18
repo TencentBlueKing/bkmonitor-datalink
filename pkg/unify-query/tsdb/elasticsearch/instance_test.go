@@ -12,6 +12,7 @@ package elasticsearch
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"testing"
@@ -1537,6 +1538,85 @@ func TestInstance_QueryLabelValuesConcurrentSharedQueryDoesNotMutate(t *testing.
 	}
 	assert.Equal(t, originalAllConditions, query.AllConditions)
 	assert.Equal(t, originalAggregates, query.Aggregates)
+}
+
+func TestInstance_QueryLabelValuesAppliesEffectiveLimit(t *testing.T) {
+	mock.Init()
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+
+	for name, tc := range map[string]struct {
+		requestSize  int
+		maxSize      int
+		expectedSize int
+	}{
+		"request limit": {
+			requestSize:  1,
+			maxSize:      10000,
+			expectedSize: 1,
+		},
+		"request above elasticsearch default bucket count": {
+			requestSize:  20,
+			maxSize:      10000,
+			expectedSize: 20,
+		},
+		"storage maximum": {
+			requestSize:  20000,
+			maxSize:      10000,
+			expectedSize: 10000,
+		},
+		"default to storage maximum": {
+			requestSize:  0,
+			maxSize:      10000,
+			expectedSize: 10000,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var requestBody []byte
+			httpmock.RegisterResponder(
+				http.MethodPost,
+				mock.EsUrl+"/es_index/_search",
+				func(request *http.Request) (*http.Response, error) {
+					var err error
+					requestBody, err = io.ReadAll(request.Body)
+					if err != nil {
+						return nil, err
+					}
+					return httpmock.NewStringResponse(http.StatusOK, `{"took":1,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":0,"relation":"eq"},"max_score":null,"hits":[]},"aggregations":{"level":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[]}}}`), nil
+				},
+			)
+
+			inst, err := NewInstance(ctx, &InstanceOption{
+				Connect: Connect{Address: mock.EsUrl},
+				Timeout: time.Minute,
+				MaxSize: tc.maxSize,
+			})
+			assert.NoError(t, err)
+
+			query := &metadata.Query{
+				DB:    "es_index",
+				Field: "_index",
+				Size:  tc.requestSize,
+				TimeField: metadata.TimeField{
+					Name: "dtEventTimeStamp",
+					Type: TimeFieldTypeTime,
+					Unit: "millisecond",
+				},
+				TableID:     "test_table",
+				StorageType: metadata.ElasticsearchStorageType,
+			}
+
+			_, err = inst.QueryLabelValues(
+				ctx,
+				query,
+				"level",
+				time.UnixMilli(1723593608000),
+				time.UnixMilli(1723679962000),
+			)
+			assert.NoError(t, err)
+			assert.JSONEq(t, fmt.Sprintf(`{"aggregations":{"level":{"aggregations":{"_value":{"cardinality":{"field":"level"}}},"terms":{"field":"level","missing":" ","size":%d}}},"query":{"bool":{"filter":[{"exists":{"field":"level"}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}]}},"size":0}`, tc.expectedSize), string(requestBody))
+		})
+	}
 }
 
 func TestBuildESQuerySourceTagValuesQueryString(t *testing.T) {

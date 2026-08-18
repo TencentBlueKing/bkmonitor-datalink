@@ -27,9 +27,36 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	tsdbService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 )
+
+func effectiveTagValuesLimit(requestLimit, maxSize int) int {
+	if maxSize <= 0 {
+		return requestLimit
+	}
+	if requestLimit <= 0 || requestLimit > maxSize {
+		return maxSize
+	}
+	return requestLimit
+}
+
+func configuredTagValuesLimit(requestLimit int) int {
+	maxSize := tsdbService.EsMaxSize
+	if maxSize <= 0 {
+		maxSize = viper.GetInt(tsdbService.EsMaxSizeConfigPath)
+	}
+	return effectiveTagValuesLimit(requestLimit, maxSize)
+}
+
+func sortAndLimitStrings(values []string, limit int) []string {
+	sort.Strings(values)
+	if limit > 0 && len(values) > limit {
+		return values[:limit]
+	}
+	return values
+}
 
 // HandlerFieldKeys
 // @Summary  info field keys
@@ -221,11 +248,14 @@ func HandlerTagValues(c *gin.Context) {
 	if err != nil {
 		return
 	}
+	effectiveLimit := configuredTagValuesLimit(params.Limit)
+	params.Limit = effectiveLimit
 
 	paramsStr, _ := json.Marshal(params)
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
+	span.Set("effective-limit", effectiveLimit)
 
 	metadata.NewMessage(
 		metadata.MsgQueryInfo,
@@ -270,10 +300,8 @@ func HandlerTagValues(c *gin.Context) {
 					return
 				}
 
-				var res []string
-
-				res, err = instance.QueryLabelValues(ctx, qry, name, qb.Start, qb.End)
-				if err != nil {
+				res, queryErr := instance.QueryLabelValues(ctx, qry, name, qb.Start, qb.End)
+				if queryErr != nil {
 					return
 				}
 
@@ -288,9 +316,7 @@ func HandlerTagValues(c *gin.Context) {
 		name := key.(string)
 		lb := value.(*set.Set[string])
 
-		res := lb.ToArray()
-		sort.Strings(res)
-		data.Values[name] = res
+		data.Values[name] = sortAndLimitStrings(lb.ToArray(), effectiveLimit)
 		return true
 	})
 
@@ -535,6 +561,7 @@ func HandlerLabelValues(c *gin.Context) {
 			return
 		}
 	}
+	queryLimit = configuredTagValuesLimit(queryLimit)
 
 	span.Set("request-start", start)
 	span.Set("request-end", end)

@@ -162,6 +162,16 @@ func cloneStringMap(source map[string]string) map[string]string {
 	return cloned
 }
 
+func effectiveQuerySize(querySize, maxSize int) int {
+	if maxSize <= 0 {
+		return querySize
+	}
+	if querySize <= 0 || querySize > maxSize {
+		return maxSize
+	}
+	return querySize
+}
+
 func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
 	return ""
 }
@@ -915,8 +925,9 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	qo.physicalIndexes = physicalIndexes
 
 	unit := metadata.GetQueryParams(ctx).TimeUnit
+	size := effectiveQuerySize(labelValuesQuery.Size, i.maxSize)
 	fact := NewFormatFactory(ctx).
-		WithQuery(name, labelValuesQuery.TimeField, start, end, unit, 0).
+		WithQuery(name, labelValuesQuery.TimeField, start, end, unit, size).
 		WithFieldMap(fieldMap)
 
 	// 枚举字段存在性需要与完整业务条件表达式相与，而不是新增 OR 分支。

@@ -11,6 +11,7 @@ package prometheus
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -154,6 +155,15 @@ func (i *Instance) DirectQuery(
 	return vector, nil
 }
 
+func sortAndLimitLabelValues(values []string, limit int) []string {
+	// 多路由去重后统一排序并截断，避免每个子查询分别限额导致总数超限。
+	sort.Strings(values)
+	if limit > 0 && len(values) > limit {
+		return values[:limit]
+	}
+	return values
+}
+
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	// TODO implement me
 	panic("implement me")
@@ -205,7 +215,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 	})
 
 	wg.Wait()
-	list = res.ToArray()
+	list = sortAndLimitLabelValues(res.ToArray(), limit)
 	return list, err
 }
 

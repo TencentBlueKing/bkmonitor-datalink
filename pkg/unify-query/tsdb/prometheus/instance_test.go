@@ -175,6 +175,12 @@ func TestMergeBucketDuration(t *testing.T) {
 	}
 }
 
+func TestSortAndLimitLabelValues(t *testing.T) {
+	values := []string{"c", "a", "b"}
+	assert.Equal(t, []string{"a", "b"}, sortAndLimitLabelValues(values, 2))
+	assert.Equal(t, []string{"a", "b", "c"}, sortAndLimitLabelValues(values, 0))
+}
+
 func TestQueryListAllowRouteStartBoundaryBucketPerSource(t *testing.T) {
 	newQuery := func(tableID string, start, end, queryStart, queryEnd int64) *Query {
 		return &Query{

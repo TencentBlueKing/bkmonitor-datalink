@@ -540,14 +540,13 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 		timeFormat:     f.toMillisecond,
 	}
 
-	// reference 查询直出存储引擎的聚合结果，不经 PromQL 分组，补键只会凭空多出一列，
-	// 而下游是按结果列的下标位置取值的，多一列会直接错位。所以 reference 保持只返回别名键，
-	// 用原始字段名请求、拿到别名键这个改名行为不变，由下游按别名读取。
-	// 这与 metadata.FieldAlias.AddAliasKeysWhenOriginalFieldPresent 的双键是同一套过渡方案，
-	// 那里带着「等前端适配之后再移除」的 TODO，将来清理时两处应一起处理。
-	if !f.isReference {
-		af.extraLabelKeys = f.extraLabelKeys
-	}
+	// 配了别名的字段，出端默认只留别名键，而请求里写的是原始字段名，两边对不上。
+	// ts 查询要经 PromQL 分组，by 子句认的是请求名，所以补一份请求名的键让两种写法都能分组；
+	// 这份双键与 metadata.FieldAlias.AddAliasKeysWhenOriginalFieldPresent 是同一套过渡方案，将来一起清理。
+	// reference 查询直出聚合结果、下游按结果列取值，补键会凭空多出一列导致错位，
+	// 所以改成把别名键重命名为请求名：列数不变，且与 /query/ts、bksql 的返回口径一致。
+	af.extraLabelKeys = f.extraLabelKeys
+	af.renameLabel = f.isReference
 
 	af.get()
 	defer af.put()

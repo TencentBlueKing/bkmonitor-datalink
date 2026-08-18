@@ -112,18 +112,15 @@ func TestAggDataFormat_AliasFreeDimensionKey(t *testing.T) {
 
 	// 用别名分组本来就能匹配上，不该多补一个键，避免无谓地改变既有响应。
 	for name, c := range map[string]struct {
-		fieldAlias  metadata.FieldAlias
-		dimensions  []string
-		isReference bool
+		fieldAlias metadata.FieldAlias
+		dimensions []string
 	}{
-		"group by alias":           {fieldAlias: fieldAlias, dimensions: []string{"app"}},
-		"reference query":          {fieldAlias: fieldAlias, dimensions: []string{"__ext.labels.app"}, isReference: true},
-		"field without alias":      {dimensions: []string{"__ext.labels.app"}},
-		"reference group by alias": {fieldAlias: fieldAlias, dimensions: []string{"app"}, isReference: true},
+		"group by alias":      {fieldAlias: fieldAlias, dimensions: []string{"app"}},
+		"field without alias": {dimensions: []string{"__ext.labels.app"}},
 	} {
 		t.Run(name+" keeps single key", func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
-			labels := aggLabels(t, newAliasFormatFactory(ctx, c.fieldAlias, c.isReference), c.dimensions)
+			labels := aggLabels(t, newAliasFormatFactory(ctx, c.fieldAlias, false), c.dimensions)
 
 			assert.Len(t, labels, 2)
 			for _, lb := range labels {
@@ -131,6 +128,40 @@ func TestAggDataFormat_AliasFreeDimensionKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAggDataFormat_ReferenceKeepsRequestedDimensionKey 覆盖 reference 查询按原始字段名分组的场景。
+// reference 直出聚合结果、下游按结果列取值，补键会多出一列导致错位，所以这里是把别名键重命名为请求名：
+// 列数不变，调用方按请求里写的字段名就能取到值。
+func TestAggDataFormat_ReferenceKeepsRequestedDimensionKey(t *testing.T) {
+	metadata.InitMetadata()
+
+	fieldAlias := metadata.FieldAlias{"app": "__ext.labels.app"}
+	promQLKey := metadata.GetFieldFormat(context.Background()).EncodeFunc()("__ext.labels.app")
+
+	t.Run("group by original field returns requested key", func(t *testing.T) {
+		ctx := metadata.InitHashID(context.Background())
+		labels := aggLabels(t, newAliasFormatFactory(ctx, fieldAlias, true), []string{"__ext.labels.app"})
+
+		assert.Len(t, labels, 2)
+		for _, lb := range labels {
+			assert.Len(t, lb, 1, "reference 是改名不是补键，列数必须保持不变")
+			assert.NotContains(t, lb, "app", "按原始字段名请求就不该返回别名键")
+			assert.Contains(t, []string{"web", "api"}, lb[promQLKey])
+		}
+	})
+
+	t.Run("group by alias still returns alias key", func(t *testing.T) {
+		ctx := metadata.InitHashID(context.Background())
+		labels := aggLabels(t, newAliasFormatFactory(ctx, fieldAlias, true), []string{"app"})
+
+		assert.Len(t, labels, 2)
+		for _, lb := range labels {
+			assert.Len(t, lb, 1)
+			assert.NotContains(t, lb, promQLKey, "按别名请求就该原样返回别名键")
+			assert.Contains(t, []string{"web", "api"}, lb["app"])
+		}
+	})
 }
 
 // TestAggDataFormat_AliasFreeKeyIsPromQLCompatible 固定补出来的键与 PromQL 侧的口径一致，
@@ -175,6 +206,38 @@ func TestAggDataFormat_AliasFreeDimensionKeyWithNestedBuckets(t *testing.T) {
 
 	got := make(map[string][2]string, len(labels))
 	for _, lb := range labels {
+		got[lb["signature"]] = [2]string{lb["__ext__bk_46__labels__bk_46__app"], lb["__ext__bk_46__cluster"]}
+	}
+	assert.Equal(t, [2]string{"web", "c1"}, got["sigA"])
+	assert.Equal(t, [2]string{"web", "c2"}, got["sigB"])
+	assert.Equal(t, [2]string{"api", "c1"}, got["sigC"])
+}
+
+// TestAggDataFormat_ReferenceDimensionKeyWithNestedBuckets 用与上一个用例相同的嵌套桶形态验证 reference：
+// 用别名请求的维度保持别名，用原始字段名请求的换成请求名，维度数与请求一致，且各桶取到自己的值。
+func TestAggDataFormat_ReferenceDimensionKeyWithNestedBuckets(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+
+	fieldAlias := metadata.FieldAlias{
+		"signature": "__dist_05",
+		"cluster":   "__ext.cluster",
+		"app":       "__ext.labels.app",
+	}
+	labels := aggLabelsFrom(t, newAliasFormatFactory(ctx, fieldAlias, true),
+		[]string{"signature", "__ext.cluster", "__ext.labels.app"}, multiDimAggResponse)
+
+	assert.Len(t, labels, 3)
+	got := make(map[string][2]string, len(labels))
+	for _, lb := range labels {
+		assert.Len(t, lb, 3, "reference 是改名不是补键，维度数必须与请求一致")
+		// 这两个用原始字段名请求，别名键不该再出现
+		assert.NotContains(t, lb, "app")
+		assert.NotContains(t, lb, "cluster")
+		// signature 用别名请求，保持别名
+		assert.NotEmpty(t, lb["signature"])
+		assert.NotContains(t, lb, "__dist_05")
+
 		got[lb["signature"]] = [2]string{lb["__ext__bk_46__labels__bk_46__app"], lb["__ext__bk_46__cluster"]}
 	}
 	assert.Equal(t, [2]string{"web", "c1"}, got["sigA"])

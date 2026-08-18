@@ -103,6 +103,87 @@ func TestComparatorHandlerJoinsThreeClaimsIntoAudit(t *testing.T) {
 	}
 }
 
+func TestComparatorHandlerRejectsAssignmentAfterReadyRunEnds(t *testing.T) {
+	t.Parallel()
+
+	metadata := newFakeComparatorMetadata(map[string][]int32{
+		"trigger-input": {0}, "go-decision": {0}, "py-decision": {0},
+	})
+	assignment, err := newComparatorAssignmentCoordinator(
+		metadata,
+		map[comparator.StreamRole]string{
+			comparator.StreamInput: "trigger-input", comparator.StreamGo: "go-decision", comparator.StreamPython: "py-decision",
+		},
+		100,
+		10*time.Second,
+	)
+	if err != nil {
+		t.Fatalf("newComparatorAssignmentCoordinator() error = %v", err)
+	}
+	var fatalErr error
+	handler, err := newComparatorHandler(
+		assignment,
+		fakeSyncOffsetCommitter{},
+		&collectingComparisonAuditSink{},
+		time.Hour,
+		func(err error) { fatalErr = err },
+	)
+	if err != nil {
+		t.Fatalf("newComparatorHandler() error = %v", err)
+	}
+	first := newFakeSession(context.Background(), &[]string{})
+	first.claims = map[string][]int32{
+		"trigger-input": {0}, "go-decision": {0}, "py-decision": {0},
+	}
+	if err := handler.Setup(first); err != nil {
+		t.Fatalf("Setup(first) error = %v", err)
+	}
+	claims := []*fakeClaim{
+		newFakeClaim("trigger-input", 0, nil),
+		newFakeClaim("go-decision", 0, nil),
+		newFakeClaim("py-decision", 0, nil),
+	}
+	var wait sync.WaitGroup
+	claimErrors := make(chan error, len(claims))
+	for _, claim := range claims {
+		claim := claim
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			claimErrors <- handler.ConsumeClaim(first, claim)
+		}()
+	}
+	wait.Wait()
+	close(claimErrors)
+	for err := range claimErrors {
+		if err != nil {
+			t.Fatalf("ConsumeClaim(first) error = %v", err)
+		}
+	}
+	if !handler.Ready() {
+		t.Fatal("handler never became ready for the first assignment")
+	}
+	if err := handler.Cleanup(first); err != nil {
+		t.Fatalf("Cleanup(first) error = %v", err)
+	}
+
+	second := newFakeSession(context.Background(), &[]string{})
+	second.generation = 2
+	second.claims = first.claims
+	if err := handler.Setup(second); err == nil {
+		t.Fatal("Setup(second) accepted a new assignment after the finite run became ready")
+	}
+	if fatalErr == nil {
+		t.Fatal("Setup(second) did not fail the finite run")
+	}
+	if assignment.nextGeneration != 1 {
+		t.Fatalf("assignment generations = %d, want exactly one finite-run epoch", assignment.nextGeneration)
+	}
+	if handler.Ready() {
+		t.Fatal("handler remained ready after the rebalance was rejected")
+	}
+}
+
 func TestComparatorHandlerDrainWaitsForActiveBarrier(t *testing.T) {
 	t.Parallel()
 

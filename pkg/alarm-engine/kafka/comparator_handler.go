@@ -20,6 +20,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/consumer"
 )
 
+var errComparatorRunRebalanced = errors.New("kafka comparator handler: finite comparison run cannot span assignments")
+
 type comparatorHandlerSession struct {
 	handle         *comparatorAssignmentHandle
 	initOnce       sync.Once
@@ -44,6 +46,7 @@ type comparatorHandler struct {
 
 	mu               sync.Mutex
 	state            *comparatorHandlerSession
+	runStarted       bool
 	ready            bool
 	draining         bool
 	inflightRecords  int
@@ -75,6 +78,18 @@ func (h *comparatorHandler) Setup(session sarama.ConsumerGroupSession) error {
 	if h == nil || session == nil {
 		return errors.New("kafka comparator handler: initialized handler and session are required")
 	}
+	h.mu.Lock()
+	if h.draining {
+		h.mu.Unlock()
+		return errors.New("kafka comparator handler: handler is draining")
+	}
+	if h.runStarted {
+		h.mu.Unlock()
+		h.fatal(errComparatorRunRebalanced)
+		return errComparatorRunRebalanced
+	}
+	h.runStarted = true
+	h.mu.Unlock()
 	handle, err := h.assignment.Setup(session)
 	if err != nil {
 		h.fatal(err)

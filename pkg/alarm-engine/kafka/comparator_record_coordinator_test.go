@@ -15,6 +15,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sync"
 	"testing"
@@ -58,6 +59,55 @@ func TestComparatorRecordCoordinatorCommitsBrokerThenRunThenLocalOffset(t *testi
 	}
 	if got := len(events); got != 2 || events[0] != "broker-ack" || events[1] != "mark" {
 		t.Fatalf("events = %#v, want broker-ack then mark", events)
+	}
+}
+
+func TestComparatorRecordCoordinatorAcknowledgesAuditBeforeInputOffset(t *testing.T) {
+	t.Parallel()
+
+	events := []string{}
+	audits := comparisonAuditSinkFunc(func(_ context.Context, batch *contract.ComparisonAuditBatch) error {
+		if batch == nil || len(batch.Audits) == 0 {
+			t.Fatal("audit sink received an empty batch")
+		}
+		events = append(events, "audit-ack")
+		return nil
+	})
+	committer := comparatorOffsetCommitterFunc(func(_ context.Context, _ sarama.ConsumerGroupSession, _ consumer.Record) error {
+		events = append(events, "input-offset-ack")
+		return nil
+	})
+	coordinator, _, _, _ := setupComparatorRecordCoordinatorWithAudit(t, 100, committer, audits, &events)
+	payload, key := comparatorTriggerInputFixture(t, "normal")
+	if _, err := coordinator.Process(context.Background(), consumer.Record{
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+	}); err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if !reflect.DeepEqual(events, []string{"audit-ack", "input-offset-ack", "mark"}) {
+		t.Fatalf("events = %v, want audit ACK before input offset ACK and local mark", events)
+	}
+}
+
+func TestComparatorRecordCoordinatorAuditFailureDoesNotCommitInputOffset(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("audit unavailable")
+	events := []string{}
+	audits := comparisonAuditSinkFunc(func(context.Context, *contract.ComparisonAuditBatch) error { return want })
+	committer := comparatorOffsetCommitterFunc(func(_ context.Context, _ sarama.ConsumerGroupSession, _ consumer.Record) error {
+		events = append(events, "input-offset-ack")
+		return nil
+	})
+	coordinator, run, _, _ := setupComparatorRecordCoordinatorWithAudit(t, 100, committer, audits, &events)
+	payload, key := comparatorTriggerInputFixture(t, "normal")
+	if _, err := coordinator.Process(context.Background(), consumer.Record{
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+	}); !errors.Is(err, want) {
+		t.Fatalf("Process() error = %v, want audit failure", err)
+	}
+	if len(events) != 0 || run.Valid() {
+		t.Fatalf("events=%v valid=%v, want no input commit and a failed Run", events, run.Valid())
 	}
 }
 
@@ -267,6 +317,7 @@ func TestComparatorRecordCoordinatorHasOneOwnerPerAssignment(t *testing.T) {
 		coordinator.handle,
 		coordinator.session,
 		committer,
+		comparisonAuditSinkFunc(func(context.Context, *contract.ComparisonAuditBatch) error { return nil }),
 	); err == nil {
 		t.Fatal("newComparatorRecordCoordinator() allowed a second owner for one assignment")
 	}
@@ -362,6 +413,12 @@ func TestComparatorRecordCoordinatorMapsAllThreeFrozenStreamRoles(t *testing.T) 
 
 type comparatorOffsetCommitterFunc func(context.Context, sarama.ConsumerGroupSession, consumer.Record) error
 
+type comparisonAuditSinkFunc func(context.Context, *contract.ComparisonAuditBatch) error
+
+func (f comparisonAuditSinkFunc) WriteBatch(ctx context.Context, batch *contract.ComparisonAuditBatch) error {
+	return f(ctx, batch)
+}
+
 type observedErrContext struct {
 	context.Context
 	once     sync.Once
@@ -404,7 +461,20 @@ func setupComparatorRecordCoordinator(
 	events *[]string,
 ) (*comparatorRecordCoordinator, *comparator.Run, string, *comparatorMarkSession) {
 	t.Helper()
-	return setupComparatorRecordCoordinatorWithContext(t, context.Background(), maxEntries, committer, events)
+	return setupComparatorRecordCoordinatorWithAudit(
+		t, maxEntries, committer, comparisonAuditSinkFunc(func(context.Context, *contract.ComparisonAuditBatch) error { return nil }), events,
+	)
+}
+
+func setupComparatorRecordCoordinatorWithAudit(
+	t *testing.T,
+	maxEntries int,
+	committer OffsetCommitter,
+	audits ComparisonAuditSink,
+	events *[]string,
+) (*comparatorRecordCoordinator, *comparator.Run, string, *comparatorMarkSession) {
+	t.Helper()
+	return setupComparatorRecordCoordinatorWithContextAndAudit(t, context.Background(), maxEntries, committer, audits, events)
 }
 
 func setupComparatorRecordCoordinatorWithContext(
@@ -412,6 +482,21 @@ func setupComparatorRecordCoordinatorWithContext(
 	ctx context.Context,
 	maxEntries int,
 	committer OffsetCommitter,
+	events *[]string,
+) (*comparatorRecordCoordinator, *comparator.Run, string, *comparatorMarkSession) {
+	t.Helper()
+	return setupComparatorRecordCoordinatorWithContextAndAudit(
+		t, ctx, maxEntries, committer,
+		comparisonAuditSinkFunc(func(context.Context, *contract.ComparisonAuditBatch) error { return nil }), events,
+	)
+}
+
+func setupComparatorRecordCoordinatorWithContextAndAudit(
+	t *testing.T,
+	ctx context.Context,
+	maxEntries int,
+	committer OffsetCommitter,
+	audits ComparisonAuditSink,
 	events *[]string,
 ) (*comparatorRecordCoordinator, *comparator.Run, string, *comparatorMarkSession) {
 	t.Helper()
@@ -452,7 +537,7 @@ func setupComparatorRecordCoordinatorWithContext(
 	if err != nil {
 		t.Fatalf("WaitReady() error = %v", err)
 	}
-	coordinator, err := newComparatorRecordCoordinator(assignment, handle, session, committer)
+	coordinator, err := newComparatorRecordCoordinator(assignment, handle, session, committer, audits)
 	if err != nil {
 		t.Fatalf("newComparatorRecordCoordinator() error = %v", err)
 	}
@@ -515,16 +600,22 @@ func comparatorTriggerDecisionFixture(t *testing.T, input *contract.TriggerInput
 	if err != nil {
 		t.Fatalf("DeriveTriggerDecisionID() error = %v", err)
 	}
-	level := 3
-	batch, err := input.BuildTriggerDecisionBatch([]contract.TriggerDecision{{
+	decision := contract.TriggerDecision{
 		DecisionID:        decisionID,
 		InputID:           source.InputID,
 		RecordID:          source.Record.RecordID,
-		Outcome:           contract.DecisionOutcomeTrigger,
-		ReasonCode:        contract.DecisionReasonTriggerConditionMet,
-		Level:             &level,
-		AnomalyTimestamps: []int64{source.Record.SourceTime},
-	}})
+		Outcome:           contract.DecisionOutcomeNoTrigger,
+		ReasonCode:        contract.DecisionReasonInputNormal,
+		AnomalyTimestamps: []int64{},
+	}
+	if source.Outcome == contract.OutcomeAnomalous {
+		level := 3
+		decision.Outcome = contract.DecisionOutcomeTrigger
+		decision.ReasonCode = contract.DecisionReasonTriggerConditionMet
+		decision.Level = &level
+		decision.AnomalyTimestamps = []int64{source.Record.SourceTime}
+	}
+	batch, err := input.BuildTriggerDecisionBatch([]contract.TriggerDecision{decision})
 	if err != nil {
 		t.Fatalf("BuildTriggerDecisionBatch() error = %v", err)
 	}

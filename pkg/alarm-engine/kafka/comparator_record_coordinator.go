@@ -19,7 +19,12 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/comparator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/consumer"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/contract"
 )
+
+type ComparisonAuditSink interface {
+	WriteBatch(context.Context, *contract.ComparisonAuditBatch) error
+}
 
 // comparatorRecordCoordinator serializes every claim in one assignment around
 // the Run's single Prepare-to-commit boundary.
@@ -30,6 +35,7 @@ type comparatorRecordCoordinator struct {
 	handle     *comparatorAssignmentHandle
 	session    sarama.ConsumerGroupSession
 	offsets    OffsetCommitter
+	audits     ComparisonAuditSink
 	run        *comparator.Run
 	epoch      string
 	failed     error
@@ -40,9 +46,10 @@ func newComparatorRecordCoordinator(
 	handle *comparatorAssignmentHandle,
 	session sarama.ConsumerGroupSession,
 	offsets OffsetCommitter,
+	audits ComparisonAuditSink,
 ) (*comparatorRecordCoordinator, error) {
-	if assignment == nil || handle == nil || handle.generation == nil || session == nil || offsets == nil {
-		return nil, errors.New("kafka comparator record: assignment, handle, session and offset committer are required")
+	if assignment == nil || handle == nil || handle.generation == nil || session == nil || offsets == nil || audits == nil {
+		return nil, errors.New("kafka comparator record: assignment, handle, session, offset committer and audit sink are required")
 	}
 	id := sessionAssignmentID(session)
 	assignment.mu.Lock()
@@ -69,6 +76,7 @@ func newComparatorRecordCoordinator(
 		handle:     handle,
 		session:    session,
 		offsets:    offsets,
+		audits:     audits,
 		run:        run,
 		epoch:      epoch,
 	}, nil
@@ -117,8 +125,18 @@ func (c *comparatorRecordCoordinator) Process(ctx context.Context, record consum
 	if err != nil {
 		return nil, c.fail(err)
 	}
+	auditBatches, err := c.run.PreviewAudits(prepared, comparator.Gates{StableEpoch: true})
+	if err != nil {
+		return nil, c.fail(err)
+	}
+	for _, auditBatch := range auditBatches {
+		if err := c.audits.WriteBatch(ctx, auditBatch); err != nil {
+			failure := errors.Join(err, c.run.Abort(prepared, err))
+			return nil, c.fail(failure)
+		}
+	}
 	if err := c.offsets.CommitOffset(ctx, c.session, record); err != nil {
-		failure := errors.Join(err, c.run.CommitFailed(prepared, err))
+		failure := errors.Join(err, c.run.Abort(prepared, err))
 		return nil, c.fail(failure)
 	}
 	updates, err := c.run.CommitSucceeded(prepared)

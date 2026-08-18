@@ -192,7 +192,7 @@ func (r *Run) FreezeBarrier(epoch, inputID string, snapshot BarrierSnapshot) err
 	return nil
 }
 
-func (r *Run) commitCoverageLocked(inflight *preparedRecord) error {
+func (r *Run) prepareCoverageLocked(inflight *preparedRecord) error {
 	var observedAt time.Time
 	if r.coverageTimeout > 0 {
 		var err error
@@ -201,16 +201,21 @@ func (r *Run) commitCoverageLocked(inflight *preparedRecord) error {
 			return err
 		}
 	}
+	inflight.observedAt = observedAt
+	inflight.coverage = make(map[string]*coverageEntry)
 	for _, update := range inflight.updates {
-		item := r.coverage[update.InputID]
+		item := inflight.coverage[update.InputID]
 		if item == nil {
-			item = &coverageEntry{
-				firstSeen:        observedAt,
-				present:          make(map[StreamRole]bool, 3),
-				missingAtBarrier: make(map[StreamRole]bool, 3),
-				late:             make(map[StreamRole]bool, 3),
+			item = cloneCoverageEntry(r.coverage[update.InputID])
+			if item == nil {
+				item = &coverageEntry{
+					firstSeen:        observedAt,
+					present:          make(map[StreamRole]bool, 3),
+					missingAtBarrier: make(map[StreamRole]bool, 3),
+					late:             make(map[StreamRole]bool, 3),
+				}
 			}
-			r.coverage[update.InputID] = item
+			inflight.coverage[update.InputID] = item
 		}
 		role := inflight.stream.role
 		if !item.present[role] {
@@ -230,8 +235,51 @@ func (r *Run) commitCoverageLocked(inflight *preparedRecord) error {
 	return nil
 }
 
+func (r *Run) commitCoverageLocked(inflight *preparedRecord) {
+	for inputID, item := range inflight.coverage {
+		r.coverage[inputID] = item
+	}
+}
+
+func cloneCoverageEntry(source *coverageEntry) *coverageEntry {
+	if source == nil {
+		return nil
+	}
+	cloned := *source
+	cloned.present = cloneRoleBools(source.present)
+	cloned.barriers = cloneBarriers(source.barriers)
+	cloned.missingAtBarrier = cloneRoleBools(source.missingAtBarrier)
+	cloned.late = cloneRoleBools(source.late)
+	return &cloned
+}
+
+func cloneRoleBools(source map[StreamRole]bool) map[StreamRole]bool {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[StreamRole]bool, len(source))
+	for role, value := range source {
+		cloned[role] = value
+	}
+	return cloned
+}
+
+func cloneBarriers(source map[streamPartition]int64) map[streamPartition]int64 {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[streamPartition]int64, len(source))
+	for coordinate, value := range source {
+		cloned[coordinate] = value
+	}
+	return cloned
+}
+
 func (r *Run) coverageComparableLocked(inputID string) bool {
-	item := r.coverage[inputID]
+	return coverageEntryComparable(r.coverage[inputID])
+}
+
+func coverageEntryComparable(item *coverageEntry) bool {
 	if item == nil || !item.present[StreamInput] || !item.present[StreamGo] || !item.present[StreamPython] {
 		return false
 	}

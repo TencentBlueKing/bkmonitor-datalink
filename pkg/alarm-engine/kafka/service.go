@@ -40,11 +40,19 @@ type serviceClient interface {
 	Close() error
 }
 
+type serviceHandler interface {
+	sarama.ConsumerGroupHandler
+	BeginDrain() <-chan struct{}
+	serviceSnapshot() assignmentSnapshot
+}
+
+type serviceHandlerFactory func(func(error)) (serviceHandler, error)
+
 type Service struct {
-	topic        string
+	topics       []string
 	group        consumerGroup
 	client       serviceClient
-	handler      *Handler
+	handler      serviceHandler
 	drainTimeout time.Duration
 
 	groupResource  ownedResource
@@ -123,14 +131,45 @@ func newOwnedService(
 	offsets OffsetCommitter,
 	drainTimeout time.Duration,
 ) (*Service, error) {
-	if topic == "" || group == nil || client == nil || newProcessor == nil || offsets == nil {
+	if topic == "" || newProcessor == nil || offsets == nil {
 		return nil, errors.New("kafka service: topic, group, client, processor factory and offset committer are required")
+	}
+	return newOwnedGroupService(
+		[]string{topic}, group, client,
+		func(reportFatal func(error)) (serviceHandler, error) {
+			return NewHandler(newProcessor, offsets, reportFatal), nil
+		},
+		drainTimeout,
+	)
+}
+
+func newOwnedGroupService(
+	topics []string,
+	group consumerGroup,
+	client serviceClient,
+	newHandler serviceHandlerFactory,
+	drainTimeout time.Duration,
+) (*Service, error) {
+	if len(topics) == 0 || group == nil || client == nil || newHandler == nil {
+		return nil, errors.New("kafka service: topics, group, client and handler factory are required")
 	}
 	if drainTimeout <= 0 {
 		return nil, errors.New("kafka service: drain timeout must be positive")
 	}
+	ownedTopics := make([]string, len(topics))
+	seenTopics := make(map[string]struct{}, len(topics))
+	for index, topic := range topics {
+		if err := validateKafkaTopicName("topics", topic); err != nil {
+			return nil, err
+		}
+		if _, ok := seenTopics[topic]; ok {
+			return nil, errors.New("kafka service: topics must be unique")
+		}
+		seenTopics[topic] = struct{}{}
+		ownedTopics[index] = topic
+	}
 	service := &Service{
-		topic:              topic,
+		topics:             ownedTopics,
 		group:              group,
 		client:             client,
 		drainTimeout:       drainTimeout,
@@ -144,7 +183,14 @@ func newOwnedService(
 	}
 	service.groupResource.close = group.Close
 	service.clientResource.close = client.Close
-	service.handler = NewHandler(newProcessor, offsets, service.reportFatal)
+	handler, err := newHandler(service.reportFatal)
+	if err != nil {
+		return nil, err
+	}
+	if handler == nil {
+		return nil, errors.New("kafka service: handler factory returned nil")
+	}
+	service.handler = handler
 	return service, nil
 }
 
@@ -240,10 +286,10 @@ func (s *Service) FatalError() error {
 }
 
 func (s *Service) LifecycleSnapshot() lifecycle.Snapshot {
-	if s == nil || s.handler == nil || s.handler.assignment == nil {
+	if s == nil || s.handler == nil {
 		return lifecycle.Snapshot{}
 	}
-	assignment := s.handler.assignment.Snapshot()
+	assignment := s.handler.serviceSnapshot()
 	fatal := s.firstFatal()
 	s.drainMu.Lock()
 	snapshot := lifecycle.Snapshot{
@@ -284,7 +330,7 @@ func (s *Service) consumeLoop(ctx context.Context) error {
 		if s.firstFatal() != nil {
 			return nil
 		}
-		err := s.group.Consume(ctx, []string{s.topic}, s.handler)
+		err := s.group.Consume(ctx, append([]string(nil), s.topics...), s.handler)
 		if ctx.Err() != nil || s.closing.Load() || s.firstFatal() != nil {
 			return nil
 		}

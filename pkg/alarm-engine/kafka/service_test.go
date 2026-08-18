@@ -532,6 +532,46 @@ func TestServiceConcurrentForcedCloseNormalizesDerivedClosedClient(t *testing.T)
 	}
 }
 
+func TestOwnedGroupServiceConsumesAllComparatorTopics(t *testing.T) {
+	t.Parallel()
+
+	wantTopics := []string{"trigger-input", "go-decision", "py-decision"}
+	observed := make(chan []string, 1)
+	group := newFakeConsumerGroup(func(ctx context.Context, topics []string, _ sarama.ConsumerGroupHandler) error {
+		observed <- append([]string(nil), topics...)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	client := &fakeServiceClient{}
+	service, err := newOwnedGroupService(
+		wantTopics,
+		group,
+		client,
+		func(reportFatal func(error)) (serviceHandler, error) {
+			return NewHandler(noopProcessorFactory(), fakeSyncOffsetCommitter{}, reportFatal), nil
+		},
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("newOwnedGroupService() error = %v", err)
+	}
+	runContext, cancelRun := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- service.Run(runContext) }()
+	select {
+	case topics := <-observed:
+		if !reflect.DeepEqual(topics, wantTopics) {
+			t.Fatalf("Consume() topics = %v, want %v", topics, wantTopics)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("service did not start consuming")
+	}
+	cancelRun()
+	if err := waitError(t, runDone); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
 func TestServiceForcedCloseReturnsKnownClientErrorAtDeadline(t *testing.T) {
 	t.Parallel()
 

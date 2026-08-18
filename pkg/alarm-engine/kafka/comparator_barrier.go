@@ -25,13 +25,16 @@ import (
 type comparatorBarrierAdapter struct {
 	records      *comparatorRecordCoordinator
 	beginCapture func(string) (time.Time, error)
+	lastCoverage map[string]string
 }
 
 func newComparatorBarrierAdapter(records *comparatorRecordCoordinator) (*comparatorBarrierAdapter, error) {
 	if records == nil || records.assignment == nil || records.assignment.metadata == nil || records.run == nil {
 		return nil, errors.New("kafka comparator barrier: initialized record coordinator is required")
 	}
-	return &comparatorBarrierAdapter{records: records, beginCapture: records.run.BeginBarrierCapture}, nil
+	return &comparatorBarrierAdapter{
+		records: records, beginCapture: records.run.BeginBarrierCapture, lastCoverage: make(map[string]string),
+	}, nil
 }
 
 // CaptureOverdue freezes fresh broker high-water barriers for every overdue
@@ -71,6 +74,9 @@ func (a *comparatorBarrierAdapter) CaptureOverdue(ctx context.Context) (int, err
 		}
 	}
 	if len(candidates) == 0 {
+		if err := a.publishChangedCoverage(ctx, snapshots); err != nil {
+			return 0, records.fail(err)
+		}
 		return 0, nil
 	}
 	sort.Slice(assignments, func(left, right int) bool {
@@ -150,7 +156,53 @@ func (a *comparatorBarrierAdapter) CaptureOverdue(ctx context.Context) (int, err
 	if activeErr != nil {
 		return 0, records.fail(activeErr)
 	}
+	refreshed, err := records.run.SweepCoverage(records.epoch)
+	if err != nil {
+		return 0, records.fail(err)
+	}
+	if err := a.publishChangedCoverage(ctx, refreshed); err != nil {
+		return 0, records.fail(err)
+	}
 	return len(candidates), nil
+}
+
+func (a *comparatorBarrierAdapter) publishChangedCoverage(ctx context.Context, snapshots []comparator.CoverageSnapshot) error {
+	changedIDs := make([]string, 0)
+	signatures := make(map[string]string)
+	for _, snapshot := range snapshots {
+		if !snapshot.BarrierFrozen {
+			continue
+		}
+		signature := coverageAuditSignature(snapshot)
+		if a.lastCoverage[snapshot.InputID] == signature {
+			continue
+		}
+		changedIDs = append(changedIDs, snapshot.InputID)
+		signatures[snapshot.InputID] = signature
+	}
+	if len(changedIDs) == 0 {
+		return nil
+	}
+	batches, err := a.records.run.AuditBatches(a.records.epoch, changedIDs, comparator.Gates{StableEpoch: true})
+	if err != nil {
+		return err
+	}
+	if len(batches) == 0 {
+		return errors.New("kafka comparator barrier: changed coverage produced no audit")
+	}
+	for _, batch := range batches {
+		if err := a.records.audits.WriteBatch(ctx, batch); err != nil {
+			return fmt.Errorf("kafka comparator barrier: publish audit: %w", err)
+		}
+	}
+	for inputID, signature := range signatures {
+		a.lastCoverage[inputID] = signature
+	}
+	return nil
+}
+
+func coverageAuditSignature(snapshot comparator.CoverageSnapshot) string {
+	return fmt.Sprintf("%d|%t|%v|%v|%v", snapshot.Phase, snapshot.BarrierFrozen, snapshot.MissingRoles, snapshot.MissingAtBarrierRoles, snapshot.LateRoles)
 }
 
 type barrierCoordinate struct {

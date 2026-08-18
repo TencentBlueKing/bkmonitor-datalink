@@ -137,6 +137,15 @@ type decisionBatchIdentity struct {
 	DecisionAlgorithm    string
 }
 
+type auditObservation struct {
+	assessment        Assessment
+	input             *contract.TriggerInput
+	outcome           contract.DetectionOutcome
+	sourceFingerprint [sha256.Size]byte
+	goDecision        *decisionObservation
+	pythonDecision    *decisionObservation
+}
+
 func NewJoiner(runEpoch string, maxEntries int) (*Joiner, error) {
 	if runEpoch == "" {
 		return nil, fmt.Errorf("comparator: run epoch must be non-empty")
@@ -272,6 +281,56 @@ func (j *Joiner) Assess(runEpoch, inputID string, gates Gates) (Assessment, bool
 	if !ok {
 		return Assessment{}, false, nil
 	}
+	assessment, err := assessEntry(inputID, item, gates)
+	return assessment, true, err
+}
+
+func (j *Joiner) auditObservation(runEpoch, inputID string, gates Gates) (auditObservation, bool, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if err := j.requireEpoch(runEpoch); err != nil {
+		return auditObservation{}, false, err
+	}
+	item, ok := j.entries[inputID]
+	if !ok || item.source == nil {
+		return auditObservation{}, false, nil
+	}
+	assessment, err := assessEntry(inputID, item, gates)
+	if err != nil {
+		return auditObservation{}, false, err
+	}
+	return auditObservation{
+		assessment:        assessment,
+		input:             item.source.input,
+		outcome:           *item.source.outcome,
+		sourceFingerprint: item.source.fingerprint,
+		goDecision:        cloneDecisionObservation(item.goDecision),
+		pythonDecision:    cloneDecisionObservation(item.pythonDecision),
+	}, true, nil
+}
+
+func (j *Joiner) firstSourceTime(runEpoch string, inputIDs []string) (int64, bool, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if err := j.requireEpoch(runEpoch); err != nil {
+		return 0, false, err
+	}
+	var first int64
+	found := false
+	for _, inputID := range inputIDs {
+		item := j.entries[inputID]
+		if item == nil || item.source == nil {
+			continue
+		}
+		sourceTime := item.source.outcome.Record.SourceTime
+		if !found || sourceTime < first {
+			first, found = sourceTime, true
+		}
+	}
+	return first, found, nil
+}
+
+func assessEntry(inputID string, item *entry, gates Gates) (Assessment, error) {
 	assessment := Assessment{
 		InputID:        inputID,
 		Authoritative:  item.source != nil,
@@ -305,22 +364,22 @@ func (j *Joiner) Assess(runEpoch, inputID string, gates Gates) (Assessment, bool
 		assessment.Join = JoinComplete
 	}
 	if assessment.Join != JoinComplete {
-		return assessment, true, nil
+		return assessment, nil
 	}
 	eligibilityValue, err := eligibility(item.source, gates)
 	if err != nil {
-		return Assessment{}, false, err
+		return Assessment{}, err
 	}
 	assessment.Eligibility = eligibilityValue
 	if assessment.Eligibility != EligibilityEligible {
-		return assessment, true, nil
+		return assessment, nil
 	}
 	if item.goDecision.fingerprint == item.pythonDecision.fingerprint {
 		assessment.Verdict = VerdictMatch
 	} else {
 		assessment.Verdict = VerdictHardDiff
 	}
-	return assessment, true, nil
+	return assessment, nil
 }
 
 func (j *Joiner) requireEpoch(runEpoch string) error {
@@ -484,6 +543,15 @@ func cloneDecision(decision contract.TriggerDecision) contract.TriggerDecision {
 	}
 	cloned.AnomalyTimestamps = append([]int64{}, decision.AnomalyTimestamps...)
 	return cloned
+}
+
+func cloneDecisionObservation(observation *decisionObservation) *decisionObservation {
+	if observation == nil {
+		return nil
+	}
+	cloned := *observation
+	cloned.decision = cloneDecision(observation.decision)
+	return &cloned
 }
 
 func inputIDsFromSources(observations []sourceObservation) []string {

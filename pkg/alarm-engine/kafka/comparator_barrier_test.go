@@ -33,6 +33,11 @@ func TestComparatorBarrierCapturesMissingPartitionsOnceAfterRunClock(t *testing.
 		"trigger-input": {0}, "go-decision": {0, 1}, "py-decision": {0},
 	})
 	coordinator, run, epoch := setupComparatorBarrierCoordinator(t, metadata, time.Nanosecond)
+	auditBatches := make([]*contract.ComparisonAuditBatch, 0)
+	coordinator.audits = comparisonAuditSinkFunc(func(_ context.Context, batch *contract.ComparisonAuditBatch) error {
+		auditBatches = append(auditBatches, batch)
+		return nil
+	})
 	adapter, err := newComparatorBarrierAdapter(coordinator)
 	if err != nil {
 		t.Fatalf("newComparatorBarrierAdapter() error = %v", err)
@@ -57,6 +62,7 @@ func TestComparatorBarrierCapturesMissingPartitionsOnceAfterRunClock(t *testing.
 		}
 	}
 	metadata.resetObservations()
+	auditBatches = nil
 
 	frozen, err := adapter.CaptureOverdue(context.Background())
 	if err != nil || frozen != 1 {
@@ -70,6 +76,18 @@ func TestComparatorBarrierCapturesMissingPartitionsOnceAfterRunClock(t *testing.
 	snapshot, ok, err := run.Coverage(epoch, input.DetectionOutcomes[0].InputID)
 	if err != nil || !ok || snapshot.Phase != comparator.CoverageOverdue || !snapshot.BarrierFrozen {
 		t.Fatalf("Coverage() = %#v, ok=%v error=%v", snapshot, ok, err)
+	}
+	audited := 0
+	for _, batch := range auditBatches {
+		for _, audit := range batch.Audits {
+			if !audit.Coverage.BarrierFrozen {
+				t.Fatalf("barrier audit = %#v", audit)
+			}
+			audited++
+		}
+	}
+	if audited != len(input.DetectionOutcomes) {
+		t.Fatalf("barrier audit batches = %#v", auditBatches)
 	}
 	if frozen, err := adapter.CaptureOverdue(context.Background()); err != nil || frozen != 0 {
 		t.Fatalf("CaptureOverdue(repeat) frozen=%d error=%v, want no-op", frozen, err)
@@ -544,7 +562,10 @@ func setupComparatorBarrierCoordinatorWithContext(
 	committer := comparatorOffsetCommitterFunc(func(context.Context, sarama.ConsumerGroupSession, consumer.Record) error {
 		return nil
 	})
-	coordinator, err := newComparatorRecordCoordinator(assignment, handle, session, committer)
+	coordinator, err := newComparatorRecordCoordinator(
+		assignment, handle, session, committer,
+		comparisonAuditSinkFunc(func(context.Context, *contract.ComparisonAuditBatch) error { return nil }),
+	)
 	if err != nil {
 		t.Fatalf("newComparatorRecordCoordinator() error = %v", err)
 	}

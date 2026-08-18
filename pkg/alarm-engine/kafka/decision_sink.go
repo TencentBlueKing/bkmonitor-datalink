@@ -120,6 +120,19 @@ func (s *DecisionSink) WriteBatch(ctx context.Context, batch *contract.TriggerDe
 	if err != nil {
 		return fmt.Errorf("kafka decision sink: derive partition key: %w", err)
 	}
+	return s.writeEncoded(ctx, key, payload)
+}
+
+func (s *DecisionSink) writeEncoded(ctx context.Context, key, payload []byte) error {
+	if s == nil || s.producer == nil {
+		return ErrDecisionSinkClosed
+	}
+	if ctx == nil {
+		return errors.New("kafka decision sink: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	if s.closing {

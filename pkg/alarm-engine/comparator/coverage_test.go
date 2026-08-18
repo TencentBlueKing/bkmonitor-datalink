@@ -388,7 +388,7 @@ func TestCoverageConfigurationAndClockFailClosed(t *testing.T) {
 		t.Fatalf("NewRun() error = %v", err)
 	}
 	_, input := testTriggerInput(t, "normal")
-	prepared, err := run.Prepare(StreamRecord{
+	_, err = run.Prepare(StreamRecord{
 		Epoch:     "run-1",
 		Role:      StreamGo,
 		Topic:     "go",
@@ -397,11 +397,8 @@ func TestCoverageConfigurationAndClockFailClosed(t *testing.T) {
 		Key:       mustPartitionKey(t, input),
 		Value:     testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger),
 	})
-	if err != nil {
-		t.Fatalf("Prepare() error = %v", err)
-	}
-	if _, err := run.CommitSucceeded(prepared); err == nil {
-		t.Fatal("CommitSucceeded() accepted a zero clock")
+	if err == nil {
+		t.Fatal("Prepare() accepted a zero clock before the external acknowledgement boundary")
 	}
 	if run.Valid() {
 		t.Fatal("a zero clock left the Run valid")

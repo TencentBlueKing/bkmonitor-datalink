@@ -59,10 +59,12 @@ type streamPartition struct {
 }
 
 type preparedRecord struct {
-	token   uint64
-	stream  streamPartition
-	offset  int64
-	updates []Update
+	token      uint64
+	stream     streamPartition
+	offset     int64
+	updates    []Update
+	coverage   map[string]*coverageEntry
+	observedAt time.Time
 }
 
 // Run serializes observations for one immutable assignment epoch. It exposes
@@ -83,6 +85,7 @@ type Run struct {
 	now             func() time.Time
 	lastNow         time.Time
 	coverage        map[string]*coverageEntry
+	epochStartTime  *int64
 }
 
 type RunOption func(*runOptions) error
@@ -221,12 +224,25 @@ func (r *Run) Prepare(record StreamRecord) (Prepared, error) {
 	if r.nextToken == 0 {
 		return Prepared{}, r.invalidateLocked(fmt.Errorf("comparator: prepared token overflow"))
 	}
-	r.inflight = &preparedRecord{
+	inflight := &preparedRecord{
 		token:   r.nextToken,
 		stream:  coordinate,
 		offset:  record.Offset,
 		updates: append([]Update(nil), updates...),
 	}
+	if err := r.prepareCoverageLocked(inflight); err != nil {
+		return Prepared{}, r.invalidateLocked(err)
+	}
+	if coordinate.role == StreamInput && r.epochStartTime == nil {
+		startedAt, ok, err := r.joiner.firstSourceTime(r.epoch, inputIDsFromUpdates(updates))
+		if err != nil {
+			return Prepared{}, r.invalidateLocked(err)
+		}
+		if ok {
+			r.epochStartTime = &startedAt
+		}
+	}
+	r.inflight = inflight
 	return Prepared{owner: r, token: r.nextToken}, nil
 }
 
@@ -240,15 +256,29 @@ func (r *Run) CommitSucceeded(prepared Prepared) ([]Update, error) {
 		return nil, r.invalidateLocked(fmt.Errorf("comparator: prepared record mismatch"))
 	}
 	inflight := r.inflight
-	if err := r.commitCoverageLocked(inflight); err != nil {
-		return nil, r.invalidateLocked(err)
-	}
+	r.commitCoverageLocked(inflight)
 	r.nextOffsets[inflight.stream] = inflight.offset + 1
 	r.inflight = nil
 	return append([]Update(nil), inflight.updates...), nil
 }
 
 func (r *Run) CommitFailed(prepared Prepared, cause error) error {
+	if cause == nil {
+		cause = errors.New("broker commit failed without a cause")
+	}
+	return r.abort(prepared, fmt.Errorf("broker commit failed: %w", cause))
+}
+
+// Abort permanently rejects the current assignment epoch after an external
+// audit or transport failure before the prepared record becomes visible.
+func (r *Run) Abort(prepared Prepared, cause error) error {
+	if cause == nil {
+		cause = errors.New("prepared record aborted without a cause")
+	}
+	return r.abort(prepared, fmt.Errorf("prepared record aborted: %w", cause))
+}
+
+func (r *Run) abort(prepared Prepared, cause error) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.requireValidLocked(); err != nil {
@@ -257,10 +287,7 @@ func (r *Run) CommitFailed(prepared Prepared, cause error) error {
 	if !r.matchesInflightLocked(prepared) {
 		return r.invalidateLocked(fmt.Errorf("comparator: prepared record mismatch"))
 	}
-	if cause == nil {
-		cause = errors.New("broker commit failed without a cause")
-	}
-	return r.invalidateLocked(fmt.Errorf("comparator: broker commit failed: %w", cause))
+	return r.invalidateLocked(cause)
 }
 
 // Invalidate permanently rejects an assignment epoch after rebalance,
@@ -354,4 +381,17 @@ func (r *Run) invalidateLocked(err error) error {
 
 func validStreamRole(role StreamRole) bool {
 	return role == StreamInput || role == StreamGo || role == StreamPython
+}
+
+func inputIDsFromUpdates(updates []Update) []string {
+	inputIDs := make([]string, 0, len(updates))
+	seen := make(map[string]struct{}, len(updates))
+	for _, update := range updates {
+		if _, ok := seen[update.InputID]; ok {
+			continue
+		}
+		seen[update.InputID] = struct{}{}
+		inputIDs = append(inputIDs, update.InputID)
+	}
+	return inputIDs
 }

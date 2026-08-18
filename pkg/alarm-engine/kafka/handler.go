@@ -73,6 +73,13 @@ func (h *Handler) Ready() bool {
 	return h != nil && h.assignment != nil && h.assignment.Ready()
 }
 
+func (h *Handler) serviceSnapshot() assignmentSnapshot {
+	if h == nil || h.assignment == nil {
+		return assignmentSnapshot{}
+	}
+	return h.assignment.Snapshot()
+}
+
 func (h *Handler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	if h == nil || session == nil || claim == nil {
 		return errors.New("kafka claim: handler, session and claim are required")

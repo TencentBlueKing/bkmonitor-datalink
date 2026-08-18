@@ -1550,22 +1550,22 @@ func TestInstance_QueryLabelValuesAppliesEffectiveLimit(t *testing.T) {
 		maxSize      int
 		expectedSize int
 	}{
-		"request limit": {
+		"请求限制生效": {
 			requestSize:  1,
 			maxSize:      10000,
 			expectedSize: 1,
 		},
-		"request above elasticsearch default bucket count": {
+		"请求限制超过默认 bucket 数量": {
 			requestSize:  20,
 			maxSize:      10000,
 			expectedSize: 20,
 		},
-		"storage maximum": {
+		"请求限制截断到存储最大值": {
 			requestSize:  20000,
 			maxSize:      10000,
 			expectedSize: 10000,
 		},
-		"default to storage maximum": {
+		"缺省限制使用存储最大值": {
 			requestSize:  0,
 			maxSize:      10000,
 			expectedSize: 10000,

@@ -156,6 +156,7 @@ func (i *Instance) DirectQuery(
 }
 
 func sortAndLimitLabelValues(values []string, limit int) []string {
+	// 多路由去重后统一排序并截断，避免每个子查询分别限额导致总数超限。
 	sort.Strings(values)
 	if limit > 0 && len(values) > limit {
 		return values[:limit]

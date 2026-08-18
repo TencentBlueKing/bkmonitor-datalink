@@ -163,6 +163,7 @@ func cloneStringMap(source map[string]string) map[string]string {
 }
 
 func effectiveQuerySize(querySize, maxSize int) int {
+	// 聚合查询的 size 受存储侧最大值保护，避免请求值过大或缺省时退化为 ES 默认 10。
 	if maxSize <= 0 {
 		return querySize
 	}
@@ -925,6 +926,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	qo.physicalIndexes = physicalIndexes
 
 	unit := metadata.GetQueryParams(ctx).TimeUnit
+	// 根查询仍使用 size=0，枚举数量需要通过 terms.size 单独限制。
 	size := effectiveQuerySize(labelValuesQuery.Size, i.maxSize)
 	fact := NewFormatFactory(ctx).
 		WithQuery(name, labelValuesQuery.TimeField, start, end, unit, size).

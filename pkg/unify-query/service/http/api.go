@@ -33,6 +33,7 @@ import (
 )
 
 func effectiveTagValuesLimit(requestLimit, maxSize int) int {
+	// tag_values 的缺省、非正数和超限请求统一收敛到服务端安全上限。
 	if maxSize <= 0 {
 		return requestLimit
 	}
@@ -248,6 +249,7 @@ func HandlerTagValues(c *gin.Context) {
 	if err != nil {
 		return
 	}
+	// 先统一有效 limit，确保每个子查询和最终合并结果使用同一上限。
 	effectiveLimit := configuredTagValuesLimit(params.Limit)
 	params.Limit = effectiveLimit
 
@@ -316,6 +318,7 @@ func HandlerTagValues(c *gin.Context) {
 		name := key.(string)
 		lb := value.(*set.Set[string])
 
+		// 多路由结果合并后可能超过单路由 terms.size，需要再次截断。
 		data.Values[name] = sortAndLimitStrings(lb.ToArray(), effectiveLimit)
 		return true
 	})

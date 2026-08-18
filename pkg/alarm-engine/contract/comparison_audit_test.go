@@ -11,6 +11,9 @@ package contract
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -46,6 +49,23 @@ func TestComparisonAuditBatchRoundTripAndPartitionKey(t *testing.T) {
 	}
 }
 
+func TestComparisonAuditEncodesCompactDecisionEvidence(t *testing.T) {
+	t.Parallel()
+
+	payload, err := EncodeComparisonAuditBatch(validComparisonAuditBatch(t))
+	if err != nil {
+		t.Fatalf("EncodeComparisonAuditBatch() error = %v", err)
+	}
+	if bytes.Contains(payload, []byte(`"anomaly_timestamps":[`)) {
+		t.Fatal("comparison audit repeated the full decision timestamp array")
+	}
+	for _, field := range [][]byte{[]byte(`"anomaly_timestamps_count":1`), []byte(`"anomaly_timestamps_sha256":"`)} {
+		if !bytes.Contains(payload, field) {
+			t.Fatalf("comparison audit is missing compact decision evidence field %s", field)
+		}
+	}
+}
+
 func TestBuildComparisonAuditBatchOwnsInput(t *testing.T) {
 	t.Parallel()
 
@@ -61,16 +81,18 @@ func TestBuildComparisonAuditBatchOwnsInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildComparisonAuditBatch() error = %v", err)
 	}
-	wantGeneration := built.Audits[0].GoDecision.BatchIdentity.StrategyRef.Generation
 	wantLevel := *built.Audits[0].GoDecision.Decision.Level
-	wantTimestamp := built.Audits[0].GoDecision.Decision.AnomalyTimestamps[0]
+	wantTimestampCount := built.Audits[0].GoDecision.Decision.AnomalyTimestampsCount
+	wantTimestampSHA := built.Audits[0].GoDecision.Decision.AnomalyTimestampsSHA256
 	audit.Coverage.MissingRoles = append(audit.Coverage.MissingRoles, ComparisonRoleGo)
-	audit.GoDecision.BatchIdentity.StrategyRef.Generation += "-mutated"
+	audit.GoDecision.IdentityMismatchFields = append(audit.GoDecision.IdentityMismatchFields, ComparisonDecisionIdentityGeneration)
 	*audit.GoDecision.Decision.Level = 1
-	audit.GoDecision.Decision.AnomalyTimestamps[0] = 1
-	if built.Audits[0].GoDecision.BatchIdentity.StrategyRef.Generation != wantGeneration ||
+	audit.GoDecision.Decision.AnomalyTimestampsCount = 2
+	audit.GoDecision.Decision.AnomalyTimestampsSHA256 = strings.Repeat("f", 64)
+	if len(built.Audits[0].GoDecision.IdentityMismatchFields) != 0 ||
 		*built.Audits[0].GoDecision.Decision.Level != wantLevel ||
-		built.Audits[0].GoDecision.Decision.AnomalyTimestamps[0] != wantTimestamp {
+		built.Audits[0].GoDecision.Decision.AnomalyTimestampsCount != wantTimestampCount ||
+		built.Audits[0].GoDecision.Decision.AnomalyTimestampsSHA256 != wantTimestampSHA {
 		t.Fatal("BuildComparisonAuditBatch() retained caller-owned nested state")
 	}
 }
@@ -94,11 +116,6 @@ func TestBuildComparisonAuditBatchDoesNotNormalizeNilArrays(t *testing.T) {
 	if err := build(audit); err == nil {
 		t.Fatal("BuildComparisonAuditBatch() normalized a nil coverage array")
 	}
-	audit = source.Audits[0]
-	audit.GoDecision.Decision.AnomalyTimestamps = nil
-	if err := build(audit); err == nil {
-		t.Fatal("BuildComparisonAuditBatch() normalized a nil decision array")
-	}
 }
 
 func TestComparisonAuditIDIsStableForReplayAndChangesWithSemantics(t *testing.T) {
@@ -109,7 +126,7 @@ func TestComparisonAuditIDIsStableForReplayAndChangesWithSemantics(t *testing.T)
 	if err != nil {
 		t.Fatalf("DeriveComparisonAuditID() error = %v", err)
 	}
-	const wantAuditID = "766384b4d648c824b94062e6d3c4e60fea2474255b98c2b05dc1f11e698c1794"
+	const wantAuditID = "2fc41395686ae7eeb5adeed6150d452114023e87bcb2fffc665fe554035d3d12"
 	if first != wantAuditID {
 		t.Fatalf("audit_id = %q, want %q", first, wantAuditID)
 	}
@@ -229,7 +246,7 @@ func TestComparisonAuditBatchRejectsWireIdentityDrift(t *testing.T) {
 			batch.Audits[0].AuditID, _ = DeriveComparisonAuditID(batch.Audits[0])
 		}},
 		{name: "unacknowledged Go batch identity drift", mutate: func(batch *ComparisonAuditBatch) {
-			batch.Audits[0].GoDecision.BatchIdentity.StrategyRef.Generation += "-stale"
+			batch.Audits[0].GoDecision.BatchIdentitySHA256 = strings.Repeat("e", 64)
 			batch.Audits[0].AuditID, _ = DeriveComparisonAuditID(batch.Audits[0])
 		}},
 	}
@@ -247,14 +264,17 @@ func TestComparisonAuditBatchRejectsWireIdentityDrift(t *testing.T) {
 func TestComparisonAuditRejectsInvalidSideThatContradictsItsOwnInputIdentity(t *testing.T) {
 	t.Parallel()
 
-	audit := validComparisonAuditBatch(t).Audits[0]
-	audit.GoDecision.BatchIdentity.StrategyRef.ContentSHA256 = strings.Repeat("e", 64)
+	batch := validComparisonAuditBatch(t)
+	audit := &batch.Audits[0]
+	audit.GoDecision.BatchIdentitySHA256 = strings.Repeat("e", 64)
 	audit.GoInvalid = true
+	audit.GoDecision.InvalidReasonCode = ComparisonDecisionInvalidLevel
 	audit.JoinStatus = ComparisonJoinInvalid
 	audit.Eligibility = ComparisonEligibilityNone
 	audit.Verdict = ComparisonVerdictNone
-	if _, err := DeriveComparisonAuditID(audit); err == nil {
-		t.Fatal("DeriveComparisonAuditID() accepted a decision that contradicts its own batch identity")
+	audit.AuditID, _ = DeriveComparisonAuditID(*audit)
+	if err := batch.Validate(); err == nil {
+		t.Fatal("Validate() accepted a decision that contradicts its own batch identity")
 	}
 }
 
@@ -263,7 +283,9 @@ func TestComparisonAuditPreservesInvalidSideBatchIdentity(t *testing.T) {
 
 	batch := validComparisonAuditBatch(t)
 	audit := &batch.Audits[0]
-	audit.GoDecision.BatchIdentity.StrategyRef.Generation += "-stale"
+	audit.GoDecision.BatchIdentitySHA256 = strings.Repeat("e", 64)
+	audit.GoDecision.InvalidReasonCode = ComparisonDecisionInvalidBatchIdentity
+	audit.GoDecision.IdentityMismatchFields = []string{ComparisonDecisionIdentityGeneration}
 	audit.GoInvalid = true
 	audit.JoinStatus = ComparisonJoinInvalid
 	audit.Eligibility = ComparisonEligibilityNone
@@ -322,7 +344,8 @@ func TestComparisonAuditDecoderNegotiatesStrictEnvelope(t *testing.T) {
 		evidence.Decision.Outcome = DecisionOutcomeNoTrigger
 		evidence.Decision.ReasonCode = DecisionReasonTriggerConditionNotMet
 		evidence.Decision.Level = nil
-		evidence.Decision.AnomalyTimestamps = []int64{}
+		evidence.Decision.AnomalyTimestampsCount = 0
+		evidence.Decision.AnomalyTimestampsSHA256 = comparisonDecisionTimestampsSHA256(nil)
 	}
 	noTrigger.Audits[0].AuditID, _ = DeriveComparisonAuditID(noTrigger.Audits[0])
 	noTriggerPayload, err := EncodeComparisonAuditBatch(noTrigger)
@@ -338,6 +361,56 @@ func TestComparisonAuditDecoderNegotiatesStrictEnvelope(t *testing.T) {
 	if _, err := DecodeComparisonAuditBatch(explicitNullLevel); err == nil {
 		t.Fatal("DecodeComparisonAuditBatch() accepted an explicit null decision level")
 	}
+	explicitNullInvalidReason := bytes.Replace(
+		noTriggerPayload,
+		[]byte(`"identity_mismatch_fields":[]`),
+		[]byte(`"invalid_reason_code":null,"identity_mismatch_fields":[]`),
+		1,
+	)
+	if _, err := DecodeComparisonAuditBatch(explicitNullInvalidReason); err == nil {
+		t.Fatal("DecodeComparisonAuditBatch() accepted an explicit null invalid_reason_code")
+	}
+}
+
+func TestComparisonAuditDecoderRejectsNonCanonicalEmptyTimestampDigest(t *testing.T) {
+	t.Parallel()
+
+	nonCanonicalDigest := validComparisonAuditBatch(t)
+	for _, evidence := range []*ComparisonDecisionEvidence{
+		nonCanonicalDigest.Audits[0].GoDecision,
+		nonCanonicalDigest.Audits[0].PythonDecision,
+	} {
+		evidence.Decision.Outcome = DecisionOutcomeNoTrigger
+		evidence.Decision.ReasonCode = DecisionReasonTriggerConditionNotMet
+		evidence.Decision.Level = nil
+		evidence.Decision.AnomalyTimestampsCount = 0
+		evidence.Decision.AnomalyTimestampsSHA256 = strings.Repeat("f", 64)
+	}
+	nonCanonicalDigest.Audits[0].AuditID = deriveComparisonAuditIDUncheckedForTest(t, nonCanonicalDigest.Audits[0])
+	nonCanonicalPayload, err := json.Marshal(nonCanonicalDigest)
+	if err != nil {
+		t.Fatalf("json.Marshal(non-canonical digest) error = %v", err)
+	}
+	if _, err := DecodeComparisonAuditBatch(nonCanonicalPayload); err == nil {
+		t.Fatal("DecodeComparisonAuditBatch() accepted a non-canonical empty timestamp digest")
+	}
+}
+
+func deriveComparisonAuditIDUncheckedForTest(t *testing.T, audit ComparisonAudit) string {
+	t.Helper()
+	audit.AuditID = ""
+	payload, err := json.Marshal(audit)
+	if err != nil {
+		t.Fatalf("json.Marshal(audit) error = %v", err)
+	}
+	digest := sha256.New()
+	for _, field := range [][]byte{[]byte(comparisonAuditIDVersionV1), payload} {
+		var prefix [4]byte
+		binary.BigEndian.PutUint32(prefix[:], uint32(len(field)))
+		_, _ = digest.Write(prefix[:])
+		_, _ = digest.Write(field)
+	}
+	return hex.EncodeToString(digest.Sum(nil))
 }
 
 func TestComparisonAuditBatchItemAndByteLimits(t *testing.T) {
@@ -362,7 +435,8 @@ func TestComparisonAuditBatchItemAndByteLimits(t *testing.T) {
 		audit.InputID, audit.RecordID, audit.SourceTime = inputID, recordID, sourceTime
 		audit.GoDecision.Decision.InputID, audit.GoDecision.Decision.RecordID = inputID, recordID
 		audit.GoDecision.Decision.DecisionID, _ = DeriveTriggerDecisionID(inputID)
-		audit.GoDecision.Decision.AnomalyTimestamps = []int64{sourceTime}
+		audit.GoDecision.Decision.AnomalyTimestampsCount = 1
+		audit.GoDecision.Decision.AnomalyTimestampsSHA256 = comparisonDecisionTimestampsSHA256([]int64{sourceTime})
 		audit.PythonDecision.Decision = audit.GoDecision.Decision
 		audit.AuditID, _ = DeriveComparisonAuditID(audit)
 		batch.Audits[index] = audit
@@ -376,17 +450,12 @@ func TestComparisonAuditBatchItemAndByteLimits(t *testing.T) {
 	}
 
 	exact := validComparisonAuditBatch(t)
-	exact.Audits[0].GoInvalid = true
-	exact.Audits[0].JoinStatus = ComparisonJoinInvalid
-	exact.Audits[0].Eligibility = ComparisonEligibilityNone
-	exact.Audits[0].Verdict = ComparisonVerdictNone
-	exact.Audits[0].AuditID, _ = DeriveComparisonAuditID(exact.Audits[0])
 	baseline, err := EncodeComparisonAuditBatch(exact)
 	if err != nil {
 		t.Fatalf("EncodeComparisonAuditBatch(baseline) error = %v", err)
 	}
-	exact.Audits[0].GoDecision.BatchIdentity.StrategyRef.Generation += strings.Repeat("x", MaxComparisonAuditBytesV1-len(baseline))
-	exact.Audits[0].AuditID, _ = DeriveComparisonAuditID(exact.Audits[0])
+	exact.StrategyRef.Generation += strings.Repeat("x", MaxComparisonAuditBytesV1-len(baseline))
+	refreshComparisonAuditBatchIdentity(t, exact)
 	atLimit, err := EncodeComparisonAuditBatch(exact)
 	if err != nil {
 		t.Fatalf("EncodeComparisonAuditBatch(exact limit) error = %v", err)
@@ -397,8 +466,8 @@ func TestComparisonAuditBatchItemAndByteLimits(t *testing.T) {
 	if _, err := DecodeComparisonAuditBatch(atLimit); err != nil {
 		t.Fatalf("DecodeComparisonAuditBatch(exact limit) error = %v", err)
 	}
-	exact.Audits[0].GoDecision.BatchIdentity.StrategyRef.Generation += "x"
-	exact.Audits[0].AuditID, _ = DeriveComparisonAuditID(exact.Audits[0])
+	exact.StrategyRef.Generation += "x"
+	refreshComparisonAuditBatchIdentity(t, exact)
 	if _, err := EncodeComparisonAuditBatch(exact); err == nil {
 		t.Fatal("EncodeComparisonAuditBatch() accepted payload above byte limit")
 	}
@@ -418,6 +487,10 @@ func validComparisonAuditBatch(t *testing.T) *ComparisonAuditBatch {
 		StrategyRef:          input.StrategyIR.StrategyRef,
 		DecisionAlgorithm:    DecisionAlgorithmV1,
 	}
+	identitySHA256, err := DeriveComparisonDecisionBatchIdentitySHA256(identity)
+	if err != nil {
+		t.Fatalf("DeriveComparisonDecisionBatchIdentitySHA256() error = %v", err)
+	}
 	audit := ComparisonAudit{
 		EventKind:   ComparisonAuditEventSnapshot,
 		InputID:     source.InputID,
@@ -430,10 +503,12 @@ func validComparisonAuditBatch(t *testing.T) *ComparisonAuditBatch {
 			Outcome: source.Outcome, SemanticSHA256: strings.Repeat("b", 64),
 		},
 		GoDecision: &ComparisonDecisionEvidence{
-			BatchIdentity: identity, Decision: decision, SemanticSHA256: strings.Repeat("d", 64),
+			BatchIdentitySHA256: identitySHA256, Decision: mustSummarizeTriggerDecision(t, decision),
+			IdentityMismatchFields: []string{}, SemanticSHA256: strings.Repeat("d", 64),
 		},
 		PythonDecision: &ComparisonDecisionEvidence{
-			BatchIdentity: identity, Decision: decision, SemanticSHA256: strings.Repeat("d", 64),
+			BatchIdentitySHA256: identitySHA256, Decision: mustSummarizeTriggerDecision(t, decision),
+			IdentityMismatchFields: []string{}, SemanticSHA256: strings.Repeat("d", 64),
 		},
 		Coverage: ComparisonCoverageEvidence{Phase: ComparisonCoverageComplete, MissingRoles: []string{}, MissingAtBarrierRoles: []string{}, LateRoles: []string{}},
 	}
@@ -448,6 +523,42 @@ func validComparisonAuditBatch(t *testing.T) *ComparisonAuditBatch {
 		t.Fatalf("BuildComparisonAuditBatch() error = %v", err)
 	}
 	return batch
+}
+
+func mustSummarizeTriggerDecision(t *testing.T, decision TriggerDecision) ComparisonDecisionSummary {
+	t.Helper()
+	summary, err := SummarizeTriggerDecision(decision)
+	if err != nil {
+		t.Fatalf("SummarizeTriggerDecision() error = %v", err)
+	}
+	return summary
+}
+
+func refreshComparisonAuditBatchIdentity(t *testing.T, batch *ComparisonAuditBatch) {
+	t.Helper()
+	identitySHA256, err := DeriveComparisonDecisionBatchIdentitySHA256(ComparisonDecisionBatchIdentity{
+		PartitionHashVersion: batch.PartitionHashVersion,
+		TenantID:             batch.TenantID,
+		Purpose:              batch.Purpose,
+		StrategyRef:          batch.StrategyRef,
+		DecisionAlgorithm:    DecisionAlgorithmV1,
+	})
+	if err != nil {
+		t.Fatalf("DeriveComparisonDecisionBatchIdentitySHA256() error = %v", err)
+	}
+	for index := range batch.Audits {
+		audit := &batch.Audits[index]
+		if audit.GoDecision != nil {
+			audit.GoDecision.BatchIdentitySHA256 = identitySHA256
+		}
+		if audit.PythonDecision != nil {
+			audit.PythonDecision.BatchIdentitySHA256 = identitySHA256
+		}
+		audit.AuditID, err = DeriveComparisonAuditID(*audit)
+		if err != nil {
+			t.Fatalf("DeriveComparisonAuditID() error = %v", err)
+		}
+	}
 }
 
 func validComparisonAuditDocument(t *testing.T) map[string]any {

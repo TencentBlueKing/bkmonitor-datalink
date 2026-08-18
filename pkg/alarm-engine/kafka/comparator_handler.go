@@ -21,15 +21,17 @@ import (
 )
 
 type comparatorHandlerSession struct {
-	handle      *comparatorAssignmentHandle
-	initOnce    sync.Once
-	initialized chan struct{}
-	records     *comparatorRecordCoordinator
-	barrier     *comparatorBarrierAdapter
-	initErr     error
-	stopOnce    sync.Once
-	stopBarrier chan struct{}
-	barrierDone chan struct{}
+	handle         *comparatorAssignmentHandle
+	initOnce       sync.Once
+	initialized    chan struct{}
+	records        *comparatorRecordCoordinator
+	barrier        *comparatorBarrierAdapter
+	initErr        error
+	stopOnce       sync.Once
+	stopBarrier    chan struct{}
+	barrierDone    chan struct{}
+	stopping       bool
+	barrierStarted bool
 }
 
 type comparatorHandler struct {
@@ -40,13 +42,14 @@ type comparatorHandler struct {
 	reportFatal     func(error)
 	fatalOnce       sync.Once
 
-	mu        sync.Mutex
-	state     *comparatorHandlerSession
-	ready     bool
-	draining  bool
-	inflight  int
-	drained   chan struct{}
-	drainOnce sync.Once
+	mu               sync.Mutex
+	state            *comparatorHandlerSession
+	ready            bool
+	draining         bool
+	inflightRecords  int
+	inflightBarriers int
+	drained          chan struct{}
+	drainOnce        sync.Once
 }
 
 func newComparatorHandler(
@@ -100,8 +103,11 @@ func (h *comparatorHandler) Cleanup(session sarama.ConsumerGroupSession) error {
 	if state == nil {
 		return nil
 	}
-	h.stopBarrier(state)
+	barrierStarted := h.signalStopBarrier(state)
 	err := h.assignment.Cleanup(state.handle, session)
+	if barrierStarted {
+		<-state.barrierDone
+	}
 	h.mu.Lock()
 	if h.state == state {
 		h.ready = false
@@ -139,11 +145,17 @@ func (h *comparatorHandler) ConsumeClaim(session sarama.ConsumerGroupSession, cl
 		}
 		if state.initErr == nil {
 			h.mu.Lock()
-			if h.state == state && !h.draining {
+			startBarrier := h.state == state && !h.draining && !state.stopping
+			if startBarrier {
 				h.ready = true
+				state.barrierStarted = true
 			}
 			h.mu.Unlock()
-			go h.runBarrier(session.Context(), state)
+			if startBarrier {
+				go h.runBarrier(session.Context(), state)
+			} else {
+				close(state.barrierDone)
+			}
 		} else {
 			close(state.barrierDone)
 		}
@@ -202,12 +214,10 @@ func (h *comparatorHandler) BeginDrain() <-chan struct{} {
 	h.draining = true
 	h.ready = false
 	state := h.state
-	if h.inflight == 0 {
-		h.drainOnce.Do(func() { close(h.drained) })
-	}
+	h.closeDrainedIfIdleLocked()
 	h.mu.Unlock()
 	if state != nil {
-		h.stopBarrier(state)
+		h.signalStopBarrier(state)
 	}
 	return h.drained
 }
@@ -227,7 +237,7 @@ func (h *comparatorHandler) serviceSnapshot() assignmentSnapshot {
 	}
 	h.mu.Lock()
 	snapshot := assignmentSnapshot{
-		ready: h.ready && !h.draining, draining: h.draining, inflightRecords: h.inflight,
+		ready: h.ready && !h.draining, draining: h.draining, inflightRecords: h.inflightRecords,
 	}
 	state := h.state
 	h.mu.Unlock()
@@ -253,19 +263,17 @@ func (h *comparatorHandler) beginRecord() bool {
 	if h.draining {
 		return false
 	}
-	h.inflight++
+	h.inflightRecords++
 	return true
 }
 
 func (h *comparatorHandler) endRecord() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.inflight > 0 {
-		h.inflight--
+	if h.inflightRecords > 0 {
+		h.inflightRecords--
 	}
-	if h.draining && h.inflight == 0 {
-		h.drainOnce.Do(func() { close(h.drained) })
-	}
+	h.closeDrainedIfIdleLocked()
 }
 
 func (h *comparatorHandler) runBarrier(ctx context.Context, state *comparatorHandlerSession) {
@@ -285,21 +293,60 @@ func (h *comparatorHandler) runBarrier(ctx context.Context, state *comparatorHan
 		case <-state.stopBarrier:
 			return
 		case <-ticker.C:
+			if !h.beginBarrier(state) {
+				return
+			}
 			if _, err := state.barrier.CaptureOverdue(ctx); err != nil {
-				if ctx.Err() == nil {
+				h.endBarrier()
+				if ctx.Err() == nil && !h.barrierStopping(state) {
 					fatalErr = err
 				}
 				return
 			}
+			h.endBarrier()
 		}
 	}
 }
 
-func (h *comparatorHandler) stopBarrier(state *comparatorHandlerSession) {
+func (h *comparatorHandler) signalStopBarrier(state *comparatorHandlerSession) bool {
+	if state == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	state.stopping = true
 	state.stopOnce.Do(func() { close(state.stopBarrier) })
-	select {
-	case <-state.barrierDone:
-	case <-time.After(h.barrierInterval):
+	return state.barrierStarted
+}
+
+func (h *comparatorHandler) beginBarrier(state *comparatorHandlerSession) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.draining || h.state != state || state.stopping {
+		return false
+	}
+	h.inflightBarriers++
+	return true
+}
+
+func (h *comparatorHandler) barrierStopping(state *comparatorHandlerSession) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return state == nil || state.stopping || h.state != state
+}
+
+func (h *comparatorHandler) endBarrier() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.inflightBarriers > 0 {
+		h.inflightBarriers--
+	}
+	h.closeDrainedIfIdleLocked()
+}
+
+func (h *comparatorHandler) closeDrainedIfIdleLocked() {
+	if h.draining && h.inflightRecords == 0 && h.inflightBarriers == 0 {
+		h.drainOnce.Do(func() { close(h.drained) })
 	}
 }
 

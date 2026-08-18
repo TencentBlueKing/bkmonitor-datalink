@@ -12,6 +12,7 @@ package comparator
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -216,6 +217,14 @@ func buildComparisonAudit(observation auditObservation, coverage CoverageSnapsho
 			return contract.ComparisonAudit{}, err
 		}
 	}
+	goDecision, err := comparisonDecisionEvidence(observation.goDecision, observation.input, observation.assessment.GoInvalid)
+	if err != nil {
+		return contract.ComparisonAudit{}, err
+	}
+	pythonDecision, err := comparisonDecisionEvidence(observation.pythonDecision, observation.input, observation.assessment.PythonInvalid)
+	if err != nil {
+		return contract.ComparisonAudit{}, err
+	}
 	return contract.ComparisonAudit{
 		EventKind:   contract.ComparisonAuditEventSnapshot,
 		InputID:     observation.outcome.InputID,
@@ -228,8 +237,8 @@ func buildComparisonAudit(observation auditObservation, coverage CoverageSnapsho
 			Outcome: observation.outcome.Outcome, ErrorCode: errorCode,
 			SemanticSHA256: hex.EncodeToString(observation.sourceFingerprint[:]),
 		},
-		GoDecision:     comparisonDecisionEvidence(observation.goDecision),
-		PythonDecision: comparisonDecisionEvidence(observation.pythonDecision),
+		GoDecision:     goDecision,
+		PythonDecision: pythonDecision,
 		Coverage:       comparisonCoverage(coverage),
 		SourceConflict: observation.assessment.SourceConflict,
 		GoConflict:     observation.assessment.GoConflict,
@@ -239,21 +248,114 @@ func buildComparisonAudit(observation auditObservation, coverage CoverageSnapsho
 	}, nil
 }
 
-func comparisonDecisionEvidence(observation *decisionObservation) *contract.ComparisonDecisionEvidence {
+func comparisonDecisionEvidence(
+	observation *decisionObservation,
+	input *contract.TriggerInput,
+	invalidSide bool,
+) (*contract.ComparisonDecisionEvidence, error) {
 	if observation == nil {
-		return nil
+		return nil, nil
+	}
+	summary, err := contract.SummarizeTriggerDecision(observation.decision)
+	if err != nil {
+		return nil, err
+	}
+	identity := contract.ComparisonDecisionBatchIdentity{
+		PartitionHashVersion: observation.batch.PartitionHashVersion,
+		TenantID:             observation.batch.TenantID,
+		Purpose:              observation.batch.Purpose,
+		StrategyRef:          observation.batch.StrategyRef,
+		DecisionAlgorithm:    observation.batch.DecisionAlgorithm,
+	}
+	identitySHA256, err := contract.DeriveComparisonDecisionBatchIdentitySHA256(identity)
+	if err != nil {
+		return nil, err
+	}
+	invalidReason := ""
+	mismatchFields := []string{}
+	if invalidSide {
+		invalidReason, mismatchFields, err = comparisonDecisionInvalidEvidence(input, observation)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return &contract.ComparisonDecisionEvidence{
-		BatchIdentity: contract.ComparisonDecisionBatchIdentity{
-			PartitionHashVersion: observation.batch.PartitionHashVersion,
-			TenantID:             observation.batch.TenantID,
-			Purpose:              observation.batch.Purpose,
-			StrategyRef:          observation.batch.StrategyRef,
-			DecisionAlgorithm:    observation.batch.DecisionAlgorithm,
-		},
-		Decision:       cloneDecision(observation.decision),
-		SemanticSHA256: hex.EncodeToString(observation.fingerprint[:]),
+		BatchIdentitySHA256:    identitySHA256,
+		Decision:               summary,
+		InvalidReasonCode:      invalidReason,
+		IdentityMismatchFields: mismatchFields,
+		SemanticSHA256:         hex.EncodeToString(observation.fingerprint[:]),
+	}, nil
+}
+
+func comparisonDecisionInvalidEvidence(
+	input *contract.TriggerInput,
+	observation *decisionObservation,
+) (string, []string, error) {
+	if input == nil || input.StrategyIR == nil || observation == nil {
+		return "", nil, fmt.Errorf("comparator: invalid decision evidence requires authoritative input and decision")
 	}
+	want := decisionBatchIdentity{
+		PartitionHashVersion: input.PartitionHashVersion,
+		TenantID:             input.StrategyIR.TenantID,
+		Purpose:              input.StrategyIR.Purpose,
+		StrategyRef:          input.StrategyIR.StrategyRef,
+		DecisionAlgorithm:    contract.DecisionAlgorithmV1,
+	}
+	mismatchFields := comparisonDecisionIdentityMismatchFields(want, observation.batch)
+	if len(mismatchFields) != 0 {
+		return contract.ComparisonDecisionInvalidBatchIdentity, mismatchFields, nil
+	}
+	err := input.ValidateTriggerDecision(observation.decision)
+	if err == nil {
+		return "", nil, fmt.Errorf("comparator: decision marked invalid without contradictory evidence")
+	}
+	var validationErr *contract.ValidationError
+	if !errors.As(err, &validationErr) {
+		return contract.ComparisonDecisionInvalidOther, []string{}, nil
+	}
+	switch validationErr.Field {
+	case "trigger_decision.input_id", "trigger_decision.record_id":
+		return contract.ComparisonDecisionInvalidRecordIdentity, []string{}, nil
+	case "trigger_decision_batch.decisions.level":
+		return contract.ComparisonDecisionInvalidLevel, []string{}, nil
+	case "trigger_decision_batch.decisions.anomaly_timestamps":
+		return contract.ComparisonDecisionInvalidAnomalyTimestamps, []string{}, nil
+	case "trigger_decision_batch.decisions":
+		return contract.ComparisonDecisionInvalidOutcomeReason, []string{}, nil
+	default:
+		return contract.ComparisonDecisionInvalidOther, []string{}, nil
+	}
+}
+
+func comparisonDecisionIdentityMismatchFields(want, got decisionBatchIdentity) []string {
+	fields := make([]string, 0, 8)
+	if want.PartitionHashVersion != got.PartitionHashVersion {
+		fields = append(fields, contract.ComparisonDecisionIdentityPartitionHashVersion)
+	}
+	if want.TenantID != got.TenantID {
+		fields = append(fields, contract.ComparisonDecisionIdentityTenantID)
+	}
+	if want.Purpose != got.Purpose {
+		fields = append(fields, contract.ComparisonDecisionIdentityPurpose)
+	}
+	if want.StrategyRef.StrategyID != got.StrategyRef.StrategyID {
+		fields = append(fields, contract.ComparisonDecisionIdentityStrategyID)
+	}
+	if want.StrategyRef.ItemID != got.StrategyRef.ItemID {
+		fields = append(fields, contract.ComparisonDecisionIdentityItemID)
+	}
+	if want.StrategyRef.Generation != got.StrategyRef.Generation {
+		fields = append(fields, contract.ComparisonDecisionIdentityGeneration)
+	}
+	if want.StrategyRef.ContentSHA256 != got.StrategyRef.ContentSHA256 {
+		fields = append(fields, contract.ComparisonDecisionIdentityContentSHA256)
+	}
+	if want.DecisionAlgorithm != got.DecisionAlgorithm {
+		fields = append(fields, contract.ComparisonDecisionIdentityAlgorithm)
+	}
+	sort.Strings(fields)
+	return fields
 }
 
 func comparisonCoverage(snapshot CoverageSnapshot) contract.ComparisonCoverageEvidence {

@@ -18,6 +18,7 @@ import (
 	"github.com/Shopify/sarama"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/comparator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/consumer"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/contract"
 )
 
@@ -99,6 +100,174 @@ func TestComparatorHandlerJoinsThreeClaimsIntoAudit(t *testing.T) {
 	cancelSession()
 	if err := handler.Cleanup(session); err != nil {
 		t.Fatalf("Cleanup() error = %v", err)
+	}
+}
+
+func TestComparatorHandlerDrainWaitsForActiveBarrier(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		block func(*testing.T, *observedBarrierMetadata, *comparatorRecordCoordinator) (<-chan struct{}, func())
+	}{
+		{
+			name: "high-water read",
+			block: func(t *testing.T, metadata *observedBarrierMetadata, _ *comparatorRecordCoordinator) (<-chan struct{}, func()) {
+				t.Helper()
+				coordinate := metadataOffset{"go-decision", 0, sarama.OffsetNewest}
+				metadata.mu.Lock()
+				metadata.blockAt = &coordinate
+				metadata.blockStarted = make(chan struct{})
+				metadata.blockRelease = make(chan struct{})
+				started, release := metadata.blockStarted, metadata.blockRelease
+				metadata.mu.Unlock()
+				return started, func() { close(release) }
+			},
+		},
+		{
+			name: "audit acknowledgement",
+			block: func(t *testing.T, _ *observedBarrierMetadata, records *comparatorRecordCoordinator) (<-chan struct{}, func()) {
+				t.Helper()
+				started := make(chan struct{})
+				release := make(chan struct{})
+				records.audits = comparisonAuditSinkFunc(func(context.Context, *contract.ComparisonAuditBatch) error {
+					close(started)
+					<-release
+					return nil
+				})
+				return started, func() { close(release) }
+			},
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			metadata := newObservedBarrierMetadata(map[string][]int32{
+				"trigger-input": {0}, "go-decision": {0, 1}, "py-decision": {0},
+			})
+			records, _, _ := setupComparatorBarrierCoordinator(t, metadata, time.Nanosecond)
+			payload, key := comparatorTriggerInputFixture(t, "normal")
+			if _, err := records.Process(context.Background(), consumer.Record{
+				Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+			}); err != nil {
+				t.Fatalf("Process(input) error = %v", err)
+			}
+			started, release := test.block(t, metadata, records)
+			barrier, err := newComparatorBarrierAdapter(records)
+			if err != nil {
+				t.Fatalf("newComparatorBarrierAdapter() error = %v", err)
+			}
+			handler := &comparatorHandler{
+				assignment: records.assignment, offsets: records.offsets, audits: records.audits,
+				barrierInterval: time.Millisecond, drained: make(chan struct{}),
+			}
+			state := &comparatorHandlerSession{
+				handle: records.handle, records: records, barrier: barrier,
+				stopBarrier: make(chan struct{}), barrierDone: make(chan struct{}),
+			}
+			handler.state = state
+			go handler.runBarrier(records.session.Context(), state)
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("barrier did not reach the blocking operation")
+			}
+
+			drainStarted := make(chan (<-chan struct{}), 1)
+			go func() { drainStarted <- handler.BeginDrain() }()
+			var drained <-chan struct{}
+			select {
+			case drained = <-drainStarted:
+			case <-time.After(time.Second):
+				t.Fatal("BeginDrain() blocked on the active barrier")
+			}
+			select {
+			case <-drained:
+				t.Fatal("handler drained before the active barrier completed")
+			default:
+			}
+			release()
+			select {
+			case <-drained:
+			case <-time.After(time.Second):
+				t.Fatal("handler did not drain after the barrier completed")
+			}
+		})
+	}
+}
+
+func TestComparatorHandlerCleanupWaitsForActiveBarrier(t *testing.T) {
+	t.Parallel()
+
+	metadata := newObservedBarrierMetadata(map[string][]int32{
+		"trigger-input": {0}, "go-decision": {0, 1}, "py-decision": {0},
+	})
+	records, _, _ := setupComparatorBarrierCoordinator(t, metadata, time.Nanosecond)
+	payload, key := comparatorTriggerInputFixture(t, "normal")
+	if _, err := records.Process(context.Background(), consumer.Record{
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+	}); err != nil {
+		t.Fatalf("Process(input) error = %v", err)
+	}
+	coordinate := metadataOffset{"go-decision", 0, sarama.OffsetNewest}
+	metadata.mu.Lock()
+	metadata.blockAt = &coordinate
+	metadata.blockStarted = make(chan struct{})
+	metadata.blockRelease = make(chan struct{})
+	started, release := metadata.blockStarted, metadata.blockRelease
+	metadata.mu.Unlock()
+	barrier, err := newComparatorBarrierAdapter(records)
+	if err != nil {
+		t.Fatalf("newComparatorBarrierAdapter() error = %v", err)
+	}
+	handler := &comparatorHandler{
+		assignment: records.assignment, offsets: records.offsets, audits: records.audits,
+		barrierInterval: time.Millisecond, drained: make(chan struct{}),
+	}
+	state := &comparatorHandlerSession{
+		handle: records.handle, records: records, barrier: barrier,
+		stopBarrier: make(chan struct{}), barrierDone: make(chan struct{}), barrierStarted: true,
+	}
+	handler.state = state
+	go handler.runBarrier(records.session.Context(), state)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("barrier did not reach the blocking HWM read")
+	}
+
+	cleanupDone := make(chan error, 1)
+	go func() { cleanupDone <- handler.Cleanup(records.session) }()
+	deadline := time.After(time.Second)
+	for {
+		records.assignment.mu.Lock()
+		active := state.handle.generation.active
+		records.assignment.mu.Unlock()
+		if !active {
+			break
+		}
+		select {
+		case err := <-cleanupDone:
+			t.Fatalf("Cleanup() returned before the assignment became inactive: %v", err)
+		case <-deadline:
+			t.Fatal("Cleanup() did not deactivate the assignment")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	select {
+	case err := <-cleanupDone:
+		t.Fatalf("Cleanup() returned before the active barrier completed: %v", err)
+	default:
+	}
+	close(release)
+	select {
+	case err := <-cleanupDone:
+		if err != nil {
+			t.Fatalf("Cleanup() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Cleanup() did not return after the active barrier completed")
 	}
 }
 

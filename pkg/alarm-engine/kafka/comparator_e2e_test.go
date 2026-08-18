@@ -101,10 +101,6 @@ func TestComparatorKafkaEndToEnd(t *testing.T) {
 			t.Fatalf("SendMessage(%q) error = %v", message.Topic, err)
 		}
 	}
-	if err := producer.Close(); err != nil {
-		t.Fatalf("producer.Close() error = %v", err)
-	}
-
 	consumer, err := sarama.NewConsumer([]string{broker}, adminConfig)
 	if err != nil {
 		t.Fatalf("NewConsumer() error = %v", err)
@@ -120,6 +116,9 @@ func TestComparatorKafkaEndToEnd(t *testing.T) {
 	for !matched || !missingAtBarrier {
 		select {
 		case message := <-partition.Messages():
+			if len(message.Value) > contract.MaxComparisonAuditBytesV1 {
+				t.Fatalf("audit bytes = %d, want at most %d", len(message.Value), contract.MaxComparisonAuditBytesV1)
+			}
 			batch, err := contract.DecodeComparisonAuditBatch(message.Value)
 			if err != nil {
 				t.Fatalf("DecodeComparisonAuditBatch() error = %v", err)
@@ -136,6 +135,61 @@ func TestComparatorKafkaEndToEnd(t *testing.T) {
 			t.Fatalf("audit consumer error = %v", err)
 		case <-readDeadline:
 			t.Fatal("timed out waiting for MATCH and MISSING_AT_BARRIER audits")
+		}
+	}
+
+	const timestampCount = 60000
+	largeDecisionPayload, largeDecisionKey := comparatorTriggerDecisionFixture(t, missingInput)
+	largeDecisionBatch, err := contract.DecodeTriggerDecisionBatch(largeDecisionPayload)
+	if err != nil {
+		t.Fatalf("DecodeTriggerDecisionBatch(large) error = %v", err)
+	}
+	timestamps := make([]int64, timestampCount)
+	for index := 0; index < len(timestamps)-1; index++ {
+		timestamps[index] = int64(index)
+	}
+	timestamps[len(timestamps)-1] = missingInput.DetectionOutcomes[0].Record.SourceTime
+	largeDecisionBatch.Decisions[0].AnomalyTimestamps = timestamps
+	largeDecisionPayload, err = contract.EncodeTriggerDecisionBatch(largeDecisionBatch)
+	if err != nil {
+		t.Fatalf("EncodeTriggerDecisionBatch(large) error = %v", err)
+	}
+	for _, topic := range []string{topics[2], topics[1]} {
+		if _, _, err := producer.SendMessage(&sarama.ProducerMessage{
+			Topic: topic, Key: sarama.ByteEncoder(largeDecisionKey), Value: sarama.ByteEncoder(largeDecisionPayload),
+		}); err != nil {
+			t.Fatalf("SendMessage(large %q) error = %v", topic, err)
+		}
+	}
+	if err := producer.Close(); err != nil {
+		t.Fatalf("producer.Close() error = %v", err)
+	}
+
+	largeAudit := false
+	readDeadline = time.After(10 * time.Second)
+	for !largeAudit {
+		select {
+		case message := <-partition.Messages():
+			if len(message.Value) > contract.MaxComparisonAuditBytesV1 {
+				t.Fatalf("large audit bytes = %d, want at most %d", len(message.Value), contract.MaxComparisonAuditBytesV1)
+			}
+			batch, err := contract.DecodeComparisonAuditBatch(message.Value)
+			if err != nil {
+				t.Fatalf("DecodeComparisonAuditBatch(large) error = %v", err)
+			}
+			for _, audit := range batch.Audits {
+				if audit.InputID == missingInput.DetectionOutcomes[0].InputID && audit.GoInvalid && audit.PythonInvalid &&
+					audit.GoDecision != nil && audit.PythonDecision != nil &&
+					audit.GoDecision.Decision.AnomalyTimestampsCount == timestampCount &&
+					audit.PythonDecision.Decision.AnomalyTimestampsCount == timestampCount &&
+					audit.Verdict == contract.ComparisonVerdictNone {
+					largeAudit = true
+				}
+			}
+		case err := <-partition.Errors():
+			t.Fatalf("large audit consumer error = %v", err)
+		case <-readDeadline:
+			t.Fatal("timed out waiting for compact large-decision audit")
 		}
 	}
 

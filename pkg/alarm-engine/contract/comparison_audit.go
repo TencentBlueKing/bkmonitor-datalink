@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	comparisonAuditBatchSchema = "comparison-audit-batch"
-	comparisonAuditIDVersionV1 = "comparison-audit-id-v1"
+	comparisonAuditBatchSchema            = "comparison-audit-batch"
+	comparisonAuditIDVersionV1            = "comparison-audit-id-v1"
+	comparisonDecisionTimestampsVersionV1 = "comparison-decision-timestamps-v1"
 
 	ComparisonAuditEventSnapshot = "ASSESSMENT_SNAPSHOT"
 
@@ -54,9 +55,38 @@ const (
 	ComparisonRoleGo     = "GO"
 	ComparisonRolePython = "PYTHON"
 
+	ComparisonDecisionInvalidBatchIdentity     = "BATCH_IDENTITY"
+	ComparisonDecisionInvalidRecordIdentity    = "RECORD_IDENTITY"
+	ComparisonDecisionInvalidOutcomeReason     = "OUTCOME_REASON"
+	ComparisonDecisionInvalidLevel             = "LEVEL"
+	ComparisonDecisionInvalidAnomalyTimestamps = "ANOMALY_TIMESTAMPS"
+	ComparisonDecisionInvalidOther             = "OTHER"
+
+	ComparisonDecisionIdentityPartitionHashVersion = "partition_hash_version"
+	ComparisonDecisionIdentityTenantID             = "tenant_id"
+	ComparisonDecisionIdentityPurpose              = "purpose"
+	ComparisonDecisionIdentityStrategyID           = "strategy_ref.strategy_id"
+	ComparisonDecisionIdentityItemID               = "strategy_ref.item_id"
+	ComparisonDecisionIdentityGeneration           = "strategy_ref.generation"
+	ComparisonDecisionIdentityContentSHA256        = "strategy_ref.content_sha256"
+	ComparisonDecisionIdentityAlgorithm            = "decision_algorithm"
+
 	MaxComparisonAuditBytesV1 = 512 * 1024
 	MaxComparisonAuditItemsV1 = 500
 )
+
+var comparisonDecisionInvalidReasons = map[string]struct{}{
+	ComparisonDecisionInvalidBatchIdentity: {}, ComparisonDecisionInvalidRecordIdentity: {},
+	ComparisonDecisionInvalidOutcomeReason: {}, ComparisonDecisionInvalidLevel: {},
+	ComparisonDecisionInvalidAnomalyTimestamps: {}, ComparisonDecisionInvalidOther: {},
+}
+
+var comparisonDecisionIdentityFields = map[string]struct{}{
+	ComparisonDecisionIdentityPartitionHashVersion: {}, ComparisonDecisionIdentityTenantID: {},
+	ComparisonDecisionIdentityPurpose: {}, ComparisonDecisionIdentityStrategyID: {},
+	ComparisonDecisionIdentityItemID: {}, ComparisonDecisionIdentityGeneration: {},
+	ComparisonDecisionIdentityContentSHA256: {}, ComparisonDecisionIdentityAlgorithm: {},
+}
 
 type ComparisonSourceEvidence struct {
 	Outcome   string `json:"outcome"`
@@ -73,12 +103,57 @@ type ComparisonDecisionBatchIdentity struct {
 	DecisionAlgorithm    string      `json:"decision_algorithm"`
 }
 
+func DeriveComparisonDecisionBatchIdentitySHA256(identity ComparisonDecisionBatchIdentity) (string, error) {
+	if identity.PartitionHashVersion != PartitionHashVersionV1 ||
+		identity.TenantID == "" || !utf8.ValidString(identity.TenantID) ||
+		identity.DecisionAlgorithm != DecisionAlgorithmV1 {
+		return "", invalid("comparison_audit.decision.batch_identity", "contains unsupported identity")
+	}
+	if err := validatePurpose(identity.Purpose); err != nil {
+		return "", err
+	}
+	if err := validateStrategyRef(identity.StrategyRef); err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(identity)
+	if err != nil {
+		return "", invalid("comparison_audit.decision.batch_identity", err.Error())
+	}
+	digest := sha256.New()
+	for _, field := range [][]byte{[]byte("comparison-decision-batch-identity-v1"), payload} {
+		if uint64(len(field)) > math.MaxUint32 {
+			return "", invalid("comparison_audit.decision.batch_identity", "canonical field exceeds uint32 length")
+		}
+		var prefix [4]byte
+		binary.BigEndian.PutUint32(prefix[:], uint32(len(field)))
+		_, _ = digest.Write(prefix[:])
+		_, _ = digest.Write(field)
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
 type ComparisonDecisionEvidence struct {
-	BatchIdentity ComparisonDecisionBatchIdentity `json:"batch_identity"`
-	Decision      TriggerDecision                 `json:"decision"`
+	BatchIdentitySHA256    string                    `json:"batch_identity_sha256"`
+	Decision               ComparisonDecisionSummary `json:"decision"`
+	InvalidReasonCode      string                    `json:"invalid_reason_code,omitempty"`
+	IdentityMismatchFields []string                  `json:"identity_mismatch_fields"`
 	// SemanticSHA256 is the exact fingerprint retained by Comparator. The
 	// contract deliberately does not reimplement Comparator's canonicalizer.
 	SemanticSHA256 string `json:"semantic_sha256"`
+}
+
+// ComparisonDecisionSummary retains the auditable decision coordinates and
+// the exact timestamp set digest without repeating the potentially large
+// timestamp array already covered by SemanticSHA256.
+type ComparisonDecisionSummary struct {
+	DecisionID              string `json:"decision_id"`
+	InputID                 string `json:"input_id"`
+	RecordID                string `json:"record_id"`
+	Outcome                 string `json:"outcome"`
+	ReasonCode              string `json:"reason_code"`
+	Level                   *int   `json:"level,omitempty"`
+	AnomalyTimestampsCount  int    `json:"anomaly_timestamps_count"`
+	AnomalyTimestampsSHA256 string `json:"anomaly_timestamps_sha256"`
 }
 
 type ComparisonCoverageEvidence struct {
@@ -292,32 +367,24 @@ func decodeComparisonAudit(payload []byte, allowUnknown bool) (ComparisonAudit, 
 			continue
 		}
 		evidence, err := validateJSONObjectFields(
-			raw, "comparison_audit."+field, []string{"batch_identity", "decision", "semantic_sha256"}, nil, allowUnknown,
+			raw,
+			"comparison_audit."+field,
+			[]string{"batch_identity_sha256", "decision", "identity_mismatch_fields", "semantic_sha256"},
+			[]string{"invalid_reason_code"},
+			allowUnknown,
 		)
 		if err != nil {
 			return ComparisonAudit{}, err
 		}
-		if _, err := validateJSONObjectFields(
-			evidence["batch_identity"], "comparison_audit."+field+".batch_identity",
-			[]string{"partition_hash_version", "tenant_id", "purpose", "strategy_ref", "decision_algorithm"}, nil, allowUnknown,
-		); err != nil {
-			return ComparisonAudit{}, err
-		}
-		var identity struct {
-			StrategyRef json.RawMessage `json:"strategy_ref"`
-		}
-		if err := decodeJSONObject(evidence["batch_identity"], &identity); err != nil {
-			return ComparisonAudit{}, err
-		}
-		if _, err := validateJSONObjectFields(
-			identity.StrategyRef, "comparison_audit."+field+".batch_identity.strategy_ref",
-			[]string{"strategy_id", "item_id", "generation", "content_sha256"}, nil, allowUnknown,
-		); err != nil {
-			return ComparisonAudit{}, err
+		if invalidReason, ok := evidence["invalid_reason_code"]; ok && bytes.Equal(bytes.TrimSpace(invalidReason), []byte("null")) {
+			return ComparisonAudit{}, invalid("comparison_audit."+field+".invalid_reason_code", "must be omitted instead of null")
 		}
 		decisionObject, err := validateJSONObjectFields(
 			evidence["decision"], "comparison_audit."+field+".decision",
-			[]string{"decision_id", "input_id", "record_id", "outcome", "reason_code", "anomaly_timestamps"},
+			[]string{
+				"decision_id", "input_id", "record_id", "outcome", "reason_code",
+				"anomaly_timestamps_count", "anomaly_timestamps_sha256",
+			},
 			[]string{"level"}, allowUnknown,
 		)
 		if err != nil {
@@ -364,6 +431,16 @@ func (b *ComparisonAuditBatch) Validate() error {
 	}
 	inputIDs := make(map[string]struct{}, len(b.Audits))
 	auditIDs := make(map[string]struct{}, len(b.Audits))
+	authoritativeIdentitySHA256, err := DeriveComparisonDecisionBatchIdentitySHA256(ComparisonDecisionBatchIdentity{
+		PartitionHashVersion: b.PartitionHashVersion,
+		TenantID:             b.TenantID,
+		Purpose:              b.Purpose,
+		StrategyRef:          b.StrategyRef,
+		DecisionAlgorithm:    DecisionAlgorithmV1,
+	})
+	if err != nil {
+		return err
+	}
 	for index := range b.Audits {
 		audit := &b.Audits[index]
 		if err := audit.Validate(); err != nil {
@@ -391,11 +468,18 @@ func (b *ComparisonAuditBatch) Validate() error {
 			evidence *ComparisonDecisionEvidence
 			invalid  bool
 		}{{audit.GoDecision, audit.GoInvalid}, {audit.PythonDecision, audit.PythonInvalid}} {
-			if side.evidence == nil || side.invalid {
+			if side.evidence == nil {
 				continue
 			}
-			if !side.evidence.BatchIdentity.matchesBatch(b) {
-				return invalid("comparison_audit.decision.batch_identity", "does not match authoritative batch identity")
+			identityMismatch := side.evidence.BatchIdentitySHA256 != authoritativeIdentitySHA256
+			if !side.invalid && identityMismatch {
+				return invalid("comparison_audit.decision.batch_identity_sha256", "does not match authoritative batch identity")
+			}
+			if side.invalid && side.evidence.InvalidReasonCode == ComparisonDecisionInvalidBatchIdentity && !identityMismatch {
+				return invalid("comparison_audit.decision.batch_identity_sha256", "identity invalid reason requires a different side identity")
+			}
+			if side.invalid && side.evidence.InvalidReasonCode != ComparisonDecisionInvalidBatchIdentity && identityMismatch {
+				return invalid("comparison_audit.decision.batch_identity_sha256", "non-identity invalid reason requires authoritative identity")
 			}
 		}
 	}
@@ -454,11 +538,14 @@ func (a *ComparisonAudit) validate(requireID bool) error {
 	if err := a.Source.validate(); err != nil {
 		return err
 	}
-	for _, evidence := range []*ComparisonDecisionEvidence{a.GoDecision, a.PythonDecision} {
-		if evidence == nil {
+	for _, side := range []struct {
+		evidence *ComparisonDecisionEvidence
+		invalid  bool
+	}{{a.GoDecision, a.GoInvalid}, {a.PythonDecision, a.PythonInvalid}} {
+		if side.evidence == nil {
 			continue
 		}
-		if err := evidence.validate(a.InputID, a.RecordID); err != nil {
+		if err := side.evidence.validate(a.InputID, a.RecordID, side.invalid); err != nil {
 			return err
 		}
 	}
@@ -594,19 +681,11 @@ func (s ComparisonSourceEvidence) validate() error {
 	return nil
 }
 
-func (d ComparisonDecisionEvidence) validate(inputID, recordID string) error {
-	evidenceBatch := &TriggerDecisionBatch{
-		Schema:               Schema{Name: triggerDecisionBatchSchema, Major: schemaMajor, Minor: 0},
-		RequiredFeatures:     []string{},
-		PartitionHashVersion: d.BatchIdentity.PartitionHashVersion,
-		BatchID:              "comparison-audit-evidence",
-		TenantID:             d.BatchIdentity.TenantID,
-		Purpose:              d.BatchIdentity.Purpose,
-		StrategyRef:          d.BatchIdentity.StrategyRef,
-		DecisionAlgorithm:    d.BatchIdentity.DecisionAlgorithm,
-		Decisions:            []TriggerDecision{d.Decision},
+func (d ComparisonDecisionEvidence) validate(inputID, recordID string, invalidSide bool) error {
+	if !sha256Pattern.MatchString(d.BatchIdentitySHA256) {
+		return invalid("comparison_audit.decision.batch_identity_sha256", "must be 64 lowercase hexadecimal characters")
 	}
-	if err := evidenceBatch.Validate(); err != nil {
+	if err := d.Decision.validate(); err != nil {
 		return err
 	}
 	if d.Decision.InputID != inputID || d.Decision.RecordID != recordID {
@@ -615,7 +694,123 @@ func (d ComparisonDecisionEvidence) validate(inputID, recordID string) error {
 	if !sha256Pattern.MatchString(d.SemanticSHA256) {
 		return invalid("comparison_audit.decision.semantic_sha256", "must be 64 lowercase hexadecimal characters")
 	}
+	if d.IdentityMismatchFields == nil {
+		return invalid("comparison_audit.decision.identity_mismatch_fields", "must be an array")
+	}
+	if !sort.StringsAreSorted(d.IdentityMismatchFields) {
+		return invalid("comparison_audit.decision.identity_mismatch_fields", "must be sorted")
+	}
+	seen := make(map[string]struct{}, len(d.IdentityMismatchFields))
+	for _, field := range d.IdentityMismatchFields {
+		if _, ok := comparisonDecisionIdentityFields[field]; !ok {
+			return invalid("comparison_audit.decision.identity_mismatch_fields", "contains unsupported field")
+		}
+		if _, ok := seen[field]; ok {
+			return invalid("comparison_audit.decision.identity_mismatch_fields", "contains duplicate field")
+		}
+		seen[field] = struct{}{}
+	}
+	if !invalidSide {
+		if d.InvalidReasonCode != "" || len(d.IdentityMismatchFields) != 0 {
+			return invalid("comparison_audit.decision", "valid side must not carry invalid evidence")
+		}
+		return nil
+	}
+	if _, ok := comparisonDecisionInvalidReasons[d.InvalidReasonCode]; !ok {
+		return invalid("comparison_audit.decision.invalid_reason_code", "unsupported invalid reason")
+	}
+	if d.InvalidReasonCode == ComparisonDecisionInvalidBatchIdentity {
+		if len(d.IdentityMismatchFields) == 0 {
+			return invalid("comparison_audit.decision.identity_mismatch_fields", "batch identity invalid reason requires mismatch fields")
+		}
+	} else if len(d.IdentityMismatchFields) != 0 {
+		return invalid("comparison_audit.decision.identity_mismatch_fields", "non-identity invalid reason must not carry mismatch fields")
+	}
 	return nil
+}
+
+func (d ComparisonDecisionSummary) validate() error {
+	if !sha256Pattern.MatchString(d.DecisionID) || !sha256Pattern.MatchString(d.InputID) {
+		return invalid("comparison_audit.decision", "decision_id and input_id must be canonical SHA-256 values")
+	}
+	expectedDecisionID, err := DeriveTriggerDecisionID(d.InputID)
+	if err != nil {
+		return err
+	}
+	if d.DecisionID != expectedDecisionID {
+		return invalid("comparison_audit.decision.decision_id", "does not match canonical tuple")
+	}
+	if _, _, err := parseRecordID(d.RecordID); err != nil {
+		return err
+	}
+	if d.Level != nil && (*d.Level <= 0 || *d.Level > maxContractInt) {
+		return invalid("comparison_audit.decision.level", "must be a positive 32-bit signed integer")
+	}
+	if d.AnomalyTimestampsCount < 0 || d.AnomalyTimestampsCount > maxContractInt {
+		return invalid("comparison_audit.decision.anomaly_timestamps_count", "must be a non-negative 32-bit signed integer")
+	}
+	if !sha256Pattern.MatchString(d.AnomalyTimestampsSHA256) {
+		return invalid("comparison_audit.decision.anomaly_timestamps_sha256", "must be 64 lowercase hexadecimal characters")
+	}
+	if d.AnomalyTimestampsCount == 0 && d.AnomalyTimestampsSHA256 != comparisonDecisionTimestampsSHA256(nil) {
+		return invalid("comparison_audit.decision.anomaly_timestamps_sha256", "must match the canonical empty timestamp digest")
+	}
+	switch d.Outcome {
+	case DecisionOutcomeTrigger:
+		if d.ReasonCode != DecisionReasonTriggerConditionMet || d.Level == nil || d.AnomalyTimestampsCount == 0 {
+			return invalid("comparison_audit.decision", "TRIGGER requires condition-met reason, level and timestamp evidence")
+		}
+	case DecisionOutcomeNoTrigger:
+		if d.ReasonCode != DecisionReasonInputNormal && d.ReasonCode != DecisionReasonTriggerConditionNotMet {
+			return invalid("comparison_audit.decision.reason_code", "unsupported NO_TRIGGER reason")
+		}
+		if d.Level != nil || d.AnomalyTimestampsCount != 0 {
+			return invalid("comparison_audit.decision", "NO_TRIGGER must not carry level or timestamp evidence")
+		}
+	case OutcomeError, OutcomeUnsupported:
+		if d.Level != nil || d.AnomalyTimestampsCount != 0 {
+			return invalid("comparison_audit.decision", "non-business outcome must not carry level or timestamp evidence")
+		}
+		if _, ok := errorCodes[d.Outcome][d.ReasonCode]; !ok {
+			return invalid("comparison_audit.decision.reason_code", "unsupported code for outcome")
+		}
+	default:
+		return invalid("comparison_audit.decision.outcome", "unsupported outcome")
+	}
+	return nil
+}
+
+func SummarizeTriggerDecision(decision TriggerDecision) (ComparisonDecisionSummary, error) {
+	if err := decision.Validate(); err != nil {
+		return ComparisonDecisionSummary{}, err
+	}
+	summary := ComparisonDecisionSummary{
+		DecisionID:              decision.DecisionID,
+		InputID:                 decision.InputID,
+		RecordID:                decision.RecordID,
+		Outcome:                 decision.Outcome,
+		ReasonCode:              decision.ReasonCode,
+		AnomalyTimestampsCount:  len(decision.AnomalyTimestamps),
+		AnomalyTimestampsSHA256: comparisonDecisionTimestampsSHA256(decision.AnomalyTimestamps),
+	}
+	if decision.Level != nil {
+		level := *decision.Level
+		summary.Level = &level
+	}
+	return summary, nil
+}
+
+func comparisonDecisionTimestampsSHA256(timestamps []int64) string {
+	digest := sha256.New()
+	_, _ = digest.Write([]byte(comparisonDecisionTimestampsVersionV1))
+	var encoded [8]byte
+	binary.BigEndian.PutUint64(encoded[:], uint64(len(timestamps)))
+	_, _ = digest.Write(encoded[:])
+	for _, timestamp := range timestamps {
+		binary.BigEndian.PutUint64(encoded[:], uint64(timestamp))
+		_, _ = digest.Write(encoded[:])
+	}
+	return hex.EncodeToString(digest.Sum(nil))
 }
 
 func (c ComparisonCoverageEvidence) validate() error {
@@ -693,15 +888,6 @@ func validateComparisonRoles(field string, roles []string) error {
 	return nil
 }
 
-func (i ComparisonDecisionBatchIdentity) matchesBatch(batch *ComparisonAuditBatch) bool {
-	return batch != nil &&
-		i.PartitionHashVersion == batch.PartitionHashVersion &&
-		i.TenantID == batch.TenantID &&
-		i.Purpose == batch.Purpose &&
-		i.StrategyRef == batch.StrategyRef &&
-		i.DecisionAlgorithm == DecisionAlgorithmV1
-}
-
 func cloneComparisonAudits(audits []ComparisonAudit) []ComparisonAudit {
 	if audits == nil {
 		return nil
@@ -724,13 +910,10 @@ func cloneComparisonDecisionEvidence(evidence *ComparisonDecisionEvidence) *Comp
 	}
 	cloned := *evidence
 	cloned.Decision = evidence.Decision
+	cloned.IdentityMismatchFields = cloneComparisonStrings(evidence.IdentityMismatchFields)
 	if evidence.Decision.Level != nil {
 		level := *evidence.Decision.Level
 		cloned.Decision.Level = &level
-	}
-	if evidence.Decision.AnomalyTimestamps != nil {
-		cloned.Decision.AnomalyTimestamps = make([]int64, len(evidence.Decision.AnomalyTimestamps))
-		copy(cloned.Decision.AnomalyTimestamps, evidence.Decision.AnomalyTimestamps)
 	}
 	return &cloned
 }

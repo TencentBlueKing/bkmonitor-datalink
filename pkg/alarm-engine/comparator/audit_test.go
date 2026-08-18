@@ -115,3 +115,74 @@ func TestComparisonAuditBatchesRespectCountAndEncodedByteLimits(t *testing.T) {
 		t.Fatalf("batches=%d audits=%d, want all %d candidates split", len(batches), total, len(candidates))
 	}
 }
+
+func TestRunCompactsTwoLargeValidDecisionsIntoOneAudit(t *testing.T) {
+	t.Parallel()
+
+	run, _ := mustCoverageRun(t, testAssignments())
+	inputPayload, input := testTriggerInput(t, "anomalous")
+	key := mustPartitionKey(t, input)
+	decisionPayload := largeAuditDecisionBatch(t, input, 60000)
+	if len(decisionPayload) >= contract.MaxTriggerDecisionBytesV1 {
+		t.Fatalf("decision payload bytes = %d, want a valid decision wire", len(decisionPayload))
+	}
+	commitStreamRecord(t, run, StreamRecord{
+		Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload,
+	})
+	commitStreamRecord(t, run, StreamRecord{
+		Epoch: "run-1", Role: StreamGo, Topic: "go", Partition: 0, Offset: 10, Key: key, Value: decisionPayload,
+	})
+	prepared, err := run.Prepare(StreamRecord{
+		Epoch: "run-1", Role: StreamPython, Topic: "python", Partition: 0, Offset: 30, Key: key, Value: decisionPayload,
+	})
+	if err != nil {
+		t.Fatalf("Prepare(python) error = %v", err)
+	}
+
+	batches, err := run.PreviewAudits(prepared, Gates{StableEpoch: true})
+	if err != nil || len(batches) != 1 {
+		t.Fatalf("PreviewAudits() batches=%d error=%v, want one compact audit", len(batches), err)
+	}
+	payload, err := contract.EncodeComparisonAuditBatch(batches[0])
+	if err != nil || len(payload) > contract.MaxComparisonAuditBytesV1 {
+		t.Fatalf("EncodeComparisonAuditBatch() bytes=%d error=%v", len(payload), err)
+	}
+}
+
+func largeAuditDecisionBatch(t *testing.T, input *contract.TriggerInput, timestampCount int) []byte {
+	t.Helper()
+	source := input.DetectionOutcomes[0]
+	decisionID, err := contract.DeriveTriggerDecisionID(source.InputID)
+	if err != nil {
+		t.Fatalf("DeriveTriggerDecisionID() error = %v", err)
+	}
+	if timestampCount < 1 || source.Record.SourceTime <= int64(timestampCount-1) {
+		t.Fatalf("source time %d cannot hold %d ordered timestamps", source.Record.SourceTime, timestampCount)
+	}
+	timestamps := make([]int64, timestampCount)
+	for index := 0; index < len(timestamps)-1; index++ {
+		timestamps[index] = int64(index)
+	}
+	timestamps[len(timestamps)-1] = source.Record.SourceTime
+	level := 3
+	batch := &contract.TriggerDecisionBatch{
+		Schema:               contract.Schema{Name: "trigger-decision-batch", Major: 1, Minor: 0},
+		RequiredFeatures:     []string{},
+		PartitionHashVersion: input.PartitionHashVersion,
+		BatchID:              "large-decision-batch",
+		TenantID:             input.StrategyIR.TenantID,
+		Purpose:              input.StrategyIR.Purpose,
+		StrategyRef:          input.StrategyIR.StrategyRef,
+		DecisionAlgorithm:    contract.DecisionAlgorithmV1,
+		Decisions: []contract.TriggerDecision{{
+			DecisionID: decisionID, InputID: source.InputID, RecordID: source.Record.RecordID,
+			Outcome: contract.DecisionOutcomeTrigger, ReasonCode: contract.DecisionReasonTriggerConditionMet,
+			Level: &level, AnomalyTimestamps: timestamps,
+		}},
+	}
+	payload, err := contract.EncodeTriggerDecisionBatch(batch)
+	if err != nil {
+		t.Fatalf("EncodeTriggerDecisionBatch() error = %v", err)
+	}
+	return payload
+}

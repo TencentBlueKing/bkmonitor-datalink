@@ -98,7 +98,7 @@ SELECT {
     }
 } AS result
 FROM host
-WHERE bk_host_id = 38268
+WHERE bk_host_id = '38268'
   AND (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
 LIMIT 10;`,
 		},

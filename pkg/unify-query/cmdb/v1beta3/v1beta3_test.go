@@ -2032,7 +2032,7 @@ func TestQueryResourceMatcherInfersOmittedSourceType(t *testing.T) {
 	assert.Equal(t, cmdb.Resource("datasource"), source)
 	assert.Equal(t, cmdb.Matcher{"bk_data_id": "1001"}, matcher)
 	assert.Contains(t, executor.sql, "FROM datasource")
-	assert.Contains(t, executor.sql, "bk_data_id = 1001")
+	assert.Contains(t, executor.sql, "bk_data_id = '1001'")
 }
 
 func TestLegacyQueryResourceMatcherInfersSourceWithExtraLabels(t *testing.T) {
@@ -2048,7 +2048,7 @@ func TestLegacyQueryResourceMatcherInfersSourceWithExtraLabels(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, cmdb.Resource("biz"), source)
 	assert.Equal(t, cmdb.Matcher{"bk_biz_id": "2"}, sourceInfo)
-	assert.Contains(t, executor.sql, "bk_biz_id = 2")
+	assert.Contains(t, executor.sql, "bk_biz_id = '2'")
 	assert.NotContains(t, executor.sql, "bk_set_id =")
 }
 

@@ -862,16 +862,9 @@ func (b *SurrealQueryBuilder) buildWhereClause() string {
 	return "WHERE " + strings.Join(conditions, "\n  AND ")
 }
 
-func (b *SurrealQueryBuilder) fieldLiteral(field, value string) string {
-	fieldType := ""
-	if provider, ok := b.schemaProvider.(ResourceFieldTypeProvider); ok {
-		fieldType = provider.GetResourceFieldType(b.namespace, b.request.SourceType, field)
-	}
-	literal, ok := typedSurrealLiteral(fieldType, value)
-	if ok {
-		return literal
-	}
-	// 正常查询会在 Build 前通过校验拦截非法类型值；直接调用构建器时则回退为安全转义的字符串。
+func (b *SurrealQueryBuilder) fieldLiteral(_, value string) string {
+	// 图顶点属性由指标标签物化而来，即使 metadata 将输入字段声明为数值，
+	// 其在 SurrealDB 中仍以字符串存储。构建查询前仍会按 metadata 校验请求值。
 	return fmt.Sprintf("'%s'", escapeSurrealString(value))
 }
 

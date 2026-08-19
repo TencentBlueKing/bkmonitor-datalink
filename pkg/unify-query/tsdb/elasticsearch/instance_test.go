@@ -1539,6 +1539,72 @@ func TestInstance_QueryLabelValuesConcurrentSharedQueryDoesNotMutate(t *testing.
 	assert.Equal(t, originalAggregates, query.Aggregates)
 }
 
+func TestBuildESQuerySourceTagValuesQueryString(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	start := time.Unix(1764074673, 0)
+	end := time.Unix(1764078273, 0)
+
+	for name, tc := range map[string]struct {
+		queryString string
+		requestSize int
+		maxSize     int
+		expected    string
+	}{
+		"query_string 过滤枚举值": {
+			queryString: "level:error",
+			expected:    `{"aggregations":{"level":{"aggregations":{"_value":{"cardinality":{"field":"level"}}},"terms":{"field":"level","missing":" "}}},"query":{"bool":{"filter":[{"exists":{"field":"level"}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1764074673,"include_lower":true,"include_upper":true,"to":1764078273}}},{"term":{"level":"error"}}]}},"size":0}`,
+		},
+		"空 query_string 保留枚举过滤条件": {
+			expected: `{"aggregations":{"level":{"aggregations":{"_value":{"cardinality":{"field":"level"}}},"terms":{"field":"level","missing":" "}}},"query":{"bool":{"filter":[{"exists":{"field":"level"}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1764074673,"include_lower":true,"include_upper":true,"to":1764078273}}}]}},"size":0}`,
+		},
+		"limit=1 生成 terms.size": {
+			requestSize: 1,
+			maxSize:     10000,
+			expected:    `{"aggregations":{"level":{"aggregations":{"_value":{"cardinality":{"field":"level"}}},"terms":{"field":"level","missing":" ","size":1}}},"query":{"bool":{"filter":[{"exists":{"field":"level"}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1764074673,"include_lower":true,"include_upper":true,"to":1764078273}}}]}},"size":0}`,
+		},
+		"limit=20 不退化为 ES 默认数量": {
+			requestSize: 20,
+			maxSize:     10000,
+			expected:    `{"aggregations":{"level":{"aggregations":{"_value":{"cardinality":{"field":"level"}}},"terms":{"field":"level","missing":" ","size":20}}},"query":{"bool":{"filter":[{"exists":{"field":"level"}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1764074673,"include_lower":true,"include_upper":true,"to":1764078273}}}]}},"size":0}`,
+		},
+		"超过存储最大值时截断": {
+			requestSize: 20000,
+			maxSize:     10000,
+			expected:    `{"aggregations":{"level":{"aggregations":{"_value":{"cardinality":{"field":"level"}}},"terms":{"field":"level","missing":" ","size":10000}}},"query":{"bool":{"filter":[{"exists":{"field":"level"}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1764074673,"include_lower":true,"include_upper":true,"to":1764078273}}}]}},"size":0}`,
+		},
+		"缺省 limit 使用存储最大值": {
+			maxSize:  10000,
+			expected: `{"aggregations":{"level":{"aggregations":{"_value":{"cardinality":{"field":"level"}}},"terms":{"field":"level","missing":" ","size":10000}}},"query":{"bool":{"filter":[{"exists":{"field":"level"}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1764074673,"include_lower":true,"include_upper":true,"to":1764078273}}}]}},"size":0}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			query := &metadata.Query{
+				QueryString: tc.queryString,
+				AllConditions: metadata.AllConditions{{{
+					DimensionName: "level",
+					Operator:      metadata.ConditionExisted,
+				}}},
+				Aggregates: metadata.Aggregates{{
+					Name:       Cardinality,
+					Field:      "level",
+					Dimensions: []string{"level"},
+					Without:    true,
+				}},
+			}
+			size := effectiveQuerySize(tc.requestSize, tc.maxSize)
+			fact := NewFormatFactory(ctx).
+				WithQuery("level", metadata.TimeField{Name: "dtEventTimeStamp", Type: TimeFieldTypeTime, Unit: "s"}, start, end, "s", size).
+				WithFieldMap(metadata.FieldsMap{
+					"level": {FieldName: "level", FieldType: KeyWord},
+				})
+
+			_, _, body, err := buildESQuerySource(ctx, query, fact, nil)
+			assert.NoError(t, err)
+			assert.JSONEq(t, tc.expected, body)
+		})
+	}
+}
+
 func TestInstance_QuerySeries(t *testing.T) {
 	mock.Init()
 

@@ -161,6 +161,11 @@ type FormatFactory struct {
 	decode func(k string) string
 	encode func(k string) string
 
+	// aliasFreeEncode 与 encode 的差别只在于不做别名改写，用于还原请求里写的维度名
+	aliasFreeEncode func(k string) string
+	// extraLabelKeys 记录 ES 字段名需要额外补出的维度键，只有请求名与别名不一致时才有内容
+	extraLabelKeys map[string][]string
+
 	fieldsMap metadata.FieldsMap
 
 	data map[string]any
@@ -321,6 +326,41 @@ func (f *FormatFactory) WithTransform(encode func(string) string, decode func(st
 		f.valueField = decode(f.valueField)
 	}
 	return f
+}
+
+// WithAliasFreeEncode 注册不做别名改写的字段名转换，用于还原请求里写的维度名。
+func (f *FormatFactory) WithAliasFreeEncode(encode func(string) string) *FormatFactory {
+	f.aliasFreeEncode = encode
+	return f
+}
+
+// recordRequestedDimension 记录请求里写的维度名。出端默认把字段名改写成别名，
+// 而 PromQL 的 by 子句用的是请求名，两者不一致时该维度会被整个聚合掉，
+// 所以这里留一份请求名，供聚合结果补出可分组的维度键。
+func (f *FormatFactory) recordRequestedDimension(requested, field string) {
+	if f.aliasFreeEncode == nil {
+		return
+	}
+
+	encoded := field
+	if f.encode != nil {
+		encoded = f.encode(field)
+	}
+
+	key := f.aliasFreeEncode(requested)
+	if key == "" || key == encoded {
+		return
+	}
+
+	if f.extraLabelKeys == nil {
+		f.extraLabelKeys = make(map[string][]string)
+	}
+	for _, exist := range f.extraLabelKeys[field] {
+		if exist == key {
+			return
+		}
+	}
+	f.extraLabelKeys[field] = append(f.extraLabelKeys[field], key)
 }
 
 func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
@@ -499,6 +539,14 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 		promDataFormat: f.encode,
 		timeFormat:     f.toMillisecond,
 	}
+
+	// 配了别名的字段，出端默认只留别名键，而请求里写的是原始字段名，两边对不上。
+	// ts 查询要经 PromQL 分组，by 子句认的是请求名，所以补一份请求名的键让两种写法都能分组；
+	// 这份双键与 metadata.FieldAlias.AddAliasKeysWhenOriginalFieldPresent 是同一套过渡方案，将来一起清理。
+	// reference 查询直出聚合结果、下游按结果列取值，补键会凭空多出一列导致错位，
+	// 所以改成把别名键重命名为请求名：列数不变，且与 /query/ts、bksql 的返回口径一致。
+	af.extraLabelKeys = f.extraLabelKeys
+	af.renameLabel = f.isReference
 
 	af.get()
 	defer af.put()
@@ -861,9 +909,11 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 				if dim == "" || dim == labels.MetricName {
 					continue
 				}
+				requested := dim
 				if f.decode != nil {
 					dim = f.decode(dim)
 				}
+				f.recordRequestedDimension(requested, dim)
 
 				f.termAgg(dim, idx == 0)
 			}

@@ -1958,7 +1958,9 @@ func TestQueryResourceMatcherAppliesSourceExpandInfo(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Contains(t, executor.sql, "env_name = 'production'")
-	assert.Contains(t, executor.sql, "system_liveness_record WHERE reference_id = $parent.")
+	assert.Contains(t, executor.sql, "relation_id = $parent.id")
+	assert.NotContains(t, executor.sql, "system_liveness_record WHERE reference_id = $parent.")
+	assert.NotContains(t, executor.sql, "host_liveness_record WHERE reference_id = $parent.")
 	assert.NotContains(t, executor.sql, ResponseFieldLiveness+":")
 	assert.NotContains(t, executor.sql, ResponseFieldRelationLiveness+":")
 }
@@ -3294,7 +3296,7 @@ func TestBuildTargetMatchersTimeSeriesRequiresEdgeLiveness(t *testing.T) {
 	}, result)
 }
 
-func TestBuildTargetMatchersTimeSeriesRequiresEveryNodeLiveness(t *testing.T) {
+func TestBuildTargetMatchersTimeSeriesUsesRelationLivenessForGraphPaths(t *testing.T) {
 	graph := NewLivenessGraph(0, 200)
 	root := &NodeLiveness{
 		ResourceID:   "node:1",
@@ -3322,6 +3324,7 @@ func TestBuildTargetMatchersTimeSeriesRequiresEveryNodeLiveness(t *testing.T) {
 	assert.Equal(t, []cmdb.MatchersWithTimestamp{
 		{Timestamp: 0, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
 		{Timestamp: 100, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
+		{Timestamp: 200, Matchers: cmdb.Matchers{{"pod": "nginx-1"}}},
 	}, result)
 }
 

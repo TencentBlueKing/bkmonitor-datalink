@@ -218,8 +218,8 @@ func (g *LivenessGraph) TargetPathsFromFilteredInstantQuery(
 	pathResource []ResourceType,
 	includeRootTargetOptions ...bool,
 ) []*TargetPath {
-	// instant SurrealQL 已对路径上的 node/relation 逐级做了判活过滤，并且为减少响应体
-	// 不投影 periods。这里不能再要求 periods 有公共交集，否则空投影会把已命中的路径丢弃。
+	// instant SurrealQL 已按 relation liveness 逐跳过滤，且响应不会投影 liveness periods。
+	// Go 侧只提取已命中的拓扑，不能再对未返回的 periods 求交集并误判路径不活跃。
 	return g.targetPaths(targetType, pathResource, false, includeRootTargetOptions...)
 }
 

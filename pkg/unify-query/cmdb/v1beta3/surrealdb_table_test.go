@@ -722,7 +722,7 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 			rangeEnd:             600000,
 			stepMs:               60000,
 			requestJSON:          `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"node","source_info":{"node":"node-1"},"target_type":"pod","look_back_delta":1200000}`,
-			expectedResponseJSON: `{"path":["node","pod"],"matchers":[{"pod":"pod-1"}],"range_result":[{"timestamp":0,"matchers":[{"pod":"pod-1"}]},{"timestamp":60000,"matchers":[{"pod":"pod-1"}]}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]}]}`,
+			expectedResponseJSON: `{"path":["node","pod"],"matchers":[{"pod":"pod-1"}],"range_result":[{"timestamp":0,"matchers":[{"pod":"pod-1"}]},{"timestamp":60000,"matchers":[{"pod":"pod-1"}]},{"timestamp":120000,"matchers":[{"pod":"pod-1"}]},{"timestamp":180000,"matchers":[{"pod":"pod-1"}]},{"timestamp":240000,"matchers":[{"pod":"pod-1"}]},{"timestamp":300000,"matchers":[{"pod":"pod-1"}]},{"timestamp":360000,"matchers":[{"pod":"pod-1"}]},{"timestamp":420000,"matchers":[{"pod":"pod-1"}]},{"timestamp":480000,"matchers":[{"pod":"pod-1"}]},{"timestamp":540000,"matchers":[{"pod":"pod-1"}]},{"timestamp":600000,"matchers":[{"pod":"pod-1"}]}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]}]}`,
 			expectedRequestCount: 1,
 		},
 		{
@@ -958,6 +958,60 @@ func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
 			assert.NotContains(t, dsl, "host_with_module_liveness_record")
 		})
 	}
+}
+
+func TestSurrealQueryBuilderForPathUsesRelationOnlyLiveness(t *testing.T) {
+	provider := newTableSchemaProvider(
+		map[ResourceType]tableResourceDefinition{
+			ResourceTypeNode: {primaryKeys: []string{"node"}},
+			ResourceTypePod:  {primaryKeys: []string{"pod"}},
+		},
+		[]RelationSchema{{
+			RelationType: RelationNodeWithPod,
+			Category:     RelationCategoryStatic,
+			FromType:     ResourceTypeNode,
+			ToType:       ResourceTypePod,
+		}},
+	)
+	req := &QueryRequest{
+		Timestamp:          300000,
+		SourceType:         ResourceTypeNode,
+		SourceInfo:         cmdb.Matcher{"node": "node-1"},
+		TargetType:         ResourceTypePod,
+		TargetTypeExplicit: true,
+	}
+	path := resourcePath{Steps: []resourcePathStep{
+		{ResourceType: string(ResourceTypeNode)},
+		{
+			ResourceType: string(ResourceTypePod),
+			RelationType: string(RelationNodeWithPod),
+			Category:     string(RelationCategoryStatic),
+			Direction:    string(DirectionOutbound),
+		},
+	}}
+
+	oldRelations := ActiveEdgeServingRelations
+	t.Cleanup(func() { ActiveEdgeServingRelations = oldRelations })
+
+	ActiveEdgeServingRelations = nil
+	rawSQL := NewSurrealQueryBuilderForPath(req, provider, path).Build()
+	assert.Contains(t, rawSQL, "node_with_pod_liveness_record")
+	assert.NotContains(t, rawSQL, "FROM node_liveness_record")
+	assert.NotContains(t, rawSQL, "FROM pod_liveness_record")
+	assert.Contains(t, rawSQL, ResponseFieldRelationLiveness+":")
+
+	ActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
+	servingBuilder := NewSurrealQueryBuilderForPath(req, provider, path)
+	servingSQL := servingBuilder.Build()
+	assert.Equal(t, "active_edge_serving", servingBuilder.routeName())
+	assert.Contains(t, servingSQL, "FROM node_with_pod_active_edge_view")
+	assert.NotContains(t, servingSQL, "FROM node_liveness_record")
+	assert.NotContains(t, servingSQL, "FROM pod_liveness_record")
+	assert.Contains(t, servingSQL, ResponseFieldRelationLiveness+":")
+
+	rootOnlyPath := resourcePath{Steps: []resourcePathStep{{ResourceType: string(ResourceTypeNode)}}}
+	rootOnlySQL := NewSurrealQueryBuilderForPath(req, provider, rootOnlyPath).Build()
+	assert.Contains(t, rootOnlySQL, "node_liveness_record")
 }
 
 func tableActiveEdgeServingResponsesBySurrealQL(

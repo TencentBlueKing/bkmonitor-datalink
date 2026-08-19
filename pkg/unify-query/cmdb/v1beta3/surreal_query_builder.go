@@ -132,6 +132,7 @@ func NewSurrealQueryBuilderForPath(request *QueryRequest, provider SchemaProvide
 	builder := NewSurrealQueryBuilderWithSchemaProvider(pathRequest, provider)
 	builder.transitions = buildTransitionsFromPaths([]resourcePath{path})
 	builder.pathHopCount = maxInt(0, len(path.Steps)-1)
+	builder.request.MaxHops = builder.pathHopCount
 	for _, step := range path.Steps[1:] {
 		if _, ok := builder.activeEdgeServingRelations[RelationType(step.RelationType)]; ok {
 			builder.servingHopCount++
@@ -148,6 +149,13 @@ func (b *SurrealQueryBuilder) routeName() string {
 		return "active_edge_serving"
 	}
 	return "mixed"
+}
+
+func (b *SurrealQueryBuilder) usesRelationOnlyLiveness() bool {
+	// 图路径只以直接上报的 relation liveness 为事实来源。resource liveness 没有独立上报，
+	// 若参与原始查询会与仅由 relation liveness 刷新的 active edge view 产生语义差异。
+	// 零跳 resource-info 查询仍需 resource liveness。
+	return b != nil && b.pathHopCount > 0
 }
 
 // WithoutLivenessProjection 保留存活性过滤条件，但不在 SELECT 结果中投影存活时段。
@@ -341,8 +349,12 @@ func escapeSurrealRecordIDPart(value string) string {
 func (b *SurrealQueryBuilder) buildRootSelect() string {
 	sourceType := b.request.SourceType
 	rootFields := b.rootEntityDataFields(sourceType)
-	livenessTable := surrealTableName(GetLivenessRecordTableName(sourceType))
-	livenessIDField := GetLivenessIDField(sourceType)
+	rootLiveness := ""
+	if !b.usesRelationOnlyLiveness() {
+		livenessTable := surrealTableName(GetLivenessRecordTableName(sourceType))
+		livenessIDField := GetLivenessIDField(sourceType)
+		rootLiveness = b.livenessProjection(",\n        ", ResponseFieldLiveness, tplLivenessSelect, livenessTable, livenessIDField)
+	}
 
 	return fmt.Sprintf(`{
         entity_type: meta::tb(id),
@@ -352,7 +364,7 @@ func (b *SurrealQueryBuilder) buildRootSelect() string {
         updated_at: updated_at%s
     }`,
 		buildEntityDataFields(rootFields, ""),
-		b.livenessProjection(",\n        ", ResponseFieldLiveness, tplLivenessSelect, livenessTable, livenessIDField))
+		rootLiveness)
 }
 
 func (b *SurrealQueryBuilder) rootEntityDataFields(sourceType ResourceType) []string {
@@ -458,6 +470,10 @@ func (b *SurrealQueryBuilder) buildRelationQuery(hop int, _ ResourceType, rel *R
 	targetLivenessIDField := GetLivenessIDField(rel.TargetType)
 	keyName := surrealObjectKey(string(relationType) + rel.KeySuffix)
 	targetFields := b.targetEntityDataFields(rel.TargetType)
+	targetLiveness := ""
+	if !b.usesRelationOnlyLiveness() {
+		targetLiveness = b.livenessProjection(",\n                ", ResponseFieldLiveness, tplLivenessSelectRef, targetLivenessTable, targetLivenessIDField, rel.SelectField)
+	}
 
 	var fieldsBuilder strings.Builder
 	fieldsBuilder.WriteString(fmt.Sprintf(`
@@ -480,7 +496,7 @@ func (b *SurrealQueryBuilder) buildRelationQuery(hop int, _ ResourceType, rel *R
 		rel.TargetType,
 		rel.SelectField,
 		buildEntityDataFields(targetFields, rel.SelectField),
-		b.livenessProjection(",\n                ", ResponseFieldLiveness, tplLivenessSelectRef, targetLivenessTable, targetLivenessIDField, rel.SelectField)))
+		targetLiveness))
 
 	if hop < b.request.MaxHops {
 		nextHopKey := fmt.Sprintf("hop%d", hop+1)
@@ -491,6 +507,19 @@ func (b *SurrealQueryBuilder) buildRelationQuery(hop int, _ ResourceType, rel *R
 
 	fieldsBuilder.WriteString(`
             }`)
+
+	if b.usesRelationOnlyLiveness() {
+		return fmt.Sprintf(sqlIndent2+`%s: (SELECT VALUE {%s
+        } FROM %s WHERE %s = $parent.id
+          AND `+tplRelLivenessFilter+`
+          LIMIT %d)`,
+			keyName,
+			fieldsBuilder.String(),
+			relationTable,
+			rel.WhereField,
+			relationLivenessTable,
+			maxEdgesPerHopQueryLimit())
+	}
 
 	return fmt.Sprintf(sqlIndent2+`%s: (SELECT VALUE {%s
         } FROM %s WHERE %s = $parent.id
@@ -548,6 +577,10 @@ func (b *SurrealQueryBuilder) buildNestedRelationQuery(hop int, rel *RelationQue
 	targetLivenessIDField := GetLivenessIDField(rel.TargetType)
 	keyName := surrealObjectKey(string(relationType) + rel.KeySuffix)
 	targetFields := b.targetEntityDataFields(rel.TargetType)
+	targetLiveness := ""
+	if !b.usesRelationOnlyLiveness() {
+		targetLiveness = b.livenessProjection(",\n                            ", ResponseFieldLiveness, tplLivenessSelectRef, targetLivenessTable, targetLivenessIDField, rel.SelectField)
+	}
 
 	var fieldsBuilder strings.Builder
 	fieldsBuilder.WriteString(fmt.Sprintf(`
@@ -570,7 +603,7 @@ func (b *SurrealQueryBuilder) buildNestedRelationQuery(hop int, rel *RelationQue
 		rel.TargetType,
 		rel.SelectField,
 		buildEntityDataFields(targetFields, rel.SelectField),
-		b.livenessProjection(",\n                            ", ResponseFieldLiveness, tplLivenessSelectRef, targetLivenessTable, targetLivenessIDField, rel.SelectField)))
+		targetLiveness))
 
 	if hop < b.request.MaxHops {
 		nextHopKey := fmt.Sprintf("hop%d", hop+1)
@@ -581,6 +614,20 @@ func (b *SurrealQueryBuilder) buildNestedRelationQuery(hop int, rel *RelationQue
 
 	fieldsBuilder.WriteString(`
                         }`)
+
+	if b.usesRelationOnlyLiveness() {
+		return fmt.Sprintf(sqlIndent5+`%s: (SELECT VALUE {%s
+                    } FROM %s WHERE %s = $parent.%s
+                      AND `+tplRelLivenessFilter+`
+                      LIMIT %d)`,
+			keyName,
+			fieldsBuilder.String(),
+			relationTable,
+			rel.WhereField,
+			parentField,
+			relationLivenessTable,
+			maxEdgesPerHopQueryLimit())
+	}
 
 	return fmt.Sprintf(sqlIndent5+`%s: (SELECT VALUE {%s
                     } FROM %s WHERE %s = $parent.%s
@@ -643,6 +690,10 @@ func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *Relat
 	indent := strings.Repeat(sqlIndent1, indentLevel)
 	innerIndent := strings.Repeat(sqlIndent1, indentLevel+1)
 	targetFields := b.targetEntityDataFields(rel.TargetType)
+	targetLiveness := ""
+	if !b.usesRelationOnlyLiveness() {
+		targetLiveness = b.livenessProjection(fmt.Sprintf(",\n%s    ", innerIndent), ResponseFieldLiveness, tplLivenessSelectRef, targetLivenessTable, targetLivenessIDField, rel.SelectField)
+	}
 
 	var fieldsBuilder strings.Builder
 	fieldsBuilder.WriteString(fmt.Sprintf(`
@@ -667,7 +718,7 @@ func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *Relat
 		innerIndent, rel.TargetType,
 		innerIndent, rel.SelectField,
 		innerIndent, buildEntityDataFields(targetFields, rel.SelectField),
-		b.livenessProjection(fmt.Sprintf(",\n%s    ", innerIndent), ResponseFieldLiveness, tplLivenessSelectRef, targetLivenessTable, targetLivenessIDField, rel.SelectField)))
+		targetLiveness))
 
 	if hop < b.request.MaxHops {
 		nextHopKey := fmt.Sprintf("hop%d", hop+1)
@@ -678,6 +729,18 @@ func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *Relat
 
 	fieldsBuilder.WriteString(fmt.Sprintf(`
 %s}`, innerIndent))
+
+	if b.usesRelationOnlyLiveness() {
+		return fmt.Sprintf(`%s%s: (SELECT VALUE {%s
+%s} FROM %s WHERE %s = $parent.%s
+%s  AND `+tplRelLivenessFilter+`
+%s  LIMIT %d)`,
+			indent, keyName,
+			fieldsBuilder.String(),
+			indent, relationTable, rel.WhereField, parentField,
+			indent, relationLivenessTable,
+			indent, maxEdgesPerHopQueryLimit())
+	}
 
 	return fmt.Sprintf(`%s%s: (SELECT VALUE {%s
 %s} FROM %s WHERE %s = $parent.%s
@@ -693,7 +756,7 @@ func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *Relat
 }
 
 // buildServingRelationQuery 读取预关联的活跃边数据，并保持 SurrealResponseParser 所需的响应结构。
-// serving 时段是边与目标存活时段的物化交集，因此同时作为二者的存活时段返回。
+// active edge view 仅由 relation liveness 刷新，因此 active_period 只能投影为 relation liveness。
 func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQueryInfo, parentRef, indent string) string {
 	relationType := rel.Schema.RelationType
 	table := surrealTableName(string(relationType) + "_active_edge_view")
@@ -707,11 +770,9 @@ func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQu
 	if rel.Schema.Category == RelationCategoryDynamic {
 		direction = fmt.Sprintf("\n%s        direction: '%s',", indent, rel.Direction)
 	}
-	liveness := ""
-	targetLiveness := ""
+	relationLiveness := ""
 	if b.projectLiveness {
-		liveness = fmt.Sprintf("\n%s        relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }],", indent)
-		targetLiveness = fmt.Sprintf(",\n%s            liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }]", indent)
+		relationLiveness = fmt.Sprintf("\n%s        relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }],", indent)
 	}
 
 	nested := ""
@@ -728,7 +789,7 @@ func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQu
 %s        target: {
 %s            entity_type: %s,
 %s            entity_id: <string>%s,
-%s            entity_data: %s%s%s
+%s            entity_data: %s%s
 %s        }
 %s    } FROM %s WHERE %s = %s
 %s      AND active_period_start_ms <= $end_ms
@@ -739,11 +800,11 @@ func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQu
 		indent, relationType,
 		indent, rel.Schema.Category,
 		direction,
-		indent, liveness,
+		indent, relationLiveness,
 		indent,
 		indent, targetTypeField,
 		indent, targetIDField,
-		indent, targetDataField, targetLiveness, nested,
+		indent, targetDataField, nested,
 		indent,
 		indent, table, matchField, parentRef,
 		indent,
@@ -792,9 +853,11 @@ func (b *SurrealQueryBuilder) buildWhereClause() string {
 		}
 	}
 
-	livenessTable := surrealTableName(GetLivenessRecordTableName(b.request.SourceType))
-	livenessIDField := GetLivenessIDField(b.request.SourceType)
-	conditions = append(conditions, fmt.Sprintf(tplLivenessFilter, livenessTable, livenessIDField))
+	if !b.usesRelationOnlyLiveness() {
+		livenessTable := surrealTableName(GetLivenessRecordTableName(b.request.SourceType))
+		livenessIDField := GetLivenessIDField(b.request.SourceType)
+		conditions = append(conditions, fmt.Sprintf(tplLivenessFilter, livenessTable, livenessIDField))
+	}
 
 	return "WHERE " + strings.Join(conditions, "\n  AND ")
 }

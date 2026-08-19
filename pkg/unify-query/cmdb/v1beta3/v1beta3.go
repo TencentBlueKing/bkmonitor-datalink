@@ -1638,12 +1638,13 @@ func isAnyTargetPathActiveInWindow(paths []*targetPathInfo, windowStart, windowE
 }
 
 func isTargetPathActiveInWindow(path *targetPathInfo, windowStart, windowEnd int64) bool {
-	for _, periods := range path.NodePeriods {
-		if !hasPeriodOverlapWindow(periods, windowStart, windowEnd) {
-			return false
-		}
+	// 图路径的时间桶与 SurrealQL/active edge view 一样只看 relation liveness；
+	// 只有零跳 resource-info 结果没有边时才回退到 resource liveness。
+	periodGroups := path.EdgePeriods
+	if len(periodGroups) == 0 {
+		periodGroups = path.NodePeriods
 	}
-	for _, periods := range path.EdgePeriods {
+	for _, periods := range periodGroups {
 		if !hasPeriodOverlapWindow(periods, windowStart, windowEnd) {
 			return false
 		}

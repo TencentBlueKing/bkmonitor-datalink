@@ -1228,6 +1228,190 @@ func TestSurrealQueryBuilderCanOmitLivenessProjection(t *testing.T) {
 	assert.Contains(t, instantSQL, "node_with_pod_liveness_record WHERE relation_id = $parent.id")
 }
 
+func TestSurrealQueryBuilderFlatOneHopActiveEdgeServingContract(t *testing.T) {
+	previousFlat := FlatOneHopActiveEdgeServingRelations
+	previousServing := ActiveEdgeServingRelations
+	FlatOneHopActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
+	ActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
+	t.Cleanup(func() {
+		FlatOneHopActiveEdgeServingRelations = previousFlat
+		ActiveEdgeServingRelations = previousServing
+	})
+
+	request := &QueryRequest{
+		Timestamp:          600000,
+		LookBackDelta:      600000,
+		SourceType:         ResourceTypeNode,
+		SourceInfo:         map[string]string{"bcs_cluster_id": "BCS-K8S-00001", "node": "node-1"},
+		TargetType:         ResourceTypePod,
+		TargetTypeExplicit: true,
+		PathResource:       []ResourceType{ResourceTypeNode, ResourceTypePod},
+		MaxHops:            1,
+	}
+	path := resourcePath{Steps: []resourcePathStep{
+		{ResourceType: string(ResourceTypeNode)},
+		{
+			ResourceType: string(ResourceTypePod),
+			RelationType: string(RelationNodeWithPod),
+			Category:     string(RelationCategoryStatic),
+			Direction:    string(DirectionOutbound),
+		},
+	}}
+
+	instantBuilder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
+	configureBuilderForGraphQueryMode(instantBuilder, graphQueryModeInstant)
+	instantSQL := instantBuilder.Build()
+	assert.Equal(t, "active_edge_serving_flat_one_hop", instantBuilder.routeName())
+	assert.Contains(t, instantSQL, "FROM node_with_pod_active_edge_view\nWHERE source_data.bcs_cluster_id = 'BCS-K8S-00001'\n  AND source_data.node = 'node-1'")
+	assert.NotContains(t, instantSQL, "LET $flat_root_id")
+	assert.NotContains(t, instantSQL, "FROM node\nWHERE")
+	assert.NotContains(t, instantSQL, "source_id = $")
+	assert.Contains(t, instantSQL, "entity_data: source_data")
+	assert.Contains(t, instantSQL, "entity_data: target_data")
+	assert.NotContains(t, instantSQL, "relation_liveness:")
+	assert.NotContains(t, instantSQL, "hop2")
+
+	rangeBuilder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
+	configureBuilderForGraphQueryMode(rangeBuilder, graphQueryModeRange)
+	assert.Equal(t, "active_edge_serving", rangeBuilder.routeName())
+	assert.Contains(t, rangeBuilder.Build(), "FROM node_with_pod_active_edge_view")
+}
+
+func TestSurrealQueryBuilderFlatOneHopActiveEdgeServingFallsBack(t *testing.T) {
+	previousFlat := FlatOneHopActiveEdgeServingRelations
+	previousServing := ActiveEdgeServingRelations
+	FlatOneHopActiveEdgeServingRelations = nil
+	ActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
+	t.Cleanup(func() {
+		FlatOneHopActiveEdgeServingRelations = previousFlat
+		ActiveEdgeServingRelations = previousServing
+	})
+
+	request := &QueryRequest{
+		Timestamp:          600000,
+		LookBackDelta:      600000,
+		SourceType:         ResourceTypeNode,
+		SourceInfo:         map[string]string{"bcs_cluster_id": "BCS-K8S-00001", "node": "node-1"},
+		TargetType:         ResourceTypePod,
+		TargetTypeExplicit: true,
+		PathResource:       []ResourceType{ResourceTypeNode, ResourceTypePod},
+		MaxHops:            1,
+	}
+	path := resourcePath{Steps: []resourcePathStep{
+		{ResourceType: string(ResourceTypeNode)},
+		{
+			ResourceType: string(ResourceTypePod),
+			RelationType: string(RelationNodeWithPod),
+			Category:     string(RelationCategoryStatic),
+			Direction:    string(DirectionOutbound),
+		},
+	}}
+
+	instantBuilder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
+	configureBuilderForGraphQueryMode(instantBuilder, graphQueryModeInstant)
+	instantSQL := instantBuilder.Build()
+	assert.Equal(t, "active_edge_serving", instantBuilder.routeName())
+	assert.Contains(t, instantSQL, "FROM node\nWHERE")
+	assert.Contains(t, instantSQL, "source_id = $parent.id")
+
+	FlatOneHopActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
+	request.SourceExpandInfo = map[string]string{"region": "sh"}
+	expandedBuilder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
+	configureBuilderForGraphQueryMode(expandedBuilder, graphQueryModeInstant)
+	assert.Equal(t, "active_edge_serving", expandedBuilder.routeName())
+	assert.Contains(t, expandedBuilder.Build(), "region = 'sh'")
+
+	rangeBuilder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
+	configureBuilderForGraphQueryMode(rangeBuilder, graphQueryModeRange)
+	assert.Equal(t, "active_edge_serving", rangeBuilder.routeName())
+	assert.Contains(t, rangeBuilder.Build(), "FROM node_with_pod_active_edge_view")
+}
+
+func TestSurrealQueryBuilderFlatOneHopActiveEdgeServingReverseContract(t *testing.T) {
+	previousFlat := FlatOneHopActiveEdgeServingRelations
+	previousServing := ActiveEdgeServingRelations
+	FlatOneHopActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
+	ActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
+	t.Cleanup(func() {
+		FlatOneHopActiveEdgeServingRelations = previousFlat
+		ActiveEdgeServingRelations = previousServing
+	})
+
+	request := &QueryRequest{
+		Timestamp:          600000,
+		LookBackDelta:      600000,
+		SourceType:         ResourceTypePod,
+		SourceInfo:         map[string]string{"bcs_cluster_id": "BCS-K8S-00001", "namespace": "default", "pod": "nginx-1"},
+		TargetType:         ResourceTypeNode,
+		TargetTypeExplicit: true,
+		PathResource:       []ResourceType{ResourceTypePod, ResourceTypeNode},
+		MaxHops:            1,
+	}
+	path := resourcePath{Steps: []resourcePathStep{
+		{ResourceType: string(ResourceTypePod)},
+		{
+			ResourceType: string(ResourceTypeNode),
+			RelationType: string(RelationNodeWithPod),
+			Category:     string(RelationCategoryStatic),
+			Direction:    string(DirectionInbound),
+		},
+	}}
+
+	builder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
+	configureBuilderForGraphQueryMode(builder, graphQueryModeInstant)
+	sql := builder.Build()
+	assert.Equal(t, "active_edge_serving_flat_one_hop", builder.routeName())
+	assert.Contains(t, sql, "FROM node_with_pod_active_edge_view\nWHERE target_data.bcs_cluster_id = 'BCS-K8S-00001'\n  AND target_data.namespace = 'default'\n  AND target_data.pod = 'nginx-1'")
+	assert.Contains(t, sql, "entity_id: <string>target_id")
+	assert.Contains(t, sql, "entity_data: target_data")
+	assert.Contains(t, sql, "entity_id: <string>source_id")
+	assert.Contains(t, sql, "entity_data: source_data")
+}
+
+func TestFlatOneHopActiveEdgeServingRejectsFanoutAboveLimit(t *testing.T) {
+	previousFlat := FlatOneHopActiveEdgeServingRelations
+	previousServing := ActiveEdgeServingRelations
+	previousMaxEdges := MaxEdgesPerHop
+	FlatOneHopActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
+	ActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
+	MaxEdgesPerHop = 1
+	t.Cleanup(func() {
+		FlatOneHopActiveEdgeServingRelations = previousFlat
+		ActiveEdgeServingRelations = previousServing
+		MaxEdgesPerHop = previousMaxEdges
+	})
+
+	path := resourcePath{Steps: []resourcePathStep{
+		{ResourceType: string(ResourceTypeNode)},
+		{
+			ResourceType: string(ResourceTypePod),
+			RelationType: string(RelationNodeWithPod),
+			Category:     string(RelationCategoryStatic),
+			Direction:    string(DirectionOutbound),
+		},
+	}}
+	request := &QueryRequest{
+		SourceInfo:         map[string]string{"bcs_cluster_id": "BCS-K8S-00001", "node": "node-1"},
+		SourceType:         ResourceTypeNode,
+		TargetType:         ResourceTypePod,
+		TargetTypeExplicit: true,
+		MaxHops:            1,
+	}
+	runner := func(context.Context, string, int64, int64) ([]*LivenessGraph, error) {
+		return []*LivenessGraph{NewLivenessGraph(0, 1), NewLivenessGraph(0, 1)}, nil
+	}
+
+	result := (&Model{}).executeOneGraphQueryPath(
+		context.Background(), request, GetSchemaProvider(), path, 0, 0, 1, graphQueryModeInstant, runner,
+	)
+	require.Error(t, result.err)
+	var limitErr *ResultLimitError
+	require.ErrorAs(t, result.err, &limitErr)
+	assert.Equal(t, "max_edges_per_hop", limitErr.TruncationReason())
+	assert.Equal(t, 2, limitErr.Count)
+	assert.Equal(t, 1, limitErr.Limit)
+}
+
 func TestSurrealQueryBuilderUsesSecondEntityAndMillisecondRelationWindows(t *testing.T) {
 	sql := NewSurrealQueryBuilder(&QueryRequest{
 		Timestamp:     1782984106000,

@@ -826,6 +826,16 @@ func (m *Model) executeOneGraphQueryPath(
 		spanErr = runErr
 		return pathQueryResult{idx: idx, path: path, err: runErr}
 	}
+	if builder.usesFlatOneHopActiveEdgeServingQuery() && len(graphs) > effectiveMaxEdgesPerHop() {
+		spanErr = &ResultLimitError{
+			Reason: "max_edges_per_hop",
+			Count:  len(graphs),
+			Limit:  effectiveMaxEdgesPerHop(),
+			Path:   fmt.Sprintf("hop1.%s", path.Steps[1].RelationType),
+		}
+		span.Set("path-result", "result-limit")
+		return pathQueryResult{idx: idx, path: path, err: spanErr}
+	}
 	if traversalErr := rejectGraphTraversalErrors(graphs); traversalErr != nil {
 		span.Set("path-result", "traversal-error")
 		spanErr = traversalErr

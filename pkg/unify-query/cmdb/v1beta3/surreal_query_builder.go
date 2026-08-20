@@ -63,6 +63,7 @@ type SurrealQueryBuilder struct {
 	projectLiveness            bool
 	queryMode                  graphQueryMode
 	activeEdgeServingRelations map[RelationType]struct{}
+	flatOneHopServingRelations map[RelationType]struct{}
 	servingHopCount            int
 	pathHopCount               int
 }
@@ -102,6 +103,10 @@ func NewSurrealQueryBuilderWithSchemaProvider(request *QueryRequest, provider Sc
 	for _, relation := range ActiveEdgeServingRelations {
 		servingRelations[RelationType(relation)] = struct{}{}
 	}
+	flatOneHopServingRelations := make(map[RelationType]struct{})
+	for _, relation := range FlatOneHopActiveEdgeServingRelations {
+		flatOneHopServingRelations[RelationType(relation)] = struct{}{}
+	}
 
 	return &SurrealQueryBuilder{
 		request:                    request,
@@ -111,6 +116,7 @@ func NewSurrealQueryBuilderWithSchemaProvider(request *QueryRequest, provider Sc
 		transitions:                buildPathTransitions(request, pf),
 		projectLiveness:            true,
 		activeEdgeServingRelations: servingRelations,
+		flatOneHopServingRelations: flatOneHopServingRelations,
 	}
 }
 
@@ -119,6 +125,14 @@ func (b *SurrealQueryBuilder) useActiveEdgeServing(relationType RelationType) bo
 		return false
 	}
 	_, ok := b.activeEdgeServingRelations[relationType]
+	return ok
+}
+
+func (b *SurrealQueryBuilder) useFlatOneHopActiveEdgeServing(relationType RelationType) bool {
+	if b == nil {
+		return false
+	}
+	_, ok := b.flatOneHopServingRelations[relationType]
 	return ok
 }
 
@@ -142,6 +156,9 @@ func NewSurrealQueryBuilderForPath(request *QueryRequest, provider SchemaProvide
 }
 
 func (b *SurrealQueryBuilder) routeName() string {
+	if b.usesFlatOneHopActiveEdgeServingQuery() {
+		return "active_edge_serving_flat_one_hop"
+	}
 	if b == nil || b.servingHopCount == 0 {
 		return "raw"
 	}
@@ -257,8 +274,97 @@ func (b *SurrealQueryBuilder) Build() string {
 	var sb strings.Builder
 	sb.WriteString(b.buildVariables())
 	sb.WriteString("\n\n")
+	if b.usesFlatOneHopActiveEdgeServingQuery() {
+		sb.WriteString(b.buildFlatOneHopServingQuery(b.getRelationsForType(1, b.request.SourceType)[0]))
+		return sb.String()
+	}
 	sb.WriteString(b.buildMainQuery())
 	return sb.String()
+}
+
+// usesFlatOneHopActiveEdgeServingQuery 只覆盖已完成主键索引验证的即时单跳 Event relation。
+// active edge 行已投影 relation liveness，直接以业务主键过滤可避开 root 相关 ProjectValue。
+func (b *SurrealQueryBuilder) usesFlatOneHopActiveEdgeServingQuery() bool {
+	if b == nil || b.queryMode != graphQueryModeInstant || b.projectLiveness || len(b.request.SourceExpandInfo) > 0 {
+		return false
+	}
+	if b.pathHopCount != 1 || !b.usesRelationOnlyLiveness() {
+		return false
+	}
+	relations := b.getRelationsForType(1, b.request.SourceType)
+	if len(relations) != 1 {
+		return false
+	}
+	rel := relations[0]
+	if !b.useActiveEdgeServing(rel.Schema.RelationType) || !b.useFlatOneHopActiveEdgeServing(rel.Schema.RelationType) {
+		return false
+	}
+	sourceDataField := "source_data"
+	if rel.WhereField == fieldOut {
+		sourceDataField = "target_data"
+	}
+	_, ok := b.flatServingPrimaryKeyConditions(sourceDataField)
+	return ok
+}
+
+// buildFlatOneHopServingQuery 直接从 active edge view 返回单边图行。view 已完成
+// relation liveness 的预关联，保留嵌套投影会让 SurrealDB 再次执行高成本的 ProjectValue。
+func (b *SurrealQueryBuilder) buildFlatOneHopServingQuery(rel *RelationQueryInfo) string {
+	relationType := rel.Schema.RelationType
+	table := surrealTableName(string(relationType) + "_active_edge_view")
+	sourceIDField, sourceDataField := "source_id", "source_data"
+	targetIDField, targetDataField, targetTypeField := "target_id", "target_data", "target_type"
+	if rel.WhereField == fieldOut {
+		sourceIDField, sourceDataField = "target_id", "target_data"
+		targetIDField, targetDataField, targetTypeField = "source_id", "source_data", "source_type"
+	}
+
+	direction := ""
+	if rel.Schema.Category == RelationCategoryDynamic {
+		direction = fmt.Sprintf("\n            direction: '%s',", rel.Direction)
+	}
+
+	primaryKeyConditions, _ := b.flatServingPrimaryKeyConditions(sourceDataField)
+
+	return fmt.Sprintf(`SELECT {
+    root: {
+        entity_type: '%s',
+        entity_id: <string>%s,
+        entity_data: %s
+    },
+    hop1: {
+        %s: [{
+            hop: 1,
+            relation_type: '%s',
+            relation_category: '%s',%s
+            relation_id: <string>relation_id,
+            target: {
+                entity_type: %s,
+                entity_id: <string>%s,
+                entity_data: %s
+            }
+        }]
+    }
+} AS result
+FROM %s
+WHERE %s
+  AND active_period_start_ms <= $end_ms
+  AND active_period_end_ms >= $start_ms
+LIMIT %d;`,
+		b.request.SourceType,
+		sourceIDField,
+		sourceDataField,
+		surrealObjectKey(string(relationType)+rel.KeySuffix),
+		relationType,
+		rel.Schema.Category,
+		direction,
+		targetTypeField,
+		targetIDField,
+		targetDataField,
+		table,
+		strings.Join(primaryKeyConditions, "\n  AND "),
+		maxEdgesPerHopQueryLimit(),
+	)
 }
 
 // buildVariables 构建变量定义部分
@@ -814,10 +920,45 @@ func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQu
 
 // buildWhereClause 构建 WHERE 子句
 func (b *SurrealQueryBuilder) buildWhereClause() string {
-	var conditions []string
-
 	_, usesRootRecordID := b.rootRecordID()
-	if len(b.request.SourceInfo) > 0 && !usesRootRecordID {
+	conditions := b.sourceFilterConditions(!usesRootRecordID)
+
+	if !b.usesRelationOnlyLiveness() {
+		livenessTable := surrealTableName(GetLivenessRecordTableName(b.request.SourceType))
+		livenessIDField := GetLivenessIDField(b.request.SourceType)
+		conditions = append(conditions, fmt.Sprintf(tplLivenessFilter, livenessTable, livenessIDField))
+	}
+
+	if len(conditions) == 0 {
+		return ""
+	}
+	return "WHERE " + strings.Join(conditions, "\n  AND ")
+}
+
+// flatServingPrimaryKeyConditions 用 Event 行内的 source/target 业务主键过滤，避免 Record ID
+// 变量在当前 SurrealDB 版本退化为 TableScan。调用方必须先确认相关复合索引已由 metadata 下发。
+func (b *SurrealQueryBuilder) flatServingPrimaryKeyConditions(dataField string) ([]string, bool) {
+	if b == nil || b.request == nil || b.schemaProvider == nil || len(b.request.SourceInfo) == 0 {
+		return nil, false
+	}
+	primaryKeys := b.schemaProvider.GetResourcePrimaryKeys(b.namespace, b.request.SourceType)
+	if len(primaryKeys) == 0 {
+		return nil, false
+	}
+	conditions := make([]string, 0, len(primaryKeys))
+	for _, key := range primaryKeys {
+		value, ok := b.request.SourceInfo[key]
+		if !ok {
+			return nil, false
+		}
+		conditions = append(conditions, fmt.Sprintf("%s.%s = %s", dataField, escapeSurrealIdentifier(key), b.fieldLiteral(key, value)))
+	}
+	return conditions, true
+}
+
+func (b *SurrealQueryBuilder) sourceFilterConditions(includePrimaryKeys bool) []string {
+	conditions := make([]string, 0, len(b.request.SourceInfo)+len(b.request.SourceExpandInfo))
+	if includePrimaryKeys && len(b.request.SourceInfo) > 0 {
 		// SourceInfo 已在 validateSourceInfoFields 中要求包含完整主键。
 		// 这里再次只接收主键白名单，是 SQL 拼接层的兜底保护，避免未知字段进入 SurrealQL。
 		allowedFields := make(map[string]bool)
@@ -835,8 +976,7 @@ func (b *SurrealQueryBuilder) buildWhereClause() string {
 			if !allowedFields[k] {
 				continue
 			}
-			v := b.request.SourceInfo[k]
-			conditions = append(conditions, fmt.Sprintf("%s = %s", escapeSurrealIdentifier(k), b.fieldLiteral(k, v)))
+			conditions = append(conditions, fmt.Sprintf("%s = %s", escapeSurrealIdentifier(k), b.fieldLiteral(k, b.request.SourceInfo[k])))
 		}
 	}
 
@@ -848,18 +988,10 @@ func (b *SurrealQueryBuilder) buildWhereClause() string {
 		sort.Strings(keys)
 
 		for _, k := range keys {
-			v := b.request.SourceExpandInfo[k]
-			conditions = append(conditions, fmt.Sprintf("%s = %s", escapeSurrealIdentifier(k), b.fieldLiteral(k, v)))
+			conditions = append(conditions, fmt.Sprintf("%s = %s", escapeSurrealIdentifier(k), b.fieldLiteral(k, b.request.SourceExpandInfo[k])))
 		}
 	}
-
-	if !b.usesRelationOnlyLiveness() {
-		livenessTable := surrealTableName(GetLivenessRecordTableName(b.request.SourceType))
-		livenessIDField := GetLivenessIDField(b.request.SourceType)
-		conditions = append(conditions, fmt.Sprintf(tplLivenessFilter, livenessTable, livenessIDField))
-	}
-
-	return "WHERE " + strings.Join(conditions, "\n  AND ")
+	return conditions
 }
 
 func (b *SurrealQueryBuilder) fieldLiteral(_, value string) string {

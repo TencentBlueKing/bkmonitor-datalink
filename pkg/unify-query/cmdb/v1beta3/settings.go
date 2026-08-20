@@ -10,17 +10,18 @@
 package v1beta3
 
 const (
-	MaxHopsConfigPath                    = "cmdb.v1beta3.max_hops"
-	MaxAllowedHopsConfigPath             = "cmdb.v1beta3.max_allowed_hops"
-	DefaultLimitConfigPath               = "cmdb.v1beta3.default_limit"
-	MaxRangePointsConfigPath             = "cmdb.v1beta3.max_range_points"
-	MaxEdgesPerHopConfigPath             = "cmdb.v1beta3.max_edges_per_hop"
-	MaxTargetsConfigPath                 = "cmdb.v1beta3.max_targets"
-	MaxResponseBytesConfigPath           = "cmdb.v1beta3.max_response_bytes"
-	RootRecordIDEnabledConfigPath        = "cmdb.v1beta3.root_record_id.enabled"
-	DefaultLookBackDeltaConfigPath       = "cmdb.v1beta3.look_back_delta"
-	ActiveEdgeServingRelationsConfigPath = "cmdb.v1beta3.active_edge_serving.relations"
-	VMPreferredRelationsConfigPath       = "cmdb.v1beta3.vm_preferred.relations"
+	MaxHopsConfigPath                              = "cmdb.v1beta3.max_hops"
+	MaxAllowedHopsConfigPath                       = "cmdb.v1beta3.max_allowed_hops"
+	DefaultLimitConfigPath                         = "cmdb.v1beta3.default_limit"
+	MaxRangePointsConfigPath                       = "cmdb.v1beta3.max_range_points"
+	MaxEdgesPerHopConfigPath                       = "cmdb.v1beta3.max_edges_per_hop"
+	MaxTargetsConfigPath                           = "cmdb.v1beta3.max_targets"
+	MaxResponseBytesConfigPath                     = "cmdb.v1beta3.max_response_bytes"
+	RootRecordIDEnabledConfigPath                  = "cmdb.v1beta3.root_record_id.enabled"
+	DefaultLookBackDeltaConfigPath                 = "cmdb.v1beta3.look_back_delta"
+	ActiveEdgeServingRelationsConfigPath           = "cmdb.v1beta3.active_edge_serving.relations"
+	FlatOneHopActiveEdgeServingRelationsConfigPath = "cmdb.v1beta3.active_edge_serving.flat_one_hop_relations"
+	VMPreferredRelationsConfigPath                 = "cmdb.v1beta3.vm_preferred.relations"
 )
 
 var (
@@ -38,7 +39,10 @@ var (
 	RootRecordIDEnabled        = false
 	DefaultLookBackDelta       = int64(86400000) // 24小时（毫秒）
 	ActiveEdgeServingRelations = []string{}
-	VMPreferredRelations       = []string{}
+	// FlatOneHopActiveEdgeServingRelations 仅允许已完成主键投影和复合索引验证的 Event relation
+	// 使用单跳扁平查询。raw relation、范围查询和多跳查询不受该配置影响。
+	FlatOneHopActiveEdgeServingRelations = []string{}
+	VMPreferredRelations                 = []string{}
 )
 
 // effectiveMaxEdgesPerHop 返回单个节点每跳允许展开的最大边数，并为非法配置提供安全默认值。

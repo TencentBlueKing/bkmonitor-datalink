@@ -79,36 +79,80 @@ func (e *Evaluator) processValidated(strategy *StrategyHandle, outcome *contract
 type evaluationTransaction struct {
 	evaluator *Evaluator
 	results   map[stateKey]map[int64]bool
+	latest    map[stateKey]int64
 	closed    bool
 }
 
 func (e *Evaluator) begin() *evaluationTransaction {
 	e.mu.Lock()
-	return &evaluationTransaction{evaluator: e, results: make(map[stateKey]map[int64]bool)}
+	return &evaluationTransaction{
+		evaluator: e,
+		results:   make(map[stateKey]map[int64]bool),
+		latest:    make(map[stateKey]int64),
+	}
+}
+
+// record stores one outcome's per-level results in the batch overlay without
+// deciding. Deciding here would read a window that is still missing the rest of
+// the micro-batch, so a batch delivered out of source-time order would disagree
+// with the legacy Python Trigger, which always reads the full CheckResult store.
+func (t *evaluationTransaction) record(strategy *StrategyHandle, outcome *contract.DetectionOutcome) error {
+	if strategy.purpose != contract.PurposeDetect {
+		return ErrUnsupportedPurpose
+	}
+	for _, evaluation := range outcome.Evaluations {
+		key := newStateKey(strategy, outcome, evaluation.Level)
+		t.resultsFor(key)[outcome.Record.SourceTime] = evaluation.Result == contract.EvaluationAnomalous
+		if latest, ok := t.latest[key]; !ok || outcome.Record.SourceTime > latest {
+			t.latest[key] = outcome.Record.SourceTime
+		}
+	}
+	return nil
+}
+
+// evict bounds overlay memory after every decision in the batch is materialized.
+// Window filtering already excludes out-of-window points, so eviction only has
+// to keep the newest window per state key.
+func (t *evaluationTransaction) evict(strategy *StrategyHandle) {
+	windowSizes := make(map[int]int, len(strategy.triggerConfigs))
+	for _, config := range strategy.triggerConfigs {
+		windowSizes[config.Level] = config.CheckWindowSize
+	}
+	for key, latest := range t.latest {
+		windowSize, ok := windowSizes[key.level]
+		if !ok {
+			continue
+		}
+		prune(t.results[key], windowStart(latest, strategy.checkWindowUnitSeconds, windowSize))
+	}
 }
 
 func (t *evaluationTransaction) processValidated(strategy *StrategyHandle, outcome *contract.DetectionOutcome) (*Decision, error) {
+	if err := t.record(strategy, outcome); err != nil {
+		return nil, err
+	}
+	decision, err := t.decide(strategy, outcome)
+	if err != nil {
+		return nil, err
+	}
+	t.evict(strategy)
+	return decision, nil
+}
+
+// decide reads the completed batch overlay, so every record of one micro-batch
+// is evaluated on event time regardless of its position in the array.
+func (t *evaluationTransaction) decide(strategy *StrategyHandle, outcome *contract.DetectionOutcome) (*Decision, error) {
 	if strategy.purpose != contract.PurposeDetect {
 		return nil, ErrUnsupportedPurpose
 	}
-
-	configs := make(map[int]contract.TriggerConfig, len(strategy.triggerConfigs))
-	for _, config := range strategy.triggerConfigs {
-		configs[config.Level] = config
+	if outcome.Outcome == contract.OutcomeNormal {
+		return nil, nil
 	}
 	currentAnomalies := make(map[int]struct{}, len(outcome.Evaluations))
 	for _, evaluation := range outcome.Evaluations {
-		key := newStateKey(strategy, outcome, evaluation.Level)
-		results := t.resultsFor(key)
-		results[outcome.Record.SourceTime] = evaluation.Result == contract.EvaluationAnomalous
-		prune(results, windowStart(outcome.Record.SourceTime, strategy.checkWindowUnitSeconds, configs[evaluation.Level].CheckWindowSize))
 		if evaluation.Result == contract.EvaluationAnomalous {
 			currentAnomalies[evaluation.Level] = struct{}{}
 		}
-	}
-
-	if outcome.Outcome == contract.OutcomeNormal {
-		return nil, nil
 	}
 	var lastAnomalyTimestamps []int64
 	for _, config := range strategy.triggerConfigs {

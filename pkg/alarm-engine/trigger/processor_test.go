@@ -48,6 +48,29 @@ func TestProcessorWritesOneOrderedTerminalBatch(t *testing.T) {
 	}
 }
 
+func TestProcessorEvaluatesOutOfOrderMicroBatchOnEventTime(t *testing.T) {
+	t.Parallel()
+
+	strategy := newStrategy(t, "generation-1", []contract.TriggerConfig{{Level: 1, CheckWindowSize: 2, TriggerCount: 2}})
+	payload, key := triggerInputPayload(t, strategy,
+		newOutcome(t, strategy, 110, map[int]bool{1: true}),
+		newOutcome(t, strategy, 100, map[int]bool{1: true}),
+	)
+	sink := &recordingSink{}
+
+	if err := NewProcessor(sink).Process(context.Background(), key, payload); err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	newest, oldest := sink.batches[0].Decisions[0], sink.batches[0].Decisions[1]
+	if newest.Outcome != DecisionTrigger || newest.ReasonCode != contract.DecisionReasonTriggerConditionMet || newest.Level == nil || *newest.Level != 1 {
+		t.Fatalf("newest terminal = %#v, want level-1 TRIGGER from the complete batch window", newest)
+	}
+	assertTimestamps(t, newest.AnomalyTimestamps, []int64{100, 110})
+	if oldest.Outcome != DecisionNoTrigger || oldest.ReasonCode != contract.DecisionReasonTriggerConditionNotMet {
+		t.Fatalf("oldest terminal = %#v, want condition-not-met NO_TRIGGER for its own window", oldest)
+	}
+}
+
 func TestProcessorMaterializesNonBusinessOutcomesWithoutAdvancingState(t *testing.T) {
 	t.Parallel()
 

@@ -98,17 +98,28 @@ func (p *Processor) Process(ctx context.Context, key, payload []byte) error {
 			transaction.discard()
 		}
 	}()
+	// The whole micro-batch is recorded before any decision so that records
+	// delivered out of source-time order still evaluate on event time.
+	for _, outcome := range input.DetectionOutcomes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := recordOutcome(transaction, handle, outcome); err != nil {
+			return err
+		}
+	}
 	terminals := make([]Terminal, 0, len(input.DetectionOutcomes))
 	for _, outcome := range input.DetectionOutcomes {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		terminal, err := p.processOutcome(transaction, handle, outcome)
+		terminal, err := p.decideOutcome(transaction, handle, outcome)
 		if err != nil {
 			return err
 		}
 		terminals = append(terminals, terminal)
 	}
+	transaction.evict(handle)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -125,7 +136,21 @@ func (p *Processor) Process(ctx context.Context, key, payload []byte) error {
 	return nil
 }
 
-func (p *Processor) processOutcome(transaction *evaluationTransaction, handle *StrategyHandle, outcome *contract.DetectionOutcome) (Terminal, error) {
+// recordOutcome advances the window only for business outcomes. ERROR and
+// UNSUPPORTED stay bounded terminals and must not move the window.
+func recordOutcome(transaction *evaluationTransaction, handle *StrategyHandle, outcome *contract.DetectionOutcome) error {
+	if handle.purpose != contract.PurposeDetect {
+		return nil
+	}
+	switch outcome.Outcome {
+	case contract.OutcomeNormal, contract.OutcomeAnomalous:
+		return transaction.record(handle, outcome)
+	default:
+		return nil
+	}
+}
+
+func (p *Processor) decideOutcome(transaction *evaluationTransaction, handle *StrategyHandle, outcome *contract.DetectionOutcome) (Terminal, error) {
 	terminal := Terminal{InputID: outcome.InputID, RecordID: outcome.Record.RecordID}
 	if handle.purpose != contract.PurposeDetect {
 		terminal.Outcome = contract.OutcomeUnsupported
@@ -140,7 +165,7 @@ func (p *Processor) processOutcome(transaction *evaluationTransaction, handle *S
 		}
 		return terminal, nil
 	case contract.OutcomeNormal, contract.OutcomeAnomalous:
-		decision, err := transaction.processValidated(handle, outcome)
+		decision, err := transaction.decide(handle, outcome)
 		if err != nil {
 			return Terminal{}, err
 		}

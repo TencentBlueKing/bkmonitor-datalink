@@ -353,6 +353,7 @@ func (b *SurrealQueryBuilder) buildFlatOneHopServingQuery(rel *RelationQueryInfo
 } AS result
 FROM %s
 WHERE %s
+  AND active_period_start_ms <= active_period_end_ms
   AND active_period_start_ms <= $end_ms
   AND active_period_end_ms >= $start_ms
 LIMIT %d;`,
@@ -934,6 +935,7 @@ func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQu
 %s            entity_data: %s%s
 %s        }
 %s    } FROM %s WHERE %s = %s
+%s      AND active_period_start_ms <= active_period_end_ms
 %s      AND active_period_start_ms <= $end_ms
 %s      AND active_period_end_ms >= $start_ms
 %s      LIMIT %d)`,
@@ -949,6 +951,7 @@ func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQu
 		indent, targetDataField, nested,
 		indent,
 		indent, table, matchField, parentRef,
+		indent,
 		indent,
 		indent,
 		indent, maxEdgesPerHopQueryLimit())

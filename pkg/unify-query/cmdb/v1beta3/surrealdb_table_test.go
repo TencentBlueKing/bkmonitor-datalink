@@ -157,6 +157,7 @@ SELECT {
                     entity_data: target_data
                 }
             } FROM node_with_pod_active_edge_view WHERE source_id = $parent.id
+              AND active_period_start_ms <= active_period_end_ms
               AND active_period_start_ms <= $end_ms
               AND active_period_end_ms >= $start_ms
               LIMIT 1001)
@@ -219,6 +220,7 @@ SELECT {
                     entity_data: source_data
                 }
             } FROM node_with_pod_active_edge_view WHERE target_id = $parent.id
+              AND active_period_start_ms <= active_period_end_ms
               AND active_period_start_ms <= $end_ms
               AND active_period_end_ms >= $start_ms
               LIMIT 1001)

@@ -1277,6 +1277,7 @@ func TestSurrealQueryBuilderFlatOneHopActiveEdgeServingContract(t *testing.T) {
 	assert.Equal(t, "active_edge_serving_flat_one_hop", rangeBuilder.routeName())
 	assert.Contains(t, rangeSQL, "FROM node_with_pod_active_edge_view\nWHERE source_data.bcs_cluster_id = 'BCS-K8S-00001'\n  AND source_data.node = 'node-1'")
 	assert.Contains(t, rangeSQL, "relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }]")
+	assert.Contains(t, rangeSQL, "active_period_start_ms <= active_period_end_ms")
 	assert.NotContains(t, rangeSQL, "FROM node\nWHERE")
 }
 
@@ -3288,6 +3289,7 @@ func TestQueryLivenessGraphFlattensBusinessSevenTwoHopEventPath(t *testing.T) {
 			assert.Contains(t, executor.sqls[1], "source_data.bk_module_id = '"+moduleID+"'")
 			for _, sql := range executor.sqls {
 				assert.NotContains(t, sql, "$parent")
+				assert.Contains(t, sql, "active_period_start_ms <= active_period_end_ms")
 				assert.Contains(t, sql, "active_period_start_ms <= $end_ms")
 				assert.Contains(t, sql, "active_period_end_ms >= $start_ms")
 			}

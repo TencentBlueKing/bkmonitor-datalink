@@ -49,13 +49,16 @@ type CoverageSnapshot struct {
 }
 
 type coverageEntry struct {
-	firstSeen        time.Time
-	authoritativeAt  time.Time
-	present          map[StreamRole]bool
-	barriers         map[streamPartition]int64
-	barrierCaptured  time.Time
-	missingAtBarrier map[StreamRole]bool
-	late             map[StreamRole]bool
+	firstSeen time.Time
+	// authoritativeAt is the deadline anchor and is only set once the
+	// authoritative TriggerInput record has a broker acknowledgement.
+	authoritativeAt      time.Time
+	pendingAuthoritative bool
+	present              map[StreamRole]bool
+	barriers             map[streamPartition]int64
+	barrierCaptured      time.Time
+	missingAtBarrier     map[StreamRole]bool
+	late                 map[StreamRole]bool
 }
 
 func (r *Run) Coverage(epoch, inputID string) (CoverageSnapshot, bool, error) {
@@ -229,16 +232,33 @@ func (r *Run) prepareCoverageLocked(inflight *preparedRecord) error {
 		}
 		item.present[role] = true
 		if role == StreamInput && item.authoritativeAt.IsZero() {
-			item.authoritativeAt = observedAt
+			item.pendingAuthoritative = true
 		}
 	}
 	return nil
 }
 
-func (r *Run) commitCoverageLocked(inflight *preparedRecord) {
+// commitCoverageLocked anchors the coverage deadline at the moment the
+// authoritative TriggerInput offset is acknowledged, not when it was prepared.
+// Audit and offset acknowledgements can outlast the coverage timeout, and an
+// anchor taken at prepare time would report a just-acknowledged input as overdue.
+func (r *Run) commitCoverageLocked(inflight *preparedRecord) error {
+	var authoritativeAt time.Time
+	if r.coverageTimeout > 0 && inflight.hasPendingAuthoritative() {
+		var err error
+		authoritativeAt, err = r.nowLocked()
+		if err != nil {
+			return err
+		}
+	}
 	for inputID, item := range inflight.coverage {
+		if item.pendingAuthoritative {
+			item.pendingAuthoritative = false
+			item.authoritativeAt = authoritativeAt
+		}
 		r.coverage[inputID] = item
 	}
+	return nil
 }
 
 func cloneCoverageEntry(source *coverageEntry) *coverageEntry {

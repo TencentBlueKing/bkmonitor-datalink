@@ -73,6 +73,39 @@ func TestCoverageDeadlineStartsAtAuthoritativeCommit(t *testing.T) {
 	}
 }
 
+func TestCoverageDeadlineExcludesPrepareToCommitDelay(t *testing.T) {
+	t.Parallel()
+
+	run, clock := mustCoverageRun(t, testAssignments())
+	inputPayload, input := testTriggerInput(t, "normal")
+	inputID := input.DetectionOutcomes[0].InputID
+	prepared, err := run.Prepare(StreamRecord{
+		Epoch:     "run-1",
+		Role:      StreamInput,
+		Topic:     "input",
+		Partition: 0,
+		Offset:    20,
+		Key:       mustPartitionKey(t, input),
+		Value:     inputPayload,
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	// The audit and offset acknowledgements outlast the coverage timeout.
+	clock.Advance(11 * time.Second)
+	if _, err := run.CommitSucceeded(prepared); err != nil {
+		t.Fatalf("CommitSucceeded() error = %v", err)
+	}
+
+	snapshot, ok, err := run.Coverage("run-1", inputID)
+	if err != nil || !ok || snapshot.Phase != CoveragePending {
+		t.Fatalf("Coverage(just acknowledged) = %#v, ok=%v, error=%v", snapshot, ok, err)
+	}
+	if want := clock.Now().Add(10 * time.Second); !snapshot.DeadlineAt.Equal(want) {
+		t.Fatalf("Coverage deadline = %s, want %s", snapshot.DeadlineAt, want)
+	}
+}
+
 func TestCoverageBarrierMarksMissingAndLateRecovery(t *testing.T) {
 	t.Parallel()
 

@@ -67,6 +67,15 @@ type preparedRecord struct {
 	observedAt time.Time
 }
 
+func (p *preparedRecord) hasPendingAuthoritative() bool {
+	for _, item := range p.coverage {
+		if item.pendingAuthoritative {
+			return true
+		}
+	}
+	return false
+}
+
 // Run serializes observations for one immutable assignment epoch. It exposes
 // Joiner state only after the corresponding broker offset commit succeeds.
 // Persistence and transport ownership are intentionally outside this
@@ -256,7 +265,9 @@ func (r *Run) CommitSucceeded(prepared Prepared) ([]Update, error) {
 		return nil, r.invalidateLocked(fmt.Errorf("comparator: prepared record mismatch"))
 	}
 	inflight := r.inflight
-	r.commitCoverageLocked(inflight)
+	if err := r.commitCoverageLocked(inflight); err != nil {
+		return nil, r.invalidateLocked(err)
+	}
 	r.nextOffsets[inflight.stream] = inflight.offset + 1
 	r.inflight = nil
 	return append([]Update(nil), inflight.updates...), nil

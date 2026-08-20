@@ -47,6 +47,9 @@ func setDefaultConfig() {
 	viper.SetDefault(GrpcMaxCallSendMsgSizeConfigPath, 1024*1024*10)
 
 	viper.SetDefault(IsCacheConfigPath, true)
+
+	// storage 数据源配置，默认为 consul
+	viper.SetDefault(StorageSourceConfigPath, "consul")
 }
 
 // LoadConfig
@@ -77,6 +80,13 @@ func LoadConfig() {
 
 	GrpcMaxCallRecvMsgSize = viper.GetInt(GrpcMaxCallRecvMsgSizeConfigPath)
 	GrpcMaxCallSendMsgSize = viper.GetInt(GrpcMaxCallSendMsgSizeConfigPath)
+
+	// storage 数据源配置
+	StorageSource = viper.GetString(StorageSourceConfigPath)
+	if StorageSource != "consul" && StorageSource != "redis" {
+		// 如果配置值不正确，默认使用 consul
+		StorageSource = "consul"
+	}
 }
 
 // init

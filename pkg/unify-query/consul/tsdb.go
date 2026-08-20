@@ -9,13 +9,34 @@
 
 package consul
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+import (
+	"context"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+)
 
 var typeList = []string{metadata.InfluxDBStorageType, metadata.ElasticsearchStorageType, metadata.BkSqlStorageType, metadata.VictoriaMetricsStorageType}
 
 // GetTsDBStorageInfo 获取 tsDB 存储实例
 func GetTsDBStorageInfo() (map[string]*Storage, error) {
 	infos, err := GetStorageInfo()
+	if err != nil {
+		return nil, err
+	}
+	influxdbInfos := make(map[string]*Storage)
+	for key, info := range infos {
+		for _, t := range typeList {
+			if info.Type == t {
+				influxdbInfos[key] = info
+			}
+		}
+	}
+	return influxdbInfos, nil
+}
+
+// GetTsDBStorageInfoContext 获取 tsDB 存储实例，并传递生命周期 Context。
+func GetTsDBStorageInfoContext(ctx context.Context) (map[string]*Storage, error) {
+	infos, err := GetStorageInfoContext(ctx)
 	if err != nil {
 		return nil, err
 	}

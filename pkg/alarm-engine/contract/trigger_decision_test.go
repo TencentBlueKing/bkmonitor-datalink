@@ -20,39 +20,84 @@ import (
 	"testing"
 )
 
+// TestPythonTriggerDecisionGolden strictly decodes every Python reference terminal
+// state and cross-checks it against the authoritative TriggerInput it was derived
+// from, so wire compatibility is proven for the whole terminal matrix rather than
+// for TRIGGER alone.
 func TestPythonTriggerDecisionGolden(t *testing.T) {
 	t.Parallel()
 
-	payload, err := os.ReadFile("testdata/python_trigger_decision_v1.json")
+	payload, err := os.ReadFile("testdata/python-v1/trigger_decision_v1.json")
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
-	const wantSHA = "982bfd06f5cf3d98fc2f7c965fafd854346601b1a47d74e86e4c7195a1f93f21"
+	checksum, err := os.ReadFile("testdata/python-v1/SHA256SUMS")
+	if err != nil {
+		t.Fatalf("ReadFile(checksum) error = %v", err)
+	}
+	wantSHA := parseChecksums(t, checksum)["trigger_decision_v1.json"]
 	if got := fmt.Sprintf("%x", sha256.Sum256(payload)); got != wantSHA {
 		t.Fatalf("golden sha256 = %s, want %s", got, wantSHA)
 	}
 	var fixture struct {
 		SchemaVersion string `json:"schema_version"`
 		Fixtures      []struct {
-			Name  string          `json:"name"`
-			Batch json.RawMessage `json:"batch"`
+			Name         string          `json:"name"`
+			TriggerInput json.RawMessage `json:"trigger_input"`
+			Batch        json.RawMessage `json:"batch"`
 		} `json:"fixtures"`
 	}
 	if err := json.Unmarshal(payload, &fixture); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	if fixture.SchemaVersion != "trigger-decision-batch/1.0" || len(fixture.Fixtures) != 1 {
-		t.Fatalf("unexpected fixture header: %#v", fixture)
+	if fixture.SchemaVersion != "trigger-decision-batch/1.0" {
+		t.Fatalf("schema version = %q", fixture.SchemaVersion)
 	}
-	batch, err := DecodeTriggerDecisionBatch(fixture.Fixtures[0].Batch)
-	if err != nil {
-		t.Fatalf("DecodeTriggerDecisionBatch() error = %v", err)
+
+	type terminal struct {
+		name       string
+		outcome    string
+		reasonCode string
+		level      *int
 	}
-	decision := batch.Decisions[0]
-	if fixture.Fixtures[0].Name != "python-trigger-reference" ||
-		decision.DecisionID != "f611274bf630b8921b4b2bf0caa6feb86363f4195012ed57a92b60fff9af7dfa" ||
-		decision.Outcome != DecisionOutcomeTrigger || decision.Level == nil || *decision.Level != 3 {
-		t.Fatalf("unexpected Python reference decision: %#v", decision)
+	want := []terminal{
+		{name: "python-trigger-reference", outcome: DecisionOutcomeTrigger, reasonCode: DecisionReasonTriggerConditionMet, level: intPointer(3)},
+		{name: "python-trigger-condition-not-met", outcome: DecisionOutcomeNoTrigger, reasonCode: DecisionReasonTriggerConditionNotMet},
+		{name: "python-input-normal", outcome: DecisionOutcomeNoTrigger, reasonCode: DecisionReasonInputNormal},
+		{name: "python-error-terminal", outcome: OutcomeError, reasonCode: "ALGORITHM_ERROR"},
+		{name: "python-unsupported-terminal", outcome: OutcomeUnsupported, reasonCode: "UNSUPPORTED_STRATEGY"},
+	}
+	if len(fixture.Fixtures) != len(want) {
+		t.Fatalf("fixture count = %d, want the full terminal matrix of %d", len(fixture.Fixtures), len(want))
+	}
+	for index, expected := range want {
+		got := fixture.Fixtures[index]
+		if got.Name != expected.name {
+			t.Fatalf("fixture[%d].name = %q, want %q", index, got.Name, expected.name)
+		}
+		input, err := DecodeTriggerInput(got.TriggerInput)
+		if err != nil {
+			t.Fatalf("DecodeTriggerInput(%s) error = %v", expected.name, err)
+		}
+		batch, err := DecodeTriggerDecisionBatch(got.Batch)
+		if err != nil {
+			t.Fatalf("DecodeTriggerDecisionBatch(%s) error = %v", expected.name, err)
+		}
+		if len(batch.Decisions) != 1 {
+			t.Fatalf("fixture %s carries %d decisions, want one", expected.name, len(batch.Decisions))
+		}
+		decision := batch.Decisions[0]
+		if decision.Outcome != expected.outcome || decision.ReasonCode != expected.reasonCode {
+			t.Fatalf("fixture %s terminal = %q/%q, want %q/%q", expected.name, decision.Outcome, decision.ReasonCode, expected.outcome, expected.reasonCode)
+		}
+		if (decision.Level == nil) != (expected.level == nil) || (expected.level != nil && *decision.Level != *expected.level) {
+			t.Fatalf("fixture %s level = %v, want %v", expected.name, decision.Level, expected.level)
+		}
+		// The authoritative cross-check: identity, source outcome, window and
+		// trigger count must all agree with the acknowledged DetectionOutcome.
+		if err := input.ValidateTriggerDecision(decision); err != nil {
+			t.Fatalf("ValidateTriggerDecision(%s) error = %v", expected.name, err)
+		}
 	}
 }
 

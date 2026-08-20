@@ -73,11 +73,14 @@ func (g *LivenessGraph) AddEdge(edge *EdgeLiveness) {
 		// 图内 key 必须带方向和端点，否则后解析到的边会覆盖先解析到的边，导致路径抽取少边。
 		key = directionalEdgeKey(edge)
 	}
-	_, exists := g.Edges[key]
-	g.Edges[key] = edge
-	if !exists {
-		g.Adjacency[edge.FromID] = append(g.Adjacency[edge.FromID], key)
+	if existing := g.Edges[key]; existing != nil && sameEdgeLiveness(existing, edge) {
+		// 同一 relation_id 可能由多条 relation liveness 投影得到。范围查询需要保留所有
+		// 可见时段，不能让后到的投影覆盖先到的时段。
+		existing.RawPeriods = mergeVisiblePeriods(append(existing.RawPeriods, edge.RawPeriods...))
+		return
 	}
+	g.Edges[key] = edge
+	g.Adjacency[edge.FromID] = append(g.Adjacency[edge.FromID], key)
 }
 
 func sameEdgeLiveness(left, right *EdgeLiveness) bool {

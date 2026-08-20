@@ -29,6 +29,7 @@ func setDefaultConfig() {
 	viper.SetDefault(DefaultLookBackDeltaConfigPath, 86400000) // 24小时（毫秒）
 	viper.SetDefault(ActiveEdgeServingRelationsConfigPath, []string{})
 	viper.SetDefault(FlatOneHopActiveEdgeServingRelationsConfigPath, []string{})
+	viper.SetDefault(FlatMultiHopActiveEdgeServingRelationsConfigPath, []string{})
 	viper.SetDefault(VMPreferredRelationsConfigPath, []string{})
 
 	viper.SetDefault(BKBaseSurrealDBResultTableIDConfigPath, DefaultBKBaseSurrealDBResultTableID)
@@ -51,6 +52,7 @@ func LoadConfig() {
 	DefaultLookBackDelta = viper.GetInt64(DefaultLookBackDeltaConfigPath)
 	ActiveEdgeServingRelations = viper.GetStringSlice(ActiveEdgeServingRelationsConfigPath)
 	FlatOneHopActiveEdgeServingRelations = viper.GetStringSlice(FlatOneHopActiveEdgeServingRelationsConfigPath)
+	FlatMultiHopActiveEdgeServingRelations = viper.GetStringSlice(FlatMultiHopActiveEdgeServingRelationsConfigPath)
 	VMPreferredRelations = viper.GetStringSlice(VMPreferredRelationsConfigPath)
 
 	BKBaseSurrealDBResultTableID = viper.GetString(BKBaseSurrealDBResultTableIDConfigPath)

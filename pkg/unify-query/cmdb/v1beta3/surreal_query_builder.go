@@ -373,6 +373,36 @@ LIMIT %d;`,
 	)
 }
 
+// buildFlatServingQueryForPath 为 UQ 分层多跳执行构造单跳 Event 查询。每次调用都把当前 hop 的
+// source 主键写成字面量，因此不会在 SurrealDB 内以 $parent 相关子查询展开下一跳。
+func buildFlatServingQueryForPath(
+	request *QueryRequest,
+	provider SchemaProvider,
+	path resourcePath,
+	mode graphQueryMode,
+) (string, bool) {
+	if request == nil || len(path.Steps) != 2 {
+		return "", false
+	}
+
+	builder := NewSurrealQueryBuilderForPath(request, provider, path)
+	configureBuilderForGraphQueryMode(builder, mode)
+	relations := builder.getRelationsForType(1, builder.request.SourceType)
+	if len(relations) != 1 {
+		return "", false
+	}
+
+	sourceDataField := "source_data"
+	if relations[0].WhereField == fieldOut {
+		sourceDataField = "target_data"
+	}
+	if _, ok := builder.flatServingPrimaryKeyConditions(sourceDataField); !ok {
+		return "", false
+	}
+
+	return builder.buildVariables() + "\n\n" + builder.buildFlatOneHopServingQuery(relations[0]), true
+}
+
 // buildVariables 构建变量定义部分
 func (b *SurrealQueryBuilder) buildVariables() string {
 	startMs, endMs := b.request.GetQueryRange()

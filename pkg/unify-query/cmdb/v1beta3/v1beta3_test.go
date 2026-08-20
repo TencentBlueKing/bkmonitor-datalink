@@ -3196,6 +3196,438 @@ func TestQueryLivenessGraphExecutesSingleCandidatePathByPath(t *testing.T) {
 	assert.Equal(t, cmdb.Matchers{{"pod": "direct"}}, matchers)
 }
 
+func TestQueryLivenessGraphFlattensBusinessSevenTwoHopEventPath(t *testing.T) {
+	const (
+		timestamp = int64(1786731939847)
+		hostID    = "185667"
+		moduleID  = "73"
+		setID     = "15"
+	)
+
+	previousServingRelations := ActiveEdgeServingRelations
+	previousFlatOneHopRelations := FlatOneHopActiveEdgeServingRelations
+	previousFlatMultiHopRelations := FlatMultiHopActiveEdgeServingRelations
+	ActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
+	FlatOneHopActiveEdgeServingRelations = nil
+	FlatMultiHopActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
+	t.Cleanup(func() {
+		ActiveEdgeServingRelations = previousServingRelations
+		FlatOneHopActiveEdgeServingRelations = previousFlatOneHopRelations
+		FlatMultiHopActiveEdgeServingRelations = previousFlatMultiHopRelations
+	})
+
+	provider := businessSevenTwoHopSchemaProvider()
+	firstHop := businessSevenSingleHopGraph(
+		ResourceTypeHost,
+		"host:`"+hostID+"`",
+		map[string]string{"bk_host_id": hostID},
+		RelationHostWithModule,
+		"host_with_module:`"+hostID+"_"+moduleID+"`",
+		ResourceTypeModule,
+		"module:`"+moduleID+"`",
+		map[string]string{"bk_module_id": moduleID},
+		[]*VisiblePeriod{{Start: 1786731878967, End: timestamp}},
+	)
+	secondHop := businessSevenSingleHopGraph(
+		ResourceTypeModule,
+		"module:`"+moduleID+"`",
+		map[string]string{"bk_module_id": moduleID},
+		RelationModuleWithSet,
+		"module_with_set:`"+moduleID+"_"+setID+"`",
+		ResourceTypeSet,
+		"set:`"+setID+"`",
+		map[string]string{"bk_set_id": setID},
+		[]*VisiblePeriod{{Start: timestamp, End: timestamp}},
+	)
+	secondHopEarlierPeriod := cloneLivenessGraphForTest(secondHop, 0, 0)
+	secondHopEarlierPeriod.GetEdge("module_with_set:`" + moduleID + "_" + setID + "`").RawPeriods = []*VisiblePeriod{{
+		Start: timestamp - 2000,
+		End:   timestamp - 1000,
+	}}
+
+	for _, mode := range []graphQueryMode{graphQueryModeInstant, graphQueryModeRange} {
+		t.Run(string(mode), func(t *testing.T) {
+			executor := &recordingGraphQueryExecutor{responseForSQL: func(sql string) graphQueryResponse {
+				switch {
+				case strings.Contains(sql, "FROM host_with_module_active_edge_view"):
+					return graphQueryResponse{graphs: []*LivenessGraph{
+						cloneLivenessGraphForTest(firstHop, 0, 0),
+						cloneLivenessGraphForTest(firstHop, 0, 0),
+					}}
+				case strings.Contains(sql, "FROM module_with_set_active_edge_view"):
+					return graphQueryResponse{graphs: []*LivenessGraph{
+						cloneLivenessGraphForTest(secondHop, 0, 0),
+						cloneLivenessGraphForTest(secondHopEarlierPeriod, 0, 0),
+						cloneLivenessGraphForTest(secondHop, 0, 0),
+					}}
+				default:
+					return graphQueryResponse{err: errors.New("unexpected SurrealQL")}
+				}
+			}}
+			model, err := NewModel(context.Background(), executor)
+			require.NoError(t, err)
+			model.SetSchemaProvider(provider)
+
+			req := businessSevenTwoHopRequest(timestamp, hostID)
+			graphs, paths, matchers, err := model.queryLivenessGraph(context.Background(), req, mode, timestamp, timestamp, 1000)
+			require.NoError(t, err)
+			assert.Equal(t, []resourcePath{businessSevenTwoHopPath()}, paths)
+			assert.Equal(t, cmdb.Matchers{{"bk_set_id": setID}}, matchers)
+			require.Len(t, graphs, 1)
+			assert.Equal(t, "host:`"+hostID+"`", graphs[0].RootID)
+			assert.Len(t, graphs[0].Edges, 2)
+			if mode == graphQueryModeRange {
+				assert.Equal(t, []*VisiblePeriod{
+					{Start: timestamp - 2000, End: timestamp - 1000},
+					{Start: timestamp, End: timestamp},
+				}, graphs[0].GetEdge("module_with_set:`"+moduleID+"_"+setID+"`").RawPeriods)
+			}
+
+			require.Len(t, executor.sqls, 2)
+			assert.Contains(t, executor.sqls[0], "source_data.bk_host_id = '"+hostID+"'")
+			assert.Contains(t, executor.sqls[1], "source_data.bk_module_id = '"+moduleID+"'")
+			for _, sql := range executor.sqls {
+				assert.NotContains(t, sql, "$parent")
+				assert.Contains(t, sql, "active_period_start_ms <= $end_ms")
+				assert.Contains(t, sql, "active_period_end_ms >= $start_ms")
+			}
+			if mode == graphQueryModeRange {
+				assert.Contains(t, executor.sqls[0], "relation_liveness")
+				assert.Contains(t, executor.sqls[1], "relation_liveness")
+			}
+		})
+	}
+}
+
+func TestLivenessGraphMergesDuplicateEdgePeriods(t *testing.T) {
+	graph := NewLivenessGraph(0, 0)
+	graph.RootID = "host:`185667`"
+	graph.AddNode(&NodeLiveness{ResourceID: graph.RootID, ResourceType: ResourceTypeHost})
+	graph.AddNode(&NodeLiveness{ResourceID: "module:`73`", ResourceType: ResourceTypeModule})
+
+	for _, periods := range [][]*VisiblePeriod{
+		{{Start: 0, End: 10}},
+		{{Start: 20, End: 30}},
+		{{Start: 0, End: 10}},
+	} {
+		graph.AddEdge(&EdgeLiveness{
+			RelationID:   "host_with_module:`185667_73`",
+			RelationType: RelationHostWithModule,
+			FromID:       graph.RootID,
+			ToID:         "module:`73`",
+			RawPeriods:   periods,
+		})
+	}
+
+	assert.Len(t, graph.Edges, 1)
+	assert.Len(t, graph.GetOutEdges(graph.RootID), 1)
+	assert.Equal(t, []*VisiblePeriod{{Start: 0, End: 10}, {Start: 20, End: 30}}, graph.GetEdge("host_with_module:`185667_73`").RawPeriods)
+}
+
+func TestQueryLivenessGraphFlatMultiHopUsesCompositeMetadataPrimaryKeys(t *testing.T) {
+	const timestamp = int64(1786731939847)
+
+	previousServingRelations := ActiveEdgeServingRelations
+	previousFlatMultiHopRelations := FlatMultiHopActiveEdgeServingRelations
+	ActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
+	FlatMultiHopActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
+	t.Cleanup(func() {
+		ActiveEdgeServingRelations = previousServingRelations
+		FlatMultiHopActiveEdgeServingRelations = previousFlatMultiHopRelations
+	})
+
+	provider := newTableSchemaProvider(
+		map[ResourceType]tableResourceDefinition{
+			ResourceTypeHost:   {primaryKeys: []string{"bk_biz_id", "bk_host_id"}},
+			ResourceTypeModule: {primaryKeys: []string{"bk_biz_id", "bk_module_id"}},
+			ResourceTypeSet:    {primaryKeys: []string{"bk_biz_id", "bk_set_id"}},
+		},
+		[]RelationSchema{
+			{RelationType: RelationHostWithModule, Category: RelationCategoryStatic, FromType: ResourceTypeHost, ToType: ResourceTypeModule},
+			{RelationType: RelationModuleWithSet, Category: RelationCategoryStatic, FromType: ResourceTypeModule, ToType: ResourceTypeSet},
+		},
+	)
+	firstHop := businessSevenSingleHopGraph(
+		ResourceTypeHost,
+		"host:`185667`",
+		map[string]string{"bk_biz_id": "7", "bk_host_id": "185667"},
+		RelationHostWithModule,
+		"host_with_module:`185667_73`",
+		ResourceTypeModule,
+		"module:`73`",
+		map[string]string{"bk_biz_id": "7", "bk_module_id": "73"},
+		[]*VisiblePeriod{{Start: timestamp, End: timestamp}},
+	)
+	secondHop := businessSevenSingleHopGraph(
+		ResourceTypeModule,
+		"module:`73`",
+		map[string]string{"bk_biz_id": "7", "bk_module_id": "73"},
+		RelationModuleWithSet,
+		"module_with_set:`73_15`",
+		ResourceTypeSet,
+		"set:`15`",
+		map[string]string{"bk_biz_id": "7", "bk_set_id": "15"},
+		[]*VisiblePeriod{{Start: timestamp, End: timestamp}},
+	)
+	executor := &recordingGraphQueryExecutor{responseForSQL: func(sql string) graphQueryResponse {
+		switch {
+		case strings.Contains(sql, "FROM host_with_module_active_edge_view"):
+			return graphQueryResponse{graphs: []*LivenessGraph{cloneLivenessGraphForTest(firstHop, 0, 0)}}
+		case strings.Contains(sql, "FROM module_with_set_active_edge_view"):
+			return graphQueryResponse{graphs: []*LivenessGraph{cloneLivenessGraphForTest(secondHop, 0, 0)}}
+		default:
+			return graphQueryResponse{err: errors.New("unexpected SurrealQL")}
+		}
+	}}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+	model.SetSchemaProvider(provider)
+
+	req := businessSevenTwoHopRequest(timestamp, "185667")
+	req.SourceInfo["bk_biz_id"] = "7"
+	_, _, matchers, err := model.QueryLivenessGraph(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, cmdb.Matchers{{"bk_biz_id": "7", "bk_set_id": "15"}}, matchers)
+	require.Len(t, executor.sqls, 2)
+	assert.Contains(t, executor.sqls[0], "source_data.bk_biz_id = '7'")
+	assert.Contains(t, executor.sqls[0], "source_data.bk_host_id = '185667'")
+	assert.Contains(t, executor.sqls[1], "source_data.bk_biz_id = '7'")
+	assert.Contains(t, executor.sqls[1], "source_data.bk_module_id = '73'")
+}
+
+func TestQueryLivenessGraphRunsFlatMultiHopParentsInParallel(t *testing.T) {
+	const timestamp = int64(1786731939847)
+
+	previousServingRelations := ActiveEdgeServingRelations
+	previousFlatMultiHopRelations := FlatMultiHopActiveEdgeServingRelations
+	ActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
+	FlatMultiHopActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
+	t.Cleanup(func() {
+		ActiveEdgeServingRelations = previousServingRelations
+		FlatMultiHopActiveEdgeServingRelations = previousFlatMultiHopRelations
+	})
+
+	firstHop := businessSevenSingleHopGraph(
+		ResourceTypeHost,
+		"host:`185667`",
+		map[string]string{"bk_host_id": "185667"},
+		RelationHostWithModule,
+		"host_with_module:`185667_73`",
+		ResourceTypeModule,
+		"module:`73`",
+		map[string]string{"bk_module_id": "73"},
+		[]*VisiblePeriod{{Start: timestamp, End: timestamp}},
+	)
+	secondModule := &NodeLiveness{
+		ResourceID:   "module:`13293`",
+		ResourceType: ResourceTypeModule,
+		Labels:       map[string]string{"bk_module_id": "13293"},
+	}
+	firstHop.AddNode(secondModule)
+	firstHop.AddEdge(&EdgeLiveness{
+		RelationID:   "host_with_module:`185667_13293`",
+		RelationType: RelationHostWithModule,
+		Category:     RelationCategoryStatic,
+		FromID:       "host:`185667`",
+		ToID:         secondModule.ResourceID,
+		RawPeriods:   []*VisiblePeriod{{Start: timestamp, End: timestamp}},
+	})
+
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseWorkers := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseWorkers()
+
+	executor := &recordingGraphQueryExecutor{responseForSQL: func(sql string) graphQueryResponse {
+		switch {
+		case strings.Contains(sql, "FROM host_with_module_active_edge_view"):
+			return graphQueryResponse{graphs: []*LivenessGraph{cloneLivenessGraphForTest(firstHop, 0, 0)}}
+		case strings.Contains(sql, "FROM module_with_set_active_edge_view"):
+			started <- sql
+			<-release
+			if strings.Contains(sql, "source_data.bk_module_id = '13293'") {
+				return graphQueryResponse{graphs: []*LivenessGraph{businessSevenSingleHopGraph(
+					ResourceTypeModule, "module:`13293`", map[string]string{"bk_module_id": "13293"},
+					RelationModuleWithSet, "module_with_set:`13293_3469`", ResourceTypeSet, "set:`3469`",
+					map[string]string{"bk_set_id": "3469"}, []*VisiblePeriod{{Start: timestamp, End: timestamp}},
+				)}}
+			}
+			return graphQueryResponse{graphs: []*LivenessGraph{businessSevenSingleHopGraph(
+				ResourceTypeModule, "module:`73`", map[string]string{"bk_module_id": "73"},
+				RelationModuleWithSet, "module_with_set:`73_15`", ResourceTypeSet, "set:`15`",
+				map[string]string{"bk_set_id": "15"}, []*VisiblePeriod{{Start: timestamp, End: timestamp}},
+			)}}
+		default:
+			return graphQueryResponse{err: errors.New("unexpected SurrealQL")}
+		}
+	}}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+	model.SetSchemaProvider(businessSevenTwoHopSchemaProvider())
+
+	done := make(chan struct {
+		matchers cmdb.Matchers
+		err      error
+	}, 1)
+	go func() {
+		_, _, matchers, err := model.QueryLivenessGraph(context.Background(), businessSevenTwoHopRequest(timestamp, "185667"))
+		done <- struct {
+			matchers cmdb.Matchers
+			err      error
+		}{matchers: matchers, err: err}
+	}()
+
+	for count := 0; count < 2; count++ {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("same-hop Event queries did not execute concurrently")
+		}
+	}
+	releaseWorkers()
+
+	result := <-done
+	require.NoError(t, result.err)
+	assert.ElementsMatch(t, cmdb.Matchers{{"bk_set_id": "15"}, {"bk_set_id": "3469"}}, result.matchers)
+}
+
+func TestQueryLivenessGraphFallsBackWhenMultiHopRelationIsNotFlatReady(t *testing.T) {
+	previousServingRelations := ActiveEdgeServingRelations
+	previousFlatMultiHopRelations := FlatMultiHopActiveEdgeServingRelations
+	ActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
+	FlatMultiHopActiveEdgeServingRelations = []string{string(RelationHostWithModule)}
+	t.Cleanup(func() {
+		ActiveEdgeServingRelations = previousServingRelations
+		FlatMultiHopActiveEdgeServingRelations = previousFlatMultiHopRelations
+	})
+
+	executor := &recordingGraphQueryExecutor{}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+	model.SetSchemaProvider(businessSevenTwoHopSchemaProvider())
+
+	_, _, _, err = model.QueryLivenessGraph(context.Background(), businessSevenTwoHopRequest(1786731939847, "185667"))
+	require.NoError(t, err)
+	require.Len(t, executor.sqls, 1)
+	assert.Contains(t, executor.sqls[0], "FROM host_with_module_active_edge_view")
+	assert.Contains(t, executor.sqls[0], "FROM module_with_set_active_edge_view")
+	assert.Contains(t, executor.sqls[0], "$parent.entity_id")
+}
+
+func TestQueryLivenessGraphRejectsFlatMultiHopFanoutAboveLimit(t *testing.T) {
+	previousServingRelations := ActiveEdgeServingRelations
+	previousFlatMultiHopRelations := FlatMultiHopActiveEdgeServingRelations
+	previousMaxEdgesPerHop := MaxEdgesPerHop
+	ActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
+	FlatMultiHopActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
+	MaxEdgesPerHop = 1
+	t.Cleanup(func() {
+		ActiveEdgeServingRelations = previousServingRelations
+		FlatMultiHopActiveEdgeServingRelations = previousFlatMultiHopRelations
+		MaxEdgesPerHop = previousMaxEdgesPerHop
+	})
+
+	firstHop := businessSevenSingleHopGraph(
+		ResourceTypeHost,
+		"host:`185667`",
+		map[string]string{"bk_host_id": "185667"},
+		RelationHostWithModule,
+		"host_with_module:`185667_73`",
+		ResourceTypeModule,
+		"module:`73`",
+		map[string]string{"bk_module_id": "73"},
+		[]*VisiblePeriod{{Start: 1786731939847, End: 1786731939847}},
+	)
+	secondModule := &NodeLiveness{
+		ResourceID:   "module:`13293`",
+		ResourceType: ResourceTypeModule,
+		Labels:       map[string]string{"bk_module_id": "13293"},
+	}
+	firstHop.AddNode(secondModule)
+	firstHop.AddEdge(&EdgeLiveness{
+		RelationID:   "host_with_module:`185667_13293`",
+		RelationType: RelationHostWithModule,
+		Category:     RelationCategoryStatic,
+		FromID:       "host:`185667`",
+		ToID:         secondModule.ResourceID,
+	})
+
+	executor := &recordingGraphQueryExecutor{responses: []graphQueryResponse{{graphs: []*LivenessGraph{firstHop}}}}
+	model, err := NewModel(context.Background(), executor)
+	require.NoError(t, err)
+	model.SetSchemaProvider(businessSevenTwoHopSchemaProvider())
+
+	_, _, _, err = model.QueryLivenessGraph(context.Background(), businessSevenTwoHopRequest(1786731939847, "185667"))
+	var limitErr *ResultLimitError
+	require.ErrorAs(t, err, &limitErr)
+	assert.ErrorContains(t, err, "hop1.host_with_module")
+}
+
+func businessSevenTwoHopSchemaProvider() SchemaProvider {
+	return newTableSchemaProvider(
+		map[ResourceType]tableResourceDefinition{
+			ResourceTypeHost:   {primaryKeys: []string{"bk_host_id"}},
+			ResourceTypeModule: {primaryKeys: []string{"bk_module_id"}},
+			ResourceTypeSet:    {primaryKeys: []string{"bk_set_id"}},
+		},
+		[]RelationSchema{
+			{RelationType: RelationHostWithModule, Category: RelationCategoryStatic, FromType: ResourceTypeHost, ToType: ResourceTypeModule},
+			{RelationType: RelationModuleWithSet, Category: RelationCategoryStatic, FromType: ResourceTypeModule, ToType: ResourceTypeSet},
+		},
+	)
+}
+
+func businessSevenTwoHopRequest(timestamp int64, hostID string) *QueryRequest {
+	return &QueryRequest{
+		Timestamp:          timestamp,
+		LookBackDelta:      5 * 60 * 1000,
+		LookBackDeltaSet:   true,
+		SourceType:         ResourceTypeHost,
+		SourceInfo:         map[string]string{"bk_host_id": hostID},
+		TargetType:         ResourceTypeSet,
+		TargetTypeExplicit: true,
+		PathResource:       []ResourceType{ResourceTypeModule},
+		MaxHops:            2,
+	}
+}
+
+func businessSevenTwoHopPath() resourcePath {
+	return resourcePath{Steps: []resourcePathStep{
+		{ResourceType: string(ResourceTypeHost)},
+		{ResourceType: string(ResourceTypeModule), RelationType: string(RelationHostWithModule), Category: string(RelationCategoryStatic), Direction: string(DirectionOutbound)},
+		{ResourceType: string(ResourceTypeSet), RelationType: string(RelationModuleWithSet), Category: string(RelationCategoryStatic), Direction: string(DirectionOutbound)},
+	}}
+}
+
+func businessSevenSingleHopGraph(
+	rootType ResourceType,
+	rootID string,
+	rootLabels map[string]string,
+	relationType RelationType,
+	relationID string,
+	targetType ResourceType,
+	targetID string,
+	targetLabels map[string]string,
+	periods []*VisiblePeriod,
+) *LivenessGraph {
+	graph := NewLivenessGraph(0, 0)
+	root := &NodeLiveness{ResourceID: rootID, ResourceType: rootType, Labels: rootLabels}
+	target := &NodeLiveness{ResourceID: targetID, ResourceType: targetType, Labels: targetLabels}
+	graph.RootID = rootID
+	graph.AddNode(root)
+	graph.AddNode(target)
+	graph.AddEdge(&EdgeLiveness{
+		RelationID:   relationID,
+		RelationType: relationType,
+		Category:     RelationCategoryStatic,
+		FromID:       rootID,
+		ToID:         targetID,
+		RawPeriods:   periods,
+	})
+	return graph
+}
+
 func sameResourceSequenceSchemaProvider() relation.SchemaProvider {
 	return relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
 		ResourcePrimaryKeys: map[string][]string{

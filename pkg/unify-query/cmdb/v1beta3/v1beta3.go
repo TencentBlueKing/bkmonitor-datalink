@@ -786,24 +786,16 @@ func (m *Model) executeOneGraphQueryPath(
 	span.Set("path-hop-count", maxInt(0, len(path.Steps)-1))
 	span.Set("query-result-mode", string(mode))
 
-	waitStarted := time.Now()
-	select {
-	case pathQuerySemaphore <- struct{}{}:
-		defer func() { <-pathQuerySemaphore }()
-	case <-ctx.Done():
-		span.Set("semaphore-wait", time.Since(waitStarted))
-		span.Set("path-result", "context-canceled-while-waiting")
-		spanErr = ctx.Err()
-		return pathQueryResult{idx: idx, path: path, err: spanErr}
-	}
-	span.Set("semaphore-wait", time.Since(waitStarted))
-
 	// 这里的 SQL 只包含当前 path 的 relation 分支。相比合并所有候选路径的大 SQL，
 	// 单 path SQL 更短，也避免 SurrealDB 在一次查询中同时展开多个无关分支。
 	buildStarted := time.Now()
 	builder := NewSurrealQueryBuilderForPath(req, provider, path)
 	configureBuilderForGraphQueryMode(builder, mode)
 	route := builder.routeName()
+	usesFlatMultiHop := usesFlatMultiHopActiveEdgeServingPath(req, provider, path, mode)
+	if usesFlatMultiHop {
+		route = "active_edge_serving_flat_multi_hop"
+	}
 	span.Set("query-route", route)
 	span.Set("path-hop-count", builder.pathHopCount)
 	span.Set("active-edge-serving-hop-count", builder.servingHopCount)
@@ -817,10 +809,28 @@ func (m *Model) executeOneGraphQueryPath(
 		}
 		metric.CMDBRelationRouteInc(ctx, route, string(mode), resultStatus)
 	}()
-	sql := builder.Build()
-	span.Set("surrealql-build-duration", time.Since(buildStarted))
-	span.Set("surrealql-bytes", len(sql))
-	graphs, runErr := runner(ctx, sql, start, end)
+
+	var graphs []*LivenessGraph
+	var runErr error
+	if usesFlatMultiHop {
+		graphs, runErr = m.executeFlatMultiHopServingPath(ctx, req, provider, path, start, end, mode, runner)
+		span.Set("surrealql-build-duration", time.Since(buildStarted))
+		span.Set("flat-hop-count", builder.pathHopCount)
+	} else {
+		release, wait, acquireErr := acquireGraphQuerySlot(ctx)
+		span.Set("semaphore-wait", wait)
+		if acquireErr != nil {
+			span.Set("path-result", "context-canceled-while-waiting")
+			spanErr = acquireErr
+			return pathQueryResult{idx: idx, path: path, err: spanErr}
+		}
+		defer release()
+
+		sql := builder.Build()
+		span.Set("surrealql-build-duration", time.Since(buildStarted))
+		span.Set("surrealql-bytes", len(sql))
+		graphs, runErr = runner(ctx, sql, start, end)
+	}
 	if runErr != nil {
 		span.Set("path-result", "query-error")
 		spanErr = runErr
@@ -848,6 +858,327 @@ func (m *Model) executeOneGraphQueryPath(
 	span.Set("edge-count", edgeCount)
 
 	return pathQueryResult{idx: idx, path: path, graphs: graphs}
+}
+
+type flatServingHopSource struct {
+	resourceType ResourceType
+	resourceID   string
+	sourceInfo   map[string]string
+}
+
+type flatServingHopResult struct {
+	graphs []*LivenessGraph
+}
+
+// usesFlatMultiHopActiveEdgeServingPath 要求整条路径的每一跳都完成 Event 主键投影与索引验证。
+// 任意一跳不满足时，完整回退到原有嵌套查询，避免将未建索引的 relation 误路由到分层模式。
+func usesFlatMultiHopActiveEdgeServingPath(
+	req *QueryRequest,
+	provider SchemaProvider,
+	path resourcePath,
+	mode graphQueryMode,
+) bool {
+	if req == nil || provider == nil || len(path.Steps) <= 2 || len(req.SourceExpandInfo) > 0 {
+		return false
+	}
+	if mode != graphQueryModeInstant && mode != graphQueryModeRange {
+		return false
+	}
+
+	servingRelations := make(map[RelationType]struct{}, len(ActiveEdgeServingRelations))
+	for _, relationType := range ActiveEdgeServingRelations {
+		servingRelations[RelationType(relationType)] = struct{}{}
+	}
+	flatRelations := make(map[RelationType]struct{}, len(FlatMultiHopActiveEdgeServingRelations))
+	for _, relationType := range FlatMultiHopActiveEdgeServingRelations {
+		flatRelations[RelationType(relationType)] = struct{}{}
+	}
+
+	for hop := 1; hop < len(path.Steps); hop++ {
+		relationType := RelationType(path.Steps[hop].RelationType)
+		if _, ok := servingRelations[relationType]; !ok {
+			return false
+		}
+		if _, ok := flatRelations[relationType]; !ok {
+			return false
+		}
+		currentType := ResourceType(path.Steps[hop-1].ResourceType)
+		nextType := ResourceType(path.Steps[hop].ResourceType)
+		if len(provider.GetResourcePrimaryKeys(req.SchemaNamespace(), currentType)) == 0 ||
+			len(provider.GetResourcePrimaryKeys(req.SchemaNamespace(), nextType)) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// executeFlatMultiHopServingPath 将多跳图路径拆成按 hop 推进的单跳 Event 查询。同一 hop 的父节点
+// 可以并发执行，但每个查询使用业务主键字面量，因此 SDB 不需要通过 $parent 相关子查询连接关系表。
+func (m *Model) executeFlatMultiHopServingPath(
+	ctx context.Context,
+	req *QueryRequest,
+	provider SchemaProvider,
+	path resourcePath,
+	start, end int64,
+	mode graphQueryMode,
+	runner graphQueryRunner,
+) ([]*LivenessGraph, error) {
+	initialSourceInfo, ok := flatServingPrimaryKeyMap(provider, req.SchemaNamespace(), req.SourceType, req.SourceInfo)
+	if !ok {
+		return nil, fmt.Errorf("flat multi-hop source %q is missing metadata primary keys", req.SourceType)
+	}
+	frontier := []flatServingHopSource{{
+		resourceType: req.SourceType,
+		sourceInfo:   initialSourceInfo,
+	}}
+
+	var aggregate *LivenessGraph
+	for hop := 1; hop < len(path.Steps); hop++ {
+		if len(frontier) == 0 {
+			break
+		}
+
+		hopPath := resourcePath{Steps: []resourcePathStep{
+			{ResourceType: string(frontier[0].resourceType)},
+			path.Steps[hop],
+		}}
+		results, err := m.executeFlatServingHop(ctx, req, provider, hopPath, hop, frontier, start, end, mode, runner)
+		if err != nil {
+			return nil, err
+		}
+
+		nextFrontier := make(map[string]flatServingHopSource)
+		for _, result := range results {
+			for _, graph := range result.graphs {
+				if graph == nil {
+					continue
+				}
+				if aggregate == nil {
+					aggregate = NewLivenessGraph(start, end)
+					aggregate.RootID = graph.RootID
+				}
+				mergeLivenessGraphInto(aggregate, graph)
+
+				if hop == len(path.Steps)-1 {
+					continue
+				}
+				for _, edge := range graph.GetOutEdges(graph.RootID) {
+					if edge.RelationType != RelationType(path.Steps[hop].RelationType) {
+						continue
+					}
+					target := graph.GetNode(edge.ToID)
+					if target == nil {
+						continue
+					}
+					sourceInfo, ok := flatServingPrimaryKeyMap(provider, req.SchemaNamespace(), target.ResourceType, target.Labels)
+					if !ok {
+						return nil, fmt.Errorf("flat multi-hop target %q is missing metadata primary keys", target.ResourceID)
+					}
+					nextFrontier[target.ResourceID] = flatServingHopSource{
+						resourceType: target.ResourceType,
+						resourceID:   target.ResourceID,
+						sourceInfo:   sourceInfo,
+					}
+				}
+			}
+		}
+
+		frontier = orderedFlatServingHopSources(nextFrontier)
+	}
+
+	if aggregate == nil {
+		return nil, nil
+	}
+	return []*LivenessGraph{aggregate}, nil
+}
+
+func (m *Model) executeFlatServingHop(
+	ctx context.Context,
+	req *QueryRequest,
+	provider SchemaProvider,
+	path resourcePath,
+	hop int,
+	sources []flatServingHopSource,
+	start, end int64,
+	mode graphQueryMode,
+	runner graphQueryRunner,
+) ([]flatServingHopResult, error) {
+	if len(sources) == 0 {
+		return nil, nil
+	}
+
+	queryCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make([]flatServingHopResult, len(sources))
+	jobs := make(chan int)
+	workerCount := minInt(len(sources), cap(pathQuerySemaphore))
+	var workers sync.WaitGroup
+	var firstErr error
+	var errOnce sync.Once
+
+	for worker := 0; worker < workerCount; worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				graphs, err := m.executeFlatServingHopQuery(queryCtx, req, provider, path, hop, sources[index], start, end, mode, runner)
+				if err != nil {
+					errOnce.Do(func() {
+						firstErr = err
+						cancel()
+					})
+					continue
+				}
+				results[index] = flatServingHopResult{graphs: graphs}
+			}
+		}()
+	}
+
+dispatch:
+	for index := range sources {
+		select {
+		case jobs <- index:
+		case <-queryCtx.Done():
+			break dispatch
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return results, nil
+}
+
+func (m *Model) executeFlatServingHopQuery(
+	ctx context.Context,
+	req *QueryRequest,
+	provider SchemaProvider,
+	path resourcePath,
+	hop int,
+	source flatServingHopSource,
+	start, end int64,
+	mode graphQueryMode,
+	runner graphQueryRunner,
+) (graphs []*LivenessGraph, err error) {
+	ctx, span := trace.NewSpan(ctx, "cmdb-v2-query-graph-flat-hop")
+	defer endV1Beta3TraceSpan(span, &err)
+	span.Set("query-route", "active_edge_serving_flat_multi_hop")
+	span.Set("flat-hop", hop)
+	span.Set("source-resource-type", string(source.resourceType))
+	span.Set("source-resource-id", source.resourceID)
+	span.Set("source-info", source.sourceInfo)
+
+	hopRequest := cloneQueryRequest(req)
+	hopRequest.SourceType = source.resourceType
+	hopRequest.SourceInfo = source.sourceInfo
+	hopRequest.SourceExpandInfo = nil
+	hopRequest.TargetType = ResourceType(path.Steps[1].ResourceType)
+	hopRequest.TargetTypeExplicit = true
+	hopRequest.PathResource = nil
+	hopRequest.MaxHops = 1
+
+	buildStarted := time.Now()
+	sql, ok := buildFlatServingQueryForPath(hopRequest, provider, path, mode)
+	span.Set("surrealql-build-duration", time.Since(buildStarted))
+	if !ok {
+		return nil, fmt.Errorf("cannot build flat serving query for hop %d from %q", hop, source.resourceType)
+	}
+	span.Set("surrealql-bytes", len(sql))
+
+	release, wait, acquireErr := acquireGraphQuerySlot(ctx)
+	span.Set("semaphore-wait", wait)
+	if acquireErr != nil {
+		return nil, acquireErr
+	}
+	defer release()
+
+	graphs, err = runner(ctx, sql, start, end)
+	if err != nil {
+		return nil, err
+	}
+	if traversalErr := rejectGraphTraversalErrors(graphs); traversalErr != nil {
+		return nil, traversalErr
+	}
+	if fanoutErr := validateFlatServingHopFanout(graphs, RelationType(path.Steps[1].RelationType), hop); fanoutErr != nil {
+		return nil, fanoutErr
+	}
+	return graphs, nil
+}
+
+func validateFlatServingHopFanout(graphs []*LivenessGraph, relationType RelationType, hop int) error {
+	limit := effectiveMaxEdgesPerHop()
+	count := 0
+	for _, graph := range graphs {
+		if graph == nil {
+			continue
+		}
+		for _, edge := range graph.GetOutEdges(graph.RootID) {
+			if edge.RelationType == relationType {
+				count++
+			}
+		}
+	}
+	if count > limit {
+		return &ResultLimitError{
+			Reason: "max_edges_per_hop",
+			Count:  count,
+			Limit:  limit,
+			Path:   fmt.Sprintf("hop%d.%s", hop, relationType),
+		}
+	}
+	return nil
+}
+
+func flatServingPrimaryKeyMap(
+	provider SchemaProvider,
+	namespace string,
+	resourceType ResourceType,
+	labels map[string]string,
+) (map[string]string, bool) {
+	primaryKeys := provider.GetResourcePrimaryKeys(namespace, resourceType)
+	if len(primaryKeys) == 0 || len(labels) == 0 {
+		return nil, false
+	}
+	result := make(map[string]string, len(primaryKeys))
+	for _, key := range primaryKeys {
+		value, ok := labels[key]
+		if !ok {
+			return nil, false
+		}
+		result[key] = value
+	}
+	return result, true
+}
+
+func orderedFlatServingHopSources(sources map[string]flatServingHopSource) []flatServingHopSource {
+	ids := make([]string, 0, len(sources))
+	for resourceID := range sources {
+		ids = append(ids, resourceID)
+	}
+	sort.Strings(ids)
+	result := make([]flatServingHopSource, 0, len(ids))
+	for _, resourceID := range ids {
+		result = append(result, sources[resourceID])
+	}
+	return result
+}
+
+func acquireGraphQuerySlot(ctx context.Context) (func(), time.Duration, error) {
+	waitStarted := time.Now()
+	select {
+	case pathQuerySemaphore <- struct{}{}:
+		return func() { <-pathQuerySemaphore }, time.Since(waitStarted), nil
+	case <-ctx.Done():
+		return func() {}, time.Since(waitStarted), ctx.Err()
+	}
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func resourcePathTypeStrings(path resourcePath) []string {

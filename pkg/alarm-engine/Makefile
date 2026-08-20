@@ -3,12 +3,18 @@ GO ?= go
 RELEASE_PATH ?= $(PWD)/dist
 VERSION ?= $(shell cat VERSION)
 COMMIT_ID ?= $(shell git rev-parse HEAD)
-SCHEMA_VERSION ?= none
+SCHEMA_VERSION ?= $(shell cat SCHEMA_VERSION)
+COMPARATOR_SCHEMA_VERSION ?= comparison-audit-batch/1.0
 BIN = $(RELEASE_PATH)/alarm-engine
+COMPARATOR_BIN = $(RELEASE_PATH)/alarm-engine-comparator
 LDFLAGS = -s -w \
 	-X main.version=$(VERSION) \
 	-X main.commit=$(COMMIT_ID) \
 	-X main.schemaVersion=$(SCHEMA_VERSION)
+COMPARATOR_LDFLAGS = -s -w \
+	-X main.version=$(VERSION) \
+	-X main.commit=$(COMMIT_ID) \
+	-X main.schemaVersion=$(COMPARATOR_SCHEMA_VERSION)
 
 .PHONY: help
 help:
@@ -42,3 +48,5 @@ build:
 	mkdir -p $(RELEASE_PATH)
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/alarm-engine
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+	$(GO) build -trimpath -ldflags "$(COMPARATOR_LDFLAGS)" -o $(COMPARATOR_BIN) ./cmd/alarm-engine-comparator

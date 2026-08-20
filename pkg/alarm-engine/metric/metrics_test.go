@@ -19,6 +19,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/lifecycle"
 )
 
 func TestRecorderUsesPrivateRegistries(t *testing.T) {
@@ -102,8 +104,14 @@ func TestHistogramBucketsMatchPythonCompatibleContract(t *testing.T) {
 
 func TestCustomMetricSeriesBudget(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
+	if err := recorder.BindLifecycle(&mutableLifecycleSource{snapshot: lifecycleBudgetSnapshot()}); err != nil {
+		t.Fatalf("BindLifecycle() error = %v", err)
+	}
 	populateAllCustomLabelCombinations(recorder)
 	got := countCustomSeries(t, recorder)
+	if want := 494; MaxCustomSeries() != want {
+		t.Fatalf("MaxCustomSeries() = %d, want %d", MaxCustomSeries(), want)
+	}
 	if want := MaxCustomSeries(); got != want {
 		t.Fatalf("registered custom series = %d, calculated maximum = %d", got, want)
 	}
@@ -117,6 +125,9 @@ func TestCustomMetricSeriesBudget(t *testing.T) {
 
 func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
+	if err := recorder.BindLifecycle(&mutableLifecycleSource{snapshot: lifecycleBudgetSnapshot()}); err != nil {
+		t.Fatalf("BindLifecycle() error = %v", err)
+	}
 	expected := map[string]string{
 		"bkmonitor_alarm_engine_build_info":               "variableLabels: {version,commit,schema_version}",
 		"bkmonitor_alarm_engine_process_duration_seconds": "variableLabels: {stage,mode}",
@@ -124,6 +135,13 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarm_engine_records_total":            "variableLabels: {stage,mode,direction,record_type}",
 		"bkmonitor_alarm_engine_pipeline_latency_seconds": "variableLabels: {from_stage,to_stage,mode}",
 		"bkmonitor_alarm_engine_shadow_compare_total":     "variableLabels: {component,result}",
+		"bkmonitor_alarm_engine_ready":                    "variableLabels: {}",
+		"bkmonitor_alarm_engine_assigned_claims":          "variableLabels: {}",
+		"bkmonitor_alarm_engine_fatal_total":              "variableLabels: {}",
+		"bkmonitor_alarm_engine_draining":                 "variableLabels: {}",
+		"bkmonitor_alarm_engine_drain_total":              "variableLabels: {result}",
+		"bkmonitor_alarm_engine_inflight_records":         "variableLabels: {}",
+		"bkmonitor_alarm_engine_consumer_lag_records":     "variableLabels: {}",
 	}
 
 	descriptions := make(chan string)
@@ -163,6 +181,10 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 			t.Errorf("approved custom metric %s is not registered", name)
 		}
 	}
+}
+
+func lifecycleBudgetSnapshot() lifecycle.Snapshot {
+	return lifecycle.Snapshot{ConsumerLagKnown: true}
 }
 
 func metricNameFromDescriptor(description string) string {

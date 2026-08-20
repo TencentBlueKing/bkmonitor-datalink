@@ -17,8 +17,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/consumer"
+	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/kafka"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/metric"
 	httpservice "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/service/http"
 )
@@ -37,6 +41,15 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	return runWithDependencies(ctx, args, stdout, stderr, defaultApplicationDependencies())
+}
+
+func runWithDependencies(
+	ctx context.Context,
+	args []string,
+	stdout, stderr io.Writer,
+	dependencies applicationDependencies,
+) int {
 	flags := flag.NewFlagSet("alarm-engine", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	configPath := flags.String("config", "", "path to alarm-engine YAML configuration")
@@ -64,10 +77,27 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Commit:        commit,
 		SchemaVersion: schemaVersion,
 	})
-	server := httpservice.New(recorder)
-	if err := server.Run(ctx, cfg.HTTP.Listen, cfg.ShutdownTimeout.Duration()); err != nil {
+	if err := runApplication(ctx, cfg, recorder, dependencies); err != nil {
 		fmt.Fprintf(stderr, "run alarm-engine: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+func defaultApplicationDependencies() applicationDependencies {
+	return applicationDependencies{
+		openSink: func(cfg config.KafkaConfig) (decisionSinkRuntime, error) {
+			return enginekafka.OpenDecisionSink(cfg.DecisionSinkCoordinates())
+		},
+		openService: func(
+			cfg config.KafkaConfig,
+			newProcessor consumer.ProcessorFactory,
+			drainTimeout time.Duration,
+		) (serviceRuntime, error) {
+			return enginekafka.OpenService(cfg.ConsumerCoordinates(), newProcessor, drainTimeout)
+		},
+		newHTTP: func(recorder *metric.Recorder, source lifecycle.Source) (httpRuntime, error) {
+			return httpservice.NewWithLifecycle(recorder, source)
+		},
+	}
 }

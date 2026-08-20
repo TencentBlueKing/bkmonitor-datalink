@@ -15,11 +15,36 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/metric"
 )
+
+func TestLifecycleReadinessAndMetricUseTheSameSource(t *testing.T) {
+	t.Parallel()
+
+	source := &mutableLifecycleSource{}
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	server, err := NewWithLifecycle(recorder, source)
+	if err != nil {
+		t.Fatalf("NewWithLifecycle() error = %v", err)
+	}
+	assertStatus(t, server.Handler(), "/readyz", http.StatusServiceUnavailable)
+	server.SetReady(true)
+	assertStatus(t, server.Handler(), "/readyz", http.StatusServiceUnavailable)
+
+	source.Set(lifecycle.Snapshot{Ready: true, ConsumerLagKnown: true})
+	assertStatus(t, server.Handler(), "/readyz", http.StatusOK)
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if !strings.Contains(response.Body.String(), "bkmonitor_alarm_engine_ready 1") {
+		t.Fatalf("ready metric did not use the readiness source:\n%s", response.Body.String())
+	}
+}
 
 func TestProbeStateTransitions(t *testing.T) {
 	server := New(metric.NewRecorder(metric.BuildInfo{}))
@@ -177,4 +202,21 @@ func assertStatus(t *testing.T, handler http.Handler, path string, want int) {
 	if response.Code != want {
 		t.Fatalf("%s status = %d, want %d", path, response.Code, want)
 	}
+}
+
+type mutableLifecycleSource struct {
+	mu       sync.Mutex
+	snapshot lifecycle.Snapshot
+}
+
+func (s *mutableLifecycleSource) LifecycleSnapshot() lifecycle.Snapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.snapshot
+}
+
+func (s *mutableLifecycleSource) Set(snapshot lifecycle.Snapshot) {
+	s.mu.Lock()
+	s.snapshot = snapshot
+	s.mu.Unlock()
 }

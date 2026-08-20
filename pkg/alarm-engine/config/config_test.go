@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-func TestDefaultIsSafeShadowConfiguration(t *testing.T) {
+func TestDefaultRequiresExplicitKafkaCoordinates(t *testing.T) {
 	cfg := Default()
 
 	if cfg.Mode != ModeShadow {
@@ -29,8 +29,24 @@ func TestDefaultIsSafeShadowConfiguration(t *testing.T) {
 	if cfg.ShutdownTimeout.Duration() <= 0 {
 		t.Fatal("default shutdown timeout must be positive")
 	}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("default configuration must be valid: %v", err)
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "broker") {
+		t.Fatalf("default configuration error = %v, want missing Kafka broker", err)
+	}
+}
+
+func TestLoadBuildsConsumerAndSinkCoordinatesFromOneInputTopic(t *testing.T) {
+	cfg, err := Load(writeConfig(t, validRuntimeConfig()))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	consumer := cfg.Kafka.ConsumerCoordinates()
+	sink := cfg.Kafka.DecisionSinkCoordinates()
+	if consumer.Topic != "alarm-engine-shadow-input" || sink.InputTopic != consumer.Topic {
+		t.Fatalf("input topics consumer=%q sink=%q, want one shared coordinate", consumer.Topic, sink.InputTopic)
+	}
+	consumer.Brokers[0] = "mutated:9092"
+	if sink.Brokers[0] != "127.0.0.1:9092" || cfg.Kafka.Brokers[0] != "127.0.0.1:9092" {
+		t.Fatal("consumer coordinates did not deep-copy brokers")
 	}
 }
 
@@ -97,4 +113,22 @@ func writeConfig(t *testing.T, contents string) string {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
+}
+
+func validRuntimeConfig() string {
+	return `mode: shadow
+http:
+  listen: 127.0.0.1:8080
+shutdown_timeout: 10s
+kafka:
+  brokers:
+    - 127.0.0.1:9092
+  input_topic: alarm-engine-shadow-input
+  output_topic: alarm-engine-shadow-output
+  allowed_output_topics:
+    - alarm-engine-shadow-output
+  group_id: alarm-engine-shadow
+  client_id: alarm-engine
+  broker_version: 2.6.0
+`
 }

@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/kafka"
 )
 
 const ModeShadow = "shadow"
@@ -42,10 +44,42 @@ type HTTPConfig struct {
 	Listen string `yaml:"listen"`
 }
 
+type KafkaConfig struct {
+	Brokers             []string `yaml:"brokers"`
+	InputTopic          string   `yaml:"input_topic"`
+	OutputTopic         string   `yaml:"output_topic"`
+	AllowedOutputTopics []string `yaml:"allowed_output_topics"`
+	GroupID             string   `yaml:"group_id"`
+	ClientID            string   `yaml:"client_id"`
+	BrokerVersion       string   `yaml:"broker_version"`
+}
+
+func (c KafkaConfig) ConsumerCoordinates() enginekafka.Config {
+	return enginekafka.Config{
+		Brokers:       append([]string(nil), c.Brokers...),
+		Topic:         c.InputTopic,
+		GroupID:       c.GroupID,
+		ClientID:      c.ClientID,
+		BrokerVersion: c.BrokerVersion,
+	}
+}
+
+func (c KafkaConfig) DecisionSinkCoordinates() enginekafka.DecisionSinkConfig {
+	return enginekafka.DecisionSinkConfig{
+		Brokers:             append([]string(nil), c.Brokers...),
+		InputTopic:          c.InputTopic,
+		OutputTopic:         c.OutputTopic,
+		AllowedOutputTopics: append([]string(nil), c.AllowedOutputTopics...),
+		ClientID:            c.ClientID,
+		BrokerVersion:       c.BrokerVersion,
+	}
+}
+
 type Config struct {
-	Mode            string     `yaml:"mode"`
-	HTTP            HTTPConfig `yaml:"http"`
-	ShutdownTimeout Duration   `yaml:"shutdown_timeout"`
+	Mode            string      `yaml:"mode"`
+	HTTP            HTTPConfig  `yaml:"http"`
+	Kafka           KafkaConfig `yaml:"kafka"`
+	ShutdownTimeout Duration    `yaml:"shutdown_timeout"`
 }
 
 func Default() Config {
@@ -108,6 +142,12 @@ func (c Config) Validate() error {
 
 	if c.ShutdownTimeout.Duration() <= 0 {
 		return errors.New("shutdown_timeout must be positive")
+	}
+	if err := c.Kafka.ConsumerCoordinates().Validate(); err != nil {
+		return fmt.Errorf("consumer configuration: %w", err)
+	}
+	if err := c.Kafka.DecisionSinkCoordinates().Validate(); err != nil {
+		return fmt.Errorf("decision sink configuration: %w", err)
 	}
 	return nil
 }

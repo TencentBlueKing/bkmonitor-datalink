@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/Shopify/sarama"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/contract"
 )
 
 func TestNewSaramaConfigForcesShadowConsumerInvariants(t *testing.T) {
@@ -39,6 +41,41 @@ func TestNewSaramaConfigForcesShadowConsumerInvariants(t *testing.T) {
 	}
 	if config.ClientID != "alarm-engine" {
 		t.Fatalf("client id = %q", config.ClientID)
+	}
+}
+
+func TestNewSaramaConfigBoundsConsumerPrefetch(t *testing.T) {
+	t.Parallel()
+
+	config, err := NewSaramaConfig(Config{
+		Brokers:       []string{"kafka-1.example:9092"},
+		Topic:         "alarm-engine-trigger-input-shadow",
+		GroupID:       "alarm-engine-trigger-shadow",
+		ClientID:      "alarm-engine",
+		BrokerVersion: "2.6.0",
+	})
+	if err != nil {
+		t.Fatalf("NewSaramaConfig() error = %v", err)
+	}
+	if config.ChannelBufferSize != consumerChannelBufferRecords {
+		t.Fatalf("channel buffer = %d, want the bounded prefetch %d", config.ChannelBufferSize, consumerChannelBufferRecords)
+	}
+	if config.Consumer.Fetch.Max != consumerMaxRecordBytes || config.Consumer.Fetch.Default != consumerMaxRecordBytes {
+		t.Fatalf(
+			"fetch bytes default=%d max=%d, want both bounded to %d",
+			config.Consumer.Fetch.Default, config.Consumer.Fetch.Max, consumerMaxRecordBytes,
+		)
+	}
+	if config.Net.MaxOpenRequests != 1 {
+		t.Fatalf("in-flight requests = %d, want one bounded fetch per broker", config.Net.MaxOpenRequests)
+	}
+	// One in-flight fetch response plus the bounded prefetch channel. The
+	// deployment memory budget multiplies this by the assigned partition count.
+	if got, want := MaxConsumerBytesPerPartition(), 3*consumerMaxRecordBytes; got != want {
+		t.Fatalf("worst-case bytes per partition = %d, want %d", got, want)
+	}
+	if consumerMaxRecordBytes < contract.MaxTriggerInputBytesV1 {
+		t.Fatalf("fetch bound %d cannot carry a maximum TriggerInput record", consumerMaxRecordBytes)
 	}
 }
 

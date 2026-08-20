@@ -17,7 +17,28 @@ import (
 	"strings"
 
 	"github.com/Shopify/sarama"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/contract"
 )
+
+const (
+	// consumerMaxRecordBytes bounds one fetched record. Every Shadow wire is
+	// capped at 512 KiB by its own encoder, and the remainder covers Kafka
+	// record overhead such as the partition key and headers.
+	consumerMaxRecordBytes = contract.MaxTriggerInputBytesV1 + 64*1024
+	// consumerChannelBufferRecords bounds prefetch. Claims are processed
+	// serially, so Sarama's default of 256 buffered records would let a single
+	// partition hold tens of MiB before the first record is even decoded.
+	consumerChannelBufferRecords = 2
+)
+
+// MaxConsumerBytesPerPartition is the worst-case fetched-record memory one
+// assigned partition can hold: one in-flight fetch response plus the bounded
+// prefetch channel. Deployment sizing multiplies it by the assigned partition
+// count across every consumed topic.
+func MaxConsumerBytesPerPartition() int {
+	return consumerMaxRecordBytes * (1 + consumerChannelBufferRecords)
+}
 
 // Config contains only stable consumer coordinates. Authentication remains a
 // deployment concern until the Kafka security contract is read back.
@@ -74,6 +95,10 @@ func NewSaramaConfig(coordinates Config) (*sarama.Config, error) {
 	config.Consumer.Return.Errors = true
 	config.Consumer.Offsets.AutoCommit.Enable = false
 	config.Consumer.Offsets.Initial = sarama.OffsetOldest
+	config.ChannelBufferSize = consumerChannelBufferRecords
+	config.Consumer.Fetch.Default = consumerMaxRecordBytes
+	config.Consumer.Fetch.Max = consumerMaxRecordBytes
+	config.Net.MaxOpenRequests = 1
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("kafka: validate sarama config: %w", err)
 	}

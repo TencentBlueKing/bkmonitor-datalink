@@ -92,14 +92,14 @@ SELECT {
                 entity_data: { bk_module_id: out.bk_module_id }
             }
         } FROM host_module_link WHERE in = $parent.id
-          AND (SELECT * FROM host_module_link_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end LIMIT 1)[0] != NONE
-          AND (SELECT * FROM module_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+          AND (SELECT * FROM host_module_link_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
+          AND (SELECT * FROM module_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
           LIMIT 1001)
     }
 } AS result
 FROM host
 WHERE bk_host_id = '38268'
-  AND (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+  AND (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
 LIMIT 10;`,
 		},
 		{
@@ -164,7 +164,7 @@ SELECT {
     }
 } AS result
 FROM node
-WHERE (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+WHERE (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
 LIMIT 100;`,
 		},
 		{
@@ -227,7 +227,7 @@ SELECT {
     }
 } AS result
 FROM pod
-WHERE (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+WHERE (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
 LIMIT 100;`,
 		},
 	}
@@ -333,13 +333,13 @@ SELECT {
                 entity_data: { bcs_cluster_id: out.bcs_cluster_id, namespace: out.namespace, pod: out.pod }
             }
         } FROM node_with_pod WHERE in = $parent.id
-          AND (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end LIMIT 1)[0] != NONE
-          AND (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+          AND (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
+          AND (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
           LIMIT 1001)
     }
 } AS result
 FROM node
-WHERE (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+WHERE (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
 LIMIT 100;`,
 		},
 		{
@@ -360,7 +360,7 @@ SELECT {
         entity_data: { bcs_cluster_id: bcs_cluster_id, node: node },
         created_at: created_at,
         updated_at: updated_at,
-        liveness: (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND period_end >= $start AND period_start <= $end)
+        liveness: (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
     },
 
     hop1: {
@@ -369,21 +369,21 @@ SELECT {
             relation_type: 'node_with_pod',
             relation_category: 'static',
             relation_id: <string>id,
-            relation_liveness: (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms),
+            relation_liveness: (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms AND period_start <= period_end),
             target: {
                 entity_type: 'pod',
                 entity_id: <string>out,
                 entity_data: { bcs_cluster_id: out.bcs_cluster_id, namespace: out.namespace, pod: out.pod },
-                liveness: (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND period_end >= $start AND period_start <= $end)
+                liveness: (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
             }
         } FROM node_with_pod WHERE in = $parent.id
-          AND (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end LIMIT 1)[0] != NONE
-          AND (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+          AND (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
+          AND (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
           LIMIT 1001)
     }
 } AS result
 FROM node
-WHERE (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+WHERE (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
 LIMIT 100;`,
 		},
 	}

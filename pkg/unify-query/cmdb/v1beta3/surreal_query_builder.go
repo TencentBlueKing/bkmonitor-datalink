@@ -31,12 +31,12 @@ const (
 	fieldRelationID = "relation_id"
 
 	// SQL 子查询模板
-	tplLivenessSelect    = "(SELECT * FROM %s WHERE %s = $parent.id AND period_end >= $start AND period_start <= $end)"
-	tplLivenessSelectRef = "(SELECT * FROM %s WHERE %s = $parent.%s AND period_end >= $start AND period_start <= $end)"
-	tplRelLivenessSelect = "(SELECT * FROM %s WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms)"
-	tplLivenessFilter    = "(SELECT * FROM %s WHERE %s = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE"
-	tplLivenessFilterRef = "(SELECT * FROM %s WHERE %s = $parent.%s AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE"
-	tplRelLivenessFilter = "(SELECT * FROM %s WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end LIMIT 1)[0] != NONE"
+	tplLivenessSelect    = "(SELECT * FROM %s WHERE %s = $parent.id AND period_end >= $start AND period_start <= $end AND period_start <= period_end)"
+	tplLivenessSelectRef = "(SELECT * FROM %s WHERE %s = $parent.%s AND period_end >= $start AND period_start <= $end AND period_start <= period_end)"
+	tplRelLivenessSelect = "(SELECT * FROM %s WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms AND period_start <= period_end)"
+	tplLivenessFilter    = "(SELECT * FROM %s WHERE %s = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE"
+	tplLivenessFilterRef = "(SELECT * FROM %s WHERE %s = $parent.%s AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE"
+	tplRelLivenessFilter = "(SELECT * FROM %s WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE"
 )
 
 // buildEntityDataFields 构建 entity_data 字段列表

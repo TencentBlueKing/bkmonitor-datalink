@@ -89,7 +89,7 @@ SELECT {
         entity_data: { bk_host_id: bk_host_id },
         created_at: created_at,
         updated_at: updated_at,
-        liveness: (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND period_end >= $start AND period_start <= $end)
+        liveness: (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
     },
 
     hop1: {
@@ -98,22 +98,22 @@ SELECT {
             relation_type: 'host_with_module',
             relation_category: 'static',
             relation_id: <string>id,
-            relation_liveness: (SELECT * FROM host_with_module_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms),
+            relation_liveness: (SELECT * FROM host_with_module_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms AND period_start <= period_end),
             target: {
                 entity_type: 'module',
                 entity_id: <string>out,
                 entity_data: { bk_module_id: out.bk_module_id },
-                liveness: (SELECT * FROM module_liveness_record WHERE reference_id = $parent.out AND period_end >= $start AND period_start <= $end)
+                liveness: (SELECT * FROM module_liveness_record WHERE reference_id = $parent.out AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
             }
         } FROM host_with_module WHERE in = $parent.id
-          AND (SELECT * FROM host_with_module_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end LIMIT 1)[0] != NONE
-          AND (SELECT * FROM module_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+          AND (SELECT * FROM host_with_module_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
+          AND (SELECT * FROM module_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
           LIMIT 1001)
     }
 } AS result
 FROM host
 WHERE bk_host_id = '77591'
-  AND (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+  AND (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
 LIMIT 1;`,
 			wantResponseJSON: `{
   "source": "host",
@@ -164,14 +164,14 @@ SELECT {
         entity_data: { bk_host_id: bk_host_id },
         created_at: created_at,
         updated_at: updated_at,
-        liveness: (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND period_end >= $start AND period_start <= $end)
+        liveness: (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
     },
 
     hop1: {}
 } AS result
 FROM host
 WHERE bk_host_id = '77591'
-  AND (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE
+  AND (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
 LIMIT 1;`,
 			wantResponseJSON: `{
   "source": "host",

@@ -1185,7 +1185,7 @@ func TestSurrealQueryBuilderRootRecordIDContract(t *testing.T) {
 
 		assert.Equal(t, `node:⟨bcs_cluster_id=BCS-K8S-00001,node=node\⟩\\1⟩`, builder.buildRootSource())
 		assert.Equal(t,
-			"WHERE region = 'east'\n  AND (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end LIMIT 1)[0] != NONE",
+			"WHERE region = 'east'\n  AND (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE",
 			builder.buildWhereClause(),
 		)
 		assert.Contains(t, builder.Build(), "FROM node:⟨bcs_cluster_id=BCS-K8S-00001,node=node\\⟩\\\\1⟩\n")
@@ -1449,6 +1449,21 @@ func TestSurrealQueryBuilderUsesSecondEntityAndMillisecondRelationWindows(t *tes
 	assert.Contains(t, sql, "LET $end_ms = 1782984106000;")
 	assert.Contains(t, sql, "SELECT * FROM module_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end")
 	assert.Contains(t, sql, "SELECT * FROM module_with_set_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end")
+}
+
+func TestSurrealQueryBuilderFiltersInvertedRelationLivenessPeriods(t *testing.T) {
+	sql := NewSurrealQueryBuilder(&QueryRequest{
+		Timestamp:     1782984106000,
+		LookBackDelta: 604800000,
+		SourceType:    ResourceTypeModule,
+		SourceInfo:    map[string]string{"bk_module_id": "10086"},
+		TargetType:    ResourceTypeSet,
+		PathResource:  []ResourceType{ResourceTypeModule, ResourceTypeSet},
+		MaxHops:       1,
+		Limit:         100,
+	}).Build()
+
+	assert.Contains(t, sql, "SELECT * FROM module_with_set_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1")
 }
 
 func TestSurrealParserNormalizesSecondEntityPeriodsForRangeTargetList(t *testing.T) {

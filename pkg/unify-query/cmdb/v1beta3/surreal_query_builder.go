@@ -282,10 +282,10 @@ func (b *SurrealQueryBuilder) Build() string {
 	return sb.String()
 }
 
-// usesFlatOneHopActiveEdgeServingQuery 只覆盖已完成主键索引验证的即时单跳 Event relation。
+// usesFlatOneHopActiveEdgeServingQuery 只覆盖已完成主键索引验证的单跳 Event relation。
 // active edge 行已投影 relation liveness，直接以业务主键过滤可避开 root 相关 ProjectValue。
 func (b *SurrealQueryBuilder) usesFlatOneHopActiveEdgeServingQuery() bool {
-	if b == nil || b.queryMode != graphQueryModeInstant || b.projectLiveness || len(b.request.SourceExpandInfo) > 0 {
+	if b == nil || (b.queryMode != graphQueryModeInstant && b.queryMode != graphQueryModeRange) || len(b.request.SourceExpandInfo) > 0 {
 		return false
 	}
 	if b.pathHopCount != 1 || !b.usesRelationOnlyLiveness() {
@@ -309,6 +309,7 @@ func (b *SurrealQueryBuilder) usesFlatOneHopActiveEdgeServingQuery() bool {
 
 // buildFlatOneHopServingQuery 直接从 active edge view 返回单边图行。view 已完成
 // relation liveness 的预关联，保留嵌套投影会让 SurrealDB 再次执行高成本的 ProjectValue。
+// range 查询必须保留 active period 作为 relation_liveness，供响应解析器生成时间桶。
 func (b *SurrealQueryBuilder) buildFlatOneHopServingQuery(rel *RelationQueryInfo) string {
 	relationType := rel.Schema.RelationType
 	table := surrealTableName(string(relationType) + "_active_edge_view")
@@ -325,6 +326,10 @@ func (b *SurrealQueryBuilder) buildFlatOneHopServingQuery(rel *RelationQueryInfo
 	}
 
 	primaryKeyConditions, _ := b.flatServingPrimaryKeyConditions(sourceDataField)
+	relationLiveness := ""
+	if b.projectLiveness {
+		relationLiveness = "\n            relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }],"
+	}
 
 	return fmt.Sprintf(`SELECT {
     root: {
@@ -337,7 +342,7 @@ func (b *SurrealQueryBuilder) buildFlatOneHopServingQuery(rel *RelationQueryInfo
             hop: 1,
             relation_type: '%s',
             relation_category: '%s',%s
-            relation_id: <string>relation_id,
+            relation_id: <string>relation_id,%s
             target: {
                 entity_type: %s,
                 entity_id: <string>%s,
@@ -358,6 +363,7 @@ LIMIT %d;`,
 		relationType,
 		rel.Schema.Category,
 		direction,
+		relationLiveness,
 		targetTypeField,
 		targetIDField,
 		targetDataField,

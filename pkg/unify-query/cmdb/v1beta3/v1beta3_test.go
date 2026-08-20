@@ -1273,8 +1273,11 @@ func TestSurrealQueryBuilderFlatOneHopActiveEdgeServingContract(t *testing.T) {
 
 	rangeBuilder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
 	configureBuilderForGraphQueryMode(rangeBuilder, graphQueryModeRange)
-	assert.Equal(t, "active_edge_serving", rangeBuilder.routeName())
-	assert.Contains(t, rangeBuilder.Build(), "FROM node_with_pod_active_edge_view")
+	rangeSQL := rangeBuilder.Build()
+	assert.Equal(t, "active_edge_serving_flat_one_hop", rangeBuilder.routeName())
+	assert.Contains(t, rangeSQL, "FROM node_with_pod_active_edge_view\nWHERE source_data.bcs_cluster_id = 'BCS-K8S-00001'\n  AND source_data.node = 'node-1'")
+	assert.Contains(t, rangeSQL, "relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }]")
+	assert.NotContains(t, rangeSQL, "FROM node\nWHERE")
 }
 
 func TestSurrealQueryBuilderFlatOneHopActiveEdgeServingFallsBack(t *testing.T) {
@@ -1366,6 +1369,14 @@ func TestSurrealQueryBuilderFlatOneHopActiveEdgeServingReverseContract(t *testin
 	assert.Contains(t, sql, "entity_data: target_data")
 	assert.Contains(t, sql, "entity_id: <string>source_id")
 	assert.Contains(t, sql, "entity_data: source_data")
+
+	rangeBuilder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
+	configureBuilderForGraphQueryMode(rangeBuilder, graphQueryModeRange)
+	rangeSQL := rangeBuilder.Build()
+	assert.Equal(t, "active_edge_serving_flat_one_hop", rangeBuilder.routeName())
+	assert.Contains(t, rangeSQL, "FROM node_with_pod_active_edge_view\nWHERE target_data.bcs_cluster_id = 'BCS-K8S-00001'\n  AND target_data.namespace = 'default'\n  AND target_data.pod = 'nginx-1'")
+	assert.Contains(t, rangeSQL, "relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }]")
+	assert.NotContains(t, rangeSQL, "FROM pod\nWHERE")
 }
 
 func TestFlatOneHopActiveEdgeServingRejectsFanoutAboveLimit(t *testing.T) {
@@ -1410,6 +1421,13 @@ func TestFlatOneHopActiveEdgeServingRejectsFanoutAboveLimit(t *testing.T) {
 	assert.Equal(t, "max_edges_per_hop", limitErr.TruncationReason())
 	assert.Equal(t, 2, limitErr.Count)
 	assert.Equal(t, 1, limitErr.Limit)
+
+	result = (&Model{}).executeOneGraphQueryPath(
+		context.Background(), request, GetSchemaProvider(), path, 0, 0, 1, graphQueryModeRange, runner,
+	)
+	require.Error(t, result.err)
+	require.ErrorAs(t, result.err, &limitErr)
+	assert.Equal(t, "max_edges_per_hop", limitErr.TruncationReason())
 }
 
 func TestSurrealQueryBuilderUsesSecondEntityAndMillisecondRelationWindows(t *testing.T) {

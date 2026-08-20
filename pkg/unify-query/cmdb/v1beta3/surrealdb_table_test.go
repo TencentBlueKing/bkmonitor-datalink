@@ -885,19 +885,27 @@ func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
 				{Timestamp: 300000, Matchers: cmdb.Matchers{{"bk_module_id": "10259"}}},
 				{Timestamp: 600000, Matchers: cmdb.Matchers{{"bk_module_id": "10259"}}},
 			},
-			expectedMatchClause:    "source_id = $parent.id",
+			expectedMatchClause:    "source_data.bk_host_id = '38268'",
 			expectedDataProjection: "entity_data: target_data",
 		},
 	}
 
 	oldRelations := ActiveEdgeServingRelations
+	oldFlatRelations := FlatOneHopActiveEdgeServingRelations
 	ActiveEdgeServingRelations = []string{string(RelationHostWithModule)}
 	t.Cleanup(func() {
 		ActiveEdgeServingRelations = oldRelations
+		FlatOneHopActiveEdgeServingRelations = oldFlatRelations
 	})
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.mode == graphQueryModeRange {
+				FlatOneHopActiveEdgeServingRelations = []string{string(RelationHostWithModule)}
+			} else {
+				FlatOneHopActiveEdgeServingRelations = nil
+			}
+
 			req := decodeTableQueryRequestJSON(t, tt.requestJSON)
 			responses := tableActiveEdgeServingResponsesBySurrealQL(t, req, provider, tt.mode, tt.responseJSON)
 			server := newSurrealDBMockServer(t, responses)

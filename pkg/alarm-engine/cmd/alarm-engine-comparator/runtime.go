@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/config"
@@ -22,33 +23,119 @@ import (
 	httpservice "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/service/http"
 )
 
+// comparisonCounted remembers what one input has already contributed to the
+// comparison counters.
+type comparisonCounted struct {
+	verdict       string
+	missingGo     bool
+	missingPython bool
+}
+
+// comparisonResultLedger keeps the comparison counters on the authoritative
+// TriggerInput denominator. One input is audited again on replay and every time
+// a barrier freezes another missing role, so counting each audit would inflate
+// match, mismatch and missing beyond the number of compared inputs. A verdict
+// that actually changes is still counted, because that is a real divergence.
+type comparisonResultLedger struct {
+	capacity int
+	counted  map[string]comparisonCounted
+}
+
+func newComparisonResultLedger(capacity int) (*comparisonResultLedger, error) {
+	if capacity <= 0 {
+		return nil, errors.New("comparator runtime: comparison result capacity must be positive")
+	}
+	return &comparisonResultLedger{capacity: capacity, counted: make(map[string]comparisonCounted)}, nil
+}
+
+// reserve fails closed before the audit is published when the batch would take
+// the ledger past the capacity the finite run was sized for.
+func (l *comparisonResultLedger) reserve(batch *contract.ComparisonAuditBatch) error {
+	admitted := make(map[string]struct{}, len(batch.Audits))
+	for _, audit := range batch.Audits {
+		if _, ok := l.counted[audit.InputID]; ok {
+			continue
+		}
+		admitted[audit.InputID] = struct{}{}
+	}
+	if len(l.counted)+len(admitted) > l.capacity {
+		return fmt.Errorf("comparator runtime: comparison result ledger is full at %d inputs", l.capacity)
+	}
+	return nil
+}
+
+// admit returns only the results this audit adds on top of what the input has
+// already contributed.
+func (l *comparisonResultLedger) admit(audit contract.ComparisonAudit) []metric.CompareResult {
+	state := l.counted[audit.InputID]
+	var results []metric.CompareResult
+	switch audit.Verdict {
+	case contract.ComparisonVerdictMatch, contract.ComparisonVerdictHardDiff:
+		if state.verdict != audit.Verdict {
+			state.verdict = audit.Verdict
+			if audit.Verdict == contract.ComparisonVerdictMatch {
+				results = append(results, metric.CompareMatch)
+			} else {
+				results = append(results, metric.CompareMismatch)
+			}
+		}
+	default:
+		if audit.Coverage.Phase == contract.ComparisonCoverageMissingAtBarrier {
+			for _, role := range audit.Coverage.MissingAtBarrierRoles {
+				switch role {
+				case contract.ComparisonRoleGo:
+					if !state.missingGo {
+						state.missingGo = true
+						results = append(results, metric.CompareMissingGo)
+					}
+				case contract.ComparisonRolePython:
+					if !state.missingPython {
+						state.missingPython = true
+						results = append(results, metric.CompareMissingPython)
+					}
+				}
+			}
+		}
+	}
+	l.counted[audit.InputID] = state
+	return results
+}
+
 type recordingComparisonAuditSink struct {
 	recorder *metric.Recorder
 	next     enginekafka.ComparisonAuditSink
+
+	mu     sync.Mutex
+	ledger *comparisonResultLedger
+}
+
+func newRecordingComparisonAuditSink(
+	recorder *metric.Recorder,
+	next enginekafka.ComparisonAuditSink,
+	capacity int,
+) (*recordingComparisonAuditSink, error) {
+	if recorder == nil || next == nil {
+		return nil, errors.New("comparator runtime: metric recorder and audit sink are required")
+	}
+	ledger, err := newComparisonResultLedger(capacity)
+	if err != nil {
+		return nil, err
+	}
+	return &recordingComparisonAuditSink{recorder: recorder, next: next, ledger: ledger}, nil
 }
 
 func (s *recordingComparisonAuditSink) WriteBatch(ctx context.Context, batch *contract.ComparisonAuditBatch) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ledger.reserve(batch); err != nil {
+		return err
+	}
 	if err := s.next.WriteBatch(ctx, batch); err != nil {
 		return err
 	}
 	for _, audit := range batch.Audits {
-		switch audit.Verdict {
-		case contract.ComparisonVerdictMatch:
-			s.recorder.RecordShadowCompare(metric.ComponentTrigger, metric.CompareMatch)
-		case contract.ComparisonVerdictHardDiff:
-			s.recorder.RecordShadowCompare(metric.ComponentTrigger, metric.CompareMismatch)
-		default:
-			if audit.Coverage.Phase != contract.ComparisonCoverageMissingAtBarrier {
-				continue
-			}
-			for _, role := range audit.Coverage.MissingAtBarrierRoles {
-				switch role {
-				case contract.ComparisonRoleGo:
-					s.recorder.RecordShadowCompare(metric.ComponentTrigger, metric.CompareMissingGo)
-				case contract.ComparisonRolePython:
-					s.recorder.RecordShadowCompare(metric.ComponentTrigger, metric.CompareMissingPython)
-				}
-			}
+		for _, result := range s.ledger.admit(audit) {
+			s.recorder.RecordShadowCompare(metric.ComponentTrigger, result)
 		}
 	}
 	return nil
@@ -81,9 +168,13 @@ func runComparatorApplication(ctx context.Context, configuration config.Comparat
 	if err := ctx.Err(); err != nil {
 		return shutdownComparatorSink(sink, time.Now().Add(configuration.ShutdownTimeout.Duration()))
 	}
+	recordingSink, err := newRecordingComparisonAuditSink(recorder, sink, configuration.Kafka.MaxEntries)
+	if err != nil {
+		return errors.Join(err, shutdownComparatorSink(sink, time.Now().Add(configuration.ShutdownTimeout.Duration())))
+	}
 	service, err := enginekafka.OpenComparatorService(
 		configuration.Kafka.ServiceCoordinates(),
-		&recordingComparisonAuditSink{recorder: recorder, next: sink},
+		recordingSink,
 		configuration.ShutdownTimeout.Duration(),
 	)
 	if err != nil {

@@ -35,6 +35,13 @@ type closeableClient interface {
 	Close() error
 }
 
+func newSyncProducerForOutput(client sarama.Client, outputTopic string) (sarama.SyncProducer, error) {
+	if err := client.RefreshMetadata(outputTopic); err != nil {
+		return nil, fmt.Errorf("refresh output topic metadata: %w", err)
+	}
+	return sarama.NewSyncProducerFromClient(client)
+}
+
 // DecisionSink owns one isolated synchronous producer and its dedicated
 // client. It is safe for concurrent use by multiple consumer claims.
 type DecisionSink struct {
@@ -69,7 +76,7 @@ func OpenDecisionSink(coordinates DecisionSinkConfig) (*DecisionSink, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kafka decision sink: open client: %w", err)
 	}
-	producer, err := sarama.NewSyncProducerFromClient(client)
+	producer, err := newSyncProducerForOutput(client, coordinates.OutputTopic)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("kafka decision sink: open producer: %w", err), client.Close())
 	}

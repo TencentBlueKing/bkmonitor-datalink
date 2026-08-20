@@ -92,7 +92,7 @@ func OpenComparisonAuditSink(coordinates ComparisonAuditSinkConfig) (*Comparison
 	if err != nil {
 		return nil, fmt.Errorf("kafka comparison audit sink: open client: %w", err)
 	}
-	producer, err := sarama.NewSyncProducerFromClient(client)
+	producer, err := newSyncProducerForOutput(client, coordinates.OutputTopic)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("kafka comparison audit sink: open producer: %w", err), client.Close())
 	}

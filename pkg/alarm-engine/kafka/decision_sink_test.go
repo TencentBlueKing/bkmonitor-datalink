@@ -25,6 +25,46 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarm-engine/contract"
 )
 
+func TestOpenDecisionSinkPrimesOnlyOutputTopicBeforeIdempotentProducer(t *testing.T) {
+	broker := sarama.NewMockBroker(t, 1)
+	defer broker.Close()
+
+	coordinates := validDecisionSinkConfig()
+	coordinates.Brokers = []string{broker.Addr()}
+	broker.SetHandlerByMap(map[string]sarama.MockResponse{
+		"MetadataRequest": sarama.NewMockMetadataResponse(t).
+			SetBroker(broker.Addr(), broker.BrokerID()).
+			SetLeader(coordinates.OutputTopic, 0, broker.BrokerID()),
+		"InitProducerIDRequest": sarama.NewMockWrapper(&sarama.InitProducerIDResponse{
+			ProducerID:    1000,
+			ProducerEpoch: 1,
+		}),
+	})
+
+	sink, err := OpenDecisionSink(coordinates)
+	if err != nil {
+		t.Fatalf("OpenDecisionSink() error = %v", err)
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	history := broker.History()
+	if len(history) < 2 {
+		t.Fatalf("broker requests = %d, want metadata then InitProducerID", len(history))
+	}
+	metadata, ok := history[0].Request.(*sarama.MetadataRequest)
+	if !ok {
+		t.Fatalf("first broker request = %T, want *sarama.MetadataRequest", history[0].Request)
+	}
+	if len(metadata.Topics) != 1 || metadata.Topics[0] != coordinates.OutputTopic {
+		t.Fatalf("metadata topics = %v, want only %q", metadata.Topics, coordinates.OutputTopic)
+	}
+	if _, ok := history[1].Request.(*sarama.InitProducerIDRequest); !ok {
+		t.Fatalf("second broker request = %T, want *sarama.InitProducerIDRequest", history[1].Request)
+	}
+}
+
 func TestDecisionSinkWritesOneOfficiallyEncodedRecordAfterAcknowledgement(t *testing.T) {
 	t.Parallel()
 

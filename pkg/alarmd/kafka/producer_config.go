@@ -92,8 +92,8 @@ func (c DecisionSinkConfig) Validate() error {
 	if err != nil {
 		return fmt.Errorf("kafka decision producer: broker_version %q: %w", c.BrokerVersion, err)
 	}
-	if !version.IsAtLeast(sarama.V0_11_0_0) || !sarama.MaxVersion.IsAtLeast(version) {
-		return fmt.Errorf("kafka decision producer: broker_version %q is outside supported producer range 0.11.0.0..%s", c.BrokerVersion, sarama.MaxVersion)
+	if !version.IsAtLeast(sarama.V0_10_2_0) || !sarama.MaxVersion.IsAtLeast(version) {
+		return fmt.Errorf("kafka decision producer: broker_version %q is outside supported producer range 0.10.2.0..%s", c.BrokerVersion, sarama.MaxVersion)
 	}
 	return nil
 }

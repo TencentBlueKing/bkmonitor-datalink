@@ -15,7 +15,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/recordrule"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -123,6 +125,51 @@ func TestPreFetchVMShortLinkTableIdValues(t *testing.T) {
 		assert.NotContains(t, values, "prefetch_disabled_rt.__default__")
 		assert.NotContains(t, values, "prefetch_deleted_rt.__default__")
 	}
+}
+
+func TestPreFetchLogGlobalTableIdValues(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	tableIDs := []string{"prefetch_log_global_es.log", "prefetch_log_global_doris.log", "prefetch_log_global_vm.log"}
+	assert.NoError(t, db.Delete(&resulttable.ResultTableOption{}, "table_id in (?)", tableIDs).Error)
+	assert.NoError(t, db.Delete(&resulttable.ResultTable{}, "table_id in (?)", tableIDs).Error)
+	t.Cleanup(func() {
+		_ = db.Delete(&resulttable.ResultTableOption{}, "table_id in (?)", tableIDs).Error
+		_ = db.Delete(&resulttable.ResultTable{}, "table_id in (?)", tableIDs).Error
+	})
+
+	resultTables := []resulttable.ResultTable{
+		{TableId: tableIDs[0], BkTenantId: "system", BkBizId: 999, DefaultStorage: models.StorageTypeES, IsEnable: true},
+		{TableId: tableIDs[1], BkTenantId: "system", BkBizId: 999, DefaultStorage: models.StorageTypeDoris, IsEnable: true},
+		{TableId: tableIDs[2], BkTenantId: "system", BkBizId: 999, DefaultStorage: models.StorageTypeVM, IsEnable: true},
+	}
+	for index := range resultTables {
+		assert.NoError(t, db.Create(&resultTables[index]).Error)
+	}
+	options := []resulttable.ResultTableOption{
+		{BkTenantId: "system", TableID: tableIDs[0], Name: models.OptionQueryRouterConfig, OptionBase: models.OptionBase{ValueType: "dict", Value: `{}`}},
+		{BkTenantId: "system", TableID: tableIDs[1], Name: models.OptionQueryRouterConfig, OptionBase: models.OptionBase{ValueType: "dict", Value: `{"space_type":"bkci","filter_key":"project_id","filter_value":"space_id"}`}},
+		{BkTenantId: "system", TableID: tableIDs[2], Name: models.OptionQueryRouterConfig, OptionBase: models.OptionBase{ValueType: "dict", Value: `{}`}},
+	}
+	for index := range options {
+		assert.NoError(t, db.Create(&options[index]).Error)
+	}
+
+	spaceList := []space.Space{
+		{Id: 1, BkTenantId: "system", SpaceTypeId: models.SpaceTypeBKCC, SpaceId: "1"},
+		{Id: 101, BkTenantId: "system", SpaceTypeId: models.SpaceTypeBKCI, SpaceId: "project_a"},
+	}
+	data, err := preFetchLogGlobalTableIdValues(service.NewSpacePusher(), spaceList)
+
+	assert.NoError(t, err)
+	bkccValues := data[service.SpaceRouteKeyWithTenant("system", models.SpaceTypeBKCC, "1")]
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "1"}}}, bkccValues["prefetch_log_global_es.log"])
+	assert.NotContains(t, bkccValues, "prefetch_log_global_doris.log")
+	assert.NotContains(t, bkccValues, "prefetch_log_global_vm.log")
+	bkciValues := data[service.SpaceRouteKeyWithTenant("system", models.SpaceTypeBKCI, "project_a")]
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "-101"}}}, bkciValues["prefetch_log_global_es.log"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"project_id": "project_a"}}}, bkciValues["prefetch_log_global_doris.log"])
+	assert.NotContains(t, bkciValues, "prefetch_log_global_vm.log")
 }
 
 func TestPreFetchRecordRuleV4TableIdValues(t *testing.T) {

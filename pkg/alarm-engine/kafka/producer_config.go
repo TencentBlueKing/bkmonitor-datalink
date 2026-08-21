@@ -93,7 +93,7 @@ func (c DecisionSinkConfig) Validate() error {
 		return fmt.Errorf("kafka decision producer: broker_version %q: %w", c.BrokerVersion, err)
 	}
 	if !version.IsAtLeast(sarama.V0_11_0_0) || !sarama.MaxVersion.IsAtLeast(version) {
-		return fmt.Errorf("kafka decision producer: broker_version %q is outside idempotent producer range 0.11.0.0..%s", c.BrokerVersion, sarama.MaxVersion)
+		return fmt.Errorf("kafka decision producer: broker_version %q is outside supported producer range 0.11.0.0..%s", c.BrokerVersion, sarama.MaxVersion)
 	}
 	return nil
 }
@@ -119,7 +119,10 @@ func NewDecisionProducerConfig(coordinates DecisionSinkConfig) (*sarama.Config, 
 	config.Metadata.Timeout = decisionProducerTimeout
 	config.Producer.RequiredAcks = sarama.WaitForAll
 	config.Producer.Timeout = decisionProducerTimeout
-	config.Producer.Idempotent = true
+	// Shadow output is intentionally at-least-once. Stable decision and audit
+	// identifiers make replays observable without depending on the broker's
+	// InitProducerID path.
+	config.Producer.Idempotent = false
 	config.Producer.Return.Successes = true
 	config.Producer.Return.Errors = true
 	config.Producer.Retry.Max = decisionProducerRetryMax

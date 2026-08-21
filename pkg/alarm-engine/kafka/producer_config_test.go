@@ -28,8 +28,8 @@ func TestNewDecisionProducerConfigForcesAcknowledgementAndBounds(t *testing.T) {
 	if config.Producer.RequiredAcks != sarama.WaitForAll {
 		t.Fatalf("required acks = %d, want WaitForAll", config.Producer.RequiredAcks)
 	}
-	if !config.Producer.Idempotent {
-		t.Fatal("producer idempotence must be enabled")
+	if config.Producer.Idempotent {
+		t.Fatal("Shadow producer must not require the broker InitProducerID path")
 	}
 	if !config.Producer.Return.Successes || !config.Producer.Return.Errors {
 		t.Fatal("sync producer acknowledgement channels must be enabled")

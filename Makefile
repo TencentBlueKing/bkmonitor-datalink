@@ -1,5 +1,5 @@
 PWD = $(shell pwd)
-MODULES ?= bkmonitorbeat collector operator transfer unify-query influxdb-proxy ingester offline-data-archive bk-monitor-worker sliwebhook bkm-ksm-exporter alarm-engine
+MODULES ?= bkmonitorbeat collector operator transfer unify-query influxdb-proxy ingester offline-data-archive bk-monitor-worker sliwebhook bkm-ksm-exporter alarmd
 RELEASE_PATH ?= $(PWD)/dist
 BUILD_NO ?= 1
 COMMIT_ID = $(shell git rev-parse HEAD)
@@ -20,7 +20,7 @@ TAG = pkg/$(MODULE)/v$(VERSION)
 PIP_PATH ?= $(shell which pip)
 
 .PHONY: all
-all: bkmonitorbeat collector operator transfer unify-query influxdb-proxy ingester offline-data-archive bk-monitor-worker sliwebhook bkm-ksm-exporter alarm-engine
+all: bkmonitorbeat collector operator transfer unify-query influxdb-proxy ingester offline-data-archive bk-monitor-worker sliwebhook bkm-ksm-exporter alarmd
 
 .PHONY: .check_module_vars
 .check_module_vars:
@@ -52,9 +52,9 @@ sliwebhook:
 bkm-ksm-exporter:
 	$(MAKE) MODULE=bkm-ksm-exporter build
 
-.PHONY: alarm-engine
-alarm-engine:
-	$(MAKE) MODULE=alarm-engine build
+.PHONY: alarmd
+alarmd:
+	$(MAKE) MODULE=alarmd build
 
 .PHONY: transfer
 transfer:

@@ -10,12 +10,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 func TestComparisonResultLedgerCountsOneVerdictPerInput(t *testing.T) {
@@ -109,8 +112,17 @@ func TestRecordingComparisonAuditSinkFailsClosedAtCapacityBeforePublishing(t *te
 func TestRecordingComparisonAuditSinkDoesNotCountAFailedPublish(t *testing.T) {
 	t.Parallel()
 
+	var output bytes.Buffer
 	want := errors.New("audit sink unavailable")
-	sink := mustRecordingSink(t, 4, func(*contract.ComparisonAuditBatch) error { return want })
+	sink, err := newRecordingComparisonAuditSinkWithLogger(
+		metric.NewRecorder(metric.BuildInfo{}),
+		stubAuditSink(func(*contract.ComparisonAuditBatch) error { return want }),
+		4,
+		observability.New(observability.ComponentComparator, &output),
+	)
+	if err != nil {
+		t.Fatalf("newRecordingComparisonAuditSinkWithLogger() error = %v", err)
+	}
 	batch := &contract.ComparisonAuditBatch{Audits: []contract.ComparisonAudit{verdictAudit("input-1", contract.ComparisonVerdictMatch)}}
 
 	if err := sink.WriteBatch(context.Background(), batch); !errors.Is(err, want) {
@@ -118,6 +130,50 @@ func TestRecordingComparisonAuditSinkDoesNotCountAFailedPublish(t *testing.T) {
 	}
 	if len(sink.ledger.counted) != 0 {
 		t.Fatalf("ledger = %#v, want no state for an unpublished audit", sink.ledger.counted)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("log after failed ACK = %q, want empty", output.String())
+	}
+}
+
+func TestRecordingComparisonAuditSinkLogsACKAndAggregatedResults(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	sink, err := newRecordingComparisonAuditSinkWithLogger(
+		metric.NewRecorder(metric.BuildInfo{}),
+		stubAuditSink(func(*contract.ComparisonAuditBatch) error { return nil }),
+		10,
+		observability.New(observability.ComponentComparator, &output),
+	)
+	if err != nil {
+		t.Fatalf("newRecordingComparisonAuditSinkWithLogger() error = %v", err)
+	}
+	batch := &contract.ComparisonAuditBatch{Audits: []contract.ComparisonAudit{
+		verdictAudit("input-secret-1", contract.ComparisonVerdictMatch),
+		verdictAudit("input-secret-2", contract.ComparisonVerdictHardDiff),
+		missingAudit("input-secret-3", contract.ComparisonRoleGo, contract.ComparisonRolePython),
+	}}
+	if err := sink.WriteBatch(context.Background(), batch); err != nil {
+		t.Fatalf("WriteBatch() error = %v", err)
+	}
+	logOutput := output.String()
+	for _, want := range []string{
+		`"stage":"comparison_audit_ack"`, `"result":"broker_ack"`, `"records":3`,
+		`"match":1`, `"mismatch":1`, `"missing_go":1`, `"missing_python":1`,
+	} {
+		if !strings.Contains(logOutput, want) {
+			t.Fatalf("log = %q, want %q", logOutput, want)
+		}
+	}
+	if strings.Contains(logOutput, "input-secret") {
+		t.Fatalf("log leaked dynamic input ID: %q", logOutput)
+	}
+	if strings.Count(logOutput, "\n") != 1 {
+		t.Fatalf("log lines = %q, want one aggregate event for the batch", logOutput)
+	}
+	if strings.Contains(logOutput, `"result":"success"`) {
+		t.Fatalf("ACK log = %q, must not use shutdown success result", logOutput)
 	}
 }
 

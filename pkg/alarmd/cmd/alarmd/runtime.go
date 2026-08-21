@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
@@ -20,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
 )
 
@@ -48,6 +50,7 @@ type httpRuntime interface {
 }
 
 type applicationDependencies struct {
+	logger      *observability.Logger
 	openSink    func(config.KafkaConfig) (decisionSinkRuntime, error)
 	openService func(config.KafkaConfig, consumer.ProcessorFactory, time.Duration) (serviceRuntime, error)
 	newHTTP     func(*metric.Recorder, lifecycle.Source) (httpRuntime, error)
@@ -56,6 +59,7 @@ type applicationDependencies struct {
 type recordingDecisionSink struct {
 	recorder *metric.Recorder
 	next     trigger.DecisionSink
+	logger   *observability.Logger
 }
 
 type recordingProcessor struct {
@@ -64,10 +68,21 @@ type recordingProcessor struct {
 }
 
 func newRecordingDecisionSink(recorder *metric.Recorder, next trigger.DecisionSink) *recordingDecisionSink {
-	return &recordingDecisionSink{recorder: recorder, next: next}
+	return newRecordingDecisionSinkWithLogger(
+		recorder, next, observability.Discard(observability.ComponentTrigger),
+	)
+}
+
+func newRecordingDecisionSinkWithLogger(
+	recorder *metric.Recorder,
+	next trigger.DecisionSink,
+	logger *observability.Logger,
+) *recordingDecisionSink {
+	return &recordingDecisionSink{recorder: recorder, next: next, logger: logger}
 }
 
 func (s *recordingDecisionSink) WriteBatch(ctx context.Context, batch *contract.TriggerDecisionBatch) error {
+	started := time.Now()
 	if err := s.next.WriteBatch(ctx, batch); err != nil {
 		return err
 	}
@@ -77,6 +92,17 @@ func (s *recordingDecisionSink) WriteBatch(ctx context.Context, batch *contract.
 		metric.DirectionOutput,
 		metric.RecordTriggerDecision,
 		float64(len(batch.Decisions)),
+	)
+	attrs := make([]slog.Attr, 0, 1)
+	if batch.BatchID != "" {
+		attrs = append(attrs, slog.String("batch_id", batch.BatchID))
+	}
+	s.logger.Info(
+		observability.StageDecisionACK,
+		observability.ResultBrokerACK,
+		len(batch.Decisions),
+		time.Since(started),
+		attrs...,
 	)
 	return nil
 }
@@ -115,14 +141,28 @@ func runApplication(ctx context.Context, cfg config.Config, recorder *metric.Rec
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	eventLogger := dependencies.logger
+	if eventLogger == nil {
+		eventLogger = observability.Discard(observability.ComponentTrigger)
+	}
+	applicationStarted := time.Now()
+	eventLogger.Info(observability.StageStartup, observability.ResultStarted, 0, 0)
+	startupFailed := func(reason string) {
+		eventLogger.Error(
+			observability.StageStartup, observability.ResultFailed, 0, time.Since(applicationStarted),
+			slog.String("reason", reason),
+		)
+	}
 	sink, err := dependencies.openSink(cfg.Kafka)
 	if err != nil {
+		startupFailed("sink")
 		return err
 	}
 	if ctx.Err() != nil {
+		startupFailed("canceled")
 		return shutdownSinkBefore(sink, time.Now().Add(cfg.ShutdownTimeout.Duration()))
 	}
-	recordingSink := newRecordingDecisionSink(recorder, sink)
+	recordingSink := newRecordingDecisionSinkWithLogger(recorder, sink, eventLogger)
 	service, err := dependencies.openService(
 		cfg.Kafka,
 		func() consumer.Processor {
@@ -131,18 +171,22 @@ func runApplication(ctx context.Context, cfg config.Config, recorder *metric.Rec
 		cfg.ShutdownTimeout.Duration(),
 	)
 	if err != nil {
+		startupFailed("service")
 		return errors.Join(err, shutdownSinkBefore(sink, time.Now().Add(cfg.ShutdownTimeout.Duration())))
 	}
 	if ctx.Err() != nil {
+		startupFailed("canceled")
 		deadline := time.Now().Add(cfg.ShutdownTimeout.Duration())
 		return errors.Join(service.Close(), shutdownSinkBefore(sink, deadline))
 	}
 	server, err := dependencies.newHTTP(recorder, service)
 	if err != nil {
+		startupFailed("http")
 		deadline := time.Now().Add(cfg.ShutdownTimeout.Duration())
 		return errors.Join(err, service.Close(), shutdownSinkBefore(sink, deadline))
 	}
 	if ctx.Err() != nil {
+		startupFailed("canceled")
 		deadline := time.Now().Add(cfg.ShutdownTimeout.Duration())
 		return errors.Join(service.Close(), shutdownSinkBefore(sink, deadline))
 	}
@@ -166,11 +210,21 @@ func runApplication(ctx context.Context, cfg config.Config, recorder *metric.Rec
 		if triggerErr == nil {
 			triggerErr = errFatalWithoutReason
 		}
+		eventLogger.Error(
+			observability.StageFatal, observability.ResultFailed, 0, time.Since(applicationStarted),
+			slog.String("reason", "kafka"),
+		)
 	case serviceErr = <-serviceDone:
 		serviceFinished = true
 		serviceStoppedBeforeShutdown = ctx.Err() == nil
 		if serviceErr == nil && serviceStoppedBeforeShutdown {
 			serviceErr = errKafkaServiceStopped
+		}
+		if serviceStoppedBeforeShutdown {
+			eventLogger.Error(
+				observability.StageFatal, observability.ResultFailed, 0, time.Since(applicationStarted),
+				slog.String("reason", "kafka"),
+			)
 		}
 	case httpErr = <-httpDone:
 		httpFinished = true
@@ -178,8 +232,15 @@ func runApplication(ctx context.Context, cfg config.Config, recorder *metric.Rec
 		if httpErr == nil && httpStoppedBeforeShutdown {
 			httpErr = errHTTPServiceStopped
 		}
+		if httpStoppedBeforeShutdown {
+			eventLogger.Error(
+				observability.StageFatal, observability.ResultFailed, 0, time.Since(applicationStarted),
+				slog.String("reason", "http"),
+			)
+		}
 	}
 
+	shutdownStarted := time.Now()
 	deadline := time.Now().Add(cfg.ShutdownTimeout.Duration())
 	cancelRuntime()
 	if !serviceFinished {
@@ -189,12 +250,24 @@ func runApplication(ctx context.Context, cfg config.Config, recorder *metric.Rec
 	if !httpFinished {
 		httpErr = waitRuntimeComponent(httpDone, deadline)
 	}
-	return errors.Join(
+	result := errors.Join(
 		triggerErr,
 		normalizeRuntimeShutdownError(serviceErr, serviceStoppedBeforeShutdown),
 		normalizeRuntimeShutdownError(httpErr, httpStoppedBeforeShutdown),
 		sinkErr,
 	)
+	shutdownResult := observability.ResultSuccess
+	if errors.Is(result, ErrApplicationShutdownTimeout) || errors.Is(result, context.DeadlineExceeded) {
+		shutdownResult = observability.ResultTimeout
+	} else if result != nil {
+		shutdownResult = observability.ResultFailed
+	}
+	if result == nil {
+		eventLogger.Info(observability.StageShutdown, shutdownResult, 0, time.Since(shutdownStarted))
+	} else {
+		eventLogger.Error(observability.StageShutdown, shutdownResult, 0, time.Since(shutdownStarted))
+	}
+	return result
 }
 
 func shutdownSinkBefore(sink decisionSinkRuntime, deadline time.Time) error {

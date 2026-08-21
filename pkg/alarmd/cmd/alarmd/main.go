@@ -24,6 +24,7 @@ import (
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	httpservice "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/service/http"
 )
 
@@ -41,7 +42,8 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	return runWithDependencies(ctx, args, stdout, stderr, defaultApplicationDependencies())
+	eventLogger := observability.New(observability.ComponentTrigger, stderr)
+	return runWithDependencies(ctx, args, stdout, stderr, defaultApplicationDependencies(eventLogger))
 }
 
 func runWithDependencies(
@@ -84,8 +86,9 @@ func runWithDependencies(
 	return 0
 }
 
-func defaultApplicationDependencies() applicationDependencies {
+func defaultApplicationDependencies(eventLogger *observability.Logger) applicationDependencies {
 	return applicationDependencies{
+		logger: eventLogger,
 		openSink: func(cfg config.KafkaConfig) (decisionSinkRuntime, error) {
 			return enginekafka.OpenDecisionSink(cfg.DecisionSinkCoordinates())
 		},

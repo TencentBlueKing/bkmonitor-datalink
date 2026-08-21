@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	httpservice "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/service/http"
 )
 
@@ -104,6 +106,7 @@ func (l *comparisonResultLedger) admit(audit contract.ComparisonAudit) []metric.
 type recordingComparisonAuditSink struct {
 	recorder *metric.Recorder
 	next     enginekafka.ComparisonAuditSink
+	logger   *observability.Logger
 
 	mu     sync.Mutex
 	ledger *comparisonResultLedger
@@ -114,6 +117,17 @@ func newRecordingComparisonAuditSink(
 	next enginekafka.ComparisonAuditSink,
 	capacity int,
 ) (*recordingComparisonAuditSink, error) {
+	return newRecordingComparisonAuditSinkWithLogger(
+		recorder, next, capacity, observability.Discard(observability.ComponentComparator),
+	)
+}
+
+func newRecordingComparisonAuditSinkWithLogger(
+	recorder *metric.Recorder,
+	next enginekafka.ComparisonAuditSink,
+	capacity int,
+	logger *observability.Logger,
+) (*recordingComparisonAuditSink, error) {
 	if recorder == nil || next == nil {
 		return nil, errors.New("comparator runtime: metric recorder and audit sink are required")
 	}
@@ -121,10 +135,11 @@ func newRecordingComparisonAuditSink(
 	if err != nil {
 		return nil, err
 	}
-	return &recordingComparisonAuditSink{recorder: recorder, next: next, ledger: ledger}, nil
+	return &recordingComparisonAuditSink{recorder: recorder, next: next, logger: logger, ledger: ledger}, nil
 }
 
 func (s *recordingComparisonAuditSink) WriteBatch(ctx context.Context, batch *contract.ComparisonAuditBatch) error {
+	started := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.ledger.reserve(batch); err != nil {
@@ -133,11 +148,28 @@ func (s *recordingComparisonAuditSink) WriteBatch(ctx context.Context, batch *co
 	if err := s.next.WriteBatch(ctx, batch); err != nil {
 		return err
 	}
+	counts := map[metric.CompareResult]int{
+		metric.CompareMatch:         0,
+		metric.CompareMismatch:      0,
+		metric.CompareMissingGo:     0,
+		metric.CompareMissingPython: 0,
+	}
 	for _, audit := range batch.Audits {
 		for _, result := range s.ledger.admit(audit) {
 			s.recorder.RecordShadowCompare(metric.ComponentTrigger, result)
+			counts[result]++
 		}
 	}
+	s.logger.Info(
+		observability.StageComparisonACK,
+		observability.ResultBrokerACK,
+		len(batch.Audits),
+		time.Since(started),
+		slog.Int("match", counts[metric.CompareMatch]),
+		slog.Int("mismatch", counts[metric.CompareMismatch]),
+		slog.Int("missing_go", counts[metric.CompareMissingGo]),
+		slog.Int("missing_python", counts[metric.CompareMissingPython]),
+	)
 	return nil
 }
 
@@ -148,6 +180,17 @@ var (
 )
 
 func runComparatorApplication(ctx context.Context, configuration config.ComparatorConfig, recorder *metric.Recorder) error {
+	return runComparatorApplicationWithLogger(
+		ctx, configuration, recorder, observability.Discard(observability.ComponentComparator),
+	)
+}
+
+func runComparatorApplicationWithLogger(
+	ctx context.Context,
+	configuration config.ComparatorConfig,
+	recorder *metric.Recorder,
+	eventLogger *observability.Logger,
+) error {
 	if ctx == nil {
 		return errors.New("comparator runtime: context is required")
 	}
@@ -160,16 +203,32 @@ func runComparatorApplication(ctx context.Context, configuration config.Comparat
 	if err := configuration.Validate(); err != nil {
 		return err
 	}
+	if eventLogger == nil {
+		eventLogger = observability.Discard(observability.ComponentComparator)
+	}
+	applicationStarted := time.Now()
+	eventLogger.Info(observability.StageStartup, observability.ResultStarted, 0, 0)
+	startupFailed := func(reason string) {
+		eventLogger.Error(
+			observability.StageStartup, observability.ResultFailed, 0, time.Since(applicationStarted),
+			slog.String("reason", reason),
+		)
+	}
 
 	sink, err := enginekafka.OpenComparisonAuditSink(configuration.Kafka.AuditSinkCoordinates())
 	if err != nil {
+		startupFailed("sink")
 		return err
 	}
 	if err := ctx.Err(); err != nil {
+		startupFailed("canceled")
 		return shutdownComparatorSink(sink, time.Now().Add(configuration.ShutdownTimeout.Duration()))
 	}
-	recordingSink, err := newRecordingComparisonAuditSink(recorder, sink, configuration.Kafka.MaxEntries)
+	recordingSink, err := newRecordingComparisonAuditSinkWithLogger(
+		recorder, sink, configuration.Kafka.MaxEntries, eventLogger,
+	)
 	if err != nil {
+		startupFailed("audit_sink")
 		return errors.Join(err, shutdownComparatorSink(sink, time.Now().Add(configuration.ShutdownTimeout.Duration())))
 	}
 	service, err := enginekafka.OpenComparatorService(
@@ -178,18 +237,22 @@ func runComparatorApplication(ctx context.Context, configuration config.Comparat
 		configuration.ShutdownTimeout.Duration(),
 	)
 	if err != nil {
+		startupFailed("service")
 		return errors.Join(err, shutdownComparatorSink(sink, time.Now().Add(configuration.ShutdownTimeout.Duration())))
 	}
 	if err := ctx.Err(); err != nil {
+		startupFailed("canceled")
 		deadline := time.Now().Add(configuration.ShutdownTimeout.Duration())
 		return errors.Join(service.Close(), shutdownComparatorSink(sink, deadline))
 	}
 	server, err := httpservice.NewWithLifecycle(recorder, service)
 	if err != nil {
+		startupFailed("http")
 		deadline := time.Now().Add(configuration.ShutdownTimeout.Duration())
 		return errors.Join(err, service.Close(), shutdownComparatorSink(sink, deadline))
 	}
 	if err := ctx.Err(); err != nil {
+		startupFailed("canceled")
 		deadline := time.Now().Add(configuration.ShutdownTimeout.Duration())
 		return errors.Join(service.Close(), shutdownComparatorSink(sink, deadline))
 	}
@@ -213,11 +276,21 @@ func runComparatorApplication(ctx context.Context, configuration config.Comparat
 		if triggerErr == nil {
 			triggerErr = errors.New("comparator runtime: fatal signal has no error")
 		}
+		eventLogger.Error(
+			observability.StageFatal, observability.ResultFailed, 0, time.Since(applicationStarted),
+			slog.String("reason", "kafka"),
+		)
 	case serviceErr = <-serviceDone:
 		serviceFinished = true
 		serviceEarly = ctx.Err() == nil
 		if serviceErr == nil && serviceEarly {
 			serviceErr = errComparatorServiceStopped
+		}
+		if serviceEarly {
+			eventLogger.Error(
+				observability.StageFatal, observability.ResultFailed, 0, time.Since(applicationStarted),
+				slog.String("reason", "kafka"),
+			)
 		}
 	case httpErr = <-httpDone:
 		httpFinished = true
@@ -225,8 +298,15 @@ func runComparatorApplication(ctx context.Context, configuration config.Comparat
 		if httpErr == nil && httpEarly {
 			httpErr = errComparatorHTTPStopped
 		}
+		if httpEarly {
+			eventLogger.Error(
+				observability.StageFatal, observability.ResultFailed, 0, time.Since(applicationStarted),
+				slog.String("reason", "http"),
+			)
+		}
 	}
 
+	shutdownStarted := time.Now()
 	deadline := time.Now().Add(configuration.ShutdownTimeout.Duration())
 	cancelRuntime()
 	if !serviceFinished {
@@ -236,12 +316,24 @@ func runComparatorApplication(ctx context.Context, configuration config.Comparat
 	if !httpFinished {
 		httpErr = waitComparatorComponent(httpDone, deadline)
 	}
-	return errors.Join(
+	result := errors.Join(
 		triggerErr,
 		normalizeComparatorComponent(serviceErr, serviceEarly),
 		normalizeComparatorComponent(httpErr, httpEarly),
 		sinkErr,
 	)
+	shutdownResult := observability.ResultSuccess
+	if errors.Is(result, errComparatorShutdown) || errors.Is(result, context.DeadlineExceeded) {
+		shutdownResult = observability.ResultTimeout
+	} else if result != nil {
+		shutdownResult = observability.ResultFailed
+	}
+	if result == nil {
+		eventLogger.Info(observability.StageShutdown, shutdownResult, 0, time.Since(shutdownStarted))
+	} else {
+		eventLogger.Error(observability.StageShutdown, shutdownResult, 0, time.Since(shutdownStarted))
+	}
+	return result
 }
 
 func shutdownComparatorSink(sink *enginekafka.ComparisonAuditKafkaSink, deadline time.Time) error {

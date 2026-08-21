@@ -20,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 var (
@@ -57,7 +58,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	recorder := metric.NewRecorder(metric.BuildInfo{Version: version, Commit: commit, SchemaVersion: schemaVersion})
-	if err := runComparatorApplication(ctx, configuration, recorder); err != nil {
+	eventLogger := observability.New(observability.ComponentComparator, stderr)
+	if err := runComparatorApplicationWithLogger(ctx, configuration, recorder, eventLogger); err != nil {
 		fmt.Fprintf(stderr, "run alarmd comparator: %v\n", err)
 		return 1
 	}

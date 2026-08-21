@@ -10,6 +10,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 func TestRunApplicationPreCanceledDoesNotOpenRuntimeDependencies(t *testing.T) {
@@ -184,6 +186,88 @@ func TestRunApplicationHTTPInitializationFailureClosesServiceThenSink(t *testing
 	}
 }
 
+func TestRunApplicationLogsBoundedStartupDependencyFailure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		wantReason string
+		configure  func(*applicationDependencies)
+	}{
+		{
+			name:       "sink",
+			wantReason: "sink",
+			configure: func(dependencies *applicationDependencies) {
+				dependencies.openSink = func(config.KafkaConfig) (decisionSinkRuntime, error) {
+					return nil, errors.New("secret sink initialization detail")
+				}
+			},
+		},
+		{
+			name:       "service",
+			wantReason: "service",
+			configure: func(dependencies *applicationDependencies) {
+				dependencies.openService = func(config.KafkaConfig, consumer.ProcessorFactory, time.Duration) (serviceRuntime, error) {
+					return nil, errors.New("secret service initialization detail")
+				}
+			},
+		},
+		{
+			name:       "HTTP",
+			wantReason: "http",
+			configure: func(dependencies *applicationDependencies) {
+				dependencies.newHTTP = func(*metric.Recorder, lifecycle.Source) (httpRuntime, error) {
+					return nil, errors.New("secret HTTP initialization detail")
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			sink := &fakeDecisionSinkRuntime{shutdown: func(context.Context) error { return nil }}
+			service := newFakeServiceRuntime()
+			service.close = func() error { return nil }
+			dependencies := applicationDependencies{
+				logger: observability.New(observability.ComponentTrigger, &output),
+				openSink: func(config.KafkaConfig) (decisionSinkRuntime, error) {
+					return sink, nil
+				},
+				openService: func(config.KafkaConfig, consumer.ProcessorFactory, time.Duration) (serviceRuntime, error) {
+					return service, nil
+				},
+				newHTTP: func(*metric.Recorder, lifecycle.Source) (httpRuntime, error) {
+					t.Fatal("HTTP initialization unexpectedly succeeded")
+					return nil, nil
+				},
+			}
+			test.configure(&dependencies)
+
+			if err := runApplication(
+				context.Background(), validApplicationConfig(), metric.NewRecorder(metric.BuildInfo{}), dependencies,
+			); err == nil {
+				t.Fatal("runApplication() error = nil, want dependency initialization failure")
+			}
+			logOutput := output.String()
+			for _, want := range []string{
+				`"stage":"startup","result":"started"`,
+				`"stage":"startup","result":"failed"`,
+				`"reason":"` + test.wantReason + `"`,
+			} {
+				if !strings.Contains(logOutput, want) {
+					t.Fatalf("log = %q, want %q", logOutput, want)
+				}
+			}
+			if strings.Contains(logOutput, "secret") {
+				t.Fatalf("startup log leaked initialization error: %q", logOutput)
+			}
+			if strings.Count(logOutput, "\n") != 2 {
+				t.Fatalf("log lines = %q, want started and failed startup events", logOutput)
+			}
+		})
+	}
+}
+
 func TestRunApplicationParentCancelDrainsServiceBeforeSinkWithinOneDeadline(t *testing.T) {
 	t.Parallel()
 
@@ -216,7 +300,9 @@ func TestRunApplicationParentCancelDrainsServiceBeforeSinkWithinOneDeadline(t *t
 		return nil
 	}}
 	recorder := metric.NewRecorder(metric.BuildInfo{})
+	var output bytes.Buffer
 	dependencies := applicationDependencies{
+		logger:   observability.New(observability.ComponentTrigger, &output),
 		openSink: func(config.KafkaConfig) (decisionSinkRuntime, error) { return sink, nil },
 		openService: func(_ config.KafkaConfig, newProcessor consumer.ProcessorFactory, _ time.Duration) (serviceRuntime, error) {
 			if newProcessor == nil || newProcessor() == nil {
@@ -258,6 +344,9 @@ func TestRunApplicationParentCancelDrainsServiceBeforeSinkWithinOneDeadline(t *t
 	}
 	if !strings.Contains(got, "http-return") {
 		t.Fatalf("events = %q, want HTTP service to complete within the shared deadline", got)
+	}
+	if logOutput := output.String(); !strings.Contains(logOutput, `"stage":"shutdown","result":"success"`) {
+		t.Fatalf("log = %q, want successful shutdown result", logOutput)
 	}
 }
 
@@ -321,6 +410,65 @@ func TestRunApplicationFatalStartsSharedDeadlineBeforeServiceReturns(t *testing.
 	latestSharedDeadline := fatalAt.Add(cfg.ShutdownTimeout.Duration() + 20*time.Millisecond)
 	if sinkDeadline.IsZero() || sinkDeadline.After(latestSharedDeadline) {
 		t.Fatalf("sink deadline = %s, want one deadline established at fatal before service return", sinkDeadline)
+	}
+}
+
+func TestRunApplicationLogsLifecycleWithoutFatalErrorBody(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	want := errors.New("consumer fatal broker=secret-broker payload=secret-payload")
+	serviceStarted := make(chan struct{})
+	httpStarted := make(chan struct{})
+	service := newFakeServiceRuntime()
+	service.fatalErr = want
+	service.run = func(ctx context.Context) error {
+		close(serviceStarted)
+		<-ctx.Done()
+		return want
+	}
+	server := &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
+		close(httpStarted)
+		<-ctx.Done()
+		return nil
+	}}
+	dependencies := applicationDependencies{
+		logger: observability.New(observability.ComponentTrigger, &output),
+		openSink: func(config.KafkaConfig) (decisionSinkRuntime, error) {
+			return &fakeDecisionSinkRuntime{shutdown: func(context.Context) error { return nil }}, nil
+		},
+		openService: func(config.KafkaConfig, consumer.ProcessorFactory, time.Duration) (serviceRuntime, error) {
+			return service, nil
+		},
+		newHTTP: func(*metric.Recorder, lifecycle.Source) (httpRuntime, error) { return server, nil },
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- runApplication(
+			context.Background(), validApplicationConfig(), metric.NewRecorder(metric.BuildInfo{}), dependencies,
+		)
+	}()
+	for _, started := range []<-chan struct{}{serviceStarted, httpStarted} {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("runtime component did not start")
+		}
+	}
+	close(service.fatalSignal)
+	if err := <-done; !errors.Is(err, want) {
+		t.Fatalf("runApplication() error = %v, want %v", err, want)
+	}
+	logOutput := output.String()
+	for _, stage := range []string{`"stage":"startup"`, `"stage":"fatal"`, `"stage":"shutdown"`} {
+		if !strings.Contains(logOutput, stage) {
+			t.Fatalf("log = %q, want %q", logOutput, stage)
+		}
+	}
+	for _, secret := range []string{"secret-broker", "secret-payload"} {
+		if strings.Contains(logOutput, secret) {
+			t.Fatalf("structured log leaked %q: %q", secret, logOutput)
+		}
 	}
 }
 
@@ -517,16 +665,59 @@ func TestRecordingDecisionSinkCountsOutputOnlyAfterAcknowledgement(t *testing.T)
 	}
 }
 
+func TestRecordingDecisionSinkLogsOnlyAfterAcknowledgement(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	started := make(chan struct{})
+	release := make(chan struct{})
+	next := &fakeDecisionSinkRuntime{write: func(context.Context, *contract.TriggerDecisionBatch) error {
+		close(started)
+		<-release
+		return nil
+	}, shutdown: func(context.Context) error { return nil }}
+	sink := newRecordingDecisionSinkWithLogger(
+		metric.NewRecorder(metric.BuildInfo{}),
+		next,
+		observability.New(observability.ComponentTrigger, &output),
+	)
+	batch := &contract.TriggerDecisionBatch{BatchID: "batch-1", Decisions: []contract.TriggerDecision{{}, {}}}
+	done := make(chan error, 1)
+	go func() { done <- sink.WriteBatch(context.Background(), batch) }()
+	<-started
+	if output.Len() != 0 {
+		t.Fatalf("log before broker ACK = %q, want empty", output.String())
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("WriteBatch() error = %v", err)
+	}
+	for _, want := range []string{
+		`"component":"trigger"`, `"stage":"go_decision_ack"`, `"result":"broker_ack"`,
+		`"records":2`, `"batch_id":"batch-1"`,
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("log = %q, want %q", output.String(), want)
+		}
+	}
+	if strings.Contains(output.String(), `"result":"success"`) {
+		t.Fatalf("ACK log = %q, must not use shutdown success result", output.String())
+	}
+}
+
 func TestRecordingDecisionSinkDoesNotCountFailedOutput(t *testing.T) {
 	t.Parallel()
 
 	recorder := metric.NewRecorder(metric.BuildInfo{})
+	var output bytes.Buffer
 	want := errors.New("broker acknowledgement failed")
 	next := &fakeDecisionSinkRuntime{
 		write:    func(context.Context, *contract.TriggerDecisionBatch) error { return want },
 		shutdown: func(context.Context) error { return nil },
 	}
-	sink := newRecordingDecisionSink(recorder, next)
+	sink := newRecordingDecisionSinkWithLogger(
+		recorder, next, observability.New(observability.ComponentTrigger, &output),
+	)
 	batch := &contract.TriggerDecisionBatch{Decisions: []contract.TriggerDecision{{}, {}}}
 	if err := sink.WriteBatch(context.Background(), batch); !errors.Is(err, want) {
 		t.Fatalf("WriteBatch() error = %v, want %v", err, want)
@@ -535,6 +726,9 @@ func TestRecordingDecisionSinkDoesNotCountFailedOutput(t *testing.T) {
 		"stage": "trigger", "mode": "shadow", "direction": "output", "record_type": "trigger_decision",
 	}); got != 0 {
 		t.Fatalf("output records after failed ACK = %v, want 0", got)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("log after failed ACK = %q, want empty", output.String())
 	}
 }
 

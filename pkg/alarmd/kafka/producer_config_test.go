@@ -75,6 +75,26 @@ func TestNewDecisionProducerConfigForcesAcknowledgementAndBounds(t *testing.T) {
 	}
 }
 
+func TestNewDecisionProducerConfigSupportsDatalinkKafkaBaseline(t *testing.T) {
+	t.Parallel()
+
+	coordinates := validDecisionSinkConfig()
+	coordinates.BrokerVersion = "0.10.2.0"
+	config, err := NewDecisionProducerConfig(coordinates)
+	if err != nil {
+		t.Fatalf("NewDecisionProducerConfig() error = %v", err)
+	}
+	if config.Version != sarama.V0_10_2_0 {
+		t.Fatalf("broker version = %s, want %s", config.Version, sarama.V0_10_2_0)
+	}
+	if config.Producer.Idempotent {
+		t.Fatal("0.10.2-compatible Shadow producer must not require InitProducerID")
+	}
+	if config.Producer.RequiredAcks != sarama.WaitForAll {
+		t.Fatalf("required acks = %d, want WaitForAll", config.Producer.RequiredAcks)
+	}
+}
+
 func TestDecisionSinkConfigRejectsInvalidCoordinatesAndPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -111,7 +131,7 @@ func TestDecisionSinkConfigRejectsInvalidCoordinatesAndPolicy(t *testing.T) {
 		"missing client":        func(config *DecisionSinkConfig) { config.ClientID = "" },
 		"missing version":       func(config *DecisionSinkConfig) { config.BrokerVersion = "" },
 		"invalid version":       func(config *DecisionSinkConfig) { config.BrokerVersion = "invalid" },
-		"version below minimum": func(config *DecisionSinkConfig) { config.BrokerVersion = "0.10.2.0" },
+		"version below minimum": func(config *DecisionSinkConfig) { config.BrokerVersion = "0.10.1.0" },
 		"version above maximum": func(config *DecisionSinkConfig) { config.BrokerVersion = "9.9.9" },
 	}
 	for name, mutate := range tests {

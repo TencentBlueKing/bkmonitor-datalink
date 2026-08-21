@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/consumer"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -166,7 +167,7 @@ func runApplication(ctx context.Context, cfg config.Config, recorder *metric.Rec
 	service, err := dependencies.openService(
 		cfg.Kafka,
 		func() consumer.Processor {
-			return newRecordingProcessor(recorder, trigger.NewProcessor(recordingSink))
+			return newRecordingProcessor(recorder, detect.NewProcessor(recordingSink))
 		},
 		cfg.ShutdownTimeout.Duration(),
 	)

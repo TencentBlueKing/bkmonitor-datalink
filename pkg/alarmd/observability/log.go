@@ -21,6 +21,7 @@ const (
 	ComponentComparator = "comparator"
 
 	StageStartup       = "startup"
+	StageDetect        = "detect"
 	StageFatal         = "fatal"
 	StageShutdown      = "shutdown"
 	StageDecisionACK   = "go_decision_ack"
@@ -30,11 +31,13 @@ const (
 	ResultBrokerACK = "broker_ack"
 	ResultSuccess   = "success"
 	ResultFailed    = "failed"
+	ResultSkipped   = "skipped"
 	ResultTimeout   = "timeout"
 )
 
-// Logger emits the fixed low-cardinality event envelope used by alarmd. Callers
-// may add only bounded aggregate fields or an already available batch ID.
+// Logger emits the fixed event envelope used by alarmd. Metric labels remain
+// bounded; diagnostic log attributes may include record coordinates and a
+// sanitized error, but never payloads or credentials.
 type Logger struct {
 	component string
 	next      *slog.Logger

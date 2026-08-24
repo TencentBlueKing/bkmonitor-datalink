@@ -27,6 +27,29 @@ type Processor struct {
 	trigger *trigger.Processor
 }
 
+// ProcessingError carries safe coordinates for a Detect processing failure.
+// Isolated is true only after an explicit Go terminal decision has been
+// acknowledged, so the runtime may commit that input and continue.
+type ProcessingError struct {
+	Operation  string
+	Reason     string
+	Isolated   bool
+	StrategyID string
+	ItemID     string
+	BatchID    string
+	RecordID   string
+	Records    int
+	Err        error
+}
+
+func (e *ProcessingError) Error() string {
+	return fmt.Sprintf("detect processor: %s: %v", e.Operation, e.Err)
+}
+
+func (e *ProcessingError) Unwrap() error {
+	return e.Err
+}
+
 func NewProcessor(sink trigger.DecisionSink) *Processor {
 	return &Processor{trigger: trigger.NewProcessor(sink)}
 }
@@ -40,18 +63,23 @@ func (p *Processor) Process(ctx context.Context, key, payload []byte) error {
 	}
 	input, err := contract.DecodeDetectInput(payload)
 	if err != nil {
-		return fmt.Errorf("decode detect input: %w", err)
+		return payloadError(payload, "decode", "invalid_input", false, err)
 	}
 	expectedKey, err := input.PartitionKey()
 	if err != nil {
-		return fmt.Errorf("derive detect input partition key: %w", err)
+		return inputError(input, "partition", "invalid_input", false, err)
 	}
 	if !bytes.Equal(key, expectedKey) {
-		return errors.New("detect processor: partition key mismatch")
+		return inputError(input, "partition", "invalid_input", false, errors.New("partition key mismatch"))
 	}
 	plan, err := loadThresholdPlan(input.StrategyIR)
 	if err != nil {
-		return err
+		outcomes, outcomeErr := terminalOutcomes(input, contract.OutcomeUnsupported, "UNSUPPORTED_STRATEGY")
+		if outcomeErr != nil {
+			return inputError(input, "load_strategy", "internal", false, errors.Join(err, outcomeErr))
+		}
+		diagnostic := inputError(input, "load_strategy", "invalid_strategy", true, err)
+		return p.processOutcomes(ctx, key, input, outcomes, diagnostic)
 	}
 	outcomes := make([]*contract.DetectionOutcome, 0, len(input.Records))
 	for _, rawRecord := range input.Records {
@@ -60,17 +88,131 @@ func (p *Processor) Process(ctx context.Context, key, payload []byte) error {
 		}
 		outcome, err := plan.evaluate(input, rawRecord)
 		if err != nil {
-			return err
+			isolated := inputError(input, "evaluate", "invalid_record", true, err)
+			var record struct {
+				RecordID string `json:"record_id"`
+			}
+			if json.Unmarshal(rawRecord, &record) == nil {
+				isolated.RecordID = record.RecordID
+			}
+			terminal, outcomeErr := terminalOutcomes(input, contract.OutcomeError, "INVALID_INPUT")
+			if outcomeErr != nil {
+				return inputError(input, "evaluate", "internal", false, errors.Join(err, outcomeErr))
+			}
+			return p.processOutcomes(ctx, key, input, terminal, isolated)
 		}
 		outcomes = append(outcomes, outcome)
 	}
-	return p.trigger.ProcessOutcomes(
+	return p.processOutcomes(ctx, key, input, outcomes, nil)
+}
+
+func (p *Processor) processOutcomes(
+	ctx context.Context,
+	key []byte,
+	input *contract.DetectInput,
+	outcomes []*contract.DetectionOutcome,
+	diagnostic *ProcessingError,
+) error {
+	err := p.trigger.ProcessOutcomes(
 		ctx,
 		key,
 		input.PartitionHashVersion,
 		input.StrategyIR,
 		outcomes,
 	)
+	if err == nil {
+		if diagnostic == nil {
+			return nil
+		}
+		return diagnostic
+	}
+	return err
+}
+
+func terminalOutcomes(input *contract.DetectInput, outcome, errorCode string) ([]*contract.DetectionOutcome, error) {
+	results := make([]*contract.DetectionOutcome, 0, len(input.Records))
+	for _, rawRecord := range input.Records {
+		decoder := json.NewDecoder(bytes.NewReader(rawRecord))
+		decoder.UseNumber()
+		var record struct {
+			RecordID string `json:"record_id"`
+			Time     int64  `json:"time"`
+		}
+		if err := decoder.Decode(&record); err != nil {
+			return nil, fmt.Errorf("detect processor: decode terminal record: %w", err)
+		}
+		parts := strings.Split(record.RecordID, ".")
+		if len(parts) != 2 {
+			return nil, errors.New("detect processor: invalid terminal record_id")
+		}
+		inputID, err := contract.DeriveInputID(contract.InputIdentity{
+			TenantID:              input.StrategyIR.TenantID,
+			Purpose:               input.StrategyIR.Purpose,
+			StrategyID:            input.StrategyIR.StrategyRef.StrategyID,
+			ItemID:                input.StrategyIR.StrategyRef.ItemID,
+			StrategyContentSHA256: input.StrategyIR.StrategyRef.ContentSHA256,
+			RecordID:              record.RecordID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		result := &contract.DetectionOutcome{
+			Schema:           contract.Schema{Name: "detection-outcome", Major: 1, Minor: 0},
+			RequiredFeatures: []string{"full-level-evaluations-v1", "raw-json-v1"},
+			InputID:          inputID,
+			BatchID:          input.BatchID,
+			TenantID:         input.StrategyIR.TenantID,
+			Purpose:          input.StrategyIR.Purpose,
+			StrategyRef:      input.StrategyIR.StrategyRef,
+			Record: contract.DetectionRecord{
+				RecordID:      record.RecordID,
+				SourceTime:    record.Time,
+				DimensionsMD5: parts[0],
+				DataRaw:       append(json.RawMessage(nil), rawRecord...),
+			},
+			Evaluations: []contract.Evaluation{},
+			Outcome:     outcome,
+			ErrorCode:   json.RawMessage(strconv.Quote(errorCode)),
+		}
+		if err := result.Validate(input.StrategyIR); err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func inputError(input *contract.DetectInput, operation, reason string, isolated bool, err error) *ProcessingError {
+	result := &ProcessingError{Operation: operation, Reason: reason, Isolated: isolated, Err: err}
+	if input == nil {
+		return result
+	}
+	result.BatchID = input.BatchID
+	result.Records = len(input.Records)
+	if input.StrategyIR != nil {
+		result.StrategyID = input.StrategyIR.StrategyRef.StrategyID
+		result.ItemID = input.StrategyIR.StrategyRef.ItemID
+	}
+	return result
+}
+
+func payloadError(payload []byte, operation, reason string, isolated bool, err error) *ProcessingError {
+	var envelope struct {
+		BatchID    string `json:"batch_id"`
+		StrategyIR struct {
+			StrategyRef contract.StrategyRef `json:"strategy_ref"`
+		} `json:"strategy_ir"`
+		Records []json.RawMessage `json:"records"`
+	}
+	_ = json.Unmarshal(payload, &envelope)
+	return &ProcessingError{
+		Operation: operation, Reason: reason, Isolated: isolated,
+		StrategyID: envelope.StrategyIR.StrategyRef.StrategyID,
+		ItemID:     envelope.StrategyIR.StrategyRef.ItemID,
+		BatchID:    envelope.BatchID,
+		Records:    len(envelope.Records),
+		Err:        err,
+	}
 }
 
 type thresholdPlan struct {
@@ -196,11 +338,7 @@ func parseThresholdAlgorithm(raw json.RawMessage, valueUnit, thresholdSuffix str
 			default:
 				return thresholdAlgorithm{}, fmt.Errorf("detect processor: unsupported threshold method %q", method)
 			}
-			number, ok := condition["threshold"].(json.Number)
-			if !ok {
-				return thresholdAlgorithm{}, errors.New("detect processor: threshold value must be numeric")
-			}
-			threshold, err := number.Float64()
+			threshold, err := thresholdValue(condition["threshold"])
 			if err != nil {
 				return thresholdAlgorithm{}, errors.New("detect processor: threshold value must be numeric")
 			}
@@ -209,6 +347,25 @@ func parseThresholdAlgorithm(raw json.RawMessage, valueUnit, thresholdSuffix str
 		algorithm.groups = append(algorithm.groups, group)
 	}
 	return algorithm, nil
+}
+
+func thresholdValue(raw any) (float64, error) {
+	var (
+		value float64
+		err   error
+	)
+	switch raw := raw.(type) {
+	case json.Number:
+		value, err = raw.Float64()
+	case string:
+		value, err = strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	default:
+		return 0, errors.New("threshold is not a number")
+	}
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, errors.New("threshold is not finite")
+	}
+	return value, nil
 }
 
 func (p *thresholdPlan) evaluate(input *contract.DetectInput, rawRecord json.RawMessage) (*contract.DetectionOutcome, error) {

@@ -15,6 +15,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,11 +25,12 @@ import (
 
 type recordingDecisionSink struct {
 	batches []*contract.TriggerDecisionBatch
+	err     error
 }
 
 func (s *recordingDecisionSink) WriteBatch(_ context.Context, batch *contract.TriggerDecisionBatch) error {
 	s.batches = append(s.batches, batch)
-	return nil
+	return s.err
 }
 
 func TestProcessorRunsThresholdDetectBeforeTrigger(t *testing.T) {
@@ -143,6 +145,131 @@ func TestProcessorMatchesPythonThresholdUnitConversion(t *testing.T) {
 	if decision := sink.batches[0].Decisions[1]; decision.Outcome != contract.DecisionOutcomeNoTrigger || decision.ReasonCode != contract.DecisionReasonInputNormal {
 		t.Fatalf("invalid-value decision = %#v, want Python-compatible INPUT_NORMAL", decision)
 	}
+}
+
+func TestProcessorAcceptsPythonNumericStringThreshold(t *testing.T) {
+	t.Parallel()
+
+	processor, key, payload, sink := thresholdProcessorFixture(t, `"50"`)
+	if err := processor.Process(context.Background(), key, payload); err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if len(sink.batches) != 1 || sink.batches[0].Decisions[0].Outcome != contract.DecisionOutcomeTrigger {
+		t.Fatalf("batches = %#v, want one TRIGGER decision", sink.batches)
+	}
+}
+
+func TestProcessorClassifiesInvalidStrategyAsIsolated(t *testing.T) {
+	t.Parallel()
+
+	processor, key, payload, sink := thresholdProcessorFixture(t, `"not-a-number"`)
+	err := processor.Process(context.Background(), key, payload)
+	var isolated *ProcessingError
+	if !errors.As(err, &isolated) {
+		t.Fatalf("Process() error = %v, want ProcessingError", err)
+	}
+	if !isolated.Isolated || isolated.Operation != "load_strategy" || isolated.Reason != "invalid_strategy" {
+		t.Fatalf("isolated error = %#v, want load_strategy/invalid_strategy", isolated)
+	}
+	if isolated.StrategyID != "1" || isolated.ItemID != "2" || isolated.BatchID != "batch-1" || isolated.Records != 1 {
+		t.Fatalf("isolated coordinates = %#v", isolated)
+	}
+	if len(sink.batches) != 1 || len(sink.batches[0].Decisions) != 1 {
+		t.Fatalf("batches = %#v, want one explicit unsupported decision", sink.batches)
+	}
+	decision := sink.batches[0].Decisions[0]
+	if decision.Outcome != contract.OutcomeUnsupported || decision.ReasonCode != "UNSUPPORTED_STRATEGY" {
+		t.Fatalf("decision = %#v, want UNSUPPORTED/UNSUPPORTED_STRATEGY", decision)
+	}
+}
+
+func TestProcessorDoesNotIsolateDecisionDeliveryFailure(t *testing.T) {
+	t.Parallel()
+
+	processor, key, payload, sink := thresholdProcessorFixture(t, `"not-a-number"`)
+	want := errors.New("broker unavailable")
+	sink.err = want
+	err := processor.Process(context.Background(), key, payload)
+	if !errors.Is(err, want) {
+		t.Fatalf("Process() error = %v, want delivery failure", err)
+	}
+	var isolated *ProcessingError
+	if errors.As(err, &isolated) {
+		t.Fatalf("Process() error = %v, must not isolate delivery failure", err)
+	}
+}
+
+func TestProcessorDoesNotCommitInputWithoutTerminalDecision(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		key     func([]byte) []byte
+		payload func([]byte) []byte
+	}{
+		{name: "invalid envelope", key: func(key []byte) []byte { return key }, payload: func([]byte) []byte { return []byte(`{`) }},
+		{name: "partition mismatch", key: func([]byte) []byte { return []byte("wrong") }, payload: func(payload []byte) []byte { return payload }},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			processor, key, payload, sink := thresholdProcessorFixture(t, `50`)
+			err := processor.Process(context.Background(), test.key(key), test.payload(payload))
+			var processing *ProcessingError
+			if !errors.As(err, &processing) || processing.Isolated {
+				t.Fatalf("Process() error = %#v, want non-isolated ProcessingError", err)
+			}
+			if len(sink.batches) != 0 {
+				t.Fatalf("batches = %#v, want none", sink.batches)
+			}
+		})
+	}
+}
+
+func thresholdProcessorFixture(
+	t *testing.T,
+	thresholdJSON string,
+) (*Processor, []byte, []byte, *recordingDecisionSink) {
+	t.Helper()
+	legacy := []byte(`{"id":1,"update_time":1,"items":[{"id":2,"query_configs":[{"agg_interval":60}],"algorithms":[{"level":1,"type":"Threshold","config":[[{"method":"gte","threshold":` + thresholdJSON + `}]]}],"no_data_config":{"is_enabled":false}}],"detects":[{"level":1,"connector":"and","trigger_config":{"count":1,"check_window":1}}]}`)
+	digest := sha256.Sum256(legacy)
+	strategy := map[string]any{
+		"schema":                    map[string]any{"name": "trigger-strategy-ir", "major": 1, "minor": 0},
+		"required_features":         []string{"raw-strategy-bytes-v1"},
+		"tenant_id":                 "default",
+		"purpose":                   "DETECT",
+		"strategy_ref":              map[string]any{"strategy_id": "1", "item_id": "2", "generation": "1", "content_sha256": hex.EncodeToString(digest[:])},
+		"required_levels":           []int{1},
+		"check_window_unit_seconds": 60,
+		"trigger_configs":           []map[string]any{{"level": 1, "check_window_size": 1, "trigger_count": 1}},
+		"legacy_json_b64":           base64.StdEncoding.EncodeToString(legacy),
+	}
+	payload, err := json.Marshal(map[string]any{
+		"schema":                 map[string]any{"name": "detect-input", "major": 1, "minor": 0},
+		"required_features":      []string{},
+		"partition_hash_version": contract.PartitionHashVersionV1,
+		"strategy_ir":            strategy,
+		"batch_id":               "batch-1",
+		"records": []map[string]any{{
+			"record_id": "342a08e0f85f169a7e099c18db3708ed.100",
+			"time":      100,
+			"value":     60,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := contract.DecodeDetectInput(payload)
+	if err != nil {
+		t.Fatalf("DecodeDetectInput() error = %v", err)
+	}
+	key, err := input.PartitionKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &recordingDecisionSink{}
+	return NewProcessor(sink), key, payload, sink
 }
 
 func TestThresholdUnitScalesMatchPythonBaseConversion(t *testing.T) {

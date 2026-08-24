@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/consumer"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -681,7 +682,11 @@ func TestRecordingDecisionSinkLogsOnlyAfterAcknowledgement(t *testing.T) {
 		next,
 		observability.New(observability.ComponentTrigger, &output),
 	)
-	batch := &contract.TriggerDecisionBatch{BatchID: "batch-1", Decisions: []contract.TriggerDecision{{}, {}}}
+	batch := &contract.TriggerDecisionBatch{
+		BatchID:     "batch-1",
+		StrategyRef: contract.StrategyRef{StrategyID: "1", ItemID: "2"},
+		Decisions:   []contract.TriggerDecision{{}, {}},
+	}
 	done := make(chan error, 1)
 	go func() { done <- sink.WriteBatch(context.Background(), batch) }()
 	<-started
@@ -694,7 +699,8 @@ func TestRecordingDecisionSinkLogsOnlyAfterAcknowledgement(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"component":"trigger"`, `"stage":"go_decision_ack"`, `"result":"broker_ack"`,
-		`"records":2`, `"batch_id":"batch-1"`,
+		`"operation":"write_batch"`, `"records":2`, `"batch_id":"batch-1"`,
+		`"strategy_id":"1"`, `"item_id":"2"`,
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("log = %q, want %q", output.String(), want)
@@ -710,7 +716,7 @@ func TestRecordingDecisionSinkDoesNotCountFailedOutput(t *testing.T) {
 
 	recorder := metric.NewRecorder(metric.BuildInfo{})
 	var output bytes.Buffer
-	want := errors.New("broker acknowledgement failed")
+	want := errors.New("broker acknowledgement failed at secret-broker")
 	next := &fakeDecisionSinkRuntime{
 		write:    func(context.Context, *contract.TriggerDecisionBatch) error { return want },
 		shutdown: func(context.Context) error { return nil },
@@ -718,7 +724,11 @@ func TestRecordingDecisionSinkDoesNotCountFailedOutput(t *testing.T) {
 	sink := newRecordingDecisionSinkWithLogger(
 		recorder, next, observability.New(observability.ComponentTrigger, &output),
 	)
-	batch := &contract.TriggerDecisionBatch{Decisions: []contract.TriggerDecision{{}, {}}}
+	batch := &contract.TriggerDecisionBatch{
+		BatchID:     "batch-1",
+		StrategyRef: contract.StrategyRef{StrategyID: "1", ItemID: "2"},
+		Decisions:   []contract.TriggerDecision{{}, {}},
+	}
 	if err := sink.WriteBatch(context.Background(), batch); !errors.Is(err, want) {
 		t.Fatalf("WriteBatch() error = %v, want %v", err, want)
 	}
@@ -727,8 +737,17 @@ func TestRecordingDecisionSinkDoesNotCountFailedOutput(t *testing.T) {
 	}); got != 0 {
 		t.Fatalf("output records after failed ACK = %v, want 0", got)
 	}
-	if output.Len() != 0 {
-		t.Fatalf("log after failed ACK = %q, want empty", output.String())
+	for _, want := range []string{
+		`"stage":"go_decision_ack"`, `"result":"failed"`, `"operation":"write_batch"`,
+		`"reason":"broker"`, `"records":2`, `"batch_id":"batch-1"`,
+		`"strategy_id":"1"`, `"item_id":"2"`,
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("log = %q, want %q", output.String(), want)
+		}
+	}
+	if strings.Contains(output.String(), "secret-broker") {
+		t.Fatalf("failed ACK log leaked broker detail: %q", output.String())
 	}
 }
 
@@ -778,6 +797,96 @@ func TestRecordingProcessorUsesBoundedSuccessAndFailureLabels(t *testing.T) {
 		"stage": "trigger", "mode": "shadow", "status": "failed", "error_code": "internal",
 	}); got != 1 {
 		t.Fatalf("failed process count = %v, want 1", got)
+	}
+}
+
+func TestRecordingProcessorSkipsAndLogsIsolatedStrategyError(t *testing.T) {
+	t.Parallel()
+
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	var output bytes.Buffer
+	calls := 0
+	next := consumer.ProcessorFunc(func(context.Context, []byte, []byte) error {
+		calls++
+		if calls > 1 {
+			return nil
+		}
+		return &detect.ProcessingError{
+			Operation:  "load_strategy",
+			Reason:     "invalid_strategy",
+			Isolated:   true,
+			StrategyID: "1",
+			ItemID:     "2",
+			BatchID:    "batch-1",
+			Records:    3,
+			Err:        errors.New("threshold value must be numeric"),
+		}
+	})
+	processor := newRecordingProcessorWithLogger(
+		recorder,
+		next,
+		observability.New(observability.ComponentTrigger, &output),
+	)
+	if err := processor.Process(context.Background(), nil, nil); err != nil {
+		t.Fatalf("Process() error = %v, want isolated record committed", err)
+	}
+	if err := processor.Process(context.Background(), nil, nil); err != nil {
+		t.Fatalf("Process() after isolated strategy error = %v, want next strategy processed", err)
+	}
+	for _, want := range []string{
+		`"stage":"detect"`, `"result":"skipped"`, `"operation":"load_strategy"`,
+		`"reason":"invalid_strategy"`, `"strategy_id":"1"`, `"item_id":"2"`,
+		`"batch_id":"batch-1"`, `"records":3`, `"error":"threshold value must be numeric"`,
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("log = %q, want %q", output.String(), want)
+		}
+	}
+	if got := counterValue(t, recorder, "bkmonitor_alarmd_process_total", map[string]string{
+		"stage": "detect", "mode": "shadow", "status": "failed", "error_code": "unsupported",
+	}); got != 1 {
+		t.Fatalf("isolated process count = %v, want 1", got)
+	}
+}
+
+func TestRecordingProcessorLogsAndReturnsNonIsolatedDetectError(t *testing.T) {
+	t.Parallel()
+
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	var output bytes.Buffer
+	want := errors.New("contract validation failed")
+	next := consumer.ProcessorFunc(func(context.Context, []byte, []byte) error {
+		return &detect.ProcessingError{
+			Operation:  "decode",
+			Reason:     "invalid_input",
+			StrategyID: "1",
+			ItemID:     "2",
+			BatchID:    "batch-1",
+			Records:    3,
+			Err:        want,
+		}
+	})
+	processor := newRecordingProcessorWithLogger(
+		recorder,
+		next,
+		observability.New(observability.ComponentTrigger, &output),
+	)
+	if err := processor.Process(context.Background(), nil, nil); !errors.Is(err, want) {
+		t.Fatalf("Process() error = %v, want fatal detect error", err)
+	}
+	for _, want := range []string{
+		`"stage":"detect"`, `"result":"failed"`, `"operation":"decode"`,
+		`"reason":"invalid_input"`, `"strategy_id":"1"`, `"item_id":"2"`,
+		`"batch_id":"batch-1"`, `"records":3`, `"error":"contract validation failed"`,
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("log = %q, want %q", output.String(), want)
+		}
+	}
+	if got := counterValue(t, recorder, "bkmonitor_alarmd_process_total", map[string]string{
+		"stage": "detect", "mode": "shadow", "status": "failed", "error_code": "invalid_input",
+	}); got != 1 {
+		t.Fatalf("fatal detect process count = %v, want 1", got)
 	}
 }
 

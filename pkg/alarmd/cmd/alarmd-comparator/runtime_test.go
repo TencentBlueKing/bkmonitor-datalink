@@ -88,7 +88,7 @@ func TestComparisonResultLedgerIgnoresCoverageGapsWithoutABarrier(t *testing.T) 
 	}
 }
 
-func TestRecordingComparisonAuditSinkFailsClosedAtCapacityBeforePublishing(t *testing.T) {
+func TestRecordingComparisonAuditSinkKeepsARollingDeduplicationWindow(t *testing.T) {
 	t.Parallel()
 
 	published := 0
@@ -101,11 +101,17 @@ func TestRecordingComparisonAuditSinkFailsClosedAtCapacityBeforePublishing(t *te
 		t.Fatalf("WriteBatch(first) error = %v", err)
 	}
 	second := &contract.ComparisonAuditBatch{Audits: []contract.ComparisonAudit{verdictAudit("input-2", contract.ComparisonVerdictMatch)}}
-	if err := sink.WriteBatch(context.Background(), second); err == nil {
-		t.Fatal("WriteBatch() accepted an input beyond the ledger capacity")
+	if err := sink.WriteBatch(context.Background(), second); err != nil {
+		t.Fatalf("WriteBatch(second) error = %v", err)
 	}
-	if published != 1 {
-		t.Fatalf("published batches = %d, want the over-capacity batch rejected before publishing", published)
+	if published != 2 {
+		t.Fatalf("published batches = %d, want both batches", published)
+	}
+	if _, ok := sink.ledger.counted["input-1"]; ok {
+		t.Fatal("oldest input remained in the rolling deduplication window")
+	}
+	if _, ok := sink.ledger.counted["input-2"]; !ok {
+		t.Fatal("newest input was not retained in the rolling deduplication window")
 	}
 }
 

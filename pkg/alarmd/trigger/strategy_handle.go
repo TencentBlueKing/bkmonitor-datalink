@@ -16,9 +16,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
-// StrategyHandle is an immutable executable projection of one validated StrategyIR.
-// It is intentionally scoped to a self-contained TriggerInput record and does not
-// make correctness depend on a cross-message strategy cache.
+// StrategyHandle is an immutable executable projection of one validated
+// StrategyIR. Every input carries the full strategy snapshot, so correctness
+// does not depend on a separately populated strategy cache.
 type StrategyHandle struct {
 	tenantID               string
 	purpose                string

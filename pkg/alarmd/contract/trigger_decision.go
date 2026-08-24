@@ -108,36 +108,80 @@ func (i *TriggerInput) BuildTriggerDecisionBatch(decisions []TriggerDecision) (*
 	if i == nil || i.StrategyIR == nil || len(i.partitionKey) == 0 {
 		return nil, invalid("trigger_input", "must be produced by DecodeTriggerInput")
 	}
-	if len(i.DetectionOutcomes) == 0 || len(i.DetectionOutcomes) > MaxTriggerDecisionItemsV1 {
+	return BuildTriggerDecisionBatchFromOutcomes(
+		i.PartitionHashVersion,
+		i.StrategyIR,
+		i.DetectionOutcomes,
+		decisions,
+	)
+}
+
+// BuildTriggerDecisionBatchFromOutcomes builds the Kafka output contract from
+// validated in-process Detect results. It deliberately does not require a
+// TriggerInput wire round trip between Detect and Trigger.
+func BuildTriggerDecisionBatchFromOutcomes(
+	partitionHashVersion string,
+	strategy *TriggerStrategyIR,
+	outcomes []*DetectionOutcome,
+	decisions []TriggerDecision,
+) (*TriggerDecisionBatch, error) {
+	if strategy == nil {
+		return nil, invalid("trigger_decision_batch", "strategy must be non-null")
+	}
+	if err := strategy.Validate(); err != nil {
+		return nil, err
+	}
+	if partitionHashVersion != PartitionHashVersionV1 {
+		return nil, invalid("trigger_decision_batch.partition_hash_version", "unsupported version")
+	}
+	if len(outcomes) == 0 || len(outcomes) > MaxTriggerDecisionItemsV1 {
 		return nil, invalid("trigger_decision_batch.decisions", "source input must contain between 1 and 500 outcomes")
 	}
-	if len(decisions) != len(i.DetectionOutcomes) {
+	if len(decisions) != len(outcomes) {
 		return nil, invalid("trigger_decision_batch.decisions", "must match input outcome count")
 	}
+	batchID := ""
+	inputIDs := make(map[string]struct{}, len(outcomes))
 	for index, decision := range decisions {
-		source := i.DetectionOutcomes[index]
+		source := outcomes[index]
 		if source == nil {
 			return nil, invalid("trigger_decision_batch.decisions", "source outcome must be non-null")
 		}
+		if err := source.Validate(strategy); err != nil {
+			return nil, err
+		}
+		if index == 0 {
+			batchID = source.BatchID
+		} else if source.BatchID != batchID {
+			return nil, invalid("trigger_decision_batch.decisions", "source outcomes must share one batch_id")
+		}
+		if _, exists := inputIDs[source.InputID]; exists {
+			return nil, invalid("trigger_decision_batch.decisions", "source outcomes must not contain duplicate input_id")
+		}
+		inputIDs[source.InputID] = struct{}{}
 		if decision.InputID != source.InputID || decision.RecordID != source.Record.RecordID {
 			return nil, invalid("trigger_decision_batch.decisions", "must preserve input order and identity")
 		}
-		if err := validateDecisionAgainstSource(i.StrategyIR, source, decision); err != nil {
+		if err := validateDecisionAgainstSource(strategy, source, decision); err != nil {
 			return nil, err
 		}
 	}
 	batch := &TriggerDecisionBatch{
 		Schema:               Schema{Name: triggerDecisionBatchSchema, Major: schemaMajor, Minor: 0},
 		RequiredFeatures:     []string{},
-		PartitionHashVersion: i.PartitionHashVersion,
-		BatchID:              i.DetectionOutcomes[0].BatchID,
-		TenantID:             i.StrategyIR.TenantID,
-		Purpose:              i.StrategyIR.Purpose,
-		StrategyRef:          i.StrategyIR.StrategyRef,
+		PartitionHashVersion: partitionHashVersion,
+		BatchID:              batchID,
+		TenantID:             strategy.TenantID,
+		Purpose:              strategy.Purpose,
+		StrategyRef:          strategy.StrategyRef,
 		DecisionAlgorithm:    DecisionAlgorithmV1,
 		Decisions:            cloneTriggerDecisions(decisions),
-		partitionKey:         append([]byte(nil), i.partitionKey...),
 	}
+	partitionKey, err := TriggerPartitionKey(partitionHashVersion, strategy)
+	if err != nil {
+		return nil, err
+	}
+	batch.partitionKey = partitionKey
 	if err := batch.Validate(); err != nil {
 		return nil, err
 	}

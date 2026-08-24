@@ -66,6 +66,7 @@ func (r *Run) PreviewAudits(prepared Prepared, gates Gates) ([]*contract.Compari
 	if err != nil {
 		return nil, r.invalidateLocked(fmt.Errorf("comparator: build audit batches: %w", err))
 	}
+	r.inflight.auditsPrepared = true
 	return batches, nil
 }
 

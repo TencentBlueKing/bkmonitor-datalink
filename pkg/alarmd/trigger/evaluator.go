@@ -13,6 +13,7 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
@@ -43,12 +44,23 @@ type stateKey struct {
 }
 
 type Evaluator struct {
-	mu      sync.Mutex
-	results map[stateKey]map[int64]bool
+	mu          sync.Mutex
+	results     map[stateKey]map[int64]bool
+	lastUpdated map[stateKey]time.Time
+	now         func() time.Time
 }
 
 func NewEvaluator() *Evaluator {
-	return &Evaluator{results: make(map[stateKey]map[int64]bool)}
+	return newEvaluatorWithClock(time.Now)
+
+}
+
+func newEvaluatorWithClock(now func() time.Time) *Evaluator {
+	return &Evaluator{
+		results:     make(map[stateKey]map[int64]bool),
+		lastUpdated: make(map[stateKey]time.Time),
+		now:         now,
+	}
 }
 
 func (e *Evaluator) Process(strategy *contract.TriggerStrategyIR, outcome *contract.DetectionOutcome) (*Decision, error) {
@@ -80,6 +92,9 @@ type evaluationTransaction struct {
 	evaluator *Evaluator
 	results   map[stateKey]map[int64]bool
 	latest    map[stateKey]int64
+	updated   map[stateKey]time.Time
+	expired   map[stateKey]struct{}
+	now       time.Time
 	closed    bool
 }
 
@@ -89,6 +104,9 @@ func (e *Evaluator) begin() *evaluationTransaction {
 		evaluator: e,
 		results:   make(map[stateKey]map[int64]bool),
 		latest:    make(map[stateKey]int64),
+		updated:   make(map[stateKey]time.Time),
+		expired:   make(map[stateKey]struct{}),
+		now:       e.now(),
 	}
 }
 
@@ -103,6 +121,7 @@ func (t *evaluationTransaction) record(strategy *StrategyHandle, outcome *contra
 	for _, evaluation := range outcome.Evaluations {
 		key := newStateKey(strategy, outcome, evaluation.Level)
 		t.resultsFor(key)[outcome.Record.SourceTime] = evaluation.Result == contract.EvaluationAnomalous
+		t.updated[key] = t.now
 		if latest, ok := t.latest[key]; !ok || outcome.Record.SourceTime > latest {
 			t.latest[key] = outcome.Record.SourceTime
 		}
@@ -110,9 +129,10 @@ func (t *evaluationTransaction) record(strategy *StrategyHandle, outcome *contra
 	return nil
 }
 
-// evict bounds overlay memory after every decision in the batch is materialized.
-// Window filtering already excludes out-of-window points, so eviction only has
-// to keep the newest window per state key.
+// evict bounds the points in active dimensions by event time and removes
+// inactive dimensions after a wall-clock retention period. A newer dimension
+// must not advance another dimension's event-time window because their records
+// can arrive with different delays.
 func (t *evaluationTransaction) evict(strategy *StrategyHandle) {
 	windowSizes := make(map[int]int, len(strategy.triggerConfigs))
 	for _, config := range strategy.triggerConfigs {
@@ -123,7 +143,17 @@ func (t *evaluationTransaction) evict(strategy *StrategyHandle) {
 		if !ok {
 			continue
 		}
-		prune(t.results[key], windowStart(latest, strategy.checkWindowUnitSeconds, windowSize))
+		prune(t.resultsFor(key), windowStart(latest, strategy.checkWindowUnitSeconds, windowSize))
+	}
+	retention := stateRetention(strategy)
+	for key, lastUpdated := range t.evaluator.lastUpdated {
+		if !stateKeyMatchesStrategy(key, strategy) {
+			continue
+		}
+		if _, updated := t.updated[key]; updated || t.now.Sub(lastUpdated) < retention {
+			continue
+		}
+		t.expired[key] = struct{}{}
 	}
 }
 
@@ -198,11 +228,54 @@ func (t *evaluationTransaction) commit() {
 	if t.closed {
 		return
 	}
+	for key := range t.expired {
+		delete(t.evaluator.results, key)
+		delete(t.evaluator.lastUpdated, key)
+	}
 	for key, results := range t.results {
-		t.evaluator.results[key] = results
+		if len(results) == 0 {
+			delete(t.evaluator.results, key)
+			delete(t.evaluator.lastUpdated, key)
+		} else {
+			t.evaluator.results[key] = results
+		}
+	}
+	for key, updated := range t.updated {
+		t.evaluator.lastUpdated[key] = updated
 	}
 	t.closed = true
 	t.evaluator.mu.Unlock()
+}
+
+func (e *Evaluator) retire(identity strategyIdentity) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for key := range e.results {
+		if stateKeyMatchesIdentity(key, identity) {
+			delete(e.results, key)
+			delete(e.lastUpdated, key)
+		}
+	}
+}
+
+// stateRetention mirrors the useful part of the Python CheckResult lifecycle
+// for Trigger: keep at least 30 data periods and at least twice the largest
+// trigger window, while active dimensions renew the retention on every record.
+func stateRetention(strategy *StrategyHandle) time.Duration {
+	points := int64(30)
+	for _, config := range strategy.triggerConfigs {
+		candidate := int64(config.CheckWindowSize) * 2
+		if candidate > points {
+			points = candidate
+		}
+	}
+	secondsPerPoint := int64(strategy.checkWindowUnitSeconds)
+	const maxDuration = time.Duration(1<<63 - 1)
+	maxSeconds := int64(maxDuration / time.Second)
+	if points > maxSeconds/secondsPerPoint {
+		return maxDuration
+	}
+	return time.Duration(points*secondsPerPoint) * time.Second
 }
 
 func (t *evaluationTransaction) discard() {
@@ -224,6 +297,24 @@ func newStateKey(strategy *StrategyHandle, outcome *contract.DetectionOutcome, l
 		dimensionsMD5: outcome.Record.DimensionsMD5,
 		level:         level,
 	}
+}
+
+func stateKeyMatchesStrategy(key stateKey, strategy *StrategyHandle) bool {
+	return key.tenantID == strategy.tenantID &&
+		key.purpose == strategy.purpose &&
+		key.strategyID == strategy.strategyRef.StrategyID &&
+		key.itemID == strategy.strategyRef.ItemID &&
+		key.generation == strategy.strategyRef.Generation &&
+		key.contentSHA256 == strategy.strategyRef.ContentSHA256
+}
+
+func stateKeyMatchesIdentity(key stateKey, identity strategyIdentity) bool {
+	return key.tenantID == identity.tenantID &&
+		key.purpose == identity.purpose &&
+		key.strategyID == identity.strategyID &&
+		key.itemID == identity.itemID &&
+		key.generation == identity.generation &&
+		key.contentSHA256 == identity.contentSHA
 }
 
 func windowStart(sourceTime int64, unitSeconds, windowSize int) int64 {

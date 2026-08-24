@@ -300,7 +300,7 @@ func (r *Run) coverageComparableLocked(inputID string) bool {
 }
 
 func coverageEntryComparable(item *coverageEntry) bool {
-	if item == nil || !item.present[StreamInput] || !item.present[StreamGo] || !item.present[StreamPython] {
+	if !coverageEntryComplete(item) {
 		return false
 	}
 	for _, late := range item.late {
@@ -309,6 +309,10 @@ func coverageEntryComparable(item *coverageEntry) bool {
 		}
 	}
 	return true
+}
+
+func coverageEntryComplete(item *coverageEntry) bool {
+	return item != nil && item.present[StreamInput] && item.present[StreamGo] && item.present[StreamPython]
 }
 
 func (r *Run) requireCoverageLocked(epoch string) error {

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
@@ -159,6 +160,40 @@ func TestEvaluatorEvictsWindowAndDoesNotAdvanceOnError(t *testing.T) {
 	}
 	if decision == nil || decision.Outcome != DecisionNoTrigger {
 		t.Fatalf("Process(outside window) decision = %#v, want NO_TRIGGER", decision)
+	}
+}
+
+func TestEvaluatorRetainsDelayedDimensionUntilItsOwnInactivityExpires(t *testing.T) {
+	strategy := newStrategy(t, "generation-1", []contract.TriggerConfig{{Level: 1, CheckWindowSize: 3, TriggerCount: 1}})
+	now := time.Unix(1_000, 0)
+	evaluator := newEvaluatorWithClock(func() time.Time { return now })
+	first := newOutcome(t, strategy, 100, map[int]bool{1: true})
+	if _, err := evaluator.Process(strategy, first); err != nil {
+		t.Fatalf("Process(first dimension) error = %v", err)
+	}
+	now = now.Add(10 * time.Second)
+	second := newOutcome(t, strategy, 140, map[int]bool{1: true})
+	setDimensions(t, second, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	if _, err := evaluator.Process(strategy, second); err != nil {
+		t.Fatalf("Process(second dimension) error = %v", err)
+	}
+	if len(evaluator.results) != 2 {
+		t.Fatalf("retained state keys = %d, want both dimensions before inactivity expiry", len(evaluator.results))
+	}
+
+	now = now.Add(stateRetention(newValidatedStrategyHandle(strategy)))
+	third := newOutcome(t, strategy, 150, map[int]bool{1: true})
+	setDimensions(t, third, second.Record.DimensionsMD5)
+	if _, err := evaluator.Process(strategy, third); err != nil {
+		t.Fatalf("Process(after expiry) error = %v", err)
+	}
+	if len(evaluator.results) != 1 {
+		t.Fatalf("retained state keys = %d, want only the renewed dimension", len(evaluator.results))
+	}
+	for key := range evaluator.results {
+		if key.dimensionsMD5 != second.Record.DimensionsMD5 {
+			t.Fatalf("retained dimensions = %q, want %q", key.dimensionsMD5, second.Record.DimensionsMD5)
+		}
 	}
 }
 

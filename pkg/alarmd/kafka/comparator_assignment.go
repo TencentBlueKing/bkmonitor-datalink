@@ -24,7 +24,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/comparator"
 )
 
-var errComparatorAssignmentEnded = errors.New("kafka comparator assignment: session ended")
+var (
+	errComparatorAssignmentEnded       = errors.New("kafka comparator assignment: session ended")
+	errComparatorSymbolicInitialOffset = errors.New("kafka comparator assignment: symbolic initial offset")
+)
 
 type comparatorMetadata interface {
 	RefreshMetadata(topics ...string) error
@@ -44,6 +47,9 @@ type comparatorGeneration struct {
 	err         error
 	inflight    int
 	recordOwner bool
+	lostEntries int
+	lostInputs  int
+	lossKnown   bool
 }
 
 type comparatorAssignmentHandle struct {
@@ -319,21 +325,14 @@ func (c *comparatorAssignmentCoordinator) Cleanup(
 
 func (c *comparatorAssignmentCoordinator) resolveInitialOffset(claim sarama.ConsumerGroupClaim) (int64, error) {
 	initial := claim.InitialOffset()
-	var next int64
-	switch {
-	case initial >= 0:
-		next = initial
-	case initial == sarama.OffsetOldest:
-		resolved, err := c.metadata.GetOffset(claim.Topic(), claim.Partition(), sarama.OffsetOldest)
-		if err != nil {
-			return 0, fmt.Errorf("kafka comparator assignment: resolve oldest offset: %w", err)
-		}
-		next = resolved
-	case initial == sarama.OffsetNewest:
-		return 0, errors.New("kafka comparator assignment: OffsetNewest cannot be resolved after claim creation")
-	default:
-		return 0, fmt.Errorf("kafka comparator assignment: unsupported initial offset %d", initial)
+	if initial < 0 {
+		return 0, fmt.Errorf(
+			"%w %d; offset repair must commit a numeric offset before Consume",
+			errComparatorSymbolicInitialOffset,
+			initial,
+		)
 	}
+	next := initial
 	highWater, err := c.metadata.GetOffset(claim.Topic(), claim.Partition(), sarama.OffsetNewest)
 	if err != nil {
 		return 0, fmt.Errorf("kafka comparator assignment: resolve newest offset: %w", err)
@@ -397,8 +396,27 @@ func (c *comparatorAssignmentCoordinator) invalidateGenerationIfIdleLocked(gener
 		return
 	}
 	if generation.run != nil && generation.run.Valid() {
+		generation.lostEntries, generation.lostInputs, _ = generation.run.CoverageCounts(generation.epoch)
+		generation.lossKnown = true
 		_ = generation.run.Invalidate(generation.epoch, generationError(generation))
 	}
+}
+
+func (c *comparatorAssignmentCoordinator) epochRollover(
+	handle *comparatorAssignmentHandle,
+) (ComparatorEpochRollover, bool) {
+	if c == nil || handle == nil || handle.generation == nil {
+		return ComparatorEpochRollover{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	generation := handle.generation
+	if !generation.lossKnown {
+		return ComparatorEpochRollover{}, false
+	}
+	return ComparatorEpochRollover{
+		Entries: generation.lostEntries, Authoritative: generation.lostInputs,
+	}, true
 }
 
 func (c *comparatorAssignmentCoordinator) closeReadyLocked(generation *comparatorGeneration) {

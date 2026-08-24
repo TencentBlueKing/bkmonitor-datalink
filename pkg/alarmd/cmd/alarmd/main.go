@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -97,10 +98,23 @@ func defaultApplicationDependencies(eventLogger *observability.Logger) applicati
 			newProcessor consumer.ProcessorFactory,
 			drainTimeout time.Duration,
 		) (serviceRuntime, error) {
-			return enginekafka.OpenService(cfg.ConsumerCoordinates(), newProcessor, drainTimeout)
+			coordinates := cfg.ConsumerCoordinates()
+			coordinates.Diagnostics = offsetResetDiagnostics(eventLogger)
+			return enginekafka.OpenService(coordinates, newProcessor, drainTimeout)
 		},
 		newHTTP: func(recorder *metric.Recorder, source lifecycle.Source) (httpRuntime, error) {
 			return httpservice.NewWithLifecycle(recorder, source)
 		},
 	}
+}
+
+func offsetResetDiagnostics(logger *observability.Logger) enginekafka.ConsumerDiagnostics {
+	return enginekafka.ConsumerDiagnostics{OnOffsetReset: func(event enginekafka.OffsetReset) {
+		logger.Info(
+			observability.StageOffsetReset, observability.ResultRecovered, 0, 0,
+			slog.String("topic", event.Topic),
+			slog.Int("partition", int(event.Partition)),
+			slog.Int64("offset", event.Offset),
+		)
+	}}
 }

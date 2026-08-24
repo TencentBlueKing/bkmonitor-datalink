@@ -103,6 +103,26 @@ type Run struct {
 
 type RunOption func(*runOptions) error
 
+// CoverageCounts returns the in-memory work that would be discarded if the
+// current assignment epoch ended now.
+func (r *Run) CoverageCounts(epoch string) (entries int, authoritative int, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.requireValidLocked(); err != nil {
+		return 0, 0, err
+	}
+	if epoch != r.epoch {
+		return 0, 0, fmt.Errorf("comparator: run epoch mismatch")
+	}
+	for _, item := range r.coverage {
+		entries++
+		if item.present[StreamInput] {
+			authoritative++
+		}
+	}
+	return entries, authoritative, nil
+}
+
 type runOptions struct {
 	coverageTimeout time.Duration
 	now             func() time.Time
@@ -218,8 +238,8 @@ func (r *Run) Prepare(record StreamRecord) (Prepared, error) {
 	}
 	// Keep a bounded recent replay window and reserve one maximum wire batch.
 	// Only fully joined entries are compacted; partial joins remain fail-closed.
-	compactTarget := contract.MaxTriggerInputItemsV1
-	if reserveTarget := r.maxEntries - contract.MaxTriggerInputItemsV1; reserveTarget < compactTarget {
+	compactTarget := contract.MaxDetectInputRecordsV1
+	if reserveTarget := r.maxEntries - contract.MaxDetectInputRecordsV1; reserveTarget < compactTarget {
 		compactTarget = reserveTarget
 	}
 	for _, inputID := range r.joiner.compact(compactTarget) {
@@ -232,7 +252,7 @@ func (r *Run) Prepare(record StreamRecord) (Prepared, error) {
 	)
 	switch record.Role {
 	case StreamInput:
-		updates, err = r.joiner.ObserveTriggerInput(r.epoch, record.Key, record.Value)
+		updates, err = r.joiner.ObserveDetectInput(r.epoch, record.Key, record.Value)
 	case StreamGo:
 		updates, err = r.joiner.ObserveDecisionBatch(r.epoch, DecisionSideGo, record.Key, record.Value)
 	case StreamPython:

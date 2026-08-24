@@ -20,7 +20,7 @@ func TestRunExposesObservationsOnlyAfterOffsetCommit(t *testing.T) {
 	t.Parallel()
 
 	run := mustRun(t)
-	inputPayload, input := testTriggerInput(t, "normal")
+	_, input := testTriggerInput(t, "normal")
 	decisionPayload := testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)
 	key := mustPartitionKey(t, input)
 	inputID := input.DetectionOutcomes[0].InputID
@@ -40,7 +40,7 @@ func TestRunExposesObservationsOnlyAfterOffsetCommit(t *testing.T) {
 		t.Fatalf("Assess(after go) = %#v, ok=%v, error=%v", assessment, ok, err)
 	}
 
-	inputPrepared, err := run.Prepare(StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload})
+	inputPrepared, err := run.Prepare(StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: mustDetectInputPayload(t, input)})
 	if err != nil {
 		t.Fatalf("Prepare(input) error = %v", err)
 	}
@@ -54,7 +54,10 @@ func TestRunExposesObservationsOnlyAfterOffsetCommit(t *testing.T) {
 	if _, err := run.CommitSucceeded(pythonPrepared); err != nil {
 		t.Fatalf("CommitSucceeded(python) error = %v", err)
 	}
-	assessment, ok, err = run.Assess("run-1", inputID, Gates{StableEpoch: true, CoverageComplete: true})
+	assessment, ok, err = run.Assess("run-1", inputID, Gates{
+		StableEpoch: true, CoverageComplete: true,
+		EpochStartSourceTime: int64Pointer(input.DetectionOutcomes[0].Record.SourceTime - 299),
+	})
 	if err != nil || !ok || assessment.Join != JoinComplete || assessment.Verdict != VerdictMatch {
 		t.Fatalf("Assess(complete) = %#v, ok=%v, error=%v", assessment, ok, err)
 	}
@@ -138,11 +141,11 @@ func TestRunConcurrentPrepareReturnsBusyWithoutInvalidating(t *testing.T) {
 	t.Parallel()
 
 	run := mustRun(t)
-	inputPayload, input := testTriggerInput(t, "normal")
+	_, input := testTriggerInput(t, "normal")
 	decisionPayload := testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)
 	key := mustPartitionKey(t, input)
 	records := []StreamRecord{
-		{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload},
+		{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: mustDetectInputPayload(t, input)},
 		{Epoch: "run-1", Role: StreamGo, Topic: "go", Partition: 0, Offset: 10, Key: key, Value: decisionPayload},
 	}
 	type result struct {

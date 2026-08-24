@@ -23,7 +23,7 @@ func TestCoverageDeadlineStartsAtAuthoritativeCommit(t *testing.T) {
 	t.Parallel()
 
 	run, clock := mustCoverageRun(t, testAssignments())
-	inputPayload, input := testTriggerInput(t, "normal")
+	_, input := testTriggerInput(t, "normal")
 	inputID := input.DetectionOutcomes[0].InputID
 	prepared, err := run.Prepare(StreamRecord{
 		Epoch:     "run-1",
@@ -57,7 +57,7 @@ func TestCoverageDeadlineStartsAtAuthoritativeCommit(t *testing.T) {
 	if err != nil || len(snapshots) != 1 || snapshots[0].InputID != inputID || snapshots[0].Phase != CoverageOverdue {
 		t.Fatalf("SweepCoverage() = %#v, error=%v", snapshots, err)
 	}
-	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: mustPartitionKey(t, input), Value: inputPayload})
+	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: mustPartitionKey(t, input), Value: mustDetectInputPayload(t, input)})
 	snapshot, ok, err = run.Coverage("run-1", inputID)
 	if err != nil || !ok || !snapshot.Authoritative || snapshot.Phase != CoveragePending || !slices.Equal(snapshot.MissingRoles, []StreamRole{StreamPython}) {
 		t.Fatalf("Coverage(after authoritative input) = %#v, ok=%v, error=%v", snapshot, ok, err)
@@ -118,7 +118,7 @@ func TestCoverageDeadlineExcludesPrepareToCommitDelay(t *testing.T) {
 	t.Parallel()
 
 	run, clock := mustCoverageRun(t, testAssignments())
-	inputPayload, input := testTriggerInput(t, "normal")
+	_, input := testTriggerInput(t, "normal")
 	inputID := input.DetectionOutcomes[0].InputID
 	prepared, err := run.Prepare(StreamRecord{
 		Epoch:     "run-1",
@@ -127,7 +127,7 @@ func TestCoverageDeadlineExcludesPrepareToCommitDelay(t *testing.T) {
 		Partition: 0,
 		Offset:    20,
 		Key:       mustPartitionKey(t, input),
-		Value:     inputPayload,
+		Value:     mustDetectInputPayload(t, input),
 	})
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -151,10 +151,10 @@ func TestCoverageBarrierMarksMissingAndLateRecovery(t *testing.T) {
 	t.Parallel()
 
 	run, clock := mustCoverageRun(t, testAssignments())
-	inputPayload, input := testTriggerInput(t, "anomalous")
+	_, input := testTriggerInput(t, "anomalous")
 	key := mustPartitionKey(t, input)
 	inputID := input.DetectionOutcomes[0].InputID
-	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload})
+	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: mustDetectInputPayload(t, input)})
 	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamPython, Topic: "python", Partition: 0, Offset: 30, Key: key, Value: testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)})
 
 	barrier := capturedBarrier(clock, PartitionBarrier{Role: StreamGo, Topic: "go", Partition: 0, HighWater: 12})
@@ -232,10 +232,10 @@ func TestCoverageBarrierRejectsFutureCapture(t *testing.T) {
 	t.Parallel()
 
 	run, clock := mustCoverageRun(t, testAssignments())
-	inputPayload, input := testTriggerInput(t, "normal")
+	_, input := testTriggerInput(t, "normal")
 	key := mustPartitionKey(t, input)
 	inputID := input.DetectionOutcomes[0].InputID
-	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload})
+	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: mustDetectInputPayload(t, input)})
 	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamPython, Topic: "python", Partition: 0, Offset: 30, Key: key, Value: testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)})
 	clock.Advance(11 * time.Second)
 	barrier := BarrierSnapshot{
@@ -272,10 +272,10 @@ func TestCoverageRecordAfterBarrierWithOffsetGapIsLate(t *testing.T) {
 	t.Parallel()
 
 	run, clock := mustCoverageRun(t, testAssignments())
-	inputPayload, input := testTriggerInput(t, "normal")
+	_, input := testTriggerInput(t, "normal")
 	key := mustPartitionKey(t, input)
 	inputID := input.DetectionOutcomes[0].InputID
-	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload})
+	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: mustDetectInputPayload(t, input)})
 	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamPython, Topic: "python", Partition: 0, Offset: 30, Key: key, Value: testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)})
 	clock.Advance(11 * time.Second)
 	if err := run.FreezeBarrier("run-1", inputID, capturedBarrier(clock, PartitionBarrier{Role: StreamGo, Topic: "go", Partition: 0, HighWater: 12})); err != nil {
@@ -301,10 +301,10 @@ func TestCoverageLateRecordUsesItsOwnPartitionBarrier(t *testing.T) {
 
 	assignments := append(testAssignments(), PartitionAssignment{Role: StreamGo, Topic: "go", Partition: 1, NextOffset: 40})
 	run, clock := mustCoverageRun(t, assignments)
-	inputPayload, input := testTriggerInput(t, "normal")
+	_, input := testTriggerInput(t, "normal")
 	key := mustPartitionKey(t, input)
 	inputID := input.DetectionOutcomes[0].InputID
-	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload})
+	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: mustDetectInputPayload(t, input)})
 	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamPython, Topic: "python", Partition: 0, Offset: 30, Key: key, Value: testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)})
 	clock.Advance(11 * time.Second)
 	if err := run.FreezeBarrier("run-1", inputID, capturedBarrier(clock,
@@ -361,10 +361,10 @@ func TestCoverageBarrierRequiresEveryMissingPartition(t *testing.T) {
 
 	assignments := append(testAssignments(), PartitionAssignment{Role: StreamGo, Topic: "go", Partition: 1, NextOffset: 40})
 	run, clock := mustCoverageRun(t, assignments)
-	inputPayload, input := testTriggerInput(t, "normal")
+	_, input := testTriggerInput(t, "normal")
 	key := mustPartitionKey(t, input)
 	inputID := input.DetectionOutcomes[0].InputID
-	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload})
+	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: mustDetectInputPayload(t, input)})
 	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamPython, Topic: "python", Partition: 0, Offset: 30, Key: key, Value: testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)})
 	clock.Advance(11 * time.Second)
 	if err := run.FreezeBarrier("old-run", inputID, capturedBarrier(clock)); err == nil {
@@ -385,10 +385,10 @@ func TestCoverageBarrierRejectsHighWaterBehindCommittedProgress(t *testing.T) {
 	t.Parallel()
 
 	run, clock := mustCoverageRun(t, testAssignments())
-	inputPayload, input := testTriggerInput(t, "normal")
+	_, input := testTriggerInput(t, "normal")
 	key := mustPartitionKey(t, input)
 	inputID := input.DetectionOutcomes[0].InputID
-	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload})
+	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: mustDetectInputPayload(t, input)})
 	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamPython, Topic: "python", Partition: 0, Offset: 30, Key: key, Value: testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)})
 	clock.Advance(11 * time.Second)
 	if err := run.FreezeBarrier("run-1", inputID, capturedBarrier(clock, PartitionBarrier{Role: StreamGo, Topic: "go", Partition: 0, HighWater: 9})); err == nil {
@@ -403,10 +403,10 @@ func TestCoverageBarrierIsCopiedAndImmutable(t *testing.T) {
 	t.Parallel()
 
 	run, clock := mustCoverageRun(t, testAssignments())
-	inputPayload, input := testTriggerInput(t, "normal")
+	_, input := testTriggerInput(t, "normal")
 	key := mustPartitionKey(t, input)
 	inputID := input.DetectionOutcomes[0].InputID
-	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload})
+	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: mustDetectInputPayload(t, input)})
 	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamPython, Topic: "python", Partition: 0, Offset: 30, Key: key, Value: testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)})
 	clock.Advance(11 * time.Second)
 	barrier := capturedBarrier(clock, PartitionBarrier{Role: StreamGo, Topic: "go", Partition: 0, HighWater: 12})
@@ -487,12 +487,12 @@ func TestCoverageCapacityReusesCompletedEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRun() error = %v", err)
 	}
-	inputPayload, input := testTriggerInput(t, "normal")
+	_, input := testTriggerInput(t, "normal")
 	key := mustPartitionKey(t, input)
-	commitAuditedStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload})
+	commitAuditedStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: mustDetectInputPayload(t, input)})
 	commitAuditedStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamGo, Topic: "go", Partition: 0, Offset: 10, Key: key, Value: testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)})
 	commitAuditedStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamPython, Topic: "python", Partition: 0, Offset: 30, Key: key, Value: testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)})
-	secondPayload, second := testTriggerInput(t, "anomalous")
+	_, second := testTriggerInput(t, "anomalous")
 	prepared, err := run.Prepare(StreamRecord{
 		Epoch:     "run-1",
 		Role:      StreamInput,
@@ -500,7 +500,7 @@ func TestCoverageCapacityReusesCompletedEntries(t *testing.T) {
 		Partition: 0,
 		Offset:    21,
 		Key:       mustPartitionKey(t, second),
-		Value:     secondPayload,
+		Value:     mustDetectInputPayload(t, second),
 	})
 	if err != nil {
 		t.Fatalf("Prepare() did not reuse completed capacity: %v", err)

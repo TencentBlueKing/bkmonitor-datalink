@@ -52,7 +52,7 @@ type CoverageSnapshot struct {
 type coverageEntry struct {
 	firstSeen time.Time
 	// authoritativeAt is the deadline anchor and is only set once the
-	// authoritative TriggerInput record has a broker acknowledgement.
+	// authoritative DetectInput record has a broker acknowledgement.
 	authoritativeAt      time.Time
 	pendingAuthoritative bool
 	present              map[StreamRole]bool
@@ -243,7 +243,7 @@ func (r *Run) prepareCoverageLocked(inflight *preparedRecord) error {
 }
 
 // commitCoverageLocked anchors the coverage deadline at the moment the
-// authoritative TriggerInput offset is acknowledged, not when it was prepared.
+// authoritative DetectInput offset is acknowledged, not when it was prepared.
 // Audit and offset acknowledgements can outlast the coverage timeout, and an
 // anchor taken at prepare time would report a just-acknowledged input as overdue.
 func (r *Run) commitCoverageLocked(inflight *preparedRecord) error {

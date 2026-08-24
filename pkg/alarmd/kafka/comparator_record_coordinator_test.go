@@ -53,7 +53,7 @@ func TestComparatorRecordCoordinatorCommitsBrokerThenRunThenLocalOffset(t *testi
 	}
 	payload, key := comparatorTriggerInputFixture(t, "normal")
 	if _, err := coordinator.Process(context.Background(), consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload),
 	}); err != nil {
 		t.Fatalf("Process() error = %v", err)
 	}
@@ -62,7 +62,7 @@ func TestComparatorRecordCoordinatorCommitsBrokerThenRunThenLocalOffset(t *testi
 	}
 }
 
-func TestComparatorRecordCoordinatorAcknowledgesAuditBeforeInputOffset(t *testing.T) {
+func TestComparatorRecordCoordinatorAcknowledgesTerminalAuditBeforeSourceOffset(t *testing.T) {
 	t.Parallel()
 
 	events := []string{}
@@ -79,13 +79,27 @@ func TestComparatorRecordCoordinatorAcknowledgesAuditBeforeInputOffset(t *testin
 	})
 	coordinator, _, _, _ := setupComparatorRecordCoordinatorWithAudit(t, 100, committer, audits, &events)
 	payload, key := comparatorTriggerInputFixture(t, "normal")
+	input, err := contract.DecodeTriggerInput(payload)
+	if err != nil {
+		t.Fatalf("DecodeTriggerInput() error = %v", err)
+	}
+	decisionPayload, decisionKey := comparatorTriggerDecisionFixture(t, input)
+	for _, record := range []consumer.Record{
+		{Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload)},
+		{Topic: "go-decision", Partition: 0, Offset: 20, Key: decisionKey, Value: decisionPayload},
+	} {
+		if _, err := coordinator.Process(context.Background(), record); err != nil {
+			t.Fatalf("Process(%s) error = %v", record.Topic, err)
+		}
+	}
+	events = nil
 	if _, err := coordinator.Process(context.Background(), consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+		Topic: "py-decision", Partition: 0, Offset: 30, Key: decisionKey, Value: decisionPayload,
 	}); err != nil {
-		t.Fatalf("Process() error = %v", err)
+		t.Fatalf("Process(python) error = %v", err)
 	}
 	if !reflect.DeepEqual(events, []string{"audit-ack", "input-offset-ack", "mark"}) {
-		t.Fatalf("events = %v, want audit ACK before input offset ACK and local mark", events)
+		t.Fatalf("events = %v, want terminal audit ACK before source offset ACK and local mark", events)
 	}
 }
 
@@ -101,8 +115,22 @@ func TestComparatorRecordCoordinatorAuditFailureDoesNotCommitInputOffset(t *test
 	})
 	coordinator, run, _, _ := setupComparatorRecordCoordinatorWithAudit(t, 100, committer, audits, &events)
 	payload, key := comparatorTriggerInputFixture(t, "normal")
+	input, err := contract.DecodeTriggerInput(payload)
+	if err != nil {
+		t.Fatalf("DecodeTriggerInput() error = %v", err)
+	}
+	decisionPayload, decisionKey := comparatorTriggerDecisionFixture(t, input)
+	for _, record := range []consumer.Record{
+		{Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload)},
+		{Topic: "go-decision", Partition: 0, Offset: 20, Key: decisionKey, Value: decisionPayload},
+	} {
+		if _, err := coordinator.Process(context.Background(), record); err != nil {
+			t.Fatalf("Process(%s) error = %v", record.Topic, err)
+		}
+	}
+	events = nil
 	if _, err := coordinator.Process(context.Background(), consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+		Topic: "py-decision", Partition: 0, Offset: 30, Key: decisionKey, Value: decisionPayload,
 	}); !errors.Is(err, want) {
 		t.Fatalf("Process() error = %v, want audit failure", err)
 	}
@@ -123,7 +151,7 @@ func TestComparatorRecordCoordinatorCommitFailureStopsAssignment(t *testing.T) {
 	})
 	coordinator, run, _, _ := setupComparatorRecordCoordinator(t, 100, committer, &events)
 	payload, key := comparatorTriggerInputFixture(t, "normal")
-	record := consumer.Record{Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload}
+	record := consumer.Record{Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload)}
 	if _, err := coordinator.Process(context.Background(), record); !errors.Is(err, want) {
 		t.Fatalf("Process() error = %v, want commit failure", err)
 	}
@@ -178,13 +206,13 @@ func TestComparatorRecordCoordinatorCommitsExplicitCapacityDrop(t *testing.T) {
 	}}
 	firstPayload, firstKey := comparatorTriggerInputFixture(t, "normal")
 	if _, err := coordinator.Process(context.Background(), consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: firstKey, Value: firstPayload,
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: firstKey, Value: comparatorDetectInputPayload(t, firstPayload),
 	}); err != nil {
 		t.Fatalf("Process(first) error = %v", err)
 	}
 	secondPayload, secondKey := comparatorTriggerInputFixture(t, "anomalous")
 	updates, err := coordinator.Process(context.Background(), consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 11, Key: secondKey, Value: secondPayload,
+		Topic: "trigger-input", Partition: 0, Offset: 11, Key: secondKey, Value: comparatorDetectInputPayload(t, secondPayload),
 	})
 	if err != nil {
 		t.Fatalf("Process(second) error = %v", err)
@@ -216,7 +244,7 @@ func TestComparatorRecordCoordinatorSuccessfulAckWinsCancellation(t *testing.T) 
 	coordinator, run, epoch, _ := setupComparatorRecordCoordinator(t, 100, committer, &events)
 	payload, key := comparatorTriggerInputFixture(t, "normal")
 	if _, err := coordinator.Process(ctx, consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload),
 	}); err != nil {
 		t.Fatalf("Process() after successful broker ack = %v, want nil", err)
 	}
@@ -256,7 +284,7 @@ func TestComparatorRecordCoordinatorRebalanceWaitsForSuccessfulInflightCommit(t 
 	)
 	payload, key := comparatorTriggerInputFixture(t, "normal")
 	if _, err := coordinator.Process(sessionContext, consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload),
 	}); err != nil {
 		t.Fatalf("Process() after successful rebalance-raced broker ack = %v, want nil", err)
 	}
@@ -282,7 +310,7 @@ func TestComparatorRecordCoordinatorPreCanceledContextStopsAssignment(t *testing
 	coordinator, run, _, _ := setupComparatorRecordCoordinator(t, 100, committer, &events)
 	payload, key := comparatorTriggerInputFixture(t, "normal")
 	if _, err := coordinator.Process(ctx, consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload),
 	}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Process() error = %v, want context canceled", err)
 	}
@@ -307,7 +335,7 @@ func TestComparatorRecordCoordinatorCanceledSessionStopsBackgroundCaller(t *test
 	cancel()
 	session.fakeSession.ctx = sessionContext
 	if _, err := coordinator.Process(context.Background(), consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload),
 	}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Process() error = %v, want canceled session", err)
 	}
@@ -351,7 +379,7 @@ func TestComparatorRecordCoordinatorFirstFailureStopsQueuedClaim(t *testing.T) {
 	})
 	coordinator, run, _, _ := setupComparatorRecordCoordinator(t, 100, committer, &events)
 	payload, key := comparatorTriggerInputFixture(t, "normal")
-	record := consumer.Record{Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload}
+	record := consumer.Record{Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload)}
 	firstDone := make(chan error, 1)
 	go func() {
 		_, err := coordinator.Process(context.Background(), record)
@@ -397,7 +425,7 @@ func TestComparatorRecordCoordinatorMapsAllThreeFrozenStreamRoles(t *testing.T) 
 
 	for _, record := range []consumer.Record{
 		{Topic: "py-decision", Partition: 0, Offset: 30, Key: decisionKey, Value: decisionPayload},
-		{Topic: "trigger-input", Partition: 0, Offset: 10, Key: inputKey, Value: inputPayload},
+		{Topic: "trigger-input", Partition: 0, Offset: 10, Key: inputKey, Value: comparatorDetectInputPayload(t, inputPayload)},
 		{Topic: "go-decision", Partition: 0, Offset: 20, Key: decisionKey, Value: decisionPayload},
 	} {
 		if _, err := coordinator.Process(context.Background(), record); err != nil {
@@ -600,6 +628,33 @@ func comparatorTriggerInputFixture(t *testing.T, name string) ([]byte, []byte) {
 	}
 	t.Fatalf("fixture %q not found", name)
 	return nil, nil
+}
+
+func comparatorDetectInputPayload(t *testing.T, triggerPayload []byte) []byte {
+	t.Helper()
+	input, err := contract.DecodeTriggerInput(triggerPayload)
+	if err != nil {
+		t.Fatalf("DecodeTriggerInput() error = %v", err)
+	}
+	records := make([]json.RawMessage, 0, len(input.DetectionOutcomes))
+	for _, outcome := range input.DetectionOutcomes {
+		records = append(records, append(json.RawMessage(nil), outcome.Record.DataRaw...))
+	}
+	payload, err := json.Marshal(map[string]any{
+		"schema":                 map[string]any{"name": "detect-input", "major": 1, "minor": 0},
+		"required_features":      []string{},
+		"partition_hash_version": input.PartitionHashVersion,
+		"strategy_ir":            input.StrategyIR,
+		"batch_id":               input.DetectionOutcomes[0].BatchID,
+		"records":                records,
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal(DetectInput) error = %v", err)
+	}
+	if _, err := contract.DecodeDetectInput(payload); err != nil {
+		t.Fatalf("DecodeDetectInput() error = %v", err)
+	}
+	return payload
 }
 
 func comparatorTriggerDecisionFixture(t *testing.T, input *contract.TriggerInput) ([]byte, []byte) {

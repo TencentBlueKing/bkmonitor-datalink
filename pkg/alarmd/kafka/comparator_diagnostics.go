@@ -16,6 +16,7 @@ import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/comparator"
 type ComparatorDiagnostics struct {
 	OnCapacityDrop    func(ComparatorCapacityDrop)
 	OnCoverageRelease func(ComparatorCoverageRelease)
+	OnEpochRollover   func(ComparatorEpochRollover)
 }
 
 type ComparatorCapacityDrop struct {
@@ -35,6 +36,11 @@ type ComparatorCoverageRelease struct {
 	MissingPython int
 }
 
+type ComparatorEpochRollover struct {
+	Entries       int
+	Authoritative int
+}
+
 func (d ComparatorDiagnostics) capacityDrop(event ComparatorCapacityDrop) {
 	if d.OnCapacityDrop != nil {
 		d.OnCapacityDrop(event)
@@ -44,5 +50,11 @@ func (d ComparatorDiagnostics) capacityDrop(event ComparatorCapacityDrop) {
 func (d ComparatorDiagnostics) coverageRelease(event ComparatorCoverageRelease) {
 	if d.OnCoverageRelease != nil {
 		d.OnCoverageRelease(event)
+	}
+}
+
+func (d ComparatorDiagnostics) epochRollover(event ComparatorEpochRollover) {
+	if d.OnEpochRollover != nil {
+		d.OnEpochRollover(event)
 	}
 }

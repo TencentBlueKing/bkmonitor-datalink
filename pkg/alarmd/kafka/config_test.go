@@ -44,6 +44,21 @@ func TestNewSaramaConfigForcesShadowConsumerInvariants(t *testing.T) {
 	}
 }
 
+func TestNewSaramaConfigSupportsLatestShadowEpoch(t *testing.T) {
+	t.Parallel()
+
+	config, err := NewSaramaConfig(Config{
+		Brokers: []string{"kafka-1.example:9092"}, Topic: "detect-input", GroupID: "alarmd-shadow-v2",
+		ClientID: "alarmd", BrokerVersion: "0.11.0.0", InitialOffset: InitialOffsetLatest,
+	})
+	if err != nil {
+		t.Fatalf("NewSaramaConfig() error = %v", err)
+	}
+	if config.Consumer.Offsets.Initial != sarama.OffsetNewest {
+		t.Fatalf("initial offset = %d, want newest", config.Consumer.Offsets.Initial)
+	}
+}
+
 func TestNewSaramaConfigBoundsConsumerPrefetch(t *testing.T) {
 	t.Parallel()
 
@@ -74,8 +89,8 @@ func TestNewSaramaConfigBoundsConsumerPrefetch(t *testing.T) {
 	if got, want := MaxConsumerBytesPerPartition(), 3*consumerMaxRecordBytes; got != want {
 		t.Fatalf("worst-case bytes per partition = %d, want %d", got, want)
 	}
-	if consumerMaxRecordBytes < contract.MaxTriggerInputBytesV1 {
-		t.Fatalf("fetch bound %d cannot carry a maximum TriggerInput record", consumerMaxRecordBytes)
+	if consumerMaxRecordBytes < contract.MaxDetectInputBytesV1 {
+		t.Fatalf("fetch bound %d cannot carry a maximum DetectInput record", consumerMaxRecordBytes)
 	}
 }
 

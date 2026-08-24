@@ -38,9 +38,11 @@ func TestComparatorDiagnosticsLogCommittedCoverageLossWithoutInputIDs(t *testing
 	configuration.Diagnostics.OnCoverageRelease(enginekafka.ComparatorCoverageRelease{
 		Entries: 4, Authoritative: 3, Orphans: 1, MissingInput: 1, MissingGo: 2, MissingPython: 2,
 	})
+	configuration.Diagnostics.OnEpochRollover(enginekafka.ComparatorEpochRollover{Entries: 5, Authoritative: 4})
+	configuration.ConsumerDiagnostics.OnOffsetReset(enginekafka.OffsetReset{Topic: "detect-input", Partition: 3})
 
 	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-	if len(lines) != 2 {
+	if len(lines) != 4 {
 		t.Fatalf("diagnostic lines = %d, output=%s", len(lines), output.String())
 	}
 	for index, line := range lines {
@@ -57,6 +59,12 @@ func TestComparatorDiagnosticsLogCommittedCoverageLossWithoutInputIDs(t *testing
 	}
 	if !strings.Contains(lines[1], `"stage":"coverage_release"`) || !strings.Contains(lines[1], `"records":4`) || !strings.Contains(lines[1], `"orphans":1`) {
 		t.Fatalf("coverage log = %s", lines[1])
+	}
+	if !strings.Contains(lines[2], `"stage":"coverage_reset"`) || !strings.Contains(lines[2], `"result":"invalidated"`) || !strings.Contains(lines[2], `"authoritative":4`) {
+		t.Fatalf("coverage reset log = %s", lines[2])
+	}
+	if !strings.Contains(lines[3], `"stage":"offset_reset"`) || !strings.Contains(lines[3], `"result":"recovered"`) || !strings.Contains(lines[3], `"partition":3`) {
+		t.Fatalf("offset reset log = %s", lines[3])
 	}
 }
 

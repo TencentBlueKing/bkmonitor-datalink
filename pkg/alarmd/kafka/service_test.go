@@ -12,6 +12,7 @@ package kafka
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -89,6 +90,76 @@ func TestServiceDrainsGroupErrorsBeforeConsume(t *testing.T) {
 	}
 	if snapshot := service.LifecycleSnapshot(); snapshot.FatalTotal != 1 || snapshot.DrainTotal[lifecycle.DrainSuccess] != 1 {
 		t.Fatalf("fatal shutdown snapshot = %+v, want one fatal and successful drain", snapshot)
+	}
+}
+
+func TestServiceRecoversOffsetOutOfRangeWithoutFatalExit(t *testing.T) {
+	t.Parallel()
+
+	var consumeCalls atomic.Int32
+	group := newFakeConsumerGroup(func(ctx context.Context, _ []string, _ sarama.ConsumerGroupHandler) error {
+		consumeCalls.Add(1)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	recovered := make(chan OffsetReset, 1)
+	service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
+	var repairCalls atomic.Int32
+	service.repairOffsets = func(context.Context) ([]OffsetReset, error) {
+		if repairCalls.Add(1) == 1 {
+			return nil, nil
+		}
+		return []OffsetReset{{Topic: "detect-input", Partition: 2, Offset: 99}}, nil
+	}
+	service.diagnostics = ConsumerDiagnostics{OnOffsetReset: func(event OffsetReset) { recovered <- event }}
+	runContext, cancelRun := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- service.Run(runContext) }()
+	waitFor(t, func() bool { return consumeCalls.Load() == 1 }, "first Consume call")
+	groupErrorChannel(group) <- &sarama.ConsumerError{Topic: "detect-input", Partition: 2, Err: sarama.ErrOffsetOutOfRange}
+	waitFor(t, func() bool { return consumeCalls.Load() >= 2 }, "recovered Consume call")
+	select {
+	case event := <-recovered:
+		if event.Topic != "detect-input" || event.Partition != 2 || event.Offset != 99 {
+			t.Fatalf("offset reset = %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("offset reset diagnostic was not recorded")
+	}
+	cancelRun()
+	if err := waitError(t, done); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if snapshot := service.LifecycleSnapshot(); snapshot.FatalTotal != 0 {
+		t.Fatalf("offset recovery snapshot = %+v, want no fatal", snapshot)
+	}
+}
+
+func TestServiceRetriesRepairWhenClaimFallsBackToSymbolicOffset(t *testing.T) {
+	t.Parallel()
+
+	service := newTestService(
+		t,
+		newFakeConsumerGroup(nil),
+		&fakeServiceClient{},
+		noopProcessorFactory(),
+		fakeSyncOffsetCommitter{},
+		time.Second,
+	)
+	cycleCancelled := make(chan struct{})
+	service.setCycleCancel(func() { close(cycleCancelled) })
+	service.handleGroupError(&sarama.ConsumerError{
+		Topic: "detect-input", Partition: 0,
+		Err: fmt.Errorf("claim setup: %w", errComparatorSymbolicInitialOffset),
+	})
+
+	select {
+	case <-cycleCancelled:
+	case <-time.After(time.Second):
+		t.Fatal("symbolic offset fallback did not restart the consume cycle")
+	}
+	if !service.offsetReset.Load() || service.firstFatal() != nil {
+		t.Fatalf("offsetReset=%v fatal=%v, want recoverable retry", service.offsetReset.Load(), service.firstFatal())
 	}
 }
 

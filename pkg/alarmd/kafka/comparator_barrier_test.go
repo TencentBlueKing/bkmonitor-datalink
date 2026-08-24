@@ -54,7 +54,7 @@ func TestComparatorBarrierCapturesMissingPartitionsOnceAfterRunClock(t *testing.
 	}
 	decisionPayload, decisionKey := comparatorTriggerDecisionFixture(t, input)
 	for _, record := range []consumer.Record{
-		{Topic: "trigger-input", Partition: 0, Offset: 10, Key: inputKey, Value: inputPayload},
+		{Topic: "trigger-input", Partition: 0, Offset: 10, Key: inputKey, Value: comparatorDetectInputPayload(t, inputPayload)},
 		{Topic: "py-decision", Partition: 0, Offset: 30, Key: decisionKey, Value: decisionPayload},
 	} {
 		if _, err := coordinator.Process(context.Background(), record); err != nil {
@@ -77,17 +77,8 @@ func TestComparatorBarrierCapturesMissingPartitionsOnceAfterRunClock(t *testing.
 	if err != nil || !ok || snapshot.Phase != comparator.CoverageOverdue || !snapshot.BarrierFrozen {
 		t.Fatalf("Coverage() = %#v, ok=%v error=%v", snapshot, ok, err)
 	}
-	audited := 0
-	for _, batch := range auditBatches {
-		for _, audit := range batch.Audits {
-			if !audit.Coverage.BarrierFrozen {
-				t.Fatalf("barrier audit = %#v", audit)
-			}
-			audited++
-		}
-	}
-	if audited != len(input.DetectionOutcomes) {
-		t.Fatalf("barrier audit batches = %#v", auditBatches)
+	if len(auditBatches) != 0 {
+		t.Fatalf("barrier freeze published an intermediate audit: %#v", auditBatches)
 	}
 	if frozen, err := adapter.CaptureOverdue(context.Background()); err != nil || frozen != 0 {
 		t.Fatalf("CaptureOverdue(repeat) frozen=%d error=%v, want no-op", frozen, err)
@@ -195,7 +186,7 @@ func TestComparatorBarrierSharesOneHWMVectorAcrossOverdueInputs(t *testing.T) {
 		}
 		inputIDs = append(inputIDs, input.DetectionOutcomes[0].InputID)
 		if _, err := coordinator.Process(context.Background(), consumer.Record{
-			Topic: "trigger-input", Partition: 0, Offset: int64(10 + index), Key: key, Value: payload,
+			Topic: "trigger-input", Partition: 0, Offset: int64(10 + index), Key: key, Value: comparatorDetectInputPayload(t, payload),
 		}); err != nil {
 			t.Fatalf("Process(%s) error = %v", name, err)
 		}
@@ -236,7 +227,7 @@ func TestComparatorBarrierHWMFailureStopsAssignmentBeforeAnyRetry(t *testing.T) 
 	}
 	payload, key := comparatorTriggerInputFixture(t, "normal")
 	if _, err := coordinator.Process(context.Background(), consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload),
 	}); err != nil {
 		t.Fatalf("Process() error = %v", err)
 	}
@@ -278,7 +269,7 @@ func TestComparatorBarrierSerializesHWMFreezeBeforeNextRecord(t *testing.T) {
 		t.Fatalf("DecodeTriggerInput() error = %v", err)
 	}
 	if _, err := coordinator.Process(context.Background(), consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: inputKey, Value: inputPayload,
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: inputKey, Value: comparatorDetectInputPayload(t, inputPayload),
 	}); err != nil {
 		t.Fatalf("Process(input) error = %v", err)
 	}
@@ -354,7 +345,7 @@ func TestComparatorBarrierSessionCancellationDuringHWMStopsBeforeFreeze(t *testi
 		t.Fatalf("DecodeTriggerInput() error = %v", err)
 	}
 	if _, err := coordinator.Process(context.Background(), consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload),
 	}); err != nil {
 		t.Fatalf("Process() error = %v", err)
 	}
@@ -424,7 +415,7 @@ func TestComparatorBarrierCleanupDuringLastHWMStopsBeforeFreeze(t *testing.T) {
 		t.Fatalf("DecodeTriggerInput() error = %v", err)
 	}
 	if _, err := coordinator.Process(context.Background(), consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload),
 	}); err != nil {
 		t.Fatalf("Process() error = %v", err)
 	}
@@ -474,7 +465,7 @@ func TestComparatorBarrierPreCanceledCallerReadsNoHWM(t *testing.T) {
 	}
 	payload, key := comparatorTriggerInputFixture(t, "normal")
 	if _, err := coordinator.Process(context.Background(), consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload),
 	}); err != nil {
 		t.Fatalf("Process() error = %v", err)
 	}
@@ -512,7 +503,7 @@ func TestComparatorBarrierRejectsUnsafeHighWater(t *testing.T) {
 			}
 			payload, key := comparatorTriggerInputFixture(t, "normal")
 			if _, err := coordinator.Process(context.Background(), consumer.Record{
-				Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+				Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload),
 			}); err != nil {
 				t.Fatalf("Process() error = %v", err)
 			}

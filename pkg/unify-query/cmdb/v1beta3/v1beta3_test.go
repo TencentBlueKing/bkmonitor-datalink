@@ -3529,7 +3529,7 @@ func TestQueryLivenessGraphFallsBackWhenMultiHopRelationIsNotFlatReady(t *testin
 	require.Len(t, executor.sqls, 1)
 	assert.Contains(t, executor.sqls[0], "FROM host_with_module_active_edge_view")
 	assert.Contains(t, executor.sqls[0], "FROM module_with_set_active_edge_view")
-	assert.Contains(t, executor.sqls[0], "$parent.entity_id")
+	assert.Contains(t, executor.sqls[0], "$parent.target_id")
 }
 
 func TestQueryLivenessGraphRejectsFlatMultiHopFanoutAboveLimit(t *testing.T) {

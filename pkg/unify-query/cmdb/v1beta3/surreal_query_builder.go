@@ -712,7 +712,7 @@ func (b *SurrealQueryBuilder) buildNestedHopSelect(hop int, currentType Resource
 func (b *SurrealQueryBuilder) buildNestedRelationQuery(hop int, rel *RelationQueryInfo, parentField string) string {
 	relationType := rel.Schema.RelationType
 	if b.useActiveEdgeServing(relationType) {
-		return b.buildServingRelationQuery(hop, rel, "$parent.entity_id", sqlIndent5)
+		return b.buildServingRelationQuery(hop, rel, "$parent."+parentField, sqlIndent5)
 	}
 	relationTable := surrealTableName(string(relationType))
 	relationLivenessTable := surrealTableName(GetRelationLivenessRecordTableName(relationType))
@@ -822,7 +822,7 @@ func (b *SurrealQueryBuilder) buildDeeperNestedHopSelect(hop int, currentType Re
 func (b *SurrealQueryBuilder) buildDeeperNestedRelationQuery(hop int, rel *RelationQueryInfo, parentField string, indentLevel int) string {
 	relationType := rel.Schema.RelationType
 	if b.useActiveEdgeServing(relationType) {
-		return b.buildServingRelationQuery(hop, rel, "$parent.entity_id", strings.Repeat(sqlIndent1, indentLevel))
+		return b.buildServingRelationQuery(hop, rel, "$parent."+parentField, strings.Repeat(sqlIndent1, indentLevel))
 	}
 	relationTable := surrealTableName(string(relationType))
 	relationLivenessTable := surrealTableName(GetRelationLivenessRecordTableName(relationType))
@@ -919,10 +919,8 @@ func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQu
 	}
 
 	nested := ""
-	targetIDProjection := fmt.Sprintf("<string>%s", targetIDField)
 	if hop < b.request.MaxHops {
-		targetIDProjection = targetIDField
-		nextHop := b.buildNestedHopSelect(hop+1, rel.TargetType, ResponseFieldEntityID)
+		nextHop := b.buildNestedHopSelect(hop+1, rel.TargetType, targetIDField)
 		nested = fmt.Sprintf(",\n%s            hop%d: %s", indent, hop+1, nextHop)
 	}
 
@@ -933,7 +931,7 @@ func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQu
 %s        relation_id: <string>relation_id,%s
 %s        target: {
 %s            entity_type: %s,
-%s            entity_id: %s,
+%s            entity_id: <string>%s,
 %s            entity_data: %s%s
 %s        }
 %s    } FROM %s WHERE %s = %s
@@ -949,7 +947,7 @@ func (b *SurrealQueryBuilder) buildServingRelationQuery(hop int, rel *RelationQu
 		indent, relationLiveness,
 		indent,
 		indent, targetTypeField,
-		indent, targetIDProjection,
+		indent, targetIDField,
 		indent, targetDataField, nested,
 		indent,
 		indent, table, matchField, parentRef,

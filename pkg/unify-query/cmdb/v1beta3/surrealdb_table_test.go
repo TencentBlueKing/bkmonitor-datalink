@@ -446,8 +446,8 @@ LIMIT 100;`,
 				expectedRoute:    "active_edge_serving",
 				expectedSQLContains: []string{
 					"FROM node_with_pod_active_edge_view",
-					"entity_id: target_id",
-					"FROM pod_with_replicaset_active_edge_view WHERE source_id = $parent.entity_id",
+					"entity_id: <string>target_id",
+					"FROM pod_with_replicaset_active_edge_view WHERE source_id = $parent.target_id",
 				},
 			},
 			{
@@ -456,9 +456,19 @@ LIMIT 100;`,
 				expectedRoute:    "mixed",
 				expectedSQLContains: []string{
 					"FROM node_with_pod_active_edge_view",
-					"FROM pod_with_replicaset WHERE in = $parent.entity_id",
+					"FROM pod_with_replicaset WHERE in = $parent.target_id",
 				},
 				expectedSQLNotContain: []string{"FROM pod_with_replicaset_active_edge_view"},
+			},
+			{
+				name:             "raw hop followed by serving",
+				servingRelations: []string{string(RelationPodWithReplicaSet)},
+				expectedRoute:    "mixed",
+				expectedSQLContains: []string{
+					"FROM node_with_pod WHERE in = $parent.id",
+					"FROM pod_with_replicaset_active_edge_view WHERE source_id = $parent.out",
+				},
+				expectedSQLNotContain: []string{"FROM node_with_pod_active_edge_view"},
 			},
 		}
 

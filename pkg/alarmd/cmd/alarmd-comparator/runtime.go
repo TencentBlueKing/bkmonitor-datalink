@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/comparator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
@@ -233,7 +234,7 @@ func runComparatorApplicationWithLogger(
 		return errors.Join(err, shutdownComparatorSink(sink, time.Now().Add(configuration.ShutdownTimeout.Duration())))
 	}
 	service, err := enginekafka.OpenComparatorService(
-		configuration.Kafka.ServiceCoordinates(),
+		withComparatorDiagnostics(configuration.Kafka.ServiceCoordinates(), eventLogger),
 		recordingSink,
 		configuration.ShutdownTimeout.Duration(),
 	)
@@ -335,6 +336,47 @@ func runComparatorApplicationWithLogger(
 		eventLogger.Error(observability.StageShutdown, shutdownResult, 0, time.Since(shutdownStarted))
 	}
 	return result
+}
+
+func withComparatorDiagnostics(
+	configuration enginekafka.ComparatorServiceConfig,
+	logger *observability.Logger,
+) enginekafka.ComparatorServiceConfig {
+	configuration.Diagnostics = enginekafka.ComparatorDiagnostics{
+		OnCapacityDrop: func(event enginekafka.ComparatorCapacityDrop) {
+			logger.Info(
+				observability.StageCapacityDrop, observability.ResultDropped, event.Dropped, 0,
+				slog.String("role", comparatorStreamRole(event.Role)),
+				slog.Int("partition", int(event.Partition)),
+				slog.Int64("offset", event.Offset),
+				slog.Int("max_entries", event.MaxEntries),
+			)
+		},
+		OnCoverageRelease: func(event enginekafka.ComparatorCoverageRelease) {
+			logger.Info(
+				observability.StageCoverageRelease, observability.ResultReleased, event.Entries, 0,
+				slog.Int("authoritative", event.Authoritative),
+				slog.Int("orphans", event.Orphans),
+				slog.Int("missing_input", event.MissingInput),
+				slog.Int("missing_go", event.MissingGo),
+				slog.Int("missing_python", event.MissingPython),
+			)
+		},
+	}
+	return configuration
+}
+
+func comparatorStreamRole(role comparator.StreamRole) string {
+	switch role {
+	case comparator.StreamInput:
+		return "input"
+	case comparator.StreamGo:
+		return "go"
+	case comparator.StreamPython:
+		return "python"
+	default:
+		return "unknown"
+	}
 }
 
 func shutdownComparatorSink(sink *enginekafka.ComparisonAuditKafkaSink, deadline time.Time) error {

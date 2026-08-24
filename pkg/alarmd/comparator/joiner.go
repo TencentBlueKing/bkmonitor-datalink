@@ -37,6 +37,7 @@ const (
 	DispositionReplay
 	DispositionConflict
 	DispositionInvalid
+	DispositionCapacityDropped
 )
 
 type JoinStatus uint8
@@ -194,13 +195,16 @@ func (j *Joiner) ObserveTriggerInput(runEpoch string, key, payload []byte) ([]Up
 	if err := j.requireEpoch(runEpoch); err != nil {
 		return nil, err
 	}
-	if err := j.requireCapacity(inputIDsFromSources(observations)); err != nil {
-		return nil, err
-	}
 	updates := make([]Update, 0, len(observations))
 	for index := range observations {
 		observation := &observations[index]
-		item := j.getOrCreate(observation.outcome.InputID)
+		item, admitted := j.getOrAdmit(observation.outcome.InputID)
+		if !admitted {
+			updates = append(updates, Update{
+				InputID: observation.outcome.InputID, Disposition: DispositionCapacityDropped,
+			})
+			continue
+		}
 		disposition := DispositionAccepted
 		switch {
 		case item.source == nil:
@@ -261,13 +265,16 @@ func (j *Joiner) ObserveDecisionBatch(runEpoch string, side DecisionSide, key, p
 	if err := j.requireEpoch(runEpoch); err != nil {
 		return nil, err
 	}
-	if err := j.requireCapacity(inputIDsFromDecisions(observations)); err != nil {
-		return nil, err
-	}
 	updates := make([]Update, 0, len(observations))
 	for index := range observations {
 		observation := &observations[index]
-		item := j.getOrCreate(observation.decision.InputID)
+		item, admitted := j.getOrAdmit(observation.decision.InputID)
+		if !admitted {
+			updates = append(updates, Update{
+				InputID: observation.decision.InputID, Disposition: DispositionCapacityDropped,
+			})
+			continue
+		}
 		disposition := j.storeDecision(item, side, observation)
 		updates = append(updates, Update{InputID: observation.decision.InputID, Disposition: disposition})
 	}
@@ -392,25 +399,9 @@ func (j *Joiner) requireEpoch(runEpoch string) error {
 	return nil
 }
 
-func (j *Joiner) requireCapacity(inputIDs []string) error {
-	newEntries := 0
-	for _, inputID := range inputIDs {
-		if _, exists := j.entries[inputID]; !exists {
-			newEntries++
-		}
-	}
-	if len(j.entries)+newEntries > j.maxEntries {
-		return fmt.Errorf(
-			"comparator: entry capacity exceeded: current=%d new=%d max=%d",
-			len(j.entries), newEntries, j.maxEntries,
-		)
-	}
-	return nil
-}
-
-// markReleasable records entries whose authoritative input and both decisions
-// have been audited and committed. They remain available for recent replay and
-// conflict detection until capacity is needed by a later stream record.
+// markReleasable records entries whose complete audit or terminal coverage gap
+// has been acknowledged. They remain available for recent replay and conflict
+// detection until capacity is needed by a later stream record.
 func (j *Joiner) markReleasable(inputIDs []string) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -451,13 +442,17 @@ func (j *Joiner) compact(target int) []string {
 	return evicted
 }
 
-func (j *Joiner) getOrCreate(inputID string) *entry {
+func (j *Joiner) getOrAdmit(inputID string) (*entry, bool) {
 	item := j.entries[inputID]
-	if item == nil {
-		item = &entry{}
-		j.entries[inputID] = item
+	if item != nil {
+		return item, true
 	}
-	return item
+	if len(j.entries) >= j.maxEntries {
+		return nil, false
+	}
+	item = &entry{}
+	j.entries[inputID] = item
+	return item, true
 }
 
 func (j *Joiner) storeDecision(item *entry, side DecisionSide, observation *decisionObservation) Disposition {
@@ -601,20 +596,4 @@ func cloneDecisionObservation(observation *decisionObservation) *decisionObserva
 	cloned := *observation
 	cloned.decision = cloneDecision(observation.decision)
 	return &cloned
-}
-
-func inputIDsFromSources(observations []sourceObservation) []string {
-	inputIDs := make([]string, 0, len(observations))
-	for index := range observations {
-		inputIDs = append(inputIDs, observations[index].outcome.InputID)
-	}
-	return inputIDs
-}
-
-func inputIDsFromDecisions(observations []decisionObservation) []string {
-	inputIDs := make([]string, 0, len(observations))
-	for index := range observations {
-		inputIDs = append(inputIDs, observations[index].decision.InputID)
-	}
-	return inputIDs
 }

@@ -20,12 +20,14 @@ const (
 	ComponentTrigger    = "trigger"
 	ComponentComparator = "comparator"
 
-	StageStartup       = "startup"
-	StageDetect        = "detect"
-	StageFatal         = "fatal"
-	StageShutdown      = "shutdown"
-	StageDecisionACK   = "go_decision_ack"
-	StageComparisonACK = "comparison_audit_ack"
+	StageStartup         = "startup"
+	StageDetect          = "detect"
+	StageFatal           = "fatal"
+	StageShutdown        = "shutdown"
+	StageDecisionACK     = "go_decision_ack"
+	StageComparisonACK   = "comparison_audit_ack"
+	StageCapacityDrop    = "capacity_drop"
+	StageCoverageRelease = "coverage_release"
 
 	ResultStarted   = "started"
 	ResultBrokerACK = "broker_ack"
@@ -33,6 +35,8 @@ const (
 	ResultFailed    = "failed"
 	ResultSkipped   = "skipped"
 	ResultTimeout   = "timeout"
+	ResultDropped   = "dropped"
+	ResultReleased  = "released"
 )
 
 // Logger emits the fixed event envelope used by alarmd. Metric labels remain

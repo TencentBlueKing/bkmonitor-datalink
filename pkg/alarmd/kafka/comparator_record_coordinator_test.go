@@ -161,7 +161,7 @@ func TestComparatorRecordCoordinatorPrepareFailureDoesNotCommit(t *testing.T) {
 	}
 }
 
-func TestComparatorRecordCoordinatorCapacityFailureDoesNotRotateRun(t *testing.T) {
+func TestComparatorRecordCoordinatorCommitsExplicitCapacityDrop(t *testing.T) {
 	t.Parallel()
 
 	commitCalls := 0
@@ -171,6 +171,11 @@ func TestComparatorRecordCoordinatorCapacityFailureDoesNotRotateRun(t *testing.T
 		return nil
 	})
 	coordinator, run, _, _ := setupComparatorRecordCoordinator(t, 1, committer, &events)
+	var capacityDrop ComparatorCapacityDrop
+	coordinator.diagnostics = ComparatorDiagnostics{OnCapacityDrop: func(event ComparatorCapacityDrop) {
+		capacityDrop = event
+		events = append(events, "capacity-drop")
+	}}
 	firstPayload, firstKey := comparatorTriggerInputFixture(t, "normal")
 	if _, err := coordinator.Process(context.Background(), consumer.Record{
 		Topic: "trigger-input", Partition: 0, Offset: 10, Key: firstKey, Value: firstPayload,
@@ -178,16 +183,23 @@ func TestComparatorRecordCoordinatorCapacityFailureDoesNotRotateRun(t *testing.T
 		t.Fatalf("Process(first) error = %v", err)
 	}
 	secondPayload, secondKey := comparatorTriggerInputFixture(t, "anomalous")
-	if _, err := coordinator.Process(context.Background(), consumer.Record{
+	updates, err := coordinator.Process(context.Background(), consumer.Record{
 		Topic: "trigger-input", Partition: 0, Offset: 11, Key: secondKey, Value: secondPayload,
-	}); err == nil {
-		t.Fatal("Process(second) accepted a new input beyond the Run capacity")
+	})
+	if err != nil {
+		t.Fatalf("Process(second) error = %v", err)
 	}
-	if run.Valid() {
-		t.Fatal("capacity failure silently rotated or retained a valid Run")
+	if len(updates) != 1 || updates[0].Disposition != comparator.DispositionCapacityDropped {
+		t.Fatalf("updates = %#v, want one explicit capacity drop", updates)
 	}
-	if commitCalls != 1 || len(events) != 1 || events[0] != "mark" {
-		t.Fatalf("commitCalls=%d events=%#v, want only the first record committed", commitCalls, events)
+	if !run.Valid() {
+		t.Fatal("capacity drop invalidated the Run")
+	}
+	if commitCalls != 2 || len(events) != 3 || events[0] != "mark" || events[1] != "mark" || events[2] != "capacity-drop" {
+		t.Fatalf("commitCalls=%d events=%#v, want both records committed", commitCalls, events)
+	}
+	if capacityDrop.Role != comparator.StreamInput || capacityDrop.Partition != 0 || capacityDrop.Offset != 11 || capacityDrop.Dropped != 1 || capacityDrop.MaxEntries != 1 {
+		t.Fatalf("capacity drop = %#v", capacityDrop)
 	}
 }
 

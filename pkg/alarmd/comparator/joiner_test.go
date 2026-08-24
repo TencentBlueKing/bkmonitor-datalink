@@ -208,8 +208,11 @@ func TestJoinerReplayConflictCapacityAndEpochAreFailClosed(t *testing.T) {
 	}
 
 	_, second := testTriggerInput(t, "error-partial")
-	if _, err := joiner.ObserveDecisionBatch("run-1", DecisionSidePython, mustPartitionKey(t, second), testDecisionBatch(t, second, contract.OutcomeError)); err == nil {
-		t.Fatal("ObserveDecisionBatch() exceeded capacity")
+	updates, err = joiner.ObserveDecisionBatch(
+		"run-1", DecisionSidePython, mustPartitionKey(t, second), testDecisionBatch(t, second, contract.OutcomeError),
+	)
+	if err != nil || len(updates) != 1 || updates[0].Disposition != DispositionCapacityDropped {
+		t.Fatalf("capacity observation = %#v, error=%v, want one explicit drop", updates, err)
 	}
 	nextRun := mustJoiner(t, "run-2", 1)
 	if _, err := nextRun.ObserveTriggerInput("run-1", key, inputPayload); err == nil {
@@ -251,18 +254,23 @@ func TestJoinerMarksConflictsSymmetricallyForBothDecisionSides(t *testing.T) {
 	}
 }
 
-func TestJoinerRejectsOverCapacityBatchAtomically(t *testing.T) {
+func TestJoinerDropsOnlyNewEntriesBeyondCapacity(t *testing.T) {
 	t.Parallel()
 
 	payload, input := testTriggerInputMany(t, "anomalous", "normal")
 	joiner := mustJoiner(t, "run-1", 1)
-	if _, err := joiner.ObserveTriggerInput("run-1", mustPartitionKey(t, input), payload); err == nil {
-		t.Fatal("ObserveTriggerInput() accepted an over-capacity batch")
+	updates, err := joiner.ObserveTriggerInput("run-1", mustPartitionKey(t, input), payload)
+	if err != nil {
+		t.Fatalf("ObserveTriggerInput() error = %v", err)
 	}
-	for _, outcome := range input.DetectionOutcomes {
-		if _, ok, err := joiner.Assess("run-1", outcome.InputID, Gates{}); err != nil || ok {
-			t.Fatalf("Assess(%s) ok=%v error=%v, want no partial mutation", outcome.InputID, ok, err)
-		}
+	if len(updates) != 2 || updates[0].Disposition != DispositionAccepted || updates[1].Disposition != DispositionCapacityDropped {
+		t.Fatalf("updates = %#v, want accepted then capacity dropped", updates)
+	}
+	if _, ok, err := joiner.Assess("run-1", input.DetectionOutcomes[0].InputID, Gates{}); err != nil || !ok {
+		t.Fatalf("Assess(admitted) ok=%v error=%v", ok, err)
+	}
+	if _, ok, err := joiner.Assess("run-1", input.DetectionOutcomes[1].InputID, Gates{}); err != nil || ok {
+		t.Fatalf("Assess(dropped) ok=%v error=%v, want no retained entry", ok, err)
 	}
 }
 

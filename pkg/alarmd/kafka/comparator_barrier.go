@@ -38,7 +38,7 @@ func newComparatorBarrierAdapter(records *comparatorRecordCoordinator) (*compara
 }
 
 // CaptureOverdue freezes fresh broker high-water barriers for every overdue
-// authoritative input that has not already frozen one.
+// coverage entry that has not already frozen one.
 func (a *comparatorBarrierAdapter) CaptureOverdue(ctx context.Context) (int, error) {
 	if a == nil || a.records == nil || ctx == nil || a.beginCapture == nil {
 		return 0, errors.New("kafka comparator barrier: initialized adapter and context are required")
@@ -168,7 +168,9 @@ func (a *comparatorBarrierAdapter) CaptureOverdue(ctx context.Context) (int, err
 }
 
 func (a *comparatorBarrierAdapter) publishChangedCoverage(ctx context.Context, snapshots []comparator.CoverageSnapshot) error {
-	changedIDs := make([]string, 0)
+	authoritativeIDs := make([]string, 0)
+	terminalIDs := make([]string, 0)
+	terminalSnapshots := make([]comparator.CoverageSnapshot, 0)
 	signatures := make(map[string]string)
 	for _, snapshot := range snapshots {
 		if !snapshot.BarrierFrozen {
@@ -178,28 +180,64 @@ func (a *comparatorBarrierAdapter) publishChangedCoverage(ctx context.Context, s
 		if a.lastCoverage[snapshot.InputID] == signature {
 			continue
 		}
-		changedIDs = append(changedIDs, snapshot.InputID)
+		if snapshot.Authoritative {
+			authoritativeIDs = append(authoritativeIDs, snapshot.InputID)
+		}
+		if snapshot.Phase == comparator.CoverageMissingAtBarrier {
+			terminalIDs = append(terminalIDs, snapshot.InputID)
+			terminalSnapshots = append(terminalSnapshots, snapshot)
+		}
 		signatures[snapshot.InputID] = signature
 	}
-	if len(changedIDs) == 0 {
+	if len(signatures) == 0 {
 		return nil
 	}
-	batches, err := a.records.run.AuditBatches(a.records.epoch, changedIDs, comparator.Gates{StableEpoch: true})
-	if err != nil {
-		return err
-	}
-	if len(batches) == 0 {
-		return errors.New("kafka comparator barrier: changed coverage produced no audit")
-	}
-	for _, batch := range batches {
-		if err := a.records.audits.WriteBatch(ctx, batch); err != nil {
-			return fmt.Errorf("kafka comparator barrier: publish audit: %w", err)
+	if len(authoritativeIDs) > 0 {
+		batches, err := a.records.run.AuditBatches(a.records.epoch, authoritativeIDs, comparator.Gates{StableEpoch: true})
+		if err != nil {
+			return err
 		}
+		if len(batches) == 0 {
+			return errors.New("kafka comparator barrier: changed authoritative coverage produced no audit")
+		}
+		for _, batch := range batches {
+			if err := a.records.audits.WriteBatch(ctx, batch); err != nil {
+				return fmt.Errorf("kafka comparator barrier: publish audit: %w", err)
+			}
+		}
+	}
+	if len(terminalIDs) > 0 {
+		if err := a.records.run.ReleaseTerminalCoverage(a.records.epoch, terminalIDs); err != nil {
+			return err
+		}
+		a.records.diagnostics.coverageRelease(summarizeCoverageRelease(terminalSnapshots))
 	}
 	for inputID, signature := range signatures {
 		a.lastCoverage[inputID] = signature
 	}
 	return nil
+}
+
+func summarizeCoverageRelease(snapshots []comparator.CoverageSnapshot) ComparatorCoverageRelease {
+	event := ComparatorCoverageRelease{Entries: len(snapshots)}
+	for _, snapshot := range snapshots {
+		if snapshot.Authoritative {
+			event.Authoritative++
+		} else {
+			event.Orphans++
+		}
+		for _, role := range snapshot.MissingAtBarrierRoles {
+			switch role {
+			case comparator.StreamInput:
+				event.MissingInput++
+			case comparator.StreamGo:
+				event.MissingGo++
+			case comparator.StreamPython:
+				event.MissingPython++
+			}
+		}
+	}
+	return event
 }
 
 func (a *comparatorBarrierAdapter) pruneLastCoverage(snapshots []comparator.CoverageSnapshot) {
@@ -215,7 +253,7 @@ func (a *comparatorBarrierAdapter) pruneLastCoverage(snapshots []comparator.Cove
 }
 
 func coverageAuditSignature(snapshot comparator.CoverageSnapshot) string {
-	return fmt.Sprintf("%d|%t|%v|%v|%v", snapshot.Phase, snapshot.BarrierFrozen, snapshot.MissingRoles, snapshot.MissingAtBarrierRoles, snapshot.LateRoles)
+	return fmt.Sprintf("%t|%d|%t|%v|%v|%v", snapshot.Authoritative, snapshot.Phase, snapshot.BarrierFrozen, snapshot.MissingRoles, snapshot.MissingAtBarrierRoles, snapshot.LateRoles)
 }
 
 type barrierCoordinate struct {

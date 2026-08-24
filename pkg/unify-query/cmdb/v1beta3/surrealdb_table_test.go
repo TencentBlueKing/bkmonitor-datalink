@@ -446,6 +446,7 @@ LIMIT 100;`,
 				expectedRoute:    "active_edge_serving",
 				expectedSQLContains: []string{
 					"FROM node_with_pod_active_edge_view",
+					"entity_id: target_id",
 					"FROM pod_with_replicaset_active_edge_view WHERE source_id = $parent.entity_id",
 				},
 			},

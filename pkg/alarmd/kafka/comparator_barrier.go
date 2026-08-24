@@ -62,6 +62,7 @@ func (a *comparatorBarrierAdapter) CaptureOverdue(ctx context.Context) (int, err
 	if err != nil {
 		return 0, records.fail(err)
 	}
+	a.pruneLastCoverage(snapshots)
 	candidates := make([]comparator.CoverageSnapshot, 0, len(snapshots))
 	missingRoles := make(map[comparator.StreamRole]struct{}, 2)
 	for _, snapshot := range snapshots {
@@ -199,6 +200,18 @@ func (a *comparatorBarrierAdapter) publishChangedCoverage(ctx context.Context, s
 		a.lastCoverage[inputID] = signature
 	}
 	return nil
+}
+
+func (a *comparatorBarrierAdapter) pruneLastCoverage(snapshots []comparator.CoverageSnapshot) {
+	current := make(map[string]struct{}, len(snapshots))
+	for _, snapshot := range snapshots {
+		current[snapshot.InputID] = struct{}{}
+	}
+	for inputID := range a.lastCoverage {
+		if _, ok := current[inputID]; !ok {
+			delete(a.lastCoverage, inputID)
+		}
+	}
 }
 
 func coverageAuditSignature(snapshot comparator.CoverageSnapshot) string {

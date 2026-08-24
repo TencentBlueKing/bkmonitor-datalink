@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -63,85 +64,13 @@ func (p *Processor) Process(ctx context.Context, key, payload []byte) error {
 		}
 		outcomes = append(outcomes, outcome)
 	}
-	triggerInputs, err := buildTriggerInputs(input.StrategyIR, outcomes)
-	if err != nil {
-		return fmt.Errorf("encode trigger input: %w", err)
-	}
-	return p.trigger.ProcessInputs(ctx, key, triggerInputs)
-}
-
-type triggerInputEnvelope struct {
-	Schema               contract.Schema             `json:"schema"`
-	RequiredFeatures     []string                    `json:"required_features"`
-	PartitionHashVersion string                      `json:"partition_hash_version"`
-	StrategyIR           *contract.TriggerStrategyIR `json:"strategy_ir"`
-	DetectionOutcomes    []json.RawMessage           `json:"detection_outcomes"`
-}
-
-func buildTriggerInputs(strategy *contract.TriggerStrategyIR, outcomes []*contract.DetectionOutcome) ([]*contract.TriggerInput, error) {
-	emptyPayload, err := encodeTriggerInputEnvelope(strategy, []json.RawMessage{})
-	if err != nil {
-		return nil, err
-	}
-	encodedOutcomes := make([]json.RawMessage, len(outcomes))
-	for index, outcome := range outcomes {
-		encoded, err := json.Marshal(outcome)
-		if err != nil {
-			return nil, err
-		}
-		encodedOutcomes[index] = encoded
-	}
-
-	chunks := make([][]json.RawMessage, 0, 1)
-	current := make([]json.RawMessage, 0, len(encodedOutcomes))
-	currentBytes := len(emptyPayload)
-	for _, outcome := range encodedOutcomes {
-		additional := len(outcome)
-		if len(current) > 0 {
-			additional++
-		}
-		if len(current) == contract.MaxTriggerInputItemsV1 || currentBytes+additional > contract.MaxTriggerInputBytesV1 {
-			if len(current) == 0 {
-				return nil, errors.New("single detection outcome exceeds trigger input byte limit")
-			}
-			chunks = append(chunks, current)
-			current = make([]json.RawMessage, 0, len(encodedOutcomes)-len(current))
-			currentBytes = len(emptyPayload)
-			additional = len(outcome)
-		}
-		if currentBytes+additional > contract.MaxTriggerInputBytesV1 {
-			return nil, errors.New("single detection outcome exceeds trigger input byte limit")
-		}
-		current = append(current, outcome)
-		currentBytes += additional
-	}
-	if len(current) > 0 {
-		chunks = append(chunks, current)
-	}
-
-	inputs := make([]*contract.TriggerInput, 0, len(chunks))
-	for _, chunk := range chunks {
-		payload, err := encodeTriggerInputEnvelope(strategy, chunk)
-		if err != nil {
-			return nil, err
-		}
-		input, err := contract.DecodeTriggerInput(payload)
-		if err != nil {
-			return nil, err
-		}
-		inputs = append(inputs, input)
-	}
-	return inputs, nil
-}
-
-func encodeTriggerInputEnvelope(strategy *contract.TriggerStrategyIR, outcomes []json.RawMessage) ([]byte, error) {
-	return json.Marshal(triggerInputEnvelope{
-		Schema:               contract.Schema{Name: "trigger-input", Major: 1, Minor: 0},
-		RequiredFeatures:     []string{},
-		PartitionHashVersion: contract.PartitionHashVersionV1,
-		StrategyIR:           strategy,
-		DetectionOutcomes:    outcomes,
-	})
+	return p.trigger.ProcessOutcomes(
+		ctx,
+		key,
+		input.PartitionHashVersion,
+		input.StrategyIR,
+		outcomes,
+	)
 }
 
 type thresholdPlan struct {
@@ -155,7 +84,9 @@ type thresholdLevel struct {
 }
 
 type thresholdAlgorithm struct {
-	groups [][]thresholdCondition
+	groups         [][]thresholdCondition
+	valueScale     float64
+	thresholdScale float64
 }
 
 type thresholdCondition struct {
@@ -165,7 +96,10 @@ type thresholdCondition struct {
 
 type legacyStrategy struct {
 	Items []struct {
-		ID         json.Number `json:"id"`
+		ID           json.Number `json:"id"`
+		QueryConfigs []struct {
+			Unit string `json:"unit"`
+		} `json:"query_configs"`
 		Algorithms []struct {
 			Level      int             `json:"level"`
 			Type       string          `json:"type"`
@@ -199,14 +133,15 @@ func loadThresholdPlan(strategy *contract.TriggerStrategyIR) (*thresholdPlan, er
 		if item.ID.String() != strategy.StrategyRef.ItemID {
 			continue
 		}
+		valueUnit := ""
+		if len(item.QueryConfigs) == 1 {
+			valueUnit = item.QueryConfigs[0].Unit
+		}
 		for _, algorithm := range item.Algorithms {
 			if algorithm.Type != "Threshold" {
 				return nil, fmt.Errorf("detect processor: unsupported algorithm %q", algorithm.Type)
 			}
-			if algorithm.UnitPrefix != "" {
-				return nil, errors.New("detect processor: threshold unit_prefix is not supported")
-			}
-			parsed, err := parseThresholdAlgorithm(algorithm.Config)
+			parsed, err := parseThresholdAlgorithm(algorithm.Config, valueUnit, algorithm.UnitPrefix)
 			if err != nil {
 				return nil, err
 			}
@@ -225,7 +160,7 @@ func loadThresholdPlan(strategy *contract.TriggerStrategyIR) (*thresholdPlan, er
 	return plan, nil
 }
 
-func parseThresholdAlgorithm(raw json.RawMessage) (thresholdAlgorithm, error) {
+func parseThresholdAlgorithm(raw json.RawMessage, valueUnit, thresholdSuffix string) (thresholdAlgorithm, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	var outer []any
@@ -235,7 +170,12 @@ func parseThresholdAlgorithm(raw json.RawMessage) (thresholdAlgorithm, error) {
 	if _, flat := outer[0].(map[string]any); flat {
 		outer = []any{outer}
 	}
-	algorithm := thresholdAlgorithm{groups: make([][]thresholdCondition, 0, len(outer))}
+	valueScale, thresholdScale := thresholdUnitScales(valueUnit, thresholdSuffix)
+	algorithm := thresholdAlgorithm{
+		groups:         make([][]thresholdCondition, 0, len(outer)),
+		valueScale:     valueScale,
+		thresholdScale: thresholdScale,
+	}
 	for _, rawGroup := range outer {
 		groupValues, ok := rawGroup.([]any)
 		if !ok || len(groupValues) == 0 {
@@ -275,17 +215,14 @@ func (p *thresholdPlan) evaluate(input *contract.DetectInput, rawRecord json.Raw
 	decoder := json.NewDecoder(bytes.NewReader(rawRecord))
 	decoder.UseNumber()
 	var record struct {
-		RecordID string      `json:"record_id"`
-		Time     int64       `json:"time"`
-		Value    json.Number `json:"value"`
+		RecordID string          `json:"record_id"`
+		Time     int64           `json:"time"`
+		Value    json.RawMessage `json:"value"`
 	}
 	if err := decoder.Decode(&record); err != nil {
 		return nil, fmt.Errorf("detect processor: decode record: %w", err)
 	}
-	value, err := record.Value.Float64()
-	if err != nil {
-		return nil, errors.New("detect processor: record value must be numeric")
-	}
+	value, valueValid := thresholdRecordValue(record.Value)
 	parts := strings.Split(record.RecordID, ".")
 	if len(parts) != 2 {
 		return nil, errors.New("detect processor: invalid record_id")
@@ -309,7 +246,7 @@ func (p *thresholdPlan) evaluate(input *contract.DetectInput, rawRecord json.Raw
 	anomalous := false
 	for _, levelNumber := range p.strategy.RequiredLevels {
 		level := p.levels[levelNumber]
-		matched := level.matches(value)
+		matched := valueValid && level.matches(value)
 		evaluation := contract.Evaluation{Level: levelNumber, Result: contract.EvaluationNormal}
 		if matched {
 			anomalous = true
@@ -346,6 +283,20 @@ func (p *thresholdPlan) evaluate(input *contract.DetectInput, rawRecord json.Raw
 	return result, nil
 }
 
+// Python Threshold catches per-point algorithm exceptions and leaves that
+// point non-anomalous. DetectInput is emitted only after the Python batch is
+// finalized, so a missing or non-numeric value must not fail the Go consumer.
+func thresholdRecordValue(raw json.RawMessage) (float64, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var number json.Number
+	if err := decoder.Decode(&number); err != nil {
+		return 0, false
+	}
+	value, err := number.Float64()
+	return value, err == nil
+}
+
 func (l thresholdLevel) matches(value float64) bool {
 	if l.connector == "or" {
 		for _, algorithm := range l.algorithms {
@@ -364,9 +315,11 @@ func (l thresholdLevel) matches(value float64) bool {
 }
 
 func (a thresholdAlgorithm) matches(value float64) bool {
+	value = roundThresholdValue(value * a.valueScale)
 	for _, group := range a.groups {
 		matched := true
 		for _, condition := range group {
+			condition.threshold = roundThresholdValue(condition.threshold * a.thresholdScale)
 			if !condition.matches(value) {
 				matched = false
 				break
@@ -377,6 +330,99 @@ func (a thresholdAlgorithm) matches(value float64) bool {
 		}
 	}
 	return false
+}
+
+type thresholdUnitSpec struct {
+	suffixes      []string
+	defaultIndex  int
+	factor        float64
+	suffixFactors map[string]float64
+}
+
+func thresholdUnitScales(unitID, thresholdSuffix string) (float64, float64) {
+	spec, ok := thresholdUnitSpecFor(unitID)
+	if !ok || len(spec.suffixes) == 0 {
+		return 1, 1
+	}
+	valueScale := spec.scaleToBase(spec.defaultIndex)
+	thresholdIndex := -1
+	for index, suffix := range spec.suffixes {
+		if suffix == thresholdSuffix {
+			thresholdIndex = index
+			break
+		}
+	}
+	if thresholdIndex < 0 {
+		return valueScale, 1
+	}
+	return valueScale, spec.scaleToBase(thresholdIndex)
+}
+
+func thresholdUnitSpecFor(unitID string) (thresholdUnitSpec, bool) {
+	if parts := strings.Split(unitID, "||"); len(parts) == 2 {
+		unitID = parts[1]
+	}
+	spec := thresholdUnitSpec{}
+	switch unitID {
+	case "percent":
+		spec = thresholdUnitSpec{suffixes: []string{"%", "x100%"}, factor: 100}
+	case "percentunit":
+		spec = thresholdUnitSpec{suffixes: []string{"%", "x100%"}, defaultIndex: 1, factor: 100}
+	case "bits", "bytes":
+		spec = thresholdUnitSpec{suffixes: []string{"", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi"}, factor: 1024}
+	case "kbytes":
+		spec = thresholdUnitSpec{suffixes: []string{"", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi"}, defaultIndex: 1, factor: 1024}
+	case "mbytes":
+		spec = thresholdUnitSpec{suffixes: []string{"", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi"}, defaultIndex: 2, factor: 1024}
+	case "gbytes":
+		spec = thresholdUnitSpec{suffixes: []string{"", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi"}, defaultIndex: 3, factor: 1024}
+	case "tbytes":
+		spec = thresholdUnitSpec{suffixes: []string{"", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi"}, defaultIndex: 4, factor: 1024}
+	case "pbytes":
+		spec = thresholdUnitSpec{suffixes: []string{"", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi"}, defaultIndex: 5, factor: 1024}
+	case "decbits", "decbytes", "pps", "bps", "Bps", "hertz":
+		spec = thresholdUnitSpec{suffixes: []string{"", "k", "M", "G", "T", "P", "E", "Z", "Y"}, factor: 1000}
+	case "deckbytes", "KBs", "Kbits":
+		spec = thresholdUnitSpec{suffixes: []string{"", "k", "M", "G", "T", "P", "E", "Z", "Y"}, defaultIndex: 1, factor: 1000}
+	case "decmbytes", "MBs", "Mbits":
+		spec = thresholdUnitSpec{suffixes: []string{"", "k", "M", "G", "T", "P", "E", "Z", "Y"}, defaultIndex: 2, factor: 1000}
+	case "decgbytes", "GBs", "Gbits":
+		spec = thresholdUnitSpec{suffixes: []string{"", "k", "M", "G", "T", "P", "E", "Z", "Y"}, defaultIndex: 3, factor: 1000}
+	case "dectbytes", "TBs", "Tbits":
+		spec = thresholdUnitSpec{suffixes: []string{"", "k", "M", "G", "T", "P", "E", "Z", "Y"}, defaultIndex: 4, factor: 1000}
+	case "decpbytes", "PBs", "Pbits":
+		spec = thresholdUnitSpec{suffixes: []string{"", "k", "M", "G", "T", "P", "E", "Z", "Y"}, defaultIndex: 5, factor: 1000}
+	case "ns", "µs", "ms", "s", "m", "h", "d":
+		indexes := map[string]int{"ns": 0, "µs": 1, "ms": 2, "s": 3, "m": 4, "h": 5, "d": 6}
+		spec = thresholdUnitSpec{
+			suffixes:      []string{"ns", "µs", "ms", "s", "m", "h", "d"},
+			defaultIndex:  indexes[unitID],
+			factor:        1000,
+			suffixFactors: map[string]float64{"m": 60, "h": 60, "d": 24},
+		}
+	case "cps", "ops", "reqps", "rps", "wps", "iops", "cpm", "opm", "rpm", "wpm":
+		spec = thresholdUnitSpec{suffixes: []string{"", "K", "M", "B", "T"}, factor: 1000}
+	default:
+		return thresholdUnitSpec{}, false
+	}
+	return spec, true
+}
+
+func (s thresholdUnitSpec) scaleToBase(index int) float64 {
+	scale := 1.0
+	for index > 0 {
+		factor := s.factor
+		if value, ok := s.suffixFactors[s.suffixes[index]]; ok {
+			factor = value
+		}
+		scale *= factor
+		index--
+	}
+	return scale
+}
+
+func roundThresholdValue(value float64) float64 {
+	return math.RoundToEven(value*1_000_000) / 1_000_000
 }
 
 func (c thresholdCondition) matches(value float64) bool {

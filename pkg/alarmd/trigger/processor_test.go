@@ -15,6 +15,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
@@ -185,6 +186,44 @@ func TestProcessorRejectsConflictingExecutionPlanForSameStrategyIdentity(t *test
 	}
 }
 
+func TestProcessorKeepsOverlappingStrategyGenerationsIsolated(t *testing.T) {
+	t.Parallel()
+
+	strategyV1 := newStrategy(t, "generation-1", []contract.TriggerConfig{{Level: 1, CheckWindowSize: 3, TriggerCount: 1}})
+	strategyV2 := newStrategy(t, "generation-2", []contract.TriggerConfig{{Level: 1, CheckWindowSize: 3, TriggerCount: 1}})
+	processor := NewProcessor(&recordingSink{})
+	for _, strategy := range []*contract.TriggerStrategyIR{strategyV1, strategyV2} {
+		payload, key := triggerInputPayload(t, strategy, newOutcome(t, strategy, 100, map[int]bool{1: true}))
+		if err := processor.Process(context.Background(), key, payload); err != nil {
+			t.Fatalf("Process(%s) error = %v", strategy.StrategyRef.Generation, err)
+		}
+	}
+	if len(processor.strategies) != 2 {
+		t.Fatalf("strategy handles = %d, want both generations inside the replay window", len(processor.strategies))
+	}
+}
+
+func TestProcessorRetiresExpiredStrategyGenerations(t *testing.T) {
+	strategyV1 := newStrategy(t, "generation-1", []contract.TriggerConfig{{Level: 1, CheckWindowSize: 3, TriggerCount: 1}})
+	strategyV2 := newStrategy(t, "generation-2", []contract.TriggerConfig{{Level: 1, CheckWindowSize: 3, TriggerCount: 1}})
+	now := time.Unix(1_000, 0)
+	processor := NewProcessor(&recordingSink{})
+	processor.evaluator = newEvaluatorWithClock(func() time.Time { return now })
+
+	payload, key := triggerInputPayload(t, strategyV1, newOutcome(t, strategyV1, 100, map[int]bool{1: true}))
+	if err := processor.Process(context.Background(), key, payload); err != nil {
+		t.Fatalf("Process(generation-1) error = %v", err)
+	}
+	now = now.Add(stateRetention(newValidatedStrategyHandle(strategyV1)))
+	payload, key = triggerInputPayload(t, strategyV2, newOutcome(t, strategyV2, 110, map[int]bool{1: true}))
+	if err := processor.Process(context.Background(), key, payload); err != nil {
+		t.Fatalf("Process(generation-2) error = %v", err)
+	}
+	if len(processor.strategies) != 1 || len(processor.evaluator.results) != 1 {
+		t.Fatalf("retained strategy/state counts = %d/%d, want 1/1", len(processor.strategies), len(processor.evaluator.results))
+	}
+}
+
 func TestProcessorRejectsPartitionKeyMismatchBeforeSink(t *testing.T) {
 	t.Parallel()
 
@@ -239,32 +278,61 @@ func TestProcessorRollsBackWindowStateWhenSinkFails(t *testing.T) {
 func TestProcessorRollsBackAllChunksWhenLaterSinkWriteFails(t *testing.T) {
 	t.Parallel()
 
-	strategy := newStrategy(t, "generation-1", []contract.TriggerConfig{{Level: 1, CheckWindowSize: 2, TriggerCount: 2}})
-	newerPayload, key := triggerInputPayload(t, strategy, newOutcome(t, strategy, 110, map[int]bool{1: true}))
-	olderPayload, _ := triggerInputPayload(t, strategy, newOutcome(t, strategy, 100, map[int]bool{1: true}))
-	newer, err := contract.DecodeTriggerInput(newerPayload)
-	if err != nil {
-		t.Fatal(err)
+	strategy := newStrategy(t, "generation-1", []contract.TriggerConfig{{Level: 1, CheckWindowSize: 500, TriggerCount: 1}})
+	outcomes := make([]*contract.DetectionOutcome, 0, contract.MaxTriggerInputItemsV1)
+	for index := 0; index < contract.MaxTriggerInputItemsV1; index++ {
+		outcomes = append(outcomes, newOutcome(t, strategy, int64(1_000_000+index), map[int]bool{1: true}))
 	}
-	older, err := contract.DecodeTriggerInput(olderPayload)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, key := triggerInputPayload(t, strategy, outcomes...)
 	sink := &recordingSink{err: errors.New("sink unavailable"), failAt: 2}
 	processor := NewProcessor(sink)
 
-	if err := processor.ProcessInputs(context.Background(), key, []*contract.TriggerInput{newer, older}); err == nil {
-		t.Fatal("ProcessInputs(first attempt) error = nil, want sink failure")
+	if err := processor.ProcessOutcomes(context.Background(), key, contract.PartitionHashVersionV1, strategy, outcomes); err == nil {
+		t.Fatal("ProcessOutcomes(first attempt) error = nil, want sink failure")
 	}
+	firstAttempt := append([][]byte(nil), sink.payloads...)
 	sink.err = nil
-	if err := processor.ProcessInputs(context.Background(), key, []*contract.TriggerInput{newer, older}); err != nil {
-		t.Fatalf("ProcessInputs(replay) error = %v", err)
+	if err := processor.ProcessOutcomes(context.Background(), key, contract.PartitionHashVersionV1, strategy, outcomes); err != nil {
+		t.Fatalf("ProcessOutcomes(replay) error = %v", err)
 	}
-	if len(sink.payloads) != 4 || !reflect.DeepEqual(sink.payloads[0], sink.payloads[2]) || !reflect.DeepEqual(sink.payloads[1], sink.payloads[3]) {
+	if len(firstAttempt) != 2 || len(sink.payloads) <= len(firstAttempt) {
+		t.Fatalf("payload counts = first:%d total:%d, want a later-write failure followed by a full replay", len(firstAttempt), len(sink.payloads))
+	}
+	if !reflect.DeepEqual(firstAttempt[0], sink.payloads[2]) || !reflect.DeepEqual(firstAttempt[1], sink.payloads[3]) {
 		t.Fatal("replayed chunked decisions changed after a partial sink failure")
 	}
-	if got := sink.batches[0].Decisions[0]; got.Outcome != DecisionTrigger || !reflect.DeepEqual(got.AnomalyTimestamps, []int64{100, 110}) {
-		t.Fatalf("newer chunk decision = %#v, want complete event-time window", got)
+}
+
+func TestProcessorSplitsDecisionBatchesByEncodedSize(t *testing.T) {
+	t.Parallel()
+
+	strategy := newStrategy(t, "generation-1", []contract.TriggerConfig{{Level: 1, CheckWindowSize: 500, TriggerCount: 1}})
+	outcomes := make([]*contract.DetectionOutcome, 0, contract.MaxTriggerInputItemsV1)
+	for index := 0; index < contract.MaxTriggerInputItemsV1; index++ {
+		outcomes = append(outcomes, newOutcome(t, strategy, int64(1_000_000+index), map[int]bool{1: true}))
+	}
+	payload, key := triggerInputPayload(t, strategy, outcomes...)
+	sink := &recordingSink{}
+
+	if err := NewProcessor(sink).Process(context.Background(), key, payload); err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if len(sink.batches) < 2 {
+		t.Fatalf("batches = %d, want encoded-size split", len(sink.batches))
+	}
+	total := 0
+	for _, batch := range sink.batches {
+		payload, err := contract.EncodeTriggerDecisionBatch(batch)
+		if err != nil {
+			t.Fatalf("EncodeTriggerDecisionBatch() error = %v", err)
+		}
+		if len(payload) > contract.MaxTriggerDecisionBytesV1 {
+			t.Fatalf("decision batch bytes = %d, want <= %d", len(payload), contract.MaxTriggerDecisionBytesV1)
+		}
+		total += len(batch.Decisions)
+	}
+	if total != len(outcomes) {
+		t.Fatalf("decisions = %d, want %d", total, len(outcomes))
 	}
 }
 

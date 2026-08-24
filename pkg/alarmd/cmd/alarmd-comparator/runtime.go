@@ -33,14 +33,15 @@ type comparisonCounted struct {
 	missingPython bool
 }
 
-// comparisonResultLedger keeps the comparison counters on the authoritative
-// TriggerInput denominator. One input is audited again on replay and every time
-// a barrier freezes another missing role, so counting each audit would inflate
-// match, mismatch and missing beyond the number of compared inputs. A verdict
-// that actually changes is still counted, because that is a real divergence.
+// comparisonResultLedger keeps a bounded recent deduplication window for the
+// comparison counters. One input can be audited again on replay and as coverage
+// changes, while a long-running Shadow process must not retain every historical
+// input forever.
 type comparisonResultLedger struct {
 	capacity int
 	counted  map[string]comparisonCounted
+	order    []string
+	head     int
 }
 
 func newComparisonResultLedger(capacity int) (*comparisonResultLedger, error) {
@@ -50,26 +51,14 @@ func newComparisonResultLedger(capacity int) (*comparisonResultLedger, error) {
 	return &comparisonResultLedger{capacity: capacity, counted: make(map[string]comparisonCounted)}, nil
 }
 
-// reserve fails closed before the audit is published when the batch would take
-// the ledger past the capacity the finite run was sized for.
-func (l *comparisonResultLedger) reserve(batch *contract.ComparisonAuditBatch) error {
-	admitted := make(map[string]struct{}, len(batch.Audits))
-	for _, audit := range batch.Audits {
-		if _, ok := l.counted[audit.InputID]; ok {
-			continue
-		}
-		admitted[audit.InputID] = struct{}{}
-	}
-	if len(l.counted)+len(admitted) > l.capacity {
-		return fmt.Errorf("comparator runtime: comparison result ledger is full at %d inputs", l.capacity)
-	}
-	return nil
-}
-
 // admit returns only the results this audit adds on top of what the input has
 // already contributed.
 func (l *comparisonResultLedger) admit(audit contract.ComparisonAudit) []metric.CompareResult {
-	state := l.counted[audit.InputID]
+	state, exists := l.counted[audit.InputID]
+	if !exists {
+		l.makeRoom()
+		l.order = append(l.order, audit.InputID)
+	}
 	var results []metric.CompareResult
 	switch audit.Verdict {
 	case contract.ComparisonVerdictMatch, contract.ComparisonVerdictHardDiff:
@@ -101,6 +90,21 @@ func (l *comparisonResultLedger) admit(audit contract.ComparisonAudit) []metric.
 	}
 	l.counted[audit.InputID] = state
 	return results
+}
+
+func (l *comparisonResultLedger) makeRoom() {
+	for len(l.counted) >= l.capacity && l.head < len(l.order) {
+		inputID := l.order[l.head]
+		l.head++
+		delete(l.counted, inputID)
+	}
+	if l.head == len(l.order) {
+		l.order = nil
+		l.head = 0
+	} else if l.head >= 1024 && l.head*2 >= len(l.order) {
+		l.order = append([]string(nil), l.order[l.head:]...)
+		l.head = 0
+	}
 }
 
 type recordingComparisonAuditSink struct {
@@ -142,9 +146,6 @@ func (s *recordingComparisonAuditSink) WriteBatch(ctx context.Context, batch *co
 	started := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.ledger.reserve(batch); err != nil {
-		return err
-	}
 	if err := s.next.WriteBatch(ctx, batch); err != nil {
 		return err
 	}

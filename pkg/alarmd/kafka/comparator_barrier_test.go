@@ -97,6 +97,19 @@ func TestComparatorBarrierCapturesMissingPartitionsOnceAfterRunClock(t *testing.
 	}
 }
 
+func TestComparatorBarrierPrunesCoverageSignaturesAfterEntryCompaction(t *testing.T) {
+	t.Parallel()
+
+	adapter := &comparatorBarrierAdapter{lastCoverage: map[string]string{
+		"retained": "signature-1",
+		"removed":  "signature-2",
+	}}
+	adapter.pruneLastCoverage([]comparator.CoverageSnapshot{{InputID: "retained"}})
+	if len(adapter.lastCoverage) != 1 || adapter.lastCoverage["retained"] != "signature-1" {
+		t.Fatalf("lastCoverage = %#v, want only the current coverage signature", adapter.lastCoverage)
+	}
+}
+
 func TestComparatorBarrierSharesOneHWMVectorAcrossOverdueInputs(t *testing.T) {
 	t.Parallel()
 

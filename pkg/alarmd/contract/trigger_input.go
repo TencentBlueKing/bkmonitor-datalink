@@ -119,12 +119,27 @@ func (i *TriggerInput) PartitionKey() ([]byte, error) {
 }
 
 func (i *TriggerInput) derivePartitionKey() ([]byte, error) {
-	return deriveTriggerPartitionKey(
+	return TriggerPartitionKey(
 		i.PartitionHashVersion,
-		i.StrategyIR.TenantID,
-		i.StrategyIR.Purpose,
-		i.StrategyIR.StrategyRef.StrategyID,
-		i.StrategyIR.StrategyRef.ItemID,
+		i.StrategyIR,
+	)
+}
+
+// TriggerPartitionKey derives the shared Detect, Trigger and Decision
+// partition key from a validated strategy without requiring a wire envelope.
+func TriggerPartitionKey(version string, strategy *TriggerStrategyIR) ([]byte, error) {
+	if strategy == nil {
+		return nil, invalid("trigger_input.partition_key", "strategy must be non-null")
+	}
+	if err := strategy.Validate(); err != nil {
+		return nil, err
+	}
+	return deriveTriggerPartitionKey(
+		version,
+		strategy.TenantID,
+		strategy.Purpose,
+		strategy.StrategyRef.StrategyID,
+		strategy.StrategyRef.ItemID,
 	)
 }
 

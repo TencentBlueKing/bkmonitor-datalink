@@ -66,6 +66,7 @@ type recordingDecisionSink struct {
 type recordingProcessor struct {
 	recorder *metric.Recorder
 	next     consumer.Processor
+	logger   *observability.Logger
 }
 
 func newRecordingDecisionSink(recorder *metric.Recorder, next trigger.DecisionSink) *recordingDecisionSink {
@@ -84,7 +85,24 @@ func newRecordingDecisionSinkWithLogger(
 
 func (s *recordingDecisionSink) WriteBatch(ctx context.Context, batch *contract.TriggerDecisionBatch) error {
 	started := time.Now()
+	attrs := []slog.Attr{slog.String("operation", "write_batch")}
+	if batch.BatchID != "" {
+		attrs = append(attrs, slog.String("batch_id", batch.BatchID))
+	}
+	if batch.StrategyRef.StrategyID != "" {
+		attrs = append(attrs, slog.String("strategy_id", batch.StrategyRef.StrategyID))
+	}
+	if batch.StrategyRef.ItemID != "" {
+		attrs = append(attrs, slog.String("item_id", batch.StrategyRef.ItemID))
+	}
 	if err := s.next.WriteBatch(ctx, batch); err != nil {
+		s.logger.Error(
+			observability.StageDecisionACK,
+			observability.ResultFailed,
+			len(batch.Decisions),
+			time.Since(started),
+			append(attrs, slog.String("reason", "broker"))...,
+		)
 		return err
 	}
 	s.recorder.RecordRecords(
@@ -94,10 +112,6 @@ func (s *recordingDecisionSink) WriteBatch(ctx context.Context, batch *contract.
 		metric.RecordTriggerDecision,
 		float64(len(batch.Decisions)),
 	)
-	attrs := make([]slog.Attr, 0, 1)
-	if batch.BatchID != "" {
-		attrs = append(attrs, slog.String("batch_id", batch.BatchID))
-	}
 	s.logger.Info(
 		observability.StageDecisionACK,
 		observability.ResultBrokerACK,
@@ -109,13 +123,67 @@ func (s *recordingDecisionSink) WriteBatch(ctx context.Context, batch *contract.
 }
 
 func newRecordingProcessor(recorder *metric.Recorder, next consumer.Processor) *recordingProcessor {
-	return &recordingProcessor{recorder: recorder, next: next}
+	return newRecordingProcessorWithLogger(
+		recorder, next, observability.Discard(observability.ComponentTrigger),
+	)
+}
+
+func newRecordingProcessorWithLogger(
+	recorder *metric.Recorder,
+	next consumer.Processor,
+	logger *observability.Logger,
+) *recordingProcessor {
+	return &recordingProcessor{recorder: recorder, next: next, logger: logger}
 }
 
 func (p *recordingProcessor) Process(ctx context.Context, key, payload []byte) error {
 	started := time.Now()
 	err := p.next.Process(ctx, key, payload)
 	if err != nil {
+		var processing *detect.ProcessingError
+		if errors.As(err, &processing) {
+			code := metric.ErrorInvalidInput
+			if processing.Reason == "invalid_strategy" {
+				code = metric.ErrorUnsupported
+			} else if processing.Reason == "internal" {
+				code = metric.ErrorInternal
+			}
+			p.recorder.RecordProcess(metric.StageDetect, metric.ModeShadow, metric.StatusFailed, code, time.Since(started))
+			attrs := []slog.Attr{
+				slog.String("operation", processing.Operation),
+				slog.String("reason", processing.Reason),
+			}
+			if processing.StrategyID != "" {
+				attrs = append(attrs, slog.String("strategy_id", processing.StrategyID))
+			}
+			if processing.ItemID != "" {
+				attrs = append(attrs, slog.String("item_id", processing.ItemID))
+			}
+			if processing.BatchID != "" {
+				attrs = append(attrs, slog.String("batch_id", processing.BatchID))
+			}
+			if processing.RecordID != "" {
+				attrs = append(attrs, slog.String("record_id", processing.RecordID))
+			}
+			if processing.Err != nil {
+				attrs = append(attrs, slog.String("error", processing.Err.Error()))
+			}
+			result := observability.ResultFailed
+			if processing.Isolated {
+				result = observability.ResultSkipped
+			}
+			p.logger.Error(
+				observability.StageDetect,
+				result,
+				processing.Records,
+				time.Since(started),
+				attrs...,
+			)
+			if processing.Isolated {
+				return nil
+			}
+			return err
+		}
 		p.recorder.RecordProcess(metric.StageTrigger, metric.ModeShadow, metric.StatusFailed, metric.ErrorInternal, time.Since(started))
 		return err
 	}
@@ -167,7 +235,7 @@ func runApplication(ctx context.Context, cfg config.Config, recorder *metric.Rec
 	service, err := dependencies.openService(
 		cfg.Kafka,
 		func() consumer.Processor {
-			return newRecordingProcessor(recorder, detect.NewProcessor(recordingSink))
+			return newRecordingProcessorWithLogger(recorder, detect.NewProcessor(recordingSink), eventLogger)
 		},
 		cfg.ShutdownTimeout.Duration(),
 	)

@@ -31,14 +31,15 @@ type ComparisonAuditSink interface {
 type comparatorRecordCoordinator struct {
 	mu sync.Mutex
 
-	assignment *comparatorAssignmentCoordinator
-	handle     *comparatorAssignmentHandle
-	session    sarama.ConsumerGroupSession
-	offsets    OffsetCommitter
-	audits     ComparisonAuditSink
-	run        *comparator.Run
-	epoch      string
-	failed     error
+	assignment  *comparatorAssignmentCoordinator
+	handle      *comparatorAssignmentHandle
+	session     sarama.ConsumerGroupSession
+	offsets     OffsetCommitter
+	audits      ComparisonAuditSink
+	run         *comparator.Run
+	epoch       string
+	diagnostics ComparatorDiagnostics
+	failed      error
 }
 
 func newComparatorRecordCoordinator(
@@ -72,13 +73,14 @@ func newComparatorRecordCoordinator(
 	generation.recordOwner = true
 	assignment.mu.Unlock()
 	return &comparatorRecordCoordinator{
-		assignment: assignment,
-		handle:     handle,
-		session:    session,
-		offsets:    offsets,
-		audits:     audits,
-		run:        run,
-		epoch:      epoch,
+		assignment:  assignment,
+		handle:      handle,
+		session:     session,
+		offsets:     offsets,
+		audits:      audits,
+		run:         run,
+		epoch:       epoch,
+		diagnostics: assignment.diagnostics,
 	}, nil
 }
 
@@ -144,6 +146,18 @@ func (c *comparatorRecordCoordinator) Process(ctx context.Context, record consum
 		return nil, c.fail(err)
 	}
 	c.session.MarkOffset(record.Topic, record.Partition, record.Offset+1, "")
+	dropped := 0
+	for _, update := range updates {
+		if update.Disposition == comparator.DispositionCapacityDropped {
+			dropped++
+		}
+	}
+	if dropped > 0 {
+		c.diagnostics.capacityDrop(ComparatorCapacityDrop{
+			Role: role, Partition: record.Partition, Offset: record.Offset,
+			Dropped: dropped, MaxEntries: c.assignment.maxEntries,
+		})
+	}
 	return updates, nil
 }
 

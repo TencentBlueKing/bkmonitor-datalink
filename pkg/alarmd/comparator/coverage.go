@@ -39,6 +39,7 @@ type BarrierSnapshot struct {
 
 type CoverageSnapshot struct {
 	InputID               string
+	Authoritative         bool
 	Phase                 CoveragePhase
 	BarrierFrozen         bool
 	FirstSeenAt           time.Time
@@ -129,10 +130,10 @@ func (r *Run) FreezeBarrier(epoch, inputID string, snapshot BarrierSnapshot) err
 	if err != nil {
 		return r.invalidateLocked(err)
 	}
-	if !item.present[StreamInput] {
-		return fmt.Errorf("comparator: authoritative TriggerInput has not arrived")
+	deadline := r.coverageDeadlineLocked(item)
+	if deadline.IsZero() {
+		return r.invalidateLocked(fmt.Errorf("comparator: coverage deadline is unavailable"))
 	}
-	deadline := item.authoritativeAt.Add(r.coverageTimeout)
 	if snapshot.CaptureStartedAt.IsZero() {
 		return r.invalidateLocked(fmt.Errorf("comparator: barrier capture start must be non-zero"))
 	}
@@ -207,6 +208,9 @@ func (r *Run) prepareCoverageLocked(inflight *preparedRecord) error {
 	inflight.observedAt = observedAt
 	inflight.coverage = make(map[string]*coverageEntry)
 	for _, update := range inflight.updates {
+		if update.Disposition == DispositionCapacityDropped {
+			continue
+		}
 		item := inflight.coverage[update.InputID]
 		if item == nil {
 			item = cloneCoverageEntry(r.coverage[update.InputID])
@@ -315,6 +319,36 @@ func coverageEntryComplete(item *coverageEntry) bool {
 	return item != nil && item.present[StreamInput] && item.present[StreamGo] && item.present[StreamPython]
 }
 
+// ReleaseTerminalCoverage makes barrier-proven missing entries eligible for
+// bounded compaction. Authoritative entries are released only after their
+// missing audit is acknowledged; decision-only orphans have no audit payload
+// and are released after the same broker high-water proof.
+func (r *Run) ReleaseTerminalCoverage(epoch string, inputIDs []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.requireCoverageLocked(epoch); err != nil {
+		return err
+	}
+	now, err := r.nowLocked()
+	if err != nil {
+		return r.invalidateLocked(err)
+	}
+	releasable := make([]string, 0, len(inputIDs))
+	for _, inputID := range inputIDs {
+		item := r.coverage[inputID]
+		if item == nil {
+			return r.invalidateLocked(fmt.Errorf("comparator: terminal coverage input is unknown"))
+		}
+		snapshot := r.coverageSnapshotLocked(inputID, item, now)
+		if !snapshot.BarrierFrozen || snapshot.Phase != CoverageMissingAtBarrier {
+			return r.invalidateLocked(fmt.Errorf("comparator: coverage is not terminal at barrier"))
+		}
+		releasable = append(releasable, inputID)
+	}
+	r.joiner.markReleasable(releasable)
+	return nil
+}
+
 func (r *Run) requireCoverageLocked(epoch string) error {
 	if err := r.requireEpochAndCommittedLocked(epoch); err != nil {
 		return err
@@ -344,10 +378,7 @@ func (r *Run) coverageSnapshotLocked(inputID string, item *coverageEntry, now ti
 		return !item.present[role] && item.missingAtBarrier[role]
 	})
 	phase := CoveragePending
-	deadline := time.Time{}
-	if !item.authoritativeAt.IsZero() {
-		deadline = item.authoritativeAt.Add(r.coverageTimeout)
-	}
+	deadline := r.coverageDeadlineLocked(item)
 	switch {
 	case len(missing) == 0:
 		phase = CoverageComplete
@@ -358,6 +389,7 @@ func (r *Run) coverageSnapshotLocked(inputID string, item *coverageEntry, now ti
 	}
 	return CoverageSnapshot{
 		InputID:               inputID,
+		Authoritative:         item.present[StreamInput],
 		Phase:                 phase,
 		BarrierFrozen:         item.barriers != nil,
 		FirstSeenAt:           item.firstSeen,
@@ -368,6 +400,20 @@ func (r *Run) coverageSnapshotLocked(inputID string, item *coverageEntry, now ti
 			return item.late[role]
 		}),
 	}
+}
+
+func (r *Run) coverageDeadlineLocked(item *coverageEntry) time.Time {
+	if item == nil {
+		return time.Time{}
+	}
+	anchor := item.authoritativeAt
+	if anchor.IsZero() {
+		anchor = item.firstSeen
+	}
+	if anchor.IsZero() {
+		return time.Time{}
+	}
+	return anchor.Add(r.coverageTimeout)
 }
 
 func (r *Run) refreshMissingAtBarrierLocked(item *coverageEntry) {

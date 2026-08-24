@@ -57,6 +57,7 @@ type comparatorAssignmentCoordinator struct {
 	roleTopics      map[comparator.StreamRole]string
 	maxEntries      int
 	coverageTimeout time.Duration
+	diagnostics     ComparatorDiagnostics
 	nextGeneration  uint64
 	current         *comparatorGeneration
 }

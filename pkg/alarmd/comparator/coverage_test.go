@@ -50,26 +50,67 @@ func TestCoverageDeadlineStartsAtAuthoritativeCommit(t *testing.T) {
 	}
 	clock.Advance(11 * time.Second)
 	snapshot, ok, err = run.Coverage("run-1", inputID)
-	if err != nil || !ok || snapshot.Phase != CoveragePending || !snapshot.DeadlineAt.IsZero() || !slices.Equal(snapshot.MissingRoles, []StreamRole{StreamInput, StreamPython}) {
-		t.Fatalf("Coverage(orphan pending) = %#v, ok=%v, error=%v", snapshot, ok, err)
+	if err != nil || !ok || snapshot.Authoritative || snapshot.Phase != CoverageOverdue || snapshot.DeadlineAt.IsZero() || !slices.Equal(snapshot.MissingRoles, []StreamRole{StreamInput, StreamPython}) {
+		t.Fatalf("Coverage(orphan overdue) = %#v, ok=%v, error=%v", snapshot, ok, err)
 	}
 	snapshots, err := run.SweepCoverage("run-1")
-	if err != nil || len(snapshots) != 1 || snapshots[0].InputID != inputID || snapshots[0].Phase != CoveragePending {
+	if err != nil || len(snapshots) != 1 || snapshots[0].InputID != inputID || snapshots[0].Phase != CoverageOverdue {
 		t.Fatalf("SweepCoverage() = %#v, error=%v", snapshots, err)
-	}
-	if err := run.FreezeBarrier("run-1", inputID, capturedBarrier(clock)); err == nil {
-		t.Fatal("FreezeBarrier() accepted an orphan without TriggerInput")
-	}
-	if !run.Valid() {
-		t.Fatal("an orphan barrier invalidated the Run")
 	}
 	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: mustPartitionKey(t, input), Value: inputPayload})
 	snapshot, ok, err = run.Coverage("run-1", inputID)
-	if err != nil || !ok || snapshot.Phase != CoveragePending || !slices.Equal(snapshot.MissingRoles, []StreamRole{StreamPython}) {
+	if err != nil || !ok || !snapshot.Authoritative || snapshot.Phase != CoveragePending || !slices.Equal(snapshot.MissingRoles, []StreamRole{StreamPython}) {
 		t.Fatalf("Coverage(after authoritative input) = %#v, ok=%v, error=%v", snapshot, ok, err)
 	}
 	if want := clock.Now().Add(10 * time.Second); !snapshot.DeadlineAt.Equal(want) {
 		t.Fatalf("Coverage deadline = %s, want %s", snapshot.DeadlineAt, want)
+	}
+}
+
+func TestCoverageTerminalOrphanReleasesCapacity(t *testing.T) {
+	t.Parallel()
+
+	clock := &manualRunClock{now: time.Date(2026, time.August, 18, 0, 0, 0, 0, time.UTC)}
+	run, err := NewRun("run-1", 1, testAssignments(), WithCoverageTimeout(10*time.Second), withRunClock(clock.Now))
+	if err != nil {
+		t.Fatalf("NewRun() error = %v", err)
+	}
+	_, first := testTriggerInput(t, "normal")
+	firstID := first.DetectionOutcomes[0].InputID
+	commitStreamRecord(t, run, StreamRecord{
+		Epoch: "run-1", Role: StreamGo, Topic: "go", Partition: 0, Offset: 10,
+		Key: mustPartitionKey(t, first), Value: testDecisionBatch(t, first, contract.DecisionOutcomeNoTrigger),
+	})
+	clock.Advance(11 * time.Second)
+	if err := run.FreezeBarrier("run-1", firstID, capturedBarrier(
+		clock,
+		PartitionBarrier{Role: StreamInput, Topic: "input", Partition: 0, HighWater: 20},
+		PartitionBarrier{Role: StreamPython, Topic: "python", Partition: 0, HighWater: 30},
+	)); err != nil {
+		t.Fatalf("FreezeBarrier() error = %v", err)
+	}
+	snapshot, ok, err := run.Coverage("run-1", firstID)
+	if err != nil || !ok || snapshot.Authoritative || snapshot.Phase != CoverageMissingAtBarrier {
+		t.Fatalf("Coverage(orphan terminal) = %#v, ok=%v, error=%v", snapshot, ok, err)
+	}
+	if err := run.ReleaseTerminalCoverage("run-1", []string{firstID}); err != nil {
+		t.Fatalf("ReleaseTerminalCoverage() error = %v", err)
+	}
+
+	_, second := testTriggerInput(t, "anomalous")
+	prepared, err := run.Prepare(StreamRecord{
+		Epoch: "run-1", Role: StreamGo, Topic: "go", Partition: 0, Offset: 11,
+		Key: mustPartitionKey(t, second), Value: testDecisionBatch(t, second, contract.DecisionOutcomeNoTrigger),
+	})
+	if err != nil {
+		t.Fatalf("Prepare(second) did not reuse terminal orphan capacity: %v", err)
+	}
+	updates, err := run.CommitSucceeded(prepared)
+	if err != nil || len(updates) != 1 || updates[0].Disposition != DispositionAccepted {
+		t.Fatalf("CommitSucceeded(second) updates=%#v error=%v", updates, err)
+	}
+	if _, ok, err := run.Coverage("run-1", firstID); err != nil || ok {
+		t.Fatalf("Coverage(evicted orphan) ok=%v error=%v", ok, err)
 	}
 }
 

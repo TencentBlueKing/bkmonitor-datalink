@@ -110,6 +110,67 @@ func TestComparatorBarrierPrunesCoverageSignaturesAfterEntryCompaction(t *testin
 	}
 }
 
+func TestComparatorBarrierReleasesDecisionOnlyOrphanWithoutAuditPayload(t *testing.T) {
+	t.Parallel()
+
+	metadata := newObservedBarrierMetadata(map[string][]int32{
+		"trigger-input": {0}, "go-decision": {0, 1}, "py-decision": {0},
+	})
+	metadata.fakeComparatorMetadata.offsets[metadataOffset{"trigger-input", 0, sarama.OffsetNewest}] = 10
+	metadata.fakeComparatorMetadata.offsets[metadataOffset{"py-decision", 0, sarama.OffsetNewest}] = 30
+	coordinator, run, epoch := setupComparatorBarrierCoordinator(t, metadata, time.Nanosecond)
+	auditCalls := 0
+	coordinator.audits = comparisonAuditSinkFunc(func(context.Context, *contract.ComparisonAuditBatch) error {
+		auditCalls++
+		return nil
+	})
+	var released ComparatorCoverageRelease
+	coordinator.diagnostics = ComparatorDiagnostics{OnCoverageRelease: func(event ComparatorCoverageRelease) {
+		released = event
+	}}
+	adapter, err := newComparatorBarrierAdapter(coordinator)
+	if err != nil {
+		t.Fatalf("newComparatorBarrierAdapter() error = %v", err)
+	}
+
+	firstPayload, _ := comparatorTriggerInputFixture(t, "normal")
+	firstInput, err := comparatorTriggerInputFromPayload(firstPayload)
+	if err != nil {
+		t.Fatalf("DecodeTriggerInput(first) error = %v", err)
+	}
+	firstDecision, firstDecisionKey := comparatorTriggerDecisionFixture(t, firstInput)
+	if _, err := coordinator.Process(context.Background(), consumer.Record{
+		Topic: "go-decision", Partition: 0, Offset: 20, Key: firstDecisionKey, Value: firstDecision,
+	}); err != nil {
+		t.Fatalf("Process(first decision) error = %v", err)
+	}
+	if frozen, err := adapter.CaptureOverdue(context.Background()); err != nil || frozen != 1 {
+		t.Fatalf("CaptureOverdue() frozen=%d error=%v", frozen, err)
+	}
+	if auditCalls != 0 {
+		t.Fatalf("audit calls = %d, want no fabricated source audit", auditCalls)
+	}
+	if released.Entries != 1 || released.Authoritative != 0 || released.Orphans != 1 || released.MissingInput != 1 || released.MissingPython != 1 {
+		t.Fatalf("coverage release = %#v", released)
+	}
+
+	secondPayload, _ := comparatorTriggerInputFixture(t, "anomalous")
+	secondInput, err := comparatorTriggerInputFromPayload(secondPayload)
+	if err != nil {
+		t.Fatalf("DecodeTriggerInput(second) error = %v", err)
+	}
+	secondDecision, secondKey := comparatorTriggerDecisionFixture(t, secondInput)
+	updates, err := coordinator.Process(context.Background(), consumer.Record{
+		Topic: "go-decision", Partition: 0, Offset: 21, Key: secondKey, Value: secondDecision,
+	})
+	if err != nil || len(updates) != 1 || updates[0].Disposition != comparator.DispositionAccepted {
+		t.Fatalf("Process(second decision) updates=%#v error=%v", updates, err)
+	}
+	if _, ok, err := run.Coverage(epoch, firstInput.DetectionOutcomes[0].InputID); err != nil || ok {
+		t.Fatalf("Coverage(evicted orphan) ok=%v error=%v", ok, err)
+	}
+}
+
 func TestComparatorBarrierSharesOneHWMVectorAcrossOverdueInputs(t *testing.T) {
 	t.Parallel()
 

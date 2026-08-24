@@ -19,8 +19,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/comparator"
 )
 
-// ComparatorServiceConfig contains the immutable coordinates for one
-// single-member, three-stream comparison run.
+// ComparatorServiceConfig contains the coordinates, bounds and diagnostics for
+// one single-member, three-stream comparison run.
 type ComparatorServiceConfig struct {
 	Brokers             []string
 	TriggerInputTopic   string
@@ -32,6 +32,7 @@ type ComparatorServiceConfig struct {
 	MaxEntries          int
 	CoverageTimeout     time.Duration
 	BarrierInterval     time.Duration
+	Diagnostics         ComparatorDiagnostics
 }
 
 func (c ComparatorServiceConfig) Topics() []string {
@@ -121,6 +122,7 @@ func OpenComparatorService(
 	if err != nil {
 		return nil, errors.Join(err, group.Close(), client.Close())
 	}
+	assignment.diagnostics = config.Diagnostics
 	service, err := newOwnedGroupService(
 		config.Topics(), group, client,
 		func(reportFatal func(error)) (serviceHandler, error) {

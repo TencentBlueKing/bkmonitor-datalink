@@ -12,14 +12,53 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/comparator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
+
+func TestComparatorDiagnosticsLogCommittedCoverageLossWithoutInputIDs(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	configuration := withComparatorDiagnostics(
+		enginekafka.ComparatorServiceConfig{},
+		observability.New(observability.ComponentComparator, &output),
+	)
+	configuration.Diagnostics.OnCapacityDrop(enginekafka.ComparatorCapacityDrop{
+		Role: comparator.StreamGo, Partition: 2, Offset: 41, Dropped: 3, MaxEntries: 1000,
+	})
+	configuration.Diagnostics.OnCoverageRelease(enginekafka.ComparatorCoverageRelease{
+		Entries: 4, Authoritative: 3, Orphans: 1, MissingInput: 1, MissingGo: 2, MissingPython: 2,
+	})
+
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("diagnostic lines = %d, output=%s", len(lines), output.String())
+	}
+	for index, line := range lines {
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("decode line %d: %v", index, err)
+		}
+		if _, exists := event["input_id"]; exists {
+			t.Fatalf("diagnostic event leaked input_id: %#v", event)
+		}
+	}
+	if !strings.Contains(lines[0], `"stage":"capacity_drop"`) || !strings.Contains(lines[0], `"records":3`) || !strings.Contains(lines[0], `"max_entries":1000`) {
+		t.Fatalf("capacity log = %s", lines[0])
+	}
+	if !strings.Contains(lines[1], `"stage":"coverage_release"`) || !strings.Contains(lines[1], `"records":4`) || !strings.Contains(lines[1], `"orphans":1`) {
+		t.Fatalf("coverage log = %s", lines[1])
+	}
+}
 
 func TestComparisonResultLedgerCountsOneVerdictPerInput(t *testing.T) {
 	t.Parallel()

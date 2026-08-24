@@ -71,22 +71,49 @@ func (p *Processor) Process(ctx context.Context, key, payload []byte) error {
 	if err != nil {
 		return fmt.Errorf("decode trigger input: %w", err)
 	}
-	expectedKey, err := input.PartitionKey()
-	if err != nil {
-		return fmt.Errorf("derive trigger input partition key: %w", err)
+	return p.ProcessInputs(ctx, key, []*contract.TriggerInput{input})
+}
+
+// ProcessInputs evaluates multiple wire-valid TriggerInput chunks as one state
+// transaction. Detect can therefore honor the per-message byte limit without
+// committing only a prefix of the original Kafka record.
+func (p *Processor) ProcessInputs(ctx context.Context, key []byte, inputs []*contract.TriggerInput) error {
+	if p == nil || p.sink == nil {
+		return errors.New("trigger processor: decision sink is required")
 	}
-	if !bytes.Equal(key, expectedKey) {
-		return errors.New("trigger processor: partition key mismatch")
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(inputs) == 0 {
+		return errors.New("trigger processor: inputs are required")
 	}
 
-	handle := newValidatedStrategyHandle(input.StrategyIR)
-	identity := strategyIdentity{
-		tenantID:   handle.tenantID,
-		purpose:    handle.purpose,
-		strategyID: handle.strategyRef.StrategyID,
-		itemID:     handle.strategyRef.ItemID,
-		generation: handle.strategyRef.Generation,
-		contentSHA: handle.strategyRef.ContentSHA256,
+	var handle *StrategyHandle
+	var identity strategyIdentity
+	batchID := ""
+	for index, input := range inputs {
+		if input == nil {
+			return errors.New("trigger processor: input is required")
+		}
+		expectedKey, err := input.PartitionKey()
+		if err != nil {
+			return fmt.Errorf("derive trigger input partition key: %w", err)
+		}
+		if !bytes.Equal(key, expectedKey) {
+			return errors.New("trigger processor: partition key mismatch")
+		}
+		candidate := newValidatedStrategyHandle(input.StrategyIR)
+		candidateIdentity := identityForHandle(candidate)
+		candidateBatchID := input.DetectionOutcomes[0].BatchID
+		if index == 0 {
+			handle = candidate
+			identity = candidateIdentity
+			batchID = candidateBatchID
+			continue
+		}
+		if candidateIdentity != identity || candidate.executionFingerprint != handle.executionFingerprint || candidateBatchID != batchID {
+			return errors.New("trigger processor: inputs must share one logical batch and execution plan")
+		}
 	}
 	if previous, ok := p.strategies[identity]; ok && previous != handle.executionFingerprint {
 		return errors.New("trigger processor: conflicting execution plan for strategy identity")
@@ -98,42 +125,65 @@ func (p *Processor) Process(ctx context.Context, key, payload []byte) error {
 			transaction.discard()
 		}
 	}()
-	// The whole micro-batch is recorded before any decision so that records
+	// The whole logical batch is recorded before any decision so that records
 	// delivered out of source-time order still evaluate on event time.
-	for _, outcome := range input.DetectionOutcomes {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := recordOutcome(transaction, handle, outcome); err != nil {
-			return err
+	for _, input := range inputs {
+		for _, outcome := range input.DetectionOutcomes {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := recordOutcome(transaction, handle, outcome); err != nil {
+				return err
+			}
 		}
 	}
-	terminals := make([]Terminal, 0, len(input.DetectionOutcomes))
-	for _, outcome := range input.DetectionOutcomes {
-		if err := ctx.Err(); err != nil {
-			return err
+	terminalGroups := make([][]Terminal, len(inputs))
+	for inputIndex, input := range inputs {
+		terminals := make([]Terminal, 0, len(input.DetectionOutcomes))
+		for _, outcome := range input.DetectionOutcomes {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			terminal, err := p.decideOutcome(transaction, handle, outcome)
+			if err != nil {
+				return err
+			}
+			terminals = append(terminals, terminal)
 		}
-		terminal, err := p.decideOutcome(transaction, handle, outcome)
-		if err != nil {
-			return err
-		}
-		terminals = append(terminals, terminal)
+		terminalGroups[inputIndex] = terminals
 	}
 	transaction.evict(handle)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	batch, err := buildDecisionBatch(input, terminals)
-	if err != nil {
-		return fmt.Errorf("build trigger decision batch: %w", err)
+	batches := make([]*contract.TriggerDecisionBatch, len(inputs))
+	for index, input := range inputs {
+		batch, err := buildDecisionBatch(input, terminalGroups[index])
+		if err != nil {
+			return fmt.Errorf("build trigger decision batch: %w", err)
+		}
+		batches[index] = batch
 	}
-	if err := p.sink.WriteBatch(ctx, batch); err != nil {
-		return fmt.Errorf("write trigger decision batch: %w", err)
+	for _, batch := range batches {
+		if err := p.sink.WriteBatch(ctx, batch); err != nil {
+			return fmt.Errorf("write trigger decision batch: %w", err)
+		}
 	}
 	transaction.commit()
 	committed = true
 	p.strategies[identity] = handle.executionFingerprint
 	return nil
+}
+
+func identityForHandle(handle *StrategyHandle) strategyIdentity {
+	return strategyIdentity{
+		tenantID:   handle.tenantID,
+		purpose:    handle.purpose,
+		strategyID: handle.strategyRef.StrategyID,
+		itemID:     handle.strategyRef.ItemID,
+		generation: handle.strategyRef.Generation,
+		contentSHA: handle.strategyRef.ContentSHA256,
+	}
 }
 
 // recordOutcome advances the window only for business outcomes. ERROR and

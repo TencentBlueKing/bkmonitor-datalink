@@ -99,10 +99,12 @@ type Assessment struct {
 }
 
 type Joiner struct {
-	mu         sync.Mutex
-	runEpoch   string
-	maxEntries int
-	entries    map[string]*entry
+	mu          sync.Mutex
+	runEpoch    string
+	maxEntries  int
+	entries     map[string]*entry
+	releasable  []string
+	releaseHead int
 }
 
 type entry struct {
@@ -114,6 +116,7 @@ type entry struct {
 	pythonConflict bool
 	goInvalid      bool
 	pythonInvalid  bool
+	releasable     bool
 }
 
 type sourceObservation struct {
@@ -397,9 +400,55 @@ func (j *Joiner) requireCapacity(inputIDs []string) error {
 		}
 	}
 	if len(j.entries)+newEntries > j.maxEntries {
-		return fmt.Errorf("comparator: entry capacity exceeded")
+		return fmt.Errorf(
+			"comparator: entry capacity exceeded: current=%d new=%d max=%d",
+			len(j.entries), newEntries, j.maxEntries,
+		)
 	}
 	return nil
+}
+
+// markReleasable records entries whose authoritative input and both decisions
+// have been audited and committed. They remain available for recent replay and
+// conflict detection until capacity is needed by a later stream record.
+func (j *Joiner) markReleasable(inputIDs []string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, inputID := range inputIDs {
+		item := j.entries[inputID]
+		if item == nil || item.releasable {
+			continue
+		}
+		item.releasable = true
+		j.releasable = append(j.releasable, inputID)
+	}
+}
+
+func (j *Joiner) compact(target int) []string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if target < 0 {
+		target = 0
+	}
+	evicted := make([]string, 0)
+	for len(j.entries) > target && j.releaseHead < len(j.releasable) {
+		inputID := j.releasable[j.releaseHead]
+		j.releaseHead++
+		item := j.entries[inputID]
+		if item == nil || !item.releasable {
+			continue
+		}
+		delete(j.entries, inputID)
+		evicted = append(evicted, inputID)
+	}
+	if j.releaseHead == len(j.releasable) {
+		j.releasable = nil
+		j.releaseHead = 0
+	} else if j.releaseHead >= 1024 && j.releaseHead*2 >= len(j.releasable) {
+		j.releasable = append([]string(nil), j.releasable[j.releaseHead:]...)
+		j.releaseHead = 0
+	}
+	return evicted
 }
 
 func (j *Joiner) getOrCreate(inputID string) *entry {

@@ -15,6 +15,8 @@ import (
 	"math"
 	"sync"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 var ErrRecordInFlight = errors.New("comparator: record is awaiting commit")
@@ -59,12 +61,13 @@ type streamPartition struct {
 }
 
 type preparedRecord struct {
-	token      uint64
-	stream     streamPartition
-	offset     int64
-	updates    []Update
-	coverage   map[string]*coverageEntry
-	observedAt time.Time
+	token          uint64
+	stream         streamPartition
+	offset         int64
+	updates        []Update
+	coverage       map[string]*coverageEntry
+	observedAt     time.Time
+	auditsPrepared bool
 }
 
 func (p *preparedRecord) hasPendingAuthoritative() bool {
@@ -86,6 +89,7 @@ type Run struct {
 	valid           bool
 	invalidErr      error
 	joiner          *Joiner
+	maxEntries      int
 	roleTopics      map[StreamRole]string
 	nextOffsets     map[streamPartition]int64
 	inflight        *preparedRecord
@@ -146,6 +150,7 @@ func NewRun(epoch string, maxEntries int, assignments []PartitionAssignment, opt
 		epoch:           epoch,
 		valid:           true,
 		joiner:          joiner,
+		maxEntries:      maxEntries,
 		roleTopics:      make(map[StreamRole]string, 3),
 		nextOffsets:     make(map[streamPartition]int64, len(assignments)),
 		coverageTimeout: configured.coverageTimeout,
@@ -211,6 +216,15 @@ func (r *Run) Prepare(record StreamRecord) (Prepared, error) {
 	if record.Offset == math.MaxInt64 {
 		return Prepared{}, r.invalidateLocked(fmt.Errorf("comparator: record offset is out of range"))
 	}
+	// Keep a bounded recent replay window and reserve one maximum wire batch.
+	// Only fully joined entries are compacted; partial joins remain fail-closed.
+	compactTarget := contract.MaxTriggerInputItemsV1
+	if reserveTarget := r.maxEntries - contract.MaxTriggerInputItemsV1; reserveTarget < compactTarget {
+		compactTarget = reserveTarget
+	}
+	for _, inputID := range r.joiner.compact(compactTarget) {
+		delete(r.coverage, inputID)
+	}
 
 	var (
 		updates []Update
@@ -267,6 +281,15 @@ func (r *Run) CommitSucceeded(prepared Prepared) ([]Update, error) {
 	inflight := r.inflight
 	if err := r.commitCoverageLocked(inflight); err != nil {
 		return nil, r.invalidateLocked(err)
+	}
+	if inflight.auditsPrepared {
+		releasable := make([]string, 0, len(inflight.coverage))
+		for inputID, item := range inflight.coverage {
+			if coverageEntryComplete(item) {
+				releasable = append(releasable, inputID)
+			}
+		}
+		r.joiner.markReleasable(releasable)
 	}
 	r.nextOffsets[inflight.stream] = inflight.offset + 1
 	r.inflight = nil

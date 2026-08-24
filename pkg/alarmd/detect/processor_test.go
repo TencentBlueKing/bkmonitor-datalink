@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -87,5 +88,69 @@ func TestProcessorRunsThresholdDetectBeforeTrigger(t *testing.T) {
 	}
 	if len(second.AnomalyTimestamps) != 2 || second.AnomalyTimestamps[0] != 100 || second.AnomalyTimestamps[1] != 160 {
 		t.Fatalf("anomaly timestamps = %v", second.AnomalyTimestamps)
+	}
+}
+
+func TestProcessorSplitsExpandedTriggerInput(t *testing.T) {
+	legacy := []byte(`{"id":1,"update_time":1,"items":[{"id":2,"query_configs":[{"agg_interval":60}],"algorithms":[{"level":1,"type":"Threshold","config":[[{"method":"gte","threshold":50}]]}],"no_data_config":{"is_enabled":false}}],"detects":[{"level":1,"connector":"and","trigger_config":{"count":1,"check_window":1}}]}`)
+	digest := sha256.Sum256(legacy)
+	strategy := map[string]any{
+		"schema":                    map[string]any{"name": "trigger-strategy-ir", "major": 1, "minor": 0},
+		"required_features":         []string{"raw-strategy-bytes-v1"},
+		"tenant_id":                 "default",
+		"purpose":                   "DETECT",
+		"strategy_ref":              map[string]any{"strategy_id": "1", "item_id": "2", "generation": "1", "content_sha256": hex.EncodeToString(digest[:])},
+		"required_levels":           []int{1},
+		"check_window_unit_seconds": 60,
+		"trigger_configs":           []map[string]any{{"level": 1, "check_window_size": 1, "trigger_count": 1}},
+		"legacy_json_b64":           base64.StdEncoding.EncodeToString(legacy),
+	}
+
+	records := make([]map[string]any, 0, contract.MaxDetectInputRecordsV1)
+	for index := 0; index < contract.MaxDetectInputRecordsV1; index++ {
+		sourceTime := int64(100 + index*60)
+		records = append(records, map[string]any{
+			"record_id": "342a08e0f85f169a7e099c18db3708ed." + strconv.FormatInt(sourceTime, 10),
+			"time":      sourceTime,
+			"value":     60,
+		})
+	}
+	document := map[string]any{
+		"schema":                 map[string]any{"name": "detect-input", "major": 1, "minor": 0},
+		"required_features":      []string{},
+		"partition_hash_version": contract.PartitionHashVersionV1,
+		"strategy_ir":            strategy,
+		"batch_id":               strings.Repeat("batch", 250),
+		"records":                records,
+	}
+	payload, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload) > contract.MaxDetectInputBytesV1 {
+		t.Fatalf("detect input bytes = %d, want <= %d", len(payload), contract.MaxDetectInputBytesV1)
+	}
+	input, err := contract.DecodeDetectInput(payload)
+	if err != nil {
+		t.Fatalf("DecodeDetectInput() error = %v", err)
+	}
+	key, err := input.PartitionKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sink := &recordingDecisionSink{}
+	if err := NewProcessor(sink).Process(context.Background(), key, payload); err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if len(sink.batches) < 2 {
+		t.Fatalf("batches = %d, want encoded-size split", len(sink.batches))
+	}
+	total := 0
+	for _, batch := range sink.batches {
+		total += len(batch.Decisions)
+	}
+	if total != contract.MaxDetectInputRecordsV1 {
+		t.Fatalf("decisions = %d, want %d", total, contract.MaxDetectInputRecordsV1)
 	}
 }

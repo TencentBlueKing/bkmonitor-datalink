@@ -438,7 +438,7 @@ func TestCoverageConfigurationAndClockFailClosed(t *testing.T) {
 	}
 }
 
-func TestCoverageCapacityFailsClosedWithoutEviction(t *testing.T) {
+func TestCoverageCapacityReusesCompletedEntries(t *testing.T) {
 	t.Parallel()
 
 	clock := &manualRunClock{now: time.Date(2026, time.August, 18, 0, 0, 0, 0, time.UTC)}
@@ -448,11 +448,11 @@ func TestCoverageCapacityFailsClosedWithoutEviction(t *testing.T) {
 	}
 	inputPayload, input := testTriggerInput(t, "normal")
 	key := mustPartitionKey(t, input)
-	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload})
-	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamGo, Topic: "go", Partition: 0, Offset: 10, Key: key, Value: testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)})
-	commitStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamPython, Topic: "python", Partition: 0, Offset: 30, Key: key, Value: testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)})
+	commitAuditedStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload})
+	commitAuditedStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamGo, Topic: "go", Partition: 0, Offset: 10, Key: key, Value: testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)})
+	commitAuditedStreamRecord(t, run, StreamRecord{Epoch: "run-1", Role: StreamPython, Topic: "python", Partition: 0, Offset: 30, Key: key, Value: testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)})
 	secondPayload, second := testTriggerInput(t, "anomalous")
-	if _, err := run.Prepare(StreamRecord{
+	prepared, err := run.Prepare(StreamRecord{
 		Epoch:     "run-1",
 		Role:      StreamInput,
 		Topic:     "input",
@@ -460,11 +460,15 @@ func TestCoverageCapacityFailsClosedWithoutEviction(t *testing.T) {
 		Offset:    21,
 		Key:       mustPartitionKey(t, second),
 		Value:     secondPayload,
-	}); err == nil {
-		t.Fatal("Prepare() silently evicted a completed coverage entry")
+	})
+	if err != nil {
+		t.Fatalf("Prepare() did not reuse completed capacity: %v", err)
 	}
-	if run.Valid() {
-		t.Fatal("coverage capacity exhaustion left the Run valid")
+	if _, err := run.CommitSucceeded(prepared); err != nil {
+		t.Fatalf("CommitSucceeded() error = %v", err)
+	}
+	if !run.Valid() {
+		t.Fatal("completed-entry reuse invalidated the Run")
 	}
 }
 
@@ -489,6 +493,20 @@ func commitStreamRecord(t *testing.T, run *Run, record StreamRecord) {
 	prepared, err := run.Prepare(record)
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
+	}
+	if _, err := run.CommitSucceeded(prepared); err != nil {
+		t.Fatalf("CommitSucceeded() error = %v", err)
+	}
+}
+
+func commitAuditedStreamRecord(t *testing.T, run *Run, record StreamRecord) {
+	t.Helper()
+	prepared, err := run.Prepare(record)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if _, err := run.PreviewAudits(prepared, Gates{StableEpoch: true}); err != nil {
+		t.Fatalf("PreviewAudits() error = %v", err)
 	}
 	if _, err := run.CommitSucceeded(prepared); err != nil {
 		t.Fatalf("CommitSucceeded() error = %v", err)

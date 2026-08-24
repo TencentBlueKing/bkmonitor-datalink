@@ -63,23 +63,85 @@ func (p *Processor) Process(ctx context.Context, key, payload []byte) error {
 		}
 		outcomes = append(outcomes, outcome)
 	}
-	triggerPayload, err := json.Marshal(struct {
-		Schema               contract.Schema              `json:"schema"`
-		RequiredFeatures     []string                     `json:"required_features"`
-		PartitionHashVersion string                       `json:"partition_hash_version"`
-		StrategyIR           *contract.TriggerStrategyIR  `json:"strategy_ir"`
-		DetectionOutcomes    []*contract.DetectionOutcome `json:"detection_outcomes"`
-	}{
-		Schema:               contract.Schema{Name: "trigger-input", Major: 1, Minor: 0},
-		RequiredFeatures:     []string{},
-		PartitionHashVersion: contract.PartitionHashVersionV1,
-		StrategyIR:           input.StrategyIR,
-		DetectionOutcomes:    outcomes,
-	})
+	triggerInputs, err := buildTriggerInputs(input.StrategyIR, outcomes)
 	if err != nil {
 		return fmt.Errorf("encode trigger input: %w", err)
 	}
-	return p.trigger.Process(ctx, key, triggerPayload)
+	return p.trigger.ProcessInputs(ctx, key, triggerInputs)
+}
+
+type triggerInputEnvelope struct {
+	Schema               contract.Schema             `json:"schema"`
+	RequiredFeatures     []string                    `json:"required_features"`
+	PartitionHashVersion string                      `json:"partition_hash_version"`
+	StrategyIR           *contract.TriggerStrategyIR `json:"strategy_ir"`
+	DetectionOutcomes    []json.RawMessage           `json:"detection_outcomes"`
+}
+
+func buildTriggerInputs(strategy *contract.TriggerStrategyIR, outcomes []*contract.DetectionOutcome) ([]*contract.TriggerInput, error) {
+	emptyPayload, err := encodeTriggerInputEnvelope(strategy, []json.RawMessage{})
+	if err != nil {
+		return nil, err
+	}
+	encodedOutcomes := make([]json.RawMessage, len(outcomes))
+	for index, outcome := range outcomes {
+		encoded, err := json.Marshal(outcome)
+		if err != nil {
+			return nil, err
+		}
+		encodedOutcomes[index] = encoded
+	}
+
+	chunks := make([][]json.RawMessage, 0, 1)
+	current := make([]json.RawMessage, 0, len(encodedOutcomes))
+	currentBytes := len(emptyPayload)
+	for _, outcome := range encodedOutcomes {
+		additional := len(outcome)
+		if len(current) > 0 {
+			additional++
+		}
+		if len(current) == contract.MaxTriggerInputItemsV1 || currentBytes+additional > contract.MaxTriggerInputBytesV1 {
+			if len(current) == 0 {
+				return nil, errors.New("single detection outcome exceeds trigger input byte limit")
+			}
+			chunks = append(chunks, current)
+			current = make([]json.RawMessage, 0, len(encodedOutcomes)-len(current))
+			currentBytes = len(emptyPayload)
+			additional = len(outcome)
+		}
+		if currentBytes+additional > contract.MaxTriggerInputBytesV1 {
+			return nil, errors.New("single detection outcome exceeds trigger input byte limit")
+		}
+		current = append(current, outcome)
+		currentBytes += additional
+	}
+	if len(current) > 0 {
+		chunks = append(chunks, current)
+	}
+
+	inputs := make([]*contract.TriggerInput, 0, len(chunks))
+	for _, chunk := range chunks {
+		payload, err := encodeTriggerInputEnvelope(strategy, chunk)
+		if err != nil {
+			return nil, err
+		}
+		input, err := contract.DecodeTriggerInput(payload)
+		if err != nil {
+			return nil, err
+		}
+		inputs = append(inputs, input)
+	}
+	return inputs, nil
+}
+
+func encodeTriggerInputEnvelope(strategy *contract.TriggerStrategyIR, outcomes []json.RawMessage) ([]byte, error) {
+	return json.Marshal(triggerInputEnvelope{
+		Schema:               contract.Schema{Name: "trigger-input", Major: 1, Minor: 0},
+		RequiredFeatures:     []string{},
+		PartitionHashVersion: contract.PartitionHashVersionV1,
+		StrategyIR:           strategy,
+		DetectionOutcomes:    outcomes,
+	})
 }
 
 type thresholdPlan struct {

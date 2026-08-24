@@ -236,10 +236,43 @@ func TestProcessorRollsBackWindowStateWhenSinkFails(t *testing.T) {
 	}
 }
 
+func TestProcessorRollsBackAllChunksWhenLaterSinkWriteFails(t *testing.T) {
+	t.Parallel()
+
+	strategy := newStrategy(t, "generation-1", []contract.TriggerConfig{{Level: 1, CheckWindowSize: 2, TriggerCount: 2}})
+	newerPayload, key := triggerInputPayload(t, strategy, newOutcome(t, strategy, 110, map[int]bool{1: true}))
+	olderPayload, _ := triggerInputPayload(t, strategy, newOutcome(t, strategy, 100, map[int]bool{1: true}))
+	newer, err := contract.DecodeTriggerInput(newerPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	older, err := contract.DecodeTriggerInput(olderPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &recordingSink{err: errors.New("sink unavailable"), failAt: 2}
+	processor := NewProcessor(sink)
+
+	if err := processor.ProcessInputs(context.Background(), key, []*contract.TriggerInput{newer, older}); err == nil {
+		t.Fatal("ProcessInputs(first attempt) error = nil, want sink failure")
+	}
+	sink.err = nil
+	if err := processor.ProcessInputs(context.Background(), key, []*contract.TriggerInput{newer, older}); err != nil {
+		t.Fatalf("ProcessInputs(replay) error = %v", err)
+	}
+	if len(sink.payloads) != 4 || !reflect.DeepEqual(sink.payloads[0], sink.payloads[2]) || !reflect.DeepEqual(sink.payloads[1], sink.payloads[3]) {
+		t.Fatal("replayed chunked decisions changed after a partial sink failure")
+	}
+	if got := sink.batches[0].Decisions[0]; got.Outcome != DecisionTrigger || !reflect.DeepEqual(got.AnomalyTimestamps, []int64{100, 110}) {
+		t.Fatalf("newer chunk decision = %#v, want complete event-time window", got)
+	}
+}
+
 type recordingSink struct {
 	batches  []*contract.TriggerDecisionBatch
 	payloads [][]byte
 	err      error
+	failAt   int
 }
 
 func (s *recordingSink) WriteBatch(_ context.Context, batch *contract.TriggerDecisionBatch) error {
@@ -253,6 +286,9 @@ func (s *recordingSink) WriteBatch(_ context.Context, batch *contract.TriggerDec
 	}
 	s.payloads = append(s.payloads, append([]byte(nil), payload...))
 	s.batches = append(s.batches, copyOfBatch)
+	if s.err != nil && s.failAt > 0 && len(s.payloads) != s.failAt {
+		return nil
+	}
 	return s.err
 }
 

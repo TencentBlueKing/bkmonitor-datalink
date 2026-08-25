@@ -52,9 +52,13 @@ func (function ObserverFunc) ObserveDetect(ctx context.Context, observation Obse
 }
 
 func observeDetect(ctx context.Context, observer Observer, observation Observation) {
-	if observer != nil {
-		observer.ObserveDetect(ctx, observation)
+	if observer == nil {
+		return
 	}
+	defer func() {
+		_ = recover()
+	}()
+	observer.ObserveDetect(ctx, observation)
 }
 
 func finishDetectObservation(

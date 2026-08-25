@@ -482,6 +482,67 @@ func TestEvaluatorObservesOneBoundedAggregatePerCall(t *testing.T) {
 	}
 }
 
+func TestEvaluatorObserverPanicDoesNotChangeBusinessResult(t *testing.T) {
+	envelope := fixtureEnvelope(t, []contract.EvaluationPlanV2{fixturePlan("1001", []contract.LevelIRV2{
+		fixtureLevel(1, 1, contract.LevelConnectorAND, fixtureThresholdAlgorithm("GT", "50", "percent", "")),
+	})}, []fixtureRecord{{host: "host", sourceTime: 100, value: json.RawMessage(`60`)}}, contract.QueryCompletenessFull)
+	input, executions, digest := fixtureExecutions(t, envelope)
+	baseRequest := EvaluateRequest{
+		Completeness: input.Execution().Completeness, DatasetContractDigest: digest, Plans: executions, Limits: generousLimits(),
+	}
+	budgetRequest := baseRequest
+	budgetRequest.Limits.MaxResultBytes = 1
+	internalRequest := baseRequest
+	internalRequest.DatasetContractDigest = strings.Repeat("0", 64)
+	tests := []struct {
+		name      string
+		request   EvaluateRequest
+		errorKind string
+	}{
+		{name: "success", request: baseRequest},
+		{name: "budget error", request: budgetRequest, errorKind: "budget"},
+		{name: "internal error", request: internalRequest, errorKind: "internal"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			baseline, err := NewEvaluator(NewDefaultRegistry(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			withPanicObserver, err := NewEvaluator(NewDefaultRegistry(), ObserverFunc(func(context.Context, Observation) {
+				panic("observer unavailable")
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantBatch, wantErr := baseline.Evaluate(context.Background(), test.request)
+			gotBatch, gotErr := withPanicObserver.Evaluate(context.Background(), test.request)
+			if !reflect.DeepEqual(gotBatch, wantBatch) {
+				t.Fatalf("batch = %#v, want %#v", gotBatch, wantBatch)
+			}
+			if (gotErr == nil) != (wantErr == nil) || gotErr != nil && gotErr.Error() != wantErr.Error() {
+				t.Fatalf("error = %v, want %v", gotErr, wantErr)
+			}
+			switch test.errorKind {
+			case "":
+				if gotErr != nil {
+					t.Fatalf("error = %v, want nil", gotErr)
+				}
+			case "budget":
+				var budget *BudgetError
+				if !errors.As(gotErr, &budget) {
+					t.Fatalf("error = %v, want BudgetError", gotErr)
+				}
+			case "internal":
+				var internal *InternalError
+				if !errors.As(gotErr, &internal) {
+					t.Fatalf("error = %v, want InternalError", gotErr)
+				}
+			}
+		})
+	}
+}
+
 func TestEvaluatorAcceptsExactResultBudgetAndRejectsOneByteLessBeforeDetect(t *testing.T) {
 	envelope := fixtureEnvelope(t, []contract.EvaluationPlanV2{fixturePlan("1001", []contract.LevelIRV2{
 		fixtureLevel(1, 1, contract.LevelConnectorAND, fixtureThresholdAlgorithm("GT", "50", "percent", "")),

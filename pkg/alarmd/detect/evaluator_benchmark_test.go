@@ -29,8 +29,10 @@ func BenchmarkEvaluatorThreshold(b *testing.B) {
 		reverse     bool
 		sparse      bool
 		exactBudget bool
+		observer    bool
 	}{
 		{name: "single_plan", planCount: 1, recordCount: 100, hostCount: 10},
+		{name: "single_plan_noop_observer", planCount: 1, recordCount: 100, hostCount: 10, observer: true},
 		{name: "multi_plan_overlap", planCount: 4, recordCount: 100, hostCount: 25},
 		{name: "multi_plan_sparse", planCount: 4, recordCount: 100, hostCount: 25, sparse: true},
 		{name: "hot_series_ordered", planCount: 1, recordCount: 100, hostCount: 1},
@@ -41,7 +43,14 @@ func BenchmarkEvaluatorThreshold(b *testing.B) {
 		b.Run(benchmark.name, func(b *testing.B) {
 			request, selectedRecords := benchmarkRequest(b, benchmark.planCount, benchmark.recordCount, benchmark.hostCount,
 				benchmark.reverse, benchmark.sparse, benchmark.exactBudget)
-			evaluator := newTestEvaluator(b)
+			var observer Observer
+			if benchmark.observer {
+				observer = ObserverFunc(func(context.Context, Observation) {})
+			}
+			evaluator, err := NewEvaluator(NewDefaultRegistry(), observer)
+			if err != nil {
+				b.Fatal(err)
+			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {

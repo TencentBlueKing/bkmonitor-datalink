@@ -339,9 +339,10 @@ func validateAlgorithmCompileResult(
 		return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
 	}
 	nodes, err := result.Detector.predicate.root.validate()
-	if err != nil || nodes != result.ASTNodes || result.Detector.predicate.validate() != nil {
+	if err != nil || nodes != result.ASTNodes || len(result.Detector.predicate.digest) != 64 {
 		return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
 	}
+	result.Detector.predicate.validated = true
 	reasons := append([]string(nil), result.Detector.declaredExecutorErrors...)
 	sort.Strings(reasons)
 	canonicalReasons := reasons[:0]

@@ -196,6 +196,43 @@ func TestCompilerReturnsImmutableViews(t *testing.T) {
 	}
 }
 
+func TestCompiledPlanReadOnlyViewsDoNotClonePredicateAST(t *testing.T) {
+	config := thresholdConfig("50")
+	groups := make([]any, 16)
+	for group := range groups {
+		conditions := make([]any, 4)
+		for condition := range conditions {
+			conditions[condition] = map[string]any{"operator": "GTE", "threshold_decimal": "50"}
+		}
+		groups[group] = map[string]any{"conditions": conditions}
+	}
+	config["groups"] = groups
+	plan := validPlan()
+	plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0].Config = mustJSON(config)
+	compiled := mustCompilePlan(t, newTestCompiler(t), plan)
+
+	allocations := testing.AllocsPerRun(1000, func() {
+		readOnlyLevelsSink = compiled.Levels()
+		readOnlyDetectorsSink = readOnlyLevelsSink[0].Detectors()
+		readOnlyPredicateSink = readOnlyDetectorsSink[0].Predicate()
+	})
+	if allocations > 2 {
+		t.Fatalf("read-only views allocated %.1f objects per access, want at most 2 outer slice copies", allocations)
+	}
+}
+
+func TestPredicateEvaluateRejectsUnvalidatedValue(t *testing.T) {
+	predicate, normalizer := compileThresholdForTest(t, thresholdConfig("50"))
+	unvalidated := Predicate{root: predicate.root, digest: predicate.digest}
+	value := normalizer.Normalize(json.RawMessage(`60`))
+	if _, err := unvalidated.Evaluate(value.Value()); err == nil {
+		t.Fatal("Evaluate() accepted a Predicate without the compiled invariant marker")
+	}
+	if _, err := predicate.Evaluate(value.Value()); err != nil {
+		t.Fatalf("compiled Predicate Evaluate() error = %v", err)
+	}
+}
+
 func TestCompilerRejectsUnsupportedScopeAndBudget(t *testing.T) {
 	compiler := newTestCompiler(t)
 	plan := validPlan()
@@ -530,6 +567,12 @@ type declaredErrorsAlgorithmCompiler struct {
 	reasons []string
 }
 
+var (
+	readOnlyLevelsSink    []CompiledLevel
+	readOnlyDetectorsSink []DetectorSpec
+	readOnlyPredicateSink Predicate
+)
+
 func (declaredErrorsAlgorithmCompiler) Capability() AlgorithmCapability {
 	return AlgorithmCapability{
 		Kind: "DeclaredErrors", Version: 1, EvaluationScope: contract.EvaluationScopeSeries, InputShape: "ROW",
@@ -548,7 +591,7 @@ func (c declaredErrorsAlgorithmCompiler) Compile(ctx context.Context, compileCon
 	return compiled, nil
 }
 
-func compileThresholdForTest(t *testing.T, config map[string]any) (Predicate, NumericNormalizerSpec) {
+func compileThresholdForTest(t testing.TB, config map[string]any) (Predicate, NumericNormalizerSpec) {
 	t.Helper()
 	plan := validPlan()
 	dataUnit := config["data_unit"].(string)
@@ -573,7 +616,7 @@ func mustEvaluate(t *testing.T, predicate Predicate, value NormalizedNumber) Pre
 	return evaluation
 }
 
-func newTestCompiler(t *testing.T) *PlanCompiler {
+func newTestCompiler(t testing.TB) *PlanCompiler {
 	t.Helper()
 	compiler, err := NewCompiler(NewDefaultAlgorithmCompilerRegistry(), testLimits())
 	if err != nil {
@@ -673,7 +716,7 @@ func mustJSON(value any) json.RawMessage {
 	return payload
 }
 
-func mustCompilePlan(t *testing.T, compiler *PlanCompiler, plan contract.EvaluationPlanV2) *CompiledPlan {
+func mustCompilePlan(t testing.TB, compiler *PlanCompiler, plan contract.EvaluationPlanV2) *CompiledPlan {
 	t.Helper()
 	result := mustCompileResult(t, compiler, plan)
 	compiled, ok := result.Plan()
@@ -683,7 +726,7 @@ func mustCompilePlan(t *testing.T, compiler *PlanCompiler, plan contract.Evaluat
 	return compiled
 }
 
-func mustCompileResult(t *testing.T, compiler *PlanCompiler, plan contract.EvaluationPlanV2) CompileResult {
+func mustCompileResult(t testing.TB, compiler *PlanCompiler, plan contract.EvaluationPlanV2) CompileResult {
 	t.Helper()
 	result, err := compiler.Compile(context.Background(), validRequest(plan))
 	if err != nil {

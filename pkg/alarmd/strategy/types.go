@@ -202,8 +202,9 @@ func (r NormalizeResult) ReasonCode() string {
 }
 
 type Predicate struct {
-	root   predicateNode
-	digest string
+	root      predicateNode
+	digest    string
+	validated bool
 }
 
 type predicateNode struct {
@@ -226,8 +227,8 @@ func (e PredicateEvaluation) MatchedGroup() int { return e.matchedGroup }
 func (e PredicateEvaluation) PredicateDigest() string { return e.predicateDigest }
 
 func (p Predicate) Evaluate(value NormalizedNumber) (PredicateEvaluation, error) {
-	if err := p.validate(); err != nil {
-		return PredicateEvaluation{}, err
+	if !p.validated || len(p.digest) != 64 {
+		return PredicateEvaluation{}, errors.New("strategy: predicate is not a validated compiled value")
 	}
 	matchedGroup := -1
 	if p.root.kind == PredicateAny {
@@ -253,28 +254,7 @@ func (p Predicate) Evaluate(value NormalizedNumber) (PredicateEvaluation, error)
 	return PredicateEvaluation{matched: matched, matchedGroup: matchedGroup, predicateDigest: p.digest}, nil
 }
 
-func (p Predicate) clone() Predicate {
-	return Predicate{root: p.root.clone(), digest: p.digest}
-}
-
 func (p Predicate) Digest() string { return p.digest }
-
-func (n predicateNode) clone() predicateNode {
-	cloned := n
-	cloned.children = make([]predicateNode, len(n.children))
-	for index := range n.children {
-		cloned.children[index] = n.children[index].clone()
-	}
-	return cloned
-}
-
-func (p Predicate) validate() error {
-	if len(p.digest) != 64 {
-		return errors.New("strategy: invalid predicate digest")
-	}
-	_, err := p.root.validate()
-	return err
-}
 
 func (n predicateNode) validate() (int, error) {
 	switch n.kind {
@@ -371,20 +351,13 @@ func (s DetectorSpec) NormalizerRef() string {
 }
 
 func (s DetectorSpec) Predicate() Predicate {
-	return s.predicate.clone()
+	return s.predicate
 }
 
 func (s DetectorSpec) PredicateDigest() string { return s.predicate.digest }
 
 func (s DetectorSpec) DeclaredExecutorErrors() []string {
 	return append([]string(nil), s.declaredExecutorErrors...)
-}
-
-func (s DetectorSpec) clone() DetectorSpec {
-	cloned := s
-	cloned.predicate = s.predicate.clone()
-	cloned.declaredExecutorErrors = append([]string(nil), s.declaredExecutorErrors...)
-	return cloned
 }
 
 type NumericNormalizerSpec struct {
@@ -437,11 +410,7 @@ func (l CompiledLevel) Connector() string {
 }
 
 func (l CompiledLevel) Detectors() []DetectorSpec {
-	result := make([]DetectorSpec, len(l.detectors))
-	for index := range l.detectors {
-		result[index] = l.detectors[index].clone()
-	}
-	return result
+	return append([]DetectorSpec(nil), l.detectors...)
 }
 
 func (l CompiledLevel) Trigger() TriggerPlan {
@@ -469,13 +438,6 @@ func (l CompiledLevel) Fingerprints() LevelFingerprints {
 }
 
 func (l CompiledLevel) ResourceEstimate() ResourceEstimate { return l.resourceEstimate }
-
-func (l CompiledLevel) clone() CompiledLevel {
-	cloned := l
-	cloned.detectors = l.Detectors()
-	cloned.effectiveTime = l.effectiveTime.clone()
-	return cloned
-}
 
 type CompiledPlan struct {
 	planRef             contract.RuntimePlanRefV1
@@ -523,11 +485,7 @@ func (p *CompiledPlan) Levels() []CompiledLevel {
 	if p == nil {
 		return nil
 	}
-	levels := make([]CompiledLevel, len(p.levels))
-	for index := range p.levels {
-		levels[index] = p.levels[index].clone()
-	}
-	return levels
+	return append([]CompiledLevel(nil), p.levels...)
 }
 
 func (p *CompiledPlan) LevelsByPriority() []CompiledLevel {

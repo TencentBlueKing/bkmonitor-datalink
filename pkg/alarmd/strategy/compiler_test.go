@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
@@ -113,10 +114,11 @@ func TestCompilerThresholdNormalizerAndPredicate(t *testing.T) {
 		t.Fatalf("Normalizer(%q) not found", detector.NormalizerRef())
 	}
 	normalized := normalizer.Normalize(json.RawMessage(`0.8`))
-	if !normalized.Available() || normalized.Value().Micros() != 80_000_000 {
+	if !normalized.Available() || normalized.Value().CanonicalDecimal() != "80.000000" {
 		t.Fatalf("Normalize(0.8) = %+v", normalized)
 	}
-	if !detector.Predicate().Evaluate(normalized.Value()) {
+	evaluation, err := detector.Predicate().Evaluate(normalized.Value())
+	if err != nil || !evaluation.Matched() || evaluation.MatchedGroup() != 0 || len(evaluation.PredicateDigest()) != 64 {
 		t.Fatal("Predicate() did not match the normalized threshold")
 	}
 
@@ -285,6 +287,48 @@ func TestCompilerRequiresThresholdUnitPrefixField(t *testing.T) {
 	}
 }
 
+func TestCompilerAcceptsCompatibleHigherMinor(t *testing.T) {
+	compiler := newTestCompiler(t)
+	plan := validPlan()
+	plan.StrategyIR.Schema.Minor = 1
+	plan.StrategyIR.RequiredFeatures = []string{"reader-owned-future-feature"}
+	if _, ok := mustCompileResult(t, compiler, plan).Plan(); !ok {
+		t.Fatal("compatible higher minor accepted by M0 did not compile")
+	}
+}
+
+func TestThresholdSupportsLargeNormalizedValues(t *testing.T) {
+	config := thresholdConfig("10")
+	config["data_unit"] = "tbytes"
+	config["threshold_unit_prefix"] = "Ti"
+	predicate, normalizer := compileThresholdForTest(t, config)
+	value := normalizer.Normalize(json.RawMessage(`10`))
+	if !value.Available() || value.Value().CanonicalDecimal() != "10995116277760.000000" {
+		t.Fatalf("Normalize(10 TiB) = %+v", value)
+	}
+	evaluation, err := predicate.Evaluate(value.Value())
+	if err != nil || !evaluation.Matched() {
+		t.Fatalf("Predicate(10 TiB) = %+v, %v", evaluation, err)
+	}
+}
+
+func TestCompilerRejectsInvalidRegistryOutputAsInternalError(t *testing.T) {
+	registry, err := NewAlgorithmCompilerRegistry(thresholdAlgorithmCompiler{}, zeroAlgorithmCompiler{})
+	if err != nil {
+		t.Fatalf("NewAlgorithmCompilerRegistry() error = %v", err)
+	}
+	compiler, err := NewCompiler(registry, testLimits())
+	if err != nil {
+		t.Fatalf("NewCompiler() error = %v", err)
+	}
+	plan := validPlan()
+	plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0] = contract.AlgorithmIRV2{Type: "Zero", Version: 1, Config: json.RawMessage(`{}`)}
+	result, err := compiler.Compile(context.Background(), validRequest(plan))
+	if err == nil || !strings.Contains(err.Error(), "invalid compiler output") {
+		t.Fatalf("Compile() result = %+v, error = %v", result, err)
+	}
+}
+
 func TestThresholdOperatorsAndOROfAND(t *testing.T) {
 	operators := []struct {
 		operator string
@@ -307,8 +351,9 @@ func TestThresholdOperatorsAndOROfAND(t *testing.T) {
 			}}}
 			predicate, normalizer := compileThresholdForTest(t, config)
 			value := normalizer.Normalize(json.RawMessage(test.value))
-			if !value.Available() || predicate.Evaluate(value.Value()) != test.want {
-				t.Fatalf("%s(%s, 5) = %v", test.operator, test.value, predicate.Evaluate(value.Value()))
+			evaluation, err := predicate.Evaluate(value.Value())
+			if !value.Available() || err != nil || evaluation.Matched() != test.want {
+				t.Fatalf("%s(%s, 5) = %+v, %v", test.operator, test.value, evaluation, err)
 			}
 		})
 	}
@@ -330,8 +375,12 @@ func TestThresholdOperatorsAndOROfAND(t *testing.T) {
 		want  bool
 	}{{"15", true}, {"25", false}, {"30", true}} {
 		value := normalizer.Normalize(json.RawMessage(test.value))
-		if got := predicate.Evaluate(value.Value()); got != test.want {
-			t.Fatalf("OR-of-AND(%s) = %v, want %v", test.value, got, test.want)
+		evaluation, err := predicate.Evaluate(value.Value())
+		if err != nil || evaluation.Matched() != test.want {
+			t.Fatalf("OR-of-AND(%s) = %+v, %v, want %v", test.value, evaluation, err, test.want)
+		}
+		if test.want && test.value == "30" && evaluation.MatchedGroup() != 1 {
+			t.Fatalf("OR-of-AND(%s) matched group = %d, want 1", test.value, evaluation.MatchedGroup())
 		}
 	}
 }
@@ -340,14 +389,14 @@ func TestThresholdUsesSixPlaceHalfEvenRounding(t *testing.T) {
 	config := thresholdConfig("1.234564")
 	config["data_unit"] = "none"
 	predicate, normalizer := compileThresholdForTest(t, config)
-	if value := normalizer.Normalize(json.RawMessage(`1.2345645`)); value.Value().Micros() != 1_234_564 || !predicate.Evaluate(value.Value()) {
+	if value := normalizer.Normalize(json.RawMessage(`1.2345645`)); value.Value().CanonicalDecimal() != "1.234564" || mustEvaluate(t, predicate, value.Value()).Matched() == false {
 		t.Fatalf("Normalize(1.2345645) = %+v", value)
 	}
 
 	config = thresholdConfig("1.234566")
 	config["data_unit"] = "none"
 	predicate, normalizer = compileThresholdForTest(t, config)
-	if value := normalizer.Normalize(json.RawMessage(`1.2345655`)); value.Value().Micros() != 1_234_566 || !predicate.Evaluate(value.Value()) {
+	if value := normalizer.Normalize(json.RawMessage(`1.2345655`)); value.Value().CanonicalDecimal() != "1.234566" || mustEvaluate(t, predicate, value.Value()).Matched() == false {
 		t.Fatalf("Normalize(1.2345655) = %+v", value)
 	}
 }
@@ -414,10 +463,28 @@ func TestCompilerCompilesM0GoldenEnvelope(t *testing.T) {
 
 type brokenAlgorithmCompiler struct{}
 
-func (brokenAlgorithmCompiler) Kind() string    { return "Broken" }
-func (brokenAlgorithmCompiler) Version() uint32 { return 1 }
+func (brokenAlgorithmCompiler) Capability() AlgorithmCapability {
+	return AlgorithmCapability{
+		Kind: "Broken", Version: 1, EvaluationScope: contract.EvaluationScopeSeries, InputShape: "ROW",
+		RequiredHistoryKind: "NONE", StateSchemaVersion: "broken-v1", Deterministic: true,
+		FixedComputeCost: 1, CostPerRecord: 1,
+	}
+}
 func (brokenAlgorithmCompiler) Compile(context.Context, AlgorithmCompileContext, contract.AlgorithmIRV2) (AlgorithmCompileResult, error) {
 	return AlgorithmCompileResult{}, errors.New("controlled compiler failure")
+}
+
+type zeroAlgorithmCompiler struct{}
+
+func (zeroAlgorithmCompiler) Capability() AlgorithmCapability {
+	return AlgorithmCapability{
+		Kind: "Zero", Version: 1, EvaluationScope: contract.EvaluationScopeSeries, InputShape: "ROW",
+		RequiredHistoryKind: "NONE", StateSchemaVersion: "zero-v1", Deterministic: true,
+		FixedComputeCost: 1, CostPerRecord: 1,
+	}
+}
+func (zeroAlgorithmCompiler) Compile(context.Context, AlgorithmCompileContext, contract.AlgorithmIRV2) (AlgorithmCompileResult, error) {
+	return AlgorithmCompileResult{}, nil
 }
 
 func compileThresholdForTest(t *testing.T, config map[string]any) (Predicate, NumericNormalizerSpec) {
@@ -434,6 +501,15 @@ func compileThresholdForTest(t *testing.T, config map[string]any) (Predicate, Nu
 		t.Fatalf("Normalizer(%q) not found", detector.NormalizerRef())
 	}
 	return detector.Predicate(), normalizer
+}
+
+func mustEvaluate(t *testing.T, predicate Predicate, value NormalizedNumber) PredicateEvaluation {
+	t.Helper()
+	evaluation, err := predicate.Evaluate(value)
+	if err != nil {
+		t.Fatalf("Predicate.Evaluate() error = %v", err)
+	}
+	return evaluation
 }
 
 func newTestCompiler(t *testing.T) *PlanCompiler {
@@ -454,6 +530,11 @@ func testLimits() Limits {
 		MaxConditionsPerAlgorithm: 64,
 		MaxASTNodesPerLevel:       256,
 		MaxRequiredHistoryPoints:  4096,
+		MaxCompiledPlanBytes:      64 << 10,
+		MaxCacheEntries:           64,
+		MaxCacheBytes:             4 << 20,
+		NegativeCacheTTL:          time.Minute,
+		BudgetRevision:            "test-budget-v1",
 	}
 }
 
@@ -533,15 +614,21 @@ func mustJSON(value any) json.RawMessage {
 
 func mustCompilePlan(t *testing.T, compiler *PlanCompiler, plan contract.EvaluationPlanV2) *CompiledPlan {
 	t.Helper()
-	result, err := compiler.Compile(context.Background(), validRequest(plan))
-	if err != nil {
-		t.Fatalf("Compile() error = %v", err)
-	}
+	result := mustCompileResult(t, compiler, plan)
 	compiled, ok := result.Plan()
 	if !ok {
 		t.Fatalf("Compile() terminal = %+v, levels = %+v", result.PlanTerminal(), result.LevelTerminals())
 	}
 	return compiled
+}
+
+func mustCompileResult(t *testing.T, compiler *PlanCompiler, plan contract.EvaluationPlanV2) CompileResult {
+	t.Helper()
+	result, err := compiler.Compile(context.Background(), validRequest(plan))
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	return result
 }
 
 func cloneLevels(levels []contract.LevelIRV2) []contract.LevelIRV2 {

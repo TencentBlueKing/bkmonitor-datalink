@@ -10,8 +10,14 @@
 package strategy
 
 import (
+	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"math/big"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
@@ -35,6 +41,11 @@ type Limits struct {
 	MaxConditionsPerAlgorithm int
 	MaxASTNodesPerLevel       int
 	MaxRequiredHistoryPoints  uint32
+	MaxCompiledPlanBytes      int
+	MaxCacheEntries           int
+	MaxCacheBytes             int
+	NegativeCacheTTL          time.Duration
+	BudgetRevision            string
 }
 
 type StateSemantics struct {
@@ -104,12 +115,73 @@ type StateRequirement struct {
 	RequiredDetectHistoryPoints uint32
 }
 
-type NormalizedNumber struct {
-	micros int64
+type ResourceEstimate struct {
+	FixedComputeCost     uint64
+	CostPerRecord        uint64
+	StatePointsPerSeries uint64
+	CompiledBytes        int
+	Algorithms           int
+	ASTNodes             int
 }
 
-func (n NormalizedNumber) Micros() int64 {
-	return n.micros
+type NormalizedNumber struct {
+	negative bool
+	high     uint64
+	low      uint64
+}
+
+func (n NormalizedNumber) CanonicalDecimal() string {
+	digits := n.magnitude().String()
+	if len(digits) <= 6 {
+		digits = strings.Repeat("0", 7-len(digits)) + digits
+	}
+	result := digits[:len(digits)-6] + "." + digits[len(digits)-6:]
+	if n.negative && (n.high != 0 || n.low != 0) {
+		return "-" + result
+	}
+	return result
+}
+
+func (n NormalizedNumber) compare(other NormalizedNumber) int {
+	if n.negative != other.negative {
+		if n.negative {
+			return -1
+		}
+		return 1
+	}
+	comparison := 0
+	if n.high < other.high || (n.high == other.high && n.low < other.low) {
+		comparison = -1
+	} else if n.high > other.high || (n.high == other.high && n.low > other.low) {
+		comparison = 1
+	}
+	if n.negative {
+		return -comparison
+	}
+	return comparison
+}
+
+func (n NormalizedNumber) magnitude() *big.Int {
+	payload := make([]byte, 16)
+	binary.BigEndian.PutUint64(payload[:8], n.high)
+	binary.BigEndian.PutUint64(payload[8:], n.low)
+	return new(big.Int).SetBytes(payload)
+}
+
+func normalizedNumberFromBigInt(value *big.Int) (NormalizedNumber, bool) {
+	if value == nil {
+		return NormalizedNumber{}, false
+	}
+	magnitude := new(big.Int).Abs(new(big.Int).Set(value))
+	if magnitude.BitLen() > 127 {
+		return NormalizedNumber{}, false
+	}
+	payload := magnitude.FillBytes(make([]byte, 16))
+	return NormalizedNumber{
+		negative: value.Sign() < 0,
+		high:     binary.BigEndian.Uint64(payload[:8]),
+		low:      binary.BigEndian.Uint64(payload[8:]),
+	}, true
 }
 
 type NormalizeResult struct {
@@ -130,7 +202,8 @@ func (r NormalizeResult) ReasonCode() string {
 }
 
 type Predicate struct {
-	root predicateNode
+	root   predicateNode
+	digest string
 }
 
 type predicateNode struct {
@@ -140,13 +213,51 @@ type predicateNode struct {
 	children  []predicateNode
 }
 
-func (p Predicate) Evaluate(value NormalizedNumber) bool {
-	return p.root.evaluate(value)
+type PredicateEvaluation struct {
+	matched         bool
+	matchedGroup    int
+	predicateDigest string
+}
+
+func (e PredicateEvaluation) Matched() bool { return e.matched }
+
+func (e PredicateEvaluation) MatchedGroup() int { return e.matchedGroup }
+
+func (e PredicateEvaluation) PredicateDigest() string { return e.predicateDigest }
+
+func (p Predicate) Evaluate(value NormalizedNumber) (PredicateEvaluation, error) {
+	if err := p.validate(); err != nil {
+		return PredicateEvaluation{}, err
+	}
+	matchedGroup := -1
+	if p.root.kind == PredicateAny {
+		for index, child := range p.root.children {
+			matched, err := child.evaluate(value)
+			if err != nil {
+				return PredicateEvaluation{}, err
+			}
+			if matched {
+				matchedGroup = index
+				break
+			}
+		}
+		return PredicateEvaluation{matched: matchedGroup >= 0, matchedGroup: matchedGroup, predicateDigest: p.digest}, nil
+	}
+	matched, err := p.root.evaluate(value)
+	if err != nil {
+		return PredicateEvaluation{}, err
+	}
+	if matched {
+		matchedGroup = 0
+	}
+	return PredicateEvaluation{matched: matched, matchedGroup: matchedGroup, predicateDigest: p.digest}, nil
 }
 
 func (p Predicate) clone() Predicate {
-	return Predicate{root: p.root.clone()}
+	return Predicate{root: p.root.clone(), digest: p.digest}
 }
+
+func (p Predicate) Digest() string { return p.digest }
 
 func (n predicateNode) clone() predicateNode {
 	cloned := n
@@ -157,39 +268,81 @@ func (n predicateNode) clone() predicateNode {
 	return cloned
 }
 
-func (n predicateNode) evaluate(value NormalizedNumber) bool {
+func (p Predicate) validate() error {
+	if len(p.digest) != 64 {
+		return errors.New("strategy: invalid predicate digest")
+	}
+	_, err := p.root.validate()
+	return err
+}
+
+func (n predicateNode) validate() (int, error) {
+	switch n.kind {
+	case PredicateAny, PredicateAll:
+		if len(n.children) == 0 || n.operator != "" {
+			return 0, errors.New("strategy: invalid predicate branch")
+		}
+		nodes := 1
+		for _, child := range n.children {
+			childNodes, err := child.validate()
+			if err != nil {
+				return 0, err
+			}
+			nodes += childNodes
+		}
+		return nodes, nil
+	case PredicateCompare:
+		if len(n.children) != 0 || !validOperator(n.operator) {
+			return 0, errors.New("strategy: invalid predicate comparison")
+		}
+		return 1, nil
+	default:
+		return 0, fmt.Errorf("strategy: unknown predicate node %q", n.kind)
+	}
+}
+
+func (n predicateNode) evaluate(value NormalizedNumber) (bool, error) {
 	switch n.kind {
 	case PredicateAny:
 		for _, child := range n.children {
-			if child.evaluate(value) {
-				return true
+			matched, err := child.evaluate(value)
+			if err != nil {
+				return false, err
+			}
+			if matched {
+				return true, nil
 			}
 		}
-		return false
+		return false, nil
 	case PredicateAll:
 		for _, child := range n.children {
-			if !child.evaluate(value) {
-				return false
+			matched, err := child.evaluate(value)
+			if err != nil {
+				return false, err
+			}
+			if !matched {
+				return false, nil
 			}
 		}
-		return true
+		return true, nil
 	case PredicateCompare:
+		comparison := value.compare(n.threshold)
 		switch n.operator {
 		case "GT":
-			return value.micros > n.threshold.micros
+			return comparison > 0, nil
 		case "GTE":
-			return value.micros >= n.threshold.micros
+			return comparison >= 0, nil
 		case "EQ":
-			return value.micros == n.threshold.micros
+			return comparison == 0, nil
 		case "NEQ":
-			return value.micros != n.threshold.micros
+			return comparison != 0, nil
 		case "LT":
-			return value.micros < n.threshold.micros
+			return comparison < 0, nil
 		case "LTE":
-			return value.micros <= n.threshold.micros
+			return comparison <= 0, nil
 		}
 	}
-	return false
+	return false, errors.New("strategy: predicate invariant violated")
 }
 
 type DetectorSpec struct {
@@ -220,6 +373,8 @@ func (s DetectorSpec) NormalizerRef() string {
 func (s DetectorSpec) Predicate() Predicate {
 	return s.predicate.clone()
 }
+
+func (s DetectorSpec) PredicateDigest() string { return s.predicate.digest }
 
 func (s DetectorSpec) DeclaredExecutorErrors() []string {
 	return append([]string(nil), s.declaredExecutorErrors...)
@@ -267,8 +422,10 @@ type CompiledLevel struct {
 	detectors        []DetectorSpec
 	trigger          TriggerPlan
 	recovery         RecoveryPlan
+	effectiveTime    EffectiveTimeRequirement
 	stateRequirement StateRequirement
 	fingerprints     LevelFingerprints
+	resourceEstimate ResourceEstimate
 }
 
 func (l CompiledLevel) Definition() contract.LevelDefinitionV2 {
@@ -295,6 +452,10 @@ func (l CompiledLevel) Recovery() RecoveryPlan {
 	return l.recovery
 }
 
+func (l CompiledLevel) EffectiveTimeRequirement() EffectiveTimeRequirement {
+	return l.effectiveTime.clone()
+}
+
 func (l CompiledLevel) RequiredDetectHistoryPoints() uint32 {
 	return l.stateRequirement.RequiredDetectHistoryPoints
 }
@@ -307,9 +468,12 @@ func (l CompiledLevel) Fingerprints() LevelFingerprints {
 	return l.fingerprints
 }
 
+func (l CompiledLevel) ResourceEstimate() ResourceEstimate { return l.resourceEstimate }
+
 func (l CompiledLevel) clone() CompiledLevel {
 	cloned := l
 	cloned.detectors = l.Detectors()
+	cloned.effectiveTime = l.effectiveTime.clone()
 	return cloned
 }
 
@@ -320,6 +484,8 @@ type CompiledPlan struct {
 	levels              []CompiledLevel
 	normalizers         map[string]NumericNormalizerSpec
 	fingerprints        PlanFingerprints
+	resourceEstimate    ResourceEstimate
+	datasetDigest       string
 }
 
 func (p *CompiledPlan) PlanRef() contract.RuntimePlanRefV1 {
@@ -390,6 +556,20 @@ func (p *CompiledPlan) Fingerprints() PlanFingerprints {
 	return p.fingerprints
 }
 
+func (p *CompiledPlan) ResourceEstimate() ResourceEstimate {
+	if p == nil {
+		return ResourceEstimate{}
+	}
+	return p.resourceEstimate
+}
+
+func (p *CompiledPlan) DatasetContractDigest() string {
+	if p == nil {
+		return ""
+	}
+	return p.datasetDigest
+}
+
 type thresholdConfigV1 struct {
 	ValueField          string             `json:"value_field"`
 	DataUnit            string             `json:"data_unit"`
@@ -413,9 +593,22 @@ type thresholdCondition struct {
 }
 
 type triggerPlanConfigV1 struct {
-	WindowSize        uint32 `json:"window_size"`
-	RequiredAnomalies uint32 `json:"required_anomalies"`
-	StepSeconds       uint32 `json:"step_seconds"`
+	WindowSize        uint32          `json:"window_size"`
+	RequiredAnomalies uint32          `json:"required_anomalies"`
+	StepSeconds       uint32          `json:"step_seconds"`
+	TimezoneRef       string          `json:"timezone_ref,omitempty"`
+	Uptime            *uptimeConfigV1 `json:"uptime,omitempty"`
+}
+
+type uptimeConfigV1 struct {
+	TimeRanges      *[]uptimeTimeRangeV1 `json:"time_ranges"`
+	ActiveCalendars []int64              `json:"active_calendars,omitempty"`
+	Calendars       []int64              `json:"calendars,omitempty"`
+}
+
+type uptimeTimeRangeV1 struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
 }
 
 type recoveryPlanConfigV1 struct {
@@ -442,10 +635,10 @@ type normalizerWire struct {
 }
 
 type predicateWire struct {
-	Kind            string          `json:"kind"`
-	Operator        string          `json:"operator,omitempty"`
-	ThresholdMicros *int64          `json:"threshold_micros,omitempty"`
-	Children        []predicateWire `json:"children,omitempty"`
+	Kind                string          `json:"kind"`
+	Operator            string          `json:"operator,omitempty"`
+	NormalizedThreshold *string         `json:"normalized_threshold,omitempty"`
+	Children            []predicateWire `json:"children,omitempty"`
 }
 
 func (s DetectorSpec) semantic(normalizer NumericNormalizerSpec) detectorSemantic {
@@ -463,8 +656,8 @@ func (s DetectorSpec) semantic(normalizer NumericNormalizerSpec) detectorSemanti
 func (n predicateNode) wire() predicateWire {
 	wire := predicateWire{Kind: n.kind, Operator: n.operator}
 	if n.kind == PredicateCompare {
-		threshold := n.threshold.micros
-		wire.ThresholdMicros = &threshold
+		threshold := n.threshold.CanonicalDecimal()
+		wire.NormalizedThreshold = &threshold
 	}
 	if len(n.children) > 0 {
 		wire.Children = make([]predicateWire, len(n.children))

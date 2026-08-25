@@ -12,13 +12,15 @@ package strategy
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 type AlgorithmCompileContext struct {
-	Projection contract.InputProjectionV2
-	Limits     Limits
+	Projection         contract.InputProjectionV2
+	ExecutionSemantics contract.ExecutionSemanticsV2
+	Limits             Limits
 }
 
 type AlgorithmCompileResult struct {
@@ -27,9 +29,21 @@ type AlgorithmCompileResult struct {
 	ASTNodes   int
 }
 
+type AlgorithmCapability struct {
+	Kind                string `json:"kind"`
+	Version             uint32 `json:"version"`
+	EvaluationScope     string `json:"evaluation_scope"`
+	InputShape          string `json:"input_shape"`
+	RequiredHistoryKind string `json:"required_history_kind"`
+	StateSchemaVersion  string `json:"state_schema_version"`
+	Deterministic       bool   `json:"deterministic"`
+	ExternalCallBudget  uint32 `json:"external_call_budget"`
+	FixedComputeCost    uint64 `json:"fixed_compute_cost"`
+	CostPerRecord       uint64 `json:"cost_per_record"`
+}
+
 type AlgorithmCompiler interface {
-	Kind() string
-	Version() uint32
+	Capability() AlgorithmCapability
 	Compile(context.Context, AlgorithmCompileContext, contract.AlgorithmIRV2) (AlgorithmCompileResult, error)
 }
 
@@ -38,22 +52,51 @@ type algorithmKey struct {
 	version uint32
 }
 
+type registeredAlgorithm struct {
+	compiler   AlgorithmCompiler
+	capability AlgorithmCapability
+}
+
 type AlgorithmCompilerRegistry struct {
-	compilers map[algorithmKey]AlgorithmCompiler
+	compilers map[algorithmKey]registeredAlgorithm
+	digest    string
 }
 
 func NewAlgorithmCompilerRegistry(compilers ...AlgorithmCompiler) (*AlgorithmCompilerRegistry, error) {
-	registry := &AlgorithmCompilerRegistry{compilers: make(map[algorithmKey]AlgorithmCompiler, len(compilers))}
+	registry := &AlgorithmCompilerRegistry{compilers: make(map[algorithmKey]registeredAlgorithm, len(compilers))}
+	capabilities := make([]AlgorithmCapability, 0, len(compilers))
 	for _, compiler := range compilers {
-		if compiler == nil || compiler.Kind() == "" || compiler.Version() == 0 {
+		if compiler == nil {
 			return nil, fmt.Errorf("strategy: invalid algorithm compiler")
 		}
-		key := algorithmKey{kind: compiler.Kind(), version: compiler.Version()}
+		capability := compiler.Capability()
+		if capability.Kind == "" || capability.Version == 0 || capability.EvaluationScope == "" || capability.InputShape == "" ||
+			capability.RequiredHistoryKind == "" || capability.StateSchemaVersion == "" || !capability.Deterministic ||
+			capability.FixedComputeCost == 0 || capability.CostPerRecord == 0 {
+			return nil, fmt.Errorf("strategy: invalid algorithm capability")
+		}
+		key := algorithmKey{kind: capability.Kind, version: capability.Version}
 		if _, exists := registry.compilers[key]; exists {
 			return nil, fmt.Errorf("strategy: duplicate algorithm compiler %s@%d", key.kind, key.version)
 		}
-		registry.compilers[key] = compiler
+		registry.compilers[key] = registeredAlgorithm{compiler: compiler, capability: capability}
+		capabilities = append(capabilities, capability)
 	}
+	sort.Slice(capabilities, func(left, right int) bool {
+		if capabilities[left].Kind == capabilities[right].Kind {
+			return capabilities[left].Version < capabilities[right].Version
+		}
+		return capabilities[left].Kind < capabilities[right].Kind
+	})
+	digest, err := contract.DeriveCanonicalDigestV2("algorithm-compiler-capabilities-v1", struct {
+		PredicateSemantics  string                `json:"predicate_semantics"`
+		NormalizerSemantics string                `json:"normalizer_semantics"`
+		Capabilities        []AlgorithmCapability `json:"capabilities"`
+	}{"threshold-predicate-v1", "numeric-normalizer-v1", capabilities})
+	if err != nil {
+		return nil, fmt.Errorf("strategy: derive capability digest: %w", err)
+	}
+	registry.digest = digest
 	return registry, nil
 }
 
@@ -65,22 +108,29 @@ func NewDefaultAlgorithmCompilerRegistry() *AlgorithmCompilerRegistry {
 	return registry
 }
 
-func (r *AlgorithmCompilerRegistry) lookup(kind string, version uint32) (AlgorithmCompiler, bool) {
+func (r *AlgorithmCompilerRegistry) lookup(kind string, version uint32) (registeredAlgorithm, bool) {
 	if r == nil {
-		return nil, false
+		return registeredAlgorithm{}, false
 	}
-	compiler, ok := r.compilers[algorithmKey{kind: kind, version: version}]
-	return compiler, ok
+	registration, ok := r.compilers[algorithmKey{kind: kind, version: version}]
+	return registration, ok
+}
+
+func (r *AlgorithmCompilerRegistry) CapabilityDigest() string {
+	if r == nil {
+		return ""
+	}
+	return r.digest
 }
 
 type thresholdAlgorithmCompiler struct{}
 
-func (thresholdAlgorithmCompiler) Kind() string {
-	return DetectorKindThreshold
-}
-
-func (thresholdAlgorithmCompiler) Version() uint32 {
-	return 1
+func (thresholdAlgorithmCompiler) Capability() AlgorithmCapability {
+	return AlgorithmCapability{
+		Kind: DetectorKindThreshold, Version: 1, EvaluationScope: contract.EvaluationScopeSeries,
+		InputShape: "ROW", RequiredHistoryKind: "NONE", StateSchemaVersion: "threshold-stateless-v1", Deterministic: true,
+		FixedComputeCost: 1, CostPerRecord: 1,
+	}
 }
 
 func (thresholdAlgorithmCompiler) Compile(_ context.Context, compileContext AlgorithmCompileContext, raw contract.AlgorithmIRV2) (AlgorithmCompileResult, error) {
@@ -127,10 +177,14 @@ func (thresholdAlgorithmCompiler) Compile(_ context.Context, compileContext Algo
 		}
 		root.children = append(root.children, group)
 	}
+	predicateDigest, err := contract.DeriveCanonicalDigestV2("threshold-predicate-v1", root.wire())
+	if err != nil {
+		return AlgorithmCompileResult{}, fmt.Errorf("threshold predicate digest: %w", err)
+	}
 	return AlgorithmCompileResult{
 		Detector: DetectorSpec{
 			kind: DetectorKindThreshold, version: 1, valueRef: config.ValueField, normalizerRef: normalizer.ref,
-			predicate: Predicate{root: root}, declaredExecutorErrors: []string{},
+			predicate: Predicate{root: root, digest: predicateDigest}, declaredExecutorErrors: []string{},
 		},
 		Normalizer: normalizer,
 		ASTNodes:   nodes,

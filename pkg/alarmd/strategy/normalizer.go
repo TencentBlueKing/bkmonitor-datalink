@@ -32,9 +32,15 @@ func (s NumericNormalizerSpec) Normalize(raw json.RawMessage) NormalizeResult {
 	if trimmed[0] == '"' || trimmed[0] == '{' || trimmed[0] == '[' || bytes.Equal(trimmed, []byte("true")) || bytes.Equal(trimmed, []byte("false")) {
 		return NormalizeResult{reasonCode: contract.ReasonRequiredValueTypeMismatch}
 	}
-	rational, ok := parseDecimalRational(string(trimmed), true)
-	if !ok {
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.UseNumber()
+	var number json.Number
+	if err := decoder.Decode(&number); err != nil || number.String() != string(trimmed) {
 		return NormalizeResult{reasonCode: contract.ReasonRequiredValueTypeMismatch}
+	}
+	rational, ok := parseDecimalRational(number.String(), true)
+	if !ok {
+		return NormalizeResult{reasonCode: contract.ReasonRequiredValueNormalizationFailed}
 	}
 	value, ok := normalizeRational(rational, s.sourceMultiplier)
 	if !ok {
@@ -64,10 +70,7 @@ func normalizeRational(value *big.Rat, multiplier int64) (NormalizedNumber, bool
 			quotient.Add(quotient, big.NewInt(1))
 		}
 	}
-	if !quotient.IsInt64() {
-		return NormalizedNumber{}, false
-	}
-	return NormalizedNumber{micros: quotient.Int64()}, true
+	return normalizedNumberFromBigInt(quotient)
 }
 
 func parseDecimalRational(value string, allowExponent bool) (*big.Rat, bool) {

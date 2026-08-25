@@ -56,6 +56,35 @@ func TestCompilerCompilesEffectiveTimeRequirements(t *testing.T) {
 	}
 }
 
+func TestCompilerIncludesTimeRangeContentInEffectiveTimeDigest(t *testing.T) {
+	compiler := newTestCompiler(t)
+	first := validPlan()
+	first.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
+		"time_ranges": []any{map[string]any{"start": "09:00", "end": "17:00"}},
+	})
+	second := validPlan()
+	second.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
+		"time_ranges": []any{map[string]any{"start": "10:00", "end": "18:00"}},
+	})
+
+	firstRequirement := mustCompilePlan(t, compiler, first).Levels()[0].EffectiveTimeRequirement()
+	secondRequirement := mustCompilePlan(t, compiler, second).Levels()[0].EffectiveTimeRequirement()
+	if firstRequirement.Digest() == secondRequirement.Digest() {
+		t.Fatal("different time ranges produced the same effective-time requirement digest")
+	}
+	firstFact, err := newEffectiveTimeFact(EffectiveTimeActive, firstRequirement.Digest(), 100, 200)
+	if err != nil {
+		t.Fatalf("newEffectiveTimeFact(first) error = %v", err)
+	}
+	secondFact, err := newEffectiveTimeFact(EffectiveTimeActive, secondRequirement.Digest(), 100, 200)
+	if err != nil {
+		t.Fatalf("newEffectiveTimeFact(second) error = %v", err)
+	}
+	if firstFact.FactDigest() == secondFact.FactDigest() {
+		t.Fatal("different time ranges produced the same effective-time fact digest")
+	}
+}
+
 func TestCompilerIsolatesInvalidEffectiveTimeRequirement(t *testing.T) {
 	compiler := newTestCompiler(t)
 	plan := validPlan()

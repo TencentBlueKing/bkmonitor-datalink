@@ -250,7 +250,7 @@ func (c *PlanCompiler) compileLevel(
 		if err != nil {
 			return CompiledLevel{}, nil, nil, fmt.Errorf("strategy: compile %s@%d: %w", algorithm.Type, algorithm.Version, err)
 		}
-		if err := validateAlgorithmCompileResult(algorithm, registration.capability, projection, compiled); err != nil {
+		if err := validateAlgorithmCompileResult(algorithm, registration.capability, projection, &compiled); err != nil {
 			return CompiledLevel{}, nil, nil, err
 		}
 		astNodes += compiled.ASTNodes
@@ -326,8 +326,11 @@ func validateAlgorithmCompileResult(
 	raw contract.AlgorithmIRV2,
 	capability AlgorithmCapability,
 	projection contract.InputProjectionV2,
-	result AlgorithmCompileResult,
+	result *AlgorithmCompileResult,
 ) error {
+	if result == nil {
+		return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
+	}
 	if capability.Kind != raw.Type || capability.Version != raw.Version || result.Detector.kind != raw.Type || result.Detector.version != raw.Version ||
 		result.Detector.valueRef == "" || !contains(projection.ValueFields, result.Detector.valueRef) ||
 		result.Detector.normalizerRef == "" || result.Detector.normalizerRef != result.Normalizer.ref || len(result.Normalizer.ref) != 64 ||
@@ -339,11 +342,19 @@ func validateAlgorithmCompileResult(
 	if err != nil || nodes != result.ASTNodes || result.Detector.predicate.validate() != nil {
 		return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
 	}
-	for _, reason := range result.Detector.declaredExecutorErrors {
-		if !contract.IsKnownReasonV2(reason) {
+	reasons := append([]string(nil), result.Detector.declaredExecutorErrors...)
+	sort.Strings(reasons)
+	canonicalReasons := reasons[:0]
+	for _, reason := range reasons {
+		if !contract.ReasonAllowedForV2(reason, contract.ReasonDomainReceipt) ||
+			!contract.ReasonAllowedForV2(reason, contract.ReasonDomainObservation) {
 			return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
 		}
+		if len(canonicalReasons) == 0 || canonicalReasons[len(canonicalReasons)-1] != reason {
+			canonicalReasons = append(canonicalReasons, reason)
+		}
 	}
+	result.Detector.declaredExecutorErrors = canonicalReasons
 	return nil
 }
 

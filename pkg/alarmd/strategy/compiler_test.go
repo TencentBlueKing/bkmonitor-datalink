@@ -255,6 +255,45 @@ func TestCompilerDoesNotTerminalizeAlgorithmCompilerFailure(t *testing.T) {
 	}
 }
 
+func TestCompilerCanonicalizesDeclaredExecutorErrors(t *testing.T) {
+	registry, err := NewAlgorithmCompilerRegistry(declaredErrorsAlgorithmCompiler{reasons: []string{
+		contract.ReasonRequiredValueTypeMismatch,
+		contract.ReasonRecordInvalid,
+		contract.ReasonRequiredValueTypeMismatch,
+	}})
+	if err != nil {
+		t.Fatalf("NewAlgorithmCompilerRegistry() error = %v", err)
+	}
+	compiler, err := NewCompiler(registry, testLimits())
+	if err != nil {
+		t.Fatalf("NewCompiler() error = %v", err)
+	}
+	plan := validPlan()
+	plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0].Type = "DeclaredErrors"
+	compiled := mustCompilePlan(t, compiler, plan)
+	reasons := compiled.Levels()[0].Detectors()[0].DeclaredExecutorErrors()
+	if len(reasons) != 2 || reasons[0] != contract.ReasonRecordInvalid || reasons[1] != contract.ReasonRequiredValueTypeMismatch {
+		t.Fatalf("DeclaredExecutorErrors() = %v", reasons)
+	}
+}
+
+func TestCompilerRejectsDeclaredExecutorErrorOutsideReceiptObservation(t *testing.T) {
+	registry, err := NewAlgorithmCompilerRegistry(declaredErrorsAlgorithmCompiler{reasons: []string{contract.ReasonAuditDrop}})
+	if err != nil {
+		t.Fatalf("NewAlgorithmCompilerRegistry() error = %v", err)
+	}
+	compiler, err := NewCompiler(registry, testLimits())
+	if err != nil {
+		t.Fatalf("NewCompiler() error = %v", err)
+	}
+	plan := validPlan()
+	plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0].Type = "DeclaredErrors"
+	result, err := compiler.Compile(context.Background(), validRequest(plan))
+	if err == nil || !strings.Contains(err.Error(), "invalid compiler output") {
+		t.Fatalf("Compile() result = %+v, error = %v", result, err)
+	}
+}
+
 func TestCompilerRequiresRecoveryEnabledField(t *testing.T) {
 	compiler := newTestCompiler(t)
 	plan := validPlan()
@@ -485,6 +524,28 @@ func (zeroAlgorithmCompiler) Capability() AlgorithmCapability {
 }
 func (zeroAlgorithmCompiler) Compile(context.Context, AlgorithmCompileContext, contract.AlgorithmIRV2) (AlgorithmCompileResult, error) {
 	return AlgorithmCompileResult{}, nil
+}
+
+type declaredErrorsAlgorithmCompiler struct {
+	reasons []string
+}
+
+func (declaredErrorsAlgorithmCompiler) Capability() AlgorithmCapability {
+	return AlgorithmCapability{
+		Kind: "DeclaredErrors", Version: 1, EvaluationScope: contract.EvaluationScopeSeries, InputShape: "ROW",
+		RequiredHistoryKind: "NONE", StateSchemaVersion: "declared-errors-v1", Deterministic: true,
+		FixedComputeCost: 1, CostPerRecord: 1,
+	}
+}
+
+func (c declaredErrorsAlgorithmCompiler) Compile(ctx context.Context, compileContext AlgorithmCompileContext, raw contract.AlgorithmIRV2) (AlgorithmCompileResult, error) {
+	compiled, err := (thresholdAlgorithmCompiler{}).Compile(ctx, compileContext, raw)
+	if err != nil {
+		return AlgorithmCompileResult{}, err
+	}
+	compiled.Detector.kind = "DeclaredErrors"
+	compiled.Detector.declaredExecutorErrors = append([]string(nil), c.reasons...)
+	return compiled, nil
 }
 
 func compileThresholdForTest(t *testing.T, config map[string]any) (Predicate, NumericNormalizerSpec) {

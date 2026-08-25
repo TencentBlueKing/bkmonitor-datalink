@@ -12,7 +12,6 @@ package strategy
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,12 +51,17 @@ type EffectiveTimeRequirement struct {
 }
 
 type effectiveTimeRequirementWire struct {
-	Kind                string      `json:"kind"`
-	Version             uint32      `json:"version"`
-	TimeRanges          []TimeRange `json:"time_ranges"`
-	TimezoneRef         string      `json:"timezone_ref"`
-	ActiveCalendarIDs   []int64     `json:"active_calendar_ids"`
-	InactiveCalendarIDs []int64     `json:"inactive_calendar_ids"`
+	Kind                string          `json:"kind"`
+	Version             uint32          `json:"version"`
+	TimeRanges          []timeRangeWire `json:"time_ranges"`
+	TimezoneRef         string          `json:"timezone_ref"`
+	ActiveCalendarIDs   []int64         `json:"active_calendar_ids"`
+	InactiveCalendarIDs []int64         `json:"inactive_calendar_ids"`
+}
+
+type timeRangeWire struct {
+	StartMinute uint16 `json:"start_minute"`
+	EndMinute   uint16 `json:"end_minute"`
 }
 
 func (r EffectiveTimeRequirement) Kind() string        { return r.kind }
@@ -81,8 +85,12 @@ func (r EffectiveTimeRequirement) clone() EffectiveTimeRequirement {
 }
 
 func (r EffectiveTimeRequirement) wire() effectiveTimeRequirementWire {
+	timeRanges := make([]timeRangeWire, len(r.timeRanges))
+	for index, timeRange := range r.timeRanges {
+		timeRanges[index] = timeRangeWire{StartMinute: timeRange.startMinute, EndMinute: timeRange.endMinute}
+	}
 	return effectiveTimeRequirementWire{
-		Kind: r.kind, Version: r.version, TimeRanges: r.TimeRanges(), TimezoneRef: r.timezoneRef,
+		Kind: r.kind, Version: r.version, TimeRanges: timeRanges, TimezoneRef: r.timezoneRef,
 		ActiveCalendarIDs: r.ActiveCalendarIDs(), InactiveCalendarIDs: r.InactiveCalendarIDs(),
 	}
 }
@@ -308,8 +316,4 @@ func nextScheduleBoundary(now time.Time, ranges []TimeRange) time.Time {
 		}
 	}
 	return next
-}
-
-func (r TimeRange) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf(`{"start_minute":%d,"end_minute":%d}`, r.startMinute, r.endMinute)), nil
 }

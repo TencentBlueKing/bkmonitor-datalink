@@ -53,7 +53,7 @@ func TestComparatorKafkaEndToEnd(t *testing.T) {
 		t.Fatalf("OpenComparisonAuditSink() error = %v", err)
 	}
 	service, err := OpenComparatorService(ComparatorServiceConfig{
-		Brokers: []string{broker}, TriggerInputTopic: topics[0], GoDecisionTopic: topics[1], PythonDecisionTopic: topics[2],
+		Brokers: []string{broker}, DetectInputTopic: topics[0], GoDecisionTopic: topics[1], PythonDecisionTopic: topics[2],
 		GroupID: prefix + "-group", ClientID: prefix + "-consumer", BrokerVersion: "2.1.0",
 		MaxEntries: 100, CoverageTimeout: 200 * time.Millisecond, BarrierInterval: 50 * time.Millisecond,
 	}, sink, 5*time.Second)
@@ -93,9 +93,9 @@ func TestComparatorKafkaEndToEnd(t *testing.T) {
 	}
 	for _, message := range []*sarama.ProducerMessage{
 		{Topic: topics[2], Key: sarama.ByteEncoder(decisionKey), Value: sarama.ByteEncoder(decisionPayload)},
-		{Topic: topics[0], Key: sarama.ByteEncoder(inputKey), Value: sarama.ByteEncoder(inputPayload)},
+		{Topic: topics[0], Key: sarama.ByteEncoder(inputKey), Value: sarama.ByteEncoder(comparatorDetectInputPayload(t, inputPayload))},
 		{Topic: topics[1], Key: sarama.ByteEncoder(decisionKey), Value: sarama.ByteEncoder(decisionPayload)},
-		{Topic: topics[0], Key: sarama.ByteEncoder(missingKey), Value: sarama.ByteEncoder(missingPayload)},
+		{Topic: topics[0], Key: sarama.ByteEncoder(missingKey), Value: sarama.ByteEncoder(comparatorDetectInputPayload(t, missingPayload))},
 	} {
 		if _, _, err := producer.SendMessage(message); err != nil {
 			t.Fatalf("SendMessage(%q) error = %v", message.Topic, err)

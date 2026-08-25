@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-// Package comparator joins authoritative TriggerInput records with Go and
+// Package comparator joins authoritative DetectInput records with Go and
 // Python terminal decisions. It deliberately contains no transport, timeout,
 // watermark, persistence or metric policy.
 package comparator
@@ -121,10 +121,15 @@ type entry struct {
 }
 
 type sourceObservation struct {
-	input       *contract.TriggerInput
-	outcome     *contract.DetectionOutcome
-	fingerprint [sha256.Size]byte
-	maxWindow   int64
+	partitionHashVersion string
+	strategy             *contract.TriggerStrategyIR
+	inputID              string
+	recordID             string
+	sourceTime           int64
+	triggerInput         *contract.TriggerInput
+	outcome              *contract.DetectionOutcome
+	fingerprint          [sha256.Size]byte
+	maxWindow            int64
 }
 
 type decisionObservation struct {
@@ -143,11 +148,52 @@ type decisionBatchIdentity struct {
 
 type auditObservation struct {
 	assessment        Assessment
-	input             *contract.TriggerInput
-	outcome           contract.DetectionOutcome
+	source            *sourceObservation
 	sourceFingerprint [sha256.Size]byte
 	goDecision        *decisionObservation
 	pythonDecision    *decisionObservation
+}
+
+func (j *Joiner) ObserveDetectInput(runEpoch string, key, payload []byte) ([]Update, error) {
+	input, err := contract.DecodeDetectInput(payload)
+	if err != nil {
+		return nil, err
+	}
+	expectedKey, err := input.PartitionKey()
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(key, expectedKey) {
+		return nil, fmt.Errorf("comparator: detect input partition key mismatch")
+	}
+	observations := make([]sourceObservation, 0, len(input.Records))
+	for _, rawRecord := range input.Records {
+		var record struct {
+			RecordID string `json:"record_id"`
+			Time     int64  `json:"time"`
+		}
+		if err := json.Unmarshal(rawRecord, &record); err != nil {
+			return nil, fmt.Errorf("comparator: decode detect input record: %w", err)
+		}
+		inputID, err := contract.DeriveInputID(contract.InputIdentity{
+			TenantID: input.StrategyIR.TenantID, Purpose: input.StrategyIR.Purpose,
+			StrategyID: input.StrategyIR.StrategyRef.StrategyID, ItemID: input.StrategyIR.StrategyRef.ItemID,
+			StrategyContentSHA256: input.StrategyIR.StrategyRef.ContentSHA256, RecordID: record.RecordID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		fingerprint, err := detectSourceFingerprint(input, rawRecord)
+		if err != nil {
+			return nil, err
+		}
+		observations = append(observations, sourceObservation{
+			partitionHashVersion: input.PartitionHashVersion, strategy: input.StrategyIR,
+			inputID: inputID, recordID: record.RecordID, sourceTime: record.Time,
+			fingerprint: fingerprint, maxWindow: maximumWindow(input.StrategyIR),
+		})
+	}
+	return j.observeSources(runEpoch, observations)
 }
 
 func NewJoiner(runEpoch string, maxEntries int) (*Joiner, error) {
@@ -164,6 +210,8 @@ func NewJoiner(runEpoch string, maxEntries int) (*Joiner, error) {
 	}, nil
 }
 
+// ObserveTriggerInput remains for frozen v1 Golden compatibility. Runtime
+// comparison uses ObserveDetectInput as its authoritative source stream.
 func (j *Joiner) ObserveTriggerInput(runEpoch string, key, payload []byte) ([]Update, error) {
 	input, err := contract.DecodeTriggerInput(payload)
 	if err != nil {
@@ -183,13 +231,21 @@ func (j *Joiner) ObserveTriggerInput(runEpoch string, key, payload []byte) ([]Up
 			return nil, err
 		}
 		observations[index] = sourceObservation{
-			input:       input,
-			outcome:     outcome,
-			fingerprint: fingerprint,
-			maxWindow:   maximumWindow(input.StrategyIR),
+			partitionHashVersion: input.PartitionHashVersion,
+			strategy:             input.StrategyIR,
+			inputID:              outcome.InputID,
+			recordID:             outcome.Record.RecordID,
+			sourceTime:           outcome.Record.SourceTime,
+			triggerInput:         input,
+			outcome:              outcome,
+			fingerprint:          fingerprint,
+			maxWindow:            maximumWindow(input.StrategyIR),
 		}
 	}
+	return j.observeSources(runEpoch, observations)
+}
 
+func (j *Joiner) observeSources(runEpoch string, observations []sourceObservation) ([]Update, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if err := j.requireEpoch(runEpoch); err != nil {
@@ -198,10 +254,10 @@ func (j *Joiner) ObserveTriggerInput(runEpoch string, key, payload []byte) ([]Up
 	updates := make([]Update, 0, len(observations))
 	for index := range observations {
 		observation := &observations[index]
-		item, admitted := j.getOrAdmit(observation.outcome.InputID)
+		item, admitted := j.getOrAdmit(observation.inputID)
 		if !admitted {
 			updates = append(updates, Update{
-				InputID: observation.outcome.InputID, Disposition: DispositionCapacityDropped,
+				InputID: observation.inputID, Disposition: DispositionCapacityDropped,
 			})
 			continue
 		}
@@ -216,7 +272,7 @@ func (j *Joiner) ObserveTriggerInput(runEpoch string, key, payload []byte) ([]Up
 			item.sourceConflict = true
 			disposition = DispositionConflict
 		}
-		updates = append(updates, Update{InputID: observation.outcome.InputID, Disposition: disposition})
+		updates = append(updates, Update{InputID: observation.inputID, Disposition: disposition})
 	}
 	return updates, nil
 }
@@ -311,8 +367,7 @@ func (j *Joiner) auditObservation(runEpoch, inputID string, gates Gates) (auditO
 	}
 	return auditObservation{
 		assessment:        assessment,
-		input:             item.source.input,
-		outcome:           *item.source.outcome,
+		source:            cloneSourceObservation(item.source),
 		sourceFingerprint: item.source.fingerprint,
 		goDecision:        cloneDecisionObservation(item.goDecision),
 		pythonDecision:    cloneDecisionObservation(item.pythonDecision),
@@ -332,7 +387,7 @@ func (j *Joiner) firstSourceTime(runEpoch string, inputIDs []string) (int64, boo
 		if item == nil || item.source == nil {
 			continue
 		}
-		sourceTime := item.source.outcome.Record.SourceTime
+		sourceTime := item.source.sourceTime
 		if !found || sourceTime < first {
 			first, found = sourceTime, true
 		}
@@ -376,7 +431,7 @@ func assessEntry(inputID string, item *entry, gates Gates) (Assessment, error) {
 	if assessment.Join != JoinComplete {
 		return assessment, nil
 	}
-	eligibilityValue, err := eligibility(item.source, gates)
+	eligibilityValue, err := eligibility(item.source, item.goDecision, item.pythonDecision, gates)
 	if err != nil {
 		return Assessment{}, err
 	}
@@ -489,9 +544,9 @@ func (j *Joiner) validateStoredDecisions(item *entry) {
 }
 
 func validateDecisionAgainstInput(source *sourceObservation, observation *decisionObservation) error {
-	strategy := source.input.StrategyIR
+	strategy := source.strategy
 	want := decisionBatchIdentity{
-		PartitionHashVersion: source.input.PartitionHashVersion,
+		PartitionHashVersion: source.partitionHashVersion,
 		TenantID:             strategy.TenantID,
 		Purpose:              strategy.Purpose,
 		StrategyRef:          strategy.StrategyRef,
@@ -500,15 +555,27 @@ func validateDecisionAgainstInput(source *sourceObservation, observation *decisi
 	if observation.batch != want {
 		return fmt.Errorf("comparator: decision envelope contradicts authoritative input")
 	}
-	return source.input.ValidateTriggerDecision(observation.decision)
+	if observation.decision.InputID != source.inputID || observation.decision.RecordID != source.recordID {
+		return fmt.Errorf("comparator: decision record contradicts authoritative input")
+	}
+	if source.triggerInput != nil {
+		return source.triggerInput.ValidateTriggerDecision(observation.decision)
+	}
+	return nil
 }
 
-func eligibility(source *sourceObservation, gates Gates) (Eligibility, error) {
-	switch source.outcome.Outcome {
-	case contract.OutcomeError:
-		return EligibilitySourceError, nil
-	case contract.OutcomeUnsupported:
-		return EligibilityUnsupported, nil
+func eligibility(
+	source *sourceObservation,
+	goDecision, pythonDecision *decisionObservation,
+	gates Gates,
+) (Eligibility, error) {
+	if source.outcome != nil {
+		switch source.outcome.Outcome {
+		case contract.OutcomeError:
+			return EligibilitySourceError, nil
+		case contract.OutcomeUnsupported:
+			return EligibilityUnsupported, nil
+		}
 	}
 	if !gates.StableEpoch {
 		return EligibilityEpochUnstable, nil
@@ -516,7 +583,12 @@ func eligibility(source *sourceObservation, gates Gates) (Eligibility, error) {
 	if !gates.CoverageComplete {
 		return EligibilityCoverageGap, nil
 	}
-	if source.outcome.Outcome == contract.OutcomeAnomalous {
+	requiresWarmup := source.outcome != nil && source.outcome.Outcome == contract.OutcomeAnomalous
+	if source.outcome == nil {
+		requiresWarmup = goDecision.decision.Outcome == contract.DecisionOutcomeTrigger ||
+			pythonDecision.decision.Outcome == contract.DecisionOutcomeTrigger
+	}
+	if requiresWarmup {
 		if gates.EpochStartSourceTime == nil {
 			return EligibilityNone, fmt.Errorf("comparator: epoch start source time is required for anomalous input")
 		}
@@ -528,7 +600,7 @@ func eligibility(source *sourceObservation, gates Gates) (Eligibility, error) {
 			return EligibilityNone, fmt.Errorf("comparator: warmup boundary exceeds int64")
 		}
 		warmupEnd := epochStart + source.maxWindow - 1
-		if source.outcome.Record.SourceTime < warmupEnd {
+		if source.sourceTime < warmupEnd {
 			return EligibilityWarmup, nil
 		}
 	}
@@ -557,6 +629,18 @@ func sourceFingerprint(input *contract.TriggerInput, outcome *contract.Detection
 		PartitionHashVersion: input.PartitionHashVersion,
 		StrategyIR:           input.StrategyIR,
 		Outcome:              cloned,
+	})
+}
+
+func detectSourceFingerprint(input *contract.DetectInput, record json.RawMessage) ([sha256.Size]byte, error) {
+	return semanticFingerprint(struct {
+		PartitionHashVersion string                      `json:"partition_hash_version"`
+		StrategyIR           *contract.TriggerStrategyIR `json:"strategy_ir"`
+		Record               json.RawMessage             `json:"record"`
+	}{
+		PartitionHashVersion: input.PartitionHashVersion,
+		StrategyIR:           input.StrategyIR,
+		Record:               append(json.RawMessage(nil), record...),
 	})
 }
 
@@ -595,5 +679,13 @@ func cloneDecisionObservation(observation *decisionObservation) *decisionObserva
 	}
 	cloned := *observation
 	cloned.decision = cloneDecision(observation.decision)
+	return &cloned
+}
+
+func cloneSourceObservation(observation *sourceObservation) *sourceObservation {
+	if observation == nil {
+		return nil
+	}
+	cloned := *observation
 	return &cloned
 }

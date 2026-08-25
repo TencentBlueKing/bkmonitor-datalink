@@ -60,6 +60,36 @@ func TestJoinerAlignsThreeStreamsByInputID(t *testing.T) {
 	}
 }
 
+func TestJoinerUsesDetectInputAsAuthoritativeComparisonSource(t *testing.T) {
+	t.Parallel()
+
+	_, triggerInput := testTriggerInput(t, "normal")
+	detectPayload, detectInput := testDetectInputFromTrigger(t, triggerInput)
+	decisionPayload := testDecisionBatch(t, triggerInput, contract.DecisionOutcomeNoTrigger)
+	key, err := detectInput.PartitionKey()
+	if err != nil {
+		t.Fatalf("PartitionKey() error = %v", err)
+	}
+	inputID := triggerInput.DetectionOutcomes[0].InputID
+	joiner := mustJoiner(t, "run-1", 10)
+
+	if _, err := joiner.ObserveDetectInput("run-1", key, detectPayload); err != nil {
+		t.Fatalf("ObserveDetectInput() error = %v", err)
+	}
+	if _, err := joiner.ObserveDecisionBatch("run-1", DecisionSideGo, key, decisionPayload); err != nil {
+		t.Fatalf("ObserveDecisionBatch(go) error = %v", err)
+	}
+	if _, err := joiner.ObserveDecisionBatch("run-1", DecisionSidePython, key, decisionPayload); err != nil {
+		t.Fatalf("ObserveDecisionBatch(python) error = %v", err)
+	}
+	assessment, ok, err := joiner.Assess("run-1", inputID, Gates{
+		StableEpoch: true, CoverageComplete: true, EpochStartSourceTime: int64Pointer(0),
+	})
+	if err != nil || !ok || assessment.Join != JoinComplete || assessment.Verdict != VerdictMatch {
+		t.Fatalf("Assessment = %#v, ok=%v, error=%v", assessment, ok, err)
+	}
+}
+
 func TestJoinerProducesSameAssessmentForEveryArrivalOrder(t *testing.T) {
 	t.Parallel()
 
@@ -466,6 +496,36 @@ func testTriggerInputMany(t *testing.T, names ...string) ([]byte, *contract.Trig
 		t.Fatalf("DecodeTriggerInput() error = %v", err)
 	}
 	return inputPayload, input
+}
+
+func testDetectInputFromTrigger(t *testing.T, input *contract.TriggerInput) ([]byte, *contract.DetectInput) {
+	t.Helper()
+	records := make([]json.RawMessage, 0, len(input.DetectionOutcomes))
+	for _, outcome := range input.DetectionOutcomes {
+		records = append(records, append(json.RawMessage(nil), outcome.Record.DataRaw...))
+	}
+	payload, err := json.Marshal(map[string]any{
+		"schema":                 map[string]any{"name": "detect-input", "major": 1, "minor": 0},
+		"required_features":      []string{},
+		"partition_hash_version": input.PartitionHashVersion,
+		"strategy_ir":            input.StrategyIR,
+		"batch_id":               "detect-batch",
+		"records":                records,
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal(detect input) error = %v", err)
+	}
+	decoded, err := contract.DecodeDetectInput(payload)
+	if err != nil {
+		t.Fatalf("DecodeDetectInput() error = %v", err)
+	}
+	return payload, decoded
+}
+
+func mustDetectInputPayload(t *testing.T, input *contract.TriggerInput) []byte {
+	t.Helper()
+	payload, _ := testDetectInputFromTrigger(t, input)
+	return payload
 }
 
 func testFullDecisionBatch(t *testing.T, input *contract.TriggerInput) *contract.TriggerDecisionBatch {

@@ -160,7 +160,6 @@ func TestComparatorAssignmentCreatesOneRunAfterEveryClaimRegisters(t *testing.T)
 		"go-decision":   {0},
 		"py-decision":   {0},
 	})
-	metadata.offsets[metadataOffset{"trigger-input", 1, sarama.OffsetOldest}] = 11
 	assignment := mustComparatorAssignment(t, metadata)
 	events := []string{}
 	session := newFakeSession(context.Background(), &events)
@@ -174,7 +173,7 @@ func TestComparatorAssignmentCreatesOneRunAfterEveryClaimRegisters(t *testing.T)
 
 	claims := []*fakeClaim{
 		{topic: "trigger-input", partition: 0, initial: 10, highWater: 100},
-		{topic: "trigger-input", partition: 1, initial: sarama.OffsetOldest, highWater: 100},
+		{topic: "trigger-input", partition: 1, initial: 11, highWater: 100},
 		{topic: "go-decision", partition: 0, initial: 20, highWater: 100},
 		{topic: "py-decision", partition: 0, initial: 30, highWater: 100},
 	}
@@ -212,7 +211,6 @@ func TestComparatorAssignmentCreatesOneRunAfterEveryClaimRegisters(t *testing.T)
 	}
 	metadata.assertOffsetCalls(t, []metadataOffset{
 		{"trigger-input", 0, sarama.OffsetNewest},
-		{"trigger-input", 1, sarama.OffsetOldest},
 		{"trigger-input", 1, sarama.OffsetNewest},
 		{"go-decision", 0, sarama.OffsetNewest},
 		{"py-decision", 0, sarama.OffsetNewest},
@@ -255,7 +253,6 @@ func TestComparatorAssignmentRejectsUnsafeInitialOffsets(t *testing.T) {
 		newest      int64
 		newestErr   error
 	}{
-		{name: "newest", initial: sarama.OffsetNewest, newest: 100},
 		{name: "unknown value", initial: -3, newest: 100},
 		{name: "oldest resolver failure", initial: sarama.OffsetOldest, resolverErr: want, newest: 100},
 		{name: "newest resolver failure", initial: 10, newestErr: want},
@@ -295,6 +292,20 @@ func TestComparatorAssignmentRejectsUnsafeInitialOffsets(t *testing.T) {
 				t.Fatal("WaitReady() accepted a failed assignment")
 			}
 		})
+	}
+}
+
+func TestComparatorAssignmentRejectsUnresolvedNewestInitialOffset(t *testing.T) {
+	t.Parallel()
+
+	metadata := newFakeComparatorMetadata(map[string][]int32{
+		"trigger-input": {0}, "go-decision": {0}, "py-decision": {0},
+	})
+	assignment := mustComparatorAssignment(t, metadata)
+	claim := &fakeClaim{topic: "trigger-input", partition: 0, initial: sarama.OffsetNewest}
+
+	if _, err := assignment.resolveInitialOffset(claim); err == nil {
+		t.Fatal("resolveInitialOffset() accepted an unresolved symbolic offset")
 	}
 }
 

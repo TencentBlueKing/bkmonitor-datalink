@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/consumer"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
+	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -215,7 +216,10 @@ func runApplication(ctx context.Context, cfg config.Config, recorder *metric.Rec
 		eventLogger = observability.Discard(observability.ComponentTrigger)
 	}
 	applicationStarted := time.Now()
-	eventLogger.Info(observability.StageStartup, observability.ResultStarted, 0, 0)
+	eventLogger.Info(
+		observability.StageStartup, observability.ResultStarted, 0, 0,
+		slog.Int("consumer_buffer_bytes_per_partition", enginekafka.MaxConsumerBytesPerPartition()),
+	)
 	startupFailed := func(reason string) {
 		eventLogger.Error(
 			observability.StageStartup, observability.ResultFailed, 0, time.Since(applicationStarted),

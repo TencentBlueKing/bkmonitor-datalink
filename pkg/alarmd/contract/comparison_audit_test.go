@@ -306,9 +306,16 @@ func TestComparisonAuditDecoderNegotiatesStrictEnvelope(t *testing.T) {
 	}{
 		{name: "unknown major", mutate: func(d map[string]any) { d["schema"].(map[string]any)["major"] = 2 }, wantErr: true},
 		{name: "unknown feature", mutate: func(d map[string]any) { d["required_features"] = []string{"future-required"} }, wantErr: true},
-		{name: "minor zero unknown field", mutate: func(d map[string]any) { d["future_optional"] = true }, wantErr: true},
-		{name: "higher minor optional field", mutate: func(d map[string]any) { d["schema"].(map[string]any)["minor"] = 1; d["future_optional"] = true }},
-		{name: "nested unknown field", mutate: func(d map[string]any) { d["audits"].([]any)[0].(map[string]any)["future_optional"] = true }, wantErr: true},
+		{name: "minor zero unknown field", mutate: func(d map[string]any) { d["schema"].(map[string]any)["minor"] = 0; d["future_optional"] = true }, wantErr: true},
+		{name: "higher minor optional field", mutate: func(d map[string]any) { d["schema"].(map[string]any)["minor"] = 2; d["future_optional"] = true }},
+		{name: "nested unknown field", mutate: func(d map[string]any) {
+			d["schema"].(map[string]any)["minor"] = 0
+			d["audits"].([]any)[0].(map[string]any)["future_optional"] = true
+		}, wantErr: true},
+		{name: "minor zero detect input source kind", mutate: func(d map[string]any) {
+			d["schema"].(map[string]any)["minor"] = 0
+			d["audits"].([]any)[0].(map[string]any)["source"].(map[string]any)["kind"] = ComparisonSourceDetectInput
+		}, wantErr: true},
 		{name: "case collision", mutate: func(d map[string]any) { d["Audits"] = d["audits"] }, wantErr: true},
 	}
 	for _, test := range tests {

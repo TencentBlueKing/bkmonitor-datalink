@@ -209,7 +209,11 @@ func runComparatorApplicationWithLogger(
 		eventLogger = observability.Discard(observability.ComponentComparator)
 	}
 	applicationStarted := time.Now()
-	eventLogger.Info(observability.StageStartup, observability.ResultStarted, 0, 0)
+	eventLogger.Info(
+		observability.StageStartup, observability.ResultStarted, 0, 0,
+		slog.Int("max_entries", configuration.Kafka.MaxEntries),
+		slog.Int("consumer_buffer_bytes_per_partition", enginekafka.MaxConsumerBytesPerPartition()),
+	)
 	startupFailed := func(reason string) {
 		eventLogger.Error(
 			observability.StageStartup, observability.ResultFailed, 0, time.Since(applicationStarted),
@@ -362,7 +366,21 @@ func withComparatorDiagnostics(
 				slog.Int("missing_python", event.MissingPython),
 			)
 		},
+		OnEpochRollover: func(event enginekafka.ComparatorEpochRollover) {
+			logger.Info(
+				observability.StageCoverageReset, observability.ResultInvalidated, event.Entries, 0,
+				slog.Int("authoritative", event.Authoritative),
+			)
+		},
 	}
+	configuration.ConsumerDiagnostics = enginekafka.ConsumerDiagnostics{OnOffsetReset: func(event enginekafka.OffsetReset) {
+		logger.Info(
+			observability.StageOffsetReset, observability.ResultRecovered, 0, 0,
+			slog.String("topic", event.Topic),
+			slog.Int("partition", int(event.Partition)),
+			slog.Int64("offset", event.Offset),
+		)
+	}}
 	return configuration
 }
 

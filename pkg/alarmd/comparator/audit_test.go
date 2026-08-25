@@ -21,11 +21,11 @@ func TestRunPreviewsCompleteAuditBeforeOffsetCommit(t *testing.T) {
 	t.Parallel()
 
 	run, _ := mustCoverageRun(t, testAssignments())
-	inputPayload, input := testTriggerInput(t, "normal")
+	_, input := testTriggerInput(t, "normal")
 	key := mustPartitionKey(t, input)
 	decisionPayload := testDecisionBatch(t, input, contract.DecisionOutcomeNoTrigger)
 	commitStreamRecord(t, run, StreamRecord{
-		Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload,
+		Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: mustDetectInputPayload(t, input),
 	})
 	commitStreamRecord(t, run, StreamRecord{
 		Epoch: "run-1", Role: StreamGo, Topic: "go", Partition: 0, Offset: 10, Key: key, Value: decisionPayload,
@@ -41,7 +41,10 @@ func TestRunPreviewsCompleteAuditBeforeOffsetCommit(t *testing.T) {
 		t.Fatalf("Assess() error = %v, want record in flight", err)
 	}
 
-	batches, err := run.PreviewAudits(prepared, Gates{StableEpoch: true})
+	batches, err := run.PreviewAudits(prepared, Gates{
+		StableEpoch:          true,
+		EpochStartSourceTime: int64Pointer(input.DetectionOutcomes[0].Record.SourceTime - 300),
+	})
 	if err != nil || len(batches) != 1 {
 		t.Fatalf("PreviewAudits() batches=%d error=%v", len(batches), err)
 	}
@@ -66,6 +69,80 @@ func TestRunPreviewsCompleteAuditBeforeOffsetCommit(t *testing.T) {
 	}
 }
 
+func TestRunDoesNotPublishIntermediateAuditSnapshots(t *testing.T) {
+	t.Parallel()
+
+	run, _ := mustCoverageRun(t, testAssignments())
+	_, triggerInput := testTriggerInput(t, "normal")
+	detectPayload, detectInput := testDetectInputFromTrigger(t, triggerInput)
+	key, err := detectInput.PartitionKey()
+	if err != nil {
+		t.Fatalf("PartitionKey() error = %v", err)
+	}
+	prepared, err := run.Prepare(StreamRecord{
+		Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: detectPayload,
+	})
+	if err != nil {
+		t.Fatalf("Prepare(input) error = %v", err)
+	}
+	batches, err := run.PreviewAudits(prepared, Gates{StableEpoch: true})
+	if err != nil {
+		t.Fatalf("PreviewAudits() error = %v", err)
+	}
+	if len(batches) != 0 {
+		t.Fatalf("PreviewAudits() batches=%d, want no intermediate audit", len(batches))
+	}
+}
+
+func TestTerminalAuditWaitsForCoverageEvenWhenJoinIsSticky(t *testing.T) {
+	t.Parallel()
+
+	for _, join := range []JoinStatus{JoinInvalid, JoinConflict} {
+		if terminalAudit(Assessment{Join: join}, CoverageSnapshot{Phase: CoveragePending}) {
+			t.Fatalf("terminalAudit(%v, pending) = true, want false", join)
+		}
+		if !terminalAudit(Assessment{Join: join}, CoverageSnapshot{Phase: CoverageComplete}) {
+			t.Fatalf("terminalAudit(%v, complete) = false, want true", join)
+		}
+		if !terminalAudit(Assessment{Join: join}, CoverageSnapshot{Phase: CoverageMissingAtBarrier}) {
+			t.Fatalf("terminalAudit(%v, missing at barrier) = false, want true", join)
+		}
+	}
+}
+
+func TestRunPublishesWarmupAsTerminalAudit(t *testing.T) {
+	t.Parallel()
+
+	run, _ := mustCoverageRun(t, testAssignments())
+	_, input := testTriggerInput(t, "anomalous")
+	key := mustPartitionKey(t, input)
+	decisionPayload := testDecisionBatch(t, input, contract.DecisionOutcomeTrigger)
+	commitStreamRecord(t, run, StreamRecord{
+		Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: mustDetectInputPayload(t, input),
+	})
+	commitStreamRecord(t, run, StreamRecord{
+		Epoch: "run-1", Role: StreamGo, Topic: "go", Partition: 0, Offset: 10, Key: key, Value: decisionPayload,
+	})
+	prepared, err := run.Prepare(StreamRecord{
+		Epoch: "run-1", Role: StreamPython, Topic: "python", Partition: 0, Offset: 30, Key: key, Value: decisionPayload,
+	})
+	if err != nil {
+		t.Fatalf("Prepare(python) error = %v", err)
+	}
+	batches, err := run.PreviewAudits(prepared, Gates{
+		StableEpoch:          true,
+		EpochStartSourceTime: int64Pointer(input.DetectionOutcomes[0].Record.SourceTime),
+	})
+	if err != nil || len(batches) != 1 || len(batches[0].Audits) != 1 {
+		t.Fatalf("PreviewAudits() batches=%d error=%v, want one terminal warmup audit", len(batches), err)
+	}
+	audit := batches[0].Audits[0]
+	if audit.JoinStatus != contract.ComparisonJoinComplete ||
+		audit.Eligibility != contract.ComparisonEligibilityWarmup || audit.Verdict != contract.ComparisonVerdictNone {
+		t.Fatalf("PreviewAudits() audit=%#v, want complete warmup without verdict", audit)
+	}
+}
+
 func TestComparisonAuditBatchesRespectCountAndEncodedByteLimits(t *testing.T) {
 	t.Parallel()
 
@@ -83,7 +160,10 @@ func TestComparisonAuditBatchesRespectCountAndEncodedByteLimits(t *testing.T) {
 			t.Fatalf("DeriveInputID() error = %v", err)
 		}
 		candidates = append(candidates, comparisonAuditCandidate{
-			input: input,
+			source: &sourceObservation{
+				partitionHashVersion: input.PartitionHashVersion, strategy: input.StrategyIR,
+				inputID: inputID, recordID: recordID, sourceTime: sourceTime,
+			},
 			audit: contract.ComparisonAudit{
 				EventKind: contract.ComparisonAuditEventSnapshot,
 				InputID:   inputID, RecordID: recordID, SourceTime: sourceTime,
@@ -120,14 +200,14 @@ func TestRunCompactsTwoLargeValidDecisionsIntoOneAudit(t *testing.T) {
 	t.Parallel()
 
 	run, _ := mustCoverageRun(t, testAssignments())
-	inputPayload, input := testTriggerInput(t, "anomalous")
+	_, input := testTriggerInput(t, "anomalous")
 	key := mustPartitionKey(t, input)
 	decisionPayload := largeAuditDecisionBatch(t, input, 60000)
 	if len(decisionPayload) >= contract.MaxTriggerDecisionBytesV1 {
 		t.Fatalf("decision payload bytes = %d, want a valid decision wire", len(decisionPayload))
 	}
 	commitStreamRecord(t, run, StreamRecord{
-		Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: inputPayload,
+		Epoch: "run-1", Role: StreamInput, Topic: "input", Partition: 0, Offset: 20, Key: key, Value: mustDetectInputPayload(t, input),
 	})
 	commitStreamRecord(t, run, StreamRecord{
 		Epoch: "run-1", Role: StreamGo, Topic: "go", Partition: 0, Offset: 10, Key: key, Value: decisionPayload,
@@ -139,7 +219,10 @@ func TestRunCompactsTwoLargeValidDecisionsIntoOneAudit(t *testing.T) {
 		t.Fatalf("Prepare(python) error = %v", err)
 	}
 
-	batches, err := run.PreviewAudits(prepared, Gates{StableEpoch: true})
+	batches, err := run.PreviewAudits(prepared, Gates{
+		StableEpoch:          true,
+		EpochStartSourceTime: int64Pointer(input.DetectionOutcomes[0].Record.SourceTime - 300),
+	})
 	if err != nil || len(batches) != 1 {
 		t.Fatalf("PreviewAudits() batches=%d error=%v, want one compact audit", len(batches), err)
 	}

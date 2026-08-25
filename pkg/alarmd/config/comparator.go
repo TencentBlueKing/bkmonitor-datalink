@@ -25,7 +25,7 @@ import (
 
 type ComparatorKafkaConfig struct {
 	Brokers                  []string `yaml:"brokers"`
-	TriggerInputTopic        string   `yaml:"trigger_input_topic"`
+	DetectInputTopic         string   `yaml:"detect_input_topic"`
 	GoDecisionTopic          string   `yaml:"go_decision_topic"`
 	PythonDecisionTopic      string   `yaml:"python_decision_topic"`
 	AuditOutputTopic         string   `yaml:"audit_output_topic"`
@@ -33,6 +33,7 @@ type ComparatorKafkaConfig struct {
 	GroupID                  string   `yaml:"group_id"`
 	ClientID                 string   `yaml:"client_id"`
 	BrokerVersion            string   `yaml:"broker_version"`
+	InitialOffset            string   `yaml:"initial_offset"`
 	MaxEntries               int      `yaml:"max_entries"`
 	CoverageTimeout          Duration `yaml:"coverage_timeout"`
 	BarrierInterval          Duration `yaml:"barrier_interval"`
@@ -41,12 +42,13 @@ type ComparatorKafkaConfig struct {
 func (c ComparatorKafkaConfig) ServiceCoordinates() enginekafka.ComparatorServiceConfig {
 	return enginekafka.ComparatorServiceConfig{
 		Brokers:             append([]string(nil), c.Brokers...),
-		TriggerInputTopic:   c.TriggerInputTopic,
+		DetectInputTopic:    c.DetectInputTopic,
 		GoDecisionTopic:     c.GoDecisionTopic,
 		PythonDecisionTopic: c.PythonDecisionTopic,
 		GroupID:             c.GroupID,
 		ClientID:            c.ClientID,
 		BrokerVersion:       c.BrokerVersion,
+		InitialOffset:       c.InitialOffset,
 		MaxEntries:          c.MaxEntries,
 		CoverageTimeout:     c.CoverageTimeout.Duration(),
 		BarrierInterval:     c.BarrierInterval.Duration(),

@@ -23,20 +23,22 @@ import (
 // one single-member, three-stream comparison run.
 type ComparatorServiceConfig struct {
 	Brokers             []string
-	TriggerInputTopic   string
+	DetectInputTopic    string
 	GoDecisionTopic     string
 	PythonDecisionTopic string
 	GroupID             string
 	ClientID            string
 	BrokerVersion       string
+	InitialOffset       string
 	MaxEntries          int
 	CoverageTimeout     time.Duration
 	BarrierInterval     time.Duration
 	Diagnostics         ComparatorDiagnostics
+	ConsumerDiagnostics ConsumerDiagnostics
 }
 
 func (c ComparatorServiceConfig) Topics() []string {
-	return []string{c.TriggerInputTopic, c.GoDecisionTopic, c.PythonDecisionTopic}
+	return []string{c.DetectInputTopic, c.GoDecisionTopic, c.PythonDecisionTopic}
 }
 
 func (c ComparatorServiceConfig) Validate() error {
@@ -59,20 +61,22 @@ func (c ComparatorServiceConfig) Validate() error {
 	}
 	return (Config{
 		Brokers:       append([]string(nil), c.Brokers...),
-		Topic:         c.TriggerInputTopic,
+		Topic:         c.DetectInputTopic,
 		GroupID:       c.GroupID,
 		ClientID:      c.ClientID,
 		BrokerVersion: c.BrokerVersion,
+		InitialOffset: c.InitialOffset,
 	}).Validate()
 }
 
 func (c ComparatorServiceConfig) consumerCoordinates() Config {
 	return Config{
 		Brokers:       append([]string(nil), c.Brokers...),
-		Topic:         c.TriggerInputTopic,
+		Topic:         c.DetectInputTopic,
 		GroupID:       c.GroupID,
 		ClientID:      c.ClientID,
 		BrokerVersion: c.BrokerVersion,
+		InitialOffset: c.InitialOffset,
 	}
 }
 
@@ -112,7 +116,7 @@ func OpenComparatorService(
 	assignment, err := newComparatorAssignmentCoordinator(
 		client,
 		map[comparator.StreamRole]string{
-			comparator.StreamInput:  config.TriggerInputTopic,
+			comparator.StreamInput:  config.DetectInputTopic,
 			comparator.StreamGo:     config.GoDecisionTopic,
 			comparator.StreamPython: config.PythonDecisionTopic,
 		},
@@ -133,5 +137,9 @@ func OpenComparatorService(
 	if err != nil {
 		return nil, errors.Join(err, group.Close(), client.Close())
 	}
+	service.diagnostics = config.ConsumerDiagnostics
+	service.repairOffsets = newGroupOffsetRepairer(
+		client, config.GroupID, config.Topics(), saramaConfig.Consumer.Offsets.Initial,
+	).Repair
 	return service, nil
 }

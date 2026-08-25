@@ -20,7 +20,7 @@ func TestComparatorServiceConfigFreezesThreeDistinctInputs(t *testing.T) {
 
 	config := ComparatorServiceConfig{
 		Brokers:             []string{"127.0.0.1:9092"},
-		TriggerInputTopic:   "trigger-input",
+		DetectInputTopic:    "detect-input",
 		GoDecisionTopic:     "go-decision",
 		PythonDecisionTopic: "python-decision",
 		GroupID:             "alarmd-comparator",
@@ -33,7 +33,7 @@ func TestComparatorServiceConfigFreezesThreeDistinctInputs(t *testing.T) {
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	want := []string{"trigger-input", "go-decision", "python-decision"}
+	want := []string{"detect-input", "go-decision", "python-decision"}
 	if got := config.Topics(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Topics() = %v, want %v", got, want)
 	}

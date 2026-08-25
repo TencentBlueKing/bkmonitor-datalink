@@ -20,8 +20,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/consumer"
 )
 
-var errComparatorRunRebalanced = errors.New("kafka comparator handler: finite comparison run cannot span assignments")
-
 type comparatorHandlerSession struct {
 	handle         *comparatorAssignmentHandle
 	initOnce       sync.Once
@@ -46,7 +44,6 @@ type comparatorHandler struct {
 
 	mu               sync.Mutex
 	state            *comparatorHandlerSession
-	runStarted       bool
 	ready            bool
 	draining         bool
 	inflightRecords  int
@@ -83,12 +80,10 @@ func (h *comparatorHandler) Setup(session sarama.ConsumerGroupSession) error {
 		h.mu.Unlock()
 		return errors.New("kafka comparator handler: handler is draining")
 	}
-	if h.runStarted {
+	if h.state != nil {
 		h.mu.Unlock()
-		h.fatal(errComparatorRunRebalanced)
-		return errComparatorRunRebalanced
+		return errors.New("kafka comparator handler: another session is active")
 	}
-	h.runStarted = true
 	h.mu.Unlock()
 	handle, err := h.assignment.Setup(session)
 	if err != nil {
@@ -119,6 +114,9 @@ func (h *comparatorHandler) Cleanup(session sarama.ConsumerGroupSession) error {
 		return nil
 	}
 	barrierStarted := h.signalStopBarrier(state)
+	h.mu.Lock()
+	processShutdown := h.draining
+	h.mu.Unlock()
 	err := h.assignment.Cleanup(state.handle, session)
 	if barrierStarted {
 		<-state.barrierDone
@@ -129,6 +127,11 @@ func (h *comparatorHandler) Cleanup(session sarama.ConsumerGroupSession) error {
 		h.state = nil
 	}
 	h.mu.Unlock()
+	if !processShutdown {
+		if event, ok := h.assignment.epochRollover(state.handle); ok {
+			h.assignment.diagnostics.epochRollover(event)
+		}
+	}
 	return err
 }
 

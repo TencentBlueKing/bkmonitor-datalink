@@ -52,6 +52,7 @@ type KafkaConfig struct {
 	GroupID             string   `yaml:"group_id"`
 	ClientID            string   `yaml:"client_id"`
 	BrokerVersion       string   `yaml:"broker_version"`
+	InitialOffset       string   `yaml:"initial_offset"`
 }
 
 func (c KafkaConfig) ConsumerCoordinates() enginekafka.Config {
@@ -61,6 +62,7 @@ func (c KafkaConfig) ConsumerCoordinates() enginekafka.Config {
 		GroupID:       c.GroupID,
 		ClientID:      c.ClientID,
 		BrokerVersion: c.BrokerVersion,
+		InitialOffset: c.InitialOffset,
 	}
 }
 

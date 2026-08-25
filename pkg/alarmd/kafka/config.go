@@ -22,10 +22,12 @@ import (
 )
 
 const (
+	InitialOffsetOldest = "oldest"
+	InitialOffsetLatest = "latest"
 	// consumerMaxRecordBytes bounds one fetched record. Every Shadow wire is
 	// capped at 512 KiB by its own encoder, and the remainder covers Kafka
 	// record overhead such as the partition key and headers.
-	consumerMaxRecordBytes = contract.MaxTriggerInputBytesV1 + 64*1024
+	consumerMaxRecordBytes = contract.MaxDetectInputBytesV1 + 64*1024
 	// consumerChannelBufferRecords bounds prefetch. Claims are processed
 	// serially, so Sarama's default of 256 buffered records would let a single
 	// partition hold tens of MiB before the first record is even decoded.
@@ -48,6 +50,8 @@ type Config struct {
 	GroupID       string
 	ClientID      string
 	BrokerVersion string
+	InitialOffset string
+	Diagnostics   ConsumerDiagnostics
 }
 
 func (c Config) Validate() error {
@@ -74,6 +78,9 @@ func (c Config) Validate() error {
 	if _, err := sarama.ParseKafkaVersion(c.BrokerVersion); err != nil {
 		return fmt.Errorf("kafka: broker_version %q: %w", c.BrokerVersion, err)
 	}
+	if c.InitialOffset != "" && c.InitialOffset != InitialOffsetOldest && c.InitialOffset != InitialOffsetLatest {
+		return fmt.Errorf("kafka: initial_offset must be %q or %q", InitialOffsetOldest, InitialOffsetLatest)
+	}
 	version, _ := sarama.ParseKafkaVersion(c.BrokerVersion)
 	if !version.IsAtLeast(sarama.V0_10_2_0) || !sarama.MaxVersion.IsAtLeast(version) {
 		return fmt.Errorf("kafka: broker_version %q is outside consumer group range 0.10.2.0..%s", c.BrokerVersion, sarama.MaxVersion)
@@ -95,6 +102,9 @@ func NewSaramaConfig(coordinates Config) (*sarama.Config, error) {
 	config.Consumer.Return.Errors = true
 	config.Consumer.Offsets.AutoCommit.Enable = false
 	config.Consumer.Offsets.Initial = sarama.OffsetOldest
+	if coordinates.InitialOffset == InitialOffsetLatest {
+		config.Consumer.Offsets.Initial = sarama.OffsetNewest
+	}
 	config.ChannelBufferSize = consumerChannelBufferRecords
 	config.Consumer.Fetch.Default = consumerMaxRecordBytes
 	config.Consumer.Fetch.Max = consumerMaxRecordBytes

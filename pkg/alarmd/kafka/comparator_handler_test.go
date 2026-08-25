@@ -62,7 +62,7 @@ func TestComparatorHandlerJoinsThreeClaimsIntoAudit(t *testing.T) {
 	decisionPayload, decisionKey := comparatorTriggerDecisionFixture(t, input)
 	claims := []*fakeClaim{
 		newFakeClaim("py-decision", 0, []*sarama.ConsumerMessage{{Topic: "py-decision", Partition: 0, Offset: 0, Key: decisionKey, Value: decisionPayload}}),
-		newFakeClaim("trigger-input", 0, []*sarama.ConsumerMessage{{Topic: "trigger-input", Partition: 0, Offset: 0, Key: inputKey, Value: inputPayload}}),
+		newFakeClaim("trigger-input", 0, []*sarama.ConsumerMessage{{Topic: "trigger-input", Partition: 0, Offset: 0, Key: inputKey, Value: comparatorDetectInputPayload(t, inputPayload)}}),
 		newFakeClaim("go-decision", 0, []*sarama.ConsumerMessage{{Topic: "go-decision", Partition: 0, Offset: 0, Key: decisionKey, Value: decisionPayload}}),
 	}
 	var wait sync.WaitGroup
@@ -103,7 +103,7 @@ func TestComparatorHandlerJoinsThreeClaimsIntoAudit(t *testing.T) {
 	}
 }
 
-func TestComparatorHandlerRejectsAssignmentAfterReadyRunEnds(t *testing.T) {
+func TestComparatorHandlerStartsFreshRunAfterAssignmentEnds(t *testing.T) {
 	t.Parallel()
 
 	metadata := newFakeComparatorMetadata(map[string][]int32{
@@ -120,6 +120,10 @@ func TestComparatorHandlerRejectsAssignmentAfterReadyRunEnds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newComparatorAssignmentCoordinator() error = %v", err)
 	}
+	var rollover *ComparatorEpochRollover
+	assignment.diagnostics = ComparatorDiagnostics{OnEpochRollover: func(event ComparatorEpochRollover) {
+		rollover = &event
+	}}
 	var fatalErr error
 	handler, err := newComparatorHandler(
 		assignment,
@@ -166,21 +170,27 @@ func TestComparatorHandlerRejectsAssignmentAfterReadyRunEnds(t *testing.T) {
 	if err := handler.Cleanup(first); err != nil {
 		t.Fatalf("Cleanup(first) error = %v", err)
 	}
+	if rollover == nil || rollover.Entries != 0 || rollover.Authoritative != 0 {
+		t.Fatalf("epoch rollover = %#v, want an explicit empty-window reset", rollover)
+	}
 
 	second := newFakeSession(context.Background(), &[]string{})
 	second.generation = 2
 	second.claims = first.claims
-	if err := handler.Setup(second); err == nil {
-		t.Fatal("Setup(second) accepted a new assignment after the finite run became ready")
+	if err := handler.Setup(second); err != nil {
+		t.Fatalf("Setup(second) error = %v", err)
 	}
-	if fatalErr == nil {
-		t.Fatal("Setup(second) did not fail the finite run")
+	if fatalErr != nil {
+		t.Fatalf("Setup(second) fatal error = %v", fatalErr)
 	}
-	if assignment.nextGeneration != 1 {
-		t.Fatalf("assignment generations = %d, want exactly one finite-run epoch", assignment.nextGeneration)
+	if assignment.nextGeneration != 2 {
+		t.Fatalf("assignment generations = %d, want a fresh comparison epoch", assignment.nextGeneration)
 	}
 	if handler.Ready() {
-		t.Fatal("handler remained ready after the rebalance was rejected")
+		t.Fatal("handler became ready before the second assignment claims initialized")
+	}
+	if err := handler.Cleanup(second); err != nil {
+		t.Fatalf("Cleanup(second) error = %v", err)
 	}
 }
 
@@ -207,8 +217,13 @@ func TestComparatorHandlerDrainWaitsForActiveBarrier(t *testing.T) {
 		},
 		{
 			name: "audit acknowledgement",
-			block: func(t *testing.T, _ *observedBarrierMetadata, records *comparatorRecordCoordinator) (<-chan struct{}, func()) {
+			block: func(t *testing.T, metadata *observedBarrierMetadata, records *comparatorRecordCoordinator) (<-chan struct{}, func()) {
 				t.Helper()
+				metadata.fakeComparatorMetadata.mu.Lock()
+				metadata.fakeComparatorMetadata.offsets[metadataOffset{"go-decision", 0, sarama.OffsetNewest}] = 20
+				metadata.fakeComparatorMetadata.offsets[metadataOffset{"go-decision", 1, sarama.OffsetNewest}] = 40
+				metadata.fakeComparatorMetadata.offsets[metadataOffset{"py-decision", 0, sarama.OffsetNewest}] = 30
+				metadata.fakeComparatorMetadata.mu.Unlock()
 				started := make(chan struct{})
 				release := make(chan struct{})
 				records.audits = comparisonAuditSinkFunc(func(context.Context, *contract.ComparisonAuditBatch) error {
@@ -229,7 +244,7 @@ func TestComparatorHandlerDrainWaitsForActiveBarrier(t *testing.T) {
 			records, _, _ := setupComparatorBarrierCoordinator(t, metadata, time.Nanosecond)
 			payload, key := comparatorTriggerInputFixture(t, "normal")
 			if _, err := records.Process(context.Background(), consumer.Record{
-				Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+				Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload),
 			}); err != nil {
 				t.Fatalf("Process(input) error = %v", err)
 			}
@@ -286,7 +301,7 @@ func TestComparatorHandlerCleanupWaitsForActiveBarrier(t *testing.T) {
 	records, _, _ := setupComparatorBarrierCoordinator(t, metadata, time.Nanosecond)
 	payload, key := comparatorTriggerInputFixture(t, "normal")
 	if _, err := records.Process(context.Background(), consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
+		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload),
 	}); err != nil {
 		t.Fatalf("Process(input) error = %v", err)
 	}

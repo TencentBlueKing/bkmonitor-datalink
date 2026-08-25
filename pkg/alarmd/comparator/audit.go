@@ -56,11 +56,14 @@ func (r *Run) PreviewAudits(prepared Prepared, gates Gates) ([]*contract.Compari
 		if !ok {
 			continue
 		}
+		if !terminalAudit(observation.assessment, coverage) {
+			continue
+		}
 		audit, err := buildComparisonAudit(observation, coverage)
 		if err != nil {
 			return nil, r.invalidateLocked(fmt.Errorf("comparator: preview audit: %w", err))
 		}
-		candidates = append(candidates, comparisonAuditCandidate{input: observation.input, audit: audit})
+		candidates = append(candidates, comparisonAuditCandidate{source: observation.source, audit: audit})
 	}
 	batches, err := buildComparisonAuditBatches(candidates)
 	if err != nil {
@@ -108,7 +111,10 @@ func (r *Run) AuditBatches(epoch string, inputIDs []string, gates Gates) ([]*con
 		if err != nil {
 			return nil, r.invalidateLocked(fmt.Errorf("comparator: audit snapshot: %w", err))
 		}
-		candidates = append(candidates, comparisonAuditCandidate{input: observation.input, audit: audit})
+		if !terminalAudit(observation.assessment, coverage) {
+			continue
+		}
+		candidates = append(candidates, comparisonAuditCandidate{source: observation.source, audit: audit})
 	}
 	batches, err := buildComparisonAuditBatches(candidates)
 	if err != nil {
@@ -118,8 +124,8 @@ func (r *Run) AuditBatches(epoch string, inputIDs []string, gates Gates) ([]*con
 }
 
 type comparisonAuditCandidate struct {
-	input *contract.TriggerInput
-	audit contract.ComparisonAudit
+	source *sourceObservation
+	audit  contract.ComparisonAudit
 }
 
 type comparisonAuditIdentity struct {
@@ -133,7 +139,7 @@ type comparisonAuditIdentity struct {
 }
 
 type comparisonAuditGroup struct {
-	input  *contract.TriggerInput
+	source *sourceObservation
 	audits []contract.ComparisonAudit
 }
 
@@ -141,19 +147,19 @@ func buildComparisonAuditBatches(candidates []comparisonAuditCandidate) ([]*cont
 	groups := make(map[comparisonAuditIdentity]*comparisonAuditGroup)
 	order := make([]comparisonAuditIdentity, 0)
 	for _, candidate := range candidates {
-		if candidate.input == nil {
-			return nil, fmt.Errorf("authoritative TriggerInput is required")
+		if candidate.source == nil || candidate.source.strategy == nil {
+			return nil, fmt.Errorf("authoritative DetectInput is required")
 		}
-		strategy := candidate.input.StrategyIR
+		strategy := candidate.source.strategy
 		identity := comparisonAuditIdentity{
-			partitionHashVersion: candidate.input.PartitionHashVersion,
+			partitionHashVersion: candidate.source.partitionHashVersion,
 			tenantID:             strategy.TenantID, purpose: strategy.Purpose,
 			strategyID: strategy.StrategyRef.StrategyID, itemID: strategy.StrategyRef.ItemID,
 			generation: strategy.StrategyRef.Generation, contentSHA256: strategy.StrategyRef.ContentSHA256,
 		}
 		group := groups[identity]
 		if group == nil {
-			group = &comparisonAuditGroup{input: candidate.input}
+			group = &comparisonAuditGroup{source: candidate.source}
 			groups[identity] = group
 			order = append(order, identity)
 		}
@@ -168,7 +174,7 @@ func buildComparisonAuditBatches(candidates []comparisonAuditCandidate) ([]*cont
 				end = len(group.audits)
 			}
 			var err error
-			batches, err = appendComparisonAuditChunks(batches, group.input, group.audits[start:end])
+			batches, err = appendComparisonAuditChunks(batches, group.source, group.audits[start:end])
 			if err != nil {
 				return nil, err
 			}
@@ -179,10 +185,10 @@ func buildComparisonAuditBatches(candidates []comparisonAuditCandidate) ([]*cont
 
 func appendComparisonAuditChunks(
 	batches []*contract.ComparisonAuditBatch,
-	input *contract.TriggerInput,
+	source *sourceObservation,
 	audits []contract.ComparisonAudit,
 ) ([]*contract.ComparisonAuditBatch, error) {
-	batch, err := buildComparisonAuditBatch(input, audits)
+	batch, err := buildComparisonAuditBatch(source, audits)
 	if err == nil {
 		_, err = contract.EncodeComparisonAuditBatch(batch)
 	}
@@ -193,17 +199,17 @@ func appendComparisonAuditChunks(
 		return nil, err
 	}
 	middle := len(audits) / 2
-	batches, leftErr := appendComparisonAuditChunks(batches, input, audits[:middle])
+	batches, leftErr := appendComparisonAuditChunks(batches, source, audits[:middle])
 	if leftErr != nil {
 		return nil, leftErr
 	}
-	return appendComparisonAuditChunks(batches, input, audits[middle:])
+	return appendComparisonAuditChunks(batches, source, audits[middle:])
 }
 
-func buildComparisonAuditBatch(input *contract.TriggerInput, audits []contract.ComparisonAudit) (*contract.ComparisonAuditBatch, error) {
-	strategy := input.StrategyIR
+func buildComparisonAuditBatch(source *sourceObservation, audits []contract.ComparisonAudit) (*contract.ComparisonAuditBatch, error) {
+	strategy := source.strategy
 	return contract.BuildComparisonAuditBatch(
-		input.PartitionHashVersion,
+		source.partitionHashVersion,
 		strategy.TenantID,
 		strategy.Purpose,
 		strategy.StrategyRef,
@@ -212,32 +218,35 @@ func buildComparisonAuditBatch(input *contract.TriggerInput, audits []contract.C
 }
 
 func buildComparisonAudit(observation auditObservation, coverage CoverageSnapshot) (contract.ComparisonAudit, error) {
-	errorCode := ""
-	if len(observation.outcome.ErrorCode) != 0 {
-		if err := json.Unmarshal(observation.outcome.ErrorCode, &errorCode); err != nil {
-			return contract.ComparisonAudit{}, err
+	sourceEvidence := contract.ComparisonSourceEvidence{
+		Kind: contract.ComparisonSourceDetectInput, SemanticSHA256: hex.EncodeToString(observation.sourceFingerprint[:]),
+	}
+	if observation.source.outcome != nil {
+		sourceEvidence.Kind = ""
+		sourceEvidence.Outcome = observation.source.outcome.Outcome
+		if len(observation.source.outcome.ErrorCode) != 0 {
+			if err := json.Unmarshal(observation.source.outcome.ErrorCode, &sourceEvidence.ErrorCode); err != nil {
+				return contract.ComparisonAudit{}, err
+			}
 		}
 	}
-	goDecision, err := comparisonDecisionEvidence(observation.goDecision, observation.input, observation.assessment.GoInvalid)
+	goDecision, err := comparisonDecisionEvidence(observation.goDecision, observation.source, observation.assessment.GoInvalid)
 	if err != nil {
 		return contract.ComparisonAudit{}, err
 	}
-	pythonDecision, err := comparisonDecisionEvidence(observation.pythonDecision, observation.input, observation.assessment.PythonInvalid)
+	pythonDecision, err := comparisonDecisionEvidence(observation.pythonDecision, observation.source, observation.assessment.PythonInvalid)
 	if err != nil {
 		return contract.ComparisonAudit{}, err
 	}
 	return contract.ComparisonAudit{
-		EventKind:   contract.ComparisonAuditEventSnapshot,
-		InputID:     observation.outcome.InputID,
-		RecordID:    observation.outcome.Record.RecordID,
-		SourceTime:  observation.outcome.Record.SourceTime,
-		JoinStatus:  comparisonJoin(observation.assessment.Join),
-		Eligibility: comparisonEligibility(observation.assessment.Eligibility),
-		Verdict:     comparisonVerdict(observation.assessment.Verdict),
-		Source: contract.ComparisonSourceEvidence{
-			Outcome: observation.outcome.Outcome, ErrorCode: errorCode,
-			SemanticSHA256: hex.EncodeToString(observation.sourceFingerprint[:]),
-		},
+		EventKind:      contract.ComparisonAuditEventSnapshot,
+		InputID:        observation.source.inputID,
+		RecordID:       observation.source.recordID,
+		SourceTime:     observation.source.sourceTime,
+		JoinStatus:     comparisonJoin(observation.assessment.Join),
+		Eligibility:    comparisonEligibility(observation.assessment.Eligibility),
+		Verdict:        comparisonVerdict(observation.assessment.Verdict),
+		Source:         sourceEvidence,
 		GoDecision:     goDecision,
 		PythonDecision: pythonDecision,
 		Coverage:       comparisonCoverage(coverage),
@@ -251,7 +260,7 @@ func buildComparisonAudit(observation auditObservation, coverage CoverageSnapsho
 
 func comparisonDecisionEvidence(
 	observation *decisionObservation,
-	input *contract.TriggerInput,
+	source *sourceObservation,
 	invalidSide bool,
 ) (*contract.ComparisonDecisionEvidence, error) {
 	if observation == nil {
@@ -275,7 +284,7 @@ func comparisonDecisionEvidence(
 	invalidReason := ""
 	mismatchFields := []string{}
 	if invalidSide {
-		invalidReason, mismatchFields, err = comparisonDecisionInvalidEvidence(input, observation)
+		invalidReason, mismatchFields, err = comparisonDecisionInvalidEvidence(source, observation)
 		if err != nil {
 			return nil, err
 		}
@@ -290,24 +299,24 @@ func comparisonDecisionEvidence(
 }
 
 func comparisonDecisionInvalidEvidence(
-	input *contract.TriggerInput,
+	source *sourceObservation,
 	observation *decisionObservation,
 ) (string, []string, error) {
-	if input == nil || input.StrategyIR == nil || observation == nil {
+	if source == nil || source.strategy == nil || observation == nil {
 		return "", nil, fmt.Errorf("comparator: invalid decision evidence requires authoritative input and decision")
 	}
 	want := decisionBatchIdentity{
-		PartitionHashVersion: input.PartitionHashVersion,
-		TenantID:             input.StrategyIR.TenantID,
-		Purpose:              input.StrategyIR.Purpose,
-		StrategyRef:          input.StrategyIR.StrategyRef,
+		PartitionHashVersion: source.partitionHashVersion,
+		TenantID:             source.strategy.TenantID,
+		Purpose:              source.strategy.Purpose,
+		StrategyRef:          source.strategy.StrategyRef,
 		DecisionAlgorithm:    contract.DecisionAlgorithmV1,
 	}
 	mismatchFields := comparisonDecisionIdentityMismatchFields(want, observation.batch)
 	if len(mismatchFields) != 0 {
 		return contract.ComparisonDecisionInvalidBatchIdentity, mismatchFields, nil
 	}
-	err := input.ValidateTriggerDecision(observation.decision)
+	err := validateDecisionAgainstInput(source, observation)
 	if err == nil {
 		return "", nil, fmt.Errorf("comparator: decision marked invalid without contradictory evidence")
 	}
@@ -327,6 +336,10 @@ func comparisonDecisionInvalidEvidence(
 	default:
 		return contract.ComparisonDecisionInvalidOther, []string{}, nil
 	}
+}
+
+func terminalAudit(_ Assessment, coverage CoverageSnapshot) bool {
+	return coverage.Phase == CoverageComplete || coverage.Phase == CoverageMissingAtBarrier
 }
 
 func comparisonDecisionIdentityMismatchFields(want, got decisionBatchIdentity) []string {

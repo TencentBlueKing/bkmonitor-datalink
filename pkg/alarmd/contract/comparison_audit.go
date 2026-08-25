@@ -26,6 +26,7 @@ const (
 	comparisonDecisionTimestampsVersionV1 = "comparison-decision-timestamps-v1"
 
 	ComparisonAuditEventSnapshot = "ASSESSMENT_SNAPSHOT"
+	ComparisonSourceDetectInput  = "DETECT_INPUT"
 
 	ComparisonJoinPendingInput  = "PENDING_INPUT"
 	ComparisonJoinPendingBoth   = "PENDING_BOTH"
@@ -89,7 +90,8 @@ var comparisonDecisionIdentityFields = map[string]struct{}{
 }
 
 type ComparisonSourceEvidence struct {
-	Outcome   string `json:"outcome"`
+	Kind      string `json:"kind,omitempty"`
+	Outcome   string `json:"outcome,omitempty"`
 	ErrorCode string `json:"error_code,omitempty"`
 	// SemanticSHA256 is the exact fingerprint retained by Comparator.
 	SemanticSHA256 string `json:"semantic_sha256"`
@@ -210,7 +212,7 @@ func BuildComparisonAuditBatch(
 		owned[index].AuditID = auditID
 	}
 	batch := &ComparisonAuditBatch{
-		Schema:               Schema{Name: comparisonAuditBatchSchema, Major: schemaMajor, Minor: 0},
+		Schema:               Schema{Name: comparisonAuditBatchSchema, Major: schemaMajor, Minor: 1},
 		RequiredFeatures:     []string{},
 		PartitionHashVersion: partitionHashVersion,
 		TenantID:             tenantID,
@@ -311,7 +313,7 @@ func DecodeComparisonAuditBatch(payload []byte) (*ComparisonAuditBatch, error) {
 	}
 	audits := make([]ComparisonAudit, 0, len(header.Audits))
 	for _, rawAudit := range header.Audits {
-		audit, err := decodeComparisonAudit(rawAudit, allowUnknown)
+		audit, err := decodeComparisonAudit(rawAudit, schema.Minor, allowUnknown)
 		if err != nil {
 			return nil, err
 		}
@@ -338,7 +340,7 @@ func DecodeComparisonAuditBatch(payload []byte) (*ComparisonAuditBatch, error) {
 	return batch, nil
 }
 
-func decodeComparisonAudit(payload []byte, allowUnknown bool) (ComparisonAudit, error) {
+func decodeComparisonAudit(payload []byte, schemaMinor int, allowUnknown bool) (ComparisonAudit, error) {
 	required := []string{
 		"audit_id", "event_kind", "input_id", "record_id", "source_time", "join_status", "eligibility", "verdict",
 		"source", "coverage", "source_conflict", "go_conflict", "python_conflict", "go_invalid", "python_invalid",
@@ -349,8 +351,12 @@ func decodeComparisonAudit(payload []byte, allowUnknown bool) (ComparisonAudit, 
 	if err != nil {
 		return ComparisonAudit{}, err
 	}
+	sourceOptional := []string{"outcome", "error_code"}
+	if schemaMinor >= 1 {
+		sourceOptional = append(sourceOptional, "kind")
+	}
 	sourceObject, err := validateJSONObjectFields(
-		object["source"], "comparison_audit.source", []string{"outcome", "semantic_sha256"}, []string{"error_code"}, allowUnknown,
+		object["source"], "comparison_audit.source", []string{"semantic_sha256"}, sourceOptional, allowUnknown,
 	)
 	if err != nil {
 		return ComparisonAudit{}, err
@@ -397,6 +403,12 @@ func decodeComparisonAudit(payload []byte, allowUnknown bool) (ComparisonAudit, 
 	var audit ComparisonAudit
 	if err := decodeJSONObject(payload, &audit); err != nil {
 		return ComparisonAudit{}, err
+	}
+	if _, present := sourceObject["kind"]; present && audit.Source.Kind == "" {
+		return ComparisonAudit{}, invalid("comparison_audit.source.kind", "must be a non-empty string when present")
+	}
+	if _, present := sourceObject["outcome"]; present && audit.Source.Outcome == "" {
+		return ComparisonAudit{}, invalid("comparison_audit.source.outcome", "must be a non-empty string when present")
 	}
 	if _, present := sourceObject["error_code"]; present && audit.Source.ErrorCode == "" {
 		return ComparisonAudit{}, invalid("comparison_audit.source.error_code", "must be a non-empty string when present")
@@ -617,22 +629,29 @@ func (a *ComparisonAudit) validateCompleteOutcome() error {
 	if _, ok := validEligibility[a.Eligibility]; !ok {
 		return invalid("comparison_audit.eligibility", "unsupported complete eligibility")
 	}
-	switch a.Source.Outcome {
-	case OutcomeError:
-		if a.Eligibility != ComparisonEligibilitySourceError {
-			return invalid("comparison_audit.eligibility", "ERROR source requires SOURCE_ERROR")
-		}
-	case OutcomeUnsupported:
-		if a.Eligibility != ComparisonEligibilityUnsupported {
-			return invalid("comparison_audit.eligibility", "UNSUPPORTED source requires UNSUPPORTED")
-		}
-	case OutcomeNormal:
-		if a.Eligibility == ComparisonEligibilityWarmup || a.Eligibility == ComparisonEligibilitySourceError || a.Eligibility == ComparisonEligibilityUnsupported {
-			return invalid("comparison_audit.eligibility", "does not match NORMAL source")
-		}
-	case OutcomeAnomalous:
+	switch a.Source.Kind {
+	case ComparisonSourceDetectInput:
 		if a.Eligibility == ComparisonEligibilitySourceError || a.Eligibility == ComparisonEligibilityUnsupported {
-			return invalid("comparison_audit.eligibility", "does not match ANOMALOUS source")
+			return invalid("comparison_audit.eligibility", "DetectInput source cannot assert Detect outcome eligibility")
+		}
+	default:
+		switch a.Source.Outcome {
+		case OutcomeError:
+			if a.Eligibility != ComparisonEligibilitySourceError {
+				return invalid("comparison_audit.eligibility", "ERROR source requires SOURCE_ERROR")
+			}
+		case OutcomeUnsupported:
+			if a.Eligibility != ComparisonEligibilityUnsupported {
+				return invalid("comparison_audit.eligibility", "UNSUPPORTED source requires UNSUPPORTED")
+			}
+		case OutcomeNormal:
+			if a.Eligibility == ComparisonEligibilityWarmup || a.Eligibility == ComparisonEligibilitySourceError || a.Eligibility == ComparisonEligibilityUnsupported {
+				return invalid("comparison_audit.eligibility", "does not match NORMAL source")
+			}
+		case OutcomeAnomalous:
+			if a.Eligibility == ComparisonEligibilitySourceError || a.Eligibility == ComparisonEligibilityUnsupported {
+				return invalid("comparison_audit.eligibility", "does not match ANOMALOUS source")
+			}
 		}
 	}
 	if a.Eligibility == ComparisonEligibilityEligible {
@@ -665,6 +684,15 @@ func (a *ComparisonAudit) validateCompleteOutcome() error {
 func (s ComparisonSourceEvidence) validate() error {
 	if !sha256Pattern.MatchString(s.SemanticSHA256) {
 		return invalid("comparison_audit.source.semantic_sha256", "must be 64 lowercase hexadecimal characters")
+	}
+	if s.Kind == ComparisonSourceDetectInput {
+		if s.Outcome != "" || s.ErrorCode != "" {
+			return invalid("comparison_audit.source", "DetectInput evidence must not assert a detection outcome")
+		}
+		return nil
+	}
+	if s.Kind != "" {
+		return invalid("comparison_audit.source.kind", "unsupported source kind")
 	}
 	switch s.Outcome {
 	case OutcomeNormal, OutcomeAnomalous:

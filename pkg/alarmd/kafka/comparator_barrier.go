@@ -180,7 +180,7 @@ func (a *comparatorBarrierAdapter) publishChangedCoverage(ctx context.Context, s
 		if a.lastCoverage[snapshot.InputID] == signature {
 			continue
 		}
-		if snapshot.Authoritative {
+		if snapshot.Authoritative && snapshot.Phase == comparator.CoverageMissingAtBarrier {
 			authoritativeIDs = append(authoritativeIDs, snapshot.InputID)
 		}
 		if snapshot.Phase == comparator.CoverageMissingAtBarrier {
@@ -196,9 +196,6 @@ func (a *comparatorBarrierAdapter) publishChangedCoverage(ctx context.Context, s
 		batches, err := a.records.run.AuditBatches(a.records.epoch, authoritativeIDs, comparator.Gates{StableEpoch: true})
 		if err != nil {
 			return err
-		}
-		if len(batches) == 0 {
-			return errors.New("kafka comparator barrier: changed authoritative coverage produced no audit")
 		}
 		for _, batch := range batches {
 			if err := a.records.audits.WriteBatch(ctx, batch); err != nil {

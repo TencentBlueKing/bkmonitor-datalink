@@ -48,6 +48,26 @@ type serviceHandler interface {
 
 type serviceHandlerFactory func(func(error)) (serviceHandler, error)
 
+// OffsetReset records one partition whose committed offset was repaired to a
+// retained broker offset before the next consumer-group session starts.
+type OffsetReset struct {
+	Topic     string
+	Partition int32
+	Offset    int64
+}
+
+// ConsumerDiagnostics exposes bounded recovery events without coupling the
+// reusable Kafka service to a logging or metrics implementation.
+type ConsumerDiagnostics struct {
+	OnOffsetReset func(OffsetReset)
+}
+
+func (d ConsumerDiagnostics) offsetReset(event OffsetReset) {
+	if d.OnOffsetReset != nil {
+		d.OnOffsetReset(event)
+	}
+}
+
 type Service struct {
 	topics       []string
 	group        consumerGroup
@@ -82,6 +102,10 @@ type Service struct {
 
 	cancelMu      sync.Mutex
 	cancelConsume context.CancelFunc
+	cycleCancel   context.CancelFunc
+	offsetReset   atomic.Bool
+	diagnostics   ConsumerDiagnostics
+	repairOffsets func(context.Context) ([]OffsetReset, error)
 
 	fatalOnce   sync.Once
 	fatalMu     sync.Mutex
@@ -120,6 +144,8 @@ func OpenService(cfg Config, newProcessor consumer.ProcessorFactory, drainTimeou
 	if err != nil {
 		return nil, errors.Join(err, group.Close(), client.Close())
 	}
+	service.diagnostics = cfg.Diagnostics
+	service.repairOffsets = newGroupOffsetRepairer(client, cfg.GroupID, []string{cfg.Topic}, saramaConfig.Consumer.Offsets.Initial).Repair
 	return service, nil
 }
 
@@ -330,9 +356,28 @@ func (s *Service) consumeLoop(ctx context.Context) error {
 		if s.firstFatal() != nil {
 			return nil
 		}
-		err := s.group.Consume(ctx, append([]string(nil), s.topics...), s.handler)
+		if s.repairOffsets != nil {
+			events, err := s.repairOffsets(ctx)
+			if err != nil {
+				return fmt.Errorf("kafka service: repair consumer offsets: %w", err)
+			}
+			for _, event := range events {
+				s.diagnostics.offsetReset(event)
+			}
+		}
+		cycleContext, cancelCycle := context.WithCancel(ctx)
+		s.setCycleCancel(cancelCycle)
+		if s.offsetReset.Load() {
+			cancelCycle()
+		}
+		err := s.group.Consume(cycleContext, append([]string(nil), s.topics...), s.handler)
+		cancelCycle()
+		s.setCycleCancel(nil)
 		if ctx.Err() != nil || s.closing.Load() || s.firstFatal() != nil {
 			return nil
+		}
+		if s.offsetReset.Swap(false) {
+			continue
 		}
 		if err != nil {
 			return fmt.Errorf("kafka service: consume group: %w", err)
@@ -360,19 +405,31 @@ func (s *Service) drainErrors(ready chan<- struct{}, done chan<- struct{}) {
 			return
 		}
 		if err != nil && !s.closing.Load() {
-			s.reportFatal(fmt.Errorf("kafka service: consumer group error: %w", err))
+			s.handleGroupError(err)
 		}
 	default:
 	}
 	close(ready)
 	for err := range errorsChannel {
 		if err != nil && !s.closing.Load() {
-			s.reportFatal(fmt.Errorf("kafka service: consumer group error: %w", err))
+			s.handleGroupError(err)
 		}
 	}
 	if !s.closing.Load() {
 		s.reportFatal(errErrorsChannelClosed)
 	}
+}
+
+func (s *Service) handleGroupError(err error) {
+	var consumerError *sarama.ConsumerError
+	if errors.As(err, &consumerError) &&
+		(errors.Is(consumerError.Err, sarama.ErrOffsetOutOfRange) ||
+			errors.Is(consumerError.Err, errComparatorSymbolicInitialOffset)) {
+		s.offsetReset.Store(true)
+		s.cancelCurrentCycle()
+		return
+	}
+	s.reportFatal(fmt.Errorf("kafka service: consumer group error: %w", err))
 }
 
 func (s *Service) reportFatal(err error) {
@@ -625,6 +682,21 @@ func (s *Service) setCancelConsume(cancel context.CancelFunc) {
 	s.cancelMu.Lock()
 	s.cancelConsume = cancel
 	s.cancelMu.Unlock()
+}
+
+func (s *Service) setCycleCancel(cancel context.CancelFunc) {
+	s.cancelMu.Lock()
+	s.cycleCancel = cancel
+	s.cancelMu.Unlock()
+}
+
+func (s *Service) cancelCurrentCycle() {
+	s.cancelMu.Lock()
+	cancel := s.cycleCancel
+	s.cancelMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (s *Service) cancelCurrentConsume() {

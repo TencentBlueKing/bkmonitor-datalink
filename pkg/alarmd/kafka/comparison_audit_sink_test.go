@@ -59,8 +59,8 @@ func TestComparisonAuditSinkPublishesOfficialWireBeforeInputCommit(t *testing.T)
 		t.Fatalf("newComparisonAuditSink() error = %v", err)
 	}
 	events := []string{}
-	committer := comparatorOffsetCommitterFunc(func(_ context.Context, _ sarama.ConsumerGroupSession, _ consumer.Record) error {
-		if produced == nil {
+	committer := comparatorOffsetCommitterFunc(func(_ context.Context, _ sarama.ConsumerGroupSession, record consumer.Record) error {
+		if record.Topic == "py-decision" && produced == nil {
 			t.Fatal("input offset committed before the audit producer ACK")
 		}
 		events = append(events, "input-offset-ack")
@@ -68,10 +68,19 @@ func TestComparisonAuditSinkPublishesOfficialWireBeforeInputCommit(t *testing.T)
 	})
 	coordinator, _, _, _ := setupComparatorRecordCoordinatorWithAudit(t, 100, committer, sink, &events)
 	payload, key := comparatorTriggerInputFixture(t, "normal")
-	if _, err := coordinator.Process(context.Background(), consumer.Record{
-		Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: payload,
-	}); err != nil {
-		t.Fatalf("Process() error = %v", err)
+	input, err := contract.DecodeTriggerInput(payload)
+	if err != nil {
+		t.Fatalf("DecodeTriggerInput() error = %v", err)
+	}
+	decisionPayload, decisionKey := comparatorTriggerDecisionFixture(t, input)
+	for _, record := range []consumer.Record{
+		{Topic: "trigger-input", Partition: 0, Offset: 10, Key: key, Value: comparatorDetectInputPayload(t, payload)},
+		{Topic: "go-decision", Partition: 0, Offset: 20, Key: decisionKey, Value: decisionPayload},
+		{Topic: "py-decision", Partition: 0, Offset: 30, Key: decisionKey, Value: decisionPayload},
+	} {
+		if _, err := coordinator.Process(context.Background(), record); err != nil {
+			t.Fatalf("Process(%s) error = %v", record.Topic, err)
+		}
 	}
 	if produced == nil || produced.Topic != "comparison-audit" {
 		t.Fatalf("produced message = %#v", produced)

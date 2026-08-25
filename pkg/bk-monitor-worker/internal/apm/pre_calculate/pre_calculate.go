@@ -18,12 +18,15 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
+	redisStore "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
 func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 	ctx, cancel := context.WithCancel(parentCtx)
+	relationDefinitionProvider := newRelationDefinitionProvider(ctx)
 	return NewPrecalculate().
 		WithContext(ctx, cancel).
 		WithNotifierConfig(
@@ -96,6 +99,7 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 					config.BuiltinRelationReportBizIDs,
 					config.BuildInResultTableDetailKey,
 				),
+				storage.MetricRelationDefinitionProvider(relationDefinitionProvider),
 			),
 		).
 		WithMetricReport(
@@ -106,6 +110,33 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 			MetricReportInterval(config.SemaphoreReportInterval),
 		).
 		Build(), nil
+}
+
+func newRelationDefinitionProvider(ctx context.Context) relation.SchemaProvider {
+	if !config.BuiltinRelationReportEnabled {
+		return nil
+	}
+	redisInstance := redisStore.GetStorageRedisInstance()
+	if redisInstance == nil || redisInstance.Client == nil {
+		apmLogger.Errorf("create relation definition provider failed: storage redis is not initialized")
+		return nil
+	}
+	provider, err := relation.NewRedisProvider(
+		ctx,
+		redisInstance.Client,
+		relation.WithReloadOnStart(true),
+	)
+	if err != nil {
+		apmLogger.Errorf("create relation definition provider failed: %s", err)
+		return nil
+	}
+	go func() {
+		<-ctx.Done()
+		if closeErr := provider.Close(); closeErr != nil {
+			apmLogger.Warnf("close relation definition provider failed: %s", closeErr)
+		}
+	}()
+	return provider
 }
 
 var apmLogger = logger.With(zap.String("package", "apm_precalculate"))

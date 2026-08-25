@@ -16,6 +16,8 @@ import (
 
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/require"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
 type mockPrometheusWriter struct {
@@ -54,6 +56,16 @@ type mockMetricCollector struct {
 	writeReq prompb.WriteRequest
 }
 
+type mockRelationDefinitionProvider struct {
+	definitions []*relation.RelationDefinition
+	namespaces  []string
+}
+
+func (m *mockRelationDefinitionProvider) ListRelationDefinitions(namespace string) ([]*relation.RelationDefinition, error) {
+	m.namespaces = append(m.namespaces, namespace)
+	return m.definitions, nil
+}
+
 func (m *mockMetricCollector) Observe(_ any) {}
 
 func (m *mockMetricCollector) Collect() prompb.WriteRequest {
@@ -80,17 +92,30 @@ func TestMetricConfigOptionsBuiltinRelationEnabledForBiz(t *testing.T) {
 func TestMetricDimensionsHandlerCleanUpAndReportDualWrite(t *testing.T) {
 	promWriter := &mockPrometheusWriter{}
 	builtinReporter := &mockBuiltinRelationReporter{}
+	definitionProvider := &mockRelationDefinitionProvider{definitions: []*relation.RelationDefinition{
+		{FromResource: "apm_service_instance", ToResource: "system"},
+		{FromResource: "apm_service", ToResource: "system", IsDirectional: true},
+	}}
 	writeReq := prompb.WriteRequest{Timeseries: []prompb.TimeSeries{
 		{
 			Labels:  []prompb.Label{{Name: "__name__", Value: "apm_service_instance_with_system_relation"}},
 			Samples: []prompb.Sample{{Value: 1, Timestamp: 1}},
 		},
+		{
+			Labels:  []prompb.Label{{Name: "__name__", Value: "apm_service_to_system_flow_bucket"}},
+			Samples: []prompb.Sample{{Value: 1, Timestamp: 1}},
+		},
+		{
+			Labels:  []prompb.Label{{Name: "__name__", Value: "custom_cpu"}},
+			Samples: []prompb.Sample{{Value: 1, Timestamp: 1}},
+		},
 	}}
 	handler := &MetricDimensionsHandler{
-		dataId:                  "12345",
-		promClient:              promWriter,
-		builtinRelationReporter: builtinReporter,
-		builtinRelationSpaceUID: "bkcc__7",
+		dataId:                     "12345",
+		promClient:                 promWriter,
+		builtinRelationReporter:    builtinReporter,
+		builtinRelationSpaceUID:    "bkcc__7",
+		relationDefinitionProvider: definitionProvider,
 	}
 
 	handler.cleanUpAndReport(&mockMetricCollector{writeReq: writeReq})
@@ -98,7 +123,8 @@ func TestMetricDimensionsHandlerCleanUpAndReportDualWrite(t *testing.T) {
 	require.Len(t, promWriter.writeRequests, 1)
 	require.Equal(t, writeReq, promWriter.writeRequests[0])
 	require.Equal(t, []string{"bkcc__7"}, builtinReporter.spaceUIDs)
-	require.Equal(t, writeReq.Timeseries, builtinReporter.timeseries[0])
+	require.Equal(t, []string{"bkcc__7"}, definitionProvider.namespaces)
+	require.Equal(t, writeReq.Timeseries[:2], builtinReporter.timeseries[0])
 }
 
 func TestMetricDimensionsHandlerCleanUpAndReportSkipsEmptyBatch(t *testing.T) {

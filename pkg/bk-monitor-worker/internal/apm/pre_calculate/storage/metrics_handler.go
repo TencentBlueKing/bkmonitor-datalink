@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
 const (
@@ -42,12 +44,13 @@ type PrometheusStorageData struct {
 type MetricConfigOption func(options *MetricConfigOptions)
 
 type MetricConfigOptions struct {
-	relationMetricMemDuration time.Duration
-	flowMetricMemDuration     time.Duration
-	flowMetricBuckets         []float64
-	builtinRelationEnabled    bool
-	builtinRelationBizIDs     map[string]struct{}
-	builtinRelationDetailKey  string
+	relationMetricMemDuration  time.Duration
+	flowMetricMemDuration      time.Duration
+	flowMetricBuckets          []float64
+	builtinRelationEnabled     bool
+	builtinRelationBizIDs      map[string]struct{}
+	builtinRelationDetailKey   string
+	relationDefinitionProvider relationDefinitionProvider
 }
 
 func MetricRelationMemDuration(m time.Duration) MetricConfigOption {
@@ -85,6 +88,12 @@ func MetricBuiltinRelationReport(enabled bool, bkBizIDs []string, resultTableDet
 	}
 }
 
+func MetricRelationDefinitionProvider(provider relationDefinitionProvider) MetricConfigOption {
+	return func(options *MetricConfigOptions) {
+		options.relationDefinitionProvider = provider
+	}
+}
+
 func (m MetricConfigOptions) builtinRelationEnabledForBiz(bkBizID string) bool {
 	if !m.builtinRelationEnabled {
 		return false
@@ -98,6 +107,10 @@ type prometheusWriter interface {
 	Close(ctx context.Context) error
 }
 
+type relationDefinitionProvider interface {
+	ListRelationDefinitions(namespace string) ([]*relation.RelationDefinition, error)
+}
+
 type MetricDimensionsHandler struct {
 	dataId string
 
@@ -109,10 +122,59 @@ type MetricDimensionsHandler struct {
 	relationMetricDimensions *relationMetricsCollector
 	flowMetricCollector      *flowMetricsCollector
 
-	promClient              prometheusWriter
-	builtinRelationReporter remote.Reporter
-	builtinRelationSpaceUID string
-	logger                  monitorLogger.Logger
+	promClient                 prometheusWriter
+	builtinRelationReporter    remote.Reporter
+	builtinRelationSpaceUID    string
+	relationDefinitionProvider relationDefinitionProvider
+	logger                     monitorLogger.Logger
+}
+
+var prometheusHistogramSuffixes = []string{"_bucket", "_sum", "_count", "_min", "_max"}
+
+func getTimeSeriesMetricName(ts prompb.TimeSeries) string {
+	for _, label := range ts.Labels {
+		if label.Name == "__name__" {
+			return label.Value
+		}
+	}
+	return ""
+}
+
+func matchRelationMetricName(metricName string, relationMetricNames map[string]struct{}) bool {
+	if _, ok := relationMetricNames[metricName]; ok {
+		return true
+	}
+	for _, suffix := range prometheusHistogramSuffixes {
+		if strings.HasSuffix(metricName, suffix) {
+			_, ok := relationMetricNames[strings.TrimSuffix(metricName, suffix)]
+			return ok
+		}
+	}
+	return false
+}
+
+func filterRelationTimeseries(
+	provider relationDefinitionProvider, namespace string, timeseries []prompb.TimeSeries,
+) ([]prompb.TimeSeries, error) {
+	definitions, err := provider.ListRelationDefinitions(namespace)
+	if err != nil {
+		return nil, err
+	}
+	relationMetricNames := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		if definition == nil {
+			continue
+		}
+		relationMetricNames[definition.GetRelationName()] = struct{}{}
+	}
+
+	filtered := make([]prompb.TimeSeries, 0, len(timeseries))
+	for _, ts := range timeseries {
+		if matchRelationMetricName(getTimeSeriesMetricName(ts), relationMetricNames) {
+			filtered = append(filtered, ts)
+		}
+	}
+	return filtered, nil
 }
 
 func (m *MetricDimensionsHandler) Add(data PrometheusStorageData) {
@@ -146,8 +208,22 @@ func (m *MetricDimensionsHandler) cleanUpAndReport(c MetricCollector) {
 	if m.builtinRelationReporter == nil {
 		return
 	}
+	builtinRelationTimeseries, err := filterRelationTimeseries(
+		m.relationDefinitionProvider, m.builtinRelationSpaceUID, writeReq.Timeseries,
+	)
+	if err != nil {
+		metrics.RecordApmPreCalcOperateStorageFailedTotal(m.dataId, metrics.SavePrometheusFailed)
+		m.logger.Errorf(
+			"[TraceMetricsReport] DataId: %s match relation definitions failed, spaceUID: %s, error: %s",
+			m.dataId, m.builtinRelationSpaceUID, err,
+		)
+		return
+	}
+	if len(builtinRelationTimeseries) == 0 {
+		return
+	}
 	if err := m.builtinRelationReporter.Do(
-		context.Background(), m.builtinRelationSpaceUID, writeReq.Timeseries...,
+		context.Background(), m.builtinRelationSpaceUID, builtinRelationTimeseries...,
 	); err != nil {
 		metrics.RecordApmPreCalcOperateStorageFailedTotal(m.dataId, metrics.SavePrometheusFailed)
 		m.logger.Errorf(
@@ -204,7 +280,8 @@ func NewMetricDimensionHandler(
 		builtinRelationReporter remote.Reporter
 		builtinRelationSpaceUID string
 	)
-	if metricsConfig.builtinRelationEnabledForBiz(baseInfo.BkBizId) {
+	if metricsConfig.builtinRelationEnabledForBiz(baseInfo.BkBizId) &&
+		metricsConfig.relationDefinitionProvider != nil {
 		reporter, err := remote.NewSpaceReporter(metricsConfig.builtinRelationDetailKey, config.Url)
 		if err != nil {
 			monitorLogger.Errorf(
@@ -226,15 +303,16 @@ func NewMetricDimensionHandler(
 	)
 
 	h := &MetricDimensionsHandler{
-		dataId:                   dataId,
-		promClient:               remote.NewPrometheusWriterClient(baseInfo.Token, config.Url, config.Headers),
-		builtinRelationReporter:  builtinRelationReporter,
-		builtinRelationSpaceUID:  builtinRelationSpaceUID,
-		relationMetricDimensions: newRelationMetricCollector(metricsConfig.relationMetricMemDuration),
-		flowMetricCollector:      newFlowMetricCollector(metricsConfig.flowMetricBuckets, metricsConfig.flowMetricMemDuration),
-		ctx:                      handlerCtx,
-		cancel:                   cancel,
-		logger:                   monitorLogger.With(zap.String("name", "metricHandler"), zap.String("dataId", dataId)),
+		dataId:                     dataId,
+		promClient:                 remote.NewPrometheusWriterClient(baseInfo.Token, config.Url, config.Headers),
+		builtinRelationReporter:    builtinRelationReporter,
+		builtinRelationSpaceUID:    builtinRelationSpaceUID,
+		relationDefinitionProvider: metricsConfig.relationDefinitionProvider,
+		relationMetricDimensions:   newRelationMetricCollector(metricsConfig.relationMetricMemDuration),
+		flowMetricCollector:        newFlowMetricCollector(metricsConfig.flowMetricBuckets, metricsConfig.flowMetricMemDuration),
+		ctx:                        handlerCtx,
+		cancel:                     cancel,
+		logger:                     monitorLogger.With(zap.String("name", "metricHandler"), zap.String("dataId", dataId)),
 	}
 	h.wg.Add(2)
 	go h.LoopCollect(h.relationMetricDimensions)

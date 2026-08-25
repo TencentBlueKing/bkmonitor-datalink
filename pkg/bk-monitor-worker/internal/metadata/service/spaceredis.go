@@ -567,7 +567,55 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 	return dataLabelTableIdMap, nil
 }
 
-// refineTableIds 只保留当前租户具备 AccessVMRecord 或 ESStorage 链路的结果表。
+// listSurrealDBRouteTableIDs 只返回同时具备 Binding 和 Storage 记录的图结果表。
+// Binding 确定图链路关联的 RT，Storage 确认该 RT 已配置实际 SurrealDB 存储。
+func listSurrealDBRouteTableIDs(db *gorm.DB, bkTenantId string, tableIdList []string) ([]string, error) {
+	var bindingList []storage.SurrealDBBindingConfig
+	bindingQuery := storage.NewSurrealDBBindingConfigQuerySet(db).
+		Select(storage.SurrealDBBindingConfigDBSchema.TableID).
+		BkTenantIDEq(bkTenantId)
+	if len(tableIdList) == 0 {
+		if err := bindingQuery.All(&bindingList); err != nil {
+			return nil, err
+		}
+	} else {
+		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+			var tempList []storage.SurrealDBBindingConfig
+			if err := bindingQuery.TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
+				return nil, err
+			}
+			bindingList = append(bindingList, tempList...)
+		}
+	}
+
+	bindingTableIDSet := make(map[string]struct{}, len(bindingList))
+	for _, binding := range bindingList {
+		if binding.TableID != "" {
+			bindingTableIDSet[binding.TableID] = struct{}{}
+		}
+	}
+	bindingTableIDs := sortedTableIDSet(bindingTableIDSet)
+	if len(bindingTableIDs) == 0 {
+		return nil, nil
+	}
+
+	storageTableIDSet := make(map[string]struct{}, len(bindingTableIDs))
+	storageQuery := storage.NewSurrealDBStorageQuerySet(db).
+		Select(storage.SurrealDBStorageDBSchema.TableID).
+		BkTenantIDEq(bkTenantId)
+	for _, chunkTableIdList := range slicex.ChunkSlice(bindingTableIDs, 0) {
+		var storageList []storage.SurrealDBStorage
+		if err := storageQuery.TableIDIn(chunkTableIdList...).All(&storageList); err != nil {
+			return nil, err
+		}
+		for _, item := range storageList {
+			storageTableIDSet[item.TableID] = struct{}{}
+		}
+	}
+	return sortedTableIDSet(storageTableIDSet), nil
+}
+
+// refineTableIds 只保留当前租户具备 AccessVMRecord、ESStorage 或完整 SurrealDB 链路的结果表。
 // AccessVMRecord 需要兼容 default_storage 为 influxdb 的指标表。
 func (s *SpacePusher) refineTableIds(bkTenantId string, tableIdList []string) ([]string, error) {
 	db := mysql.GetDBSession().DB
@@ -612,15 +660,8 @@ func (s *SpacePusher) refineTableIds(bkTenantId string, tableIdList []string) ([
 		}
 	}
 
-	// 查询当前租户下的 SurrealDB 结果表，补充到待处理的结果表列表。
-	var surrealdbStorageList []storage.SurrealDBStorage
-	surrealdbQuery := storage.NewSurrealDBStorageQuerySet(db).
-		Select(storage.SurrealDBStorageDBSchema.TableID).
-		BkTenantIDEq(bkTenantId)
-	if len(tableIdList) != 0 {
-		surrealdbQuery = surrealdbQuery.TableIDIn(tableIdList...)
-	}
-	if err := surrealdbQuery.All(&surrealdbStorageList); err != nil {
+	surrealdbTableIDs, err := listSurrealDBRouteTableIDs(db, bkTenantId, tableIdList)
+	if err != nil {
 		return nil, err
 	}
 
@@ -632,9 +673,7 @@ func (s *SpacePusher) refineTableIds(bkTenantId string, tableIdList []string) ([
 	for _, i := range esStorageList {
 		tableIds = append(tableIds, i.TableID)
 	}
-	for _, i := range surrealdbStorageList {
-		tableIds = append(tableIds, i.TableID)
-	}
+	tableIds = append(tableIds, surrealdbTableIDs...)
 
 	// 去重
 	tableIds = slicex.RemoveDuplicate(&tableIds)
@@ -946,42 +985,42 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 	}
 
 	db := mysql.GetDBSession().DB
-	// 先获取结果表对应的存储集群，再根据绑定配置补充查询所需的库名和命名空间。
-	var surrealdbStorageList []storage.SurrealDBStorage
-	surrealdbQuery := storage.NewSurrealDBStorageQuerySet(db).
+	// Binding 明确图链路对应的 RT、库名和命名空间，Storage 负责确认实际存储并提供集群 ID。
+	var surrealdbBindingList []storage.SurrealDBBindingConfig
+	if err := storage.NewSurrealDBBindingConfigQuerySet(db).
 		Select(
-			storage.SurrealDBStorageDBSchema.TableID,
-			storage.SurrealDBStorageDBSchema.StorageClusterID,
+			storage.SurrealDBBindingConfigDBSchema.TableID,
+			storage.SurrealDBBindingConfigDBSchema.Namespace,
+			storage.SurrealDBBindingConfigDBSchema.BkbaseResultTableName,
 		).
-		BkTenantIDEq(bkTenantId)
-	if len(tableIdList) != 0 {
-		surrealdbQuery = surrealdbQuery.TableIDIn(tableIdList...)
-	}
-	if err := surrealdbQuery.All(&surrealdbStorageList); err != nil {
+		BkTenantIDEq(bkTenantId).
+		TableIDIn(tableIdList...).
+		All(&surrealdbBindingList); err != nil {
 		return nil, err
 	}
-	surrealdbTableIDs := make([]string, 0, len(surrealdbStorageList))
-	for _, row := range surrealdbStorageList {
-		surrealdbTableIDs = append(surrealdbTableIDs, row.TableID)
+	surrealdbTableIDSet := make(map[string]struct{}, len(surrealdbBindingList))
+	for _, binding := range surrealdbBindingList {
+		if binding.TableID != "" {
+			surrealdbTableIDSet[binding.TableID] = struct{}{}
+		}
 	}
-	var surrealdbBindingList []storage.SurrealDBBindingConfig
+	surrealdbTableIDs := sortedTableIDSet(surrealdbTableIDSet)
+	var surrealdbStorageList []storage.SurrealDBStorage
 	if len(surrealdbTableIDs) != 0 {
-		if err := storage.NewSurrealDBBindingConfigQuerySet(db).
+		if err := storage.NewSurrealDBStorageQuerySet(db).
 			Select(
-				storage.SurrealDBBindingConfigDBSchema.TableID,
-				storage.SurrealDBBindingConfigDBSchema.Namespace,
-				storage.SurrealDBBindingConfigDBSchema.BkbaseResultTableName,
+				storage.SurrealDBStorageDBSchema.TableID,
+				storage.SurrealDBStorageDBSchema.StorageClusterID,
 			).
 			BkTenantIDEq(bkTenantId).
 			TableIDIn(surrealdbTableIDs...).
-			All(&surrealdbBindingList); err != nil {
+			All(&surrealdbStorageList); err != nil {
 			return nil, err
 		}
 	}
-	// 绑定配置按结果表 ID 建立索引，便于后续组装路由信息。
-	surrealdbBindingMap := make(map[string]storage.SurrealDBBindingConfig, len(surrealdbBindingList))
-	for _, binding := range surrealdbBindingList {
-		surrealdbBindingMap[binding.TableID] = binding
+	surrealdbStorageMap := make(map[string]storage.SurrealDBStorage, len(surrealdbStorageList))
+	for _, item := range surrealdbStorageList {
+		surrealdbStorageMap[item.TableID] = item
 	}
 
 	var vmRecordList []storage.AccessVMRecord
@@ -1022,7 +1061,7 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 	}
 
 	// 先保留原有 VM 路由；同表双写 SurrealDB 时再追加独立子路由。
-	tableIdInfo := make(map[string]map[string]any, len(vmRecordList)+len(surrealdbStorageList))
+	tableIdInfo := make(map[string]map[string]any, len(vmRecordList)+len(surrealdbBindingList))
 	for _, record := range vmRecordList {
 		storageName := ""
 		if cluster, exists := clusterMap[record.VmClusterId]; exists && cluster.ClusterType == models.StorageTypeVM {
@@ -1044,11 +1083,14 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 			"storage_type":     models.StorageTypeVM,
 		}
 	}
-	for _, row := range surrealdbStorageList {
-		binding := surrealdbBindingMap[row.TableID]
+	for _, binding := range surrealdbBindingList {
+		row, exists := surrealdbStorageMap[binding.TableID]
+		if !exists {
+			continue
+		}
 		database := binding.BkbaseResultTableName
 		if database == "" {
-			database = row.TableID
+			database = binding.TableID
 		}
 		clusterName := ""
 		if cluster, exists := clusterMap[row.StorageClusterID]; exists && cluster.ClusterType == models.StorageTypeSurrealdb {
@@ -1063,14 +1105,14 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 			"namespace":    binding.Namespace,
 			"storage_type": models.StorageTypeSurrealdb,
 		}
-		if detail, exists := tableIdInfo[row.TableID]; exists {
+		if detail, exists := tableIdInfo[binding.TableID]; exists {
 			detail[models.StorageTypeSurrealdb] = surrealdbDetail
 			continue
 		}
 		surrealdbDetail["measurement"] = ""
 		surrealdbDetail["vm_rt"] = ""
 		surrealdbDetail["tags_key"] = []string{}
-		tableIdInfo[row.TableID] = surrealdbDetail
+		tableIdInfo[binding.TableID] = surrealdbDetail
 	}
 	return tableIdInfo, nil
 }

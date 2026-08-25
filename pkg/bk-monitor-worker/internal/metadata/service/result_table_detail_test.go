@@ -451,18 +451,47 @@ func TestAccessVMRecordAndRecordRulePayloadsRemainCompatible(t *testing.T) {
 		assert.Equal(t, 3, queryCount)
 	})
 
-	t.Run("full refresh includes surrealdb-only routes", func(t *testing.T) {
+	t.Run("full refresh includes complete surrealdb routes", func(t *testing.T) {
 		db := setupResultTableDetailMySQL(t)
 		const tenantID = "tenant-surreal-only"
 		execResultTableDetailSQL(t, db,
 			`INSERT INTO metadata_surrealdbstorage (table_id, bk_tenant_id, storage_cluster_id) VALUES (?, ?, ?)`,
 			"metric.surreal_only", tenantID, 7,
 		)
+		execResultTableDetailSQL(t, db,
+			`INSERT INTO metadata_surrealdbbindingconfig (table_id, bk_tenant_id, namespace, bkbase_result_table_name) VALUES (?, ?, ?, ?)`,
+			"metric.surreal_only", tenantID, "mapleleaf_2", "2_graph_rt",
+		)
+		execResultTableDetailSQL(t, db,
+			`INSERT INTO metadata_surrealdbstorage (table_id, bk_tenant_id, storage_cluster_id) VALUES (?, ?, ?)`,
+			"metric.storage_without_binding", tenantID, 7,
+		)
+		execResultTableDetailSQL(t, db,
+			`INSERT INTO metadata_surrealdbbindingconfig (table_id, bk_tenant_id, namespace, bkbase_result_table_name) VALUES (?, ?, ?, ?)`,
+			"metric.binding_without_storage", tenantID, "mapleleaf_2", "2_graph_rt_missing",
+		)
 
 		metricTableIDs, err := NewSpacePusher().listMetricTableIDs(tenantID, nil)
 
 		require.NoError(t, err)
 		assert.Equal(t, []string{"metric.surreal_only"}, metricTableIDs)
+	})
+
+	t.Run("surrealdb route requires binding and storage", func(t *testing.T) {
+		db := setupResultTableDetailMySQL(t)
+		const tenantID = "tenant-incomplete-surreal"
+		const tableID = "metric.graph"
+		insertCluster(t, db, tenantID, 7, "surrealdb-prod", models.StorageTypeSurrealdb)
+		execResultTableDetailSQL(t, db,
+			`INSERT INTO metadata_surrealdbstorage (table_id, bk_tenant_id, storage_cluster_id) VALUES (?, ?, ?)`,
+			tableID, tenantID, 7,
+		)
+
+		clusterMap := loadRouteClustersForTest(t, db, tenantID)
+		details, err := NewSpacePusher().getTableInfoForAccessVMRecord(tenantID, []string{tableID}, clusterMap)
+
+		require.NoError(t, err)
+		assert.Empty(t, details)
 	})
 
 	t.Run("metric route keeps vm and exposes surrealdb sub-route", func(t *testing.T) {

@@ -373,6 +373,35 @@ func TestSpacePusher_refineTableIds(t *testing.T) {
 	err = esTable.Create(db)
 	assert.NoError(t, err)
 
+	surrealTableName := "surreal_table_name"
+	surrealStorage := storage.SurrealDBStorage{
+		TableID:          surrealTableName,
+		BkTenantID:       tenant.DefaultTenantId,
+		StorageClusterID: 7,
+	}
+	db.Delete(&surrealStorage)
+	err = surrealStorage.Create(db)
+	assert.NoError(t, err)
+	surrealBinding := storage.SurrealDBBindingConfig{
+		TableID:               surrealTableName,
+		BkTenantID:            tenant.DefaultTenantId,
+		Namespace:             "mapleleaf_2",
+		BkbaseResultTableName: "2_graph_rt",
+	}
+	db.Where("table_id = ? AND bk_tenant_id = ?", surrealTableName, tenant.DefaultTenantId).Delete(&storage.SurrealDBBindingConfig{})
+	err = surrealBinding.Create(db)
+	assert.NoError(t, err)
+
+	orphanSurrealTableName := "surreal_storage_without_binding"
+	orphanSurrealStorage := storage.SurrealDBStorage{
+		TableID:          orphanSurrealTableName,
+		BkTenantID:       tenant.DefaultTenantId,
+		StorageClusterID: 7,
+	}
+	db.Delete(&orphanSurrealStorage)
+	err = orphanSurrealStorage.Create(db)
+	assert.NoError(t, err)
+
 	// 不存在的表
 	notExistTable := "not_exist_rt"
 	// 该测试使用持久 bmw_test 数据库，清理其他用例可能留下的同名
@@ -384,12 +413,12 @@ func TestSpacePusher_refineTableIds(t *testing.T) {
 
 	// 调用 refineTableIds 方法
 	ids, err := NewSpacePusher().refineTableIds(
-		tenant.DefaultTenantId, []string{itableName, itableName1, notExistTable, vmTableName, esTableName},
+		tenant.DefaultTenantId, []string{itableName, itableName1, notExistTable, vmTableName, esTableName, surrealTableName, orphanSurrealTableName},
 	)
 
-	// 只保留具备 AccessVMRecord 或 ESStorage 链路的候选表。
+	// 只保留具备完整指标、日志或 SurrealDB 链路的候选表。
 	assert.NoError(t, err)
-	assert.ElementsMatch(t, []string{vmTableName, esTableName}, ids)
+	assert.ElementsMatch(t, []string{vmTableName, esTableName, surrealTableName}, ids)
 }
 
 func TestSpacePusher_refineEsTableIds(t *testing.T) {

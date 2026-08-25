@@ -716,7 +716,7 @@ planLoop:
 		record := &envelope.Records[index]
 		reason := ReasonRecordInvalid
 		if validRecordWireShapeV2(rawRecords[index]) {
-			reason = validateCanonicalRecordV2(envelope.TenantID, &envelope.DatasetContract, record)
+			reason = validateCanonicalRecordV2(envelope.TenantID, &envelope.SourceWindow, &envelope.DatasetContract, record)
 		}
 		if reason == "" {
 			if businessID == "" {
@@ -838,8 +838,16 @@ func rawIsJSONObjectV2(raw json.RawMessage) bool {
 	return len(trimmed) > 1 && trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}'
 }
 
-func validateCanonicalRecordV2(tenantID string, dataset *DatasetContractV2, record *CanonicalRecordV2) string {
+func validateCanonicalRecordV2(
+	tenantID string,
+	sourceWindow *SourceWindowV2,
+	dataset *DatasetContractV2,
+	record *CanonicalRecordV2,
+) string {
 	if record.SourceTime < 0 || record.ReceivedTime < 0 || (record.CollectionTime != nil && *record.CollectionTime < 0) {
+		return ReasonTimeInvalid
+	}
+	if sourceWindow == nil || record.SourceTime < sourceWindow.FromTime || record.SourceTime >= sourceWindow.UntilTime {
 		return ReasonTimeInvalid
 	}
 	if !canonicalSignedDecimalPattern.MatchString(record.BusinessID) || record.Values == nil || record.Dimensions == nil {

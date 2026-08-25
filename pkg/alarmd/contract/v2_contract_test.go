@@ -669,6 +669,7 @@ func TestReadExecutionEnvelopeV2AllowsDimensionlessSeriesAndIsolatesCrossBusines
 		}
 	}
 	envelope.Records = records
+	envelope.SourceWindow.UntilTime = records[len(records)-1].SourceTime + 60
 	ranges := []SelectorRangeV2{{Start: 0, End: 3}}
 	envelope.Selectors[0].Selector.Ranges = &ranges
 	_, issues, err := ReadExecutionEnvelopeV2(encodeExecutionEnvelopeV2ForTest(t, envelope), generousReaderLimitsV2())
@@ -677,6 +678,45 @@ func TestReadExecutionEnvelopeV2AllowsDimensionlessSeriesAndIsolatesCrossBusines
 	}
 	if !containsRecordIssueV2(issues, 1, ReasonRecordIdentityConflict) || containsRecordIssueV2(issues, 2, ReasonRecordIdentityConflict) {
 		t.Fatalf("issues = %#v, want only cross-business record ordinal 1 isolated", issues)
+	}
+}
+
+func TestReadExecutionEnvelopeV2IsolatesRecordOutsideSourceWindow(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		sourceTime func(SourceWindowV2) int64
+		wantIssue  bool
+	}{
+		{name: "at from", sourceTime: func(window SourceWindowV2) int64 { return window.FromTime }},
+		{name: "before from", sourceTime: func(window SourceWindowV2) int64 { return window.FromTime - 1 }, wantIssue: true},
+		{name: "before until", sourceTime: func(window SourceWindowV2) int64 { return window.UntilTime - 1 }},
+		{name: "at until", sourceTime: func(window SourceWindowV2) int64 { return window.UntilTime }, wantIssue: true},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			envelope := validExecutionEnvelopeV2(t)
+			record := &envelope.Records[0]
+			record.SourceTime = test.sourceTime(envelope.SourceWindow)
+			var err error
+			record.RecordID, err = DeriveRecordIDV2(record.DimensionIdentity.Digest, record.SourceTime)
+			if err != nil {
+				t.Fatalf("DeriveRecordIDV2() error = %v", err)
+			}
+			_, issues, err := ReadExecutionEnvelopeV2(
+				encodeExecutionEnvelopeV2ForTest(t, envelope), generousReaderLimitsV2(),
+			)
+			if err != nil {
+				t.Fatalf("ReadExecutionEnvelopeV2() error = %v", err)
+			}
+			gotIssue := containsRecordIssueV2(issues, 0, ReasonTimeInvalid)
+			if gotIssue != test.wantIssue {
+				t.Fatalf("TIME_INVALID issue = %t, want %t; issues = %#v", gotIssue, test.wantIssue, issues)
+			}
+		})
 	}
 }
 

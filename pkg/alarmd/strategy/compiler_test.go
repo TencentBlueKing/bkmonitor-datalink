@@ -129,7 +129,20 @@ func TestCompilerThresholdNormalizerAndPredicate(t *testing.T) {
 	}{
 		{name: "absent", raw: nil, want: contract.ReasonRequiredValueMissing},
 		{name: "null", raw: json.RawMessage(`null`), want: contract.ReasonRequiredValueMissing},
-		{name: "type mismatch", raw: json.RawMessage(`"0.8"`), want: contract.ReasonRequiredValueTypeMismatch},
+		{name: "whitespace only", raw: json.RawMessage(" \t\n"), want: contract.ReasonRequiredValueMissing},
+		{name: "string", raw: json.RawMessage(`"0.8"`), want: contract.ReasonRequiredValueTypeMismatch},
+		{name: "boolean", raw: json.RawMessage(`true`), want: contract.ReasonRequiredValueTypeMismatch},
+		{name: "object", raw: json.RawMessage(`{}`), want: contract.ReasonRequiredValueTypeMismatch},
+		{name: "array", raw: json.RawMessage(`[]`), want: contract.ReasonRequiredValueTypeMismatch},
+		{name: "leading zero", raw: json.RawMessage(`01`), want: contract.ReasonRequiredValueTypeMismatch},
+		{name: "negative leading zero", raw: json.RawMessage(`-01`), want: contract.ReasonRequiredValueTypeMismatch},
+		{name: "trailing token", raw: json.RawMessage(`1 true`), want: contract.ReasonRequiredValueTypeMismatch},
+		{name: "trailing decimal point", raw: json.RawMessage(`1.`), want: contract.ReasonRequiredValueTypeMismatch},
+		{name: "missing integer", raw: json.RawMessage(`.1`), want: contract.ReasonRequiredValueTypeMismatch},
+		{name: "missing exponent", raw: json.RawMessage(`1e`), want: contract.ReasonRequiredValueTypeMismatch},
+		{name: "nan", raw: json.RawMessage(`NaN`), want: contract.ReasonRequiredValueTypeMismatch},
+		{name: "positive infinity", raw: json.RawMessage(`Infinity`), want: contract.ReasonRequiredValueTypeMismatch},
+		{name: "negative infinity", raw: json.RawMessage(`-Infinity`), want: contract.ReasonRequiredValueTypeMismatch},
 		{name: "overflow", raw: json.RawMessage(`1e100`), want: contract.ReasonRequiredValueNormalizationFailed},
 	}
 	for _, test := range cases {
@@ -139,6 +152,11 @@ func TestCompilerThresholdNormalizerAndPredicate(t *testing.T) {
 				t.Fatalf("Normalize(%s) reason = %q, want %q", test.raw, got.ReasonCode(), test.want)
 			}
 		})
+	}
+
+	withWhitespace := normalizer.Normalize(json.RawMessage(" \t0.8\n"))
+	if !withWhitespace.Available() || withWhitespace.Value().CanonicalDecimal() != "80.000000" {
+		t.Fatalf("Normalize() with JSON whitespace = %+v", withWhitespace)
 	}
 }
 

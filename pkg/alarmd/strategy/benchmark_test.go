@@ -36,3 +36,15 @@ func BenchmarkPredicateEvaluate(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkNumericNormalizerNormalize(b *testing.B) {
+	_, normalizer := compileThresholdForTest(b, thresholdConfig("50"))
+	raw := json.RawMessage(`60.25`)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		if result := normalizer.Normalize(raw); !result.Available() {
+			b.Fatalf("Normalize() reason = %q", result.ReasonCode())
+		}
+	}
+}

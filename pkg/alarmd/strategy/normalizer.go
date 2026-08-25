@@ -32,13 +32,12 @@ func (s NumericNormalizerSpec) Normalize(raw json.RawMessage) NormalizeResult {
 	if trimmed[0] == '"' || trimmed[0] == '{' || trimmed[0] == '[' || bytes.Equal(trimmed, []byte("true")) || bytes.Equal(trimmed, []byte("false")) {
 		return NormalizeResult{reasonCode: contract.ReasonRequiredValueTypeMismatch}
 	}
-	decoder := json.NewDecoder(bytes.NewReader(trimmed))
-	decoder.UseNumber()
-	var number json.Number
-	if err := decoder.Decode(&number); err != nil || number.String() != string(trimmed) {
+	number := string(trimmed)
+	matches := decimalPattern.FindStringSubmatch(number)
+	if matches == nil {
 		return NormalizeResult{reasonCode: contract.ReasonRequiredValueTypeMismatch}
 	}
-	rational, ok := parseDecimalRational(number.String(), true)
+	rational, ok := parseDecimalRationalMatch(number, matches, true)
 	if !ok {
 		return NormalizeResult{reasonCode: contract.ReasonRequiredValueNormalizationFailed}
 	}
@@ -78,7 +77,14 @@ func parseDecimalRational(value string, allowExponent bool) (*big.Rat, bool) {
 		return nil, false
 	}
 	matches := decimalPattern.FindStringSubmatch(value)
-	if matches == nil || (!allowExponent && matches[4] != "") {
+	if matches == nil {
+		return nil, false
+	}
+	return parseDecimalRationalMatch(value, matches, allowExponent)
+}
+
+func parseDecimalRationalMatch(value string, matches []string, allowExponent bool) (*big.Rat, bool) {
+	if len(value) == 0 || len(value) > 128 || len(matches) != 5 || (!allowExponent && matches[4] != "") {
 		return nil, false
 	}
 	exponent := 0

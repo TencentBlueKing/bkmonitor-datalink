@@ -146,6 +146,11 @@ func evaluateLevelV2(
 	if fact.Definition != definition || fact.DetectFingerprint != level.Fingerprints().Detect {
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("validate Detect fact", definition.LevelID, errors.New("definition or fingerprint mismatch"))
 	}
+	if err := validateEffectiveTimeFactV2(
+		request.EvaluationTime, level.EffectiveTimeRequirementDigest(), effective,
+	); err != nil {
+		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("validate EffectiveTime fact", definition.LevelID, err)
+	}
 	validFact := fact.Result == DetectionAnomalous || fact.Result == DetectionNormal
 	if !validFact {
 		if (fact.Result != DetectionUnavailable && fact.Result != DetectionError) || fact.ReasonCode == "" ||
@@ -159,11 +164,6 @@ func evaluateLevelV2(
 	detectEvidence, err := buildDetectEvidenceV2(request.Record, fact, strategy.EffectiveTimeActive)
 	if err != nil {
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("build Detect evidence", definition.LevelID, err)
-	}
-	if err := validateEffectiveTimeFactV2(
-		request.EvaluationTime, level.EffectiveTimeRequirementDigest(), effective,
-	); err != nil {
-		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("validate EffectiveTime fact", definition.LevelID, err)
 	}
 	switch effective.Status() {
 	case strategy.EffectiveTimeInactive:

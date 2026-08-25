@@ -198,6 +198,56 @@ func TestEvaluatorV2RejectsEffectiveTimeFactRequirementMismatch(t *testing.T) {
 			t.Fatalf("old EffectiveTime fact revision error = %v", err)
 		}
 	})
+
+	t.Run("unavailable Detect facts do not bypass exchanged requirements", func(t *testing.T) {
+		plan := compilePlanV2(t, []contract.LevelIRV2{
+			levelV2(1, 1, 1, 1, 1, staticUptimeV2()),
+			levelV2(5, 2, 1, 1, 1, nil),
+		})
+		levels := plan.Levels()
+		facts := activeFactsV2(t, plan, 36000)
+		facts[0].Fact, facts[1].Fact = facts[1].Fact, facts[0].Fact
+		request := requestV2(t, plan, 36000,
+			[]DetectionFact{
+				unavailableFactV2(levels[0], contract.ReasonRequiredValueMissing),
+				unavailableFactV2(levels[1], contract.ReasonRequiredValueMissing),
+			},
+			[]LevelHistory{
+				{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{36000: false}}},
+				{LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{36000: false}}},
+			}, facts)
+		result, err := EvaluateV2(request)
+		assertInvariantWithoutResultV2(t, result, err)
+	})
+
+	t.Run("error Detect fact does not bypass old requirement", func(t *testing.T) {
+		oldPlan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, staticUptimeV2())})
+		oldFact := activeFactsV2(t, oldPlan, 36000)[0]
+		newUptime := map[string]any{
+			"time_ranges":      []any{map[string]any{"start": "08:00", "end": "18:00"}},
+			"active_calendars": []any{},
+			"calendars":        []any{},
+		}
+		plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, newUptime)})
+		level := plan.Levels()[0]
+		oldFact.LevelID = level.Definition().LevelID
+		detectFact := unavailableFactV2(level, contract.ReasonRequiredValueNormalizationFailed)
+		detectFact.Result = DetectionError
+		request := requestV2(t, plan, 36000,
+			[]DetectionFact{detectFact},
+			[]LevelHistory{{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{36000: false}}}},
+			[]LevelEffectiveTimeFact{oldFact})
+		result, err := EvaluateV2(request)
+		assertInvariantWithoutResultV2(t, result, err)
+	})
+}
+
+func assertInvariantWithoutResultV2(t *testing.T, result EvaluationResultV2, err error) {
+	t.Helper()
+	if !errors.Is(err, ErrInvariantV2) || result.Completion != "" || result.RecordResult != "" ||
+		len(result.LevelOutcomes) != 0 || result.TriggerEvent != nil || result.Counts != (EvaluationCountsV2{}) {
+		t.Fatalf("EvaluateV2() result = %#v, error = %v; want zero result and ErrInvariantV2", result, err)
+	}
 }
 
 func TestEvaluatorV2UsesStableM0EventIdentity(t *testing.T) {

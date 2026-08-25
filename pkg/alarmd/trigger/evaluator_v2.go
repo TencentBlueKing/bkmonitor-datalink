@@ -160,7 +160,9 @@ func evaluateLevelV2(
 	if err != nil {
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("build Detect evidence", definition.LevelID, err)
 	}
-	if err := validateEffectiveTimeFactV2(request.EvaluationTime, effective); err != nil {
+	if err := validateEffectiveTimeFactV2(
+		request.EvaluationTime, level.EffectiveTimeRequirementDigest(), effective,
+	); err != nil {
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("validate EffectiveTime fact", definition.LevelID, err)
 	}
 	switch effective.Status() {
@@ -309,10 +311,11 @@ func validCanonicalDecimalV2(value string) bool {
 	return true
 }
 
-func validateEffectiveTimeFactV2(evaluationTime int64, fact strategy.EffectiveTimeFact) error {
-	if !validDigestV2(fact.FactDigest()) || !validDigestV2(fact.FactRevision()) || fact.ValidFrom() > evaluationTime ||
+func validateEffectiveTimeFactV2(evaluationTime int64, requirementDigest string, fact strategy.EffectiveTimeFact) error {
+	if fact.RequirementDigest() != requirementDigest || !validDigestV2(fact.FactDigest()) ||
+		!validDigestV2(fact.FactRevision()) || fact.ValidFrom() > evaluationTime ||
 		fact.ValidUntil() <= evaluationTime || fact.ValidUntil() <= fact.ValidFrom() {
-		return errors.New("fact digest, revision, or validity interval is invalid")
+		return errors.New("fact requirement, digest, revision, or validity interval is invalid")
 	}
 	return nil
 }

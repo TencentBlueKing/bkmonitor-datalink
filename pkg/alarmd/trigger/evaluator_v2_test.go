@@ -159,6 +159,47 @@ func TestEvaluatorV2RejectsBrokenCrossModuleInvariants(t *testing.T) {
 	}
 }
 
+func TestEvaluatorV2RejectsEffectiveTimeFactRequirementMismatch(t *testing.T) {
+	t.Run("facts exchanged between Levels", func(t *testing.T) {
+		plan := compilePlanV2(t, []contract.LevelIRV2{
+			levelV2(1, 1, 1, 1, 1, staticUptimeV2()),
+			levelV2(5, 2, 1, 1, 1, nil),
+		})
+		levels := plan.Levels()
+		facts := activeFactsV2(t, plan, 36000)
+		facts[0].Fact, facts[1].Fact = facts[1].Fact, facts[0].Fact
+		request := requestV2(t, plan, 36000,
+			[]DetectionFact{factV2(levels[0], DetectionAnomalous), factV2(levels[1], DetectionAnomalous)},
+			[]LevelHistory{
+				{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{36000: true}}},
+				{LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{36000: true}}},
+			}, facts)
+		if _, err := EvaluateV2(request); !errors.Is(err, ErrInvariantV2) {
+			t.Fatalf("exchanged EffectiveTime facts error = %v", err)
+		}
+	})
+
+	t.Run("fact from old requirement revision", func(t *testing.T) {
+		oldPlan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, staticUptimeV2())})
+		oldFact := activeFactsV2(t, oldPlan, 36000)[0]
+		newUptime := map[string]any{
+			"time_ranges":      []any{map[string]any{"start": "08:00", "end": "18:00"}},
+			"active_calendars": []any{},
+			"calendars":        []any{},
+		}
+		plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, newUptime)})
+		level := plan.Levels()[0]
+		oldFact.LevelID = level.Definition().LevelID
+		request := requestV2(t, plan, 36000,
+			[]DetectionFact{factV2(level, DetectionAnomalous)},
+			[]LevelHistory{{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{36000: true}}}},
+			[]LevelEffectiveTimeFact{oldFact})
+		if _, err := EvaluateV2(request); !errors.Is(err, ErrInvariantV2) {
+			t.Fatalf("old EffectiveTime fact revision error = %v", err)
+		}
+	})
+}
+
 func TestEvaluatorV2UsesStableM0EventIdentity(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 1, 1, 1, 1, nil)})
 	history := []LevelHistory{{LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{300: true}}}}

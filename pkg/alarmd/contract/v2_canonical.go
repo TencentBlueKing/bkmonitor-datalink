@@ -155,8 +155,8 @@ func DeriveDimensionIdentityDigestV2(tenantID, businessID string, fields []Dimen
 	if tenantID == "" || !utf8.ValidString(tenantID) {
 		return "", invalid("dimension_identity.tenant_id", "must be non-empty valid UTF-8")
 	}
-	if !canonicalDecimalPattern.MatchString(businessID) {
-		return "", invalid("dimension_identity.business_id", "must use canonical decimal form")
+	if !canonicalSignedDecimalPattern.MatchString(businessID) {
+		return "", invalid("dimension_identity.business_id", "must use canonical signed decimal form")
 	}
 	if fields == nil {
 		return "", invalid("dimension_identity.fields", "must be an array")

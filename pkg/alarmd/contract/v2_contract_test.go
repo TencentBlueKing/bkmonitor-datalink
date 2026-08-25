@@ -75,12 +75,35 @@ func TestCanonicalJSONV2AndRecordIdentity(t *testing.T) {
 			Digest   string `json:"digest"`
 			RecordID string `json:"record_id"`
 		} `json:"dimension_identity"`
+		NegativeBusinessIdentity struct {
+			BusinessID string             `json:"business_id"`
+			Digest     string             `json:"digest"`
+			Fields     []DimensionFieldV2 `json:"fields"`
+			RecordID   string             `json:"record_id"`
+			SourceTime int64              `json:"source_time"`
+			TenantID   string             `json:"tenant_id"`
+		} `json:"negative_business_identity"`
 	}
 	if err := json.Unmarshal(vectorPayload, &vectors); err != nil {
 		t.Fatalf("json.Unmarshal(canonical vectors) error = %v", err)
 	}
 	if vectors.DimensionIdentity.Digest != dimensionDigest || vectors.DimensionIdentity.RecordID != recordID {
 		t.Fatalf("checked-in vector drift: %#v", vectors.DimensionIdentity)
+	}
+	negativeDigest, err := DeriveDimensionIdentityDigestV2(
+		vectors.NegativeBusinessIdentity.TenantID,
+		vectors.NegativeBusinessIdentity.BusinessID,
+		vectors.NegativeBusinessIdentity.Fields,
+	)
+	if err != nil {
+		t.Fatalf("DeriveDimensionIdentityDigestV2(negative Golden) error = %v", err)
+	}
+	negativeRecordID, err := DeriveRecordIDV2(negativeDigest, vectors.NegativeBusinessIdentity.SourceTime)
+	if err != nil {
+		t.Fatalf("DeriveRecordIDV2(negative Golden) error = %v", err)
+	}
+	if negativeDigest != vectors.NegativeBusinessIdentity.Digest || negativeRecordID != vectors.NegativeBusinessIdentity.RecordID {
+		t.Fatalf("checked-in negative-business vector drift: %#v", vectors.NegativeBusinessIdentity)
 	}
 
 	reordered := []DimensionFieldV2{fields[1], fields[0]}
@@ -93,6 +116,73 @@ func TestCanonicalJSONV2AndRecordIdentity(t *testing.T) {
 	}
 	if _, err := DeriveDimensionIdentityDigestV2("default", "2", []DimensionFieldV2{}); err != nil {
 		t.Fatalf("dimensionless time series must retain a stable business-scoped identity: %v", err)
+	}
+}
+
+func TestV2BusinessIDUsesCanonicalSignedDecimal(t *testing.T) {
+	t.Parallel()
+
+	fields := []DimensionFieldV2{{Name: "host", Value: json.RawMessage(`"127.0.0.1"`)}}
+	digest, err := DeriveDimensionIdentityDigestV2("default", "-200", fields)
+	if err != nil {
+		t.Fatalf("DeriveDimensionIdentityDigestV2(negative business) error = %v", err)
+	}
+	if len(digest) != 64 {
+		t.Fatalf("negative business dimension digest = %q, want sha256 hex", digest)
+	}
+
+	for _, businessID := range []string{"", "-0", "+1", "01", "-01"} {
+		if _, err := DeriveDimensionIdentityDigestV2("default", businessID, fields); err == nil {
+			t.Fatalf("DeriveDimensionIdentityDigestV2() accepted non-canonical business_id %q", businessID)
+		}
+	}
+
+	envelope := validExecutionEnvelopeV2(t)
+	envelope.Records[0].BusinessID = "-200"
+	envelope.Records[0].DimensionIdentity.Digest, err = DeriveDimensionIdentityDigestV2(
+		envelope.TenantID, envelope.Records[0].BusinessID, envelope.Records[0].DimensionIdentity.Fields,
+	)
+	if err != nil {
+		t.Fatalf("DeriveDimensionIdentityDigestV2(envelope) error = %v", err)
+	}
+	envelope.Records[0].RecordID, err = DeriveRecordIDV2(
+		envelope.Records[0].DimensionIdentity.Digest, envelope.Records[0].SourceTime,
+	)
+	if err != nil {
+		t.Fatalf("DeriveRecordIDV2(envelope) error = %v", err)
+	}
+	if _, issues, err := ReadExecutionEnvelopeV2(
+		encodeExecutionEnvelopeV2ForTest(t, envelope), generousReaderLimitsV2(),
+	); err != nil || len(issues) != 0 {
+		t.Fatalf("ReadExecutionEnvelopeV2(negative business) = (_, %#v, %v), want success", issues, err)
+	}
+
+	event, err := BuildTriggerEventV1(TriggerEventBuildInputV1{
+		EventKind: TriggerEventAbnormal, TenantID: "default", BusinessID: "-200",
+		PlanRef: RuntimePlanRefV1{
+			StrategyID: "1001", StrategyRevision: "strategy-r1", StateCompatibilityHash: strings.Repeat("a", 64),
+		},
+		RecordRef: TriggerRecordRefV1{
+			RecordID: strings.Repeat("b", 64), SourceTime: 1_725_000_000,
+			DimensionIdentityDigest: strings.Repeat("c", 64), Dimensions: map[string]json.RawMessage{},
+		},
+		Observed: TriggerObservedV1{Values: map[string]json.RawMessage{"value": json.RawMessage(`50.1`)}, Unit: "percent"},
+		LevelResults: []LevelResultV1{
+			levelResultV1ForTest(5, 1, LevelResultAbnormal, strings.Repeat("e", 64)),
+		},
+		EvaluationTime: 1_725_000_060, DetectPlanFingerprint: strings.Repeat("f", 64),
+		TriggerStateFingerprint: strings.Repeat("0", 64), ExecutionID: "execution-negative-business",
+		MaxEvidenceBytes: 4096,
+	})
+	if err != nil {
+		t.Fatalf("BuildTriggerEventV1(negative business) error = %v", err)
+	}
+	payload, err := EncodeTriggerEventV1(event)
+	if err != nil {
+		t.Fatalf("EncodeTriggerEventV1(negative business) error = %v", err)
+	}
+	if _, err := DecodeTriggerEventV1(payload); err != nil {
+		t.Fatalf("DecodeTriggerEventV1(negative business) error = %v", err)
 	}
 }
 
@@ -307,6 +397,11 @@ func TestGoV2InvalidVectors(t *testing.T) {
 		t.Fatalf("os.ReadFile(invalid vectors) error = %v", err)
 	}
 	var vectors struct {
+		BusinessIDs []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+			Valid bool   `json:"valid"`
+		} `json:"business_ids"`
 		Selectors []struct {
 			Name        string   `json:"name"`
 			BitmapB64   string   `json:"bitmap_b64"`
@@ -325,6 +420,11 @@ func TestGoV2InvalidVectors(t *testing.T) {
 	}
 	if err := json.Unmarshal(payload, &vectors); err != nil {
 		t.Fatalf("json.Unmarshal(invalid vectors) error = %v", err)
+	}
+	for _, vector := range vectors.BusinessIDs {
+		if got := canonicalSignedDecimalPattern.MatchString(vector.Value); got != vector.Valid {
+			t.Fatalf("business id vector %q validity = %v, want %v", vector.Name, got, vector.Valid)
+		}
 	}
 	for _, vector := range vectors.Selectors {
 		view, err := NewSelectorIndexViewV2(SelectorV2{Kind: SelectorKindBitmap, BitmapB64: vector.BitmapB64}, vector.RecordCount)

@@ -822,7 +822,7 @@ func validateCanonicalRecordV2(tenantID string, dataset *DatasetContractV2, reco
 	if record.SourceTime < 0 || record.ReceivedTime < 0 || (record.CollectionTime != nil && *record.CollectionTime < 0) {
 		return ReasonTimeInvalid
 	}
-	if !canonicalDecimalPattern.MatchString(record.BusinessID) || record.Values == nil || record.Dimensions == nil {
+	if !canonicalSignedDecimalPattern.MatchString(record.BusinessID) || record.Values == nil || record.Dimensions == nil {
 		return ReasonRecordInvalid
 	}
 	for _, values := range []map[string]json.RawMessage{record.Values, record.Dimensions} {

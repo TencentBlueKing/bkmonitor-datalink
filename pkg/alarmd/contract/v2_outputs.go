@@ -99,7 +99,7 @@ func DeriveEventSemanticDigestV1(eventKind string, results []LevelResultV1, dete
 }
 
 func DeriveTriggerEventIDV1(tenantID, businessID, strategyID, stateCompatibilityHash, recordID, eventKind, semanticDigest string) (string, error) {
-	if tenantID == "" || !utf8.ValidString(tenantID) || !canonicalDecimalPattern.MatchString(businessID) ||
+	if tenantID == "" || !utf8.ValidString(tenantID) || !canonicalSignedDecimalPattern.MatchString(businessID) ||
 		!canonicalDecimalPattern.MatchString(strategyID) || !sha256Pattern.MatchString(stateCompatibilityHash) ||
 		!sha256Pattern.MatchString(recordID) || !sha256Pattern.MatchString(semanticDigest) {
 		return "", invalid("trigger_event.event_id", "contains invalid identity")
@@ -120,7 +120,7 @@ func ValidateTriggerEventV1(event *TriggerEventV1) error {
 	if event.Schema.Name != TriggerEventSchemaV1 || event.Schema.Major != 1 || event.Schema.Minor != 0 || event.RequiredFeatures == nil || len(event.RequiredFeatures) != 0 {
 		return invalid("trigger_event.schema", "unsupported header")
 	}
-	if event.TenantID == "" || !utf8.ValidString(event.TenantID) || !canonicalDecimalPattern.MatchString(event.BusinessID) ||
+	if event.TenantID == "" || !utf8.ValidString(event.TenantID) || !canonicalSignedDecimalPattern.MatchString(event.BusinessID) ||
 		!canonicalDecimalPattern.MatchString(event.PlanRef.StrategyID) || event.PlanRef.StrategyRevision == "" || !utf8.ValidString(event.PlanRef.StrategyRevision) ||
 		!sha256Pattern.MatchString(event.PlanRef.StateCompatibilityHash) || !sha256Pattern.MatchString(event.EventSemanticDigest) ||
 		!sha256Pattern.MatchString(event.RecordRef.RecordID) || !sha256Pattern.MatchString(event.RecordRef.DimensionIdentityDigest) ||

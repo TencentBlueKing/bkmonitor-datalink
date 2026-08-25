@@ -66,6 +66,10 @@ const (
 	ReasonQueryPartial                     = "QUERY_PARTIAL"
 	ReasonQueryTimeout                     = "QUERY_TIMEOUT"
 	ReasonQueryUnavailable                 = "QUERY_UNAVAILABLE"
+	ReasonEffectiveTimeInactive            = "EFFECTIVE_TIME_INACTIVE"
+	ReasonEffectiveTimeUnknown             = "EFFECTIVE_TIME_UNKNOWN"
+	ReasonHistoryWarming                   = "HISTORY_WARMING"
+	ReasonHistoryGapped                    = "HISTORY_GAPPED"
 	ReasonKafkaUnavailable                 = "KAFKA_UNAVAILABLE"
 	ReasonRedisUnavailable                 = "REDIS_UNAVAILABLE"
 	ReasonResourceHardStop                 = "RESOURCE_HARD_STOP"
@@ -448,9 +452,12 @@ type PlanReceiptV1 struct {
 }
 
 type ReceiptCountsV1 struct {
-	Received    uint64 `json:"received"`
-	Selected    uint64 `json:"selected"`
-	Processed   uint64 `json:"processed"`
+	Received  uint64 `json:"received"`
+	Selected  uint64 `json:"selected"`
+	Processed uint64 `json:"processed"`
+	// Unavailable counts selected Plan x Record evaluations that produced no
+	// valid three-state decision for a controlled runtime reason. ReasonCounts
+	// distinguishes suppression, missing facts, warming and gapped history.
 	Unavailable uint64 `json:"unavailable"`
 	Terminal    uint64 `json:"terminal"`
 	Events      uint64 `json:"events"`

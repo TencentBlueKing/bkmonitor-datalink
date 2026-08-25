@@ -907,6 +907,19 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 		ReasonAllowedForV2(ReasonRecordInvalid, ReasonDomainQueryResult) {
 		t.Fatal("QueryResult Reason domain accepted an invalid mapping")
 	}
+	for _, reason := range []string{
+		ReasonEffectiveTimeInactive,
+		ReasonEffectiveTimeUnknown,
+		ReasonHistoryWarming,
+		ReasonHistoryGapped,
+	} {
+		definition, ok := LookupReasonV2(reason)
+		if !ok || definition.Class != ReasonClassCoverage ||
+			!definition.Domains.Has(ReasonDomainReceipt) || !definition.Domains.Has(ReasonDomainObservation) ||
+			definition.Domains.Has(ReasonDomainQueryResult) || definition.Domains.Has(ReasonDomainSummary) {
+			t.Fatalf("runtime coverage reason %q definition = (%#v, %t)", reason, definition, ok)
+		}
+	}
 	firstCode := catalog[0].Code
 	catalog[0].Code = "MUTATED"
 	if refreshed := ReasonCatalogV2(); len(refreshed) == 0 || refreshed[0].Code != firstCode {

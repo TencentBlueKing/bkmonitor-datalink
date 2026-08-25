@@ -612,7 +612,6 @@ func (s *SpacePusher) refineTableIds(bkTenantId string, tableIdList []string) ([
 		}
 	}
 
-	// 过滤 SurrealDB 图结果表，复用统一 result_table_detail 路由。
 	var surrealdbStorageList []storage.SurrealDBStorage
 	surrealdbQuery := storage.NewSurrealDBStorageQuerySet(db).
 		Select(storage.SurrealDBStorageDBSchema.TableID).

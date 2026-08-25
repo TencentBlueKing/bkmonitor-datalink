@@ -612,12 +612,27 @@ func (s *SpacePusher) refineTableIds(bkTenantId string, tableIdList []string) ([
 		}
 	}
 
+	// 过滤 SurrealDB 图结果表，复用统一 result_table_detail 路由。
+	var surrealdbTableList []struct {
+		TableID string `gorm:"column:table_id"`
+	}
+	surrealdbQuery := db.Table("metadata_surrealdbstorage").Select("table_id").Where("bk_tenant_id = ?", bkTenantId)
+	if len(tableIdList) != 0 {
+		surrealdbQuery = surrealdbQuery.Where("table_id IN (?)", tableIdList)
+	}
+	if err := surrealdbQuery.Scan(&surrealdbTableList).Error; err != nil {
+		return nil, err
+	}
+
 	// 合并所有表 ID
 	var tableIds []string
 	for _, i := range vmRecordList {
 		tableIds = append(tableIds, i.ResultTableId)
 	}
 	for _, i := range esStorageList {
+		tableIds = append(tableIds, i.TableID)
+	}
+	for _, i := range surrealdbTableList {
 		tableIds = append(tableIds, i.TableID)
 	}
 
@@ -925,12 +940,31 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 	tableIdList []string,
 	clusterMap map[uint]storage.ClusterInfo,
 ) (map[string]map[string]any, error) {
-logger.Debugf("get table info from access vm records, table_id_list->[%v]", tableIdList)
+	logger.Debugf("get table info from access vm records, table_id_list->[%v]", tableIdList)
 	if len(tableIdList) == 0 {
 		return map[string]map[string]any{}, nil
 	}
 
 	db := mysql.GetDBSession().DB
+	var surrealdbRows []struct {
+		TableID          string `gorm:"column:table_id"`
+		StorageClusterID uint   `gorm:"column:storage_cluster_id"`
+		ClusterName      string `gorm:"column:cluster_name"`
+		Database         string `gorm:"column:database"`
+		Namespace        string `gorm:"column:namespace"`
+	}
+	surrealdbQuery := db.Table("metadata_surrealdbstorage AS surrealdb").
+		Select("surrealdb.table_id, surrealdb.storage_cluster_id, cluster.cluster_name, binding.bkbase_result_table_name AS database, binding.namespace").
+		Joins("LEFT JOIN metadata_clusterinfo AS cluster ON cluster.cluster_id = surrealdb.storage_cluster_id AND cluster.cluster_type = ?", models.StorageTypeSurrealdb).
+		Joins("LEFT JOIN metadata_surrealdbbindingconfig AS binding ON binding.table_id = surrealdb.table_id AND binding.bk_tenant_id = surrealdb.bk_tenant_id").
+		Where("surrealdb.bk_tenant_id = ?", bkTenantId)
+	if len(tableIdList) != 0 {
+		surrealdbQuery = surrealdbQuery.Where("surrealdb.table_id IN (?)", tableIdList)
+	}
+	if err := surrealdbQuery.Scan(&surrealdbRows).Error; err != nil {
+		return nil, err
+	}
+
 	var vmRecordList []storage.AccessVMRecord
 	if err := storage.NewAccessVMRecordQuerySet(db).
 		Select(
@@ -968,7 +1002,25 @@ logger.Debugf("get table info from access vm records, table_id_list->[%v]", tabl
 		cmdbLevelVmrtMap[option.TableID] = option.Value
 	}
 
-	tableIdInfo := make(map[string]map[string]any, len(vmRecordList))
+	tableIdInfo := make(map[string]map[string]any, len(vmRecordList)+len(surrealdbRows))
+	for _, row := range surrealdbRows {
+		database := row.Database
+		if database == "" {
+			database = row.TableID
+		}
+		tableIdInfo[row.TableID] = map[string]any{
+			"storage_id":   row.StorageClusterID,
+			"storage_name": row.ClusterName,
+			"cluster_name": row.ClusterName,
+			"db":           database,
+			"database":     database,
+			"namespace":    row.Namespace,
+			"measurement":  "",
+			"vm_rt":        "",
+			"tags_key":     []string{},
+			"storage_type": models.StorageTypeSurrealdb,
+		}
+	}
 	for _, record := range vmRecordList {
 		storageName := ""
 		if cluster, exists := clusterMap[record.VmClusterId]; exists && cluster.ClusterType == models.StorageTypeVM {

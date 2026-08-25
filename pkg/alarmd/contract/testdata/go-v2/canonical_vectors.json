@@ -1,0 +1,1 @@
+{"dimension_identity":{"business_id":"2","digest":"3c92064a5bc0c7703ba6c85ab0714fdfc40aea0bfb7e76efdb5c189ac6076f16","fields":[{"name":"host","value":"127.0.0.1"},{"name":"port","value":8080}],"record_id":"846d0304a0f24f68e1c7f81e75e039362b3adf7c12cffc2909d92a329ef773ba","source_time":1725000000,"tenant_id":"default"}}

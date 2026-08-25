@@ -506,10 +506,12 @@ func selectedRecordIDs(t *testing.T, plan PlanView) []string {
 func validEnvelope(t testing.TB, recordCount int) *contract.ExecutionEnvelopeV2 {
 	t.Helper()
 
+	const firstSourceTime int64 = 1_725_000_000
 	records := make([]contract.CanonicalRecordV2, 0, recordCount)
 	for index := 0; index < recordCount; index++ {
-		records = append(records, validRecord(t, 1_725_000_000+int64(index*60), json.RawMessage(`50.1`)))
+		records = append(records, validRecord(t, firstSourceTime+int64(index*60), json.RawMessage(`50.1`)))
 	}
+	untilTime := firstSourceTime + int64(max(recordCount, 1)*60)
 	ranges := make([]contract.SelectorRangeV2, 0, 1)
 	if recordCount > 0 {
 		ranges = append(ranges, contract.SelectorRangeV2{Start: 0, End: uint32(recordCount)})
@@ -521,9 +523,9 @@ func validEnvelope(t testing.TB, recordCount int) *contract.ExecutionEnvelopeV2 
 		MessageID:        "message-1",
 		TenantID:         "default",
 		QueryGroup: contract.QueryGroupV2{
-			Key: "query-group-1", QueryMD5: "query-md5-1", QueryRevision: "query-r1", EvaluationTime: 1_725_000_060,
+			Key: "query-group-1", QueryMD5: "query-md5-1", QueryRevision: "query-r1", EvaluationTime: untilTime,
 		},
-		SourceWindow: contract.SourceWindowV2{FromTime: 1_724_999_700, UntilTime: 1_725_000_060},
+		SourceWindow: contract.SourceWindowV2{FromTime: firstSourceTime - 300, UntilTime: untilTime},
 		QueryResult:  contract.QueryResultV2{Completeness: contract.QueryCompletenessFull},
 		DatasetContract: contract.DatasetContractV2{
 			SchemaDigest:        "1111111111111111111111111111111111111111111111111111111111111111",

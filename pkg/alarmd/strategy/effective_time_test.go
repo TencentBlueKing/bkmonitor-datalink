@@ -36,6 +36,9 @@ func TestCompilerCompilesEffectiveTimeRequirements(t *testing.T) {
 	if static.Kind() != EffectiveTimeStaticSchedule || static.TimezoneRef() != "BUSINESS_LOCAL" || len(static.TimeRanges()) != 1 {
 		t.Fatalf("STATIC_SCHEDULE requirement = %+v", static)
 	}
+	if staticLevel.EffectiveTimeRequirementDigest() != static.Digest() {
+		t.Fatal("EffectiveTimeRequirementDigest() does not match the immutable requirement")
+	}
 	if staticLevel.Fingerprints() != always.Fingerprints() {
 		t.Fatal("uptime requirement unexpectedly changed Trigger state fingerprint")
 	}

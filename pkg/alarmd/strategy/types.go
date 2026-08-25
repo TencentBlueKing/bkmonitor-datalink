@@ -425,6 +425,10 @@ func (l CompiledLevel) EffectiveTimeRequirement() EffectiveTimeRequirement {
 	return l.effectiveTime.clone()
 }
 
+func (l CompiledLevel) EffectiveTimeRequirementDigest() string {
+	return l.effectiveTime.digest
+}
+
 func (l CompiledLevel) RequiredDetectHistoryPoints() uint32 {
 	return l.stateRequirement.RequiredDetectHistoryPoints
 }

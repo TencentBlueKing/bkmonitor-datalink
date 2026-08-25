@@ -238,8 +238,8 @@ func (s *SpacePusher) listLogTableIDs(bkTenantId string, requestedTableIDs []str
 	return sortedTableIDSet(tableIDSet), nil
 }
 
-// listMetricTableIDs 在增量刷新时原样交回请求列表；全量刷新时只枚举当前租户的
-// AccessVMRecord，并兼容 ResultTable.default_storage 为 influxdb 的指标表。
+// listMetricTableIDs 在增量刷新时原样交回请求列表；全量刷新时枚举当前租户的
+// AccessVMRecord 和 SurrealDBStorage。
 func (s *SpacePusher) listMetricTableIDs(bkTenantId string, requestedTableIDs []string) ([]string, error) {
 	if len(requestedTableIDs) > 0 {
 		return requestedTableIDs, nil
@@ -256,6 +256,16 @@ func (s *SpacePusher) listMetricTableIDs(bkTenantId string, requestedTableIDs []
 	}
 	for _, item := range vmRecordList {
 		tableIDSet[item.ResultTableId] = struct{}{}
+	}
+	var surrealdbStorageList []storage.SurrealDBStorage
+	if err := storage.NewSurrealDBStorageQuerySet(db).
+		Select(storage.SurrealDBStorageDBSchema.TableID).
+		BkTenantIDEq(bkTenantId).
+		All(&surrealdbStorageList); err != nil {
+		return nil, err
+	}
+	for _, item := range surrealdbStorageList {
+		tableIDSet[item.TableID] = struct{}{}
 	}
 
 	return sortedTableIDSet(tableIDSet), nil

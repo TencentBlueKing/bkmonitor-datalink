@@ -1021,31 +1021,8 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 		cmdbLevelVmrtMap[option.TableID] = option.Value
 	}
 
-	// 将 SurrealDB 和 VM 结果表统一组装成 table_id -> route detail。
+	// 先保留原有 VM 路由；同表双写 SurrealDB 时再追加独立子路由。
 	tableIdInfo := make(map[string]map[string]any, len(vmRecordList)+len(surrealdbStorageList))
-	for _, row := range surrealdbStorageList {
-		binding := surrealdbBindingMap[row.TableID]
-		database := binding.BkbaseResultTableName
-		if database == "" {
-			database = row.TableID
-		}
-		clusterName := ""
-		if cluster, exists := clusterMap[row.StorageClusterID]; exists && cluster.ClusterType == models.StorageTypeSurrealdb {
-			clusterName = cluster.ClusterName
-		}
-		tableIdInfo[row.TableID] = map[string]any{
-			"storage_id":   row.StorageClusterID,
-			"storage_name": clusterName,
-			"cluster_name": clusterName,
-			"db":           database,
-			"database":     database,
-			"namespace":    binding.Namespace,
-			"measurement":  "",
-			"vm_rt":        "",
-			"tags_key":     []string{},
-			"storage_type": models.StorageTypeSurrealdb,
-		}
-	}
 	for _, record := range vmRecordList {
 		storageName := ""
 		if cluster, exists := clusterMap[record.VmClusterId]; exists && cluster.ClusterType == models.StorageTypeVM {
@@ -1066,6 +1043,34 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 			"tags_key":         []string{},
 			"storage_type":     models.StorageTypeVM,
 		}
+	}
+	for _, row := range surrealdbStorageList {
+		binding := surrealdbBindingMap[row.TableID]
+		database := binding.BkbaseResultTableName
+		if database == "" {
+			database = row.TableID
+		}
+		clusterName := ""
+		if cluster, exists := clusterMap[row.StorageClusterID]; exists && cluster.ClusterType == models.StorageTypeSurrealdb {
+			clusterName = cluster.ClusterName
+		}
+		surrealdbDetail := map[string]any{
+			"storage_id":   row.StorageClusterID,
+			"storage_name": clusterName,
+			"cluster_name": clusterName,
+			"db":           database,
+			"database":     database,
+			"namespace":    binding.Namespace,
+			"storage_type": models.StorageTypeSurrealdb,
+		}
+		if detail, exists := tableIdInfo[row.TableID]; exists {
+			detail[models.StorageTypeSurrealdb] = surrealdbDetail
+			continue
+		}
+		surrealdbDetail["measurement"] = ""
+		surrealdbDetail["vm_rt"] = ""
+		surrealdbDetail["tags_key"] = []string{}
+		tableIdInfo[row.TableID] = surrealdbDetail
 	}
 	return tableIdInfo, nil
 }

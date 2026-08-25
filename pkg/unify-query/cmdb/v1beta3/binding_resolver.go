@@ -328,6 +328,8 @@ func (r *BindingResolver) fetchFromResultTableRoute(ctx context.Context, tenantI
 }
 
 func surrealDBRouteDetail(detail map[string]any) map[string]any {
+	// SurrealDB-only 路由直接使用顶层配置；VM + SurrealDB 双写路由则读取
+	// surrealdb 子配置，避免改变通用时序查询消费的顶层 VM 路由。
 	if routeStringValue(detail["storage_type"], "") == metadata.SurrealDBStorageType {
 		return detail
 	}

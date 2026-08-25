@@ -22,7 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-func TestBindingResolverFetchesSurrealDBResultTableRouteWithTenant(t *testing.T) {
+func TestBindingResolverFetchesSurrealDBSubRouteFromDualWriteResultTable(t *testing.T) {
 	ctx := contextWithTenantForBindingResolverTest("tenant-a")
 	var requests []string
 	resolver := &BindingResolver{
@@ -37,13 +37,16 @@ func TestBindingResolverFetchesSurrealDBResultTableRouteWithTenant(t *testing.T)
 	info, err := resolver.Resolve(ctx, "bkcc__2")
 
 	require.NoError(t, err)
-	assert.Equal(t, "surreal.graph", info.Name)
-	assert.Equal(t, "2", info.BkBizID)
-	assert.Equal(t, "2_graph_rt", info.Database)
-	assert.Equal(t, "mapleleaf_2", info.Namespace)
-	assert.Equal(t, "surrealdb-main", info.ClusterName)
-	assert.Equal(t, "7", info.StorageID)
-	assert.Equal(t, metadata.SurrealDBStorageType, info.StorageType)
+	assert.Equal(t, &BindingInfo{
+		Name:        "surreal.graph",
+		BkBizID:     "2",
+		Database:    "2_graph_rt",
+		Namespace:   "mapleleaf_2",
+		ClusterName: "surrealdb-main",
+		StorageID:   "7",
+		StorageType: metadata.SurrealDBStorageType,
+		Phase:       "Ok",
+	}, info)
 	assert.Equal(t, []string{
 		routeRedisLookupKey(DefaultSpaceToResultTableRedisKey, "bkcc__2|tenant-a"),
 		routeRedisLookupKey(DefaultResultTableDetailRedisKey, "metric.vm|tenant-a"),

@@ -11,6 +11,7 @@ package v1beta3
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -21,136 +22,115 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-func TestBindingResolverFetchesRedisRouteWithTenant(t *testing.T) {
+func TestBindingResolverFetchesSurrealDBResultTableRouteWithTenant(t *testing.T) {
 	ctx := contextWithTenantForBindingResolverTest("tenant-a")
-	restoreBindingRedisKey := setBindingRedisKeyForTest("test:surrealdb_binding")
-	defer restoreBindingRedisKey()
-
-	var requestedFields []string
+	var requests []string
 	resolver := &BindingResolver{
-		redisLookup: func(ctx context.Context, key, field string) (string, error) {
-			require.Equal(t, "test:surrealdb_binding", key)
-			requestedFields = append(requestedFields, field)
-			if field == "bkcc__2|tenant-a" {
-				return `{"name":"binding-a","bk_biz_id":"2","database":"2_graph_rt","namespace":"mapleleaf_2","cluster_name":"surrealdb-main","phase":"Ok"}`, nil
-			}
-			return "", goRedis.Nil
-		},
+		redisLookup: routeRedisLookupForTest(map[string]string{
+			routeRedisLookupKey(DefaultSpaceToResultTableRedisKey, "bkcc__2|tenant-a"):      `{"metric.vm":{"filters":[{"bk_biz_id":"2"}]},"surreal.graph":{"filters":[{"bk_biz_id":"2"}]}}`,
+			routeRedisLookupKey(DefaultResultTableDetailRedisKey, "metric.vm|tenant-a"):     `{"storage_id":6,"storage_type":"victoria_metrics"}`,
+			routeRedisLookupKey(DefaultResultTableDetailRedisKey, "surreal.graph|tenant-a"): `{"storage_id":7,"storage_type":"surrealdb","database":"2_graph_rt","namespace":"mapleleaf_2","cluster_name":"surrealdb-main"}`,
+		}, &requests),
 		cache: make(map[string]*bindingCacheEntry),
 	}
 
 	info, err := resolver.Resolve(ctx, "bkcc__2")
 
 	require.NoError(t, err)
-	assert.Equal(t, "binding-a", info.Name)
+	assert.Equal(t, "surreal.graph", info.Name)
+	assert.Equal(t, "2", info.BkBizID)
 	assert.Equal(t, "2_graph_rt", info.Database)
 	assert.Equal(t, "mapleleaf_2", info.Namespace)
 	assert.Equal(t, "surrealdb-main", info.ClusterName)
-	assert.Equal(t, []string{"bkcc__2|tenant-a"}, requestedFields)
+	assert.Equal(t, "7", info.StorageID)
+	assert.Equal(t, metadata.SurrealDBStorageType, info.StorageType)
+	assert.Equal(t, []string{
+		routeRedisLookupKey(DefaultSpaceToResultTableRedisKey, "bkcc__2|tenant-a"),
+		routeRedisLookupKey(DefaultResultTableDetailRedisKey, "metric.vm|tenant-a"),
+		routeRedisLookupKey(DefaultResultTableDetailRedisKey, "surreal.graph|tenant-a"),
+	}, requests)
 }
 
-func TestBindingResolverFallsBackToPlainRedisField(t *testing.T) {
+func TestBindingResolverFetchesPlainSurrealDBResultTableRoute(t *testing.T) {
 	ctx := contextWithTenantForBindingResolverTest("")
-	restoreBindingRedisKey := setBindingRedisKeyForTest("test:surrealdb_binding")
-	defer restoreBindingRedisKey()
-
-	var requestedFields []string
+	var requests []string
 	resolver := &BindingResolver{
-		redisLookup: func(ctx context.Context, key, field string) (string, error) {
-			requestedFields = append(requestedFields, field)
-			if field == "bkcc__2" {
-				return `{"name":"binding-a","bk_biz_id":"2","database":"2_graph_rt","namespace":"mapleleaf_2","phase":"Ok"}`, nil
-			}
-			return "", goRedis.Nil
-		},
+		redisLookup: routeRedisLookupForTest(map[string]string{
+			routeRedisLookupKey(DefaultSpaceToResultTableRedisKey, "bkcc__2"):      `{"surreal.graph":{"filters":[{"bk_biz_id":"2"}]}}`,
+			routeRedisLookupKey(DefaultResultTableDetailRedisKey, "surreal.graph"): `{"storage_id":"7","storage_type":"surrealdb","db":"2_graph_rt","namespace":"mapleleaf_2"}`,
+		}, &requests),
 		cache: make(map[string]*bindingCacheEntry),
 	}
 
 	info, err := resolver.Resolve(ctx, "bkcc__2")
 
 	require.NoError(t, err)
-	assert.Equal(t, "binding-a", info.Name)
-	assert.Equal(t, []string{"bkcc__2"}, requestedFields)
+	assert.Equal(t, "surreal.graph", info.Name)
+	assert.Equal(t, "7", info.StorageID)
+	assert.Equal(t, []string{
+		routeRedisLookupKey(DefaultSpaceToResultTableRedisKey, "bkcc__2"),
+		routeRedisLookupKey(DefaultResultTableDetailRedisKey, "surreal.graph"),
+	}, requests)
 }
 
-func TestBindingResolverDoesNotFallbackToPlainRedisFieldForTenant(t *testing.T) {
+func TestBindingResolverDoesNotFallbackToPlainRouteForTenant(t *testing.T) {
 	ctx := contextWithTenantForBindingResolverTest("tenant-a")
-	restoreBindingRedisKey := setBindingRedisKeyForTest("test:surrealdb_binding")
-	defer restoreBindingRedisKey()
-
-	var requestedFields []string
+	var requests []string
 	resolver := &BindingResolver{
-		redisLookup: func(ctx context.Context, key, field string) (string, error) {
-			requestedFields = append(requestedFields, field)
-			if field == "bkcc__2" {
-				return `{"name":"binding-other","bk_biz_id":"2","database":"other_graph_rt","namespace":"mapleleaf_other","phase":"Ok"}`, nil
+		redisLookup: routeRedisLookupForTest(map[string]string{
+			routeRedisLookupKey(DefaultSpaceToResultTableRedisKey, "bkcc__2"): `{"surreal.graph":{"filters":[]}}`,
+		}, &requests),
+		cache: make(map[string]*bindingCacheEntry),
+	}
+
+	_, err := resolver.Resolve(ctx, "bkcc__2")
+
+	require.ErrorContains(t, err, "no usable SurrealDB result table route")
+	assert.Equal(t, []string{routeRedisLookupKey(DefaultSpaceToResultTableRedisKey, "bkcc__2|tenant-a")}, requests)
+}
+
+func TestBindingResolverSkipsNonSurrealDBResultTable(t *testing.T) {
+	ctx := contextWithTenantForBindingResolverTest("tenant-a")
+	resolver := &BindingResolver{
+		redisLookup: routeRedisLookupForTest(map[string]string{
+			routeRedisLookupKey(DefaultSpaceToResultTableRedisKey, "bkcc__2|tenant-a"):  `{"metric.vm":{"filters":[]}}`,
+			routeRedisLookupKey(DefaultResultTableDetailRedisKey, "metric.vm|tenant-a"): `{"storage_id":6,"storage_type":"victoria_metrics"}`,
+		}, nil),
+		cache: make(map[string]*bindingCacheEntry),
+	}
+
+	_, err := resolver.Resolve(ctx, "bkcc__2")
+
+	require.ErrorContains(t, err, "no usable SurrealDB result table route")
+}
+
+func TestBindingResolverRejectsIncompleteSurrealDBResultTableDetail(t *testing.T) {
+	testCases := []struct {
+		name   string
+		detail string
+		error  string
+	}{
+		{name: "missing storage id", detail: `{"storage_type":"surrealdb","database":"2_graph_rt","namespace":"mapleleaf_2"}`, error: "missing storage_id"},
+		{name: "missing database", detail: `{"storage_id":7,"storage_type":"surrealdb","namespace":"mapleleaf_2"}`, error: "missing database or namespace"},
+		{name: "missing namespace", detail: `{"storage_id":7,"storage_type":"surrealdb","database":"2_graph_rt"}`, error: "missing database or namespace"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx := contextWithTenantForBindingResolverTest("tenant-a")
+			resolver := &BindingResolver{
+				redisLookup: routeRedisLookupForTest(map[string]string{
+					routeRedisLookupKey(DefaultSpaceToResultTableRedisKey, "bkcc__2|tenant-a"):      `{"surreal.graph":{"filters":[]}}`,
+					routeRedisLookupKey(DefaultResultTableDetailRedisKey, "surreal.graph|tenant-a"): testCase.detail,
+				}, nil),
+				cache: make(map[string]*bindingCacheEntry),
 			}
-			return "", goRedis.Nil
-		},
-		cache: make(map[string]*bindingCacheEntry),
+
+			_, err := resolver.Resolve(ctx, "bkcc__2")
+
+			require.ErrorContains(t, err, testCase.error)
+		})
 	}
-
-	_, err := resolver.Resolve(ctx, "bkcc__2")
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no usable SurrealDBBinding")
-	assert.Equal(t, []string{"bkcc__2|tenant-a"}, requestedFields)
-}
-
-func TestBindingResolverRejectsNotReadyRedisRoute(t *testing.T) {
-	ctx := contextWithTenantForBindingResolverTest("tenant-a")
-	restoreBindingRedisKey := setBindingRedisKeyForTest("test:surrealdb_binding")
-	defer restoreBindingRedisKey()
-
-	resolver := &BindingResolver{
-		redisLookup: func(ctx context.Context, key, field string) (string, error) {
-			return `{"name":"binding-a","bk_biz_id":"2","database":"2_graph_rt","namespace":"mapleleaf_2","phase":"Pending"}`, nil
-		},
-		cache: make(map[string]*bindingCacheEntry),
-	}
-
-	_, err := resolver.Resolve(ctx, "bkcc__2")
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not ready")
-}
-
-func TestBindingResolverRejectsRedisRouteWithoutPhase(t *testing.T) {
-	ctx := contextWithTenantForBindingResolverTest("tenant-a")
-	restoreBindingRedisKey := setBindingRedisKeyForTest("test:surrealdb_binding")
-	defer restoreBindingRedisKey()
-
-	resolver := &BindingResolver{
-		redisLookup: func(ctx context.Context, key, field string) (string, error) {
-			return `{"name":"binding-a","bk_biz_id":"2","database":"2_graph_rt","namespace":"mapleleaf_2"}`, nil
-		},
-		cache: make(map[string]*bindingCacheEntry),
-	}
-
-	_, err := resolver.Resolve(ctx, "bkcc__2")
-
-	require.ErrorContains(t, err, "not ready")
-	assert.Contains(t, err.Error(), "phase=")
-}
-
-func TestBindingResolverRejectsRedisRouteForDifferentBiz(t *testing.T) {
-	ctx := contextWithTenantForBindingResolverTest("tenant-a")
-	restoreBindingRedisKey := setBindingRedisKeyForTest("test:surrealdb_binding")
-	defer restoreBindingRedisKey()
-
-	resolver := &BindingResolver{
-		redisLookup: func(ctx context.Context, key, field string) (string, error) {
-			return `{"name":"binding-a","bk_biz_id":"3","database":"3_graph_rt","namespace":"mapleleaf_3","phase":"Ok"}`, nil
-		},
-		cache: make(map[string]*bindingCacheEntry),
-	}
-
-	_, err := resolver.Resolve(ctx, "bkcc__2")
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "biz mismatch")
-	assert.Contains(t, err.Error(), "binding_bk_biz_id=3")
-	assert.Contains(t, err.Error(), "request_bk_biz_id=2")
 }
 
 func TestBindingResolverDeletesExpiredCacheEntry(t *testing.T) {
@@ -200,10 +180,20 @@ func contextWithTenantForBindingResolverTest(tenantID string) context.Context {
 	return ctx
 }
 
-func setBindingRedisKeyForTest(key string) func() {
-	old := BindingRedisKey
-	BindingRedisKey = key
-	return func() {
-		BindingRedisKey = old
+func routeRedisLookupForTest(values map[string]string, requests *[]string) bindingRedisLookup {
+	return func(_ context.Context, key, field string) (string, error) {
+		lookupKey := routeRedisLookupKey(key, field)
+		if requests != nil {
+			*requests = append(*requests, lookupKey)
+		}
+		value, ok := values[lookupKey]
+		if !ok {
+			return "", goRedis.Nil
+		}
+		return value, nil
 	}
+}
+
+func routeRedisLookupKey(key, field string) string {
+	return fmt.Sprintf("%s#%s", key, field)
 }

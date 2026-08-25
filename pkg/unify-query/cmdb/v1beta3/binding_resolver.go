@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,14 +27,13 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-// BindingInfo 是 SurrealDBBinding 路由里 unify-query 查询需要的字段，
-// 对应 bkbase 回填的 metadata.annotations.{database, namespace} + storage name。
+// BindingInfo 是 unify-query 直连 SurrealDB 所需的结果表路由信息。
 type BindingInfo struct {
-	Name        string // binding metadata.name
-	BkBizID     string // binding metadata.labels.bk_biz_id
-	Database    string // binding metadata.annotations.database，作为 result_table_id
-	Namespace   string // binding metadata.annotations.namespace，如 "mapleleaf_39"
-	ClusterName string // binding spec.storage.name，即 SurrealDB 集群名
+	Name        string // result table ID
+	BkBizID     string // space UID 中的业务 ID
+	Database    string // result_table_detail.database
+	Namespace   string // result_table_detail.namespace，如 "mapleleaf_39"
+	ClusterName string // result_table_detail.cluster_name
 	StorageID   string // result_table_detail.storage_id，Storage Map 的 key
 	StorageType string // result_table_detail.storage_type
 	Phase       string // binding status.phase
@@ -141,7 +141,7 @@ func (r *BindingResolver) Resolve(ctx context.Context, spaceUID string) (info *B
 	if info == nil {
 		ObserveBindingLookup(spaceUID, "not_found")
 		span.Set("lookup-result", "not-found")
-		return nil, &BindingLookupError{SpaceUID: spaceUID, Reason: fmt.Sprintf("no usable SurrealDBBinding found for bk_biz_id=%s", bizID)}
+		return nil, &BindingLookupError{SpaceUID: spaceUID, Reason: fmt.Sprintf("no usable SurrealDB result table route found for bk_biz_id=%s", bizID)}
 	}
 
 	storeStats := r.storeCache(cacheKey, info)
@@ -282,11 +282,13 @@ func (r *BindingResolver) fetchFromResultTableRoute(ctx context.Context, tenantI
 	if err := json.Unmarshal([]byte(spaceValue), &tableRoutes); err != nil {
 		return nil, fmt.Errorf("decode space_to_result_table route failed: %w", err)
 	}
-	for tableID, rawRoute := range tableRoutes {
-		route, ok := rawRoute.(map[string]any)
-		if !ok || routeStringValue(route["storage_type"], "") != metadata.SurrealDBStorageType {
-			continue
-		}
+	tableIDs := make([]string, 0, len(tableRoutes))
+	for tableID := range tableRoutes {
+		tableIDs = append(tableIDs, tableID)
+	}
+	sort.Strings(tableIDs)
+
+	for _, tableID := range tableIDs {
 		value, err := lookup(ctx, DefaultResultTableDetailRedisKey, routeRedisFields(tenantID, tableID)[0])
 		if errors.Is(err, goRedis.Nil) || value == "" {
 			continue
@@ -298,15 +300,23 @@ func (r *BindingResolver) fetchFromResultTableRoute(ctx context.Context, tenantI
 		if err := json.Unmarshal([]byte(value), &detail); err != nil {
 			return nil, fmt.Errorf("decode result_table_detail route failed: table_id=%s: %w", tableID, err)
 		}
+		if routeStringValue(detail["storage_type"], "") != metadata.SurrealDBStorageType {
+			continue
+		}
 		storageID := routeStringValue(detail["storage_id"], "")
 		if storageID == "" {
 			return nil, fmt.Errorf("result_table_detail route missing storage_id: table_id=%s", tableID)
 		}
+		database := routeStringValue(detail["database"], routeStringValue(detail["db"], ""))
+		namespace := routeStringValue(detail["namespace"], "")
+		if database == "" || namespace == "" {
+			return nil, fmt.Errorf("result_table_detail route missing database or namespace: table_id=%s", tableID)
+		}
 		return &BindingInfo{
 			Name:        tableID,
 			BkBizID:     bizID,
-			Database:    routeStringValue(detail["database"], routeStringValue(detail["db"], tableID)),
-			Namespace:   routeStringValue(detail["namespace"], ""),
+			Database:    database,
+			Namespace:   namespace,
 			ClusterName: routeStringValue(detail["cluster_name"], routeStringValue(detail["storage_name"], "")),
 			StorageID:   storageID,
 			StorageType: metadata.SurrealDBStorageType,

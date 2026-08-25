@@ -49,9 +49,10 @@ func TestBindingResolverTraceRecordsCapacityEviction(t *testing.T) {
 	BindingCacheMaxSize = 1
 	t.Cleanup(func() { BindingCacheMaxSize = previousMaxSize })
 	resolver := &BindingResolver{
-		redisLookup: func(context.Context, string, string) (string, error) {
-			return `{"name":"binding-a","bk_biz_id":"2","database":"2_graph_rt","namespace":"mapleleaf_2","phase":"Ok"}`, nil
-		},
+		redisLookup: routeRedisLookupForTest(map[string]string{
+			routeRedisLookupKey(DefaultSpaceToResultTableRedisKey, "bkcc__2"):      `{"surreal.graph":{"filters":[]}}`,
+			routeRedisLookupKey(DefaultResultTableDetailRedisKey, "surreal.graph"): `{"storage_id":7,"storage_type":"surrealdb","database":"2_graph_rt","namespace":"mapleleaf_2"}`,
+		}, nil),
 		cache: map[string]*bindingCacheEntry{
 			"other": {info: &BindingInfo{Name: "other"}, expiry: time.Now().Add(time.Hour)},
 		},

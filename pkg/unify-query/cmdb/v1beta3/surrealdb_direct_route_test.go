@@ -58,7 +58,7 @@ func TestSurrealDBRouteResolvesStorageAndExecutesDirectQuery(t *testing.T) {
 	resolver := &BindingResolver{
 		redisLookup: routeRedisLookupForTest(map[string]string{
 			routeRedisLookupKey(DefaultSpaceToResultTableRedisKey, "bkcc__2|tenant-a"):      `{"surreal.graph":{"filters":[{"bk_biz_id":"2"}]}}`,
-			routeRedisLookupKey(DefaultResultTableDetailRedisKey, "surreal.graph|tenant-a"): `{"storage_id":700007,"storage_type":"surrealdb","database":"2_graph_rt","namespace":"mapleleaf_2","cluster_name":"surrealdb-main"}`,
+			routeRedisLookupKey(DefaultResultTableDetailRedisKey, "surreal.graph|tenant-a"): `{"storage_id":700006,"storage_type":"victoria_metrics","vm_rt":"2_graph_metric_vm","surrealdb":{"storage_id":700007,"storage_type":"surrealdb","database":"2_graph_rt","namespace":"mapleleaf_2","cluster_name":"surrealdb-main"}}`,
 		}, nil),
 		cache: make(map[string]*bindingCacheEntry),
 	}

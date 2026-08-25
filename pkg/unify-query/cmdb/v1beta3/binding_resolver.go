@@ -300,15 +300,16 @@ func (r *BindingResolver) fetchFromResultTableRoute(ctx context.Context, tenantI
 		if err := json.Unmarshal([]byte(value), &detail); err != nil {
 			return nil, fmt.Errorf("decode result_table_detail route failed: table_id=%s: %w", tableID, err)
 		}
-		if routeStringValue(detail["storage_type"], "") != metadata.SurrealDBStorageType {
+		surrealdbDetail := surrealDBRouteDetail(detail)
+		if surrealdbDetail == nil {
 			continue
 		}
-		storageID := routeStringValue(detail["storage_id"], "")
+		storageID := routeStringValue(surrealdbDetail["storage_id"], "")
 		if storageID == "" {
 			return nil, fmt.Errorf("result_table_detail route missing storage_id: table_id=%s", tableID)
 		}
-		database := routeStringValue(detail["database"], routeStringValue(detail["db"], ""))
-		namespace := routeStringValue(detail["namespace"], "")
+		database := routeStringValue(surrealdbDetail["database"], routeStringValue(surrealdbDetail["db"], ""))
+		namespace := routeStringValue(surrealdbDetail["namespace"], "")
 		if database == "" || namespace == "" {
 			return nil, fmt.Errorf("result_table_detail route missing database or namespace: table_id=%s", tableID)
 		}
@@ -317,13 +318,24 @@ func (r *BindingResolver) fetchFromResultTableRoute(ctx context.Context, tenantI
 			BkBizID:     bizID,
 			Database:    database,
 			Namespace:   namespace,
-			ClusterName: routeStringValue(detail["cluster_name"], routeStringValue(detail["storage_name"], "")),
+			ClusterName: routeStringValue(surrealdbDetail["cluster_name"], routeStringValue(surrealdbDetail["storage_name"], "")),
 			StorageID:   storageID,
 			StorageType: metadata.SurrealDBStorageType,
 			Phase:       "Ok",
 		}, nil
 	}
 	return nil, nil
+}
+
+func surrealDBRouteDetail(detail map[string]any) map[string]any {
+	if routeStringValue(detail["storage_type"], "") == metadata.SurrealDBStorageType {
+		return detail
+	}
+	nested, ok := detail[metadata.SurrealDBStorageType].(map[string]any)
+	if !ok || routeStringValue(nested["storage_type"], "") != metadata.SurrealDBStorageType {
+		return nil
+	}
+	return nested
 }
 
 func routeRedisFields(tenantID, key string) []string {

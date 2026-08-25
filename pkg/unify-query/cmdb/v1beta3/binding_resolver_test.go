@@ -29,7 +29,7 @@ func TestBindingResolverFetchesSurrealDBResultTableRouteWithTenant(t *testing.T)
 		redisLookup: routeRedisLookupForTest(map[string]string{
 			routeRedisLookupKey(DefaultSpaceToResultTableRedisKey, "bkcc__2|tenant-a"):      `{"metric.vm":{"filters":[{"bk_biz_id":"2"}]},"surreal.graph":{"filters":[{"bk_biz_id":"2"}]}}`,
 			routeRedisLookupKey(DefaultResultTableDetailRedisKey, "metric.vm|tenant-a"):     `{"storage_id":6,"storage_type":"victoria_metrics"}`,
-			routeRedisLookupKey(DefaultResultTableDetailRedisKey, "surreal.graph|tenant-a"): `{"storage_id":7,"storage_type":"surrealdb","database":"2_graph_rt","namespace":"mapleleaf_2","cluster_name":"surrealdb-main"}`,
+			routeRedisLookupKey(DefaultResultTableDetailRedisKey, "surreal.graph|tenant-a"): `{"storage_id":6,"storage_type":"victoria_metrics","vm_rt":"2_graph_metric_vm","surrealdb":{"storage_id":7,"storage_type":"surrealdb","database":"2_graph_rt","namespace":"mapleleaf_2","cluster_name":"surrealdb-main"}}`,
 		}, &requests),
 		cache: make(map[string]*bindingCacheEntry),
 	}

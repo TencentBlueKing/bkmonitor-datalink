@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -72,16 +73,20 @@ func TestCompilerIncludesTimeRangeContentInEffectiveTimeDigest(t *testing.T) {
 	if firstRequirement.Digest() == secondRequirement.Digest() {
 		t.Fatal("different time ranges produced the same effective-time requirement digest")
 	}
-	firstFact, err := newEffectiveTimeFact(EffectiveTimeActive, firstRequirement.Digest(), 100, 200)
+	factRevision := strings.Repeat("a", 64)
+	firstFact, err := newEffectiveTimeFact(EffectiveTimeActive, firstRequirement.Digest(), factRevision, 100, 200)
 	if err != nil {
 		t.Fatalf("newEffectiveTimeFact(first) error = %v", err)
 	}
-	secondFact, err := newEffectiveTimeFact(EffectiveTimeActive, secondRequirement.Digest(), 100, 200)
+	secondFact, err := newEffectiveTimeFact(EffectiveTimeActive, secondRequirement.Digest(), factRevision, 100, 200)
 	if err != nil {
 		t.Fatalf("newEffectiveTimeFact(second) error = %v", err)
 	}
 	if firstFact.FactDigest() == secondFact.FactDigest() {
 		t.Fatal("different time ranges produced the same effective-time fact digest")
+	}
+	if firstFact.RequirementDigest() != firstRequirement.Digest() || secondFact.RequirementDigest() != secondRequirement.Digest() {
+		t.Fatalf("fact requirement binding = %q / %q", firstFact.RequirementDigest(), secondFact.RequirementDigest())
 	}
 }
 
@@ -132,7 +137,8 @@ func TestStaticScheduleProviderReturnsBoundedFacts(t *testing.T) {
 		t.Fatalf("Resolve() facts = %+v", facts)
 	}
 	for index, fact := range facts {
-		if len(fact.FactDigest()) != 64 || len(fact.FactRevision()) != 64 || fact.ValidUntil() <= requests[index].EvaluationTime {
+		if len(fact.FactDigest()) != 64 || len(fact.FactRevision()) != 64 ||
+			fact.RequirementDigest() != requests[index].Requirement.Digest() || fact.ValidUntil() <= requests[index].EvaluationTime {
 			t.Fatalf("Resolve() fact[%d] = %+v", index, fact)
 		}
 	}

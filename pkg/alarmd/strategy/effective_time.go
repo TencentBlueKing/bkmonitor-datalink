@@ -103,18 +103,20 @@ type EffectiveTimeRequest struct {
 }
 
 type EffectiveTimeFact struct {
-	status       string
-	factRevision string
-	factDigest   string
-	validFrom    int64
-	validUntil   int64
+	status            string
+	requirementDigest string
+	factRevision      string
+	factDigest        string
+	validFrom         int64
+	validUntil        int64
 }
 
-func (f EffectiveTimeFact) Status() string       { return f.status }
-func (f EffectiveTimeFact) FactRevision() string { return f.factRevision }
-func (f EffectiveTimeFact) FactDigest() string   { return f.factDigest }
-func (f EffectiveTimeFact) ValidFrom() int64     { return f.validFrom }
-func (f EffectiveTimeFact) ValidUntil() int64    { return f.validUntil }
+func (f EffectiveTimeFact) Status() string            { return f.status }
+func (f EffectiveTimeFact) RequirementDigest() string { return f.requirementDigest }
+func (f EffectiveTimeFact) FactRevision() string      { return f.factRevision }
+func (f EffectiveTimeFact) FactDigest() string        { return f.factDigest }
+func (f EffectiveTimeFact) ValidFrom() int64          { return f.validFrom }
+func (f EffectiveTimeFact) ValidUntil() int64         { return f.validUntil }
 
 type EffectiveTimeProvider interface {
 	Resolve(context.Context, []EffectiveTimeRequest) ([]EffectiveTimeFact, error)
@@ -154,7 +156,10 @@ func (p *StaticScheduleProvider) Resolve(ctx context.Context, requests []Effecti
 			}
 			location, err := p.timezones.ResolveTimezone(ctx, request.Requirement.timezoneRef, request.TenantID, request.BusinessID)
 			if errors.Is(err, ErrEffectiveTimeUnknown) || (err == nil && location == nil) {
-				facts[index], err = newEffectiveTimeFact(EffectiveTimeUnknown, request.Requirement.digest, request.EvaluationTime, request.EvaluationTime+60)
+				facts[index], err = newEffectiveTimeFact(
+					EffectiveTimeUnknown, request.Requirement.digest, request.Requirement.digest,
+					request.EvaluationTime, request.EvaluationTime+60,
+				)
 				if err != nil {
 					return nil, err
 				}
@@ -170,12 +175,17 @@ func (p *StaticScheduleProvider) Resolve(ctx context.Context, requests []Effecti
 			}
 			validUntil = nextScheduleBoundary(now, request.Requirement.timeRanges).Unix()
 		case EffectiveTimeCalendar:
-			facts[index], _ = newEffectiveTimeFact(EffectiveTimeUnknown, request.Requirement.digest, request.EvaluationTime, request.EvaluationTime+60)
+			facts[index], _ = newEffectiveTimeFact(
+				EffectiveTimeUnknown, request.Requirement.digest, request.Requirement.digest,
+				request.EvaluationTime, request.EvaluationTime+60,
+			)
 			continue
 		default:
 			return nil, errors.New("effective time: invalid requirement kind")
 		}
-		fact, err := newEffectiveTimeFact(status, request.Requirement.digest, request.EvaluationTime, validUntil)
+		fact, err := newEffectiveTimeFact(
+			status, request.Requirement.digest, request.Requirement.digest, request.EvaluationTime, validUntil,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -184,17 +194,21 @@ func (p *StaticScheduleProvider) Resolve(ctx context.Context, requests []Effecti
 	return facts, nil
 }
 
-func newEffectiveTimeFact(status, revision string, validFrom, validUntil int64) (EffectiveTimeFact, error) {
+func newEffectiveTimeFact(status, requirementDigest, factRevision string, validFrom, validUntil int64) (EffectiveTimeFact, error) {
 	digest, err := contract.DeriveCanonicalDigestV2("effective-time-fact-v1", struct {
-		Status       string `json:"status"`
-		FactRevision string `json:"fact_revision"`
-		ValidFrom    int64  `json:"valid_from"`
-		ValidUntil   int64  `json:"valid_until"`
-	}{status, revision, validFrom, validUntil})
+		Status            string `json:"status"`
+		RequirementDigest string `json:"requirement_digest"`
+		FactRevision      string `json:"fact_revision"`
+		ValidFrom         int64  `json:"valid_from"`
+		ValidUntil        int64  `json:"valid_until"`
+	}{status, requirementDigest, factRevision, validFrom, validUntil})
 	if err != nil {
 		return EffectiveTimeFact{}, err
 	}
-	return EffectiveTimeFact{status: status, factRevision: revision, factDigest: digest, validFrom: validFrom, validUntil: validUntil}, nil
+	return EffectiveTimeFact{
+		status: status, requirementDigest: requirementDigest, factRevision: factRevision,
+		factDigest: digest, validFrom: validFrom, validUntil: validUntil,
+	}, nil
 }
 
 func compileEffectiveTimeRequirement(uptime *uptimeConfigV1, timezoneRef string) (EffectiveTimeRequirement, error) {

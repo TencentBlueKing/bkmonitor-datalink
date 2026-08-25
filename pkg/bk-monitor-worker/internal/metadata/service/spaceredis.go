@@ -612,6 +612,7 @@ func (s *SpacePusher) refineTableIds(bkTenantId string, tableIdList []string) ([
 		}
 	}
 
+	// 查询当前租户下的 SurrealDB 结果表，补充到待处理的结果表列表。
 	var surrealdbStorageList []storage.SurrealDBStorage
 	surrealdbQuery := storage.NewSurrealDBStorageQuerySet(db).
 		Select(storage.SurrealDBStorageDBSchema.TableID).
@@ -945,6 +946,7 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 	}
 
 	db := mysql.GetDBSession().DB
+	// 先获取结果表对应的存储集群，再根据绑定配置补充查询所需的库名和命名空间。
 	var surrealdbStorageList []storage.SurrealDBStorage
 	surrealdbQuery := storage.NewSurrealDBStorageQuerySet(db).
 		Select(
@@ -976,6 +978,7 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 			return nil, err
 		}
 	}
+	// 绑定配置按结果表 ID 建立索引，便于后续组装路由信息。
 	surrealdbBindingMap := make(map[string]storage.SurrealDBBindingConfig, len(surrealdbBindingList))
 	for _, binding := range surrealdbBindingList {
 		surrealdbBindingMap[binding.TableID] = binding
@@ -1018,6 +1021,7 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 		cmdbLevelVmrtMap[option.TableID] = option.Value
 	}
 
+	// 将 SurrealDB 和 VM 结果表统一组装成 table_id -> route detail。
 	tableIdInfo := make(map[string]map[string]any, len(vmRecordList)+len(surrealdbStorageList))
 	for _, row := range surrealdbStorageList {
 		binding := surrealdbBindingMap[row.TableID]

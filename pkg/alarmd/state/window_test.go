@@ -10,6 +10,7 @@
 package state
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -200,6 +201,73 @@ func TestWindowNilReceiverIsInternalInvariant(t *testing.T) {
 	var window *Window
 	if _, err := window.Apply(nil); !errors.Is(err, ErrStateInvariant) {
 		t.Fatalf("Apply() error = %v, want state invariant", err)
+	}
+}
+
+func TestWindowObserverAggregatesApplyAndSummaryOutcomes(t *testing.T) {
+	requirement := requirement(1, "1", 3, 3)
+	window, err := NewWindow([]LevelRequirement{requirement})
+	if err != nil {
+		t.Fatalf("NewWindow() error = %v", err)
+	}
+	observations := make([]Observation, 0, 6)
+	window.setObserver(ObserverFunc(func(_ context.Context, observation Observation) {
+		observations = append(observations, observation)
+	}))
+	ctx := context.Background()
+	history, _ := window.History(1)
+	if summary := history.SummarizeContext(ctx, 300, 3); summary.Completeness != HistoryWarming {
+		t.Fatalf("empty summary = %+v, want WARMING", summary)
+	}
+	if _, err := window.ApplyContext(ctx, []StatePoint{
+		point(180, "a", fact(requirement, LevelFactNormal)),
+		point(300, "b", fact(requirement, LevelFactAnomalous)),
+	}); err != nil {
+		t.Fatalf("ApplyContext(initial) error = %v", err)
+	}
+	if summary := history.SummarizeContext(ctx, 300, 3); summary.Completeness != HistoryGapped {
+		t.Fatalf("summary = %+v, want GAPPED", summary)
+	}
+	results, err := window.ApplyContext(ctx, []StatePoint{
+		point(240, "c", fact(requirement, LevelFactNormal)),
+		point(120, "d", fact(requirement, LevelFactNormal)),
+	})
+	if err != nil {
+		t.Fatalf("ApplyContext(late) error = %v", err)
+	}
+	assertPointStatuses(t, results, PointApplied, PointTerminal)
+	if summary := history.SummarizeContext(ctx, 300, 3); summary.Completeness != HistoryFull {
+		t.Fatalf("summary = %+v, want FULL", summary)
+	}
+
+	if len(observations) != 5 {
+		t.Fatalf("observations = %+v, want warming/apply/gapped/apply/full", observations)
+	}
+	if observations[0].Stage != StageHistorySummarized || observations[0].WarmingSummaries != 1 {
+		t.Fatalf("warming summary observation = %+v", observations[0])
+	}
+	if observations[1].Stage != StageWindowApplied || observations[1].AppliedPoints != 2 {
+		t.Fatalf("initial apply observation = %+v", observations[1])
+	}
+	if observations[2].Stage != StageHistorySummarized || observations[2].GappedSummaries != 1 {
+		t.Fatalf("gapped summary observation = %+v", observations[2])
+	}
+	if observations[3].LateAcceptedPoints != 1 || observations[3].LateOutOfWindowPoints != 1 ||
+		observations[3].TerminalPoints != 1 || observations[3].Result != OperationPartial {
+		t.Fatalf("late apply observation = %+v", observations[3])
+	}
+	if observations[4].FullSummaries != 1 {
+		t.Fatalf("full summary observation = %+v", observations[4])
+	}
+
+	drifted := requirement
+	drifted.DetectFingerprint = strings.Repeat("2", 64)
+	if _, err := window.ApplyContext(ctx, []StatePoint{point(360, "e", fact(drifted, LevelFactNormal))}); !errors.Is(err, ErrStateInvariant) {
+		t.Fatalf("ApplyContext(invariant) error = %v", err)
+	}
+	last := observations[len(observations)-1]
+	if last.Result != OperationFailed || last.InvariantViolations != 1 || last.ReasonCode != "" {
+		t.Fatalf("invariant observation = %+v", last)
 	}
 }
 

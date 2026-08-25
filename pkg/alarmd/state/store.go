@@ -167,8 +167,16 @@ func NewStore(options StoreOptions) (*Store, error) {
 	return &Store{options: options}, nil
 }
 
-func (store *Store) LoadWindows(ctx context.Context, request LoadWindowsRequest) (LoadWindowsResult, error) {
-	result := LoadWindowsResult{Items: make([]LoadedWindow, len(request.Items))}
+func (store *Store) LoadWindows(ctx context.Context, request LoadWindowsRequest) (result LoadWindowsResult, returnErr error) {
+	started := time.Now()
+	observation := Observation{
+		Stage: StageDependencyLoaded, Result: OperationSucceeded, Codec: CodecNoneV1,
+		TouchedKeys: len(request.Items),
+	}
+	defer func() {
+		store.finishLoadObservation(ctx, &observation, result, returnErr, time.Since(started))
+	}()
+	result = LoadWindowsResult{Items: make([]LoadedWindow, len(request.Items))}
 	groups := make(map[string][]routedLoad)
 	order := make([]string, 0)
 	seenKeys := make(map[string]struct{}, len(request.Items))
@@ -192,6 +200,7 @@ func (store *Store) LoadWindows(ctx context.Context, request LoadWindowsRequest)
 		if target.Name == "" || target.Backend == nil {
 			return result, fmt.Errorf("state: route strategy %s returned invalid target", spec.Identity.StrategyID)
 		}
+		observation.Target = mergeObservationTarget(observation.Target, target.Name)
 		if _, exists := groups[target.Name]; !exists {
 			order = append(order, target.Name)
 		}
@@ -209,22 +218,16 @@ func (store *Store) LoadWindows(ctx context.Context, request LoadWindowsRequest)
 			for index := start; index < end; index++ {
 				keys[index-start] = items[index].key
 			}
-			started := time.Now()
+			observation.BackendCalls++
+			observation.RequestBytes += stringsBytes(keys)
 			values, err := items[start].target.Backend.MGet(ctx, keys)
 			if err != nil {
-				store.observe(ctx, Observation{
-					Operation: OperationLoad, Target: targetName, Result: OperationFailed,
-					ReasonCode: contract.ReasonRedisUnavailable, Keys: len(keys), RequestBytes: stringsBytes(keys),
-					Duration: time.Since(started),
-				})
+				observation.ReasonCode = contract.ReasonRedisUnavailable
 				return result, fmt.Errorf("state: load target %s: %w", targetName, err)
 			}
 			responseBytes := byteSlicesBytes(values)
-			store.observe(ctx, Observation{
-				Operation: OperationLoad, Target: targetName, Result: OperationSucceeded,
-				Keys: len(keys), RequestBytes: stringsBytes(keys), ResponseBytes: responseBytes,
-				Duration: time.Since(started),
-			})
+			observation.ResponseBytes += responseBytes
+			observation.DecodeBytes += responseBytes
 			if len(values) != len(keys) {
 				return result, fmt.Errorf("state: load target %s returned %d values for %d keys", targetName, len(values), len(keys))
 			}
@@ -242,8 +245,16 @@ func (store *Store) LoadWindows(ctx context.Context, request LoadWindowsRequest)
 	return result, nil
 }
 
-func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsRequest) (WriteWindowsResult, error) {
-	result := WriteWindowsResult{Items: make([]WriteWindowResult, len(request.Items))}
+func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsRequest) (result WriteWindowsResult, returnErr error) {
+	started := time.Now()
+	observation := Observation{
+		Stage: StageStateCommitted, Result: OperationSucceeded, Codec: CodecNoneV1,
+		TouchedKeys: len(request.Items),
+	}
+	defer func() {
+		store.finishWriteObservation(ctx, &observation, result, returnErr, time.Since(started))
+	}()
+	result = WriteWindowsResult{Items: make([]WriteWindowResult, len(request.Items))}
 	groups := make(map[string][]routedWrite)
 	order := make([]string, 0)
 	writtenBytes := 0
@@ -293,6 +304,8 @@ func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsReques
 			continue
 		}
 		writtenBytes += len(value)
+		observation.EncodeBytes += len(value)
+		observation.StateBytes += len(value)
 		if writtenBytes > store.options.Limits.MaxWrittenBytes {
 			return result, fmt.Errorf("%w: written bytes", ErrStateBudget)
 		}
@@ -303,6 +316,7 @@ func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsReques
 		if target.Name == "" || target.Backend == nil {
 			return result, fmt.Errorf("state: route strategy %s returned invalid target", item.Identity.StrategyID)
 		}
+		observation.Target = mergeObservationTarget(observation.Target, target.Name)
 		if _, exists := groups[target.Name]; !exists {
 			order = append(order, target.Name)
 		}
@@ -324,19 +338,12 @@ func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsReques
 			for index := start; index < end; index++ {
 				writes[index-start] = items[index].write
 			}
-			started := time.Now()
+			observation.BackendCalls++
+			observation.RequestBytes += writesBytes(writes)
 			if err := items[start].target.Backend.SetMany(ctx, writes); err != nil {
-				store.observe(ctx, Observation{
-					Operation: OperationWrite, Target: targetName, Result: OperationFailed,
-					ReasonCode: contract.ReasonStateWriteRetryable, Keys: len(writes), RequestBytes: writesBytes(writes),
-					Duration: time.Since(started),
-				})
+				observation.ReasonCode = contract.ReasonStateWriteRetryable
 				return result, fmt.Errorf("state: write target %s: %w", targetName, err)
 			}
-			store.observe(ctx, Observation{
-				Operation: OperationWrite, Target: targetName, Result: OperationSucceeded,
-				Keys: len(writes), RequestBytes: writesBytes(writes), Duration: time.Since(started),
-			})
 			for index := start; index < end; index++ {
 				items[index].window.MarkPersisted()
 				result.Items[items[index].index].Status = WritePersisted
@@ -347,10 +354,88 @@ func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsReques
 	return result, nil
 }
 
-func (store *Store) observe(ctx context.Context, observation Observation) {
-	if store.options.Observer != nil {
-		store.options.Observer.ObserveState(ctx, observation)
+func (store *Store) finishLoadObservation(
+	ctx context.Context, observation *Observation, result LoadWindowsResult, returnErr error, duration time.Duration,
+) {
+	classified := 0
+	for _, item := range result.Items {
+		switch item.Status {
+		case LoadFound:
+			observation.FoundKeys++
+			classified++
+		case LoadMissing:
+			observation.MissingKeys++
+			classified++
+		case LoadResetCorrupt:
+			observation.ResetCorruptKeys++
+			classified++
+		case LoadUnavailable:
+			classified++
+			if errors.Is(item.Err, ErrUnsupportedState) {
+				observation.UnsupportedKeys++
+			} else if errors.Is(item.Err, ErrStateBudget) {
+				observation.UnavailableKeys++
+				observation.BudgetViolations++
+			} else {
+				observation.UnavailableKeys++
+				observation.InvariantViolations++
+			}
+		}
 	}
+	if returnErr != nil {
+		observation.Result = OperationFailed
+		observation.UnavailableKeys += observation.TouchedKeys - classified
+	} else if observation.ResetCorruptKeys > 0 || observation.UnsupportedKeys > 0 || observation.UnavailableKeys > 0 {
+		observation.Result = OperationPartial
+	}
+	observation.Duration = duration
+	observeState(ctx, store.options.Observer, *observation)
+}
+
+func (store *Store) finishWriteObservation(
+	ctx context.Context, observation *Observation, result WriteWindowsResult, returnErr error, duration time.Duration,
+) {
+	classified := 0
+	for _, item := range result.Items {
+		switch item.Status {
+		case WriteNoop:
+			observation.NoopKeys++
+			classified++
+		case WritePersisted:
+			observation.PersistedKeys++
+			classified++
+		case WriteUnavailable:
+			classified++
+			if errors.Is(item.Err, ErrUnsupportedState) {
+				observation.UnsupportedKeys++
+			} else {
+				observation.UnavailableKeys++
+			}
+		case WriteInvariantViolation:
+			observation.InvariantKeys++
+			classified++
+			if errors.Is(item.Err, ErrStateBudget) {
+				observation.BudgetViolations++
+			} else {
+				observation.InvariantViolations++
+			}
+		}
+	}
+	if returnErr != nil {
+		observation.Result = OperationFailed
+		observation.UnavailableKeys += observation.TouchedKeys - classified
+	} else if observation.InvariantKeys > 0 || observation.UnsupportedKeys > 0 || observation.UnavailableKeys > 0 {
+		observation.Result = OperationFailed
+	}
+	observation.Duration = duration
+	observeState(ctx, store.options.Observer, *observation)
+}
+
+func mergeObservationTarget(current, next string) string {
+	if current == "" || current == next {
+		return next
+	}
+	return "MULTIPLE"
 }
 
 func stringsBytes(values []string) int {
@@ -415,6 +500,7 @@ func (store *Store) decodeLoaded(item routedLoad, value []byte) LoadedWindow {
 	}
 	if value == nil {
 		window, err := NewWindow(item.spec.Requirements)
+		window.setObserver(store.options.Observer)
 		loaded.Window, loaded.Err = window, err
 		if err != nil {
 			loaded.Status = LoadUnavailable
@@ -428,6 +514,7 @@ func (store *Store) decodeLoaded(item routedLoad, value []byte) LoadedWindow {
 		err = window.Align(item.spec.Requirements)
 	}
 	if err == nil {
+		window.setObserver(store.options.Observer)
 		loaded.Window, loaded.Status = window, LoadFound
 		return loaded
 	}
@@ -439,6 +526,7 @@ func (store *Store) decodeLoaded(item routedLoad, value []byte) LoadedWindow {
 			loaded.Status = LoadUnavailable
 			return loaded
 		}
+		window.setObserver(store.options.Observer)
 		loaded.Window, loaded.Status = window, LoadResetCorrupt
 		return loaded
 	}

@@ -14,29 +14,64 @@ import (
 	"time"
 )
 
-type Operation string
+type ObservationStage string
 
 const (
-	OperationLoad  Operation = "LOAD"
-	OperationWrite Operation = "WRITE"
+	StageDependencyLoaded  ObservationStage = "DEPENDENCY_LOADED"
+	StageStateCommitted    ObservationStage = "STATE_COMMITTED"
+	StageWindowApplied     ObservationStage = "WINDOW_APPLIED"
+	StageHistorySummarized ObservationStage = "HISTORY_SUMMARIZED"
 )
 
 type OperationResult string
 
 const (
 	OperationSucceeded OperationResult = "SUCCEEDED"
+	OperationPartial   OperationResult = "PARTIAL"
 	OperationFailed    OperationResult = "FAILED"
 )
 
+const (
+	CodecNoneV1 = "NONE_V1"
+)
+
+// Observation is one bounded aggregate emitted per M4 callpoint. All counters
+// are deliberately scalar and low cardinality; RuntimeKey, strategy, Level and
+// dimension identities must never be copied into metric labels.
 type Observation struct {
-	Operation     Operation
-	Target        string
-	Result        OperationResult
-	ReasonCode    string
-	Keys          int
-	RequestBytes  int
-	ResponseBytes int
-	Duration      time.Duration
+	Stage                 ObservationStage
+	Target                string
+	Result                OperationResult
+	ReasonCode            string
+	Codec                 string
+	BackendCalls          int
+	RequestBytes          int
+	ResponseBytes         int
+	DecodeBytes           int
+	EncodeBytes           int
+	StateBytes            int
+	TouchedKeys           int
+	FoundKeys             int
+	MissingKeys           int
+	ResetCorruptKeys      int
+	UnsupportedKeys       int
+	UnavailableKeys       int
+	NoopKeys              int
+	PersistedKeys         int
+	InvariantKeys         int
+	TouchedPoints         int
+	AppliedPoints         int
+	NoopPoints            int
+	UnavailablePoints     int
+	TerminalPoints        int
+	LateAcceptedPoints    int
+	LateOutOfWindowPoints int
+	FullSummaries         int
+	WarmingSummaries      int
+	GappedSummaries       int
+	BudgetViolations      int
+	InvariantViolations   int
+	Duration              time.Duration
 }
 
 // Observer is implemented by M8. Target and Redis keys must remain trace/log
@@ -50,5 +85,11 @@ type ObserverFunc func(context.Context, Observation)
 func (function ObserverFunc) ObserveState(ctx context.Context, observation Observation) {
 	if function != nil {
 		function(ctx, observation)
+	}
+}
+
+func observeState(ctx context.Context, observer Observer, observation Observation) {
+	if observer != nil {
+		observer.ObserveState(ctx, observation)
 	}
 }

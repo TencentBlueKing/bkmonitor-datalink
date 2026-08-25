@@ -23,7 +23,10 @@ func TestStoreLoadsMissingValidCorruptAndUnsupportedIndependently(t *testing.T) 
 	codec := mustCodec(t)
 	backend := newFakeBackend()
 	router := &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}}
-	store := mustStore(t, codec, router)
+	observations := make([]Observation, 0, 2)
+	store := mustStoreWithObserver(t, codec, router, ObserverFunc(func(_ context.Context, observation Observation) {
+		observations = append(observations, observation)
+	}))
 	requirement := requirement(5, "5", 2, 4)
 	identities := []RuntimeIdentity{
 		storeIdentity("11", "a"), storeIdentity("12", "b"), storeIdentity("13", "c"), storeIdentity("14", "d"),
@@ -75,11 +78,27 @@ func TestStoreLoadsMissingValidCorruptAndUnsupportedIndependently(t *testing.T) 
 	if len(backend.mgetBatches) != 2 {
 		t.Fatalf("MGET batches = %d, want max-2-key bounded batches", len(backend.mgetBatches))
 	}
+	if len(observations) != 2 {
+		t.Fatalf("observations = %+v, want load plus explicit history summary", observations)
+	}
+	loadObservation := observations[0]
+	if loadObservation.Stage != StageDependencyLoaded || loadObservation.Result != OperationPartial ||
+		loadObservation.Codec != CodecNoneV1 || loadObservation.BackendCalls != 2 ||
+		loadObservation.TouchedKeys != 4 || loadObservation.FoundKeys != 1 || loadObservation.MissingKeys != 1 ||
+		loadObservation.ResetCorruptKeys != 1 || loadObservation.UnsupportedKeys != 1 || loadObservation.UnavailableKeys != 0 ||
+		loadObservation.DecodeBytes != len(validBlob)+len(backend.values[corruptKey])+len(unsupported) {
+		t.Fatalf("load observation = %+v", loadObservation)
+	}
 	if _, err := store.WriteWindows(context.Background(), WriteWindowsRequest{Items: []LoadedWindow{result.Items[2]}}); err != nil {
 		t.Fatalf("WriteWindows(unchanged corrupt reset) error = %v", err)
 	}
 	if len(backend.setBatches) != 0 {
 		t.Fatal("corrupt state was overwritten before a changed next state existed")
+	}
+	lastObservation := observations[len(observations)-1]
+	if lastObservation.Stage != StageStateCommitted || lastObservation.NoopKeys != 1 ||
+		lastObservation.Result != OperationSucceeded {
+		t.Fatalf("noop observation = %+v", lastObservation)
 	}
 }
 
@@ -163,7 +182,11 @@ func TestStoreExposesPostAdmissionBudgetAsInvariantViolation(t *testing.T) {
 		t.Fatalf("NewCodec() error = %v", err)
 	}
 	backend := newFakeBackend()
-	store := mustStore(t, codec, &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}})
+	observations := make([]Observation, 0, 1)
+	store := mustStoreWithObserver(t, codec, &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}},
+		ObserverFunc(func(_ context.Context, observation Observation) {
+			observations = append(observations, observation)
+		}))
 	requirement := requirement(1, "1", 1, 2)
 	window, _ := NewWindow([]LevelRequirement{requirement})
 	mustApply(t, window, []StatePoint{
@@ -183,6 +206,11 @@ func TestStoreExposesPostAdmissionBudgetAsInvariantViolation(t *testing.T) {
 	}
 	if len(backend.setBatches) != 0 || !window.Changed() {
 		t.Fatal("terminal state was written or marked persisted")
+	}
+	if len(observations) != 1 || observations[0].Stage != StageStateCommitted ||
+		observations[0].Result != OperationFailed || observations[0].InvariantKeys != 1 ||
+		observations[0].BudgetViolations != 1 || observations[0].ReasonCode != "" {
+		t.Fatalf("observations = %+v, want budget invariant commit result", observations)
 	}
 }
 
@@ -319,14 +347,28 @@ func TestStoreReportsBoundedBackendOperationsToObserver(t *testing.T) {
 	if _, err := store.WriteWindows(context.Background(), WriteWindowsRequest{Items: loaded.Items}); err != nil {
 		t.Fatalf("WriteWindows() error = %v", err)
 	}
-	if len(observations) != 2 || observations[0].Operation != OperationLoad || observations[1].Operation != OperationWrite {
+	history, _ := loaded.Items[0].Window.History(1)
+	_ = history.SummarizeContext(context.Background(), 100, 1)
+	if len(observations) != 4 || observations[0].Stage != StageDependencyLoaded ||
+		observations[1].Stage != StageWindowApplied || observations[2].Stage != StageStateCommitted ||
+		observations[3].Stage != StageHistorySummarized {
 		t.Fatalf("observations = %+v, want LOAD then WRITE", observations)
 	}
-	for index, observation := range observations {
-		if observation.Result != OperationSucceeded || observation.Target != "monitor-01" || observation.Keys != 1 ||
-			observation.RequestBytes <= 0 || observation.Duration < 0 {
-			t.Fatalf("observation[%d] = %+v", index, observation)
-		}
+	if observations[0].Result != OperationSucceeded || observations[0].Target != "monitor-01" ||
+		observations[0].TouchedKeys != 1 || observations[0].MissingKeys != 1 || observations[0].BackendCalls != 1 ||
+		observations[0].RequestBytes <= 0 || observations[0].Duration < 0 || observations[0].Codec != CodecNoneV1 {
+		t.Fatalf("load observation = %+v", observations[0])
+	}
+	if observations[1].AppliedPoints != 1 {
+		t.Fatalf("apply observation = %+v", observations[1])
+	}
+	if observations[2].Result != OperationSucceeded || observations[2].Target != "monitor-01" ||
+		observations[2].TouchedKeys != 1 || observations[2].PersistedKeys != 1 ||
+		observations[2].EncodeBytes <= 0 || observations[2].BackendCalls != 1 {
+		t.Fatalf("write observation = %+v", observations[2])
+	}
+	if observations[len(observations)-1].FullSummaries != 1 {
+		t.Fatalf("summary observation = %+v", observations[len(observations)-1])
 	}
 
 	backend.readErr = errors.New("redis unavailable")
@@ -336,7 +378,7 @@ func TestStoreReportsBoundedBackendOperationsToObserver(t *testing.T) {
 		t.Fatal("LoadWindows() error = nil, want dependency error")
 	}
 	last := observations[len(observations)-1]
-	if last.Result != OperationFailed || last.ReasonCode != contract.ReasonRedisUnavailable {
+	if last.Result != OperationFailed || last.ReasonCode != contract.ReasonRedisUnavailable || last.UnavailableKeys != 1 {
 		t.Fatalf("failed observation = %+v", last)
 	}
 }
@@ -351,11 +393,16 @@ func mustCodec(t *testing.T) *Codec {
 }
 
 func mustStore(t *testing.T, codec *Codec, router StorageRouter) *Store {
+	return mustStoreWithObserver(t, codec, router, nil)
+}
+
+func mustStoreWithObserver(t *testing.T, codec *Codec, router StorageRouter, observer Observer) *Store {
 	t.Helper()
 	store, err := NewStore(StoreOptions{
 		Prefix: "alarmd", Codec: codec, Router: router,
 		Limits: StoreLimits{MaxKeysPerBatch: 2, MaxKeyBytesPerBatch: 1024, MaxLoadedBytes: 16 << 10, MaxWrittenBytes: 16 << 10},
 		MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute,
+		Observer: observer,
 	})
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)

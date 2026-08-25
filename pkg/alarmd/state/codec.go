@@ -45,6 +45,7 @@ type Window struct {
 	points       []pointState
 	requirements map[uint32]LevelRequirement
 	changed      bool
+	observer     Observer
 }
 
 type levelState struct {

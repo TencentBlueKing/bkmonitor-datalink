@@ -680,6 +680,48 @@ func TestReadExecutionEnvelopeV2AllowsDimensionlessSeriesAndIsolatesCrossBusines
 	}
 }
 
+func TestReadExecutionEnvelopeV2TerminalizesEveryDuplicateRecordSlot(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		mutate     func(*CanonicalRecordV2)
+		wantReason string
+	}{
+		{name: "same body", mutate: func(*CanonicalRecordV2) {}, wantReason: ReasonRecordInvalid},
+		{
+			name: "different body",
+			mutate: func(record *CanonicalRecordV2) {
+				record.ReceivedTime++
+			},
+			wantReason: ReasonRecordIdentityConflict,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			envelope := validExecutionEnvelopeV2(t)
+			duplicate := envelope.Records[0]
+			test.mutate(&duplicate)
+			envelope.Records = append(envelope.Records, duplicate)
+			ranges := []SelectorRangeV2{{Start: 0, End: 2}}
+			envelope.Selectors[0].Selector.Ranges = &ranges
+			_, issues, err := ReadExecutionEnvelopeV2(
+				encodeExecutionEnvelopeV2ForTest(t, envelope), generousReaderLimitsV2(),
+			)
+			if err != nil {
+				t.Fatalf("ReadExecutionEnvelopeV2(duplicate) error = %v", err)
+			}
+			for ordinal := uint32(0); ordinal < 2; ordinal++ {
+				if !containsRecordIssueV2(issues, ordinal, test.wantReason) {
+					t.Fatalf("issues = %#v, want record %d %s", issues, ordinal, test.wantReason)
+				}
+			}
+		})
+	}
+}
+
 func TestReadExecutionEnvelopeV2InvalidSortIdentityDoesNotPolluteSiblings(t *testing.T) {
 	t.Parallel()
 

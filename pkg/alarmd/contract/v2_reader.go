@@ -705,14 +705,14 @@ planLoop:
 		_ = rawPlans[index]
 	}
 
-	recordBodies := make(map[string]string, len(envelope.Records))
+	type recordOccurrence struct {
+		ordinal uint32
+		body    string
+	}
+	recordOccurrences := make(map[string][]recordOccurrence, len(envelope.Records))
+	recordReasons := make([]string, len(envelope.Records))
 	businessID := ""
-recordLoop:
 	for index := range envelope.Records {
-		if truncated {
-			break
-		}
-		recordOrdinal := uint32(index)
 		record := &envelope.Records[index]
 		reason := ReasonRecordInvalid
 		if validRecordWireShapeV2(rawRecords[index]) {
@@ -725,24 +725,44 @@ recordLoop:
 				reason = ReasonRecordIdentityConflict
 			}
 		}
-		if reason != "" {
-			if !appendIssue(ValidationIssue{Scope: ValidationScopeRecord, ReasonCode: reason, FieldPath: "records", RecordOrdinal: &recordOrdinal, RecordID: record.RecordID}) {
-				break recordLoop
+		recordReasons[index] = reason
+		if reason == "" {
+			canonical, err := CanonicalJSONV2(rawRecords[index])
+			if err == nil {
+				recordOccurrences[record.RecordID] = append(recordOccurrences[record.RecordID], recordOccurrence{
+					ordinal: uint32(index), body: string(canonical),
+				})
 			}
 		}
-		canonical, err := CanonicalJSONV2(rawRecords[index])
-		if err == nil {
-			body := string(canonical)
-			if previous, exists := recordBodies[record.RecordID]; exists {
-				duplicateReason := ReasonRecordInvalid
-				if previous != body {
-					duplicateReason = ReasonRecordIdentityConflict
-				}
-				if !appendIssue(ValidationIssue{Scope: ValidationScopeRecord, ReasonCode: duplicateReason, FieldPath: "records", RecordOrdinal: &recordOrdinal, RecordID: record.RecordID}) {
-					break recordLoop
-				}
-			} else {
-				recordBodies[record.RecordID] = body
+	}
+	for _, occurrences := range recordOccurrences {
+		if len(occurrences) < 2 {
+			continue
+		}
+		duplicateReason := ReasonRecordInvalid
+		firstBody := occurrences[0].body
+		for _, occurrence := range occurrences[1:] {
+			if occurrence.body != firstBody {
+				duplicateReason = ReasonRecordIdentityConflict
+				break
+			}
+		}
+		for _, occurrence := range occurrences {
+			recordReasons[occurrence.ordinal] = duplicateReason
+		}
+	}
+recordLoop:
+	for index, reason := range recordReasons {
+		if truncated {
+			break
+		}
+		if reason != "" {
+			recordOrdinal := uint32(index)
+			if !appendIssue(ValidationIssue{
+				Scope: ValidationScopeRecord, ReasonCode: reason, FieldPath: "records",
+				RecordOrdinal: &recordOrdinal, RecordID: envelope.Records[index].RecordID,
+			}) {
+				break recordLoop
 			}
 		}
 	}

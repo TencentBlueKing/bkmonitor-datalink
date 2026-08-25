@@ -220,6 +220,9 @@ taskConfig:
         prometheus:
           url: ""
           headers: {}
+        builtinRelation:
+          enabled: false
+          bkBizIds: []
       profile:
         enabled: false
         host: http://127.0.0.1:14040

@@ -11,11 +11,13 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/prometheus/prometheus/prompb"
 	"go.uber.org/zap"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
@@ -43,6 +45,9 @@ type MetricConfigOptions struct {
 	relationMetricMemDuration time.Duration
 	flowMetricMemDuration     time.Duration
 	flowMetricBuckets         []float64
+	builtinRelationEnabled    bool
+	builtinRelationBizIDs     map[string]struct{}
+	builtinRelationDetailKey  string
 }
 
 func MetricRelationMemDuration(m time.Duration) MetricConfigOption {
@@ -69,17 +74,45 @@ func MetricFlowBuckets(b []float64) MetricConfigOption {
 	}
 }
 
+func MetricBuiltinRelationReport(enabled bool, bkBizIDs []string, resultTableDetailKey string) MetricConfigOption {
+	return func(options *MetricConfigOptions) {
+		options.builtinRelationEnabled = enabled
+		options.builtinRelationBizIDs = make(map[string]struct{}, len(bkBizIDs))
+		for _, bkBizID := range bkBizIDs {
+			options.builtinRelationBizIDs[bkBizID] = struct{}{}
+		}
+		options.builtinRelationDetailKey = resultTableDetailKey
+	}
+}
+
+func (m MetricConfigOptions) builtinRelationEnabledForBiz(bkBizID string) bool {
+	if !m.builtinRelationEnabled {
+		return false
+	}
+	_, ok := m.builtinRelationBizIDs[bkBizID]
+	return ok
+}
+
+type prometheusWriter interface {
+	WriteBatch(ctx context.Context, token string, writeReq prompb.WriteRequest) error
+	Close(ctx context.Context) error
+}
+
 type MetricDimensionsHandler struct {
 	dataId string
 
-	ctx context.Context
-	mu  sync.Mutex
+	ctx    context.Context
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	wg     sync.WaitGroup
 
 	relationMetricDimensions *relationMetricsCollector
 	flowMetricCollector      *flowMetricsCollector
 
-	promClient *remote.PrometheusWriter
-	logger     monitorLogger.Logger
+	promClient              prometheusWriter
+	builtinRelationReporter remote.Reporter
+	builtinRelationSpaceUID string
+	logger                  monitorLogger.Logger
 }
 
 func (m *MetricDimensionsHandler) Add(data PrometheusStorageData) {
@@ -103,13 +136,30 @@ func (m *MetricDimensionsHandler) cleanUpAndReport(c MetricCollector) {
 	writeReq := c.Collect()
 	metrics.RecordApmPreCalcOperateStorageCount(m.dataId, metrics.StoragePrometheus, metrics.OperateSave)
 	metrics.RecordApmPreCalcSaveStorageTotal(m.dataId, metrics.StoragePrometheus, len(writeReq.Timeseries))
+	if len(writeReq.Timeseries) == 0 {
+		return
+	}
 	if err := m.promClient.WriteBatch(context.Background(), "", writeReq); err != nil {
 		metrics.RecordApmPreCalcOperateStorageFailedTotal(m.dataId, metrics.SavePrometheusFailed)
 		m.logger.Errorf("[TraceMetricsReport] DataId: %s report to prometheus failed, error: %s", m.dataId, err)
 	}
+	if m.builtinRelationReporter == nil {
+		return
+	}
+	if err := m.builtinRelationReporter.Do(
+		context.Background(), m.builtinRelationSpaceUID, writeReq.Timeseries...,
+	); err != nil {
+		metrics.RecordApmPreCalcOperateStorageFailedTotal(m.dataId, metrics.SavePrometheusFailed)
+		m.logger.Errorf(
+			"[TraceMetricsReport] DataId: %s dual-write to built-in relation failed, spaceUID: %s, error: %s",
+			m.dataId, m.builtinRelationSpaceUID, err,
+		)
+	}
 }
 
 func (m *MetricDimensionsHandler) LoopCollect(c MetricCollector) {
+	defer m.wg.Done()
+
 	ticker := time.NewTicker(c.Ttl())
 	m.logger.Infof("[MetricReport] start loop, listen for metrics, interval: %s", c.Ttl())
 
@@ -126,8 +176,20 @@ func (m *MetricDimensionsHandler) LoopCollect(c MetricCollector) {
 }
 
 func (m *MetricDimensionsHandler) Close() {
+	m.cancel()
+	m.wg.Wait()
 	m.cleanUpAndReport(m.relationMetricDimensions)
 	m.cleanUpAndReport(m.flowMetricCollector)
+	if m.builtinRelationReporter != nil {
+		if err := m.builtinRelationReporter.Close(context.Background()); err != nil {
+			m.logger.Errorf(
+				"[TraceMetricsReport] DataId: %s close built-in relation reporter failed, error: %s", m.dataId, err,
+			)
+		}
+	}
+	if err := m.promClient.Close(context.Background()); err != nil {
+		m.logger.Errorf("[TraceMetricsReport] DataId: %s close prometheus writer failed, error: %s", m.dataId, err)
+	}
 }
 
 func NewMetricDimensionHandler(
@@ -137,6 +199,24 @@ func NewMetricDimensionHandler(
 	config remote.PrometheusWriterOptions,
 	metricsConfig MetricConfigOptions,
 ) *MetricDimensionsHandler {
+	handlerCtx, cancel := context.WithCancel(ctx)
+	var (
+		builtinRelationReporter remote.Reporter
+		builtinRelationSpaceUID string
+	)
+	if metricsConfig.builtinRelationEnabledForBiz(baseInfo.BkBizId) {
+		reporter, err := remote.NewSpaceReporter(metricsConfig.builtinRelationDetailKey, config.Url)
+		if err != nil {
+			monitorLogger.Errorf(
+				"[MetricDimension] DataId(%s) appKey(%+v) create built-in relation reporter failed: %s",
+				dataId, baseInfo.AppKey(), err,
+			)
+		} else {
+			builtinRelationReporter = reporter
+			builtinRelationSpaceUID = fmt.Sprintf("bkcc__%s", baseInfo.BkBizId)
+		}
+	}
+
 	monitorLogger.Infof(
 		"[MetricDimension] \ncreate metric handler\n====\n"+
 			"prometheus host: %s \nconfigHeaders: %s \ndataId(%s) appKey(%+v) -> token: %s \n"+
@@ -148,11 +228,15 @@ func NewMetricDimensionHandler(
 	h := &MetricDimensionsHandler{
 		dataId:                   dataId,
 		promClient:               remote.NewPrometheusWriterClient(baseInfo.Token, config.Url, config.Headers),
+		builtinRelationReporter:  builtinRelationReporter,
+		builtinRelationSpaceUID:  builtinRelationSpaceUID,
 		relationMetricDimensions: newRelationMetricCollector(metricsConfig.relationMetricMemDuration),
 		flowMetricCollector:      newFlowMetricCollector(metricsConfig.flowMetricBuckets, metricsConfig.flowMetricMemDuration),
-		ctx:                      ctx,
+		ctx:                      handlerCtx,
+		cancel:                   cancel,
 		logger:                   monitorLogger.With(zap.String("name", "metricHandler"), zap.String("dataId", dataId)),
 	}
+	h.wg.Add(2)
 	go h.LoopCollect(h.relationMetricDimensions)
 	go h.LoopCollect(h.flowMetricCollector)
 	return h

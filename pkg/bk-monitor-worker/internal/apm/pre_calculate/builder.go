@@ -456,6 +456,16 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 				remote.PrometheusWriterUrl(config.PromRemoteWriteUrl),
 				remote.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
 			),
+			storage.MetricsConfig(
+				storage.MetricRelationMemDuration(config.RelationMetricsInMemDuration),
+				storage.MetricFlowMemDuration(config.FlowMetricsInMemDuration),
+				storage.MetricFlowBuckets(config.MetricsDurationBuckets),
+				storage.MetricBuiltinRelationReport(
+					config.BuiltinRelationReportEnabled,
+					config.BuiltinRelationReportBizIDs,
+					config.BuildInResultTableDetailKey,
+				),
+			),
 		}, p.config.storageConfig...,
 		)...,
 	)

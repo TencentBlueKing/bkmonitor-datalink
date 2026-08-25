@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	inputv2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/input/adapter/v2"
@@ -30,6 +31,7 @@ const (
 
 type Evaluator struct {
 	registry *Registry
+	observer Observer
 }
 
 type boundPlan struct {
@@ -37,6 +39,13 @@ type boundPlan struct {
 	levels          []boundLevel
 	detectorCount   uint64
 	projectionCount uint64
+}
+
+type planAdmission struct {
+	selectedRecords uint64
+	validRecords    uint64
+	groups          []seriesGroup
+	resultBytes     uint64
 }
 
 type boundLevel struct {
@@ -50,14 +59,23 @@ type boundDetector struct {
 	normalizer strategy.NumericNormalizerSpec
 }
 
-func NewEvaluator(registry *Registry) (*Evaluator, error) {
+func NewEvaluator(registry *Registry, observer Observer) (*Evaluator, error) {
 	if registry == nil || len(registry.detectors) == 0 {
 		return nil, errors.New("alarmd detect: detector registry is required")
 	}
-	return &Evaluator{registry: registry}, nil
+	return &Evaluator{registry: registry, observer: observer}, nil
 }
 
-func (evaluator *Evaluator) Evaluate(ctx context.Context, request EvaluateRequest) (DetectionBatch, error) {
+func (evaluator *Evaluator) Evaluate(ctx context.Context, request EvaluateRequest) (result DetectionBatch, returnErr error) {
+	started := time.Now()
+	var observedCounts DetectionCounts
+	var observer Observer
+	if evaluator != nil {
+		observer = evaluator.observer
+	}
+	defer func() {
+		finishDetectObservation(ctx, observer, request.Completeness, observedCounts, returnErr, time.Since(started))
+	}()
 	if err := ctx.Err(); err != nil {
 		return DetectionBatch{}, err
 	}
@@ -92,6 +110,7 @@ func (evaluator *Evaluator) Evaluate(ctx context.Context, request EvaluateReques
 				return DetectionBatch{}, &InternalError{Operation: "count unavailable records", Err: errors.New("count overflow")}
 			}
 		}
+		observedCounts = batch.Counts
 		return batch, nil
 	}
 
@@ -108,16 +127,91 @@ func (evaluator *Evaluator) Evaluate(ctx context.Context, request EvaluateReques
 		}
 		boundPlans[index] = bound
 	}
+	admissions, err := admitPlans(ctx, boundPlans, request.Limits)
+	if err != nil {
+		return DetectionBatch{}, err
+	}
 
-	for _, execution := range boundPlans {
-		series, counts, err := evaluator.evaluatePlan(ctx, execution, request.Limits, batch.Counts)
+	for index, execution := range boundPlans {
+		series, counts, err := evaluator.evaluatePlan(ctx, execution, admissions[index], batch.Counts)
+		observedCounts = counts
 		if err != nil {
 			return DetectionBatch{}, err
 		}
+		admissions[index].groups = nil
 		batch.Series = append(batch.Series, series...)
 		batch.Counts = counts
 	}
+	observedCounts = batch.Counts
 	return batch, nil
+}
+
+func admitPlans(ctx context.Context, plans []boundPlan, limits ExecutionLimits) ([]planAdmission, error) {
+	admissions := make([]planAdmission, len(plans))
+	var totalFacts uint64
+	var totalPredicates uint64
+	var totalResultBytes uint64
+	for index, plan := range plans {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		planID := plan.execution.View.PlanID()
+		selected := uint64(plan.execution.View.SelectedCount())
+		if selected > limits.MaxSelectedRecordsPerPlan {
+			return nil, budgetExceeded("selected_records_per_plan", limits.MaxSelectedRecordsPerPlan, selected)
+		}
+		facts, ok := checkedMul(selected, uint64(len(plan.levels)))
+		if !ok {
+			return nil, &InternalError{Operation: "admit facts", PlanID: planID, Err: errors.New("fact count overflow")}
+		}
+		totalFacts, ok = checkedAdd(totalFacts, facts)
+		if !ok {
+			return nil, &InternalError{Operation: "admit facts", PlanID: planID, Err: errors.New("fact count overflow")}
+		}
+		if totalFacts > limits.MaxLevelFacts {
+			return nil, budgetExceeded("level_facts", limits.MaxLevelFacts, totalFacts)
+		}
+		predicates, ok := checkedMul(selected, plan.detectorCount)
+		if !ok {
+			return nil, &InternalError{Operation: "admit predicates", PlanID: planID, Err: errors.New("predicate count overflow")}
+		}
+		totalPredicates, ok = checkedAdd(totalPredicates, predicates)
+		if !ok {
+			return nil, &InternalError{Operation: "admit predicates", PlanID: planID, Err: errors.New("predicate count overflow")}
+		}
+		if totalPredicates > limits.MaxPredicateEvaluations {
+			return nil, budgetExceeded("predicate_evaluations", limits.MaxPredicateEvaluations, totalPredicates)
+		}
+
+		records, err := collectSelectedRecords(ctx, plan.execution.View)
+		if err != nil {
+			return nil, err
+		}
+		groups := groupSelectedRecords(records)
+		if uint64(len(groups)) > limits.MaxSeriesPerPlan {
+			return nil, budgetExceeded("series_per_plan", limits.MaxSeriesPerPlan, uint64(len(groups)))
+		}
+		for _, group := range groups {
+			if uint64(len(group.records)) > limits.MaxRecordsPerSeries {
+				return nil, budgetExceeded("records_per_series", limits.MaxRecordsPerSeries, uint64(len(group.records)))
+			}
+		}
+		resultBytes, ok := estimatePlanResultBytes(uint64(len(groups)), uint64(len(records)), uint64(len(plan.levels)), plan.projectionCount)
+		if !ok {
+			return nil, &InternalError{Operation: "admit result", PlanID: planID, Err: errors.New("result byte estimate overflow")}
+		}
+		totalResultBytes, ok = checkedAdd(totalResultBytes, resultBytes)
+		if !ok {
+			return nil, &InternalError{Operation: "admit result", PlanID: planID, Err: errors.New("result byte estimate overflow")}
+		}
+		if totalResultBytes > limits.MaxResultBytes {
+			return nil, budgetExceeded("result_bytes", limits.MaxResultBytes, totalResultBytes)
+		}
+		admissions[index] = planAdmission{
+			selectedRecords: selected, validRecords: uint64(len(records)), groups: groups, resultBytes: resultBytes,
+		}
+	}
+	return admissions, nil
 }
 
 func (evaluator *Evaluator) bindPlan(execution PlanExecution, datasetDigest string) (boundPlan, error) {
@@ -164,42 +258,15 @@ func (evaluator *Evaluator) bindPlan(execution PlanExecution, datasetDigest stri
 func (evaluator *Evaluator) evaluatePlan(
 	ctx context.Context,
 	execution boundPlan,
-	limits ExecutionLimits,
+	admission planAdmission,
 	counts DetectionCounts,
 ) ([]SeriesDetection, DetectionCounts, error) {
 	planID := execution.execution.View.PlanID()
-	selected := uint64(execution.execution.View.SelectedCount())
-	if selected > limits.MaxSelectedRecordsPerPlan {
-		return nil, counts, budgetExceeded("selected_records_per_plan", limits.MaxSelectedRecordsPerPlan, selected)
-	}
-	if err := preflightTotals(selected, uint64(len(execution.levels)), execution.detectorCount, counts, limits); err != nil {
-		return nil, counts, err
-	}
-
-	records, err := collectSelectedRecords(ctx, execution.execution.View)
-	if err != nil {
-		return nil, counts, err
-	}
-	groups := groupSelectedRecords(records)
-	if uint64(len(groups)) > limits.MaxSeriesPerPlan {
-		return nil, counts, budgetExceeded("series_per_plan", limits.MaxSeriesPerPlan, uint64(len(groups)))
-	}
-	for _, group := range groups {
-		if uint64(len(group.records)) > limits.MaxRecordsPerSeries {
-			return nil, counts, budgetExceeded("records_per_series", limits.MaxRecordsPerSeries, uint64(len(group.records)))
-		}
-	}
-
-	estimatedBytes, ok := estimatePlanResultBytes(uint64(len(groups)), uint64(len(records)), uint64(len(execution.levels)), execution.projectionCount)
+	selected := admission.selectedRecords
+	groups := admission.groups
+	totalEstimated, ok := checkedAdd(counts.EstimatedResultBytes, admission.resultBytes)
 	if !ok {
 		return nil, counts, &InternalError{Operation: "estimate result", PlanID: planID, Err: errors.New("result byte estimate overflow")}
-	}
-	totalEstimated, ok := checkedAdd(counts.EstimatedResultBytes, estimatedBytes)
-	if !ok {
-		return nil, counts, &InternalError{Operation: "estimate result", PlanID: planID, Err: errors.New("result byte estimate overflow")}
-	}
-	if totalEstimated > limits.MaxResultBytes {
-		return nil, counts, budgetExceeded("result_bytes", limits.MaxResultBytes, totalEstimated)
 	}
 
 	result := make([]SeriesDetection, 0, len(groups))
@@ -228,9 +295,9 @@ func (evaluator *Evaluator) evaluatePlan(
 	counts.Plans++
 	counts.CompiledLevels += uint64(len(execution.levels))
 	counts.SelectedRecords += selected
-	counts.EvaluatedRecords += uint64(len(records))
+	counts.EvaluatedRecords += admission.validRecords
 	counts.Series += uint64(len(groups))
-	facts, _ := checkedMul(uint64(len(records)), uint64(len(execution.levels)))
+	facts, _ := checkedMul(admission.validRecords, uint64(len(execution.levels)))
 	counts.LevelFacts += facts
 	counts.EstimatedResultBytes = totalEstimated
 	return result, counts, nil
@@ -434,32 +501,6 @@ func declaresReason(spec strategy.DetectorSpec, reason string) bool {
 	reasons := spec.DeclaredExecutorErrors()
 	index := sort.SearchStrings(reasons, reason)
 	return index < len(reasons) && reasons[index] == reason
-}
-
-func preflightTotals(selected, levels, detectors uint64, counts DetectionCounts, limits ExecutionLimits) error {
-	facts, ok := checkedMul(selected, levels)
-	if !ok {
-		return &InternalError{Operation: "estimate facts", Err: errors.New("fact count overflow")}
-	}
-	totalFacts, ok := checkedAdd(counts.LevelFacts, facts)
-	if !ok {
-		return &InternalError{Operation: "estimate facts", Err: errors.New("fact count overflow")}
-	}
-	if totalFacts > limits.MaxLevelFacts {
-		return budgetExceeded("level_facts", limits.MaxLevelFacts, totalFacts)
-	}
-	evaluations, ok := checkedMul(selected, detectors)
-	if !ok {
-		return &InternalError{Operation: "estimate predicate evaluations", Err: errors.New("predicate count overflow")}
-	}
-	totalEvaluations, ok := checkedAdd(counts.PredicateEvaluations, evaluations)
-	if !ok {
-		return &InternalError{Operation: "estimate predicate evaluations", Err: errors.New("predicate count overflow")}
-	}
-	if totalEvaluations > limits.MaxPredicateEvaluations {
-		return budgetExceeded("predicate_evaluations", limits.MaxPredicateEvaluations, totalEvaluations)
-	}
-	return nil
 }
 
 func estimatePlanResultBytes(series, records, levels, projections uint64) (uint64, bool) {

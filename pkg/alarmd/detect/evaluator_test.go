@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -336,7 +337,7 @@ func TestEvaluatorRejectsBudgetContextAndInternalFailuresWithoutPartialBatch(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	evaluator, err := NewEvaluator(registry)
+	evaluator, err := NewEvaluator(registry, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +352,7 @@ func TestEvaluatorRejectsBudgetContextAndInternalFailuresWithoutPartialBatch(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	evaluator, err = NewEvaluator(registry)
+	evaluator, err = NewEvaluator(registry, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,6 +364,164 @@ func TestEvaluatorRejectsBudgetContextAndInternalFailuresWithoutPartialBatch(t *
 	}
 }
 
+func TestEvaluatorAdmitsWholeMessageBeforeRunningAnyDetector(t *testing.T) {
+	plans := []contract.EvaluationPlanV2{
+		fixturePlan("1001", []contract.LevelIRV2{fixtureLevel(1, 1, contract.LevelConnectorAND,
+			fixtureThresholdAlgorithm("GT", "50", "percent", ""))}),
+		fixturePlan("1002", []contract.LevelIRV2{fixtureLevel(1, 1, contract.LevelConnectorAND,
+			fixtureThresholdAlgorithm("GT", "50", "percent", ""))}),
+	}
+	envelope := fixtureEnvelope(t, plans, []fixtureRecord{
+		{host: "hot", sourceTime: 100, value: json.RawMessage(`60`)},
+		{host: "hot", sourceTime: 160, value: json.RawMessage(`60`)},
+	}, contract.QueryCompletenessFull)
+	firstOnly := []contract.SelectorRangeV2{{Start: 0, End: 1}}
+	both := []contract.SelectorRangeV2{{Start: 0, End: 2}}
+	envelope.Selectors = []contract.PlanSelectorV2{
+		{PlanOrdinal: 0, Selector: contract.SelectorV2{Kind: contract.SelectorKindRanges, Ranges: &firstOnly}},
+		{PlanOrdinal: 1, Selector: contract.SelectorV2{Kind: contract.SelectorKindRanges, Ranges: &both}},
+	}
+	input, executions, digest := fixtureExecutions(t, envelope)
+	detector := &countingThresholdDetector{}
+	registry, err := NewRegistry(detector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluator, err := NewEvaluator(registry, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := generousLimits()
+	limits.MaxRecordsPerSeries = 1
+
+	batch, err := evaluator.Evaluate(context.Background(), EvaluateRequest{
+		Completeness: input.Execution().Completeness, DatasetContractDigest: digest, Plans: executions, Limits: limits,
+	})
+	var budget *BudgetError
+	if !errors.As(err, &budget) || !reflect.DeepEqual(batch, DetectionBatch{}) {
+		t.Fatalf("Evaluate() = (%#v, %v), want empty budget failure", batch, err)
+	}
+	if calls := detector.calls.Load(); calls != 0 {
+		t.Fatalf("detector calls = %d, want whole-message admission before the first call", calls)
+	}
+}
+
+func TestEvaluatorObservesOneBoundedAggregatePerCall(t *testing.T) {
+	envelope := fixtureEnvelope(t, []contract.EvaluationPlanV2{fixturePlan("1001", []contract.LevelIRV2{
+		fixtureLevel(1, 1, contract.LevelConnectorAND, fixtureThresholdAlgorithm("GT", "50", "percent", "")),
+	})}, []fixtureRecord{{host: "host", sourceTime: 100, value: json.RawMessage(`60`)}}, contract.QueryCompletenessFull)
+	_, executions, digest := fixtureExecutions(t, envelope)
+	observations := make([]Observation, 0, 3)
+	observer := ObserverFunc(func(_ context.Context, observation Observation) {
+		observations = append(observations, observation)
+	})
+	evaluator, err := NewEvaluator(NewDefaultRegistry(), observer)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	batch, err := evaluator.Evaluate(context.Background(), EvaluateRequest{
+		Completeness: contract.QueryCompletenessPartial, DatasetContractDigest: digest, Plans: executions, Limits: generousLimits(),
+	})
+	if err != nil || len(batch.Series) != 1 {
+		t.Fatalf("partial Evaluate() = (%#v, %v)", batch, err)
+	}
+	if len(observations) != 1 {
+		t.Fatalf("partial observations = %d, want one", len(observations))
+	}
+	partial := observations[0]
+	if partial.Stage != StageDetectCompleted || partial.Result != ObservationSuccess ||
+		partial.ReasonCode != contract.ReasonQueryPartial || partial.Completeness != contract.QueryCompletenessPartial ||
+		partial.Counts.Plans != 1 || partial.Counts.EvaluatedRecords != 1 || partial.Counts.AnomalousFacts != 1 || partial.Duration < 0 {
+		t.Fatalf("partial observation = %+v", partial)
+	}
+
+	limits := generousLimits()
+	limits.MaxResultBytes = 1
+	batch, err = evaluator.Evaluate(context.Background(), EvaluateRequest{
+		Completeness: contract.QueryCompletenessFull, DatasetContractDigest: digest, Plans: executions, Limits: limits,
+	})
+	var budget *BudgetError
+	if !errors.As(err, &budget) || !reflect.DeepEqual(batch, DetectionBatch{}) {
+		t.Fatalf("budget Evaluate() = (%#v, %v)", batch, err)
+	}
+	if len(observations) != 2 {
+		t.Fatalf("budget observations = %d, want one additional aggregate", len(observations))
+	}
+	terminal := observations[1]
+	if terminal.Stage != StageDetectCompleted || terminal.Result != ObservationTerminal ||
+		terminal.ReasonCode != contract.ReasonMessageBudgetExceeded || terminal.Counts.EvaluatedRecords != 0 {
+		t.Fatalf("terminal observation = %+v", terminal)
+	}
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	batch, err = evaluator.Evaluate(canceled, EvaluateRequest{
+		Completeness: contract.QueryCompletenessFull, DatasetContractDigest: digest, Plans: executions, Limits: generousLimits(),
+	})
+	if !errors.Is(err, context.Canceled) || !reflect.DeepEqual(batch, DetectionBatch{}) {
+		t.Fatalf("canceled Evaluate() = (%#v, %v)", batch, err)
+	}
+	if len(observations) != 3 {
+		t.Fatalf("failed observations = %d, want one additional aggregate", len(observations))
+	}
+	failed := observations[2]
+	if failed.Stage != StageDetectCompleted || failed.Result != ObservationFailed ||
+		failed.ReasonCode != "" || failed.Counts.EvaluatedRecords != 0 {
+		t.Fatalf("failed observation = %+v", failed)
+	}
+
+	batch, err = evaluator.Evaluate(context.Background(), EvaluateRequest{
+		Completeness: "user-controlled-invalid-value", DatasetContractDigest: digest, Plans: executions, Limits: generousLimits(),
+	})
+	if err == nil || !reflect.DeepEqual(batch, DetectionBatch{}) {
+		t.Fatalf("invalid completeness Evaluate() = (%#v, %v)", batch, err)
+	}
+	if len(observations) != 4 || observations[3].Completeness != "" || observations[3].Result != ObservationFailed {
+		t.Fatalf("invalid completeness observation = %+v", observations)
+	}
+}
+
+func TestEvaluatorAcceptsExactResultBudgetAndRejectsOneByteLessBeforeDetect(t *testing.T) {
+	envelope := fixtureEnvelope(t, []contract.EvaluationPlanV2{fixturePlan("1001", []contract.LevelIRV2{
+		fixtureLevel(1, 1, contract.LevelConnectorAND, fixtureThresholdAlgorithm("GT", "50", "percent", "")),
+	})}, []fixtureRecord{
+		{host: "hot", sourceTime: 100, value: json.RawMessage(`60`)},
+		{host: "hot", sourceTime: 160, value: json.RawMessage(`60`)},
+	}, contract.QueryCompletenessFull)
+	input, executions, digest := fixtureExecutions(t, envelope)
+	detector := &countingThresholdDetector{}
+	registry, err := NewRegistry(detector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluator, err := NewEvaluator(registry, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exact, ok := estimatePlanResultBytes(1, 2, 1, 1)
+	if !ok {
+		t.Fatal("exact result budget overflowed")
+	}
+	limits := generousLimits()
+	limits.MaxResultBytes = exact
+	batch, err := evaluator.Evaluate(context.Background(), EvaluateRequest{
+		Completeness: input.Execution().Completeness, DatasetContractDigest: digest, Plans: executions, Limits: limits,
+	})
+	if err != nil || len(batch.Series) != 1 || batch.Counts.EstimatedResultBytes != exact {
+		t.Fatalf("exact budget Evaluate() = (%#v, %v)", batch, err)
+	}
+	detector.calls.Store(0)
+	limits.MaxResultBytes = exact - 1
+	batch, err = evaluator.Evaluate(context.Background(), EvaluateRequest{
+		Completeness: input.Execution().Completeness, DatasetContractDigest: digest, Plans: executions, Limits: limits,
+	})
+	var budget *BudgetError
+	if !errors.As(err, &budget) || !reflect.DeepEqual(batch, DetectionBatch{}) || detector.calls.Load() != 0 {
+		t.Fatalf("under budget Evaluate() = (%#v, %v), detector calls=%d", batch, err, detector.calls.Load())
+	}
+}
+
 func TestRegistryRejectsInvalidAndDuplicateDetectors(t *testing.T) {
 	if _, err := NewRegistry(nil); err == nil {
 		t.Fatal("NewRegistry() accepted nil detector")
@@ -370,7 +529,7 @@ func TestRegistryRejectsInvalidAndDuplicateDetectors(t *testing.T) {
 	if _, err := NewRegistry(thresholdDetector{}, thresholdDetector{}); err == nil {
 		t.Fatal("NewRegistry() accepted duplicate detector")
 	}
-	if _, err := NewEvaluator(nil); err == nil {
+	if _, err := NewEvaluator(nil, nil); err == nil {
 		t.Fatal("NewEvaluator() accepted nil registry")
 	}
 }
@@ -432,6 +591,23 @@ func (invalidFactDetector) Key() DetectorKey {
 
 func (invalidFactDetector) Evaluate(context.Context, strategy.DetectorSpec, strategy.NormalizedNumber) (AlgorithmFact, error) {
 	return AlgorithmFact{Matched: true, MatchedGroup: -1}, nil
+}
+
+type countingThresholdDetector struct {
+	calls atomic.Uint64
+}
+
+func (*countingThresholdDetector) Key() DetectorKey {
+	return DetectorKey{Kind: strategy.DetectorKindThreshold, Version: 1}
+}
+
+func (detector *countingThresholdDetector) Evaluate(
+	ctx context.Context,
+	spec strategy.DetectorSpec,
+	value strategy.NormalizedNumber,
+) (AlgorithmFact, error) {
+	detector.calls.Add(1)
+	return (thresholdDetector{}).Evaluate(ctx, spec, value)
 }
 
 type fixtureRecord struct {
@@ -685,7 +861,7 @@ func generousLimits() ExecutionLimits {
 
 func newTestEvaluator(t testing.TB) *Evaluator {
 	t.Helper()
-	evaluator, err := NewEvaluator(NewDefaultRegistry())
+	evaluator, err := NewEvaluator(NewDefaultRegistry(), nil)
 	if err != nil {
 		t.Fatalf("NewEvaluator() error = %v", err)
 	}

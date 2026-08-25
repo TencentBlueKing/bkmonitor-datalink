@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,8 @@ type BindingInfo struct {
 	Database    string // binding metadata.annotations.database，作为 result_table_id
 	Namespace   string // binding metadata.annotations.namespace，如 "mapleleaf_39"
 	ClusterName string // binding spec.storage.name，即 SurrealDB 集群名
+	StorageID   string // result_table_detail.storage_id，Storage Map 的 key
+	StorageType string // result_table_detail.storage_type
 	Phase       string // binding status.phase
 }
 
@@ -71,6 +74,8 @@ type bindingRouteDetail struct {
 	Database    string `json:"database"`
 	Namespace   string `json:"namespace"`
 	ClusterName string `json:"cluster_name"`
+	StorageID   string `json:"storage_id"`
+	StorageType string `json:"storage_type"`
 	Phase       string `json:"phase"`
 }
 
@@ -257,42 +262,79 @@ func (r *BindingResolver) fetchFromRedis(ctx context.Context, tenantID, spaceUID
 	if lookup == nil {
 		lookup = defaultBindingRedisLookup
 	}
-	key := BindingRedisKey
-	if key == "" {
-		key = DefaultBindingRedisKey
+	info, err := r.fetchFromResultTableRoute(ctx, tenantID, spaceUID, bizID, lookup)
+	if err != nil {
+		return nil, err
 	}
+	return info, nil
+}
 
-	for _, field := range bindingRedisFields(tenantID, spaceUID) {
-		value, err := lookup(ctx, key, field)
-		if errors.Is(err, goRedis.Nil) {
+func (r *BindingResolver) fetchFromResultTableRoute(ctx context.Context, tenantID, spaceUID, bizID string, lookup bindingRedisLookup) (*BindingInfo, error) {
+	fields := routeRedisFields(tenantID, spaceUID)
+	spaceValue, err := lookup(ctx, DefaultSpaceToResultTableRedisKey, fields[0])
+	if errors.Is(err, goRedis.Nil) || spaceValue == "" {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get space_to_result_table route from redis failed: %w", err)
+	}
+	var tableRoutes map[string]any
+	if err := json.Unmarshal([]byte(spaceValue), &tableRoutes); err != nil {
+		return nil, fmt.Errorf("decode space_to_result_table route failed: %w", err)
+	}
+	for tableID, rawRoute := range tableRoutes {
+		route, ok := rawRoute.(map[string]any)
+		if !ok || routeStringValue(route["storage_type"], "") != metadata.SurrealDBStorageType {
+			continue
+		}
+		value, err := lookup(ctx, DefaultResultTableDetailRedisKey, routeRedisFields(tenantID, tableID)[0])
+		if errors.Is(err, goRedis.Nil) || value == "" {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("get SurrealDBBinding route from redis failed: key=%s field=%s: %w", key, field, err)
+			return nil, fmt.Errorf("get result_table_detail route from redis failed: table_id=%s: %w", tableID, err)
 		}
-		if value == "" {
-			continue
+		var detail map[string]any
+		if err := json.Unmarshal([]byte(value), &detail); err != nil {
+			return nil, fmt.Errorf("decode result_table_detail route failed: table_id=%s: %w", tableID, err)
 		}
-
-		info, err := decodeBindingInfo(value)
-		if err != nil {
-			return nil, fmt.Errorf("decode SurrealDBBinding route failed: key=%s field=%s: %w", key, field, err)
+		storageID := routeStringValue(detail["storage_id"], "")
+		if storageID == "" {
+			return nil, fmt.Errorf("result_table_detail route missing storage_id: table_id=%s", tableID)
 		}
-		if info.BkBizID == "" {
-			info.BkBizID = bizID
-		} else if info.BkBizID != bizID {
-			return nil, fmt.Errorf("SurrealDBBinding route biz mismatch: key=%s field=%s binding_bk_biz_id=%s request_bk_biz_id=%s", key, field, info.BkBizID, bizID)
-		}
-		if info.Phase != "Ok" {
-			return nil, fmt.Errorf("SurrealDBBinding route is not ready: key=%s field=%s phase=%s", key, field, info.Phase)
-		}
-		if info.Database == "" || info.Namespace == "" {
-			return nil, fmt.Errorf("SurrealDBBinding route missing database or namespace: key=%s field=%s", key, field)
-		}
-		return info, nil
+		return &BindingInfo{
+			Name:        tableID,
+			BkBizID:     bizID,
+			Database:    routeStringValue(detail["database"], routeStringValue(detail["db"], tableID)),
+			Namespace:   routeStringValue(detail["namespace"], ""),
+			ClusterName: routeStringValue(detail["cluster_name"], routeStringValue(detail["storage_name"], "")),
+			StorageID:   storageID,
+			StorageType: metadata.SurrealDBStorageType,
+			Phase:       "Ok",
+		}, nil
 	}
-
 	return nil, nil
+}
+
+func routeRedisFields(tenantID, key string) []string {
+	if tenantID == "" {
+		return []string{key}
+	}
+	return []string{key + "|" + tenantID}
+}
+
+func routeStringValue(value any, fallback string) string {
+	switch typed := value.(type) {
+	case string:
+		if typed != "" {
+			return typed
+		}
+	case float64:
+		return strconv.FormatInt(int64(typed), 10)
+	case json.Number:
+		return typed.String()
+	}
+	return fallback
 }
 
 func bindingRedisFields(tenantID, spaceUID string) []string {
@@ -320,6 +362,8 @@ func decodeBindingInfo(value string) (*BindingInfo, error) {
 		Database:    detail.Database,
 		Namespace:   detail.Namespace,
 		ClusterName: detail.ClusterName,
+		StorageID:   detail.StorageID,
+		StorageType: detail.StorageType,
 		Phase:       detail.Phase,
 	}, nil
 }

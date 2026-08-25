@@ -14,12 +14,16 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
 // 保留的 v1beta3 专属配置
@@ -42,6 +46,8 @@ var (
 	DefaultBindingCacheTTL              = 5 * time.Minute
 	DefaultBindingCacheMaxSize          = 10000
 	DefaultBindingRedisKey              = "bkmonitorv3:spaces:surrealdb_binding"
+	DefaultSpaceToResultTableRedisKey   = "bkmonitorv3:spaces:space_to_result_table"
+	DefaultResultTableDetailRedisKey    = "bkmonitorv3:spaces:result_table_detail"
 )
 
 var (
@@ -162,6 +168,13 @@ func (c *BKBaseSurrealDBClient) ExecuteWithBinding(ctx context.Context, spaceUID
 		// SurrealDBBinding 注入，否则同一个 result_table_id 在多租户场景下会查到错误 database。
 		finalDSL = fmt.Sprintf("USE NS `%s` DB `%s`;%s", binding.Namespace, binding.Database, dsl)
 	}
+	if binding.StorageID != "" {
+		if binding.Namespace == "" || binding.Database == "" {
+			return nil, fmt.Errorf("direct surrealdb route requires namespace and database")
+		}
+		return c.executeDirect(ctx, binding.StorageID, binding.Namespace, binding.Database, finalDSL, start, end)
+	}
+
 	// 记录最终发给 BKBase 的完整 DSL，便于通过 UQ trace 直接复现下游查询。
 	// 认证信息不在 DSL 中；请求鉴权字段仍不会写入 trace。
 	span.Set("dsl", finalDSL)
@@ -320,4 +333,45 @@ func surrealDBQuerySyncURL(spaceUID string) string {
 		return BKBaseSurrealDBQueryURL
 	}
 	return bkapi.GetBkDataAPI().QueryUrl(spaceUID)
+}
+
+func (c *BKBaseSurrealDBClient) executeDirect(ctx context.Context, storageID, namespace, database, sql string, start, end int64) ([]*LivenessGraph, error) {
+	storage, err := tsdb.GetStorage(ctx, storageID)
+	if err != nil {
+		return nil, fmt.Errorf("get surrealdb storage %s: %w", storageID, err)
+	}
+	if storage.Type != metadata.SurrealDBStorageType {
+		return nil, fmt.Errorf("storage %s has unexpected type %s", storageID, storage.Type)
+	}
+	if strings.TrimSpace(storage.Address) == "" {
+		return nil, fmt.Errorf("storage %s has empty address", storageID)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(storage.Address, "/")+"/sql", strings.NewReader(sql))
+	if err != nil {
+		return nil, fmt.Errorf("create surrealdb request: %w", err)
+	}
+	request.Header.Set("Content-Type", "text/plain")
+	request.Header.Set("NS", namespace)
+	request.Header.Set("DB", database)
+	if storage.Username != "" {
+		request.SetBasicAuth(storage.Username, storage.Password)
+	}
+	response, err := (&http.Client{Timeout: c.currentTimeout()}).Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("direct surrealdb request failed: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, int64(effectiveMaxResponseBytes())))
+		return nil, fmt.Errorf("direct surrealdb request returned status %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, int64(effectiveMaxResponseBytes())))
+	if err != nil {
+		return nil, fmt.Errorf("read surrealdb response: %w", err)
+	}
+	var payload []map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("decode surrealdb response: %w", err)
+	}
+	return NewSurrealResponseParser(start, end).Parse(payload)
 }

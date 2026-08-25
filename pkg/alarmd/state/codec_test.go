@@ -170,6 +170,14 @@ func TestCodecShapeAdmissionProvidesBoundedUpperBound(t *testing.T) {
 	if _, err := tooSmall.AdmitShape(8, 120); !errors.Is(err, ErrStateBudget) {
 		t.Fatalf("AdmitShape(bytes) error = %v, want conservative budget rejection", err)
 	}
+	if _, err := tooSmall.Encode(window); !errors.Is(err, ErrStateBudget) {
+		t.Fatalf("Encode(bytes) error = %v, want budget rejection before append", err)
+	}
+	if allocations := testing.AllocsPerRun(100, func() {
+		_, _ = tooSmall.Encode(window)
+	}); allocations != 0 {
+		t.Fatalf("Encode(over budget) allocations = %.1f, want 0 before hard-water allocation", allocations)
+	}
 }
 
 func mustDigest32(t *testing.T, value string) [32]byte {

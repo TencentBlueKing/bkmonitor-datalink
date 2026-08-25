@@ -120,15 +120,12 @@ func (codec *Codec) Encode(window *Window) ([]byte, error) {
 	if codec == nil || window == nil {
 		return nil, fmt.Errorf("%w: codec and window are required", ErrCorruptState)
 	}
-	if len(window.levels) > codec.limits.MaxLevels || len(window.points) > codec.limits.MaxPoints {
-		return nil, ErrStateBudget
-	}
-	bitmapBytes := (len(window.levels) + 7) / 8
-	estimatedBytes, err := PackedEncodedUpperBoundV1(len(window.levels), len(window.points))
+	upperBound, err := codec.AdmitWindow(window)
 	if err != nil {
 		return nil, err
 	}
-	buffer := make([]byte, 0, min(codec.limits.MaxEncodedBytes, estimatedBytes))
+	bitmapBytes := (len(window.levels) + 7) / 8
+	buffer := make([]byte, 0, upperBound)
 	buffer = append(buffer, stateBlobMagic...)
 	buffer = append(buffer, stateBlobSchemaV1, stateBlobCodecNone)
 	buffer = appendUvarint(buffer, uint64(len(window.levels)))

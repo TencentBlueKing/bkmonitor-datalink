@@ -58,7 +58,7 @@ func BenchmarkWindowApplyAndSummarize(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		window.Apply(points)
+		mustApply(b, window, points)
 		history, _ := window.History(5)
 		_ = history.Summarize(100+59*60, 30)
 	}

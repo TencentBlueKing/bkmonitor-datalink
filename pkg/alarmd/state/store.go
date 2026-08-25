@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 type Backend interface {
@@ -59,6 +61,7 @@ type StoreOptions struct {
 	MinTTL        time.Duration
 	MaxTTL        time.Duration
 	RestartMargin time.Duration
+	Observer      Observer
 }
 
 type Store struct {
@@ -155,6 +158,9 @@ func NewStore(options StoreOptions) (*Store, error) {
 		options.Limits.MaxLoadedBytes <= 0 || options.Limits.MaxWrittenBytes <= 0 {
 		return nil, fmt.Errorf("state: store limits must be positive")
 	}
+	if options.Limits.MaxLoadedBytes < options.Codec.limits.MaxEncodedBytes {
+		return nil, fmt.Errorf("%w: loaded bytes cannot admit one maximum state", ErrStateBudget)
+	}
 	if options.MinTTL <= 0 || options.MaxTTL < options.MinTTL || options.RestartMargin < 0 {
 		return nil, fmt.Errorf("state: invalid TTL limits")
 	}
@@ -195,7 +201,7 @@ func (store *Store) LoadWindows(ctx context.Context, request LoadWindowsRequest)
 	for _, targetName := range order {
 		items := groups[targetName]
 		for start := 0; start < len(items); {
-			end, err := store.loadBatchEnd(items, start)
+			end, err := store.loadBatchEnd(items, start, store.options.Limits.MaxLoadedBytes-loadedBytes)
 			if err != nil {
 				return result, err
 			}
@@ -203,10 +209,22 @@ func (store *Store) LoadWindows(ctx context.Context, request LoadWindowsRequest)
 			for index := start; index < end; index++ {
 				keys[index-start] = items[index].key
 			}
+			started := time.Now()
 			values, err := items[start].target.Backend.MGet(ctx, keys)
 			if err != nil {
+				store.observe(ctx, Observation{
+					Operation: OperationLoad, Target: targetName, Result: OperationFailed,
+					ReasonCode: contract.ReasonRedisUnavailable, Keys: len(keys), RequestBytes: stringsBytes(keys),
+					Duration: time.Since(started),
+				})
 				return result, fmt.Errorf("state: load target %s: %w", targetName, err)
 			}
+			responseBytes := byteSlicesBytes(values)
+			store.observe(ctx, Observation{
+				Operation: OperationLoad, Target: targetName, Result: OperationSucceeded,
+				Keys: len(keys), RequestBytes: stringsBytes(keys), ResponseBytes: responseBytes,
+				Duration: time.Since(started),
+			})
 			if len(values) != len(keys) {
 				return result, fmt.Errorf("state: load target %s returned %d values for %d keys", targetName, len(values), len(keys))
 			}
@@ -253,6 +271,15 @@ func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsReques
 			result.Items[index].Status = WriteNoop
 			continue
 		}
+		upperBound, err := store.options.Codec.AdmitWindow(item.Window)
+		if err != nil {
+			result.Items[index].Status = WriteInvariantViolation
+			result.Items[index].Err = err
+			continue
+		}
+		if upperBound > store.options.Limits.MaxWrittenBytes-writtenBytes {
+			return result, fmt.Errorf("%w: remaining written bytes cannot admit state", ErrStateBudget)
+		}
 		value, err := store.options.Codec.Encode(item.Window)
 		if err != nil {
 			result.Items[index].Status = WriteInvariantViolation
@@ -297,9 +324,19 @@ func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsReques
 			for index := start; index < end; index++ {
 				writes[index-start] = items[index].write
 			}
+			started := time.Now()
 			if err := items[start].target.Backend.SetMany(ctx, writes); err != nil {
+				store.observe(ctx, Observation{
+					Operation: OperationWrite, Target: targetName, Result: OperationFailed,
+					ReasonCode: contract.ReasonStateWriteRetryable, Keys: len(writes), RequestBytes: writesBytes(writes),
+					Duration: time.Since(started),
+				})
 				return result, fmt.Errorf("state: write target %s: %w", targetName, err)
 			}
+			store.observe(ctx, Observation{
+				Operation: OperationWrite, Target: targetName, Result: OperationSucceeded,
+				Keys: len(writes), RequestBytes: writesBytes(writes), Duration: time.Since(started),
+			})
 			for index := start; index < end; index++ {
 				items[index].window.MarkPersisted()
 				result.Items[items[index].index].Status = WritePersisted
@@ -308,6 +345,36 @@ func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsReques
 		}
 	}
 	return result, nil
+}
+
+func (store *Store) observe(ctx context.Context, observation Observation) {
+	if store.options.Observer != nil {
+		store.options.Observer.ObserveState(ctx, observation)
+	}
+}
+
+func stringsBytes(values []string) int {
+	total := 0
+	for _, value := range values {
+		total += len(value)
+	}
+	return total
+}
+
+func byteSlicesBytes(values [][]byte) int {
+	total := 0
+	for _, value := range values {
+		total += len(value)
+	}
+	return total
+}
+
+func writesBytes(writes []BackendWrite) int {
+	total := 0
+	for _, write := range writes {
+		total += len(write.Key) + len(write.Value)
+	}
+	return total
 }
 
 func StateTTL(requirements []LevelRequirement, restartMargin, minimum, maximum time.Duration) (time.Duration, error) {
@@ -379,13 +446,20 @@ func (store *Store) decodeLoaded(item routedLoad, value []byte) LoadedWindow {
 	return loaded
 }
 
-func (store *Store) loadBatchEnd(items []routedLoad, start int) (int, error) {
+func (store *Store) loadBatchEnd(items []routedLoad, start, remainingLoadedBytes int) (int, error) {
+	maxValueBytes := store.options.Codec.limits.MaxEncodedBytes
+	if remainingLoadedBytes < maxValueBytes {
+		return 0, fmt.Errorf("%w: remaining loaded bytes cannot admit one state", ErrStateBudget)
+	}
 	end, keyBytes := start, 0
 	for end < len(items) && end-start < store.options.Limits.MaxKeysPerBatch {
 		if len(items[end].key) > store.options.Limits.MaxKeyBytesPerBatch {
 			return 0, fmt.Errorf("%w: key bytes", ErrStateBudget)
 		}
 		if end > start && keyBytes+len(items[end].key) > store.options.Limits.MaxKeyBytesPerBatch {
+			break
+		}
+		if end-start+1 > remainingLoadedBytes/maxValueBytes {
 			break
 		}
 		keyBytes += len(items[end].key)

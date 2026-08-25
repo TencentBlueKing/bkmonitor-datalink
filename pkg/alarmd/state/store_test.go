@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 func TestStoreLoadsMissingValidCorruptAndUnsupportedIndependently(t *testing.T) {
@@ -30,7 +32,7 @@ func TestStoreLoadsMissingValidCorruptAndUnsupportedIndependently(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewWindow() error = %v", err)
 	}
-	valid.Apply([]StatePoint{point(100, "a", fact(requirement, LevelFactAnomalous))})
+	mustApply(t, valid, []StatePoint{point(100, "a", fact(requirement, LevelFactAnomalous))})
 	validBlob, err := codec.Encode(valid)
 	if err != nil {
 		t.Fatalf("Encode() error = %v", err)
@@ -91,7 +93,7 @@ func TestStoreWritesOnlyChangedWindowsWithTTLAndRetriesFailedBatch(t *testing.T)
 	if err != nil {
 		t.Fatalf("LoadWindows() error = %v", err)
 	}
-	loaded.Items[0].Window.Apply([]StatePoint{point(100, "a", fact(requirement, LevelFactNormal))})
+	mustApply(t, loaded.Items[0].Window, []StatePoint{point(100, "a", fact(requirement, LevelFactNormal))})
 
 	written, err := store.WriteWindows(context.Background(), WriteWindowsRequest{Items: loaded.Items})
 	if err != nil {
@@ -110,7 +112,7 @@ func TestStoreWritesOnlyChangedWindowsWithTTLAndRetriesFailedBatch(t *testing.T)
 		t.Fatal("successful write did not mark window persisted")
 	}
 
-	loaded.Items[0].Window.Apply([]StatePoint{point(160, "b", fact(requirement, LevelFactAnomalous))})
+	mustApply(t, loaded.Items[0].Window, []StatePoint{point(160, "b", fact(requirement, LevelFactAnomalous))})
 	backend.writeErr = errors.New("redis unavailable")
 	if _, err := store.WriteWindows(context.Background(), WriteWindowsRequest{Items: loaded.Items}); err == nil {
 		t.Fatal("WriteWindows() error = nil, want retryable backend error")
@@ -164,7 +166,7 @@ func TestStoreExposesPostAdmissionBudgetAsInvariantViolation(t *testing.T) {
 	store := mustStore(t, codec, &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}})
 	requirement := requirement(1, "1", 1, 2)
 	window, _ := NewWindow([]LevelRequirement{requirement})
-	window.Apply([]StatePoint{
+	mustApply(t, window, []StatePoint{
 		point(100, "a", fact(requirement, LevelFactNormal)),
 		point(160, "b", fact(requirement, LevelFactAnomalous)),
 	})
@@ -195,7 +197,7 @@ func TestStoreRejectsMutatedPhysicalKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadWindows() error = %v", err)
 	}
-	loaded.Items[0].Window.Apply([]StatePoint{point(100, "a", fact(requirement, LevelFactNormal))})
+	mustApply(t, loaded.Items[0].Window, []StatePoint{point(100, "a", fact(requirement, LevelFactNormal))})
 	loaded.Items[0].Key = "alarmd:runtime:v1:w:wrong"
 	if _, err := store.WriteWindows(context.Background(), WriteWindowsRequest{Items: loaded.Items}); err == nil {
 		t.Fatal("WriteWindows() error = nil, want physical key mismatch")
@@ -242,10 +244,100 @@ func TestStoreIsolatesInvalidRuntimeIdentity(t *testing.T) {
 	}
 }
 
+func TestStoreBoundsMGetByWorstCaseResponseBeforeRequest(t *testing.T) {
+	codec, err := NewCodec(CodecLimits{MaxLevels: 2, MaxPoints: 4, MaxEncodedBytes: 256})
+	if err != nil {
+		t.Fatalf("NewCodec() error = %v", err)
+	}
+	backend := newFakeBackend()
+	store, err := NewStore(StoreOptions{
+		Prefix: "alarmd", Codec: codec,
+		Router: &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}},
+		Limits: StoreLimits{
+			MaxKeysPerBatch: 10, MaxKeyBytesPerBatch: 4096, MaxLoadedBytes: 512, MaxWrittenBytes: 4096,
+		},
+		MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	requirement := requirement(1, "1", 1, 2)
+	_, err = store.LoadWindows(context.Background(), LoadWindowsRequest{Items: loadSpecs([]RuntimeIdentity{
+		storeIdentity("11", "a"), storeIdentity("12", "b"), storeIdentity("13", "c"),
+	}, requirement)})
+	if err != nil {
+		t.Fatalf("LoadWindows() error = %v", err)
+	}
+	if len(backend.mgetBatches) != 2 || len(backend.mgetBatches[0]) != 2 || len(backend.mgetBatches[1]) != 1 {
+		t.Fatalf("MGET batches = %v, want [2,1] from 2*256 response admission", backend.mgetBatches)
+	}
+
+	_, err = NewStore(StoreOptions{
+		Prefix: "alarmd", Codec: codec,
+		Router: &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}},
+		Limits: StoreLimits{
+			MaxKeysPerBatch: 1, MaxKeyBytesPerBatch: 1024, MaxLoadedBytes: 255, MaxWrittenBytes: 1024,
+		},
+		MinTTL: time.Minute, MaxTTL: time.Hour,
+	})
+	if !errors.Is(err, ErrStateBudget) {
+		t.Fatalf("NewStore(load budget) error = %v, want state budget", err)
+	}
+}
+
 func TestStateTTLRejectsUnsatisfiedHardMaximum(t *testing.T) {
 	requirement := requirement(1, "1", 2, 4)
 	if _, err := StateTTL([]LevelRequirement{requirement}, time.Minute, time.Minute, 4*time.Minute); !errors.Is(err, ErrStateBudget) {
 		t.Fatalf("StateTTL() error = %v, want budget error", err)
+	}
+}
+
+func TestStoreReportsBoundedBackendOperationsToObserver(t *testing.T) {
+	codec := mustCodec(t)
+	backend := newFakeBackend()
+	observations := make([]Observation, 0, 2)
+	store, err := NewStore(StoreOptions{
+		Prefix: "alarmd", Codec: codec,
+		Router: &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}},
+		Limits: StoreLimits{MaxKeysPerBatch: 2, MaxKeyBytesPerBatch: 1024, MaxLoadedBytes: 16 << 10, MaxWrittenBytes: 16 << 10},
+		MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute,
+		Observer: ObserverFunc(func(_ context.Context, observation Observation) {
+			observations = append(observations, observation)
+		}),
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	requirement := requirement(1, "1", 1, 2)
+	loaded, err := store.LoadWindows(context.Background(), LoadWindowsRequest{
+		Items: loadSpecs([]RuntimeIdentity{storeIdentity("11", "a")}, requirement),
+	})
+	if err != nil {
+		t.Fatalf("LoadWindows() error = %v", err)
+	}
+	mustApply(t, loaded.Items[0].Window, []StatePoint{point(100, "a", fact(requirement, LevelFactNormal))})
+	if _, err := store.WriteWindows(context.Background(), WriteWindowsRequest{Items: loaded.Items}); err != nil {
+		t.Fatalf("WriteWindows() error = %v", err)
+	}
+	if len(observations) != 2 || observations[0].Operation != OperationLoad || observations[1].Operation != OperationWrite {
+		t.Fatalf("observations = %+v, want LOAD then WRITE", observations)
+	}
+	for index, observation := range observations {
+		if observation.Result != OperationSucceeded || observation.Target != "monitor-01" || observation.Keys != 1 ||
+			observation.RequestBytes <= 0 || observation.Duration < 0 {
+			t.Fatalf("observation[%d] = %+v", index, observation)
+		}
+	}
+
+	backend.readErr = errors.New("redis unavailable")
+	if _, err := store.LoadWindows(context.Background(), LoadWindowsRequest{
+		Items: loadSpecs([]RuntimeIdentity{storeIdentity("12", "b")}, requirement),
+	}); err == nil {
+		t.Fatal("LoadWindows() error = nil, want dependency error")
+	}
+	last := observations[len(observations)-1]
+	if last.Result != OperationFailed || last.ReasonCode != contract.ReasonRedisUnavailable {
+		t.Fatalf("failed observation = %+v", last)
 	}
 }
 

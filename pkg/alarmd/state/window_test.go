@@ -10,6 +10,7 @@
 package state
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func TestWindowAlignsDynamicLevelsWithoutResettingSiblings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWindow() error = %v", err)
 	}
-	results := window.Apply([]StatePoint{
+	results := mustApply(t, window, []StatePoint{
 		point(100, "a", fact(one, LevelFactAnomalous), fact(five, LevelFactNormal)),
 		point(160, "b", fact(one, LevelFactNormal), fact(five, LevelFactAnomalous)),
 	})
@@ -64,22 +65,22 @@ func TestWindowReplayIsIdempotentAndConflictingBodyIsIsolated(t *testing.T) {
 		t.Fatalf("NewWindow() error = %v", err)
 	}
 	original := point(100, "a", fact(one, LevelFactAnomalous))
-	assertPointStatuses(t, window.Apply([]StatePoint{original}), PointApplied)
+	assertPointStatuses(t, mustApply(t, window, []StatePoint{original}), PointApplied)
 	window.MarkPersisted()
 
-	assertPointStatuses(t, window.Apply([]StatePoint{original}), PointNoop)
+	assertPointStatuses(t, mustApply(t, window, []StatePoint{original}), PointNoop)
 	if window.Changed() {
 		t.Fatal("Changed() = true after identical replay")
 	}
 
 	differentFact := point(100, "a", fact(one, LevelFactNormal))
-	result := window.Apply([]StatePoint{differentFact})
+	result := mustApply(t, window, []StatePoint{differentFact})
 	assertPointStatuses(t, result, PointTerminal)
 	if result[0].ReasonCode != contract.ReasonRecordIdentityConflict {
 		t.Fatalf("ReasonCode = %q, want %q", result[0].ReasonCode, contract.ReasonRecordIdentityConflict)
 	}
 	differentRecord := point(100, "b", fact(one, LevelFactAnomalous))
-	result = window.Apply([]StatePoint{differentRecord})
+	result = mustApply(t, window, []StatePoint{differentRecord})
 	assertPointStatuses(t, result, PointTerminal)
 	if result[0].ReasonCode != contract.ReasonRecordIdentityConflict {
 		t.Fatalf("ReasonCode = %q, want %q", result[0].ReasonCode, contract.ReasonRecordIdentityConflict)
@@ -95,7 +96,7 @@ func TestWindowPositionSummaryIsEventTimeBounded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWindow() error = %v", err)
 	}
-	results := window.Apply([]StatePoint{
+	results := mustApply(t, window, []StatePoint{
 		point(220, "c", fact(one, LevelFactAnomalous)),
 		point(100, "a", fact(one, LevelFactNormal)),
 		point(160, "b", fact(one, LevelFactAnomalous)),
@@ -120,7 +121,7 @@ func TestWindowDistinguishesWarmingGapAndUnavailableLevel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWindow() error = %v", err)
 	}
-	results := window.Apply([]StatePoint{
+	results := mustApply(t, window, []StatePoint{
 		point(100, "a", fact(one, LevelFactNormal), fact(five, LevelFactUnavailable)),
 		point(220, "c", fact(one, LevelFactAnomalous), fact(five, LevelFactNormal)),
 	})
@@ -141,16 +142,16 @@ func TestWindowAcceptsBoundedLatePointAndRejectsExpiredPoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWindow() error = %v", err)
 	}
-	assertPointStatuses(t, window.Apply([]StatePoint{
+	assertPointStatuses(t, mustApply(t, window, []StatePoint{
 		point(160, "b", fact(one, LevelFactNormal)),
 		point(220, "c", fact(one, LevelFactAnomalous)),
 	}), PointApplied, PointApplied)
-	late := window.Apply([]StatePoint{point(100, "a", fact(one, LevelFactNormal))})
+	late := mustApply(t, window, []StatePoint{point(100, "a", fact(one, LevelFactNormal))})
 	assertPointStatuses(t, late, PointApplied)
 	if late[0].Late != true {
 		t.Fatalf("late result = %+v, want Late", late[0])
 	}
-	expired := window.Apply([]StatePoint{point(40, "d", fact(one, LevelFactNormal))})
+	expired := mustApply(t, window, []StatePoint{point(40, "d", fact(one, LevelFactNormal))})
 	assertPointStatuses(t, expired, PointTerminal)
 	if expired[0].ReasonCode != contract.ReasonLateOutOfWindow {
 		t.Fatalf("ReasonCode = %q, want %q", expired[0].ReasonCode, contract.ReasonLateOutOfWindow)
@@ -165,10 +166,8 @@ func TestWindowRejectsFingerprintDriftLocally(t *testing.T) {
 	}
 	drifted := one
 	drifted.DetectFingerprint = strings.Repeat("2", 64)
-	result := window.Apply([]StatePoint{point(100, "a", fact(drifted, LevelFactNormal))})
-	assertPointStatuses(t, result, PointTerminal)
-	if result[0].ReasonCode != contract.ReasonConfigDrift {
-		t.Fatalf("ReasonCode = %q, want %q", result[0].ReasonCode, contract.ReasonConfigDrift)
+	if _, err := window.Apply([]StatePoint{point(100, "a", fact(drifted, LevelFactNormal))}); !errors.Is(err, ErrStateInvariant) {
+		t.Fatalf("Apply() error = %v, want state invariant", err)
 	}
 	if window.Changed() {
 		t.Fatal("fingerprint drift changed state")
@@ -181,21 +180,26 @@ func TestWindowInvalidFuturePointDoesNotPruneValidHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWindow() error = %v", err)
 	}
-	assertPointStatuses(t, window.Apply([]StatePoint{
+	assertPointStatuses(t, mustApply(t, window, []StatePoint{
 		point(100, "a", fact(one, LevelFactNormal)),
 		point(160, "b", fact(one, LevelFactAnomalous)),
 	}), PointApplied, PointApplied)
 
 	invalid := point(10_000, "c", fact(one, LevelFactNormal))
 	invalid.RecordID = "not-a-digest"
-	result := window.Apply([]StatePoint{invalid})
-	assertPointStatuses(t, result, PointTerminal)
-	if result[0].ReasonCode != contract.ReasonRecordInvalid {
-		t.Fatalf("ReasonCode = %q, want %q", result[0].ReasonCode, contract.ReasonRecordInvalid)
+	if _, err := window.Apply([]StatePoint{invalid}); !errors.Is(err, ErrStateInvariant) {
+		t.Fatalf("Apply() error = %v, want state invariant", err)
 	}
 	history, _ := window.History(1)
 	if summary := history.Summarize(160, 2); summary.Completeness != HistoryFull || summary.ValidPositions != 2 {
 		t.Fatalf("history = %+v, invalid future point must not advance retention", summary)
+	}
+}
+
+func TestWindowNilReceiverIsInternalInvariant(t *testing.T) {
+	var window *Window
+	if _, err := window.Apply(nil); !errors.Is(err, ErrStateInvariant) {
+		t.Fatalf("Apply() error = %v, want state invariant", err)
 	}
 }
 
@@ -230,4 +234,13 @@ func assertPointStatuses(t *testing.T, results []PointResult, statuses ...PointS
 			t.Fatalf("result[%d] = %+v, want status %q", index, results[index], status)
 		}
 	}
+}
+
+func mustApply(t testing.TB, window *Window, points []StatePoint) []PointResult {
+	t.Helper()
+	results, err := window.Apply(points)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	return results
 }

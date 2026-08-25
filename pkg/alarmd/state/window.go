@@ -12,6 +12,7 @@ package state
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -19,6 +20,8 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
+
+var ErrStateInvariant = errors.New("state: runtime state invariant violated")
 
 type LevelFactResult uint8
 
@@ -98,7 +101,6 @@ type pointCandidate struct {
 	valid        []byte
 	anomalous    []byte
 	hasValid     bool
-	reasonCode   string
 }
 
 func NewWindow(requirements []LevelRequirement) (*Window, error) {
@@ -160,36 +162,33 @@ func (window *Window) Align(requirements []LevelRequirement) error {
 	return nil
 }
 
-func (window *Window) Apply(points []StatePoint) []PointResult {
-	results := make([]PointResult, len(points))
+func (window *Window) Apply(points []StatePoint) ([]PointResult, error) {
 	if window == nil {
-		for index, point := range points {
-			results[index] = PointResult{RecordID: point.RecordID, SourceTime: point.SourceTime, Status: PointTerminal, ReasonCode: contract.ReasonRecordInvalid}
-		}
-		return results
+		return nil, fmt.Errorf("%w: nil window", ErrStateInvariant)
 	}
+	results := make([]PointResult, len(points))
 	loadedLatest, hasLoaded := window.latestSourceTime()
 	finalLatest := loadedLatest
 	hasFinal := hasLoaded
 	candidates := make([]pointCandidate, len(points))
 	for index, point := range points {
-		candidate := window.preparePoint(index, point)
+		candidate, err := window.preparePoint(index, point)
+		if err != nil {
+			return nil, err
+		}
 		candidates[index] = candidate
 		results[index] = PointResult{
 			RecordID: point.RecordID, SourceTime: point.SourceTime, Status: PointUnavailable,
 			Late: hasLoaded && point.SourceTime < loadedLatest,
 		}
-		if candidate.reasonCode != "" {
-			results[index].Status = PointTerminal
-			results[index].ReasonCode = candidate.reasonCode
-		} else if candidate.hasValid && (!hasFinal || candidate.sourceTime > finalLatest) {
+		if candidate.hasValid && (!hasFinal || candidate.sourceTime > finalLatest) {
 			finalLatest = candidate.sourceTime
 			hasFinal = true
 		}
 	}
 	order := make([]int, 0, len(candidates))
 	for index := range candidates {
-		if candidates[index].reasonCode == "" && candidates[index].hasValid {
+		if candidates[index].hasValid {
 			order = append(order, index)
 		}
 	}
@@ -210,7 +209,7 @@ func (window *Window) Apply(points []StatePoint) []PointResult {
 	if hasFinal {
 		window.prune(finalLatest)
 	}
-	return results
+	return results, nil
 }
 
 func (window *Window) History(levelID uint32) (HistoryView, bool) {
@@ -354,12 +353,11 @@ func sameLevelLayout(left, right []levelState) bool {
 	return true
 }
 
-func (window *Window) preparePoint(index int, point StatePoint) pointCandidate {
+func (window *Window) preparePoint(index int, point StatePoint) (pointCandidate, error) {
 	candidate := pointCandidate{index: index, recordID: point.RecordID, sourceTime: point.SourceTime}
 	digest, err := decodeDigest32(point.RecordID)
 	if err != nil || point.SourceTime < 0 {
-		candidate.reasonCode = contract.ReasonRecordInvalid
-		return candidate
+		return pointCandidate{}, fmt.Errorf("%w: invalid StatePoint identity", ErrStateInvariant)
 	}
 	copy(candidate.recordDigest[:], digest[:16])
 	bitmapBytes := (len(window.levels) + 7) / 8
@@ -368,19 +366,16 @@ func (window *Window) preparePoint(index int, point StatePoint) pointCandidate {
 	seen := make(map[uint32]struct{}, len(point.Levels))
 	for _, fact := range point.Levels {
 		if _, duplicate := seen[fact.LevelID]; duplicate {
-			candidate.reasonCode = contract.ReasonRecordInvalid
-			return candidate
+			return pointCandidate{}, fmt.Errorf("%w: duplicate Level fact %d", ErrStateInvariant, fact.LevelID)
 		}
 		seen[fact.LevelID] = struct{}{}
 		position := sort.Search(len(window.levels), func(i int) bool { return window.levels[i].levelID >= fact.LevelID })
 		if position == len(window.levels) || window.levels[position].levelID != fact.LevelID {
-			candidate.reasonCode = contract.ReasonConfigDrift
-			return candidate
+			return pointCandidate{}, fmt.Errorf("%w: unknown Level fact %d", ErrStateInvariant, fact.LevelID)
 		}
 		fingerprint, decodeErr := decodeDigest32(fact.DetectFingerprint)
 		if decodeErr != nil || fingerprint != window.levels[position].detectFingerprint {
-			candidate.reasonCode = contract.ReasonConfigDrift
-			return candidate
+			return pointCandidate{}, fmt.Errorf("%w: Level %d detect fingerprint mismatch", ErrStateInvariant, fact.LevelID)
 		}
 		switch fact.Result {
 		case LevelFactNormal:
@@ -392,11 +387,10 @@ func (window *Window) preparePoint(index int, point StatePoint) pointCandidate {
 			candidate.hasValid = true
 		case LevelFactUnavailable, LevelFactError:
 		default:
-			candidate.reasonCode = contract.ReasonRecordInvalid
-			return candidate
+			return pointCandidate{}, fmt.Errorf("%w: Level %d fact result %d", ErrStateInvariant, fact.LevelID, fact.Result)
 		}
 	}
-	return candidate
+	return candidate, nil
 }
 
 func (window *Window) applyCandidate(candidate pointCandidate) (PointStatus, string) {

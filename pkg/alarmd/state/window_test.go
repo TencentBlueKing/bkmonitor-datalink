@@ -243,13 +243,16 @@ func TestWindowObserverAggregatesApplyAndSummaryOutcomes(t *testing.T) {
 	if len(observations) != 5 {
 		t.Fatalf("observations = %+v, want warming/apply/gapped/apply/full", observations)
 	}
-	if observations[0].Stage != StageHistorySummarized || observations[0].WarmingSummaries != 1 {
+	if observations[0].Stage != StageDependencyLoaded || observations[0].Operation != OperationSample ||
+		observations[0].WarmingSummaries != 1 {
 		t.Fatalf("warming summary observation = %+v", observations[0])
 	}
-	if observations[1].Stage != StageWindowApplied || observations[1].AppliedPoints != 2 {
+	if observations[1].Stage != StageDependencyLoaded || observations[1].Operation != OperationTransition ||
+		observations[1].AppliedPoints != 2 {
 		t.Fatalf("initial apply observation = %+v", observations[1])
 	}
-	if observations[2].Stage != StageHistorySummarized || observations[2].GappedSummaries != 1 {
+	if observations[2].Stage != StageDependencyLoaded || observations[2].Operation != OperationSample ||
+		observations[2].GappedSummaries != 1 {
 		t.Fatalf("gapped summary observation = %+v", observations[2])
 	}
 	if observations[3].LateAcceptedPoints != 1 || observations[3].LateOutOfWindowPoints != 1 ||

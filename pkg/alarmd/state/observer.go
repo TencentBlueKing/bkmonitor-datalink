@@ -17,18 +17,27 @@ import (
 type ObservationStage string
 
 const (
-	StageDependencyLoaded  ObservationStage = "DEPENDENCY_LOADED"
-	StageStateCommitted    ObservationStage = "STATE_COMMITTED"
-	StageWindowApplied     ObservationStage = "WINDOW_APPLIED"
-	StageHistorySummarized ObservationStage = "HISTORY_SUMMARIZED"
+	StageDependencyLoaded ObservationStage = "dependency_loaded"
+	StageStateCommitted   ObservationStage = "state_committed"
+)
+
+type Operation string
+
+const (
+	OperationLoad       Operation = "load"
+	OperationDecode     Operation = "decode"
+	OperationEncode     Operation = "encode"
+	OperationWrite      Operation = "write"
+	OperationSample     Operation = "sample"
+	OperationTransition Operation = "transition"
 )
 
 type OperationResult string
 
 const (
-	OperationSucceeded OperationResult = "SUCCEEDED"
-	OperationPartial   OperationResult = "PARTIAL"
-	OperationFailed    OperationResult = "FAILED"
+	OperationSucceeded OperationResult = "success"
+	OperationPartial   OperationResult = "degraded"
+	OperationFailed    OperationResult = "failed"
 )
 
 const (
@@ -40,6 +49,7 @@ const (
 // dimension identities must never be copied into metric labels.
 type Observation struct {
 	Stage                 ObservationStage
+	Operation             Operation
 	Target                string
 	Result                OperationResult
 	ReasonCode            string

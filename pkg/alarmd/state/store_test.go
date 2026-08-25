@@ -78,12 +78,15 @@ func TestStoreLoadsMissingValidCorruptAndUnsupportedIndependently(t *testing.T) 
 	if len(backend.mgetBatches) != 2 {
 		t.Fatalf("MGET batches = %d, want max-2-key bounded batches", len(backend.mgetBatches))
 	}
-	if len(observations) != 2 {
-		t.Fatalf("observations = %+v, want load plus explicit history summary", observations)
+	if len(observations) != 3 {
+		t.Fatalf("observations = %+v, want load/decode plus explicit history summary", observations)
 	}
-	loadObservation := observations[0]
+	if observations[0].Operation != OperationLoad || observations[0].BackendCalls != 2 {
+		t.Fatalf("load observation = %+v", observations[0])
+	}
+	loadObservation := observations[1]
 	if loadObservation.Stage != StageDependencyLoaded || loadObservation.Result != OperationPartial ||
-		loadObservation.Codec != CodecNoneV1 || loadObservation.BackendCalls != 2 ||
+		loadObservation.Operation != OperationDecode || loadObservation.Codec != CodecNoneV1 || loadObservation.BackendCalls != 0 ||
 		loadObservation.TouchedKeys != 4 || loadObservation.FoundKeys != 1 || loadObservation.MissingKeys != 1 ||
 		loadObservation.ResetCorruptKeys != 1 || loadObservation.UnsupportedKeys != 1 || loadObservation.UnavailableKeys != 0 ||
 		loadObservation.DecodeBytes != len(validBlob)+len(backend.values[corruptKey])+len(unsupported) {
@@ -207,7 +210,7 @@ func TestStoreExposesPostAdmissionBudgetAsInvariantViolation(t *testing.T) {
 	if len(backend.setBatches) != 0 || !window.Changed() {
 		t.Fatal("terminal state was written or marked persisted")
 	}
-	if len(observations) != 1 || observations[0].Stage != StageStateCommitted ||
+	if len(observations) != 1 || observations[0].Stage != StageStateCommitted || observations[0].Operation != OperationEncode ||
 		observations[0].Result != OperationFailed || observations[0].InvariantKeys != 1 ||
 		observations[0].BudgetViolations != 1 || observations[0].ReasonCode != "" {
 		t.Fatalf("observations = %+v, want budget invariant commit result", observations)
@@ -349,25 +352,27 @@ func TestStoreReportsBoundedBackendOperationsToObserver(t *testing.T) {
 	}
 	history, _ := loaded.Items[0].Window.History(1)
 	_ = history.SummarizeContext(context.Background(), 100, 1)
-	if len(observations) != 4 || observations[0].Stage != StageDependencyLoaded ||
-		observations[1].Stage != StageWindowApplied || observations[2].Stage != StageStateCommitted ||
-		observations[3].Stage != StageHistorySummarized {
-		t.Fatalf("observations = %+v, want LOAD then WRITE", observations)
+	if len(observations) != 6 || observations[0].Operation != OperationLoad || observations[1].Operation != OperationDecode ||
+		observations[2].Operation != OperationTransition || observations[3].Operation != OperationEncode ||
+		observations[4].Operation != OperationWrite || observations[5].Operation != OperationSample {
+		t.Fatalf("observations = %+v, want load/decode/transition/encode/write/sample", observations)
 	}
 	if observations[0].Result != OperationSucceeded || observations[0].Target != "monitor-01" ||
-		observations[0].TouchedKeys != 1 || observations[0].MissingKeys != 1 || observations[0].BackendCalls != 1 ||
+		observations[0].TouchedKeys != 1 || observations[0].BackendCalls != 1 ||
 		observations[0].RequestBytes <= 0 || observations[0].Duration < 0 || observations[0].Codec != CodecNoneV1 {
 		t.Fatalf("load observation = %+v", observations[0])
 	}
-	if observations[1].AppliedPoints != 1 {
-		t.Fatalf("apply observation = %+v", observations[1])
+	if observations[1].MissingKeys != 1 || observations[1].DecodeBytes != 0 {
+		t.Fatalf("decode observation = %+v", observations[1])
 	}
-	if observations[2].Result != OperationSucceeded || observations[2].Target != "monitor-01" ||
-		observations[2].TouchedKeys != 1 || observations[2].PersistedKeys != 1 ||
-		observations[2].EncodeBytes <= 0 || observations[2].BackendCalls != 1 {
-		t.Fatalf("write observation = %+v", observations[2])
+	if observations[2].AppliedPoints != 1 {
+		t.Fatalf("apply observation = %+v", observations[2])
 	}
-	if observations[len(observations)-1].FullSummaries != 1 {
+	if observations[3].EncodeBytes <= 0 || observations[3].BackendCalls != 0 ||
+		observations[4].PersistedKeys != 1 || observations[4].BackendCalls != 1 || observations[4].Target != "monitor-01" {
+		t.Fatalf("encode/write observations = %+v / %+v", observations[3], observations[4])
+	}
+	if observations[5].FullSummaries != 1 {
 		t.Fatalf("summary observation = %+v", observations[len(observations)-1])
 	}
 
@@ -378,7 +383,8 @@ func TestStoreReportsBoundedBackendOperationsToObserver(t *testing.T) {
 		t.Fatal("LoadWindows() error = nil, want dependency error")
 	}
 	last := observations[len(observations)-1]
-	if last.Result != OperationFailed || last.ReasonCode != contract.ReasonRedisUnavailable || last.UnavailableKeys != 1 {
+	if last.Operation != OperationLoad || last.Result != OperationFailed ||
+		last.ReasonCode != contract.ReasonRedisUnavailable || last.UnavailableKeys != 1 {
 		t.Fatalf("failed observation = %+v", last)
 	}
 }

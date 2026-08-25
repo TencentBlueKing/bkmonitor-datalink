@@ -184,7 +184,8 @@ func (window *Window) ApplyContext(ctx context.Context, points []StatePoint) (re
 	}
 	defer func() {
 		observation := Observation{
-			Stage: StageWindowApplied, Result: OperationSucceeded, Codec: CodecNoneV1,
+			Stage: StageDependencyLoaded, Operation: OperationTransition,
+			Result: OperationSucceeded, Codec: CodecNoneV1,
 			TouchedPoints: len(points), Duration: time.Since(started),
 		}
 		if err != nil {
@@ -306,7 +307,8 @@ func (view HistoryView) SummarizeContext(ctx context.Context, endTime int64, req
 	started := time.Now()
 	defer func() {
 		observation := Observation{
-			Stage: StageHistorySummarized, Result: OperationSucceeded, Codec: CodecNoneV1,
+			Stage: StageDependencyLoaded, Operation: OperationSample,
+			Result: OperationSucceeded, Codec: CodecNoneV1,
 			Duration: time.Since(started),
 		}
 		switch summary.Completeness {

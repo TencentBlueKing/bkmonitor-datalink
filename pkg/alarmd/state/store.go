@@ -170,7 +170,8 @@ func NewStore(options StoreOptions) (*Store, error) {
 func (store *Store) LoadWindows(ctx context.Context, request LoadWindowsRequest) (result LoadWindowsResult, returnErr error) {
 	started := time.Now()
 	observation := Observation{
-		Stage: StageDependencyLoaded, Result: OperationSucceeded, Codec: CodecNoneV1,
+		Stage: StageDependencyLoaded, Operation: OperationDecode,
+		Result: OperationSucceeded, Codec: CodecNoneV1,
 		TouchedKeys: len(request.Items),
 	}
 	defer func() {
@@ -248,7 +249,8 @@ func (store *Store) LoadWindows(ctx context.Context, request LoadWindowsRequest)
 func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsRequest) (result WriteWindowsResult, returnErr error) {
 	started := time.Now()
 	observation := Observation{
-		Stage: StageStateCommitted, Result: OperationSucceeded, Codec: CodecNoneV1,
+		Stage: StageStateCommitted, Operation: OperationEncode,
+		Result: OperationSucceeded, Codec: CodecNoneV1,
 		TouchedKeys: len(request.Items),
 	}
 	defer func() {
@@ -383,13 +385,43 @@ func (store *Store) finishLoadObservation(
 		}
 	}
 	if returnErr != nil {
-		observation.Result = OperationFailed
-		observation.UnavailableKeys += observation.TouchedKeys - classified
+		if observation.ReasonCode != contract.ReasonRedisUnavailable {
+			observation.InvariantViolations++
+		}
+		if classified > 0 {
+			observation.Result = OperationPartial
+		}
 	} else if observation.ResetCorruptKeys > 0 || observation.UnsupportedKeys > 0 || observation.UnavailableKeys > 0 {
 		observation.Result = OperationPartial
 	}
 	observation.Duration = duration
-	observeState(ctx, store.options.Observer, *observation)
+
+	load := Observation{
+		Stage: StageDependencyLoaded, Operation: OperationLoad, Target: observation.Target,
+		Result: OperationSucceeded, ReasonCode: observation.ReasonCode, Codec: CodecNoneV1,
+		BackendCalls: observation.BackendCalls, RequestBytes: observation.RequestBytes,
+		ResponseBytes: observation.ResponseBytes, StateBytes: observation.ResponseBytes,
+		TouchedKeys: observation.TouchedKeys, Duration: duration,
+	}
+	if returnErr != nil {
+		load.Result = OperationFailed
+		load.UnavailableKeys = observation.TouchedKeys - classified
+	}
+	observeState(ctx, store.options.Observer, load)
+
+	decode := *observation
+	decode.Operation = OperationDecode
+	decode.Target = ""
+	decode.BackendCalls = 0
+	decode.RequestBytes = 0
+	decode.ResponseBytes = 0
+	decode.StateBytes = decode.DecodeBytes
+	decode.TouchedKeys = classified
+	decode.ReasonCode = ""
+	if returnErr != nil && classified == 0 {
+		return
+	}
+	observeState(ctx, store.options.Observer, decode)
 }
 
 func (store *Store) finishWriteObservation(
@@ -421,14 +453,42 @@ func (store *Store) finishWriteObservation(
 			}
 		}
 	}
-	if returnErr != nil {
-		observation.Result = OperationFailed
-		observation.UnavailableKeys += observation.TouchedKeys - classified
-	} else if observation.InvariantKeys > 0 || observation.UnsupportedKeys > 0 || observation.UnavailableKeys > 0 {
+	if observation.InvariantKeys > 0 || observation.UnsupportedKeys > 0 || observation.UnavailableKeys > 0 {
 		observation.Result = OperationFailed
 	}
 	observation.Duration = duration
-	observeState(ctx, store.options.Observer, *observation)
+
+	encode := *observation
+	encode.Operation = OperationEncode
+	encode.Target = ""
+	encode.BackendCalls = 0
+	encode.RequestBytes = 0
+	encode.ResponseBytes = 0
+	encode.PersistedKeys = 0
+	encode.ReasonCode = ""
+	if returnErr != nil && observation.EncodeBytes == 0 && classified == 0 {
+		encode.Result = OperationFailed
+		encode.InvariantViolations += observation.TouchedKeys
+	}
+	observeState(ctx, store.options.Observer, encode)
+
+	scheduled := observation.TouchedKeys - observation.NoopKeys - observation.InvariantKeys -
+		observation.UnsupportedKeys - observation.UnavailableKeys
+	if scheduled == 0 && observation.BackendCalls == 0 {
+		return
+	}
+	write := Observation{
+		Stage: StageStateCommitted, Operation: OperationWrite, Target: observation.Target,
+		Result: OperationSucceeded, ReasonCode: observation.ReasonCode, Codec: CodecNoneV1,
+		BackendCalls: observation.BackendCalls, RequestBytes: observation.RequestBytes,
+		StateBytes: observation.StateBytes, TouchedKeys: scheduled,
+		PersistedKeys: observation.PersistedKeys, Duration: duration,
+	}
+	if returnErr != nil {
+		write.Result = OperationFailed
+		write.UnavailableKeys = scheduled - observation.PersistedKeys
+	}
+	observeState(ctx, store.options.Observer, write)
 }
 
 func mergeObservationTarget(current, next string) string {

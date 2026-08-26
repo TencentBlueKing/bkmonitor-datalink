@@ -62,7 +62,26 @@ func TestBusinessLocalTimezoneResolverSeparatesUnknownFromSourceFailure(t *testi
 	))
 	if _, err := resolver.ResolveTimezone(context.Background(), "BUSINESS_LOCAL", "tenant-a", "42"); !errors.Is(err, want) {
 		t.Fatalf("ResolveTimezone() error = %v", err)
+	} else {
+		assertRetryableEffectiveTimeDependency(t, err)
 	}
+}
+
+func TestBusinessLocalTimezoneResolverDoesNotMarkLocalErrorsRetryable(t *testing.T) {
+	t.Parallel()
+
+	resolver := NewBusinessLocalTimezoneResolver(nil)
+	_, err := resolver.ResolveTimezone(context.Background(), "BUSINESS_LOCAL", "tenant-a", "42")
+	assertNotRetryableEffectiveTimeDependency(t, err)
+
+	resolver = NewBusinessLocalTimezoneResolver(BusinessTimezoneSourceFunc(
+		func(context.Context, string, string) (string, bool, error) { return "", false, nil },
+	))
+	_, err = resolver.ResolveTimezone(context.Background(), "BUSINESS_LOCAL", "tenant-a", "42")
+	if !errors.Is(err, ErrEffectiveTimeUnknown) {
+		t.Fatalf("ResolveTimezone() error = %v", err)
+	}
+	assertNotRetryableEffectiveTimeDependency(t, err)
 }
 
 func TestCalendarScheduleProviderResolvesAlwaysWithoutDependencies(t *testing.T) {
@@ -161,7 +180,23 @@ func TestCalendarScheduleProviderDistinguishesKnownEmptyUnknownAndDependencyFail
 	))
 	if _, err := failing.Resolve(context.Background(), request); !errors.Is(err, want) {
 		t.Fatalf("dependency Resolve() error = %v", err)
+	} else {
+		assertRetryableEffectiveTimeDependency(t, err)
 	}
+}
+
+func TestCalendarScheduleProviderDoesNotMarkLocalRequirementErrorRetryable(t *testing.T) {
+	t.Parallel()
+
+	provider := NewCalendarScheduleProvider(nil, nil)
+	_, err := provider.Resolve(context.Background(), []EffectiveTimeRequest{{
+		TenantID: "tenant-a", BusinessID: "42", EvaluationTime: 1725000000,
+		Requirement: EffectiveTimeRequirement{kind: "INVALID"},
+	}})
+	if err == nil {
+		t.Fatal("Resolve() accepted an invalid local requirement")
+	}
+	assertNotRetryableEffectiveTimeDependency(t, err)
 }
 
 func TestCalendarScheduleProviderDoesNotUseFactsOutsideValidInterval(t *testing.T) {
@@ -200,4 +235,20 @@ func fixedTimezoneResolver(location *time.Location) TimezoneResolver {
 	return TimezoneResolverFunc(func(context.Context, string, string, string) (*time.Location, error) {
 		return location, nil
 	})
+}
+
+func assertRetryableEffectiveTimeDependency(t testing.TB, err error) {
+	t.Helper()
+	var dependency *EffectiveTimeDependencyError
+	if !errors.As(err, &dependency) || !dependency.RetryableEffectiveTimeDependency() {
+		t.Fatalf("error is not a retryable EffectiveTime dependency: %T %v", err, err)
+	}
+}
+
+func assertNotRetryableEffectiveTimeDependency(t testing.TB, err error) {
+	t.Helper()
+	var dependency interface{ RetryableEffectiveTimeDependency() bool }
+	if errors.As(err, &dependency) && dependency.RetryableEffectiveTimeDependency() {
+		t.Fatalf("error unexpectedly marked as retryable EffectiveTime dependency: %T %v", err, err)
+	}
 }

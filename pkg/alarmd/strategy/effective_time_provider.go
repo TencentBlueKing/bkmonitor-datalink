@@ -21,6 +21,29 @@ import (
 
 const businessLocalTimezoneRef = "BUSINESS_LOCAL"
 
+// EffectiveTimeDependencyError marks a public EffectiveTime source failure as
+// retryable while preserving the source error for errors.Is/errors.As.
+type EffectiveTimeDependencyError struct {
+	operation string
+	cause     error
+}
+
+func (e *EffectiveTimeDependencyError) Error() string {
+	return fmt.Sprintf("effective time: %s: %v", e.operation, e.cause)
+}
+
+func (e *EffectiveTimeDependencyError) Unwrap() error {
+	return e.cause
+}
+
+func (e *EffectiveTimeDependencyError) RetryableEffectiveTimeDependency() bool {
+	return true
+}
+
+func newEffectiveTimeDependencyError(operation string, cause error) error {
+	return &EffectiveTimeDependencyError{operation: operation, cause: cause}
+}
+
 type BusinessTimezoneSource interface {
 	ResolveBusinessTimezone(context.Context, string, string) (string, bool, error)
 }
@@ -50,7 +73,7 @@ func (r *BusinessLocalTimezoneResolver) ResolveTimezone(
 	}
 	name, found, err := r.source.ResolveBusinessTimezone(ctx, tenantID, businessID)
 	if err != nil {
-		return nil, fmt.Errorf("effective time: resolve business timezone: %w", err)
+		return nil, newEffectiveTimeDependencyError("resolve business timezone", err)
 	}
 	if !found || name == "" {
 		return nil, fmt.Errorf("effective time: business timezone is missing: %w", ErrEffectiveTimeUnknown)
@@ -183,7 +206,7 @@ func (p *CalendarScheduleProvider) Resolve(ctx context.Context, requests []Effec
 	})
 	resolved, err := p.calendars.ResolveCalendarFacts(ctx, append([]CalendarFactRequest(nil), batch...))
 	if err != nil {
-		return nil, fmt.Errorf("effective time: resolve calendar facts: %w", err)
+		return nil, newEffectiveTimeDependencyError("resolve calendar facts", err)
 	}
 	byRequest := indexCalendarFacts(resolved)
 	for index, request := range requests {

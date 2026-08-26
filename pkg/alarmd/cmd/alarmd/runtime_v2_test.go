@@ -1,0 +1,344 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package main
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/coordinator"
+	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
+)
+
+func TestOpenApplicationBundleBuildsV2EvaluationService(t *testing.T) {
+	t.Parallel()
+
+	cfg := validApplicationConfig()
+	redis := &fakeRedisRuntime{}
+	events := &fakeTriggerEventRuntime{}
+	receipts := &fakeReceiptRuntime{}
+	service := newFakeServiceRuntime()
+	service.close = func() error { return nil }
+	factories := applicationComponentFactories{
+		newEffectiveTime: phaseOneEffectiveTimeProvider,
+		openRedis:        func(state.RedisBackendOptions) (redisRuntime, error) { return redis, nil },
+		openTriggerEvents: func(enginekafka.DecisionSinkConfig) (triggerEventRuntime, error) {
+			return events, nil
+		},
+		openReceipts: func(enginekafka.DecisionSinkConfig, enginekafka.ReceiptPublisherLimits) (receiptRuntime, error) {
+			return receipts, nil
+		},
+		openEvaluationService: func(
+			coordinates enginekafka.Config,
+			router coordinator.MessageOutcomeRouter,
+			critical coordinator.CriticalCompletion,
+			gotReceipts coordinator.ReceiptPublisher,
+			gate *coordinator.CriticalDependencyGate,
+			diagnostics enginekafka.EvaluationDiagnostics,
+			_ coordinator.DependencyRetryConfig,
+			_ time.Duration,
+		) (serviceRuntime, error) {
+			if coordinates.Topic != cfg.Kafka.InputTopic {
+				t.Fatalf("input topic = %q, want %q", coordinates.Topic, cfg.Kafka.InputTopic)
+			}
+			if router == nil || critical == nil || gotReceipts != receipts || gate == nil {
+				t.Fatal("v2 evaluation service received an incomplete composition")
+			}
+			if diagnostics.OnRejected == nil {
+				t.Fatal("v2 evaluation service did not require rejected-message evidence")
+			}
+			return service, nil
+		},
+	}
+
+	bundle, err := openApplicationBundleWithFactories(
+		context.Background(), cfg, metric.NewRecorder(metric.BuildInfo{}),
+		observability.Discard(observability.ComponentTrigger), factories,
+	)
+	if err != nil {
+		t.Fatalf("openApplicationBundleWithFactories() error = %v", err)
+	}
+	if bundle.service != service || bundle.gate == nil {
+		t.Fatal("application bundle did not retain the v2 service and dependency gate")
+	}
+	if redis.pings != 1 {
+		t.Fatalf("Redis pings = %d, want one startup readiness check", redis.pings)
+	}
+	if err := bundle.Shutdown(context.Background()); err != nil {
+		t.Fatalf("bundle.Shutdown() error = %v", err)
+	}
+}
+
+func TestRunApplicationRetriesStartupDependencyWhileHTTPStaysNotReady(t *testing.T) {
+	t.Parallel()
+
+	cfg := validApplicationConfig()
+	cfg.DependencyRetry.MinDelay = config.Duration(time.Millisecond)
+	cfg.DependencyRetry.MaxDelay = config.Duration(time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	service := newFakeServiceRuntime()
+	service.snapshot = lifecycle.Snapshot{Ready: true, AssignedClaims: 1}
+	service.run = func(ctx context.Context) error {
+		cancel()
+		<-ctx.Done()
+		return nil
+	}
+	service.close = func() error { return nil }
+	bundle := &applicationBundle{
+		service: service,
+		gate:    coordinator.NewCriticalDependencyGate(nil),
+	}
+	openAttempts := 0
+	observedNotReady := false
+	dependencies := applicationDependencies{
+		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
+			openAttempts++
+			if openAttempts == 1 {
+				return nil, retryableStartupDependency(errors.New("broker unavailable"))
+			}
+			return bundle, nil
+		},
+		newHTTP: func(_ *metric.Recorder, source observability.HealthSource) (httpRuntime, error) {
+			if snapshot := source.HealthSnapshot(); snapshot.Ready || snapshot.State != observability.HealthStarting {
+				t.Fatalf("startup health = %+v, want starting and not ready", snapshot)
+			}
+			observedNotReady = true
+			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
+				<-ctx.Done()
+				return nil
+			}}, nil
+		},
+	}
+
+	if err := runApplication(ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), dependencies); err != nil {
+		t.Fatalf("runApplication() error = %v", err)
+	}
+	if !observedNotReady || openAttempts != 2 {
+		t.Fatalf("observedNotReady=%v openAttempts=%d, want true and 2", observedNotReady, openAttempts)
+	}
+}
+
+func TestApplicationHealthKeepsAssignmentSeparateFromDependencyGate(t *testing.T) {
+	t.Parallel()
+
+	health := newApplicationHealth()
+	service := newFakeServiceRuntime()
+	service.snapshot = lifecycle.Snapshot{Ready: false, AssignedClaims: 1}
+	gate := coordinator.NewCriticalDependencyGate(nil)
+	if _, err := gate.Pause(coordinator.DependencyBlocker{
+		Dependency: coordinator.DependencyRedis,
+		ReasonCode: contract.ReasonRedisUnavailable,
+	}); err != nil {
+		t.Fatalf("Pause() error = %v", err)
+	}
+	health.attach(&applicationBundle{service: service, gate: gate})
+	snapshot := health.HealthSnapshot()
+	if !snapshot.AssignmentReady || snapshot.Ready || snapshot.State != observability.HealthNotReady {
+		t.Fatalf("health = %+v, want assignment ready but dependency-gated NotReady", snapshot)
+	}
+}
+
+func TestApplicationBundleShutdownUsesReverseOrder(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	events := make([]string, 0, 4)
+	add := func(event string) {
+		mu.Lock()
+		events = append(events, event)
+		mu.Unlock()
+	}
+	service := newFakeServiceRuntime()
+	service.close = func() error { add("service"); return nil }
+	bundle := &applicationBundle{
+		service:       service,
+		receipts:      &fakeReceiptRuntime{shutdown: func(context.Context) { add("receipts") }},
+		triggerEvents: &fakeTriggerEventRuntime{shutdown: func(context.Context) error { add("events"); return nil }},
+		redis:         &fakeRedisRuntime{close: func() error { add("redis"); return nil }},
+		gate:          coordinator.NewCriticalDependencyGate(nil),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := bundle.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	mu.Lock()
+	got := strings.Join(events, ",")
+	mu.Unlock()
+	if got != "service,receipts,events,redis" {
+		t.Fatalf("shutdown order = %q, want reverse dependency order", got)
+	}
+}
+
+func TestApplicationBundleShutdownReturnsReceiptDrainError(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("receipt drain failed")
+	bundle := &applicationBundle{
+		receipts: &fakeReceiptRuntime{result: enginekafka.ReceiptDrainResult{
+			Status: enginekafka.ReceiptDrainFailed,
+			Err:    want,
+		}},
+	}
+	if err := bundle.Shutdown(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("Shutdown() error = %v, want receipt drain error", err)
+	}
+}
+
+func TestOpenApplicationBundleDoesNotRetryUnclassifiedFactoryError(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("deterministic factory error")
+	factories := applicationComponentFactories{
+		newEffectiveTime: phaseOneEffectiveTimeProvider,
+		openRedis:        func(state.RedisBackendOptions) (redisRuntime, error) { return &fakeRedisRuntime{}, nil },
+		openTriggerEvents: func(enginekafka.DecisionSinkConfig) (triggerEventRuntime, error) {
+			return nil, want
+		},
+		openReceipts: func(enginekafka.DecisionSinkConfig, enginekafka.ReceiptPublisherLimits) (receiptRuntime, error) {
+			return &fakeReceiptRuntime{}, nil
+		},
+		openEvaluationService: func(
+			enginekafka.Config,
+			coordinator.MessageOutcomeRouter,
+			coordinator.CriticalCompletion,
+			coordinator.ReceiptPublisher,
+			*coordinator.CriticalDependencyGate,
+			enginekafka.EvaluationDiagnostics,
+			coordinator.DependencyRetryConfig,
+			time.Duration,
+		) (serviceRuntime, error) {
+			return newFakeServiceRuntime(), nil
+		},
+	}
+
+	_, err := openApplicationBundleWithFactories(
+		context.Background(), validApplicationConfig(), metric.NewRecorder(metric.BuildInfo{}),
+		observability.Discard(observability.ComponentTrigger), factories,
+	)
+	if !errors.Is(err, want) {
+		t.Fatalf("openApplicationBundleWithFactories() error = %v, want %v", err, want)
+	}
+	var dependency *startupDependencyError
+	if errors.As(err, &dependency) {
+		t.Fatalf("deterministic factory error was classified retryable: %v", err)
+	}
+}
+
+func TestDependencyGateObserverRecordsPauseAndResume(t *testing.T) {
+	t.Parallel()
+
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	var output bytes.Buffer
+	gate := coordinator.NewCriticalDependencyGate(dependencyGateObserver(
+		recorder, observability.New(observability.ComponentTrigger, &output),
+	))
+	if _, err := gate.Pause(coordinator.DependencyBlocker{
+		Dependency: coordinator.DependencyRedis,
+		ReasonCode: contract.ReasonRedisUnavailable,
+	}); err != nil {
+		t.Fatalf("Pause() error = %v", err)
+	}
+	if _, err := gate.Resume(coordinator.DependencyRedis); err != nil {
+		t.Fatalf("Resume() error = %v", err)
+	}
+
+	logOutput := output.String()
+	for _, want := range []string{
+		`"stage":"dependency_gate","result":"paused"`,
+		`"stage":"dependency_gate","result":"resumed"`,
+	} {
+		if !strings.Contains(logOutput, want) {
+			t.Fatalf("log = %q, want %q", logOutput, want)
+		}
+	}
+	families, err := recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+	results := map[string]bool{}
+	for _, family := range families {
+		if family.GetName() != "bkmonitor_alarmd_observation_total" {
+			continue
+		}
+		for _, sample := range family.Metric {
+			for _, label := range sample.Label {
+				if label.GetName() == "result" {
+					results[label.GetValue()] = true
+				}
+			}
+		}
+	}
+	if !results[string(observability.ResultPaused)] || !results[string(observability.ResultResumed)] {
+		t.Fatalf("dependency gate metrics results = %v, want paused and resumed", results)
+	}
+}
+
+type fakeRedisRuntime struct {
+	pings int
+	close func() error
+}
+
+func (runtime *fakeRedisRuntime) Ping(context.Context) error {
+	runtime.pings++
+	return nil
+}
+
+func (*fakeRedisRuntime) MGet(context.Context, []string) ([][]byte, error)    { return [][]byte{}, nil }
+func (*fakeRedisRuntime) SetMany(context.Context, []state.BackendWrite) error { return nil }
+func (runtime *fakeRedisRuntime) Close() error {
+	if runtime.close != nil {
+		return runtime.close()
+	}
+	return nil
+}
+
+type fakeTriggerEventRuntime struct {
+	shutdown func(context.Context) error
+}
+
+func (*fakeTriggerEventRuntime) WriteBatch(context.Context, []contract.TriggerEventV1) error {
+	return nil
+}
+func (runtime *fakeTriggerEventRuntime) Shutdown(ctx context.Context) error {
+	if runtime.shutdown != nil {
+		return runtime.shutdown(ctx)
+	}
+	return nil
+}
+
+type fakeReceiptRuntime struct {
+	shutdown func(context.Context)
+	result   enginekafka.ReceiptDrainResult
+}
+
+func (*fakeReceiptRuntime) TryEnqueue(*contract.MessageReceiptV1) bool { return true }
+func (runtime *fakeReceiptRuntime) Shutdown(ctx context.Context) enginekafka.ReceiptDrainResult {
+	if runtime.shutdown != nil {
+		runtime.shutdown(ctx)
+	}
+	if runtime.result.Status != "" || runtime.result.Err != nil {
+		return runtime.result
+	}
+	return enginekafka.ReceiptDrainResult{Status: enginekafka.ReceiptDrainSuccess}
+}

@@ -1264,6 +1264,14 @@ func TestMessageReceiptV1CountModel(t *testing.T) {
 	if _, err := BuildMessageReceiptV1(valid); err != nil {
 		t.Fatalf("BuildMessageReceiptV1(valid selected > received) error = %v", err)
 	}
+	mixedLevel := valid
+	mixedLevel.Status = ReceiptStatusCompletedWithTerminal
+	mixedLevel.Counts.LevelTerminalAffected = 1
+	mixedLevel.PerPlan = append([]PlanReceiptV1(nil), valid.PerPlan...)
+	mixedLevel.PerPlan[0].LevelTerminalAffected = 1
+	if _, err := BuildMessageReceiptV1(mixedLevel); err != nil {
+		t.Fatalf("BuildMessageReceiptV1(valid mixed-Level terminal) error = %v", err)
+	}
 
 	rejected := validMessageReceiptV1ForTest()
 	rejected.Status = ReceiptStatusRejected
@@ -1272,6 +1280,10 @@ func TestMessageReceiptV1CountModel(t *testing.T) {
 	rejected.ReasonCounts = []ReasonCountV1{{ReasonCode: ReasonMalformedJSON, Count: 1}}
 	if _, err := BuildMessageReceiptV1(rejected); err != nil {
 		t.Fatalf("BuildMessageReceiptV1(valid rejected) error = %v", err)
+	}
+	rejected.Counts.LevelTerminalAffected = 1
+	if _, err := BuildMessageReceiptV1(rejected); err == nil {
+		t.Fatal("BuildMessageReceiptV1() accepted REJECTED with a level terminal affected count")
 	}
 
 	tests := []struct {
@@ -1284,6 +1296,19 @@ func TestMessageReceiptV1CountModel(t *testing.T) {
 		{name: "per plan selected exceeds received", mutate: func(receipt *MessageReceiptV1) { receipt.Counts.Received = 1 }},
 		{name: "processed sum", mutate: func(receipt *MessageReceiptV1) { receipt.Counts.Processed++ }},
 		{name: "events sum", mutate: func(receipt *MessageReceiptV1) { receipt.Counts.Events++ }},
+		{name: "level terminal affected sum", mutate: func(receipt *MessageReceiptV1) { receipt.Counts.LevelTerminalAffected++ }},
+		{name: "level terminal affected exceeds selected", mutate: func(receipt *MessageReceiptV1) {
+			receipt.Status = ReceiptStatusCompletedWithTerminal
+			receipt.Counts.LevelTerminalAffected = receipt.PerPlan[0].Selected + 1
+			receipt.PerPlan[0].LevelTerminalAffected = receipt.PerPlan[0].Selected + 1
+		}},
+		{name: "completed status with level terminal affected", mutate: func(receipt *MessageReceiptV1) {
+			receipt.Counts.LevelTerminalAffected = 1
+			receipt.PerPlan[0].LevelTerminalAffected = 1
+		}},
+		{name: "completed with terminal status without terminal counts", mutate: func(receipt *MessageReceiptV1) {
+			receipt.Status = ReceiptStatusCompletedWithTerminal
+		}},
 		{name: "terminal status", mutate: func(receipt *MessageReceiptV1) {
 			receipt.Counts.Terminal = 1
 			receipt.Counts.Selected++
@@ -1308,6 +1333,86 @@ func TestMessageReceiptV1CountModel(t *testing.T) {
 			test.mutate(&receipt)
 			if _, err := BuildMessageReceiptV1(receipt); err == nil {
 				t.Fatal("BuildMessageReceiptV1() accepted inconsistent counts")
+			}
+		})
+	}
+}
+
+func TestMessageReceiptV1RepresentsMixedLevelTerminal(t *testing.T) {
+	t.Parallel()
+
+	receipt := validMessageReceiptV1ForTest()
+	receipt.Status = ReceiptStatusCompletedWithTerminal
+	receipt.Counts = ReceiptCountsV1{
+		Received: 1, Selected: 1, Processed: 1, LevelTerminalAffected: 1, Events: 1,
+	}
+	receipt.PerPlan[0].Normal = 0
+	receipt.PerPlan[0].Abnormal = 1
+	receipt.PerPlan[0].LevelTerminalAffected = 1
+	built, err := BuildMessageReceiptV1(receipt)
+	if err != nil {
+		t.Fatalf("BuildMessageReceiptV1() error = %v", err)
+	}
+	payload, err := EncodeMessageReceiptV1(built)
+	if err != nil {
+		t.Fatalf("EncodeMessageReceiptV1() error = %v", err)
+	}
+
+	decoded, err := DecodeMessageReceiptV1(payload)
+	if err != nil {
+		t.Fatalf("DecodeMessageReceiptV1() cannot express a processed Plan x Record with a sibling Level terminal: %v", err)
+	}
+	if decoded.Status != ReceiptStatusCompletedWithTerminal || decoded.Counts.Selected != 1 || decoded.Counts.Processed != 1 ||
+		decoded.Counts.Terminal != 0 || decoded.Counts.LevelTerminalAffected != 1 || decoded.Counts.Events != 1 ||
+		len(decoded.PerPlan) != 1 || decoded.PerPlan[0].Selected != 1 || decoded.PerPlan[0].Abnormal != 1 ||
+		decoded.PerPlan[0].Terminal != 0 || decoded.PerPlan[0].LevelTerminalAffected != 1 {
+		t.Fatalf("mixed-Level receipt = %#v", decoded)
+	}
+}
+
+func TestMessageReceiptV1RequiresLevelTerminalAffectedShape(t *testing.T) {
+	t.Parallel()
+
+	receipt, err := BuildMessageReceiptV1(validMessageReceiptV1ForTest())
+	if err != nil {
+		t.Fatalf("BuildMessageReceiptV1() error = %v", err)
+	}
+	payload, err := EncodeMessageReceiptV1(receipt)
+	if err != nil {
+		t.Fatalf("EncodeMessageReceiptV1() error = %v", err)
+	}
+
+	for _, scope := range []string{"counts", "per_plan"} {
+		t.Run(scope, func(t *testing.T) {
+			var object map[string]json.RawMessage
+			if err := json.Unmarshal(payload, &object); err != nil {
+				t.Fatalf("decode receipt fixture: %v", err)
+			}
+			switch scope {
+			case "counts":
+				var counts map[string]json.RawMessage
+				if err := json.Unmarshal(object["counts"], &counts); err != nil {
+					t.Fatalf("decode counts fixture: %v", err)
+				}
+				delete(counts, "level_terminal_affected")
+				object["counts"], err = json.Marshal(counts)
+			case "per_plan":
+				var perPlan []map[string]json.RawMessage
+				if err := json.Unmarshal(object["per_plan"], &perPlan); err != nil {
+					t.Fatalf("decode per_plan fixture: %v", err)
+				}
+				delete(perPlan[0], "level_terminal_affected")
+				object["per_plan"], err = json.Marshal(perPlan)
+			}
+			if err != nil {
+				t.Fatalf("encode %s fixture: %v", scope, err)
+			}
+			missing, err := json.Marshal(object)
+			if err != nil {
+				t.Fatalf("encode receipt fixture: %v", err)
+			}
+			if _, err := DecodeMessageReceiptV1(missing); err == nil {
+				t.Fatalf("DecodeMessageReceiptV1() accepted missing %s level_terminal_affected", scope)
 			}
 		})
 	}

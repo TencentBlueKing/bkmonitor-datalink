@@ -506,10 +506,13 @@ func validateReceiptCountsV1(receipt *MessageReceiptV1) error {
 		return nil
 	}
 
-	var selected, processed, unavailable, terminal, events uint64
+	var selected, processed, unavailable, terminal, levelTerminalAffected, events uint64
 	for _, plan := range receipt.PerPlan {
 		if plan.Selected > receipt.Counts.Received {
 			return invalid("message_receipt.per_plan.selected", "cannot exceed received Dataset records")
+		}
+		if plan.LevelTerminalAffected > plan.Selected {
+			return invalid("message_receipt.per_plan.level_terminal_affected", "cannot exceed selected Plan x Record evaluations")
 		}
 		planProcessed, ok := sumCountsV1(plan.Abnormal, plan.Normal, plan.Recovery)
 		if !ok {
@@ -524,9 +527,12 @@ func validateReceiptCountsV1(receipt *MessageReceiptV1) error {
 			!addCountV1(&unavailable, plan.Unavailable) || !addCountV1(&terminal, plan.Terminal) || !addCountV1(&events, planEvents) {
 			return invalid("message_receipt.per_plan", "count overflow")
 		}
+		if !addCountV1(&levelTerminalAffected, plan.LevelTerminalAffected) {
+			return invalid("message_receipt.per_plan", "count overflow")
+		}
 	}
 	if selected != receipt.Counts.Selected || processed != receipt.Counts.Processed || unavailable != receipt.Counts.Unavailable ||
-		terminal != receipt.Counts.Terminal || events != receipt.Counts.Events {
+		terminal != receipt.Counts.Terminal || levelTerminalAffected != receipt.Counts.LevelTerminalAffected || events != receipt.Counts.Events {
 		return invalid("message_receipt.counts", "must equal per_plan result sums")
 	}
 	topSelected, ok := sumCountsV1(receipt.Counts.Processed, receipt.Counts.Unavailable, receipt.Counts.Terminal)
@@ -534,11 +540,11 @@ func validateReceiptCountsV1(receipt *MessageReceiptV1) error {
 		return invalid("message_receipt.counts.selected", "must equal processed + unavailable + terminal")
 	}
 	wantStatus := ReceiptStatusCompleted
-	if receipt.Counts.Terminal != 0 {
+	if receipt.Counts.Terminal != 0 || receipt.Counts.LevelTerminalAffected != 0 {
 		wantStatus = ReceiptStatusCompletedWithTerminal
 	}
 	if receipt.Status != wantStatus {
-		return invalid("message_receipt.status", "does not match terminal count")
+		return invalid("message_receipt.status", "does not match terminal counts")
 	}
 	return nil
 }
@@ -585,10 +591,10 @@ func DecodeMessageReceiptV1(payload []byte) (*MessageReceiptV1, error) {
 	if _, err := validateJSONObjectFields(object["source_window"], "message_receipt.source_window", []string{"from_time", "until_time"}, nil, false); err != nil {
 		return nil, err
 	}
-	if _, err := validateJSONObjectFields(object["counts"], "message_receipt.counts", []string{"received", "selected", "processed", "unavailable", "terminal", "events"}, nil, false); err != nil {
+	if _, err := validateJSONObjectFields(object["counts"], "message_receipt.counts", []string{"received", "selected", "processed", "unavailable", "terminal", "level_terminal_affected", "events"}, nil, false); err != nil {
 		return nil, err
 	}
-	if err := validateRawObjectArrayV1(object["per_plan"], "message_receipt.per_plan", []string{"plan_id", "selected", "abnormal", "normal", "recovery", "unavailable", "terminal", "result_identity_digest"}); err != nil {
+	if err := validateRawObjectArrayV1(object["per_plan"], "message_receipt.per_plan", []string{"plan_id", "selected", "abnormal", "normal", "recovery", "unavailable", "terminal", "level_terminal_affected", "result_identity_digest"}); err != nil {
 		return nil, err
 	}
 	if err := validateRawObjectArrayV1(object["reason_counts"], "message_receipt.reason_counts", []string{"reason_code", "count"}); err != nil {

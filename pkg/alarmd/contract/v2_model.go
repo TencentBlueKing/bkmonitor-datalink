@@ -441,14 +441,15 @@ type ReasonCountV1 struct {
 }
 
 type PlanReceiptV1 struct {
-	PlanID               string `json:"plan_id"`
-	Selected             uint64 `json:"selected"`
-	Abnormal             uint64 `json:"abnormal"`
-	Normal               uint64 `json:"normal"`
-	Recovery             uint64 `json:"recovery"`
-	Unavailable          uint64 `json:"unavailable"`
-	Terminal             uint64 `json:"terminal"`
-	ResultIdentityDigest string `json:"result_identity_digest"`
+	PlanID                string `json:"plan_id"`
+	Selected              uint64 `json:"selected"`
+	Abnormal              uint64 `json:"abnormal"`
+	Normal                uint64 `json:"normal"`
+	Recovery              uint64 `json:"recovery"`
+	Unavailable           uint64 `json:"unavailable"`
+	Terminal              uint64 `json:"terminal"`
+	LevelTerminalAffected uint64 `json:"level_terminal_affected"`
+	ResultIdentityDigest  string `json:"result_identity_digest"`
 }
 
 type ReceiptCountsV1 struct {
@@ -460,7 +461,11 @@ type ReceiptCountsV1 struct {
 	// distinguishes suppression, missing facts, warming and gapped history.
 	Unavailable uint64 `json:"unavailable"`
 	Terminal    uint64 `json:"terminal"`
-	Events      uint64 `json:"events"`
+	// LevelTerminalAffected counts Plan x Record evaluations whose sibling
+	// Level terminalized. It can overlap Processed and is not part of the
+	// Selected decomposition.
+	LevelTerminalAffected uint64 `json:"level_terminal_affected"`
+	Events                uint64 `json:"events"`
 }
 
 type MessageReceiptV1 struct {

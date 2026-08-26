@@ -138,6 +138,43 @@ func (pipeline *EvaluationPipeline) EvaluateMessage(ctx context.Context, input *
 	return MessageResult{CriticalResult: critical, Receipt: receipt}, nil
 }
 
+// EvaluateDetectOnly runs M3 and M5 for PARTIAL input. It deliberately does
+// not resolve runtime dependencies, load or advance state, or produce events.
+func (pipeline *EvaluationPipeline) EvaluateDetectOnly(ctx context.Context, input *inputv2.EvaluationInput) (MessageResult, error) {
+	if pipeline == nil || input == nil {
+		return MessageResult{}, errors.New("alarmd coordinator: initialized pipeline and input are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return MessageResult{}, err
+	}
+	if input.ProcessingRoute() != inputv2.RouteDetectOnly {
+		return MessageResult{}, fmt.Errorf("alarmd coordinator: Detect-only pipeline requires PARTIAL input, got %s", input.ProcessingRoute())
+	}
+
+	compiled, executions, compileTerminals, err := pipeline.compilePlans(ctx, input)
+	if err != nil {
+		return MessageResult{}, err
+	}
+	terminals := append(input.Terminals().Items(), compileTerminals...)
+	if len(executions) > 0 {
+		detected, err := evaluateDetectWithIsolation(ctx, pipeline.options.Detector, detect.EvaluateRequest{
+			Completeness: input.Execution().Completeness, DatasetContractDigest: compiledDatasetDigest(compiled),
+			Plans: executions, Limits: pipeline.options.DetectLimits,
+		})
+		if err != nil {
+			return MessageResult{}, err
+		}
+		terminals = append(terminals, detected.Terminals...)
+	}
+	receipt, err := buildMessageReceiptWithOptions(input, nil, terminals, receiptBuildOptions{
+		DefaultUnavailable: true, QueryResultReason: input.Execution().QueryResultReason,
+	})
+	if err != nil {
+		return MessageResult{}, err
+	}
+	return MessageResult{Receipt: receipt}, nil
+}
+
 func (pipeline *EvaluationPipeline) compilePlans(
 	ctx context.Context,
 	input *inputv2.EvaluationInput,

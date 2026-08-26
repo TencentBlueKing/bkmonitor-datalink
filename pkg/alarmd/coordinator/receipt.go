@@ -35,10 +35,24 @@ type planReceiptState struct {
 	slots  map[uint32]*receiptSlot
 }
 
+type receiptBuildOptions struct {
+	DefaultUnavailable bool
+	QueryResultReason  string
+}
+
 func buildMessageReceipt(
 	input *inputv2.EvaluationInput,
 	evaluations map[string][]recordEvaluation,
 	terminals []inputv2.Terminal,
+) (*contract.MessageReceiptV1, error) {
+	return buildMessageReceiptWithOptions(input, evaluations, terminals, receiptBuildOptions{})
+}
+
+func buildMessageReceiptWithOptions(
+	input *inputv2.EvaluationInput,
+	evaluations map[string][]recordEvaluation,
+	terminals []inputv2.Terminal,
+	options receiptBuildOptions,
 ) (*contract.MessageReceiptV1, error) {
 	if input == nil {
 		return nil, errors.New("alarmd coordinator: Receipt input is required")
@@ -62,6 +76,23 @@ func buildMessageReceipt(
 				return nil, err
 			}
 		}
+	}
+	if options.DefaultUnavailable {
+		for _, plan := range plans {
+			for _, slot := range plan.slots {
+				if slot.result == "" && !slot.unavailable && !slot.terminal {
+					slot.unavailable = true
+				}
+			}
+		}
+	}
+	if options.QueryResultReason != "" {
+		if !contract.ReasonAllowedForV2(options.QueryResultReason, contract.ReasonDomainReceipt) {
+			return nil, errors.New("alarmd coordinator: QueryResult has an invalid Receipt reason")
+		}
+		// QueryResult reasons describe one query-result fact. They do not
+		// scale with the number of Plan x Record selections in this message.
+		reasonCounts[options.QueryResultReason]++
 	}
 	if err := applyReceiptTerminals(plans, terminals, reasonCounts); err != nil {
 		return nil, err

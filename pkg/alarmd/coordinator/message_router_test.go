@@ -15,7 +15,11 @@ import (
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	inputv2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/input/adapter/v2"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
 )
 
 func TestMessageRouterRejectsUnframedPayloadWithoutBusinessReceipt(t *testing.T) {
@@ -39,6 +43,46 @@ func TestMessageRouterRejectsUnframedPayloadWithoutBusinessReceipt(t *testing.T)
 	terminals := outcome.Rejected.Terminals
 	if len(terminals) != 1 || terminals[0].Scope != inputv2.ScopeMessage || terminals[0].ReasonCode != contract.ReasonMalformedJSON {
 		t.Fatalf("REJECTED terminals = %#v", terminals)
+	}
+}
+
+func TestMessageRouterRejectsUntrustedPlanIdentityWithoutPerPlanReceipt(t *testing.T) {
+	t.Parallel()
+
+	var envelope contract.ExecutionEnvelopeV2
+	if err := json.Unmarshal(encodeG1Envelope(t), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	envelope.PlanSet.EvaluationPlans[0].PlanID = "invalid"
+	var err error
+	envelope.PlanSet.PlanSetDigest, err = contract.DerivePlanSetDigestV2(envelope.PlanSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.PayloadDigest, err = contract.DeriveExecutionEnvelopePayloadDigestV2(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := contract.CanonicalJSONV2(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	processor := &messageProcessorSpy{}
+	router, err := NewMessageRouter(inputv2.New(g1ReaderLimits()), processor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := router.Route(context.Background(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Kind != MessageOutcomeRejected || outcome.Message != nil || outcome.Rejected == nil ||
+		len(outcome.Rejected.Terminals) == 0 {
+		t.Fatalf("outcome = %#v, want typed REJECTED without per-Plan Receipt", outcome)
+	}
+	if processor.fullCalls != 0 || processor.detectOnlyCalls != 0 {
+		t.Fatalf("processor calls = full:%d detect-only:%d, want 0/0", processor.fullCalls, processor.detectOnlyCalls)
 	}
 }
 
@@ -90,6 +134,141 @@ func TestMessageRouterDelegatesFullRecordsToEvaluationPipeline(t *testing.T) {
 	}
 }
 
+func TestMessageRouterCompletesUnavailableWithoutEvaluation(t *testing.T) {
+	t.Parallel()
+
+	processor := &messageProcessorSpy{}
+	router, err := NewMessageRouter(inputv2.New(g1ReaderLimits()), processor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := router.Route(context.Background(), envelopePayloadForRoute(
+		t, contract.QueryCompletenessUnavailable, contract.ReasonQueryUnavailable, false,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Kind != MessageOutcomeCompleted || outcome.Message == nil || outcome.Rejected != nil {
+		t.Fatalf("outcome = %#v, want completed UNAVAILABLE", outcome)
+	}
+	receipt := outcome.Message.Receipt
+	if receipt == nil || receipt.Status != contract.ReceiptStatusCompleted || receipt.Counts != (contract.ReceiptCountsV1{}) ||
+		len(receipt.PerPlan) != 1 || receipt.PerPlan[0].Selected != 0 ||
+		!receiptHasExactReason(receipt, contract.ReasonQueryUnavailable, 1) {
+		t.Fatalf("UNAVAILABLE receipt = %#v", receipt)
+	}
+	if len(outcome.Message.Events) != 0 || len(outcome.Message.StateWrite.Items) != 0 ||
+		processor.fullCalls != 0 || processor.detectOnlyCalls != 0 {
+		t.Fatalf("UNAVAILABLE invoked evaluation or produced side effects: outcome=%#v calls=%d/%d", outcome, processor.fullCalls, processor.detectOnlyCalls)
+	}
+}
+
+func TestMessageRouterDelegatesPartialRecordsToDetectOnly(t *testing.T) {
+	t.Parallel()
+
+	want := &contract.MessageReceiptV1{Status: contract.ReceiptStatusCompleted}
+	processor := &messageProcessorSpy{detectOnlyResult: MessageResult{Receipt: want}}
+	router, err := NewMessageRouter(inputv2.New(g1ReaderLimits()), processor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := router.Route(context.Background(), envelopePayloadForRoute(
+		t, contract.QueryCompletenessPartial, contract.ReasonQueryPartial, true,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Kind != MessageOutcomeCompleted || outcome.Message == nil || outcome.Message.Receipt != want || outcome.Rejected != nil {
+		t.Fatalf("outcome = %#v, want delegated PARTIAL result", outcome)
+	}
+	if processor.fullCalls != 0 || processor.detectOnlyCalls != 1 {
+		t.Fatalf("processor calls = full:%d detect-only:%d, want 0/1", processor.fullCalls, processor.detectOnlyCalls)
+	}
+}
+
+func TestEvaluationPipelinePartialDetectOnlyPreservesQueryReasonAndTerminalIsolation(t *testing.T) {
+	t.Parallel()
+
+	payload := payloadWithCompleteness(
+		t, encodeSharedG1Envelope(t), contract.QueryCompletenessPartial, contract.ReasonQueryPartial, false,
+	)
+	decoded, err := inputv2.New(g1ReaderLimits()).Decode(context.Background(), payload)
+	if err != nil || decoded.Rejected || decoded.Input == nil {
+		t.Fatalf("Decode() = %#v, %v", decoded, err)
+	}
+	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), g1CompilerLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	semantics, err := state.RuntimeStateSemantics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	detectCalls := 0
+	detector := detectionEvaluatorFunc(func(_ context.Context, request detect.EvaluateRequest) (detect.DetectionBatch, error) {
+		detectCalls++
+		if detectCalls == 1 {
+			return detect.DetectionBatch{}, &detect.BudgetError{
+				Scope: detect.BudgetScopePlan, PlanID: "1001", ReasonCode: contract.ReasonPlanBudgetExceeded,
+			}
+		}
+		if len(request.Plans) != 1 || request.Plans[0].View.PlanID() != "1002" {
+			t.Fatalf("Detect retry plans = %#v, want only sibling 1002", request.Plans)
+		}
+		return detect.DetectionBatch{
+			Completeness: contract.QueryCompletenessPartial, ExecutionMode: detect.ExecutionModeStandard,
+			DetectionCoverage: contract.QueryCompletenessPartial,
+		}, nil
+	})
+	providerCalls, stateCalls, admissionCalls := 0, 0, 0
+	pipeline, err := NewEvaluationPipeline(PipelineOptions{
+		Compiler: compiler, Detector: detector,
+		EffectiveTime: effectiveTimeProviderFunc(func(context.Context, []strategy.EffectiveTimeRequest) ([]strategy.EffectiveTimeFact, error) {
+			providerCalls++
+			return nil, nil
+		}),
+		State: runtimeStateLoaderFunc(func(context.Context, state.LoadWindowsRequest) (state.LoadWindowsResult, error) {
+			stateCalls++
+			return state.LoadWindowsResult{}, nil
+		}),
+		StateAdmission: stateBatchAdmitterFunc(func(context.Context, state.WriteWindowsRequest) error {
+			admissionCalls++
+			return nil
+		}),
+		StateSemantics: strategy.StateSemantics{
+			StateSchemaVersion: semantics.StateSchemaVersion, CodecSemanticsVersion: semantics.CodecSemanticsVersion,
+			IdentitySchemaDigest: semantics.IdentitySchemaDigest, SourceTimeSemanticsVersion: semantics.SourceTimeSemanticsVersion,
+			HistoryCellSemanticsVersion: semantics.HistoryCellSemanticsVersion,
+		},
+		DetectLimits: detect.ExecutionLimits{
+			MaxPlans: 4, MaxSelectedRecordsPerPlan: 100, MaxSeriesPerPlan: 100, MaxRecordsPerSeries: 100,
+			MaxLevelFacts: 1_000, MaxPredicateEvaluations: 1_000, MaxResultBytes: 1 << 20,
+		},
+		TriggerLimits: trigger.EvaluationLimitsV2{MaxLevels: 8},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	message, err := pipeline.EvaluateDetectOnly(context.Background(), decoded.Input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detectCalls != 2 || providerCalls != 0 || stateCalls != 0 || admissionCalls != 0 ||
+		len(message.Events) != 0 || len(message.StateWrite.Items) != 0 {
+		t.Fatalf("PARTIAL calls = detect:%d provider:%d state:%d admission:%d, result=%#v", detectCalls, providerCalls, stateCalls, admissionCalls, message)
+	}
+	wantCounts := contract.ReceiptCountsV1{Received: 2, Selected: 4, Unavailable: 2, Terminal: 2}
+	if message.Receipt == nil || message.Receipt.Status != contract.ReceiptStatusCompletedWithTerminal ||
+		message.Receipt.Counts != wantCounts || len(message.Receipt.PerPlan) != 2 ||
+		message.Receipt.PerPlan[0].PlanID != "1001" || message.Receipt.PerPlan[0].Terminal != 2 ||
+		message.Receipt.PerPlan[1].PlanID != "1002" || message.Receipt.PerPlan[1].Unavailable != 2 ||
+		!receiptHasExactReason(message.Receipt, contract.ReasonQueryPartial, 1) ||
+		!receiptHasExactReason(message.Receipt, contract.ReasonPlanBudgetExceeded, 2) {
+		t.Fatalf("PARTIAL receipt = %#v", message.Receipt)
+	}
+}
+
 type messageProcessorSpy struct {
 	fullCalls        int
 	detectOnlyCalls  int
@@ -107,13 +286,36 @@ func (processor *messageProcessorSpy) EvaluateDetectOnly(context.Context, *input
 	return processor.detectOnlyResult, nil
 }
 
+type runtimeStateLoaderFunc func(context.Context, state.LoadWindowsRequest) (state.LoadWindowsResult, error)
+
+func (function runtimeStateLoaderFunc) LoadWindows(
+	ctx context.Context,
+	request state.LoadWindowsRequest,
+) (state.LoadWindowsResult, error) {
+	return function(ctx, request)
+}
+
+func receiptHasExactReason(receipt *contract.MessageReceiptV1, reason string, count uint64) bool {
+	for _, item := range receipt.ReasonCounts {
+		if item.ReasonCode == reason {
+			return item.Count == count
+		}
+	}
+	return false
+}
+
 func envelopePayloadForRoute(t testing.TB, completeness, reason string, withRecords bool) []byte {
 	t.Helper()
+	return payloadWithCompleteness(t, encodeG1Envelope(t), completeness, reason, !withRecords)
+}
+
+func payloadWithCompleteness(t testing.TB, encoded []byte, completeness, reason string, clearRecords bool) []byte {
+	t.Helper()
 	var envelope contract.ExecutionEnvelopeV2
-	if err := json.Unmarshal(encodeG1Envelope(t), &envelope); err != nil {
+	if err := json.Unmarshal(encoded, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if !withRecords {
+	if clearRecords {
 		envelope.Records = []contract.CanonicalRecordV2{}
 		ranges := []contract.SelectorRangeV2{}
 		envelope.Selectors[0].Selector.Ranges = &ranges

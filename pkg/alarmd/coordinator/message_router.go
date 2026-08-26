@@ -23,6 +23,7 @@ type MessageDecoder interface {
 
 type MessageProcessor interface {
 	EvaluateMessage(context.Context, *inputv2.EvaluationInput) (MessageResult, error)
+	EvaluateDetectOnly(context.Context, *inputv2.EvaluationInput) (MessageResult, error)
 }
 
 type MessageOutcomeKind string
@@ -74,21 +75,52 @@ func (router *MessageRouter) Route(ctx context.Context, payload []byte) (Message
 	if decoded.Input == nil {
 		return MessageOutcome{}, errors.New("alarmd coordinator: accepted decode result has no input")
 	}
-
-	if decoded.Input.ProcessingRoute() != inputv2.RouteFullPipeline {
-		return MessageOutcome{}, fmt.Errorf("alarmd coordinator: completeness route %s is not implemented", decoded.Input.ProcessingRoute())
+	if hasUntrustedPlanIdentity(decoded.Input) {
+		if decoded.Terminals.Len() == 0 {
+			return MessageOutcome{}, errors.New("alarmd coordinator: untrusted Plan identity has no terminal evidence")
+		}
+		return MessageOutcome{
+			Kind:     MessageOutcomeRejected,
+			Rejected: &RejectedOutcome{Terminals: decoded.Terminals.Items()},
+		}, nil
 	}
-	if decoded.Input.RecordBatch().Len() == 0 {
+
+	var message MessageResult
+	switch decoded.Input.ProcessingRoute() {
+	case inputv2.RouteFullPipeline:
+		if decoded.Input.RecordBatch().Len() != 0 {
+			message, err = router.processor.EvaluateMessage(ctx, decoded.Input)
+			break
+		}
 		receipt, err := buildMessageReceipt(decoded.Input, nil, decoded.Terminals.Items())
 		if err != nil {
 			return MessageOutcome{}, err
 		}
-		message := MessageResult{Receipt: receipt}
-		return MessageOutcome{Kind: MessageOutcomeCompleted, Message: &message}, nil
+		message = MessageResult{Receipt: receipt}
+	case inputv2.RouteNoEvaluation:
+		receipt, err := buildMessageReceiptWithOptions(decoded.Input, nil, decoded.Terminals.Items(), receiptBuildOptions{
+			DefaultUnavailable: true, QueryResultReason: decoded.Input.Execution().QueryResultReason,
+		})
+		if err != nil {
+			return MessageOutcome{}, err
+		}
+		message = MessageResult{Receipt: receipt}
+	case inputv2.RouteDetectOnly:
+		message, err = router.processor.EvaluateDetectOnly(ctx, decoded.Input)
+	default:
+		return MessageOutcome{}, fmt.Errorf("alarmd coordinator: unsupported completeness route %s", decoded.Input.ProcessingRoute())
 	}
-	message, err := router.processor.EvaluateMessage(ctx, decoded.Input)
 	if err != nil {
 		return MessageOutcome{}, err
 	}
 	return MessageOutcome{Kind: MessageOutcomeCompleted, Message: &message}, nil
+}
+
+func hasUntrustedPlanIdentity(input *inputv2.EvaluationInput) bool {
+	for _, selection := range input.PlanSelections() {
+		if selection.PlanID() == "" {
+			return true
+		}
+	}
+	return false
 }

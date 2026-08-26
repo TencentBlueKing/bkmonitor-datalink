@@ -133,6 +133,7 @@ type WriteWindowsResult struct {
 // internal invariant violation, not a committable local terminal.
 type RuntimeStateStore interface {
 	LoadWindows(context.Context, LoadWindowsRequest) (LoadWindowsResult, error)
+	AdmitWindows(WriteWindowsRequest) (int, error)
 	WriteWindows(context.Context, WriteWindowsRequest) (WriteWindowsResult, error)
 }
 
@@ -246,6 +247,32 @@ func (store *Store) LoadWindows(ctx context.Context, request LoadWindowsRequest)
 	return result, nil
 }
 
+// AdmitWindows validates deterministic key, TTL, shape, and encoded byte
+// budgets for every changed window in one write request. It performs no
+// routing, encoding, or backend I/O; the returned value is the aggregate
+// NONE_V1 encoded upper bound.
+func (store *Store) AdmitWindows(request WriteWindowsRequest) (int, error) {
+	if store == nil || store.options.Codec == nil {
+		return 0, fmt.Errorf("state: store and codec are required")
+	}
+	admittedBytes := 0
+	for index := range request.Items {
+		window := request.Items[index].Window
+		if window == nil || !window.Changed() {
+			continue
+		}
+		upperBound, _, err := store.admitWriteWindow(request.Items[index])
+		if err != nil {
+			return 0, fmt.Errorf("state: admit write item %d: %w", index, err)
+		}
+		admittedBytes, err = admitWrittenBytes(admittedBytes, upperBound, store.options.Limits.MaxWrittenBytes)
+		if err != nil {
+			return 0, fmt.Errorf("state: admit write item %d: %w", index, err)
+		}
+	}
+	return admittedBytes, nil
+}
+
 func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsRequest) (result WriteWindowsResult, returnErr error) {
 	started := time.Now()
 	observation := Observation{
@@ -259,6 +286,7 @@ func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsReques
 	result = WriteWindowsResult{Items: make([]WriteWindowResult, len(request.Items))}
 	groups := make(map[string][]routedWrite)
 	order := make([]string, 0)
+	admittedBytes := 0
 	writtenBytes := 0
 	seenKeys := make(map[string]struct{}, len(request.Items))
 	for index := range request.Items {
@@ -284,22 +312,17 @@ func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsReques
 			result.Items[index].Status = WriteNoop
 			continue
 		}
-		upperBound, err := store.options.Codec.AdmitWindow(item.Window)
+		upperBound, ttl, err := store.admitWriteWindow(*item)
 		if err != nil {
 			result.Items[index].Status = WriteInvariantViolation
 			result.Items[index].Err = err
 			continue
 		}
-		if upperBound > store.options.Limits.MaxWrittenBytes-writtenBytes {
-			return result, fmt.Errorf("%w: remaining written bytes cannot admit state", ErrStateBudget)
+		admittedBytes, err = admitWrittenBytes(admittedBytes, upperBound, store.options.Limits.MaxWrittenBytes)
+		if err != nil {
+			return result, err
 		}
 		value, err := store.options.Codec.Encode(item.Window)
-		if err != nil {
-			result.Items[index].Status = WriteInvariantViolation
-			result.Items[index].Err = err
-			continue
-		}
-		ttl, err := StateTTL(item.Requirements, store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL)
 		if err != nil {
 			result.Items[index].Status = WriteInvariantViolation
 			result.Items[index].Err = err
@@ -354,6 +377,28 @@ func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsReques
 		}
 	}
 	return result, nil
+}
+
+func (store *Store) admitWriteWindow(item LoadedWindow) (int, time.Duration, error) {
+	if len(item.Key) > store.options.Limits.MaxKeyBytesPerBatch {
+		return 0, 0, fmt.Errorf("%w: key bytes", ErrStateBudget)
+	}
+	upperBound, err := store.options.Codec.AdmitWindow(item.Window)
+	if err != nil {
+		return 0, 0, err
+	}
+	ttl, err := StateTTL(item.Requirements, store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL)
+	if err != nil {
+		return 0, 0, err
+	}
+	return upperBound, ttl, nil
+}
+
+func admitWrittenBytes(current, upperBound, maximum int) (int, error) {
+	if current < 0 || upperBound < 0 || maximum < 0 || current > maximum || upperBound > maximum-current {
+		return 0, fmt.Errorf("%w: written bytes upper bound", ErrStateBudget)
+	}
+	return current + upperBound, nil
 }
 
 func (store *Store) finishLoadObservation(

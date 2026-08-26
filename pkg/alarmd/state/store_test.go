@@ -12,6 +12,7 @@ package state
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -214,6 +215,126 @@ func TestStoreExposesPostAdmissionBudgetAsInvariantViolation(t *testing.T) {
 		observations[0].Result != OperationFailed || observations[0].InvariantKeys != 1 ||
 		observations[0].BudgetViolations != 1 || observations[0].ReasonCode != "" {
 		t.Fatalf("observations = %+v, want budget invariant commit result", observations)
+	}
+}
+
+func TestStoreAdmitWindowsUsesWriteBudget(t *testing.T) {
+	codec, err := NewCodec(CodecLimits{MaxLevels: 2, MaxPoints: 1, MaxEncodedBytes: 256})
+	if err != nil {
+		t.Fatalf("NewCodec() error = %v", err)
+	}
+	requirement := requirement(1, "1", 1, 2)
+	windows := make([]*Window, 2)
+	for index := range windows {
+		windows[index], err = NewWindow([]LevelRequirement{requirement})
+		if err != nil {
+			t.Fatalf("NewWindow() error = %v", err)
+		}
+		mustApply(t, windows[index], []StatePoint{point(int64(100+index*60), string(rune('a'+index)), fact(requirement, LevelFactNormal))})
+	}
+	upperBound, err := codec.AdmitWindow(windows[0])
+	if err != nil {
+		t.Fatalf("AdmitWindow() error = %v", err)
+	}
+	backend := newFakeBackend()
+	newStore := func(maxWrittenBytes int) *Store {
+		t.Helper()
+		store, storeErr := NewStore(StoreOptions{
+			Prefix: "alarmd", Codec: codec,
+			Router: &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}},
+			Limits: StoreLimits{
+				MaxKeysPerBatch: 2, MaxKeyBytesPerBatch: 1024,
+				MaxLoadedBytes: 512, MaxWrittenBytes: maxWrittenBytes,
+			},
+			MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute,
+		})
+		if storeErr != nil {
+			t.Fatalf("NewStore() error = %v", storeErr)
+		}
+		return store
+	}
+	store := newStore(upperBound*2 - 1)
+	request := WriteWindowsRequest{Items: make([]LoadedWindow, len(windows))}
+	for index, window := range windows {
+		identity := storeIdentity(string(rune('1'+index)), string(rune('a'+index)))
+		key, keyErr := identity.Key("alarmd")
+		if keyErr != nil {
+			t.Fatalf("Key() error = %v", keyErr)
+		}
+		request.Items[index] = LoadedWindow{
+			Identity: identity, Key: key, Requirements: []LevelRequirement{requirement}, Window: window,
+		}
+	}
+
+	if _, err := store.AdmitWindows(request); !errors.Is(err, ErrStateBudget) {
+		t.Fatalf("AdmitWindows() error = %v, want combined state budget", err)
+	}
+	if len(backend.setBatches) != 0 || !windows[0].Changed() || !windows[1].Changed() {
+		t.Fatal("admission must not write or mutate windows")
+	}
+
+	store = newStore(upperBound * 2)
+	if admitted, err := store.AdmitWindows(request); err != nil || admitted != upperBound*2 {
+		t.Fatalf("AdmitWindows() = (%d, %v), want (%d, nil)", admitted, err, upperBound*2)
+	}
+	written, err := store.WriteWindows(context.Background(), request)
+	if err != nil {
+		t.Fatalf("WriteWindows() after admission error = %v", err)
+	}
+	if written.Items[0].Status != WritePersisted || written.Items[1].Status != WritePersisted {
+		t.Fatalf("write statuses = %+v, want admitted request persisted", written.Items)
+	}
+
+	mustApply(t, windows[0], []StatePoint{point(160, "c", fact(requirement, LevelFactNormal))})
+	if _, err := store.AdmitWindows(WriteWindowsRequest{Items: request.Items[:1]}); !errors.Is(err, ErrStateBudget) {
+		t.Fatalf("AdmitWindows(shape) error = %v, want state budget", err)
+	}
+}
+
+func TestAdmitWrittenBytesRejectsIntegerOverflow(t *testing.T) {
+	if _, err := admitWrittenBytes(math.MaxInt-1, 2, math.MaxInt); !errors.Is(err, ErrStateBudget) {
+		t.Fatalf("admitWrittenBytes() error = %v, want overflow-safe state budget", err)
+	}
+}
+
+func TestStoreAdmitWindowsRejectsRemainingDeterministicWriteBudgets(t *testing.T) {
+	codec := mustCodec(t)
+	requirement := requirement(1, "1", 2, 4)
+	window, err := NewWindow([]LevelRequirement{requirement})
+	if err != nil {
+		t.Fatalf("NewWindow() error = %v", err)
+	}
+	mustApply(t, window, []StatePoint{point(100, "a", fact(requirement, LevelFactNormal))})
+	identity := storeIdentity("11", "a")
+	key, err := identity.Key("alarmd")
+	if err != nil {
+		t.Fatalf("Key() error = %v", err)
+	}
+	request := WriteWindowsRequest{Items: []LoadedWindow{{
+		Identity: identity, Key: key, Requirements: []LevelRequirement{requirement}, Window: window,
+	}}}
+
+	for name, limits := range map[string]StoreLimits{
+		"ttl":       {MaxKeysPerBatch: 1, MaxKeyBytesPerBatch: 1024, MaxLoadedBytes: 4096, MaxWrittenBytes: 4096},
+		"key bytes": {MaxKeysPerBatch: 1, MaxKeyBytesPerBatch: len(key) - 1, MaxLoadedBytes: 4096, MaxWrittenBytes: 4096},
+	} {
+		t.Run(name, func(t *testing.T) {
+			maxTTL := time.Hour
+			if name == "ttl" {
+				maxTTL = 4 * time.Minute
+			}
+			store, storeErr := NewStore(StoreOptions{
+				Prefix: "alarmd", Codec: codec,
+				Router: &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: newFakeBackend()}},
+				Limits: limits, MinTTL: time.Minute, MaxTTL: maxTTL, RestartMargin: time.Minute,
+			})
+			if storeErr != nil {
+				t.Fatalf("NewStore() error = %v", storeErr)
+			}
+			if _, err := store.AdmitWindows(request); !errors.Is(err, ErrStateBudget) {
+				t.Fatalf("AdmitWindows() error = %v, want deterministic %s budget", err, name)
+			}
+		})
 	}
 }
 

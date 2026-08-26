@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	RedisKeyPrefix         = "bkmonitorv3:entity"
-	KindResourceDefinition = "ResourceDefinition"
-	KindRelationDefinition = "RelationDefinition"
-	NamespaceAll           = "__all__"
+	RedisKeyPrefix           = "bkmonitorv3:entity"
+	KindResourceDefinition   = "ResourceDefinition"
+	KindRelationDefinition   = "RelationDefinition"
+	KindCustomRelationStatus = "CustomRelationStatus"
+	NamespaceAll             = "__all__"
 )
 
 type DirectionType int
@@ -63,6 +64,14 @@ type RelationDefinition struct {
 	IsBelongsTo   bool                   `json:"is_belongs_to"`
 	Labels        map[string]string      `json:"labels"`
 	Spec          map[string]interface{} `json:"spec"`
+}
+
+type CustomRelationStatus struct {
+	Namespace    string            `json:"namespace"`
+	Name         string            `json:"name"`
+	FromResource string            `json:"from_resource"`
+	ToResource   string            `json:"to_resource"`
+	Labels       map[string]string `json:"labels"`
 }
 
 func (rd *RelationDefinition) GetRelationName() string {

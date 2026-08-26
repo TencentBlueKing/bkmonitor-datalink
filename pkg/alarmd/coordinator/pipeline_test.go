@@ -71,15 +71,21 @@ func TestEvaluationPipelineRunsG1ThresholdThroughRuntimeState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := pipeline.Evaluate(context.Background(), decoded.Input)
+	message, err := pipeline.EvaluateMessage(context.Background(), decoded.Input)
 	if err != nil {
-		t.Fatalf("Evaluate() error = %v", err)
+		t.Fatalf("EvaluateMessage() error = %v", err)
 	}
+	result := message.CriticalResult
 	if len(result.Events) != 1 || result.Events[0].EventKind != contract.LevelResultAbnormal || result.Events[0].PrimaryLevelID != 5 {
 		t.Fatalf("events = %#v, want one Level 5 ABNORMAL", result.Events)
 	}
 	if len(result.StateWrite.Items) != 1 || !result.StateWrite.Items[0].Window.Changed() {
 		t.Fatalf("state write = %#v, want one changed window", result.StateWrite)
+	}
+	if message.Receipt == nil || message.Receipt.Status != contract.ReceiptStatusCompleted ||
+		message.Receipt.Counts != (contract.ReceiptCountsV1{Received: 1, Selected: 1, Processed: 1, Events: 1}) ||
+		len(message.Receipt.PerPlan) != 1 || message.Receipt.PerPlan[0].Abnormal != 1 {
+		t.Fatalf("receipt = %#v, want one processed ABNORMAL event", message.Receipt)
 	}
 
 	ack := 0

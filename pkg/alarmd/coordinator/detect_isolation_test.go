@@ -75,6 +75,17 @@ func (function detectionEvaluatorFunc) Evaluate(ctx context.Context, request det
 
 func planExecutionsWithIDs(t testing.TB, planIDs ...string) []detect.PlanExecution {
 	t.Helper()
+	input := evaluationInputWithPlanIDs(t, planIDs...)
+	views := input.PlanViews()
+	result := make([]detect.PlanExecution, len(views))
+	for index, view := range views {
+		result[index] = detect.PlanExecution{View: view}
+	}
+	return result
+}
+
+func evaluationInputWithPlanIDs(t testing.TB, planIDs ...string) *inputv2.EvaluationInput {
+	t.Helper()
 	var envelope contract.ExecutionEnvelopeV2
 	if err := json.Unmarshal(encodeG1Envelope(t), &envelope); err != nil {
 		t.Fatal(err)
@@ -109,10 +120,5 @@ func planExecutionsWithIDs(t testing.TB, planIDs ...string) []detect.PlanExecuti
 	if err != nil || decoded.Input == nil {
 		t.Fatalf("Decode() = %#v, %v", decoded, err)
 	}
-	views := decoded.Input.PlanViews()
-	result := make([]detect.PlanExecution, len(views))
-	for index, view := range views {
-		result[index] = detect.PlanExecution{View: view}
-	}
-	return result
+	return decoded.Input
 }

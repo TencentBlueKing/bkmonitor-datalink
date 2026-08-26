@@ -47,6 +47,11 @@ type EvaluationPipeline struct {
 	options PipelineOptions
 }
 
+type MessageResult struct {
+	CriticalResult
+	Receipt *contract.MessageReceiptV1
+}
+
 type compiledExecution struct {
 	view inputv2.PlanView
 	plan *strategy.CompiledPlan
@@ -68,76 +73,107 @@ func NewEvaluationPipeline(options PipelineOptions) (*EvaluationPipeline, error)
 // Evaluate runs the phase-one FULL path through M2's immutable input, M3,
 // M5, M4 overlay and M6. It returns side effects without publishing them.
 func (pipeline *EvaluationPipeline) Evaluate(ctx context.Context, input *inputv2.EvaluationInput) (CriticalResult, error) {
+	result, err := pipeline.EvaluateMessage(ctx, input)
+	return result.CriticalResult, err
+}
+
+func (pipeline *EvaluationPipeline) EvaluateMessage(ctx context.Context, input *inputv2.EvaluationInput) (MessageResult, error) {
 	if pipeline == nil || input == nil {
-		return CriticalResult{}, errors.New("alarmd coordinator: initialized pipeline and input are required")
+		return MessageResult{}, errors.New("alarmd coordinator: initialized pipeline and input are required")
 	}
 	if err := ctx.Err(); err != nil {
-		return CriticalResult{}, err
+		return MessageResult{}, err
 	}
 	if input.ProcessingRoute() != inputv2.RouteFullPipeline {
-		return CriticalResult{}, fmt.Errorf("alarmd coordinator: G1 pipeline requires FULL input, got %s", input.ProcessingRoute())
+		return MessageResult{}, fmt.Errorf("alarmd coordinator: G1 pipeline requires FULL input, got %s", input.ProcessingRoute())
 	}
 
-	compiled, executions, err := pipeline.compilePlans(ctx, input)
+	compiled, executions, compileTerminals, err := pipeline.compilePlans(ctx, input)
 	if err != nil {
-		return CriticalResult{}, err
+		return MessageResult{}, err
 	}
-	detected, err := evaluateDetectWithIsolation(ctx, pipeline.options.Detector, detect.EvaluateRequest{
-		Completeness: input.Execution().Completeness, DatasetContractDigest: compiledDatasetDigest(compiled),
-		Plans: executions, Limits: pipeline.options.DetectLimits,
-	})
-	if err != nil {
-		return CriticalResult{}, err
+	terminals := append(input.Terminals().Items(), compileTerminals...)
+	detected := isolatedDetection{Batch: detect.DetectionBatch{
+		Completeness: input.Execution().Completeness, ExecutionMode: detect.ExecutionModeStandard,
+		DetectionCoverage: detect.DetectionCoverageFull,
+	}}
+	if len(executions) > 0 {
+		detected, err = evaluateDetectWithIsolation(ctx, pipeline.options.Detector, detect.EvaluateRequest{
+			Completeness: input.Execution().Completeness, DatasetContractDigest: compiledDatasetDigest(compiled),
+			Plans: executions, Limits: pipeline.options.DetectLimits,
+		})
+		if err != nil {
+			return MessageResult{}, err
+		}
 	}
-	if len(detected.Terminals) != 0 {
-		return CriticalResult{}, errors.New("alarmd coordinator: G1 pipeline does not accept Detection budget terminals")
-	}
+	terminals = append(terminals, detected.Terminals...)
 	series, err := pipeline.loadSeries(ctx, input, detected.Batch, compiled)
 	if err != nil {
-		return CriticalResult{}, err
+		return MessageResult{}, err
 	}
 
-	result := CriticalResult{Events: make([]contract.TriggerEventV1, 0), StateWrite: state.WriteWindowsRequest{Items: make([]state.LoadedWindow, len(series))}}
+	critical := CriticalResult{Events: make([]contract.TriggerEventV1, 0), StateWrite: state.WriteWindowsRequest{Items: make([]state.LoadedWindow, len(series))}}
+	evaluations := make(map[string][]recordEvaluation, len(compiled))
 	for index := range series {
-		events, err := pipeline.evaluateSeries(ctx, input, &series[index])
+		events, results, err := pipeline.evaluateSeries(ctx, input, &series[index])
 		if err != nil {
-			return CriticalResult{}, err
+			return MessageResult{}, err
 		}
-		result.Events = append(result.Events, events...)
+		critical.Events = append(critical.Events, events...)
+		planID := series[index].compiled.plan.PlanRef().StrategyID
+		evaluations[planID] = append(evaluations[planID], results...)
 		if _, err := pipeline.options.StateCodec.AdmitWindow(series[index].loaded.Window); err != nil {
-			return CriticalResult{}, fmt.Errorf("alarmd coordinator: admit runtime state: %w", err)
+			return MessageResult{}, fmt.Errorf("alarmd coordinator: admit runtime state: %w", err)
 		}
-		result.StateWrite.Items[index] = series[index].loaded
+		critical.StateWrite.Items[index] = series[index].loaded
 	}
-	return result, nil
+	receipt, err := buildMessageReceipt(input, evaluations, terminals)
+	if err != nil {
+		return MessageResult{}, err
+	}
+	return MessageResult{CriticalResult: critical, Receipt: receipt}, nil
 }
 
 func (pipeline *EvaluationPipeline) compilePlans(
 	ctx context.Context,
 	input *inputv2.EvaluationInput,
-) (map[string]compiledExecution, []detect.PlanExecution, error) {
+) (map[string]compiledExecution, []detect.PlanExecution, []inputv2.Terminal, error) {
 	views := input.PlanViews()
 	compiled := make(map[string]compiledExecution, len(views))
 	executions := make([]detect.PlanExecution, 0, len(views))
+	terminals := make([]inputv2.Terminal, 0)
 	for _, view := range views {
 		result, err := pipeline.options.Compiler.Compile(ctx, strategy.CompileRequest{
 			Plan: view.Snapshot(), DatasetContract: input.DatasetContract().Snapshot(), StateSemantics: pipeline.options.StateSemantics,
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		plan, ok := result.Plan()
-		if !ok || result.PlanTerminal() != nil || len(result.LevelTerminals()) != 0 {
-			return nil, nil, fmt.Errorf("alarmd coordinator: G1 plan %s did not compile without terminals", view.PlanID())
+		if terminal := result.PlanTerminal(); terminal != nil {
+			terminals = append(terminals, inputv2.Terminal{
+				Scope: inputv2.ScopePlan, PlanID: view.PlanID(), ReasonCode: terminal.ReasonCode, FieldPath: terminal.FieldPath,
+			})
+			continue
+		}
+		for _, terminal := range result.LevelTerminals() {
+			levelID := terminal.LevelID
+			terminals = append(terminals, inputv2.Terminal{
+				Scope: inputv2.ScopeLevel, PlanID: view.PlanID(), LevelID: &levelID,
+				ReasonCode: terminal.ReasonCode, FieldPath: terminal.FieldPath,
+			})
+		}
+		if !ok || len(plan.Levels()) == 0 {
+			continue
 		}
 		if _, duplicate := compiled[view.PlanID()]; duplicate {
-			return nil, nil, fmt.Errorf("alarmd coordinator: duplicate compiled plan %s", view.PlanID())
+			return nil, nil, nil, fmt.Errorf("alarmd coordinator: duplicate compiled plan %s", view.PlanID())
 		}
 		entry := compiledExecution{view: view, plan: plan}
 		compiled[view.PlanID()] = entry
 		executions = append(executions, detect.PlanExecution{View: view, Plan: plan})
 	}
-	return compiled, executions, nil
+	return compiled, executions, terminals, nil
 }
 
 func compiledDatasetDigest(plans map[string]compiledExecution) string {
@@ -207,19 +243,20 @@ func (pipeline *EvaluationPipeline) evaluateSeries(
 	ctx context.Context,
 	input *inputv2.EvaluationInput,
 	series *seriesExecution,
-) ([]contract.TriggerEventV1, error) {
+) ([]contract.TriggerEventV1, []recordEvaluation, error) {
 	events := make([]contract.TriggerEventV1, 0)
+	results := make([]recordEvaluation, 0, len(series.detection.Records))
 	levels := series.compiled.plan.Levels()
 	batch := input.RecordBatch()
 	for _, detected := range series.detection.Records {
 		record, ok := batch.Record(int(detected.RecordOrdinal))
 		if !ok || record.RecordID() != detected.RecordID || record.SourceTime() != detected.SourceTime ||
 			record.DimensionIdentityDigest() != series.detection.DimensionIdentityDigest {
-			return nil, errors.New("alarmd coordinator: Detection record is not aligned with its source record")
+			return nil, nil, errors.New("alarmd coordinator: Detection record is not aligned with its source record")
 		}
 		facts, err := pipeline.resolveEffectiveTime(ctx, input.Execution(), record.BusinessID(), levels)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		detectionRecord := mapDetectionRecord(detected)
 		point := state.StatePoint{RecordID: detected.RecordID, SourceTime: detected.SourceTime}
@@ -228,12 +265,12 @@ func (pipeline *EvaluationPipeline) evaluateSeries(
 				input.Execution().EvaluationTime, level, detectionRecord.LevelFacts[levelIndex], facts[levelIndex].Fact,
 			)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if eligibility.StateDisposition() == trigger.StateAdvance {
 				stateFact, err := mapStateFact(detectionRecord.LevelFacts[levelIndex])
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				point.Levels = append(point.Levels, stateFact)
 			}
@@ -242,10 +279,10 @@ func (pipeline *EvaluationPipeline) evaluateSeries(
 		if len(point.Levels) > 0 {
 			applied, err := series.loaded.Window.ApplyContext(ctx, []state.StatePoint{point})
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if len(applied) != 1 || (applied[0].Status != state.PointApplied && applied[0].Status != state.PointNoop) {
-				return nil, fmt.Errorf("alarmd coordinator: runtime point is not evaluable: status=%s reason=%s", applied[0].Status, applied[0].ReasonCode)
+				return nil, nil, fmt.Errorf("alarmd coordinator: runtime point is not evaluable: status=%s reason=%s", applied[0].Status, applied[0].ReasonCode)
 			}
 			lateAccepted = applied[0].Late
 		}
@@ -253,7 +290,7 @@ func (pipeline *EvaluationPipeline) evaluateSeries(
 		for index, level := range levels {
 			history, ok := series.loaded.Window.History(level.Definition().LevelID)
 			if !ok {
-				return nil, errors.New("alarmd coordinator: runtime history is missing a compiled Level")
+				return nil, nil, errors.New("alarmd coordinator: runtime history is missing a compiled Level")
 			}
 			histories[index] = trigger.LevelHistory{LevelID: level.Definition().LevelID, View: triggerHistoryView{view: history}}
 		}
@@ -269,13 +306,14 @@ func (pipeline *EvaluationPipeline) evaluateSeries(
 			ExecutionID: input.Execution().ExecutionID, LateAccepted: lateAccepted, Limits: pipeline.options.TriggerLimits,
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		results = append(results, recordEvaluation{RecordOrdinal: detected.RecordOrdinal, Result: result})
 		if result.TriggerEvent != nil {
 			events = append(events, *result.TriggerEvent)
 		}
 	}
-	return events, nil
+	return events, results, nil
 }
 
 func (pipeline *EvaluationPipeline) resolveEffectiveTime(

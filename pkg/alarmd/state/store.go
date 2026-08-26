@@ -133,7 +133,6 @@ type WriteWindowsResult struct {
 // internal invariant violation, not a committable local terminal.
 type RuntimeStateStore interface {
 	LoadWindows(context.Context, LoadWindowsRequest) (LoadWindowsResult, error)
-	AdmitWindows(WriteWindowsRequest) (int, error)
 	WriteWindows(context.Context, WriteWindowsRequest) (WriteWindowsResult, error)
 }
 

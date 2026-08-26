@@ -44,7 +44,7 @@ func TestEvaluationPipelineRunsG1ThresholdThroughRuntimeState(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend := &memoryStateBackend{values: make(map[string][]byte)}
-	codec, store := newG1StateStore(t, backend)
+	_, store := newG1StateStore(t, backend)
 	semantics, err := state.RuntimeStateSemantics()
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestEvaluationPipelineRunsG1ThresholdThroughRuntimeState(t *testing.T) {
 		if len(request.Items) != 1 {
 			t.Fatalf("admission items = %d, want the complete message batch", len(request.Items))
 		}
-		_, err := codec.AdmitWindow(request.Items[0].Window)
+		_, err := store.AdmitWindows(request)
 		return err
 	})
 	pipeline, err := NewEvaluationPipeline(PipelineOptions{
@@ -144,7 +144,7 @@ func TestEvaluationPipelineResolvesEffectiveTimeOncePerMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend := &memoryStateBackend{values: make(map[string][]byte)}
-	codec, store := newG1StateStore(t, backend)
+	_, store := newG1StateStore(t, backend)
 	semantics, err := state.RuntimeStateSemantics()
 	if err != nil {
 		t.Fatal(err)
@@ -163,12 +163,8 @@ func TestEvaluationPipelineResolvesEffectiveTimeOncePerMessage(t *testing.T) {
 		if len(request.Items) != 4 {
 			t.Fatalf("admission items = %d, want all Plan x series windows", len(request.Items))
 		}
-		for _, item := range request.Items {
-			if _, err := codec.AdmitWindow(item.Window); err != nil {
-				return err
-			}
-		}
-		return nil
+		_, err := store.AdmitWindows(request)
+		return err
 	})
 	pipeline, err := NewEvaluationPipeline(PipelineOptions{
 		Compiler: compiler, Detector: detector, EffectiveTime: provider, State: store, StateAdmission: admission,
@@ -379,8 +375,8 @@ func (function effectiveTimeProviderFunc) Resolve(
 
 type stateBatchAdmitterFunc func(context.Context, state.WriteWindowsRequest) error
 
-func (function stateBatchAdmitterFunc) AdmitStateBatch(ctx context.Context, request state.WriteWindowsRequest) error {
-	return function(ctx, request)
+func (function stateBatchAdmitterFunc) AdmitWindows(request state.WriteWindowsRequest) (int, error) {
+	return 0, function(context.Background(), request)
 }
 
 func g1ReaderLimits() contract.ReaderLimitsV2 {

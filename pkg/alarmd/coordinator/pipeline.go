@@ -29,7 +29,7 @@ type RuntimeStateLoader interface {
 }
 
 type StateBatchAdmitter interface {
-	AdmitStateBatch(context.Context, state.WriteWindowsRequest) error
+	AdmitWindows(state.WriteWindowsRequest) (int, error)
 }
 
 type PipelineOptions struct {
@@ -128,7 +128,7 @@ func (pipeline *EvaluationPipeline) EvaluateMessage(ctx context.Context, input *
 		evaluations[planID] = append(evaluations[planID], results...)
 		critical.StateWrite.Items[index] = series[index].loaded
 	}
-	if err := pipeline.options.StateAdmission.AdmitStateBatch(ctx, critical.StateWrite); err != nil {
+	if _, err := pipeline.options.StateAdmission.AdmitWindows(critical.StateWrite); err != nil {
 		return MessageResult{}, fmt.Errorf("alarmd coordinator: admit runtime state batch: %w", err)
 	}
 	receipt, err := buildMessageReceipt(input, evaluations, terminals)

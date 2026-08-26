@@ -551,6 +551,9 @@ func (rp *RedisProvider) customRelationDefinition(namespace, name string) *Relat
 		if customRelationName(status.FromResource, status.ToResource) != name {
 			continue
 		}
+		if !rp.hasResourceDefinition(namespace, status.FromResource) || !rp.hasResourceDefinition(namespace, status.ToResource) {
+			return nil
+		}
 		return &RelationDefinition{
 			Namespace:     status.Namespace,
 			Name:          name,
@@ -562,6 +565,21 @@ func (rp *RedisProvider) customRelationDefinition(namespace, name string) *Relat
 		}
 	}
 	return nil
+}
+
+func (rp *RedisProvider) hasResourceDefinition(namespace, name string) bool {
+	if definitions, ok := rp.resourceDefinitions[namespace]; ok {
+		if _, ok := definitions[name]; ok {
+			return true
+		}
+	}
+	if namespace != NamespaceAll {
+		if definitions, ok := rp.resourceDefinitions[NamespaceAll]; ok {
+			_, ok := definitions[name]
+			return ok
+		}
+	}
+	return false
 }
 
 // ListRelationDefinitions 列出指定命名空间下的所有关联定义
@@ -585,8 +603,10 @@ func (rp *RedisProvider) ListRelationDefinitions(namespace string) ([]*RelationD
 		if _, exists := seen[name]; exists {
 			continue
 		}
-		result = append(result, rp.customRelationDefinition(ns, name))
-		seen[name] = struct{}{}
+		if def := rp.customRelationDefinition(ns, name); def != nil {
+			result = append(result, def)
+			seen[name] = struct{}{}
+		}
 	}
 
 	// 合并 __all__（指定 namespace 优先）
@@ -603,8 +623,10 @@ func (rp *RedisProvider) ListRelationDefinitions(namespace string) ([]*RelationD
 			if _, exists := seen[name]; exists {
 				continue
 			}
-			result = append(result, rp.customRelationDefinition(NamespaceAll, name))
-			seen[name] = struct{}{}
+			if def := rp.customRelationDefinition(NamespaceAll, name); def != nil {
+				result = append(result, def)
+				seen[name] = struct{}{}
+			}
 		}
 	}
 	return result, nil

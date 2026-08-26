@@ -240,15 +240,19 @@ func fixedTimezoneResolver(location *time.Location) TimezoneResolver {
 func assertRetryableEffectiveTimeDependency(t testing.TB, err error) {
 	t.Helper()
 	var dependency *EffectiveTimeDependencyError
-	if !errors.As(err, &dependency) || !dependency.RetryableEffectiveTimeDependency() {
+	if !errors.As(err, &dependency) {
 		t.Fatalf("error is not a retryable EffectiveTime dependency: %T %v", err, err)
+	}
+	var marker interface{ RetryableEffectiveTimeDependency() }
+	if !errors.As(err, &marker) {
+		t.Fatalf("error does not implement the retryable EffectiveTime marker: %T %v", err, err)
 	}
 }
 
 func assertNotRetryableEffectiveTimeDependency(t testing.TB, err error) {
 	t.Helper()
-	var dependency interface{ RetryableEffectiveTimeDependency() bool }
-	if errors.As(err, &dependency) && dependency.RetryableEffectiveTimeDependency() {
+	var dependency interface{ RetryableEffectiveTimeDependency() }
+	if errors.As(err, &dependency) {
 		t.Fatalf("error unexpectedly marked as retryable EffectiveTime dependency: %T %v", err, err)
 	}
 }

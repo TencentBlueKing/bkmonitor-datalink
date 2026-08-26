@@ -36,9 +36,7 @@ func (e *EffectiveTimeDependencyError) Unwrap() error {
 	return e.cause
 }
 
-func (e *EffectiveTimeDependencyError) RetryableEffectiveTimeDependency() bool {
-	return true
-}
+func (e *EffectiveTimeDependencyError) RetryableEffectiveTimeDependency() {}
 
 func newEffectiveTimeDependencyError(operation string, cause error) error {
 	return &EffectiveTimeDependencyError{operation: operation, cause: cause}

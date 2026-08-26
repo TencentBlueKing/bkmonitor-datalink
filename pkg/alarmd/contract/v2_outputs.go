@@ -511,12 +511,12 @@ func validateReceiptCountsV1(receipt *MessageReceiptV1) error {
 		if plan.Selected > receipt.Counts.Received {
 			return invalid("message_receipt.per_plan.selected", "cannot exceed received Dataset records")
 		}
-		if plan.LevelTerminalAffected > plan.Selected {
-			return invalid("message_receipt.per_plan.level_terminal_affected", "cannot exceed selected Plan x Record evaluations")
-		}
 		planProcessed, ok := sumCountsV1(plan.Abnormal, plan.Normal, plan.Recovery)
 		if !ok {
 			return invalid("message_receipt.per_plan", "count overflow")
+		}
+		if plan.LevelTerminalAffected > planProcessed {
+			return invalid("message_receipt.per_plan.level_terminal_affected", "cannot exceed Plan x Record evaluations with a valid three-state result")
 		}
 		planSelected, ok := sumCountsV1(planProcessed, plan.Unavailable, plan.Terminal)
 		if !ok || plan.Selected != planSelected {

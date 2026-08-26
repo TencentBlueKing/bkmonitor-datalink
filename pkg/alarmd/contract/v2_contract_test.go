@@ -1272,6 +1272,17 @@ func TestMessageReceiptV1CountModel(t *testing.T) {
 	if _, err := BuildMessageReceiptV1(mixedLevel); err != nil {
 		t.Fatalf("BuildMessageReceiptV1(valid mixed-Level terminal) error = %v", err)
 	}
+	affectedWithoutDecision := validMessageReceiptV1ForTest()
+	affectedWithoutDecision.Status = ReceiptStatusCompletedWithTerminal
+	affectedWithoutDecision.Counts = ReceiptCountsV1{
+		Received: 1, Selected: 1, Unavailable: 1, LevelTerminalAffected: 1,
+	}
+	affectedWithoutDecision.PerPlan[0].Normal = 0
+	affectedWithoutDecision.PerPlan[0].Unavailable = 1
+	affectedWithoutDecision.PerPlan[0].LevelTerminalAffected = 1
+	if _, err := BuildMessageReceiptV1(affectedWithoutDecision); err == nil {
+		t.Fatal("BuildMessageReceiptV1() accepted Level terminal affected without a valid three-state result")
+	}
 
 	rejected := validMessageReceiptV1ForTest()
 	rejected.Status = ReceiptStatusRejected
@@ -1357,6 +1368,7 @@ func TestMessageReceiptV1RepresentsMixedLevelTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncodeMessageReceiptV1() error = %v", err)
 	}
+	assertGoldenPayloadV2(t, "testdata/go-v2/message_receipt_mixed_level_v1.json", payload)
 
 	decoded, err := DecodeMessageReceiptV1(payload)
 	if err != nil {

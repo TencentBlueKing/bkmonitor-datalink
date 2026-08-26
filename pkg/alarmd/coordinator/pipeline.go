@@ -107,6 +107,10 @@ func (pipeline *EvaluationPipeline) EvaluateMessage(ctx context.Context, input *
 		}
 	}
 	terminals = append(terminals, detected.Terminals...)
+	effectiveTimes, err := pipeline.resolveEffectiveTimes(ctx, input, compiled, len(detected.Batch.Series) > 0)
+	if err != nil {
+		return MessageResult{}, err
+	}
 	series, err := pipeline.loadSeries(ctx, input, detected.Batch, compiled)
 	if err != nil {
 		return MessageResult{}, err
@@ -115,12 +119,12 @@ func (pipeline *EvaluationPipeline) EvaluateMessage(ctx context.Context, input *
 	critical := CriticalResult{Events: make([]contract.TriggerEventV1, 0), StateWrite: state.WriteWindowsRequest{Items: make([]state.LoadedWindow, len(series))}}
 	evaluations := make(map[string][]recordEvaluation, len(compiled))
 	for index := range series {
-		events, results, err := pipeline.evaluateSeries(ctx, input, &series[index])
+		planID := series[index].compiled.plan.PlanRef().StrategyID
+		events, results, err := pipeline.evaluateSeries(ctx, input, &series[index], effectiveTimes[planID])
 		if err != nil {
 			return MessageResult{}, err
 		}
 		critical.Events = append(critical.Events, events...)
-		planID := series[index].compiled.plan.PlanRef().StrategyID
 		evaluations[planID] = append(evaluations[planID], results...)
 		if _, err := pipeline.options.StateCodec.AdmitWindow(series[index].loaded.Window); err != nil {
 			return MessageResult{}, fmt.Errorf("alarmd coordinator: admit runtime state: %w", err)
@@ -243,6 +247,7 @@ func (pipeline *EvaluationPipeline) evaluateSeries(
 	ctx context.Context,
 	input *inputv2.EvaluationInput,
 	series *seriesExecution,
+	effectiveTimes []trigger.LevelEffectiveTimeFact,
 ) ([]contract.TriggerEventV1, []recordEvaluation, error) {
 	events := make([]contract.TriggerEventV1, 0)
 	results := make([]recordEvaluation, 0, len(series.detection.Records))
@@ -254,15 +259,11 @@ func (pipeline *EvaluationPipeline) evaluateSeries(
 			record.DimensionIdentityDigest() != series.detection.DimensionIdentityDigest {
 			return nil, nil, errors.New("alarmd coordinator: Detection record is not aligned with its source record")
 		}
-		facts, err := pipeline.resolveEffectiveTime(ctx, input.Execution(), record.BusinessID(), levels)
-		if err != nil {
-			return nil, nil, err
-		}
 		detectionRecord := mapDetectionRecord(detected)
 		point := state.StatePoint{RecordID: detected.RecordID, SourceTime: detected.SourceTime}
 		for levelIndex, level := range levels {
 			eligibility, err := trigger.EvaluateStateEligibilityV2(
-				input.Execution().EvaluationTime, level, detectionRecord.LevelFacts[levelIndex], facts[levelIndex].Fact,
+				input.Execution().EvaluationTime, level, detectionRecord.LevelFacts[levelIndex], effectiveTimes[levelIndex].Fact,
 			)
 			if err != nil {
 				return nil, nil, err
@@ -302,7 +303,7 @@ func (pipeline *EvaluationPipeline) evaluateSeries(
 				Dimensions: record.Dimensions(),
 			},
 			Observed:  contract.TriggerObservedV1{Values: observedValues(record, series.compiled.plan.Projection()), Unit: series.compiled.plan.Projection().DataUnit},
-			Histories: histories, EffectiveTimeFacts: facts, EvaluationTime: input.Execution().EvaluationTime,
+			Histories: histories, EffectiveTimeFacts: effectiveTimes, EvaluationTime: input.Execution().EvaluationTime,
 			ExecutionID: input.Execution().ExecutionID, LateAccepted: lateAccepted, Limits: pipeline.options.TriggerLimits,
 		})
 		if err != nil {
@@ -316,29 +317,64 @@ func (pipeline *EvaluationPipeline) evaluateSeries(
 	return events, results, nil
 }
 
-func (pipeline *EvaluationPipeline) resolveEffectiveTime(
+func (pipeline *EvaluationPipeline) resolveEffectiveTimes(
 	ctx context.Context,
-	execution inputv2.ExecutionMetadata,
-	businessID string,
-	levels []strategy.CompiledLevel,
-) ([]trigger.LevelEffectiveTimeFact, error) {
-	requests := make([]strategy.EffectiveTimeRequest, len(levels))
-	for index, level := range levels {
-		requests[index] = strategy.EffectiveTimeRequest{
-			TenantID: execution.TenantID, BusinessID: businessID, EvaluationTime: execution.EvaluationTime,
-			Requirement: level.EffectiveTimeRequirement(),
+	input *inputv2.EvaluationInput,
+	compiled map[string]compiledExecution,
+	needed bool,
+) (map[string][]trigger.LevelEffectiveTimeFact, error) {
+	result := make(map[string][]trigger.LevelEffectiveTimeFact, len(compiled))
+	if !needed {
+		return result, nil
+	}
+	businessID := ""
+	for index := 0; index < input.RecordBatch().Len(); index++ {
+		if record, ok := input.RecordBatch().Record(index); ok {
+			businessID = record.BusinessID()
+			break
+		}
+	}
+	if businessID == "" {
+		return nil, errors.New("alarmd coordinator: EffectiveTime requires one valid business identity")
+	}
+	execution := input.Execution()
+	requests := make([]strategy.EffectiveTimeRequest, 0)
+	type requestRange struct {
+		planID string
+		start  int
+		levels []strategy.CompiledLevel
+	}
+	ranges := make([]requestRange, 0, len(compiled))
+	for _, view := range input.PlanViews() {
+		entry, ok := compiled[view.PlanID()]
+		if !ok {
+			continue
+		}
+		levels := entry.plan.Levels()
+		ranges = append(ranges, requestRange{planID: view.PlanID(), start: len(requests), levels: levels})
+		for _, level := range levels {
+			requests = append(requests, strategy.EffectiveTimeRequest{
+				TenantID: execution.TenantID, BusinessID: businessID, EvaluationTime: execution.EvaluationTime,
+				Requirement: level.EffectiveTimeRequirement(),
+			})
 		}
 	}
 	facts, err := pipeline.options.EffectiveTime.Resolve(ctx, requests)
 	if err != nil {
 		return nil, err
 	}
-	if len(facts) != len(levels) {
+	if len(facts) != len(requests) {
 		return nil, errors.New("alarmd coordinator: EffectiveTime Provider returned incomplete results")
 	}
-	result := make([]trigger.LevelEffectiveTimeFact, len(levels))
-	for index, level := range levels {
-		result[index] = trigger.LevelEffectiveTimeFact{LevelID: level.Definition().LevelID, Fact: facts[index]}
+	for _, requestRange := range ranges {
+		planFacts := make([]trigger.LevelEffectiveTimeFact, len(requestRange.levels))
+		for index, level := range requestRange.levels {
+			planFacts[index] = trigger.LevelEffectiveTimeFact{
+				LevelID: level.Definition().LevelID,
+				Fact:    facts[requestRange.start+index],
+			}
+		}
+		result[requestRange.planID] = planFacts
 	}
 	return result, nil
 }

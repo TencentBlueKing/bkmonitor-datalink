@@ -115,6 +115,65 @@ func TestEvaluationPipelineRunsG1ThresholdThroughRuntimeState(t *testing.T) {
 	}
 }
 
+func TestEvaluationPipelineResolvesEffectiveTimeOncePerMessage(t *testing.T) {
+	t.Parallel()
+
+	adapter := inputv2.New(g1ReaderLimits())
+	decoded, err := adapter.Decode(context.Background(), encodeSharedG1Envelope(t))
+	if err != nil || decoded.Rejected || decoded.Input == nil {
+		t.Fatalf("Decode() = %#v, %v", decoded, err)
+	}
+	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), g1CompilerLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &memoryStateBackend{values: make(map[string][]byte)}
+	codec, store := newG1StateStore(t, backend)
+	semantics, err := state.RuntimeStateSemantics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolveCalls := 0
+	provider := effectiveTimeProviderFunc(func(ctx context.Context, requests []strategy.EffectiveTimeRequest) ([]strategy.EffectiveTimeFact, error) {
+		resolveCalls++
+		if len(requests) != 2 {
+			t.Fatalf("EffectiveTime requests = %d, want one request for each compiled Plan Level", len(requests))
+		}
+		return strategy.NewStaticScheduleProvider(nil).Resolve(ctx, requests)
+	})
+	pipeline, err := NewEvaluationPipeline(PipelineOptions{
+		Compiler: compiler, Detector: detector, EffectiveTime: provider, State: store, StateCodec: codec,
+		StateSemantics: strategy.StateSemantics{
+			StateSchemaVersion: semantics.StateSchemaVersion, CodecSemanticsVersion: semantics.CodecSemanticsVersion,
+			IdentitySchemaDigest: semantics.IdentitySchemaDigest, SourceTimeSemanticsVersion: semantics.SourceTimeSemanticsVersion,
+			HistoryCellSemanticsVersion: semantics.HistoryCellSemanticsVersion,
+		},
+		DetectLimits: detect.ExecutionLimits{
+			MaxPlans: 4, MaxSelectedRecordsPerPlan: 100, MaxSeriesPerPlan: 100, MaxRecordsPerSeries: 100,
+			MaxLevelFacts: 1_000, MaxPredicateEvaluations: 1_000, MaxResultBytes: 1 << 20,
+		},
+		TriggerLimits: trigger.EvaluationLimitsV2{
+			MaxLevels: 8, MaxTriggerWindowSize: 100, MaxRecoveryConsecutiveWindows: 100,
+			MaxRequiredHistoryPoints: 1_000, MaxLevelResultsPerEvent: 8, MaxEvidenceBytesPerEvent: 64 << 10,
+			MaxComputeCost: 10_000,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := pipeline.EvaluateMessage(context.Background(), decoded.Input); err != nil {
+		t.Fatal(err)
+	}
+	if resolveCalls != 1 {
+		t.Fatalf("EffectiveTime Resolve calls = %d, want 1 per message", resolveCalls)
+	}
+}
+
 type memoryStateBackend struct {
 	mu     sync.Mutex
 	values map[string][]byte
@@ -231,6 +290,63 @@ func encodeG1Envelope(t testing.TB) []byte {
 		t.Fatal(err)
 	}
 	return payload
+}
+
+func encodeSharedG1Envelope(t testing.TB) []byte {
+	t.Helper()
+	var envelope contract.ExecutionEnvelopeV2
+	if err := json.Unmarshal(encodeG1Envelope(t), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	secondFields := []contract.DimensionFieldV2{{Name: "host", Value: json.RawMessage(`"127.0.0.2"`)}}
+	secondDimension, err := contract.DeriveDimensionIdentityDigestV2(envelope.TenantID, "2", secondFields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRecordID, err := contract.DeriveRecordIDV2(secondDimension, envelope.Records[0].SourceTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.Records = append(envelope.Records, contract.CanonicalRecordV2{
+		RecordID: secondRecordID, SourceTime: envelope.Records[0].SourceTime, BusinessID: "2",
+		DimensionIdentity: contract.DimensionIdentityV2{Fields: secondFields, Digest: secondDimension},
+		Values:            map[string]json.RawMessage{"value": json.RawMessage(`50.2`)},
+		Dimensions:        map[string]json.RawMessage{"host": json.RawMessage(`"127.0.0.2"`)},
+		ReceivedTime:      envelope.Records[0].ReceivedTime,
+	})
+	secondPlan := envelope.PlanSet.EvaluationPlans[0]
+	secondPlan.PlanID = "1002"
+	secondPlan.StrategyRef.StrategyID = "1002"
+	secondPlan.StrategyIR.StrategyRef.StrategyID = "1002"
+	envelope.PlanSet.EvaluationPlans = append(envelope.PlanSet.EvaluationPlans, secondPlan)
+	envelope.PlanSet.PlanCount = 2
+	ranges := []contract.SelectorRangeV2{{Start: 0, End: 2}}
+	envelope.Selectors[0].Selector.Ranges = &ranges
+	secondSelector := envelope.Selectors[0]
+	secondSelector.PlanOrdinal = 1
+	envelope.Selectors = append(envelope.Selectors, secondSelector)
+	envelope.PlanSet.PlanSetDigest, err = contract.DerivePlanSetDigestV2(envelope.PlanSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.PayloadDigest, err = contract.DeriveExecutionEnvelopePayloadDigestV2(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := contract.CanonicalJSONV2(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+type effectiveTimeProviderFunc func(context.Context, []strategy.EffectiveTimeRequest) ([]strategy.EffectiveTimeFact, error)
+
+func (function effectiveTimeProviderFunc) Resolve(
+	ctx context.Context,
+	requests []strategy.EffectiveTimeRequest,
+) ([]strategy.EffectiveTimeFact, error) {
+	return function(ctx, requests)
 }
 
 func g1ReaderLimits() contract.ReaderLimitsV2 {

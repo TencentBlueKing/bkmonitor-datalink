@@ -34,7 +34,7 @@ type StateCodecAdmitter interface {
 
 type PipelineOptions struct {
 	Compiler       *strategy.PlanCompiler
-	Detector       *detect.Evaluator
+	Detector       DetectionEvaluator
 	EffectiveTime  strategy.EffectiveTimeProvider
 	State          RuntimeStateLoader
 	StateCodec     StateCodecAdmitter
@@ -82,14 +82,17 @@ func (pipeline *EvaluationPipeline) Evaluate(ctx context.Context, input *inputv2
 	if err != nil {
 		return CriticalResult{}, err
 	}
-	detection, err := pipeline.options.Detector.Evaluate(ctx, detect.EvaluateRequest{
+	detected, err := evaluateDetectWithIsolation(ctx, pipeline.options.Detector, detect.EvaluateRequest{
 		Completeness: input.Execution().Completeness, DatasetContractDigest: compiledDatasetDigest(compiled),
 		Plans: executions, Limits: pipeline.options.DetectLimits,
 	})
 	if err != nil {
 		return CriticalResult{}, err
 	}
-	series, err := pipeline.loadSeries(ctx, input, detection, compiled)
+	if len(detected.Terminals) != 0 {
+		return CriticalResult{}, errors.New("alarmd coordinator: G1 pipeline does not accept Detection budget terminals")
+	}
+	series, err := pipeline.loadSeries(ctx, input, detected.Batch, compiled)
 	if err != nil {
 		return CriticalResult{}, err
 	}

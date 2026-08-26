@@ -99,6 +99,10 @@ var (
 	SpaceToResultTableChannel string
 	// BuildInResultTableDetailKey 空间关联内置上报rt详情
 	BuildInResultTableDetailKey string
+	// GraphRelationRouteKey Graph V4 业务关系动态路由快照
+	GraphRelationRouteKey string
+	// GraphRelationRouteChannel Graph V4 业务关系动态路由变更通知
+	GraphRelationRouteChannel string
 	// BkAppToSpaceKey redis 中 bkApp 的 key
 	BkAppToSpaceKey string
 	// BkAppToSpaceChannelKey bkAppCode 关联 space 的 channel
@@ -196,6 +200,8 @@ func initMetadataVariables() {
 	SpaceToResultTableKey = GetValue("taskConfig.metadata.space.spaceToResultTableKey", fmt.Sprintf("%s:space_to_result_table", SpaceRedisKey))
 	SpaceToResultTableChannel = GetValue("taskConfig.metadata.space.spaceToResultTableChannel", fmt.Sprintf("%s:space_to_result_table:channel", SpaceRedisKey))
 	BuildInResultTableDetailKey = GetValue("taskConfig.metadata.space.buildInResultTableDetailKey", fmt.Sprintf("%s:built_in_result_table_detail", SpaceRedisKey))
+	GraphRelationRouteKey = GetValue("taskConfig.metadata.space.graphRelationRouteKey", fmt.Sprintf("%s:graph_relation_route", SpaceRedisKey))
+	GraphRelationRouteChannel = GetValue("taskConfig.metadata.space.graphRelationRouteChannel", fmt.Sprintf("%s:graph_relation_route:channel", SpaceRedisKey))
 	BkAppToSpaceKey = GetValue("taskConfig.metadata.space.bkAppSpace", fmt.Sprintf("%s:bk_app_to_space", SpaceRedisKey))
 	BkAppToSpaceChannelKey = GetValue("taskConfig.metadata.space.bkAppSpaceChannel", fmt.Sprintf("%s:bk_app_to_space:channel", SpaceRedisKey))
 

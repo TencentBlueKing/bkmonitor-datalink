@@ -146,6 +146,9 @@ taskConfig:
       timeout: 10
   # metadata: metadata任务配置
   metadata:
+    space:
+      graphRelationRouteKey: "bkmonitorv3:spaces:graph_relation_route"
+      graphRelationRouteChannel: "bkmonitorv3:spaces:graph_relation_route:channel"
     global:
       customReportDefaultProxyIp: []
       ipv6SupportBizList: []

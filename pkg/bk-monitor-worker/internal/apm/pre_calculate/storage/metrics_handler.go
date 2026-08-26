@@ -51,6 +51,7 @@ type MetricConfigOptions struct {
 	builtinRelationBizIDs      map[string]struct{}
 	builtinRelationDetailKey   string
 	relationDefinitionProvider relationDefinitionProvider
+	relationRouteProvider      RelationRouteProvider
 }
 
 func MetricRelationMemDuration(m time.Duration) MetricConfigOption {
@@ -94,6 +95,12 @@ func MetricRelationDefinitionProvider(provider relationDefinitionProvider) Metri
 	}
 }
 
+func MetricRelationRouteProvider(provider RelationRouteProvider) MetricConfigOption {
+	return func(options *MetricConfigOptions) {
+		options.relationRouteProvider = provider
+	}
+}
+
 func (m MetricConfigOptions) builtinRelationEnabledForBiz(bkBizID string) bool {
 	if !m.builtinRelationEnabled {
 		return false
@@ -111,6 +118,10 @@ type relationDefinitionProvider interface {
 	ListRelationDefinitions(namespace string) ([]*relation.RelationDefinition, error)
 }
 
+type RelationRouteProvider interface {
+	Ready(spaceUID string) bool
+}
+
 type MetricDimensionsHandler struct {
 	dataId string
 
@@ -126,6 +137,7 @@ type MetricDimensionsHandler struct {
 	builtinRelationReporter    remote.Reporter
 	builtinRelationSpaceUID    string
 	relationDefinitionProvider relationDefinitionProvider
+	relationRouteProvider      RelationRouteProvider
 	logger                     monitorLogger.Logger
 }
 
@@ -208,6 +220,9 @@ func (m *MetricDimensionsHandler) cleanUpAndReport(c MetricCollector) {
 	if m.builtinRelationReporter == nil {
 		return
 	}
+	if m.relationRouteProvider != nil && !m.relationRouteProvider.Ready(m.builtinRelationSpaceUID) {
+		return
+	}
 	builtinRelationTimeseries, err := filterRelationTimeseries(
 		m.relationDefinitionProvider, m.builtinRelationSpaceUID, writeReq.Timeseries,
 	)
@@ -281,7 +296,7 @@ func NewMetricDimensionHandler(
 		builtinRelationSpaceUID string
 	)
 	if metricsConfig.builtinRelationEnabledForBiz(baseInfo.BkBizId) &&
-		metricsConfig.relationDefinitionProvider != nil {
+		metricsConfig.relationDefinitionProvider != nil && metricsConfig.relationRouteProvider != nil {
 		reporter, err := remote.NewSpaceReporter(metricsConfig.builtinRelationDetailKey, config.Url)
 		if err != nil {
 			monitorLogger.Errorf(
@@ -308,6 +323,7 @@ func NewMetricDimensionHandler(
 		builtinRelationReporter:    builtinRelationReporter,
 		builtinRelationSpaceUID:    builtinRelationSpaceUID,
 		relationDefinitionProvider: metricsConfig.relationDefinitionProvider,
+		relationRouteProvider:      metricsConfig.relationRouteProvider,
 		relationMetricDimensions:   newRelationMetricCollector(metricsConfig.relationMetricMemDuration),
 		flowMetricCollector:        newFlowMetricCollector(metricsConfig.flowMetricBuckets, metricsConfig.flowMetricMemDuration),
 		ctx:                        handlerCtx,

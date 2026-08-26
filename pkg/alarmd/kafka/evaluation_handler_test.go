@@ -21,6 +21,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	alarmdcoordinator "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/coordinator"
+	inputv2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/input/adapter/v2"
 )
 
 func TestEvaluationHandlerCompletesRawMessageBeforeOffsetAndReceipt(t *testing.T) {
@@ -87,6 +88,44 @@ func TestEvaluationHandlerCommitsRejectedMessageWithoutBusinessReceipt(t *testin
 	}
 	if criticalCalls != 0 || receiptCalls != 0 || !reflect.DeepEqual(events, []string{"commit", "mark"}) {
 		t.Fatalf("critical=%d receipt=%d events=%v, want 0/0/commit+mark", criticalCalls, receiptCalls, events)
+	}
+}
+
+func TestEvaluationHandlerReportsRejectedTransportEvidence(t *testing.T) {
+	t.Parallel()
+
+	events := []string{}
+	session := newFakeSession(context.Background(), &events)
+	claim := newFakeClaim("execution-envelope", 3, []*sarama.ConsumerMessage{{Topic: "execution-envelope", Partition: 3, Offset: 12}})
+	var evidence RejectedMessageEvidence
+	handler, err := NewEvaluationHandlerWithDiagnostics(
+		evaluationMessageRouterFunc(func(context.Context, []byte) (alarmdcoordinator.MessageOutcome, error) {
+			return alarmdcoordinator.MessageOutcome{Kind: alarmdcoordinator.MessageOutcomeRejected, Rejected: &alarmdcoordinator.RejectedOutcome{
+				Terminals: []inputv2.Terminal{{ReasonCode: contract.ReasonMalformedJSON}},
+			}}, nil
+		}),
+		evaluationCriticalCompletionFunc(func(context.Context, alarmdcoordinator.CriticalResult) error { return nil }),
+		fakeSyncOffsetCommitter{events: &events},
+		evaluationReceiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
+		alarmdcoordinator.NewCriticalDependencyGate(nil),
+		EvaluationDiagnostics{OnRejected: func(value RejectedMessageEvidence) {
+			events = append(events, "rejected")
+			evidence = value
+		}}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setupEvaluationHandler(t, handler, session, claim)
+	if err := handler.ConsumeClaim(session, claim); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"rejected", "commit", "mark"}; !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+	if evidence.Topic != "execution-envelope" || evidence.Partition != 3 || evidence.Offset != 12 ||
+		!reflect.DeepEqual(evidence.ReasonCodes, []string{contract.ReasonMalformedJSON}) {
+		t.Fatalf("rejected evidence = %#v", evidence)
 	}
 }
 

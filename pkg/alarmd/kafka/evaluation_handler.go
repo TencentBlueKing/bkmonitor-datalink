@@ -29,9 +29,21 @@ type EvaluationHandler struct {
 	offsets     OffsetCommitter
 	receipts    alarmdcoordinator.ReceiptPublisher
 	gate        *alarmdcoordinator.CriticalDependencyGate
+	diagnostics EvaluationDiagnostics
 	assignment  *assignmentLifecycle
 	reportFatal func(error)
 	fatalOnce   sync.Once
+}
+
+type RejectedMessageEvidence struct {
+	Topic       string
+	Partition   int32
+	Offset      int64
+	ReasonCodes []string
+}
+
+type EvaluationDiagnostics struct {
+	OnRejected func(RejectedMessageEvidence)
 }
 
 func NewEvaluationHandler(
@@ -42,12 +54,24 @@ func NewEvaluationHandler(
 	gate *alarmdcoordinator.CriticalDependencyGate,
 	reportFatal func(error),
 ) (*EvaluationHandler, error) {
+	return NewEvaluationHandlerWithDiagnostics(router, critical, offsets, receipts, gate, EvaluationDiagnostics{}, reportFatal)
+}
+
+func NewEvaluationHandlerWithDiagnostics(
+	router alarmdcoordinator.MessageOutcomeRouter,
+	critical alarmdcoordinator.CriticalCompletion,
+	offsets OffsetCommitter,
+	receipts alarmdcoordinator.ReceiptPublisher,
+	gate *alarmdcoordinator.CriticalDependencyGate,
+	diagnostics EvaluationDiagnostics,
+	reportFatal func(error),
+) (*EvaluationHandler, error) {
 	if router == nil || critical == nil || offsets == nil || receipts == nil || gate == nil {
 		return nil, errors.New("kafka evaluation handler: router, completion, offsets, receipts and dependency gate are required")
 	}
 	return &EvaluationHandler{
 		router: router, critical: critical, offsets: offsets, receipts: receipts,
-		gate: gate, assignment: newAssignmentLifecycle(), reportFatal: reportFatal,
+		gate: gate, diagnostics: diagnostics, assignment: newAssignmentLifecycle(), reportFatal: reportFatal,
 	}, nil
 }
 
@@ -101,7 +125,10 @@ func (handler *EvaluationHandler) ConsumeClaim(session sarama.ConsumerGroupSessi
 	offsets := evaluationPartitionOffsetCommitter{
 		session: session, offsets: handler.offsets, topic: claim.Topic(), partition: claim.Partition(),
 	}
-	runner, err := alarmdcoordinator.NewRoutedPartitionRunner(handler.router, handler.critical, offsets, handler.receipts)
+	runner, err := alarmdcoordinator.NewRoutedPartitionRunnerWithObserver(
+		handler.router, handler.critical, offsets, handler.receipts,
+		evaluationRejectedObserver{handler: handler, topic: claim.Topic(), partition: claim.Partition()},
+	)
 	if err != nil {
 		handler.fatal(err)
 		return err
@@ -154,6 +181,25 @@ func (handler *EvaluationHandler) ConsumeClaim(session sarama.ConsumerGroupSessi
 			}
 		}
 	}
+}
+
+type evaluationRejectedObserver struct {
+	handler   *EvaluationHandler
+	topic     string
+	partition int32
+}
+
+func (observer evaluationRejectedObserver) ObserveRejected(offset int64, rejected alarmdcoordinator.RejectedOutcome) {
+	if observer.handler == nil || observer.handler.diagnostics.OnRejected == nil {
+		return
+	}
+	reasons := make([]string, len(rejected.Terminals))
+	for index := range rejected.Terminals {
+		reasons[index] = rejected.Terminals[index].ReasonCode
+	}
+	observer.handler.diagnostics.OnRejected(RejectedMessageEvidence{
+		Topic: observer.topic, Partition: observer.partition, Offset: offset, ReasonCodes: reasons,
+	})
 }
 
 func (handler *EvaluationHandler) waitForDrainOrSession(session sarama.ConsumerGroupSession) error {

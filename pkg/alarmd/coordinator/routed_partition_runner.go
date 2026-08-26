@@ -20,12 +20,17 @@ type MessageOutcomeRouter interface {
 	Route(context.Context, []byte) (MessageOutcome, error)
 }
 
+type RejectedMessageObserver interface {
+	ObserveRejected(offset int64, rejected RejectedOutcome)
+}
+
 // RoutedPartitionRunner owns the complete boundary for one Kafka partition.
 // A rejected message has no trustworthy business receipt, but it is complete
 // once the typed rejection has been recorded by the adapter/router path.
 type RoutedPartitionRunner struct {
 	router    MessageOutcomeRouter
 	critical  CriticalCompletion
+	rejected  RejectedMessageObserver
 	tracker   *PartitionCompletionTracker
 	committer *PartitionCommitter
 }
@@ -36,6 +41,16 @@ func NewRoutedPartitionRunner(
 	offsets PartitionOffsetCommitter,
 	receipts ReceiptPublisher,
 ) (*RoutedPartitionRunner, error) {
+	return NewRoutedPartitionRunnerWithObserver(router, critical, offsets, receipts, nil)
+}
+
+func NewRoutedPartitionRunnerWithObserver(
+	router MessageOutcomeRouter,
+	critical CriticalCompletion,
+	offsets PartitionOffsetCommitter,
+	receipts ReceiptPublisher,
+	rejected RejectedMessageObserver,
+) (*RoutedPartitionRunner, error) {
 	if router == nil || critical == nil {
 		return nil, errors.New("alarmd coordinator: router and critical completion are required")
 	}
@@ -44,7 +59,9 @@ func NewRoutedPartitionRunner(
 	if err != nil {
 		return nil, err
 	}
-	return &RoutedPartitionRunner{router: router, critical: critical, tracker: tracker, committer: committer}, nil
+	return &RoutedPartitionRunner{
+		router: router, critical: critical, rejected: rejected, tracker: tracker, committer: committer,
+	}, nil
 }
 
 func (runner *RoutedPartitionRunner) Process(ctx context.Context, offset int64, payload []byte) error {
@@ -76,6 +93,9 @@ func (runner *RoutedPartitionRunner) processRegistered(ctx context.Context, offs
 	case MessageOutcomeRejected:
 		if outcome.Message != nil || outcome.Rejected == nil {
 			return errors.New("alarmd coordinator: invalid rejected message outcome")
+		}
+		if runner.rejected != nil {
+			runner.rejected.ObserveRejected(offset, *outcome.Rejected)
 		}
 		if err := runner.tracker.Complete(offset, nil); err != nil {
 			return err

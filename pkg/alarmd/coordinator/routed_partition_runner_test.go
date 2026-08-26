@@ -77,6 +77,38 @@ func TestRoutedPartitionRunnerCommitsRejectedMessageWithoutBusinessReceipt(t *te
 	}
 }
 
+func TestRoutedPartitionRunnerRecordsRejectedEvidenceBeforeOffset(t *testing.T) {
+	t.Parallel()
+
+	calls := []string{}
+	runner, err := NewRoutedPartitionRunnerWithObserver(
+		messageOutcomeRouterFunc(func(context.Context, []byte) (MessageOutcome, error) {
+			return MessageOutcome{Kind: MessageOutcomeRejected, Rejected: &RejectedOutcome{}}, nil
+		}),
+		criticalCompletionFunc(func(context.Context, CriticalResult) error { return nil }),
+		partitionOffsetCommitterFunc(func(context.Context, int64) error {
+			calls = append(calls, "offset")
+			return nil
+		}),
+		receiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
+		rejectedMessageObserverFunc(func(offset int64, _ RejectedOutcome) {
+			calls = append(calls, "rejected")
+			if offset != 17 {
+				t.Fatalf("rejected offset = %d, want 17", offset)
+			}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Process(context.Background(), 17, []byte("bad")); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"rejected", "offset"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+}
+
 func TestRoutedPartitionRunnerRetriesRegisteredRoutingFailure(t *testing.T) {
 	t.Parallel()
 
@@ -130,4 +162,10 @@ type messageOutcomeRouterFunc func(context.Context, []byte) (MessageOutcome, err
 
 func (function messageOutcomeRouterFunc) Route(ctx context.Context, payload []byte) (MessageOutcome, error) {
 	return function(ctx, payload)
+}
+
+type rejectedMessageObserverFunc func(int64, RejectedOutcome)
+
+func (function rejectedMessageObserverFunc) ObserveRejected(offset int64, rejected RejectedOutcome) {
+	function(offset, rejected)
 }

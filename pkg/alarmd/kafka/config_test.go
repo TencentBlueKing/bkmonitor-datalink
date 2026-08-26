@@ -89,6 +89,9 @@ func TestNewSaramaConfigBoundsConsumerPrefetch(t *testing.T) {
 	if got, want := MaxConsumerBytesPerPartition(), 3*consumerMaxRecordBytes; got != want {
 		t.Fatalf("worst-case bytes per partition = %d, want %d", got, want)
 	}
+	if got := MaxConsumerRecordBytes(); int32(got) != config.Consumer.Fetch.Max || int32(got) != config.Consumer.Fetch.Default {
+		t.Fatalf("record bytes = %d, fetch default/max = %d/%d", got, config.Consumer.Fetch.Default, config.Consumer.Fetch.Max)
+	}
 	if consumerMaxRecordBytes < contract.MaxDetectInputBytesV1 {
 		t.Fatalf("fetch bound %d cannot carry a maximum DetectInput record", consumerMaxRecordBytes)
 	}

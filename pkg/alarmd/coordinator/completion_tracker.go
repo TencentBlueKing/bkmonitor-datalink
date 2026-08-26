@@ -115,10 +115,6 @@ func (tracker *PartitionCompletionTracker) CommitACK(nextOffset int64) error {
 	tracker.entries = tracker.entries[:len(tracker.entries)-tracker.pendingCount]
 	tracker.pendingCount = 0
 	tracker.pendingNext = 0
-	if len(tracker.entries) == 0 {
-		tracker.hasOffset = false
-		tracker.lastOffset = 0
-	}
 	return nil
 }
 

@@ -59,13 +59,15 @@ func TestBuildMessageReceiptKeepsSiblingLevelResult(t *testing.T) {
 
 	input := evaluationInputWithPlanIDs(t, "1001")
 	levelID := uint32(5)
+	secondLevelID := uint32(6)
 	receipt, err := buildMessageReceipt(input, map[string][]recordEvaluation{
 		"1001": {{RecordOrdinal: 0, Result: trigger.EvaluationResultV2{
 			Completion: trigger.CompletionEvaluated, RecordResult: contract.LevelResultNormal,
 		}}},
-	}, []inputv2.Terminal{{
-		Scope: inputv2.ScopeLevel, PlanID: "1001", LevelID: &levelID, ReasonCode: contract.ReasonAlgorithmUnsupported,
-	}})
+	}, []inputv2.Terminal{
+		{Scope: inputv2.ScopeLevel, PlanID: "1001", LevelID: &levelID, ReasonCode: contract.ReasonAlgorithmUnsupported},
+		{Scope: inputv2.ScopeLevel, PlanID: "1001", LevelID: &secondLevelID, ReasonCode: contract.ReasonLevelInvalid},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,5 +75,8 @@ func TestBuildMessageReceiptKeepsSiblingLevelResult(t *testing.T) {
 		receipt.Counts != (contract.ReceiptCountsV1{Received: 1, Selected: 1, Processed: 1, LevelTerminalAffected: 1}) ||
 		receipt.PerPlan[0].Normal != 1 || receipt.PerPlan[0].LevelTerminalAffected != 1 {
 		t.Fatalf("receipt = %#v", receipt)
+	}
+	if len(receipt.ReasonCounts) != 2 || receipt.ReasonCounts[0].Count != 1 || receipt.ReasonCounts[1].Count != 1 {
+		t.Fatalf("reason counts = %#v, want both isolated Level terminals", receipt.ReasonCounts)
 	}
 }

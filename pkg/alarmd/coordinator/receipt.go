@@ -207,8 +207,8 @@ func applyReceiptTerminals(
 				if slot.result != "" {
 					if !slot.levelTerminalAffected {
 						slot.levelTerminalAffected = true
-						reasonCounts[terminal.ReasonCode]++
 					}
+					reasonCounts[terminal.ReasonCode]++
 				} else if !slot.unavailable && !slot.terminal {
 					slot.terminal = true
 					reasonCounts[terminal.ReasonCode]++

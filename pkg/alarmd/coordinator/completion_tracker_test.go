@@ -52,6 +52,9 @@ func TestPartitionCompletionTrackerDoesNotCrossIncompleteRegisteredMessage(t *te
 	if tracker.Len() != 0 {
 		t.Fatalf("Len() = %d, want 0 after ACK", tracker.Len())
 	}
+	if err := tracker.Register(40); err == nil {
+		t.Fatal("Register() accepted an older offset after the completed prefix was ACKed")
+	}
 }
 
 func TestPartitionCompletionTrackerRejectsInvalidTransitions(t *testing.T) {

@@ -15,7 +15,13 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
+
+func retryableDependencyError(err error) error {
+	return &RetryableDependencyError{Err: err}
+}
 
 func TestDependencyRetryPausesIntakeAndResumesAfterRecovery(t *testing.T) {
 	t.Parallel()
@@ -24,7 +30,7 @@ func TestDependencyRetryPausesIntakeAndResumesAfterRecovery(t *testing.T) {
 	waits := make([]time.Duration, 0, 3)
 	retry, err := newDependencyRetry(
 		gate,
-		DependencyBlocker{Dependency: DependencyRedis, ReasonCode: "REDIS_UNAVAILABLE"},
+		DependencyBlocker{Dependency: DependencyRedis, ReasonCode: contract.ReasonRedisUnavailable},
 		DependencyRetryConfig{MinDelay: 10 * time.Millisecond, MaxDelay: 25 * time.Millisecond},
 		func(base time.Duration) time.Duration { return base },
 		func(_ context.Context, delay time.Duration) error {
@@ -40,7 +46,7 @@ func TestDependencyRetryPausesIntakeAndResumesAfterRecovery(t *testing.T) {
 	if err := retry.Do(context.Background(), func(context.Context) error {
 		attempts++
 		if attempts < 4 {
-			return operationError
+			return retryableDependencyError(operationError)
 		}
 		return nil
 	}); err != nil {
@@ -61,7 +67,7 @@ func TestDependencyRetryDoesNotExhaustBeforeContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	retry, err := newDependencyRetry(
 		gate,
-		DependencyBlocker{Dependency: DependencyProvider, ReasonCode: "PROVIDER_UNAVAILABLE"},
+		DependencyBlocker{Dependency: DependencyProvider, ReasonCode: contract.ReasonProviderUnavailable},
 		DependencyRetryConfig{MinDelay: time.Millisecond, MaxDelay: 4 * time.Millisecond},
 		func(base time.Duration) time.Duration { return base },
 		func(ctx context.Context, _ time.Duration) error {
@@ -81,9 +87,9 @@ func TestDependencyRetryDoesNotExhaustBeforeContextCancellation(t *testing.T) {
 		if attempts == 6 {
 			cancel()
 		}
-		return want
+		return retryableDependencyError(want)
 	})
-	if !errors.Is(err, context.Canceled) || attempts != 6 {
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, want) || attempts != 6 {
 		t.Fatalf("Do() = attempts:%d err:%v, want six attempts then cancellation", attempts, err)
 	}
 	if gate.Ready() {
@@ -95,7 +101,7 @@ func TestDependencyRetryContinuesTaskThatStartedBeforePause(t *testing.T) {
 	t.Parallel()
 
 	gate := NewCriticalDependencyGate(nil)
-	blocker := DependencyBlocker{Dependency: DependencyOutputKafka, ReasonCode: "KAFKA_UNAVAILABLE"}
+	blocker := DependencyBlocker{Dependency: DependencyOutputKafka, ReasonCode: contract.ReasonKafkaUnavailable}
 	if _, err := gate.Pause(blocker); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +129,7 @@ func TestDependencyRetryBoundsInjectedJitter(t *testing.T) {
 	waits := make([]time.Duration, 0, 2)
 	retry, err := newDependencyRetry(
 		NewCriticalDependencyGate(nil),
-		DependencyBlocker{Dependency: DependencyRedis, ReasonCode: "REDIS_UNAVAILABLE"},
+		DependencyBlocker{Dependency: DependencyRedis, ReasonCode: contract.ReasonRedisUnavailable},
 		DependencyRetryConfig{MinDelay: 5 * time.Millisecond, MaxDelay: 10 * time.Millisecond},
 		func(base time.Duration) time.Duration { return base * 100 },
 		func(_ context.Context, delay time.Duration) error {
@@ -138,7 +144,7 @@ func TestDependencyRetryBoundsInjectedJitter(t *testing.T) {
 	if err := retry.Do(context.Background(), func(context.Context) error {
 		attempts++
 		if attempts < 3 {
-			return errors.New("retry")
+			return retryableDependencyError(errors.New("retry"))
 		}
 		return nil
 	}); err != nil {
@@ -154,7 +160,7 @@ func TestDependencyRetryStopsBeforeFirstAttemptWhenContextCanceled(t *testing.T)
 
 	retry, err := NewDependencyRetry(
 		NewCriticalDependencyGate(nil),
-		DependencyBlocker{Dependency: DependencyRedis, ReasonCode: "REDIS_UNAVAILABLE"},
+		DependencyBlocker{Dependency: DependencyRedis, ReasonCode: contract.ReasonRedisUnavailable},
 		DependencyRetryConfig{MinDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	)
 	if err != nil {
@@ -175,23 +181,40 @@ func TestDependencyRetryStopsBeforeFirstAttemptWhenContextCanceled(t *testing.T)
 func TestDependencyRetryCancelsDefaultBackoffImmediately(t *testing.T) {
 	t.Parallel()
 
+	gate := NewCriticalDependencyGate(nil)
 	retry, err := NewDependencyRetry(
-		NewCriticalDependencyGate(nil),
-		DependencyBlocker{Dependency: DependencyRedis, ReasonCode: "REDIS_UNAVAILABLE"},
+		gate,
+		DependencyBlocker{Dependency: DependencyRedis, ReasonCode: contract.ReasonRedisUnavailable},
 		DependencyRetryConfig{MinDelay: time.Hour, MaxDelay: time.Hour},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	attempts := 0
-	err = retry.Do(ctx, func(context.Context) error {
-		attempts++
-		cancel()
-		return errors.New("redis unavailable")
-	})
-	if !errors.Is(err, context.Canceled) || attempts != 1 {
-		t.Fatalf("Do() = attempts:%d err:%v", attempts, err)
+	want := errors.New("redis unavailable")
+	result := make(chan error, 1)
+	go func() {
+		result <- retry.Do(ctx, func(context.Context) error {
+			return retryableDependencyError(want)
+		})
+	}()
+	deadline := time.After(time.Second)
+	for gate.Ready() {
+		select {
+		case <-deadline:
+			t.Fatal("dependency retry did not pause intake")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	cancel()
+	select {
+	case err = <-result:
+	case <-time.After(time.Second):
+		t.Fatal("dependency retry did not stop after context cancellation")
+	}
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, want) {
+		t.Fatalf("Do() = %v", err)
 	}
 }
 
@@ -199,7 +222,7 @@ func TestDependencyRetryDoesNotMarkRecoveryAfterContextCancellation(t *testing.T
 	t.Parallel()
 
 	gate := NewCriticalDependencyGate(nil)
-	blocker := DependencyBlocker{Dependency: DependencyRedis, ReasonCode: "REDIS_UNAVAILABLE"}
+	blocker := DependencyBlocker{Dependency: DependencyRedis, ReasonCode: contract.ReasonRedisUnavailable}
 	if _, err := gate.Pause(blocker); err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +245,7 @@ func TestDependencyRetryDoesNotMarkRecoveryAfterContextCancellation(t *testing.T
 func TestDependencyRetryRejectsInvalidConstruction(t *testing.T) {
 	t.Parallel()
 
-	validBlocker := DependencyBlocker{Dependency: DependencyRedis, ReasonCode: "REDIS_UNAVAILABLE"}
+	validBlocker := DependencyBlocker{Dependency: DependencyRedis, ReasonCode: contract.ReasonRedisUnavailable}
 	for _, test := range []struct {
 		name    string
 		gate    *CriticalDependencyGate
@@ -240,5 +263,50 @@ func TestDependencyRetryRejectsInvalidConstruction(t *testing.T) {
 				t.Fatal("NewDependencyRetry() succeeded")
 			}
 		})
+	}
+}
+
+func TestDependencyRetryReturnsNonRetryableErrorUnchanged(t *testing.T) {
+	t.Parallel()
+
+	gate := NewCriticalDependencyGate(nil)
+	waits := 0
+	retry, err := newDependencyRetry(
+		gate,
+		DependencyBlocker{Dependency: DependencyRedis, ReasonCode: contract.ReasonRedisUnavailable},
+		DependencyRetryConfig{MinDelay: time.Millisecond, MaxDelay: time.Millisecond},
+		func(base time.Duration) time.Duration { return base },
+		func(context.Context, time.Duration) error {
+			waits++
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := errors.New("invalid redis request")
+	attempts := 0
+	got := retry.Do(context.Background(), func(context.Context) error {
+		attempts++
+		return want
+	})
+	if got != want || attempts != 1 || waits != 0 {
+		t.Fatalf("Do() = %v, attempts=%d waits=%d", got, attempts, waits)
+	}
+	if !gate.Ready() {
+		t.Fatalf("non-retryable error paused intake: %#v", gate.Snapshot())
+	}
+}
+
+func TestDependencyRetryRejectsInvalidDependencyReasonPair(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewDependencyRetry(
+		NewCriticalDependencyGate(nil),
+		DependencyBlocker{Dependency: DependencyProvider, ReasonCode: contract.ReasonKafkaUnavailable},
+		DependencyRetryConfig{MinDelay: time.Millisecond, MaxDelay: time.Millisecond},
+	)
+	if err == nil {
+		t.Fatal("NewDependencyRetry() accepted an invalid dependency reason pair")
 	}
 }

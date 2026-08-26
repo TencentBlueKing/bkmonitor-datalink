@@ -13,7 +13,11 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 func TestCriticalDependencyGatePausesAndResumesAdmission(t *testing.T) {
@@ -30,7 +34,7 @@ func TestCriticalDependencyGatePausesAndResumesAdmission(t *testing.T) {
 		t.Fatalf("initial snapshot = %#v", snapshot)
 	}
 
-	blocker := DependencyBlocker{Dependency: DependencyRedis, ReasonCode: "REDIS_UNAVAILABLE"}
+	blocker := DependencyBlocker{Dependency: DependencyRedis, ReasonCode: contract.ReasonRedisUnavailable}
 	paused, err := gate.Pause(blocker)
 	if err != nil {
 		t.Fatal(err)
@@ -64,10 +68,10 @@ func TestCriticalDependencyGateWaitsForEveryBlocker(t *testing.T) {
 	t.Parallel()
 
 	gate := NewCriticalDependencyGate(nil)
-	if _, err := gate.Pause(DependencyBlocker{Dependency: DependencyRedis, ReasonCode: "REDIS_UNAVAILABLE"}); err != nil {
+	if _, err := gate.Pause(DependencyBlocker{Dependency: DependencyRedis, ReasonCode: contract.ReasonRedisUnavailable}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := gate.Pause(DependencyBlocker{Dependency: DependencyOutputKafka, ReasonCode: "KAFKA_UNAVAILABLE"}); err != nil {
+	if _, err := gate.Pause(DependencyBlocker{Dependency: DependencyOutputKafka, ReasonCode: contract.ReasonKafkaUnavailable}); err != nil {
 		t.Fatal(err)
 	}
 	if snapshot, err := gate.Resume(DependencyRedis); err != nil {
@@ -96,14 +100,14 @@ func TestCriticalDependencyGatePublishesOnlySnapshotChanges(t *testing.T) {
 	gate := NewCriticalDependencyGate(func(transition DependencyGateTransition) {
 		transitions = append(transitions, transition)
 	})
-	blocker := DependencyBlocker{Dependency: DependencyProvider, ReasonCode: "PROVIDER_UNAVAILABLE"}
+	blocker := DependencyBlocker{Dependency: DependencyOutputKafka, ReasonCode: contract.ReasonKafkaUnavailable}
 	if _, err := gate.Pause(blocker); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := gate.Pause(blocker); err != nil {
 		t.Fatal(err)
 	}
-	updated := DependencyBlocker{Dependency: DependencyProvider, ReasonCode: "PROVIDER_TIMEOUT"}
+	updated := DependencyBlocker{Dependency: DependencyOutputKafka, ReasonCode: contract.ReasonOutputACKUnknown}
 	if _, err := gate.Pause(updated); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +133,7 @@ func TestCriticalDependencyGateRejectsIncompleteBlockerIdentity(t *testing.T) {
 
 	gate := NewCriticalDependencyGate(nil)
 	for _, blocker := range []DependencyBlocker{
-		{ReasonCode: "REDIS_UNAVAILABLE"},
+		{ReasonCode: contract.ReasonRedisUnavailable},
 		{Dependency: DependencyRedis},
 	} {
 		if _, err := gate.Pause(blocker); err == nil {
@@ -138,5 +142,101 @@ func TestCriticalDependencyGateRejectsIncompleteBlockerIdentity(t *testing.T) {
 	}
 	if _, err := gate.Resume(""); err == nil {
 		t.Fatal("Resume() accepted an empty dependency")
+	}
+}
+
+func TestCriticalDependencyGateSerializesTransitionCallbacks(t *testing.T) {
+	t.Parallel()
+
+	var (
+		gate         *CriticalDependencyGate
+		observedMu   sync.Mutex
+		revisions    []uint64
+		firstCalled  = make(chan struct{})
+		releaseFirst = make(chan struct{})
+	)
+	gate = NewCriticalDependencyGate(func(transition DependencyGateTransition) {
+		// The observer remains reentrant for state reads while transitions are serialized.
+		_ = gate.Snapshot()
+		if transition.Current.Revision == 1 {
+			close(firstCalled)
+			<-releaseFirst
+		}
+		observedMu.Lock()
+		revisions = append(revisions, transition.Current.Revision)
+		observedMu.Unlock()
+	})
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := gate.Pause(DependencyBlocker{
+			Dependency: DependencyRedis, ReasonCode: contract.ReasonRedisUnavailable,
+		})
+		firstDone <- err
+	}()
+	<-firstCalled
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := gate.Pause(DependencyBlocker{
+			Dependency: DependencyProvider, ReasonCode: contract.ReasonProviderUnavailable,
+		})
+		secondDone <- err
+	}()
+	select {
+	case err := <-secondDone:
+		t.Fatalf("second transition completed before the first observer: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if snapshot := gate.Snapshot(); snapshot.Revision != 1 {
+		t.Fatalf("snapshot revision advanced before the first observer completed: %d", snapshot.Revision)
+	}
+
+	close(releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatal(err)
+	}
+	observedMu.Lock()
+	defer observedMu.Unlock()
+	if !reflect.DeepEqual(revisions, []uint64{1, 2}) {
+		t.Fatalf("observer revisions = %v", revisions)
+	}
+}
+
+func TestCriticalDependencyGateAcceptsOnlyCatalogedRetryableObservationReasons(t *testing.T) {
+	t.Parallel()
+
+	accepted := []DependencyBlocker{
+		{Dependency: DependencyInputKafka, ReasonCode: contract.ReasonKafkaUnavailable},
+		{Dependency: DependencyOutputKafka, ReasonCode: contract.ReasonKafkaUnavailable},
+		{Dependency: DependencyOutputKafka, ReasonCode: contract.ReasonOutputACKUnknown},
+		{Dependency: DependencyRedis, ReasonCode: contract.ReasonRedisUnavailable},
+		{Dependency: DependencyRedis, ReasonCode: contract.ReasonStateWriteRetryable},
+		{Dependency: DependencyProvider, ReasonCode: contract.ReasonProviderUnavailable},
+	}
+	for _, blocker := range accepted {
+		gate := NewCriticalDependencyGate(nil)
+		if _, err := gate.Pause(blocker); err != nil {
+			t.Fatalf("Pause(%#v) = %v", blocker, err)
+		}
+	}
+
+	rejected := []DependencyBlocker{
+		{Dependency: DependencyRedis, ReasonCode: contract.ReasonRecordInvalid},
+		{Dependency: DependencyProvider, ReasonCode: contract.ReasonKafkaUnavailable},
+		{Dependency: DependencyInputKafka, ReasonCode: contract.ReasonOutputACKUnknown},
+		{Dependency: DependencyOutputKafka, ReasonCode: "UNKNOWN_RETRYABLE_REASON"},
+	}
+	for _, blocker := range rejected {
+		gate := NewCriticalDependencyGate(nil)
+		if _, err := gate.Pause(blocker); err == nil {
+			t.Fatalf("Pause(%#v) succeeded", blocker)
+		}
+		if snapshot := gate.Snapshot(); snapshot.State != DependencyGateReady || snapshot.Revision != 0 {
+			t.Fatalf("invalid blocker changed gate state: %#v", snapshot)
+		}
 	}
 }

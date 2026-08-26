@@ -23,6 +23,26 @@ type DependencyRetryConfig struct {
 
 type DependencyOperation func(context.Context) error
 
+// RetryableDependencyError explicitly marks a critical dependency failure as
+// retryable. DependencyRetry returns every unmarked operation error unchanged.
+type RetryableDependencyError struct {
+	Err error
+}
+
+func (err *RetryableDependencyError) Error() string {
+	if err == nil || err.Err == nil {
+		return "alarmd coordinator: retryable dependency failure"
+	}
+	return err.Err.Error()
+}
+
+func (err *RetryableDependencyError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.Err
+}
+
 type dependencyRetryJitter func(time.Duration) time.Duration
 type dependencyRetryWait func(context.Context, time.Duration) error
 
@@ -52,8 +72,11 @@ func newDependencyRetry(
 	jitter dependencyRetryJitter,
 	wait dependencyRetryWait,
 ) (*DependencyRetry, error) {
-	if gate == nil || blocker.Dependency == "" || blocker.ReasonCode == "" {
-		return nil, errors.New("alarmd coordinator: retry gate, dependency and reason are required")
+	if gate == nil {
+		return nil, errors.New("alarmd coordinator: retry gate is required")
+	}
+	if err := validateDependencyBlocker(blocker); err != nil {
+		return nil, err
 	}
 	if config.MinDelay <= 0 || config.MaxDelay < config.MinDelay {
 		return nil, errors.New("alarmd coordinator: retry delay range is invalid")
@@ -73,26 +96,45 @@ func (retry *DependencyRetry) Do(ctx context.Context, operation DependencyOperat
 	}
 
 	delay := retry.config.MinDelay
+	var lastDependencyErr error
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return dependencyRetryCancellationError(err, lastDependencyErr)
 		}
 		operationErr := operation(ctx)
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		if operationErr == nil {
+			if err := ctx.Err(); err != nil {
+				return dependencyRetryCancellationError(err, lastDependencyErr)
+			}
 			_, resumeErr := retry.gate.Resume(retry.blocker.Dependency)
 			return resumeErr
 		}
+		var retryableErr *RetryableDependencyError
+		if !errors.As(operationErr, &retryableErr) || retryableErr == nil || retryableErr.Err == nil {
+			return operationErr
+		}
+		lastDependencyErr = operationErr
 		if _, err := retry.gate.Pause(retry.blocker); err != nil {
 			return err
 		}
+		if err := ctx.Err(); err != nil {
+			return dependencyRetryCancellationError(err, lastDependencyErr)
+		}
 		if err := retry.wait(ctx, boundedDependencyRetryJitter(retry.jitter(delay), delay)); err != nil {
+			if contextErr := ctx.Err(); contextErr != nil {
+				return dependencyRetryCancellationError(contextErr, lastDependencyErr)
+			}
 			return err
 		}
 		delay = nextDependencyRetryDelay(delay, retry.config.MaxDelay)
 	}
+}
+
+func dependencyRetryCancellationError(contextErr, dependencyErr error) error {
+	if dependencyErr == nil {
+		return contextErr
+	}
+	return errors.Join(contextErr, dependencyErr)
 }
 
 func defaultDependencyRetryJitter(base time.Duration) time.Duration {

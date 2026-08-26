@@ -12,8 +12,11 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 type CriticalDependency string
@@ -55,7 +58,8 @@ type DependencyGateObserver func(DependencyGateTransition)
 // CriticalDependencyGate stops only new admission. A task that passed
 // WaitAdmission has already started and is not canceled when the gate pauses.
 type CriticalDependencyGate struct {
-	mu sync.Mutex
+	transitionMu sync.Mutex
+	mu           sync.Mutex
 
 	blockers map[CriticalDependency]DependencyBlocker
 	revision uint64
@@ -90,10 +94,12 @@ func (gate *CriticalDependencyGate) Pause(blocker DependencyBlocker) (Dependency
 	if gate == nil {
 		return DependencyGateSnapshot{}, errors.New("alarmd coordinator: critical dependency gate is required")
 	}
-	if blocker.Dependency == "" || blocker.ReasonCode == "" {
-		return gate.Snapshot(), errors.New("alarmd coordinator: dependency and reason are required to pause intake")
+	if err := validateDependencyBlocker(blocker); err != nil {
+		return gate.Snapshot(), err
 	}
 
+	gate.transitionMu.Lock()
+	defer gate.transitionMu.Unlock()
 	gate.mu.Lock()
 	previous := gate.snapshotLocked()
 	if current, ok := gate.blockers[blocker.Dependency]; ok && current == blocker {
@@ -123,6 +129,8 @@ func (gate *CriticalDependencyGate) Resume(dependency CriticalDependency) (Depen
 		return gate.Snapshot(), errors.New("alarmd coordinator: dependency is required to resume intake")
 	}
 
+	gate.transitionMu.Lock()
+	defer gate.transitionMu.Unlock()
 	gate.mu.Lock()
 	previous := gate.snapshotLocked()
 	if _, ok := gate.blockers[dependency]; !ok {
@@ -181,4 +189,36 @@ func (gate *CriticalDependencyGate) snapshotLocked() DependencyGateSnapshot {
 		state = DependencyGatePaused
 	}
 	return DependencyGateSnapshot{State: state, Revision: gate.revision, Blockers: blockers}
+}
+
+func validateDependencyBlocker(blocker DependencyBlocker) error {
+	if blocker.Dependency == "" || blocker.ReasonCode == "" {
+		return errors.New("alarmd coordinator: dependency and reason are required to pause intake")
+	}
+	definition, ok := contract.LookupReasonV2(string(blocker.ReasonCode))
+	if !ok || definition.Class != contract.ReasonClassRetryable ||
+		!definition.Domains.Has(contract.ReasonDomainObservation) {
+		return fmt.Errorf("alarmd coordinator: dependency reason %q is not a retryable observation reason", blocker.ReasonCode)
+	}
+
+	allowed := false
+	switch blocker.Dependency {
+	case DependencyInputKafka:
+		allowed = blocker.ReasonCode == contract.ReasonKafkaUnavailable
+	case DependencyOutputKafka:
+		allowed = blocker.ReasonCode == contract.ReasonKafkaUnavailable ||
+			blocker.ReasonCode == contract.ReasonOutputACKUnknown
+	case DependencyRedis:
+		allowed = blocker.ReasonCode == contract.ReasonRedisUnavailable ||
+			blocker.ReasonCode == contract.ReasonStateWriteRetryable
+	case DependencyProvider:
+		allowed = blocker.ReasonCode == contract.ReasonProviderUnavailable
+	}
+	if !allowed {
+		return fmt.Errorf(
+			"alarmd coordinator: reason %q is not valid for dependency %q",
+			blocker.ReasonCode, blocker.Dependency,
+		)
+	}
+	return nil
 }

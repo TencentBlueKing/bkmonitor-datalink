@@ -23,6 +23,29 @@ type OffsetCommitter interface {
 	CommitOffset(context.Context, sarama.ConsumerGroupSession, consumer.Record) error
 }
 
+// offsetCommitDependencyError marks only failures from the Kafka coordinator
+// or offset commit broker exchange. Local validation and lifecycle invariants
+// remain ordinary errors and must not enter dependency retry.
+type offsetCommitDependencyError struct {
+	err error
+}
+
+func (err *offsetCommitDependencyError) Error() string {
+	if err == nil || err.err == nil {
+		return "kafka offset commit: input dependency failure"
+	}
+	return err.err.Error()
+}
+
+func (err *offsetCommitDependencyError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.err
+}
+
+func (err *offsetCommitDependencyError) RetryableOffsetCommitDependency() {}
+
 type coordinator interface {
 	Coordinator(string) (offsetBroker, error)
 }
@@ -55,24 +78,21 @@ func (c *SaramaOffsetCommitter) CommitOffset(ctx context.Context, session sarama
 	if c == nil || c.coordinator == nil || c.groupID == "" || session == nil {
 		return errors.New("kafka offset commit: initialized committer and session are required")
 	}
-	if err := ctx.Err(); err != nil {
+	if err := validateOffset(record.Offset); err != nil {
 		return err
 	}
-	if err := validateOffset(record.Offset); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	broker, err := c.coordinator.Coordinator(c.groupID)
 	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return contextErr
-		}
-		return fmt.Errorf("kafka offset commit: get group coordinator: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return err
+		return markOffsetCommitDependencyError(ctx, fmt.Errorf("kafka offset commit: get group coordinator: %w", err))
 	}
 	if broker == nil {
 		return errors.New("kafka offset commit: group coordinator is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	request := &sarama.OffsetCommitRequest{
 		Version:                 1,
@@ -83,36 +103,28 @@ func (c *SaramaOffsetCommitter) CommitOffset(ctx context.Context, session sarama
 	request.AddBlock(record.Topic, record.Partition, record.Offset+1, sarama.ReceiveTime, "")
 	response, err := broker.CommitOffset(request)
 	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return contextErr
-		}
-		return fmt.Errorf("kafka offset commit: broker request: %w", err)
+		return markOffsetCommitDependencyError(ctx, fmt.Errorf("kafka offset commit: broker request: %w", err))
 	}
 	if response == nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return contextErr
-		}
-		return errors.New("kafka offset commit: empty broker response")
+		return markOffsetCommitDependencyError(ctx, errors.New("kafka offset commit: empty broker response"))
 	}
 	partitions, ok := response.Errors[record.Topic]
 	if !ok {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return contextErr
-		}
-		return errors.New("kafka offset commit: response is missing topic")
+		return markOffsetCommitDependencyError(ctx, errors.New("kafka offset commit: response is missing topic"))
 	}
 	commitError, ok := partitions[record.Partition]
 	if !ok {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return contextErr
-		}
-		return errors.New("kafka offset commit: response is missing partition")
+		return markOffsetCommitDependencyError(ctx, errors.New("kafka offset commit: response is missing partition"))
 	}
 	if commitError != sarama.ErrNoError {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return contextErr
-		}
-		return fmt.Errorf("kafka offset commit: broker rejected offset: %w", commitError)
+		return markOffsetCommitDependencyError(ctx, fmt.Errorf("kafka offset commit: broker rejected offset: %w", commitError))
 	}
 	return nil
+}
+
+func markOffsetCommitDependencyError(ctx context.Context, err error) error {
+	if contextErr := ctx.Err(); contextErr != nil {
+		err = errors.Join(contextErr, err)
+	}
+	return &offsetCommitDependencyError{err: err}
 }

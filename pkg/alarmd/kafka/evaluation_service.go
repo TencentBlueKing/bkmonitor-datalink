@@ -29,6 +29,7 @@ func OpenEvaluationService(
 	receipts alarmdcoordinator.ReceiptPublisher,
 	gate *alarmdcoordinator.CriticalDependencyGate,
 	diagnostics EvaluationDiagnostics,
+	retryConfig alarmdcoordinator.DependencyRetryConfig,
 	drainTimeout time.Duration,
 ) (*Service, error) {
 	if router == nil || critical == nil || receipts == nil || gate == nil {
@@ -57,7 +58,7 @@ func OpenEvaluationService(
 		return nil, errors.Join(err, group.Close(), client.Close())
 	}
 	service, err := newOwnedEvaluationService(
-		config.Topic, group, client, router, critical, offsets, receipts, gate, diagnostics, drainTimeout,
+		config.Topic, group, client, router, critical, offsets, receipts, gate, diagnostics, retryConfig, drainTimeout,
 	)
 	if err != nil {
 		return nil, errors.Join(err, group.Close(), client.Close())
@@ -79,6 +80,7 @@ func newOwnedEvaluationService(
 	receipts alarmdcoordinator.ReceiptPublisher,
 	gate *alarmdcoordinator.CriticalDependencyGate,
 	diagnostics EvaluationDiagnostics,
+	retryConfig alarmdcoordinator.DependencyRetryConfig,
 	drainTimeout time.Duration,
 ) (*Service, error) {
 	if router == nil || critical == nil || offsets == nil || receipts == nil || gate == nil {
@@ -91,7 +93,7 @@ func newOwnedEvaluationService(
 		[]string{topic}, group, client,
 		func(reportFatal func(error)) (serviceHandler, error) {
 			return NewEvaluationHandlerWithDiagnostics(
-				router, critical, offsets, receipts, gate, diagnostics, reportFatal,
+				router, critical, offsets, receipts, gate, retryConfig, diagnostics, reportFatal,
 			)
 		},
 		drainTimeout,

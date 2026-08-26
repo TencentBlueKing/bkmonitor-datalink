@@ -18,6 +18,7 @@ import (
 	"github.com/Shopify/sarama"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/consumer"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	alarmdcoordinator "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/coordinator"
 )
 
@@ -29,6 +30,7 @@ type EvaluationHandler struct {
 	offsets     OffsetCommitter
 	receipts    alarmdcoordinator.ReceiptPublisher
 	gate        *alarmdcoordinator.CriticalDependencyGate
+	offsetRetry *alarmdcoordinator.DependencyRetry
 	diagnostics EvaluationDiagnostics
 	assignment  *assignmentLifecycle
 	reportFatal func(error)
@@ -52,6 +54,7 @@ func NewEvaluationHandlerWithDiagnostics(
 	offsets OffsetCommitter,
 	receipts alarmdcoordinator.ReceiptPublisher,
 	gate *alarmdcoordinator.CriticalDependencyGate,
+	retryConfig alarmdcoordinator.DependencyRetryConfig,
 	diagnostics EvaluationDiagnostics,
 	reportFatal func(error),
 ) (*EvaluationHandler, error) {
@@ -61,9 +64,16 @@ func NewEvaluationHandlerWithDiagnostics(
 	if diagnostics.OnRejected == nil {
 		return nil, errors.New("kafka evaluation handler: rejected evidence observer is required")
 	}
+	offsetRetry, err := alarmdcoordinator.NewDependencyRetry(gate, alarmdcoordinator.DependencyBlocker{
+		Dependency: alarmdcoordinator.DependencyInputKafka, ReasonCode: contract.ReasonKafkaUnavailable,
+	}, retryConfig)
+	if err != nil {
+		return nil, fmt.Errorf("kafka evaluation handler: offset dependency retry: %w", err)
+	}
 	return &EvaluationHandler{
 		router: router, critical: critical, offsets: offsets, receipts: receipts,
-		gate: gate, diagnostics: diagnostics, assignment: newAssignmentLifecycle(), reportFatal: reportFatal,
+		gate: gate, offsetRetry: offsetRetry, diagnostics: diagnostics,
+		assignment: newAssignmentLifecycle(), reportFatal: reportFatal,
 	}, nil
 }
 
@@ -116,6 +126,7 @@ func (handler *EvaluationHandler) ConsumeClaim(session sarama.ConsumerGroupSessi
 	}
 	offsets := evaluationPartitionOffsetCommitter{
 		session: session, offsets: handler.offsets, topic: claim.Topic(), partition: claim.Partition(),
+		retry: handler.offsetRetry,
 	}
 	runner, err := alarmdcoordinator.NewRoutedPartitionRunnerWithObserver(
 		handler.router, handler.critical, offsets, handler.receipts,
@@ -217,16 +228,33 @@ type evaluationPartitionOffsetCommitter struct {
 	offsets   OffsetCommitter
 	topic     string
 	partition int32
+	retry     *alarmdcoordinator.DependencyRetry
 }
 
 func (committer evaluationPartitionOffsetCommitter) CommitThrough(ctx context.Context, nextOffset int64) error {
-	if committer.session == nil || committer.offsets == nil || committer.topic == "" || nextOffset <= 0 {
+	if committer.session == nil || committer.offsets == nil || committer.topic == "" ||
+		committer.retry == nil || nextOffset <= 0 {
 		return errors.New("kafka evaluation handler: initialized partition offset committer is required")
 	}
 	record := consumer.Record{Topic: committer.topic, Partition: committer.partition, Offset: nextOffset - 1}
-	if err := committer.offsets.CommitOffset(ctx, committer.session, record); err != nil {
+	err := committer.retry.Do(ctx, func(ctx context.Context) error {
+		err := committer.offsets.CommitOffset(ctx, committer.session, record)
+		if !isRetryableOffsetCommitDependency(err) {
+			return err
+		}
+		return &alarmdcoordinator.RetryableDependencyError{Err: err}
+	})
+	if err != nil {
 		return fmt.Errorf("kafka evaluation handler: commit through %d: %w", nextOffset, err)
 	}
 	committer.session.MarkOffset(committer.topic, committer.partition, nextOffset, "")
 	return nil
+}
+
+func isRetryableOffsetCommitDependency(err error) bool {
+	if err == nil {
+		return false
+	}
+	var dependencyErr interface{ RetryableOffsetCommitDependency() }
+	return errors.As(err, &dependencyErr) && dependencyErr != nil
 }

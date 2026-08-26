@@ -19,9 +19,11 @@ import (
 
 	"github.com/Shopify/sarama"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/consumer"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	alarmdcoordinator "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/coordinator"
 	inputv2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/input/adapter/v2"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
 
 func TestEvaluationHandlerCompletesRawMessageBeforeOffsetAndReceipt(t *testing.T) {
@@ -62,6 +64,142 @@ func TestEvaluationHandlerCompletesRawMessageBeforeOffsetAndReceipt(t *testing.T
 	}
 	if session.markedOffset != 42 {
 		t.Fatalf("marked offset = %d, want 42", session.markedOffset)
+	}
+}
+
+func TestEvaluationHandlerRetriesOffsetBrokerFailureWithoutRepeatingCriticalPhases(t *testing.T) {
+	t.Parallel()
+
+	events := make([]string, 0, 9)
+	gate := alarmdcoordinator.NewCriticalDependencyGate(func(transition alarmdcoordinator.DependencyGateTransition) {
+		if transition.Current.State == alarmdcoordinator.DependencyGatePaused {
+			events = append(events, "paused")
+		} else {
+			events = append(events, "resumed")
+		}
+	})
+	session := newFakeSession(context.Background(), &events)
+	claim := newFakeClaim("execution-envelope", 2, []*sarama.ConsumerMessage{{
+		Topic: "execution-envelope", Partition: 2, Offset: 41, Value: []byte("payload"),
+	}})
+	commitAttempts := 0
+	offsets := evaluationOffsetCommitterFunc(func(context.Context, sarama.ConsumerGroupSession, consumer.Record) error {
+		commitAttempts++
+		if commitAttempts == 1 {
+			events = append(events, "commit_failed")
+			return &offsetCommitDependencyError{err: errors.New("broker unavailable")}
+		}
+		events = append(events, "commit_acked")
+		return nil
+	})
+	critical := &evaluationCriticalPhaseCompletion{
+		events: func(context.Context, []contract.TriggerEventV1) error {
+			events = append(events, "events")
+			return nil
+		},
+		state: func(context.Context, state.WriteWindowsRequest) error {
+			events = append(events, "state")
+			return nil
+		},
+	}
+	handler := newTestEvaluationHandler(t,
+		evaluationMessageRouterFunc(func(context.Context, []byte) (alarmdcoordinator.MessageOutcome, error) {
+			events = append(events, "route")
+			return alarmdcoordinator.MessageOutcome{Kind: alarmdcoordinator.MessageOutcomeCompleted, Message: &alarmdcoordinator.MessageResult{
+				CriticalResult: alarmdcoordinator.CriticalResult{Events: []contract.TriggerEventV1{{EventID: "event-41"}}},
+				Receipt:        &contract.MessageReceiptV1{MessageID: "message-41"},
+			}}, nil
+		}), critical, offsets,
+		evaluationReceiptPublisherFunc(func(*contract.MessageReceiptV1) bool {
+			events = append(events, "receipt")
+			return true
+		}), gate, nil,
+	)
+	setupEvaluationHandler(t, handler, session, claim)
+
+	if err := handler.ConsumeClaim(session, claim); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"route", "events", "state", "commit_failed", "paused", "commit_acked", "resumed", "mark", "receipt"}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+	if commitAttempts != 2 || !gate.Ready() {
+		t.Fatalf("commit attempts = %d, gate = %#v", commitAttempts, gate.Snapshot())
+	}
+}
+
+func TestEvaluationOffsetRetryCancellationPreservesBrokerRootCause(t *testing.T) {
+	t.Parallel()
+
+	gate := alarmdcoordinator.NewCriticalDependencyGate(nil)
+	retry, err := alarmdcoordinator.NewDependencyRetry(gate, alarmdcoordinator.DependencyBlocker{
+		Dependency: alarmdcoordinator.DependencyInputKafka, ReasonCode: contract.ReasonKafkaUnavailable,
+	}, evaluationRetryConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	root := errors.New("broker unavailable")
+	session := newFakeSession(ctx, &[]string{})
+	committer := evaluationPartitionOffsetCommitter{
+		session: session, topic: "execution-envelope", offsets: evaluationOffsetCommitterFunc(
+			func(context.Context, sarama.ConsumerGroupSession, consumer.Record) error {
+				cancel()
+				return &offsetCommitDependencyError{err: root}
+			},
+		), retry: retry,
+	}
+	err = committer.CommitThrough(ctx, 42)
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, root) {
+		t.Fatalf("CommitThrough() error = %v, want cancellation and broker root cause", err)
+	}
+	if session.markedOffset != 0 || gate.Ready() {
+		t.Fatalf("marked offset = %d, gate = %#v", session.markedOffset, gate.Snapshot())
+	}
+}
+
+func TestEvaluationHandlerReportsLocalOffsetInvariantAsFatal(t *testing.T) {
+	t.Parallel()
+
+	root := errors.New("local offset invariant")
+	commitAttempts, eventCalls, stateCalls, receiptCalls := 0, 0, 0, 0
+	fatal := make(chan error, 1)
+	session := newFakeSession(context.Background(), &[]string{})
+	claim := newFakeClaim("execution-envelope", 0, []*sarama.ConsumerMessage{{Topic: "execution-envelope", Offset: 1}})
+	critical := &evaluationCriticalPhaseCompletion{
+		events: func(context.Context, []contract.TriggerEventV1) error { eventCalls++; return nil },
+		state:  func(context.Context, state.WriteWindowsRequest) error { stateCalls++; return nil },
+	}
+	handler := newTestEvaluationHandler(t,
+		evaluationMessageRouterFunc(func(context.Context, []byte) (alarmdcoordinator.MessageOutcome, error) {
+			return alarmdcoordinator.MessageOutcome{Kind: alarmdcoordinator.MessageOutcomeCompleted, Message: &alarmdcoordinator.MessageResult{
+				Receipt: &contract.MessageReceiptV1{MessageID: "message-1"},
+			}}, nil
+		}), critical,
+		evaluationOffsetCommitterFunc(func(context.Context, sarama.ConsumerGroupSession, consumer.Record) error {
+			commitAttempts++
+			return root
+		}),
+		evaluationReceiptPublisherFunc(func(*contract.MessageReceiptV1) bool { receiptCalls++; return true }),
+		alarmdcoordinator.NewCriticalDependencyGate(nil), func(err error) { fatal <- err },
+	)
+	setupEvaluationHandler(t, handler, session, claim)
+
+	err := handler.ConsumeClaim(session, claim)
+	if !errors.Is(err, root) {
+		t.Fatalf("ConsumeClaim() error = %v, want local invariant", err)
+	}
+	if commitAttempts != 1 || eventCalls != 1 || stateCalls != 1 || receiptCalls != 0 || session.markedOffset != 0 {
+		t.Fatalf("attempts=%d events=%d state=%d receipts=%d marked=%d", commitAttempts, eventCalls, stateCalls, receiptCalls, session.markedOffset)
+	}
+	select {
+	case err := <-fatal:
+		if !errors.Is(err, root) {
+			t.Fatalf("fatal = %v, want local invariant", err)
+		}
+	default:
+		t.Fatal("local offset invariant was not reported as fatal")
 	}
 }
 
@@ -107,7 +245,7 @@ func TestEvaluationHandlerReportsRejectedTransportEvidence(t *testing.T) {
 		evaluationCriticalCompletionFunc(func(context.Context, alarmdcoordinator.CriticalResult) error { return nil }),
 		fakeSyncOffsetCommitter{events: &events},
 		evaluationReceiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
-		alarmdcoordinator.NewCriticalDependencyGate(nil),
+		alarmdcoordinator.NewCriticalDependencyGate(nil), evaluationRetryConfig(),
 		EvaluationDiagnostics{OnRejected: func(value RejectedMessageEvidence) {
 			events = append(events, "rejected")
 			evidence = value
@@ -139,7 +277,7 @@ func TestNewEvaluationHandlerRejectsMissingRejectedEvidenceObserver(t *testing.T
 		evaluationCriticalCompletionFunc(func(context.Context, alarmdcoordinator.CriticalResult) error { return nil }),
 		fakeSyncOffsetCommitter{},
 		evaluationReceiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
-		alarmdcoordinator.NewCriticalDependencyGate(nil), EvaluationDiagnostics{}, nil,
+		alarmdcoordinator.NewCriticalDependencyGate(nil), evaluationRetryConfig(), EvaluationDiagnostics{}, nil,
 	)
 	if err == nil {
 		t.Fatal("NewEvaluationHandlerWithDiagnostics() accepted a missing rejected evidence observer")
@@ -234,7 +372,7 @@ func newTestEvaluationHandler(
 ) *EvaluationHandler {
 	t.Helper()
 	handler, err := NewEvaluationHandlerWithDiagnostics(
-		router, critical, offsets, receipts, gate,
+		router, critical, offsets, receipts, gate, evaluationRetryConfig(),
 		EvaluationDiagnostics{OnRejected: func(RejectedMessageEvidence) {}}, reportFatal,
 	)
 	if err != nil {
@@ -264,6 +402,40 @@ type evaluationCriticalCompletionFunc func(context.Context, alarmdcoordinator.Cr
 
 func (function evaluationCriticalCompletionFunc) Complete(ctx context.Context, result alarmdcoordinator.CriticalResult) error {
 	return function(ctx, result)
+}
+
+type evaluationCriticalPhaseCompletion struct {
+	events func(context.Context, []contract.TriggerEventV1) error
+	state  func(context.Context, state.WriteWindowsRequest) error
+}
+
+func (completion *evaluationCriticalPhaseCompletion) Complete(ctx context.Context, result alarmdcoordinator.CriticalResult) error {
+	if err := completion.CompleteEvents(ctx, result.Events); err != nil {
+		return err
+	}
+	return completion.CompleteState(ctx, result.StateWrite)
+}
+
+func (completion *evaluationCriticalPhaseCompletion) CompleteEvents(ctx context.Context, events []contract.TriggerEventV1) error {
+	return completion.events(ctx, events)
+}
+
+func (completion *evaluationCriticalPhaseCompletion) CompleteState(ctx context.Context, request state.WriteWindowsRequest) error {
+	return completion.state(ctx, request)
+}
+
+type evaluationOffsetCommitterFunc func(context.Context, sarama.ConsumerGroupSession, consumer.Record) error
+
+func (function evaluationOffsetCommitterFunc) CommitOffset(
+	ctx context.Context,
+	session sarama.ConsumerGroupSession,
+	record consumer.Record,
+) error {
+	return function(ctx, session, record)
+}
+
+func evaluationRetryConfig() alarmdcoordinator.DependencyRetryConfig {
+	return alarmdcoordinator.DependencyRetryConfig{MinDelay: time.Nanosecond, MaxDelay: time.Nanosecond}
 }
 
 type evaluationReceiptPublisherFunc func(*contract.MessageReceiptV1) bool

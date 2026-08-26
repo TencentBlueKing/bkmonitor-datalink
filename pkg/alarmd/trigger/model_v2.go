@@ -132,6 +132,16 @@ type LevelEffectiveTimeFact struct {
 	Fact    strategy.EffectiveTimeFact
 }
 
+// StateEligibilityV2 is M6's pre-history decision for whether the current
+// Level fact may advance runtime history. The value is immutable to callers.
+type StateEligibilityV2 struct {
+	stateDisposition string
+}
+
+func (e StateEligibilityV2) StateDisposition() string {
+	return e.stateDisposition
+}
+
 type EvaluationRequestV2 struct {
 	TenantID           string
 	BusinessID         string

@@ -30,12 +30,23 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 	}
 	levelResults := make([]contract.LevelResultV1, 0, len(levels))
 	for index, level := range levels {
-		outcome, successful, err := evaluateLevelV2(
-			request, level, request.Record.LevelFacts[index], request.Histories[index].View,
-			request.EffectiveTimeFacts[index].Fact,
+		eligibility, err := EvaluateStateEligibilityV2(
+			request.EvaluationTime, level, request.Record.LevelFacts[index], request.EffectiveTimeFacts[index].Fact,
 		)
 		if err != nil {
 			return EvaluationResultV2{}, err
+		}
+		outcome, successful, err := evaluateLevelV2(
+			request, level, request.Record.LevelFacts[index], request.Histories[index].View,
+			request.EffectiveTimeFacts[index].Fact, eligibility,
+		)
+		if err != nil {
+			return EvaluationResultV2{}, err
+		}
+		if outcome.StateDisposition != eligibility.StateDisposition() {
+			return EvaluationResultV2{}, invariantV2(
+				"assert state eligibility", outcome.LevelID, errors.New("Level outcome changed pre-history disposition"),
+			)
 		}
 		result.LevelOutcomes = append(result.LevelOutcomes, outcome)
 		switch {
@@ -89,6 +100,56 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 	return result, nil
 }
 
+// EvaluateStateEligibilityV2 validates the current Level facts and decides if
+// M4 history may advance before M6 reads any HistoryView. History completeness
+// is intentionally not part of this decision.
+func EvaluateStateEligibilityV2(
+	evaluationTime int64,
+	level strategy.CompiledLevel,
+	fact DetectionFact,
+	effective strategy.EffectiveTimeFact,
+) (StateEligibilityV2, error) {
+	definition := level.Definition()
+	if fact.Definition != definition || fact.DetectFingerprint != level.Fingerprints().Detect {
+		return StateEligibilityV2{}, invariantV2(
+			"validate Detect fact", definition.LevelID, errors.New("definition or fingerprint mismatch"),
+		)
+	}
+	if err := validateEffectiveTimeFactV2(
+		evaluationTime, level.EffectiveTimeRequirementDigest(), effective,
+	); err != nil {
+		return StateEligibilityV2{}, invariantV2("validate EffectiveTime fact", definition.LevelID, err)
+	}
+	effectiveDisposition := ""
+	switch effective.Status() {
+	case strategy.EffectiveTimeActive, strategy.EffectiveTimeInactive:
+		effectiveDisposition = StateAdvance
+	case strategy.EffectiveTimeUnknown:
+		effectiveDisposition = StateFreeze
+	default:
+		return StateEligibilityV2{}, invariantV2(
+			"validate EffectiveTime fact", definition.LevelID, errors.New("unknown status"),
+		)
+	}
+
+	switch fact.Result {
+	case DetectionUnavailable, DetectionError:
+		if fact.ReasonCode == "" ||
+			!contract.ReasonAllowedForV2(fact.ReasonCode, contract.ReasonDomainReceipt|contract.ReasonDomainObservation) {
+			return StateEligibilityV2{}, invariantV2(
+				"validate unavailable Detect fact", definition.LevelID, errors.New("invalid fact result or reason"),
+			)
+		}
+		return StateEligibilityV2{stateDisposition: StateFreeze}, nil
+	case DetectionAnomalous, DetectionNormal:
+	default:
+		return StateEligibilityV2{}, invariantV2(
+			"validate Detect fact", definition.LevelID, errors.New("invalid fact result"),
+		)
+	}
+	return StateEligibilityV2{stateDisposition: effectiveDisposition}, nil
+}
+
 func validateRequestV2(request EvaluationRequestV2) ([]strategy.CompiledLevel, error) {
 	if request.Plan == nil || !request.Limits.valid() || request.TenantID == "" || request.BusinessID == "" ||
 		request.Record.RecordID == "" || request.Record.SourceTime < 0 || request.EvaluationTime < 0 || request.ExecutionID == "" ||
@@ -137,28 +198,16 @@ func evaluateLevelV2(
 	fact DetectionFact,
 	history HistoryView,
 	effective strategy.EffectiveTimeFact,
+	eligibility StateEligibilityV2,
 ) (LevelOutcomeV2, contract.LevelResultV1, error) {
 	definition := level.Definition()
 	outcome := LevelOutcomeV2{
 		LevelID: definition.LevelID, LevelCode: definition.LevelCode, Priority: definition.Priority,
-		TriggerFingerprint: level.Fingerprints().Trigger,
-	}
-	if fact.Definition != definition || fact.DetectFingerprint != level.Fingerprints().Detect {
-		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("validate Detect fact", definition.LevelID, errors.New("definition or fingerprint mismatch"))
-	}
-	if err := validateEffectiveTimeFactV2(
-		request.EvaluationTime, level.EffectiveTimeRequirementDigest(), effective,
-	); err != nil {
-		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("validate EffectiveTime fact", definition.LevelID, err)
+		TriggerFingerprint: level.Fingerprints().Trigger, StateDisposition: eligibility.StateDisposition(),
 	}
 	validFact := fact.Result == DetectionAnomalous || fact.Result == DetectionNormal
 	if !validFact {
-		if (fact.Result != DetectionUnavailable && fact.Result != DetectionError) || fact.ReasonCode == "" ||
-			!contract.ReasonAllowedForV2(fact.ReasonCode, contract.ReasonDomainReceipt|contract.ReasonDomainObservation) {
-			return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("validate unavailable Detect fact", definition.LevelID, errors.New("invalid fact result or reason"))
-		}
 		outcome.UnavailableReason = fact.ReasonCode
-		outcome.StateDisposition = StateFreeze
 		return outcome, contract.LevelResultV1{}, nil
 	}
 	detectEvidence, err := buildDetectEvidenceV2(request.Record, fact, strategy.EffectiveTimeActive)
@@ -168,11 +217,9 @@ func evaluateLevelV2(
 	switch effective.Status() {
 	case strategy.EffectiveTimeInactive:
 		outcome.SuppressedReason = contract.ReasonEffectiveTimeInactive
-		outcome.StateDisposition = StateAdvance
 		return outcome, contract.LevelResultV1{}, nil
 	case strategy.EffectiveTimeUnknown:
 		outcome.UnavailableReason = contract.ReasonEffectiveTimeUnknown
-		outcome.StateDisposition = StateFreeze
 		return outcome, contract.LevelResultV1{}, nil
 	case strategy.EffectiveTimeActive:
 	default:
@@ -198,7 +245,6 @@ func evaluateLevelV2(
 		result = contract.LevelResultAbnormal
 	} else if summary.Completeness != HistoryFull {
 		outcome.UnavailableReason = historyReasonV2(summary.Completeness)
-		outcome.StateDisposition = StateAdvance
 		outcome.HistoryCompleteness = summary.Completeness
 		return outcome, contract.LevelResultV1{}, nil
 	}
@@ -244,7 +290,6 @@ func evaluateLevelV2(
 		},
 	}
 	outcome.Result = result
-	outcome.StateDisposition = StateAdvance
 	outcome.HistoryCompleteness = summary.Completeness
 	outcome.DecisionWindow = &decisionWindow
 	outcome.DetectEvidence = &detectEvidence

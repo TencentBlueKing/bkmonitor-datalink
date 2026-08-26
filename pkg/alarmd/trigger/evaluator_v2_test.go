@@ -145,6 +145,63 @@ func TestEvaluatorV2UnknownAndUnavailableFreezeWithoutBlockingSibling(t *testing
 	}
 }
 
+func TestStateEligibilityV2(t *testing.T) {
+	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, staticUptimeV2())})
+	level := plan.Levels()[0]
+	active := effectiveFactsV2(t, plan, 36000, func(string) (*time.Location, error) { return time.UTC, nil })[0].Fact
+	inactive := effectiveFactsV2(t, plan, 64800, func(string) (*time.Location, error) { return time.UTC, nil })[0].Fact
+	unknown := effectiveFactsV2(t, plan, 36000, func(string) (*time.Location, error) {
+		return nil, strategy.ErrEffectiveTimeUnknown
+	})[0].Fact
+	errorFact := unavailableFactV2(level, contract.ReasonRequiredValueNormalizationFailed)
+	errorFact.Result = DetectionError
+
+	tests := []struct {
+		name           string
+		evaluationTime int64
+		detect         DetectionFact
+		effective      strategy.EffectiveTimeFact
+		want           string
+	}{
+		{name: "anomalous active", evaluationTime: 36000, detect: factV2(level, DetectionAnomalous), effective: active, want: StateAdvance},
+		{name: "normal active", evaluationTime: 36000, detect: factV2(level, DetectionNormal), effective: active, want: StateAdvance},
+		{name: "anomalous inactive", evaluationTime: 64800, detect: factV2(level, DetectionAnomalous), effective: inactive, want: StateAdvance},
+		{name: "normal inactive", evaluationTime: 64800, detect: factV2(level, DetectionNormal), effective: inactive, want: StateAdvance},
+		{name: "unavailable active", evaluationTime: 36000, detect: unavailableFactV2(level, contract.ReasonRequiredValueMissing), effective: active, want: StateFreeze},
+		{name: "error inactive", evaluationTime: 64800, detect: errorFact, effective: inactive, want: StateFreeze},
+		{name: "anomalous unknown", evaluationTime: 36000, detect: factV2(level, DetectionAnomalous), effective: unknown, want: StateFreeze},
+		{name: "unavailable unknown", evaluationTime: 36000, detect: unavailableFactV2(level, contract.ReasonRequiredValueMissing), effective: unknown, want: StateFreeze},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			eligibility, err := EvaluateStateEligibilityV2(test.evaluationTime, level, test.detect, test.effective)
+			if err != nil || eligibility.StateDisposition() != test.want {
+				t.Fatalf("EvaluateStateEligibilityV2() = %#v, %v; want %s", eligibility, err, test.want)
+			}
+		})
+	}
+
+	otherPlan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, nil)})
+	otherFact := activeFactsV2(t, otherPlan, 36000)[0].Fact
+	for _, test := range []struct {
+		name           string
+		evaluationTime int64
+		detect         DetectionFact
+		effective      strategy.EffectiveTimeFact
+	}{
+		{name: "requirement mismatch", evaluationTime: 36000, detect: factV2(level, DetectionNormal), effective: otherFact},
+		{name: "expired validity interval", evaluationTime: active.ValidUntil(), detect: factV2(level, DetectionNormal), effective: active},
+		{name: "invalid Detect result", evaluationTime: 36000, detect: DetectionFact{Definition: level.Definition(), DetectFingerprint: level.Fingerprints().Detect, Result: "INVALID"}, effective: active},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			eligibility, err := EvaluateStateEligibilityV2(test.evaluationTime, level, test.detect, test.effective)
+			if !errors.Is(err, ErrInvariantV2) || eligibility != (StateEligibilityV2{}) {
+				t.Fatalf("EvaluateStateEligibilityV2() = %#v, %v; want zero result and ErrInvariantV2", eligibility, err)
+			}
+		})
+	}
+}
+
 func TestEvaluatorV2RejectsBrokenCrossModuleInvariants(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, nil)})
 	request := requestV2(t, plan, 300, nil,

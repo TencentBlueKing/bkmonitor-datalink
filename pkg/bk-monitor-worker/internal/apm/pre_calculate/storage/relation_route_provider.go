@@ -38,8 +38,7 @@ func NewRedisRelationRouteProvider(
 		ctx: ctx, cancel: cancel, client: client, key: key, channel: channel, ready: make(map[string]bool),
 	}
 	if err := provider.reload(); err != nil {
-		cancel()
-		return nil, err
+		logger.Warnf("initial relation graph route load failed: %s", err)
 	}
 	provider.wg.Add(2)
 	go provider.watch()

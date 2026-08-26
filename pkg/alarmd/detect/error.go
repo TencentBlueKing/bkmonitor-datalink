@@ -49,7 +49,8 @@ const (
 
 // BudgetError reports a deterministic execution budget rejection. The caller
 // must not commit a partial DetectionBatch. A PLAN rejection may be isolated
-// by removing PlanID and retrying; a MESSAGE rejection cannot.
+// by removing the Plan identified by PlanID from the request and retrying; a
+// MESSAGE rejection cannot.
 type BudgetError struct {
 	Scope      BudgetScope
 	PlanID     string

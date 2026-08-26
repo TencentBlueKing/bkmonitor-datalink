@@ -32,7 +32,9 @@ func TestNewOwnedEvaluationServiceBuildsV2Handler(t *testing.T) {
 		evaluationCriticalCompletionFunc(func(context.Context, alarmdcoordinator.CriticalResult) error { return nil }),
 		fakeSyncOffsetCommitter{},
 		evaluationReceiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
-		alarmdcoordinator.NewCriticalDependencyGate(nil), EvaluationDiagnostics{}, time.Second,
+		alarmdcoordinator.NewCriticalDependencyGate(nil), EvaluationDiagnostics{
+			OnRejected: func(RejectedMessageEvidence) {},
+		}, time.Second,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -49,8 +51,30 @@ func TestNewOwnedEvaluationServiceRejectsMissingCompletionDependencies(t *testin
 		"execution-envelope", newFakeConsumerGroup(func(context.Context, []string, sarama.ConsumerGroupHandler) error { return nil }),
 		&fakeServiceClient{}, nil, nil, fakeSyncOffsetCommitter{},
 		evaluationReceiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
-		alarmdcoordinator.NewCriticalDependencyGate(nil), EvaluationDiagnostics{}, time.Second,
+		alarmdcoordinator.NewCriticalDependencyGate(nil), EvaluationDiagnostics{
+			OnRejected: func(RejectedMessageEvidence) {},
+		}, time.Second,
 	); err == nil {
 		t.Fatal("newOwnedEvaluationService() accepted missing router and critical completion")
+	}
+}
+
+func TestNewOwnedEvaluationServiceRejectsMissingRejectedEvidenceObserver(t *testing.T) {
+	t.Parallel()
+
+	_, err := newOwnedEvaluationService(
+		"execution-envelope",
+		newFakeConsumerGroup(func(context.Context, []string, sarama.ConsumerGroupHandler) error { return nil }),
+		&fakeServiceClient{},
+		evaluationMessageRouterFunc(func(context.Context, []byte) (alarmdcoordinator.MessageOutcome, error) {
+			return alarmdcoordinator.MessageOutcome{}, nil
+		}),
+		evaluationCriticalCompletionFunc(func(context.Context, alarmdcoordinator.CriticalResult) error { return nil }),
+		fakeSyncOffsetCommitter{},
+		evaluationReceiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
+		alarmdcoordinator.NewCriticalDependencyGate(nil), EvaluationDiagnostics{}, time.Second,
+	)
+	if err == nil {
+		t.Fatal("newOwnedEvaluationService() accepted a missing rejected evidence observer")
 	}
 }

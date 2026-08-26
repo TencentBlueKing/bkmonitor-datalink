@@ -46,17 +46,6 @@ type EvaluationDiagnostics struct {
 	OnRejected func(RejectedMessageEvidence)
 }
 
-func NewEvaluationHandler(
-	router alarmdcoordinator.MessageOutcomeRouter,
-	critical alarmdcoordinator.CriticalCompletion,
-	offsets OffsetCommitter,
-	receipts alarmdcoordinator.ReceiptPublisher,
-	gate *alarmdcoordinator.CriticalDependencyGate,
-	reportFatal func(error),
-) (*EvaluationHandler, error) {
-	return NewEvaluationHandlerWithDiagnostics(router, critical, offsets, receipts, gate, EvaluationDiagnostics{}, reportFatal)
-}
-
 func NewEvaluationHandlerWithDiagnostics(
 	router alarmdcoordinator.MessageOutcomeRouter,
 	critical alarmdcoordinator.CriticalCompletion,
@@ -68,6 +57,9 @@ func NewEvaluationHandlerWithDiagnostics(
 ) (*EvaluationHandler, error) {
 	if router == nil || critical == nil || offsets == nil || receipts == nil || gate == nil {
 		return nil, errors.New("kafka evaluation handler: router, completion, offsets, receipts and dependency gate are required")
+	}
+	if diagnostics.OnRejected == nil {
+		return nil, errors.New("kafka evaluation handler: rejected evidence observer is required")
 	}
 	return &EvaluationHandler{
 		router: router, critical: critical, offsets: offsets, receipts: receipts,
@@ -190,7 +182,7 @@ type evaluationRejectedObserver struct {
 }
 
 func (observer evaluationRejectedObserver) ObserveRejected(offset int64, rejected alarmdcoordinator.RejectedOutcome) {
-	if observer.handler == nil || observer.handler.diagnostics.OnRejected == nil {
+	if observer.handler == nil {
 		return
 	}
 	reasons := make([]string, len(rejected.Terminals))

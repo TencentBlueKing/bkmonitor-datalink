@@ -34,6 +34,9 @@ func OpenEvaluationService(
 	if router == nil || critical == nil || receipts == nil || gate == nil {
 		return nil, errors.New("kafka evaluation service: router, completion, receipts and dependency gate are required")
 	}
+	if diagnostics.OnRejected == nil {
+		return nil, errors.New("kafka evaluation service: rejected evidence observer is required")
+	}
 	if drainTimeout <= 0 {
 		return nil, errors.New("kafka evaluation service: drain timeout must be positive")
 	}
@@ -80,6 +83,9 @@ func newOwnedEvaluationService(
 ) (*Service, error) {
 	if router == nil || critical == nil || offsets == nil || receipts == nil || gate == nil {
 		return nil, errors.New("kafka evaluation service: router, completion, offsets, receipts and dependency gate are required")
+	}
+	if diagnostics.OnRejected == nil {
+		return nil, errors.New("kafka evaluation service: rejected evidence observer is required")
 	}
 	return newOwnedGroupService(
 		[]string{topic}, group, client,

@@ -129,6 +129,23 @@ func TestEvaluationHandlerReportsRejectedTransportEvidence(t *testing.T) {
 	}
 }
 
+func TestNewEvaluationHandlerRejectsMissingRejectedEvidenceObserver(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewEvaluationHandlerWithDiagnostics(
+		evaluationMessageRouterFunc(func(context.Context, []byte) (alarmdcoordinator.MessageOutcome, error) {
+			return alarmdcoordinator.MessageOutcome{}, nil
+		}),
+		evaluationCriticalCompletionFunc(func(context.Context, alarmdcoordinator.CriticalResult) error { return nil }),
+		fakeSyncOffsetCommitter{},
+		evaluationReceiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
+		alarmdcoordinator.NewCriticalDependencyGate(nil), EvaluationDiagnostics{}, nil,
+	)
+	if err == nil {
+		t.Fatal("NewEvaluationHandlerWithDiagnostics() accepted a missing rejected evidence observer")
+	}
+}
+
 func TestEvaluationHandlerWaitsForDependencyGateBeforeAdmission(t *testing.T) {
 	t.Parallel()
 
@@ -216,7 +233,10 @@ func newTestEvaluationHandler(
 	reportFatal func(error),
 ) *EvaluationHandler {
 	t.Helper()
-	handler, err := NewEvaluationHandler(router, critical, offsets, receipts, gate, reportFatal)
+	handler, err := NewEvaluationHandlerWithDiagnostics(
+		router, critical, offsets, receipts, gate,
+		EvaluationDiagnostics{OnRejected: func(RejectedMessageEvidence) {}}, reportFatal,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

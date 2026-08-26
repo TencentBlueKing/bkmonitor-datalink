@@ -296,6 +296,78 @@ func TestServiceRecoversOffsetOutOfRangeWithoutFatalExit(t *testing.T) {
 	}
 }
 
+func TestServiceRecoversTransientOffsetRepairFailure(t *testing.T) {
+	t.Parallel()
+
+	var consumeCalls atomic.Int32
+	group := newFakeConsumerGroup(func(ctx context.Context, _ []string, _ sarama.ConsumerGroupHandler) error {
+		consumeCalls.Add(1)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	observed := make(chan ConsumerRetry, 1)
+	service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
+	service.consumeRetryDelay = time.Nanosecond
+	var repairCalls atomic.Int32
+	service.repairOffsets = func(context.Context) ([]OffsetReset, error) {
+		if repairCalls.Add(1) == 1 {
+			return nil, sarama.ErrNotCoordinatorForConsumer
+		}
+		return nil, nil
+	}
+	service.diagnostics.OnConsumeRetry = func(event ConsumerRetry) { observed <- event }
+	runContext, cancelRun := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- service.Run(runContext) }()
+	waitFor(t, func() bool { return consumeCalls.Load() == 1 }, "Consume after offset-repair retry")
+	select {
+	case event := <-observed:
+		if event.Source != ConsumerRetrySource("offset_repair") || !errors.Is(event.Err, sarama.ErrNotCoordinatorForConsumer) {
+			t.Fatalf("offset-repair retry = %#v", event)
+		}
+	default:
+		t.Fatal("transient offset-repair failure was not observed")
+	}
+	if repairCalls.Load() != 2 {
+		t.Fatalf("repair calls = %d, want 2", repairCalls.Load())
+	}
+	cancelRun()
+	if err := waitError(t, done); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if service.FatalError() != nil {
+		t.Fatalf("transient offset-repair failure became fatal: %v", service.FatalError())
+	}
+}
+
+func TestServiceDoesNotRetryAuthorizationOrLocalOffsetRepairFailure(t *testing.T) {
+	t.Parallel()
+
+	for _, want := range []error{
+		sarama.ErrGroupAuthorizationFailed,
+		sarama.ConfigurationError("invalid config"),
+		errors.New("offset repair invariant"),
+	} {
+		want := want
+		t.Run(want.Error(), func(t *testing.T) {
+			t.Parallel()
+			group := newFakeConsumerGroup(nil)
+			service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
+			var repairCalls atomic.Int32
+			service.repairOffsets = func(context.Context) ([]OffsetReset, error) {
+				repairCalls.Add(1)
+				return nil, want
+			}
+			if err := service.Run(context.Background()); !errors.Is(err, want) {
+				t.Fatalf("Run() error = %v, want %v", err, want)
+			}
+			if repairCalls.Load() != 1 || group.consumeCalls.Load() != 0 || service.FatalError() == nil {
+				t.Fatalf("repair calls = %d, Consume calls = %d, fatal = %v", repairCalls.Load(), group.consumeCalls.Load(), service.FatalError())
+			}
+		})
+	}
+}
+
 func TestServiceRetriesRepairWhenClaimFallsBackToSymbolicOffset(t *testing.T) {
 	t.Parallel()
 

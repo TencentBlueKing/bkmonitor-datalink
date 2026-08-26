@@ -65,6 +65,7 @@ type ConsumerRetrySource string
 const (
 	ConsumerRetrySourceConsumeReturn ConsumerRetrySource = "consume_return"
 	ConsumerRetrySourceErrorsChannel ConsumerRetrySource = "errors_channel"
+	ConsumerRetrySourceOffsetRepair  ConsumerRetrySource = "offset_repair"
 )
 
 // ConsumerRetry preserves the external Kafka failure that caused one consume
@@ -390,6 +391,13 @@ func (s *Service) consumeLoop(ctx context.Context) error {
 		if s.repairOffsets != nil {
 			events, err := s.repairOffsets(ctx)
 			if err != nil {
+				if ctx.Err() != nil || s.closing.Load() || s.firstFatal() != nil {
+					return nil
+				}
+				if isRetryableConsumerGroupError(err) {
+					s.requestConsumeRetry(ConsumerRetrySourceOffsetRepair, err)
+					continue
+				}
 				return fmt.Errorf("kafka service: repair consumer offsets: %w", err)
 			}
 			for _, event := range events {

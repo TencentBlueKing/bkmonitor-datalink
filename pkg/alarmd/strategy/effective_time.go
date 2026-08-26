@@ -151,34 +151,25 @@ func (p *StaticScheduleProvider) Resolve(ctx context.Context, requests []Effecti
 		switch request.Requirement.kind {
 		case EffectiveTimeAlways:
 		case EffectiveTimeStaticSchedule:
-			if p == nil || p.timezones == nil {
-				return nil, errors.New("effective time: timezone resolver is unavailable")
+			var unknown bool
+			var err error
+			var timezones TimezoneResolver
+			if p != nil {
+				timezones = p.timezones
 			}
-			location, err := p.timezones.ResolveTimezone(ctx, request.Requirement.timezoneRef, request.TenantID, request.BusinessID)
-			if errors.Is(err, ErrEffectiveTimeUnknown) || (err == nil && location == nil) {
-				facts[index], err = newEffectiveTimeFact(
-					EffectiveTimeUnknown, request.Requirement.digest, request.Requirement.digest,
-					request.EvaluationTime, request.EvaluationTime+60,
-				)
+			status, validUntil, unknown, err = resolveStaticSchedule(ctx, timezones, request)
+			if err != nil {
+				return nil, err
+			}
+			if unknown {
+				facts[index], err = unknownEffectiveTimeFact(request)
 				if err != nil {
 					return nil, err
 				}
 				continue
 			}
-			if err != nil {
-				return nil, err
-			}
-			now := time.Unix(request.EvaluationTime, 0).In(location)
-			minute := now.Hour()*60 + now.Minute()
-			if !matchesTimeRanges(minute, request.Requirement.timeRanges) {
-				status = EffectiveTimeInactive
-			}
-			validUntil = nextScheduleBoundary(now, request.Requirement.timeRanges).Unix()
 		case EffectiveTimeCalendar:
-			facts[index], _ = newEffectiveTimeFact(
-				EffectiveTimeUnknown, request.Requirement.digest, request.Requirement.digest,
-				request.EvaluationTime, request.EvaluationTime+60,
-			)
+			facts[index], _ = unknownEffectiveTimeFact(request)
 			continue
 		default:
 			return nil, errors.New("effective time: invalid requirement kind")

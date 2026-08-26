@@ -249,6 +249,121 @@ func TestOpenApplicationBundleDoesNotRetryUnclassifiedFactoryError(t *testing.T)
 	}
 }
 
+func TestOpenApplicationBundleFailsOpenWhenReceiptKafkaIsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	root := errors.New("receipt broker unavailable")
+	service := newFakeServiceRuntime()
+	service.close = func() error { return nil }
+	var serviceReceipts coordinator.ReceiptPublisher
+	factories := applicationComponentFactories{
+		newEffectiveTime: phaseOneEffectiveTimeProvider,
+		openRedis:        func(state.RedisBackendOptions) (redisRuntime, error) { return &fakeRedisRuntime{}, nil },
+		openTriggerEvents: func(enginekafka.DecisionSinkConfig) (triggerEventRuntime, error) {
+			return &fakeTriggerEventRuntime{}, nil
+		},
+		openReceipts: func(enginekafka.DecisionSinkConfig, enginekafka.ReceiptPublisherLimits) (receiptRuntime, error) {
+			return nil, retryableStartupDependency(root)
+		},
+		openEvaluationService: func(
+			_ enginekafka.Config,
+			_ coordinator.MessageOutcomeRouter,
+			_ coordinator.CriticalCompletion,
+			receipts coordinator.ReceiptPublisher,
+			_ *coordinator.CriticalDependencyGate,
+			_ enginekafka.EvaluationDiagnostics,
+			_ coordinator.DependencyRetryConfig,
+			_ time.Duration,
+		) (serviceRuntime, error) {
+			serviceReceipts = receipts
+			return service, nil
+		},
+	}
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	var output bytes.Buffer
+	bundle, err := openApplicationBundleWithFactories(
+		context.Background(), validApplicationConfig(), recorder,
+		observability.New(observability.ComponentTrigger, &output), factories,
+	)
+	if err != nil {
+		t.Fatalf("openApplicationBundleWithFactories() error = %v, want Receipt fail-open", err)
+	}
+	if bundle.service != service || bundle.receipts == nil || serviceReceipts != bundle.receipts {
+		t.Fatal("evaluation service did not receive the fail-open Receipt publisher")
+	}
+	if bundle.receipts.TryEnqueue(&contract.MessageReceiptV1{}) {
+		t.Fatal("unavailable Receipt publisher accepted an audit record")
+	}
+	drain := bundle.receipts.Shutdown(context.Background())
+	if drain.Status != enginekafka.ReceiptDrainFailed || drain.Drops.Closed != 1 || !errors.Is(drain.Err, root) {
+		t.Fatalf("Receipt drain = %+v, want one explicit drop with startup root cause", drain)
+	}
+	if err := bundle.Shutdown(context.Background()); !errors.Is(err, root) {
+		t.Fatalf("bundle.Shutdown() error = %v, want Receipt startup root cause", err)
+	}
+	logOutput := output.String()
+	for _, want := range []string{
+		`"stage":"receipt_queued"`, `"result":"dropped"`,
+		`"reason_code":"KAFKA_UNAVAILABLE"`, `"coverage_acceptable":false`,
+	} {
+		if !strings.Contains(logOutput, want) {
+			t.Fatalf("log = %q, want %q", logOutput, want)
+		}
+	}
+	if strings.Contains(logOutput, root.Error()) {
+		t.Fatalf("Receipt fail-open log leaked broker error: %q", logOutput)
+	}
+	if !hasObservationMetric(t, recorder, map[string]string{
+		"component":   string(observability.ComponentCoverage),
+		"stage":       string(observability.StageReceiptQueued),
+		"result":      string(observability.ResultDegraded),
+		"reason_code": string(observability.ReasonContractRetryable),
+	}) {
+		t.Fatal("Receipt fail-open metric was not recorded")
+	}
+}
+
+func TestOpenApplicationBundleRejectsDeterministicReceiptFactoryError(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("invalid Receipt configuration")
+	factories := applicationComponentFactories{
+		newEffectiveTime: phaseOneEffectiveTimeProvider,
+		openRedis:        func(state.RedisBackendOptions) (redisRuntime, error) { return &fakeRedisRuntime{}, nil },
+		openTriggerEvents: func(enginekafka.DecisionSinkConfig) (triggerEventRuntime, error) {
+			return &fakeTriggerEventRuntime{}, nil
+		},
+		openReceipts: func(enginekafka.DecisionSinkConfig, enginekafka.ReceiptPublisherLimits) (receiptRuntime, error) {
+			return nil, want
+		},
+		openEvaluationService: func(
+			enginekafka.Config,
+			coordinator.MessageOutcomeRouter,
+			coordinator.CriticalCompletion,
+			coordinator.ReceiptPublisher,
+			*coordinator.CriticalDependencyGate,
+			enginekafka.EvaluationDiagnostics,
+			coordinator.DependencyRetryConfig,
+			time.Duration,
+		) (serviceRuntime, error) {
+			t.Fatal("evaluation service opened after deterministic Receipt failure")
+			return nil, nil
+		},
+	}
+
+	_, err := openApplicationBundleWithFactories(
+		context.Background(), validApplicationConfig(), metric.NewRecorder(metric.BuildInfo{}),
+		observability.Discard(observability.ComponentTrigger), factories,
+	)
+	if !errors.Is(err, want) {
+		t.Fatalf("openApplicationBundleWithFactories() error = %v, want deterministic error", err)
+	}
+	var dependency *startupDependencyError
+	if errors.As(err, &dependency) {
+		t.Fatalf("deterministic Receipt error was classified external: %v", err)
+	}
+}
+
 func TestDependencyGateObserverRecordsPauseAndResume(t *testing.T) {
 	t.Parallel()
 
@@ -352,11 +467,21 @@ func TestConsumerDiagnosticsRecordsConsumeRetryWithoutErrorBody(t *testing.T) {
 	if strings.Contains(logOutput, "secret broker address") {
 		t.Fatalf("consume retry log leaked broker error: %q", logOutput)
 	}
+	if !hasObservationMetric(t, recorder, map[string]string{
+		"component":   string(observability.ComponentConsumer),
+		"result":      string(observability.ResultRetrying),
+		"reason_code": string(observability.ReasonContractRetryable),
+	}) {
+		t.Fatal("consume retry metric was not recorded")
+	}
+}
+
+func hasObservationMetric(t *testing.T, recorder *metric.Recorder, want map[string]string) bool {
+	t.Helper()
 	families, err := recorder.Gatherer().Gather()
 	if err != nil {
 		t.Fatalf("Gather() error = %v", err)
 	}
-	found := false
 	for _, family := range families {
 		if family.GetName() != "bkmonitor_alarmd_observation_total" {
 			continue
@@ -366,16 +491,19 @@ func TestConsumerDiagnosticsRecordsConsumeRetryWithoutErrorBody(t *testing.T) {
 			for _, label := range sample.Label {
 				labels[label.GetName()] = label.GetValue()
 			}
-			if labels["component"] == string(observability.ComponentConsumer) &&
-				labels["result"] == string(observability.ResultRetrying) &&
-				labels["reason_code"] == string(observability.ReasonContractRetryable) {
-				found = true
+			matched := true
+			for name, value := range want {
+				if labels[name] != value {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				return true
 			}
 		}
 	}
-	if !found {
-		t.Fatal("consume retry metric was not recorded")
-	}
+	return false
 }
 
 type fakeRedisRuntime struct {

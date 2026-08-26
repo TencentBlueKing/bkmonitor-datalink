@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
@@ -63,6 +64,32 @@ type triggerEventRuntime interface {
 type receiptRuntime interface {
 	coordinator.ReceiptPublisher
 	Shutdown(context.Context) enginekafka.ReceiptDrainResult
+}
+
+// unavailableReceiptRuntime makes the non-critical audit loss explicit while
+// the evaluation path continues. Phase one recovers this dependency only by
+// restarting the process and reopening the real publisher.
+type unavailableReceiptRuntime struct {
+	err     error
+	dropped atomic.Uint64
+}
+
+func (runtime *unavailableReceiptRuntime) TryEnqueue(*contract.MessageReceiptV1) bool {
+	if runtime != nil {
+		runtime.dropped.Add(1)
+	}
+	return false
+}
+
+func (runtime *unavailableReceiptRuntime) Shutdown(context.Context) enginekafka.ReceiptDrainResult {
+	if runtime == nil {
+		return enginekafka.ReceiptDrainResult{Status: enginekafka.ReceiptDrainFailed}
+	}
+	return enginekafka.ReceiptDrainResult{
+		Status: enginekafka.ReceiptDrainFailed,
+		Drops:  enginekafka.ReceiptDropCounts{Closed: runtime.dropped.Load()},
+		Err:    runtime.err,
+	}
 }
 
 type applicationDependencies struct {
@@ -654,7 +681,12 @@ func openApplicationBundleWithFactories(
 	}
 	receipts, err := factories.openReceipts(cfg.Kafka.MessageReceiptCoordinates(), cfg.ReceiptPublisherLimits())
 	if err != nil {
-		return cleanup(err)
+		var dependency *startupDependencyError
+		if !errors.As(err, &dependency) {
+			return cleanup(err)
+		}
+		receipts = &unavailableReceiptRuntime{err: err}
+		observeReceiptUnavailable(recorder, logger)
 	}
 	partial.receipts = receipts
 	consumerCoordinates := cfg.Kafka.ConsumerCoordinates()
@@ -670,6 +702,23 @@ func openApplicationBundleWithFactories(
 	}
 	partial.service = service
 	return partial, nil
+}
+
+func observeReceiptUnavailable(recorder observability.Observer, logger *observability.Logger) {
+	observability.Multi(recorder).Observe(context.Background(), observability.Observation{
+		Component:  observability.ComponentCoverage,
+		Stage:      observability.StageReceiptQueued,
+		Result:     observability.ResultDegraded,
+		Operation:  observability.OperationProduce,
+		Direction:  observability.DirectionOutput,
+		ReasonCode: observability.ReasonCode(contract.ReasonKafkaUnavailable),
+	})
+	logger.Error(
+		string(observability.StageReceiptQueued), observability.ResultDropped, 0, 0,
+		slog.String("reason_code", contract.ReasonKafkaUnavailable),
+		slog.Bool("coverage_acceptable", false),
+		slog.String("recovery", "process_restart"),
+	)
 }
 
 func dependencyGateObserver(recorder observability.Observer, logger *observability.Logger) coordinator.DependencyGateObserver {

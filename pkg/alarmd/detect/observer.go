@@ -77,7 +77,7 @@ func finishDetectObservation(
 		var budget *BudgetError
 		if errors.As(returnErr, &budget) {
 			observation.Result = ObservationTerminal
-			observation.ReasonCode = contract.ReasonMessageBudgetExceeded
+			observation.ReasonCode = budget.ReasonCode
 		} else {
 			observation.Result = ObservationFailed
 		}

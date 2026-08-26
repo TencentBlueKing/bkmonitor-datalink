@@ -406,6 +406,167 @@ func TestEvaluatorAdmitsWholeMessageBeforeRunningAnyDetector(t *testing.T) {
 	}
 }
 
+func TestEvaluatorBudgetErrorsHaveStableTypedScope(t *testing.T) {
+	plans := []contract.EvaluationPlanV2{
+		fixturePlan("1001", []contract.LevelIRV2{fixtureLevel(1, 1, contract.LevelConnectorAND,
+			fixtureThresholdAlgorithm("GT", "50", "percent", ""))}),
+		fixturePlan("1002", []contract.LevelIRV2{fixtureLevel(1, 1, contract.LevelConnectorAND,
+			fixtureThresholdAlgorithm("GT", "50", "percent", ""))}),
+	}
+	tests := []struct {
+		name           string
+		records        []fixtureRecord
+		setLimit       func(*ExecutionLimits)
+		wantScope      BudgetScope
+		wantPlanID     string
+		wantReasonCode string
+		wantBudget     string
+		wantLimit      uint64
+		wantActual     uint64
+		wantError      string
+	}{
+		{
+			name: "message plan count", records: twoSameSeriesRecords(),
+			setLimit:  func(limits *ExecutionLimits) { limits.MaxPlans = 1 },
+			wantScope: BudgetScopeMessage, wantReasonCode: contract.ReasonMessageBudgetExceeded,
+			wantBudget: "plans", wantLimit: 1, wantActual: 2,
+			wantError: "alarmd detect: budget exceeded: scope=MESSAGE budget=plans actual=2 limit=1 reason=MESSAGE_BUDGET_EXCEEDED",
+		},
+		{
+			name: "message cumulative level facts", records: twoSameSeriesRecords(),
+			setLimit:  func(limits *ExecutionLimits) { limits.MaxLevelFacts = 2 },
+			wantScope: BudgetScopeMessage, wantReasonCode: contract.ReasonMessageBudgetExceeded,
+			wantBudget: "level_facts", wantLimit: 2, wantActual: 4,
+			wantError: "alarmd detect: budget exceeded: scope=MESSAGE budget=level_facts actual=4 limit=2 reason=MESSAGE_BUDGET_EXCEEDED",
+		},
+		{
+			name: "message cumulative predicate evaluations", records: twoSameSeriesRecords(),
+			setLimit:  func(limits *ExecutionLimits) { limits.MaxPredicateEvaluations = 2 },
+			wantScope: BudgetScopeMessage, wantReasonCode: contract.ReasonMessageBudgetExceeded,
+			wantBudget: "predicate_evaluations", wantLimit: 2, wantActual: 4,
+			wantError: "alarmd detect: budget exceeded: scope=MESSAGE budget=predicate_evaluations actual=4 limit=2 reason=MESSAGE_BUDGET_EXCEEDED",
+		},
+		{
+			name: "message cumulative result bytes", records: twoSameSeriesRecords(),
+			setLimit: func(limits *ExecutionLimits) {
+				onePlanBytes, ok := estimatePlanResultBytes(1, 2, 1, 1)
+				if !ok {
+					panic("test result byte estimate overflowed")
+				}
+				limits.MaxResultBytes = onePlanBytes
+			},
+			wantScope: BudgetScopeMessage, wantReasonCode: contract.ReasonMessageBudgetExceeded,
+			wantBudget: "result_bytes", wantLimit: 1408, wantActual: 2816,
+			wantError: "alarmd detect: budget exceeded: scope=MESSAGE budget=result_bytes actual=2816 limit=1408 reason=MESSAGE_BUDGET_EXCEEDED",
+		},
+		{
+			name: "plan selected records", records: twoSameSeriesRecords(),
+			setLimit:  func(limits *ExecutionLimits) { limits.MaxSelectedRecordsPerPlan = 1 },
+			wantScope: BudgetScopePlan, wantPlanID: "1001", wantReasonCode: contract.ReasonPlanBudgetExceeded,
+			wantBudget: "selected_records_per_plan", wantLimit: 1, wantActual: 2,
+			wantError: "alarmd detect: budget exceeded: scope=PLAN plan_id=1001 budget=selected_records_per_plan actual=2 limit=1 reason=PLAN_BUDGET_EXCEEDED",
+		},
+		{
+			name: "plan series", records: []fixtureRecord{
+				{host: "host-a", sourceTime: 100, value: json.RawMessage(`60`)},
+				{host: "host-b", sourceTime: 160, value: json.RawMessage(`60`)},
+			},
+			setLimit:  func(limits *ExecutionLimits) { limits.MaxSeriesPerPlan = 1 },
+			wantScope: BudgetScopePlan, wantPlanID: "1001", wantReasonCode: contract.ReasonPlanBudgetExceeded,
+			wantBudget: "series_per_plan", wantLimit: 1, wantActual: 2,
+			wantError: "alarmd detect: budget exceeded: scope=PLAN plan_id=1001 budget=series_per_plan actual=2 limit=1 reason=PLAN_BUDGET_EXCEEDED",
+		},
+		{
+			name: "plan records per series", records: twoSameSeriesRecords(),
+			setLimit:  func(limits *ExecutionLimits) { limits.MaxRecordsPerSeries = 1 },
+			wantScope: BudgetScopePlan, wantPlanID: "1001", wantReasonCode: contract.ReasonPlanBudgetExceeded,
+			wantBudget: "records_per_series", wantLimit: 1, wantActual: 2,
+			wantError: "alarmd detect: budget exceeded: scope=PLAN plan_id=1001 budget=records_per_series actual=2 limit=1 reason=PLAN_BUDGET_EXCEEDED",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			envelope := fixtureEnvelope(t, plans, test.records, contract.QueryCompletenessFull)
+			input, executions, digest := fixtureExecutions(t, envelope)
+			detector := &countingThresholdDetector{}
+			registry, err := NewRegistry(detector)
+			if err != nil {
+				t.Fatal(err)
+			}
+			observations := make([]Observation, 0, 1)
+			evaluator, err := NewEvaluator(registry, ObserverFunc(func(_ context.Context, observation Observation) {
+				observations = append(observations, observation)
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			limits := generousLimits()
+			test.setLimit(&limits)
+			batch, evaluateErr := evaluator.Evaluate(context.Background(), EvaluateRequest{
+				Completeness: input.Execution().Completeness, DatasetContractDigest: digest, Plans: executions, Limits: limits,
+			})
+			var budget *BudgetError
+			if !errors.As(evaluateErr, &budget) {
+				t.Fatalf("Evaluate() error = %v, want BudgetError", evaluateErr)
+			}
+			if !reflect.DeepEqual(batch, DetectionBatch{}) || detector.calls.Load() != 0 {
+				t.Fatalf("Evaluate() batch = %#v, detector calls = %d, want empty and zero", batch, detector.calls.Load())
+			}
+			if budget.Scope != test.wantScope || budget.PlanID != test.wantPlanID || budget.ReasonCode != test.wantReasonCode ||
+				budget.Budget != test.wantBudget || budget.Limit != test.wantLimit || budget.Actual != test.wantActual {
+				t.Fatalf("BudgetError = %+v, want scope=%s plan=%s reason=%s budget=%s actual=%d limit=%d",
+					budget, test.wantScope, test.wantPlanID, test.wantReasonCode, test.wantBudget, test.wantActual, test.wantLimit)
+			}
+			if got := budget.Error(); got != test.wantError {
+				t.Fatalf("BudgetError.Error() = %q, want %q", got, test.wantError)
+			}
+			if len(observations) != 1 || observations[0].Result != ObservationTerminal ||
+				observations[0].ReasonCode != test.wantReasonCode {
+				t.Fatalf("observations = %+v, want one terminal with reason %s", observations, test.wantReasonCode)
+			}
+
+			exactLimits := generousLimits()
+			setExecutionBudgetLimitForTest(t, &exactLimits, budget.Budget, budget.Actual)
+			detector.calls.Store(0)
+			exactBatch, exactErr := evaluator.Evaluate(context.Background(), EvaluateRequest{
+				Completeness: input.Execution().Completeness, DatasetContractDigest: digest, Plans: executions, Limits: exactLimits,
+			})
+			if exactErr != nil || exactBatch.Counts.Plans != 2 || detector.calls.Load() == 0 {
+				t.Fatalf("exact boundary Evaluate() = (%#v, %v), detector calls=%d", exactBatch, exactErr, detector.calls.Load())
+			}
+		})
+	}
+}
+
+func setExecutionBudgetLimitForTest(t testing.TB, limits *ExecutionLimits, budget string, value uint64) {
+	t.Helper()
+	switch budget {
+	case "plans":
+		limits.MaxPlans = value
+	case "selected_records_per_plan":
+		limits.MaxSelectedRecordsPerPlan = value
+	case "series_per_plan":
+		limits.MaxSeriesPerPlan = value
+	case "records_per_series":
+		limits.MaxRecordsPerSeries = value
+	case "level_facts":
+		limits.MaxLevelFacts = value
+	case "predicate_evaluations":
+		limits.MaxPredicateEvaluations = value
+	case "result_bytes":
+		limits.MaxResultBytes = value
+	default:
+		t.Fatalf("unknown budget %q", budget)
+	}
+}
+
+func twoSameSeriesRecords() []fixtureRecord {
+	return []fixtureRecord{
+		{host: "hot", sourceTime: 100, value: json.RawMessage(`60`)},
+		{host: "hot", sourceTime: 160, value: json.RawMessage(`60`)},
+	}
+}
+
 func TestEvaluatorObservesOneBoundedAggregatePerCall(t *testing.T) {
 	envelope := fixtureEnvelope(t, []contract.EvaluationPlanV2{fixturePlan("1001", []contract.LevelIRV2{
 		fixtureLevel(1, 1, contract.LevelConnectorAND, fixtureThresholdAlgorithm("GT", "50", "percent", "")),

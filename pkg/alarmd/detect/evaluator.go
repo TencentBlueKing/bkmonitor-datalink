@@ -93,7 +93,7 @@ func (evaluator *Evaluator) Evaluate(ctx context.Context, request EvaluateReques
 		return DetectionBatch{}, &InternalError{Operation: "evaluate", Err: errors.New("query completeness is invalid")}
 	}
 	if uint64(len(request.Plans)) > request.Limits.MaxPlans {
-		return DetectionBatch{}, budgetExceeded("plans", request.Limits.MaxPlans, uint64(len(request.Plans)))
+		return DetectionBatch{}, messageBudgetExceeded("plans", request.Limits.MaxPlans, uint64(len(request.Plans)))
 	}
 
 	batch := DetectionBatch{
@@ -158,7 +158,7 @@ func admitPlans(ctx context.Context, plans []boundPlan, limits ExecutionLimits) 
 		planID := plan.execution.View.PlanID()
 		selected := uint64(plan.execution.View.SelectedCount())
 		if selected > limits.MaxSelectedRecordsPerPlan {
-			return nil, budgetExceeded("selected_records_per_plan", limits.MaxSelectedRecordsPerPlan, selected)
+			return nil, planBudgetExceeded(planID, "selected_records_per_plan", limits.MaxSelectedRecordsPerPlan, selected)
 		}
 		facts, ok := checkedMul(selected, uint64(len(plan.levels)))
 		if !ok {
@@ -169,7 +169,7 @@ func admitPlans(ctx context.Context, plans []boundPlan, limits ExecutionLimits) 
 			return nil, &InternalError{Operation: "admit facts", PlanID: planID, Err: errors.New("fact count overflow")}
 		}
 		if totalFacts > limits.MaxLevelFacts {
-			return nil, budgetExceeded("level_facts", limits.MaxLevelFacts, totalFacts)
+			return nil, messageBudgetExceeded("level_facts", limits.MaxLevelFacts, totalFacts)
 		}
 		predicates, ok := checkedMul(selected, plan.detectorCount)
 		if !ok {
@@ -180,7 +180,7 @@ func admitPlans(ctx context.Context, plans []boundPlan, limits ExecutionLimits) 
 			return nil, &InternalError{Operation: "admit predicates", PlanID: planID, Err: errors.New("predicate count overflow")}
 		}
 		if totalPredicates > limits.MaxPredicateEvaluations {
-			return nil, budgetExceeded("predicate_evaluations", limits.MaxPredicateEvaluations, totalPredicates)
+			return nil, messageBudgetExceeded("predicate_evaluations", limits.MaxPredicateEvaluations, totalPredicates)
 		}
 
 		records, err := collectSelectedRecords(ctx, plan.execution.View)
@@ -189,11 +189,11 @@ func admitPlans(ctx context.Context, plans []boundPlan, limits ExecutionLimits) 
 		}
 		groups := groupSelectedRecords(records)
 		if uint64(len(groups)) > limits.MaxSeriesPerPlan {
-			return nil, budgetExceeded("series_per_plan", limits.MaxSeriesPerPlan, uint64(len(groups)))
+			return nil, planBudgetExceeded(planID, "series_per_plan", limits.MaxSeriesPerPlan, uint64(len(groups)))
 		}
 		for _, group := range groups {
 			if uint64(len(group.records)) > limits.MaxRecordsPerSeries {
-				return nil, budgetExceeded("records_per_series", limits.MaxRecordsPerSeries, uint64(len(group.records)))
+				return nil, planBudgetExceeded(planID, "records_per_series", limits.MaxRecordsPerSeries, uint64(len(group.records)))
 			}
 		}
 		resultBytes, ok := estimatePlanResultBytes(uint64(len(groups)), uint64(len(records)), uint64(len(plan.levels)), plan.projectionCount)
@@ -205,7 +205,7 @@ func admitPlans(ctx context.Context, plans []boundPlan, limits ExecutionLimits) 
 			return nil, &InternalError{Operation: "admit result", PlanID: planID, Err: errors.New("result byte estimate overflow")}
 		}
 		if totalResultBytes > limits.MaxResultBytes {
-			return nil, budgetExceeded("result_bytes", limits.MaxResultBytes, totalResultBytes)
+			return nil, messageBudgetExceeded("result_bytes", limits.MaxResultBytes, totalResultBytes)
 		}
 		admissions[index] = planAdmission{
 			selectedRecords: selected, validRecords: uint64(len(records)), groups: groups, resultBytes: resultBytes,
@@ -551,8 +551,4 @@ func checkedMul(left, right uint64) (uint64, bool) {
 		return 0, false
 	}
 	return left * right, true
-}
-
-func budgetExceeded(name string, limit, actual uint64) error {
-	return &BudgetError{Budget: name, Limit: limit, Actual: actual}
 }

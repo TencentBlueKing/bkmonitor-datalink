@@ -93,12 +93,10 @@ func (adapter *Adapter) Decode(ctx context.Context, payload []byte) (DecodeResul
 		if individuallyInvalid {
 			continue
 		}
-		plans = append(plans, PlanView{
-			ordinal: ordinal, planID: envelope.PlanSet.EvaluationPlans[index].PlanID,
-			strategy: StrategyIRView{strategy: filterStrategyLevels(
-				envelope.PlanSet.EvaluationPlans[index].StrategyIR, isolation.invalidLevels[ordinal],
-			)}, selector: selector, batch: batch,
-		})
+		plan := envelope.PlanSet.EvaluationPlans[index]
+		plans = append(plans, newPlanView(
+			ordinal, plan, filterStrategyLevels(plan.StrategyIR, isolation.invalidLevels[ordinal]), selector, batch,
+		))
 	}
 	terminals := newTerminalSet(isolation.terminals)
 	route, ok := routeForCompleteness(envelope.QueryResult.Completeness)

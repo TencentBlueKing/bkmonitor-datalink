@@ -66,6 +66,13 @@ func (view DatasetContractView) IdentityFields() []string {
 func (view DatasetContractView) SourceTimeField() string     { return view.sourceTimeField }
 func (view DatasetContractView) CollectionTimeField() string { return view.collectionTimeField }
 func (view DatasetContractView) ReceivedTimeField() string   { return view.receivedTimeField }
+func (view DatasetContractView) Snapshot() contract.DatasetContractV2 {
+	return contract.DatasetContractV2{
+		SchemaDigest: view.schemaDigest, NormalizationDigest: view.normalizationDigest,
+		IdentityFields: append([]string(nil), view.identityFields...), SourceTimeField: view.sourceTimeField,
+		CollectionTimeField: view.collectionTimeField, ReceivedTimeField: view.receivedTimeField,
+	}
+}
 
 type RecordBatch struct {
 	records     []contract.CanonicalRecordV2
@@ -219,15 +226,30 @@ func (view PlanSelectionView) ForEachSelectedSlot(visitor func(recordOrdinal uin
 type PlanView struct {
 	ordinal  uint32
 	planID   string
-	strategy StrategyIRView
+	plan     contract.EvaluationPlanV2
 	selector contract.SelectorIndexViewV2
 	batch    *RecordBatch
 }
 
 func (view PlanView) PlanOrdinal() uint32      { return view.ordinal }
 func (view PlanView) PlanID() string           { return view.planID }
-func (view PlanView) Strategy() StrategyIRView { return view.strategy }
-func (view PlanView) SelectedCount() int       { return view.selector.Len() }
+func (view PlanView) Strategy() StrategyIRView { return StrategyIRView{strategy: view.plan.StrategyIR} }
+func (view PlanView) Snapshot() contract.EvaluationPlanV2 {
+	return cloneEvaluationPlan(view.plan, view.plan.StrategyIR)
+}
+func (view PlanView) SelectedCount() int { return view.selector.Len() }
+
+func newPlanView(
+	ordinal uint32,
+	source contract.EvaluationPlanV2,
+	strategy contract.StrategyIRV2,
+	selector contract.SelectorIndexViewV2,
+	batch *RecordBatch,
+) PlanView {
+	return PlanView{
+		ordinal: ordinal, planID: source.PlanID, plan: cloneEvaluationPlan(source, strategy), selector: selector, batch: batch,
+	}
+}
 
 // ForEachSelectedSlot preserves selector membership for both valid and
 // terminal record slots without materializing an ordinal slice.
@@ -343,6 +365,17 @@ func cloneStrategyIR(source contract.StrategyIRV2) contract.StrategyIRV2 {
 		cloned.Levels[index].TriggerPlan.Config = bytes.Clone(source.Levels[index].TriggerPlan.Config)
 		cloned.Levels[index].RecoveryPlan.Config = bytes.Clone(source.Levels[index].RecoveryPlan.Config)
 	}
+	return cloned
+}
+
+func cloneEvaluationPlan(source contract.EvaluationPlanV2, strategy contract.StrategyIRV2) contract.EvaluationPlanV2 {
+	cloned := source
+	cloned.InputProjection = cloneProjection(source.InputProjection)
+	if source.SourceCompatibility != nil {
+		compatibility := *source.SourceCompatibility
+		cloned.SourceCompatibility = &compatibility
+	}
+	cloned.StrategyIR = cloneStrategyIR(strategy)
 	return cloned
 }
 

@@ -193,8 +193,8 @@ func applyReceiptTerminals(
 				return errors.New("alarmd coordinator: record terminal has no ordinal")
 			}
 			for _, plan := range plans {
-				if slot, ok := plan.slots[*terminal.RecordOrdinal]; ok && slot.result == "" && !slot.unavailable && !slot.terminal {
-					slot.terminal = true
+				if slot, ok := plan.slots[*terminal.RecordOrdinal]; ok && slot.result == "" {
+					classifyTerminalSlot(slot)
 					reasonCounts[terminal.ReasonCode]++
 				}
 			}
@@ -209,8 +209,8 @@ func applyReceiptTerminals(
 						slot.levelTerminalAffected = true
 					}
 					reasonCounts[terminal.ReasonCode]++
-				} else if !slot.unavailable && !slot.terminal {
-					slot.terminal = true
+				} else {
+					classifyTerminalSlot(slot)
 					reasonCounts[terminal.ReasonCode]++
 				}
 			}
@@ -223,9 +223,14 @@ func applyReceiptTerminals(
 
 func classifyTerminalSlots(slots map[uint32]*receiptSlot, reason string, reasonCounts map[string]uint64) {
 	for _, slot := range slots {
-		if slot.result == "" && !slot.unavailable && !slot.terminal {
-			slot.terminal = true
+		if slot.result == "" {
+			classifyTerminalSlot(slot)
 			reasonCounts[reason]++
 		}
 	}
+}
+
+func classifyTerminalSlot(slot *receiptSlot) {
+	slot.unavailable = false
+	slot.terminal = true
 }

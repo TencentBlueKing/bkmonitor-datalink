@@ -80,3 +80,51 @@ func TestBuildMessageReceiptKeepsSiblingLevelResult(t *testing.T) {
 		t.Fatalf("reason counts = %#v, want both isolated Level terminals", receipt.ReasonCounts)
 	}
 }
+
+func TestBuildMessageReceiptPrefersTerminalOverUnavailable(t *testing.T) {
+	t.Parallel()
+
+	ordinal := uint32(0)
+	levelID := uint32(5)
+	tests := []struct {
+		name     string
+		terminal inputv2.Terminal
+	}{
+		{name: "message", terminal: inputv2.Terminal{Scope: inputv2.ScopeMessage, ReasonCode: contract.ReasonMessageBudgetExceeded}},
+		{name: "plan", terminal: inputv2.Terminal{Scope: inputv2.ScopePlan, PlanID: "1001", ReasonCode: contract.ReasonPlanBudgetExceeded}},
+		{name: "record", terminal: inputv2.Terminal{Scope: inputv2.ScopeRecord, RecordOrdinal: &ordinal, ReasonCode: contract.ReasonRecordInvalid}},
+		{name: "level", terminal: inputv2.Terminal{Scope: inputv2.ScopeLevel, PlanID: "1001", LevelID: &levelID, ReasonCode: contract.ReasonAlgorithmUnsupported}},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			receipt, err := buildMessageReceipt(evaluationInputWithPlanIDs(t, "1001"), map[string][]recordEvaluation{
+				"1001": {{RecordOrdinal: 0, Result: trigger.EvaluationResultV2{
+					Completion:    trigger.CompletionUnavailable,
+					LevelOutcomes: []trigger.LevelOutcomeV2{{LevelID: 1, UnavailableReason: contract.ReasonHistoryWarming}},
+				}}},
+			}, []inputv2.Terminal{test.terminal})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if receipt.Status != contract.ReceiptStatusCompletedWithTerminal ||
+				receipt.Counts != (contract.ReceiptCountsV1{Received: 1, Selected: 1, Terminal: 1}) ||
+				len(receipt.PerPlan) != 1 || receipt.PerPlan[0].Terminal != 1 {
+				t.Fatalf("receipt = %#v, want terminal to classify the selected slot", receipt)
+			}
+			if !receiptHasReason(receipt, contract.ReasonHistoryWarming) || !receiptHasReason(receipt, test.terminal.ReasonCode) {
+				t.Fatalf("reason counts = %#v, want unavailable and terminal facts", receipt.ReasonCounts)
+			}
+		})
+	}
+}
+
+func receiptHasReason(receipt *contract.MessageReceiptV1, reason string) bool {
+	for _, count := range receipt.ReasonCounts {
+		if count.ReasonCode == reason && count.Count == 1 {
+			return true
+		}
+	}
+	return false
+}

@@ -24,7 +24,15 @@ type customRelationChange struct {
 func StartCustomRelationWatcher(ctx context.Context) {
 	go func() {
 		for {
-			messages := storeRedis.GetStorageRedisInstance().Subscribe(CustomRelationStatusChannel)
+			redisInstance := storeRedis.GetStorageRedisInstance()
+			if redisInstance == nil || redisInstance.Client == nil {
+				logger.Warnf("[CustomRelationWatcher] storage redis is not initialized, retrying")
+				if !waitCustomRelationRetry(ctx) {
+					return
+				}
+				continue
+			}
+			messages := redisInstance.Subscribe(CustomRelationStatusChannel)
 			select {
 			case <-ctx.Done():
 				return
@@ -34,9 +42,22 @@ func StartCustomRelationWatcher(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			time.Sleep(time.Second)
+			if !waitCustomRelationRetry(ctx) {
+				return
+			}
 		}
 	}()
+}
+
+func waitCustomRelationRetry(ctx context.Context) bool {
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func watchCustomRelationChannel(ctx context.Context, messages <-chan *redis.Message) <-chan struct{} {

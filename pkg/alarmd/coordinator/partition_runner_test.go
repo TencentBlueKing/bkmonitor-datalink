@@ -80,6 +80,79 @@ func TestPartitionRunnerRetriesOnlyOffsetAfterCommitFailure(t *testing.T) {
 	}
 }
 
+func TestPartitionRunnerRetriesEvaluationOnRegisteredOffset(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("provider unavailable")
+	evaluateCalls, criticalCalls, offsetCalls := 0, 0, 0
+	runner := newTestPartitionRunner(t,
+		messageEvaluatorFunc(func(context.Context, *inputv2.EvaluationInput) (MessageResult, error) {
+			evaluateCalls++
+			if evaluateCalls == 1 {
+				return MessageResult{}, want
+			}
+			return MessageResult{Receipt: &contract.MessageReceiptV1{MessageID: "message-41"}}, nil
+		}),
+		criticalCompletionFunc(func(context.Context, CriticalResult) error { criticalCalls++; return nil }),
+		partitionOffsetCommitterFunc(func(context.Context, int64) error { offsetCalls++; return nil }),
+		receiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
+	)
+	input := &inputv2.EvaluationInput{}
+	if err := runner.Process(context.Background(), 41, input); !errors.Is(err, want) {
+		t.Fatalf("Process() error = %v, want %v", err, want)
+	}
+	if err := runner.Process(context.Background(), 41, input); err == nil {
+		t.Fatal("duplicate Process() bypassed offset registration discipline")
+	}
+	if evaluateCalls != 1 {
+		t.Fatalf("duplicate Process() evaluation calls = %d, want 1", evaluateCalls)
+	}
+	if err := runner.Retry(context.Background(), 41, input); err != nil {
+		t.Fatalf("Retry() error = %v", err)
+	}
+	if evaluateCalls != 2 || criticalCalls != 1 || offsetCalls != 1 {
+		t.Fatalf("calls = evaluate:%d critical:%d offset:%d", evaluateCalls, criticalCalls, offsetCalls)
+	}
+}
+
+func TestPartitionRunnerRetriesCriticalCompletionOnRegisteredOffset(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("event output unavailable")
+	evaluateCalls, criticalCalls, offsetCalls := 0, 0, 0
+	runner := newTestPartitionRunner(t,
+		messageEvaluatorFunc(func(context.Context, *inputv2.EvaluationInput) (MessageResult, error) {
+			evaluateCalls++
+			return MessageResult{
+				CriticalResult: CriticalResult{Events: []contract.TriggerEventV1{{EventID: "stable-event-1"}}},
+				Receipt:        &contract.MessageReceiptV1{MessageID: "message-41"},
+			}, nil
+		}),
+		criticalCompletionFunc(func(_ context.Context, result CriticalResult) error {
+			criticalCalls++
+			if len(result.Events) != 1 || result.Events[0].EventID != "stable-event-1" {
+				t.Fatalf("critical retry changed stable event identity: %#v", result.Events)
+			}
+			if criticalCalls == 1 {
+				return want
+			}
+			return nil
+		}),
+		partitionOffsetCommitterFunc(func(context.Context, int64) error { offsetCalls++; return nil }),
+		receiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
+	)
+	input := &inputv2.EvaluationInput{}
+	if err := runner.Process(context.Background(), 41, input); !errors.Is(err, want) {
+		t.Fatalf("Process() error = %v, want %v", err, want)
+	}
+	if err := runner.Retry(context.Background(), 41, input); err != nil {
+		t.Fatalf("Retry() error = %v", err)
+	}
+	if evaluateCalls != 2 || criticalCalls != 2 || offsetCalls != 1 {
+		t.Fatalf("calls = evaluate:%d critical:%d offset:%d", evaluateCalls, criticalCalls, offsetCalls)
+	}
+}
+
 func newTestPartitionRunner(
 	t testing.TB,
 	evaluator MessageEvaluator,

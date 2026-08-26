@@ -75,6 +75,22 @@ func (tracker *PartitionCompletionTracker) Complete(offset int64, receipt *contr
 	return nil
 }
 
+func (tracker *PartitionCompletionTracker) requireRetryable(offset int64) error {
+	if tracker == nil {
+		return errors.New("alarmd coordinator: completion tracker is required")
+	}
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	entry, ok := tracker.byOffset[offset]
+	if !ok {
+		return errors.New("alarmd coordinator: cannot retry an unregistered offset")
+	}
+	if entry.complete {
+		return errors.New("alarmd coordinator: completed offset only permits commit retry")
+	}
+	return nil
+}
+
 func (tracker *PartitionCompletionTracker) NextCommit() (int64, []*contract.MessageReceiptV1, bool) {
 	if tracker == nil {
 		return 0, nil, false

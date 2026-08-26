@@ -55,6 +55,22 @@ func (runner *PartitionRunner) Process(ctx context.Context, offset int64, input 
 	if err := runner.tracker.Register(offset); err != nil {
 		return err
 	}
+	return runner.processRegistered(ctx, offset, input)
+}
+
+// Retry reruns one already registered, incomplete message. It deliberately
+// does not relax Register: a duplicate broker delivery must still be rejected.
+func (runner *PartitionRunner) Retry(ctx context.Context, offset int64, input *inputv2.EvaluationInput) error {
+	if runner == nil || runner.evaluator == nil || runner.critical == nil || runner.tracker == nil || runner.committer == nil {
+		return errors.New("alarmd coordinator: initialized partition runner is required")
+	}
+	if err := runner.tracker.requireRetryable(offset); err != nil {
+		return err
+	}
+	return runner.processRegistered(ctx, offset, input)
+}
+
+func (runner *PartitionRunner) processRegistered(ctx context.Context, offset int64, input *inputv2.EvaluationInput) error {
 	result, err := runner.evaluator.EvaluateMessage(ctx, input)
 	if err != nil {
 		return err

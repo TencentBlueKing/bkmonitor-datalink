@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -77,6 +78,7 @@ type RedisProvider struct {
 	// 外层 key: namespace, 内层 key: resource/relation name
 	resourceDefinitions map[string]map[string]*ResourceDefinition
 	relationDefinitions map[string]map[string]*RelationDefinition
+	customRelations     map[string]map[string]*CustomRelationStatus
 	mu                  sync.RWMutex
 
 	// 订阅回调列表，在数据变更时通知
@@ -126,6 +128,7 @@ func NewRedisProvider(ctx context.Context, client redis.UniversalClient, opts ..
 		config:              config,
 		resourceDefinitions: make(map[string]map[string]*ResourceDefinition),
 		relationDefinitions: make(map[string]map[string]*RelationDefinition),
+		customRelations:     make(map[string]map[string]*CustomRelationStatus),
 		ctx:                 ctx,
 		cancel:              cancel,
 	}
@@ -176,6 +179,9 @@ func (rp *RedisProvider) loadAllEntities() error {
 	if err := rp.loadEntitiesByKind(KindRelationDefinition); err != nil {
 		return fmt.Errorf("failed to load relation definitions: %w", err)
 	}
+	if err := rp.loadEntitiesByKind(KindCustomRelationStatus); err != nil {
+		return fmt.Errorf("failed to load custom relation statuses: %w", err)
+	}
 
 	resourceCount := 0
 	for _, nsMap := range rp.resourceDefinitions {
@@ -183,6 +189,9 @@ func (rp *RedisProvider) loadAllEntities() error {
 	}
 	relationCount := 0
 	for _, nsMap := range rp.relationDefinitions {
+		relationCount += len(nsMap)
+	}
+	for _, nsMap := range rp.customRelations {
 		relationCount += len(nsMap)
 	}
 
@@ -242,6 +251,18 @@ func (rp *RedisProvider) loadEntityByKind(kind, namespace, name, jsonData string
 		}
 		rp.relationDefinitions[normalizedNs][name] = &def
 		rp.mu.Unlock()
+
+	case KindCustomRelationStatus:
+		var status CustomRelationStatus
+		if err := json.Unmarshal([]byte(jsonData), &status); err != nil {
+			return fmt.Errorf("failed to unmarshal CustomRelationStatus: %w", err)
+		}
+		rp.mu.Lock()
+		if _, ok := rp.customRelations[normalizedNs]; !ok {
+			rp.customRelations[normalizedNs] = make(map[string]*CustomRelationStatus)
+		}
+		rp.customRelations[normalizedNs][name] = &status
+		rp.mu.Unlock()
 	}
 	return nil
 }
@@ -260,6 +281,8 @@ func (rp *RedisProvider) reloadNamespace(kind, namespace string) error {
 			delete(rp.resourceDefinitions, normalizedNs)
 		case KindRelationDefinition:
 			delete(rp.relationDefinitions, normalizedNs)
+		case KindCustomRelationStatus:
+			delete(rp.customRelations, normalizedNs)
 		}
 		rp.mu.Unlock()
 		rp.config.Logger.Infof("cleared namespace cache: kind=%s, ns=%s", kind, namespace)
@@ -302,6 +325,20 @@ func (rp *RedisProvider) reloadNamespace(kind, namespace string) error {
 		rp.mu.Lock()
 		rp.relationDefinitions[normalizedNs] = newMap
 		rp.mu.Unlock()
+
+	case KindCustomRelationStatus:
+		newMap := make(map[string]*CustomRelationStatus, len(entities))
+		for name, jsonData := range entities {
+			var status CustomRelationStatus
+			if unmarshalErr := json.Unmarshal(jsonData, &status); unmarshalErr != nil {
+				rp.config.Logger.Warnf("failed to unmarshal CustomRelationStatus %s:%s: %v", namespace, name, unmarshalErr)
+				continue
+			}
+			newMap[name] = &status
+		}
+		rp.mu.Lock()
+		rp.customRelations[normalizedNs] = newMap
+		rp.mu.Unlock()
 	}
 
 	rp.config.Logger.Infof("reloaded namespace cache: kind=%s, ns=%s, count=%d", kind, namespace, len(entities))
@@ -321,6 +358,7 @@ func (rp *RedisProvider) subscribeEntities() {
 	channels := []string{
 		fmt.Sprintf("%s:%s%s", RedisKeyPrefix, KindResourceDefinition, DefaultRedisPubSubChannelSuffix),
 		fmt.Sprintf("%s:%s%s", RedisKeyPrefix, KindRelationDefinition, DefaultRedisPubSubChannelSuffix),
+		fmt.Sprintf("%s:%s%s", RedisKeyPrefix, KindCustomRelationStatus, DefaultRedisPubSubChannelSuffix),
 	}
 
 	retryCount := 0
@@ -482,6 +520,9 @@ func (rp *RedisProvider) GetRelationDefinition(namespace, name string) (*Relatio
 			return def, nil
 		}
 	}
+	if def := rp.customRelationDefinition(ns, name); def != nil {
+		return def, nil
+	}
 
 	// 如果指定 namespace 没找到，尝试从 __all__ 查找
 	if ns != NamespaceAll {
@@ -490,10 +531,37 @@ func (rp *RedisProvider) GetRelationDefinition(namespace, name string) (*Relatio
 				return def, nil
 			}
 		}
+		if def := rp.customRelationDefinition(NamespaceAll, name); def != nil {
+			return def, nil
+		}
 	}
 
 	rp.config.Logger.Debugf("relation definition not found: namespace=%s, name=%s", namespace, name)
 	return nil, ErrRelationDefinitionNotFound
+}
+
+func customRelationName(fromResource, toResource string) string {
+	resources := []string{fromResource, toResource}
+	sort.Strings(resources)
+	return fmt.Sprintf("%s_with_%s_relation", resources[0], resources[1])
+}
+
+func (rp *RedisProvider) customRelationDefinition(namespace, name string) *RelationDefinition {
+	for _, status := range rp.customRelations[namespace] {
+		if customRelationName(status.FromResource, status.ToResource) != name {
+			continue
+		}
+		return &RelationDefinition{
+			Namespace:     status.Namespace,
+			Name:          name,
+			FromResource:  status.FromResource,
+			ToResource:    status.ToResource,
+			Category:      string(RelationCategoryStatic),
+			IsDirectional: false,
+			Labels:        status.Labels,
+		}
+	}
+	return nil
 }
 
 // ListRelationDefinitions 列出指定命名空间下的所有关联定义
@@ -512,6 +580,14 @@ func (rp *RedisProvider) ListRelationDefinitions(namespace string) ([]*RelationD
 			seen[name] = struct{}{}
 		}
 	}
+	for _, status := range rp.customRelations[ns] {
+		name := customRelationName(status.FromResource, status.ToResource)
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		result = append(result, rp.customRelationDefinition(ns, name))
+		seen[name] = struct{}{}
+	}
 
 	// 合并 __all__（指定 namespace 优先）
 	if ns != NamespaceAll {
@@ -522,6 +598,14 @@ func (rp *RedisProvider) ListRelationDefinitions(namespace string) ([]*RelationD
 				}
 			}
 		}
+		for _, status := range rp.customRelations[NamespaceAll] {
+			name := customRelationName(status.FromResource, status.ToResource)
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			result = append(result, rp.customRelationDefinition(NamespaceAll, name))
+			seen[name] = struct{}{}
+		}
 	}
 	return result, nil
 }
@@ -529,13 +613,20 @@ func (rp *RedisProvider) ListRelationDefinitions(namespace string) ([]*RelationD
 // ListAllRelationDefinitions 返回所有命名空间下的关联定义，按 namespace 分组
 func (rp *RedisProvider) ListAllRelationDefinitions() (map[string][]*RelationDefinition, error) {
 	rp.mu.RLock()
-	defer rp.mu.RUnlock()
+	namespaces := make(map[string]struct{}, len(rp.relationDefinitions)+len(rp.customRelations))
+	for ns := range rp.relationDefinitions {
+		namespaces[ns] = struct{}{}
+	}
+	for ns := range rp.customRelations {
+		namespaces[ns] = struct{}{}
+	}
+	rp.mu.RUnlock()
 
-	result := make(map[string][]*RelationDefinition, len(rp.relationDefinitions))
-	for ns, nsMap := range rp.relationDefinitions {
-		defs := make([]*RelationDefinition, 0, len(nsMap))
-		for _, def := range nsMap {
-			defs = append(defs, def)
+	result := make(map[string][]*RelationDefinition, len(namespaces))
+	for ns := range namespaces {
+		defs, err := rp.ListRelationDefinitions(ns)
+		if err != nil {
+			return nil, err
 		}
 		result[ns] = defs
 	}

@@ -224,7 +224,7 @@ func (store *Store) LoadWindows(ctx context.Context, request LoadWindowsRequest)
 			values, err := items[start].target.Backend.MGet(ctx, keys)
 			if err != nil {
 				observation.ReasonCode = contract.ReasonRedisUnavailable
-				return result, fmt.Errorf("state: load target %s: %w", targetName, err)
+				return result, &DependencyError{Operation: DependencyOperationLoad, Target: targetName, Err: err}
 			}
 			responseBytes := byteSlicesBytes(values)
 			observation.ResponseBytes += responseBytes
@@ -366,7 +366,7 @@ func (store *Store) WriteWindows(ctx context.Context, request WriteWindowsReques
 			observation.RequestBytes += writesBytes(writes)
 			if err := items[start].target.Backend.SetMany(ctx, writes); err != nil {
 				observation.ReasonCode = contract.ReasonStateWriteRetryable
-				return result, fmt.Errorf("state: write target %s: %w", targetName, err)
+				return result, &DependencyError{Operation: DependencyOperationWrite, Target: targetName, Err: err}
 			}
 			for index := start; index < end; index++ {
 				items[index].window.MarkPersisted()

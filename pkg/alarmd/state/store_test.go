@@ -139,6 +139,11 @@ func TestStoreWritesOnlyChangedWindowsWithTTLAndRetriesFailedBatch(t *testing.T)
 	backend.writeErr = errors.New("redis unavailable")
 	if _, err := store.WriteWindows(context.Background(), WriteWindowsRequest{Items: loaded.Items}); err == nil {
 		t.Fatal("WriteWindows() error = nil, want retryable backend error")
+	} else {
+		var dependency *DependencyError
+		if !errors.As(err, &dependency) || dependency.Operation != DependencyOperationWrite || dependency.Target != "monitor-01" || !errors.Is(err, backend.writeErr) {
+			t.Fatalf("WriteWindows() error = %#v, want typed write dependency error", err)
+		}
 	}
 	if !loaded.Items[0].Window.Changed() {
 		t.Fatal("failed write cleared changed state")
@@ -502,6 +507,11 @@ func TestStoreReportsBoundedBackendOperationsToObserver(t *testing.T) {
 		Items: loadSpecs([]RuntimeIdentity{storeIdentity("12", "b")}, requirement),
 	}); err == nil {
 		t.Fatal("LoadWindows() error = nil, want dependency error")
+	} else {
+		var dependency *DependencyError
+		if !errors.As(err, &dependency) || dependency.Operation != DependencyOperationLoad || dependency.Target != "monitor-01" || !errors.Is(err, backend.readErr) {
+			t.Fatalf("LoadWindows() error = %#v, want typed load dependency error", err)
+		}
 	}
 	last := observations[len(observations)-1]
 	if last.Operation != OperationLoad || last.Result != OperationFailed ||

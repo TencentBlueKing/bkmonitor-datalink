@@ -25,6 +25,28 @@ type TriggerEventSink struct {
 	core *DecisionSink
 }
 
+// triggerEventDependencyError marks only an attempted broker write whose ACK
+// failed or is unknown. Encoding and local lifecycle errors remain ordinary.
+type triggerEventDependencyError struct {
+	err error
+}
+
+func (err *triggerEventDependencyError) Error() string {
+	if err == nil || err.err == nil {
+		return "kafka trigger event sink: output dependency failure"
+	}
+	return err.err.Error()
+}
+
+func (err *triggerEventDependencyError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.err
+}
+
+func (err *triggerEventDependencyError) RetryableOutputDependency() {}
+
 func OpenTriggerEventSink(coordinates DecisionSinkConfig) (*TriggerEventSink, error) {
 	config, err := NewDecisionProducerConfig(coordinates)
 	if err != nil {
@@ -61,6 +83,12 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 	if sink == nil || sink.core == nil {
 		return ErrDecisionSinkClosed
 	}
+	if ctx == nil {
+		return errors.New("kafka trigger event sink: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	messages := make([]*sarama.ProducerMessage, len(events))
 	for index := range events {
 		payload, err := contract.EncodeTriggerEventV1(&events[index])
@@ -74,7 +102,11 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 		}
 	}
 	if err := sink.core.writeMessages(ctx, messages); err != nil {
-		return fmt.Errorf("kafka trigger event sink: publish batch: %w", err)
+		publishErr := fmt.Errorf("kafka trigger event sink: publish batch: %w", err)
+		if errors.Is(err, ErrDecisionSinkClosed) || ctx.Err() != nil {
+			return publishErr
+		}
+		return &triggerEventDependencyError{err: publishErr}
 	}
 	return nil
 }

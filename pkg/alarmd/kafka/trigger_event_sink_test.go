@@ -101,11 +101,58 @@ func TestTriggerEventSinkReturnsBrokerFailureForReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{triggerEventGolden(t)}); !errors.Is(err, want) {
+	err = sink.WriteBatch(context.Background(), []contract.TriggerEventV1{triggerEventGolden(t)})
+	if !errors.Is(err, want) {
 		t.Fatalf("WriteBatch() error = %v, want broker error", err)
+	}
+	var retryable interface{ RetryableOutputDependency() }
+	if !errors.As(err, &retryable) {
+		t.Fatalf("WriteBatch() error = %T, want retryable output dependency marker", err)
 	}
 	if err := sink.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTriggerEventSinkDoesNotMarkEncodingFailureRetryable(t *testing.T) {
+	t.Parallel()
+
+	event := triggerEventGolden(t)
+	event.EventID = "invalid"
+	sink, err := newTriggerEventSink("alarmd-trigger-event-shadow", &fakeSyncProducer{}, &fakeCloser{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = sink.WriteBatch(context.Background(), []contract.TriggerEventV1{event})
+	if err == nil {
+		t.Fatal("WriteBatch() accepted invalid event")
+	}
+	var retryable interface{ RetryableOutputDependency() }
+	if errors.As(err, &retryable) {
+		t.Fatalf("WriteBatch() encoding error = %T, must not be retryable dependency", err)
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTriggerEventSinkDoesNotMarkLocalLifecycleFailureRetryable(t *testing.T) {
+	t.Parallel()
+
+	sink, err := newTriggerEventSink("alarmd-trigger-event-shadow", &fakeSyncProducer{}, &fakeCloser{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatal(err)
+	}
+	err = sink.WriteBatch(context.Background(), []contract.TriggerEventV1{triggerEventGolden(t)})
+	if !errors.Is(err, ErrDecisionSinkClosed) {
+		t.Fatalf("WriteBatch() error = %v, want closed sink", err)
+	}
+	var retryable interface{ RetryableOutputDependency() }
+	if errors.As(err, &retryable) {
+		t.Fatalf("WriteBatch() lifecycle error = %T, must not be retryable dependency", err)
 	}
 }
 

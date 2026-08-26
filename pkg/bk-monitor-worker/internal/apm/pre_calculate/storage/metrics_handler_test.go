@@ -87,6 +87,10 @@ func TestMetricConfigOptionsBuiltinRelationEnabledForBiz(t *testing.T) {
 
 	MetricBuiltinRelationReport(false, []string{"7"}, "result-table-detail")(&options)
 	require.False(t, options.builtinRelationEnabledForBiz("7"))
+
+	MetricBuiltinRelationReport(true, nil, "result-table-detail")(&options)
+	require.True(t, options.builtinRelationEnabledForBiz("7"))
+	require.True(t, options.builtinRelationEnabledForBiz("42"))
 }
 
 func TestMetricDimensionsHandlerCleanUpAndReportDualWrite(t *testing.T) {

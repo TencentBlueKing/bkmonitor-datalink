@@ -3361,6 +3361,11 @@ func (s *SpaceRedisClearer) ClearRtDetail() {
 		if err := s.redisClient.HDel(cfg.ResultTableDetailKey, deleteBatch...); err != nil {
 			return err
 		}
+		for _, field := range deleteBatch {
+			if err := s.redisClient.Publish(cfg.ResultTableDetailDeleteChannel, field); err != nil {
+				return err
+			}
+		}
 		deletedCount += len(deleteBatch)
 		deleteBatch = deleteBatch[:0]
 		return nil

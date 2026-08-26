@@ -93,16 +93,16 @@ var (
 	ResultTableDetailKey string
 	// ResultTableDetailChannel 结果表详情channel
 	ResultTableDetailChannel string
+	// ResultTableDetailDeleteChannel 结果表详情删除channel
+	ResultTableDetailDeleteChannel string
 	// SpaceToResultTableKey 空间关联的结果表key
 	SpaceToResultTableKey string
 	// SpaceToResultTableChannel 空间关联的结果表channel
 	SpaceToResultTableChannel string
 	// BuildInResultTableDetailKey 空间关联内置上报rt详情
 	BuildInResultTableDetailKey string
-	// GraphRelationRouteKey Graph V4 业务关系动态路由快照
-	GraphRelationRouteKey string
-	// GraphRelationRouteChannel Graph V4 业务关系动态路由变更通知
-	GraphRelationRouteChannel string
+	// BuildInResultTableDetailChannel 空间关联内置上报rt详情channel
+	BuildInResultTableDetailChannel string
 	// BkAppToSpaceKey redis 中 bkApp 的 key
 	BkAppToSpaceKey string
 	// BkAppToSpaceChannelKey bkAppCode 关联 space 的 channel
@@ -197,11 +197,11 @@ func initMetadataVariables() {
 	DataLabelToResultTableChannel = GetValue("taskConfig.metadata.space.dataLabelToResultTableChannel", fmt.Sprintf("%s:data_label_to_result_table:channel", SpaceRedisKey))
 	ResultTableDetailKey = GetValue("taskConfig.metadata.space.resultTableDetailKey", fmt.Sprintf("%s:result_table_detail", SpaceRedisKey))
 	ResultTableDetailChannel = GetValue("taskConfig.metadata.space.resultTableDetailChannel", fmt.Sprintf("%s:result_table_detail:channel", SpaceRedisKey))
+	ResultTableDetailDeleteChannel = GetValue("taskConfig.metadata.space.resultTableDetailDeleteChannel", fmt.Sprintf("%s:result_table_detail:channel:delete", SpaceRedisKey))
 	SpaceToResultTableKey = GetValue("taskConfig.metadata.space.spaceToResultTableKey", fmt.Sprintf("%s:space_to_result_table", SpaceRedisKey))
 	SpaceToResultTableChannel = GetValue("taskConfig.metadata.space.spaceToResultTableChannel", fmt.Sprintf("%s:space_to_result_table:channel", SpaceRedisKey))
 	BuildInResultTableDetailKey = GetValue("taskConfig.metadata.space.buildInResultTableDetailKey", fmt.Sprintf("%s:built_in_result_table_detail", SpaceRedisKey))
-	GraphRelationRouteKey = GetValue("taskConfig.metadata.space.graphRelationRouteKey", fmt.Sprintf("%s:graph_relation_route", SpaceRedisKey))
-	GraphRelationRouteChannel = GetValue("taskConfig.metadata.space.graphRelationRouteChannel", fmt.Sprintf("%s:graph_relation_route:channel", SpaceRedisKey))
+	BuildInResultTableDetailChannel = GetValue("taskConfig.metadata.space.buildInResultTableDetailChannel", fmt.Sprintf("%s:built_in_result_table_detail:channel", SpaceRedisKey))
 	BkAppToSpaceKey = GetValue("taskConfig.metadata.space.bkAppSpace", fmt.Sprintf("%s:bk_app_to_space", SpaceRedisKey))
 	BkAppToSpaceChannelKey = GetValue("taskConfig.metadata.space.bkAppSpaceChannel", fmt.Sprintf("%s:bk_app_to_space:channel", SpaceRedisKey))
 

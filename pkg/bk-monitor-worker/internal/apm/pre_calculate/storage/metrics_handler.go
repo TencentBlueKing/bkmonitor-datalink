@@ -105,6 +105,9 @@ func (m MetricConfigOptions) builtinRelationEnabledForBiz(bkBizID string) bool {
 	if !m.builtinRelationEnabled {
 		return false
 	}
+	if len(m.builtinRelationBizIDs) == 0 {
+		return true
+	}
 	_, ok := m.builtinRelationBizIDs[bkBizID]
 	return ok
 }

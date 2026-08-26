@@ -123,8 +123,12 @@ func newRelationRouteProvider(ctx context.Context) storage.RelationRouteProvider
 	provider, err := storage.NewRedisRelationRouteProvider(
 		ctx,
 		redisInstance.Client,
-		config.GraphRelationRouteKey,
-		config.GraphRelationRouteChannel,
+		config.ResultTableDetailKey,
+		config.ResultTableDetailChannel,
+		config.ResultTableDetailDeleteChannel,
+		config.BuildInResultTableDetailKey,
+		config.BuildInResultTableDetailChannel,
+		config.EnableMultiTenantMode,
 	)
 	if err != nil {
 		apmLogger.Warnf("create relation route provider failed: %s", err)

@@ -147,8 +147,8 @@ taskConfig:
   # metadata: metadata任务配置
   metadata:
     space:
-      graphRelationRouteKey: "bkmonitorv3:spaces:graph_relation_route"
-      graphRelationRouteChannel: "bkmonitorv3:spaces:graph_relation_route:channel"
+      resultTableDetailDeleteChannel: "bkmonitorv3:spaces:result_table_detail:channel:delete"
+      buildInResultTableDetailChannel: "bkmonitorv3:spaces:built_in_result_table_detail:channel"
     global:
       customReportDefaultProxyIp: []
       ipv6SupportBizList: []

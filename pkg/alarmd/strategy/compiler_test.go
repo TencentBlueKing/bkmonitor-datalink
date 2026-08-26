@@ -205,6 +205,26 @@ func TestCompilerCalculatesTriggerRecoveryAndFingerprints(t *testing.T) {
 	}
 }
 
+func TestCompilerUsesTriggerWindowAsRetentionWhenRecoveryDisabled(t *testing.T) {
+	compiler := newTestCompiler(t)
+	plan := validPlan()
+	plan.StrategyIR.Levels[0].TriggerPlan.Config = json.RawMessage(`{"window_size":5,"required_anomalies":3,"step_seconds":60}`)
+	plan.StrategyIR.Levels[0].RecoveryPlan.Config = json.RawMessage(`{"enabled":false,"consecutive_windows":99}`)
+
+	compiled := mustCompilePlan(t, compiler, plan)
+	level := compiled.Levels()[0]
+	requirement := level.StateRequirement()
+	if requirement.RetentionPoints != 5 || requirement.RequiredDetectHistoryPoints != 5 {
+		t.Fatalf("StateRequirement() = %+v, want trigger window size 5", requirement)
+	}
+	if got := compiled.EvaluationSemantics().LatenessTolerance; got != 120 {
+		t.Fatalf("EvaluationSemantics().LatenessTolerance = %d, want separate value 120", got)
+	}
+	if got := level.ResourceEstimate().StatePointsPerSeries; got != uint64(requirement.RetentionPoints) {
+		t.Fatalf("ResourceEstimate().StatePointsPerSeries = %d, want %d", got, requirement.RetentionPoints)
+	}
+}
+
 func TestCompilerReturnsImmutableViews(t *testing.T) {
 	compiler := newTestCompiler(t)
 	plan := validPlan()

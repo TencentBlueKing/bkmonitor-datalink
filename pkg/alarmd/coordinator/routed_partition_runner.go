@@ -10,6 +10,7 @@
 package coordinator
 
 import (
+	"bytes"
 	"context"
 	"errors"
 )
@@ -33,6 +34,15 @@ type RoutedPartitionRunner struct {
 	rejected  RejectedMessageObserver
 	tracker   *PartitionCompletionTracker
 	committer *PartitionCommitter
+	tasks     map[int64]*routedMessageTask
+}
+
+type routedMessageTask struct {
+	payload      []byte
+	outcome      *MessageOutcome
+	eventsDone   bool
+	stateDone    bool
+	criticalDone bool
 }
 
 func NewRoutedPartitionRunner(
@@ -61,6 +71,7 @@ func NewRoutedPartitionRunnerWithObserver(
 	}
 	return &RoutedPartitionRunner{
 		router: router, critical: critical, rejected: rejected, tracker: tracker, committer: committer,
+		tasks: make(map[int64]*routedMessageTask),
 	}, nil
 }
 
@@ -71,7 +82,8 @@ func (runner *RoutedPartitionRunner) Process(ctx context.Context, offset int64, 
 	if err := runner.tracker.Register(offset); err != nil {
 		return err
 	}
-	return runner.processRegistered(ctx, offset, payload)
+	runner.tasks[offset] = &routedMessageTask{payload: append([]byte(nil), payload...)}
+	return runner.processRegistered(ctx, offset)
 }
 
 func (runner *RoutedPartitionRunner) Retry(ctx context.Context, offset int64, payload []byte) error {
@@ -81,14 +93,29 @@ func (runner *RoutedPartitionRunner) Retry(ctx context.Context, offset int64, pa
 	if err := runner.tracker.requireRetryable(offset); err != nil {
 		return err
 	}
-	return runner.processRegistered(ctx, offset, payload)
+	task, ok := runner.tasks[offset]
+	if !ok {
+		return errors.New("alarmd coordinator: retry task is missing")
+	}
+	if !bytes.Equal(task.payload, payload) {
+		return errors.New("alarmd coordinator: retry payload changed")
+	}
+	return runner.processRegistered(ctx, offset)
 }
 
-func (runner *RoutedPartitionRunner) processRegistered(ctx context.Context, offset int64, payload []byte) error {
-	outcome, err := runner.router.Route(ctx, payload)
-	if err != nil {
-		return err
+func (runner *RoutedPartitionRunner) processRegistered(ctx context.Context, offset int64) error {
+	task, ok := runner.tasks[offset]
+	if !ok {
+		return errors.New("alarmd coordinator: registered task is missing")
 	}
+	if task.outcome == nil {
+		outcome, err := runner.router.Route(ctx, task.payload)
+		if err != nil {
+			return err
+		}
+		task.outcome = &outcome
+	}
+	outcome := *task.outcome
 	switch outcome.Kind {
 	case MessageOutcomeRejected:
 		if outcome.Message != nil || outcome.Rejected == nil {
@@ -104,8 +131,24 @@ func (runner *RoutedPartitionRunner) processRegistered(ctx context.Context, offs
 		if outcome.Message == nil || outcome.Rejected != nil || outcome.Message.Receipt == nil {
 			return errors.New("alarmd coordinator: invalid completed message outcome")
 		}
-		if err := runner.critical.Complete(ctx, outcome.Message.CriticalResult); err != nil {
-			return err
+		if phased, ok := runner.critical.(CriticalPhaseCompletion); ok {
+			if !task.eventsDone {
+				if err := phased.CompleteEvents(ctx, outcome.Message.Events); err != nil {
+					return err
+				}
+				task.eventsDone = true
+			}
+			if !task.stateDone {
+				if err := phased.CompleteState(ctx, outcome.Message.StateWrite); err != nil {
+					return err
+				}
+				task.stateDone = true
+			}
+		} else if !task.criticalDone {
+			if err := runner.critical.Complete(ctx, outcome.Message.CriticalResult); err != nil {
+				return err
+			}
+			task.criticalDone = true
 		}
 		if err := runner.tracker.Complete(offset, outcome.Message.Receipt); err != nil {
 			return err
@@ -113,6 +156,7 @@ func (runner *RoutedPartitionRunner) processRegistered(ctx context.Context, offs
 	default:
 		return errors.New("alarmd coordinator: unsupported message outcome")
 	}
+	delete(runner.tasks, offset)
 	return runner.committer.CommitReady(ctx)
 }
 

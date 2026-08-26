@@ -26,6 +26,11 @@ type RuntimeStateWriter interface {
 	WriteWindows(context.Context, state.WriteWindowsRequest) (state.WriteWindowsResult, error)
 }
 
+type CriticalPhaseCompletion interface {
+	CompleteEvents(context.Context, []contract.TriggerEventV1) error
+	CompleteState(context.Context, state.WriteWindowsRequest) error
+}
+
 type CriticalResult struct {
 	Events     []contract.TriggerEventV1
 	StateWrite state.WriteWindowsRequest
@@ -50,19 +55,43 @@ func (completer *CriticalCompleter) Complete(ctx context.Context, result Critica
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if len(result.Events) > 0 {
-		if err := completer.events.WriteBatch(ctx, result.Events); err != nil {
-			return fmt.Errorf("alarmd coordinator: acknowledge TriggerEvent batch: %w", err)
-		}
+	if err := completer.CompleteEvents(ctx, result.Events); err != nil {
+		return err
 	}
-	if len(result.StateWrite.Items) == 0 {
+	return completer.CompleteState(ctx, result.StateWrite)
+}
+
+func (completer *CriticalCompleter) CompleteEvents(ctx context.Context, events []contract.TriggerEventV1) error {
+	if completer == nil || completer.events == nil {
+		return errors.New("alarmd coordinator: initialized critical event completer is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(events) == 0 {
 		return nil
 	}
-	written, err := completer.state.WriteWindows(ctx, result.StateWrite)
+	if err := completer.events.WriteBatch(ctx, events); err != nil {
+		return fmt.Errorf("alarmd coordinator: acknowledge TriggerEvent batch: %w", err)
+	}
+	return nil
+}
+
+func (completer *CriticalCompleter) CompleteState(ctx context.Context, request state.WriteWindowsRequest) error {
+	if completer == nil || completer.state == nil {
+		return errors.New("alarmd coordinator: initialized critical state completer is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(request.Items) == 0 {
+		return nil
+	}
+	written, err := completer.state.WriteWindows(ctx, request)
 	if err != nil {
 		return fmt.Errorf("alarmd coordinator: write runtime state: %w", err)
 	}
-	if len(written.Items) != len(result.StateWrite.Items) {
+	if len(written.Items) != len(request.Items) {
 		return errors.New("alarmd coordinator: runtime state writer returned incomplete results")
 	}
 	for index, item := range written.Items {

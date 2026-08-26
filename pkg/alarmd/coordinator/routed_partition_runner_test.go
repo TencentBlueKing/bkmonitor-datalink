@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
 
 func TestRoutedPartitionRunnerCompletesRawMessageInOrder(t *testing.T) {
@@ -143,6 +144,63 @@ func TestRoutedPartitionRunnerRetriesRegisteredRoutingFailure(t *testing.T) {
 	}
 }
 
+func TestRoutedPartitionRunnerResumesAfterEventACKWithoutRerouting(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("Redis unavailable")
+	routeCalls, eventCalls, stateCalls, offsetCalls := 0, 0, 0, 0
+	critical := &criticalPhaseCompletionSpy{
+		events: func(context.Context, []contract.TriggerEventV1) error { eventCalls++; return nil },
+		state: func(context.Context, state.WriteWindowsRequest) error {
+			stateCalls++
+			if stateCalls == 1 {
+				return want
+			}
+			return nil
+		},
+	}
+	runner := newTestRoutedPartitionRunner(t,
+		messageOutcomeRouterFunc(func(context.Context, []byte) (MessageOutcome, error) {
+			routeCalls++
+			return MessageOutcome{Kind: MessageOutcomeCompleted, Message: &MessageResult{
+				CriticalResult: CriticalResult{Events: []contract.TriggerEventV1{{EventID: "event-21"}}},
+				Receipt:        &contract.MessageReceiptV1{MessageID: "message-21"},
+			}}, nil
+		}),
+		critical,
+		partitionOffsetCommitterFunc(func(context.Context, int64) error { offsetCalls++; return nil }),
+		receiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
+	)
+	payload := []byte("payload")
+	if err := runner.Process(context.Background(), 21, payload); !errors.Is(err, want) {
+		t.Fatalf("Process() error = %v, want %v", err, want)
+	}
+	if err := runner.Retry(context.Background(), 21, payload); err != nil {
+		t.Fatal(err)
+	}
+	if routeCalls != 1 || eventCalls != 1 || stateCalls != 2 || offsetCalls != 1 {
+		t.Fatalf("calls route=%d event=%d state=%d offset=%d, want 1/1/2/1", routeCalls, eventCalls, stateCalls, offsetCalls)
+	}
+}
+
+func TestRoutedPartitionRunnerRejectsChangedRetryPayload(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("provider unavailable")
+	runner := newTestRoutedPartitionRunner(t,
+		messageOutcomeRouterFunc(func(context.Context, []byte) (MessageOutcome, error) { return MessageOutcome{}, want }),
+		criticalCompletionFunc(func(context.Context, CriticalResult) error { return nil }),
+		partitionOffsetCommitterFunc(func(context.Context, int64) error { return nil }),
+		receiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
+	)
+	if err := runner.Process(context.Background(), 5, []byte("first")); !errors.Is(err, want) {
+		t.Fatal(err)
+	}
+	if err := runner.Retry(context.Background(), 5, []byte("changed")); err == nil {
+		t.Fatal("Retry() accepted a changed payload")
+	}
+}
+
 func newTestRoutedPartitionRunner(
 	t testing.TB,
 	router MessageOutcomeRouter,
@@ -168,4 +226,24 @@ type rejectedMessageObserverFunc func(int64, RejectedOutcome)
 
 func (function rejectedMessageObserverFunc) ObserveRejected(offset int64, rejected RejectedOutcome) {
 	function(offset, rejected)
+}
+
+type criticalPhaseCompletionSpy struct {
+	events func(context.Context, []contract.TriggerEventV1) error
+	state  func(context.Context, state.WriteWindowsRequest) error
+}
+
+func (spy *criticalPhaseCompletionSpy) Complete(ctx context.Context, result CriticalResult) error {
+	if err := spy.CompleteEvents(ctx, result.Events); err != nil {
+		return err
+	}
+	return spy.CompleteState(ctx, result.StateWrite)
+}
+
+func (spy *criticalPhaseCompletionSpy) CompleteEvents(ctx context.Context, events []contract.TriggerEventV1) error {
+	return spy.events(ctx, events)
+}
+
+func (spy *criticalPhaseCompletionSpy) CompleteState(ctx context.Context, request state.WriteWindowsRequest) error {
+	return spy.state(ctx, request)
 }

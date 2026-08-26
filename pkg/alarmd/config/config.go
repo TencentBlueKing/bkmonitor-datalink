@@ -252,6 +252,9 @@ func (c Config) Validate() error {
 	if err := c.Limits.validate(); err != nil {
 		return err
 	}
+	if c.Limits.Reader.MaxEnvelopeBytes > enginekafka.MaxConsumerRecordBytes() {
+		return errors.New("limits.reader.max_envelope_bytes exceeds Kafka consumer record fetch budget")
+	}
 	if c.Limits.Trigger.MaxEvidenceBytesPerEvent > c.Kafka.TriggerEvent.MaxMessageBytes {
 		return errors.New("trigger_event max_message_bytes cannot admit maximum trigger evidence")
 	}

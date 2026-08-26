@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
 
@@ -155,7 +156,10 @@ func TestValidateRejectsInvalidRedisAndRuntimeBudgets(t *testing.T) {
 		"negative restart margin": func(cfg *Config) {
 			cfg.Redis.RestartMargin = Duration(-time.Second)
 		},
-		"zero reader budget":   func(cfg *Config) { cfg.Limits.Reader.MaxEnvelopeBytes = 0 },
+		"zero reader budget": func(cfg *Config) { cfg.Limits.Reader.MaxEnvelopeBytes = 0 },
+		"reader exceeds Kafka fetch": func(cfg *Config) {
+			cfg.Limits.Reader.MaxEnvelopeBytes = enginekafka.MaxConsumerRecordBytes() + 1
+		},
 		"zero compiler budget": func(cfg *Config) { cfg.Limits.Compiler.MaxPlanBytes = 0 },
 		"zero detect budget":   func(cfg *Config) { cfg.Limits.Detect.MaxPlans = 0 },
 		"zero trigger budget":  func(cfg *Config) { cfg.Limits.Trigger.MaxLevels = 0 },

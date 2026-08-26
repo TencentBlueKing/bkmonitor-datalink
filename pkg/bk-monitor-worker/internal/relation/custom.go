@@ -70,7 +70,7 @@ func ReportCustomRelationByNamespace(ctx context.Context, namespace string) erro
 	return reportCustomRelationStatuses(ctx, statuses)
 }
 
-func reportCustomRelationStatuses(ctx context.Context, statuses []relation.CustomRelationStatus) error {
+func reportCustomRelationStatuses(ctx context.Context, statuses []relation.CustomRelationStatus) (err error) {
 	if len(statuses) == 0 {
 		logger.Infof("[ReportCustomRelation] no custom relation status records found")
 		return nil
@@ -85,7 +85,10 @@ func reportCustomRelationStatuses(ctx context.Context, statuses []relation.Custo
 		return err
 	}
 	defer func() {
-		err = reporter.Close(ctx)
+		closeErr := reporter.Close(ctx)
+		if err == nil {
+			err = closeErr
+		}
 	}()
 
 	// 按 namespace 分组处理

@@ -1088,18 +1088,22 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 		if !exists {
 			continue
 		}
+		cluster, exists := clusterMap[row.StorageClusterID]
+		if !exists || cluster.ClusterType != models.StorageTypeSurrealdb || cluster.ClusterName == "" {
+			logger.Warnf(
+				"compose surrealdb detail: storage cluster is unavailable or invalid, tenant [%s], table_id [%s], cluster_id [%d]",
+				bkTenantId, binding.TableID, row.StorageClusterID,
+			)
+			continue
+		}
 		database := binding.BkbaseResultTableName
 		if database == "" {
 			database = binding.TableID
 		}
-		clusterName := ""
-		if cluster, exists := clusterMap[row.StorageClusterID]; exists && cluster.ClusterType == models.StorageTypeSurrealdb {
-			clusterName = cluster.ClusterName
-		}
 		surrealdbDetail := map[string]any{
 			"storage_id":   row.StorageClusterID,
-			"storage_name": clusterName,
-			"cluster_name": clusterName,
+			"storage_name": cluster.ClusterName,
+			"cluster_name": cluster.ClusterName,
 			"db":           database,
 			"database":     database,
 			"namespace":    binding.Namespace,

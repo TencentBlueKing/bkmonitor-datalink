@@ -31,7 +31,7 @@ func TestRelationRouteProviderReload(t *testing.T) {
 		context.Background(),
 		provider.resultTableDetailKey,
 		"7_bkcc_built_in_time_series.__default__",
-		`{"storage_type":"victoria_metrics","surrealdb":{"storage_id":2,"database":"7_relation","namespace":"mapleleaf_7"}}`,
+		`{"storage_type":"victoria_metrics","surrealdb":{"storage_id":2,"database":"7_relation","namespace":"mapleleaf_7","cluster_name":"surrealdb-main"}}`,
 	).Err())
 
 	require.NoError(t, provider.reload())
@@ -46,12 +46,15 @@ func TestRelationRouteProviderReload(t *testing.T) {
 
 func TestHasSurrealDBRoute(t *testing.T) {
 	require.True(t, hasSurrealDBRoute(
-		`{"storage_type":"surrealdb","storage_id":2,"database":"relation","namespace":"mapleleaf_7"}`,
+		`{"storage_type":"surrealdb","storage_id":2,"database":"relation","namespace":"mapleleaf_7","cluster_name":"surrealdb-main"}`,
 	))
 	require.True(t, hasSurrealDBRoute(
-		`{"storage_type":"victoria_metrics","surrealdb":{"storage_id":2,"db":"relation","namespace":"mapleleaf_7"}}`,
+		`{"storage_type":"victoria_metrics","surrealdb":{"storage_id":2,"db":"relation","namespace":"mapleleaf_7","cluster_name":"surrealdb-main"}}`,
 	))
 	require.False(t, hasSurrealDBRoute(
 		`{"storage_type":"victoria_metrics","surrealdb":{"storage_id":2,"database":"relation"}}`,
+	))
+	require.False(t, hasSurrealDBRoute(
+		`{"storage_type":"surrealdb","storage_id":2,"database":"relation","namespace":"mapleleaf_7"}`,
 	))
 }

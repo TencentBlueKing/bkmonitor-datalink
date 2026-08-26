@@ -166,7 +166,16 @@ func validSurrealDBRoute(route map[string]json.RawMessage) bool {
 			_ = json.Unmarshal(value, &database)
 		}
 	}
-	return database != ""
+	var clusterName string
+	if value, ok := route["cluster_name"]; ok {
+		_ = json.Unmarshal(value, &clusterName)
+	}
+	if clusterName == "" {
+		if value, ok := route["storage_name"]; ok {
+			_ = json.Unmarshal(value, &clusterName)
+		}
+	}
+	return database != "" && clusterName != ""
 }
 
 func (p *relationRouteProviderImpl) watch() {

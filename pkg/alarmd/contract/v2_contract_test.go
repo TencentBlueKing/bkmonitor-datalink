@@ -1209,7 +1209,7 @@ func TestReceiptAndSummaryStrictRoundTrip(t *testing.T) {
 		PlanSetDigest: strings.Repeat("2", 64), SourceWindow: SourceWindowV2{FromTime: 1, UntilTime: 2},
 		Status:  ReceiptStatusCompleted,
 		Counts:  ReceiptCountsV1{Received: 1, Selected: 1, Processed: 1},
-		PerPlan: []PlanReceiptV1{{PlanID: "1001", Selected: 1, Normal: 1, ResultIdentityDigest: strings.Repeat("3", 64)}},
+		PerPlan: []PlanReceiptV1{{PlanID: "1001", Selected: 1, Normal: 1}},
 	})
 	if err != nil {
 		t.Fatalf("BuildMessageReceiptV1() error = %v", err)
@@ -1228,6 +1228,19 @@ func TestReceiptAndSummaryStrictRoundTrip(t *testing.T) {
 	unknown := append(payload[:len(payload)-1], []byte(`,"future":true}`)...)
 	if _, err := DecodeMessageReceiptV1(unknown); err == nil {
 		t.Fatal("DecodeMessageReceiptV1() accepted an unknown 1.0 field")
+	}
+	var legacy map[string]any
+	if err := json.Unmarshal(payload, &legacy); err != nil {
+		t.Fatalf("decode receipt for legacy-field test: %v", err)
+	}
+	legacyPerPlan := legacy["per_plan"].([]any)
+	legacyPerPlan[0].(map[string]any)["result_identity_digest"] = strings.Repeat("3", 64)
+	legacyPayload, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("encode receipt with legacy field: %v", err)
+	}
+	if _, err := DecodeMessageReceiptV1(legacyPayload); err == nil {
+		t.Fatal("DecodeMessageReceiptV1() accepted removed result_identity_digest field")
 	}
 
 	summary, err := BuildExecutionSummaryV1(ExecutionSummaryV1{
@@ -1257,8 +1270,8 @@ func TestMessageReceiptV1CountModel(t *testing.T) {
 	valid := validMessageReceiptV1ForTest()
 	valid.Counts = ReceiptCountsV1{Received: 2, Selected: 3, Processed: 2, Unavailable: 1, Events: 1}
 	valid.PerPlan = []PlanReceiptV1{
-		{PlanID: "1001", Selected: 2, Abnormal: 1, Unavailable: 1, ResultIdentityDigest: strings.Repeat("3", 64)},
-		{PlanID: "1002", Selected: 1, Normal: 1, ResultIdentityDigest: strings.Repeat("4", 64)},
+		{PlanID: "1001", Selected: 2, Abnormal: 1, Unavailable: 1},
+		{PlanID: "1002", Selected: 1, Normal: 1},
 	}
 	valid.ReasonCounts = []ReasonCountV1{{ReasonCode: ReasonRequiredValueMissing, Count: 1}}
 	if _, err := BuildMessageReceiptV1(valid); err != nil {
@@ -1698,7 +1711,7 @@ func validMessageReceiptV1ForTest() MessageReceiptV1 {
 		PlanSetDigest: strings.Repeat("2", 64), SourceWindow: SourceWindowV2{FromTime: 1, UntilTime: 2},
 		Status:  ReceiptStatusCompleted,
 		Counts:  ReceiptCountsV1{Received: 1, Selected: 1, Processed: 1},
-		PerPlan: []PlanReceiptV1{{PlanID: "1001", Selected: 1, Normal: 1, ResultIdentityDigest: strings.Repeat("3", 64)}},
+		PerPlan: []PlanReceiptV1{{PlanID: "1001", Selected: 1, Normal: 1}},
 	}
 }
 

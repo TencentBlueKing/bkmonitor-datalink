@@ -449,7 +449,6 @@ type PlanReceiptV1 struct {
 	Unavailable           uint64 `json:"unavailable"`
 	Terminal              uint64 `json:"terminal"`
 	LevelTerminalAffected uint64 `json:"level_terminal_affected"`
-	ResultIdentityDigest  string `json:"result_identity_digest"`
 }
 
 type ReceiptCountsV1 struct {

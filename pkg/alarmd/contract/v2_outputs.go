@@ -478,8 +478,7 @@ func EncodeExecutionSummaryV1(summary *ExecutionSummaryV1) ([]byte, error) {
 func sortedPlanReceiptsV1(values []PlanReceiptV1) bool {
 	previous := ""
 	for index, value := range values {
-		if !canonicalDecimalPattern.MatchString(value.PlanID) || !sha256Pattern.MatchString(value.ResultIdentityDigest) ||
-			(index > 0 && compareCanonicalDecimal(value.PlanID, previous) <= 0) {
+		if !canonicalDecimalPattern.MatchString(value.PlanID) || (index > 0 && compareCanonicalDecimal(value.PlanID, previous) <= 0) {
 			return false
 		}
 		previous = value.PlanID
@@ -594,7 +593,7 @@ func DecodeMessageReceiptV1(payload []byte) (*MessageReceiptV1, error) {
 	if _, err := validateJSONObjectFields(object["counts"], "message_receipt.counts", []string{"received", "selected", "processed", "unavailable", "terminal", "level_terminal_affected", "events"}, nil, false); err != nil {
 		return nil, err
 	}
-	if err := validateRawObjectArrayV1(object["per_plan"], "message_receipt.per_plan", []string{"plan_id", "selected", "abnormal", "normal", "recovery", "unavailable", "terminal", "level_terminal_affected", "result_identity_digest"}); err != nil {
+	if err := validateRawObjectArrayV1(object["per_plan"], "message_receipt.per_plan", []string{"plan_id", "selected", "abnormal", "normal", "recovery", "unavailable", "terminal", "level_terminal_affected"}); err != nil {
 		return nil, err
 	}
 	if err := validateRawObjectArrayV1(object["reason_counts"], "message_receipt.reason_counts", []string{"reason_code", "count"}); err != nil {

@@ -78,15 +78,16 @@ const (
 
 // ClusterStorageType
 const (
-	StorageTypeInfluxdb = "influxdb"
-	StorageTypeKafka    = "kafka"
-	StorageTypeES       = "elasticsearch"
-	StorageTypeRedis    = "redis"
-	StorageTypeBkdata   = "bkdata"
-	StorageTypeArgus    = "argus"
-	StorageTypeVM       = "victoria_metrics"
-	StorageTypeDoris    = "doris"
-	StorageTypeBkSql    = "bk_sql"
+	StorageTypeInfluxdb  = "influxdb"
+	StorageTypeKafka     = "kafka"
+	StorageTypeES        = "elasticsearch"
+	StorageTypeRedis     = "redis"
+	StorageTypeBkdata    = "bkdata"
+	StorageTypeArgus     = "argus"
+	StorageTypeVM        = "victoria_metrics"
+	StorageTypeDoris     = "doris"
+	StorageTypeSurrealdb = "surrealdb"
+	StorageTypeBkSql     = "bk_sql"
 )
 
 const (

@@ -52,6 +52,8 @@ func setupResultTableDetailMySQL(t *testing.T) *gorm.DB {
 		`CREATE TEMPORARY TABLE metadata_bcsclusterinfo (cluster_id VARCHAR(128), bk_tenant_id VARCHAR(256), K8sMetricDataID BIGINT, CustomMetricDataID BIGINT)`,
 		"CREATE TEMPORARY TABLE metadata_influxdbstorage (table_id VARCHAR(128), bk_tenant_id VARCHAR(256), influxdb_proxy_storage_id INTEGER, `database` VARCHAR(128), real_table_name VARCHAR(128), partition_tag VARCHAR(128))",
 		`CREATE TEMPORARY TABLE metadata_accessvmrecord (result_table_id VARCHAR(128), bk_tenant_id VARCHAR(256), vm_cluster_id INTEGER, vm_result_table_id VARCHAR(128))`,
+		`CREATE TEMPORARY TABLE metadata_surrealdbstorage (table_id VARCHAR(128), bk_tenant_id VARCHAR(256), storage_cluster_id INTEGER)`,
+		`CREATE TEMPORARY TABLE metadata_surrealdbbindingconfig (id INTEGER, table_id VARCHAR(255), bk_tenant_id VARCHAR(256), namespace VARCHAR(128), bkbase_result_table_name VARCHAR(255))`,
 		`CREATE TEMPORARY TABLE metadata_recordrule (table_id VARCHAR(128), bk_tenant_id VARCHAR(256), vm_cluster_id INTEGER, dst_vm_table_id VARCHAR(128), rule_metrics TEXT)`,
 	}
 	for _, statement := range statements {
@@ -447,6 +449,85 @@ func TestAccessVMRecordAndRecordRulePayloadsRemainCompatible(t *testing.T) {
 			},
 		}, details)
 		assert.Equal(t, 3, queryCount)
+	})
+
+	t.Run("full refresh includes complete surrealdb routes", func(t *testing.T) {
+		db := setupResultTableDetailMySQL(t)
+		const tenantID = "tenant-surreal-only"
+		execResultTableDetailSQL(t, db,
+			`INSERT INTO metadata_surrealdbstorage (table_id, bk_tenant_id, storage_cluster_id) VALUES (?, ?, ?)`,
+			"metric.surreal_only", tenantID, 7,
+		)
+		execResultTableDetailSQL(t, db,
+			`INSERT INTO metadata_surrealdbbindingconfig (table_id, bk_tenant_id, namespace, bkbase_result_table_name) VALUES (?, ?, ?, ?)`,
+			"metric.surreal_only", tenantID, "mapleleaf_2", "2_graph_rt",
+		)
+		execResultTableDetailSQL(t, db,
+			`INSERT INTO metadata_surrealdbstorage (table_id, bk_tenant_id, storage_cluster_id) VALUES (?, ?, ?)`,
+			"metric.storage_without_binding", tenantID, 7,
+		)
+		execResultTableDetailSQL(t, db,
+			`INSERT INTO metadata_surrealdbbindingconfig (table_id, bk_tenant_id, namespace, bkbase_result_table_name) VALUES (?, ?, ?, ?)`,
+			"metric.binding_without_storage", tenantID, "mapleleaf_2", "2_graph_rt_missing",
+		)
+
+		metricTableIDs, err := NewSpacePusher().listMetricTableIDs(tenantID, nil)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"metric.surreal_only"}, metricTableIDs)
+	})
+
+	t.Run("surrealdb route requires binding and storage", func(t *testing.T) {
+		db := setupResultTableDetailMySQL(t)
+		const tenantID = "tenant-incomplete-surreal"
+		const tableID = "metric.graph"
+		insertCluster(t, db, tenantID, 7, "surrealdb-prod", models.StorageTypeSurrealdb)
+		execResultTableDetailSQL(t, db,
+			`INSERT INTO metadata_surrealdbstorage (table_id, bk_tenant_id, storage_cluster_id) VALUES (?, ?, ?)`,
+			tableID, tenantID, 7,
+		)
+
+		clusterMap := loadRouteClustersForTest(t, db, tenantID)
+		details, err := NewSpacePusher().getTableInfoForAccessVMRecord(tenantID, []string{tableID}, clusterMap)
+
+		require.NoError(t, err)
+		assert.Empty(t, details)
+	})
+
+	t.Run("metric route keeps vm and exposes surrealdb sub-route", func(t *testing.T) {
+		db := setupResultTableDetailMySQL(t)
+		const tenantID = "tenant-dual-write"
+		const tableID = "metric.graph"
+		insertCluster(t, db, tenantID, 6, "vm-prod", models.StorageTypeVM)
+		insertCluster(t, db, tenantID, 7, "surrealdb-prod", models.StorageTypeSurrealdb)
+		execResultTableDetailSQL(t, db,
+			`INSERT INTO metadata_accessvmrecord (result_table_id, bk_tenant_id, vm_cluster_id, vm_result_table_id) VALUES (?, ?, ?, ?)`,
+			tableID, tenantID, 6, "vm_metric_target",
+		)
+		execResultTableDetailSQL(t, db,
+			`INSERT INTO metadata_surrealdbstorage (table_id, bk_tenant_id, storage_cluster_id) VALUES (?, ?, ?)`,
+			tableID, tenantID, 7,
+		)
+		execResultTableDetailSQL(t, db,
+			`INSERT INTO metadata_surrealdbbindingconfig (table_id, bk_tenant_id, namespace, bkbase_result_table_name) VALUES (?, ?, ?, ?)`,
+			tableID, tenantID, "mapleleaf_2", "2_graph_rt",
+		)
+
+		clusterMap := loadRouteClustersForTest(t, db, tenantID)
+		details, err := NewSpacePusher().getTableInfoForAccessVMRecord(tenantID, []string{tableID}, clusterMap)
+
+		require.NoError(t, err)
+		assert.Equal(t, models.StorageTypeVM, details[tableID]["storage_type"])
+		assert.Equal(t, uint(6), details[tableID]["storage_id"])
+		assert.Equal(t, map[string]any{
+			"storage_id":   uint(7),
+			"storage_name": "surrealdb-prod",
+			"cluster_name": "surrealdb-prod",
+			"db":           "2_graph_rt",
+			"database":     "2_graph_rt",
+			"namespace":    "mapleleaf_2",
+			"storage_type": models.StorageTypeSurrealdb,
+		}, details[tableID]["surrealdb"])
 	})
 
 	t.Run("RecordRule payload", func(t *testing.T) {

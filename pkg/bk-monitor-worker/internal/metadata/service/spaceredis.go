@@ -567,7 +567,55 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 	return dataLabelTableIdMap, nil
 }
 
-// refineTableIds 只保留当前租户具备 AccessVMRecord 或 ESStorage 链路的结果表。
+// listSurrealDBRouteTableIDs 只返回同时具备 Binding 和 Storage 记录的图结果表。
+// Binding 确定图链路关联的 RT，Storage 确认该 RT 已配置实际 SurrealDB 存储。
+func listSurrealDBRouteTableIDs(db *gorm.DB, bkTenantId string, tableIdList []string) ([]string, error) {
+	var bindingList []storage.SurrealDBBindingConfig
+	bindingQuery := storage.NewSurrealDBBindingConfigQuerySet(db).
+		Select(storage.SurrealDBBindingConfigDBSchema.TableID).
+		BkTenantIDEq(bkTenantId)
+	if len(tableIdList) == 0 {
+		if err := bindingQuery.All(&bindingList); err != nil {
+			return nil, err
+		}
+	} else {
+		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+			var tempList []storage.SurrealDBBindingConfig
+			if err := bindingQuery.TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
+				return nil, err
+			}
+			bindingList = append(bindingList, tempList...)
+		}
+	}
+
+	bindingTableIDSet := make(map[string]struct{}, len(bindingList))
+	for _, binding := range bindingList {
+		if binding.TableID != "" {
+			bindingTableIDSet[binding.TableID] = struct{}{}
+		}
+	}
+	bindingTableIDs := sortedTableIDSet(bindingTableIDSet)
+	if len(bindingTableIDs) == 0 {
+		return nil, nil
+	}
+
+	storageTableIDSet := make(map[string]struct{}, len(bindingTableIDs))
+	storageQuery := storage.NewSurrealDBStorageQuerySet(db).
+		Select(storage.SurrealDBStorageDBSchema.TableID).
+		BkTenantIDEq(bkTenantId)
+	for _, chunkTableIdList := range slicex.ChunkSlice(bindingTableIDs, 0) {
+		var storageList []storage.SurrealDBStorage
+		if err := storageQuery.TableIDIn(chunkTableIdList...).All(&storageList); err != nil {
+			return nil, err
+		}
+		for _, item := range storageList {
+			storageTableIDSet[item.TableID] = struct{}{}
+		}
+	}
+	return sortedTableIDSet(storageTableIDSet), nil
+}
+
+// refineTableIds 只保留当前租户具备 AccessVMRecord、ESStorage 或完整 SurrealDB 链路的结果表。
 // AccessVMRecord 需要兼容 default_storage 为 influxdb 的指标表。
 func (s *SpacePusher) refineTableIds(bkTenantId string, tableIdList []string) ([]string, error) {
 	db := mysql.GetDBSession().DB
@@ -612,6 +660,11 @@ func (s *SpacePusher) refineTableIds(bkTenantId string, tableIdList []string) ([
 		}
 	}
 
+	surrealdbTableIDs, err := listSurrealDBRouteTableIDs(db, bkTenantId, tableIdList)
+	if err != nil {
+		return nil, err
+	}
+
 	// 合并所有表 ID
 	var tableIds []string
 	for _, i := range vmRecordList {
@@ -620,6 +673,7 @@ func (s *SpacePusher) refineTableIds(bkTenantId string, tableIdList []string) ([
 	for _, i := range esStorageList {
 		tableIds = append(tableIds, i.TableID)
 	}
+	tableIds = append(tableIds, surrealdbTableIDs...)
 
 	// 去重
 	tableIds = slicex.RemoveDuplicate(&tableIds)
@@ -925,12 +979,50 @@ func (s *SpacePusher) getTableInfoForAccessVMRecord(
 	tableIdList []string,
 	clusterMap map[uint]storage.ClusterInfo,
 ) (map[string]map[string]any, error) {
-logger.Debugf("get table info from access vm records, table_id_list->[%v]", tableIdList)
+	logger.Debugf("get table info from access vm records, table_id_list->[%v]", tableIdList)
 	if len(tableIdList) == 0 {
 		return map[string]map[string]any{}, nil
 	}
 
 	db := mysql.GetDBSession().DB
+	// Binding 明确图链路对应的 RT、库名和命名空间，Storage 负责确认实际存储并提供集群 ID。
+	var surrealdbBindingList []storage.SurrealDBBindingConfig
+	if err := storage.NewSurrealDBBindingConfigQuerySet(db).
+		Select(
+			storage.SurrealDBBindingConfigDBSchema.TableID,
+			storage.SurrealDBBindingConfigDBSchema.Namespace,
+			storage.SurrealDBBindingConfigDBSchema.BkbaseResultTableName,
+		).
+		BkTenantIDEq(bkTenantId).
+		TableIDIn(tableIdList...).
+		All(&surrealdbBindingList); err != nil {
+		return nil, err
+	}
+	surrealdbTableIDSet := make(map[string]struct{}, len(surrealdbBindingList))
+	for _, binding := range surrealdbBindingList {
+		if binding.TableID != "" {
+			surrealdbTableIDSet[binding.TableID] = struct{}{}
+		}
+	}
+	surrealdbTableIDs := sortedTableIDSet(surrealdbTableIDSet)
+	var surrealdbStorageList []storage.SurrealDBStorage
+	if len(surrealdbTableIDs) != 0 {
+		if err := storage.NewSurrealDBStorageQuerySet(db).
+			Select(
+				storage.SurrealDBStorageDBSchema.TableID,
+				storage.SurrealDBStorageDBSchema.StorageClusterID,
+			).
+			BkTenantIDEq(bkTenantId).
+			TableIDIn(surrealdbTableIDs...).
+			All(&surrealdbStorageList); err != nil {
+			return nil, err
+		}
+	}
+	surrealdbStorageMap := make(map[string]storage.SurrealDBStorage, len(surrealdbStorageList))
+	for _, item := range surrealdbStorageList {
+		surrealdbStorageMap[item.TableID] = item
+	}
+
 	var vmRecordList []storage.AccessVMRecord
 	if err := storage.NewAccessVMRecordQuerySet(db).
 		Select(
@@ -968,7 +1060,8 @@ logger.Debugf("get table info from access vm records, table_id_list->[%v]", tabl
 		cmdbLevelVmrtMap[option.TableID] = option.Value
 	}
 
-	tableIdInfo := make(map[string]map[string]any, len(vmRecordList))
+	// 先保留原有 VM 路由；同表双写 SurrealDB 时再追加独立子路由。
+	tableIdInfo := make(map[string]map[string]any, len(vmRecordList)+len(surrealdbBindingList))
 	for _, record := range vmRecordList {
 		storageName := ""
 		if cluster, exists := clusterMap[record.VmClusterId]; exists && cluster.ClusterType == models.StorageTypeVM {
@@ -989,6 +1082,37 @@ logger.Debugf("get table info from access vm records, table_id_list->[%v]", tabl
 			"tags_key":         []string{},
 			"storage_type":     models.StorageTypeVM,
 		}
+	}
+	for _, binding := range surrealdbBindingList {
+		row, exists := surrealdbStorageMap[binding.TableID]
+		if !exists {
+			continue
+		}
+		database := binding.BkbaseResultTableName
+		if database == "" {
+			database = binding.TableID
+		}
+		clusterName := ""
+		if cluster, exists := clusterMap[row.StorageClusterID]; exists && cluster.ClusterType == models.StorageTypeSurrealdb {
+			clusterName = cluster.ClusterName
+		}
+		surrealdbDetail := map[string]any{
+			"storage_id":   row.StorageClusterID,
+			"storage_name": clusterName,
+			"cluster_name": clusterName,
+			"db":           database,
+			"database":     database,
+			"namespace":    binding.Namespace,
+			"storage_type": models.StorageTypeSurrealdb,
+		}
+		if detail, exists := tableIdInfo[binding.TableID]; exists {
+			detail[models.StorageTypeSurrealdb] = surrealdbDetail
+			continue
+		}
+		surrealdbDetail["measurement"] = ""
+		surrealdbDetail["vm_rt"] = ""
+		surrealdbDetail["tags_key"] = []string{}
+		tableIdInfo[binding.TableID] = surrealdbDetail
 	}
 	return tableIdInfo, nil
 }

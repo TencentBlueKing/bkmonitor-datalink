@@ -22,6 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	bmwHttp "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/http"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/daemon"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/periodic"
@@ -61,6 +62,7 @@ func startController(cmd *cobra.Command, args []string) {
 		}
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
+	relation.StartCustomRelationWatcher(ctx)
 
 	// 1. 任务监听器
 	taskWatcher := periodic.NewWatchService(ctx)

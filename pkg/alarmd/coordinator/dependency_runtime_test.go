@@ -17,7 +17,71 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
+
+func TestRetryingEffectiveTimeProviderRetriesOnlyMarkedDependencyErrors(t *testing.T) {
+	t.Parallel()
+
+	root := errors.New("calendar source unavailable")
+	provider := &effectiveTimeProviderStub{resolve: func(call int) ([]strategy.EffectiveTimeFact, error) {
+		if call == 1 {
+			return nil, &retryableEffectiveTimeStubError{err: root}
+		}
+		return []strategy.EffectiveTimeFact{{}}, nil
+	}}
+	transitions := make([]DependencyGateTransition, 0, 2)
+	gate := NewCriticalDependencyGate(func(transition DependencyGateTransition) {
+		transitions = append(transitions, transition)
+	})
+	retrying, err := NewRetryingEffectiveTimeProvider(provider, gate, immediateDependencyRetryConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := retrying.Resolve(context.Background(), nil)
+	if err != nil || len(facts) != 1 {
+		t.Fatalf("Resolve() = (%+v, %v), want one fact", facts, err)
+	}
+	if provider.calls != 2 || len(transitions) != 2 {
+		t.Fatalf("calls=%d transitions=%+v, want one retry with pause/resume", provider.calls, transitions)
+	}
+	if blocker := transitions[0].Current.Blockers; len(blocker) != 1 ||
+		blocker[0].Dependency != DependencyProvider || blocker[0].ReasonCode != contract.ReasonProviderUnavailable {
+		t.Fatalf("pause blockers = %+v, want provider unavailable", blocker)
+	}
+	if !gate.Ready() {
+		t.Fatalf("gate snapshot = %+v, want ready after provider recovery", gate.Snapshot())
+	}
+}
+
+func TestRetryingEffectiveTimeProviderDoesNotRetryUnknownOrLocalErrors(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "unknown", err: strategy.ErrEffectiveTimeUnknown},
+		{name: "local", err: errors.New("invalid provider response")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &effectiveTimeProviderStub{resolve: func(int) ([]strategy.EffectiveTimeFact, error) {
+				return nil, test.err
+			}}
+			gate := NewCriticalDependencyGate(nil)
+			retrying, err := NewRetryingEffectiveTimeProvider(provider, gate, immediateDependencyRetryConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := retrying.Resolve(context.Background(), nil); err != test.err {
+				t.Fatalf("Resolve() error = %v, want exact %v", err, test.err)
+			}
+			if provider.calls != 1 || !gate.Ready() {
+				t.Fatalf("calls=%d gate=%+v, want no retry and ready gate", provider.calls, gate.Snapshot())
+			}
+		})
+	}
+}
 
 func TestRetryingRuntimeStateRetriesOnlyMatchingDependencyOperations(t *testing.T) {
 	t.Parallel()
@@ -300,3 +364,23 @@ type retryableOutputStubError struct {
 func (err *retryableOutputStubError) Error() string              { return err.err.Error() }
 func (err *retryableOutputStubError) Unwrap() error              { return err.err }
 func (err *retryableOutputStubError) RetryableOutputDependency() {}
+
+type effectiveTimeProviderStub struct {
+	resolve func(int) ([]strategy.EffectiveTimeFact, error)
+	calls   int
+}
+
+func (stub *effectiveTimeProviderStub) Resolve(
+	context.Context, []strategy.EffectiveTimeRequest,
+) ([]strategy.EffectiveTimeFact, error) {
+	stub.calls++
+	return stub.resolve(stub.calls)
+}
+
+type retryableEffectiveTimeStubError struct {
+	err error
+}
+
+func (err *retryableEffectiveTimeStubError) Error() string                     { return err.err.Error() }
+func (err *retryableEffectiveTimeStubError) Unwrap() error                     { return err.err }
+func (err *retryableEffectiveTimeStubError) RetryableEffectiveTimeDependency() {}

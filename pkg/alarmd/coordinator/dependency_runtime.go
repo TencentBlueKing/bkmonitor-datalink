@@ -15,7 +15,50 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
+
+// RetryingEffectiveTimeProvider retries only source errors that explicitly
+// identify themselves as EffectiveTime dependency failures. UNKNOWN facts and
+// deterministic provider errors remain ordinary evaluation outcomes.
+type RetryingEffectiveTimeProvider struct {
+	provider strategy.EffectiveTimeProvider
+	retry    *DependencyRetry
+}
+
+func NewRetryingEffectiveTimeProvider(
+	provider strategy.EffectiveTimeProvider,
+	gate *CriticalDependencyGate,
+	config DependencyRetryConfig,
+) (*RetryingEffectiveTimeProvider, error) {
+	if provider == nil {
+		return nil, errors.New("alarmd coordinator: EffectiveTime provider is required")
+	}
+	retry, err := NewDependencyRetry(gate, DependencyBlocker{
+		Dependency: DependencyProvider, ReasonCode: contract.ReasonProviderUnavailable,
+	}, config)
+	if err != nil {
+		return nil, err
+	}
+	return &RetryingEffectiveTimeProvider{provider: provider, retry: retry}, nil
+}
+
+func (provider *RetryingEffectiveTimeProvider) Resolve(
+	ctx context.Context,
+	requests []strategy.EffectiveTimeRequest,
+) (facts []strategy.EffectiveTimeFact, err error) {
+	if provider == nil || provider.provider == nil || provider.retry == nil {
+		return nil, errors.New("alarmd coordinator: initialized retrying EffectiveTime provider is required")
+	}
+	err = provider.retry.Do(ctx, func(ctx context.Context) error {
+		facts, err = provider.provider.Resolve(ctx, requests)
+		if !isRetryableEffectiveTimeDependency(err) {
+			return err
+		}
+		return &RetryableDependencyError{Err: err}
+	})
+	return facts, err
+}
 
 // RetryingRuntimeState retries only typed Redis backend failures. Deterministic
 // validation, budget and state-shape errors leave the Store unchanged.
@@ -156,5 +199,13 @@ func isRetryableOutputDependency(err error) bool {
 		return false
 	}
 	var dependencyErr interface{ RetryableOutputDependency() }
+	return errors.As(err, &dependencyErr) && dependencyErr != nil
+}
+
+func isRetryableEffectiveTimeDependency(err error) bool {
+	if err == nil {
+		return false
+	}
+	var dependencyErr interface{ RetryableEffectiveTimeDependency() }
 	return errors.As(err, &dependencyErr) && dependencyErr != nil
 }

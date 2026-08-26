@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/coordinator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	inputv2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/input/adapter/v2"
@@ -237,6 +238,11 @@ func (health *applicationHealth) HealthSnapshot() observability.HealthSnapshot {
 		base.InflightMessages = snapshot.InflightRecords
 		base.ConsumerLagRecords = snapshot.ConsumerLagRecords
 		base.ConsumerLagKnown = snapshot.ConsumerLagKnown
+	}
+	if gate != nil {
+		for _, blocker := range gate.Snapshot().Blockers {
+			base.Reasons = append(base.Reasons, observability.ReasonCode(blocker.ReasonCode))
+		}
 	}
 	switch {
 	case fatal:
@@ -608,6 +614,10 @@ func openApplicationBundleWithFactories(
 	if effectiveTime == nil {
 		return cleanup(errors.New("alarmd runtime: EffectiveTime provider is required"))
 	}
+	effectiveTime, err = coordinator.NewRetryingEffectiveTimeProvider(effectiveTime, gate, cfg.DependencyRetryOptions())
+	if err != nil {
+		return cleanup(err)
+	}
 	pipeline, err := coordinator.NewEvaluationPipeline(coordinator.PipelineOptions{
 		Compiler:       compiler,
 		Detector:       detector,
@@ -648,7 +658,7 @@ func openApplicationBundleWithFactories(
 	}
 	partial.receipts = receipts
 	consumerCoordinates := cfg.Kafka.ConsumerCoordinates()
-	consumerCoordinates.Diagnostics = offsetResetDiagnostics(logger)
+	consumerCoordinates.Diagnostics = consumerDiagnostics(recorder, logger)
 	service, err := factories.openEvaluationService(
 		consumerCoordinates, router, &criticalCompletionRuntime{CriticalPhaseCompletion: retryingCritical}, receipts, gate,
 		enginekafka.EvaluationDiagnostics{OnRejected: rejectedMessageDiagnostics(logger)},
@@ -665,13 +675,12 @@ func openApplicationBundleWithFactories(
 func dependencyGateObserver(recorder observability.Observer, logger *observability.Logger) coordinator.DependencyGateObserver {
 	observer := observability.Multi(recorder)
 	return func(transition coordinator.DependencyGateTransition) {
-		blocker := changedDependencyBlocker(transition)
+		blocker, added := changedDependencyBlocker(transition)
 		result := observability.Result(observability.ResultResumed)
-		reason := observability.ReasonNone
-		if transition.Current.State == coordinator.DependencyGatePaused {
+		if added {
 			result = observability.ResultPaused
-			reason = observability.ReasonCode(blocker.ReasonCode)
 		}
+		reason := observability.ReasonCode(blocker.ReasonCode)
 		observer.Observe(context.Background(), observability.Observation{
 			Component:  observability.ComponentState,
 			Stage:      observability.StageDependencyLoaded,
@@ -697,7 +706,7 @@ func dependencyGateObserver(recorder observability.Observer, logger *observabili
 	}
 }
 
-func changedDependencyBlocker(transition coordinator.DependencyGateTransition) coordinator.DependencyBlocker {
+func changedDependencyBlocker(transition coordinator.DependencyGateTransition) (coordinator.DependencyBlocker, bool) {
 	for _, candidate := range transition.Current.Blockers {
 		found := false
 		for _, previous := range transition.Previous.Blockers {
@@ -707,7 +716,7 @@ func changedDependencyBlocker(transition coordinator.DependencyGateTransition) c
 			}
 		}
 		if !found {
-			return candidate
+			return candidate, true
 		}
 	}
 	for _, candidate := range transition.Previous.Blockers {
@@ -719,10 +728,10 @@ func changedDependencyBlocker(transition coordinator.DependencyGateTransition) c
 			}
 		}
 		if !found {
-			return candidate
+			return candidate, false
 		}
 	}
-	return coordinator.DependencyBlocker{}
+	return coordinator.DependencyBlocker{}, false
 }
 
 func phaseOneEffectiveTimeProvider() strategy.EffectiveTimeProvider {
@@ -748,11 +757,29 @@ func rejectedMessageDiagnostics(logger *observability.Logger) func(enginekafka.R
 	}
 }
 
-func offsetResetDiagnostics(logger *observability.Logger) enginekafka.ConsumerDiagnostics {
-	return enginekafka.ConsumerDiagnostics{OnOffsetReset: func(event enginekafka.OffsetReset) {
-		logger.Info(
-			observability.StageOffsetReset, observability.ResultRecovered, 0, 0,
-			slog.String("topic", event.Topic), slog.Int("partition", int(event.Partition)), slog.Int64("offset", event.Offset),
-		)
-	}}
+func consumerDiagnostics(recorder observability.Observer, logger *observability.Logger) enginekafka.ConsumerDiagnostics {
+	observer := observability.Multi(recorder)
+	return enginekafka.ConsumerDiagnostics{
+		OnOffsetReset: func(event enginekafka.OffsetReset) {
+			logger.Info(
+				observability.StageOffsetReset, observability.ResultRecovered, 0, 0,
+				slog.String("topic", event.Topic), slog.Int("partition", int(event.Partition)), slog.Int64("offset", event.Offset),
+			)
+		},
+		OnConsumeRetry: func(event enginekafka.ConsumerRetry) {
+			observer.Observe(context.Background(), observability.Observation{
+				Component:  observability.ComponentConsumer,
+				Stage:      observability.StageKafkaAssigned,
+				Result:     observability.ResultRetrying,
+				Operation:  observability.OperationConsume,
+				Direction:  observability.DirectionInput,
+				ReasonCode: observability.ReasonCode(contract.ReasonKafkaUnavailable),
+			})
+			logger.Error(
+				"consume_retry", string(observability.ResultRetrying), 0, 0,
+				slog.String("reason_code", contract.ReasonKafkaUnavailable),
+				slog.String("source", string(event.Source)),
+			)
+		},
+	}
 }

@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -156,6 +157,9 @@ func TestApplicationHealthKeepsAssignmentSeparateFromDependencyGate(t *testing.T
 	if !snapshot.AssignmentReady || snapshot.Ready || snapshot.State != observability.HealthNotReady {
 		t.Fatalf("health = %+v, want assignment ready but dependency-gated NotReady", snapshot)
 	}
+	if want := []observability.ReasonCode{observability.ReasonCode(contract.ReasonRedisUnavailable)}; !reflect.DeepEqual(snapshot.Reasons, want) {
+		t.Fatalf("health reasons = %#v, want %#v", snapshot.Reasons, want)
+	}
 }
 
 func TestApplicationBundleShutdownUsesReverseOrder(t *testing.T) {
@@ -291,6 +295,86 @@ func TestDependencyGateObserverRecordsPauseAndResume(t *testing.T) {
 	}
 	if !results[string(observability.ResultPaused)] || !results[string(observability.ResultResumed)] {
 		t.Fatalf("dependency gate metrics results = %v, want paused and resumed", results)
+	}
+}
+
+func TestDependencyGateObserverReportsRemovedBlockerAsResumedWhileOthersRemain(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	gate := coordinator.NewCriticalDependencyGate(dependencyGateObserver(
+		metric.NewRecorder(metric.BuildInfo{}), observability.New(observability.ComponentTrigger, &output),
+	))
+	for _, blocker := range []coordinator.DependencyBlocker{
+		{Dependency: coordinator.DependencyRedis, ReasonCode: contract.ReasonRedisUnavailable},
+		{Dependency: coordinator.DependencyProvider, ReasonCode: contract.ReasonProviderUnavailable},
+	} {
+		if _, err := gate.Pause(blocker); err != nil {
+			t.Fatalf("Pause(%+v) error = %v", blocker, err)
+		}
+	}
+	if _, err := gate.Resume(coordinator.DependencyRedis); err != nil {
+		t.Fatalf("Resume(redis) error = %v", err)
+	}
+	if gate.Ready() {
+		t.Fatal("gate became ready while provider blocker remains")
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 3 || !strings.Contains(lines[2], `"result":"resumed"`) ||
+		!strings.Contains(lines[2], `"dependency":"redis"`) ||
+		!strings.Contains(lines[2], `"reason_code":"REDIS_UNAVAILABLE"`) {
+		t.Fatalf("gate transition logs = %q, want removed Redis blocker reported as resumed", output.String())
+	}
+}
+
+func TestConsumerDiagnosticsRecordsConsumeRetryWithoutErrorBody(t *testing.T) {
+	t.Parallel()
+
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	var output bytes.Buffer
+	diagnostics := consumerDiagnostics(recorder, observability.New(observability.ComponentTrigger, &output))
+	if diagnostics.OnOffsetReset == nil || diagnostics.OnConsumeRetry == nil {
+		t.Fatal("consumer diagnostics did not wire offset reset and consume retry")
+	}
+	diagnostics.OnConsumeRetry(enginekafka.ConsumerRetry{
+		Source: enginekafka.ConsumerRetrySourceErrorsChannel,
+		Err:    errors.New("secret broker address"),
+	})
+	logOutput := output.String()
+	for _, want := range []string{
+		`"stage":"consume_retry"`, `"result":"retrying"`,
+		`"reason_code":"KAFKA_UNAVAILABLE"`, `"source":"errors_channel"`,
+	} {
+		if !strings.Contains(logOutput, want) {
+			t.Fatalf("log = %q, want %q", logOutput, want)
+		}
+	}
+	if strings.Contains(logOutput, "secret broker address") {
+		t.Fatalf("consume retry log leaked broker error: %q", logOutput)
+	}
+	families, err := recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+	found := false
+	for _, family := range families {
+		if family.GetName() != "bkmonitor_alarmd_observation_total" {
+			continue
+		}
+		for _, sample := range family.Metric {
+			labels := map[string]string{}
+			for _, label := range sample.Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["component"] == string(observability.ComponentConsumer) &&
+				labels["result"] == string(observability.ResultRetrying) &&
+				labels["reason_code"] == string(observability.ReasonContractRetryable) {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("consume retry metric was not recorded")
 	}
 }
 

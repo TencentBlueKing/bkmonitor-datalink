@@ -86,6 +86,7 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 
 	ReasonKafkaUnavailable:    {ReasonKafkaUnavailable, ReasonClassRetryable, ReasonDomainSummary | ReasonDomainObservation},
 	ReasonRedisUnavailable:    {ReasonRedisUnavailable, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonProviderUnavailable: {ReasonProviderUnavailable, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonResourceHardStop:    {ReasonResourceHardStop, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonOutputACKUnknown:    {ReasonOutputACKUnknown, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonStateWriteRetryable: {ReasonStateWriteRetryable, ReasonClassRetryable, ReasonDomainObservation},

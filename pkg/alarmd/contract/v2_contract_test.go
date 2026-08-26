@@ -903,6 +903,11 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 	if !ok || definition.Class != ReasonClassRetryable || !definition.Domains.Has(ReasonDomainObservation) {
 		t.Fatalf("Redis reason definition = (%#v, %t)", definition, ok)
 	}
+	provider, ok := LookupReasonV2(ReasonProviderUnavailable)
+	if !ok || provider.Class != ReasonClassRetryable || provider.Domains != ReasonDomainObservation ||
+		ReasonAllowedForV2(ReasonProviderUnavailable, ReasonDomainReceipt) {
+		t.Fatalf("Provider reason definition = (%#v, %t)", provider, ok)
+	}
 	if !ReasonAllowedForV2(ReasonQueryPartial, ReasonDomainQueryResult) ||
 		ReasonAllowedForV2(ReasonRecordInvalid, ReasonDomainQueryResult) {
 		t.Fatal("QueryResult Reason domain accepted an invalid mapping")

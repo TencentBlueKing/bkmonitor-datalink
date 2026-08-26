@@ -72,6 +72,7 @@ const (
 	ReasonHistoryGapped                    = "HISTORY_GAPPED"
 	ReasonKafkaUnavailable                 = "KAFKA_UNAVAILABLE"
 	ReasonRedisUnavailable                 = "REDIS_UNAVAILABLE"
+	ReasonProviderUnavailable              = "PROVIDER_UNAVAILABLE"
 	ReasonResourceHardStop                 = "RESOURCE_HARD_STOP"
 	ReasonOutputACKUnknown                 = "OUTPUT_ACK_UNKNOWN"
 	ReasonStateWriteRetryable              = "STATE_WRITE_RETRYABLE"

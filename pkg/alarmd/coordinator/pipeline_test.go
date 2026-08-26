@@ -49,9 +49,18 @@ func TestEvaluationPipelineRunsG1ThresholdThroughRuntimeState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	admissionCalls := 0
+	admission := stateBatchAdmitterFunc(func(_ context.Context, request state.WriteWindowsRequest) error {
+		admissionCalls++
+		if len(request.Items) != 1 {
+			t.Fatalf("admission items = %d, want the complete message batch", len(request.Items))
+		}
+		_, err := codec.AdmitWindow(request.Items[0].Window)
+		return err
+	})
 	pipeline, err := NewEvaluationPipeline(PipelineOptions{
 		Compiler: compiler, Detector: detector, EffectiveTime: strategy.NewStaticScheduleProvider(nil),
-		State: store, StateCodec: codec,
+		State: store, StateAdmission: admission,
 		StateSemantics: strategy.StateSemantics{
 			StateSchemaVersion: semantics.StateSchemaVersion, CodecSemanticsVersion: semantics.CodecSemanticsVersion,
 			IdentitySchemaDigest: semantics.IdentitySchemaDigest, SourceTimeSemanticsVersion: semantics.SourceTimeSemanticsVersion,
@@ -86,6 +95,9 @@ func TestEvaluationPipelineRunsG1ThresholdThroughRuntimeState(t *testing.T) {
 		message.Receipt.Counts != (contract.ReceiptCountsV1{Received: 1, Selected: 1, Processed: 1, Events: 1}) ||
 		len(message.Receipt.PerPlan) != 1 || message.Receipt.PerPlan[0].Abnormal != 1 {
 		t.Fatalf("receipt = %#v, want one processed ABNORMAL event", message.Receipt)
+	}
+	if admissionCalls != 1 {
+		t.Fatalf("batch admission calls = %d, want 1", admissionCalls)
 	}
 
 	ack := 0
@@ -145,8 +157,21 @@ func TestEvaluationPipelineResolvesEffectiveTimeOncePerMessage(t *testing.T) {
 		}
 		return strategy.NewStaticScheduleProvider(nil).Resolve(ctx, requests)
 	})
+	admissionCalls := 0
+	admission := stateBatchAdmitterFunc(func(_ context.Context, request state.WriteWindowsRequest) error {
+		admissionCalls++
+		if len(request.Items) != 4 {
+			t.Fatalf("admission items = %d, want all Plan x series windows", len(request.Items))
+		}
+		for _, item := range request.Items {
+			if _, err := codec.AdmitWindow(item.Window); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	pipeline, err := NewEvaluationPipeline(PipelineOptions{
-		Compiler: compiler, Detector: detector, EffectiveTime: provider, State: store, StateCodec: codec,
+		Compiler: compiler, Detector: detector, EffectiveTime: provider, State: store, StateAdmission: admission,
 		StateSemantics: strategy.StateSemantics{
 			StateSchemaVersion: semantics.StateSchemaVersion, CodecSemanticsVersion: semantics.CodecSemanticsVersion,
 			IdentitySchemaDigest: semantics.IdentitySchemaDigest, SourceTimeSemanticsVersion: semantics.SourceTimeSemanticsVersion,
@@ -171,6 +196,9 @@ func TestEvaluationPipelineResolvesEffectiveTimeOncePerMessage(t *testing.T) {
 	}
 	if resolveCalls != 1 {
 		t.Fatalf("EffectiveTime Resolve calls = %d, want 1 per message", resolveCalls)
+	}
+	if admissionCalls != 1 {
+		t.Fatalf("batch admission calls = %d, want 1 per message", admissionCalls)
 	}
 }
 
@@ -347,6 +375,12 @@ func (function effectiveTimeProviderFunc) Resolve(
 	requests []strategy.EffectiveTimeRequest,
 ) ([]strategy.EffectiveTimeFact, error) {
 	return function(ctx, requests)
+}
+
+type stateBatchAdmitterFunc func(context.Context, state.WriteWindowsRequest) error
+
+func (function stateBatchAdmitterFunc) AdmitStateBatch(ctx context.Context, request state.WriteWindowsRequest) error {
+	return function(ctx, request)
 }
 
 func g1ReaderLimits() contract.ReaderLimitsV2 {

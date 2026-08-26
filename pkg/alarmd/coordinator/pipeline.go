@@ -28,8 +28,8 @@ type RuntimeStateLoader interface {
 	LoadWindows(context.Context, state.LoadWindowsRequest) (state.LoadWindowsResult, error)
 }
 
-type StateCodecAdmitter interface {
-	AdmitWindow(*state.Window) (int, error)
+type StateBatchAdmitter interface {
+	AdmitStateBatch(context.Context, state.WriteWindowsRequest) error
 }
 
 type PipelineOptions struct {
@@ -37,7 +37,7 @@ type PipelineOptions struct {
 	Detector       DetectionEvaluator
 	EffectiveTime  strategy.EffectiveTimeProvider
 	State          RuntimeStateLoader
-	StateCodec     StateCodecAdmitter
+	StateAdmission StateBatchAdmitter
 	StateSemantics strategy.StateSemantics
 	DetectLimits   detect.ExecutionLimits
 	TriggerLimits  trigger.EvaluationLimitsV2
@@ -64,8 +64,8 @@ type seriesExecution struct {
 }
 
 func NewEvaluationPipeline(options PipelineOptions) (*EvaluationPipeline, error) {
-	if options.Compiler == nil || options.Detector == nil || options.EffectiveTime == nil || options.State == nil || options.StateCodec == nil {
-		return nil, errors.New("alarmd coordinator: compiler, detector, EffectiveTime, state and codec are required")
+	if options.Compiler == nil || options.Detector == nil || options.EffectiveTime == nil || options.State == nil || options.StateAdmission == nil {
+		return nil, errors.New("alarmd coordinator: compiler, detector, EffectiveTime, state and batch admission are required")
 	}
 	return &EvaluationPipeline{options: options}, nil
 }
@@ -126,10 +126,10 @@ func (pipeline *EvaluationPipeline) EvaluateMessage(ctx context.Context, input *
 		}
 		critical.Events = append(critical.Events, events...)
 		evaluations[planID] = append(evaluations[planID], results...)
-		if _, err := pipeline.options.StateCodec.AdmitWindow(series[index].loaded.Window); err != nil {
-			return MessageResult{}, fmt.Errorf("alarmd coordinator: admit runtime state: %w", err)
-		}
 		critical.StateWrite.Items[index] = series[index].loaded
+	}
+	if err := pipeline.options.StateAdmission.AdmitStateBatch(ctx, critical.StateWrite); err != nil {
+		return MessageResult{}, fmt.Errorf("alarmd coordinator: admit runtime state batch: %w", err)
 	}
 	receipt, err := buildMessageReceipt(input, evaluations, terminals)
 	if err != nil {

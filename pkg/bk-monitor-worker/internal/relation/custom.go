@@ -35,10 +35,7 @@ var customTsPool = sync.Pool{
 func ReportCustomRelation(ctx context.Context, t *t.Task) error {
 	logger.Infof("[ReportCustomRelation] start reporting custom relation data")
 
-	// 获取数据库连接
 	db := mysql.GetDBSession().DB
-
-	// 查询所有 customrelationstatus 记录
 	var statuses []relation.CustomRelationStatus
 	qs := relation.NewCustomRelationStatusQuerySet(db)
 
@@ -48,6 +45,32 @@ func ReportCustomRelation(ctx context.Context, t *t.Task) error {
 		return err
 	}
 
+	return reportCustomRelationStatuses(ctx, statuses)
+}
+
+// ReportCustomRelationByNamespace immediately reports the latest custom relation
+// instances for one business namespace after a metadata change notification.
+func ReportCustomRelationByNamespace(ctx context.Context, namespace string) error {
+	if namespace == "" {
+		return nil
+	}
+
+	db := mysql.GetDBSession().DB
+	var statuses []relation.CustomRelationStatus
+	if err := relation.NewCustomRelationStatusQuerySet(db).NamespaceEq(namespace).All(&statuses); err != nil {
+		logger.Errorf("[ReportCustomRelationByNamespace] query namespace=%s error: %v", namespace, err)
+		return err
+	}
+
+	logger.Infof(
+		"[ReportCustomRelationByNamespace] namespace=%s custom relation status count=%d",
+		namespace,
+		len(statuses),
+	)
+	return reportCustomRelationStatuses(ctx, statuses)
+}
+
+func reportCustomRelationStatuses(ctx context.Context, statuses []relation.CustomRelationStatus) error {
 	if len(statuses) == 0 {
 		logger.Infof("[ReportCustomRelation] no custom relation status records found")
 		return nil

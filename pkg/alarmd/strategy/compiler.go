@@ -282,7 +282,7 @@ func (c *PlanCompiler) compileLevel(
 	level := CompiledLevel{
 		definition: raw.Definition, connector: raw.Connector, detectors: detectors, trigger: trigger, recovery: recovery,
 		effectiveTime:    effectiveTime,
-		stateRequirement: StateRequirement{RequiredDetectHistoryPoints: requiredPoints},
+		stateRequirement: StateRequirement{RequiredDetectHistoryPoints: requiredPoints, RetentionPoints: requiredPoints},
 	}
 	level.resourceEstimate.Algorithms = len(detectors)
 	level.resourceEstimate.ASTNodes = astNodes

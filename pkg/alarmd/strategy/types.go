@@ -113,6 +113,7 @@ type RecoveryPlan struct {
 
 type StateRequirement struct {
 	RequiredDetectHistoryPoints uint32
+	RetentionPoints             uint32
 }
 
 type ResourceEstimate struct {

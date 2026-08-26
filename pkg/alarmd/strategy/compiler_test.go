@@ -171,6 +171,16 @@ func TestCompilerCalculatesTriggerRecoveryAndFingerprints(t *testing.T) {
 	if got := level.RequiredDetectHistoryPoints(); got != 8 {
 		t.Fatalf("RequiredDetectHistoryPoints() = %d, want 8", got)
 	}
+	requirement := level.StateRequirement()
+	if requirement.RetentionPoints != 8 || requirement.RetentionPoints != requirement.RequiredDetectHistoryPoints {
+		t.Fatalf("StateRequirement() = %+v, want equal 8-point history and retention", requirement)
+	}
+	if got := first.EvaluationSemantics().LatenessTolerance; got != 120 {
+		t.Fatalf("EvaluationSemantics().LatenessTolerance = %d, want separate value 120", got)
+	}
+	if got := level.ResourceEstimate().StatePointsPerSeries; got != uint64(requirement.RetentionPoints) {
+		t.Fatalf("ResourceEstimate().StatePointsPerSeries = %d, want %d", got, requirement.RetentionPoints)
+	}
 	firstFingerprints := level.Fingerprints()
 
 	thresholdChanged := base

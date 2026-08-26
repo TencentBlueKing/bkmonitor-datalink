@@ -68,6 +68,12 @@ type bindingCacheStoreStats struct {
 
 type bindingRedisLookup func(ctx context.Context, key, field string) (string, error)
 
+const (
+	BindingRedisChannel             = "bkmonitorv3:spaces:surrealdb_binding:channel"
+	ResultTableDetailChannel        = "bkmonitorv3:spaces:result_table_detail:channel"
+	BuiltInResultTableDetailChannel = "bkmonitorv3:spaces:built_in_result_table_detail:channel"
+)
+
 type bindingRouteDetail struct {
 	Name        string `json:"name"`
 	BkBizID     string `json:"bk_biz_id"`
@@ -85,6 +91,12 @@ type BindingResolver struct {
 
 	cacheMu sync.RWMutex
 	cache   map[string]*bindingCacheEntry // key = bk_biz_id
+}
+
+type bindingChange struct {
+	SpaceUID string `json:"space_uid"`
+	BkBizID  string `json:"bk_biz_id"`
+	Field    string `json:"field"`
 }
 
 var (
@@ -154,6 +166,96 @@ func (r *BindingResolver) Resolve(ctx context.Context, spaceUID string) (info *B
 	span.Set("binding-database", info.Database)
 	span.Set("binding-namespace", info.Namespace)
 	return info, nil
+}
+
+func (r *BindingResolver) InvalidateSpace(spaceUID string) {
+	bizID, err := parseBkBizIDFromSpaceUID(spaceUID)
+	if err != nil {
+		return
+	}
+	r.cacheMu.Lock()
+	for key := range r.cache {
+		if strings.HasSuffix(key, ":"+bizID) {
+			delete(r.cache, key)
+		}
+	}
+	size := len(r.cache)
+	r.cacheMu.Unlock()
+	ObserveBindingCacheSize(size)
+}
+
+func (r *BindingResolver) InvalidateAll() {
+	r.cacheMu.Lock()
+	r.cache = make(map[string]*bindingCacheEntry)
+	r.cacheMu.Unlock()
+	ObserveBindingCacheSize(0)
+}
+
+func StartBindingResolverWatcher(ctx context.Context) {
+	resolver := GetBindingResolver()
+	go func() {
+		channels := []string{
+			BindingRedisChannel,
+			ResultTableDetailChannel,
+			BuiltInResultTableDetailChannel,
+		}
+		for {
+			messages := uqredis.Subscribe(ctx, channels...)
+			for message := range messages {
+				if message == nil {
+					continue
+				}
+				if message.Channel == BuiltInResultTableDetailChannel {
+					if spaceUID := parseBindingChangeSpaceUID(message.Payload); spaceUID != "" {
+						resolver.InvalidateSpace(spaceUID)
+					}
+					continue
+				}
+				if spaceUID := parseBindingChangeSpaceUID(message.Payload); spaceUID != "" {
+					resolver.InvalidateSpace(spaceUID)
+				} else {
+					resolver.InvalidateAll()
+				}
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	}()
+}
+
+func parseBindingChangeSpaceUID(payload string) string {
+	var change bindingChange
+	if json.Unmarshal([]byte(payload), &change) == nil {
+		if change.SpaceUID != "" {
+			return parseBindingFieldSpaceUID(change.SpaceUID)
+		}
+		if change.BkBizID != "" {
+			return "bkcc__" + change.BkBizID
+		}
+		if change.Field != "" {
+			return parseBindingFieldSpaceUID(change.Field)
+		}
+	}
+	return parseBindingFieldSpaceUID(payload)
+}
+
+func parseBindingFieldSpaceUID(field string) string {
+	field = strings.TrimSpace(field)
+	if separator := strings.IndexByte(field, '|'); separator >= 0 {
+		field = field[:separator]
+	}
+	if strings.HasPrefix(field, "bkcc__") {
+		return field
+	}
+	return ""
 }
 
 func (r *BindingResolver) lookupCache(cacheKey string) *BindingInfo {

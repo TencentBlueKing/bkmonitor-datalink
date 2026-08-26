@@ -176,6 +176,27 @@ func TestBindingResolverCacheHasMaximumCapacity(t *testing.T) {
 	assert.NotNil(t, resolver.lookupCache("three"))
 }
 
+func TestParseBindingChangeSpaceUID(t *testing.T) {
+	assert.Equal(t, "bkcc__7", parseBindingChangeSpaceUID(`{"space_uid":"bkcc__7|tenant-a"}`))
+	assert.Equal(t, "bkcc__8", parseBindingChangeSpaceUID(`{"bk_biz_id":"8"}`))
+	assert.Equal(t, "bkcc__9", parseBindingChangeSpaceUID(`{"field":"bkcc__9|tenant-a"}`))
+	assert.Equal(t, "bkcc__10", parseBindingChangeSpaceUID("bkcc__10|tenant-a"))
+	assert.Empty(t, parseBindingChangeSpaceUID("result_table_id"))
+}
+
+func TestBindingResolverInvalidateSpace(t *testing.T) {
+	resolver := &BindingResolver{cache: map[string]*bindingCacheEntry{
+		bindingCacheKey("tenant-a", "7"): {info: &BindingInfo{Name: "a"}, expiry: time.Now().Add(time.Minute)},
+		bindingCacheKey("tenant-b", "7"): {info: &BindingInfo{Name: "b"}, expiry: time.Now().Add(time.Minute)},
+		bindingCacheKey("tenant-a", "8"): {info: &BindingInfo{Name: "c"}, expiry: time.Now().Add(time.Minute)},
+	}}
+
+	resolver.InvalidateSpace("bkcc__7")
+
+	assert.Len(t, resolver.cache, 1)
+	assert.NotNil(t, resolver.cache[bindingCacheKey("tenant-a", "8")])
+}
+
 func contextWithTenantForBindingResolverTest(tenantID string) context.Context {
 	metadata.InitMetadata()
 	ctx := metadata.InitHashID(context.Background())

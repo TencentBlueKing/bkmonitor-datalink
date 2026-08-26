@@ -107,6 +107,7 @@ func (s *Service) initSchemaProvider(ctx context.Context) {
 
 	v1beta1.InitSchemaProvider(s.providerManager.GetProvider())
 	v1beta3.InitSchemaProvider(s.providerManager.GetProvider())
+	v1beta3.StartBindingResolverWatcher(s.ctx)
 	log.Infof(ctx, "SchemaProvider initialized with type: %s", SchemaProviderType)
 }
 

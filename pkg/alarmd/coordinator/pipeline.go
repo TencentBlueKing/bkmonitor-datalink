@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -207,12 +208,25 @@ func (pipeline *EvaluationPipeline) compilePlans(
 	defer func() {
 		result := observability.Result(observability.ResultSuccess)
 		reason := observability.ReasonNone
+		execution := input.Execution()
+		trace := observability.TraceFields{
+			ExecutionID: execution.ExecutionID, MessageID: execution.MessageID, QueryGroupKey: execution.QueryGroupKey,
+		}
 		if returnErr != nil {
 			result = observability.Result(observability.ResultFailed)
 			reason = observability.ReasonInternalUnknown
 		} else if len(terminals) > 0 {
 			result = observability.ResultTerminal
 			reason = observability.ReasonCode(terminals[0].ReasonCode)
+			// Metrics retain the bounded stage summary. The sampled structured log
+			// identifies one concrete terminal so operators never receive an
+			// untraceable aggregate when several bad Levels are isolated together.
+			trace.StrategyID = terminals[0].PlanID
+			trace.TerminalScope = string(terminals[0].Scope)
+			trace.TerminalFieldPath = terminals[0].FieldPath
+			if terminals[0].LevelID != nil {
+				trace.LevelID = strconv.FormatUint(uint64(*terminals[0].LevelID), 10)
+			}
 		}
 		levels := int64(0)
 		for _, execution := range compiled {
@@ -221,7 +235,8 @@ func (pipeline *EvaluationPipeline) compilePlans(
 		observePipeline(ctx, pipeline.options.Observer, observability.Observation{
 			Component: observability.ComponentCompiler, Stage: observability.StagePlanCompiled,
 			Result: result, Operation: observability.OperationCompile, Direction: observability.DirectionInternal,
-			ReasonCode: reason, Duration: time.Since(started), Counts: observability.Counts{Plans: int64(len(views)), Levels: levels}, Err: returnErr,
+			ReasonCode: reason, Duration: time.Since(started), Counts: observability.Counts{Plans: int64(len(views)), Levels: levels},
+			Trace: trace, Err: returnErr,
 		})
 	}()
 	for _, view := range views {

@@ -75,7 +75,12 @@ func TestLoadBuildsPhaseOneCoordinatesAndModuleOptions(t *testing.T) {
 		cfg.TriggerLimits().MaxLevels == 0 || cfg.CodecLimits().MaxEncodedBytes <= 0 || cfg.StoreLimits().MaxWrittenBytes <= 0 {
 		t.Fatal("phase-one module limits were not converted")
 	}
-	if cfg.ReaderLimits().MaxRecordsPerMessage != 321 || cfg.CompilerLimits().BudgetRevision != "deployment-v1" ||
+	compilerLimits := cfg.CompilerLimits()
+	if cfg.ReaderLimits().MaxRecordsPerMessage != 321 || compilerLimits.BudgetRevision != "deployment-v1" ||
+		compilerLimits.MaxTriggerWindowSize != 123 || compilerLimits.MaxTriggerWindowSize != cfg.TriggerLimits().MaxTriggerWindowSize ||
+		compilerLimits.MaxRecoveryConsecutiveWindows != 456 ||
+		compilerLimits.MaxRecoveryConsecutiveWindows != cfg.TriggerLimits().MaxRecoveryConsecutiveWindows ||
+		compilerLimits.MaxTriggerComputeCost != cfg.TriggerLimits().MaxComputeCost ||
 		cfg.DetectLimits().MaxResultBytes != 20<<20 || cfg.TriggerLimits().MaxComputeCost != 2<<20 ||
 		cfg.CodecLimits().MaxEncodedBytes != 600000 || cfg.StoreLimits().MaxWrittenBytes != 65<<20 {
 		t.Fatal("phase-one YAML limit overrides were not preserved")
@@ -163,8 +168,11 @@ func TestValidateRejectsInvalidRedisAndRuntimeBudgets(t *testing.T) {
 		"zero compiler budget": func(cfg *Config) { cfg.Limits.Compiler.MaxPlanBytes = 0 },
 		"zero detect budget":   func(cfg *Config) { cfg.Limits.Detect.MaxPlans = 0 },
 		"zero trigger budget":  func(cfg *Config) { cfg.Limits.Trigger.MaxLevels = 0 },
-		"zero codec budget":    func(cfg *Config) { cfg.Limits.Codec.MaxLevels = 0 },
-		"zero store budget":    func(cfg *Config) { cfg.Limits.Store.MaxKeysPerBatch = 0 },
+		"compiler levels exceed trigger event": func(cfg *Config) {
+			cfg.Limits.Trigger.MaxLevelResultsPerEvent = uint32(cfg.Limits.Compiler.MaxLevelsPerPlan - 1)
+		},
+		"zero codec budget": func(cfg *Config) { cfg.Limits.Codec.MaxLevels = 0 },
+		"zero store budget": func(cfg *Config) { cfg.Limits.Store.MaxKeysPerBatch = 0 },
 		"reversed retry": func(cfg *Config) {
 			cfg.DependencyRetry.MaxDelay = cfg.DependencyRetry.MinDelay - 1
 		},
@@ -303,6 +311,8 @@ limits:
   detect:
     max_result_bytes: 20971520
   trigger:
+    max_trigger_window_size: 123
+    max_recovery_consecutive_windows: 456
     max_compute_cost: 2097152
   codec:
     max_encoded_bytes: 600000

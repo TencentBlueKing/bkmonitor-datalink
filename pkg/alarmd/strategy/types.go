@@ -34,18 +34,21 @@ const (
 )
 
 type Limits struct {
-	MaxPlanBytes              int
-	MaxLevelsPerPlan          int
-	MaxAlgorithmsPerLevel     int
-	MaxGroupsPerAlgorithm     int
-	MaxConditionsPerAlgorithm int
-	MaxASTNodesPerLevel       int
-	MaxRequiredHistoryPoints  uint32
-	MaxCompiledPlanBytes      int
-	MaxCacheEntries           int
-	MaxCacheBytes             int
-	NegativeCacheTTL          time.Duration
-	BudgetRevision            string
+	MaxPlanBytes                  int
+	MaxLevelsPerPlan              int
+	MaxAlgorithmsPerLevel         int
+	MaxGroupsPerAlgorithm         int
+	MaxConditionsPerAlgorithm     int
+	MaxASTNodesPerLevel           int
+	MaxTriggerWindowSize          uint32
+	MaxRecoveryConsecutiveWindows uint32
+	MaxRequiredHistoryPoints      uint32
+	MaxTriggerComputeCost         uint64
+	MaxCompiledPlanBytes          int
+	MaxCacheEntries               int
+	MaxCacheBytes                 int
+	NegativeCacheTTL              time.Duration
+	BudgetRevision                string
 }
 
 type StateSemantics struct {

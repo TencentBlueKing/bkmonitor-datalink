@@ -1220,7 +1220,6 @@ func TestLevelResultV1RequiresConsistentWindowDecision(t *testing.T) {
 			mutate: func(result *LevelResultV1) {
 				result.DecisionWindow.Trigger.RequiredAnomalies = 3
 			},
-			wantErr: true,
 		},
 		{
 			name: "abnormal without satisfied trigger",

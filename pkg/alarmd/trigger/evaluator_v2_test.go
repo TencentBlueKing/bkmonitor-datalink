@@ -73,6 +73,40 @@ func TestEvaluatorV2MatchesPythonTriggerAndRecoveryWindows(t *testing.T) {
 	}
 }
 
+func TestEvaluatorV2TreatsRequiredAnomaliesAboveWindowAsNeverTriggered(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		level     contract.LevelIRV2
+		want      string
+		wantEvent bool
+	}{
+		{name: "recovery disabled", level: levelWithoutRecoveryV2(5, 1, 2, 3), want: contract.LevelResultNormal},
+		{name: "recovery enabled", level: levelV2(5, 1, 2, 3, 1, nil), want: contract.LevelResultRecovery, wantEvent: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			plan := compilePlanV2(t, []contract.LevelIRV2{test.level})
+			level := plan.Levels()[0]
+			if level.RequiredDetectHistoryPoints() != 2 {
+				t.Fatalf("RequiredDetectHistoryPoints() = %d, want trigger window 2", level.RequiredDetectHistoryPoints())
+			}
+			request := requestV2(t, plan, 300,
+				[]DetectionFact{factV2(level, DetectionAnomalous)},
+				[]LevelHistory{{LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{240: true, 300: true}}}},
+				activeFactsV2(t, plan, 300),
+			)
+
+			result, err := EvaluateV2(request)
+			if err != nil {
+				t.Fatalf("EvaluateV2() error = %v", err)
+			}
+			if result.RecordResult != test.want || (result.TriggerEvent != nil) != test.wantEvent ||
+				len(result.LevelOutcomes) != 1 || result.LevelOutcomes[0].Result != test.want {
+				t.Fatalf("EvaluateV2() = %#v, want %s event=%t", result, test.want, test.wantEvent)
+			}
+		})
+	}
+}
+
 func TestEvaluatorV2KeepsWarmingAndLevelIsolationExplicit(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{
 		levelV2(1, 20, 2, 2, 1, staticUptimeV2()),
@@ -632,6 +666,7 @@ func compilePlanV2(t testing.TB, levels []contract.LevelIRV2) *strategy.Compiled
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{
 		MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16,
 		MaxConditionsPerAlgorithm: 64, MaxASTNodesPerLevel: 256, MaxRequiredHistoryPoints: 4096,
+		MaxTriggerWindowSize: 4096, MaxRecoveryConsecutiveWindows: 4096, MaxTriggerComputeCost: 1 << 20,
 		MaxCompiledPlanBytes: 64 << 10, MaxCacheEntries: 64, MaxCacheBytes: 4 << 20,
 		NegativeCacheTTL: time.Minute, BudgetRevision: "trigger-test-v1",
 	})

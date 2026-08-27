@@ -135,6 +135,38 @@ func TestRuntimeObserverAdaptersCoverExistingV2Callpoints(t *testing.T) {
 	}
 }
 
+func TestPhaseOneRuntimeObserverEmitsBoundedTerminalDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	var output bytes.Buffer
+	observer, err := newPhaseOneRuntimeObserver(recorder, observability.New(observability.ComponentTrigger, &output))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := observability.Observation{
+		Component: observability.ComponentCompiler, Stage: observability.StagePlanCompiled,
+		Result: observability.ResultTerminal, Operation: observability.OperationCompile,
+		Direction: observability.DirectionInternal, ReasonCode: observability.ReasonCode(contract.ReasonLevelBudgetExceeded),
+		Counts: observability.Counts{Messages: 1, Plans: 1, Levels: 1},
+		Trace: observability.TraceFields{
+			ExecutionID: "execution-1", MessageID: "message-1", StrategyID: "1001", LevelID: "6",
+			TerminalScope: "LEVEL", TerminalFieldPath: "level.trigger_plan",
+		},
+	}
+	observer.Observe(context.Background(), observation)
+	observer.Observe(context.Background(), observation)
+
+	logOutput := output.String()
+	if strings.Count(logOutput, `"stage":"plan_compiled"`) != 1 ||
+		!strings.Contains(logOutput, `"execution_id":"execution-1"`) ||
+		!strings.Contains(logOutput, `"strategy_id":"1001"`) || !strings.Contains(logOutput, `"level_id":"6"`) ||
+		!strings.Contains(logOutput, `"terminal_scope":"LEVEL"`) ||
+		!strings.Contains(logOutput, `"field_path":"level.trigger_plan"`) {
+		t.Fatalf("terminal diagnostics = %q", logOutput)
+	}
+}
+
 func TestObservedTriggerEventRuntimeRecordsBrokerACK(t *testing.T) {
 	t.Parallel()
 

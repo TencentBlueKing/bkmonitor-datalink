@@ -140,8 +140,12 @@ func (c Config) CompilerLimits() strategy.Limits {
 		MaxPlanBytes: v.MaxPlanBytes, MaxLevelsPerPlan: v.MaxLevelsPerPlan,
 		MaxAlgorithmsPerLevel: v.MaxAlgorithmsPerLevel, MaxGroupsPerAlgorithm: v.MaxGroupsPerAlgorithm,
 		MaxConditionsPerAlgorithm: v.MaxConditionsPerAlgorithm, MaxASTNodesPerLevel: v.MaxASTNodesPerLevel,
-		MaxRequiredHistoryPoints: v.MaxRequiredHistoryPoints, MaxCompiledPlanBytes: v.MaxCompiledPlanBytes,
-		MaxCacheEntries: v.MaxCacheEntries, MaxCacheBytes: v.MaxCacheBytes,
+		MaxTriggerWindowSize:          c.Limits.Trigger.MaxTriggerWindowSize,
+		MaxRecoveryConsecutiveWindows: c.Limits.Trigger.MaxRecoveryConsecutiveWindows,
+		MaxRequiredHistoryPoints:      v.MaxRequiredHistoryPoints,
+		MaxTriggerComputeCost:         c.Limits.Trigger.MaxComputeCost,
+		MaxCompiledPlanBytes:          v.MaxCompiledPlanBytes,
+		MaxCacheEntries:               v.MaxCacheEntries, MaxCacheBytes: v.MaxCacheBytes,
 		NegativeCacheTTL: v.NegativeCacheTTL.Duration(), BudgetRevision: v.BudgetRevision,
 	}
 }
@@ -219,7 +223,8 @@ func (c LimitsConfig) validate() error {
 		return errors.New("reader and compiler byte budgets are inconsistent")
 	}
 	if r.MaxPlansPerMessage > int(detectLimits.MaxPlans) || r.MaxLevelsPerPlan > compiler.MaxLevelsPerPlan ||
-		compiler.MaxLevelsPerPlan > int(triggerLimits.MaxLevels) || compiler.MaxLevelsPerPlan > codec.MaxLevels {
+		compiler.MaxLevelsPerPlan > int(triggerLimits.MaxLevels) ||
+		compiler.MaxLevelsPerPlan > int(triggerLimits.MaxLevelResultsPerEvent) || compiler.MaxLevelsPerPlan > codec.MaxLevels {
 		return errors.New("plan and level budgets are inconsistent")
 	}
 	if compiler.MaxRequiredHistoryPoints > triggerLimits.MaxRequiredHistoryPoints ||

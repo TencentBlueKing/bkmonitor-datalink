@@ -225,6 +225,89 @@ func TestCompilerUsesTriggerWindowAsRetentionWhenRecoveryDisabled(t *testing.T) 
 	}
 }
 
+func TestCompilerIsolatesTriggerRecoveryDeploymentBudgets(t *testing.T) {
+	tests := []struct {
+		name      string
+		trigger   string
+		recovery  string
+		fieldPath string
+		terminal  bool
+	}{
+		{
+			name:     "trigger window at limit",
+			trigger:  `{"window_size":64,"required_anomalies":1,"step_seconds":60}`,
+			recovery: `{"enabled":false,"consecutive_windows":0}`,
+		},
+		{
+			name:      "trigger window",
+			trigger:   `{"window_size":65,"required_anomalies":1,"step_seconds":60}`,
+			recovery:  `{"enabled":false,"consecutive_windows":0}`,
+			fieldPath: "level.trigger_plan",
+			terminal:  true,
+		},
+		{
+			name:     "recovery windows at limit",
+			trigger:  `{"window_size":1,"required_anomalies":1,"step_seconds":60}`,
+			recovery: `{"enabled":true,"consecutive_windows":64}`,
+		},
+		{
+			name:      "recovery windows",
+			trigger:   `{"window_size":1,"required_anomalies":1,"step_seconds":60}`,
+			recovery:  `{"enabled":true,"consecutive_windows":65}`,
+			fieldPath: "level.recovery_plan",
+			terminal:  true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			limits := testLimits()
+			limits.MaxTriggerWindowSize = 64
+			limits.MaxRecoveryConsecutiveWindows = 64
+			compiler, err := NewCompiler(NewDefaultAlgorithmCompilerRegistry(), limits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan := validPlan()
+			plan.StrategyIR.Levels[0].TriggerPlan.Config = json.RawMessage(test.trigger)
+			plan.StrategyIR.Levels[0].RecoveryPlan.Config = json.RawMessage(test.recovery)
+
+			result := mustCompileResult(t, compiler, plan)
+			terminals := result.LevelTerminals()
+			compiled, ok := result.Plan()
+			if !test.terminal {
+				if !ok || len(compiled.Levels()) != 1 || len(terminals) != 0 {
+					t.Fatalf("Compile() plan=%#v terminals=%#v, want admitted Level", compiled, terminals)
+				}
+				return
+			}
+			if !ok || len(compiled.Levels()) != 0 || len(terminals) != 1 ||
+				terminals[0].ReasonCode != contract.ReasonLevelBudgetExceeded || terminals[0].FieldPath != test.fieldPath {
+				t.Fatalf("Compile() plan=%#v terminals=%#v, want isolated Level", compiled, terminals)
+			}
+		})
+	}
+}
+
+func TestCompilerTerminalizesPlanAboveTriggerComputeBudget(t *testing.T) {
+	limits := testLimits()
+	limits.MaxTriggerComputeCost = 7
+	compiler, err := NewCompiler(NewDefaultAlgorithmCompilerRegistry(), limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := validPlan()
+	plan.StrategyIR.Levels = append(plan.StrategyIR.Levels, validLevel(2, 2, "60"))
+	for index := range plan.StrategyIR.Levels {
+		plan.StrategyIR.Levels[index].RecoveryPlan.Config = json.RawMessage(`{"enabled":true,"consecutive_windows":3}`)
+	}
+
+	result := mustCompileResult(t, compiler, plan)
+	terminal := result.PlanTerminal()
+	if terminal == nil || terminal.ReasonCode != contract.ReasonPlanBudgetExceeded || terminal.FieldPath != "trigger_compute" {
+		t.Fatalf("PlanTerminal() = %#v", terminal)
+	}
+}
+
 func TestCompilerReturnsImmutableViews(t *testing.T) {
 	compiler := newTestCompiler(t)
 	plan := validPlan()
@@ -675,18 +758,21 @@ func newTestCompiler(t testing.TB) *PlanCompiler {
 
 func testLimits() Limits {
 	return Limits{
-		MaxPlanBytes:              64 << 10,
-		MaxLevelsPerPlan:          16,
-		MaxAlgorithmsPerLevel:     8,
-		MaxGroupsPerAlgorithm:     16,
-		MaxConditionsPerAlgorithm: 64,
-		MaxASTNodesPerLevel:       256,
-		MaxRequiredHistoryPoints:  4096,
-		MaxCompiledPlanBytes:      64 << 10,
-		MaxCacheEntries:           64,
-		MaxCacheBytes:             4 << 20,
-		NegativeCacheTTL:          time.Minute,
-		BudgetRevision:            "test-budget-v1",
+		MaxPlanBytes:                  64 << 10,
+		MaxLevelsPerPlan:              16,
+		MaxAlgorithmsPerLevel:         8,
+		MaxGroupsPerAlgorithm:         16,
+		MaxConditionsPerAlgorithm:     64,
+		MaxASTNodesPerLevel:           256,
+		MaxTriggerWindowSize:          4096,
+		MaxRecoveryConsecutiveWindows: 4096,
+		MaxRequiredHistoryPoints:      4096,
+		MaxTriggerComputeCost:         1 << 20,
+		MaxCompiledPlanBytes:          64 << 10,
+		MaxCacheEntries:               64,
+		MaxCacheBytes:                 4 << 20,
+		NegativeCacheTTL:              time.Minute,
+		BudgetRevision:                "test-budget-v1",
 	}
 }
 

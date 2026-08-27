@@ -38,6 +38,11 @@ var (
 	errFatalWithoutReason         = errors.New("alarmd runtime: fatal signal has no error")
 )
 
+const (
+	phaseOneDiagnosticLogWindow    = time.Minute
+	phaseOneDiagnosticLogMaxEvents = 1
+)
+
 type serviceRuntime interface {
 	lifecycle.Source
 	Run(context.Context) error
@@ -601,7 +606,10 @@ func openApplicationBundleWithFactories(
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	runtimeObserver := observability.Multi(recorder)
+	runtimeObserver, err := newPhaseOneRuntimeObserver(recorder, logger)
+	if err != nil {
+		return nil, err
+	}
 	resources, err := observability.NewResourceGovernor(observability.ResourceGovernorConfig{})
 	if err != nil {
 		return nil, err
@@ -736,6 +744,23 @@ func openApplicationBundleWithFactories(
 		return cleanup(err)
 	}
 	return partial, nil
+}
+
+func newPhaseOneRuntimeObserver(recorder *metric.Recorder, logger *observability.Logger) (observability.Observer, error) {
+	if recorder == nil || logger == nil {
+		return nil, errors.New("alarmd runtime: recorder and logger are required")
+	}
+	limiter, err := observability.NewWindowLogLimiter(observability.WindowLogLimiterConfig{
+		Window: phaseOneDiagnosticLogWindow, MaxEvents: phaseOneDiagnosticLogMaxEvents,
+	})
+	if err != nil {
+		return nil, err
+	}
+	policy, err := observability.NewBoundedLogPolicy(limiter)
+	if err != nil {
+		return nil, err
+	}
+	return observability.Multi(recorder, observability.NewLoggingObserver(logger, policy)), nil
 }
 
 func observeReceiptUnavailable(observer observability.Observer, logger *observability.Logger) {

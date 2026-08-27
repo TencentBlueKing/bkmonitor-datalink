@@ -138,6 +138,80 @@ func TestEvaluationPipelineRunsG1ThresholdThroughRuntimeState(t *testing.T) {
 	}
 }
 
+func TestEvaluationPipelineCompletesTriggerBudgetTerminalAndEvaluatesSibling(t *testing.T) {
+	adapter := inputv2.New(g1ReaderLimits())
+	decoded, err := adapter.Decode(context.Background(), encodeTriggerBudgetEnvelope(t))
+	if err != nil || decoded.Rejected || decoded.Input == nil {
+		t.Fatalf("Decode() = %#v, %v", decoded, err)
+	}
+	compilerLimits := g1CompilerLimits()
+	compilerLimits.MaxTriggerWindowSize = 100
+	compilerLimits.MaxRecoveryConsecutiveWindows = 100
+	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), compilerLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &memoryStateBackend{values: make(map[string][]byte)}
+	_, store := newG1StateStore(t, backend)
+	semantics, err := state.RuntimeStateSemantics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compileTerminal observability.Observation
+	pipeline, err := NewEvaluationPipeline(PipelineOptions{
+		Compiler: compiler, Detector: detector, EffectiveTime: strategy.NewStaticScheduleProvider(nil),
+		State: store, StateAdmission: store,
+		StateSemantics: strategy.StateSemantics{
+			StateSchemaVersion: semantics.StateSchemaVersion, CodecSemanticsVersion: semantics.CodecSemanticsVersion,
+			IdentitySchemaDigest: semantics.IdentitySchemaDigest, SourceTimeSemanticsVersion: semantics.SourceTimeSemanticsVersion,
+			HistoryCellSemanticsVersion: semantics.HistoryCellSemanticsVersion,
+		},
+		DetectLimits: detect.ExecutionLimits{
+			MaxPlans: 4, MaxSelectedRecordsPerPlan: 100, MaxSeriesPerPlan: 100, MaxRecordsPerSeries: 100,
+			MaxLevelFacts: 1_000, MaxPredicateEvaluations: 1_000, MaxResultBytes: 1 << 20,
+		},
+		TriggerLimits: trigger.EvaluationLimitsV2{
+			MaxLevels: 8, MaxTriggerWindowSize: 100, MaxRecoveryConsecutiveWindows: 100,
+			MaxRequiredHistoryPoints: 1_000, MaxLevelResultsPerEvent: 8, MaxEvidenceBytesPerEvent: 64 << 10,
+			MaxComputeCost: 10_000,
+		},
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			if observation.Stage == observability.StagePlanCompiled && observation.Result == observability.ResultTerminal {
+				compileTerminal = observation
+			}
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	message, err := pipeline.EvaluateMessage(context.Background(), decoded.Input)
+	if err != nil {
+		t.Fatalf("EvaluateMessage() error = %v", err)
+	}
+	if len(message.CriticalResult.Events) != 1 || message.CriticalResult.Events[0].PrimaryLevelID != 5 ||
+		len(message.CriticalResult.StateWrite.Items) != 1 {
+		t.Fatalf("critical result = %#v, want valid Level 5 event and state", message.CriticalResult)
+	}
+	wantCounts := contract.ReceiptCountsV1{Received: 1, Selected: 1, Processed: 1, LevelTerminalAffected: 1, Events: 1}
+	if message.Receipt == nil || message.Receipt.Status != contract.ReceiptStatusCompletedWithTerminal ||
+		message.Receipt.Counts != wantCounts || len(message.Receipt.PerPlan) != 1 ||
+		message.Receipt.PerPlan[0].Abnormal != 1 || message.Receipt.PerPlan[0].LevelTerminalAffected != 1 ||
+		!receiptHasExactReason(message.Receipt, contract.ReasonLevelBudgetExceeded, 1) {
+		t.Fatalf("receipt = %#v", message.Receipt)
+	}
+	if compileTerminal.Trace.ExecutionID != "execution-1" || compileTerminal.Trace.MessageID != "message-1" ||
+		compileTerminal.Trace.QueryGroupKey != "query-group-1" || compileTerminal.Trace.StrategyID != "1001" ||
+		compileTerminal.Trace.LevelID != "6" || compileTerminal.Trace.TerminalScope != string(inputv2.ScopeLevel) ||
+		compileTerminal.Trace.TerminalFieldPath != "level.trigger_plan" {
+		t.Fatalf("compile terminal trace = %#v", compileTerminal.Trace)
+	}
+}
+
 func TestEvaluationPipelineResolvesEffectiveTimeOncePerMessage(t *testing.T) {
 	t.Parallel()
 
@@ -375,6 +449,35 @@ func encodeSharedG1Envelope(t testing.TB) []byte {
 	return payload
 }
 
+func encodeTriggerBudgetEnvelope(t testing.TB) []byte {
+	t.Helper()
+	var envelope contract.ExecutionEnvelopeV2
+	if err := json.Unmarshal(encodeG1Envelope(t), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	badLevel := envelope.PlanSet.EvaluationPlans[0].StrategyIR.Levels[0]
+	badLevel.Definition = contract.LevelDefinitionV2{LevelID: 6, LevelCode: "warning", Priority: 2}
+	badLevel.TriggerPlan.Config = json.RawMessage(`{"window_size":101,"required_anomalies":1,"step_seconds":60}`)
+	badLevel.RecoveryPlan.Config = json.RawMessage(`{"enabled":false,"consecutive_windows":0}`)
+	envelope.PlanSet.EvaluationPlans[0].StrategyIR.Levels = append(
+		envelope.PlanSet.EvaluationPlans[0].StrategyIR.Levels, badLevel,
+	)
+	var err error
+	envelope.PlanSet.PlanSetDigest, err = contract.DerivePlanSetDigestV2(envelope.PlanSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.PayloadDigest, err = contract.DeriveExecutionEnvelopePayloadDigestV2(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := contract.CanonicalJSONV2(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
 type effectiveTimeProviderFunc func(context.Context, []strategy.EffectiveTimeRequest) ([]strategy.EffectiveTimeFact, error)
 
 func (function effectiveTimeProviderFunc) Resolve(
@@ -402,6 +505,7 @@ func g1CompilerLimits() strategy.Limits {
 	return strategy.Limits{
 		MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16,
 		MaxConditionsPerAlgorithm: 64, MaxASTNodesPerLevel: 256, MaxRequiredHistoryPoints: 4_096,
+		MaxTriggerWindowSize: 4_096, MaxRecoveryConsecutiveWindows: 4_096, MaxTriggerComputeCost: 1 << 20,
 		MaxCompiledPlanBytes: 64 << 10, MaxCacheEntries: 64, MaxCacheBytes: 4 << 20,
 		NegativeCacheTTL: time.Minute, BudgetRevision: "coordinator-test-v1",
 	}

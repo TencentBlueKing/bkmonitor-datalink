@@ -137,6 +137,8 @@ type TraceFields struct {
 	QueryGroupKey           string
 	StrategyID              string
 	LevelID                 string
+	TerminalScope           string
+	TerminalFieldPath       string
 	RecordID                string
 	DimensionIdentityDigest string
 	Topic                   string

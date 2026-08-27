@@ -384,7 +384,7 @@ func validateHistorySummaryV2(sourceTime int64, requiredPoints, stepSeconds uint
 }
 
 func requiredHistoryPointsV2(trigger strategy.TriggerPlan, recovery strategy.RecoveryPlan) (uint32, bool) {
-	if trigger.WindowSize == 0 || trigger.RequiredAnomalies == 0 || trigger.RequiredAnomalies > trigger.WindowSize || trigger.StepSeconds == 0 {
+	if trigger.WindowSize == 0 || trigger.RequiredAnomalies == 0 || trigger.StepSeconds == 0 {
 		return 0, false
 	}
 	if !recovery.Enabled {

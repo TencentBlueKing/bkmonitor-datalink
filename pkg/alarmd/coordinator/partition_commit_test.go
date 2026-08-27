@@ -76,6 +76,30 @@ func TestPartitionCommitterRetainsPrefixWhenOffsetACKFails(t *testing.T) {
 	}
 }
 
+func TestPartitionCommitterKeepsReceiptRejectionFailOpen(t *testing.T) {
+	t.Parallel()
+
+	tracker := completedTracker(t, 41, &contract.MessageReceiptV1{MessageID: "message-41"})
+	receiptCalls := 0
+	committer, err := NewPartitionCommitter(
+		tracker,
+		partitionOffsetCommitterFunc(func(context.Context, int64) error { return nil }),
+		receiptPublisherFunc(func(*contract.MessageReceiptV1) bool {
+			receiptCalls++
+			return false
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := committer.CommitReady(context.Background()); err != nil {
+		t.Fatalf("CommitReady() error = %v, want fail-open", err)
+	}
+	if receiptCalls != 1 || tracker.Len() != 0 {
+		t.Fatalf("receipt calls=%d tracker=%d, want 1/0 after committed offset", receiptCalls, tracker.Len())
+	}
+}
+
 func completedTracker(t testing.TB, offset int64, receipt *contract.MessageReceiptV1) *PartitionCompletionTracker {
 	t.Helper()
 	tracker := NewPartitionCompletionTracker()

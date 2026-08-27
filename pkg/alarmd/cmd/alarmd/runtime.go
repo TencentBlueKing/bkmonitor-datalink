@@ -102,7 +102,7 @@ type applicationComponentFactories struct {
 	newEffectiveTime      func() strategy.EffectiveTimeProvider
 	openRedis             func(state.RedisBackendOptions) (redisRuntime, error)
 	openTriggerEvents     func(enginekafka.DecisionSinkConfig) (triggerEventRuntime, error)
-	openReceipts          func(enginekafka.DecisionSinkConfig, enginekafka.ReceiptPublisherLimits) (receiptRuntime, error)
+	openReceipts          func(enginekafka.DecisionSinkConfig, enginekafka.ReceiptPublisherLimits, enginekafka.ReceiptPublisherDiagnostics) (receiptRuntime, error)
 	openEvaluationService func(
 		enginekafka.Config,
 		coordinator.MessageOutcomeRouter,
@@ -135,7 +135,6 @@ type applicationBundle struct {
 	receipts      receiptRuntime
 	triggerEvents triggerEventRuntime
 	redis         redisRuntime
-	logger        *observability.Logger
 	resources     *observability.ObservingResourceGovernor
 
 	shutdownOnce sync.Once
@@ -158,12 +157,6 @@ func (bundle *applicationBundle) Shutdown(ctx context.Context) error {
 			drain := bundle.receipts.Shutdown(ctx)
 			if drain.Err != nil {
 				result = append(result, drain.Err)
-				if bundle.logger != nil {
-					bundle.logger.Error(
-						string(observability.StageReceiptQueued), observability.ResultDropped, drain.PendingMessages, 0,
-						slog.String("reason", string(drain.Status)),
-					)
-				}
 			}
 		}
 		if bundle.triggerEvents != nil {
@@ -543,11 +536,12 @@ func defaultApplicationComponentFactories() applicationComponentFactories {
 		openReceipts: func(
 			coordinates enginekafka.DecisionSinkConfig,
 			limits enginekafka.ReceiptPublisherLimits,
+			diagnostics enginekafka.ReceiptPublisherDiagnostics,
 		) (receiptRuntime, error) {
 			if err := coordinates.Validate(); err != nil {
 				return nil, err
 			}
-			runtime, err := enginekafka.OpenReceiptPublisher(coordinates, limits)
+			runtime, err := enginekafka.OpenReceiptPublisherWithDiagnostics(coordinates, limits, diagnostics)
 			if err != nil {
 				return nil, retryableStartupDependency(err)
 			}
@@ -639,7 +633,7 @@ func openApplicationBundleWithFactories(
 	if err != nil {
 		return nil, err
 	}
-	partial := &applicationBundle{redis: redis, logger: logger, resources: resources}
+	partial := &applicationBundle{redis: redis, resources: resources}
 	cleanup := func(openErr error) (*applicationBundle, error) {
 		deadline, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout.Duration())
 		defer cancel()
@@ -706,20 +700,23 @@ func openApplicationBundleWithFactories(
 	if err != nil {
 		return cleanup(err)
 	}
-	receipts, err := factories.openReceipts(cfg.Kafka.MessageReceiptCoordinates(), cfg.ReceiptPublisherLimits())
+	receipts, err := factories.openReceipts(
+		cfg.Kafka.MessageReceiptCoordinates(), cfg.ReceiptPublisherLimits(), receiptPublisherDiagnostics(runtimeObserver, logger),
+	)
 	if err != nil {
 		var dependency *startupDependencyError
 		if !errors.As(err, &dependency) {
 			return cleanup(err)
 		}
 		receipts = &unavailableReceiptRuntime{err: err}
-		observeReceiptUnavailable(recorder, logger)
+		observeReceiptUnavailable(runtimeObserver, logger)
 	}
-	partial.receipts = receipts
+	observedReceipts := &observedReceiptRuntime{next: receipts, observer: runtimeObserver, logger: logger}
+	partial.receipts = observedReceipts
 	consumerCoordinates := cfg.Kafka.ConsumerCoordinates()
 	consumerCoordinates.Diagnostics = consumerDiagnostics(recorder, logger)
 	service, err := factories.openEvaluationService(
-		consumerCoordinates, router, &criticalCompletionRuntime{CriticalPhaseCompletion: retryingCritical}, receipts, gate,
+		consumerCoordinates, router, &criticalCompletionRuntime{CriticalPhaseCompletion: retryingCritical}, observedReceipts, gate,
 		enginekafka.EvaluationDiagnostics{
 			OnRejected: rejectedMessageDiagnostics(logger), OnOffsetCommitted: offsetCommitDiagnostics(runtimeObserver),
 		},
@@ -736,19 +733,11 @@ func openApplicationBundleWithFactories(
 	return partial, nil
 }
 
-func observeReceiptUnavailable(recorder observability.Observer, logger *observability.Logger) {
-	observability.Multi(recorder).Observe(context.Background(), observability.Observation{
-		Component:  observability.ComponentCoverage,
-		Stage:      observability.StageReceiptQueued,
-		Result:     observability.ResultDegraded,
-		Operation:  observability.OperationProduce,
-		Direction:  observability.DirectionOutput,
-		ReasonCode: observability.ReasonCode(contract.ReasonKafkaUnavailable),
-	})
-	logger.Error(
-		string(observability.StageReceiptQueued), observability.ResultDropped, 0, 0,
-		slog.String("reason_code", contract.ReasonKafkaUnavailable),
-		slog.Bool("coverage_acceptable", false),
+func observeReceiptUnavailable(observer observability.Observer, logger *observability.Logger) {
+	observeReceiptDrop(observer, logger, observability.StageCoverageGap, enginekafka.ReceiptDropEvidence{
+		Kind: enginekafka.ReceiptDropPublisherUnavailable, Count: 1,
+	},
+		slog.String("dependency_reason_code", contract.ReasonKafkaUnavailable),
 		slog.String("recovery", "process_restart"),
 	)
 }

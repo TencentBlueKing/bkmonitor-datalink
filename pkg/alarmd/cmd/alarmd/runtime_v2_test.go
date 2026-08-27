@@ -38,6 +38,7 @@ func TestOpenApplicationBundleBuildsV2EvaluationService(t *testing.T) {
 	redis := &fakeRedisRuntime{}
 	events := &fakeTriggerEventRuntime{}
 	receipts := &fakeReceiptRuntime{}
+	var serviceReceipts coordinator.ReceiptPublisher
 	service := newFakeServiceRuntime()
 	service.close = func() error { return nil }
 	factories := applicationComponentFactories{
@@ -46,7 +47,10 @@ func TestOpenApplicationBundleBuildsV2EvaluationService(t *testing.T) {
 		openTriggerEvents: func(enginekafka.DecisionSinkConfig) (triggerEventRuntime, error) {
 			return events, nil
 		},
-		openReceipts: func(enginekafka.DecisionSinkConfig, enginekafka.ReceiptPublisherLimits) (receiptRuntime, error) {
+		openReceipts: func(_ enginekafka.DecisionSinkConfig, _ enginekafka.ReceiptPublisherLimits, diagnostics enginekafka.ReceiptPublisherDiagnostics) (receiptRuntime, error) {
+			if diagnostics.OnDrop == nil {
+				t.Fatal("Receipt publisher diagnostics were not wired")
+			}
 			return receipts, nil
 		},
 		openEvaluationService: func(
@@ -62,9 +66,10 @@ func TestOpenApplicationBundleBuildsV2EvaluationService(t *testing.T) {
 			if coordinates.Topic != cfg.Kafka.InputTopic {
 				t.Fatalf("input topic = %q, want %q", coordinates.Topic, cfg.Kafka.InputTopic)
 			}
-			if router == nil || critical == nil || gotReceipts != receipts || gate == nil {
+			if router == nil || critical == nil || gotReceipts == nil || gate == nil {
 				t.Fatal("v2 evaluation service received an incomplete composition")
 			}
+			serviceReceipts = gotReceipts
 			if diagnostics.OnRejected == nil || diagnostics.OnOffsetCommitted == nil {
 				t.Fatal("v2 evaluation service did not receive rejection and offset diagnostics")
 			}
@@ -80,7 +85,7 @@ func TestOpenApplicationBundleBuildsV2EvaluationService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openApplicationBundleWithFactories() error = %v", err)
 	}
-	if bundle.service != service || bundle.gate == nil {
+	if bundle.service != service || bundle.gate == nil || serviceReceipts != bundle.receipts {
 		t.Fatal("application bundle did not retain the v2 service and dependency gate")
 	}
 	if bundle.resources == nil || !hasMetricFamily(t, recorder, "bkmonitor_alarmd_resource_state") {
@@ -144,6 +149,54 @@ func TestObservedTriggerEventRuntimeRecordsBrokerACK(t *testing.T) {
 		"result": string(observability.ResultSuccess),
 	}) {
 		t.Fatal("TriggerEvent ACK observation was not recorded")
+	}
+}
+
+func TestReceiptDropDiagnosticsCoverEnqueueCauseAndShutdownSummary(t *testing.T) {
+	t.Parallel()
+
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	observer := observability.Multi(recorder)
+	var output bytes.Buffer
+	logger := observability.New(observability.ComponentTrigger, &output)
+	runtime := &observedReceiptRuntime{
+		next: &fakeReceiptRuntime{
+			enqueue: func(*contract.MessageReceiptV1) bool { return false },
+			result: enginekafka.ReceiptDrainResult{
+				Status: enginekafka.ReceiptDrainWithDrop,
+				Drops:  enginekafka.ReceiptDropCounts{QueueMessages: 2},
+			},
+		},
+		observer: observer,
+		logger:   logger,
+	}
+	if runtime.TryEnqueue(&contract.MessageReceiptV1{}) {
+		t.Fatal("observed Receipt runtime accepted rejected audit")
+	}
+	diagnostics := receiptPublisherDiagnostics(observer, logger)
+	diagnostics.OnDrop(enginekafka.ReceiptDropEvidence{Kind: enginekafka.ReceiptDropQueueBytes, Count: 3})
+	if result := runtime.Shutdown(context.Background()); result.Status != enginekafka.ReceiptDrainWithDrop {
+		t.Fatalf("Shutdown() = %+v, want WITH_DROP", result)
+	}
+
+	logOutput := output.String()
+	for _, want := range []string{
+		`"reason_code":"AUDIT_DROP"`, `"coverage_acceptable":false`,
+		`"drop_kind":"enqueue_rejected"`, `"drop_kind":"queue_bytes"`,
+		`"drop_kind":"shutdown_with_drop"`,
+	} {
+		if !strings.Contains(logOutput, want) {
+			t.Fatalf("log = %q, want %q", logOutput, want)
+		}
+	}
+	for _, stage := range []observability.Stage{observability.StageReceiptQueued, observability.StageCoverageGap} {
+		if !hasObservationMetric(t, recorder, map[string]string{
+			"component": string(observability.ComponentCoverage),
+			"stage":     string(stage), "result": string(observability.ResultDegraded),
+			"reason_code": string(observability.ReasonContractCoverage),
+		}) {
+			t.Fatalf("missing Receipt drop metric at stage %s", stage)
+		}
 	}
 }
 
@@ -278,7 +331,7 @@ func TestOpenApplicationBundleDoesNotRetryUnclassifiedFactoryError(t *testing.T)
 		openTriggerEvents: func(enginekafka.DecisionSinkConfig) (triggerEventRuntime, error) {
 			return nil, want
 		},
-		openReceipts: func(enginekafka.DecisionSinkConfig, enginekafka.ReceiptPublisherLimits) (receiptRuntime, error) {
+		openReceipts: func(enginekafka.DecisionSinkConfig, enginekafka.ReceiptPublisherLimits, enginekafka.ReceiptPublisherDiagnostics) (receiptRuntime, error) {
 			return &fakeReceiptRuntime{}, nil
 		},
 		openEvaluationService: func(
@@ -321,7 +374,7 @@ func TestOpenApplicationBundleFailsOpenWhenReceiptKafkaIsUnavailable(t *testing.
 		openTriggerEvents: func(enginekafka.DecisionSinkConfig) (triggerEventRuntime, error) {
 			return &fakeTriggerEventRuntime{}, nil
 		},
-		openReceipts: func(enginekafka.DecisionSinkConfig, enginekafka.ReceiptPublisherLimits) (receiptRuntime, error) {
+		openReceipts: func(enginekafka.DecisionSinkConfig, enginekafka.ReceiptPublisherLimits, enginekafka.ReceiptPublisherDiagnostics) (receiptRuntime, error) {
 			return nil, retryableStartupDependency(root)
 		},
 		openEvaluationService: func(
@@ -362,8 +415,9 @@ func TestOpenApplicationBundleFailsOpenWhenReceiptKafkaIsUnavailable(t *testing.
 	}
 	logOutput := output.String()
 	for _, want := range []string{
-		`"stage":"receipt_queued"`, `"result":"dropped"`,
-		`"reason_code":"KAFKA_UNAVAILABLE"`, `"coverage_acceptable":false`,
+		`"stage":"coverage_gap"`, `"result":"dropped"`,
+		`"reason_code":"AUDIT_DROP"`, `"dependency_reason_code":"KAFKA_UNAVAILABLE"`,
+		`"drop_kind":"publisher_unavailable"`, `"coverage_acceptable":false`,
 	} {
 		if !strings.Contains(logOutput, want) {
 			t.Fatalf("log = %q, want %q", logOutput, want)
@@ -374,9 +428,9 @@ func TestOpenApplicationBundleFailsOpenWhenReceiptKafkaIsUnavailable(t *testing.
 	}
 	if !hasObservationMetric(t, recorder, map[string]string{
 		"component":   string(observability.ComponentCoverage),
-		"stage":       string(observability.StageReceiptQueued),
+		"stage":       string(observability.StageCoverageGap),
 		"result":      string(observability.ResultDegraded),
-		"reason_code": string(observability.ReasonContractRetryable),
+		"reason_code": string(observability.ReasonContractCoverage),
 	}) {
 		t.Fatal("Receipt fail-open metric was not recorded")
 	}
@@ -392,7 +446,7 @@ func TestOpenApplicationBundleRejectsDeterministicReceiptFactoryError(t *testing
 		openTriggerEvents: func(enginekafka.DecisionSinkConfig) (triggerEventRuntime, error) {
 			return &fakeTriggerEventRuntime{}, nil
 		},
-		openReceipts: func(enginekafka.DecisionSinkConfig, enginekafka.ReceiptPublisherLimits) (receiptRuntime, error) {
+		openReceipts: func(enginekafka.DecisionSinkConfig, enginekafka.ReceiptPublisherLimits, enginekafka.ReceiptPublisherDiagnostics) (receiptRuntime, error) {
 			return nil, want
 		},
 		openEvaluationService: func(
@@ -614,10 +668,16 @@ func (runtime *fakeTriggerEventRuntime) Shutdown(ctx context.Context) error {
 
 type fakeReceiptRuntime struct {
 	shutdown func(context.Context)
+	enqueue  func(*contract.MessageReceiptV1) bool
 	result   enginekafka.ReceiptDrainResult
 }
 
-func (*fakeReceiptRuntime) TryEnqueue(*contract.MessageReceiptV1) bool { return true }
+func (runtime *fakeReceiptRuntime) TryEnqueue(receipt *contract.MessageReceiptV1) bool {
+	if runtime.enqueue != nil {
+		return runtime.enqueue(receipt)
+	}
+	return true
+}
 func (runtime *fakeReceiptRuntime) Shutdown(ctx context.Context) enginekafka.ReceiptDrainResult {
 	if runtime.shutdown != nil {
 		runtime.shutdown(ctx)

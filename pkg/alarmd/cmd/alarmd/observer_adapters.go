@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -124,6 +125,88 @@ func stateObserver(observer observability.Observer) state.Observer {
 type observedTriggerEventRuntime struct {
 	next     triggerEventRuntime
 	observer observability.Observer
+}
+
+type observedReceiptRuntime struct {
+	next     receiptRuntime
+	observer observability.Observer
+	logger   *observability.Logger
+}
+
+func (runtime *observedReceiptRuntime) TryEnqueue(receipt *contract.MessageReceiptV1) bool {
+	accepted := runtime.next.TryEnqueue(receipt)
+	if !accepted {
+		observeReceiptDrop(runtime.observer, runtime.logger, observability.StageReceiptQueued, enginekafka.ReceiptDropEvidence{
+			Kind: enginekafka.ReceiptDropEnqueueRejected, Count: 1,
+		})
+	}
+	return accepted
+}
+
+func (runtime *observedReceiptRuntime) Shutdown(ctx context.Context) enginekafka.ReceiptDrainResult {
+	result := runtime.next.Shutdown(ctx)
+	switch result.Status {
+	case enginekafka.ReceiptDrainWithDrop:
+		observeReceiptDrop(runtime.observer, runtime.logger, observability.StageCoverageGap, enginekafka.ReceiptDropEvidence{
+			Kind: enginekafka.ReceiptDropShutdownWithDrop, Count: maxReceiptDropCount(1, receiptDropTotal(result.Drops)),
+		})
+	case enginekafka.ReceiptDrainFailed:
+		observeReceiptDrop(runtime.observer, runtime.logger, observability.StageCoverageGap, enginekafka.ReceiptDropEvidence{
+			Kind: enginekafka.ReceiptDropShutdownFailed, Count: maxReceiptDropCount(1, receiptDropTotal(result.Drops)),
+		})
+	}
+	return result
+}
+
+func receiptPublisherDiagnostics(
+	observer observability.Observer,
+	logger *observability.Logger,
+) enginekafka.ReceiptPublisherDiagnostics {
+	return enginekafka.ReceiptPublisherDiagnostics{OnDrop: func(evidence enginekafka.ReceiptDropEvidence) {
+		observeReceiptDrop(observer, logger, observability.StageCoverageGap, evidence)
+	}}
+}
+
+func observeReceiptDrop(
+	observer observability.Observer,
+	logger *observability.Logger,
+	stage observability.Stage,
+	evidence enginekafka.ReceiptDropEvidence,
+	attributes ...slog.Attr,
+) {
+	if evidence.Count == 0 {
+		return
+	}
+	observeRuntime(context.Background(), observer, observability.Observation{
+		Component: observability.ComponentCoverage, Stage: stage,
+		Result: observability.ResultDegraded, Operation: observability.OperationProduce,
+		Direction: observability.DirectionOutput, ReasonCode: observability.ReasonCode(contract.ReasonAuditDrop),
+		Counts: observability.Counts{Messages: int64(evidence.Count)},
+	})
+	if logger != nil {
+		attributes = append([]slog.Attr{
+			slog.String("reason_code", contract.ReasonAuditDrop),
+			slog.String("drop_kind", string(evidence.Kind)),
+			slog.Uint64("drop_count", evidence.Count),
+			slog.Bool("coverage_acceptable", false),
+		}, attributes...)
+		logger.Error(
+			string(stage), observability.ResultDropped, int(evidence.Count), 0,
+			attributes...,
+		)
+	}
+}
+
+func receiptDropTotal(drops enginekafka.ReceiptDropCounts) uint64 {
+	return drops.EncodeFailed + drops.QueueMessages + drops.QueueBytes + drops.BrokerACKFailed +
+		drops.Closed + drops.ShutdownTimeout + drops.CloseFailed
+}
+
+func maxReceiptDropCount(left, right uint64) uint64 {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func (runtime *observedTriggerEventRuntime) WriteBatch(ctx context.Context, events []contract.TriggerEventV1) error {

@@ -134,6 +134,135 @@ func TestReceiptPublisherClassifiesBrokerACKDropWithoutRetrying(t *testing.T) {
 	}
 }
 
+func TestReceiptPublisherEmitsEvidenceForEveryEnqueueDropClass(t *testing.T) {
+	t.Parallel()
+
+	receipt := messageReceiptGolden(t)
+	payload, err := contract.EncodeMessageReceiptV1(&receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan error, 1)
+	evidence := make(chan ReceiptDropEvidence, 4)
+	publisher, err := newReceiptPublisherWithDiagnostics(
+		"alarmd-message-receipt-shadow",
+		&fakeSyncProducer{send: func(*sarama.ProducerMessage) (int32, int64, error) {
+			close(started)
+			return 0, 0, <-release
+		}},
+		&fakeCloser{},
+		ReceiptPublisherLimits{MaxQueuedMessages: 1, MaxQueuedBytes: len(payload)},
+		ReceiptPublisherDiagnostics{OnDrop: func(drop ReceiptDropEvidence) { evidence <- drop }},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !publisher.TryEnqueue(&receipt) {
+		t.Fatal("first TryEnqueue() = false")
+	}
+	<-started
+	if publisher.TryEnqueue(&receipt) {
+		t.Fatal("TryEnqueue() exceeded message budget")
+	}
+	invalid := receipt
+	invalid.ReceiptID = "invalid"
+	if publisher.TryEnqueue(&invalid) {
+		t.Fatal("TryEnqueue() accepted invalid Receipt")
+	}
+	release <- nil
+	if result := publisher.Shutdown(context.Background()); result.Status != ReceiptDrainWithDrop {
+		t.Fatalf("Shutdown() = %+v, want WITH_DROP", result)
+	}
+	if publisher.TryEnqueue(&receipt) {
+		t.Fatal("TryEnqueue() accepted Receipt after shutdown")
+	}
+	for _, want := range []ReceiptDropKind{ReceiptDropQueueMessages, ReceiptDropEncodeFailed, ReceiptDropClosed} {
+		select {
+		case got := <-evidence:
+			if got.Kind != want || got.Count != 1 {
+				t.Fatalf("drop evidence = %+v, want %s/1", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("missing drop evidence %s", want)
+		}
+	}
+
+	byteEvidence := make(chan ReceiptDropEvidence, 1)
+	bytePublisher, err := newReceiptPublisherWithDiagnostics(
+		"alarmd-message-receipt-shadow", &fakeSyncProducer{}, &fakeCloser{},
+		ReceiptPublisherLimits{MaxQueuedMessages: 1, MaxQueuedBytes: len(payload) - 1},
+		ReceiptPublisherDiagnostics{OnDrop: func(drop ReceiptDropEvidence) { byteEvidence <- drop }},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytePublisher.TryEnqueue(&receipt) {
+		t.Fatal("TryEnqueue() exceeded byte budget")
+	}
+	if got := <-byteEvidence; got.Kind != ReceiptDropQueueBytes || got.Count != 1 {
+		t.Fatalf("byte drop evidence = %+v", got)
+	}
+	_ = bytePublisher.Shutdown(context.Background())
+}
+
+func TestReceiptPublisherEmitsEvidenceForAsyncAndShutdownDrops(t *testing.T) {
+	t.Parallel()
+
+	receipt := messageReceiptGolden(t)
+	payload, err := contract.EncodeMessageReceiptV1(&receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	brokerEvidence := make(chan ReceiptDropEvidence, 1)
+	brokerPublisher, err := newReceiptPublisherWithDiagnostics(
+		"alarmd-message-receipt-shadow",
+		&fakeSyncProducer{send: func(*sarama.ProducerMessage) (int32, int64, error) {
+			return -1, -1, errors.New("broker ACK failed")
+		}},
+		&fakeCloser{}, ReceiptPublisherLimits{MaxQueuedMessages: 1, MaxQueuedBytes: len(payload)},
+		ReceiptPublisherDiagnostics{OnDrop: func(drop ReceiptDropEvidence) { brokerEvidence <- drop }},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !brokerPublisher.TryEnqueue(&receipt) {
+		t.Fatal("TryEnqueue() = false")
+	}
+	_ = brokerPublisher.Shutdown(context.Background())
+	if got := <-brokerEvidence; got.Kind != ReceiptDropBrokerACKFailed || got.Count != 1 {
+		t.Fatalf("broker drop evidence = %+v", got)
+	}
+
+	sendStarted := make(chan struct{})
+	clientClosed := make(chan struct{})
+	timeoutEvidence := make(chan ReceiptDropEvidence, 1)
+	timeoutPublisher, err := newReceiptPublisherWithDiagnostics(
+		"alarmd-message-receipt-shadow",
+		&fakeSyncProducer{send: func(*sarama.ProducerMessage) (int32, int64, error) {
+			close(sendStarted)
+			<-clientClosed
+			return -1, -1, sarama.ErrClosedClient
+		}},
+		&fakeCloser{close: func() error { close(clientClosed); return nil }},
+		ReceiptPublisherLimits{MaxQueuedMessages: 1, MaxQueuedBytes: len(payload)},
+		ReceiptPublisherDiagnostics{OnDrop: func(drop ReceiptDropEvidence) { timeoutEvidence <- drop }},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !timeoutPublisher.TryEnqueue(&receipt) {
+		t.Fatal("TryEnqueue() = false")
+	}
+	<-sendStarted
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_ = timeoutPublisher.Shutdown(ctx)
+	if got := <-timeoutEvidence; got.Kind != ReceiptDropShutdownTimeout || got.Count != 1 {
+		t.Fatalf("timeout drop evidence = %+v", got)
+	}
+}
+
 func TestReceiptPublisherShutdownTimeoutDropsPendingWithoutBlocking(t *testing.T) {
 	t.Parallel()
 
@@ -228,9 +357,11 @@ func TestReceiptPublisherReportsOwnedResourceCloseFailure(t *testing.T) {
 		send:  func(*sarama.ProducerMessage) (int32, int64, error) { return 0, 0, nil },
 		close: func() error { return want },
 	}
-	publisher, err := newReceiptPublisher(
+	evidence := make(chan ReceiptDropEvidence, 1)
+	publisher, err := newReceiptPublisherWithDiagnostics(
 		"alarmd-message-receipt-shadow", producer, &fakeCloser{},
 		ReceiptPublisherLimits{MaxQueuedMessages: 1, MaxQueuedBytes: 1024},
+		ReceiptPublisherDiagnostics{OnDrop: func(drop ReceiptDropEvidence) { evidence <- drop }},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -238,6 +369,9 @@ func TestReceiptPublisherReportsOwnedResourceCloseFailure(t *testing.T) {
 	result := publisher.Shutdown(context.Background())
 	if result.Status != ReceiptDrainFailed || result.Drops.CloseFailed != 1 || !errors.Is(result.Err, want) {
 		t.Fatalf("Shutdown() = %#v", result)
+	}
+	if got := <-evidence; got.Kind != ReceiptDropCloseFailed || got.Count != 1 {
+		t.Fatalf("close drop evidence = %+v", got)
 	}
 }
 

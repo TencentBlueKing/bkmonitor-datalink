@@ -58,7 +58,11 @@ func (committer *PartitionCommitter) CommitReady(ctx context.Context) error {
 	}
 	for _, receipt := range receipts {
 		if receipt != nil {
-			_ = committer.receipts.TryEnqueue(receipt)
+			if !committer.receipts.TryEnqueue(receipt) {
+				// Receipt is a fail-open audit. The publisher owns drop evidence;
+				// a rejection must not invalidate the committed input offset.
+				continue
+			}
 		}
 	}
 	return nil

@@ -25,6 +25,38 @@ type ReceiptPublisherLimits struct {
 	MaxQueuedBytes    int
 }
 
+type ReceiptDropKind string
+
+const (
+	ReceiptDropEncodeFailed         ReceiptDropKind = "encode_failed"
+	ReceiptDropQueueMessages        ReceiptDropKind = "queue_messages"
+	ReceiptDropQueueBytes           ReceiptDropKind = "queue_bytes"
+	ReceiptDropBrokerACKFailed      ReceiptDropKind = "broker_ack_failed"
+	ReceiptDropClosed               ReceiptDropKind = "closed"
+	ReceiptDropShutdownTimeout      ReceiptDropKind = "shutdown_timeout"
+	ReceiptDropCloseFailed          ReceiptDropKind = "close_failed"
+	ReceiptDropEnqueueRejected      ReceiptDropKind = "enqueue_rejected"
+	ReceiptDropShutdownWithDrop     ReceiptDropKind = "shutdown_with_drop"
+	ReceiptDropShutdownFailed       ReceiptDropKind = "shutdown_failed"
+	ReceiptDropPublisherUnavailable ReceiptDropKind = "publisher_unavailable"
+)
+
+type ReceiptDropEvidence struct {
+	Kind  ReceiptDropKind
+	Count uint64
+}
+
+type ReceiptPublisherDiagnostics struct {
+	OnDrop func(ReceiptDropEvidence)
+}
+
+func (diagnostics ReceiptPublisherDiagnostics) drop(kind ReceiptDropKind, count uint64) {
+	if diagnostics.OnDrop != nil && count > 0 {
+		defer func() { _ = recover() }()
+		diagnostics.OnDrop(ReceiptDropEvidence{Kind: kind, Count: count})
+	}
+}
+
 func (limits ReceiptPublisherLimits) validate() error {
 	if limits.MaxQueuedMessages <= 0 || limits.MaxQueuedBytes <= 0 {
 		return errors.New("kafka receipt publisher: message and byte budgets must be positive")
@@ -68,9 +100,10 @@ type queuedReceipt struct {
 // ReceiptPublisher is a best-effort audit output. TryEnqueue never waits for a
 // broker ACK and its queue bounds include both buffered and in-flight payloads.
 type ReceiptPublisher struct {
-	core   *DecisionSink
-	limits ReceiptPublisherLimits
-	queue  chan queuedReceipt
+	core        *DecisionSink
+	limits      ReceiptPublisherLimits
+	queue       chan queuedReceipt
+	diagnostics ReceiptPublisherDiagnostics
 
 	mu              sync.Mutex
 	accepting       bool
@@ -91,6 +124,14 @@ func OpenReceiptPublisher(
 	coordinates DecisionSinkConfig,
 	limits ReceiptPublisherLimits,
 ) (*ReceiptPublisher, error) {
+	return OpenReceiptPublisherWithDiagnostics(coordinates, limits, ReceiptPublisherDiagnostics{})
+}
+
+func OpenReceiptPublisherWithDiagnostics(
+	coordinates DecisionSinkConfig,
+	limits ReceiptPublisherLimits,
+	diagnostics ReceiptPublisherDiagnostics,
+) (*ReceiptPublisher, error) {
 	if err := limits.validate(); err != nil {
 		return nil, err
 	}
@@ -106,7 +147,7 @@ func OpenReceiptPublisher(
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("kafka receipt publisher: open producer: %w", err), client.Close())
 	}
-	publisher, err := newReceiptPublisher(coordinates.OutputTopic, producer, client, limits)
+	publisher, err := newReceiptPublisherWithDiagnostics(coordinates.OutputTopic, producer, client, limits, diagnostics)
 	if err != nil {
 		return nil, errors.Join(err, producer.Close(), client.Close())
 	}
@@ -119,6 +160,16 @@ func newReceiptPublisher(
 	client closeableClient,
 	limits ReceiptPublisherLimits,
 ) (*ReceiptPublisher, error) {
+	return newReceiptPublisherWithDiagnostics(outputTopic, producer, client, limits, ReceiptPublisherDiagnostics{})
+}
+
+func newReceiptPublisherWithDiagnostics(
+	outputTopic string,
+	producer syncMessageProducer,
+	client closeableClient,
+	limits ReceiptPublisherLimits,
+	diagnostics ReceiptPublisherDiagnostics,
+) (*ReceiptPublisher, error) {
 	if err := limits.validate(); err != nil {
 		return nil, err
 	}
@@ -127,7 +178,7 @@ func newReceiptPublisher(
 		return nil, err
 	}
 	publisher := &ReceiptPublisher{
-		core: core, limits: limits, queue: make(chan queuedReceipt, limits.MaxQueuedMessages),
+		core: core, limits: limits, queue: make(chan queuedReceipt, limits.MaxQueuedMessages), diagnostics: diagnostics,
 		accepting: true, workerDone: make(chan struct{}),
 	}
 	go publisher.run()
@@ -142,6 +193,7 @@ func (publisher *ReceiptPublisher) TryEnqueue(receipt *contract.MessageReceiptV1
 	if !publisher.accepting {
 		publisher.drops.Closed++
 		publisher.mu.Unlock()
+		publisher.diagnostics.drop(ReceiptDropClosed, 1)
 		return false
 	}
 	publisher.mu.Unlock()
@@ -152,27 +204,34 @@ func (publisher *ReceiptPublisher) TryEnqueue(receipt *contract.MessageReceiptV1
 		publisher.drops.EncodeFailed++
 		publisher.recordError(err)
 		publisher.mu.Unlock()
+		publisher.diagnostics.drop(ReceiptDropEncodeFailed, 1)
 		return false
 	}
 
 	publisher.mu.Lock()
-	defer publisher.mu.Unlock()
 	if !publisher.accepting {
 		publisher.drops.Closed++
+		publisher.mu.Unlock()
+		publisher.diagnostics.drop(ReceiptDropClosed, 1)
 		return false
 	}
 	if publisher.pendingMessages >= publisher.limits.MaxQueuedMessages {
 		publisher.drops.QueueMessages++
+		publisher.mu.Unlock()
+		publisher.diagnostics.drop(ReceiptDropQueueMessages, 1)
 		return false
 	}
 	if len(payload) > publisher.limits.MaxQueuedBytes-publisher.pendingBytes {
 		publisher.drops.QueueBytes++
+		publisher.mu.Unlock()
+		publisher.diagnostics.drop(ReceiptDropQueueBytes, 1)
 		return false
 	}
 	publisher.pendingMessages++
 	publisher.pendingBytes += len(payload)
 	publisher.enqueued++
 	publisher.queue <- queuedReceipt{payload: payload}
+	publisher.mu.Unlock()
 	return true
 }
 
@@ -201,18 +260,21 @@ func (publisher *ReceiptPublisher) run() {
 
 func (publisher *ReceiptPublisher) finish(item queuedReceipt, err error) {
 	publisher.mu.Lock()
-	defer publisher.mu.Unlock()
 	publisher.pendingMessages--
 	publisher.pendingBytes -= len(item.payload)
 	if publisher.abandoned {
+		publisher.mu.Unlock()
 		return
 	}
 	if err != nil {
 		publisher.drops.BrokerACKFailed++
 		publisher.recordError(err)
+		publisher.mu.Unlock()
+		publisher.diagnostics.drop(ReceiptDropBrokerACKFailed, 1)
 		return
 	}
 	publisher.acked++
+	publisher.mu.Unlock()
 }
 
 func (publisher *ReceiptPublisher) shutdownWithin(ctx context.Context) ReceiptDrainResult {
@@ -232,6 +294,7 @@ func (publisher *ReceiptPublisher) shutdownWithin(ctx context.Context) ReceiptDr
 		result := publisher.snapshotLocked()
 		publisher.mu.Unlock()
 		if closeErr != nil {
+			publisher.diagnostics.drop(ReceiptDropCloseFailed, 1)
 			result.Status = ReceiptDrainFailed
 		} else if hasReceiptDrops(result.Drops) {
 			result.Status = ReceiptDrainWithDrop
@@ -250,6 +313,7 @@ func (publisher *ReceiptPublisher) shutdownWithin(ctx context.Context) ReceiptDr
 		publisher.recordError(ctx.Err())
 		result := publisher.snapshotLocked()
 		publisher.mu.Unlock()
+		publisher.diagnostics.drop(ReceiptDropShutdownTimeout, uint64(timedOut))
 		closeErr := publisher.core.Shutdown(ctx)
 		result.Status = ReceiptDrainTimedOut
 		result.Err = errors.Join(result.Err, closeErr)

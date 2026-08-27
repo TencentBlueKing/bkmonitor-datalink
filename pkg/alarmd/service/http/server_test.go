@@ -11,6 +11,7 @@ package httpservice
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 func TestLifecycleReadinessAndMetricUseTheSameSource(t *testing.T) {
@@ -57,6 +59,64 @@ func TestProbeStateTransitions(t *testing.T) {
 
 	server.SetReady(false)
 	assertStatus(t, server.Handler(), "/readyz", http.StatusServiceUnavailable)
+}
+
+func TestHealthSnapshotControlsReadinessAndResponse(t *testing.T) {
+	t.Parallel()
+
+	source := observability.NewHealthTracker(observability.HealthSnapshot{
+		State:             observability.HealthDegraded,
+		ConfigLoaded:      true,
+		SchemaReady:       true,
+		AssignmentReady:   true,
+		RuntimeStateReady: true,
+		OutputSinkReady:   true,
+		Reasons: []observability.ReasonCode{
+			observability.ReasonWorkerQueue,
+		},
+	})
+	server, err := NewWithHealth(metric.NewRecorder(metric.BuildInfo{}), source)
+	if err != nil {
+		t.Fatalf("NewWithHealth() error = %v", err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("ready response = %d/%q", response.Code, response.Header().Get("Content-Type"))
+	}
+	var snapshot observability.HealthSnapshot
+	if err := json.Unmarshal(response.Body.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode readiness response: %v", err)
+	}
+	if !snapshot.Ready || snapshot.State != observability.HealthDegraded {
+		t.Fatalf("readiness snapshot = %#v", snapshot)
+	}
+
+	source.Update(observability.HealthSnapshot{State: observability.HealthNotReady})
+	assertStatus(t, server.Handler(), "/readyz", http.StatusServiceUnavailable)
+	source.Update(observability.HealthSnapshot{State: observability.HealthFatal})
+	assertStatus(t, server.Handler(), "/readyz", http.StatusServiceUnavailable)
+	assertStatus(t, server.Handler(), "/healthz", http.StatusOK)
+}
+
+func TestNewWithHealthRequiresInputsAndSingleBinding(t *testing.T) {
+	t.Parallel()
+
+	source := observability.NewHealthTracker(observability.HealthSnapshot{})
+	if _, err := NewWithHealth(nil, source); err == nil {
+		t.Fatal("NewWithHealth(nil, source) returned nil")
+	}
+	if _, err := NewWithHealth(metric.NewRecorder(metric.BuildInfo{}), nil); err == nil {
+		t.Fatal("NewWithHealth(recorder, nil) returned nil")
+	}
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	if _, err := NewWithHealth(recorder, source); err != nil {
+		t.Fatalf("first NewWithHealth() error = %v", err)
+	}
+	if _, err := NewWithHealth(recorder, source); err == nil {
+		t.Fatal("second NewWithHealth() returned nil")
+	}
 }
 
 func TestMetricsRemainAvailableBeforeReady(t *testing.T) {

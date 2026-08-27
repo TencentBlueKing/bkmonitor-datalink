@@ -11,6 +11,7 @@ package httpservice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -22,12 +23,14 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 type Server struct {
-	handler http.Handler
-	ready   atomic.Bool
-	source  lifecycle.Source
+	handler      http.Handler
+	ready        atomic.Bool
+	source       lifecycle.Source
+	healthSource observability.HealthSource
 }
 
 func New(recorder *metric.Recorder) *Server {
@@ -45,6 +48,21 @@ func NewWithLifecycle(recorder *metric.Recorder, source lifecycle.Source) (*Serv
 		return nil, err
 	}
 	return newServer(recorder, source), nil
+}
+
+func NewWithHealth(recorder *metric.Recorder, source observability.HealthSource) (*Server, error) {
+	if recorder == nil {
+		return nil, errors.New("HTTP service: metric recorder is required")
+	}
+	if source == nil {
+		return nil, errors.New("HTTP service: health source is required")
+	}
+	if err := recorder.BindHealth(source); err != nil {
+		return nil, err
+	}
+	server := newServer(recorder, nil)
+	server.healthSource = source
+	return server, nil
 }
 
 func newServer(recorder *metric.Recorder, source lifecycle.Source) *Server {
@@ -117,6 +135,17 @@ func (s *Server) health(response http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) readiness(response http.ResponseWriter, _ *http.Request) {
 	ready := s.ready.Load()
+	if s.healthSource != nil {
+		snapshot := observability.NormalizeHealthSnapshot(s.healthSource.HealthSnapshot())
+		response.Header().Set("Content-Type", "application/json")
+		if !snapshot.Ready {
+			response.WriteHeader(http.StatusServiceUnavailable)
+		}
+		if err := json.NewEncoder(response).Encode(snapshot); err != nil {
+			return
+		}
+		return
+	}
 	if s.source != nil {
 		ready = s.source.LifecycleSnapshot().Ready
 	}

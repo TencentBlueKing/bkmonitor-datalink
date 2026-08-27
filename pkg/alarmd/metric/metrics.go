@@ -22,7 +22,7 @@ const (
 	metricNamespace    = "bkmonitor"
 	metricSubsystem    = "alarmd"
 	otherLabel         = "_other"
-	CustomSeriesBudget = 500
+	CustomSeriesBudget = 19000
 )
 
 var (
@@ -109,11 +109,16 @@ type Recorder struct {
 	registry        *prometheus.Registry
 	lifecycleMu     sync.Mutex
 	lifecycleBound  bool
+	healthMu        sync.Mutex
+	healthBound     bool
+	resourceMu      sync.Mutex
+	resourceBound   bool
 	processDuration *prometheus.HistogramVec
 	processTotal    *prometheus.CounterVec
 	recordsTotal    *prometheus.CounterVec
 	pipelineLatency *prometheus.HistogramVec
 	shadowCompare   *prometheus.CounterVec
+	observations    observationMetrics
 }
 
 func NewRecorder(build BuildInfo) *Recorder {
@@ -175,8 +180,9 @@ func NewRecorder(build BuildInfo) *Recorder {
 		[]string{"version", "commit", "schema_version"},
 	)
 	buildInfo.WithLabelValues(build.Version, build.Commit, build.SchemaVersion).Set(1)
+	observations := newObservationMetrics()
 
-	registry.MustRegister(
+	collectorsToRegister := []prometheus.Collector{
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		buildInfo,
@@ -185,7 +191,9 @@ func NewRecorder(build BuildInfo) *Recorder {
 		recordsTotal,
 		pipelineLatency,
 		shadowCompare,
-	)
+	}
+	collectorsToRegister = append(collectorsToRegister, observations.collectors()...)
+	registry.MustRegister(collectorsToRegister...)
 
 	return &Recorder{
 		registry:        registry,
@@ -194,6 +202,7 @@ func NewRecorder(build BuildInfo) *Recorder {
 		recordsTotal:    recordsTotal,
 		pipelineLatency: pipelineLatency,
 		shadowCompare:   shadowCompare,
+		observations:    observations,
 	}
 }
 
@@ -245,7 +254,8 @@ func MaxCustomSeries() int {
 	pipelineLatency := len(allEdges) * len(allModes) * histogramSeries(len(pipelineLatencyBuckets))
 	shadowCompare := len(allComponents) * len(allCompareResults)
 	buildInfo := 1
-	return processTotal + processDuration + recordsTotal + pipelineLatency + shadowCompare + buildInfo + lifecycleCustomSeries()
+	return processTotal + processDuration + recordsTotal + pipelineLatency + shadowCompare + buildInfo +
+		lifecycleCustomSeries() + observationCustomSeries() + healthResourceCustomSeries()
 }
 
 var (

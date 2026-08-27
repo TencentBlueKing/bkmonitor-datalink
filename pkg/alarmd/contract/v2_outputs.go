@@ -539,13 +539,27 @@ func validateReceiptCountsV1(receipt *MessageReceiptV1) error {
 		return invalid("message_receipt.counts.selected", "must equal processed + unavailable + terminal")
 	}
 	wantStatus := ReceiptStatusCompleted
-	if receipt.Counts.Terminal != 0 || receipt.Counts.LevelTerminalAffected != 0 {
+	// An isolated validation terminal may have no trustworthy Plan x Record
+	// cardinality. It is then represented by one reason fact rather than by
+	// selected/per_plan/terminal counts.
+	if receipt.Counts.Terminal != 0 || receipt.Counts.LevelTerminalAffected != 0 ||
+		hasValidationTerminalReasonV1(receipt.ReasonCounts) {
 		wantStatus = ReceiptStatusCompletedWithTerminal
 	}
 	if receipt.Status != wantStatus {
 		return invalid("message_receipt.status", "does not match terminal counts")
 	}
 	return nil
+}
+
+func hasValidationTerminalReasonV1(values []ReasonCountV1) bool {
+	for _, value := range values {
+		definition, ok := LookupReasonV2(value.ReasonCode)
+		if ok && value.Count != 0 && definition.Domains.Has(ReasonDomainValidationIssue) {
+			return true
+		}
+	}
+	return false
 }
 
 func sumCountsV1(values ...uint64) (uint64, bool) {

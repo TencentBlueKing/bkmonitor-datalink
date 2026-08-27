@@ -55,7 +55,10 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonSelectorOrdinalInvalid:     {ReasonSelectorOrdinalInvalid, ReasonClassDeterministic, reasonMessageDomainsV2},
 	ReasonMessageBudgetExceeded:      {ReasonMessageBudgetExceeded, ReasonClassDeterministic, reasonMessageDomainsV2},
 
-	ReasonPlanInvalid:              {ReasonPlanInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonPlanInvalid: {ReasonPlanInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonMultipleEvaluationUnitsUnsupported: {
+		ReasonMultipleEvaluationUnitsUnsupported, ReasonClassDeterministic, reasonOutcomeDomainsV2,
+	},
 	ReasonPlanDuplicateLevelID:     {ReasonPlanDuplicateLevelID, ReasonClassDeterministic, reasonOutcomeDomainsV2},
 	ReasonPlanBudgetExceeded:       {ReasonPlanBudgetExceeded, ReasonClassDeterministic, reasonOutcomeDomainsV2},
 	ReasonProjectionInvalid:        {ReasonProjectionInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},

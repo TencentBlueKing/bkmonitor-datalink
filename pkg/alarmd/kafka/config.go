@@ -42,6 +42,12 @@ func MaxConsumerBytesPerPartition() int {
 	return consumerMaxRecordBytes * (1 + consumerChannelBufferRecords)
 }
 
+// MaxConsumerRecordBytes is the configured Sarama fetch ceiling for one
+// Kafka record. Runtime configuration must not admit a larger v2 envelope.
+func MaxConsumerRecordBytes() int {
+	return consumerMaxRecordBytes
+}
+
 // Config contains only stable consumer coordinates. Authentication remains a
 // deployment concern until the Kafka security contract is read back.
 type Config struct {

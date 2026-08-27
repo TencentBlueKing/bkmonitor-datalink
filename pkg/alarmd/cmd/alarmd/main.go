@@ -14,16 +14,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/consumer"
-	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	httpservice "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/service/http"
@@ -89,32 +84,10 @@ func runWithDependencies(
 
 func defaultApplicationDependencies(eventLogger *observability.Logger) applicationDependencies {
 	return applicationDependencies{
-		logger: eventLogger,
-		openSink: func(cfg config.KafkaConfig) (decisionSinkRuntime, error) {
-			return enginekafka.OpenDecisionSink(cfg.DecisionSinkCoordinates())
-		},
-		openService: func(
-			cfg config.KafkaConfig,
-			newProcessor consumer.ProcessorFactory,
-			drainTimeout time.Duration,
-		) (serviceRuntime, error) {
-			coordinates := cfg.ConsumerCoordinates()
-			coordinates.Diagnostics = offsetResetDiagnostics(eventLogger)
-			return enginekafka.OpenService(coordinates, newProcessor, drainTimeout)
-		},
-		newHTTP: func(recorder *metric.Recorder, source lifecycle.Source) (httpRuntime, error) {
-			return httpservice.NewWithLifecycle(recorder, source)
+		logger:     eventLogger,
+		openBundle: openApplicationBundle,
+		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource) (httpRuntime, error) {
+			return httpservice.NewWithHealth(recorder, source)
 		},
 	}
-}
-
-func offsetResetDiagnostics(logger *observability.Logger) enginekafka.ConsumerDiagnostics {
-	return enginekafka.ConsumerDiagnostics{OnOffsetReset: func(event enginekafka.OffsetReset) {
-		logger.Info(
-			observability.StageOffsetReset, observability.ResultRecovered, 0, 0,
-			slog.String("topic", event.Topic),
-			slog.Int("partition", int(event.Partition)),
-			slog.Int64("offset", event.Offset),
-		)
-	}}
 }

@@ -70,13 +70,17 @@ type receiptRuntime interface {
 // the evaluation path continues. Phase one recovers this dependency only by
 // restarting the process and reopening the real publisher.
 type unavailableReceiptRuntime struct {
-	err     error
-	dropped atomic.Uint64
+	err         error
+	diagnostics enginekafka.ReceiptPublisherDiagnostics
+	dropped     atomic.Uint64
 }
 
 func (runtime *unavailableReceiptRuntime) TryEnqueue(*contract.MessageReceiptV1) bool {
 	if runtime != nil {
 		runtime.dropped.Add(1)
+		runtime.diagnostics.ObserveDrop(enginekafka.ReceiptDropEvidence{
+			Kind: enginekafka.ReceiptDropPublisherUnavailable, Count: 1,
+		})
 	}
 	return false
 }
@@ -700,18 +704,19 @@ func openApplicationBundleWithFactories(
 	if err != nil {
 		return cleanup(err)
 	}
+	receiptDiagnostics := receiptPublisherDiagnostics(runtimeObserver, logger)
 	receipts, err := factories.openReceipts(
-		cfg.Kafka.MessageReceiptCoordinates(), cfg.ReceiptPublisherLimits(), receiptPublisherDiagnostics(runtimeObserver, logger),
+		cfg.Kafka.MessageReceiptCoordinates(), cfg.ReceiptPublisherLimits(), receiptDiagnostics,
 	)
 	if err != nil {
 		var dependency *startupDependencyError
 		if !errors.As(err, &dependency) {
 			return cleanup(err)
 		}
-		receipts = &unavailableReceiptRuntime{err: err}
+		receipts = &unavailableReceiptRuntime{err: err, diagnostics: receiptDiagnostics}
 		observeReceiptUnavailable(runtimeObserver, logger)
 	}
-	observedReceipts := &observedReceiptRuntime{next: receipts, observer: runtimeObserver, logger: logger}
+	observedReceipts := &observedReceiptRuntime{next: receipts, logger: logger}
 	partial.receipts = observedReceipts
 	consumerCoordinates := cfg.Kafka.ConsumerCoordinates()
 	consumerCoordinates.Diagnostics = consumerDiagnostics(recorder, logger)
@@ -734,12 +739,19 @@ func openApplicationBundleWithFactories(
 }
 
 func observeReceiptUnavailable(observer observability.Observer, logger *observability.Logger) {
-	observeReceiptDrop(observer, logger, observability.StageCoverageGap, enginekafka.ReceiptDropEvidence{
-		Kind: enginekafka.ReceiptDropPublisherUnavailable, Count: 1,
-	},
-		slog.String("dependency_reason_code", contract.ReasonKafkaUnavailable),
-		slog.String("recovery", "process_restart"),
-	)
+	observeRuntime(context.Background(), observer, observability.Observation{
+		Component: observability.ComponentCoverage, Stage: observability.StageCoverageGap,
+		Result: observability.ResultDegraded, Operation: observability.OperationProduce,
+		Direction: observability.DirectionOutput, ReasonCode: observability.ReasonCode(contract.ReasonKafkaUnavailable),
+	})
+	if logger != nil {
+		logger.Error(
+			string(observability.StageCoverageGap), observability.ResultDegraded, 0, 0,
+			slog.String("reason_code", contract.ReasonKafkaUnavailable),
+			slog.String("dependency", "receipt_publisher"),
+			slog.String("recovery", "process_restart"),
+		)
+	}
 }
 
 func dependencyGateObserver(recorder observability.Observer, logger *observability.Logger) coordinator.DependencyGateObserver {

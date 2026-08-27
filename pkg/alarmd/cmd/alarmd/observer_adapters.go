@@ -127,34 +127,36 @@ type observedTriggerEventRuntime struct {
 	observer observability.Observer
 }
 
+// observedReceiptRuntime only reports the final drain status. Individual
+// losses are owned by the wrapped publisher diagnostics and must not be
+// counted again here.
 type observedReceiptRuntime struct {
-	next     receiptRuntime
-	observer observability.Observer
-	logger   *observability.Logger
+	next   receiptRuntime
+	logger *observability.Logger
 }
 
 func (runtime *observedReceiptRuntime) TryEnqueue(receipt *contract.MessageReceiptV1) bool {
-	accepted := runtime.next.TryEnqueue(receipt)
-	if !accepted {
-		observeReceiptDrop(runtime.observer, runtime.logger, observability.StageReceiptQueued, enginekafka.ReceiptDropEvidence{
-			Kind: enginekafka.ReceiptDropEnqueueRejected, Count: 1,
-		})
-	}
-	return accepted
+	return runtime.next.TryEnqueue(receipt)
 }
 
 func (runtime *observedReceiptRuntime) Shutdown(ctx context.Context) enginekafka.ReceiptDrainResult {
 	result := runtime.next.Shutdown(ctx)
+	if runtime.logger == nil {
+		return result
+	}
+	var logResult observability.Result
 	switch result.Status {
 	case enginekafka.ReceiptDrainWithDrop:
-		observeReceiptDrop(runtime.observer, runtime.logger, observability.StageCoverageGap, enginekafka.ReceiptDropEvidence{
-			Kind: enginekafka.ReceiptDropShutdownWithDrop, Count: maxReceiptDropCount(1, receiptDropTotal(result.Drops)),
-		})
+		logResult = observability.ResultDegraded
 	case enginekafka.ReceiptDrainFailed:
-		observeReceiptDrop(runtime.observer, runtime.logger, observability.StageCoverageGap, enginekafka.ReceiptDropEvidence{
-			Kind: enginekafka.ReceiptDropShutdownFailed, Count: maxReceiptDropCount(1, receiptDropTotal(result.Drops)),
-		})
+		logResult = observability.ResultFailed
+	default:
+		return result
 	}
+	runtime.logger.Error(
+		string(observability.StageCoverageGap), string(logResult), 0, 0,
+		slog.String("receipt_drain_status", string(result.Status)),
+	)
 	return result
 }
 
@@ -195,18 +197,6 @@ func observeReceiptDrop(
 			attributes...,
 		)
 	}
-}
-
-func receiptDropTotal(drops enginekafka.ReceiptDropCounts) uint64 {
-	return drops.EncodeFailed + drops.QueueMessages + drops.QueueBytes + drops.BrokerACKFailed +
-		drops.Closed + drops.ShutdownTimeout + drops.CloseFailed
-}
-
-func maxReceiptDropCount(left, right uint64) uint64 {
-	if left > right {
-		return left
-	}
-	return right
 }
 
 func (runtime *observedTriggerEventRuntime) WriteBatch(ctx context.Context, events []contract.TriggerEventV1) error {

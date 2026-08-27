@@ -85,7 +85,8 @@ func TestOpenApplicationBundleBuildsV2EvaluationService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openApplicationBundleWithFactories() error = %v", err)
 	}
-	if bundle.service != service || bundle.gate == nil || serviceReceipts != bundle.receipts {
+	observedReceipts, ok := bundle.receipts.(*observedReceiptRuntime)
+	if bundle.service != service || bundle.gate == nil || !ok || observedReceipts.next != receipts || serviceReceipts != bundle.receipts {
 		t.Fatal("application bundle did not retain the v2 service and dependency gate")
 	}
 	if bundle.resources == nil || !hasMetricFamily(t, recorder, "bkmonitor_alarmd_resource_state") {
@@ -152,51 +153,67 @@ func TestObservedTriggerEventRuntimeRecordsBrokerACK(t *testing.T) {
 	}
 }
 
-func TestReceiptDropDiagnosticsCoverEnqueueCauseAndShutdownSummary(t *testing.T) {
+func TestReceiptDropDiagnosticsReportsOnePublisherEvidenceOnce(t *testing.T) {
 	t.Parallel()
 
 	recorder := metric.NewRecorder(metric.BuildInfo{})
 	observer := observability.Multi(recorder)
 	var output bytes.Buffer
 	logger := observability.New(observability.ComponentTrigger, &output)
+	diagnostics := receiptPublisherDiagnostics(observer, logger)
+	diagnostics.OnDrop(enginekafka.ReceiptDropEvidence{Kind: enginekafka.ReceiptDropQueueMessages, Count: 1})
 	runtime := &observedReceiptRuntime{
 		next: &fakeReceiptRuntime{
 			enqueue: func(*contract.MessageReceiptV1) bool { return false },
 			result: enginekafka.ReceiptDrainResult{
 				Status: enginekafka.ReceiptDrainWithDrop,
-				Drops:  enginekafka.ReceiptDropCounts{QueueMessages: 2},
+				Drops:  enginekafka.ReceiptDropCounts{QueueMessages: 1},
 			},
 		},
-		observer: observer,
-		logger:   logger,
+		logger: logger,
 	}
 	if runtime.TryEnqueue(&contract.MessageReceiptV1{}) {
 		t.Fatal("observed Receipt runtime accepted rejected audit")
 	}
-	diagnostics := receiptPublisherDiagnostics(observer, logger)
-	diagnostics.OnDrop(enginekafka.ReceiptDropEvidence{Kind: enginekafka.ReceiptDropQueueBytes, Count: 3})
 	if result := runtime.Shutdown(context.Background()); result.Status != enginekafka.ReceiptDrainWithDrop {
 		t.Fatalf("Shutdown() = %+v, want WITH_DROP", result)
 	}
 
 	logOutput := output.String()
-	for _, want := range []string{
-		`"reason_code":"AUDIT_DROP"`, `"coverage_acceptable":false`,
-		`"drop_kind":"enqueue_rejected"`, `"drop_kind":"queue_bytes"`,
-		`"drop_kind":"shutdown_with_drop"`,
-	} {
-		if !strings.Contains(logOutput, want) {
-			t.Fatalf("log = %q, want %q", logOutput, want)
-		}
+	if got := strings.Count(logOutput, `"drop_kind":"queue_messages"`); got != 1 {
+		t.Fatalf("queue drop log count = %d, want 1; log = %q", got, logOutput)
 	}
-	for _, stage := range []observability.Stage{observability.StageReceiptQueued, observability.StageCoverageGap} {
-		if !hasObservationMetric(t, recorder, map[string]string{
-			"component": string(observability.ComponentCoverage),
-			"stage":     string(stage), "result": string(observability.ResultDegraded),
-			"reason_code": string(observability.ReasonContractCoverage),
-		}) {
-			t.Fatalf("missing Receipt drop metric at stage %s", stage)
-		}
+	if got := observationMessageCount(t, recorder, observability.StageCoverageGap); got != 1 {
+		t.Fatalf("coverage gap message count = %v, want 1", got)
+	}
+	if got := strings.Count(logOutput, `"receipt_drain_status":"WITH_DROP"`); got != 1 {
+		t.Fatalf("Receipt drain status log count = %d, want 1; log = %q", got, logOutput)
+	}
+	if strings.Contains(logOutput, `"drop_kind":"enqueue_rejected"`) || strings.Contains(logOutput, `"drop_kind":"shutdown_with_drop"`) {
+		t.Fatalf("Receipt wrapper duplicated publisher drop evidence: %q", logOutput)
+	}
+}
+
+func TestUnavailableReceiptRuntimeReportsEachRejectedReceiptOnce(t *testing.T) {
+	t.Parallel()
+
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	observer := observability.Multi(recorder)
+	var output bytes.Buffer
+	logger := observability.New(observability.ComponentTrigger, &output)
+	diagnostics := receiptPublisherDiagnostics(observer, logger)
+	runtime := &unavailableReceiptRuntime{
+		err: errors.New("receipt publisher unavailable"), diagnostics: diagnostics,
+	}
+
+	if runtime.TryEnqueue(&contract.MessageReceiptV1{}) {
+		t.Fatal("unavailable Receipt runtime accepted audit")
+	}
+	if got := observationMessageCount(t, recorder, observability.StageCoverageGap); got != 1 {
+		t.Fatalf("coverage gap message count = %v, want 1", got)
+	}
+	if got := strings.Count(output.String(), `"drop_kind":"publisher_unavailable"`); got != 1 {
+		t.Fatalf("publisher unavailable log count = %d, want 1; log = %q", got, output.String())
 	}
 }
 
@@ -416,7 +433,8 @@ func TestOpenApplicationBundleFailsOpenWhenReceiptKafkaIsUnavailable(t *testing.
 	logOutput := output.String()
 	for _, want := range []string{
 		`"stage":"coverage_gap"`, `"result":"dropped"`,
-		`"reason_code":"AUDIT_DROP"`, `"dependency_reason_code":"KAFKA_UNAVAILABLE"`,
+		`"reason_code":"AUDIT_DROP"`, `"reason_code":"KAFKA_UNAVAILABLE"`,
+		`"dependency":"receipt_publisher"`,
 		`"drop_kind":"publisher_unavailable"`, `"coverage_acceptable":false`,
 	} {
 		if !strings.Contains(logOutput, want) {
@@ -425,6 +443,12 @@ func TestOpenApplicationBundleFailsOpenWhenReceiptKafkaIsUnavailable(t *testing.
 	}
 	if strings.Contains(logOutput, root.Error()) {
 		t.Fatalf("Receipt fail-open log leaked broker error: %q", logOutput)
+	}
+	if got := strings.Count(logOutput, `"drop_kind":"publisher_unavailable"`); got != 1 {
+		t.Fatalf("publisher unavailable drop log count = %d, want 1; log = %q", got, logOutput)
+	}
+	if got := observationMessageCount(t, recorder, observability.StageCoverageGap); got != 1 {
+		t.Fatalf("coverage gap message count = %v, want 1", got)
 	}
 	if !hasObservationMetric(t, recorder, map[string]string{
 		"component":   string(observability.ComponentCoverage),
@@ -617,6 +641,30 @@ func hasObservationMetric(t *testing.T, recorder *metric.Recorder, want map[stri
 		}
 	}
 	return false
+}
+
+func observationMessageCount(t *testing.T, recorder *metric.Recorder, stage observability.Stage) float64 {
+	t.Helper()
+	families, err := recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+	for _, family := range families {
+		if family.GetName() != "bkmonitor_alarmd_observed_messages_total" {
+			continue
+		}
+		for _, sample := range family.Metric {
+			labels := map[string]string{}
+			for _, label := range sample.Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["stage"] == string(stage) && labels["direction"] == string(observability.DirectionOutput) &&
+				labels["result"] == string(observability.ResultDegraded) {
+				return sample.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
 }
 
 func hasMetricFamily(t *testing.T, recorder *metric.Recorder, name string) bool {

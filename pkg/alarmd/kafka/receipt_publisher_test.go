@@ -178,15 +178,9 @@ func TestReceiptPublisherEmitsEvidenceForEveryEnqueueDropClass(t *testing.T) {
 		t.Fatal("TryEnqueue() accepted Receipt after shutdown")
 	}
 	for _, want := range []ReceiptDropKind{ReceiptDropQueueMessages, ReceiptDropEncodeFailed, ReceiptDropClosed} {
-		select {
-		case got := <-evidence:
-			if got.Kind != want || got.Count != 1 {
-				t.Fatalf("drop evidence = %+v, want %s/1", got, want)
-			}
-		case <-time.After(time.Second):
-			t.Fatalf("missing drop evidence %s", want)
-		}
+		expectReceiptDropEvidence(t, evidence, want, 1)
 	}
+	expectNoReceiptDropEvidence(t, evidence)
 
 	byteEvidence := make(chan ReceiptDropEvidence, 1)
 	bytePublisher, err := newReceiptPublisherWithDiagnostics(
@@ -200,10 +194,9 @@ func TestReceiptPublisherEmitsEvidenceForEveryEnqueueDropClass(t *testing.T) {
 	if bytePublisher.TryEnqueue(&receipt) {
 		t.Fatal("TryEnqueue() exceeded byte budget")
 	}
-	if got := <-byteEvidence; got.Kind != ReceiptDropQueueBytes || got.Count != 1 {
-		t.Fatalf("byte drop evidence = %+v", got)
-	}
+	expectReceiptDropEvidence(t, byteEvidence, ReceiptDropQueueBytes, 1)
 	_ = bytePublisher.Shutdown(context.Background())
+	expectNoReceiptDropEvidence(t, byteEvidence)
 }
 
 func TestReceiptPublisherEmitsEvidenceForAsyncAndShutdownDrops(t *testing.T) {
@@ -230,9 +223,8 @@ func TestReceiptPublisherEmitsEvidenceForAsyncAndShutdownDrops(t *testing.T) {
 		t.Fatal("TryEnqueue() = false")
 	}
 	_ = brokerPublisher.Shutdown(context.Background())
-	if got := <-brokerEvidence; got.Kind != ReceiptDropBrokerACKFailed || got.Count != 1 {
-		t.Fatalf("broker drop evidence = %+v", got)
-	}
+	expectReceiptDropEvidence(t, brokerEvidence, ReceiptDropBrokerACKFailed, 1)
+	expectNoReceiptDropEvidence(t, brokerEvidence)
 
 	sendStarted := make(chan struct{})
 	clientClosed := make(chan struct{})
@@ -429,4 +421,30 @@ func messageReceiptGolden(t testing.TB) contract.MessageReceiptV1 {
 		t.Fatal(err)
 	}
 	return *receipt
+}
+
+func expectReceiptDropEvidence(
+	t testing.TB,
+	evidence <-chan ReceiptDropEvidence,
+	wantKind ReceiptDropKind,
+	wantCount uint64,
+) {
+	t.Helper()
+	select {
+	case got := <-evidence:
+		if got.Kind != wantKind || got.Count != wantCount {
+			t.Fatalf("drop evidence = %+v, want %s/%d", got, wantKind, wantCount)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("missing drop evidence %s/%d", wantKind, wantCount)
+	}
+}
+
+func expectNoReceiptDropEvidence(t testing.TB, evidence <-chan ReceiptDropEvidence) {
+	t.Helper()
+	select {
+	case got := <-evidence:
+		t.Fatalf("unexpected duplicate drop evidence: %+v", got)
+	default:
+	}
 }

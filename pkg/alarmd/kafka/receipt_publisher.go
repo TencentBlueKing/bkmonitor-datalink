@@ -35,9 +35,6 @@ const (
 	ReceiptDropClosed               ReceiptDropKind = "closed"
 	ReceiptDropShutdownTimeout      ReceiptDropKind = "shutdown_timeout"
 	ReceiptDropCloseFailed          ReceiptDropKind = "close_failed"
-	ReceiptDropEnqueueRejected      ReceiptDropKind = "enqueue_rejected"
-	ReceiptDropShutdownWithDrop     ReceiptDropKind = "shutdown_with_drop"
-	ReceiptDropShutdownFailed       ReceiptDropKind = "shutdown_failed"
 	ReceiptDropPublisherUnavailable ReceiptDropKind = "publisher_unavailable"
 )
 
@@ -51,10 +48,17 @@ type ReceiptPublisherDiagnostics struct {
 }
 
 func (diagnostics ReceiptPublisherDiagnostics) drop(kind ReceiptDropKind, count uint64) {
-	if diagnostics.OnDrop != nil && count > 0 {
-		defer func() { _ = recover() }()
-		diagnostics.OnDrop(ReceiptDropEvidence{Kind: kind, Count: count})
+	diagnostics.ObserveDrop(ReceiptDropEvidence{Kind: kind, Count: count})
+}
+
+// ObserveDrop reports one already-classified publisher loss without allowing
+// diagnostics failures to affect the evaluation path.
+func (diagnostics ReceiptPublisherDiagnostics) ObserveDrop(evidence ReceiptDropEvidence) {
+	if diagnostics.OnDrop == nil || evidence.Count == 0 {
+		return
 	}
+	defer func() { _ = recover() }()
+	diagnostics.OnDrop(evidence)
 }
 
 func (limits ReceiptPublisherLimits) validate() error {

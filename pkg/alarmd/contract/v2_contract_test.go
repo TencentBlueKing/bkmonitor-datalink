@@ -426,8 +426,9 @@ func TestReadExecutionEnvelopeV2TerminalAndExecutablePlanAreMutuallyExclusive(t 
 	if err != nil {
 		t.Fatalf("ReadExecutionEnvelopeV2() error = %v", err)
 	}
-	if len(issues) != 1 || issues[0].Scope != ValidationScopePlan || issues[0].ReasonCode != ReasonPlanInvalid {
-		t.Fatalf("issues = %#v, want mixed Plan variant isolated as PLAN_INVALID", issues)
+	if len(issues) != 1 || issues[0].Scope != ValidationScopePlan || issues[0].ReasonCode != ReasonPlanInvalid ||
+		issues[0].PlanIdentityUntrusted {
+		t.Fatalf("issues = %#v, want mixed Plan variant isolated with trusted Plan identity", issues)
 	}
 }
 
@@ -579,6 +580,45 @@ func TestReadExecutionEnvelopeV2ReturnsBoundedScopedIssues(t *testing.T) {
 	if limited[0].UnverifiedTail == nil || pointerValue(limited[0].UnverifiedTail.PlanFromOrdinal) != 0 ||
 		pointerValue(limited[0].UnverifiedTail.RecordFromOrdinal) != 0 {
 		t.Fatalf("limited tail = %#v, want plans[0:] and records[0:] explicitly unverified", limited[0].UnverifiedTail)
+	}
+}
+
+func TestReadExecutionEnvelopeV2DistinguishesUntrustedPlanIdentity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		mutate        func(*EvaluationPlanV2)
+		wantUntrusted bool
+	}{
+		{
+			name: "valid identity with invalid body",
+			mutate: func(plan *EvaluationPlanV2) {
+				plan.StrategyIR.Levels = nil
+			},
+		},
+		{
+			name: "invalid identity",
+			mutate: func(plan *EvaluationPlanV2) {
+				plan.PlanID = "invalid"
+			},
+			wantUntrusted: true,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			envelope := validExecutionEnvelopeV2(t)
+			test.mutate(&envelope.PlanSet.EvaluationPlans[0])
+			_, issues, err := ReadExecutionEnvelopeV2(encodeExecutionEnvelopeV2ForTest(t, envelope), generousReaderLimitsV2())
+			if err != nil || len(issues) != 1 || issues[0].ReasonCode != ReasonPlanInvalid {
+				t.Fatalf("ReadExecutionEnvelopeV2() = (_, %#v, %v), want one PLAN_INVALID", issues, err)
+			}
+			if issues[0].PlanIdentityUntrusted != test.wantUntrusted {
+				t.Fatalf("PlanIdentityUntrusted = %t, want %t", issues[0].PlanIdentityUntrusted, test.wantUntrusted)
+			}
+		})
 	}
 }
 

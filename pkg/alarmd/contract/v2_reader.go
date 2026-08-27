@@ -717,22 +717,29 @@ planLoop:
 	for index := range envelope.PlanSet.EvaluationPlans {
 		planOrdinal := uint32(index)
 		plan := &envelope.PlanSet.EvaluationPlans[index]
+		planIdentityTrusted := canonicalDecimalPattern.MatchString(plan.PlanID) && plan.PlanID == plan.StrategyRef.StrategyID &&
+			plan.StrategyRef.TenantID == envelope.TenantID && plan.StrategyRef.Revision != "" &&
+			(previousPlan == "" || compareCanonicalDecimal(plan.PlanID, previousPlan) > 0)
+		if planIdentityTrusted {
+			previousPlan = plan.PlanID
+		}
 		if err := validatePlanWireShapeV2(rawPlans[index], index, envelope.Schema.Minor > 0); err != nil {
-			if !appendIssue(ValidationIssue{Scope: ValidationScopePlan, ReasonCode: ReasonPlanInvalid, FieldPath: "plan_set.evaluation_plans", PlanOrdinal: &planOrdinal, PlanID: plan.PlanID}) {
+			if !appendIssue(ValidationIssue{
+				Scope: ValidationScopePlan, ReasonCode: ReasonPlanInvalid, FieldPath: "plan_set.evaluation_plans",
+				PlanOrdinal: &planOrdinal, PlanID: plan.PlanID, PlanIdentityUntrusted: !planIdentityTrusted,
+			}) {
 				break planLoop
 			}
 			continue
 		}
 		rawLevels := rawPlanLevelsV2(rawPlans[index])
-		planIdentityValid := canonicalDecimalPattern.MatchString(plan.PlanID) && plan.PlanID == plan.StrategyRef.StrategyID &&
-			plan.StrategyRef.TenantID == envelope.TenantID && plan.StrategyRef.Revision != "" &&
-			(previousPlan == "" || compareCanonicalDecimal(plan.PlanID, previousPlan) > 0)
-		if !planIdentityValid {
-			if !appendIssue(ValidationIssue{Scope: ValidationScopePlan, ReasonCode: ReasonPlanInvalid, FieldPath: "plan_set.evaluation_plans", PlanOrdinal: &planOrdinal, PlanID: plan.PlanID}) {
+		if !planIdentityTrusted {
+			if !appendIssue(ValidationIssue{
+				Scope: ValidationScopePlan, ReasonCode: ReasonPlanInvalid, FieldPath: "plan_set.evaluation_plans",
+				PlanOrdinal: &planOrdinal, PlanID: plan.PlanID, PlanIdentityUntrusted: true,
+			}) {
 				break planLoop
 			}
-		} else {
-			previousPlan = plan.PlanID
 		}
 		if plan.TerminalReasonCode != "" {
 			reason := ReasonPlanInvalid

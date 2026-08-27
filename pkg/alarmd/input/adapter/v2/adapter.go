@@ -174,7 +174,7 @@ type validationIsolation struct {
 func isolateValidationIssues(envelope *contract.ExecutionEnvelopeV2, issues []contract.ValidationIssue) (validationIsolation, error) {
 	isolation := validationIsolation{terminals: make([]Terminal, 0, len(issues))}
 	for _, issue := range issues {
-		if issue.Scope == contract.ValidationScopePlan && issue.ReasonCode == contract.ReasonPlanInvalid && issue.PlanOrdinal != nil {
+		if issue.Scope == contract.ValidationScopePlan && issue.PlanIdentityUntrusted && issue.PlanOrdinal != nil {
 			if isolation.untrustedPlanIDs == nil {
 				isolation.untrustedPlanIDs = make(map[uint32]struct{})
 			}

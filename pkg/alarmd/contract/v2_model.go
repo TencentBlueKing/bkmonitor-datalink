@@ -297,15 +297,16 @@ type ReaderLimitsV2 struct {
 type ValidationScope string
 
 type ValidationIssue struct {
-	Scope          ValidationScope             `json:"scope"`
-	ReasonCode     string                      `json:"reason_code"`
-	FieldPath      string                      `json:"field_path"`
-	PlanOrdinal    *uint32                     `json:"plan_ordinal,omitempty"`
-	PlanID         string                      `json:"plan_id,omitempty"`
-	LevelID        *uint32                     `json:"level_id,omitempty"`
-	RecordOrdinal  *uint32                     `json:"record_ordinal,omitempty"`
-	RecordID       string                      `json:"record_id,omitempty"`
-	UnverifiedTail *ValidationUnverifiedTailV2 `json:"unverified_tail,omitempty"`
+	Scope                 ValidationScope             `json:"scope"`
+	ReasonCode            string                      `json:"reason_code"`
+	FieldPath             string                      `json:"field_path"`
+	PlanOrdinal           *uint32                     `json:"plan_ordinal,omitempty"`
+	PlanID                string                      `json:"plan_id,omitempty"`
+	PlanIdentityUntrusted bool                        `json:"plan_identity_untrusted,omitempty"`
+	LevelID               *uint32                     `json:"level_id,omitempty"`
+	RecordOrdinal         *uint32                     `json:"record_ordinal,omitempty"`
+	RecordID              string                      `json:"record_id,omitempty"`
+	UnverifiedTail        *ValidationUnverifiedTailV2 `json:"unverified_tail,omitempty"`
 }
 
 // ValidationUnverifiedTailV2 is present only on VALIDATION_BUDGET_EXCEEDED.

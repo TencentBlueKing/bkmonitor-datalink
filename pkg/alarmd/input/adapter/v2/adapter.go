@@ -98,10 +98,10 @@ func (adapter *Adapter) Decode(ctx context.Context, payload []byte) (DecodeResul
 			}
 			return DecodeResult{}, selectorErr
 		}
-		planID := envelope.PlanSet.EvaluationPlans[index].PlanID
 		if _, untrusted := isolation.untrustedPlanIDs[ordinal]; untrusted {
-			planID = ""
+			continue
 		}
+		planID := envelope.PlanSet.EvaluationPlans[index].PlanID
 		selections = append(selections, PlanSelectionView{
 			ordinal: ordinal, planID: planID, evaluable: !individuallyInvalid, selector: selector, batch: batch,
 		})

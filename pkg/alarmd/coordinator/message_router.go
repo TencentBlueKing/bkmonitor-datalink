@@ -77,20 +77,6 @@ func (router *MessageRouter) Route(ctx context.Context, payload []byte) (Message
 	if decoded.Input == nil {
 		return MessageOutcome{}, errors.New("alarmd coordinator: accepted decode result has no input")
 	}
-	if hasUntrustedPlanIdentity(decoded.Input) {
-		if decoded.Terminals.Len() == 0 {
-			return MessageOutcome{}, errors.New("alarmd coordinator: untrusted Plan identity has no terminal evidence")
-		}
-		receipt, err := buildRejectedMessageReceipt(decoded.Input.Execution(), decoded.Terminals.Items())
-		if err != nil {
-			return MessageOutcome{}, err
-		}
-		return MessageOutcome{
-			Kind:     MessageOutcomeRejected,
-			Rejected: &RejectedOutcome{Terminals: decoded.Terminals.Items(), Receipt: receipt},
-		}, nil
-	}
-
 	var message MessageResult
 	switch decoded.Input.ProcessingRoute() {
 	case inputv2.RouteFullPipeline:
@@ -120,13 +106,4 @@ func (router *MessageRouter) Route(ctx context.Context, payload []byte) (Message
 		return MessageOutcome{}, err
 	}
 	return MessageOutcome{Kind: MessageOutcomeCompleted, Message: &message}, nil
-}
-
-func hasUntrustedPlanIdentity(input *inputv2.EvaluationInput) bool {
-	for _, selection := range input.PlanSelections() {
-		if selection.PlanID() == "" {
-			return true
-		}
-	}
-	return false
 }

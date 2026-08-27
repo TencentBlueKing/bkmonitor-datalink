@@ -46,7 +46,7 @@ func TestMessageRouterRejectsUnframedPayloadWithoutBusinessReceipt(t *testing.T)
 	}
 }
 
-func TestMessageRouterRejectsUntrustedPlanIdentityWithMessageReceiptWithoutPerPlanCounts(t *testing.T) {
+func TestMessageRouterCompletesUntrustedPlanIdentityWithDiagnosticReceipt(t *testing.T) {
 	t.Parallel()
 
 	var envelope contract.ExecutionEnvelopeV2
@@ -77,14 +77,17 @@ func TestMessageRouterRejectsUntrustedPlanIdentityWithMessageReceiptWithoutPerPl
 	if err != nil {
 		t.Fatal(err)
 	}
-	if outcome.Kind != MessageOutcomeRejected || outcome.Message != nil || outcome.Rejected == nil ||
-		len(outcome.Rejected.Terminals) == 0 {
-		t.Fatalf("outcome = %#v, want typed REJECTED without per-Plan Receipt", outcome)
+	if outcome.Kind != MessageOutcomeCompleted || outcome.Message == nil || outcome.Rejected != nil {
+		t.Fatalf("outcome = %#v, want completed isolation without an untrusted per-Plan identity", outcome)
 	}
-	receipt := outcome.Rejected.Receipt
-	if receipt == nil || receipt.Status != contract.ReceiptStatusRejected || receipt.Counts != (contract.ReceiptCountsV1{}) ||
+	receipt := outcome.Message.Receipt
+	if receipt == nil || receipt.Status != contract.ReceiptStatusCompletedWithTerminal ||
+		receipt.Counts != (contract.ReceiptCountsV1{Received: 1}) ||
 		len(receipt.PerPlan) != 0 || receipt.ExecutionID != envelope.ExecutionID || receipt.MessageID != envelope.MessageID {
-		t.Fatalf("REJECTED Receipt = %#v, want trusted message identity without per-Plan counts", receipt)
+		t.Fatalf("Receipt = %#v, want trusted message identity and diagnostic-only Plan terminal", receipt)
+	}
+	if !receiptHasExactReason(receipt, contract.ReasonPlanInvalid, 1) {
+		t.Fatalf("reason counts = %#v, want one untrusted Plan diagnostic fact", receipt.ReasonCounts)
 	}
 	if processor.fullCalls != 0 || processor.detectOnlyCalls != 0 {
 		t.Fatalf("processor calls = full:%d detect-only:%d, want 0/0", processor.fullCalls, processor.detectOnlyCalls)

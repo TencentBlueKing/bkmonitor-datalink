@@ -31,8 +31,9 @@ type receiptSlot struct {
 }
 
 type planReceiptState struct {
-	planID string
-	slots  map[uint32]*receiptSlot
+	ordinal uint32
+	planID  string
+	slots   map[uint32]*receiptSlot
 }
 
 type receiptBuildOptions struct {
@@ -182,7 +183,10 @@ func initializeReceiptPlans(input *inputv2.EvaluationInput) (map[string]*planRec
 		if _, duplicate := plans[selection.PlanID()]; duplicate {
 			return nil, fmt.Errorf("alarmd coordinator: duplicate Receipt Plan %s", selection.PlanID())
 		}
-		plan := &planReceiptState{planID: selection.PlanID(), slots: make(map[uint32]*receiptSlot, selection.SelectedCount())}
+		plan := &planReceiptState{
+			ordinal: selection.PlanOrdinal(), planID: selection.PlanID(),
+			slots: make(map[uint32]*receiptSlot, selection.SelectedCount()),
+		}
 		if err := selection.ForEachSelectedSlot(func(ordinal uint32, _ inputv2.RecordView, _ bool) error {
 			plan.slots[ordinal] = &receiptSlot{}
 			return nil
@@ -232,18 +236,26 @@ func applyReceiptTerminals(
 	reasonCounts map[string]uint64,
 ) (bool, error) {
 	uncountedTerminal := false
-	unknownSelectorPlans := make(map[string]struct{})
-	for _, terminal := range terminals {
-		if terminal.Scope != inputv2.ScopePlan || terminal.ReasonCode != contract.ReasonSelectorInvalid || terminal.PlanID == "" {
-			continue
-		}
-		if _, selected := plans[terminal.PlanID]; !selected {
-			unknownSelectorPlans[terminal.PlanID] = struct{}{}
-		}
+	selectedOrdinals := make(map[uint32]struct{}, len(plans))
+	for _, plan := range plans {
+		selectedOrdinals[plan.ordinal] = struct{}{}
 	}
 	for _, terminal := range terminals {
 		if terminal.ReasonCode == "" || !contract.ReasonAllowedForV2(terminal.ReasonCode, contract.ReasonDomainReceipt) {
 			return false, errors.New("alarmd coordinator: terminal has an invalid Receipt reason")
+		}
+		if terminal.PlanFromOrdinal != nil {
+			if terminal.Scope != inputv2.ScopePlan || selectedPlanAtOrAfter(selectedOrdinals, *terminal.PlanFromOrdinal) {
+				return false, errors.New("alarmd coordinator: invalid unverified Plan tail")
+			}
+			if terminal.RecordFromOrdinal != nil {
+				classifyRecordTail(plans, *terminal.RecordFromOrdinal, terminal.ReasonCode, reasonCounts)
+			}
+			// A validation tail is one bounded diagnostic fact. Its omitted Plans
+			// have no trustworthy identity or Plan x Record cardinality.
+			reasonCounts[terminal.ReasonCode]++
+			uncountedTerminal = true
+			continue
 		}
 		switch terminal.Scope {
 		case inputv2.ScopeMessage:
@@ -253,10 +265,9 @@ func applyReceiptTerminals(
 		case inputv2.ScopePlan:
 			plan, ok := plans[terminal.PlanID]
 			if !ok {
-				if _, unknown := unknownSelectorPlans[terminal.PlanID]; unknown {
-					// The selector cannot supply a trustworthy Plan x Record
-					// cardinality. Preserve one Plan-level reason fact without
-					// inventing selected or terminal counts.
+				if terminalReferencesUnselectedPlan(terminal, selectedOrdinals) {
+					// Preserve one Plan-level fact without inventing selected,
+					// per_plan or terminal counts.
 					reasonCounts[terminal.ReasonCode]++
 					uncountedTerminal = true
 					continue
@@ -265,19 +276,33 @@ func applyReceiptTerminals(
 			}
 			classifyTerminalSlots(plan.slots, terminal.ReasonCode, reasonCounts)
 		case inputv2.ScopeRecord:
-			if terminal.RecordOrdinal == nil {
-				return false, errors.New("alarmd coordinator: record terminal has no ordinal")
+			if terminal.RecordFromOrdinal != nil {
+				matched := classifyRecordTail(plans, *terminal.RecordFromOrdinal, terminal.ReasonCode, reasonCounts)
+				if matched == 0 {
+					reasonCounts[terminal.ReasonCode]++
+					uncountedTerminal = true
+				}
+				continue
 			}
+			if terminal.RecordOrdinal == nil {
+				return false, errors.New("alarmd coordinator: record terminal has no ordinal or tail")
+			}
+			matched := 0
 			for _, plan := range plans {
 				if slot, ok := plan.slots[*terminal.RecordOrdinal]; ok && slot.result == "" {
 					classifyTerminalSlot(slot)
 					reasonCounts[terminal.ReasonCode]++
+					matched++
 				}
+			}
+			if matched == 0 {
+				reasonCounts[terminal.ReasonCode]++
+				uncountedTerminal = true
 			}
 		case inputv2.ScopeLevel:
 			plan, ok := plans[terminal.PlanID]
 			if !ok {
-				if _, unknown := unknownSelectorPlans[terminal.PlanID]; unknown {
+				if terminalReferencesUnselectedPlan(terminal, selectedOrdinals) {
 					reasonCounts[terminal.ReasonCode]++
 					uncountedTerminal = true
 					continue
@@ -300,6 +325,43 @@ func applyReceiptTerminals(
 		}
 	}
 	return uncountedTerminal, nil
+}
+
+func terminalReferencesUnselectedPlan(terminal inputv2.Terminal, selectedOrdinals map[uint32]struct{}) bool {
+	if terminal.PlanOrdinal == nil {
+		return false
+	}
+	_, selected := selectedOrdinals[*terminal.PlanOrdinal]
+	return !selected
+}
+
+func selectedPlanAtOrAfter(selectedOrdinals map[uint32]struct{}, start uint32) bool {
+	for ordinal := range selectedOrdinals {
+		if ordinal >= start {
+			return true
+		}
+	}
+	return false
+}
+
+func classifyRecordTail(
+	plans map[string]*planReceiptState,
+	start uint32,
+	reason string,
+	reasonCounts map[string]uint64,
+) int {
+	classified := 0
+	for _, plan := range plans {
+		for ordinal, slot := range plan.slots {
+			if ordinal < start || slot.result != "" || slot.terminal {
+				continue
+			}
+			classifyTerminalSlot(slot)
+			reasonCounts[reason]++
+			classified++
+		}
+	}
+	return classified
 }
 
 func classifyTerminalSlots(slots map[uint32]*receiptSlot, reason string, reasonCounts map[string]uint64) {

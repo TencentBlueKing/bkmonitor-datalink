@@ -96,10 +96,11 @@ func TestApplyReceiptTerminalsKeepsLevelFactForUnknownSelector(t *testing.T) {
 	t.Parallel()
 
 	levelID := uint32(5)
+	planOrdinal := uint32(0)
 	reasonCounts := make(map[string]uint64)
 	uncountedTerminal, err := applyReceiptTerminals(map[string]*planReceiptState{}, []inputv2.Terminal{
-		{Scope: inputv2.ScopePlan, PlanID: "1001", ReasonCode: contract.ReasonSelectorInvalid},
-		{Scope: inputv2.ScopeLevel, PlanID: "1001", LevelID: &levelID, ReasonCode: contract.ReasonLevelInvalid},
+		{Scope: inputv2.ScopePlan, PlanOrdinal: &planOrdinal, PlanID: "1001", ReasonCode: contract.ReasonSelectorInvalid},
+		{Scope: inputv2.ScopeLevel, PlanOrdinal: &planOrdinal, PlanID: "1001", LevelID: &levelID, ReasonCode: contract.ReasonLevelInvalid},
 	}, reasonCounts)
 	if err != nil {
 		t.Fatal(err)
@@ -107,6 +108,99 @@ func TestApplyReceiptTerminalsKeepsLevelFactForUnknownSelector(t *testing.T) {
 	if !uncountedTerminal || reasonCounts[contract.ReasonSelectorInvalid] != 1 || reasonCounts[contract.ReasonLevelInvalid] != 1 {
 		t.Fatalf("uncountedTerminal = %t, reasonCounts = %#v, want one diagnostic fact per invalid Plan/Level", uncountedTerminal, reasonCounts)
 	}
+}
+
+func TestBuildMessageReceiptOmitsUntrustedPlanIdentityAndKeepsSiblingResult(t *testing.T) {
+	t.Parallel()
+
+	var envelope contract.ExecutionEnvelopeV2
+	if err := json.Unmarshal(encodeSharedG1Envelope(t), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	envelope.PlanSet.EvaluationPlans[0].PlanID = "untrusted"
+	envelope.PlanSet.EvaluationPlans[0].StrategyIR.Levels[0].Definition.Priority = 0
+	payload := encodeReceiptEnvelope(t, envelope)
+	decoded, err := inputv2.New(g1ReaderLimits()).Decode(context.Background(), payload)
+	if err != nil || decoded.Rejected || decoded.Input == nil {
+		t.Fatalf("Decode() = %#v, %v", decoded, err)
+	}
+	selections := decoded.Input.PlanSelections()
+	if len(selections) != 1 || selections[0].PlanID() != "1002" || selections[0].SelectedCount() != 2 {
+		t.Fatalf("PlanSelections() = %#v, want only trusted sibling 1002", selections)
+	}
+
+	receipt, err := buildMessageReceipt(decoded.Input, map[string][]recordEvaluation{
+		"1002": {
+			{RecordOrdinal: 0, Result: trigger.EvaluationResultV2{Completion: trigger.CompletionEvaluated, RecordResult: contract.LevelResultNormal}},
+			{RecordOrdinal: 1, Result: trigger.EvaluationResultV2{Completion: trigger.CompletionEvaluated, RecordResult: contract.LevelResultNormal}},
+		},
+	}, decoded.Terminals.Items())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Status != contract.ReceiptStatusCompletedWithTerminal ||
+		receipt.Counts != (contract.ReceiptCountsV1{Received: 2, Selected: 2, Processed: 2}) ||
+		len(receipt.PerPlan) != 1 || receipt.PerPlan[0].PlanID != "1002" || receipt.PerPlan[0].Normal != 2 {
+		t.Fatalf("receipt = %#v, want only trusted sibling counts", receipt)
+	}
+	if !receiptHasReason(receipt, contract.ReasonPlanInvalid) || !receiptHasReason(receipt, contract.ReasonLevelInvalid) {
+		t.Fatalf("reason counts = %#v, want one diagnostic fact per untrusted Plan/Level issue", receipt.ReasonCounts)
+	}
+}
+
+func TestBuildMessageReceiptAccountsValidationTailWithoutInventingPlans(t *testing.T) {
+	t.Parallel()
+
+	var envelope contract.ExecutionEnvelopeV2
+	if err := json.Unmarshal(encodeSharedG1Envelope(t), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	envelope.PlanSet.EvaluationPlans[1].StrategyIR.Levels = append(
+		envelope.PlanSet.EvaluationPlans[1].StrategyIR.Levels,
+		envelope.PlanSet.EvaluationPlans[1].StrategyIR.Levels[0],
+	)
+	limits := g1ReaderLimits()
+	limits.MaxValidationIssues = 1
+	decoded, err := inputv2.New(limits).Decode(context.Background(), encodeReceiptEnvelope(t, envelope))
+	if err != nil || decoded.Rejected || decoded.Input == nil {
+		t.Fatalf("Decode() = %#v, %v", decoded, err)
+	}
+	selections := decoded.Input.PlanSelections()
+	if len(selections) != 1 || selections[0].PlanID() != "1001" || selections[0].SelectedCount() != 2 {
+		t.Fatalf("PlanSelections() = %#v, want only verified sibling before Plan tail", selections)
+	}
+
+	receipt, err := buildMessageReceipt(decoded.Input, nil, decoded.Terminals.Items())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Status != contract.ReceiptStatusCompletedWithTerminal ||
+		receipt.Counts != (contract.ReceiptCountsV1{Received: 2, Selected: 2, Terminal: 2}) ||
+		len(receipt.PerPlan) != 1 || receipt.PerPlan[0].PlanID != "1001" || receipt.PerPlan[0].Terminal != 2 {
+		t.Fatalf("receipt = %#v, want verified sibling slots terminalized and unknown Plan tail omitted", receipt)
+	}
+	if !receiptHasReasonCount(receipt, contract.ReasonValidationBudgetExceeded, 3) {
+		t.Fatalf("reason counts = %#v, want two trusted slot facts plus one bounded Plan-tail fact", receipt.ReasonCounts)
+	}
+}
+
+func encodeReceiptEnvelope(t testing.TB, envelope contract.ExecutionEnvelopeV2) []byte {
+	t.Helper()
+
+	var err error
+	envelope.PlanSet.PlanSetDigest, err = contract.DerivePlanSetDigestV2(envelope.PlanSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.PayloadDigest, err = contract.DeriveExecutionEnvelopePayloadDigestV2(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := contract.CanonicalJSONV2(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }
 
 func TestBuildMessageReceiptCountsRecordTerminalOnlyForSelectedSlot(t *testing.T) {
@@ -194,8 +288,12 @@ func TestBuildMessageReceiptPrefersTerminalOverUnavailable(t *testing.T) {
 }
 
 func receiptHasReason(receipt *contract.MessageReceiptV1, reason string) bool {
+	return receiptHasReasonCount(receipt, reason, 1)
+}
+
+func receiptHasReasonCount(receipt *contract.MessageReceiptV1, reason string, want uint64) bool {
 	for _, count := range receipt.ReasonCounts {
-		if count.ReasonCode == reason && count.Count == 1 {
+		if count.ReasonCode == reason && count.Count == want {
 			return true
 		}
 	}

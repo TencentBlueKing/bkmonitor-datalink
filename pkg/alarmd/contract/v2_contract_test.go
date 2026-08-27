@@ -1354,11 +1354,13 @@ func TestMessageReceiptV1CountModel(t *testing.T) {
 	if _, err := BuildMessageReceiptV1(mixedLevel); err != nil {
 		t.Fatalf("BuildMessageReceiptV1(valid mixed-Level terminal) error = %v", err)
 	}
-	unknownSelector := validMessageReceiptV1ForTest()
-	unknownSelector.Status = ReceiptStatusCompletedWithTerminal
-	unknownSelector.ReasonCounts = []ReasonCountV1{{ReasonCode: ReasonSelectorInvalid, Count: 1}}
-	if _, err := BuildMessageReceiptV1(unknownSelector); err != nil {
-		t.Fatalf("BuildMessageReceiptV1(valid unknown-selector Plan fact) error = %v", err)
+	for _, reason := range []string{ReasonSelectorInvalid, ReasonPlanInvalid, ReasonLevelInvalid, ReasonValidationBudgetExceeded} {
+		uncountedTerminal := validMessageReceiptV1ForTest()
+		uncountedTerminal.Status = ReceiptStatusCompletedWithTerminal
+		uncountedTerminal.ReasonCounts = []ReasonCountV1{{ReasonCode: reason, Count: 1}}
+		if _, err := BuildMessageReceiptV1(uncountedTerminal); err != nil {
+			t.Fatalf("BuildMessageReceiptV1(valid uncounted %s terminal fact) error = %v", reason, err)
+		}
 	}
 	affectedWithoutDecision := validMessageReceiptV1ForTest()
 	affectedWithoutDecision.Status = ReceiptStatusCompletedWithTerminal

@@ -159,6 +159,9 @@ func TestAdapterDoesNotExposeUntrustedPlanIdentityInSiblingTerminals(t *testing.
 			t.Fatalf("terminal leaked untrusted plan_id %q: %#v", terminal.PlanID, terminal)
 		}
 	}
+	if selections := result.Input.PlanSelections(); len(selections) != 0 {
+		t.Fatalf("PlanSelections() = %#v, untrusted Plan identity must not enter Receipt accounting", selections)
+	}
 }
 
 func TestAdapterTerminalizesEveryValidationBudgetTailObject(t *testing.T) {

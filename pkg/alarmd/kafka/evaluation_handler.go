@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/Shopify/sarama"
 
@@ -45,7 +46,16 @@ type RejectedMessageEvidence struct {
 }
 
 type EvaluationDiagnostics struct {
-	OnRejected func(RejectedMessageEvidence)
+	OnRejected        func(RejectedMessageEvidence)
+	OnOffsetCommitted func(OffsetCommitEvidence)
+}
+
+type OffsetCommitEvidence struct {
+	Topic      string
+	Partition  int32
+	NextOffset int64
+	Duration   time.Duration
+	Err        error
 }
 
 func NewEvaluationHandlerWithDiagnostics(
@@ -126,7 +136,7 @@ func (handler *EvaluationHandler) ConsumeClaim(session sarama.ConsumerGroupSessi
 	}
 	offsets := evaluationPartitionOffsetCommitter{
 		session: session, offsets: handler.offsets, topic: claim.Topic(), partition: claim.Partition(),
-		retry: handler.offsetRetry,
+		retry: handler.offsetRetry, onCommitted: handler.diagnostics.OnOffsetCommitted,
 	}
 	runner, err := alarmdcoordinator.NewRoutedPartitionRunnerWithObserver(
 		handler.router, handler.critical, offsets, handler.receipts,
@@ -224,14 +234,24 @@ func (handler *EvaluationHandler) fatal(err error) {
 }
 
 type evaluationPartitionOffsetCommitter struct {
-	session   sarama.ConsumerGroupSession
-	offsets   OffsetCommitter
-	topic     string
-	partition int32
-	retry     *alarmdcoordinator.DependencyRetry
+	session     sarama.ConsumerGroupSession
+	offsets     OffsetCommitter
+	topic       string
+	partition   int32
+	retry       *alarmdcoordinator.DependencyRetry
+	onCommitted func(OffsetCommitEvidence)
 }
 
-func (committer evaluationPartitionOffsetCommitter) CommitThrough(ctx context.Context, nextOffset int64) error {
+func (committer evaluationPartitionOffsetCommitter) CommitThrough(ctx context.Context, nextOffset int64) (returnErr error) {
+	started := time.Now()
+	defer func() {
+		if committer.onCommitted != nil {
+			committer.onCommitted(OffsetCommitEvidence{
+				Topic: committer.topic, Partition: committer.partition, NextOffset: nextOffset,
+				Duration: time.Since(started), Err: returnErr,
+			})
+		}
+	}()
 	if committer.session == nil || committer.offsets == nil || committer.topic == "" ||
 		committer.retry == nil || nextOffset <= 0 {
 		return errors.New("kafka evaluation handler: initialized partition offset committer is required")

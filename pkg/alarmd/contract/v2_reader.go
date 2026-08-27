@@ -27,6 +27,18 @@ type MessageFramingError struct {
 	Message    string
 }
 
+// RejectedReceiptIdentityV2 contains the complete identity required to emit a
+// REJECTED MessageReceipt without inventing business counts. It is available
+// only when the bounded JSON framing and every Receipt identity field remain
+// independently trustworthy.
+type RejectedReceiptIdentityV2 struct {
+	ExecutionID   string
+	MessageID     string
+	PayloadDigest string
+	PlanSetDigest string
+	SourceWindow  SourceWindowV2
+}
+
 func (e *MessageFramingError) Error() string {
 	if e.FieldPath == "" {
 		return fmt.Sprintf("alarmd contract framing: %s: %s", e.ReasonCode, e.Message)
@@ -36,6 +48,65 @@ func (e *MessageFramingError) Error() string {
 
 func framing(reason, field, message string) error {
 	return &MessageFramingError{ReasonCode: reason, FieldPath: field, Message: message}
+}
+
+// ReadRejectedReceiptIdentityV2 performs a bounded second pass used only after
+// a deterministic message framing failure. It deliberately does not accept a
+// supplied digest: both digests are recomputed from the duplicate-free JSON so
+// a PAYLOAD_DIGEST_MISMATCH can still produce trustworthy audit identity.
+func ReadRejectedReceiptIdentityV2(payload []byte, limits ReaderLimitsV2) (*RejectedReceiptIdentityV2, error) {
+	if err := validateReaderLimitsV2(limits); err != nil {
+		return nil, err
+	}
+	if len(payload) == 0 || len(payload) > limits.MaxEnvelopeBytes || !utf8.Valid(payload) ||
+		bytes.HasPrefix(payload, []byte{0xef, 0xbb, 0xbf}) {
+		return nil, errors.New("alarmd contract: rejected Receipt identity is unavailable")
+	}
+	if err := validateJSONBudgetsV2(payload, limits.MaxContractDepth, limits.MaxStringBytes); err != nil {
+		return nil, err
+	}
+	if err := validateJSONSurrogateEscapes(payload); err != nil {
+		return nil, err
+	}
+	if err := rejectDuplicateJSONFields(payload); err != nil {
+		return nil, err
+	}
+	required := []string{"execution_id", "message_id", "source_window", "plan_set", "payload_digest"}
+	object, err := validateJSONObjectFields(payload, "execution_envelope", required, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	identity := &RejectedReceiptIdentityV2{}
+	if err := decodeJSONObject(object["execution_id"], &identity.ExecutionID); err != nil ||
+		!isOpaqueASCII(identity.ExecutionID) {
+		return nil, errors.New("alarmd contract: rejected Receipt execution identity is unavailable")
+	}
+	if err := decodeJSONObject(object["message_id"], &identity.MessageID); err != nil ||
+		!isOpaqueASCII(identity.MessageID) {
+		return nil, errors.New("alarmd contract: rejected Receipt message identity is unavailable")
+	}
+	if _, err := validateJSONObjectFields(
+		object["source_window"], "execution_envelope.source_window", []string{"from_time", "until_time"}, nil, false,
+	); err != nil {
+		return nil, errors.New("alarmd contract: rejected Receipt source window is unavailable")
+	}
+	if err := decodeJSONObject(object["source_window"], &identity.SourceWindow); err != nil ||
+		identity.SourceWindow.FromTime < 0 || identity.SourceWindow.UntilTime < identity.SourceWindow.FromTime {
+		return nil, errors.New("alarmd contract: rejected Receipt source window is unavailable")
+	}
+	identity.PlanSetDigest, err = digestJSONObjectWithoutV2(
+		"execution_envelope.plan_set.plan_set_digest", "plan-set-v2", object["plan_set"], "plan_set_digest",
+	)
+	if err != nil {
+		return nil, err
+	}
+	identity.PayloadDigest, err = digestJSONObjectWithoutV2(
+		"execution_envelope.payload_digest", "execution-envelope-payload-v2", payload, "payload_digest",
+	)
+	if err != nil {
+		return nil, err
+	}
+	return identity, nil
 }
 
 // ReadExecutionEnvelopeV2 establishes message framing first, then reports
@@ -157,6 +228,7 @@ type evaluationPlanWirePartsV2 struct {
 	InputProjection     InputProjectionV2      `json:"input_projection"`
 	SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
 	StrategyIR          json.RawMessage        `json:"strategy_ir"`
+	TerminalReasonCode  string                 `json:"terminal_reason_code,omitempty"`
 }
 
 type strategyIRWirePartsV2 struct {
@@ -226,7 +298,10 @@ func decodeEvaluationPlanBestEffortV2(raw json.RawMessage) EvaluationPlanV2 {
 	}
 	plan := EvaluationPlanV2{
 		PlanID: wire.PlanID, StrategyRef: wire.StrategyRef, InputProjection: wire.InputProjection,
-		SourceCompatibility: wire.SourceCompatibility,
+		SourceCompatibility: wire.SourceCompatibility, TerminalReasonCode: wire.TerminalReasonCode,
+	}
+	if wire.TerminalReasonCode != "" {
+		return plan
 	}
 	var strategyWire strategyIRWirePartsV2
 	if decodeJSONObject(wire.StrategyIR, &strategyWire) != nil {
@@ -430,6 +505,26 @@ func validateEnvelopeNestedShapeV2(object map[string]json.RawMessage, allowUnkno
 
 func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) error {
 	path := fmt.Sprintf("execution_envelope.plan_set.evaluation_plans[%d]", index)
+	var variant map[string]json.RawMessage
+	if err := decodeJSONObject(raw, &variant); err != nil {
+		return framing(ReasonMalformedJSON, path, err.Error())
+	}
+	if _, terminal := variant["terminal_reason_code"]; terminal {
+		object, err := validateJSONObjectFields(
+			raw, path, []string{"plan_id", "strategy_ref", "terminal_reason_code"}, nil, allowUnknown,
+		)
+		if err != nil {
+			return framing(ReasonMalformedJSON, path, err.Error())
+		}
+		if _, err := validateJSONObjectFields(object["strategy_ref"], path+".strategy_ref", []string{"tenant_id", "strategy_id", "revision"}, nil, allowUnknown); err != nil {
+			return framing(ReasonMalformedJSON, path+".strategy_ref", err.Error())
+		}
+		var typed evaluationPlanWirePartsV2
+		if err := decodeJSONObject(raw, &typed); err != nil {
+			return framing(ReasonMalformedJSON, path, err.Error())
+		}
+		return nil
+	}
 	object, err := validateJSONObjectFields(
 		raw, path,
 		[]string{"plan_id", "strategy_ref", "input_projection", "strategy_ir"},
@@ -638,6 +733,24 @@ planLoop:
 			}
 		} else {
 			previousPlan = plan.PlanID
+		}
+		if plan.TerminalReasonCode != "" {
+			reason := ReasonPlanInvalid
+			if plan.TerminalReasonCode == ReasonMultipleEvaluationUnitsUnsupported {
+				reason = plan.TerminalReasonCode
+			}
+			if !appendIssue(ValidationIssue{
+				Scope: ValidationScopePlan, ReasonCode: reason, FieldPath: "terminal_reason_code",
+				PlanOrdinal: &planOrdinal, PlanID: plan.PlanID,
+			}) {
+				break planLoop
+			}
+			if index < len(envelope.Selectors) && (!validSelectorV2(envelope.Selectors[index].Selector, len(envelope.Records)) || !validSelectorWireV2(rawSelectors[index])) {
+				if !appendIssue(ValidationIssue{Scope: ValidationScopePlan, ReasonCode: ReasonSelectorInvalid, FieldPath: "selectors", PlanOrdinal: &planOrdinal, PlanID: plan.PlanID}) {
+					break planLoop
+				}
+			}
+			continue
 		}
 		if len(plan.StrategyIR.Levels) == 0 {
 			if !appendIssue(ValidationIssue{Scope: ValidationScopePlan, ReasonCode: ReasonPlanInvalid, FieldPath: "strategy_ir.levels", PlanOrdinal: &planOrdinal, PlanID: plan.PlanID}) {

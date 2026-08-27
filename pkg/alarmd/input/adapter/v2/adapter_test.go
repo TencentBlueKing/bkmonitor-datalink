@@ -105,6 +105,39 @@ func TestAdapterIsolatesPlanLevelAndRecordIssues(t *testing.T) {
 	})
 }
 
+func TestAdapterPreservesFormalTerminalPlanSelectionWithoutPlanView(t *testing.T) {
+	t.Parallel()
+
+	envelope := validEnvelope(t, 1)
+	executable := envelope.PlanSet.EvaluationPlans[0]
+	envelope.PlanSet.EvaluationPlans[0] = contract.EvaluationPlanV2{
+		PlanID: executable.PlanID, StrategyRef: executable.StrategyRef,
+		TerminalReasonCode: contract.ReasonMultipleEvaluationUnitsUnsupported,
+	}
+
+	result, err := New(readerLimits()).Decode(context.Background(), encodeEnvelope(t, envelope))
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if result.Rejected || result.Input == nil {
+		t.Fatalf("Decode() = %#v, want accepted message with an isolated Plan terminal", result)
+	}
+	if got := result.Input.PlanViews(); len(got) != 0 {
+		t.Fatalf("PlanViews() = %#v, want no executable view for terminal Plan", got)
+	}
+	selections := result.Input.PlanSelections()
+	if len(selections) != 1 || selections[0].PlanID() != "1001" || selections[0].Evaluable() || selections[0].SelectedCount() != 1 {
+		t.Fatalf("PlanSelections() = %#v, want one non-evaluable selected Plan", selections)
+	}
+	if result.Terminals.Len() != 1 {
+		t.Fatalf("terminals = %#v, want one formal Plan terminal", result.Terminals.Items())
+	}
+	terminal := result.Terminals.Items()[0]
+	if terminal.Scope != ScopePlan || terminal.PlanID != "1001" || terminal.ReasonCode != contract.ReasonMultipleEvaluationUnitsUnsupported {
+		t.Fatalf("terminal = %#v", terminal)
+	}
+}
+
 func TestAdapterDoesNotExposeUntrustedPlanIdentityInSiblingTerminals(t *testing.T) {
 	t.Parallel()
 
@@ -470,6 +503,53 @@ func TestAdapterTurnsFramingFailureIntoDeterministicMessageRejection(t *testing.
 	terminal := result.Terminals.Items()[0]
 	if terminal.Scope != ScopeMessage || terminal.ReasonCode != contract.ReasonPayloadDigestMismatch {
 		t.Fatalf("terminal = %#v, want message/PAYLOAD_DIGEST_MISMATCH", terminal)
+	}
+	if result.RejectedReceipt == nil {
+		t.Fatal("Decode() did not preserve safely decoded identity in a REJECTED Receipt")
+	}
+	receipt := result.RejectedReceipt
+	if receipt.Status != contract.ReceiptStatusRejected || receipt.ExecutionID != envelope.ExecutionID ||
+		receipt.MessageID != envelope.MessageID || receipt.Counts != (contract.ReceiptCountsV1{}) ||
+		len(receipt.PerPlan) != 0 || len(receipt.ReasonCounts) != 1 ||
+		receipt.ReasonCounts[0].ReasonCode != contract.ReasonPayloadDigestMismatch {
+		t.Fatalf("REJECTED Receipt = %#v", receipt)
+	}
+}
+
+func TestAdapterDoesNotInventRejectedReceiptIdentityForMalformedJSON(t *testing.T) {
+	t.Parallel()
+
+	result, err := New(readerLimits()).Decode(context.Background(), []byte(`{"execution_id":"execution-1","message_id":`))
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if !result.Rejected || result.RejectedReceipt != nil {
+		t.Fatalf("Decode() = %#v, want rejection without invented Receipt identity", result)
+	}
+}
+
+func TestAdapterDoesNotInventRejectedReceiptIdentityFromIncompleteSourceWindow(t *testing.T) {
+	t.Parallel()
+
+	payload := encodeEnvelope(t, validEnvelope(t, 1))
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &object); err != nil {
+		t.Fatal(err)
+	}
+	var sourceWindow map[string]json.RawMessage
+	if err := json.Unmarshal(object["source_window"], &sourceWindow); err != nil {
+		t.Fatal(err)
+	}
+	delete(sourceWindow, "from_time")
+	object["source_window"], _ = json.Marshal(sourceWindow)
+	payload, _ = json.Marshal(object)
+
+	result, err := New(readerLimits()).Decode(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if !result.Rejected || result.RejectedReceipt != nil {
+		t.Fatalf("Decode() = %#v, want rejection without invented source-window identity", result)
 	}
 }
 

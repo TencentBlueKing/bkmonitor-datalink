@@ -67,6 +67,33 @@ func TestEvaluationHandlerCompletesRawMessageBeforeOffsetAndReceipt(t *testing.T
 	}
 }
 
+func TestEvaluationPartitionOffsetCommitterReportsFinalCommit(t *testing.T) {
+	t.Parallel()
+
+	gate := alarmdcoordinator.NewCriticalDependencyGate(nil)
+	retry, err := alarmdcoordinator.NewDependencyRetry(gate, alarmdcoordinator.DependencyBlocker{
+		Dependency: alarmdcoordinator.DependencyInputKafka, ReasonCode: contract.ReasonKafkaUnavailable,
+	}, evaluationRetryConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := newFakeSession(context.Background(), &[]string{})
+	events := []string{}
+	var evidence OffsetCommitEvidence
+	committer := evaluationPartitionOffsetCommitter{
+		session: session, topic: "execution-envelope", partition: 3,
+		offsets: fakeSyncOffsetCommitter{events: &events}, retry: retry,
+		onCommitted: func(value OffsetCommitEvidence) { evidence = value },
+	}
+	if err := committer.CommitThrough(context.Background(), 42); err != nil {
+		t.Fatal(err)
+	}
+	if evidence.Topic != "execution-envelope" || evidence.Partition != 3 || evidence.NextOffset != 42 ||
+		evidence.Err != nil || evidence.Duration < 0 {
+		t.Fatalf("offset evidence = %#v", evidence)
+	}
+}
+
 func TestEvaluationHandlerRetriesOffsetBrokerFailureWithoutRepeatingCriticalPhases(t *testing.T) {
 	t.Parallel()
 

@@ -23,9 +23,10 @@ type Adapter struct {
 }
 
 type DecodeResult struct {
-	Input     *EvaluationInput
-	Terminals TerminalSet
-	Rejected  bool
+	Input           *EvaluationInput
+	Terminals       TerminalSet
+	RejectedReceipt *contract.MessageReceiptV1
+	Rejected        bool
 }
 
 func New(limits contract.ReaderLimitsV2) *Adapter {
@@ -55,7 +56,21 @@ func (adapter *Adapter) Decode(ctx context.Context, payload []byte) (DecodeResul
 		terminals := newTerminalSet([]Terminal{{
 			Scope: ScopeMessage, ReasonCode: framingError.ReasonCode, FieldPath: framingError.FieldPath,
 		}})
-		return DecodeResult{Terminals: terminals, Rejected: true}, nil
+		var receipt *contract.MessageReceiptV1
+		identity, identityErr := contract.ReadRejectedReceiptIdentityV2(payload, adapter.limits)
+		if identityErr == nil {
+			receipt, err = contract.BuildMessageReceiptV1(contract.MessageReceiptV1{
+				ExecutionID: identity.ExecutionID, MessageID: identity.MessageID,
+				PayloadDigest: identity.PayloadDigest, PlanSetDigest: identity.PlanSetDigest,
+				SourceWindow: identity.SourceWindow, Status: contract.ReceiptStatusRejected,
+				PerPlan:      []contract.PlanReceiptV1{},
+				ReasonCounts: []contract.ReasonCountV1{{ReasonCode: framingError.ReasonCode, Count: 1}},
+			})
+			if err != nil {
+				return DecodeResult{}, err
+			}
+		}
+		return DecodeResult{Terminals: terminals, RejectedReceipt: receipt, Rejected: true}, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return DecodeResult{}, err

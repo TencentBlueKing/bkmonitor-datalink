@@ -367,6 +367,70 @@ func TestExecutionEnvelopeV2GoldenFile(t *testing.T) {
 	}
 }
 
+func TestExecutionEnvelopeV2TerminalPlanGoldenFile(t *testing.T) {
+	t.Parallel()
+
+	envelope := validExecutionEnvelopeV2(t)
+	executable := envelope.PlanSet.EvaluationPlans[0]
+	envelope.PlanSet.EvaluationPlans[0] = EvaluationPlanV2{
+		PlanID: executable.PlanID, StrategyRef: executable.StrategyRef,
+		TerminalReasonCode: ReasonMultipleEvaluationUnitsUnsupported,
+	}
+	payload := encodeExecutionEnvelopeV2ForTest(t, envelope)
+	assertGoldenPayloadV2(t, "testdata/go-v2/execution_envelope_terminal_plan_v2.json", payload)
+
+	var wire struct {
+		PlanSet struct {
+			Plans []map[string]json.RawMessage `json:"evaluation_plans"`
+		} `json:"plan_set"`
+	}
+	if err := json.Unmarshal(payload, &wire); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if got := wire.PlanSet.Plans[0]; len(got) != 3 || got["plan_id"] == nil || got["strategy_ref"] == nil || got["terminal_reason_code"] == nil {
+		t.Fatalf("terminal Plan shape = %#v, want exactly plan_id + strategy_ref + terminal_reason_code", got)
+	}
+
+	framed, issues, err := ReadExecutionEnvelopeV2(payload, generousReaderLimitsV2())
+	if err != nil {
+		t.Fatalf("ReadExecutionEnvelopeV2() error = %v", err)
+	}
+	if framed == nil || len(issues) != 1 || issues[0].Scope != ValidationScopePlan ||
+		issues[0].ReasonCode != ReasonMultipleEvaluationUnitsUnsupported || issues[0].PlanOrdinal == nil || *issues[0].PlanOrdinal != 0 {
+		t.Fatalf("ReadExecutionEnvelopeV2() issues = %#v, want one Plan terminal", issues)
+	}
+}
+
+func TestReadExecutionEnvelopeV2TerminalAndExecutablePlanAreMutuallyExclusive(t *testing.T) {
+	t.Parallel()
+
+	payload := encodeExecutionEnvelopeV2ForTest(t, validExecutionEnvelopeV2(t))
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &object); err != nil {
+		t.Fatal(err)
+	}
+	var planSet map[string]json.RawMessage
+	if err := json.Unmarshal(object["plan_set"], &planSet); err != nil {
+		t.Fatal(err)
+	}
+	var plans []map[string]json.RawMessage
+	if err := json.Unmarshal(planSet["evaluation_plans"], &plans); err != nil {
+		t.Fatal(err)
+	}
+	plans[0]["terminal_reason_code"] = json.RawMessage(`"MULTIPLE_EVALUATION_UNITS_UNSUPPORTED"`)
+	planSet["evaluation_plans"], _ = CanonicalJSONV2(plans)
+	object["plan_set"], _ = CanonicalJSONV2(planSet)
+	payload = recomputeEnvelopeDigestsForRawTest(t, object)
+
+	_, issues, err := ReadExecutionEnvelopeV2(payload, generousReaderLimitsV2())
+	if err != nil {
+		t.Fatalf("ReadExecutionEnvelopeV2() error = %v", err)
+	}
+	if len(issues) != 1 || issues[0].Scope != ValidationScopePlan || issues[0].ReasonCode != ReasonPlanInvalid {
+		t.Fatalf("issues = %#v, want mixed Plan variant isolated as PLAN_INVALID", issues)
+	}
+}
+
 func TestGoV2GoldenChecksums(t *testing.T) {
 	t.Parallel()
 

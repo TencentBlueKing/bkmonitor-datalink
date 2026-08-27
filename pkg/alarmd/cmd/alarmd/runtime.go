@@ -136,6 +136,7 @@ type applicationBundle struct {
 	triggerEvents triggerEventRuntime
 	redis         redisRuntime
 	logger        *observability.Logger
+	resources     *observability.ObservingResourceGovernor
 
 	shutdownOnce sync.Once
 	shutdownErr  error
@@ -201,11 +202,12 @@ func retryableStartupDependency(err error) error {
 type applicationHealth struct {
 	tracker *observability.HealthTracker
 
-	mu       sync.RWMutex
-	service  serviceRuntime
-	gate     *coordinator.CriticalDependencyGate
-	draining bool
-	fatal    bool
+	mu        sync.RWMutex
+	service   serviceRuntime
+	gate      *coordinator.CriticalDependencyGate
+	resources *observability.ObservingResourceGovernor
+	draining  bool
+	fatal     bool
 }
 
 func newApplicationHealth() *applicationHealth {
@@ -221,6 +223,7 @@ func (health *applicationHealth) attach(bundle *applicationBundle) {
 	health.mu.Lock()
 	health.service = bundle.service
 	health.gate = bundle.gate
+	health.resources = bundle.resources
 	health.mu.Unlock()
 	base := health.tracker.HealthSnapshot()
 	base.RuntimeStateReady = true
@@ -255,6 +258,7 @@ func (health *applicationHealth) HealthSnapshot() observability.HealthSnapshot {
 	health.mu.RLock()
 	service := health.service
 	gate := health.gate
+	resources := health.resources
 	draining := health.draining
 	fatal := health.fatal
 	health.mu.RUnlock()
@@ -265,6 +269,17 @@ func (health *applicationHealth) HealthSnapshot() observability.HealthSnapshot {
 		base.InflightMessages = snapshot.InflightRecords
 		base.ConsumerLagRecords = snapshot.ConsumerLagRecords
 		base.ConsumerLagKnown = snapshot.ConsumerLagKnown
+		if resources != nil {
+			resourceSnapshot := resources.ResourceSnapshot()
+			resourceSnapshot.ObservedAt = time.Now()
+			resourceSnapshot.InflightMessages = float64(snapshot.InflightRecords)
+			if snapshot.ConsumerLagKnown {
+				resourceSnapshot.ConsumerLagRecords = float64(snapshot.ConsumerLagRecords)
+			} else {
+				resourceSnapshot.ConsumerLagRecords = -1
+			}
+			base.ResourceState = resources.Observe(resourceSnapshot).State
+		}
 	}
 	if gate != nil {
 		for _, blocker := range gate.Snapshot().Blockers {
@@ -588,6 +603,16 @@ func openApplicationBundleWithFactories(
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	runtimeObserver := observability.Multi(recorder)
+	resources, err := observability.NewResourceGovernor(observability.ResourceGovernorConfig{})
+	if err != nil {
+		return nil, err
+	}
+	resources.Observe(observability.ResourceSnapshot{
+		ObservedAt: time.Now(), CPUCores: -1, RSSBytes: -1, HeapBytes: -1, GCPauseSeconds: -1,
+		WorkerQueueDepth: -1, WorkerQueueBytes: -1, InflightMessages: -1, InflightBytes: -1,
+		ConsumerLagRecords: -1, StateBytes: -1,
+	})
 
 	adapter := inputv2.New(cfg.ReaderLimits())
 	if err := adapter.Validate(); err != nil {
@@ -597,7 +622,7 @@ func openApplicationBundleWithFactories(
 	if err != nil {
 		return nil, err
 	}
-	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry(), nil)
+	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry(), detectObserver(runtimeObserver))
 	if err != nil {
 		return nil, err
 	}
@@ -614,7 +639,7 @@ func openApplicationBundleWithFactories(
 	if err != nil {
 		return nil, err
 	}
-	partial := &applicationBundle{redis: redis, logger: logger}
+	partial := &applicationBundle{redis: redis, logger: logger, resources: resources}
 	cleanup := func(openErr error) (*applicationBundle, error) {
 		deadline, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout.Duration())
 		defer cancel()
@@ -627,7 +652,7 @@ func openApplicationBundleWithFactories(
 	if err != nil {
 		return cleanup(err)
 	}
-	store, err := state.NewStore(cfg.StateStoreOptions(codec, storageRouter, nil))
+	store, err := state.NewStore(cfg.StateStoreOptions(codec, storageRouter, stateObserver(runtimeObserver)))
 	if err != nil {
 		return cleanup(err)
 	}
@@ -658,11 +683,12 @@ func openApplicationBundleWithFactories(
 			HistoryCellSemanticsVersion: semantics.HistoryCellSemanticsVersion,
 		},
 		DetectLimits: cfg.DetectLimits(), TriggerLimits: cfg.TriggerLimits(),
+		Observer: runtimeObserver,
 	})
 	if err != nil {
 		return cleanup(err)
 	}
-	router, err := coordinator.NewMessageRouter(adapter, pipeline)
+	router, err := coordinator.NewMessageRouter(observedMessageDecoder{next: adapter, observer: runtimeObserver}, pipeline)
 	if err != nil {
 		return cleanup(err)
 	}
@@ -670,8 +696,9 @@ func openApplicationBundleWithFactories(
 	if err != nil {
 		return cleanup(err)
 	}
-	partial.triggerEvents = events
-	critical, err := coordinator.NewCriticalCompleter(events, store)
+	observedEvents := &observedTriggerEventRuntime{next: events, observer: runtimeObserver}
+	partial.triggerEvents = observedEvents
+	critical, err := coordinator.NewCriticalCompleter(observedEvents, store)
 	if err != nil {
 		return cleanup(err)
 	}
@@ -693,7 +720,9 @@ func openApplicationBundleWithFactories(
 	consumerCoordinates.Diagnostics = consumerDiagnostics(recorder, logger)
 	service, err := factories.openEvaluationService(
 		consumerCoordinates, router, &criticalCompletionRuntime{CriticalPhaseCompletion: retryingCritical}, receipts, gate,
-		enginekafka.EvaluationDiagnostics{OnRejected: rejectedMessageDiagnostics(logger)},
+		enginekafka.EvaluationDiagnostics{
+			OnRejected: rejectedMessageDiagnostics(logger), OnOffsetCommitted: offsetCommitDiagnostics(runtimeObserver),
+		},
 		cfg.DependencyRetryOptions(),
 		cfg.ShutdownTimeout.Duration(),
 	)
@@ -701,6 +730,9 @@ func openApplicationBundleWithFactories(
 		return cleanup(err)
 	}
 	partial.service = service
+	if err := recorder.BindResources(resources); err != nil {
+		return cleanup(err)
+	}
 	return partial, nil
 }
 

@@ -22,6 +22,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/coordinator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
+	inputv2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/input/adapter/v2"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
@@ -63,15 +65,16 @@ func TestOpenApplicationBundleBuildsV2EvaluationService(t *testing.T) {
 			if router == nil || critical == nil || gotReceipts != receipts || gate == nil {
 				t.Fatal("v2 evaluation service received an incomplete composition")
 			}
-			if diagnostics.OnRejected == nil {
-				t.Fatal("v2 evaluation service did not require rejected-message evidence")
+			if diagnostics.OnRejected == nil || diagnostics.OnOffsetCommitted == nil {
+				t.Fatal("v2 evaluation service did not receive rejection and offset diagnostics")
 			}
 			return service, nil
 		},
 	}
 
+	recorder := metric.NewRecorder(metric.BuildInfo{})
 	bundle, err := openApplicationBundleWithFactories(
-		context.Background(), cfg, metric.NewRecorder(metric.BuildInfo{}),
+		context.Background(), cfg, recorder,
 		observability.Discard(observability.ComponentTrigger), factories,
 	)
 	if err != nil {
@@ -80,11 +83,67 @@ func TestOpenApplicationBundleBuildsV2EvaluationService(t *testing.T) {
 	if bundle.service != service || bundle.gate == nil {
 		t.Fatal("application bundle did not retain the v2 service and dependency gate")
 	}
+	if bundle.resources == nil || !hasMetricFamily(t, recorder, "bkmonitor_alarmd_resource_state") {
+		t.Fatal("application bundle did not bind the observation-only ResourceGovernor")
+	}
 	if redis.pings != 1 {
 		t.Fatalf("Redis pings = %d, want one startup readiness check", redis.pings)
 	}
 	if err := bundle.Shutdown(context.Background()); err != nil {
 		t.Fatalf("bundle.Shutdown() error = %v", err)
+	}
+}
+
+func TestRuntimeObserverAdaptersCoverExistingV2Callpoints(t *testing.T) {
+	t.Parallel()
+
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	observer := observability.Multi(recorder)
+	decoded, err := (observedMessageDecoder{
+		next: inputv2.New(validApplicationConfig().ReaderLimits()), observer: observer,
+	}).Decode(context.Background(), []byte(`{"schema":`))
+	if err != nil || !decoded.Rejected {
+		t.Fatalf("observed Decode() = %#v, %v; want deterministic rejection", decoded, err)
+	}
+	detectObserver(observer).ObserveDetect(context.Background(), detect.Observation{
+		Stage: detect.StageDetectCompleted, Result: detect.ObservationSuccess,
+		Counts: detect.DetectionCounts{Plans: 1, EvaluatedRecords: 2, CompiledLevels: 3},
+	})
+	stateObserver(observer).ObserveState(context.Background(), state.Observation{
+		Stage: state.StageDependencyLoaded, Operation: state.OperationLoad, Result: state.OperationSucceeded,
+		TouchedKeys: 2, StateBytes: 128,
+	})
+	offsetCommitDiagnostics(observer)(enginekafka.OffsetCommitEvidence{
+		Topic: "execution-envelope", Partition: 1, NextOffset: 42,
+	})
+
+	for _, want := range []map[string]string{
+		{"component": string(observability.ComponentAdapter), "stage": string(observability.StageMessageDecoded)},
+		{"component": string(observability.ComponentDetect), "stage": string(observability.StageDetectCompleted)},
+		{"component": string(observability.ComponentState), "stage": string(observability.StageDependencyLoaded)},
+		{"component": string(observability.ComponentConsumer), "stage": string(observability.StageOffsetCommitted)},
+	} {
+		if !hasObservationMetric(t, recorder, want) {
+			t.Fatalf("missing observation metric %v", want)
+		}
+	}
+}
+
+func TestObservedTriggerEventRuntimeRecordsBrokerACK(t *testing.T) {
+	t.Parallel()
+
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	runtime := &observedTriggerEventRuntime{
+		next: &fakeTriggerEventRuntime{}, observer: observability.Multi(recorder),
+	}
+	if err := runtime.WriteBatch(context.Background(), []contract.TriggerEventV1{{EventID: "event-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !hasObservationMetric(t, recorder, map[string]string{
+		"component": string(observability.ComponentOutput), "stage": string(observability.StageOutputACKed),
+		"result": string(observability.ResultSuccess),
+	}) {
+		t.Fatal("TriggerEvent ACK observation was not recorded")
 	}
 }
 
@@ -501,6 +560,20 @@ func hasObservationMetric(t *testing.T, recorder *metric.Recorder, want map[stri
 			if matched {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func hasMetricFamily(t *testing.T, recorder *metric.Recorder, name string) bool {
+	t.Helper()
+	families, err := recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+	for _, family := range families {
+		if family.GetName() == name {
+			return true
 		}
 	}
 	return false

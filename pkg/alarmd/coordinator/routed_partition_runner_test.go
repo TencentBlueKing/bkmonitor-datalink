@@ -78,6 +78,37 @@ func TestRoutedPartitionRunnerCommitsRejectedMessageWithoutBusinessReceipt(t *te
 	}
 }
 
+func TestRoutedPartitionRunnerQueuesIdentifiedRejectedReceiptAfterOffsetCommit(t *testing.T) {
+	t.Parallel()
+
+	receipt := &contract.MessageReceiptV1{MessageID: "message-7", Status: contract.ReceiptStatusRejected}
+	calls := make([]string, 0, 2)
+	runner := newTestRoutedPartitionRunner(t,
+		messageOutcomeRouterFunc(func(context.Context, []byte) (MessageOutcome, error) {
+			return MessageOutcome{Kind: MessageOutcomeRejected, Rejected: &RejectedOutcome{Receipt: receipt}}, nil
+		}),
+		criticalCompletionFunc(func(context.Context, CriticalResult) error { return nil }),
+		partitionOffsetCommitterFunc(func(context.Context, int64) error {
+			calls = append(calls, "offset")
+			return nil
+		}),
+		receiptPublisherFunc(func(got *contract.MessageReceiptV1) bool {
+			if got != receipt {
+				t.Fatalf("Receipt = %#v, want %#v", got, receipt)
+			}
+			calls = append(calls, "receipt")
+			return true
+		}),
+	)
+
+	if err := runner.Process(context.Background(), 7, []byte("bad")); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"offset", "receipt"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+}
+
 func TestRoutedPartitionRunnerRecordsRejectedEvidenceBeforeOffset(t *testing.T) {
 	t.Parallel()
 

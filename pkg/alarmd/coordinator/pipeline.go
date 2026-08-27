@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	inputv2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/input/adapter/v2"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
@@ -41,6 +42,7 @@ type PipelineOptions struct {
 	StateSemantics strategy.StateSemantics
 	DetectLimits   detect.ExecutionLimits
 	TriggerLimits  trigger.EvaluationLimitsV2
+	Observer       observability.Observer
 }
 
 type EvaluationPipeline struct {
@@ -118,16 +120,34 @@ func (pipeline *EvaluationPipeline) EvaluateMessage(ctx context.Context, input *
 
 	critical := CriticalResult{Events: make([]contract.TriggerEventV1, 0), StateWrite: state.WriteWindowsRequest{Items: make([]state.LoadedWindow, len(series))}}
 	evaluations := make(map[string][]recordEvaluation, len(compiled))
+	triggerStarted := time.Now()
+	var triggerRecords, triggerLevels int64
 	for index := range series {
 		planID := series[index].compiled.plan.PlanRef().StrategyID
 		events, results, err := pipeline.evaluateSeries(ctx, input, &series[index], effectiveTimes[planID])
 		if err != nil {
+			observePipeline(ctx, pipeline.options.Observer, observability.Observation{
+				Component: observability.ComponentTrigger, Stage: observability.StageTriggerCompleted,
+				Result: observability.Result(observability.ResultFailed), Direction: observability.DirectionInternal,
+				Duration: time.Since(triggerStarted), Counts: observability.Counts{Records: triggerRecords, Levels: triggerLevels}, Err: err,
+			})
 			return MessageResult{}, err
 		}
 		critical.Events = append(critical.Events, events...)
 		evaluations[planID] = append(evaluations[planID], results...)
+		triggerRecords += int64(len(results))
+		for _, result := range results {
+			triggerLevels += int64(result.Result.Counts.Levels)
+		}
 		critical.StateWrite.Items[index] = series[index].loaded
 	}
+	observePipeline(ctx, pipeline.options.Observer, observability.Observation{
+		Component: observability.ComponentTrigger, Stage: observability.StageTriggerCompleted,
+		Result: observability.ResultSuccess, Direction: observability.DirectionInternal,
+		Duration: time.Since(triggerStarted), Counts: observability.Counts{
+			Records: triggerRecords, Levels: triggerLevels, Events: int64(len(critical.Events)),
+		},
+	})
 	if _, err := pipeline.options.StateAdmission.AdmitWindows(critical.StateWrite); err != nil {
 		return MessageResult{}, fmt.Errorf("alarmd coordinator: admit runtime state batch: %w", err)
 	}
@@ -178,11 +198,32 @@ func (pipeline *EvaluationPipeline) EvaluateDetectOnly(ctx context.Context, inpu
 func (pipeline *EvaluationPipeline) compilePlans(
 	ctx context.Context,
 	input *inputv2.EvaluationInput,
-) (map[string]compiledExecution, []detect.PlanExecution, []inputv2.Terminal, error) {
+) (compiled map[string]compiledExecution, executions []detect.PlanExecution, terminals []inputv2.Terminal, returnErr error) {
+	started := time.Now()
 	views := input.PlanViews()
-	compiled := make(map[string]compiledExecution, len(views))
-	executions := make([]detect.PlanExecution, 0, len(views))
-	terminals := make([]inputv2.Terminal, 0)
+	compiled = make(map[string]compiledExecution, len(views))
+	executions = make([]detect.PlanExecution, 0, len(views))
+	terminals = make([]inputv2.Terminal, 0)
+	defer func() {
+		result := observability.Result(observability.ResultSuccess)
+		reason := observability.ReasonNone
+		if returnErr != nil {
+			result = observability.Result(observability.ResultFailed)
+			reason = observability.ReasonInternalUnknown
+		} else if len(terminals) > 0 {
+			result = observability.ResultTerminal
+			reason = observability.ReasonCode(terminals[0].ReasonCode)
+		}
+		levels := int64(0)
+		for _, execution := range compiled {
+			levels += int64(len(execution.plan.Levels()))
+		}
+		observePipeline(ctx, pipeline.options.Observer, observability.Observation{
+			Component: observability.ComponentCompiler, Stage: observability.StagePlanCompiled,
+			Result: result, Operation: observability.OperationCompile, Direction: observability.DirectionInternal,
+			ReasonCode: reason, Duration: time.Since(started), Counts: observability.Counts{Plans: int64(len(views)), Levels: levels}, Err: returnErr,
+		})
+	}()
 	for _, view := range views {
 		result, err := pipeline.options.Compiler.Compile(ctx, strategy.CompileRequest{
 			Plan: view.Snapshot(), DatasetContract: input.DatasetContract().Snapshot(), StateSemantics: pipeline.options.StateSemantics,
@@ -215,6 +256,14 @@ func (pipeline *EvaluationPipeline) compilePlans(
 		executions = append(executions, detect.PlanExecution{View: view, Plan: plan})
 	}
 	return compiled, executions, terminals, nil
+}
+
+func observePipeline(ctx context.Context, observer observability.Observer, observation observability.Observation) {
+	if observer == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	observer.Observe(ctx, observation)
 }
 
 func compiledDatasetDigest(plans map[string]compiledExecution) string {

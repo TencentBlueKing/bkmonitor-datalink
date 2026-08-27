@@ -46,7 +46,7 @@ func TestMessageRouterRejectsUnframedPayloadWithoutBusinessReceipt(t *testing.T)
 	}
 }
 
-func TestMessageRouterRejectsUntrustedPlanIdentityWithoutPerPlanReceipt(t *testing.T) {
+func TestMessageRouterRejectsUntrustedPlanIdentityWithMessageReceiptWithoutPerPlanCounts(t *testing.T) {
 	t.Parallel()
 
 	var envelope contract.ExecutionEnvelopeV2
@@ -81,8 +81,63 @@ func TestMessageRouterRejectsUntrustedPlanIdentityWithoutPerPlanReceipt(t *testi
 		len(outcome.Rejected.Terminals) == 0 {
 		t.Fatalf("outcome = %#v, want typed REJECTED without per-Plan Receipt", outcome)
 	}
+	receipt := outcome.Rejected.Receipt
+	if receipt == nil || receipt.Status != contract.ReceiptStatusRejected || receipt.Counts != (contract.ReceiptCountsV1{}) ||
+		len(receipt.PerPlan) != 0 || receipt.ExecutionID != envelope.ExecutionID || receipt.MessageID != envelope.MessageID {
+		t.Fatalf("REJECTED Receipt = %#v, want trusted message identity without per-Plan counts", receipt)
+	}
 	if processor.fullCalls != 0 || processor.detectOnlyCalls != 0 {
 		t.Fatalf("processor calls = full:%d detect-only:%d, want 0/0", processor.fullCalls, processor.detectOnlyCalls)
+	}
+}
+
+func TestMessageRouterCompletesFormalTerminalPlanWithConservedReceipt(t *testing.T) {
+	t.Parallel()
+
+	var envelope contract.ExecutionEnvelopeV2
+	if err := json.Unmarshal(encodeG1Envelope(t), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	executable := envelope.PlanSet.EvaluationPlans[0]
+	envelope.PlanSet.EvaluationPlans[0] = contract.EvaluationPlanV2{
+		PlanID: executable.PlanID, StrategyRef: executable.StrategyRef,
+		TerminalReasonCode: contract.ReasonMultipleEvaluationUnitsUnsupported,
+	}
+	var err error
+	envelope.PlanSet.PlanSetDigest, err = contract.DerivePlanSetDigestV2(envelope.PlanSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.PayloadDigest, err = contract.DeriveExecutionEnvelopePayloadDigestV2(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := contract.CanonicalJSONV2(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	processor := &messageProcessorSpy{}
+	router, err := NewMessageRouter(inputv2.New(g1ReaderLimits()), processor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := router.Route(context.Background(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Kind != MessageOutcomeCompleted || outcome.Message == nil || outcome.Rejected != nil {
+		t.Fatalf("outcome = %#v, want completed terminal Plan", outcome)
+	}
+	receipt := outcome.Message.Receipt
+	wantCounts := contract.ReceiptCountsV1{Received: 1, Selected: 1, Terminal: 1}
+	if receipt == nil || receipt.Status != contract.ReceiptStatusCompletedWithTerminal || receipt.Counts != wantCounts ||
+		len(receipt.PerPlan) != 1 || receipt.PerPlan[0].PlanID != "1001" || receipt.PerPlan[0].Selected != 1 || receipt.PerPlan[0].Terminal != 1 ||
+		!receiptHasExactReason(receipt, contract.ReasonMultipleEvaluationUnitsUnsupported, 1) {
+		t.Fatalf("terminal Plan receipt = %#v", receipt)
+	}
+	if processor.fullCalls != 0 || processor.detectOnlyCalls != 0 || len(outcome.Message.Events) != 0 || len(outcome.Message.StateWrite.Items) != 0 {
+		t.Fatalf("terminal Plan invoked Evaluation or produced side effects: outcome=%#v calls=%d/%d", outcome, processor.fullCalls, processor.detectOnlyCalls)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	inputv2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/input/adapter/v2"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
@@ -58,6 +59,7 @@ func TestEvaluationPipelineRunsG1ThresholdThroughRuntimeState(t *testing.T) {
 		_, err := store.AdmitWindows(request)
 		return err
 	})
+	observedStages := make(map[observability.Stage]observability.Observation)
 	pipeline, err := NewEvaluationPipeline(PipelineOptions{
 		Compiler: compiler, Detector: detector, EffectiveTime: strategy.NewStaticScheduleProvider(nil),
 		State: store, StateAdmission: admission,
@@ -75,6 +77,9 @@ func TestEvaluationPipelineRunsG1ThresholdThroughRuntimeState(t *testing.T) {
 			MaxRequiredHistoryPoints: 1_000, MaxLevelResultsPerEvent: 8, MaxEvidenceBytesPerEvent: 64 << 10,
 			MaxComputeCost: 10_000,
 		},
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observedStages[observation.Stage] = observation
+		}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -98,6 +103,12 @@ func TestEvaluationPipelineRunsG1ThresholdThroughRuntimeState(t *testing.T) {
 	}
 	if admissionCalls != 1 {
 		t.Fatalf("batch admission calls = %d, want 1", admissionCalls)
+	}
+	for _, stage := range []observability.Stage{observability.StagePlanCompiled, observability.StageTriggerCompleted} {
+		observation, ok := observedStages[stage]
+		if !ok || observation.Result != observability.ResultSuccess || observation.Duration < 0 {
+			t.Fatalf("observation[%s] = %#v, want successful bounded stage", stage, observation)
+		}
 	}
 
 	ack := 0

@@ -26,8 +26,9 @@ type RejectedMessageObserver interface {
 }
 
 // RoutedPartitionRunner owns the complete boundary for one Kafka partition.
-// A rejected message has no trustworthy business receipt, but it is complete
-// once the typed rejection has been recorded by the adapter/router path.
+// A rejected message has no business counts. When its message identity is
+// independently trustworthy, it may carry a REJECTED audit Receipt that is
+// queued only after the input offset is committed.
 type RoutedPartitionRunner struct {
 	router    MessageOutcomeRouter
 	critical  CriticalCompletion
@@ -124,7 +125,7 @@ func (runner *RoutedPartitionRunner) processRegistered(ctx context.Context, offs
 		if runner.rejected != nil {
 			runner.rejected.ObserveRejected(offset, *outcome.Rejected)
 		}
-		if err := runner.tracker.Complete(offset, nil); err != nil {
+		if err := runner.tracker.Complete(offset, outcome.Rejected.Receipt); err != nil {
 			return err
 		}
 	case MessageOutcomeCompleted:

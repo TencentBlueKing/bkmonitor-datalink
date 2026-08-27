@@ -40,6 +40,32 @@ type receiptBuildOptions struct {
 	QueryResultReason  string
 }
 
+func buildRejectedMessageReceipt(
+	execution inputv2.ExecutionMetadata,
+	terminals []inputv2.Terminal,
+) (*contract.MessageReceiptV1, error) {
+	if len(terminals) == 0 {
+		return nil, errors.New("alarmd coordinator: REJECTED Receipt requires a reason")
+	}
+	reasonCounts := make(map[string]uint64, len(terminals))
+	for _, terminal := range terminals {
+		if !contract.ReasonAllowedForV2(terminal.ReasonCode, contract.ReasonDomainReceipt) {
+			return nil, errors.New("alarmd coordinator: REJECTED Receipt reason is invalid")
+		}
+		reasonCounts[terminal.ReasonCode]++
+	}
+	receipt := contract.MessageReceiptV1{
+		ExecutionID: execution.ExecutionID, MessageID: execution.MessageID,
+		PayloadDigest: execution.PayloadDigest, PlanSetDigest: execution.PlanSetDigest,
+		SourceWindow: execution.SourceWindow, Status: contract.ReceiptStatusRejected,
+		PerPlan: []contract.PlanReceiptV1{}, ReasonCounts: make([]contract.ReasonCountV1, 0, len(reasonCounts)),
+	}
+	for reason, count := range reasonCounts {
+		receipt.ReasonCounts = append(receipt.ReasonCounts, contract.ReasonCountV1{ReasonCode: reason, Count: count})
+	}
+	return contract.BuildMessageReceiptV1(receipt)
+}
+
 func buildMessageReceipt(
 	input *inputv2.EvaluationInput,
 	evaluations map[string][]recordEvaluation,

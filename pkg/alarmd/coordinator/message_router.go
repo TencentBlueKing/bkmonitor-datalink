@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	inputv2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/input/adapter/v2"
 )
 
@@ -35,6 +36,7 @@ const (
 
 type RejectedOutcome struct {
 	Terminals []inputv2.Terminal
+	Receipt   *contract.MessageReceiptV1
 }
 
 type MessageOutcome struct {
@@ -69,7 +71,7 @@ func (router *MessageRouter) Route(ctx context.Context, payload []byte) (Message
 		}
 		return MessageOutcome{
 			Kind:     MessageOutcomeRejected,
-			Rejected: &RejectedOutcome{Terminals: decoded.Terminals.Items()},
+			Rejected: &RejectedOutcome{Terminals: decoded.Terminals.Items(), Receipt: decoded.RejectedReceipt},
 		}, nil
 	}
 	if decoded.Input == nil {
@@ -79,16 +81,20 @@ func (router *MessageRouter) Route(ctx context.Context, payload []byte) (Message
 		if decoded.Terminals.Len() == 0 {
 			return MessageOutcome{}, errors.New("alarmd coordinator: untrusted Plan identity has no terminal evidence")
 		}
+		receipt, err := buildRejectedMessageReceipt(decoded.Input.Execution(), decoded.Terminals.Items())
+		if err != nil {
+			return MessageOutcome{}, err
+		}
 		return MessageOutcome{
 			Kind:     MessageOutcomeRejected,
-			Rejected: &RejectedOutcome{Terminals: decoded.Terminals.Items()},
+			Rejected: &RejectedOutcome{Terminals: decoded.Terminals.Items(), Receipt: receipt},
 		}, nil
 	}
 
 	var message MessageResult
 	switch decoded.Input.ProcessingRoute() {
 	case inputv2.RouteFullPipeline:
-		if decoded.Input.RecordBatch().Len() != 0 {
+		if decoded.Input.RecordBatch().Len() != 0 && len(decoded.Input.PlanViews()) != 0 {
 			message, err = router.processor.EvaluateMessage(ctx, decoded.Input)
 			break
 		}

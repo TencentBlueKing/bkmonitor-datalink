@@ -96,6 +96,8 @@ const (
 	ReceiptStatusRejected              = "REJECTED"
 )
 
+const ReasonMultipleEvaluationUnitsUnsupported = "MULTIPLE_EVALUATION_UNITS_UNSUPPORTED"
+
 // StrategyRefV2 is the producer-side strategy identity. Runtime state identity
 // is compiled later and therefore is deliberately absent here.
 type StrategyRefV2 struct {
@@ -198,6 +200,26 @@ type EvaluationPlanV2 struct {
 	InputProjection     InputProjectionV2      `json:"input_projection"`
 	SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
 	StrategyIR          StrategyIRV2           `json:"strategy_ir"`
+	TerminalReasonCode  string                 `json:"terminal_reason_code,omitempty"`
+}
+
+// MarshalJSON keeps the 2.0 wire union flat: a producer emits either the
+// executable Plan body or the bounded terminal Plan identity, never both.
+func (plan EvaluationPlanV2) MarshalJSON() ([]byte, error) {
+	if plan.TerminalReasonCode != "" {
+		return json.Marshal(struct {
+			PlanID             string        `json:"plan_id"`
+			StrategyRef        StrategyRefV2 `json:"strategy_ref"`
+			TerminalReasonCode string        `json:"terminal_reason_code"`
+		}{plan.PlanID, plan.StrategyRef, plan.TerminalReasonCode})
+	}
+	return json.Marshal(struct {
+		PlanID              string                 `json:"plan_id"`
+		StrategyRef         StrategyRefV2          `json:"strategy_ref"`
+		InputProjection     InputProjectionV2      `json:"input_projection"`
+		SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
+		StrategyIR          StrategyIRV2           `json:"strategy_ir"`
+	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.StrategyIR})
 }
 
 type PlanSetV2 struct {

@@ -120,7 +120,8 @@ func buildMessageReceiptWithOptions(
 		// scale with the number of Plan x Record selections in this message.
 		reasonCounts[options.QueryResultReason]++
 	}
-	if err := applyReceiptTerminals(plans, terminals, reasonCounts); err != nil {
+	uncountedTerminal, err := applyReceiptTerminals(plans, terminals, reasonCounts)
+	if err != nil {
 		return nil, err
 	}
 
@@ -163,7 +164,7 @@ func buildMessageReceiptWithOptions(
 		receipt.Counts.Events += entry.Abnormal + entry.Recovery
 		receipt.PerPlan = append(receipt.PerPlan, entry)
 	}
-	if receipt.Counts.Terminal > 0 || receipt.Counts.LevelTerminalAffected > 0 {
+	if receipt.Counts.Terminal > 0 || receipt.Counts.LevelTerminalAffected > 0 || uncountedTerminal {
 		receipt.Status = contract.ReceiptStatusCompletedWithTerminal
 	}
 	for reason, count := range reasonCounts {
@@ -229,10 +230,20 @@ func applyReceiptTerminals(
 	plans map[string]*planReceiptState,
 	terminals []inputv2.Terminal,
 	reasonCounts map[string]uint64,
-) error {
+) (bool, error) {
+	uncountedTerminal := false
+	unknownSelectorPlans := make(map[string]struct{})
+	for _, terminal := range terminals {
+		if terminal.Scope != inputv2.ScopePlan || terminal.ReasonCode != contract.ReasonSelectorInvalid || terminal.PlanID == "" {
+			continue
+		}
+		if _, selected := plans[terminal.PlanID]; !selected {
+			unknownSelectorPlans[terminal.PlanID] = struct{}{}
+		}
+	}
 	for _, terminal := range terminals {
 		if terminal.ReasonCode == "" || !contract.ReasonAllowedForV2(terminal.ReasonCode, contract.ReasonDomainReceipt) {
-			return errors.New("alarmd coordinator: terminal has an invalid Receipt reason")
+			return false, errors.New("alarmd coordinator: terminal has an invalid Receipt reason")
 		}
 		switch terminal.Scope {
 		case inputv2.ScopeMessage:
@@ -242,12 +253,20 @@ func applyReceiptTerminals(
 		case inputv2.ScopePlan:
 			plan, ok := plans[terminal.PlanID]
 			if !ok {
-				return fmt.Errorf("alarmd coordinator: terminal references unknown Plan %s", terminal.PlanID)
+				if _, unknown := unknownSelectorPlans[terminal.PlanID]; unknown {
+					// The selector cannot supply a trustworthy Plan x Record
+					// cardinality. Preserve one Plan-level reason fact without
+					// inventing selected or terminal counts.
+					reasonCounts[terminal.ReasonCode]++
+					uncountedTerminal = true
+					continue
+				}
+				return false, fmt.Errorf("alarmd coordinator: terminal references unknown Plan %s", terminal.PlanID)
 			}
 			classifyTerminalSlots(plan.slots, terminal.ReasonCode, reasonCounts)
 		case inputv2.ScopeRecord:
 			if terminal.RecordOrdinal == nil {
-				return errors.New("alarmd coordinator: record terminal has no ordinal")
+				return false, errors.New("alarmd coordinator: record terminal has no ordinal")
 			}
 			for _, plan := range plans {
 				if slot, ok := plan.slots[*terminal.RecordOrdinal]; ok && slot.result == "" {
@@ -258,7 +277,12 @@ func applyReceiptTerminals(
 		case inputv2.ScopeLevel:
 			plan, ok := plans[terminal.PlanID]
 			if !ok {
-				return fmt.Errorf("alarmd coordinator: Level terminal references unknown Plan %s", terminal.PlanID)
+				if _, unknown := unknownSelectorPlans[terminal.PlanID]; unknown {
+					reasonCounts[terminal.ReasonCode]++
+					uncountedTerminal = true
+					continue
+				}
+				return false, fmt.Errorf("alarmd coordinator: Level terminal references unknown Plan %s", terminal.PlanID)
 			}
 			for _, slot := range plan.slots {
 				if slot.result != "" {
@@ -272,10 +296,10 @@ func applyReceiptTerminals(
 				}
 			}
 		default:
-			return fmt.Errorf("alarmd coordinator: unsupported terminal scope %q", terminal.Scope)
+			return false, fmt.Errorf("alarmd coordinator: unsupported terminal scope %q", terminal.Scope)
 		}
 	}
-	return nil
+	return uncountedTerminal, nil
 }
 
 func classifyTerminalSlots(slots map[uint32]*receiptSlot, reason string, reasonCounts map[string]uint64) {

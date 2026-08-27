@@ -681,6 +681,26 @@ func (m *MockSchemaProvider) GetResourceDefinition(namespace, resourceType strin
 	return nil, fmt.Errorf("not found")
 }
 
+func (m *MockSchemaProvider) Name() string {
+	return "mock"
+}
+
+func (m *MockSchemaProvider) ListNamespaces() ([]string, error) {
+	namespaces := make(map[string]struct{})
+	for _, def := range m.resourceDefs {
+		namespaces[def.Namespace] = struct{}{}
+	}
+	for _, def := range m.relationDefs {
+		namespaces[def.Namespace] = struct{}{}
+	}
+
+	result := make([]string, 0, len(namespaces))
+	for namespace := range namespaces {
+		result = append(result, namespace)
+	}
+	return result, nil
+}
+
 func (m *MockSchemaProvider) GetRelationDefinition(namespace, name string) (*relation.RelationDefinition, error) {
 	key := fmt.Sprintf("%s:%s", namespace, name)
 	if def, ok := m.relationDefs[key]; ok {
@@ -728,6 +748,22 @@ func (m *MockSchemaProvider) ListResourceDefinitions(namespace string) ([]*relat
 		if namespace == "" || strings.HasPrefix(key, namespace+":") {
 			result = append(result, def)
 		}
+	}
+	return result, nil
+}
+
+func (m *MockSchemaProvider) ListAllResourceDefinitions() (map[string][]*relation.ResourceDefinition, error) {
+	result := make(map[string][]*relation.ResourceDefinition)
+	for _, def := range m.resourceDefs {
+		result[def.Namespace] = append(result[def.Namespace], def)
+	}
+	return result, nil
+}
+
+func (m *MockSchemaProvider) ListAllRelationDefinitions() (map[string][]*relation.RelationDefinition, error) {
+	result := make(map[string][]*relation.RelationDefinition)
+	for _, def := range m.relationDefs {
+		result[def.Namespace] = append(result[def.Namespace], def)
 	}
 	return result, nil
 }

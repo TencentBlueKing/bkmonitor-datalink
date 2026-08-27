@@ -119,6 +119,8 @@ worker:
 
 # ================================ 任务配置  ===================================
 taskConfig:
+  # Shared relation target. Set a DataID to enable BMW relation remote writes.
+  relationDataID: 0
   # common: 任务通用配置
   common:
     queues:
@@ -223,9 +225,6 @@ taskConfig:
         prometheus:
           url: ""
           headers: {}
-        builtinRelation:
-          enabled: false
-          bkBizIds: []
       profile:
         enabled: false
         host: http://127.0.0.1:14040

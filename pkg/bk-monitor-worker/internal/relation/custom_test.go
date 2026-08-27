@@ -20,26 +20,27 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 )
 
-// MockSpaceReporter 模拟SpaceReporter
-type MockSpaceReporter struct {
-	DoFunc    func(ctx context.Context, spaceUID string, ts ...prompb.TimeSeries) error
+// MockRelationDataIDReporter simulates the configured shared relation target.
+type MockRelationDataIDReporter struct {
+	WriteFunc func(ctx context.Context, ts ...prompb.TimeSeries) error
 	CloseFunc func(ctx context.Context) error
 }
 
-func (m *MockSpaceReporter) Do(ctx context.Context, spaceUID string, ts ...prompb.TimeSeries) error {
-	if m.DoFunc != nil {
-		return m.DoFunc(ctx, spaceUID, ts...)
+func (m *MockRelationDataIDReporter) Write(ctx context.Context, ts ...prompb.TimeSeries) error {
+	if m.WriteFunc != nil {
+		return m.WriteFunc(ctx, ts...)
 	}
 	return nil
 }
 
-func (m *MockSpaceReporter) Close(ctx context.Context) error {
+func (m *MockRelationDataIDReporter) Close(ctx context.Context) error {
 	if m.CloseFunc != nil {
 		return m.CloseFunc(ctx)
 	}
@@ -47,9 +48,13 @@ func (m *MockSpaceReporter) Close(ctx context.Context) error {
 }
 
 func TestReportCustomRelation(t *testing.T) {
-	// 设置测试上下文
 	mocker.InitTestDBConfig("../../dist/bmw.yaml")
-	// 获取数据库连接
+	originalRelationDataID := config.RelationDataID
+	config.RelationDataID = 1573946
+	t.Cleanup(func() {
+		config.RelationDataID = originalRelationDataID
+	})
+
 	db := mysql.GetDBSession().DB
 	table := &relation.CustomRelationStatus{}
 	db.DropTable(table).CreateTable(table)
@@ -58,25 +63,15 @@ func TestReportCustomRelation(t *testing.T) {
 
 	ctx := context.Background()
 	t.Run("空记录测试", func(t *testing.T) {
-		// Mock数据库查询返回空记录
 		patches := gomonkey.NewPatches()
 		defer patches.Reset()
 
-		// Mock数据库查询返回空切片
 		patches.ApplyMethodFunc(
 			relation.CustomRelationStatusQuerySet{},
 			"All",
 			func(ret *[]relation.CustomRelationStatus) error {
 				*ret = []relation.CustomRelationStatus{}
 				return nil
-			},
-		)
-
-		// Mock NewSpaceReporter 避免实际创建
-		patches.ApplyFunc(
-			remote.NewSpaceReporter,
-			func(resultTableDetailKey, remoteWriteUrl string) (remote.Reporter, error) {
-				return &MockSpaceReporter{}, nil
 			},
 		)
 
@@ -88,7 +83,6 @@ func TestReportCustomRelation(t *testing.T) {
 		patches := gomonkey.NewPatches()
 		defer patches.Reset()
 
-		// 准备测试数据
 		testData := []relation.CustomRelationStatus{
 			{
 				ID:           1,
@@ -124,22 +118,19 @@ func TestReportCustomRelation(t *testing.T) {
 			assert.NoError(t, err)
 		}
 
-		// 记录上报的指标
 		var reportedMetrics []prompb.TimeSeries
-		reportedNamespaces := make(map[string]int)
 
-		// Mock SpaceReporter
-		mockReporter := &MockSpaceReporter{
-			DoFunc: func(ctx context.Context, namespace string, ts ...prompb.TimeSeries) error {
-				reportedNamespaces[namespace] = len(ts)
+		mockReporter := &MockRelationDataIDReporter{
+			WriteFunc: func(ctx context.Context, ts ...prompb.TimeSeries) error {
 				reportedMetrics = append(reportedMetrics, ts...)
 				return nil
 			},
 		}
 
 		patches.ApplyFunc(
-			remote.NewSpaceReporter,
-			func(resultTableDetailKey, remoteWriteUrl string) (remote.Reporter, error) {
+			remote.NewRelationDataIDReporter,
+			func(dataID uint, remoteWriteURL string, headers map[string]string) (remote.RelationDataIDReporter, error) {
+				assert.Equal(t, uint(1573946), dataID)
 				return mockReporter, nil
 			},
 		)
@@ -147,18 +138,13 @@ func TestReportCustomRelation(t *testing.T) {
 		err := ReportCustomRelation(ctx, nil)
 		assert.NoError(t, err)
 
-		// 验证上报的指标数量
-		assert.Equal(t, 2, len(reportedNamespaces))                // 两个namespace
-		assert.Equal(t, 2, reportedNamespaces["test-namespace-1"]) // namespace1有2条记录
-		assert.Equal(t, 1, reportedNamespaces["test-namespace-2"]) // namespace2有1条记录
-		assert.Equal(t, 3, len(reportedMetrics))                   // 总共3条指标
+		assert.Equal(t, 3, len(reportedMetrics)) // 两个 namespace 的指标写入同一目标
 	})
 
 	t.Run("指标上报错误测试", func(t *testing.T) {
 		patches := gomonkey.NewPatches()
 		defer patches.Reset()
 
-		// 准备测试数据
 		testData := []relation.CustomRelationStatus{
 			{
 				ID:           1,
@@ -178,16 +164,15 @@ func TestReportCustomRelation(t *testing.T) {
 			assert.NoError(t, err)
 		}
 
-		// Mock SpaceReporter返回错误
-		mockReporter := &MockSpaceReporter{
-			DoFunc: func(ctx context.Context, namespace string, ts ...prompb.TimeSeries) error {
+		mockReporter := &MockRelationDataIDReporter{
+			WriteFunc: func(ctx context.Context, ts ...prompb.TimeSeries) error {
 				return errors.New("report error")
 			},
 		}
 
 		patches.ApplyFunc(
-			remote.NewSpaceReporter,
-			func(resultTableDetailKey, remoteWriteUrl string) (remote.Reporter, error) {
+			remote.NewRelationDataIDReporter,
+			func(dataID uint, remoteWriteURL string, headers map[string]string) (remote.RelationDataIDReporter, error) {
 				return mockReporter, nil
 			},
 		)
@@ -197,11 +182,10 @@ func TestReportCustomRelation(t *testing.T) {
 		assert.Contains(t, err.Error(), "report error")
 	})
 
-	t.Run("SpaceReporter创建错误测试", func(t *testing.T) {
+	t.Run("RelationDataIDReporter创建错误测试", func(t *testing.T) {
 		patches := gomonkey.NewPatches()
 		defer patches.Reset()
 
-		// 准备测试数据
 		testData := []relation.CustomRelationStatus{
 			{
 				ID:           1,
@@ -221,10 +205,9 @@ func TestReportCustomRelation(t *testing.T) {
 			assert.NoError(t, err)
 		}
 
-		// Mock NewSpaceReporter返回错误
 		patches.ApplyFunc(
-			remote.NewSpaceReporter,
-			func(resultTableDetailKey, remoteWriteUrl string) (remote.Reporter, error) {
+			remote.NewRelationDataIDReporter,
+			func(dataID uint, remoteWriteURL string, headers map[string]string) (remote.RelationDataIDReporter, error) {
 				return nil, errors.New("create reporter error")
 			},
 		)
@@ -232,6 +215,16 @@ func TestReportCustomRelation(t *testing.T) {
 		err := ReportCustomRelation(ctx, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "create reporter error")
+	})
+
+	t.Run("未配置RelationDataID跳过测试", func(t *testing.T) {
+		config.RelationDataID = 0
+		defer func() {
+			config.RelationDataID = 1573946
+		}()
+
+		err := ReportCustomRelation(ctx, nil)
+		assert.NoError(t, err)
 	})
 }
 

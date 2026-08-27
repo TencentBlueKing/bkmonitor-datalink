@@ -18,16 +18,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
-	bmwRelation "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
-	redisStore "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 	ctx, cancel := context.WithCancel(parentCtx)
-	relationDefinitionProvider := bmwRelation.GetSchemaProvider()
-	relationRouteProvider := newRelationRouteProvider(ctx)
 	return NewPrecalculate().
 		WithContext(ctx, cancel).
 		WithNotifierConfig(
@@ -95,13 +91,7 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 				storage.MetricRelationMemDuration(config.RelationMetricsInMemDuration),
 				storage.MetricFlowMemDuration(config.FlowMetricsInMemDuration),
 				storage.MetricFlowBuckets(config.MetricsDurationBuckets),
-				storage.MetricBuiltinRelationReport(
-					config.BuiltinRelationReportEnabled,
-					config.BuiltinRelationReportBizIDs,
-					config.BuildInResultTableDetailKey,
-				),
-				storage.MetricRelationDefinitionProvider(relationDefinitionProvider),
-				storage.MetricRelationRouteProvider(relationRouteProvider),
+				storage.MetricRelationDataID(config.RelationDataID),
 			),
 		).
 		WithMetricReport(
@@ -112,29 +102,6 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 			MetricReportInterval(config.SemaphoreReportInterval),
 		).
 		Build(), nil
-}
-
-func newRelationRouteProvider(ctx context.Context) storage.RelationRouteProvider {
-	redisInstance := redisStore.GetStorageRedisInstance()
-	if redisInstance == nil || redisInstance.Client == nil {
-		apmLogger.Warnf("create relation route provider skipped: storage redis is not initialized")
-		return nil
-	}
-	provider, err := storage.NewRedisRelationRouteProvider(
-		ctx,
-		redisInstance.Client,
-		config.ResultTableDetailKey,
-		config.ResultTableDetailChannel,
-		config.ResultTableDetailDeleteChannel,
-		config.BuildInResultTableDetailKey,
-		config.BuildInResultTableDetailChannel,
-		config.EnableMultiTenantMode,
-	)
-	if err != nil {
-		apmLogger.Warnf("create relation route provider failed: %s", err)
-		return nil
-	}
-	return provider
 }
 
 var apmLogger = logger.With(zap.String("package", "apm_precalculate"))

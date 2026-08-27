@@ -1,6 +1,6 @@
 // Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// 蓝鲸智云 - 监控平台 (BK-Monitor) available.
+// Copyright (C) 2026 THL A29 Limited, a Tencent company. All rights reserved.
 // Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at http://opensource.org/licenses/MIT
 // Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
@@ -15,155 +15,51 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 )
 
-type mockPrometheusWriter struct {
-	writeRequests []prompb.WriteRequest
-	closed        bool
+type staticMetricCollector struct {
+	request prompb.WriteRequest
 }
 
-func (m *mockPrometheusWriter) WriteBatch(_ context.Context, _ string, writeReq prompb.WriteRequest) error {
-	m.writeRequests = append(m.writeRequests, writeReq)
-	return nil
+func (c staticMetricCollector) Observe(any) {}
+
+func (c staticMetricCollector) Collect() prompb.WriteRequest {
+	return c.request
 }
 
-func (m *mockPrometheusWriter) Close(_ context.Context) error {
-	m.closed = true
-	return nil
-}
-
-type mockBuiltinRelationReporter struct {
-	spaceUIDs  []string
-	timeseries [][]prompb.TimeSeries
-	closed     bool
-}
-
-func (m *mockBuiltinRelationReporter) Do(_ context.Context, spaceUID string, tsList ...prompb.TimeSeries) error {
-	m.spaceUIDs = append(m.spaceUIDs, spaceUID)
-	m.timeseries = append(m.timeseries, tsList)
-	return nil
-}
-
-func (m *mockBuiltinRelationReporter) Close(_ context.Context) error {
-	m.closed = true
-	return nil
-}
-
-type mockMetricCollector struct {
-	writeReq prompb.WriteRequest
-}
-
-type mockRelationDefinitionProvider struct {
-	definitions []*relation.RelationDefinition
-	namespaces  []string
-}
-
-func (m *mockRelationDefinitionProvider) ListRelationDefinitions(namespace string) ([]*relation.RelationDefinition, error) {
-	m.namespaces = append(m.namespaces, namespace)
-	return m.definitions, nil
-}
-
-func (m *mockMetricCollector) Observe(_ any) {}
-
-func (m *mockMetricCollector) Collect() prompb.WriteRequest {
-	return m.writeReq
-}
-
-func (m *mockMetricCollector) Ttl() time.Duration {
+func (c staticMetricCollector) Ttl() time.Duration {
 	return time.Minute
 }
 
-func TestMetricConfigOptionsBuiltinRelationEnabledForBiz(t *testing.T) {
-	options := MetricConfigOptions{}
-	MetricBuiltinRelationReport(true, []string{"7", "42"}, "result-table-detail")(&options)
-
-	require.True(t, options.builtinRelationEnabledForBiz("7"))
-	require.True(t, options.builtinRelationEnabledForBiz("42"))
-	require.False(t, options.builtinRelationEnabledForBiz("2"))
-	require.Equal(t, "result-table-detail", options.builtinRelationDetailKey)
-
-	MetricBuiltinRelationReport(false, []string{"7"}, "result-table-detail")(&options)
-	require.False(t, options.builtinRelationEnabledForBiz("7"))
-
-	MetricBuiltinRelationReport(true, nil, "result-table-detail")(&options)
-	require.True(t, options.builtinRelationEnabledForBiz("7"))
-	require.True(t, options.builtinRelationEnabledForBiz("42"))
+type recordingRelationReporter struct {
+	writes []prompb.TimeSeries
 }
 
-func TestMetricDimensionsHandlerCleanUpAndReportDualWrite(t *testing.T) {
-	promWriter := &mockPrometheusWriter{}
-	builtinReporter := &mockBuiltinRelationReporter{}
-	definitionProvider := &mockRelationDefinitionProvider{definitions: []*relation.RelationDefinition{
-		{FromResource: "apm_service_instance", ToResource: "system"},
-		{FromResource: "apm_service", ToResource: "system", IsDirectional: true},
-	}}
-	writeReq := prompb.WriteRequest{Timeseries: []prompb.TimeSeries{
-		{
-			Labels:  []prompb.Label{{Name: "__name__", Value: "apm_service_instance_with_system_relation"}},
-			Samples: []prompb.Sample{{Value: 1, Timestamp: 1}},
-		},
-		{
-			Labels:  []prompb.Label{{Name: "__name__", Value: "apm_service_to_system_flow_bucket"}},
-			Samples: []prompb.Sample{{Value: 1, Timestamp: 1}},
-		},
-		{
-			Labels:  []prompb.Label{{Name: "__name__", Value: "custom_cpu"}},
-			Samples: []prompb.Sample{{Value: 1, Timestamp: 1}},
-		},
-	}}
-	handler := &MetricDimensionsHandler{
-		dataId:                     "12345",
-		promClient:                 promWriter,
-		builtinRelationReporter:    builtinReporter,
-		builtinRelationSpaceUID:    "bkcc__7",
-		relationDefinitionProvider: definitionProvider,
-	}
-
-	handler.cleanUpAndReport(&mockMetricCollector{writeReq: writeReq})
-
-	require.Len(t, promWriter.writeRequests, 1)
-	require.Equal(t, writeReq, promWriter.writeRequests[0])
-	require.Equal(t, []string{"bkcc__7"}, builtinReporter.spaceUIDs)
-	require.Equal(t, []string{"bkcc__7"}, definitionProvider.namespaces)
-	require.Equal(t, writeReq.Timeseries[:2], builtinReporter.timeseries[0])
+func (r *recordingRelationReporter) Write(_ context.Context, series ...prompb.TimeSeries) error {
+	r.writes = append(r.writes, series...)
+	return nil
 }
 
-func TestMetricDimensionsHandlerCleanUpAndReportSkipsEmptyBatch(t *testing.T) {
-	promWriter := &mockPrometheusWriter{}
-	builtinReporter := &mockBuiltinRelationReporter{}
-	handler := &MetricDimensionsHandler{
-		dataId:                  "12345",
-		promClient:              promWriter,
-		builtinRelationReporter: builtinReporter,
-		builtinRelationSpaceUID: "bkcc__7",
-	}
-
-	handler.cleanUpAndReport(&mockMetricCollector{})
-
-	require.Empty(t, promWriter.writeRequests)
-	require.Empty(t, builtinReporter.spaceUIDs)
+func (r *recordingRelationReporter) Close(context.Context) error {
+	return nil
 }
 
-func TestMetricDimensionsHandlerCloseStopsAndClosesReporters(t *testing.T) {
-	promWriter := &mockPrometheusWriter{}
-	builtinReporter := &mockBuiltinRelationReporter{}
-	ctx, cancel := context.WithCancel(context.Background())
+func TestMetricDimensionsHandlerWritesOnlyRelationMetricsToRelationDataID(t *testing.T) {
+	relationReporter := &recordingRelationReporter{}
+	series := prompb.TimeSeries{Labels: []prompb.Label{{Name: "__name__", Value: "service_with_host"}}}
 	handler := &MetricDimensionsHandler{
-		dataId:                   "12345",
-		ctx:                      ctx,
-		cancel:                   cancel,
-		promClient:               promWriter,
-		builtinRelationReporter:  builtinReporter,
-		builtinRelationSpaceUID:  "bkcc__7",
-		relationMetricDimensions: newRelationMetricCollector(time.Minute),
-		flowMetricCollector:      newFlowMetricCollector([]float64{1}, time.Minute),
+		dataId:           "12345",
+		promClient:       remote.NewPrometheusWriterClient("", "http://127.0.0.1", nil),
+		relationReporter: relationReporter,
 	}
+	collector := staticMetricCollector{request: prompb.WriteRequest{Timeseries: []prompb.TimeSeries{series}}}
 
-	handler.Close()
+	handler.cleanUpAndReport(collector, true)
+	assert.Equal(t, []prompb.TimeSeries{series}, relationReporter.writes)
 
-	require.True(t, promWriter.closed)
-	require.True(t, builtinReporter.closed)
+	handler.cleanUpAndReport(collector, false)
+	assert.Equal(t, []prompb.TimeSeries{series}, relationReporter.writes)
 }

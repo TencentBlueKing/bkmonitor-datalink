@@ -460,11 +460,7 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 				storage.MetricRelationMemDuration(config.RelationMetricsInMemDuration),
 				storage.MetricFlowMemDuration(config.FlowMetricsInMemDuration),
 				storage.MetricFlowBuckets(config.MetricsDurationBuckets),
-				storage.MetricBuiltinRelationReport(
-					config.BuiltinRelationReportEnabled,
-					config.BuiltinRelationReportBizIDs,
-					config.BuildInResultTableDetailKey,
-				),
+				storage.MetricRelationDataID(config.RelationDataID),
 			),
 		}, p.config.storageConfig...,
 		)...,

@@ -35,19 +35,19 @@ import (
 // 同时为 schema_provider 相关日志添加统一前缀，便于过滤和调试
 type bmwLogger struct{}
 
-func (l *bmwLogger) Infof(format string, args ...interface{}) {
+func (l *bmwLogger) Infof(format string, args ...any) {
 	logger.Infof("[schema_provider] "+format, args...)
 }
 
-func (l *bmwLogger) Warnf(format string, args ...interface{}) {
+func (l *bmwLogger) Warnf(format string, args ...any) {
 	logger.Warnf("[schema_provider] "+format, args...)
 }
 
-func (l *bmwLogger) Errorf(format string, args ...interface{}) {
+func (l *bmwLogger) Errorf(format string, args ...any) {
 	logger.Errorf("[schema_provider] "+format, args...)
 }
 
-func (l *bmwLogger) Debugf(format string, args ...interface{}) {
+func (l *bmwLogger) Debugf(format string, args ...any) {
 	logger.Debugf("[schema_provider] "+format, args...)
 }
 
@@ -586,39 +586,45 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 		logger.Infof("[cmdb_relation] schema provider initialized successfully")
 	}
 
-	// 推送自定义上报数据，如果没有配置则不启动
-	if config.PromRemoteWriteUrl != "" {
+	// 仅在 Helm 指定 relationDataID 时上报关系指标到共享 relation RT。
+	if config.PromRemoteWriteUrl != "" && config.RelationDataID != 0 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// 启动指标上报
-			reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
+			reporter, err := remote.NewRelationDataIDReporter(
+				config.RelationDataID,
+				config.PromRemoteWriteUrl,
+				config.PromRemoteWriteHeaders,
+			)
 			if err != nil {
-				logger.Errorf("[cmdb_relation] new space reporter: %v", err)
+				logger.Errorf("[cmdb_relation] new relation DataID reporter: %v", err)
 				return
 			}
 			defer func() {
-				err = reporter.Close(ctx)
+				if closeErr := reporter.Close(ctx); closeErr != nil {
+					logger.Warnf("[cmdb_relation] close relation DataID reporter: %v", closeErr)
+				}
 			}()
-			spaceReport := relationInternal.GetRelationMetricsBuilder().WithSpaceReport(reporter)
+			relationReport := relationInternal.GetRelationMetricsBuilder().WithRelationReporter(reporter)
+			ticker := time.NewTicker(time.Minute)
+			defer ticker.Stop()
 
 			for {
-				ticker := time.NewTicker(time.Minute)
-
 				// 事件处理间隔时间
 				select {
 				case <-cancelCtx.Done():
 					relationInternal.GetRelationMetricsBuilder().ClearAllMetrics()
-					ticker.Stop()
 					return
 				case <-ticker.C:
 					// 上报指标
-					if err = spaceReport.PushAll(cancelCtx, time.Now()); err != nil {
+					if err = relationReport.PushAll(cancelCtx, time.Now()); err != nil {
 						logger.Errorf("[cmdb_relation] relation metrics builder push all error: %v", err.Error())
 					}
 				}
 			}
 		}()
+	} else if config.RelationDataID == 0 {
+		logger.Infof("[cmdb_relation] relation metric reporting is disabled because taskConfig.relationDataID is not configured")
 	}
 
 	for _, cacheType := range cacheTypes {

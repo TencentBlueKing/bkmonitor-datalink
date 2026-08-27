@@ -19,6 +19,7 @@ import (
 type CustomGroupBase struct {
 	BkDataID            uint      `json:"bk_data_id" gorm:"index"`
 	BkBizID             int       `json:"bk_biz_id" gorm:"index"`
+	Token               string    `json:"token" gorm:"column:token;size:256"`
 	TableID             string    `json:"table_id" gorm:"size:128;index"`
 	MaxRate             int       `json:"max_rate" gorm:"column:max_rate"`
 	Label               string    `json:"label" gorm:"size:128"`

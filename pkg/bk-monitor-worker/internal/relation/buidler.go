@@ -155,7 +155,7 @@ func putTsPool(ts []prompb.TimeSeries) {
 }
 
 type MetricsBuilder struct {
-	spaceReport remote.Reporter
+	relationReport remote.RelationDataIDReporter
 
 	// SchemaProvider 提供资源和关系的元数据定义
 	schemaProvider relation.SchemaProvider
@@ -182,8 +182,8 @@ func GetRelationMetricsBuilder() *MetricsBuilder {
 	return defaultRelationMetricsBuilder
 }
 
-func (b *MetricsBuilder) WithSpaceReport(reporter remote.Reporter) *MetricsBuilder {
-	b.spaceReport = reporter
+func (b *MetricsBuilder) WithRelationReporter(reporter remote.RelationDataIDReporter) *MetricsBuilder {
+	b.relationReport = reporter
 	return b
 }
 
@@ -437,8 +437,8 @@ func (b *MetricsBuilder) String() string {
 
 // PushAll 推送全业务数据
 func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error {
-	if b.spaceReport == nil {
-		return fmt.Errorf("space reporter is nil")
+	if b.relationReport == nil {
+		return fmt.Errorf("relation reporter is nil")
 	}
 
 	n := time.Now()
@@ -458,9 +458,8 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 		}
 
 		if len(ts) > 0 {
-			// 上传业务 timeSeries
-			spaceUID := fmt.Sprintf("bkcc__%d", bkBizID)
-			if err := b.spaceReport.Do(ctx, spaceUID, ts...); err != nil {
+			// Source business remains in metric labels; the configured DataID selects the shared target.
+			if err := b.relationReport.Write(ctx, ts...); err != nil {
 				return err
 			}
 			pushCount += len(ts)

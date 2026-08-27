@@ -110,10 +110,6 @@ var (
 	PromRemoteWriteUrl string
 	// PromRemoteWriteHeaders remote write headers of http request
 	PromRemoteWriteHeaders map[string]string
-	// BuiltinRelationReportEnabled whether to dual-write APM relation metrics to the built-in relation data source
-	BuiltinRelationReportEnabled bool
-	// BuiltinRelationReportBizIDs business IDs enabled for built-in relation dual-write
-	BuiltinRelationReportBizIDs []string
 	// RelationMetricsInMemDuration duration of relation-metrics in memory
 	RelationMetricsInMemDuration time.Duration
 	// FlowMetricsInMemDuration duration of flow-metrics in memory
@@ -183,8 +179,5 @@ func initApmVariables() {
 	SemaphoreReportInterval = GetValue("taskConfig.apmPreCalculate.metrics.report.semaphoreReportInterval", 5*time.Second, viper.GetDuration)
 	PromRemoteWriteUrl = GetValue("taskConfig.apmPreCalculate.metrics.report.prometheus.url", "")
 	PromRemoteWriteHeaders = GetValue("taskConfig.apmPreCalculate.metrics.report.prometheus.headers", map[string]string{}, viper.GetStringMapString)
-	BuiltinRelationReportEnabled = GetValue("taskConfig.apmPreCalculate.metrics.report.builtinRelation.enabled", false)
-	BuiltinRelationReportBizIDs = GetValue("taskConfig.apmPreCalculate.metrics.report.builtinRelation.bkBizIds", []string{})
-
 	HashSecret = GetValue("taskConfig.apmPreCalculate.hashSecret", "")
 }

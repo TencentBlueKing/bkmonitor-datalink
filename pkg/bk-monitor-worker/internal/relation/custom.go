@@ -34,6 +34,14 @@ var customTsPool = sync.Pool{
 // ReportCustomRelation 上报自定义关联数据
 func ReportCustomRelation(ctx context.Context, t *t.Task) error {
 	logger.Infof("[ReportCustomRelation] start reporting custom relation data")
+	if config.RelationDataID == 0 {
+		logger.Infof("[ReportCustomRelation] skip because taskConfig.relationDataID is not configured")
+		return nil
+	}
+	if config.PromRemoteWriteUrl == "" {
+		logger.Infof("[ReportCustomRelation] skip because Prometheus remote-write URL is not configured")
+		return nil
+	}
 
 	db := mysql.GetDBSession().DB
 	var statuses []relation.CustomRelationStatus
@@ -78,10 +86,13 @@ func reportCustomRelationStatuses(ctx context.Context, statuses []relation.Custo
 
 	logger.Infof("[ReportCustomRelation] found %d custom relation status records", len(statuses))
 
-	// 启动指标上报
-	reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
+	reporter, err := remote.NewRelationDataIDReporter(
+		config.RelationDataID,
+		config.PromRemoteWriteUrl,
+		config.PromRemoteWriteHeaders,
+	)
 	if err != nil {
-		logger.Errorf("[ReportCustomRelation] create space reporter error: %v", err)
+		logger.Errorf("[ReportCustomRelation] create relation DataID reporter error: %v", err)
 		return err
 	}
 	defer func() {
@@ -91,51 +102,41 @@ func reportCustomRelationStatuses(ctx context.Context, statuses []relation.Custo
 		}
 	}()
 
-	// 按 namespace 分组处理
-	customRelationStatusMap := make(map[string][]relation.CustomRelationStatus)
-	for _, status := range statuses {
-		customRelationStatusMap[status.Namespace] = append(customRelationStatusMap[status.Namespace], status)
-	}
-
-	// 为每个业务构建relation指标
+	// namespace is source metadata only. All configured relation metrics share one DataID target.
 	now := time.Now()
-	for namespace, statusList := range customRelationStatusMap {
-		logger.Infof("[ReportCustomRelation] processing namespace: %s, records: %d", namespace, len(statusList))
-
-		ts := customTsPool.Get().([]prompb.TimeSeries)
-		for _, status := range statusList {
-			// 解析Labels字段（JSON字符串）
-			var labels map[string]string
-			if status.Labels != "" {
-				err = json.Unmarshal([]byte(status.Labels), &labels)
-				if err != nil {
-					logger.Warnf("[ReportCustomRelation] parse labels error for record %s: %v", status.Name, err)
-					continue
-				}
-			}
-			if len(labels) == 0 {
-				logger.Warnf("[ReportCustomRelation] empty labels for record %s", status.Name)
+	ts := customTsPool.Get().([]prompb.TimeSeries)
+	defer func() {
+		customTsPool.Put(ts[:0])
+	}()
+	for _, status := range statuses {
+		// 解析Labels字段（JSON字符串）
+		var labels map[string]string
+		if status.Labels != "" {
+			err = json.Unmarshal([]byte(status.Labels), &labels)
+			if err != nil {
+				logger.Warnf("[ReportCustomRelation] parse labels error for record %s: %v", status.Name, err)
 				continue
 			}
-
-			sourceNode := Node{
-				Name: status.FromResource,
-			}
-
-			ts = append(ts, (sourceNode.RelationMetric(Node{
-				Name:   status.ToResource,
-				Labels: labels,
-			})).TimeSeries(now))
 		}
-		if len(ts) > 0 {
-			if err = reporter.Do(ctx, namespace, ts...); err != nil {
-				logger.Errorf("[ReportCustomRelation] report custom relation error: %v", err)
-				return err
-			}
+		if len(labels) == 0 {
+			logger.Warnf("[ReportCustomRelation] empty labels for record %s", status.Name)
+			continue
 		}
 
-		ts = ts[:0]
-		customTsPool.Put(ts)
+		sourceNode := Node{
+			Name: status.FromResource,
+		}
+
+		ts = append(ts, (sourceNode.RelationMetric(Node{
+			Name:   status.ToResource,
+			Labels: labels,
+		})).TimeSeries(now))
+	}
+	if len(ts) > 0 {
+		if err = reporter.Write(ctx, ts...); err != nil {
+			logger.Errorf("[ReportCustomRelation] report custom relation error: %v", err)
+			return err
+		}
 	}
 
 	return nil

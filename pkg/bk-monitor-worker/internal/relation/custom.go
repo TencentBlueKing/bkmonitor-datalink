@@ -62,6 +62,14 @@ func ReportCustomRelationByNamespace(ctx context.Context, namespace string) erro
 	if namespace == "" {
 		return nil
 	}
+	if config.RelationDataID == 0 {
+		logger.Infof("[ReportCustomRelationByNamespace] skip because taskConfig.relationDataID is not configured")
+		return nil
+	}
+	if config.PromRemoteWriteUrl == "" {
+		logger.Infof("[ReportCustomRelationByNamespace] skip because Prometheus remote-write URL is not configured")
+		return nil
+	}
 
 	db := mysql.GetDBSession().DB
 	var statuses []relation.CustomRelationStatus

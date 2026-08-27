@@ -48,6 +48,19 @@ func (ca *ConfigAdapter) GetConfigs(ctx context.Context) (map[string]*Config, er
 	if err != nil {
 		return nil, fmt.Errorf("list all relation definitions: %w", err)
 	}
+	// A namespace can define relations while inheriting every resource definition
+	// from __all__. Include it during the initial load so a restart does not wait
+	// for a later Pub/Sub event to create its model.
+	for ns := range relationsByNs {
+		if _, exists := resourcesByNs[ns]; exists {
+			continue
+		}
+		resourceDefs, listErr := ca.provider.ListResourceDefinitions(ns)
+		if listErr != nil {
+			return nil, fmt.Errorf("list resource definitions for relation namespace %q: %w", ns, listErr)
+		}
+		resourcesByNs[ns] = resourceDefs
+	}
 
 	configs := make(map[string]*Config, len(resourcesByNs))
 	for ns, resourceDefs := range resourcesByNs {

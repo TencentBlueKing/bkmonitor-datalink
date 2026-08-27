@@ -312,6 +312,42 @@ func TestConfigAdapter_GetConfigs_MultiNamespace(t *testing.T) {
 	assert.Len(t, cfgAll.Relation, 1)
 }
 
+type globalResourceFallbackProvider struct {
+	*mockSchemaProvider
+}
+
+func (m *globalResourceFallbackProvider) ListResourceDefinitions(namespace string) ([]*relation.ResourceDefinition, error) {
+	result, err := m.mockSchemaProvider.ListResourceDefinitions(namespace)
+	if err != nil || namespace == relation.NamespaceAll {
+		return result, err
+	}
+	global, err := m.mockSchemaProvider.ListResourceDefinitions(relation.NamespaceAll)
+	if err != nil {
+		return nil, err
+	}
+	return append(result, global...), nil
+}
+
+func TestConfigAdapter_GetConfigs_IncludesRelationNamespaceWithGlobalResources(t *testing.T) {
+	provider := &globalResourceFallbackProvider{mockSchemaProvider: &mockSchemaProvider{
+		resources: []*relation.ResourceDefinition{
+			{Namespace: relation.NamespaceAll, Name: "app_version", Fields: []relation.FieldDefinition{{Name: "id", Required: true}}},
+			{Namespace: relation.NamespaceAll, Name: "git_commit", Fields: []relation.FieldDefinition{{Name: "id", Required: true}}},
+		},
+		relations: []*relation.RelationDefinition{
+			{Namespace: "bkcc__7", Name: "app_version_with_git_commit_relation", FromResource: "app_version", ToResource: "git_commit"},
+		},
+	}}
+
+	configs, err := NewConfigAdapter(provider).GetConfigs(context.Background())
+	require.NoError(t, err)
+
+	config := configs["bkcc__7"]
+	require.NotNil(t, config)
+	assert.Len(t, config.Resource, 2)
+	assert.Len(t, config.Relation, 1)
+}
+
 func TestConvertResourceDefinition(t *testing.T) {
 	rd := &relation.ResourceDefinition{
 		Namespace: "",

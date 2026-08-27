@@ -250,3 +250,20 @@ func TestCustomTsPool(t *testing.T) {
 		assert.True(t, cap(ts2) >= 1)
 	})
 }
+
+func TestReportCustomRelationByNamespaceSkipsWhenReportingIsDisabled(t *testing.T) {
+	originalDataID := config.RelationDataID
+	originalRemoteWriteURL := config.PromRemoteWriteUrl
+	t.Cleanup(func() {
+		config.RelationDataID = originalDataID
+		config.PromRemoteWriteUrl = originalRemoteWriteURL
+	})
+
+	config.RelationDataID = 0
+	config.PromRemoteWriteUrl = "http://remote-write"
+	assert.NoError(t, ReportCustomRelationByNamespace(context.Background(), "bkcc__7"))
+
+	config.RelationDataID = 1573946
+	config.PromRemoteWriteUrl = ""
+	assert.NoError(t, ReportCustomRelationByNamespace(context.Background(), "bkcc__7"))
+}

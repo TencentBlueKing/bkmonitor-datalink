@@ -60,6 +60,36 @@ func TestCompilerCompilesEffectiveTimeRequirements(t *testing.T) {
 	}
 }
 
+func TestCompilerCanonicalizesNoCalendarFullDayUptimeToAlways(t *testing.T) {
+	compiler := newTestCompiler(t)
+	want := mustCompilePlan(t, compiler, validPlan()).Levels()[0].EffectiveTimeRequirement()
+	tests := []struct {
+		name       string
+		timeRanges []any
+	}{
+		{name: "empty ranges", timeRanges: []any{}},
+		{name: "full day range", timeRanges: []any{map[string]any{"start": "00:00", "end": "23:59"}}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			plan := validPlan()
+			plan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
+				"time_ranges":      test.timeRanges,
+				"active_calendars": []any{},
+				"calendars":        []any{},
+			})
+			requirement := mustCompilePlan(t, compiler, plan).Levels()[0].EffectiveTimeRequirement()
+			if requirement.Kind() != EffectiveTimeAlways {
+				t.Fatalf("effective-time kind = %q, want %q", requirement.Kind(), EffectiveTimeAlways)
+			}
+			if requirement.Digest() != want.Digest() {
+				t.Fatalf("ALWAYS digest = %q, want %q", requirement.Digest(), want.Digest())
+			}
+		})
+	}
+}
+
 func TestCompilerIncludesTimeRangeContentInEffectiveTimeDigest(t *testing.T) {
 	compiler := newTestCompiler(t)
 	first := validPlan()

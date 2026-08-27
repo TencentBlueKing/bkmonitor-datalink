@@ -243,6 +243,10 @@ func compileEffectiveTimeRequirement(uptime *uptimeConfigV1, timezoneRef string)
 		if err != nil {
 			return EffectiveTimeRequirement{}, err
 		}
+		if len(active) == 0 && len(inactive) == 0 && len(ranges) == 1 &&
+			ranges[0].startMinute == 0 && ranges[0].endMinute == 24*60-1 {
+			ranges = nil
+		}
 		if len(ranges) > 0 || len(active) > 0 || len(inactive) > 0 {
 			if timezoneRef != "BUSINESS_LOCAL" {
 				return EffectiveTimeRequirement{}, errors.New("effective time: timezone_ref must be BUSINESS_LOCAL")

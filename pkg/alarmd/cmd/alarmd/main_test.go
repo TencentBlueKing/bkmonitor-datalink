@@ -39,6 +39,62 @@ func TestRunPrintsVersionWithoutLoadingConfiguration(t *testing.T) {
 	}
 }
 
+func TestRunChecksConfigurationWithoutStartingApplication(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "alarmd.yaml")
+	if err := os.WriteFile(path, []byte(validApplicationYAML()), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	want := errors.New("application must not start")
+	dependencies := applicationDependencies{
+		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
+			return nil, want
+		},
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runWithDependencies(
+		context.Background(), []string{"--check-config", "--config", path}, &stdout, &stderr, dependencies,
+	)
+	if code != 0 {
+		t.Fatalf("runWithDependencies() code = %d, stderr = %q", code, stderr.String())
+	}
+	if strings.Contains(stderr.String(), want.Error()) {
+		t.Fatalf("runWithDependencies() started application: %q", stderr.String())
+	}
+}
+
+func TestRunCheckConfigurationRejectsUnknownField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "alarmd.yaml")
+	contents := validApplicationYAML() + "unknown_field: true\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run(context.Background(), []string{"--check-config", "--config", path}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("run() code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "field unknown_field not found") {
+		t.Fatalf("run() stderr = %q, want strict field error", stderr.String())
+	}
+}
+
+func TestRunRejectsConflictingTerminalFlags(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := run(context.Background(), []string{"--version", "--check-config"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("run() code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "cannot be used together") {
+		t.Fatalf("run() stderr = %q, want flag conflict", stderr.String())
+	}
+}
+
 func TestRunRejectsOwnerConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "alarmd.yaml")
 	if err := os.WriteFile(path, []byte("mode: owner\n"), 0o600); err != nil {

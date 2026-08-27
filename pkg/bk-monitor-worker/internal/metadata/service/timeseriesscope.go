@@ -18,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -208,6 +209,18 @@ func collectMetricsAndDimensions(svc *TimeSeriesGroupSvc, metricInfoList []map[s
 	return scopeNameToMetrics, scopeNameToDimensions, nil
 }
 
+// buildNewDimensionConfig : 新发现维度的初始配置
+//
+// SDK 会把含中文等非法字符的维度名编码成 base62 标识符上报，查询必须继续使用编码后的名字，
+// 这里把解码出的原始名回填成别名，让各展示入口都能拿到可读的维度名。
+func buildNewDimensionConfig(dimension string) map[string]any {
+	originalName := stringx.DecodeIdentifier(dimension)
+	if originalName == dimension {
+		return map[string]any{}
+	}
+	return map[string]any{"alias": originalName}
+}
+
 // doBulkRefreshTSScopes : 批量刷新 TimeSeriesScope
 func doBulkRefreshTSScopes(groupID uint, scopeNameToDimensions map[string]*scopeDimensionInfo) error {
 	db := mysql.GetDBSession().DB
@@ -238,7 +251,7 @@ func doBulkRefreshTSScopes(groupID uint, scopeNameToDimensions map[string]*scope
 			newDims := false
 			for _, dim := range dimensions {
 				if _, has := dimensionConfig[dim]; !has {
-					dimensionConfig[dim] = map[string]any{}
+					dimensionConfig[dim] = buildNewDimensionConfig(dim)
 					newDims = true
 				}
 			}
@@ -250,7 +263,7 @@ func doBulkRefreshTSScopes(groupID uint, scopeNameToDimensions map[string]*scope
 		} else {
 			dimensionConfig := make(map[string]any)
 			for _, dim := range dimensions {
-				dimensionConfig[dim] = map[string]any{}
+				dimensionConfig[dim] = buildNewDimensionConfig(dim)
 			}
 			configJSON, _ := json.Marshal(dimensionConfig)
 			autoRulesJSON, _ := json.Marshal([]string{})

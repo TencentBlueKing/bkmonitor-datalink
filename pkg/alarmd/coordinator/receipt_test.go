@@ -151,32 +151,49 @@ func TestBuildMessageReceiptOmitsUntrustedPlanIdentityAndKeepsSiblingResult(t *t
 func TestBuildMessageReceiptKeepsTrustedIdentityForInvalidPlanBody(t *testing.T) {
 	t.Parallel()
 
-	var envelope contract.ExecutionEnvelopeV2
-	if err := json.Unmarshal(encodeG1Envelope(t), &envelope); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name   string
+		mutate func(*contract.EvaluationPlanV2)
+	}{
+		{name: "empty levels", mutate: func(plan *contract.EvaluationPlanV2) { plan.StrategyIR.Levels = nil }},
+		{name: "formal PLAN_INVALID terminal", mutate: func(plan *contract.EvaluationPlanV2) {
+			*plan = contract.EvaluationPlanV2{
+				PlanID: plan.PlanID, StrategyRef: plan.StrategyRef, TerminalReasonCode: contract.ReasonPlanInvalid,
+			}
+		}},
 	}
-	envelope.PlanSet.EvaluationPlans[0].StrategyIR.Levels = nil
-	decoded, err := inputv2.New(g1ReaderLimits()).Decode(context.Background(), encodeReceiptEnvelope(t, envelope))
-	if err != nil || decoded.Rejected || decoded.Input == nil {
-		t.Fatalf("Decode() = %#v, %v", decoded, err)
-	}
-	selections := decoded.Input.PlanSelections()
-	if len(selections) != 1 || selections[0].PlanID() != "1001" || selections[0].Evaluable() || selections[0].SelectedCount() != 1 {
-		t.Fatalf("PlanSelections() = %#v, want trusted non-evaluable Plan 1001 selection", selections)
-	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var envelope contract.ExecutionEnvelopeV2
+			if err := json.Unmarshal(encodeG1Envelope(t), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(&envelope.PlanSet.EvaluationPlans[0])
+			decoded, err := inputv2.New(g1ReaderLimits()).Decode(context.Background(), encodeReceiptEnvelope(t, envelope))
+			if err != nil || decoded.Rejected || decoded.Input == nil {
+				t.Fatalf("Decode() = %#v, %v", decoded, err)
+			}
+			selections := decoded.Input.PlanSelections()
+			if len(selections) != 1 || selections[0].PlanID() != "1001" || selections[0].Evaluable() || selections[0].SelectedCount() != 1 {
+				t.Fatalf("PlanSelections() = %#v, want trusted non-evaluable Plan 1001 selection", selections)
+			}
 
-	receipt, err := buildMessageReceipt(decoded.Input, nil, decoded.Terminals.Items())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if receipt.Status != contract.ReceiptStatusCompletedWithTerminal ||
-		receipt.Counts != (contract.ReceiptCountsV1{Received: 1, Selected: 1, Terminal: 1}) ||
-		len(receipt.PerPlan) != 1 || receipt.PerPlan[0].PlanID != "1001" ||
-		receipt.PerPlan[0].Selected != 1 || receipt.PerPlan[0].Terminal != 1 {
-		t.Fatalf("receipt = %#v, want trusted Plan selected/terminal conservation", receipt)
-	}
-	if !receiptHasReason(receipt, contract.ReasonPlanInvalid) {
-		t.Fatalf("reason counts = %#v, want one invalid Plan-body fact", receipt.ReasonCounts)
+			receipt, err := buildMessageReceipt(decoded.Input, nil, decoded.Terminals.Items())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if receipt.Status != contract.ReceiptStatusCompletedWithTerminal ||
+				receipt.Counts != (contract.ReceiptCountsV1{Received: 1, Selected: 1, Terminal: 1}) ||
+				len(receipt.PerPlan) != 1 || receipt.PerPlan[0].PlanID != "1001" ||
+				receipt.PerPlan[0].Selected != 1 || receipt.PerPlan[0].Terminal != 1 {
+				t.Fatalf("receipt = %#v, want trusted Plan selected/terminal conservation", receipt)
+			}
+			if !receiptHasReason(receipt, contract.ReasonPlanInvalid) {
+				t.Fatalf("reason counts = %#v, want one invalid Plan-body fact", receipt.ReasonCounts)
+			}
+		})
 	}
 }
 

@@ -37,9 +37,10 @@ const (
 )
 
 var (
-	canonicalDecimalPattern = regexp.MustCompile(`^(?:0|[1-9][0-9]*)$`)
-	sha256Pattern           = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	dimensionsMD5Pattern    = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	canonicalDecimalPattern       = regexp.MustCompile(`^(?:0|[1-9][0-9]*)$`)
+	canonicalSignedDecimalPattern = regexp.MustCompile(`^(?:0|-?[1-9][0-9]*)$`)
+	sha256Pattern                 = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	dimensionsMD5Pattern          = regexp.MustCompile(`^[0-9a-f]{32}$`)
 )
 
 type Schema struct {

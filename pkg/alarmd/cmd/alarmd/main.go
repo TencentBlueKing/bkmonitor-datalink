@@ -51,12 +51,17 @@ func runWithDependencies(
 	flags := flag.NewFlagSet("alarmd", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	configPath := flags.String("config", "", "path to alarmd YAML configuration")
+	checkConfig := flags.Bool("check-config", false, "validate configuration and exit")
 	showVersion := flags.Bool("version", false, "print build information and exit")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 	if flags.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected arguments: %v\n", flags.Args())
+		return 2
+	}
+	if *showVersion && *checkConfig {
+		fmt.Fprintln(stderr, "--version and --check-config cannot be used together")
 		return 2
 	}
 	if *showVersion {
@@ -68,6 +73,9 @@ func runWithDependencies(
 	if err != nil {
 		fmt.Fprintf(stderr, "load configuration: %v\n", err)
 		return 1
+	}
+	if *checkConfig {
+		return 0
 	}
 
 	recorder := metric.NewRecorder(metric.BuildInfo{

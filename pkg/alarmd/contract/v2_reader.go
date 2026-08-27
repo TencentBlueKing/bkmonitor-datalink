@@ -50,6 +50,141 @@ func framing(reason, field, message string) error {
 	return &MessageFramingError{ReasonCode: reason, FieldPath: field, Message: message}
 }
 
+// decodePrevalidatedJSONV2 decodes a JSON slice taken from an envelope after
+// the complete payload has passed UTF-8, surrogate and duplicate-field
+// validation. Repeating those whole-tree scans for every nested Plan and
+// Record is unnecessary and dominates the phase-one Adapter hot path.
+func decodePrevalidatedJSONV2(payload []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	if err := decoder.Decode(target); err != nil {
+		return invalid("json", err.Error())
+	}
+	return ensureJSONEOF(decoder)
+}
+
+func validatePrevalidatedJSONObjectFieldsV2(
+	payload []byte,
+	field string,
+	required []string,
+	optional []string,
+	allowUnknown bool,
+) (map[string]json.RawMessage, error) {
+	var object map[string]json.RawMessage
+	if err := decodePrevalidatedJSONV2(payload, &object); err != nil {
+		return nil, invalid(field, err.Error())
+	}
+	if object == nil {
+		return nil, invalid(field, "must be a JSON object")
+	}
+	known := make(map[string]struct{}, len(required)+len(optional))
+	for _, name := range append(append([]string(nil), required...), optional...) {
+		known[name] = struct{}{}
+	}
+	for _, name := range required {
+		raw, ok := object[name]
+		if !ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return nil, invalid(field+"."+name, "is required and must be non-null")
+		}
+	}
+	for name := range object {
+		if _, ok := known[name]; ok {
+			continue
+		}
+		for canonical := range known {
+			if strings.EqualFold(name, canonical) {
+				return nil, invalid(field+"."+name, "case-collides with "+canonical)
+			}
+		}
+		if !allowUnknown {
+			return nil, invalid(field+"."+name, "unknown field for schema minor")
+		}
+	}
+	return object, nil
+}
+
+func canonicalJSONPrevalidatedV2(value any) ([]byte, error) {
+	var raw []byte
+	switch typed := value.(type) {
+	case json.RawMessage:
+		raw = typed
+	case []byte:
+		raw = typed
+	default:
+		var buffer bytes.Buffer
+		encoder := json.NewEncoder(&buffer)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(value); err != nil {
+			return nil, invalid("canonical_json", err.Error())
+		}
+		raw = bytes.TrimSuffix(buffer.Bytes(), []byte{'\n'})
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var normalized any
+	if err := decoder.Decode(&normalized); err != nil {
+		return nil, invalid("canonical_json", err.Error())
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return nil, err
+	}
+	var output bytes.Buffer
+	encoder := json.NewEncoder(&output)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(normalized); err != nil {
+		return nil, invalid("canonical_json", err.Error())
+	}
+	return restoreJSONLineSeparatorsV2(bytes.TrimSuffix(output.Bytes(), []byte{'\n'})), nil
+}
+
+func digestPrevalidatedJSONObjectWithoutV2(field, domain string, payload []byte, omitted string) (string, error) {
+	var object map[string]json.RawMessage
+	if err := decodePrevalidatedJSONV2(payload, &object); err != nil {
+		return "", invalid(field, err.Error())
+	}
+	if object == nil {
+		return "", invalid(field, "must be a JSON object")
+	}
+	delete(object, omitted)
+	canonical, err := canonicalJSONPrevalidatedV2(object)
+	if err != nil {
+		return "", invalid(field, err.Error())
+	}
+	return deriveLengthPrefixedSHA256(field, domain, canonical)
+}
+
+func deriveDimensionIdentityDigestPrevalidatedV2(tenantID, businessID string, fields []DimensionFieldV2) (string, error) {
+	if tenantID == "" || !utf8.ValidString(tenantID) {
+		return "", invalid("dimension_identity.tenant_id", "must be non-empty valid UTF-8")
+	}
+	if !canonicalSignedDecimalPattern.MatchString(businessID) {
+		return "", invalid("dimension_identity.business_id", "must use canonical signed decimal form")
+	}
+	if fields == nil {
+		return "", invalid("dimension_identity.fields", "must be an array")
+	}
+	previous := ""
+	for index, dimension := range fields {
+		if dimension.Name == "" || !utf8.ValidString(dimension.Name) || (index > 0 && dimension.Name <= previous) {
+			return "", invalid("dimension_identity.fields", "names must be non-empty, sorted and unique")
+		}
+		canonical, err := canonicalJSONPrevalidatedV2(dimension.Value)
+		if err != nil || bytes.Equal(canonical, []byte("null")) || len(canonical) == 0 || canonical[0] == '{' || canonical[0] == '[' {
+			return "", invalid("dimension_identity.fields.value", "must be a non-null scalar JSON value")
+		}
+		previous = dimension.Name
+	}
+	canonicalFields, err := canonicalJSONPrevalidatedV2(fields)
+	if err != nil {
+		return "", invalid("dimension_identity.fields", err.Error())
+	}
+	return deriveLengthPrefixedSHA256(
+		"dimension_identity.digest", "dimension-identity-v1",
+		[]byte(tenantID), []byte(businessID), canonicalFields,
+	)
+}
+
 // ReadRejectedReceiptIdentityV2 performs a bounded second pass used only after
 // a deterministic message framing failure. It deliberately does not accept a
 // supplied digest: both digests are recomputed from the duplicate-free JSON so
@@ -72,35 +207,35 @@ func ReadRejectedReceiptIdentityV2(payload []byte, limits ReaderLimitsV2) (*Reje
 		return nil, err
 	}
 	required := []string{"execution_id", "message_id", "source_window", "plan_set", "payload_digest"}
-	object, err := validateJSONObjectFields(payload, "execution_envelope", required, nil, true)
+	object, err := validatePrevalidatedJSONObjectFieldsV2(payload, "execution_envelope", required, nil, true)
 	if err != nil {
 		return nil, err
 	}
 	identity := &RejectedReceiptIdentityV2{}
-	if err := decodeJSONObject(object["execution_id"], &identity.ExecutionID); err != nil ||
+	if err := decodePrevalidatedJSONV2(object["execution_id"], &identity.ExecutionID); err != nil ||
 		!isOpaqueASCII(identity.ExecutionID) {
 		return nil, errors.New("alarmd contract: rejected Receipt execution identity is unavailable")
 	}
-	if err := decodeJSONObject(object["message_id"], &identity.MessageID); err != nil ||
+	if err := decodePrevalidatedJSONV2(object["message_id"], &identity.MessageID); err != nil ||
 		!isOpaqueASCII(identity.MessageID) {
 		return nil, errors.New("alarmd contract: rejected Receipt message identity is unavailable")
 	}
-	if _, err := validateJSONObjectFields(
+	if _, err := validatePrevalidatedJSONObjectFieldsV2(
 		object["source_window"], "execution_envelope.source_window", []string{"from_time", "until_time"}, nil, false,
 	); err != nil {
 		return nil, errors.New("alarmd contract: rejected Receipt source window is unavailable")
 	}
-	if err := decodeJSONObject(object["source_window"], &identity.SourceWindow); err != nil ||
+	if err := decodePrevalidatedJSONV2(object["source_window"], &identity.SourceWindow); err != nil ||
 		identity.SourceWindow.FromTime < 0 || identity.SourceWindow.UntilTime < identity.SourceWindow.FromTime {
 		return nil, errors.New("alarmd contract: rejected Receipt source window is unavailable")
 	}
-	identity.PlanSetDigest, err = digestJSONObjectWithoutV2(
+	identity.PlanSetDigest, err = digestPrevalidatedJSONObjectWithoutV2(
 		"execution_envelope.plan_set.plan_set_digest", "plan-set-v2", object["plan_set"], "plan_set_digest",
 	)
 	if err != nil {
 		return nil, err
 	}
-	identity.PayloadDigest, err = digestJSONObjectWithoutV2(
+	identity.PayloadDigest, err = digestPrevalidatedJSONObjectWithoutV2(
 		"execution_envelope.payload_digest", "execution-envelope-payload-v2", payload, "payload_digest",
 	)
 	if err != nil {
@@ -145,32 +280,32 @@ func ReadExecutionEnvelopeV2(payload []byte, limits ReaderLimitsV2) (*FramedExec
 		return nil, nil, framing(ReasonMessageBudgetExceeded, "execution_envelope.plan_set", "encoded bytes exceed Reader limit")
 	}
 	var planSetObject map[string]json.RawMessage
-	if err := decodeJSONObject(planSetRaw, &planSetObject); err != nil {
+	if err := decodePrevalidatedJSONV2(planSetRaw, &planSetObject); err != nil {
 		return nil, nil, framing(ReasonMalformedJSON, "execution_envelope.plan_set", err.Error())
 	}
-	expectedPlanDigest, err := digestJSONObjectWithoutV2(
+	expectedPlanDigest, err := digestPrevalidatedJSONObjectWithoutV2(
 		"execution_envelope.plan_set.plan_set_digest", "plan-set-v2", planSetRaw, "plan_set_digest",
 	)
 	if err != nil {
 		return nil, nil, framing(ReasonPlanSetConflict, "execution_envelope.plan_set", err.Error())
 	}
 	var suppliedPlanDigest string
-	if err := decodeJSONObject(planSetObject["plan_set_digest"], &suppliedPlanDigest); err != nil || suppliedPlanDigest != expectedPlanDigest {
+	if err := decodePrevalidatedJSONV2(planSetObject["plan_set_digest"], &suppliedPlanDigest); err != nil || suppliedPlanDigest != expectedPlanDigest {
 		return nil, nil, framing(ReasonPlanSetConflict, "execution_envelope.plan_set.plan_set_digest", "digest does not match canonical Plan Set")
 	}
-	expectedPayloadDigest, err := digestJSONObjectWithoutV2(
+	expectedPayloadDigest, err := digestPrevalidatedJSONObjectWithoutV2(
 		"execution_envelope.payload_digest", "execution-envelope-payload-v2", payload, "payload_digest",
 	)
 	if err != nil {
 		return nil, nil, framing(ReasonPayloadDigestMismatch, "execution_envelope.payload_digest", err.Error())
 	}
 	var suppliedPayloadDigest string
-	if err := decodeJSONObject(object["payload_digest"], &suppliedPayloadDigest); err != nil || suppliedPayloadDigest != expectedPayloadDigest {
+	if err := decodePrevalidatedJSONV2(object["payload_digest"], &suppliedPayloadDigest); err != nil || suppliedPayloadDigest != expectedPayloadDigest {
 		return nil, nil, framing(ReasonPayloadDigestMismatch, "execution_envelope.payload_digest", "digest does not match canonical Envelope")
 	}
 
 	var rawRecords []json.RawMessage
-	if err := decodeJSONObject(object["records"], &rawRecords); err != nil {
+	if err := decodePrevalidatedJSONV2(object["records"], &rawRecords); err != nil {
 		return nil, nil, framing(ReasonMalformedJSON, "execution_envelope.records", err.Error())
 	}
 	if len(rawRecords) > limits.MaxRecordsPerMessage {
@@ -182,14 +317,14 @@ func ReadExecutionEnvelopeV2(payload []byte, limits ReaderLimitsV2) (*FramedExec
 		}
 	}
 	var rawPlans []json.RawMessage
-	if err := decodeJSONObject(planSetObject["evaluation_plans"], &rawPlans); err != nil {
+	if err := decodePrevalidatedJSONV2(planSetObject["evaluation_plans"], &rawPlans); err != nil {
 		return nil, nil, framing(ReasonMalformedJSON, "execution_envelope.plan_set.evaluation_plans", err.Error())
 	}
 	if len(rawPlans) == 0 || len(rawPlans) > limits.MaxPlansPerMessage {
 		return nil, nil, framing(ReasonMessageBudgetExceeded, "execution_envelope.plan_set.evaluation_plans", "plan count outside Reader limit")
 	}
 	var rawSelectors []json.RawMessage
-	if err := decodeJSONObject(object["selectors"], &rawSelectors); err != nil {
+	if err := decodePrevalidatedJSONV2(object["selectors"], &rawSelectors); err != nil {
 		return nil, nil, framing(ReasonMalformedJSON, "execution_envelope.selectors", err.Error())
 	}
 	if len(rawSelectors) != len(rawPlans) {
@@ -202,7 +337,7 @@ func ReadExecutionEnvelopeV2(payload []byte, limits ReaderLimitsV2) (*FramedExec
 		var ordinal struct {
 			PlanOrdinal uint32 `json:"plan_ordinal"`
 		}
-		if err := decodeJSONObject(selector, &ordinal); err != nil || ordinal.PlanOrdinal != uint32(index) {
+		if err := decodePrevalidatedJSONV2(selector, &ordinal); err != nil || ordinal.PlanOrdinal != uint32(index) {
 			return nil, nil, framing(ReasonSelectorOrdinalInvalid, fmt.Sprintf("execution_envelope.selectors[%d].plan_ordinal", index), "ordinals must be continuous from zero")
 		}
 	}
@@ -264,7 +399,7 @@ func decodeExecutionEnvelopePartsV2(
 		{"payload_digest", object["payload_digest"], &envelope.PayloadDigest},
 	}
 	for _, field := range fields {
-		if err := decodeJSONObject(field.raw, field.target); err != nil {
+		if err := decodePrevalidatedJSONV2(field.raw, field.target); err != nil {
 			return nil, framing(ReasonMalformedJSON, "execution_envelope."+field.path, err.Error())
 		}
 	}
@@ -275,7 +410,7 @@ func decodeExecutionEnvelopePartsV2(
 	}
 	envelope.Selectors = make([]PlanSelectorV2, len(rawSelectors))
 	for index := range rawSelectors {
-		if err := decodeJSONObject(rawSelectors[index], &envelope.Selectors[index]); err != nil {
+		if err := decodePrevalidatedJSONV2(rawSelectors[index], &envelope.Selectors[index]); err != nil {
 			envelope.Selectors[index].PlanOrdinal = uint32(index)
 		}
 	}
@@ -288,11 +423,11 @@ func decodeExecutionEnvelopePartsV2(
 
 func decodeEvaluationPlanBestEffortV2(raw json.RawMessage) EvaluationPlanV2 {
 	var wire evaluationPlanWirePartsV2
-	if decodeJSONObject(raw, &wire) != nil {
+	if decodePrevalidatedJSONV2(raw, &wire) != nil {
 		var object map[string]json.RawMessage
 		var plan EvaluationPlanV2
-		if decodeJSONObject(raw, &object) == nil {
-			_ = decodeJSONObject(object["plan_id"], &plan.PlanID)
+		if decodePrevalidatedJSONV2(raw, &object) == nil {
+			_ = decodePrevalidatedJSONV2(object["plan_id"], &plan.PlanID)
 		}
 		return plan
 	}
@@ -304,7 +439,7 @@ func decodeEvaluationPlanBestEffortV2(raw json.RawMessage) EvaluationPlanV2 {
 		return plan
 	}
 	var strategyWire strategyIRWirePartsV2
-	if decodeJSONObject(wire.StrategyIR, &strategyWire) != nil {
+	if decodePrevalidatedJSONV2(wire.StrategyIR, &strategyWire) != nil {
 		return plan
 	}
 	plan.StrategyIR = StrategyIRV2{
@@ -320,26 +455,26 @@ func decodeEvaluationPlanBestEffortV2(raw json.RawMessage) EvaluationPlanV2 {
 
 func decodeLevelBestEffortV2(raw json.RawMessage) LevelIRV2 {
 	var level LevelIRV2
-	if decodeJSONObject(raw, &level) == nil {
+	if decodePrevalidatedJSONV2(raw, &level) == nil {
 		return level
 	}
 	var object map[string]json.RawMessage
 	var definition map[string]json.RawMessage
-	if decodeJSONObject(raw, &object) == nil && decodeJSONObject(object["definition"], &definition) == nil {
-		_ = decodeJSONObject(definition["level_id"], &level.Definition.LevelID)
-		_ = decodeJSONObject(definition["level_code"], &level.Definition.LevelCode)
+	if decodePrevalidatedJSONV2(raw, &object) == nil && decodePrevalidatedJSONV2(object["definition"], &definition) == nil {
+		_ = decodePrevalidatedJSONV2(definition["level_id"], &level.Definition.LevelID)
+		_ = decodePrevalidatedJSONV2(definition["level_code"], &level.Definition.LevelCode)
 	}
 	return level
 }
 
 func decodeCanonicalRecordBestEffortV2(raw json.RawMessage) CanonicalRecordV2 {
 	var record CanonicalRecordV2
-	if decodeJSONObject(raw, &record) == nil {
+	if decodePrevalidatedJSONV2(raw, &record) == nil {
 		return record
 	}
 	var object map[string]json.RawMessage
-	if decodeJSONObject(raw, &object) == nil {
-		_ = decodeJSONObject(object["record_id"], &record.RecordID)
+	if decodePrevalidatedJSONV2(raw, &object) == nil {
+		_ = decodePrevalidatedJSONV2(object["record_id"], &record.RecordID)
 	}
 	return record
 }
@@ -404,7 +539,7 @@ func validateExecutionEnvelopeWireShapeV2(payload []byte) (map[string]json.RawMe
 		"schema", "required_features", "execution_id", "message_id", "tenant_id", "query_group", "source_window",
 		"query_result", "dataset_contract", "plan_set", "selectors", "records", "payload_digest",
 	}
-	object, err := validateJSONObjectFields(payload, "execution_envelope", required, nil, true)
+	object, err := validatePrevalidatedJSONObjectFieldsV2(payload, "execution_envelope", required, nil, true)
 	if err != nil {
 		return nil, 0, framing(ReasonMalformedJSON, "execution_envelope", err.Error())
 	}
@@ -413,7 +548,7 @@ func validateExecutionEnvelopeWireShapeV2(payload []byte) (map[string]json.RawMe
 		return nil, 0, err
 	}
 	allowUnknown := minor > 0
-	object, err = validateJSONObjectFields(payload, "execution_envelope", required, nil, allowUnknown)
+	object, err = validatePrevalidatedJSONObjectFieldsV2(payload, "execution_envelope", required, nil, allowUnknown)
 	if err != nil {
 		return nil, 0, framing(ReasonMalformedJSON, "execution_envelope", err.Error())
 	}
@@ -427,12 +562,12 @@ func validateExecutionEnvelopeWireShapeV2(payload []byte) (map[string]json.RawMe
 }
 
 func validateSchemaRawV2(raw json.RawMessage, field, name string, major int) (int, error) {
-	object, err := validateJSONObjectFields(raw, field, []string{"name", "major", "minor"}, nil, false)
+	object, err := validatePrevalidatedJSONObjectFieldsV2(raw, field, []string{"name", "major", "minor"}, nil, false)
 	if err != nil {
 		return 0, framing(ReasonMalformedJSON, field, err.Error())
 	}
 	var schema Schema
-	if err := decodeJSONObject(raw, &schema); err != nil {
+	if err := decodePrevalidatedJSONV2(raw, &schema); err != nil {
 		return 0, framing(ReasonMalformedJSON, field, err.Error())
 	}
 	if schema.Name != name || schema.Major != major || schema.Minor < 0 || schema.Minor > maxContractInt {
@@ -444,7 +579,7 @@ func validateSchemaRawV2(raw json.RawMessage, field, name string, major int) (in
 
 func validateRequiredFeaturesRawV2(raw json.RawMessage, field string) error {
 	var features []string
-	if err := decodeJSONObject(raw, &features); err != nil || features == nil {
+	if err := decodePrevalidatedJSONV2(raw, &features); err != nil || features == nil {
 		return framing(ReasonMalformedJSON, field, "must be an array")
 	}
 	previous := ""
@@ -471,30 +606,30 @@ func validateEnvelopeNestedShapeV2(object map[string]json.RawMessage, allowUnkno
 		{"plan_set", object["plan_set"], []string{"plan_set_digest", "plan_count", "evaluation_plans"}, nil},
 	}
 	for _, shape := range shapes {
-		if _, err := validateJSONObjectFields(shape.raw, "execution_envelope."+shape.field, shape.required, shape.optional, allowUnknown); err != nil {
+		if _, err := validatePrevalidatedJSONObjectFieldsV2(shape.raw, "execution_envelope."+shape.field, shape.required, shape.optional, allowUnknown); err != nil {
 			return framing(ReasonMalformedJSON, "execution_envelope."+shape.field, err.Error())
 		}
 	}
 	var queryResult map[string]json.RawMessage
-	if err := decodeJSONObject(object["query_result"], &queryResult); err != nil {
+	if err := decodePrevalidatedJSONV2(object["query_result"], &queryResult); err != nil {
 		return framing(ReasonMalformedJSON, "execution_envelope.query_result", err.Error())
 	}
 	if reason, ok := queryResult["reason_code"]; ok && bytes.Equal(bytes.TrimSpace(reason), []byte("null")) {
 		return framing(ReasonMalformedJSON, "execution_envelope.query_result.reason_code", "must be omitted instead of null")
 	}
 	var datasetContract map[string]json.RawMessage
-	if err := decodeJSONObject(object["dataset_contract"], &datasetContract); err != nil {
+	if err := decodePrevalidatedJSONV2(object["dataset_contract"], &datasetContract); err != nil {
 		return framing(ReasonMalformedJSON, "execution_envelope.dataset_contract", err.Error())
 	}
 	if collection, ok := datasetContract["collection_time_field"]; ok && bytes.Equal(bytes.TrimSpace(collection), []byte("null")) {
 		return framing(ReasonMalformedJSON, "execution_envelope.dataset_contract.collection_time_field", "must be omitted instead of null")
 	}
 	var selectors []json.RawMessage
-	if err := decodeJSONObject(object["selectors"], &selectors); err != nil {
+	if err := decodePrevalidatedJSONV2(object["selectors"], &selectors); err != nil {
 		return framing(ReasonMalformedJSON, "execution_envelope.selectors", err.Error())
 	}
 	for index, selector := range selectors {
-		selectorObject, err := validateJSONObjectFields(selector, fmt.Sprintf("execution_envelope.selectors[%d]", index), []string{"plan_ordinal", "selector"}, nil, allowUnknown)
+		selectorObject, err := validatePrevalidatedJSONObjectFieldsV2(selector, fmt.Sprintf("execution_envelope.selectors[%d]", index), []string{"plan_ordinal", "selector"}, nil, allowUnknown)
 		if err != nil {
 			return framing(ReasonMalformedJSON, fmt.Sprintf("execution_envelope.selectors[%d]", index), err.Error())
 		}
@@ -506,26 +641,26 @@ func validateEnvelopeNestedShapeV2(object map[string]json.RawMessage, allowUnkno
 func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) error {
 	path := fmt.Sprintf("execution_envelope.plan_set.evaluation_plans[%d]", index)
 	var variant map[string]json.RawMessage
-	if err := decodeJSONObject(raw, &variant); err != nil {
+	if err := decodePrevalidatedJSONV2(raw, &variant); err != nil {
 		return framing(ReasonMalformedJSON, path, err.Error())
 	}
 	if _, terminal := variant["terminal_reason_code"]; terminal {
-		object, err := validateJSONObjectFields(
+		object, err := validatePrevalidatedJSONObjectFieldsV2(
 			raw, path, []string{"plan_id", "strategy_ref", "terminal_reason_code"}, nil, allowUnknown,
 		)
 		if err != nil {
 			return framing(ReasonMalformedJSON, path, err.Error())
 		}
-		if _, err := validateJSONObjectFields(object["strategy_ref"], path+".strategy_ref", []string{"tenant_id", "strategy_id", "revision"}, nil, allowUnknown); err != nil {
+		if _, err := validatePrevalidatedJSONObjectFieldsV2(object["strategy_ref"], path+".strategy_ref", []string{"tenant_id", "strategy_id", "revision"}, nil, allowUnknown); err != nil {
 			return framing(ReasonMalformedJSON, path+".strategy_ref", err.Error())
 		}
 		var typed evaluationPlanWirePartsV2
-		if err := decodeJSONObject(raw, &typed); err != nil {
+		if err := decodePrevalidatedJSONV2(raw, &typed); err != nil {
 			return framing(ReasonMalformedJSON, path, err.Error())
 		}
 		return nil
 	}
-	object, err := validateJSONObjectFields(
+	object, err := validatePrevalidatedJSONObjectFieldsV2(
 		raw, path,
 		[]string{"plan_id", "strategy_ref", "input_projection", "strategy_ir"},
 		[]string{"source_compatibility"}, allowUnknown,
@@ -533,26 +668,26 @@ func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) 
 	if err != nil {
 		return framing(ReasonMalformedJSON, path, err.Error())
 	}
-	if _, err := validateJSONObjectFields(object["strategy_ref"], path+".strategy_ref", []string{"tenant_id", "strategy_id", "revision"}, nil, allowUnknown); err != nil {
+	if _, err := validatePrevalidatedJSONObjectFieldsV2(object["strategy_ref"], path+".strategy_ref", []string{"tenant_id", "strategy_id", "revision"}, nil, allowUnknown); err != nil {
 		return framing(ReasonMalformedJSON, path+".strategy_ref", err.Error())
 	}
-	if _, err := validateJSONObjectFields(object["input_projection"], path+".input_projection", []string{"value_fields", "dimension_fields", "business_identity_field", "multi_value_alignment", "data_unit", "missing_value_policy"}, nil, allowUnknown); err != nil {
+	if _, err := validatePrevalidatedJSONObjectFieldsV2(object["input_projection"], path+".input_projection", []string{"value_fields", "dimension_fields", "business_identity_field", "multi_value_alignment", "data_unit", "missing_value_policy"}, nil, allowUnknown); err != nil {
 		return framing(ReasonMalformedJSON, path+".input_projection", err.Error())
 	}
 	if source, ok := object["source_compatibility"]; ok {
-		if _, err := validateJSONObjectFields(source, path+".source_compatibility", []string{"item_id"}, nil, allowUnknown); err != nil {
+		if _, err := validatePrevalidatedJSONObjectFieldsV2(source, path+".source_compatibility", []string{"item_id"}, nil, allowUnknown); err != nil {
 			return framing(ReasonMalformedJSON, path+".source_compatibility", err.Error())
 		}
 	}
 	var typed evaluationPlanWirePartsV2
-	if err := decodeJSONObject(raw, &typed); err != nil {
+	if err := decodePrevalidatedJSONV2(raw, &typed); err != nil {
 		return framing(ReasonMalformedJSON, path, err.Error())
 	}
 	return validateStrategyIRWireShapeV2(object["strategy_ir"], path+".strategy_ir")
 }
 
 func validateStrategyIRWireShapeV2(raw json.RawMessage, path string) error {
-	base, err := validateJSONObjectFields(raw, path, []string{"schema", "required_features", "strategy_ref", "execution_semantics", "input_projection", "levels"}, nil, true)
+	base, err := validatePrevalidatedJSONObjectFieldsV2(raw, path, []string{"schema", "required_features", "strategy_ref", "execution_semantics", "input_projection", "levels"}, nil, true)
 	if err != nil {
 		return framing(ReasonMalformedJSON, path, err.Error())
 	}
@@ -561,60 +696,60 @@ func validateStrategyIRWireShapeV2(raw json.RawMessage, path string) error {
 		return err
 	}
 	allowUnknown := minor > 0
-	base, err = validateJSONObjectFields(raw, path, []string{"schema", "required_features", "strategy_ref", "execution_semantics", "input_projection", "levels"}, nil, allowUnknown)
+	base, err = validatePrevalidatedJSONObjectFieldsV2(raw, path, []string{"schema", "required_features", "strategy_ref", "execution_semantics", "input_projection", "levels"}, nil, allowUnknown)
 	if err != nil {
 		return framing(ReasonMalformedJSON, path, err.Error())
 	}
 	if err := validateRequiredFeaturesRawV2(base["required_features"], path+".required_features"); err != nil {
 		return err
 	}
-	if _, err := validateJSONObjectFields(base["strategy_ref"], path+".strategy_ref", []string{"tenant_id", "strategy_id", "revision"}, nil, allowUnknown); err != nil {
+	if _, err := validatePrevalidatedJSONObjectFieldsV2(base["strategy_ref"], path+".strategy_ref", []string{"tenant_id", "strategy_id", "revision"}, nil, allowUnknown); err != nil {
 		return framing(ReasonMalformedJSON, path+".strategy_ref", err.Error())
 	}
-	_, err = validateJSONObjectFields(base["execution_semantics"], path+".execution_semantics", []string{"evaluation_scope", "query_window", "aggregation_interval", "evaluation_interval", "lateness_tolerance"}, nil, allowUnknown)
+	_, err = validatePrevalidatedJSONObjectFieldsV2(base["execution_semantics"], path+".execution_semantics", []string{"evaluation_scope", "query_window", "aggregation_interval", "evaluation_interval", "lateness_tolerance"}, nil, allowUnknown)
 	if err != nil {
 		return framing(ReasonMalformedJSON, path+".execution_semantics", err.Error())
 	}
-	if _, err := validateJSONObjectFields(base["input_projection"], path+".input_projection", []string{"value_fields", "dimension_fields", "business_identity_field", "multi_value_alignment", "data_unit", "missing_value_policy"}, nil, allowUnknown); err != nil {
+	if _, err := validatePrevalidatedJSONObjectFieldsV2(base["input_projection"], path+".input_projection", []string{"value_fields", "dimension_fields", "business_identity_field", "multi_value_alignment", "data_unit", "missing_value_policy"}, nil, allowUnknown); err != nil {
 		return framing(ReasonMalformedJSON, path+".input_projection", err.Error())
 	}
 	var levels []json.RawMessage
-	if err := decodeJSONObject(base["levels"], &levels); err != nil {
+	if err := decodePrevalidatedJSONV2(base["levels"], &levels); err != nil {
 		return framing(ReasonMalformedJSON, path+".levels", err.Error())
 	}
 	if levels == nil {
 		return framing(ReasonMalformedJSON, path+".levels", "must be an array")
 	}
 	var typed strategyIRWirePartsV2
-	if err := decodeJSONObject(raw, &typed); err != nil {
+	if err := decodePrevalidatedJSONV2(raw, &typed); err != nil {
 		return framing(ReasonMalformedJSON, path, err.Error())
 	}
 	return nil
 }
 
 func validateLevelWireShapeV2(raw json.RawMessage, path string, allowUnknown bool) error {
-	levelObject, err := validateJSONObjectFields(raw, path, []string{"definition", "connector", "detect_plan", "trigger_plan", "recovery_plan"}, nil, allowUnknown)
+	levelObject, err := validatePrevalidatedJSONObjectFieldsV2(raw, path, []string{"definition", "connector", "detect_plan", "trigger_plan", "recovery_plan"}, nil, allowUnknown)
 	if err != nil {
 		return err
 	}
-	definition, err := validateJSONObjectFields(levelObject["definition"], path+".definition", []string{"level_id", "priority"}, []string{"level_code"}, allowUnknown)
+	definition, err := validatePrevalidatedJSONObjectFieldsV2(levelObject["definition"], path+".definition", []string{"level_id", "priority"}, []string{"level_code"}, allowUnknown)
 	if err != nil {
 		return err
 	}
 	if code, ok := definition["level_code"]; ok && bytes.Equal(bytes.TrimSpace(code), []byte("null")) {
 		return invalid(path+".definition.level_code", "must be omitted instead of null")
 	}
-	detectPlan, err := validateJSONObjectFields(levelObject["detect_plan"], path+".detect_plan", []string{"algorithms"}, nil, allowUnknown)
+	detectPlan, err := validatePrevalidatedJSONObjectFieldsV2(levelObject["detect_plan"], path+".detect_plan", []string{"algorithms"}, nil, allowUnknown)
 	if err != nil {
 		return err
 	}
 	var algorithms []json.RawMessage
-	if err := decodeJSONObject(detectPlan["algorithms"], &algorithms); err != nil || algorithms == nil {
+	if err := decodePrevalidatedJSONV2(detectPlan["algorithms"], &algorithms); err != nil || algorithms == nil {
 		return invalid(path+".detect_plan.algorithms", "must be an array")
 	}
 	for algorithmIndex, algorithm := range algorithms {
 		algorithmPath := fmt.Sprintf("%s.detect_plan.algorithms[%d]", path, algorithmIndex)
-		algorithmObject, err := validateJSONObjectFields(algorithm, algorithmPath, []string{"type", "version", "config"}, nil, allowUnknown)
+		algorithmObject, err := validatePrevalidatedJSONObjectFieldsV2(algorithm, algorithmPath, []string{"type", "version", "config"}, nil, allowUnknown)
 		if err != nil {
 			return err
 		}
@@ -629,11 +764,11 @@ func validateLevelWireShapeV2(raw json.RawMessage, path string, allowUnknown boo
 		return err
 	}
 	var typed LevelIRV2
-	return decodeJSONObject(raw, &typed)
+	return decodePrevalidatedJSONV2(raw, &typed)
 }
 
 func validateTypedPlanWireShapeV2(raw json.RawMessage, path string, allowUnknown bool) error {
-	object, err := validateJSONObjectFields(raw, path, []string{"type", "version", "config"}, nil, allowUnknown)
+	object, err := validatePrevalidatedJSONObjectFieldsV2(raw, path, []string{"type", "version", "config"}, nil, allowUnknown)
 	if err != nil {
 		return framing(ReasonMalformedJSON, path, err.Error())
 	}
@@ -847,7 +982,7 @@ planLoop:
 		}
 		recordReasons[index] = reason
 		if reason == "" {
-			canonical, err := CanonicalJSONV2(rawRecords[index])
+			canonical, err := canonicalJSONPrevalidatedV2(rawRecords[index])
 			if err == nil {
 				recordOccurrences[record.RecordID] = append(recordOccurrences[record.RecordID], recordOccurrence{
 					ordinal: uint32(index), body: string(canonical),
@@ -895,19 +1030,19 @@ func rawPlanLevelsV2(rawPlan json.RawMessage) []json.RawMessage {
 	var planObject map[string]json.RawMessage
 	var strategyObject map[string]json.RawMessage
 	var levels []json.RawMessage
-	if decodeJSONObject(rawPlan, &planObject) != nil || decodeJSONObject(planObject["strategy_ir"], &strategyObject) != nil ||
-		decodeJSONObject(strategyObject["levels"], &levels) != nil {
+	if decodePrevalidatedJSONV2(rawPlan, &planObject) != nil || decodePrevalidatedJSONV2(planObject["strategy_ir"], &strategyObject) != nil ||
+		decodePrevalidatedJSONV2(strategyObject["levels"], &levels) != nil {
 		return nil
 	}
 	return levels
 }
 
 func validSelectorWireV2(raw json.RawMessage) bool {
-	object, err := validateJSONObjectFields(raw, "selector", []string{"plan_ordinal", "selector"}, nil, true)
+	object, err := validatePrevalidatedJSONObjectFieldsV2(raw, "selector", []string{"plan_ordinal", "selector"}, nil, true)
 	if err != nil {
 		return false
 	}
-	selector, err := validateJSONObjectFields(object["selector"], "selector", []string{"kind"}, []string{"ranges", "bitmap_b64"}, false)
+	selector, err := validatePrevalidatedJSONObjectFieldsV2(object["selector"], "selector", []string{"kind"}, []string{"ranges", "bitmap_b64"}, false)
 	if err != nil {
 		return false
 	}
@@ -917,11 +1052,11 @@ func validSelectorWireV2(raw json.RawMessage) bool {
 		}
 	}
 	var typed PlanSelectorV2
-	return decodeJSONObject(raw, &typed) == nil
+	return decodePrevalidatedJSONV2(raw, &typed) == nil
 }
 
 func validRecordWireShapeV2(raw json.RawMessage) bool {
-	object, err := validateJSONObjectFields(
+	object, err := validatePrevalidatedJSONObjectFieldsV2(
 		raw, "record",
 		[]string{"record_id", "source_time", "business_id", "dimension_identity", "values", "dimensions", "received_time"},
 		[]string{"collection_time"}, false,
@@ -932,25 +1067,25 @@ func validRecordWireShapeV2(raw json.RawMessage) bool {
 	if collectionTime, ok := object["collection_time"]; ok && bytes.Equal(bytes.TrimSpace(collectionTime), []byte("null")) {
 		return false
 	}
-	dimensionObject, err := validateJSONObjectFields(object["dimension_identity"], "dimension_identity", []string{"fields", "digest"}, nil, false)
+	dimensionObject, err := validatePrevalidatedJSONObjectFieldsV2(object["dimension_identity"], "dimension_identity", []string{"fields", "digest"}, nil, false)
 	if err != nil {
 		return false
 	}
 	var fields []json.RawMessage
-	if err := decodeJSONObject(dimensionObject["fields"], &fields); err != nil {
+	if err := decodePrevalidatedJSONV2(dimensionObject["fields"], &fields); err != nil {
 		return false
 	}
 	for _, field := range fields {
-		if _, err := validateJSONObjectFields(field, "dimension_identity.fields", []string{"name", "value"}, nil, false); err != nil {
+		if _, err := validatePrevalidatedJSONObjectFieldsV2(field, "dimension_identity.fields", []string{"name", "value"}, nil, false); err != nil {
 			return false
 		}
 	}
 	var values map[string]json.RawMessage
 	var dimensions map[string]json.RawMessage
 	var typed CanonicalRecordV2
-	return decodeJSONObject(object["values"], &values) == nil && values != nil &&
-		decodeJSONObject(object["dimensions"], &dimensions) == nil && dimensions != nil &&
-		decodeJSONObject(raw, &typed) == nil
+	return decodePrevalidatedJSONV2(object["values"], &values) == nil && values != nil &&
+		decodePrevalidatedJSONV2(object["dimensions"], &dimensions) == nil && dimensions != nil &&
+		decodePrevalidatedJSONV2(raw, &typed) == nil
 }
 
 func rawIsJSONObjectV2(raw json.RawMessage) bool {
@@ -991,13 +1126,13 @@ func validateCanonicalRecordV2(
 		if !exists || bytes.Equal(bytes.TrimSpace(dimensionValue), []byte("null")) {
 			return ReasonRecordIdentityConflict
 		}
-		identityCanonical, identityErr := CanonicalJSONV2(identityField.Value)
-		dimensionCanonical, dimensionErr := CanonicalJSONV2(dimensionValue)
+		identityCanonical, identityErr := canonicalJSONPrevalidatedV2(identityField.Value)
+		dimensionCanonical, dimensionErr := canonicalJSONPrevalidatedV2(dimensionValue)
 		if identityErr != nil || dimensionErr != nil || !bytes.Equal(identityCanonical, dimensionCanonical) {
 			return ReasonRecordIdentityConflict
 		}
 	}
-	dimensionDigest, err := DeriveDimensionIdentityDigestV2(tenantID, record.BusinessID, record.DimensionIdentity.Fields)
+	dimensionDigest, err := deriveDimensionIdentityDigestPrevalidatedV2(tenantID, record.BusinessID, record.DimensionIdentity.Fields)
 	if err != nil || dimensionDigest != record.DimensionIdentity.Digest {
 		return ReasonRecordIdentityConflict
 	}
@@ -1009,7 +1144,7 @@ func validateCanonicalRecordV2(
 }
 
 func rawIsScalarOrNullV2(raw json.RawMessage) bool {
-	canonical, err := CanonicalJSONV2(raw)
+	canonical, err := canonicalJSONPrevalidatedV2(raw)
 	return err == nil && len(canonical) > 0 && canonical[0] != '{' && canonical[0] != '['
 }
 
@@ -1090,8 +1225,8 @@ func compareCanonicalDecimal(left, right string) int {
 }
 
 func equalInputProjectionV2(left, right InputProjectionV2) bool {
-	leftJSON, leftErr := CanonicalJSONV2(left)
-	rightJSON, rightErr := CanonicalJSONV2(right)
+	leftJSON, leftErr := canonicalJSONPrevalidatedV2(left)
+	rightJSON, rightErr := canonicalJSONPrevalidatedV2(right)
 	return leftErr == nil && rightErr == nil && bytes.Equal(leftJSON, rightJSON)
 }
 

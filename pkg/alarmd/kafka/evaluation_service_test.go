@@ -20,6 +20,21 @@ import (
 	alarmdcoordinator "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/coordinator"
 )
 
+func TestNewEvaluationSaramaConfigEnablesPeriodicOffsetCommit(t *testing.T) {
+	t.Parallel()
+
+	config, err := newEvaluationSaramaConfig(Config{
+		Brokers: []string{"127.0.0.1:9092"}, Topic: "execution-envelope", GroupID: "alarmd-v2",
+		ClientID: "alarmd-v2", BrokerVersion: "0.10.2.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.Consumer.Offsets.AutoCommit.Enable {
+		t.Fatal("evaluation consumer must periodically commit completed session offsets")
+	}
+}
+
 func TestNewOwnedEvaluationServiceBuildsV2Handler(t *testing.T) {
 	t.Parallel()
 

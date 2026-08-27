@@ -526,6 +526,7 @@ func TestReadExecutionEnvelopeV2StrictFraming(t *testing.T) {
 		"bom":                  append([]byte{0xef, 0xbb, 0xbf}, payload...),
 		"trailing value":       append(append([]byte(nil), payload...), []byte(` {}`)...),
 		"duplicate field":      bytes.Replace(payload, []byte(`"execution_id":"execution-1"`), []byte(`"execution_id":"execution-1","execution_id":"execution-2"`), 1),
+		"nested duplicate":     bytes.Replace(payload, []byte(`"source_time":1725000000`), []byte(`"source_time":1725000000,"source_time":1725000001`), 1),
 		"case collision":       append(payload[:len(payload)-1], []byte(`,"Execution_ID":"execution-1"}`)...),
 		"payload digest drift": bytes.Replace(payload, []byte(`"query_revision":"query-r1"`), []byte(`"query_revision":"query-r2"`), 1),
 	}

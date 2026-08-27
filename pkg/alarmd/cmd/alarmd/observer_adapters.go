@@ -230,8 +230,8 @@ func observeRuntime(ctx context.Context, observer observability.Observer, observ
 	observer.Observe(ctx, observation)
 }
 
-func offsetCommitDiagnostics(observer observability.Observer) func(enginekafka.OffsetCommitEvidence) {
-	return func(evidence enginekafka.OffsetCommitEvidence) {
+func offsetMarkDiagnostics(observer observability.Observer) func(enginekafka.OffsetMarkEvidence) {
+	return func(evidence enginekafka.OffsetMarkEvidence) {
 		result := observability.Result(observability.ResultSuccess)
 		reason := observability.ReasonNone
 		if evidence.Err != nil {
@@ -239,7 +239,7 @@ func offsetCommitDiagnostics(observer observability.Observer) func(enginekafka.O
 			reason = observability.ReasonCode(contract.ReasonKafkaUnavailable)
 		}
 		observeRuntime(context.Background(), observer, observability.Observation{
-			Component: observability.ComponentConsumer, Stage: observability.StageOffsetCommitted,
+			Component: observability.ComponentConsumer, Stage: observability.StageOffsetMarked,
 			Result: result, Operation: observability.OperationCommit, Direction: observability.DirectionInput,
 			ReasonCode: reason, Duration: evidence.Duration, Err: evidence.Err,
 			Trace: observability.TraceFields{

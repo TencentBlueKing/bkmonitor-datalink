@@ -70,7 +70,7 @@ func TestOpenApplicationBundleBuildsV2EvaluationService(t *testing.T) {
 				t.Fatal("v2 evaluation service received an incomplete composition")
 			}
 			serviceReceipts = gotReceipts
-			if diagnostics.OnRejected == nil || diagnostics.OnOffsetCommitted == nil {
+			if diagnostics.OnRejected == nil || diagnostics.OnOffsetMarked == nil {
 				t.Fatal("v2 evaluation service did not receive rejection and offset diagnostics")
 			}
 			return service, nil
@@ -119,7 +119,7 @@ func TestRuntimeObserverAdaptersCoverExistingV2Callpoints(t *testing.T) {
 		Stage: state.StageDependencyLoaded, Operation: state.OperationLoad, Result: state.OperationSucceeded,
 		TouchedKeys: 2, StateBytes: 128,
 	})
-	offsetCommitDiagnostics(observer)(enginekafka.OffsetCommitEvidence{
+	offsetMarkDiagnostics(observer)(enginekafka.OffsetMarkEvidence{
 		Topic: "execution-envelope", Partition: 1, NextOffset: 42,
 	})
 
@@ -127,7 +127,7 @@ func TestRuntimeObserverAdaptersCoverExistingV2Callpoints(t *testing.T) {
 		{"component": string(observability.ComponentAdapter), "stage": string(observability.StageMessageDecoded)},
 		{"component": string(observability.ComponentDetect), "stage": string(observability.StageDetectCompleted)},
 		{"component": string(observability.ComponentState), "stage": string(observability.StageDependencyLoaded)},
-		{"component": string(observability.ComponentConsumer), "stage": string(observability.StageOffsetCommitted)},
+		{"component": string(observability.ComponentConsumer), "stage": string(observability.StageOffsetMarked)},
 	} {
 		if !hasObservationMetric(t, recorder, want) {
 			t.Fatalf("missing observation metric %v", want)

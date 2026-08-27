@@ -731,7 +731,7 @@ func openApplicationBundleWithFactories(
 	service, err := factories.openEvaluationService(
 		consumerCoordinates, router, &criticalCompletionRuntime{CriticalPhaseCompletion: retryingCritical}, observedReceipts, gate,
 		enginekafka.EvaluationDiagnostics{
-			OnRejected: rejectedMessageDiagnostics(logger), OnOffsetCommitted: offsetCommitDiagnostics(runtimeObserver),
+			OnRejected: rejectedMessageDiagnostics(logger), OnOffsetMarked: offsetMarkDiagnostics(runtimeObserver),
 		},
 		cfg.DependencyRetryOptions(),
 		cfg.ShutdownTimeout.Duration(),

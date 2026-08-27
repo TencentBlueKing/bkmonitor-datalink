@@ -46,11 +46,11 @@ type RejectedMessageEvidence struct {
 }
 
 type EvaluationDiagnostics struct {
-	OnRejected        func(RejectedMessageEvidence)
-	OnOffsetCommitted func(OffsetCommitEvidence)
+	OnRejected     func(RejectedMessageEvidence)
+	OnOffsetMarked func(OffsetMarkEvidence)
 }
 
-type OffsetCommitEvidence struct {
+type OffsetMarkEvidence struct {
 	Topic      string
 	Partition  int32
 	NextOffset int64
@@ -136,7 +136,7 @@ func (handler *EvaluationHandler) ConsumeClaim(session sarama.ConsumerGroupSessi
 	}
 	offsets := evaluationPartitionOffsetCommitter{
 		session: session, offsets: handler.offsets, topic: claim.Topic(), partition: claim.Partition(),
-		retry: handler.offsetRetry, onCommitted: handler.diagnostics.OnOffsetCommitted,
+		retry: handler.offsetRetry, onMarked: handler.diagnostics.OnOffsetMarked,
 	}
 	runner, err := alarmdcoordinator.NewRoutedPartitionRunnerWithObserver(
 		handler.router, handler.critical, offsets, handler.receipts,
@@ -234,19 +234,38 @@ func (handler *EvaluationHandler) fatal(err error) {
 }
 
 type evaluationPartitionOffsetCommitter struct {
-	session     sarama.ConsumerGroupSession
-	offsets     OffsetCommitter
-	topic       string
-	partition   int32
-	retry       *alarmdcoordinator.DependencyRetry
-	onCommitted func(OffsetCommitEvidence)
+	session   sarama.ConsumerGroupSession
+	offsets   OffsetCommitter
+	topic     string
+	partition int32
+	retry     *alarmdcoordinator.DependencyRetry
+	onMarked  func(OffsetMarkEvidence)
+}
+
+// evaluationSessionOffsetCommitter leaves the broker exchange to Sarama's
+// periodic consumer-group commit. evaluationPartitionOffsetCommitter performs
+// the MarkOffset call only after TriggerEvent and Redis state have completed.
+type evaluationSessionOffsetCommitter struct{}
+
+func (evaluationSessionOffsetCommitter) CommitOffset(
+	ctx context.Context,
+	session sarama.ConsumerGroupSession,
+	record consumer.Record,
+) error {
+	if session == nil {
+		return errors.New("kafka evaluation handler: consumer group session is required")
+	}
+	if err := validateOffset(record.Offset); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func (committer evaluationPartitionOffsetCommitter) CommitThrough(ctx context.Context, nextOffset int64) (returnErr error) {
 	started := time.Now()
 	defer func() {
-		if committer.onCommitted != nil {
-			committer.onCommitted(OffsetCommitEvidence{
+		if committer.onMarked != nil {
+			committer.onMarked(OffsetMarkEvidence{
 				Topic: committer.topic, Partition: committer.partition, NextOffset: nextOffset,
 				Duration: time.Since(started), Err: returnErr,
 			})

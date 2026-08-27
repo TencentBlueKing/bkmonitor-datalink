@@ -45,7 +45,7 @@ func newHealthCollector(source observability.HealthSource) *healthCollector {
 		inflightMessages:    descriptor("health_inflight_messages", "Inflight messages in the current health snapshot.", nil),
 		workerQueueDepth:    descriptor("health_worker_queue_depth", "Worker queue depth in the current health snapshot.", nil),
 		workerQueueBytes:    descriptor("health_worker_queue_bytes", "Worker queue bytes in the current health snapshot.", nil),
-		consumerLagRecords:  descriptor("health_consumer_lag_records", "Known aggregate consumer lag in the current health snapshot.", nil),
+		consumerLagRecords:  descriptor("health_consumer_lag_records", "Known aggregate high-water minus processed and marked offset; this is not broker committed-group lag.", nil),
 		lastProgress:        descriptor("health_last_progress_timestamp_seconds", "Unix timestamp of the last pipeline progress.", []string{"stage"}),
 		lastRecoverySeconds: descriptor("health_last_recovery_timestamp_seconds", "Unix timestamp of the last dependency or restart recovery.", nil),
 	}
@@ -127,7 +127,7 @@ func newResourceCollector(source observability.ResourceSource) *resourceCollecto
 		workerQueueBytes:   descriptor("resource_worker_queue_bytes", "Observed worker queue bytes.", nil),
 		inflightMessages:   descriptor("resource_inflight_messages", "Observed inflight messages.", nil),
 		inflightBytes:      descriptor("resource_inflight_bytes", "Observed inflight bytes.", nil),
-		consumerLagRecords: descriptor("resource_consumer_lag_records", "Observed aggregate consumer lag; it does not trigger resource actions.", nil),
+		consumerLagRecords: descriptor("resource_consumer_lag_records", "Observed aggregate high-water minus processed and marked offset; it is not broker committed-group lag and does not trigger resource actions.", nil),
 		stateBytes:         descriptor("resource_state_bytes", "Observed runtime state bytes touched by alarmd.", nil),
 	}
 }

@@ -590,7 +590,11 @@ func (f *QueryFactory) prepareSearchAfter() error {
 		return fmt.Errorf("search_after does not support custom SQL")
 	}
 
+	// 避免追加兜底排序字段时修改调用方传入的 Query.Orders。
 	f.orders = append(metadata.Orders(nil), f.orders...)
+
+	// search_after 依赖全序排序。业务排序字段相同时，追加 __unique_key__ 作为最后的
+	// 稳定排序字段，保证相邻页之间不会遗漏或重复数据。
 	hasTieBreaker := false
 	for _, order := range f.orders {
 		if strings.EqualFold(order.Name, sql_expr.SearchAfterTieBreaker) {
@@ -602,6 +606,7 @@ func (f *QueryFactory) prepareSearchAfter() error {
 		if !f.FieldMap().Field(sql_expr.SearchAfterTieBreaker).Existed() {
 			return fmt.Errorf("search_after requires %s as a stable tie-breaker", sql_expr.SearchAfterTieBreaker)
 		}
+		// 沿用最后一个业务排序字段的方向，避免改变用户定义的结果排序。
 		f.orders = append(f.orders, metadata.Order{
 			Name: sql_expr.SearchAfterTieBreaker,
 			Ast:  f.orders[len(f.orders)-1].Ast,

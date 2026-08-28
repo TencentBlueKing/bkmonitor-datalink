@@ -439,6 +439,9 @@ func TestInstance_QueryRaw(t *testing.T) {
 	ins := createTestInstance(ctx)
 
 	mock.BkSQL.Set(map[string]any{
+		"SHOW CREATE TABLE `search_after_log`.doris": `{"result":true,"message":"success","code":"00","data":{"list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES"},{"Field":"dtEventTimeStamp","Type":"bigint","Null":"NO","Key":"YES"},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"NO"},{"Field":"gseIndex","Type":"double","Null":"YES","Key":"YES"},{"Field":"iterationIndex","Type":"bigint","Null":"YES","Key":"YES"},{"Field":"__unique_key__","Type":"varchar(512)","Null":"YES","Key":"YES"},{"Field":"message","Type":"text","Null":"YES","Key":"NO"}]}}`,
+		"SELECT `message`, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_`, `gseIndex` AS `__search_after_0`, `dtEventTimeStamp` AS `__search_after_1`, `iterationIndex` AS `__search_after_2`, `__unique_key__` AS `__search_after_3` FROM `search_after_log`.doris WHERE `dtEventTimeStamp` >= 1730118589181 AND `dtEventTimeStamp` <= 1730118889181 AND `dtEventTime` >= '2024-10-28 20:29:49' AND `dtEventTime` <= '2024-10-28 20:34:50' AND `thedate` = '20241028' AND ((`gseIndex` > 7) OR (`gseIndex` = 7 AND `dtEventTimeStamp` < 1730118700000) OR (`gseIndex` = 7 AND `dtEventTimeStamp` = 1730118700000 AND `iterationIndex` < 2) OR (`gseIndex` = 7 AND `dtEventTimeStamp` = 1730118700000 AND `iterationIndex` = 2 AND `__unique_key__` < 'log-1')) ORDER BY `gseIndex` ASC, `dtEventTimeStamp` DESC, `iterationIndex` DESC, `__unique_key__` DESC LIMIT 2": `{"result":true,"message":"success","code":"00","data":{"totalRecords":2,"list":[{"message":"first","_value_":1730118700000,"_timestamp_":1730118700000,"__search_after_0":7,"__search_after_1":1730118700000,"__search_after_2":1,"__search_after_3":"log-2"},{"message":"second","_value_":1730118710000,"_timestamp_":1730118710000,"__search_after_0":8,"__search_after_1":1730118710000,"__search_after_2":0,"__search_after_3":"log-3"}],"result_schema":[{"field_alias":"message"},{"field_alias":"_value_"},{"field_alias":"_timestamp_"},{"field_alias":"__search_after_0"},{"field_alias":"__search_after_1"},{"field_alias":"__search_after_2"},{"field_alias":"__search_after_3"}]}}`,
+
 		// query raw by doris use condition
 		"SHOW CREATE TABLE `2_bklog_pure_v4_log_doris_for_unify_query`.doris": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":18,"external_api_call_time_mills":{"bkbase_auth_api":69,"bkbase_meta_api":9,"bkbase_apigw_api":25},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"__shard_key__","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"cloudId","Type":"decimalv3(38, 6)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"serverIp","Type":"varchar(512)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"path","Type":"varchar(512)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"gseIndex","Type":"decimalv3(38, 6)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"bk_host_id","Type":"int","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"iterationIndex","Type":"decimalv3(38, 6)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__ext","Type":"variant","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"file","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"level","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"log","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE","Analyzed":"true"},{"Field":"message","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"report_time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"trace_id","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":6,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":6,"connect_db":66,"match_query_routing_rule":0,"check_permission":69,"check_query_semantic":0,"pick_valid_storage":0},"select_fields_order":["Field","Type","Null","Key","Default","Extra"],"sql":"SHOW COLUMNS FROM mapleleaf_2.bklog_pure_v4_log_doris_for_unify_query_2","total_record_size":11808,"timetaken":0.148,"result_schema":[{"field_type":"string","field_name":"Field","field_alias":"Field","field_index":0},{"field_type":"string","field_name":"Type","field_alias":"Type","field_index":1},{"field_type":"string","field_name":"Null","field_alias":"Null","field_index":2},{"field_type":"string","field_name":"Key","field_alias":"Key","field_index":3},{"field_type":"string","field_name":"Default","field_alias":"Default","field_index":4},{"field_type":"string","field_name":"Extra","field_alias":"Extra","field_index":5}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_pure_v4_log_doris_for_unify_query"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
 
@@ -567,6 +570,28 @@ func TestInstance_QueryRaw(t *testing.T) {
   "namespace" : "gz100",
   "thedate" : 20241028
 } ]`,
+		},
+		"query raw with search after": {
+			query: &metadata.Query{
+				TableID:       "search_after_log.doris",
+				DB:            "search_after_log",
+				Measurement:   "doris",
+				Field:         "dtEventTimeStamp",
+				DataLabel:     "search_after_log",
+				Size:          2,
+				Source:        []string{"message"},
+				IsSearchAfter: true,
+				ResultTableOption: &metadata.ResultTableOption{
+					SearchAfter: []any{json.Number("7"), json.Number("1730118700000"), json.Number("2"), "log-1"},
+				},
+				Orders: metadata.Orders{
+					{Name: "gseIndex", Ast: true},
+					{Name: "dtEventTimeStamp", Ast: false},
+					{Name: "iterationIndex", Ast: false},
+				},
+			},
+			options:  `{"search_after_log.doris":{"search_after":[8,1730118710000,0,"log-3"],"result_schema":[{"field_alias":"message"},{"field_alias":"_value_"},{"field_alias":"_timestamp_"}]}}`,
+			expected: `[{"__data_label":"search_after_log","__index":"search_after_log","__result_table":"search_after_log.doris","__table_uuid":"search_after_log.doris","_timestamp_":1730118700000,"_value_":1730118700000,"message":"first"},{"__data_label":"search_after_log","__index":"search_after_log","__result_table":"search_after_log.doris","__table_uuid":"search_after_log.doris","_timestamp_":1730118710000,"_value_":1730118710000,"message":"second"}]`,
 		},
 		"query raw by doris": {
 			query: &metadata.Query{

@@ -196,7 +196,7 @@ func TestReceiptDropDiagnosticsReportsOnePublisherEvidenceOnce(t *testing.T) {
 	observer := observability.Multi(recorder)
 	var output bytes.Buffer
 	logger := observability.New(observability.ComponentTrigger, &output)
-	diagnostics := receiptPublisherDiagnostics(observer, logger)
+	diagnostics := receiptPublisherDiagnostics(observer, logger, recorder)
 	diagnostics.OnDrop(enginekafka.ReceiptDropEvidence{Kind: enginekafka.ReceiptDropQueueMessages, Count: 1})
 	runtime := &observedReceiptRuntime{
 		next: &fakeReceiptRuntime{
@@ -208,7 +208,9 @@ func TestReceiptDropDiagnosticsReportsOnePublisherEvidenceOnce(t *testing.T) {
 		},
 		logger: logger,
 	}
-	if runtime.TryEnqueue(&contract.MessageReceiptV1{}) {
+	receipt := validRuntimeMessageReceipt(t)
+	diagnostics.OnValidated(receipt)
+	if runtime.TryEnqueue(receipt) {
 		t.Fatal("observed Receipt runtime accepted rejected audit")
 	}
 	if result := runtime.Shutdown(context.Background()); result.Status != enginekafka.ReceiptDrainWithDrop {
@@ -221,6 +223,12 @@ func TestReceiptDropDiagnosticsReportsOnePublisherEvidenceOnce(t *testing.T) {
 	}
 	if got := observationMessageCount(t, recorder, observability.StageCoverageGap); got != 1 {
 		t.Fatalf("coverage gap message count = %v, want 1", got)
+	}
+	if got := messageReceiptMetricCount(t, recorder, "bkmonitor_alarmd_message_receipt_business_total", "field", "selected"); got != 1 {
+		t.Fatalf("Receipt selected count = %v, want 1", got)
+	}
+	if got := messageReceiptMetricCount(t, recorder, "bkmonitor_alarmd_message_receipt_delivery_total", "outcome", "dropped"); got != 1 {
+		t.Fatalf("Receipt dropped count = %v, want 1", got)
 	}
 	if got := strings.Count(logOutput, `"receipt_drain_status":"WITH_DROP"`); got != 1 {
 		t.Fatalf("Receipt drain status log count = %d, want 1; log = %q", got, logOutput)
@@ -237,12 +245,12 @@ func TestUnavailableReceiptRuntimeReportsEachRejectedReceiptOnce(t *testing.T) {
 	observer := observability.Multi(recorder)
 	var output bytes.Buffer
 	logger := observability.New(observability.ComponentTrigger, &output)
-	diagnostics := receiptPublisherDiagnostics(observer, logger)
+	diagnostics := receiptPublisherDiagnostics(observer, logger, recorder)
 	runtime := &unavailableReceiptRuntime{
 		err: errors.New("receipt publisher unavailable"), diagnostics: diagnostics,
 	}
 
-	if runtime.TryEnqueue(&contract.MessageReceiptV1{}) {
+	if runtime.TryEnqueue(validRuntimeMessageReceipt(t)) {
 		t.Fatal("unavailable Receipt runtime accepted audit")
 	}
 	if got := observationMessageCount(t, recorder, observability.StageCoverageGap); got != 1 {
@@ -250,6 +258,58 @@ func TestUnavailableReceiptRuntimeReportsEachRejectedReceiptOnce(t *testing.T) {
 	}
 	if got := strings.Count(output.String(), `"drop_kind":"publisher_unavailable"`); got != 1 {
 		t.Fatalf("publisher unavailable log count = %d, want 1; log = %q", got, output.String())
+	}
+	if got := messageReceiptMetricCount(t, recorder, "bkmonitor_alarmd_message_receipt_status_total", "status", contract.ReceiptStatusCompleted); got != 1 {
+		t.Fatalf("validated unavailable Receipt status count = %v, want 1", got)
+	}
+}
+
+func TestReceiptDeliveryDroppedCountsOnlyValidatedReceiptLoss(t *testing.T) {
+	t.Parallel()
+
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	diagnostics := receiptPublisherDiagnostics(observability.Multi(recorder), nil, recorder)
+	for _, evidence := range []enginekafka.ReceiptDropEvidence{
+		{Kind: enginekafka.ReceiptDropEncodeFailed, Count: 1},
+		{Kind: enginekafka.ReceiptDropCloseFailed, Count: 1},
+		{Kind: enginekafka.ReceiptDropShutdownTimeout, Count: 0},
+	} {
+		diagnostics.OnDrop(evidence)
+	}
+	if got := messageReceiptMetricCount(t, recorder, "bkmonitor_alarmd_message_receipt_delivery_total", "outcome", "dropped"); got != 0 {
+		t.Fatalf("operational failures counted as Receipt losses: %v", got)
+	}
+	for _, evidence := range []enginekafka.ReceiptDropEvidence{
+		{Kind: enginekafka.ReceiptDropQueueMessages, Count: 1},
+		{Kind: enginekafka.ReceiptDropShutdownTimeout, Count: 2},
+	} {
+		diagnostics.OnDrop(evidence)
+	}
+	if got := messageReceiptMetricCount(t, recorder, "bkmonitor_alarmd_message_receipt_delivery_total", "outcome", "dropped"); got != 3 {
+		t.Fatalf("validated Receipt loss count = %v, want 3", got)
+	}
+}
+
+func TestUnavailableReceiptRuntimeDoesNotValidateInvalidReceipt(t *testing.T) {
+	t.Parallel()
+
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	var output bytes.Buffer
+	diagnostics := receiptPublisherDiagnostics(
+		observability.Multi(recorder), observability.New(observability.ComponentTrigger, &output), recorder,
+	)
+	runtime := &unavailableReceiptRuntime{err: errors.New("receipt publisher unavailable"), diagnostics: diagnostics}
+	if runtime.TryEnqueue(&contract.MessageReceiptV1{}) {
+		t.Fatal("unavailable Receipt runtime accepted invalid audit")
+	}
+	if got := messageReceiptMetricCount(t, recorder, "bkmonitor_alarmd_message_receipt_status_total", "status", contract.ReceiptStatusCompleted); got != 0 {
+		t.Fatalf("invalid Receipt status count = %v, want 0", got)
+	}
+	if got := messageReceiptMetricCount(t, recorder, "bkmonitor_alarmd_message_receipt_delivery_total", "outcome", "dropped"); got != 0 {
+		t.Fatalf("invalid Receipt loss count = %v, want 0", got)
+	}
+	if got := strings.Count(output.String(), `"drop_kind":"encode_failed"`); got != 1 {
+		t.Fatalf("invalid Receipt diagnostics count = %d, want 1; log = %q", got, output.String())
 	}
 }
 
@@ -458,7 +518,7 @@ func TestOpenApplicationBundleFailsOpenWhenReceiptKafkaIsUnavailable(t *testing.
 	if bundle.service != service || bundle.receipts == nil || serviceReceipts != bundle.receipts {
 		t.Fatal("evaluation service did not receive the fail-open Receipt publisher")
 	}
-	if bundle.receipts.TryEnqueue(&contract.MessageReceiptV1{}) {
+	if bundle.receipts.TryEnqueue(validRuntimeMessageReceipt(t)) {
 		t.Fatal("unavailable Receipt publisher accepted an audit record")
 	}
 	drain := bundle.receipts.Shutdown(context.Background())
@@ -704,6 +764,49 @@ func observationMessageCount(t *testing.T, recorder *metric.Recorder, stage obse
 		}
 	}
 	return 0
+}
+
+func messageReceiptMetricCount(
+	t *testing.T,
+	recorder *metric.Recorder,
+	familyName string,
+	labelName string,
+	labelValue string,
+) float64 {
+	t.Helper()
+	families, err := recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+	for _, family := range families {
+		if family.GetName() != familyName {
+			continue
+		}
+		for _, sample := range family.Metric {
+			for _, label := range sample.Label {
+				if label.GetName() == labelName && label.GetValue() == labelValue {
+					return sample.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func validRuntimeMessageReceipt(t *testing.T) *contract.MessageReceiptV1 {
+	t.Helper()
+	receipt, err := contract.BuildMessageReceiptV1(contract.MessageReceiptV1{
+		ExecutionID: "execution-1", MessageID: "message-1",
+		PayloadDigest: strings.Repeat("1", 64), PlanSetDigest: strings.Repeat("2", 64),
+		SourceWindow: contract.SourceWindowV2{FromTime: 1, UntilTime: 2},
+		Status:       contract.ReceiptStatusCompleted,
+		Counts:       contract.ReceiptCountsV1{Received: 1, Selected: 1, Processed: 1},
+		PerPlan:      []contract.PlanReceiptV1{{PlanID: "1001", Selected: 1, Normal: 1}},
+	})
+	if err != nil {
+		t.Fatalf("BuildMessageReceiptV1() error = %v", err)
+	}
+	return receipt
 }
 
 func hasMetricFamily(t *testing.T, recorder *metric.Recorder, name string) bool {

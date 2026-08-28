@@ -207,7 +207,7 @@ func TestCustomMetricSeriesBudget(t *testing.T) {
 	bindBudgetHealthAndResources(t, recorder)
 	populateAllCustomLabelCombinations(recorder)
 	got := countCustomSeries(t, recorder)
-	if want := 18482; MaxCustomSeries() != want {
+	if want := 18498; MaxCustomSeries() != want {
 		t.Fatalf("MaxCustomSeries() = %d, want formula result %d", MaxCustomSeries(), want)
 	}
 	if gotObservation := countObservationSeries(t, recorder); gotObservation != observationCustomSeries() {
@@ -233,30 +233,33 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		t.Fatalf("BindLifecycle() error = %v", err)
 	}
 	expected := map[string]string{
-		"bkmonitor_alarmd_build_info":                   "variableLabels: {version,commit,schema_version}",
-		"bkmonitor_alarmd_process_duration_seconds":     "variableLabels: {stage,mode}",
-		"bkmonitor_alarmd_process_total":                "variableLabels: {stage,mode,status,error_code}",
-		"bkmonitor_alarmd_records_total":                "variableLabels: {stage,mode,direction,record_type}",
-		"bkmonitor_alarmd_pipeline_latency_seconds":     "variableLabels: {from_stage,to_stage,mode}",
-		"bkmonitor_alarmd_shadow_compare_total":         "variableLabels: {component,result}",
-		"bkmonitor_alarmd_observation_total":            "variableLabels: {component,stage,result,reason_code}",
-		"bkmonitor_alarmd_operation_total":              "variableLabels: {operation,result,reason_code}",
-		"bkmonitor_alarmd_observation_duration_seconds": "variableLabels: {component,stage,result}",
-		"bkmonitor_alarmd_observed_messages_total":      "variableLabels: {stage,direction,result}",
-		"bkmonitor_alarmd_observed_records_total":       "variableLabels: {stage,direction,result}",
-		"bkmonitor_alarmd_observed_plans_total":         "variableLabels: {stage,direction,result}",
-		"bkmonitor_alarmd_observed_levels_total":        "variableLabels: {stage,direction,result}",
-		"bkmonitor_alarmd_observed_events_total":        "variableLabels: {stage,direction,result}",
-		"bkmonitor_alarmd_observed_bytes_total":         "variableLabels: {stage,direction,result}",
-		"bkmonitor_alarmd_observed_keys_total":          "variableLabels: {stage,direction,result}",
-		"bkmonitor_alarmd_observed_state_bytes_total":   "variableLabels: {stage,direction,result}",
-		"bkmonitor_alarmd_ready":                        "variableLabels: {}",
-		"bkmonitor_alarmd_assigned_claims":              "variableLabels: {}",
-		"bkmonitor_alarmd_fatal_total":                  "variableLabels: {}",
-		"bkmonitor_alarmd_draining":                     "variableLabels: {}",
-		"bkmonitor_alarmd_drain_total":                  "variableLabels: {result}",
-		"bkmonitor_alarmd_inflight_records":             "variableLabels: {}",
-		"bkmonitor_alarmd_consumer_lag_records":         "variableLabels: {}",
+		"bkmonitor_alarmd_build_info":                     "variableLabels: {version,commit,schema_version}",
+		"bkmonitor_alarmd_process_duration_seconds":       "variableLabels: {stage,mode}",
+		"bkmonitor_alarmd_process_total":                  "variableLabels: {stage,mode,status,error_code}",
+		"bkmonitor_alarmd_records_total":                  "variableLabels: {stage,mode,direction,record_type}",
+		"bkmonitor_alarmd_pipeline_latency_seconds":       "variableLabels: {from_stage,to_stage,mode}",
+		"bkmonitor_alarmd_shadow_compare_total":           "variableLabels: {component,result}",
+		"bkmonitor_alarmd_observation_total":              "variableLabels: {component,stage,result,reason_code}",
+		"bkmonitor_alarmd_operation_total":                "variableLabels: {operation,result,reason_code}",
+		"bkmonitor_alarmd_observation_duration_seconds":   "variableLabels: {component,stage,result}",
+		"bkmonitor_alarmd_observed_messages_total":        "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_observed_records_total":         "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_observed_plans_total":           "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_observed_levels_total":          "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_observed_events_total":          "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_observed_bytes_total":           "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_observed_keys_total":            "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_observed_state_bytes_total":     "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_message_receipt_status_total":   "variableLabels: {status}",
+		"bkmonitor_alarmd_message_receipt_business_total": "variableLabels: {field}",
+		"bkmonitor_alarmd_message_receipt_delivery_total": "variableLabels: {outcome}",
+		"bkmonitor_alarmd_ready":                          "variableLabels: {}",
+		"bkmonitor_alarmd_assigned_claims":                "variableLabels: {}",
+		"bkmonitor_alarmd_fatal_total":                    "variableLabels: {}",
+		"bkmonitor_alarmd_draining":                       "variableLabels: {}",
+		"bkmonitor_alarmd_drain_total":                    "variableLabels: {result}",
+		"bkmonitor_alarmd_inflight_records":               "variableLabels: {}",
+		"bkmonitor_alarmd_consumer_lag_records":           "variableLabels: {}",
 	}
 
 	descriptions := make(chan string)

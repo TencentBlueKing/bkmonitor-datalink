@@ -44,7 +44,36 @@ type ReceiptDropEvidence struct {
 }
 
 type ReceiptPublisherDiagnostics struct {
-	OnDrop func(ReceiptDropEvidence)
+	OnValidated func(*contract.MessageReceiptV1)
+	OnQueued    func(uint64)
+	OnACKed     func(uint64)
+	OnDrop      func(ReceiptDropEvidence)
+}
+
+// ObserveValidated reports one Receipt only after its official encoder or
+// validator has completed contract validation successfully.
+func (diagnostics ReceiptPublisherDiagnostics) ObserveValidated(receipt *contract.MessageReceiptV1) {
+	if diagnostics.OnValidated == nil || receipt == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	diagnostics.OnValidated(receipt)
+}
+
+func (diagnostics ReceiptPublisherDiagnostics) queued(count uint64) {
+	diagnostics.observeCount(diagnostics.OnQueued, count)
+}
+
+func (diagnostics ReceiptPublisherDiagnostics) acked(count uint64) {
+	diagnostics.observeCount(diagnostics.OnACKed, count)
+}
+
+func (diagnostics ReceiptPublisherDiagnostics) observeCount(callback func(uint64), count uint64) {
+	if callback == nil || count == 0 {
+		return
+	}
+	defer func() { _ = recover() }()
+	callback(count)
 }
 
 func (diagnostics ReceiptPublisherDiagnostics) drop(kind ReceiptDropKind, count uint64) {
@@ -193,14 +222,6 @@ func (publisher *ReceiptPublisher) TryEnqueue(receipt *contract.MessageReceiptV1
 	if publisher == nil || publisher.core == nil {
 		return false
 	}
-	publisher.mu.Lock()
-	if !publisher.accepting {
-		publisher.drops.Closed++
-		publisher.mu.Unlock()
-		publisher.diagnostics.drop(ReceiptDropClosed, 1)
-		return false
-	}
-	publisher.mu.Unlock()
 
 	payload, err := contract.EncodeMessageReceiptV1(receipt)
 	if err != nil {
@@ -211,6 +232,7 @@ func (publisher *ReceiptPublisher) TryEnqueue(receipt *contract.MessageReceiptV1
 		publisher.diagnostics.drop(ReceiptDropEncodeFailed, 1)
 		return false
 	}
+	publisher.diagnostics.ObserveValidated(receipt)
 
 	publisher.mu.Lock()
 	if !publisher.accepting {
@@ -236,6 +258,7 @@ func (publisher *ReceiptPublisher) TryEnqueue(receipt *contract.MessageReceiptV1
 	publisher.enqueued++
 	publisher.queue <- queuedReceipt{payload: payload}
 	publisher.mu.Unlock()
+	publisher.diagnostics.queued(1)
 	return true
 }
 
@@ -279,6 +302,7 @@ func (publisher *ReceiptPublisher) finish(item queuedReceipt, err error) {
 	}
 	publisher.acked++
 	publisher.mu.Unlock()
+	publisher.diagnostics.acked(1)
 }
 
 func (publisher *ReceiptPublisher) shutdownWithin(ctx context.Context) ReceiptDrainResult {
@@ -310,9 +334,6 @@ func (publisher *ReceiptPublisher) shutdownWithin(ctx context.Context) ReceiptDr
 		publisher.mu.Lock()
 		publisher.abandoned = true
 		timedOut := publisher.pendingMessages
-		if timedOut == 0 {
-			timedOut = 1
-		}
 		publisher.drops.ShutdownTimeout += uint64(timedOut)
 		publisher.recordError(ctx.Err())
 		result := publisher.snapshotLocked()

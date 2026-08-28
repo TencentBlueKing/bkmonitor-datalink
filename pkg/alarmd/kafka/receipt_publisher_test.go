@@ -83,9 +83,11 @@ func TestReceiptPublisherClassifiesEncodeAndByteBudgetDrops(t *testing.T) {
 		sends++
 		return 0, 0, nil
 	}}
-	publisher, err := newReceiptPublisher(
+	validated := make(chan *contract.MessageReceiptV1, 1)
+	publisher, err := newReceiptPublisherWithDiagnostics(
 		"alarmd-message-receipt-shadow", producer, &fakeCloser{},
 		ReceiptPublisherLimits{MaxQueuedMessages: 2, MaxQueuedBytes: len(payload) - 1},
+		ReceiptPublisherDiagnostics{OnValidated: func(receipt *contract.MessageReceiptV1) { validated <- receipt }},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +97,14 @@ func TestReceiptPublisherClassifiesEncodeAndByteBudgetDrops(t *testing.T) {
 	}
 	if publisher.TryEnqueue(&receipt) {
 		t.Fatal("TryEnqueue() accepted a Receipt above the byte budget")
+	}
+	if got := <-validated; got.ReceiptID != receipt.ReceiptID {
+		t.Fatalf("validated Receipt = %s, want %s", got.ReceiptID, receipt.ReceiptID)
+	}
+	select {
+	case got := <-validated:
+		t.Fatalf("invalid Receipt reached validated diagnostics: %+v", got)
+	default:
 	}
 	result := publisher.Shutdown(context.Background())
 	if sends != 0 || result.Status != ReceiptDrainWithDrop || result.Enqueued != 0 || result.Acked != 0 ||
@@ -131,6 +141,48 @@ func TestReceiptPublisherClassifiesBrokerACKDropWithoutRetrying(t *testing.T) {
 	if sends != 1 || result.Status != ReceiptDrainWithDrop || result.Enqueued != 1 || result.Acked != 0 ||
 		result.Drops.BrokerACKFailed != 1 || !errors.Is(result.Err, want) {
 		t.Fatalf("Shutdown() = %#v, sends=%d", result, sends)
+	}
+}
+
+func TestReceiptPublisherReportsQueuedAndACKedLifecycle(t *testing.T) {
+	t.Parallel()
+
+	receipt := messageReceiptGolden(t)
+	payload, err := contract.EncodeMessageReceiptV1(&receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type lifecycleEvidence struct {
+		outcome string
+		count   uint64
+	}
+	evidence := make(chan lifecycleEvidence, 3)
+	publisher, err := newReceiptPublisherWithDiagnostics(
+		"alarmd-message-receipt-shadow",
+		&fakeSyncProducer{send: func(*sarama.ProducerMessage) (int32, int64, error) { return 0, 0, nil }},
+		&fakeCloser{}, ReceiptPublisherLimits{MaxQueuedMessages: 1, MaxQueuedBytes: len(payload)},
+		ReceiptPublisherDiagnostics{
+			OnValidated: func(*contract.MessageReceiptV1) { evidence <- lifecycleEvidence{outcome: "validated", count: 1} },
+			OnQueued:    func(count uint64) { evidence <- lifecycleEvidence{outcome: "queued", count: count} },
+			OnACKed:     func(count uint64) { evidence <- lifecycleEvidence{outcome: "acked", count: count} },
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !publisher.TryEnqueue(&receipt) {
+		t.Fatal("TryEnqueue() = false")
+	}
+	if result := publisher.Shutdown(context.Background()); result.Status != ReceiptDrainSuccess {
+		t.Fatalf("Shutdown() = %+v, want SUCCESS", result)
+	}
+	got := map[string]uint64{}
+	for range 3 {
+		item := <-evidence
+		got[item.outcome] += item.count
+	}
+	if got["validated"] != 1 || got["queued"] != 1 || got["acked"] != 1 {
+		t.Fatalf("lifecycle evidence = %v, want validated=1 queued=1 acked=1", got)
 	}
 }
 
@@ -420,7 +472,11 @@ func messageReceiptGolden(t testing.TB) contract.MessageReceiptV1 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return *receipt
+	built, err := contract.BuildMessageReceiptV1(*receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return *built
 }
 
 func expectReceiptDropEvidence(

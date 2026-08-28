@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	inputv2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/input/adapter/v2"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
@@ -163,10 +164,33 @@ func (runtime *observedReceiptRuntime) Shutdown(ctx context.Context) enginekafka
 func receiptPublisherDiagnostics(
 	observer observability.Observer,
 	logger *observability.Logger,
+	recorder *metric.Recorder,
 ) enginekafka.ReceiptPublisherDiagnostics {
-	return enginekafka.ReceiptPublisherDiagnostics{OnDrop: func(evidence enginekafka.ReceiptDropEvidence) {
-		observeReceiptDrop(observer, logger, observability.StageCoverageGap, evidence)
-	}}
+	return enginekafka.ReceiptPublisherDiagnostics{
+		OnValidated: recorder.RecordValidatedMessageReceipt,
+		OnQueued:    recorder.RecordMessageReceiptQueued,
+		OnACKed:     recorder.RecordMessageReceiptACKed,
+		OnDrop: func(evidence enginekafka.ReceiptDropEvidence) {
+			if receiptDropRepresentsLoss(evidence.Kind) {
+				recorder.RecordMessageReceiptDropped(evidence.Count)
+			}
+			observeReceiptDrop(observer, logger, observability.StageCoverageGap, evidence)
+		},
+	}
+}
+
+func receiptDropRepresentsLoss(kind enginekafka.ReceiptDropKind) bool {
+	switch kind {
+	case enginekafka.ReceiptDropQueueMessages,
+		enginekafka.ReceiptDropQueueBytes,
+		enginekafka.ReceiptDropBrokerACKFailed,
+		enginekafka.ReceiptDropClosed,
+		enginekafka.ReceiptDropShutdownTimeout,
+		enginekafka.ReceiptDropPublisherUnavailable:
+		return true
+	default:
+		return false
+	}
 }
 
 func observeReceiptDrop(

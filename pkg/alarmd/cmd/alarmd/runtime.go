@@ -80,13 +80,19 @@ type unavailableReceiptRuntime struct {
 	dropped     atomic.Uint64
 }
 
-func (runtime *unavailableReceiptRuntime) TryEnqueue(*contract.MessageReceiptV1) bool {
-	if runtime != nil {
-		runtime.dropped.Add(1)
-		runtime.diagnostics.ObserveDrop(enginekafka.ReceiptDropEvidence{
-			Kind: enginekafka.ReceiptDropPublisherUnavailable, Count: 1,
-		})
+func (runtime *unavailableReceiptRuntime) TryEnqueue(receipt *contract.MessageReceiptV1) bool {
+	if runtime == nil {
+		return false
 	}
+	if err := contract.ValidateMessageReceiptV1(receipt); err != nil {
+		runtime.diagnostics.ObserveDrop(enginekafka.ReceiptDropEvidence{Kind: enginekafka.ReceiptDropEncodeFailed, Count: 1})
+		return false
+	}
+	runtime.diagnostics.ObserveValidated(receipt)
+	runtime.dropped.Add(1)
+	runtime.diagnostics.ObserveDrop(enginekafka.ReceiptDropEvidence{
+		Kind: enginekafka.ReceiptDropPublisherUnavailable, Count: 1,
+	})
 	return false
 }
 
@@ -714,7 +720,7 @@ func openApplicationBundleWithFactories(
 	if err != nil {
 		return cleanup(err)
 	}
-	receiptDiagnostics := receiptPublisherDiagnostics(runtimeObserver, logger)
+	receiptDiagnostics := receiptPublisherDiagnostics(runtimeObserver, logger, recorder)
 	receipts, err := factories.openReceipts(
 		cfg.Kafka.MessageReceiptCoordinates(), cfg.ReceiptPublisherLimits(), receiptDiagnostics,
 	)

@@ -192,6 +192,27 @@ func TestMessageRouterDelegatesFullRecordsToEvaluationPipeline(t *testing.T) {
 	}
 }
 
+func TestMessageRouterBuildsStagedFullTaskWithoutEvaluatingIt(t *testing.T) {
+	t.Parallel()
+
+	want := newBlockingRoutedTask(RuntimeKey{StrategyID: "1001"})
+	processor := &stagedMessageProcessorSpy{task: want}
+	router, err := NewMessageRouter(inputv2.New(g1ReaderLimits()), processor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := router.BuildMessageTask(context.Background(), encodeG1Envelope(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task != want || processor.buildCalls != 1 {
+		t.Fatalf("BuildMessageTask() = %T, build calls = %d, want staged task/1", task, processor.buildCalls)
+	}
+	if processor.fullCalls != 0 || processor.detectOnlyCalls != 0 {
+		t.Fatalf("processor evaluated during ordered build: full=%d detect-only=%d", processor.fullCalls, processor.detectOnlyCalls)
+	}
+}
+
 func TestMessageRouterCompletesUnavailableWithoutEvaluation(t *testing.T) {
 	t.Parallel()
 
@@ -332,6 +353,20 @@ type messageProcessorSpy struct {
 	detectOnlyCalls  int
 	fullResult       MessageResult
 	detectOnlyResult MessageResult
+}
+
+type stagedMessageProcessorSpy struct {
+	messageProcessorSpy
+	task       RoutedMessageTask
+	buildCalls int
+}
+
+func (processor *stagedMessageProcessorSpy) BuildFullMessageTask(
+	context.Context,
+	*inputv2.EvaluationInput,
+) (RoutedMessageTask, error) {
+	processor.buildCalls++
+	return processor.task, nil
 }
 
 func (processor *messageProcessorSpy) EvaluateMessage(context.Context, *inputv2.EvaluationInput) (MessageResult, error) {

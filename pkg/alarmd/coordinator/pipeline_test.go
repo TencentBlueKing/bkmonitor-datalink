@@ -85,10 +85,28 @@ func TestEvaluationPipelineRunsG1ThresholdThroughRuntimeState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	message, err := pipeline.EvaluateMessage(context.Background(), decoded.Input)
+	task, err := pipeline.BuildFullMessageTask(context.Background(), decoded.Input)
 	if err != nil {
-		t.Fatalf("EvaluateMessage() error = %v", err)
+		t.Fatalf("BuildFullMessageTask() error = %v", err)
 	}
+	keys := task.RuntimeKeys()
+	record, ok := decoded.Input.RecordBatch().Record(0)
+	if !ok || len(keys) != 1 || keys[0].TenantID != decoded.Input.Execution().TenantID ||
+		keys[0].BusinessID != record.BusinessID() || keys[0].StrategyID != "1001" ||
+		keys[0].DimensionIdentityDigest != record.DimensionIdentityDigest() || keys[0].StateCompatibilityHash == "" {
+		t.Fatalf("RuntimeKeys() = %#v, want one complete strategy/time-series identity", keys)
+	}
+	if err := task.Prepare(context.Background()); err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	outcome, err := task.Evaluate(context.Background())
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if outcome.Kind != MessageOutcomeCompleted || outcome.Message == nil || outcome.Rejected != nil {
+		t.Fatalf("Evaluate() outcome = %#v, want completed message", outcome)
+	}
+	message := *outcome.Message
 	result := message.CriticalResult
 	if len(result.Events) != 1 || result.Events[0].EventKind != contract.LevelResultAbnormal || result.Events[0].PrimaryLevelID != 5 {
 		t.Fatalf("events = %#v, want one Level 5 ABNORMAL", result.Events)

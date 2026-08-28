@@ -113,6 +113,39 @@ func TestObservedRecordRejectsUntrustworthyHighWaterMark(t *testing.T) {
 	}
 }
 
+func TestAssignmentCursorAdvancesOnlyFromContiguousCommitWatermark(t *testing.T) {
+	t.Parallel()
+
+	state := newAssignmentLifecycle()
+	session := newFakeSession(context.Background(), &[]string{})
+	claim := newFakeClaim("trigger-input", 0, nil)
+	claim.highWater = 15
+	session.claims = map[string][]int32{"trigger-input": {0}}
+	if err := state.Setup(session); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ClaimInitialized(session, claim); err != nil {
+		t.Fatal(err)
+	}
+	if !state.TryBeginObservedRecord(session, claim, 10) || !state.TryBeginObservedRecord(session, claim, 11) {
+		t.Fatal("active claim rejected an observed record")
+	}
+	assertAssignmentSnapshot(t, state.Snapshot(), assignmentSnapshot{
+		ready: true, assignedClaims: 1, inflightRecords: 2, consumerLagRecords: 5, consumerLagKnown: true,
+	})
+	state.EndObservedRecord(session, claim, 12, false)
+	state.EndObservedRecord(session, claim, 11, false)
+	state.AdvanceObservedCursor(session, claim, 11)
+	claim.highWater = 11
+	if snapshot := state.Snapshot(); snapshot.consumerLagKnown {
+		t.Fatalf("high water below an admitted later offset became trustworthy: %+v", snapshot)
+	}
+	claim.highWater = 15
+	assertAssignmentSnapshot(t, state.Snapshot(), assignmentSnapshot{
+		ready: true, assignedClaims: 1, consumerLagRecords: 4, consumerLagKnown: true,
+	})
+}
+
 func TestZeroClaimAssignmentHasKnownZeroLag(t *testing.T) {
 	t.Parallel()
 

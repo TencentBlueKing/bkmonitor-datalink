@@ -83,6 +83,50 @@ func TestStaleSessionCancellationDoesNotClearNewAssignment(t *testing.T) {
 	}
 }
 
+func TestStaleObservedCompletionDoesNotDecrementNewAssignmentInflight(t *testing.T) {
+	t.Parallel()
+
+	lifecycle := newAssignmentLifecycle()
+	oldSession := newFakeSession(context.Background(), &[]string{})
+	oldSession.generation = 1
+	oldClaim := newFakeClaim("trigger-input", 0, nil)
+	oldSession.claims = map[string][]int32{"trigger-input": {0}}
+	if err := lifecycle.Setup(oldSession); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.ClaimInitialized(oldSession, oldClaim); err != nil {
+		t.Fatal(err)
+	}
+	if !lifecycle.TryBeginObservedRecord(oldSession, oldClaim, 10) {
+		t.Fatal("old assignment rejected record")
+	}
+
+	newSession := newFakeSession(context.Background(), &[]string{})
+	newSession.generation = 2
+	newClaim := newFakeClaim("trigger-input", 0, nil)
+	newSession.claims = map[string][]int32{"trigger-input": {0}}
+	if err := lifecycle.Setup(newSession); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.ClaimInitialized(newSession, newClaim); err != nil {
+		t.Fatal(err)
+	}
+	if !lifecycle.TryBeginObservedRecord(newSession, newClaim, 20) {
+		t.Fatal("new assignment rejected record")
+	}
+	if snapshot := lifecycle.Snapshot(); snapshot.inflightRecords != 1 {
+		t.Fatalf("new assignment inherited %d stale inflight records, want 1 current record", snapshot.inflightRecords)
+	}
+	lifecycle.EndObservedRecord(oldSession, oldClaim, 11, false)
+	if snapshot := lifecycle.Snapshot(); snapshot.inflightRecords != 1 {
+		t.Fatalf("new assignment inflight = %d after stale callback, want 1", snapshot.inflightRecords)
+	}
+	lifecycle.EndObservedRecord(newSession, newClaim, 21, false)
+	if snapshot := lifecycle.Snapshot(); snapshot.inflightRecords != 0 {
+		t.Fatalf("new assignment inflight = %d after current callback, want 0", snapshot.inflightRecords)
+	}
+}
+
 func TestEndedManagedAssignmentRejectsLateClaim(t *testing.T) {
 	t.Parallel()
 

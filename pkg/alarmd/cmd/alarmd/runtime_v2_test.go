@@ -59,6 +59,7 @@ func TestOpenApplicationBundleBuildsV2EvaluationService(t *testing.T) {
 			critical coordinator.CriticalCompletion,
 			gotReceipts coordinator.ReceiptPublisher,
 			gate *coordinator.CriticalDependencyGate,
+			runnerLimits coordinator.ConcurrentRunnerLimits,
 			diagnostics enginekafka.EvaluationDiagnostics,
 			_ coordinator.DependencyRetryConfig,
 			_ time.Duration,
@@ -68,6 +69,9 @@ func TestOpenApplicationBundleBuildsV2EvaluationService(t *testing.T) {
 			}
 			if router == nil || critical == nil || gotReceipts == nil || gate == nil {
 				t.Fatal("v2 evaluation service received an incomplete composition")
+			}
+			if runnerLimits != cfg.EvaluationRunnerLimits() {
+				t.Fatalf("evaluation runner limits = %+v, want %+v", runnerLimits, cfg.EvaluationRunnerLimits())
 			}
 			serviceReceipts = gotReceipts
 			if diagnostics.OnRejected == nil || diagnostics.OnOffsetMarked == nil {
@@ -389,6 +393,7 @@ func TestOpenApplicationBundleDoesNotRetryUnclassifiedFactoryError(t *testing.T)
 			coordinator.CriticalCompletion,
 			coordinator.ReceiptPublisher,
 			*coordinator.CriticalDependencyGate,
+			coordinator.ConcurrentRunnerLimits,
 			enginekafka.EvaluationDiagnostics,
 			coordinator.DependencyRetryConfig,
 			time.Duration,
@@ -432,6 +437,7 @@ func TestOpenApplicationBundleFailsOpenWhenReceiptKafkaIsUnavailable(t *testing.
 			_ coordinator.CriticalCompletion,
 			receipts coordinator.ReceiptPublisher,
 			_ *coordinator.CriticalDependencyGate,
+			_ coordinator.ConcurrentRunnerLimits,
 			_ enginekafka.EvaluationDiagnostics,
 			_ coordinator.DependencyRetryConfig,
 			_ time.Duration,
@@ -511,6 +517,7 @@ func TestOpenApplicationBundleRejectsDeterministicReceiptFactoryError(t *testing
 			coordinator.CriticalCompletion,
 			coordinator.ReceiptPublisher,
 			*coordinator.CriticalDependencyGate,
+			coordinator.ConcurrentRunnerLimits,
 			enginekafka.EvaluationDiagnostics,
 			coordinator.DependencyRetryConfig,
 			time.Duration,

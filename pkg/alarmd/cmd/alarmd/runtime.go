@@ -118,6 +118,7 @@ type applicationComponentFactories struct {
 		coordinator.CriticalCompletion,
 		coordinator.ReceiptPublisher,
 		*coordinator.CriticalDependencyGate,
+		coordinator.ConcurrentRunnerLimits,
 		enginekafka.EvaluationDiagnostics,
 		coordinator.DependencyRetryConfig,
 		time.Duration,
@@ -562,6 +563,7 @@ func defaultApplicationComponentFactories() applicationComponentFactories {
 			critical coordinator.CriticalCompletion,
 			receipts coordinator.ReceiptPublisher,
 			gate *coordinator.CriticalDependencyGate,
+			runnerLimits coordinator.ConcurrentRunnerLimits,
 			diagnostics enginekafka.EvaluationDiagnostics,
 			retryConfig coordinator.DependencyRetryConfig,
 			drainTimeout time.Duration,
@@ -570,7 +572,7 @@ func defaultApplicationComponentFactories() applicationComponentFactories {
 				return nil, err
 			}
 			runtime, err := enginekafka.OpenEvaluationService(
-				coordinates, router, critical, receipts, gate, diagnostics, retryConfig, drainTimeout,
+				coordinates, router, critical, receipts, gate, runnerLimits, diagnostics, retryConfig, drainTimeout,
 			)
 			if err != nil {
 				return nil, retryableStartupDependency(err)
@@ -730,6 +732,7 @@ func openApplicationBundleWithFactories(
 	consumerCoordinates.Diagnostics = consumerDiagnostics(recorder, logger)
 	service, err := factories.openEvaluationService(
 		consumerCoordinates, router, &criticalCompletionRuntime{CriticalPhaseCompletion: retryingCritical}, observedReceipts, gate,
+		cfg.EvaluationRunnerLimits(),
 		enginekafka.EvaluationDiagnostics{
 			OnRejected: rejectedMessageDiagnostics(logger), OnOffsetMarked: offsetMarkDiagnostics(runtimeObserver),
 		},

@@ -67,6 +67,46 @@ func TestEvaluationHandlerCompletesRawMessageBeforeOffsetAndReceipt(t *testing.T
 	}
 }
 
+func TestEvaluationHandlerRunsDisjointRuntimeKeysConcurrently(t *testing.T) {
+	t.Parallel()
+
+	first := newHandlerBlockingTask(alarmdcoordinator.RuntimeKey{StrategyID: "1"})
+	second := newHandlerBlockingTask(alarmdcoordinator.RuntimeKey{StrategyID: "2"})
+	router := &evaluationTaskRouter{tasks: map[string]*handlerBlockingTask{"first": first, "second": second}}
+	events := []string{}
+	session := newFakeSession(context.Background(), &events)
+	claim := newFakeClaim("execution-envelope", 0, []*sarama.ConsumerMessage{
+		{Topic: "execution-envelope", Offset: 10, Value: []byte("first")},
+		{Topic: "execution-envelope", Offset: 11, Value: []byte("second")},
+	})
+	handler := newTestEvaluationHandler(
+		t, router,
+		evaluationCriticalCompletionFunc(func(context.Context, alarmdcoordinator.CriticalResult) error { return nil }),
+		fakeSyncOffsetCommitter{events: &events},
+		evaluationReceiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
+		alarmdcoordinator.NewCriticalDependencyGate(nil), nil,
+	)
+	setupEvaluationHandler(t, handler, session, claim)
+
+	done := make(chan error, 1)
+	go func() { done <- handler.ConsumeClaim(session, claim) }()
+	awaitHandlerSignal(t, first.started, "first RuntimeKey")
+	awaitHandlerSignal(t, second.started, "disjoint RuntimeKey")
+	close(first.release)
+	close(second.release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ConsumeClaim did not drain concurrent work")
+	}
+	if session.markedOffset != 12 {
+		t.Fatalf("marked offset = %d, want 12", session.markedOffset)
+	}
+}
+
 func TestEvaluationPartitionOffsetCommitterReportsFinalMark(t *testing.T) {
 	t.Parallel()
 
@@ -423,6 +463,59 @@ type evaluationMessageRouterFunc func(context.Context, []byte) (alarmdcoordinato
 
 func (function evaluationMessageRouterFunc) Route(ctx context.Context, payload []byte) (alarmdcoordinator.MessageOutcome, error) {
 	return function(ctx, payload)
+}
+
+type evaluationTaskRouter struct {
+	tasks map[string]*handlerBlockingTask
+}
+
+func (*evaluationTaskRouter) Route(context.Context, []byte) (alarmdcoordinator.MessageOutcome, error) {
+	return alarmdcoordinator.MessageOutcome{}, errors.New("legacy route must not be used for staged tasks")
+}
+
+func (router *evaluationTaskRouter) BuildMessageTask(
+	_ context.Context,
+	payload []byte,
+) (alarmdcoordinator.RoutedMessageTask, error) {
+	return router.tasks[string(payload)], nil
+}
+
+type handlerBlockingTask struct {
+	keys    []alarmdcoordinator.RuntimeKey
+	started chan struct{}
+	release chan struct{}
+}
+
+func newHandlerBlockingTask(keys ...alarmdcoordinator.RuntimeKey) *handlerBlockingTask {
+	return &handlerBlockingTask{keys: keys, started: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (task *handlerBlockingTask) RuntimeKeys() []alarmdcoordinator.RuntimeKey {
+	return append([]alarmdcoordinator.RuntimeKey(nil), task.keys...)
+}
+
+func (*handlerBlockingTask) Prepare(context.Context) error { return nil }
+
+func (task *handlerBlockingTask) Evaluate(ctx context.Context) (alarmdcoordinator.MessageOutcome, error) {
+	close(task.started)
+	select {
+	case <-task.release:
+	case <-ctx.Done():
+		return alarmdcoordinator.MessageOutcome{}, ctx.Err()
+	}
+	return alarmdcoordinator.MessageOutcome{
+		Kind:    alarmdcoordinator.MessageOutcomeCompleted,
+		Message: &alarmdcoordinator.MessageResult{Receipt: &contract.MessageReceiptV1{}},
+	}, nil
+}
+
+func awaitHandlerSignal(t *testing.T, signal <-chan struct{}, name string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for %s", name)
+	}
 }
 
 type evaluationCriticalCompletionFunc func(context.Context, alarmdcoordinator.CriticalResult) error

@@ -91,6 +91,11 @@ func TestLoadBuildsPhaseOneCoordinatesAndModuleOptions(t *testing.T) {
 	if queue := cfg.ReceiptPublisherLimits(); queue.MaxQueuedMessages != 2000 || queue.MaxQueuedBytes != 8<<20 {
 		t.Fatalf("receipt queue = %+v", queue)
 	}
+	if runner := cfg.EvaluationRunnerLimits(); runner.PreparationWorkers != 3 || runner.StatefulWorkers != 6 ||
+		runner.MaxInflightMessages != 24 || runner.MaxInflightBytes != 12<<20 ||
+		runner.MaxRuntimeKeysPerMessage != 7000 || runner.MaxPendingKeyRefs != 84_000 {
+		t.Fatalf("evaluation runner limits = %+v", runner)
+	}
 
 	codec, err := state.NewCodec(cfg.CodecLimits())
 	if err != nil {
@@ -176,7 +181,8 @@ func TestValidateRejectsInvalidRedisAndRuntimeBudgets(t *testing.T) {
 		"reversed retry": func(cfg *Config) {
 			cfg.DependencyRetry.MaxDelay = cfg.DependencyRetry.MinDelay - 1
 		},
-		"zero receipt queue": func(cfg *Config) { cfg.ReceiptQueue.MaxQueuedMessages = 0 },
+		"zero receipt queue":      func(cfg *Config) { cfg.ReceiptQueue.MaxQueuedMessages = 0 },
+		"zero evaluation workers": func(cfg *Config) { cfg.EvaluationRunner.MaxStatefulWorkers = 0 },
 	}
 
 	for name, mutate := range tests {
@@ -303,6 +309,13 @@ dependency_retry:
 receipt_queue:
   max_queued_messages: 2000
   max_queued_bytes: 8388608
+evaluation_runner:
+  max_preparation_workers: 3
+  max_stateful_workers: 6
+  max_inflight_messages: 24
+  max_inflight_bytes: 12582912
+  max_runtime_keys_per_message: 7000
+  max_pending_key_refs: 84000
 limits:
   reader:
     max_records_per_message: 321

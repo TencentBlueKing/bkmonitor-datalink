@@ -27,6 +27,10 @@ type MessageProcessor interface {
 	EvaluateDetectOnly(context.Context, *inputv2.EvaluationInput) (MessageResult, error)
 }
 
+type FullMessageTaskBuilder interface {
+	BuildFullMessageTask(context.Context, *inputv2.EvaluationInput) (RoutedMessageTask, error)
+}
+
 type MessageOutcomeKind string
 
 const (
@@ -58,50 +62,117 @@ func NewMessageRouter(decoder MessageDecoder, processor MessageProcessor) (*Mess
 }
 
 func (router *MessageRouter) Route(ctx context.Context, payload []byte) (MessageOutcome, error) {
-	if router == nil || router.decoder == nil || router.processor == nil {
-		return MessageOutcome{}, errors.New("alarmd coordinator: initialized message router is required")
-	}
-	decoded, err := router.decoder.Decode(ctx, payload)
+	task, err := router.BuildMessageTask(ctx, payload)
 	if err != nil {
 		return MessageOutcome{}, err
 	}
+	if err := task.Prepare(ctx); err != nil {
+		return MessageOutcome{}, err
+	}
+	return task.Evaluate(ctx)
+}
+
+func (router *MessageRouter) BuildMessageTask(ctx context.Context, payload []byte) (RoutedMessageTask, error) {
+	if router == nil || router.decoder == nil || router.processor == nil {
+		return nil, errors.New("alarmd coordinator: initialized message router is required")
+	}
+	decoded, err := router.decoder.Decode(ctx, payload)
+	if err != nil {
+		return nil, err
+	}
 	if decoded.Rejected {
 		if decoded.Input != nil || decoded.Terminals.Len() == 0 {
-			return MessageOutcome{}, errors.New("alarmd coordinator: invalid rejected decode result")
+			return nil, errors.New("alarmd coordinator: invalid rejected decode result")
 		}
-		return MessageOutcome{
+		return newPreparedMessageTask(MessageOutcome{
 			Kind:     MessageOutcomeRejected,
 			Rejected: &RejectedOutcome{Terminals: decoded.Terminals.Items(), Receipt: decoded.RejectedReceipt},
-		}, nil
+		}), nil
 	}
 	if decoded.Input == nil {
-		return MessageOutcome{}, errors.New("alarmd coordinator: accepted decode result has no input")
+		return nil, errors.New("alarmd coordinator: accepted decode result has no input")
 	}
-	var message MessageResult
 	switch decoded.Input.ProcessingRoute() {
 	case inputv2.RouteFullPipeline:
 		if decoded.Input.RecordBatch().Len() != 0 && len(decoded.Input.PlanViews()) != 0 {
-			message, err = router.processor.EvaluateMessage(ctx, decoded.Input)
-			break
+			if builder, ok := router.processor.(FullMessageTaskBuilder); ok {
+				return builder.BuildFullMessageTask(ctx, decoded.Input)
+			}
+			return newDeferredMessageTask(func(ctx context.Context) (MessageOutcome, error) {
+				message, err := router.processor.EvaluateMessage(ctx, decoded.Input)
+				return completedMessageOutcome(message, err)
+			}), nil
 		}
 		receipt, err := buildMessageReceipt(decoded.Input, nil, decoded.Terminals.Items())
 		if err != nil {
-			return MessageOutcome{}, err
+			return nil, err
 		}
-		message = MessageResult{Receipt: receipt}
+		return newPreparedMessageTask(MessageOutcome{
+			Kind: MessageOutcomeCompleted, Message: &MessageResult{Receipt: receipt},
+		}), nil
 	case inputv2.RouteNoEvaluation:
 		receipt, err := buildMessageReceiptWithOptions(decoded.Input, nil, decoded.Terminals.Items(), receiptBuildOptions{
 			DefaultUnavailable: true, QueryResultReason: decoded.Input.Execution().QueryResultReason,
 		})
 		if err != nil {
-			return MessageOutcome{}, err
+			return nil, err
 		}
-		message = MessageResult{Receipt: receipt}
+		return newPreparedMessageTask(MessageOutcome{
+			Kind: MessageOutcomeCompleted, Message: &MessageResult{Receipt: receipt},
+		}), nil
 	case inputv2.RouteDetectOnly:
-		message, err = router.processor.EvaluateDetectOnly(ctx, decoded.Input)
+		return newDeferredMessageTask(func(ctx context.Context) (MessageOutcome, error) {
+			message, err := router.processor.EvaluateDetectOnly(ctx, decoded.Input)
+			return completedMessageOutcome(message, err)
+		}), nil
 	default:
-		return MessageOutcome{}, fmt.Errorf("alarmd coordinator: unsupported completeness route %s", decoded.Input.ProcessingRoute())
+		return nil, fmt.Errorf("alarmd coordinator: unsupported completeness route %s", decoded.Input.ProcessingRoute())
 	}
+}
+
+type deferredMessageTask struct {
+	prepare  func(context.Context) (MessageOutcome, error)
+	outcome  MessageOutcome
+	prepared bool
+}
+
+func newPreparedMessageTask(outcome MessageOutcome) *deferredMessageTask {
+	return &deferredMessageTask{outcome: outcome, prepared: true}
+}
+
+func newDeferredMessageTask(prepare func(context.Context) (MessageOutcome, error)) *deferredMessageTask {
+	return &deferredMessageTask{prepare: prepare}
+}
+
+func (*deferredMessageTask) RuntimeKeys() []RuntimeKey { return nil }
+
+func (task *deferredMessageTask) Prepare(ctx context.Context) error {
+	if task == nil {
+		return errors.New("alarmd coordinator: message task is required")
+	}
+	if task.prepared {
+		return nil
+	}
+	if task.prepare == nil {
+		return errors.New("alarmd coordinator: message task preparation is required")
+	}
+	outcome, err := task.prepare(ctx)
+	if err != nil {
+		return err
+	}
+	task.outcome = outcome
+	task.prepared = true
+	return nil
+}
+
+func (task *deferredMessageTask) Evaluate(context.Context) (MessageOutcome, error) {
+	if task == nil || !task.prepared {
+		return MessageOutcome{}, errors.New("alarmd coordinator: prepared message task is required")
+	}
+	return task.outcome, nil
+}
+
+func completedMessageOutcome(message MessageResult, err error) (MessageOutcome, error) {
 	if err != nil {
 		return MessageOutcome{}, err
 	}

@@ -26,16 +26,18 @@ import (
 // EvaluationHandler binds the v2 alarmd completion boundary to one Sarama
 // assignment. Each claim owns an independent partition completion tracker.
 type EvaluationHandler struct {
-	router      alarmdcoordinator.MessageOutcomeRouter
-	critical    alarmdcoordinator.CriticalCompletion
-	offsets     OffsetCommitter
-	receipts    alarmdcoordinator.ReceiptPublisher
-	gate        *alarmdcoordinator.CriticalDependencyGate
-	offsetRetry *alarmdcoordinator.DependencyRetry
-	diagnostics EvaluationDiagnostics
-	assignment  *assignmentLifecycle
-	reportFatal func(error)
-	fatalOnce   sync.Once
+	builder      alarmdcoordinator.RoutedMessageTaskBuilder
+	critical     alarmdcoordinator.CriticalCompletion
+	offsets      OffsetCommitter
+	receipts     alarmdcoordinator.ReceiptPublisher
+	gate         *alarmdcoordinator.CriticalDependencyGate
+	offsetRetry  *alarmdcoordinator.DependencyRetry
+	diagnostics  EvaluationDiagnostics
+	assignment   *assignmentLifecycle
+	reportFatal  func(error)
+	fatalOnce    sync.Once
+	runnerLimits alarmdcoordinator.ConcurrentRunnerLimits
+	drainTimeout time.Duration
 }
 
 type RejectedMessageEvidence struct {
@@ -68,11 +70,32 @@ func NewEvaluationHandlerWithDiagnostics(
 	diagnostics EvaluationDiagnostics,
 	reportFatal func(error),
 ) (*EvaluationHandler, error) {
+	return NewEvaluationHandlerWithRunnerLimits(
+		router, critical, offsets, receipts, gate, retryConfig, diagnostics,
+		alarmdcoordinator.DefaultConcurrentRunnerLimits(), 10*time.Second, reportFatal,
+	)
+}
+
+func NewEvaluationHandlerWithRunnerLimits(
+	router alarmdcoordinator.MessageOutcomeRouter,
+	critical alarmdcoordinator.CriticalCompletion,
+	offsets OffsetCommitter,
+	receipts alarmdcoordinator.ReceiptPublisher,
+	gate *alarmdcoordinator.CriticalDependencyGate,
+	retryConfig alarmdcoordinator.DependencyRetryConfig,
+	diagnostics EvaluationDiagnostics,
+	runnerLimits alarmdcoordinator.ConcurrentRunnerLimits,
+	drainTimeout time.Duration,
+	reportFatal func(error),
+) (*EvaluationHandler, error) {
 	if router == nil || critical == nil || offsets == nil || receipts == nil || gate == nil {
 		return nil, errors.New("kafka evaluation handler: router, completion, offsets, receipts and dependency gate are required")
 	}
 	if diagnostics.OnRejected == nil {
 		return nil, errors.New("kafka evaluation handler: rejected evidence observer is required")
+	}
+	if drainTimeout <= 0 {
+		return nil, errors.New("kafka evaluation handler: drain timeout must be positive")
 	}
 	offsetRetry, err := alarmdcoordinator.NewDependencyRetry(gate, alarmdcoordinator.DependencyBlocker{
 		Dependency: alarmdcoordinator.DependencyInputKafka, ReasonCode: contract.ReasonKafkaUnavailable,
@@ -80,10 +103,14 @@ func NewEvaluationHandlerWithDiagnostics(
 	if err != nil {
 		return nil, fmt.Errorf("kafka evaluation handler: offset dependency retry: %w", err)
 	}
+	builder, ok := router.(alarmdcoordinator.RoutedMessageTaskBuilder)
+	if !ok {
+		builder = alarmdcoordinator.AdaptMessageOutcomeRouter(router)
+	}
 	return &EvaluationHandler{
-		router: router, critical: critical, offsets: offsets, receipts: receipts,
+		builder: builder, critical: critical, offsets: offsets, receipts: receipts,
 		gate: gate, offsetRetry: offsetRetry, diagnostics: diagnostics,
-		assignment: newAssignmentLifecycle(), reportFatal: reportFatal,
+		assignment: newAssignmentLifecycle(), reportFatal: reportFatal, runnerLimits: runnerLimits, drainTimeout: drainTimeout,
 	}, nil
 }
 
@@ -137,15 +164,31 @@ func (handler *EvaluationHandler) ConsumeClaim(session sarama.ConsumerGroupSessi
 	offsets := evaluationPartitionOffsetCommitter{
 		session: session, offsets: handler.offsets, topic: claim.Topic(), partition: claim.Partition(),
 		retry: handler.offsetRetry, onMarked: handler.diagnostics.OnOffsetMarked,
+		onAdvanced: func(nextOffset int64) {
+			handler.assignment.AdvanceObservedCursor(session, claim, nextOffset)
+		},
 	}
-	runner, err := alarmdcoordinator.NewRoutedPartitionRunnerWithObserver(
-		handler.router, handler.critical, offsets, handler.receipts,
+	runner, err := alarmdcoordinator.NewConcurrentRoutedPartitionRunner(
+		session.Context(), handler.builder, handler.critical, offsets, handler.receipts,
 		evaluationRejectedObserver{handler: handler, topic: claim.Topic(), partition: claim.Partition()},
+		handler.runnerLimits,
+		&alarmdcoordinator.ConcurrentRunnerCallbacks{OnTaskFinished: func(offset int64, _ error) {
+			handler.assignment.EndObservedRecord(session, claim, offset+1, false)
+		}},
 	)
 	if err != nil {
 		handler.fatal(err)
 		return err
 	}
+	runnerFinalized := false
+	defer func() {
+		if runnerFinalized {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), handler.drainTimeout)
+		defer cancel()
+		_ = runner.Stop(ctx)
+	}()
 	if err := handler.assignment.ClaimInitialized(session, claim); err != nil {
 		if errors.Is(err, errAssignmentInactive) {
 			return handler.waitForDrainOrSession(session)
@@ -164,12 +207,22 @@ func (handler *EvaluationHandler) ConsumeClaim(session sarama.ConsumerGroupSessi
 		}
 		select {
 		case <-session.Context().Done():
-			return nil
+			runnerFinalized = true
+			return handler.stopRunner(runner, session.Context().Err())
 		case <-handler.assignment.Drained():
-			return nil
+			runnerFinalized = true
+			return handler.drainRunner(runner)
+		case err := <-runner.Errors():
+			if err == nil {
+				runnerFinalized = true
+				return handler.drainRunner(runner)
+			}
+			handler.fatal(err)
+			return err
 		case message, ok := <-claim.Messages():
 			if !ok {
-				return nil
+				runnerFinalized = true
+				return handler.drainRunner(runner)
 			}
 			if message == nil || message.Topic != claim.Topic() || message.Partition != claim.Partition() {
 				err := errors.New("kafka evaluation handler: message coordinates do not match claim")
@@ -183,17 +236,52 @@ func (handler *EvaluationHandler) ConsumeClaim(session sarama.ConsumerGroupSessi
 			if !handler.assignment.TryBeginObservedRecord(session, claim, message.Offset) {
 				return handler.waitForDrainOrSession(session)
 			}
-			err := runner.Process(session.Context(), message.Offset, message.Value)
-			handler.assignment.EndObservedRecord(session, claim, message.Offset+1, err == nil)
+			err := runner.Submit(message.Offset, message.Value)
 			if err != nil {
+				handler.assignment.EndObservedRecord(session, claim, message.Offset+1, false)
 				if session.Context().Err() != nil && errors.Is(err, session.Context().Err()) {
-					return nil
+					runnerFinalized = true
+					return handler.stopRunner(runner, session.Context().Err())
+				}
+				select {
+				case runnerErr := <-runner.Errors():
+					if runnerErr != nil {
+						err = runnerErr
+					}
+				default:
 				}
 				handler.fatal(err)
 				return err
 			}
 		}
 	}
+}
+
+func (handler *EvaluationHandler) drainRunner(runner *alarmdcoordinator.ConcurrentRoutedPartitionRunner) error {
+	ctx, cancel := context.WithTimeout(context.Background(), handler.drainTimeout)
+	defer cancel()
+	err := runner.Drain(ctx)
+	if err != nil {
+		runner.Cancel()
+		handler.fatal(err)
+	}
+	return err
+}
+
+func (handler *EvaluationHandler) stopRunner(
+	runner *alarmdcoordinator.ConcurrentRoutedPartitionRunner,
+	cause error,
+) error {
+	ctx, cancel := context.WithTimeout(context.Background(), handler.drainTimeout)
+	defer cancel()
+	err := runner.Stop(ctx)
+	if cause != nil && (errors.Is(err, cause) || errors.Is(err, context.Canceled)) {
+		return nil
+	}
+	if err != nil {
+		handler.fatal(err)
+	}
+	return err
 }
 
 type evaluationRejectedObserver struct {
@@ -234,12 +322,13 @@ func (handler *EvaluationHandler) fatal(err error) {
 }
 
 type evaluationPartitionOffsetCommitter struct {
-	session   sarama.ConsumerGroupSession
-	offsets   OffsetCommitter
-	topic     string
-	partition int32
-	retry     *alarmdcoordinator.DependencyRetry
-	onMarked  func(OffsetMarkEvidence)
+	session    sarama.ConsumerGroupSession
+	offsets    OffsetCommitter
+	topic      string
+	partition  int32
+	retry      *alarmdcoordinator.DependencyRetry
+	onMarked   func(OffsetMarkEvidence)
+	onAdvanced func(int64)
 }
 
 // evaluationSessionOffsetCommitter leaves the broker exchange to Sarama's
@@ -287,6 +376,9 @@ func (committer evaluationPartitionOffsetCommitter) CommitThrough(ctx context.Co
 		return fmt.Errorf("kafka evaluation handler: commit through %d: %w", nextOffset, err)
 	}
 	committer.session.MarkOffset(committer.topic, committer.partition, nextOffset, "")
+	if committer.onAdvanced != nil {
+		committer.onAdvanced(nextOffset)
+	}
 	return nil
 }
 

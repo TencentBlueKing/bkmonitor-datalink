@@ -66,6 +66,19 @@ type seriesExecution struct {
 	loaded    state.LoadedWindow
 }
 
+type fullEvaluationTask struct {
+	pipeline       *EvaluationPipeline
+	input          *inputv2.EvaluationInput
+	compiled       map[string]compiledExecution
+	executions     []detect.PlanExecution
+	terminals      []inputv2.Terminal
+	keys           []RuntimeKey
+	detected       isolatedDetection
+	effectiveTimes map[string][]trigger.LevelEffectiveTimeFact
+	prepared       bool
+	evaluated      bool
+}
+
 func NewEvaluationPipeline(options PipelineOptions) (*EvaluationPipeline, error) {
 	if options.Compiler == nil || options.Detector == nil || options.EffectiveTime == nil || options.State == nil || options.StateAdmission == nil {
 		return nil, errors.New("alarmd coordinator: compiler, detector, EffectiveTime, state and batch admission are required")
@@ -90,43 +103,121 @@ func (pipeline *EvaluationPipeline) EvaluateMessage(ctx context.Context, input *
 	if input.ProcessingRoute() != inputv2.RouteFullPipeline {
 		return MessageResult{}, fmt.Errorf("alarmd coordinator: G1 pipeline requires FULL input, got %s", input.ProcessingRoute())
 	}
+	task, err := pipeline.BuildFullMessageTask(ctx, input)
+	if err != nil {
+		return MessageResult{}, err
+	}
+	if err := task.Prepare(ctx); err != nil {
+		return MessageResult{}, err
+	}
+	outcome, err := task.Evaluate(ctx)
+	if err != nil {
+		return MessageResult{}, err
+	}
+	if outcome.Kind != MessageOutcomeCompleted || outcome.Message == nil || outcome.Rejected != nil {
+		return MessageResult{}, errors.New("alarmd coordinator: full evaluation returned invalid message outcome")
+	}
+	return *outcome.Message, nil
+}
 
+func (pipeline *EvaluationPipeline) BuildFullMessageTask(
+	ctx context.Context,
+	input *inputv2.EvaluationInput,
+) (RoutedMessageTask, error) {
+	if pipeline == nil || input == nil {
+		return nil, errors.New("alarmd coordinator: initialized pipeline and input are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if input.ProcessingRoute() != inputv2.RouteFullPipeline {
+		return nil, fmt.Errorf("alarmd coordinator: G1 pipeline requires FULL input, got %s", input.ProcessingRoute())
+	}
 	compiled, executions, compileTerminals, err := pipeline.compilePlans(ctx, input)
 	if err != nil {
-		return MessageResult{}, err
+		return nil, err
 	}
-	terminals := append(input.Terminals().Items(), compileTerminals...)
-	detected := isolatedDetection{Batch: detect.DetectionBatch{
-		Completeness: input.Execution().Completeness, ExecutionMode: detect.ExecutionModeStandard,
+	keys, err := runtimeKeysForCompiledInput(input, compiled)
+	if err != nil {
+		return nil, err
+	}
+	return &fullEvaluationTask{
+		pipeline: pipeline, input: input, compiled: compiled, executions: executions,
+		terminals: append(input.Terminals().Items(), compileTerminals...), keys: keys,
+	}, nil
+}
+
+func (task *fullEvaluationTask) RuntimeKeys() []RuntimeKey {
+	if task == nil {
+		return nil
+	}
+	return append([]RuntimeKey(nil), task.keys...)
+}
+
+func (task *fullEvaluationTask) Prepare(ctx context.Context) error {
+	if task == nil || task.pipeline == nil || task.input == nil {
+		return errors.New("alarmd coordinator: initialized full evaluation task is required")
+	}
+	if task.prepared {
+		return errors.New("alarmd coordinator: full evaluation task is already prepared")
+	}
+	task.detected = isolatedDetection{Batch: detect.DetectionBatch{
+		Completeness: task.input.Execution().Completeness, ExecutionMode: detect.ExecutionModeStandard,
 		DetectionCoverage: detect.DetectionCoverageFull,
 	}}
-	if len(executions) > 0 {
-		detected, err = evaluateDetectWithIsolation(ctx, pipeline.options.Detector, detect.EvaluateRequest{
-			Completeness: input.Execution().Completeness, DatasetContractDigest: compiledDatasetDigest(compiled),
-			Plans: executions, Limits: pipeline.options.DetectLimits,
+	var err error
+	if len(task.executions) > 0 {
+		task.detected, err = evaluateDetectWithIsolation(ctx, task.pipeline.options.Detector, detect.EvaluateRequest{
+			Completeness: task.input.Execution().Completeness, DatasetContractDigest: compiledDatasetDigest(task.compiled),
+			Plans: task.executions, Limits: task.pipeline.options.DetectLimits,
 		})
 		if err != nil {
-			return MessageResult{}, err
+			return err
 		}
 	}
-	terminals = append(terminals, detected.Terminals...)
-	effectiveTimes, err := pipeline.resolveEffectiveTimes(ctx, input, compiled, len(detected.Batch.Series) > 0)
+	task.terminals = append(task.terminals, task.detected.Terminals...)
+	task.effectiveTimes, err = task.pipeline.resolveEffectiveTimes(
+		ctx, task.input, task.compiled, len(task.detected.Batch.Series) > 0,
+	)
 	if err != nil {
-		return MessageResult{}, err
+		return err
 	}
-	series, err := pipeline.loadSeries(ctx, input, detected.Batch, compiled)
+	task.prepared = true
+	return nil
+}
+
+func (task *fullEvaluationTask) Evaluate(ctx context.Context) (MessageOutcome, error) {
+	if task == nil || task.pipeline == nil || task.input == nil || !task.prepared {
+		return MessageOutcome{}, errors.New("alarmd coordinator: prepared full evaluation task is required")
+	}
+	if task.evaluated {
+		return MessageOutcome{}, errors.New("alarmd coordinator: full evaluation task is already evaluated")
+	}
+	task.evaluated = true
+	message, err := task.pipeline.evaluatePreparedFull(ctx, task)
+	if err != nil {
+		return MessageOutcome{}, err
+	}
+	return MessageOutcome{Kind: MessageOutcomeCompleted, Message: &message}, nil
+}
+
+func (pipeline *EvaluationPipeline) evaluatePreparedFull(
+	ctx context.Context,
+	task *fullEvaluationTask,
+) (MessageResult, error) {
+	series, err := pipeline.loadSeries(ctx, task.input, task.detected.Batch, task.compiled)
 	if err != nil {
 		return MessageResult{}, err
 	}
 
 	critical := CriticalResult{Events: make([]contract.TriggerEventV1, 0), StateWrite: state.WriteWindowsRequest{Items: make([]state.LoadedWindow, len(series))}}
-	evaluations := make(map[string][]recordEvaluation, len(compiled))
+	evaluations := make(map[string][]recordEvaluation, len(task.compiled))
 	triggerStarted := time.Now()
 	var triggerRecords, triggerLevels int64
 	triggerTerminals := make([]inputv2.Terminal, 0)
 	for index := range series {
 		planID := series[index].compiled.plan.PlanRef().StrategyID
-		events, results, seriesTerminals, err := pipeline.evaluateSeries(ctx, input, &series[index], effectiveTimes[planID])
+		events, results, seriesTerminals, err := pipeline.evaluateSeries(ctx, task.input, &series[index], task.effectiveTimes[planID])
 		if err != nil {
 			observePipeline(ctx, pipeline.options.Observer, observability.Observation{
 				Component: observability.ComponentTrigger, Stage: observability.StageTriggerCompleted,
@@ -137,7 +228,7 @@ func (pipeline *EvaluationPipeline) EvaluateMessage(ctx context.Context, input *
 		}
 		critical.Events = append(critical.Events, events...)
 		evaluations[planID] = append(evaluations[planID], results...)
-		terminals = append(terminals, seriesTerminals...)
+		task.terminals = append(task.terminals, seriesTerminals...)
 		triggerTerminals = append(triggerTerminals, seriesTerminals...)
 		triggerRecords += int64(len(results) + len(seriesTerminals))
 		for _, result := range results {
@@ -153,8 +244,8 @@ func (pipeline *EvaluationPipeline) EvaluateMessage(ctx context.Context, input *
 		triggerResult = observability.ResultTerminal
 		triggerReason = observability.ReasonCode(terminal.ReasonCode)
 		triggerTrace = observability.TraceFields{
-			ExecutionID: input.Execution().ExecutionID, MessageID: input.Execution().MessageID,
-			QueryGroupKey: input.Execution().QueryGroupKey, StrategyID: terminal.PlanID,
+			ExecutionID: task.input.Execution().ExecutionID, MessageID: task.input.Execution().MessageID,
+			QueryGroupKey: task.input.Execution().QueryGroupKey, StrategyID: terminal.PlanID,
 			TerminalScope: string(terminal.Scope), RecordID: terminal.RecordID,
 		}
 	}
@@ -168,11 +259,39 @@ func (pipeline *EvaluationPipeline) EvaluateMessage(ctx context.Context, input *
 	if _, err := pipeline.options.StateAdmission.AdmitWindows(critical.StateWrite); err != nil {
 		return MessageResult{}, fmt.Errorf("alarmd coordinator: admit runtime state batch: %w", err)
 	}
-	receipt, err := buildMessageReceipt(input, evaluations, terminals)
+	receipt, err := buildMessageReceipt(task.input, evaluations, task.terminals)
 	if err != nil {
 		return MessageResult{}, err
 	}
 	return MessageResult{CriticalResult: critical, Receipt: receipt}, nil
+}
+
+func runtimeKeysForCompiledInput(
+	input *inputv2.EvaluationInput,
+	compiled map[string]compiledExecution,
+) ([]RuntimeKey, error) {
+	keys := make([]RuntimeKey, 0)
+	execution := input.Execution()
+	for _, view := range input.PlanViews() {
+		entry, ok := compiled[view.PlanID()]
+		if !ok {
+			continue
+		}
+		ref := entry.plan.PlanRef()
+		if err := view.ForEachSelectedSlot(func(_ uint32, record inputv2.RecordView, valid bool) error {
+			if !valid {
+				return nil
+			}
+			keys = append(keys, RuntimeKey{
+				TenantID: execution.TenantID, BusinessID: record.BusinessID(), StrategyID: ref.StrategyID,
+				StateCompatibilityHash: ref.StateCompatibilityHash, DimensionIdentityDigest: record.DimensionIdentityDigest(),
+			})
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return canonicalRuntimeKeys(keys), nil
 }
 
 // EvaluateDetectOnly runs M3 and M5 for PARTIAL input. It deliberately does

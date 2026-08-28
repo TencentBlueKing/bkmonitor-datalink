@@ -120,15 +120,25 @@ type ReceiptQueueConfig struct {
 	MaxQueuedBytes    int `yaml:"max_queued_bytes"`
 }
 
+type EvaluationRunnerConfig struct {
+	MaxPreparationWorkers    int `yaml:"max_preparation_workers"`
+	MaxStatefulWorkers       int `yaml:"max_stateful_workers"`
+	MaxInflightMessages      int `yaml:"max_inflight_messages"`
+	MaxInflightBytes         int `yaml:"max_inflight_bytes"`
+	MaxRuntimeKeysPerMessage int `yaml:"max_runtime_keys_per_message"`
+	MaxPendingKeyRefs        int `yaml:"max_pending_key_refs"`
+}
+
 type Config struct {
-	Mode            string                `yaml:"mode"`
-	HTTP            HTTPConfig            `yaml:"http"`
-	Kafka           KafkaConfig           `yaml:"kafka"`
-	Redis           RedisConfig           `yaml:"redis"`
-	Limits          LimitsConfig          `yaml:"limits"`
-	DependencyRetry DependencyRetryConfig `yaml:"dependency_retry"`
-	ReceiptQueue    ReceiptQueueConfig    `yaml:"receipt_queue"`
-	ShutdownTimeout Duration              `yaml:"shutdown_timeout"`
+	Mode             string                 `yaml:"mode"`
+	HTTP             HTTPConfig             `yaml:"http"`
+	Kafka            KafkaConfig            `yaml:"kafka"`
+	Redis            RedisConfig            `yaml:"redis"`
+	Limits           LimitsConfig           `yaml:"limits"`
+	DependencyRetry  DependencyRetryConfig  `yaml:"dependency_retry"`
+	ReceiptQueue     ReceiptQueueConfig     `yaml:"receipt_queue"`
+	EvaluationRunner EvaluationRunnerConfig `yaml:"evaluation_runner"`
+	ShutdownTimeout  Duration               `yaml:"shutdown_timeout"`
 }
 
 func Default() Config {
@@ -150,7 +160,11 @@ func Default() Config {
 		DependencyRetry: DependencyRetryConfig{
 			MinDelay: Duration(100 * time.Millisecond), MaxDelay: Duration(5 * time.Second),
 		},
-		ReceiptQueue:    ReceiptQueueConfig{MaxQueuedMessages: 4096, MaxQueuedBytes: 16 << 20},
+		ReceiptQueue: ReceiptQueueConfig{MaxQueuedMessages: 4096, MaxQueuedBytes: 16 << 20},
+		EvaluationRunner: EvaluationRunnerConfig{
+			MaxPreparationWorkers: 4, MaxStatefulWorkers: 4, MaxInflightMessages: 16,
+			MaxInflightBytes: 8 << 20, MaxRuntimeKeysPerMessage: 8_192, MaxPendingKeyRefs: 128_000,
+		},
 		ShutdownTimeout: Duration(10 * time.Second),
 	}
 }
@@ -180,6 +194,17 @@ func (c Config) DependencyRetryOptions() coordinator.DependencyRetryConfig {
 func (c Config) ReceiptPublisherLimits() enginekafka.ReceiptPublisherLimits {
 	return enginekafka.ReceiptPublisherLimits{
 		MaxQueuedMessages: c.ReceiptQueue.MaxQueuedMessages, MaxQueuedBytes: c.ReceiptQueue.MaxQueuedBytes,
+	}
+}
+
+func (c Config) EvaluationRunnerLimits() coordinator.ConcurrentRunnerLimits {
+	return coordinator.ConcurrentRunnerLimits{
+		PreparationWorkers:       c.EvaluationRunner.MaxPreparationWorkers,
+		StatefulWorkers:          c.EvaluationRunner.MaxStatefulWorkers,
+		MaxInflightMessages:      c.EvaluationRunner.MaxInflightMessages,
+		MaxInflightBytes:         c.EvaluationRunner.MaxInflightBytes,
+		MaxRuntimeKeysPerMessage: c.EvaluationRunner.MaxRuntimeKeysPerMessage,
+		MaxPendingKeyRefs:        c.EvaluationRunner.MaxPendingKeyRefs,
 	}
 }
 
@@ -266,6 +291,12 @@ func (c Config) Validate() error {
 	}
 	if c.ReceiptQueue.MaxQueuedBytes < c.Kafka.MessageReceipt.MaxMessageBytes {
 		return errors.New("receipt_queue max_queued_bytes cannot admit one maximum message receipt")
+	}
+	if c.EvaluationRunner.MaxPreparationWorkers <= 0 || c.EvaluationRunner.MaxStatefulWorkers <= 0 ||
+		c.EvaluationRunner.MaxInflightMessages <= 0 || c.EvaluationRunner.MaxInflightBytes <= 0 ||
+		c.EvaluationRunner.MaxRuntimeKeysPerMessage <= 0 || c.EvaluationRunner.MaxPendingKeyRefs <= 0 ||
+		c.EvaluationRunner.MaxRuntimeKeysPerMessage > c.EvaluationRunner.MaxPendingKeyRefs {
+		return errors.New("evaluation_runner budgets must be positive and internally consistent")
 	}
 	return nil
 }

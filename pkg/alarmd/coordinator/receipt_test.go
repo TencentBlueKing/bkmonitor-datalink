@@ -38,6 +38,29 @@ func TestBuildMessageReceiptIsolatesPlanTerminalFromProcessedSibling(t *testing.
 	}
 }
 
+func TestBuildMessageReceiptScopesRuntimeRecordTerminalToOnePlan(t *testing.T) {
+	t.Parallel()
+
+	ordinal := uint32(0)
+	receipt, err := buildMessageReceipt(evaluationInputWithPlanIDs(t, "1001", "1002"), map[string][]recordEvaluation{
+		"1002": {{RecordOrdinal: ordinal, Result: trigger.EvaluationResultV2{
+			Completion: trigger.CompletionEvaluated, RecordResult: contract.LevelResultNormal,
+		}}},
+	}, []inputv2.Terminal{{
+		Scope: inputv2.ScopeRecord, PlanID: "1001", RecordOrdinal: &ordinal,
+		ReasonCode: contract.ReasonLateOutOfWindow,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Status != contract.ReceiptStatusCompletedWithTerminal ||
+		receipt.Counts != (contract.ReceiptCountsV1{Received: 1, Selected: 2, Processed: 1, Terminal: 1}) ||
+		len(receipt.PerPlan) != 2 || receipt.PerPlan[0].Terminal != 1 || receipt.PerPlan[1].Normal != 1 ||
+		!receiptHasExactReason(receipt, contract.ReasonLateOutOfWindow, 1) {
+		t.Fatalf("receipt = %#v", receipt)
+	}
+}
+
 func TestBuildMessageReceiptOmitsUnknownSelectorCountAndKeepsSiblingResult(t *testing.T) {
 	t.Parallel()
 

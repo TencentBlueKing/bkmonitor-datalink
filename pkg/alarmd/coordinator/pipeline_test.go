@@ -212,6 +212,94 @@ func TestEvaluationPipelineCompletesTriggerBudgetTerminalAndEvaluatesSibling(t *
 	}
 }
 
+func TestEvaluationPipelineIsolatesLateOutOfWindowRecord(t *testing.T) {
+	t.Parallel()
+
+	decoded, err := inputv2.New(g1ReaderLimits()).Decode(context.Background(), encodeG1Envelope(t))
+	if err != nil || decoded.Rejected || decoded.Input == nil {
+		t.Fatalf("Decode() = %#v, %v", decoded, err)
+	}
+	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), g1CompilerLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, store := newG1StateStore(t, &memoryStateBackend{values: make(map[string][]byte)})
+	semantics, err := state.RuntimeStateSemantics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipeline, err := NewEvaluationPipeline(PipelineOptions{
+		Compiler: compiler, Detector: detector, EffectiveTime: strategy.NewStaticScheduleProvider(nil),
+		State: store, StateAdmission: store,
+		StateSemantics: strategy.StateSemantics{
+			StateSchemaVersion: semantics.StateSchemaVersion, CodecSemanticsVersion: semantics.CodecSemanticsVersion,
+			IdentitySchemaDigest: semantics.IdentitySchemaDigest, SourceTimeSemanticsVersion: semantics.SourceTimeSemanticsVersion,
+			HistoryCellSemanticsVersion: semantics.HistoryCellSemanticsVersion,
+		},
+		DetectLimits: detect.ExecutionLimits{
+			MaxPlans: 4, MaxSelectedRecordsPerPlan: 100, MaxSeriesPerPlan: 100, MaxRecordsPerSeries: 100,
+			MaxLevelFacts: 1_000, MaxPredicateEvaluations: 1_000, MaxResultBytes: 1 << 20,
+		},
+		TriggerLimits: trigger.EvaluationLimitsV2{
+			MaxLevels: 8, MaxTriggerWindowSize: 100, MaxRecoveryConsecutiveWindows: 100,
+			MaxRequiredHistoryPoints: 1_000, MaxLevelResultsPerEvent: 8, MaxEvidenceBytesPerEvent: 64 << 10,
+			MaxComputeCost: 10_000,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	compiled, executions, _, err := pipeline.compilePlans(context.Background(), decoded.Input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detected, err := evaluateDetectWithIsolation(context.Background(), detector, detect.EvaluateRequest{
+		Completeness: decoded.Input.Execution().Completeness, DatasetContractDigest: compiledDatasetDigest(compiled),
+		Plans: executions, Limits: pipeline.options.DetectLimits,
+	})
+	if err != nil || len(detected.Batch.Series) != 1 {
+		t.Fatalf("Detect() = %#v, %v", detected, err)
+	}
+	effectiveTimes, err := pipeline.resolveEffectiveTimes(context.Background(), decoded.Input, compiled, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := pipeline.loadSeries(context.Background(), decoded.Input, detected.Batch, compiled)
+	if err != nil || len(series) != 1 {
+		t.Fatalf("loadSeries() = %#v, %v", series, err)
+	}
+	requirement := series[0].loaded.Requirements[0]
+	source, ok := decoded.Input.RecordBatch().Record(0)
+	if !ok {
+		t.Fatal("RecordBatch has no first record")
+	}
+	if _, err := series[0].loaded.Window.Apply([]state.StatePoint{{
+		RecordID: source.RecordID(), SourceTime: source.SourceTime() + 600,
+		Levels: []state.PointLevelFact{{
+			LevelID: requirement.LevelID, DetectFingerprint: requirement.DetectFingerprint, Result: state.LevelFactAnomalous,
+		}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	events, results, terminals, err := pipeline.evaluateSeries(
+		context.Background(), decoded.Input, &series[0], effectiveTimes[series[0].compiled.plan.PlanRef().StrategyID],
+	)
+	if err != nil {
+		t.Fatalf("evaluateSeries() error = %v", err)
+	}
+	if len(events) != 0 || len(results) != 0 || len(terminals) != 1 || terminals[0].Scope != inputv2.ScopeRecord ||
+		terminals[0].PlanID != "1001" || terminals[0].RecordOrdinal == nil || *terminals[0].RecordOrdinal != 0 ||
+		terminals[0].ReasonCode != contract.ReasonLateOutOfWindow {
+		t.Fatalf("events=%#v results=%#v terminals=%#v", events, results, terminals)
+	}
+}
+
 func TestEvaluationPipelineResolvesEffectiveTimeOncePerMessage(t *testing.T) {
 	t.Parallel()
 

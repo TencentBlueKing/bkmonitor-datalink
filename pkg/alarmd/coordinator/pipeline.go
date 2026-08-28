@@ -123,9 +123,10 @@ func (pipeline *EvaluationPipeline) EvaluateMessage(ctx context.Context, input *
 	evaluations := make(map[string][]recordEvaluation, len(compiled))
 	triggerStarted := time.Now()
 	var triggerRecords, triggerLevels int64
+	triggerTerminals := make([]inputv2.Terminal, 0)
 	for index := range series {
 		planID := series[index].compiled.plan.PlanRef().StrategyID
-		events, results, err := pipeline.evaluateSeries(ctx, input, &series[index], effectiveTimes[planID])
+		events, results, seriesTerminals, err := pipeline.evaluateSeries(ctx, input, &series[index], effectiveTimes[planID])
 		if err != nil {
 			observePipeline(ctx, pipeline.options.Observer, observability.Observation{
 				Component: observability.ComponentTrigger, Stage: observability.StageTriggerCompleted,
@@ -136,15 +137,30 @@ func (pipeline *EvaluationPipeline) EvaluateMessage(ctx context.Context, input *
 		}
 		critical.Events = append(critical.Events, events...)
 		evaluations[planID] = append(evaluations[planID], results...)
-		triggerRecords += int64(len(results))
+		terminals = append(terminals, seriesTerminals...)
+		triggerTerminals = append(triggerTerminals, seriesTerminals...)
+		triggerRecords += int64(len(results) + len(seriesTerminals))
 		for _, result := range results {
 			triggerLevels += int64(result.Result.Counts.Levels)
 		}
 		critical.StateWrite.Items[index] = series[index].loaded
 	}
+	triggerResult := observability.Result(observability.ResultSuccess)
+	triggerReason := observability.ReasonNone
+	triggerTrace := observability.TraceFields{}
+	if len(triggerTerminals) > 0 {
+		terminal := triggerTerminals[0]
+		triggerResult = observability.ResultTerminal
+		triggerReason = observability.ReasonCode(terminal.ReasonCode)
+		triggerTrace = observability.TraceFields{
+			ExecutionID: input.Execution().ExecutionID, MessageID: input.Execution().MessageID,
+			QueryGroupKey: input.Execution().QueryGroupKey, StrategyID: terminal.PlanID,
+			TerminalScope: string(terminal.Scope), RecordID: terminal.RecordID,
+		}
+	}
 	observePipeline(ctx, pipeline.options.Observer, observability.Observation{
 		Component: observability.ComponentTrigger, Stage: observability.StageTriggerCompleted,
-		Result: observability.ResultSuccess, Direction: observability.DirectionInternal,
+		Result: triggerResult, ReasonCode: triggerReason, Direction: observability.DirectionInternal, Trace: triggerTrace,
 		Duration: time.Since(triggerStarted), Counts: observability.Counts{
 			Records: triggerRecords, Levels: triggerLevels, Events: int64(len(critical.Events)),
 		},
@@ -349,16 +365,17 @@ func (pipeline *EvaluationPipeline) evaluateSeries(
 	input *inputv2.EvaluationInput,
 	series *seriesExecution,
 	effectiveTimes []trigger.LevelEffectiveTimeFact,
-) ([]contract.TriggerEventV1, []recordEvaluation, error) {
+) ([]contract.TriggerEventV1, []recordEvaluation, []inputv2.Terminal, error) {
 	events := make([]contract.TriggerEventV1, 0)
 	results := make([]recordEvaluation, 0, len(series.detection.Records))
+	terminals := make([]inputv2.Terminal, 0)
 	levels := series.compiled.plan.Levels()
 	batch := input.RecordBatch()
 	for _, detected := range series.detection.Records {
 		record, ok := batch.Record(int(detected.RecordOrdinal))
 		if !ok || record.RecordID() != detected.RecordID || record.SourceTime() != detected.SourceTime ||
 			record.DimensionIdentityDigest() != series.detection.DimensionIdentityDigest {
-			return nil, nil, errors.New("alarmd coordinator: Detection record is not aligned with its source record")
+			return nil, nil, nil, errors.New("alarmd coordinator: Detection record is not aligned with its source record")
 		}
 		detectionRecord := mapDetectionRecord(detected)
 		point := state.StatePoint{RecordID: detected.RecordID, SourceTime: detected.SourceTime}
@@ -367,12 +384,12 @@ func (pipeline *EvaluationPipeline) evaluateSeries(
 				input.Execution().EvaluationTime, level, detectionRecord.LevelFacts[levelIndex], effectiveTimes[levelIndex].Fact,
 			)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			if eligibility.StateDisposition() == trigger.StateAdvance {
 				stateFact, err := mapStateFact(detectionRecord.LevelFacts[levelIndex])
 				if err != nil {
-					return nil, nil, err
+					return nil, nil, nil, err
 				}
 				point.Levels = append(point.Levels, stateFact)
 			}
@@ -381,18 +398,33 @@ func (pipeline *EvaluationPipeline) evaluateSeries(
 		if len(point.Levels) > 0 {
 			applied, err := series.loaded.Window.ApplyContext(ctx, []state.StatePoint{point})
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
-			if len(applied) != 1 || (applied[0].Status != state.PointApplied && applied[0].Status != state.PointNoop) {
-				return nil, nil, fmt.Errorf("alarmd coordinator: runtime point is not evaluable: status=%s reason=%s", applied[0].Status, applied[0].ReasonCode)
+			if len(applied) != 1 {
+				return nil, nil, nil, errors.New("alarmd coordinator: runtime state returned an incomplete point result")
 			}
-			lateAccepted = applied[0].Late
+			switch applied[0].Status {
+			case state.PointApplied, state.PointNoop:
+				lateAccepted = applied[0].Late
+			case state.PointTerminal:
+				ordinal := detected.RecordOrdinal
+				terminals = append(terminals, inputv2.Terminal{
+					Scope: inputv2.ScopeRecord, PlanID: series.compiled.plan.PlanRef().StrategyID,
+					RecordOrdinal: &ordinal, RecordID: detected.RecordID, ReasonCode: applied[0].ReasonCode,
+				})
+				continue
+			default:
+				return nil, nil, nil, fmt.Errorf(
+					"alarmd coordinator: runtime point is not evaluable: status=%s reason=%s",
+					applied[0].Status, applied[0].ReasonCode,
+				)
+			}
 		}
 		histories := make([]trigger.LevelHistory, len(levels))
 		for index, level := range levels {
 			history, ok := series.loaded.Window.History(level.Definition().LevelID)
 			if !ok {
-				return nil, nil, errors.New("alarmd coordinator: runtime history is missing a compiled Level")
+				return nil, nil, nil, errors.New("alarmd coordinator: runtime history is missing a compiled Level")
 			}
 			histories[index] = trigger.LevelHistory{LevelID: level.Definition().LevelID, View: triggerHistoryView{view: history}}
 		}
@@ -408,14 +440,14 @@ func (pipeline *EvaluationPipeline) evaluateSeries(
 			ExecutionID: input.Execution().ExecutionID, LateAccepted: lateAccepted, Limits: pipeline.options.TriggerLimits,
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		results = append(results, recordEvaluation{RecordOrdinal: detected.RecordOrdinal, Result: result})
 		if result.TriggerEvent != nil {
 			events = append(events, *result.TriggerEvent)
 		}
 	}
-	return events, results, nil
+	return events, results, terminals, nil
 }
 
 func (pipeline *EvaluationPipeline) resolveEffectiveTimes(

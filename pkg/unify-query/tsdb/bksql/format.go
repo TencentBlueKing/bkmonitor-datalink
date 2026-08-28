@@ -594,7 +594,7 @@ func (f *QueryFactory) prepareSearchAfter() error {
 	f.orders = append(metadata.Orders(nil), f.orders...)
 
 	// search_after 依赖全序排序。业务排序字段相同时，追加 __unique_key__ 作为最后的
-	// 稳定排序字段，保证相邻页之间不会遗漏或重复数据。
+	// 稳定排序字段；只有数据侧保证该字段在当前查询范围内非空且唯一时，才能避免相邻页遗漏或重复。
 	hasTieBreaker := false
 	for _, order := range f.orders {
 		if strings.EqualFold(order.Name, sql_expr.SearchAfterTieBreaker) {

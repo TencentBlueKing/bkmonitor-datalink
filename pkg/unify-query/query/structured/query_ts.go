@@ -91,7 +91,7 @@ type QueryTs struct {
 	SliceMax int `json:"slice_max,omitempty"`
 	// IsMultiFrom 是否启用 MultiFrom 查询
 	IsMultiFrom bool `json:"is_multi_from,omitempty"`
-	// IsSearchAfter 是否启用 SearchAfter 查询
+	// IsSearchAfter 是否启用 SearchAfter 查询，Elasticsearch 使用原生游标，Doris 使用 keyset pagination
 	IsSearchAfter bool `json:"is_search_after,omitempty"`
 	// ClearCache 是否强制清理已存在的缓存会话
 	ClearCache bool `json:"clear_cache,omitempty"`
@@ -209,6 +209,7 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		if q.ResultTableOptions != nil {
 			query.ResultTableOptions = q.ResultTableOptions
 		}
+		query.IsSearchAfter = q.IsSearchAfter
 
 		if q.Scroll != "" {
 			query.Scroll = q.Scroll
@@ -485,6 +486,7 @@ type Query struct {
 
 	// ResultTableOptions
 	ResultTableOptions metadata.ResultTableOptions `json:"-"`
+	IsSearchAfter      bool                        `json:"-"`
 	// Scroll
 	Scroll   string `json:"-"`
 	SliceMax int    `json:"-"`
@@ -800,6 +802,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 		query.Scroll = q.Scroll
 		query.DryRun = q.DryRun
 		query.IsMergeDB = q.IsMergeDB
+		query.IsSearchAfter = q.IsSearchAfter
 
 		query.Size = q.Limit
 		query.From = q.From
@@ -916,6 +919,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 				query.RouteQueryEnd = storageRange.QueryEnd
 			}
 			query.ResultTableOption = q.ResultTableOptions.GetOption(query.TableUUID())
+			query.IsSearchAfter = q.IsSearchAfter
 
 			// 如果没有指定查询类型，则通过 storageID 获取
 			if query.StorageType == "" {

@@ -11,6 +11,7 @@ package bksql_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -25,6 +26,32 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
+
+func TestQueryFactory_SearchAfterValues(t *testing.T) {
+	query := &metadata.Query{
+		Field: "gseIndex",
+		Orders: metadata.Orders{
+			{Name: sql_expr.FieldTime, Ast: false},
+			{Name: "level", Ast: false},
+			{Name: sql_expr.FieldValue, Ast: true},
+		},
+	}
+	factory := bksql.NewQueryFactory(metadata.InitHashID(context.Background()), query)
+
+	values, err := factory.SearchAfterValues(map[string]any{
+		sql_expr.TimeStamp: json.Number("1745234704000"),
+		"level":            "info",
+		sql_expr.Value:     json.Number("4281730"),
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []any{json.Number("1745234704000"), "info", json.Number("4281730")}, values)
+
+	_, err = factory.SearchAfterValues(map[string]any{
+		sql_expr.TimeStamp: json.Number("1745234704000"),
+		"level":            "info",
+	})
+	assert.EqualError(t, err, "search_after order field _value is missing from query result")
+}
 
 func TestNewSqlFactory(t *testing.T) {
 	start := time.Unix(1741795260, 0)

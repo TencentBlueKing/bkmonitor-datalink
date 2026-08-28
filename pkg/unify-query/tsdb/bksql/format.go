@@ -456,7 +456,67 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 		}
 	}
 
+	if f.query.IsSearchAfter && f.query.ResultTableOption != nil && len(f.query.ResultTableOption.SearchAfter) > 0 {
+		searchAfter, err := f.expr.ParserSearchAfter(f.orders, f.query.ResultTableOption.SearchAfter)
+		if err != nil {
+			return "", err
+		}
+		if searchAfter != "" {
+			s = append(s, searchAfter)
+		}
+	}
+
 	return strings.Join(s, " AND "), nil
+}
+
+func (f *QueryFactory) SearchAfterValues(data map[string]any) ([]any, error) {
+	if len(f.orders) == 0 {
+		return nil, fmt.Errorf("search_after requires order fields")
+	}
+
+	values := make([]any, 0, len(f.orders))
+	for _, order := range f.orders {
+		candidates := []string{order.Name}
+		switch order.Name {
+		case sql_expr.FieldTime:
+			candidates = append(candidates, sql_expr.TimeStamp, f.timeField)
+		case sql_expr.FieldValue:
+			candidates = append(candidates, sql_expr.Value, f.query.Field)
+		default:
+			if originField := f.query.FieldAlias.OriginField(order.Name); originField != "" {
+				candidates = append(candidates, originField)
+			}
+		}
+
+		var (
+			value any
+			ok    bool
+		)
+		for _, candidate := range candidates {
+			if value, ok = data[candidate]; ok {
+				break
+			}
+			for key, item := range data {
+				if strings.EqualFold(key, candidate) {
+					value = item
+					ok = true
+					break
+				}
+			}
+			if ok {
+				break
+			}
+		}
+		if !ok {
+			return nil, fmt.Errorf("search_after order field %s is missing from query result", order.Name)
+		}
+		if value == nil {
+			return nil, fmt.Errorf("search_after order field %s contains null value", order.Name)
+		}
+		values = append(values, value)
+	}
+
+	return values, nil
 }
 
 func (f *QueryFactory) Tables() []string {
@@ -1178,6 +1238,18 @@ func isUnionQualifiedWildcardToken(s string, idx int) bool {
 }
 
 func (f *QueryFactory) SQL() (sql string, err error) {
+	if f.query.IsSearchAfter {
+		if f.expr.Type() != sql_expr.Doris {
+			return "", fmt.Errorf("search_after is unsupported for %s", f.expr.Type())
+		}
+		if len(f.orders) == 0 {
+			return "", fmt.Errorf("search_after requires order fields")
+		}
+		if len(f.query.Aggregates) > 0 {
+			return "", fmt.Errorf("search_after does not support aggregate query")
+		}
+	}
+
 	// sql 解析语法不一样需要重新拼写
 	if f.query.SQL != "" {
 		return f.parserSQL()
@@ -1253,7 +1325,9 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	}
 
 	if len(orderFields) > 0 {
-		sort.Strings(orderFields)
+		if !f.query.IsSearchAfter {
+			sort.Strings(orderFields)
+		}
 		sqlBuilder.WriteString(" ORDER BY ")
 		sqlBuilder.WriteString(strings.Join(orderFields, ", "))
 	}

@@ -245,7 +245,9 @@ func HandlerQueryRaw(c *gin.Context) {
 
 	// 解析请求 body
 	queryTs := &structured.QueryTs{}
-	err = json.NewDecoder(c.Request.Body).Decode(queryTs)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.UseNumber()
+	err = decoder.Decode(queryTs)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -332,7 +334,9 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	span.Set("query-space-uid", user.SpaceUID)
 
 	queryTs := &structured.QueryTs{}
-	err = json.NewDecoder(c.Request.Body).Decode(queryTs)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.UseNumber()
+	err = decoder.Decode(queryTs)
 	if err != nil {
 		return
 	}

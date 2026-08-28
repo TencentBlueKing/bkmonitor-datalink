@@ -1454,6 +1454,7 @@ func TestInstance_bkSql(t *testing.T) {
 				Field:         "value",
 				Size:          5,
 				IsSearchAfter: true,
+				Source:        []string{"message"},
 				ResultTableOption: &metadata.ResultTableOption{
 					SearchAfter: []any{json.Number("4281730"), json.Number("1745234704000"), json.Number("4"), "log-1"},
 				},
@@ -1463,7 +1464,7 @@ func TestInstance_bkSql(t *testing.T) {
 					{Name: "iterationIndex", Ast: false},
 				},
 			},
-			expected: "SELECT *, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_`, `gseIndex` AS `__search_after_0`, `dtEventTimeStamp` AS `__search_after_1`, `iterationIndex` AS `__search_after_2`, `__unique_key__` AS `__search_after_3` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' AND ((`gseIndex` > 4281730) OR (`gseIndex` = 4281730 AND `dtEventTimeStamp` < 1745234704000) OR (`gseIndex` = 4281730 AND `dtEventTimeStamp` = 1745234704000 AND `iterationIndex` < 4) OR (`gseIndex` = 4281730 AND `dtEventTimeStamp` = 1745234704000 AND `iterationIndex` = 4 AND `__unique_key__` < 'log-1')) ORDER BY `gseIndex` ASC, `dtEventTimeStamp` DESC, `iterationIndex` DESC, `__unique_key__` DESC LIMIT 5",
+			expected: "SELECT `message`, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_`, `gseIndex` AS `__search_after_0`, `dtEventTimeStamp` AS `__search_after_1`, `iterationIndex` AS `__search_after_2`, `__unique_key__` AS `__search_after_3` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' AND ((`gseIndex` > 4281730) OR (`gseIndex` = 4281730 AND `dtEventTimeStamp` < 1745234704000) OR (`gseIndex` = 4281730 AND `dtEventTimeStamp` = 1745234704000 AND `iterationIndex` < 4) OR (`gseIndex` = 4281730 AND `dtEventTimeStamp` = 1745234704000 AND `iterationIndex` = 4 AND `__unique_key__` < 'log-1')) ORDER BY `gseIndex` ASC, `dtEventTimeStamp` DESC, `iterationIndex` DESC, `__unique_key__` DESC LIMIT 5",
 		},
 		{
 			name: "query raw",
@@ -1817,6 +1818,7 @@ WHERE
 			}
 
 			fieldsMap := metadata.FieldsMap{
+				"message":                      {FieldType: sql_expr.DorisTypeText},
 				"text":                         {FieldType: sql_expr.DorisTypeText},
 				"log":                          {FieldType: sql_expr.DorisTypeText},
 				"origin_field":                 {AliasName: "alias_field", FieldType: sql_expr.DorisTypeText},
@@ -1841,7 +1843,11 @@ WHERE
 				"trace_id":                     {FieldType: sql_expr.DorisTypeString},
 			}
 
-			fact := bksql.NewQueryFactory(ctx, c.query).WithFieldsMap(fieldsMap).WithTableFieldsMap(c.tableFieldsMap).WithRangeTime(c.start, c.end)
+			fact := bksql.NewQueryFactory(ctx, c.query).
+				WithFieldsMap(fieldsMap).
+				WithTableFieldsMap(c.tableFieldsMap).
+				WithKeepColumns(c.query.Source).
+				WithRangeTime(c.start, c.end)
 			sql, err := fact.SQL()
 			if c.errContains != "" {
 				assert.ErrorContains(t, err, c.errContains)

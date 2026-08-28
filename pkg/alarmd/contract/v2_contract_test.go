@@ -186,6 +186,40 @@ func TestV2BusinessIDUsesCanonicalSignedDecimal(t *testing.T) {
 	}
 }
 
+func TestV2DimensionIdentityAllowsExplicitNull(t *testing.T) {
+	t.Parallel()
+
+	envelope := validExecutionEnvelopeV2(t)
+	envelope.DatasetContract.IdentityFields = []string{"host"}
+	envelope.Records[0].DimensionIdentity.Fields = []DimensionFieldV2{
+		{Name: "host", Value: json.RawMessage(`null`)},
+	}
+	envelope.Records[0].Dimensions = map[string]json.RawMessage{"host": json.RawMessage(`null`)}
+
+	digest, err := DeriveDimensionIdentityDigestV2(
+		envelope.TenantID,
+		envelope.Records[0].BusinessID,
+		envelope.Records[0].DimensionIdentity.Fields,
+	)
+	if err != nil {
+		t.Fatalf("DeriveDimensionIdentityDigestV2(null identity) error = %v", err)
+	}
+	if want := "248cb04ea988fcad43b087a7377e931b6ae200866a2e314af91677d8cbe16a87"; digest != want {
+		t.Fatalf("null dimension digest = %s, want cross-language vector %s", digest, want)
+	}
+	envelope.Records[0].DimensionIdentity.Digest = digest
+	envelope.Records[0].RecordID, err = DeriveRecordIDV2(digest, envelope.Records[0].SourceTime)
+	if err != nil {
+		t.Fatalf("DeriveRecordIDV2(null identity) error = %v", err)
+	}
+
+	if _, issues, err := ReadExecutionEnvelopeV2(
+		encodeExecutionEnvelopeV2ForTest(t, envelope), generousReaderLimitsV2(),
+	); err != nil || len(issues) != 0 {
+		t.Fatalf("ReadExecutionEnvelopeV2(null identity) = (_, %#v, %v), want success", issues, err)
+	}
+}
+
 func TestReadExecutionEnvelopeV2PreservesHigherMinorOptionalFields(t *testing.T) {
 	t.Parallel()
 

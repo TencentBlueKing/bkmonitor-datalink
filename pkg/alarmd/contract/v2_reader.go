@@ -170,8 +170,8 @@ func deriveDimensionIdentityDigestPrevalidatedV2(tenantID, businessID string, fi
 			return "", invalid("dimension_identity.fields", "names must be non-empty, sorted and unique")
 		}
 		canonical, err := canonicalJSONPrevalidatedV2(dimension.Value)
-		if err != nil || bytes.Equal(canonical, []byte("null")) || len(canonical) == 0 || canonical[0] == '{' || canonical[0] == '[' {
-			return "", invalid("dimension_identity.fields.value", "must be a non-null scalar JSON value")
+		if err != nil || len(canonical) == 0 || canonical[0] == '{' || canonical[0] == '[' {
+			return "", invalid("dimension_identity.fields.value", "must be a scalar or null JSON value")
 		}
 		previous = dimension.Name
 	}
@@ -1076,7 +1076,13 @@ func validRecordWireShapeV2(raw json.RawMessage) bool {
 		return false
 	}
 	for _, field := range fields {
-		if _, err := validatePrevalidatedJSONObjectFieldsV2(field, "dimension_identity.fields", []string{"name", "value"}, nil, false); err != nil {
+		object, err := validatePrevalidatedJSONObjectFieldsV2(
+			field, "dimension_identity.fields", []string{"name"}, []string{"value"}, false,
+		)
+		if err != nil {
+			return false
+		}
+		if _, exists := object["value"]; !exists {
 			return false
 		}
 	}
@@ -1123,7 +1129,7 @@ func validateCanonicalRecordV2(
 			return ReasonRecordIdentityConflict
 		}
 		dimensionValue, exists := record.Dimensions[identityField.Name]
-		if !exists || bytes.Equal(bytes.TrimSpace(dimensionValue), []byte("null")) {
+		if !exists {
 			return ReasonRecordIdentityConflict
 		}
 		identityCanonical, identityErr := canonicalJSONPrevalidatedV2(identityField.Value)

@@ -78,8 +78,9 @@ type ConcurrentRunnerCallbacks struct {
 }
 
 // ConcurrentRoutedPartitionRunner owns the bounded message pipeline for one
-// Kafka partition. Registration remains synchronous and ordered; only
-// preparation and disjoint-key stateful work run concurrently.
+// Kafka partition. Admission remains synchronous and bounded; message
+// construction runs in the preparation pool, while RuntimeKey registration
+// stays in receive order and disjoint-key stateful work runs concurrently.
 type ConcurrentRoutedPartitionRunner struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -95,6 +96,8 @@ type ConcurrentRoutedPartitionRunner struct {
 
 	preparationTokens chan struct{}
 	statefulTokens    chan struct{}
+	registrationMu    sync.Mutex
+	registrationTail  chan struct{}
 	completionReady   chan struct{}
 	commitDone        chan struct{}
 	allDone           chan struct{}
@@ -131,11 +134,14 @@ func NewConcurrentRoutedPartitionRunner(
 		return nil, err
 	}
 	runnerCtx, cancel := context.WithCancel(ctx)
+	registrationTail := make(chan struct{})
+	close(registrationTail)
 	runner := &ConcurrentRoutedPartitionRunner{
 		ctx: runnerCtx, cancel: cancel, builder: builder, critical: critical, rejected: rejected,
 		tracker: tracker, committer: committer, keyGate: NewOrderedKeyGate(), admission: newRunnerAdmission(limits),
 		preparationTokens: make(chan struct{}, limits.PreparationWorkers),
 		statefulTokens:    make(chan struct{}, limits.StatefulWorkers),
+		registrationTail:  registrationTail,
 		completionReady:   make(chan struct{}, limits.MaxInflightMessages), commitDone: make(chan struct{}),
 		allDone: make(chan struct{}), errors: make(chan error, 1),
 	}
@@ -168,31 +174,23 @@ func (runner *ConcurrentRoutedPartitionRunner) Submit(offset int64, payload []by
 			lease.release()
 		}
 	}()
-	task, err := runner.builder.BuildMessageTask(runner.ctx, payload)
-	if err != nil {
-		return err
-	}
-	if task == nil {
-		return errors.New("alarmd coordinator: message task builder returned nil")
-	}
-	keys := canonicalRuntimeKeys(task.RuntimeKeys())
-	if err := lease.addKeys(runner.ctx, len(keys)); err != nil {
-		return err
-	}
 	if err := runner.tracker.Register(offset); err != nil {
 		return err
 	}
-	var reservation *KeyReservation
-	if len(keys) > 0 {
-		reservation, err = runner.keyGate.Register(uint64(offset), keys)
-		if err != nil {
-			return err
-		}
-	}
+	registrationPrevious, registrationDone := runner.nextRegistration()
 	runner.tasks.Add(1)
 	releaseLease = false
-	go runner.runTask(offset, task, reservation, lease)
+	go runner.runTask(offset, payload, registrationPrevious, registrationDone, lease)
 	return nil
+}
+
+func (runner *ConcurrentRoutedPartitionRunner) nextRegistration() (<-chan struct{}, chan struct{}) {
+	runner.registrationMu.Lock()
+	defer runner.registrationMu.Unlock()
+	previous := runner.registrationTail
+	done := make(chan struct{})
+	runner.registrationTail = done
+	return previous, done
 }
 
 func (runner *ConcurrentRoutedPartitionRunner) Errors() <-chan error {
@@ -263,12 +261,18 @@ func (runner *ConcurrentRoutedPartitionRunner) closeInput() {
 
 func (runner *ConcurrentRoutedPartitionRunner) runTask(
 	offset int64,
-	task RoutedMessageTask,
-	reservation *KeyReservation,
+	payload []byte,
+	registrationPrevious <-chan struct{},
+	registrationDone chan struct{},
 	lease *runnerAdmissionLease,
 ) {
 	var taskErr error
+	var reservation *KeyReservation
+	registrationFinished := false
 	defer func() {
+		if !registrationFinished {
+			close(registrationDone)
+		}
 		if reservation != nil {
 			reservation.Cancel()
 		}
@@ -279,6 +283,41 @@ func (runner *ConcurrentRoutedPartitionRunner) runTask(
 		runner.tasks.Done()
 	}()
 
+	var task RoutedMessageTask
+	if taskErr = runner.withToken(runner.preparationTokens, func() error {
+		var err error
+		task, err = runner.builder.BuildMessageTask(runner.ctx, payload)
+		if err != nil {
+			return err
+		}
+		if task == nil {
+			return errors.New("alarmd coordinator: message task builder returned nil")
+		}
+		return nil
+	}); taskErr != nil {
+		runner.failTask(taskErr)
+		return
+	}
+	select {
+	case <-registrationPrevious:
+	case <-runner.ctx.Done():
+		taskErr = runner.ctx.Err()
+		return
+	}
+	keys := canonicalRuntimeKeys(task.RuntimeKeys())
+	if taskErr = lease.addKeys(runner.ctx, len(keys)); taskErr != nil {
+		runner.failTask(taskErr)
+		return
+	}
+	if len(keys) > 0 {
+		reservation, taskErr = runner.keyGate.Register(uint64(offset), keys)
+		if taskErr != nil {
+			runner.failTask(taskErr)
+			return
+		}
+	}
+	close(registrationDone)
+	registrationFinished = true
 	if taskErr = runner.withToken(runner.preparationTokens, func() error { return task.Prepare(runner.ctx) }); taskErr != nil {
 		runner.failTask(taskErr)
 		return

@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -39,6 +40,91 @@ func TestConcurrentRunnerRunsDisjointRuntimeKeysTogether(t *testing.T) {
 	awaitSignal(t, first.evaluateStarted, "first stateful task")
 	awaitSignal(t, second.evaluateStarted, "disjoint stateful task")
 	close(first.evaluateRelease)
+	close(second.evaluateRelease)
+	if err := runner.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConcurrentRunnerDoesNotBlockSubmitWhileBuildingMessage(t *testing.T) {
+	t.Parallel()
+
+	buildStarted := make(chan struct{})
+	buildRelease := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(buildRelease) })
+	builder := &blockingTaskBuilder{
+		started: buildStarted,
+		release: buildRelease,
+		task: &immediateRoutedTask{
+			keys:    []RuntimeKey{{StrategyID: "1"}},
+			outcome: MessageOutcome{Kind: MessageOutcomeCompleted, Message: &MessageResult{Receipt: &contract.MessageReceiptV1{}}},
+		},
+	}
+	runner, err := NewConcurrentRoutedPartitionRunner(
+		context.Background(), builder, completedCriticalPhase{},
+		partitionOffsetCommitterFunc(func(context.Context, int64) error { return nil }),
+		receiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }), nil,
+		ConcurrentRunnerLimits{PreparationWorkers: 2, StatefulWorkers: 1, MaxInflightMessages: 2, MaxInflightBytes: 1024, MaxRuntimeKeysPerMessage: 1, MaxPendingKeyRefs: 2}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	submitted := make(chan error, 1)
+	go func() { submitted <- runner.Submit(1, []byte("message")) }()
+	awaitSignal(t, buildStarted, "message build")
+	select {
+	case err := <-submitted:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(20 * time.Millisecond):
+		t.Fatal("Submit remained blocked by message construction")
+	}
+	releaseOnce.Do(func() { close(buildRelease) })
+	if err := runner.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConcurrentRunnerPreservesReceiveOrderWhenMessageBuildsFinishOutOfOrder(t *testing.T) {
+	t.Parallel()
+
+	key := RuntimeKey{StrategyID: "1"}
+	first := newBlockingRoutedTask(key)
+	second := newBlockingRoutedTask(key)
+	firstBuildStarted := make(chan struct{})
+	firstBuildRelease := make(chan struct{})
+	secondBuilt := make(chan struct{})
+	builder := &outOfOrderTaskBuilder{
+		tasks:        map[string]RoutedMessageTask{"first": first, "second": second},
+		firstStarted: firstBuildStarted, firstRelease: firstBuildRelease, secondBuilt: secondBuilt,
+	}
+	runner, err := NewConcurrentRoutedPartitionRunner(
+		context.Background(), builder, completedCriticalPhase{},
+		partitionOffsetCommitterFunc(func(context.Context, int64) error { return nil }),
+		receiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }), nil,
+		ConcurrentRunnerLimits{PreparationWorkers: 2, StatefulWorkers: 2, MaxInflightMessages: 2, MaxInflightBytes: 1024, MaxRuntimeKeysPerMessage: 1, MaxPendingKeyRefs: 2}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Submit(10, []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	awaitSignal(t, firstBuildStarted, "first message build")
+	if err := runner.Submit(11, []byte("second")); err != nil {
+		t.Fatal(err)
+	}
+	awaitSignal(t, secondBuilt, "second message build")
+	assertNoSignal(t, second.evaluateStarted, "later shared-key message before earlier build")
+
+	close(firstBuildRelease)
+	awaitSignal(t, first.evaluateStarted, "first shared-key message")
+	assertNoSignal(t, second.evaluateStarted, "later shared-key message before earlier completion")
+	close(first.evaluateRelease)
+	awaitSignal(t, second.evaluateStarted, "second shared-key message")
 	close(second.evaluateRelease)
 	if err := runner.Drain(context.Background()); err != nil {
 		t.Fatal(err)
@@ -152,7 +238,7 @@ func TestConcurrentRunnerBackpressuresAtInflightBudget(t *testing.T) {
 	}
 }
 
-func TestConcurrentRunnerRejectsMessageRuntimeKeyBudgetBeforeExecution(t *testing.T) {
+func TestConcurrentRunnerReportsMessageRuntimeKeyBudgetBeforeExecution(t *testing.T) {
 	t.Parallel()
 
 	task := newBlockingRoutedTask(RuntimeKey{StrategyID: "1"}, RuntimeKey{StrategyID: "2"})
@@ -160,11 +246,11 @@ func TestConcurrentRunnerRejectsMessageRuntimeKeyBudgetBeforeExecution(t *testin
 		PreparationWorkers: 1, StatefulWorkers: 1, MaxInflightMessages: 1, MaxInflightBytes: 1024,
 		MaxRuntimeKeysPerMessage: 1, MaxPendingKeyRefs: 2,
 	})
-	if err := runner.Submit(60, []byte("message")); err == nil {
-		t.Fatal("Submit() accepted a message above the RuntimeKey budget")
-	}
-	if err := runner.Drain(context.Background()); err != nil {
+	if err := runner.Submit(60, []byte("message")); err != nil {
 		t.Fatal(err)
+	}
+	if err := runner.Drain(context.Background()); err == nil || !strings.Contains(err.Error(), "key references exceed") {
+		t.Fatalf("Drain() error = %v, want RuntimeKey budget failure", err)
 	}
 	assertNoSignal(t, task.evaluateStarted, "over-budget task")
 }
@@ -324,6 +410,36 @@ type blockingRoutedTask struct {
 
 type immediateTaskBuilder struct {
 	task RoutedMessageTask
+}
+
+type blockingTaskBuilder struct {
+	started chan struct{}
+	release chan struct{}
+	task    RoutedMessageTask
+}
+
+type outOfOrderTaskBuilder struct {
+	tasks        map[string]RoutedMessageTask
+	firstStarted chan struct{}
+	firstRelease chan struct{}
+	secondBuilt  chan struct{}
+}
+
+func (builder *outOfOrderTaskBuilder) BuildMessageTask(_ context.Context, payload []byte) (RoutedMessageTask, error) {
+	name := string(payload)
+	if name == "first" {
+		close(builder.firstStarted)
+		<-builder.firstRelease
+	} else if name == "second" {
+		close(builder.secondBuilt)
+	}
+	return builder.tasks[name], nil
+}
+
+func (builder *blockingTaskBuilder) BuildMessageTask(context.Context, []byte) (RoutedMessageTask, error) {
+	close(builder.started)
+	<-builder.release
+	return builder.task, nil
 }
 
 func (builder *immediateTaskBuilder) BuildMessageTask(context.Context, []byte) (RoutedMessageTask, error) {

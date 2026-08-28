@@ -475,34 +475,31 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 
 	if data.ResultSchema != nil {
-		option.ResultSchema = data.ResultSchema
+		option.ResultSchema = queryFactory.FilterResultSchema(data.ResultSchema)
 	}
 
 	span.Set("data-total-records", data.TotalRecords)
 	span.Set("data-list-size", len(data.List))
-
-	var lastData map[string]any
-	for _, list := range data.List {
-		newData := queryFactory.ReloadListData(list, false)
-		query.FieldAlias.AddAliasKeysWhenOriginalFieldPresent(newData)
-		newData[metadata.KeyIndex] = query.DB
-		// 注入原始数据需要的字段
-		query.DataReload(newData)
-		lastData = newData
-
-		dataCh <- newData
-	}
 
 	size = int64(len(data.List))
 	total = int64(data.TotalRecords)
 	if query.IsSearchAfter {
 		option.SearchAfter = nil
 		if size > 0 {
-			option.SearchAfter, err = queryFactory.SearchAfterValues(lastData)
+			option.SearchAfter, err = queryFactory.SearchAfterValues(data.List[len(data.List)-1])
 			if err != nil {
 				return size, total, option, err
 			}
 		}
+	}
+
+	for _, list := range data.List {
+		newData := queryFactory.ReloadListData(list, false)
+		query.FieldAlias.AddAliasKeysWhenOriginalFieldPresent(newData)
+		newData[metadata.KeyIndex] = query.DB
+		// 注入原始数据需要的字段
+		query.DataReload(newData)
+		dataCh <- newData
 	}
 
 	return size, total, option, err

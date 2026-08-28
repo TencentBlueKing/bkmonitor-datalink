@@ -32,6 +32,8 @@ const (
 	Doris = "doris"
 
 	ShardKey = "__shard_key__"
+	// SearchAfterTieBreaker 是 Doris 日志表的稳定行标识，用于保证 keyset pagination 不会在排序值相同时漏行。
+	SearchAfterTieBreaker = "__unique_key__"
 
 	SelectIndex = "_index"
 
@@ -394,60 +396,20 @@ func (d *DorisSQLExpr) ParserRangeTime(timeField string, start, end time.Time) s
 	return fmt.Sprintf("`%s` >= %d AND `%s` <= %d", timeField, start.UnixMilli(), timeField, end.UnixMilli())
 }
 
+type searchAfterField struct {
+	expr    string
+	literal string
+	asc     bool
+}
+
 func (d *DorisSQLExpr) ParserSearchAfter(orders metadata.Orders, values []any) (string, error) {
 	if len(values) == 0 {
 		return "", nil
 	}
-	if len(orders) == 0 {
-		return "", fmt.Errorf("search_after requires order fields")
-	}
-	if len(orders) != len(values) {
-		return "", fmt.Errorf("search_after values count %d does not match order fields count %d", len(values), len(orders))
-	}
 
-	type searchField struct {
-		expr    string
-		literal string
-		asc     bool
-	}
-	fields := make([]searchField, 0, len(orders))
-	fieldSet := set.New[string]()
-
-	for idx, order := range orders {
-		fieldName := order.Name
-		switch fieldName {
-		case FieldTime:
-			fieldName = d.timeField
-		case FieldValue:
-			fieldName = d.valueField
-		}
-		if fieldName == "" {
-			return "", fmt.Errorf("search_after order field %s is empty", order.Name)
-		}
-
-		originField := fieldName
-		if alias, ok := d.fieldAlias[originField]; ok {
-			originField = alias
-		}
-		fieldOption, existed := d.getField(originField)
-		if !existed || fieldOption.FieldType == "" {
-			return "", fmt.Errorf("search_after order field %s does not exist", order.Name)
-		}
-
-		fieldExpr, _ := d.dimTransform(fieldName)
-		if fieldExpr == "" || fieldExpr == metadata.Null {
-			return "", fmt.Errorf("search_after order field %s cannot be transformed", order.Name)
-		}
-		if fieldSet.Existed(fieldExpr) {
-			return "", fmt.Errorf("search_after contains duplicate order field %s", order.Name)
-		}
-		fieldSet.Add(fieldExpr)
-
-		literal, err := d.searchAfterLiteral(values[idx], fieldOption.FieldType)
-		if err != nil {
-			return "", fmt.Errorf("invalid search_after value for field %s: %w", order.Name, err)
-		}
-		fields = append(fields, searchField{expr: fieldExpr, literal: literal, asc: order.Ast})
+	fields, err := d.parseSearchAfterFields(orders, values)
+	if err != nil {
+		return "", err
 	}
 
 	conditions := make([]string, 0, len(fields))
@@ -465,6 +427,74 @@ func (d *DorisSQLExpr) ParserSearchAfter(orders metadata.Orders, values []any) (
 	}
 
 	return fmt.Sprintf("(%s)", strings.Join(conditions, " OR ")), nil
+}
+
+func (d *DorisSQLExpr) ParserSearchAfterFields(orders metadata.Orders) ([]string, error) {
+	fields, err := d.parseSearchAfterFields(orders, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	expressions := make([]string, 0, len(fields))
+	for _, field := range fields {
+		expressions = append(expressions, field.expr)
+	}
+	return expressions, nil
+}
+
+func (d *DorisSQLExpr) parseSearchAfterFields(orders metadata.Orders, values []any) ([]searchAfterField, error) {
+	if len(orders) == 0 {
+		return nil, fmt.Errorf("search_after requires order fields")
+	}
+	if values != nil && len(orders) != len(values) {
+		return nil, fmt.Errorf("search_after values count %d does not match order fields count %d", len(values), len(orders))
+	}
+
+	fields := make([]searchAfterField, 0, len(orders))
+	fieldSet := set.New[string]()
+
+	for idx, order := range orders {
+		fieldName := order.Name
+		switch fieldName {
+		case FieldTime:
+			fieldName = d.timeField
+		case FieldValue:
+			fieldName = d.valueField
+		}
+		if fieldName == "" {
+			return nil, fmt.Errorf("search_after order field %s is empty", order.Name)
+		}
+
+		originField := fieldName
+		if alias, ok := d.fieldAlias[originField]; ok {
+			originField = alias
+		}
+		fieldOption, existed := d.getField(originField)
+		if !existed || fieldOption.FieldType == "" {
+			return nil, fmt.Errorf("search_after order field %s does not exist", order.Name)
+		}
+
+		fieldExpr, _ := d.dimTransform(fieldName)
+		if fieldExpr == "" || fieldExpr == metadata.Null {
+			return nil, fmt.Errorf("search_after order field %s cannot be transformed", order.Name)
+		}
+		if fieldSet.Existed(fieldExpr) {
+			return nil, fmt.Errorf("search_after contains duplicate order field %s", order.Name)
+		}
+		fieldSet.Add(fieldExpr)
+
+		field := searchAfterField{expr: fieldExpr, asc: order.Ast}
+		if values != nil {
+			literal, err := d.searchAfterLiteral(values[idx], fieldOption.FieldType)
+			if err != nil {
+				return nil, fmt.Errorf("invalid search_after value for field %s: %w", order.Name, err)
+			}
+			field.literal = literal
+		}
+		fields = append(fields, field)
+	}
+
+	return fields, nil
 }
 
 func (d *DorisSQLExpr) searchAfterLiteral(value any, fieldType string) (string, error) {
@@ -567,8 +597,9 @@ func isDorisStringType(fieldType string) bool {
 }
 
 func isDorisDateType(fieldType string) bool {
-	return fieldType == DorisTypeDate || fieldType == DorisTypeDatetime || fieldType == DorisTypeTimestamp ||
-		strings.HasPrefix(fieldType, DorisTypeDatetime+"(")
+	return fieldType == DorisTypeDate || fieldType == "DATEV2" ||
+		fieldType == DorisTypeDatetime || fieldType == "DATETIMEV2" || fieldType == DorisTypeTimestamp ||
+		strings.HasPrefix(fieldType, DorisTypeDatetime+"(") || strings.HasPrefix(fieldType, "DATETIMEV2(")
 }
 
 func (d *DorisSQLExpr) ParserAllConditions(allConditions metadata.AllConditions) (string, error) {

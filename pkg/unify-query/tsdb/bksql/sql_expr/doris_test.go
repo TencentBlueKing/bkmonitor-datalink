@@ -65,6 +65,8 @@ func TestDorisSQLExpr_ParserSearchAfter(t *testing.T) {
 			"level":            {FieldType: DorisTypeString},
 			"gseIndex":         {FieldType: DorisTypeDouble},
 			"enabled":          {FieldType: DorisTypeBoolean},
+			"eventDate":        {FieldType: "DATEV2"},
+			"eventTime":        {FieldType: "DATETIMEV2(6)"},
 		})
 
 	tests := []struct {
@@ -99,6 +101,15 @@ func TestDorisSQLExpr_ParserSearchAfter(t *testing.T) {
 			},
 			values: []any{true},
 			want:   "((`enabled` > TRUE))",
+		},
+		{
+			name: "Doris V2 date values",
+			orders: metadata.Orders{
+				{Name: "eventDate", Ast: true},
+				{Name: "eventTime", Ast: false},
+			},
+			values: []any{"2026-08-28", "2026-08-28 13:05:42.123456"},
+			want:   "((`eventDate` > '2026-08-28') OR (`eventDate` = '2026-08-28' AND `eventTime` < '2026-08-28 13:05:42.123456'))",
 		},
 		{
 			name: "null value",

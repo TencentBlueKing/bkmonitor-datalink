@@ -44,9 +44,9 @@ func TestPartitionCompletionTrackerDoesNotCrossIncompleteRegisteredMessage(t *te
 		t.Fatalf("NextCommit() = %d, %v, %v; want 45 and registered prefix", next, receipts, ok)
 	}
 	if repeated, _, ok := tracker.NextCommit(); !ok || repeated != next {
-		t.Fatal("pending prefix changed before broker ACK")
+		t.Fatal("pending prefix changed before the offset boundary was applied")
 	}
-	if err := tracker.CommitACK(next); err != nil {
+	if err := tracker.CommitApplied(next); err != nil {
 		t.Fatal(err)
 	}
 	if tracker.Len() != 0 {
@@ -65,10 +65,10 @@ func TestPartitionCompletionTrackerRejectsInvalidTransitions(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, action := range map[string]func() error{
-		"duplicate register":       func() error { return tracker.Register(5) },
-		"out of order register":    func() error { return tracker.Register(4) },
-		"unknown complete":         func() error { return tracker.Complete(6, &contract.MessageReceiptV1{MessageID: "receipt-6"}) },
-		"ack without ready prefix": func() error { return tracker.CommitACK(6) },
+		"duplicate register":         func() error { return tracker.Register(5) },
+		"out of order register":      func() error { return tracker.Register(4) },
+		"unknown complete":           func() error { return tracker.Complete(6, &contract.MessageReceiptV1{MessageID: "receipt-6"}) },
+		"apply without ready prefix": func() error { return tracker.CommitApplied(6) },
 	} {
 		if err := action(); err == nil {
 			t.Fatalf("%s accepted", name)

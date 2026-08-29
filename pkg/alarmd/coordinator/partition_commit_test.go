@@ -18,7 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
-func TestPartitionCommitterPublishesReceiptOnlyAfterOffsetACK(t *testing.T) {
+func TestPartitionCommitterPublishesReceiptOnlyAfterOffsetBoundaryApplied(t *testing.T) {
 	t.Parallel()
 
 	tracker := completedTracker(t, 41, &contract.MessageReceiptV1{MessageID: "message-41"})
@@ -51,7 +51,7 @@ func TestPartitionCommitterPublishesReceiptOnlyAfterOffsetACK(t *testing.T) {
 	}
 }
 
-func TestPartitionCommitterRetainsPrefixWhenOffsetACKFails(t *testing.T) {
+func TestPartitionCommitterRetainsPrefixWhenOffsetBoundaryFails(t *testing.T) {
 	t.Parallel()
 
 	tracker := completedTracker(t, 41, &contract.MessageReceiptV1{MessageID: "message-41"})
@@ -96,7 +96,7 @@ func TestPartitionCommitterKeepsReceiptRejectionFailOpen(t *testing.T) {
 		t.Fatalf("CommitReady() error = %v, want fail-open", err)
 	}
 	if receiptCalls != 1 || tracker.Len() != 0 {
-		t.Fatalf("receipt calls=%d tracker=%d, want 1/0 after committed offset", receiptCalls, tracker.Len())
+		t.Fatalf("receipt calls=%d tracker=%d, want 1/0 after applied offset boundary", receiptCalls, tracker.Len())
 	}
 }
 
@@ -114,7 +114,7 @@ func completedTracker(t testing.TB, offset int64, receipt *contract.MessageRecei
 
 type partitionOffsetCommitterFunc func(context.Context, int64) error
 
-func (function partitionOffsetCommitterFunc) CommitThrough(ctx context.Context, next int64) error {
+func (function partitionOffsetCommitterFunc) MarkThrough(ctx context.Context, next int64) error {
 	return function(ctx, next)
 }
 

@@ -26,18 +26,18 @@ import (
 // EvaluationHandler binds the v2 alarmd completion boundary to one Sarama
 // assignment. Each claim owns an independent partition completion tracker.
 type EvaluationHandler struct {
-	builder      alarmdcoordinator.RoutedMessageTaskBuilder
-	critical     alarmdcoordinator.CriticalCompletion
-	offsets      OffsetCommitter
-	receipts     alarmdcoordinator.ReceiptPublisher
-	gate         *alarmdcoordinator.CriticalDependencyGate
-	offsetRetry  *alarmdcoordinator.DependencyRetry
-	diagnostics  EvaluationDiagnostics
-	assignment   *assignmentLifecycle
-	reportFatal  func(error)
-	fatalOnce    sync.Once
-	runnerLimits alarmdcoordinator.ConcurrentRunnerLimits
-	drainTimeout time.Duration
+	builder         alarmdcoordinator.RoutedMessageTaskBuilder
+	critical        alarmdcoordinator.CriticalCompletion
+	offsets         OffsetCommitter
+	receipts        alarmdcoordinator.ReceiptPublisher
+	gate            *alarmdcoordinator.CriticalDependencyGate
+	offsetRetry     *alarmdcoordinator.DependencyRetry
+	diagnostics     EvaluationDiagnostics
+	assignment      *assignmentLifecycle
+	reportFatal     func(error)
+	fatalOnce       sync.Once
+	runnerResources *alarmdcoordinator.ConcurrentRunnerResources
+	drainTimeout    time.Duration
 }
 
 type RejectedMessageEvidence struct {
@@ -107,10 +107,15 @@ func NewEvaluationHandlerWithRunnerLimits(
 	if !ok {
 		builder = alarmdcoordinator.AdaptMessageOutcomeRouter(router)
 	}
+	runnerResources, err := alarmdcoordinator.NewConcurrentRunnerResources(runnerLimits)
+	if err != nil {
+		return nil, fmt.Errorf("kafka evaluation handler: concurrent runner resources: %w", err)
+	}
 	return &EvaluationHandler{
 		builder: builder, critical: critical, offsets: offsets, receipts: receipts,
 		gate: gate, offsetRetry: offsetRetry, diagnostics: diagnostics,
-		assignment: newAssignmentLifecycle(), reportFatal: reportFatal, runnerLimits: runnerLimits, drainTimeout: drainTimeout,
+		assignment: newAssignmentLifecycle(), reportFatal: reportFatal,
+		runnerResources: runnerResources, drainTimeout: drainTimeout,
 	}, nil
 }
 
@@ -168,10 +173,10 @@ func (handler *EvaluationHandler) ConsumeClaim(session sarama.ConsumerGroupSessi
 			handler.assignment.AdvanceObservedCursor(session, claim, nextOffset)
 		},
 	}
-	runner, err := alarmdcoordinator.NewConcurrentRoutedPartitionRunner(
+	runner, err := alarmdcoordinator.NewConcurrentRoutedPartitionRunnerWithResources(
 		session.Context(), handler.builder, handler.critical, offsets, handler.receipts,
 		evaluationRejectedObserver{handler: handler, topic: claim.Topic(), partition: claim.Partition()},
-		handler.runnerLimits,
+		handler.runnerResources,
 		&alarmdcoordinator.ConcurrentRunnerCallbacks{OnTaskFinished: func(offset int64, _ error) {
 			handler.assignment.EndObservedRecord(session, claim, offset+1, false)
 		}},
@@ -350,7 +355,7 @@ func (evaluationSessionOffsetCommitter) CommitOffset(
 	return ctx.Err()
 }
 
-func (committer evaluationPartitionOffsetCommitter) CommitThrough(ctx context.Context, nextOffset int64) (returnErr error) {
+func (committer evaluationPartitionOffsetCommitter) MarkThrough(ctx context.Context, nextOffset int64) (returnErr error) {
 	started := time.Now()
 	defer func() {
 		if committer.onMarked != nil {
@@ -373,7 +378,7 @@ func (committer evaluationPartitionOffsetCommitter) CommitThrough(ctx context.Co
 		return &alarmdcoordinator.RetryableDependencyError{Err: err}
 	})
 	if err != nil {
-		return fmt.Errorf("kafka evaluation handler: commit through %d: %w", nextOffset, err)
+		return fmt.Errorf("kafka evaluation handler: mark through %d: %w", nextOffset, err)
 	}
 	committer.session.MarkOffset(committer.topic, committer.partition, nextOffset, "")
 	if committer.onAdvanced != nil {

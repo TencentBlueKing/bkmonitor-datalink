@@ -77,6 +77,27 @@ type ConcurrentRunnerCallbacks struct {
 	OnTaskFinished func(offset int64, err error)
 }
 
+// ConcurrentRunnerResources owns the process-wide worker and admission
+// budgets shared by every assigned Kafka partition. Partition-local ordering
+// and completion state remain on ConcurrentRoutedPartitionRunner.
+type ConcurrentRunnerResources struct {
+	limits ConcurrentRunnerLimits
+
+	preparationTokens chan struct{}
+	statefulTokens    chan struct{}
+	admission         *runnerAdmission
+}
+
+func NewConcurrentRunnerResources(limits ConcurrentRunnerLimits) (*ConcurrentRunnerResources, error) {
+	if err := limits.validate(); err != nil {
+		return nil, err
+	}
+	return &ConcurrentRunnerResources{
+		limits: limits, preparationTokens: make(chan struct{}, limits.PreparationWorkers),
+		statefulTokens: make(chan struct{}, limits.StatefulWorkers), admission: newRunnerAdmission(limits),
+	}, nil
+}
+
 // ConcurrentRoutedPartitionRunner owns the bounded message pipeline for one
 // Kafka partition. Admission remains synchronous and bounded; message
 // construction runs in the preparation pool, while RuntimeKey registration
@@ -122,11 +143,30 @@ func NewConcurrentRoutedPartitionRunner(
 	limits ConcurrentRunnerLimits,
 	callbacks *ConcurrentRunnerCallbacks,
 ) (*ConcurrentRoutedPartitionRunner, error) {
+	resources, err := NewConcurrentRunnerResources(limits)
+	if err != nil {
+		return nil, err
+	}
+	return NewConcurrentRoutedPartitionRunnerWithResources(
+		ctx, builder, critical, offsets, receipts, rejected, resources, callbacks,
+	)
+}
+
+func NewConcurrentRoutedPartitionRunnerWithResources(
+	ctx context.Context,
+	builder RoutedMessageTaskBuilder,
+	critical CriticalCompletion,
+	offsets PartitionOffsetCommitter,
+	receipts ReceiptPublisher,
+	rejected RejectedMessageObserver,
+	resources *ConcurrentRunnerResources,
+	callbacks *ConcurrentRunnerCallbacks,
+) (*ConcurrentRoutedPartitionRunner, error) {
 	if ctx == nil || builder == nil || critical == nil || offsets == nil || receipts == nil {
 		return nil, errors.New("alarmd coordinator: concurrent runner dependencies are required")
 	}
-	if err := limits.validate(); err != nil {
-		return nil, err
+	if resources == nil || resources.admission == nil || resources.preparationTokens == nil || resources.statefulTokens == nil {
+		return nil, errors.New("alarmd coordinator: concurrent runner resources are required")
 	}
 	tracker := NewPartitionCompletionTracker()
 	committer, err := NewPartitionCommitter(tracker, offsets, receipts)
@@ -138,11 +178,11 @@ func NewConcurrentRoutedPartitionRunner(
 	close(registrationTail)
 	runner := &ConcurrentRoutedPartitionRunner{
 		ctx: runnerCtx, cancel: cancel, builder: builder, critical: critical, rejected: rejected,
-		tracker: tracker, committer: committer, keyGate: NewOrderedKeyGate(), admission: newRunnerAdmission(limits),
-		preparationTokens: make(chan struct{}, limits.PreparationWorkers),
-		statefulTokens:    make(chan struct{}, limits.StatefulWorkers),
+		tracker: tracker, committer: committer, keyGate: NewOrderedKeyGate(), admission: resources.admission,
+		preparationTokens: resources.preparationTokens,
+		statefulTokens:    resources.statefulTokens,
 		registrationTail:  registrationTail,
-		completionReady:   make(chan struct{}, limits.MaxInflightMessages), commitDone: make(chan struct{}),
+		completionReady:   make(chan struct{}, resources.limits.MaxInflightMessages), commitDone: make(chan struct{}),
 		allDone: make(chan struct{}), errors: make(chan error, 1),
 	}
 	if callbacks != nil {

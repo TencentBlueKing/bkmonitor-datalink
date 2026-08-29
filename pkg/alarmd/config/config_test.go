@@ -183,6 +183,13 @@ func TestValidateRejectsInvalidRedisAndRuntimeBudgets(t *testing.T) {
 		},
 		"zero receipt queue":      func(cfg *Config) { cfg.ReceiptQueue.MaxQueuedMessages = 0 },
 		"zero evaluation workers": func(cfg *Config) { cfg.EvaluationRunner.MaxStatefulWorkers = 0 },
+		"runtime keys cannot admit maximum reader message": func(cfg *Config) {
+			cfg.EvaluationRunner.MaxRuntimeKeysPerMessage =
+				cfg.Limits.Reader.MaxPlansPerMessage*cfg.Limits.Reader.MaxRecordsPerMessage - 1
+		},
+		"inflight bytes cannot admit maximum reader envelope": func(cfg *Config) {
+			cfg.EvaluationRunner.MaxInflightBytes = cfg.Limits.Reader.MaxEnvelopeBytes - 1
+		},
 	}
 
 	for name, mutate := range tests {

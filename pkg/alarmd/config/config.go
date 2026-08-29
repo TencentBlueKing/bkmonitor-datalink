@@ -142,6 +142,7 @@ type Config struct {
 }
 
 func Default() Config {
+	runner := coordinator.DefaultConcurrentRunnerLimits()
 	return Config{
 		Mode: ModeShadow,
 		HTTP: HTTPConfig{
@@ -162,8 +163,9 @@ func Default() Config {
 		},
 		ReceiptQueue: ReceiptQueueConfig{MaxQueuedMessages: 4096, MaxQueuedBytes: 16 << 20},
 		EvaluationRunner: EvaluationRunnerConfig{
-			MaxPreparationWorkers: 4, MaxStatefulWorkers: 4, MaxInflightMessages: 16,
-			MaxInflightBytes: 8 << 20, MaxRuntimeKeysPerMessage: 8_192, MaxPendingKeyRefs: 128_000,
+			MaxPreparationWorkers: runner.PreparationWorkers, MaxStatefulWorkers: runner.StatefulWorkers,
+			MaxInflightMessages: runner.MaxInflightMessages, MaxInflightBytes: runner.MaxInflightBytes,
+			MaxRuntimeKeysPerMessage: runner.MaxRuntimeKeysPerMessage, MaxPendingKeyRefs: runner.MaxPendingKeyRefs,
 		},
 		ShutdownTimeout: Duration(10 * time.Second),
 	}
@@ -297,6 +299,13 @@ func (c Config) Validate() error {
 		c.EvaluationRunner.MaxRuntimeKeysPerMessage <= 0 || c.EvaluationRunner.MaxPendingKeyRefs <= 0 ||
 		c.EvaluationRunner.MaxRuntimeKeysPerMessage > c.EvaluationRunner.MaxPendingKeyRefs {
 		return errors.New("evaluation_runner budgets must be positive and internally consistent")
+	}
+	if c.EvaluationRunner.MaxRuntimeKeysPerMessage/c.Limits.Reader.MaxPlansPerMessage <
+		c.Limits.Reader.MaxRecordsPerMessage {
+		return errors.New("evaluation_runner max_runtime_keys_per_message cannot admit one maximum reader message")
+	}
+	if c.EvaluationRunner.MaxInflightBytes < c.Limits.Reader.MaxEnvelopeBytes {
+		return errors.New("evaluation_runner max_inflight_bytes cannot admit one maximum reader envelope")
 	}
 	return nil
 }

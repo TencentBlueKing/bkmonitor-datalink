@@ -125,7 +125,7 @@ func TestEvaluationPartitionOffsetCommitterReportsFinalMark(t *testing.T) {
 		offsets: fakeSyncOffsetCommitter{events: &events}, retry: retry,
 		onMarked: func(value OffsetMarkEvidence) { evidence = value },
 	}
-	if err := committer.CommitThrough(context.Background(), 42); err != nil {
+	if err := committer.MarkThrough(context.Background(), 42); err != nil {
 		t.Fatal(err)
 	}
 	if evidence.Topic != "execution-envelope" || evidence.Partition != 3 || evidence.NextOffset != 42 ||
@@ -217,9 +217,9 @@ func TestEvaluationOffsetRetryCancellationPreservesBrokerRootCause(t *testing.T)
 			},
 		), retry: retry,
 	}
-	err = committer.CommitThrough(ctx, 42)
+	err = committer.MarkThrough(ctx, 42)
 	if !errors.Is(err, context.Canceled) || !errors.Is(err, root) {
-		t.Fatalf("CommitThrough() error = %v, want cancellation and broker root cause", err)
+		t.Fatalf("MarkThrough() error = %v, want cancellation and broker root cause", err)
 	}
 	if session.markedOffset != 0 || gate.Ready() {
 		t.Fatalf("marked offset = %d, gate = %#v", session.markedOffset, gate.Snapshot())

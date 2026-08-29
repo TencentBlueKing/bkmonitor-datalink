@@ -238,6 +238,107 @@ func TestConcurrentRunnerBackpressuresAtInflightBudget(t *testing.T) {
 	}
 }
 
+func TestConcurrentRunnerResourcesBoundInflightAcrossPartitions(t *testing.T) {
+	t.Parallel()
+
+	limits := ConcurrentRunnerLimits{
+		PreparationWorkers: 1, StatefulWorkers: 1, MaxInflightMessages: 1,
+		MaxInflightBytes: 1024, MaxRuntimeKeysPerMessage: 1, MaxPendingKeyRefs: 1,
+	}
+	resources, err := NewConcurrentRunnerResources(limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := newBlockingRoutedTask(RuntimeKey{StrategyID: "1"})
+	second := newBlockingRoutedTask(RuntimeKey{StrategyID: "2"})
+	newRunner := func(task *blockingRoutedTask, payload string) *ConcurrentRoutedPartitionRunner {
+		runner, err := NewConcurrentRoutedPartitionRunnerWithResources(
+			context.Background(), &mapTaskBuilder{tasks: map[string]*blockingRoutedTask{payload: task}},
+			completedCriticalPhase{}, partitionOffsetCommitterFunc(func(context.Context, int64) error { return nil }),
+			receiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }), nil, resources, nil,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return runner
+	}
+	firstRunner := newRunner(first, "first")
+	secondRunner := newRunner(second, "second")
+	if err := firstRunner.Submit(50, []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	awaitSignal(t, first.evaluateStarted, "first partition task")
+	secondSubmitted := make(chan error, 1)
+	go func() { secondSubmitted <- secondRunner.Submit(70, []byte("second")) }()
+	select {
+	case err := <-secondSubmitted:
+		t.Fatalf("second partition Submit returned before global capacity was released: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(first.evaluateRelease)
+	select {
+	case err := <-secondSubmitted:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second partition Submit remained blocked after global capacity was released")
+	}
+	awaitSignal(t, second.evaluateStarted, "second partition task")
+	close(second.evaluateRelease)
+	if err := firstRunner.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := secondRunner.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConcurrentRunnerResourcesBoundStatefulWorkersAcrossPartitions(t *testing.T) {
+	t.Parallel()
+
+	limits := ConcurrentRunnerLimits{
+		PreparationWorkers: 2, StatefulWorkers: 1, MaxInflightMessages: 2,
+		MaxInflightBytes: 1024, MaxRuntimeKeysPerMessage: 1, MaxPendingKeyRefs: 2,
+	}
+	resources, err := NewConcurrentRunnerResources(limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := newBlockingRoutedTask(RuntimeKey{StrategyID: "1"})
+	second := newBlockingRoutedTask(RuntimeKey{StrategyID: "2"})
+	newRunner := func(task *blockingRoutedTask, payload string) *ConcurrentRoutedPartitionRunner {
+		runner, err := NewConcurrentRoutedPartitionRunnerWithResources(
+			context.Background(), &mapTaskBuilder{tasks: map[string]*blockingRoutedTask{payload: task}},
+			completedCriticalPhase{}, partitionOffsetCommitterFunc(func(context.Context, int64) error { return nil }),
+			receiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }), nil, resources, nil,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return runner
+	}
+	firstRunner := newRunner(first, "first")
+	secondRunner := newRunner(second, "second")
+	if err := firstRunner.Submit(50, []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	awaitSignal(t, first.evaluateStarted, "first partition stateful task")
+	if err := secondRunner.Submit(70, []byte("second")); err != nil {
+		t.Fatal(err)
+	}
+	assertNoSignal(t, second.evaluateStarted, "second partition stateful task before shared worker was released")
+	close(first.evaluateRelease)
+	awaitSignal(t, second.evaluateStarted, "second partition stateful task")
+	close(second.evaluateRelease)
+	if err := firstRunner.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := secondRunner.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestConcurrentRunnerReportsMessageRuntimeKeyBudgetBeforeExecution(t *testing.T) {
 	t.Parallel()
 

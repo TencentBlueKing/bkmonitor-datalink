@@ -277,6 +277,9 @@ bk-collector:
     # ServiceDiscover: 服务发现处理器
     - name: "service_discover/common"
 
+    # SpanProcessor: span 处理器
+    - name: "span_processor/common"
+
     # TokenChecker: 权限校验处理器
     # Proxy
     - name: "token_checker/proxy"
@@ -339,6 +342,7 @@ bk-collector:
         - "db_filter/common"
         - "attribute_filter/common"
         - "attribute_filter/app"
+        - "span_processor/common"
         - "service_discover/common"
         - "apdex_calculator/standard"
         - "traces_deriver/delta"

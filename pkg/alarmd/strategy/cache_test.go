@@ -82,6 +82,34 @@ func TestCompilerCacheKeyIncludesDatasetAndStateSemantics(t *testing.T) {
 	}
 }
 
+func TestCompilerBudgetDigestIncludesTriggerRuntimeBudgets(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*Limits)
+	}{
+		{name: "trigger window", change: func(limits *Limits) { limits.MaxTriggerWindowSize-- }},
+		{name: "recovery window", change: func(limits *Limits) { limits.MaxRecoveryConsecutiveWindows-- }},
+		{name: "trigger compute", change: func(limits *Limits) { limits.MaxTriggerComputeCost-- }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := testLimits()
+			first, err := NewCompiler(NewDefaultAlgorithmCompilerRegistry(), base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed := base
+			test.change(&changed)
+			second, err := NewCompiler(NewDefaultAlgorithmCompilerRegistry(), changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if first.budgetDigest == second.budgetDigest {
+				t.Fatal("trigger runtime budget change did not invalidate compiler budget digest")
+			}
+		})
+	}
+}
+
 func TestCompilerEnforcesCompiledPlanBudgetAndReportsCost(t *testing.T) {
 	compiler := newTestCompiler(t)
 	compiled := mustCompilePlan(t, compiler, validPlan())

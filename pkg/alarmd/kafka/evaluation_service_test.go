@@ -20,6 +20,21 @@ import (
 	alarmdcoordinator "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/coordinator"
 )
 
+func TestNewEvaluationSaramaConfigEnablesPeriodicOffsetCommit(t *testing.T) {
+	t.Parallel()
+
+	config, err := newEvaluationSaramaConfig(Config{
+		Brokers: []string{"127.0.0.1:9092"}, Topic: "execution-envelope", GroupID: "alarmd-v2",
+		ClientID: "alarmd-v2", BrokerVersion: "0.10.2.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.Consumer.Offsets.AutoCommit.Enable {
+		t.Fatal("evaluation consumer must periodically commit completed session offsets")
+	}
+}
+
 func TestNewOwnedEvaluationServiceBuildsV2Handler(t *testing.T) {
 	t.Parallel()
 
@@ -32,7 +47,7 @@ func TestNewOwnedEvaluationServiceBuildsV2Handler(t *testing.T) {
 		evaluationCriticalCompletionFunc(func(context.Context, alarmdcoordinator.CriticalResult) error { return nil }),
 		fakeSyncOffsetCommitter{},
 		evaluationReceiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
-		alarmdcoordinator.NewCriticalDependencyGate(nil), EvaluationDiagnostics{
+		alarmdcoordinator.NewCriticalDependencyGate(nil), alarmdcoordinator.DefaultConcurrentRunnerLimits(), EvaluationDiagnostics{
 			OnRejected: func(RejectedMessageEvidence) {},
 		}, evaluationRetryConfig(), time.Second,
 	)
@@ -51,7 +66,7 @@ func TestNewOwnedEvaluationServiceRejectsMissingCompletionDependencies(t *testin
 		"execution-envelope", newFakeConsumerGroup(func(context.Context, []string, sarama.ConsumerGroupHandler) error { return nil }),
 		&fakeServiceClient{}, nil, nil, fakeSyncOffsetCommitter{},
 		evaluationReceiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
-		alarmdcoordinator.NewCriticalDependencyGate(nil), EvaluationDiagnostics{
+		alarmdcoordinator.NewCriticalDependencyGate(nil), alarmdcoordinator.DefaultConcurrentRunnerLimits(), EvaluationDiagnostics{
 			OnRejected: func(RejectedMessageEvidence) {},
 		}, evaluationRetryConfig(), time.Second,
 	); err == nil {
@@ -72,7 +87,7 @@ func TestNewOwnedEvaluationServiceRejectsMissingRejectedEvidenceObserver(t *test
 		evaluationCriticalCompletionFunc(func(context.Context, alarmdcoordinator.CriticalResult) error { return nil }),
 		fakeSyncOffsetCommitter{},
 		evaluationReceiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
-		alarmdcoordinator.NewCriticalDependencyGate(nil), EvaluationDiagnostics{}, evaluationRetryConfig(), time.Second,
+		alarmdcoordinator.NewCriticalDependencyGate(nil), alarmdcoordinator.DefaultConcurrentRunnerLimits(), EvaluationDiagnostics{}, evaluationRetryConfig(), time.Second,
 	)
 	if err == nil {
 		t.Fatal("newOwnedEvaluationService() accepted a missing rejected evidence observer")
@@ -92,7 +107,7 @@ func TestNewOwnedEvaluationServiceRejectsInvalidDependencyRetryConfig(t *testing
 		evaluationCriticalCompletionFunc(func(context.Context, alarmdcoordinator.CriticalResult) error { return nil }),
 		fakeSyncOffsetCommitter{},
 		evaluationReceiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }),
-		alarmdcoordinator.NewCriticalDependencyGate(nil), EvaluationDiagnostics{
+		alarmdcoordinator.NewCriticalDependencyGate(nil), alarmdcoordinator.DefaultConcurrentRunnerLimits(), EvaluationDiagnostics{
 			OnRejected: func(RejectedMessageEvidence) {},
 		}, alarmdcoordinator.DependencyRetryConfig{}, time.Second,
 	)

@@ -45,23 +45,28 @@ func NewCompiler(registry *AlgorithmCompilerRegistry, limits Limits) (*PlanCompi
 	}
 	if limits.MaxPlanBytes <= 0 || limits.MaxLevelsPerPlan <= 0 || limits.MaxAlgorithmsPerLevel <= 0 ||
 		limits.MaxGroupsPerAlgorithm <= 0 || limits.MaxConditionsPerAlgorithm <= 0 || limits.MaxASTNodesPerLevel <= 0 ||
-		limits.MaxRequiredHistoryPoints == 0 || limits.MaxCompiledPlanBytes <= 0 || limits.MaxCacheEntries <= 0 ||
+		limits.MaxTriggerWindowSize == 0 || limits.MaxRecoveryConsecutiveWindows == 0 || limits.MaxRequiredHistoryPoints == 0 ||
+		limits.MaxTriggerComputeCost == 0 || limits.MaxCompiledPlanBytes <= 0 || limits.MaxCacheEntries <= 0 ||
 		limits.MaxCacheBytes <= 0 || limits.NegativeCacheTTL <= 0 || limits.BudgetRevision == "" {
 		return nil, errors.New("strategy: deployment budgets must be positive")
 	}
 	budgetDigest, err := contract.DeriveCanonicalDigestV2("strategy-compiler-budget-v1", struct {
-		MaxPlanBytes              int    `json:"max_plan_bytes"`
-		MaxLevelsPerPlan          int    `json:"max_levels_per_plan"`
-		MaxAlgorithmsPerLevel     int    `json:"max_algorithms_per_level"`
-		MaxGroupsPerAlgorithm     int    `json:"max_groups_per_algorithm"`
-		MaxConditionsPerAlgorithm int    `json:"max_conditions_per_algorithm"`
-		MaxASTNodesPerLevel       int    `json:"max_ast_nodes_per_level"`
-		MaxRequiredHistoryPoints  uint32 `json:"max_required_history_points"`
-		MaxCompiledPlanBytes      int    `json:"max_compiled_plan_bytes"`
-		BudgetRevision            string `json:"budget_revision"`
+		MaxPlanBytes                  int    `json:"max_plan_bytes"`
+		MaxLevelsPerPlan              int    `json:"max_levels_per_plan"`
+		MaxAlgorithmsPerLevel         int    `json:"max_algorithms_per_level"`
+		MaxGroupsPerAlgorithm         int    `json:"max_groups_per_algorithm"`
+		MaxConditionsPerAlgorithm     int    `json:"max_conditions_per_algorithm"`
+		MaxASTNodesPerLevel           int    `json:"max_ast_nodes_per_level"`
+		MaxTriggerWindowSize          uint32 `json:"max_trigger_window_size"`
+		MaxRecoveryConsecutiveWindows uint32 `json:"max_recovery_consecutive_windows"`
+		MaxRequiredHistoryPoints      uint32 `json:"max_required_history_points"`
+		MaxTriggerComputeCost         uint64 `json:"max_trigger_compute_cost"`
+		MaxCompiledPlanBytes          int    `json:"max_compiled_plan_bytes"`
+		BudgetRevision                string `json:"budget_revision"`
 	}{
 		limits.MaxPlanBytes, limits.MaxLevelsPerPlan, limits.MaxAlgorithmsPerLevel, limits.MaxGroupsPerAlgorithm,
-		limits.MaxConditionsPerAlgorithm, limits.MaxASTNodesPerLevel, limits.MaxRequiredHistoryPoints,
+		limits.MaxConditionsPerAlgorithm, limits.MaxASTNodesPerLevel, limits.MaxTriggerWindowSize,
+		limits.MaxRecoveryConsecutiveWindows, limits.MaxRequiredHistoryPoints, limits.MaxTriggerComputeCost,
 		limits.MaxCompiledPlanBytes, limits.BudgetRevision,
 	})
 	if err != nil {
@@ -135,6 +140,7 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 		datasetDigest:       datasetDigest,
 	}
 	terminals := make([]Terminal, 0)
+	var triggerComputeCost uint64
 	for _, rawLevel := range request.Plan.StrategyIR.Levels {
 		level, normalizers, terminal, err := c.compileLevel(ctx, request.Plan.InputProjection, request.Plan.StrategyIR.ExecutionSemantics, rawLevel)
 		if err != nil {
@@ -144,6 +150,11 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 			terminals = append(terminals, *terminal)
 			continue
 		}
+		levelCost := triggerComputeCostForLevel(level.trigger, level.recovery)
+		if levelCost > c.limits.MaxTriggerComputeCost-triggerComputeCost {
+			return CompileResult{planTerminal: &Terminal{ReasonCode: contract.ReasonPlanBudgetExceeded, FieldPath: "trigger_compute"}}, nil
+		}
+		triggerComputeCost += levelCost
 		compiled.levels = append(compiled.levels, level)
 		for _, normalizer := range normalizers {
 			compiled.normalizers[normalizer.ref] = normalizer
@@ -268,6 +279,15 @@ func (c *PlanCompiler) compileLevel(
 	if err != nil {
 		return terminal(contract.ReasonLevelInvalid, "level.recovery_plan")
 	}
+	if trigger.WindowSize > c.limits.MaxTriggerWindowSize {
+		return terminal(contract.ReasonLevelBudgetExceeded, "level.trigger_plan")
+	}
+	if recovery.Enabled && recovery.ConsecutiveWindows > c.limits.MaxRecoveryConsecutiveWindows {
+		return terminal(contract.ReasonLevelBudgetExceeded, "level.recovery_plan")
+	}
+	if triggerComputeCostForLevel(trigger, recovery) > c.limits.MaxTriggerComputeCost {
+		return terminal(contract.ReasonLevelBudgetExceeded, "level.recovery_plan")
+	}
 	requiredPoints := trigger.WindowSize
 	if recovery.Enabled {
 		addition := recovery.ConsecutiveWindows - 1
@@ -320,6 +340,14 @@ func (c *PlanCompiler) compileLevel(
 		return CompiledLevel{}, nil, nil, fmt.Errorf("strategy: derive Level trigger fingerprint: %w", err)
 	}
 	return level, normalizers, nil, nil
+}
+
+func triggerComputeCostForLevel(trigger TriggerPlan, recovery RecoveryPlan) uint64 {
+	cost := uint64(1)
+	if recovery.Enabled {
+		cost += uint64(recovery.ConsecutiveWindows)
+	}
+	return cost
 }
 
 func validateAlgorithmCompileResult(

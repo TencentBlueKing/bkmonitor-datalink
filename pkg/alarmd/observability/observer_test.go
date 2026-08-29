@@ -77,8 +77,10 @@ func TestObservationLoggerUsesBoundedEnvelope(t *testing.T) {
 			Keys:       3,
 			StateBytes: 128,
 		},
-		Trace: TraceFields{MessageID: "message-1", StrategyID: "42"},
-		Err:   errors.New("do not log raw error content"),
+		Trace: TraceFields{
+			MessageID: "message-1", StrategyID: "42", TerminalScope: "LEVEL", TerminalFieldPath: "level.trigger_plan",
+		},
+		Err: errors.New("do not log raw error content"),
 	})
 
 	var event map[string]any
@@ -86,18 +88,20 @@ func TestObservationLoggerUsesBoundedEnvelope(t *testing.T) {
 		t.Fatalf("decode event: %v", err)
 	}
 	for field, want := range map[string]any{
-		"component":   string(ComponentResource),
-		"stage":       string(StageResourceSoft),
-		"result":      string(ResultTerminal),
-		"operation":   string(OperationTransition),
-		"direction":   string(DirectionOutput),
-		"reason_code": string(ReasonRSS),
-		"duration_ms": float64(1500),
-		"records":     float64(2),
-		"keys":        float64(3),
-		"state_bytes": float64(128),
-		"message_id":  "message-1",
-		"strategy_id": "42",
+		"component":      string(ComponentResource),
+		"stage":          string(StageResourceSoft),
+		"result":         string(ResultTerminal),
+		"operation":      string(OperationTransition),
+		"direction":      string(DirectionOutput),
+		"reason_code":    string(ReasonRSS),
+		"duration_ms":    float64(1500),
+		"records":        float64(2),
+		"keys":           float64(3),
+		"state_bytes":    float64(128),
+		"message_id":     "message-1",
+		"strategy_id":    "42",
+		"terminal_scope": "LEVEL",
+		"field_path":     "level.trigger_plan",
 	} {
 		if event[field] != want {
 			t.Fatalf("event[%q] = %#v, want %#v; event=%#v", field, event[field], want, event)

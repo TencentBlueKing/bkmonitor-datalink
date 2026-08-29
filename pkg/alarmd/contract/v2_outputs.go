@@ -286,7 +286,7 @@ func validateSuccessfulLevelResultsV1(results []LevelResultV1) error {
 		if window.Type != "N_OF_M_WITH_CONTINUOUS_MISS" || window.Version != 1 || window.SourceTime < 0 ||
 			window.Trigger.WindowStart < 0 || window.Trigger.WindowEnd < window.Trigger.WindowStart || window.Trigger.WindowSize == 0 ||
 			window.Trigger.WindowEnd != window.SourceTime ||
-			window.Trigger.RequiredAnomalies == 0 || window.Trigger.RequiredAnomalies > window.Trigger.WindowSize ||
+			window.Trigger.RequiredAnomalies == 0 ||
 			window.Trigger.ObservedAnomalies > window.Trigger.WindowSize ||
 			window.Recovery.OldestWindowStart < 0 || window.Recovery.OldestWindowStart > window.SourceTime ||
 			!sha256Pattern.MatchString(window.WindowEvidence.AnomalyTimestampsDigest) {

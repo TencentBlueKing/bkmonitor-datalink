@@ -64,6 +64,46 @@ func TestTriggerEventSinkPublishesOfficialWireWithEmptyKeyAfterBrokerACK(t *test
 	}
 }
 
+func TestTriggerEventSinkPublishesMultiEventBatchWithOneProducerBatchACK(t *testing.T) {
+	t.Parallel()
+
+	events := []contract.TriggerEventV1{triggerEventGolden(t), triggerEventGolden(t), triggerEventGolden(t)}
+	producer := &batchAwareSyncProducer{}
+	sink, err := newTriggerEventSink("alarmd-trigger-event-shadow", producer, &fakeCloser{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sink.WriteBatch(context.Background(), events); err != nil {
+		t.Fatal(err)
+	}
+	if producer.batchCalls != 1 || producer.singleCalls != 0 || producer.batchSize != len(events) {
+		t.Fatalf(
+			"producer calls = batch:%d single:%d batch_size:%d, want 1/0/%d",
+			producer.batchCalls, producer.singleCalls, producer.batchSize, len(events),
+		)
+	}
+}
+
+type batchAwareSyncProducer struct {
+	batchCalls  int
+	singleCalls int
+	batchSize   int
+}
+
+func (producer *batchAwareSyncProducer) SendMessage(*sarama.ProducerMessage) (int32, int64, error) {
+	producer.singleCalls++
+	return 0, 0, nil
+}
+
+func (producer *batchAwareSyncProducer) SendMessages(messages []*sarama.ProducerMessage) error {
+	producer.batchCalls++
+	producer.batchSize = len(messages)
+	return nil
+}
+
+func (*batchAwareSyncProducer) Close() error { return nil }
+
 func TestTriggerEventSinkValidatesWholeBatchBeforePublishing(t *testing.T) {
 	t.Parallel()
 

@@ -42,7 +42,7 @@ const (
 	StageKafkaAssigned        = "kafka_assigned"
 	StageExecutionReceived    = "execution_received"
 	StageOffsetGap            = "offset_gap"
-	StageOffsetCommitted      = "offset_committed"
+	StageOffsetMarked         = "offset_marked"
 	StageMessageDecoded       = "message_decoded"
 	StageRecordBatchReady     = "record_batch_ready"
 	StageRejected             = "rejected"
@@ -137,6 +137,8 @@ type TraceFields struct {
 	QueryGroupKey           string
 	StrategyID              string
 	LevelID                 string
+	TerminalScope           string
+	TerminalFieldPath       string
 	RecordID                string
 	DimensionIdentityDigest string
 	Topic                   string
@@ -352,7 +354,7 @@ var allComponentStages = []ComponentStage{
 	{ComponentRuntime, StageShutdown}, {ComponentRuntime, StageFatal},
 	{ComponentRuntime, StageRestartRecovered},
 	{ComponentConsumer, StageKafkaAssigned}, {ComponentConsumer, StageExecutionReceived},
-	{ComponentConsumer, StageOffsetGap}, {ComponentConsumer, StageOffsetCommitted},
+	{ComponentConsumer, StageOffsetGap}, {ComponentConsumer, StageOffsetMarked},
 	{ComponentAdapter, StageMessageDecoded}, {ComponentAdapter, StageRecordBatchReady},
 	{ComponentAdapter, StageRejected},
 	{ComponentCompiler, StagePlanCompiled},

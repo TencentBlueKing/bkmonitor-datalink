@@ -75,7 +75,12 @@ func TestLoadBuildsPhaseOneCoordinatesAndModuleOptions(t *testing.T) {
 		cfg.TriggerLimits().MaxLevels == 0 || cfg.CodecLimits().MaxEncodedBytes <= 0 || cfg.StoreLimits().MaxWrittenBytes <= 0 {
 		t.Fatal("phase-one module limits were not converted")
 	}
-	if cfg.ReaderLimits().MaxRecordsPerMessage != 321 || cfg.CompilerLimits().BudgetRevision != "deployment-v1" ||
+	compilerLimits := cfg.CompilerLimits()
+	if cfg.ReaderLimits().MaxRecordsPerMessage != 321 || compilerLimits.BudgetRevision != "deployment-v1" ||
+		compilerLimits.MaxTriggerWindowSize != 123 || compilerLimits.MaxTriggerWindowSize != cfg.TriggerLimits().MaxTriggerWindowSize ||
+		compilerLimits.MaxRecoveryConsecutiveWindows != 456 ||
+		compilerLimits.MaxRecoveryConsecutiveWindows != cfg.TriggerLimits().MaxRecoveryConsecutiveWindows ||
+		compilerLimits.MaxTriggerComputeCost != cfg.TriggerLimits().MaxComputeCost ||
 		cfg.DetectLimits().MaxResultBytes != 20<<20 || cfg.TriggerLimits().MaxComputeCost != 2<<20 ||
 		cfg.CodecLimits().MaxEncodedBytes != 600000 || cfg.StoreLimits().MaxWrittenBytes != 65<<20 {
 		t.Fatal("phase-one YAML limit overrides were not preserved")
@@ -85,6 +90,11 @@ func TestLoadBuildsPhaseOneCoordinatesAndModuleOptions(t *testing.T) {
 	}
 	if queue := cfg.ReceiptPublisherLimits(); queue.MaxQueuedMessages != 2000 || queue.MaxQueuedBytes != 8<<20 {
 		t.Fatalf("receipt queue = %+v", queue)
+	}
+	if runner := cfg.EvaluationRunnerLimits(); runner.PreparationWorkers != 3 || runner.StatefulWorkers != 6 ||
+		runner.MaxInflightMessages != 24 || runner.MaxInflightBytes != 12<<20 ||
+		runner.MaxRuntimeKeysPerMessage != 7000 || runner.MaxPendingKeyRefs != 84_000 {
+		t.Fatalf("evaluation runner limits = %+v", runner)
 	}
 
 	codec, err := state.NewCodec(cfg.CodecLimits())
@@ -163,12 +173,23 @@ func TestValidateRejectsInvalidRedisAndRuntimeBudgets(t *testing.T) {
 		"zero compiler budget": func(cfg *Config) { cfg.Limits.Compiler.MaxPlanBytes = 0 },
 		"zero detect budget":   func(cfg *Config) { cfg.Limits.Detect.MaxPlans = 0 },
 		"zero trigger budget":  func(cfg *Config) { cfg.Limits.Trigger.MaxLevels = 0 },
-		"zero codec budget":    func(cfg *Config) { cfg.Limits.Codec.MaxLevels = 0 },
-		"zero store budget":    func(cfg *Config) { cfg.Limits.Store.MaxKeysPerBatch = 0 },
+		"compiler levels exceed trigger event": func(cfg *Config) {
+			cfg.Limits.Trigger.MaxLevelResultsPerEvent = uint32(cfg.Limits.Compiler.MaxLevelsPerPlan - 1)
+		},
+		"zero codec budget": func(cfg *Config) { cfg.Limits.Codec.MaxLevels = 0 },
+		"zero store budget": func(cfg *Config) { cfg.Limits.Store.MaxKeysPerBatch = 0 },
 		"reversed retry": func(cfg *Config) {
 			cfg.DependencyRetry.MaxDelay = cfg.DependencyRetry.MinDelay - 1
 		},
-		"zero receipt queue": func(cfg *Config) { cfg.ReceiptQueue.MaxQueuedMessages = 0 },
+		"zero receipt queue":      func(cfg *Config) { cfg.ReceiptQueue.MaxQueuedMessages = 0 },
+		"zero evaluation workers": func(cfg *Config) { cfg.EvaluationRunner.MaxStatefulWorkers = 0 },
+		"runtime keys cannot admit maximum reader message": func(cfg *Config) {
+			cfg.EvaluationRunner.MaxRuntimeKeysPerMessage =
+				cfg.Limits.Reader.MaxPlansPerMessage*cfg.Limits.Reader.MaxRecordsPerMessage - 1
+		},
+		"inflight bytes cannot admit maximum reader envelope": func(cfg *Config) {
+			cfg.EvaluationRunner.MaxInflightBytes = cfg.Limits.Reader.MaxEnvelopeBytes - 1
+		},
 	}
 
 	for name, mutate := range tests {
@@ -295,6 +316,13 @@ dependency_retry:
 receipt_queue:
   max_queued_messages: 2000
   max_queued_bytes: 8388608
+evaluation_runner:
+  max_preparation_workers: 3
+  max_stateful_workers: 6
+  max_inflight_messages: 24
+  max_inflight_bytes: 12582912
+  max_runtime_keys_per_message: 7000
+  max_pending_key_refs: 84000
 limits:
   reader:
     max_records_per_message: 321
@@ -303,6 +331,8 @@ limits:
   detect:
     max_result_bytes: 20971520
   trigger:
+    max_trigger_window_size: 123
+    max_recovery_consecutive_windows: 456
     max_compute_cost: 2097152
   codec:
     max_encoded_bytes: 600000

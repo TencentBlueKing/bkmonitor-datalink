@@ -113,16 +113,18 @@ func (tracker *PartitionCompletionTracker) NextCommit() (int64, []*contract.Mess
 	return tracker.pendingNext, receipts, true
 }
 
-// CommitACK removes exactly the prefix frozen by NextCommit. Callers must use
-// it only after the broker acknowledges the corresponding next offset.
-func (tracker *PartitionCompletionTracker) CommitACK(nextOffset int64) error {
+// CommitApplied removes exactly the prefix frozen by NextCommit. Callers use
+// it only after their PartitionOffsetCommitter accepts the corresponding next
+// offset boundary. The concrete committer may require a broker ACK or, for the
+// phase-one evaluation path, a session-local mark followed by periodic commit.
+func (tracker *PartitionCompletionTracker) CommitApplied(nextOffset int64) error {
 	if tracker == nil {
 		return errors.New("alarmd coordinator: completion tracker is required")
 	}
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 	if tracker.pendingCount == 0 || nextOffset != tracker.pendingNext {
-		return errors.New("alarmd coordinator: offset ACK does not match the pending completed prefix")
+		return errors.New("alarmd coordinator: applied offset does not match the pending completed prefix")
 	}
 	for index := 0; index < tracker.pendingCount; index++ {
 		delete(tracker.byOffset, tracker.entries[index].offset)

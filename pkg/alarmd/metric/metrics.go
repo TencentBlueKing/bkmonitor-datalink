@@ -119,6 +119,7 @@ type Recorder struct {
 	pipelineLatency *prometheus.HistogramVec
 	shadowCompare   *prometheus.CounterVec
 	observations    observationMetrics
+	receipts        receiptMetrics
 }
 
 func NewRecorder(build BuildInfo) *Recorder {
@@ -181,6 +182,7 @@ func NewRecorder(build BuildInfo) *Recorder {
 	)
 	buildInfo.WithLabelValues(build.Version, build.Commit, build.SchemaVersion).Set(1)
 	observations := newObservationMetrics()
+	receipts := newReceiptMetrics()
 
 	collectorsToRegister := []prometheus.Collector{
 		collectors.NewGoCollector(),
@@ -193,6 +195,7 @@ func NewRecorder(build BuildInfo) *Recorder {
 		shadowCompare,
 	}
 	collectorsToRegister = append(collectorsToRegister, observations.collectors()...)
+	collectorsToRegister = append(collectorsToRegister, receipts.collectors()...)
 	registry.MustRegister(collectorsToRegister...)
 
 	return &Recorder{
@@ -203,6 +206,7 @@ func NewRecorder(build BuildInfo) *Recorder {
 		pipelineLatency: pipelineLatency,
 		shadowCompare:   shadowCompare,
 		observations:    observations,
+		receipts:        receipts,
 	}
 }
 
@@ -255,7 +259,7 @@ func MaxCustomSeries() int {
 	shadowCompare := len(allComponents) * len(allCompareResults)
 	buildInfo := 1
 	return processTotal + processDuration + recordsTotal + pipelineLatency + shadowCompare + buildInfo +
-		lifecycleCustomSeries() + observationCustomSeries() + healthResourceCustomSeries()
+		lifecycleCustomSeries() + observationCustomSeries() + healthResourceCustomSeries() + receiptCustomSeries()
 }
 
 var (

@@ -31,6 +31,10 @@ type syncMessageProducer interface {
 	Close() error
 }
 
+type syncBatchMessageProducer interface {
+	SendMessages([]*sarama.ProducerMessage) error
+}
+
 type closeableClient interface {
 	Close() error
 }
@@ -165,6 +169,16 @@ func (s *DecisionSink) writeMessages(ctx context.Context, messages []*sarama.Pro
 	s.mu.Unlock()
 	defer s.inflight.Done()
 
+	if batchProducer, ok := s.producer.(syncBatchMessageProducer); ok && len(messages) > 1 {
+		if err := batchProducer.SendMessages(messages); err != nil {
+			producerErr := fmt.Errorf("kafka decision sink: send batch: %w", err)
+			if contextErr := ctx.Err(); contextErr != nil {
+				return errors.Join(contextErr, producerErr)
+			}
+			return producerErr
+		}
+		return nil
+	}
 	for _, message := range messages {
 		if _, _, err := s.producer.SendMessage(message); err != nil {
 			producerErr := fmt.Errorf("kafka decision sink: send batch: %w", err)

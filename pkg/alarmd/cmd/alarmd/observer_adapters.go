@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	inputv2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/input/adapter/v2"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
@@ -163,10 +164,33 @@ func (runtime *observedReceiptRuntime) Shutdown(ctx context.Context) enginekafka
 func receiptPublisherDiagnostics(
 	observer observability.Observer,
 	logger *observability.Logger,
+	recorder *metric.Recorder,
 ) enginekafka.ReceiptPublisherDiagnostics {
-	return enginekafka.ReceiptPublisherDiagnostics{OnDrop: func(evidence enginekafka.ReceiptDropEvidence) {
-		observeReceiptDrop(observer, logger, observability.StageCoverageGap, evidence)
-	}}
+	return enginekafka.ReceiptPublisherDiagnostics{
+		OnValidated: recorder.RecordValidatedMessageReceipt,
+		OnQueued:    recorder.RecordMessageReceiptQueued,
+		OnACKed:     recorder.RecordMessageReceiptACKed,
+		OnDrop: func(evidence enginekafka.ReceiptDropEvidence) {
+			if receiptDropRepresentsLoss(evidence.Kind) {
+				recorder.RecordMessageReceiptDropped(evidence.Count)
+			}
+			observeReceiptDrop(observer, logger, observability.StageCoverageGap, evidence)
+		},
+	}
+}
+
+func receiptDropRepresentsLoss(kind enginekafka.ReceiptDropKind) bool {
+	switch kind {
+	case enginekafka.ReceiptDropQueueMessages,
+		enginekafka.ReceiptDropQueueBytes,
+		enginekafka.ReceiptDropBrokerACKFailed,
+		enginekafka.ReceiptDropClosed,
+		enginekafka.ReceiptDropShutdownTimeout,
+		enginekafka.ReceiptDropPublisherUnavailable:
+		return true
+	default:
+		return false
+	}
 }
 
 func observeReceiptDrop(
@@ -230,8 +254,8 @@ func observeRuntime(ctx context.Context, observer observability.Observer, observ
 	observer.Observe(ctx, observation)
 }
 
-func offsetCommitDiagnostics(observer observability.Observer) func(enginekafka.OffsetCommitEvidence) {
-	return func(evidence enginekafka.OffsetCommitEvidence) {
+func offsetMarkDiagnostics(observer observability.Observer) func(enginekafka.OffsetMarkEvidence) {
+	return func(evidence enginekafka.OffsetMarkEvidence) {
 		result := observability.Result(observability.ResultSuccess)
 		reason := observability.ReasonNone
 		if evidence.Err != nil {
@@ -239,7 +263,7 @@ func offsetCommitDiagnostics(observer observability.Observer) func(enginekafka.O
 			reason = observability.ReasonCode(contract.ReasonKafkaUnavailable)
 		}
 		observeRuntime(context.Background(), observer, observability.Observation{
-			Component: observability.ComponentConsumer, Stage: observability.StageOffsetCommitted,
+			Component: observability.ComponentConsumer, Stage: observability.StageOffsetMarked,
 			Result: result, Operation: observability.OperationCommit, Direction: observability.DirectionInput,
 			ReasonCode: reason, Duration: evidence.Duration, Err: evidence.Err,
 			Trace: observability.TraceFields{

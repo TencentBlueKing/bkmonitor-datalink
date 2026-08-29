@@ -28,6 +28,7 @@ func OpenEvaluationService(
 	critical alarmdcoordinator.CriticalCompletion,
 	receipts alarmdcoordinator.ReceiptPublisher,
 	gate *alarmdcoordinator.CriticalDependencyGate,
+	runnerLimits alarmdcoordinator.ConcurrentRunnerLimits,
 	diagnostics EvaluationDiagnostics,
 	retryConfig alarmdcoordinator.DependencyRetryConfig,
 	drainTimeout time.Duration,
@@ -41,7 +42,7 @@ func OpenEvaluationService(
 	if drainTimeout <= 0 {
 		return nil, errors.New("kafka evaluation service: drain timeout must be positive")
 	}
-	saramaConfig, err := NewSaramaConfig(config)
+	saramaConfig, err := newEvaluationSaramaConfig(config)
 	if err != nil {
 		return nil, err
 	}
@@ -53,12 +54,9 @@ func OpenEvaluationService(
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("kafka evaluation service: open consumer group: %w", err), client.Close())
 	}
-	offsets, err := NewSaramaOffsetCommitter(client, config.GroupID)
-	if err != nil {
-		return nil, errors.Join(err, group.Close(), client.Close())
-	}
 	service, err := newOwnedEvaluationService(
-		config.Topic, group, client, router, critical, offsets, receipts, gate, diagnostics, retryConfig, drainTimeout,
+		config.Topic, group, client, router, critical, evaluationSessionOffsetCommitter{}, receipts, gate,
+		runnerLimits, diagnostics, retryConfig, drainTimeout,
 	)
 	if err != nil {
 		return nil, errors.Join(err, group.Close(), client.Close())
@@ -70,6 +68,18 @@ func OpenEvaluationService(
 	return service, nil
 }
 
+func newEvaluationSaramaConfig(config Config) (*sarama.Config, error) {
+	saramaConfig, err := NewSaramaConfig(config)
+	if err != nil {
+		return nil, err
+	}
+	// Once TriggerEvent and Redis state complete, the v2 input offset is only a
+	// recovery cursor. Let Sarama batch broker commits; a crash may replay a
+	// bounded interval, but cannot lose a completed event or state write.
+	saramaConfig.Consumer.Offsets.AutoCommit.Enable = true
+	return saramaConfig, nil
+}
+
 func newOwnedEvaluationService(
 	topic string,
 	group consumerGroup,
@@ -79,6 +89,7 @@ func newOwnedEvaluationService(
 	offsets OffsetCommitter,
 	receipts alarmdcoordinator.ReceiptPublisher,
 	gate *alarmdcoordinator.CriticalDependencyGate,
+	runnerLimits alarmdcoordinator.ConcurrentRunnerLimits,
 	diagnostics EvaluationDiagnostics,
 	retryConfig alarmdcoordinator.DependencyRetryConfig,
 	drainTimeout time.Duration,
@@ -92,8 +103,8 @@ func newOwnedEvaluationService(
 	return newOwnedGroupService(
 		[]string{topic}, group, client,
 		func(reportFatal func(error)) (serviceHandler, error) {
-			return NewEvaluationHandlerWithDiagnostics(
-				router, critical, offsets, receipts, gate, retryConfig, diagnostics, reportFatal,
+			return NewEvaluationHandlerWithRunnerLimits(
+				router, critical, offsets, receipts, gate, retryConfig, diagnostics, runnerLimits, drainTimeout, reportFatal,
 			)
 		},
 		drainTimeout,

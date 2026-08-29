@@ -79,6 +79,7 @@ func (l *assignmentLifecycle) Setup(session sarama.ConsumerGroupSession) error {
 	l.expected = expected
 	l.initialized = make(map[assignmentClaim]struct{}, len(expected))
 	l.cursors = make(map[assignmentClaim]claimCursor, len(expected))
+	l.inflight = 0
 	l.ready = len(expected) == 0 && !l.draining && !l.fatal
 	l.mu.Unlock()
 
@@ -162,9 +163,15 @@ func (l *assignmentLifecycle) tryBeginRecord(
 		return false
 	}
 	if observeCursor {
-		l.cursors[claimID] = claimCursor{
-			nextOffset: nextOffset, minimumHighWater: nextOffset + 1, source: claim,
+		cursor, ok := l.cursors[claimID]
+		if !ok {
+			cursor.nextOffset = nextOffset
 		}
+		if minimum := nextOffset + 1; minimum > cursor.minimumHighWater {
+			cursor.minimumHighWater = minimum
+		}
+		cursor.source = claim
+		l.cursors[claimID] = cursor
 	}
 	l.inflight++
 	return true
@@ -193,6 +200,9 @@ func (l *assignmentLifecycle) EndObservedRecord(
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if session == nil || l.current != sessionAssignmentID(session) {
+		return
+	}
 	if l.inflight > 0 {
 		l.inflight--
 	}
@@ -207,6 +217,31 @@ func (l *assignmentLifecycle) EndObservedRecord(
 		}
 	}
 	l.closeDrainedIfIdle()
+}
+
+func (l *assignmentLifecycle) AdvanceObservedCursor(
+	session sarama.ConsumerGroupSession,
+	claim sarama.ConsumerGroupClaim,
+	nextOffset int64,
+) {
+	if l == nil || session == nil || claim == nil || nextOffset <= 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.active || l.current != sessionAssignmentID(session) {
+		return
+	}
+	claimID := assignmentClaim{topic: claim.Topic(), partition: claim.Partition()}
+	cursor, ok := l.cursors[claimID]
+	if !ok || nextOffset < cursor.nextOffset {
+		return
+	}
+	cursor.nextOffset = nextOffset
+	if nextOffset > cursor.minimumHighWater {
+		cursor.minimumHighWater = nextOffset
+	}
+	l.cursors[claimID] = cursor
 }
 
 func (l *assignmentLifecycle) BeginDrain() <-chan struct{} {

@@ -38,6 +38,11 @@ var (
 	errFatalWithoutReason         = errors.New("alarmd runtime: fatal signal has no error")
 )
 
+const (
+	phaseOneDiagnosticLogWindow    = time.Minute
+	phaseOneDiagnosticLogMaxEvents = 1
+)
+
 type serviceRuntime interface {
 	lifecycle.Source
 	Run(context.Context) error
@@ -75,13 +80,19 @@ type unavailableReceiptRuntime struct {
 	dropped     atomic.Uint64
 }
 
-func (runtime *unavailableReceiptRuntime) TryEnqueue(*contract.MessageReceiptV1) bool {
-	if runtime != nil {
-		runtime.dropped.Add(1)
-		runtime.diagnostics.ObserveDrop(enginekafka.ReceiptDropEvidence{
-			Kind: enginekafka.ReceiptDropPublisherUnavailable, Count: 1,
-		})
+func (runtime *unavailableReceiptRuntime) TryEnqueue(receipt *contract.MessageReceiptV1) bool {
+	if runtime == nil {
+		return false
 	}
+	if err := contract.ValidateMessageReceiptV1(receipt); err != nil {
+		runtime.diagnostics.ObserveDrop(enginekafka.ReceiptDropEvidence{Kind: enginekafka.ReceiptDropEncodeFailed, Count: 1})
+		return false
+	}
+	runtime.diagnostics.ObserveValidated(receipt)
+	runtime.dropped.Add(1)
+	runtime.diagnostics.ObserveDrop(enginekafka.ReceiptDropEvidence{
+		Kind: enginekafka.ReceiptDropPublisherUnavailable, Count: 1,
+	})
 	return false
 }
 
@@ -113,6 +124,7 @@ type applicationComponentFactories struct {
 		coordinator.CriticalCompletion,
 		coordinator.ReceiptPublisher,
 		*coordinator.CriticalDependencyGate,
+		coordinator.ConcurrentRunnerLimits,
 		enginekafka.EvaluationDiagnostics,
 		coordinator.DependencyRetryConfig,
 		time.Duration,
@@ -557,6 +569,7 @@ func defaultApplicationComponentFactories() applicationComponentFactories {
 			critical coordinator.CriticalCompletion,
 			receipts coordinator.ReceiptPublisher,
 			gate *coordinator.CriticalDependencyGate,
+			runnerLimits coordinator.ConcurrentRunnerLimits,
 			diagnostics enginekafka.EvaluationDiagnostics,
 			retryConfig coordinator.DependencyRetryConfig,
 			drainTimeout time.Duration,
@@ -565,7 +578,7 @@ func defaultApplicationComponentFactories() applicationComponentFactories {
 				return nil, err
 			}
 			runtime, err := enginekafka.OpenEvaluationService(
-				coordinates, router, critical, receipts, gate, diagnostics, retryConfig, drainTimeout,
+				coordinates, router, critical, receipts, gate, runnerLimits, diagnostics, retryConfig, drainTimeout,
 			)
 			if err != nil {
 				return nil, retryableStartupDependency(err)
@@ -601,7 +614,10 @@ func openApplicationBundleWithFactories(
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	runtimeObserver := observability.Multi(recorder)
+	runtimeObserver, err := newPhaseOneRuntimeObserver(recorder, logger)
+	if err != nil {
+		return nil, err
+	}
 	resources, err := observability.NewResourceGovernor(observability.ResourceGovernorConfig{})
 	if err != nil {
 		return nil, err
@@ -704,7 +720,7 @@ func openApplicationBundleWithFactories(
 	if err != nil {
 		return cleanup(err)
 	}
-	receiptDiagnostics := receiptPublisherDiagnostics(runtimeObserver, logger)
+	receiptDiagnostics := receiptPublisherDiagnostics(runtimeObserver, logger, recorder)
 	receipts, err := factories.openReceipts(
 		cfg.Kafka.MessageReceiptCoordinates(), cfg.ReceiptPublisherLimits(), receiptDiagnostics,
 	)
@@ -722,8 +738,9 @@ func openApplicationBundleWithFactories(
 	consumerCoordinates.Diagnostics = consumerDiagnostics(recorder, logger)
 	service, err := factories.openEvaluationService(
 		consumerCoordinates, router, &criticalCompletionRuntime{CriticalPhaseCompletion: retryingCritical}, observedReceipts, gate,
+		cfg.EvaluationRunnerLimits(),
 		enginekafka.EvaluationDiagnostics{
-			OnRejected: rejectedMessageDiagnostics(logger), OnOffsetCommitted: offsetCommitDiagnostics(runtimeObserver),
+			OnRejected: rejectedMessageDiagnostics(logger), OnOffsetMarked: offsetMarkDiagnostics(runtimeObserver),
 		},
 		cfg.DependencyRetryOptions(),
 		cfg.ShutdownTimeout.Duration(),
@@ -736,6 +753,23 @@ func openApplicationBundleWithFactories(
 		return cleanup(err)
 	}
 	return partial, nil
+}
+
+func newPhaseOneRuntimeObserver(recorder *metric.Recorder, logger *observability.Logger) (observability.Observer, error) {
+	if recorder == nil || logger == nil {
+		return nil, errors.New("alarmd runtime: recorder and logger are required")
+	}
+	limiter, err := observability.NewWindowLogLimiter(observability.WindowLogLimiterConfig{
+		Window: phaseOneDiagnosticLogWindow, MaxEvents: phaseOneDiagnosticLogMaxEvents,
+	})
+	if err != nil {
+		return nil, err
+	}
+	policy, err := observability.NewBoundedLogPolicy(limiter)
+	if err != nil {
+		return nil, err
+	}
+	return observability.Multi(recorder, observability.NewLoggingObserver(logger, policy)), nil
 }
 
 func observeReceiptUnavailable(observer observability.Observer, logger *observability.Logger) {

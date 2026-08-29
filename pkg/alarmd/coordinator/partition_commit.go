@@ -18,7 +18,10 @@ import (
 )
 
 type PartitionOffsetCommitter interface {
-	CommitThrough(context.Context, int64) error
+	// MarkThrough applies one contiguous completion boundary. Concrete
+	// implementations may synchronously commit to the broker or only mark the
+	// consumer-group session for a later periodic commit.
+	MarkThrough(context.Context, int64) error
 }
 
 type ReceiptPublisher interface {
@@ -50,17 +53,17 @@ func (committer *PartitionCommitter) CommitReady(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	if err := committer.offsets.CommitThrough(ctx, nextOffset); err != nil {
-		return fmt.Errorf("alarmd coordinator: commit input offset %d: %w", nextOffset, err)
+	if err := committer.offsets.MarkThrough(ctx, nextOffset); err != nil {
+		return fmt.Errorf("alarmd coordinator: mark input offset %d: %w", nextOffset, err)
 	}
-	if err := committer.tracker.CommitACK(nextOffset); err != nil {
+	if err := committer.tracker.CommitApplied(nextOffset); err != nil {
 		return err
 	}
 	for _, receipt := range receipts {
 		if receipt != nil {
 			if !committer.receipts.TryEnqueue(receipt) {
 				// Receipt is a fail-open audit. The publisher owns drop evidence;
-				// a rejection must not invalidate the committed input offset.
+				// a rejection must not invalidate the applied input boundary.
 				continue
 			}
 		}

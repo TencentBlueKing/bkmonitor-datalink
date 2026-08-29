@@ -276,8 +276,16 @@ func applyReceiptTerminals(
 			}
 			classifyTerminalSlots(plan.slots, terminal.ReasonCode, reasonCounts)
 		case inputv2.ScopeRecord:
+			targetPlans := plans
+			if terminal.PlanID != "" {
+				plan, ok := plans[terminal.PlanID]
+				if !ok {
+					return false, fmt.Errorf("alarmd coordinator: record terminal references unknown Plan %s", terminal.PlanID)
+				}
+				targetPlans = map[string]*planReceiptState{terminal.PlanID: plan}
+			}
 			if terminal.RecordFromOrdinal != nil {
-				matched := classifyRecordTail(plans, *terminal.RecordFromOrdinal, terminal.ReasonCode, reasonCounts)
+				matched := classifyRecordTail(targetPlans, *terminal.RecordFromOrdinal, terminal.ReasonCode, reasonCounts)
 				if matched == 0 {
 					reasonCounts[terminal.ReasonCode]++
 					uncountedTerminal = true
@@ -288,7 +296,7 @@ func applyReceiptTerminals(
 				return false, errors.New("alarmd coordinator: record terminal has no ordinal or tail")
 			}
 			matched := 0
-			for _, plan := range plans {
+			for _, plan := range targetPlans {
 				if slot, ok := plan.slots[*terminal.RecordOrdinal]; ok && slot.result == "" {
 					classifyTerminalSlot(slot)
 					reasonCounts[terminal.ReasonCode]++

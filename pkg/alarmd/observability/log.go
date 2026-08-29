@@ -194,7 +194,8 @@ func appendTraceFields(attributes []slog.Attr, trace TraceFields) []slog.Attr {
 	}{
 		{"execution_id", trace.ExecutionID}, {"message_id", trace.MessageID},
 		{"query_group_key", trace.QueryGroupKey}, {"strategy_id", trace.StrategyID},
-		{"level_id", trace.LevelID}, {"record_id", trace.RecordID},
+		{"level_id", trace.LevelID}, {"terminal_scope", trace.TerminalScope},
+		{"field_path", trace.TerminalFieldPath}, {"record_id", trace.RecordID},
 		{"dimension_identity_digest", trace.DimensionIdentityDigest}, {"topic", trace.Topic},
 		{"source_window", trace.SourceWindow},
 	}

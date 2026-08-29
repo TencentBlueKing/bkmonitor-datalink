@@ -167,8 +167,8 @@ func DeriveDimensionIdentityDigestV2(tenantID, businessID string, fields []Dimen
 			return "", invalid("dimension_identity.fields", "names must be non-empty, sorted and unique")
 		}
 		canonical, err := CanonicalJSONV2(dimension.Value)
-		if err != nil || bytes.Equal(canonical, []byte("null")) || len(canonical) == 0 || canonical[0] == '{' || canonical[0] == '[' {
-			return "", invalid("dimension_identity.fields.value", "must be a non-null scalar JSON value")
+		if err != nil || len(canonical) == 0 || canonical[0] == '{' || canonical[0] == '[' {
+			return "", invalid("dimension_identity.fields.value", "must be a scalar or null JSON value")
 		}
 		previous = dimension.Name
 	}

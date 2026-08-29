@@ -286,7 +286,6 @@ func NewController(ctx context.Context, client kubernetes.Interface, mClient met
 		return nil, err
 	}
 
-	// configs.G().MonitorNamespace SharedInformer
 	monitorSharedInformer := metadatainformer.NewFilteredSharedInformerFactory(mClient, define.ReSyncPeriod, configs.G().MonitorNamespace, nil)
 	controller.secretObjs, err = newSecretObjects(ctx, monitorSharedInformer)
 	if err != nil {

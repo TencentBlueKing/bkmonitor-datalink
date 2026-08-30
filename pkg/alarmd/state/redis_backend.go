@@ -32,8 +32,24 @@ type redisClient interface {
 	MGet(context.Context, ...string) *redis.SliceCmd
 	Pipelined(context.Context, func(redis.Pipeliner) error) ([]redis.Cmder, error)
 	Ping(context.Context) *redis.StatusCmd
+	Eval(context.Context, string, []string, ...interface{}) *redis.Cmd
 	Close() error
 }
+
+const compareAndSetScript = `
+local current = redis.call('GET', KEYS[1])
+if ARGV[1] == '1' then
+  if current then return 0 end
+else
+  if not current or current ~= ARGV[2] then return 0 end
+end
+if tonumber(ARGV[4]) == 0 then
+  redis.call('SET', KEYS[1], ARGV[3])
+else
+  redis.call('PSETEX', KEYS[1], ARGV[4], ARGV[3])
+end
+return 1
+`
 
 // RedisBackend implements the minimum phase-one Redis String command set. The
 // go-redis client owns pooling and reconnect; dependency errors are returned to
@@ -118,6 +134,24 @@ func (backend *RedisBackend) SetMany(ctx context.Context, writes []BackendWrite)
 		return nil
 	})
 	return err
+}
+
+func (backend *RedisBackend) CompareAndSet(
+	ctx context.Context, key string, expected []byte, expectedMissing bool, value []byte, ttl time.Duration,
+) (bool, error) {
+	if backend == nil || backend.client == nil || key == "" || len(value) == 0 || ttl < 0 ||
+		(expectedMissing && len(expected) != 0) {
+		return false, fmt.Errorf("state: invalid Redis compare-and-set")
+	}
+	missing := "0"
+	if expectedMissing {
+		missing = "1"
+	}
+	result, err := backend.client.Eval(ctx, compareAndSetScript, []string{key}, missing, expected, value, ttl.Milliseconds()).Int()
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
 }
 
 func (backend *RedisBackend) Close() error {

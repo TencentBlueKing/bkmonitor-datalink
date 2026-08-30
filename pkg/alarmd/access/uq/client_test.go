@@ -245,7 +245,7 @@ func TestRequestMatchesTraceablePythonFinalWireFixture(t *testing.T) {
 	}
 }
 
-func TestRequestPreservesPythonEmptyFunctionShapes(t *testing.T) {
+func TestRequestPreservesPythonAVGAndRealTimeFunctionShapes(t *testing.T) {
 	want, err := os.ReadFile("testdata/python-empty-functions-wire-v1.json")
 	if err != nil {
 		t.Fatal(err)
@@ -254,13 +254,14 @@ func TestRequestPreservesPythonEmptyFunctionShapes(t *testing.T) {
 	avg := attempt.Spec.PlanFacts.QueryList[0]
 	avg.DataSource = ""
 	avg.Functions = []execution.QueryFunction{{Method: "mean", Position: 0}}
-	avg.TimeAggregation = execution.QueryFunction{}
+	avg.TimeAggregation = execution.QueryFunction{Method: "avg_over_time", Window: "60s", Position: 0}
 	avg.Conditions = execution.QueryConditions{}
 	avg.OffsetForward = ""
 	realTime := avg
 	realTime.ReferenceName = "b"
 	realTime.FieldName = "instant_usage"
 	realTime.Functions = []execution.QueryFunction{}
+	realTime.TimeAggregation = execution.QueryFunction{}
 	facts := attempt.Spec.PlanFacts
 	facts.QueryRevision = ""
 	facts.QueryList = []execution.QueryClause{avg, realTime}

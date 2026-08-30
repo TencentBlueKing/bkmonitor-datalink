@@ -93,19 +93,21 @@ func TestQueryPlanFactsAcceptsRealUQFunctionPositions(t *testing.T) {
 	}
 }
 
-func TestQueryPlanFactsAcceptsPythonEmptyFunctionShapes(t *testing.T) {
+func TestQueryPlanFactsAcceptsPythonAVGAndRealTimeFunctionShapes(t *testing.T) {
 	tests := []struct {
-		name      string
-		functions []execution.QueryFunction
+		name            string
+		functions       []execution.QueryFunction
+		timeAggregation execution.QueryFunction
 	}{
-		{name: "ordinary avg", functions: []execution.QueryFunction{{Method: "mean", Position: 0}}},
+		{name: "ordinary avg", functions: []execution.QueryFunction{{Method: "mean", Position: 0}},
+			timeAggregation: execution.QueryFunction{Method: "avg_over_time", Window: "60s", Position: 0}},
 		{name: "real time", functions: []execution.QueryFunction{}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			facts := validQueryPlanFacts()
 			facts.QueryList[0].Functions = test.functions
-			facts.QueryList[0].TimeAggregation = execution.QueryFunction{}
+			facts.QueryList[0].TimeAggregation = test.timeAggregation
 			built, err := execution.BuildQueryPlanFacts(facts)
 			if err != nil {
 				t.Fatalf("real Python UQ shape must be accepted: %v", err)

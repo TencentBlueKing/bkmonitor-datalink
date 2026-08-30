@@ -12,13 +12,19 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"regexp"
+	"strconv"
 	"strings"
+
+	"github.com/Shopify/sarama"
 
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 )
 
 // InputMode selects the only active input source for one phase-two worker.
-// The C0 contract deliberately does not wire either source into a runtime.
+// Runtime dispatch is mode-specific; neither source identity enters Slot,
+// State, Progress or Event contracts.
 type InputMode string
 
 const (
@@ -53,9 +59,9 @@ func (c PhaseOneKafkaCompatibilityConfig) Validate() error {
 	return nil
 }
 
-// PhaseTwoInputConfig is the C0 input-selection schema. Go Access is the
-// default. Supplying phase-one coordinates while Go Access is selected is an
-// error rather than an implicit fallback to the old consumer path.
+// PhaseTwoInputConfig is the input-selection schema. Go Access is the default.
+// Supplying phase-one coordinates while Go Access is selected is an error
+// rather than an implicit fallback to the old consumer path.
 type PhaseTwoInputConfig struct {
 	Mode          InputMode                         `yaml:"mode"`
 	PhaseOneKafka *PhaseOneKafkaCompatibilityConfig `yaml:"phase_one_kafka,omitempty"`
@@ -80,6 +86,121 @@ func (c PhaseTwoInputConfig) Validate() error {
 	default:
 		return fmt.Errorf("phase-two input mode %q is not supported", c.Mode)
 	}
+}
+
+// PhaseOneCompatibilityRuntimeConfig maps the explicitly isolated
+// compatibility coordinates into the phase-one runtime fields. The default Go
+// Access path never calls this conversion and therefore cannot silently fall
+// back to the phase-one consumer.
+func (c Config) PhaseOneCompatibilityRuntimeConfig() (Config, error) {
+	if c.Input.Mode != InputModePhaseOneKafkaCompatibility || c.Input.PhaseOneKafka == nil {
+		return Config{}, errors.New("phase-one runtime requires explicit Kafka compatibility mode")
+	}
+	compatibility := *c.Input.PhaseOneKafka
+	if err := compatibility.Validate(); err != nil {
+		return Config{}, err
+	}
+	for name, values := range map[string][2]string{
+		"kafka.input_topic":    {c.Kafka.InputTopic, compatibility.InputTopic},
+		"kafka.group_id":       {c.Kafka.GroupID, compatibility.ConsumerGroup},
+		"kafka.initial_offset": {c.Kafka.InitialOffset, compatibility.InitialOffset},
+		"redis.state_prefix":   {c.Redis.StatePrefix, compatibility.StatePrefix},
+	} {
+		if values[0] != "" && values[0] != values[1] {
+			return Config{}, fmt.Errorf("%s conflicts with explicit phase-one compatibility coordinates", name)
+		}
+	}
+
+	runtimeConfig := c
+	runtimeConfig.Kafka.InputTopic = compatibility.InputTopic
+	runtimeConfig.Kafka.GroupID = compatibility.ConsumerGroup
+	runtimeConfig.Kafka.InitialOffset = compatibility.InitialOffset
+	runtimeConfig.Redis.StatePrefix = compatibility.StatePrefix
+	return runtimeConfig, nil
+}
+
+var phaseTwoKafkaTopicNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// validatePhaseTwoKafkaOutput validates only the TriggerEvent producer
+// topology. Reusing DecisionSinkConfig.Validate would incorrectly require a
+// phase-one input topic on the default Go Access path.
+func validatePhaseTwoKafkaOutput(c KafkaConfig) error {
+	if len(c.Brokers) == 0 {
+		return errors.New("kafka producer: at least one broker is required")
+	}
+	seenBrokers := make(map[string]struct{}, len(c.Brokers))
+	for _, broker := range c.Brokers {
+		if err := validatePhaseTwoBroker(broker); err != nil {
+			return err
+		}
+		if _, exists := seenBrokers[broker]; exists {
+			return fmt.Errorf("kafka producer: duplicate broker %q", broker)
+		}
+		seenBrokers[broker] = struct{}{}
+	}
+	if err := validatePhaseTwoTopic("trigger_event.topic", c.TriggerEvent.Topic); err != nil {
+		return err
+	}
+	if len(c.AllowedOutputTopics) == 0 {
+		return errors.New("kafka producer: output topic allowlist must be non-empty")
+	}
+	seenTopics := make(map[string]struct{}, len(c.AllowedOutputTopics))
+	for _, topic := range c.AllowedOutputTopics {
+		if err := validatePhaseTwoTopic("allowed_output_topics", topic); err != nil {
+			return err
+		}
+		if _, exists := seenTopics[topic]; exists {
+			return fmt.Errorf("kafka producer: duplicate allowed output topic %q", topic)
+		}
+		seenTopics[topic] = struct{}{}
+	}
+	if _, allowed := seenTopics[c.TriggerEvent.Topic]; !allowed {
+		return fmt.Errorf("kafka producer: output topic %q is not allowlisted", c.TriggerEvent.Topic)
+	}
+	for name, value := range map[string]string{"client_id": c.ClientID, "broker_version": c.BrokerVersion} {
+		if value == "" || strings.TrimSpace(value) != value {
+			return fmt.Errorf("kafka producer: %s must be non-empty canonical text", name)
+		}
+	}
+	if c.TriggerEvent.MaxMessageBytes <= 0 {
+		return errors.New("kafka producer: trigger_event.max_message_bytes must be positive")
+	}
+	version, err := sarama.ParseKafkaVersion(c.BrokerVersion)
+	if err != nil {
+		return fmt.Errorf("kafka producer: broker_version %q: %w", c.BrokerVersion, err)
+	}
+	if !version.IsAtLeast(sarama.V0_10_2_0) || !sarama.MaxVersion.IsAtLeast(version) {
+		return fmt.Errorf(
+			"kafka producer: broker_version %q is outside supported range 0.10.2.0..%s",
+			c.BrokerVersion, sarama.MaxVersion,
+		)
+	}
+	return nil
+}
+
+func validatePhaseTwoBroker(broker string) error {
+	if broker == "" || strings.TrimSpace(broker) != broker {
+		return fmt.Errorf("kafka producer: broker %q must be canonical host:port", broker)
+	}
+	host, port, err := net.SplitHostPort(broker)
+	if err != nil {
+		return fmt.Errorf("kafka producer: broker %q: %w", broker, err)
+	}
+	portNumber, parseErr := strconv.Atoi(port)
+	if host == "" || parseErr != nil || portNumber <= 0 || portNumber > 65535 {
+		return fmt.Errorf("kafka producer: broker %q has invalid host or port", broker)
+	}
+	return nil
+}
+
+func validatePhaseTwoTopic(field, topic string) error {
+	if topic == "" || strings.TrimSpace(topic) != topic {
+		return fmt.Errorf("kafka producer: %s must be non-empty canonical text", field)
+	}
+	if len(topic) > 249 || topic == "." || topic == ".." || !phaseTwoKafkaTopicNamePattern.MatchString(topic) {
+		return fmt.Errorf("kafka producer: %s %q is not a valid Kafka topic name", field, topic)
+	}
+	return nil
 }
 
 type PhaseOneAsset string

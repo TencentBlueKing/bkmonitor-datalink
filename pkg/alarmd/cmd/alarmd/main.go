@@ -48,6 +48,18 @@ func runWithDependencies(
 	stdout, stderr io.Writer,
 	dependencies applicationDependencies,
 ) int {
+	return runWithRuntimeModeDependencies(ctx, args, stdout, stderr, runtimeModeDependencies{
+		phaseOne: dependencies,
+		phaseTwo: defaultPhaseTwoApplicationDependencies(),
+	})
+}
+
+func runWithRuntimeModeDependencies(
+	ctx context.Context,
+	args []string,
+	stdout, stderr io.Writer,
+	dependencies runtimeModeDependencies,
+) int {
 	flags := flag.NewFlagSet("alarmd", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	configPath := flags.String("config", "", "path to alarmd YAML configuration")
@@ -83,8 +95,26 @@ func runWithDependencies(
 		Commit:        commit,
 		SchemaVersion: schemaVersion,
 	})
-	if err := runApplication(ctx, cfg, recorder, dependencies); err != nil {
-		fmt.Fprintf(stderr, "run alarmd: %v\n", err)
+	var runErr error
+	switch cfg.Input.Mode {
+	case config.InputModeGoAccess:
+		if dependencies.phaseTwo.run == nil {
+			runErr = errPhaseTwoWorkerBundleNotAssembled
+		} else {
+			runErr = dependencies.phaseTwo.run(ctx, cfg, recorder, dependencies.phaseOne.logger)
+		}
+	case config.InputModePhaseOneKafkaCompatibility:
+		runtimeConfig, err := cfg.PhaseOneCompatibilityRuntimeConfig()
+		if err != nil {
+			runErr = err
+		} else {
+			runErr = runApplication(ctx, runtimeConfig, recorder, dependencies.phaseOne)
+		}
+	default:
+		runErr = fmt.Errorf("unsupported input mode %q", cfg.Input.Mode)
+	}
+	if runErr != nil {
+		fmt.Fprintf(stderr, "run alarmd: %v\n", runErr)
 		return 1
 	}
 	return 0

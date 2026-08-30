@@ -26,6 +26,9 @@ func TestDefaultRequiresExplicitEnvironmentCoordinates(t *testing.T) {
 	if cfg.Mode != ModeShadow {
 		t.Fatalf("default mode = %q, want %q", cfg.Mode, ModeShadow)
 	}
+	if cfg.Input.Mode != InputModeGoAccess || cfg.Input.PhaseOneKafka != nil {
+		t.Fatalf("default input = %+v, want Go Access without compatibility coordinates", cfg.Input)
+	}
 	if cfg.HTTP.Listen == "" || cfg.ShutdownTimeout.Duration() <= 0 {
 		t.Fatal("default local HTTP and shutdown budgets must be usable")
 	}
@@ -37,6 +40,92 @@ func TestDefaultRequiresExplicitEnvironmentCoordinates(t *testing.T) {
 	}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "broker") {
 		t.Fatalf("default configuration error = %v, want missing Kafka broker", err)
+	}
+}
+
+func TestGoAccessDoesNotRequirePhaseOneKafkaInputOrReceipt(t *testing.T) {
+	cfg := validGoAccessConfigObject()
+	cfg.Kafka.MessageReceipt.MaxMessageBytes = 0
+	cfg.ReceiptQueue.MaxQueuedMessages = 0
+	cfg.ReceiptQueue.MaxQueuedBytes = 0
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if cfg.Kafka.InputTopic != "" || cfg.Kafka.GroupID != "" || cfg.Kafka.InitialOffset != "" ||
+		cfg.Kafka.MessageReceipt.Topic != "" {
+		t.Fatalf("Go Access unexpectedly contains phase-one Kafka input assets: %+v", cfg.Kafka)
+	}
+}
+
+func TestGoAccessValidatesOnlyTriggerEventKafkaTopology(t *testing.T) {
+	tests := map[string]func(*Config){
+		"missing broker":        func(cfg *Config) { cfg.Kafka.Brokers = nil },
+		"invalid broker":        func(cfg *Config) { cfg.Kafka.Brokers = []string{"missing-port"} },
+		"duplicate broker":      func(cfg *Config) { cfg.Kafka.Brokers = append(cfg.Kafka.Brokers, cfg.Kafka.Brokers[0]) },
+		"invalid trigger topic": func(cfg *Config) { cfg.Kafka.TriggerEvent.Topic = "invalid topic" },
+		"missing allowlist":     func(cfg *Config) { cfg.Kafka.AllowedOutputTopics = nil },
+		"output not allowlisted": func(cfg *Config) {
+			cfg.Kafka.AllowedOutputTopics = []string{"different-output"}
+		},
+		"duplicate allowlist": func(cfg *Config) {
+			cfg.Kafka.AllowedOutputTopics = append(cfg.Kafka.AllowedOutputTopics, cfg.Kafka.TriggerEvent.Topic)
+		},
+		"missing client":    func(cfg *Config) { cfg.Kafka.ClientID = "" },
+		"invalid version":   func(cfg *Config) { cfg.Kafka.BrokerVersion = "not-a-version" },
+		"zero output bytes": func(cfg *Config) { cfg.Kafka.TriggerEvent.MaxMessageBytes = 0 },
+	}
+
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg := validGoAccessConfigObject()
+			mutate(&cfg)
+			if err := cfg.Validate(); err == nil {
+				t.Fatalf("Validate() accepted %s", name)
+			}
+		})
+	}
+}
+
+func TestGoAccessRejectsPhaseOneKafkaAssets(t *testing.T) {
+	tests := map[string]func(*Config){
+		"input topic":     func(cfg *Config) { cfg.Kafka.InputTopic = "alarmd-input" },
+		"consumer group":  func(cfg *Config) { cfg.Kafka.GroupID = "alarmd-group" },
+		"initial offset":  func(cfg *Config) { cfg.Kafka.InitialOffset = enginekafka.InitialOffsetOldest },
+		"message receipt": func(cfg *Config) { cfg.Kafka.MessageReceipt.Topic = "alarmd-receipt" },
+	}
+
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg := validGoAccessConfigObject()
+			mutate(&cfg)
+			if err := cfg.Validate(); err == nil {
+				t.Fatalf("Validate() accepted phase-one %s in Go Access mode", name)
+			}
+		})
+	}
+}
+
+func TestPhaseOneCompatibilityUsesExplicitCoordinates(t *testing.T) {
+	cfg := validConfigObject()
+	cfg.Kafka.InputTopic = ""
+	cfg.Kafka.GroupID = ""
+	cfg.Kafka.InitialOffset = ""
+	cfg.Redis.StatePrefix = ""
+
+	runtimeCfg, err := cfg.PhaseOneCompatibilityRuntimeConfig()
+	if err != nil {
+		t.Fatalf("PhaseOneCompatibilityRuntimeConfig() error = %v", err)
+	}
+	compatibility := cfg.Input.PhaseOneKafka
+	if runtimeCfg.Kafka.InputTopic != compatibility.InputTopic ||
+		runtimeCfg.Kafka.GroupID != compatibility.ConsumerGroup ||
+		runtimeCfg.Kafka.InitialOffset != compatibility.InitialOffset ||
+		runtimeCfg.Redis.StatePrefix != compatibility.StatePrefix {
+		t.Fatalf("compatibility runtime coordinates = kafka:%+v redis:%+v", runtimeCfg.Kafka, runtimeCfg.Redis)
+	}
+	if err := runtimeCfg.Validate(); err != nil {
+		t.Fatalf("compatibility runtime Validate() error = %v", err)
 	}
 }
 
@@ -253,6 +342,13 @@ func (staticRouter) Route(_, _ string) (state.StorageTarget, error) {
 
 func validConfigObject() Config {
 	cfg := Default()
+	cfg.Input = PhaseTwoInputConfig{
+		Mode: InputModePhaseOneKafkaCompatibility,
+		PhaseOneKafka: &PhaseOneKafkaCompatibilityConfig{
+			InputTopic: "alarmd-v2-input", ConsumerGroup: "alarmd-shadow",
+			InitialOffset: enginekafka.InitialOffsetOldest, StatePrefix: "alarmd-shadow",
+		},
+	}
 	cfg.Kafka.Brokers = []string{"127.0.0.1:9092"}
 	cfg.Kafka.InputTopic = "alarmd-v2-input"
 	cfg.Kafka.TriggerEvent.Topic = "alarmd-trigger-event"
@@ -263,6 +359,18 @@ func validConfigObject() Config {
 	cfg.Kafka.BrokerVersion = "2.6.0"
 	cfg.Redis.Address = "redis.test:6379"
 	cfg.Redis.StatePrefix = "alarmd-shadow"
+	return cfg
+}
+
+func validGoAccessConfigObject() Config {
+	cfg := Default()
+	cfg.Kafka.Brokers = []string{"127.0.0.1:9092"}
+	cfg.Kafka.TriggerEvent.Topic = "alarmd-trigger-event"
+	cfg.Kafka.AllowedOutputTopics = []string{"alarmd-trigger-event"}
+	cfg.Kafka.ClientID = "alarmd"
+	cfg.Kafka.BrokerVersion = "2.6.0"
+	cfg.Redis.Address = "redis.test:6379"
+	cfg.Redis.StatePrefix = "alarmd-phase-two"
 	return cfg
 }
 
@@ -278,13 +386,19 @@ func writeConfig(t *testing.T, contents string) string {
 
 func validRuntimeConfig() string {
 	return `mode: shadow
+input:
+  mode: phase_one_kafka_compatibility
+  phase_one_kafka:
+    input_topic: alarmd-v2-input
+    consumer_group: alarmd-shadow
+    initial_offset: oldest
+    state_prefix: alarmd-shadow
 http:
   listen: 127.0.0.1:8080
 shutdown_timeout: 11s
 kafka:
   brokers:
     - 127.0.0.1:9092
-  input_topic: alarmd-v2-input
   trigger_event:
     topic: alarmd-trigger-event
     max_message_bytes: 600000
@@ -294,7 +408,6 @@ kafka:
   allowed_output_topics:
     - alarmd-trigger-event
     - alarmd-message-receipt
-  group_id: alarmd-shadow
   client_id: alarmd
   broker_version: 2.6.0
 redis:
@@ -306,7 +419,6 @@ redis:
   read_timeout: 3s
   write_timeout: 4s
   pool_size: 24
-  state_prefix: alarmd-shadow
   min_ttl: 1m
   max_ttl: 24h
   restart_margin: 5m

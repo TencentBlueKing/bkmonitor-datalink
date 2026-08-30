@@ -315,6 +315,13 @@ func TestRunApplicationShutdownDeadlineStillAttemptsOutputsAndRedis(t *testing.T
 
 func validApplicationConfig() config.Config {
 	cfg := config.Default()
+	cfg.Input = config.PhaseTwoInputConfig{
+		Mode: config.InputModePhaseOneKafkaCompatibility,
+		PhaseOneKafka: &config.PhaseOneKafkaCompatibilityConfig{
+			InputTopic: "alarmd-shadow-input-v2", ConsumerGroup: "alarmd-shadow-v2",
+			InitialOffset: "oldest", StatePrefix: "alarmd-shadow",
+		},
+	}
 	cfg.Kafka.Brokers = []string{"127.0.0.1:9092"}
 	cfg.Kafka.InputTopic = "alarmd-shadow-input-v2"
 	cfg.Kafka.TriggerEvent.Topic = "alarmd-shadow-trigger-event-v1"

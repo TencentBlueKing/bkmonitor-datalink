@@ -182,7 +182,7 @@ func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 func (value QueryScalar) Validate() error {
 	switch value.Kind {
 	case QueryScalarString:
-		if value.StringValue == "" || value.NumberValue != "" || value.BoolValue {
+		if value.NumberValue != "" || value.BoolValue {
 			return errors.New("alarmd execution: invalid string query scalar")
 		}
 	case QueryScalarNumber:

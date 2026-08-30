@@ -126,6 +126,44 @@ func TestQueryPlanFactsDigestCoversTypedUQSemantics(t *testing.T) {
 	}
 }
 
+func TestQueryPlanFactsAcceptsPythonEmptyStringConditionAndPreservesRevision(t *testing.T) {
+	facts := validQueryPlanFacts()
+	facts.QueryList[0].Conditions.Fields[0].Values = []execution.QueryScalar{{Kind: execution.QueryScalarString}}
+	built, err := execution.BuildQueryPlanFacts(facts)
+	if err != nil {
+		t.Fatalf("Python UQ condition empty string must remain a typed string: %v", err)
+	}
+	payload, err := json.Marshal(built)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip execution.QueryPlanFacts
+	if err := json.Unmarshal(payload, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if err := roundTrip.Validate(); err != nil {
+		t.Fatalf("empty string condition lost canonical query revision: %v", err)
+	}
+	const wantRevision = "d2bce1ca931747602e150f79f3271e612fbe40a67dbe69c5aae2f1b468bf71d9"
+	if string(roundTrip.QueryRevision) != wantRevision {
+		t.Fatalf("query_revision=%q, want golden %q", roundTrip.QueryRevision, wantRevision)
+	}
+}
+
+func TestQueryScalarDoesNotWidenNonStringShapes(t *testing.T) {
+	for _, scalar := range []execution.QueryScalar{
+		{Kind: execution.QueryScalarString, NumberValue: "0"},
+		{Kind: execution.QueryScalarString, BoolValue: true},
+		{Kind: execution.QueryScalarNumber},
+		{Kind: execution.QueryScalarBoolean, StringValue: "false"},
+		{Kind: execution.QueryScalarKind("NULL")},
+	} {
+		if err := scalar.Validate(); err == nil {
+			t.Fatalf("invalid non-empty/non-string scalar was accepted: %+v", scalar)
+		}
+	}
+}
+
 func TestQueryPlanFactsAcceptsRealUQFunctionPositions(t *testing.T) {
 	facts := validQueryPlanFacts()
 	facts.QueryList[0].Functions = []execution.QueryFunction{

@@ -333,6 +333,40 @@ func TestRequestPreservesPythonAVGAndRealTimeFunctionShapes(t *testing.T) {
 	}
 }
 
+func TestRequestPreservesPythonEmptyStringConditionValue(t *testing.T) {
+	attempt := validAttempt(t)
+	facts := attempt.Spec.PlanFacts
+	facts.QueryRevision = ""
+	facts.QueryList = append([]execution.QueryClause(nil), facts.QueryList...)
+	facts.QueryList[0].Conditions.Fields = append([]execution.QueryConditionField(nil), facts.QueryList[0].Conditions.Fields...)
+	facts.QueryList[0].Conditions.Fields[0].Values = []execution.QueryScalar{{Kind: execution.QueryScalarString}}
+	var err error
+	facts, err = execution.BuildQueryPlanFacts(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt.Spec, err = execution.BuildPhysicalQuerySpec(execution.PhysicalQuerySpec{
+		PlanFacts: facts, LogicalWindow: attempt.Spec.LogicalWindow,
+		ProviderRange: attempt.Spec.ProviderRange, AcceptedRange: attempt.Spec.AcceptedRange,
+		RequiredColumns: attempt.Spec.RequiredColumns,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := buildRequest(attempt.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(body.QueryList[0].Conditions.Fields[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"field_name":"host","op":"eq","value":[""],"is_prefix":true}`
+	if string(got) != want {
+		t.Fatalf("empty string condition wire=%s, want %s", got, want)
+	}
+}
+
 func fixtureClient(t *testing.T, status int, body string, limits Limits) *Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {

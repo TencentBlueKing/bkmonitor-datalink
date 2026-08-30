@@ -129,6 +129,14 @@ func (view RecordView) Values() map[string]json.RawMessage {
 	return cloneRawMap(view.record.Values)
 }
 
+func (view RecordView) Value(name string) (json.RawMessage, bool) {
+	if view.record == nil {
+		return nil, false
+	}
+	value, ok := view.record.Values[name]
+	return cloneRawMessage(value), ok
+}
+
 func (view RecordView) Dimensions() map[string]json.RawMessage {
 	if view.record == nil {
 		return nil

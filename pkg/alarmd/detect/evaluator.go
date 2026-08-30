@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
-	inputv2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/input/adapter/v2"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -228,30 +227,12 @@ func (evaluator *Evaluator) bindPlan(execution PlanExecution, datasetDigest stri
 	if execution.Plan.EvaluationSemantics().EvaluationScope != contract.EvaluationScopeSeries {
 		return boundPlan{}, &InternalError{Operation: "bind plan", PlanID: planID, Err: errors.New("evaluation scope is not SERIES")}
 	}
-	levels := execution.Plan.Levels()
-	result := boundPlan{execution: execution, levels: make([]boundLevel, len(levels))}
-	projectionKeys := make(map[projectionKey]struct{})
-	for levelIndex, level := range levels {
-		if levelIndex > 0 && levels[levelIndex-1].Definition().LevelID >= level.Definition().LevelID {
-			return boundPlan{}, &InternalError{Operation: "bind plan", PlanID: planID, Err: errors.New("compiled levels are not ordered and unique")}
-		}
-		detectorSpecs := level.Detectors()
-		result.levels[levelIndex] = boundLevel{compiled: level, detectors: make([]boundDetector, len(detectorSpecs))}
-		for detectorIndex, spec := range detectorSpecs {
-			detector, ok := evaluator.registry.resolve(DetectorKey{Kind: spec.Kind(), Version: spec.Version()})
-			if !ok {
-				return boundPlan{}, &InternalError{Operation: "bind detector", PlanID: planID, Err: fmt.Errorf("detector %s@%d is unavailable", spec.Kind(), spec.Version())}
-			}
-			normalizer, ok := execution.Plan.Normalizer(spec.NormalizerRef())
-			if !ok {
-				return boundPlan{}, &InternalError{Operation: "bind detector", PlanID: planID, Err: errors.New("compiled normalizer is unavailable")}
-			}
-			result.levels[levelIndex].detectors[detectorIndex] = boundDetector{spec: spec, detector: detector, normalizer: normalizer}
-			result.detectorCount++
-			projectionKeys[projectionKey{valueRef: spec.ValueRef(), normalizerRef: spec.NormalizerRef()}] = struct{}{}
-		}
+	prepared, err := evaluator.PreparePlan(execution.Plan)
+	if err != nil {
+		return boundPlan{}, &InternalError{Operation: "bind detector", PlanID: planID, Err: err}
 	}
-	result.projectionCount = uint64(len(projectionKeys))
+	result := prepared.bound
+	result.execution = execution
 	return result, nil
 }
 
@@ -356,7 +337,7 @@ func (evaluator *Evaluator) evaluateRecord(
 func (evaluator *Evaluator) evaluateLevel(
 	ctx context.Context,
 	plan *strategy.CompiledPlan,
-	record inputv2.RecordView,
+	record RecordValueView,
 	level boundLevel,
 	projections *[]projectionEntry,
 ) (LevelFact, uint64, error) {
@@ -365,19 +346,27 @@ func (evaluator *Evaluator) evaluateLevel(
 	}
 	matched := level.compiled.Connector() == contract.LevelConnectorAND
 	evidenceSet := false
+	unknown := false
+	terminal := false
+	unknownReason := ""
+	var unknownEvidence ThresholdEvidence
 	var evidenceFact AlgorithmFact
 	var evidenceAlgorithm uint32
 	var evidenceProjection uint32
 	predicateEvaluations := uint64(0)
+	truths := make([]algorithmTruth, 0, len(level.detectors))
 	for algorithmIndex, bound := range level.detectors {
 		projectionOrdinal, projection := projectRecordValue(record, bound, projections)
 		if !projection.view.Available {
-			fact.Result = FactResultUnavailable
-			fact.ReasonCode = projection.view.ReasonCode
-			fact.Evidence = ThresholdEvidence{
-				ProjectedValueOrdinal: projectionOrdinal, HasProjectedValue: true, ResultReason: projection.view.ReasonCode,
+			truths = append(truths, algorithmTruthUnknown)
+			unknown = true
+			if unknownReason == "" {
+				unknownReason = projection.view.ReasonCode
+				unknownEvidence = ThresholdEvidence{
+					ProjectedValueOrdinal: projectionOrdinal, HasProjectedValue: true, ResultReason: projection.view.ReasonCode,
+				}
 			}
-			return fact, predicateEvaluations, nil
+			continue
 		}
 		algorithmFact, err := callDetector(ctx, bound.detector, bound.spec, projection.value)
 		if err != nil {
@@ -388,12 +377,16 @@ func (evaluator *Evaluator) evaluateLevel(
 			if !errors.As(err, &controlled) || !declaresReason(bound.spec, controlled.ReasonCode) {
 				return LevelFact{}, predicateEvaluations, &InternalError{Operation: "execute detector", PlanID: plan.PlanRef().StrategyID, Err: err}
 			}
-			fact.Result = FactResultError
-			fact.ReasonCode = controlled.ReasonCode
-			fact.Evidence = ThresholdEvidence{
-				ProjectedValueOrdinal: projectionOrdinal, HasProjectedValue: true, ResultReason: controlled.ReasonCode,
+			unknown = true
+			terminal = true
+			truths = append(truths, algorithmTruthUnknown)
+			if unknownReason == "" {
+				unknownReason = controlled.ReasonCode
+				unknownEvidence = ThresholdEvidence{
+					ProjectedValueOrdinal: projectionOrdinal, HasProjectedValue: true, ResultReason: controlled.ReasonCode,
+				}
 			}
-			return fact, predicateEvaluations, nil
+			continue
 		}
 		if len(algorithmFact.PredicateDigest) != 64 || algorithmFact.MatchedGroup < -1 ||
 			(!algorithmFact.Matched && algorithmFact.MatchedGroup != -1) ||
@@ -403,6 +396,11 @@ func (evaluator *Evaluator) evaluateLevel(
 			}
 		}
 		predicateEvaluations++
+		if algorithmFact.Matched {
+			truths = append(truths, algorithmTruthTrue)
+		} else {
+			truths = append(truths, algorithmTruthFalse)
+		}
 		if algorithmIndex == 0 {
 			evidenceFact = algorithmFact
 			evidenceProjection = projectionOrdinal
@@ -429,7 +427,21 @@ func (evaluator *Evaluator) evaluateLevel(
 			}
 		}
 	}
-	if matched {
+	combined, determined := combineAlgorithmTruth(level.compiled.Connector(), truths)
+	if determined {
+		if combined {
+			fact.Result = FactResultAnomalous
+		} else {
+			fact.Result = FactResultNormal
+		}
+	} else if unknown {
+		fact.Result = FactResultUnavailable
+		if terminal {
+			fact.Result = FactResultError
+		}
+		fact.ReasonCode, fact.Evidence = unknownReason, unknownEvidence
+		return fact, predicateEvaluations, nil
+	} else if matched {
 		fact.Result = FactResultAnomalous
 	} else {
 		fact.Result = FactResultNormal
@@ -450,8 +462,36 @@ func (evaluator *Evaluator) evaluateLevel(
 	return fact, predicateEvaluations, nil
 }
 
+type algorithmTruth uint8
+
+const (
+	algorithmTruthFalse algorithmTruth = iota
+	algorithmTruthTrue
+	algorithmTruthUnknown
+)
+
+func combineAlgorithmTruth(connector string, truths []algorithmTruth) (bool, bool) {
+	unknown := false
+	if connector == contract.LevelConnectorAND {
+		for _, truth := range truths {
+			if truth == algorithmTruthFalse {
+				return false, true
+			}
+			unknown = unknown || truth == algorithmTruthUnknown
+		}
+		return !unknown, !unknown
+	}
+	for _, truth := range truths {
+		if truth == algorithmTruthTrue {
+			return true, true
+		}
+		unknown = unknown || truth == algorithmTruthUnknown
+	}
+	return false, !unknown
+}
+
 func projectRecordValue(
-	record inputv2.RecordView,
+	record RecordValueView,
 	detector boundDetector,
 	projections *[]projectionEntry,
 ) (uint32, projectionEntry) {

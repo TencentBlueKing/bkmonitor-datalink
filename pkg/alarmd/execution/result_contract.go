@@ -110,6 +110,9 @@ func validateLevelOutcomes(
 	if err != nil {
 		return err
 	}
+	if err := validateStateHistoryReplacements(plan, result.StateResults, states); err != nil {
+		return err
+	}
 	seen := make(map[levelOutcomeIdentity]LevelOutcome, len(result.LevelOutcomes))
 	for _, outcome := range result.LevelOutcomes {
 		identity := levelOutcomeIdentity{
@@ -121,7 +124,7 @@ func validateLevelOutcomes(
 		if _, duplicate := seen[identity]; duplicate {
 			return errors.New("alarmd execution: duplicate Level outcome")
 		}
-		if err := validateLevelOutcome(input, plan, result.Disposition, outcome, states, gaps); err != nil {
+		if err := validateLevelOutcome(input, plan, result.Disposition, outcome, result.StateResults, states, gaps); err != nil {
 			return err
 		}
 		seen[identity] = outcome
@@ -140,6 +143,7 @@ func validateLevelOutcome(
 	plan DuePlan,
 	disposition PlanDisposition,
 	outcome LevelOutcome,
+	stateResults []StateEvaluation,
 	states StatePreflightResult,
 	gaps GapLoadResult,
 ) error {
@@ -188,7 +192,9 @@ func validateLevelOutcome(
 	if len(guardReasons) != 0 {
 		switch outcome.Outcome {
 		case LevelOutcomeNormal, LevelOutcomeRecovery:
-			return errors.New("alarmd execution: active Runtime State or Plan gap guard forbids NORMAL and RECOVERY")
+			if !loadedSeriesWarmingCompleted(outcome, plan, stateResults, states, gaps) {
+				return errors.New("alarmd execution: active Runtime State or Plan gap guard forbids NORMAL and RECOVERY")
+			}
 		case LevelOutcomeUnknown:
 			if _, ok := guardReasons[outcome.ReasonCode]; !ok && disposition != PlanRetryPending {
 				return errors.New("alarmd execution: UNKNOWN Level outcome does not preserve its active guard reason")
@@ -262,6 +268,88 @@ func validateLevelOutcome(
 		return errors.New("alarmd execution: every PARTIAL input affecting ABNORMAL requires one proof receipt")
 	}
 	return nil
+}
+
+func validateStateHistoryReplacements(
+	plan DuePlan,
+	stateResults []StateEvaluation,
+	states StatePreflightResult,
+) error {
+	for _, state := range stateResults {
+		loaded, found := states.Find(state.Mutation.Identity)
+		if !found {
+			return errors.New("alarmd execution: State mutation lacks its loaded view")
+		}
+		if err := validateStateHistoryReplacement(loaded.History, state.Mutation, stateRetentionPoints(plan)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func loadedSeriesWarmingCompleted(
+	outcome LevelOutcome,
+	plan DuePlan,
+	stateResults []StateEvaluation,
+	states StatePreflightResult,
+	gaps GapLoadResult,
+) bool {
+	identity := StateKeyIdentity{
+		Plan: plan.Identity, StateGeneration: plan.StateGeneration, SeriesIdentityDigest: outcome.SeriesIdentityDigest,
+	}
+	loaded, found := states.Find(identity)
+	if !found || loaded.Status != StateFoundWarming || loaded.SeriesGuard != nil {
+		return false
+	}
+	matchingLoadedLevel := false
+	for _, level := range loaded.Levels {
+		if level.LevelID != outcome.LevelID {
+			continue
+		}
+		if matchingLoadedLevel || level.HistoryCompleteness != HistoryWarming || level.GapReasonCode == "" {
+			return false
+		}
+		matchingLoadedLevel = true
+	}
+	if !matchingLoadedLevel {
+		return false
+	}
+	for _, marker := range gaps.Items {
+		if marker.Status != GapFound || marker.Identity.Plan != plan.Identity {
+			continue
+		}
+		for _, scope := range marker.Scopes {
+			if !scope.Scope.HasLevel || scope.Scope.LevelID == outcome.LevelID {
+				return false
+			}
+		}
+	}
+	matchingMutation := false
+	for _, state := range stateResults {
+		mutation := state.Mutation
+		if mutation.Identity != identity {
+			continue
+		}
+		if matchingMutation || mutation.SeriesGuard != nil || mutation.ValidateDigest() != nil ||
+			mutation.ExpectedBlobRevision != loaded.BlobRevision {
+			return false
+		}
+		matchingMutation = true
+		matchingLevel := false
+		for _, level := range mutation.Levels {
+			if level.LevelID != outcome.LevelID {
+				continue
+			}
+			if matchingLevel || level.HistoryCompleteness != HistoryFull || level.GapReasonCode != "" {
+				return false
+			}
+			matchingLevel = true
+		}
+		if !matchingLevel {
+			return false
+		}
+	}
+	return matchingMutation
 }
 
 func loadedGuardReasons(
@@ -366,13 +454,6 @@ func validateStateOutcomes(
 ) error {
 	facts := make(map[levelOutcomeIdentity]LevelFactResult)
 	for _, state := range result.StateResults {
-		loaded, found := states.Find(state.Mutation.Identity)
-		if !found {
-			return errors.New("alarmd execution: State mutation lacks its loaded view")
-		}
-		if err := validateStateHistoryReplacement(loaded.History, state.Mutation, stateRetentionPoints(plan)); err != nil {
-			return err
-		}
 		anchors := make(map[RecordAnchor]struct{}, len(state.Mutation.AffectedRecords))
 		for _, anchor := range state.Mutation.AffectedRecords {
 			anchors[anchor] = struct{}{}

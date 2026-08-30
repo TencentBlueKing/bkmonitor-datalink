@@ -654,6 +654,94 @@ func TestEvaluationAllowsFullInactiveStateAdvance(t *testing.T) {
 	}
 }
 
+func TestEvaluationAllowsLoadedSeriesWarmingToCompleteWithFinalFullMutation(t *testing.T) {
+	for _, outcomeKind := range []execution.LevelOutcomeKind{
+		execution.LevelOutcomeNormal, execution.LevelOutcomeAbnormal, execution.LevelOutcomeRecovery,
+	} {
+		t.Run(string(outcomeKind), func(t *testing.T) {
+			result, request := loadedSeriesWarmingCompletion(t, outcomeKind)
+			if err := result.Validate(request); err != nil {
+				t.Fatalf("loaded series-local WARMING must accept %s after canonical FULL mutation: %v", outcomeKind, err)
+			}
+		})
+	}
+}
+
+func TestEvaluationRejectsLoadedSeriesWarmingWithoutExclusiveFinalFullProof(t *testing.T) {
+	t.Run("no final mutation", func(t *testing.T) {
+		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeNormal)
+		result.Plans[0].StateResults = nil
+		if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "active Runtime State or Plan gap guard") {
+			t.Fatalf("loaded WARMING without a final State mutation must reject NORMAL at the guard, got %v", err)
+		}
+	})
+
+	t.Run("mutation remains warming", func(t *testing.T) {
+		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeRecovery)
+		mutation := result.Plans[0].StateResults[0].Mutation
+		mutation.Levels = append([]execution.RuntimeLevelStateMutation(nil), mutation.Levels...)
+		mutation.Levels[0].HistoryCompleteness = execution.HistoryWarming
+		mutation.Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonHistoryWarming)
+		mutation.MutationDigest = ""
+		result.Plans[0].StateResults[0].Mutation = mustStateMutation(mutation)
+		if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "active Runtime State or Plan gap guard") {
+			t.Fatalf("a WARMING final mutation must not clear loaded WARMING for RECOVERY, got %v", err)
+		}
+	})
+
+	t.Run("loaded gapped", func(t *testing.T) {
+		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeNormal)
+		request.State.Items[0].Status = execution.StateFoundGapped
+		request.State.Items[0].Levels[0].HistoryCompleteness = execution.HistoryGapped
+		request.State.Items[0].Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonHistoryGapped)
+		if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "active Runtime State or Plan gap guard") {
+			t.Fatalf("loaded GAPPED must continue to reject NORMAL at the guard, got %v", err)
+		}
+	})
+
+	t.Run("series guard", func(t *testing.T) {
+		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeNormal)
+		request.State.Items[0].SeriesGuard = &execution.StateGuardFact{
+			Status: execution.HistoryWarming, ReasonCode: execution.ReasonCode(contract.ReasonHistoryWarming),
+			WarmupRequirementRef: mustSeriesWarmupRequirementRef(validInternalExecution().DuePlans[0].CompiledPlan),
+		}
+		if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "active Runtime State or Plan gap guard") {
+			t.Fatalf("a loaded series guard must continue to reject NORMAL at the guard, got %v", err)
+		}
+	})
+
+	for _, scope := range []execution.GapScope{{}, {HasLevel: true, LevelID: 5}} {
+		name := "plan gap"
+		if scope.HasLevel {
+			name = "level gap"
+		}
+		t.Run(name, func(t *testing.T) {
+			result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeRecovery)
+			request.Gaps.Items[0].Status = execution.GapFound
+			request.Gaps.Items[0].MarkerRevision = 1
+			request.Gaps.Items[0].Scopes = []execution.GapScopeState{{
+				Scope: scope, Status: execution.GapStatusGapped,
+				ReasonCode: execution.ReasonCode(contract.ReasonHistoryGapped), RequiredFullSlots: 1,
+			}}
+			if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "active Runtime State or Plan gap guard") {
+				t.Fatalf("loaded %s must continue to reject RECOVERY at the guard, got %v", name, err)
+			}
+		})
+	}
+
+	t.Run("successful outcome lacks current State fact", func(t *testing.T) {
+		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeNormal)
+		mutation := result.Plans[0].StateResults[0].Mutation
+		mutation.Points = append([]execution.StateHistoryPoint(nil), mutation.Points...)
+		mutation.Points[len(mutation.Points)-1].Levels = nil
+		mutation.MutationDigest = ""
+		result.Plans[0].StateResults[0].Mutation = mustStateMutation(mutation)
+		if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "successful Level outcome lacks its State fact") {
+			t.Fatalf("successful outcome without its current State fact must reject at State conservation, got %v", err)
+		}
+	})
+}
+
 func TestTerminalAggregateReasonMustComeFromTerminalPlan(t *testing.T) {
 	input := validInternalExecution()
 	gap := input.GapPreflight[0]
@@ -1250,6 +1338,114 @@ func normalStateEvaluation() execution.StateEvaluation {
 		panic(err)
 	}
 	return execution.StateEvaluation{Mutation: mutation}
+}
+
+func loadedSeriesWarmingCompletion(
+	t testing.TB,
+	outcomeKind execution.LevelOutcomeKind,
+) (execution.EvaluationResult, execution.EvaluationRequest) {
+	t.Helper()
+	input := validInternalExecution()
+	state := normalStateEvaluation()
+	state.Mutation.ExpectedBlobRevision = 1
+	state.Mutation.MutationDigest = ""
+	state.Mutation = mustStateMutation(state.Mutation)
+	refs, err := execution.DeriveRuntimeLevelContractRefs(input.DuePlans[0].CompiledPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedPoint := execution.StateHistoryPoint{
+		RecordID: strings.Repeat("d", 64), SourceTime: 1_787_999_940,
+		Levels: []execution.StateLevelFact{{
+			LevelID: 5, DetectFingerprint: refs[0].DetectFingerprint, Result: execution.LevelFactNormal,
+		}},
+	}
+	request := evaluationRequest(input, execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
+		Identity: input.StatePreflight[0].Identity, BlobRevision: 1,
+		PersistedApplyVersion:   olderApplyVersion(input.StatePreflight[0].ApplyVersion),
+		PersistedMutationDigest: "loaded-state", Status: execution.StateFoundWarming,
+		Levels: []execution.RuntimeLevelStateView{{
+			LevelID: 5, LevelStateCompatibility: refs[0].LevelStateCompatibility,
+			HistoryCompleteness:  execution.HistoryWarming,
+			GapReasonCode:        execution.ReasonCode(contract.ReasonHistoryWarming),
+			WarmupRequirementRef: refs[0].WarmupRequirementRef,
+		}},
+		History: []execution.StateHistoryPoint{loadedPoint},
+	}}}, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
+		Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
+	}}})
+	outcome := normalLevelOutcome()
+	outcome.Outcome = outcomeKind
+	if outcomeKind == execution.LevelOutcomeAbnormal {
+		mutation := state.Mutation
+		mutation.Points = append([]execution.StateHistoryPoint(nil), mutation.Points...)
+		current := len(mutation.Points) - 1
+		mutation.Points[current].Levels = append([]execution.StateLevelFact(nil), mutation.Points[current].Levels...)
+		mutation.Points[current].Levels[0].Result = execution.LevelFactAnomalous
+		mutation.MutationDigest = ""
+		state.Mutation = mustStateMutation(mutation)
+	}
+	if outcomeKind == execution.LevelOutcomeAbnormal || outcomeKind == execution.LevelOutcomeRecovery {
+		state.Events = []contract.TriggerEventV1{triggerEventForOutcome(input, outcomeKind)}
+	}
+	return execution.EvaluationResult{
+		Contract: input.Contract, Result: observability.ResultSuccess,
+		Plans: []execution.PlanEvaluationResult{{
+			Plan: input.DuePlans[0].Identity, Disposition: execution.PlanDecided,
+			LevelOutcomes: []execution.LevelOutcome{outcome}, StateResults: []execution.StateEvaluation{state},
+		}},
+	}, request
+}
+
+func triggerEventForOutcome(input execution.InternalExecution, outcomeKind execution.LevelOutcomeKind) contract.TriggerEventV1 {
+	compiled := input.DuePlans[0].CompiledPlan
+	fingerprints := compiled.Fingerprints()
+	eventKind := contract.TriggerEventAbnormal
+	levelResult := contract.LevelResultAbnormal
+	observedAnomalies := uint32(1)
+	observedMisses := uint32(0)
+	if outcomeKind == execution.LevelOutcomeRecovery {
+		eventKind = contract.TriggerEventRecovery
+		levelResult = contract.LevelResultRecovery
+		observedAnomalies = 0
+		observedMisses = 1
+	}
+	event, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{
+		EventKind: eventKind, TenantID: "tenant", BusinessID: "2",
+		PlanRef: compiled.PlanRef(),
+		RecordRef: contract.TriggerRecordRefV1{
+			RecordID: strings.Repeat("b", 64), SourceTime: 1_788_000_000,
+			DimensionIdentityDigest: strings.Repeat("c", 64), Dimensions: map[string]json.RawMessage{},
+		},
+		Observed: contract.TriggerObservedV1{Values: map[string]json.RawMessage{"value": json.RawMessage(`50.1`)}},
+		LevelResults: []contract.LevelResultV1{{
+			LevelID: 5, Priority: 1, Result: levelResult,
+			LevelTriggerFingerprint: strings.Repeat("e", 64),
+			DecisionWindow: contract.DecisionWindowV1{
+				Type: "N_OF_M_WITH_CONTINUOUS_MISS", Version: 1, SourceTime: 1_788_000_000,
+				Trigger: contract.TriggerWindowEvidenceV1{
+					WindowStart: 1_788_000_000, WindowEnd: 1_788_000_000, WindowSize: 1,
+					RequiredAnomalies: 1, ObservedAnomalies: observedAnomalies,
+				},
+				Recovery: contract.RecoveryWindowEvidenceV1{
+					Enabled: true, RequiredConsecutiveWindows: 1, ObservedConsecutiveMisses: observedMisses,
+					OldestWindowStart: 1_788_000_000,
+				},
+				HistoryCompleteness: "FULL",
+				WindowEvidence:      contract.WindowEvidenceV1{AnomalyTimestampsDigest: strings.Repeat("9", 64)},
+			},
+			DetectEvidence: contract.DetectEvidenceV1{
+				DetectionResult: "ANOMALOUS", PredicateDigest: strings.Repeat("8", 64),
+				NormalizedValue: json.RawMessage(`50.1`), EffectiveTimeStatus: "ACTIVE",
+			},
+		}},
+		EvaluationTime: 1_788_000_000, DetectPlanFingerprint: fingerprints.Detect,
+		TriggerStateFingerprint: fingerprints.Trigger, ExecutionID: "execution-test", MaxEvidenceBytes: 4096,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return *event
 }
 
 func mustStateMutation(mutation execution.StateMutation) execution.StateMutation {

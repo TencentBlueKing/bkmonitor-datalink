@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
 func TestRedisStorePublishesAssignmentOnlyWithLiveControlLeader(t *testing.T) {
@@ -213,6 +215,62 @@ func TestRedisStoreFencedCASRejectsExpiredSnapshotPublisher(t *testing.T) {
 	})
 	if !errors.Is(err, ErrStaleFence) || result != FencedCASStaleOwner {
 		t.Fatalf("FencedCompareAndSet(expired) = (%s, %v), want stale owner", result, err)
+	}
+}
+
+func TestRedisStoreReadControlComposesWithFencedCompareAndSet(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	queryGroup := execution.QueryGroupIdentity("query-group-1")
+	namespace := "progress"
+
+	value, missing, err := store.ReadControl(ctx, queryGroup, namespace)
+	if err != nil || !missing || value != nil {
+		t.Fatalf("ReadControl(missing) = (%q, %t, %v), want (nil, true, nil)", value, missing, err)
+	}
+
+	now := time.UnixMilli(1_700_000_000_000)
+	authority, err := store.AcquireControlLeader(ctx, "control-1", now, time.Minute)
+	if err != nil {
+		t.Fatalf("AcquireControlLeader() error = %v", err)
+	}
+	if _, err := store.PublishAssignment(ctx, authority, AssignmentDecision{
+		QueryGroup: queryGroup, DesiredWorkerID: "worker-1", ExpectedRecordRevision: 0,
+		PlacementReason: PlacementRendezvous, DecidedAt: now,
+	}); err != nil {
+		t.Fatalf("PublishAssignment() error = %v", err)
+	}
+	lease, err := store.Acquire(ctx, queryGroup, "worker-1", now, time.Minute)
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	want := []byte("progress-v1")
+	status, err := store.FencedCompareAndSet(ctx, FencedCASRequest{
+		Fence: lease.Fence, At: now, Namespace: namespace, ExpectedMissing: true, Value: want,
+	})
+	if err != nil || status != FencedCASApplied {
+		t.Fatalf("FencedCompareAndSet() = (%s, %v), want (%s, nil)", status, err, FencedCASApplied)
+	}
+
+	value, missing, err = store.ReadControl(ctx, queryGroup, namespace)
+	if err != nil || missing || !bytes.Equal(value, want) {
+		t.Fatalf("ReadControl(roundtrip) = (%q, %t, %v), want (%q, false, nil)", value, missing, err, want)
+	}
+	wantNext := []byte("progress-v2")
+	status, err = store.FencedCompareAndSet(ctx, FencedCASRequest{
+		Fence: lease.Fence, At: now, Namespace: namespace, Expected: value, Value: wantNext,
+	})
+	if err != nil || status != FencedCASApplied {
+		t.Fatalf("FencedCompareAndSet(read expected) = (%s, %v), want (%s, nil)", status, err, FencedCASApplied)
+	}
+	value, missing, err = store.ReadControl(ctx, queryGroup, namespace)
+	if err != nil || missing || !bytes.Equal(value, wantNext) {
+		t.Fatalf("ReadControl(updated) = (%q, %t, %v), want (%q, false, nil)", value, missing, err, wantNext)
+	}
+	value[0] = 'X'
+	stored, missing, err := store.ReadControl(ctx, queryGroup, namespace)
+	if err != nil || missing || !bytes.Equal(stored, wantNext) {
+		t.Fatalf("ReadControl(after caller mutation) = (%q, %t, %v), want (%q, false, nil)", stored, missing, err, wantNext)
 	}
 }
 

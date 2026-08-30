@@ -388,6 +388,25 @@ func (store *RedisStore) FencedCompareAndSet(
 	}
 }
 
+func (store *RedisStore) ReadControl(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	namespace string,
+) ([]byte, bool, error) {
+	if store == nil || store.client == nil || queryGroup == "" || namespace == "" ||
+		strings.ContainsAny(namespace, "{} \t\r\n") {
+		return nil, false, errors.New("alarmd ownership: invalid control read")
+	}
+	value, err := store.client.Get(ctx, store.controlKey(queryGroup, namespace)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, true, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return append([]byte(nil), value...), false, nil
+}
+
 func (store *RedisStore) workerRegistryKey() string {
 	return store.prefix + ":worker-registry"
 }

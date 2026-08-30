@@ -1047,6 +1047,19 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 		ReasonAllowedForV2(ReasonProviderUnavailable, ReasonDomainReceipt) {
 		t.Fatalf("Provider reason definition = (%#v, %t)", provider, ok)
 	}
+	snapshotUnavailable, ok := LookupReasonV2(ReasonSnapshotUnavailable)
+	if !ok || snapshotUnavailable.Class != ReasonClassCoverage ||
+		snapshotUnavailable.Domains != ReasonDomainObservation ||
+		ReasonAllowedForV2(ReasonSnapshotUnavailable, ReasonDomainReceipt) ||
+		ReasonAllowedForV2(ReasonSnapshotUnavailable, ReasonDomainQueryResult) {
+		t.Fatalf("Snapshot unavailable reason definition = (%#v, %t)", snapshotUnavailable, ok)
+	}
+	gapSkipped, ok := LookupReasonV2(ReasonGapSkipped)
+	if !ok || gapSkipped.Class != ReasonClassCoverage || gapSkipped.Domains != ReasonDomainObservation ||
+		ReasonAllowedForV2(ReasonGapSkipped, ReasonDomainReceipt) ||
+		ReasonAllowedForV2(ReasonGapSkipped, ReasonDomainQueryResult) {
+		t.Fatalf("Gap-skipped reason definition = (%#v, %t)", gapSkipped, ok)
+	}
 	if !ReasonAllowedForV2(ReasonQueryPartial, ReasonDomainQueryResult) ||
 		ReasonAllowedForV2(ReasonRecordInvalid, ReasonDomainQueryResult) {
 		t.Fatal("QueryResult Reason domain accepted an invalid mapping")

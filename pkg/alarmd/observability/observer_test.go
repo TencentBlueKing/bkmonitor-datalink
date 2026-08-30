@@ -223,6 +223,24 @@ func TestStageCatalogMapsEachStageToOneComponent(t *testing.T) {
 	}
 }
 
+func TestPhaseTwoWorkflowFactsDoNotExpandGenericMetricCatalog(t *testing.T) {
+	t.Parallel()
+
+	component, stage := NormalizeComponentStage(ComponentState, StageMutationCompared)
+	if component != ComponentState || stage != StageMutationCompared {
+		t.Fatalf("phase-two log fact normalized to (%q,%q)", component, stage)
+	}
+	if IsGenericMetricComponentStage(component, stage) {
+		t.Fatal("phase-two detailed stage entered the generic metric cross product")
+	}
+	if got := NormalizeOperation(OperationReplay); got != OperationReplay {
+		t.Fatalf("phase-two log operation=%q", got)
+	}
+	if got := NormalizeMetricOperation(OperationReplay); got != OperationOther {
+		t.Fatalf("phase-two operation entered generic metric labels as %q", got)
+	}
+}
+
 func TestMultiObserverSkipsNilObservers(t *testing.T) {
 	t.Parallel()
 

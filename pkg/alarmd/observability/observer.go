@@ -29,7 +29,10 @@ const (
 	ComponentConsumer       = "consumer"
 	ComponentAdapter        = "adapter"
 	ComponentCompiler       = "compiler"
+	ComponentAccess         = "access"
+	ComponentEvaluation     = "evaluation"
 	ComponentState          = "state"
+	ComponentProgress       = "progress"
 	ComponentDetect         = "detect"
 	ComponentOutput         = "output"
 	ComponentCoverage       = "coverage"
@@ -47,6 +50,17 @@ const (
 	StageRecordBatchReady     = "record_batch_ready"
 	StageRejected             = "rejected"
 	StagePlanCompiled         = "plan_compiled"
+	StageQueryCompleted       = "query_completed"
+	StageStatePreflight       = "state_preflight"
+	StageGapLoaded            = "gap_loaded"
+	StageEvaluationCompleted  = "evaluation_completed"
+	StageSideEffectAdmission  = "side_effect_admission"
+	StageStateAdmission       = "state_admission"
+	StageGapGuardCommitted    = "gap_guard_committed"
+	StageMutationCompared     = "mutation_compared"
+	StageEventACKed           = "event_acked"
+	StageStateApplied         = "state_applied"
+	StageProgressCommitted    = "progress_committed"
 	StageDependencyLoaded     = "dependency_loaded"
 	StageStateCommitted       = "state_committed"
 	StageDetectCompleted      = "detect_completed"
@@ -92,6 +106,10 @@ const (
 	OperationOffsetRepair       = "offset_repair"
 	OperationSample             = "sample"
 	OperationTransition         = "transition"
+	OperationNormal             = "normal"
+	OperationRetry              = "retry"
+	OperationReplay             = "replay"
+	OperationProbe              = "probe"
 	OperationOther              = "_other"
 
 	DirectionInput    Direction = "input"
@@ -298,9 +316,29 @@ func AllComponentStages() []ComponentStage {
 	return append([]ComponentStage(nil), allComponentStages...)
 }
 
+// AllMetricComponentStages returns only the phase-one generic metric catalog.
+// Phase-two workflow stages remain available to structured observers, but 07
+// requires dedicated bounded metrics instead of a generic stage cross product.
+func AllMetricComponentStages() []ComponentStage {
+	return append([]ComponentStage(nil), metricComponentStages...)
+}
+
+func IsGenericMetricComponentStage(component Component, stage Stage) bool {
+	_, ok := metricComponentStageSet[ComponentStage{Component: component, Stage: stage}]
+	return ok
+}
+
 func AllStages() []Stage {
 	stages := make([]Stage, 0, len(allComponentStages))
 	for _, pair := range allComponentStages {
+		stages = append(stages, pair.Stage)
+	}
+	return stages
+}
+
+func AllMetricStages() []Stage {
+	stages := make([]Stage, 0, len(metricComponentStages))
+	for _, pair := range metricComponentStages {
 		stages = append(stages, pair.Stage)
 	}
 	return stages
@@ -332,6 +370,20 @@ func AllOperations() []Operation {
 	return append([]Operation(nil), allOperations...)
 }
 
+func AllMetricOperations() []Operation {
+	return append([]Operation(nil), metricOperations...)
+}
+
+func NormalizeMetricOperation(operation Operation) Operation {
+	if operation == "" {
+		return OperationNone
+	}
+	if _, ok := metricOperationSet[operation]; ok {
+		return operation
+	}
+	return OperationOther
+}
+
 func AllDirections() []Direction {
 	return append([]Direction(nil), allDirections...)
 }
@@ -349,7 +401,7 @@ func normalizeCounts(counts Counts) Counts {
 	return counts
 }
 
-var allComponentStages = []ComponentStage{
+var metricComponentStages = []ComponentStage{
 	{ComponentRuntime, StageStartup}, {ComponentRuntime, StageConfigLoaded},
 	{ComponentRuntime, StageShutdown}, {ComponentRuntime, StageFatal},
 	{ComponentRuntime, StageRestartRecovered},
@@ -373,17 +425,36 @@ var allComponentStages = []ComponentStage{
 	{ComponentOther, StageOther},
 }
 
+var phaseTwoComponentStages = []ComponentStage{
+	{ComponentAccess, StageQueryCompleted},
+	{ComponentEvaluation, StageEvaluationCompleted},
+	{ComponentState, StageStatePreflight}, {ComponentState, StageGapLoaded},
+	{ComponentState, StageSideEffectAdmission}, {ComponentState, StageGapGuardCommitted},
+	{ComponentState, StageMutationCompared}, {ComponentState, StageStateAdmission},
+	{ComponentState, StageStateApplied},
+	{ComponentOutput, StageEventACKed},
+	{ComponentProgress, StageProgressCommitted},
+}
+
+var allComponentStages = append(
+	append([]ComponentStage(nil), metricComponentStages...),
+	phaseTwoComponentStages...,
+)
+
 var allResults = []Result{
 	Result(ResultStarted), Result(ResultSuccess), ResultTerminal, ResultRetrying, ResultPaused,
 	ResultResumed, ResultDegraded, Result(ResultTimeout), Result(ResultFailed), ResultOther,
 }
 
-var allOperations = []Operation{
+var metricOperations = []Operation{
 	OperationNone, OperationCompile, OperationCacheHit, OperationCacheMiss, OperationCacheEvict,
 	OperationRequirementCompile, OperationLoad, OperationDecode, OperationEncode, OperationWrite,
 	OperationConsume, OperationProduce, OperationACK, OperationCommit, OperationOffsetRepair,
 	OperationSample, OperationTransition, OperationOther,
 }
+
+var phaseTwoOperations = []Operation{OperationNormal, OperationRetry, OperationReplay, OperationProbe}
+var allOperations = append(append([]Operation(nil), metricOperations...), phaseTwoOperations...)
 
 var allDirections = []Direction{DirectionInput, DirectionOutput, DirectionInternal, DirectionOther}
 
@@ -404,8 +475,10 @@ var allLogReasons = []ReasonCode{
 }
 
 var componentStageSet = makeComponentStageSet(allComponentStages)
+var metricComponentStageSet = makeComponentStageSet(metricComponentStages)
 var resultSet = makeResultSet(allResults)
 var operationSet = makeOperationSet(allOperations)
+var metricOperationSet = makeOperationSet(metricOperations)
 var directionSet = makeDirectionSet(allDirections)
 var commonReasonSet = makeReasonSet(allCommonReasons[:2])
 var resourceReasonSet = makeReasonSet(allLogReasons[2 : len(allLogReasons)-1])

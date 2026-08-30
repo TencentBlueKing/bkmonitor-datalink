@@ -80,6 +80,8 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonQueryPartial:          {ReasonQueryPartial, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryTimeout:          {ReasonQueryTimeout, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryUnavailable:      {ReasonQueryUnavailable, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonSnapshotUnavailable:   {ReasonSnapshotUnavailable, ReasonClassCoverage, ReasonDomainObservation},
+	ReasonGapSkipped:            {ReasonGapSkipped, ReasonClassCoverage, ReasonDomainObservation},
 	ReasonEffectiveTimeInactive: {ReasonEffectiveTimeInactive, ReasonClassCoverage, ReasonDomainReceipt | ReasonDomainObservation},
 	ReasonEffectiveTimeUnknown:  {ReasonEffectiveTimeUnknown, ReasonClassCoverage, ReasonDomainReceipt | ReasonDomainObservation},
 	ReasonHistoryWarming:        {ReasonHistoryWarming, ReasonClassCoverage, ReasonDomainReceipt | ReasonDomainObservation},

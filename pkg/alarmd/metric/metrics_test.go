@@ -387,7 +387,7 @@ func populateAllCustomLabelCombinations(recorder *Recorder) {
 			recorder.RecordShadowCompare(component, result)
 		}
 	}
-	for _, pair := range observability.AllComponentStages() {
+	for _, pair := range observability.AllMetricComponentStages() {
 		for _, result := range observability.AllResults() {
 			for _, reason := range observability.AllReasons(pair.Component) {
 				recorder.Observe(context.Background(), observability.Observation{
@@ -401,7 +401,7 @@ func populateAllCustomLabelCombinations(recorder *Recorder) {
 			}
 		}
 	}
-	for _, operation := range observability.AllOperations() {
+	for _, operation := range observability.AllMetricOperations() {
 		for _, result := range observability.AllResults() {
 			for _, reason := range observability.AllMetricReasons() {
 				recorder.Observe(context.Background(), observability.Observation{
@@ -412,7 +412,7 @@ func populateAllCustomLabelCombinations(recorder *Recorder) {
 			}
 		}
 	}
-	for _, pair := range observability.AllComponentStages() {
+	for _, pair := range observability.AllMetricComponentStages() {
 		for _, direction := range observability.AllDirections() {
 			for _, result := range observability.AllResults() {
 				recorder.Observe(context.Background(), observability.Observation{

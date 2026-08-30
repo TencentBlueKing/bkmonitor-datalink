@@ -87,6 +87,10 @@ func (r *Recorder) Observe(_ context.Context, observation observability.Observat
 	}
 	duration := observation.Duration
 	observation = observability.NormalizeObservation(observation)
+	if !observability.IsGenericMetricComponentStage(observation.Component, observation.Stage) {
+		return
+	}
+	observation.Operation = observability.NormalizeMetricOperation(observation.Operation)
 	metricReason := observability.NormalizeMetricReason(observation.Component, observation.ReasonCode, observation.Result)
 	r.observations.total.WithLabelValues(
 		string(observation.Component), string(observation.Stage),
@@ -117,18 +121,18 @@ func (r *Recorder) Observe(_ context.Context, observation observability.Observat
 func observationCustomSeries() int {
 	histogramSeries := len(observationDurationBuckets) + 3
 	total := 0
-	for _, pair := range observability.AllComponentStages() {
+	for _, pair := range observability.AllMetricComponentStages() {
 		for _, result := range observability.AllResults() {
 			total += metricReasonCount(pair.Component, result)
 		}
 	}
-	duration := len(observability.AllComponentStages()) * len(observability.AllResults()) * histogramSeries
+	duration := len(observability.AllMetricComponentStages()) * len(observability.AllResults()) * histogramSeries
 	operationReasons := 0
 	for _, result := range observability.AllResults() {
 		operationReasons += metricReasonCount(observability.ComponentResource, result)
 	}
-	operations := len(observability.AllOperations()) * operationReasons
-	counts := 8 * len(observability.AllStages()) * len(observability.AllDirections()) * len(observability.AllResults())
+	operations := len(observability.AllMetricOperations()) * operationReasons
+	counts := 8 * len(observability.AllMetricStages()) * len(observability.AllDirections()) * len(observability.AllResults())
 	return total + operations + duration + counts
 }
 

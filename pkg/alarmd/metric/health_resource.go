@@ -207,7 +207,7 @@ func (r *Recorder) BindResources(source observability.ResourceSource) error {
 }
 
 func healthResourceCustomSeries() int {
-	health := 1 + len(observability.AllHealthStates()) + len(observability.AllReasons(observability.ComponentResource)) + 7 + len(observability.AllComponentStages())
+	health := 1 + len(observability.AllHealthStates()) + len(observability.AllReasons(observability.ComponentResource)) + 7 + len(observability.AllMetricComponentStages())
 	resources := len(observability.AllResourceStates()) + 10
 	return health + resources
 }

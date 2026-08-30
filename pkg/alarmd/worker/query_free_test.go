@@ -1,0 +1,485 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License.
+
+package worker_test
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
+)
+
+func TestSlotExecutionCoordinatorFinalizesSnapshotUnavailableWithoutQuery(t *testing.T) {
+	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activePlanResult("state-v2", 2)})
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+	if err != nil || !result.Completed {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	assertTrace(t, fixture.trace, []string{
+		"finalization", "target_verify", "activation", "sequence", "query_free_admission_guard", "query_free_gap_load",
+		"query_free_gap_apply", "activation", "query_free_admission_progress", "progress_commit",
+	})
+	if len(fixture.ports.mutations) != 1 {
+		t.Fatalf("gap mutations=%d, want=1", len(fixture.ports.mutations))
+	}
+	mutation := fixture.ports.mutations[0]
+	if mutation.Identity.Plan != planIdentity() || mutation.Identity.StateGeneration != "state-v2" ||
+		mutation.ApplyVersion.StateApplyEpoch != 2 || mutation.ScheduleRevision != "plan-schedule-v2" ||
+		len(mutation.Scopes) != 1 || mutation.Scopes[0].Scope != (execution.GapScope{}) ||
+		mutation.Scopes[0].Kind != execution.GapOpen ||
+		mutation.Scopes[0].ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) ||
+		mutation.Scopes[0].RequiredFullSlots != 3 {
+		t.Fatalf("unexpected query-free mutation: %+v", mutation)
+	}
+	completion := fixture.ports.lastProgress.Completion
+	if completion.Kind != execution.CompletionSnapshotUnavailable || completion.Primary != nil ||
+		completion.Result != observability.ResultDegraded ||
+		completion.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) {
+		t.Fatalf("unexpected query-free completion: %+v", completion)
+	}
+	lastObservation := (*fixture.observations)[len(*fixture.observations)-1]
+	if lastObservation.Stage != observability.StageProgressCommitted ||
+		lastObservation.Result != observability.ResultDegraded ||
+		lastObservation.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) {
+		t.Fatalf("query-free completion observation=%+v", lastObservation)
+	}
+}
+
+func TestSlotExecutionCoordinatorSkipsGuardWhenActivationHasNoPlan(t *testing.T) {
+	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{noPlanResult()})
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+	if err != nil || !result.Completed {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	assertTrace(t, fixture.trace, []string{"finalization", "target_verify", "activation", "sequence", "activation", "progress_commit"})
+	if len(fixture.ports.mutations) != 0 {
+		t.Fatalf("no-Plan finalization wrote Guard: %+v", fixture.ports.mutations)
+	}
+}
+
+func TestSlotExecutionCoordinatorUsesSameQueryFreePathForGapSkipped(t *testing.T) {
+	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activePlanResult("state-v2", 2)})
+	fixture.ports.finalization.Mode = execution.FinalizationGapSkipped
+	fixture.ports.finalization.ReasonCode = execution.ReasonCode(contract.ReasonGapSkipped)
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+	if err != nil || !result.Completed {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	if len(fixture.ports.mutations) != 1 ||
+		fixture.ports.mutations[0].Scopes[0].ReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) ||
+		fixture.ports.lastProgress.Completion.Kind != execution.CompletionGapSkipped ||
+		fixture.ports.lastProgress.Completion.ReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) {
+		t.Fatalf("GAP_SKIPPED did not use query-free Guard/Progress: mutation=%+v progress=%+v",
+			fixture.ports.mutations, fixture.ports.lastProgress)
+	}
+	lastObservation := (*fixture.observations)[len(*fixture.observations)-1]
+	if lastObservation.Stage != observability.StageProgressCommitted ||
+		lastObservation.Result != observability.ResultDegraded ||
+		lastObservation.ReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) {
+		t.Fatalf("GAP_SKIPPED completion observation=%+v", lastObservation)
+	}
+}
+
+func TestSlotExecutionCoordinatorRejectsWrongFrozenPlanWithEchoedDigest(t *testing.T) {
+	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activePlanResult("state-v2", 2)})
+	fixture.ports.finalization.Targets.Plans[0].StrategyID = "wrong-plan"
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+	if err == nil || result.Completed {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	assertTrace(t, fixture.trace, []string{"finalization", "target_verify"})
+}
+
+func TestSlotExecutionCoordinatorReprotectsChangedActivationBeforeProgress(t *testing.T) {
+	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{
+		activePlanResult("state-v2", 2),
+		activePlanResult("state-v3", 3),
+		activePlanResult("state-v3", 3),
+	})
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+	if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
+		t.Fatalf("first Execute() result=%+v error=%v", result, err)
+	}
+	if len(fixture.ports.mutations) != 2 || fixture.ports.mutations[0].Identity.StateGeneration != "state-v2" ||
+		fixture.ports.mutations[1].Identity.StateGeneration != "state-v3" ||
+		fixture.ports.mutations[1].Scopes[0].ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) {
+		t.Fatalf("changed activation was not protected before retry: %+v", fixture.ports.mutations)
+	}
+	result, err = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+	if err != nil || !result.Completed {
+		t.Fatalf("redo Execute() result=%+v error=%v", result, err)
+	}
+	if len(fixture.ports.mutations) != 3 || fixture.ports.mutations[2].Identity.StateGeneration != "state-v3" ||
+		fixture.ports.mutations[1].MutationDigest != fixture.ports.mutations[2].MutationDigest ||
+		!reflect.DeepEqual(fixture.ports.applyStatuses, []execution.GapGuardApplyStatus{
+			execution.GapGuardApplied, execution.GapGuardApplied, execution.GapGuardAlreadyApplied,
+		}) {
+		t.Fatalf("activation switch mutations=%+v", fixture.ports.mutations)
+	}
+	if fixture.ports.progressCalls != 1 || fixture.ports.activationCalls != 4 {
+		t.Fatalf("activation calls=%d progress calls=%d", fixture.ports.activationCalls, fixture.ports.progressCalls)
+	}
+}
+
+func TestSlotExecutionCoordinatorOnlyReprotectsChangedPlanBeforeProgress(t *testing.T) {
+	stablePlan := planIdentity()
+	changedPlan := planIdentity()
+	changedPlan.StrategyID = "8"
+	activation := func(stableGeneration, changedGeneration execution.StateGeneration, changedEpoch execution.StateApplyEpoch) execution.PlanActivationResult {
+		return execution.PlanActivationResult{
+			Contract: frozenContract(),
+			Facts: []execution.PlanActivationFact{
+				{
+					Plan: stablePlan, Selection: execution.ActivationCurrent,
+					Selected: execution.ActivatedPlan{
+						Identity: stablePlan, StateGeneration: stableGeneration, StateApplyEpoch: 2,
+						ScheduleRevision: "stable-schedule", RequiredFullSlots: 2,
+					},
+				},
+				{
+					Plan: changedPlan, Selection: execution.ActivationCurrent,
+					Selected: execution.ActivatedPlan{
+						Identity: changedPlan, StateGeneration: changedGeneration, StateApplyEpoch: changedEpoch,
+						ScheduleRevision: "changed-schedule", RequiredFullSlots: 3,
+					},
+				},
+			},
+		}
+	}
+	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{
+		activation("stable-v1", "changed-v1", 2),
+		activation("stable-v1", "changed-v2", 3),
+	})
+	fixture.ports.expectedTargets.Plans = []execution.PlanIdentity{stablePlan, changedPlan}
+	fixture.ports.finalization.Targets.Plans = append([]execution.PlanIdentity(nil), fixture.ports.expectedTargets.Plans...)
+
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+	if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	if fixture.ports.progressCalls != 0 {
+		t.Fatalf("activation change committed Progress %d times", fixture.ports.progressCalls)
+	}
+	var stableGuards, oldChangedGuards, newChangedGuards int
+	for _, mutation := range fixture.ports.mutations {
+		switch mutation.Identity {
+		case (execution.PlanGapIdentity{Plan: stablePlan, StateGeneration: "stable-v1"}):
+			stableGuards++
+		case (execution.PlanGapIdentity{Plan: changedPlan, StateGeneration: "changed-v1"}):
+			oldChangedGuards++
+		case (execution.PlanGapIdentity{Plan: changedPlan, StateGeneration: "changed-v2"}):
+			newChangedGuards++
+		}
+	}
+	if stableGuards != 1 || oldChangedGuards != 1 || newChangedGuards != 1 || len(fixture.ports.mutations) != 3 {
+		t.Fatalf("unexpected activation protection scope: mutations=%+v", fixture.ports.mutations)
+	}
+}
+
+func TestSlotExecutionCoordinatorReturnsRetryWhenActivationKeepsChanging(t *testing.T) {
+	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{
+		activePlanResult("state-v2", 2),
+		activePlanResult("state-v3", 3),
+	})
+	fixture.ports.cycleActivations = true
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	result, err := fixture.coordinator.Execute(ctx, slotRequest(execution.OperationReplay))
+	if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	if fixture.ports.activationCalls != 2 || fixture.ports.progressCalls != 0 {
+		t.Fatalf("activation calls=%d progress calls=%d", fixture.ports.activationCalls, fixture.ports.progressCalls)
+	}
+}
+
+func TestSlotExecutionCoordinatorSnapshotUnavailableRedoUsesCanonicalEnsureGapped(t *testing.T) {
+	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activePlanResult("state-v2", 2)})
+	fixture.ports.activationErrorAt = 2
+	if result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay)); err != nil || result.Completed || result.Result != observability.ResultRetrying ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) {
+		t.Fatalf("first Execute() result=%+v error=%v", result, err)
+	}
+	if fixture.ports.progressCalls != 0 {
+		t.Fatalf("control-plane failure advanced Progress %d times", fixture.ports.progressCalls)
+	}
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+	if err != nil || !result.Completed {
+		t.Fatalf("redo Execute() result=%+v error=%v", result, err)
+	}
+	if len(fixture.ports.mutations) != 2 || len(fixture.ports.applyStatuses) != 2 {
+		t.Fatalf("redo mutations=%+v statuses=%v", fixture.ports.mutations, fixture.ports.applyStatuses)
+	}
+	first, redo := fixture.ports.mutations[0], fixture.ports.mutations[1]
+	if first.Scopes[0].Kind != execution.GapOpen || redo.Scopes[0].Kind != execution.GapStrengthen ||
+		first.MutationDigest != redo.MutationDigest {
+		t.Fatalf("redo did not preserve ENSURE_GAPPED digest: first=%+v redo=%+v", first, redo)
+	}
+	if !reflect.DeepEqual(fixture.ports.applyStatuses, []execution.GapGuardApplyStatus{
+		execution.GapGuardApplied, execution.GapGuardAlreadyApplied,
+	}) {
+		t.Fatalf("apply statuses=%v", fixture.ports.applyStatuses)
+	}
+}
+
+func TestSlotExecutionCoordinatorDoesNotAdvanceWhenActivationIsUnreadable(t *testing.T) {
+	for _, failAt := range []int{1, 2} {
+		t.Run(string(rune('0'+failAt)), func(t *testing.T) {
+			fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activePlanResult("state-v2", 2)})
+			fixture.ports.activationErrorAt = failAt
+			result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+			if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
+				result.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) || fixture.ports.progressCalls != 0 {
+				t.Fatalf("Execute() result=%+v error=%v progress=%d", result, err, fixture.ports.progressCalls)
+			}
+			if failAt == 1 && len(fixture.ports.mutations) != 0 {
+				t.Fatalf("Guard was written without a readable activation fact: %+v", fixture.ports.mutations)
+			}
+		})
+	}
+}
+
+func TestSlotExecutionCoordinatorRequiresAdmissionBeforeQueryFreeGuardAndProgress(t *testing.T) {
+	for _, failAt := range []int{1, 2} {
+		t.Run(string(rune('0'+failAt)), func(t *testing.T) {
+			fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activePlanResult("state-v2", 2)})
+			fixture.ports.admissionRejectAt = failAt
+			result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+			if err == nil || result.Completed || fixture.ports.progressCalls != 0 {
+				t.Fatalf("Execute() result=%+v error=%v progress=%d", result, err, fixture.ports.progressCalls)
+			}
+			if failAt == 1 && len(fixture.ports.mutations) != 0 {
+				t.Fatalf("Guard admission failure still wrote mutations: %+v", fixture.ports.mutations)
+			}
+			if failAt == 2 && len(fixture.ports.mutations) != 1 {
+				t.Fatalf("Progress admission was not checked after Guard: %+v", fixture.ports.mutations)
+			}
+		})
+	}
+}
+
+type queryFreeFixture struct {
+	trace        *[]string
+	observations *[]observability.Observation
+	ports        *queryFreePorts
+	coordinator  *worker.SlotExecutionCoordinator
+}
+
+func newQueryFreeFixture(t *testing.T, activations []execution.PlanActivationResult) queryFreeFixture {
+	t.Helper()
+	trace := make([]string, 0, 16)
+	observations := make([]observability.Observation, 0, 8)
+	base := &recordingPorts{trace: &trace}
+	expectedTargets := execution.FrozenDuePlanTargets{
+		DuePlanSetDigest: frozenContract().DuePlanSetDigest,
+		Plans:            []execution.PlanIdentity{planIdentity()},
+	}
+	ports := &queryFreePorts{
+		recordingPorts: base,
+		finalization: execution.QueryFreeFinalization{
+			Contract: frozenContract(), Mode: execution.FinalizationSnapshotUnavailable,
+			ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
+			Targets: execution.FrozenDuePlanTargets{
+				DuePlanSetDigest: expectedTargets.DuePlanSetDigest,
+				Plans:            append([]execution.PlanIdentity(nil), expectedTargets.Plans...),
+			},
+		},
+		expectedTargets: expectedTargets,
+		activations:     activations,
+		markers:         make(map[execution.PlanGapIdentity]execution.GapGuardSnapshot),
+	}
+	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{
+		Finalization: ports, Activation: ports,
+		Query: ports, Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports,
+		Events: ports, State: ports, Progress: ports,
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observability.NormalizeObservation(observation))
+		}),
+	})
+	if err != nil {
+		t.Fatalf("NewSlotExecutionCoordinator() error: %v", err)
+	}
+	return queryFreeFixture{trace: &trace, observations: &observations, ports: ports, coordinator: coordinator}
+}
+
+type queryFreePorts struct {
+	*recordingPorts
+	finalization      execution.QueryFreeFinalization
+	expectedTargets   execution.FrozenDuePlanTargets
+	activations       []execution.PlanActivationResult
+	cycleActivations  bool
+	activationCalls   int
+	activationErrorAt int
+	lastActivation    execution.PlanActivationResult
+	admissionCalls    int
+	admissionRejectAt int
+	markers           map[execution.PlanGapIdentity]execution.GapGuardSnapshot
+	mutations         []execution.PlanGapMutation
+	applyStatuses     []execution.GapGuardApplyStatus
+	progressCalls     int
+}
+
+func (ports *queryFreePorts) VerifyFrozenDuePlanTargets(
+	_ context.Context,
+	_ execution.FrozenExecutionContractRef,
+	targets execution.FrozenDuePlanTargets,
+) error {
+	ports.record("target_verify")
+	if targets.DuePlanSetDigest != ports.expectedTargets.DuePlanSetDigest ||
+		!reflect.DeepEqual(targets.Plans, ports.expectedTargets.Plans) {
+		return errors.New("frozen due Plan exact-set mismatch")
+	}
+	return nil
+}
+
+func (ports *queryFreePorts) ResolveFinalization(
+	_ context.Context,
+	_ execution.SlotExecutionRequest,
+) (execution.QueryFreeFinalization, error) {
+	ports.record("finalization")
+	return ports.finalization, nil
+}
+
+func (ports *queryFreePorts) LoadActivations(
+	_ context.Context,
+	_ execution.PlanActivationRequest,
+) (execution.PlanActivationResult, error) {
+	ports.record("activation")
+	ports.activationCalls++
+	if ports.activationErrorAt == ports.activationCalls {
+		ports.activationErrorAt = 0
+		return execution.PlanActivationResult{}, errors.New("injected activation read")
+	}
+	index := ports.activationCalls - 1
+	if ports.cycleActivations {
+		index %= len(ports.activations)
+	}
+	if index >= len(ports.activations) {
+		index = len(ports.activations) - 1
+	}
+	ports.lastActivation = ports.activations[index]
+	return ports.lastActivation, nil
+}
+
+func (ports *queryFreePorts) Sequence(
+	ctx context.Context,
+	_ execution.SequencingScope,
+	run func(context.Context) error,
+) error {
+	ports.record("sequence")
+	return run(ctx)
+}
+
+func (ports *queryFreePorts) Check(
+	_ context.Context,
+	request execution.SideEffectAdmissionRequest,
+) (execution.SideEffectAdmissionResult, error) {
+	ports.admissionCalls++
+	stage := "query_free_admission_guard"
+	if ports.activationCalls >= 2 {
+		stage = "query_free_admission_progress"
+	}
+	ports.record(stage)
+	fact, found := ports.lastActivation.Find(request.Plan)
+	if !found || fact.Selection == execution.ActivationNone || request.StateApplyEpoch != fact.Selected.StateApplyEpoch ||
+		request.OwnerFence != slotRequest(execution.OperationReplay).OwnerFence {
+		return execution.SideEffectAdmissionResult{}, errors.New("query-free admission facts drifted")
+	}
+	if ports.admissionRejectAt == ports.admissionCalls {
+		return execution.SideEffectAdmissionResult{
+			Admitted: false, ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift),
+		}, nil
+	}
+	return execution.SideEffectAdmissionResult{Admitted: true}, nil
+}
+
+func (ports *queryFreePorts) LoadGaps(
+	_ context.Context,
+	request execution.GapLoadRequest,
+) (execution.GapLoadResult, error) {
+	ports.record("query_free_gap_load")
+	items := make([]execution.GapGuardSnapshot, len(request.Items))
+	for index, item := range request.Items {
+		marker, ok := ports.markers[item.Identity]
+		if !ok {
+			marker = execution.GapGuardSnapshot{Identity: item.Identity, Status: execution.GapMissing}
+		}
+		items[index] = marker
+	}
+	return execution.GapLoadResult{Items: items}, nil
+}
+
+func (ports *queryFreePorts) ApplyGap(
+	_ context.Context,
+	request execution.GapGuardApplyRequest,
+) (execution.GapGuardApplyResult, error) {
+	ports.record("query_free_gap_apply")
+	items := make([]execution.GapGuardApplyItemResult, len(request.Items))
+	for index, mutation := range request.Items {
+		status := execution.GapGuardApplied
+		if marker, ok := ports.markers[mutation.Identity]; ok &&
+			marker.PersistedApplyVersion == mutation.ApplyVersion &&
+			marker.PersistedMutationDigest == mutation.MutationDigest {
+			status = execution.GapGuardAlreadyApplied
+		} else {
+			scopes := make([]execution.GapScopeState, len(mutation.Scopes))
+			for scopeIndex, scope := range mutation.Scopes {
+				scopes[scopeIndex] = execution.GapScopeState{
+					Scope: scope.Scope, Status: execution.GapStatusGapped, ReasonCode: scope.ReasonCode,
+					RequiredFullSlots: scope.RequiredFullSlots,
+				}
+			}
+			ports.markers[mutation.Identity] = execution.GapGuardSnapshot{
+				Identity: mutation.Identity, MarkerRevision: 1,
+				PersistedApplyVersion: mutation.ApplyVersion, PersistedMutationDigest: mutation.MutationDigest,
+				Status: execution.GapFound, LastScheduleRevision: mutation.ScheduleRevision, Scopes: scopes,
+			}
+		}
+		ports.mutations = append(ports.mutations, mutation)
+		ports.applyStatuses = append(ports.applyStatuses, status)
+		items[index] = execution.GapGuardApplyItemResult{Identity: mutation.Identity, Status: status}
+	}
+	return execution.GapGuardApplyResult{Items: items}, nil
+}
+
+func (ports *queryFreePorts) CommitProgress(
+	_ context.Context,
+	request execution.ProgressCommitRequest,
+) (execution.ProgressCommitResult, error) {
+	ports.record("progress_commit")
+	ports.progressCalls++
+	ports.lastProgress = request
+	return execution.ProgressCommitResult{Status: execution.ProgressCommitted}, nil
+}
+
+func activePlanResult(generation execution.StateGeneration, epoch execution.StateApplyEpoch) execution.PlanActivationResult {
+	return execution.PlanActivationResult{
+		Contract: frozenContract(),
+		Facts: []execution.PlanActivationFact{{
+			Plan: planIdentity(), Selection: execution.ActivationCurrent,
+			Selected: execution.ActivatedPlan{
+				Identity: planIdentity(), StateGeneration: generation, StateApplyEpoch: epoch,
+				ScheduleRevision: "plan-schedule-v2", RequiredFullSlots: 3,
+			},
+		}},
+	}
+}
+
+func noPlanResult() execution.PlanActivationResult {
+	return execution.PlanActivationResult{
+		Contract: frozenContract(),
+		Facts:    []execution.PlanActivationFact{{Plan: planIdentity(), Selection: execution.ActivationNone}},
+	}
+}

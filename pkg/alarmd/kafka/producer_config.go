@@ -41,6 +41,26 @@ type DecisionSinkConfig struct {
 }
 
 func (c DecisionSinkConfig) Validate() error {
+	if err := c.ValidateProducerOnly(); err != nil {
+		return err
+	}
+	if err := validateKafkaTopicName("input_topic", c.InputTopic); err != nil {
+		return err
+	}
+	if c.InputTopic == c.OutputTopic {
+		return errors.New("kafka decision producer: input_topic and output_topic must differ")
+	}
+	for _, topic := range c.AllowedOutputTopics {
+		if topic == c.InputTopic {
+			return errors.New("kafka decision producer: input topic must not appear in output allowlist")
+		}
+	}
+	return nil
+}
+
+// ValidateProducerOnly validates the output producer without requiring the
+// phase-one input topic. Input topology remains the responsibility of Validate.
+func (c DecisionSinkConfig) ValidateProducerOnly() error {
 	if len(c.Brokers) == 0 {
 		return errors.New("kafka decision producer: at least one broker is required")
 	}
@@ -54,14 +74,8 @@ func (c DecisionSinkConfig) Validate() error {
 		}
 		seenBrokers[broker] = struct{}{}
 	}
-	if err := validateKafkaTopicName("input_topic", c.InputTopic); err != nil {
-		return err
-	}
 	if err := validateKafkaTopicName("output_topic", c.OutputTopic); err != nil {
 		return err
-	}
-	if c.InputTopic == c.OutputTopic {
-		return errors.New("kafka decision producer: input_topic and output_topic must differ")
 	}
 	if len(c.AllowedOutputTopics) == 0 {
 		return errors.New("kafka decision producer: output topic allowlist must be non-empty")
@@ -70,9 +84,6 @@ func (c DecisionSinkConfig) Validate() error {
 	for _, topic := range c.AllowedOutputTopics {
 		if err := validateKafkaTopicName("allowed_output_topics", topic); err != nil {
 			return err
-		}
-		if topic == c.InputTopic {
-			return errors.New("kafka decision producer: input topic must not appear in output allowlist")
 		}
 		if _, exists := seenTopics[topic]; exists {
 			return fmt.Errorf("kafka decision producer: duplicate allowed output topic %q", topic)
@@ -106,6 +117,19 @@ func NewDecisionProducerConfig(coordinates DecisionSinkConfig) (*sarama.Config, 
 	if err := coordinates.Validate(); err != nil {
 		return nil, err
 	}
+	return newDecisionProducerConfig(coordinates)
+}
+
+// NewDecisionProducerOnlyConfig builds the synchronous output producer used
+// by phase-two TriggerEvent without inventing a phase-one input coordinate.
+func NewDecisionProducerOnlyConfig(coordinates DecisionSinkConfig) (*sarama.Config, error) {
+	if err := coordinates.ValidateProducerOnly(); err != nil {
+		return nil, err
+	}
+	return newDecisionProducerConfig(coordinates)
+}
+
+func newDecisionProducerConfig(coordinates DecisionSinkConfig) (*sarama.Config, error) {
 	version, err := sarama.ParseKafkaVersion(coordinates.BrokerVersion)
 	if err != nil {
 		return nil, fmt.Errorf("kafka decision producer: parse broker_version: %w", err)

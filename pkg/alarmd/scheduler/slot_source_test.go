@@ -30,7 +30,7 @@ func TestProductionSlotSourceColdStartFreezesFirstDueSlot(t *testing.T) {
 	if slot.Contract.Slot.EvaluationTime != 120 || slot.ExpectedNextSlot != 120 || slot.NextSlotAfterCompletion != 180 {
 		t.Fatalf("slot times = %+v", slot)
 	}
-	if slot.Contract.SnapshotRevision != schedule.SnapshotRevision || slot.Contract.QueryRevision != schedule.QueryRevision ||
+	if slot.Contract.SnapshotRevision != "snapshot-1" || slot.Contract.QueryRevision != "query-1" ||
 		slot.Contract.ScheduleRevision != schedule.ScheduleRevision || slot.Contract.DuePlanSetDigest != "due-plan-set-1" {
 		t.Fatalf("frozen contract = %+v", slot.Contract)
 	}
@@ -65,6 +65,95 @@ func TestProductionSlotSourceUsesContinuousProgress(t *testing.T) {
 	wantDue := []FrozenPlanScheduleRef{{Identity: planIdentity("1"), ScheduleRevision: "plan-schedule-1"}}
 	if !reflect.DeepEqual(catalog.requests[0].DuePlans, wantDue) {
 		t.Fatalf("due plans = %+v, want %+v", catalog.requests[0].DuePlans, wantDue)
+	}
+}
+
+func TestProductionSlotSourceFreezesContentRevisionByEvaluationTimeAcrossCutover(t *testing.T) {
+	schedule := testSchedule()
+	freeze := func(request FreezeSlotContractRequest) execution.FrozenExecutionContractRef {
+		snapshotRevision := execution.SnapshotRevision("snapshot-before-cutover")
+		queryRevision := execution.QueryRevision("query-before-cutover")
+		if request.EvaluationTime >= 180 {
+			snapshotRevision = "snapshot-after-cutover"
+			queryRevision = "query-after-cutover"
+		}
+		return execution.FrozenExecutionContractRef{
+			Slot: execution.SlotIdentity{QueryGroup: request.QueryGroup, ScheduleRevision: request.ScheduleRevision,
+				EvaluationTime: request.EvaluationTime},
+			SnapshotRevision: snapshotRevision, QueryRevision: queryRevision,
+			ScheduleRevision: request.ScheduleRevision, DuePlanSetDigest: "due-plan-set-after-cutover",
+		}
+	}
+	tests := []struct {
+		name         string
+		load         execution.ProgressLoadResult
+		wantSnapshot execution.SnapshotRevision
+		wantQuery    execution.QueryRevision
+	}{
+		{name: "before cutover", load: execution.ProgressLoadResult{Status: execution.ProgressMissing},
+			wantSnapshot: "snapshot-before-cutover", wantQuery: "query-before-cutover"},
+		{name: "after cutover", load: foundProgress(schedule, 180, 120),
+			wantSnapshot: "snapshot-after-cutover", wantQuery: "query-after-cutover"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			catalog := &fakeSlotCatalog{schedule: schedule, freeze: freeze}
+			source := mustProductionSlotSource(t, schedule.QueryGroup, schedule.ScheduleRevision,
+				&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
+				&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog,
+				&fakeProgressReader{result: test.load}, time.Unix(200, 0))
+
+			slot, due, err := source.Next(context.Background(), schedule.QueryGroup)
+			if err != nil || !due {
+				t.Fatalf("Next() due=%v error=%v", due, err)
+			}
+			if slot.Contract.SnapshotRevision != test.wantSnapshot || slot.Contract.QueryRevision != test.wantQuery {
+				t.Fatalf("contract content revisions = %+v", slot.Contract)
+			}
+		})
+	}
+}
+
+func TestProductionSlotSourceReadsOnlyBoundScheduleLane(t *testing.T) {
+	for _, revision := range []execution.ScheduleRevision{"schedule-1", "schedule-2"} {
+		t.Run(string(revision), func(t *testing.T) {
+			schedule := testSchedule()
+			schedule.ScheduleRevision = revision
+			catalog := &fakeSlotCatalog{schedule: schedule}
+			source := mustProductionSlotSource(t, schedule.QueryGroup, revision,
+				&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
+				&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog,
+				&fakeProgressReader{result: execution.ProgressLoadResult{Status: execution.ProgressMissing}}, time.Unix(200, 0))
+
+			if _, due, err := source.Next(context.Background(), schedule.QueryGroup); err != nil || !due {
+				t.Fatalf("Next() due=%v error=%v", due, err)
+			}
+			if catalog.readScheduleRevision != revision {
+				t.Fatalf("ReadFrozenSchedule() revision = %q, want %q", catalog.readScheduleRevision, revision)
+			}
+			if catalog.requests[0].ScheduleRevision != revision {
+				t.Fatalf("FreezeSlotContract() revision = %q, want %q", catalog.requests[0].ScheduleRevision, revision)
+			}
+		})
+	}
+}
+
+func TestProductionSlotSourceRestartWithSameProgressFreezesSameContract(t *testing.T) {
+	schedule := testSchedule()
+	namespace := execution.ProgressNamespace{QueryGroup: schedule.QueryGroup, ScheduleRevision: schedule.ScheduleRevision}
+	load := execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+		Namespace: namespace, NextSlot: 180, LastFullSlot: 120, LastCompletionKind: execution.CompletionFull,
+	}}
+
+	first, _ := newTestProductionSlotSource(t, schedule, load)
+	second, _ := newTestProductionSlotSource(t, schedule, load)
+	firstSlot, firstDue, firstErr := first.Next(context.Background(), schedule.QueryGroup)
+	secondSlot, secondDue, secondErr := second.Next(context.Background(), schedule.QueryGroup)
+	if firstErr != nil || secondErr != nil || !firstDue || !secondDue {
+		t.Fatalf("restart results first=(%v,%v) second=(%v,%v)", firstDue, firstErr, secondDue, secondErr)
+	}
+	if !reflect.DeepEqual(firstSlot.Contract, secondSlot.Contract) || firstSlot.ExpectedNextSlot != secondSlot.ExpectedNextSlot {
+		t.Fatalf("contracts drifted across restart: first=%+v second=%+v", firstSlot, secondSlot)
 	}
 }
 
@@ -123,7 +212,7 @@ func TestProductionSlotSourceRejectsNonCurrentAssignmentAndLostLease(t *testing.
 			assignments := &fakeAssignmentReader{records: []ownership.AssignmentRecord{test.assignment}}
 			session := &sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}, err: test.sessionErr}
 			catalog := &fakeSlotCatalog{schedule: schedule}
-			source := mustProductionSlotSource(t, schedule.QueryGroup, assignments, session, catalog,
+			source := mustProductionSlotSource(t, schedule.QueryGroup, schedule.ScheduleRevision, assignments, session, catalog,
 				&fakeProgressReader{result: execution.ProgressLoadResult{Status: execution.ProgressMissing}}, time.Unix(200, 0))
 
 			if _, _, err := source.Next(context.Background(), schedule.QueryGroup); !errors.Is(err, test.want) {
@@ -148,7 +237,7 @@ func TestProductionSlotSourceRejectsOwnershipChangeWhileFreezing(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			schedule := testSchedule()
-			source := mustProductionSlotSource(t, schedule.QueryGroup, &fakeAssignmentReader{records: test.assignments},
+			source := mustProductionSlotSource(t, schedule.QueryGroup, schedule.ScheduleRevision, &fakeAssignmentReader{records: test.assignments},
 				&sequenceOwnerSession{fences: test.fences}, &fakeSlotCatalog{schedule: schedule},
 				&fakeProgressReader{result: execution.ProgressLoadResult{Status: execution.ProgressMissing}}, time.Unix(200, 0))
 
@@ -163,8 +252,8 @@ func TestProductionSlotSourceRejectsCatalogContractDrift(t *testing.T) {
 	schedule := testSchedule()
 	valid := execution.FrozenExecutionContractRef{
 		Slot:             execution.SlotIdentity{QueryGroup: schedule.QueryGroup, ScheduleRevision: schedule.ScheduleRevision, EvaluationTime: 120},
-		SnapshotRevision: schedule.SnapshotRevision,
-		QueryRevision:    schedule.QueryRevision,
+		SnapshotRevision: "snapshot-1",
+		QueryRevision:    "query-1",
 		ScheduleRevision: schedule.ScheduleRevision,
 		DuePlanSetDigest: "due-plan-set-1",
 	}
@@ -172,7 +261,7 @@ func TestProductionSlotSourceRejectsCatalogContractDrift(t *testing.T) {
 		name   string
 		mutate func(*execution.FrozenExecutionContractRef)
 	}{
-		{name: "snapshot revision", mutate: func(ref *execution.FrozenExecutionContractRef) { ref.SnapshotRevision = "snapshot-changed" }},
+		{name: "schedule revision", mutate: func(ref *execution.FrozenExecutionContractRef) { ref.ScheduleRevision = "schedule-changed" }},
 		{name: "missing due Plan digest", mutate: func(ref *execution.FrozenExecutionContractRef) { ref.DuePlanSetDigest = "" }},
 	}
 	for _, test := range tests {
@@ -180,7 +269,7 @@ func TestProductionSlotSourceRejectsCatalogContractDrift(t *testing.T) {
 			contractRef := valid
 			test.mutate(&contractRef)
 			catalog := &fakeSlotCatalog{schedule: schedule, contract: contractRef}
-			source := mustProductionSlotSource(t, schedule.QueryGroup,
+			source := mustProductionSlotSource(t, schedule.QueryGroup, schedule.ScheduleRevision,
 				&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 				&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog,
 				&fakeProgressReader{result: execution.ProgressLoadResult{Status: execution.ProgressMissing}}, time.Unix(200, 0))
@@ -194,13 +283,19 @@ func TestProductionSlotSourceRejectsCatalogContractDrift(t *testing.T) {
 
 func testSchedule() FrozenQueryGroupSchedule {
 	return FrozenQueryGroupSchedule{
-		QueryGroup: "query-group-1", SnapshotRevision: "snapshot-1", QueryRevision: "query-1",
-		ScheduleRevision: "schedule-1", FirstEvaluationTime: 120,
+		QueryGroup: "query-group-1", ScheduleRevision: "schedule-1", FirstEvaluationTime: 120,
 		Plans: []FrozenPlanSchedule{
 			{Identity: planIdentity("2"), ScheduleRevision: "plan-schedule-2", IntervalSeconds: 120, Alignment: 0},
 			{Identity: planIdentity("1"), ScheduleRevision: "plan-schedule-1", IntervalSeconds: 60, Alignment: 0},
 		},
 	}
+}
+
+func foundProgress(schedule FrozenQueryGroupSchedule, nextSlot, lastFullSlot execution.EvaluationTime) execution.ProgressLoadResult {
+	return execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+		Namespace: execution.ProgressNamespace{QueryGroup: schedule.QueryGroup, ScheduleRevision: schedule.ScheduleRevision},
+		NextSlot:  nextSlot, LastFullSlot: lastFullSlot, LastCompletionKind: execution.CompletionFull,
+	}}
 }
 
 func planIdentity(strategyID string) execution.PlanIdentity {
@@ -232,7 +327,7 @@ func newTestProductionSlotSourceAt(
 	at time.Time,
 ) (*ProductionSlotSource, *fakeSlotCatalog) {
 	catalog := &fakeSlotCatalog{schedule: schedule}
-	source := mustProductionSlotSource(t, schedule.QueryGroup,
+	source := mustProductionSlotSource(t, schedule.QueryGroup, schedule.ScheduleRevision,
 		&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog,
 		&fakeProgressReader{result: load}, at)
@@ -242,6 +337,7 @@ func newTestProductionSlotSourceAt(
 func mustProductionSlotSource(
 	t *testing.T,
 	queryGroup execution.QueryGroupIdentity,
+	scheduleRevision execution.ScheduleRevision,
 	assignments AssignmentReader,
 	session OwnerSession,
 	catalog SlotCatalogReader,
@@ -249,7 +345,7 @@ func mustProductionSlotSource(
 	at time.Time,
 ) *ProductionSlotSource {
 	t.Helper()
-	source, err := NewProductionSlotSource(queryGroup, "worker-1", assignments, session, catalog, progress, func() time.Time { return at })
+	source, err := NewProductionSlotSource(queryGroup, scheduleRevision, "worker-1", assignments, session, catalog, progress, func() time.Time { return at })
 	if err != nil {
 		t.Fatalf("NewProductionSlotSource() error = %v", err)
 	}
@@ -289,25 +385,35 @@ func (session *sequenceOwnerSession) ValidateCurrent(context.Context, time.Time)
 }
 
 type fakeSlotCatalog struct {
-	schedule FrozenQueryGroupSchedule
-	contract execution.FrozenExecutionContractRef
-	requests []FreezeSlotContractRequest
-	reads    int
+	schedule             FrozenQueryGroupSchedule
+	contract             execution.FrozenExecutionContractRef
+	freeze               func(FreezeSlotContractRequest) execution.FrozenExecutionContractRef
+	requests             []FreezeSlotContractRequest
+	reads                int
+	readScheduleRevision execution.ScheduleRevision
 }
 
-func (catalog *fakeSlotCatalog) ReadFrozenSchedule(context.Context, execution.QueryGroupIdentity) (FrozenQueryGroupSchedule, error) {
+func (catalog *fakeSlotCatalog) ReadFrozenSchedule(
+	_ context.Context,
+	_ execution.QueryGroupIdentity,
+	scheduleRevision execution.ScheduleRevision,
+) (FrozenQueryGroupSchedule, error) {
 	catalog.reads++
+	catalog.readScheduleRevision = scheduleRevision
 	return catalog.schedule, nil
 }
 
 func (catalog *fakeSlotCatalog) FreezeSlotContract(_ context.Context, request FreezeSlotContractRequest) (execution.FrozenExecutionContractRef, error) {
 	catalog.requests = append(catalog.requests, request)
+	if catalog.freeze != nil {
+		return catalog.freeze(request), nil
+	}
 	if catalog.contract.Slot.QueryGroup != "" {
 		return catalog.contract, nil
 	}
 	return execution.FrozenExecutionContractRef{
 		Slot:             execution.SlotIdentity{QueryGroup: request.QueryGroup, ScheduleRevision: request.ScheduleRevision, EvaluationTime: request.EvaluationTime},
-		SnapshotRevision: request.SnapshotRevision, QueryRevision: request.QueryRevision,
+		SnapshotRevision: "snapshot-1", QueryRevision: "query-1",
 		ScheduleRevision: request.ScheduleRevision, DuePlanSetDigest: "due-plan-set-1",
 	}, nil
 }

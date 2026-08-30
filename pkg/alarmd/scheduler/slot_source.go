@@ -44,16 +44,17 @@ type FrozenPlanScheduleRef struct {
 // Slot; the Scheduler must not derive it from local process time.
 type FrozenQueryGroupSchedule struct {
 	QueryGroup          execution.QueryGroupIdentity
-	SnapshotRevision    execution.SnapshotRevision
-	QueryRevision       execution.QueryRevision
 	ScheduleRevision    execution.ScheduleRevision
 	FirstEvaluationTime execution.EvaluationTime
 	Plans               []FrozenPlanSchedule
 }
 
-func (schedule FrozenQueryGroupSchedule) validate(queryGroup execution.QueryGroupIdentity) error {
-	if schedule.QueryGroup != queryGroup || schedule.SnapshotRevision == "" || schedule.QueryRevision == "" ||
-		schedule.ScheduleRevision == "" || schedule.FirstEvaluationTime <= 0 || len(schedule.Plans) == 0 {
+func (schedule FrozenQueryGroupSchedule) validate(
+	queryGroup execution.QueryGroupIdentity,
+	scheduleRevision execution.ScheduleRevision,
+) error {
+	if schedule.QueryGroup != queryGroup || schedule.ScheduleRevision == "" || schedule.ScheduleRevision != scheduleRevision ||
+		schedule.FirstEvaluationTime <= 0 || len(schedule.Plans) == 0 {
 		return ErrScheduleFactsInvalid
 	}
 	seen := make(map[execution.PlanIdentity]struct{}, len(schedule.Plans))
@@ -139,11 +140,10 @@ func lessPlan(left, right execution.PlanIdentity) bool {
 
 // FreezeSlotContractRequest keeps Scheduler enumeration separate from Catalog
 // materialization. The Catalog adapter selects the full frozen Plan/query facts
-// and derives DuePlanSetDigest for this exact due set.
+// by the persisted cutover evaluation time and derives DuePlanSetDigest for
+// this exact due set; it must not resolve the request from latest content.
 type FreezeSlotContractRequest struct {
 	QueryGroup       execution.QueryGroupIdentity
-	SnapshotRevision execution.SnapshotRevision
-	QueryRevision    execution.QueryRevision
 	ScheduleRevision execution.ScheduleRevision
 	EvaluationTime   execution.EvaluationTime
 	DuePlans         []FrozenPlanScheduleRef
@@ -154,7 +154,7 @@ type AssignmentReader interface {
 }
 
 type SlotCatalogReader interface {
-	ReadFrozenSchedule(context.Context, execution.QueryGroupIdentity) (FrozenQueryGroupSchedule, error)
+	ReadFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.ScheduleRevision) (FrozenQueryGroupSchedule, error)
 	FreezeSlotContract(context.Context, FreezeSlotContractRequest) (execution.FrozenExecutionContractRef, error)
 }
 
@@ -166,17 +166,19 @@ type ScheduleProgressReader interface {
 // control facts and returns one normal due Slot; it never executes queries,
 // evaluates data, commits state/Progress, or creates recovery state machines.
 type ProductionSlotSource struct {
-	queryGroup  execution.QueryGroupIdentity
-	workerID    string
-	assignments AssignmentReader
-	session     OwnerSession
-	catalog     SlotCatalogReader
-	progress    ScheduleProgressReader
-	now         func() time.Time
+	queryGroup       execution.QueryGroupIdentity
+	scheduleRevision execution.ScheduleRevision
+	workerID         string
+	assignments      AssignmentReader
+	session          OwnerSession
+	catalog          SlotCatalogReader
+	progress         ScheduleProgressReader
+	now              func() time.Time
 }
 
 func NewProductionSlotSource(
 	queryGroup execution.QueryGroupIdentity,
+	scheduleRevision execution.ScheduleRevision,
 	workerID string,
 	assignments AssignmentReader,
 	session OwnerSession,
@@ -184,10 +186,10 @@ func NewProductionSlotSource(
 	progress ScheduleProgressReader,
 	now func() time.Time,
 ) (*ProductionSlotSource, error) {
-	if queryGroup == "" || workerID == "" || assignments == nil || session == nil || catalog == nil || progress == nil || now == nil {
+	if queryGroup == "" || scheduleRevision == "" || workerID == "" || assignments == nil || session == nil || catalog == nil || progress == nil || now == nil {
 		return nil, errors.New("alarmd scheduler: complete production SlotSource dependencies are required")
 	}
-	return &ProductionSlotSource{queryGroup: queryGroup, workerID: workerID, assignments: assignments,
+	return &ProductionSlotSource{queryGroup: queryGroup, scheduleRevision: scheduleRevision, workerID: workerID, assignments: assignments,
 		session: session, catalog: catalog, progress: progress, now: now}, nil
 }
 
@@ -209,11 +211,11 @@ func (source *ProductionSlotSource) Next(
 	if err != nil {
 		return FrozenSlot{}, false, err
 	}
-	schedule, err := source.catalog.ReadFrozenSchedule(ctx, queryGroup)
+	schedule, err := source.catalog.ReadFrozenSchedule(ctx, queryGroup, source.scheduleRevision)
 	if err != nil {
 		return FrozenSlot{}, false, err
 	}
-	if err := schedule.validate(queryGroup); err != nil {
+	if err := schedule.validate(queryGroup, source.scheduleRevision); err != nil {
 		return FrozenSlot{}, false, err
 	}
 	namespace := execution.ProgressNamespace{QueryGroup: queryGroup, ScheduleRevision: schedule.ScheduleRevision}
@@ -240,8 +242,7 @@ func (source *ProductionSlotSource) Next(
 		return FrozenSlot{}, false, ErrScheduleFactsInvalid
 	}
 	request := FreezeSlotContractRequest{
-		QueryGroup: queryGroup, SnapshotRevision: schedule.SnapshotRevision, QueryRevision: schedule.QueryRevision,
-		ScheduleRevision: schedule.ScheduleRevision, EvaluationTime: nextSlot, DuePlans: duePlans,
+		QueryGroup: queryGroup, ScheduleRevision: schedule.ScheduleRevision, EvaluationTime: nextSlot, DuePlans: duePlans,
 	}
 	contractRef, err := source.catalog.FreezeSlotContract(ctx, request)
 	if err != nil {
@@ -298,8 +299,7 @@ func validateFrozenContract(request FreezeSlotContractRequest, contractRef execu
 		return fmt.Errorf("%w: %v", ErrSlotContractDrift, err)
 	}
 	if contractRef.Slot.QueryGroup != request.QueryGroup || contractRef.Slot.EvaluationTime != request.EvaluationTime ||
-		contractRef.Slot.ScheduleRevision != request.ScheduleRevision || contractRef.SnapshotRevision != request.SnapshotRevision ||
-		contractRef.QueryRevision != request.QueryRevision || contractRef.ScheduleRevision != request.ScheduleRevision {
+		contractRef.Slot.ScheduleRevision != request.ScheduleRevision || contractRef.ScheduleRevision != request.ScheduleRevision {
 		return ErrSlotContractDrift
 	}
 	return nil

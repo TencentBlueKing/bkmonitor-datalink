@@ -39,7 +39,16 @@ type Ports struct {
 }
 
 type SlotExecutionCoordinator struct {
-	ports Ports
+	ports  Ports
+	budget ProvisionalBudget
+}
+
+type ProvisionalBudget struct {
+	MaxSeries         uint64
+	MaxRetainedBytes  uint64
+	MaxStateMutations uint64
+	MaxEvents         uint64
+	MaxGapMutations   uint64
 }
 
 type activationProtectionRequiredError struct {
@@ -50,13 +59,17 @@ func (*activationProtectionRequiredError) Error() string {
 	return "alarmd worker: changed activation requires Guard protection"
 }
 
-func NewSlotExecutionCoordinator(ports Ports) (*SlotExecutionCoordinator, error) {
+func NewSlotExecutionCoordinator(ports Ports, budget ProvisionalBudget) (*SlotExecutionCoordinator, error) {
 	if ports.Finalization == nil || ports.Activation == nil || ports.Query == nil || ports.Sequencer == nil ||
 		ports.Evaluator == nil || ports.Admission == nil || ports.GapGuard == nil ||
 		ports.Events == nil || ports.State == nil || ports.Progress == nil || ports.Observer == nil {
 		return nil, errors.New("alarmd worker: all C0 execution ports are required")
 	}
-	return &SlotExecutionCoordinator{ports: ports}, nil
+	if budget.MaxSeries == 0 || budget.MaxRetainedBytes == 0 || budget.MaxStateMutations == 0 ||
+		budget.MaxEvents == 0 || budget.MaxGapMutations == 0 {
+		return nil, errors.New("alarmd worker: positive process provisional budgets are required")
+	}
+	return &SlotExecutionCoordinator{ports: ports, budget: budget}, nil
 }
 
 // Execute performs one already-scheduled attempt. normal, retry, replay and
@@ -89,27 +102,30 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		return coordinator.executeQueryFreeFinalization(ctx, request, finalization)
 	}
 	started := time.Now()
-	queried, err := coordinator.ports.Query.Execute(ctx, execution.QueryExecutionRequest{
+	stream := &streamedExecution{coordinator: coordinator, request: request}
+	completion, err := coordinator.ports.Query.Execute(ctx, execution.QueryExecutionRequest{
 		Contract: request.Contract, Operation: request.Operation,
-	})
+	}, stream)
 	if err != nil {
 		coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation, started, "", "", err)
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: query: %w", err)
 	}
-	if err := queried.Validate(request.Contract); err != nil {
+	if err := stream.complete(completion); err != nil {
 		coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation, started, "", "", err)
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid query result: %w", err)
 	}
-	if !queried.Ready {
-		coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation, started, queried.Result, queried.ReasonCode, nil)
-		return execution.SlotExecutionResult{Result: queried.Result, ReasonCode: queried.ReasonCode}, nil
+	queryResult, queryReason := provisionalResult(stream.evaluated)
+	coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation, started, queryResult, queryReason, nil)
+	if len(stream.evaluated.Plans) == 0 {
+		return execution.SlotExecutionResult{Result: queryResult, ReasonCode: queryReason}, nil
 	}
-	coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation, started, queried.Result, queried.ReasonCode, nil)
 
 	var result execution.SlotExecutionResult
-	err = coordinator.ports.Sequencer.Sequence(ctx, sequencingScope(queried.Execution), func(sequenceCtx context.Context) error {
+	err = coordinator.ports.Sequencer.Sequence(ctx, sequencingScope(stream.header, stream.stateItems, stream.gapItems), func(sequenceCtx context.Context) error {
 		var executeErr error
-		result, executeErr = coordinator.executePrepared(sequenceCtx, request, queried.Execution)
+		result, executeErr = coordinator.finalizePrepared(
+			sequenceCtx, request, stream.header, stream.bindings, stream.state, stream.evaluated,
+		)
 		return executeErr
 	})
 	if err != nil {
@@ -434,49 +450,16 @@ func activatedPlanSequencingScope(slot execution.SlotIdentity, activations execu
 	return scope
 }
 
-func (coordinator *SlotExecutionCoordinator) executePrepared(
+func (coordinator *SlotExecutionCoordinator) finalizePrepared(
 	ctx context.Context,
 	request execution.SlotExecutionRequest,
-	input execution.InternalExecution,
+	header execution.InternalExecutionHeader,
+	bindings []execution.NamedInputBinding,
+	loadedState execution.StatePreflightResult,
+	evaluated execution.EvaluationResult,
 ) (execution.SlotExecutionResult, error) {
-	started := time.Now()
-	stateRequest := execution.StatePreflightRequest{Contract: request.Contract, Items: input.StatePreflight}
-	loadedState, err := coordinator.ports.State.LoadRuntime(ctx, stateRequest)
-	if err == nil {
-		loadedState, err = execution.ClassifyStatePreflight(stateRequest, loadedState)
-	}
-	stateResult, stateReason := summarizeStateLoad(loadedState)
-	coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageStatePreflight, request.Operation, started,
-		stateResult, stateReason, observability.Counts{Keys: int64(len(loadedState.Items))}, err)
-	if err != nil {
-		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: state preflight: %w", err)
-	}
-
-	started = time.Now()
-	gapRequest := execution.GapLoadRequest{Contract: request.Contract, Items: input.GapPreflight}
-	loadedGaps, err := coordinator.ports.GapGuard.LoadGaps(ctx, gapRequest)
-	if err == nil {
-		err = execution.ValidateGapLoad(gapRequest, loadedGaps)
-	}
-	gapResult, gapReason := summarizeGapLoad(loadedGaps)
-	coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageGapLoaded, request.Operation, started,
-		gapResult, gapReason, observability.Counts{Keys: int64(len(loadedGaps.Items))}, err)
-	if err != nil {
-		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: gap preflight: %w", err)
-	}
-	started = time.Now()
-	evaluationRequest := execution.EvaluationRequest{Execution: input, State: loadedState, Gaps: loadedGaps}
-	evaluated, err := coordinator.ports.Evaluator.Evaluate(ctx, evaluationRequest)
-	if err != nil {
-		coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted, request.Operation, started, "", "", err)
-		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: evaluate: %w", err)
-	}
-	if err := evaluated.Validate(evaluationRequest); err != nil {
-		coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted, request.Operation, started, "", "", err)
-		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid evaluation result: %w", err)
-	}
-	coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted, request.Operation, started, evaluated.Result, evaluated.ReasonCode, nil)
-	activationRequest := duePlanActivationRequest(request.Contract, input.DuePlans)
+	var err error
+	activationRequest := duePlanActivationRequest(request.Contract, header.DuePlans)
 	guardActivations, err := coordinator.loadActivations(ctx, activationRequest)
 	if err != nil {
 		return activationRetry(execution.ReasonCode(contract.ReasonProviderUnavailable)), nil
@@ -489,7 +472,7 @@ func (coordinator *SlotExecutionCoordinator) executePrepared(
 	var retryPendingReason execution.ReasonCode
 	var stateAdmissionTerminalReason execution.ReasonCode
 	for _, planResult := range planResults {
-		due, ok := duePlan(input.DuePlans, planResult.Plan)
+		due, ok := duePlan(header.DuePlans, planResult.Plan)
 		if !ok {
 			return execution.SlotExecutionResult{}, errors.New("alarmd worker: evaluated plan is not due")
 		}
@@ -511,7 +494,7 @@ func (coordinator *SlotExecutionCoordinator) executePrepared(
 			if !found {
 				return execution.SlotExecutionResult{}, errors.New("alarmd worker: evaluation returned state without preflight view")
 			}
-			started = time.Now()
+			started := time.Now()
 			disposition := execution.ClassifyStateMutation(view, stateResult.Mutation)
 			switch disposition {
 			case execution.StateProceed:
@@ -584,7 +567,7 @@ func (coordinator *SlotExecutionCoordinator) executePrepared(
 			Completed: false, Result: observability.ResultRetrying, ReasonCode: retryPendingReason,
 		}, nil
 	}
-	completionKind, err := execution.DeriveCompletionKind(input, evaluated)
+	completionKind, err := execution.DeriveStreamingCompletionKind(header, bindings, evaluated)
 	if err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive completion: %w", err)
 	}
@@ -595,7 +578,7 @@ func (coordinator *SlotExecutionCoordinator) executePrepared(
 		completionResult = observability.ResultTerminal
 		completionReason = stateAdmissionTerminalReason
 	}
-	primary, err := execution.DerivePrimaryInputFact(input)
+	primary, err := execution.DeriveStreamingPrimaryInputFact(header, bindings)
 	if err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive PRIMARY input fact: %w", err)
 	}
@@ -608,7 +591,7 @@ func (coordinator *SlotExecutionCoordinator) executePrepared(
 			activations: changedSelectedActivations(guardActivations, progressActivations),
 		}
 	}
-	if err := coordinator.admitDuePlans(ctx, request, input.DuePlans); err != nil {
+	if err := coordinator.admitDuePlans(ctx, request, header.DuePlans); err != nil {
 		return execution.SlotExecutionResult{}, err
 	}
 
@@ -629,6 +612,7 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 			QueryGroup: request.Contract.Slot.QueryGroup, ScheduleRevision: request.Contract.ScheduleRevision,
 		},
 		OwnerFence: request.OwnerFence, ExpectedNextSlot: request.ExpectedNextSlot, Completion: completion,
+		NextSlotAfterCompletion: request.NextSlotAfterCompletion,
 	}
 	if err := progressRequest.Validate(); err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid progress commit: %w", err)
@@ -961,13 +945,17 @@ func summarizeGapLoad(result execution.GapLoadResult) (observability.Result, obs
 	return observability.ResultSuccess, observability.ReasonNone
 }
 
-func sequencingScope(input execution.InternalExecution) execution.SequencingScope {
-	states := make([]execution.StateKeyIdentity, 0, len(input.StatePreflight))
-	for _, item := range input.StatePreflight {
+func sequencingScope(
+	header execution.InternalExecutionHeader,
+	stateItems []execution.StatePreflightItem,
+	gapItems []execution.PlanGapLoadItem,
+) execution.SequencingScope {
+	states := make([]execution.StateKeyIdentity, 0, len(stateItems))
+	for _, item := range stateItems {
 		states = append(states, item.Identity)
 	}
-	gaps := make([]execution.PlanGapIdentity, 0, len(input.GapPreflight))
-	for _, item := range input.GapPreflight {
+	gaps := make([]execution.PlanGapIdentity, 0, len(gapItems))
+	for _, item := range gapItems {
 		gaps = append(gaps, item.Identity)
 	}
 	sort.Slice(states, func(left, right int) bool { return lessStateIdentity(states[left], states[right]) })
@@ -977,7 +965,7 @@ func sequencingScope(input execution.InternalExecution) execution.SequencingScop
 		}
 		return gaps[left].StateGeneration < gaps[right].StateGeneration
 	})
-	return execution.SequencingScope{Slot: input.Contract.Slot, StateKeys: states, GapKeys: gaps}
+	return execution.SequencingScope{Slot: header.Contract.Slot, StateKeys: states, GapKeys: gaps}
 }
 
 func duePlan(plans []execution.DuePlan, identity execution.PlanIdentity) (execution.DuePlan, bool) {

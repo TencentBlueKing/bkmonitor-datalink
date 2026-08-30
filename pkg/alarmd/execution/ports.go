@@ -19,13 +19,13 @@ import (
 // QueryProvider is the only external query boundary. The phase-two Access
 // module provides the UQ implementation without importing UQ server modules.
 type QueryProvider interface {
-	Execute(context.Context, QueryAttempt) (ProviderResult, error)
+	Execute(context.Context, QueryAttempt, ProviderSeriesSink) (ProviderCompletion, error)
 }
 
-// QueryExecutionSource assembles one complete InternalExecution from Go
-// Access results.
+// QueryExecutionSource streams one frozen execution to the Coordinator. Access
+// never receives evaluation or side-effect ports.
 type QueryExecutionSource interface {
-	Execute(context.Context, QueryExecutionRequest) (QueryExecutionResult, error)
+	Execute(context.Context, QueryExecutionRequest, QueryExecutionConsumer) (QueryExecutionCompletion, error)
 }
 
 type SequencingScope struct {
@@ -68,7 +68,7 @@ type StateStore interface {
 }
 
 type ProgressStore interface {
-	LoadProgress(context.Context, ProgressNamespace) (ScheduleProgress, error)
+	LoadProgress(context.Context, ProgressNamespace) (ProgressLoadResult, error)
 	CommitProgress(context.Context, ProgressCommitRequest) (ProgressCommitResult, error)
 }
 

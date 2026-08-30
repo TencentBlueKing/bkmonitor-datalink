@@ -199,12 +199,12 @@ func TestStatePreflightPreservesUnavailableAndClassifiesBeforeEvaluation(t *test
 		classified.Items[0].VersionComparison != execution.ApplyVersionPersistedOlder {
 		t.Fatalf("TERMINAL state classification=%+v error=%v", classified, err)
 	}
-	_, err = execution.ClassifyStatePreflight(request, execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
+	classified, err = execution.ClassifyStatePreflight(request, execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
 		Identity: identity, Status: execution.StateDeterministicInvalid,
-		ReasonCode: execution.ReasonCode(contract.ReasonRecordInvalid),
+		ReasonCode: execution.ReasonCode(contract.ReasonStateCorrupt),
 	}}})
-	if err == nil {
-		t.Fatal("terminal state without its CAS revision must fail")
+	if err != nil || classified.Items[0].BlobRevision != 0 {
+		t.Fatalf("terminal decode failure without revision must remain a typed deterministic result: %+v error=%v", classified, err)
 	}
 	_, err = execution.ClassifyStatePreflight(request, execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
 		Identity: identity, Status: execution.StateRetryableIO, BlobRevision: 1,
@@ -421,15 +421,11 @@ func TestCompletionFoldDoesNotGuessLoadedGuardFacts(t *testing.T) {
 func TestEvaluationResultRejectsCrossPlanAndDoubleGapMutation(t *testing.T) {
 	input := validInternalExecution()
 	gapIdentity := input.GapPreflight[0].Identity
-	request := execution.EvaluationRequest{
-		Execution: input,
-		State: execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
-			Identity: input.StatePreflight[0].Identity, Status: execution.StateMissingWarming,
-		}}},
-		Gaps: execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
-			Identity: gapIdentity, Status: execution.GapMissing,
-		}}},
-	}
+	request := evaluationRequest(input, execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
+		Identity: input.StatePreflight[0].Identity, Status: execution.StateMissingWarming,
+	}}}, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
+		Identity: gapIdentity, Status: execution.GapMissing,
+	}}})
 	mutation := mustPlanGapMutation(execution.PlanGapMutation{
 		Identity:     gapIdentity,
 		ApplyVersion: input.GapPreflight[0].ApplyVersion, ScheduleRevision: input.GapPreflight[0].ScheduleRevision,
@@ -459,15 +455,13 @@ func TestEvaluationResultRejectsCrossPlanAndDoubleGapMutation(t *testing.T) {
 
 func TestEvaluationResultRejectsUnsafePrimaryAndLoadFactsBeforeSideEffects(t *testing.T) {
 	input := validInternalExecution()
-	request := execution.EvaluationRequest{
-		Execution: input,
-		State: execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
-			Identity: input.StatePreflight[0].Identity, Status: execution.StateMissingWarming,
-		}}},
-		Gaps: execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
-			Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
-		}}},
-	}
+	state := execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
+		Identity: input.StatePreflight[0].Identity, Status: execution.StateMissingWarming,
+	}}}
+	gaps := execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
+		Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
+	}}}
+	request := evaluationRequest(input, state, gaps)
 	decided := execution.EvaluationResult{
 		Contract: input.Contract, Result: observability.ResultSuccess,
 		Plans: []execution.PlanEvaluationResult{{
@@ -480,14 +474,15 @@ func TestEvaluationResultRejectsUnsafePrimaryAndLoadFactsBeforeSideEffects(t *te
 		t.Fatalf("FULL decided result error=%v", err)
 	}
 
-	request.Execution.Inputs[0].Completeness = execution.CompletenessPartial
-	request.Execution.Inputs[0].Disposition = execution.AccessDegraded
-	request.Execution.Inputs[0].ReasonCode = execution.ReasonCode(contract.ReasonQueryPartial)
-	if err := decided.Validate(request); err == nil {
+	partialInput := input
+	partialInput.Inputs = append([]execution.NamedInputBinding(nil), input.Inputs...)
+	partialInput.Inputs[0].Completeness = execution.CompletenessPartial
+	partialInput.Inputs[0].Disposition = execution.AccessDegraded
+	partialInput.Inputs[0].ReasonCode = execution.ReasonCode(contract.ReasonQueryPartial)
+	if err := decided.Validate(evaluationRequest(partialInput, state, gaps)); err == nil {
 		t.Fatal("PARTIAL PRIMARY cannot produce an unqualified decision")
 	}
 
-	request.Execution = input
 	request.State.Items[0].Status = execution.StateRetryableIO
 	request.State.Items[0].ReasonCode = execution.ReasonCode(contract.ReasonRedisUnavailable)
 	if err := decided.Validate(request); err == nil {
@@ -509,19 +504,15 @@ func TestEvaluationResultCannotIgnoreExactLoadedGuards(t *testing.T) {
 			StateResults:  []execution.StateEvaluation{normalStateEvaluation()},
 		}},
 	}
-	request := execution.EvaluationRequest{
-		Execution: input,
-		State: execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
-			Identity: input.StatePreflight[0].Identity, Status: execution.StateFoundGapped,
-			SeriesGuard: &execution.StateGuardFact{
-				Status: execution.HistoryGapped, ReasonCode: execution.ReasonCode(contract.ReasonQueryPartial),
-				WarmupRequirementRef: seriesWarmup,
-			},
-		}}},
-		Gaps: execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
-			Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
-		}}},
-	}
+	request := evaluationRequest(input, execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
+		Identity: input.StatePreflight[0].Identity, Status: execution.StateFoundGapped,
+		SeriesGuard: &execution.StateGuardFact{
+			Status: execution.HistoryGapped, ReasonCode: execution.ReasonCode(contract.ReasonQueryPartial),
+			WarmupRequirementRef: seriesWarmup,
+		},
+	}}}, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
+		Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
+	}}})
 	if err := decided.Validate(request); err == nil {
 		t.Fatal("series guard must prevent NORMAL")
 	}
@@ -546,15 +537,11 @@ func TestTerminalAggregateReasonMustComeFromTerminalPlan(t *testing.T) {
 	input := validInternalExecution()
 	gap := input.GapPreflight[0]
 	terminalReason := execution.ReasonCode(contract.ReasonRecordInvalid)
-	request := execution.EvaluationRequest{
-		Execution: input,
-		State: execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
-			Identity: input.StatePreflight[0].Identity, Status: execution.StateDeterministicInvalid, ReasonCode: terminalReason,
-		}}},
-		Gaps: execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
-			Identity: gap.Identity, Status: execution.GapMissing,
-		}}},
-	}
+	request := evaluationRequest(input, execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
+		Identity: input.StatePreflight[0].Identity, Status: execution.StateDeterministicInvalid, ReasonCode: terminalReason,
+	}}}, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
+		Identity: gap.Identity, Status: execution.GapMissing,
+	}}})
 	result := execution.EvaluationResult{
 		Contract: input.Contract, Result: observability.ResultTerminal, ReasonCode: terminalReason,
 		Plans: []execution.PlanEvaluationResult{{
@@ -591,16 +578,12 @@ func TestLocalizedTerminalRequiresAndAcceptsExactSeriesGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := execution.EvaluationRequest{
-		Execution: input,
-		State: execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
-			Identity: input.StatePreflight[0].Identity, Status: execution.StateDeterministicInvalid,
-			BlobRevision: 1, ReasonCode: reason,
-		}}},
-		Gaps: execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
-			Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
-		}}},
-	}
+	request := evaluationRequest(input, execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
+		Identity: input.StatePreflight[0].Identity, Status: execution.StateDeterministicInvalid,
+		BlobRevision: 1, ReasonCode: reason,
+	}}}, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
+		Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
+	}}})
 	guard, err := execution.BuildStateMutation(execution.StateMutation{
 		Identity: input.StatePreflight[0].Identity, ExpectedBlobRevision: 1,
 		ApplyVersion: input.StatePreflight[0].ApplyVersion,
@@ -685,16 +668,12 @@ func TestLocalizedBadSeriesOutsideDatasetCanProduceExactGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := execution.EvaluationRequest{
-		Execution: input,
-		State: execution.StatePreflightResult{Items: []execution.RuntimeStateView{
-			{Identity: input.StatePreflight[0].Identity, Status: execution.StateMissingWarming},
-			{Identity: badPreflight.Identity, Status: execution.StateDeterministicInvalid, BlobRevision: 1, ReasonCode: reason},
-		}},
-		Gaps: execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
-			Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
-		}}},
-	}
+	request := evaluationRequest(input, execution.StatePreflightResult{Items: []execution.RuntimeStateView{
+		{Identity: input.StatePreflight[0].Identity, Status: execution.StateMissingWarming},
+		{Identity: badPreflight.Identity, Status: execution.StateDeterministicInvalid, BlobRevision: 1, ReasonCode: reason},
+	}}, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
+		Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
+	}}})
 	result := execution.EvaluationResult{
 		Contract: input.Contract, Result: observability.ResultTerminal, ReasonCode: reason,
 		Plans: []execution.PlanEvaluationResult{{
@@ -717,20 +696,16 @@ func TestDegradedOutcomeCannotClearItsOnlyFinalGuard(t *testing.T) {
 	reason := execution.ReasonCode(contract.ReasonRecordInvalid)
 	loadedApplyVersion := input.GapPreflight[0].ApplyVersion
 	loadedApplyVersion.EvaluationTime--
-	request := execution.EvaluationRequest{
-		Execution: input,
-		State: execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
-			Identity: input.StatePreflight[0].Identity, Status: execution.StateMissingWarming,
-		}}},
-		Gaps: execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
-			Identity: input.GapPreflight[0].Identity, Status: execution.GapFound, MarkerRevision: 1,
-			PersistedApplyVersion: loadedApplyVersion, PersistedMutationDigest: "loaded-gap",
-			LastScheduleRevision: input.GapPreflight[0].ScheduleRevision,
-			Scopes: []execution.GapScopeState{{
-				Status: execution.GapStatusGapped, ReasonCode: reason, RequiredFullSlots: 1,
-			}},
-		}}},
-	}
+	request := evaluationRequest(input, execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
+		Identity: input.StatePreflight[0].Identity, Status: execution.StateMissingWarming,
+	}}}, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
+		Identity: input.GapPreflight[0].Identity, Status: execution.GapFound, MarkerRevision: 1,
+		PersistedApplyVersion: loadedApplyVersion, PersistedMutationDigest: "loaded-gap",
+		LastScheduleRevision: input.GapPreflight[0].ScheduleRevision,
+		Scopes: []execution.GapScopeState{{
+			Status: execution.GapStatusGapped, ReasonCode: reason, RequiredFullSlots: 1,
+		}},
+	}}})
 	clear := mustPlanGapMutation(execution.PlanGapMutation{
 		Identity: input.GapPreflight[0].Identity, ExpectedMarkerRevision: 1,
 		ApplyVersion: input.GapPreflight[0].ApplyVersion, ScheduleRevision: input.GapPreflight[0].ScheduleRevision,
@@ -758,8 +733,9 @@ func TestQueryProviderContractIsTypedAndClosed(t *testing.T) {
 	var _ execution.QueryProvider = queryProviderStub{}
 	providerType := reflect.TypeOf((*execution.QueryProvider)(nil)).Elem()
 	method, ok := providerType.MethodByName("Execute")
-	if !ok || method.Type.NumIn() != 2 || method.Type.In(1) != reflect.TypeOf(execution.QueryAttempt{}) ||
-		method.Type.NumOut() != 2 || method.Type.Out(0) != reflect.TypeOf(execution.ProviderResult{}) {
+	if !ok || method.Type.NumIn() != 3 || method.Type.In(1) != reflect.TypeOf(execution.QueryAttempt{}) ||
+		method.Type.In(2) != reflect.TypeOf((*execution.ProviderSeriesSink)(nil)).Elem() ||
+		method.Type.NumOut() != 2 || method.Type.Out(0) != reflect.TypeOf(execution.ProviderCompletion{}) {
 		t.Fatalf("QueryProvider.Execute signature=%v", method.Type)
 	}
 
@@ -781,76 +757,6 @@ func TestQueryProviderContractIsTypedAndClosed(t *testing.T) {
 	}
 }
 
-func TestQueryExecutionResultReadyContract(t *testing.T) {
-	ready := execution.QueryExecutionResult{
-		Ready: true, Execution: validInternalExecution(), Result: observability.ResultSuccess, ReasonCode: observability.ReasonNone,
-	}
-	ready.ProviderResults = providerResultsForExecution(ready.Execution)
-	if err := ready.Validate(frozenContract()); err != nil {
-		t.Fatalf("ready query result error=%v", err)
-	}
-	unready := execution.QueryExecutionResult{
-		Ready: false, Result: observability.ResultRetrying, ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable),
-	}
-	if err := unready.Validate(frozenContract()); err != nil {
-		t.Fatalf("unready query result error=%v", err)
-	}
-	unready.Result = observability.ResultSuccess
-	unready.ReasonCode = observability.ReasonNone
-	if err := unready.Validate(frozenContract()); err == nil {
-		t.Fatal("unready success must fail")
-	}
-	ready.Result = observability.ResultRetrying
-	ready.ReasonCode = execution.ReasonCode(contract.ReasonQueryUnavailable)
-	if err := ready.Validate(frozenContract()); err == nil {
-		t.Fatal("ready retrying must fail")
-	}
-}
-
-func TestPhysicalProviderFactCanFanOutAcrossBindings(t *testing.T) {
-	input := validInternalExecution()
-	fact := execution.InputQualityFact{
-		ReasonCode: execution.ReasonCode(contract.ReasonQueryPartial), ImpactScope: execution.ImpactSeries,
-		RecordID: strings.Repeat("b", 64), SourceTime: 1_788_000_000,
-		SeriesIdentity: execution.SeriesIdentityDigest(strings.Repeat("c", 64)),
-	}
-	input.Inputs[0].Disposition = execution.AccessDegraded
-	input.Inputs[0].ReasonCode = fact.ReasonCode
-	input.Inputs[0].QualityFacts = []execution.InputQualityFact{fact}
-
-	dependency := input.Requirements[0]
-	dependency.RequirementID = "dependency"
-	dependency.DatasetName = "dependency"
-	dependency.Role = execution.InputRoleAlgorithmDependency
-	input.Requirements = append(input.Requirements, dependency)
-	dependencyBinding := input.Inputs[0]
-	dependencyBinding.RequirementID = dependency.RequirementID
-	dependencyBinding.DatasetName = dependency.DatasetName
-	dependencyBinding.Role = dependency.Role
-	input.Inputs = append(input.Inputs, dependencyBinding)
-	digest, err := execution.DeriveDuePlanSetDigest(input.DuePlans, input.Requirements)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input.Contract.DuePlanSetDigest = digest
-
-	result := execution.QueryExecutionResult{
-		Execution: input, ProviderResults: providerResultsForExecution(input), Ready: true,
-		Result: observability.ResultDegraded, ReasonCode: fact.ReasonCode,
-	}
-	if err := result.Validate(input.Contract); err != nil {
-		t.Fatalf("shared Provider fact fan-out error=%v", err)
-	}
-
-	omitted := result
-	omitted.Execution.Inputs = append([]execution.NamedInputBinding(nil), result.Execution.Inputs...)
-	omitted.Execution.Inputs[0].QualityFacts = nil
-	omitted.Execution.Inputs[1].QualityFacts = nil
-	if err := omitted.Validate(input.Contract); err == nil {
-		t.Fatal("physical Provider fact omitted by every binding must fail")
-	}
-}
-
 func TestLocalizedBadSeriesRequiresStatePreflightOutsideDataset(t *testing.T) {
 	input := validInternalExecution()
 	badSeries := execution.SeriesIdentityDigest(strings.Repeat("d", 64))
@@ -868,81 +774,14 @@ func TestLocalizedBadSeriesRequiresStatePreflightOutsideDataset(t *testing.T) {
 	badEffectiveTime.SeriesIdentity = badSeries
 	input.EffectiveTimeFacts = append(input.EffectiveTimeFacts, badEffectiveTime)
 
-	result := execution.QueryExecutionResult{
-		Execution: input, ProviderResults: providerResultsForExecution(input), Ready: true,
-		Result: observability.ResultDegraded, ReasonCode: execution.ReasonCode(contract.ReasonQueryPartial),
-	}
-	if err := result.Validate(frozenContract()); err != nil {
+	if err := input.Validate(frozenContract()); err != nil {
 		t.Fatalf("localized bad series contract error=%v", err)
 	}
 
-	missing := result
-	missing.Execution.StatePreflight = missing.Execution.StatePreflight[:1]
+	missing := input
+	missing.StatePreflight = missing.StatePreflight[:1]
 	if err := missing.Validate(frozenContract()); err == nil {
 		t.Fatal("localized bad series without State preflight must fail")
-	}
-}
-
-func TestProviderResultCompletenessContract(t *testing.T) {
-	attempt := validQueryAttempt()
-	fullEmpty := validProviderResult(attempt)
-	if err := fullEmpty.Validate(attempt); err != nil {
-		t.Fatalf("FULL+EMPTY Validate() error=%v", err)
-	}
-
-	partial := fullEmpty
-	partial.Completeness = execution.CompletenessPartial
-	partial.QualityFacts = []execution.ProviderQualityFact{{
-		ReasonCode: execution.ReasonCode(contract.ReasonQueryPartial), RecordID: strings.Repeat("b", 64),
-		SourceTime: 1_788_000_000, SeriesIdentity: execution.SeriesIdentityDigest(strings.Repeat("c", 64)),
-	}}
-	if err := partial.Validate(attempt); err != nil {
-		t.Fatalf("PARTIAL Validate() error=%v", err)
-	}
-
-	unavailable := fullEmpty
-	unavailable.Completeness = execution.CompletenessUnavailable
-	unavailable.DataState = execution.DataStateUnknown
-	unavailable.Dataset = nil
-	unavailable.RouteFacts.Attempts = []execution.RouteAttemptFact{{
-		AttemptNo: 1, Endpoint: "uq-a", Result: execution.RouteAttemptFailed,
-		ReasonCode: execution.ReasonCode(contract.ReasonProviderUnavailable),
-	}}
-	if err := unavailable.Validate(attempt); err != nil {
-		t.Fatalf("UNAVAILABLE Validate() error=%v", err)
-	}
-	unavailable.QualityFacts = []execution.ProviderQualityFact{{
-		ReasonCode: execution.ReasonCode(contract.ReasonQueryPartial), RecordID: strings.Repeat("b", 64),
-		SourceTime: 1_788_000_000, SeriesIdentity: execution.SeriesIdentityDigest(strings.Repeat("c", 64)),
-	}}
-	if err := unavailable.Validate(attempt); err == nil {
-		t.Fatal("UNAVAILABLE ProviderResult must not carry localized trusted facts")
-	}
-
-	invalid := fullEmpty
-	invalid.Dataset = nil
-	if err := invalid.Validate(attempt); err == nil {
-		t.Fatal("FULL ProviderResult without Dataset must fail")
-	}
-	invalid = fullEmpty
-	invalid.DataState = execution.DataStateData
-	if err := invalid.Validate(attempt); err == nil {
-		t.Fatal("DATA ProviderResult without records must fail")
-	}
-	drift := fullEmpty
-	drift.PhysicalQuery = "another"
-	if err := drift.Validate(attempt); err == nil {
-		t.Fatal("ProviderResult for another physical query must fail")
-	}
-	drift = fullEmpty
-	drift.RouteFacts.ResultTableIDs = []string{"another.table"}
-	if err := drift.Validate(attempt); err == nil {
-		t.Fatal("ProviderResult for another routed result table must fail")
-	}
-	drift = fullEmpty
-	drift.RouteFacts.ResultTableIDs = []string{"system.cpu", "system.cpu"}
-	if err := drift.ValidateFacts(); err == nil {
-		t.Fatal("duplicate routed result tables must fail")
 	}
 }
 
@@ -1043,9 +882,10 @@ func TestStoreAndProgressReceiptStatusReasonContracts(t *testing.T) {
 
 func TestProgressCommitRequiresSelfConsistentPrimaryFact(t *testing.T) {
 	request := execution.ProgressCommitRequest{
-		Namespace:        execution.ProgressNamespace{QueryGroup: frozenContract().Slot.QueryGroup, ScheduleRevision: frozenContract().ScheduleRevision},
-		OwnerFence:       execution.OwnerFence{QueryGroup: frozenContract().Slot.QueryGroup, OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"},
-		ExpectedNextSlot: frozenContract().Slot.EvaluationTime,
+		Namespace:               execution.ProgressNamespace{QueryGroup: frozenContract().Slot.QueryGroup, ScheduleRevision: frozenContract().ScheduleRevision},
+		OwnerFence:              execution.OwnerFence{QueryGroup: frozenContract().Slot.QueryGroup, OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"},
+		ExpectedNextSlot:        frozenContract().Slot.EvaluationTime,
+		NextSlotAfterCompletion: frozenContract().Slot.EvaluationTime + 60,
 		Completion: execution.SlotCompletion{
 			Contract: frozenContract(), Kind: execution.CompletionFullEmpty,
 			Primary: &execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateEmpty},
@@ -1066,12 +906,28 @@ func TestProgressCommitRequiresSelfConsistentPrimaryFact(t *testing.T) {
 	}
 }
 
+func TestProgressLoadDistinguishesFoundAndMissing(t *testing.T) {
+	namespace := execution.ProgressNamespace{QueryGroup: "query-group", ScheduleRevision: "schedule-v1"}
+	if err := (execution.ProgressLoadResult{Status: execution.ProgressMissing}).Validate(namespace); err != nil {
+		t.Fatalf("MISSING Progress error=%v", err)
+	}
+	progress := &execution.ScheduleProgress{Namespace: namespace, NextSlot: 120}
+	if err := (execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: progress}).Validate(namespace); err != nil {
+		t.Fatalf("FOUND Progress error=%v", err)
+	}
+	if err := (execution.ProgressLoadResult{Status: execution.ProgressFound}).Validate(namespace); err == nil {
+		t.Fatal("FOUND without Progress must fail")
+	}
+	if err := (execution.ProgressLoadResult{Status: execution.ProgressMissing, Progress: progress}).Validate(namespace); err == nil {
+		t.Fatal("MISSING with persisted facts must fail")
+	}
+}
+
 func TestPublicExecutionContractsHaveNoOpaquePayload(t *testing.T) {
 	assertNoOpaqueFields(t, reflect.TypeOf(execution.InternalExecution{}), map[reflect.Type]bool{})
 	assertNoOpaqueFields(t, reflect.TypeOf(execution.EvaluationResult{}), map[reflect.Type]bool{})
 	assertNoOpaqueFields(t, reflect.TypeOf(execution.PhysicalQuerySpec{}), map[reflect.Type]bool{})
 	assertNoOpaqueFields(t, reflect.TypeOf(execution.QueryAttempt{}), map[reflect.Type]bool{})
-	assertNoOpaqueFields(t, reflect.TypeOf(execution.ProviderResult{}), map[reflect.Type]bool{})
 }
 
 func assertNoOpaqueFields(t *testing.T, typ reflect.Type, seen map[reflect.Type]bool) {
@@ -1116,23 +972,41 @@ func frozenContract() execution.FrozenExecutionContractRef {
 
 type queryProviderStub struct{}
 
-func (queryProviderStub) Execute(context.Context, execution.QueryAttempt) (execution.ProviderResult, error) {
-	return execution.ProviderResult{}, nil
+func (queryProviderStub) Execute(context.Context, execution.QueryAttempt, execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {
+	return execution.ProviderCompletion{}, nil
 }
 
 func validQueryAttempt() execution.QueryAttempt {
-	spec, err := execution.BuildPhysicalQuerySpec(execution.PhysicalQuerySpec{
+	planFacts, err := execution.BuildQueryPlanFacts(execution.QueryPlanFacts{
 		Provider: execution.ProviderUQ, ProviderRouteRef: "uq-route-v1",
-		TenantID: "tenant", SpaceScope: "space", QueryRevision: "query-v1",
-		LogicalWindow: execution.QueryWindow{Start: 40, End: 100},
-		ProviderRange: execution.QueryWindow{Start: 20, End: 120},
-		AcceptedRange: execution.QueryWindow{Start: 40, End: 100},
-		QueryList: []execution.PhysicalQueryClause{{
-			ReferenceName: "a", DataSourceLabel: "bk_monitor", DataTypeLabel: "time_series",
-			ResultTableID: "system.cpu", MetricField: "usage", AggregationMethod: "AVG",
-			AggregationIntervalMillis: 60_000,
+		TenantID: "tenant", BusinessID: "business", SpaceScope: "space",
+		QueryList: []execution.QueryClause{{
+			ReferenceName: "a", DataSource: "bk_monitor", TableID: "system.cpu", FieldName: "usage",
+			Driver: "influxdb", TimeField: "time",
+			Functions:       []execution.QueryFunction{{Method: "avg", Position: 1}},
+			TimeAggregation: execution.QueryFunction{Method: "avg", Position: 1, Window: "60s"},
 		}},
-		StepMillis: 60_000, AlignmentMillis: 60_000, Timezone: "UTC", RequiredColumns: []string{"usage"},
+		MetricMerge: "a", StepMillis: 60_000, AlignmentMillis: 60_000, Timezone: "UTC",
+		Normalization: execution.DatasetNormalizationSpec{
+			DatasetContract: contract.DatasetContractV2{
+				SchemaDigest: strings.Repeat("a", 64), NormalizationDigest: strings.Repeat("b", 64),
+				IdentityFields: []string{"bk_target_ip"}, SourceTimeField: "_time", ReceivedTimeField: "_received_time",
+			},
+			SourceTimeUnit: execution.TimeUnitMillisecond, CanonicalSourceTimeUnit: execution.TimeUnitSecond,
+			SeriesIdentityMode: execution.SeriesIdentityUQGroupKeysValuesV1, GroupKeyRule: execution.GroupKeyStripTableSuffixV1,
+			ValueSelectionMode: execution.ValueSelectionResultOrFirstReferenceV1, CanonicalValueField: "value",
+			ReceivedTimeMode: execution.ReceivedTimeProviderReceivedAt, Version: "uq-threshold-normalization-v1",
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	spec, err := execution.BuildPhysicalQuerySpec(execution.PhysicalQuerySpec{
+		PlanFacts:       planFacts,
+		LogicalWindow:   execution.QueryWindow{Start: 40, End: 100},
+		ProviderRange:   execution.QueryWindow{Start: 20, End: 120},
+		AcceptedRange:   execution.QueryWindow{Start: 40, End: 100},
+		RequiredColumns: []string{"usage"},
 	})
 	if err != nil {
 		panic(err)
@@ -1143,46 +1017,31 @@ func validQueryAttempt() execution.QueryAttempt {
 	}
 }
 
-func validProviderResult(attempt execution.QueryAttempt) execution.ProviderResult {
-	return execution.ProviderResult{
-		Ref: "provider-result-1", PhysicalQuery: attempt.Spec.Digest, RequestedRange: attempt.Spec.ProviderRange,
-		Completeness: execution.CompletenessFull, DataState: execution.DataStateEmpty,
-		Dataset: execution.NewDataset([]contract.CanonicalRecordV2{}),
-		RouteFacts: execution.ProviderRouteFacts{
-			ProviderRouteRef: attempt.Spec.ProviderRouteRef,
-			ResultTableIDs:   []string{"system.cpu"},
-			Attempts:         []execution.RouteAttemptFact{{AttemptNo: 1, Endpoint: "uq-a", Result: execution.RouteAttemptSucceeded}},
-		},
-	}
-}
-
-func providerResultsForExecution(input execution.InternalExecution) []execution.ProviderResult {
+func evaluationRequest(
+	input execution.InternalExecution,
+	state execution.StatePreflightResult,
+	gaps execution.GapLoadResult,
+) execution.EvaluationRequest {
 	binding := input.Inputs[0]
-	provider := execution.ProviderResult{
-		Ref: binding.ProviderResult, PhysicalQuery: binding.Provenance.PhysicalQuery,
-		RequestedRange: binding.QueryWindow, Completeness: binding.Completeness, DataState: binding.DataState,
-		Dataset: binding.Dataset, TraceID: binding.Provenance.TraceID, PartialEvidence: binding.PartialEvidence,
-		RouteFacts: execution.ProviderRouteFacts{
-			ProviderRouteRef: "uq-route-v1",
-			ResultTableIDs:   []string{"system.cpu"},
-			Attempts:         []execution.RouteAttemptFact{{AttemptNo: 1, Endpoint: "uq-a", Result: execution.RouteAttemptSucceeded}},
+	header := execution.InternalExecutionHeader{
+		ExecutionID: "execution-test", Contract: input.Contract, DuePlans: input.DuePlans,
+		Requirements: input.Requirements, EffectiveTimeFacts: input.EffectiveTimeFacts,
+		RequiredPhysicalQueries: []execution.PlannedPhysicalQueryRef{{
+			Digest: binding.Provenance.PhysicalQuery, QueryRevision: input.Contract.QueryRevision,
+		}}, DeadlineUnixMilli: 1_788_000_030_000,
+	}
+	return execution.EvaluationRequest{
+		Header: header,
+		Batch: execution.SeriesExecutionBatch{
+			PhysicalQuery: binding.Provenance.PhysicalQuery, QueryRevision: input.Contract.QueryRevision,
+			CompletionRef: binding.ProviderResult, Dataset: binding.Dataset, Inputs: input.Inputs,
+			Delivery: execution.SeriesDelivery{
+				PhysicalQuery: binding.Provenance.PhysicalQuery, QueryRevision: input.Contract.QueryRevision,
+				Series: 1, Records: uint64(binding.Dataset.Len()), Digest: "delivery-test",
+			},
 		},
+		State: state, Gaps: gaps,
 	}
-	for _, fact := range binding.QualityFacts {
-		if fact.ImpactScope == execution.ImpactSeries {
-			provider.QualityFacts = append(provider.QualityFacts, execution.ProviderQualityFact{
-				ReasonCode: fact.ReasonCode, RecordID: fact.RecordID, SourceTime: fact.SourceTime, SeriesIdentity: fact.SeriesIdentity,
-			})
-		}
-	}
-	for _, fact := range binding.Terminals {
-		if fact.ImpactScope == execution.ImpactSeries {
-			provider.RecordTerminals = append(provider.RecordTerminals, execution.ProviderRecordTerminal{
-				ReasonCode: fact.ReasonCode, RecordID: fact.RecordID, SourceTime: fact.SourceTime, SeriesIdentity: fact.SeriesIdentity,
-			})
-		}
-	}
-	return []execution.ProviderResult{provider}
 }
 
 func validInternalExecution() execution.InternalExecution {

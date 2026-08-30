@@ -48,7 +48,8 @@ func queryFreeProgressRequest(kind execution.CompletionKind, reason execution.Re
 		OwnerFence: execution.OwnerFence{
 			QueryGroup: "query-group", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1",
 		},
-		ExpectedNextSlot: contractRef.Slot.EvaluationTime,
+		ExpectedNextSlot:        contractRef.Slot.EvaluationTime,
+		NextSlotAfterCompletion: contractRef.Slot.EvaluationTime + 60,
 		Completion: execution.SlotCompletion{
 			Contract: contractRef, Kind: kind, Result: observability.ResultDegraded, ReasonCode: reason,
 		},

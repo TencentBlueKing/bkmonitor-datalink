@@ -12,10 +12,8 @@ package execution
 import (
 	"errors"
 	"fmt"
-	"sort"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 type ProviderRouteRef string
@@ -42,53 +40,23 @@ func (window QueryWindow) Validate() error {
 	return nil
 }
 
-type PhysicalQueryFilter struct {
-	Field    string
-	Operator string
-	Values   []string
-}
-
-type PhysicalQueryClause struct {
-	ReferenceName             string
-	DataSourceLabel           string
-	DataTypeLabel             string
-	ResultTableID             string
-	MetricField               string
-	AggregationMethod         string
-	AggregationIntervalMillis int64
-	Dimensions                []string
-	Filters                   []PhysicalQueryFilter
-}
-
 // PhysicalQuerySpec is the provider-neutral normalized request compiled by
 // Access. The UQ provider owns the small /query/ts wire DTO conversion.
 type PhysicalQuerySpec struct {
-	Digest           PhysicalQueryDigest
-	Provider         ProviderKind
-	ProviderRouteRef ProviderRouteRef
-	TenantID         string
-	SpaceScope       string
-	QueryRevision    QueryRevision
-	LogicalWindow    QueryWindow
-	ProviderRange    QueryWindow
-	AcceptedRange    QueryWindow
-	QueryList        []PhysicalQueryClause
-	MetricMerge      string
-	DownSampleRange  DownSampleRange
-	StepMillis       int64
-	AlignmentMillis  int64
-	Timezone         string
-	NotTimeAlign     bool
-	RequiredColumns  []string
+	Digest          PhysicalQueryDigest
+	PlanFacts       QueryPlanFacts
+	LogicalWindow   QueryWindow
+	ProviderRange   QueryWindow
+	AcceptedRange   QueryWindow
+	RequiredColumns []string
 }
 
 func (spec PhysicalQuerySpec) Validate() error {
-	if spec.Digest == "" || spec.Provider != ProviderUQ || spec.ProviderRouteRef == "" ||
-		spec.TenantID == "" || spec.SpaceScope == "" || spec.QueryRevision == "" {
+	if spec.Digest == "" {
 		return errors.New("alarmd execution: complete physical query identity is required")
 	}
-	if spec.DownSampleRange != DownSampleNone {
-		return errors.New("alarmd execution: phase two only supports explicit no-downsample")
+	if err := spec.PlanFacts.Validate(); err != nil {
+		return err
 	}
 	for _, window := range []QueryWindow{spec.LogicalWindow, spec.ProviderRange, spec.AcceptedRange} {
 		if err := window.Validate(); err != nil {
@@ -99,20 +67,8 @@ func (spec PhysicalQuerySpec) Validate() error {
 		spec.AcceptedRange.Start < spec.ProviderRange.Start || spec.AcceptedRange.End > spec.ProviderRange.End {
 		return errors.New("alarmd execution: physical query ranges are inconsistent")
 	}
-	if len(spec.QueryList) == 0 || spec.StepMillis <= 0 || spec.AlignmentMillis <= 0 || len(spec.RequiredColumns) == 0 {
+	if len(spec.RequiredColumns) == 0 {
 		return errors.New("alarmd execution: complete normalized physical query is required")
-	}
-	for _, clause := range spec.QueryList {
-		if clause.ReferenceName == "" || clause.DataSourceLabel == "" || clause.DataTypeLabel == "" ||
-			clause.ResultTableID == "" || clause.MetricField == "" || clause.AggregationMethod == "" ||
-			clause.AggregationIntervalMillis <= 0 {
-			return errors.New("alarmd execution: incomplete physical query clause")
-		}
-		for _, filter := range clause.Filters {
-			if filter.Field == "" || filter.Operator == "" || len(filter.Values) == 0 {
-				return errors.New("alarmd execution: incomplete physical query filter")
-			}
-		}
 	}
 	for _, column := range spec.RequiredColumns {
 		if column == "" {
@@ -130,7 +86,7 @@ func (spec PhysicalQuerySpec) Validate() error {
 }
 
 func DerivePhysicalQueryDigest(spec PhysicalQuerySpec) (PhysicalQueryDigest, error) {
-	if spec.Provider != ProviderUQ || spec.ProviderRouteRef == "" || spec.QueryRevision == "" {
+	if err := spec.PlanFacts.Validate(); err != nil {
 		return "", errors.New("alarmd execution: cannot derive incomplete physical query identity")
 	}
 	spec.Digest = ""
@@ -266,177 +222,4 @@ func (evidence *PartialEvidence) Validate() error {
 		return errors.New("alarmd execution: invalid typed PARTIAL evidence")
 	}
 	return nil
-}
-
-// ProviderResult is a physical query fact. Consumer-specific readiness and
-// capability decisions belong to NamedInputBinding, not this object.
-type ProviderResult struct {
-	Ref             ProviderResultRef
-	PhysicalQuery   PhysicalQueryDigest
-	RequestedRange  QueryWindow
-	Completeness    Completeness
-	DataState       DataState
-	Dataset         *Dataset
-	TraceID         string
-	RouteFacts      ProviderRouteFacts
-	MaxEventTime    *int64
-	QualityFacts    []ProviderQualityFact
-	RecordTerminals []ProviderRecordTerminal
-	PartialEvidence *PartialEvidence
-	Stats           ProviderStats
-}
-
-func (result ProviderResult) Validate(attempt QueryAttempt) error {
-	if err := attempt.Validate(); err != nil {
-		return err
-	}
-	if result.Ref == "" || result.PhysicalQuery != attempt.Spec.Digest || result.RequestedRange != attempt.Spec.ProviderRange ||
-		result.RouteFacts.ProviderRouteRef != attempt.Spec.ProviderRouteRef {
-		return errors.New("alarmd execution: ProviderResult does not match QueryAttempt")
-	}
-	expectedTables := make([]string, 0, len(attempt.Spec.QueryList))
-	seenTables := make(map[string]struct{}, len(attempt.Spec.QueryList))
-	for _, query := range attempt.Spec.QueryList {
-		if _, found := seenTables[query.ResultTableID]; found {
-			continue
-		}
-		seenTables[query.ResultTableID] = struct{}{}
-		expectedTables = append(expectedTables, query.ResultTableID)
-	}
-	sort.Strings(expectedTables)
-	if !equalStrings(expectedTables, result.RouteFacts.ResultTableIDs) {
-		return errors.New("alarmd execution: ProviderResult route tables do not match QueryAttempt")
-	}
-	return result.ValidateFacts()
-}
-
-// ValidateFacts validates the immutable physical result without requiring the
-// transient QueryAttempt. It is used at the Access-to-Evaluation boundary;
-// attempt/permit validation remains inside the query engine.
-func (result ProviderResult) ValidateFacts() error {
-	if result.Ref == "" || result.PhysicalQuery == "" || result.RouteFacts.ProviderRouteRef == "" {
-		return errors.New("alarmd execution: incomplete ProviderResult identity")
-	}
-	if err := result.RequestedRange.Validate(); err != nil {
-		return err
-	}
-	if err := validateRouteFacts(result.RouteFacts, result.Completeness); err != nil {
-		return err
-	}
-	switch result.Completeness {
-	case CompletenessFull:
-		if result.Dataset == nil || (result.DataState != DataStateData && result.DataState != DataStateEmpty) {
-			return errors.New("alarmd execution: invalid FULL ProviderResult")
-		}
-		if err := validateDatasetState(result.Dataset, result.DataState); err != nil {
-			return err
-		}
-		if result.PartialEvidence != nil {
-			return errors.New("alarmd execution: FULL ProviderResult must not carry PARTIAL evidence")
-		}
-	case CompletenessPartial:
-		if result.Dataset == nil || (result.DataState != DataStateData && result.DataState != DataStateEmpty) {
-			return errors.New("alarmd execution: invalid PARTIAL ProviderResult")
-		}
-		if err := validateDatasetState(result.Dataset, result.DataState); err != nil {
-			return err
-		}
-		if result.PartialEvidence != nil {
-			if err := result.PartialEvidence.Validate(); err != nil {
-				return err
-			}
-		}
-	case CompletenessUnavailable:
-		if result.Dataset != nil || result.DataState != DataStateUnknown || result.MaxEventTime != nil ||
-			len(result.QualityFacts) != 0 || len(result.RecordTerminals) != 0 {
-			return errors.New("alarmd execution: invalid UNAVAILABLE ProviderResult")
-		}
-		if result.PartialEvidence != nil {
-			return errors.New("alarmd execution: UNAVAILABLE ProviderResult must not carry PARTIAL evidence")
-		}
-	default:
-		return errors.New("alarmd execution: invalid ProviderResult completeness")
-	}
-	for _, fact := range result.QualityFacts {
-		if err := validateProviderFact(fact.ReasonCode, fact.RecordID, fact.SourceTime, fact.SeriesIdentity, false); err != nil {
-			return err
-		}
-	}
-	for _, terminal := range result.RecordTerminals {
-		if err := validateProviderFact(terminal.ReasonCode, terminal.RecordID, terminal.SourceTime, terminal.SeriesIdentity, true); err != nil {
-			return err
-		}
-	}
-	if result.Completeness == CompletenessPartial && result.PartialEvidence == nil &&
-		len(result.QualityFacts) == 0 && len(result.RecordTerminals) == 0 {
-		return errors.New("alarmd execution: PARTIAL ProviderResult requires typed physical evidence")
-	}
-	return nil
-}
-
-func validateProviderFact(reason ReasonCode, recordID string, sourceTime int64, series SeriesIdentityDigest, terminal bool) error {
-	reasonClass := contract.ReasonClassCoverage
-	if terminal {
-		reasonClass = contract.ReasonClassDeterministic
-	}
-	if err := requireReasonClass(reason, reasonClass); err != nil {
-		return err
-	}
-	if recordID == "" || sourceTime <= 0 || series == "" {
-		return errors.New("alarmd execution: physical Provider fact requires a stable record anchor and series locator")
-	}
-	return nil
-}
-
-func validateRouteFacts(facts ProviderRouteFacts, completeness Completeness) error {
-	if len(facts.ResultTableIDs) == 0 {
-		return errors.New("alarmd execution: ProviderResult requires routed result tables")
-	}
-	for index, tableID := range facts.ResultTableIDs {
-		if tableID == "" || (index > 0 && facts.ResultTableIDs[index-1] >= tableID) {
-			return errors.New("alarmd execution: routed result tables must be canonical, unique and non-empty")
-		}
-	}
-	if len(facts.Attempts) == 0 {
-		return errors.New("alarmd execution: ProviderResult requires ordered route attempt facts")
-	}
-	succeeded := false
-	for index, attempt := range facts.Attempts {
-		if attempt.AttemptNo != uint32(index+1) || attempt.Endpoint == "" {
-			return errors.New("alarmd execution: route attempts must be ordered and fully identified")
-		}
-		switch attempt.Result {
-		case RouteAttemptSucceeded:
-			if succeeded || index != len(facts.Attempts)-1 ||
-				(attempt.ReasonCode != "" && attempt.ReasonCode != observability.ReasonNone) {
-				return errors.New("alarmd execution: invalid successful route attempt")
-			}
-			succeeded = true
-		case RouteAttemptFailed:
-			if err := requireReasonClass(attempt.ReasonCode, contract.ReasonClassRetryable); err != nil {
-				return err
-			}
-		default:
-			return errors.New("alarmd execution: invalid route attempt result")
-		}
-	}
-	if completeness != CompletenessUnavailable && !succeeded {
-		return errors.New("alarmd execution: available ProviderResult requires a successful route attempt")
-	}
-	if completeness == CompletenessUnavailable && succeeded {
-		return errors.New("alarmd execution: unavailable ProviderResult cannot claim a successful route attempt")
-	}
-	return nil
-}
-
-func equalStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
 }

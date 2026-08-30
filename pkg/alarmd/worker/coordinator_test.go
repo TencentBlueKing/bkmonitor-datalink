@@ -50,7 +50,7 @@ func TestSlotExecutionCoordinatorProbeStopsUntilReady(t *testing.T) {
 	if err != nil || result.Completed {
 		t.Fatalf("unready probe result=%+v error=%v", result, err)
 	}
-	assertTrace(t, fixture.trace, []string{"query"})
+	assertTrace(t, fixture.trace, []string{"query", "gap_load"})
 
 	readyFixture := newFixture(t, true, "")
 	result, err = readyFixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationProbe))
@@ -60,6 +60,59 @@ func TestSlotExecutionCoordinatorProbeStopsUntilReady(t *testing.T) {
 	assertTrace(t, readyFixture.trace, fullTrace)
 }
 
+func TestSlotExecutionCoordinatorDiscardsProvisionalResultsWithoutCompletion(t *testing.T) {
+	fixture := newFixture(t, true, "query_after_series")
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err == nil || result.Completed {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	assertTrace(t, fixture.trace, []string{"query", "gap_load", "state_load", "evaluate"})
+	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+		t.Fatal("provisional result escaped before trustworthy completion")
+	}
+}
+
+func TestSlotExecutionCoordinatorEnforcesProcessProvisionalBudget(t *testing.T) {
+	fixture := newFixtureWithBudget(t, worker.ProvisionalBudget{
+		MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 1, MaxEvents: 1, MaxGapMutations: 1,
+	})
+	fixture.ports.reverseStateReceipts = true
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err == nil || result.Completed {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+		t.Fatal("over-budget provisional result reached side effects")
+	}
+}
+
+func TestSlotExecutionCoordinatorBudgetsRetainedSeriesAndBytes(t *testing.T) {
+	tests := []struct {
+		name   string
+		budget worker.ProvisionalBudget
+	}{
+		{name: "series", budget: worker.ProvisionalBudget{
+			MaxSeries: 1, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10,
+		}},
+		{name: "retained bytes", budget: worker.ProvisionalBudget{
+			MaxSeries: 100, MaxRetainedBytes: 1, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10,
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newFixtureWithBudget(t, test.budget)
+			fixture.ports.reverseStateReceipts = true
+			result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+			if err == nil || result.Completed {
+				t.Fatalf("Execute() result=%+v error=%v", result, err)
+			}
+			if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+				t.Fatal("series/byte budget rejection reached side effects")
+			}
+		})
+	}
+}
+
 func TestSlotExecutionCoordinatorOrdersRequiredSideEffects(t *testing.T) {
 	fixture := newFixture(t, true, "")
 	if _, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal)); err != nil {
@@ -67,10 +120,10 @@ func TestSlotExecutionCoordinatorOrdersRequiredSideEffects(t *testing.T) {
 	}
 	assertTrace(t, fixture.trace, fullTrace)
 	wantStages := []observability.Stage{
-		observability.StageQueryCompleted,
-		observability.StageStatePreflight,
 		observability.StageGapLoaded,
+		observability.StageStatePreflight,
 		observability.StageEvaluationCompleted,
+		observability.StageQueryCompleted,
 		observability.StageSideEffectAdmission,
 		observability.StageMutationCompared,
 		observability.StageSideEffectAdmission,
@@ -170,13 +223,13 @@ func TestSlotExecutionCoordinatorPersistsDegradedGapBeforeEvents(t *testing.T) {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{
-		"query", "sequence", "state_load", "gap_load", "evaluate", "admission_initial", "gap_before",
+		"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial", "gap_before",
 		"admission_event", "state_admission", "event_ack", "state_apply", "admission_progress", "progress_commit",
 	})
 	if fixture.ports.lastProgress.Completion.Kind != execution.CompletionPartialGap {
 		t.Fatalf("completion=%q, want=%q", fixture.ports.lastProgress.Completion.Kind, execution.CompletionPartialGap)
 	}
-	queryObservation := (*fixture.observations)[0]
+	queryObservation := (*fixture.observations)[3]
 	if queryObservation.Result != observability.ResultDegraded || queryObservation.ReasonCode != contract.ReasonQueryPartial {
 		t.Fatalf("query observation result=%q reason=%q", queryObservation.Result, queryObservation.ReasonCode)
 	}
@@ -190,7 +243,7 @@ func TestSlotExecutionCoordinatorShortCircuitsAlreadyAppliedState(t *testing.T) 
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{
-		"query", "sequence", "state_load", "gap_load", "evaluate", "admission_initial", "gap_after", "admission_progress", "progress_commit",
+		"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial", "gap_after", "admission_progress", "progress_commit",
 	})
 }
 
@@ -233,7 +286,7 @@ func TestSlotExecutionCoordinatorPreservesStateTerminalAsPlanCompletion(t *testi
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{
-		"query", "sequence", "state_load", "gap_load", "evaluate", "admission_initial", "gap_before", "admission_progress", "progress_commit",
+		"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial", "gap_before", "admission_progress", "progress_commit",
 	})
 	if fixture.ports.lastProgress.Completion.Kind != execution.CompletionTerminal {
 		t.Fatalf("completion=%q", fixture.ports.lastProgress.Completion.Kind)
@@ -259,7 +312,7 @@ func TestSlotExecutionCoordinatorIsolatesDeterministicStateAdmission(t *testing.
 				t.Fatalf("Execute() result=%+v error=%v", result, err)
 			}
 			assertTrace(t, fixture.trace, []string{
-				"query", "sequence", "state_load", "gap_load", "evaluate", "admission_initial",
+				"query", "gap_load", "state_load", "evaluate", "state_load", "evaluate", "sequence", "admission_initial",
 				"admission_event", "state_admission", "event_ack", "state_apply", "gap_after",
 				"admission_progress", "progress_commit",
 			})
@@ -291,7 +344,7 @@ func TestSlotExecutionCoordinatorRejectsDeterministicStateApplyAsContractViolati
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{
-		"query", "sequence", "state_load", "gap_load", "evaluate", "admission_initial",
+		"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial",
 		"admission_event", "state_admission", "event_ack", "state_apply",
 	})
 	if fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
@@ -334,8 +387,8 @@ func TestSlotExecutionCoordinatorObservesGapUnavailableWithoutCallingItSuccess(t
 	if err != nil || result.Completed || result.Result != observability.ResultRetrying {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
-	assertTrace(t, fixture.trace, []string{"query", "sequence", "state_load", "gap_load", "evaluate", "admission_initial"})
-	gapObservation := (*fixture.observations)[2]
+	assertTrace(t, fixture.trace, []string{"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial"})
+	gapObservation := (*fixture.observations)[0]
 	if gapObservation.Result != observability.ResultDegraded || gapObservation.ReasonCode != contract.ReasonRedisUnavailable ||
 		gapObservation.Counts.Keys != 1 {
 		t.Fatalf("gap observation=%+v", gapObservation)
@@ -349,7 +402,7 @@ func TestSlotExecutionCoordinatorDoesNotCommitProgressForUnavailableState(t *tes
 	if err != nil || result.Completed || result.Result != observability.ResultRetrying {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
-	assertTrace(t, fixture.trace, []string{"query", "sequence", "state_load", "gap_load", "evaluate", "admission_initial"})
+	assertTrace(t, fixture.trace, []string{"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial"})
 	if fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
 		t.Fatalf("retry-pending Slot must not commit Progress: %+v", fixture.ports.lastProgress)
 	}
@@ -364,8 +417,8 @@ func TestSlotExecutionCoordinatorCompletesSiblingSeriesButKeepsSlotRetryPending(
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{
-		"query", "sequence", "state_load", "gap_load", "evaluate", "admission_initial",
-		"admission_event", "state_admission", "event_ack", "state_apply",
+		"query", "gap_load", "state_load", "evaluate", "state_load", "evaluate", "sequence", "admission_initial",
+		"admission_event", "state_admission", "event_ack", "state_apply", "gap_after",
 	})
 	if fixture.ports.eventCount != 1 || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
 		t.Fatalf("sibling evidence events=%d progress=%+v", fixture.ports.eventCount, fixture.ports.lastProgress)
@@ -387,7 +440,7 @@ func TestSlotExecutionCoordinatorRejectsTriggerEventDrift(t *testing.T) {
 			if _, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal)); err == nil {
 				t.Fatal("TriggerEvent drift must fail")
 			}
-			assertTrace(t, fixture.trace, []string{"query", "sequence", "state_load", "gap_load", "evaluate"})
+			assertTrace(t, fixture.trace, []string{"query", "gap_load", "state_load", "evaluate"})
 		})
 	}
 }
@@ -400,7 +453,10 @@ func TestSlotExecutionCoordinatorObserverPanicIsFailOpen(t *testing.T) {
 	if err != nil || !result.Completed {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
-	assertTrace(t, fixture.trace, fullTrace)
+	assertTrace(t, fixture.trace, []string{
+		"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial",
+		"admission_event", "state_admission", "event_ack", "state_apply", "gap_after", "admission_progress", "progress_commit",
+	})
 }
 
 func TestSlotExecutionCoordinatorRejectsMismatchedStoreReceipts(t *testing.T) {
@@ -434,7 +490,10 @@ func TestSlotExecutionCoordinatorAcceptsUnorderedStoreReceipts(t *testing.T) {
 	if err != nil || !result.Completed {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
-	assertTrace(t, fixture.trace, fullTrace)
+	assertTrace(t, fixture.trace, []string{
+		"query", "gap_load", "state_load", "evaluate", "state_load", "evaluate", "sequence", "admission_initial",
+		"admission_event", "state_admission", "event_ack", "state_apply", "gap_after", "admission_progress", "progress_commit",
+	})
 	if len(fixture.ports.lastSequenceScope.StateKeys) != 2 || len(fixture.ports.lastSequenceScope.GapKeys) != 1 {
 		t.Fatalf("sequencing scope=%+v", fixture.ports.lastSequenceScope)
 	}
@@ -445,11 +504,11 @@ func TestSlotExecutionCoordinatorFailsClosedBeforeLaterSideEffects(t *testing.T)
 		stage string
 		want  []string
 	}{
-		{stage: "query", want: fullTrace[:1]},
-		{stage: "sequence", want: fullTrace[:2]},
+		{stage: "query", want: []string{"query", "gap_load"}},
+		{stage: "sequence", want: fullTrace[:5]},
 		{stage: "state_load", want: fullTrace[:3]},
-		{stage: "gap_load", want: fullTrace[:4]},
-		{stage: "evaluate", want: fullTrace[:5]},
+		{stage: "gap_load", want: fullTrace[:2]},
+		{stage: "evaluate", want: fullTrace[:4]},
 		{stage: "admission_initial", want: fullTrace[:6]},
 		{stage: "admission_event", want: fullTrace[:7]},
 		{stage: "state_admission", want: fullTrace[:8]},
@@ -488,7 +547,7 @@ func TestSlotExecutionCoordinatorFailsClosedBeforeLaterSideEffects(t *testing.T)
 }
 
 var fullTrace = []string{
-	"query", "sequence", "state_load", "gap_load", "evaluate", "admission_initial",
+	"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial",
 	"admission_event", "state_admission", "event_ack", "state_apply", "gap_after", "admission_progress", "progress_commit",
 }
 
@@ -514,12 +573,33 @@ func newFixtureWithObserver(t *testing.T, ready bool, failStage string, observer
 	return buildFixture(t, ready, failStage, observer, &observations)
 }
 
+func newFixtureWithBudget(t *testing.T, budget worker.ProvisionalBudget) fixture {
+	t.Helper()
+	observations := make([]observability.Observation, 0, len(fullTrace)+1)
+	observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		observations = append(observations, observability.NormalizeObservation(observation))
+	})
+	return buildFixtureWithBudget(t, true, "", observer, &observations, budget)
+}
+
 func buildFixture(
 	t *testing.T,
 	ready bool,
 	failStage string,
 	observer observability.Observer,
 	observations *[]observability.Observation,
+) fixture {
+	return buildFixtureWithBudget(t, ready, failStage, observer, observations,
+		worker.ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10})
+}
+
+func buildFixtureWithBudget(
+	t *testing.T,
+	ready bool,
+	failStage string,
+	observer observability.Observer,
+	observations *[]observability.Observation,
+	budget worker.ProvisionalBudget,
 ) fixture {
 	t.Helper()
 	trace := make([]string, 0, len(fullTrace))
@@ -529,7 +609,7 @@ func buildFixture(
 		Query: ports, Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports,
 		Events: ports, State: ports, Progress: ports,
 		Observer: observer,
-	})
+	}, budget)
 	if err != nil {
 		t.Fatalf("NewSlotExecutionCoordinator() error: %v", err)
 	}
@@ -610,6 +690,7 @@ type recordingPorts struct {
 	admissionRejectAt               int
 	stateLoadStatus                 execution.StateLoadStatus
 	stateRetryableFirstOnly         bool
+	stateLoadCalls                  int
 	gapLoadStatus                   execution.GapLoadStatus
 	eventSeriesDrift                bool
 	eventTimeDrift                  bool
@@ -622,7 +703,7 @@ type recordingPorts struct {
 	gapMutations                    []execution.PlanGapMutation
 }
 
-func (ports *recordingPorts) Execute(_ context.Context, request execution.QueryExecutionRequest) (execution.QueryExecutionResult, error) {
+func (ports *recordingPorts) Execute(ctx context.Context, request execution.QueryExecutionRequest, consumer execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error) {
 	ports.record("query")
 	input := validInternalExecution()
 	input.Contract = request.Contract
@@ -658,8 +739,6 @@ func (ports *recordingPorts) Execute(_ context.Context, request execution.QueryE
 	if ports.contractDrift {
 		input.Contract.QueryRevision = "query-v2"
 	}
-	result := observability.Result(observability.ResultSuccess)
-	reason := observability.ReasonNone
 	if ports.degraded {
 		input.Inputs[0].Completeness = execution.CompletenessPartial
 		input.Inputs[0].Disposition = execution.AccessDegraded
@@ -668,33 +747,68 @@ func (ports *recordingPorts) Execute(_ context.Context, request execution.QueryE
 			Kind: execution.PartialEvidenceOmissionStable, Version: 1, EvidenceDigest: strings.Repeat("d", 64),
 			OmissionOnly: true, ReturnedRecordsStable: true,
 		}
-		result = observability.ResultDegraded
-		reason = execution.ReasonCode(contract.ReasonQueryPartial)
+	}
+	header := execution.InternalExecutionHeader{
+		ExecutionID: "execution-1", Contract: input.Contract, DuePlans: input.DuePlans,
+		Requirements: input.Requirements, EffectiveTimeFacts: input.EffectiveTimeFacts,
+		RequiredPhysicalQueries: []execution.PlannedPhysicalQueryRef{{
+			Digest: "physical-query-1", QueryRevision: input.Contract.QueryRevision,
+		}}, DeadlineUnixMilli: 1_788_000_030_000,
+	}
+	if err := consumer.Begin(ctx, header); err != nil {
+		return execution.QueryExecutionCompletion{}, err
+	}
+	if err := ports.fail("query"); err != nil {
+		return execution.QueryExecutionCompletion{}, err
 	}
 	if !ports.ready {
-		result = observability.ResultRetrying
-		reason = execution.ReasonCode(contract.ReasonQueryUnavailable)
+		binding := input.Inputs[0]
+		binding.Dataset, binding.View = nil, nil
+		binding.Completeness, binding.DataState = execution.CompletenessUnavailable, execution.DataStateUnknown
+		binding.Disposition, binding.ReasonCode = execution.AccessUnavailable, execution.ReasonCode(contract.ReasonQueryUnavailable)
+		return execution.QueryExecutionCompletion{AllRequiredCompleted: true, CompletionBindings: []execution.NamedInputBinding{binding},
+			PhysicalQueries: []execution.PhysicalQueryCompletion{{
+				Ref: "provider-result-1", PhysicalQuery: "physical-query-1", QueryRevision: input.Contract.QueryRevision,
+				Completeness: execution.CompletenessUnavailable, DataState: execution.DataStateUnknown,
+			}}}, nil
 	}
-	queryResult := execution.QueryExecutionResult{Ready: ports.ready, Result: result, ReasonCode: reason}
-	if ports.ready {
-		queryResult.Execution = input
-		queryResult.ProviderResults = providerResultsForExecution(input)
+	dataset := input.Inputs[0].Dataset
+	var delivery execution.SeriesDelivery
+	for index := 0; index < dataset.Len(); index++ {
+		record, _ := dataset.Record(index)
+		canonical := contract.CanonicalRecordV2{
+			RecordID: record.RecordID(), SourceTime: record.SourceTime(), BusinessID: record.BusinessID(),
+			DimensionIdentity: record.DimensionIdentity(), Values: record.Values(), Dimensions: record.Dimensions(),
+			ReceivedTime: record.ReceivedTime(),
+		}
+		seriesDataset := execution.NewDataset([]contract.CanonicalRecordV2{canonical})
+		view, _ := execution.NewDatasetView(seriesDataset, []uint32{0})
+		binding := input.Inputs[0]
+		binding.Dataset, binding.View = seriesDataset, view
+		batchDelivery := execution.SeriesDelivery{
+			PhysicalQuery: "physical-query-1", QueryRevision: input.Contract.QueryRevision,
+			Series: 1, Records: 1, Digest: fmt.Sprintf("delivery-%d", index+1),
+		}
+		accumulated, accumulateErr := execution.AccumulateSeriesDelivery(delivery, batchDelivery)
+		if accumulateErr != nil {
+			return execution.QueryExecutionCompletion{}, accumulateErr
+		}
+		delivery = accumulated
+		if err := consumer.ConsumeSeries(ctx, execution.SeriesExecutionBatch{
+			PhysicalQuery: "physical-query-1", QueryRevision: input.Contract.QueryRevision,
+			CompletionRef: "provider-result-1", Dataset: seriesDataset, Inputs: []execution.NamedInputBinding{binding},
+			Delivery: batchDelivery,
+		}); err != nil {
+			return execution.QueryExecutionCompletion{}, err
+		}
 	}
-	return queryResult, ports.fail("query")
-}
-
-func providerResultsForExecution(input execution.InternalExecution) []execution.ProviderResult {
-	binding := input.Inputs[0]
-	return []execution.ProviderResult{{
-		Ref: binding.ProviderResult, PhysicalQuery: binding.Provenance.PhysicalQuery,
-		RequestedRange: binding.QueryWindow, Completeness: binding.Completeness, DataState: binding.DataState,
-		Dataset: binding.Dataset, TraceID: binding.Provenance.TraceID, PartialEvidence: binding.PartialEvidence,
-		RouteFacts: execution.ProviderRouteFacts{
-			ProviderRouteRef: "uq-route-v1",
-			ResultTableIDs:   []string{"system.cpu"},
-			Attempts:         []execution.RouteAttemptFact{{AttemptNo: 1, Endpoint: "uq-a", Result: execution.RouteAttemptSucceeded}},
-		},
-	}}
+	if err := ports.fail("query_after_series"); err != nil {
+		return execution.QueryExecutionCompletion{}, err
+	}
+	return execution.QueryExecutionCompletion{AllRequiredCompleted: true, PhysicalQueries: []execution.PhysicalQueryCompletion{{
+		Ref: "provider-result-1", PhysicalQuery: "physical-query-1", QueryRevision: input.Contract.QueryRevision,
+		Completeness: input.Inputs[0].Completeness, DataState: input.Inputs[0].DataState, Delivery: delivery,
+	}}}, nil
 }
 
 func (ports *recordingPorts) Sequence(
@@ -712,7 +826,12 @@ func (ports *recordingPorts) Sequence(
 
 func (ports *recordingPorts) Evaluate(_ context.Context, request execution.EvaluationRequest) (execution.EvaluationResult, error) {
 	ports.record("evaluate")
-	mutation := validStateMutation()
+	seriesDigest := string(request.State.Items[0].Identity.SeriesIdentityDigest)
+	recordID := strings.Repeat("b", 64)
+	if seriesDigest == strings.Repeat("d", 64) {
+		recordID = strings.Repeat("f", 64)
+	}
+	mutation := stateMutationForTest(seriesDigest, recordID, execution.LevelFactAnomalous)
 	mutation.ExpectedBlobRevision = request.State.Items[0].BlobRevision
 	disposition := execution.PlanDecided
 	reason := observability.ReasonNone
@@ -729,7 +848,7 @@ func (ports *recordingPorts) Evaluate(_ context.Context, request execution.Evalu
 			Scopes: []execution.GapScopeMutation{{Kind: execution.GapOpen, ReasonCode: reason, RequiredFullSlots: 1}},
 		})}
 		return execution.EvaluationResult{
-			Contract: request.Execution.Contract,
+			Contract: request.Header.Contract,
 			Plans: []execution.PlanEvaluationResult{{
 				Plan: planIdentity(), Disposition: execution.PlanTerminal, ReasonCode: reason,
 				LevelOutcomes:     []execution.LevelOutcome{validLevelOutcome(execution.LevelOutcomeTerminal, reason, false)},
@@ -783,7 +902,7 @@ func (ports *recordingPorts) Evaluate(_ context.Context, request execution.Evalu
 			})
 		}
 		return execution.EvaluationResult{
-			Contract: request.Execution.Contract,
+			Contract: request.Header.Contract,
 			Plans: []execution.PlanEvaluationResult{{
 				Plan: planIdentity(), Disposition: execution.PlanRetryPending, ReasonCode: retryReason,
 				LevelOutcomes: outcomes, StateResults: stateResults,
@@ -808,7 +927,7 @@ func (ports *recordingPorts) Evaluate(_ context.Context, request execution.Evalu
 			Scopes: []execution.GapScopeMutation{{Kind: execution.GapClear}},
 		})}
 	}
-	event := validTriggerEvent()
+	event := validTriggerEventFor(recordID, seriesDigest)
 	if ports.eventSeriesDrift {
 		event.RecordRef.DimensionIdentityDigest = strings.Repeat("d", 64)
 	}
@@ -819,21 +938,12 @@ func (ports *recordingPorts) Evaluate(_ context.Context, request execution.Evalu
 		event.RecordRef.RecordID = strings.Repeat("a", 64)
 	}
 	stateResults := []execution.StateEvaluation{{Mutation: mutation, Events: []contract.TriggerEventV1{event}}}
-	levelOutcomes := []execution.LevelOutcome{validLevelOutcome(execution.LevelOutcomeAbnormal, observability.ReasonNone, ports.degraded)}
-	if ports.reverseStateReceipts {
-		second := stateMutationForTest(strings.Repeat("d", 64), strings.Repeat("f", 64), execution.LevelFactAnomalous)
-		second.ExpectedBlobRevision = request.State.Items[1].BlobRevision
-		stateResults = append(stateResults, execution.StateEvaluation{
-			Mutation: second, Events: []contract.TriggerEventV1{validTriggerEventFor(strings.Repeat("f", 64), strings.Repeat("d", 64))},
-		})
-		levelOutcomes = append(levelOutcomes, execution.LevelOutcome{
-			Plan: planIdentity(), LevelID: 5, SeriesIdentityDigest: execution.SeriesIdentityDigest(strings.Repeat("d", 64)),
-			Record:  execution.RecordAnchor{RecordID: strings.Repeat("f", 64), SourceTime: 1_788_000_000},
-			Outcome: execution.LevelOutcomeAbnormal,
-		})
-	}
+	levelOutcome := validLevelOutcome(execution.LevelOutcomeAbnormal, observability.ReasonNone, ports.degraded)
+	levelOutcome.SeriesIdentityDigest = execution.SeriesIdentityDigest(seriesDigest)
+	levelOutcome.Record = execution.RecordAnchor{RecordID: recordID, SourceTime: 1_788_000_000}
+	levelOutcomes := []execution.LevelOutcome{levelOutcome}
 	return execution.EvaluationResult{
-		Contract: request.Execution.Contract,
+		Contract: request.Header.Contract,
 		Plans: []execution.PlanEvaluationResult{{
 			Plan: planIdentity(), Disposition: disposition, ReasonCode: reason,
 			LevelOutcomes:     levelOutcomes,
@@ -847,10 +957,11 @@ func (ports *recordingPorts) Evaluate(_ context.Context, request execution.Evalu
 
 func (ports *recordingPorts) LoadRuntime(_ context.Context, request execution.StatePreflightRequest) (execution.StatePreflightResult, error) {
 	ports.record("state_load")
+	ports.stateLoadCalls++
 	items := make([]execution.RuntimeStateView, len(request.Items))
 	for index, item := range request.Items {
 		items[index] = execution.RuntimeStateView{Identity: item.Identity, Status: execution.StateMissingWarming}
-		if ports.stateLoadStatus == execution.StateRetryableIO || (ports.stateRetryableFirstOnly && index == 0) {
+		if ports.stateLoadStatus == execution.StateRetryableIO || (ports.stateRetryableFirstOnly && ports.stateLoadCalls == 1 && index == 0) {
 			items[index].Status = execution.StateRetryableIO
 			items[index].ReasonCode = execution.ReasonCode(contract.ReasonRedisUnavailable)
 		}
@@ -1009,8 +1120,8 @@ func (ports *recordingPorts) CommitProgress(_ context.Context, request execution
 	return execution.ProgressCommitResult{Status: execution.ProgressCommitted}, ports.fail("progress_commit")
 }
 
-func (ports *recordingPorts) LoadProgress(context.Context, execution.ProgressNamespace) (execution.ScheduleProgress, error) {
-	return execution.ScheduleProgress{}, nil
+func (ports *recordingPorts) LoadProgress(context.Context, execution.ProgressNamespace) (execution.ProgressLoadResult, error) {
+	return execution.ProgressLoadResult{Status: execution.ProgressMissing}, nil
 }
 
 func (ports *recordingPorts) record(stage string) { *ports.trace = append(*ports.trace, stage) }
@@ -1024,8 +1135,9 @@ func (ports *recordingPorts) fail(stage string) error {
 func slotRequest(operation execution.Operation) execution.SlotExecutionRequest {
 	return execution.SlotExecutionRequest{
 		Contract: frozenContract(), Operation: operation,
-		OwnerFence:       execution.OwnerFence{QueryGroup: "query-group", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1"},
-		ExpectedNextSlot: frozenContract().Slot.EvaluationTime,
+		OwnerFence:              execution.OwnerFence{QueryGroup: "query-group", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1"},
+		ExpectedNextSlot:        frozenContract().Slot.EvaluationTime,
+		NextSlotAfterCompletion: frozenContract().Slot.EvaluationTime + 60,
 	}
 }
 

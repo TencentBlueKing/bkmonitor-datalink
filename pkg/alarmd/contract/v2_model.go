@@ -78,6 +78,9 @@ const (
 	ReasonResourceHardStop                 = "RESOURCE_HARD_STOP"
 	ReasonOutputACKUnknown                 = "OUTPUT_ACK_UNKNOWN"
 	ReasonStateWriteRetryable              = "STATE_WRITE_RETRYABLE"
+	ReasonStateCorrupt                     = "STATE_CORRUPT"
+	ReasonStateSchemaUnsupported           = "STATE_SCHEMA_UNSUPPORTED"
+	ReasonStateBudgetExceeded              = "STATE_BUDGET_EXCEEDED"
 	ReasonAuditDrop                        = "AUDIT_DROP"
 
 	CompatibilityModeLegacyGroupOfOne = "LEGACY_GROUP_OF_ONE"

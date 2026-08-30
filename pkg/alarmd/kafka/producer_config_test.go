@@ -94,6 +94,53 @@ func TestNewDecisionProducerConfigSupportsDatalinkKafkaBaseline(t *testing.T) {
 	}
 }
 
+func TestNewDecisionProducerOnlyConfigDoesNotRequireInputTopic(t *testing.T) {
+	t.Parallel()
+
+	coordinates := validDecisionSinkConfig()
+	coordinates.InputTopic = ""
+	config, err := NewDecisionProducerOnlyConfig(coordinates)
+	if err != nil {
+		t.Fatalf("NewDecisionProducerOnlyConfig() error = %v", err)
+	}
+	if config.Producer.RequiredAcks != sarama.WaitForAll || !config.Producer.Return.Successes {
+		t.Fatal("producer-only config must preserve synchronous broker acknowledgement")
+	}
+}
+
+func TestNewDecisionProducerOnlyConfigRejectsMissingOutputCoordinates(t *testing.T) {
+	t.Parallel()
+
+	valid := validDecisionSinkConfig()
+	valid.InputTopic = ""
+	tests := map[string]func(*DecisionSinkConfig){
+		"missing brokers":      func(config *DecisionSinkConfig) { config.Brokers = nil },
+		"missing output topic": func(config *DecisionSinkConfig) { config.OutputTopic = "" },
+	}
+	for name, mutate := range tests {
+		name, mutate := name, mutate
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			coordinates := cloneDecisionSinkConfig(valid)
+			mutate(&coordinates)
+			if _, err := NewDecisionProducerOnlyConfig(coordinates); err == nil {
+				t.Fatal("NewDecisionProducerOnlyConfig() accepted invalid output coordinates")
+			}
+		})
+	}
+}
+
+func TestNewDecisionProducerConfigStillRequiresInputTopic(t *testing.T) {
+	t.Parallel()
+
+	coordinates := validDecisionSinkConfig()
+	coordinates.InputTopic = ""
+	if _, err := NewDecisionProducerConfig(coordinates); err == nil {
+		t.Fatal("NewDecisionProducerConfig() accepted missing phase-one input topic")
+	}
+}
+
 func TestDecisionSinkConfigRejectsInvalidCoordinatesAndPolicy(t *testing.T) {
 	t.Parallel()
 

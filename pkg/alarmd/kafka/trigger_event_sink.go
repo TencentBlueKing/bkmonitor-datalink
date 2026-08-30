@@ -19,7 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
-// TriggerEventSink is the critical Kafka output for phase-one Trigger events.
+// TriggerEventSink is the critical Kafka output for Trigger events.
 // A successful WriteBatch means every event received a synchronous broker ACK.
 type TriggerEventSink struct {
 	core *DecisionSink
@@ -48,7 +48,7 @@ func (err *triggerEventDependencyError) Unwrap() error {
 func (err *triggerEventDependencyError) RetryableOutputDependency() {}
 
 func OpenTriggerEventSink(coordinates DecisionSinkConfig) (*TriggerEventSink, error) {
-	config, err := NewDecisionProducerConfig(coordinates)
+	config, err := NewDecisionProducerOnlyConfig(coordinates)
 	if err != nil {
 		return nil, err
 	}

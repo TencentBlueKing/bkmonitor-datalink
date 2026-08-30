@@ -99,8 +99,9 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 			stream.request.Operation, started, "", "", err)
 		return fmt.Errorf("alarmd worker: invalid series evaluation: %w", err)
 	}
-	stream.coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
-		stream.request.Operation, started, evaluated.Result, evaluated.ReasonCode, nil)
+	stream.coordinator.observeWithCounts(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
+		stream.request.Operation, started, evaluated.Result, evaluated.ReasonCode,
+		observability.Counts{Records: int64(batch.Delivery.Records)}, nil)
 	compactBindings := make([]execution.NamedInputBinding, len(batch.Inputs))
 	copy(compactBindings, batch.Inputs)
 	for index := range compactBindings {
@@ -113,10 +114,21 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 	}
 	stream.series += batch.Delivery.Series
 	stream.retained += retained
-	if stream.series > stream.coordinator.budget.MaxSeries || stream.retained > stream.coordinator.budget.MaxRetainedBytes {
-		return errors.New("alarmd worker: provisional series/byte budget exceeded")
+	if stream.series > stream.coordinator.budget.MaxSeries {
+		err := errors.New("alarmd worker: provisional series budget exceeded")
+		stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, observability.CapacityBudgetSeries, err)
+		return err
+	}
+	if stream.retained > stream.coordinator.budget.MaxRetainedBytes {
+		err := errors.New("alarmd worker: provisional retained byte budget exceeded")
+		stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, observability.CapacityBudgetRetainedBytes, err)
+		return err
 	}
 	if err := mergeProvisional(&stream.evaluated, evaluated, stream.coordinator.budget); err != nil {
+		var exceeded *provisionalBudgetExceededError
+		if errors.As(err, &exceeded) {
+			stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, exceeded.budget, err)
+		}
 		return err
 	}
 	stream.state.Items = append(stream.state.Items, loaded.Items...)
@@ -211,10 +223,24 @@ func mergeProvisional(target *execution.EvaluationResult, next execution.Evaluat
 			events += uint64(len(state.Events))
 		}
 	}
-	if states > budget.MaxStateMutations || events > budget.MaxEvents || gaps > budget.MaxGapMutations {
-		return errors.New("alarmd worker: provisional result budget exceeded")
+	if states > budget.MaxStateMutations {
+		return &provisionalBudgetExceededError{budget: observability.CapacityBudgetStateMutations}
+	}
+	if events > budget.MaxEvents {
+		return &provisionalBudgetExceededError{budget: observability.CapacityBudgetEvents}
+	}
+	if gaps > budget.MaxGapMutations {
+		return &provisionalBudgetExceededError{budget: observability.CapacityBudgetGapMutations}
 	}
 	return nil
+}
+
+type provisionalBudgetExceededError struct {
+	budget observability.CapacityBudget
+}
+
+func (err *provisionalBudgetExceededError) Error() string {
+	return "alarmd worker: provisional " + string(err.budget) + " budget exceeded"
 }
 
 func resultRank(result observability.Result) int {

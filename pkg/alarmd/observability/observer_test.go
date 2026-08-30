@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,6 +48,22 @@ func TestNormalizeObservationBoundsCatalogAndCounts(t *testing.T) {
 	}
 	if got.Duration != -time.Second || got.Counts.Messages != 0 || got.Counts.Records != 2 {
 		t.Fatalf("normalized duration/counts = %v/%#v", got.Duration, got.Counts)
+	}
+}
+
+func TestPhaseTwoComponentValuesMatchFrozenObservabilityContract(t *testing.T) {
+	if ComponentControlPlane != "source" || ComponentOwnership != "router" || ComponentScheduler != "scheduler" {
+		t.Fatalf("phase-two components = %q/%q/%q", ComponentControlPlane, ComponentOwnership, ComponentScheduler)
+	}
+	for _, pair := range []ComponentStage{
+		{ComponentControlPlane, StageSnapshotRefreshed},
+		{ComponentOwnership, StageAssignmentAcquired},
+		{ComponentScheduler, StageSlotCompleted},
+	} {
+		component, stage := NormalizeComponentStage(pair.Component, pair.Stage)
+		if component != pair.Component || stage != pair.Stage {
+			t.Fatalf("component/stage normalized to %q/%q, want %q/%q", component, stage, pair.Component, pair.Stage)
+		}
 	}
 }
 
@@ -251,4 +268,42 @@ func TestMultiObserverSkipsNilObservers(t *testing.T) {
 		t.Fatalf("observer calls = %d, want 1", called)
 	}
 	NopObserver{}.Observe(context.Background(), Observation{})
+}
+
+func TestPhaseTwoSuccessLogsAreBoundedAndCarryTraceID(t *testing.T) {
+	var output bytes.Buffer
+	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := NewLoggingObserver(New("alarmd", &output), policy)
+	observation := Observation{
+		Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultSuccess,
+	}
+	ctx := ContextWithTraceFields(context.Background(), TraceFields{TraceID: "uq-trace-1", QueryGroupKey: "qg-sensitive"})
+	observer.Observe(ctx, observation)
+	observer.Observe(ctx, observation)
+	if got := strings.Count(output.String(), "\"stage\":\"query_completed\""); got != 1 {
+		t.Fatalf("bounded phase-two success logs = %d, want 1: %s", got, output.String())
+	}
+	if !strings.Contains(output.String(), "\"trace_id\":\"uq-trace-1\"") {
+		t.Fatalf("trace id missing from structured log: %s", output.String())
+	}
+}
+
+func TestNestedTraceContextKeepsInheritedFieldsAndExplicitValuesWin(t *testing.T) {
+	parent := ContextWithTraceFields(context.Background(), TraceFields{
+		TraceID: "trace-parent", QueryGroupKey: "qg-parent", StrategyID: "strategy-parent",
+		Partition: 3, PartitionKnown: true,
+	})
+	child := ContextWithTraceFields(parent, TraceFields{TraceID: "trace-child", LevelID: "level-child"})
+	got := TraceFieldsFromContext(child)
+	if got.TraceID != "trace-child" || got.QueryGroupKey != "qg-parent" || got.StrategyID != "strategy-parent" ||
+		got.LevelID != "level-child" || !got.PartitionKnown || got.Partition != 3 {
+		t.Fatalf("merged trace fields = %#v", got)
+	}
 }

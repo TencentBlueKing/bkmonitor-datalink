@@ -84,19 +84,21 @@ func TestSlotExecutionCoordinatorEnforcesProcessProvisionalBudget(t *testing.T) 
 	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
 		t.Fatal("over-budget provisional result reached side effects")
 	}
+	assertCapacityRejection(t, fixture.observations, observability.CapacityBudgetStateMutations)
 }
 
 func TestSlotExecutionCoordinatorBudgetsRetainedSeriesAndBytes(t *testing.T) {
 	tests := []struct {
-		name   string
-		budget worker.ProvisionalBudget
+		name       string
+		budget     worker.ProvisionalBudget
+		wantBudget observability.CapacityBudget
 	}{
 		{name: "series", budget: worker.ProvisionalBudget{
 			MaxSeries: 1, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10,
-		}},
+		}, wantBudget: observability.CapacityBudgetSeries},
 		{name: "retained bytes", budget: worker.ProvisionalBudget{
 			MaxSeries: 100, MaxRetainedBytes: 1, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10,
-		}},
+		}, wantBudget: observability.CapacityBudgetRetainedBytes},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -109,8 +111,25 @@ func TestSlotExecutionCoordinatorBudgetsRetainedSeriesAndBytes(t *testing.T) {
 			if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
 				t.Fatal("series/byte budget rejection reached side effects")
 			}
+			assertCapacityRejection(t, fixture.observations, test.wantBudget)
 		})
 	}
+}
+
+func assertCapacityRejection(t *testing.T, observations *[]observability.Observation, want observability.CapacityBudget) {
+	t.Helper()
+	for _, observation := range *observations {
+		if observation.Stage == observability.StageResourceHard && observation.Result == observability.ResultPaused {
+			if observation.CapacityBudget != want {
+				t.Fatalf("capacity budget = %q, want %q", observation.CapacityBudget, want)
+			}
+			if observation.ReasonCode != observability.ReasonCode(contract.ReasonResourceHardStop) {
+				t.Fatalf("capacity rejection reason = %q, want %q", observation.ReasonCode, contract.ReasonResourceHardStop)
+			}
+			return
+		}
+	}
+	t.Fatalf("capacity rejection %q was not observed", want)
 }
 
 func TestSlotExecutionCoordinatorOrdersRequiredSideEffects(t *testing.T) {

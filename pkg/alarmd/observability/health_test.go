@@ -90,6 +90,21 @@ func TestHealthSnapshotPreservesKnownM0Reason(t *testing.T) {
 	}
 }
 
+func TestPhaseTwoHealthRequiresSnapshotAndExistingWorkerPrerequisites(t *testing.T) {
+	base := HealthSnapshot{
+		State: HealthReady, PhaseTwo: true,
+		ConfigLoaded: true, SchemaReady: true, AssignmentReady: true,
+		RuntimeStateReady: true, OutputSinkReady: true,
+	}
+	if got := NormalizeHealthSnapshot(base); got.Ready || got.State != HealthNotReady {
+		t.Fatalf("phase-two health without worker prerequisites = %#v", got)
+	}
+	base.SnapshotReady = true
+	if got := NormalizeHealthSnapshot(base); !got.Ready || got.State != HealthReady {
+		t.Fatalf("phase-two health with worker prerequisites = %#v", got)
+	}
+}
+
 func TestHealthSnapshotBoundsProgressFields(t *testing.T) {
 	t.Parallel()
 

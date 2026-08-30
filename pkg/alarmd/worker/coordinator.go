@@ -88,6 +88,14 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	if err := request.Validate(); err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid execution request: %w", err)
 	}
+	ctx = observability.ContextWithTraceFields(ctx, observability.TraceFields{
+		QueryGroupKey:    string(request.Contract.Slot.QueryGroup),
+		SnapshotRevision: string(request.Contract.SnapshotRevision),
+		QueryRevision:    string(request.Contract.QueryRevision),
+		ScheduleRevision: string(request.Contract.ScheduleRevision),
+		OwnerID:          request.OwnerFence.OwnerID, OwnerEpoch: request.OwnerFence.OwnerEpoch,
+		EvaluationTime: int64(request.Contract.Slot.EvaluationTime),
+	})
 	finalization, err := coordinator.ports.Finalization.ResolveFinalization(ctx, request)
 	if err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: resolve finalization: %w", err)
@@ -728,7 +736,8 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 	if err != nil {
 		reason = execution.ReasonCode(contract.ReasonOutputACKUnknown)
 	}
-	coordinator.observe(ctx, observability.ComponentOutput, observability.StageEventACKed, operation, started, "", reason, err)
+	coordinator.observeWithCounts(ctx, observability.ComponentOutput, observability.StageEventACKed, operation, started,
+		"", reason, observability.Counts{Events: int64(len(events))}, err)
 	if err != nil {
 		return fmt.Errorf("alarmd worker: acknowledge events: %w", err)
 	}
@@ -904,6 +913,22 @@ func (coordinator *SlotExecutionCoordinator) observeWithCounts(
 		Component: component, Stage: stage, Result: result,
 		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
 		ReasonCode: reason, Duration: time.Since(started), Counts: counts, Err: err,
+	}
+	defer func() { _ = recover() }()
+	coordinator.ports.Observer.Observe(ctx, observation)
+}
+
+func (coordinator *SlotExecutionCoordinator) observeCapacityRejection(
+	ctx context.Context,
+	operation execution.Operation,
+	budget observability.CapacityBudget,
+	err error,
+) {
+	observation := observability.Observation{
+		Component: observability.ComponentResource, Stage: observability.StageResourceHard,
+		Result: observability.ResultPaused, Operation: observability.Operation(operation),
+		Direction: observability.DirectionInternal, ReasonCode: observability.ReasonCode(contract.ReasonResourceHardStop),
+		CapacityBudget: budget, Err: err,
 	}
 	defer func() { _ = recover() }()
 	coordinator.ports.Observer.Observe(ctx, observation)

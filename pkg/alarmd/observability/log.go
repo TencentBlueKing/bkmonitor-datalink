@@ -123,6 +123,7 @@ func (l *LoggingObserver) Observe(ctx context.Context, observation Observation) 
 }
 
 func (l *Logger) logObservation(ctx context.Context, observation Observation) {
+	observation.Trace = mergeTraceFields(observation.Trace, TraceFieldsFromContext(ctx))
 	attributes := []slog.Attr{
 		slog.String("component", string(observation.Component)),
 		slog.String("stage", string(observation.Stage)),
@@ -131,6 +132,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation) {
 		slog.String("operation", string(observation.Operation)),
 		slog.String("direction", string(observation.Direction)),
 		slog.Int64("duration_ms", observation.Duration.Milliseconds()),
+	}
+	if observation.CapacityBudget != "" {
+		attributes = append(attributes, slog.String("capacity_budget", string(observation.CapacityBudget)))
 	}
 	attributes = appendObservationCounts(attributes, observation.Counts)
 	attributes = appendTraceFields(attributes, observation.Trace)
@@ -192,8 +196,10 @@ func appendTraceFields(attributes []slog.Attr, trace TraceFields) []slog.Attr {
 		name  string
 		value string
 	}{
-		{"execution_id", trace.ExecutionID}, {"message_id", trace.MessageID},
+		{"trace_id", trace.TraceID}, {"execution_id", trace.ExecutionID}, {"message_id", trace.MessageID},
 		{"query_group_key", trace.QueryGroupKey}, {"strategy_id", trace.StrategyID},
+		{"snapshot_revision", trace.SnapshotRevision}, {"query_revision", trace.QueryRevision},
+		{"schedule_revision", trace.ScheduleRevision}, {"owner_id", trace.OwnerID},
 		{"level_id", trace.LevelID}, {"terminal_scope", trace.TerminalScope},
 		{"field_path", trace.TerminalFieldPath}, {"record_id", trace.RecordID},
 		{"dimension_identity_digest", trace.DimensionIdentityDigest}, {"topic", trace.Topic},
@@ -210,12 +216,20 @@ func appendTraceFields(attributes []slog.Attr, trace TraceFields) []slog.Attr {
 	if trace.OffsetKnown {
 		attributes = append(attributes, slog.Int64("offset", trace.Offset))
 	}
+	if trace.OwnerEpoch > 0 {
+		attributes = append(attributes, slog.Uint64("owner_epoch", trace.OwnerEpoch))
+	}
+	if trace.EvaluationTime > 0 {
+		attributes = append(attributes, slog.Int64("evaluation_time", trace.EvaluationTime))
+	}
 	return attributes
 }
 
 func mandatoryLogStage(stage Stage) bool {
 	switch stage {
 	case StageStartup, StageConfigLoaded, StageKafkaAssigned, StageShutdown, StageFatal:
+		return true
+	case StageSnapshotRefreshed, StageSnapshotUnavailable, StageAssignmentAcquired, StageAssignmentLost:
 		return true
 	default:
 		return false
@@ -227,8 +241,17 @@ func repeatedLogObservation(observation Observation) bool {
 	case StageOffsetGap, StageResourceSoft, StageResourceHard, StageResourceResumed, StageRestartRecovered:
 		return true
 	default:
-		return observation.Result == ResultResumed || exceptionalLogResult(observation.Result)
+		return isPhaseTwoWorkflowStage(observation.Stage) || observation.Result == ResultResumed || exceptionalLogResult(observation.Result)
 	}
+}
+
+func isPhaseTwoWorkflowStage(stage Stage) bool {
+	for _, pair := range phaseTwoComponentStages {
+		if pair.Stage == stage {
+			return true
+		}
+	}
+	return false
 }
 
 func exceptionalLogResult(result Result) bool {

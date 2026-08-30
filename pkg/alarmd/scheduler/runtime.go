@@ -18,12 +18,27 @@ var ErrSlotInFlight = errors.New("alarmd scheduler: Query Group Slot is already 
 
 type FrozenSlot struct {
 	Contract                execution.FrozenExecutionContractRef
+	Dispatch                SlotDispatchContext
 	ExpectedNextSlot        execution.EvaluationTime
 	NextSlotAfterCompletion execution.EvaluationTime
 }
 
+// SlotDispatchContext contains current, replaceable execution authority. It is
+// deliberately separate from FrozenExecutionContractRef and business identity.
+type SlotDispatchContext struct {
+	Operation            execution.Operation
+	OwnerFence           execution.OwnerFence
+	AssignmentGeneration uint64
+}
+
 func (slot FrozenSlot) Validate(queryGroup execution.QueryGroupIdentity) error {
 	if err := slot.Contract.Validate(); err != nil {
+		return err
+	}
+	if slot.Dispatch.Operation != execution.OperationNormal || slot.Dispatch.AssignmentGeneration == 0 {
+		return errors.New("alarmd scheduler: normal dispatch context is required")
+	}
+	if err := slot.Dispatch.OwnerFence.Validate(slot.Contract); err != nil {
 		return err
 	}
 	if slot.Contract.Slot.QueryGroup != queryGroup || slot.ExpectedNextSlot != slot.Contract.Slot.EvaluationTime ||
@@ -127,8 +142,11 @@ func (runner *Runner) RunOne(
 	if err != nil {
 		return execution.SlotExecutionResult{}, false, err
 	}
+	if fence != slot.Dispatch.OwnerFence {
+		return execution.SlotExecutionResult{}, false, ErrSlotOwnershipChanged
+	}
 	request := execution.SlotExecutionRequest{
-		Contract: slot.Contract, Operation: execution.OperationNormal,
+		Contract: slot.Contract, Operation: slot.Dispatch.Operation,
 		OwnerFence: fence, ExpectedNextSlot: slot.ExpectedNextSlot, NextSlotAfterCompletion: slot.NextSlotAfterCompletion,
 	}
 	if err := request.Validate(); err != nil {

@@ -97,12 +97,37 @@ func TestRunnerRejectsStaleFenceBeforeResolvingSlot(t *testing.T) {
 	}
 }
 
+func TestRunnerRejectsDispatchFenceThatChangedAfterSlotFreeze(t *testing.T) {
+	now := time.UnixMilli(1_700_000_000_000)
+	slot := frozenSlot("query-group-1")
+	session := &sequenceOwnerSession{fences: []execution.OwnerFence{
+		slot.Dispatch.OwnerFence,
+		{QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 2, LeaseToken: "token-2"},
+	}}
+	executor := &blockingExecutor{}
+	runner, err := NewRunner("query-group-1", session, &fakeSlotSource{slot: slot}, executor, NewFlightCoordinator(), func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+
+	if _, _, err := runner.RunOne(context.Background()); !errors.Is(err, ErrSlotOwnershipChanged) {
+		t.Fatalf("RunOne() error = %v, want ErrSlotOwnershipChanged", err)
+	}
+	if executor.calls != 0 {
+		t.Fatalf("executor calls = %d, want 0", executor.calls)
+	}
+}
+
 func frozenSlot(queryGroup execution.QueryGroupIdentity) FrozenSlot {
 	contract := execution.FrozenExecutionContractRef{
 		Slot:             execution.SlotIdentity{QueryGroup: queryGroup, ScheduleRevision: "schedule-1", EvaluationTime: 100},
 		SnapshotRevision: "snapshot-1", QueryRevision: "query-1", ScheduleRevision: "schedule-1", DuePlanSetDigest: "plans-1",
 	}
-	return FrozenSlot{Contract: contract, ExpectedNextSlot: contract.Slot.EvaluationTime, NextSlotAfterCompletion: contract.Slot.EvaluationTime + 60}
+	return FrozenSlot{Contract: contract, Dispatch: SlotDispatchContext{
+		Operation:            execution.OperationNormal,
+		OwnerFence:           execution.OwnerFence{QueryGroup: queryGroup, OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "token-1"},
+		AssignmentGeneration: 1,
+	}, ExpectedNextSlot: contract.Slot.EvaluationTime, NextSlotAfterCompletion: contract.Slot.EvaluationTime + 60}
 }
 
 type fakeSession struct {

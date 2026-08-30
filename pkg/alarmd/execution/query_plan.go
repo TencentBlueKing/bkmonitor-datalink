@@ -96,7 +96,7 @@ type DatasetNormalizationSpec struct {
 
 func (spec DatasetNormalizationSpec) Validate() error {
 	if spec.DatasetContract.SchemaDigest == "" || spec.DatasetContract.NormalizationDigest == "" ||
-		len(spec.DatasetContract.IdentityFields) == 0 || spec.DatasetContract.SourceTimeField == "" ||
+		spec.DatasetContract.IdentityFields == nil || spec.DatasetContract.SourceTimeField == "" ||
 		spec.DatasetContract.ReceivedTimeField == "" || spec.SourceTimeUnit != TimeUnitMillisecond ||
 		spec.CanonicalSourceTimeUnit != TimeUnitSecond || spec.SeriesIdentityMode != SeriesIdentityUQGroupKeysValuesV1 ||
 		spec.GroupKeyRule != GroupKeyStripTableSuffixV1 || spec.ValueSelectionMode != ValueSelectionResultOrFirstReferenceV1 ||

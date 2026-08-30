@@ -1,6 +1,7 @@
 package execution_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -44,6 +45,49 @@ func TestDatasetNormalizationConvertsUQMillisecondsToCoreSeconds(t *testing.T) {
 	}
 	if got != 1_700_123_456 {
 		t.Fatalf("source_time=%d", got)
+	}
+}
+
+func TestDatasetNormalizationAcceptsExplicitNoDimensionIdentityFields(t *testing.T) {
+	facts := validQueryPlanFacts()
+	facts.QueryList[0].Dimensions = []string{}
+	facts.Normalization.DatasetContract.IdentityFields = []string{}
+	if _, err := execution.BuildQueryPlanFacts(facts); err != nil {
+		t.Fatalf("explicit no-dimension identity fields must be accepted: %v", err)
+	}
+
+	facts.Normalization.DatasetContract.IdentityFields = nil
+	if _, err := execution.BuildQueryPlanFacts(facts); err == nil {
+		t.Fatal("missing identity fields must remain invalid")
+	}
+}
+
+func TestNoDimensionQueryPlanCanonicalRoundTripAndDigest(t *testing.T) {
+	facts := validQueryPlanFacts()
+	facts.QueryList[0].Dimensions = []string{}
+	facts.Normalization.DatasetContract.IdentityFields = []string{}
+	built, err := execution.BuildQueryPlanFacts(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := json.Marshal(built)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip execution.QueryPlanFacts
+	if err := json.Unmarshal(payload, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.Normalization.DatasetContract.IdentityFields == nil {
+		t.Fatal("canonical round trip changed explicit empty identity fields to nil")
+	}
+	if err := roundTrip.Validate(); err != nil {
+		t.Fatalf("round-tripped no-dimension query plan lost its digest: %v", err)
+	}
+	const wantRevision = "f34f611883c8f932b3d9a6f1f8448b4e1d541db151d96341c82f6409029aebc3"
+	if string(roundTrip.QueryRevision) != wantRevision {
+		t.Fatalf("query_revision=%q, want golden %q", roundTrip.QueryRevision, wantRevision)
 	}
 }
 

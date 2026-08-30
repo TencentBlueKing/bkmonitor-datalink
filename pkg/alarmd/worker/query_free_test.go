@@ -307,6 +307,8 @@ func newQueryFreeFixture(t *testing.T, activations []execution.PlanActivationRes
 		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			observations = append(observations, observability.NormalizeObservation(observation))
 		}),
+	}, worker.ProvisionalBudget{
+		MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10,
 	})
 	if err != nil {
 		t.Fatalf("NewSlotExecutionCoordinator() error: %v", err)

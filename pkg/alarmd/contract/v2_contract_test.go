@@ -1077,6 +1077,13 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 			t.Fatalf("runtime coverage reason %q definition = (%#v, %t)", reason, definition, ok)
 		}
 	}
+	for _, reason := range []string{ReasonStateCorrupt, ReasonStateSchemaUnsupported, ReasonStateBudgetExceeded} {
+		definition, ok := LookupReasonV2(reason)
+		if !ok || definition.Class != ReasonClassDeterministic ||
+			!definition.Domains.Has(ReasonDomainReceipt) || !definition.Domains.Has(ReasonDomainObservation) {
+			t.Fatalf("state deterministic reason %q definition = (%#v, %t)", reason, definition, ok)
+		}
+	}
 	firstCode := catalog[0].Code
 	catalog[0].Code = "MUTATED"
 	if refreshed := ReasonCatalogV2(); len(refreshed) == 0 || refreshed[0].Code != firstCode {

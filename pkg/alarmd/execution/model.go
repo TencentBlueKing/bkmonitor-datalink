@@ -134,10 +134,11 @@ func (fence OwnerFence) Validate(contractRef FrozenExecutionContractRef) error {
 }
 
 type SlotExecutionRequest struct {
-	Contract         FrozenExecutionContractRef
-	Operation        Operation
-	OwnerFence       OwnerFence
-	ExpectedNextSlot EvaluationTime
+	Contract                FrozenExecutionContractRef
+	Operation               Operation
+	OwnerFence              OwnerFence
+	ExpectedNextSlot        EvaluationTime
+	NextSlotAfterCompletion EvaluationTime
 }
 
 func (request SlotExecutionRequest) Validate() error {
@@ -152,6 +153,9 @@ func (request SlotExecutionRequest) Validate() error {
 	}
 	if request.ExpectedNextSlot != request.Contract.Slot.EvaluationTime {
 		return errors.New("alarmd execution: expected next slot must equal the frozen evaluation time")
+	}
+	if request.NextSlotAfterCompletion <= request.ExpectedNextSlot {
+		return errors.New("alarmd execution: Scheduler must freeze the next Slot after completion")
 	}
 	return nil
 }
@@ -325,8 +329,9 @@ type PlanGapLoadItem struct {
 	ScheduleRevision PlanScheduleRevision
 }
 
-// InternalExecution is the stable, typed input consumed by the evaluation
-// core. It has no Kafka, Redis or UQ transport representation.
+// InternalExecution is retained as an execution-package validation aggregate.
+// Phase-two runtime hand-off uses InternalExecutionHeader, SeriesExecutionBatch
+// and EvaluationRequest; the Coordinator must not exchange this aggregate.
 type InternalExecution struct {
 	Contract           FrozenExecutionContractRef
 	DuePlans           []DuePlan
@@ -698,192 +703,6 @@ func validateInputFact(
 	return nil
 }
 
-type QueryExecutionResult struct {
-	Execution       InternalExecution
-	ProviderResults []ProviderResult
-	Ready           bool
-	Result          Result
-	ReasonCode      ReasonCode
-}
-
-func (result QueryExecutionResult) Validate(expected FrozenExecutionContractRef) error {
-	if err := ValidateResultReason(result.Result, result.ReasonCode); err != nil {
-		return err
-	}
-	if !result.Ready {
-		if result.Result != observability.ResultRetrying {
-			return errors.New("alarmd execution: an unready query result must be retrying")
-		}
-		if result.Execution.Contract != (FrozenExecutionContractRef{}) || len(result.Execution.DuePlans) != 0 ||
-			len(result.Execution.Requirements) != 0 || len(result.Execution.Inputs) != 0 ||
-			len(result.Execution.EffectiveTimeFacts) != 0 || len(result.Execution.StatePreflight) != 0 ||
-			len(result.Execution.GapPreflight) != 0 || len(result.ProviderResults) != 0 {
-			return errors.New("alarmd execution: unready query result must not carry prepared execution facts")
-		}
-		return nil
-	}
-	if result.Result != observability.ResultSuccess && result.Result != observability.ResultDegraded &&
-		result.Result != observability.ResultTerminal {
-		return errors.New("alarmd execution: a ready query result has an invalid result")
-	}
-	if err := result.Execution.Validate(expected); err != nil {
-		return err
-	}
-	if err := validateProviderBindings(result.ProviderResults, result.Execution.Inputs); err != nil {
-		return err
-	}
-	expectedResult, expectedReasons := deriveAccessAggregate(result.Execution.Inputs)
-	if result.Result != expectedResult {
-		return errors.New("alarmd execution: query aggregate result does not match input dispositions")
-	}
-	if expectedResult != observability.ResultSuccess {
-		if _, ok := expectedReasons[result.ReasonCode]; !ok {
-			return errors.New("alarmd execution: query aggregate reason does not match input dispositions")
-		}
-	}
-	return nil
-}
-
-type physicalFactKey struct {
-	Reason ReasonCode
-	Record string
-	Time   int64
-	Series SeriesIdentityDigest
-}
-
-func validateProviderBindings(results []ProviderResult, bindings []NamedInputBinding) error {
-	providers := make(map[ProviderResultRef]ProviderResult, len(results))
-	quality := make(map[ProviderResultRef]map[physicalFactKey]struct{}, len(results))
-	terminals := make(map[ProviderResultRef]map[physicalFactKey]struct{}, len(results))
-	projectedQuality := make(map[ProviderResultRef]map[physicalFactKey]struct{}, len(results))
-	projectedTerminals := make(map[ProviderResultRef]map[physicalFactKey]struct{}, len(results))
-	for _, result := range results {
-		if err := result.ValidateFacts(); err != nil {
-			return err
-		}
-		if _, duplicate := providers[result.Ref]; duplicate {
-			return errors.New("alarmd execution: duplicate ProviderResult reference")
-		}
-		providers[result.Ref] = result
-		quality[result.Ref] = make(map[physicalFactKey]struct{}, len(result.QualityFacts))
-		for _, fact := range result.QualityFacts {
-			key := physicalFactKey{fact.ReasonCode, fact.RecordID, fact.SourceTime, fact.SeriesIdentity}
-			if _, duplicate := quality[result.Ref][key]; duplicate {
-				return errors.New("alarmd execution: duplicate physical Provider quality fact")
-			}
-			quality[result.Ref][key] = struct{}{}
-		}
-		terminals[result.Ref] = make(map[physicalFactKey]struct{}, len(result.RecordTerminals))
-		for _, fact := range result.RecordTerminals {
-			key := physicalFactKey{fact.ReasonCode, fact.RecordID, fact.SourceTime, fact.SeriesIdentity}
-			if _, duplicate := terminals[result.Ref][key]; duplicate {
-				return errors.New("alarmd execution: duplicate physical Provider terminal fact")
-			}
-			terminals[result.Ref][key] = struct{}{}
-		}
-		projectedQuality[result.Ref] = make(map[physicalFactKey]struct{}, len(result.QualityFacts))
-		projectedTerminals[result.Ref] = make(map[physicalFactKey]struct{}, len(result.RecordTerminals))
-	}
-	usedProviders := make(map[ProviderResultRef]struct{})
-	for _, binding := range bindings {
-		if binding.ProviderResult == "" {
-			continue
-		}
-		provider, ok := providers[binding.ProviderResult]
-		if !ok {
-			return errors.New("alarmd execution: binding references an unknown ProviderResult")
-		}
-		usedProviders[binding.ProviderResult] = struct{}{}
-		if binding.Provenance.PhysicalQuery != provider.PhysicalQuery || binding.Provenance.TraceID != provider.TraceID {
-			return errors.New("alarmd execution: binding provenance differs from ProviderResult")
-		}
-		if completenessRank(binding.Completeness) > completenessRank(provider.Completeness) {
-			return errors.New("alarmd execution: binding cannot strengthen Provider completeness")
-		}
-		if binding.Completeness == CompletenessUnavailable {
-			if binding.Dataset != nil || binding.DataState != DataStateUnknown || binding.PartialEvidence != nil {
-				return errors.New("alarmd execution: unavailable binding must discard untrusted Provider data")
-			}
-		} else if binding.Dataset != provider.Dataset || binding.DataState != provider.DataState {
-			return errors.New("alarmd execution: executable binding must share Provider Dataset facts")
-		}
-		if binding.Completeness == CompletenessPartial && binding.PartialEvidence != provider.PartialEvidence {
-			return errors.New("alarmd execution: binding PARTIAL evidence must come from ProviderResult")
-		}
-		for _, fact := range binding.QualityFacts {
-			if fact.ImpactScope != ImpactSeries {
-				continue
-			}
-			key := physicalFactKey{fact.ReasonCode, fact.RecordID, fact.SourceTime, fact.SeriesIdentity}
-			if _, found := quality[binding.ProviderResult][key]; !found {
-				return errors.New("alarmd execution: SERIES quality fact lacks matching physical Provider evidence")
-			}
-			projectedQuality[binding.ProviderResult][key] = struct{}{}
-		}
-		for _, fact := range binding.Terminals {
-			if fact.ImpactScope != ImpactSeries {
-				continue
-			}
-			key := physicalFactKey{fact.ReasonCode, fact.RecordID, fact.SourceTime, fact.SeriesIdentity}
-			if _, found := terminals[binding.ProviderResult][key]; !found {
-				return errors.New("alarmd execution: SERIES terminal lacks matching physical Provider evidence")
-			}
-			projectedTerminals[binding.ProviderResult][key] = struct{}{}
-		}
-	}
-	if len(usedProviders) != len(providers) {
-		return errors.New("alarmd execution: every ProviderResult must feed at least one input binding")
-	}
-	for ref := range providers {
-		for key := range quality[ref] {
-			if _, found := projectedQuality[ref][key]; !found {
-				return errors.New("alarmd execution: physical Provider quality fact was not conserved into any input binding")
-			}
-		}
-		for key := range terminals[ref] {
-			if _, found := projectedTerminals[ref][key]; !found {
-				return errors.New("alarmd execution: physical Provider terminal was not conserved into any input binding")
-			}
-		}
-	}
-	return nil
-}
-
-func completenessRank(value Completeness) int {
-	switch value {
-	case CompletenessFull:
-		return 2
-	case CompletenessPartial:
-		return 1
-	case CompletenessUnavailable:
-		return 0
-	default:
-		return -1
-	}
-}
-
-func deriveAccessAggregate(bindings []NamedInputBinding) (Result, map[ReasonCode]struct{}) {
-	result := observability.Result(observability.ResultSuccess)
-	degradedReasons := make(map[ReasonCode]struct{})
-	terminalReasons := make(map[ReasonCode]struct{})
-	for _, binding := range bindings {
-		switch binding.Disposition {
-		case AccessTerminal:
-			result = observability.ResultTerminal
-			terminalReasons[binding.ReasonCode] = struct{}{}
-		case AccessDegraded, AccessUnavailable:
-			if result != observability.ResultTerminal {
-				result = observability.ResultDegraded
-			}
-			degradedReasons[binding.ReasonCode] = struct{}{}
-		}
-	}
-	if result == observability.ResultTerminal {
-		return result, terminalReasons
-	}
-	return result, degradedReasons
-}
-
 type StateLoadStatus string
 
 const (
@@ -1048,7 +867,7 @@ func ClassifyStatePreflight(request StatePreflightRequest, result StatePreflight
 				return StatePreflightResult{}, err
 			}
 		case StateDeterministicInvalid:
-			if view.BlobRevision == 0 || runtimeStateHasTrustedPayload(view) {
+			if runtimeStateHasTrustedPayload(view) {
 				return StatePreflightResult{}, errors.New("alarmd execution: terminal state carries trusted payload")
 			}
 			if err := requireReasonClass(view.ReasonCode, contract.ReasonClassDeterministic); err != nil {
@@ -1300,9 +1119,10 @@ func gapSnapshotHasPayload(item GapGuardSnapshot) bool {
 }
 
 type EvaluationRequest struct {
-	Execution InternalExecution
-	State     StatePreflightResult
-	Gaps      GapLoadResult
+	Header InternalExecutionHeader
+	Batch  SeriesExecutionBatch
+	State  StatePreflightResult
+	Gaps   GapLoadResult
 }
 
 type StateMutation struct {
@@ -1423,7 +1243,10 @@ type EvaluationResult struct {
 }
 
 func (result EvaluationResult) Validate(request EvaluationRequest) error {
-	input := request.Execution
+	input, err := buildSeriesInternalExecution(request.Header, request.Batch)
+	if err != nil {
+		return err
+	}
 	if result.Contract != input.Contract {
 		return errors.New("alarmd execution: evaluation changed frozen contract")
 	}
@@ -2227,10 +2050,11 @@ type SlotCompletion struct {
 }
 
 type ProgressCommitRequest struct {
-	Namespace        ProgressNamespace
-	OwnerFence       OwnerFence
-	ExpectedNextSlot EvaluationTime
-	Completion       SlotCompletion
+	Namespace               ProgressNamespace
+	OwnerFence              OwnerFence
+	ExpectedNextSlot        EvaluationTime
+	NextSlotAfterCompletion EvaluationTime
+	Completion              SlotCompletion
 }
 
 func (request ProgressCommitRequest) Validate() error {
@@ -2242,7 +2066,8 @@ func (request ProgressCommitRequest) Validate() error {
 	}
 	if request.Namespace.QueryGroup != request.Completion.Contract.Slot.QueryGroup ||
 		request.Namespace.ScheduleRevision != request.Completion.Contract.ScheduleRevision ||
-		request.ExpectedNextSlot != request.Completion.Contract.Slot.EvaluationTime {
+		request.ExpectedNextSlot != request.Completion.Contract.Slot.EvaluationTime ||
+		request.NextSlotAfterCompletion <= request.ExpectedNextSlot {
 		return errors.New("alarmd execution: Progress request does not match the completed Slot")
 	}
 	if err := request.Completion.Contract.Validate(); err != nil {
@@ -2339,6 +2164,38 @@ type ScheduleProgress struct {
 	LastFullSlot       EvaluationTime
 	LastCompletionKind CompletionKind
 	CurrentOrRecentGap *ProgressGapSummary
+}
+
+type ProgressLoadStatus string
+
+const (
+	ProgressFound   ProgressLoadStatus = "FOUND"
+	ProgressMissing ProgressLoadStatus = "MISSING"
+)
+
+type ProgressLoadResult struct {
+	Status   ProgressLoadStatus
+	Progress *ScheduleProgress
+}
+
+func (result ProgressLoadResult) Validate(namespace ProgressNamespace) error {
+	if namespace.QueryGroup == "" || namespace.ScheduleRevision == "" {
+		return errors.New("alarmd execution: complete Progress namespace is required")
+	}
+	switch result.Status {
+	case ProgressFound:
+		if result.Progress == nil || result.Progress.Namespace != namespace {
+			return errors.New("alarmd execution: FOUND Progress must match its namespace")
+		}
+		return result.Progress.Validate()
+	case ProgressMissing:
+		if result.Progress != nil {
+			return errors.New("alarmd execution: MISSING Progress must not carry persisted facts")
+		}
+		return nil
+	default:
+		return errors.New("alarmd execution: unknown Progress load status")
+	}
 }
 
 type ProgressGapSummary struct {

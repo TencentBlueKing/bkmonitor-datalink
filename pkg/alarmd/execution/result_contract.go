@@ -649,7 +649,7 @@ func levelFactMatchesOutcome(fact LevelFactResult, outcome LevelOutcomeKind) boo
 	case LevelFactNormal:
 		return outcome == LevelOutcomeNormal || outcome == LevelOutcomeRecovery
 	case LevelFactAnomalous:
-		return outcome == LevelOutcomeAbnormal
+		return outcome == LevelOutcomeNormal || outcome == LevelOutcomeAbnormal || outcome == LevelOutcomeRecovery
 	case LevelFactUnavailable:
 		return outcome == LevelOutcomeUnknown
 	case LevelFactError:

@@ -125,7 +125,7 @@ func TestRunRejectsUnknownFlag(t *testing.T) {
 	}
 }
 
-func TestRunUsesV2RuntimeAfterConfigurationLoads(t *testing.T) {
+func TestRunExplicitCompatibilityUsesPhaseOneRuntime(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "alarmd.yaml")
@@ -133,8 +133,12 @@ func TestRunUsesV2RuntimeAfterConfigurationLoads(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	want := errors.New("sink open failed")
+	compatibilityCoordinatesObserved := false
 	dependencies := applicationDependencies{
-		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
+		openBundle: func(_ context.Context, cfg config.Config, _ *metric.Recorder, _ *observability.Logger) (*applicationBundle, error) {
+			compatibilityCoordinatesObserved = cfg.Kafka.InputTopic == "alarmd-shadow-input-v2" &&
+				cfg.Kafka.GroupID == "alarmd-shadow-v2" && cfg.Kafka.InitialOffset == "oldest" &&
+				cfg.Redis.StatePrefix == "alarmd-shadow"
 			return nil, want
 		},
 		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
@@ -150,17 +154,62 @@ func TestRunUsesV2RuntimeAfterConfigurationLoads(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr.String(), want.Error()) {
 		t.Fatalf("runWithDependencies() code=%d stderr=%q, want sink open failure", code, stderr.String())
 	}
+	if !compatibilityCoordinatesObserved {
+		t.Fatal("explicit compatibility coordinates were not mapped into the phase-one runtime")
+	}
+}
+
+func TestRunDefaultGoAccessDoesNotConstructPhaseOneBundle(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "alarmd.yaml")
+	if err := os.WriteFile(path, []byte(validGoAccessApplicationYAML()), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	want := errors.New("phase-two runner reached")
+	phaseOneOpened := false
+	dependencies := runtimeModeDependencies{
+		phaseOne: applicationDependencies{
+			openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
+				phaseOneOpened = true
+				return nil, errors.New("phase-one bundle must not open")
+			},
+		},
+		phaseTwo: phaseTwoApplicationDependencies{
+			run: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) error {
+				return want
+			},
+		},
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runWithRuntimeModeDependencies(
+		context.Background(), []string{"--config", path}, &stdout, &stderr, dependencies,
+	)
+	if code != 1 || !strings.Contains(stderr.String(), want.Error()) {
+		t.Fatalf("runWithRuntimeModeDependencies() code=%d stderr=%q", code, stderr.String())
+	}
+	if phaseOneOpened {
+		t.Fatal("default Go Access opened the phase-one application bundle")
+	}
 }
 
 func validApplicationYAML() string {
 	return `mode: shadow
+input:
+  mode: phase_one_kafka_compatibility
+  phase_one_kafka:
+    input_topic: alarmd-shadow-input-v2
+    consumer_group: alarmd-shadow-v2
+    initial_offset: oldest
+    state_prefix: alarmd-shadow
 http:
   listen: 127.0.0.1:8080
 shutdown_timeout: 1s
 kafka:
   brokers:
     - 127.0.0.1:9092
-  input_topic: alarmd-shadow-input-v2
   trigger_event:
     topic: alarmd-shadow-trigger-event-v1
     max_message_bytes: 524288
@@ -170,12 +219,30 @@ kafka:
   allowed_output_topics:
     - alarmd-shadow-trigger-event-v1
     - alarmd-shadow-message-receipt-v1
-  group_id: alarmd-shadow-v2
   client_id: alarmd
   broker_version: 2.6.0
-  initial_offset: oldest
 redis:
   address: 127.0.0.1:6379
-  state_prefix: alarmd-shadow
+`
+}
+
+func validGoAccessApplicationYAML() string {
+	return `mode: shadow
+http:
+  listen: 127.0.0.1:8080
+shutdown_timeout: 1s
+kafka:
+  brokers:
+    - 127.0.0.1:9092
+  trigger_event:
+    topic: alarmd-shadow-trigger-event-v2
+    max_message_bytes: 524288
+  allowed_output_topics:
+    - alarmd-shadow-trigger-event-v2
+  client_id: alarmd
+  broker_version: 2.6.0
+redis:
+  address: 127.0.0.1:6379
+  state_prefix: alarmd-phase-two
 `
 }

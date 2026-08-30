@@ -17,15 +17,17 @@ import (
 var ErrSlotInFlight = errors.New("alarmd scheduler: Query Group Slot is already in flight")
 
 type FrozenSlot struct {
-	Contract         execution.FrozenExecutionContractRef
-	ExpectedNextSlot execution.EvaluationTime
+	Contract                execution.FrozenExecutionContractRef
+	ExpectedNextSlot        execution.EvaluationTime
+	NextSlotAfterCompletion execution.EvaluationTime
 }
 
 func (slot FrozenSlot) Validate(queryGroup execution.QueryGroupIdentity) error {
 	if err := slot.Contract.Validate(); err != nil {
 		return err
 	}
-	if slot.Contract.Slot.QueryGroup != queryGroup || slot.ExpectedNextSlot != slot.Contract.Slot.EvaluationTime {
+	if slot.Contract.Slot.QueryGroup != queryGroup || slot.ExpectedNextSlot != slot.Contract.Slot.EvaluationTime ||
+		slot.NextSlotAfterCompletion <= slot.ExpectedNextSlot {
 		return errors.New("alarmd scheduler: frozen Slot does not match Query Group Progress")
 	}
 	return nil
@@ -127,7 +129,7 @@ func (runner *Runner) RunOne(
 	}
 	request := execution.SlotExecutionRequest{
 		Contract: slot.Contract, Operation: execution.OperationNormal,
-		OwnerFence: fence, ExpectedNextSlot: slot.ExpectedNextSlot,
+		OwnerFence: fence, ExpectedNextSlot: slot.ExpectedNextSlot, NextSlotAfterCompletion: slot.NextSlotAfterCompletion,
 	}
 	if err := request.Validate(); err != nil {
 		return execution.SlotExecutionResult{}, false, err

@@ -102,7 +102,7 @@ func frozenSlot(queryGroup execution.QueryGroupIdentity) FrozenSlot {
 		Slot:             execution.SlotIdentity{QueryGroup: queryGroup, ScheduleRevision: "schedule-1", EvaluationTime: 100},
 		SnapshotRevision: "snapshot-1", QueryRevision: "query-1", ScheduleRevision: "schedule-1", DuePlanSetDigest: "plans-1",
 	}
-	return FrozenSlot{Contract: contract, ExpectedNextSlot: contract.Slot.EvaluationTime}
+	return FrozenSlot{Contract: contract, ExpectedNextSlot: contract.Slot.EvaluationTime, NextSlotAfterCompletion: contract.Slot.EvaluationTime + 60}
 }
 
 type fakeSession struct {

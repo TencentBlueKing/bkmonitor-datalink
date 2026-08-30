@@ -87,6 +87,7 @@ func (r *Recorder) Observe(_ context.Context, observation observability.Observat
 	}
 	duration := observation.Duration
 	observation = observability.NormalizeObservation(observation)
+	r.phaseTwo.observe(observation)
 	if !observability.IsGenericMetricComponentStage(observation.Component, observation.Stage) {
 		return
 	}

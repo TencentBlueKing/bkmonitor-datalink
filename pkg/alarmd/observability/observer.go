@@ -23,9 +23,13 @@ type Result string
 type Operation string
 type ReasonCode string
 type Direction string
+type CapacityBudget string
 
 const (
 	ComponentRuntime        = "runtime"
+	ComponentControlPlane   = "source"
+	ComponentOwnership      = "router"
+	ComponentScheduler      = "scheduler"
 	ComponentConsumer       = "consumer"
 	ComponentAdapter        = "adapter"
 	ComponentCompiler       = "compiler"
@@ -41,6 +45,15 @@ const (
 	ComponentOther          = "_other"
 
 	StageConfigLoaded         = "config_loaded"
+	StageSnapshotRefreshed    = "snapshot_refreshed"
+	StageSnapshotUnavailable  = "snapshot_unavailable"
+	StageAssignmentAcquired   = "assignment_acquired"
+	StageAssignmentLost       = "assignment_lost"
+	StageLeaseRenewed         = "lease_renewed"
+	StageFenceChecked         = "fence_checked"
+	StageScheduleDue          = "schedule_due"
+	StageSlotStarted          = "slot_started"
+	StageSlotCompleted        = "slot_completed"
 	StageRestartRecovered     = "restart_recovered"
 	StageKafkaAssigned        = "kafka_assigned"
 	StageExecutionReceived    = "execution_received"
@@ -117,6 +130,13 @@ const (
 	DirectionInternal Direction = "internal"
 	DirectionOther    Direction = "_other"
 
+	CapacityBudgetSeries         CapacityBudget = "series"
+	CapacityBudgetRetainedBytes  CapacityBudget = "retained_bytes"
+	CapacityBudgetStateMutations CapacityBudget = "state_mutations"
+	CapacityBudgetEvents         CapacityBudget = "events"
+	CapacityBudgetGapMutations   CapacityBudget = "gap_mutations"
+	CapacityBudgetOther          CapacityBudget = "other"
+
 	ReasonNone                  ReasonCode = "none"
 	ReasonInternalUnknown       ReasonCode = "internal_unknown"
 	ReasonCPU                   ReasonCode = "resource_cpu"
@@ -150,9 +170,16 @@ type Counts struct {
 }
 
 type TraceFields struct {
+	TraceID                 string
 	ExecutionID             string
 	MessageID               string
 	QueryGroupKey           string
+	SnapshotRevision        string
+	QueryRevision           string
+	ScheduleRevision        string
+	OwnerID                 string
+	OwnerEpoch              uint64
+	EvaluationTime          int64
 	StrategyID              string
 	LevelID                 string
 	TerminalScope           string
@@ -178,6 +205,7 @@ type Observation struct {
 	Counts            Counts
 	Trace             TraceFields
 	Err               error
+	CapacityBudget    CapacityBudget
 	normalized        bool
 	stageReasonBucket bool
 }
@@ -232,9 +260,22 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.Operation = NormalizeOperation(observation.Operation)
 	observation.Direction = NormalizeDirection(observation.Direction)
 	observation.ReasonCode = NormalizeReason(observation.ReasonCode, observation.Result)
+	observation.CapacityBudget = NormalizeCapacityBudget(observation.CapacityBudget)
 	observation.Counts = normalizeCounts(observation.Counts)
 	observation.normalized = true
 	return observation
+}
+
+func NormalizeCapacityBudget(budget CapacityBudget) CapacityBudget {
+	switch budget {
+	case "":
+		return ""
+	case CapacityBudgetSeries, CapacityBudgetRetainedBytes, CapacityBudgetStateMutations,
+		CapacityBudgetEvents, CapacityBudgetGapMutations:
+		return budget
+	default:
+		return CapacityBudgetOther
+	}
 }
 
 func NormalizeDirection(direction Direction) Direction {
@@ -426,6 +467,11 @@ var metricComponentStages = []ComponentStage{
 }
 
 var phaseTwoComponentStages = []ComponentStage{
+	{ComponentControlPlane, StageSnapshotRefreshed}, {ComponentControlPlane, StageSnapshotUnavailable},
+	{ComponentOwnership, StageAssignmentAcquired}, {ComponentOwnership, StageAssignmentLost},
+	{ComponentOwnership, StageLeaseRenewed}, {ComponentOwnership, StageFenceChecked},
+	{ComponentScheduler, StageScheduleDue}, {ComponentScheduler, StageSlotStarted},
+	{ComponentScheduler, StageSlotCompleted},
 	{ComponentAccess, StageQueryCompleted},
 	{ComponentEvaluation, StageEvaluationCompleted},
 	{ComponentState, StageStatePreflight}, {ComponentState, StageGapLoaded},

@@ -146,9 +146,7 @@ func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 		return QueryPlanFacts{}, err
 	}
 	for _, clause := range facts.QueryList {
-		if clause.DataSource == "" || clause.TableID == "" || clause.FieldName == "" || clause.ReferenceName == "" ||
-			clause.Driver == "" || clause.TimeField == "" ||
-			len(clause.Functions) == 0 || clause.TimeAggregation.Method == "" {
+		if clause.Driver == "" || clause.TimeField == "" {
 			return QueryPlanFacts{}, errors.New("alarmd execution: incomplete query clause")
 		}
 		if len(clause.Conditions.Connectors) != 0 && len(clause.Conditions.Connectors)+1 != len(clause.Conditions.Fields) {
@@ -157,8 +155,10 @@ func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 		if err := validateQueryFunctions(clause.Functions); err != nil {
 			return QueryPlanFacts{}, err
 		}
-		if err := validateQueryFunction(clause.TimeAggregation); err != nil {
-			return QueryPlanFacts{}, err
+		if !isZeroQueryFunction(clause.TimeAggregation) {
+			if err := validateQueryFunction(clause.TimeAggregation); err != nil {
+				return QueryPlanFacts{}, err
+			}
 		}
 		for _, condition := range clause.Conditions.Fields {
 			if condition.Field == "" || condition.Operator == "" || len(condition.Values) == 0 {
@@ -200,15 +200,18 @@ func (value QueryScalar) Validate() error {
 }
 
 func validateQueryFunctions(functions []QueryFunction) error {
-	if len(functions) == 0 {
-		return errors.New("alarmd execution: ordered query functions are required")
-	}
 	for _, function := range functions {
 		if err := validateQueryFunction(function); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func isZeroQueryFunction(function QueryFunction) bool {
+	return function.Method == "" && function.Field == "" && !function.Without && len(function.Dimensions) == 0 &&
+		function.Position == 0 && len(function.Arguments) == 0 && function.Window == "" && !function.Subquery &&
+		function.Step == ""
 }
 
 func validateQueryFunction(function QueryFunction) error {

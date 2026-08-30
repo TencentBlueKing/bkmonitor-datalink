@@ -7,6 +7,8 @@ package execution
 
 import (
 	"errors"
+	"reflect"
+	"sort"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -127,7 +129,7 @@ func validateLevelOutcomes(
 	if len(seen) != len(wanted) {
 		return errors.New("alarmd execution: every selected Plan record Level requires one outcome")
 	}
-	if err := validateStateOutcomes(result, seen); err != nil {
+	if err := validateStateOutcomes(input, plan, result, states, seen); err != nil {
 		return err
 	}
 	return validateEventOutcomes(input, result, seen)
@@ -355,9 +357,22 @@ func affectedBindings(input InternalExecution, plan PlanIdentity, levelID uint32
 	return bindings
 }
 
-func validateStateOutcomes(result PlanEvaluationResult, outcomes map[levelOutcomeIdentity]LevelOutcome) error {
+func validateStateOutcomes(
+	input InternalExecution,
+	plan DuePlan,
+	result PlanEvaluationResult,
+	states StatePreflightResult,
+	outcomes map[levelOutcomeIdentity]LevelOutcome,
+) error {
 	facts := make(map[levelOutcomeIdentity]LevelFactResult)
 	for _, state := range result.StateResults {
+		loaded, found := states.Find(state.Mutation.Identity)
+		if !found {
+			return errors.New("alarmd execution: State mutation lacks its loaded view")
+		}
+		if err := validateStateHistoryReplacement(loaded.History, state.Mutation, stateRetentionPoints(plan)); err != nil {
+			return err
+		}
 		anchors := make(map[RecordAnchor]struct{}, len(state.Mutation.AffectedRecords))
 		for _, anchor := range state.Mutation.AffectedRecords {
 			anchors[anchor] = struct{}{}
@@ -370,7 +385,8 @@ func validateStateOutcomes(result PlanEvaluationResult, outcomes map[levelOutcom
 					case LevelOutcomeNormal, LevelOutcomeAbnormal, LevelOutcomeRecovery:
 						foundBusiness = true
 					case LevelOutcomeUnknown, LevelOutcomeTerminal:
-						if stateMutationGuardsOutcome(state.Mutation, outcome, true) {
+						if stateMutationGuardsOutcome(state.Mutation, outcome, true) ||
+							stateUnknownMayAdvance(input, state.Mutation, outcome) {
 							foundGuardedNonBusiness = true
 						}
 					}
@@ -383,7 +399,7 @@ func validateStateOutcomes(result PlanEvaluationResult, outcomes map[levelOutcom
 		for _, point := range state.Mutation.Points {
 			anchor := RecordAnchor{RecordID: point.RecordID, SourceTime: point.SourceTime}
 			if _, ok := anchors[anchor]; !ok {
-				return errors.New("alarmd execution: State history point lacks a selected record anchor")
+				continue
 			}
 			for _, fact := range point.Levels {
 				outcome, ok := outcomes[levelOutcomeIdentity{
@@ -393,7 +409,14 @@ func validateStateOutcomes(result PlanEvaluationResult, outcomes map[levelOutcom
 				if !ok {
 					return errors.New("alarmd execution: State Level fact lacks a matching Level outcome")
 				}
-				if !levelFactMatchesOutcome(fact.Result, outcome.Outcome) {
+				effectiveStatus := ""
+				if effective, found := findEffectiveTimeFact(input, outcome.Plan, outcome.LevelID, outcome.SeriesIdentityDigest); found {
+					effectiveStatus = effective.Fact.Status()
+				}
+				if !levelFactMatchesOutcome(fact.Result, outcome.Outcome) &&
+					!stateFactMayAdvanceUnknown(
+						fact.Result, outcome, state.Mutation, effectiveStatus, stateInputAllowsAdvance(input, outcome),
+					) {
 					return errors.New("alarmd execution: State Level fact contradicts its Level outcome")
 				}
 				identity := levelOutcomeIdentity{
@@ -430,6 +453,124 @@ func validateStateOutcomes(result PlanEvaluationResult, outcomes map[levelOutcom
 	return nil
 }
 
+func stateRetentionPoints(plan DuePlan) uint32 {
+	var retention uint32
+	if plan.CompiledPlan == nil {
+		return 0
+	}
+	for _, level := range plan.CompiledPlan.Levels() {
+		if points := level.StateRequirement().RetentionPoints; points > retention {
+			retention = points
+		}
+	}
+	return retention
+}
+
+// validateStateHistoryReplacement proves that Points is the complete bounded
+// replacement snapshot obtained from the loaded history plus this batch's
+// affected anchors. Retention may evict only the oldest points.
+func validateStateHistoryReplacement(loaded []StateHistoryPoint, mutation StateMutation, retention uint32) error {
+	if retention == 0 {
+		return errors.New("alarmd execution: State history replacement lacks a retention bound")
+	}
+	affected := make(map[RecordAnchor]struct{}, len(mutation.AffectedRecords))
+	for _, anchor := range mutation.AffectedRecords {
+		affected[anchor] = struct{}{}
+	}
+	loadedPoints := make(map[RecordAnchor]StateHistoryPoint, len(loaded))
+	allAnchors := make(map[RecordAnchor]struct{}, len(loaded)+len(affected))
+	for _, point := range loaded {
+		anchor := RecordAnchor{RecordID: point.RecordID, SourceTime: point.SourceTime}
+		loadedPoints[anchor] = point
+		allAnchors[anchor] = struct{}{}
+	}
+	if len(mutation.Points) != 0 {
+		for anchor := range affected {
+			allAnchors[anchor] = struct{}{}
+		}
+	}
+	for _, point := range mutation.Points {
+		anchor := RecordAnchor{RecordID: point.RecordID, SourceTime: point.SourceTime}
+		if loadedPoint, ok := loadedPoints[anchor]; ok {
+			if !reflect.DeepEqual(loadedPoint, point) {
+				return errors.New("alarmd execution: State history replacement changes a loaded point")
+			}
+			continue
+		}
+		if _, current := affected[anchor]; !current {
+			return errors.New("alarmd execution: State history replacement changes or invents a loaded point")
+		}
+	}
+	expectedAnchors := make([]RecordAnchor, 0, len(allAnchors))
+	for anchor := range allAnchors {
+		expectedAnchors = append(expectedAnchors, anchor)
+	}
+	sort.Slice(expectedAnchors, func(left, right int) bool {
+		if expectedAnchors[left].SourceTime != expectedAnchors[right].SourceTime {
+			return expectedAnchors[left].SourceTime < expectedAnchors[right].SourceTime
+		}
+		return expectedAnchors[left].RecordID < expectedAnchors[right].RecordID
+	})
+	if len(expectedAnchors) > int(retention) {
+		expectedAnchors = expectedAnchors[len(expectedAnchors)-int(retention):]
+	}
+	if len(expectedAnchors) != len(mutation.Points) {
+		return errors.New("alarmd execution: State history replacement is not the complete bounded snapshot")
+	}
+	for index, point := range mutation.Points {
+		anchor := RecordAnchor{RecordID: point.RecordID, SourceTime: point.SourceTime}
+		if anchor != expectedAnchors[index] {
+			return errors.New("alarmd execution: State history replacement is not the complete bounded snapshot")
+		}
+	}
+	return nil
+}
+
+func stateUnknownMayAdvance(input InternalExecution, mutation StateMutation, outcome LevelOutcome) bool {
+	if !stateInputAllowsAdvance(input, outcome) {
+		return false
+	}
+	if stateMutationGuardsOutcome(mutation, outcome, true) {
+		return true
+	}
+	effective, found := findEffectiveTimeFact(input, outcome.Plan, outcome.LevelID, outcome.SeriesIdentityDigest)
+	return found && effective.Fact.Status() == strategy.EffectiveTimeInactive &&
+		outcome.ReasonCode == ReasonCode(contract.ReasonEffectiveTimeInactive)
+}
+
+func stateFactMayAdvanceUnknown(
+	fact LevelFactResult,
+	outcome LevelOutcome,
+	mutation StateMutation,
+	effectiveStatus string,
+	inputIsFull bool,
+) bool {
+	if !inputIsFull || outcome.Outcome != LevelOutcomeUnknown ||
+		(fact != LevelFactNormal && fact != LevelFactAnomalous) {
+		return false
+	}
+	if stateMutationGuardsOutcome(mutation, outcome, true) {
+		return true
+	}
+	return effectiveStatus == strategy.EffectiveTimeInactive &&
+		outcome.ReasonCode == ReasonCode(contract.ReasonEffectiveTimeInactive)
+}
+
+func stateInputAllowsAdvance(input InternalExecution, outcome LevelOutcome) bool {
+	bindings := affectedBindings(input, outcome.Plan, outcome.LevelID)
+	if len(bindings) == 0 {
+		return false
+	}
+	for _, binding := range bindings {
+		if binding.Completeness != CompletenessFull || binding.DataState != DataStateData ||
+			binding.Disposition != AccessAvailable {
+			return false
+		}
+	}
+	localized, err := validateLocalizedInputOutcome(input, outcome.Plan, outcome)
+	return err == nil && !localized
+}
+
 func validateDegradedGuardCoverage(
 	input InternalExecution,
 	result PlanEvaluationResult,
@@ -448,6 +589,13 @@ func validateDegradedGuardCoverage(
 		requiresGuard := outcome.Outcome == LevelOutcomeUnknown || outcome.Outcome == LevelOutcomeTerminal || len(outcome.PartialProofs) != 0
 		if !requiresGuard {
 			continue
+		}
+		if outcome.Outcome == LevelOutcomeUnknown && stateInputAllowsAdvance(input, outcome) {
+			effective, found := findEffectiveTimeFact(input, outcome.Plan, outcome.LevelID, outcome.SeriesIdentityDigest)
+			if found && effective.Fact.Status() == strategy.EffectiveTimeInactive &&
+				outcome.ReasonCode == ReasonCode(contract.ReasonEffectiveTimeInactive) {
+				continue
+			}
 		}
 		obligations++
 		if result.Disposition == PlanRetryPending && outcome.Outcome == LevelOutcomeUnknown {

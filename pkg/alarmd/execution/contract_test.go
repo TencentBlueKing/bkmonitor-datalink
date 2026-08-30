@@ -533,6 +533,127 @@ func TestEvaluationResultCannotIgnoreExactLoadedGuards(t *testing.T) {
 
 }
 
+func TestEvaluationAllowsWarmingStateAdvanceWithGuardedUnknown(t *testing.T) {
+	input := validInternalExecution()
+	state := normalStateEvaluation()
+	state.Mutation.ExpectedBlobRevision = 1
+	state.Mutation.Levels[0].HistoryCompleteness = execution.HistoryWarming
+	state.Mutation.Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonHistoryWarming)
+	state.Mutation.SeriesGuard = &execution.StateGuardFact{
+		Status: execution.HistoryWarming, ReasonCode: execution.ReasonCode(contract.ReasonHistoryWarming),
+		WarmupRequirementRef: mustSeriesWarmupRequirementRef(input.DuePlans[0].CompiledPlan),
+	}
+	state.Mutation.MutationDigest = ""
+	state.Mutation = mustStateMutation(state.Mutation)
+	outcome := normalLevelOutcome()
+	outcome.Outcome = execution.LevelOutcomeUnknown
+	outcome.ReasonCode = execution.ReasonCode(contract.ReasonHistoryWarming)
+	request := evaluationRequest(input, execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
+		Identity: input.StatePreflight[0].Identity, BlobRevision: 1,
+		PersistedApplyVersion:   olderApplyVersion(input.StatePreflight[0].ApplyVersion),
+		PersistedMutationDigest: "loaded-state", Status: execution.StateFoundWarming,
+		SeriesGuard: state.Mutation.SeriesGuard,
+		Levels: []execution.RuntimeLevelStateView{{
+			LevelID:                 state.Mutation.Levels[0].LevelID,
+			LevelStateCompatibility: state.Mutation.Levels[0].LevelStateCompatibility,
+			HistoryCompleteness:     execution.HistoryWarming,
+			GapReasonCode:           execution.ReasonCode(contract.ReasonHistoryWarming),
+			WarmupRequirementRef:    state.Mutation.Levels[0].WarmupRequirementRef,
+		}},
+	}}}, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
+		Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
+	}}})
+	result := execution.EvaluationResult{
+		Contract: input.Contract, Result: observability.ResultDegraded,
+		ReasonCode: execution.ReasonCode(contract.ReasonHistoryWarming),
+		Plans: []execution.PlanEvaluationResult{{
+			Plan: input.DuePlans[0].Identity, Disposition: execution.PlanDecidedDegraded,
+			ReasonCode:    execution.ReasonCode(contract.ReasonHistoryWarming),
+			LevelOutcomes: []execution.LevelOutcome{outcome}, StateResults: []execution.StateEvaluation{state},
+		}},
+	}
+	if err := result.Validate(request); err != nil {
+		t.Fatalf("guarded WARMING state advance rejected: %v", err)
+	}
+
+	unguarded := result
+	unguarded.Plans = append([]execution.PlanEvaluationResult(nil), result.Plans...)
+	unguarded.Plans[0].StateResults = append([]execution.StateEvaluation(nil), result.Plans[0].StateResults...)
+	mutation := unguarded.Plans[0].StateResults[0].Mutation
+	mutation.SeriesGuard = nil
+	mutation.Levels[0].HistoryCompleteness = execution.HistoryFull
+	mutation.Levels[0].GapReasonCode = ""
+	mutation.MutationDigest = ""
+	unguarded.Plans[0].StateResults[0].Mutation = mustStateMutation(mutation)
+	if err := unguarded.Validate(request); err == nil {
+		t.Fatal("UNKNOWN without an exact durable mutation guard must not advance history")
+	}
+
+	for _, completeness := range []execution.Completeness{execution.CompletenessPartial} {
+		degradedInput := input
+		degradedInput.Inputs = append([]execution.NamedInputBinding(nil), input.Inputs...)
+		degradedInput.Inputs[0].Completeness = completeness
+		degradedInput.Inputs[0].Disposition = execution.AccessDegraded
+		degradedInput.Inputs[0].ReasonCode = execution.ReasonCode(contract.ReasonQueryPartial)
+		if err := result.Validate(evaluationRequest(degradedInput, request.State, request.Gaps)); err == nil {
+			t.Fatalf("%s input must not advance guarded UNKNOWN history", completeness)
+		}
+	}
+}
+
+func TestEvaluationAllowsFullInactiveStateAdvance(t *testing.T) {
+	input := validInternalExecution()
+	compiled := compiledPlanWithTriggerConfig(t, json.RawMessage(`{
+		"window_size":1,"required_anomalies":1,"step_seconds":60,"timezone_ref":"BUSINESS_LOCAL",
+		"uptime":{"time_ranges":[{"start":"00:00","end":"00:01"}]}
+	}`))
+	input.DuePlans[0].CompiledPlan = compiled
+	provider := strategy.NewStaticScheduleProvider(strategy.TimezoneResolverFunc(
+		func(context.Context, string, string, string) (*time.Location, error) { return time.UTC, nil },
+	))
+	facts, err := provider.Resolve(context.Background(), []strategy.EffectiveTimeRequest{{
+		TenantID: "tenant", BusinessID: "2", EvaluationTime: int64(input.Contract.Slot.EvaluationTime),
+		Requirement: compiled.Levels()[0].EffectiveTimeRequirement(),
+	}})
+	if err != nil || len(facts) != 1 || facts[0].Status() != strategy.EffectiveTimeInactive {
+		t.Fatalf("inactive EffectiveTime fact = %+v, %v", facts, err)
+	}
+	input.EffectiveTimeFacts[0].Fact = facts[0]
+
+	state := normalStateEvaluation()
+	state.Mutation.ExpectedBlobRevision = 1
+	state.Mutation.MutationDigest = ""
+	state.Mutation = mustStateMutation(state.Mutation)
+	outcome := normalLevelOutcome()
+	outcome.Outcome = execution.LevelOutcomeUnknown
+	outcome.ReasonCode = execution.ReasonCode(contract.ReasonEffectiveTimeInactive)
+	request := evaluationRequest(input, execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
+		Identity: input.StatePreflight[0].Identity, BlobRevision: 1,
+		PersistedApplyVersion:   olderApplyVersion(input.StatePreflight[0].ApplyVersion),
+		PersistedMutationDigest: "loaded-state", Status: execution.StateFoundReady,
+		Levels: []execution.RuntimeLevelStateView{{
+			LevelID:                 state.Mutation.Levels[0].LevelID,
+			LevelStateCompatibility: state.Mutation.Levels[0].LevelStateCompatibility,
+			HistoryCompleteness:     execution.HistoryFull,
+			WarmupRequirementRef:    state.Mutation.Levels[0].WarmupRequirementRef,
+		}},
+	}}}, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
+		Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
+	}}})
+	result := execution.EvaluationResult{
+		Contract: input.Contract, Result: observability.ResultDegraded,
+		ReasonCode: execution.ReasonCode(contract.ReasonEffectiveTimeInactive),
+		Plans: []execution.PlanEvaluationResult{{
+			Plan: input.DuePlans[0].Identity, Disposition: execution.PlanDecidedDegraded,
+			ReasonCode:    execution.ReasonCode(contract.ReasonEffectiveTimeInactive),
+			LevelOutcomes: []execution.LevelOutcome{outcome}, StateResults: []execution.StateEvaluation{state},
+		}},
+	}
+	if err := result.Validate(request); err != nil {
+		t.Fatalf("FULL INACTIVE state advance rejected: %v", err)
+	}
+}
+
 func TestTerminalAggregateReasonMustComeFromTerminalPlan(t *testing.T) {
 	input := validInternalExecution()
 	gap := input.GapPreflight[0]
@@ -1131,6 +1252,27 @@ func normalStateEvaluation() execution.StateEvaluation {
 	return execution.StateEvaluation{Mutation: mutation}
 }
 
+func mustStateMutation(mutation execution.StateMutation) execution.StateMutation {
+	built, err := execution.BuildStateMutation(mutation)
+	if err != nil {
+		panic(err)
+	}
+	return built
+}
+
+func mustSeriesWarmupRequirementRef(plan *strategy.CompiledPlan) string {
+	ref, err := execution.DeriveRuntimeSeriesWarmupRequirementRef(plan)
+	if err != nil {
+		panic(err)
+	}
+	return ref
+}
+
+func olderApplyVersion(version execution.ApplyVersion) execution.ApplyVersion {
+	version.EvaluationTime--
+	return version
+}
+
 func mustPlanGapMutation(mutation execution.PlanGapMutation) execution.PlanGapMutation {
 	built, err := execution.BuildPlanGapMutation(mutation)
 	if err != nil {
@@ -1181,6 +1323,10 @@ func effectiveTimeFactForTest(plan *strategy.CompiledPlan) strategy.EffectiveTim
 }
 
 func compiledPlanForTest(t testing.TB) *strategy.CompiledPlan {
+	return compiledPlanWithTriggerConfig(t, json.RawMessage(`{"window_size":1,"required_anomalies":1,"step_seconds":60}`))
+}
+
+func compiledPlanWithTriggerConfig(t testing.TB, triggerConfig json.RawMessage) *strategy.CompiledPlan {
 	if t != nil {
 		t.Helper()
 	}
@@ -1214,7 +1360,7 @@ func compiledPlanForTest(t testing.TB) *strategy.CompiledPlan {
 					Type: "Threshold", Version: 1,
 					Config: json.RawMessage(`{"value_field":"value","data_unit":"percent","threshold_unit_prefix":"","precision":{"decimal_places":6,"rounding":"HALF_EVEN"},"groups":[{"conditions":[{"operator":"GTE","threshold_decimal":"50"}]}]}`),
 				}}},
-				TriggerPlan:  contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: json.RawMessage(`{"window_size":1,"required_anomalies":1,"step_seconds":60}`)},
+				TriggerPlan:  contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: triggerConfig},
 				RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)},
 			}},
 		},
@@ -1237,6 +1383,9 @@ func compiledPlanForTest(t testing.TB) *strategy.CompiledPlan {
 	compiled, ok := result.Plan()
 	if !ok {
 		panic("test plan did not compile")
+	}
+	if len(compiled.Levels()) == 0 {
+		panic(fmt.Sprintf("test plan has no compiled Levels: %+v", result.LevelTerminals()))
 	}
 	return compiled
 }

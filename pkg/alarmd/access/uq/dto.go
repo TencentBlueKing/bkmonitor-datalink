@@ -35,7 +35,7 @@ type queryClause struct {
 type timeAggregation struct {
 	Function  string `json:"function,omitempty"`
 	Window    string `json:"window,omitempty"`
-	Position  int32  `json:"position"`
+	Position  *int32 `json:"position,omitempty"`
 	VArgsList []any  `json:"vargs_list,omitempty"`
 	Subquery  bool   `json:"is_sub_query,omitempty"`
 	Step      string `json:"step,omitempty"`

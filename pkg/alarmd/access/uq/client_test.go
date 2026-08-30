@@ -245,6 +245,50 @@ func TestRequestMatchesTraceablePythonFinalWireFixture(t *testing.T) {
 	}
 }
 
+func TestRequestPreservesPythonAVGAndRealTimeFunctionShapes(t *testing.T) {
+	want, err := os.ReadFile("testdata/python-empty-functions-wire-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := validAttempt(t)
+	avg := attempt.Spec.PlanFacts.QueryList[0]
+	avg.DataSource = ""
+	avg.Functions = []execution.QueryFunction{{Method: "mean", Position: 0}}
+	avg.TimeAggregation = execution.QueryFunction{Method: "avg_over_time", Window: "60s", Position: 0}
+	avg.Conditions = execution.QueryConditions{}
+	avg.OffsetForward = ""
+	realTime := avg
+	realTime.ReferenceName = "b"
+	realTime.FieldName = "instant_usage"
+	realTime.Functions = []execution.QueryFunction{}
+	realTime.TimeAggregation = execution.QueryFunction{}
+	facts := attempt.Spec.PlanFacts
+	facts.QueryRevision = ""
+	facts.QueryList = []execution.QueryClause{avg, realTime}
+	facts.MetricMerge = "a or b"
+	facts, err = execution.BuildQueryPlanFacts(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt.Spec, err = execution.BuildPhysicalQuerySpec(execution.PhysicalQuerySpec{PlanFacts: facts,
+		LogicalWindow: attempt.Spec.LogicalWindow, ProviderRange: attempt.Spec.ProviderRange,
+		AcceptedRange: attempt.Spec.AcceptedRange, RequiredColumns: attempt.Spec.RequiredColumns})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := buildRequest(attempt.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !jsonEqual(got, want) {
+		t.Fatalf("request lost Python empty function shapes\ngot=%s\nwant=%s", got, want)
+	}
+}
+
 func fixtureClient(t *testing.T, status int, body string, limits Limits) *Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {

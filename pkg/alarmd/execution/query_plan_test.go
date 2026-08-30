@@ -93,6 +93,57 @@ func TestQueryPlanFactsAcceptsRealUQFunctionPositions(t *testing.T) {
 	}
 }
 
+func TestQueryPlanFactsAcceptsPythonAVGAndRealTimeFunctionShapes(t *testing.T) {
+	tests := []struct {
+		name            string
+		functions       []execution.QueryFunction
+		timeAggregation execution.QueryFunction
+	}{
+		{name: "ordinary avg", functions: []execution.QueryFunction{{Method: "mean", Position: 0}},
+			timeAggregation: execution.QueryFunction{Method: "avg_over_time", Window: "60s", Position: 0}},
+		{name: "real time", functions: []execution.QueryFunction{}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			facts := validQueryPlanFacts()
+			facts.QueryList[0].Functions = test.functions
+			facts.QueryList[0].TimeAggregation = test.timeAggregation
+			built, err := execution.BuildQueryPlanFacts(facts)
+			if err != nil {
+				t.Fatalf("real Python UQ shape must be accepted: %v", err)
+			}
+			if err := built.Validate(); err != nil {
+				t.Fatalf("built facts must preserve a stable query revision: %v", err)
+			}
+		})
+	}
+}
+
+func TestQueryPlanFactsRejectsNonEmptyInvalidFunctionShapes(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*execution.QueryClause)
+	}{
+		{name: "function without method", mutate: func(clause *execution.QueryClause) {
+			clause.Functions = []execution.QueryFunction{{Window: "60s"}}
+			clause.TimeAggregation = execution.QueryFunction{}
+		}},
+		{name: "time aggregation without method", mutate: func(clause *execution.QueryClause) {
+			clause.Functions = []execution.QueryFunction{}
+			clause.TimeAggregation = execution.QueryFunction{Window: "60s"}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			facts := validQueryPlanFacts()
+			test.mutate(&facts.QueryList[0])
+			if _, err := execution.BuildQueryPlanFacts(facts); err == nil {
+				t.Fatal("non-empty invalid function shape must be rejected")
+			}
+		})
+	}
+}
+
 func TestQueryPlanFactsRequiresQueryExecutionFields(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -108,6 +159,20 @@ func TestQueryPlanFactsRequiresQueryExecutionFields(t *testing.T) {
 				t.Fatalf("empty %s must be rejected", test.name)
 			}
 		})
+	}
+}
+
+func TestQueryPlanFactsAllowsOptionalUQClauseFieldsToBeEmpty(t *testing.T) {
+	facts := validQueryPlanFacts()
+	clause := &facts.QueryList[0]
+	clause.DataSource = ""
+	clause.TableID = ""
+	clause.FieldName = ""
+	clause.ReferenceName = ""
+	clause.Functions = []execution.QueryFunction{}
+	clause.TimeAggregation = execution.QueryFunction{}
+	if _, err := execution.BuildQueryPlanFacts(facts); err != nil {
+		t.Fatalf("only driver and time_field are mandatory UQ clause facts: %v", err)
 	}
 }
 

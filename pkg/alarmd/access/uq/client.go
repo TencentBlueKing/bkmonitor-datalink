@@ -236,6 +236,9 @@ func mapFunctions(source []execution.QueryFunction) ([]queryFunction, error) {
 }
 
 func mapTimeAggregation(source execution.QueryFunction) (timeAggregation, error) {
+	if source.Method == "" {
+		return timeAggregation{}, nil
+	}
 	arguments := make([]any, 0, len(source.Arguments))
 	for _, argument := range source.Arguments {
 		value, err := scalarValue(argument)
@@ -244,7 +247,8 @@ func mapTimeAggregation(source execution.QueryFunction) (timeAggregation, error)
 		}
 		arguments = append(arguments, value)
 	}
-	return timeAggregation{Function: source.Method, Window: source.Window, Position: source.Position,
+	position := source.Position
+	return timeAggregation{Function: source.Method, Window: source.Window, Position: &position,
 		VArgsList: arguments, Subquery: source.Subquery, Step: source.Step}, nil
 }
 

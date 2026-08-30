@@ -308,7 +308,39 @@ func (stream *streamedExecution) complete(completion execution.QueryExecutionCom
 				return nil
 			}
 		}
-		return errors.New("alarmd worker: trustworthy completion produced no provisional evaluation")
+		completionByQuery := make(map[execution.PhysicalQueryDigest]execution.PhysicalQueryCompletion,
+			len(completion.PhysicalQueries))
+		for _, physical := range completion.PhysicalQueries {
+			if physical.Completeness != execution.CompletenessFull || physical.DataState != execution.DataStateEmpty {
+				return errors.New("alarmd worker: trustworthy completion produced no provisional evaluation")
+			}
+			completionByQuery[physical.PhysicalQuery] = physical
+		}
+		for _, binding := range completion.CompletionBindings {
+			physical, ok := completionByQuery[binding.Provenance.PhysicalQuery]
+			if !ok || physical.Ref != binding.ProviderResult ||
+				binding.Completeness != execution.CompletenessFull || binding.DataState != execution.DataStateEmpty ||
+				binding.Disposition != execution.AccessAvailable {
+				return errors.New("alarmd worker: trustworthy completion produced no provisional evaluation")
+			}
+		}
+		input := execution.InternalExecution{
+			Contract: stream.header.Contract, DuePlans: stream.header.DuePlans, Requirements: stream.header.Requirements,
+			Inputs: completion.CompletionBindings, EffectiveTimeFacts: stream.header.EffectiveTimeFacts,
+			GapPreflight: stream.gapItems,
+		}
+		if err := input.Validate(stream.header.Contract); err != nil {
+			return fmt.Errorf("alarmd worker: invalid completion-only execution: %w", err)
+		}
+		stream.evaluated = execution.EvaluationResult{
+			Contract: stream.header.Contract, Result: observability.ResultSuccess,
+			Plans: make([]execution.PlanEvaluationResult, len(stream.header.DuePlans)),
+		}
+		for index, due := range stream.header.DuePlans {
+			stream.evaluated.Plans[index] = execution.PlanEvaluationResult{
+				Plan: due.Identity, Disposition: execution.PlanDecided,
+			}
+		}
 	}
 	return nil
 }

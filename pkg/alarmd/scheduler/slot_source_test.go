@@ -7,20 +7,24 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
 func TestProductionSlotSourceColdStartFreezesFirstDueSlot(t *testing.T) {
 	schedule := testSchedule()
 	source, catalog := newTestProductionSlotSource(t, schedule, execution.ProgressLoadResult{Status: execution.ProgressMissing})
 
-	slot, due, err := source.Next(context.Background(), schedule.QueryGroup)
+	slot, due, err := source.Next(context.Background(), schedule.Lane.QueryGroup)
 	if err != nil {
 		t.Fatalf("Next() error = %v", err)
 	}
@@ -31,12 +35,12 @@ func TestProductionSlotSourceColdStartFreezesFirstDueSlot(t *testing.T) {
 		t.Fatalf("slot times = %+v", slot)
 	}
 	if slot.Contract.SnapshotRevision != "snapshot-1" || slot.Contract.QueryRevision != "query-1" ||
-		slot.Contract.ScheduleRevision != schedule.ScheduleRevision || slot.Contract.DuePlanSetDigest != "due-plan-set-1" {
+		slot.Contract.ScheduleRevision != schedule.Lane.ScheduleRevision || slot.Contract.DuePlanSetDigest == "" {
 		t.Fatalf("frozen contract = %+v", slot.Contract)
 	}
-	wantDue := []FrozenPlanScheduleRef{
-		{Identity: planIdentity("1"), ScheduleRevision: "plan-schedule-1"},
-		{Identity: planIdentity("2"), ScheduleRevision: "plan-schedule-2"},
+	wantDue := []execution.FrozenPlanScheduleRef{
+		{Identity: planIdentity("1"), ScheduleRevision: schedule.Plans[1].ScheduleRevision},
+		{Identity: planIdentity("2"), ScheduleRevision: schedule.Plans[0].ScheduleRevision},
 	}
 	if !reflect.DeepEqual(catalog.requests[0].DuePlans, wantDue) {
 		t.Fatalf("due plans = %+v, want %+v", catalog.requests[0].DuePlans, wantDue)
@@ -49,20 +53,20 @@ func TestProductionSlotSourceColdStartFreezesFirstDueSlot(t *testing.T) {
 
 func TestProductionSlotSourceUsesContinuousProgress(t *testing.T) {
 	schedule := testSchedule()
-	namespace := execution.ProgressNamespace{QueryGroup: schedule.QueryGroup, ScheduleRevision: schedule.ScheduleRevision}
+	namespace := schedule.Lane.ProgressNamespace()
 	load := execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
 		Namespace: namespace, NextSlot: 180, LastFullSlot: 120, LastCompletionKind: execution.CompletionFull,
 	}}
 	source, catalog := newTestProductionSlotSource(t, schedule, load)
 
-	slot, due, err := source.Next(context.Background(), schedule.QueryGroup)
+	slot, due, err := source.Next(context.Background(), schedule.Lane.QueryGroup)
 	if err != nil || !due {
 		t.Fatalf("Next() due=%v error=%v", due, err)
 	}
 	if slot.ExpectedNextSlot != 180 || slot.NextSlotAfterCompletion != 240 {
 		t.Fatalf("slot times = %+v", slot)
 	}
-	wantDue := []FrozenPlanScheduleRef{{Identity: planIdentity("1"), ScheduleRevision: "plan-schedule-1"}}
+	wantDue := []execution.FrozenPlanScheduleRef{{Identity: planIdentity("1"), ScheduleRevision: schedule.Plans[1].ScheduleRevision}}
 	if !reflect.DeepEqual(catalog.requests[0].DuePlans, wantDue) {
 		t.Fatalf("due plans = %+v, want %+v", catalog.requests[0].DuePlans, wantDue)
 	}
@@ -70,19 +74,21 @@ func TestProductionSlotSourceUsesContinuousProgress(t *testing.T) {
 
 func TestProductionSlotSourceFreezesContentRevisionByEvaluationTimeAcrossCutover(t *testing.T) {
 	schedule := testSchedule()
-	freeze := func(request FreezeSlotContractRequest) execution.FrozenExecutionContractRef {
+	freeze := func(request execution.FreezeSlotContractRequest) execution.FrozenSlotContractFact {
 		snapshotRevision := execution.SnapshotRevision("snapshot-before-cutover")
 		queryRevision := execution.QueryRevision("query-before-cutover")
 		if request.EvaluationTime >= 180 {
 			snapshotRevision = "snapshot-after-cutover"
 			queryRevision = "query-after-cutover"
 		}
-		return execution.FrozenExecutionContractRef{
-			Slot: execution.SlotIdentity{QueryGroup: request.QueryGroup, ScheduleRevision: request.ScheduleRevision,
+		fact := frozenSlotContractFact(t, request)
+		fact.Contract = execution.FrozenExecutionContractRef{
+			Slot: execution.SlotIdentity{QueryGroup: request.Lane.QueryGroup, ScheduleRevision: request.Lane.ScheduleRevision,
 				EvaluationTime: request.EvaluationTime},
 			SnapshotRevision: snapshotRevision, QueryRevision: queryRevision,
-			ScheduleRevision: request.ScheduleRevision, DuePlanSetDigest: "due-plan-set-after-cutover",
+			ScheduleRevision: request.Lane.ScheduleRevision, DuePlanSetDigest: fact.Contract.DuePlanSetDigest,
 		}
+		return fact
 	}
 	tests := []struct {
 		name         string
@@ -97,13 +103,13 @@ func TestProductionSlotSourceFreezesContentRevisionByEvaluationTimeAcrossCutover
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			catalog := &fakeSlotCatalog{schedule: schedule, freeze: freeze}
-			source := mustProductionSlotSource(t, schedule.QueryGroup, schedule.ScheduleRevision,
+			catalog := &fakeSlotCatalog{t: t, schedule: schedule, freeze: freeze}
+			source := mustProductionSlotSource(t, schedule.Lane,
 				&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 				&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog,
 				&fakeProgressReader{result: test.load}, time.Unix(200, 0))
 
-			slot, due, err := source.Next(context.Background(), schedule.QueryGroup)
+			slot, due, err := source.Next(context.Background(), schedule.Lane.QueryGroup)
 			if err != nil || !due {
 				t.Fatalf("Next() due=%v error=%v", due, err)
 			}
@@ -115,24 +121,23 @@ func TestProductionSlotSourceFreezesContentRevisionByEvaluationTimeAcrossCutover
 }
 
 func TestProductionSlotSourceReadsOnlyBoundScheduleLane(t *testing.T) {
-	for _, revision := range []execution.ScheduleRevision{"schedule-1", "schedule-2"} {
+	for _, schedule := range []execution.FrozenQueryGroupSchedule{testSchedule(), testScheduleWithFirstPlanInterval(180)} {
+		revision := schedule.Lane.ScheduleRevision
 		t.Run(string(revision), func(t *testing.T) {
-			schedule := testSchedule()
-			schedule.ScheduleRevision = revision
-			catalog := &fakeSlotCatalog{schedule: schedule}
-			source := mustProductionSlotSource(t, schedule.QueryGroup, revision,
+			catalog := &fakeSlotCatalog{t: t, schedule: schedule}
+			source := mustProductionSlotSource(t, schedule.Lane,
 				&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 				&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog,
 				&fakeProgressReader{result: execution.ProgressLoadResult{Status: execution.ProgressMissing}}, time.Unix(200, 0))
 
-			if _, due, err := source.Next(context.Background(), schedule.QueryGroup); err != nil || !due {
+			if _, due, err := source.Next(context.Background(), schedule.Lane.QueryGroup); err != nil || !due {
 				t.Fatalf("Next() due=%v error=%v", due, err)
 			}
-			if catalog.readScheduleRevision != revision {
-				t.Fatalf("ReadFrozenSchedule() revision = %q, want %q", catalog.readScheduleRevision, revision)
+			if catalog.readLane != schedule.Lane {
+				t.Fatalf("ReadFrozenSchedule() lane = %+v, want %+v", catalog.readLane, schedule.Lane)
 			}
-			if catalog.requests[0].ScheduleRevision != revision {
-				t.Fatalf("FreezeSlotContract() revision = %q, want %q", catalog.requests[0].ScheduleRevision, revision)
+			if catalog.requests[0].Lane.ScheduleRevision != revision {
+				t.Fatalf("FreezeSlotContract() revision = %q, want %q", catalog.requests[0].Lane.ScheduleRevision, revision)
 			}
 		})
 	}
@@ -140,15 +145,15 @@ func TestProductionSlotSourceReadsOnlyBoundScheduleLane(t *testing.T) {
 
 func TestProductionSlotSourceRestartWithSameProgressFreezesSameContract(t *testing.T) {
 	schedule := testSchedule()
-	namespace := execution.ProgressNamespace{QueryGroup: schedule.QueryGroup, ScheduleRevision: schedule.ScheduleRevision}
+	namespace := schedule.Lane.ProgressNamespace()
 	load := execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
 		Namespace: namespace, NextSlot: 180, LastFullSlot: 120, LastCompletionKind: execution.CompletionFull,
 	}}
 
 	first, _ := newTestProductionSlotSource(t, schedule, load)
 	second, _ := newTestProductionSlotSource(t, schedule, load)
-	firstSlot, firstDue, firstErr := first.Next(context.Background(), schedule.QueryGroup)
-	secondSlot, secondDue, secondErr := second.Next(context.Background(), schedule.QueryGroup)
+	firstSlot, firstDue, firstErr := first.Next(context.Background(), schedule.Lane.QueryGroup)
+	secondSlot, secondDue, secondErr := second.Next(context.Background(), schedule.Lane.QueryGroup)
 	if firstErr != nil || secondErr != nil || !firstDue || !secondDue {
 		t.Fatalf("restart results first=(%v,%v) second=(%v,%v)", firstDue, firstErr, secondDue, secondErr)
 	}
@@ -161,7 +166,7 @@ func TestProductionSlotSourceReturnsNotDueBeforeEvaluationTime(t *testing.T) {
 	schedule := testSchedule()
 	source, catalog := newTestProductionSlotSourceAt(t, schedule, execution.ProgressLoadResult{Status: execution.ProgressMissing}, time.Unix(119, 0))
 
-	_, due, err := source.Next(context.Background(), schedule.QueryGroup)
+	_, due, err := source.Next(context.Background(), schedule.Lane.QueryGroup)
 	if err != nil {
 		t.Fatalf("Next() error = %v", err)
 	}
@@ -175,13 +180,13 @@ func TestProductionSlotSourceReturnsNotDueBeforeEvaluationTime(t *testing.T) {
 
 func TestProductionSlotSourceRejectsProgressOutsideSchedule(t *testing.T) {
 	schedule := testSchedule()
-	namespace := execution.ProgressNamespace{QueryGroup: schedule.QueryGroup, ScheduleRevision: schedule.ScheduleRevision}
+	namespace := schedule.Lane.ProgressNamespace()
 	load := execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
 		Namespace: namespace, NextSlot: 181, LastFullSlot: 120, LastCompletionKind: execution.CompletionFull,
 	}}
 	source, _ := newTestProductionSlotSource(t, schedule, load)
 
-	if _, _, err := source.Next(context.Background(), schedule.QueryGroup); !errors.Is(err, ErrProgressOffSchedule) {
+	if _, _, err := source.Next(context.Background(), schedule.Lane.QueryGroup); !errors.Is(err, ErrProgressOffSchedule) {
 		t.Fatalf("Next() error = %v, want ErrProgressOffSchedule", err)
 	}
 }
@@ -191,7 +196,7 @@ func TestProductionSlotSourceRejectsMissingDueFacts(t *testing.T) {
 	schedule.Plans = nil
 	source, _ := newTestProductionSlotSource(t, schedule, execution.ProgressLoadResult{Status: execution.ProgressMissing})
 
-	if _, _, err := source.Next(context.Background(), schedule.QueryGroup); !errors.Is(err, ErrScheduleFactsInvalid) {
+	if _, _, err := source.Next(context.Background(), schedule.Lane.QueryGroup); !errors.Is(err, ErrScheduleFactsInvalid) {
 		t.Fatalf("Next() error = %v, want ErrScheduleFactsInvalid", err)
 	}
 }
@@ -211,11 +216,11 @@ func TestProductionSlotSourceRejectsNonCurrentAssignmentAndLostLease(t *testing.
 			schedule := testSchedule()
 			assignments := &fakeAssignmentReader{records: []ownership.AssignmentRecord{test.assignment}}
 			session := &sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}, err: test.sessionErr}
-			catalog := &fakeSlotCatalog{schedule: schedule}
-			source := mustProductionSlotSource(t, schedule.QueryGroup, schedule.ScheduleRevision, assignments, session, catalog,
+			catalog := &fakeSlotCatalog{t: t, schedule: schedule}
+			source := mustProductionSlotSource(t, schedule.Lane, assignments, session, catalog,
 				&fakeProgressReader{result: execution.ProgressLoadResult{Status: execution.ProgressMissing}}, time.Unix(200, 0))
 
-			if _, _, err := source.Next(context.Background(), schedule.QueryGroup); !errors.Is(err, test.want) {
+			if _, _, err := source.Next(context.Background(), schedule.Lane.QueryGroup); !errors.Is(err, test.want) {
 				t.Fatalf("Next() error = %v, want %v", err, test.want)
 			}
 			if catalog.reads != 0 {
@@ -237,11 +242,11 @@ func TestProductionSlotSourceRejectsOwnershipChangeWhileFreezing(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			schedule := testSchedule()
-			source := mustProductionSlotSource(t, schedule.QueryGroup, schedule.ScheduleRevision, &fakeAssignmentReader{records: test.assignments},
-				&sequenceOwnerSession{fences: test.fences}, &fakeSlotCatalog{schedule: schedule},
+			source := mustProductionSlotSource(t, schedule.Lane, &fakeAssignmentReader{records: test.assignments},
+				&sequenceOwnerSession{fences: test.fences}, &fakeSlotCatalog{t: t, schedule: schedule},
 				&fakeProgressReader{result: execution.ProgressLoadResult{Status: execution.ProgressMissing}}, time.Unix(200, 0))
 
-			if _, _, err := source.Next(context.Background(), schedule.QueryGroup); !errors.Is(err, ErrSlotOwnershipChanged) {
+			if _, _, err := source.Next(context.Background(), schedule.Lane.QueryGroup); !errors.Is(err, ErrSlotOwnershipChanged) {
 				t.Fatalf("Next() error = %v, want ErrSlotOwnershipChanged", err)
 			}
 		})
@@ -250,56 +255,89 @@ func TestProductionSlotSourceRejectsOwnershipChangeWhileFreezing(t *testing.T) {
 
 func TestProductionSlotSourceRejectsCatalogContractDrift(t *testing.T) {
 	schedule := testSchedule()
-	valid := execution.FrozenExecutionContractRef{
-		Slot:             execution.SlotIdentity{QueryGroup: schedule.QueryGroup, ScheduleRevision: schedule.ScheduleRevision, EvaluationTime: 120},
+	valid := frozenSlotContractFact(t, execution.FreezeSlotContractRequest{
+		Lane: schedule.Lane, EvaluationTime: 120, DuePlans: schedule.DuePlanRefs(120),
+	})
+	valid.Contract = execution.FrozenExecutionContractRef{
+		Slot:             execution.SlotIdentity{QueryGroup: schedule.Lane.QueryGroup, ScheduleRevision: schedule.Lane.ScheduleRevision, EvaluationTime: 120},
 		SnapshotRevision: "snapshot-1",
 		QueryRevision:    "query-1",
-		ScheduleRevision: schedule.ScheduleRevision,
-		DuePlanSetDigest: "due-plan-set-1",
+		ScheduleRevision: schedule.Lane.ScheduleRevision,
+		DuePlanSetDigest: valid.Contract.DuePlanSetDigest,
 	}
 	tests := []struct {
 		name   string
-		mutate func(*execution.FrozenExecutionContractRef)
+		mutate func(*execution.FrozenSlotContractFact)
 	}{
-		{name: "schedule revision", mutate: func(ref *execution.FrozenExecutionContractRef) { ref.ScheduleRevision = "schedule-changed" }},
-		{name: "missing due Plan digest", mutate: func(ref *execution.FrozenExecutionContractRef) { ref.DuePlanSetDigest = "" }},
+		{name: "schedule revision", mutate: func(fact *execution.FrozenSlotContractFact) { fact.Contract.ScheduleRevision = "schedule-changed" }},
+		{name: "missing due Plan digest", mutate: func(fact *execution.FrozenSlotContractFact) { fact.Contract.DuePlanSetDigest = "" }},
+		{name: "returned exact due facts", mutate: func(fact *execution.FrozenSlotContractFact) {
+			fact.DuePlans = append([]execution.DuePlan(nil), fact.DuePlans...)
+			fact.DuePlans[0].ScheduleRevision = "plan-schedule-changed"
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			contractRef := valid
-			test.mutate(&contractRef)
-			catalog := &fakeSlotCatalog{schedule: schedule, contract: contractRef}
-			source := mustProductionSlotSource(t, schedule.QueryGroup, schedule.ScheduleRevision,
+			fact := valid
+			test.mutate(&fact)
+			catalog := &fakeSlotCatalog{t: t, schedule: schedule, contract: fact}
+			source := mustProductionSlotSource(t, schedule.Lane,
 				&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 				&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog,
 				&fakeProgressReader{result: execution.ProgressLoadResult{Status: execution.ProgressMissing}}, time.Unix(200, 0))
 
-			if _, _, err := source.Next(context.Background(), schedule.QueryGroup); !errors.Is(err, ErrSlotContractDrift) {
+			if _, _, err := source.Next(context.Background(), schedule.Lane.QueryGroup); !errors.Is(err, ErrSlotContractDrift) {
 				t.Fatalf("Next() error = %v, want ErrSlotContractDrift", err)
 			}
 		})
 	}
 }
 
-func testSchedule() FrozenQueryGroupSchedule {
-	return FrozenQueryGroupSchedule{
-		QueryGroup: "query-group-1", ScheduleRevision: "schedule-1", FirstEvaluationTime: 120,
-		Plans: []FrozenPlanSchedule{
-			{Identity: planIdentity("2"), ScheduleRevision: "plan-schedule-2", IntervalSeconds: 120, Alignment: 0},
-			{Identity: planIdentity("1"), ScheduleRevision: "plan-schedule-1", IntervalSeconds: 60, Alignment: 0},
-		},
+func testSchedule() execution.FrozenQueryGroupSchedule {
+	plans := []execution.FrozenPlanSchedule{
+		frozenPlanSchedule(planIdentity("2"), execution.ScheduleSpec{EvaluationIntervalSeconds: 120, Alignment: 0, Timezone: "UTC"}),
+		frozenPlanSchedule(planIdentity("1"), execution.ScheduleSpec{EvaluationIntervalSeconds: 60, Alignment: 0, Timezone: "UTC"}),
+	}
+	revision, err := execution.DeriveQueryGroupScheduleRevision(plans)
+	if err != nil {
+		panic(err)
+	}
+	return execution.FrozenQueryGroupSchedule{
+		Lane:                execution.ScheduleLaneIdentity{QueryGroup: "query-group-1", ScheduleRevision: revision},
+		FirstEvaluationTime: 120, Plans: plans,
 	}
 }
 
-func foundProgress(schedule FrozenQueryGroupSchedule, nextSlot, lastFullSlot execution.EvaluationTime) execution.ProgressLoadResult {
+func testScheduleWithFirstPlanInterval(interval int64) execution.FrozenQueryGroupSchedule {
+	schedule := testSchedule()
+	schedule.Plans[0] = frozenPlanSchedule(schedule.Plans[0].Identity, execution.ScheduleSpec{
+		EvaluationIntervalSeconds: interval, Alignment: 0, Timezone: "UTC",
+	})
+	revision, err := execution.DeriveQueryGroupScheduleRevision(schedule.Plans)
+	if err != nil {
+		panic(err)
+	}
+	schedule.Lane.ScheduleRevision = revision
+	return schedule
+}
+
+func foundProgress(schedule execution.FrozenQueryGroupSchedule, nextSlot, lastFullSlot execution.EvaluationTime) execution.ProgressLoadResult {
 	return execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
-		Namespace: execution.ProgressNamespace{QueryGroup: schedule.QueryGroup, ScheduleRevision: schedule.ScheduleRevision},
+		Namespace: schedule.Lane.ProgressNamespace(),
 		NextSlot:  nextSlot, LastFullSlot: lastFullSlot, LastCompletionKind: execution.CompletionFull,
 	}}
 }
 
 func planIdentity(strategyID string) execution.PlanIdentity {
 	return execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: strategyID}
+}
+
+func frozenPlanSchedule(identity execution.PlanIdentity, spec execution.ScheduleSpec) execution.FrozenPlanSchedule {
+	revision, err := execution.DerivePlanScheduleRevision(spec)
+	if err != nil {
+		panic(err)
+	}
+	return execution.FrozenPlanSchedule{Identity: identity, ScheduleRevision: revision, Spec: spec}
 }
 
 func testAssignment(workerID string, generation uint64) ownership.AssignmentRecord {
@@ -314,7 +352,7 @@ func testFence(epoch uint64) execution.OwnerFence {
 
 func newTestProductionSlotSource(
 	t *testing.T,
-	schedule FrozenQueryGroupSchedule,
+	schedule execution.FrozenQueryGroupSchedule,
 	load execution.ProgressLoadResult,
 ) (*ProductionSlotSource, *fakeSlotCatalog) {
 	return newTestProductionSlotSourceAt(t, schedule, load, time.Unix(200, 0))
@@ -322,12 +360,12 @@ func newTestProductionSlotSource(
 
 func newTestProductionSlotSourceAt(
 	t *testing.T,
-	schedule FrozenQueryGroupSchedule,
+	schedule execution.FrozenQueryGroupSchedule,
 	load execution.ProgressLoadResult,
 	at time.Time,
 ) (*ProductionSlotSource, *fakeSlotCatalog) {
-	catalog := &fakeSlotCatalog{schedule: schedule}
-	source := mustProductionSlotSource(t, schedule.QueryGroup, schedule.ScheduleRevision,
+	catalog := &fakeSlotCatalog{t: t, schedule: schedule}
+	source := mustProductionSlotSource(t, schedule.Lane,
 		&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog,
 		&fakeProgressReader{result: load}, at)
@@ -336,8 +374,7 @@ func newTestProductionSlotSourceAt(
 
 func mustProductionSlotSource(
 	t *testing.T,
-	queryGroup execution.QueryGroupIdentity,
-	scheduleRevision execution.ScheduleRevision,
+	lane execution.ScheduleLaneIdentity,
 	assignments AssignmentReader,
 	session OwnerSession,
 	catalog SlotCatalogReader,
@@ -345,7 +382,7 @@ func mustProductionSlotSource(
 	at time.Time,
 ) *ProductionSlotSource {
 	t.Helper()
-	source, err := NewProductionSlotSource(queryGroup, scheduleRevision, "worker-1", assignments, session, catalog, progress, func() time.Time { return at })
+	source, err := NewProductionSlotSource(lane, "worker-1", assignments, session, catalog, progress, func() time.Time { return at })
 	if err != nil {
 		t.Fatalf("NewProductionSlotSource() error = %v", err)
 	}
@@ -385,37 +422,132 @@ func (session *sequenceOwnerSession) ValidateCurrent(context.Context, time.Time)
 }
 
 type fakeSlotCatalog struct {
-	schedule             FrozenQueryGroupSchedule
-	contract             execution.FrozenExecutionContractRef
-	freeze               func(FreezeSlotContractRequest) execution.FrozenExecutionContractRef
-	requests             []FreezeSlotContractRequest
-	reads                int
-	readScheduleRevision execution.ScheduleRevision
+	t        *testing.T
+	schedule execution.FrozenQueryGroupSchedule
+	contract execution.FrozenSlotContractFact
+	freeze   func(execution.FreezeSlotContractRequest) execution.FrozenSlotContractFact
+	requests []execution.FreezeSlotContractRequest
+	reads    int
+	readLane execution.ScheduleLaneIdentity
 }
 
 func (catalog *fakeSlotCatalog) ReadFrozenSchedule(
 	_ context.Context,
-	_ execution.QueryGroupIdentity,
-	scheduleRevision execution.ScheduleRevision,
-) (FrozenQueryGroupSchedule, error) {
+	lane execution.ScheduleLaneIdentity,
+) (execution.FrozenQueryGroupSchedule, error) {
 	catalog.reads++
-	catalog.readScheduleRevision = scheduleRevision
+	catalog.readLane = lane
 	return catalog.schedule, nil
 }
 
-func (catalog *fakeSlotCatalog) FreezeSlotContract(_ context.Context, request FreezeSlotContractRequest) (execution.FrozenExecutionContractRef, error) {
+func (catalog *fakeSlotCatalog) FreezeSlotContract(_ context.Context, request execution.FreezeSlotContractRequest) (execution.FrozenSlotContractFact, error) {
 	catalog.requests = append(catalog.requests, request)
 	if catalog.freeze != nil {
 		return catalog.freeze(request), nil
 	}
-	if catalog.contract.Slot.QueryGroup != "" {
+	if catalog.contract.Contract.Slot.QueryGroup != "" {
 		return catalog.contract, nil
 	}
-	return execution.FrozenExecutionContractRef{
-		Slot:             execution.SlotIdentity{QueryGroup: request.QueryGroup, ScheduleRevision: request.ScheduleRevision, EvaluationTime: request.EvaluationTime},
-		SnapshotRevision: "snapshot-1", QueryRevision: "query-1",
-		ScheduleRevision: request.ScheduleRevision, DuePlanSetDigest: "due-plan-set-1",
-	}, nil
+	return frozenSlotContractFact(catalog.t, request), nil
+}
+
+func frozenSlotContractFact(t *testing.T, request execution.FreezeSlotContractRequest) execution.FrozenSlotContractFact {
+	t.Helper()
+	compiled := compiledPlanForSlotSource(t)
+	plans := make([]execution.DuePlan, len(request.DuePlans))
+	requirements := make([]execution.DataRequirement, len(request.DuePlans))
+	for index, ref := range request.DuePlans {
+		deadline := int64(request.EvaluationTime+60) * 1000
+		plans[index] = execution.DuePlan{
+			Identity: ref.Identity, CompiledPlan: compiled, StateGeneration: "state-v1", StateApplyEpoch: 1,
+			ScheduleRevision: ref.ScheduleRevision, CompletionDeadlineUnixMilli: deadline,
+		}
+		requirementID := execution.RequirementID("primary-" + ref.Identity.StrategyID)
+		requirements[index] = execution.DataRequirement{
+			RequirementID: requirementID, DatasetName: execution.DatasetName(requirementID), Role: execution.InputRolePrimary,
+			LogicalQueryRef: execution.LogicalQueryRef("query-main"),
+			RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -60, EndOffsetSeconds: 0, HalfOpen: true},
+			StepMillis:      60_000, AlignmentMillis: 60_000, ResultWindowPolicy: execution.ResultWindowExactHalfOpen,
+			ReadinessClass: execution.ReadinessEager, RequiredColumns: []string{"value"},
+			Consumers: []execution.DataRequirementConsumer{{
+				Consumer: execution.ConsumerRef{Plan: ref.Identity}, ConsumerDeadlineUnixMilli: deadline,
+				DownstreamExecutionReserveMilliSec: 5_000,
+			}},
+		}
+	}
+	digest, err := execution.DeriveDuePlanSetDigest(plans, requirements)
+	if err != nil {
+		t.Fatalf("DeriveDuePlanSetDigest() error = %v", err)
+	}
+	return execution.FrozenSlotContractFact{
+		Contract: execution.FrozenExecutionContractRef{
+			Slot: execution.SlotIdentity{QueryGroup: request.Lane.QueryGroup, ScheduleRevision: request.Lane.ScheduleRevision,
+				EvaluationTime: request.EvaluationTime},
+			SnapshotRevision: "snapshot-1", QueryRevision: "query-1",
+			ScheduleRevision: request.Lane.ScheduleRevision, DuePlanSetDigest: digest,
+		},
+		DuePlans: plans, Requirements: requirements,
+	}
+}
+
+func compiledPlanForSlotSource(t *testing.T) *strategy.CompiledPlan {
+	t.Helper()
+	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{
+		MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 4, MaxAlgorithmsPerLevel: 4, MaxGroupsPerAlgorithm: 4,
+		MaxConditionsPerAlgorithm: 8, MaxASTNodesPerLevel: 32, MaxTriggerWindowSize: 64,
+		MaxRecoveryConsecutiveWindows: 64, MaxRequiredHistoryPoints: 64, MaxTriggerComputeCost: 1 << 16,
+		MaxCompiledPlanBytes: 64 << 10, MaxCacheEntries: 4, MaxCacheBytes: 1 << 20,
+		NegativeCacheTTL: time.Minute, BudgetRevision: "scheduler-test-v1",
+	})
+	if err != nil {
+		t.Fatalf("NewCompiler() error = %v", err)
+	}
+	ref := contract.StrategyRefV2{TenantID: "tenant", StrategyID: "1", Revision: "r1"}
+	projection := contract.InputProjectionV2{
+		ValueFields: []string{"value"}, DimensionFields: []string{"host"}, BusinessIdentityField: "bk_biz_id",
+		MultiValueAlignment: "SINGLE_VALUE", DataUnit: "percent", MissingValuePolicy: contract.MissingValuePolicyRequired,
+	}
+	plan := contract.EvaluationPlanV2{
+		PlanID: "1", StrategyRef: ref, InputProjection: projection,
+		StrategyIR: contract.StrategyIRV2{
+			Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2}, StrategyRef: ref,
+			InputProjection: projection,
+			ExecutionSemantics: contract.ExecutionSemanticsV2{
+				EvaluationScope: contract.EvaluationScopeSeries, QueryWindow: 60,
+				AggregationInterval: 60, EvaluationInterval: 60,
+			},
+			Levels: []contract.LevelIRV2{{
+				Definition: contract.LevelDefinitionV2{LevelID: 1, Priority: 1}, Connector: contract.LevelConnectorAND,
+				DetectPlan: contract.DetectPlanV2{Algorithms: []contract.AlgorithmIRV2{{
+					Type: "Threshold", Version: 1,
+					Config: json.RawMessage(`{"value_field":"value","data_unit":"percent","threshold_unit_prefix":"","precision":{"decimal_places":6,"rounding":"HALF_EVEN"},"groups":[{"conditions":[{"operator":"GTE","threshold_decimal":"50"}]}]}`),
+				}}},
+				TriggerPlan: contract.TypedPlanV1{Type: "N_OF_M", Version: 1,
+					Config: json.RawMessage(`{"window_size":1,"required_anomalies":1,"step_seconds":60}`)},
+				RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1,
+					Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)},
+			}},
+		},
+	}
+	result, err := compiler.Compile(context.Background(), strategy.CompileRequest{
+		Plan: plan,
+		DatasetContract: contract.DatasetContractV2{
+			SchemaDigest: strings.Repeat("a", 64), NormalizationDigest: strings.Repeat("b", 64),
+			IdentityFields: []string{"host"}, SourceTimeField: "_time", ReceivedTimeField: "_received_time",
+		},
+		StateSemantics: strategy.StateSemantics{
+			StateSchemaVersion: "v1", CodecSemanticsVersion: "v1", IdentitySchemaDigest: strings.Repeat("c", 64),
+			SourceTimeSemanticsVersion: "seconds-v1", HistoryCellSemanticsVersion: "v1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	compiled, ok := result.Plan()
+	if !ok {
+		t.Fatalf("Compile() terminal = %+v", result.PlanTerminal())
+	}
+	return compiled
 }
 
 type fakeProgressReader struct {

@@ -6,8 +6,11 @@ import (
 	"errors"
 	"net"
 	"os/exec"
+	"reflect"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -356,6 +359,132 @@ func TestRedisCatalogRepositoryActivationCASAndProjection(t *testing.T) {
 	activations, err := repository.LoadActivations(context.Background(), execution.PlanActivationRequest{Contract: contract, Plans: []execution.PlanIdentity{plan.Identity, missingPlan}})
 	if err != nil || len(activations.Facts) != 2 || activations.Facts[0] != fact || activations.Facts[1].Selection != execution.ActivationNone {
 		t.Fatalf("activation projection=(%#v, %v)", activations, err)
+	}
+}
+
+func TestInitialScheduleActivatorPersistsOneNonAlignedBoundaryAcrossRestart(t *testing.T) {
+	client := newControlplaneRedis(t)
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:first-activation", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
+	snapshot, _, err := repository.PublishCatalog(context.Background(), catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, stateSemantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryGroup := catalog.QueryGroups[0].Identity
+	if _, err := runtime.ReadInitialFrozenSchedule(context.Background(), queryGroup); !errors.Is(err, controlplane.ErrScheduleUnavailable) {
+		t.Fatalf("missing production activation error=%v", err)
+	}
+
+	var clockCalls atomic.Int32
+	activator, err := controlplane.NewInitialScheduleActivator(repository, compiler, stateSemantics, func() time.Time {
+		clockCalls.Add(1)
+		return time.Unix(83, 0)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := activator.Ensure(context.Background(), snapshot.Publication)
+	if err != nil || state.Current != snapshot.Publication || state.RecordRevision != 1 {
+		t.Fatalf("initial activation=(%#v, %v)", state, err)
+	}
+	if len(state.Plans) != 1 || state.Plans[0].Fact.Selected.RequiredFullSlots != 1 {
+		t.Fatalf("initial Plan activation=%#v", state.Plans)
+	}
+	schedule, err := runtime.ReadInitialFrozenSchedule(context.Background(), queryGroup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstSlot, ok := schedule.FirstSlot()
+	if schedule.Segment.Start != 83 || !ok || firstSlot != 120 {
+		t.Fatalf("initial segment start=%d first slot=(%d,%v), want start=83 slot=120", schedule.Segment.Start, firstSlot, ok)
+	}
+
+	restartedClockCalls := 0
+	restarted, err := controlplane.NewInitialScheduleActivator(repository, compiler, stateSemantics, func() time.Time {
+		restartedClockCalls++
+		return time.Unix(999, 0)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := restarted.Ensure(context.Background(), snapshot.Publication)
+	if err != nil || reloaded.RecordRevision != 1 || reloaded.Current != snapshot.Publication {
+		t.Fatalf("restart activation=(%#v, %v)", reloaded, err)
+	}
+	if clockCalls.Load() != 1 || restartedClockCalls != 0 {
+		t.Fatalf("clock calls=(%d,%d), want (1,0)", clockCalls.Load(), restartedClockCalls)
+	}
+	reloadedSchedule, err := runtime.ReadInitialFrozenSchedule(context.Background(), queryGroup)
+	if err != nil || reloadedSchedule.Segment.Start != 83 {
+		t.Fatalf("restart schedule=(%#v, %v)", reloadedSchedule, err)
+	}
+}
+
+func TestInitialScheduleActivatorConcurrentCASKeepsWinnerFact(t *testing.T) {
+	client := newControlplaneRedis(t)
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:first-activation-race", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
+	snapshot, _, err := repository.PublishCatalog(context.Background(), catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, stateSemantics := runtimePlanCompiler(t)
+
+	var entered sync.WaitGroup
+	entered.Add(2)
+	release := make(chan struct{})
+	newClock := func(unix int64) func() time.Time {
+		return func() time.Time {
+			entered.Done()
+			<-release
+			return time.Unix(unix, 0)
+		}
+	}
+	first, err := controlplane.NewInitialScheduleActivator(repository, compiler, stateSemantics, newClock(83))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := controlplane.NewInitialScheduleActivator(repository, compiler, stateSemantics, newClock(97))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		state controlplane.ActivationState
+		err   error
+	}
+	results := make(chan result, 2)
+	go func() {
+		state, runErr := first.Ensure(context.Background(), snapshot.Publication)
+		results <- result{state: state, err: runErr}
+	}()
+	go func() {
+		state, runErr := second.Ensure(context.Background(), snapshot.Publication)
+		results <- result{state: state, err: runErr}
+	}()
+	entered.Wait()
+	close(release)
+	one, two := <-results, <-results
+	if one.err != nil || two.err != nil || one.state.RecordRevision != 1 || !reflect.DeepEqual(two.state, one.state) {
+		t.Fatalf("concurrent activations=(%#v,%#v)", one, two)
+	}
+	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, stateSemantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedule, err := runtime.ReadInitialFrozenSchedule(context.Background(), catalog.QueryGroups[0].Identity)
+	if err != nil || (schedule.Segment.Start != 83 && schedule.Segment.Start != 97) {
+		t.Fatalf("winner schedule=(%#v, %v)", schedule, err)
 	}
 }
 

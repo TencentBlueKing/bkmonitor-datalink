@@ -12,6 +12,7 @@ package structured
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -37,7 +38,16 @@ import (
 const (
 	// Error messages
 	ErrUnknownOperatorMsg = "unknown operator: %s"
+
+	NamedOutputsV1 = "named_outputs/v1"
 )
+
+var outputReferencePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+type QueryOutput struct {
+	ReferenceName string `json:"reference_name"`
+	Expression    string `json:"expression"`
+}
 
 type QueryTs struct {
 	// TsDBMap 查询路由匹配中的 tsDB 列表 key:reference_name
@@ -48,6 +58,12 @@ type QueryTs struct {
 	QueryList []*Query `json:"query_list,omitempty"`
 	// MetricMerge 表达式：支持所有PromQL语法
 	MetricMerge string `json:"metric_merge,omitempty" example:"a"`
+	// ResponseContract 显式选择命名多输出响应契约；为空时保持旧单输出行为。
+	ResponseContract string `json:"response_contract,omitempty"`
+	// LegacyOutputRef 指向与 MetricMerge 等价的输出，供旧服务兼容降级。
+	LegacyOutputRef string `json:"legacy_output_ref,omitempty"`
+	// OutputList 按请求顺序声明命名输出。
+	OutputList []QueryOutput `json:"output_list,omitempty"`
 	// OrderBy 排序字段列表，按顺序排序，负数代表倒序, ["_time", "-_time"]
 	OrderBy OrderBy `json:"order_by,omitempty"`
 	// ResultColumns 指定保留返回字段值
@@ -112,6 +128,79 @@ type QueryTs struct {
 
 	// AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并
 	AddDimensions []string `json:"add_dimensions,omitempty"`
+}
+
+// ValidateNamedOutputs 在任何路由和存储 I/O 前校验命名多输出契约。
+func (q *QueryTs) ValidateNamedOutputs(maxOutputs int) error {
+	if q.ResponseContract == "" {
+		if len(q.OutputList) == 0 && q.LegacyOutputRef == "" {
+			return nil
+		}
+		return fmt.Errorf("response_contract is required when named output fields are present")
+	}
+	if q.ResponseContract != NamedOutputsV1 {
+		return fmt.Errorf("unsupported response_contract: %s", q.ResponseContract)
+	}
+	if strings.TrimSpace(q.MetricMerge) == "" {
+		return fmt.Errorf("metric_merge is required")
+	}
+	if strings.TrimSpace(q.LegacyOutputRef) == "" {
+		return fmt.Errorf("legacy_output_ref is required")
+	}
+	if len(q.OutputList) == 0 || len(q.OutputList) > maxOutputs {
+		return fmt.Errorf("output_list length must be between 1 and %d", maxOutputs)
+	}
+
+	queryReferences := make(map[string]struct{}, len(q.QueryList))
+	for _, query := range q.QueryList {
+		if query == nil {
+			return fmt.Errorf("query_list contains nil query")
+		}
+		queryReferences[query.ReferenceName] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(q.OutputList))
+	legacyFound := false
+	for _, output := range q.OutputList {
+		if !outputReferencePattern.MatchString(output.ReferenceName) {
+			return fmt.Errorf("invalid output reference: %s", output.ReferenceName)
+		}
+		if _, ok := seen[output.ReferenceName]; ok {
+			return fmt.Errorf("duplicate output reference: %s", output.ReferenceName)
+		}
+		seen[output.ReferenceName] = struct{}{}
+		legacyFound = legacyFound || output.ReferenceName == q.LegacyOutputRef
+	}
+	if !legacyFound {
+		return fmt.Errorf("legacy_output_ref %s is missing from output_list", q.LegacyOutputRef)
+	}
+
+	metricMerge, err := parser.ParseExpr(q.MetricMerge)
+	if err != nil {
+		return fmt.Errorf("metric_merge expression is invalid: %w", err)
+	}
+	for _, output := range q.OutputList {
+		expr, parseErr := parser.ParseExpr(output.Expression)
+		if parseErr != nil {
+			return fmt.Errorf("output %s expression is invalid: %w", output.ReferenceName, parseErr)
+		}
+		if output.ReferenceName == q.LegacyOutputRef {
+			if expr.String() != metricMerge.String() {
+				return fmt.Errorf("legacy output expression must be equivalent to metric_merge")
+			}
+			continue
+		}
+
+		selector, ok := expr.(*parser.VectorSelector)
+		if !ok || selector.Name == "" || len(selector.LabelMatchers) != 1 ||
+			selector.OriginalOffset != 0 || selector.Offset != 0 ||
+			selector.Timestamp != nil || selector.StartOrEnd != 0 {
+			return fmt.Errorf("output %s must be a query reference identity expression", output.ReferenceName)
+		}
+		if _, ok = queryReferences[selector.Name]; !ok {
+			return fmt.Errorf("output %s identity expression must reference query reference", output.ReferenceName)
+		}
+	}
+	return nil
 }
 
 // StepParse 解析step
@@ -353,14 +442,34 @@ func (q *QueryTs) ToPromExpr(
 	ctx context.Context,
 	promExprOpt *PromExprOption,
 ) (parser.Expr, error) {
+	return q.toPromExpr(ctx, q.MetricMerge, promExprOpt, false)
+}
+
+func (q *QueryTs) ToPromExprFor(
+	ctx context.Context,
+	expression string,
+	promExprOpt *PromExprOption,
+) (parser.Expr, error) {
+	return q.toPromExpr(ctx, expression, promExprOpt, true)
+}
+
+func (q *QueryTs) toPromExpr(
+	ctx context.Context,
+	expression string,
+	promExprOpt *PromExprOption,
+	copyInputs bool,
+) (parser.Expr, error) {
 	var (
 		err     error
 		result  parser.Expr
 		expr    parser.Expr
 		exprMap = make(map[string]*PromExpr, len(q.QueryList))
 	)
+	if copyInputs {
+		promExprOpt = clonePromExprOption(promExprOpt)
+	}
 
-	if q.MetricMerge == "" {
+	if expression == "" {
 		return nil, metadata.NewMessage(
 			metadata.MsgParserUnifyQuery,
 			"表达式配置不能为空",
@@ -368,16 +477,23 @@ func (q *QueryTs) ToPromExpr(
 	}
 
 	// 先解析表达式
-	if result, err = parser.ParseExpr(q.MetricMerge); err != nil {
+	if result, err = parser.ParseExpr(expression); err != nil {
 		return nil, metadata.NewMessage(
 			metadata.MsgParserUnifyQuery,
 			"表达式 %s 解析失败",
-			q.MetricMerge,
+			expression,
 		).Error(ctx, err)
 	}
 
 	// 获取指标查询的表达式
-	for _, query := range q.QueryList {
+	for _, sourceQuery := range q.QueryList {
+		if sourceQuery == nil {
+			return nil, fmt.Errorf("query_list contains nil query")
+		}
+		query := sourceQuery
+		if copyInputs {
+			query = cloneQueryForPromExpr(sourceQuery)
+		}
 		if query.Step == "" {
 			query.Step = q.Step
 		}
@@ -401,6 +517,55 @@ func (q *QueryTs) ToPromExpr(
 	}
 
 	return result, nil
+}
+
+func cloneQueryForPromExpr(source *Query) *Query {
+	query := *source
+	query.AggregateMethodList = append(AggregateMethodList(nil), source.AggregateMethodList...)
+	for index := range query.AggregateMethodList {
+		method := &query.AggregateMethodList[index]
+		method.Dimensions = append(Dimensions(nil), method.Dimensions...)
+		method.VArgsList = append([]any(nil), method.VArgsList...)
+		if method.ArgsList != nil {
+			method.ArgsList = make(Args, len(source.AggregateMethodList[index].ArgsList))
+			for key, value := range source.AggregateMethodList[index].ArgsList {
+				method.ArgsList[key] = value
+			}
+		}
+	}
+	query.TimeAggregation.VargsList = append([]any(nil), source.TimeAggregation.VargsList...)
+	return &query
+}
+
+func clonePromExprOption(source *PromExprOption) *PromExprOption {
+	if source == nil {
+		return nil
+	}
+	option := &PromExprOption{
+		ReferenceNameMetric:         make(map[string]string, len(source.ReferenceNameMetric)),
+		ReferenceNameLabelMatcher:   make(map[string][]*labels.Matcher, len(source.ReferenceNameLabelMatcher)),
+		FunctionReplace:             make(map[string]string, len(source.FunctionReplace)),
+		IgnoreTimeAggregationEnable: source.IgnoreTimeAggregationEnable,
+	}
+	for key, value := range source.ReferenceNameMetric {
+		option.ReferenceNameMetric[key] = value
+	}
+	for key, matchers := range source.ReferenceNameLabelMatcher {
+		clonedMatchers := make([]*labels.Matcher, 0, len(matchers))
+		for _, matcher := range matchers {
+			if matcher == nil {
+				clonedMatchers = append(clonedMatchers, nil)
+				continue
+			}
+			copyOfMatcher := *matcher
+			clonedMatchers = append(clonedMatchers, &copyOfMatcher)
+		}
+		option.ReferenceNameLabelMatcher[key] = clonedMatchers
+	}
+	for key, value := range source.FunctionReplace {
+		option.FunctionReplace[key] = value
+	}
+	return option
 }
 
 type TimeField struct {

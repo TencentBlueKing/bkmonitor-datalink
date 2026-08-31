@@ -155,6 +155,15 @@ func (i *Instance) DirectQuery(
 	return vector, nil
 }
 
+func (i *Instance) DirectQueryWithPartial(
+	ctx context.Context,
+	qs string,
+	end time.Time,
+) (promql.Vector, bool, error) {
+	vector, err := i.DirectQuery(ctx, qs, end)
+	return vector, false, err
+}
+
 func sortAndLimitLabelValues(values []string, limit int) []string {
 	// 多路由去重后统一排序并截断，避免每个子查询分别限额导致总数超限。
 	sort.Strings(values)

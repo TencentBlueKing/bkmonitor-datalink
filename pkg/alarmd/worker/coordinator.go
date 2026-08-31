@@ -89,11 +89,13 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid execution request: %w", err)
 	}
 	ctx = observability.ContextWithTraceFields(ctx, observability.TraceFields{
-		QueryGroupKey:    string(request.Contract.Slot.QueryGroup),
-		SnapshotRevision: string(request.Contract.SnapshotRevision),
-		QueryRevision:    string(request.Contract.QueryRevision),
-		ScheduleRevision: string(request.Contract.ScheduleRevision),
-		OwnerID:          request.OwnerFence.OwnerID, OwnerEpoch: request.OwnerFence.OwnerEpoch,
+		QueryGroupKey:        string(request.Contract.Slot.QueryGroup),
+		SnapshotRevision:     string(request.Contract.SnapshotRevision),
+		QueryRevision:        string(request.Contract.QueryRevision),
+		ScheduleRevision:     string(request.Contract.ScheduleRevision),
+		ScheduleSegmentStart: int64(request.Contract.ScheduleSegmentStart),
+		DuePlanSetDigest:     string(request.Contract.DuePlanSetDigest),
+		OwnerID:              request.OwnerFence.OwnerID, OwnerEpoch: request.OwnerFence.OwnerEpoch,
 		EvaluationTime: int64(request.Contract.Slot.EvaluationTime),
 	})
 	finalization, err := coordinator.ports.Finalization.ResolveFinalization(ctx, request)

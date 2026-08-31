@@ -527,8 +527,10 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 		_ = session.Release(ctx)
 		return nil, err
 	}
+	observedSource := &observedProductionSlotSource{next: source, observer: runtime.dependencies.Observer}
+	observedExecutor := &observedProductionSlotExecutor{next: runtime.dependencies.Executor, observer: runtime.dependencies.Observer}
 	runner, err := scheduler.NewRunner(
-		queryGroup, session, source, runtime.dependencies.Executor, runtime.flights, runtime.dependencies.Now,
+		queryGroup, session, observedSource, observedExecutor, runtime.flights, runtime.dependencies.Now,
 	)
 	if err != nil {
 		_ = session.Release(ctx)
@@ -567,6 +569,70 @@ type productionPhaseTwoQueryGroup struct {
 	session  *ownership.Session
 	runner   *scheduler.Runner
 	observer observability.Observer
+}
+
+type observedProductionSlotSource struct {
+	next     scheduler.SlotSource
+	observer observability.Observer
+}
+
+func (source observedProductionSlotSource) Next(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+) (scheduler.FrozenSlot, bool, error) {
+	slot, due, err := source.next.Next(ctx, queryGroup)
+	if err == nil && due {
+		observeRuntime(ctx, source.observer, observability.Observation{
+			Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
+			Result: observability.ResultSuccess, Direction: observability.DirectionInternal,
+			Trace: frozenSlotTrace(slot.Contract, slot.Dispatch.OwnerFence),
+		})
+	}
+	return slot, due, err
+}
+
+type observedProductionSlotExecutor struct {
+	next     scheduler.Executor
+	observer observability.Observer
+}
+
+func (executor observedProductionSlotExecutor) Execute(
+	ctx context.Context,
+	request execution.SlotExecutionRequest,
+) (execution.SlotExecutionResult, error) {
+	trace := frozenSlotTrace(request.Contract, request.OwnerFence)
+	observeRuntime(ctx, executor.observer, observability.Observation{
+		Component: observability.ComponentScheduler, Stage: observability.StageSlotStarted,
+		Result: observability.ResultStarted, Direction: observability.DirectionInternal, Trace: trace,
+	})
+	started := time.Now()
+	result, err := executor.next.Execute(ctx, request)
+	observedResult := result.Result
+	reason := result.ReasonCode
+	if err != nil {
+		observedResult = observability.ResultFailed
+		reason = observability.ReasonInternalUnknown
+	} else if observedResult == "" {
+		observedResult = observability.ResultSuccess
+	}
+	observeRuntime(ctx, executor.observer, observability.Observation{
+		Component: observability.ComponentScheduler, Stage: observability.StageSlotCompleted,
+		Result: observedResult, ReasonCode: reason, Direction: observability.DirectionInternal,
+		Duration: time.Since(started), Trace: trace, Err: err,
+	})
+	return result, err
+}
+
+func frozenSlotTrace(
+	contractRef execution.FrozenExecutionContractRef,
+	fence execution.OwnerFence,
+) observability.TraceFields {
+	return observability.TraceFields{
+		QueryGroupKey: string(contractRef.Slot.QueryGroup), EvaluationTime: int64(contractRef.Slot.EvaluationTime),
+		SnapshotRevision: string(contractRef.SnapshotRevision), QueryRevision: string(contractRef.QueryRevision),
+		ScheduleRevision: string(contractRef.ScheduleRevision), ScheduleSegmentStart: int64(contractRef.ScheduleSegmentStart),
+		DuePlanSetDigest: string(contractRef.DuePlanSetDigest), OwnerID: fence.OwnerID, OwnerEpoch: fence.OwnerEpoch,
+	}
 }
 
 func (runtime *productionPhaseTwoQueryGroup) RunOne(

@@ -199,7 +199,8 @@ func appendTraceFields(attributes []slog.Attr, trace TraceFields) []slog.Attr {
 		{"trace_id", trace.TraceID}, {"execution_id", trace.ExecutionID}, {"message_id", trace.MessageID},
 		{"query_group_key", trace.QueryGroupKey}, {"strategy_id", trace.StrategyID},
 		{"snapshot_revision", trace.SnapshotRevision}, {"query_revision", trace.QueryRevision},
-		{"schedule_revision", trace.ScheduleRevision}, {"owner_id", trace.OwnerID},
+		{"schedule_revision", trace.ScheduleRevision}, {"due_plan_set_digest", trace.DuePlanSetDigest},
+		{"owner_id", trace.OwnerID},
 		{"level_id", trace.LevelID}, {"terminal_scope", trace.TerminalScope},
 		{"field_path", trace.TerminalFieldPath}, {"record_id", trace.RecordID},
 		{"dimension_identity_digest", trace.DimensionIdentityDigest}, {"topic", trace.Topic},
@@ -221,6 +222,9 @@ func appendTraceFields(attributes []slog.Attr, trace TraceFields) []slog.Attr {
 	}
 	if trace.EvaluationTime > 0 {
 		attributes = append(attributes, slog.Int64("evaluation_time", trace.EvaluationTime))
+	}
+	if trace.ScheduleSegmentStart > 0 {
+		attributes = append(attributes, slog.Int64("schedule_segment_start", trace.ScheduleSegmentStart))
 	}
 	return attributes
 }

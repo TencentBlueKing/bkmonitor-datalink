@@ -333,6 +333,86 @@ func TestProductionPhaseTwoOwnershipUsesAssignmentAndLeaseBeforeRunner(t *testin
 	}
 }
 
+func TestProductionSlotObservationsBracketRealExecutionWithFrozenProvenance(t *testing.T) {
+	contractRef := execution.FrozenExecutionContractRef{
+		Slot:                 execution.SlotIdentity{QueryGroup: "query-group-1", EvaluationTime: 120},
+		SnapshotRevision:     "snapshot-1",
+		QueryRevision:        "query-1",
+		ScheduleRevision:     "schedule-1",
+		ScheduleSegmentStart: 60,
+		DuePlanSetDigest:     "due-plan-set-1",
+	}
+	fence := execution.OwnerFence{
+		QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 3, LeaseToken: "lease-1",
+	}
+	var observations []observability.Observation
+	observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		observations = append(observations, observation)
+	})
+	source := observedProductionSlotSource{
+		next: slotSourceFunc(func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, error) {
+			return scheduler.FrozenSlot{
+				Contract: contractRef,
+				Dispatch: scheduler.SlotDispatchContext{
+					Operation: execution.OperationNormal, OwnerFence: fence, AssignmentGeneration: 1,
+				},
+				ExpectedNextSlot: contractRef.Slot.EvaluationTime,
+			}, true, nil
+		}),
+		observer: observer,
+	}
+	slot, due, err := source.Next(context.Background(), contractRef.Slot.QueryGroup)
+	if err != nil || !due {
+		t.Fatalf("observed SlotSource.Next() due=%v error=%v", due, err)
+	}
+	executor := observedProductionSlotExecutor{
+		next: slotExecutorFunc(func(context.Context, execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
+			if got := observedStages(observations); !reflect.DeepEqual(got, []observability.Stage{
+				observability.StageScheduleDue, observability.StageSlotStarted,
+			}) {
+				t.Fatalf("observations before real execution = %v", got)
+			}
+			return execution.SlotExecutionResult{Completed: true, Result: observability.ResultSuccess}, nil
+		}),
+		observer: observer,
+	}
+	request := execution.SlotExecutionRequest{
+		Contract: slot.Contract, Operation: slot.Dispatch.Operation,
+		OwnerFence: slot.Dispatch.OwnerFence, ExpectedNextSlot: slot.ExpectedNextSlot,
+	}
+	if _, err := executor.Execute(context.Background(), request); err != nil {
+		t.Fatalf("observed Slot executor error = %v", err)
+	}
+	if got := observedStages(observations); !reflect.DeepEqual(got, []observability.Stage{
+		observability.StageScheduleDue, observability.StageSlotStarted, observability.StageSlotCompleted,
+	}) {
+		t.Fatalf("Slot observations = %v", got)
+	}
+	for _, observation := range observations {
+		trace := observation.Trace
+		if trace.QueryGroupKey != "query-group-1" || trace.EvaluationTime != 120 ||
+			trace.SnapshotRevision != "snapshot-1" || trace.QueryRevision != "query-1" ||
+			trace.ScheduleRevision != "schedule-1" || trace.ScheduleSegmentStart != 60 ||
+			trace.DuePlanSetDigest != "due-plan-set-1" || trace.OwnerID != "worker-1" || trace.OwnerEpoch != 3 {
+			t.Fatalf("Slot observation lacks frozen provenance: %+v", observation)
+		}
+	}
+
+	observations = nil
+	notDue := observedProductionSlotSource{
+		next: slotSourceFunc(func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, error) {
+			return scheduler.FrozenSlot{}, false, nil
+		}),
+		observer: observer,
+	}
+	if _, due, err := notDue.Next(context.Background(), "query-group-1"); err != nil || due {
+		t.Fatalf("not-due SlotSource.Next() due=%v error=%v", due, err)
+	}
+	if len(observations) != 0 {
+		t.Fatalf("not-due Slot emitted execution observations: %+v", observations)
+	}
+}
+
 type fakePhaseTwoOwnershipStore struct {
 	mu                     sync.Mutex
 	now                    time.Time
@@ -486,6 +566,24 @@ func (rejectingSlotExecutor) Execute(context.Context, execution.SlotExecutionReq
 	return execution.SlotExecutionResult{}, errors.New("stale fence reached executor")
 }
 
+type slotSourceFunc func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, error)
+
+func (function slotSourceFunc) Next(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+) (scheduler.FrozenSlot, bool, error) {
+	return function(ctx, queryGroup)
+}
+
+type slotExecutorFunc func(context.Context, execution.SlotExecutionRequest) (execution.SlotExecutionResult, error)
+
+func (function slotExecutorFunc) Execute(
+	ctx context.Context,
+	request execution.SlotExecutionRequest,
+) (execution.SlotExecutionResult, error) {
+	return function(ctx, request)
+}
+
 var _ scheduler.AssignmentStore = (*fakePhaseTwoOwnershipStore)(nil)
 var _ ownership.LeaseStore = (*fakePhaseTwoOwnershipStore)(nil)
 
@@ -496,4 +594,12 @@ func hasObservedStage(observations []observability.Observation, stage observabil
 		}
 	}
 	return false
+}
+
+func observedStages(observations []observability.Observation) []observability.Stage {
+	stages := make([]observability.Stage, len(observations))
+	for index, observation := range observations {
+		stages[index] = observation.Stage
+	}
+	return stages
 }

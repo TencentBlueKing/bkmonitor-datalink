@@ -1,0 +1,38 @@
+{
+  "id": 1001,
+  "bk_biz_id": 2,
+  "bk_tenant_id": "tenant-a",
+  "space_uid": "bkcc__2",
+  "update_time": 1725000000,
+  "items": [{
+    "id": 11,
+    "query_md5": "g1-full-query-md5",
+    "expression": "a",
+    "functions": [],
+    "query_configs": [{
+      "data_source_label": "bk_monitor",
+      "data_type_label": "time_series",
+      "agg_method": "avg",
+      "agg_interval": 300,
+      "agg_dimension": ["host"],
+      "agg_condition": [],
+      "result_table_id": "system.cpu",
+      "metric_field": "usage",
+      "alias": "a",
+      "functions": []
+    }],
+    "algorithms": [{
+      "level": 1,
+      "type": "Threshold",
+      "unit_prefix": "",
+      "config": [[{"method": "gte", "threshold": 80}]]
+    }],
+    "unit": "percent"
+  }],
+  "detects": [{
+    "level": 1,
+    "connector": "and",
+    "trigger_config": {"count": 1, "check_window": 1},
+    "recovery_config": {"check_window": 1}
+  }]
+}

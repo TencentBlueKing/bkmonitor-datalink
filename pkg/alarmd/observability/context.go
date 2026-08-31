@@ -46,6 +46,12 @@ func mergeTraceFields(primary, fallback TraceFields) TraceFields {
 	if primary.ScheduleRevision == "" {
 		primary.ScheduleRevision = fallback.ScheduleRevision
 	}
+	if primary.ScheduleSegmentStart == 0 {
+		primary.ScheduleSegmentStart = fallback.ScheduleSegmentStart
+	}
+	if primary.DuePlanSetDigest == "" {
+		primary.DuePlanSetDigest = fallback.DuePlanSetDigest
+	}
 	if primary.OwnerID == "" {
 		primary.OwnerID = fallback.OwnerID
 	}

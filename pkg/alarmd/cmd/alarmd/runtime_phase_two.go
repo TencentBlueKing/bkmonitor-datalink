@@ -31,6 +31,8 @@ var errPhaseTwoWorkerBundleNotAssembled = errors.New(
 
 var errPhaseTwoWorkerDraining = errors.New("phase-two Go Access worker is draining")
 
+var errPhaseTwoWorkerStopped = errors.New("phase-two Go Access worker stopped before application shutdown")
+
 type phaseTwoApplicationDependencies struct {
 	run        func(context.Context, config.Config, *metric.Recorder, *observability.Logger) error
 	openBundle func(
@@ -117,20 +119,61 @@ func runPhaseTwoApplicationWithDependencies(
 	if err != nil {
 		return err
 	}
-	httpContext, cancelHTTP := context.WithCancel(context.Background())
+	runtimeContext, cancelRuntime := context.WithCancel(ctx)
+	defer cancelRuntime()
+	httpContext, cancelHTTP := context.WithCancel(runtimeContext)
 	httpDone := make(chan error, 1)
 	go func() { httpDone <- server.Run(httpContext, cfg.HTTP.Listen, cfg.ShutdownTimeout.Duration()) }()
 
-	bundle, err := dependencies.openBundle(ctx, cfg, recorder, logger, application.health)
+	bundle, err := dependencies.openBundle(runtimeContext, cfg, recorder, logger, application.health)
 	if err != nil {
+		cancelRuntime()
 		cancelHTTP()
 		httpErr := waitRuntimeComponent(httpDone, time.Now().Add(cfg.ShutdownTimeout.Duration()))
 		return errors.Join(err, normalizeRuntimeShutdownError(httpErr, false))
 	}
-	runErr := bundle.Run(ctx)
+	bundleDone := make(chan error, 1)
+	go func() { bundleDone <- bundle.Run(runtimeContext) }()
+
+	var runErr, httpErr error
+	bundleFinished := false
+	httpFinished := false
+	bundleStoppedEarly := false
+	httpStoppedEarly := false
+	select {
+	case <-ctx.Done():
+	case runErr = <-bundleDone:
+		bundleFinished = true
+		bundleStoppedEarly = ctx.Err() == nil
+		if runErr == nil && bundleStoppedEarly {
+			runErr = errPhaseTwoWorkerStopped
+		}
+		if bundleStoppedEarly {
+			markPhaseTwoFatal(runtimeContext, bundle, application.health, runErr)
+		}
+	case httpErr = <-httpDone:
+		httpFinished = true
+		httpStoppedEarly = ctx.Err() == nil
+		if httpErr == nil && httpStoppedEarly {
+			httpErr = errHTTPServiceStopped
+		}
+		if httpStoppedEarly {
+			markPhaseTwoFatal(runtimeContext, bundle, application.health, httpErr)
+		}
+	}
+	cancelRuntime()
 	cancelHTTP()
-	httpErr := waitRuntimeComponent(httpDone, time.Now().Add(cfg.ShutdownTimeout.Duration()))
-	result := errors.Join(runErr, normalizeRuntimeShutdownError(httpErr, false))
+	deadline := time.Now().Add(cfg.ShutdownTimeout.Duration())
+	if !bundleFinished {
+		runErr = waitRuntimeComponent(bundleDone, deadline)
+	}
+	if !httpFinished {
+		httpErr = waitRuntimeComponent(httpDone, deadline)
+	}
+	result := errors.Join(
+		normalizeRuntimeShutdownError(runErr, bundleStoppedEarly),
+		normalizeRuntimeShutdownError(httpErr, httpStoppedEarly),
+	)
 	if result == nil {
 		logger.Info(observability.StageShutdown, observability.ResultSuccess, 0, 0)
 	} else {
@@ -309,25 +352,17 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 			return err
 		}
 	}
-	queryGroups := make([]execution.QueryGroupIdentity, 0, len(bundle.runners))
 	runners := make([]phaseTwoQueryGroupRuntime, 0, len(bundle.runners))
-	for queryGroup, runner := range bundle.runners {
-		queryGroups = append(queryGroups, queryGroup)
+	for _, runner := range bundle.runners {
 		runners = append(runners, runner)
 	}
 	bundle.inflightWG.Add(len(runners))
 	bundle.mu.RUnlock()
 
 	for index, runner := range runners {
-		started := time.Now()
-		_, attempted, err := runner.RunOne(ctx)
+		_, _, err := runner.RunOne(ctx)
 		bundle.inflightWG.Done()
 		if err != nil {
-			if attempted {
-				bundle.observe(ctx, observability.ComponentScheduler, observability.StageScheduleDue, observability.ResultSuccess, nil)
-				bundle.observe(ctx, observability.ComponentScheduler, observability.StageSlotStarted, observability.ResultStarted, nil)
-				bundle.observe(ctx, observability.ComponentScheduler, observability.StageSlotCompleted, observability.ResultFailed, err)
-			}
 			if errors.Is(err, ownership.ErrStaleFence) || errors.Is(err, ownership.ErrNotDesired) {
 				bundle.markOwnershipUnsafe(err)
 			}
@@ -336,12 +371,6 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 			}
 			return err
 		}
-		if attempted {
-			bundle.observe(ctx, observability.ComponentScheduler, observability.StageScheduleDue, observability.ResultSuccess, nil)
-			bundle.observe(ctx, observability.ComponentScheduler, observability.StageSlotStarted, observability.ResultStarted, nil)
-			bundle.observeDuration(ctx, observability.ComponentScheduler, observability.StageSlotCompleted, started)
-		}
-		_ = queryGroups[index]
 	}
 	return nil
 }
@@ -385,10 +414,26 @@ func (bundle *phaseTwoWorkerBundle) Shutdown(ctx context.Context) error {
 		bundle.mu.Lock()
 		bundle.closed = true
 		bundle.mu.Unlock()
-		bundle.observe(ctx, observability.ComponentRuntime, observability.Stage(observability.StageShutdown), observability.ResultSuccess, nil)
 		bundle.shutdownErr = errors.Join(result...)
+		shutdownResult := observability.Result(observability.ResultSuccess)
+		if bundle.shutdownErr != nil {
+			shutdownResult = observability.ResultFailed
+		}
+		bundle.observe(ctx, observability.ComponentRuntime, observability.Stage(observability.StageShutdown), shutdownResult, bundle.shutdownErr)
 	})
 	return bundle.shutdownErr
+}
+
+func markPhaseTwoFatal(
+	ctx context.Context,
+	bundle *phaseTwoWorkerBundle,
+	health *phaseTwoApplicationHealth,
+	err error,
+) {
+	health.Update(phaseTwoReadiness{
+		State: observability.HealthFatal, Reasons: []observability.ReasonCode{observability.ReasonInternalUnknown},
+	})
+	bundle.observe(ctx, observability.ComponentRuntime, observability.Stage(observability.StageFatal), observability.ResultFailed, err)
 }
 
 func (bundle *phaseTwoWorkerBundle) register(ctx context.Context, readiness ownership.AssignmentReadiness) error {
@@ -556,18 +601,6 @@ func (bundle *phaseTwoWorkerBundle) observe(
 	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
 		Component: component, Stage: stage, Result: result,
 		Direction: observability.DirectionInternal, Err: err,
-	})
-}
-
-func (bundle *phaseTwoWorkerBundle) observeDuration(
-	ctx context.Context,
-	component observability.Component,
-	stage observability.Stage,
-	started time.Time,
-) {
-	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
-		Component: component, Stage: stage, Result: observability.ResultSuccess,
-		Direction: observability.DirectionInternal, Duration: time.Since(started),
 	})
 }
 

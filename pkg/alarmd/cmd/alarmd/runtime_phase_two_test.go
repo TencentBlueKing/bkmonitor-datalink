@@ -173,6 +173,161 @@ func TestRunPhaseTwoApplicationBoundsHTTPShutdownWhenBundleOpenFails(t *testing.
 	}
 }
 
+func TestRunPhaseTwoApplicationCancelsWorkerAndMarksFatalWhenHTTPStopsEarly(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	want := errors.New("HTTP runtime stopped")
+	runner := newFakePhaseTwoQueryGroup()
+	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
+	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{"query-group-1"}, runner: runner}
+	var mu sync.Mutex
+	var stages []observability.Stage
+	observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		mu.Lock()
+		defer mu.Unlock()
+		stages = append(stages, observation.Stage)
+	})
+	dependencies := phaseTwoApplicationDependencies{
+		openBundle: func(
+			_ context.Context,
+			_ config.Config,
+			_ *metric.Recorder,
+			_ *observability.Logger,
+			health *phaseTwoApplicationHealth,
+		) (*phaseTwoWorkerBundle, error) {
+			return newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
+				Config: cfg, Health: health, Control: control, Ownership: owner,
+				Observer: observer, Now: time.Now,
+			})
+		},
+		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+			return &fakeHTTPRuntime{run: func(context.Context, string, time.Duration) error {
+				waitSignal(t, runner.leaseStarted, "query-group lease maintenance")
+				return want
+			}}, nil
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- runPhaseTwoApplicationWithDependencies(
+			ctx, cfg, metric.NewRecorder(metric.BuildInfo{}),
+			observability.Discard(observability.ComponentRuntime), dependencies,
+		)
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, want) {
+			t.Fatalf("runPhaseTwoApplicationWithDependencies() error = %v, want HTTP failure", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		cancel()
+		<-done
+		t.Fatal("HTTP runtime stopped but the Worker Bundle kept running")
+	}
+	if runner.releaseCount() != 1 {
+		t.Fatalf("worker release calls = %d, want 1", runner.releaseCount())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !containsStage(stages, observability.Stage(observability.StageFatal)) {
+		t.Fatalf("application stages = %v, want fatal transition", stages)
+	}
+}
+
+func TestRunPhaseTwoApplicationCancelsHTTPAndMarksFatalWhenWorkerStopsEarly(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.TickInterval = config.Duration(time.Millisecond)
+	want := errors.New("worker runtime stopped")
+	runner := newFakePhaseTwoQueryGroup()
+	runner.runErr = want
+	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
+	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{"query-group-1"}, runner: runner}
+	var mu sync.Mutex
+	var stages []observability.Stage
+	observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		mu.Lock()
+		defer mu.Unlock()
+		stages = append(stages, observation.Stage)
+	})
+	httpCanceled := make(chan struct{})
+	var applicationHealth *phaseTwoApplicationHealth
+	dependencies := phaseTwoApplicationDependencies{
+		openBundle: func(
+			_ context.Context,
+			_ config.Config,
+			_ *metric.Recorder,
+			_ *observability.Logger,
+			health *phaseTwoApplicationHealth,
+		) (*phaseTwoWorkerBundle, error) {
+			applicationHealth = health
+			return newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
+				Config: cfg, Health: health, Control: control, Ownership: owner,
+				Observer: observer, Now: time.Now,
+			})
+		},
+		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
+				<-ctx.Done()
+				close(httpCanceled)
+				return ctx.Err()
+			}}, nil
+		},
+	}
+	err := runPhaseTwoApplicationWithDependencies(
+		context.Background(), cfg, metric.NewRecorder(metric.BuildInfo{}),
+		observability.Discard(observability.ComponentRuntime), dependencies,
+	)
+	if !errors.Is(err, want) {
+		t.Fatalf("runPhaseTwoApplicationWithDependencies() error = %v, want Worker failure", err)
+	}
+	waitSignal(t, httpCanceled, "HTTP cancellation")
+	if snapshot := applicationHealth.HealthSnapshot(); snapshot.State != observability.HealthFatal || snapshot.Ready {
+		t.Fatalf("application health after Worker failure = %+v, want fatal", snapshot)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !containsStage(stages, observability.Stage(observability.StageFatal)) {
+		t.Fatalf("application stages = %v, want fatal transition", stages)
+	}
+}
+
+func TestPhaseTwoWorkerBundleReportsShutdownFailureFromResourceClose(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	want := errors.New("close trigger sink")
+	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
+	owner := &fakePhaseTwoOwnership{
+		assigned: []execution.QueryGroupIdentity{"query-group-1"}, runner: newFakePhaseTwoQueryGroup(),
+	}
+	var mu sync.Mutex
+	var shutdownResult observability.Result
+	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
+		Config: cfg, Health: newPhaseTwoApplicationHealth(), Control: control, Ownership: owner, Now: time.Now,
+		CloseResources: func(context.Context) error { return want },
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			if observation.Stage == observability.Stage(observability.StageShutdown) {
+				mu.Lock()
+				shutdownResult = observation.Result
+				mu.Unlock()
+			}
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := bundle.Shutdown(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("Shutdown() error = %v, want resource close failure", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if shutdownResult != observability.ResultFailed {
+		t.Fatalf("shutdown observation result = %s, want failed", shutdownResult)
+	}
+}
+
 func TestPhaseTwoWorkerBundleTransitionsReadyAndDrainingAroundOwnedRunner(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	health := newPhaseTwoApplicationHealth()
@@ -388,7 +543,7 @@ func TestPhaseTwoWorkerBundleDrainsInflightSlotBeforeConditionalRelease(t *testi
 	}
 }
 
-func TestPhaseTwoWorkerBundleObservesLifecycleWithoutBusinessIdentityLabels(t *testing.T) {
+func TestPhaseTwoWorkerBundleObservesLifecycleWithoutInventingSlotTransitions(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	health := newPhaseTwoApplicationHealth()
 	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
@@ -429,11 +584,17 @@ func TestPhaseTwoWorkerBundleObservesLifecycleWithoutBusinessIdentityLabels(t *t
 	for _, want := range []observability.Stage{
 		observability.Stage(observability.StageStartup), observability.StageConfigLoaded,
 		observability.StageSnapshotRefreshed, observability.StageAssignmentAcquired,
-		observability.StageScheduleDue, observability.StageSlotStarted,
-		observability.StageSlotCompleted, observability.Stage(observability.StageShutdown),
+		observability.Stage(observability.StageShutdown),
 	} {
 		if !containsStage(stages, want) {
 			t.Fatalf("lifecycle stages = %v, missing %s", stages, want)
+		}
+	}
+	for _, absent := range []observability.Stage{
+		observability.StageScheduleDue, observability.StageSlotStarted, observability.StageSlotCompleted,
+	} {
+		if containsStage(stages, absent) {
+			t.Fatalf("fake Query Group runner produced %s without a frozen due Slot: %v", absent, stages)
 		}
 	}
 }
@@ -562,6 +723,7 @@ type fakePhaseTwoQueryGroup struct {
 	runStarted    chan struct{}
 	runRelease    chan struct{}
 	attempted     bool
+	runErr        error
 }
 
 func newFakePhaseTwoQueryGroup() *fakePhaseTwoQueryGroup {
@@ -578,7 +740,7 @@ func (runner *fakePhaseTwoQueryGroup) RunOne(context.Context) (execution.SlotExe
 	if runner.runRelease != nil {
 		<-runner.runRelease
 	}
-	return execution.SlotExecutionResult{}, runner.attempted, nil
+	return execution.SlotExecutionResult{}, runner.attempted, runner.runErr
 }
 
 func (runner *fakePhaseTwoQueryGroup) MaintainLease(ctx context.Context, _, _ time.Duration) error {

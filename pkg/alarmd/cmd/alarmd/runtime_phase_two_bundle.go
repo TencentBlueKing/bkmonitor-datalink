@@ -36,6 +36,28 @@ type productionStrategySourceFactory func(
 	string,
 ) (controlplane.StrategySource, error)
 
+type productionPhaseTwoEventSink interface {
+	execution.EventSink
+	Shutdown(context.Context) error
+	Close() error
+}
+
+type phaseTwoProductionExternalDependencies struct {
+	Now                func() time.Time
+	HTTPClient         *http.Client
+	OpenEvents         func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error)
+	AdditionalObserver observability.Observer
+}
+
+func defaultPhaseTwoProductionExternalDependencies() phaseTwoProductionExternalDependencies {
+	return phaseTwoProductionExternalDependencies{
+		Now: time.Now, HTTPClient: &http.Client{},
+		OpenEvents: func(coordinates enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
+			return enginekafka.OpenTriggerEventSink(coordinates)
+		},
+	}
+}
+
 func openProductionPhaseTwoBundle(
 	ctx context.Context,
 	cfg config.Config,
@@ -43,11 +65,12 @@ func openProductionPhaseTwoBundle(
 	logger *observability.Logger,
 	health *phaseTwoApplicationHealth,
 ) (*phaseTwoWorkerBundle, error) {
-	return openProductionPhaseTwoBundleWithStrategySource(
+	return openProductionPhaseTwoBundleWithDependencies(
 		ctx, cfg, recorder, logger, health,
 		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
 			return controlplane.NewLegacyRedisStrategySource(client, prefix)
 		},
+		defaultPhaseTwoProductionExternalDependencies(),
 	)
 }
 
@@ -59,7 +82,23 @@ func openProductionPhaseTwoBundleWithStrategySource(
 	health *phaseTwoApplicationHealth,
 	newStrategySource productionStrategySourceFactory,
 ) (_ *phaseTwoWorkerBundle, resultErr error) {
-	if ctx == nil || recorder == nil || logger == nil || health == nil || newStrategySource == nil {
+	return openProductionPhaseTwoBundleWithDependencies(
+		ctx, cfg, recorder, logger, health, newStrategySource,
+		defaultPhaseTwoProductionExternalDependencies(),
+	)
+}
+
+func openProductionPhaseTwoBundleWithDependencies(
+	ctx context.Context,
+	cfg config.Config,
+	recorder *metric.Recorder,
+	logger *observability.Logger,
+	health *phaseTwoApplicationHealth,
+	newStrategySource productionStrategySourceFactory,
+	external phaseTwoProductionExternalDependencies,
+) (_ *phaseTwoWorkerBundle, resultErr error) {
+	if ctx == nil || recorder == nil || logger == nil || health == nil || newStrategySource == nil ||
+		external.Now == nil || external.HTTPClient == nil || external.OpenEvents == nil {
 		return nil, errors.New("phase-two production Bundle dependencies are incomplete")
 	}
 	if err := cfg.Validate(); err != nil {
@@ -72,6 +111,7 @@ func openProductionPhaseTwoBundleWithStrategySource(
 	if err != nil {
 		return nil, err
 	}
+	observer = observability.Multi(observer, external.AdditionalObserver)
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), cfg.CompilerLimits())
 	if err != nil {
 		return nil, err
@@ -120,7 +160,7 @@ func openProductionPhaseTwoBundleWithStrategySource(
 	if err != nil {
 		return nil, err
 	}
-	activator, err := controlplane.NewInitialScheduleActivator(repository, compiler, strategySemantics, time.Now)
+	activator, err := controlplane.NewInitialScheduleActivator(repository, compiler, strategySemantics, external.Now)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +227,7 @@ func openProductionPhaseTwoBundleWithStrategySource(
 	}
 	progressStore, err := progress.NewStore(progress.StoreOptions{
 		Prefix: productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "schedule"), Control: ownershipStore,
-		Slots: catalog, Now: time.Now,
+		Slots: catalog, Now: external.Now,
 	})
 	if err != nil {
 		return nil, err
@@ -197,7 +237,7 @@ func openProductionPhaseTwoBundleWithStrategySource(
 		return nil, err
 	}
 	queryClient, err := accessuq.NewClientWithLimits(
-		cfg.PhaseTwo.Access.UQEndpoint, cfg.PhaseTwo.Access.QuerySource, &http.Client{}, phaseTwoUQLimits(cfg),
+		cfg.PhaseTwo.Access.UQEndpoint, cfg.PhaseTwo.Access.QuerySource, external.HTTPClient, phaseTwoUQLimits(cfg),
 	)
 	if err != nil {
 		return nil, err
@@ -223,7 +263,7 @@ func openProductionPhaseTwoBundleWithStrategySource(
 	if err != nil {
 		return nil, err
 	}
-	events, err := enginekafka.OpenTriggerEventSink(cfg.Kafka.TriggerEventCoordinates())
+	events, err := external.OpenEvents(cfg.Kafka.TriggerEventCoordinates())
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +274,7 @@ func openProductionPhaseTwoBundleWithStrategySource(
 		}
 	}()
 	activation := productionPhaseTwoActivation{source: repository}
-	admitter, err := ownership.NewAdmitter(ownershipStore, activation, time.Now)
+	admitter, err := ownership.NewAdmitter(ownershipStore, activation, external.Now)
 	if err != nil {
 		return nil, err
 	}
@@ -252,14 +292,14 @@ func openProductionPhaseTwoBundleWithStrategySource(
 	}
 	productionOwnership, err := newProductionPhaseTwoOwnership(productionPhaseTwoOwnershipDependencies{
 		Store: ownershipStore, WorkerID: cfg.PhaseTwo.Worker.ID, Catalog: catalog, Progress: progressStore,
-		Executor: coordinator, Now: time.Now, ControlLeaderTTL: cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration(),
+		Executor: coordinator, Now: external.Now, ControlLeaderTTL: cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration(),
 		Observer: observer,
 	})
 	if err != nil {
 		return nil, err
 	}
 	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
-		Config: cfg, Health: health, Control: control, Ownership: productionOwnership, Observer: observer, Now: time.Now,
+		Config: cfg, Health: health, Control: control, Ownership: productionOwnership, Observer: observer, Now: external.Now,
 		CloseResources: func(shutdownCtx context.Context) error {
 			eventsClosed = true
 			stateClosed = true

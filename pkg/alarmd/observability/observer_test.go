@@ -284,7 +284,10 @@ func TestPhaseTwoSuccessLogsAreBoundedAndCarryTraceID(t *testing.T) {
 	observation := Observation{
 		Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultSuccess,
 	}
-	ctx := ContextWithTraceFields(context.Background(), TraceFields{TraceID: "uq-trace-1", QueryGroupKey: "qg-sensitive"})
+	ctx := ContextWithTraceFields(context.Background(), TraceFields{
+		TraceID: "uq-trace-1", QueryGroupKey: "qg-sensitive",
+		ScheduleSegmentStart: 1_700_000_000, DuePlanSetDigest: "due-plan-set-sensitive",
+	})
 	observer.Observe(ctx, observation)
 	observer.Observe(ctx, observation)
 	if got := strings.Count(output.String(), "\"stage\":\"query_completed\""); got != 1 {
@@ -292,6 +295,10 @@ func TestPhaseTwoSuccessLogsAreBoundedAndCarryTraceID(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "\"trace_id\":\"uq-trace-1\"") {
 		t.Fatalf("trace id missing from structured log: %s", output.String())
+	}
+	if !strings.Contains(output.String(), "\"schedule_segment_start\":1700000000") ||
+		!strings.Contains(output.String(), "\"due_plan_set_digest\":\"due-plan-set-sensitive\"") {
+		t.Fatalf("frozen Slot provenance missing from structured log: %s", output.String())
 	}
 }
 

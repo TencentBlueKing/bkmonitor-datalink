@@ -1,6 +1,7 @@
 package execution_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -47,6 +48,49 @@ func TestDatasetNormalizationConvertsUQMillisecondsToCoreSeconds(t *testing.T) {
 	}
 }
 
+func TestDatasetNormalizationAcceptsExplicitNoDimensionIdentityFields(t *testing.T) {
+	facts := validQueryPlanFacts()
+	facts.QueryList[0].Dimensions = []string{}
+	facts.Normalization.DatasetContract.IdentityFields = []string{}
+	if _, err := execution.BuildQueryPlanFacts(facts); err != nil {
+		t.Fatalf("explicit no-dimension identity fields must be accepted: %v", err)
+	}
+
+	facts.Normalization.DatasetContract.IdentityFields = nil
+	if _, err := execution.BuildQueryPlanFacts(facts); err == nil {
+		t.Fatal("missing identity fields must remain invalid")
+	}
+}
+
+func TestNoDimensionQueryPlanCanonicalRoundTripAndDigest(t *testing.T) {
+	facts := validQueryPlanFacts()
+	facts.QueryList[0].Dimensions = []string{}
+	facts.Normalization.DatasetContract.IdentityFields = []string{}
+	built, err := execution.BuildQueryPlanFacts(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := json.Marshal(built)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip execution.QueryPlanFacts
+	if err := json.Unmarshal(payload, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.Normalization.DatasetContract.IdentityFields == nil {
+		t.Fatal("canonical round trip changed explicit empty identity fields to nil")
+	}
+	if err := roundTrip.Validate(); err != nil {
+		t.Fatalf("round-tripped no-dimension query plan lost its digest: %v", err)
+	}
+	const wantRevision = "f34f611883c8f932b3d9a6f1f8448b4e1d541db151d96341c82f6409029aebc3"
+	if string(roundTrip.QueryRevision) != wantRevision {
+		t.Fatalf("query_revision=%q, want golden %q", roundTrip.QueryRevision, wantRevision)
+	}
+}
+
 func TestQueryPlanFactsDigestCoversTypedUQSemantics(t *testing.T) {
 	base := validQueryPlanFacts()
 	built, err := execution.BuildQueryPlanFacts(base)
@@ -82,6 +126,44 @@ func TestQueryPlanFactsDigestCoversTypedUQSemantics(t *testing.T) {
 	}
 }
 
+func TestQueryPlanFactsAcceptsPythonEmptyStringConditionAndPreservesRevision(t *testing.T) {
+	facts := validQueryPlanFacts()
+	facts.QueryList[0].Conditions.Fields[0].Values = []execution.QueryScalar{{Kind: execution.QueryScalarString}}
+	built, err := execution.BuildQueryPlanFacts(facts)
+	if err != nil {
+		t.Fatalf("Python UQ condition empty string must remain a typed string: %v", err)
+	}
+	payload, err := json.Marshal(built)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip execution.QueryPlanFacts
+	if err := json.Unmarshal(payload, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if err := roundTrip.Validate(); err != nil {
+		t.Fatalf("empty string condition lost canonical query revision: %v", err)
+	}
+	const wantRevision = "d2bce1ca931747602e150f79f3271e612fbe40a67dbe69c5aae2f1b468bf71d9"
+	if string(roundTrip.QueryRevision) != wantRevision {
+		t.Fatalf("query_revision=%q, want golden %q", roundTrip.QueryRevision, wantRevision)
+	}
+}
+
+func TestQueryScalarDoesNotWidenNonStringShapes(t *testing.T) {
+	for _, scalar := range []execution.QueryScalar{
+		{Kind: execution.QueryScalarString, NumberValue: "0"},
+		{Kind: execution.QueryScalarString, BoolValue: true},
+		{Kind: execution.QueryScalarNumber},
+		{Kind: execution.QueryScalarBoolean, StringValue: "false"},
+		{Kind: execution.QueryScalarKind("NULL")},
+	} {
+		if err := scalar.Validate(); err == nil {
+			t.Fatalf("invalid non-empty/non-string scalar was accepted: %+v", scalar)
+		}
+	}
+}
+
 func TestQueryPlanFactsAcceptsRealUQFunctionPositions(t *testing.T) {
 	facts := validQueryPlanFacts()
 	facts.QueryList[0].Functions = []execution.QueryFunction{
@@ -93,19 +175,21 @@ func TestQueryPlanFactsAcceptsRealUQFunctionPositions(t *testing.T) {
 	}
 }
 
-func TestQueryPlanFactsAcceptsPythonEmptyFunctionShapes(t *testing.T) {
+func TestQueryPlanFactsAcceptsPythonAVGAndRealTimeFunctionShapes(t *testing.T) {
 	tests := []struct {
-		name      string
-		functions []execution.QueryFunction
+		name            string
+		functions       []execution.QueryFunction
+		timeAggregation execution.QueryFunction
 	}{
-		{name: "ordinary avg", functions: []execution.QueryFunction{{Method: "mean", Position: 0}}},
+		{name: "ordinary avg", functions: []execution.QueryFunction{{Method: "mean", Position: 0}},
+			timeAggregation: execution.QueryFunction{Method: "avg_over_time", Window: "60s", Position: 0}},
 		{name: "real time", functions: []execution.QueryFunction{}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			facts := validQueryPlanFacts()
 			facts.QueryList[0].Functions = test.functions
-			facts.QueryList[0].TimeAggregation = execution.QueryFunction{}
+			facts.QueryList[0].TimeAggregation = test.timeAggregation
 			built, err := execution.BuildQueryPlanFacts(facts)
 			if err != nil {
 				t.Fatalf("real Python UQ shape must be accepted: %v", err)

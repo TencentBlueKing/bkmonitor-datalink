@@ -79,6 +79,50 @@ func TestClientUsesFinalPythonWireContractAndNormalizesMilliseconds(t *testing.T
 	}
 }
 
+func TestClientNormalizesNoDimensionSeriesWithStableIdentity(t *testing.T) {
+	attempt := noDimensionAttempt(t)
+	client := fixtureClient(t, http.StatusOK,
+		`{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":[],"group_values":[],"values":[[1700123456789,12.5],[1700123516789,13.5]]}],"is_partial":false}`,
+		DefaultLimits())
+	client.now = func() time.Time { return time.Unix(1_700_123_500, 0) }
+	sink := &collectingSink{}
+	completion, err := client.Execute(context.Background(), attempt, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.batches) != 1 {
+		t.Fatalf("batches=%d", len(sink.batches))
+	}
+	batch := sink.batches[0]
+	if batch.Dataset.Len() != 2 || batch.Delivery.Series != 1 || batch.Delivery.Records != 2 ||
+		completion.Delivery != batch.Delivery {
+		t.Fatalf("dataset=%d delivery=%+v completion=%+v", batch.Dataset.Len(), batch.Delivery, completion)
+	}
+	first, ok := batch.Dataset.Record(0)
+	if !ok {
+		t.Fatal("first no-dimension record is missing")
+	}
+	identity := first.DimensionIdentity()
+	if len(identity.Fields) != 0 || len(first.Dimensions()) != 0 {
+		t.Fatalf("no-dimension series gained synthetic dimensions: identity=%+v dimensions=%v", identity, first.Dimensions())
+	}
+	const wantIdentityDigest = "4a46e4f597c486e288a78ac81c71fb8db64e6e55e694d6459915c28985c20e0e"
+	const wantRecordID = "f9892be76bdb0f7918dd6456aa713c3cfc5548d872d7dd3c1e9728c6b5693cf3"
+	const wantDeliveryDigest = "c079c5a5825c416759527d0bc109ae908a05cd57990927463fa7cec2e9ed79c1"
+	if identity.Digest != wantIdentityDigest || first.RecordID() != wantRecordID || batch.Delivery.Digest != wantDeliveryDigest {
+		t.Fatalf("identity=%q record_id=%q delivery=%q", identity.Digest, first.RecordID(), batch.Delivery.Digest)
+	}
+	for _, scope := range []struct{ tenant, business string }{{"other", "2"}, {"tenant", "3"}} {
+		other, err := contract.DeriveDimensionIdentityDigestV2(scope.tenant, scope.business, []contract.DimensionFieldV2{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if other == identity.Digest {
+			t.Fatalf("tenant/business scope collided with no-dimension identity: %+v", scope)
+		}
+	}
+}
+
 func TestClientRejectsInvalidCanonicalBoolean(t *testing.T) {
 	if _, err := parseQueryBool("is_wildcard", "yes"); err == nil || !strings.Contains(err.Error(), "is_wildcard must be true or false") {
 		t.Fatalf("error=%v", err)
@@ -245,7 +289,7 @@ func TestRequestMatchesTraceablePythonFinalWireFixture(t *testing.T) {
 	}
 }
 
-func TestRequestPreservesPythonEmptyFunctionShapes(t *testing.T) {
+func TestRequestPreservesPythonAVGAndRealTimeFunctionShapes(t *testing.T) {
 	want, err := os.ReadFile("testdata/python-empty-functions-wire-v1.json")
 	if err != nil {
 		t.Fatal(err)
@@ -254,13 +298,14 @@ func TestRequestPreservesPythonEmptyFunctionShapes(t *testing.T) {
 	avg := attempt.Spec.PlanFacts.QueryList[0]
 	avg.DataSource = ""
 	avg.Functions = []execution.QueryFunction{{Method: "mean", Position: 0}}
-	avg.TimeAggregation = execution.QueryFunction{}
+	avg.TimeAggregation = execution.QueryFunction{Method: "avg_over_time", Window: "60s", Position: 0}
 	avg.Conditions = execution.QueryConditions{}
 	avg.OffsetForward = ""
 	realTime := avg
 	realTime.ReferenceName = "b"
 	realTime.FieldName = "instant_usage"
 	realTime.Functions = []execution.QueryFunction{}
+	realTime.TimeAggregation = execution.QueryFunction{}
 	facts := attempt.Spec.PlanFacts
 	facts.QueryRevision = ""
 	facts.QueryList = []execution.QueryClause{avg, realTime}
@@ -285,6 +330,40 @@ func TestRequestPreservesPythonEmptyFunctionShapes(t *testing.T) {
 	}
 	if !jsonEqual(got, want) {
 		t.Fatalf("request lost Python empty function shapes\ngot=%s\nwant=%s", got, want)
+	}
+}
+
+func TestRequestPreservesPythonEmptyStringConditionValue(t *testing.T) {
+	attempt := validAttempt(t)
+	facts := attempt.Spec.PlanFacts
+	facts.QueryRevision = ""
+	facts.QueryList = append([]execution.QueryClause(nil), facts.QueryList...)
+	facts.QueryList[0].Conditions.Fields = append([]execution.QueryConditionField(nil), facts.QueryList[0].Conditions.Fields...)
+	facts.QueryList[0].Conditions.Fields[0].Values = []execution.QueryScalar{{Kind: execution.QueryScalarString}}
+	var err error
+	facts, err = execution.BuildQueryPlanFacts(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt.Spec, err = execution.BuildPhysicalQuerySpec(execution.PhysicalQuerySpec{
+		PlanFacts: facts, LogicalWindow: attempt.Spec.LogicalWindow,
+		ProviderRange: attempt.Spec.ProviderRange, AcceptedRange: attempt.Spec.AcceptedRange,
+		RequiredColumns: attempt.Spec.RequiredColumns,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := buildRequest(attempt.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(body.QueryList[0].Conditions.Fields[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"field_name":"host","op":"eq","value":[""],"is_prefix":true}`
+	if string(got) != want {
+		t.Fatalf("empty string condition wire=%s, want %s", got, want)
 	}
 }
 
@@ -347,4 +426,28 @@ func validAttempt(t *testing.T) execution.QueryAttempt {
 	}
 	return execution.QueryAttempt{Spec: spec, Slot: execution.SlotIdentity{QueryGroup: "group", ScheduleRevision: "schedule", EvaluationTime: 1_700_124_000},
 		Operation: execution.OperationNormal, AttemptNo: 1, DeadlineUnixMilli: time.Now().Add(time.Minute).UnixMilli()}
+}
+
+func noDimensionAttempt(t *testing.T) execution.QueryAttempt {
+	t.Helper()
+	attempt := validAttempt(t)
+	facts := attempt.Spec.PlanFacts
+	facts.QueryRevision = ""
+	facts.QueryList = append([]execution.QueryClause(nil), facts.QueryList...)
+	facts.QueryList[0].Dimensions = []string{}
+	facts.Normalization.DatasetContract.IdentityFields = []string{}
+	var err error
+	facts, err = execution.BuildQueryPlanFacts(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt.Spec, err = execution.BuildPhysicalQuerySpec(execution.PhysicalQuerySpec{
+		PlanFacts: facts, LogicalWindow: attempt.Spec.LogicalWindow,
+		ProviderRange: attempt.Spec.ProviderRange, AcceptedRange: attempt.Spec.AcceptedRange,
+		RequiredColumns: attempt.Spec.RequiredColumns,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return attempt
 }

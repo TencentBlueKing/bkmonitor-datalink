@@ -7,7 +7,8 @@
       "id": 11,
       "query_md5": "shared-query-md5",
       "expression": "a",
-      "query_configs": [{"data_source_label":"bk_monitor","data_type_label":"time_series","agg_method":"avg","agg_interval":60,"agg_dimension":["host"],"agg_condition":[],"result_table_id":"system.cpu","metric_field":"usage","functions":[]}],
+      "functions": [],
+      "query_configs": [{"data_source_label":"bk_monitor","data_type_label":"time_series","agg_method":"avg","agg_interval":60,"agg_dimension":["host"],"agg_condition":[],"result_table_id":"system.cpu","metric_field":"usage","alias":"a","functions":[]}],
       "algorithms": [{"level":1,"type":"Threshold","unit_prefix":"","config":[[{"method":"gte","threshold":80}]]}],
       "unit": "percent"
     }],
@@ -21,7 +22,8 @@
       "id": 12,
       "query_md5": "shared-query-md5",
       "expression": "a",
-      "query_configs": [{"data_source_label":"bk_monitor","data_type_label":"time_series","agg_method":"avg","agg_interval":60,"agg_dimension":["host"],"agg_condition":[],"result_table_id":"system.cpu","metric_field":"usage","functions":[]}],
+      "functions": [],
+      "query_configs": [{"data_source_label":"bk_monitor","data_type_label":"time_series","agg_method":"avg","agg_interval":60,"agg_dimension":["host"],"agg_condition":[],"result_table_id":"system.cpu","metric_field":"usage","alias":"a","functions":[]}],
       "algorithms": [{"level":1,"type":"Threshold","unit_prefix":"","config":[[{"method":"gt","threshold":90}]]}],
       "unit": "percent"
     }],

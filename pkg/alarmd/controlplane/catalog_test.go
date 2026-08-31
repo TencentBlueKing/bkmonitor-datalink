@@ -63,6 +63,22 @@ func TestBuildCatalogGroupsRealLegacyShapeDataOncePlansMany(t *testing.T) {
 	}
 }
 
+func TestBuildCatalogAcceptsStableEmptyActiveSet(t *testing.T) {
+	catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
+		Strategies: []controlplane.SourceStrategy{},
+		Planner:    &recordingPlanner{facts: queryFacts(t)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if catalog.ObservationID == "" || catalog.SnapshotRevision == "" {
+		t.Fatalf("empty catalog identities = %#v", catalog)
+	}
+	if catalog.QueryGroups == nil || len(catalog.QueryGroups) != 0 || catalog.Dispositions == nil || len(catalog.Dispositions) != 0 {
+		t.Fatalf("empty catalog collections = %#v", catalog)
+	}
+}
+
 func assertCompilesWithEvaluationCore(t *testing.T, plan contract.EvaluationPlanV2, dataset contract.DatasetContractV2) {
 	t.Helper()
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{
@@ -186,41 +202,6 @@ func TestRejectedPlanDoesNotBlockValidSibling(t *testing.T) {
 	}
 }
 
-func TestLegacyMultipleItemsUsesFirstParticipatingItem(t *testing.T) {
-	payload, err := os.ReadFile("testdata/two_threshold_strategies.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var documents []json.RawMessage
-	if json.Unmarshal(payload, &documents) != nil {
-		t.Fatal("fixture")
-	}
-	var strategy map[string]any
-	if json.Unmarshal(documents[0], &strategy) != nil {
-		t.Fatal("fixture")
-	}
-	items := strategy["items"].([]any)
-	strategy["items"] = append(items, map[string]any{"id": 999})
-	document, _ := json.Marshal(strategy)
-	identity := controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}
-	catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{Strategies: []controlplane.SourceStrategy{{SourceID: "1001", Document: document, Identity: identity}}, Planner: &recordingPlanner{facts: queryFacts(t)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(catalog.QueryGroups) != 1 || len(catalog.QueryGroups[0].Plans) != 1 {
-		t.Fatalf("catalog=%#v", catalog)
-	}
-	found := false
-	for _, item := range catalog.Dispositions {
-		if item.Disposition == controlplane.DispositionCompatibilityIgnored && item.Reason == "LEGACY_FIRST_ITEM_ONLY" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("dispositions=%#v", catalog.Dispositions)
-	}
-}
-
 func TestUnsupportedLevelDoesNotBlockSiblingLevel(t *testing.T) {
 	document := json.RawMessage(`{"id":10,"bk_biz_id":2,"update_time":1,"items":[{"id":1,"query_md5":"q","expression":"a","unit":"percent","query_configs":[{"agg_interval":60}],"algorithms":[{"level":1,"type":"Threshold","config":[{"method":"gt","threshold":80}]},{"level":5,"type":"TimeSeriesForecasting","config":{}}]}],"detects":[{"level":1,"priority":1,"trigger_config":{"count":1,"check_window":1}},{"level":5,"priority":5,"trigger_config":{"count":1,"check_window":1}}]}`)
 	identity := controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}
@@ -258,6 +239,62 @@ func TestSameLevelMultipleAlgorithmsANDAndUnusedDirtyDetect(t *testing.T) {
 	}
 }
 
+func TestLegacyLevelPriorityDistinguishesMissingFromExplicitZero(t *testing.T) {
+	identity := controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}
+	build := func(t *testing.T, detect string) controlplane.Catalog {
+		t.Helper()
+		document := json.RawMessage(fmt.Sprintf(`{"id":11,"bk_biz_id":2,"update_time":1,"items":[{"id":1,"query_md5":"q","expression":"a","unit":"percent","query_configs":[{"agg_interval":60}],"algorithms":[{"level":1,"type":"Threshold","config":[{"method":"gt","threshold":80}]}]}],"detects":[%s]}`, detect))
+		catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{Strategies: []controlplane.SourceStrategy{{SourceID: "11", Document: document, Identity: identity}}, Planner: &recordingPlanner{facts: queryFacts(t)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return catalog
+	}
+
+	missing := build(t, `{"level":1,"trigger_config":{"count":1,"check_window":1}}`)
+	if got := missing.QueryGroups[0].Plans[0].Plan.StrategyIR.Levels[0].Definition.Priority; got != 1 {
+		t.Fatalf("missing priority compatibility mapping=%d, want 1", got)
+	}
+
+	explicitZero := build(t, `{"level":1,"priority":0,"trigger_config":{"count":1,"check_window":1}}`)
+	if len(explicitZero.QueryGroups) != 0 || len(explicitZero.Dispositions) != 1 || explicitZero.Dispositions[0].Reason != "LEVEL_PRIORITY_INVALID" {
+		t.Fatalf("explicit zero priority was silently rewritten: %#v", explicitZero)
+	}
+}
+
+func TestLegacyRecoveryPresenceMatchesPythonContract(t *testing.T) {
+	identity := controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}
+	build := func(t *testing.T, recovery string) controlplane.Catalog {
+		t.Helper()
+		document := json.RawMessage(fmt.Sprintf(`{"id":11,"bk_biz_id":2,"update_time":1,"items":[{"id":1,"query_md5":"q","expression":"a","unit":"percent","query_configs":[{"agg_interval":60}],"algorithms":[{"level":1,"type":"Threshold","config":[{"method":"gt","threshold":80}]}]}],"detects":[{"level":1,"trigger_config":{"count":1,"check_window":1}%s}]}`, recovery))
+		catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{Strategies: []controlplane.SourceStrategy{{SourceID: "11", Document: document, Identity: identity}}, Planner: &recordingPlanner{facts: queryFacts(t)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return catalog
+	}
+
+	disabled := build(t, `,"recovery_config":{}`)
+	if len(disabled.QueryGroups) != 1 {
+		t.Fatalf("empty recovery config should disable recovery: %#v", disabled)
+	}
+	var disabledConfig struct {
+		Enabled            bool   `json:"enabled"`
+		ConsecutiveWindows uint32 `json:"consecutive_windows"`
+	}
+	if err := json.Unmarshal(disabled.QueryGroups[0].Plans[0].Plan.StrategyIR.Levels[0].RecoveryPlan.Config, &disabledConfig); err != nil {
+		t.Fatal(err)
+	}
+	if disabledConfig.Enabled || disabledConfig.ConsecutiveWindows != 0 {
+		t.Fatalf("disabled recovery=%+v", disabledConfig)
+	}
+
+	invalid := build(t, `,"recovery_config":{"check_window":0}`)
+	if len(invalid.QueryGroups) != 0 || len(invalid.Dispositions) != 1 || invalid.Dispositions[0].Reason != "RECOVERY_CONFIG_INVALID" {
+		t.Fatalf("non-empty zero recovery was silently disabled: %#v", invalid)
+	}
+}
+
 func TestMembershipPlanAndScheduleRevisionsAreIndependent(t *testing.T) {
 	payload, err := os.ReadFile("testdata/two_threshold_strategies.json")
 	if err != nil {
@@ -289,13 +326,69 @@ func TestMembershipPlanAndScheduleRevisionsAreIndependent(t *testing.T) {
 	}
 }
 
+func TestLegacyZeroUpdateTimeUsesContentRevision(t *testing.T) {
+	identity := controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}
+	build := func(t *testing.T, threshold int) contract.StrategyRefV2 {
+		t.Helper()
+		document := json.RawMessage(fmt.Sprintf(`{"id":11,"bk_biz_id":2,"update_time":0,"items":[{"id":1,"query_md5":"q","expression":"a","unit":"percent","query_configs":[{"agg_interval":60}],"algorithms":[{"level":1,"type":"Threshold","config":[{"method":"gt","threshold":%d}]}]}],"detects":[{"level":1,"trigger_config":{"count":1,"check_window":1}}]}`, threshold))
+		catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{Strategies: []controlplane.SourceStrategy{{SourceID: "11", Document: document, Identity: identity}}, Planner: &recordingPlanner{facts: queryFacts(t)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return catalog.QueryGroups[0].Plans[0].Plan.StrategyRef
+	}
+	first := build(t, 80)
+	second := build(t, 81)
+	if first.Revision == "" || first.Revision == "0" || first.Revision == second.Revision {
+		t.Fatalf("content revisions were not derived independently: first=%q second=%q", first.Revision, second.Revision)
+	}
+}
+
+func TestCatalogPassesItemExpressionFunctionsToPrimaryQueryCompiler(t *testing.T) {
+	document := json.RawMessage(`{"id":12,"bk_biz_id":2,"update_time":1,"items":[{"id":1,"query_md5":"q","expression":"a","functions":[{"id":"abs","params":[]}],"query_configs":[{"agg_interval":60}],"algorithms":[{"level":1,"type":"Threshold","config":[{"method":"gt","threshold":80}]}]}],"detects":[{"level":1,"trigger_config":{"count":1,"check_window":1}}]}`)
+	planner := &recordingPlanner{facts: queryFacts(t)}
+	_, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
+		Strategies: []controlplane.SourceStrategy{{SourceID: "12", Document: document,
+			Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}}},
+		Planner: planner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planner.lastSource.Functions) != 1 || string(planner.lastSource.Functions[0]) != `{"id":"abs","params":[]}` {
+		t.Fatalf("primary query source=%#v", planner.lastSource)
+	}
+}
+
+func TestBuildCatalogRejectsMultipleItemsWithoutSilentlySelectingFirst(t *testing.T) {
+	document := json.RawMessage(`{"id":12,"bk_biz_id":2,"update_time":1,"items":[{"id":1,"query_md5":"q","expression":"a","query_configs":[{"agg_interval":60}],"algorithms":[{"level":1,"type":"Threshold","config":[{"method":"gt","threshold":80}]}]},{"id":2,"query_md5":"q2","expression":"b","query_configs":[{"agg_interval":60}],"algorithms":[{"level":1,"type":"Threshold","config":[{"method":"gt","threshold":90}]}]}],"detects":[{"level":1,"trigger_config":{"count":1,"check_window":1}}]}`)
+	planner := &recordingPlanner{facts: queryFacts(t)}
+	catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
+		Strategies: []controlplane.SourceStrategy{{SourceID: "12", Document: document,
+			Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}}},
+		Planner: planner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planner.calls != 0 || len(catalog.QueryGroups) != 0 || len(catalog.Dispositions) != 1 {
+		t.Fatalf("multiple Items were partially compiled: catalog=%#v planner calls=%d", catalog, planner.calls)
+	}
+	disposition := catalog.Dispositions[0]
+	if disposition.Scope != "PLAN" || disposition.Disposition != controlplane.DispositionUnsupported || disposition.Reason != "UNSUPPORTED_MULTI_ITEM_STRATEGY" {
+		t.Fatalf("multiple Item disposition=%#v", disposition)
+	}
+}
+
 type recordingPlanner struct {
-	facts execution.QueryPlanFacts
-	calls int
+	facts      execution.QueryPlanFacts
+	calls      int
+	lastSource controlplane.PrimaryQuerySource
 }
 
 func (p *recordingPlanner) CompilePrimaryQuery(_ context.Context, source controlplane.PrimaryQuerySource) (execution.QueryPlanFacts, error) {
 	p.calls++
+	p.lastSource = source
 	return p.facts, nil
 }
 
@@ -305,7 +398,7 @@ func queryFacts(t *testing.T) execution.QueryPlanFacts {
 func queryFactsFor(t *testing.T, business, space string) execution.QueryPlanFacts {
 	t.Helper()
 	facts, err := execution.BuildQueryPlanFacts(execution.QueryPlanFacts{
-		Provider: execution.ProviderUQ, ProviderRouteRef: "uq-bkop", TenantID: "tenant-a", BusinessID: business, SpaceScope: space,
+		Provider: execution.ProviderUQ, ProviderRouteRef: "uq-primary", TenantID: "tenant-a", BusinessID: business, SpaceScope: space,
 		QueryList:   []execution.QueryClause{{DataSource: "bk_monitor", Driver: "influxdb", TableID: "system.cpu", FieldName: "usage", TimeField: "time", ReferenceName: "a", Functions: []execution.QueryFunction{{Method: "default", Position: 0}}, TimeAggregation: execution.QueryFunction{Method: "avg", Position: 0}}},
 		MetricMerge: "a", StepMillis: 60000, AlignmentMillis: 60000,
 		Normalization: execution.DatasetNormalizationSpec{DatasetContract: contract.DatasetContractV2{SchemaDigest: "schema", NormalizationDigest: "normalization", IdentityFields: []string{"host"}, SourceTimeField: "time", ReceivedTimeField: "received_time"}, SourceTimeUnit: execution.TimeUnitMillisecond, CanonicalSourceTimeUnit: execution.TimeUnitSecond, SeriesIdentityMode: execution.SeriesIdentityUQGroupKeysValuesV1, GroupKeyRule: execution.GroupKeyStripTableSuffixV1, ValueSelectionMode: execution.ValueSelectionResultOrFirstReferenceV1, CanonicalValueField: "value", ReceivedTimeMode: execution.ReceivedTimeProviderReceivedAt, Version: "v1"},

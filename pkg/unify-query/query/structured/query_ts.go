@@ -44,9 +44,12 @@ const (
 
 var outputReferencePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
+// QueryOutput 声明 named_outputs/v1 中的一个命名输出。
 type QueryOutput struct {
-	ReferenceName string `json:"reference_name"`
-	Expression    string `json:"expression"`
+	// ReferenceName 输出引用名，在同一 output_list 中必须唯一。
+	ReferenceName string `json:"reference_name" example:"A"`
+	// Expression 输出表达式；非 legacy 输出仅允许 query reference identity 表达式。
+	Expression string `json:"expression" example:"A"`
 }
 
 type QueryTs struct {
@@ -59,9 +62,9 @@ type QueryTs struct {
 	// MetricMerge 表达式：支持所有PromQL语法
 	MetricMerge string `json:"metric_merge,omitempty" example:"a"`
 	// ResponseContract 显式选择命名多输出响应契约；为空时保持旧单输出行为。
-	ResponseContract string `json:"response_contract,omitempty"`
+	ResponseContract string `json:"response_contract,omitempty" example:"named_outputs/v1" enums:"named_outputs/v1"`
 	// LegacyOutputRef 指向与 MetricMerge 等价的输出，供旧服务兼容降级。
-	LegacyOutputRef string `json:"legacy_output_ref,omitempty"`
+	LegacyOutputRef string `json:"legacy_output_ref,omitempty" example:"C"`
 	// OutputList 按请求顺序声明命名输出。
 	OutputList []QueryOutput `json:"output_list,omitempty"`
 	// OrderBy 排序字段列表，按顺序排序，负数代表倒序, ["_time", "-_time"]

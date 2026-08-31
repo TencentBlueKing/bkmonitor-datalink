@@ -30,6 +30,7 @@ import (
 	uqPrometheus "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 )
 
+// OutputState 表示单个命名输出的执行状态。
 type OutputState string
 
 const (
@@ -39,22 +40,51 @@ const (
 	OutputStateError        OutputState = "ERROR"
 )
 
+// NamedOutputData 是 named_outputs/v1 的单个引用结果。
 type NamedOutputData struct {
-	ReferenceName string           `json:"reference_name"`
-	State         OutputState      `json:"state"`
-	Tables        []*TablesItem    `json:"series"`
-	Status        *metadata.Status `json:"status,omitempty"`
-	IsPartial     bool             `json:"is_partial"`
-	InvalidPoints int              `json:"invalid_points"`
+	// ReferenceName 对应请求 output_list 中的 reference_name。
+	ReferenceName string `json:"reference_name" example:"A"`
+	// State 取值为 SUCCESS、SUCCESS_EMPTY、PARTIAL 或 ERROR。
+	State OutputState `json:"state" enums:"SUCCESS,SUCCESS_EMPTY,PARTIAL,ERROR" example:"SUCCESS"`
+	// Tables 使用与旧 PromData.series 相同的序列结构。
+	Tables []*TablesItem `json:"series"`
+	// Status 保留本输出的路由或查询状态。
+	Status *metadata.Status `json:"status,omitempty"`
+	// IsPartial 表示本输出是否部分成功或失败。
+	IsPartial bool `json:"is_partial"`
+	// InvalidPoints 是被过滤的 NaN/Inf 点数。
+	InvalidPoints int `json:"invalid_points"`
 }
 
+// NamedOutputsData 是显式请求 named_outputs/v1 时的响应。
 type NamedOutputsData struct {
-	ContractVersion string            `json:"contract_version"`
-	Outputs         []NamedOutputData `json:"outputs"`
-	Status          *metadata.Status  `json:"status,omitempty"`
-	IsPartial       bool              `json:"is_partial"`
-	ResultTableID   []string          `json:"result_table_id"`
-	TraceID         string            `json:"trace_id,omitempty"`
+	// ContractVersion 固定为 named_outputs/v1。
+	ContractVersion string `json:"contract_version" example:"named_outputs/v1" enums:"named_outputs/v1"`
+	// Outputs 按请求 output_list 的顺序返回各引用结果。
+	Outputs []NamedOutputData `json:"outputs"`
+	// Status 聚合本次请求的部分成功或错误状态。
+	Status *metadata.Status `json:"status,omitempty"`
+	// IsPartial 任一输出为 PARTIAL/ERROR 时为 true。
+	IsPartial bool `json:"is_partial"`
+	// ResultTableID 是共享 QueryReference 的路由结果表并集。
+	ResultTableID []string `json:"result_table_id"`
+	TraceID       string   `json:"trace_id,omitempty"`
+}
+
+// QueryTsResponse 描述 /query/ts 的兼容响应：未指定 response_contract 时返回
+// legacy PromData 字段；指定 named_outputs/v1 时返回 contract_version 和 outputs。
+// Swagger 2.0 不支持 oneOf，因此这里用可选字段表达两种互斥形态。
+type QueryTsResponse struct {
+	// Series 是未指定 response_contract 时的旧单输出结果。
+	Series []*TablesItem `json:"series,omitempty"`
+	// ContractVersion 仅在 named_outputs/v1 响应中返回。
+	ContractVersion string `json:"contract_version,omitempty" example:"named_outputs/v1" enums:"named_outputs/v1"`
+	// Outputs 仅在 named_outputs/v1 响应中返回。
+	Outputs       []NamedOutputData `json:"outputs,omitempty"`
+	Status        *metadata.Status  `json:"status,omitempty"`
+	TraceID       string            `json:"trace_id,omitempty"`
+	IsPartial     bool              `json:"is_partial"`
+	ResultTableID []string          `json:"result_table_id,omitempty"`
 }
 
 type namedOutputSettings struct {

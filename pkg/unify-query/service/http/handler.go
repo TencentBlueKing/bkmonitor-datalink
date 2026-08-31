@@ -413,7 +413,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryTs  			true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  QueryTsResponse  "未指定 response_contract 时返回 legacy PromData；named_outputs/v1 返回命名多输出"
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts [post]
 func HandlerQueryTs(c *gin.Context) {

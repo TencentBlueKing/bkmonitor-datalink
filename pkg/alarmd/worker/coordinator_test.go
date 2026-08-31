@@ -72,6 +72,26 @@ func TestSlotExecutionCoordinatorDiscardsProvisionalResultsWithoutCompletion(t *
 	}
 }
 
+func TestSlotExecutionCoordinatorBindsAlwaysEffectiveTimeToRealSeries(t *testing.T) {
+	fixture := newFixture(t, true, "")
+	fixture.ports.unboundEffectiveTimeFacts = true
+
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err != nil || !result.Completed {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	facts := fixture.ports.lastEvaluation.Header.EffectiveTimeFacts
+	if len(facts) != 1 {
+		t.Fatalf("EffectiveTime facts=%d, want one fact for the selected series and Level", len(facts))
+	}
+	fact := facts[0]
+	if fact.Consumer.Plan != planIdentity() || !fact.Consumer.HasLevel || fact.Consumer.LevelID != 5 ||
+		fact.SeriesIdentity != execution.SeriesIdentityDigest(strings.Repeat("c", 64)) ||
+		fact.Fact.Status() != strategy.EffectiveTimeActive {
+		t.Fatalf("EffectiveTime fact=%+v, want ACTIVE fact bound to the real series and Level", fact)
+	}
+}
+
 func TestSlotExecutionCoordinatorEnforcesProcessProvisionalBudget(t *testing.T) {
 	fixture := newFixtureWithBudget(t, worker.ProvisionalBudget{
 		MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 1, MaxEvents: 1, MaxGapMutations: 1,
@@ -696,6 +716,7 @@ type recordingPorts struct {
 	wrongStateApplyIdentity         bool
 	progressConflict                bool
 	reverseStateReceipts            bool
+	unboundEffectiveTimeFacts       bool
 	stateAdmissionDeterministic     bool
 	stateApplyDeterministic         bool
 	stateAdmissionDeterministicLast bool
@@ -718,6 +739,7 @@ type recordingPorts struct {
 	lastStateApply                  execution.StateApplyRequest
 	lastProgress                    execution.ProgressCommitRequest
 	lastEvents                      []contract.TriggerEventV1
+	lastEvaluation                  execution.EvaluationRequest
 	eventCount                      int
 	gapMutations                    []execution.PlanGapMutation
 }
@@ -726,6 +748,11 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 	ports.record("query")
 	input := validInternalExecution()
 	input.Contract = request.Contract
+	if ports.unboundEffectiveTimeFacts {
+		for index := range input.EffectiveTimeFacts {
+			input.EffectiveTimeFacts[index].SeriesIdentity = ""
+		}
+	}
 	if ports.reverseStateReceipts {
 		input.Inputs[0].Dataset = execution.NewDataset([]contract.CanonicalRecordV2{
 			{
@@ -845,6 +872,7 @@ func (ports *recordingPorts) Sequence(
 
 func (ports *recordingPorts) Evaluate(_ context.Context, request execution.EvaluationRequest) (execution.EvaluationResult, error) {
 	ports.record("evaluate")
+	ports.lastEvaluation = request
 	seriesDigest := string(request.State.Items[0].Identity.SeriesIdentityDigest)
 	recordID := strings.Repeat("b", 64)
 	if seriesDigest == strings.Repeat("d", 64) {

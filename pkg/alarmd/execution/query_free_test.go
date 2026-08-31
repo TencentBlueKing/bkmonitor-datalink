@@ -38,13 +38,13 @@ func TestQueryFreeProgressRequiresExactCompletionReason(t *testing.T) {
 func queryFreeProgressRequest(kind execution.CompletionKind, reason execution.ReasonCode) execution.ProgressCommitRequest {
 	contractRef := execution.FrozenExecutionContractRef{
 		Slot: execution.SlotIdentity{
-			QueryGroup: "query-group", ScheduleRevision: "schedule-v1", EvaluationTime: 1_788_000_000,
+			QueryGroup: "query-group", EvaluationTime: 1_788_000_000,
 		},
 		SnapshotRevision: "snapshot-v1", QueryRevision: "query-v1",
-		ScheduleRevision: "schedule-v1", DuePlanSetDigest: "due-plans-v1",
+		ScheduleRevision: "schedule-v1", ScheduleSegmentStart: 1_787_999_940, DuePlanSetDigest: "due-plans-v1",
 	}
 	return execution.ProgressCommitRequest{
-		Namespace: execution.ProgressNamespace{QueryGroup: "query-group", ScheduleRevision: "schedule-v1"},
+		Identity: execution.ProgressIdentity{QueryGroup: "query-group"},
 		OwnerFence: execution.OwnerFence{
 			QueryGroup: "query-group", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1",
 		},

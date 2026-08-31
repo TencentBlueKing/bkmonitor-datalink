@@ -338,7 +338,7 @@ func TestGapOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
 }
 
 func frozenRef() execution.FrozenExecutionContractRef {
-	return execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{QueryGroup: "q", ScheduleRevision: "schedule", EvaluationTime: 60}, SnapshotRevision: "snapshot", QueryRevision: "query", ScheduleRevision: "schedule", DuePlanSetDigest: "plans"}
+	return execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{QueryGroup: "q", EvaluationTime: 60}, SnapshotRevision: "snapshot", QueryRevision: "query", ScheduleRevision: "schedule", ScheduleSegmentStart: 60, DuePlanSetDigest: "plans"}
 }
 func applyVersion() execution.ApplyVersion {
 	return execution.ApplyVersion{StateApplyEpoch: 1, EvaluationTime: 60, SlotDigest: "slot"}

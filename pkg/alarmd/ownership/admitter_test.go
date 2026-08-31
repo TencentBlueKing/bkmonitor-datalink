@@ -19,8 +19,12 @@ func TestAdmitterRequiresCurrentFenceAndCurrentPlanActivation(t *testing.T) {
 	now := time.UnixMilli(1_700_000_000_000)
 	request := execution.SideEffectAdmissionRequest{
 		Contract: execution.FrozenExecutionContractRef{
-			Slot:             execution.SlotIdentity{QueryGroup: "query-group-1", ScheduleRevision: "schedule-1", EvaluationTime: 100},
-			SnapshotRevision: "snapshot-1", QueryRevision: "query-1", ScheduleRevision: "schedule-1", DuePlanSetDigest: "plans-1",
+			Slot:                 execution.SlotIdentity{QueryGroup: "query-group-1", EvaluationTime: 100},
+			SnapshotRevision:     "snapshot-1",
+			QueryRevision:        "query-1",
+			ScheduleRevision:     "schedule-1",
+			ScheduleSegmentStart: 100,
+			DuePlanSetDigest:     "plans-1",
 		},
 		Plan:            execution.PlanIdentity{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy"},
 		StateApplyEpoch: 1,

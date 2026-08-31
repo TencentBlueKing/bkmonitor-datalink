@@ -94,7 +94,7 @@ func (sequencer *KeyedSideEffectSequencer) Sequence(
 }
 
 func runtimeKeys(scope execution.SequencingScope) ([]coordinator.RuntimeKey, error) {
-	if scope.Slot.QueryGroup == "" || scope.Slot.ScheduleRevision == "" || scope.Slot.EvaluationTime <= 0 {
+	if scope.Slot.QueryGroup == "" || scope.Slot.EvaluationTime <= 0 {
 		return nil, errors.New("alarmd worker: complete side-effect sequencing Slot is required")
 	}
 	keys := make([]coordinator.RuntimeKey, 0, len(scope.StateKeys)+len(scope.GapKeys))

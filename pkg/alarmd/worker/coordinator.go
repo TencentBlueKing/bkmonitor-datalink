@@ -616,9 +616,7 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 ) (execution.SlotExecutionResult, error) {
 	started := time.Now()
 	progressRequest := execution.ProgressCommitRequest{
-		Namespace: execution.ProgressNamespace{
-			QueryGroup: request.Contract.Slot.QueryGroup, ScheduleRevision: request.Contract.ScheduleRevision,
-		},
+		Identity:   execution.ProgressIdentity{QueryGroup: request.Contract.Slot.QueryGroup},
 		OwnerFence: request.OwnerFence, ExpectedNextSlot: request.ExpectedNextSlot, Completion: completion,
 		NextSlotAfterCompletion: request.NextSlotAfterCompletion,
 	}

@@ -37,27 +37,25 @@ type SlotIdentityDigest string
 type MutationDigest string
 
 type SlotIdentity struct {
-	QueryGroup       QueryGroupIdentity
-	ScheduleRevision ScheduleRevision
-	EvaluationTime   EvaluationTime
+	QueryGroup     QueryGroupIdentity
+	EvaluationTime EvaluationTime
 }
 
 // FrozenExecutionContractRef identifies immutable computation semantics. It
 // is not an ownership or side-effect authorization token.
 type FrozenExecutionContractRef struct {
-	Slot             SlotIdentity
-	SnapshotRevision SnapshotRevision
-	QueryRevision    QueryRevision
-	ScheduleRevision ScheduleRevision
-	DuePlanSetDigest DuePlanSetDigest
+	Slot                 SlotIdentity
+	SnapshotRevision     SnapshotRevision
+	QueryRevision        QueryRevision
+	ScheduleRevision     ScheduleRevision
+	ScheduleSegmentStart EvaluationTime
+	DuePlanSetDigest     DuePlanSetDigest
 }
 
 func (ref FrozenExecutionContractRef) Validate() error {
 	switch {
 	case ref.Slot.QueryGroup == "":
 		return errors.New("alarmd execution: query group is required")
-	case ref.Slot.ScheduleRevision == "":
-		return errors.New("alarmd execution: slot schedule revision is required")
 	case ref.Slot.EvaluationTime <= 0:
 		return errors.New("alarmd execution: positive evaluation time is required")
 	case ref.SnapshotRevision == "":
@@ -66,10 +64,10 @@ func (ref FrozenExecutionContractRef) Validate() error {
 		return errors.New("alarmd execution: query revision is required")
 	case ref.ScheduleRevision == "":
 		return errors.New("alarmd execution: schedule revision is required")
+	case ref.ScheduleSegmentStart <= 0 || ref.ScheduleSegmentStart > ref.Slot.EvaluationTime:
+		return errors.New("alarmd execution: valid schedule segment start is required")
 	case ref.DuePlanSetDigest == "":
 		return errors.New("alarmd execution: due plan set digest is required")
-	case ref.Slot.ScheduleRevision != ref.ScheduleRevision:
-		return errors.New("alarmd execution: slot and contract schedule revisions differ")
 	default:
 		return nil
 	}
@@ -197,6 +195,7 @@ type DuePlan struct {
 	StateGeneration             StateGeneration
 	StateApplyEpoch             StateApplyEpoch
 	ScheduleRevision            PlanScheduleRevision
+	ScheduleSpec                ScheduleSpec
 	CompletionDeadlineUnixMilli int64
 	PartialCapabilities         []LevelPartialCapability
 }
@@ -292,14 +291,12 @@ func BuildApplyVersion(contractRef FrozenExecutionContractRef, epoch StateApplyE
 	if epoch == 0 {
 		return ApplyVersion{}, errors.New("alarmd execution: positive state apply epoch is required")
 	}
-	digest, err := contract.DeriveCanonicalDigestV2("alarmd-slot-identity-v1", struct {
-		QueryGroup       QueryGroupIdentity `json:"query_group"`
-		ScheduleRevision ScheduleRevision   `json:"schedule_revision"`
-		EvaluationTime   EvaluationTime     `json:"evaluation_time"`
+	digest, err := contract.DeriveCanonicalDigestV2("alarmd-slot-identity-v2", struct {
+		QueryGroup     QueryGroupIdentity `json:"query_group"`
+		EvaluationTime EvaluationTime     `json:"evaluation_time"`
 	}{
-		QueryGroup:       contractRef.Slot.QueryGroup,
-		ScheduleRevision: contractRef.Slot.ScheduleRevision,
-		EvaluationTime:   contractRef.Slot.EvaluationTime,
+		QueryGroup:     contractRef.Slot.QueryGroup,
+		EvaluationTime: contractRef.Slot.EvaluationTime,
 	})
 	if err != nil {
 		return ApplyVersion{}, fmt.Errorf("alarmd execution: derive Slot identity digest: %w", err)
@@ -2036,9 +2033,8 @@ func DeriveCompletionKind(input InternalExecution, result EvaluationResult) (Com
 	}
 }
 
-type ProgressNamespace struct {
-	QueryGroup       QueryGroupIdentity
-	ScheduleRevision ScheduleRevision
+type ProgressIdentity struct {
+	QueryGroup QueryGroupIdentity
 }
 
 type SlotCompletion struct {
@@ -2050,7 +2046,7 @@ type SlotCompletion struct {
 }
 
 type ProgressCommitRequest struct {
-	Namespace               ProgressNamespace
+	Identity                ProgressIdentity
 	OwnerFence              OwnerFence
 	ExpectedNextSlot        EvaluationTime
 	NextSlotAfterCompletion EvaluationTime
@@ -2058,14 +2054,13 @@ type ProgressCommitRequest struct {
 }
 
 func (request ProgressCommitRequest) Validate() error {
-	if request.Namespace.QueryGroup == "" || request.Namespace.ScheduleRevision == "" {
-		return errors.New("alarmd execution: complete Progress namespace is required")
+	if request.Identity.QueryGroup == "" {
+		return errors.New("alarmd execution: complete Progress identity is required")
 	}
 	if err := request.OwnerFence.Validate(request.Completion.Contract); err != nil {
 		return err
 	}
-	if request.Namespace.QueryGroup != request.Completion.Contract.Slot.QueryGroup ||
-		request.Namespace.ScheduleRevision != request.Completion.Contract.ScheduleRevision ||
+	if request.Identity.QueryGroup != request.Completion.Contract.Slot.QueryGroup ||
 		request.ExpectedNextSlot != request.Completion.Contract.Slot.EvaluationTime ||
 		request.NextSlotAfterCompletion <= request.ExpectedNextSlot {
 		return errors.New("alarmd execution: Progress request does not match the completed Slot")
@@ -2159,7 +2154,7 @@ const (
 )
 
 type ScheduleProgress struct {
-	Namespace          ProgressNamespace
+	Identity           ProgressIdentity
 	NextSlot           EvaluationTime
 	LastFullSlot       EvaluationTime
 	LastCompletionKind CompletionKind
@@ -2178,14 +2173,14 @@ type ProgressLoadResult struct {
 	Progress *ScheduleProgress
 }
 
-func (result ProgressLoadResult) Validate(namespace ProgressNamespace) error {
-	if namespace.QueryGroup == "" || namespace.ScheduleRevision == "" {
-		return errors.New("alarmd execution: complete Progress namespace is required")
+func (result ProgressLoadResult) Validate(identity ProgressIdentity) error {
+	if identity.QueryGroup == "" {
+		return errors.New("alarmd execution: complete Progress identity is required")
 	}
 	switch result.Status {
 	case ProgressFound:
-		if result.Progress == nil || result.Progress.Namespace != namespace {
-			return errors.New("alarmd execution: FOUND Progress must match its namespace")
+		if result.Progress == nil || result.Progress.Identity != identity {
+			return errors.New("alarmd execution: FOUND Progress must match its identity")
 		}
 		return result.Progress.Validate()
 	case ProgressMissing:
@@ -2208,8 +2203,7 @@ type ProgressGapSummary struct {
 }
 
 func (progress ScheduleProgress) Validate() error {
-	if progress.Namespace.QueryGroup == "" || progress.Namespace.ScheduleRevision == "" ||
-		progress.NextSlot <= 0 {
+	if progress.Identity.QueryGroup == "" || progress.NextSlot <= 0 {
 		return errors.New("alarmd execution: incomplete Schedule Progress")
 	}
 	if progress.LastFullSlot < 0 || progress.LastFullSlot >= progress.NextSlot {

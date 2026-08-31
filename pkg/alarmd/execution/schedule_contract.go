@@ -1,7 +1,7 @@
 // Tencent is pleased to support the open source community by making
 // 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
 // Copyright (C) 2017-2025 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// Licensed under the MIT License.
 
 package execution
 
@@ -17,9 +17,7 @@ import (
 
 type PublicationEpoch uint64
 
-// ScheduleSpec is the complete cadence input for one Plan. Alignment is a
-// resolved Unix-second grid anchor; Timezone remains part of the revision so
-// source schedule semantics cannot change without a new lane.
+// ScheduleSpec is the complete immutable cadence input for one Plan.
 type ScheduleSpec struct {
 	EvaluationIntervalSeconds int64          `json:"evaluation_interval"`
 	Alignment                 EvaluationTime `json:"alignment"`
@@ -30,8 +28,8 @@ func (spec ScheduleSpec) Validate() error {
 	if spec.EvaluationIntervalSeconds <= 0 {
 		return errors.New("alarmd execution: positive evaluation interval is required")
 	}
-	if spec.Alignment < 0 {
-		return errors.New("alarmd execution: schedule alignment cannot be negative")
+	if spec.Alignment < 0 || int64(spec.Alignment) >= spec.EvaluationIntervalSeconds {
+		return errors.New("alarmd execution: schedule alignment must be within one evaluation interval")
 	}
 	if spec.Timezone == "" {
 		return errors.New("alarmd execution: schedule timezone is required")
@@ -69,6 +67,17 @@ func (spec ScheduleSpec) nextAtOrAfter(at EvaluationTime) (EvaluationTime, bool)
 		return 0, false
 	}
 	return EvaluationTime(int64(at) + increment), true
+}
+
+func (spec ScheduleSpec) completionDeadlineUnixMilli(at EvaluationTime) (int64, bool) {
+	if spec.Validate() != nil || at <= 0 || int64(at) > math.MaxInt64-spec.EvaluationIntervalSeconds {
+		return 0, false
+	}
+	deadlineSeconds := int64(at) + spec.EvaluationIntervalSeconds
+	if deadlineSeconds > math.MaxInt64/1000 {
+		return 0, false
+	}
+	return deadlineSeconds * 1000, true
 }
 
 func DerivePlanScheduleRevision(spec ScheduleSpec) (PlanScheduleRevision, error) {
@@ -149,55 +158,87 @@ func DeriveQueryGroupScheduleRevision(plans []FrozenPlanSchedule) (ScheduleRevis
 	return ScheduleRevision(digest), nil
 }
 
-// ScheduleLaneIdentity keeps Progress and Slot enumeration independent for
-// each Query Group schedule revision.
-type ScheduleLaneIdentity struct {
-	QueryGroup       QueryGroupIdentity
-	ScheduleRevision ScheduleRevision
+type SnapshotPublicationRef struct {
+	SnapshotRevision SnapshotRevision
+	PublicationEpoch PublicationEpoch
 }
 
-func (lane ScheduleLaneIdentity) Validate() error {
-	if lane.QueryGroup == "" || lane.ScheduleRevision == "" {
-		return errors.New("alarmd execution: complete schedule lane identity is required")
+func (ref SnapshotPublicationRef) Validate() error {
+	if ref.SnapshotRevision == "" || ref.PublicationEpoch == 0 {
+		return errors.New("alarmd execution: complete content-addressed Snapshot publication is required")
 	}
 	return nil
 }
 
-func (lane ScheduleLaneIdentity) ProgressNamespace() ProgressNamespace {
-	return ProgressNamespace{QueryGroup: lane.QueryGroup, ScheduleRevision: lane.ScheduleRevision}
+// ScheduleSegmentFact gives one schedule revision the half-open ownership
+// interval [Start, End) on a Query Group's single logical timeline.
+type ScheduleSegmentFact struct {
+	Publication      SnapshotPublicationRef
+	QueryGroup       QueryGroupIdentity
+	QueryRevision    QueryRevision
+	ScheduleRevision ScheduleRevision
+	Start            EvaluationTime
+	End              *EvaluationTime
 }
 
-// FrozenQueryGroupSchedule contains only immutable facts needed to enumerate
-// one versioned schedule lane. FirstEvaluationTime is persisted control-plane
-// fact, never a Worker first-seen timestamp.
+func (segment ScheduleSegmentFact) Validate() error {
+	if err := segment.Publication.Validate(); err != nil {
+		return err
+	}
+	if segment.QueryGroup == "" || segment.QueryRevision == "" || segment.ScheduleRevision == "" || segment.Start <= 0 {
+		return errors.New("alarmd execution: complete Schedule Segment is required")
+	}
+	if segment.End != nil && *segment.End <= segment.Start {
+		return errors.New("alarmd execution: Schedule Segment end must follow its start")
+	}
+	return nil
+}
+
+func (segment ScheduleSegmentFact) Contains(at EvaluationTime) bool {
+	return at >= segment.Start && (segment.End == nil || at < *segment.End)
+}
+
+func sameScheduleSegment(left, right ScheduleSegmentFact) bool {
+	if left.Publication != right.Publication || left.QueryGroup != right.QueryGroup ||
+		left.QueryRevision != right.QueryRevision || left.ScheduleRevision != right.ScheduleRevision || left.Start != right.Start {
+		return false
+	}
+	if left.End == nil || right.End == nil {
+		return left.End == nil && right.End == nil
+	}
+	return *left.End == *right.End
+}
+
+// FrozenQueryGroupSchedule binds one immutable Plan schedule set to the exact
+// persisted Segment that owns its Slot times.
 type FrozenQueryGroupSchedule struct {
-	Lane                ScheduleLaneIdentity
-	FirstEvaluationTime EvaluationTime
-	Plans               []FrozenPlanSchedule
+	Segment ScheduleSegmentFact
+	Plans   []FrozenPlanSchedule
 }
 
 func (schedule FrozenQueryGroupSchedule) Validate() error {
-	if err := schedule.Lane.Validate(); err != nil {
+	if err := schedule.Segment.Validate(); err != nil {
 		return err
-	}
-	if schedule.FirstEvaluationTime <= 0 {
-		return errors.New("alarmd execution: positive first evaluation time is required")
 	}
 	revision, err := DeriveQueryGroupScheduleRevision(schedule.Plans)
 	if err != nil {
 		return err
 	}
-	if revision != schedule.Lane.ScheduleRevision {
-		return errors.New("alarmd execution: lane revision does not match active Plan schedules")
+	if revision != schedule.Segment.ScheduleRevision {
+		return errors.New("alarmd execution: Segment revision does not match active Plan schedules")
 	}
-	if len(schedule.DuePlanRefs(schedule.FirstEvaluationTime)) == 0 {
-		return errors.New("alarmd execution: first evaluation time is outside the schedule")
+	if _, ok := schedule.FirstSlot(); !ok {
+		return errors.New("alarmd execution: Schedule Segment contains no legal Slot")
 	}
 	return nil
 }
 
+func (schedule FrozenQueryGroupSchedule) FirstSlot() (EvaluationTime, bool) {
+	return schedule.nextSlotAtOrAfter(schedule.Segment.Start)
+}
+
 func (schedule FrozenQueryGroupSchedule) DuePlanRefs(at EvaluationTime) []FrozenPlanScheduleRef {
-	if at < schedule.FirstEvaluationTime {
+	if !schedule.Segment.Contains(at) {
 		return nil
 	}
 	due := make([]FrozenPlanScheduleRef, 0, len(schedule.Plans))
@@ -213,93 +254,88 @@ func (schedule FrozenQueryGroupSchedule) DuePlanRefs(at EvaluationTime) []Frozen
 }
 
 func (schedule FrozenQueryGroupSchedule) NextSlotAfter(current EvaluationTime) (EvaluationTime, bool) {
-	if current >= EvaluationTime(math.MaxInt64) {
+	if !schedule.Segment.Contains(current) || current >= EvaluationTime(math.MaxInt64) {
 		return 0, false
+	}
+	return schedule.nextSlotAtOrAfter(current + 1)
+}
+
+func (schedule FrozenQueryGroupSchedule) nextSlotAtOrAfter(at EvaluationTime) (EvaluationTime, bool) {
+	if at < schedule.Segment.Start {
+		at = schedule.Segment.Start
 	}
 	next := EvaluationTime(math.MaxInt64)
 	for _, plan := range schedule.Plans {
-		candidate, ok := plan.Spec.nextAtOrAfter(current + 1)
+		candidate, ok := plan.Spec.nextAtOrAfter(at)
 		if ok && candidate < next {
 			next = candidate
 		}
 	}
-	return next, next != EvaluationTime(math.MaxInt64)
+	return next, next != EvaluationTime(math.MaxInt64) && schedule.Segment.Contains(next)
 }
 
-type SnapshotPublicationRef struct {
-	SnapshotRevision SnapshotRevision
-	PublicationEpoch PublicationEpoch
+// InitialScheduleActivationFact establishes the first open Segment without an
+// invented old publication or a Worker-local first-seen time.
+type InitialScheduleActivationFact struct {
+	Segment ScheduleSegmentFact
 }
 
-func (ref SnapshotPublicationRef) Validate() error {
-	if ref.SnapshotRevision == "" || ref.PublicationEpoch == 0 {
-		return errors.New("alarmd execution: complete content-addressed Snapshot publication is required")
+func (fact InitialScheduleActivationFact) Validate(schedule FrozenQueryGroupSchedule) error {
+	if err := fact.Segment.Validate(); err != nil {
+		return err
+	}
+	if err := schedule.Validate(); err != nil {
+		return err
+	}
+	if fact.Segment.End != nil || !sameScheduleSegment(fact.Segment, schedule.Segment) {
+		return errors.New("alarmd execution: initial activation must establish the first open Schedule Segment")
 	}
 	return nil
 }
 
-// ScheduleCutoverFact is the persisted selection boundary between immutable
-// publications and schedule lanes. It is separate from PlanActivationFact,
-// which protects current side effects for one PlanIdentity.
+// ScheduleCutoverFact atomically closes OldSegment and opens NewSegment at one
+// boundary. It records immutable facts and does not introduce a state machine.
 type ScheduleCutoverFact struct {
-	OldPublication        SnapshotPublicationRef
-	NewPublication        SnapshotPublicationRef
-	OldLane               ScheduleLaneIdentity
-	NewLane               ScheduleLaneIdentity
-	FirstEvaluationTime   EvaluationTime
-	CutoverEvaluationTime EvaluationTime
+	OldSegment ScheduleSegmentFact
+	NewSegment ScheduleSegmentFact
 }
 
 func (fact ScheduleCutoverFact) Validate(oldSchedule, newSchedule FrozenQueryGroupSchedule) error {
-	if err := fact.OldPublication.Validate(); err != nil {
-		return err
-	}
-	if err := fact.NewPublication.Validate(); err != nil {
-		return err
-	}
-	if fact.NewPublication.PublicationEpoch <= fact.OldPublication.PublicationEpoch ||
-		fact.NewPublication.SnapshotRevision == fact.OldPublication.SnapshotRevision {
-		return errors.New("alarmd execution: cutover publication must advance content and epoch")
-	}
-	if err := fact.OldLane.Validate(); err != nil {
-		return err
-	}
-	if err := fact.NewLane.Validate(); err != nil {
-		return err
-	}
 	if err := oldSchedule.Validate(); err != nil {
 		return err
 	}
 	if err := newSchedule.Validate(); err != nil {
 		return err
 	}
-	if fact.OldLane != oldSchedule.Lane || fact.NewLane != newSchedule.Lane {
-		return errors.New("alarmd execution: cutover lanes do not match frozen schedules")
+	if !sameScheduleSegment(fact.OldSegment, oldSchedule.Segment) ||
+		!sameScheduleSegment(fact.NewSegment, newSchedule.Segment) {
+		return errors.New("alarmd execution: cutover Segments do not match frozen schedules")
 	}
-	if fact.FirstEvaluationTime <= 0 || fact.CutoverEvaluationTime <= 0 ||
-		fact.FirstEvaluationTime != newSchedule.FirstEvaluationTime || fact.CutoverEvaluationTime < fact.FirstEvaluationTime {
-		return errors.New("alarmd execution: invalid persisted cutover times")
+	if fact.OldSegment.QueryGroup != fact.NewSegment.QueryGroup || fact.OldSegment.End == nil ||
+		*fact.OldSegment.End != fact.NewSegment.Start || fact.NewSegment.End != nil {
+		return errors.New("alarmd execution: cutover requires adjacent half-open Segments on one Query Group timeline")
 	}
-	if len(newSchedule.DuePlanRefs(fact.FirstEvaluationTime)) == 0 || len(newSchedule.DuePlanRefs(fact.CutoverEvaluationTime)) == 0 {
-		return errors.New("alarmd execution: persisted cutover times are outside the new schedule")
+	if fact.NewSegment.Publication.PublicationEpoch <= fact.OldSegment.Publication.PublicationEpoch ||
+		fact.NewSegment.Publication.SnapshotRevision == fact.OldSegment.Publication.SnapshotRevision {
+		return errors.New("alarmd execution: cutover publication must advance content and epoch")
 	}
 	return nil
 }
 
-// FreezeSlotContractRequest is the exact 02-to-01 freeze request. It contains
+// FreezeSlotContractRequest is the exact Scheduler-to-Catalog request. It has
 // no latest selector, local time, ownership, assignment or execution identity.
 type FreezeSlotContractRequest struct {
-	Lane           ScheduleLaneIdentity
-	EvaluationTime EvaluationTime
-	DuePlans       []FrozenPlanScheduleRef
+	QueryGroup           QueryGroupIdentity
+	ScheduleRevision     ScheduleRevision
+	ScheduleSegmentStart EvaluationTime
+	EvaluationTime       EvaluationTime
+	DuePlans             []FrozenPlanScheduleRef
 }
 
 func (request FreezeSlotContractRequest) Validate() error {
-	if err := request.Lane.Validate(); err != nil {
-		return err
-	}
-	if request.EvaluationTime <= 0 || len(request.DuePlans) == 0 {
-		return errors.New("alarmd execution: positive evaluation time and exact due Plan refs are required")
+	if request.QueryGroup == "" || request.ScheduleRevision == "" || request.ScheduleSegmentStart <= 0 ||
+		request.EvaluationTime < request.ScheduleSegmentStart || len(request.DuePlans) == 0 {
+		return errors.New("alarmd execution: complete frozen Slot request is required")
 	}
 	seen := make(map[PlanIdentity]struct{}, len(request.DuePlans))
 	for _, due := range request.DuePlans {
@@ -315,7 +351,7 @@ func (request FreezeSlotContractRequest) Validate() error {
 }
 
 // FrozenSlotContractFact returns the full due digest inputs so Scheduler can
-// independently verify the Catalog result instead of trusting an echoed hash.
+// independently validate exact refs, ScheduleSpec/deadline and the digest.
 type FrozenSlotContractFact struct {
 	Contract     FrozenExecutionContractRef
 	DuePlans     []DuePlan
@@ -333,11 +369,11 @@ func (fact FrozenSlotContractFact) Validate(request FreezeSlotContractRequest) e
 	if err := fact.Contract.Validate(); err != nil {
 		return err
 	}
-	if fact.Contract.Slot.QueryGroup != request.Lane.QueryGroup ||
-		fact.Contract.Slot.ScheduleRevision != request.Lane.ScheduleRevision ||
-		fact.Contract.ScheduleRevision != request.Lane.ScheduleRevision ||
+	if fact.Contract.Slot.QueryGroup != request.QueryGroup ||
+		fact.Contract.ScheduleRevision != request.ScheduleRevision ||
+		fact.Contract.ScheduleSegmentStart != request.ScheduleSegmentStart ||
 		fact.Contract.Slot.EvaluationTime != request.EvaluationTime {
-		return errors.New("alarmd execution: frozen Slot contract differs from requested lane or time")
+		return errors.New("alarmd execution: frozen Slot contract differs from requested Segment or time")
 	}
 	if len(fact.DuePlans) != len(request.DuePlans) {
 		return errors.New("alarmd execution: frozen due Plan cardinality differs from exact request")
@@ -351,8 +387,17 @@ func (fact FrozenSlotContractFact) Validate(request FreezeSlotContractRequest) e
 		if err := due.Identity.Validate(); err != nil {
 			return err
 		}
-		revision, ok := wanted[due.Identity]
-		if !ok || revision != due.ScheduleRevision {
+		revision, err := DerivePlanScheduleRevision(due.ScheduleSpec)
+		if err != nil {
+			return err
+		}
+		deadline, ok := due.ScheduleSpec.completionDeadlineUnixMilli(request.EvaluationTime)
+		if !ok || revision != due.ScheduleRevision || !due.ScheduleSpec.IsAligned(request.EvaluationTime) ||
+			deadline != due.CompletionDeadlineUnixMilli {
+			return errors.New("alarmd execution: frozen due Plan ScheduleSpec or deadline is invalid")
+		}
+		wantedRevision, exists := wanted[due.Identity]
+		if !exists || wantedRevision != due.ScheduleRevision {
 			return errors.New("alarmd execution: frozen due Plan facts differ from exact request")
 		}
 		if _, duplicate := seen[due.Identity]; duplicate {

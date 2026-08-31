@@ -27,19 +27,20 @@ type AssignmentReader interface {
 }
 
 type SlotCatalogReader interface {
-	ReadFrozenSchedule(context.Context, execution.ScheduleLaneIdentity) (execution.FrozenQueryGroupSchedule, error)
+	ReadInitialFrozenSchedule(context.Context, execution.QueryGroupIdentity) (execution.FrozenQueryGroupSchedule, error)
+	ReadFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.FrozenQueryGroupSchedule, error)
 	FreezeSlotContract(context.Context, execution.FreezeSlotContractRequest) (execution.FrozenSlotContractFact, error)
 }
 
 type ScheduleProgressReader interface {
-	LoadProgress(context.Context, execution.ProgressNamespace) (execution.ProgressLoadResult, error)
+	LoadProgress(context.Context, execution.ProgressIdentity) (execution.ProgressLoadResult, error)
 }
 
 // ProductionSlotSource is bound to one owned Query Group. It reads current
 // control facts and returns one normal due Slot; it never executes queries,
 // evaluates data, commits state/Progress, or creates recovery state machines.
 type ProductionSlotSource struct {
-	lane        execution.ScheduleLaneIdentity
+	queryGroup  execution.QueryGroupIdentity
 	workerID    string
 	assignments AssignmentReader
 	session     OwnerSession
@@ -49,7 +50,7 @@ type ProductionSlotSource struct {
 }
 
 func NewProductionSlotSource(
-	lane execution.ScheduleLaneIdentity,
+	queryGroup execution.QueryGroupIdentity,
 	workerID string,
 	assignments AssignmentReader,
 	session OwnerSession,
@@ -57,10 +58,10 @@ func NewProductionSlotSource(
 	progress ScheduleProgressReader,
 	now func() time.Time,
 ) (*ProductionSlotSource, error) {
-	if lane.Validate() != nil || workerID == "" || assignments == nil || session == nil || catalog == nil || progress == nil || now == nil {
+	if queryGroup == "" || workerID == "" || assignments == nil || session == nil || catalog == nil || progress == nil || now == nil {
 		return nil, errors.New("alarmd scheduler: complete production SlotSource dependencies are required")
 	}
-	return &ProductionSlotSource{lane: lane, workerID: workerID, assignments: assignments,
+	return &ProductionSlotSource{queryGroup: queryGroup, workerID: workerID, assignments: assignments,
 		session: session, catalog: catalog, progress: progress, now: now}, nil
 }
 
@@ -68,7 +69,7 @@ func (source *ProductionSlotSource) Next(
 	ctx context.Context,
 	queryGroup execution.QueryGroupIdentity,
 ) (FrozenSlot, bool, error) {
-	if source == nil || queryGroup == "" || queryGroup != source.lane.QueryGroup {
+	if source == nil || queryGroup == "" || queryGroup != source.queryGroup {
 		return FrozenSlot{}, false, errors.New("alarmd scheduler: SlotSource Query Group mismatch")
 	}
 	if err := ctx.Err(); err != nil {
@@ -82,25 +83,31 @@ func (source *ProductionSlotSource) Next(
 	if err != nil {
 		return FrozenSlot{}, false, err
 	}
-	schedule, err := source.catalog.ReadFrozenSchedule(ctx, source.lane)
+	identity := execution.ProgressIdentity{QueryGroup: source.queryGroup}
+	load, err := source.progress.LoadProgress(ctx, identity)
 	if err != nil {
 		return FrozenSlot{}, false, err
 	}
-	if err := schedule.Validate(); err != nil {
-		return FrozenSlot{}, false, fmt.Errorf("%w: %v", ErrScheduleFactsInvalid, err)
+	if err := load.Validate(identity); err != nil {
+		return FrozenSlot{}, false, err
 	}
-	if schedule.Lane != source.lane {
-		return FrozenSlot{}, false, ErrScheduleFactsInvalid
+	var schedule execution.FrozenQueryGroupSchedule
+	var nextSlot execution.EvaluationTime
+	if load.Status == execution.ProgressMissing {
+		schedule, err = source.catalog.ReadInitialFrozenSchedule(ctx, source.queryGroup)
+		if err == nil {
+			nextSlot, _ = schedule.FirstSlot()
+		}
+	} else {
+		nextSlot = load.Progress.NextSlot
+		schedule, err = source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, nextSlot)
 	}
-	namespace := schedule.Lane.ProgressNamespace()
-	load, err := source.progress.LoadProgress(ctx, namespace)
 	if err != nil {
 		return FrozenSlot{}, false, err
 	}
-	if err := load.Validate(namespace); err != nil {
+	if err := source.validateSchedule(schedule, nextSlot); err != nil {
 		return FrozenSlot{}, false, err
 	}
-	nextSlot := schedule.FirstEvaluationTime
 	if load.Status == execution.ProgressFound {
 		nextSlot = load.Progress.NextSlot
 	}
@@ -112,11 +119,19 @@ func (source *ProductionSlotSource) Next(
 		return FrozenSlot{}, false, nil
 	}
 	nextAfterCompletion, ok := schedule.NextSlotAfter(nextSlot)
-	if !ok {
+	if !ok && schedule.Segment.End != nil {
+		nextAfterCompletion, err = source.firstSuccessorSlot(ctx, schedule)
+		if err != nil {
+			return FrozenSlot{}, false, err
+		}
+		ok = true
+	}
+	if !ok || nextAfterCompletion <= nextSlot {
 		return FrozenSlot{}, false, ErrScheduleFactsInvalid
 	}
 	request := execution.FreezeSlotContractRequest{
-		Lane: schedule.Lane, EvaluationTime: nextSlot, DuePlans: duePlans,
+		QueryGroup: source.queryGroup, ScheduleRevision: schedule.Segment.ScheduleRevision,
+		ScheduleSegmentStart: schedule.Segment.Start, EvaluationTime: nextSlot, DuePlans: duePlans,
 	}
 	fact, err := source.catalog.FreezeSlotContract(ctx, request)
 	if err != nil {
@@ -124,6 +139,10 @@ func (source *ProductionSlotSource) Next(
 	}
 	if err := fact.Validate(request); err != nil {
 		return FrozenSlot{}, false, fmt.Errorf("%w: %v", ErrSlotContractDrift, err)
+	}
+	if fact.Contract.SnapshotRevision != schedule.Segment.Publication.SnapshotRevision ||
+		fact.Contract.QueryRevision != schedule.Segment.QueryRevision {
+		return FrozenSlot{}, false, ErrSlotContractDrift
 	}
 	currentAssignment, currentFence, err := source.currentOwnership(ctx, source.now())
 	if err != nil {
@@ -144,25 +163,60 @@ func (source *ProductionSlotSource) Next(
 	return slot, true, nil
 }
 
+func (source *ProductionSlotSource) validateSchedule(
+	schedule execution.FrozenQueryGroupSchedule,
+	nextSlot execution.EvaluationTime,
+) error {
+	if err := schedule.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrScheduleFactsInvalid, err)
+	}
+	if schedule.Segment.QueryGroup != source.queryGroup || !schedule.Segment.Contains(nextSlot) {
+		return ErrProgressOffSchedule
+	}
+	return nil
+}
+
+func (source *ProductionSlotSource) firstSuccessorSlot(
+	ctx context.Context,
+	schedule execution.FrozenQueryGroupSchedule,
+) (execution.EvaluationTime, error) {
+	boundary := *schedule.Segment.End
+	successor, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, boundary)
+	if err != nil {
+		return 0, err
+	}
+	if err := successor.Validate(); err != nil {
+		return 0, fmt.Errorf("%w: %v", ErrScheduleFactsInvalid, err)
+	}
+	if successor.Segment.QueryGroup != source.queryGroup || successor.Segment.Start != boundary {
+		return 0, ErrScheduleFactsInvalid
+	}
+	next, ok := successor.FirstSlot()
+	if !ok {
+		return 0, ErrScheduleFactsInvalid
+	}
+	return next, nil
+}
+
 func (source *ProductionSlotSource) currentOwnership(
 	ctx context.Context,
 	at time.Time,
 ) (ownership.AssignmentRecord, execution.OwnerFence, error) {
-	assignment, err := source.assignments.ReadAssignment(ctx, source.lane.QueryGroup)
+	assignment, err := source.assignments.ReadAssignment(ctx, source.queryGroup)
 	if err != nil {
 		return ownership.AssignmentRecord{}, execution.OwnerFence{}, err
 	}
 	if err := assignment.Validate(); err != nil {
 		return ownership.AssignmentRecord{}, execution.OwnerFence{}, err
 	}
-	if assignment.QueryGroup != source.lane.QueryGroup || assignment.DesiredWorkerID != source.workerID {
+	if assignment.QueryGroup != source.queryGroup || assignment.DesiredWorkerID != source.workerID {
 		return ownership.AssignmentRecord{}, execution.OwnerFence{}, ownership.ErrNotDesired
 	}
 	fence, err := source.session.ValidateCurrent(ctx, at)
 	if err != nil {
 		return ownership.AssignmentRecord{}, execution.OwnerFence{}, err
 	}
-	if fence.QueryGroup != source.lane.QueryGroup || fence.OwnerID != source.workerID || fence.OwnerEpoch == 0 || fence.LeaseToken == "" {
+	if fence.QueryGroup != source.queryGroup || fence.OwnerID != source.workerID || fence.OwnerEpoch == 0 || fence.LeaseToken == "" {
 		return ownership.AssignmentRecord{}, execution.OwnerFence{}, ownership.ErrStaleFence
 	}
 	return assignment, fence, nil

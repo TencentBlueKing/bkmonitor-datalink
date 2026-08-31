@@ -1139,7 +1139,7 @@ func (ports *recordingPorts) CommitProgress(_ context.Context, request execution
 	return execution.ProgressCommitResult{Status: execution.ProgressCommitted}, ports.fail("progress_commit")
 }
 
-func (ports *recordingPorts) LoadProgress(context.Context, execution.ProgressNamespace) (execution.ProgressLoadResult, error) {
+func (ports *recordingPorts) LoadProgress(context.Context, execution.ProgressIdentity) (execution.ProgressLoadResult, error) {
 	return execution.ProgressLoadResult{Status: execution.ProgressMissing}, nil
 }
 
@@ -1167,8 +1167,12 @@ func frozenContract() execution.FrozenExecutionContractRef {
 		panic(err)
 	}
 	return execution.FrozenExecutionContractRef{
-		Slot:             execution.SlotIdentity{QueryGroup: "query-group", ScheduleRevision: "schedule-v1", EvaluationTime: 1_788_000_000},
-		SnapshotRevision: "snapshot-v1", QueryRevision: "query-v1", ScheduleRevision: "schedule-v1", DuePlanSetDigest: digest,
+		Slot:                 execution.SlotIdentity{QueryGroup: "query-group", EvaluationTime: 1_788_000_000},
+		SnapshotRevision:     "snapshot-v1",
+		QueryRevision:        "query-v1",
+		ScheduleRevision:     "schedule-v1",
+		ScheduleSegmentStart: 1_787_999_940,
+		DuePlanSetDigest:     digest,
 	}
 }
 

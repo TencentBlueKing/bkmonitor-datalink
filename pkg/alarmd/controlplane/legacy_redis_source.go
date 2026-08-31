@@ -13,28 +13,6 @@ import (
 
 var ErrLegacySourceIncomplete = errors.New("alarmd controlplane: legacy Redis source incomplete")
 
-// SourceIdentityResolver is the explicit boundary to the current business to
-// tenant/space metadata facts. Implementations must return observed facts and
-// must not manufacture a default tenant or a non-CMDB space identity.
-type SourceIdentityResolver interface {
-	ResolveSourceIdentity(context.Context, string) (SourceIdentity, error)
-}
-
-// SourceFactUnavailableError distinguishes an absent metadata fact from an
-// infrastructure failure. The former is isolated to one strategy; the latter
-// invalidates the source observation.
-type SourceFactUnavailableError struct {
-	BusinessID string
-	Reason     string
-}
-
-func (failure *SourceFactUnavailableError) Error() string {
-	if failure == nil {
-		return "alarmd controlplane: source identity fact unavailable"
-	}
-	return fmt.Sprintf("alarmd controlplane: source identity fact unavailable for business %s: %s", failure.BusinessID, failure.Reason)
-}
-
 type legacyRedisCommands interface {
 	Get(context.Context, string) *redis.StringCmd
 	MGet(context.Context, ...string) *redis.SliceCmd
@@ -44,19 +22,18 @@ type legacyRedisCommands interface {
 // contract: <prefix>.strategy_ids and <prefix>.strategy_<id>. Legacy DTOs do
 // not escape this adapter.
 type LegacyRedisStrategySource struct {
-	client           legacyRedisCommands
-	strategyIDsKey   string
-	strategyKeyStem  string
-	identityResolver SourceIdentityResolver
+	client          legacyRedisCommands
+	strategyIDsKey  string
+	strategyKeyStem string
 }
 
-func NewLegacyRedisStrategySource(client redis.Cmdable, cachePrefix string, resolver SourceIdentityResolver) (*LegacyRedisStrategySource, error) {
-	if client == nil || resolver == nil || cachePrefix == "" || strings.ContainsAny(cachePrefix, "{} \t\r\n") {
+func NewLegacyRedisStrategySource(client redis.Cmdable, cachePrefix string) (*LegacyRedisStrategySource, error) {
+	if client == nil || cachePrefix == "" || strings.ContainsAny(cachePrefix, "{} \t\r\n") {
 		return nil, errors.New("alarmd controlplane: invalid legacy Redis strategy source")
 	}
 	return &LegacyRedisStrategySource{
 		client: client, strategyIDsKey: cachePrefix + ".strategy_ids",
-		strategyKeyStem: cachePrefix + ".strategy_", identityResolver: resolver,
+		strategyKeyStem: cachePrefix + ".strategy_",
 	}, nil
 }
 
@@ -88,7 +65,7 @@ func (source *LegacyRedisStrategySource) ActiveStrategyIDs(ctx context.Context) 
 }
 
 func (source *LegacyRedisStrategySource) Strategies(ctx context.Context, ids []string) ([]SourceStrategy, error) {
-	if source == nil || source.client == nil || source.identityResolver == nil {
+	if source == nil || source.client == nil {
 		return nil, errors.New("alarmd controlplane: legacy Redis strategy source is required")
 	}
 	if len(ids) == 0 {
@@ -109,11 +86,6 @@ func (source *LegacyRedisStrategySource) Strategies(ctx context.Context, ids []s
 	if len(values) != len(ids) {
 		return nil, ErrObservationUnstable
 	}
-	type identityResolution struct {
-		identity SourceIdentity
-		err      error
-	}
-	identityByBusiness := make(map[string]identityResolution)
 	strategies := make([]SourceStrategy, 0, len(ids))
 	for index, value := range values {
 		payload, ok := legacyRedisBytes(value)
@@ -126,8 +98,10 @@ func (source *LegacyRedisStrategySource) Strategies(ctx context.Context, ids []s
 		}
 		strategy := SourceStrategy{SourceID: ids[index], Document: append(json.RawMessage(nil), payload...)}
 		var identityDTO struct {
-			ID         int64 `json:"id"`
-			BusinessID int64 `json:"bk_biz_id"`
+			ID         int64           `json:"id"`
+			BusinessID int64           `json:"bk_biz_id"`
+			TenantID   json.RawMessage `json:"bk_tenant_id"`
+			SpaceUID   json.RawMessage `json:"space_uid"`
 		}
 		if err := json.Unmarshal(payload, &identityDTO); err != nil {
 			strategy.SourceDisposition = &ObjectDisposition{
@@ -153,34 +127,31 @@ func (source *LegacyRedisStrategySource) Strategies(ctx context.Context, ids []s
 			strategies = append(strategies, strategy)
 			continue
 		}
-		businessID := strconv.FormatInt(identityDTO.BusinessID, 10)
-		resolution, found := identityByBusiness[businessID]
-		if !found {
-			resolution.identity, resolution.err = source.identityResolver.ResolveSourceIdentity(ctx, businessID)
-			identityByBusiness[businessID] = resolution
-		}
-		identity, resolveErr := resolution.identity, resolution.err
-		if resolveErr == nil {
-			if identity.BusinessID != businessID || identity.validate() != nil {
-				return nil, errors.New("alarmd controlplane: identity resolver returned an invalid explicit fact")
-			}
-			strategy.Identity = identity
-		} else {
-			var unavailable *SourceFactUnavailableError
-			if !errors.As(resolveErr, &unavailable) {
-				return nil, fmt.Errorf("alarmd controlplane: resolve source identity: %w", resolveErr)
-			}
-			if unavailable.BusinessID != businessID || unavailable.Reason == "" {
-				return nil, errors.New("alarmd controlplane: invalid source identity unavailability fact")
-			}
+		tenantID, tenantOK := decodeRequiredIdentityString(identityDTO.TenantID)
+		spaceUID, spaceOK := decodeRequiredIdentityString(identityDTO.SpaceUID)
+		if !tenantOK || !spaceOK {
 			strategy.SourceDisposition = &ObjectDisposition{
 				SourceID: ids[index], Scope: "STRATEGY", Disposition: DispositionSourceIncomplete,
-				Reason: unavailable.Reason,
+				Reason: "SOURCE_IDENTITY_UNAVAILABLE",
 			}
+			strategies = append(strategies, strategy)
+			continue
 		}
+		strategy.Identity = SourceIdentity{TenantID: tenantID, BusinessID: strconv.FormatInt(identityDTO.BusinessID, 10), SpaceScope: spaceUID}
 		strategies = append(strategies, strategy)
 	}
 	return strategies, nil
+}
+
+func decodeRequiredIdentityString(payload json.RawMessage) (string, bool) {
+	if len(payload) == 0 {
+		return "", false
+	}
+	var value string
+	if err := json.Unmarshal(payload, &value); err != nil || value == "" || strings.TrimSpace(value) != value {
+		return "", false
+	}
+	return value, true
 }
 
 func legacyRedisBytes(value interface{}) ([]byte, bool) {

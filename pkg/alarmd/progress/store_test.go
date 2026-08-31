@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -41,6 +42,163 @@ func TestCommitProgressUsesExplicitNextSlotAndFence(t *testing.T) {
 	loaded, err := store.LoadProgress(context.Background(), request.Identity)
 	if err != nil || loaded.Progress.NextSlot != 120 || loaded.Progress.LastFullSlot != 60 {
 		t.Fatalf("LoadProgress() = (%+v, %v)", loaded, err)
+	}
+}
+
+func TestCommitProgressAdvancesColdStartHistoryWarmingUntilFull(t *testing.T) {
+	fake := &controlFake{missing: true}
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	fence := execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"}
+
+	commitWarming := func(store *Store, slot execution.EvaluationTime) {
+		t.Helper()
+		result, err := store.CommitProgress(context.Background(), execution.ProgressCommitRequest{
+			Identity: identity, OwnerFence: fence, ExpectedNextSlot: slot,
+			Completion: execution.SlotCompletion{
+				Contract: progressContractAt(slot), Kind: execution.CompletionPartialGap,
+				Primary: &execution.PrimaryInputFact{
+					Completeness: execution.CompletenessFull,
+					DataState:    execution.DataStateData,
+				},
+				Result:     observability.ResultDegraded,
+				ReasonCode: execution.ReasonCode(contract.ReasonHistoryWarming),
+			},
+		})
+		if err != nil || result.Status != execution.ProgressCommitted {
+			t.Fatalf("CommitProgress(warming %d) = (%+v, %v)", slot, result, err)
+		}
+	}
+
+	first := mustStore(t, fake)
+	commitWarming(first, 60)
+	loaded, err := first.LoadProgress(context.Background(), identity)
+	if err != nil || loaded.Progress == nil {
+		t.Fatalf("LoadProgress(first warming) = (%+v, %v)", loaded, err)
+	}
+	assertWarmingProgress(t, *loaded.Progress, 120, 60, 60, 1)
+
+	// Re-open the Store over the same persisted value to prove a process restart
+	// continues from the next Slot instead of replaying the first warming Slot.
+	restarted := mustStore(t, fake)
+	commitWarming(restarted, 120)
+	loaded, err = restarted.LoadProgress(context.Background(), identity)
+	if err != nil || loaded.Progress == nil {
+		t.Fatalf("LoadProgress(second warming) = (%+v, %v)", loaded, err)
+	}
+	assertWarmingProgress(t, *loaded.Progress, 180, 60, 120, 2)
+
+	result, err := restarted.CommitProgress(context.Background(), execution.ProgressCommitRequest{
+		Identity: identity, OwnerFence: fence, ExpectedNextSlot: 180,
+		Completion: execution.SlotCompletion{
+			Contract: progressContractAt(180), Kind: execution.CompletionFull,
+			Primary: &execution.PrimaryInputFact{
+				Completeness: execution.CompletenessFull,
+				DataState:    execution.DataStateData,
+			},
+			Result: observability.ResultSuccess,
+		},
+	})
+	if err != nil || result.Status != execution.ProgressCommitted {
+		t.Fatalf("CommitProgress(full) = (%+v, %v)", result, err)
+	}
+	loaded, err = restarted.LoadProgress(context.Background(), identity)
+	if err != nil || loaded.Progress == nil || loaded.Progress.NextSlot != 240 ||
+		loaded.Progress.LastFullSlot != 180 || loaded.Progress.LastCompletionKind != execution.CompletionFull {
+		t.Fatalf("LoadProgress(full) = (%+v, %v)", loaded, err)
+	}
+	assertWarmingGap(t, loaded.Progress.CurrentOrRecentGap, 60, 120, 2)
+}
+
+func TestCommitProgressDoesNotOpenOtherDegradedCompletionsInG1(t *testing.T) {
+	fullData := &execution.PrimaryInputFact{
+		Completeness: execution.CompletenessFull,
+		DataState:    execution.DataStateData,
+	}
+	partialData := &execution.PrimaryInputFact{
+		Completeness: execution.CompletenessPartial,
+		DataState:    execution.DataStateData,
+	}
+	unavailable := &execution.PrimaryInputFact{
+		Completeness: execution.CompletenessUnavailable,
+		DataState:    execution.DataStateUnknown,
+	}
+	for _, test := range []struct {
+		name       string
+		kind       execution.CompletionKind
+		primary    *execution.PrimaryInputFact
+		result     observability.Result
+		reasonCode execution.ReasonCode
+	}{
+		{
+			name: "other partial reason", kind: execution.CompletionPartialGap, primary: fullData,
+			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonQueryPartial),
+		},
+		{
+			name: "partial primary", kind: execution.CompletionPartialGap, primary: partialData,
+			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonHistoryWarming),
+		},
+		{
+			name: "unavailable", kind: execution.CompletionUnavailable, primary: unavailable,
+			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable),
+		},
+		{
+			name: "terminal", kind: execution.CompletionTerminal, primary: fullData,
+			result: observability.ResultTerminal, reasonCode: execution.ReasonCode(contract.ReasonRecordInvalid),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fake := &controlFake{missing: true}
+			store := mustStore(t, fake)
+			request := execution.ProgressCommitRequest{
+				Identity: execution.ProgressIdentity{QueryGroup: "q"},
+				OwnerFence: execution.OwnerFence{
+					QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease",
+				},
+				ExpectedNextSlot: 60,
+				Completion: execution.SlotCompletion{
+					Contract: progressContract(), Kind: test.kind, Primary: test.primary,
+					Result: test.result, ReasonCode: test.reasonCode,
+				},
+			}
+			if err := request.Validate(); err != nil {
+				t.Fatalf("test completion is not valid before the G1 boundary: %v", err)
+			}
+			_, err := store.CommitProgress(context.Background(), request)
+			if err == nil {
+				t.Fatalf("CommitProgress(%s) accepted a completion outside the G1 warming boundary", test.name)
+			}
+			if !fake.missing {
+				t.Fatalf("CommitProgress(%s) persisted rejected Progress", test.name)
+			}
+		})
+	}
+}
+
+func assertWarmingProgress(
+	t *testing.T,
+	progress execution.ScheduleProgress,
+	nextSlot, firstGap, lastGap execution.EvaluationTime,
+	count uint32,
+) {
+	t.Helper()
+	if progress.NextSlot != nextSlot || progress.LastFullSlot != lastGap ||
+		progress.LastCompletionKind != execution.CompletionPartialGap {
+		t.Fatalf("warming Progress = %+v", progress)
+	}
+	assertWarmingGap(t, progress.CurrentOrRecentGap, firstGap, lastGap, count)
+}
+
+func assertWarmingGap(
+	t *testing.T,
+	gap *execution.ProgressGapSummary,
+	first, last execution.EvaluationTime,
+	count uint32,
+) {
+	t.Helper()
+	if gap == nil || gap.Kind != execution.CompletionPartialGap ||
+		gap.ReasonCode != execution.ReasonCode(contract.ReasonHistoryWarming) ||
+		gap.FirstSlot != first || gap.LastSlot != last || gap.Count != count || gap.NextProbeAt != nil {
+		t.Fatalf("warming gap = %+v", gap)
 	}
 }
 

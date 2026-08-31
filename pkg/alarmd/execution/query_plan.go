@@ -96,7 +96,7 @@ type DatasetNormalizationSpec struct {
 
 func (spec DatasetNormalizationSpec) Validate() error {
 	if spec.DatasetContract.SchemaDigest == "" || spec.DatasetContract.NormalizationDigest == "" ||
-		len(spec.DatasetContract.IdentityFields) == 0 || spec.DatasetContract.SourceTimeField == "" ||
+		spec.DatasetContract.IdentityFields == nil || spec.DatasetContract.SourceTimeField == "" ||
 		spec.DatasetContract.ReceivedTimeField == "" || spec.SourceTimeUnit != TimeUnitMillisecond ||
 		spec.CanonicalSourceTimeUnit != TimeUnitSecond || spec.SeriesIdentityMode != SeriesIdentityUQGroupKeysValuesV1 ||
 		spec.GroupKeyRule != GroupKeyStripTableSuffixV1 || spec.ValueSelectionMode != ValueSelectionResultOrFirstReferenceV1 ||
@@ -182,7 +182,7 @@ func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 func (value QueryScalar) Validate() error {
 	switch value.Kind {
 	case QueryScalarString:
-		if value.StringValue == "" || value.NumberValue != "" || value.BoolValue {
+		if value.NumberValue != "" || value.BoolValue {
 			return errors.New("alarmd execution: invalid string query scalar")
 		}
 	case QueryScalarNumber:

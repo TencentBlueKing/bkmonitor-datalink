@@ -156,8 +156,9 @@ func frozenExecution(t *testing.T) (execution.FrozenExecutionContractRef, Frozen
 	if err != nil {
 		t.Fatal(err)
 	}
-	contractRef := execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{QueryGroup: "group", ScheduleRevision: "schedule-v1", EvaluationTime: evaluationTime},
-		SnapshotRevision: "snapshot-v1", QueryRevision: facts.QueryRevision, ScheduleRevision: "schedule-v1", DuePlanSetDigest: dueDigest}
+	contractRef := execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{QueryGroup: "group", EvaluationTime: evaluationTime},
+		SnapshotRevision: "snapshot-v1", QueryRevision: facts.QueryRevision, ScheduleRevision: "schedule-v1",
+		ScheduleSegmentStart: evaluationTime - 60, DuePlanSetDigest: dueDigest}
 	return contractRef, FrozenPlan{DuePlans: []execution.DuePlan{due}, Requirements: []execution.DataRequirement{requirement},
 		QueryFacts: map[execution.LogicalQueryRef]execution.QueryPlanFacts{"query": facts}}
 }

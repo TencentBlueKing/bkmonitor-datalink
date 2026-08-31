@@ -26,7 +26,7 @@ import (
 
 func TestFrozenExecutionContractRefContainsOnlyFrozenSemantics(t *testing.T) {
 	ref := frozenContract()
-	wantFields := []string{"Slot", "SnapshotRevision", "QueryRevision", "ScheduleRevision", "DuePlanSetDigest"}
+	wantFields := []string{"Slot", "SnapshotRevision", "QueryRevision", "ScheduleRevision", "ScheduleSegmentStart", "DuePlanSetDigest"}
 	typeOfRef := reflect.TypeOf(ref)
 	if typeOfRef.NumField() != len(wantFields) {
 		t.Fatalf("FrozenExecutionContractRef fields=%d, want=%d", typeOfRef.NumField(), len(wantFields))
@@ -44,13 +44,15 @@ func TestFrozenExecutionContractRefValidationFailsClosed(t *testing.T) {
 		mutate func(*execution.FrozenExecutionContractRef)
 	}{
 		{name: "query group", mutate: func(ref *execution.FrozenExecutionContractRef) { ref.Slot.QueryGroup = "" }},
-		{name: "slot schedule revision", mutate: func(ref *execution.FrozenExecutionContractRef) { ref.Slot.ScheduleRevision = "" }},
 		{name: "evaluation time", mutate: func(ref *execution.FrozenExecutionContractRef) { ref.Slot.EvaluationTime = 0 }},
 		{name: "snapshot revision", mutate: func(ref *execution.FrozenExecutionContractRef) { ref.SnapshotRevision = "" }},
 		{name: "query revision", mutate: func(ref *execution.FrozenExecutionContractRef) { ref.QueryRevision = "" }},
 		{name: "schedule revision", mutate: func(ref *execution.FrozenExecutionContractRef) { ref.ScheduleRevision = "" }},
+		{name: "schedule segment start", mutate: func(ref *execution.FrozenExecutionContractRef) { ref.ScheduleSegmentStart = 0 }},
+		{name: "segment after Slot", mutate: func(ref *execution.FrozenExecutionContractRef) {
+			ref.ScheduleSegmentStart = ref.Slot.EvaluationTime + 1
+		}},
 		{name: "due plan digest", mutate: func(ref *execution.FrozenExecutionContractRef) { ref.DuePlanSetDigest = "" }},
-		{name: "schedule mismatch", mutate: func(ref *execution.FrozenExecutionContractRef) { ref.ScheduleRevision = "schedule-v2" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1091,10 +1093,9 @@ func TestStoreAndProgressReceiptStatusReasonContracts(t *testing.T) {
 
 func TestProgressCommitRequiresSelfConsistentPrimaryFact(t *testing.T) {
 	request := execution.ProgressCommitRequest{
-		Namespace:               execution.ProgressNamespace{QueryGroup: frozenContract().Slot.QueryGroup, ScheduleRevision: frozenContract().ScheduleRevision},
-		OwnerFence:              execution.OwnerFence{QueryGroup: frozenContract().Slot.QueryGroup, OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"},
-		ExpectedNextSlot:        frozenContract().Slot.EvaluationTime,
-		NextSlotAfterCompletion: frozenContract().Slot.EvaluationTime + 60,
+		Identity:         execution.ProgressIdentity{QueryGroup: frozenContract().Slot.QueryGroup},
+		OwnerFence:       execution.OwnerFence{QueryGroup: frozenContract().Slot.QueryGroup, OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"},
+		ExpectedNextSlot: frozenContract().Slot.EvaluationTime,
 		Completion: execution.SlotCompletion{
 			Contract: frozenContract(), Kind: execution.CompletionFullEmpty,
 			Primary: &execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateEmpty},
@@ -1116,18 +1117,18 @@ func TestProgressCommitRequiresSelfConsistentPrimaryFact(t *testing.T) {
 }
 
 func TestProgressLoadDistinguishesFoundAndMissing(t *testing.T) {
-	namespace := execution.ProgressNamespace{QueryGroup: "query-group", ScheduleRevision: "schedule-v1"}
-	if err := (execution.ProgressLoadResult{Status: execution.ProgressMissing}).Validate(namespace); err != nil {
+	identity := execution.ProgressIdentity{QueryGroup: "query-group"}
+	if err := (execution.ProgressLoadResult{Status: execution.ProgressMissing}).Validate(identity); err != nil {
 		t.Fatalf("MISSING Progress error=%v", err)
 	}
-	progress := &execution.ScheduleProgress{Namespace: namespace, NextSlot: 120}
-	if err := (execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: progress}).Validate(namespace); err != nil {
+	progress := &execution.ScheduleProgress{Identity: identity, NextSlot: 120}
+	if err := (execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: progress}).Validate(identity); err != nil {
 		t.Fatalf("FOUND Progress error=%v", err)
 	}
-	if err := (execution.ProgressLoadResult{Status: execution.ProgressFound}).Validate(namespace); err == nil {
+	if err := (execution.ProgressLoadResult{Status: execution.ProgressFound}).Validate(identity); err == nil {
 		t.Fatal("FOUND without Progress must fail")
 	}
-	if err := (execution.ProgressLoadResult{Status: execution.ProgressMissing, Progress: progress}).Validate(namespace); err == nil {
+	if err := (execution.ProgressLoadResult{Status: execution.ProgressMissing, Progress: progress}).Validate(identity); err == nil {
 		t.Fatal("MISSING with persisted facts must fail")
 	}
 }
@@ -1168,14 +1169,14 @@ func frozenContract() execution.FrozenExecutionContractRef {
 	}
 	return execution.FrozenExecutionContractRef{
 		Slot: execution.SlotIdentity{
-			QueryGroup:       execution.QueryGroupIdentity("query-group"),
-			ScheduleRevision: execution.ScheduleRevision("schedule-v1"),
-			EvaluationTime:   execution.EvaluationTime(1_788_000_000),
+			QueryGroup:     execution.QueryGroupIdentity("query-group"),
+			EvaluationTime: execution.EvaluationTime(1_788_000_000),
 		},
-		SnapshotRevision: execution.SnapshotRevision("snapshot-v1"),
-		QueryRevision:    execution.QueryRevision("query-v1"),
-		ScheduleRevision: execution.ScheduleRevision("schedule-v1"),
-		DuePlanSetDigest: digest,
+		SnapshotRevision:     execution.SnapshotRevision("snapshot-v1"),
+		QueryRevision:        execution.QueryRevision("query-v1"),
+		ScheduleRevision:     execution.ScheduleRevision("schedule-v1"),
+		ScheduleSegmentStart: execution.EvaluationTime(1_787_999_940),
+		DuePlanSetDigest:     digest,
 	}
 }
 

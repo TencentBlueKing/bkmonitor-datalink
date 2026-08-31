@@ -424,7 +424,7 @@ func validAttempt(t *testing.T) execution.QueryAttempt {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return execution.QueryAttempt{Spec: spec, Slot: execution.SlotIdentity{QueryGroup: "group", ScheduleRevision: "schedule", EvaluationTime: 1_700_124_000},
+	return execution.QueryAttempt{Spec: spec, Slot: execution.SlotIdentity{QueryGroup: "group", EvaluationTime: 1_700_124_000},
 		Operation: execution.OperationNormal, AttemptNo: 1, DeadlineUnixMilli: time.Now().Add(time.Minute).UnixMilli()}
 }
 

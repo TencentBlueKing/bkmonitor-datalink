@@ -260,8 +260,7 @@ func mustSequencer(t *testing.T, capacity int) *worker.KeyedSideEffectSequencer 
 func sequencingScope(evaluationTime int64, states []execution.StateKeyIdentity, gaps []execution.PlanGapIdentity) execution.SequencingScope {
 	return execution.SequencingScope{
 		Slot: execution.SlotIdentity{
-			QueryGroup: "query-group-1", ScheduleRevision: "schedule-v1",
-			EvaluationTime: execution.EvaluationTime(evaluationTime),
+			QueryGroup: "query-group-1", EvaluationTime: execution.EvaluationTime(evaluationTime),
 		},
 		StateKeys: states,
 		GapKeys:   gaps,

@@ -120,14 +120,18 @@ func TestRunnerRejectsDispatchFenceThatChangedAfterSlotFreeze(t *testing.T) {
 
 func frozenSlot(queryGroup execution.QueryGroupIdentity) FrozenSlot {
 	contract := execution.FrozenExecutionContractRef{
-		Slot:             execution.SlotIdentity{QueryGroup: queryGroup, ScheduleRevision: "schedule-1", EvaluationTime: 100},
-		SnapshotRevision: "snapshot-1", QueryRevision: "query-1", ScheduleRevision: "schedule-1", DuePlanSetDigest: "plans-1",
+		Slot:                 execution.SlotIdentity{QueryGroup: queryGroup, EvaluationTime: 100},
+		SnapshotRevision:     "snapshot-1",
+		QueryRevision:        "query-1",
+		ScheduleRevision:     "schedule-1",
+		ScheduleSegmentStart: 60,
+		DuePlanSetDigest:     "plans-1",
 	}
 	return FrozenSlot{Contract: contract, Dispatch: SlotDispatchContext{
 		Operation:            execution.OperationNormal,
 		OwnerFence:           execution.OwnerFence{QueryGroup: queryGroup, OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "token-1"},
 		AssignmentGeneration: 1,
-	}, ExpectedNextSlot: contract.Slot.EvaluationTime, NextSlotAfterCompletion: contract.Slot.EvaluationTime + 60}
+	}, ExpectedNextSlot: contract.Slot.EvaluationTime}
 }
 
 type fakeSession struct {

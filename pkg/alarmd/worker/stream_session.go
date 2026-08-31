@@ -9,6 +9,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
 // streamedExecution is the Coordinator-owned provisional lifetime. It owns no
@@ -23,6 +24,7 @@ type streamedExecution struct {
 	gapItems    []execution.PlanGapLoadItem
 	state       execution.StatePreflightResult
 	gaps        execution.GapLoadResult
+	effective   map[execution.ConsumerRef]strategy.EffectiveTimeFact
 	evaluated   execution.EvaluationResult
 	delivered   []execution.SeriesDelivery
 	series      uint64
@@ -39,6 +41,11 @@ func (stream *streamedExecution) Begin(ctx context.Context, header execution.Int
 	}
 	stream.began = true
 	stream.header = header
+	effective, err := prepareAlwaysEffectiveTimeFacts(ctx, header)
+	if err != nil {
+		return fmt.Errorf("alarmd worker: prepare EffectiveTime facts: %w", err)
+	}
+	stream.effective = effective
 	items, err := gapPreflightForHeader(header)
 	if err != nil {
 		return err
@@ -86,7 +93,11 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 	stateResult, stateReason := summarizeStateLoad(loaded)
 	stream.coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageStatePreflight,
 		stream.request.Operation, started, stateResult, stateReason, observability.Counts{Keys: int64(len(loaded.Items))}, nil)
-	evaluationRequest := execution.EvaluationRequest{Header: stream.header, Batch: batch, State: loaded, Gaps: stream.gaps}
+	evaluationHeader, err := bindAlwaysEffectiveTimeFacts(stream.header, stateItems, stream.effective)
+	if err != nil {
+		return fmt.Errorf("alarmd worker: bind series EffectiveTime facts: %w", err)
+	}
+	evaluationRequest := execution.EvaluationRequest{Header: evaluationHeader, Batch: batch, State: loaded, Gaps: stream.gaps}
 	started = time.Now()
 	evaluated, err := stream.coordinator.ports.Evaluator.Evaluate(ctx, evaluationRequest)
 	if err != nil {

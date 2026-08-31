@@ -187,6 +187,9 @@ func TestRunApplicationFatalStartsOneShutdownDeadline(t *testing.T) {
 	}
 	close(service.fatalSignal)
 	shutdownObservedAt := <-shutdownObserved
+	// Keep the service blocked after cancellation so an implementation that
+	// resets the shared deadline after waiting cannot pass on clock granularity.
+	time.Sleep(10 * time.Millisecond)
 	close(releaseService)
 	if err := <-done; !errors.Is(err, want) {
 		t.Fatalf("runApplication() error = %v, want %v", err, want)

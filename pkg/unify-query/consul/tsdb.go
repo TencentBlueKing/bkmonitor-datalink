@@ -11,7 +11,7 @@ package consul
 
 import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 
-var typeList = []string{metadata.InfluxDBStorageType, metadata.ElasticsearchStorageType, metadata.BkSqlStorageType, metadata.VictoriaMetricsStorageType}
+var typeList = []string{metadata.InfluxDBStorageType, metadata.ElasticsearchStorageType, metadata.BkSqlStorageType, metadata.VictoriaMetricsStorageType, metadata.SurrealDBStorageType}
 
 // GetTsDBStorageInfo 获取 tsDB 存储实例
 func GetTsDBStorageInfo() (map[string]*Storage, error) {

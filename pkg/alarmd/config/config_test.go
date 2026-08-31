@@ -278,6 +278,39 @@ func TestPhaseOneCompatibilityUsesExplicitCoordinates(t *testing.T) {
 	}
 }
 
+func TestPhaseOneCompatibilityRejectsSentinelRedis(t *testing.T) {
+	cfg := validConfigObject()
+	cfg.Redis.Mode = RedisModeSentinel
+	cfg.Redis.Address = ""
+	cfg.Redis.SentinelAddress = []string{"sentinel-a:26379", "sentinel-b:26379"}
+	cfg.Redis.MasterName = "monitor-master"
+
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "standalone") {
+		t.Fatalf("Validate() error = %v, want phase-one standalone Redis rejection", err)
+	}
+}
+
+func TestPhaseOneCompatibilityRejectsPhaseTwoRedisAndG1Selector(t *testing.T) {
+	for name, mutate := range map[string]func(*Config){
+		"g1 selector": func(cfg *Config) {
+			cfg.PhaseTwo.Worker.DeploymentProfile = DeploymentProfileG1
+			cfg.PhaseTwo.G1Validation.StrategyIDs = []string{"9889"}
+		},
+		"runtime redis": func(cfg *Config) {
+			runtimeRedis := cfg.Redis.Connection()
+			cfg.PhaseTwo.RuntimeRedis = &runtimeRedis
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := validConfigObject()
+			mutate(&cfg)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "phase_two") {
+				t.Fatalf("Validate() error = %v, want ignored phase-two config rejection", err)
+			}
+		})
+	}
+}
+
 func TestLoadBuildsPhaseOneCoordinatesAndModuleOptions(t *testing.T) {
 	cfg, err := Load(writeConfig(t, validRuntimeConfig()))
 	if err != nil {

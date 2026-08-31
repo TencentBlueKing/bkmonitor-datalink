@@ -353,6 +353,15 @@ func (c Config) validateGoAccessRuntime() error {
 }
 
 func (c Config) validatePhaseOneRuntime() error {
+	if len(c.PhaseTwo.G1Validation.StrategyIDs) != 0 {
+		return errors.New("phase-one Kafka compatibility must not configure phase_two g1_validation")
+	}
+	if c.PhaseTwo.RuntimeRedis != nil {
+		return errors.New("phase-one Kafka compatibility must not configure phase_two runtime_redis")
+	}
+	if c.Redis.Mode != RedisModeStandalone {
+		return errors.New("phase-one Kafka compatibility requires standalone Redis")
+	}
 	if err := c.Kafka.ConsumerCoordinates().Validate(); err != nil {
 		return fmt.Errorf("consumer configuration: %w", err)
 	}

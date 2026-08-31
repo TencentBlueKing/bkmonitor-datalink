@@ -149,8 +149,11 @@ func TestLegacyRedisStrategySourceInvalidatesMixedRefreshAndInfrastructureFailur
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := source.Strategies(ctx, []string{"1002"}); !errors.Is(err, controlplane.ErrObservationUnstable) {
-		t.Fatalf("missing detail error=%v", err)
+	strategies, err := source.Strategies(ctx, []string{"1002"})
+	if err != nil || len(strategies) != 1 || strategies[0].SourceDisposition == nil ||
+		strategies[0].SourceDisposition.Disposition != controlplane.DispositionSourceIncomplete ||
+		strategies[0].SourceDisposition.Reason != "SOURCE_OBJECT_INCOMPLETE" {
+		t.Fatalf("missing detail strategy=(%#v, %v)", strategies, err)
 	}
 }
 

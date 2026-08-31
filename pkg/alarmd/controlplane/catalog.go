@@ -43,6 +43,7 @@ type PrimaryQueryCompiler interface {
 type BuildRequest struct {
 	Strategies []SourceStrategy
 	Planner    PrimaryQueryCompiler
+	LastGood   *PublishedSnapshot
 }
 
 type FrozenPlan struct {
@@ -67,6 +68,8 @@ const (
 	DispositionAccepted             Disposition = "ACCEPTED"
 	DispositionSourceIncomplete     Disposition = "SOURCE_INCOMPLETE"
 	DispositionConfigRejected       Disposition = "CONFIG_REJECTED"
+	DispositionStaleConfig          Disposition = "STALE_CONFIG"
+	DispositionPendingRemoval       Disposition = "PENDING_REMOVAL"
 	DispositionUnsupported          Disposition = "UNSUPPORTED_PHASE2_CAPABILITY"
 	DispositionCompatibilityIgnored Disposition = "COMPATIBILITY_IGNORED"
 )
@@ -97,7 +100,39 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 	catalog := Catalog{ObservationID: observationID, QueryGroups: []QueryGroup{}, Dispositions: []ObjectDisposition{}}
 	groups := make(map[execution.QueryGroupIdentity]*QueryGroup)
 	seenPlans := make(map[execution.PlanIdentity]struct{}, len(request.Strategies))
+	lastGood := indexLastGoodPlans(request.LastGood)
+	addPlan := func(facts execution.QueryPlanFacts, plan FrozenPlan) error {
+		if _, duplicate := seenPlans[plan.Identity]; duplicate {
+			return errors.New("alarmd controlplane: duplicate Plan identity")
+		}
+		seenPlans[plan.Identity] = struct{}{}
+		identity, err := deriveQueryGroupIdentity(facts)
+		if err != nil {
+			return err
+		}
+		group := groups[identity]
+		if group == nil {
+			group = &QueryGroup{Identity: identity, QueryPlan: facts}
+			groups[identity] = group
+		} else if group.QueryPlan.QueryRevision != facts.QueryRevision {
+			return errors.New("alarmd controlplane: one query group has conflicting query revisions")
+		}
+		group.Plans = append(group.Plans, plan)
+		return nil
+	}
+	retainLastGood := func(sourceID string) (bool, error) {
+		entry, ok := lastGood[sourceID]
+		if !ok {
+			return false, nil
+		}
+		if err := addPlan(entry.facts, entry.plan); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	observed := make(map[string]struct{}, len(request.Strategies))
 	for _, source := range request.Strategies {
+		observed[source.SourceID] = struct{}{}
 		if source.SourceDisposition != nil {
 			disposition := *source.SourceDisposition
 			if disposition.SourceID == "" {
@@ -106,6 +141,13 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 			if disposition.SourceID != source.SourceID || disposition.Scope != "STRATEGY" || disposition.Reason == "" ||
 				(disposition.Disposition != DispositionSourceIncomplete && disposition.Disposition != DispositionConfigRejected) {
 				return Catalog{}, errors.New("alarmd controlplane: invalid source disposition")
+			}
+			retained, err := retainLastGood(source.SourceID)
+			if err != nil {
+				return Catalog{}, err
+			}
+			if retained && disposition.Disposition == DispositionConfigRejected {
+				disposition.Disposition = DispositionStaleConfig
 			}
 			catalog.Dispositions = append(catalog.Dispositions, disposition)
 			continue
@@ -117,6 +159,15 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 			} else {
 				catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionConfigRejected, Reason: "PLAN_INVALID"})
 			}
+			if shouldRetainLastGood(candidate.dispositions) {
+				retained, retainErr := retainLastGood(source.SourceID)
+				if retainErr != nil {
+					return Catalog{}, retainErr
+				}
+				if retained {
+					markStaleConfig(catalog.Dispositions, source.SourceID)
+				}
+			}
 			continue
 		}
 		planIdentity := candidate.plan.Identity
@@ -124,21 +175,24 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 			catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionConfigRejected, Reason: "DUPLICATE_STRATEGY_IDENTITY"})
 			continue
 		}
-		seenPlans[planIdentity] = struct{}{}
-		identity, err := deriveQueryGroupIdentity(candidate.facts)
+		if err := addPlan(candidate.facts, candidate.plan); err != nil {
+			return Catalog{}, err
+		}
+		catalog.Dispositions = append(catalog.Dispositions, candidate.dispositions...)
+		catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionAccepted})
+	}
+	for sourceID := range lastGood {
+		if _, found := observed[sourceID]; found {
+			continue
+		}
+		retained, err := retainLastGood(sourceID)
 		if err != nil {
 			return Catalog{}, err
 		}
-		group := groups[identity]
-		if group == nil {
-			group = &QueryGroup{Identity: identity, QueryPlan: candidate.facts}
-			groups[identity] = group
-		} else if group.QueryPlan.QueryRevision != candidate.facts.QueryRevision {
-			return Catalog{}, errors.New("alarmd controlplane: one query group has conflicting query revisions")
+		if retained {
+			catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: sourceID, Scope: "STRATEGY",
+				Disposition: DispositionPendingRemoval, Reason: "REMOVED_FROM_ACTIVE_SET"})
 		}
-		group.Plans = append(group.Plans, candidate.plan)
-		catalog.Dispositions = append(catalog.Dispositions, candidate.dispositions...)
-		catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionAccepted})
 	}
 
 	for _, group := range groups {
@@ -162,11 +216,63 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 		catalog.QueryGroups = append(catalog.QueryGroups, *group)
 	}
 	sort.Slice(catalog.QueryGroups, func(i, j int) bool { return catalog.QueryGroups[i].Identity < catalog.QueryGroups[j].Identity })
+	sort.Slice(catalog.Dispositions, func(i, j int) bool { return lessDisposition(catalog.Dispositions[i], catalog.Dispositions[j]) })
 	catalog.SnapshotRevision, err = deriveSnapshotRevision(catalog.QueryGroups)
 	if err != nil {
 		return Catalog{}, err
 	}
 	return catalog, nil
+}
+
+type lastGoodPlan struct {
+	facts execution.QueryPlanFacts
+	plan  FrozenPlan
+}
+
+func indexLastGoodPlans(snapshot *PublishedSnapshot) map[string]lastGoodPlan {
+	result := make(map[string]lastGoodPlan)
+	if snapshot == nil {
+		return result
+	}
+	for _, group := range snapshot.QueryGroups {
+		for _, plan := range group.Plans {
+			result[plan.Identity.StrategyID] = lastGoodPlan{facts: group.QueryPlan, plan: plan}
+		}
+	}
+	return result
+}
+
+func shouldRetainLastGood(dispositions []ObjectDisposition) bool {
+	for _, disposition := range dispositions {
+		if disposition.Disposition == DispositionUnsupported {
+			return false
+		}
+	}
+	return true
+}
+
+func markStaleConfig(dispositions []ObjectDisposition, sourceID string) {
+	for index := range dispositions {
+		if dispositions[index].SourceID == sourceID && dispositions[index].Disposition == DispositionConfigRejected {
+			dispositions[index].Disposition = DispositionStaleConfig
+		}
+	}
+}
+
+func lessDisposition(left, right ObjectDisposition) bool {
+	if left.SourceID != right.SourceID {
+		return left.SourceID < right.SourceID
+	}
+	if left.Scope != right.Scope {
+		return left.Scope < right.Scope
+	}
+	if left.LevelID != right.LevelID {
+		return left.LevelID < right.LevelID
+	}
+	if left.Disposition != right.Disposition {
+		return left.Disposition < right.Disposition
+	}
+	return left.Reason < right.Reason
 }
 
 func deriveSnapshotRevision(groups []QueryGroup) (execution.SnapshotRevision, error) {

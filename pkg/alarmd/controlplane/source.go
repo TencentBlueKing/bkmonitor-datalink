@@ -46,7 +46,7 @@ func deriveObservationID(strategies []SourceStrategy) (string, error) {
 	type item struct{ ID, Digest string }
 	items := make([]item, 0, len(strategies))
 	for _, strategy := range strategies {
-		if strategy.SourceID == "" || len(strategy.Document) == 0 {
+		if !validObservedStrategy(strategy) {
 			return "", ErrObservationUnstable
 		}
 		digest, err := sourceFactsDigest(strategy)
@@ -90,7 +90,7 @@ func observeCycle(ctx context.Context, source StrategySource) (observedCycle, er
 	}
 	byID := make(map[string]SourceStrategy, len(strategies))
 	for _, strategy := range strategies {
-		if strategy.SourceID == "" || len(strategy.Document) == 0 {
+		if !validObservedStrategy(strategy) {
 			return observedCycle{}, ErrObservationUnstable
 		}
 		if _, duplicate := byID[strategy.SourceID]; duplicate {
@@ -113,6 +113,18 @@ func observeCycle(ctx context.Context, source StrategySource) (observedCycle, er
 		digests = append(digests, digest)
 	}
 	return observedCycle{ids: before, digests: digests, strategies: ordered}, nil
+}
+
+func validObservedStrategy(strategy SourceStrategy) bool {
+	if strategy.SourceID == "" {
+		return false
+	}
+	if len(strategy.Document) > 0 {
+		return true
+	}
+	return strategy.SourceDisposition != nil && strategy.SourceDisposition.SourceID == strategy.SourceID &&
+		strategy.SourceDisposition.Scope == "STRATEGY" && strategy.SourceDisposition.Reason != "" &&
+		strategy.SourceDisposition.Disposition == DispositionSourceIncomplete
 }
 
 func sourceFactsDigest(strategy SourceStrategy) (string, error) {

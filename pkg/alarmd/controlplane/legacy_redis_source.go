@@ -118,7 +118,11 @@ func (source *LegacyRedisStrategySource) Strategies(ctx context.Context, ids []s
 	for index, value := range values {
 		payload, ok := legacyRedisBytes(value)
 		if !ok || len(payload) == 0 {
-			return nil, ErrObservationUnstable
+			strategies = append(strategies, SourceStrategy{SourceID: ids[index], SourceDisposition: &ObjectDisposition{
+				SourceID: ids[index], Scope: "STRATEGY", Disposition: DispositionSourceIncomplete,
+				Reason: "SOURCE_OBJECT_INCOMPLETE",
+			}})
+			continue
 		}
 		strategy := SourceStrategy{SourceID: ids[index], Document: append(json.RawMessage(nil), payload...)}
 		var identityDTO struct {

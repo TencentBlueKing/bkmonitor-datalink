@@ -123,6 +123,155 @@ func TestLegacyRedisSourceCompilesAndPublishesSharedQueryGroup(t *testing.T) {
 	}
 }
 
+func TestSourceReconcilerConfirmsChangeAcrossIndependentRefreshAndRestart(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	documents := realThresholdDocuments(t)
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", `[1001,1002]`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	for index, id := range []string{"1001", "1002"} {
+		if err := client.Set(ctx, "bkmonitor.cache.strategy_"+id, string(documents[index]), 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := newRedisStrategySource(t, client)
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:reconcile", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler, err := controlplane.NewSourceReconciler(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := reconciler.Refresh(ctx, source, planner)
+	if err != nil || first.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("first refresh=(%#v, %v)", first, err)
+	}
+	if _, err := repository.LoadLatestPublication(ctx); !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+		t.Fatalf("unconfirmed candidate was published: %v", err)
+	}
+	changed := strings.Replace(string(documents[1]), `"threshold":90`, `"threshold":91`, 1)
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1002", changed, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Recreate the reconciler: confirmation must come from the persisted prior
+	// independent refresh, not process memory or a second read in one call.
+	restarted, err := controlplane.NewSourceReconciler(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := restarted.Refresh(ctx, source, planner)
+	if err != nil || second.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("second refresh=(%#v, %v)", second, err)
+	}
+	if _, err := repository.LoadLatestPublication(ctx); !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+		t.Fatalf("changed second candidate was published: %v", err)
+	}
+	third, err := restarted.Refresh(ctx, source, planner)
+	if err != nil || third.Status != controlplane.SourceRefreshPublished || third.Publication.PublicationEpoch == 0 {
+		t.Fatalf("third refresh=(%#v, %v)", third, err)
+	}
+	fourth, err := restarted.Refresh(ctx, source, planner)
+	if err != nil || fourth.Status != controlplane.SourceRefreshUnchanged || fourth.Publication != third.Publication {
+		t.Fatalf("unchanged refresh=(%#v, %v), published=%#v", fourth, err, third)
+	}
+}
+
+func TestSourceReconcilerRetainsLastGoodForMissingAndInvalidObjectWhileHealthySiblingAdvances(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	documents := realThresholdDocuments(t)
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", `[1001,1002]`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	for index, id := range []string{"1001", "1002"} {
+		if err := client.Set(ctx, "bkmonitor.cache.strategy_"+id, string(documents[index]), 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := newRedisStrategySource(t, client)
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:last-good", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler, err := controlplane.NewSourceReconciler(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("initial pending=(%#v, %v)", result, err)
+	}
+	initial, err := reconciler.Refresh(ctx, source, planner)
+	if err != nil || initial.Status != controlplane.SourceRefreshPublished {
+		t.Fatalf("initial publish=(%#v, %v)", initial, err)
+	}
+	initialSnapshot, err := repository.LoadSnapshot(ctx, initial.Publication.SnapshotRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialPlans := plansByStrategy(initialSnapshot)
+
+	changedSibling := strings.Replace(string(documents[1]), `"threshold":90`, `"threshold":91`, 1)
+	if err := client.Del(ctx, "bkmonitor.cache.strategy_1001").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1002", changedSibling, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("missing pending=(%#v, %v)", result, err)
+	}
+	missing, err := reconciler.Refresh(ctx, source, planner)
+	if err != nil || missing.Status != controlplane.SourceRefreshPublished {
+		t.Fatalf("missing publish=(%#v, %v)", missing, err)
+	}
+	missingSnapshot, err := repository.LoadSnapshot(ctx, missing.Publication.SnapshotRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingPlans := plansByStrategy(missingSnapshot)
+	if missingPlans["1001"].PlanRevision != initialPlans["1001"].PlanRevision ||
+		missingPlans["1002"].PlanRevision == initialPlans["1002"].PlanRevision {
+		t.Fatalf("missing object last-good=%#v initial=%#v", missingPlans, initialPlans)
+	}
+	assertAuditDisposition(t, repository, "1001", controlplane.DispositionSourceIncomplete, "SOURCE_OBJECT_INCOMPLETE")
+
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", `{"id":1001,`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	changedSibling = strings.Replace(string(documents[1]), `"threshold":90`, `"threshold":92`, 1)
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1002", changedSibling, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("invalid pending=(%#v, %v)", result, err)
+	}
+	invalid, err := reconciler.Refresh(ctx, source, planner)
+	if err != nil || invalid.Status != controlplane.SourceRefreshPublished {
+		t.Fatalf("invalid publish=(%#v, %v)", invalid, err)
+	}
+	invalidSnapshot, err := repository.LoadSnapshot(ctx, invalid.Publication.SnapshotRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidPlans := plansByStrategy(invalidSnapshot)
+	if invalidPlans["1001"].PlanRevision != initialPlans["1001"].PlanRevision ||
+		invalidPlans["1002"].PlanRevision == missingPlans["1002"].PlanRevision {
+		t.Fatalf("invalid object last-good=%#v missing=%#v", invalidPlans, missingPlans)
+	}
+	assertAuditDisposition(t, repository, "1001", controlplane.DispositionStaleConfig, "STRATEGY_DOCUMENT_INVALID")
+}
+
 func TestRedisCatalogRepositoryRejectsRevisionMismatchAndCollision(t *testing.T) {
 	client := newControlplaneRedis(t)
 	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:test", time.Hour)
@@ -560,6 +709,49 @@ func mustDigest(t *testing.T, domain string, value any) string {
 		t.Fatal(err)
 	}
 	return digest
+}
+
+func newRedisStrategySource(t *testing.T, client redis.Cmdable) *controlplane.LegacyRedisStrategySource {
+	t.Helper()
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache", &recordingIdentityResolver{
+		facts: map[string]controlplane.SourceIdentity{
+			"2": {TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return source
+}
+
+func plansByStrategy(snapshot controlplane.PublishedSnapshot) map[string]controlplane.FrozenPlan {
+	result := make(map[string]controlplane.FrozenPlan)
+	for _, group := range snapshot.QueryGroups {
+		for _, plan := range group.Plans {
+			result[plan.Identity.StrategyID] = plan
+		}
+	}
+	return result
+}
+
+func assertAuditDisposition(
+	t *testing.T,
+	repository *controlplane.RedisCatalogRepository,
+	sourceID string,
+	disposition controlplane.Disposition,
+	reason string,
+) {
+	t.Helper()
+	audit, err := repository.LoadLatestAudit(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range audit.Dispositions {
+		if item.SourceID == sourceID && item.Disposition == disposition && item.Reason == reason {
+			return
+		}
+	}
+	t.Fatalf("missing audit disposition source=%s disposition=%s reason=%s: %#v", sourceID, disposition, reason, audit)
 }
 
 func newControlplaneRedis(t *testing.T) *redis.Client {

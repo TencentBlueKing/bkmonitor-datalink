@@ -49,7 +49,7 @@ func deriveObservationID(strategies []SourceStrategy) (string, error) {
 		if strategy.SourceID == "" || len(strategy.Document) == 0 {
 			return "", ErrObservationUnstable
 		}
-		digest, err := contract.DeriveCanonicalDigestV2("alarmd-source-object-v1", strategy.Document)
+		digest, err := sourceFactsDigest(strategy)
 		if err != nil {
 			return "", err
 		}
@@ -105,7 +105,7 @@ func observeCycle(ctx context.Context, source StrategySource) (observedCycle, er
 		if !ok {
 			return observedCycle{}, ErrObservationUnstable
 		}
-		digest, err := contract.DeriveCanonicalDigestV2("alarmd-source-object-v1", strategy.Document)
+		digest, err := sourceFactsDigest(strategy)
 		if err != nil {
 			return observedCycle{}, ErrObservationUnstable
 		}
@@ -113,6 +113,14 @@ func observeCycle(ctx context.Context, source StrategySource) (observedCycle, er
 		digests = append(digests, digest)
 	}
 	return observedCycle{ids: before, digests: digests, strategies: ordered}, nil
+}
+
+func sourceFactsDigest(strategy SourceStrategy) (string, error) {
+	return contract.DeriveCanonicalDigestV2("alarmd-source-object-v2", struct {
+		Document    []byte             `json:"document"`
+		Identity    SourceIdentity     `json:"identity"`
+		Disposition *ObjectDisposition `json:"disposition,omitempty"`
+	}{Document: strategy.Document, Identity: strategy.Identity, Disposition: strategy.SourceDisposition})
 }
 
 func canonicalActiveSet(ids []string) ([]string, error) {

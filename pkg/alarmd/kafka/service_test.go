@@ -707,27 +707,18 @@ func TestServiceNormalCloseTimeoutUsesClientToInterruptGroup(t *testing.T) {
 
 	groupStarted := make(chan struct{})
 	clientClosed := make(chan struct{})
-	order := make([]string, 0, 3)
-	var orderMu sync.Mutex
+	groupFinished := make(chan struct{})
 	group := newFakeConsumerGroup(func(ctx context.Context, _ []string, _ sarama.ConsumerGroupHandler) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})
 	group.closeFunc = func() error {
-		orderMu.Lock()
-		order = append(order, "group-start")
-		orderMu.Unlock()
 		close(groupStarted)
 		<-clientClosed
-		orderMu.Lock()
-		order = append(order, "group-end")
-		orderMu.Unlock()
+		close(groupFinished)
 		return sarama.ErrClosedClient
 	}
 	client := &fakeServiceClient{closeFunc: func() error {
-		orderMu.Lock()
-		order = append(order, "client")
-		orderMu.Unlock()
 		close(clientClosed)
 		return nil
 	}}
@@ -746,15 +737,26 @@ func TestServiceNormalCloseTimeoutUsesClientToInterruptGroup(t *testing.T) {
 	if !errors.Is(err, ErrDrainTimeout) || errors.Is(err, sarama.ErrClosedClient) {
 		t.Fatalf("Run() error = %v, want timeout without derived ErrClosedClient", err)
 	}
-	waitFor(t, func() bool {
-		orderMu.Lock()
-		defer orderMu.Unlock()
-		return len(order) == 3
-	}, "forced client interrupt and group close")
-	orderMu.Lock()
-	defer orderMu.Unlock()
-	if !reflect.DeepEqual(order, []string{"group-start", "client", "group-end"}) {
-		t.Fatalf("close order = %v, want group-start/client/group-end", order)
+	select {
+	case <-service.forcedCloseStarted:
+	default:
+		t.Fatal("drain timeout did not start forced close")
+	}
+	select {
+	case <-clientClosed:
+	case <-time.After(time.Second):
+		t.Fatal("forced close did not close client")
+	}
+	select {
+	case <-groupFinished:
+	case <-time.After(time.Second):
+		t.Fatal("client close did not unblock group close")
+	}
+	if group.closeCalls.Load() != 1 || client.closeCalls.Load() != 1 {
+		t.Fatalf("close calls group=%d client=%d, want 1/1", group.closeCalls.Load(), client.closeCalls.Load())
+	}
+	if snapshot := service.LifecycleSnapshot(); snapshot.DrainTotal[lifecycle.DrainTimeout] != 1 {
+		t.Fatalf("shutdown snapshot = %+v, want one timeout drain", snapshot)
 	}
 }
 
@@ -881,6 +883,9 @@ func TestServiceForcedCloseReturnsKnownClientErrorAtDeadline(t *testing.T) {
 
 	want := errors.New("client close failed")
 	releaseGroup := make(chan struct{})
+	var releaseGroupOnce sync.Once
+	release := func() { releaseGroupOnce.Do(func() { close(releaseGroup) }) }
+	t.Cleanup(release)
 	group := newFakeConsumerGroup(func(ctx context.Context, _ []string, _ sarama.ConsumerGroupHandler) error {
 		<-ctx.Done()
 		return ctx.Err()
@@ -891,6 +896,12 @@ func TestServiceForcedCloseReturnsKnownClientErrorAtDeadline(t *testing.T) {
 	}
 	client := &fakeServiceClient{closeFunc: func() error { return want }}
 	service := newTestService(t, group, client, noopProcessorFactory(), fakeSyncOffsetCommitter{}, 20*time.Millisecond)
+	service.startForcedClose()
+	select {
+	case <-service.forcedClientDone:
+	case <-time.After(time.Second):
+		t.Fatal("forced client close did not complete")
+	}
 	err := service.Close()
 	if !errors.Is(err, ErrDrainTimeout) || !errors.Is(err, want) {
 		t.Fatalf("Close() error = %v, want timeout joined with client error", err)
@@ -898,7 +909,15 @@ func TestServiceForcedCloseReturnsKnownClientErrorAtDeadline(t *testing.T) {
 	if snapshot := service.LifecycleSnapshot(); snapshot.Draining || snapshot.DrainTotal[lifecycle.DrainFailed] != 1 {
 		t.Fatalf("failed forced close snapshot = %+v, want one failed drain", snapshot)
 	}
-	close(releaseGroup)
+	release()
+	select {
+	case <-service.forcedCloseDone:
+	case <-time.After(time.Second):
+		t.Fatal("forced group close did not complete")
+	}
+	if group.closeCalls.Load() != 1 || client.closeCalls.Load() != 1 {
+		t.Fatalf("close calls group=%d client=%d, want 1/1", group.closeCalls.Load(), client.closeCalls.Load())
+	}
 }
 
 func noopProcessorFactory() consumer.ProcessorFactory {

@@ -148,6 +148,62 @@ func TestCommitProgressAdvancesAndRestoresConsecutiveGapSkippedSlots(t *testing.
 	assertGapSkippedProgress(t, *loaded.Progress, 180, 60, 120, 2)
 }
 
+func TestCommitProgressAdvancesFullDataGuardedByPreviousGapSkipped(t *testing.T) {
+	fake := &controlFake{missing: true}
+	store := mustStore(t, fake)
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	fence := execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"}
+
+	result, err := store.CommitProgress(context.Background(), execution.ProgressCommitRequest{
+		Identity: identity, OwnerFence: fence, ExpectedNextSlot: 60,
+		Completion: execution.SlotCompletion{
+			Contract: progressContractAt(60), Kind: execution.CompletionGapSkipped,
+			Result:     observability.ResultDegraded,
+			ReasonCode: execution.ReasonCode(contract.ReasonGapSkipped),
+		},
+	})
+	if err != nil || result.Status != execution.ProgressCommitted {
+		t.Fatalf("CommitProgress(gap skipped) = (%+v, %v)", result, err)
+	}
+
+	// A following live Slot can have FULL+DATA input while its Level outcome is
+	// still guarded by the durable GAP_SKIPPED marker. Completion derivation
+	// intentionally preserves that as COMPLETED_WITH_UNAVAILABLE; G1 may advance
+	// only this exact guarded combination, not a query/readiness UNAVAILABLE.
+	result, err = store.CommitProgress(context.Background(), execution.ProgressCommitRequest{
+		Identity: identity, OwnerFence: fence, ExpectedNextSlot: 120,
+		Completion: execution.SlotCompletion{
+			Contract: progressContractAt(120), Kind: execution.CompletionUnavailable,
+			Primary: &execution.PrimaryInputFact{
+				Completeness: execution.CompletenessFull,
+				DataState:    execution.DataStateData,
+			},
+			Result:     observability.ResultDegraded,
+			ReasonCode: execution.ReasonCode(contract.ReasonGapSkipped),
+		},
+	})
+	if err != nil || result.Status != execution.ProgressCommitted {
+		t.Fatalf("CommitProgress(full data guarded by gap skipped) = (%+v, %v)", result, err)
+	}
+
+	loaded, err := store.LoadProgress(context.Background(), identity)
+	if err != nil || loaded.Progress == nil {
+		t.Fatalf("LoadProgress() = (%+v, %v)", loaded, err)
+	}
+	progress := *loaded.Progress
+	if progress.NextSlot != 180 || progress.LastFullSlot != 120 ||
+		progress.LastCompletionKind != execution.CompletionUnavailable {
+		t.Fatalf("guarded full-data Progress = %+v", progress)
+	}
+	// The guarded live Slot must not rewrite the earlier query-free gap episode.
+	gap := progress.CurrentOrRecentGap
+	if gap == nil || gap.Kind != execution.CompletionGapSkipped ||
+		gap.ReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) ||
+		gap.FirstSlot != 60 || gap.LastSlot != 60 || gap.Count != 1 || gap.NextProbeAt != nil {
+		t.Fatalf("preserved gap-skipped summary = %+v", gap)
+	}
+}
+
 func TestCommitProgressDoesNotOpenOtherDegradedCompletionsInG1(t *testing.T) {
 	fullData := &execution.PrimaryInputFact{
 		Completeness: execution.CompletenessFull,
@@ -156,6 +212,10 @@ func TestCommitProgressDoesNotOpenOtherDegradedCompletionsInG1(t *testing.T) {
 	partialData := &execution.PrimaryInputFact{
 		Completeness: execution.CompletenessPartial,
 		DataState:    execution.DataStateData,
+	}
+	fullEmpty := &execution.PrimaryInputFact{
+		Completeness: execution.CompletenessFull,
+		DataState:    execution.DataStateEmpty,
 	}
 	unavailable := &execution.PrimaryInputFact{
 		Completeness: execution.CompletenessUnavailable,
@@ -179,6 +239,18 @@ func TestCommitProgressDoesNotOpenOtherDegradedCompletionsInG1(t *testing.T) {
 		{
 			name: "unavailable", kind: execution.CompletionUnavailable, primary: unavailable,
 			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable),
+		},
+		{
+			name: "unavailable other coverage reason", kind: execution.CompletionUnavailable, primary: fullData,
+			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonHistoryWarming),
+		},
+		{
+			name: "unavailable partial primary", kind: execution.CompletionUnavailable, primary: partialData,
+			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonGapSkipped),
+		},
+		{
+			name: "unavailable empty primary", kind: execution.CompletionUnavailable, primary: fullEmpty,
+			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonGapSkipped),
 		},
 		{
 			name: "terminal", kind: execution.CompletionTerminal, primary: fullData,

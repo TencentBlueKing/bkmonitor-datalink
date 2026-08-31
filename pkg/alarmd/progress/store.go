@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
@@ -165,6 +166,19 @@ func validateG1Completion(completion execution.SlotCompletion) error {
 			completion.Primary.DataState != execution.DataStateData ||
 			completion.ReasonCode != execution.ReasonCode(contract.ReasonHistoryWarming) {
 			return fmt.Errorf("progress: G1 PARTIAL completion is limited to FULL+DATA HISTORY_WARMING")
+		}
+		return nil
+	case execution.CompletionUnavailable:
+		// A live FULL+DATA Slot immediately following a query-free GAP_SKIPPED
+		// completion can still be constrained by that durable guard. Completion
+		// derivation preserves its UNKNOWN Level outcome as UNAVAILABLE even though
+		// the query itself was available. G1 advances only this exact combination;
+		// query/readiness UNAVAILABLE remains outside the G1 boundary.
+		if completion.Primary == nil || completion.Primary.Completeness != execution.CompletenessFull ||
+			completion.Primary.DataState != execution.DataStateData ||
+			completion.Result != observability.ResultDegraded ||
+			completion.ReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) {
+			return fmt.Errorf("progress: G1 UNAVAILABLE completion is limited to FULL+DATA DEGRADED GAP_SKIPPED")
 		}
 		return nil
 	case execution.CompletionGapSkipped:

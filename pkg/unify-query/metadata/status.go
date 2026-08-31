@@ -11,7 +11,44 @@ package metadata
 
 import (
 	"context"
+	"strconv"
+	"sync/atomic"
 )
+
+type statusScopeContextKey struct{}
+
+var selectorStatusScopeSequence atomic.Uint64
+
+func statusKey(ctx context.Context) string {
+	if scope, ok := ctx.Value(statusScopeContextKey{}).(string); ok {
+		return StatusKey + ":" + scope
+	}
+	return StatusKey
+}
+
+func withStatusScope(ctx context.Context, scope string) context.Context {
+	base := GetStatus(ctx)
+	scoped := context.WithValue(ctx, statusScopeContextKey{}, scope)
+	if base != nil {
+		copyOfBase := *base
+		md.set(scoped, statusKey(scoped), &copyOfBase)
+	}
+	return scoped
+}
+
+// WithStatusScope creates an output-local status namespace while preserving
+// the routing status that was recorded before output execution.
+func WithStatusScope(ctx context.Context, outputIndex int) context.Context {
+	return withStatusScope(ctx, "output:"+strconv.Itoa(outputIndex))
+}
+
+// WithSelectorStatusScope creates an internal selector-local status namespace.
+// The scope inherits the output status at creation but writes cannot race with
+// another selector populating under the same output context.
+func WithSelectorStatusScope(ctx context.Context) context.Context {
+	sequence := selectorStatusScopeSequence.Add(1)
+	return withStatusScope(ctx, "selector:"+strconv.FormatUint(sequence, 10))
+}
 
 // Status
 type Status struct {
@@ -26,13 +63,13 @@ func SetStatus(ctx context.Context, code, message string) {
 			Code:    code,
 			Message: message,
 		}
-		md.set(ctx, StatusKey, status)
+		md.set(ctx, statusKey(ctx), status)
 	}
 }
 
 // GetStatus
 func GetStatus(ctx context.Context) *Status {
-	r, ok := md.get(ctx, StatusKey)
+	r, ok := md.get(ctx, statusKey(ctx))
 	if ok {
 		if v, ok := r.(*Status); ok {
 			return v

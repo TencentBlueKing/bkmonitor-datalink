@@ -41,6 +41,13 @@ type Instance interface {
 	InstanceType() string
 }
 
+// InstantQueryWithPartial is an optional status-aware instant query contract.
+// It is used by named outputs while the legacy Instance.DirectQuery signature
+// remains unchanged for existing callers and implementations.
+type InstantQueryWithPartial interface {
+	DirectQueryWithPartial(ctx context.Context, qs string, end time.Time) (promql.Vector, bool, error)
+}
+
 var _ Instance = &DefaultInstance{}
 
 type DefaultInstance struct{}

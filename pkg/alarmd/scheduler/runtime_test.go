@@ -131,7 +131,7 @@ func frozenSlot(queryGroup execution.QueryGroupIdentity) FrozenSlot {
 		Operation:            execution.OperationNormal,
 		OwnerFence:           execution.OwnerFence{QueryGroup: queryGroup, OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "token-1"},
 		AssignmentGeneration: 1,
-	}, ExpectedNextSlot: contract.Slot.EvaluationTime, NextSlotAfterCompletion: contract.Slot.EvaluationTime + 60}
+	}, ExpectedNextSlot: contract.Slot.EvaluationTime}
 }
 
 type fakeSession struct {

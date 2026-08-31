@@ -16,7 +16,9 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -33,8 +35,8 @@ func TestProductionSlotSourceColdStartUsesFirstSegment(t *testing.T) {
 		t.Fatalf("SlotIdentity = %+v", slot.Contract.Slot)
 	}
 	if slot.Contract.ScheduleRevision != schedule.Segment.ScheduleRevision ||
-		slot.Contract.ScheduleSegmentStart != schedule.Segment.Start || slot.NextSlotAfterCompletion != 120 {
-		t.Fatalf("frozen schedule provenance = %+v, next=%d", slot.Contract, slot.NextSlotAfterCompletion)
+		slot.Contract.ScheduleSegmentStart != schedule.Segment.Start {
+		t.Fatalf("frozen schedule provenance = %+v", slot.Contract)
 	}
 	if catalog.initialReads != 1 || len(catalog.readTimes) != 0 {
 		t.Fatalf("catalog reads initial=%d by-time=%v", catalog.initialReads, catalog.readTimes)
@@ -56,11 +58,11 @@ func TestProductionSlotSourceCrossesCutoverWithoutSecondProgressIdentity(t *test
 	if err != nil || !due {
 		t.Fatalf("old Next() due=%v error=%v", due, err)
 	}
-	if oldSlot.Contract.ScheduleRevision != oldSchedule.Segment.ScheduleRevision || oldSlot.NextSlotAfterCompletion != 90 {
+	if oldSlot.Contract.ScheduleRevision != oldSchedule.Segment.ScheduleRevision {
 		t.Fatalf("old Slot = %+v", oldSlot)
 	}
-	if !reflect.DeepEqual(catalog.readTimes, []execution.EvaluationTime{60, boundary}) {
-		t.Fatalf("ReadFrozenSchedule times = %v, want [60 75]", catalog.readTimes)
+	if !reflect.DeepEqual(catalog.readTimes, []execution.EvaluationTime{60}) {
+		t.Fatalf("ReadFrozenSchedule times = %v, want only the current Slot", catalog.readTimes)
 	}
 
 	catalog.readTimes = nil
@@ -74,8 +76,61 @@ func TestProductionSlotSourceCrossesCutoverWithoutSecondProgressIdentity(t *test
 		newSlot.Contract.ScheduleSegmentStart != boundary || newSlot.Contract.Slot.EvaluationTime != 90 {
 		t.Fatalf("new Slot = %+v", newSlot)
 	}
+	if !reflect.DeepEqual(catalog.readTimes, []execution.EvaluationTime{60, boundary}) {
+		t.Fatalf("ReadFrozenSchedule times = %v, want completed Slot then successor Segment", catalog.readTimes)
+	}
 	if catalog.progressIdentity != (execution.ProgressIdentity{QueryGroup: "query-group-1"}) {
 		t.Fatalf("Progress identity = %+v", catalog.progressIdentity)
+	}
+}
+
+func TestProductionSlotSourceReloadsContinuousNextSlotAfterInflightCutover(t *testing.T) {
+	oldSchedule := schedulerSchedule(t, 60, 30, nil, "snapshot-old", 7)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{oldSchedule}}
+	control := &slotProgressControlStore{missing: true}
+	store, err := progress.NewStore(progress.StoreOptions{
+		Prefix: "alarmd", Control: control, Slots: slotProgressResolver{catalog: catalog},
+		Now: func() time.Time { return time.Unix(200, 0) },
+	})
+	if err != nil {
+		t.Fatalf("progress.NewStore() error = %v", err)
+	}
+	source := mustProductionSlotSource(t,
+		&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
+		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog, store, time.Unix(200, 0))
+
+	oldSlot, due, err := source.Next(context.Background(), "query-group-1")
+	if err != nil || !due || oldSlot.Contract.Slot.EvaluationTime != 60 {
+		t.Fatalf("freeze old Slot = (%+v, %v, %v)", oldSlot, due, err)
+	}
+
+	boundary := execution.EvaluationTime(75)
+	oldSchedule.Segment.End = &boundary
+	newSchedule := schedulerSchedule(t, 90, boundary, nil, "snapshot-new", 8)
+	catalog.schedules = []execution.FrozenQueryGroupSchedule{oldSchedule, newSchedule}
+	commit, err := store.CommitProgress(context.Background(), execution.ProgressCommitRequest{
+		Identity: execution.ProgressIdentity{QueryGroup: "query-group-1"}, OwnerFence: oldSlot.Dispatch.OwnerFence,
+		ExpectedNextSlot: oldSlot.ExpectedNextSlot,
+		Completion: execution.SlotCompletion{
+			Contract: oldSlot.Contract, Kind: execution.CompletionFull,
+			Primary: &execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateData},
+			Result:  observability.ResultSuccess,
+		},
+	})
+	if err != nil || commit.Status != execution.ProgressCommitted {
+		t.Fatalf("CommitProgress() = (%+v, %v)", commit, err)
+	}
+	loaded, err := store.LoadProgress(context.Background(), execution.ProgressIdentity{QueryGroup: "query-group-1"})
+	if err != nil || loaded.Progress == nil || loaded.Progress.NextSlot != 90 {
+		t.Fatalf("LoadProgress() after cutover = (%+v, %v), want next Slot 90", loaded, err)
+	}
+
+	nextSlot, due, err := source.Next(context.Background(), "query-group-1")
+	if err != nil || !due {
+		t.Fatalf("Next() after cutover due=%v error=%v", due, err)
+	}
+	if nextSlot.Contract.Slot.EvaluationTime != 90 || nextSlot.Contract.ScheduleRevision != newSchedule.Segment.ScheduleRevision {
+		t.Fatalf("next Slot after cutover = %+v, want new Segment Slot 90", nextSlot)
 	}
 }
 
@@ -425,4 +480,56 @@ func (reader *fakeProgressReader) LoadProgress(
 ) (execution.ProgressLoadResult, error) {
 	reader.catalog.progressIdentity = identity
 	return reader.result, nil
+}
+
+type slotProgressControlStore struct {
+	value   []byte
+	missing bool
+}
+
+type slotProgressResolver struct {
+	catalog *fakeSlotCatalog
+}
+
+func (resolver slotProgressResolver) NextSlotAfter(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	completed execution.EvaluationTime,
+) (execution.EvaluationTime, error) {
+	schedule, err := resolver.catalog.ReadFrozenSchedule(ctx, queryGroup, completed)
+	if err != nil {
+		return 0, err
+	}
+	if next, ok := schedule.NextSlotAfter(completed); ok {
+		return next, nil
+	}
+	if schedule.Segment.End == nil {
+		return 0, ErrScheduleFactsInvalid
+	}
+	successor, err := resolver.catalog.ReadFrozenSchedule(ctx, queryGroup, *schedule.Segment.End)
+	if err != nil {
+		return 0, err
+	}
+	next, ok := successor.FirstSlot()
+	if !ok {
+		return 0, ErrScheduleFactsInvalid
+	}
+	return next, nil
+}
+
+func (store *slotProgressControlStore) ReadControl(
+	context.Context,
+	execution.QueryGroupIdentity,
+	string,
+) ([]byte, bool, error) {
+	return append([]byte(nil), store.value...), store.missing, nil
+}
+
+func (store *slotProgressControlStore) FencedCompareAndSet(
+	_ context.Context,
+	request ownership.FencedCASRequest,
+) (ownership.FencedCASStatus, error) {
+	store.value = append([]byte(nil), request.Value...)
+	store.missing = false
+	return ownership.FencedCASApplied, nil
 }

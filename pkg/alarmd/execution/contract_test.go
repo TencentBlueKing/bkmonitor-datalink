@@ -1093,10 +1093,9 @@ func TestStoreAndProgressReceiptStatusReasonContracts(t *testing.T) {
 
 func TestProgressCommitRequiresSelfConsistentPrimaryFact(t *testing.T) {
 	request := execution.ProgressCommitRequest{
-		Identity:                execution.ProgressIdentity{QueryGroup: frozenContract().Slot.QueryGroup},
-		OwnerFence:              execution.OwnerFence{QueryGroup: frozenContract().Slot.QueryGroup, OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"},
-		ExpectedNextSlot:        frozenContract().Slot.EvaluationTime,
-		NextSlotAfterCompletion: frozenContract().Slot.EvaluationTime + 60,
+		Identity:         execution.ProgressIdentity{QueryGroup: frozenContract().Slot.QueryGroup},
+		OwnerFence:       execution.OwnerFence{QueryGroup: frozenContract().Slot.QueryGroup, OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"},
+		ExpectedNextSlot: frozenContract().Slot.EvaluationTime,
 		Completion: execution.SlotCompletion{
 			Contract: frozenContract(), Kind: execution.CompletionFullEmpty,
 			Primary: &execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateEmpty},

@@ -1154,9 +1154,8 @@ func (ports *recordingPorts) fail(stage string) error {
 func slotRequest(operation execution.Operation) execution.SlotExecutionRequest {
 	return execution.SlotExecutionRequest{
 		Contract: frozenContract(), Operation: operation,
-		OwnerFence:              execution.OwnerFence{QueryGroup: "query-group", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1"},
-		ExpectedNextSlot:        frozenContract().Slot.EvaluationTime,
-		NextSlotAfterCompletion: frozenContract().Slot.EvaluationTime + 60,
+		OwnerFence:       execution.OwnerFence{QueryGroup: "query-group", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1"},
+		ExpectedNextSlot: frozenContract().Slot.EvaluationTime,
 	}
 }
 

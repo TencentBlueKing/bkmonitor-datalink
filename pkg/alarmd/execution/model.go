@@ -132,11 +132,10 @@ func (fence OwnerFence) Validate(contractRef FrozenExecutionContractRef) error {
 }
 
 type SlotExecutionRequest struct {
-	Contract                FrozenExecutionContractRef
-	Operation               Operation
-	OwnerFence              OwnerFence
-	ExpectedNextSlot        EvaluationTime
-	NextSlotAfterCompletion EvaluationTime
+	Contract         FrozenExecutionContractRef
+	Operation        Operation
+	OwnerFence       OwnerFence
+	ExpectedNextSlot EvaluationTime
 }
 
 func (request SlotExecutionRequest) Validate() error {
@@ -151,9 +150,6 @@ func (request SlotExecutionRequest) Validate() error {
 	}
 	if request.ExpectedNextSlot != request.Contract.Slot.EvaluationTime {
 		return errors.New("alarmd execution: expected next slot must equal the frozen evaluation time")
-	}
-	if request.NextSlotAfterCompletion <= request.ExpectedNextSlot {
-		return errors.New("alarmd execution: Scheduler must freeze the next Slot after completion")
 	}
 	return nil
 }
@@ -2046,11 +2042,10 @@ type SlotCompletion struct {
 }
 
 type ProgressCommitRequest struct {
-	Identity                ProgressIdentity
-	OwnerFence              OwnerFence
-	ExpectedNextSlot        EvaluationTime
-	NextSlotAfterCompletion EvaluationTime
-	Completion              SlotCompletion
+	Identity         ProgressIdentity
+	OwnerFence       OwnerFence
+	ExpectedNextSlot EvaluationTime
+	Completion       SlotCompletion
 }
 
 func (request ProgressCommitRequest) Validate() error {
@@ -2061,8 +2056,7 @@ func (request ProgressCommitRequest) Validate() error {
 		return err
 	}
 	if request.Identity.QueryGroup != request.Completion.Contract.Slot.QueryGroup ||
-		request.ExpectedNextSlot != request.Completion.Contract.Slot.EvaluationTime ||
-		request.NextSlotAfterCompletion <= request.ExpectedNextSlot {
+		request.ExpectedNextSlot != request.Completion.Contract.Slot.EvaluationTime {
 		return errors.New("alarmd execution: Progress request does not match the completed Slot")
 	}
 	if err := request.Completion.Contract.Validate(); err != nil {

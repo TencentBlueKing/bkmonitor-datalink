@@ -24,9 +24,14 @@ type ControlStore interface {
 	FencedCompareAndSet(context.Context, ownership.FencedCASRequest) (ownership.FencedCASStatus, error)
 }
 
+type ContinuousSlotResolver interface {
+	NextSlotAfter(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.EvaluationTime, error)
+}
+
 type StoreOptions struct {
 	Prefix  string
 	Control ControlStore
+	Slots   ContinuousSlotResolver
 	Now     func() time.Time
 }
 
@@ -45,7 +50,8 @@ func (err *DeterministicInvalidError) Error() string {
 func (err *DeterministicInvalidError) Unwrap() error { return err.Err }
 
 func NewStore(options StoreOptions) (*Store, error) {
-	if options.Prefix == "" || strings.ContainsAny(options.Prefix, "{} \t\r\n") || options.Control == nil || options.Now == nil {
+	if options.Prefix == "" || strings.ContainsAny(options.Prefix, "{} \t\r\n") ||
+		options.Control == nil || options.Slots == nil || options.Now == nil {
 		return nil, fmt.Errorf("progress: invalid store options")
 	}
 	return &Store{options: options}, nil
@@ -97,11 +103,22 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 		if current.Identity != request.Identity {
 			return execution.ProgressCommitResult{}, &DeterministicInvalidError{Err: fmt.Errorf("persisted identity does not match commit identity")}
 		}
-		if current.NextSlot != request.ExpectedNextSlot {
+		currentNext, resolveErr := store.resolveCurrentNextSlot(ctx, current)
+		if resolveErr != nil {
+			return execution.ProgressCommitResult{}, resolveErr
+		}
+		if currentNext != request.ExpectedNextSlot {
 			return execution.ProgressCommitResult{Status: execution.ProgressConflict}, nil
 		}
 	}
-	next := execution.ScheduleProgress{Identity: request.Identity, NextSlot: request.NextSlotAfterCompletion,
+	nextSlot, err := store.options.Slots.NextSlotAfter(ctx, request.Identity.QueryGroup, request.ExpectedNextSlot)
+	if err != nil {
+		return execution.ProgressCommitResult{}, fmt.Errorf("progress: resolve next continuous Slot: %w", err)
+	}
+	if nextSlot <= request.ExpectedNextSlot {
+		return execution.ProgressCommitResult{}, fmt.Errorf("progress: next continuous Slot must follow completion")
+	}
+	next := execution.ScheduleProgress{Identity: request.Identity, NextSlot: nextSlot,
 		LastCompletionKind: request.Completion.Kind}
 	if request.Completion.Kind == execution.CompletionFull || request.Completion.Kind == execution.CompletionFullEmpty {
 		next.LastFullSlot = request.ExpectedNextSlot
@@ -127,6 +144,24 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 		}
 		return retryable(), nil
 	}
+}
+
+func (store *Store) resolveCurrentNextSlot(
+	ctx context.Context,
+	current execution.ScheduleProgress,
+) (execution.EvaluationTime, error) {
+	if current.LastFullSlot <= 0 ||
+		(current.LastCompletionKind != execution.CompletionFull && current.LastCompletionKind != execution.CompletionFullEmpty) {
+		return current.NextSlot, nil
+	}
+	next, err := store.options.Slots.NextSlotAfter(ctx, current.Identity.QueryGroup, current.LastFullSlot)
+	if err != nil {
+		return 0, fmt.Errorf("progress: resolve persisted continuous Slot: %w", err)
+	}
+	if next <= current.LastFullSlot {
+		return 0, fmt.Errorf("progress: persisted continuous Slot must follow last FULL completion")
+	}
+	return next, nil
 }
 
 func (store *Store) namespace(identity execution.ProgressIdentity) (string, error) {

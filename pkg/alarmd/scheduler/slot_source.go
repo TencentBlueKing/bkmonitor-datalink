@@ -99,8 +99,7 @@ func (source *ProductionSlotSource) Next(
 			nextSlot, _ = schedule.FirstSlot()
 		}
 	} else {
-		nextSlot = load.Progress.NextSlot
-		schedule, err = source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, nextSlot)
+		schedule, nextSlot, err = source.nextSlotAfterProgress(ctx, *load.Progress)
 	}
 	if err != nil {
 		return FrozenSlot{}, false, err
@@ -108,26 +107,12 @@ func (source *ProductionSlotSource) Next(
 	if err := source.validateSchedule(schedule, nextSlot); err != nil {
 		return FrozenSlot{}, false, err
 	}
-	if load.Status == execution.ProgressFound {
-		nextSlot = load.Progress.NextSlot
-	}
 	duePlans := schedule.DuePlanRefs(nextSlot)
 	if len(duePlans) == 0 {
 		return FrozenSlot{}, false, ErrProgressOffSchedule
 	}
 	if at.Unix() < int64(nextSlot) {
 		return FrozenSlot{}, false, nil
-	}
-	nextAfterCompletion, ok := schedule.NextSlotAfter(nextSlot)
-	if !ok && schedule.Segment.End != nil {
-		nextAfterCompletion, err = source.firstSuccessorSlot(ctx, schedule)
-		if err != nil {
-			return FrozenSlot{}, false, err
-		}
-		ok = true
-	}
-	if !ok || nextAfterCompletion <= nextSlot {
-		return FrozenSlot{}, false, ErrScheduleFactsInvalid
 	}
 	request := execution.FreezeSlotContractRequest{
 		QueryGroup: source.queryGroup, ScheduleRevision: schedule.Segment.ScheduleRevision,
@@ -155,12 +140,37 @@ func (source *ProductionSlotSource) Next(
 		Contract: fact.Contract,
 		Dispatch: SlotDispatchContext{Operation: execution.OperationNormal, OwnerFence: currentFence,
 			AssignmentGeneration: currentAssignment.AssignmentGeneration},
-		ExpectedNextSlot: nextSlot, NextSlotAfterCompletion: nextAfterCompletion,
+		ExpectedNextSlot: nextSlot,
 	}
 	if err := slot.Validate(queryGroup); err != nil {
 		return FrozenSlot{}, false, err
 	}
 	return slot, true, nil
+}
+
+func (source *ProductionSlotSource) nextSlotAfterProgress(
+	ctx context.Context,
+	progress execution.ScheduleProgress,
+) (execution.FrozenQueryGroupSchedule, execution.EvaluationTime, error) {
+	if progress.LastFullSlot <= 0 ||
+		(progress.LastCompletionKind != execution.CompletionFull && progress.LastCompletionKind != execution.CompletionFullEmpty) {
+		schedule, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, progress.NextSlot)
+		return schedule, progress.NextSlot, err
+	}
+	schedule, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, progress.LastFullSlot)
+	if err != nil {
+		return execution.FrozenQueryGroupSchedule{}, 0, err
+	}
+	if err := source.validateSchedule(schedule, progress.LastFullSlot); err != nil {
+		return execution.FrozenQueryGroupSchedule{}, 0, err
+	}
+	if next, ok := schedule.NextSlotAfter(progress.LastFullSlot); ok {
+		return schedule, next, nil
+	}
+	if schedule.Segment.End == nil {
+		return execution.FrozenQueryGroupSchedule{}, 0, ErrScheduleFactsInvalid
+	}
+	return source.firstSuccessorSchedule(ctx, schedule)
 }
 
 func (source *ProductionSlotSource) validateSchedule(
@@ -176,26 +186,26 @@ func (source *ProductionSlotSource) validateSchedule(
 	return nil
 }
 
-func (source *ProductionSlotSource) firstSuccessorSlot(
+func (source *ProductionSlotSource) firstSuccessorSchedule(
 	ctx context.Context,
 	schedule execution.FrozenQueryGroupSchedule,
-) (execution.EvaluationTime, error) {
+) (execution.FrozenQueryGroupSchedule, execution.EvaluationTime, error) {
 	boundary := *schedule.Segment.End
 	successor, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, boundary)
 	if err != nil {
-		return 0, err
+		return execution.FrozenQueryGroupSchedule{}, 0, err
 	}
 	if err := successor.Validate(); err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrScheduleFactsInvalid, err)
+		return execution.FrozenQueryGroupSchedule{}, 0, fmt.Errorf("%w: %v", ErrScheduleFactsInvalid, err)
 	}
 	if successor.Segment.QueryGroup != source.queryGroup || successor.Segment.Start != boundary {
-		return 0, ErrScheduleFactsInvalid
+		return execution.FrozenQueryGroupSchedule{}, 0, ErrScheduleFactsInvalid
 	}
 	next, ok := successor.FirstSlot()
 	if !ok {
-		return 0, ErrScheduleFactsInvalid
+		return execution.FrozenQueryGroupSchedule{}, 0, ErrScheduleFactsInvalid
 	}
-	return next, nil
+	return successor, next, nil
 }
 
 func (source *ProductionSlotSource) currentOwnership(

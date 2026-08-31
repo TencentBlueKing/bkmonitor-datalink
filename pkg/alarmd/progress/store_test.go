@@ -30,7 +30,7 @@ func TestCommitProgressUsesExplicitNextSlotAndFence(t *testing.T) {
 	request := execution.ProgressCommitRequest{
 		Identity:         execution.ProgressIdentity{QueryGroup: "q"},
 		OwnerFence:       execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"},
-		ExpectedNextSlot: 60, NextSlotAfterCompletion: 120,
+		ExpectedNextSlot: 60,
 		Completion: execution.SlotCompletion{Contract: ref, Kind: execution.CompletionFull,
 			Primary: &execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateData}, Result: observability.ResultSuccess},
 	}
@@ -64,12 +64,38 @@ func TestProgressIdentityMismatchIsDeterministicInvalidAndNotOverwritten(t *test
 	if _, err := store.LoadProgress(context.Background(), requested); err == nil {
 		t.Fatal("LoadProgress accepted mismatched identity")
 	}
-	request := execution.ProgressCommitRequest{Identity: requested, OwnerFence: execution.OwnerFence{QueryGroup: "q", OwnerID: "w", OwnerEpoch: 1, LeaseToken: "l"}, ExpectedNextSlot: 60, NextSlotAfterCompletion: 120, Completion: execution.SlotCompletion{Contract: progressContract(), Kind: execution.CompletionFull, Primary: &execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateData}, Result: observability.ResultSuccess}}
+	request := execution.ProgressCommitRequest{Identity: requested, OwnerFence: execution.OwnerFence{QueryGroup: "q", OwnerID: "w", OwnerEpoch: 1, LeaseToken: "l"}, ExpectedNextSlot: 60, Completion: execution.SlotCompletion{Contract: progressContract(), Kind: execution.CompletionFull, Primary: &execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateData}, Result: observability.ResultSuccess}}
 	if _, err := store.CommitProgress(context.Background(), request); err == nil {
 		t.Fatal("CommitProgress accepted mismatched identity")
 	}
 	if string(fake.value) != string(raw) {
 		t.Fatal("mismatched Progress was overwritten")
+	}
+}
+
+func TestCommitProgressRepairsStaleNextSlotFromCurrentSegmentFacts(t *testing.T) {
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	raw := mustEncode(t, execution.ScheduleProgress{
+		Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull,
+	})
+	fake := &controlFake{value: raw}
+	store := mustStoreWithSlots(t, fake, mappedSlotResolver{60: 90, 90: 180})
+	request := execution.ProgressCommitRequest{
+		Identity: identity, OwnerFence: execution.OwnerFence{QueryGroup: "q", OwnerID: "w", OwnerEpoch: 1, LeaseToken: "l"},
+		ExpectedNextSlot: 90,
+		Completion: execution.SlotCompletion{
+			Contract: progressContractAt(90), Kind: execution.CompletionFull,
+			Primary: &execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateData},
+			Result:  observability.ResultSuccess,
+		},
+	}
+	result, err := store.CommitProgress(context.Background(), request)
+	if err != nil || result.Status != execution.ProgressCommitted {
+		t.Fatalf("CommitProgress() = (%+v, %v), want stale next repaired", result, err)
+	}
+	loaded, err := store.LoadProgress(context.Background(), identity)
+	if err != nil || loaded.Progress == nil || loaded.Progress.NextSlot != 180 {
+		t.Fatalf("LoadProgress() = (%+v, %v), want next Slot 180", loaded, err)
 	}
 }
 
@@ -83,7 +109,7 @@ func TestCommitProgressMapsFencedCASStatuses(t *testing.T) {
 	} {
 		fake := &controlFake{missing: true, status: test.cas}
 		store := mustStore(t, fake)
-		request := execution.ProgressCommitRequest{Identity: execution.ProgressIdentity{QueryGroup: "q"}, OwnerFence: execution.OwnerFence{QueryGroup: "q", OwnerID: "w", OwnerEpoch: 1, LeaseToken: "l"}, ExpectedNextSlot: 60, NextSlotAfterCompletion: 120, Completion: execution.SlotCompletion{Contract: progressContract(), Kind: execution.CompletionFull, Primary: &execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateData}, Result: observability.ResultSuccess}}
+		request := execution.ProgressCommitRequest{Identity: execution.ProgressIdentity{QueryGroup: "q"}, OwnerFence: execution.OwnerFence{QueryGroup: "q", OwnerID: "w", OwnerEpoch: 1, LeaseToken: "l"}, ExpectedNextSlot: 60, Completion: execution.SlotCompletion{Contract: progressContract(), Kind: execution.CompletionFull, Primary: &execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateData}, Result: observability.ResultSuccess}}
 		result, err := store.CommitProgress(context.Background(), request)
 		if err != nil || result.Status != test.want {
 			t.Fatalf("CommitProgress(%s) = (%+v, %v)", test.cas, result, err)
@@ -123,19 +149,53 @@ func TestLoadProgressDistinguishesMissingAndFound(t *testing.T) {
 }
 
 func progressContract() execution.FrozenExecutionContractRef {
+	return progressContractAt(60)
+}
+
+func progressContractAt(evaluationTime execution.EvaluationTime) execution.FrozenExecutionContractRef {
 	return execution.FrozenExecutionContractRef{
-		Slot: execution.SlotIdentity{QueryGroup: "q", EvaluationTime: 60}, SnapshotRevision: "s", QueryRevision: "query",
+		Slot: execution.SlotIdentity{QueryGroup: "q", EvaluationTime: evaluationTime}, SnapshotRevision: "s", QueryRevision: "query",
 		ScheduleRevision: "r", ScheduleSegmentStart: 60, DuePlanSetDigest: "plans",
 	}
 }
 
 func mustStore(t *testing.T, control ControlStore) *Store {
 	t.Helper()
-	store, err := NewStore(StoreOptions{Prefix: "alarmd", Control: control, Now: func() time.Time { return time.Unix(1, 0) }})
+	return mustStoreWithSlots(t, control, fixedSlotResolver{interval: 60})
+}
+
+func mustStoreWithSlots(t *testing.T, control ControlStore, slots ContinuousSlotResolver) *Store {
+	t.Helper()
+	store, err := NewStore(StoreOptions{
+		Prefix: "alarmd", Control: control, Slots: slots,
+		Now: func() time.Time { return time.Unix(1, 0) },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return store
+}
+
+type mappedSlotResolver map[execution.EvaluationTime]execution.EvaluationTime
+
+func (resolver mappedSlotResolver) NextSlotAfter(
+	_ context.Context,
+	_ execution.QueryGroupIdentity,
+	completed execution.EvaluationTime,
+) (execution.EvaluationTime, error) {
+	return resolver[completed], nil
+}
+
+type fixedSlotResolver struct {
+	interval execution.EvaluationTime
+}
+
+func (resolver fixedSlotResolver) NextSlotAfter(
+	_ context.Context,
+	_ execution.QueryGroupIdentity,
+	completed execution.EvaluationTime,
+) (execution.EvaluationTime, error) {
+	return completed + resolver.interval, nil
 }
 
 func mustEncode(t *testing.T, value execution.ScheduleProgress) []byte {

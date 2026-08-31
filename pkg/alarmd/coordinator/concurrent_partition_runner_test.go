@@ -162,13 +162,28 @@ func TestConcurrentRunnerDoesNotCommitPastEarlierIncompleteOffset(t *testing.T) 
 
 	first := newBlockingRoutedTask(RuntimeKey{StrategyID: "1"})
 	second := newBlockingRoutedTask(RuntimeKey{StrategyID: "2"})
-	commits := make(chan int64, 2)
-	runner := newConcurrentRunnerForTestWithCommitter(t, map[string]*blockingRoutedTask{"first": first, "second": second}, ConcurrentRunnerLimits{
-		PreparationWorkers: 2, StatefulWorkers: 2, MaxInflightMessages: 2, MaxInflightBytes: 1024, MaxRuntimeKeysPerMessage: 2, MaxPendingKeyRefs: 2,
-	}, partitionOffsetCommitterFunc(func(_ context.Context, nextOffset int64) error {
-		commits <- nextOffset
-		return nil
-	}))
+	commits := make(chan int64, 4)
+	type taskResult struct {
+		offset int64
+		err    error
+	}
+	finished := make(chan taskResult, 2)
+	runner, err := NewConcurrentRoutedPartitionRunner(
+		context.Background(), &mapTaskBuilder{tasks: map[string]*blockingRoutedTask{"first": first, "second": second}},
+		completedCriticalPhase{}, partitionOffsetCommitterFunc(func(_ context.Context, nextOffset int64) error {
+			commits <- nextOffset
+			return nil
+		}), receiptPublisherFunc(func(*contract.MessageReceiptV1) bool { return true }), nil,
+		ConcurrentRunnerLimits{
+			PreparationWorkers: 2, StatefulWorkers: 2, MaxInflightMessages: 2, MaxInflightBytes: 1024,
+			MaxRuntimeKeysPerMessage: 2, MaxPendingKeyRefs: 2,
+		}, &ConcurrentRunnerCallbacks{OnTaskFinished: func(offset int64, err error) {
+			finished <- taskResult{offset: offset, err: err}
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := runner.Submit(30, []byte("first")); err != nil {
 		t.Fatal(err)
@@ -179,18 +194,42 @@ func TestConcurrentRunnerDoesNotCommitPastEarlierIncompleteOffset(t *testing.T) 
 	awaitSignal(t, first.evaluateStarted, "first stateful task")
 	awaitSignal(t, second.evaluateStarted, "second stateful task")
 	close(second.evaluateRelease)
+	select {
+	case result := <-finished:
+		if result.offset != 40 || result.err != nil {
+			t.Fatalf("finished task = offset:%d error:%v, want offset 40 without error", result.offset, result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for second task completion")
+	}
 	assertNoInt64(t, commits, "offset commit past an earlier incomplete message")
 	close(first.evaluateRelease)
 	if err := runner.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case nextOffset := <-commits:
-		if nextOffset != 41 {
-			t.Fatalf("committed next offset = %d, want 41 for the completed registered prefix", nextOffset)
+	var committed []int64
+drainCommits:
+	for {
+		select {
+		case nextOffset := <-commits:
+			committed = append(committed, nextOffset)
+		default:
+			break drainCommits
 		}
-	default:
+	}
+	if len(committed) == 0 {
 		t.Fatal("completed registered prefix was not committed")
+	}
+	for index, nextOffset := range committed {
+		if nextOffset != 31 && nextOffset != 41 {
+			t.Fatalf("committed next offsets = %v, want only valid prefix boundaries 31 or 41", committed)
+		}
+		if index > 0 && nextOffset <= committed[index-1] {
+			t.Fatalf("committed next offsets = %v, want strictly increasing boundaries", committed)
+		}
+	}
+	if committed[len(committed)-1] != 41 {
+		t.Fatalf("committed next offsets = %v, want final completed prefix boundary 41", committed)
 	}
 }
 

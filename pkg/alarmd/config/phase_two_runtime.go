@@ -8,6 +8,7 @@ package config
 import (
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -68,13 +69,21 @@ type PhaseTwoCoordinatorConfig struct {
 	MaxGapMutations          uint64 `yaml:"max_gap_mutations"`
 }
 
+const DeploymentProfileG1 = "g1"
+
+type PhaseTwoG1ValidationConfig struct {
+	StrategyIDs []string `yaml:"strategy_ids"`
+}
+
 type PhaseTwoRuntimeConfig struct {
-	Worker      PhaseTwoWorkerConfig      `yaml:"worker"`
-	Control     PhaseTwoControlConfig     `yaml:"control"`
-	Ownership   PhaseTwoOwnershipConfig   `yaml:"ownership"`
-	Scheduler   PhaseTwoSchedulerConfig   `yaml:"scheduler"`
-	Access      PhaseTwoAccessConfig      `yaml:"access"`
-	Coordinator PhaseTwoCoordinatorConfig `yaml:"coordinator"`
+	Worker       PhaseTwoWorkerConfig       `yaml:"worker"`
+	Control      PhaseTwoControlConfig      `yaml:"control"`
+	Ownership    PhaseTwoOwnershipConfig    `yaml:"ownership"`
+	Scheduler    PhaseTwoSchedulerConfig    `yaml:"scheduler"`
+	Access       PhaseTwoAccessConfig       `yaml:"access"`
+	Coordinator  PhaseTwoCoordinatorConfig  `yaml:"coordinator"`
+	RuntimeRedis *RedisConnectionConfig     `yaml:"runtime_redis,omitempty"`
+	G1Validation PhaseTwoG1ValidationConfig `yaml:"g1_validation"`
 }
 
 func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
@@ -142,6 +151,33 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 	if budget.MaxSequencerReservations <= 0 || budget.MaxSeries == 0 || budget.MaxRetainedBytes == 0 ||
 		budget.MaxStateMutations == 0 || budget.MaxEvents == 0 || budget.MaxGapMutations == 0 {
 		return errors.New("phase_two Coordinator and Sequencer budgets must be positive")
+	}
+	if err := c.G1Validation.validate(c.Worker.DeploymentProfile); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c PhaseTwoG1ValidationConfig) validate(deploymentProfile string) error {
+	if deploymentProfile != DeploymentProfileG1 {
+		if len(c.StrategyIDs) != 0 {
+			return errors.New("phase_two g1_validation strategy_ids are only allowed for the G1 deployment profile")
+		}
+		return nil
+	}
+	if len(c.StrategyIDs) == 0 {
+		return errors.New("phase_two g1_validation strategy_ids must be explicit for the G1 deployment profile")
+	}
+	seen := make(map[string]struct{}, len(c.StrategyIDs))
+	for _, id := range c.StrategyIDs {
+		parsed, err := strconv.ParseUint(id, 10, 64)
+		if err != nil || parsed == 0 || strconv.FormatUint(parsed, 10) != id {
+			return errors.New("phase_two g1_validation strategy_ids must be canonical positive integers")
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return errors.New("phase_two g1_validation strategy_ids must not contain duplicates")
+		}
+		seen[id] = struct{}{}
 	}
 	return nil
 }

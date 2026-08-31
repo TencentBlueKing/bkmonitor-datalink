@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/go-redis/redis/v8"
 
@@ -43,6 +44,12 @@ type SourceReconciler struct {
 	publisher  *SnapshotPublisher
 }
 
+type executionStrategySelector interface {
+	SelectExecutionStrategies([]SourceStrategy) ([]SourceStrategy, []ObjectDisposition, error)
+	SelectLastGood(*PublishedSnapshot) *PublishedSnapshot
+	ValidateCompiledCatalog(Catalog) error
+}
+
 func NewSourceReconciler(repository *RedisCatalogRepository) (*SourceReconciler, error) {
 	publisher, err := NewSnapshotPublisher(repository)
 	if err != nil {
@@ -67,18 +74,41 @@ func (reconciler *SourceReconciler) Refresh(
 	if err != nil {
 		return SourceRefreshResult{}, err
 	}
+	executionStrategies := cycle.strategies
+	var sourceAudit []ObjectDisposition
+	selector, selectedView := source.(executionStrategySelector)
+	if selectedView {
+		executionStrategies, sourceAudit, err = selector.SelectExecutionStrategies(cycle.strategies)
+		if err != nil {
+			return SourceRefreshResult{}, err
+		}
+	}
 
 	current, audit, err := reconciler.loadCurrent(ctx)
 	if err != nil {
 		return SourceRefreshResult{}, err
 	}
-	catalog, err := BuildCatalog(ctx, BuildRequest{Strategies: cycle.strategies, Planner: planner, LastGood: current})
+	lastGood := current
+	if selectedView {
+		lastGood = selector.SelectLastGood(current)
+	}
+	catalog, err := BuildCatalog(ctx, BuildRequest{Strategies: executionStrategies, Planner: planner, LastGood: lastGood})
 	if err != nil {
 		return SourceRefreshResult{}, err
 	}
-	if catalog.ObservationID != observationID {
+	if selectedView {
+		if err := selector.ValidateCompiledCatalog(catalog); err != nil {
+			return SourceRefreshResult{}, err
+		}
+	}
+	if !selectedView && catalog.ObservationID != observationID {
 		return SourceRefreshResult{}, errors.New("alarmd controlplane: source observation changed while building Catalog")
 	}
+	catalog.ObservationID = observationID
+	catalog.Dispositions = append(catalog.Dispositions, sourceAudit...)
+	sort.Slice(catalog.Dispositions, func(i, j int) bool {
+		return lessDisposition(catalog.Dispositions[i], catalog.Dispositions[j])
+	})
 	confirmationKey, err := sourceCandidateConfirmationKey(catalog.ObservationID, catalog.SnapshotRevision, catalog.Dispositions)
 	if err != nil {
 		return SourceRefreshResult{}, err

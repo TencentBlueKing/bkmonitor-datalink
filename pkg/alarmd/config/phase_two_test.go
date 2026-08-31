@@ -126,6 +126,44 @@ func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
 	}
 }
 
+func TestPhaseTwoG1ValidationRequiresExplicitCanonicalStrategyIDs(t *testing.T) {
+	valid := validGoAccessConfigObject()
+	valid.PhaseTwo.Worker.DeploymentProfile = DeploymentProfileG1
+	valid.PhaseTwo.G1Validation.StrategyIDs = []string{"9889", "2662"}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Validate() rejected G1 strategy selection: %v", err)
+	}
+
+	for name, mutate := range map[string]func(*Config){
+		"missing selector": func(cfg *Config) { cfg.PhaseTwo.G1Validation.StrategyIDs = nil },
+		"empty selector":   func(cfg *Config) { cfg.PhaseTwo.G1Validation.StrategyIDs = []string{} },
+		"zero identity":    func(cfg *Config) { cfg.PhaseTwo.G1Validation.StrategyIDs = []string{"0"} },
+		"noncanonical identity": func(cfg *Config) {
+			cfg.PhaseTwo.G1Validation.StrategyIDs = []string{"09889"}
+		},
+		"duplicate identity": func(cfg *Config) {
+			cfg.PhaseTwo.G1Validation.StrategyIDs = []string{"9889", "9889"}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := valid
+			mutate(&cfg)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "g1_validation") {
+				t.Fatalf("Validate() error = %v, want G1 selector rejection", err)
+			}
+		})
+	}
+}
+
+func TestPhaseTwoG1ValidationSelectorIsRejectedOutsideG1Profile(t *testing.T) {
+	cfg := validGoAccessConfigObject()
+	cfg.PhaseTwo.G1Validation.StrategyIDs = []string{"9889"}
+
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "g1_validation") {
+		t.Fatalf("Validate() error = %v, want profile-scoped selector rejection", err)
+	}
+}
+
 func TestPhaseTwoInputRequiresExplicitIsolatedPhaseOneCompatibility(t *testing.T) {
 	compatibility := PhaseOneKafkaCompatibilityConfig{
 		InputTopic: "alarmd-detect-input-shadow-v2", ConsumerGroup: "alarmd-shadow-v2",

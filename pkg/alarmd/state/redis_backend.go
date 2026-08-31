@@ -55,8 +55,9 @@ return 1
 // go-redis client owns pooling and reconnect; dependency errors are returned to
 // M7 without being converted into NORMAL/RECOVERY state.
 type RedisBackend struct {
-	address string
-	client  redisClient
+	address    string
+	client     redisClient
+	ownsClient bool
 }
 
 func NewRedisBackend(options RedisBackendOptions) (*RedisBackend, error) {
@@ -69,7 +70,16 @@ func NewRedisBackend(options RedisBackendOptions) (*RedisBackend, error) {
 		DialTimeout: options.DialTimeout, ReadTimeout: options.ReadTimeout, WriteTimeout: options.WriteTimeout,
 		PoolSize: options.PoolSize,
 	})
-	return &RedisBackend{address: options.Address, client: client}, nil
+	return &RedisBackend{address: options.Address, client: client, ownsClient: true}, nil
+}
+
+// NewRedisBackendWithClient binds the state backend to a runtime-owned
+// universal Redis client. The caller retains client lifecycle ownership.
+func NewRedisBackendWithClient(address string, client redis.UniversalClient) (*RedisBackend, error) {
+	if address == "" || client == nil {
+		return nil, fmt.Errorf("state: Redis backend address and client are required")
+	}
+	return &RedisBackend{address: address, client: client}, nil
 }
 
 func (backend *RedisBackend) Address() string {
@@ -155,7 +165,7 @@ func (backend *RedisBackend) CompareAndSet(
 }
 
 func (backend *RedisBackend) Close() error {
-	if backend == nil || backend.client == nil {
+	if backend == nil || backend.client == nil || !backend.ownsClient {
 		return nil
 	}
 	return backend.client.Close()

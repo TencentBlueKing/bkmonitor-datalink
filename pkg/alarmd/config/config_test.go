@@ -12,6 +12,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,154 @@ import (
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
+
+func TestRedisConnectionSupportsStandaloneAndSentinel(t *testing.T) {
+	standalone := validGoAccessConfigObject()
+	standalone.Redis.Mode = RedisModeStandalone
+	if err := standalone.Validate(); err != nil {
+		t.Fatalf("standalone Validate() error = %v", err)
+	}
+
+	sentinel := validGoAccessConfigObject()
+	sentinel.Redis.Mode = RedisModeSentinel
+	sentinel.Redis.Address = ""
+	sentinel.Redis.SentinelAddress = []string{"sentinel-a:26379", "sentinel-b:26379"}
+	sentinel.Redis.MasterName = "monitor-master"
+	sentinel.Redis.SentinelUsername = "sentinel-user"
+	sentinel.Redis.SentinelPassword = "sentinel-secret"
+	if err := sentinel.Validate(); err != nil {
+		t.Fatalf("sentinel Validate() error = %v", err)
+	}
+
+	for name, mutate := range map[string]func(*Config){
+		"unknown mode": func(cfg *Config) { cfg.Redis.Mode = "cluster" },
+		"standalone address": func(cfg *Config) {
+			cfg.Redis.Mode = RedisModeStandalone
+			cfg.Redis.Address = ""
+		},
+		"sentinel addresses": func(cfg *Config) {
+			cfg.Redis.SentinelAddress = nil
+		},
+		"sentinel master": func(cfg *Config) { cfg.Redis.MasterName = "" },
+		"duplicate sentinel": func(cfg *Config) {
+			cfg.Redis.SentinelAddress = []string{"sentinel-a:26379", "sentinel-a:26379"}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := sentinel
+			mutate(&cfg)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "redis") {
+				t.Fatalf("Validate() error = %v, want Redis connection rejection", err)
+			}
+		})
+	}
+}
+
+func TestPhaseTwoRuntimeRedisExplicitlyInheritsTopLevelConnection(t *testing.T) {
+	cfg := validGoAccessConfigObject()
+	cfg.Redis.Mode = RedisModeSentinel
+	cfg.Redis.Address = ""
+	cfg.Redis.SentinelAddress = []string{"sentinel-a:26379", "sentinel-b:26379"}
+	cfg.Redis.MasterName = "monitor-master"
+	cfg.Redis.SentinelPassword = "sentinel-secret"
+
+	cfg.resolvePhaseTwoRuntimeRedis()
+	if cfg.PhaseTwo.RuntimeRedis == nil {
+		t.Fatal("runtime Redis inheritance was not resolved during configuration parsing")
+	}
+	want := cfg.Redis.Connection()
+	if !reflect.DeepEqual(*cfg.PhaseTwo.RuntimeRedis, want) {
+		t.Fatalf("resolved runtime Redis = %+v, want top-level %+v", *cfg.PhaseTwo.RuntimeRedis, want)
+	}
+	cfg.Redis.SentinelAddress[0] = "mutated:26379"
+	if cfg.PhaseTwo.RuntimeRedis.SentinelAddress[0] != "sentinel-a:26379" {
+		t.Fatal("runtime Redis inheritance aliases top-level address storage")
+	}
+}
+
+func TestLoadResolvesPhaseTwoRuntimeRedisInheritance(t *testing.T) {
+	loaded, err := Load(writeConfig(t, `mode: shadow
+input:
+  mode: go_access
+http:
+  listen: 127.0.0.1:8080
+kafka:
+  brokers: [127.0.0.1:9092]
+  trigger_event:
+    topic: alarmd-trigger-event
+  allowed_output_topics: [alarmd-trigger-event]
+  client_id: alarmd
+  broker_version: 2.6.0
+redis:
+  mode: sentinel
+  sentinel_address: [sentinel-a:26379, sentinel-b:26379]
+  master_name: monitor-master
+  db: 8
+  state_prefix: alarmd:phase-two:g1:v1
+phase_two:
+  worker:
+    id: alarmd-worker-0
+    deployment_profile: shadow
+  control:
+    strategy_cache_prefix: alarm-config
+    provider_route: unify-query-primary
+    timezone: Asia/Shanghai
+    legacy_query_runtime:
+      access_bk_data: false
+      bkdata_cmdb_level_tables: []
+      system_disk_filter:
+        field_name: device_type
+        values: []
+      system_network_filter:
+        field_name: device_name
+        values: []
+  access:
+    uq_endpoint: http://unify-query.service
+    query_source: alarmd
+`))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.PhaseTwo.RuntimeRedis == nil ||
+		!reflect.DeepEqual(*loaded.PhaseTwo.RuntimeRedis, loaded.Redis.Connection()) {
+		t.Fatalf("loaded runtime Redis = %+v, top-level = %+v", loaded.PhaseTwo.RuntimeRedis, loaded.Redis.Connection())
+	}
+}
+
+func TestPhaseTwoRuntimeRedisOverrideDoesNotChangeStrategySourceConnection(t *testing.T) {
+	cfg := validGoAccessConfigObject()
+	cfg.PhaseTwo.RuntimeRedis = &RedisConnectionConfig{
+		Mode: RedisModeStandalone, Address: "runtime.redis:6379", DB: 9,
+		DialTimeout: Duration(time.Second), ReadTimeout: Duration(2 * time.Second),
+		WriteTimeout: Duration(3 * time.Second), PoolSize: 8,
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() rejected runtime Redis override: %v", err)
+	}
+	if got := cfg.StrategySourceRedis(); got.Address != "redis.test:6379" || got.DB != cfg.Redis.DB {
+		t.Fatalf("StrategySource Redis = %+v, want top-level Redis", got)
+	}
+	if got := cfg.ResolvedRuntimeRedis(); got.Address != "runtime.redis:6379" || got.DB != 9 {
+		t.Fatalf("resolved runtime Redis = %+v, want explicit override", got)
+	}
+}
+
+func TestPhaseTwoRuntimePrefixCannotOverlapCanonicalStrategyCache(t *testing.T) {
+	for name, prefix := range map[string]string{
+		"same":           "alarm-config",
+		"source child":   "alarm-config:runtime:v2",
+		"source parent":  "alarm",
+		"redis hash tag": "alarmd:{phase-two}:v2",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := validGoAccessConfigObject()
+			cfg.Redis.StatePrefix = prefix
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "state_prefix") {
+				t.Fatalf("Validate() error = %v, want prefix isolation rejection", err)
+			}
+		})
+	}
+}
 
 func TestDefaultRequiresExplicitEnvironmentCoordinates(t *testing.T) {
 	cfg := Default()
@@ -126,6 +275,39 @@ func TestPhaseOneCompatibilityUsesExplicitCoordinates(t *testing.T) {
 	}
 	if err := runtimeCfg.Validate(); err != nil {
 		t.Fatalf("compatibility runtime Validate() error = %v", err)
+	}
+}
+
+func TestPhaseOneCompatibilityRejectsSentinelRedis(t *testing.T) {
+	cfg := validConfigObject()
+	cfg.Redis.Mode = RedisModeSentinel
+	cfg.Redis.Address = ""
+	cfg.Redis.SentinelAddress = []string{"sentinel-a:26379", "sentinel-b:26379"}
+	cfg.Redis.MasterName = "monitor-master"
+
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "standalone") {
+		t.Fatalf("Validate() error = %v, want phase-one standalone Redis rejection", err)
+	}
+}
+
+func TestPhaseOneCompatibilityRejectsPhaseTwoRedisAndG1Selector(t *testing.T) {
+	for name, mutate := range map[string]func(*Config){
+		"g1 selector": func(cfg *Config) {
+			cfg.PhaseTwo.Worker.DeploymentProfile = DeploymentProfileG1
+			cfg.PhaseTwo.G1Validation.StrategyIDs = []string{"9889"}
+		},
+		"runtime redis": func(cfg *Config) {
+			runtimeRedis := cfg.Redis.Connection()
+			cfg.PhaseTwo.RuntimeRedis = &runtimeRedis
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := validConfigObject()
+			mutate(&cfg)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "phase_two") {
+				t.Fatalf("Validate() error = %v, want ignored phase-two config rejection", err)
+			}
+		})
 	}
 }
 

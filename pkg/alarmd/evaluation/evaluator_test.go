@@ -213,6 +213,69 @@ func TestEvaluatorPreservesLoadedPlanGapReasonInUnknownOutcomeAndState(t *testin
 	}
 }
 
+func TestEvaluatorAdvancesLoadedPlanGapAfterFullStateMutation(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		status   execution.GapStatus
+		observed uint32
+		wantKind execution.GapMutationKind
+	}{
+		{name: "warmup", status: execution.GapStatusGapped, observed: 0, wantKind: execution.GapWarmup},
+		{name: "clear", status: execution.GapStatusWarming, observed: 2, wantKind: execution.GapClear},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := requestFixture(t, json.RawMessage(`10`), nil)
+			due := req.Header.DuePlans[0]
+			persistedVersion, err := execution.BuildApplyVersion(req.Header.Contract, due.StateApplyEpoch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Gaps.Items[0] = execution.GapGuardSnapshot{
+				Identity:                execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration},
+				MarkerRevision:          7,
+				PersistedApplyVersion:   persistedVersion,
+				PersistedMutationDigest: "gap-digest",
+				Status:                  execution.GapFound,
+				LastScheduleRevision:    due.ScheduleRevision,
+				Scopes: []execution.GapScopeState{{
+					Status:            test.status,
+					ReasonCode:        execution.ReasonCode(contract.ReasonGapSkipped),
+					RequiredFullSlots: 3,
+					ObservedFullSlots: test.observed,
+				}},
+			}
+
+			result, err := newEvaluator(t).Evaluate(context.Background(), req)
+			if err != nil {
+				t.Fatalf("Evaluate()=%v", err)
+			}
+			plan := result.Plans[0]
+			if len(plan.StateResults) != 1 {
+				t.Fatalf("FULL input did not produce durable state before gap recovery: %+v", plan.StateResults)
+			}
+			if len(plan.GuardAfterState) != 1 || len(plan.GuardAfterState[0].Scopes) != 1 {
+				t.Fatalf("FULL input did not produce one post-state gap mutation: %+v", plan.GuardAfterState)
+			}
+			mutation := plan.GuardAfterState[0]
+			if mutation.Identity != req.Gaps.Items[0].Identity || mutation.ExpectedMarkerRevision != 7 ||
+				mutation.ScheduleRevision != due.ScheduleRevision || mutation.Scopes[0].Kind != test.wantKind {
+				t.Fatalf("post-state gap mutation = %+v", mutation)
+			}
+			if test.wantKind == execution.GapWarmup {
+				if mutation.Scopes[0].ReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) ||
+					mutation.Scopes[0].RequiredFullSlots != 3 {
+					t.Fatalf("warmup mutation lost recovery contract: %+v", mutation.Scopes[0])
+				}
+			} else if mutation.Scopes[0].ReasonCode != "" || mutation.Scopes[0].RequiredFullSlots != 0 {
+				t.Fatalf("clear mutation retained stale recovery payload: %+v", mutation.Scopes[0])
+			}
+			if err := mutation.ValidateDigest(); err != nil {
+				t.Fatalf("gap mutation digest is invalid: %v", err)
+			}
+		})
+	}
+}
+
 func stateViewFromMutation(mutation execution.StateMutation, status execution.StateLoadStatus) execution.RuntimeStateView {
 	levels := make([]execution.RuntimeLevelStateView, len(mutation.Levels))
 	for i, level := range mutation.Levels {

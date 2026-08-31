@@ -143,6 +143,13 @@ func (e *Evaluator) evaluatePlan(ctx context.Context, request execution.Evaluati
 			result.StateResults = append(result.StateResults, *final)
 		}
 	}
+	gapMutation, err := planGapRecoveryMutation(request, due, len(result.StateResults) > 0)
+	if err != nil {
+		return execution.PlanEvaluationResult{}, err
+	}
+	if gapMutation != nil {
+		result.GuardAfterState = []execution.PlanGapMutation{*gapMutation}
+	}
 	for _, outcome := range result.LevelOutcomes {
 		if outcome.Outcome == execution.LevelOutcomeUnknown || outcome.Outcome == execution.LevelOutcomeTerminal {
 			result.Disposition = execution.PlanDecidedDegraded
@@ -151,6 +158,45 @@ func (e *Evaluator) evaluatePlan(ctx context.Context, request execution.Evaluati
 		}
 	}
 	return result, nil
+}
+
+func planGapRecoveryMutation(
+	request execution.EvaluationRequest,
+	due execution.DuePlan,
+	hasStateMutation bool,
+) (*execution.PlanGapMutation, error) {
+	if !hasStateMutation {
+		return nil, nil
+	}
+	identity := execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}
+	gap, found := request.Gaps.Find(identity)
+	if !found || gap.Status != execution.GapFound || gap.LastScheduleRevision != due.ScheduleRevision {
+		return nil, nil
+	}
+	scopes := make([]execution.GapScopeMutation, len(gap.Scopes))
+	for index, current := range gap.Scopes {
+		scopes[index] = execution.GapScopeMutation{Scope: current.Scope, Kind: execution.GapClear}
+		if current.ObservedFullSlots+1 < current.RequiredFullSlots {
+			scopes[index].Kind = execution.GapWarmup
+			scopes[index].ReasonCode = current.ReasonCode
+			scopes[index].RequiredFullSlots = current.RequiredFullSlots
+		}
+	}
+	version, err := execution.BuildApplyVersion(request.Header.Contract, due.StateApplyEpoch)
+	if err != nil {
+		return nil, err
+	}
+	mutation, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{
+		Identity:               identity,
+		ExpectedMarkerRevision: gap.MarkerRevision,
+		ApplyVersion:           version,
+		ScheduleRevision:       due.ScheduleRevision,
+		Scopes:                 scopes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &mutation, nil
 }
 
 type recordResult struct {

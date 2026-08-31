@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"strconv"
@@ -139,6 +140,7 @@ type Config struct {
 	DependencyRetry  DependencyRetryConfig  `yaml:"dependency_retry"`
 	ReceiptQueue     ReceiptQueueConfig     `yaml:"receipt_queue"`
 	EvaluationRunner EvaluationRunnerConfig `yaml:"evaluation_runner"`
+	PhaseTwo         PhaseTwoRuntimeConfig  `yaml:"phase_two"`
 	ShutdownTimeout  Duration               `yaml:"shutdown_timeout"`
 }
 
@@ -169,6 +171,7 @@ func Default() Config {
 			MaxInflightMessages: runner.MaxInflightMessages, MaxInflightBytes: runner.MaxInflightBytes,
 			MaxRuntimeKeysPerMessage: runner.MaxRuntimeKeysPerMessage, MaxPendingKeyRefs: runner.MaxPendingKeyRefs,
 		},
+		PhaseTwo:        defaultPhaseTwoRuntime(),
 		ShutdownTimeout: Duration(10 * time.Second),
 	}
 }
@@ -306,6 +309,18 @@ func (c Config) validateGoAccessRuntime() error {
 	}
 	if err := c.validateSharedRuntime(); err != nil {
 		return err
+	}
+	if err := c.PhaseTwo.validate(); err != nil {
+		return err
+	}
+	budget := c.PhaseTwo.Coordinator
+	if budget.MaxStateMutations > uint64(c.Limits.Store.MaxKeysPerBatch) ||
+		budget.MaxGapMutations > uint64(c.Limits.Store.MaxKeysPerBatch) {
+		return errors.New("phase_two mutation budgets exceed the shared state store call budget")
+	}
+	if budget.MaxRetainedBytes > math.MaxInt64 ||
+		budget.MaxSeries > math.MaxUint64/c.Limits.Detect.MaxRecordsPerSeries {
+		return errors.New("phase_two provider budgets overflow production limits")
 	}
 	if c.Limits.Trigger.MaxEvidenceBytesPerEvent > c.Kafka.TriggerEvent.MaxMessageBytes {
 		return errors.New("trigger_event max_message_bytes cannot admit maximum trigger evidence")

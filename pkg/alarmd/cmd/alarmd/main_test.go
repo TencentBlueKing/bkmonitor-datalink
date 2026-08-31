@@ -244,5 +244,25 @@ kafka:
 redis:
   address: 127.0.0.1:6379
   state_prefix: alarmd-phase-two
+phase_two:
+  worker:
+    id: alarmd-worker-0
+    deployment_profile: shadow
+  control:
+    strategy_cache_prefix: alarm-config
+    provider_route: unify-query-primary
+    timezone: Asia/Shanghai
+    legacy_query_runtime:
+      access_bk_data: false
+      bkdata_cmdb_level_tables: []
+      system_disk_filter:
+        field_name: device_type
+        values: []
+      system_network_filter:
+        field_name: device_name
+        values: []
+  access:
+    uq_endpoint: http://unify-query.service
+    query_source: alarmd
 `
 }

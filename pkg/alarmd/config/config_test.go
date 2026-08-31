@@ -364,6 +364,7 @@ func validConfigObject() Config {
 
 func validGoAccessConfigObject() Config {
 	cfg := Default()
+	accessBKData := false
 	cfg.Kafka.Brokers = []string{"127.0.0.1:9092"}
 	cfg.Kafka.TriggerEvent.Topic = "alarmd-trigger-event"
 	cfg.Kafka.AllowedOutputTopics = []string{"alarmd-trigger-event"}
@@ -371,6 +372,17 @@ func validGoAccessConfigObject() Config {
 	cfg.Kafka.BrokerVersion = "2.6.0"
 	cfg.Redis.Address = "redis.test:6379"
 	cfg.Redis.StatePrefix = "alarmd-phase-two"
+	cfg.PhaseTwo.Worker.ID = "alarmd-worker-0"
+	cfg.PhaseTwo.Worker.DeploymentProfile = "shadow"
+	cfg.PhaseTwo.Control.StrategyCachePrefix = "alarm-config"
+	cfg.PhaseTwo.Control.ProviderRoute = "unify-query-primary"
+	cfg.PhaseTwo.Control.Timezone = "Asia/Shanghai"
+	cfg.PhaseTwo.Control.LegacyQueryRuntime.AccessBKData = &accessBKData
+	cfg.PhaseTwo.Control.LegacyQueryRuntime.BKDataCMDBLevelTables = []string{}
+	cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemDiskFilter = PhaseTwoRuntimeFilterConfig{FieldName: "device_type", Values: []string{}}
+	cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemNetworkFilter = PhaseTwoRuntimeFilterConfig{FieldName: "device_name", Values: []string{}}
+	cfg.PhaseTwo.Access.UQEndpoint = "http://unify-query.service"
+	cfg.PhaseTwo.Access.QuerySource = "alarmd"
 	return cfg
 }
 

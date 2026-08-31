@@ -177,6 +177,8 @@ type TraceFields struct {
 	SnapshotRevision        string
 	QueryRevision           string
 	ScheduleRevision        string
+	ScheduleSegmentStart    int64
+	DuePlanSetDigest        string
 	OwnerID                 string
 	OwnerEpoch              uint64
 	EvaluationTime          int64

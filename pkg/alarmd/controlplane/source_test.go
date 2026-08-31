@@ -23,6 +23,17 @@ func TestObserveStableReadsActiveSetAroundDetails(t *testing.T) {
 	}
 }
 
+func TestObserveStableAcceptsEmptyActiveSet(t *testing.T) {
+	source := &fakeSource{active: [][]string{{}, {}, {}, {}}, documents: map[string]controlplane.SourceStrategy{}}
+	got, err := controlplane.ObserveStable(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ObservationID == "" || got.Strategies == nil || len(got.Strategies) != 0 || source.detailCalls != 2 {
+		t.Fatalf("empty observation=%#v calls=%d", got, source.detailCalls)
+	}
+}
+
 func TestObserveStableRejectsMixedRefresh(t *testing.T) {
 	source := &fakeSource{active: [][]string{{"1001"}, {"1001", "1002"}}, documents: map[string]controlplane.SourceStrategy{"1001": {SourceID: "1001", Document: json.RawMessage(`{}`)}}}
 	_, err := controlplane.ObserveStable(context.Background(), source)
@@ -35,6 +46,18 @@ func TestObserveStableRejectsChangedObjectOnConfirmationPoll(t *testing.T) {
 	source := &sequenceSource{active: []string{"1001"}, documents: [][]controlplane.SourceStrategy{
 		{{SourceID: "1001", Document: json.RawMessage(`{"id":1001,"version":1}`)}},
 		{{SourceID: "1001", Document: json.RawMessage(`{"id":1001,"version":2}`)}},
+	}}
+	_, err := controlplane.ObserveStable(context.Background(), source)
+	if !errors.Is(err, controlplane.ErrObservationUnstable) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestObserveStableRejectsChangedExplicitIdentityFact(t *testing.T) {
+	document := json.RawMessage(`{"id":1001,"bk_biz_id":2,"items":[{}]}`)
+	source := &sequenceSource{active: []string{"1001"}, documents: [][]controlplane.SourceStrategy{
+		{{SourceID: "1001", Document: document, Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}}},
+		{{SourceID: "1001", Document: document, Identity: controlplane.SourceIdentity{TenantID: "tenant-b", BusinessID: "2", SpaceScope: "bkcc__2"}}},
 	}}
 	_, err := controlplane.ObserveStable(context.Background(), source)
 	if !errors.Is(err, controlplane.ErrObservationUnstable) {

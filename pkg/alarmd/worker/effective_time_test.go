@@ -24,10 +24,14 @@ import (
 
 func TestPrepareAlwaysEffectiveTimeFactsDeduplicatesRequirementDigestWithoutDroppingConsumers(t *testing.T) {
 	header, plans := effectiveTimeHeaderForTest(t)
+	provider := &recordingEffectiveTimeProvider{delegate: strategy.NewStaticScheduleProvider(nil)}
 
-	prepared, err := prepareAlwaysEffectiveTimeFacts(context.Background(), header)
+	prepared, err := prepareAlwaysEffectiveTimeFactsWithProvider(context.Background(), header, provider)
 	if err != nil {
 		t.Fatalf("prepareAlwaysEffectiveTimeFacts() error = %v", err)
+	}
+	if provider.calls != 1 || !reflect.DeepEqual(provider.requestCounts, []int{1}) {
+		t.Fatalf("EffectiveTime Resolve calls/requests = %d/%v, want 1/[1] for one shared requirement digest", provider.calls, provider.requestCounts)
 	}
 	wantConsumers := 0
 	for _, due := range plans {
@@ -49,6 +53,21 @@ func TestPrepareAlwaysEffectiveTimeFactsDeduplicatesRequirementDigestWithoutDrop
 	if len(requirementDigests) != 1 || len(factDigests) != 1 {
 		t.Fatalf("duplicate ALWAYS requirements resolved to requirement/fact digests = %d/%d, want 1/1", len(requirementDigests), len(factDigests))
 	}
+}
+
+type recordingEffectiveTimeProvider struct {
+	delegate      strategy.EffectiveTimeProvider
+	calls         int
+	requestCounts []int
+}
+
+func (provider *recordingEffectiveTimeProvider) Resolve(
+	ctx context.Context,
+	requests []strategy.EffectiveTimeRequest,
+) ([]strategy.EffectiveTimeFact, error) {
+	provider.calls++
+	provider.requestCounts = append(provider.requestCounts, len(requests))
+	return provider.delegate.Resolve(ctx, requests)
 }
 
 func TestBindAlwaysEffectiveTimeFactsUsesExactSelectedSeriesPlanAndLevelTargets(t *testing.T) {

@@ -27,6 +27,14 @@ func prepareAlwaysEffectiveTimeFacts(
 	ctx context.Context,
 	header execution.InternalExecutionHeader,
 ) (map[execution.ConsumerRef]strategy.EffectiveTimeFact, error) {
+	return prepareAlwaysEffectiveTimeFactsWithProvider(ctx, header, strategy.NewStaticScheduleProvider(nil))
+}
+
+func prepareAlwaysEffectiveTimeFactsWithProvider(
+	ctx context.Context,
+	header execution.InternalExecutionHeader,
+	provider strategy.EffectiveTimeProvider,
+) (map[execution.ConsumerRef]strategy.EffectiveTimeFact, error) {
 	requestsByDigest := make(map[string]strategy.EffectiveTimeRequest)
 	requirementByConsumer := make(map[execution.ConsumerRef]string)
 	for _, due := range header.DuePlans {
@@ -55,7 +63,7 @@ func prepareAlwaysEffectiveTimeFacts(
 	for index, digest := range digests {
 		requests[index] = requestsByDigest[digest]
 	}
-	resolved, err := strategy.NewStaticScheduleProvider(nil).Resolve(ctx, requests)
+	resolved, err := provider.Resolve(ctx, requests)
 	if err != nil {
 		return nil, err
 	}

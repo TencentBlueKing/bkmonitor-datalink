@@ -229,7 +229,7 @@ func requestFixtureForPlan(t *testing.T, plan *strategy.CompiledPlan, records []
 	if err != nil {
 		t.Fatal(err)
 	}
-	contractRef := execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{QueryGroup: "qg", ScheduleRevision: "schedule", EvaluationTime: 100}, SnapshotRevision: "snapshot", QueryRevision: "query", ScheduleRevision: "schedule", DuePlanSetDigest: digest}
+	contractRef := execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{QueryGroup: "qg", EvaluationTime: 100}, SnapshotRevision: "snapshot", QueryRevision: "query", ScheduleRevision: "schedule", ScheduleSegmentStart: 100, DuePlanSetDigest: digest}
 	series := execution.SeriesIdentityDigest(records[0].DimensionIdentity.Digest)
 	dataset := execution.NewDataset(records)
 	ordinals := make([]uint32, len(records))

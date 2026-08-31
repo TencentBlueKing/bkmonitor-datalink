@@ -17,16 +17,21 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
-const schemaV1 = "alarmd-schedule-progress-v1"
+const schemaV2 = "alarmd-schedule-progress-v2"
 
 type ControlStore interface {
 	ReadControl(context.Context, execution.QueryGroupIdentity, string) ([]byte, bool, error)
 	FencedCompareAndSet(context.Context, ownership.FencedCASRequest) (ownership.FencedCASStatus, error)
 }
 
+type ContinuousSlotResolver interface {
+	NextSlotAfter(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.EvaluationTime, error)
+}
+
 type StoreOptions struct {
 	Prefix  string
 	Control ControlStore
+	Slots   ContinuousSlotResolver
 	Now     func() time.Time
 }
 
@@ -45,18 +50,19 @@ func (err *DeterministicInvalidError) Error() string {
 func (err *DeterministicInvalidError) Unwrap() error { return err.Err }
 
 func NewStore(options StoreOptions) (*Store, error) {
-	if options.Prefix == "" || strings.ContainsAny(options.Prefix, "{} \t\r\n") || options.Control == nil || options.Now == nil {
+	if options.Prefix == "" || strings.ContainsAny(options.Prefix, "{} \t\r\n") ||
+		options.Control == nil || options.Slots == nil || options.Now == nil {
 		return nil, fmt.Errorf("progress: invalid store options")
 	}
 	return &Store{options: options}, nil
 }
 
-func (store *Store) LoadProgress(ctx context.Context, namespace execution.ProgressNamespace) (execution.ProgressLoadResult, error) {
-	name, err := store.namespace(namespace)
+func (store *Store) LoadProgress(ctx context.Context, identity execution.ProgressIdentity) (execution.ProgressLoadResult, error) {
+	name, err := store.namespace(identity)
 	if err != nil {
 		return execution.ProgressLoadResult{}, err
 	}
-	raw, missing, err := store.options.Control.ReadControl(ctx, namespace.QueryGroup, name)
+	raw, missing, err := store.options.Control.ReadControl(ctx, identity.QueryGroup, name)
 	if err != nil {
 		return execution.ProgressLoadResult{}, err
 	}
@@ -67,11 +73,11 @@ func (store *Store) LoadProgress(ctx context.Context, namespace execution.Progre
 	if err != nil {
 		return execution.ProgressLoadResult{}, &DeterministicInvalidError{Err: err}
 	}
-	if value.Namespace != namespace {
-		return execution.ProgressLoadResult{}, &DeterministicInvalidError{Err: fmt.Errorf("persisted namespace does not match requested namespace")}
+	if value.Identity != identity {
+		return execution.ProgressLoadResult{}, &DeterministicInvalidError{Err: fmt.Errorf("persisted identity does not match requested identity")}
 	}
 	result := execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &value}
-	return result, result.Validate(namespace)
+	return result, result.Validate(identity)
 }
 
 func (store *Store) CommitProgress(ctx context.Context, request execution.ProgressCommitRequest) (execution.ProgressCommitResult, error) {
@@ -81,11 +87,11 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 	if request.Completion.Kind != execution.CompletionFull && request.Completion.Kind != execution.CompletionFullEmpty {
 		return execution.ProgressCommitResult{}, fmt.Errorf("progress: G1 store accepts only FULL completion")
 	}
-	name, err := store.namespace(request.Namespace)
+	name, err := store.namespace(request.Identity)
 	if err != nil {
 		return execution.ProgressCommitResult{}, err
 	}
-	raw, missing, err := store.options.Control.ReadControl(ctx, request.Namespace.QueryGroup, name)
+	raw, missing, err := store.options.Control.ReadControl(ctx, request.Identity.QueryGroup, name)
 	if err != nil {
 		return retryable(), nil
 	}
@@ -94,14 +100,25 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 		if decodeErr != nil {
 			return execution.ProgressCommitResult{}, &DeterministicInvalidError{Err: decodeErr}
 		}
-		if current.Namespace != request.Namespace {
-			return execution.ProgressCommitResult{}, &DeterministicInvalidError{Err: fmt.Errorf("persisted namespace does not match commit namespace")}
+		if current.Identity != request.Identity {
+			return execution.ProgressCommitResult{}, &DeterministicInvalidError{Err: fmt.Errorf("persisted identity does not match commit identity")}
 		}
-		if current.NextSlot != request.ExpectedNextSlot {
+		currentNext, resolveErr := store.resolveCurrentNextSlot(ctx, current)
+		if resolveErr != nil {
+			return execution.ProgressCommitResult{}, resolveErr
+		}
+		if currentNext != request.ExpectedNextSlot {
 			return execution.ProgressCommitResult{Status: execution.ProgressConflict}, nil
 		}
 	}
-	next := execution.ScheduleProgress{Namespace: request.Namespace, NextSlot: request.NextSlotAfterCompletion,
+	nextSlot, err := store.options.Slots.NextSlotAfter(ctx, request.Identity.QueryGroup, request.ExpectedNextSlot)
+	if err != nil {
+		return execution.ProgressCommitResult{}, fmt.Errorf("progress: resolve next continuous Slot: %w", err)
+	}
+	if nextSlot <= request.ExpectedNextSlot {
+		return execution.ProgressCommitResult{}, fmt.Errorf("progress: next continuous Slot must follow completion")
+	}
+	next := execution.ScheduleProgress{Identity: request.Identity, NextSlot: nextSlot,
 		LastCompletionKind: request.Completion.Kind}
 	if request.Completion.Kind == execution.CompletionFull || request.Completion.Kind == execution.CompletionFullEmpty {
 		next.LastFullSlot = request.ExpectedNextSlot
@@ -129,22 +146,36 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 	}
 }
 
-func (store *Store) namespace(namespace execution.ProgressNamespace) (string, error) {
-	if namespace.QueryGroup == "" || namespace.ScheduleRevision == "" {
-		return "", fmt.Errorf("progress: complete namespace is required")
+func (store *Store) resolveCurrentNextSlot(
+	ctx context.Context,
+	current execution.ScheduleProgress,
+) (execution.EvaluationTime, error) {
+	if current.LastFullSlot <= 0 ||
+		(current.LastCompletionKind != execution.CompletionFull && current.LastCompletionKind != execution.CompletionFullEmpty) {
+		return current.NextSlot, nil
 	}
-	digest, err := contract.DeriveCanonicalDigestV2("alarmd-progress-schedule-revision-v1", namespace.ScheduleRevision)
+	next, err := store.options.Slots.NextSlotAfter(ctx, current.Identity.QueryGroup, current.LastFullSlot)
 	if err != nil {
-		return "", err
+		return 0, fmt.Errorf("progress: resolve persisted continuous Slot: %w", err)
 	}
-	return store.options.Prefix + ":progress:" + digest[:32], nil
+	if next <= current.LastFullSlot {
+		return 0, fmt.Errorf("progress: persisted continuous Slot must follow last FULL completion")
+	}
+	return next, nil
+}
+
+func (store *Store) namespace(identity execution.ProgressIdentity) (string, error) {
+	if identity.QueryGroup == "" {
+		return "", fmt.Errorf("progress: complete identity is required")
+	}
+	return store.options.Prefix + ":progress", nil
 }
 
 func encode(progress execution.ScheduleProgress) ([]byte, error) {
 	if err := progress.Validate(); err != nil {
 		return nil, err
 	}
-	return json.Marshal(envelope{Schema: schemaV1, Progress: progress})
+	return json.Marshal(envelope{Schema: schemaV2, Progress: progress})
 }
 
 func decode(raw []byte) (execution.ScheduleProgress, error) {
@@ -152,7 +183,7 @@ func decode(raw []byte) (execution.ScheduleProgress, error) {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return execution.ScheduleProgress{}, err
 	}
-	if value.Schema != schemaV1 {
+	if value.Schema != schemaV2 {
 		return execution.ScheduleProgress{}, fmt.Errorf("unsupported schema %q", value.Schema)
 	}
 	if err := value.Progress.Validate(); err != nil {

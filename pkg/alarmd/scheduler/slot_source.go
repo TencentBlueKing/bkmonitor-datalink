@@ -9,8 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
-	"sort"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -24,161 +22,35 @@ var (
 	ErrSlotOwnershipChanged = errors.New("alarmd scheduler: ownership changed while freezing Slot")
 )
 
-// FrozenPlanSchedule is the Scheduler projection of one active Plan schedule.
-// Alignment is an already resolved Unix-second grid anchor. Parsing source
-// configuration and compiling Plans remain control-plane responsibilities.
-type FrozenPlanSchedule struct {
-	Identity         execution.PlanIdentity
-	ScheduleRevision execution.PlanScheduleRevision
-	IntervalSeconds  int64
-	Alignment        execution.EvaluationTime
-}
-
-type FrozenPlanScheduleRef struct {
-	Identity         execution.PlanIdentity
-	ScheduleRevision execution.PlanScheduleRevision
-}
-
-// FrozenQueryGroupSchedule contains only immutable facts needed to enumerate
-// Slots. FirstEvaluationTime is the control plane's resolved activation/cutover
-// Slot; the Scheduler must not derive it from local process time.
-type FrozenQueryGroupSchedule struct {
-	QueryGroup          execution.QueryGroupIdentity
-	ScheduleRevision    execution.ScheduleRevision
-	FirstEvaluationTime execution.EvaluationTime
-	Plans               []FrozenPlanSchedule
-}
-
-func (schedule FrozenQueryGroupSchedule) validate(
-	queryGroup execution.QueryGroupIdentity,
-	scheduleRevision execution.ScheduleRevision,
-) error {
-	if schedule.QueryGroup != queryGroup || schedule.ScheduleRevision == "" || schedule.ScheduleRevision != scheduleRevision ||
-		schedule.FirstEvaluationTime <= 0 || len(schedule.Plans) == 0 {
-		return ErrScheduleFactsInvalid
-	}
-	seen := make(map[execution.PlanIdentity]struct{}, len(schedule.Plans))
-	for _, plan := range schedule.Plans {
-		if plan.Identity.TenantID == "" || plan.Identity.BusinessID == "" || plan.Identity.StrategyID == "" ||
-			plan.ScheduleRevision == "" || plan.IntervalSeconds <= 0 || plan.Alignment < 0 {
-			return ErrScheduleFactsInvalid
-		}
-		if _, duplicate := seen[plan.Identity]; duplicate {
-			return ErrScheduleFactsInvalid
-		}
-		seen[plan.Identity] = struct{}{}
-	}
-	if len(schedule.duePlans(schedule.FirstEvaluationTime)) == 0 {
-		return ErrScheduleFactsInvalid
-	}
-	return nil
-}
-
-func (schedule FrozenQueryGroupSchedule) duePlans(at execution.EvaluationTime) []FrozenPlanScheduleRef {
-	if at < schedule.FirstEvaluationTime {
-		return nil
-	}
-	due := make([]FrozenPlanScheduleRef, 0, len(schedule.Plans))
-	for _, plan := range schedule.Plans {
-		if onGrid(at, plan.Alignment, plan.IntervalSeconds) {
-			due = append(due, FrozenPlanScheduleRef{Identity: plan.Identity, ScheduleRevision: plan.ScheduleRevision})
-		}
-	}
-	sort.Slice(due, func(left, right int) bool { return lessPlan(due[left].Identity, due[right].Identity) })
-	return due
-}
-
-func (schedule FrozenQueryGroupSchedule) nextSlotAfter(current execution.EvaluationTime) (execution.EvaluationTime, bool) {
-	if current >= execution.EvaluationTime(math.MaxInt64) {
-		return 0, false
-	}
-	next := execution.EvaluationTime(math.MaxInt64)
-	for _, plan := range schedule.Plans {
-		candidate, ok := alignedAtOrAfter(current+1, plan.Alignment, plan.IntervalSeconds)
-		if ok && candidate < next {
-			next = candidate
-		}
-	}
-	return next, next != execution.EvaluationTime(math.MaxInt64)
-}
-
-func onGrid(at, alignment execution.EvaluationTime, interval int64) bool {
-	if interval <= 0 || at < alignment {
-		return false
-	}
-	return (int64(at)-int64(alignment))%interval == 0
-}
-
-func alignedAtOrAfter(at, alignment execution.EvaluationTime, interval int64) (execution.EvaluationTime, bool) {
-	if interval <= 0 {
-		return 0, false
-	}
-	if at <= alignment {
-		return alignment, true
-	}
-	delta := int64(at) - int64(alignment)
-	remainder := delta % interval
-	if remainder == 0 {
-		return at, true
-	}
-	increment := interval - remainder
-	if int64(at) > math.MaxInt64-increment {
-		return 0, false
-	}
-	return execution.EvaluationTime(int64(at) + increment), true
-}
-
-func lessPlan(left, right execution.PlanIdentity) bool {
-	if left.TenantID != right.TenantID {
-		return left.TenantID < right.TenantID
-	}
-	if left.BusinessID != right.BusinessID {
-		return left.BusinessID < right.BusinessID
-	}
-	return left.StrategyID < right.StrategyID
-}
-
-// FreezeSlotContractRequest keeps Scheduler enumeration separate from Catalog
-// materialization. The Catalog adapter selects the full frozen Plan/query facts
-// by the persisted cutover evaluation time and derives DuePlanSetDigest for
-// this exact due set; it must not resolve the request from latest content.
-type FreezeSlotContractRequest struct {
-	QueryGroup       execution.QueryGroupIdentity
-	ScheduleRevision execution.ScheduleRevision
-	EvaluationTime   execution.EvaluationTime
-	DuePlans         []FrozenPlanScheduleRef
-}
-
 type AssignmentReader interface {
 	ReadAssignment(context.Context, execution.QueryGroupIdentity) (ownership.AssignmentRecord, error)
 }
 
 type SlotCatalogReader interface {
-	ReadFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.ScheduleRevision) (FrozenQueryGroupSchedule, error)
-	FreezeSlotContract(context.Context, FreezeSlotContractRequest) (execution.FrozenExecutionContractRef, error)
+	ReadInitialFrozenSchedule(context.Context, execution.QueryGroupIdentity) (execution.FrozenQueryGroupSchedule, error)
+	ReadFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.FrozenQueryGroupSchedule, error)
+	FreezeSlotContract(context.Context, execution.FreezeSlotContractRequest) (execution.FrozenSlotContractFact, error)
 }
 
 type ScheduleProgressReader interface {
-	LoadProgress(context.Context, execution.ProgressNamespace) (execution.ProgressLoadResult, error)
+	LoadProgress(context.Context, execution.ProgressIdentity) (execution.ProgressLoadResult, error)
 }
 
 // ProductionSlotSource is bound to one owned Query Group. It reads current
 // control facts and returns one normal due Slot; it never executes queries,
 // evaluates data, commits state/Progress, or creates recovery state machines.
 type ProductionSlotSource struct {
-	queryGroup       execution.QueryGroupIdentity
-	scheduleRevision execution.ScheduleRevision
-	workerID         string
-	assignments      AssignmentReader
-	session          OwnerSession
-	catalog          SlotCatalogReader
-	progress         ScheduleProgressReader
-	now              func() time.Time
+	queryGroup  execution.QueryGroupIdentity
+	workerID    string
+	assignments AssignmentReader
+	session     OwnerSession
+	catalog     SlotCatalogReader
+	progress    ScheduleProgressReader
+	now         func() time.Time
 }
 
 func NewProductionSlotSource(
 	queryGroup execution.QueryGroupIdentity,
-	scheduleRevision execution.ScheduleRevision,
 	workerID string,
 	assignments AssignmentReader,
 	session OwnerSession,
@@ -186,10 +58,10 @@ func NewProductionSlotSource(
 	progress ScheduleProgressReader,
 	now func() time.Time,
 ) (*ProductionSlotSource, error) {
-	if queryGroup == "" || scheduleRevision == "" || workerID == "" || assignments == nil || session == nil || catalog == nil || progress == nil || now == nil {
+	if queryGroup == "" || workerID == "" || assignments == nil || session == nil || catalog == nil || progress == nil || now == nil {
 		return nil, errors.New("alarmd scheduler: complete production SlotSource dependencies are required")
 	}
-	return &ProductionSlotSource{queryGroup: queryGroup, scheduleRevision: scheduleRevision, workerID: workerID, assignments: assignments,
+	return &ProductionSlotSource{queryGroup: queryGroup, workerID: workerID, assignments: assignments,
 		session: session, catalog: catalog, progress: progress, now: now}, nil
 }
 
@@ -211,45 +83,51 @@ func (source *ProductionSlotSource) Next(
 	if err != nil {
 		return FrozenSlot{}, false, err
 	}
-	schedule, err := source.catalog.ReadFrozenSchedule(ctx, queryGroup, source.scheduleRevision)
+	identity := execution.ProgressIdentity{QueryGroup: source.queryGroup}
+	load, err := source.progress.LoadProgress(ctx, identity)
 	if err != nil {
 		return FrozenSlot{}, false, err
 	}
-	if err := schedule.validate(queryGroup, source.scheduleRevision); err != nil {
+	if err := load.Validate(identity); err != nil {
 		return FrozenSlot{}, false, err
 	}
-	namespace := execution.ProgressNamespace{QueryGroup: queryGroup, ScheduleRevision: schedule.ScheduleRevision}
-	load, err := source.progress.LoadProgress(ctx, namespace)
+	var schedule execution.FrozenQueryGroupSchedule
+	var nextSlot execution.EvaluationTime
+	if load.Status == execution.ProgressMissing {
+		schedule, err = source.catalog.ReadInitialFrozenSchedule(ctx, source.queryGroup)
+		if err == nil {
+			nextSlot, _ = schedule.FirstSlot()
+		}
+	} else {
+		schedule, nextSlot, err = source.nextSlotAfterProgress(ctx, *load.Progress)
+	}
 	if err != nil {
 		return FrozenSlot{}, false, err
 	}
-	if err := load.Validate(namespace); err != nil {
+	if err := source.validateSchedule(schedule, nextSlot); err != nil {
 		return FrozenSlot{}, false, err
 	}
-	nextSlot := schedule.FirstEvaluationTime
-	if load.Status == execution.ProgressFound {
-		nextSlot = load.Progress.NextSlot
-	}
-	duePlans := schedule.duePlans(nextSlot)
+	duePlans := schedule.DuePlanRefs(nextSlot)
 	if len(duePlans) == 0 {
 		return FrozenSlot{}, false, ErrProgressOffSchedule
 	}
 	if at.Unix() < int64(nextSlot) {
 		return FrozenSlot{}, false, nil
 	}
-	nextAfterCompletion, ok := schedule.nextSlotAfter(nextSlot)
-	if !ok {
-		return FrozenSlot{}, false, ErrScheduleFactsInvalid
+	request := execution.FreezeSlotContractRequest{
+		QueryGroup: source.queryGroup, ScheduleRevision: schedule.Segment.ScheduleRevision,
+		ScheduleSegmentStart: schedule.Segment.Start, EvaluationTime: nextSlot, DuePlans: duePlans,
 	}
-	request := FreezeSlotContractRequest{
-		QueryGroup: queryGroup, ScheduleRevision: schedule.ScheduleRevision, EvaluationTime: nextSlot, DuePlans: duePlans,
-	}
-	contractRef, err := source.catalog.FreezeSlotContract(ctx, request)
+	fact, err := source.catalog.FreezeSlotContract(ctx, request)
 	if err != nil {
 		return FrozenSlot{}, false, err
 	}
-	if err := validateFrozenContract(request, contractRef); err != nil {
-		return FrozenSlot{}, false, err
+	if err := fact.Validate(request); err != nil {
+		return FrozenSlot{}, false, fmt.Errorf("%w: %v", ErrSlotContractDrift, err)
+	}
+	if fact.Contract.SnapshotRevision != schedule.Segment.Publication.SnapshotRevision ||
+		fact.Contract.QueryRevision != schedule.Segment.QueryRevision {
+		return FrozenSlot{}, false, ErrSlotContractDrift
 	}
 	currentAssignment, currentFence, err := source.currentOwnership(ctx, source.now())
 	if err != nil {
@@ -259,15 +137,75 @@ func (source *ProductionSlotSource) Next(
 		return FrozenSlot{}, false, ErrSlotOwnershipChanged
 	}
 	slot := FrozenSlot{
-		Contract: contractRef,
+		Contract: fact.Contract,
 		Dispatch: SlotDispatchContext{Operation: execution.OperationNormal, OwnerFence: currentFence,
 			AssignmentGeneration: currentAssignment.AssignmentGeneration},
-		ExpectedNextSlot: nextSlot, NextSlotAfterCompletion: nextAfterCompletion,
+		ExpectedNextSlot: nextSlot,
 	}
 	if err := slot.Validate(queryGroup); err != nil {
 		return FrozenSlot{}, false, err
 	}
 	return slot, true, nil
+}
+
+func (source *ProductionSlotSource) nextSlotAfterProgress(
+	ctx context.Context,
+	progress execution.ScheduleProgress,
+) (execution.FrozenQueryGroupSchedule, execution.EvaluationTime, error) {
+	if progress.LastFullSlot <= 0 ||
+		(progress.LastCompletionKind != execution.CompletionFull && progress.LastCompletionKind != execution.CompletionFullEmpty) {
+		schedule, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, progress.NextSlot)
+		return schedule, progress.NextSlot, err
+	}
+	schedule, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, progress.LastFullSlot)
+	if err != nil {
+		return execution.FrozenQueryGroupSchedule{}, 0, err
+	}
+	if err := source.validateSchedule(schedule, progress.LastFullSlot); err != nil {
+		return execution.FrozenQueryGroupSchedule{}, 0, err
+	}
+	if next, ok := schedule.NextSlotAfter(progress.LastFullSlot); ok {
+		return schedule, next, nil
+	}
+	if schedule.Segment.End == nil {
+		return execution.FrozenQueryGroupSchedule{}, 0, ErrScheduleFactsInvalid
+	}
+	return source.firstSuccessorSchedule(ctx, schedule)
+}
+
+func (source *ProductionSlotSource) validateSchedule(
+	schedule execution.FrozenQueryGroupSchedule,
+	nextSlot execution.EvaluationTime,
+) error {
+	if err := schedule.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrScheduleFactsInvalid, err)
+	}
+	if schedule.Segment.QueryGroup != source.queryGroup || !schedule.Segment.Contains(nextSlot) {
+		return ErrProgressOffSchedule
+	}
+	return nil
+}
+
+func (source *ProductionSlotSource) firstSuccessorSchedule(
+	ctx context.Context,
+	schedule execution.FrozenQueryGroupSchedule,
+) (execution.FrozenQueryGroupSchedule, execution.EvaluationTime, error) {
+	boundary := *schedule.Segment.End
+	successor, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, boundary)
+	if err != nil {
+		return execution.FrozenQueryGroupSchedule{}, 0, err
+	}
+	if err := successor.Validate(); err != nil {
+		return execution.FrozenQueryGroupSchedule{}, 0, fmt.Errorf("%w: %v", ErrScheduleFactsInvalid, err)
+	}
+	if successor.Segment.QueryGroup != source.queryGroup || successor.Segment.Start != boundary {
+		return execution.FrozenQueryGroupSchedule{}, 0, ErrScheduleFactsInvalid
+	}
+	next, ok := successor.FirstSlot()
+	if !ok {
+		return execution.FrozenQueryGroupSchedule{}, 0, ErrScheduleFactsInvalid
+	}
+	return successor, next, nil
 }
 
 func (source *ProductionSlotSource) currentOwnership(
@@ -292,17 +230,6 @@ func (source *ProductionSlotSource) currentOwnership(
 		return ownership.AssignmentRecord{}, execution.OwnerFence{}, ownership.ErrStaleFence
 	}
 	return assignment, fence, nil
-}
-
-func validateFrozenContract(request FreezeSlotContractRequest, contractRef execution.FrozenExecutionContractRef) error {
-	if err := contractRef.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", ErrSlotContractDrift, err)
-	}
-	if contractRef.Slot.QueryGroup != request.QueryGroup || contractRef.Slot.EvaluationTime != request.EvaluationTime ||
-		contractRef.Slot.ScheduleRevision != request.ScheduleRevision || contractRef.ScheduleRevision != request.ScheduleRevision {
-		return ErrSlotContractDrift
-	}
-	return nil
 }
 
 func sameAssignment(left, right ownership.AssignmentRecord) bool {

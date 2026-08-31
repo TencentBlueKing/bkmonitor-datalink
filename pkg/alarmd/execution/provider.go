@@ -132,7 +132,7 @@ func (attempt QueryAttempt) Validate() error {
 	if err := attempt.Spec.Validate(); err != nil {
 		return err
 	}
-	if attempt.Slot.QueryGroup == "" || attempt.Slot.ScheduleRevision == "" || attempt.Slot.EvaluationTime <= 0 {
+	if attempt.Slot.QueryGroup == "" || attempt.Slot.EvaluationTime <= 0 {
 		return errors.New("alarmd execution: complete query attempt Slot is required")
 	}
 	if err := attempt.Operation.Validate(); err != nil {

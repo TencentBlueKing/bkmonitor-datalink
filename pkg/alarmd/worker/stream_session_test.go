@@ -248,7 +248,6 @@ func newCompletionOnlyFixture(
 	request := slotRequest(execution.OperationNormal)
 	request.Contract = contractRef
 	request.ExpectedNextSlot = contractRef.Slot.EvaluationTime
-	request.NextSlotAfterCompletion = contractRef.Slot.EvaluationTime + 60
 	return fixture{trace: &trace, observations: &observations, ports: ports, coordinator: coordinator}, request
 }
 
@@ -260,7 +259,6 @@ func assertFullEmptyProgress(t *testing.T, fixture fixture, request execution.Sl
 	}
 	progress := fixture.ports.lastProgress
 	if progress.ExpectedNextSlot != request.ExpectedNextSlot ||
-		progress.NextSlotAfterCompletion != request.NextSlotAfterCompletion ||
 		progress.Completion.Kind != execution.CompletionFullEmpty ||
 		progress.Completion.Result != observability.ResultSuccess ||
 		progress.Completion.Primary == nil ||

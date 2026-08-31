@@ -669,6 +669,85 @@ func TestEvaluationAllowsLoadedSeriesWarmingToCompleteWithFinalFullMutation(t *t
 	}
 }
 
+func TestEvaluationAllowsUnknownOwnReasonAfterLoadedSeriesWarmingCompletes(t *testing.T) {
+	result, request := loadedSeriesWarmingInactiveCompletion(t)
+	if err := result.Validate(request); err != nil {
+		t.Fatalf("completed loaded WARMING must not replace the current UNKNOWN reason: %v", err)
+	}
+}
+
+func TestEvaluationRejectsWrongUnknownReasonAfterLoadedSeriesWarmingCompletes(t *testing.T) {
+	result, request := loadedSeriesWarmingInactiveCompletion(t)
+	wrongReason := execution.ReasonCode(contract.ReasonHistoryWarming)
+	result.ReasonCode = wrongReason
+	result.Plans[0].ReasonCode = wrongReason
+	result.Plans[0].LevelOutcomes[0].ReasonCode = wrongReason
+	if err := result.Validate(request); err == nil {
+		t.Fatal("completed loaded WARMING must not authorize an UNKNOWN reason unrelated to the current fact")
+	}
+}
+
+func TestEvaluationRejectsUnknownWhenLoadedSeriesWarmingIsNotCompleted(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*execution.EvaluationResult, *execution.EvaluationRequest)
+	}{
+		{
+			name: "no final mutation",
+			mutate: func(result *execution.EvaluationResult, _ *execution.EvaluationRequest) {
+				result.Plans[0].StateResults = nil
+			},
+		},
+		{
+			name: "mutation remains warming",
+			mutate: func(result *execution.EvaluationResult, _ *execution.EvaluationRequest) {
+				mutation := result.Plans[0].StateResults[0].Mutation
+				mutation.Levels = append([]execution.RuntimeLevelStateMutation(nil), mutation.Levels...)
+				mutation.Levels[0].HistoryCompleteness = execution.HistoryWarming
+				mutation.Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonHistoryWarming)
+				mutation.MutationDigest = ""
+				result.Plans[0].StateResults[0].Mutation = mustStateMutation(mutation)
+			},
+		},
+		{
+			name: "loaded gapped",
+			mutate: func(_ *execution.EvaluationResult, request *execution.EvaluationRequest) {
+				request.State.Items[0].Status = execution.StateFoundGapped
+				request.State.Items[0].Levels[0].HistoryCompleteness = execution.HistoryGapped
+				request.State.Items[0].Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonHistoryGapped)
+			},
+		},
+		{
+			name: "series guard",
+			mutate: func(_ *execution.EvaluationResult, request *execution.EvaluationRequest) {
+				request.State.Items[0].SeriesGuard = &execution.StateGuardFact{
+					Status: execution.HistoryWarming, ReasonCode: execution.ReasonCode(contract.ReasonHistoryWarming),
+					WarmupRequirementRef: mustSeriesWarmupRequirementRef(request.Header.DuePlans[0].CompiledPlan),
+				}
+			},
+		},
+		{
+			name: "plan gap",
+			mutate: func(_ *execution.EvaluationResult, request *execution.EvaluationRequest) {
+				request.Gaps.Items[0].Status = execution.GapFound
+				request.Gaps.Items[0].MarkerRevision = 1
+				request.Gaps.Items[0].Scopes = []execution.GapScopeState{{
+					Status: execution.GapStatusWarming, ReasonCode: execution.ReasonCode(contract.ReasonGapSkipped),
+					RequiredFullSlots: 9, ObservedFullSlots: 8,
+				}}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, request := loadedSeriesWarmingInactiveCompletion(t)
+			test.mutate(&result, &request)
+			if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "active guard reason") {
+				t.Fatalf("incomplete loaded WARMING proof must preserve its active reason, got %v", err)
+			}
+		})
+	}
+}
+
 func TestEvaluationRejectsLoadedSeriesWarmingWithoutExclusiveFinalFullProof(t *testing.T) {
 	t.Run("no final mutation", func(t *testing.T) {
 		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeNormal)
@@ -742,6 +821,68 @@ func TestEvaluationRejectsLoadedSeriesWarmingWithoutExclusiveFinalFullProof(t *t
 			t.Fatalf("successful outcome without its current State fact must reject at State conservation, got %v", err)
 		}
 	})
+}
+
+func loadedSeriesWarmingInactiveCompletion(
+	t testing.TB,
+) (execution.EvaluationResult, execution.EvaluationRequest) {
+	t.Helper()
+	input := validInternalExecution()
+	compiled := compiledPlanWithTriggerConfig(t, json.RawMessage(`{
+		"window_size":1,"required_anomalies":1,"step_seconds":60,"timezone_ref":"BUSINESS_LOCAL",
+		"uptime":{"time_ranges":[{"start":"00:00","end":"00:01"}]}
+	}`))
+	input.DuePlans[0].CompiledPlan = compiled
+	provider := strategy.NewStaticScheduleProvider(strategy.TimezoneResolverFunc(
+		func(context.Context, string, string, string) (*time.Location, error) { return time.UTC, nil },
+	))
+	facts, err := provider.Resolve(context.Background(), []strategy.EffectiveTimeRequest{{
+		TenantID: "tenant", BusinessID: "2", EvaluationTime: int64(input.Contract.Slot.EvaluationTime),
+		Requirement: compiled.Levels()[0].EffectiveTimeRequirement(),
+	}})
+	if err != nil || len(facts) != 1 || facts[0].Status() != strategy.EffectiveTimeInactive {
+		t.Fatalf("inactive EffectiveTime fact = %+v, %v", facts, err)
+	}
+	input.EffectiveTimeFacts[0].Fact = facts[0]
+
+	refs, err := execution.DeriveRuntimeLevelContractRefs(compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := normalStateEvaluation()
+	state.Mutation.ExpectedBlobRevision = 1
+	state.Mutation.Levels = append([]execution.RuntimeLevelStateMutation(nil), state.Mutation.Levels...)
+	state.Mutation.Levels[0].LevelStateCompatibility = refs[0].LevelStateCompatibility
+	state.Mutation.Levels[0].WarmupRequirementRef = refs[0].WarmupRequirementRef
+	state.Mutation.Points = append([]execution.StateHistoryPoint(nil), state.Mutation.Points...)
+	state.Mutation.Points[0].Levels = append([]execution.StateLevelFact(nil), state.Mutation.Points[0].Levels...)
+	state.Mutation.Points[0].Levels[0].DetectFingerprint = refs[0].DetectFingerprint
+	state.Mutation.MutationDigest = ""
+	state.Mutation = mustStateMutation(state.Mutation)
+	request := evaluationRequest(input, execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
+		Identity: input.StatePreflight[0].Identity, BlobRevision: 1,
+		PersistedApplyVersion:   olderApplyVersion(input.StatePreflight[0].ApplyVersion),
+		PersistedMutationDigest: "loaded-state", Status: execution.StateFoundWarming,
+		Levels: []execution.RuntimeLevelStateView{{
+			LevelID: 5, LevelStateCompatibility: refs[0].LevelStateCompatibility,
+			HistoryCompleteness:  execution.HistoryWarming,
+			GapReasonCode:        execution.ReasonCode(contract.ReasonGapSkipped),
+			WarmupRequirementRef: refs[0].WarmupRequirementRef,
+		}},
+	}}}, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
+		Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
+	}}})
+	outcome := normalLevelOutcome()
+	outcome.Outcome = execution.LevelOutcomeUnknown
+	outcome.ReasonCode = execution.ReasonCode(contract.ReasonEffectiveTimeInactive)
+	return execution.EvaluationResult{
+		Contract: input.Contract, Result: observability.ResultDegraded, ReasonCode: outcome.ReasonCode,
+		Plans: []execution.PlanEvaluationResult{{
+			Plan: input.DuePlans[0].Identity, Disposition: execution.PlanDecidedDegraded,
+			ReasonCode: outcome.ReasonCode, LevelOutcomes: []execution.LevelOutcome{outcome},
+			StateResults: []execution.StateEvaluation{state},
+		}},
+	}, request
 }
 
 func TestTerminalAggregateReasonMustComeFromTerminalPlan(t *testing.T) {

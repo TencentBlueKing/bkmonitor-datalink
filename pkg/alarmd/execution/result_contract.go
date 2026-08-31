@@ -196,10 +196,12 @@ func validateLevelOutcome(
 				return errors.New("alarmd execution: active Runtime State or Plan gap guard forbids NORMAL and RECOVERY")
 			}
 		case LevelOutcomeUnknown:
-			if _, ok := guardReasons[outcome.ReasonCode]; !ok && disposition != PlanRetryPending {
-				return errors.New("alarmd execution: UNKNOWN Level outcome does not preserve its active guard reason")
+			if !loadedSeriesWarmingCompleted(outcome, plan, stateResults, states, gaps) {
+				if _, ok := guardReasons[outcome.ReasonCode]; !ok && disposition != PlanRetryPending {
+					return errors.New("alarmd execution: UNKNOWN Level outcome does not preserve its active guard reason")
+				}
+				constrained = true
 			}
-			constrained = true
 		}
 	}
 	localized, err := validateLocalizedInputOutcome(input, plan.Identity, outcome)

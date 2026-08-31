@@ -129,8 +129,9 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 	if request.Completion.Primary != nil && request.Completion.Primary.Completeness == execution.CompletenessFull {
 		next.LastFullSlot = request.ExpectedNextSlot
 	}
-	if request.Completion.Kind == execution.CompletionPartialGap {
-		next.CurrentOrRecentGap = foldHistoryWarmingGap(current, request)
+	if request.Completion.Kind == execution.CompletionPartialGap ||
+		request.Completion.Kind == execution.CompletionGapSkipped {
+		next.CurrentOrRecentGap = foldRecentGap(current, request)
 	}
 	encoded, err := encode(next)
 	if err != nil {
@@ -166,17 +167,19 @@ func validateG1Completion(completion execution.SlotCompletion) error {
 			return fmt.Errorf("progress: G1 PARTIAL completion is limited to FULL+DATA HISTORY_WARMING")
 		}
 		return nil
+	case execution.CompletionGapSkipped:
+		return nil
 	default:
 		return fmt.Errorf("progress: G1 store does not accept completion kind %q", completion.Kind)
 	}
 }
 
-func foldHistoryWarmingGap(
+func foldRecentGap(
 	current execution.ScheduleProgress,
 	request execution.ProgressCommitRequest,
 ) *execution.ProgressGapSummary {
-	if current.LastCompletionKind == execution.CompletionPartialGap && current.CurrentOrRecentGap != nil &&
-		current.CurrentOrRecentGap.Kind == execution.CompletionPartialGap &&
+	if current.LastCompletionKind == request.Completion.Kind && current.CurrentOrRecentGap != nil &&
+		current.CurrentOrRecentGap.Kind == request.Completion.Kind &&
 		current.CurrentOrRecentGap.ReasonCode == request.Completion.ReasonCode {
 		next := *current.CurrentOrRecentGap
 		next.LastSlot = request.ExpectedNextSlot

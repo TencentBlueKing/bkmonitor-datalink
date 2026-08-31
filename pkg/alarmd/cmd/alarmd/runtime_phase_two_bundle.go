@@ -242,7 +242,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	frozen, err := newProductionFrozenExecution(catalog, repository)
+	frozen, err := newProductionFrozenExecution(catalog, repository, external.Now)
 	if err != nil {
 		return nil, err
 	}

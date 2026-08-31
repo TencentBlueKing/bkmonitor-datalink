@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -44,13 +45,22 @@ func TestProductionFrozenExecutionResolvesExactPersistedContract(t *testing.T) {
 		ScheduleSegmentStart: 60, DuePlanSetDigest: "due-1",
 	}
 	catalog := &fakeFrozenCatalog{schedule: schedule, fact: execution.FrozenSlotContractFact{
-		Contract: contractRef, DuePlans: []execution.DuePlan{{Identity: plan}},
+		Contract: contractRef, DuePlans: []execution.DuePlan{{
+			Identity: plan, ScheduleRevision: planRevision, ScheduleSpec: spec,
+			CompletionDeadlineUnixMilli: 180_000,
+		}},
+		Requirements: []execution.DataRequirement{{Consumers: []execution.DataRequirementConsumer{{
+			Consumer: execution.ConsumerRef{Plan: plan}, ConsumerDeadlineUnixMilli: 180_000,
+			DownstreamExecutionReserveMilliSec: 5_000,
+		}}}},
 	}}
 	repository := &fakeProductionCatalogRepository{snapshot: controlplane.PublishedSnapshot{
 		Publication: controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-1", PublicationEpoch: 1},
 		QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-1", QueryPlan: execution.QueryPlanFacts{QueryRevision: "query-1"}}},
 	}}
-	resolver, err := newProductionFrozenExecution(catalog, repository)
+	resolver, err := newProductionFrozenExecution(catalog, repository, func() time.Time {
+		return time.UnixMilli(174_999)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +82,126 @@ func TestProductionFrozenExecutionResolvesExactPersistedContract(t *testing.T) {
 	})
 	if err != nil || finalization.Mode != execution.FinalizationQueryRequired || finalization.Contract != contractRef {
 		t.Fatalf("ResolveFinalization() = %+v, %v", finalization, err)
+	}
+}
+
+func TestProductionFrozenExecutionSkipsExpiredNormalSlotInG1(t *testing.T) {
+	plan := execution.PlanIdentity{TenantID: "tenant-a", BusinessID: "2", StrategyID: "1001"}
+	spec := execution.ScheduleSpec{EvaluationIntervalSeconds: 60, Alignment: 0, Timezone: "UTC"}
+	planRevision, err := execution.DerivePlanScheduleRevision(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedulePlan := execution.FrozenPlanSchedule{Identity: plan, ScheduleRevision: planRevision, Spec: spec}
+	scheduleRevision, err := execution.DeriveQueryGroupScheduleRevision([]execution.FrozenPlanSchedule{schedulePlan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contractRef := execution.FrozenExecutionContractRef{
+		Slot:             execution.SlotIdentity{QueryGroup: "query-group-1", EvaluationTime: 120},
+		SnapshotRevision: "snapshot-1", QueryRevision: "query-1", ScheduleRevision: scheduleRevision,
+		ScheduleSegmentStart: 60, DuePlanSetDigest: "due-1",
+	}
+	catalog := &fakeFrozenCatalog{
+		schedule: execution.FrozenQueryGroupSchedule{Segment: execution.ScheduleSegmentFact{
+			Publication: execution.SnapshotPublicationRef{SnapshotRevision: "snapshot-1", PublicationEpoch: 1},
+			QueryGroup:  "query-group-1", QueryRevision: "query-1", ScheduleRevision: scheduleRevision, Start: 60,
+		}, Plans: []execution.FrozenPlanSchedule{schedulePlan}},
+		fact: execution.FrozenSlotContractFact{
+			Contract: contractRef,
+			DuePlans: []execution.DuePlan{{
+				Identity: plan, ScheduleRevision: planRevision, ScheduleSpec: spec,
+				CompletionDeadlineUnixMilli: 180_000,
+			}},
+			Requirements: []execution.DataRequirement{
+				{Consumers: []execution.DataRequirementConsumer{{
+					Consumer: execution.ConsumerRef{Plan: plan}, ConsumerDeadlineUnixMilli: 180_000,
+					DownstreamExecutionReserveMilliSec: 2_000,
+				}}},
+				{Consumers: []execution.DataRequirementConsumer{{
+					Consumer: execution.ConsumerRef{Plan: plan}, ConsumerDeadlineUnixMilli: 180_000,
+					DownstreamExecutionReserveMilliSec: 5_000,
+				}}},
+			},
+		},
+	}
+	repository := &fakeProductionCatalogRepository{snapshot: controlplane.PublishedSnapshot{
+		Publication: controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-1", PublicationEpoch: 1},
+		QueryGroups: []controlplane.QueryGroup{{
+			Identity: "query-group-1", QueryPlan: execution.QueryPlanFacts{QueryRevision: "query-1"},
+		}},
+	}}
+	now := time.UnixMilli(175_000)
+	resolver, err := newProductionFrozenExecution(catalog, repository, func() time.Time {
+		return now
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := execution.SlotExecutionRequest{
+		Contract: contractRef,
+		OwnerFence: execution.OwnerFence{
+			QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1",
+		},
+		ExpectedNextSlot: 120, Operation: execution.OperationNormal,
+	}
+	finalization, err := resolver.ResolveFinalization(context.Background(), request)
+	if err != nil {
+		t.Fatalf("ResolveFinalization() error = %v", err)
+	}
+	if finalization.Mode != execution.FinalizationGapSkipped ||
+		finalization.ReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) ||
+		!reflect.DeepEqual(finalization.Targets.Plans, []execution.PlanIdentity{plan}) {
+		t.Fatalf("ResolveFinalization() = %+v", finalization)
+	}
+	if err := finalization.Validate(request); err != nil {
+		t.Fatalf("ResolveFinalization() produced invalid finalization: %v", err)
+	}
+	now = time.UnixMilli(179_999)
+	finalization, err = resolver.ResolveFinalization(context.Background(), request)
+	if err != nil || finalization.Mode != execution.FinalizationGapSkipped {
+		t.Fatalf("ResolveFinalization(after query deadline) = %+v, %v", finalization, err)
+	}
+
+	// Expiry is only the G1 normal-path finalization rule. A future G3 recovery
+	// scheduler must retain control of retry/replay/probe eligibility.
+	for _, operation := range []execution.Operation{
+		execution.OperationRetry,
+		execution.OperationReplay,
+		execution.OperationProbe,
+	} {
+		request.Operation = operation
+		finalization, err = resolver.ResolveFinalization(context.Background(), request)
+		if err != nil || finalization.Mode != execution.FinalizationQueryRequired {
+			t.Fatalf("ResolveFinalization(%s) = %+v, %v", operation, finalization, err)
+		}
+	}
+
+	request.Operation = execution.OperationNormal
+	for _, test := range []struct {
+		name         string
+		requirements []execution.DataRequirement
+	}{
+		{name: "no consumer"},
+		{name: "reserve consumes deadline", requirements: []execution.DataRequirement{{
+			Consumers: []execution.DataRequirementConsumer{{
+				Consumer: execution.ConsumerRef{Plan: plan}, ConsumerDeadlineUnixMilli: 5_000,
+				DownstreamExecutionReserveMilliSec: 5_000,
+			}},
+		}}},
+		{name: "non-positive reserve", requirements: []execution.DataRequirement{{
+			Consumers: []execution.DataRequirementConsumer{{
+				Consumer: execution.ConsumerRef{Plan: plan}, ConsumerDeadlineUnixMilli: 5_000,
+			}},
+		}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			catalog.fact.Requirements = test.requirements
+			_, err := resolver.ResolveFinalization(context.Background(), request)
+			if err == nil || !strings.Contains(err.Error(), "frozen contract query deadline") {
+				t.Fatalf("ResolveFinalization(invalid frozen contract) error = %v", err)
+			}
+		})
 	}
 }
 

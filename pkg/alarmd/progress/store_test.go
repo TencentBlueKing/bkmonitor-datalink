@@ -109,6 +109,45 @@ func TestCommitProgressAdvancesColdStartHistoryWarmingUntilFull(t *testing.T) {
 	assertWarmingGap(t, loaded.Progress.CurrentOrRecentGap, 60, 120, 2)
 }
 
+func TestCommitProgressAdvancesAndRestoresConsecutiveGapSkippedSlots(t *testing.T) {
+	fake := &controlFake{missing: true}
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	fence := execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"}
+
+	commitGapSkipped := func(store *Store, slot execution.EvaluationTime) {
+		t.Helper()
+		result, err := store.CommitProgress(context.Background(), execution.ProgressCommitRequest{
+			Identity: identity, OwnerFence: fence, ExpectedNextSlot: slot,
+			Completion: execution.SlotCompletion{
+				Contract: progressContractAt(slot), Kind: execution.CompletionGapSkipped,
+				Result:     observability.ResultDegraded,
+				ReasonCode: execution.ReasonCode(contract.ReasonGapSkipped),
+			},
+		})
+		if err != nil || result.Status != execution.ProgressCommitted {
+			t.Fatalf("CommitProgress(gap skipped %d) = (%+v, %v)", slot, result, err)
+		}
+	}
+
+	first := mustStore(t, fake)
+	commitGapSkipped(first, 60)
+	loaded, err := first.LoadProgress(context.Background(), identity)
+	if err != nil || loaded.Progress == nil {
+		t.Fatalf("LoadProgress(first gap skipped) = (%+v, %v)", loaded, err)
+	}
+	assertGapSkippedProgress(t, *loaded.Progress, 120, 60, 60, 1)
+
+	// Re-open over the persisted value to prove startup can continue past an
+	// expired Slot without replaying it or requiring an in-memory cursor.
+	restarted := mustStore(t, fake)
+	commitGapSkipped(restarted, 120)
+	loaded, err = restarted.LoadProgress(context.Background(), identity)
+	if err != nil || loaded.Progress == nil {
+		t.Fatalf("LoadProgress(second gap skipped) = (%+v, %v)", loaded, err)
+	}
+	assertGapSkippedProgress(t, *loaded.Progress, 180, 60, 120, 2)
+}
+
 func TestCommitProgressDoesNotOpenOtherDegradedCompletionsInG1(t *testing.T) {
 	fullData := &execution.PrimaryInputFact{
 		Completeness: execution.CompletenessFull,
@@ -199,6 +238,25 @@ func assertWarmingGap(
 		gap.ReasonCode != execution.ReasonCode(contract.ReasonHistoryWarming) ||
 		gap.FirstSlot != first || gap.LastSlot != last || gap.Count != count || gap.NextProbeAt != nil {
 		t.Fatalf("warming gap = %+v", gap)
+	}
+}
+
+func assertGapSkippedProgress(
+	t *testing.T,
+	progress execution.ScheduleProgress,
+	nextSlot, firstGap, lastGap execution.EvaluationTime,
+	count uint32,
+) {
+	t.Helper()
+	if progress.NextSlot != nextSlot || progress.LastFullSlot != 0 ||
+		progress.LastCompletionKind != execution.CompletionGapSkipped {
+		t.Fatalf("gap-skipped Progress = %+v", progress)
+	}
+	gap := progress.CurrentOrRecentGap
+	if gap == nil || gap.Kind != execution.CompletionGapSkipped ||
+		gap.ReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) ||
+		gap.FirstSlot != firstGap || gap.LastSlot != lastGap || gap.Count != count || gap.NextProbeAt != nil {
+		t.Fatalf("gap-skipped summary = %+v", gap)
 	}
 }
 

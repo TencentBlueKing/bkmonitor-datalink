@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -37,16 +38,18 @@ type productionSnapshotReader interface {
 type productionFrozenExecution struct {
 	catalog    productionFrozenCatalog
 	repository productionSnapshotReader
+	now        func() time.Time
 }
 
 func newProductionFrozenExecution(
 	catalog productionFrozenCatalog,
 	repository productionSnapshotReader,
+	now func() time.Time,
 ) (*productionFrozenExecution, error) {
-	if catalog == nil || repository == nil {
+	if catalog == nil || repository == nil || now == nil {
 		return nil, errors.New("phase-two frozen execution dependencies are incomplete")
 	}
-	return &productionFrozenExecution{catalog: catalog, repository: repository}, nil
+	return &productionFrozenExecution{catalog: catalog, repository: repository, now: now}, nil
 }
 
 func (source *productionFrozenExecution) ResolveFrozenPlan(
@@ -85,12 +88,65 @@ func (source *productionFrozenExecution) ResolveFinalization(
 	if err := request.Validate(); err != nil {
 		return execution.QueryFreeFinalization{}, err
 	}
-	if _, err := source.resolveFrozenFact(ctx, request.Contract); err != nil {
+	fact, err := source.resolveFrozenFact(ctx, request.Contract)
+	if err != nil {
 		return execution.QueryFreeFinalization{}, err
+	}
+	if request.Operation == execution.OperationNormal {
+		expired, deadlineErr := source.g1NormalSlotDeadlineExpired(fact)
+		if deadlineErr != nil {
+			return execution.QueryFreeFinalization{}, deadlineErr
+		}
+		if !expired {
+			return execution.QueryFreeFinalization{
+				Contract: request.Contract, Mode: execution.FinalizationQueryRequired,
+			}, nil
+		}
+		plans := make([]execution.PlanIdentity, len(fact.DuePlans))
+		for index := range fact.DuePlans {
+			plans[index] = fact.DuePlans[index].Identity
+		}
+		// G1 has no replay/recovery permit. Once the frozen normal Slot budget
+		// has expired, querying cannot produce a valid normal completion, so the
+		// existing query-free path records GAP_SKIPPED and advances Progress.
+		// G3 may select an eligible recovery before normal finalization; this is
+		// deliberately not a general max-replay-age decision.
+		return execution.QueryFreeFinalization{
+			Contract:   request.Contract,
+			Mode:       execution.FinalizationGapSkipped,
+			ReasonCode: execution.ReasonCode(contract.ReasonGapSkipped),
+			Targets: execution.FrozenDuePlanTargets{
+				DuePlanSetDigest: request.Contract.DuePlanSetDigest,
+				Plans:            plans,
+			},
+		}, nil
 	}
 	return execution.QueryFreeFinalization{
 		Contract: request.Contract, Mode: execution.FinalizationQueryRequired,
 	}, nil
+}
+
+func (source *productionFrozenExecution) g1NormalSlotDeadlineExpired(
+	fact execution.FrozenSlotContractFact,
+) (bool, error) {
+	deadline := int64(0)
+	for _, requirement := range fact.Requirements {
+		for _, consumer := range requirement.Consumers {
+			if consumer.ConsumerDeadlineUnixMilli <= 0 ||
+				consumer.DownstreamExecutionReserveMilliSec <= 0 ||
+				consumer.DownstreamExecutionReserveMilliSec >= consumer.ConsumerDeadlineUnixMilli {
+				return false, errors.New("phase-two frozen contract query deadline or reserve is invalid")
+			}
+			candidate := consumer.ConsumerDeadlineUnixMilli - consumer.DownstreamExecutionReserveMilliSec
+			if deadline == 0 || candidate < deadline {
+				deadline = candidate
+			}
+		}
+	}
+	if deadline == 0 {
+		return false, errors.New("phase-two frozen contract query deadline has no consumer")
+	}
+	return source.now().UnixMilli() >= deadline, nil
 }
 
 func (source *productionFrozenExecution) VerifyFrozenDuePlanTargets(

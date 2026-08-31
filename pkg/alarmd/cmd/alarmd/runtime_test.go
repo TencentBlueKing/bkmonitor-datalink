@@ -142,12 +142,14 @@ func TestRunApplicationFatalStartsOneShutdownDeadline(t *testing.T) {
 	want := errors.New("consumer fatal")
 	serviceStarted := make(chan struct{})
 	httpStarted := make(chan struct{})
+	shutdownObserved := make(chan time.Time, 1)
 	releaseService := make(chan struct{})
 	service := newFakeServiceRuntime()
 	service.fatalErr = want
 	service.run = func(ctx context.Context) error {
 		close(serviceStarted)
 		<-ctx.Done()
+		shutdownObserved <- time.Now()
 		<-releaseService
 		return want
 	}
@@ -183,15 +185,15 @@ func TestRunApplicationFatalStartsOneShutdownDeadline(t *testing.T) {
 			t.Fatal("runtime component did not start")
 		}
 	}
-	fatalAt := time.Now()
 	close(service.fatalSignal)
-	time.AfterFunc(50*time.Millisecond, func() { close(releaseService) })
+	shutdownObservedAt := <-shutdownObserved
+	close(releaseService)
 	if err := <-done; !errors.Is(err, want) {
 		t.Fatalf("runApplication() error = %v, want %v", err, want)
 	}
-	latest := fatalAt.Add(cfg.ShutdownTimeout.Duration() + 20*time.Millisecond)
+	latest := shutdownObservedAt.Add(cfg.ShutdownTimeout.Duration())
 	if eventDeadline.IsZero() || eventDeadline.After(latest) {
-		t.Fatalf("event shutdown deadline = %s, want deadline fixed when fatal was observed", eventDeadline)
+		t.Fatalf("event shutdown deadline = %s, want deadline fixed before service cancellation at %s", eventDeadline, shutdownObservedAt)
 	}
 }
 

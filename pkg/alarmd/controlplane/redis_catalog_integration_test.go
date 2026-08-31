@@ -3,6 +3,7 @@ package controlplane_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"os/exec"
@@ -86,10 +87,7 @@ func TestLegacyRedisSourceCompilesAndPublishesSharedQueryGroup(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	resolver := &recordingIdentityResolver{facts: map[string]controlplane.SourceIdentity{
-		"2": {TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
-	}}
-	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache", resolver)
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,10 +222,51 @@ func TestSourceReconcilerRetainsLastGoodForMissingAndInvalidObjectWhileHealthySi
 	}
 	initialPlans := plansByStrategy(initialSnapshot)
 
+	// A strategy whose new cache object loses its authoritative identity fact
+	// keeps the persisted last-good Plan. Recreating the reconciler proves that
+	// this decision is based on repository state rather than process memory.
+	var identityMissing map[string]any
+	if err := json.Unmarshal(documents[0], &identityMissing); err != nil {
+		t.Fatal(err)
+	}
+	delete(identityMissing, "space_uid")
+	identityMissingPayload, err := json.Marshal(identityMissing)
+	if err != nil {
+		t.Fatal(err)
+	}
 	changedSibling := strings.Replace(string(documents[1]), `"threshold":90`, `"threshold":91`, 1)
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", identityMissingPayload, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1002", changedSibling, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("identity missing pending=(%#v, %v)", result, err)
+	}
+	reconciler, err = controlplane.NewSourceReconciler(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityMissingResult, err := reconciler.Refresh(ctx, source, planner)
+	if err != nil || identityMissingResult.Status != controlplane.SourceRefreshPublished {
+		t.Fatalf("identity missing publish=(%#v, %v)", identityMissingResult, err)
+	}
+	identityMissingSnapshot, err := repository.LoadSnapshot(ctx, identityMissingResult.Publication.SnapshotRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityMissingPlans := plansByStrategy(identityMissingSnapshot)
+	if identityMissingPlans["1001"].PlanRevision != initialPlans["1001"].PlanRevision ||
+		identityMissingPlans["1002"].PlanRevision == initialPlans["1002"].PlanRevision {
+		t.Fatalf("identity missing last-good=%#v initial=%#v", identityMissingPlans, initialPlans)
+	}
+	assertAuditDisposition(t, repository, "1001", controlplane.DispositionSourceIncomplete, "SOURCE_IDENTITY_UNAVAILABLE")
+
 	if err := client.Del(ctx, "bkmonitor.cache.strategy_1001").Err(); err != nil {
 		t.Fatal(err)
 	}
+	changedSibling = strings.Replace(string(documents[1]), `"threshold":90`, `"threshold":92`, 1)
 	if err := client.Set(ctx, "bkmonitor.cache.strategy_1002", changedSibling, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -244,15 +283,15 @@ func TestSourceReconcilerRetainsLastGoodForMissingAndInvalidObjectWhileHealthySi
 	}
 	missingPlans := plansByStrategy(missingSnapshot)
 	if missingPlans["1001"].PlanRevision != initialPlans["1001"].PlanRevision ||
-		missingPlans["1002"].PlanRevision == initialPlans["1002"].PlanRevision {
-		t.Fatalf("missing object last-good=%#v initial=%#v", missingPlans, initialPlans)
+		missingPlans["1002"].PlanRevision == identityMissingPlans["1002"].PlanRevision {
+		t.Fatalf("missing object last-good=%#v identity-missing=%#v", missingPlans, identityMissingPlans)
 	}
 	assertAuditDisposition(t, repository, "1001", controlplane.DispositionSourceIncomplete, "SOURCE_OBJECT_INCOMPLETE")
 
 	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", `{"id":1001,`, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	changedSibling = strings.Replace(string(documents[1]), `"threshold":90`, `"threshold":92`, 1)
+	changedSibling = strings.Replace(string(documents[1]), `"threshold":90`, `"threshold":93`, 1)
 	if err := client.Set(ctx, "bkmonitor.cache.strategy_1002", changedSibling, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -763,14 +802,23 @@ func activationState(
 func twoQueryGroupCatalog(t *testing.T) controlplane.Catalog {
 	t.Helper()
 	documents := realThresholdDocuments(t)
-	second := strings.Replace(string(documents[1]), `"bk_biz_id": 2`, `"bk_biz_id": 3`, 1)
+	var secondValue map[string]any
+	if err := json.Unmarshal(documents[1], &secondValue); err != nil {
+		t.Fatal(err)
+	}
+	secondValue["bk_biz_id"] = 3
+	secondValue["space_uid"] = "bkcc__3"
+	second, err := json.Marshal(secondValue)
+	if err != nil {
+		t.Fatal(err)
+	}
 	planner := queryPlannerFunc(func(_ context.Context, source controlplane.PrimaryQuerySource) (execution.QueryPlanFacts, error) {
 		return queryFactsFor(t, source.Identity.BusinessID, source.Identity.SpaceScope), nil
 	})
 	catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
 		Strategies: []controlplane.SourceStrategy{
 			{SourceID: "1001", Document: documents[0], Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}},
-			{SourceID: "1002", Document: []byte(second), Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "3", SpaceScope: "bkcc__3"}},
+			{SourceID: "1002", Document: second, Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "3", SpaceScope: "bkcc__3"}},
 		},
 		Planner: planner,
 	})
@@ -842,11 +890,7 @@ func mustDigest(t *testing.T, domain string, value any) string {
 
 func newRedisStrategySource(t *testing.T, client redis.Cmdable) *controlplane.LegacyRedisStrategySource {
 	t.Helper()
-	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache", &recordingIdentityResolver{
-		facts: map[string]controlplane.SourceIdentity{
-			"2": {TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
-		},
-	})
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
 	if err != nil {
 		t.Fatal(err)
 	}

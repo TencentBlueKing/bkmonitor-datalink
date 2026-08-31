@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
@@ -25,10 +24,7 @@ func TestLegacyRedisStrategySourceReadsPythonStringContract(t *testing.T) {
 		}
 	}
 
-	resolver := &recordingIdentityResolver{facts: map[string]controlplane.SourceIdentity{
-		"2": {TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
-	}}
-	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache", resolver)
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,15 +38,126 @@ func TestLegacyRedisStrategySourceReadsPythonStringContract(t *testing.T) {
 	if observation.Strategies[0].SourceID != "1001" || observation.Strategies[1].SourceID != "1002" {
 		t.Fatalf("strategy order=%#v", observation.Strategies)
 	}
-	if resolver.calls != 2 { // one business fact per independent stability cycle
-		t.Fatalf("identity resolver calls=%d, want 2", resolver.calls)
+}
+
+func TestLegacyRedisStrategySourceReadsIdentityFromStrategyDocument(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	document := withWireIdentity(t, realThresholdDocuments(t)[0], "tenant-a", "bkcc__2")
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", string(document), 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	strategies, err := source.Strategies(ctx, []string{"1001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}
+	if len(strategies) != 1 || strategies[0].Identity != want || strategies[0].SourceDisposition != nil {
+		t.Fatalf("strategies=%#v, want identity=%#v", strategies, want)
+	}
+}
+
+func TestLegacyRedisStrategySourceIsolatesMissingWireIdentityFromHealthySibling(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	documents := realThresholdDocuments(t)
+	bad := withWireIdentity(t, documents[0], "tenant-a", "bkcc__2")
+	var badObject map[string]any
+	if err := json.Unmarshal(bad, &badObject); err != nil {
+		t.Fatal(err)
+	}
+	delete(badObject, "space_uid")
+	bad, _ = json.Marshal(badObject)
+	healthy := withWireIdentity(t, documents[1], "tenant-a", "bkcc__2")
+	for index, id := range []string{"1001", "1002"} {
+		payload := [][]byte{bad, healthy}[index]
+		if err := client.Set(ctx, "bkmonitor.cache.strategy_"+id, string(payload), 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	strategies, err := source.Strategies(ctx, []string{"1001", "1002"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strategies) != 2 || strategies[0].SourceDisposition == nil ||
+		strategies[0].SourceDisposition.Disposition != controlplane.DispositionSourceIncomplete ||
+		strategies[0].SourceDisposition.Reason != "SOURCE_IDENTITY_UNAVAILABLE" ||
+		strategies[1].Identity.TenantID != "tenant-a" || strategies[1].Identity.SpaceScope != "bkcc__2" {
+		t.Fatalf("strategies=%#v", strategies)
+	}
+	catalog, err := controlplane.BuildCatalog(ctx, controlplane.BuildRequest{Strategies: strategies, Planner: &recordingPlanner{facts: queryFacts(t)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.QueryGroups) != 1 || len(catalog.QueryGroups[0].Plans) != 1 || catalog.QueryGroups[0].Plans[0].Identity.StrategyID != "1002" {
+		t.Fatalf("catalog=%#v", catalog)
+	}
+}
+
+func TestLegacyRedisStrategySourceRejectsInvalidWireIdentityShapes(t *testing.T) {
+	tests := []struct {
+		name  string
+		field string
+		value any
+	}{
+		{name: "missing tenant", field: "bk_tenant_id", value: nil},
+		{name: "empty tenant", field: "bk_tenant_id", value: ""},
+		{name: "non-string tenant", field: "bk_tenant_id", value: 2},
+		{name: "whitespace tenant", field: "bk_tenant_id", value: " tenant-a "},
+		{name: "missing space", field: "space_uid", value: nil},
+		{name: "empty space", field: "space_uid", value: ""},
+		{name: "non-string space", field: "space_uid", value: false},
+		{name: "whitespace space", field: "space_uid", value: " bkcc__2 "},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := newControlplaneRedis(t)
+			ctx := context.Background()
+			var value map[string]any
+			if err := json.Unmarshal(realThresholdDocuments(t)[0], &value); err != nil {
+				t.Fatal(err)
+			}
+			if test.value == nil {
+				delete(value, test.field)
+			} else {
+				value[test.field] = test.value
+			}
+			payload, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", payload, 0).Err(); err != nil {
+				t.Fatal(err)
+			}
+			source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
+			if err != nil {
+				t.Fatal(err)
+			}
+			strategies, err := source.Strategies(ctx, []string{"1001"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(strategies) != 1 || strategies[0].SourceDisposition == nil ||
+				strategies[0].SourceDisposition.Disposition != controlplane.DispositionSourceIncomplete ||
+				strategies[0].SourceDisposition.Reason != "SOURCE_IDENTITY_UNAVAILABLE" {
+				t.Fatalf("strategies=%#v", strategies)
+			}
+		})
 	}
 }
 
 func TestLegacyRedisStrategySourceDistinguishesEmptyAndIncompleteActiveSet(t *testing.T) {
 	client := newControlplaneRedis(t)
 	ctx := context.Background()
-	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache", &recordingIdentityResolver{})
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,16 +179,21 @@ func TestLegacyRedisStrategySourceDistinguishesEmptyAndIncompleteActiveSet(t *te
 	}
 }
 
-func TestLegacyRedisStrategySourceIsolatesMissingExplicitIdentityFact(t *testing.T) {
+func TestLegacyRedisStrategySourceIsolatesOldCacheWithoutIdentityFact(t *testing.T) {
 	client := newControlplaneRedis(t)
 	ctx := context.Background()
 	document := realThresholdDocuments(t)[0]
+	var value map[string]any
+	if err := json.Unmarshal(document, &value); err != nil {
+		t.Fatal(err)
+	}
+	delete(value, "bk_tenant_id")
+	delete(value, "space_uid")
+	document, _ = json.Marshal(value)
 	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", string(document), 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache", &recordingIdentityResolver{
-		errors: map[string]error{"2": &controlplane.SourceFactUnavailableError{BusinessID: "2", Reason: "SPACE_FACT_NOT_FOUND"}},
-	})
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +201,7 @@ func TestLegacyRedisStrategySourceIsolatesMissingExplicitIdentityFact(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(strategies) != 1 || strategies[0].SourceDisposition == nil || strategies[0].SourceDisposition.Reason != "SPACE_FACT_NOT_FOUND" {
+	if len(strategies) != 1 || strategies[0].SourceDisposition == nil || strategies[0].SourceDisposition.Reason != "SOURCE_IDENTITY_UNAVAILABLE" {
 		t.Fatalf("strategies=%#v", strategies)
 	}
 	catalog, err := controlplane.BuildCatalog(ctx, controlplane.BuildRequest{Strategies: strategies, Planner: inertPlanner{}})
@@ -104,15 +216,21 @@ func TestLegacyRedisStrategySourceIsolatesMissingExplicitIdentityFact(t *testing
 func TestLegacyRedisStrategySourceUsesExplicitNegativeBusinessIdentity(t *testing.T) {
 	client := newControlplaneRedis(t)
 	ctx := context.Background()
-	document := strings.Replace(string(realThresholdDocuments(t)[0]), `"bk_biz_id": 2`, `"bk_biz_id": -7`, 1)
+	var value map[string]any
+	if err := json.Unmarshal(realThresholdDocuments(t)[0], &value); err != nil {
+		t.Fatal(err)
+	}
+	value["bk_biz_id"] = -7
+	value["space_uid"] = "custom__42"
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := string(payload)
 	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", document, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache", &recordingIdentityResolver{
-		facts: map[string]controlplane.SourceIdentity{
-			"-7": {TenantID: "tenant-a", BusinessID: "-7", SpaceScope: "custom__42"},
-		},
-	})
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,27 +243,14 @@ func TestLegacyRedisStrategySourceUsesExplicitNegativeBusinessIdentity(t *testin
 	}
 }
 
-func TestLegacyRedisStrategySourceInvalidatesMixedRefreshAndInfrastructureFailure(t *testing.T) {
+func TestLegacyRedisStrategySourceIsolatesMissingDetail(t *testing.T) {
 	client := newControlplaneRedis(t)
 	ctx := context.Background()
 	document := realThresholdDocuments(t)[0]
 	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", string(document), 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache", &recordingIdentityResolver{
-		errors: map[string]error{"2": errors.New("metadata backend unavailable")},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := source.Strategies(ctx, []string{"1001"}); err == nil || errors.Is(err, controlplane.ErrObservationUnstable) {
-		t.Fatalf("infrastructure error=%v", err)
-	}
-
-	resolver := &recordingIdentityResolver{facts: map[string]controlplane.SourceIdentity{
-		"2": {TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
-	}}
-	source, err = controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache", resolver)
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,11 +275,7 @@ func TestLegacyRedisStrategySourceIsolatesStableInvalidDocument(t *testing.T) {
 	if err := client.Set(ctx, "bkmonitor.cache.strategy_1002", string(documents[1]), 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache", &recordingIdentityResolver{
-		facts: map[string]controlplane.SourceIdentity{
-			"2": {TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
-		},
-	})
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,24 +301,6 @@ func TestLegacyRedisStrategySourceIsolatesStableInvalidDocument(t *testing.T) {
 	}
 }
 
-type recordingIdentityResolver struct {
-	facts  map[string]controlplane.SourceIdentity
-	errors map[string]error
-	calls  int
-}
-
-func (resolver *recordingIdentityResolver) ResolveSourceIdentity(_ context.Context, businessID string) (controlplane.SourceIdentity, error) {
-	resolver.calls++
-	if err := resolver.errors[businessID]; err != nil {
-		return controlplane.SourceIdentity{}, err
-	}
-	identity, ok := resolver.facts[businessID]
-	if !ok {
-		return controlplane.SourceIdentity{}, &controlplane.SourceFactUnavailableError{BusinessID: businessID, Reason: "IDENTITY_FACT_NOT_FOUND"}
-	}
-	return identity, nil
-}
-
 type inertPlanner struct{}
 
 func (inertPlanner) CompilePrimaryQuery(context.Context, controlplane.PrimaryQuerySource) (execution.QueryPlanFacts, error) {
@@ -234,5 +317,23 @@ func realThresholdDocuments(t *testing.T) []json.RawMessage {
 	if err := json.Unmarshal(payload, &documents); err != nil {
 		t.Fatal(err)
 	}
+	for index := range documents {
+		documents[index] = withWireIdentity(t, documents[index], "tenant-a", "bkcc__2")
+	}
 	return documents
+}
+
+func withWireIdentity(t *testing.T, document json.RawMessage, tenantID, spaceUID string) json.RawMessage {
+	t.Helper()
+	var value map[string]any
+	if err := json.Unmarshal(document, &value); err != nil {
+		t.Fatal(err)
+	}
+	value["bk_tenant_id"] = tenantID
+	value["space_uid"] = spaceUID
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }

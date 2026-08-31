@@ -46,6 +46,14 @@ func TestQueryFactory_SearchAfterValues(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, []any{json.Number("1745234704000"), "info", json.Number("4281730")}, values)
 
+	values, err = factory.SearchAfterValues(map[string]any{
+		sql_expr.TimeStamp: json.Number("1745234704000"),
+		"level":            nil,
+		sql_expr.Value:     json.Number("4281730"),
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []any{json.Number("1745234704000"), nil, json.Number("4281730")}, values)
+
 	_, err = factory.SearchAfterValues(map[string]any{
 		sql_expr.TimeStamp: json.Number("1745234704000"),
 		"level":            "info",

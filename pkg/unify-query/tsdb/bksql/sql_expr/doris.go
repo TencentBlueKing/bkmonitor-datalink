@@ -400,6 +400,7 @@ type searchAfterField struct {
 	expr    string
 	literal string
 	asc     bool
+	isNull  bool
 }
 
 func (d *DorisSQLExpr) ParserSearchAfter(orders metadata.Orders, values []any) (string, error) {
@@ -416,17 +417,47 @@ func (d *DorisSQLExpr) ParserSearchAfter(orders metadata.Orders, values []any) (
 	for idx, field := range fields {
 		parts := make([]string, 0, idx+1)
 		for previous := 0; previous < idx; previous++ {
-			parts = append(parts, fmt.Sprintf("%s = %s", fields[previous].expr, fields[previous].literal))
+			parts = append(parts, fields[previous].equalCondition())
 		}
-		op := ">"
-		if !field.asc {
-			op = "<"
+
+		strictCondition, compound := field.afterCondition()
+		if strictCondition == "" {
+			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s %s %s", field.expr, op, field.literal))
+		if compound && len(parts) > 0 {
+			strictCondition = fmt.Sprintf("(%s)", strictCondition)
+		}
+		parts = append(parts, strictCondition)
 		conditions = append(conditions, fmt.Sprintf("(%s)", strings.Join(parts, " AND ")))
+	}
+	if len(conditions) == 0 {
+		return "FALSE", nil
 	}
 
 	return fmt.Sprintf("(%s)", strings.Join(conditions, " OR ")), nil
+}
+
+func (f searchAfterField) equalCondition() string {
+	if f.isNull {
+		return fmt.Sprintf("%s IS NULL", f.expr)
+	}
+	return fmt.Sprintf("%s = %s", f.expr, f.literal)
+}
+
+func (f searchAfterField) afterCondition() (condition string, compound bool) {
+	if f.isNull {
+		if f.asc {
+			return fmt.Sprintf("%s IS NOT NULL", f.expr), false
+		}
+		return "", false
+	}
+
+	op := ">"
+	if !f.asc {
+		op = "<"
+		return fmt.Sprintf("%s %s %s OR %s IS NULL", f.expr, op, f.literal, f.expr), true
+	}
+	return fmt.Sprintf("%s %s %s", f.expr, op, f.literal), false
 }
 
 func (d *DorisSQLExpr) ParserSearchAfterFields(orders metadata.Orders) ([]string, error) {
@@ -485,11 +516,15 @@ func (d *DorisSQLExpr) parseSearchAfterFields(orders metadata.Orders, values []a
 
 		field := searchAfterField{expr: fieldExpr, asc: order.Ast}
 		if values != nil {
-			literal, err := d.searchAfterLiteral(values[idx], fieldOption.FieldType)
-			if err != nil {
-				return nil, fmt.Errorf("invalid search_after value for field %s: %w", order.Name, err)
+			if values[idx] == nil {
+				field.isNull = true
+			} else {
+				literal, err := d.searchAfterLiteral(values[idx], fieldOption.FieldType)
+				if err != nil {
+					return nil, fmt.Errorf("invalid search_after value for field %s: %w", order.Name, err)
+				}
+				field.literal = literal
 			}
-			field.literal = literal
 		}
 		fields = append(fields, field)
 	}

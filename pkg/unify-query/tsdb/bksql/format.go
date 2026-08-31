@@ -519,9 +519,6 @@ func (f *QueryFactory) SearchAfterValues(data map[string]any) ([]any, error) {
 			if !ok {
 				return nil, fmt.Errorf("search_after order field %s is missing from query result", order.Name)
 			}
-			if value == nil {
-				return nil, fmt.Errorf("search_after order field %s contains null value", order.Name)
-			}
 			values = append(values, value)
 			continue
 		}
@@ -548,9 +545,6 @@ func (f *QueryFactory) SearchAfterValues(data map[string]any) ([]any, error) {
 		}
 		if !ok {
 			return nil, fmt.Errorf("search_after order field %s is missing from query result", order.Name)
-		}
-		if value == nil {
-			return nil, fmt.Errorf("search_after order field %s contains null value", order.Name)
 		}
 		values = append(values, value)
 	}

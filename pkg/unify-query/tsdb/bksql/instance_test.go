@@ -447,7 +447,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 		if cursor == "" {
 			return searchAfterBaseSQL + searchAfterOrderSQL
 		}
-		return searchAfterBaseSQL + fmt.Sprintf(" AND ((`gseIndex` > 7) OR (`gseIndex` = 7 AND `dtEventTimeStamp` < %d) OR (`gseIndex` = 7 AND `dtEventTimeStamp` = %d AND `iterationIndex` < 2) OR (`gseIndex` = 7 AND `dtEventTimeStamp` = %d AND `iterationIndex` = 2 AND `__unique_key__` < '%s'))", searchAfterTimestamp, searchAfterTimestamp, searchAfterTimestamp, cursor) + searchAfterOrderSQL
+		return searchAfterBaseSQL + fmt.Sprintf(" AND ((`gseIndex` > 7) OR (`gseIndex` = 7 AND (`dtEventTimeStamp` < %d OR `dtEventTimeStamp` IS NULL)) OR (`gseIndex` = 7 AND `dtEventTimeStamp` = %d AND (`iterationIndex` < 2 OR `iterationIndex` IS NULL)) OR (`gseIndex` = 7 AND `dtEventTimeStamp` = %d AND `iterationIndex` = 2 AND (`__unique_key__` < '%s' OR `__unique_key__` IS NULL)))", searchAfterTimestamp, searchAfterTimestamp, searchAfterTimestamp, cursor) + searchAfterOrderSQL
 	}
 	searchAfterResult := func(keys ...string) map[string]any {
 		list := make([]map[string]any, 0, len(keys))
@@ -1589,7 +1589,7 @@ func TestInstance_bkSql(t *testing.T) {
 					{Name: "iterationIndex", Ast: false},
 				},
 			},
-			expected: "SELECT `message`, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_`, `gseIndex` AS `__search_after_0`, `dtEventTimeStamp` AS `__search_after_1`, `iterationIndex` AS `__search_after_2`, `__unique_key__` AS `__search_after_3` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' AND ((`gseIndex` > 4281730) OR (`gseIndex` = 4281730 AND `dtEventTimeStamp` < 1745234704000) OR (`gseIndex` = 4281730 AND `dtEventTimeStamp` = 1745234704000 AND `iterationIndex` < 4) OR (`gseIndex` = 4281730 AND `dtEventTimeStamp` = 1745234704000 AND `iterationIndex` = 4 AND `__unique_key__` < 'log-1')) ORDER BY `gseIndex` ASC, `dtEventTimeStamp` DESC, `iterationIndex` DESC, `__unique_key__` DESC LIMIT 5",
+			expected: "SELECT `message`, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_`, `gseIndex` AS `__search_after_0`, `dtEventTimeStamp` AS `__search_after_1`, `iterationIndex` AS `__search_after_2`, `__unique_key__` AS `__search_after_3` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' AND ((`gseIndex` > 4281730) OR (`gseIndex` = 4281730 AND (`dtEventTimeStamp` < 1745234704000 OR `dtEventTimeStamp` IS NULL)) OR (`gseIndex` = 4281730 AND `dtEventTimeStamp` = 1745234704000 AND (`iterationIndex` < 4 OR `iterationIndex` IS NULL)) OR (`gseIndex` = 4281730 AND `dtEventTimeStamp` = 1745234704000 AND `iterationIndex` = 4 AND (`__unique_key__` < 'log-1' OR `__unique_key__` IS NULL))) ORDER BY `gseIndex` ASC, `dtEventTimeStamp` DESC, `iterationIndex` DESC, `__unique_key__` DESC LIMIT 5",
 		},
 		{
 			name: "query raw",

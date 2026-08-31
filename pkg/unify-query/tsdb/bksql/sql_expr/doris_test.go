@@ -84,7 +84,7 @@ func TestDorisSQLExpr_ParserSearchAfter(t *testing.T) {
 				{Name: "gseIndex", Ast: true},
 			},
 			values: []any{json.Number("1743465646224"), "warning", 4281730.5},
-			want:   "((`dtEventTimeStamp` < 1743465646224) OR (`dtEventTimeStamp` = 1743465646224 AND `level` < 'warning') OR (`dtEventTimeStamp` = 1743465646224 AND `level` = 'warning' AND `gseIndex` > 4.2817305e+06))",
+			want:   "((`dtEventTimeStamp` < 1743465646224 OR `dtEventTimeStamp` IS NULL) OR (`dtEventTimeStamp` = 1743465646224 AND (`level` < 'warning' OR `level` IS NULL)) OR (`dtEventTimeStamp` = 1743465646224 AND `level` = 'warning' AND `gseIndex` > 4.2817305e+06))",
 		},
 		{
 			name: "preserve large integer",
@@ -92,7 +92,7 @@ func TestDorisSQLExpr_ParserSearchAfter(t *testing.T) {
 				{Name: "dtEventTimeStamp", Ast: false},
 			},
 			values: []any{json.Number("11198970968214182562")},
-			want:   "((`dtEventTimeStamp` < 11198970968214182562))",
+			want:   "((`dtEventTimeStamp` < 11198970968214182562 OR `dtEventTimeStamp` IS NULL))",
 		},
 		{
 			name: "boolean value",
@@ -109,15 +109,40 @@ func TestDorisSQLExpr_ParserSearchAfter(t *testing.T) {
 				{Name: "eventTime", Ast: false},
 			},
 			values: []any{"2026-08-28", "2026-08-28 13:05:42.123456"},
-			want:   "((`eventDate` > '2026-08-28') OR (`eventDate` = '2026-08-28' AND `eventTime` < '2026-08-28 13:05:42.123456'))",
+			want:   "((`eventDate` > '2026-08-28') OR (`eventDate` = '2026-08-28' AND (`eventTime` < '2026-08-28 13:05:42.123456' OR `eventTime` IS NULL)))",
 		},
 		{
-			name: "null value",
+			name: "ascending null cursor includes non-null values",
 			orders: metadata.Orders{
 				{Name: "level", Ast: true},
 			},
 			values: []any{nil},
-			err:    "invalid search_after value for field level: null value is unsupported",
+			want:   "((`level` IS NOT NULL))",
+		},
+		{
+			name: "descending cursor includes trailing null values",
+			orders: metadata.Orders{
+				{Name: "level", Ast: false},
+			},
+			values: []any{"warning"},
+			want:   "((`level` < 'warning' OR `level` IS NULL))",
+		},
+		{
+			name: "descending null cursor has no following values",
+			orders: metadata.Orders{
+				{Name: "level", Ast: false},
+			},
+			values: []any{nil},
+			want:   "FALSE",
+		},
+		{
+			name: "null cursor preserves following sort fields",
+			orders: metadata.Orders{
+				{Name: "level", Ast: true},
+				{Name: "gseIndex", Ast: true},
+			},
+			values: []any{nil, 7},
+			want:   "((`level` IS NOT NULL) OR (`level` IS NULL AND `gseIndex` > 7))",
 		},
 		{
 			name: "value count mismatch",

@@ -194,6 +194,7 @@ func (e *Evaluator) evaluateRecord(ctx context.Context, request execution.Evalua
 	}
 	histories := make([]trigger.LevelHistory, len(levels))
 	historyCompleteness := make(map[uint32]execution.HistoryCompleteness, len(levels))
+	activeHistoryGuardReasons := make(map[uint32]execution.ReasonCode, len(levels))
 	effective := make([]trigger.LevelEffectiveTimeFact, len(levels))
 	for i, l := range levels {
 		h, _ := window.History(l.Definition().LevelID)
@@ -202,10 +203,14 @@ func (e *Evaluator) evaluateRecord(ctx context.Context, request execution.Evalua
 			if current.HistoryCompleteness == execution.HistoryGapped ||
 				(current.HistoryCompleteness == execution.HistoryWarming && !warmingConvergence[l.Definition().LevelID]) {
 				completeness = string(current.HistoryCompleteness)
+				if current.GapReasonCode != "" {
+					activeHistoryGuardReasons[l.Definition().LevelID] = current.GapReasonCode
+				}
 			}
 		}
-		if guarded, found := gapCompleteness(request.Gaps, due, l.Definition().LevelID); found {
+		if guarded, reason, found := gapCompleteness(request.Gaps, due, l.Definition().LevelID); found {
 			completeness = guarded
+			activeHistoryGuardReasons[l.Definition().LevelID] = reason
 		}
 		histories[i] = trigger.LevelHistory{LevelID: l.Definition().LevelID, View: historyView{HistoryView: h, completeness: completeness}}
 		summary := histories[i].View.Summarize(record.SourceTime(), l.RequiredDetectHistoryPoints())
@@ -251,6 +256,11 @@ func (e *Evaluator) evaluateRecord(ctx context.Context, request execution.Evalua
 			if reason == "" {
 				reason = execution.ReasonCode(o.SuppressedReason)
 			}
+			if o.HistoryCompleteness != "" {
+				if guarded, found := activeHistoryGuardReasons[o.LevelID]; found {
+					reason = guarded
+				}
+			}
 		}
 		outcomes[i] = execution.LevelOutcome{Plan: due.Identity, LevelID: o.LevelID, SeriesIdentityDigest: series, Record: execution.RecordAnchor{RecordID: record.RecordID(), SourceTime: record.SourceTime()}, Outcome: kind, ReasonCode: reason}
 	}
@@ -266,7 +276,7 @@ func (e *Evaluator) evaluateRecord(ctx context.Context, request execution.Evalua
 	}
 	result := recordResult{outcomes: outcomes}
 	if advance {
-		mutation, err := buildMutation(request, due, record, view, facts, tr.LevelOutcomes, historyCompleteness)
+		mutation, err := buildMutation(request, due, record, view, facts, tr.LevelOutcomes, historyCompleteness, activeHistoryGuardReasons)
 		if err != nil {
 			return recordResult{}, err
 		}
@@ -338,20 +348,20 @@ func levelState(v execution.RuntimeStateView, id uint32) (execution.RuntimeLevel
 	}
 	return execution.RuntimeLevelStateView{}, false
 }
-func gapCompleteness(gaps execution.GapLoadResult, due execution.DuePlan, levelID uint32) (string, bool) {
+func gapCompleteness(gaps execution.GapLoadResult, due execution.DuePlan, levelID uint32) (string, execution.ReasonCode, bool) {
 	gap, ok := gaps.Find(execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration})
 	if !ok || gap.Status != execution.GapFound {
-		return "", false
+		return "", "", false
 	}
 	for _, scope := range gap.Scopes {
 		if !scope.Scope.HasLevel || scope.Scope.LevelID == levelID {
 			if scope.Status == execution.GapStatusGapped {
-				return trigger.HistoryGapped, true
+				return trigger.HistoryGapped, scope.ReasonCode, true
 			}
-			return trigger.HistoryWarming, true
+			return trigger.HistoryWarming, scope.ReasonCode, true
 		}
 	}
-	return "", false
+	return "", "", false
 }
 func applyProvisional(view execution.RuntimeStateView, mutation execution.StateMutation) execution.RuntimeStateView {
 	view.BlobRevision = mutation.ExpectedBlobRevision
@@ -393,7 +403,7 @@ func stateFact(v string) state.LevelFactResult {
 		return state.LevelFactUnavailable
 	}
 }
-func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, facts []detect.LevelFact, outcomes []trigger.LevelOutcomeV2, summaries map[uint32]execution.HistoryCompleteness) (execution.StateMutation, error) {
+func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, facts []detect.LevelFact, outcomes []trigger.LevelOutcomeV2, summaries map[uint32]execution.HistoryCompleteness, activeHistoryGuardReasons map[uint32]execution.ReasonCode) (execution.StateMutation, error) {
 	refs, err := execution.DeriveRuntimeLevelContractRefs(due.CompiledPlan)
 	if err != nil {
 		return execution.StateMutation{}, err
@@ -429,6 +439,10 @@ func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, r
 					reason = execution.ReasonCode(contract.ReasonHistoryGapped)
 				}
 			}
+		}
+		if guarded, found := activeHistoryGuardReasons[r.LevelID]; found &&
+			(completeness == execution.HistoryWarming || completeness == execution.HistoryGapped) {
+			reason = guarded
 		}
 		levels[i] = execution.RuntimeLevelStateMutation{LevelID: r.LevelID, LevelStateCompatibility: r.LevelStateCompatibility, HistoryCompleteness: completeness, GapReasonCode: reason, WarmupRequirementRef: r.WarmupRequirementRef, LastProcessedEventTime: record.SourceTime()}
 	}

@@ -140,7 +140,10 @@ func TestEvaluatorClearsSeriesWarmingOnlyOnFollowingFullSlot(t *testing.T) {
 		t.Fatalf("cold Evaluate()=%v", err)
 	}
 	firstPlan := first.Plans[0]
-	if firstPlan.LevelOutcomes[0].Outcome != execution.LevelOutcomeUnknown || firstPlan.LevelOutcomes[1].Outcome != execution.LevelOutcomeAbnormal || len(firstPlan.StateResults[0].Events) != 1 || firstPlan.StateResults[0].Mutation.Levels[0].HistoryCompleteness != execution.HistoryWarming {
+	if firstPlan.LevelOutcomes[0].Outcome != execution.LevelOutcomeUnknown || firstPlan.LevelOutcomes[0].ReasonCode != execution.ReasonCode(contract.ReasonHistoryWarming) ||
+		firstPlan.LevelOutcomes[1].Outcome != execution.LevelOutcomeAbnormal || len(firstPlan.StateResults[0].Events) != 1 ||
+		firstPlan.StateResults[0].Mutation.Levels[0].HistoryCompleteness != execution.HistoryWarming ||
+		firstPlan.StateResults[0].Mutation.Levels[0].GapReasonCode != execution.ReasonCode(contract.ReasonHistoryWarming) {
 		t.Fatalf("cold slot did not retain its required guard: %+v", firstPlan)
 	}
 
@@ -160,14 +163,53 @@ func TestEvaluatorDoesNotClearLoadedGappedWithoutEvidence(t *testing.T) {
 	req := requestFixture(t, json.RawMessage(`10`), nil)
 	req.State.Items[0].Status = execution.StateFoundGapped
 	req.State.Items[0].Levels[0].HistoryCompleteness = execution.HistoryGapped
-	req.State.Items[0].Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonHistoryGapped)
+	req.State.Items[0].Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonGapSkipped)
 	result, err := newEvaluator(t).Evaluate(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Evaluate()=%v", err)
 	}
 	plan := result.Plans[0]
-	if plan.LevelOutcomes[0].Outcome != execution.LevelOutcomeUnknown || len(plan.StateResults) != 1 || plan.StateResults[0].Mutation.Levels[0].HistoryCompleteness != execution.HistoryGapped || len(plan.StateResults[0].Events) != 0 {
+	if plan.LevelOutcomes[0].Outcome != execution.LevelOutcomeUnknown || plan.LevelOutcomes[0].ReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) ||
+		len(plan.StateResults) != 1 || plan.StateResults[0].Mutation.Levels[0].HistoryCompleteness != execution.HistoryGapped ||
+		plan.StateResults[0].Mutation.Levels[0].GapReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) || len(plan.StateResults[0].Events) != 0 {
 		t.Fatalf("GAPPED was cleared without evidence: %+v", plan)
+	}
+}
+
+func TestEvaluatorPreservesLoadedPlanGapReasonInUnknownOutcomeAndState(t *testing.T) {
+	req := requestFixture(t, json.RawMessage(`10`), nil)
+	due := req.Header.DuePlans[0]
+	applyVersion, err := execution.BuildApplyVersion(req.Header.Contract, due.StateApplyEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Gaps.Items[0] = execution.GapGuardSnapshot{
+		Identity:                execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration},
+		MarkerRevision:          1,
+		PersistedApplyVersion:   applyVersion,
+		PersistedMutationDigest: "gap-digest",
+		Status:                  execution.GapFound,
+		LastScheduleRevision:    due.ScheduleRevision,
+		Scopes: []execution.GapScopeState{{
+			Status:            execution.GapStatusGapped,
+			ReasonCode:        execution.ReasonCode(contract.ReasonGapSkipped),
+			RequiredFullSlots: 1,
+		}},
+	}
+
+	result, err := newEvaluator(t).Evaluate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Evaluate()=%v", err)
+	}
+	plan := result.Plans[0]
+	if len(plan.LevelOutcomes) != 1 || plan.LevelOutcomes[0].Outcome != execution.LevelOutcomeUnknown ||
+		plan.LevelOutcomes[0].ReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) {
+		t.Fatalf("outcome did not preserve GAP_SKIPPED: %+v", plan.LevelOutcomes)
+	}
+	if len(plan.StateResults) != 1 || len(plan.StateResults[0].Mutation.Levels) != 1 ||
+		plan.StateResults[0].Mutation.Levels[0].HistoryCompleteness != execution.HistoryGapped ||
+		plan.StateResults[0].Mutation.Levels[0].GapReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) {
+		t.Fatalf("state did not preserve GAP_SKIPPED: %+v", plan.StateResults)
 	}
 }
 

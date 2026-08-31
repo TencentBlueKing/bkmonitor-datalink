@@ -36,8 +36,9 @@ type RedisStoreOptions struct {
 }
 
 type RedisStore struct {
-	prefix string
-	client *redis.Client
+	prefix     string
+	client     redis.UniversalClient
+	ownsClient bool
 }
 
 func NewRedisStore(options RedisStoreOptions) (*RedisStore, error) {
@@ -54,8 +55,17 @@ func NewRedisStore(options RedisStoreOptions) (*RedisStore, error) {
 			Addr: options.Address, Username: options.Username, Password: options.Password, DB: options.DB,
 			DialTimeout: options.DialTimeout, ReadTimeout: options.ReadTimeout, WriteTimeout: options.WriteTimeout,
 			PoolSize: options.PoolSize,
-		}),
+		}), ownsClient: true,
 	}, nil
+}
+
+// NewRedisStoreWithClient binds ownership facts to a runtime-owned universal
+// Redis client. The caller retains client lifecycle ownership.
+func NewRedisStoreWithClient(client redis.UniversalClient, prefix string) (*RedisStore, error) {
+	if client == nil || prefix == "" || strings.ContainsAny(prefix, "{} \t\r\n") {
+		return nil, errors.New("alarmd ownership: Redis client and canonical prefix are required")
+	}
+	return &RedisStore{prefix: prefix, client: client}, nil
 }
 
 func (store *RedisStore) Ping(ctx context.Context) error {
@@ -66,7 +76,7 @@ func (store *RedisStore) Ping(ctx context.Context) error {
 }
 
 func (store *RedisStore) Close() error {
-	if store == nil || store.client == nil {
+	if store == nil || store.client == nil || !store.ownsClient {
 		return nil
 	}
 	return store.client.Close()

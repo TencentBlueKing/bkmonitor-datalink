@@ -32,6 +32,74 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
 
+func TestProductionPhaseTwoBundleUsesCanonicalSourceAndRuntimeRedisOverride(t *testing.T) {
+	sourceAddress, sourceClient := startPhaseTwoRedis(t)
+	runtimeAddress, runtimeClient := startPhaseTwoRedis(t)
+	ctx := context.Background()
+	strategyDocument, err := os.ReadFile("testdata/g1_full_threshold_strategy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sourceClient.Set(ctx, "alarm-config.strategy_ids", `[1001,1002]`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sourceClient.Set(ctx, "alarm-config.strategy_1001", strategyDocument, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`{"series":[],"status":null,"trace_id":"unused","is_partial":false,"result_table_id":[]}`))
+	}))
+	defer uqServer.Close()
+	cfg := validGoAccessRuntimeConfig()
+	cfg.Redis.Address = sourceAddress
+	cfg.Redis.StatePrefix = "alarmd:phase-two:g1:v1"
+	runtimeRedis := cfg.Redis.Connection()
+	runtimeRedis.Address = runtimeAddress
+	cfg.PhaseTwo.RuntimeRedis = &runtimeRedis
+	cfg.PhaseTwo.Worker.DeploymentProfile = config.DeploymentProfileG1
+	cfg.PhaseTwo.G1Validation.StrategyIDs = []string{"1001"}
+	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
+
+	bundle, err := openProductionPhaseTwoBundleWithDependencies(
+		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime),
+		newPhaseTwoApplicationHealth(),
+		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
+			return controlplane.NewLegacyRedisStrategySource(client, prefix)
+		},
+		phaseTwoProductionExternalDependencies{
+			Now: time.Now, HTTPClient: uqServer.Client(),
+			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
+				return &recordingPhaseTwoEventSink{}, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("openProductionPhaseTwoBundleWithDependencies() error = %v", err)
+	}
+	if err := bundle.Start(ctx); err != nil {
+		t.Fatalf("phase-two production Start() error = %v", err)
+	}
+	if len(bundle.queryGroups) != 1 {
+		t.Fatalf("selected strategies compiled to Query Groups = %v, want exactly one", bundle.queryGroups)
+	}
+	sourceKeys, err := sourceClient.Keys(ctx, cfg.Redis.StatePrefix+"*").Result()
+	if err != nil || len(sourceKeys) != 0 {
+		t.Fatalf("top-level StrategySource Redis contains runtime keys %v, error=%v", sourceKeys, err)
+	}
+	runtimeKeys, err := runtimeClient.Keys(ctx, cfg.Redis.StatePrefix+"*").Result()
+	if err != nil || len(runtimeKeys) == 0 {
+		t.Fatalf("runtime Redis keys = %v, error=%v, want Go-owned facts", runtimeKeys, err)
+	}
+	if sourceClient.Exists(ctx, "alarm-config.strategy_1002").Val() != 0 {
+		t.Fatal("test unexpectedly provisioned the unselected strategy object")
+	}
+	if err := bundle.Shutdown(ctx); err != nil {
+		t.Fatalf("phase-two production Shutdown() error = %v", err)
+	}
+}
+
 func TestProductionPhaseTwoBundleExecutesFullNonEmptySlotEndToEnd(t *testing.T) {
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()

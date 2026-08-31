@@ -17,7 +17,6 @@ import (
 	"net"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -97,18 +96,11 @@ func (c KafkaConfig) outputCoordinates(output KafkaOutputConfig) enginekafka.Dec
 }
 
 type RedisConfig struct {
-	Address       string   `yaml:"address"`
-	Username      string   `yaml:"username"`
-	Password      string   `yaml:"password"`
-	DB            int      `yaml:"db"`
-	DialTimeout   Duration `yaml:"dial_timeout"`
-	ReadTimeout   Duration `yaml:"read_timeout"`
-	WriteTimeout  Duration `yaml:"write_timeout"`
-	PoolSize      int      `yaml:"pool_size"`
-	StatePrefix   string   `yaml:"state_prefix"`
-	MinTTL        Duration `yaml:"min_ttl"`
-	MaxTTL        Duration `yaml:"max_ttl"`
-	RestartMargin Duration `yaml:"restart_margin"`
+	RedisConnectionConfig `yaml:",inline"`
+	StatePrefix           string   `yaml:"state_prefix"`
+	MinTTL                Duration `yaml:"min_ttl"`
+	MaxTTL                Duration `yaml:"max_ttl"`
+	RestartMargin         Duration `yaml:"restart_margin"`
 }
 
 type DependencyRetryConfig struct {
@@ -157,8 +149,9 @@ func Default() Config {
 			MessageReceipt: KafkaOutputConfig{MaxMessageBytes: defaultOutputMaxMessageBytes},
 		},
 		Redis: RedisConfig{
-			DialTimeout: Duration(3 * time.Second), ReadTimeout: Duration(3 * time.Second),
-			WriteTimeout: Duration(3 * time.Second), PoolSize: 16,
+			RedisConnectionConfig: RedisConnectionConfig{Mode: RedisModeStandalone,
+				DialTimeout: Duration(3 * time.Second), ReadTimeout: Duration(3 * time.Second),
+				WriteTimeout: Duration(3 * time.Second), PoolSize: 16},
 			MinTTL: Duration(time.Minute), MaxTTL: Duration(30 * 24 * time.Hour), RestartMargin: Duration(10 * time.Minute),
 		},
 		Limits: defaultLimits(),
@@ -182,6 +175,29 @@ func (c Config) RedisBackendOptions() state.RedisBackendOptions {
 		DialTimeout: c.Redis.DialTimeout.Duration(), ReadTimeout: c.Redis.ReadTimeout.Duration(),
 		WriteTimeout: c.Redis.WriteTimeout.Duration(), PoolSize: c.Redis.PoolSize,
 	}
+}
+
+func (c RedisConfig) Connection() RedisConnectionConfig {
+	return c.RedisConnectionConfig.clone()
+}
+
+func (c Config) StrategySourceRedis() RedisConnectionConfig {
+	return c.Redis.Connection()
+}
+
+func (c Config) ResolvedRuntimeRedis() RedisConnectionConfig {
+	if c.PhaseTwo.RuntimeRedis != nil {
+		return c.PhaseTwo.RuntimeRedis.clone()
+	}
+	return c.Redis.Connection()
+}
+
+func (c *Config) resolvePhaseTwoRuntimeRedis() {
+	if c == nil || c.Input.Mode != InputModeGoAccess || c.PhaseTwo.RuntimeRedis != nil {
+		return
+	}
+	resolved := c.Redis.Connection()
+	c.PhaseTwo.RuntimeRedis = &resolved
 }
 
 func (c Config) StateStoreOptions(codec *state.Codec, router state.StorageRouter, observer state.Observer) state.StoreOptions {
@@ -218,6 +234,7 @@ func (c Config) EvaluationRunnerLimits() coordinator.ConcurrentRunnerLimits {
 func Load(path string) (Config, error) {
 	cfg := Default()
 	if path == "" {
+		cfg.resolvePhaseTwoRuntimeRedis()
 		return cfg, cfg.Validate()
 	}
 
@@ -240,6 +257,7 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
 
+	cfg.resolvePhaseTwoRuntimeRedis()
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -311,6 +329,12 @@ func (c Config) validateGoAccessRuntime() error {
 		return err
 	}
 	if err := c.PhaseTwo.validate(); err != nil {
+		return err
+	}
+	if err := c.ResolvedRuntimeRedis().validate("phase_two.runtime_redis"); err != nil {
+		return err
+	}
+	if err := validateRuntimePrefixIsolation(c.Redis.StatePrefix, c.PhaseTwo.Control.StrategyCachePrefix); err != nil {
 		return err
 	}
 	budget := c.PhaseTwo.Coordinator
@@ -386,14 +410,10 @@ func (c Config) validateSharedRuntime() error {
 }
 
 func (c Config) validateRedis() error {
-	if c.Redis.Address == "" || strings.TrimSpace(c.Redis.Address) != c.Redis.Address {
-		return errors.New("redis address must be non-empty canonical text")
+	if err := c.Redis.Connection().validate("redis"); err != nil {
+		return err
 	}
-	if c.Redis.DB < 0 || c.Redis.DialTimeout.Duration() <= 0 || c.Redis.ReadTimeout.Duration() <= 0 ||
-		c.Redis.WriteTimeout.Duration() <= 0 || c.Redis.PoolSize <= 0 {
-		return errors.New("redis db, timeouts and pool_size are invalid")
-	}
-	if strings.TrimSpace(c.Redis.StatePrefix) == "" || strings.TrimSpace(c.Redis.StatePrefix) != c.Redis.StatePrefix {
+	if !canonicalRedisPrefix(c.Redis.StatePrefix) {
 		return errors.New("redis state_prefix must be non-empty canonical text")
 	}
 	if c.Redis.MinTTL.Duration() <= 0 || c.Redis.MaxTTL.Duration() < c.Redis.MinTTL.Duration() || c.Redis.RestartMargin.Duration() < 0 {

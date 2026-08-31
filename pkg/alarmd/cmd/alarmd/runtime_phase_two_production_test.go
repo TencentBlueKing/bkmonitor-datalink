@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -127,6 +128,38 @@ func TestProductionPhaseTwoControlConfirmsColdStartBeforeInitialActivation(t *te
 	if reconciler.calls != 2 || waits != 1 || activator.calls != 1 || activator.publication != publication {
 		t.Fatalf("cold-start calls refresh/wait/activate=%d/%d/%d publication=%+v",
 			reconciler.calls, waits, activator.calls, activator.publication)
+	}
+}
+
+func TestProductionPhaseTwoControlRejectsG1SnapshotWithoutExactlyOneQueryGroup(t *testing.T) {
+	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-1", PublicationEpoch: 1}
+	for name, groups := range map[string][]controlplane.QueryGroup{
+		"empty":    {},
+		"multiple": {{Identity: "query-group-1"}, {Identity: "query-group-2"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			reconciler := &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{{
+				Status: controlplane.SourceRefreshPublished, Observation: "observation-1", Publication: publication,
+			}}}
+			repository := &fakeProductionCatalogRepository{snapshot: controlplane.PublishedSnapshot{
+				Publication: publication, QueryGroups: groups,
+			}}
+			activator := &fakeInitialScheduleActivator{state: controlplane.ActivationState{
+				RecordRevision: 1, Current: publication,
+			}}
+			control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+				Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
+				Activator: activator, Repository: repository, RefreshInterval: time.Second,
+				Wait: func(context.Context, time.Duration) error { return nil },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := control.InitialRefresh(context.Background()); err == nil ||
+				!strings.Contains(err.Error(), "exactly one Query Group") {
+				t.Fatalf("InitialRefresh() error = %v, want exact-one G1 rejection", err)
+			}
+		})
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -128,19 +129,42 @@ func openProductionPhaseTwoBundleWithDependencies(
 		HistoryCellSemanticsVersion: stateSemantics.HistoryCellSemanticsVersion,
 	}
 
-	controlClient := redis.NewClient(productionRedisOptions(cfg.Redis))
+	sourceConnection := cfg.StrategySourceRedis()
+	runtimeConnection := cfg.ResolvedRuntimeRedis()
+	controlClient, err := openProductionRedis(ctx, sourceConnection)
+	if err != nil {
+		return nil, err
+	}
 	controlClosed := false
 	defer func() {
 		if resultErr != nil && !controlClosed {
 			resultErr = errors.Join(resultErr, controlClient.Close())
 		}
 	}()
-	if err := controlClient.Ping(ctx).Err(); err != nil {
-		return nil, err
+	runtimeClient := controlClient
+	runtimeClientIsSource := reflect.DeepEqual(runtimeConnection, sourceConnection)
+	if !runtimeClientIsSource {
+		runtimeClient, err = openProductionRedis(ctx, runtimeConnection)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if resultErr != nil {
+				resultErr = errors.Join(resultErr, runtimeClient.Close())
+			}
+		}()
 	}
 	strategySource, err := newStrategySource(controlClient, cfg.PhaseTwo.Control.StrategyCachePrefix)
 	if err != nil {
 		return nil, err
+	}
+	if len(cfg.PhaseTwo.G1Validation.StrategyIDs) > 0 {
+		strategySource, err = controlplane.NewActiveIDStrategySourceView(
+			strategySource, cfg.PhaseTwo.G1Validation.StrategyIDs,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 	planner, err := controlplane.NewLegacyPrimaryQueryCompiler(
 		execution.ProviderRouteRef(cfg.PhaseTwo.Control.ProviderRoute),
@@ -151,7 +175,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		return nil, err
 	}
 	repository, err := controlplane.NewRedisCatalogRepository(
-		controlClient, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog"), cfg.PhaseTwo.Control.CatalogTTL.Duration(),
+		runtimeClient, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog"), cfg.PhaseTwo.Control.CatalogTTL.Duration(),
 	)
 	if err != nil {
 		return nil, err
@@ -183,34 +207,20 @@ func openProductionPhaseTwoBundleWithDependencies(
 		return nil, err
 	}
 
-	ownershipStore, err := ownership.NewRedisStore(ownership.RedisStoreOptions{
-		Address: cfg.Redis.Address, Username: cfg.Redis.Username, Password: cfg.Redis.Password, DB: cfg.Redis.DB,
-		Prefix: productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "ownership"), DialTimeout: cfg.Redis.DialTimeout.Duration(),
-		ReadTimeout: cfg.Redis.ReadTimeout.Duration(), WriteTimeout: cfg.Redis.WriteTimeout.Duration(), PoolSize: cfg.Redis.PoolSize,
-	})
+	ownershipStore, err := ownership.NewRedisStoreWithClient(
+		runtimeClient, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "ownership"),
+	)
 	if err != nil {
 		return nil, err
 	}
-	ownershipClosed := false
-	defer func() {
-		if resultErr != nil && !ownershipClosed {
-			resultErr = errors.Join(resultErr, ownershipStore.Close())
-		}
-	}()
 	if err := ownershipStore.Ping(ctx); err != nil {
 		return nil, err
 	}
 
-	stateBackend, err := state.NewRedisBackend(cfg.RedisBackendOptions())
+	stateBackend, err := state.NewRedisBackendWithClient(productionRedisAddress(runtimeConnection), runtimeClient)
 	if err != nil {
 		return nil, err
 	}
-	stateClosed := false
-	defer func() {
-		if resultErr != nil && !stateClosed {
-			resultErr = errors.Join(resultErr, stateBackend.Close())
-		}
-	}()
 	if err := stateBackend.Ping(ctx); err != nil {
 		return nil, err
 	}
@@ -302,23 +312,16 @@ func openProductionPhaseTwoBundleWithDependencies(
 		Config: cfg, Health: health, Control: control, Ownership: productionOwnership, Observer: observer, Now: external.Now,
 		CloseResources: func(shutdownCtx context.Context) error {
 			eventsClosed = true
-			stateClosed = true
-			return errors.Join(events.Shutdown(shutdownCtx), stateBackend.Close())
+			if runtimeClientIsSource {
+				return events.Shutdown(shutdownCtx)
+			}
+			return errors.Join(events.Shutdown(shutdownCtx), runtimeClient.Close())
 		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	ownershipClosed = true
 	return bundle, nil
-}
-
-func productionRedisOptions(redisConfig config.RedisConfig) *redis.Options {
-	return &redis.Options{
-		Addr: redisConfig.Address, Username: redisConfig.Username, Password: redisConfig.Password, DB: redisConfig.DB,
-		DialTimeout: redisConfig.DialTimeout.Duration(), ReadTimeout: redisConfig.ReadTimeout.Duration(),
-		WriteTimeout: redisConfig.WriteTimeout.Duration(), PoolSize: redisConfig.PoolSize,
-	}
 }
 
 func productionPhaseTwoPrefix(prefix, component string) string {

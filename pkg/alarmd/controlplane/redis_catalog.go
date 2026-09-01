@@ -306,6 +306,11 @@ func (repository *RedisCatalogRepository) LoadPublishedSnapshot(
 	}
 	revision, err := repository.client.Get(ctx, repository.publicationKey(publication.PublicationEpoch)).Result()
 	if errors.Is(err, redis.Nil) {
+		revision, err = repository.client.HGet(
+			ctx, repository.legacyPublicationsByEpochKey(), strconv.FormatUint(publication.PublicationEpoch, 10),
+		).Result()
+	}
+	if errors.Is(err, redis.Nil) {
 		if snapshot.Publication != publication {
 			return PublishedSnapshot{}, ErrSnapshotUnavailable
 		}
@@ -553,6 +558,9 @@ func (repository *RedisCatalogRepository) publicationKeyPrefix() string {
 }
 func (repository *RedisCatalogRepository) publicationKey(epoch uint64) string {
 	return repository.publicationKeyPrefix() + strconv.FormatUint(epoch, 10)
+}
+func (repository *RedisCatalogRepository) legacyPublicationsByEpochKey() string {
+	return repository.prefix + ":publications_by_epoch"
 }
 func (repository *RedisCatalogRepository) auditKey(observation string) string {
 	return repository.prefix + ":audit:" + observation

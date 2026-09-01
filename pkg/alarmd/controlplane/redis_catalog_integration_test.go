@@ -155,6 +155,60 @@ func TestRedisCatalogRepositoryExpiresPublicationOccurrencesIndependently(t *tes
 	}
 }
 
+func TestRedisCatalogRepositoryLoadsHistoricalOccurrenceFromLegacyHashWithoutRenewingTTL(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	prefix := "alarmd:control:legacy-occurrence-hash"
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstCatalog := validCatalog(t, 80)
+	first, _, err := repository.PublishCatalog(ctx, firstCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repository.PublishCatalog(ctx, validCatalog(t, 81)); err != nil {
+		t.Fatal(err)
+	}
+	republished, _, err := repository.PublishCatalog(ctx, firstCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstKey := prefix + ":publication:" + strconv.FormatUint(first.Publication.PublicationEpoch, 10)
+	if err := client.Del(ctx, firstKey).Err(); err != nil {
+		t.Fatal(err)
+	}
+	legacyHash := prefix + ":publications_by_epoch"
+	if err := client.HSet(ctx, legacyHash, strconv.FormatUint(first.Publication.PublicationEpoch, 10),
+		string(first.Publication.SnapshotRevision)).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.PExpire(ctx, legacyHash, 10*time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+	latestRevisionEpoch, err := client.Get(ctx, prefix+":snapshot_epoch:"+string(first.Publication.SnapshotRevision)).Result()
+	if err != nil || latestRevisionEpoch != strconv.FormatUint(republished.Publication.PublicationEpoch, 10) {
+		t.Fatalf("latest revision occurrence=(%q,%v), republished=%#v", latestRevisionEpoch, err, republished.Publication)
+	}
+	before, err := client.PTTL(ctx, legacyHash).Result()
+	if err != nil || before <= 0 {
+		t.Fatalf("legacy Hash TTL before=(%s,%v)", before, err)
+	}
+	loaded, err := repository.LoadPublishedSnapshot(ctx, first.Publication)
+	if err != nil || loaded.Publication != first.Publication || !reflect.DeepEqual(loaded.QueryGroups, first.QueryGroups) {
+		t.Fatalf("legacy historical occurrence=(%#v,%v), first=%#v", loaded, err, first)
+	}
+	after, err := client.PTTL(ctx, legacyHash).Result()
+	if err != nil || after <= 0 || after > before {
+		t.Fatalf("legacy Hash TTL after=(%s,%v), before=%s", after, err, before)
+	}
+	if count, err := client.Exists(ctx, firstKey).Result(); err != nil || count != 0 {
+		t.Fatalf("legacy occurrence was migrated=(%d,%v)", count, err)
+	}
+}
+
 func TestRedisCatalogRepositoryRejectsStalePublicationExpectations(t *testing.T) {
 	for _, test := range []struct {
 		name      string

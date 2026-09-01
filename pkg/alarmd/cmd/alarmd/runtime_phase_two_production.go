@@ -268,12 +268,20 @@ type productionCatalogRepository interface {
 	LoadSnapshot(context.Context, execution.SnapshotRevision) (controlplane.PublishedSnapshot, error)
 }
 
+type productionScheduleProjection interface {
+	ReadInitialFrozenSchedule(context.Context, execution.QueryGroupIdentity) (execution.FrozenQueryGroupSchedule, error)
+	ReadFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.FrozenQueryGroupSchedule, error)
+	ReadScheduleRetirement(context.Context, execution.QueryGroupIdentity) (execution.EvaluationTime, bool, error)
+}
+
 type productionPhaseTwoControlDependencies struct {
 	Source          controlplane.StrategySource
 	Planner         controlplane.PrimaryQueryCompiler
 	Reconciler      productionSourceReconciler
 	Activator       productionInitialScheduleActivator
 	Repository      productionCatalogRepository
+	Schedules       productionScheduleProjection
+	Progress        productionPhaseTwoProgressReader
 	RefreshInterval time.Duration
 	Wait            func(context.Context, time.Duration) error
 	Close           func() error
@@ -287,7 +295,8 @@ func newProductionPhaseTwoControl(
 	dependencies productionPhaseTwoControlDependencies,
 ) (*productionPhaseTwoControl, error) {
 	if dependencies.Source == nil || dependencies.Planner == nil || dependencies.Reconciler == nil ||
-		dependencies.Activator == nil || dependencies.Repository == nil || dependencies.RefreshInterval <= 0 ||
+		dependencies.Activator == nil || dependencies.Repository == nil || dependencies.Schedules == nil ||
+		dependencies.Progress == nil || dependencies.RefreshInterval <= 0 ||
 		dependencies.Wait == nil {
 		return nil, errors.New("phase-two production Control dependencies are incomplete")
 	}
@@ -402,6 +411,70 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 			return nil, errors.New("phase-two active Snapshot contains duplicate Query Groups")
 		}
 	}
+	active := make(map[execution.QueryGroupIdentity]struct{}, len(queryGroups)+len(state.Draining))
+	for _, queryGroup := range queryGroups {
+		active[queryGroup] = struct{}{}
+	}
+	for _, draining := range state.Draining {
+		if _, current := active[draining.QueryGroup]; current {
+			return nil, errors.New("phase-two Query Group cannot be current and draining")
+		}
+		retiredAt, retired, err := runtime.dependencies.Schedules.ReadScheduleRetirement(ctx, draining.QueryGroup)
+		if err != nil {
+			return nil, err
+		}
+		if !retired || retiredAt != draining.RetiredBoundary {
+			return nil, errors.New("phase-two draining projection differs from persisted Schedule retirement")
+		}
+		identity := execution.ProgressIdentity{QueryGroup: draining.QueryGroup}
+		load, err := runtime.dependencies.Progress.LoadProgress(ctx, identity)
+		if err != nil {
+			return nil, err
+		}
+		if err := load.Validate(identity); err != nil {
+			return nil, err
+		}
+		drained := load.Status == execution.ProgressFound && load.Progress.NextSlot >= draining.RetiredBoundary
+		if load.Status == execution.ProgressMissing {
+			initial, err := runtime.dependencies.Schedules.ReadInitialFrozenSchedule(ctx, draining.QueryGroup)
+			if err != nil {
+				return nil, err
+			}
+			for {
+				if err := initial.Validate(); err != nil || initial.Segment.QueryGroup != draining.QueryGroup {
+					return nil, errors.New("phase-two draining Schedule is invalid")
+				}
+				if _, hasSlot := initial.FirstSlot(); hasSlot {
+					break
+				}
+				if initial.Segment.End == nil || *initial.Segment.End > draining.RetiredBoundary {
+					return nil, errors.New("phase-two draining Schedule does not reach its retirement boundary")
+				}
+				if *initial.Segment.End == draining.RetiredBoundary {
+					drained = true
+					break
+				}
+				next, err := runtime.dependencies.Schedules.ReadFrozenSchedule(
+					ctx, draining.QueryGroup, *initial.Segment.End,
+				)
+				if err != nil {
+					return nil, err
+				}
+				if next.Segment.Start != *initial.Segment.End {
+					return nil, errors.New("phase-two draining Schedule Segments are not adjacent")
+				}
+				initial = next
+			}
+		}
+		if !drained {
+			active[draining.QueryGroup] = struct{}{}
+		}
+	}
+	queryGroups = queryGroups[:0]
+	for queryGroup := range active {
+		queryGroups = append(queryGroups, queryGroup)
+	}
+	sort.Slice(queryGroups, func(left, right int) bool { return queryGroups[left] < queryGroups[right] })
 	return queryGroups, nil
 }
 
@@ -449,6 +522,7 @@ type productionPhaseTwoOwnershipStore interface {
 type productionPhaseTwoSlotCatalog interface {
 	ReadInitialFrozenSchedule(context.Context, execution.QueryGroupIdentity) (execution.FrozenQueryGroupSchedule, error)
 	ReadFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.FrozenQueryGroupSchedule, error)
+	ReadScheduleRetirement(context.Context, execution.QueryGroupIdentity) (execution.EvaluationTime, bool, error)
 	FreezeSlotContract(context.Context, execution.FreezeSlotContractRequest) (execution.FrozenSlotContractFact, error)
 }
 

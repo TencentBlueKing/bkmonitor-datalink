@@ -29,6 +29,7 @@ type AssignmentReader interface {
 type SlotCatalogReader interface {
 	ReadInitialFrozenSchedule(context.Context, execution.QueryGroupIdentity) (execution.FrozenQueryGroupSchedule, error)
 	ReadFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.FrozenQueryGroupSchedule, error)
+	ReadScheduleRetirement(context.Context, execution.QueryGroupIdentity) (execution.EvaluationTime, bool, error)
 	FreezeSlotContract(context.Context, execution.FreezeSlotContractRequest) (execution.FrozenSlotContractFact, error)
 }
 
@@ -96,9 +97,20 @@ func (source *ProductionSlotSource) Next(
 	if load.Status == execution.ProgressMissing {
 		schedule, err = source.catalog.ReadInitialFrozenSchedule(ctx, source.queryGroup)
 		if err == nil {
-			nextSlot, _ = schedule.FirstSlot()
+			var retired bool
+			schedule, nextSlot, retired, err = source.firstAvailableSchedule(ctx, schedule)
+			if retired {
+				return FrozenSlot{}, false, nil
+			}
 		}
 	} else {
+		retired, retirementErr := source.isRetiredBoundary(ctx, load.Progress.NextSlot)
+		if retirementErr != nil {
+			return FrozenSlot{}, false, retirementErr
+		}
+		if retired {
+			return FrozenSlot{}, false, nil
+		}
 		schedule, nextSlot, err = source.nextSlotAfterProgress(ctx, *load.Progress)
 	}
 	if err != nil {
@@ -146,6 +158,17 @@ func (source *ProductionSlotSource) Next(
 		return FrozenSlot{}, false, err
 	}
 	return slot, true, nil
+}
+
+func (source *ProductionSlotSource) isRetiredBoundary(
+	ctx context.Context,
+	boundary execution.EvaluationTime,
+) (bool, error) {
+	retiredAt, retired, err := source.catalog.ReadScheduleRetirement(ctx, source.queryGroup)
+	if err != nil || !retired {
+		return false, err
+	}
+	return retiredAt == boundary, nil
 }
 
 func (source *ProductionSlotSource) nextSlotAfterProgress(
@@ -201,11 +224,47 @@ func (source *ProductionSlotSource) firstSuccessorSchedule(
 	if successor.Segment.QueryGroup != source.queryGroup || successor.Segment.Start != boundary {
 		return execution.FrozenQueryGroupSchedule{}, 0, ErrScheduleFactsInvalid
 	}
-	next, ok := successor.FirstSlot()
-	if !ok {
+	successor, next, retired, err := source.firstAvailableSchedule(ctx, successor)
+	if err != nil {
+		return execution.FrozenQueryGroupSchedule{}, 0, err
+	}
+	if retired {
 		return execution.FrozenQueryGroupSchedule{}, 0, ErrScheduleFactsInvalid
 	}
 	return successor, next, nil
+}
+
+func (source *ProductionSlotSource) firstAvailableSchedule(
+	ctx context.Context,
+	schedule execution.FrozenQueryGroupSchedule,
+) (execution.FrozenQueryGroupSchedule, execution.EvaluationTime, bool, error) {
+	for {
+		if err := schedule.Validate(); err != nil || schedule.Segment.QueryGroup != source.queryGroup {
+			return execution.FrozenQueryGroupSchedule{}, 0, false, ErrScheduleFactsInvalid
+		}
+		if next, ok := schedule.FirstSlot(); ok {
+			return schedule, next, false, nil
+		}
+		if schedule.Segment.End == nil {
+			return execution.FrozenQueryGroupSchedule{}, 0, false, ErrScheduleFactsInvalid
+		}
+		boundary := *schedule.Segment.End
+		retired, err := source.isRetiredBoundary(ctx, boundary)
+		if err != nil {
+			return execution.FrozenQueryGroupSchedule{}, 0, false, err
+		}
+		if retired {
+			return schedule, boundary, true, nil
+		}
+		successor, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, boundary)
+		if err != nil {
+			return execution.FrozenQueryGroupSchedule{}, 0, false, err
+		}
+		if successor.Segment.Start != boundary {
+			return execution.FrozenQueryGroupSchedule{}, 0, false, ErrScheduleFactsInvalid
+		}
+		schedule = successor
+	}
 }
 
 func (source *ProductionSlotSource) currentOwnership(

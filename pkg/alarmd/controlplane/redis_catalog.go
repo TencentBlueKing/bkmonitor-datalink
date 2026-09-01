@@ -59,6 +59,11 @@ type PlanActivationRecord struct {
 	Publication SnapshotPublicationRef       `json:"publication"`
 }
 
+type DrainingQueryGroup struct {
+	QueryGroup      execution.QueryGroupIdentity `json:"query_group"`
+	RetiredBoundary execution.EvaluationTime     `json:"retired_boundary"`
+}
+
 // ActivationState is storage for the one activation fact owned by module 02.
 // This package supplies persistence and reads only; SnapshotPublisher never
 // mutates activation.
@@ -68,6 +73,7 @@ type ActivationState struct {
 	Current        SnapshotPublicationRef  `json:"current"`
 	Pending        *SnapshotPublicationRef `json:"pending,omitempty"`
 	Plans          []PlanActivationRecord  `json:"plans"`
+	Draining       []DrainingQueryGroup    `json:"draining,omitempty"`
 }
 
 type ActivationExpectation struct {
@@ -371,7 +377,7 @@ func validateActivationState(state ActivationState) error {
 	if state.SchemaVersion != "" && state.SchemaVersion != activationSchemaVersion {
 		return errors.New("alarmd controlplane: unsupported activation schema")
 	}
-	if state.RecordRevision == 0 || state.Current.validate() != nil || len(state.Plans) == 0 {
+	if state.RecordRevision == 0 || state.Current.validate() != nil {
 		return errors.New("alarmd controlplane: incomplete activation state")
 	}
 	if state.Pending != nil && state.Pending.validate() != nil {
@@ -407,6 +413,16 @@ func validateActivationState(state ActivationState) error {
 		if selected.Identity != record.Fact.Plan || selected.StateGeneration == "" || selected.StateApplyEpoch == 0 || selected.ScheduleRevision == "" || selected.RequiredFullSlots == 0 {
 			return errors.New("alarmd controlplane: incomplete activated Plan")
 		}
+	}
+	seenDraining := make(map[execution.QueryGroupIdentity]struct{}, len(state.Draining))
+	for _, draining := range state.Draining {
+		if draining.QueryGroup == "" || draining.RetiredBoundary <= 0 {
+			return errors.New("alarmd controlplane: invalid draining Query Group")
+		}
+		if _, duplicate := seenDraining[draining.QueryGroup]; duplicate {
+			return errors.New("alarmd controlplane: duplicate draining Query Group")
+		}
+		seenDraining[draining.QueryGroup] = struct{}{}
 	}
 	return nil
 }

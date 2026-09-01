@@ -83,6 +83,32 @@ func TestScheduleCutoverCreatesAdjacentHalfOpenSegments(t *testing.T) {
 	}
 }
 
+func TestScheduleCutoverAllowsOldSegmentReplacedBeforeItsFirstSlot(t *testing.T) {
+	boundary := execution.EvaluationTime(90)
+	oldSchedule := baselineSchedule(t, "query-group", 60, 83, &boundary, "snapshot-old", 7)
+	newSchedule := baselineSchedule(t, "query-group", 60, boundary, nil, "snapshot-new", 8)
+	fact := execution.ScheduleCutoverFact{OldSegment: oldSchedule.Segment, NewSegment: newSchedule.Segment}
+
+	if err := fact.Validate(oldSchedule, newSchedule); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if first, ok := oldSchedule.FirstSlot(); ok {
+		t.Fatalf("old FirstSlot() = (%d, %t), want no owned Slot", first, ok)
+	}
+	if due := oldSchedule.DuePlanRefs(boundary); len(due) != 0 {
+		t.Fatalf("old Segment owns boundary due Plans: %+v", due)
+	}
+	if due := oldSchedule.DuePlanRefs(120); len(due) != 0 {
+		t.Fatalf("old Segment owns post-boundary due Plans: %+v", due)
+	}
+	if first, ok := newSchedule.FirstSlot(); !ok || first != 120 {
+		t.Fatalf("new FirstSlot() = (%d, %t), want (120, true)", first, ok)
+	}
+	if due := newSchedule.DuePlanRefs(boundary); len(due) != 0 {
+		t.Fatalf("new Segment fabricated a non-grid boundary Slot: %+v", due)
+	}
+}
+
 func TestFrozenSlotRejectsTamperedDeadlineAfterDigestRecomputed(t *testing.T) {
 	plans, requirements := baseDuePlanAndRequirements()
 	spec := execution.ScheduleSpec{EvaluationIntervalSeconds: 60, Alignment: 0, Timezone: "UTC"}

@@ -245,7 +245,8 @@ func TestProductionPhaseTwoControlConfirmsColdStartBeforeInitialActivation(t *te
 	waits := 0
 	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
 		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
-		Activator: activator, Repository: repository, RefreshInterval: time.Second,
+		Activator: activator, Repository: repository, Schedules: &fakeScheduleProjection{},
+		Progress: &fakeProductionProgressReader{}, RefreshInterval: time.Second,
 		Wait: func(context.Context, time.Duration) error { waits++; return nil },
 	})
 	if err != nil {
@@ -271,7 +272,8 @@ func TestProductionPhaseTwoControlLoadsAllActiveQueryGroups(t *testing.T) {
 	}
 	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
 		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: &fakeSourceReconciler{},
-		Activator: &fakeInitialScheduleActivator{}, Repository: repository, RefreshInterval: time.Second,
+		Activator: &fakeInitialScheduleActivator{}, Repository: repository, Schedules: &fakeScheduleProjection{},
+		Progress: &fakeProductionProgressReader{}, RefreshInterval: time.Second,
 		Wait: func(context.Context, time.Duration) error { return nil },
 	})
 	if err != nil {
@@ -280,6 +282,82 @@ func TestProductionPhaseTwoControlLoadsAllActiveQueryGroups(t *testing.T) {
 	queryGroups, err := control.LoadActive(context.Background())
 	if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-1", "query-group-2"}) {
 		t.Fatalf("LoadActive() = %v, %v", queryGroups, err)
+	}
+}
+
+func TestProductionPhaseTwoControlDrainsRetiredQueryGroupBeforeRemovingIt(t *testing.T) {
+	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-new", PublicationEpoch: 2}
+	boundary := execution.EvaluationTime(90)
+	retired := execution.QueryGroupIdentity("query-group-old")
+	repository := &fakeProductionCatalogRepository{
+		activation: controlplane.ActivationState{RecordRevision: 2, Current: publication,
+			Draining: []controlplane.DrainingQueryGroup{{QueryGroup: retired, RetiredBoundary: boundary}}},
+		snapshot: controlplane.PublishedSnapshot{Publication: publication,
+			QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-new"}}},
+	}
+	schedules := &fakeScheduleProjection{
+		initial: map[execution.QueryGroupIdentity]execution.FrozenQueryGroupSchedule{
+			retired: schedulerScheduleForProductionControl(t, retired, 60, 60, &boundary),
+		},
+		retired: map[execution.QueryGroupIdentity]execution.EvaluationTime{retired: boundary},
+	}
+	progress := &fakeProductionProgressReader{byGroup: map[execution.QueryGroupIdentity]execution.ProgressLoadResult{
+		retired: {Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+			Identity: execution.ProgressIdentity{QueryGroup: retired}, NextSlot: 60,
+		}},
+	}}
+	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: &fakeSourceReconciler{},
+		Activator: &fakeInitialScheduleActivator{}, Repository: repository, Schedules: schedules, Progress: progress,
+		RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryGroups, err := control.LoadActive(context.Background())
+	if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-new", retired}) {
+		t.Fatalf("draining active projection=(%v,%v)", queryGroups, err)
+	}
+	progress.byGroup[retired] = execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+		Identity: execution.ProgressIdentity{QueryGroup: retired}, NextSlot: boundary, LastFullSlot: 60,
+		LastCompletionKind: execution.CompletionFull,
+	}}
+	queryGroups, err = control.LoadActive(context.Background())
+	if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-new"}) {
+		t.Fatalf("drained active projection=(%v,%v)", queryGroups, err)
+	}
+}
+
+func TestProductionPhaseTwoControlRemovesRetiredZeroSlotQueryGroupWithoutProgress(t *testing.T) {
+	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-new", PublicationEpoch: 2}
+	boundary := execution.EvaluationTime(90)
+	retired := execution.QueryGroupIdentity("query-group-old")
+	repository := &fakeProductionCatalogRepository{
+		activation: controlplane.ActivationState{RecordRevision: 2, Current: publication,
+			Draining: []controlplane.DrainingQueryGroup{{QueryGroup: retired, RetiredBoundary: boundary}}},
+		snapshot: controlplane.PublishedSnapshot{Publication: publication,
+			QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-new"}}},
+	}
+	schedules := &fakeScheduleProjection{
+		initial: map[execution.QueryGroupIdentity]execution.FrozenQueryGroupSchedule{
+			retired: schedulerScheduleForProductionControl(t, retired, 60, 83, &boundary),
+		},
+		retired: map[execution.QueryGroupIdentity]execution.EvaluationTime{retired: boundary},
+	}
+	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: &fakeSourceReconciler{},
+		Activator: &fakeInitialScheduleActivator{}, Repository: repository, Schedules: schedules,
+		Progress: &fakeProductionProgressReader{byGroup: map[execution.QueryGroupIdentity]execution.ProgressLoadResult{
+			retired: {Status: execution.ProgressMissing},
+		}},
+		RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryGroups, err := control.LoadActive(context.Background())
+	if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-new"}) {
+		t.Fatalf("zero-Slot retired active projection=(%v,%v)", queryGroups, err)
 	}
 }
 
@@ -295,7 +373,8 @@ func TestProductionPhaseTwoControlKeepsCurrentActivationWhileCandidateIsPending(
 	activator := &fakeInitialScheduleActivator{}
 	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
 		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
-		Activator: activator, Repository: repository, RefreshInterval: time.Second,
+		Activator: activator, Repository: repository, Schedules: &fakeScheduleProjection{},
+		Progress: &fakeProductionProgressReader{}, RefreshInterval: time.Second,
 		Wait: func(context.Context, time.Duration) error { return errors.New("unexpected wait") },
 	})
 	if err != nil {
@@ -354,6 +433,92 @@ type fakeInitialScheduleActivator struct {
 	state       controlplane.ActivationState
 	publication controlplane.SnapshotPublicationRef
 	calls       int
+}
+
+type fakeScheduleProjection struct {
+	initial map[execution.QueryGroupIdentity]execution.FrozenQueryGroupSchedule
+	retired map[execution.QueryGroupIdentity]execution.EvaluationTime
+}
+
+func (projection *fakeScheduleProjection) ReadInitialFrozenSchedule(
+	_ context.Context,
+	queryGroup execution.QueryGroupIdentity,
+) (execution.FrozenQueryGroupSchedule, error) {
+	schedule, ok := projection.initial[queryGroup]
+	if !ok {
+		return execution.FrozenQueryGroupSchedule{}, errors.New("missing initial Schedule")
+	}
+	return schedule, nil
+}
+
+func (projection *fakeScheduleProjection) ReadFrozenSchedule(
+	_ context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	evaluationTime execution.EvaluationTime,
+) (execution.FrozenQueryGroupSchedule, error) {
+	schedule, ok := projection.initial[queryGroup]
+	if !ok || !schedule.Segment.Contains(evaluationTime) {
+		return execution.FrozenQueryGroupSchedule{}, errors.New("missing frozen Schedule")
+	}
+	return schedule, nil
+}
+
+func (projection *fakeScheduleProjection) ReadScheduleRetirement(
+	_ context.Context,
+	queryGroup execution.QueryGroupIdentity,
+) (execution.EvaluationTime, bool, error) {
+	boundary, ok := projection.retired[queryGroup]
+	return boundary, ok, nil
+}
+
+type fakeProductionProgressReader struct {
+	byGroup map[execution.QueryGroupIdentity]execution.ProgressLoadResult
+}
+
+func (reader *fakeProductionProgressReader) LoadProgress(
+	_ context.Context,
+	identity execution.ProgressIdentity,
+) (execution.ProgressLoadResult, error) {
+	result, ok := reader.byGroup[identity.QueryGroup]
+	if !ok {
+		return execution.ProgressLoadResult{}, errors.New("missing Progress fixture")
+	}
+	return result, nil
+}
+
+func schedulerScheduleForProductionControl(
+	t *testing.T,
+	queryGroup execution.QueryGroupIdentity,
+	interval int64,
+	start execution.EvaluationTime,
+	end *execution.EvaluationTime,
+) execution.FrozenQueryGroupSchedule {
+	t.Helper()
+	spec := execution.ScheduleSpec{EvaluationIntervalSeconds: interval, Timezone: "UTC"}
+	planRevision, err := execution.DerivePlanScheduleRevision(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := execution.FrozenPlanSchedule{
+		Identity:         execution.PlanIdentity{TenantID: "tenant-a", BusinessID: "2", StrategyID: "1001"},
+		ScheduleRevision: planRevision, Spec: spec,
+	}
+	queryRevision, err := execution.DeriveQueryGroupScheduleRevision([]execution.FrozenPlanSchedule{plan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedule := execution.FrozenQueryGroupSchedule{
+		Segment: execution.ScheduleSegmentFact{
+			Publication: execution.SnapshotPublicationRef{SnapshotRevision: "snapshot-old", PublicationEpoch: 1},
+			QueryGroup:  queryGroup, QueryRevision: "query-old", ScheduleRevision: queryRevision,
+			Start: start, End: end,
+		},
+		Plans: []execution.FrozenPlanSchedule{plan},
+	}
+	if err := schedule.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return schedule
 }
 
 func (activator *fakeInitialScheduleActivator) Ensure(
@@ -752,6 +917,10 @@ func (unavailableSlotCatalog) ReadInitialFrozenSchedule(context.Context, executi
 
 func (unavailableSlotCatalog) ReadFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.FrozenQueryGroupSchedule, error) {
 	return execution.FrozenQueryGroupSchedule{}, errors.New("unexpected schedule read")
+}
+
+func (unavailableSlotCatalog) ReadScheduleRetirement(context.Context, execution.QueryGroupIdentity) (execution.EvaluationTime, bool, error) {
+	return 0, false, errors.New("unexpected schedule read")
 }
 
 func (unavailableSlotCatalog) FreezeSlotContract(context.Context, execution.FreezeSlotContractRequest) (execution.FrozenSlotContractFact, error) {

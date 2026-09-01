@@ -891,6 +891,204 @@ func TestInitialScheduleActivatorConcurrentCASKeepsWinnerFact(t *testing.T) {
 	}
 }
 
+func TestScheduleActivationReconcilerPersistsOnePublicationBoundaryAndExactHalfOpenSlots(t *testing.T) {
+	client := newControlplaneRedis(t)
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:publication-cutover", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCatalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
+	oldSnapshot, _, err := repository.PublishCatalog(context.Background(), oldCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	clock := []time.Time{time.Unix(83, 0), time.Unix(90, 0)}
+	clockCalls := 0
+	reconciler, err := controlplane.NewScheduleActivationReconciler(repository, compiler, stateSemantics, func() time.Time {
+		at := clock[clockCalls]
+		clockCalls++
+		return at
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Ensure(context.Background(), oldSnapshot.Publication); err != nil {
+		t.Fatal(err)
+	}
+
+	newCatalog := catalogWithSchedule(t, validCatalog(t, 81), 60, 0)
+	newSnapshot, _, err := repository.PublishCatalog(context.Background(), newCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := reconciler.Ensure(context.Background(), newSnapshot.Publication)
+	if err != nil || state.Current != newSnapshot.Publication || state.RecordRevision != 2 {
+		t.Fatalf("publication cutover=(%#v, %v)", state, err)
+	}
+	if clockCalls != 2 {
+		t.Fatalf("publication clock calls=%d, want 2", clockCalls)
+	}
+	if _, err := reconciler.Ensure(context.Background(), newSnapshot.Publication); err != nil || clockCalls != 2 {
+		t.Fatalf("winner reload error=%v clock calls=%d", err, clockCalls)
+	}
+
+	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, stateSemantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryGroup := oldCatalog.QueryGroups[0].Identity
+	oldSchedule, err := runtime.ReadFrozenSchedule(context.Background(), queryGroup, 83)
+	if err != nil || oldSchedule.Segment.End == nil || *oldSchedule.Segment.End != 90 {
+		t.Fatalf("old half-open Segment=(%#v, %v)", oldSchedule, err)
+	}
+	if first, ok := oldSchedule.FirstSlot(); ok || first != 120 {
+		t.Fatalf("old [83,90) first Slot=(%d,%t), want candidate 120 without ownership", first, ok)
+	}
+	newSchedule, err := runtime.ReadFrozenSchedule(context.Background(), queryGroup, 90)
+	if err != nil || newSchedule.Segment.Start != 90 || newSchedule.Segment.Publication.SnapshotRevision != newSnapshot.Publication.SnapshotRevision {
+		t.Fatalf("new half-open Segment=(%#v, %v)", newSchedule, err)
+	}
+	if first, ok := newSchedule.FirstSlot(); !ok || first != 120 {
+		t.Fatalf("new [90,+inf) first Slot=(%d,%t), want 120", first, ok)
+	}
+	if oldSchedule.Segment.Contains(90) || oldSchedule.Segment.Contains(120) || newSchedule.Segment.Contains(83) {
+		t.Fatalf("Segment ownership overlaps: old=%#v new=%#v", oldSchedule.Segment, newSchedule.Segment)
+	}
+}
+
+func TestScheduleActivationReconcilerConcurrentCASLoserReadsWinnerBoundary(t *testing.T) {
+	client := newControlplaneRedis(t)
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:publication-cutover-race", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCatalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
+	oldSnapshot, _, err := repository.PublishCatalog(context.Background(), oldCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	initial, err := controlplane.NewScheduleActivationReconciler(repository, compiler, stateSemantics, func() time.Time {
+		return time.Unix(60, 0)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := initial.Ensure(context.Background(), oldSnapshot.Publication); err != nil {
+		t.Fatal(err)
+	}
+	newCatalog := catalogWithSchedule(t, validCatalog(t, 81), 60, 0)
+	newSnapshot, _, err := repository.PublishCatalog(context.Background(), newCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var entered sync.WaitGroup
+	entered.Add(2)
+	release := make(chan struct{})
+	newClock := func(unix int64) func() time.Time {
+		return func() time.Time {
+			entered.Done()
+			<-release
+			return time.Unix(unix, 0)
+		}
+	}
+	first, err := controlplane.NewScheduleActivationReconciler(repository, compiler, stateSemantics, newClock(90))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := controlplane.NewScheduleActivationReconciler(repository, compiler, stateSemantics, newClock(97))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		state controlplane.ActivationState
+		err   error
+	}
+	results := make(chan result, 2)
+	go func() {
+		state, runErr := first.Ensure(context.Background(), newSnapshot.Publication)
+		results <- result{state: state, err: runErr}
+	}()
+	go func() {
+		state, runErr := second.Ensure(context.Background(), newSnapshot.Publication)
+		results <- result{state: state, err: runErr}
+	}()
+	entered.Wait()
+	close(release)
+	one, two := <-results, <-results
+	if one.err != nil || two.err != nil || !reflect.DeepEqual(one.state, two.state) || one.state.RecordRevision != 2 {
+		t.Fatalf("concurrent publication activations states=(%#v,%#v) errors=(%v,%v)", one.state, two.state, one.err, two.err)
+	}
+	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, stateSemantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedule, err := runtime.ReadFrozenSchedule(context.Background(), oldCatalog.QueryGroups[0].Identity, 100)
+	if err != nil || (schedule.Segment.Start != 90 && schedule.Segment.Start != 97) {
+		t.Fatalf("winner cutover boundary=(%#v,%v)", schedule, err)
+	}
+}
+
+func TestScheduleActivationReconcilerProjectsQueryIdentityChangeAsIndependentNewAndRetiredGroups(t *testing.T) {
+	client := newControlplaneRedis(t)
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:query-identity-cutover", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCatalog := catalogWithQueryTable(t, "system.cpu")
+	oldSnapshot, _, err := repository.PublishCatalog(context.Background(), oldCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	clock := []time.Time{time.Unix(60, 0), time.Unix(90, 0)}
+	clockCalls := 0
+	reconciler, err := controlplane.NewScheduleActivationReconciler(repository, compiler, stateSemantics, func() time.Time {
+		at := clock[clockCalls]
+		clockCalls++
+		return at
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Ensure(context.Background(), oldSnapshot.Publication); err != nil {
+		t.Fatal(err)
+	}
+
+	newCatalog := catalogWithQueryTable(t, "system.mem")
+	newSnapshot, _, err := repository.PublishCatalog(context.Background(), newCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := reconciler.Ensure(context.Background(), newSnapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldGroup := oldCatalog.QueryGroups[0].Identity
+	newGroup := newCatalog.QueryGroups[0].Identity
+	if oldGroup == newGroup || len(state.Draining) != 1 || state.Draining[0].QueryGroup != oldGroup || state.Draining[0].RetiredBoundary != 90 {
+		t.Fatalf("query identity transition old=%s new=%s draining=%#v", oldGroup, newGroup, state.Draining)
+	}
+	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, stateSemantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retiredAt, retired, err := runtime.ReadScheduleRetirement(context.Background(), oldGroup)
+	if err != nil || !retired || retiredAt != 90 {
+		t.Fatalf("old Query Group retirement=(%d,%t,%v)", retiredAt, retired, err)
+	}
+	newSchedule, err := runtime.ReadInitialFrozenSchedule(context.Background(), newGroup)
+	if err != nil || newSchedule.Segment.Start != 90 {
+		t.Fatalf("new Query Group activation=(%#v,%v)", newSchedule, err)
+	}
+	next, err := runtime.NextSlotAfter(context.Background(), oldGroup, 60)
+	if err != nil || next != 90 {
+		t.Fatalf("retired Query Group terminal Progress watermark=(%d,%v), want 90", next, err)
+	}
+}
+
 func TestRedisCatalogRuntimePersistsInitialScheduleAndFreezesExactSlot(t *testing.T) {
 	client := newControlplaneRedis(t)
 	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:runtime", time.Hour)
@@ -1188,6 +1386,27 @@ func twoQueryGroupCatalog(t *testing.T) controlplane.Catalog {
 	})
 	if err != nil || len(catalog.QueryGroups) != 2 {
 		t.Fatalf("two Query Group catalog=(%#v, %v)", catalog, err)
+	}
+	return catalog
+}
+
+func catalogWithQueryTable(t *testing.T, tableID string) controlplane.Catalog {
+	t.Helper()
+	document := realThresholdDocuments(t)[0]
+	planner := queryPlannerFunc(func(context.Context, controlplane.PrimaryQuerySource) (execution.QueryPlanFacts, error) {
+		facts := queryFacts(t)
+		facts.QueryRevision = ""
+		facts.QueryList = append([]execution.QueryClause(nil), facts.QueryList...)
+		facts.QueryList[0].TableID = tableID
+		return execution.BuildQueryPlanFacts(facts)
+	})
+	catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
+		Strategies: []controlplane.SourceStrategy{{SourceID: "1001", Document: document,
+			Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}}},
+		Planner: planner,
+	})
+	if err != nil || len(catalog.QueryGroups) != 1 {
+		t.Fatalf("query table catalog=(%#v,%v)", catalog, err)
 	}
 	return catalog
 }

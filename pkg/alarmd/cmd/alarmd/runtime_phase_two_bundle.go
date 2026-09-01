@@ -178,7 +178,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	activator, err := controlplane.NewInitialScheduleActivator(repository, compiler, strategySemantics, external.Now)
+	activator, err := controlplane.NewScheduleActivationReconciler(repository, compiler, strategySemantics, external.Now)
 	if err != nil {
 		return nil, err
 	}
@@ -188,19 +188,6 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
-		Source: strategySource, Planner: planner, Reconciler: reconciler, Activator: activator,
-		Repository: repository, RefreshInterval: cfg.PhaseTwo.Control.RefreshInterval.Duration(),
-		Wait: waitProductionControl,
-		Close: func() error {
-			controlClosed = true
-			return controlClient.Close()
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-
 	ownershipStore, err := ownership.NewRedisStoreWithClient(
 		runtimeClient, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "ownership"),
 	)
@@ -232,6 +219,18 @@ func openProductionPhaseTwoBundleWithDependencies(
 	progressStore, err := progress.NewStore(progress.StoreOptions{
 		Prefix: productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "schedule"), Control: ownershipStore,
 		Slots: catalog, Now: external.Now,
+	})
+	if err != nil {
+		return nil, err
+	}
+	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+		Source: strategySource, Planner: planner, Reconciler: reconciler, Activator: activator,
+		Repository: repository, Schedules: catalog, Progress: progressStore,
+		RefreshInterval: cfg.PhaseTwo.Control.RefreshInterval.Duration(), Wait: waitProductionControl,
+		Close: func() error {
+			controlClosed = true
+			return controlClient.Close()
+		},
 	})
 	if err != nil {
 		return nil, err

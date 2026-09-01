@@ -46,6 +46,23 @@ func TestProductionSlotSourceColdStartUsesFirstSegment(t *testing.T) {
 	}
 }
 
+func TestProductionSlotSourceColdStartSkipsClosedZeroSlotSegment(t *testing.T) {
+	boundary := execution.EvaluationTime(90)
+	oldSchedule := schedulerSchedule(t, 60, 83, &boundary, "snapshot-old", 7)
+	newSchedule := schedulerSchedule(t, 60, boundary, nil, "snapshot-new", 8)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{oldSchedule, newSchedule}}
+	source := newProductionSlotSourceForTest(t, catalog, missingProgress(), time.Unix(200, 0))
+
+	slot, due, err := source.Next(context.Background(), "query-group-1")
+	if err != nil || !due {
+		t.Fatalf("Next() due=%v error=%v", due, err)
+	}
+	if slot.Contract.Slot.EvaluationTime != 120 || slot.Contract.ScheduleSegmentStart != boundary ||
+		slot.Contract.SnapshotRevision != "snapshot-new" {
+		t.Fatalf("cold-start successor Slot=%#v, want new Segment Slot 120", slot.Contract)
+	}
+}
+
 func TestProductionSlotSourceCrossesCutoverWithoutSecondProgressIdentity(t *testing.T) {
 	boundary := execution.EvaluationTime(75)
 	oldSchedule := schedulerSchedule(t, 60, 30, &boundary, "snapshot-old", 7)
@@ -150,6 +167,36 @@ func TestProductionSlotSourceBoundaryBelongsOnlyToNewSegment(t *testing.T) {
 	}
 	if slot.Contract.ScheduleRevision != newSchedule.Segment.ScheduleRevision || slot.Contract.ScheduleSegmentStart != boundary {
 		t.Fatalf("boundary Slot provenance = %+v", slot.Contract)
+	}
+}
+
+func TestProductionSlotSourceRetiredProgressHasNoSuccessorSlot(t *testing.T) {
+	boundary := execution.EvaluationTime(90)
+	schedule := schedulerSchedule(t, 60, 60, &boundary, "snapshot-retired", 9)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}, retiredAt: &boundary}
+	source := newProductionSlotSourceForTest(t, catalog, foundProgress(boundary, 60), time.Unix(200, 0))
+
+	_, due, err := source.Next(context.Background(), "query-group-1")
+	if err != nil || due {
+		t.Fatalf("retired Next() due=%v error=%v", due, err)
+	}
+	if len(catalog.requests) != 0 {
+		t.Fatalf("retired Query Group froze a successor Slot: %#v", catalog.requests)
+	}
+}
+
+func TestProductionSlotSourceRetiredZeroSlotSegmentHasNoFabricatedSlot(t *testing.T) {
+	boundary := execution.EvaluationTime(90)
+	schedule := schedulerSchedule(t, 60, 83, &boundary, "snapshot-retired", 9)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}, retiredAt: &boundary}
+	source := newProductionSlotSourceForTest(t, catalog, missingProgress(), time.Unix(200, 0))
+
+	_, due, err := source.Next(context.Background(), "query-group-1")
+	if err != nil || due {
+		t.Fatalf("zero-Slot retired Next() due=%v error=%v", due, err)
+	}
+	if len(catalog.requests) != 0 {
+		t.Fatalf("zero-Slot retired Segment froze a Slot: %#v", catalog.requests)
 	}
 }
 
@@ -317,6 +364,7 @@ type fakeSlotCatalog struct {
 	readTimes        []execution.EvaluationTime
 	requests         []execution.FreezeSlotContractRequest
 	progressIdentity execution.ProgressIdentity
+	retiredAt        *execution.EvaluationTime
 }
 
 func (catalog *fakeSlotCatalog) ReadInitialFrozenSchedule(
@@ -357,6 +405,16 @@ func (catalog *fakeSlotCatalog) FreezeSlotContract(
 		}
 	}
 	return frozenSlotContractFact(catalog.t, schedule, request), nil
+}
+
+func (catalog *fakeSlotCatalog) ReadScheduleRetirement(
+	context.Context,
+	execution.QueryGroupIdentity,
+) (execution.EvaluationTime, bool, error) {
+	if catalog.retiredAt == nil {
+		return 0, false, nil
+	}
+	return *catalog.retiredAt, true, nil
 }
 
 func frozenSlotContractFact(

@@ -227,7 +227,7 @@ func (schedule FrozenQueryGroupSchedule) Validate() error {
 	if revision != schedule.Segment.ScheduleRevision {
 		return errors.New("alarmd execution: Segment revision does not match active Plan schedules")
 	}
-	if _, ok := schedule.FirstSlot(); !ok {
+	if _, ok := schedule.FirstSlot(); !ok && schedule.Segment.End == nil {
 		return errors.New("alarmd execution: Schedule Segment contains no legal Slot")
 	}
 	return nil

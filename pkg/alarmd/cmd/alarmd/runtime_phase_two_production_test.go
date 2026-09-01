@@ -361,6 +361,49 @@ func TestProductionPhaseTwoControlRemovesRetiredZeroSlotQueryGroupWithoutProgres
 	}
 }
 
+func TestProductionPhaseTwoControlIsolatesInvalidDrainingQueryGroup(t *testing.T) {
+	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-current", PublicationEpoch: 3}
+	boundary := execution.EvaluationTime(90)
+	bad := execution.QueryGroupIdentity("query-group-bad-draining")
+	repository := &fakeProductionCatalogRepository{
+		activation: controlplane.ActivationState{RecordRevision: 3, Current: publication,
+			Draining: []controlplane.DrainingQueryGroup{{QueryGroup: bad, RetiredBoundary: boundary}}},
+		snapshot: controlplane.PublishedSnapshot{Publication: publication,
+			QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-healthy"}}},
+	}
+	schedules := &fakeScheduleProjection{
+		initial: map[execution.QueryGroupIdentity]execution.FrozenQueryGroupSchedule{
+			bad: schedulerScheduleForProductionControl(t, bad, 60, 60, &boundary),
+		},
+		retired: map[execution.QueryGroupIdentity]execution.EvaluationTime{bad: boundary},
+	}
+	progress := &fakeProductionProgressReader{byGroup: map[execution.QueryGroupIdentity]execution.ProgressLoadResult{
+		bad: {Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+			Identity: execution.ProgressIdentity{QueryGroup: "wrong-query-group"}, NextSlot: 60,
+		}},
+	}}
+	var observations []observability.Observation
+	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: &fakeSourceReconciler{},
+		Activator: &fakeInitialScheduleActivator{}, Repository: repository, Schedules: schedules, Progress: progress,
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		}),
+		RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryGroups, err := control.LoadActive(context.Background())
+	if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
+		t.Fatalf("isolated active projection=(%v,%v)", queryGroups, err)
+	}
+	if len(observations) != 1 || observations[0].Result != observability.ResultDegraded ||
+		observations[0].Trace.QueryGroupKey != string(bad) || observations[0].Err == nil {
+		t.Fatalf("draining isolation observation=%#v", observations)
+	}
+}
+
 func TestProductionPhaseTwoControlKeepsCurrentActivationWhileCandidateIsPending(t *testing.T) {
 	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-current", PublicationEpoch: 2}
 	reconciler := &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{{
@@ -461,6 +504,14 @@ func (projection *fakeScheduleProjection) ReadFrozenSchedule(
 		return execution.FrozenQueryGroupSchedule{}, errors.New("missing frozen Schedule")
 	}
 	return schedule, nil
+}
+
+func (projection *fakeScheduleProjection) ReadSuccessorFrozenSchedule(
+	context.Context,
+	execution.QueryGroupIdentity,
+	execution.EvaluationTime,
+) (execution.FrozenQueryGroupSchedule, error) {
+	return execution.FrozenQueryGroupSchedule{}, errors.New("missing successor Schedule")
 }
 
 func (projection *fakeScheduleProjection) ReadScheduleRetirement(
@@ -921,6 +972,10 @@ func (unavailableSlotCatalog) ReadFrozenSchedule(context.Context, execution.Quer
 
 func (unavailableSlotCatalog) ReadScheduleRetirement(context.Context, execution.QueryGroupIdentity) (execution.EvaluationTime, bool, error) {
 	return 0, false, errors.New("unexpected schedule read")
+}
+
+func (unavailableSlotCatalog) ReadSuccessorFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.FrozenQueryGroupSchedule, error) {
+	return execution.FrozenQueryGroupSchedule{}, errors.New("unexpected schedule read")
 }
 
 func (unavailableSlotCatalog) FreezeSlotContract(context.Context, execution.FreezeSlotContractRequest) (execution.FrozenSlotContractFact, error) {

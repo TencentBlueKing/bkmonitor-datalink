@@ -93,8 +93,8 @@ func TestProductionSlotSourceCrossesCutoverWithoutSecondProgressIdentity(t *test
 		newSlot.Contract.ScheduleSegmentStart != boundary || newSlot.Contract.Slot.EvaluationTime != 90 {
 		t.Fatalf("new Slot = %+v", newSlot)
 	}
-	if !reflect.DeepEqual(catalog.readTimes, []execution.EvaluationTime{60, boundary}) {
-		t.Fatalf("ReadFrozenSchedule times = %v, want completed Slot then successor Segment", catalog.readTimes)
+	if !reflect.DeepEqual(catalog.readTimes, []execution.EvaluationTime{60}) {
+		t.Fatalf("ReadFrozenSchedule times = %v, want completed Slot before explicit successor read", catalog.readTimes)
 	}
 	if catalog.progressIdentity != (execution.ProgressIdentity{QueryGroup: "query-group-1"}) {
 		t.Fatalf("Progress identity = %+v", catalog.progressIdentity)
@@ -387,6 +387,20 @@ func (catalog *fakeSlotCatalog) ReadFrozenSchedule(
 	for _, schedule := range catalog.schedules {
 		if schedule.Segment.QueryGroup == queryGroup && schedule.Segment.Contains(at) {
 			return schedule, nil
+		}
+	}
+	return execution.FrozenQueryGroupSchedule{}, ErrProgressOffSchedule
+}
+
+func (catalog *fakeSlotCatalog) ReadSuccessorFrozenSchedule(
+	_ context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	segmentEnd execution.EvaluationTime,
+) (execution.FrozenQueryGroupSchedule, error) {
+	for index := 1; index < len(catalog.schedules); index++ {
+		previous := catalog.schedules[index-1]
+		if previous.Segment.QueryGroup == queryGroup && previous.Segment.End != nil && *previous.Segment.End == segmentEnd {
+			return catalog.schedules[index], nil
 		}
 	}
 	return execution.FrozenQueryGroupSchedule{}, ErrProgressOffSchedule

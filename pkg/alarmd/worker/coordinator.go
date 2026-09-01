@@ -134,7 +134,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	err = coordinator.ports.Sequencer.Sequence(ctx, sequencingScope(stream.header, stream.stateItems, stream.gapItems), func(sequenceCtx context.Context) error {
 		var executeErr error
 		result, executeErr = coordinator.finalizePrepared(
-			sequenceCtx, request, stream.header, stream.bindings, stream.state, stream.evaluated,
+			sequenceCtx, request, stream.header, stream.bindings, stream.state, stream.gaps, stream.evaluated,
 		)
 		return executeErr
 	})
@@ -466,6 +466,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePrepared(
 	header execution.InternalExecutionHeader,
 	bindings []execution.NamedInputBinding,
 	loadedState execution.StatePreflightResult,
+	loadedGaps execution.GapLoadResult,
 	evaluated execution.EvaluationResult,
 ) (execution.SlotExecutionResult, error) {
 	var err error
@@ -473,6 +474,15 @@ func (coordinator *SlotExecutionCoordinator) finalizePrepared(
 	guardActivations, err := coordinator.loadActivations(ctx, activationRequest)
 	if err != nil {
 		return activationRetry(execution.ReasonCode(contract.ReasonProviderUnavailable)), nil
+	}
+	forced := unsatisfiedForcedWarmingActivations(guardActivations, loadedGaps)
+	if len(forced.Facts) > 0 {
+		if err := coordinator.ensureActivatedPlanGaps(
+			ctx, request, execution.ReasonCode(contract.ReasonConfigDrift), forced,
+		); err != nil {
+			return execution.SlotExecutionResult{}, err
+		}
+		return activationRetry(execution.ReasonCode(contract.ReasonConfigDrift)), nil
 	}
 
 	planResults := append([]execution.PlanEvaluationResult(nil), evaluated.Plans...)
@@ -609,6 +619,27 @@ func (coordinator *SlotExecutionCoordinator) finalizePrepared(
 		Contract: request.Contract, Kind: completionKind, Primary: &primary,
 		Result: completionResult, ReasonCode: completionReason,
 	})
+}
+
+func unsatisfiedForcedWarmingActivations(
+	activations execution.PlanActivationResult,
+	loaded execution.GapLoadResult,
+) execution.PlanActivationResult {
+	result := execution.PlanActivationResult{Contract: activations.Contract}
+	for _, fact := range activations.Facts {
+		if fact.Selection == execution.ActivationNone || !fact.Selected.ForceWarming {
+			continue
+		}
+		marker, found := loaded.Find(execution.PlanGapIdentity{
+			Plan: fact.Plan, StateGeneration: fact.Selected.StateGeneration,
+		})
+		if found && (marker.Status == execution.GapFound || marker.Status == execution.GapClearedTombstone) &&
+			marker.PersistedApplyVersion.StateApplyEpoch >= fact.Selected.StateApplyEpoch {
+			continue
+		}
+		result.Facts = append(result.Facts, fact)
+	}
+	return result
 }
 
 func (coordinator *SlotExecutionCoordinator) commitProgress(

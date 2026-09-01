@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
@@ -271,6 +272,7 @@ type productionCatalogRepository interface {
 type productionScheduleProjection interface {
 	ReadInitialFrozenSchedule(context.Context, execution.QueryGroupIdentity) (execution.FrozenQueryGroupSchedule, error)
 	ReadFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.FrozenQueryGroupSchedule, error)
+	ReadSuccessorFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.FrozenQueryGroupSchedule, error)
 	ReadScheduleRetirement(context.Context, execution.QueryGroupIdentity) (execution.EvaluationTime, bool, error)
 }
 
@@ -282,6 +284,7 @@ type productionPhaseTwoControlDependencies struct {
 	Repository      productionCatalogRepository
 	Schedules       productionScheduleProjection
 	Progress        productionPhaseTwoProgressReader
+	Observer        observability.Observer
 	RefreshInterval time.Duration
 	Wait            func(context.Context, time.Duration) error
 	Close           func() error
@@ -299,6 +302,9 @@ func newProductionPhaseTwoControl(
 		dependencies.Progress == nil || dependencies.RefreshInterval <= 0 ||
 		dependencies.Wait == nil {
 		return nil, errors.New("phase-two production Control dependencies are incomplete")
+	}
+	if dependencies.Observer == nil {
+		dependencies.Observer = observability.NopObserver{}
 	}
 	return &productionPhaseTwoControl{dependencies: dependencies}, nil
 }
@@ -417,53 +423,84 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 	}
 	for _, draining := range state.Draining {
 		if _, current := active[draining.QueryGroup]; current {
-			return nil, errors.New("phase-two Query Group cannot be current and draining")
+			runtime.isolateDrainingQueryGroup(ctx, draining.QueryGroup,
+				errors.New("phase-two Query Group cannot be current and draining"))
+			continue
 		}
 		retiredAt, retired, err := runtime.dependencies.Schedules.ReadScheduleRetirement(ctx, draining.QueryGroup)
 		if err != nil {
+			if runtime.isLocalDrainingError(ctx, draining.QueryGroup, err) {
+				continue
+			}
 			return nil, err
 		}
 		if !retired || retiredAt != draining.RetiredBoundary {
-			return nil, errors.New("phase-two draining projection differs from persisted Schedule retirement")
+			runtime.isolateDrainingQueryGroup(ctx, draining.QueryGroup,
+				errors.New("phase-two draining projection differs from persisted Schedule retirement"))
+			continue
 		}
 		identity := execution.ProgressIdentity{QueryGroup: draining.QueryGroup}
 		load, err := runtime.dependencies.Progress.LoadProgress(ctx, identity)
 		if err != nil {
+			if runtime.isLocalDrainingError(ctx, draining.QueryGroup, err) {
+				continue
+			}
 			return nil, err
 		}
 		if err := load.Validate(identity); err != nil {
-			return nil, err
+			runtime.isolateDrainingQueryGroup(ctx, draining.QueryGroup, err)
+			continue
 		}
 		drained := load.Status == execution.ProgressFound && load.Progress.NextSlot >= draining.RetiredBoundary
 		if load.Status == execution.ProgressMissing {
 			initial, err := runtime.dependencies.Schedules.ReadInitialFrozenSchedule(ctx, draining.QueryGroup)
 			if err != nil {
+				if runtime.isLocalDrainingError(ctx, draining.QueryGroup, err) {
+					continue
+				}
 				return nil, err
 			}
+			isolated := false
 			for {
 				if err := initial.Validate(); err != nil || initial.Segment.QueryGroup != draining.QueryGroup {
-					return nil, errors.New("phase-two draining Schedule is invalid")
+					runtime.isolateDrainingQueryGroup(ctx, draining.QueryGroup,
+						errors.New("phase-two draining Schedule is invalid"))
+					isolated = true
+					break
 				}
 				if _, hasSlot := initial.FirstSlot(); hasSlot {
 					break
 				}
 				if initial.Segment.End == nil || *initial.Segment.End > draining.RetiredBoundary {
-					return nil, errors.New("phase-two draining Schedule does not reach its retirement boundary")
+					runtime.isolateDrainingQueryGroup(ctx, draining.QueryGroup,
+						errors.New("phase-two draining Schedule does not reach its retirement boundary"))
+					isolated = true
+					break
 				}
 				if *initial.Segment.End == draining.RetiredBoundary {
 					drained = true
 					break
 				}
-				next, err := runtime.dependencies.Schedules.ReadFrozenSchedule(
+				next, err := runtime.dependencies.Schedules.ReadSuccessorFrozenSchedule(
 					ctx, draining.QueryGroup, *initial.Segment.End,
 				)
 				if err != nil {
+					if runtime.isLocalDrainingError(ctx, draining.QueryGroup, err) {
+						isolated = true
+						break
+					}
 					return nil, err
 				}
-				if next.Segment.Start != *initial.Segment.End {
-					return nil, errors.New("phase-two draining Schedule Segments are not adjacent")
+				if next.Segment.Start < *initial.Segment.End {
+					runtime.isolateDrainingQueryGroup(ctx, draining.QueryGroup,
+						errors.New("phase-two draining Schedule Segments overlap"))
+					isolated = true
+					break
 				}
 				initial = next
+			}
+			if isolated {
+				continue
 			}
 		}
 		if !drained {
@@ -476,6 +513,37 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 	}
 	sort.Slice(queryGroups, func(left, right int) bool { return queryGroups[left] < queryGroups[right] })
 	return queryGroups, nil
+}
+
+func (runtime *productionPhaseTwoControl) isLocalDrainingError(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	err error,
+) bool {
+	var invalidProgress *progress.DeterministicInvalidError
+	var invalidSchedule *controlplane.DeterministicScheduleError
+	if !errors.Is(err, controlplane.ErrScheduleUnavailable) && !errors.As(err, &invalidProgress) &&
+		!errors.As(err, &invalidSchedule) {
+		return false
+	}
+	runtime.isolateDrainingQueryGroup(ctx, queryGroup, err)
+	return true
+}
+
+func (runtime *productionPhaseTwoControl) isolateDrainingQueryGroup(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	err error,
+) {
+	runtime.dependencies.Observer.Observe(ctx, observability.Observation{
+		Component:  observability.ComponentControlPlane,
+		Stage:      observability.StageSnapshotUnavailable,
+		Result:     observability.ResultDegraded,
+		Operation:  observability.OperationLoad,
+		ReasonCode: observability.ReasonContractDeterministic,
+		Trace:      observability.TraceFields{QueryGroupKey: string(queryGroup)},
+		Err:        err,
+	})
 }
 
 var _ phaseTwoControlRuntime = (*productionPhaseTwoControl)(nil)
@@ -522,6 +590,7 @@ type productionPhaseTwoOwnershipStore interface {
 type productionPhaseTwoSlotCatalog interface {
 	ReadInitialFrozenSchedule(context.Context, execution.QueryGroupIdentity) (execution.FrozenQueryGroupSchedule, error)
 	ReadFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.FrozenQueryGroupSchedule, error)
+	ReadSuccessorFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.FrozenQueryGroupSchedule, error)
 	ReadScheduleRetirement(context.Context, execution.QueryGroupIdentity) (execution.EvaluationTime, bool, error)
 	FreezeSlotContract(context.Context, execution.FreezeSlotContractRequest) (execution.FrozenSlotContractFact, error)
 }

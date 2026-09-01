@@ -101,6 +101,7 @@ type ActivatedPlan struct {
 	StateApplyEpoch   StateApplyEpoch
 	ScheduleRevision  PlanScheduleRevision
 	RequiredFullSlots uint32
+	ForceWarming      bool
 }
 
 type PlanActivationFact struct {

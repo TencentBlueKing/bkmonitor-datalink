@@ -1089,6 +1089,90 @@ func TestScheduleActivationReconcilerProjectsQueryIdentityChangeAsIndependentNew
 	}
 }
 
+func TestScheduleActivationReconcilerReactivatesDrainedQueryGroupOnSameProgressTimeline(t *testing.T) {
+	client := newControlplaneRedis(t)
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:same-qg-reactivation", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialCatalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
+	initialSnapshot, _, err := repository.PublishCatalog(context.Background(), initialCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryGroup := initialCatalog.QueryGroups[0].Identity
+	progress := &activationProgressReader{byGroup: map[execution.QueryGroupIdentity]execution.ProgressLoadResult{
+		queryGroup: {Status: execution.ProgressMissing},
+	}}
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	clock := []time.Time{time.Unix(60, 0), time.Unix(90, 0), time.Unix(180, 0)}
+	clockCalls := 0
+	reconciler, err := controlplane.NewScheduleActivationReconcilerWithProgress(
+		repository, compiler, stateSemantics, progress, func() time.Time {
+			at := clock[clockCalls]
+			clockCalls++
+			return at
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Ensure(context.Background(), initialSnapshot.Publication); err != nil {
+		t.Fatal(err)
+	}
+
+	emptyCatalog := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{}}
+	emptyCatalog.SnapshotRevision = execution.SnapshotRevision(mustDigest(t, "alarmd-strategy-snapshot-v1", emptyCatalog.QueryGroups))
+	emptySnapshot, _, err := repository.PublishCatalog(context.Background(), emptyCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retired, err := reconciler.Ensure(context.Background(), emptySnapshot.Publication)
+	if err != nil || len(retired.Draining) != 1 || retired.Draining[0].QueryGroup != queryGroup || retired.Draining[0].RetiredBoundary != 90 {
+		t.Fatalf("retirement=(%#v,%v)", retired, err)
+	}
+	progress.byGroup[queryGroup] = execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+		Identity: execution.ProgressIdentity{QueryGroup: queryGroup}, NextSlot: 90, LastFullSlot: 60,
+		LastCompletionKind: execution.CompletionFull,
+	}}
+
+	reenabledCatalog := catalogWithSchedule(t, validCatalog(t, 82), 60, 0)
+	if reenabledCatalog.QueryGroups[0].Identity != queryGroup {
+		t.Fatalf("query identity changed across reactivation: old=%s new=%s", queryGroup, reenabledCatalog.QueryGroups[0].Identity)
+	}
+	reenabledSnapshot, _, err := repository.PublishCatalog(context.Background(), reenabledCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := reconciler.Ensure(context.Background(), reenabledSnapshot.Publication)
+	if err != nil || active.RecordRevision != 3 || len(active.Draining) != 0 || len(active.Plans) != 1 {
+		t.Fatalf("reactivation=(%#v,%v)", active, err)
+	}
+	if !active.Plans[0].Fact.Selected.ForceWarming ||
+		active.Plans[0].Fact.Selected.StateApplyEpoch != execution.StateApplyEpoch(reenabledSnapshot.Publication.PublicationEpoch) {
+		t.Fatalf("reactivated Plan activation=%#v", active.Plans[0])
+	}
+
+	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, stateSemantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, retiredNow, err := runtime.ReadScheduleRetirement(context.Background(), queryGroup); err != nil || retiredNow {
+		t.Fatalf("reactivated retirement=(%t,%v)", retiredNow, err)
+	}
+	newSchedule, err := runtime.ReadFrozenSchedule(context.Background(), queryGroup, 180)
+	if err != nil || newSchedule.Segment.Start != 180 || newSchedule.Segment.Publication.SnapshotRevision != reenabledSnapshot.Publication.SnapshotRevision {
+		t.Fatalf("reactivated Schedule=(%#v,%v)", newSchedule, err)
+	}
+	if _, err := runtime.ReadFrozenSchedule(context.Background(), queryGroup, 120); !errors.Is(err, controlplane.ErrScheduleUnavailable) {
+		t.Fatalf("inactive tombstone interval error=%v", err)
+	}
+	next, err := runtime.NextSlotAfter(context.Background(), queryGroup, 60)
+	if err != nil || next != 180 {
+		t.Fatalf("same Progress successor=(%d,%v), want 180", next, err)
+	}
+}
+
 func TestRedisCatalogRuntimePersistsInitialScheduleAndFreezesExactSlot(t *testing.T) {
 	client := newControlplaneRedis(t)
 	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:runtime", time.Hour)
@@ -1412,6 +1496,21 @@ func catalogWithQueryTable(t *testing.T, tableID string) controlplane.Catalog {
 }
 
 type queryPlannerFunc func(context.Context, controlplane.PrimaryQuerySource) (execution.QueryPlanFacts, error)
+
+type activationProgressReader struct {
+	byGroup map[execution.QueryGroupIdentity]execution.ProgressLoadResult
+}
+
+func (reader *activationProgressReader) LoadProgress(
+	_ context.Context,
+	identity execution.ProgressIdentity,
+) (execution.ProgressLoadResult, error) {
+	result, ok := reader.byGroup[identity.QueryGroup]
+	if !ok {
+		return execution.ProgressLoadResult{}, errors.New("missing activation Progress fixture")
+	}
+	return result, nil
+}
 
 func (planner queryPlannerFunc) CompilePrimaryQuery(ctx context.Context, source controlplane.PrimaryQuerySource) (execution.QueryPlanFacts, error) {
 	return planner(ctx, source)

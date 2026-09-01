@@ -23,9 +23,18 @@ var (
 	ErrScheduleConflict    = errors.New("alarmd controlplane: schedule activation conflict")
 )
 
+type DeterministicScheduleError struct{ Err error }
+
+func (err *DeterministicScheduleError) Error() string {
+	return fmt.Sprintf("alarmd controlplane: deterministic-invalid persisted Schedule: %v", err.Err)
+}
+
+func (err *DeterministicScheduleError) Unwrap() error { return err.Err }
+
 type persistedScheduleSegment struct {
-	Schedule execution.FrozenQueryGroupSchedule `json:"schedule"`
-	Plans    []PlanActivationRecord             `json:"plans"`
+	Schedule         execution.FrozenQueryGroupSchedule `json:"schedule"`
+	Plans            []PlanActivationRecord             `json:"plans"`
+	ReactivatedAfter *execution.EvaluationTime          `json:"reactivated_after,omitempty"`
 }
 
 type persistedScheduleTimeline struct {
@@ -90,6 +99,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	expected ActivationExpectation,
 	next ActivationState,
 	boundary execution.EvaluationTime,
+	progress ScheduleActivationProgressReader,
 ) error {
 	if repository == nil || repository.client == nil || boundary <= 0 {
 		return errors.New("alarmd controlplane: publication schedule activation is required")
@@ -132,7 +142,24 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	if err != nil {
 		return err
 	}
-	wantedDraining, err := expectedDrainingProjection(previous.Draining, oldGroups, newGroups, boundary)
+	reactivating := make(map[execution.QueryGroupIdentity]struct{})
+	for _, draining := range previous.Draining {
+		if _, reappeared := newGroups[draining.QueryGroup]; !reappeared {
+			continue
+		}
+		if progress == nil {
+			return errors.New("alarmd controlplane: reactivation requires the single Progress reader")
+		}
+		drained, err := repository.queryGroupDrained(ctx, draining.QueryGroup, draining.RetiredBoundary, progress)
+		if err != nil {
+			return err
+		}
+		if !drained {
+			return errors.New("alarmd controlplane: Query Group cannot reactivate before retirement drains")
+		}
+		reactivating[draining.QueryGroup] = struct{}{}
+	}
+	wantedDraining, err := expectedDrainingProjection(previous.Draining, oldGroups, newGroups, reactivating, boundary)
 	if err != nil {
 		return err
 	}
@@ -195,11 +222,6 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		if _, existed := oldGroups[queryGroup]; existed {
 			continue
 		}
-		for _, draining := range previous.Draining {
-			if draining.QueryGroup == queryGroup {
-				return errors.New("alarmd controlplane: reactivating a draining Query Group is unsupported")
-			}
-		}
 		opened, err := repository.materializeSchedule(ctx, scheduleSegmentForGroup(newSnapshot.Publication, newGroup, boundary))
 		if err != nil {
 			return err
@@ -208,14 +230,34 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		if err != nil {
 			return err
 		}
-		timeline := persistedScheduleTimeline{SchemaVersion: scheduleTimelineSchemaVersion,
-			RecordRevision: 1, QueryGroup: queryGroup,
-			Segments: []persistedScheduleSegment{{Schedule: opened, Plans: records}}}
+		var timeline persistedScheduleTimeline
+		var raw []byte
+		if _, reactivated := reactivating[queryGroup]; reactivated {
+			timeline, raw, err = repository.loadScheduleTimeline(ctx, queryGroup)
+			if err != nil {
+				return err
+			}
+			if timeline.RetiredAt == nil || *timeline.RetiredAt >= boundary {
+				return ErrScheduleConflict
+			}
+			retiredAt := *timeline.RetiredAt
+			timeline.RetiredAt = nil
+			timeline.RecordRevision++
+			timeline.Segments = append(timeline.Segments, persistedScheduleSegment{
+				Schedule: opened, Plans: records, ReactivatedAfter: &retiredAt,
+			})
+		} else {
+			timeline = persistedScheduleTimeline{SchemaVersion: scheduleTimelineSchemaVersion,
+				RecordRevision: 1, QueryGroup: queryGroup,
+				Segments: []persistedScheduleSegment{{Schedule: opened, Plans: records}}}
+		}
 		if err := validateScheduleTimeline(timeline); err != nil {
 			return err
 		}
-		updates = append(updates, scheduleTimelineUpdate{next: timeline})
-		coverage = append(coverage, timeline)
+		updates = append(updates, scheduleTimelineUpdate{expected: raw, next: timeline})
+		coverage = append(coverage, persistedScheduleTimeline{SchemaVersion: scheduleTimelineSchemaVersion,
+			RecordRevision: 1, QueryGroup: queryGroup,
+			Segments: []persistedScheduleSegment{{Schedule: opened, Plans: records}}})
 	}
 	if len(coverage) == 0 && len(next.Plans) != 0 {
 		return errors.New("alarmd controlplane: empty publication Schedule coverage")
@@ -622,10 +664,14 @@ func expectedDrainingProjection(
 	previous []DrainingQueryGroup,
 	oldGroups map[execution.QueryGroupIdentity]QueryGroup,
 	newGroups map[execution.QueryGroupIdentity]QueryGroup,
+	reactivating map[execution.QueryGroupIdentity]struct{},
 	boundary execution.EvaluationTime,
 ) ([]DrainingQueryGroup, error) {
 	byGroup := make(map[execution.QueryGroupIdentity]DrainingQueryGroup, len(previous)+len(oldGroups))
 	for _, draining := range previous {
+		if _, reactivated := reactivating[draining.QueryGroup]; reactivated {
+			continue
+		}
 		if _, duplicate := byGroup[draining.QueryGroup]; duplicate {
 			return nil, errors.New("alarmd controlplane: duplicate previous draining Query Group")
 		}
@@ -662,6 +708,38 @@ func sameDrainingProjection(left, right []DrainingQueryGroup) bool {
 	return true
 }
 
+func (repository *RedisCatalogRepository) queryGroupDrained(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	retiredBoundary execution.EvaluationTime,
+	progress ScheduleActivationProgressReader,
+) (bool, error) {
+	timeline, _, err := repository.loadScheduleTimeline(ctx, queryGroup)
+	if err != nil {
+		return false, err
+	}
+	if timeline.RetiredAt == nil || *timeline.RetiredAt != retiredBoundary {
+		return false, errors.New("alarmd controlplane: draining projection differs from Schedule retirement")
+	}
+	identity := execution.ProgressIdentity{QueryGroup: queryGroup}
+	load, err := progress.LoadProgress(ctx, identity)
+	if err != nil {
+		return false, err
+	}
+	if err := load.Validate(identity); err != nil {
+		return false, err
+	}
+	if load.Status == execution.ProgressFound {
+		return load.Progress.NextSlot >= retiredBoundary, nil
+	}
+	for _, segment := range timeline.Segments {
+		if _, hasSlot := segment.Schedule.FirstSlot(); hasSlot {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func sameFrozenSchedule(left, right execution.FrozenQueryGroupSchedule) bool {
 	leftPayload, leftErr := json.Marshal(left)
 	rightPayload, rightErr := json.Marshal(right)
@@ -680,10 +758,22 @@ func validateScheduleTimeline(timeline persistedScheduleTimeline) error {
 		if _, err := activationRecordsForPersistedSchedule(segment.Plans, segment.Schedule); err != nil {
 			return err
 		}
+		if index == 0 && segment.ReactivatedAfter != nil {
+			return errors.New("alarmd controlplane: initial Schedule Segment cannot be a reactivation")
+		}
 		if index+1 < len(timeline.Segments) {
-			next := timeline.Segments[index+1].Schedule.Segment
-			if segment.Schedule.Segment.End == nil || *segment.Schedule.Segment.End != next.Start {
-				return errors.New("alarmd controlplane: persisted Schedule Segments are not adjacent")
+			nextRecord := timeline.Segments[index+1]
+			next := nextRecord.Schedule.Segment
+			if segment.Schedule.Segment.End == nil {
+				return errors.New("alarmd controlplane: persisted Schedule Segments overlap")
+			}
+			end := *segment.Schedule.Segment.End
+			if end == next.Start {
+				if nextRecord.ReactivatedAfter != nil {
+					return errors.New("alarmd controlplane: adjacent Schedule Segment cannot carry a reactivation tombstone")
+				}
+			} else if nextRecord.ReactivatedAfter == nil || *nextRecord.ReactivatedAfter != end || next.Start <= end {
+				return errors.New("alarmd controlplane: persisted Schedule Segments are neither adjacent nor tombstone-reactivated")
 			}
 		} else if timeline.RetiredAt == nil {
 			if segment.Schedule.Segment.End != nil {
@@ -734,13 +824,17 @@ func (repository *RedisCatalogRepository) loadScheduleTimeline(
 	}
 	var timeline persistedScheduleTimeline
 	if err := json.Unmarshal(payload, &timeline); err != nil {
-		return persistedScheduleTimeline{}, nil, fmt.Errorf("alarmd controlplane: decode Schedule timeline: %w", err)
+		return persistedScheduleTimeline{}, nil, &DeterministicScheduleError{
+			Err: fmt.Errorf("decode Schedule timeline: %w", err),
+		}
 	}
 	if timeline.QueryGroup != queryGroup {
-		return persistedScheduleTimeline{}, nil, errors.New("alarmd controlplane: persisted Schedule timeline identity mismatch")
+		return persistedScheduleTimeline{}, nil, &DeterministicScheduleError{
+			Err: errors.New("persisted Schedule timeline identity mismatch"),
+		}
 	}
 	if err := validateScheduleTimeline(timeline); err != nil {
-		return persistedScheduleTimeline{}, nil, err
+		return persistedScheduleTimeline{}, nil, &DeterministicScheduleError{Err: err}
 	}
 	return timeline, payload, nil
 }
@@ -801,6 +895,18 @@ func (runtime *RedisCatalogRuntime) ReadFrozenSchedule(
 	return segment.Schedule, nil
 }
 
+func (runtime *RedisCatalogRuntime) ReadSuccessorFrozenSchedule(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	segmentEnd execution.EvaluationTime,
+) (execution.FrozenQueryGroupSchedule, error) {
+	segment, err := runtime.readPersistedSuccessor(ctx, queryGroup, segmentEnd)
+	if err != nil {
+		return execution.FrozenQueryGroupSchedule{}, err
+	}
+	return segment.Schedule, nil
+}
+
 func (runtime *RedisCatalogRuntime) ReadScheduleRetirement(
 	ctx context.Context,
 	queryGroup execution.QueryGroupIdentity,
@@ -843,7 +949,7 @@ func (runtime *RedisCatalogRuntime) NextSlotAfter(
 			return 0, ErrScheduleUnavailable
 		}
 		boundary := *segment.Schedule.Segment.End
-		successor, successorErr := runtime.readPersistedSegment(ctx, queryGroup, boundary)
+		successor, successorErr := runtime.readPersistedSuccessor(ctx, queryGroup, boundary)
 		if errors.Is(successorErr, ErrScheduleUnavailable) {
 			retiredAt, retired, retirementErr := runtime.ReadScheduleRetirement(ctx, queryGroup)
 			if retirementErr != nil {
@@ -859,6 +965,28 @@ func (runtime *RedisCatalogRuntime) NextSlotAfter(
 		segment = successor
 		containsCompletion = false
 	}
+}
+
+func (runtime *RedisCatalogRuntime) readPersistedSuccessor(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	segmentEnd execution.EvaluationTime,
+) (persistedScheduleSegment, error) {
+	if runtime == nil || runtime.repository == nil || queryGroup == "" || segmentEnd <= 0 {
+		return persistedScheduleSegment{}, errors.New("alarmd controlplane: valid Schedule successor read is required")
+	}
+	timeline, _, err := runtime.repository.loadScheduleTimeline(ctx, queryGroup)
+	if err != nil {
+		return persistedScheduleSegment{}, err
+	}
+	for index := 1; index < len(timeline.Segments); index++ {
+		previous := timeline.Segments[index-1].Schedule.Segment
+		if previous.End == nil || *previous.End != segmentEnd {
+			continue
+		}
+		return timeline.Segments[index], nil
+	}
+	return persistedScheduleSegment{}, ErrScheduleUnavailable
 }
 
 func (runtime *RedisCatalogRuntime) FreezeSlotContract(

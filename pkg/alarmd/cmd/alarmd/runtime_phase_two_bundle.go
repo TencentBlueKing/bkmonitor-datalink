@@ -178,10 +178,6 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	activator, err := controlplane.NewScheduleActivationReconciler(repository, compiler, strategySemantics, external.Now)
-	if err != nil {
-		return nil, err
-	}
 	catalog, err := controlplane.NewRedisCatalogRuntime(
 		repository, compiler, strategySemantics, cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration(),
 	)
@@ -223,9 +219,16 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	activator, err := controlplane.NewScheduleActivationReconcilerWithProgress(
+		repository, compiler, strategySemantics, progressStore, external.Now,
+	)
+	if err != nil {
+		return nil, err
+	}
 	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
 		Source: strategySource, Planner: planner, Reconciler: reconciler, Activator: activator,
 		Repository: repository, Schedules: catalog, Progress: progressStore,
+		Observer:        observer,
 		RefreshInterval: cfg.PhaseTwo.Control.RefreshInterval.Duration(), Wait: waitProductionControl,
 		Close: func() error {
 			controlClosed = true

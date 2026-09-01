@@ -29,6 +29,7 @@ type AssignmentReader interface {
 type SlotCatalogReader interface {
 	ReadInitialFrozenSchedule(context.Context, execution.QueryGroupIdentity) (execution.FrozenQueryGroupSchedule, error)
 	ReadFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.FrozenQueryGroupSchedule, error)
+	ReadSuccessorFrozenSchedule(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.FrozenQueryGroupSchedule, error)
 	ReadScheduleRetirement(context.Context, execution.QueryGroupIdentity) (execution.EvaluationTime, bool, error)
 	FreezeSlotContract(context.Context, execution.FreezeSlotContractRequest) (execution.FrozenSlotContractFact, error)
 }
@@ -178,7 +179,18 @@ func (source *ProductionSlotSource) nextSlotAfterProgress(
 	if progress.LastFullSlot <= 0 ||
 		(progress.LastCompletionKind != execution.CompletionFull && progress.LastCompletionKind != execution.CompletionFullEmpty) {
 		schedule, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, progress.NextSlot)
-		return schedule, progress.NextSlot, err
+		if err == nil {
+			return schedule, progress.NextSlot, nil
+		}
+		schedule, err = source.catalog.ReadSuccessorFrozenSchedule(ctx, source.queryGroup, progress.NextSlot)
+		if err != nil {
+			return execution.FrozenQueryGroupSchedule{}, 0, err
+		}
+		schedule, next, retired, err := source.firstAvailableSchedule(ctx, schedule)
+		if retired && err == nil {
+			return execution.FrozenQueryGroupSchedule{}, 0, ErrScheduleFactsInvalid
+		}
+		return schedule, next, err
 	}
 	schedule, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, progress.LastFullSlot)
 	if err != nil {
@@ -214,14 +226,14 @@ func (source *ProductionSlotSource) firstSuccessorSchedule(
 	schedule execution.FrozenQueryGroupSchedule,
 ) (execution.FrozenQueryGroupSchedule, execution.EvaluationTime, error) {
 	boundary := *schedule.Segment.End
-	successor, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, boundary)
+	successor, err := source.catalog.ReadSuccessorFrozenSchedule(ctx, source.queryGroup, boundary)
 	if err != nil {
 		return execution.FrozenQueryGroupSchedule{}, 0, err
 	}
 	if err := successor.Validate(); err != nil {
 		return execution.FrozenQueryGroupSchedule{}, 0, fmt.Errorf("%w: %v", ErrScheduleFactsInvalid, err)
 	}
-	if successor.Segment.QueryGroup != source.queryGroup || successor.Segment.Start != boundary {
+	if successor.Segment.QueryGroup != source.queryGroup || successor.Segment.Start < boundary {
 		return execution.FrozenQueryGroupSchedule{}, 0, ErrScheduleFactsInvalid
 	}
 	successor, next, retired, err := source.firstAvailableSchedule(ctx, successor)
@@ -256,11 +268,11 @@ func (source *ProductionSlotSource) firstAvailableSchedule(
 		if retired {
 			return schedule, boundary, true, nil
 		}
-		successor, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, boundary)
+		successor, err := source.catalog.ReadSuccessorFrozenSchedule(ctx, source.queryGroup, boundary)
 		if err != nil {
 			return execution.FrozenQueryGroupSchedule{}, 0, false, err
 		}
-		if successor.Segment.Start != boundary {
+		if successor.Segment.Start < boundary {
 			return execution.FrozenQueryGroupSchedule{}, 0, false, ErrScheduleFactsInvalid
 		}
 		schedule = successor

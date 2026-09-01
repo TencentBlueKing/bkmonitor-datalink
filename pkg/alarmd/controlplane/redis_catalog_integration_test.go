@@ -360,6 +360,7 @@ func TestSourceReconcilerMergesInvalidLevelLastGoodWithoutUnsupportedLevel(t *te
 	initialLevels := levelIRByID(initialPlan.Plan)
 
 	changedDocument := withThresholdForLevel(t, withStrategyUpdateTime(t, initialDocument, 1800000003), 1, 81)
+	changedDocument = withThresholdForLevel(t, changedDocument, 2, 82)
 	changedCatalog, err := controlplane.BuildCatalog(ctx, controlplane.BuildRequest{Strategies: []controlplane.SourceStrategy{{
 		SourceID: "1001", Document: changedDocument,
 		Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
@@ -368,6 +369,9 @@ func TestSourceReconcilerMergesInvalidLevelLastGoodWithoutUnsupportedLevel(t *te
 		t.Fatal(err)
 	}
 	changedLevels := levelIRByID(changedCatalog.QueryGroups[0].Plans[0].Plan)
+	if reflect.DeepEqual(changedLevels[2], initialLevels[2]) {
+		t.Fatal("changed Level 2 fixture does not differ from last-good")
+	}
 	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", string(changedDocument), 0).Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -424,6 +428,82 @@ func TestSourceReconcilerMergesInvalidLevelLastGoodWithoutUnsupportedLevel(t *te
 	}); err != nil {
 		t.Fatalf("mixed Level frozen contract=%v", err)
 	}
+}
+
+func TestSourceReconcilerExcludesMergedPlanWhenAuthoritativeRecompileFails(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	documents := realThresholdDocuments(t)
+	brokenDocument := addThresholdLevels(t, documents[0], []uint32{2, 3}, []uint32{1, 1})
+	healthyDocument := withBusinessScope(t, documents[1], 3, "bkcc__3")
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", `[1001,1002]`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	for id, document := range map[string]json.RawMessage{"1001": brokenDocument, "1002": healthyDocument} {
+		if err := client.Set(ctx, "bkmonitor.cache.strategy_"+id, string(document), 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := newRedisStrategySource(t, client)
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:runtime-merged-recompile", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normal, stateSemantics := runtimePlanCompiler(t)
+	compiler := &revisionTerminalCompiler{
+		normal: normal, strict: normal, invalid: map[string]struct{}{}, unsupported: map[string]struct{}{},
+		mixedLevels: map[string]struct{}{"1800000003": {}}, mergedInvalid: map[string]struct{}{"1800000003": {}},
+	}
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, stateSemantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("initial pending=(%#v, %v)", result, err)
+	}
+	initial, err := reconciler.Refresh(ctx, source, planner)
+	if err != nil || initial.Status != controlplane.SourceRefreshPublished {
+		t.Fatalf("initial publish=(%#v, %v)", initial, err)
+	}
+	initialSnapshot, err := repository.LoadSnapshot(ctx, initial.Publication.SnapshotRevision)
+	if err != nil || len(initialSnapshot.QueryGroups) != 2 {
+		t.Fatalf("initial Query Groups=(%#v, %v)", initialSnapshot.QueryGroups, err)
+	}
+
+	changedDocument := withThresholdForLevel(t, withStrategyUpdateTime(t, brokenDocument, 1800000003), 1, 81)
+	changedDocument = withThresholdForLevel(t, changedDocument, 2, 82)
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", string(changedDocument), 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("changed pending=(%#v, %v)", result, err)
+	}
+	published, err := reconciler.Refresh(ctx, source, planner)
+	if err != nil || published.Status != controlplane.SourceRefreshPublished {
+		t.Fatalf("changed publish=(%#v, %v)", published, err)
+	}
+	snapshot, err := repository.LoadSnapshot(ctx, published.Publication.SnapshotRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plans := plansByStrategy(snapshot)
+	if len(snapshot.QueryGroups) != 1 || len(plans) != 1 || plans["1002"].Identity.StrategyID != "1002" {
+		t.Fatalf("locally excluded merged Plan snapshot=%#v", snapshot.QueryGroups)
+	}
+	assertNoAcceptedPlanDisposition(t, repository, "1001")
+	assertNoAuditDisposition(t, repository, "1001", controlplane.DispositionStaleConfig)
+	assertAuditDispositionExact(t, repository, "1001", "LEVEL", 2,
+		controlplane.DispositionConfigRejected, contract.ReasonLevelInvalid)
+	assertAuditDispositionExact(t, repository, "1001", "LEVEL", 3,
+		controlplane.DispositionUnsupported, contract.ReasonAlgorithmUnsupported)
+	assertAuditDispositionExact(t, repository, "1001", "PLAN", 0,
+		controlplane.DispositionConfigRejected, contract.ReasonPlanInvalid)
+	assertAuditDispositionExact(t, repository, "1002", "PLAN", 0,
+		controlplane.DispositionAccepted, "")
 }
 
 func TestSourceReconcilerRetainsLastGoodForMissingAndInvalidObjectWhileHealthySiblingAdvances(t *testing.T) {
@@ -1205,11 +1285,12 @@ func runtimeCompileIsolationDocuments(t *testing.T) []json.RawMessage {
 }
 
 type revisionTerminalCompiler struct {
-	normal      *strategy.PlanCompiler
-	strict      *strategy.PlanCompiler
-	invalid     map[string]struct{}
-	unsupported map[string]struct{}
-	mixedLevels map[string]struct{}
+	normal        *strategy.PlanCompiler
+	strict        *strategy.PlanCompiler
+	invalid       map[string]struct{}
+	unsupported   map[string]struct{}
+	mixedLevels   map[string]struct{}
+	mergedInvalid map[string]struct{}
 }
 
 func (compiler *revisionTerminalCompiler) Compile(
@@ -1234,6 +1315,9 @@ func (compiler *revisionTerminalCompiler) Compile(
 				level.DetectPlan.Algorithms[0].Type = "UnsupportedForTest"
 			}
 		}
+	}
+	if _, invalid := compiler.mergedInvalid[revision]; invalid && len(request.Plan.StrategyIR.Levels) == 2 {
+		request.Plan.StrategyIR.Schema.Name = "invalid-strategy-ir"
 	}
 	return compiler.normal.Compile(ctx, request)
 }
@@ -1268,6 +1352,21 @@ func withThresholdForLevel(t *testing.T, document json.RawMessage, levelID uint3
 		conditions := groups[0].([]any)
 		conditions[0].(map[string]any)["threshold"] = float64(threshold)
 	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+func withBusinessScope(t *testing.T, document json.RawMessage, businessID int, spaceScope string) json.RawMessage {
+	t.Helper()
+	var value map[string]any
+	if err := json.Unmarshal(document, &value); err != nil {
+		t.Fatal(err)
+	}
+	value["bk_biz_id"] = float64(businessID)
+	value["space_uid"] = spaceScope
 	payload, err := json.Marshal(value)
 	if err != nil {
 		t.Fatal(err)
@@ -1394,6 +1493,48 @@ func assertAuditDisposition(
 		}
 	}
 	t.Fatalf("missing audit disposition source=%s disposition=%s reason=%s: %#v", sourceID, disposition, reason, audit)
+}
+
+func assertAuditDispositionExact(
+	t *testing.T,
+	repository *controlplane.RedisCatalogRepository,
+	sourceID string,
+	scope string,
+	levelID uint32,
+	disposition controlplane.Disposition,
+	reason string,
+) {
+	t.Helper()
+	audit, err := repository.LoadLatestAudit(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range audit.Dispositions {
+		if item.SourceID == sourceID && item.Scope == scope && item.LevelID == levelID &&
+			item.Disposition == disposition && item.Reason == reason {
+			return
+		}
+	}
+	t.Fatalf("missing exact audit disposition source=%s scope=%s level=%d disposition=%s reason=%s: %#v",
+		sourceID, scope, levelID, disposition, reason, audit)
+}
+
+func assertNoAuditDisposition(
+	t *testing.T,
+	repository *controlplane.RedisCatalogRepository,
+	sourceID string,
+	disposition controlplane.Disposition,
+) {
+	t.Helper()
+	audit, err := repository.LoadLatestAudit(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range audit.Dispositions {
+		if item.SourceID == sourceID && item.Disposition == disposition {
+			t.Fatalf("unexpected audit disposition source=%s disposition=%s: %#v", sourceID, disposition, audit)
+		}
+	}
 }
 
 func newControlplaneRedis(t *testing.T) *redis.Client {

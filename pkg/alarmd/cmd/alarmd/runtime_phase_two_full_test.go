@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -364,10 +365,277 @@ func TestProductionPhaseTwoBundleExecutesFullNonEmptySlotEndToEnd(t *testing.T) 
 	}
 }
 
+func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingEventACKIsRetryable(t *testing.T) {
+	address, redisClient := startPhaseTwoRedis(t)
+	ctx := context.Background()
+	failedDocument, err := os.ReadFile("testdata/g1_full_threshold_strategy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var healthyStrategy map[string]any
+	if err := json.Unmarshal(failedDocument, &healthyStrategy); err != nil {
+		t.Fatal(err)
+	}
+	healthyStrategy["id"] = 1002
+	item := healthyStrategy["items"].([]any)[0].(map[string]any)
+	item["id"] = 12
+	item["query_md5"] = "g3b-healthy-query-md5"
+	query := item["query_configs"].([]any)[0].(map[string]any)
+	query["result_table_id"] = "system.mem"
+	healthyDocument, err := json.Marshal(healthyStrategy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.Set(ctx, "alarm-config.strategy_ids", `[1001,1002]`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.Set(ctx, "alarm-config.strategy_1001", failedDocument, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.Set(ctx, "alarm-config.strategy_1002", healthyDocument, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Now().Unix()
+	base -= base % 300
+	var clock atomic.Int64
+	clock.Store(base)
+	now := func() time.Time { return time.Unix(clock.Load(), 0) }
+	var uqCalls atomic.Int64
+	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		uqCalls.Add(1)
+		_, _ = writer.Write([]byte(`{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["host"],"group_values":["127.0.0.1"],"values":[[` +
+			strconv.FormatInt((base-1)*1000, 10) + `,95]]}],"status":null,"trace_id":"g3b-query","is_partial":false,"result_table_id":[]}`))
+	}))
+	defer uqServer.Close()
+
+	cfg := validGoAccessRuntimeConfig()
+	cfg.Redis.Address = address
+	cfg.Redis.StatePrefix = "alarmd-g3b-qg-isolation"
+	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
+	cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.DownstreamExecutionReserve = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Worker.RegistrationRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.LeaseTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Ownership.LeaseRenewInterval = config.Duration(time.Minute)
+
+	events := &selectiveRetryablePhaseTwoEventSink{failedStrategyID: "1001"}
+	var observationsMu sync.Mutex
+	var observations []observability.Observation
+	bundle, err := openProductionPhaseTwoBundleWithDependencies(
+		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime),
+		newPhaseTwoApplicationHealth(),
+		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
+			return controlplane.NewLegacyRedisStrategySource(client, prefix)
+		},
+		phaseTwoProductionExternalDependencies{
+			Now: now, HTTPClient: uqServer.Client(),
+			AdditionalObserver: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+				observationsMu.Lock()
+				defer observationsMu.Unlock()
+				observations = append(observations, observation)
+			}),
+			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
+				return events, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("openProductionPhaseTwoBundleWithDependencies() error = %v", err)
+	}
+	if err := bundle.Start(ctx); err != nil {
+		t.Fatalf("phase-two production Start() error = %v", err)
+	}
+	if len(bundle.queryGroups) != 2 || len(bundle.runners) != 2 {
+		t.Fatalf("initial Query Groups/runners = %v/%d, want two", bundle.queryGroups, len(bundle.runners))
+	}
+	runResults := make(map[execution.QueryGroupIdentity]*recordingPhaseTwoQueryGroupRuntime, len(bundle.runners))
+	bundle.mu.Lock()
+	for queryGroup, lifecycle := range bundle.runners {
+		recording := &recordingPhaseTwoQueryGroupRuntime{next: lifecycle.runner}
+		lifecycle.runner = recording
+		runResults[queryGroup] = recording
+	}
+	bundle.mu.Unlock()
+	clock.Store(base + 1)
+	if err := bundle.runScheduledOnce(ctx); err != nil {
+		t.Fatalf("runScheduledOnce(retryable sibling) error = %v", err)
+	}
+	if uqCalls.Load() != 2 {
+		t.Fatalf("real UQ wire calls = %d, want two independent Query Groups", uqCalls.Load())
+	}
+	if len(bundle.runners) != 2 {
+		t.Fatalf("retryable Event ACK migrated a Query Group: runners=%d", len(bundle.runners))
+	}
+
+	attempted, acknowledged := events.snapshot()
+	if attempted["1001"] != 1 || attempted["1002"] != 1 || acknowledged["1001"] != 0 || acknowledged["1002"] != 1 {
+		t.Fatalf("Event attempts/ACKs = %v/%v, want failed retryable sibling and healthy ACK", attempted, acknowledged)
+	}
+	productionOwnership := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
+	queryGroupsByStrategy := make(map[string]execution.QueryGroupIdentity, 2)
+	for _, queryGroup := range bundle.queryGroups {
+		schedule, scheduleErr := productionOwnership.dependencies.Catalog.ReadInitialFrozenSchedule(ctx, queryGroup)
+		if scheduleErr != nil || len(schedule.Plans) != 1 {
+			t.Fatalf("Query Group %s schedule=%+v error=%v", queryGroup, schedule, scheduleErr)
+		}
+		queryGroupsByStrategy[schedule.Plans[0].Identity.StrategyID] = queryGroup
+	}
+	failedProgress, err := productionOwnership.dependencies.Progress.LoadProgress(ctx, execution.ProgressIdentity{
+		QueryGroup: queryGroupsByStrategy["1001"],
+	})
+	if err != nil || failedProgress.Status != execution.ProgressMissing {
+		t.Fatalf("failed Query Group Progress=%+v error=%v, want unchanged", failedProgress, err)
+	}
+	healthyProgress, err := productionOwnership.dependencies.Progress.LoadProgress(ctx, execution.ProgressIdentity{
+		QueryGroup: queryGroupsByStrategy["1002"],
+	})
+	if err != nil || healthyProgress.Status != execution.ProgressFound || healthyProgress.Progress == nil ||
+		healthyProgress.Progress.LastFullSlot != execution.EvaluationTime(base) {
+		t.Fatalf("healthy Query Group Progress=%+v error=%v", healthyProgress, err)
+	}
+	failedResult, failedAttempted, failedErr := runResults[queryGroupsByStrategy["1001"]].snapshot()
+	if failedErr != nil || !failedAttempted || failedResult.Completed ||
+		failedResult.Result != observability.ResultRetrying ||
+		failedResult.ReasonCode != execution.ReasonCode(contract.ReasonOutputACKUnknown) {
+		t.Fatalf("failed scheduler Runner result=%+v attempted=%t error=%v", failedResult, failedAttempted, failedErr)
+	}
+	healthyResult, healthyAttempted, healthyErr := runResults[queryGroupsByStrategy["1002"]].snapshot()
+	if healthyErr != nil || !healthyAttempted || !healthyResult.Completed {
+		t.Fatalf("healthy scheduler Runner result=%+v attempted=%t error=%v", healthyResult, healthyAttempted, healthyErr)
+	}
+	bundle.mu.RLock()
+	failedRunnerStillOwned := bundle.runners[queryGroupsByStrategy["1001"]].runner == runResults[queryGroupsByStrategy["1001"]]
+	bundle.mu.RUnlock()
+	if !failedRunnerStillOwned {
+		t.Fatal("retryable Event ACK migrated the failed Query Group")
+	}
+
+	observationsMu.Lock()
+	var retryingQG execution.QueryGroupIdentity
+	for _, observation := range observations {
+		if observation.Stage == observability.Stage(observability.StageFatal) {
+			observationsMu.Unlock()
+			t.Fatalf("retryable Query Group failure became Worker fatal: %+v", observation)
+		}
+		if observation.Stage == observability.StageSlotCompleted &&
+			observation.Result == observability.ResultRetrying &&
+			observation.ReasonCode == execution.ReasonCode(contract.ReasonOutputACKUnknown) {
+			retryingQG = execution.QueryGroupIdentity(observation.Trace.QueryGroupKey)
+		}
+	}
+	observationsMu.Unlock()
+	if retryingQG != queryGroupsByStrategy["1001"] {
+		t.Fatalf("retrying Slot observation Query Group=%s, want failed Query Group %s", retryingQG, queryGroupsByStrategy["1001"])
+	}
+	if err := bundle.Shutdown(ctx); err != nil {
+		t.Fatalf("phase-two production Shutdown() error = %v", err)
+	}
+}
+
 type recordingPhaseTwoEventSink struct {
 	mu     sync.Mutex
 	events []contract.TriggerEventV1
 	closed bool
+}
+
+type selectiveRetryablePhaseTwoEventSink struct {
+	mu               sync.Mutex
+	failedStrategyID string
+	attempted        map[string]int
+	acknowledged     map[string]int
+	closed           bool
+}
+
+func (sink *selectiveRetryablePhaseTwoEventSink) WriteBatch(_ context.Context, events []contract.TriggerEventV1) error {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if sink.attempted == nil {
+		sink.attempted = make(map[string]int)
+		sink.acknowledged = make(map[string]int)
+	}
+	for index := range events {
+		if _, err := contract.EncodeTriggerEventV1(&events[index]); err != nil {
+			return err
+		}
+		strategyID := events[index].PlanRef.StrategyID
+		sink.attempted[strategyID]++
+		if strategyID == sink.failedStrategyID {
+			return &retryablePhaseTwoEventError{err: errors.New("broker ACK unavailable")}
+		}
+	}
+	for index := range events {
+		sink.acknowledged[events[index].PlanRef.StrategyID]++
+	}
+	return nil
+}
+
+func (sink *selectiveRetryablePhaseTwoEventSink) Shutdown(context.Context) error {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	sink.closed = true
+	return nil
+}
+
+func (sink *selectiveRetryablePhaseTwoEventSink) Close() error {
+	return sink.Shutdown(context.Background())
+}
+
+func (sink *selectiveRetryablePhaseTwoEventSink) snapshot() (map[string]int, map[string]int) {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	attempted := make(map[string]int, len(sink.attempted))
+	acknowledged := make(map[string]int, len(sink.acknowledged))
+	for strategyID, count := range sink.attempted {
+		attempted[strategyID] = count
+	}
+	for strategyID, count := range sink.acknowledged {
+		acknowledged[strategyID] = count
+	}
+	return attempted, acknowledged
+}
+
+type retryablePhaseTwoEventError struct{ err error }
+
+func (err *retryablePhaseTwoEventError) Error() string              { return err.err.Error() }
+func (err *retryablePhaseTwoEventError) Unwrap() error              { return err.err }
+func (err *retryablePhaseTwoEventError) RetryableOutputDependency() {}
+
+type recordingPhaseTwoQueryGroupRuntime struct {
+	next phaseTwoQueryGroupRuntime
+	mu   sync.Mutex
+
+	result    execution.SlotExecutionResult
+	attempted bool
+	err       error
+}
+
+func (runtime *recordingPhaseTwoQueryGroupRuntime) RunOne(ctx context.Context) (execution.SlotExecutionResult, bool, error) {
+	result, attempted, err := runtime.next.RunOne(ctx)
+	runtime.mu.Lock()
+	runtime.result = result
+	runtime.attempted = attempted
+	runtime.err = err
+	runtime.mu.Unlock()
+	return result, attempted, err
+}
+
+func (runtime *recordingPhaseTwoQueryGroupRuntime) MaintainLease(ctx context.Context, interval, ttl time.Duration) error {
+	return runtime.next.MaintainLease(ctx, interval, ttl)
+}
+
+func (runtime *recordingPhaseTwoQueryGroupRuntime) Release(ctx context.Context) error {
+	return runtime.next.Release(ctx)
+}
+
+func (runtime *recordingPhaseTwoQueryGroupRuntime) snapshot() (execution.SlotExecutionResult, bool, error) {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	return runtime.result, runtime.attempted, runtime.err
 }
 
 func (sink *recordingPhaseTwoEventSink) WriteBatch(_ context.Context, events []contract.TriggerEventV1) error {

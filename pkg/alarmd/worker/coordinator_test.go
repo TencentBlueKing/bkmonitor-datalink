@@ -1309,8 +1309,17 @@ func (ports *recordingPorts) WriteBatch(_ context.Context, events []contract.Tri
 	ports.record("event_ack")
 	ports.eventCount += len(events)
 	ports.lastEvents = append([]contract.TriggerEventV1(nil), events...)
-	return ports.fail("event_ack")
+	if err := ports.fail("event_ack"); err != nil {
+		return &retryableOutputTestError{err: err}
+	}
+	return nil
 }
+
+type retryableOutputTestError struct{ err error }
+
+func (err *retryableOutputTestError) Error() string              { return err.err.Error() }
+func (err *retryableOutputTestError) Unwrap() error              { return err.err }
+func (err *retryableOutputTestError) RetryableOutputDependency() {}
 
 func (ports *recordingPorts) AdmitRuntime(_ context.Context, request execution.StateApplyRequest) (execution.StateAdmissionResult, error) {
 	ports.record("state_admission")

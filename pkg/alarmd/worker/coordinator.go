@@ -657,6 +657,9 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			}
 			sortTriggerEvents(events)
 			if err := coordinator.writeEvents(ctx, request.Operation, events); err != nil {
+				if !isRetryableOutputDependency(err) {
+					return execution.SlotExecutionResult{}, err
+				}
 				if retryPendingReason == "" {
 					retryPendingReason = execution.ReasonCode(contract.ReasonOutputACKUnknown)
 				}
@@ -893,7 +896,10 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 	err := coordinator.ports.Events.WriteBatch(ctx, events)
 	reason := execution.ReasonCode(observability.ReasonNone)
 	if err != nil {
-		reason = execution.ReasonCode(contract.ReasonOutputACKUnknown)
+		reason = execution.ReasonCode(observability.ReasonInternalUnknown)
+		if isRetryableOutputDependency(err) {
+			reason = execution.ReasonCode(contract.ReasonOutputACKUnknown)
+		}
 	}
 	coordinator.observeWithCounts(ctx, observability.ComponentOutput, observability.StageEventACKed, operation, started,
 		"", reason, observability.Counts{Events: int64(len(events))}, err)
@@ -901,6 +907,14 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 		return fmt.Errorf("alarmd worker: acknowledge events: %w", err)
 	}
 	return nil
+}
+
+func isRetryableOutputDependency(err error) bool {
+	if err == nil {
+		return false
+	}
+	var dependencyErr interface{ RetryableOutputDependency() }
+	return errors.As(err, &dependencyErr) && dependencyErr != nil
 }
 
 func (coordinator *SlotExecutionCoordinator) admitState(

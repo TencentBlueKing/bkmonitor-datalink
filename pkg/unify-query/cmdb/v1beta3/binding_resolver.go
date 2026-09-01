@@ -68,6 +68,13 @@ type bindingCacheStoreStats struct {
 
 type bindingRedisLookup func(ctx context.Context, key, field string) (string, error)
 
+type bindingSubscription interface {
+	Channel(opts ...goRedis.ChannelOption) <-chan *goRedis.Message
+	Close() error
+}
+
+type bindingSubscribe func(ctx context.Context, channels ...string) bindingSubscription
+
 const (
 	BindingRedisChannel             = "bkmonitorv3:spaces:surrealdb_binding:channel"
 	ResultTableDetailChannel        = "bkmonitorv3:spaces:result_table_detail:channel"
@@ -191,33 +198,26 @@ func (r *BindingResolver) InvalidateAll() {
 	ObserveBindingCacheSize(0)
 }
 
-func StartBindingResolverWatcher(ctx context.Context) {
-	resolver := GetBindingResolver()
+func StartBindingResolverWatcher(ctx context.Context) <-chan struct{} {
+	return startBindingResolverWatcher(ctx, GetBindingResolver(), func(ctx context.Context, channels ...string) bindingSubscription {
+		return uqredis.SubscribePubSub(ctx, channels...)
+	})
+}
+
+func startBindingResolverWatcher(ctx context.Context, resolver *BindingResolver, subscribe bindingSubscribe) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		channels := []string{
 			BindingRedisChannel,
 			ResultTableDetailChannel,
 			BuiltInResultTableDetailChannel,
 		}
 		for {
-			messages := uqredis.Subscribe(ctx, channels...)
-			for message := range messages {
-				if message == nil {
-					continue
-				}
-				if message.Channel == BuiltInResultTableDetailChannel {
-					if spaceUID := parseBindingChangeSpaceUID(message.Payload); spaceUID != "" {
-						resolver.InvalidateSpace(spaceUID)
-					}
-					continue
-				}
-				if spaceUID := parseBindingChangeSpaceUID(message.Payload); spaceUID != "" {
-					resolver.InvalidateSpace(spaceUID)
-				} else {
-					resolver.InvalidateAll()
-				}
-			}
 			if ctx.Err() != nil {
+				return
+			}
+			if !watchBindingSubscription(ctx, resolver, subscribe(ctx, channels...)) {
 				return
 			}
 			timer := time.NewTimer(time.Second)
@@ -229,6 +229,40 @@ func StartBindingResolverWatcher(ctx context.Context) {
 			}
 		}
 	}()
+	return done
+}
+
+func watchBindingSubscription(ctx context.Context, resolver *BindingResolver, subscription bindingSubscription) bool {
+	defer subscription.Close()
+	messages := subscription.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case message, ok := <-messages:
+			if !ok {
+				return true
+			}
+			handleBindingChange(resolver, message)
+		}
+	}
+}
+
+func handleBindingChange(resolver *BindingResolver, message *goRedis.Message) {
+	if message == nil {
+		return
+	}
+	if message.Channel == BuiltInResultTableDetailChannel {
+		if spaceUID := parseBindingChangeSpaceUID(message.Payload); spaceUID != "" {
+			resolver.InvalidateSpace(spaceUID)
+		}
+		return
+	}
+	if spaceUID := parseBindingChangeSpaceUID(message.Payload); spaceUID != "" {
+		resolver.InvalidateSpace(spaceUID)
+	} else {
+		resolver.InvalidateAll()
+	}
 }
 
 func parseBindingChangeSpaceUID(payload string) string {

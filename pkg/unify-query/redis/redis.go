@@ -129,8 +129,11 @@ var SMembers = func(ctx context.Context, key string) ([]string, error) {
 	return res.Result()
 }
 
-var Subscribe = func(ctx context.Context, channels ...string) <-chan *goRedis.Message {
+var SubscribePubSub = func(ctx context.Context, channels ...string) *goRedis.PubSub {
 	log.Debugf(ctx, "[redis] subscribe %s", channels)
-	p := globalInstance.client.Subscribe(ctx, channels...)
-	return p.Channel()
+	return globalInstance.client.Subscribe(ctx, channels...)
+}
+
+var Subscribe = func(ctx context.Context, channels ...string) <-chan *goRedis.Message {
+	return SubscribePubSub(ctx, channels...).Channel()
 }

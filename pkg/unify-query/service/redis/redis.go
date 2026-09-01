@@ -26,6 +26,7 @@ type Service struct {
 	ctx             context.Context
 	cancelFunc      context.CancelFunc
 	providerManager *relation.ProviderManager
+	bindingWatcher  <-chan struct{}
 }
 
 func (s *Service) Type() string {
@@ -107,7 +108,7 @@ func (s *Service) initSchemaProvider(ctx context.Context) {
 
 	v1beta1.InitSchemaProvider(s.providerManager.GetProvider())
 	v1beta3.InitSchemaProvider(s.providerManager.GetProvider())
-	v1beta3.StartBindingResolverWatcher(s.ctx)
+	s.bindingWatcher = v1beta3.StartBindingResolverWatcher(s.ctx)
 	log.Infof(ctx, "SchemaProvider initialized with type: %s", SchemaProviderType)
 }
 
@@ -116,11 +117,17 @@ func (s *Service) Wait() {
 }
 
 func (s *Service) Close() {
-	if s.providerManager != nil {
-		s.providerManager.Close()
-	}
-	redis.Close()
 	if s.cancelFunc != nil {
 		s.cancelFunc()
+		s.cancelFunc = nil
 	}
+	if s.bindingWatcher != nil {
+		<-s.bindingWatcher
+		s.bindingWatcher = nil
+	}
+	if s.providerManager != nil {
+		_ = s.providerManager.Close()
+		s.providerManager = nil
+	}
+	redis.Close()
 }

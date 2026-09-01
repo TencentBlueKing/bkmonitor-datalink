@@ -15,11 +15,13 @@ import (
 	"testing"
 	"time"
 
+	miniredis "github.com/alicebob/miniredis/v2"
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	uqredis "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
 
 func TestBindingResolverFetchesSurrealDBSubRouteFromDualWriteResultTable(t *testing.T) {
@@ -195,6 +197,43 @@ func TestBindingResolverInvalidateSpace(t *testing.T) {
 
 	assert.Len(t, resolver.cache, 1)
 	assert.NotNil(t, resolver.cache[bindingCacheKey("tenant-a", "8")])
+}
+
+func TestBindingResolverWatcherClosesSubscriptionOnCancel(t *testing.T) {
+	server := miniredis.RunT(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, uqredis.SetInstance(ctx, "binding-watcher-test", &goRedis.UniversalOptions{
+		Addrs: []string{server.Addr()},
+	}))
+	t.Cleanup(uqredis.Close)
+
+	StartBindingResolverWatcher(ctx)
+	require.Eventually(t, func() bool {
+		for _, count := range server.PubSubNumSub(
+			BindingRedisChannel,
+			ResultTableDetailChannel,
+			BuiltInResultTableDetailChannel,
+		) {
+			if count != 1 {
+				return false
+			}
+		}
+		return true
+	}, time.Second, 10*time.Millisecond)
+
+	cancel()
+	require.Eventually(t, func() bool {
+		for _, count := range server.PubSubNumSub(
+			BindingRedisChannel,
+			ResultTableDetailChannel,
+			BuiltInResultTableDetailChannel,
+		) {
+			if count != 0 {
+				return false
+			}
+		}
+		return true
+	}, time.Second, 10*time.Millisecond)
 }
 
 func contextWithTenantForBindingResolverTest(tenantID string) context.Context {

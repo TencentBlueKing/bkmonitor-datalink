@@ -377,14 +377,20 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 		_, _, err := scheduled.lifecycle.runner.RunOne(ctx)
 		bundle.inflightWG.Done()
 		if err != nil {
+			if ctx.Err() != nil {
+				for remaining := index + 1; remaining < len(runners); remaining++ {
+					bundle.inflightWG.Done()
+				}
+				return ctx.Err()
+			}
 			if errors.Is(err, ownership.ErrStaleFence) || errors.Is(err, ownership.ErrNotDesired) {
 				bundle.stopLostQueryGroup(scheduled.queryGroup, scheduled.lifecycle, err)
 				continue
 			}
-			for remaining := index + 1; remaining < len(runners); remaining++ {
-				bundle.inflightWG.Done()
-			}
-			return err
+			// RunOne errors are scoped to this Query Group. Progress remains on the
+			// same Slot, ownership stays local, and sibling Query Groups continue;
+			// later Gates may add bounded recovery without changing this isolation.
+			continue
 		}
 	}
 	return nil

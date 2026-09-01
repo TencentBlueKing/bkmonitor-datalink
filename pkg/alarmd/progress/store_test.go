@@ -168,8 +168,8 @@ func TestCommitProgressAdvancesFullDataGuardedByPreviousGapSkipped(t *testing.T)
 
 	// A following live Slot can have FULL+DATA input while its Level outcome is
 	// still guarded by the durable GAP_SKIPPED marker. Completion derivation
-	// intentionally preserves that as COMPLETED_WITH_UNAVAILABLE; G1 may advance
-	// only this exact guarded combination, not a query/readiness UNAVAILABLE.
+	// intentionally preserves that as COMPLETED_WITH_UNAVAILABLE without
+	// replacing the original query-free gap episode.
 	result, err = store.CommitProgress(context.Background(), execution.ProgressCommitRequest{
 		Identity: identity, OwnerFence: fence, ExpectedNextSlot: 120,
 		Completion: execution.SlotCompletion{
@@ -204,22 +204,55 @@ func TestCommitProgressAdvancesFullDataGuardedByPreviousGapSkipped(t *testing.T)
 	}
 }
 
-func TestCommitProgressDoesNotOpenOtherDegradedCompletionsInG1(t *testing.T) {
+func TestCommitProgressAdvancesContractValidUnavailableInG2(t *testing.T) {
+	fake := &controlFake{missing: true}
+	store := mustStore(t, fake)
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	fence := execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"}
+
+	for _, slot := range []execution.EvaluationTime{60, 120} {
+		request := execution.ProgressCommitRequest{
+			Identity: identity, OwnerFence: fence, ExpectedNextSlot: slot,
+			Completion: execution.SlotCompletion{
+				Contract: progressContractAt(slot), Kind: execution.CompletionUnavailable,
+				Primary: &execution.PrimaryInputFact{
+					Completeness: execution.CompletenessUnavailable,
+					DataState:    execution.DataStateUnknown,
+				},
+				Result:     observability.ResultDegraded,
+				ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable),
+			},
+		}
+		if err := request.Validate(); err != nil {
+			t.Fatalf("G2 UNAVAILABLE contract at %d is invalid: %v", slot, err)
+		}
+		result, err := store.CommitProgress(context.Background(), request)
+		if err != nil || result.Status != execution.ProgressCommitted {
+			t.Fatalf("CommitProgress(unavailable %d) = (%+v, %v)", slot, result, err)
+		}
+	}
+
+	loaded, err := store.LoadProgress(context.Background(), identity)
+	if err != nil || loaded.Progress == nil {
+		t.Fatalf("LoadProgress() = (%+v, %v)", loaded, err)
+	}
+	progress := *loaded.Progress
+	if progress.NextSlot != 180 || progress.LastFullSlot != 0 ||
+		progress.LastCompletionKind != execution.CompletionUnavailable {
+		t.Fatalf("UNAVAILABLE Progress = %+v", progress)
+	}
+	gap := progress.CurrentOrRecentGap
+	if gap == nil || gap.Kind != execution.CompletionUnavailable ||
+		gap.ReasonCode != execution.ReasonCode(contract.ReasonQueryUnavailable) ||
+		gap.FirstSlot != 60 || gap.LastSlot != 120 || gap.Count != 2 || gap.NextProbeAt != nil {
+		t.Fatalf("UNAVAILABLE gap summary = %+v", gap)
+	}
+}
+
+func TestCommitProgressKeepsLaterGateCompletionsClosedInG2(t *testing.T) {
 	fullData := &execution.PrimaryInputFact{
 		Completeness: execution.CompletenessFull,
 		DataState:    execution.DataStateData,
-	}
-	partialData := &execution.PrimaryInputFact{
-		Completeness: execution.CompletenessPartial,
-		DataState:    execution.DataStateData,
-	}
-	fullEmpty := &execution.PrimaryInputFact{
-		Completeness: execution.CompletenessFull,
-		DataState:    execution.DataStateEmpty,
-	}
-	unavailable := &execution.PrimaryInputFact{
-		Completeness: execution.CompletenessUnavailable,
-		DataState:    execution.DataStateUnknown,
 	}
 	for _, test := range []struct {
 		name       string
@@ -229,28 +262,8 @@ func TestCommitProgressDoesNotOpenOtherDegradedCompletionsInG1(t *testing.T) {
 		reasonCode execution.ReasonCode
 	}{
 		{
-			name: "other partial reason", kind: execution.CompletionPartialGap, primary: fullData,
-			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonQueryPartial),
-		},
-		{
-			name: "partial primary", kind: execution.CompletionPartialGap, primary: partialData,
-			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonHistoryWarming),
-		},
-		{
-			name: "unavailable", kind: execution.CompletionUnavailable, primary: unavailable,
-			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable),
-		},
-		{
-			name: "unavailable other coverage reason", kind: execution.CompletionUnavailable, primary: fullData,
-			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonHistoryWarming),
-		},
-		{
-			name: "unavailable partial primary", kind: execution.CompletionUnavailable, primary: partialData,
-			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonGapSkipped),
-		},
-		{
-			name: "unavailable empty primary", kind: execution.CompletionUnavailable, primary: fullEmpty,
-			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonGapSkipped),
+			name: "snapshot unavailable", kind: execution.CompletionSnapshotUnavailable,
+			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
 		},
 		{
 			name: "terminal", kind: execution.CompletionTerminal, primary: fullData,
@@ -272,11 +285,11 @@ func TestCommitProgressDoesNotOpenOtherDegradedCompletionsInG1(t *testing.T) {
 				},
 			}
 			if err := request.Validate(); err != nil {
-				t.Fatalf("test completion is not valid before the G1 boundary: %v", err)
+				t.Fatalf("test completion is not valid before the G2 boundary: %v", err)
 			}
 			_, err := store.CommitProgress(context.Background(), request)
 			if err == nil {
-				t.Fatalf("CommitProgress(%s) accepted a completion outside the G1 warming boundary", test.name)
+				t.Fatalf("CommitProgress(%s) accepted a completion outside the G2 boundary", test.name)
 			}
 			if !fake.missing {
 				t.Fatalf("CommitProgress(%s) persisted rejected Progress", test.name)

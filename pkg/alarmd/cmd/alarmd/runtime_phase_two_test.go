@@ -239,12 +239,11 @@ func TestRunPhaseTwoApplicationCancelsWorkerAndMarksFatalWhenHTTPStopsEarly(t *t
 	}
 }
 
-func TestRunPhaseTwoApplicationCancelsHTTPAndMarksFatalWhenWorkerStopsEarly(t *testing.T) {
+func TestRunPhaseTwoApplicationKeepsRunningAfterQueryGroupFailure(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	cfg.PhaseTwo.Scheduler.TickInterval = config.Duration(time.Millisecond)
-	want := errors.New("worker runtime stopped")
 	runner := newFakePhaseTwoQueryGroup()
-	runner.runErr = want
+	runner.runErr = errors.New("commit progress: deterministic completion rejection")
 	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
 	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{"query-group-1"}, runner: runner}
 	var mu sync.Mutex
@@ -278,21 +277,32 @@ func TestRunPhaseTwoApplicationCancelsHTTPAndMarksFatalWhenWorkerStopsEarly(t *t
 			}}, nil
 		},
 	}
-	err := runPhaseTwoApplicationWithDependencies(
-		context.Background(), cfg, metric.NewRecorder(metric.BuildInfo{}),
-		observability.Discard(observability.ComponentRuntime), dependencies,
-	)
-	if !errors.Is(err, want) {
-		t.Fatalf("runPhaseTwoApplicationWithDependencies() error = %v, want Worker failure", err)
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- runPhaseTwoApplicationWithDependencies(
+			runCtx, cfg, metric.NewRecorder(metric.BuildInfo{}),
+			observability.Discard(observability.ComponentRuntime), dependencies,
+		)
+	}()
+	waitForRunnerCalls(t, runner, 2)
+	select {
+	case err := <-done:
+		t.Fatalf("application stopped after local Query Group failure: %v", err)
+	default:
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("runPhaseTwoApplicationWithDependencies() shutdown error = %v", err)
 	}
 	waitSignal(t, httpCanceled, "HTTP cancellation")
-	if snapshot := applicationHealth.HealthSnapshot(); snapshot.State != observability.HealthFatal || snapshot.Ready {
-		t.Fatalf("application health after Worker failure = %+v, want fatal", snapshot)
+	if snapshot := applicationHealth.HealthSnapshot(); snapshot.State == observability.HealthFatal {
+		t.Fatalf("application health after local Query Group failure = %+v, want non-fatal", snapshot)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if !containsStage(stages, observability.Stage(observability.StageFatal)) {
-		t.Fatalf("application stages = %v, want fatal transition", stages)
+	if containsStage(stages, observability.Stage(observability.StageFatal)) {
+		t.Fatalf("application stages = %v, local Query Group failure became fatal", stages)
 	}
 }
 
@@ -529,6 +539,33 @@ func TestPhaseTwoWorkerBundleStaleRunnerDoesNotStopSiblingQueryGroup(t *testing.
 	}
 	if stale.releaseCount() != 1 {
 		t.Fatalf("stale runner release calls = %d, want 1", stale.releaseCount())
+	}
+	_ = bundle.Shutdown(context.Background())
+}
+
+func TestPhaseTwoWorkerBundleQueryGroupFailureDoesNotStopSiblingOrWorker(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	queryGroups := []execution.QueryGroupIdentity{"query-group-1", "query-group-2"}
+	control := &fakePhaseTwoControl{queryGroups: queryGroups}
+	failed := newFakePhaseTwoQueryGroup()
+	failed.runErr = errors.New("commit progress: deterministic completion rejection")
+	healthy := newFakePhaseTwoQueryGroup()
+	owner := &fakePhaseTwoOwnership{assigned: queryGroups, runners: map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime{
+		"query-group-1": failed, "query-group-2": healthy,
+	}}
+	bundle := mustPhaseTwoWorkerBundle(t, cfg, newPhaseTwoApplicationHealth(), control, owner)
+
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if err := bundle.runScheduledOnce(context.Background()); err != nil {
+		t.Fatalf("runScheduledOnce(local Query Group failure) error = %v", err)
+	}
+	if failed.runCount() != 1 || healthy.runCount() != 1 {
+		t.Fatalf("runner calls failed/healthy = %d/%d, want 1/1", failed.runCount(), healthy.runCount())
+	}
+	if failed.releaseCount() != 0 {
+		t.Fatalf("local Query Group failure migrated ownership, releases = %d", failed.releaseCount())
 	}
 	_ = bundle.Shutdown(context.Background())
 }
@@ -1067,6 +1104,18 @@ func (runner *fakePhaseTwoQueryGroup) runCount() int {
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
 	return runner.runCalls
+}
+
+func waitForRunnerCalls(t *testing.T, runner *fakePhaseTwoQueryGroup, count int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if runner.runCount() >= count {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d runner calls; got %d", count, runner.runCount())
 }
 
 func waitSignal(t *testing.T, signal <-chan struct{}, name string) {

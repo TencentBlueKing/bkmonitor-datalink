@@ -14,7 +14,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
@@ -85,7 +84,7 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 	if err := request.Validate(); err != nil {
 		return execution.ProgressCommitResult{}, err
 	}
-	if err := validateG1Completion(request.Completion); err != nil {
+	if err := validateG2Completion(request.Completion); err != nil {
 		return execution.ProgressCommitResult{}, err
 	}
 	name, err := store.namespace(request.Identity)
@@ -130,8 +129,7 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 	if request.Completion.Primary != nil && request.Completion.Primary.Completeness == execution.CompletenessFull {
 		next.LastFullSlot = request.ExpectedNextSlot
 	}
-	if request.Completion.Kind == execution.CompletionPartialGap ||
-		request.Completion.Kind == execution.CompletionGapSkipped {
+	if shouldFoldRecentGap(current, request.Completion) {
 		next.CurrentOrRecentGap = foldRecentGap(current, request)
 	}
 	encoded, err := encode(next)
@@ -157,34 +155,39 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 	}
 }
 
-func validateG1Completion(completion execution.SlotCompletion) error {
+func validateG2Completion(completion execution.SlotCompletion) error {
 	switch completion.Kind {
-	case execution.CompletionFull, execution.CompletionFullEmpty:
-		return nil
-	case execution.CompletionPartialGap:
-		if completion.Primary == nil || completion.Primary.Completeness != execution.CompletenessFull ||
-			completion.Primary.DataState != execution.DataStateData ||
-			completion.ReasonCode != execution.ReasonCode(contract.ReasonHistoryWarming) {
-			return fmt.Errorf("progress: G1 PARTIAL completion is limited to FULL+DATA HISTORY_WARMING")
-		}
-		return nil
-	case execution.CompletionUnavailable:
-		// A live FULL+DATA Slot immediately following a query-free GAP_SKIPPED
-		// completion can still be constrained by that durable guard. Completion
-		// derivation preserves its UNKNOWN Level outcome as UNAVAILABLE even though
-		// the query itself was available. G1 advances only this exact combination;
-		// query/readiness UNAVAILABLE remains outside the G1 boundary.
-		if completion.Primary == nil || completion.Primary.Completeness != execution.CompletenessFull ||
-			completion.Primary.DataState != execution.DataStateData ||
-			completion.Result != observability.ResultDegraded ||
-			completion.ReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) {
-			return fmt.Errorf("progress: G1 UNAVAILABLE completion is limited to FULL+DATA DEGRADED GAP_SKIPPED")
-		}
-		return nil
-	case execution.CompletionGapSkipped:
+	case execution.CompletionFull, execution.CompletionFullEmpty,
+		execution.CompletionPartialGap, execution.CompletionUnavailable,
+		execution.CompletionGapSkipped:
+		// ProgressCommitRequest.Validate has already checked the complete result,
+		// PRIMARY and reason contract. G2 must persist business PARTIAL and
+		// UNAVAILABLE completions so one Query Group cannot stop the Worker.
 		return nil
 	default:
-		return fmt.Errorf("progress: G1 store does not accept completion kind %q", completion.Kind)
+		// TERMINAL and SNAPSHOT_UNAVAILABLE remain closed until their later Gate;
+		// accepting contract-valid PARTIAL/UNAVAILABLE does not enable G3 recovery.
+		return fmt.Errorf("progress: G2 store does not accept completion kind %q", completion.Kind)
+	}
+}
+
+func shouldFoldRecentGap(
+	current execution.ScheduleProgress,
+	completion execution.SlotCompletion,
+) bool {
+	switch completion.Kind {
+	case execution.CompletionPartialGap, execution.CompletionGapSkipped:
+		return true
+	case execution.CompletionUnavailable:
+		// A FULL+DATA result can remain guarded by an earlier query-free
+		// GAP_SKIPPED episode. Preserve that episode instead of replacing it with
+		// a second summary for the same durable guard.
+		return completion.Primary == nil || completion.Primary.Completeness != execution.CompletenessFull ||
+			completion.Primary.DataState != execution.DataStateData || current.CurrentOrRecentGap == nil ||
+			current.CurrentOrRecentGap.Kind != execution.CompletionGapSkipped ||
+			current.CurrentOrRecentGap.ReasonCode != completion.ReasonCode
+	default:
+		return false
 	}
 }
 

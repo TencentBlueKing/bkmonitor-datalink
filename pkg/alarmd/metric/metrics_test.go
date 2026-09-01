@@ -242,6 +242,10 @@ func TestCustomMetricFamilySeriesDevelopmentLimits(t *testing.T) {
 			t.Errorf("histogram family %s theoretical maximum = %d, want buckets/+Inf/sum/count total %d", family, got, want)
 		}
 	}
+	if got, want := bounds["bkmonitor_alarmd_health_last_progress_timestamp_seconds"],
+		len(observability.AllStages()); got != want {
+		t.Errorf("health last-progress stage maximum = %d, want complete legal stage catalog %d", got, want)
+	}
 }
 
 func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
@@ -538,7 +542,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("health_worker_queue_depth"):              1,
 		fqName("health_worker_queue_bytes"):              1,
 		fqName("health_consumer_lag_records"):            1,
-		fqName("health_last_progress_timestamp_seconds"): len(observability.AllMetricComponentStages()),
+		fqName("health_last_progress_timestamp_seconds"): len(observability.AllStages()),
 		fqName("health_last_recovery_timestamp_seconds"): 1,
 		fqName("resource_state"):                         len(observability.AllResourceStates()),
 	}

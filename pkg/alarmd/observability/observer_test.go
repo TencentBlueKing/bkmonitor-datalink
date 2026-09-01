@@ -69,6 +69,24 @@ func TestPhaseTwoComponentValuesMatchFrozenObservabilityContract(t *testing.T) {
 	}
 }
 
+func TestAllStagesIsCompleteUniqueLabelCatalog(t *testing.T) {
+	t.Parallel()
+
+	seen := make(map[Stage]struct{})
+	for _, stage := range AllStages() {
+		if _, duplicate := seen[stage]; duplicate {
+			t.Fatalf("AllStages() contains duplicate stage %q", stage)
+		}
+		seen[stage] = struct{}{}
+	}
+	if _, ok := seen[StageProgressCommitted]; !ok {
+		t.Fatal("AllStages() omitted phase-two progress_committed")
+	}
+	if len(seen) != len(AllComponentStages()) {
+		t.Fatalf("unique stages = %d, component-stage catalog = %d", len(seen), len(AllComponentStages()))
+	}
+}
+
 func TestOwnershipLifecycleLogCarriesExactOperationalIdentity(t *testing.T) {
 	var output bytes.Buffer
 	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})

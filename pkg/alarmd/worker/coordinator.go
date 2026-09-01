@@ -52,7 +52,10 @@ type ProvisionalBudget struct {
 }
 
 type activationProtectionRequiredError struct {
-	activations execution.PlanActivationResult
+	activationRequest execution.PlanActivationRequest
+	currentFacts      execution.PlanActivationResult
+	activations       execution.PlanActivationResult
+	completion        execution.SlotCompletion
 }
 
 func (*activationProtectionRequiredError) Error() string {
@@ -141,12 +144,11 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	if err != nil {
 		var protection *activationProtectionRequiredError
 		if errors.As(err, &protection) {
-			if protectErr := coordinator.protectActivatedPlanGaps(
-				ctx, request, execution.ReasonCode(contract.ReasonConfigDrift), protection.activations,
-			); protectErr != nil {
-				return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: protect changed activation: %w", protectErr)
+			result, convergeErr := coordinator.convergeNormalActivation(ctx, request, *protection)
+			if convergeErr != nil {
+				return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: converge changed activation: %w", convergeErr)
 			}
-			return activationRetry(execution.ReasonCode(contract.ReasonConfigDrift)), nil
+			return result, nil
 		}
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: execute frozen Slot: %w", err)
 	}
@@ -169,7 +171,7 @@ func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(
 	var result execution.SlotExecutionResult
 	var changedActivations *execution.PlanActivationResult
 	err = coordinator.ports.Sequencer.Sequence(ctx, activatedPlanSequencingScope(request.Contract.Slot, guardFacts), func(sequenceCtx context.Context) error {
-		if err := coordinator.ensureActivatedPlanGaps(sequenceCtx, request, finalization.ReasonCode, guardFacts); err != nil {
+		if _, err := coordinator.ensureActivatedPlanGaps(sequenceCtx, request, finalization.ReasonCode, guardFacts); err != nil {
 			return err
 		}
 		progressFacts, err := coordinator.loadActivations(sequenceCtx, activationRequest)
@@ -251,6 +253,29 @@ func changedSelectedActivations(
 	return changed
 }
 
+func changedDuePlanActivations(
+	duePlans []execution.DuePlan,
+	activations execution.PlanActivationResult,
+) (map[execution.PlanIdentity]struct{}, execution.PlanActivationResult) {
+	changedPlans := make(map[execution.PlanIdentity]struct{})
+	changedSelected := execution.PlanActivationResult{Contract: activations.Contract}
+	for _, due := range duePlans {
+		fact, found := activations.Find(due.Identity)
+		if found && fact.Selection != execution.ActivationNone &&
+			fact.Selected.Identity == due.Identity &&
+			fact.Selected.StateGeneration == due.StateGeneration &&
+			fact.Selected.StateApplyEpoch == due.StateApplyEpoch &&
+			fact.Selected.ScheduleRevision == due.ScheduleRevision {
+			continue
+		}
+		changedPlans[due.Identity] = struct{}{}
+		if found && fact.Selection != execution.ActivationNone {
+			changedSelected.Facts = append(changedSelected.Facts, fact)
+		}
+	}
+	return changedPlans, changedSelected
+}
+
 func (coordinator *SlotExecutionCoordinator) admitActivatedPlans(
 	ctx context.Context,
 	request execution.SlotExecutionRequest,
@@ -294,9 +319,63 @@ func (coordinator *SlotExecutionCoordinator) protectActivatedPlanGaps(
 		ctx,
 		activatedPlanSequencingScope(request.Contract.Slot, activations),
 		func(sequenceCtx context.Context) error {
-			return coordinator.ensureActivatedPlanGaps(sequenceCtx, request, reason, activations)
+			_, err := coordinator.ensureActivatedPlanGaps(sequenceCtx, request, reason, activations)
+			return err
 		},
 	)
+}
+
+func (coordinator *SlotExecutionCoordinator) convergeNormalActivation(
+	ctx context.Context,
+	request execution.SlotExecutionRequest,
+	protection activationProtectionRequiredError,
+) (execution.SlotExecutionResult, error) {
+	result := activationRetry(execution.ReasonCode(contract.ReasonConfigDrift))
+	var changedActivations *execution.PlanActivationResult
+	err := coordinator.ports.Sequencer.Sequence(
+		ctx,
+		activatedPlanSequencingScope(request.Contract.Slot, protection.activations),
+		func(sequenceCtx context.Context) error {
+			alreadyProtected, err := coordinator.ensureActivatedPlanGaps(
+				sequenceCtx,
+				request,
+				execution.ReasonCode(contract.ReasonConfigDrift),
+				protection.activations,
+			)
+			if err != nil || !alreadyProtected {
+				return err
+			}
+			progressFacts, err := coordinator.loadActivations(sequenceCtx, protection.activationRequest)
+			if err != nil {
+				result = activationRetry(execution.ReasonCode(contract.ReasonProviderUnavailable))
+				return nil
+			}
+			if !protection.currentFacts.SameSelections(progressFacts) {
+				changed := changedSelectedActivations(protection.currentFacts, progressFacts)
+				changedActivations = &changed
+				return nil
+			}
+			if err := coordinator.admitActivatedPlans(sequenceCtx, request, progressFacts); err != nil {
+				return err
+			}
+			result, err = coordinator.commitProgress(sequenceCtx, request, protection.completion)
+			return err
+		},
+	)
+	if err != nil {
+		return execution.SlotExecutionResult{}, err
+	}
+	if changedActivations != nil {
+		if err := coordinator.protectActivatedPlanGaps(
+			ctx,
+			request,
+			execution.ReasonCode(contract.ReasonConfigDrift),
+			*changedActivations,
+		); err != nil {
+			return execution.SlotExecutionResult{}, err
+		}
+	}
+	return result, nil
 }
 
 func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
@@ -304,7 +383,7 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 	request execution.SlotExecutionRequest,
 	reason execution.ReasonCode,
 	activations execution.PlanActivationResult,
-) error {
+) (bool, error) {
 	items := make([]execution.PlanGapLoadItem, 0, len(activations.Facts))
 	for _, fact := range activations.Facts {
 		if fact.Selection == execution.ActivationNone {
@@ -312,7 +391,7 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 		}
 		version, err := execution.BuildApplyVersion(request.Contract, fact.Selected.StateApplyEpoch)
 		if err != nil {
-			return fmt.Errorf("alarmd worker: build activated Plan ApplyVersion: %w", err)
+			return false, fmt.Errorf("alarmd worker: build activated Plan ApplyVersion: %w", err)
 		}
 		items = append(items, execution.PlanGapLoadItem{
 			Identity:     execution.PlanGapIdentity{Plan: fact.Plan, StateGeneration: fact.Selected.StateGeneration},
@@ -320,13 +399,13 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 		})
 	}
 	if len(items) == 0 {
-		return nil
+		return true, nil
 	}
 	sort.Slice(items, func(left, right int) bool {
 		return lessPlanIdentity(items[left].Identity.Plan, items[right].Identity.Plan)
 	})
 	if err := coordinator.admitActivatedPlans(ctx, request, activations); err != nil {
-		return err
+		return false, err
 	}
 	started := time.Now()
 	loadRequest := execution.GapLoadRequest{Contract: request.Contract, Items: items}
@@ -338,7 +417,7 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 	coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageGapLoaded, request.Operation, started,
 		gapResult, gapReason, observability.Counts{Keys: int64(len(loaded.Items))}, err)
 	if err != nil {
-		return fmt.Errorf("alarmd worker: activated Plan gap preflight: %w", err)
+		return false, fmt.Errorf("alarmd worker: activated Plan gap preflight: %w", err)
 	}
 
 	selected := make(map[execution.PlanIdentity]execution.ActivatedPlan, len(activations.Facts))
@@ -352,11 +431,11 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 	for _, item := range items {
 		marker, found := loaded.Find(item.Identity)
 		if !found {
-			return errors.New("alarmd worker: activated Plan gap marker is absent from validated result")
+			return false, errors.New("alarmd worker: activated Plan gap marker is absent from validated result")
 		}
 		kind, err := ensureGappedKind(marker)
 		if err != nil {
-			return err
+			return false, err
 		}
 		plan := selected[item.Identity.Plan]
 		mutation, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{
@@ -368,15 +447,15 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 			}},
 		})
 		if err != nil {
-			return fmt.Errorf("alarmd worker: build activated Plan gap mutation: %w", err)
+			return false, fmt.Errorf("alarmd worker: build activated Plan gap mutation: %w", err)
 		}
 		if marker.Status == execution.GapFound || marker.Status == execution.GapClearedTombstone {
 			switch execution.CompareApplyVersion(marker.PersistedApplyVersion, mutation.ApplyVersion) {
 			case execution.ApplyVersionPersistedNewer:
-				return errors.New("alarmd worker: activated Plan gap marker is newer than the Slot")
+				return false, errors.New("alarmd worker: activated Plan gap marker is newer than the Slot")
 			case execution.ApplyVersionEqual:
 				if marker.Status != execution.GapFound || marker.PersistedMutationDigest != mutation.MutationDigest {
-					return errors.New("alarmd worker: activated Plan gap marker conflicts with the Slot")
+					return false, errors.New("alarmd worker: activated Plan gap marker conflicts with the Slot")
 				}
 				requireAlready[item.Identity] = struct{}{}
 			}
@@ -410,10 +489,11 @@ func (coordinator *SlotExecutionCoordinator) applyActivatedPlanGaps(
 	contractRef execution.FrozenExecutionContractRef,
 	items []execution.PlanGapMutation,
 	requireAlready map[execution.PlanGapIdentity]struct{},
-) error {
+) (bool, error) {
 	started := time.Now()
 	result, err := coordinator.ports.GapGuard.ApplyGap(ctx, execution.GapGuardApplyRequest{Contract: contractRef, Items: items})
 	var reason execution.ReasonCode
+	allAlready := len(items) > 0
 	if err == nil {
 		if err = result.Validate(); err == nil {
 			expected := make([]execution.PlanGapIdentity, len(items))
@@ -424,6 +504,9 @@ func (coordinator *SlotExecutionCoordinator) applyActivatedPlanGaps(
 			for index, item := range result.Items {
 				actual[index] = item.Identity
 				reason = item.ReasonCode
+				if item.Status != execution.GapGuardAlreadyApplied {
+					allAlready = false
+				}
 				if _, redo := requireAlready[item.Identity]; redo && item.Status != execution.GapGuardAlreadyApplied {
 					err = fmt.Errorf("activated Plan gap redo did not converge: %s", item.Status)
 					break
@@ -440,9 +523,9 @@ func (coordinator *SlotExecutionCoordinator) applyActivatedPlanGaps(
 	}
 	coordinator.observe(ctx, observability.ComponentState, observability.StageGapGuardCommitted, operation, started, "", reason, err)
 	if err != nil {
-		return fmt.Errorf("alarmd worker: apply activated Plan gap guard: %w", err)
+		return false, fmt.Errorf("alarmd worker: apply activated Plan gap guard: %w", err)
 	}
-	return nil
+	return allAlready, nil
 }
 
 func activatedPlanSequencingScope(slot execution.SlotIdentity, activations execution.PlanActivationResult) execution.SequencingScope {
@@ -474,6 +557,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePrepared(
 	if err != nil {
 		return activationRetry(execution.ReasonCode(contract.ReasonProviderUnavailable)), nil
 	}
+	changedPlans, changedActivations := changedDuePlanActivations(header.DuePlans, guardActivations)
 
 	planResults := append([]execution.PlanEvaluationResult(nil), evaluated.Plans...)
 	sort.Slice(planResults, func(left, right int) bool {
@@ -482,6 +566,9 @@ func (coordinator *SlotExecutionCoordinator) finalizePrepared(
 	var retryPendingReason execution.ReasonCode
 	var stateAdmissionTerminalReason execution.ReasonCode
 	for _, planResult := range planResults {
+		if _, changed := changedPlans[planResult.Plan]; changed {
+			continue
+		}
 		due, ok := duePlan(header.DuePlans, planResult.Plan)
 		if !ok {
 			return execution.SlotExecutionResult{}, errors.New("alarmd worker: evaluated plan is not due")
@@ -577,20 +664,35 @@ func (coordinator *SlotExecutionCoordinator) finalizePrepared(
 			Completed: false, Result: observability.ResultRetrying, ReasonCode: retryPendingReason,
 		}, nil
 	}
-	completionKind, err := execution.DeriveStreamingCompletionKind(header, bindings, evaluated)
-	if err != nil {
-		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive completion: %w", err)
-	}
-	completionResult := evaluated.Result
-	completionReason := evaluated.ReasonCode
-	if stateAdmissionTerminalReason != "" {
-		completionKind = execution.CompletionTerminal
-		completionResult = observability.ResultTerminal
-		completionReason = stateAdmissionTerminalReason
-	}
 	primary, err := execution.DeriveStreamingPrimaryInputFact(header, bindings)
 	if err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive PRIMARY input fact: %w", err)
+	}
+	completion := execution.SlotCompletion{Contract: request.Contract, Primary: &primary}
+	if len(changedPlans) > 0 {
+		completion.Kind = execution.CompletionPartialGap
+		completion.Result = observability.ResultDegraded
+		completion.ReasonCode = execution.ReasonCode(contract.ReasonConfigDrift)
+	} else {
+		completion.Kind, err = execution.DeriveStreamingCompletionKind(header, bindings, evaluated)
+		if err != nil {
+			return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive completion: %w", err)
+		}
+		completion.Result = evaluated.Result
+		completion.ReasonCode = evaluated.ReasonCode
+	}
+	if stateAdmissionTerminalReason != "" {
+		completion.Kind = execution.CompletionTerminal
+		completion.Result = observability.ResultTerminal
+		completion.ReasonCode = stateAdmissionTerminalReason
+	}
+	if len(changedPlans) > 0 {
+		return execution.SlotExecutionResult{}, &activationProtectionRequiredError{
+			activationRequest: activationRequest,
+			currentFacts:      guardActivations,
+			activations:       changedActivations,
+			completion:        completion,
+		}
 	}
 	progressActivations, err := coordinator.loadActivations(ctx, activationRequest)
 	if err != nil {
@@ -598,17 +700,20 @@ func (coordinator *SlotExecutionCoordinator) finalizePrepared(
 	}
 	if !guardActivations.SameSelections(progressActivations) {
 		return execution.SlotExecutionResult{}, &activationProtectionRequiredError{
-			activations: changedSelectedActivations(guardActivations, progressActivations),
+			activationRequest: activationRequest,
+			currentFacts:      progressActivations,
+			activations:       changedSelectedActivations(guardActivations, progressActivations),
+			completion: execution.SlotCompletion{
+				Contract: request.Contract, Kind: execution.CompletionPartialGap, Primary: &primary,
+				Result: observability.ResultDegraded, ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift),
+			},
 		}
 	}
 	if err := coordinator.admitDuePlans(ctx, request, header.DuePlans); err != nil {
 		return execution.SlotExecutionResult{}, err
 	}
 
-	return coordinator.commitProgress(ctx, request, execution.SlotCompletion{
-		Contract: request.Contract, Kind: completionKind, Primary: &primary,
-		Result: completionResult, ReasonCode: completionReason,
-	})
+	return coordinator.commitProgress(ctx, request, completion)
 }
 
 func (coordinator *SlotExecutionCoordinator) commitProgress(

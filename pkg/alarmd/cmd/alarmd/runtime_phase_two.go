@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -374,7 +375,7 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 	bundle.mu.RUnlock()
 
 	for index, scheduled := range runners {
-		_, _, err := scheduled.lifecycle.runner.RunOne(ctx)
+		_, attempted, err := scheduled.lifecycle.runner.RunOne(ctx)
 		bundle.inflightWG.Done()
 		if err != nil {
 			if ctx.Err() != nil {
@@ -383,9 +384,19 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 				}
 				return ctx.Err()
 			}
-			if errors.Is(err, ownership.ErrStaleFence) || errors.Is(err, ownership.ErrNotDesired) {
+			if errors.Is(err, ownership.ErrStaleFence) || errors.Is(err, ownership.ErrNotDesired) ||
+				errors.Is(err, scheduler.ErrSlotOwnershipChanged) {
 				bundle.stopLostQueryGroup(scheduled.queryGroup, scheduled.lifecycle, err)
 				continue
+			}
+			if !attempted {
+				observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
+					Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
+					Result: observability.ResultFailed, ReasonCode: observability.ReasonInternalUnknown,
+					Direction: observability.DirectionInternal,
+					Trace:     observability.TraceFields{QueryGroupKey: string(scheduled.queryGroup)},
+					Err:       err,
+				})
 			}
 			// RunOne errors are scoped to this Query Group. Progress remains on the
 			// same Slot, ownership stays local, and sibling Query Groups continue;

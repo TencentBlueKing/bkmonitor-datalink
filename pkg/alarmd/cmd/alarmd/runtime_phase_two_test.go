@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
 func TestPhaseTwoApplicationHealthUsesWorkerReadinessWithoutKafkaInputState(t *testing.T) {
@@ -543,6 +544,33 @@ func TestPhaseTwoWorkerBundleStaleRunnerDoesNotStopSiblingQueryGroup(t *testing.
 	_ = bundle.Shutdown(context.Background())
 }
 
+func TestPhaseTwoWorkerBundleSlotOwnershipChangeStopsOnlyInvalidQueryGroup(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	queryGroups := []execution.QueryGroupIdentity{"query-group-1", "query-group-2"}
+	control := &fakePhaseTwoControl{queryGroups: queryGroups}
+	changed := newFakePhaseTwoQueryGroup()
+	changed.runErr = scheduler.ErrSlotOwnershipChanged
+	healthy := newFakePhaseTwoQueryGroup()
+	owner := &fakePhaseTwoOwnership{assigned: queryGroups, runners: map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime{
+		"query-group-1": changed, "query-group-2": healthy,
+	}}
+	bundle := mustPhaseTwoWorkerBundle(t, cfg, newPhaseTwoApplicationHealth(), control, owner)
+
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if err := bundle.runScheduledOnce(context.Background()); err != nil {
+		t.Fatalf("runScheduledOnce(ownership changed sibling) error = %v", err)
+	}
+	if changed.runCount() != 1 || healthy.runCount() != 1 {
+		t.Fatalf("runner calls changed/healthy = %d/%d, want 1/1", changed.runCount(), healthy.runCount())
+	}
+	if changed.releaseCount() != 1 {
+		t.Fatalf("ownership-changed runner releases = %d, want 1", changed.releaseCount())
+	}
+	_ = bundle.Shutdown(context.Background())
+}
+
 func TestPhaseTwoWorkerBundleQueryGroupFailureDoesNotStopSiblingOrWorker(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	queryGroups := []execution.QueryGroupIdentity{"query-group-1", "query-group-2"}
@@ -553,7 +581,19 @@ func TestPhaseTwoWorkerBundleQueryGroupFailureDoesNotStopSiblingOrWorker(t *test
 	owner := &fakePhaseTwoOwnership{assigned: queryGroups, runners: map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime{
 		"query-group-1": failed, "query-group-2": healthy,
 	}}
-	bundle := mustPhaseTwoWorkerBundle(t, cfg, newPhaseTwoApplicationHealth(), control, owner)
+	var mu sync.Mutex
+	var observations []observability.Observation
+	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
+		Config: cfg, Health: newPhaseTwoApplicationHealth(), Control: control, Ownership: owner, Now: time.Now,
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			mu.Lock()
+			defer mu.Unlock()
+			observations = append(observations, observation)
+		}),
+	})
+	if err != nil {
+		t.Fatalf("newPhaseTwoWorkerBundle() error = %v", err)
+	}
 
 	if err := bundle.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v", err)
@@ -566,6 +606,48 @@ func TestPhaseTwoWorkerBundleQueryGroupFailureDoesNotStopSiblingOrWorker(t *test
 	}
 	if failed.releaseCount() != 0 {
 		t.Fatalf("local Query Group failure migrated ownership, releases = %d", failed.releaseCount())
+	}
+	mu.Lock()
+	failures := schedulerFailureObservations(observations)
+	for _, observation := range observations {
+		if observation.Stage == observability.Stage(observability.StageFatal) {
+			mu.Unlock()
+			t.Fatalf("local Query Group failure became fatal: %+v", observation)
+		}
+	}
+	mu.Unlock()
+	if len(failures) != 1 || failures[0].Trace.QueryGroupKey != "query-group-1" {
+		t.Fatalf("scheduler failure observations = %+v, want one local Query Group trace", failures)
+	}
+	_ = bundle.Shutdown(context.Background())
+}
+
+func TestPhaseTwoWorkerBundleDoesNotDuplicateAttemptedRunnerFailureObservation(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
+	failed := newFakePhaseTwoQueryGroup()
+	failed.attempted = true
+	failed.runErr = errors.New("executor already observed this failure")
+	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{"query-group-1"}, runner: failed}
+	var observations []observability.Observation
+	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
+		Config: cfg, Health: newPhaseTwoApplicationHealth(), Control: control, Ownership: owner, Now: time.Now,
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		}),
+	})
+	if err != nil {
+		t.Fatalf("newPhaseTwoWorkerBundle() error = %v", err)
+	}
+
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if err := bundle.runScheduledOnce(context.Background()); err != nil {
+		t.Fatalf("runScheduledOnce(attempted failure) error = %v", err)
+	}
+	if failures := schedulerFailureObservations(observations); len(failures) != 0 {
+		t.Fatalf("attempted runner failure was observed twice: %+v", failures)
 	}
 	_ = bundle.Shutdown(context.Background())
 }
@@ -1171,6 +1253,18 @@ func containsStage(stages []observability.Stage, wanted observability.Stage) boo
 		}
 	}
 	return false
+}
+
+func schedulerFailureObservations(observations []observability.Observation) []observability.Observation {
+	var failures []observability.Observation
+	for _, observation := range observations {
+		if observation.Component == observability.ComponentScheduler &&
+			observation.Stage == observability.StageScheduleDue &&
+			observation.Result == observability.ResultFailed {
+			failures = append(failures, observation)
+		}
+	}
+	return failures
 }
 
 func validGoAccessRuntimeConfig() config.Config {

@@ -56,18 +56,29 @@ func TestPhaseTwoOwnershipMetricsStayLowCardinality(t *testing.T) {
 		t.Fatalf("owned query groups = %v, want 7", got)
 	}
 
-	recorder.Observe(context.Background(), observability.Observation{
-		Component:  observability.ComponentOwnership,
-		Stage:      observability.StageAssignmentAcquired,
-		Result:     observability.ResultSuccess,
-		ReasonCode: observability.ReasonNone,
-		Trace: observability.TraceFields{
-			QueryGroupKey: "high-cardinality-qg",
-			OwnerID:       "high-cardinality-worker",
-		},
-	})
-	if got := testutil.ToFloat64(recorder.phaseTwo.ownershipTransitions.WithLabelValues("success", "none")); got != 1 {
-		t.Fatalf("successful ownership transitions = %v, want 1", got)
+	for _, stage := range []observability.Stage{
+		observability.StageAssignmentAcquired,
+		observability.StageAssignmentLost,
+		observability.StageTakeoverStarted,
+		observability.StageTakeoverCompleted,
+		observability.StageFenceChecked,
+	} {
+		recorder.Observe(context.Background(), observability.Observation{
+			Component:  observability.ComponentOwnership,
+			Stage:      stage,
+			Result:     observability.ResultSuccess,
+			ReasonCode: observability.ReasonNone,
+			Trace: observability.TraceFields{
+				QueryGroupKey: "high-cardinality-qg",
+				OwnerID:       "high-cardinality-worker",
+			},
+		})
+		if got := testutil.ToFloat64(recorder.phaseTwo.ownershipTransitions.WithLabelValues(string(stage), "success", "none")); got != 1 {
+			t.Fatalf("%s ownership transitions = %v, want 1", stage, got)
+		}
+	}
+	if isOwnershipTransitionStage(observability.StageLeaseRenewed) {
+		t.Fatal("lease_renewed was admitted as a fixed ownership transition")
 	}
 }
 

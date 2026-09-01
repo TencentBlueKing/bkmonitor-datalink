@@ -207,7 +207,7 @@ func TestCustomMetricSeriesBudget(t *testing.T) {
 	bindBudgetHealthAndResources(t, recorder)
 	populateAllCustomLabelCombinations(recorder)
 	got := countCustomSeries(t, recorder)
-	if want := 18677; MaxCustomSeries() != want {
+	if want := 18837; MaxCustomSeries() != want {
 		t.Fatalf("MaxCustomSeries() = %d, want formula result %d", MaxCustomSeries(), want)
 	}
 	if gotObservation := countObservationSeries(t, recorder); gotObservation != observationCustomSeries() {
@@ -258,7 +258,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_last_progress_timestamp_seconds": "variableLabels: {kind}",
 		"bkmonitor_alarmd_capacity_transition_total":       "variableLabels: {budget,result}",
 		"bkmonitor_alarmd_worker_owned_query_groups":       "variableLabels: {worker_role}",
-		"bkmonitor_alarmd_ownership_transition_total":      "variableLabels: {result,reason_class}",
+		"bkmonitor_alarmd_ownership_transition_total":      "variableLabels: {transition,result,reason_class}",
 		"bkmonitor_alarmd_ready":                           "variableLabels: {}",
 		"bkmonitor_alarmd_assigned_claims":                 "variableLabels: {}",
 		"bkmonitor_alarmd_fatal_total":                     "variableLabels: {}",

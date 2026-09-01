@@ -32,6 +32,13 @@ var phaseTwoProgressKinds = []string{
 }
 var phaseTwoBudgets = []string{"series", "retained_bytes", "state_mutations", "events", "gap_mutations", "other"}
 var phaseTwoCapacityResults = []string{"admitted", "rejected", "other"}
+var phaseTwoOwnershipTransitions = []observability.Stage{
+	observability.StageAssignmentAcquired,
+	observability.StageAssignmentLost,
+	observability.StageTakeoverStarted,
+	observability.StageTakeoverCompleted,
+	observability.StageFenceChecked,
+}
 
 func newPhaseTwoMetrics() phaseTwoMetrics {
 	return phaseTwoMetrics{
@@ -57,8 +64,8 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 		}, []string{"worker_role"}),
 		ownershipTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "ownership_transition_total",
-			Help: "Ownership lifecycle transitions by bounded result and reason class.",
-		}, []string{"result", "reason_class"}),
+			Help: "Ownership lifecycle transitions by bounded transition, result and reason class.",
+		}, []string{"transition", "result", "reason_class"}),
 	}
 }
 
@@ -73,7 +80,9 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 		reasonClass := observability.NormalizeMetricReason(
 			observability.ComponentOwnership, observation.ReasonCode, observation.Result,
 		)
-		m.ownershipTransitions.WithLabelValues(string(observation.Result), string(reasonClass)).Inc()
+		m.ownershipTransitions.WithLabelValues(
+			string(observation.Stage), string(observation.Result), string(reasonClass),
+		).Inc()
 	}
 	if observation.Component == observability.ComponentResource && observation.CapacityBudget != "" {
 		result := "other"
@@ -114,13 +123,12 @@ func (r *Recorder) SetOwnedQueryGroups(count int) {
 }
 
 func isOwnershipTransitionStage(stage observability.Stage) bool {
-	switch stage {
-	case observability.StageAssignmentAcquired, observability.StageAssignmentLost,
-		observability.StageTakeoverStarted, observability.StageTakeoverCompleted:
-		return true
-	default:
-		return false
+	for _, transition := range phaseTwoOwnershipTransitions {
+		if stage == transition {
+			return true
+		}
 	}
+	return false
 }
 
 func phaseTwoWorkCompleted(observation observability.Observation) bool {
@@ -199,5 +207,6 @@ func normalizePhaseTwoBudget(budget observability.CapacityBudget) string {
 func phaseTwoCustomSeries() int {
 	return len(phaseTwoWorkKinds) + len(phaseTwoBusyStages) + len(phaseTwoProgressKinds) +
 		len(phaseTwoBudgets)*len(phaseTwoCapacityResults) + 1 +
-		len(observability.AllResults())*len(observability.AllMetricReasons())
+		len(phaseTwoOwnershipTransitions)*len(observability.AllResults())*
+			len(observability.AllReasons(observability.ComponentOwnership))
 }

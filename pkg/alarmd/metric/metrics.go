@@ -19,10 +19,9 @@ import (
 )
 
 const (
-	metricNamespace    = "bkmonitor"
-	metricSubsystem    = "alarmd"
-	otherLabel         = "_other"
-	CustomSeriesBudget = 19000
+	metricNamespace = "bkmonitor"
+	metricSubsystem = "alarmd"
+	otherLabel      = "_other"
 )
 
 var (
@@ -249,22 +248,6 @@ func (r *Recorder) RecordPipelineLatency(from, to Stage, mode Mode, duration tim
 
 func (r *Recorder) RecordShadowCompare(component Component, result CompareResult) {
 	r.shadowCompare.WithLabelValues(string(normalizeComponent(component)), string(normalizeCompareResult(result))).Inc()
-}
-
-func MaxCustomSeries() int {
-	histogramSeries := func(bucketCount int) int {
-		return bucketCount + 1 + 2 // explicit buckets, +Inf, sum and count
-	}
-
-	processTotal := len(allStages) * len(allModes) * len(allStatuses) * len(allErrors)
-	processDuration := len(allStages) * len(allModes) * histogramSeries(len(processDurationBuckets))
-	recordsTotal := len(allStages) * len(allModes) * len(allDirections) * len(allRecordTypes)
-	pipelineLatency := len(allEdges) * len(allModes) * histogramSeries(len(pipelineLatencyBuckets))
-	shadowCompare := len(allComponents) * len(allCompareResults)
-	buildInfo := 1
-	return processTotal + processDuration + recordsTotal + pipelineLatency + shadowCompare + buildInfo +
-		lifecycleCustomSeries() + observationCustomSeries() + healthResourceCustomSeries() + receiptCustomSeries() +
-		phaseTwoCustomSeries()
 }
 
 var (

@@ -216,11 +216,3 @@ func normalizePhaseTwoBudget(budget observability.CapacityBudget) string {
 		return "other"
 	}
 }
-
-func phaseTwoCustomSeries() int {
-	return len(phaseTwoWorkKinds) + len(phaseTwoBusyStages) + len(phaseTwoProgressKinds) +
-		len(phaseTwoBudgets)*len(phaseTwoCapacityResults) +
-		len(observability.AllSourceKinds())*len(phaseTwoSourceResults)*len(observability.AllReasons(observability.ComponentControlPlane)) + 1 +
-		len(phaseTwoOwnershipTransitions)*len(observability.AllResults())*
-			len(observability.AllReasons(observability.ComponentOwnership))
-}

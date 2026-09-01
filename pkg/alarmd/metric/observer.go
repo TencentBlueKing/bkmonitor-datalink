@@ -119,30 +119,4 @@ func (r *Recorder) Observe(_ context.Context, observation observability.Observat
 	}
 }
 
-func observationCustomSeries() int {
-	histogramSeries := len(observationDurationBuckets) + 3
-	total := 0
-	for _, pair := range observability.AllMetricComponentStages() {
-		for _, result := range observability.AllResults() {
-			total += metricReasonCount(pair.Component, result)
-		}
-	}
-	duration := len(observability.AllMetricComponentStages()) * len(observability.AllResults()) * histogramSeries
-	operationReasons := 0
-	for _, result := range observability.AllResults() {
-		operationReasons += metricReasonCount(observability.ComponentResource, result)
-	}
-	operations := len(observability.AllMetricOperations()) * operationReasons
-	counts := 8 * len(observability.AllMetricStages()) * len(observability.AllDirections()) * len(observability.AllResults())
-	return total + operations + duration + counts
-}
-
-func metricReasonCount(component observability.Component, result observability.Result) int {
-	count := len(observability.AllReasons(component))
-	if result != observability.ResultStarted && result != observability.ResultSuccess && result != observability.ResultResumed {
-		count-- // ReasonNone is normalized to internal_unknown for non-success results.
-	}
-	return count
-}
-
 var _ observability.Observer = (*Recorder)(nil)

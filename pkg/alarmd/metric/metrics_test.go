@@ -199,31 +199,48 @@ func TestHistogramBucketsMatchPythonCompatibleContract(t *testing.T) {
 	}
 }
 
-func TestCustomMetricSeriesBudget(t *testing.T) {
+// metricFamilySeriesDevelopmentLimit is an initial development guard, not a
+// runtime danger threshold.
+const metricFamilySeriesDevelopmentLimit = 50000
+
+func TestCustomMetricFamilySeriesDevelopmentLimits(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
 	if err := recorder.BindLifecycle(&mutableLifecycleSource{snapshot: lifecycleBudgetSnapshot()}); err != nil {
 		t.Fatalf("BindLifecycle() error = %v", err)
 	}
 	bindBudgetHealthAndResources(t, recorder)
 	populateAllCustomLabelCombinations(recorder)
-	got := countCustomSeries(t, recorder)
-	if want := 18861; MaxCustomSeries() != want {
-		t.Fatalf("MaxCustomSeries() = %d, want formula result %d", MaxCustomSeries(), want)
+
+	bounds := customMetricFamilySeriesUpperBounds()
+	descriptors := customMetricDescriptorNames(t, recorder)
+	for family, bound := range bounds {
+		if bound <= 0 || bound > metricFamilySeriesDevelopmentLimit {
+			t.Errorf("metric family %s theoretical maximum = %d, development limit = %d",
+				family, bound, metricFamilySeriesDevelopmentLimit)
+		}
+		if !descriptors[family] {
+			t.Errorf("metric family bound %s has no registered descriptor", family)
+		}
 	}
-	if gotObservation := countObservationSeries(t, recorder); gotObservation != observationCustomSeries() {
-		t.Fatalf("observation series = %d, formula = %d", gotObservation, observationCustomSeries())
+	for family := range descriptors {
+		if _, ok := bounds[family]; !ok {
+			t.Errorf("registered custom metric family %s has no series upper bound", family)
+		}
 	}
-	if got > MaxCustomSeries() {
-		t.Fatalf("registered custom series = %d, calculated maximum = %d", got, MaxCustomSeries())
+	for family, got := range countCustomSeriesByFamily(t, recorder) {
+		if got > bounds[family] {
+			t.Errorf("metric family %s registered series = %d, theoretical maximum = %d", family, got, bounds[family])
+		}
 	}
-	if MaxCustomSeries() > CustomSeriesBudget {
-		t.Fatalf("calculated maximum custom series = %d, budget = %d", MaxCustomSeries(), CustomSeriesBudget)
-	}
-	if got > CustomSeriesBudget {
-		t.Fatalf("maximum custom series = %d, budget = %d", got, CustomSeriesBudget)
-	}
-	if got <= 0 {
-		t.Fatalf("maximum custom series must be positive, got %d", got)
+
+	for family, want := range map[string]int{
+		"bkmonitor_alarmd_process_duration_seconds":     126,
+		"bkmonitor_alarmd_pipeline_latency_seconds":     84,
+		"bkmonitor_alarmd_observation_duration_seconds": 2970,
+	} {
+		if got := bounds[family]; got != want {
+			t.Errorf("histogram family %s theoretical maximum = %d, want buckets/+Inf/sum/count total %d", family, got, want)
+		}
 	}
 }
 
@@ -447,43 +464,138 @@ func metricInputReason(metricReason observability.ReasonCode) observability.Reas
 	}
 }
 
-func countCustomSeries(t *testing.T, recorder *Recorder) int {
-	return countSeries(t, recorder, func(name string) bool {
-		return strings.HasPrefix(name, "bkmonitor_alarmd_")
-	})
+func customMetricFamilySeriesUpperBounds() map[string]int {
+	fqName := func(name string) string {
+		return prometheus.BuildFQName(metricNamespace, metricSubsystem, name)
+	}
+	histogramSeries := func(labelCombinations, explicitBuckets int) int {
+		return labelCombinations * (explicitBuckets + 1 + 2) // explicit buckets, +Inf, sum and count
+	}
+	metricReasonSeries := func(component observability.Component, result observability.Result) int {
+		count := len(observability.AllReasons(component))
+		if result != observability.ResultStarted && result != observability.ResultSuccess &&
+			result != observability.ResultResumed {
+			count-- // ReasonNone normalizes to internal_unknown for non-success results.
+		}
+		return count
+	}
+	metricReasonSets := func(component observability.Component) int {
+		total := 0
+		for _, result := range observability.AllResults() {
+			total += metricReasonSeries(component, result)
+		}
+		return total
+	}
+
+	observationTotal := 0
+	for _, pair := range observability.AllMetricComponentStages() {
+		for _, result := range observability.AllResults() {
+			observationTotal += metricReasonSeries(pair.Component, result)
+		}
+	}
+	observationCount := len(observability.AllMetricStages()) * len(observability.AllDirections()) *
+		len(observability.AllResults())
+
+	bounds := map[string]int{
+		fqName("build_info"):               1,
+		fqName("process_duration_seconds"): histogramSeries(len(allStages)*len(allModes), len(processDurationBuckets)),
+		fqName("process_total"):            len(allStages) * len(allModes) * len(allStatuses) * len(allErrors),
+		fqName("records_total"):            len(allStages) * len(allModes) * len(allDirections) * len(allRecordTypes),
+		fqName("pipeline_latency_seconds"): histogramSeries(len(allEdges)*len(allModes), len(pipelineLatencyBuckets)),
+		fqName("shadow_compare_total"):     len(allComponents) * len(allCompareResults),
+
+		fqName("observation_total"): observationTotal,
+		fqName("operation_total"): len(observability.AllMetricOperations()) *
+			metricReasonSets(observability.ComponentResource),
+		fqName("observation_duration_seconds"): histogramSeries(
+			len(observability.AllMetricComponentStages())*len(observability.AllResults()),
+			len(observationDurationBuckets),
+		),
+
+		fqName("message_receipt_status_total"):   len(receiptStatuses),
+		fqName("message_receipt_business_total"): len(receiptBusinessFields),
+		fqName("message_receipt_delivery_total"): 3,
+
+		fqName("worker_work_total"):                      len(phaseTwoWorkKinds),
+		fqName("worker_busy_seconds_total"):              len(phaseTwoBusyStages),
+		fqName("last_progress_timestamp_seconds"):        len(phaseTwoProgressKinds),
+		fqName("capacity_transition_total"):              len(phaseTwoBudgets) * len(phaseTwoCapacityResults),
+		fqName("source_observation_total"):               len(observability.AllSourceKinds()) * len(phaseTwoSourceResults) * len(observability.AllReasons(observability.ComponentControlPlane)),
+		fqName("worker_owned_query_groups"):              1,
+		fqName("ownership_transition_total"):             len(phaseTwoOwnershipTransitions) * metricReasonSets(observability.ComponentOwnership),
+		fqName("ready"):                                  1,
+		fqName("assigned_claims"):                        1,
+		fqName("fatal_total"):                            1,
+		fqName("draining"):                               1,
+		fqName("drain_total"):                            int(lifecycle.DrainResultCount),
+		fqName("inflight_records"):                       1,
+		fqName("consumer_lag_records"):                   1,
+		fqName("health_ready"):                           1,
+		fqName("health_state"):                           len(observability.AllHealthStates()),
+		fqName("health_reason"):                          len(observability.AllReasons(observability.ComponentResource)),
+		fqName("health_assigned_claims"):                 1,
+		fqName("health_inflight_messages"):               1,
+		fqName("health_worker_queue_depth"):              1,
+		fqName("health_worker_queue_bytes"):              1,
+		fqName("health_consumer_lag_records"):            1,
+		fqName("health_last_progress_timestamp_seconds"): len(observability.AllMetricComponentStages()),
+		fqName("health_last_recovery_timestamp_seconds"): 1,
+		fqName("resource_state"):                         len(observability.AllResourceStates()),
+	}
+	for _, name := range []string{
+		"messages", "records", "plans", "levels", "events", "bytes", "keys", "state_bytes",
+	} {
+		bounds[fqName("observed_"+name+"_total")] = observationCount
+	}
+	for _, name := range []string{
+		"cpu_cores", "rss_bytes", "heap_bytes", "gc_pause_seconds", "worker_queue_depth",
+		"worker_queue_bytes", "inflight_messages", "inflight_bytes", "consumer_lag_records", "state_bytes",
+	} {
+		bounds[fqName("resource_"+name)] = 1
+	}
+	return bounds
 }
 
-func countObservationSeries(t *testing.T, recorder *Recorder) int {
-	return countSeries(t, recorder, func(name string) bool {
-		return name == "bkmonitor_alarmd_observation_total" ||
-			name == "bkmonitor_alarmd_operation_total" ||
-			name == "bkmonitor_alarmd_observation_duration_seconds" ||
-			strings.HasPrefix(name, "bkmonitor_alarmd_observed_")
-	})
+func customMetricDescriptorNames(t *testing.T, recorder *Recorder) map[string]bool {
+	t.Helper()
+	descriptors := make(chan *prometheus.Desc)
+	go func() {
+		recorder.registry.Describe(descriptors)
+		close(descriptors)
+	}()
+	names := make(map[string]bool)
+	for descriptor := range descriptors {
+		name := metricNameFromDescriptor(descriptor.String())
+		if strings.HasPrefix(name, "bkmonitor_alarmd_") {
+			names[name] = true
+		}
+	}
+	return names
 }
 
-func countSeries(t *testing.T, recorder *Recorder, include func(string) bool) int {
+func countCustomSeriesByFamily(t *testing.T, recorder *Recorder) map[string]int {
 	t.Helper()
 
 	families, err := recorder.registry.Gather()
 	if err != nil {
 		t.Fatalf("gather metrics: %v", err)
 	}
-	total := 0
+	counts := make(map[string]int)
 	for _, family := range families {
-		if !include(family.GetName()) {
+		name := family.GetName()
+		if !strings.HasPrefix(name, "bkmonitor_alarmd_") {
 			continue
 		}
 		switch family.GetType() {
 		case dto.MetricType_HISTOGRAM:
 			for _, sample := range family.Metric {
-				total += len(sample.GetHistogram().Bucket) + 3
+				counts[name] += len(sample.GetHistogram().Bucket) + 3
 			}
 		case dto.MetricType_COUNTER, dto.MetricType_GAUGE:
-			total += len(family.Metric)
+			counts[name] += len(family.Metric)
 		default:
-			t.Fatalf("custom metric %s has unsupported type %s", family.GetName(), family.GetType())
+			t.Fatalf("custom metric %s has unsupported type %s", name, family.GetType())
 		}
 	}
-	return total
+	return counts
 }

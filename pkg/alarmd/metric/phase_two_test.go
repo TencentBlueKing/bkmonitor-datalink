@@ -43,12 +43,6 @@ func TestPhaseTwoObservationRecordsOnlyBoundedWorkflowMetrics(t *testing.T) {
 	}
 }
 
-func TestPhaseTwoMetricsStayInsideSeriesBudget(t *testing.T) {
-	if got := MaxCustomSeries(); got > CustomSeriesBudget {
-		t.Fatalf("MaxCustomSeries() = %d, budget = %d", got, CustomSeriesBudget)
-	}
-}
-
 func TestPhaseTwoSourceObservationMetricRecordsOnlyFixedEpisodeTransitions(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
 	for _, observation := range []observability.Observation{

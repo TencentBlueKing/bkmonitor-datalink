@@ -95,10 +95,6 @@ func (r *Recorder) BindLifecycle(source lifecycle.Source) error {
 	return nil
 }
 
-func lifecycleCustomSeries() int {
-	return 6 + int(lifecycle.DrainResultCount)
-}
-
 func boolFloat(value bool) float64 {
 	if value {
 		return 1

@@ -10,7 +10,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-func TestFinalizePreparedPreservesStableSiblingDuringActivationConvergence(t *testing.T) {
+func TestFinalizePreparedPreservesStableSiblingReceiptsDuringForceWarmingActivationConvergence(t *testing.T) {
 	contractRef := execution.FrozenExecutionContractRef{
 		Slot:             execution.SlotIdentity{QueryGroup: "query-group", EvaluationTime: 1_788_000_000},
 		SnapshotRevision: "snapshot-v1", QueryRevision: "query-v1", ScheduleRevision: "schedule-v1",
@@ -105,6 +105,7 @@ func (ports *activationSiblingPorts) LoadActivations(_ context.Context, request 
 		switch plan {
 		case ports.changedPlan:
 			selected.StateGeneration, selected.StateApplyEpoch, selected.ScheduleRevision = "new-changed", 2, "new-changed-schedule"
+			selected.ForceWarming = true
 		case ports.stablePlan:
 			selected.StateGeneration, selected.ScheduleRevision = "stable-generation", "stable-schedule"
 		}

@@ -571,7 +571,8 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	if err != nil {
 		return activationRetry(execution.ReasonCode(contract.ReasonProviderUnavailable)), nil
 	}
-	forced := unsatisfiedForcedWarmingActivations(guardActivations, loadedGaps)
+	changedPlans, changedActivations := changedDuePlanActivations(header.DuePlans, guardActivations)
+	forced := unsatisfiedForcedWarmingActivations(guardActivations, loadedGaps, changedPlans)
 	if len(forced.Facts) > 0 {
 		if _, err := coordinator.ensureActivatedPlanGaps(
 			ctx, request, execution.ReasonCode(contract.ReasonConfigDrift), forced,
@@ -580,7 +581,6 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		}
 		return activationRetry(execution.ReasonCode(contract.ReasonConfigDrift)), nil
 	}
-	changedPlans, changedActivations := changedDuePlanActivations(header.DuePlans, guardActivations)
 
 	planResults := append([]execution.PlanEvaluationResult(nil), evaluated.Plans...)
 	sort.Slice(planResults, func(left, right int) bool {
@@ -742,10 +742,14 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 func unsatisfiedForcedWarmingActivations(
 	activations execution.PlanActivationResult,
 	loaded execution.GapLoadResult,
+	changedPlans map[execution.PlanIdentity]struct{},
 ) execution.PlanActivationResult {
 	result := execution.PlanActivationResult{Contract: activations.Contract}
 	for _, fact := range activations.Facts {
 		if fact.Selection == execution.ActivationNone || !fact.Selected.ForceWarming {
+			continue
+		}
+		if _, changed := changedPlans[fact.Plan]; changed {
 			continue
 		}
 		marker, found := loaded.Find(execution.PlanGapIdentity{

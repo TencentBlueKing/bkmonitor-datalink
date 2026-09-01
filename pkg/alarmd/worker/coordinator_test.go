@@ -238,9 +238,10 @@ func TestSlotExecutionCoordinatorDoesNotCommitNormalProgressAfterActivationChang
 	}
 }
 
-func TestSlotExecutionCoordinatorProtectsActivationChangedBeforeNormalSideEffects(t *testing.T) {
+func TestSlotExecutionCoordinatorForceWarmingDriftProtectsThenConvergesAlreadyAppliedGuard(t *testing.T) {
 	fixture := newFixture(t, true, "")
 	fixture.ports.activationChangeAt = 1
+	fixture.ports.activationForceWarming = true
 	fixture.ports.persistActivatedGaps = true
 	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
 	if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
@@ -276,6 +277,21 @@ func TestSlotExecutionCoordinatorProtectsActivationChangedBeforeNormalSideEffect
 	if fixture.ports.lastProgress.Completion.Kind != execution.CompletionPartialGap ||
 		fixture.ports.lastProgress.Completion.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
 		t.Fatalf("activation convergence Progress=%+v", fixture.ports.lastProgress)
+	}
+}
+
+func TestSlotExecutionCoordinatorSatisfiedForceWarmingDoesNotBlockNormalSideEffects(t *testing.T) {
+	fixture := newFixture(t, true, "")
+	fixture.ports.activationForceWarming = true
+
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err != nil || !result.Completed || result.Result != observability.ResultSuccess {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	if fixture.ports.eventCount != 1 || fixture.ports.stateApplyCalls != 1 ||
+		fixture.ports.lastProgress.Completion.Kind != execution.CompletionFull {
+		t.Fatalf("satisfied ForceWarming side effects events=%d state=%d Progress=%+v",
+			fixture.ports.eventCount, fixture.ports.stateApplyCalls, fixture.ports.lastProgress)
 	}
 }
 
@@ -320,10 +336,11 @@ func TestSlotExecutionCoordinatorConvergesCurrentActivationSelectionChange(t *te
 	})
 }
 
-func TestSlotExecutionCoordinatorReprotectsActivationChangedBetweenGuardAndProgress(t *testing.T) {
+func TestSlotExecutionCoordinatorReprotectsForceWarmingActivationChangedBetweenGuardAndProgress(t *testing.T) {
 	fixture := newFixture(t, true, "")
 	fixture.ports.activationChangeAt = 1
 	fixture.ports.activationSecondChangeAt = 3
+	fixture.ports.activationForceWarming = true
 	fixture.ports.persistActivatedGaps = true
 
 	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
@@ -813,6 +830,7 @@ func (ports *recordingPorts) LoadActivations(
 			Selected: execution.ActivatedPlan{
 				Identity: plan, StateGeneration: "state-v1", StateApplyEpoch: 1,
 				ScheduleRevision: "plan-schedule-v1", RequiredFullSlots: 1,
+				ForceWarming: ports.activationForceWarming,
 			},
 		}
 		if ports.activationChangeAt != 0 && ports.activationLoadCalls >= ports.activationChangeAt {
@@ -825,6 +843,7 @@ func (ports *recordingPorts) LoadActivations(
 				Selected: execution.ActivatedPlan{
 					Identity: plan, StateGeneration: "activation-change", StateApplyEpoch: 2,
 					ScheduleRevision: "activation-change", RequiredFullSlots: 1,
+					ForceWarming: ports.activationForceWarming,
 				},
 			}
 			if selection == execution.ActivationNone {
@@ -837,6 +856,7 @@ func (ports *recordingPorts) LoadActivations(
 				Selected: execution.ActivatedPlan{
 					Identity: plan, StateGeneration: "activation-change-2", StateApplyEpoch: 3,
 					ScheduleRevision: "activation-change-2", RequiredFullSlots: 1,
+					ForceWarming: ports.activationForceWarming,
 				},
 			}
 		}
@@ -871,6 +891,7 @@ type recordingPorts struct {
 	activationErrorAt               int
 	activationChangeAt              int
 	activationSecondChangeAt        int
+	activationForceWarming          bool
 	activationSelection             execution.ActivationSelection
 	persistActivatedGaps            bool
 	activatedGapMarkers             map[execution.PlanGapIdentity]execution.GapGuardSnapshot

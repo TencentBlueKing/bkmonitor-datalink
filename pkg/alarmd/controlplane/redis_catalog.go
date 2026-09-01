@@ -104,6 +104,9 @@ func (repository *RedisCatalogRepository) Ping(ctx context.Context) error {
 }
 
 const publishSnapshotScript = `
+local function occurrence_key(epoch)
+  return KEYS[5] .. tostring(epoch)
+end
 local latest = redis.call('GET', KEYS[4])
 if ARGV[4] == '' then
   if latest then return {-2, -2} end
@@ -124,26 +127,24 @@ local latest_revision = nil
 if latest then
   latest_epoch, latest_revision = string.match(latest, '^(%d+)\n(.+)$')
   if not latest_epoch or not latest_revision then return {-3, -3} end
-  redis.call('HSET', KEYS[5], latest_epoch, latest_revision)
+  redis.call('SET', occurrence_key(latest_epoch), latest_revision, 'PX', ARGV[2], 'NX')
 end
 local previous_epoch = redis.call('GET', KEYS[2])
 if previous_epoch then
-  redis.call('HSET', KEYS[5], previous_epoch, ARGV[3])
+  redis.call('SET', occurrence_key(previous_epoch), ARGV[3], 'PX', ARGV[2], 'NX')
 end
 if latest then
   if latest_revision == ARGV[3] then
-    redis.call('HSET', KEYS[5], latest_epoch, latest_revision)
+    redis.call('PSETEX', occurrence_key(latest_epoch), ARGV[2], latest_revision)
     redis.call('PSETEX', KEYS[2], ARGV[2], latest_epoch)
     redis.call('PEXPIRE', KEYS[4], ARGV[2])
-    redis.call('PEXPIRE', KEYS[5], ARGV[2])
     return {tonumber(latest_epoch), 0}
   end
 end
 local epoch = redis.call('INCR', KEYS[1])
-redis.call('HSET', KEYS[5], tostring(epoch), ARGV[3])
+redis.call('PSETEX', occurrence_key(epoch), ARGV[2], ARGV[3])
 redis.call('PSETEX', KEYS[2], ARGV[2], tostring(epoch))
 redis.call('PSETEX', KEYS[4], ARGV[2], tostring(epoch) .. '\n' .. ARGV[3])
-redis.call('PEXPIRE', KEYS[5], ARGV[2])
 return {tonumber(epoch), 1}
 `
 
@@ -194,7 +195,7 @@ func (repository *RedisCatalogRepository) PublishCatalogIfCurrent(
 	}
 	result, err := repository.client.Eval(ctx, publishSnapshotScript, []string{
 		repository.epochCounterKey(), repository.epochForRevisionKey(catalog.SnapshotRevision),
-		repository.snapshotKey(catalog.SnapshotRevision), repository.latestPublicationKey(), repository.publicationsByEpochKey(),
+		repository.snapshotKey(catalog.SnapshotRevision), repository.latestPublicationKey(), repository.publicationKeyPrefix(),
 	}, payload, repository.ttl.Milliseconds(), string(catalog.SnapshotRevision), expectedValue).Slice()
 	if err != nil {
 		return PublishedSnapshot{}, false, fmt.Errorf("alarmd controlplane: publish snapshot: %w", err)
@@ -222,6 +223,14 @@ func (repository *RedisCatalogRepository) PublishCatalogIfCurrent(
 	return snapshot, created == 1, nil
 }
 
+const publishAuditScript = `
+local latest = redis.call('GET', KEYS[1])
+if not latest or latest ~= ARGV[1] then return 0 end
+redis.call('PSETEX', KEYS[2], ARGV[2], ARGV[3])
+redis.call('PSETEX', KEYS[3], ARGV[2], ARGV[4])
+return 1
+`
+
 func (repository *RedisCatalogRepository) PublishAudit(ctx context.Context, audit SourceAuditState) error {
 	if repository == nil || repository.client == nil || audit.ObservationID == "" || audit.Publication.validate() != nil {
 		return errors.New("alarmd controlplane: incomplete source audit publication")
@@ -231,13 +240,14 @@ func (repository *RedisCatalogRepository) PublishAudit(ctx context.Context, audi
 	if err != nil {
 		return fmt.Errorf("alarmd controlplane: encode source audit: %w", err)
 	}
-	_, err = repository.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.Set(ctx, repository.auditKey(audit.ObservationID), payload, repository.ttl)
-		pipe.Set(ctx, repository.latestAuditKey(), audit.ObservationID, repository.ttl)
-		return nil
-	})
+	changed, err := repository.client.Eval(ctx, publishAuditScript, []string{
+		repository.latestPublicationKey(), repository.auditKey(audit.ObservationID), repository.latestAuditKey(),
+	}, publicationValue(audit.Publication), repository.ttl.Milliseconds(), payload, audit.ObservationID).Int()
 	if err != nil {
 		return fmt.Errorf("alarmd controlplane: publish source audit: %w", err)
+	}
+	if changed != 1 {
+		return ErrPublicationConflict
 	}
 	return nil
 }
@@ -294,9 +304,7 @@ func (repository *RedisCatalogRepository) LoadPublishedSnapshot(
 	if err != nil {
 		return PublishedSnapshot{}, err
 	}
-	revision, err := repository.client.HGet(
-		ctx, repository.publicationsByEpochKey(), strconv.FormatUint(publication.PublicationEpoch, 10),
-	).Result()
+	revision, err := repository.client.Get(ctx, repository.publicationKey(publication.PublicationEpoch)).Result()
 	if errors.Is(err, redis.Nil) {
 		if snapshot.Publication != publication {
 			return PublishedSnapshot{}, ErrSnapshotUnavailable
@@ -540,8 +548,11 @@ func (repository *RedisCatalogRepository) snapshotKey(revision execution.Snapsho
 func (repository *RedisCatalogRepository) latestPublicationKey() string {
 	return repository.prefix + ":latest_publication"
 }
-func (repository *RedisCatalogRepository) publicationsByEpochKey() string {
-	return repository.prefix + ":publications_by_epoch"
+func (repository *RedisCatalogRepository) publicationKeyPrefix() string {
+	return repository.prefix + ":publication:"
+}
+func (repository *RedisCatalogRepository) publicationKey(epoch uint64) string {
+	return repository.publicationKeyPrefix() + strconv.FormatUint(epoch, 10)
 }
 func (repository *RedisCatalogRepository) auditKey(observation string) string {
 	return repository.prefix + ":audit:" + observation

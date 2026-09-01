@@ -138,8 +138,13 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		ctx, expected, next, boundary, reconciler.progress,
 	); applyErr != nil {
 		winner, loadErr := reconciler.repository.LoadActivation(ctx)
-		if loadErr == nil && winner.Current.PublicationEpoch >= publication.PublicationEpoch {
-			return winner, nil
+		if loadErr == nil {
+			if winner.Current == publication || winner.Current.PublicationEpoch > publication.PublicationEpoch {
+				return winner, nil
+			}
+			if winner.Current.PublicationEpoch == publication.PublicationEpoch {
+				return ActivationState{}, errors.New("alarmd controlplane: Schedule activation publication epoch collision")
+			}
 		}
 		if errors.Is(applyErr, ErrActivationConflict) && loadErr != nil {
 			return ActivationState{}, loadErr

@@ -364,22 +364,8 @@ func (runtime *productionPhaseTwoControl) refresh(
 		ctx, runtime.dependencies.Source, runtime.dependencies.Planner,
 	)
 	if err != nil {
-		state, loadErr := runtime.dependencies.Repository.LoadActivation(ctx)
-		if errors.Is(loadErr, controlplane.ErrActivationUnavailable) {
-			return nil, false, err
-		}
-		if loadErr != nil {
-			return nil, false, errors.Join(err, loadErr)
-		}
-		queryGroups, loadErr := runtime.loadActiveQueryGroups(ctx, state)
-		if loadErr != nil {
-			return nil, false, errors.Join(err, loadErr)
-		}
-		runtime.dependencies.Observer.Observe(ctx, observability.Observation{
-			Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotUnavailable,
-			Result: observability.ResultDegraded, ReasonCode: observability.ReasonContractRetryable, Err: err,
-		})
-		return queryGroups, false, nil
+		queryGroups, fallbackErr := runtime.keepLastGood(ctx, err)
+		return queryGroups, false, fallbackErr
 	}
 	if result.Status == controlplane.SourceRefreshPendingConfirmation {
 		state, err := runtime.dependencies.Repository.LoadActivation(ctx)
@@ -407,10 +393,33 @@ func (runtime *productionPhaseTwoControl) refresh(
 	}
 	state, err := runtime.dependencies.Activator.Ensure(ctx, result.Publication)
 	if err != nil {
-		return nil, false, err
+		queryGroups, fallbackErr := runtime.keepLastGood(ctx, err)
+		return queryGroups, false, fallbackErr
 	}
 	queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
 	return queryGroups, false, err
+}
+
+func (runtime *productionPhaseTwoControl) keepLastGood(
+	ctx context.Context,
+	cause error,
+) ([]execution.QueryGroupIdentity, error) {
+	state, err := runtime.dependencies.Repository.LoadActivation(ctx)
+	if errors.Is(err, controlplane.ErrActivationUnavailable) {
+		return nil, cause
+	}
+	if err != nil {
+		return nil, errors.Join(cause, err)
+	}
+	queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
+	if err != nil {
+		return nil, errors.Join(cause, err)
+	}
+	runtime.dependencies.Observer.Observe(ctx, observability.Observation{
+		Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotUnavailable,
+		Result: observability.ResultDegraded, ReasonCode: observability.ReasonContractRetryable, Err: cause,
+	})
+	return queryGroups, nil
 }
 
 func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(

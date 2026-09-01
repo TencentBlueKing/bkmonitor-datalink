@@ -513,6 +513,52 @@ func TestProductionPhaseTwoControlKeepsLastGoodAcrossFailedRefreshAndRecovery(t 
 	}
 }
 
+func TestProductionPhaseTwoControlKeepsLastGoodAcrossFailedCutoverAndRecovery(t *testing.T) {
+	current := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-current", PublicationEpoch: 2}
+	candidate := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-candidate", PublicationEpoch: 3}
+	reconciler := &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{
+		{Status: controlplane.SourceRefreshPublished, Observation: "observation-candidate", Publication: candidate},
+		{Status: controlplane.SourceRefreshUnchanged, Observation: "observation-candidate", Publication: candidate},
+	}}
+	repository := &fakeProductionCatalogRepository{
+		activation: controlplane.ActivationState{RecordRevision: 2, Current: current},
+		snapshots: map[controlplane.SnapshotPublicationRef]controlplane.PublishedSnapshot{
+			current:   {Publication: current, QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-healthy"}}},
+			candidate: {Publication: candidate, QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-healthy"}}},
+		},
+	}
+	activator := &fakeInitialScheduleActivator{
+		state: controlplane.ActivationState{RecordRevision: 3, Current: candidate},
+		errs:  []error{controlplane.ErrScheduleConflict, nil},
+	}
+	var observations []observability.Observation
+	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
+		Activator: activator, Repository: repository, Schedules: &fakeScheduleProjection{},
+		Progress: &fakeProductionProgressReader{}, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		}),
+		RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 2; index++ {
+		queryGroups, err := control.Refresh(context.Background())
+		if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
+			t.Fatalf("Refresh(%d)=(%v,%v)", index, queryGroups, err)
+		}
+	}
+	if activator.calls != 2 {
+		t.Fatalf("activation calls=%d, want 2", activator.calls)
+	}
+	if len(observations) != 1 || observations[0].Stage != observability.StageSnapshotUnavailable ||
+		observations[0].Result != observability.ResultDegraded || !errors.Is(observations[0].Err, controlplane.ErrScheduleConflict) ||
+		observations[0].ReasonCode != observability.ReasonContractRetryable {
+		t.Fatalf("failed cutover observations=%#v", observations)
+	}
+}
+
 type fakeSourceReconciler struct {
 	results []controlplane.SourceRefreshResult
 	errs    []error
@@ -540,12 +586,16 @@ type fakeProductionCatalogRepository struct {
 	activation    controlplane.ActivationState
 	activationErr error
 	snapshot      controlplane.PublishedSnapshot
+	snapshots     map[controlplane.SnapshotPublicationRef]controlplane.PublishedSnapshot
 }
 
 func (repository *fakeProductionCatalogRepository) LoadPublishedSnapshot(
 	_ context.Context,
 	publication controlplane.SnapshotPublicationRef,
 ) (controlplane.PublishedSnapshot, error) {
+	if snapshot, ok := repository.snapshots[publication]; ok {
+		return snapshot, nil
+	}
 	if repository.snapshot.Publication != publication {
 		return controlplane.PublishedSnapshot{}, errors.New("unexpected Snapshot publication")
 	}
@@ -571,6 +621,7 @@ func (repository *fakeProductionCatalogRepository) LoadSnapshot(
 type fakeInitialScheduleActivator struct {
 	state       controlplane.ActivationState
 	publication controlplane.SnapshotPublicationRef
+	errs        []error
 	calls       int
 }
 
@@ -672,8 +723,12 @@ func (activator *fakeInitialScheduleActivator) Ensure(
 	_ context.Context,
 	publication controlplane.SnapshotPublicationRef,
 ) (controlplane.ActivationState, error) {
+	call := activator.calls
 	activator.calls++
 	activator.publication = publication
+	if call < len(activator.errs) && activator.errs[call] != nil {
+		return controlplane.ActivationState{}, activator.errs[call]
+	}
 	return activator.state, nil
 }
 

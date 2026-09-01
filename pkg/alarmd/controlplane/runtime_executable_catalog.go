@@ -89,7 +89,6 @@ func retainRuntimeExecutableCatalog(
 			levelTerminals := compiledResult.LevelTerminals()
 			terminalDispositions := make([]ObjectDisposition, 0, len(levelTerminals))
 			hasConfigRejected := false
-			hasUnsupported := false
 			for _, terminal := range levelTerminals {
 				disposition, err := terminalDisposition(sourcePlan.Identity.StrategyID, "LEVEL", terminal)
 				if err != nil {
@@ -97,36 +96,58 @@ func retainRuntimeExecutableCatalog(
 				}
 				terminalDispositions = append(terminalDispositions, disposition)
 				hasConfigRejected = hasConfigRejected || disposition.Disposition == DispositionConfigRejected
-				hasUnsupported = hasUnsupported || disposition.Disposition == DispositionUnsupported
 			}
-			if hasConfigRejected && !hasUnsupported {
+			plan, err := retainCompiledLevels(sourcePlan, compiled)
+			if err != nil {
+				return Catalog{}, err
+			}
+			supplementedLevels := map[uint32]struct{}{}
+			if hasConfigRejected {
 				if entry, ok := lastGoodPlans[sourcePlan.Identity.StrategyID]; ok {
 					executable, err := runtimePlanIsTerminalFree(ctx, entry, compiler, stateSemantics)
 					if err != nil {
 						return Catalog{}, err
 					}
 					if executable {
-						result.Dispositions = withoutAcceptedPlanDisposition(result.Dispositions, sourcePlan.Identity.StrategyID)
-						for index := range terminalDispositions {
-							terminalDispositions[index].Disposition = DispositionStaleConfig
-						}
-						result.Dispositions = append(result.Dispositions, terminalDispositions...)
-						if err := addPlan(entry.facts, entry.plan); err != nil {
+						plan, supplementedLevels, err = supplementRejectedLevels(plan, entry.plan, terminalDispositions)
+						if err != nil {
 							return Catalog{}, err
 						}
-						continue
 					}
 				}
 			}
-			result.Dispositions = append(result.Dispositions, terminalDispositions...)
-			plan, err := retainCompiledLevels(sourcePlan, compiled)
-			if err != nil {
-				return Catalog{}, err
-			}
 			if len(plan.Plan.StrategyIR.Levels) == 0 {
+				result.Dispositions = append(result.Dispositions, terminalDispositions...)
 				result.Dispositions = withoutAcceptedPlanDisposition(result.Dispositions, sourcePlan.Identity.StrategyID)
 				continue
 			}
+			if len(supplementedLevels) > 0 {
+				verification, err := compiler.Compile(ctx, strategy.CompileRequest{
+					Plan: plan.Plan, DatasetContract: sourceGroup.QueryPlan.Normalization.DatasetContract,
+					StateSemantics: stateSemantics,
+				})
+				if err != nil {
+					return Catalog{}, err
+				}
+				verifiedPlan, ok := verification.Plan()
+				if verification.PlanTerminal() == nil && len(verification.LevelTerminals()) == 0 && ok && len(verifiedPlan.Levels()) > 0 {
+					markSupplementedLevelDispositionsStale(terminalDispositions, supplementedLevels)
+					result.Dispositions = append(result.Dispositions, terminalDispositions...)
+					if err := addPlan(sourceGroup.QueryPlan, plan); err != nil {
+						return Catalog{}, err
+					}
+					continue
+				}
+				verificationDispositions, err := compileResultDispositions(sourcePlan.Identity.StrategyID, verification)
+				if err != nil {
+					return Catalog{}, err
+				}
+				result.Dispositions = append(result.Dispositions, terminalDispositions...)
+				result.Dispositions = append(result.Dispositions, verificationDispositions...)
+				result.Dispositions = withoutAcceptedPlanDisposition(result.Dispositions, sourcePlan.Identity.StrategyID)
+				continue
+			}
+			result.Dispositions = append(result.Dispositions, terminalDispositions...)
 			if err := addPlan(sourceGroup.QueryPlan, plan); err != nil {
 				return Catalog{}, err
 			}
@@ -155,8 +176,20 @@ func runtimePlanIsTerminalFree(
 	compiler RuntimePlanCompiler,
 	stateSemantics strategy.StateSemantics,
 ) (bool, error) {
+	return runtimeFrozenPlanIsTerminalFree(
+		ctx, entry.plan, entry.facts.Normalization.DatasetContract, compiler, stateSemantics,
+	)
+}
+
+func runtimeFrozenPlanIsTerminalFree(
+	ctx context.Context,
+	plan FrozenPlan,
+	datasetContract contract.DatasetContractV2,
+	compiler RuntimePlanCompiler,
+	stateSemantics strategy.StateSemantics,
+) (bool, error) {
 	result, err := compiler.Compile(ctx, strategy.CompileRequest{
-		Plan: entry.plan.Plan, DatasetContract: entry.facts.Normalization.DatasetContract, StateSemantics: stateSemantics,
+		Plan: plan.Plan, DatasetContract: datasetContract, StateSemantics: stateSemantics,
 	})
 	if err != nil {
 		return false, err
@@ -183,6 +216,84 @@ func retainCompiledLevels(plan FrozenPlan, compiled *strategy.CompiledPlan) (Fro
 	}
 	plan.PlanRevision = revision
 	return plan, nil
+}
+
+func supplementRejectedLevels(
+	plan FrozenPlan,
+	lastGood FrozenPlan,
+	dispositions []ObjectDisposition,
+) (FrozenPlan, map[uint32]struct{}, error) {
+	lastGoodLevels := make(map[uint32]contract.LevelIRV2, len(lastGood.Plan.StrategyIR.Levels))
+	for _, level := range lastGood.Plan.StrategyIR.Levels {
+		lastGoodLevels[level.Definition.LevelID] = level
+	}
+	retained := make(map[uint32]struct{}, len(plan.Plan.StrategyIR.Levels))
+	for _, level := range plan.Plan.StrategyIR.Levels {
+		retained[level.Definition.LevelID] = struct{}{}
+	}
+	supplemented := make(map[uint32]struct{})
+	for index := range dispositions {
+		disposition := &dispositions[index]
+		if disposition.Disposition != DispositionConfigRejected {
+			continue
+		}
+		level, ok := lastGoodLevels[disposition.LevelID]
+		if !ok {
+			continue
+		}
+		if _, duplicate := retained[disposition.LevelID]; duplicate {
+			return FrozenPlan{}, nil, errors.New("alarmd controlplane: rejected Level is already runtime executable")
+		}
+		plan.Plan.StrategyIR.Levels = append(plan.Plan.StrategyIR.Levels, level)
+		retained[disposition.LevelID] = struct{}{}
+		supplemented[disposition.LevelID] = struct{}{}
+	}
+	sort.Slice(plan.Plan.StrategyIR.Levels, func(i, j int) bool {
+		return plan.Plan.StrategyIR.Levels[i].Definition.LevelID < plan.Plan.StrategyIR.Levels[j].Definition.LevelID
+	})
+	revision, err := contract.DeriveCanonicalDigestV2("alarmd-plan-semantics-v1", plan.Plan)
+	if err != nil {
+		return FrozenPlan{}, nil, err
+	}
+	plan.PlanRevision = revision
+	return plan, supplemented, nil
+}
+
+func compileResultDispositions(sourceID string, result strategy.CompileResult) ([]ObjectDisposition, error) {
+	if terminal := result.PlanTerminal(); terminal != nil {
+		disposition, err := terminalDisposition(sourceID, "PLAN", *terminal)
+		if err != nil {
+			return nil, err
+		}
+		return []ObjectDisposition{disposition}, nil
+	}
+	terminals := result.LevelTerminals()
+	if len(terminals) == 0 {
+		return nil, errors.New("alarmd controlplane: runtime compiler returned neither Plan nor terminal")
+	}
+	dispositions := make([]ObjectDisposition, 0, len(terminals))
+	for _, terminal := range terminals {
+		disposition, err := terminalDisposition(sourceID, "LEVEL", terminal)
+		if err != nil {
+			return nil, err
+		}
+		dispositions = append(dispositions, disposition)
+	}
+	return dispositions, nil
+}
+
+func markSupplementedLevelDispositionsStale(
+	dispositions []ObjectDisposition,
+	supplemented map[uint32]struct{},
+) {
+	for index := range dispositions {
+		if dispositions[index].Disposition != DispositionConfigRejected {
+			continue
+		}
+		if _, ok := supplemented[dispositions[index].LevelID]; ok {
+			dispositions[index].Disposition = DispositionStaleConfig
+		}
+	}
 }
 
 func refreshQueryGroupDigests(group *QueryGroup) error {

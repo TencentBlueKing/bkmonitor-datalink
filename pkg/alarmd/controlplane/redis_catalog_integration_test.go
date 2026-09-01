@@ -319,6 +319,113 @@ func TestSourceReconcilerRuntimeCompilerKeepsOnlyInvalidLastGood(t *testing.T) {
 	assertNoAcceptedPlanDisposition(t, repository, "1002")
 }
 
+func TestSourceReconcilerMergesInvalidLevelLastGoodWithoutUnsupportedLevel(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	initialDocument := addThresholdLevels(t, realThresholdDocuments(t)[0], []uint32{2, 3}, []uint32{1, 1})
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", `[1001]`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", string(initialDocument), 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	source := newRedisStrategySource(t, client)
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:runtime-level-last-good", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normal, stateSemantics := runtimePlanCompiler(t)
+	compiler := &revisionTerminalCompiler{normal: normal, strict: normal,
+		invalid: map[string]struct{}{}, unsupported: map[string]struct{}{}, mixedLevels: map[string]struct{}{"1800000003": {}}}
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, stateSemantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("initial pending=(%#v, %v)", result, err)
+	}
+	initial, err := reconciler.Refresh(ctx, source, planner)
+	if err != nil || initial.Status != controlplane.SourceRefreshPublished {
+		t.Fatalf("initial publish=(%#v, %v)", initial, err)
+	}
+	initialSnapshot, err := repository.LoadSnapshot(ctx, initial.Publication.SnapshotRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialPlan := initialSnapshot.QueryGroups[0].Plans[0]
+	initialLevels := levelIRByID(initialPlan.Plan)
+
+	changedDocument := withThresholdForLevel(t, withStrategyUpdateTime(t, initialDocument, 1800000003), 1, 81)
+	changedCatalog, err := controlplane.BuildCatalog(ctx, controlplane.BuildRequest{Strategies: []controlplane.SourceStrategy{{
+		SourceID: "1001", Document: changedDocument,
+		Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
+	}}, Planner: planner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedLevels := levelIRByID(changedCatalog.QueryGroups[0].Plans[0].Plan)
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", string(changedDocument), 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("changed pending=(%#v, %v)", result, err)
+	}
+	published, err := reconciler.Refresh(ctx, source, planner)
+	if err != nil || published.Status != controlplane.SourceRefreshPublished {
+		t.Fatalf("changed publish=(%#v, %v)", published, err)
+	}
+	snapshot, err := repository.LoadSnapshot(ctx, published.Publication.SnapshotRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.QueryGroups) != 1 || len(snapshot.QueryGroups[0].Plans) != 1 {
+		t.Fatalf("mixed Level snapshot=%#v", snapshot.QueryGroups)
+	}
+	plan := snapshot.QueryGroups[0].Plans[0]
+	levels := levelIRByID(plan.Plan)
+	if len(levels) != 2 || !reflect.DeepEqual(levels[1], changedLevels[1]) || !reflect.DeepEqual(levels[2], initialLevels[2]) {
+		t.Fatalf("mixed Levels=%#v changed=%#v initial=%#v", levels, changedLevels, initialLevels)
+	}
+	if _, retainedUnsupported := levels[3]; retainedUnsupported {
+		t.Fatalf("unsupported Level was retained: %#v", levels[3])
+	}
+	assertAuditDisposition(t, repository, "1001", controlplane.DispositionStaleConfig, contract.ReasonLevelInvalid)
+	assertAuditDisposition(t, repository, "1001", controlplane.DispositionUnsupported, contract.ReasonAlgorithmUnsupported)
+	assertAuditDisposition(t, repository, "1001", controlplane.DispositionAccepted, "")
+
+	activator, err := controlplane.NewInitialScheduleActivator(repository, compiler, stateSemantics, func() time.Time {
+		return time.Unix(180, 0)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := activator.Ensure(ctx, published.Publication); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, stateSemantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedule, err := runtime.ReadInitialFrozenSchedule(ctx, snapshot.QueryGroups[0].Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, ok := schedule.FirstSlot()
+	if !ok {
+		t.Fatal("mixed Level schedule has no first Slot")
+	}
+	if _, err := runtime.FreezeSlotContract(ctx, execution.FreezeSlotContractRequest{
+		QueryGroup: schedule.Segment.QueryGroup, ScheduleRevision: schedule.Segment.ScheduleRevision,
+		ScheduleSegmentStart: schedule.Segment.Start, EvaluationTime: first, DuePlans: schedule.DuePlanRefs(first),
+	}); err != nil {
+		t.Fatalf("mixed Level frozen contract=%v", err)
+	}
+}
+
 func TestSourceReconcilerRetainsLastGoodForMissingAndInvalidObjectWhileHealthySiblingAdvances(t *testing.T) {
 	client := newControlplaneRedis(t)
 	ctx := context.Background()
@@ -1102,6 +1209,7 @@ type revisionTerminalCompiler struct {
 	strict      *strategy.PlanCompiler
 	invalid     map[string]struct{}
 	unsupported map[string]struct{}
+	mixedLevels map[string]struct{}
 }
 
 func (compiler *revisionTerminalCompiler) Compile(
@@ -1115,6 +1223,17 @@ func (compiler *revisionTerminalCompiler) Compile(
 	}
 	if _, unsupported := compiler.unsupported[revision]; unsupported {
 		return compiler.strict.Compile(ctx, request)
+	}
+	if _, mixed := compiler.mixedLevels[revision]; mixed && len(request.Plan.StrategyIR.Levels) == 3 {
+		for index := range request.Plan.StrategyIR.Levels {
+			level := &request.Plan.StrategyIR.Levels[index]
+			switch level.Definition.LevelID {
+			case 2:
+				level.TriggerPlan.Type = "INVALID_TRIGGER"
+			case 3:
+				level.DetectPlan.Algorithms[0].Type = "UnsupportedForTest"
+			}
+		}
 	}
 	return compiler.normal.Compile(ctx, request)
 }
@@ -1131,6 +1250,37 @@ func withStrategyUpdateTime(t *testing.T, document json.RawMessage, updateTime i
 		t.Fatal(err)
 	}
 	return payload
+}
+
+func withThresholdForLevel(t *testing.T, document json.RawMessage, levelID uint32, threshold int) json.RawMessage {
+	t.Helper()
+	var value map[string]any
+	if err := json.Unmarshal(document, &value); err != nil {
+		t.Fatal(err)
+	}
+	algorithms := value["items"].([]any)[0].(map[string]any)["algorithms"].([]any)
+	for _, raw := range algorithms {
+		algorithm := raw.(map[string]any)
+		if uint32(algorithm["level"].(float64)) != levelID {
+			continue
+		}
+		groups := algorithm["config"].([]any)
+		conditions := groups[0].([]any)
+		conditions[0].(map[string]any)["threshold"] = float64(threshold)
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+func levelIRByID(plan contract.EvaluationPlanV2) map[uint32]contract.LevelIRV2 {
+	result := make(map[uint32]contract.LevelIRV2, len(plan.StrategyIR.Levels))
+	for _, level := range plan.StrategyIR.Levels {
+		result[level.Definition.LevelID] = level
+	}
+	return result
 }
 
 func addThresholdLevels(

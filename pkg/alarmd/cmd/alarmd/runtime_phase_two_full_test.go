@@ -95,6 +95,100 @@ func TestProductionPhaseTwoBundleUsesCanonicalSourceAndRuntimeRedisOverride(t *t
 	}
 }
 
+func TestProductionPhaseTwoBundleStartsIdleWithEmptyCatalogThenActivatesQueryGroup(t *testing.T) {
+	address, redisClient := startPhaseTwoRedis(t)
+	ctx := context.Background()
+	strategyDocument, err := os.ReadFile("testdata/g1_full_threshold_strategy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.Set(ctx, "alarm-config.strategy_ids", `[]`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.Set(ctx, "alarm-config.strategy_1001", strategyDocument, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`{"series":[],"status":null,"trace_id":"unused","is_partial":false,"result_table_id":[]}`))
+	}))
+	defer uqServer.Close()
+	cfg := validGoAccessRuntimeConfig()
+	cfg.Redis.Address = address
+	cfg.Redis.StatePrefix = "alarmd:phase-two:empty-catalog"
+	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
+
+	var observationsMu sync.Mutex
+	var observations []observability.Observation
+	health := newPhaseTwoApplicationHealth()
+	bundle, err := openProductionPhaseTwoBundleWithDependencies(
+		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime), health,
+		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
+			return controlplane.NewLegacyRedisStrategySource(client, prefix)
+		},
+		phaseTwoProductionExternalDependencies{
+			Now: time.Now, HTTPClient: uqServer.Client(),
+			AdditionalObserver: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+				observationsMu.Lock()
+				defer observationsMu.Unlock()
+				observations = append(observations, observation)
+			}),
+			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
+				return &recordingPhaseTwoEventSink{}, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("openProductionPhaseTwoBundleWithDependencies() error = %v", err)
+	}
+	if err := bundle.Start(ctx); err != nil {
+		t.Fatalf("phase-two production empty Catalog Start() error = %v", err)
+	}
+	if len(bundle.queryGroups) != 0 || len(bundle.runners) != 0 {
+		t.Fatalf("empty Catalog runtime Query Groups/runners = %v/%d, want healthy idle", bundle.queryGroups, len(bundle.runners))
+	}
+	productionControl := bundle.dependencies.Control.(*productionPhaseTwoControl)
+	activation, err := productionControl.dependencies.Repository.LoadActivation(ctx)
+	if err != nil || activation.RecordRevision != 1 || len(activation.Plans) != 0 {
+		t.Fatalf("empty Catalog activation = %+v, %v", activation, err)
+	}
+	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthReady || !snapshot.Ready {
+		t.Fatalf("empty Catalog health = %+v, want ready idle Worker", snapshot)
+	}
+
+	if err := redisClient.Set(ctx, "alarm-config.strategy_ids", `[1001]`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := bundle.refreshAndReconcile(ctx, true); err != nil {
+		t.Fatalf("first non-empty refresh error = %v", err)
+	}
+	if err := bundle.refreshAndReconcile(ctx, true); err != nil {
+		t.Fatalf("confirmed non-empty refresh error = %v", err)
+	}
+	if len(bundle.queryGroups) != 1 || len(bundle.runners) != 1 {
+		t.Fatalf("activated Query Groups/runners = %v/%d, want one", bundle.queryGroups, len(bundle.runners))
+	}
+	activation, err = productionControl.dependencies.Repository.LoadActivation(ctx)
+	if err != nil || activation.RecordRevision != 2 || len(activation.Plans) != 1 {
+		t.Fatalf("non-empty Catalog activation = %+v, %v", activation, err)
+	}
+	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthReady || !snapshot.Ready {
+		t.Fatalf("post-activation health = %+v, want ready", snapshot)
+	}
+	observationsMu.Lock()
+	for _, observation := range observations {
+		if observation.Stage == observability.Stage(observability.StageFatal) {
+			observationsMu.Unlock()
+			t.Fatalf("legal empty Catalog became process fatal: %+v", observation)
+		}
+	}
+	observationsMu.Unlock()
+	if err := bundle.Shutdown(ctx); err != nil {
+		t.Fatalf("phase-two production Shutdown() error = %v", err)
+	}
+}
+
 func TestProductionPhaseTwoBundleExecutesFullNonEmptySlotEndToEnd(t *testing.T) {
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()

@@ -24,7 +24,7 @@ func retainRuntimeExecutableCatalog(
 		return Catalog{}, errors.New("alarmd controlplane: invalid runtime executable Catalog compiler")
 	}
 	result := catalog
-	result.QueryGroups = nil
+	result.QueryGroups = make([]QueryGroup, 0, len(catalog.QueryGroups))
 	result.Dispositions = append([]ObjectDisposition(nil), catalog.Dispositions...)
 	groups := make(map[execution.QueryGroupIdentity]*QueryGroup, len(catalog.QueryGroups))
 	seenPlans := make(map[execution.PlanIdentity]struct{})

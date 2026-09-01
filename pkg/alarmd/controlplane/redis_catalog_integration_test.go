@@ -1034,6 +1034,11 @@ func TestRedisCatalogRepositoryPublishesEmptySnapshot(t *testing.T) {
 	if err != nil || loaded.QueryGroups == nil || len(loaded.QueryGroups) != 0 || loaded.Publication != snapshot.Publication {
 		t.Fatalf("empty loaded=(%#v, %v)", loaded, err)
 	}
+	missing := catalog
+	missing.QueryGroups = nil
+	if _, _, err := repository.PublishCatalog(context.Background(), missing); err == nil || !strings.Contains(err.Error(), "incomplete catalog publication") {
+		t.Fatalf("missing Catalog collection error=%v", err)
+	}
 }
 
 func TestRedisCatalogRepositoryActivationCASAndProjection(t *testing.T) {

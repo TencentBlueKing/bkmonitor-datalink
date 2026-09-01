@@ -53,9 +53,6 @@ func (activator *InitialScheduleActivator) Ensure(
 	if err != nil {
 		return ActivationState{}, err
 	}
-	if len(snapshot.QueryGroups) == 0 {
-		return ActivationState{}, errors.New("alarmd controlplane: initial activation requires a confirmed non-empty Query Group publication")
-	}
 	boundary := execution.EvaluationTime(activator.now().Unix())
 	if boundary <= 0 {
 		return ActivationState{}, errors.New("alarmd controlplane: initial activation clock must produce a positive Unix second")

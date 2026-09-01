@@ -267,7 +267,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	return repository.persistCutoverActivation(ctx, expected, next, updates)
 }
 
-// CompareAndSetInitialScheduleActivation establishes one or more first
+// CompareAndSetInitialScheduleActivation establishes zero or more first
 // Schedule Segments together with their Plan activation facts. Module 02 owns
 // the choice of facts; this method only validates and atomically persists them.
 func (repository *RedisCatalogRepository) CompareAndSetInitialScheduleActivation(
@@ -276,7 +276,7 @@ func (repository *RedisCatalogRepository) CompareAndSetInitialScheduleActivation
 	next ActivationState,
 	facts []execution.InitialScheduleActivationFact,
 ) error {
-	if repository == nil || repository.client == nil || len(facts) == 0 {
+	if repository == nil || repository.client == nil {
 		return errors.New("alarmd controlplane: initial schedule activation is required")
 	}
 	if err := validateActivationTransition(expected, next); err != nil {

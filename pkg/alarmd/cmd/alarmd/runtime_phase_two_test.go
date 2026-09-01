@@ -12,9 +12,13 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -443,25 +447,88 @@ func TestPhaseTwoWorkerBundleAcquiresControlLeaderBeforeInitialRefresh(t *testin
 	_ = bundle.Shutdown(context.Background())
 }
 
-func TestPhaseTwoWorkerBundleLeaseFailureStopsBeforeAnotherSlot(t *testing.T) {
+func TestPhaseTwoWorkerBundleFollowerLoadsControlFactsAndRunsItsAssignment(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
-	health := newPhaseTwoApplicationHealth()
 	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
 	runner := newFakePhaseTwoQueryGroup()
-	runner.leaseErr = ownership.ErrStaleFence
-	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{"query-group-1"}, runner: runner}
+	owner := &fakePhaseTwoOwnership{
+		follower: true, assigned: []execution.QueryGroupIdentity{"query-group-1"}, runner: runner,
+	}
+	bundle := mustPhaseTwoWorkerBundle(t, cfg, newPhaseTwoApplicationHealth(), control, owner)
+
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitSignal(t, runner.leaseStarted, "follower query-group lease maintenance")
+	if control.initialRefreshCalls != 0 || control.loadActiveCalls != 1 {
+		t.Fatalf("follower control calls initial/load = %d/%d, want 0/1", control.initialRefreshCalls, control.loadActiveCalls)
+	}
+	if owner.publishAssignmentCount() != 0 {
+		t.Fatalf("follower published %d Assignment batches", owner.publishAssignmentCount())
+	}
+	if err := bundle.runScheduledOnce(context.Background()); err != nil {
+		t.Fatalf("runScheduledOnce() error = %v", err)
+	}
+	if runner.runCount() != 1 {
+		t.Fatalf("follower runner calls = %d, want 1", runner.runCount())
+	}
+	_ = bundle.Shutdown(context.Background())
+}
+
+func TestPhaseTwoWorkerBundleLeaseFailureIsLocalToQueryGroup(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	health := newPhaseTwoApplicationHealth()
+	queryGroups := []execution.QueryGroupIdentity{"query-group-1", "query-group-2"}
+	control := &fakePhaseTwoControl{queryGroups: queryGroups}
+	lost := newFakePhaseTwoQueryGroup()
+	lost.leaseErr = ownership.ErrStaleFence
+	lost.leaseRelease = make(chan struct{})
+	healthy := newFakePhaseTwoQueryGroup()
+	owner := &fakePhaseTwoOwnership{assigned: queryGroups, runners: map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime{
+		"query-group-1": lost, "query-group-2": healthy,
+	}}
 	bundle := mustPhaseTwoWorkerBundle(t, cfg, health, control, owner)
 
 	if err := bundle.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	waitSignal(t, runner.leaseFinished, "stale lease failure")
+	waitSignal(t, lost.leaseStarted, "lost query-group lease maintenance")
+	waitSignal(t, healthy.leaseStarted, "healthy query-group lease maintenance")
+	close(lost.leaseRelease)
+	waitSignal(t, lost.leaseFinished, "stale lease failure")
 	waitForHealthState(t, health, observability.HealthNotReady)
-	if err := bundle.runScheduledOnce(context.Background()); !errors.Is(err, ownership.ErrStaleFence) {
-		t.Fatalf("runScheduledOnce(stale lease) error = %v, want ErrStaleFence", err)
+	if err := bundle.runScheduledOnce(context.Background()); err != nil {
+		t.Fatalf("runScheduledOnce(after local lease loss) error = %v", err)
 	}
-	if runner.runCount() != 0 {
-		t.Fatalf("stale lease started Slot side effects, runner calls = %d", runner.runCount())
+	if lost.runCount() != 0 || healthy.runCount() != 1 {
+		t.Fatalf("runner calls lost/healthy = %d/%d, want 0/1", lost.runCount(), healthy.runCount())
+	}
+	_ = bundle.Shutdown(context.Background())
+}
+
+func TestPhaseTwoWorkerBundleStaleRunnerDoesNotStopSiblingQueryGroup(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	queryGroups := []execution.QueryGroupIdentity{"query-group-1", "query-group-2"}
+	control := &fakePhaseTwoControl{queryGroups: queryGroups}
+	stale := newFakePhaseTwoQueryGroup()
+	stale.runErr = ownership.ErrStaleFence
+	healthy := newFakePhaseTwoQueryGroup()
+	owner := &fakePhaseTwoOwnership{assigned: queryGroups, runners: map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime{
+		"query-group-1": stale, "query-group-2": healthy,
+	}}
+	bundle := mustPhaseTwoWorkerBundle(t, cfg, newPhaseTwoApplicationHealth(), control, owner)
+
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if err := bundle.runScheduledOnce(context.Background()); err != nil {
+		t.Fatalf("runScheduledOnce(stale sibling) error = %v", err)
+	}
+	if stale.runCount() != 1 || healthy.runCount() != 1 {
+		t.Fatalf("runner calls stale/healthy = %d/%d, want 1/1", stale.runCount(), healthy.runCount())
+	}
+	if stale.releaseCount() != 1 {
+		t.Fatalf("stale runner release calls = %d, want 1", stale.releaseCount())
 	}
 	_ = bundle.Shutdown(context.Background())
 }
@@ -485,23 +552,191 @@ func TestPhaseTwoWorkerBundleReconcileUsesCurrentSnapshotWithoutRefreshingAgain(
 	_ = bundle.Shutdown(context.Background())
 }
 
-func TestPhaseTwoWorkerBundleRejectsSameSizeAssignmentIdentityChange(t *testing.T) {
+func TestPhaseTwoWorkerBundleAppliesAssignmentDiffWithoutRestart(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
-	runner := newFakePhaseTwoQueryGroup()
-	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{"query-group-1"}, runner: runner}
+	first := newFakePhaseTwoQueryGroup()
+	second := newFakePhaseTwoQueryGroup()
+	owner := &fakePhaseTwoOwnership{
+		assigned: []execution.QueryGroupIdentity{"query-group-1"},
+		runners: map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime{
+			"query-group-1": first, "query-group-2": second,
+		},
+	}
 	bundle := mustPhaseTwoWorkerBundle(t, cfg, newPhaseTwoApplicationHealth(), control, owner)
 
 	if err := bundle.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
+	waitSignal(t, first.leaseStarted, "first query-group lease maintenance")
 	control.queryGroups = []execution.QueryGroupIdentity{"query-group-2"}
-	owner.assigned = []execution.QueryGroupIdentity{"query-group-2"}
-	if err := bundle.refreshAndReconcile(context.Background(), true); err == nil {
-		t.Fatal("refreshAndReconcile() accepted a same-size replacement Assignment")
+	owner.setAssigned([]execution.QueryGroupIdentity{"query-group-2"})
+	if err := bundle.refreshAndReconcile(context.Background(), true); err != nil {
+		t.Fatalf("refreshAndReconcile() error = %v", err)
 	}
-	if runner.runCount() != 0 {
-		t.Fatalf("replacement Assignment admitted old runner, calls = %d", runner.runCount())
+	waitSignal(t, first.leaseFinished, "removed query-group lease cancellation")
+	waitSignal(t, second.leaseStarted, "new query-group lease maintenance")
+	if first.releaseCount() != 1 {
+		t.Fatalf("removed runner release calls = %d, want 1", first.releaseCount())
+	}
+	if err := bundle.runScheduledOnce(context.Background()); err != nil {
+		t.Fatalf("runScheduledOnce() error = %v", err)
+	}
+	if first.runCount() != 0 || second.runCount() != 1 {
+		t.Fatalf("runner calls old/new = %d/%d, want 0/1", first.runCount(), second.runCount())
+	}
+	_ = bundle.Shutdown(context.Background())
+}
+
+func TestPhaseTwoWorkerBundleReportsOwnedQueryGroupsAndFixedOwnershipTransitions(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
+	runner := newFakePhaseTwoQueryGroup()
+	owner := &fakePhaseTwoOwnership{
+		assigned: []execution.QueryGroupIdentity{"query-group-1"},
+		runners:  map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime{"query-group-1": runner},
+	}
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	var mu sync.Mutex
+	var observations []observability.Observation
+	observer := observability.Multi(recorder, observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		mu.Lock()
+		defer mu.Unlock()
+		observations = append(observations, observation)
+	}))
+	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
+		Config: cfg, Health: newPhaseTwoApplicationHealth(), Control: control, Ownership: owner,
+		Recorder: recorder, Observer: observer, Now: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitSignal(t, runner.leaseStarted, "query-group lease maintenance")
+	assertOwnedQueryGroupGauge(t, recorder, 1)
+
+	control.queryGroups = nil
+	owner.setAssigned(nil)
+	if err := bundle.refreshAndReconcile(context.Background(), true); err != nil {
+		t.Fatalf("refreshAndReconcile() error = %v", err)
+	}
+	waitSignal(t, runner.leaseFinished, "removed query-group lease cancellation")
+	assertOwnedQueryGroupGauge(t, recorder, 0)
+
+	mu.Lock()
+	gotObservations := append([]observability.Observation(nil), observations...)
+	mu.Unlock()
+	want := []observability.Stage{
+		observability.StageTakeoverStarted,
+		observability.StageTakeoverCompleted,
+		observability.StageAssignmentAcquired,
+		observability.StageAssignmentLost,
+	}
+	for _, stage := range want {
+		found := false
+		for _, observation := range gotObservations {
+			if observation.Component == observability.ComponentOwnership && observation.Stage == stage &&
+				observation.Trace.QueryGroupKey == "query-group-1" && observation.Trace.OwnerID == cfg.PhaseTwo.Worker.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("ownership observations = %+v, missing %s with worker/QG identity", gotObservations, stage)
+		}
+	}
+	assertOwnershipTransitionMetrics(t, recorder, []string{
+		`bkmonitor_alarmd_ownership_transition_total{reason_class="none",result="started",transition="takeover_started"} 1`,
+		`bkmonitor_alarmd_ownership_transition_total{reason_class="none",result="success",transition="takeover_completed"} 1`,
+		`bkmonitor_alarmd_ownership_transition_total{reason_class="none",result="success",transition="assignment_acquired"} 1`,
+		`bkmonitor_alarmd_ownership_transition_total{reason_class="none",result="success",transition="assignment_lost"} 1`,
+	})
+	_ = bundle.Shutdown(context.Background())
+}
+
+func TestPhaseTwoRuntimeObserverReportsRealFenceChecks(t *testing.T) {
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	var observations []observability.Observation
+	next := observability.Multi(recorder, observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		observations = append(observations, observation)
+	}))
+	observer := phaseTwoRuntimeObserver(next)
+	want := observability.Observation{
+		Component: observability.ComponentState, Stage: observability.StageSideEffectAdmission,
+		Result: observability.ResultSuccess, Operation: observability.OperationNormal,
+		Direction: observability.DirectionInternal, ReasonCode: observability.ReasonNone,
+		Trace: observability.TraceFields{QueryGroupKey: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 2},
+	}
+	observer.Observe(context.Background(), want)
+	if len(observations) != 2 || observations[0].Stage != observability.StageSideEffectAdmission {
+		t.Fatalf("observations = %+v, want admission followed by fence check", observations)
+	}
+	got := observations[1]
+	if got.Component != observability.ComponentOwnership || got.Stage != observability.StageFenceChecked ||
+		got.Result != want.Result || got.ReasonCode != want.ReasonCode || got.Trace != want.Trace {
+		t.Fatalf("fence observation = %+v, want admission result/reason/trace", got)
+	}
+	assertOwnershipTransitionMetrics(t, recorder, []string{
+		`bkmonitor_alarmd_ownership_transition_total{reason_class="none",result="success",transition="fence_checked"} 1`,
+	})
+}
+
+func assertOwnedQueryGroupGauge(t *testing.T, recorder *metric.Recorder, count int) {
+	t.Helper()
+	want := strings.NewReader("# HELP bkmonitor_alarmd_worker_owned_query_groups Query groups currently owned by this complete worker role.\n" +
+		"# TYPE bkmonitor_alarmd_worker_owned_query_groups gauge\n" +
+		fmt.Sprintf("bkmonitor_alarmd_worker_owned_query_groups{worker_role=\"complete\"} %d\n", count))
+	if err := testutil.GatherAndCompare(recorder.Gatherer(), want, "bkmonitor_alarmd_worker_owned_query_groups"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertOwnershipTransitionMetrics(t *testing.T, recorder *metric.Recorder, samples []string) {
+	t.Helper()
+	want := strings.NewReader("# HELP bkmonitor_alarmd_ownership_transition_total Ownership lifecycle transitions by bounded transition, result and reason class.\n" +
+		"# TYPE bkmonitor_alarmd_ownership_transition_total counter\n" + strings.Join(samples, "\n") + "\n")
+	if err := testutil.GatherAndCompare(recorder.Gatherer(), want, "bkmonitor_alarmd_ownership_transition_total"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPhaseTwoWorkerBundleIsReadyWithNoCurrentAssignments(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	health := newPhaseTwoApplicationHealth()
+	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
+	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{}}
+	bundle := mustPhaseTwoWorkerBundle(t, cfg, health, control, owner)
+
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthReady || !snapshot.Ready {
+		t.Fatalf("health without assignments = %+v, want ready idle Worker", snapshot)
+	}
+	_ = bundle.Shutdown(context.Background())
+}
+
+func TestPhaseTwoWorkerBundleWaitsForBusyAssignedLeaseWithoutStoppingWorker(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	health := newPhaseTwoApplicationHealth()
+	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
+	owner := &fakePhaseTwoOwnership{
+		assigned:   []execution.QueryGroupIdentity{"query-group-1"},
+		openErrors: map[execution.QueryGroupIdentity]error{"query-group-1": ownership.ErrLeaseBusy},
+	}
+	bundle := mustPhaseTwoWorkerBundle(t, cfg, health, control, owner)
+
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v, want handoff wait", err)
+	}
+	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthNotReady || snapshot.Ready {
+		t.Fatalf("health while assigned lease is busy = %+v, want not ready", snapshot)
+	}
+	if err := bundle.runScheduledOnce(context.Background()); err != nil {
+		t.Fatalf("runScheduledOnce(with no acquired runner) error = %v", err)
 	}
 	_ = bundle.Shutdown(context.Background())
 }
@@ -577,8 +812,15 @@ func TestPhaseTwoWorkerBundleObservesLifecycleWithoutInventingSlotTransitions(t 
 	stages := make([]observability.Stage, len(observations))
 	for index, observation := range observations {
 		stages[index] = observation.Stage
-		if observation.Trace.QueryGroupKey != "" || observation.Trace.OwnerID != "" {
-			t.Fatalf("lifecycle observation leaked business identity: %+v", observation)
+		ownershipTransition := observation.Component == observability.ComponentOwnership &&
+			(observation.Stage == observability.StageAssignmentAcquired || observation.Stage == observability.StageAssignmentLost ||
+				observation.Stage == observability.StageTakeoverStarted || observation.Stage == observability.StageTakeoverCompleted)
+		if ownershipTransition {
+			if observation.Trace.QueryGroupKey != "query-group-1" || observation.Trace.OwnerID != cfg.PhaseTwo.Worker.ID {
+				t.Fatalf("ownership lifecycle observation lacks diagnostic identity: %+v", observation)
+			}
+		} else if observation.Trace.QueryGroupKey != "" || observation.Trace.OwnerID != "" {
+			t.Fatalf("non-ownership lifecycle observation leaked business identity: %+v", observation)
 		}
 	}
 	for _, want := range []observability.Stage{
@@ -621,6 +863,7 @@ type fakePhaseTwoControl struct {
 	queryGroups          []execution.QueryGroupIdentity
 	beforeInitialRefresh func() error
 	initialRefreshCalls  int
+	loadActiveCalls      int
 	closeCalls           int
 }
 
@@ -638,6 +881,11 @@ func (control *fakePhaseTwoControl) Refresh(context.Context) ([]execution.QueryG
 	return append([]execution.QueryGroupIdentity(nil), control.queryGroups...), nil
 }
 
+func (control *fakePhaseTwoControl) LoadActive(context.Context) ([]execution.QueryGroupIdentity, error) {
+	control.loadActiveCalls++
+	return append([]execution.QueryGroupIdentity(nil), control.queryGroups...), nil
+}
+
 func (control *fakePhaseTwoControl) Close() error {
 	control.closeCalls++
 	return nil
@@ -649,15 +897,22 @@ type fakePhaseTwoOwnership struct {
 	beforeRegister func(ownership.WorkerRegistration)
 	assigned       []execution.QueryGroupIdentity
 	runner         phaseTwoQueryGroupRuntime
+	runners        map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime
+	openErrors     map[execution.QueryGroupIdentity]error
+	follower       bool
 	controlLeader  int
+	published      int
 	closeCalls     int
 }
 
-func (owner *fakePhaseTwoOwnership) AcquireControlLeader(context.Context, time.Time, time.Duration) error {
+func (owner *fakePhaseTwoOwnership) TryAcquireControlLeader(context.Context, time.Time, time.Duration) (bool, error) {
 	owner.mu.Lock()
 	defer owner.mu.Unlock()
+	if owner.follower {
+		return false, nil
+	}
 	owner.controlLeader++
-	return nil
+	return true, nil
 }
 
 func (owner *fakePhaseTwoOwnership) RegisterWorker(_ context.Context, registration ownership.WorkerRegistration) error {
@@ -670,11 +925,23 @@ func (owner *fakePhaseTwoOwnership) RegisterWorker(_ context.Context, registrati
 	return nil
 }
 
-func (owner *fakePhaseTwoOwnership) Reconcile(
+func (owner *fakePhaseTwoOwnership) PublishAssignments(
 	context.Context,
 	[]execution.QueryGroupIdentity,
 	time.Time,
+) error {
+	owner.mu.Lock()
+	defer owner.mu.Unlock()
+	owner.published++
+	return nil
+}
+
+func (owner *fakePhaseTwoOwnership) AssignedQueryGroups(
+	context.Context,
+	[]execution.QueryGroupIdentity,
 ) ([]execution.QueryGroupIdentity, error) {
+	owner.mu.Lock()
+	defer owner.mu.Unlock()
 	return append([]execution.QueryGroupIdentity(nil), owner.assigned...), nil
 }
 
@@ -684,11 +951,19 @@ func (owner *fakePhaseTwoOwnership) MaintainControlLeader(ctx context.Context, _
 }
 
 func (owner *fakePhaseTwoOwnership) OpenQueryGroup(
-	context.Context,
-	execution.QueryGroupIdentity,
-	time.Time,
-	time.Duration,
+	_ context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	_ time.Time,
+	_ time.Duration,
 ) (phaseTwoQueryGroupRuntime, error) {
+	owner.mu.Lock()
+	defer owner.mu.Unlock()
+	if err := owner.openErrors[queryGroup]; err != nil {
+		return nil, err
+	}
+	if owner.runners != nil {
+		return owner.runners[queryGroup], nil
+	}
 	return owner.runner, nil
 }
 
@@ -713,11 +988,24 @@ func (owner *fakePhaseTwoOwnership) controlLeaderCount() int {
 	return owner.controlLeader
 }
 
+func (owner *fakePhaseTwoOwnership) publishAssignmentCount() int {
+	owner.mu.Lock()
+	defer owner.mu.Unlock()
+	return owner.published
+}
+
+func (owner *fakePhaseTwoOwnership) setAssigned(assigned []execution.QueryGroupIdentity) {
+	owner.mu.Lock()
+	defer owner.mu.Unlock()
+	owner.assigned = append([]execution.QueryGroupIdentity(nil), assigned...)
+}
+
 type fakePhaseTwoQueryGroup struct {
 	mu            sync.Mutex
 	runCalls      int
 	releaseCalls  int
 	leaseErr      error
+	leaseRelease  chan struct{}
 	leaseStarted  chan struct{}
 	leaseFinished chan struct{}
 	runStarted    chan struct{}
@@ -745,6 +1033,14 @@ func (runner *fakePhaseTwoQueryGroup) RunOne(context.Context) (execution.SlotExe
 
 func (runner *fakePhaseTwoQueryGroup) MaintainLease(ctx context.Context, _, _ time.Duration) error {
 	close(runner.leaseStarted)
+	if runner.leaseRelease != nil {
+		select {
+		case <-runner.leaseRelease:
+		case <-ctx.Done():
+			close(runner.leaseFinished)
+			return ctx.Err()
+		}
+	}
 	if runner.leaseErr != nil {
 		close(runner.leaseFinished)
 		return runner.leaseErr

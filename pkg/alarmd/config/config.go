@@ -258,6 +258,7 @@ func Load(path string) (Config, error) {
 	}
 
 	cfg.resolvePhaseTwoRuntimeRedis()
+	cfg.resolvePhaseTwoWorkerIDFromEnvironment()
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -353,9 +354,6 @@ func (c Config) validateGoAccessRuntime() error {
 }
 
 func (c Config) validatePhaseOneRuntime() error {
-	if len(c.PhaseTwo.G1Validation.StrategyIDs) != 0 {
-		return errors.New("phase-one Kafka compatibility must not configure phase_two g1_validation")
-	}
 	if c.PhaseTwo.RuntimeRedis != nil {
 		return errors.New("phase-one Kafka compatibility must not configure phase_two runtime_redis")
 	}

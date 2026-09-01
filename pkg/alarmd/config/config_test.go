@@ -290,24 +290,12 @@ func TestPhaseOneCompatibilityRejectsSentinelRedis(t *testing.T) {
 	}
 }
 
-func TestPhaseOneCompatibilityRejectsPhaseTwoRedisAndG1Selector(t *testing.T) {
-	for name, mutate := range map[string]func(*Config){
-		"g1 selector": func(cfg *Config) {
-			cfg.PhaseTwo.Worker.DeploymentProfile = DeploymentProfileG1
-			cfg.PhaseTwo.G1Validation.StrategyIDs = []string{"9889"}
-		},
-		"runtime redis": func(cfg *Config) {
-			runtimeRedis := cfg.Redis.Connection()
-			cfg.PhaseTwo.RuntimeRedis = &runtimeRedis
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			cfg := validConfigObject()
-			mutate(&cfg)
-			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "phase_two") {
-				t.Fatalf("Validate() error = %v, want ignored phase-two config rejection", err)
-			}
-		})
+func TestPhaseOneCompatibilityRejectsPhaseTwoRuntimeRedis(t *testing.T) {
+	cfg := validConfigObject()
+	runtimeRedis := cfg.Redis.Connection()
+	cfg.PhaseTwo.RuntimeRedis = &runtimeRedis
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "phase_two") {
+		t.Fatalf("Validate() error = %v, want ignored phase-two config rejection", err)
 	}
 }
 

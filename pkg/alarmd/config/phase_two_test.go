@@ -10,6 +10,8 @@
 package config
 
 import (
+	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -126,42 +128,92 @@ func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
 	}
 }
 
-func TestPhaseTwoG1ValidationRequiresExplicitCanonicalStrategyIDs(t *testing.T) {
-	valid := validGoAccessConfigObject()
-	valid.PhaseTwo.Worker.DeploymentProfile = DeploymentProfileG1
-	valid.PhaseTwo.G1Validation.StrategyIDs = []string{"9889", "2662"}
-	if err := valid.Validate(); err != nil {
-		t.Fatalf("Validate() rejected G1 strategy selection: %v", err)
+func TestLoadPhaseTwoWorkerIdentityUsesDeploymentEnvironmentBeforeYAML(t *testing.T) {
+	t.Setenv(PhaseTwoWorkerIDEnvironment, "alarmd-phase-two-7d9f8")
+	cfg, err := Load(writeConfig(t, validGoAccessRuntimeConfigYAML("yaml-worker")))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
 	}
-
-	for name, mutate := range map[string]func(*Config){
-		"missing selector": func(cfg *Config) { cfg.PhaseTwo.G1Validation.StrategyIDs = nil },
-		"empty selector":   func(cfg *Config) { cfg.PhaseTwo.G1Validation.StrategyIDs = []string{} },
-		"zero identity":    func(cfg *Config) { cfg.PhaseTwo.G1Validation.StrategyIDs = []string{"0"} },
-		"noncanonical identity": func(cfg *Config) {
-			cfg.PhaseTwo.G1Validation.StrategyIDs = []string{"09889"}
-		},
-		"duplicate identity": func(cfg *Config) {
-			cfg.PhaseTwo.G1Validation.StrategyIDs = []string{"9889", "9889"}
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			cfg := valid
-			mutate(&cfg)
-			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "g1_validation") {
-				t.Fatalf("Validate() error = %v, want G1 selector rejection", err)
-			}
-		})
+	if cfg.PhaseTwo.Worker.ID != "alarmd-phase-two-7d9f8" {
+		t.Fatalf("worker ID = %q, want deployment identity", cfg.PhaseTwo.Worker.ID)
 	}
 }
 
-func TestPhaseTwoG1ValidationSelectorIsRejectedOutsideG1Profile(t *testing.T) {
-	cfg := validGoAccessConfigObject()
-	cfg.PhaseTwo.G1Validation.StrategyIDs = []string{"9889"}
-
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "g1_validation") {
-		t.Fatalf("Validate() error = %v, want profile-scoped selector rejection", err)
+func TestLoadPhaseTwoWorkerIdentityFallsBackToYAML(t *testing.T) {
+	previous, present := os.LookupEnv(PhaseTwoWorkerIDEnvironment)
+	if err := os.Unsetenv(PhaseTwoWorkerIDEnvironment); err != nil {
+		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if present {
+			_ = os.Setenv(PhaseTwoWorkerIDEnvironment, previous)
+			return
+		}
+		_ = os.Unsetenv(PhaseTwoWorkerIDEnvironment)
+	})
+	cfg, err := Load(writeConfig(t, validGoAccessRuntimeConfigYAML("yaml-worker")))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.PhaseTwo.Worker.ID != "yaml-worker" {
+		t.Fatalf("worker ID = %q, want YAML fallback", cfg.PhaseTwo.Worker.ID)
+	}
+}
+
+func TestLoadPhaseTwoWorkerIdentityRejectsNonCanonicalDeploymentEnvironment(t *testing.T) {
+	t.Setenv(PhaseTwoWorkerIDEnvironment, " alarmd-phase-two-0 ")
+	if _, err := Load(writeConfig(t, validGoAccessRuntimeConfigYAML("yaml-worker"))); err == nil ||
+		!strings.Contains(err.Error(), "worker identity") {
+		t.Fatalf("Load() error = %v, want deployment identity rejection", err)
+	}
+}
+
+func TestLoadRejectsRemovedG1StrategySelector(t *testing.T) {
+	contents := validGoAccessRuntimeConfigYAML("yaml-worker") + `  g1_validation:
+    strategy_ids: [956]
+`
+	if _, err := Load(writeConfig(t, contents)); err == nil || !strings.Contains(err.Error(), "g1_validation") {
+		t.Fatalf("Load() error = %v, want removed G1 selector rejection", err)
+	}
+}
+
+func validGoAccessRuntimeConfigYAML(workerID string) string {
+	return fmt.Sprintf(`mode: shadow
+input:
+  mode: go_access
+http:
+  listen: 127.0.0.1:8080
+kafka:
+  brokers: [127.0.0.1:9092]
+  trigger_event:
+    topic: alarmd-trigger-event
+  allowed_output_topics: [alarmd-trigger-event]
+  client_id: alarmd
+  broker_version: 2.6.0
+redis:
+  address: redis.test:6379
+  state_prefix: alarmd:phase-two:g2:v1
+phase_two:
+  worker:
+    id: %s
+    deployment_profile: shadow
+  control:
+    strategy_cache_prefix: alarm-config
+    provider_route: unify-query-primary
+    timezone: Asia/Shanghai
+    legacy_query_runtime:
+      access_bk_data: false
+      bkdata_cmdb_level_tables: []
+      system_disk_filter:
+        field_name: device_type
+        values: []
+      system_network_filter:
+        field_name: device_name
+        values: []
+  access:
+    uq_endpoint: http://unify-query.service
+    query_source: alarmd
+`, workerID)
 }
 
 func TestPhaseTwoInputRequiresExplicitIsolatedPhaseOneCompatibility(t *testing.T) {

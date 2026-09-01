@@ -185,13 +185,15 @@ func runPhaseTwoApplicationWithDependencies(
 type phaseTwoControlRuntime interface {
 	InitialRefresh(context.Context) ([]execution.QueryGroupIdentity, error)
 	Refresh(context.Context) ([]execution.QueryGroupIdentity, error)
+	LoadActive(context.Context) ([]execution.QueryGroupIdentity, error)
 	Close() error
 }
 
 type phaseTwoOwnershipRuntime interface {
 	RegisterWorker(context.Context, ownership.WorkerRegistration) error
-	AcquireControlLeader(context.Context, time.Time, time.Duration) error
-	Reconcile(context.Context, []execution.QueryGroupIdentity, time.Time) ([]execution.QueryGroupIdentity, error)
+	TryAcquireControlLeader(context.Context, time.Time, time.Duration) (bool, error)
+	PublishAssignments(context.Context, []execution.QueryGroupIdentity, time.Time) error
+	AssignedQueryGroups(context.Context, []execution.QueryGroupIdentity) ([]execution.QueryGroupIdentity, error)
 	MaintainControlLeader(context.Context, time.Duration, time.Duration) error
 	OpenQueryGroup(
 		context.Context,
@@ -200,6 +202,12 @@ type phaseTwoOwnershipRuntime interface {
 		time.Duration,
 	) (phaseTwoQueryGroupRuntime, error)
 	Close() error
+}
+
+type phaseTwoQueryGroupLifecycle struct {
+	runner phaseTwoQueryGroupRuntime
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 type phaseTwoQueryGroupRuntime interface {
@@ -213,6 +221,7 @@ type phaseTwoWorkerBundleDependencies struct {
 	Health         *phaseTwoApplicationHealth
 	Control        phaseTwoControlRuntime
 	Ownership      phaseTwoOwnershipRuntime
+	Recorder       *metric.Recorder
 	Observer       observability.Observer
 	CloseResources func(context.Context) error
 	Now            func() time.Time
@@ -224,15 +233,17 @@ type phaseTwoWorkerBundle struct {
 	registrationMu sync.Mutex
 	mu             sync.RWMutex
 	queryGroups    []execution.QueryGroupIdentity
-	runners        map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime
-	leaseFailures  map[execution.QueryGroupIdentity]error
+	assigned       map[execution.QueryGroupIdentity]struct{}
+	runners        map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle
 	started        bool
 	draining       bool
 	closed         bool
+	controlLeader  bool
+	controlRunning bool
+	controlEpoch   uint64
 	maintenanceCtx context.Context
 	cancelMaintain context.CancelFunc
-	leaseCtx       context.Context
-	cancelLeases   context.CancelFunc
+	cancelControl  context.CancelFunc
 	maintenanceWG  sync.WaitGroup
 	inflightWG     sync.WaitGroup
 	shutdownOnce   sync.Once
@@ -247,9 +258,13 @@ func newPhaseTwoWorkerBundle(dependencies phaseTwoWorkerBundleDependencies) (*ph
 	if err := dependencies.Config.Validate(); err != nil {
 		return nil, err
 	}
-	return &phaseTwoWorkerBundle{dependencies: dependencies,
-		runners:       make(map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime),
-		leaseFailures: make(map[execution.QueryGroupIdentity]error)}, nil
+	bundle := &phaseTwoWorkerBundle{dependencies: dependencies,
+		assigned: make(map[execution.QueryGroupIdentity]struct{}),
+		runners:  make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle)}
+	if dependencies.Recorder != nil {
+		dependencies.Recorder.SetOwnedQueryGroups(0)
+	}
+	return bundle, nil
 }
 
 func (bundle *phaseTwoWorkerBundle) Start(ctx context.Context) error {
@@ -263,45 +278,46 @@ func (bundle *phaseTwoWorkerBundle) Start(ctx context.Context) error {
 	}
 	bundle.started = true
 	bundle.maintenanceCtx, bundle.cancelMaintain = context.WithCancel(context.Background())
-	bundle.leaseCtx, bundle.cancelLeases = context.WithCancel(context.Background())
 	bundle.mu.Unlock()
-	if err := bundle.dependencies.Ownership.AcquireControlLeader(
-		ctx, bundle.dependencies.Now(), bundle.dependencies.Config.PhaseTwo.Ownership.ControlLeaderTTL.Duration(),
-	); err != nil {
-		return fmt.Errorf("phase-two acquire Control Leader: %w", err)
-	}
-	bundle.startControlMaintenance()
 	bundle.observe(ctx, observability.ComponentRuntime, observability.Stage(observability.StageStartup), observability.ResultStarted, nil)
 	bundle.observe(ctx, observability.ComponentRuntime, observability.StageConfigLoaded, observability.ResultSuccess, nil)
-
-	queryGroups, err := bundle.dependencies.Control.InitialRefresh(ctx)
+	if err := bundle.register(ctx, ownership.WorkerStarting); err != nil {
+		return err
+	}
+	leader, err := bundle.tryAcquireControlLeader(ctx)
 	if err != nil {
-		return fmt.Errorf("phase-two initial control refresh: %w", err)
+		return fmt.Errorf("phase-two acquire Control Leader: %w", err)
+	}
+	var queryGroups []execution.QueryGroupIdentity
+	if leader {
+		queryGroups, err = bundle.dependencies.Control.InitialRefresh(ctx)
+	} else {
+		queryGroups, err = bundle.dependencies.Control.LoadActive(ctx)
+	}
+	if err != nil {
+		return fmt.Errorf("phase-two initial control facts: %w", err)
 	}
 	bundle.mu.Lock()
 	bundle.queryGroups = append([]execution.QueryGroupIdentity(nil), queryGroups...)
 	bundle.mu.Unlock()
 	bundle.observe(ctx, observability.ComponentControlPlane, observability.StageSnapshotRefreshed, observability.ResultSuccess, nil)
-	if err := bundle.register(ctx, ownership.WorkerStarting); err != nil {
-		return err
-	}
 	if err := bundle.register(ctx, ownership.WorkerReady); err != nil {
 		return err
 	}
-	assigned, err := bundle.dependencies.Ownership.Reconcile(ctx, queryGroups, bundle.dependencies.Now())
-	if err != nil {
-		return fmt.Errorf("phase-two reconcile Assignment: %w", err)
+	if leader {
+		if err := bundle.dependencies.Ownership.PublishAssignments(ctx, queryGroups, bundle.dependencies.Now()); err != nil {
+			return fmt.Errorf("phase-two publish Assignment: %w", err)
+		}
 	}
-	if err := bundle.openAssigned(ctx, assigned); err != nil {
+	assigned, err := bundle.dependencies.Ownership.AssignedQueryGroups(ctx, queryGroups)
+	if err != nil {
+		return fmt.Errorf("phase-two read Assignment: %w", err)
+	}
+	if err := bundle.applyAssignment(ctx, assigned); err != nil {
 		return err
 	}
 	bundle.startMaintenance()
-	ready := len(queryGroups) > 0 && len(assigned) == len(queryGroups)
-	bundle.dependencies.Health.Update(phaseTwoReadiness{
-		State: observability.HealthReady, SnapshotReady: true, AssignmentReady: ready,
-		RuntimeStateReady: true, OutputSinkReady: true,
-	})
-	bundle.observe(ctx, observability.ComponentOwnership, observability.StageAssignmentAcquired, observability.ResultSuccess, nil)
+	bundle.updateReadiness()
 	return nil
 }
 
@@ -346,25 +362,24 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 		bundle.mu.RUnlock()
 		return errPhaseTwoWorkerDraining
 	}
-	for _, err := range bundle.leaseFailures {
-		if err != nil {
-			bundle.mu.RUnlock()
-			return err
-		}
+	type scheduledRunner struct {
+		queryGroup execution.QueryGroupIdentity
+		lifecycle  *phaseTwoQueryGroupLifecycle
 	}
-	runners := make([]phaseTwoQueryGroupRuntime, 0, len(bundle.runners))
-	for _, runner := range bundle.runners {
-		runners = append(runners, runner)
+	runners := make([]scheduledRunner, 0, len(bundle.runners))
+	for queryGroup, lifecycle := range bundle.runners {
+		runners = append(runners, scheduledRunner{queryGroup: queryGroup, lifecycle: lifecycle})
 	}
 	bundle.inflightWG.Add(len(runners))
 	bundle.mu.RUnlock()
 
-	for index, runner := range runners {
-		_, _, err := runner.RunOne(ctx)
+	for index, scheduled := range runners {
+		_, _, err := scheduled.lifecycle.runner.RunOne(ctx)
 		bundle.inflightWG.Done()
 		if err != nil {
 			if errors.Is(err, ownership.ErrStaleFence) || errors.Is(err, ownership.ErrNotDesired) {
-				bundle.markOwnershipUnsafe(err)
+				bundle.stopLostQueryGroup(scheduled.queryGroup, scheduled.lifecycle, err)
+				continue
 			}
 			for remaining := index + 1; remaining < len(runners); remaining++ {
 				bundle.inflightWG.Done()
@@ -395,17 +410,25 @@ func (bundle *phaseTwoWorkerBundle) Shutdown(ctx context.Context) error {
 		}
 		result = append(result, waitPhaseTwoGroup(ctx, &bundle.inflightWG))
 		bundle.mu.Lock()
-		if bundle.cancelLeases != nil {
-			bundle.cancelLeases()
+		runners := make([]*phaseTwoQueryGroupLifecycle, 0, len(bundle.runners))
+		queryGroups := make([]execution.QueryGroupIdentity, 0, len(bundle.runners))
+		for queryGroup, lifecycle := range bundle.runners {
+			delete(bundle.runners, queryGroup)
+			lifecycle.cancel()
+			runners = append(runners, lifecycle)
+			queryGroups = append(queryGroups, queryGroup)
 		}
-		runners := make([]phaseTwoQueryGroupRuntime, 0, len(bundle.runners))
-		for _, runner := range bundle.runners {
-			runners = append(runners, runner)
-		}
+		bundle.setOwnedQueryGroupsLocked()
 		bundle.mu.Unlock()
 		result = append(result, waitPhaseTwoGroup(ctx, &bundle.maintenanceWG))
-		for _, runner := range runners {
-			result = append(result, runner.Release(ctx))
+		for index, lifecycle := range runners {
+			releaseErr := lifecycle.runner.Release(ctx)
+			result = append(result, releaseErr)
+			transitionResult := observability.Result(observability.ResultSuccess)
+			if releaseErr != nil {
+				transitionResult = observability.ResultFailed
+			}
+			bundle.observeOwnership(ctx, observability.StageAssignmentLost, transitionResult, queryGroups[index], releaseErr)
 		}
 		if bundle.dependencies.CloseResources != nil {
 			result = append(result, bundle.dependencies.CloseResources(ctx))
@@ -447,16 +470,9 @@ func (bundle *phaseTwoWorkerBundle) register(ctx context.Context, readiness owne
 			return nil
 		}
 	}
-	cfg := bundle.dependencies.Config.PhaseTwo
-	capabilitiesDigest, err := phaseTwoCapabilitiesDigest(bundle.dependencies.Config)
+	registration, err := phaseTwoWorkerRegistration(bundle.dependencies.Config, readiness, bundle.dependencies.Now())
 	if err != nil {
-		return fmt.Errorf("phase-two derive worker capabilities: %w", err)
-	}
-	registration := ownership.WorkerRegistration{
-		WorkerID: cfg.Worker.ID, AssignmentReadiness: readiness, DependencyStatus: ownership.DependencyHealthy,
-		DeploymentProfile:  cfg.Worker.DeploymentProfile,
-		CapabilitiesDigest: capabilitiesDigest,
-		ExpiresAt:          bundle.dependencies.Now().Add(cfg.Worker.RegistrationTTL.Duration()),
+		return err
 	}
 	if err := bundle.dependencies.Ownership.RegisterWorker(ctx, registration); err != nil {
 		return fmt.Errorf("phase-two register worker as %s: %w", readiness, err)
@@ -464,59 +480,82 @@ func (bundle *phaseTwoWorkerBundle) register(ctx context.Context, readiness owne
 	return nil
 }
 
-func (bundle *phaseTwoWorkerBundle) openAssigned(ctx context.Context, assigned []execution.QueryGroupIdentity) error {
-	seen := make(map[execution.QueryGroupIdentity]struct{}, len(assigned))
-	for _, queryGroup := range assigned {
-		if queryGroup == "" {
-			return errors.New("phase-two Assignment contains empty Query Group")
-		}
-		if _, duplicate := seen[queryGroup]; duplicate {
-			return errors.New("phase-two Assignment contains duplicate Query Group")
-		}
-		seen[queryGroup] = struct{}{}
-		runner, err := bundle.dependencies.Ownership.OpenQueryGroup(
-			ctx, queryGroup, bundle.dependencies.Now(), bundle.dependencies.Config.PhaseTwo.Ownership.LeaseTTL.Duration(),
-		)
-		if err != nil {
-			return fmt.Errorf("phase-two open Query Group %s: %w", queryGroup, err)
-		}
-		bundle.runners[queryGroup] = runner
+func phaseTwoWorkerRegistration(
+	cfg config.Config,
+	readiness ownership.AssignmentReadiness,
+	at time.Time,
+) (ownership.WorkerRegistration, error) {
+	capabilitiesDigest, err := phaseTwoCapabilitiesDigest(cfg)
+	if err != nil {
+		return ownership.WorkerRegistration{}, fmt.Errorf("phase-two derive worker capabilities: %w", err)
 	}
-	return nil
+	registration := ownership.WorkerRegistration{
+		WorkerID: cfg.PhaseTwo.Worker.ID, AssignmentReadiness: readiness,
+		DependencyStatus: ownership.DependencyHealthy, DeploymentProfile: cfg.PhaseTwo.Worker.DeploymentProfile,
+		CapabilitiesDigest: capabilitiesDigest,
+		ExpiresAt:          at.Add(cfg.PhaseTwo.Worker.RegistrationTTL.Duration()),
+	}
+	if err := registration.Validate(); err != nil {
+		return ownership.WorkerRegistration{}, err
+	}
+	return registration, nil
 }
 
 func (bundle *phaseTwoWorkerBundle) startMaintenance() {
-	cfg := bundle.dependencies.Config.PhaseTwo
 	bundle.maintenanceWG.Add(1)
 	go bundle.maintainRegistration()
-	for queryGroup, runner := range bundle.runners {
-		queryGroup, runner := queryGroup, runner
-		bundle.maintenanceWG.Add(1)
-		go func() {
-			defer bundle.maintenanceWG.Done()
-			err := runner.MaintainLease(
-				bundle.leaseCtx, cfg.Ownership.LeaseRenewInterval.Duration(), cfg.Ownership.LeaseTTL.Duration(),
-			)
-			if err != nil && !errors.Is(err, context.Canceled) {
-				bundle.mu.Lock()
-				bundle.leaseFailures[queryGroup] = err
-				bundle.mu.Unlock()
-				bundle.markOwnershipUnsafe(err)
-			}
-		}()
+}
+
+func (bundle *phaseTwoWorkerBundle) tryAcquireControlLeader(ctx context.Context) (bool, error) {
+	bundle.mu.RLock()
+	if bundle.controlLeader {
+		bundle.mu.RUnlock()
+		return true, nil
 	}
+	if bundle.controlRunning {
+		bundle.mu.RUnlock()
+		return false, nil
+	}
+	bundle.mu.RUnlock()
+	leader, err := bundle.dependencies.Ownership.TryAcquireControlLeader(
+		ctx, bundle.dependencies.Now(), bundle.dependencies.Config.PhaseTwo.Ownership.ControlLeaderTTL.Duration(),
+	)
+	if err != nil || !leader {
+		return leader, err
+	}
+	bundle.startControlMaintenance()
+	return true, nil
 }
 
 func (bundle *phaseTwoWorkerBundle) startControlMaintenance() {
 	cfg := bundle.dependencies.Config.PhaseTwo
+	bundle.mu.Lock()
+	if bundle.draining || bundle.closed || bundle.controlRunning {
+		bundle.mu.Unlock()
+		return
+	}
+	controlCtx, cancel := context.WithCancel(bundle.maintenanceCtx)
+	bundle.controlLeader = true
+	bundle.controlRunning = true
+	bundle.controlEpoch++
+	controlEpoch := bundle.controlEpoch
+	bundle.cancelControl = cancel
 	bundle.maintenanceWG.Add(1)
+	bundle.mu.Unlock()
 	go func() {
 		defer bundle.maintenanceWG.Done()
 		err := bundle.dependencies.Ownership.MaintainControlLeader(
-			bundle.maintenanceCtx, cfg.Ownership.ControlLeaderRenewInterval.Duration(), cfg.Ownership.ControlLeaderTTL.Duration(),
+			controlCtx, cfg.Ownership.ControlLeaderRenewInterval.Duration(), cfg.Ownership.ControlLeaderTTL.Duration(),
 		)
+		bundle.mu.Lock()
+		if bundle.controlEpoch == controlEpoch {
+			bundle.controlLeader = false
+			bundle.controlRunning = false
+			bundle.cancelControl = nil
+		}
+		bundle.mu.Unlock()
 		if err != nil && !errors.Is(err, context.Canceled) {
-			bundle.markOwnershipUnsafe(err)
+			bundle.observe(context.Background(), observability.ComponentControlPlane, observability.StageSnapshotUnavailable, observability.ResultFailed, err)
 		}
 	}()
 }
@@ -538,11 +577,229 @@ func (bundle *phaseTwoWorkerBundle) maintainRegistration() {
 	}
 }
 
+func (bundle *phaseTwoWorkerBundle) applyAssignment(
+	ctx context.Context,
+	assigned []execution.QueryGroupIdentity,
+) error {
+	desired := make(map[execution.QueryGroupIdentity]struct{}, len(assigned))
+	for _, queryGroup := range assigned {
+		if queryGroup == "" {
+			return errors.New("phase-two Assignment contains empty Query Group")
+		}
+		if _, duplicate := desired[queryGroup]; duplicate {
+			return errors.New("phase-two Assignment contains duplicate Query Group")
+		}
+		desired[queryGroup] = struct{}{}
+	}
+
+	bundle.mu.Lock()
+	if bundle.draining || bundle.closed {
+		bundle.mu.Unlock()
+		return errPhaseTwoWorkerDraining
+	}
+	bundle.assigned = desired
+	removed := make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle)
+	for queryGroup, lifecycle := range bundle.runners {
+		if _, keep := desired[queryGroup]; keep {
+			continue
+		}
+		delete(bundle.runners, queryGroup)
+		removed[queryGroup] = lifecycle
+	}
+	bundle.setOwnedQueryGroupsLocked()
+	missing := make([]execution.QueryGroupIdentity, 0, len(desired))
+	for queryGroup := range desired {
+		if _, open := bundle.runners[queryGroup]; !open {
+			missing = append(missing, queryGroup)
+		}
+	}
+	bundle.mu.Unlock()
+
+	for queryGroup, lifecycle := range removed {
+		if err := bundle.stopQueryGroup(ctx, queryGroup, lifecycle); err != nil {
+			bundle.observeOwnership(ctx, observability.StageAssignmentLost, observability.ResultFailed, queryGroup, err)
+			return err
+		}
+		bundle.observeOwnership(ctx, observability.StageAssignmentLost, observability.ResultSuccess, queryGroup, nil)
+	}
+	for _, queryGroup := range missing {
+		bundle.observeOwnership(ctx, observability.StageTakeoverStarted, observability.ResultStarted, queryGroup, nil)
+		runner, err := bundle.dependencies.Ownership.OpenQueryGroup(
+			ctx, queryGroup, bundle.dependencies.Now(), bundle.dependencies.Config.PhaseTwo.Ownership.LeaseTTL.Duration(),
+		)
+		if err != nil {
+			bundle.observeOwnership(ctx, observability.StageTakeoverCompleted, observability.ResultFailed, queryGroup, err)
+			if errors.Is(err, ownership.ErrLeaseBusy) || errors.Is(err, ownership.ErrNotDesired) ||
+				errors.Is(err, ownership.ErrStaleFence) {
+				continue
+			}
+			return fmt.Errorf("phase-two open Query Group %s: %w", queryGroup, err)
+		}
+		if runner == nil {
+			return fmt.Errorf("phase-two open Query Group %s returned no runner", queryGroup)
+		}
+		if !bundle.startQueryGroup(ctx, queryGroup, runner) {
+			if err := runner.Release(ctx); err != nil {
+				return fmt.Errorf("phase-two release unopened Query Group %s: %w", queryGroup, err)
+			}
+			continue
+		}
+	}
+	return nil
+}
+
+func (bundle *phaseTwoWorkerBundle) startQueryGroup(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	runner phaseTwoQueryGroupRuntime,
+) bool {
+	bundle.mu.Lock()
+	if bundle.draining || bundle.closed {
+		bundle.mu.Unlock()
+		return false
+	}
+	if _, desired := bundle.assigned[queryGroup]; !desired {
+		bundle.mu.Unlock()
+		return false
+	}
+	if _, exists := bundle.runners[queryGroup]; exists {
+		bundle.mu.Unlock()
+		return false
+	}
+	leaseCtx, cancel := context.WithCancel(bundle.maintenanceCtx)
+	lifecycle := &phaseTwoQueryGroupLifecycle{runner: runner, cancel: cancel, done: make(chan struct{})}
+	bundle.runners[queryGroup] = lifecycle
+	bundle.setOwnedQueryGroupsLocked()
+	bundle.maintenanceWG.Add(1)
+	bundle.mu.Unlock()
+	bundle.observeOwnership(ctx, observability.StageTakeoverCompleted, observability.ResultSuccess, queryGroup, nil)
+	bundle.observeOwnership(ctx, observability.StageAssignmentAcquired, observability.ResultSuccess, queryGroup, nil)
+
+	cfg := bundle.dependencies.Config.PhaseTwo.Ownership
+	go func() {
+		defer bundle.maintenanceWG.Done()
+		defer close(lifecycle.done)
+		err := runner.MaintainLease(leaseCtx, cfg.LeaseRenewInterval.Duration(), cfg.LeaseTTL.Duration())
+		if err != nil && !errors.Is(err, context.Canceled) {
+			bundle.detachLostQueryGroup(queryGroup, lifecycle, err)
+		}
+	}()
+	return true
+}
+
+func (bundle *phaseTwoWorkerBundle) stopQueryGroup(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	lifecycle *phaseTwoQueryGroupLifecycle,
+) error {
+	lifecycle.cancel()
+	select {
+	case <-lifecycle.done:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := lifecycle.runner.Release(ctx); err != nil {
+		return fmt.Errorf("phase-two release Query Group %s: %w", queryGroup, err)
+	}
+	return nil
+}
+
+func (bundle *phaseTwoWorkerBundle) stopLostQueryGroup(
+	queryGroup execution.QueryGroupIdentity,
+	lifecycle *phaseTwoQueryGroupLifecycle,
+	err error,
+) {
+	if !bundle.detachQueryGroup(queryGroup, lifecycle) {
+		return
+	}
+	lifecycle.cancel()
+	select {
+	case <-lifecycle.done:
+	case <-time.After(bundle.dependencies.Config.ShutdownTimeout.Duration()):
+	}
+	releaseCtx, cancel := context.WithTimeout(context.Background(), bundle.dependencies.Config.ShutdownTimeout.Duration())
+	defer cancel()
+	if releaseErr := lifecycle.runner.Release(releaseCtx); releaseErr != nil {
+		err = errors.Join(err, releaseErr)
+	}
+	bundle.updateReadiness()
+	bundle.observeOwnership(context.Background(), observability.StageAssignmentLost, observability.ResultFailed, queryGroup, err)
+}
+
+func (bundle *phaseTwoWorkerBundle) detachLostQueryGroup(
+	queryGroup execution.QueryGroupIdentity,
+	lifecycle *phaseTwoQueryGroupLifecycle,
+	err error,
+) {
+	if !bundle.detachQueryGroup(queryGroup, lifecycle) {
+		return
+	}
+	releaseCtx, cancel := context.WithTimeout(context.Background(), bundle.dependencies.Config.ShutdownTimeout.Duration())
+	defer cancel()
+	if releaseErr := lifecycle.runner.Release(releaseCtx); releaseErr != nil {
+		err = errors.Join(err, releaseErr)
+	}
+	bundle.updateReadiness()
+	bundle.observeOwnership(context.Background(), observability.StageAssignmentLost, observability.ResultFailed, queryGroup, err)
+}
+
+func (bundle *phaseTwoWorkerBundle) detachQueryGroup(
+	queryGroup execution.QueryGroupIdentity,
+	lifecycle *phaseTwoQueryGroupLifecycle,
+) bool {
+	bundle.mu.Lock()
+	defer bundle.mu.Unlock()
+	if bundle.runners[queryGroup] != lifecycle {
+		return false
+	}
+	delete(bundle.runners, queryGroup)
+	bundle.setOwnedQueryGroupsLocked()
+	return true
+}
+
+func (bundle *phaseTwoWorkerBundle) setOwnedQueryGroupsLocked() {
+	if bundle.dependencies.Recorder != nil {
+		bundle.dependencies.Recorder.SetOwnedQueryGroups(len(bundle.runners))
+	}
+}
+
+func (bundle *phaseTwoWorkerBundle) updateReadiness() {
+	bundle.mu.RLock()
+	assignmentReady := !bundle.draining && !bundle.closed && len(bundle.runners) == len(bundle.assigned)
+	if assignmentReady {
+		for queryGroup := range bundle.assigned {
+			if _, open := bundle.runners[queryGroup]; !open {
+				assignmentReady = false
+				break
+			}
+		}
+	}
+	bundle.mu.RUnlock()
+	state := observability.HealthReady
+	var reasons []observability.ReasonCode
+	if !assignmentReady {
+		state = observability.HealthNotReady
+		reasons = []observability.ReasonCode{observability.ReasonInternalUnknown}
+	}
+	bundle.dependencies.Health.Update(phaseTwoReadiness{
+		State: state, Reasons: reasons, SnapshotReady: true, AssignmentReady: assignmentReady,
+		RuntimeStateReady: true, OutputSinkReady: true,
+	})
+}
+
 func (bundle *phaseTwoWorkerBundle) refreshAndReconcile(ctx context.Context, refresh bool) error {
 	var queryGroups []execution.QueryGroupIdentity
 	var err error
 	if refresh {
-		queryGroups, err = bundle.dependencies.Control.Refresh(ctx)
+		leader, acquireErr := bundle.tryAcquireControlLeader(ctx)
+		if acquireErr != nil {
+			return acquireErr
+		}
+		if leader {
+			queryGroups, err = bundle.dependencies.Control.Refresh(ctx)
+		} else {
+			queryGroups, err = bundle.dependencies.Control.LoadActive(ctx)
+		}
 		if err == nil {
 			bundle.mu.Lock()
 			bundle.queryGroups = append(bundle.queryGroups[:0], queryGroups...)
@@ -558,29 +815,36 @@ func (bundle *phaseTwoWorkerBundle) refreshAndReconcile(ctx context.Context, ref
 		bundle.observe(ctx, observability.ComponentControlPlane, observability.StageSnapshotUnavailable, observability.ResultFailed, err)
 		return err
 	}
-	assigned, err := bundle.dependencies.Ownership.Reconcile(ctx, queryGroups, bundle.dependencies.Now())
+	bundle.mu.RLock()
+	leader := bundle.controlLeader
+	bundle.mu.RUnlock()
+	if leader {
+		if err := bundle.dependencies.Ownership.PublishAssignments(ctx, queryGroups, bundle.dependencies.Now()); err != nil {
+			if !errors.Is(err, ownership.ErrStaleFence) {
+				return err
+			}
+			bundle.markControlFollower(err)
+		}
+	}
+	assigned, err := bundle.dependencies.Ownership.AssignedQueryGroups(ctx, queryGroups)
 	if err != nil {
 		return err
 	}
-	bundle.mu.RLock()
-	if len(assigned) != len(bundle.runners) {
-		bundle.mu.RUnlock()
-		return errors.New("phase-two G1 Assignment changed after startup")
+	if err := bundle.applyAssignment(ctx, assigned); err != nil {
+		return err
 	}
-	seen := make(map[execution.QueryGroupIdentity]struct{}, len(assigned))
-	for _, queryGroup := range assigned {
-		if _, duplicate := seen[queryGroup]; duplicate {
-			bundle.mu.RUnlock()
-			return errors.New("phase-two G1 Assignment changed after startup")
-		}
-		seen[queryGroup] = struct{}{}
-		if _, known := bundle.runners[queryGroup]; !known {
-			bundle.mu.RUnlock()
-			return errors.New("phase-two G1 Assignment changed after startup")
-		}
-	}
-	bundle.mu.RUnlock()
+	bundle.updateReadiness()
 	return nil
+}
+
+func (bundle *phaseTwoWorkerBundle) markControlFollower(err error) {
+	bundle.mu.Lock()
+	bundle.controlLeader = false
+	if bundle.cancelControl != nil {
+		bundle.cancelControl()
+	}
+	bundle.mu.Unlock()
+	bundle.observe(context.Background(), observability.ComponentControlPlane, observability.StageSnapshotUnavailable, observability.ResultFailed, err)
 }
 
 func (bundle *phaseTwoWorkerBundle) markOwnershipUnsafe(err error) {
@@ -601,6 +865,43 @@ func (bundle *phaseTwoWorkerBundle) observe(
 	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
 		Component: component, Stage: stage, Result: result,
 		Direction: observability.DirectionInternal, Err: err,
+	})
+}
+
+func (bundle *phaseTwoWorkerBundle) observeOwnership(
+	ctx context.Context,
+	stage observability.Stage,
+	result observability.Result,
+	queryGroup execution.QueryGroupIdentity,
+	err error,
+) {
+	reason := observability.ReasonNone
+	if err != nil {
+		reason = observability.ReasonInternalUnknown
+	}
+	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
+		Component: observability.ComponentOwnership, Stage: stage, Result: result,
+		Operation: observability.OperationTransition, Direction: observability.DirectionInternal,
+		ReasonCode: reason, Trace: observability.TraceFields{
+			QueryGroupKey: string(queryGroup), OwnerID: bundle.dependencies.Config.PhaseTwo.Worker.ID,
+		}, Err: err,
+	})
+}
+
+func phaseTwoRuntimeObserver(observer observability.Observer) observability.Observer {
+	if observer == nil {
+		return observability.NopObserver{}
+	}
+	return observability.ObserverFunc(func(ctx context.Context, observation observability.Observation) {
+		observeRuntime(ctx, observer, observation)
+		if observation.Component != observability.ComponentState || observation.Stage != observability.StageSideEffectAdmission {
+			return
+		}
+		observeRuntime(ctx, observer, observability.Observation{
+			Component: observability.ComponentOwnership, Stage: observability.StageFenceChecked,
+			Result: observation.Result, Operation: observation.Operation, Direction: observability.DirectionInternal,
+			ReasonCode: observation.ReasonCode, Duration: observation.Duration, Trace: observation.Trace, Err: observation.Err,
+		})
 	})
 }
 

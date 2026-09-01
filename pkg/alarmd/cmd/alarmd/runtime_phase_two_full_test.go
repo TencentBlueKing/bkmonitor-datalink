@@ -40,7 +40,7 @@ func TestProductionPhaseTwoBundleUsesCanonicalSourceAndRuntimeRedisOverride(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sourceClient.Set(ctx, "alarm-config.strategy_ids", `[1001,1002]`, 0).Err(); err != nil {
+	if err := sourceClient.Set(ctx, "alarm-config.strategy_ids", `[1001]`, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
 	if err := sourceClient.Set(ctx, "alarm-config.strategy_1001", strategyDocument, 0).Err(); err != nil {
@@ -57,8 +57,6 @@ func TestProductionPhaseTwoBundleUsesCanonicalSourceAndRuntimeRedisOverride(t *t
 	runtimeRedis := cfg.Redis.Connection()
 	runtimeRedis.Address = runtimeAddress
 	cfg.PhaseTwo.RuntimeRedis = &runtimeRedis
-	cfg.PhaseTwo.Worker.DeploymentProfile = config.DeploymentProfileG1
-	cfg.PhaseTwo.G1Validation.StrategyIDs = []string{"1001"}
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
 
@@ -91,9 +89,6 @@ func TestProductionPhaseTwoBundleUsesCanonicalSourceAndRuntimeRedisOverride(t *t
 	runtimeKeys, err := runtimeClient.Keys(ctx, cfg.Redis.StatePrefix+"*").Result()
 	if err != nil || len(runtimeKeys) == 0 {
 		t.Fatalf("runtime Redis keys = %v, error=%v, want Go-owned facts", runtimeKeys, err)
-	}
-	if sourceClient.Exists(ctx, "alarm-config.strategy_1002").Val() != 0 {
-		t.Fatal("test unexpectedly provisioned the unselected strategy object")
 	}
 	if err := bundle.Shutdown(ctx); err != nil {
 		t.Fatalf("phase-two production Shutdown() error = %v", err)

@@ -106,7 +106,7 @@ func (source *productionFrozenExecution) ResolveFinalization(
 		for index := range fact.DuePlans {
 			plans[index] = fact.DuePlans[index].Identity
 		}
-		// G1 has no replay/recovery permit. Once the frozen normal Slot budget
+		// Before G3 there is no replay/recovery permit. Once the frozen normal Slot budget
 		// has expired, querying cannot produce a valid normal completion, so the
 		// existing query-free path records GAP_SKIPPED and advances Progress.
 		// G3 may select an eligible recovery before normal finalization; this is
@@ -321,6 +321,19 @@ func (runtime *productionPhaseTwoControl) Refresh(
 	return queryGroups, err
 }
 
+func (runtime *productionPhaseTwoControl) LoadActive(
+	ctx context.Context,
+) ([]execution.QueryGroupIdentity, error) {
+	if runtime == nil {
+		return nil, errors.New("phase-two production Control is not initialized")
+	}
+	state, err := runtime.dependencies.Repository.LoadActivation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.loadActiveQueryGroups(ctx, state)
+}
+
 func (runtime *productionPhaseTwoControl) Close() error {
 	if runtime == nil || runtime.dependencies.Close == nil {
 		return nil
@@ -373,10 +386,23 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 	if err != nil {
 		return nil, err
 	}
-	if snapshot.Publication != state.Current || len(snapshot.QueryGroups) != 1 || snapshot.QueryGroups[0].Identity == "" {
-		return nil, errors.New("phase-two active Snapshot must contain exactly one Query Group")
+	if snapshot.Publication != state.Current {
+		return nil, errors.New("phase-two active Snapshot publication differs from activation")
 	}
-	return []execution.QueryGroupIdentity{snapshot.QueryGroups[0].Identity}, nil
+	queryGroups := make([]execution.QueryGroupIdentity, len(snapshot.QueryGroups))
+	for index, queryGroup := range snapshot.QueryGroups {
+		if queryGroup.Identity == "" {
+			return nil, errors.New("phase-two active Snapshot contains an empty Query Group")
+		}
+		queryGroups[index] = queryGroup.Identity
+	}
+	sort.Slice(queryGroups, func(left, right int) bool { return queryGroups[left] < queryGroups[right] })
+	for index := 1; index < len(queryGroups); index++ {
+		if queryGroups[index-1] == queryGroups[index] {
+			return nil, errors.New("phase-two active Snapshot contains duplicate Query Groups")
+		}
+	}
+	return queryGroups, nil
 }
 
 var _ phaseTwoControlRuntime = (*productionPhaseTwoControl)(nil)
@@ -456,19 +482,11 @@ func newProductionPhaseTwoOwnership(
 ) (*productionPhaseTwoOwnership, error) {
 	if dependencies.Store == nil || dependencies.WorkerID == "" || dependencies.Catalog == nil ||
 		dependencies.Progress == nil || dependencies.Executor == nil || dependencies.Now == nil ||
-		dependencies.ControlLeaderTTL <= 0 || dependencies.Observer == nil {
+		dependencies.ControlLeaderTTL <= 0 || dependencies.Observer == nil || dependencies.Reconcile == nil {
 		return nil, errors.New("phase-two production ownership dependencies are incomplete")
 	}
-	reconciler := dependencies.Reconcile
-	if reconciler == nil {
-		var err error
-		reconciler, err = scheduler.NewReconciler(scheduler.NewRouter(nil), dependencies.Store)
-		if err != nil {
-			return nil, err
-		}
-	}
 	return &productionPhaseTwoOwnership{
-		dependencies: dependencies, reconciler: reconciler, flights: scheduler.NewFlightCoordinator(),
+		dependencies: dependencies, reconciler: dependencies.Reconcile, flights: scheduler.NewFlightCoordinator(),
 	}, nil
 }
 
@@ -485,40 +503,72 @@ func (runtime *productionPhaseTwoOwnership) RegisterWorker(
 	return runtime.dependencies.Store.RegisterWorker(ctx, registration)
 }
 
-func (runtime *productionPhaseTwoOwnership) AcquireControlLeader(
+func (runtime *productionPhaseTwoOwnership) TryAcquireControlLeader(
 	ctx context.Context,
 	at time.Time,
 	ttl time.Duration,
-) error {
+) (bool, error) {
 	if runtime == nil || at.IsZero() || ttl != runtime.dependencies.ControlLeaderTTL {
-		return errors.New("phase-two production Control Leader acquisition is invalid")
+		return false, errors.New("phase-two production Control Leader acquisition is invalid")
 	}
 	_, err := runtime.ensureControlAuthority(ctx, at)
-	return err
+	if errors.Is(err, ownership.ErrLeaseBusy) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
-func (runtime *productionPhaseTwoOwnership) Reconcile(
+func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 	ctx context.Context,
 	queryGroups []execution.QueryGroupIdentity,
 	at time.Time,
-) ([]execution.QueryGroupIdentity, error) {
+) error {
 	if runtime == nil || at.IsZero() {
-		return nil, errors.New("phase-two production Assignment reconcile is invalid")
+		return errors.New("phase-two production Assignment reconcile is invalid")
 	}
 	authority, err := runtime.ensureControlAuthority(ctx, at)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	ordered := append([]execution.QueryGroupIdentity(nil), queryGroups...)
+	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
+	for index, queryGroup := range ordered {
+		if queryGroup == "" || (index > 0 && ordered[index-1] == queryGroup) {
+			return errors.New("phase-two production reconcile contains an invalid Query Group set")
+		}
+		if _, err := runtime.reconciler.Reconcile(ctx, authority, queryGroup, at); err != nil {
+			if errors.Is(err, ownership.ErrStaleFence) {
+				runtime.clearControlAuthority(authority)
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (runtime *productionPhaseTwoOwnership) AssignedQueryGroups(
+	ctx context.Context,
+	queryGroups []execution.QueryGroupIdentity,
+) ([]execution.QueryGroupIdentity, error) {
+	if runtime == nil {
+		return nil, errors.New("phase-two production Assignment reader is not initialized")
 	}
 	ordered := append([]execution.QueryGroupIdentity(nil), queryGroups...)
 	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
 	assigned := make([]execution.QueryGroupIdentity, 0, len(ordered))
 	for index, queryGroup := range ordered {
 		if queryGroup == "" || (index > 0 && ordered[index-1] == queryGroup) {
-			return nil, errors.New("phase-two production reconcile contains an invalid Query Group set")
+			return nil, errors.New("phase-two production Assignment read contains an invalid Query Group set")
 		}
-		record, err := runtime.reconciler.Reconcile(ctx, authority, queryGroup, at)
+		record, err := runtime.dependencies.Store.ReadAssignment(ctx, queryGroup)
+		if errors.Is(err, ownership.ErrAssignmentAbsent) {
+			continue
+		}
 		if err != nil {
 			return nil, err
+		}
+		if record.QueryGroup != queryGroup {
+			return nil, errors.New("phase-two production Assignment identity mismatch")
 		}
 		if record.DesiredWorkerID == runtime.dependencies.WorkerID {
 			assigned = append(assigned, queryGroup)
@@ -550,6 +600,7 @@ func (runtime *productionPhaseTwoOwnership) MaintainControlLeader(
 			}
 			renewed, err := runtime.dependencies.Store.RenewControlLeader(ctx, authority, at, ttl)
 			if err != nil {
+				runtime.clearControlAuthority(authority)
 				return err
 			}
 			observeProductionOwnership(ctx, runtime.dependencies.Observer, observability.StageLeaseRenewed, nil)
@@ -559,6 +610,14 @@ func (runtime *productionPhaseTwoOwnership) MaintainControlLeader(
 			}
 			runtime.mu.Unlock()
 		}
+	}
+}
+
+func (runtime *productionPhaseTwoOwnership) clearControlAuthority(authority ownership.PublicationAuthority) {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.authority.Fence == authority.Fence {
+		runtime.authority = ownership.PublicationAuthority{}
 	}
 }
 

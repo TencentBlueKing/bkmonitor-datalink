@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
@@ -113,6 +114,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		return nil, err
 	}
 	observer = observability.Multi(observer, external.AdditionalObserver)
+	observer = phaseTwoRuntimeObserver(observer)
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), cfg.CompilerLimits())
 	if err != nil {
 		return nil, err
@@ -157,14 +159,6 @@ func openProductionPhaseTwoBundleWithDependencies(
 	strategySource, err := newStrategySource(controlClient, cfg.PhaseTwo.Control.StrategyCachePrefix)
 	if err != nil {
 		return nil, err
-	}
-	if len(cfg.PhaseTwo.G1Validation.StrategyIDs) > 0 {
-		strategySource, err = controlplane.NewActiveIDStrategySourceView(
-			strategySource, cfg.PhaseTwo.G1Validation.StrategyIDs,
-		)
-		if err != nil {
-			return nil, err
-		}
 	}
 	planner, err := controlplane.NewLegacyPrimaryQueryCompiler(
 		execution.ProviderRouteRef(cfg.PhaseTwo.Control.ProviderRoute),
@@ -300,16 +294,29 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	registration, err := phaseTwoWorkerRegistration(cfg, ownership.WorkerStarting, external.Now())
+	if err != nil {
+		return nil, err
+	}
+	eligibility, err := scheduler.NewStaticWorkerEligibility(registration.Compatibility())
+	if err != nil {
+		return nil, err
+	}
+	assignmentReconciler, err := scheduler.NewReconciler(scheduler.NewRouter(eligibility), ownershipStore)
+	if err != nil {
+		return nil, err
+	}
 	productionOwnership, err := newProductionPhaseTwoOwnership(productionPhaseTwoOwnershipDependencies{
 		Store: ownershipStore, WorkerID: cfg.PhaseTwo.Worker.ID, Catalog: catalog, Progress: progressStore,
 		Executor: coordinator, Now: external.Now, ControlLeaderTTL: cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration(),
-		Observer: observer,
+		Observer: observer, Reconcile: assignmentReconciler,
 	})
 	if err != nil {
 		return nil, err
 	}
 	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
-		Config: cfg, Health: health, Control: control, Ownership: productionOwnership, Observer: observer, Now: external.Now,
+		Config: cfg, Health: health, Control: control, Ownership: productionOwnership,
+		Recorder: recorder, Observer: observer, Now: external.Now,
 		CloseResources: func(shutdownCtx context.Context) error {
 			eventsClosed = true
 			if runtimeClientIsSource {

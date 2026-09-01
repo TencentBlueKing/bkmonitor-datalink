@@ -85,7 +85,7 @@ func TestProductionFrozenExecutionResolvesExactPersistedContract(t *testing.T) {
 	}
 }
 
-func TestProductionFrozenExecutionSkipsExpiredNormalSlotInG1(t *testing.T) {
+func TestProductionFrozenExecutionSkipsExpiredNormalSlotWithoutRecoveryPermit(t *testing.T) {
 	plan := execution.PlanIdentity{TenantID: "tenant-a", BusinessID: "2", StrategyID: "1001"}
 	spec := execution.ScheduleSpec{EvaluationIntervalSeconds: 60, Alignment: 0, Timezone: "UTC"}
 	planRevision, err := execution.DerivePlanScheduleRevision(spec)
@@ -163,7 +163,7 @@ func TestProductionFrozenExecutionSkipsExpiredNormalSlotInG1(t *testing.T) {
 		t.Fatalf("ResolveFinalization(after query deadline) = %+v, %v", finalization, err)
 	}
 
-	// Expiry is only the G1 normal-path finalization rule. A future G3 recovery
+	// Expiry is only the pre-G3 normal-path finalization rule. A future G3 recovery
 	// scheduler must retain control of retry/replay/probe eligibility.
 	for _, operation := range []execution.Operation{
 		execution.OperationRetry,
@@ -261,35 +261,25 @@ func TestProductionPhaseTwoControlConfirmsColdStartBeforeInitialActivation(t *te
 	}
 }
 
-func TestProductionPhaseTwoControlRejectsG1SnapshotWithoutExactlyOneQueryGroup(t *testing.T) {
+func TestProductionPhaseTwoControlLoadsAllActiveQueryGroups(t *testing.T) {
 	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-1", PublicationEpoch: 1}
-	for name, groups := range map[string][]controlplane.QueryGroup{
-		"empty":    {},
-		"multiple": {{Identity: "query-group-1"}, {Identity: "query-group-2"}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			reconciler := &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{{
-				Status: controlplane.SourceRefreshPublished, Observation: "observation-1", Publication: publication,
-			}}}
-			repository := &fakeProductionCatalogRepository{snapshot: controlplane.PublishedSnapshot{
-				Publication: publication, QueryGroups: groups,
-			}}
-			activator := &fakeInitialScheduleActivator{state: controlplane.ActivationState{
-				RecordRevision: 1, Current: publication,
-			}}
-			control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
-				Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
-				Activator: activator, Repository: repository, RefreshInterval: time.Second,
-				Wait: func(context.Context, time.Duration) error { return nil },
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := control.InitialRefresh(context.Background()); err == nil ||
-				!strings.Contains(err.Error(), "exactly one Query Group") {
-				t.Fatalf("InitialRefresh() error = %v, want exact-one G1 rejection", err)
-			}
-		})
+	repository := &fakeProductionCatalogRepository{
+		activation: controlplane.ActivationState{RecordRevision: 1, Current: publication},
+		snapshot: controlplane.PublishedSnapshot{Publication: publication, QueryGroups: []controlplane.QueryGroup{
+			{Identity: "query-group-2"}, {Identity: "query-group-1"},
+		}},
+	}
+	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: &fakeSourceReconciler{},
+		Activator: &fakeInitialScheduleActivator{}, Repository: repository, RefreshInterval: time.Second,
+		Wait: func(context.Context, time.Duration) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryGroups, err := control.LoadActive(context.Background())
+	if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-1", "query-group-2"}) {
+		t.Fatalf("LoadActive() = %v, %v", queryGroups, err)
 	}
 }
 
@@ -444,13 +434,22 @@ func TestProductionPhaseTwoActivationChecksExactPersistedStateEpoch(t *testing.T
 func TestProductionPhaseTwoOwnershipUsesAssignmentAndLeaseBeforeRunner(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	store := &fakePhaseTwoOwnershipStore{now: now, renewed: make(chan struct{})}
+	compatibility := ownership.WorkerCompatibility{DeploymentProfile: "shadow", CapabilitiesDigest: "capabilities"}
+	eligibility, err := scheduler.NewStaticWorkerEligibility(compatibility)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler, err := scheduler.NewReconciler(scheduler.NewRouter(eligibility), store)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var observations []observability.Observation
 	production, err := newProductionPhaseTwoOwnership(productionPhaseTwoOwnershipDependencies{
 		Store: store, WorkerID: "worker-1", Catalog: unavailableSlotCatalog{},
 		Progress: unavailableScheduleProgress{}, Executor: rejectingSlotExecutor{}, Now: func() time.Time { return now },
 		ControlLeaderTTL: time.Minute, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			observations = append(observations, observation)
-		}),
+		}), Reconcile: reconciler,
 	})
 	if err != nil {
 		t.Fatalf("newProductionPhaseTwoOwnership() error = %v", err)
@@ -462,11 +461,20 @@ func TestProductionPhaseTwoOwnershipUsesAssignmentAndLeaseBeforeRunner(t *testin
 	}); err != nil {
 		t.Fatalf("RegisterWorker() error = %v", err)
 	}
-	assigned, err := production.Reconcile(
+	leader, err := production.TryAcquireControlLeader(context.Background(), now, time.Minute)
+	if err != nil || !leader {
+		t.Fatalf("TryAcquireControlLeader() leader=%v error=%v", leader, err)
+	}
+	if err := production.PublishAssignments(
 		context.Background(), []execution.QueryGroupIdentity{"query-group-1"}, now,
+	); err != nil {
+		t.Fatalf("PublishAssignments() error=%v", err)
+	}
+	assigned, err := production.AssignedQueryGroups(
+		context.Background(), []execution.QueryGroupIdentity{"query-group-1"},
 	)
-	if err != nil || len(assigned) != 1 || assigned[0] != "query-group-1" {
-		t.Fatalf("Reconcile() assigned=%v error=%v", assigned, err)
+	if err != nil || !reflect.DeepEqual(assigned, []execution.QueryGroupIdentity{"query-group-1"}) {
+		t.Fatalf("AssignedQueryGroups() assigned=%v error=%v", assigned, err)
 	}
 	runner, err := production.OpenQueryGroup(context.Background(), "query-group-1", now, time.Minute)
 	if err != nil {
@@ -493,6 +501,46 @@ func TestProductionPhaseTwoOwnershipUsesAssignmentAndLeaseBeforeRunner(t *testin
 	}
 	if err := runner.Release(context.Background()); err != nil || store.releaseCalls != 1 {
 		t.Fatalf("Release() calls=%d error=%v", store.releaseCalls, err)
+	}
+}
+
+func TestProductionPhaseTwoOwnershipFollowerReadsAssignmentWithoutPublishing(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	store := &fakePhaseTwoOwnershipStore{
+		now: now, acquireLeaderErr: ownership.ErrLeaseBusy,
+		assignment: ownership.AssignmentRecord{
+			QueryGroup: "query-group-1", DesiredWorkerID: "worker-1", AssignmentGeneration: 1,
+			RecordRevision: 1, ControlEpoch: 1, PlacementReason: ownership.PlacementRendezvous, AssignedAt: now,
+		},
+	}
+	eligibility, err := scheduler.NewStaticWorkerEligibility(ownership.WorkerCompatibility{
+		DeploymentProfile: "shadow", CapabilitiesDigest: "capabilities",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler, err := scheduler.NewReconciler(scheduler.NewRouter(eligibility), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	production, err := newProductionPhaseTwoOwnership(productionPhaseTwoOwnershipDependencies{
+		Store: store, WorkerID: "worker-1", Catalog: unavailableSlotCatalog{},
+		Progress: unavailableScheduleProgress{}, Executor: rejectingSlotExecutor{}, Now: func() time.Time { return now },
+		ControlLeaderTTL: time.Minute, Observer: observability.NopObserver{}, Reconcile: reconciler,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leader, err := production.TryAcquireControlLeader(context.Background(), now, time.Minute)
+	if err != nil || leader {
+		t.Fatalf("TryAcquireControlLeader() leader=%v error=%v, want follower", leader, err)
+	}
+	assigned, err := production.AssignedQueryGroups(context.Background(), []execution.QueryGroupIdentity{"query-group-1"})
+	if err != nil || !reflect.DeepEqual(assigned, []execution.QueryGroupIdentity{"query-group-1"}) {
+		t.Fatalf("AssignedQueryGroups() assigned=%v error=%v", assigned, err)
+	}
+	if store.publishAssignmentCalls != 0 {
+		t.Fatalf("follower published %d Assignments", store.publishAssignmentCalls)
 	}
 }
 
@@ -582,6 +630,7 @@ type fakePhaseTwoOwnershipStore struct {
 	worker                 ownership.WorkerRegistration
 	assignment             ownership.AssignmentRecord
 	checkErr               error
+	acquireLeaderErr       error
 	acquireLeaderCalls     int
 	publishAssignmentCalls int
 	acquireLeaseCalls      int
@@ -637,6 +686,9 @@ func (store *fakePhaseTwoOwnershipStore) AcquireControlLeader(
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	store.acquireLeaderCalls++
+	if store.acquireLeaderErr != nil {
+		return ownership.PublicationAuthority{}, store.acquireLeaderErr
+	}
 	return ownership.PublicationAuthority{Fence: execution.OwnerFence{
 		QueryGroup: ownership.ControlLeaderIdentity, OwnerID: leaderID, OwnerEpoch: 1, LeaseToken: "leader-token",
 	}, Deadline: at.Add(ttl)}, nil

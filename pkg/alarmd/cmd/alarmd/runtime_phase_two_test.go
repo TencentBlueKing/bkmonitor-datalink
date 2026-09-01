@@ -707,6 +707,88 @@ func TestPhaseTwoWorkerBundleAppliesAssignmentDiffWithoutRestart(t *testing.T) {
 	_ = bundle.Shutdown(context.Background())
 }
 
+func TestPhaseTwoWorkerBundleKeepsTwoQueryGroupsReadyWhileControlDegradedAndRecordsRecovery(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	queryGroups := []execution.QueryGroupIdentity{"query-group-a", "query-group-b"}
+	degraded := phaseTwoControlRefreshResult{
+		QueryGroups: queryGroups, Status: phaseTwoControlDegradedLastGood,
+		SourceKind: observability.SourceKindLegacyStrategy, ReasonCode: observability.ReasonContractRetryable,
+		Cause: errors.New("source unavailable"),
+	}
+	healthy := phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}
+	control := &fakePhaseTwoControl{
+		initialResult:  degraded,
+		refreshResults: []phaseTwoControlRefreshResult{degraded, healthy},
+	}
+	first := newFakePhaseTwoQueryGroup()
+	second := newFakePhaseTwoQueryGroup()
+	owner := &fakePhaseTwoOwnership{
+		assigned: queryGroups,
+		runners: map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime{
+			"query-group-a": first,
+			"query-group-b": second,
+		},
+	}
+	health := newPhaseTwoApplicationHealth()
+	recoveredAt := time.Unix(1_800_000_000, 0)
+	var mu sync.Mutex
+	var observations []observability.Observation
+	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
+		Config: cfg, Health: health, Control: control, Ownership: owner, Now: func() time.Time { return recoveredAt },
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			mu.Lock()
+			defer mu.Unlock()
+			observations = append(observations, observation)
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer func() { _ = bundle.Shutdown(context.Background()) }()
+	waitSignal(t, first.leaseStarted, "first healthy query-group")
+	waitSignal(t, second.leaseStarted, "second healthy query-group")
+	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthDegraded || !snapshot.Ready {
+		t.Fatalf("last-good health=%+v, want ready degraded", snapshot)
+	}
+	if err := bundle.refreshAndReconcile(context.Background(), true); err != nil {
+		t.Fatalf("repeated degraded refresh error = %v", err)
+	}
+	if err := bundle.refreshAndReconcile(context.Background(), true); err != nil {
+		t.Fatalf("healthy recovery refresh error = %v", err)
+	}
+	snapshot := health.HealthSnapshot()
+	if snapshot.State != observability.HealthReady || !snapshot.Ready || !snapshot.LastRecoveryAt.Equal(recoveredAt) {
+		t.Fatalf("recovered health=%+v", snapshot)
+	}
+	bundle.mu.RLock()
+	runnerCount := len(bundle.runners)
+	bundle.mu.RUnlock()
+	if runnerCount != 2 {
+		t.Fatalf("healthy runners after control episode=%d, want 2", runnerCount)
+	}
+	mu.Lock()
+	got := append([]observability.Observation(nil), observations...)
+	mu.Unlock()
+	degradedCount, recoveredCount := 0, 0
+	for _, observation := range got {
+		if observation.Component != observability.ComponentControlPlane {
+			continue
+		}
+		switch observation.Result {
+		case observability.ResultDegraded:
+			degradedCount++
+		case observability.Result(observability.ResultRecovered):
+			recoveredCount++
+		}
+	}
+	if degradedCount != 1 || recoveredCount != 1 {
+		t.Fatalf("control episode observations degraded/recovered=%d/%d: %+v", degradedCount, recoveredCount, got)
+	}
+}
+
 func TestPhaseTwoWorkerBundleReportsOwnedQueryGroupsAndFixedOwnershipTransitions(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
@@ -980,29 +1062,55 @@ func mustPhaseTwoWorkerBundle(
 
 type fakePhaseTwoControl struct {
 	queryGroups          []execution.QueryGroupIdentity
+	initialResult        phaseTwoControlRefreshResult
+	refreshResults       []phaseTwoControlRefreshResult
 	beforeInitialRefresh func() error
 	initialRefreshCalls  int
+	refreshCalls         int
 	loadActiveCalls      int
 	closeCalls           int
 }
 
-func (control *fakePhaseTwoControl) InitialRefresh(context.Context) ([]execution.QueryGroupIdentity, error) {
+func (control *fakePhaseTwoControl) InitialRefresh(context.Context) (phaseTwoControlRefreshResult, error) {
 	control.initialRefreshCalls++
 	if control.beforeInitialRefresh != nil {
 		if err := control.beforeInitialRefresh(); err != nil {
-			return nil, err
+			return phaseTwoControlRefreshResult{}, err
 		}
 	}
-	return append([]execution.QueryGroupIdentity(nil), control.queryGroups...), nil
+	if control.initialResult.Status != "" {
+		return clonePhaseTwoControlRefreshResult(control.initialResult), nil
+	}
+	return phaseTwoControlRefreshResult{
+		QueryGroups: append([]execution.QueryGroupIdentity(nil), control.queryGroups...),
+		Status:      phaseTwoControlHealthy,
+	}, nil
 }
 
-func (control *fakePhaseTwoControl) Refresh(context.Context) ([]execution.QueryGroupIdentity, error) {
-	return append([]execution.QueryGroupIdentity(nil), control.queryGroups...), nil
+func (control *fakePhaseTwoControl) Refresh(context.Context) (phaseTwoControlRefreshResult, error) {
+	if control.refreshCalls < len(control.refreshResults) {
+		result := clonePhaseTwoControlRefreshResult(control.refreshResults[control.refreshCalls])
+		control.refreshCalls++
+		return result, nil
+	}
+	control.refreshCalls++
+	return phaseTwoControlRefreshResult{
+		QueryGroups: append([]execution.QueryGroupIdentity(nil), control.queryGroups...),
+		Status:      phaseTwoControlHealthy,
+	}, nil
 }
 
-func (control *fakePhaseTwoControl) LoadActive(context.Context) ([]execution.QueryGroupIdentity, error) {
+func clonePhaseTwoControlRefreshResult(result phaseTwoControlRefreshResult) phaseTwoControlRefreshResult {
+	result.QueryGroups = append([]execution.QueryGroupIdentity(nil), result.QueryGroups...)
+	return result
+}
+
+func (control *fakePhaseTwoControl) LoadActive(context.Context) (phaseTwoControlRefreshResult, error) {
 	control.loadActiveCalls++
-	return append([]execution.QueryGroupIdentity(nil), control.queryGroups...), nil
+	return phaseTwoControlRefreshResult{
+		QueryGroups: append([]execution.QueryGroupIdentity(nil), control.queryGroups...),
+		Status:      phaseTwoControlHealthy,
+	}, nil
 }
 
 func (control *fakePhaseTwoControl) Close() error {

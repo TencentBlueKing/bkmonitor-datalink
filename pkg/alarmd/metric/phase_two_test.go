@@ -49,6 +49,34 @@ func TestPhaseTwoMetricsStayInsideSeriesBudget(t *testing.T) {
 	}
 }
 
+func TestPhaseTwoSourceObservationMetricRecordsOnlyFixedEpisodeTransitions(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	for _, observation := range []observability.Observation{
+		{
+			Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotUnavailable,
+			Result: observability.ResultDegraded, ReasonCode: observability.ReasonContractRetryable,
+			SourceKind: observability.SourceKindLegacyStrategy,
+		},
+		{
+			Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotRefreshed,
+			Result: observability.Result(observability.ResultRecovered), ReasonCode: observability.ReasonContractRetryable,
+			SourceKind: observability.SourceKindLegacyStrategy,
+		},
+	} {
+		recorder.Observe(context.Background(), observation)
+	}
+	for _, result := range []string{"degraded", "recovered"} {
+		if got := testutil.ToFloat64(recorder.phaseTwo.sourceObservations.WithLabelValues(
+			"legacy_strategy", result, "contract_retryable",
+		)); got != 1 {
+			t.Fatalf("legacy source %s transitions = %v, want 1", result, got)
+		}
+	}
+	if got, err := testutil.GatherAndCount(recorder.Gatherer(), "bkmonitor_alarmd_observation_total"); err != nil || got != 0 {
+		t.Fatalf("phase-two source transition leaked into generic observation metric: families=%d error=%v", got, err)
+	}
+}
+
 func TestPhaseTwoOwnershipMetricsStayLowCardinality(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
 	recorder.SetOwnedQueryGroups(7)

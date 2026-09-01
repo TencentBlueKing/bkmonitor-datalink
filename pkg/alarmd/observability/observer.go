@@ -24,6 +24,7 @@ type Operation string
 type ReasonCode string
 type Direction string
 type CapacityBudget string
+type SourceKind string
 
 const (
 	ComponentRuntime        = "runtime"
@@ -139,6 +140,9 @@ const (
 	CapacityBudgetGapMutations   CapacityBudget = "gap_mutations"
 	CapacityBudgetOther          CapacityBudget = "other"
 
+	SourceKindLegacyStrategy   SourceKind = "legacy_strategy"
+	SourceKindCompiledSnapshot SourceKind = "compiled_snapshot"
+
 	ReasonNone                  ReasonCode = "none"
 	ReasonInternalUnknown       ReasonCode = "internal_unknown"
 	ReasonCPU                   ReasonCode = "resource_cpu"
@@ -210,6 +214,7 @@ type Observation struct {
 	Trace             TraceFields
 	Err               error
 	CapacityBudget    CapacityBudget
+	SourceKind        SourceKind
 	normalized        bool
 	stageReasonBucket bool
 }
@@ -258,16 +263,46 @@ func NormalizeObservation(observation Observation) Observation {
 	}
 	rawReason := observation.ReasonCode
 	observation.Component, observation.Stage = NormalizeComponentStage(observation.Component, observation.Stage)
-	observation.Result = NormalizeResult(observation.Result)
+	if observation.Component != ComponentControlPlane || observation.Result != Result(ResultRecovered) {
+		observation.Result = NormalizeResult(observation.Result)
+	}
 	observation.stageReasonBucket = rawReason == "" ||
 		(rawReason == ReasonNone && !resultAllowsNone(observation.Result))
 	observation.Operation = NormalizeOperation(observation.Operation)
 	observation.Direction = NormalizeDirection(observation.Direction)
-	observation.ReasonCode = NormalizeReason(observation.ReasonCode, observation.Result)
+	observation.SourceKind = NormalizeSourceKind(observation.SourceKind)
+	if observation.Component == ComponentControlPlane && observation.SourceKind != "" && isSourceReasonClass(observation.ReasonCode) {
+		observation.ReasonCode = rawReason
+	} else {
+		observation.ReasonCode = NormalizeReason(observation.ReasonCode, observation.Result)
+	}
 	observation.CapacityBudget = NormalizeCapacityBudget(observation.CapacityBudget)
 	observation.Counts = normalizeCounts(observation.Counts)
 	observation.normalized = true
 	return observation
+}
+
+func isSourceReasonClass(reason ReasonCode) bool {
+	switch reason {
+	case ReasonNone, ReasonInternalUnknown, ReasonContractDeterministic,
+		ReasonContractRetryable, ReasonContractCoverage, ReasonOther:
+		return true
+	default:
+		return false
+	}
+}
+
+func NormalizeSourceKind(sourceKind SourceKind) SourceKind {
+	switch sourceKind {
+	case SourceKindLegacyStrategy, SourceKindCompiledSnapshot:
+		return sourceKind
+	default:
+		return ""
+	}
+}
+
+func AllSourceKinds() []SourceKind {
+	return []SourceKind{SourceKindLegacyStrategy, SourceKindCompiledSnapshot}
 }
 
 func NormalizeCapacityBudget(budget CapacityBudget) CapacityBudget {

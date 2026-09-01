@@ -183,10 +183,25 @@ func runPhaseTwoApplicationWithDependencies(
 	return result
 }
 
+type phaseTwoControlRefreshStatus string
+
+const (
+	phaseTwoControlHealthy          phaseTwoControlRefreshStatus = "HEALTHY"
+	phaseTwoControlDegradedLastGood phaseTwoControlRefreshStatus = "DEGRADED_LAST_GOOD"
+)
+
+type phaseTwoControlRefreshResult struct {
+	QueryGroups []execution.QueryGroupIdentity
+	Status      phaseTwoControlRefreshStatus
+	SourceKind  observability.SourceKind
+	ReasonCode  observability.ReasonCode
+	Cause       error
+}
+
 type phaseTwoControlRuntime interface {
-	InitialRefresh(context.Context) ([]execution.QueryGroupIdentity, error)
-	Refresh(context.Context) ([]execution.QueryGroupIdentity, error)
-	LoadActive(context.Context) ([]execution.QueryGroupIdentity, error)
+	InitialRefresh(context.Context) (phaseTwoControlRefreshResult, error)
+	Refresh(context.Context) (phaseTwoControlRefreshResult, error)
+	LoadActive(context.Context) (phaseTwoControlRefreshResult, error)
 	Close() error
 }
 
@@ -231,24 +246,28 @@ type phaseTwoWorkerBundleDependencies struct {
 type phaseTwoWorkerBundle struct {
 	dependencies phaseTwoWorkerBundleDependencies
 
-	registrationMu sync.Mutex
-	mu             sync.RWMutex
-	queryGroups    []execution.QueryGroupIdentity
-	assigned       map[execution.QueryGroupIdentity]struct{}
-	runners        map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle
-	started        bool
-	draining       bool
-	closed         bool
-	controlLeader  bool
-	controlRunning bool
-	controlEpoch   uint64
-	maintenanceCtx context.Context
-	cancelMaintain context.CancelFunc
-	cancelControl  context.CancelFunc
-	maintenanceWG  sync.WaitGroup
-	inflightWG     sync.WaitGroup
-	shutdownOnce   sync.Once
-	shutdownErr    error
+	registrationMu        sync.Mutex
+	mu                    sync.RWMutex
+	queryGroups           []execution.QueryGroupIdentity
+	assigned              map[execution.QueryGroupIdentity]struct{}
+	runners               map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle
+	started               bool
+	draining              bool
+	closed                bool
+	controlLeader         bool
+	controlRunning        bool
+	controlEpoch          uint64
+	controlDegraded       bool
+	controlSourceKind     observability.SourceKind
+	controlReason         observability.ReasonCode
+	lastControlRecoveryAt time.Time
+	maintenanceCtx        context.Context
+	cancelMaintain        context.CancelFunc
+	cancelControl         context.CancelFunc
+	maintenanceWG         sync.WaitGroup
+	inflightWG            sync.WaitGroup
+	shutdownOnce          sync.Once
+	shutdownErr           error
 }
 
 func newPhaseTwoWorkerBundle(dependencies phaseTwoWorkerBundleDependencies) (*phaseTwoWorkerBundle, error) {
@@ -289,19 +308,23 @@ func (bundle *phaseTwoWorkerBundle) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("phase-two acquire Control Leader: %w", err)
 	}
-	var queryGroups []execution.QueryGroupIdentity
+	var controlResult phaseTwoControlRefreshResult
 	if leader {
-		queryGroups, err = bundle.dependencies.Control.InitialRefresh(ctx)
+		controlResult, err = bundle.dependencies.Control.InitialRefresh(ctx)
 	} else {
-		queryGroups, err = bundle.dependencies.Control.LoadActive(ctx)
+		controlResult, err = bundle.dependencies.Control.LoadActive(ctx)
 	}
 	if err != nil {
 		return fmt.Errorf("phase-two initial control facts: %w", err)
 	}
-	bundle.mu.Lock()
-	bundle.queryGroups = append([]execution.QueryGroupIdentity(nil), queryGroups...)
-	bundle.mu.Unlock()
-	bundle.observe(ctx, observability.ComponentControlPlane, observability.StageSnapshotRefreshed, observability.ResultSuccess, nil)
+	queryGroups := controlResult.QueryGroups
+	if leader {
+		if err := bundle.applyControlRefresh(ctx, controlResult); err != nil {
+			return err
+		}
+	} else {
+		bundle.setControlQueryGroups(queryGroups)
+	}
 	if err := bundle.register(ctx, ownership.WorkerReady); err != nil {
 		return err
 	}
@@ -791,16 +814,22 @@ func (bundle *phaseTwoWorkerBundle) updateReadiness() {
 			}
 		}
 	}
+	controlDegraded := bundle.controlDegraded
+	controlReason := bundle.controlReason
+	lastRecoveryAt := bundle.lastControlRecoveryAt
 	bundle.mu.RUnlock()
 	state := observability.HealthReady
 	var reasons []observability.ReasonCode
 	if !assignmentReady {
 		state = observability.HealthNotReady
 		reasons = []observability.ReasonCode{observability.ReasonInternalUnknown}
+	} else if controlDegraded {
+		state = observability.HealthDegraded
+		reasons = []observability.ReasonCode{controlReason}
 	}
 	bundle.dependencies.Health.Update(phaseTwoReadiness{
 		State: state, Reasons: reasons, SnapshotReady: true, AssignmentReady: assignmentReady,
-		RuntimeStateReady: true, OutputSinkReady: true,
+		RuntimeStateReady: true, OutputSinkReady: true, LastRecoveryAt: lastRecoveryAt,
 	})
 }
 
@@ -813,15 +842,19 @@ func (bundle *phaseTwoWorkerBundle) refreshAndReconcile(ctx context.Context, ref
 			return acquireErr
 		}
 		if leader {
-			queryGroups, err = bundle.dependencies.Control.Refresh(ctx)
+			var result phaseTwoControlRefreshResult
+			result, err = bundle.dependencies.Control.Refresh(ctx)
+			queryGroups = result.QueryGroups
+			if err == nil {
+				err = bundle.applyControlRefresh(ctx, result)
+			}
 		} else {
-			queryGroups, err = bundle.dependencies.Control.LoadActive(ctx)
-		}
-		if err == nil {
-			bundle.mu.Lock()
-			bundle.queryGroups = append(bundle.queryGroups[:0], queryGroups...)
-			bundle.mu.Unlock()
-			bundle.observe(ctx, observability.ComponentControlPlane, observability.StageSnapshotRefreshed, observability.ResultSuccess, nil)
+			var result phaseTwoControlRefreshResult
+			result, err = bundle.dependencies.Control.LoadActive(ctx)
+			queryGroups = result.QueryGroups
+			if err == nil {
+				bundle.setControlQueryGroups(queryGroups)
+			}
 		}
 	} else {
 		bundle.mu.RLock()
@@ -851,6 +884,73 @@ func (bundle *phaseTwoWorkerBundle) refreshAndReconcile(ctx context.Context, ref
 		return err
 	}
 	bundle.updateReadiness()
+	return nil
+}
+
+func (bundle *phaseTwoWorkerBundle) setControlQueryGroups(queryGroups []execution.QueryGroupIdentity) {
+	bundle.mu.Lock()
+	bundle.queryGroups = append(bundle.queryGroups[:0], queryGroups...)
+	bundle.mu.Unlock()
+}
+
+func (bundle *phaseTwoWorkerBundle) applyControlRefresh(
+	ctx context.Context,
+	result phaseTwoControlRefreshResult,
+) error {
+	if result.Status != phaseTwoControlHealthy && result.Status != phaseTwoControlDegradedLastGood {
+		return errors.New("phase-two Control refresh returned an invalid health fact")
+	}
+	if result.Status == phaseTwoControlDegradedLastGood &&
+		(result.SourceKind != observability.SourceKindLegacyStrategy &&
+			result.SourceKind != observability.SourceKindCompiledSnapshot ||
+			result.ReasonCode == "" || result.Cause == nil) {
+		return errors.New("phase-two degraded Control refresh returned an incomplete health fact")
+	}
+
+	var transitionResult observability.Result
+	var transitionSource observability.SourceKind
+	var transitionReason observability.ReasonCode
+	var transitionCause error
+	bundle.mu.Lock()
+	bundle.queryGroups = append(bundle.queryGroups[:0], result.QueryGroups...)
+	switch result.Status {
+	case phaseTwoControlDegradedLastGood:
+		if !bundle.controlDegraded {
+			bundle.controlDegraded = true
+			bundle.controlSourceKind = result.SourceKind
+			bundle.controlReason = result.ReasonCode
+			transitionResult = observability.ResultDegraded
+			transitionSource = result.SourceKind
+			transitionReason = result.ReasonCode
+			transitionCause = result.Cause
+		}
+	case phaseTwoControlHealthy:
+		if bundle.controlDegraded {
+			transitionResult = observability.Result(observability.ResultRecovered)
+			transitionSource = bundle.controlSourceKind
+			transitionReason = bundle.controlReason
+			bundle.controlDegraded = false
+			bundle.lastControlRecoveryAt = bundle.dependencies.Now()
+			bundle.controlSourceKind = ""
+			bundle.controlReason = ""
+		} else {
+			transitionResult = observability.ResultSuccess
+		}
+	}
+	bundle.mu.Unlock()
+
+	if transitionResult == "" {
+		return nil
+	}
+	stage := observability.Stage(observability.StageSnapshotRefreshed)
+	if transitionResult == observability.ResultDegraded {
+		stage = observability.Stage(observability.StageSnapshotUnavailable)
+	}
+	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
+		Component: observability.ComponentControlPlane, Stage: stage, Result: transitionResult,
+		Direction: observability.DirectionInternal, ReasonCode: transitionReason, Err: transitionCause,
+		SourceKind: transitionSource,
+	})
 	return nil
 }
 
@@ -956,6 +1056,7 @@ type phaseTwoReadiness struct {
 	RuntimeStateReady bool
 	OutputSinkReady   bool
 	ResourceState     observability.ResourceState
+	LastRecoveryAt    time.Time
 }
 
 type phaseTwoApplicationHealth struct {
@@ -977,6 +1078,7 @@ func (h *phaseTwoApplicationHealth) Update(readiness phaseTwoReadiness) {
 		ConfigLoaded: true, SchemaReady: true, PhaseTwo: true, SnapshotReady: readiness.SnapshotReady,
 		AssignmentReady: readiness.AssignmentReady, RuntimeStateReady: readiness.RuntimeStateReady,
 		OutputSinkReady: readiness.OutputSinkReady, ResourceState: readiness.ResourceState,
+		LastRecoveryAt: readiness.LastRecoveryAt,
 	})
 }
 

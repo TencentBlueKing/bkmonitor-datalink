@@ -136,6 +136,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation) {
 	if observation.CapacityBudget != "" {
 		attributes = append(attributes, slog.String("capacity_budget", string(observation.CapacityBudget)))
 	}
+	if observation.SourceKind != "" {
+		attributes = append(attributes, slog.String("source_kind", string(observation.SourceKind)))
+	}
 	attributes = appendObservationCounts(attributes, observation.Counts)
 	attributes = appendTraceFields(attributes, observation.Trace)
 	if observation.Err != nil {

@@ -252,9 +252,10 @@ func TestProductionPhaseTwoControlConfirmsColdStartBeforeInitialActivation(t *te
 	if err != nil {
 		t.Fatalf("newProductionPhaseTwoControl() error = %v", err)
 	}
-	queryGroups, err := control.InitialRefresh(context.Background())
-	if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-1"}) {
-		t.Fatalf("InitialRefresh() = %v, %v", queryGroups, err)
+	result, err := control.InitialRefresh(context.Background())
+	if err != nil || result.Status != phaseTwoControlHealthy ||
+		!reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-1"}) {
+		t.Fatalf("InitialRefresh() = %#v, %v", result, err)
 	}
 	if reconciler.calls != 2 || waits != 1 || activator.calls != 1 || activator.publication != publication {
 		t.Fatalf("cold-start calls refresh/wait/activate=%d/%d/%d publication=%+v",
@@ -279,9 +280,10 @@ func TestProductionPhaseTwoControlLoadsAllActiveQueryGroups(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	queryGroups, err := control.LoadActive(context.Background())
-	if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-1", "query-group-2"}) {
-		t.Fatalf("LoadActive() = %v, %v", queryGroups, err)
+	result, err := control.LoadActive(context.Background())
+	if err != nil || result.Status != phaseTwoControlHealthy ||
+		!reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-1", "query-group-2"}) {
+		t.Fatalf("LoadActive() = %#v, %v", result, err)
 	}
 }
 
@@ -314,17 +316,17 @@ func TestProductionPhaseTwoControlDrainsRetiredQueryGroupBeforeRemovingIt(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	queryGroups, err := control.LoadActive(context.Background())
-	if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-new", retired}) {
-		t.Fatalf("draining active projection=(%v,%v)", queryGroups, err)
+	result, err := control.LoadActive(context.Background())
+	if err != nil || !reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-new", retired}) {
+		t.Fatalf("draining active projection=(%#v,%v)", result, err)
 	}
 	progress.byGroup[retired] = execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
 		Identity: execution.ProgressIdentity{QueryGroup: retired}, NextSlot: boundary, LastFullSlot: 60,
 		LastCompletionKind: execution.CompletionFull,
 	}}
-	queryGroups, err = control.LoadActive(context.Background())
-	if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-new"}) {
-		t.Fatalf("drained active projection=(%v,%v)", queryGroups, err)
+	result, err = control.LoadActive(context.Background())
+	if err != nil || !reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-new"}) {
+		t.Fatalf("drained active projection=(%#v,%v)", result, err)
 	}
 }
 
@@ -355,9 +357,9 @@ func TestProductionPhaseTwoControlRemovesRetiredZeroSlotQueryGroupWithoutProgres
 	if err != nil {
 		t.Fatal(err)
 	}
-	queryGroups, err := control.LoadActive(context.Background())
-	if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-new"}) {
-		t.Fatalf("zero-Slot retired active projection=(%v,%v)", queryGroups, err)
+	result, err := control.LoadActive(context.Background())
+	if err != nil || !reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-new"}) {
+		t.Fatalf("zero-Slot retired active projection=(%#v,%v)", result, err)
 	}
 }
 
@@ -394,9 +396,9 @@ func TestProductionPhaseTwoControlIsolatesInvalidDrainingQueryGroup(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	queryGroups, err := control.LoadActive(context.Background())
-	if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
-		t.Fatalf("isolated active projection=(%v,%v)", queryGroups, err)
+	result, err := control.LoadActive(context.Background())
+	if err != nil || !reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
+		t.Fatalf("isolated active projection=(%#v,%v)", result, err)
 	}
 	if len(observations) != 1 || observations[0].Result != observability.ResultDegraded ||
 		observations[0].Trace.QueryGroupKey != string(bad) || observations[0].Err == nil {
@@ -423,9 +425,10 @@ func TestProductionPhaseTwoControlKeepsCurrentActivationWhileCandidateIsPending(
 	if err != nil {
 		t.Fatal(err)
 	}
-	queryGroups, err := control.Refresh(context.Background())
-	if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-1"}) {
-		t.Fatalf("Refresh() = %v, %v", queryGroups, err)
+	result, err := control.Refresh(context.Background())
+	if err != nil || result.Status != phaseTwoControlHealthy ||
+		!reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-1"}) {
+		t.Fatalf("Refresh() = %#v, %v", result, err)
 	}
 	if activator.calls != 0 {
 		t.Fatalf("pending candidate changed current activation, calls = %d", activator.calls)
@@ -456,9 +459,10 @@ func TestProductionPhaseTwoControlKeepsHealthyQueryGroupsAcrossPublicationConfli
 		t.Fatal(err)
 	}
 	for index := 0; index < 2; index++ {
-		queryGroups, err := control.Refresh(context.Background())
-		if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
-			t.Fatalf("Refresh(%d)=(%v,%v)", index, queryGroups, err)
+		result, err := control.Refresh(context.Background())
+		if err != nil || result.Status != phaseTwoControlHealthy ||
+			!reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
+			t.Fatalf("Refresh(%d)=(%#v,%v)", index, result, err)
 		}
 	}
 	if activator.calls != 2 {
@@ -485,31 +489,29 @@ func TestProductionPhaseTwoControlKeepsLastGoodAcrossFailedRefreshAndRecovery(t 
 	}, snapshot: controlplane.PublishedSnapshot{Publication: publication,
 		QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-healthy"}}}}
 	activator := &fakeInitialScheduleActivator{state: repository.activation}
-	var observations []observability.Observation
 	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
 		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
 		Activator: activator, Repository: repository, Schedules: &fakeScheduleProjection{},
-		Progress: &fakeProductionProgressReader{}, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
-			observations = append(observations, observation)
-		}),
+		Progress:        &fakeProductionProgressReader{},
 		RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for index := 0; index < 2; index++ {
-		queryGroups, err := control.Refresh(context.Background())
-		if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
-			t.Fatalf("Refresh(%d)=(%v,%v)", index, queryGroups, err)
-		}
+	degraded, err := control.Refresh(context.Background())
+	if err != nil || degraded.Status != phaseTwoControlDegradedLastGood ||
+		degraded.SourceKind != observability.SourceKindLegacyStrategy ||
+		degraded.ReasonCode != observability.ReasonContractRetryable || degraded.Cause == nil ||
+		!reflect.DeepEqual(degraded.QueryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
+		t.Fatalf("degraded Refresh()=(%#v,%v)", degraded, err)
+	}
+	healthy, err := control.Refresh(context.Background())
+	if err != nil || healthy.Status != phaseTwoControlHealthy ||
+		!reflect.DeepEqual(healthy.QueryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
+		t.Fatalf("healthy Refresh()=(%#v,%v)", healthy, err)
 	}
 	if activator.calls != 1 {
 		t.Fatalf("activation calls=%d, want 1 after recovery", activator.calls)
-	}
-	if len(observations) != 1 || observations[0].Stage != observability.StageSnapshotUnavailable ||
-		observations[0].Result != observability.ResultDegraded || observations[0].Err == nil ||
-		observations[0].ReasonCode != observability.ReasonContractRetryable {
-		t.Fatalf("failed refresh observations=%#v", observations)
 	}
 }
 
@@ -531,31 +533,30 @@ func TestProductionPhaseTwoControlKeepsLastGoodAcrossFailedCutoverAndRecovery(t 
 		state: controlplane.ActivationState{RecordRevision: 3, Current: candidate},
 		errs:  []error{controlplane.ErrScheduleConflict, nil},
 	}
-	var observations []observability.Observation
 	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
 		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
 		Activator: activator, Repository: repository, Schedules: &fakeScheduleProjection{},
-		Progress: &fakeProductionProgressReader{}, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
-			observations = append(observations, observation)
-		}),
+		Progress:        &fakeProductionProgressReader{},
 		RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for index := 0; index < 2; index++ {
-		queryGroups, err := control.Refresh(context.Background())
-		if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
-			t.Fatalf("Refresh(%d)=(%v,%v)", index, queryGroups, err)
-		}
+	degraded, err := control.Refresh(context.Background())
+	if err != nil || degraded.Status != phaseTwoControlDegradedLastGood ||
+		degraded.SourceKind != observability.SourceKindCompiledSnapshot ||
+		degraded.ReasonCode != observability.ReasonContractRetryable ||
+		!errors.Is(degraded.Cause, controlplane.ErrScheduleConflict) ||
+		!reflect.DeepEqual(degraded.QueryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
+		t.Fatalf("degraded Refresh()=(%#v,%v)", degraded, err)
+	}
+	healthy, err := control.Refresh(context.Background())
+	if err != nil || healthy.Status != phaseTwoControlHealthy ||
+		!reflect.DeepEqual(healthy.QueryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
+		t.Fatalf("healthy Refresh()=(%#v,%v)", healthy, err)
 	}
 	if activator.calls != 2 {
 		t.Fatalf("activation calls=%d, want 2", activator.calls)
-	}
-	if len(observations) != 1 || observations[0].Stage != observability.StageSnapshotUnavailable ||
-		observations[0].Result != observability.ResultDegraded || !errors.Is(observations[0].Err, controlplane.ErrScheduleConflict) ||
-		observations[0].ReasonCode != observability.ReasonContractRetryable {
-		t.Fatalf("failed cutover observations=%#v", observations)
 	}
 }
 

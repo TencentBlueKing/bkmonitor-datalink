@@ -18,6 +18,7 @@ type phaseTwoMetrics struct {
 	busy                 *prometheus.CounterVec
 	lastProgress         *prometheus.GaugeVec
 	capacity             *prometheus.CounterVec
+	sourceObservations   *prometheus.CounterVec
 	ownedQueryGroups     *prometheus.GaugeVec
 	ownershipTransitions *prometheus.CounterVec
 }
@@ -32,6 +33,7 @@ var phaseTwoProgressKinds = []string{
 }
 var phaseTwoBudgets = []string{"series", "retained_bytes", "state_mutations", "events", "gap_mutations", "other"}
 var phaseTwoCapacityResults = []string{"admitted", "rejected", "other"}
+var phaseTwoSourceResults = []string{"degraded", "recovered"}
 var phaseTwoOwnershipTransitions = []observability.Stage{
 	observability.StageAssignmentAcquired,
 	observability.StageAssignmentLost,
@@ -58,6 +60,10 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "capacity_transition_total",
 			Help: "Process-wide phase-two capacity admission outcomes by fixed budget kind.",
 		}, []string{"budget", "result"}),
+		sourceObservations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_observation_total",
+			Help: "Phase-two source health episode transitions by bounded source, result and reason class.",
+		}, []string{"source_kind", "result", "reason_class"}),
 		ownedQueryGroups: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "worker_owned_query_groups",
 			Help: "Query groups currently owned by this complete worker role.",
@@ -71,11 +77,18 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 
 func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 	return []prometheus.Collector{
-		m.work, m.busy, m.lastProgress, m.capacity, m.ownedQueryGroups, m.ownershipTransitions,
+		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations,
+		m.ownedQueryGroups, m.ownershipTransitions,
 	}
 }
 
 func (m phaseTwoMetrics) observe(observation observability.Observation) {
+	if observation.Component == observability.ComponentControlPlane && observation.SourceKind != "" &&
+		(observation.Result == observability.ResultDegraded || observation.Result == observability.Result(observability.ResultRecovered)) {
+		m.sourceObservations.WithLabelValues(
+			string(observation.SourceKind), string(observation.Result), string(observation.ReasonCode),
+		).Inc()
+	}
 	if observation.Component == observability.ComponentOwnership && isOwnershipTransitionStage(observation.Stage) {
 		reasonClass := observability.NormalizeMetricReason(
 			observability.ComponentOwnership, observation.ReasonCode, observation.Result,
@@ -206,7 +219,8 @@ func normalizePhaseTwoBudget(budget observability.CapacityBudget) string {
 
 func phaseTwoCustomSeries() int {
 	return len(phaseTwoWorkKinds) + len(phaseTwoBusyStages) + len(phaseTwoProgressKinds) +
-		len(phaseTwoBudgets)*len(phaseTwoCapacityResults) + 1 +
+		len(phaseTwoBudgets)*len(phaseTwoCapacityResults) +
+		len(observability.AllSourceKinds())*len(phaseTwoSourceResults)*len(observability.AllReasons(observability.ComponentControlPlane)) + 1 +
 		len(phaseTwoOwnershipTransitions)*len(observability.AllResults())*
 			len(observability.AllReasons(observability.ComponentOwnership))
 }

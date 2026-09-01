@@ -312,42 +312,43 @@ func newProductionPhaseTwoControl(
 
 func (runtime *productionPhaseTwoControl) InitialRefresh(
 	ctx context.Context,
-) ([]execution.QueryGroupIdentity, error) {
+) (phaseTwoControlRefreshResult, error) {
 	if runtime == nil {
-		return nil, errors.New("phase-two production Control is not initialized")
+		return phaseTwoControlRefreshResult{}, errors.New("phase-two production Control is not initialized")
 	}
 	for {
-		queryGroups, pending, err := runtime.refresh(ctx)
+		result, pending, err := runtime.refresh(ctx)
 		if err != nil || !pending {
-			return queryGroups, err
+			return result, err
 		}
 		if err := runtime.dependencies.Wait(ctx, runtime.dependencies.RefreshInterval); err != nil {
-			return nil, err
+			return phaseTwoControlRefreshResult{}, err
 		}
 	}
 }
 
 func (runtime *productionPhaseTwoControl) Refresh(
 	ctx context.Context,
-) ([]execution.QueryGroupIdentity, error) {
+) (phaseTwoControlRefreshResult, error) {
 	if runtime == nil {
-		return nil, errors.New("phase-two production Control is not initialized")
+		return phaseTwoControlRefreshResult{}, errors.New("phase-two production Control is not initialized")
 	}
-	queryGroups, _, err := runtime.refresh(ctx)
-	return queryGroups, err
+	result, _, err := runtime.refresh(ctx)
+	return result, err
 }
 
 func (runtime *productionPhaseTwoControl) LoadActive(
 	ctx context.Context,
-) ([]execution.QueryGroupIdentity, error) {
+) (phaseTwoControlRefreshResult, error) {
 	if runtime == nil {
-		return nil, errors.New("phase-two production Control is not initialized")
+		return phaseTwoControlRefreshResult{}, errors.New("phase-two production Control is not initialized")
 	}
 	state, err := runtime.dependencies.Repository.LoadActivation(ctx)
 	if err != nil {
-		return nil, err
+		return phaseTwoControlRefreshResult{}, err
 	}
-	return runtime.loadActiveQueryGroups(ctx, state)
+	queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
+	return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, err
 }
 
 func (runtime *productionPhaseTwoControl) Close() error {
@@ -359,31 +360,31 @@ func (runtime *productionPhaseTwoControl) Close() error {
 
 func (runtime *productionPhaseTwoControl) refresh(
 	ctx context.Context,
-) ([]execution.QueryGroupIdentity, bool, error) {
+) (phaseTwoControlRefreshResult, bool, error) {
 	result, err := runtime.dependencies.Reconciler.Refresh(
 		ctx, runtime.dependencies.Source, runtime.dependencies.Planner,
 	)
 	if err != nil {
-		queryGroups, fallbackErr := runtime.keepLastGood(ctx, err)
-		return queryGroups, false, fallbackErr
+		result, fallbackErr := runtime.keepLastGood(ctx, observability.SourceKindLegacyStrategy, err)
+		return result, false, fallbackErr
 	}
 	if result.Status == controlplane.SourceRefreshPendingConfirmation {
 		state, err := runtime.dependencies.Repository.LoadActivation(ctx)
 		if errors.Is(err, controlplane.ErrActivationUnavailable) {
-			return nil, true, nil
+			return phaseTwoControlRefreshResult{}, true, nil
 		}
 		if err != nil {
-			return nil, false, err
+			return phaseTwoControlRefreshResult{}, false, err
 		}
 		queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
-		return queryGroups, false, err
+		return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, false, err
 	}
 	if result.Status != controlplane.SourceRefreshPublished && result.Status != controlplane.SourceRefreshUnchanged &&
 		result.Status != controlplane.SourceRefreshPublicationConflict {
-		return nil, false, errors.New("phase-two source refresh returned an invalid status")
+		return phaseTwoControlRefreshResult{}, false, errors.New("phase-two source refresh returned an invalid status")
 	}
 	if result.Publication.SnapshotRevision == "" || result.Publication.PublicationEpoch == 0 {
-		return nil, false, errors.New("phase-two source refresh returned an incomplete publication")
+		return phaseTwoControlRefreshResult{}, false, errors.New("phase-two source refresh returned an incomplete publication")
 	}
 	if result.Status == controlplane.SourceRefreshPublicationConflict {
 		runtime.dependencies.Observer.Observe(ctx, observability.Observation{
@@ -393,33 +394,33 @@ func (runtime *productionPhaseTwoControl) refresh(
 	}
 	state, err := runtime.dependencies.Activator.Ensure(ctx, result.Publication)
 	if err != nil {
-		queryGroups, fallbackErr := runtime.keepLastGood(ctx, err)
-		return queryGroups, false, fallbackErr
+		fallback, fallbackErr := runtime.keepLastGood(ctx, observability.SourceKindCompiledSnapshot, err)
+		return fallback, false, fallbackErr
 	}
 	queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
-	return queryGroups, false, err
+	return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, false, err
 }
 
 func (runtime *productionPhaseTwoControl) keepLastGood(
 	ctx context.Context,
+	sourceKind observability.SourceKind,
 	cause error,
-) ([]execution.QueryGroupIdentity, error) {
+) (phaseTwoControlRefreshResult, error) {
 	state, err := runtime.dependencies.Repository.LoadActivation(ctx)
 	if errors.Is(err, controlplane.ErrActivationUnavailable) {
-		return nil, cause
+		return phaseTwoControlRefreshResult{}, cause
 	}
 	if err != nil {
-		return nil, errors.Join(cause, err)
+		return phaseTwoControlRefreshResult{}, errors.Join(cause, err)
 	}
 	queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
 	if err != nil {
-		return nil, errors.Join(cause, err)
+		return phaseTwoControlRefreshResult{}, errors.Join(cause, err)
 	}
-	runtime.dependencies.Observer.Observe(ctx, observability.Observation{
-		Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotUnavailable,
-		Result: observability.ResultDegraded, ReasonCode: observability.ReasonContractRetryable, Err: cause,
-	})
-	return queryGroups, nil
+	return phaseTwoControlRefreshResult{
+		QueryGroups: queryGroups, Status: phaseTwoControlDegradedLastGood, SourceKind: sourceKind,
+		ReasonCode: observability.ReasonContractRetryable, Cause: cause,
+	}, nil
 }
 
 func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(

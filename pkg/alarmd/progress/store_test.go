@@ -415,6 +415,9 @@ func TestCommitProgressMapsFencedCASStatuses(t *testing.T) {
 		if err != nil || result.Status != test.want {
 			t.Fatalf("CommitProgress(%s) = (%+v, %v)", test.cas, result, err)
 		}
+		if !fake.missing || fake.value != nil {
+			t.Fatalf("CommitProgress(%s) mutated rejected fake value: missing=%t value=%q", test.cas, fake.missing, fake.value)
+		}
 	}
 }
 
@@ -423,11 +426,14 @@ func (fake *controlFake) ReadControl(_ context.Context, group execution.QueryGro
 	return append([]byte(nil), fake.value...), fake.missing, nil
 }
 func (fake *controlFake) FencedCompareAndSet(_ context.Context, request ownership.FencedCASRequest) (ownership.FencedCASStatus, error) {
-	fake.value, fake.missing = append([]byte(nil), request.Value...), false
-	if fake.status == "" {
-		return ownership.FencedCASApplied, nil
+	status := fake.status
+	if status == "" {
+		status = ownership.FencedCASApplied
 	}
-	return fake.status, nil
+	if status == ownership.FencedCASApplied {
+		fake.value, fake.missing = append([]byte(nil), request.Value...), false
+	}
+	return status, nil
 }
 
 func TestLoadProgressDistinguishesMissingAndFound(t *testing.T) {

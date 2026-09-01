@@ -217,6 +217,10 @@ func TestRedisStoreFencedCASRejectsExpiredSnapshotPublisher(t *testing.T) {
 	if !errors.Is(err, ErrStaleFence) || result != FencedCASStaleOwner {
 		t.Fatalf("FencedCompareAndSet(expired) = (%s, %v), want stale owner", result, err)
 	}
+	value, missing, err := store.ReadControl(context.Background(), ControlLeaderIdentity, "snapshot-active")
+	if err != nil || missing || !bytes.Equal(value, []byte("snapshot-1")) {
+		t.Fatalf("ReadControl(after stale owner) = (%q, %t, %v), want unchanged snapshot-1", value, missing, err)
+	}
 }
 
 func TestRedisStoreReadControlComposesWithFencedCompareAndSet(t *testing.T) {

@@ -193,6 +193,7 @@ func TestSlotExecutionCoordinatorRechecksActivationBeforeNormalProgress(t *testi
 func TestSlotExecutionCoordinatorDoesNotCommitNormalProgressAfterActivationChange(t *testing.T) {
 	fixture := newFixture(t, true, "")
 	fixture.ports.activationChangeAt = 2
+	fixture.ports.persistActivatedGaps = true
 	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
 	if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
 		result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
@@ -221,6 +222,133 @@ func TestSlotExecutionCoordinatorDoesNotCommitNormalProgressAfterActivationChang
 	}
 	if !reflect.DeepEqual(fixture.ports.lastSequenceScope, wantScope) {
 		t.Fatalf("activation protection scope=%+v, want=%+v", fixture.ports.lastSequenceScope, wantScope)
+	}
+
+	firstEvents := fixture.ports.eventCount
+	firstStateApplies := fixture.ports.stateApplyCalls
+	result, err = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err != nil || !result.Completed || result.Result != observability.ResultDegraded ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) ||
+		fixture.ports.lastProgress.Completion.Kind != execution.CompletionPartialGap {
+		t.Fatalf("second Execute() result=%+v error=%v Progress=%+v", result, err, fixture.ports.lastProgress)
+	}
+	if fixture.ports.eventCount != firstEvents || fixture.ports.stateApplyCalls != firstStateApplies {
+		t.Fatalf("second execution replayed old side effects: events=%d want=%d state applies=%d want=%d",
+			fixture.ports.eventCount, firstEvents, fixture.ports.stateApplyCalls, firstStateApplies)
+	}
+}
+
+func TestSlotExecutionCoordinatorProtectsActivationChangedBeforeNormalSideEffects(t *testing.T) {
+	fixture := newFixture(t, true, "")
+	fixture.ports.activationChangeAt = 1
+	fixture.ports.persistActivatedGaps = true
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 {
+		t.Fatalf("changed frozen Plan emitted old side effects: events=%d state applies=%d",
+			fixture.ports.eventCount, fixture.ports.stateApplyCalls)
+	}
+	if fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+		t.Fatalf("changed frozen Plan committed Progress before protection: %+v", fixture.ports.lastProgress)
+	}
+	if len(fixture.ports.gapMutations) != 1 {
+		t.Fatalf("activation change gap mutations=%+v", fixture.ports.gapMutations)
+	}
+	mutation := fixture.ports.gapMutations[0]
+	if mutation.Identity != (execution.PlanGapIdentity{Plan: planIdentity(), StateGeneration: "activation-change"}) ||
+		mutation.ApplyVersion.StateApplyEpoch != 2 ||
+		mutation.Scopes[0].ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
+		t.Fatalf("activation change was not protected before retry: %+v", mutation)
+	}
+
+	result, err = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err != nil || !result.Completed || result.Result != observability.ResultDegraded ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
+		t.Fatalf("second Execute() result=%+v error=%v", result, err)
+	}
+	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 {
+		t.Fatalf("activation convergence emitted old side effects: events=%d state applies=%d",
+			fixture.ports.eventCount, fixture.ports.stateApplyCalls)
+	}
+	if fixture.ports.lastProgress.Completion.Kind != execution.CompletionPartialGap ||
+		fixture.ports.lastProgress.Completion.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
+		t.Fatalf("activation convergence Progress=%+v", fixture.ports.lastProgress)
+	}
+}
+
+func TestSlotExecutionCoordinatorConvergesCurrentActivationSelectionChange(t *testing.T) {
+	t.Run("current_to_pending", func(t *testing.T) {
+		fixture := newFixture(t, true, "")
+		fixture.ports.activationChangeAt = 2
+		fixture.ports.activationSelection = execution.ActivationPending
+		fixture.ports.persistActivatedGaps = true
+
+		result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+		if err != nil || result.Completed || result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
+			t.Fatalf("first Execute() result=%+v error=%v", result, err)
+		}
+		firstEvents, firstStateApplies := fixture.ports.eventCount, fixture.ports.stateApplyCalls
+		result, err = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+		if err != nil || !result.Completed || result.Result != observability.ResultDegraded ||
+			result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) ||
+			fixture.ports.lastProgress.Completion.Kind != execution.CompletionPartialGap {
+			t.Fatalf("second Execute() result=%+v error=%v Progress=%+v", result, err, fixture.ports.lastProgress)
+		}
+		if fixture.ports.eventCount != firstEvents || fixture.ports.stateApplyCalls != firstStateApplies {
+			t.Fatalf("pending activation replayed old side effects: events=%d want=%d state applies=%d want=%d",
+				fixture.ports.eventCount, firstEvents, fixture.ports.stateApplyCalls, firstStateApplies)
+		}
+	})
+
+	t.Run("current_to_none", func(t *testing.T) {
+		fixture := newFixture(t, true, "")
+		fixture.ports.activationChangeAt = 2
+		fixture.ports.activationSelection = execution.ActivationNone
+
+		result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+		if err != nil || !result.Completed || result.Result != observability.ResultDegraded ||
+			result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) ||
+			fixture.ports.lastProgress.Completion.Kind != execution.CompletionPartialGap {
+			t.Fatalf("Execute() result=%+v error=%v Progress=%+v", result, err, fixture.ports.lastProgress)
+		}
+		if len(fixture.ports.gapMutations) != 1 {
+			t.Fatalf("NONE activation must not invent a selected Plan Guard: %+v", fixture.ports.gapMutations)
+		}
+	})
+}
+
+func TestSlotExecutionCoordinatorReprotectsActivationChangedBetweenGuardAndProgress(t *testing.T) {
+	fixture := newFixture(t, true, "")
+	fixture.ports.activationChangeAt = 1
+	fixture.ports.activationSecondChangeAt = 3
+	fixture.ports.persistActivatedGaps = true
+
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err != nil || result.Completed {
+		t.Fatalf("first Execute() result=%+v error=%v", result, err)
+	}
+	result, err = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err != nil || result.Completed || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+		t.Fatalf("second Execute() result=%+v error=%v Progress=%+v", result, err, fixture.ports.lastProgress)
+	}
+	if _, found := fixture.ports.activatedGapMarkers[execution.PlanGapIdentity{
+		Plan: planIdentity(), StateGeneration: "activation-change-2",
+	}]; !found {
+		t.Fatalf("activation changed after Guard was not protected: %+v", fixture.ports.activatedGapMarkers)
+	}
+
+	result, err = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err != nil || !result.Completed || result.Result != observability.ResultDegraded ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
+		t.Fatalf("third Execute() result=%+v error=%v", result, err)
+	}
+	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 ||
+		fixture.ports.lastProgress.Completion.Kind != execution.CompletionPartialGap {
+		t.Fatalf("unstable activation convergence side effects/events=%d state=%d Progress=%+v",
+			fixture.ports.eventCount, fixture.ports.stateApplyCalls, fixture.ports.lastProgress)
 	}
 }
 
@@ -688,11 +816,27 @@ func (ports *recordingPorts) LoadActivations(
 			},
 		}
 		if ports.activationChangeAt != 0 && ports.activationLoadCalls >= ports.activationChangeAt {
+			selection := ports.activationSelection
+			if selection == "" {
+				selection = execution.ActivationCurrent
+			}
 			facts[index] = execution.PlanActivationFact{
-				Plan: plan, Selection: execution.ActivationCurrent,
+				Plan: plan, Selection: selection,
 				Selected: execution.ActivatedPlan{
 					Identity: plan, StateGeneration: "activation-change", StateApplyEpoch: 2,
 					ScheduleRevision: "activation-change", RequiredFullSlots: 1,
+				},
+			}
+			if selection == execution.ActivationNone {
+				facts[index].Selected = execution.ActivatedPlan{}
+			}
+		}
+		if ports.activationSecondChangeAt != 0 && ports.activationLoadCalls >= ports.activationSecondChangeAt {
+			facts[index] = execution.PlanActivationFact{
+				Plan: plan, Selection: execution.ActivationCurrent,
+				Selected: execution.ActivatedPlan{
+					Identity: plan, StateGeneration: "activation-change-2", StateApplyEpoch: 3,
+					ScheduleRevision: "activation-change-2", RequiredFullSlots: 1,
 				},
 			}
 		}
@@ -726,6 +870,10 @@ type recordingPorts struct {
 	activationLoadCalls             int
 	activationErrorAt               int
 	activationChangeAt              int
+	activationSecondChangeAt        int
+	activationSelection             execution.ActivationSelection
+	persistActivatedGaps            bool
+	activatedGapMarkers             map[execution.PlanGapIdentity]execution.GapGuardSnapshot
 	progressActivationChecked       bool
 	admissionRejectAt               int
 	stateLoadStatus                 execution.StateLoadStatus
@@ -1040,6 +1188,10 @@ func (ports *recordingPorts) LoadGaps(_ context.Context, request execution.GapLo
 	ports.record("gap_load")
 	items := make([]execution.GapGuardSnapshot, len(request.Items))
 	for index, item := range request.Items {
+		if marker, found := ports.activatedGapMarkers[item.Identity]; found {
+			items[index] = marker
+			continue
+		}
 		items[index] = execution.GapGuardSnapshot{Identity: item.Identity, Status: execution.GapMissing}
 		if ports.gapLoadStatus == execution.GapUnavailable {
 			items[index].Status = execution.GapUnavailable
@@ -1095,6 +1247,28 @@ func (ports *recordingPorts) ApplyGap(_ context.Context, request execution.GapGu
 	items := make([]execution.GapGuardApplyItemResult, len(request.Items))
 	for index, item := range request.Items {
 		items[index] = execution.GapGuardApplyItemResult{Identity: item.Identity, Status: execution.GapGuardApplied}
+		if ports.persistActivatedGaps && item.Identity.StateGeneration != "state-v1" {
+			if ports.activatedGapMarkers == nil {
+				ports.activatedGapMarkers = make(map[execution.PlanGapIdentity]execution.GapGuardSnapshot)
+			}
+			if marker, found := ports.activatedGapMarkers[item.Identity]; found &&
+				marker.PersistedApplyVersion == item.ApplyVersion && marker.PersistedMutationDigest == item.MutationDigest {
+				items[index].Status = execution.GapGuardAlreadyApplied
+			} else {
+				scopes := make([]execution.GapScopeState, len(item.Scopes))
+				for scopeIndex, scope := range item.Scopes {
+					scopes[scopeIndex] = execution.GapScopeState{
+						Scope: scope.Scope, Status: execution.GapStatusGapped, ReasonCode: scope.ReasonCode,
+						RequiredFullSlots: scope.RequiredFullSlots,
+					}
+				}
+				ports.activatedGapMarkers[item.Identity] = execution.GapGuardSnapshot{
+					Identity: item.Identity, MarkerRevision: 1, Status: execution.GapFound,
+					PersistedApplyVersion: item.ApplyVersion, PersistedMutationDigest: item.MutationDigest,
+					LastScheduleRevision: item.ScheduleRevision, Scopes: scopes,
+				}
+			}
+		}
 		if ports.wrongGapIdentity {
 			items[index].Identity.Plan.StrategyID = "another"
 		}

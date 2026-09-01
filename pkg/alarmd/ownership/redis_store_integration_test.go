@@ -29,7 +29,8 @@ func TestRedisStorePublishesAssignmentOnlyWithLiveControlLeader(t *testing.T) {
 		t.Fatalf("RegisterWorker() error = %v", err)
 	}
 	ready, err := store.ListReadyWorkers(context.Background(), now)
-	if err != nil || len(ready) != 1 || ready[0].WorkerID != worker.WorkerID {
+	if err != nil || len(ready) != 1 || ready[0].WorkerID != worker.WorkerID ||
+		ready[0].Compatibility() != worker.Compatibility() || ready[0].DependencyStatus != worker.DependencyStatus {
 		t.Fatalf("ListReadyWorkers() = (%+v, %v)", ready, err)
 	}
 

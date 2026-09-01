@@ -50,8 +50,29 @@ type WorkerRegistration struct {
 	ExpiresAt           time.Time           `json:"expires_at"`
 }
 
+// WorkerCompatibility is the static deployment contract used before
+// Rendezvous routing. It deliberately excludes runtime health and Worker
+// identity so dependency degradation does not cause ownership churn.
+type WorkerCompatibility struct {
+	DeploymentProfile  string
+	CapabilitiesDigest string
+}
+
+func (compatibility WorkerCompatibility) Validate() error {
+	if compatibility.DeploymentProfile == "" || compatibility.CapabilitiesDigest == "" {
+		return errors.New("alarmd ownership: incomplete worker compatibility")
+	}
+	return nil
+}
+
+func (worker WorkerRegistration) Compatibility() WorkerCompatibility {
+	return WorkerCompatibility{
+		DeploymentProfile: worker.DeploymentProfile, CapabilitiesDigest: worker.CapabilitiesDigest,
+	}
+}
+
 func (worker WorkerRegistration) Validate() error {
-	if worker.WorkerID == "" || worker.DeploymentProfile == "" || worker.CapabilitiesDigest == "" || worker.ExpiresAt.IsZero() {
+	if worker.WorkerID == "" || worker.ExpiresAt.IsZero() || worker.Compatibility().Validate() != nil {
 		return errors.New("alarmd ownership: incomplete worker registration")
 	}
 	switch worker.AssignmentReadiness {

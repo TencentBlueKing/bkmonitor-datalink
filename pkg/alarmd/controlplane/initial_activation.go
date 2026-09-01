@@ -53,55 +53,57 @@ func (activator *InitialScheduleActivator) Ensure(
 	if err != nil {
 		return ActivationState{}, err
 	}
-	if snapshot.Publication != publication || len(snapshot.QueryGroups) != 1 {
-		return ActivationState{}, errors.New("alarmd controlplane: initial activation requires one confirmed Query Group publication")
+	if snapshot.Publication != publication || len(snapshot.QueryGroups) == 0 {
+		return ActivationState{}, errors.New("alarmd controlplane: initial activation requires a confirmed non-empty Query Group publication")
 	}
 	boundary := execution.EvaluationTime(activator.now().Unix())
 	if boundary <= 0 {
 		return ActivationState{}, errors.New("alarmd controlplane: initial activation clock must produce a positive Unix second")
 	}
 
-	group := snapshot.QueryGroups[0]
-	plans := make([]execution.FrozenPlanSchedule, len(group.Plans))
-	records := make([]PlanActivationRecord, len(group.Plans))
-	for index, plan := range group.Plans {
-		compiledResult, err := activator.compiler.Compile(ctx, strategy.CompileRequest{
-			Plan: plan.Plan, DatasetContract: group.QueryPlan.Normalization.DatasetContract, StateSemantics: activator.stateSemantics,
-		})
-		if err != nil {
+	records := make([]PlanActivationRecord, 0)
+	initial := make([]execution.InitialScheduleActivationFact, 0, len(snapshot.QueryGroups))
+	for _, group := range snapshot.QueryGroups {
+		plans := make([]execution.FrozenPlanSchedule, len(group.Plans))
+		for index, plan := range group.Plans {
+			compiledResult, err := activator.compiler.Compile(ctx, strategy.CompileRequest{
+				Plan: plan.Plan, DatasetContract: group.QueryPlan.Normalization.DatasetContract, StateSemantics: activator.stateSemantics,
+			})
+			if err != nil {
+				return ActivationState{}, err
+			}
+			compiled, ok := compiledResult.Plan()
+			if !ok || compiledResult.PlanTerminal() != nil || len(compiledResult.LevelTerminals()) != 0 {
+				return ActivationState{}, errors.New("alarmd controlplane: initial activation Plan cannot be compiled")
+			}
+			requiredFullSlots := requiredFullSlots(compiled)
+			if requiredFullSlots == 0 {
+				return ActivationState{}, errors.New("alarmd controlplane: initial activation Plan has no recovery window")
+			}
+			plans[index] = execution.FrozenPlanSchedule{
+				Identity: plan.Identity, ScheduleRevision: plan.ScheduleRevision, Spec: plan.ScheduleSpec,
+			}
+			fact := execution.PlanActivationFact{Plan: plan.Identity, Selection: execution.ActivationCurrent,
+				Selected: execution.ActivatedPlan{Identity: plan.Identity,
+					StateGeneration:  execution.StateGeneration(compiled.StateCompatibilityHash()),
+					StateApplyEpoch:  execution.StateApplyEpoch(publication.PublicationEpoch),
+					ScheduleRevision: plan.ScheduleRevision, RequiredFullSlots: requiredFullSlots}}
+			records = append(records, PlanActivationRecord{Fact: fact, Publication: publication})
+		}
+		segment := execution.ScheduleSegmentFact{
+			Publication: execution.SnapshotPublicationRef{SnapshotRevision: publication.SnapshotRevision,
+				PublicationEpoch: execution.PublicationEpoch(publication.PublicationEpoch)},
+			QueryGroup: group.Identity, QueryRevision: group.QueryPlan.QueryRevision,
+			ScheduleRevision: group.ScheduleRevision, Start: boundary,
+		}
+		schedule := execution.FrozenQueryGroupSchedule{Segment: segment, Plans: plans}
+		if err := schedule.Validate(); err != nil {
 			return ActivationState{}, err
 		}
-		compiled, ok := compiledResult.Plan()
-		if !ok || compiledResult.PlanTerminal() != nil || len(compiledResult.LevelTerminals()) != 0 {
-			return ActivationState{}, errors.New("alarmd controlplane: initial activation Plan cannot be compiled")
-		}
-		requiredFullSlots := requiredFullSlots(compiled)
-		if requiredFullSlots == 0 {
-			return ActivationState{}, errors.New("alarmd controlplane: initial activation Plan has no recovery window")
-		}
-		plans[index] = execution.FrozenPlanSchedule{
-			Identity: plan.Identity, ScheduleRevision: plan.ScheduleRevision, Spec: plan.ScheduleSpec,
-		}
-		fact := execution.PlanActivationFact{Plan: plan.Identity, Selection: execution.ActivationCurrent,
-			Selected: execution.ActivatedPlan{Identity: plan.Identity,
-				StateGeneration:  execution.StateGeneration(compiled.StateCompatibilityHash()),
-				StateApplyEpoch:  execution.StateApplyEpoch(publication.PublicationEpoch),
-				ScheduleRevision: plan.ScheduleRevision, RequiredFullSlots: requiredFullSlots}}
-		records[index] = PlanActivationRecord{Fact: fact, Publication: publication}
-	}
-	segment := execution.ScheduleSegmentFact{
-		Publication: execution.SnapshotPublicationRef{SnapshotRevision: publication.SnapshotRevision,
-			PublicationEpoch: execution.PublicationEpoch(publication.PublicationEpoch)},
-		QueryGroup: group.Identity, QueryRevision: group.QueryPlan.QueryRevision,
-		ScheduleRevision: group.ScheduleRevision, Start: boundary,
-	}
-	schedule := execution.FrozenQueryGroupSchedule{Segment: segment, Plans: plans}
-	if err := schedule.Validate(); err != nil {
-		return ActivationState{}, err
+		initial = append(initial, execution.InitialScheduleActivationFact{Segment: segment})
 	}
 	next := ActivationState{RecordRevision: 1, Current: publication, Plans: records}
-	if err := activator.repository.CompareAndSetInitialScheduleActivation(ctx, ActivationExpectation{}, next,
-		[]execution.InitialScheduleActivationFact{{Segment: segment}}); err != nil && !errors.Is(err, ErrActivationConflict) {
+	if err := activator.repository.CompareAndSetInitialScheduleActivation(ctx, ActivationExpectation{}, next, initial); err != nil && !errors.Is(err, ErrActivationConflict) {
 		return ActivationState{}, err
 	}
 	return activator.repository.LoadActivation(ctx)

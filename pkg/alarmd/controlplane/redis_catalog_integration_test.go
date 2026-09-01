@@ -467,6 +467,47 @@ func TestInitialScheduleActivatorPersistsOneNonAlignedBoundaryAcrossRestart(t *t
 	}
 }
 
+func TestInitialScheduleActivatorPersistsEveryPublishedQueryGroup(t *testing.T) {
+	client := newControlplaneRedis(t)
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:first-activation-multi-qg", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := twoQueryGroupCatalog(t)
+	snapshot, _, err := repository.PublishCatalog(context.Background(), catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	activator, err := controlplane.NewInitialScheduleActivator(repository, compiler, stateSemantics, func() time.Time {
+		return time.Unix(83, 0)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := activator.Ensure(context.Background(), snapshot.Publication)
+	if err != nil {
+		t.Fatalf("Ensure() error = %v", err)
+	}
+	if len(state.Plans) != 2 {
+		t.Fatalf("activated Plans=%d, want 2", len(state.Plans))
+	}
+
+	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, stateSemantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, group := range catalog.QueryGroups {
+		schedule, loadErr := runtime.ReadInitialFrozenSchedule(context.Background(), group.Identity)
+		if loadErr != nil {
+			t.Fatalf("ReadInitialFrozenSchedule(%s) error = %v", group.Identity, loadErr)
+		}
+		if schedule.Segment.QueryGroup != group.Identity || schedule.Segment.Start != 83 || len(schedule.Plans) != len(group.Plans) {
+			t.Fatalf("schedule(%s) = %#v", group.Identity, schedule)
+		}
+	}
+}
+
 func TestInitialScheduleActivatorConcurrentCASKeepsWinnerFact(t *testing.T) {
 	client := newControlplaneRedis(t)
 	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:first-activation-race", time.Hour)

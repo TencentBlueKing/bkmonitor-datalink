@@ -24,6 +24,25 @@ type WorkerEligibility interface {
 	Eligible(execution.QueryGroupIdentity, ownership.WorkerRegistration, time.Time) bool
 }
 
+type staticWorkerEligibility struct {
+	required ownership.WorkerCompatibility
+}
+
+func NewStaticWorkerEligibility(required ownership.WorkerCompatibility) (WorkerEligibility, error) {
+	if err := required.Validate(); err != nil {
+		return nil, err
+	}
+	return staticWorkerEligibility{required: required}, nil
+}
+
+func (eligibility staticWorkerEligibility) Eligible(
+	_ execution.QueryGroupIdentity,
+	worker ownership.WorkerRegistration,
+	_ time.Time,
+) bool {
+	return worker.Compatibility() == eligibility.required
+}
+
 type Router struct {
 	additionalEligibility WorkerEligibility
 }

@@ -52,6 +52,58 @@ func TestRouterAppliesAdditionalEligibilityWithoutChangingG1MembershipRules(t *t
 	}
 }
 
+func TestRouterUsesStaticProfileAndCapabilityBeforeStableRendezvous(t *testing.T) {
+	now := time.UnixMilli(1_700_000_000_000)
+	required := ownership.WorkerCompatibility{DeploymentProfile: "standard", CapabilitiesDigest: "cap-v2"}
+	eligibility, err := NewStaticWorkerEligibility(required)
+	if err != nil {
+		t.Fatalf("NewStaticWorkerEligibility() error = %v", err)
+	}
+	eligible := []ownership.WorkerRegistration{
+		{WorkerID: "worker-a", AssignmentReadiness: ownership.WorkerReady, DependencyStatus: ownership.DependencyDegraded,
+			DeploymentProfile: "standard", CapabilitiesDigest: "cap-v2", ExpiresAt: now.Add(time.Minute)},
+		{WorkerID: "worker-b", AssignmentReadiness: ownership.WorkerReady, DependencyStatus: ownership.DependencyHealthy,
+			DeploymentProfile: "standard", CapabilitiesDigest: "cap-v2", ExpiresAt: now.Add(time.Minute)},
+	}
+	incompatible := []ownership.WorkerRegistration{
+		{WorkerID: "worker-wrong-profile", AssignmentReadiness: ownership.WorkerReady, DependencyStatus: ownership.DependencyHealthy,
+			DeploymentProfile: "large", CapabilitiesDigest: "cap-v2", ExpiresAt: now.Add(time.Minute)},
+		{WorkerID: "worker-wrong-capability", AssignmentReadiness: ownership.WorkerReady, DependencyStatus: ownership.DependencyHealthy,
+			DeploymentProfile: "standard", CapabilitiesDigest: "cap-v1", ExpiresAt: now.Add(time.Minute)},
+	}
+	router := NewRouter(eligibility)
+	want, err := router.Select("query-group-1", eligible, now)
+	if err != nil {
+		t.Fatalf("Select(eligible) error = %v", err)
+	}
+	for _, workers := range [][]ownership.WorkerRegistration{
+		{incompatible[0], eligible[1], incompatible[1], eligible[0]},
+		{eligible[0], incompatible[1], eligible[1], incompatible[0]},
+	} {
+		got, selectErr := router.Select("query-group-1", workers, now)
+		if selectErr != nil {
+			t.Fatalf("Select(mixed) error = %v", selectErr)
+		}
+		if got.WorkerID != want.WorkerID {
+			t.Fatalf("Select(mixed) worker = %q, want stable %q", got.WorkerID, want.WorkerID)
+		}
+	}
+	if _, err := router.Select("query-group-1", incompatible, now); err != ErrNoEligibleWorker {
+		t.Fatalf("Select(incompatible) error = %v, want ErrNoEligibleWorker", err)
+	}
+}
+
+func TestStaticWorkerEligibilityRejectsIncompleteRequirement(t *testing.T) {
+	for _, required := range []ownership.WorkerCompatibility{
+		{CapabilitiesDigest: "cap-v1"},
+		{DeploymentProfile: "standard"},
+	} {
+		if _, err := NewStaticWorkerEligibility(required); err == nil {
+			t.Fatalf("NewStaticWorkerEligibility(%#v) succeeded", required)
+		}
+	}
+}
+
 func TestReconcilerPublishesRouterDecisionWithControlAuthority(t *testing.T) {
 	now := time.UnixMilli(1_700_000_000_000)
 	authority := ownership.PublicationAuthority{

@@ -213,16 +213,19 @@ func (store *Store) resolveCurrentNextSlot(
 	ctx context.Context,
 	current execution.ScheduleProgress,
 ) (execution.EvaluationTime, error) {
-	if current.LastFullSlot <= 0 ||
-		(current.LastCompletionKind != execution.CompletionFull && current.LastCompletionKind != execution.CompletionFullEmpty) {
+	completed := current.LastFullSlot
+	if current.CurrentOrRecentGap != nil && current.CurrentOrRecentGap.LastSlot > completed {
+		completed = current.CurrentOrRecentGap.LastSlot
+	}
+	if completed <= 0 {
 		return current.NextSlot, nil
 	}
-	next, err := store.options.Slots.NextSlotAfter(ctx, current.Identity.QueryGroup, current.LastFullSlot)
+	next, err := store.options.Slots.NextSlotAfter(ctx, current.Identity.QueryGroup, completed)
 	if err != nil {
 		return 0, fmt.Errorf("progress: resolve persisted continuous Slot: %w", err)
 	}
-	if next <= current.LastFullSlot {
-		return 0, fmt.Errorf("progress: persisted continuous Slot must follow last FULL completion")
+	if next <= completed {
+		return 0, fmt.Errorf("progress: persisted continuous Slot must follow last completion")
 	}
 	return next, nil
 }

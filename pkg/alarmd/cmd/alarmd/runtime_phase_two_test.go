@@ -571,12 +571,12 @@ func TestPhaseTwoWorkerBundleSlotOwnershipChangeStopsOnlyInvalidQueryGroup(t *te
 	_ = bundle.Shutdown(context.Background())
 }
 
-func TestPhaseTwoWorkerBundleQueryGroupFailureDoesNotStopSiblingOrWorker(t *testing.T) {
+func TestPhaseTwoWorkerBundleProgressConflictDoesNotStopSiblingOrWorker(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	queryGroups := []execution.QueryGroupIdentity{"query-group-1", "query-group-2"}
 	control := &fakePhaseTwoControl{queryGroups: queryGroups}
 	failed := newFakePhaseTwoQueryGroup()
-	failed.runErr = errors.New("commit progress: deterministic completion rejection")
+	failed.runErr = errors.New("commit progress after cutover: CONFLICT")
 	healthy := newFakePhaseTwoQueryGroup()
 	owner := &fakePhaseTwoOwnership{assigned: queryGroups, runners: map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime{
 		"query-group-1": failed, "query-group-2": healthy,

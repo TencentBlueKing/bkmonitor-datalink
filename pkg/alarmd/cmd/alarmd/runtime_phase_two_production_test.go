@@ -978,6 +978,10 @@ func (unavailableSlotCatalog) ReadSuccessorFrozenSchedule(context.Context, execu
 	return execution.FrozenQueryGroupSchedule{}, errors.New("unexpected schedule read")
 }
 
+func (unavailableSlotCatalog) NextSlotAfter(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.EvaluationTime, error) {
+	return 0, errors.New("unexpected schedule read")
+}
+
 func (unavailableSlotCatalog) FreezeSlotContract(context.Context, execution.FreezeSlotContractRequest) (execution.FrozenSlotContractFact, error) {
 	return execution.FrozenSlotContractFact{}, errors.New("unexpected schedule freeze")
 }

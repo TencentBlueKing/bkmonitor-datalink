@@ -93,8 +93,8 @@ func TestProductionSlotSourceCrossesCutoverWithoutSecondProgressIdentity(t *test
 		newSlot.Contract.ScheduleSegmentStart != boundary || newSlot.Contract.Slot.EvaluationTime != 90 {
 		t.Fatalf("new Slot = %+v", newSlot)
 	}
-	if !reflect.DeepEqual(catalog.readTimes, []execution.EvaluationTime{60}) {
-		t.Fatalf("ReadFrozenSchedule times = %v, want completed Slot before explicit successor read", catalog.readTimes)
+	if !reflect.DeepEqual(catalog.readTimes, []execution.EvaluationTime{90}) {
+		t.Fatalf("ReadFrozenSchedule times = %v, want timeline-proven next Slot", catalog.readTimes)
 	}
 	if catalog.progressIdentity != (execution.ProgressIdentity{QueryGroup: "query-group-1"}) {
 		t.Fatalf("Progress identity = %+v", catalog.progressIdentity)
@@ -148,6 +148,54 @@ func TestProductionSlotSourceReloadsContinuousNextSlotAfterInflightCutover(t *te
 	}
 	if nextSlot.Contract.Slot.EvaluationTime != 90 || nextSlot.Contract.ScheduleRevision != newSchedule.Segment.ScheduleRevision {
 		t.Fatalf("next Slot after cutover = %+v, want new Segment Slot 90", nextSlot)
+	}
+}
+
+func TestProductionSlotSourceUsesFirstLegalSlotOnNewCutoverGrid(t *testing.T) {
+	boundary := execution.EvaluationTime(75)
+	oldSchedule := schedulerSchedule(t, 60, 30, &boundary, "snapshot-old", 7)
+	newSchedule := schedulerSchedule(t, 90, boundary, nil, "snapshot-new", 8)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{oldSchedule, newSchedule}}
+	load := nonFullProgress(120, 60, execution.CompletionPartialGap,
+		execution.ReasonCode(contract.ReasonHistoryWarming))
+	source := newProductionSlotSourceForTest(t, catalog, load, time.Unix(200, 0))
+
+	slot, due, err := source.Next(context.Background(), "query-group-1")
+	if err != nil || !due {
+		t.Fatalf("Next() due=%v error=%v", due, err)
+	}
+	if slot.ExpectedNextSlot != 90 || slot.Contract.ScheduleRevision != newSchedule.Segment.ScheduleRevision ||
+		slot.Contract.ScheduleSegmentStart != boundary {
+		t.Fatalf("cutover Slot = %+v, want first legal new-grid Slot 90", slot)
+	}
+}
+
+func TestProductionSlotSourceCrossesReactivationForEveryNonFullCompletion(t *testing.T) {
+	retiredAt := execution.EvaluationTime(90)
+	oldSchedule := schedulerSchedule(t, 60, 60, &retiredAt, "snapshot-old", 7)
+	newSchedule := schedulerSchedule(t, 60, 180, nil, "snapshot-new", 9)
+	for _, test := range []struct {
+		name   string
+		kind   execution.CompletionKind
+		reason execution.ReasonCode
+	}{
+		{name: "partial gap", kind: execution.CompletionPartialGap, reason: execution.ReasonCode(contract.ReasonHistoryWarming)},
+		{name: "unavailable", kind: execution.CompletionUnavailable, reason: execution.ReasonCode(contract.ReasonQueryUnavailable)},
+		{name: "gap skipped", kind: execution.CompletionGapSkipped, reason: execution.ReasonCode(contract.ReasonGapSkipped)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{oldSchedule, newSchedule}}
+			source := newProductionSlotSourceForTest(t, catalog,
+				nonFullProgress(retiredAt, 60, test.kind, test.reason), time.Unix(240, 0))
+
+			slot, due, err := source.Next(context.Background(), "query-group-1")
+			if err != nil || !due {
+				t.Fatalf("Next() due=%v error=%v", due, err)
+			}
+			if slot.ExpectedNextSlot != 180 || slot.Contract.ScheduleRevision != newSchedule.Segment.ScheduleRevision {
+				t.Fatalf("reactivated Slot = %+v, want first legal Slot 180", slot)
+			}
+		})
 	}
 }
 
@@ -291,6 +339,20 @@ func foundProgress(nextSlot, lastFull execution.EvaluationTime) execution.Progre
 	}}
 }
 
+func nonFullProgress(
+	nextSlot, lastCompleted execution.EvaluationTime,
+	kind execution.CompletionKind,
+	reason execution.ReasonCode,
+) execution.ProgressLoadResult {
+	return execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+		Identity: execution.ProgressIdentity{QueryGroup: "query-group-1"}, NextSlot: nextSlot,
+		LastCompletionKind: kind,
+		CurrentOrRecentGap: &execution.ProgressGapSummary{
+			Kind: kind, ReasonCode: reason, FirstSlot: lastCompleted, LastSlot: lastCompleted, Count: 1,
+		},
+	}}
+}
+
 func testAssignment(workerID string, generation uint64) ownership.AssignmentRecord {
 	return ownership.AssignmentRecord{QueryGroup: "query-group-1", DesiredWorkerID: workerID,
 		AssignmentGeneration: generation, RecordRevision: generation, ControlEpoch: 2,
@@ -429,6 +491,27 @@ func (catalog *fakeSlotCatalog) ReadScheduleRetirement(
 		return 0, false, nil
 	}
 	return *catalog.retiredAt, true, nil
+}
+
+func (catalog *fakeSlotCatalog) NextSlotAfter(
+	_ context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	completed execution.EvaluationTime,
+) (execution.EvaluationTime, error) {
+	for index, schedule := range catalog.schedules {
+		if schedule.Segment.QueryGroup != queryGroup || !schedule.Segment.Contains(completed) {
+			continue
+		}
+		if next, ok := schedule.NextSlotAfter(completed); ok {
+			return next, nil
+		}
+		for successor := index + 1; successor < len(catalog.schedules); successor++ {
+			if next, ok := catalog.schedules[successor].FirstSlot(); ok {
+				return next, nil
+			}
+		}
+	}
+	return 0, ErrProgressOffSchedule
 }
 
 func frozenSlotContractFact(

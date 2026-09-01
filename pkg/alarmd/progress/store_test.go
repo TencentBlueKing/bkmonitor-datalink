@@ -374,10 +374,14 @@ func TestProgressIdentityMismatchIsDeterministicInvalidAndNotOverwritten(t *test
 	}
 }
 
-func TestCommitProgressRepairsStaleNextSlotFromCurrentSegmentFacts(t *testing.T) {
+func TestCommitProgressRepairsFullCompletionWithoutFallingBackToOlderGap(t *testing.T) {
 	identity := execution.ProgressIdentity{QueryGroup: "q"}
 	raw := mustEncode(t, execution.ScheduleProgress{
 		Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull,
+		CurrentOrRecentGap: &execution.ProgressGapSummary{
+			Kind: execution.CompletionPartialGap, ReasonCode: execution.ReasonCode(contract.ReasonHistoryWarming),
+			FirstSlot: 30, LastSlot: 30, Count: 1,
+		},
 	})
 	fake := &controlFake{value: raw}
 	store := mustStoreWithSlots(t, fake, mappedSlotResolver{60: 90, 90: 180})
@@ -397,6 +401,91 @@ func TestCommitProgressRepairsStaleNextSlotFromCurrentSegmentFacts(t *testing.T)
 	loaded, err := store.LoadProgress(context.Background(), identity)
 	if err != nil || loaded.Progress == nil || loaded.Progress.NextSlot != 180 {
 		t.Fatalf("LoadProgress() = (%+v, %v), want next Slot 180", loaded, err)
+	}
+}
+
+func TestCommitProgressAcceptsTimelineProvenGridJumpForEveryNonFullCompletion(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		kind     execution.CompletionKind
+		reason   execution.ReasonCode
+		oldNext  execution.EvaluationTime
+		newFirst execution.EvaluationTime
+	}{
+		{name: "partial gap after reactivation", kind: execution.CompletionPartialGap,
+			reason: execution.ReasonCode(contract.ReasonHistoryWarming), oldNext: 90, newFirst: 180},
+		{name: "unavailable after reactivation", kind: execution.CompletionUnavailable,
+			reason: execution.ReasonCode(contract.ReasonQueryUnavailable), oldNext: 90, newFirst: 180},
+		{name: "gap skipped after reactivation", kind: execution.CompletionGapSkipped,
+			reason: execution.ReasonCode(contract.ReasonGapSkipped), oldNext: 90, newFirst: 180},
+		{name: "partial gap after ordinary cutover", kind: execution.CompletionPartialGap,
+			reason: execution.ReasonCode(contract.ReasonHistoryWarming), oldNext: 120, newFirst: 90},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			identity := execution.ProgressIdentity{QueryGroup: "q"}
+			current := execution.ScheduleProgress{
+				Identity: identity, NextSlot: test.oldNext, LastCompletionKind: test.kind,
+				CurrentOrRecentGap: &execution.ProgressGapSummary{
+					Kind: test.kind, ReasonCode: test.reason, FirstSlot: 60, LastSlot: 60, Count: 1,
+				},
+			}
+			fake := &controlFake{value: mustEncode(t, current)}
+			store := mustStoreWithSlots(t, fake, mappedSlotResolver{60: test.newFirst, test.newFirst: test.newFirst + 60})
+			request := progressRequestForKind(test.newFirst, test.kind, test.reason)
+
+			result, err := store.CommitProgress(context.Background(), request)
+			if err != nil || result.Status != execution.ProgressCommitted {
+				t.Fatalf("CommitProgress() = (%+v, %v), want timeline-proven grid jump", result, err)
+			}
+			loaded, err := store.LoadProgress(context.Background(), identity)
+			if err != nil || loaded.Progress == nil || loaded.Progress.NextSlot != test.newFirst+60 {
+				t.Fatalf("LoadProgress() = (%+v, %v)", loaded, err)
+			}
+		})
+	}
+}
+
+func TestCommitProgressRejectsJumpPastTimelineNextSlot(t *testing.T) {
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	current := execution.ScheduleProgress{
+		Identity: identity, NextSlot: 120, LastCompletionKind: execution.CompletionPartialGap,
+		CurrentOrRecentGap: &execution.ProgressGapSummary{
+			Kind: execution.CompletionPartialGap, ReasonCode: execution.ReasonCode(contract.ReasonHistoryWarming),
+			FirstSlot: 60, LastSlot: 60, Count: 1,
+		},
+	}
+	raw := mustEncode(t, current)
+	fake := &controlFake{value: raw}
+	store := mustStoreWithSlots(t, fake, mappedSlotResolver{60: 90, 180: 240})
+
+	result, err := store.CommitProgress(context.Background(), progressRequestForKind(
+		180, execution.CompletionPartialGap, execution.ReasonCode(contract.ReasonHistoryWarming)))
+	if err != nil || result.Status != execution.ProgressConflict {
+		t.Fatalf("CommitProgress(illegal jump) = (%+v, %v), want conflict", result, err)
+	}
+	if string(fake.value) != string(raw) {
+		t.Fatal("illegal old-Segment jump changed persisted Progress")
+	}
+}
+
+func progressRequestForKind(
+	slot execution.EvaluationTime,
+	kind execution.CompletionKind,
+	reason execution.ReasonCode,
+) execution.ProgressCommitRequest {
+	completion := execution.SlotCompletion{
+		Contract: progressContractAt(slot), Kind: kind, Result: observability.ResultDegraded, ReasonCode: reason,
+	}
+	if kind != execution.CompletionGapSkipped {
+		completion.Primary = &execution.PrimaryInputFact{Completeness: execution.CompletenessPartial, DataState: execution.DataStateData}
+		if kind == execution.CompletionUnavailable {
+			completion.Primary = &execution.PrimaryInputFact{Completeness: execution.CompletenessUnavailable, DataState: execution.DataStateUnknown}
+		}
+	}
+	return execution.ProgressCommitRequest{
+		Identity:         execution.ProgressIdentity{QueryGroup: "q"},
+		OwnerFence:       execution.OwnerFence{QueryGroup: "q", OwnerID: "w", OwnerEpoch: 1, LeaseToken: "l"},
+		ExpectedNextSlot: slot, Completion: completion,
 	}
 }
 

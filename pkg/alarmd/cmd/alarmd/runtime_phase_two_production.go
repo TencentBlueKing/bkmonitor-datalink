@@ -267,6 +267,7 @@ type productionInitialScheduleActivator interface {
 type productionCatalogRepository interface {
 	LoadActivation(context.Context) (controlplane.ActivationState, error)
 	LoadSnapshot(context.Context, execution.SnapshotRevision) (controlplane.PublishedSnapshot, error)
+	LoadPublishedSnapshot(context.Context, controlplane.SnapshotPublicationRef) (controlplane.PublishedSnapshot, error)
 }
 
 type productionScheduleProjection interface {
@@ -363,7 +364,22 @@ func (runtime *productionPhaseTwoControl) refresh(
 		ctx, runtime.dependencies.Source, runtime.dependencies.Planner,
 	)
 	if err != nil {
-		return nil, false, err
+		state, loadErr := runtime.dependencies.Repository.LoadActivation(ctx)
+		if errors.Is(loadErr, controlplane.ErrActivationUnavailable) {
+			return nil, false, err
+		}
+		if loadErr != nil {
+			return nil, false, errors.Join(err, loadErr)
+		}
+		queryGroups, loadErr := runtime.loadActiveQueryGroups(ctx, state)
+		if loadErr != nil {
+			return nil, false, errors.Join(err, loadErr)
+		}
+		runtime.dependencies.Observer.Observe(ctx, observability.Observation{
+			Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotUnavailable,
+			Result: observability.ResultDegraded, ReasonCode: observability.ReasonContractRetryable, Err: err,
+		})
+		return queryGroups, false, nil
 	}
 	if result.Status == controlplane.SourceRefreshPendingConfirmation {
 		state, err := runtime.dependencies.Repository.LoadActivation(ctx)
@@ -376,11 +392,18 @@ func (runtime *productionPhaseTwoControl) refresh(
 		queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
 		return queryGroups, false, err
 	}
-	if result.Status != controlplane.SourceRefreshPublished && result.Status != controlplane.SourceRefreshUnchanged {
+	if result.Status != controlplane.SourceRefreshPublished && result.Status != controlplane.SourceRefreshUnchanged &&
+		result.Status != controlplane.SourceRefreshPublicationConflict {
 		return nil, false, errors.New("phase-two source refresh returned an invalid status")
 	}
 	if result.Publication.SnapshotRevision == "" || result.Publication.PublicationEpoch == 0 {
 		return nil, false, errors.New("phase-two source refresh returned an incomplete publication")
+	}
+	if result.Status == controlplane.SourceRefreshPublicationConflict {
+		runtime.dependencies.Observer.Observe(ctx, observability.Observation{
+			Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotRefreshed,
+			Result: observability.ResultDegraded, ReasonCode: observability.ReasonContractRetryable,
+		})
 	}
 	state, err := runtime.dependencies.Activator.Ensure(ctx, result.Publication)
 	if err != nil {
@@ -397,12 +420,9 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 	if state.RecordRevision == 0 || state.Current.SnapshotRevision == "" || state.Current.PublicationEpoch == 0 {
 		return nil, errors.New("phase-two activation state is incomplete")
 	}
-	snapshot, err := runtime.dependencies.Repository.LoadSnapshot(ctx, state.Current.SnapshotRevision)
+	snapshot, err := runtime.dependencies.Repository.LoadPublishedSnapshot(ctx, state.Current)
 	if err != nil {
 		return nil, err
-	}
-	if snapshot.Publication != state.Current {
-		return nil, errors.New("phase-two active Snapshot publication differs from activation")
 	}
 	queryGroups := make([]execution.QueryGroupIdentity, len(snapshot.QueryGroups))
 	for index, queryGroup := range snapshot.QueryGroups {

@@ -121,16 +121,13 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		next.Current.SnapshotRevision == previous.Current.SnapshotRevision {
 		return errors.New("alarmd controlplane: publication activation must advance to one new current publication")
 	}
-	oldSnapshot, err := repository.LoadSnapshot(ctx, previous.Current.SnapshotRevision)
+	oldSnapshot, err := repository.LoadPublishedSnapshot(ctx, previous.Current)
 	if err != nil {
 		return err
 	}
-	newSnapshot, err := repository.LoadSnapshot(ctx, next.Current.SnapshotRevision)
+	newSnapshot, err := repository.LoadPublishedSnapshot(ctx, next.Current)
 	if err != nil {
 		return err
-	}
-	if oldSnapshot.Publication != previous.Current || newSnapshot.Publication != next.Current {
-		return errors.New("alarmd controlplane: publication activation Snapshot reference mismatch")
 	}
 	next.SchemaVersion = activationSchemaVersion
 
@@ -583,12 +580,11 @@ func (repository *RedisCatalogRepository) materializeSchedule(
 	if err := segment.Validate(); err != nil {
 		return execution.FrozenQueryGroupSchedule{}, err
 	}
-	snapshot, err := repository.LoadSnapshot(ctx, segment.Publication.SnapshotRevision)
+	publication := SnapshotPublicationRef{SnapshotRevision: segment.Publication.SnapshotRevision,
+		PublicationEpoch: uint64(segment.Publication.PublicationEpoch)}
+	snapshot, err := repository.LoadPublishedSnapshot(ctx, publication)
 	if err != nil {
 		return execution.FrozenQueryGroupSchedule{}, err
-	}
-	if execution.PublicationEpoch(snapshot.Publication.PublicationEpoch) != segment.Publication.PublicationEpoch {
-		return execution.FrozenQueryGroupSchedule{}, errors.New("alarmd controlplane: Schedule Segment publication epoch mismatch")
 	}
 	for _, group := range snapshot.QueryGroups {
 		if group.Identity != segment.QueryGroup {
@@ -1008,7 +1004,9 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 	if !equalDuePlanRefs(expectedDue, request.DuePlans) {
 		return execution.FrozenSlotContractFact{}, errors.New("alarmd controlplane: frozen Slot request differs from exact due Plan set")
 	}
-	snapshot, err := runtime.repository.LoadSnapshot(ctx, schedule.Segment.Publication.SnapshotRevision)
+	publication := SnapshotPublicationRef{SnapshotRevision: schedule.Segment.Publication.SnapshotRevision,
+		PublicationEpoch: uint64(schedule.Segment.Publication.PublicationEpoch)}
+	snapshot, err := runtime.repository.LoadPublishedSnapshot(ctx, publication)
 	if err != nil {
 		return execution.FrozenSlotContractFact{}, err
 	}

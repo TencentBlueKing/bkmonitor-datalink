@@ -432,8 +432,90 @@ func TestProductionPhaseTwoControlKeepsCurrentActivationWhileCandidateIsPending(
 	}
 }
 
+func TestProductionPhaseTwoControlKeepsHealthyQueryGroupsAcrossPublicationConflictAndRecovery(t *testing.T) {
+	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-current", PublicationEpoch: 2}
+	reconciler := &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{
+		{Status: controlplane.SourceRefreshPublicationConflict, Observation: "observation-stale", Publication: publication},
+		{Status: controlplane.SourceRefreshUnchanged, Observation: "observation-current", Publication: publication},
+	}}
+	repository := &fakeProductionCatalogRepository{activation: controlplane.ActivationState{
+		RecordRevision: 2, Current: publication,
+	}, snapshot: controlplane.PublishedSnapshot{Publication: publication,
+		QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-healthy"}}}}
+	activator := &fakeInitialScheduleActivator{state: repository.activation}
+	var observations []observability.Observation
+	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
+		Activator: activator, Repository: repository, Schedules: &fakeScheduleProjection{},
+		Progress: &fakeProductionProgressReader{}, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		}),
+		RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 2; index++ {
+		queryGroups, err := control.Refresh(context.Background())
+		if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
+			t.Fatalf("Refresh(%d)=(%v,%v)", index, queryGroups, err)
+		}
+	}
+	if activator.calls != 2 {
+		t.Fatalf("activation calls=%d, want 2", activator.calls)
+	}
+	if len(observations) != 1 || observations[0].Stage != observability.StageSnapshotRefreshed ||
+		observations[0].Result != observability.ResultDegraded ||
+		observations[0].ReasonCode != observability.ReasonContractRetryable {
+		t.Fatalf("publication conflict observations=%#v", observations)
+	}
+}
+
+func TestProductionPhaseTwoControlKeepsLastGoodAcrossFailedRefreshAndRecovery(t *testing.T) {
+	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-current", PublicationEpoch: 2}
+	reconciler := &fakeSourceReconciler{
+		results: []controlplane.SourceRefreshResult{
+			{},
+			{Status: controlplane.SourceRefreshUnchanged, Observation: "observation-current", Publication: publication},
+		},
+		errs: []error{controlplane.ErrSnapshotUnavailable, nil},
+	}
+	repository := &fakeProductionCatalogRepository{activation: controlplane.ActivationState{
+		RecordRevision: 2, Current: publication,
+	}, snapshot: controlplane.PublishedSnapshot{Publication: publication,
+		QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-healthy"}}}}
+	activator := &fakeInitialScheduleActivator{state: repository.activation}
+	var observations []observability.Observation
+	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
+		Activator: activator, Repository: repository, Schedules: &fakeScheduleProjection{},
+		Progress: &fakeProductionProgressReader{}, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		}),
+		RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 2; index++ {
+		queryGroups, err := control.Refresh(context.Background())
+		if err != nil || !reflect.DeepEqual(queryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
+			t.Fatalf("Refresh(%d)=(%v,%v)", index, queryGroups, err)
+		}
+	}
+	if activator.calls != 1 {
+		t.Fatalf("activation calls=%d, want 1 after recovery", activator.calls)
+	}
+	if len(observations) != 1 || observations[0].Stage != observability.StageSnapshotUnavailable ||
+		observations[0].Result != observability.ResultDegraded || observations[0].Err == nil ||
+		observations[0].ReasonCode != observability.ReasonContractRetryable {
+		t.Fatalf("failed refresh observations=%#v", observations)
+	}
+}
+
 type fakeSourceReconciler struct {
 	results []controlplane.SourceRefreshResult
+	errs    []error
 	calls   int
 }
 
@@ -446,14 +528,28 @@ func (reconciler *fakeSourceReconciler) Refresh(
 		return controlplane.SourceRefreshResult{}, errors.New("unexpected source refresh")
 	}
 	result := reconciler.results[reconciler.calls]
+	var err error
+	if reconciler.calls < len(reconciler.errs) {
+		err = reconciler.errs[reconciler.calls]
+	}
 	reconciler.calls++
-	return result, nil
+	return result, err
 }
 
 type fakeProductionCatalogRepository struct {
 	activation    controlplane.ActivationState
 	activationErr error
 	snapshot      controlplane.PublishedSnapshot
+}
+
+func (repository *fakeProductionCatalogRepository) LoadPublishedSnapshot(
+	_ context.Context,
+	publication controlplane.SnapshotPublicationRef,
+) (controlplane.PublishedSnapshot, error) {
+	if repository.snapshot.Publication != publication {
+		return controlplane.PublishedSnapshot{}, errors.New("unexpected Snapshot publication")
+	}
+	return repository.snapshot, nil
 }
 
 func (repository *fakeProductionCatalogRepository) LoadActivation(

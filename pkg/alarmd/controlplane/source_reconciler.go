@@ -21,6 +21,7 @@ const (
 	SourceRefreshPendingConfirmation SourceRefreshStatus = "PENDING_CONFIRMATION"
 	SourceRefreshPublished           SourceRefreshStatus = "PUBLISHED"
 	SourceRefreshUnchanged           SourceRefreshStatus = "UNCHANGED"
+	SourceRefreshPublicationConflict SourceRefreshStatus = "PUBLICATION_CONFLICT"
 )
 
 type SourceRefreshResult struct {
@@ -104,14 +105,7 @@ func (reconciler *SourceReconciler) Refresh(
 			return SourceRefreshResult{}, err
 		}
 		if currentKey == confirmationKey {
-			snapshot, _, err := reconciler.publisher.Publish(ctx, catalog)
-			if err != nil {
-				return SourceRefreshResult{}, err
-			}
-			if err := reconciler.clearPending(ctx); err != nil {
-				return SourceRefreshResult{}, err
-			}
-			return SourceRefreshResult{Status: SourceRefreshUnchanged, Observation: catalog.ObservationID, Publication: snapshot.Publication}, nil
+			return reconciler.publish(ctx, current, catalog, SourceRefreshUnchanged)
 		}
 	}
 
@@ -120,20 +114,44 @@ func (reconciler *SourceReconciler) Refresh(
 		return SourceRefreshResult{}, err
 	}
 	if err == nil && pending.ConfirmationKey == confirmationKey {
-		snapshot, _, err := reconciler.publisher.Publish(ctx, catalog)
-		if err != nil {
-			return SourceRefreshResult{}, err
-		}
-		if err := reconciler.clearPending(ctx); err != nil {
-			return SourceRefreshResult{}, err
-		}
-		return SourceRefreshResult{Status: SourceRefreshPublished, Observation: catalog.ObservationID, Publication: snapshot.Publication}, nil
+		return reconciler.publish(ctx, current, catalog, SourceRefreshPublished)
 	}
 	if err := reconciler.savePending(ctx, persistedSourceCandidate{SchemaVersion: sourceCandidateSchemaVersion,
 		ConfirmationKey: confirmationKey, ObservationID: catalog.ObservationID, SnapshotRevision: string(catalog.SnapshotRevision)}); err != nil {
 		return SourceRefreshResult{}, err
 	}
 	return SourceRefreshResult{Status: SourceRefreshPendingConfirmation, Observation: catalog.ObservationID}, nil
+}
+
+func (reconciler *SourceReconciler) publish(
+	ctx context.Context,
+	current *PublishedSnapshot,
+	catalog Catalog,
+	status SourceRefreshStatus,
+) (SourceRefreshResult, error) {
+	expected := SnapshotPublicationRef{}
+	if current != nil {
+		expected = current.Publication
+	}
+	snapshot, _, err := reconciler.publisher.PublishIfCurrent(ctx, expected, catalog)
+	if errors.Is(err, ErrPublicationConflict) {
+		winner, loadErr := reconciler.repository.LoadLatestPublication(ctx)
+		if loadErr != nil {
+			return SourceRefreshResult{}, loadErr
+		}
+		if clearErr := reconciler.clearPending(ctx); clearErr != nil {
+			return SourceRefreshResult{}, clearErr
+		}
+		return SourceRefreshResult{Status: SourceRefreshPublicationConflict,
+			Observation: catalog.ObservationID, Publication: winner}, nil
+	}
+	if err != nil {
+		return SourceRefreshResult{}, err
+	}
+	if err := reconciler.clearPending(ctx); err != nil {
+		return SourceRefreshResult{}, err
+	}
+	return SourceRefreshResult{Status: status, Observation: catalog.ObservationID, Publication: snapshot.Publication}, nil
 }
 
 func (reconciler *SourceReconciler) loadCurrent(ctx context.Context) (*PublishedSnapshot, *SourceAuditState, error) {
@@ -144,7 +162,7 @@ func (reconciler *SourceReconciler) loadCurrent(ctx context.Context) (*Published
 	if err != nil {
 		return nil, nil, err
 	}
-	snapshot, err := reconciler.repository.LoadSnapshot(ctx, publication.SnapshotRevision)
+	snapshot, err := reconciler.repository.LoadPublishedSnapshot(ctx, publication)
 	if err != nil {
 		return nil, nil, err
 	}

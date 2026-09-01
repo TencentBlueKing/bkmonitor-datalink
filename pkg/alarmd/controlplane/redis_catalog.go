@@ -24,6 +24,7 @@ var (
 	ErrCatalogObjectUnavailable = errors.New("alarmd controlplane: catalog object unavailable")
 	ErrActivationUnavailable    = errors.New("alarmd controlplane: activation unavailable")
 	ErrActivationConflict       = errors.New("alarmd controlplane: activation conflict")
+	ErrPublicationConflict      = errors.New("alarmd controlplane: publication conflict")
 )
 
 type SnapshotPublicationRef struct {
@@ -103,38 +104,73 @@ func (repository *RedisCatalogRepository) Ping(ctx context.Context) error {
 }
 
 const publishSnapshotScript = `
+local latest = redis.call('GET', KEYS[4])
+if ARGV[4] == '' then
+  if latest then return {-2, -2} end
+elseif not latest or latest ~= ARGV[4] then
+  return {-2, -2}
+end
 local snapshot = redis.call('GET', KEYS[3])
 if snapshot and snapshot ~= ARGV[1] then
   return {-1, -1}
-end
-local epoch = redis.call('GET', KEYS[2])
-local created = 0
-if not epoch then
-  epoch = redis.call('INCR', KEYS[1])
-  redis.call('PSETEX', KEYS[2], ARGV[2], tostring(epoch))
-  created = 1
-else
-  redis.call('PEXPIRE', KEYS[2], ARGV[2])
 end
 if snapshot then
   redis.call('PEXPIRE', KEYS[3], ARGV[2])
 else
   redis.call('PSETEX', KEYS[3], ARGV[2], ARGV[1])
 end
-local latest = redis.call('GET', KEYS[4])
-local latest_epoch = 0
+local latest_epoch = nil
+local latest_revision = nil
 if latest then
-  latest_epoch = tonumber(string.match(latest, '^(%d+)')) or 0
+  latest_epoch, latest_revision = string.match(latest, '^(%d+)\n(.+)$')
+  if not latest_epoch or not latest_revision then return {-3, -3} end
+  redis.call('HSET', KEYS[5], latest_epoch, latest_revision)
 end
-if tonumber(epoch) >= latest_epoch then
-  redis.call('PSETEX', KEYS[4], ARGV[2], tostring(epoch) .. '\n' .. ARGV[3])
+local previous_epoch = redis.call('GET', KEYS[2])
+if previous_epoch then
+  redis.call('HSET', KEYS[5], previous_epoch, ARGV[3])
 end
-return {tonumber(epoch), created}
+if latest then
+  if latest_revision == ARGV[3] then
+    redis.call('HSET', KEYS[5], latest_epoch, latest_revision)
+    redis.call('PSETEX', KEYS[2], ARGV[2], latest_epoch)
+    redis.call('PEXPIRE', KEYS[4], ARGV[2])
+    redis.call('PEXPIRE', KEYS[5], ARGV[2])
+    return {tonumber(latest_epoch), 0}
+  end
+end
+local epoch = redis.call('INCR', KEYS[1])
+redis.call('HSET', KEYS[5], tostring(epoch), ARGV[3])
+redis.call('PSETEX', KEYS[2], ARGV[2], tostring(epoch))
+redis.call('PSETEX', KEYS[4], ARGV[2], tostring(epoch) .. '\n' .. ARGV[3])
+redis.call('PEXPIRE', KEYS[5], ARGV[2])
+return {tonumber(epoch), 1}
 `
 
 func (repository *RedisCatalogRepository) PublishCatalog(ctx context.Context, catalog Catalog) (PublishedSnapshot, bool, error) {
+	expected, err := repository.LoadLatestPublication(ctx)
+	if errors.Is(err, ErrSnapshotUnavailable) {
+		expected = SnapshotPublicationRef{}
+	} else if err != nil {
+		return PublishedSnapshot{}, false, err
+	}
+	return repository.PublishCatalogIfCurrent(ctx, expected, catalog)
+}
+
+// PublishCatalogIfCurrent persists one publication occurrence only while the
+// caller's previously read latest publication remains current. Snapshot
+// content stays addressed by revision; an historical revision returning after
+// an intervening publication receives a new epoch.
+func (repository *RedisCatalogRepository) PublishCatalogIfCurrent(
+	ctx context.Context,
+	expected SnapshotPublicationRef,
+	catalog Catalog,
+) (PublishedSnapshot, bool, error) {
 	if repository == nil || repository.client == nil || catalog.SnapshotRevision == "" || catalog.QueryGroups == nil {
 		return PublishedSnapshot{}, false, errors.New("alarmd controlplane: incomplete catalog publication")
+	}
+	if expected != (SnapshotPublicationRef{}) && expected.validate() != nil {
+		return PublishedSnapshot{}, false, errors.New("alarmd controlplane: invalid expected publication")
 	}
 	revision, err := deriveSnapshotRevision(catalog.QueryGroups)
 	if err != nil {
@@ -152,10 +188,14 @@ func (repository *RedisCatalogRepository) PublishCatalog(ctx context.Context, ca
 	if err != nil {
 		return PublishedSnapshot{}, false, fmt.Errorf("alarmd controlplane: encode snapshot: %w", err)
 	}
+	expectedValue := ""
+	if expected != (SnapshotPublicationRef{}) {
+		expectedValue = publicationValue(expected)
+	}
 	result, err := repository.client.Eval(ctx, publishSnapshotScript, []string{
 		repository.epochCounterKey(), repository.epochForRevisionKey(catalog.SnapshotRevision),
-		repository.snapshotKey(catalog.SnapshotRevision), repository.latestPublicationKey(),
-	}, payload, repository.ttl.Milliseconds(), string(catalog.SnapshotRevision)).Slice()
+		repository.snapshotKey(catalog.SnapshotRevision), repository.latestPublicationKey(), repository.publicationsByEpochKey(),
+	}, payload, repository.ttl.Milliseconds(), string(catalog.SnapshotRevision), expectedValue).Slice()
 	if err != nil {
 		return PublishedSnapshot{}, false, fmt.Errorf("alarmd controlplane: publish snapshot: %w", err)
 	}
@@ -165,6 +205,9 @@ func (repository *RedisCatalogRepository) PublishCatalog(ctx context.Context, ca
 	epoch, err := redisInteger(result[0])
 	if epoch == -1 {
 		return PublishedSnapshot{}, false, errors.New("alarmd controlplane: snapshot revision collision")
+	}
+	if epoch == -2 {
+		return PublishedSnapshot{}, false, ErrPublicationConflict
 	}
 	if err != nil || epoch <= 0 {
 		return PublishedSnapshot{}, false, errors.New("alarmd controlplane: invalid publication epoch")
@@ -236,6 +279,35 @@ func (repository *RedisCatalogRepository) LoadSnapshot(ctx context.Context, revi
 	}
 	return PublishedSnapshot{SchemaVersion: content.SchemaVersion,
 		Publication: SnapshotPublicationRef{SnapshotRevision: revision, PublicationEpoch: epoch}, QueryGroups: content.QueryGroups}, nil
+}
+
+// LoadPublishedSnapshot resolves one exact publication occurrence without
+// falling forward to another epoch that reused the same Snapshot content.
+func (repository *RedisCatalogRepository) LoadPublishedSnapshot(
+	ctx context.Context,
+	publication SnapshotPublicationRef,
+) (PublishedSnapshot, error) {
+	if publication.validate() != nil {
+		return PublishedSnapshot{}, errors.New("alarmd controlplane: complete publication is required")
+	}
+	snapshot, err := repository.LoadSnapshot(ctx, publication.SnapshotRevision)
+	if err != nil {
+		return PublishedSnapshot{}, err
+	}
+	revision, err := repository.client.HGet(
+		ctx, repository.publicationsByEpochKey(), strconv.FormatUint(publication.PublicationEpoch, 10),
+	).Result()
+	if errors.Is(err, redis.Nil) {
+		if snapshot.Publication != publication {
+			return PublishedSnapshot{}, ErrSnapshotUnavailable
+		}
+	} else if err != nil {
+		return PublishedSnapshot{}, err
+	} else if revision != string(publication.SnapshotRevision) {
+		return PublishedSnapshot{}, errors.New("alarmd controlplane: publication occurrence differs from Snapshot revision")
+	}
+	snapshot.Publication = publication
+	return snapshot, nil
 }
 
 func (repository *RedisCatalogRepository) LoadLatestPublication(ctx context.Context) (SnapshotPublicationRef, error) {
@@ -452,6 +524,10 @@ func redisInteger(value interface{}) (int64, error) {
 	}
 }
 
+func publicationValue(reference SnapshotPublicationRef) string {
+	return fmt.Sprintf("%d\n%s", reference.PublicationEpoch, reference.SnapshotRevision)
+}
+
 func (repository *RedisCatalogRepository) epochCounterKey() string {
 	return repository.prefix + ":publication_epoch"
 }
@@ -463,6 +539,9 @@ func (repository *RedisCatalogRepository) snapshotKey(revision execution.Snapsho
 }
 func (repository *RedisCatalogRepository) latestPublicationKey() string {
 	return repository.prefix + ":latest_publication"
+}
+func (repository *RedisCatalogRepository) publicationsByEpochKey() string {
+	return repository.prefix + ":publications_by_epoch"
 }
 func (repository *RedisCatalogRepository) auditKey(observation string) string {
 	return repository.prefix + ":audit:" + observation
@@ -493,6 +572,31 @@ func (publisher *SnapshotPublisher) Publish(ctx context.Context, catalog Catalog
 		return PublishedSnapshot{}, false, errors.New("alarmd controlplane: incomplete snapshot publish request")
 	}
 	snapshot, created, err := publisher.repository.PublishCatalog(ctx, catalog)
+	return publisher.publishAudit(ctx, catalog, snapshot, created, err)
+}
+
+// PublishIfCurrent preserves the SourceReconciler's read-build-publish CAS.
+// A stale caller returns ErrPublicationConflict and cannot update either the
+// latest publication or its audit pointer.
+func (publisher *SnapshotPublisher) PublishIfCurrent(
+	ctx context.Context,
+	expected SnapshotPublicationRef,
+	catalog Catalog,
+) (PublishedSnapshot, bool, error) {
+	if publisher == nil || publisher.repository == nil || catalog.ObservationID == "" {
+		return PublishedSnapshot{}, false, errors.New("alarmd controlplane: incomplete snapshot publish request")
+	}
+	snapshot, created, err := publisher.repository.PublishCatalogIfCurrent(ctx, expected, catalog)
+	return publisher.publishAudit(ctx, catalog, snapshot, created, err)
+}
+
+func (publisher *SnapshotPublisher) publishAudit(
+	ctx context.Context,
+	catalog Catalog,
+	snapshot PublishedSnapshot,
+	created bool,
+	err error,
+) (PublishedSnapshot, bool, error) {
 	if err != nil {
 		return PublishedSnapshot{}, false, err
 	}

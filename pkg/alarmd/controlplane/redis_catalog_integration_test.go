@@ -66,12 +66,228 @@ func TestRedisCatalogRepositoryPublishesImmutableContentAddressedSnapshot(t *tes
 
 	newCatalog := validCatalog(t, 81)
 	newSnapshot, created, err := publisher.Publish(context.Background(), newCatalog)
-	if err != nil || !created || newSnapshot.Publication.PublicationEpoch <= first.Publication.PublicationEpoch {
+	if err != nil || !created || newSnapshot.Publication.PublicationEpoch != first.Publication.PublicationEpoch+1 {
 		t.Fatalf("new publish=(%#v, %t, %v), first=%#v", newSnapshot, created, err, first)
 	}
 	latest, err := repository.LoadLatestPublication(context.Background())
 	if err != nil || latest != newSnapshot.Publication {
 		t.Fatalf("latest=(%#v, %v), want %#v", latest, err, newSnapshot.Publication)
+	}
+}
+
+func TestRedisCatalogRepositoryRepublishesHistoricalSnapshotWithNewOccurrence(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:republish", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstCatalog := validCatalog(t, 80)
+	first, _, err := repository.PublishCatalog(ctx, firstCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := repository.PublishCatalog(ctx, validCatalog(t, 81))
+	if err != nil {
+		t.Fatal(err)
+	}
+	republished, created, err := repository.PublishCatalog(ctx, firstCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created || republished.Publication.SnapshotRevision != first.Publication.SnapshotRevision ||
+		republished.Publication.PublicationEpoch <= second.Publication.PublicationEpoch {
+		t.Fatalf("republished Snapshot=(%#v, %t), first=%#v second=%#v", republished, created, first, second)
+	}
+	latest, err := repository.LoadLatestPublication(ctx)
+	if err != nil || latest != republished.Publication {
+		t.Fatalf("latest publication=(%#v, %v), want %#v", latest, err, republished.Publication)
+	}
+	for _, publication := range []controlplane.SnapshotPublicationRef{first.Publication, republished.Publication} {
+		loaded, err := repository.LoadPublishedSnapshot(ctx, publication)
+		if err != nil || loaded.Publication != publication || !reflect.DeepEqual(loaded.QueryGroups, first.QueryGroups) {
+			t.Fatalf("loaded occurrence %v=(%#v, %v)", publication, loaded, err)
+		}
+	}
+}
+
+func TestRedisCatalogRepositoryRejectsStalePublicationExpectations(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		candidate func(*testing.T) controlplane.Catalog
+	}{
+		{name: "historical revision", candidate: func(t *testing.T) controlplane.Catalog { return validCatalog(t, 80) }},
+		{name: "new revision", candidate: func(t *testing.T) controlplane.Catalog { return validCatalog(t, 82) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := newControlplaneRedis(t)
+			ctx := context.Background()
+			repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:stale:"+strings.ReplaceAll(test.name, " ", "-"), time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first, _, err := repository.PublishCatalog(ctx, validCatalog(t, 80))
+			if err != nil {
+				t.Fatal(err)
+			}
+			winner, _, err := repository.PublishCatalog(ctx, validCatalog(t, 81))
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidate := test.candidate(t)
+			if _, _, err := repository.PublishCatalogIfCurrent(ctx, first.Publication, candidate); !errors.Is(err, controlplane.ErrPublicationConflict) {
+				t.Fatalf("stale publish error=%v", err)
+			}
+			latest, err := repository.LoadLatestPublication(ctx)
+			if err != nil || latest != winner.Publication {
+				t.Fatalf("latest after stale publish=(%#v, %v), want %#v", latest, err, winner.Publication)
+			}
+			if candidate.SnapshotRevision != first.Publication.SnapshotRevision {
+				if _, err := repository.LoadSnapshot(ctx, candidate.SnapshotRevision); !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+					t.Fatalf("stale new candidate was persisted: %v", err)
+				}
+			}
+			next, _, err := repository.PublishCatalog(ctx, validCatalog(t, 83))
+			if err != nil || next.Publication.PublicationEpoch != winner.Publication.PublicationEpoch+1 {
+				t.Fatalf("next publication=(%#v, %v), winner=%#v", next, err, winner)
+			}
+		})
+	}
+}
+
+func TestSnapshotPublisherDoesNotPublishAuditForStaleCandidate(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:publisher-stale", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher, err := controlplane.NewSnapshotPublisher(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstCatalog := validCatalog(t, 80)
+	first, _, err := publisher.Publish(ctx, firstCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	winnerCatalog := validCatalog(t, 81)
+	winner, _, err := publisher.Publish(ctx, winnerCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := validCatalog(t, 82)
+	if _, _, err := publisher.PublishIfCurrent(ctx, first.Publication, stale); !errors.Is(err, controlplane.ErrPublicationConflict) {
+		t.Fatalf("stale Publisher error=%v", err)
+	}
+	audit, err := repository.LoadLatestAudit(ctx)
+	if err != nil || audit.Publication != winner.Publication || audit.ObservationID != winnerCatalog.ObservationID {
+		t.Fatalf("latest audit=(%#v, %v), winner=%#v", audit, err, winner)
+	}
+}
+
+func TestSourceReconcilerReturnsPublicationConflictWinner(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	document := realThresholdDocuments(t)[0]
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", `[1001]`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", string(document), 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	source := newRedisStrategySource(t, client)
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:source-stale", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, stateSemantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planner := &recordingPlanner{facts: queryFacts(t)}
+	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("initial pending=(%#v, %v)", result, err)
+	}
+	initial, err := reconciler.Refresh(ctx, source, planner)
+	if err != nil || initial.Status != controlplane.SourceRefreshPublished {
+		t.Fatalf("initial publication=(%#v, %v)", initial, err)
+	}
+	changed := strings.Replace(string(document), `"threshold":80`, `"threshold":82`, 1)
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", changed, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("changed pending=(%#v, %v)", result, err)
+	}
+	winnerCatalog := validCatalog(t, 81)
+	var winner controlplane.PublishedSnapshot
+	winnerPlanner := queryPlannerFunc(func(ctx context.Context, source controlplane.PrimaryQuerySource) (execution.QueryPlanFacts, error) {
+		if winner.Publication == (controlplane.SnapshotPublicationRef{}) {
+			var publishErr error
+			winner, _, publishErr = repository.PublishCatalog(ctx, winnerCatalog)
+			if publishErr != nil {
+				return execution.QueryPlanFacts{}, publishErr
+			}
+		}
+		return queryFacts(t), nil
+	})
+	result, err := reconciler.Refresh(ctx, source, winnerPlanner)
+	if err != nil || result.Status != controlplane.SourceRefreshPublicationConflict || result.Publication != winner.Publication {
+		t.Fatalf("publication conflict=(%#v, %v), winner=%#v", result, err, winner)
+	}
+}
+
+func TestSourceReconcilerPublishesNewOccurrenceWhenHistoricalContentReturns(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	document := realThresholdDocuments(t)[0]
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", `[1001]`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", string(document), 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	source := newRedisStrategySource(t, client)
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:source-a-b-a", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, stateSemantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planner := &recordingPlanner{facts: queryFacts(t)}
+	publish := func(wantPending bool) controlplane.SourceRefreshResult {
+		t.Helper()
+		if wantPending {
+			pending, err := reconciler.Refresh(ctx, source, planner)
+			if err != nil || pending.Status != controlplane.SourceRefreshPendingConfirmation {
+				t.Fatalf("pending refresh=(%#v,%v)", pending, err)
+			}
+		}
+		result, err := reconciler.Refresh(ctx, source, planner)
+		if err != nil || result.Status != controlplane.SourceRefreshPublished {
+			t.Fatalf("published refresh=(%#v,%v)", result, err)
+		}
+		return result
+	}
+	first := publish(true)
+	changed := strings.Replace(string(document), `"threshold":80`, `"threshold":81`, 1)
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", changed, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	second := publish(true)
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", string(document), 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	republished := publish(true)
+	if republished.Publication.SnapshotRevision != first.Publication.SnapshotRevision ||
+		republished.Publication.PublicationEpoch <= second.Publication.PublicationEpoch {
+		t.Fatalf("Source A-B-A publications=%#v/%#v/%#v", first.Publication, second.Publication, republished.Publication)
 	}
 }
 
@@ -954,6 +1170,153 @@ func TestScheduleActivationReconcilerPersistsOnePublicationBoundaryAndExactHalfO
 	}
 	if oldSchedule.Segment.Contains(90) || oldSchedule.Segment.Contains(120) || newSchedule.Segment.Contains(83) {
 		t.Fatalf("Segment ownership overlaps: old=%#v new=%#v", oldSchedule.Segment, newSchedule.Segment)
+	}
+}
+
+func TestScheduleActivationReconcilerCutsBackToHistoricalSnapshotOnNewOccurrence(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:publication-a-b-a", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	clock := []time.Time{time.Unix(60, 0), time.Unix(120, 0), time.Unix(180, 0)}
+	clockCalls := 0
+	reconciler, err := controlplane.NewScheduleActivationReconciler(repository, compiler, stateSemantics, func() time.Time {
+		at := clock[clockCalls]
+		clockCalls++
+		return at
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstCatalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
+	first, _, err := repository.PublishCatalog(ctx, firstCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Ensure(ctx, first.Publication); err != nil {
+		t.Fatal(err)
+	}
+	secondCatalog := catalogWithSchedule(t, validCatalog(t, 81), 60, 0)
+	second, _, err := repository.PublishCatalog(ctx, secondCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Ensure(ctx, second.Publication); err != nil {
+		t.Fatal(err)
+	}
+	republished, _, err := repository.PublishCatalog(ctx, firstCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := reconciler.Ensure(ctx, republished.Publication)
+	if err != nil || state.Current != republished.Publication || state.RecordRevision != 3 || clockCalls != 3 {
+		t.Fatalf("A-B-A activation=(%#v, %v), clock calls=%d", state, err, clockCalls)
+	}
+	if len(state.Plans) != 1 || state.Plans[0].Fact.Selected.StateApplyEpoch != execution.StateApplyEpoch(republished.Publication.PublicationEpoch) {
+		t.Fatalf("A-B-A Plan activation=%#v", state.Plans)
+	}
+	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, stateSemantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryGroup := firstCatalog.QueryGroups[0].Identity
+	for _, want := range []struct {
+		at          execution.EvaluationTime
+		publication controlplane.SnapshotPublicationRef
+	}{
+		{at: 60, publication: first.Publication},
+		{at: 120, publication: second.Publication},
+		{at: 180, publication: republished.Publication},
+	} {
+		schedule, err := runtime.ReadFrozenSchedule(ctx, queryGroup, want.at)
+		if err != nil || schedule.Segment.Publication.SnapshotRevision != want.publication.SnapshotRevision ||
+			schedule.Segment.Publication.PublicationEpoch != execution.PublicationEpoch(want.publication.PublicationEpoch) {
+			t.Fatalf("Schedule at %d=(%#v, %v), want publication %#v", want.at, schedule, err, want.publication)
+		}
+	}
+	firstSchedule, err := runtime.ReadFrozenSchedule(ctx, queryGroup, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fact, err := runtime.FreezeSlotContract(ctx, execution.FreezeSlotContractRequest{
+		QueryGroup: queryGroup, ScheduleRevision: firstSchedule.Segment.ScheduleRevision,
+		ScheduleSegmentStart: firstSchedule.Segment.Start, EvaluationTime: 60,
+		DuePlans: firstSchedule.DuePlanRefs(60),
+	})
+	if err != nil || fact.Contract.SnapshotRevision != first.Publication.SnapshotRevision {
+		t.Fatalf("historical occurrence replay=(%#v, %v)", fact, err)
+	}
+}
+
+func TestScheduleActivationReconcilerReturnsWinnerForStalePublicationWithoutClock(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:stale-activation", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	clockCalls := 0
+	reconciler, err := controlplane.NewScheduleActivationReconciler(repository, compiler, stateSemantics, func() time.Time {
+		clockCalls++
+		return time.Unix(int64(clockCalls*60), 0)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := repository.PublishCatalog(ctx, validCatalog(t, 80))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Ensure(ctx, first.Publication); err != nil {
+		t.Fatal(err)
+	}
+	winner, _, err := repository.PublishCatalog(ctx, validCatalog(t, 81))
+	if err != nil {
+		t.Fatal(err)
+	}
+	winnerState, err := reconciler.Ensure(ctx, winner.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := clockCalls
+	staleState, err := reconciler.Ensure(ctx, first.Publication)
+	if err != nil || !reflect.DeepEqual(staleState, winnerState) || clockCalls != before {
+		t.Fatalf("stale activation=(%#v, %v), winner=%#v clock=%d/%d", staleState, err, winnerState, clockCalls, before)
+	}
+}
+
+func TestScheduleActivationReconcilerRejectsEqualEpochDifferentRevision(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:publication-collision", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	clockCalls := 0
+	reconciler, err := controlplane.NewScheduleActivationReconciler(repository, compiler, stateSemantics, func() time.Time {
+		clockCalls++
+		return time.Unix(60, 0)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := repository.PublishCatalog(ctx, validCatalog(t, 80))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Ensure(ctx, current.Publication); err != nil {
+		t.Fatal(err)
+	}
+	forged := controlplane.SnapshotPublicationRef{SnapshotRevision: validCatalog(t, 81).SnapshotRevision,
+		PublicationEpoch: current.Publication.PublicationEpoch}
+	before := clockCalls
+	if _, err := reconciler.Ensure(ctx, forged); err == nil || clockCalls != before {
+		t.Fatalf("equal-epoch collision error=%v clock=%d/%d", err, clockCalls, before)
 	}
 }
 

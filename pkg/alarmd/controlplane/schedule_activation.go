@@ -79,21 +79,21 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	if previous.Current == publication {
 		return previous, nil
 	}
-	if publication.PublicationEpoch <= previous.Current.PublicationEpoch {
-		return ActivationState{}, errors.New("alarmd controlplane: Schedule activation publication must advance")
+	if publication.PublicationEpoch < previous.Current.PublicationEpoch {
+		return previous, nil
 	}
-	snapshot, err := reconciler.repository.LoadSnapshot(ctx, publication.SnapshotRevision)
+	if publication.PublicationEpoch == previous.Current.PublicationEpoch {
+		return ActivationState{}, errors.New("alarmd controlplane: Schedule activation publication epoch collision")
+	}
+	snapshot, err := reconciler.repository.LoadPublishedSnapshot(ctx, publication)
 	if err != nil {
 		return ActivationState{}, err
-	}
-	if snapshot.Publication != publication {
-		return ActivationState{}, errors.New("alarmd controlplane: Schedule activation requires the confirmed publication")
 	}
 	boundary := execution.EvaluationTime(reconciler.now().Unix())
 	if boundary <= 0 {
 		return ActivationState{}, errors.New("alarmd controlplane: Schedule activation clock must produce a positive Unix second")
 	}
-	oldSnapshot, err := reconciler.repository.LoadSnapshot(ctx, previous.Current.SnapshotRevision)
+	oldSnapshot, err := reconciler.repository.LoadPublishedSnapshot(ctx, previous.Current)
 	if err != nil {
 		return ActivationState{}, err
 	}

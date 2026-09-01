@@ -49,11 +49,11 @@ func (activator *InitialScheduleActivator) Ensure(
 		return ActivationState{}, err
 	}
 
-	snapshot, err := activator.repository.LoadSnapshot(ctx, publication.SnapshotRevision)
+	snapshot, err := activator.repository.LoadPublishedSnapshot(ctx, publication)
 	if err != nil {
 		return ActivationState{}, err
 	}
-	if snapshot.Publication != publication || len(snapshot.QueryGroups) == 0 {
+	if len(snapshot.QueryGroups) == 0 {
 		return ActivationState{}, errors.New("alarmd controlplane: initial activation requires a confirmed non-empty Query Group publication")
 	}
 	boundary := execution.EvaluationTime(activator.now().Unix())

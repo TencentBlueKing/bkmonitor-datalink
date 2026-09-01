@@ -84,7 +84,7 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 	if err := request.Validate(); err != nil {
 		return execution.ProgressCommitResult{}, err
 	}
-	if err := validateG2Completion(request.Completion); err != nil {
+	if err := validateEnabledCompletion(request.Completion); err != nil {
 		return execution.ProgressCommitResult{}, err
 	}
 	name, err := store.namespace(request.Identity)
@@ -155,19 +155,18 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 	}
 }
 
-func validateG2Completion(completion execution.SlotCompletion) error {
+func validateEnabledCompletion(completion execution.SlotCompletion) error {
 	switch completion.Kind {
 	case execution.CompletionFull, execution.CompletionFullEmpty,
 		execution.CompletionPartialGap, execution.CompletionUnavailable,
-		execution.CompletionGapSkipped:
+		execution.CompletionTerminal, execution.CompletionGapSkipped:
 		// ProgressCommitRequest.Validate has already checked the complete result,
-		// PRIMARY and reason contract. G2 must persist business PARTIAL and
-		// UNAVAILABLE completions so one Query Group cannot stop the Worker.
+		// PRIMARY and reason contract. Persist every completion enabled through
+		// G3b so one local deterministic terminal cannot stop the Worker.
 		return nil
 	default:
-		// TERMINAL and SNAPSHOT_UNAVAILABLE remain closed until their later Gate;
-		// accepting contract-valid PARTIAL/UNAVAILABLE does not enable G3 recovery.
-		return fmt.Errorf("progress: G2 store does not accept completion kind %q", completion.Kind)
+		// SNAPSHOT_UNAVAILABLE remains closed until its later Gate.
+		return fmt.Errorf("progress: store does not accept completion kind %q in the current Gate", completion.Kind)
 	}
 }
 
@@ -176,7 +175,7 @@ func shouldFoldRecentGap(
 	completion execution.SlotCompletion,
 ) bool {
 	switch completion.Kind {
-	case execution.CompletionPartialGap, execution.CompletionGapSkipped:
+	case execution.CompletionPartialGap, execution.CompletionTerminal, execution.CompletionGapSkipped:
 		return true
 	case execution.CompletionUnavailable:
 		// A FULL+DATA result can remain guarded by an earlier query-free

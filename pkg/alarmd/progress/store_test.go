@@ -249,11 +249,7 @@ func TestCommitProgressAdvancesContractValidUnavailableInG2(t *testing.T) {
 	}
 }
 
-func TestCommitProgressKeepsLaterGateCompletionsClosedInG2(t *testing.T) {
-	fullData := &execution.PrimaryInputFact{
-		Completeness: execution.CompletenessFull,
-		DataState:    execution.DataStateData,
-	}
+func TestCommitProgressKeepsSnapshotUnavailableClosedBeforeItsGate(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		kind       execution.CompletionKind
@@ -264,10 +260,6 @@ func TestCommitProgressKeepsLaterGateCompletionsClosedInG2(t *testing.T) {
 		{
 			name: "snapshot unavailable", kind: execution.CompletionSnapshotUnavailable,
 			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
-		},
-		{
-			name: "terminal", kind: execution.CompletionTerminal, primary: fullData,
-			result: observability.ResultTerminal, reasonCode: execution.ReasonCode(contract.ReasonRecordInvalid),
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -295,6 +287,79 @@ func TestCommitProgressKeepsLaterGateCompletionsClosedInG2(t *testing.T) {
 				t.Fatalf("CommitProgress(%s) persisted rejected Progress", test.name)
 			}
 		})
+	}
+}
+
+func TestCommitProgressPersistsTerminalAndRestoresContinuousCursor(t *testing.T) {
+	fake := &controlFake{missing: true}
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	fence := execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"}
+
+	store := mustStore(t, fake)
+	result, err := store.CommitProgress(context.Background(), execution.ProgressCommitRequest{
+		Identity: identity, OwnerFence: fence, ExpectedNextSlot: 60,
+		Completion: execution.SlotCompletion{
+			Contract: progressContractAt(60), Kind: execution.CompletionFull,
+			Primary: &execution.PrimaryInputFact{
+				Completeness: execution.CompletenessFull,
+				DataState:    execution.DataStateData,
+			},
+			Result: observability.ResultSuccess,
+		},
+	})
+	if err != nil || result.Status != execution.ProgressCommitted {
+		t.Fatalf("CommitProgress(full) = (%+v, %v)", result, err)
+	}
+
+	result, err = store.CommitProgress(context.Background(), execution.ProgressCommitRequest{
+		Identity: identity, OwnerFence: fence, ExpectedNextSlot: 120,
+		Completion: execution.SlotCompletion{
+			Contract: progressContractAt(120), Kind: execution.CompletionTerminal,
+			Primary: &execution.PrimaryInputFact{
+				Completeness: execution.CompletenessPartial,
+				DataState:    execution.DataStateData,
+			},
+			Result:     observability.ResultTerminal,
+			ReasonCode: execution.ReasonCode(contract.ReasonRecordInvalid),
+		},
+	})
+	if err != nil || result.Status != execution.ProgressCommitted {
+		t.Fatalf("CommitProgress(terminal) = (%+v, %v)", result, err)
+	}
+
+	// Re-open over the persisted value to prove the terminal Slot remains a
+	// bounded completion cursor instead of being replayed after restart.
+	restarted := mustStore(t, fake)
+	result, err = restarted.CommitProgress(context.Background(), execution.ProgressCommitRequest{
+		Identity: identity, OwnerFence: fence, ExpectedNextSlot: 180,
+		Completion: execution.SlotCompletion{
+			Contract: progressContractAt(180), Kind: execution.CompletionTerminal,
+			Primary: &execution.PrimaryInputFact{
+				Completeness: execution.CompletenessPartial,
+				DataState:    execution.DataStateData,
+			},
+			Result:     observability.ResultTerminal,
+			ReasonCode: execution.ReasonCode(contract.ReasonRecordInvalid),
+		},
+	})
+	if err != nil || result.Status != execution.ProgressCommitted {
+		t.Fatalf("CommitProgress(terminal after restart) = (%+v, %v)", result, err)
+	}
+
+	loaded, err := restarted.LoadProgress(context.Background(), identity)
+	if err != nil || loaded.Progress == nil {
+		t.Fatalf("LoadProgress() = (%+v, %v)", loaded, err)
+	}
+	progress := *loaded.Progress
+	if progress.NextSlot != 240 || progress.LastFullSlot != 60 ||
+		progress.LastCompletionKind != execution.CompletionTerminal {
+		t.Fatalf("terminal Progress = %+v", progress)
+	}
+	gap := progress.CurrentOrRecentGap
+	if gap == nil || gap.Kind != execution.CompletionTerminal ||
+		gap.ReasonCode != execution.ReasonCode(contract.ReasonRecordInvalid) ||
+		gap.FirstSlot != 120 || gap.LastSlot != 180 || gap.Count != 2 || gap.NextProbeAt != nil {
+		t.Fatalf("terminal summary = %+v", gap)
 	}
 }
 

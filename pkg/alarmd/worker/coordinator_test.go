@@ -696,7 +696,6 @@ func TestSlotExecutionCoordinatorFailsClosedBeforeLaterSideEffects(t *testing.T)
 		{stage: "admission_initial", want: fullTrace[:6]},
 		{stage: "admission_event", want: fullTrace[:7]},
 		{stage: "state_admission", want: fullTrace[:8]},
-		{stage: "event_ack", want: fullTrace[:9]},
 		{stage: "state_apply", want: fullTrace[:10]},
 		{stage: "gap_after", want: fullTrace[:11]},
 		{stage: "admission_progress", want: fullTrace[:12]},
@@ -715,18 +714,27 @@ func TestSlotExecutionCoordinatorFailsClosedBeforeLaterSideEffects(t *testing.T)
 				if last.Result != observability.ResultFailed || last.Operation != observability.OperationNormal {
 					t.Fatalf("last observation=%+v", last)
 				}
-				if test.stage == "event_ack" {
-					if last.Stage != observability.StageEventACKed ||
-						last.ReasonCode != execution.ReasonCode(contract.ReasonOutputACKUnknown) {
-						t.Fatalf("event ACK observation=%+v", last)
-					}
-					if fixture.ports.stateApplyCalls != 0 || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
-						t.Fatalf("unknown event ACK advanced state/progress: state=%d progress=%+v",
-							fixture.ports.stateApplyCalls, fixture.ports.lastProgress)
-					}
-				}
 			}
 		})
+	}
+}
+
+func TestSlotExecutionCoordinatorKeepsEventACKUnknownRetryable(t *testing.T) {
+	fixture := newFixture(t, true, "event_ack")
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonOutputACKUnknown) {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	assertTrace(t, fixture.trace, fullTrace[:9])
+	last := (*fixture.observations)[len(*fixture.observations)-1]
+	if last.Stage != observability.StageEventACKed || last.Result != observability.ResultFailed ||
+		last.ReasonCode != execution.ReasonCode(contract.ReasonOutputACKUnknown) {
+		t.Fatalf("event ACK observation=%+v", last)
+	}
+	if fixture.ports.stateApplyCalls != 0 || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+		t.Fatalf("unknown event ACK advanced state/progress: state=%d progress=%+v",
+			fixture.ports.stateApplyCalls, fixture.ports.lastProgress)
 	}
 }
 

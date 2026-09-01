@@ -657,7 +657,13 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			}
 			sortTriggerEvents(events)
 			if err := coordinator.writeEvents(ctx, request.Operation, events); err != nil {
-				return execution.SlotExecutionResult{}, err
+				if retryPendingReason == "" {
+					retryPendingReason = execution.ReasonCode(contract.ReasonOutputACKUnknown)
+				}
+				// Event acknowledgement is Plan-local. Keep the Slot retryable and
+				// continue healthy sibling Plans, but do not apply this Plan's State
+				// or advance Progress until the stable event identity is replayed.
+				continue
 			}
 			if len(accepted) > 0 {
 				rejectedApply, err := coordinator.applyState(ctx, request.Operation, request.Contract, accepted)
@@ -882,6 +888,7 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 	if len(events) == 0 {
 		return nil
 	}
+	ctx = observability.ContextWithTraceFields(ctx, observability.TraceFields{StrategyID: events[0].PlanRef.StrategyID})
 	started := time.Now()
 	err := coordinator.ports.Events.WriteBatch(ctx, events)
 	reason := execution.ReasonCode(observability.ReasonNone)

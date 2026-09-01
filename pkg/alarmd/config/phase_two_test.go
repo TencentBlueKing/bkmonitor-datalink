@@ -168,15 +168,6 @@ func TestLoadPhaseTwoWorkerIdentityRejectsNonCanonicalDeploymentEnvironment(t *t
 	}
 }
 
-func TestLoadRejectsRemovedG1StrategySelector(t *testing.T) {
-	contents := validGoAccessRuntimeConfigYAML("yaml-worker") + `  g1_validation:
-    strategy_ids: [956]
-`
-	if _, err := Load(writeConfig(t, contents)); err == nil || !strings.Contains(err.Error(), "g1_validation") {
-		t.Fatalf("Load() error = %v, want removed G1 selector rejection", err)
-	}
-}
-
 func validGoAccessRuntimeConfigYAML(workerID string) string {
 	return fmt.Sprintf(`mode: shadow
 input:

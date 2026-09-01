@@ -49,6 +49,28 @@ func TestPhaseTwoMetricsStayInsideSeriesBudget(t *testing.T) {
 	}
 }
 
+func TestPhaseTwoOwnershipMetricsStayLowCardinality(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	recorder.SetOwnedQueryGroups(7)
+	if got := testutil.ToFloat64(recorder.phaseTwo.ownedQueryGroups.WithLabelValues("complete")); got != 7 {
+		t.Fatalf("owned query groups = %v, want 7", got)
+	}
+
+	recorder.Observe(context.Background(), observability.Observation{
+		Component:  observability.ComponentOwnership,
+		Stage:      observability.StageAssignmentAcquired,
+		Result:     observability.ResultSuccess,
+		ReasonCode: observability.ReasonNone,
+		Trace: observability.TraceFields{
+			QueryGroupKey: "high-cardinality-qg",
+			OwnerID:       "high-cardinality-worker",
+		},
+	})
+	if got := testutil.ToFloat64(recorder.phaseTwo.ownershipTransitions.WithLabelValues("success", "none")); got != 1 {
+		t.Fatalf("successful ownership transitions = %v, want 1", got)
+	}
+}
+
 func TestCapacityMetricRequiresExplicitBoundedBudget(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
 	recorder.Observe(context.Background(), observability.Observation{

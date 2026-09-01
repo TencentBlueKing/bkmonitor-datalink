@@ -58,11 +58,45 @@ func TestPhaseTwoComponentValuesMatchFrozenObservabilityContract(t *testing.T) {
 	for _, pair := range []ComponentStage{
 		{ComponentControlPlane, StageSnapshotRefreshed},
 		{ComponentOwnership, StageAssignmentAcquired},
+		{ComponentOwnership, StageTakeoverStarted},
+		{ComponentOwnership, StageTakeoverCompleted},
 		{ComponentScheduler, StageSlotCompleted},
 	} {
 		component, stage := NormalizeComponentStage(pair.Component, pair.Stage)
 		if component != pair.Component || stage != pair.Stage {
 			t.Fatalf("component/stage normalized to %q/%q, want %q/%q", component, stage, pair.Component, pair.Stage)
+		}
+	}
+}
+
+func TestOwnershipLifecycleLogCarriesExactOperationalIdentity(t *testing.T) {
+	var output bytes.Buffer
+	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+		Component: ComponentOwnership,
+		Stage:     StageTakeoverCompleted,
+		Result:    ResultSuccess,
+		Trace: TraceFields{
+			QueryGroupKey: "qg-exact-identity",
+			OwnerID:       "worker-exact-identity",
+			OwnerEpoch:    7,
+		},
+	})
+	for _, field := range []string{
+		`"stage":"takeover_completed"`,
+		`"query_group_key":"qg-exact-identity"`,
+		`"owner_id":"worker-exact-identity"`,
+		`"owner_epoch":7`,
+	} {
+		if !strings.Contains(output.String(), field) {
+			t.Fatalf("ownership lifecycle log missing %s: %s", field, output.String())
 		}
 	}
 }

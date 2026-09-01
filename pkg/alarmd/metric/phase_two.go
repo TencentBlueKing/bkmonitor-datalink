@@ -14,10 +14,12 @@ import (
 )
 
 type phaseTwoMetrics struct {
-	work         *prometheus.CounterVec
-	busy         *prometheus.CounterVec
-	lastProgress *prometheus.GaugeVec
-	capacity     *prometheus.CounterVec
+	work                 *prometheus.CounterVec
+	busy                 *prometheus.CounterVec
+	lastProgress         *prometheus.GaugeVec
+	capacity             *prometheus.CounterVec
+	ownedQueryGroups     *prometheus.GaugeVec
+	ownershipTransitions *prometheus.CounterVec
 }
 
 var phaseTwoBusyStages = []string{"query", "evaluation", "event", "state", "progress", "other"}
@@ -49,14 +51,30 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "capacity_transition_total",
 			Help: "Process-wide phase-two capacity admission outcomes by fixed budget kind.",
 		}, []string{"budget", "result"}),
+		ownedQueryGroups: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "worker_owned_query_groups",
+			Help: "Query groups currently owned by this complete worker role.",
+		}, []string{"worker_role"}),
+		ownershipTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "ownership_transition_total",
+			Help: "Ownership lifecycle transitions by bounded result and reason class.",
+		}, []string{"result", "reason_class"}),
 	}
 }
 
 func (m phaseTwoMetrics) collectors() []prometheus.Collector {
-	return []prometheus.Collector{m.work, m.busy, m.lastProgress, m.capacity}
+	return []prometheus.Collector{
+		m.work, m.busy, m.lastProgress, m.capacity, m.ownedQueryGroups, m.ownershipTransitions,
+	}
 }
 
 func (m phaseTwoMetrics) observe(observation observability.Observation) {
+	if observation.Component == observability.ComponentOwnership && isOwnershipTransitionStage(observation.Stage) {
+		reasonClass := observability.NormalizeMetricReason(
+			observability.ComponentOwnership, observation.ReasonCode, observation.Result,
+		)
+		m.ownershipTransitions.WithLabelValues(string(observation.Result), string(reasonClass)).Inc()
+	}
 	if observation.Component == observability.ComponentResource && observation.CapacityBudget != "" {
 		result := "other"
 		if observation.Result == observability.ResultPaused || observation.Result == observability.ResultFailed {
@@ -82,6 +100,26 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 	}
 	if kind := phaseTwoProgressKind(observation.Stage); kind != "" && observation.Result == observability.ResultSuccess {
 		m.lastProgress.WithLabelValues(kind).Set(float64(time.Now().Unix()))
+	}
+}
+
+func (r *Recorder) SetOwnedQueryGroups(count int) {
+	if r == nil || r.phaseTwo.ownedQueryGroups == nil {
+		return
+	}
+	if count < 0 {
+		count = 0
+	}
+	r.phaseTwo.ownedQueryGroups.WithLabelValues("complete").Set(float64(count))
+}
+
+func isOwnershipTransitionStage(stage observability.Stage) bool {
+	switch stage {
+	case observability.StageAssignmentAcquired, observability.StageAssignmentLost,
+		observability.StageTakeoverStarted, observability.StageTakeoverCompleted:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -160,5 +198,6 @@ func normalizePhaseTwoBudget(budget observability.CapacityBudget) string {
 
 func phaseTwoCustomSeries() int {
 	return len(phaseTwoWorkKinds) + len(phaseTwoBusyStages) + len(phaseTwoProgressKinds) +
-		len(phaseTwoBudgets)*len(phaseTwoCapacityResults)
+		len(phaseTwoBudgets)*len(phaseTwoCapacityResults) + 1 +
+		len(observability.AllResults())*len(observability.AllMetricReasons())
 }

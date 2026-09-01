@@ -49,6 +49,8 @@ const (
 	StageSnapshotUnavailable  = "snapshot_unavailable"
 	StageAssignmentAcquired   = "assignment_acquired"
 	StageAssignmentLost       = "assignment_lost"
+	StageTakeoverStarted      = "takeover_started"
+	StageTakeoverCompleted    = "takeover_completed"
 	StageLeaseRenewed         = "lease_renewed"
 	StageFenceChecked         = "fence_checked"
 	StageScheduleDue          = "schedule_due"
@@ -471,6 +473,7 @@ var metricComponentStages = []ComponentStage{
 var phaseTwoComponentStages = []ComponentStage{
 	{ComponentControlPlane, StageSnapshotRefreshed}, {ComponentControlPlane, StageSnapshotUnavailable},
 	{ComponentOwnership, StageAssignmentAcquired}, {ComponentOwnership, StageAssignmentLost},
+	{ComponentOwnership, StageTakeoverStarted}, {ComponentOwnership, StageTakeoverCompleted},
 	{ComponentOwnership, StageLeaseRenewed}, {ComponentOwnership, StageFenceChecked},
 	{ComponentScheduler, StageScheduleDue}, {ComponentScheduler, StageSlotStarted},
 	{ComponentScheduler, StageSlotCompleted},

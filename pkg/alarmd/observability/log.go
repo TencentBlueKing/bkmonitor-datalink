@@ -233,7 +233,8 @@ func mandatoryLogStage(stage Stage) bool {
 	switch stage {
 	case StageStartup, StageConfigLoaded, StageKafkaAssigned, StageShutdown, StageFatal:
 		return true
-	case StageSnapshotRefreshed, StageSnapshotUnavailable, StageAssignmentAcquired, StageAssignmentLost:
+	case StageSnapshotRefreshed, StageSnapshotUnavailable, StageAssignmentAcquired, StageAssignmentLost,
+		StageTakeoverStarted, StageTakeoverCompleted:
 		return true
 	default:
 		return false

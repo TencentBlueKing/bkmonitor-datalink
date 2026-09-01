@@ -10,6 +10,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
 const sourceCandidateSchemaVersion = "alarmd-control-source-candidate-v1"
@@ -39,16 +40,25 @@ type persistedSourceCandidate struct {
 // refresh calls. Its only durable intermediate fact is the candidate digest;
 // it does not own a leader, retry queue or activation state machine.
 type SourceReconciler struct {
-	repository *RedisCatalogRepository
-	publisher  *SnapshotPublisher
+	repository     *RedisCatalogRepository
+	publisher      *SnapshotPublisher
+	compiler       RuntimePlanCompiler
+	stateSemantics strategy.StateSemantics
 }
 
-func NewSourceReconciler(repository *RedisCatalogRepository) (*SourceReconciler, error) {
+func NewSourceReconciler(
+	repository *RedisCatalogRepository,
+	compiler RuntimePlanCompiler,
+	stateSemantics strategy.StateSemantics,
+) (*SourceReconciler, error) {
+	if compiler == nil || !validStateSemantics(stateSemantics) {
+		return nil, errors.New("alarmd controlplane: invalid source reconciler compiler")
+	}
 	publisher, err := NewSnapshotPublisher(repository)
 	if err != nil {
 		return nil, err
 	}
-	return &SourceReconciler{repository: repository, publisher: publisher}, nil
+	return &SourceReconciler{repository: repository, publisher: publisher, compiler: compiler, stateSemantics: stateSemantics}, nil
 }
 
 func (reconciler *SourceReconciler) Refresh(
@@ -56,7 +66,8 @@ func (reconciler *SourceReconciler) Refresh(
 	source StrategySource,
 	planner PrimaryQueryCompiler,
 ) (SourceRefreshResult, error) {
-	if reconciler == nil || reconciler.repository == nil || reconciler.publisher == nil || source == nil || planner == nil {
+	if reconciler == nil || reconciler.repository == nil || reconciler.publisher == nil || reconciler.compiler == nil ||
+		source == nil || planner == nil {
 		return SourceRefreshResult{}, errors.New("alarmd controlplane: incomplete source refresh request")
 	}
 	cycle, err := observeCycle(ctx, source)
@@ -72,6 +83,10 @@ func (reconciler *SourceReconciler) Refresh(
 		return SourceRefreshResult{}, err
 	}
 	catalog, err := BuildCatalog(ctx, BuildRequest{Strategies: cycle.strategies, Planner: planner, LastGood: current})
+	if err != nil {
+		return SourceRefreshResult{}, err
+	}
+	catalog, err = retainRuntimeExecutableCatalog(ctx, catalog, current, reconciler.compiler, reconciler.stateSemantics)
 	if err != nil {
 		return SourceRefreshResult{}, err
 	}

@@ -145,7 +145,8 @@ func TestSourceReconcilerConfirmsChangeAcrossIndependentRefreshAndRestart(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	reconciler, err := controlplane.NewSourceReconciler(repository)
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, stateSemantics)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +164,7 @@ func TestSourceReconcilerConfirmsChangeAcrossIndependentRefreshAndRestart(t *tes
 
 	// Recreate the reconciler: confirmation must come from the persisted prior
 	// independent refresh, not process memory or a second read in one call.
-	restarted, err := controlplane.NewSourceReconciler(repository)
+	restarted, err := controlplane.NewSourceReconciler(repository, compiler, stateSemantics)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,6 +183,140 @@ func TestSourceReconcilerConfirmsChangeAcrossIndependentRefreshAndRestart(t *tes
 	if err != nil || fourth.Status != controlplane.SourceRefreshUnchanged || fourth.Publication != third.Publication {
 		t.Fatalf("unchanged refresh=(%#v, %v), published=%#v", fourth, err, third)
 	}
+}
+
+func TestSourceReconcilerPublishesOnlyRuntimeExecutablePlans(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	documents := runtimeCompileIsolationDocuments(t)
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", `[1001,1002,1003]`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	for index, id := range []string{"1001", "1002", "1003"} {
+		if err := client.Set(ctx, "bkmonitor.cache.strategy_"+id, string(documents[index]), 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := newRedisStrategySource(t, client)
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:runtime-compile-isolation", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, stateSemantics := runtimePlanCompilerWithLimits(t, 2, 1)
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, stateSemantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("initial pending=(%#v, %v)", result, err)
+	}
+	published, err := reconciler.Refresh(ctx, source, planner)
+	if err != nil || published.Status != controlplane.SourceRefreshPublished {
+		t.Fatalf("published=(%#v, %v)", published, err)
+	}
+	snapshot, err := repository.LoadSnapshot(ctx, published.Publication.SnapshotRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.QueryGroups) != 1 || len(snapshot.QueryGroups[0].Plans) != 1 {
+		t.Fatalf("runtime executable Query Groups=%#v", snapshot.QueryGroups)
+	}
+	plan := snapshot.QueryGroups[0].Plans[0]
+	if plan.Identity.StrategyID != "1001" || len(plan.Plan.StrategyIR.Levels) != 1 || plan.Plan.StrategyIR.Levels[0].Definition.LevelID != 1 {
+		t.Fatalf("runtime executable Plan=%#v", plan)
+	}
+	assertAuditDisposition(t, repository, "1001", controlplane.DispositionUnsupported, contract.ReasonLevelBudgetExceeded)
+	assertAuditDisposition(t, repository, "1002", controlplane.DispositionUnsupported, contract.ReasonLevelBudgetExceeded)
+	assertAuditDisposition(t, repository, "1003", controlplane.DispositionUnsupported, contract.ReasonPlanBudgetExceeded)
+	assertNoAcceptedPlanDisposition(t, repository, "1002")
+	assertNoAcceptedPlanDisposition(t, repository, "1003")
+
+	activator, err := controlplane.NewInitialScheduleActivator(repository, compiler, stateSemantics, func() time.Time {
+		return time.Unix(180, 0)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	activation, err := activator.Ensure(ctx, published.Publication)
+	if err != nil || len(activation.Plans) != 1 || activation.Plans[0].Fact.Plan.StrategyID != "1001" {
+		t.Fatalf("healthy initial activation=(%#v, %v)", activation, err)
+	}
+}
+
+func TestSourceReconcilerRuntimeCompilerKeepsOnlyInvalidLastGood(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	documents := realThresholdDocuments(t)
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", `[1001,1002]`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	for index, id := range []string{"1001", "1002"} {
+		if err := client.Set(ctx, "bkmonitor.cache.strategy_"+id, string(documents[index]), 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := newRedisStrategySource(t, client)
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:runtime-last-good", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normal, stateSemantics := runtimePlanCompiler(t)
+	strict, _ := runtimePlanCompilerWithBudgets(t, 1, 16, 4096)
+	compiler := &revisionTerminalCompiler{normal: normal, strict: strict,
+		invalid: map[string]struct{}{"1800000001": {}}, unsupported: map[string]struct{}{"1800000002": {}}}
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, stateSemantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("initial pending=(%#v, %v)", result, err)
+	}
+	initial, err := reconciler.Refresh(ctx, source, planner)
+	if err != nil || initial.Status != controlplane.SourceRefreshPublished {
+		t.Fatalf("initial publish=(%#v, %v)", initial, err)
+	}
+	initialSnapshot, err := repository.LoadSnapshot(ctx, initial.Publication.SnapshotRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialPlans := plansByStrategy(initialSnapshot)
+
+	changed := []json.RawMessage{
+		withStrategyUpdateTime(t, documents[0], 1800000001),
+		withStrategyUpdateTime(t, documents[1], 1800000002),
+	}
+	for index, id := range []string{"1001", "1002"} {
+		if err := client.Set(ctx, "bkmonitor.cache.strategy_"+id, string(changed[index]), 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("changed pending=(%#v, %v)", result, err)
+	}
+	published, err := reconciler.Refresh(ctx, source, planner)
+	if err != nil || published.Status != controlplane.SourceRefreshPublished {
+		t.Fatalf("changed publish=(%#v, %v)", published, err)
+	}
+	snapshot, err := repository.LoadSnapshot(ctx, published.Publication.SnapshotRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plans := plansByStrategy(snapshot)
+	if len(plans) != 1 || plans["1001"].PlanRevision != initialPlans["1001"].PlanRevision {
+		t.Fatalf("runtime last-good Plans=%#v initial=%#v", plans, initialPlans)
+	}
+	assertAuditDisposition(t, repository, "1001", controlplane.DispositionStaleConfig, contract.ReasonPlanInvalid)
+	assertAuditDisposition(t, repository, "1002", controlplane.DispositionUnsupported, contract.ReasonPlanBudgetExceeded)
+	assertNoAcceptedPlanDisposition(t, repository, "1001")
+	assertNoAcceptedPlanDisposition(t, repository, "1002")
 }
 
 func TestSourceReconcilerRetainsLastGoodForMissingAndInvalidObjectWhileHealthySiblingAdvances(t *testing.T) {
@@ -205,7 +340,8 @@ func TestSourceReconcilerRetainsLastGoodForMissingAndInvalidObjectWhileHealthySi
 	if err != nil {
 		t.Fatal(err)
 	}
-	reconciler, err := controlplane.NewSourceReconciler(repository)
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, stateSemantics)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +380,7 @@ func TestSourceReconcilerRetainsLastGoodForMissingAndInvalidObjectWhileHealthySi
 	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
 		t.Fatalf("identity missing pending=(%#v, %v)", result, err)
 	}
-	reconciler, err = controlplane.NewSourceReconciler(repository)
+	reconciler, err = controlplane.NewSourceReconciler(repository, compiler, stateSemantics)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -905,10 +1041,29 @@ func catalogWithSchedule(t *testing.T, source controlplane.Catalog, interval int
 
 func runtimePlanCompiler(t *testing.T) (*strategy.PlanCompiler, strategy.StateSemantics) {
 	t.Helper()
+	return runtimePlanCompilerWithLimits(t, 16, 4096)
+}
+
+func runtimePlanCompilerWithLimits(
+	t *testing.T,
+	maxLevels int,
+	maxRecoveryWindows uint32,
+) (*strategy.PlanCompiler, strategy.StateSemantics) {
+	t.Helper()
+	return runtimePlanCompilerWithBudgets(t, 64<<10, maxLevels, maxRecoveryWindows)
+}
+
+func runtimePlanCompilerWithBudgets(
+	t *testing.T,
+	maxPlanBytes int,
+	maxLevels int,
+	maxRecoveryWindows uint32,
+) (*strategy.PlanCompiler, strategy.StateSemantics) {
+	t.Helper()
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{
-		MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16,
+		MaxPlanBytes: maxPlanBytes, MaxLevelsPerPlan: maxLevels, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16,
 		MaxConditionsPerAlgorithm: 64, MaxASTNodesPerLevel: 256, MaxTriggerWindowSize: 4096,
-		MaxRecoveryConsecutiveWindows: 4096, MaxRequiredHistoryPoints: 4096, MaxTriggerComputeCost: 1 << 20,
+		MaxRecoveryConsecutiveWindows: maxRecoveryWindows, MaxRequiredHistoryPoints: 4096, MaxTriggerComputeCost: 1 << 20,
 		MaxCompiledPlanBytes: 64 << 10, MaxCacheEntries: 64, MaxCacheBytes: 4 << 20,
 		NegativeCacheTTL: time.Minute, BudgetRevision: "test-v1",
 	})
@@ -918,6 +1073,129 @@ func runtimePlanCompiler(t *testing.T) (*strategy.PlanCompiler, strategy.StateSe
 	return compiler, strategy.StateSemantics{StateSchemaVersion: "window-state-v1", CodecSemanticsVersion: "window-state-codec-v1",
 		IdentitySchemaDigest: strings.Repeat("3", 64), SourceTimeSemanticsVersion: "source-time-seconds-v1",
 		HistoryCellSemanticsVersion: "detect-history-cell-v1"}
+}
+
+func runtimeCompileIsolationDocuments(t *testing.T) []json.RawMessage {
+	t.Helper()
+	documents := realThresholdDocuments(t)
+	partial := addThresholdLevels(t, documents[0], []uint32{2}, []uint32{2})
+	allLevelsTerminal := documents[1]
+	planTerminal := addThresholdLevels(t, documents[0], []uint32{2, 3}, []uint32{1, 1})
+	var planTerminalValue map[string]any
+	if err := json.Unmarshal(planTerminal, &planTerminalValue); err != nil {
+		t.Fatal(err)
+	}
+	planTerminalValue["id"] = float64(1003)
+	planTerminalValue["bk_biz_id"] = float64(3)
+	planTerminalValue["space_uid"] = "bkcc__3"
+	items := planTerminalValue["items"].([]any)
+	items[0].(map[string]any)["id"] = float64(13)
+	planTerminal, err := json.Marshal(planTerminalValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []json.RawMessage{partial, allLevelsTerminal, planTerminal}
+}
+
+type revisionTerminalCompiler struct {
+	normal      *strategy.PlanCompiler
+	strict      *strategy.PlanCompiler
+	invalid     map[string]struct{}
+	unsupported map[string]struct{}
+}
+
+func (compiler *revisionTerminalCompiler) Compile(
+	ctx context.Context,
+	request strategy.CompileRequest,
+) (strategy.CompileResult, error) {
+	revision := request.Plan.StrategyRef.Revision
+	if _, invalid := compiler.invalid[revision]; invalid {
+		request.Plan.StrategyIR.Schema.Name = "invalid-strategy-ir"
+		return compiler.normal.Compile(ctx, request)
+	}
+	if _, unsupported := compiler.unsupported[revision]; unsupported {
+		return compiler.strict.Compile(ctx, request)
+	}
+	return compiler.normal.Compile(ctx, request)
+}
+
+func withStrategyUpdateTime(t *testing.T, document json.RawMessage, updateTime int64) json.RawMessage {
+	t.Helper()
+	var value map[string]any
+	if err := json.Unmarshal(document, &value); err != nil {
+		t.Fatal(err)
+	}
+	value["update_time"] = float64(updateTime)
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+func addThresholdLevels(
+	t *testing.T,
+	document json.RawMessage,
+	levels []uint32,
+	recoveryWindows []uint32,
+) json.RawMessage {
+	t.Helper()
+	if len(levels) != len(recoveryWindows) {
+		t.Fatal("level fixtures must have one recovery window per Level")
+	}
+	var value map[string]any
+	if err := json.Unmarshal(document, &value); err != nil {
+		t.Fatal(err)
+	}
+	item := value["items"].([]any)[0].(map[string]any)
+	algorithms := item["algorithms"].([]any)
+	detects := value["detects"].([]any)
+	for index, levelID := range levels {
+		algorithm := cloneJSONMap(t, algorithms[0])
+		algorithm["level"] = float64(levelID)
+		algorithms = append(algorithms, algorithm)
+		detect := cloneJSONMap(t, detects[0])
+		detect["level"] = float64(levelID)
+		detect["recovery_config"] = map[string]any{"check_window": float64(recoveryWindows[index])}
+		detects = append(detects, detect)
+	}
+	item["algorithms"] = algorithms
+	value["detects"] = detects
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+func cloneJSONMap(t *testing.T, source any) map[string]any {
+	t.Helper()
+	payload, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(payload, &result); err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func assertNoAcceptedPlanDisposition(
+	t *testing.T,
+	repository *controlplane.RedisCatalogRepository,
+	sourceID string,
+) {
+	t.Helper()
+	audit, err := repository.LoadLatestAudit(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range audit.Dispositions {
+		if item.SourceID == sourceID && item.Scope == "PLAN" && item.Disposition == controlplane.DispositionAccepted {
+			t.Fatalf("unexpected accepted Plan disposition source=%s: %#v", sourceID, audit)
+		}
+	}
 }
 
 func mustDigest(t *testing.T, domain string, value any) string {

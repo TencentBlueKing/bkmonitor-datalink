@@ -174,7 +174,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	reconciler, err := controlplane.NewSourceReconciler(repository)
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, strategySemantics)
 	if err != nil {
 		return nil, err
 	}

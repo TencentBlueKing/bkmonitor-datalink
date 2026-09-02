@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"reflect"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -514,6 +515,17 @@ func testProductionPhaseTwoStrandedLatest(
 	nowUnix.Add(2)
 
 	catalogPrefix := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog")
+	oldSnapshot, err := firstControl.dependencies.Repository.LoadPublishedSnapshot(ctx, oldActivation.Current)
+	if err != nil || len(oldSnapshot.QueryGroups) != 1 {
+		t.Fatalf("old Snapshot=(%+v,%v), want one Query Group", oldSnapshot, err)
+	}
+	latestSnapshot, err := firstControl.dependencies.Repository.LoadPublishedSnapshot(ctx, latest.Publication)
+	if err != nil || len(latestSnapshot.QueryGroups) != 1 {
+		t.Fatalf("latest Snapshot=(%+v,%v), want one Query Group", latestSnapshot, err)
+	}
+	if !wantRecovery && !incompleteActivation && oldSnapshot.QueryGroups[0].Identity == latestSnapshot.QueryGroups[0].Identity {
+		t.Fatalf("negative identity case kept Query Group identity %q", oldSnapshot.QueryGroups[0].Identity)
+	}
 	if incompleteActivation {
 		incomplete := oldActivation
 		extra := incomplete.Plans[0]
@@ -525,6 +537,19 @@ func testProductionPhaseTwoStrandedLatest(
 			t.Fatal(marshalErr)
 		}
 		if err := redisClient.Set(ctx, catalogPrefix+":activation", payload, 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var activationBefore controlplane.ActivationState
+	var scheduleBefore string
+	scheduleKey := catalogPrefix + ":schedule_timeline:" + string(oldSnapshot.QueryGroups[0].Identity)
+	if !wantRecovery {
+		activationBefore, err = firstControl.dependencies.Repository.LoadActivation(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scheduleBefore, err = redisClient.Get(ctx, scheduleKey).Result()
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -549,8 +574,15 @@ func testProductionPhaseTwoStrandedLatest(
 		if activation.Current != latest.Publication || activation.RecordRevision != oldActivation.RecordRevision+1 {
 			t.Fatalf("recovered activation = %+v, want latest publication %+v", activation, latest.Publication)
 		}
-	} else if activation.Current != oldActivation.Current || activation.RecordRevision != oldActivation.RecordRevision {
-		t.Fatalf("rejected recovery mutated activation = %+v, want old publication %+v", activation, oldActivation.Current)
+	} else {
+		if !reflect.DeepEqual(activation, activationBefore) {
+			t.Fatalf("rejected recovery mutated activation: got=%+v want=%+v", activation, activationBefore)
+		}
+		scheduleAfter, loadErr := redisClient.Get(ctx, scheduleKey).Result()
+		if loadErr != nil || scheduleAfter != scheduleBefore {
+			t.Fatalf("rejected recovery mutated Schedule timeline: before=%q after=%q error=%v",
+				scheduleBefore, scheduleAfter, loadErr)
+		}
 	}
 }
 

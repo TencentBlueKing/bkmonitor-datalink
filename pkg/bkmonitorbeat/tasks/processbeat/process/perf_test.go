@@ -39,6 +39,25 @@ func TestGetProcState(t *testing.T) {
 	}
 }
 
+func TestParseProcStatmMemUsesRuntimePageSize(t *testing.T) {
+	statm := []byte("1199 576 42 1 2 3 4\n")
+
+	got, err := parseProcStatmMem(statm, 64*1024)
+	if err != nil {
+		t.Fatalf("parseProcStatmMem error: %v", err)
+	}
+
+	if got.Size != 1199*64*1024 {
+		t.Fatalf("size = %d, want %d", got.Size, 1199*64*1024)
+	}
+	if got.Resident != 576*64*1024 {
+		t.Fatalf("resident = %d, want %d", got.Resident, 576*64*1024)
+	}
+	if got.Share != 42*64*1024 {
+		t.Fatalf("share = %d, want %d", got.Share, 42*64*1024)
+	}
+}
+
 func TestProcFSReaderReadsStableMetaWithSingleBootTimeLookup(t *testing.T) {
 	root := t.TempDir()
 	writeLinuxProc(t, root, 101, "worker 1", "S", 1, 12345, "worker\x00--config\x00x", 1000)

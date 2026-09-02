@@ -142,6 +142,23 @@ func (reconciler *SourceReconciler) publish(
 	catalog Catalog,
 	status SourceRefreshStatus,
 ) (SourceRefreshResult, error) {
+	if current == nil {
+		activation, err := reconciler.repository.LoadActivation(ctx)
+		if err == nil && activation.Current.SnapshotRevision == catalog.SnapshotRevision {
+			snapshot, _, restoreErr := reconciler.publisher.restoreIfActivationCurrent(ctx, activation, catalog)
+			if restoreErr != nil {
+				return SourceRefreshResult{}, restoreErr
+			}
+			if clearErr := reconciler.clearPending(ctx); clearErr != nil {
+				return SourceRefreshResult{}, clearErr
+			}
+			return SourceRefreshResult{Status: status, Observation: catalog.ObservationID,
+				Publication: snapshot.Publication}, nil
+		}
+		if err != nil && !errors.Is(err, ErrActivationUnavailable) {
+			return SourceRefreshResult{}, err
+		}
+	}
 	expected := SnapshotPublicationRef{}
 	if current != nil {
 		expected = current.Publication

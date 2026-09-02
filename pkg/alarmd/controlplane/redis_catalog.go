@@ -162,6 +162,75 @@ redis.call('PSETEX', KEYS[4], ARGV[2], tostring(epoch) .. '\n' .. ARGV[3])
 return {tonumber(epoch), 1}
 `
 
+const restoreSnapshotPublicationScript = `
+local header = redis.call('GET', KEYS[1])
+if not header or header ~= ARGV[1] then return 0 end
+if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+local snapshot = redis.call('GET', KEYS[3])
+if snapshot and snapshot ~= ARGV[2] then return -1 end
+local occurrence = redis.call('GET', KEYS[5])
+if occurrence and occurrence ~= ARGV[6] then return -2 end
+redis.call('PSETEX', KEYS[3], ARGV[3], ARGV[2])
+redis.call('PSETEX', KEYS[4], ARGV[3], ARGV[4])
+redis.call('PSETEX', KEYS[5], ARGV[3], ARGV[6])
+redis.call('PSETEX', KEYS[2], ARGV[3], ARGV[5])
+return 1
+`
+
+// restoreCatalogPublicationIfActivationCurrent recreates expired immutable
+// Catalog facts only when the persistent Activation still selects the exact
+// same content-addressed Snapshot occurrence. It does not create a new epoch
+// or mutate Schedule/Activation provenance.
+func (repository *RedisCatalogRepository) restoreCatalogPublicationIfActivationCurrent(
+	ctx context.Context,
+	activation ActivationState,
+	catalog Catalog,
+) (PublishedSnapshot, error) {
+	if repository == nil || repository.client == nil ||
+		validateActivationState(activation) != nil || catalog.SnapshotRevision == "" ||
+		activation.Current.SnapshotRevision != catalog.SnapshotRevision {
+		return PublishedSnapshot{}, errors.New("alarmd controlplane: invalid expired Snapshot restoration")
+	}
+	revision, err := deriveSnapshotRevision(catalog.QueryGroups)
+	if err != nil || revision != catalog.SnapshotRevision {
+		return PublishedSnapshot{}, errors.New("alarmd controlplane: restored Snapshot revision does not match Catalog")
+	}
+	content := struct {
+		SchemaVersion    string       `json:"schema_version"`
+		SnapshotRevision string       `json:"snapshot_revision"`
+		QueryGroups      []QueryGroup `json:"query_groups"`
+	}{SchemaVersion: snapshotSchemaVersion, SnapshotRevision: string(catalog.SnapshotRevision), QueryGroups: catalog.QueryGroups}
+	payload, err := json.Marshal(content)
+	if err != nil {
+		return PublishedSnapshot{}, fmt.Errorf("alarmd controlplane: encode restored Snapshot: %w", err)
+	}
+	header, err := activationHeader(activation.RecordRevision, activation.Current, activation.Pending)
+	if err != nil {
+		return PublishedSnapshot{}, err
+	}
+	epoch := strconv.FormatUint(activation.Current.PublicationEpoch, 10)
+	changed, err := repository.client.Eval(ctx, restoreSnapshotPublicationScript, []string{
+		repository.activationHeaderKey(), repository.latestPublicationKey(),
+		repository.snapshotKey(catalog.SnapshotRevision), repository.epochForRevisionKey(catalog.SnapshotRevision),
+		repository.publicationKey(activation.Current.PublicationEpoch),
+	}, header, payload, repository.ttl.Milliseconds(), epoch, publicationValue(activation.Current),
+		string(catalog.SnapshotRevision)).Int()
+	if err != nil {
+		return PublishedSnapshot{}, fmt.Errorf("alarmd controlplane: restore expired Snapshot: %w", err)
+	}
+	if changed == -1 {
+		return PublishedSnapshot{}, errors.New("alarmd controlplane: restored Snapshot revision collision")
+	}
+	if changed == -2 {
+		return PublishedSnapshot{}, errors.New("alarmd controlplane: restored publication occurrence collision")
+	}
+	if changed != 1 {
+		return PublishedSnapshot{}, ErrPublicationConflict
+	}
+	return PublishedSnapshot{SchemaVersion: snapshotSchemaVersion, Publication: activation.Current,
+		QueryGroups: append([]QueryGroup(nil), catalog.QueryGroups...)}, nil
+}
+
 func (repository *RedisCatalogRepository) PublishCatalog(ctx context.Context, catalog Catalog) (PublishedSnapshot, bool, error) {
 	expected, err := repository.LoadLatestPublication(ctx)
 	if errors.Is(err, ErrSnapshotUnavailable) {
@@ -621,6 +690,18 @@ func (publisher *SnapshotPublisher) PublishIfCurrent(
 	}
 	snapshot, created, err := publisher.repository.PublishCatalogIfCurrent(ctx, expected, catalog)
 	return publisher.publishAudit(ctx, catalog, snapshot, created, err)
+}
+
+func (publisher *SnapshotPublisher) restoreIfActivationCurrent(
+	ctx context.Context,
+	activation ActivationState,
+	catalog Catalog,
+) (PublishedSnapshot, bool, error) {
+	if publisher == nil || publisher.repository == nil || catalog.ObservationID == "" {
+		return PublishedSnapshot{}, false, errors.New("alarmd controlplane: incomplete Snapshot restore request")
+	}
+	snapshot, err := publisher.repository.restoreCatalogPublicationIfActivationCurrent(ctx, activation, catalog)
+	return publisher.publishAudit(ctx, catalog, snapshot, false, err)
 }
 
 func (publisher *SnapshotPublisher) publishAudit(

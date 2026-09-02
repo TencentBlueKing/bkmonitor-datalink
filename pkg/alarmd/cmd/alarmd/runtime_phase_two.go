@@ -18,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -309,16 +310,24 @@ func (bundle *phaseTwoWorkerBundle) Start(ctx context.Context) error {
 		return fmt.Errorf("phase-two acquire Control Leader: %w", err)
 	}
 	var controlResult phaseTwoControlRefreshResult
+	controlFactsAvailable := true
 	if leader {
 		controlResult, err = bundle.dependencies.Control.InitialRefresh(ctx)
 	} else {
 		controlResult, err = bundle.dependencies.Control.LoadActive(ctx)
 	}
 	if err != nil {
-		return fmt.Errorf("phase-two initial control facts: %w", err)
+		if !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+			return fmt.Errorf("phase-two initial control facts: %w", err)
+		}
+		controlFactsAvailable = false
+		controlResult = phaseTwoControlRefreshResult{
+			Status: phaseTwoControlDegradedLastGood, SourceKind: observability.SourceKindCompiledSnapshot,
+			ReasonCode: observability.ReasonContractRetryable, Cause: err,
+		}
 	}
 	queryGroups := controlResult.QueryGroups
-	if leader {
+	if leader || controlResult.Status == phaseTwoControlDegradedLastGood {
 		if err := bundle.applyControlRefresh(ctx, controlResult); err != nil {
 			return err
 		}
@@ -328,7 +337,7 @@ func (bundle *phaseTwoWorkerBundle) Start(ctx context.Context) error {
 	if err := bundle.register(ctx, ownership.WorkerReady); err != nil {
 		return err
 	}
-	if leader {
+	if leader && controlFactsAvailable {
 		if err := bundle.dependencies.Ownership.PublishAssignments(ctx, queryGroups, bundle.dependencies.Now()); err != nil {
 			return fmt.Errorf("phase-two publish Assignment: %w", err)
 		}
@@ -900,8 +909,22 @@ func (bundle *phaseTwoWorkerBundle) refreshAndReconcile(ctx context.Context, ref
 		bundle.mu.RUnlock()
 	}
 	if err != nil {
-		bundle.observe(ctx, observability.ComponentControlPlane, observability.StageSnapshotUnavailable, observability.ResultFailed, err)
-		return err
+		if !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+			bundle.observe(ctx, observability.ComponentControlPlane, observability.StageSnapshotUnavailable, observability.ResultFailed, err)
+			return err
+		}
+		bundle.mu.RLock()
+		queryGroups = append([]execution.QueryGroupIdentity(nil), bundle.queryGroups...)
+		bundle.mu.RUnlock()
+		if applyErr := bundle.applyControlRefresh(ctx, phaseTwoControlRefreshResult{
+			QueryGroups: queryGroups, Status: phaseTwoControlDegradedLastGood,
+			SourceKind: observability.SourceKindCompiledSnapshot,
+			ReasonCode: observability.ReasonContractRetryable, Cause: err,
+		}); applyErr != nil {
+			return applyErr
+		}
+		bundle.updateReadiness()
+		return nil
 	}
 	bundle.mu.RLock()
 	leader := bundle.controlLeader

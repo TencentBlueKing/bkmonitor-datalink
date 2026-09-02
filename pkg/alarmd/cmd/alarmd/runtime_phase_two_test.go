@@ -22,6 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -557,6 +558,114 @@ func TestPhaseTwoWorkerBundleAcquiresControlLeaderBeforeInitialRefresh(t *testin
 		t.Fatalf("Start() error = %v", err)
 	}
 	_ = bundle.Shutdown(context.Background())
+}
+
+func TestPhaseTwoWorkerBundleStartsReadyDegradedWhenInitialSnapshotIsUnavailableAndRecovers(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	queryGroup := execution.QueryGroupIdentity("query-group-1")
+	health := newPhaseTwoApplicationHealth()
+	runner := newFakePhaseTwoQueryGroup()
+	control := &fakePhaseTwoControl{
+		beforeInitialRefresh: func() error { return controlplane.ErrSnapshotUnavailable },
+		refreshResults: []phaseTwoControlRefreshResult{{
+			QueryGroups: []execution.QueryGroupIdentity{queryGroup}, Status: phaseTwoControlHealthy,
+		}},
+	}
+	owner := &fakePhaseTwoOwnership{runner: runner}
+	bundle := mustPhaseTwoWorkerBundle(t, cfg, health, control, owner)
+
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start(snapshot unavailable) error = %v", err)
+	}
+	defer func() { _ = bundle.Shutdown(context.Background()) }()
+	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthDegraded || !snapshot.Ready {
+		t.Fatalf("initial unavailable health=%+v, want ready degraded", snapshot)
+	}
+	if owner.publishAssignmentCount() != 0 || len(bundle.runners) != 0 {
+		t.Fatalf("initial unavailable published/runners=%d/%d, want 0/0", owner.publishAssignmentCount(), len(bundle.runners))
+	}
+
+	owner.setAssigned([]execution.QueryGroupIdentity{queryGroup})
+	if err := bundle.refreshAndReconcile(context.Background(), true); err != nil {
+		t.Fatalf("refreshAndReconcile(recovered) error = %v", err)
+	}
+	waitSignal(t, runner.leaseStarted, "recovered query-group lease maintenance")
+	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthReady || !snapshot.Ready {
+		t.Fatalf("recovered health=%+v, want ready", snapshot)
+	}
+	if owner.publishAssignmentCount() != 1 {
+		t.Fatalf("recovered Assignment publications=%d, want 1", owner.publishAssignmentCount())
+	}
+}
+
+func TestPhaseTwoWorkerBundleFollowerStartsReadyDegradedWhenActiveSnapshotIsUnavailable(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	health := newPhaseTwoApplicationHealth()
+	control := &fakePhaseTwoControl{loadActiveErr: controlplane.ErrSnapshotUnavailable}
+	owner := &fakePhaseTwoOwnership{follower: true}
+	bundle := mustPhaseTwoWorkerBundle(t, cfg, health, control, owner)
+
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start(follower snapshot unavailable) error = %v", err)
+	}
+	defer func() { _ = bundle.Shutdown(context.Background()) }()
+	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthDegraded || !snapshot.Ready {
+		t.Fatalf("follower unavailable health=%+v, want ready degraded", snapshot)
+	}
+	if owner.publishAssignmentCount() != 0 || len(bundle.runners) != 0 {
+		t.Fatalf("follower unavailable published/runners=%d/%d, want 0/0", owner.publishAssignmentCount(), len(bundle.runners))
+	}
+}
+
+func TestPhaseTwoWorkerBundleStillRejectsNonSnapshotInitialControlFailure(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	want := errors.New("invalid initial control facts")
+	control := &fakePhaseTwoControl{beforeInitialRefresh: func() error { return want }}
+	bundle := mustPhaseTwoWorkerBundle(t, cfg, newPhaseTwoApplicationHealth(), control, &fakePhaseTwoOwnership{})
+
+	if err := bundle.Start(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("Start(non-snapshot failure) error = %v, want %v", err, want)
+	}
+	_ = bundle.Shutdown(context.Background())
+}
+
+func TestPhaseTwoWorkerBundleKeepsHealthyQueryGroupAcrossSnapshotUnavailableRefresh(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	queryGroup := execution.QueryGroupIdentity("query-group-1")
+	health := newPhaseTwoApplicationHealth()
+	runner := newFakePhaseTwoQueryGroup()
+	control := &fakePhaseTwoControl{
+		queryGroups:   []execution.QueryGroupIdentity{queryGroup},
+		refreshErrors: []error{controlplane.ErrSnapshotUnavailable},
+		refreshResults: []phaseTwoControlRefreshResult{{
+			QueryGroups: []execution.QueryGroupIdentity{queryGroup}, Status: phaseTwoControlHealthy,
+		}},
+	}
+	owner := &fakePhaseTwoOwnership{
+		assigned: []execution.QueryGroupIdentity{queryGroup}, runner: runner,
+	}
+	bundle := mustPhaseTwoWorkerBundle(t, cfg, health, control, owner)
+
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer func() { _ = bundle.Shutdown(context.Background()) }()
+	waitSignal(t, runner.leaseStarted, "healthy query-group lease maintenance")
+	if err := bundle.refreshAndReconcile(context.Background(), true); err != nil {
+		t.Fatalf("refreshAndReconcile(snapshot unavailable) error = %v", err)
+	}
+	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthDegraded || !snapshot.Ready {
+		t.Fatalf("refresh unavailable health=%+v, want ready degraded", snapshot)
+	}
+	if err := bundle.runScheduledOnce(context.Background()); err != nil || runner.runCount() != 1 {
+		t.Fatalf("healthy runner after unavailable refresh calls/error=%d/%v, want 1/nil", runner.runCount(), err)
+	}
+	if err := bundle.refreshAndReconcile(context.Background(), true); err != nil {
+		t.Fatalf("refreshAndReconcile(recovered) error = %v", err)
+	}
+	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthReady || !snapshot.Ready {
+		t.Fatalf("recovered health=%+v, want ready", snapshot)
+	}
 }
 
 func TestPhaseTwoWorkerBundleFollowerLoadsControlFactsAndRunsItsAssignment(t *testing.T) {
@@ -1209,10 +1318,12 @@ type fakePhaseTwoControl struct {
 	queryGroups          []execution.QueryGroupIdentity
 	initialResult        phaseTwoControlRefreshResult
 	refreshResults       []phaseTwoControlRefreshResult
+	refreshErrors        []error
 	beforeInitialRefresh func() error
 	initialRefreshCalls  int
 	refreshCalls         int
 	loadActiveCalls      int
+	loadActiveErr        error
 	closeCalls           int
 }
 
@@ -1233,12 +1344,16 @@ func (control *fakePhaseTwoControl) InitialRefresh(context.Context) (phaseTwoCon
 }
 
 func (control *fakePhaseTwoControl) Refresh(context.Context) (phaseTwoControlRefreshResult, error) {
-	if control.refreshCalls < len(control.refreshResults) {
-		result := clonePhaseTwoControlRefreshResult(control.refreshResults[control.refreshCalls])
-		control.refreshCalls++
+	call := control.refreshCalls
+	control.refreshCalls++
+	if call < len(control.refreshErrors) && control.refreshErrors[call] != nil {
+		return phaseTwoControlRefreshResult{}, control.refreshErrors[call]
+	}
+	resultIndex := call - len(control.refreshErrors)
+	if resultIndex >= 0 && resultIndex < len(control.refreshResults) {
+		result := clonePhaseTwoControlRefreshResult(control.refreshResults[resultIndex])
 		return result, nil
 	}
-	control.refreshCalls++
 	return phaseTwoControlRefreshResult{
 		QueryGroups: append([]execution.QueryGroupIdentity(nil), control.queryGroups...),
 		Status:      phaseTwoControlHealthy,
@@ -1252,6 +1367,9 @@ func clonePhaseTwoControlRefreshResult(result phaseTwoControlRefreshResult) phas
 
 func (control *fakePhaseTwoControl) LoadActive(context.Context) (phaseTwoControlRefreshResult, error) {
 	control.loadActiveCalls++
+	if control.loadActiveErr != nil {
+		return phaseTwoControlRefreshResult{}, control.loadActiveErr
+	}
 	return phaseTwoControlRefreshResult{
 		QueryGroups: append([]execution.QueryGroupIdentity(nil), control.queryGroups...),
 		Status:      phaseTwoControlHealthy,

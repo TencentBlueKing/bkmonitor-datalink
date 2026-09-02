@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -188,6 +189,171 @@ func TestProductionPhaseTwoBundleStartsIdleWithEmptyCatalogThenActivatesQueryGro
 	observationsMu.Unlock()
 	if err := bundle.Shutdown(ctx); err != nil {
 		t.Fatalf("phase-two production Shutdown() error = %v", err)
+	}
+}
+
+func TestProductionPhaseTwoBundleRebuildsExpiredSnapshotReferencedByPersistentActivation(t *testing.T) {
+	address, redisClient := startPhaseTwoRedis(t)
+	ctx := context.Background()
+	strategyDocument, err := os.ReadFile("testdata/g1_full_threshold_strategy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.Set(ctx, "alarm-config.strategy_ids", `[1001]`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.Set(ctx, "alarm-config.strategy_1001", strategyDocument, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`{"series":[],"status":null,"trace_id":"unused","is_partial":false,"result_table_id":[]}`))
+	}))
+	defer uqServer.Close()
+	cfg := validGoAccessRuntimeConfig()
+	cfg.Redis.Address = address
+	cfg.Redis.StatePrefix = "alarmd:phase-two:expired-snapshot"
+	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
+	openBundle := func(health *phaseTwoApplicationHealth) *phaseTwoWorkerBundle {
+		bundle, openErr := openProductionPhaseTwoBundleWithDependencies(
+			ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime), health,
+			func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
+				return controlplane.NewLegacyRedisStrategySource(client, prefix)
+			},
+			phaseTwoProductionExternalDependencies{
+				Now: time.Now, HTTPClient: uqServer.Client(),
+				OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
+					return &recordingPhaseTwoEventSink{}, nil
+				},
+			},
+		)
+		if openErr != nil {
+			t.Fatalf("open production bundle: %v", openErr)
+		}
+		return bundle
+	}
+
+	first := openBundle(newPhaseTwoApplicationHealth())
+	if err := first.Start(ctx); err != nil {
+		t.Fatalf("first Start() error = %v", err)
+	}
+	firstControl := first.dependencies.Control.(*productionPhaseTwoControl)
+	oldActivation, err := firstControl.dependencies.Repository.LoadActivation(ctx)
+	if err != nil || oldActivation.Current.SnapshotRevision == "" {
+		t.Fatalf("first activation = %+v, %v", oldActivation, err)
+	}
+	if err := first.Shutdown(ctx); err != nil {
+		t.Fatalf("first Shutdown() error = %v", err)
+	}
+
+	catalogPrefix := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog")
+	catalogKeys, err := redisClient.Keys(ctx, catalogPrefix+":*").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	activationKey := catalogPrefix + ":activation"
+	activationHeaderKey := catalogPrefix + ":activation_header"
+	publicationEpochKey := catalogPrefix + ":publication_epoch"
+	for _, key := range catalogKeys {
+		if key == activationKey || key == activationHeaderKey || key == publicationEpochKey {
+			continue
+		}
+		if err := redisClient.Del(ctx, key).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if exists, err := redisClient.Exists(ctx, activationKey).Result(); err != nil || exists != 1 {
+		t.Fatalf("persistent activation exists=%d, error=%v", exists, err)
+	}
+	ownershipKeys, err := redisClient.Keys(ctx, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "ownership")+":*").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ownershipKeys) > 0 {
+		if err := redisClient.Del(ctx, ownershipKeys...).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	recoveredHealth := newPhaseTwoApplicationHealth()
+	recovered := openBundle(recoveredHealth)
+	if err := recovered.Start(ctx); err != nil {
+		t.Fatalf("recovered Start() error = %v", err)
+	}
+	defer func() { _ = recovered.Shutdown(ctx) }()
+	if snapshot := recoveredHealth.HealthSnapshot(); snapshot.State != observability.HealthDegraded || !snapshot.Ready {
+		t.Fatalf("expired Snapshot bootstrap health=%+v, want ready degraded", snapshot)
+	}
+	recovered.mu.RLock()
+	recoveredLeader := recovered.controlLeader
+	recovered.mu.RUnlock()
+	if !recoveredLeader {
+		t.Fatal("recovered Worker did not acquire Control Leader after expired ownership facts were removed")
+	}
+	if err := recovered.refreshAndReconcile(ctx, true); err != nil {
+		t.Fatalf("refreshAndReconcile(rebuild expired Snapshot) error = %v", err)
+	}
+	recoveredControl := recovered.dependencies.Control.(*productionPhaseTwoControl)
+	newActivation, err := recoveredControl.dependencies.Repository.LoadActivation(ctx)
+	if err != nil {
+		t.Fatalf("recovered activation error = %v", err)
+	}
+	if newActivation.Current != oldActivation.Current || newActivation.RecordRevision != oldActivation.RecordRevision {
+		t.Fatalf("expired publication restoration mutated frozen Activation: old=%+v new=%+v",
+			oldActivation, newActivation)
+	}
+	if _, err := recoveredControl.dependencies.Repository.LoadPublishedSnapshot(ctx, newActivation.Current); err != nil {
+		t.Fatalf("recovered active Snapshot is unreadable: %v", err)
+	}
+	if len(recovered.queryGroups) != 1 || len(recovered.runners) != 1 {
+		t.Fatalf("recovered Query Groups/runners=%v/%d, want one", recovered.queryGroups, len(recovered.runners))
+	}
+	if snapshot := recoveredHealth.HealthSnapshot(); snapshot.State != observability.HealthReady || !snapshot.Ready {
+		t.Fatalf("recovered health=%+v, want ready", snapshot)
+	}
+
+	activationBeforeCollision, err := redisClient.Get(ctx, activationKey).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalogKeys, err = redisClient.Keys(ctx, catalogPrefix+":*").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range catalogKeys {
+		if key == activationKey || key == activationHeaderKey || key == publicationEpochKey {
+			continue
+		}
+		if err := redisClient.Del(ctx, key).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	revision := string(newActivation.Current.SnapshotRevision)
+	snapshotKey := catalogPrefix + ":snapshot:" + revision
+	snapshotEpochKey := catalogPrefix + ":snapshot_epoch:" + revision
+	latestPublicationKey := catalogPrefix + ":latest_publication"
+	occurrenceKey := catalogPrefix + ":publication:" + strconv.FormatUint(newActivation.Current.PublicationEpoch, 10)
+	if err := redisClient.Set(ctx, occurrenceKey, "another-snapshot-revision", time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recoveredControl.Refresh(ctx); !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+		t.Fatalf("first conflicting recovery confirmation error = %v, want Snapshot unavailable", err)
+	}
+	if _, err := recoveredControl.Refresh(ctx); err == nil ||
+		!strings.Contains(err.Error(), "publication occurrence collision") {
+		t.Fatalf("conflicting occurrence recovery error = %v, want collision", err)
+	}
+	if exists, err := redisClient.Exists(ctx, snapshotKey, latestPublicationKey, snapshotEpochKey).Result(); err != nil || exists != 0 {
+		t.Fatalf("collision mutated Snapshot/latest/revision epoch facts: exists=%d error=%v", exists, err)
+	}
+	if occurrence, err := redisClient.Get(ctx, occurrenceKey).Result(); err != nil || occurrence != "another-snapshot-revision" {
+		t.Fatalf("collision mutated immutable occurrence=%q error=%v", occurrence, err)
+	}
+	if activationAfterCollision, err := redisClient.Get(ctx, activationKey).Result(); err != nil ||
+		activationAfterCollision != activationBeforeCollision {
+		t.Fatalf("collision mutated Activation: changed=%t error=%v",
+			activationAfterCollision != activationBeforeCollision, err)
 	}
 }
 

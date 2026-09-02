@@ -349,6 +349,7 @@ func TestReadExecutionEnvelopeV2QueryCompleteness(t *testing.T) {
 		{name: "full empty", result: QueryResultV2{Completeness: QueryCompletenessFull}, empty: true},
 		{name: "partial", result: QueryResultV2{Completeness: QueryCompletenessPartial, ReasonCode: ReasonQueryPartial}},
 		{name: "unavailable", result: QueryResultV2{Completeness: QueryCompletenessUnavailable, ReasonCode: ReasonQueryUnavailable}, empty: true},
+		{name: "unavailable exhausted budget", result: QueryResultV2{Completeness: QueryCompletenessUnavailable, ReasonCode: ReasonExecutionBudgetExhausted}, empty: true},
 		{name: "partial missing reason", result: QueryResultV2{Completeness: QueryCompletenessPartial}, wantFraming: true},
 	}
 	for _, test := range tests {
@@ -1066,8 +1067,8 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 	}
 	executionBudget, ok := LookupReasonV2(ReasonExecutionBudgetExhausted)
 	if !ok || executionBudget.Class != ReasonClassCoverage ||
-		executionBudget.Domains != ReasonDomainObservation ||
-		ReasonAllowedForV2(ReasonExecutionBudgetExhausted, ReasonDomainQueryResult) {
+		executionBudget.Domains != ReasonDomainQueryResult|ReasonDomainObservation ||
+		!ReasonAllowedForV2(ReasonExecutionBudgetExhausted, ReasonDomainQueryResult) {
 		t.Fatalf("execution budget reason definition = (%#v, %t)", executionBudget, ok)
 	}
 	for _, reason := range []string{

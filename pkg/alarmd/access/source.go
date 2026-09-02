@@ -85,22 +85,37 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		if err != nil {
 			return execution.QueryExecutionCompletion{}, fmt.Errorf("alarmd access: execute physical query: %w", err)
 		}
-		if providerCompletion.PhysicalQuery != query.Spec.Digest || providerCompletion.Ref == "" ||
-			providerCompletion.Completeness != execution.CompletenessFull {
+		if !trustedProviderCompletion(query.Spec.Digest, providerCompletion) {
 			return execution.QueryExecutionCompletion{}, errors.New("alarmd access: G1 provider returned an untrusted completion")
 		}
 		completion.PhysicalQueries = append(completion.PhysicalQueries, execution.PhysicalQueryCompletion{
 			Ref: providerCompletion.Ref, PhysicalQuery: providerCompletion.PhysicalQuery,
 			QueryRevision: query.Spec.PlanFacts.QueryRevision, Completeness: providerCompletion.Completeness,
 			DataState: providerCompletion.DataState, Delivery: providerCompletion.Delivery,
-			RouteFacts: providerCompletion.RouteFacts, Stats: providerCompletion.Stats,
+			RouteFacts: providerCompletion.RouteFacts, PartialEvidence: providerCompletion.PartialEvidence,
+			Stats: providerCompletion.Stats,
 		})
-		if providerCompletion.DataState == execution.DataStateEmpty {
+		if providerCompletion.DataState != execution.DataStateData {
 			completion.CompletionBindings = append(completion.CompletionBindings, completionBindings(query, providerCompletion, attempt.AttemptNo)...)
 		}
 	}
 	completion.AllRequiredCompleted = true
 	return completion, nil
+}
+
+func trustedProviderCompletion(digest execution.PhysicalQueryDigest, completion execution.ProviderCompletion) bool {
+	if completion.PhysicalQuery != digest || completion.Ref == "" {
+		return false
+	}
+	switch completion.Completeness {
+	case execution.CompletenessFull, execution.CompletenessPartial:
+		return completion.DataState == execution.DataStateData || completion.DataState == execution.DataStateEmpty
+	case execution.CompletenessUnavailable:
+		return completion.DataState == execution.DataStateData || completion.DataState == execution.DataStateEmpty ||
+			completion.DataState == execution.DataStateUnknown
+	default:
+		return false
+	}
 }
 
 type PreparedExecution struct {
@@ -249,19 +264,46 @@ func dataBindings(query PlannedQuery, batch execution.ProviderSeriesBatch, attem
 
 func completionBindings(query PlannedQuery, completion execution.ProviderCompletion, attemptNo uint32) []execution.NamedInputBinding {
 	bindings := make([]execution.NamedInputBinding, 0)
-	empty := execution.NewDataset(nil)
+	var dataset *execution.Dataset
+	var view *execution.DatasetView
+	dataState := completion.DataState
+	disposition := execution.AccessAvailable
+	var reason execution.ReasonCode
+	switch completion.Completeness {
+	case execution.CompletenessFull:
+		dataset = execution.NewDataset(nil)
+		view, _ = execution.NewDatasetView(dataset, nil)
+	case execution.CompletenessPartial:
+		dataset = execution.NewDataset(nil)
+		view, _ = execution.NewDatasetView(dataset, nil)
+		disposition = execution.AccessDegraded
+		reason = execution.ReasonCode(contract.ReasonQueryPartial)
+	case execution.CompletenessUnavailable:
+		dataState = execution.DataStateUnknown
+		disposition = execution.AccessUnavailable
+		reason = providerFailureReason(completion.RouteFacts)
+	}
 	for _, requirement := range query.Requirements {
 		for _, consumer := range requirement.Consumers {
-			view, _ := execution.NewDatasetView(empty, nil)
 			bindings = append(bindings, execution.NamedInputBinding{Consumer: consumer.Consumer,
 				RequirementID: requirement.RequirementID, DatasetName: requirement.DatasetName, Role: requirement.Role,
-				ProviderResult: completion.Ref, QueryWindow: query.Spec.LogicalWindow, Dataset: empty, View: view,
-				Completeness: execution.CompletenessFull, DataState: execution.DataStateEmpty,
-				Disposition: execution.AccessAvailable, ImpactScope: execution.ImpactPlan,
-				Provenance: execution.InputProvenance{PhysicalQuery: query.Spec.Digest, AttemptNo: attemptNo}})
+				ProviderResult: completion.Ref, QueryWindow: query.Spec.LogicalWindow, Dataset: dataset, View: view,
+				Completeness: completion.Completeness, DataState: dataState,
+				Disposition: disposition, ReasonCode: reason, ImpactScope: execution.ImpactPlan,
+				PartialEvidence: completion.PartialEvidence,
+				Provenance:      execution.InputProvenance{PhysicalQuery: query.Spec.Digest, AttemptNo: attemptNo}})
 		}
 	}
 	return bindings
+}
+
+func providerFailureReason(facts execution.ProviderRouteFacts) execution.ReasonCode {
+	for index := len(facts.Attempts) - 1; index >= 0; index-- {
+		if facts.Attempts[index].ReasonCode != "" {
+			return facts.Attempts[index].ReasonCode
+		}
+	}
+	return execution.ReasonCode(contract.ReasonQueryUnavailable)
 }
 
 func waitContext(ctx context.Context, delay time.Duration) error {

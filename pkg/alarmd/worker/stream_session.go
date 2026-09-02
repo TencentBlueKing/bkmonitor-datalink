@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
@@ -309,51 +310,197 @@ func (stream *streamedExecution) complete(completion execution.QueryExecutionCom
 	if err := completion.Validate(stream.header, stream.delivered); err != nil {
 		return err
 	}
-	stream.bindings = append(stream.bindings, completion.CompletionBindings...)
-	if len(stream.evaluated.Plans) == 0 {
-		for _, binding := range completion.CompletionBindings {
-			if binding.Disposition == execution.AccessUnavailable {
-				stream.evaluated = execution.EvaluationResult{
-					Contract: stream.header.Contract, Result: observability.ResultRetrying, ReasonCode: binding.ReasonCode,
-				}
-				return nil
+	physical := make(map[execution.PhysicalQueryDigest]execution.PhysicalQueryCompletion, len(completion.PhysicalQueries))
+	for _, item := range completion.PhysicalQueries {
+		physical[item.PhysicalQuery] = item
+	}
+	forced := make(map[execution.PlanIdentity]execution.NamedInputBinding)
+	for index := range stream.bindings {
+		binding := &stream.bindings[index]
+		item, ok := physical[binding.Provenance.PhysicalQuery]
+		if !ok || item.Ref != binding.ProviderResult {
+			return errors.New("alarmd worker: streamed binding differs from physical completion")
+		}
+		switch item.Completeness {
+		case execution.CompletenessFull:
+			if binding.Completeness != execution.CompletenessFull {
+				return errors.New("alarmd worker: streamed binding differs from FULL physical completion")
 			}
-		}
-		completionByQuery := make(map[execution.PhysicalQueryDigest]execution.PhysicalQueryCompletion,
-			len(completion.PhysicalQueries))
-		for _, physical := range completion.PhysicalQueries {
-			if physical.Completeness != execution.CompletenessFull || physical.DataState != execution.DataStateEmpty {
-				return errors.New("alarmd worker: trustworthy completion produced no provisional evaluation")
+		case execution.CompletenessPartial:
+			if binding.Completeness != execution.CompletenessFull {
+				// A provider that supplied typed PARTIAL evidence earlier remains
+				// owned by the existing evaluator capability path.
+				continue
 			}
-			completionByQuery[physical.PhysicalQuery] = physical
-		}
-		for _, binding := range completion.CompletionBindings {
-			physical, ok := completionByQuery[binding.Provenance.PhysicalQuery]
-			if !ok || physical.Ref != binding.ProviderResult ||
-				binding.Completeness != execution.CompletenessFull || binding.DataState != execution.DataStateEmpty ||
-				binding.Disposition != execution.AccessAvailable {
-				return errors.New("alarmd worker: trustworthy completion produced no provisional evaluation")
-			}
-		}
-		input := execution.InternalExecution{
-			Contract: stream.header.Contract, DuePlans: stream.header.DuePlans, Requirements: stream.header.Requirements,
-			Inputs: completion.CompletionBindings, EffectiveTimeFacts: stream.header.EffectiveTimeFacts,
-			GapPreflight: stream.gapItems,
-		}
-		if err := input.Validate(stream.header.Contract); err != nil {
-			return fmt.Errorf("alarmd worker: invalid completion-only execution: %w", err)
-		}
-		stream.evaluated = execution.EvaluationResult{
-			Contract: stream.header.Contract, Result: observability.ResultSuccess,
-			Plans: make([]execution.PlanEvaluationResult, len(stream.header.DuePlans)),
-		}
-		for index, due := range stream.header.DuePlans {
-			stream.evaluated.Plans[index] = execution.PlanEvaluationResult{
-				Plan: due.Identity, Disposition: execution.PlanDecided,
-			}
+			binding.Completeness = execution.CompletenessPartial
+			binding.Disposition = execution.AccessDegraded
+			binding.ReasonCode = execution.ReasonCode(contract.ReasonQueryPartial)
+			binding.PartialEvidence = item.PartialEvidence
+			forced[binding.Consumer.Plan] = *binding
+		case execution.CompletenessUnavailable:
+			binding.Completeness = execution.CompletenessUnavailable
+			binding.DataState = execution.DataStateUnknown
+			binding.Disposition = execution.AccessUnavailable
+			binding.ReasonCode = physicalFailureReason(item.RouteFacts)
+			binding.PartialEvidence = nil
+			forced[binding.Consumer.Plan] = *binding
+		default:
+			return errors.New("alarmd worker: invalid physical completion completeness")
 		}
 	}
+	for _, binding := range completion.CompletionBindings {
+		item, ok := physical[binding.Provenance.PhysicalQuery]
+		if !ok || item.Ref != binding.ProviderResult || item.Completeness != binding.Completeness {
+			return errors.New("alarmd worker: completion binding differs from physical completion")
+		}
+		switch binding.Completeness {
+		case execution.CompletenessFull:
+		case execution.CompletenessPartial, execution.CompletenessUnavailable:
+			forced[binding.Consumer.Plan] = binding
+		default:
+			return errors.New("alarmd worker: invalid completion binding completeness")
+		}
+	}
+	stream.bindings = append(stream.bindings, completion.CompletionBindings...)
+	if len(forced) == 0 {
+		return stream.completeFullEmpty(completion)
+	}
+	if stream.request.Operation == execution.OperationProbe {
+		for _, binding := range forced {
+			stream.evaluated = execution.EvaluationResult{
+				Contract: stream.header.Contract, Result: observability.ResultDegraded, ReasonCode: binding.ReasonCode,
+			}
+			return nil
+		}
+	}
+	result := stream.evaluated
+	result.Contract, result.Result, result.ReasonCode = stream.header.Contract, observability.ResultDegraded, observability.ReasonNone
+	byPlan := make(map[execution.PlanIdentity]int, len(result.Plans))
+	for index, plan := range result.Plans {
+		byPlan[plan.Plan] = index
+	}
+	for _, due := range stream.header.DuePlans {
+		binding, affected := forced[due.Identity]
+		if !affected {
+			if _, found := byPlan[due.Identity]; found {
+				continue
+			}
+			if !planCompletedFullEmpty(stream.bindings, due.Identity) {
+				return errors.New("alarmd worker: trustworthy completion produced no provisional evaluation")
+			}
+			result.Plans = append(result.Plans, execution.PlanEvaluationResult{Plan: due.Identity, Disposition: execution.PlanDecided})
+			continue
+		}
+		mutation, err := stream.completionGapMutation(due, binding.ReasonCode)
+		if err != nil {
+			return err
+		}
+		disposition := execution.PlanDecidedDegraded
+		if binding.Completeness == execution.CompletenessUnavailable {
+			disposition = execution.PlanUnavailable
+		}
+		plan := execution.PlanEvaluationResult{Plan: due.Identity, Disposition: disposition, ReasonCode: binding.ReasonCode,
+			GuardBeforeEvents: []execution.PlanGapMutation{mutation}}
+		if index, found := byPlan[due.Identity]; found {
+			result.Plans[index] = plan
+		} else {
+			result.Plans = append(result.Plans, plan)
+		}
+		result.ReasonCode = binding.ReasonCode
+	}
+	stream.evaluated = result
 	return nil
+}
+
+func (stream *streamedExecution) completeFullEmpty(completion execution.QueryExecutionCompletion) error {
+	if len(stream.evaluated.Plans) != 0 {
+		return nil
+	}
+	for _, physical := range completion.PhysicalQueries {
+		if physical.Completeness != execution.CompletenessFull || physical.DataState != execution.DataStateEmpty {
+			return errors.New("alarmd worker: trustworthy completion produced no provisional evaluation")
+		}
+	}
+	stream.evaluated = execution.EvaluationResult{Contract: stream.header.Contract, Result: observability.ResultSuccess,
+		Plans: make([]execution.PlanEvaluationResult, len(stream.header.DuePlans))}
+	for index, due := range stream.header.DuePlans {
+		if !planCompletedFullEmpty(stream.bindings, due.Identity) {
+			return errors.New("alarmd worker: trustworthy completion produced no provisional evaluation")
+		}
+		stream.evaluated.Plans[index] = execution.PlanEvaluationResult{Plan: due.Identity, Disposition: execution.PlanDecided}
+	}
+	return nil
+}
+
+func planCompletedFullEmpty(bindings []execution.NamedInputBinding, plan execution.PlanIdentity) bool {
+	found := false
+	for _, binding := range bindings {
+		if binding.Consumer.Plan != plan {
+			continue
+		}
+		found = true
+		if binding.Completeness != execution.CompletenessFull || binding.DataState != execution.DataStateEmpty ||
+			binding.Disposition != execution.AccessAvailable {
+			return false
+		}
+	}
+	return found
+}
+
+func (stream *streamedExecution) completionGapMutation(
+	due execution.DuePlan,
+	reason execution.ReasonCode,
+) (execution.PlanGapMutation, error) {
+	identity := execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}
+	marker, found := stream.gaps.Find(identity)
+	if !found {
+		return execution.PlanGapMutation{}, errors.New("alarmd worker: Plan gap marker is absent from validated result")
+	}
+	kind, err := ensureGappedKind(marker)
+	if err != nil {
+		return execution.PlanGapMutation{}, err
+	}
+	version, err := execution.BuildApplyVersion(stream.header.Contract, due.StateApplyEpoch)
+	if err != nil {
+		return execution.PlanGapMutation{}, err
+	}
+	required := requiredFullSlots(due.CompiledPlan)
+	if required == 0 {
+		return execution.PlanGapMutation{}, errors.New("alarmd worker: Plan gap requires positive FULL warmup slots")
+	}
+	mutation, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{
+		Identity: identity, ExpectedMarkerRevision: marker.MarkerRevision,
+		ApplyVersion: version, ScheduleRevision: due.ScheduleRevision,
+		Scopes: []execution.GapScopeMutation{{
+			Kind: kind, ReasonCode: reason, RequiredFullSlots: required,
+		}},
+	})
+	if err != nil {
+		return execution.PlanGapMutation{}, fmt.Errorf("alarmd worker: build completion Plan gap: %w", err)
+	}
+	return mutation, nil
+}
+
+func requiredFullSlots(plan *strategy.CompiledPlan) uint32 {
+	if plan == nil {
+		return 0
+	}
+	var required uint32
+	for _, level := range plan.Levels() {
+		if points := level.RequiredDetectHistoryPoints(); points > required {
+			required = points
+		}
+	}
+	return required
+}
+
+func physicalFailureReason(facts execution.ProviderRouteFacts) execution.ReasonCode {
+	for index := len(facts.Attempts) - 1; index >= 0; index-- {
+		if facts.Attempts[index].ReasonCode != "" {
+			return facts.Attempts[index].ReasonCode
+		}
+	}
+	return execution.ReasonCode(contract.ReasonQueryUnavailable)
 }
 
 func provisionalResult(result execution.EvaluationResult) (observability.Result, execution.ReasonCode) {

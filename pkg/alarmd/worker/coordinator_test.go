@@ -419,6 +419,32 @@ func TestSlotExecutionCoordinatorPersistsDegradedGapBeforeEvents(t *testing.T) {
 	}
 }
 
+func TestSlotExecutionCoordinatorDiscardsProvisionalEffectsForPartialData(t *testing.T) {
+	fixture := newFixture(t, true, "")
+	fixture.ports.completionCompleteness = execution.CompletenessPartial
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err != nil || !result.Completed || result.Result != observability.ResultDegraded ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonQueryPartial) {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	if fixture.ports.stateLoadCalls == 0 {
+		t.Fatal("provisional DATA did not exercise the pure evaluation path")
+	}
+	if fixture.ports.eventCount != 0 || fixture.ports.stateAdmissionCalls != 0 || fixture.ports.stateApplyCalls != 0 {
+		t.Fatalf("PARTIAL DATA leaked provisional effects: events=%d state_admit=%d state_apply=%d",
+			fixture.ports.eventCount, fixture.ports.stateAdmissionCalls, fixture.ports.stateApplyCalls)
+	}
+	if len(fixture.ports.gapMutations) != 1 || len(fixture.ports.gapMutations[0].Scopes) != 1 ||
+		fixture.ports.gapMutations[0].Scopes[0].ReasonCode != execution.ReasonCode(contract.ReasonQueryPartial) {
+		t.Fatalf("gap mutations=%+v", fixture.ports.gapMutations)
+	}
+	if fixture.ports.lastProgress.Completion.Kind != execution.CompletionPartialGap ||
+		fixture.ports.lastProgress.Completion.Primary == nil ||
+		fixture.ports.lastProgress.Completion.Primary.Completeness != execution.CompletenessPartial {
+		t.Fatalf("Progress=%+v", fixture.ports.lastProgress)
+	}
+}
+
 func TestSlotExecutionCoordinatorShortCircuitsAlreadyAppliedState(t *testing.T) {
 	fixture := newFixture(t, true, "")
 	fixture.ports.alreadyApplied = true
@@ -883,6 +909,7 @@ type recordingPorts struct {
 	contractDrift                   bool
 	alreadyApplied                  bool
 	degraded                        bool
+	completionCompleteness          execution.Completeness
 	wrongGapIdentity                bool
 	wrongStateAdmissionIdentity     bool
 	wrongStateApplyIdentity         bool
@@ -1028,9 +1055,13 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 	if err := ports.fail("query_after_series"); err != nil {
 		return execution.QueryExecutionCompletion{}, err
 	}
+	completeness := input.Inputs[0].Completeness
+	if ports.completionCompleteness != "" {
+		completeness = ports.completionCompleteness
+	}
 	return execution.QueryExecutionCompletion{AllRequiredCompleted: true, PhysicalQueries: []execution.PhysicalQueryCompletion{{
 		Ref: "provider-result-1", PhysicalQuery: "physical-query-1", QueryRevision: input.Contract.QueryRevision,
-		Completeness: input.Inputs[0].Completeness, DataState: input.Inputs[0].DataState, Delivery: delivery,
+		Completeness: completeness, DataState: input.Inputs[0].DataState, Delivery: delivery,
 	}}}, nil
 }
 

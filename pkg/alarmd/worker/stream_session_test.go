@@ -132,8 +132,16 @@ func TestSlotExecutionCoordinatorRejectsNonFullEmptyCompletionOnlyInput(t *testi
 	}
 }
 
-func TestSlotExecutionCoordinatorDoesNotCompleteUnavailableAsFullEmpty(t *testing.T) {
+func TestSlotExecutionCoordinatorCompletesUnavailableAfterPlanGap(t *testing.T) {
 	plans, requirements := baseDuePlanAndRequirements()
+	second := plans[0]
+	second.Identity.BusinessID = "3"
+	plans = append(plans, second)
+	requirements[0].Consumers = append(requirements[0].Consumers, execution.DataRequirementConsumer{
+		Consumer:                           execution.ConsumerRef{Plan: second.Identity},
+		ConsumerDeadlineUnixMilli:          second.CompletionDeadlineUnixMilli,
+		DownstreamExecutionReserveMilliSec: 5_000,
+	})
 	reason := execution.ReasonCode(contract.ReasonQueryUnavailable)
 	fixture, request := newCompletionOnlyFixture(t, plans, requirements, func(completion *execution.QueryExecutionCompletion) {
 		completion.PhysicalQueries[0].Completeness = execution.CompletenessUnavailable
@@ -149,12 +157,72 @@ func TestSlotExecutionCoordinatorDoesNotCompleteUnavailableAsFullEmpty(t *testin
 	})
 
 	result, err := fixture.coordinator.Execute(context.Background(), request)
-	if err != nil || result.Completed || result.Result != observability.ResultRetrying || result.ReasonCode != reason {
+	if err != nil || !result.Completed || result.Result != observability.ResultDegraded || result.ReasonCode != reason {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
-	assertNoFullEmptyBusinessSideEffects(t, fixture)
-	if fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
-		t.Fatalf("UNAVAILABLE advanced Progress: %+v", fixture.ports.lastProgress)
+	assertCompletionGapBeforeProgress(t, fixture, execution.CompletenessUnavailable, execution.CompletionUnavailable, reason, len(plans))
+}
+
+func TestSlotExecutionCoordinatorCompletesPartialEmptyAfterPlanGap(t *testing.T) {
+	plans, requirements := baseDuePlanAndRequirements()
+	reason := execution.ReasonCode(contract.ReasonQueryPartial)
+	fixture, request := newCompletionOnlyFixture(t, plans, requirements, func(completion *execution.QueryExecutionCompletion) {
+		completion.PhysicalQueries[0].Completeness = execution.CompletenessPartial
+		for index := range completion.CompletionBindings {
+			binding := &completion.CompletionBindings[index]
+			binding.Completeness = execution.CompletenessPartial
+			binding.Disposition = execution.AccessDegraded
+			binding.ReasonCode = reason
+		}
+	})
+
+	result, err := fixture.coordinator.Execute(context.Background(), request)
+	if err != nil || !result.Completed || result.Result != observability.ResultDegraded || result.ReasonCode != reason {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	assertCompletionGapBeforeProgress(t, fixture, execution.CompletenessPartial, execution.CompletionPartialGap, reason, len(plans))
+}
+
+func assertCompletionGapBeforeProgress(
+	t *testing.T,
+	fixture fixture,
+	completeness execution.Completeness,
+	kind execution.CompletionKind,
+	reason execution.ReasonCode,
+	wantGaps int,
+) {
+	t.Helper()
+	if fixture.ports.stateLoadCalls != 0 || fixture.ports.stateAdmissionCalls != 0 ||
+		fixture.ports.stateApplyCalls != 0 || fixture.ports.eventCount != 0 {
+		t.Fatalf("completion-only gap produced Event/State: state_load=%d state_admit=%d state_apply=%d events=%d",
+			fixture.ports.stateLoadCalls, fixture.ports.stateAdmissionCalls, fixture.ports.stateApplyCalls, fixture.ports.eventCount)
+	}
+	if len(fixture.ports.gapMutations) != wantGaps {
+		t.Fatalf("gap mutations=%+v", fixture.ports.gapMutations)
+	}
+	for _, mutation := range fixture.ports.gapMutations {
+		if len(mutation.Scopes) != 1 || mutation.Scopes[0].ReasonCode != reason ||
+			mutation.Scopes[0].RequiredFullSlots == 0 {
+			t.Fatalf("gap mutation=%+v", mutation)
+		}
+	}
+	progress := fixture.ports.lastProgress
+	if progress.Completion.Kind != kind || progress.Completion.Primary == nil ||
+		progress.Completion.Primary.Completeness != completeness || progress.Completion.Result != observability.ResultDegraded ||
+		progress.Completion.ReasonCode != reason {
+		t.Fatalf("Progress=%+v", progress)
+	}
+	gapIndex, progressIndex := -1, -1
+	for index, stage := range *fixture.trace {
+		switch stage {
+		case "gap_before":
+			gapIndex = index
+		case "progress_commit":
+			progressIndex = index
+		}
+	}
+	if gapIndex < 0 || progressIndex < 0 || gapIndex >= progressIndex {
+		t.Fatalf("Guard did not precede Progress: %v", *fixture.trace)
 	}
 }
 

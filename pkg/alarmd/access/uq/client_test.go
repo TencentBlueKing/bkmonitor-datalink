@@ -179,7 +179,38 @@ func TestClientAcceptsFullEmpty(t *testing.T) {
 	}
 }
 
-func TestClientRejectsMalformedNonSuccessAndTimeout(t *testing.T) {
+func TestClientReportsPartialDataAndEmpty(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		dataState execution.DataState
+		batches   int
+	}{
+		{
+			name:      "data",
+			body:      `{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["bk_target_ip"],"group_values":["127.0.0.1"],"values":[[1700123456789,12.5]]}],"is_partial":true}`,
+			dataState: execution.DataStateData,
+			batches:   1,
+		},
+		{name: "empty", body: `{"series":[],"is_partial":true}`, dataState: execution.DataStateEmpty},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := fixtureClient(t, http.StatusOK, test.body, DefaultLimits())
+			sink := &collectingSink{}
+			completion, err := client.Execute(context.Background(), validAttempt(t), sink)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if completion.Completeness != execution.CompletenessPartial || completion.DataState != test.dataState ||
+				len(sink.batches) != test.batches || completion.PartialEvidence != nil {
+				t.Fatalf("completion=%+v batches=%d", completion, len(sink.batches))
+			}
+		})
+	}
+}
+
+func TestClientReportsUnavailableForTransportProtocolAndDeadlineFailures(t *testing.T) {
 	t.Run("malformed", func(t *testing.T) {
 		client := fixtureClient(t, http.StatusOK, `{"series":[`, DefaultLimits())
 		if _, err := client.Execute(context.Background(), validAttempt(t), &collectingSink{}); err == nil {
@@ -194,8 +225,21 @@ func TestClientRejectsMalformedNonSuccessAndTimeout(t *testing.T) {
 	})
 	t.Run("non-success", func(t *testing.T) {
 		client := fixtureClient(t, http.StatusBadGateway, `upstream failed`, DefaultLimits())
-		if _, err := client.Execute(context.Background(), validAttempt(t), &collectingSink{}); err == nil || !strings.Contains(err.Error(), "502") {
-			t.Fatalf("error=%v", err)
+		completion, err := client.Execute(context.Background(), validAttempt(t), &collectingSink{})
+		if err != nil || completion.Completeness != execution.CompletenessUnavailable || completion.DataState != execution.DataStateUnknown ||
+			len(completion.RouteFacts.Attempts) != 1 || completion.RouteFacts.Attempts[0].ReasonCode != execution.ReasonCode(contract.ReasonQueryUnavailable) {
+			t.Fatalf("completion=%+v error=%v", completion, err)
+		}
+	})
+	t.Run("missing is_partial after data", func(t *testing.T) {
+		body := `{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["bk_target_ip"],"group_values":["127.0.0.1"],"values":[[1700123456789,12.5]]}]}`
+		client := fixtureClient(t, http.StatusOK, body, DefaultLimits())
+		sink := &collectingSink{}
+		completion, err := client.Execute(context.Background(), validAttempt(t), sink)
+		if err != nil || completion.Completeness != execution.CompletenessUnavailable || completion.DataState != execution.DataStateData ||
+			len(sink.batches) != 1 || len(completion.RouteFacts.Attempts) != 1 ||
+			completion.RouteFacts.Attempts[0].ReasonCode != execution.ReasonCode(contract.ReasonQueryUnavailable) {
+			t.Fatalf("completion=%+v batches=%d error=%v", completion, len(sink.batches), err)
 		}
 	})
 	t.Run("timeout", func(t *testing.T) {
@@ -204,10 +248,23 @@ func TestClientRejectsMalformedNonSuccessAndTimeout(t *testing.T) {
 		client, _ := NewClient(server.URL, "alarmd-shadow", server.Client())
 		attempt := validAttempt(t)
 		attempt.DeadlineUnixMilli = time.Now().Add(10 * time.Millisecond).UnixMilli()
-		if _, err := client.Execute(context.Background(), attempt, &collectingSink{}); err == nil || !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("error=%v", err)
+		completion, err := client.Execute(context.Background(), attempt, &collectingSink{})
+		if err != nil || completion.Completeness != execution.CompletenessUnavailable || completion.DataState != execution.DataStateUnknown ||
+			len(completion.RouteFacts.Attempts) != 1 || completion.RouteFacts.Attempts[0].ReasonCode != execution.ReasonCode(contract.ReasonQueryTimeout) {
+			t.Fatalf("completion=%+v error=%v", completion, err)
 		}
 	})
+}
+
+func TestClientPropagatesCallerCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { time.Sleep(100 * time.Millisecond) }))
+	defer server.Close()
+	client, _ := NewClient(server.URL, "alarmd-shadow", server.Client())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := client.Execute(ctx, validAttempt(t), &collectingSink{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("error=%v", err)
+	}
 }
 
 func TestClientEnforcesDecompressedAndSeriesBudgets(t *testing.T) {

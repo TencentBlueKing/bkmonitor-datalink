@@ -537,6 +537,187 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingEventACKIsRetr
 	}
 }
 
+func TestProductionPhaseTwoBundleCompletesUnavailableWithoutStoppingHealthyQueryGroupAndRecovers(t *testing.T) {
+	address, redisClient := startPhaseTwoRedis(t)
+	ctx := context.Background()
+	installTwoPhaseTwoStrategies(t, ctx, redisClient)
+
+	base := time.Now().Add(2 * time.Second).Unix()
+	var clock atomic.Int64
+	clock.Store(base)
+	now := func() time.Time { return time.Unix(clock.Load(), 0) }
+	var failedOnce atomic.Bool
+	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var payload struct {
+			QueryList []struct {
+				TableID string `json:"table_id"`
+			} `json:"query_list"`
+			EndTime string `json:"end_time"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || len(payload.QueryList) != 1 {
+			t.Errorf("decode UQ request: payload=%+v error=%v", payload, err)
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if payload.QueryList[0].TableID == "system.cpu" && failedOnce.CompareAndSwap(false, true) {
+			writer.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		end, err := strconv.ParseInt(payload.EndTime, 10, 64)
+		if err != nil {
+			t.Errorf("parse end_time %q: %v", payload.EndTime, err)
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = writer.Write([]byte(`{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["host"],"group_values":["127.0.0.1"],"values":[[` +
+			strconv.FormatInt((end-1)*1000, 10) + `,95]]}],"status":null,"trace_id":"g3b-recovered","is_partial":false,"result_table_id":[]}`))
+	}))
+	defer uqServer.Close()
+
+	cfg := validGoAccessRuntimeConfig()
+	cfg.Redis.Address = address
+	cfg.Redis.StatePrefix = "alarmd-g3b-access-recovery"
+	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
+	cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.DownstreamExecutionReserve = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Worker.RegistrationRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.LeaseTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Ownership.LeaseRenewInterval = config.Duration(time.Minute)
+
+	events := &recordingPhaseTwoEventSink{}
+	var fatal atomic.Bool
+	bundle, err := openProductionPhaseTwoBundleWithDependencies(
+		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime),
+		newPhaseTwoApplicationHealth(),
+		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
+			return controlplane.NewLegacyRedisStrategySource(client, prefix)
+		},
+		phaseTwoProductionExternalDependencies{
+			Now: now, HTTPClient: uqServer.Client(),
+			AdditionalObserver: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+				if observation.Stage == observability.Stage(observability.StageFatal) {
+					fatal.Store(true)
+				}
+			}),
+			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil },
+		},
+	)
+	if err != nil {
+		t.Fatalf("openProductionPhaseTwoBundleWithDependencies() error = %v", err)
+	}
+	if err := bundle.Start(ctx); err != nil {
+		t.Fatalf("phase-two production Start() error = %v", err)
+	}
+	defer func() {
+		if err := bundle.Shutdown(ctx); err != nil {
+			t.Errorf("phase-two production Shutdown() error = %v", err)
+		}
+	}()
+
+	productionOwnership := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
+	queryGroupsByStrategy := make(map[string]execution.QueryGroupIdentity, 2)
+	for _, queryGroup := range bundle.queryGroups {
+		schedule, scheduleErr := productionOwnership.dependencies.Catalog.ReadInitialFrozenSchedule(ctx, queryGroup)
+		if scheduleErr != nil || len(schedule.Plans) != 1 {
+			t.Fatalf("Query Group %s schedule=%+v error=%v", queryGroup, schedule, scheduleErr)
+		}
+		queryGroupsByStrategy[schedule.Plans[0].Identity.StrategyID] = queryGroup
+	}
+
+	clock.Store(base)
+	if err := bundle.runScheduledOnce(ctx); err != nil {
+		t.Fatalf("runScheduledOnce(unavailable sibling) error = %v", err)
+	}
+	failed := loadPhaseTwoProgress(t, ctx, productionOwnership, queryGroupsByStrategy["1001"])
+	healthy := loadPhaseTwoProgress(t, ctx, productionOwnership, queryGroupsByStrategy["1002"])
+	if failed.LastCompletionKind != execution.CompletionUnavailable || failed.LastFullSlot != 0 ||
+		failed.CurrentOrRecentGap == nil || failed.CurrentOrRecentGap.ReasonCode != execution.ReasonCode(contract.ReasonQueryUnavailable) {
+		t.Fatalf("unavailable Query Group Progress=%+v gap=%+v", failed, failed.CurrentOrRecentGap)
+	}
+	if healthy.LastFullSlot != execution.EvaluationTime(base) || healthy.LastCompletionKind != execution.CompletionFull {
+		t.Fatalf("healthy Query Group Progress=%+v", healthy)
+	}
+	for _, event := range events.snapshot() {
+		if event.PlanRef.StrategyID == "1001" {
+			t.Fatalf("UNAVAILABLE emitted an unproven event: %+v", event)
+		}
+	}
+
+	clock.Store(base + 1)
+	if err := bundle.runScheduledOnce(ctx); err != nil {
+		t.Fatalf("runScheduledOnce(recovered sibling) error = %v", err)
+	}
+	recovered := loadPhaseTwoProgress(t, ctx, productionOwnership, queryGroupsByStrategy["1001"])
+	if recovered.LastFullSlot != execution.EvaluationTime(base+1) ||
+		recovered.LastCompletionKind != execution.CompletionFull || recovered.NextSlot != execution.EvaluationTime(base+2) {
+		t.Fatalf("recovered Query Group Progress=%+v", recovered)
+	}
+	foundRecoveredEvent := false
+	for _, event := range events.snapshot() {
+		foundRecoveredEvent = foundRecoveredEvent || event.PlanRef.StrategyID == "1001"
+	}
+	if !foundRecoveredEvent || fatal.Load() || len(bundle.runners) != 2 {
+		t.Fatalf("recovery event=%t fatal=%t runners=%d", foundRecoveredEvent, fatal.Load(), len(bundle.runners))
+	}
+}
+
+func installTwoPhaseTwoStrategies(t *testing.T, ctx context.Context, redisClient *redis.Client) {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/g1_full_threshold_strategy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firstStrategy map[string]any
+	if err := json.Unmarshal(raw, &firstStrategy); err != nil {
+		t.Fatal(err)
+	}
+	firstItem := firstStrategy["items"].([]any)[0].(map[string]any)
+	firstItem["query_configs"].([]any)[0].(map[string]any)["agg_interval"] = 1
+	first, err := json.Marshal(firstStrategy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var second map[string]any
+	if err := json.Unmarshal(first, &second); err != nil {
+		t.Fatal(err)
+	}
+	second["id"] = 1002
+	item := second["items"].([]any)[0].(map[string]any)
+	item["id"], item["query_md5"] = 12, "g3b-access-healthy-query-md5"
+	item["query_configs"].([]any)[0].(map[string]any)["result_table_id"] = "system.mem"
+	encoded, err := json.Marshal(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range map[string]any{
+		"alarm-config.strategy_ids":  `[1001,1002]`,
+		"alarm-config.strategy_1001": first,
+		"alarm-config.strategy_1002": encoded,
+	} {
+		if err := redisClient.Set(ctx, key, value, 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func loadPhaseTwoProgress(
+	t *testing.T,
+	ctx context.Context,
+	production *productionPhaseTwoOwnership,
+	queryGroup execution.QueryGroupIdentity,
+) execution.ScheduleProgress {
+	t.Helper()
+	loaded, err := production.dependencies.Progress.LoadProgress(ctx, execution.ProgressIdentity{QueryGroup: queryGroup})
+	if err != nil || loaded.Status != execution.ProgressFound || loaded.Progress == nil {
+		t.Fatalf("Query Group %s Progress=%+v error=%v", queryGroup, loaded, err)
+	}
+	return *loaded.Progress
+}
+
 type recordingPhaseTwoEventSink struct {
 	mu     sync.Mutex
 	events []contract.TriggerEventV1

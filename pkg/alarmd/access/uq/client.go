@@ -76,6 +76,7 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 	if err := attempt.Validate(); err != nil {
 		return execution.ProviderCompletion{}, err
 	}
+	callerCtx := ctx
 	deadline := time.UnixMilli(attempt.DeadlineUnixMilli)
 	if current, ok := ctx.Deadline(); !ok || deadline.Before(current) {
 		var cancel context.CancelFunc
@@ -101,12 +102,23 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 	started := client.now()
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: execute request: %w", err)
+		if callerCtx.Err() != nil {
+			return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: execute request: %w", callerCtx.Err())
+		}
+		reason := execution.ReasonCode(contract.ReasonQueryUnavailable)
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			reason = execution.ReasonCode(contract.ReasonQueryTimeout)
+		}
+		completion := client.unavailableCompletion(attempt, reason)
+		completion.Stats.QueryMillis = uint64(client.now().Sub(started).Milliseconds())
+		return completion, nil
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: unexpected HTTP status %d", response.StatusCode)
+		completion := client.unavailableCompletion(attempt, execution.ReasonCode(contract.ReasonQueryUnavailable))
+		completion.Stats.QueryMillis = uint64(client.now().Sub(started).Milliseconds())
+		return completion, nil
 	}
 	counted := &countingReader{reader: &boundedReader{reader: response.Body, maximum: client.limits.MaxBodyBytes}}
 	completion, err := client.decode(ctx, counted, attempt, sink)
@@ -116,6 +128,26 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 	completion.Stats.Bytes = counted.bytes
 	completion.Stats.QueryMillis = uint64(client.now().Sub(started).Milliseconds())
 	return completion, nil
+}
+
+func (client *Client) unavailableCompletion(attempt execution.QueryAttempt, reason execution.ReasonCode) execution.ProviderCompletion {
+	return execution.ProviderCompletion{
+		Ref:           providerResultRef(attempt),
+		PhysicalQuery: attempt.Spec.Digest,
+		Completeness:  execution.CompletenessUnavailable,
+		DataState:     execution.DataStateUnknown,
+		RouteFacts: execution.ProviderRouteFacts{
+			ProviderRouteRef: attempt.Spec.PlanFacts.ProviderRouteRef,
+			Attempts: []execution.RouteAttemptFact{{
+				AttemptNo: attempt.AttemptNo, Endpoint: client.endpoint,
+				Result: execution.RouteAttemptFailed, ReasonCode: reason,
+			}},
+		},
+	}
+}
+
+func providerResultRef(attempt execution.QueryAttempt) execution.ProviderResultRef {
+	return execution.ProviderResultRef(string(attempt.Spec.Digest) + ":" + strconv.FormatUint(uint64(attempt.AttemptNo), 10))
 }
 
 type countingReader struct {
@@ -308,7 +340,7 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 	if opening != json.Delim('{') {
 		return execution.ProviderCompletion{}, errors.New("alarmd access uq: response must be an object")
 	}
-	ref := execution.ProviderResultRef(string(attempt.Spec.Digest) + ":" + strconv.FormatUint(uint64(attempt.AttemptNo), 10))
+	ref := providerResultRef(attempt)
 	var delivery execution.SeriesDelivery
 	var status *responseStatus
 	var isPartial *bool
@@ -401,12 +433,6 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 		}
 		return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: unexpected trailing token %v", token)
 	}
-	if isPartial == nil {
-		return execution.ProviderCompletion{}, errors.New("alarmd access uq: response lacks is_partial")
-	}
-	if *isPartial {
-		return execution.ProviderCompletion{}, errors.New("alarmd access uq: G1 requires FULL response")
-	}
 	if status != nil && status.Code != "" {
 		return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: query status %s", status.Code)
 	}
@@ -414,8 +440,21 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 	if delivery.Records > 0 {
 		dataState = execution.DataStateData
 	}
+	if isPartial == nil {
+		completion := client.unavailableCompletion(attempt, execution.ReasonCode(contract.ReasonQueryUnavailable))
+		completion.DataState = dataState
+		completion.Delivery = delivery
+		completion.RouteFacts.ResultTableIDs = append([]string(nil), resultTableIDs...)
+		completion.Stats = execution.ProviderStats{Series: delivery.Series, Records: delivery.Records,
+			DecodeMillis: uint64(client.now().Sub(decodeStarted).Milliseconds())}
+		return completion, nil
+	}
+	completeness := execution.CompletenessFull
+	if *isPartial {
+		completeness = execution.CompletenessPartial
+	}
 	return execution.ProviderCompletion{Ref: ref, PhysicalQuery: attempt.Spec.Digest,
-		Completeness: execution.CompletenessFull, DataState: dataState, Delivery: delivery,
+		Completeness: completeness, DataState: dataState, Delivery: delivery,
 		RouteFacts: execution.ProviderRouteFacts{ProviderRouteRef: attempt.Spec.PlanFacts.ProviderRouteRef,
 			ResultTableIDs: append([]string(nil), resultTableIDs...), Attempts: []execution.RouteAttemptFact{{AttemptNo: attempt.AttemptNo, Endpoint: client.endpoint, Result: execution.RouteAttemptSucceeded}}},
 		Stats: execution.ProviderStats{Series: delivery.Series, Records: delivery.Records, DecodeMillis: uint64(client.now().Sub(decodeStarted).Milliseconds())}}, nil

@@ -38,6 +38,63 @@ func TestSourceStreamsFullQueryAndConservesCompletion(t *testing.T) {
 	}
 }
 
+func TestSourceProjectsPartialAndUnavailableCompletions(t *testing.T) {
+	tests := []struct {
+		name         string
+		provider     *fakeProvider
+		completeness execution.Completeness
+		dataState    execution.DataState
+		disposition  execution.AccessDisposition
+		reason       execution.ReasonCode
+		batches      int
+		bindings     int
+	}{
+		{
+			name: "partial data", provider: &fakeProvider{completeness: execution.CompletenessPartial},
+			completeness: execution.CompletenessPartial, dataState: execution.DataStateData,
+			batches: 1,
+		},
+		{
+			name: "partial empty", provider: &fakeProvider{completeness: execution.CompletenessPartial, empty: true},
+			completeness: execution.CompletenessPartial, dataState: execution.DataStateEmpty,
+			disposition: execution.AccessDegraded, reason: execution.ReasonCode(contract.ReasonQueryPartial), bindings: 1,
+		},
+		{
+			name: "unavailable", provider: &fakeProvider{completeness: execution.CompletenessUnavailable, empty: true, reason: execution.ReasonCode(contract.ReasonQueryTimeout)},
+			completeness: execution.CompletenessUnavailable, dataState: execution.DataStateUnknown,
+			disposition: execution.AccessUnavailable, reason: execution.ReasonCode(contract.ReasonQueryTimeout), bindings: 1,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			contractRef, frozen := frozenExecution(t)
+			source, err := NewSource(staticFrozenPlan{plan: frozen}, test.provider, Config{MinReadyDelay: time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			source.now = func() time.Time { return time.UnixMilli(2_000_000_000_000) }
+			source.wait = func(context.Context, time.Duration) error { return nil }
+			consumer := &recordingConsumer{}
+			completion, err := source.Execute(context.Background(), execution.QueryExecutionRequest{Contract: contractRef, Operation: execution.OperationNormal}, consumer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(completion.PhysicalQueries) != 1 || completion.PhysicalQueries[0].Completeness != test.completeness ||
+				completion.PhysicalQueries[0].DataState != test.dataState || len(consumer.batches) != test.batches ||
+				len(completion.CompletionBindings) != test.bindings {
+				t.Fatalf("completion=%+v batches=%d", completion, len(consumer.batches))
+			}
+			if test.bindings == 1 {
+				binding := completion.CompletionBindings[0]
+				if binding.Completeness != test.completeness || binding.DataState != test.dataState ||
+					binding.Disposition != test.disposition || binding.ReasonCode != test.reason {
+					t.Fatalf("binding=%+v", binding)
+				}
+			}
+		})
+	}
+}
+
 func TestPrepareUsesEarliestConsumerDeadlineAndDoesNotDelayEager(t *testing.T) {
 	contractRef, frozen := frozenExecution(t)
 	requirement := frozen.Requirements[0]
@@ -101,9 +158,27 @@ func (source staticFrozenPlan) ResolveFrozenPlan(context.Context, execution.Froz
 	return source.plan, nil
 }
 
-type fakeProvider struct{}
+type fakeProvider struct {
+	completeness execution.Completeness
+	empty        bool
+	reason       execution.ReasonCode
+}
 
-func (*fakeProvider) Execute(ctx context.Context, attempt execution.QueryAttempt, sink execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {
+func (provider *fakeProvider) Execute(ctx context.Context, attempt execution.QueryAttempt, sink execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {
+	completeness := provider.completeness
+	if completeness == "" {
+		completeness = execution.CompletenessFull
+	}
+	if provider.empty {
+		dataState := execution.DataStateEmpty
+		if completeness == execution.CompletenessUnavailable {
+			dataState = execution.DataStateUnknown
+		}
+		return execution.ProviderCompletion{Ref: "provider-result", PhysicalQuery: attempt.Spec.Digest,
+			Completeness: completeness, DataState: dataState,
+			RouteFacts: execution.ProviderRouteFacts{ProviderRouteRef: attempt.Spec.PlanFacts.ProviderRouteRef,
+				Attempts: []execution.RouteAttemptFact{{AttemptNo: attempt.AttemptNo, Endpoint: "uq", Result: execution.RouteAttemptFailed, ReasonCode: provider.reason}}}}, nil
+	}
 	fields := []contract.DimensionFieldV2{{Name: "host", Value: json.RawMessage(`"127.0.0.1"`)}}
 	dimension, _ := contract.DeriveDimensionIdentityDigestV2("tenant", "2", fields)
 	recordID, _ := contract.DeriveRecordIDV2(dimension, int64(attempt.Slot.EvaluationTime)-60)
@@ -116,7 +191,7 @@ func (*fakeProvider) Execute(ctx context.Context, attempt execution.QueryAttempt
 	if err := sink.ConsumeProviderSeries(ctx, execution.ProviderSeriesBatch{PhysicalQuery: attempt.Spec.Digest, CompletionRef: ref, Dataset: execution.NewDataset(records), Delivery: delivery}); err != nil {
 		return execution.ProviderCompletion{}, err
 	}
-	return execution.ProviderCompletion{Ref: ref, PhysicalQuery: attempt.Spec.Digest, Completeness: execution.CompletenessFull,
+	return execution.ProviderCompletion{Ref: ref, PhysicalQuery: attempt.Spec.Digest, Completeness: completeness,
 		DataState: execution.DataStateData, Delivery: delivery,
 		RouteFacts: execution.ProviderRouteFacts{ProviderRouteRef: attempt.Spec.PlanFacts.ProviderRouteRef},
 		Stats:      execution.ProviderStats{Series: 1, Records: 1}}, nil

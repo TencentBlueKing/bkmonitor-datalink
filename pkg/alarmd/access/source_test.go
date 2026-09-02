@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -186,11 +187,11 @@ func TestSourceRecoveryBudgetIsNotResetAcrossPermitWaitsOrPhysicalQueries(t *tes
 	}
 }
 
-func TestSourceRejectsInvalidOrPermitConsumedRecoveryBudget(t *testing.T) {
+func TestSourceCompletesInvalidOrPermitConsumedRecoveryBudgetAsUnavailable(t *testing.T) {
 	t.Run("invalid frozen duration", func(t *testing.T) {
 		contractRef, frozen := frozenExecution(t)
-		consumer := &frozen.Requirements[0].Consumers[0]
-		consumer.DownstreamExecutionReserveMilliSec = consumer.ConsumerDeadlineUnixMilli - int64(contractRef.Slot.EvaluationTime)*1000
+		frozenConsumer := &frozen.Requirements[0].Consumers[0]
+		frozenConsumer.DownstreamExecutionReserveMilliSec = frozenConsumer.ConsumerDeadlineUnixMilli - int64(contractRef.Slot.EvaluationTime)*1000
 		contractRef = bindFrozenDueDigest(t, contractRef, frozen)
 		source, err := NewSource(staticFrozenPlan{plan: frozen}, &fakeProvider{}, &recordingQueryPermits{}, Config{MinReadyDelay: time.Second})
 		if err != nil {
@@ -200,8 +201,9 @@ func TestSourceRejectsInvalidOrPermitConsumedRecoveryBudget(t *testing.T) {
 		request := execution.QueryExecutionRequest{
 			Contract: contractRef, Operation: execution.OperationReplay, AttemptNo: 2,
 		}
-		_, err = source.Execute(context.Background(), request, &recordingConsumer{})
-		assertQueryExecutionBudgetExhausted(t, err, request, nil)
+		consumer := &recordingConsumer{}
+		completion, err := source.Execute(context.Background(), request, consumer)
+		assertBudgetExhaustedCompletion(t, completion, err, consumer, request, 1, 1)
 	})
 
 	t.Run("permit wait consumed", func(t *testing.T) {
@@ -217,8 +219,9 @@ func TestSourceRejectsInvalidOrPermitConsumedRecoveryBudget(t *testing.T) {
 		request := execution.QueryExecutionRequest{
 			Contract: contractRef, Operation: execution.OperationReplay, AttemptNo: 2,
 		}
-		_, err = source.Execute(context.Background(), request, &recordingConsumer{})
-		assertQueryExecutionBudgetExhausted(t, err, request, context.DeadlineExceeded)
+		consumer := &recordingConsumer{}
+		completion, err := source.Execute(context.Background(), request, consumer)
+		assertBudgetExhaustedCompletion(t, completion, err, consumer, request, 1, 1)
 	})
 
 	t.Run("normal permit deadline keeps live error semantics", func(t *testing.T) {
@@ -234,30 +237,84 @@ func TestSourceRejectsInvalidOrPermitConsumedRecoveryBudget(t *testing.T) {
 		_, err = source.Execute(context.Background(), execution.QueryExecutionRequest{
 			Contract: contractRef, Operation: execution.OperationNormal, AttemptNo: 1,
 		}, &recordingConsumer{})
-		var exhausted *execution.QueryExecutionBudgetExhaustedError
-		if !errors.Is(err, context.DeadlineExceeded) || errors.As(err, &exhausted) {
+		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("normal permit deadline error=%v, want unchanged raw live deadline", err)
 		}
 	})
 }
 
-func assertQueryExecutionBudgetExhausted(
+func TestSourcePreservesCompletedQueryAndCompletesCurrentAndRemainingQueriesWhenRecoveryPermitBudgetExpires(t *testing.T) {
+	contractRef, frozen := frozenExecution(t)
+	for index, offset := range []int64{-120, -180} {
+		requirement := frozen.Requirements[0]
+		requirement.RequirementID = execution.RequirementID(fmt.Sprintf("dependency-%d", index+1))
+		requirement.DatasetName = execution.DatasetName(fmt.Sprintf("dependency-%d", index+1))
+		requirement.RelativeWindow.StartOffsetSeconds = offset
+		frozen.Requirements = append(frozen.Requirements, requirement)
+	}
+	contractRef = bindFrozenDueDigest(t, contractRef, frozen)
+	provider := &fakeProvider{}
+	permits := &failAfterOneQueryPermits{}
+	source, err := NewSource(staticFrozenPlan{plan: frozen}, provider, permits, Config{MinReadyDelay: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.now = func() time.Time { return time.UnixMilli(2_000_000_000_000) }
+	source.wait = func(context.Context, time.Duration) error { return nil }
+	request := execution.QueryExecutionRequest{
+		Contract: contractRef, Operation: execution.OperationRetry, AttemptNo: 4,
+	}
+	consumer := &recordingConsumer{}
+	completion, err := source.Execute(context.Background(), request, consumer)
+	assertBudgetExhaustedCompletion(t, completion, err, consumer, request, 3, 2)
+	if len(provider.attempts) != 1 || len(consumer.batches) != 1 || permits.releases != 1 {
+		t.Fatalf("provider/batch/release counts=%d/%d/%d, want completed first query only",
+			len(provider.attempts), len(consumer.batches), permits.releases)
+	}
+	if completion.PhysicalQueries[0].Completeness != execution.CompletenessFull ||
+		completion.PhysicalQueries[0].DataState != execution.DataStateData {
+		t.Fatalf("completed physical query was replaced: %+v", completion.PhysicalQueries[0])
+	}
+	for index := 1; index < len(completion.PhysicalQueries); index++ {
+		physical := completion.PhysicalQueries[index]
+		if physical.Completeness != execution.CompletenessUnavailable || physical.DataState != execution.DataStateUnknown {
+			t.Fatalf("physical query %d completion=%+v, want UNAVAILABLE UNKNOWN", index, physical)
+		}
+	}
+}
+
+func assertBudgetExhaustedCompletion(
 	t *testing.T,
+	completion execution.QueryExecutionCompletion,
 	err error,
+	consumer *recordingConsumer,
 	request execution.QueryExecutionRequest,
-	cause error,
+	wantPhysical int,
+	wantBindings int,
 ) {
 	t.Helper()
-	var exhausted *execution.QueryExecutionBudgetExhaustedError
-	if !errors.As(err, &exhausted) {
-		t.Fatalf("query execution budget error=%v, want typed exhaustion", err)
+	if err != nil {
+		t.Fatalf("budget exhaustion returned error=%v", err)
 	}
-	if exhausted.Slot != request.Contract.Slot || exhausted.Operation != request.Operation ||
-		exhausted.AttemptNo != request.AttemptNo {
-		t.Fatalf("query execution budget scope=%+v, want request=%+v", exhausted, request)
+	if consumer.begin != 1 || len(completion.PhysicalQueries) != wantPhysical ||
+		len(completion.CompletionBindings) != wantBindings || !completion.AllRequiredCompleted {
+		t.Fatalf("begin=%d completion=%+v", consumer.begin, completion)
 	}
-	if cause != nil && !errors.Is(err, cause) {
-		t.Fatalf("query execution budget cause=%v, want %v", err, cause)
+	delivered := make([]execution.SeriesDelivery, 0, len(consumer.batches))
+	for _, batch := range consumer.batches {
+		delivered = append(delivered, batch.Delivery)
+	}
+	if err := completion.Validate(consumer.header, delivered); err != nil {
+		t.Fatalf("budget completion does not conserve frozen queries: %v", err)
+	}
+	for _, binding := range completion.CompletionBindings {
+		if binding.Completeness != execution.CompletenessUnavailable || binding.DataState != execution.DataStateUnknown ||
+			binding.Disposition != execution.AccessUnavailable ||
+			binding.ReasonCode != execution.ReasonCode(contract.ReasonExecutionBudgetExhausted) ||
+			binding.ImpactScope != execution.ImpactPlan || binding.Dataset != nil || binding.View != nil ||
+			binding.Provenance.AttemptNo != request.AttemptNo {
+			t.Fatalf("budget binding=%+v", binding)
+		}
 	}
 }
 
@@ -399,6 +456,29 @@ func (permits *recordingQueryPermits) AcquireQueryPermit(
 type deadlineCheckingQueryPermits struct {
 	now  func() time.Time
 	wait func()
+}
+
+type failAfterOneQueryPermits struct {
+	calls    int
+	releases int
+}
+
+func (permits *failAfterOneQueryPermits) AcquireQueryPermit(
+	_ context.Context,
+	slot execution.SlotIdentity,
+	operation execution.Operation,
+	deadline time.Time,
+) (QueryPermit, error) {
+	permits.calls++
+	if permits.calls > 1 {
+		return nil, context.DeadlineExceeded
+	}
+	return &recordingQueryPermit{
+		recovery: &execution.RecoveryPermit{
+			PermitID: "recovery-permit", Slot: slot, Operation: operation, ExpiresAtUnixMilli: deadline.UnixMilli(),
+		},
+		release: func() { permits.releases++ },
+	}, nil
 }
 
 func (permits deadlineCheckingQueryPermits) AcquireQueryPermit(

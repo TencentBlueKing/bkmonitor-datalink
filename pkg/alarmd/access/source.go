@@ -79,22 +79,22 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	if err != nil {
 		return execution.QueryExecutionCompletion{}, fmt.Errorf("alarmd access: resolve frozen plan: %w", err)
 	}
-	recoveryDeadline, err := deriveRecoveryQueryDeadline(request, frozen, recoveryStartedAt)
-	if err != nil {
-		return execution.QueryExecutionCompletion{}, queryExecutionBudgetExhausted(request, err)
-	}
-	prepared, err := Prepare(request.Contract, frozen, source.config.MinReadyDelay)
+	prepared, err := prepare(request.Contract, frozen, source.config.MinReadyDelay, request.Operation != execution.OperationNormal)
 	if err != nil {
 		return execution.QueryExecutionCompletion{}, err
 	}
-	if !recoveryDeadline.IsZero() && !recoveryDeadline.After(source.now()) {
-		return execution.QueryExecutionCompletion{}, queryExecutionBudgetExhausted(request, context.DeadlineExceeded)
+	recoveryDeadline, budgetErr := deriveRecoveryQueryDeadline(request, frozen, recoveryStartedAt)
+	if budgetErr != nil || (!recoveryDeadline.IsZero() && !recoveryDeadline.After(source.now())) {
+		if err := consumer.Begin(ctx, prepared.Header); err != nil {
+			return execution.QueryExecutionCompletion{}, err
+		}
+		return completeBudgetExhaustedQueries(execution.QueryExecutionCompletion{}, prepared.Queries, request.AttemptNo), nil
 	}
 	if err := consumer.Begin(ctx, prepared.Header); err != nil {
 		return execution.QueryExecutionCompletion{}, err
 	}
 	completion := execution.QueryExecutionCompletion{PhysicalQueries: make([]execution.PhysicalQueryCompletion, 0, len(prepared.Queries))}
-	for _, query := range prepared.Queries {
+	for queryIndex, query := range prepared.Queries {
 		if delay := time.UnixMilli(query.ReadyAtUnixMilli).Sub(source.now()); delay > 0 {
 			if err := source.wait(ctx, delay); err != nil {
 				return execution.QueryExecutionCompletion{}, err
@@ -107,7 +107,7 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		permit, err := source.permits.AcquireQueryPermit(ctx, request.Contract.Slot, request.Operation, queryDeadline)
 		if err != nil {
 			if request.Operation != execution.OperationNormal && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
-				return execution.QueryExecutionCompletion{}, queryExecutionBudgetExhausted(request, err)
+				return completeBudgetExhaustedQueries(completion, prepared.Queries[queryIndex:], request.AttemptNo), nil
 			}
 			return execution.QueryExecutionCompletion{}, fmt.Errorf("alarmd access: acquire physical query permit: %w", err)
 		}
@@ -140,13 +140,36 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	return completion, nil
 }
 
-func queryExecutionBudgetExhausted(
-	request execution.QueryExecutionRequest,
-	cause error,
-) error {
-	return &execution.QueryExecutionBudgetExhaustedError{
-		Slot: request.Contract.Slot, Operation: request.Operation, AttemptNo: request.AttemptNo, Cause: cause,
+func completeBudgetExhaustedQueries(
+	completion execution.QueryExecutionCompletion,
+	queries []PlannedQuery,
+	attemptNo uint32,
+) execution.QueryExecutionCompletion {
+	for _, query := range queries {
+		ref := execution.ProviderResultRef(fmt.Sprintf("%s:budget:%d", query.Spec.Digest, attemptNo))
+		completion.PhysicalQueries = append(completion.PhysicalQueries, execution.PhysicalQueryCompletion{
+			Ref: ref, PhysicalQuery: query.Spec.Digest, QueryRevision: query.Spec.PlanFacts.QueryRevision,
+			Completeness: execution.CompletenessUnavailable, DataState: execution.DataStateUnknown,
+		})
+		for _, requirement := range query.Requirements {
+			for _, consumer := range requirement.Consumers {
+				completion.CompletionBindings = append(completion.CompletionBindings, execution.NamedInputBinding{
+					Consumer: consumer.Consumer, RequirementID: requirement.RequirementID,
+					DatasetName: requirement.DatasetName, Role: requirement.Role,
+					ProviderResult: ref, QueryWindow: query.Spec.LogicalWindow,
+					Completeness: execution.CompletenessUnavailable, DataState: execution.DataStateUnknown,
+					Disposition: execution.AccessUnavailable,
+					ReasonCode:  execution.ReasonCode(contract.ReasonExecutionBudgetExhausted),
+					ImpactScope: execution.ImpactPlan,
+					Provenance: execution.InputProvenance{
+						PhysicalQuery: query.Spec.Digest, AttemptNo: attemptNo,
+					},
+				})
+			}
+		}
 	}
+	completion.AllRequiredCompleted = true
+	return completion
 }
 
 func deriveRecoveryQueryDeadline(
@@ -219,6 +242,15 @@ type PlannedQuery struct {
 }
 
 func Prepare(contractRef execution.FrozenExecutionContractRef, frozen FrozenPlan, minReadyDelay time.Duration) (PreparedExecution, error) {
+	return prepare(contractRef, frozen, minReadyDelay, false)
+}
+
+func prepare(
+	contractRef execution.FrozenExecutionContractRef,
+	frozen FrozenPlan,
+	minReadyDelay time.Duration,
+	allowExhaustedRecoveryBudget bool,
+) (PreparedExecution, error) {
 	if err := contractRef.Validate(); err != nil {
 		return PreparedExecution{}, err
 	}
@@ -253,7 +285,7 @@ func Prepare(contractRef execution.FrozenExecutionContractRef, frozen FrozenPlan
 		deadline := int64(0)
 		for _, consumer := range requirement.Consumers {
 			candidate := consumer.ConsumerDeadlineUnixMilli - consumer.DownstreamExecutionReserveMilliSec
-			if candidate <= readyAt {
+			if candidate <= readyAt && !allowExhaustedRecoveryBudget {
 				return PreparedExecution{}, errors.New("alarmd access: readiness budget is invalid")
 			}
 			if deadline == 0 || candidate < deadline {

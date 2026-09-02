@@ -423,6 +423,71 @@ func TestPhaseTwoWorkerBundleRunsOwnedQueryGroupsConcurrentlyOncePerTick(t *test
 	}
 }
 
+func TestPhaseTwoWorkerBundleBoundsPrePermitRunnerFanoutFromExistingSchedulerLimits(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
+	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 1
+	cfg.PhaseTwo.Scheduler.RecoveryQueueCapacity = 2
+	cfg.PhaseTwo.Scheduler.MaxQueuedItemsPerQG = 1
+	queryGroups := []execution.QueryGroupIdentity{
+		"query-group-1", "query-group-2", "query-group-3",
+		"query-group-4", "query-group-5", "query-group-6",
+	}
+	started := make(chan execution.QueryGroupIdentity, len(queryGroups))
+	releaseRunners := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseRunners) }) }
+	defer release()
+	runners := make(map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime, len(queryGroups))
+	for _, queryGroup := range queryGroups {
+		runner := newFakePhaseTwoQueryGroup()
+		runner.runRelease = releaseRunners
+		queryGroup := queryGroup
+		runner.onRun = func() { started <- queryGroup }
+		runners[queryGroup] = runner
+	}
+	bundle := mustPhaseTwoWorkerBundle(t, cfg, newPhaseTwoApplicationHealth(),
+		&fakePhaseTwoControl{queryGroups: queryGroups},
+		&fakePhaseTwoOwnership{assigned: queryGroups, runners: runners})
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		release()
+		if err := bundle.Shutdown(context.Background()); err != nil {
+			t.Errorf("Shutdown() error = %v", err)
+		}
+	}()
+
+	done := make(chan error, 1)
+	go func() { done <- bundle.runScheduledOnce(context.Background()) }()
+	wantFanout := cfg.PhaseTwo.Scheduler.ProcessQueryPermits + cfg.PhaseTwo.Scheduler.RecoveryQueueCapacity
+	for index := 0; index < wantFanout; index++ {
+		select {
+		case <-started:
+		case <-time.After(3 * time.Second):
+			t.Fatalf("pre-permit runner %d did not start", index+1)
+		}
+	}
+	select {
+	case queryGroup := <-started:
+		t.Fatalf("pre-permit runner fanout exceeded %d at %s", wantFanout, queryGroup)
+	case <-time.After(50 * time.Millisecond):
+	}
+	release()
+	if err := <-done; err != nil {
+		t.Fatalf("runScheduledOnce() error = %v", err)
+	}
+	if len(started) != len(queryGroups)-wantFanout {
+		t.Fatalf("runners admitted after fanout drained = %d, want %d", len(started), len(queryGroups)-wantFanout)
+	}
+	for queryGroup, runtime := range runners {
+		if runtime.(*fakePhaseTwoQueryGroup).runCount() != 1 {
+			t.Fatalf("single tick Query Group %s run count != 1", queryGroup)
+		}
+	}
+}
+
 func TestPhaseTwoWorkerBundleNeverRegistersReadyAfterDraining(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(100 * time.Millisecond)
@@ -1274,6 +1339,7 @@ type fakePhaseTwoQueryGroup struct {
 	runRelease    chan struct{}
 	attempted     bool
 	runErr        error
+	onRun         func()
 }
 
 func newFakePhaseTwoQueryGroup() *fakePhaseTwoQueryGroup {
@@ -1284,6 +1350,9 @@ func (runner *fakePhaseTwoQueryGroup) RunOne(context.Context) (execution.SlotExe
 	runner.mu.Lock()
 	runner.runCalls++
 	runner.mu.Unlock()
+	if runner.onRun != nil {
+		runner.onRun()
+	}
 	if runner.runStarted != nil {
 		close(runner.runStarted)
 	}

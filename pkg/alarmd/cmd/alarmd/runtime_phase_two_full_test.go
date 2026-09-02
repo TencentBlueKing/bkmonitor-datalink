@@ -671,6 +671,112 @@ func TestProductionPhaseTwoBundleSharesOneProcessRecoveryPermitBudgetAcrossOwned
 	}
 }
 
+func TestProductionPhaseTwoBundleCommitsBudgetExhaustedRecoveryCompletionWithoutUQ(t *testing.T) {
+	address, redisClient := startPhaseTwoRedis(t)
+	ctx := context.Background()
+	installTwoPhaseTwoStrategies(t, ctx, redisClient)
+
+	base := time.Now().Unix()
+	var clock atomic.Int64
+	clock.Store(time.Unix(base, 0).UnixMilli())
+	now := func() time.Time { return time.UnixMilli(clock.Load()) }
+	var uqCalls atomic.Int64
+	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		uqCalls.Add(1)
+		_, _ = writer.Write([]byte(`{"series":[],"status":null,"trace_id":"unexpected","is_partial":false,"result_table_id":[]}`))
+	}))
+	defer uqServer.Close()
+
+	cfg := validGoAccessRuntimeConfig()
+	cfg.Redis.Address = address
+	cfg.Redis.StatePrefix = "alarmd-g3b-budget-completion"
+	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
+	cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.DownstreamExecutionReserve = config.Duration(900 * time.Millisecond)
+	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
+	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 1
+	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Worker.RegistrationRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.LeaseTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Ownership.LeaseRenewInterval = config.Duration(time.Minute)
+
+	var observationsMu sync.Mutex
+	var observations []observability.Observation
+	bundle, err := openProductionPhaseTwoBundleWithDependencies(
+		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime),
+		newPhaseTwoApplicationHealth(),
+		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
+			return controlplane.NewLegacyRedisStrategySource(client, prefix)
+		},
+		phaseTwoProductionExternalDependencies{
+			Now: now, HTTPClient: uqServer.Client(),
+			AdditionalObserver: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+				observationsMu.Lock()
+				defer observationsMu.Unlock()
+				observations = append(observations, observation)
+			}),
+			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
+				return &recordingPhaseTwoEventSink{}, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("openProductionPhaseTwoBundleWithDependencies() error = %v", err)
+	}
+	if err := bundle.Start(ctx); err != nil {
+		t.Fatalf("phase-two production Start() error = %v", err)
+	}
+	productionOwnership := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
+	holder, err := productionOwnership.flights.AcquireQueryPermit(ctx,
+		execution.SlotIdentity{QueryGroup: "recovery-holder", EvaluationTime: execution.EvaluationTime(base)},
+		execution.OperationReplay, now().Add(time.Minute))
+	if err != nil {
+		t.Fatalf("hold process recovery permit: %v", err)
+	}
+	defer func() {
+		holder.Release()
+		if err := bundle.Shutdown(ctx); err != nil {
+			t.Errorf("phase-two production Shutdown() error = %v", err)
+		}
+	}()
+
+	clock.Store(time.Unix(base, 0).Add(500 * time.Millisecond).UnixMilli())
+	if err := bundle.runScheduledOnce(ctx); err != nil {
+		t.Fatalf("budget-exhausted production tick error = %v", err)
+	}
+	if uqCalls.Load() != 0 {
+		t.Fatalf("budget-exhausted completion issued %d UQ calls", uqCalls.Load())
+	}
+	for _, queryGroup := range bundle.queryGroups {
+		progress := loadPhaseTwoProgress(t, ctx, productionOwnership, queryGroup)
+		if progress.LastCompletionKind != execution.CompletionUnavailable || progress.LastFullSlot != 0 ||
+			progress.NextSlot != execution.EvaluationTime(base+1) || progress.CurrentOrRecentGap == nil ||
+			progress.CurrentOrRecentGap.ReasonCode != execution.ReasonCode(contract.ReasonExecutionBudgetExhausted) {
+			t.Fatalf("budget-exhausted Query Group %s Progress=%+v", queryGroup, progress)
+		}
+	}
+	observationsMu.Lock()
+	defer observationsMu.Unlock()
+	queryCompleted, slotCompleted := 0, 0
+	for _, observation := range observations {
+		if observation.ReasonCode != observability.ReasonCode(contract.ReasonExecutionBudgetExhausted) {
+			continue
+		}
+		switch observation.Stage {
+		case observability.StageQueryCompleted:
+			queryCompleted++
+		case observability.StageSlotCompleted:
+			slotCompleted++
+		}
+	}
+	if queryCompleted == 0 || slotCompleted == 0 {
+		t.Fatalf("budget completion observations query/slot=%d/%d", queryCompleted, slotCompleted)
+	}
+}
+
 func TestProductionPhaseTwoBundleLetsNormalUseRemainingProcessPermitDuringRecovery(t *testing.T) {
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()

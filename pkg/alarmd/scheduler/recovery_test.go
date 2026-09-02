@@ -25,7 +25,7 @@ func TestRunnerRetriesSameFrozenSlotWithoutBlockingHealthyQueryGroup(t *testing.
 		t.Fatalf("NewFlightCoordinatorWithRecovery() error = %v", err)
 	}
 	failedExecutor := &scriptedExecutor{results: []execution.SlotExecutionResult{
-		{Completed: false, Result: observability.ResultRetrying, ReasonCode: execution.ReasonCode(contract.ReasonExecutionBudgetExhausted)},
+		{Completed: false, Result: observability.ResultRetrying, ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable)},
 		{Completed: true, Result: observability.ResultSuccess},
 	}}
 	failedSlot := frozenSlot("query-group-failed")

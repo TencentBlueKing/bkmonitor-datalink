@@ -121,11 +121,6 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	}
 	completion, err := coordinator.ports.Query.Execute(ctx, queryRequest, stream)
 	if err != nil {
-		if queryExecutionBudgetExhausted(err, queryRequest) {
-			result := activationRetry(execution.ReasonCode(contract.ReasonExecutionBudgetExhausted))
-			coordinator.observeQueryBudgetExhausted(ctx, request.Operation, started, err)
-			return result, nil
-		}
 		coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation, started, "", "", err)
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: query: %w", err)
 	}
@@ -159,30 +154,6 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: execute frozen Slot: %w", err)
 	}
 	return result, nil
-}
-
-func queryExecutionBudgetExhausted(err error, request execution.QueryExecutionRequest) bool {
-	var exhausted *execution.QueryExecutionBudgetExhaustedError
-	return errors.As(err, &exhausted) && exhausted != nil &&
-		exhausted.Slot == request.Contract.Slot && exhausted.Operation == request.Operation &&
-		exhausted.AttemptNo == request.AttemptNo
-}
-
-func (coordinator *SlotExecutionCoordinator) observeQueryBudgetExhausted(
-	ctx context.Context,
-	operation execution.Operation,
-	started time.Time,
-	err error,
-) {
-	observation := observability.Observation{
-		Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
-		Result: observability.ResultRetrying, Operation: observability.Operation(operation),
-		Direction:  observability.DirectionInternal,
-		ReasonCode: observability.ReasonCode(contract.ReasonExecutionBudgetExhausted),
-		Duration:   time.Since(started), Err: err,
-	}
-	defer func() { _ = recover() }()
-	coordinator.ports.Observer.Observe(ctx, observation)
 }
 
 func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(

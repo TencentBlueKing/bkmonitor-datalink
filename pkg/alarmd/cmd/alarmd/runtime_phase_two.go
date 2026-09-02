@@ -403,12 +403,29 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 		err       error
 	}
 	results := make(chan scheduledResult, len(runners))
-	for _, scheduled := range runners {
-		go func(scheduled scheduledRunner) {
-			defer bundle.inflightWG.Done()
-			_, attempted, err := scheduled.lifecycle.runner.RunOne(ctx)
-			results <- scheduledResult{scheduled: scheduled, attempted: attempted, err: err}
-		}(scheduled)
+	fanout := len(runners)
+	processPermits := bundle.dependencies.Config.PhaseTwo.Scheduler.ProcessQueryPermits
+	if processPermits < fanout {
+		fanout = processPermits
+		remaining := len(runners) - fanout
+		recoveryWaiters := bundle.dependencies.Config.PhaseTwo.Scheduler.RecoveryQueueCapacity
+		if recoveryWaiters > remaining {
+			recoveryWaiters = remaining
+		}
+		fanout += recoveryWaiters
+	}
+	for workerIndex := 0; workerIndex < fanout; workerIndex++ {
+		go func(workerIndex int) {
+			for runnerIndex := workerIndex; runnerIndex < len(runners); runnerIndex += fanout {
+				scheduled := runners[runnerIndex]
+				result := func() scheduledResult {
+					defer bundle.inflightWG.Done()
+					_, attempted, err := scheduled.lifecycle.runner.RunOne(ctx)
+					return scheduledResult{scheduled: scheduled, attempted: attempted, err: err}
+				}()
+				results <- result
+			}
+		}(workerIndex)
 	}
 	var canceled error
 	for range runners {

@@ -177,33 +177,6 @@ func (request QueryExecutionRequest) Validate() error {
 	return nil
 }
 
-// QueryExecutionBudgetExhaustedError carries the Slot scope and separate
-// non-identity attempt facts needed to form one local retry result.
-type QueryExecutionBudgetExhaustedError struct {
-	Slot      SlotIdentity
-	Operation Operation
-	AttemptNo uint32
-	Cause     error
-}
-
-func (failure *QueryExecutionBudgetExhaustedError) Error() string {
-	if failure == nil {
-		return "alarmd execution: query execution budget exhausted"
-	}
-	if failure.Cause == nil {
-		return fmt.Sprintf("alarmd execution: query execution budget exhausted for %s attempt %d", failure.Operation, failure.AttemptNo)
-	}
-	return fmt.Sprintf("alarmd execution: query execution budget exhausted for %s attempt %d: %v",
-		failure.Operation, failure.AttemptNo, failure.Cause)
-}
-
-func (failure *QueryExecutionBudgetExhaustedError) Unwrap() error {
-	if failure == nil {
-		return nil
-	}
-	return failure.Cause
-}
-
 type PlanIdentity struct {
 	TenantID   string
 	BusinessID string

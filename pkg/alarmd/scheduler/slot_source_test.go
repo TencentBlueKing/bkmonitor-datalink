@@ -310,6 +310,22 @@ func TestProductionSlotSourceMarksEligibleBacklogAsReplayWithoutChangingContract
 	}
 }
 
+func TestProductionSlotSourceStartsReplayAtFrozenQueryDeadline(t *testing.T) {
+	schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
+	limits := testRecoveryLimits()
+	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, missingProgress(), time.Unix(116, 0), limits)
+
+	slot, due, err := source.Next(context.Background(), "query-group-1")
+	if err != nil || !due {
+		t.Fatalf("Next() due=%v error=%v", due, err)
+	}
+	if slot.Dispatch.Operation != execution.OperationReplay || slot.Recovery.Disposition != ReplayEligible ||
+		slot.Recovery.Distance != 1 || slot.Recovery.Age != time.Second {
+		t.Fatalf("query-deadline replay facts = %+v dispatch=%+v", slot.Recovery, slot.Dispatch)
+	}
+}
+
 func TestProductionSlotSourceLeavesExpiredBacklogForExistingGapFinalizer(t *testing.T) {
 	schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"sort"
 	"sync"
 	"time"
 
@@ -31,6 +32,7 @@ type RecoveryLimits struct {
 	RecoveryQueryPermits  int
 	ReadyQueueCapacity    int
 	RecoveryQueueCapacity int
+	MaxQueuedItemsPerQG   int
 	MaxReplaySlots        uint32
 	MaxReplayAge          time.Duration
 	RetryMinDelay         time.Duration
@@ -41,6 +43,8 @@ func (limits RecoveryLimits) Validate() error {
 	if limits.ProcessQueryPermits <= 0 || limits.RecoveryQueryPermits < 0 ||
 		limits.RecoveryQueryPermits >= limits.ProcessQueryPermits ||
 		limits.ReadyQueueCapacity <= 0 || limits.RecoveryQueueCapacity <= 0 ||
+		limits.MaxQueuedItemsPerQG <= 0 || limits.MaxQueuedItemsPerQG >= limits.ReadyQueueCapacity ||
+		limits.MaxQueuedItemsPerQG >= limits.RecoveryQueueCapacity ||
 		limits.MaxReplaySlots == 0 || limits.MaxReplayAge <= 0 ||
 		limits.RetryMinDelay <= 0 || limits.RetryMaxDelay < limits.RetryMinDelay {
 		return ErrRecoveryLimitsInvalid
@@ -95,25 +99,25 @@ type recoveryAttempt struct {
 func (runner *Runner) operationFor(
 	slot FrozenSlot,
 	at time.Time,
-) (execution.Operation, bool, error) {
+) (execution.Operation, bool) {
 	if !runner.flights.recoveryEnabled {
-		return slot.Dispatch.Operation, true, nil
+		return slot.Dispatch.Operation, true
 	}
 	if slot.Recovery.Disposition == ReplayExpired {
 		runner.attempt = nil
-		return execution.OperationNormal, true, nil
+		return execution.OperationNormal, true
 	}
 	if runner.attempt == nil {
-		return slot.Dispatch.Operation, true, nil
+		return slot.Dispatch.Operation, true
 	}
 	if runner.attempt.contract != slot.Contract {
 		runner.attempt = nil
-		return slot.Dispatch.Operation, true, nil
+		return slot.Dispatch.Operation, true
 	}
 	if at.Before(runner.attempt.nextAt) {
-		return "", false, nil
+		return "", false
 	}
-	return runner.attempt.next, true, nil
+	return runner.attempt.next, true
 }
 
 func (runner *Runner) recordResult(
@@ -174,7 +178,7 @@ type queryPermitWaiter struct {
 	grant     chan *QueryPermit
 }
 
-type QueryPermitSnapshot struct {
+type queryPermitSnapshot struct {
 	Inflight         int
 	RecoveryInflight int
 	NormalWaiting    int
@@ -232,7 +236,8 @@ func (coordinator *FlightCoordinator) AcquireQueryPermit(
 		queue = &coordinator.recoveryWaiters
 		capacity = coordinator.limits.RecoveryQueueCapacity
 	}
-	if len(*queue) >= capacity {
+	coordinator.expireWaitersLocked(queue)
+	if len(*queue) >= capacity || queuedForQueryGroup(*queue, slot.QueryGroup) >= coordinator.limits.MaxQueuedItemsPerQG {
 		coordinator.mu.Unlock()
 		return nil, ErrQueryPermitQueueFull
 	}
@@ -240,8 +245,17 @@ func (coordinator *FlightCoordinator) AcquireQueryPermit(
 	coordinator.dispatchQueryPermitsLocked()
 	coordinator.mu.Unlock()
 
+	timer := time.NewTimer(deadline.Sub(coordinator.now()))
+	defer timer.Stop()
 	select {
 	case permit := <-waiter.grant:
+		if permit == nil {
+			return nil, context.DeadlineExceeded
+		}
+		if !deadline.After(coordinator.now()) {
+			permit.Release()
+			return nil, context.DeadlineExceeded
+		}
 		return permit, nil
 	case <-ctx.Done():
 		coordinator.mu.Lock()
@@ -250,19 +264,33 @@ func (coordinator *FlightCoordinator) AcquireQueryPermit(
 		coordinator.mu.Unlock()
 		if !removed {
 			permit := <-waiter.grant
-			permit.Release()
+			if permit != nil {
+				permit.Release()
+			}
 		}
 		return nil, ctx.Err()
+	case <-timer.C:
+		coordinator.mu.Lock()
+		removed := coordinator.removeWaiterLocked(waiter, recovery)
+		coordinator.dispatchQueryPermitsLocked()
+		coordinator.mu.Unlock()
+		if !removed {
+			permit := <-waiter.grant
+			if permit != nil {
+				permit.Release()
+			}
+		}
+		return nil, context.DeadlineExceeded
 	}
 }
 
-func (coordinator *FlightCoordinator) QueryPermitSnapshot() QueryPermitSnapshot {
+func (coordinator *FlightCoordinator) queryPermitSnapshot() queryPermitSnapshot {
 	if coordinator == nil {
-		return QueryPermitSnapshot{}
+		return queryPermitSnapshot{}
 	}
 	coordinator.mu.Lock()
 	defer coordinator.mu.Unlock()
-	return QueryPermitSnapshot{Inflight: coordinator.queryInflight, RecoveryInflight: coordinator.recoveryInflight,
+	return queryPermitSnapshot{Inflight: coordinator.queryInflight, RecoveryInflight: coordinator.recoveryInflight,
 		NormalWaiting: len(coordinator.normalWaiters), RecoveryWaiting: len(coordinator.recoveryWaiters)}
 }
 
@@ -280,6 +308,8 @@ func (coordinator *FlightCoordinator) releaseQueryPermit(recovery bool) {
 
 func (coordinator *FlightCoordinator) dispatchQueryPermitsLocked() {
 	for coordinator.queryInflight < coordinator.limits.ProcessQueryPermits {
+		coordinator.expireWaitersLocked(&coordinator.normalWaiters)
+		coordinator.expireWaitersLocked(&coordinator.recoveryWaiters)
 		canRecovery := len(coordinator.recoveryWaiters) > 0 &&
 			coordinator.recoveryInflight < coordinator.limits.RecoveryQueryPermits
 		canNormal := len(coordinator.normalWaiters) > 0
@@ -289,13 +319,11 @@ func (coordinator *FlightCoordinator) dispatchQueryPermitsLocked() {
 		useRecovery := canRecovery && (!canNormal || coordinator.nextRecovery)
 		var waiter *queryPermitWaiter
 		if useRecovery {
-			waiter = coordinator.recoveryWaiters[0]
-			coordinator.recoveryWaiters = coordinator.recoveryWaiters[1:]
+			waiter = coordinator.popFairWaiterLocked(&coordinator.recoveryWaiters, &coordinator.lastRecoveryQG)
 			coordinator.recoveryInflight++
 			coordinator.nextRecovery = false
 		} else {
-			waiter = coordinator.normalWaiters[0]
-			coordinator.normalWaiters = coordinator.normalWaiters[1:]
+			waiter = coordinator.popFairWaiterLocked(&coordinator.normalWaiters, &coordinator.lastNormalQG)
 			if canRecovery {
 				coordinator.nextRecovery = true
 			}
@@ -309,6 +337,72 @@ func (coordinator *FlightCoordinator) dispatchQueryPermitsLocked() {
 		}
 		waiter.grant <- permit
 	}
+}
+
+func queuedForQueryGroup(queue []*queryPermitWaiter, queryGroup execution.QueryGroupIdentity) int {
+	count := 0
+	for _, waiter := range queue {
+		if waiter.slot.QueryGroup == queryGroup {
+			count++
+		}
+	}
+	return count
+}
+
+func (coordinator *FlightCoordinator) expireWaitersLocked(queue *[]*queryPermitWaiter) {
+	now := coordinator.now()
+	kept := (*queue)[:0]
+	for _, waiter := range *queue {
+		if !waiter.deadline.After(now) {
+			waiter.grant <- nil
+			continue
+		}
+		kept = append(kept, waiter)
+	}
+	*queue = kept
+}
+
+func (coordinator *FlightCoordinator) popFairWaiterLocked(
+	queue *[]*queryPermitWaiter,
+	last *execution.QueryGroupIdentity,
+) *queryPermitWaiter {
+	// Each QG contributes its earliest-deadline query to a stable round. The
+	// selected QG then moves behind its healthy siblings for the next grant.
+	firstByGroup := make(map[execution.QueryGroupIdentity]int)
+	groups := make([]execution.QueryGroupIdentity, 0, len(*queue))
+	for index, waiter := range *queue {
+		queryGroup := waiter.slot.QueryGroup
+		candidate, exists := firstByGroup[queryGroup]
+		if !exists {
+			firstByGroup[queryGroup] = index
+			groups = append(groups, queryGroup)
+			continue
+		}
+		if waiter.deadline.Before((*queue)[candidate].deadline) {
+			firstByGroup[queryGroup] = index
+		}
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		left := (*queue)[firstByGroup[groups[i]]]
+		right := (*queue)[firstByGroup[groups[j]]]
+		if left.deadline.Equal(right.deadline) {
+			return groups[i] < groups[j]
+		}
+		return left.deadline.Before(right.deadline)
+	})
+	selectedGroup := groups[0]
+	for index, queryGroup := range groups {
+		if queryGroup == *last {
+			selectedGroup = groups[(index+1)%len(groups)]
+			break
+		}
+	}
+	selected := firstByGroup[selectedGroup]
+	waiter := (*queue)[selected]
+	copy((*queue)[selected:], (*queue)[selected+1:])
+	*queue = (*queue)[:len(*queue)-1]
+	*last = selectedGroup
+	return waiter
 }
 
 func (coordinator *FlightCoordinator) removeWaiterLocked(waiter *queryPermitWaiter, recovery bool) bool {

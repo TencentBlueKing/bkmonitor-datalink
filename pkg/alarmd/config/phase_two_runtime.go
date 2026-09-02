@@ -59,8 +59,8 @@ type PhaseTwoSchedulerConfig struct {
 	RecoveryQueryPermits  int      `yaml:"recovery_query_permits"`
 	ReadyQueueCapacity    int      `yaml:"ready_queue_capacity"`
 	RecoveryQueueCapacity int      `yaml:"recovery_queue_capacity"`
+	MaxQueuedItemsPerQG   int      `yaml:"max_queued_items_per_qg"`
 	MaxReplaySlots        uint32   `yaml:"max_replay_slots"`
-	MaxReplaySlotsPerTick uint32   `yaml:"max_replay_slots_per_tick"`
 	MaxReplayAge          Duration `yaml:"max_replay_age"`
 	RetryMinDelay         Duration `yaml:"retry_min_delay"`
 	RetryMaxDelay         Duration `yaml:"retry_max_delay"`
@@ -70,7 +70,8 @@ func (config PhaseTwoSchedulerConfig) RecoveryLimits() scheduler.RecoveryLimits 
 	return scheduler.RecoveryLimits{
 		ProcessQueryPermits: config.ProcessQueryPermits, RecoveryQueryPermits: config.RecoveryQueryPermits,
 		ReadyQueueCapacity: config.ReadyQueueCapacity, RecoveryQueueCapacity: config.RecoveryQueueCapacity,
-		MaxReplaySlots: config.MaxReplaySlots, MaxReplayAge: config.MaxReplayAge.Duration(),
+		MaxQueuedItemsPerQG: config.MaxQueuedItemsPerQG,
+		MaxReplaySlots:      config.MaxReplaySlots, MaxReplayAge: config.MaxReplayAge.Duration(),
 		RetryMinDelay: config.RetryMinDelay.Duration(), RetryMaxDelay: config.RetryMaxDelay.Duration(),
 	}
 }
@@ -117,7 +118,7 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 		Scheduler: PhaseTwoSchedulerConfig{
 			TickInterval: Duration(time.Second), ProcessQueryPermits: 2, RecoveryQueryPermits: 1,
 			ReadyQueueCapacity: 256, RecoveryQueueCapacity: 64,
-			MaxReplaySlots: 3, MaxReplaySlotsPerTick: 1, MaxReplayAge: Duration(10 * time.Minute),
+			MaxQueuedItemsPerQG: 16, MaxReplaySlots: 3, MaxReplayAge: Duration(10 * time.Minute),
 			RetryMinDelay: Duration(time.Second), RetryMaxDelay: Duration(30 * time.Second),
 		},
 		Access: PhaseTwoAccessConfig{
@@ -167,8 +168,7 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 		!ttlExceedsRenew(c.Ownership.LeaseTTL, c.Ownership.LeaseRenewInterval) {
 		return errors.New("phase_two ownership TTL must exceed its renew interval")
 	}
-	if c.Scheduler.TickInterval.Duration() <= 0 || c.Scheduler.RecoveryLimits().Validate() != nil ||
-		c.Scheduler.MaxReplaySlotsPerTick == 0 || c.Scheduler.MaxReplaySlotsPerTick > c.Scheduler.MaxReplaySlots {
+	if c.Scheduler.TickInterval.Duration() <= 0 || c.Scheduler.RecoveryLimits().Validate() != nil {
 		return errors.New("phase_two scheduler cadence and recovery limits are invalid")
 	}
 	endpoint, err := url.Parse(c.Access.UQEndpoint)

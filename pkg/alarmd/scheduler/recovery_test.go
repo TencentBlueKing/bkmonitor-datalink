@@ -173,7 +173,7 @@ func TestQueryPermitPoolHasProcessAndRecoveryBoundsWithoutStarvation(t *testing.
 	if recovery.RecoveryPermit() == nil {
 		t.Fatal("replay permit did not carry a recovery permit")
 	}
-	if snapshot := flights.QueryPermitSnapshot(); snapshot.Inflight != 2 || snapshot.RecoveryInflight != 1 {
+	if snapshot := flights.queryPermitSnapshot(); snapshot.Inflight != 2 || snapshot.RecoveryInflight != 1 {
 		t.Fatalf("snapshot after recovery grant = %+v", snapshot)
 	}
 
@@ -182,7 +182,7 @@ func TestQueryPermitPoolHasProcessAndRecoveryBoundsWithoutStarvation(t *testing.
 	if normal.RecoveryPermit() != nil {
 		t.Fatal("normal permit unexpectedly carried a recovery permit")
 	}
-	if snapshot := flights.QueryPermitSnapshot(); snapshot.Inflight > limits.ProcessQueryPermits ||
+	if snapshot := flights.queryPermitSnapshot(); snapshot.Inflight > limits.ProcessQueryPermits ||
 		snapshot.RecoveryInflight > limits.RecoveryQueryPermits {
 		t.Fatalf("permit bounds exceeded: %+v", snapshot)
 	}
@@ -219,11 +219,104 @@ func TestQueryPermitCancellationRemovesBoundedWaiter(t *testing.T) {
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("AcquireQueryPermit(canceled) error = %v", err)
 	}
-	if snapshot := flights.QueryPermitSnapshot(); snapshot.NormalWaiting != 0 || snapshot.Inflight != 2 {
+	if snapshot := flights.queryPermitSnapshot(); snapshot.NormalWaiting != 0 || snapshot.Inflight != 2 {
 		t.Fatalf("snapshot after cancellation = %+v", snapshot)
 	}
 	first.Release()
 	second.Release()
+}
+
+func TestQueryPermitDeadlineRemovesQueuedWaiterBeforeGrant(t *testing.T) {
+	limits := testRecoveryLimits()
+	limits.ProcessQueryPermits = 1
+	limits.RecoveryQueryPermits = 0
+	flights, err := NewFlightCoordinatorWithRecovery(limits, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder, err := flights.AcquireQueryPermit(context.Background(),
+		execution.SlotIdentity{QueryGroup: "holder", EvaluationTime: 60}, execution.OperationNormal, time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, acquireErr := flights.AcquireQueryPermit(context.Background(),
+			execution.SlotIdentity{QueryGroup: "expiring", EvaluationTime: 60}, execution.OperationNormal,
+			time.Now().Add(100*time.Millisecond))
+		done <- acquireErr
+	}()
+	waitForPermitQueue(t, flights, 1, 0)
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("AcquireQueryPermit(expiring) error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued permit did not expire at its business deadline")
+	}
+	if snapshot := flights.queryPermitSnapshot(); snapshot.NormalWaiting != 0 || snapshot.Inflight != 1 {
+		t.Fatalf("snapshot after deadline = %+v", snapshot)
+	}
+	holder.Release()
+}
+
+func TestQueryPermitQueueUsesEarliestDeadlineWithinFairQueryGroupRotation(t *testing.T) {
+	limits := testRecoveryLimits()
+	limits.ProcessQueryPermits = 1
+	limits.RecoveryQueryPermits = 0
+	limits.ReadyQueueCapacity = 3
+	limits.MaxQueuedItemsPerQG = 2
+	flights, err := NewFlightCoordinatorWithRecovery(limits, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder, err := flights.AcquireQueryPermit(context.Background(),
+		execution.SlotIdentity{QueryGroup: "holder", EvaluationTime: 60}, execution.OperationNormal, time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type grant struct {
+		name   string
+		permit *QueryPermit
+		err    error
+	}
+	grants := make(chan grant, 4)
+	queue := func(name string, qg execution.QueryGroupIdentity, deadline time.Time) {
+		go func() {
+			permit, acquireErr := flights.AcquireQueryPermit(context.Background(),
+				execution.SlotIdentity{QueryGroup: qg, EvaluationTime: 60}, execution.OperationNormal, deadline)
+			grants <- grant{name: name, permit: permit, err: acquireErr}
+		}()
+	}
+	now := time.Now()
+	queue("hot-late", "hot", now.Add(900*time.Millisecond))
+	queue("hot-early", "hot", now.Add(700*time.Millisecond))
+	waitForPermitQueue(t, flights, 2, 0)
+	queue("hot-over-cap", "hot", now.Add(800*time.Millisecond))
+	if got := <-grants; got.name != "hot-over-cap" || !errors.Is(got.err, ErrQueryPermitQueueFull) {
+		t.Fatalf("per-QG queue overflow = %+v", got)
+	}
+	queue("healthy", "healthy", now.Add(800*time.Millisecond))
+	waitForPermitQueue(t, flights, 3, 0)
+
+	holder.Release()
+	first := <-grants
+	if first.err != nil || first.name != "hot-early" {
+		t.Fatalf("first grant = %+v, want earliest hot query", first)
+	}
+	first.permit.Release()
+	second := <-grants
+	if second.err != nil || second.name != "healthy" {
+		t.Fatalf("second grant = %+v, want fair healthy QG", second)
+	}
+	second.permit.Release()
+	third := <-grants
+	if third.err != nil || third.name != "hot-late" {
+		t.Fatalf("third grant = %+v, want remaining hot query", third)
+	}
+	third.permit.Release()
 }
 
 func TestQueryPermitRejectsRecoveryWhenRecoveryPermitsAreDisabled(t *testing.T) {
@@ -245,7 +338,8 @@ func testRecoveryLimits() RecoveryLimits {
 	return RecoveryLimits{
 		ProcessQueryPermits: 2, RecoveryQueryPermits: 1,
 		ReadyQueueCapacity: 8, RecoveryQueueCapacity: 8,
-		MaxReplaySlots: 3, MaxReplayAge: 10 * time.Minute,
+		MaxQueuedItemsPerQG: 2,
+		MaxReplaySlots:      3, MaxReplayAge: 10 * time.Minute,
 		RetryMinDelay: time.Second, RetryMaxDelay: 8 * time.Second,
 	}
 }
@@ -321,13 +415,13 @@ func waitForPermitQueue(t *testing.T, flights *FlightCoordinator, normal, recove
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		snapshot := flights.QueryPermitSnapshot()
+		snapshot := flights.queryPermitSnapshot()
 		if snapshot.NormalWaiting == normal && snapshot.RecoveryWaiting == recovery {
 			return
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatalf("permit queue did not settle: %+v", flights.QueryPermitSnapshot())
+	t.Fatalf("permit queue did not settle: %+v", flights.queryPermitSnapshot())
 }
 
 func receivePermit(t *testing.T, permits <-chan *QueryPermit) *QueryPermit {

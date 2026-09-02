@@ -72,6 +72,8 @@ type FlightCoordinator struct {
 	now              func() time.Time
 	normalWaiters    []*queryPermitWaiter
 	recoveryWaiters  []*queryPermitWaiter
+	lastNormalQG     execution.QueryGroupIdentity
+	lastRecoveryQG   execution.QueryGroupIdentity
 	queryInflight    int
 	recoveryInflight int
 	nextRecovery     bool
@@ -136,6 +138,8 @@ func NewRunner(
 func (runner *Runner) RunOne(
 	ctx context.Context,
 ) (execution.SlotExecutionResult, bool, error) {
+	// One invocation executes at most one frozen Slot. Replay therefore has a
+	// fixed one-Slot-per-tick bound instead of a configurable batch surface.
 	if runner == nil {
 		return execution.SlotExecutionResult{}, false, errors.New("alarmd scheduler: initialized Runner is required")
 	}
@@ -161,9 +165,9 @@ func (runner *Runner) RunOne(
 	if err := slot.Validate(runner.queryGroup); err != nil {
 		return execution.SlotExecutionResult{}, false, err
 	}
-	operation, ready, err := runner.operationFor(slot, runner.now())
-	if err != nil || !ready {
-		return execution.SlotExecutionResult{}, false, err
+	operation, ready := runner.operationFor(slot, runner.now())
+	if !ready {
+		return execution.SlotExecutionResult{}, false, nil
 	}
 	fence, err := runner.session.ValidateCurrent(ctx, runner.now())
 	if err != nil {

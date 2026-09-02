@@ -199,9 +199,16 @@ func (source *ProductionSlotSource) classifyRecovery(
 		return execution.OperationNormal, SlotRecoveryFacts{}, nil
 	}
 	deadline := int64(0)
-	for _, plan := range fact.DuePlans {
-		if deadline == 0 || plan.CompletionDeadlineUnixMilli < deadline {
-			deadline = plan.CompletionDeadlineUnixMilli
+	for _, requirement := range fact.Requirements {
+		for _, consumer := range requirement.Consumers {
+			if consumer.ConsumerDeadlineUnixMilli <= 0 || consumer.DownstreamExecutionReserveMilliSec <= 0 ||
+				consumer.DownstreamExecutionReserveMilliSec >= consumer.ConsumerDeadlineUnixMilli {
+				return "", SlotRecoveryFacts{}, ErrSlotContractDrift
+			}
+			candidate := consumer.ConsumerDeadlineUnixMilli - consumer.DownstreamExecutionReserveMilliSec
+			if deadline == 0 || candidate < deadline {
+				deadline = candidate
+			}
 		}
 	}
 	if deadline <= 0 {

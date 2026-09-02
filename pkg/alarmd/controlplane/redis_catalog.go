@@ -127,6 +127,14 @@ if ARGV[4] == '' then
 elseif not latest or latest ~= ARGV[4] then
   return {-2, -2}
 end
+local latest_epoch = nil
+local latest_revision = nil
+if latest then
+  latest_epoch, latest_revision = string.match(latest, '^(%d+)\n(.+)$')
+  if not latest_epoch or not latest_revision then return {-3, -3} end
+  local latest_occurrence = redis.call('GET', occurrence_key(latest_epoch))
+  if latest_occurrence and latest_occurrence ~= latest_revision then return {-4, -4} end
+end
 local snapshot = redis.call('GET', KEYS[3])
 if snapshot and snapshot ~= ARGV[1] then
   return {-1, -1}
@@ -136,11 +144,7 @@ if snapshot then
 else
   redis.call('PSETEX', KEYS[3], ARGV[2], ARGV[1])
 end
-local latest_epoch = nil
-local latest_revision = nil
 if latest then
-  latest_epoch, latest_revision = string.match(latest, '^(%d+)\n(.+)$')
-  if not latest_epoch or not latest_revision then return {-3, -3} end
   redis.call('SET', occurrence_key(latest_epoch), latest_revision, 'PX', ARGV[2], 'NX')
 end
 local previous_epoch = redis.call('GET', KEYS[2])
@@ -292,6 +296,9 @@ func (repository *RedisCatalogRepository) PublishCatalogIfCurrent(
 	}
 	if epoch == -2 {
 		return PublishedSnapshot{}, false, ErrPublicationConflict
+	}
+	if epoch == -4 {
+		return PublishedSnapshot{}, false, errors.New("alarmd controlplane: publication occurrence collision")
 	}
 	if err != nil || epoch <= 0 {
 		return PublishedSnapshot{}, false, errors.New("alarmd controlplane: invalid publication epoch")

@@ -319,6 +319,56 @@ func TestProductionPhaseTwoBundleRebuildsExpiredSnapshotReferencedByPersistentAc
 		t.Fatalf("recovered health=%+v, want ready", snapshot)
 	}
 
+	activationBeforePublishCollision, err := redisClient.Get(ctx, activationKey).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	latestBeforePublishCollision, err := redisClient.Get(ctx, latestPublicationKey).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotEpochBeforePublishCollision, err := redisClient.Get(ctx, snapshotEpochKey).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicationEpochBeforePublishCollision, err := redisClient.Get(ctx, publicationEpochKey).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.Del(ctx, snapshotKey).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.Set(ctx, occurrenceKey, "another-snapshot-revision", time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recoveredControl.Refresh(ctx); !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+		t.Fatalf("latest occurrence collision first confirmation error = %v, want Snapshot unavailable", err)
+	}
+	if _, err := recoveredControl.Refresh(ctx); err == nil ||
+		!strings.Contains(err.Error(), "publication occurrence collision") {
+		t.Fatalf("latest occurrence collision error = %v, want collision", err)
+	}
+	if exists, err := redisClient.Exists(ctx, snapshotKey).Result(); err != nil || exists != 0 {
+		t.Fatalf("latest occurrence collision recreated Snapshot: exists=%d error=%v", exists, err)
+	}
+	for key, want := range map[string]string{
+		latestPublicationKey: latestBeforePublishCollision,
+		snapshotEpochKey:     snapshotEpochBeforePublishCollision,
+		occurrenceKey:        "another-snapshot-revision",
+		activationKey:        activationBeforePublishCollision,
+		publicationEpochKey:  publicationEpochBeforePublishCollision,
+	} {
+		if got, err := redisClient.Get(ctx, key).Result(); err != nil || got != want {
+			t.Fatalf("latest occurrence collision mutated %s: got=%q want=%q error=%v", key, got, want, err)
+		}
+	}
+	if err := redisClient.Set(ctx, occurrenceKey, revision, time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recoveredControl.Refresh(ctx); err != nil {
+		t.Fatalf("restore after latest occurrence collision: %v", err)
+	}
+
 	activationBeforeCollision, err := redisClient.Get(ctx, activationKey).Result()
 	if err != nil {
 		t.Fatal(err)

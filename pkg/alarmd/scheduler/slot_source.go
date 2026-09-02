@@ -50,6 +50,19 @@ type ProductionSlotSource struct {
 	catalog     SlotCatalogReader
 	progress    ScheduleProgressReader
 	now         func() time.Time
+	recovery    *RecoveryLimits
+}
+
+type ProductionSlotSourceOption func(*ProductionSlotSource) error
+
+func WithRecoveryLimits(limits RecoveryLimits) ProductionSlotSourceOption {
+	return func(source *ProductionSlotSource) error {
+		if err := limits.Validate(); err != nil {
+			return err
+		}
+		source.recovery = &limits
+		return nil
+	}
 }
 
 func NewProductionSlotSource(
@@ -60,12 +73,22 @@ func NewProductionSlotSource(
 	catalog SlotCatalogReader,
 	progress ScheduleProgressReader,
 	now func() time.Time,
+	options ...ProductionSlotSourceOption,
 ) (*ProductionSlotSource, error) {
 	if queryGroup == "" || workerID == "" || assignments == nil || session == nil || catalog == nil || progress == nil || now == nil {
 		return nil, errors.New("alarmd scheduler: complete production SlotSource dependencies are required")
 	}
-	return &ProductionSlotSource{queryGroup: queryGroup, workerID: workerID, assignments: assignments,
-		session: session, catalog: catalog, progress: progress, now: now}, nil
+	source := &ProductionSlotSource{queryGroup: queryGroup, workerID: workerID, assignments: assignments,
+		session: session, catalog: catalog, progress: progress, now: now}
+	for _, option := range options {
+		if option == nil {
+			return nil, errors.New("alarmd scheduler: nil production SlotSource option")
+		}
+		if err := option(source); err != nil {
+			return nil, err
+		}
+	}
+	return source, nil
 }
 
 func (source *ProductionSlotSource) Next(
@@ -143,6 +166,10 @@ func (source *ProductionSlotSource) Next(
 		fact.Contract.QueryRevision != schedule.Segment.QueryRevision {
 		return FrozenSlot{}, false, ErrSlotContractDrift
 	}
+	operation, recovery, err := source.classifyRecovery(ctx, fact, at)
+	if err != nil {
+		return FrozenSlot{}, false, err
+	}
 	currentAssignment, currentFence, err := source.currentOwnership(ctx, source.now())
 	if err != nil {
 		return FrozenSlot{}, false, err
@@ -152,14 +179,72 @@ func (source *ProductionSlotSource) Next(
 	}
 	slot := FrozenSlot{
 		Contract: fact.Contract,
-		Dispatch: SlotDispatchContext{Operation: execution.OperationNormal, OwnerFence: currentFence,
+		Dispatch: SlotDispatchContext{Operation: operation, OwnerFence: currentFence,
 			AssignmentGeneration: currentAssignment.AssignmentGeneration},
 		ExpectedNextSlot: nextSlot,
+		Recovery:         recovery,
 	}
 	if err := slot.Validate(queryGroup); err != nil {
 		return FrozenSlot{}, false, err
 	}
 	return slot, true, nil
+}
+
+func (source *ProductionSlotSource) classifyRecovery(
+	ctx context.Context,
+	fact execution.FrozenSlotContractFact,
+	at time.Time,
+) (execution.Operation, SlotRecoveryFacts, error) {
+	if source.recovery == nil {
+		return execution.OperationNormal, SlotRecoveryFacts{}, nil
+	}
+	deadline := int64(0)
+	for _, plan := range fact.DuePlans {
+		if deadline == 0 || plan.CompletionDeadlineUnixMilli < deadline {
+			deadline = plan.CompletionDeadlineUnixMilli
+		}
+	}
+	if deadline <= 0 {
+		return "", SlotRecoveryFacts{}, ErrSlotContractDrift
+	}
+	if at.UnixMilli() < deadline {
+		return execution.OperationNormal, SlotRecoveryFacts{Disposition: ReplayLive}, nil
+	}
+	age := at.Sub(time.UnixMilli(deadline))
+	distance, err := source.replayDistance(ctx, fact.Contract.Slot.EvaluationTime, at)
+	if err != nil {
+		return "", SlotRecoveryFacts{}, err
+	}
+	facts := SlotRecoveryFacts{Disposition: ReplayEligible, Distance: distance, Age: age}
+	if age > source.recovery.MaxReplayAge || distance > source.recovery.MaxReplaySlots {
+		facts.Disposition = ReplayExpired
+		return execution.OperationNormal, facts, nil
+	}
+	return execution.OperationReplay, facts, nil
+}
+
+func (source *ProductionSlotSource) replayDistance(
+	ctx context.Context,
+	first execution.EvaluationTime,
+	at time.Time,
+) (uint32, error) {
+	distance := uint32(1)
+	cursor := first
+	for distance <= source.recovery.MaxReplaySlots {
+		next, err := source.catalog.NextSlotAfter(ctx, source.queryGroup, cursor)
+		if err != nil {
+			return 0, err
+		}
+		if next <= cursor {
+			return 0, ErrScheduleFactsInvalid
+		}
+		if int64(next) > at.Unix() {
+			return distance, nil
+		}
+		distance++
+		cursor = next
+	}
+	return distance, nil
 }
 
 func (source *ProductionSlotSource) isRetiredBoundary(

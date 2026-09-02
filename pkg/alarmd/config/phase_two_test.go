@@ -52,6 +52,14 @@ func TestDefaultPhaseTwoRuntimeHasBoundedLifecycleBudgets(t *testing.T) {
 		cfg.Coordinator.MaxEvents == 0 || cfg.Coordinator.MaxGapMutations == 0 {
 		t.Fatalf("phase-two Coordinator budgets = %+v, want positive values", cfg.Coordinator)
 	}
+	if cfg.Scheduler.ProcessQueryPermits <= cfg.Scheduler.RecoveryQueryPermits ||
+		cfg.Scheduler.RecoveryQueryPermits <= 0 || cfg.Scheduler.ReadyQueueCapacity <= 0 ||
+		cfg.Scheduler.RecoveryQueueCapacity <= 0 || cfg.Scheduler.MaxReplaySlots == 0 ||
+		cfg.Scheduler.MaxReplaySlotsPerTick == 0 || cfg.Scheduler.MaxReplayAge.Duration() <= 0 ||
+		cfg.Scheduler.RetryMinDelay.Duration() <= 0 ||
+		cfg.Scheduler.RetryMaxDelay.Duration() < cfg.Scheduler.RetryMinDelay.Duration() {
+		t.Fatalf("phase-two Scheduler recovery defaults = %+v, want bounded conservative values", cfg.Scheduler)
+	}
 }
 
 func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
@@ -104,6 +112,15 @@ func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
 		},
 		"lease cadence": func(cfg *Config) {
 			cfg.PhaseTwo.Ownership.LeaseRenewInterval = cfg.PhaseTwo.Ownership.LeaseTTL
+		},
+		"query permit partition": func(cfg *Config) {
+			cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = cfg.PhaseTwo.Scheduler.ProcessQueryPermits
+		},
+		"replay batch": func(cfg *Config) {
+			cfg.PhaseTwo.Scheduler.MaxReplaySlotsPerTick = cfg.PhaseTwo.Scheduler.MaxReplaySlots + 1
+		},
+		"retry delay": func(cfg *Config) {
+			cfg.PhaseTwo.Scheduler.RetryMaxDelay = cfg.PhaseTwo.Scheduler.RetryMinDelay - 1
 		},
 		"state mutation store budget": func(cfg *Config) {
 			cfg.PhaseTwo.Coordinator.MaxStateMutations = uint64(cfg.Limits.Store.MaxKeysPerBatch) + 1

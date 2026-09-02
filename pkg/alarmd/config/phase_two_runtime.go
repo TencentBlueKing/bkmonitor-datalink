@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
 const PhaseTwoWorkerIDEnvironment = "ALARMD_PHASE_TWO_WORKER_ID"
@@ -52,7 +54,25 @@ type PhaseTwoOwnershipConfig struct {
 }
 
 type PhaseTwoSchedulerConfig struct {
-	TickInterval Duration `yaml:"tick_interval"`
+	TickInterval          Duration `yaml:"tick_interval"`
+	ProcessQueryPermits   int      `yaml:"process_query_permits"`
+	RecoveryQueryPermits  int      `yaml:"recovery_query_permits"`
+	ReadyQueueCapacity    int      `yaml:"ready_queue_capacity"`
+	RecoveryQueueCapacity int      `yaml:"recovery_queue_capacity"`
+	MaxReplaySlots        uint32   `yaml:"max_replay_slots"`
+	MaxReplaySlotsPerTick uint32   `yaml:"max_replay_slots_per_tick"`
+	MaxReplayAge          Duration `yaml:"max_replay_age"`
+	RetryMinDelay         Duration `yaml:"retry_min_delay"`
+	RetryMaxDelay         Duration `yaml:"retry_max_delay"`
+}
+
+func (config PhaseTwoSchedulerConfig) RecoveryLimits() scheduler.RecoveryLimits {
+	return scheduler.RecoveryLimits{
+		ProcessQueryPermits: config.ProcessQueryPermits, RecoveryQueryPermits: config.RecoveryQueryPermits,
+		ReadyQueueCapacity: config.ReadyQueueCapacity, RecoveryQueueCapacity: config.RecoveryQueueCapacity,
+		MaxReplaySlots: config.MaxReplaySlots, MaxReplayAge: config.MaxReplayAge.Duration(),
+		RetryMinDelay: config.RetryMinDelay.Duration(), RetryMaxDelay: config.RetryMaxDelay.Duration(),
+	}
 }
 
 type PhaseTwoAccessConfig struct {
@@ -94,7 +114,12 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 			ControlLeaderTTL: Duration(30 * time.Second), ControlLeaderRenewInterval: Duration(10 * time.Second),
 			LeaseTTL: Duration(30 * time.Second), LeaseRenewInterval: Duration(10 * time.Second),
 		},
-		Scheduler: PhaseTwoSchedulerConfig{TickInterval: Duration(time.Second)},
+		Scheduler: PhaseTwoSchedulerConfig{
+			TickInterval: Duration(time.Second), ProcessQueryPermits: 2, RecoveryQueryPermits: 1,
+			ReadyQueueCapacity: 256, RecoveryQueueCapacity: 64,
+			MaxReplaySlots: 3, MaxReplaySlotsPerTick: 1, MaxReplayAge: Duration(10 * time.Minute),
+			RetryMinDelay: Duration(time.Second), RetryMaxDelay: Duration(30 * time.Second),
+		},
 		Access: PhaseTwoAccessConfig{
 			MinReadyDelay: Duration(30 * time.Second), DownstreamExecutionReserve: Duration(5 * time.Second),
 		},
@@ -142,8 +167,9 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 		!ttlExceedsRenew(c.Ownership.LeaseTTL, c.Ownership.LeaseRenewInterval) {
 		return errors.New("phase_two ownership TTL must exceed its renew interval")
 	}
-	if c.Scheduler.TickInterval.Duration() <= 0 {
-		return errors.New("phase_two scheduler tick_interval must be positive")
+	if c.Scheduler.TickInterval.Duration() <= 0 || c.Scheduler.RecoveryLimits().Validate() != nil ||
+		c.Scheduler.MaxReplaySlotsPerTick == 0 || c.Scheduler.MaxReplaySlotsPerTick > c.Scheduler.MaxReplaySlots {
+		return errors.New("phase_two scheduler cadence and recovery limits are invalid")
 	}
 	endpoint, err := url.Parse(c.Access.UQEndpoint)
 	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" ||

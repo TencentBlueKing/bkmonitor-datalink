@@ -20,6 +20,7 @@ type FrozenSlot struct {
 	Contract         execution.FrozenExecutionContractRef
 	Dispatch         SlotDispatchContext
 	ExpectedNextSlot execution.EvaluationTime
+	Recovery         SlotRecoveryFacts
 }
 
 // SlotDispatchContext contains current, replaceable execution authority. It is
@@ -34,8 +35,11 @@ func (slot FrozenSlot) Validate(queryGroup execution.QueryGroupIdentity) error {
 	if err := slot.Contract.Validate(); err != nil {
 		return err
 	}
-	if slot.Dispatch.Operation != execution.OperationNormal || slot.Dispatch.AssignmentGeneration == 0 {
-		return errors.New("alarmd scheduler: normal dispatch context is required")
+	if err := slot.Dispatch.Operation.Validate(); err != nil || slot.Dispatch.AssignmentGeneration == 0 {
+		return errors.New("alarmd scheduler: valid dispatch context is required")
+	}
+	if err := slot.Recovery.validate(slot.Dispatch.Operation); err != nil {
+		return err
 	}
 	if err := slot.Dispatch.OwnerFence.Validate(slot.Contract); err != nil {
 		return err
@@ -61,12 +65,30 @@ type Executor interface {
 // FlightCoordinator is one process-wide gate keyed by Query Group. It keeps
 // query execution single-flight without introducing a Redis business lock.
 type FlightCoordinator struct {
-	mu     sync.Mutex
-	active map[execution.QueryGroupIdentity]struct{}
+	mu               sync.Mutex
+	active           map[execution.QueryGroupIdentity]struct{}
+	recoveryEnabled  bool
+	limits           RecoveryLimits
+	now              func() time.Time
+	attempts         map[execution.QueryGroupIdentity]recoveryAttempt
+	normalWaiters    []*queryPermitWaiter
+	recoveryWaiters  []*queryPermitWaiter
+	queryInflight    int
+	recoveryInflight int
+	nextRecovery     bool
+	permitSequence   uint64
 }
 
 func NewFlightCoordinator() *FlightCoordinator {
-	return &FlightCoordinator{active: make(map[execution.QueryGroupIdentity]struct{})}
+	return &FlightCoordinator{active: make(map[execution.QueryGroupIdentity]struct{}), now: time.Now}
+}
+
+func NewFlightCoordinatorWithRecovery(limits RecoveryLimits, now func() time.Time) (*FlightCoordinator, error) {
+	if err := limits.Validate(); err != nil || now == nil {
+		return nil, ErrRecoveryLimitsInvalid
+	}
+	return &FlightCoordinator{active: make(map[execution.QueryGroupIdentity]struct{}), recoveryEnabled: true,
+		limits: limits, now: now, attempts: make(map[execution.QueryGroupIdentity]recoveryAttempt), nextRecovery: true}, nil
 }
 
 func (coordinator *FlightCoordinator) tryAcquire(queryGroup execution.QueryGroupIdentity) (func(), bool) {
@@ -86,8 +108,8 @@ func (coordinator *FlightCoordinator) tryAcquire(queryGroup execution.QueryGroup
 	}, true
 }
 
-// Runner is bound to one owned Query Group. G1 deliberately exposes only the
-// normal operation; retry, replay and probe remain outside this implementation.
+// Runner is bound to one owned Query Group. normal, retry, replay and probe use
+// this same single-flight path and the same frozen Slot contract.
 type Runner struct {
 	queryGroup execution.QueryGroupIdentity
 	session    OwnerSession
@@ -131,9 +153,16 @@ func (runner *Runner) RunOne(
 	}
 	slot, due, err := runner.source.Next(ctx, runner.queryGroup)
 	if err != nil || !due {
+		if err == nil && !due {
+			runner.flights.clearAttempt(runner.queryGroup)
+		}
 		return execution.SlotExecutionResult{}, false, err
 	}
 	if err := slot.Validate(runner.queryGroup); err != nil {
+		return execution.SlotExecutionResult{}, false, err
+	}
+	operation, ready, err := runner.flights.operationFor(slot, runner.now())
+	if err != nil || !ready {
 		return execution.SlotExecutionResult{}, false, err
 	}
 	fence, err := runner.session.ValidateCurrent(ctx, runner.now())
@@ -144,12 +173,15 @@ func (runner *Runner) RunOne(
 		return execution.SlotExecutionResult{}, false, ErrSlotOwnershipChanged
 	}
 	request := execution.SlotExecutionRequest{
-		Contract: slot.Contract, Operation: slot.Dispatch.Operation,
+		Contract: slot.Contract, Operation: operation,
 		OwnerFence: fence, ExpectedNextSlot: slot.ExpectedNextSlot,
 	}
 	if err := request.Validate(); err != nil {
 		return execution.SlotExecutionResult{}, false, err
 	}
 	result, err := runner.executor.Execute(ctx, request)
+	if err == nil {
+		err = runner.flights.recordResult(slot, operation, result, runner.now())
+	}
 	return result, true, err
 }

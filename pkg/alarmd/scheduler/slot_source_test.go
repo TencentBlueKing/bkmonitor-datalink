@@ -291,6 +291,42 @@ func TestProductionSlotSourceDoesNotFreezeFutureSlot(t *testing.T) {
 	}
 }
 
+func TestProductionSlotSourceMarksEligibleBacklogAsReplayWithoutChangingContract(t *testing.T) {
+	schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
+	limits := testRecoveryLimits()
+	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, missingProgress(), time.Unix(200, 0), limits)
+
+	slot, due, err := source.Next(context.Background(), "query-group-1")
+	if err != nil || !due {
+		t.Fatalf("Next() due=%v error=%v", due, err)
+	}
+	if slot.Dispatch.Operation != execution.OperationReplay || slot.Recovery.Disposition != ReplayEligible ||
+		slot.Recovery.Distance != 3 {
+		t.Fatalf("backlog slot recovery facts = %+v dispatch=%+v", slot.Recovery, slot.Dispatch)
+	}
+	if slot.Contract.Slot.EvaluationTime != 60 || slot.ExpectedNextSlot != 60 {
+		t.Fatalf("replay changed frozen Slot identity: %+v", slot)
+	}
+}
+
+func TestProductionSlotSourceLeavesExpiredBacklogForExistingGapFinalizer(t *testing.T) {
+	schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
+	limits := testRecoveryLimits()
+	limits.MaxReplaySlots = 2
+	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, missingProgress(), time.Unix(200, 0), limits)
+
+	slot, due, err := source.Next(context.Background(), "query-group-1")
+	if err != nil || !due {
+		t.Fatalf("Next() due=%v error=%v", due, err)
+	}
+	if slot.Dispatch.Operation != execution.OperationNormal || slot.Recovery.Disposition != ReplayExpired ||
+		slot.Recovery.Distance != 3 {
+		t.Fatalf("expired backlog recovery facts = %+v dispatch=%+v", slot.Recovery, slot.Dispatch)
+	}
+}
+
 func schedulerSchedule(
 	t *testing.T,
 	interval int64,
@@ -373,6 +409,25 @@ func newProductionSlotSourceForTest(
 	reader := &fakeProgressReader{result: load, catalog: catalog}
 	return mustProductionSlotSource(t, &fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog, reader, at)
+}
+
+func newProductionSlotSourceWithRecoveryForTest(
+	t *testing.T,
+	catalog *fakeSlotCatalog,
+	load execution.ProgressLoadResult,
+	at time.Time,
+	limits RecoveryLimits,
+) *ProductionSlotSource {
+	t.Helper()
+	reader := &fakeProgressReader{result: load, catalog: catalog}
+	source, err := NewProductionSlotSource("query-group-1", "worker-1",
+		&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
+		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog, reader,
+		func() time.Time { return at }, WithRecoveryLimits(limits))
+	if err != nil {
+		t.Fatalf("NewProductionSlotSource() error = %v", err)
+	}
+	return source
 }
 
 func mustProductionSlotSource(

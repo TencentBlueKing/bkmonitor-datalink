@@ -121,21 +121,23 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		next.Current.SnapshotRevision == previous.Current.SnapshotRevision {
 		return errors.New("alarmd controlplane: publication activation must advance to one new current publication")
 	}
-	oldSnapshot, err := repository.LoadPublishedSnapshot(ctx, previous.Current)
-	if err != nil {
-		return err
-	}
 	newSnapshot, err := repository.LoadPublishedSnapshot(ctx, next.Current)
 	if err != nil {
 		return err
 	}
 	next.SchemaVersion = activationSchemaVersion
 
-	oldGroups, err := queryGroupMap(oldSnapshot.QueryGroups)
+	newGroups, err := queryGroupMap(newSnapshot.QueryGroups)
 	if err != nil {
 		return err
 	}
-	newGroups, err := queryGroupMap(newSnapshot.QueryGroups)
+	oldSnapshot, err := repository.LoadPublishedSnapshot(ctx, previous.Current)
+	var oldGroups map[execution.QueryGroupIdentity]QueryGroup
+	if errors.Is(err, ErrSnapshotUnavailable) {
+		oldGroups, err = repository.loadActivatedGroupsFromOpenSchedules(ctx, previous, newGroups)
+	} else if err == nil {
+		oldGroups, err = queryGroupMap(oldSnapshot.QueryGroups)
+	}
 	if err != nil {
 		return err
 	}
@@ -177,8 +179,8 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		}
 		open := timeline.Segments[last]
 		if open.Schedule.Segment.End != nil || open.Schedule.Segment.Start >= boundary ||
-			open.Schedule.Segment.Publication.SnapshotRevision != oldSnapshot.Publication.SnapshotRevision ||
-			open.Schedule.Segment.Publication.PublicationEpoch != execution.PublicationEpoch(oldSnapshot.Publication.PublicationEpoch) ||
+			open.Schedule.Segment.Publication.SnapshotRevision != previous.Current.SnapshotRevision ||
+			open.Schedule.Segment.Publication.PublicationEpoch != execution.PublicationEpoch(previous.Current.PublicationEpoch) ||
 			open.Schedule.Segment.QueryRevision != oldGroup.QueryPlan.QueryRevision ||
 			open.Schedule.Segment.ScheduleRevision != oldGroup.ScheduleRevision {
 			return ErrScheduleConflict
@@ -654,6 +656,72 @@ func queryGroupMap(groups []QueryGroup) (map[execution.QueryGroupIdentity]QueryG
 		result[group.Identity] = group
 	}
 	return result, nil
+}
+
+// loadActivatedGroupsFromOpenSchedules recovers only the old group facts
+// needed to close an activation boundary. It is intentionally limited to
+// Query Groups also present in the new publication: every active Plan must be
+// covered by one immutable open Schedule Segment from the old publication.
+// If that exact coverage cannot be proven, the missing Snapshot remains
+// unavailable instead of guessing from the new source.
+func (repository *RedisCatalogRepository) loadActivatedGroupsFromOpenSchedules(
+	ctx context.Context,
+	activation ActivationState,
+	candidates map[execution.QueryGroupIdentity]QueryGroup,
+) (map[execution.QueryGroupIdentity]QueryGroup, error) {
+	expected, err := activationRecordMap(activation.Plans)
+	if err != nil {
+		return nil, err
+	}
+	covered := make(map[execution.PlanIdentity]struct{}, len(expected))
+	groups := make(map[execution.QueryGroupIdentity]QueryGroup)
+	identities := make([]execution.QueryGroupIdentity, 0, len(candidates))
+	for identity := range candidates {
+		identities = append(identities, identity)
+	}
+	sort.Slice(identities, func(i, j int) bool { return identities[i] < identities[j] })
+	for _, identity := range identities {
+		timeline, _, loadErr := repository.loadScheduleTimeline(ctx, identity)
+		if errors.Is(loadErr, ErrScheduleUnavailable) {
+			continue
+		}
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		last := len(timeline.Segments) - 1
+		if last < 0 || timeline.RetiredAt != nil {
+			continue
+		}
+		open := timeline.Segments[last]
+		if open.Schedule.Segment.End != nil ||
+			open.Schedule.Segment.Publication.SnapshotRevision != activation.Current.SnapshotRevision ||
+			open.Schedule.Segment.Publication.PublicationEpoch != execution.PublicationEpoch(activation.Current.PublicationEpoch) {
+			continue
+		}
+		if err := validateOpenSegmentActivation(activation, open); err != nil {
+			return nil, err
+		}
+		for _, record := range open.Plans {
+			if expected[record.Fact.Plan] != record {
+				return nil, ErrSnapshotUnavailable
+			}
+			if _, duplicate := covered[record.Fact.Plan]; duplicate {
+				return nil, ErrSnapshotUnavailable
+			}
+			covered[record.Fact.Plan] = struct{}{}
+		}
+		groups[identity] = QueryGroup{
+			Identity: identity,
+			QueryPlan: execution.QueryPlanFacts{
+				QueryRevision: open.Schedule.Segment.QueryRevision,
+			},
+			ScheduleRevision: open.Schedule.Segment.ScheduleRevision,
+		}
+	}
+	if len(covered) != len(expected) {
+		return nil, ErrSnapshotUnavailable
+	}
+	return groups, nil
 }
 
 func expectedDrainingProjection(

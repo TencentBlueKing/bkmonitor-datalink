@@ -20,11 +20,12 @@ const (
 )
 
 var (
-	ErrSnapshotUnavailable      = errors.New("alarmd controlplane: snapshot unavailable")
-	ErrCatalogObjectUnavailable = errors.New("alarmd controlplane: catalog object unavailable")
-	ErrActivationUnavailable    = errors.New("alarmd controlplane: activation unavailable")
-	ErrActivationConflict       = errors.New("alarmd controlplane: activation conflict")
-	ErrPublicationConflict      = errors.New("alarmd controlplane: publication conflict")
+	ErrSnapshotUnavailable            = errors.New("alarmd controlplane: snapshot unavailable")
+	ErrCatalogObjectUnavailable       = errors.New("alarmd controlplane: catalog object unavailable")
+	ErrActivationUnavailable          = errors.New("alarmd controlplane: activation unavailable")
+	ErrActivationConflict             = errors.New("alarmd controlplane: activation conflict")
+	ErrPublicationConflict            = errors.New("alarmd controlplane: publication conflict")
+	ErrPublicationOccurrenceCollision = errors.New("alarmd controlplane: publication occurrence collision")
 )
 
 // PersistedSnapshotCorruptError identifies persisted bytes that were read
@@ -226,7 +227,7 @@ func (repository *RedisCatalogRepository) restoreCatalogPublicationIfActivationC
 		return PublishedSnapshot{}, errors.New("alarmd controlplane: restored Snapshot revision collision")
 	}
 	if changed == -2 {
-		return PublishedSnapshot{}, errors.New("alarmd controlplane: restored publication occurrence collision")
+		return PublishedSnapshot{}, ErrPublicationOccurrenceCollision
 	}
 	if changed != 1 {
 		return PublishedSnapshot{}, ErrPublicationConflict
@@ -298,7 +299,7 @@ func (repository *RedisCatalogRepository) PublishCatalogIfCurrent(
 		return PublishedSnapshot{}, false, ErrPublicationConflict
 	}
 	if epoch == -4 {
-		return PublishedSnapshot{}, false, errors.New("alarmd controlplane: publication occurrence collision")
+		return PublishedSnapshot{}, false, ErrPublicationOccurrenceCollision
 	}
 	if err != nil || epoch <= 0 {
 		return PublishedSnapshot{}, false, errors.New("alarmd controlplane: invalid publication epoch")

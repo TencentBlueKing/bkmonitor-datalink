@@ -93,15 +93,17 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	if boundary <= 0 {
 		return ActivationState{}, errors.New("alarmd controlplane: Schedule activation clock must produce a positive Unix second")
 	}
-	oldSnapshot, err := reconciler.repository.LoadPublishedSnapshot(ctx, previous.Current)
-	if err != nil {
-		return ActivationState{}, err
-	}
-	oldGroups, err := queryGroupMap(oldSnapshot.QueryGroups)
-	if err != nil {
-		return ActivationState{}, err
-	}
 	newGroups, err := queryGroupMap(snapshot.QueryGroups)
+	if err != nil {
+		return ActivationState{}, err
+	}
+	oldSnapshot, err := reconciler.repository.LoadPublishedSnapshot(ctx, previous.Current)
+	var oldGroups map[execution.QueryGroupIdentity]QueryGroup
+	if errors.Is(err, ErrSnapshotUnavailable) {
+		oldGroups, err = reconciler.repository.loadActivatedGroupsFromOpenSchedules(ctx, previous, newGroups)
+	} else if err == nil {
+		oldGroups, err = queryGroupMap(oldSnapshot.QueryGroups)
+	}
 	if err != nil {
 		return ActivationState{}, err
 	}

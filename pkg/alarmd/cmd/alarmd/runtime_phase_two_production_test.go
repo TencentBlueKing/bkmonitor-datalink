@@ -636,7 +636,7 @@ func TestProductionPhaseTwoControlKeepsLastGoodAcrossFailedRefreshAndRecovery(t 
 	}
 	degraded, err := control.Refresh(context.Background())
 	if err != nil || degraded.Status != phaseTwoControlDegradedLastGood ||
-		degraded.SourceKind != observability.SourceKindLegacyStrategy ||
+		degraded.SourceKind != observability.SourceKindCompiledSnapshot ||
 		degraded.ReasonCode != observability.ReasonContractRetryable || degraded.Cause == nil ||
 		!reflect.DeepEqual(degraded.QueryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
 		t.Fatalf("degraded Refresh()=(%#v,%v)", degraded, err)
@@ -648,6 +648,46 @@ func TestProductionPhaseTwoControlKeepsLastGoodAcrossFailedRefreshAndRecovery(t 
 	}
 	if activator.calls != 1 {
 		t.Fatalf("activation calls=%d, want 1 after recovery", activator.calls)
+	}
+}
+
+func TestProductionPhaseTwoControlPreservesPrimaryRefreshClassificationWithoutLastGoodPayload(t *testing.T) {
+	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-current", PublicationEpoch: 2}
+	tests := []struct {
+		name       string
+		cause      error
+		sourceKind observability.SourceKind
+		reason     observability.ReasonCode
+	}{
+		{name: "legacy source", cause: controlplane.ErrLegacySourceIncomplete,
+			sourceKind: observability.SourceKindLegacyStrategy, reason: observability.ReasonContractRetryable},
+		{name: "snapshot", cause: controlplane.ErrSnapshotUnavailable,
+			sourceKind: observability.SourceKindCompiledSnapshot, reason: observability.ReasonContractRetryable},
+		{name: "occurrence collision", cause: controlplane.ErrPublicationOccurrenceCollision,
+			sourceKind: observability.SourceKindLegacyStrategy, reason: observability.ReasonContractDeterministic},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+				Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{},
+				Reconciler: &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{{}}, errs: []error{test.cause}},
+				Activator:  &fakeInitialScheduleActivator{}, Repository: &fakeProductionCatalogRepository{
+					activation:  controlplane.ActivationState{RecordRevision: 2, Current: publication},
+					snapshotErr: controlplane.ErrSnapshotUnavailable,
+				},
+				Schedules: &fakeScheduleProjection{}, Progress: &fakeProductionProgressReader{},
+				RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := control.Refresh(context.Background())
+			if err != nil || result.Status != phaseTwoControlDegradedLastGood || result.SourceKind != test.sourceKind ||
+				result.ReasonCode != test.reason || !errors.Is(result.Cause, test.cause) || len(result.QueryGroups) != 0 {
+				t.Fatalf("Refresh()=(%#v,%v), want degraded source=%s reason=%s cause=%v",
+					result, err, test.sourceKind, test.reason, test.cause)
+			}
+		})
 	}
 }
 
@@ -723,6 +763,7 @@ type fakeProductionCatalogRepository struct {
 	activation    controlplane.ActivationState
 	activationErr error
 	snapshot      controlplane.PublishedSnapshot
+	snapshotErr   error
 	snapshots     map[controlplane.SnapshotPublicationRef]controlplane.PublishedSnapshot
 }
 
@@ -730,6 +771,9 @@ func (repository *fakeProductionCatalogRepository) LoadPublishedSnapshot(
 	_ context.Context,
 	publication controlplane.SnapshotPublicationRef,
 ) (controlplane.PublishedSnapshot, error) {
+	if repository.snapshotErr != nil {
+		return controlplane.PublishedSnapshot{}, repository.snapshotErr
+	}
 	if snapshot, ok := repository.snapshots[publication]; ok {
 		return snapshot, nil
 	}

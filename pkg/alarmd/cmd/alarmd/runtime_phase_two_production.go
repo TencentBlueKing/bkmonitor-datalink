@@ -378,7 +378,11 @@ func (runtime *productionPhaseTwoControl) refresh(
 		ctx, runtime.dependencies.Source, runtime.dependencies.Planner,
 	)
 	if err != nil {
-		result, fallbackErr := runtime.keepLastGood(ctx, observability.SourceKindLegacyStrategy, err)
+		sourceKind := observability.SourceKindLegacyStrategy
+		if errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+			sourceKind = observability.SourceKindCompiledSnapshot
+		}
+		result, fallbackErr := runtime.keepLastGood(ctx, sourceKind, err)
 		return result, false, fallbackErr
 	}
 	if result.Status == controlplane.SourceRefreshPendingConfirmation {
@@ -428,6 +432,16 @@ func (runtime *productionPhaseTwoControl) keepLastGood(
 	}
 	queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
 	if err != nil {
+		if errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+			reason := observability.ReasonContractRetryable
+			if errors.Is(cause, controlplane.ErrPublicationOccurrenceCollision) {
+				reason = observability.ReasonContractDeterministic
+			}
+			return phaseTwoControlRefreshResult{
+				Status: phaseTwoControlDegradedLastGood, SourceKind: sourceKind,
+				ReasonCode: reason, Cause: cause,
+			}, nil
+		}
 		return phaseTwoControlRefreshResult{}, errors.Join(cause, err)
 	}
 	return phaseTwoControlRefreshResult{

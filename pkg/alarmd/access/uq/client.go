@@ -20,6 +20,7 @@ const (
 	headerQuerySource = "Bk-Query-Source"
 	headerTenant      = "X-Bk-Tenant-Id"
 	headerSpace       = "X-Bk-Scope-Space-Uid"
+	queryTSPartial    = "QUERY_TS_PARTIAL"
 )
 
 var (
@@ -433,7 +434,7 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 		}
 		return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: unexpected trailing token %v", token)
 	}
-	if status != nil && status.Code != "" {
+	if status != nil && status.Code != "" && status.Code != queryTSPartial {
 		return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: query status %s", status.Code)
 	}
 	dataState := execution.DataStateEmpty
@@ -450,7 +451,7 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 		return completion, nil
 	}
 	completeness := execution.CompletenessFull
-	if *isPartial {
+	if *isPartial || status != nil && status.Code == queryTSPartial {
 		completeness = execution.CompletenessPartial
 	}
 	return execution.ProviderCompletion{Ref: ref, PhysicalQuery: attempt.Spec.Digest,

@@ -537,7 +537,7 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingEventACKIsRetr
 	}
 }
 
-func TestProductionPhaseTwoBundleCompletesUnavailableWithoutStoppingHealthyQueryGroupAndRecovers(t *testing.T) {
+func TestProductionPhaseTwoBundleCompletesIncompleteAccessWithoutStoppingHealthyQueryGroupAndRecovers(t *testing.T) {
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
 	installTwoPhaseTwoStrategies(t, ctx, redisClient)
@@ -546,7 +546,7 @@ func TestProductionPhaseTwoBundleCompletesUnavailableWithoutStoppingHealthyQuery
 	var clock atomic.Int64
 	clock.Store(base)
 	now := func() time.Time { return time.Unix(clock.Load(), 0) }
-	var failedOnce atomic.Bool
+	var cpuAttempts atomic.Int64
 	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		var payload struct {
 			QueryList []struct {
@@ -559,18 +559,25 @@ func TestProductionPhaseTwoBundleCompletesUnavailableWithoutStoppingHealthyQuery
 			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if payload.QueryList[0].TableID == "system.cpu" && failedOnce.CompareAndSwap(false, true) {
-			writer.WriteHeader(http.StatusBadGateway)
-			return
-		}
 		end, err := strconv.ParseInt(payload.EndTime, 10, 64)
 		if err != nil {
 			t.Errorf("parse end_time %q: %v", payload.EndTime, err)
 			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		_, _ = writer.Write([]byte(`{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["host"],"group_values":["127.0.0.1"],"values":[[` +
-			strconv.FormatInt((end-1)*1000, 10) + `,95]]}],"status":null,"trace_id":"g3b-recovered","is_partial":false,"result_table_id":[]}`))
+		body := `{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["host"],"group_values":["127.0.0.1"],"values":[[` +
+			strconv.FormatInt((end-1)*1000, 10) + `,95]]}],"status":null,"trace_id":"g3b-recovered","is_partial":false,"result_table_id":[]}`
+		if payload.QueryList[0].TableID == "system.cpu" {
+			switch cpuAttempts.Add(1) {
+			case 1:
+				body = `{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["host"],"group_values":["127.0.0.1"],"values":[[` +
+					strconv.FormatInt((end-1)*1000, 10) + `,95]]}],"status":{"code":"QUERY_TS_PARTIAL","message":"one route failed"},"trace_id":"g3b-partial","is_partial":false,"result_table_id":[]}`
+			case 2:
+				writer.WriteHeader(http.StatusBadGateway)
+				return
+			}
+		}
+		_, _ = writer.Write([]byte(body))
 	}))
 	defer uqServer.Close()
 
@@ -630,30 +637,56 @@ func TestProductionPhaseTwoBundleCompletesUnavailableWithoutStoppingHealthyQuery
 
 	clock.Store(base)
 	if err := bundle.runScheduledOnce(ctx); err != nil {
-		t.Fatalf("runScheduledOnce(unavailable sibling) error = %v", err)
+		t.Fatalf("runScheduledOnce(partial sibling) error = %v", err)
 	}
 	failed := loadPhaseTwoProgress(t, ctx, productionOwnership, queryGroupsByStrategy["1001"])
 	healthy := loadPhaseTwoProgress(t, ctx, productionOwnership, queryGroupsByStrategy["1002"])
-	if failed.LastCompletionKind != execution.CompletionUnavailable || failed.LastFullSlot != 0 ||
-		failed.CurrentOrRecentGap == nil || failed.CurrentOrRecentGap.ReasonCode != execution.ReasonCode(contract.ReasonQueryUnavailable) {
-		t.Fatalf("unavailable Query Group Progress=%+v gap=%+v", failed, failed.CurrentOrRecentGap)
+	if failed.LastCompletionKind != execution.CompletionPartialGap || failed.LastFullSlot != 0 ||
+		failed.CurrentOrRecentGap == nil || failed.CurrentOrRecentGap.ReasonCode != execution.ReasonCode(contract.ReasonQueryPartial) {
+		t.Fatalf("partial Query Group Progress=%+v gap=%+v", failed, failed.CurrentOrRecentGap)
 	}
 	if healthy.LastFullSlot != execution.EvaluationTime(base) || healthy.LastCompletionKind != execution.CompletionFull {
 		t.Fatalf("healthy Query Group Progress=%+v", healthy)
 	}
+	gapKeys, err := redisClient.Keys(ctx, cfg.Redis.StatePrefix+":gap:v2:*:*:1001:*").Result()
+	if err != nil || len(gapKeys) != 1 {
+		t.Fatalf("partial Query Group Guard keys=%v error=%v", gapKeys, err)
+	}
+	var guard struct {
+		Scopes []execution.GapScopeState `json:"scopes"`
+	}
+	if err := json.Unmarshal([]byte(redisClient.Get(ctx, gapKeys[0]).Val()), &guard); err != nil || len(guard.Scopes) != 1 ||
+		guard.Scopes[0].Status != execution.GapStatusGapped ||
+		guard.Scopes[0].ReasonCode != execution.ReasonCode(contract.ReasonQueryPartial) {
+		t.Fatalf("partial Query Group Guard=%+v error=%v", guard, err)
+	}
 	for _, event := range events.snapshot() {
 		if event.PlanRef.StrategyID == "1001" {
-			t.Fatalf("UNAVAILABLE emitted an unproven event: %+v", event)
+			t.Fatalf("PARTIAL emitted an unproven event: %+v", event)
 		}
 	}
 
 	clock.Store(base + 1)
 	if err := bundle.runScheduledOnce(ctx); err != nil {
+		t.Fatalf("runScheduledOnce(unavailable sibling) error = %v", err)
+	}
+	failed = loadPhaseTwoProgress(t, ctx, productionOwnership, queryGroupsByStrategy["1001"])
+	healthy = loadPhaseTwoProgress(t, ctx, productionOwnership, queryGroupsByStrategy["1002"])
+	if failed.LastCompletionKind != execution.CompletionUnavailable || failed.LastFullSlot != 0 ||
+		failed.CurrentOrRecentGap == nil || failed.CurrentOrRecentGap.ReasonCode != execution.ReasonCode(contract.ReasonQueryUnavailable) {
+		t.Fatalf("unavailable Query Group Progress=%+v gap=%+v", failed, failed.CurrentOrRecentGap)
+	}
+	if healthy.LastFullSlot != execution.EvaluationTime(base+1) || healthy.LastCompletionKind != execution.CompletionFull {
+		t.Fatalf("healthy Query Group Progress after unavailable sibling=%+v", healthy)
+	}
+
+	clock.Store(base + 2)
+	if err := bundle.runScheduledOnce(ctx); err != nil {
 		t.Fatalf("runScheduledOnce(recovered sibling) error = %v", err)
 	}
 	recovered := loadPhaseTwoProgress(t, ctx, productionOwnership, queryGroupsByStrategy["1001"])
-	if recovered.LastFullSlot != execution.EvaluationTime(base+1) ||
-		recovered.LastCompletionKind != execution.CompletionFull || recovered.NextSlot != execution.EvaluationTime(base+2) {
+	if recovered.LastFullSlot != execution.EvaluationTime(base+2) ||
+		recovered.LastCompletionKind != execution.CompletionFull || recovered.NextSlot != execution.EvaluationTime(base+3) {
 		t.Fatalf("recovered Query Group Progress=%+v", recovered)
 	}
 	foundRecoveredEvent := false

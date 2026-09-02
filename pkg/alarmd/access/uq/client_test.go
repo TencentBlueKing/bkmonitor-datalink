@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -130,13 +131,30 @@ func TestClientRejectsInvalidCanonicalBoolean(t *testing.T) {
 }
 
 func TestClientRejectsQueryStatus(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		_, _ = writer.Write([]byte(`{"series":[],"status":{"code":"QUERY_ERROR","message":"bad query"},"is_partial":false}`))
-	}))
-	defer server.Close()
-	client, _ := NewClient(server.URL, "alarmd-shadow", server.Client())
-	if _, err := client.Execute(context.Background(), validAttempt(t), &collectingSink{}); err == nil || !strings.Contains(err.Error(), "QUERY_ERROR") {
-		t.Fatalf("error=%v", err)
+	for _, partial := range []bool{false, true} {
+		t.Run(strconv.FormatBool(partial), func(t *testing.T) {
+			body := fmt.Sprintf(`{"series":[],"status":{"code":"QUERY_ERROR","message":"bad query"},"is_partial":%t}`, partial)
+			client := fixtureClient(t, http.StatusOK, body, DefaultLimits())
+			if _, err := client.Execute(context.Background(), validAttempt(t), &collectingSink{}); err == nil || !strings.Contains(err.Error(), "QUERY_ERROR") {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+}
+
+func TestClientClassifiesQueryTsPartialStatus(t *testing.T) {
+	for _, partial := range []bool{true, false} {
+		t.Run(strconv.FormatBool(partial), func(t *testing.T) {
+			body := fmt.Sprintf(`{"series":[],"status":{"code":"QUERY_TS_PARTIAL","message":"one route failed"},"is_partial":%t}`, partial)
+			client := fixtureClient(t, http.StatusOK, body, DefaultLimits())
+			completion, err := client.Execute(context.Background(), validAttempt(t), &collectingSink{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if completion.Completeness != execution.CompletenessPartial || completion.DataState != execution.DataStateEmpty {
+				t.Fatalf("completion=%+v", completion)
+			}
+		})
 	}
 }
 

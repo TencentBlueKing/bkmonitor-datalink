@@ -399,6 +399,7 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 
 	type scheduledResult struct {
 		scheduled scheduledRunner
+		result    execution.SlotExecutionResult
 		attempted bool
 		err       error
 	}
@@ -420,8 +421,8 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 				scheduled := runners[runnerIndex]
 				result := func() scheduledResult {
 					defer bundle.inflightWG.Done()
-					_, attempted, err := scheduled.lifecycle.runner.RunOne(ctx)
-					return scheduledResult{scheduled: scheduled, attempted: attempted, err: err}
+					result, attempted, err := scheduled.lifecycle.runner.RunOne(ctx)
+					return scheduledResult{scheduled: scheduled, result: result, attempted: attempted, err: err}
 				}()
 				results <- result
 			}
@@ -454,6 +455,14 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 			// same Slot, ownership stays local, and sibling Query Groups continue;
 			// later Gates may add bounded recovery without changing this isolation.
 			continue
+		}
+		if attempted && result.result.SourceRetry && result.result.Result != "" {
+			observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
+				Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
+				Result: observability.Result(result.result.Result), ReasonCode: observability.ReasonCode(result.result.ReasonCode),
+				Direction: observability.DirectionInternal,
+				Trace:     observability.TraceFields{QueryGroupKey: string(scheduled.queryGroup)},
+			})
 		}
 	}
 	return canceled

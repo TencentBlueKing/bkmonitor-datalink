@@ -24,6 +24,63 @@ type controlFake struct {
 	name    string
 }
 
+func TestBeginSlotPersistsIdempotentlyAndCompletionClearsProjection(t *testing.T) {
+	fake := &controlFake{missing: true}
+	store := mustStore(t, fake)
+	projection := progressProjection()
+	begin := execution.ProgressBeginRequest{
+		Identity:   execution.ProgressIdentity{QueryGroup: "q"},
+		OwnerFence: execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"},
+		Projection: projection,
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		result, err := store.BeginSlot(context.Background(), begin)
+		if err != nil || result.Status != execution.ProgressCommitted {
+			t.Fatalf("BeginSlot(attempt %d) = (%+v, %v)", attempt, result, err)
+		}
+	}
+	loaded, err := store.LoadProgress(context.Background(), begin.Identity)
+	if err != nil || loaded.Progress == nil || loaded.Progress.UnfinishedSlot == nil ||
+		!loaded.Progress.UnfinishedSlot.Equal(projection) {
+		t.Fatalf("LoadProgress(after BeginSlot) = (%+v, %v)", loaded, err)
+	}
+	commit := execution.ProgressCommitRequest{
+		Identity: begin.Identity, OwnerFence: begin.OwnerFence, ExpectedNextSlot: 60, Projection: projection,
+		Completion: execution.SlotCompletion{Contract: progressContract(), Kind: execution.CompletionFull,
+			Primary: &execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateData}, Result: observability.ResultSuccess},
+	}
+	result, err := store.CommitProgress(context.Background(), commit)
+	if err != nil || result.Status != execution.ProgressCommitted {
+		t.Fatalf("CommitProgress() = (%+v, %v)", result, err)
+	}
+	loaded, err = store.LoadProgress(context.Background(), begin.Identity)
+	if err != nil || loaded.Progress == nil || loaded.Progress.NextSlot != 120 || loaded.Progress.UnfinishedSlot != nil {
+		t.Fatalf("LoadProgress(after completion) = (%+v, %v)", loaded, err)
+	}
+}
+
+func TestBeginSlotRejectsDifferentProjectionAndHonorsFenceOnIdempotentRetry(t *testing.T) {
+	fake := &controlFake{missing: true}
+	store := mustStore(t, fake)
+	request := execution.ProgressBeginRequest{
+		Identity:   execution.ProgressIdentity{QueryGroup: "q"},
+		OwnerFence: execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"},
+		Projection: progressProjection(),
+	}
+	if result, err := store.BeginSlot(context.Background(), request); err != nil || result.Status != execution.ProgressCommitted {
+		t.Fatalf("BeginSlot(first) = (%+v, %v)", result, err)
+	}
+	fake.status = ownership.FencedCASStaleOwner
+	if result, err := store.BeginSlot(context.Background(), request); err != nil || result.Status != execution.ProgressStaleOwner {
+		t.Fatalf("BeginSlot(idempotent stale owner) = (%+v, %v)", result, err)
+	}
+	fake.status = ownership.FencedCASApplied
+	request.Projection.DuePlanTargets.Plans[0].StrategyID = "changed"
+	if _, err := store.BeginSlot(context.Background(), request); err == nil {
+		t.Fatal("BeginSlot(different projection) unexpectedly succeeded")
+	}
+}
+
 func TestCommitProgressUsesExplicitNextSlotAndFence(t *testing.T) {
 	fake := &controlFake{missing: true}
 	store := mustStore(t, fake)
@@ -249,44 +306,44 @@ func TestCommitProgressAdvancesContractValidUnavailableInG2(t *testing.T) {
 	}
 }
 
-func TestCommitProgressKeepsSnapshotUnavailableClosedBeforeItsGate(t *testing.T) {
-	for _, test := range []struct {
-		name       string
-		kind       execution.CompletionKind
-		primary    *execution.PrimaryInputFact
-		result     observability.Result
-		reasonCode execution.ReasonCode
-	}{
-		{
-			name: "snapshot unavailable", kind: execution.CompletionSnapshotUnavailable,
-			result: observability.ResultDegraded, reasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			fake := &controlFake{missing: true}
-			store := mustStore(t, fake)
-			request := execution.ProgressCommitRequest{
-				Identity: execution.ProgressIdentity{QueryGroup: "q"},
-				OwnerFence: execution.OwnerFence{
-					QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease",
-				},
-				ExpectedNextSlot: 60,
-				Completion: execution.SlotCompletion{
-					Contract: progressContract(), Kind: test.kind, Primary: test.primary,
-					Result: test.result, ReasonCode: test.reasonCode,
-				},
-			}
-			if err := request.Validate(); err != nil {
-				t.Fatalf("test completion is not valid before the G2 boundary: %v", err)
-			}
-			_, err := store.CommitProgress(context.Background(), request)
-			if err == nil {
-				t.Fatalf("CommitProgress(%s) accepted a completion outside the G2 boundary", test.name)
-			}
-			if !fake.missing {
-				t.Fatalf("CommitProgress(%s) persisted rejected Progress", test.name)
-			}
+func TestCommitProgressPersistsAndFoldsSnapshotUnavailableAcrossRestart(t *testing.T) {
+	fake := &controlFake{missing: true}
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	fence := execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"}
+
+	commit := func(t *testing.T, store *Store, slot execution.EvaluationTime) {
+		t.Helper()
+		result, err := store.CommitProgress(context.Background(), execution.ProgressCommitRequest{
+			Identity: identity, OwnerFence: fence, ExpectedNextSlot: slot,
+			Completion: execution.SlotCompletion{
+				Contract: progressContractAt(slot), Kind: execution.CompletionSnapshotUnavailable,
+				Result:     observability.ResultDegraded,
+				ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
+			},
 		})
+		if err != nil || result.Status != execution.ProgressCommitted {
+			t.Fatalf("CommitProgress(snapshot unavailable %d) = (%+v, %v)", slot, result, err)
+		}
+	}
+
+	commit(t, mustStore(t, fake), 60)
+	restarted := mustStore(t, fake)
+	commit(t, restarted, 120)
+
+	loaded, err := restarted.LoadProgress(context.Background(), identity)
+	if err != nil || loaded.Progress == nil {
+		t.Fatalf("LoadProgress() = (%+v, %v)", loaded, err)
+	}
+	progress := *loaded.Progress
+	if progress.NextSlot != 180 || progress.LastFullSlot != 0 ||
+		progress.LastCompletionKind != execution.CompletionSnapshotUnavailable {
+		t.Fatalf("SNAPSHOT_UNAVAILABLE Progress = %+v", progress)
+	}
+	gap := progress.CurrentOrRecentGap
+	if gap == nil || gap.Kind != execution.CompletionSnapshotUnavailable ||
+		gap.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) ||
+		gap.FirstSlot != 60 || gap.LastSlot != 120 || gap.Count != 2 || gap.NextProbeAt != nil {
+		t.Fatalf("SNAPSHOT_UNAVAILABLE gap summary = %+v", gap)
 	}
 }
 
@@ -617,6 +674,18 @@ func progressContractAt(evaluationTime execution.EvaluationTime) execution.Froze
 	return execution.FrozenExecutionContractRef{
 		Slot: execution.SlotIdentity{QueryGroup: "q", EvaluationTime: evaluationTime}, SnapshotRevision: "s", QueryRevision: "query",
 		ScheduleRevision: "r", ScheduleSegmentStart: 60, DuePlanSetDigest: "plans",
+	}
+}
+
+func progressProjection() execution.UnfinishedSlotProjection {
+	return execution.UnfinishedSlotProjection{
+		Contract: progressContract(),
+		DuePlanTargets: execution.FrozenDuePlanTargets{
+			DuePlanSetDigest: progressContract().DuePlanSetDigest,
+			Plans:            []execution.PlanIdentity{{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy"}},
+		},
+		EarliestQueryDeadlineUnixMilli: 61_000,
+		KeepUntilUnixMilli:             661_000,
 	}
 }
 

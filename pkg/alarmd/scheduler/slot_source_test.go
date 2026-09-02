@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -43,6 +44,74 @@ func TestProductionSlotSourceColdStartUsesFirstSegment(t *testing.T) {
 	}
 	if got := catalog.requests[0]; got.QueryGroup != "query-group-1" || got.ScheduleSegmentStart != 60 || got.EvaluationTime != 60 {
 		t.Fatalf("FreezeSlotContract request = %+v", got)
+	}
+	if len(slot.DuePlanTargets.Plans) != 1 || slot.DuePlanTargets.Plans[0] != schedule.Plans[0].Identity ||
+		slot.DuePlanTargets.DuePlanSetDigest != slot.Contract.DuePlanSetDigest ||
+		slot.EarliestQueryDeadlineUnixMilli <= int64(slot.Contract.Slot.EvaluationTime)*1000 {
+		t.Fatalf("frozen execution facts = targets=%+v deadline=%d", slot.DuePlanTargets, slot.EarliestQueryDeadlineUnixMilli)
+	}
+}
+
+func TestProductionSlotSourceDoesNotConstructFirstSlotWhenSnapshotIsUnavailable(t *testing.T) {
+	schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
+	catalog := &fakeSlotCatalog{
+		t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}, freezeErr: controlplane.ErrSnapshotUnavailable,
+	}
+	source := newProductionSlotSourceForTest(t, catalog, missingProgress(), time.Unix(200, 0))
+
+	slot, due, err := source.Next(context.Background(), "query-group-1")
+	if !errors.Is(err, controlplane.ErrSnapshotUnavailable) || due || !reflect.DeepEqual(slot, FrozenSlot{}) {
+		t.Fatalf("Next(snapshot unavailable) = (%+v, %v, %v)", slot, due, err)
+	}
+	if len(catalog.requests) != 1 {
+		t.Fatalf("FreezeSlotContract calls = %d, want 1", len(catalog.requests))
+	}
+}
+
+func TestProductionSlotSourceRestoresUnfinishedProjectionWhenSnapshotIsUnavailable(t *testing.T) {
+	schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
+	first := newProductionSlotSourceForTest(t, catalog, missingProgress(), time.Unix(200, 0))
+	slot, due, err := first.Next(context.Background(), "query-group-1")
+	if err != nil || !due {
+		t.Fatalf("Next(first) = (%+v, %t, %v)", slot, due, err)
+	}
+	projection := execution.UnfinishedSlotProjection{
+		Contract: slot.Contract, DuePlanTargets: slot.DuePlanTargets.Clone(),
+		EarliestQueryDeadlineUnixMilli: slot.EarliestQueryDeadlineUnixMilli,
+		KeepUntilUnixMilli:             slot.KeepUntilUnixMilli,
+	}
+	load := foundProgress(slot.ExpectedNextSlot, 0)
+	load.Progress.UnfinishedSlot = &projection
+	catalog.freezeErr = controlplane.ErrSnapshotUnavailable
+	restarted := newProductionSlotSourceForTest(t, catalog, load, time.Unix(200, 0))
+	restored, due, err := restarted.Next(context.Background(), "query-group-1")
+	if err != nil || !due || restored.Contract != slot.Contract ||
+		!restored.DuePlanTargets.Equal(slot.DuePlanTargets) || restored.KeepUntilUnixMilli != slot.KeepUntilUnixMilli {
+		t.Fatalf("Next(restarted) = (%+v, %t, %v)", restored, due, err)
+	}
+}
+
+func TestProductionSlotSourceBlocksCorruptSnapshotWithoutProjection(t *testing.T) {
+	schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule},
+		freezeErr: &controlplane.PersistedSnapshotCorruptError{Err: errors.New("bad digest")}}
+	source := newProductionSlotSourceForTest(t, catalog, missingProgress(), time.Unix(116, 0))
+	_, due, err := source.Next(context.Background(), "query-group-1")
+	var blocked *SourceBlockedError
+	if due || !errors.As(err, &blocked) {
+		t.Fatalf("Next(corrupt snapshot) due=%t error=%v", due, err)
+	}
+}
+
+func TestProductionSlotSourceRejectsCandidateOutsideSnapshotRetention(t *testing.T) {
+	schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
+	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, missingProgress(), time.Unix(116, 0), testRecoveryLimits())
+	source.snapshotRetention = 10 * time.Minute
+	source.publicationDelayAllowance = time.Minute
+	if _, _, err := source.Next(context.Background(), "query-group-1"); !errors.Is(err, ErrSnapshotRetentionInsufficient) {
+		t.Fatalf("Next(insufficient retention) error=%v", err)
 	}
 }
 
@@ -439,7 +508,7 @@ func newProductionSlotSourceWithRecoveryForTest(
 	source, err := NewProductionSlotSource("query-group-1", "worker-1",
 		&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog, reader,
-		func() time.Time { return at }, WithRecoveryLimits(limits))
+		func() time.Time { return at }, WithRecoveryLimits(limits), WithPostRecoveryTerminalDelay(time.Minute), WithQueryDeadlineReserve(5*time.Second))
 	if err != nil {
 		t.Fatalf("NewProductionSlotSource() error = %v", err)
 	}
@@ -455,7 +524,8 @@ func mustProductionSlotSource(
 	at time.Time,
 ) *ProductionSlotSource {
 	t.Helper()
-	source, err := NewProductionSlotSource("query-group-1", "worker-1", assignments, session, catalog, progress, func() time.Time { return at })
+	source, err := NewProductionSlotSource("query-group-1", "worker-1", assignments, session, catalog, progress, func() time.Time { return at },
+		WithRecoveryLimits(testRecoveryLimits()), WithPostRecoveryTerminalDelay(time.Minute), WithQueryDeadlineReserve(5*time.Second))
 	if err != nil {
 		t.Fatalf("NewProductionSlotSource() error = %v", err)
 	}
@@ -498,6 +568,7 @@ type fakeSlotCatalog struct {
 	requests         []execution.FreezeSlotContractRequest
 	progressIdentity execution.ProgressIdentity
 	retiredAt        *execution.EvaluationTime
+	freezeErr        error
 }
 
 func (catalog *fakeSlotCatalog) ReadInitialFrozenSchedule(
@@ -544,6 +615,9 @@ func (catalog *fakeSlotCatalog) FreezeSlotContract(
 	request execution.FreezeSlotContractRequest,
 ) (execution.FrozenSlotContractFact, error) {
 	catalog.requests = append(catalog.requests, request)
+	if catalog.freezeErr != nil {
+		return execution.FrozenSlotContractFact{}, catalog.freezeErr
+	}
 	var schedule execution.FrozenQueryGroupSchedule
 	for _, candidate := range catalog.schedules {
 		if candidate.Segment.Start == request.ScheduleSegmentStart && candidate.Segment.QueryGroup == request.QueryGroup {

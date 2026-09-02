@@ -69,6 +69,7 @@ type StateStore interface {
 
 type ProgressStore interface {
 	LoadProgress(context.Context, ProgressIdentity) (ProgressLoadResult, error)
+	BeginSlot(context.Context, ProgressBeginRequest) (ProgressBeginResult, error)
 	CommitProgress(context.Context, ProgressCommitRequest) (ProgressCommitResult, error)
 }
 

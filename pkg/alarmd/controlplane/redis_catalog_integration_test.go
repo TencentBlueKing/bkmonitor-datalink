@@ -75,6 +75,27 @@ func TestRedisCatalogRepositoryPublishesImmutableContentAddressedSnapshot(t *tes
 	}
 }
 
+func TestRedisCatalogRepositoryTypesPersistedSnapshotCorruption(t *testing.T) {
+	client := newControlplaneRedis(t)
+	prefix := "alarmd:control:corrupt-snapshot"
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := validCatalog(t, 80)
+	if _, _, err := repository.PublishCatalog(context.Background(), catalog); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(context.Background(), prefix+":snapshot:"+string(catalog.SnapshotRevision), []byte("{"), time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = repository.LoadSnapshot(context.Background(), catalog.SnapshotRevision)
+	var corrupt *controlplane.PersistedSnapshotCorruptError
+	if !errors.As(err, &corrupt) {
+		t.Fatalf("LoadSnapshot(corrupt) error=%v", err)
+	}
+}
+
 func TestRedisCatalogRepositoryRepublishesHistoricalSnapshotWithNewOccurrence(t *testing.T) {
 	client := newControlplaneRedis(t)
 	ctx := context.Background()

@@ -47,7 +47,8 @@ type DeterministicInvalidError struct{ Err error }
 func (err *DeterministicInvalidError) Error() string {
 	return fmt.Sprintf("progress: deterministic-invalid persisted value: %v", err.Err)
 }
-func (err *DeterministicInvalidError) Unwrap() error { return err.Err }
+func (err *DeterministicInvalidError) Unwrap() error             { return err.Err }
+func (err *DeterministicInvalidError) DeterministicControlFact() {}
 
 func NewStore(options StoreOptions) (*Store, error) {
 	if options.Prefix == "" || strings.ContainsAny(options.Prefix, "{} \t\r\n") ||
@@ -78,6 +79,62 @@ func (store *Store) LoadProgress(ctx context.Context, identity execution.Progres
 	}
 	result := execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &value}
 	return result, result.Validate(identity)
+}
+
+func (store *Store) BeginSlot(ctx context.Context, request execution.ProgressBeginRequest) (execution.ProgressBeginResult, error) {
+	if request.Identity.QueryGroup == "" || request.Projection.Contract.Slot.QueryGroup != request.Identity.QueryGroup {
+		return execution.ProgressBeginResult{}, fmt.Errorf("progress: invalid BeginSlot identity")
+	}
+	if err := request.OwnerFence.Validate(request.Projection.Contract); err != nil {
+		return execution.ProgressBeginResult{}, err
+	}
+	if err := request.Projection.Validate(); err != nil {
+		return execution.ProgressBeginResult{}, err
+	}
+	name, err := store.namespace(request.Identity)
+	if err != nil {
+		return execution.ProgressBeginResult{}, err
+	}
+	raw, missing, err := store.options.Control.ReadControl(ctx, request.Identity.QueryGroup, name)
+	if err != nil {
+		return execution.ProgressBeginResult{Status: execution.ProgressRetryableIO, ReasonCode: execution.ReasonCode(contract.ReasonRedisUnavailable)}, nil
+	}
+	current := execution.ScheduleProgress{Identity: request.Identity, NextSlot: request.Projection.Contract.Slot.EvaluationTime}
+	if !missing {
+		current, err = decode(raw)
+		if err != nil {
+			return execution.ProgressBeginResult{}, &DeterministicInvalidError{Err: err}
+		}
+		if current.Identity != request.Identity || current.NextSlot != request.Projection.Contract.Slot.EvaluationTime {
+			return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
+		}
+		if current.UnfinishedSlot != nil {
+			if !current.UnfinishedSlot.Equal(request.Projection) {
+				return execution.ProgressBeginResult{}, &DeterministicInvalidError{Err: fmt.Errorf("unfinished Slot projection differs from persisted facts")}
+			}
+		}
+	}
+	projection := request.Projection
+	current.UnfinishedSlot = &projection
+	encoded, err := encode(current)
+	if err != nil {
+		return execution.ProgressBeginResult{}, err
+	}
+	status, applyErr := store.options.Control.FencedCompareAndSet(ctx, ownership.FencedCASRequest{
+		Fence: request.OwnerFence, At: store.options.Now(), Namespace: name,
+		ExpectedMissing: missing, Expected: raw, Value: encoded, TTL: 0,
+	})
+	switch status {
+	case ownership.FencedCASApplied:
+		return execution.ProgressBeginResult{Status: execution.ProgressCommitted}, nil
+	case ownership.FencedCASConflict:
+		return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
+	case ownership.FencedCASStaleOwner:
+		return execution.ProgressBeginResult{Status: execution.ProgressStaleOwner}, nil
+	default:
+		_ = applyErr
+		return execution.ProgressBeginResult{Status: execution.ProgressRetryableIO, ReasonCode: execution.ReasonCode(contract.ReasonRedisUnavailable)}, nil
+	}
 }
 
 func (store *Store) CommitProgress(ctx context.Context, request execution.ProgressCommitRequest) (execution.ProgressCommitResult, error) {
@@ -112,6 +169,12 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 		if currentNext != request.ExpectedNextSlot {
 			return execution.ProgressCommitResult{Status: execution.ProgressConflict}, nil
 		}
+		if !request.Projection.IsZero() &&
+			(current.UnfinishedSlot == nil || !current.UnfinishedSlot.Equal(request.Projection)) {
+			return execution.ProgressCommitResult{}, &DeterministicInvalidError{Err: fmt.Errorf("persisted unfinished Slot projection does not match completion")}
+		}
+	} else if !request.Projection.IsZero() {
+		return execution.ProgressCommitResult{Status: execution.ProgressConflict}, nil
 	}
 	nextSlot, err := store.options.Slots.NextSlotAfter(ctx, request.Identity.QueryGroup, request.ExpectedNextSlot)
 	if err != nil {
@@ -159,13 +222,13 @@ func validateEnabledCompletion(completion execution.SlotCompletion) error {
 	switch completion.Kind {
 	case execution.CompletionFull, execution.CompletionFullEmpty,
 		execution.CompletionPartialGap, execution.CompletionUnavailable,
-		execution.CompletionTerminal, execution.CompletionGapSkipped:
+		execution.CompletionTerminal, execution.CompletionGapSkipped,
+		execution.CompletionSnapshotUnavailable:
 		// ProgressCommitRequest.Validate has already checked the complete result,
 		// PRIMARY and reason contract. Persist every completion enabled through
 		// G3b so one local deterministic terminal cannot stop the Worker.
 		return nil
 	default:
-		// SNAPSHOT_UNAVAILABLE remains closed until its later Gate.
 		return fmt.Errorf("progress: store does not accept completion kind %q in the current Gate", completion.Kind)
 	}
 }
@@ -175,7 +238,8 @@ func shouldFoldRecentGap(
 	completion execution.SlotCompletion,
 ) bool {
 	switch completion.Kind {
-	case execution.CompletionPartialGap, execution.CompletionTerminal, execution.CompletionGapSkipped:
+	case execution.CompletionPartialGap, execution.CompletionTerminal, execution.CompletionGapSkipped,
+		execution.CompletionSnapshotUnavailable:
 		return true
 	case execution.CompletionUnavailable:
 		// A FULL+DATA result can remain guarded by an earlier query-free

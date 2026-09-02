@@ -27,6 +27,20 @@ var (
 	ErrPublicationConflict      = errors.New("alarmd controlplane: publication conflict")
 )
 
+// PersistedSnapshotCorruptError identifies persisted bytes that were read
+// successfully but cannot prove the immutable Snapshot fact they claim to
+// contain. Transport and Redis command errors deliberately do not use this
+// type: callers may retry those without treating the control fact as corrupt.
+type PersistedSnapshotCorruptError struct {
+	Err error
+}
+
+func (err *PersistedSnapshotCorruptError) Error() string {
+	return fmt.Sprintf("alarmd controlplane: persisted snapshot is corrupt: %v", err.Err)
+}
+
+func (err *PersistedSnapshotCorruptError) Unwrap() error { return err.Err }
+
 type SnapshotPublicationRef struct {
 	SnapshotRevision execution.SnapshotRevision `json:"snapshot_revision"`
 	PublicationEpoch uint64                     `json:"publication_epoch"`
@@ -265,7 +279,7 @@ func (repository *RedisCatalogRepository) LoadSnapshot(ctx context.Context, revi
 	}
 	payload, ok := legacyRedisBytes(values[0])
 	if !ok {
-		return PublishedSnapshot{}, errors.New("alarmd controlplane: invalid persisted snapshot payload")
+		return PublishedSnapshot{}, &PersistedSnapshotCorruptError{Err: errors.New("invalid payload")}
 	}
 	var content struct {
 		SchemaVersion    string       `json:"schema_version"`
@@ -273,19 +287,19 @@ func (repository *RedisCatalogRepository) LoadSnapshot(ctx context.Context, revi
 		QueryGroups      []QueryGroup `json:"query_groups"`
 	}
 	if err := json.Unmarshal(payload, &content); err != nil {
-		return PublishedSnapshot{}, fmt.Errorf("alarmd controlplane: decode snapshot: %w", err)
+		return PublishedSnapshot{}, &PersistedSnapshotCorruptError{Err: fmt.Errorf("decode: %w", err)}
 	}
 	epochText, ok := values[1].(string)
 	if !ok {
-		return PublishedSnapshot{}, errors.New("alarmd controlplane: invalid persisted publication epoch")
+		return PublishedSnapshot{}, &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
 	}
 	epoch, err := strconv.ParseUint(epochText, 10, 64)
 	if err != nil || epoch == 0 || content.SchemaVersion != snapshotSchemaVersion || content.SnapshotRevision != string(revision) || content.QueryGroups == nil {
-		return PublishedSnapshot{}, errors.New("alarmd controlplane: invalid persisted snapshot")
+		return PublishedSnapshot{}, &PersistedSnapshotCorruptError{Err: errors.New("invalid schema, identity, or publication epoch")}
 	}
 	derivedRevision, err := deriveSnapshotRevision(content.QueryGroups)
 	if err != nil || derivedRevision != revision {
-		return PublishedSnapshot{}, errors.New("alarmd controlplane: persisted snapshot content does not match revision")
+		return PublishedSnapshot{}, &PersistedSnapshotCorruptError{Err: errors.New("content does not match revision")}
 	}
 	return PublishedSnapshot{SchemaVersion: content.SchemaVersion,
 		Publication: SnapshotPublicationRef{SnapshotRevision: revision, PublicationEpoch: epoch}, QueryGroups: content.QueryGroups}, nil

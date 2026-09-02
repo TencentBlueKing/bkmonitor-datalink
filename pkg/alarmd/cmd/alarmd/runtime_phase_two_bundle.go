@@ -174,7 +174,11 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, strategySemantics)
+	if cfg.PhaseTwo.Control.CatalogTTL.Duration() < phaseTwoSnapshotMinimumRetention(cfg, 0) {
+		return nil, scheduler.ErrSnapshotRetentionInsufficient
+	}
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, strategySemantics,
+		phaseTwoCatalogRetentionValidator(cfg))
 	if err != nil {
 		return nil, err
 	}
@@ -317,6 +321,10 @@ func openProductionPhaseTwoBundleWithDependencies(
 		Store: ownershipStore, WorkerID: cfg.PhaseTwo.Worker.ID, Catalog: catalog, Progress: progressStore,
 		Executor: coordinator, Now: external.Now, ControlLeaderTTL: cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration(),
 		Observer: observer, Reconcile: assignmentReconciler, Flights: flights, RecoveryLimits: recoveryLimits,
+		PostRecoveryTerminalDelay: phaseTwoPostRecoveryTerminalDelay(cfg),
+		QueryDeadlineReserve:      cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration(),
+		SnapshotRetention:         cfg.PhaseTwo.Control.CatalogTTL.Duration(),
+		PublicationDelayAllowance: phaseTwoPublicationDelayAllowance(cfg),
 	})
 	if err != nil {
 		return nil, err
@@ -336,6 +344,58 @@ func openProductionPhaseTwoBundleWithDependencies(
 		return nil, err
 	}
 	return bundle, nil
+}
+
+func phaseTwoPostRecoveryTerminalDelay(cfg config.Config) time.Duration {
+	takeover := maxDuration(cfg.PhaseTwo.Worker.RegistrationTTL.Duration(), cfg.PhaseTwo.Ownership.LeaseTTL.Duration()) +
+		cfg.PhaseTwo.Control.ReconcileInterval.Duration() + cfg.PhaseTwo.Scheduler.TickInterval.Duration()
+	drain := cfg.ShutdownTimeout.Duration() + cfg.PhaseTwo.Ownership.LeaseTTL.Duration() +
+		cfg.PhaseTwo.Control.ReconcileInterval.Duration() + cfg.PhaseTwo.Scheduler.TickInterval.Duration()
+	terminal := maxDuration(cfg.PhaseTwo.Scheduler.TickInterval.Duration()+cfg.PhaseTwo.Control.ReconcileInterval.Duration(), takeover, drain)
+	safety := maxDuration(cfg.PhaseTwo.Control.RefreshInterval.Duration(), cfg.PhaseTwo.Ownership.LeaseRenewInterval.Duration(),
+		cfg.PhaseTwo.Worker.RegistrationRenewInterval.Duration(), cfg.PhaseTwo.Scheduler.RetryMaxDelay.Duration())
+	return terminal + safety
+}
+
+func phaseTwoPublicationDelayAllowance(cfg config.Config) time.Duration {
+	return cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration() + 2*cfg.PhaseTwo.Control.RefreshInterval.Duration()
+}
+
+func phaseTwoSnapshotMinimumRetention(cfg config.Config, queryDeadlineOffset time.Duration) time.Duration {
+	return phaseTwoPublicationDelayAllowance(cfg) + queryDeadlineOffset +
+		cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration() + phaseTwoPostRecoveryTerminalDelay(cfg)
+}
+
+func phaseTwoCatalogRetentionValidator(cfg config.Config) func(controlplane.Catalog) error {
+	return func(catalog controlplane.Catalog) error {
+		var maximumOffset time.Duration
+		for _, group := range catalog.QueryGroups {
+			for _, plan := range group.Plans {
+				offset := time.Duration(plan.ScheduleSpec.EvaluationIntervalSeconds)*time.Second -
+					cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration()
+				if offset <= 0 {
+					return scheduler.ErrSnapshotRetentionInsufficient
+				}
+				if offset > maximumOffset {
+					maximumOffset = offset
+				}
+			}
+		}
+		if cfg.PhaseTwo.Control.CatalogTTL.Duration() < phaseTwoSnapshotMinimumRetention(cfg, maximumOffset) {
+			return scheduler.ErrSnapshotRetentionInsufficient
+		}
+		return nil
+	}
+}
+
+func maxDuration(values ...time.Duration) time.Duration {
+	var maximum time.Duration
+	for _, value := range values {
+		if value > maximum {
+			maximum = value
+		}
+	}
+	return maximum
 }
 
 func productionPhaseTwoPrefix(prefix, component string) string {

@@ -81,7 +81,7 @@ func TestSlotExecutionCoordinatorDiscardsProvisionalResultsWithoutCompletion(t *
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{"query", "gap_load", "state_load", "evaluate"})
-	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || !isZeroProgressCommit(fixture.ports.lastProgress) {
 		t.Fatal("provisional result escaped before trustworthy completion")
 	}
 }
@@ -115,7 +115,7 @@ func TestSlotExecutionCoordinatorEnforcesProcessProvisionalBudget(t *testing.T) 
 	if err == nil || result.Completed {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
-	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || !isZeroProgressCommit(fixture.ports.lastProgress) {
 		t.Fatal("over-budget provisional result reached side effects")
 	}
 	assertCapacityRejection(t, fixture.observations, observability.CapacityBudgetStateMutations)
@@ -142,7 +142,7 @@ func TestSlotExecutionCoordinatorBudgetsRetainedSeriesAndBytes(t *testing.T) {
 			if err == nil || result.Completed {
 				t.Fatalf("Execute() result=%+v error=%v", result, err)
 			}
-			if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+			if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || !isZeroProgressCommit(fixture.ports.lastProgress) {
 				t.Fatal("series/byte budget rejection reached side effects")
 			}
 			assertCapacityRejection(t, fixture.observations, test.wantBudget)
@@ -215,7 +215,7 @@ func TestSlotExecutionCoordinatorDoesNotCommitNormalProgressAfterActivationChang
 	}
 	assertTrace(t, fixture.trace, append(append([]string(nil), fullTrace[:11]...),
 		"sequence", "admission_progress", "gap_load", "gap_before"))
-	if fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+	if !isZeroProgressCommit(fixture.ports.lastProgress) {
 		t.Fatalf("activation change committed Progress: %+v", fixture.ports.lastProgress)
 	}
 	if len(fixture.ports.gapMutations) != 2 {
@@ -266,7 +266,7 @@ func TestSlotExecutionCoordinatorForceWarmingDriftProtectsThenConvergesAlreadyAp
 		t.Fatalf("changed frozen Plan emitted old side effects: events=%d state applies=%d",
 			fixture.ports.eventCount, fixture.ports.stateApplyCalls)
 	}
-	if fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+	if !isZeroProgressCommit(fixture.ports.lastProgress) {
 		t.Fatalf("changed frozen Plan committed Progress before protection: %+v", fixture.ports.lastProgress)
 	}
 	if len(fixture.ports.gapMutations) != 1 {
@@ -362,7 +362,7 @@ func TestSlotExecutionCoordinatorReprotectsForceWarmingActivationChangedBetweenG
 		t.Fatalf("first Execute() result=%+v error=%v", result, err)
 	}
 	result, err = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
-	if err != nil || result.Completed || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+	if err != nil || result.Completed || !isZeroProgressCommit(fixture.ports.lastProgress) {
 		t.Fatalf("second Execute() result=%+v error=%v Progress=%+v", result, err, fixture.ports.lastProgress)
 	}
 	if _, found := fixture.ports.activatedGapMarkers[execution.PlanGapIdentity{
@@ -393,7 +393,7 @@ func TestSlotExecutionCoordinatorDoesNotCommitNormalProgressWhenActivationIsUnre
 				result.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) {
 				t.Fatalf("Execute() result=%+v error=%v", result, err)
 			}
-			if fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+			if !isZeroProgressCommit(fixture.ports.lastProgress) {
 				t.Fatalf("unreadable activation committed Progress: %+v", fixture.ports.lastProgress)
 			}
 		})
@@ -408,7 +408,7 @@ func TestSlotExecutionCoordinatorRequiresAdmissionBeforeNormalProgress(t *testin
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, fullTrace[:len(fullTrace)-1])
-	if fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+	if !isZeroProgressCommit(fixture.ports.lastProgress) {
 		t.Fatalf("Progress admission failure committed Progress: %+v", fixture.ports.lastProgress)
 	}
 }
@@ -571,7 +571,7 @@ func TestSlotExecutionCoordinatorRejectsDeterministicStateApplyAsContractViolati
 		"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial",
 		"admission_event", "state_admission", "event_ack", "state_apply",
 	})
-	if fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+	if !isZeroProgressCommit(fixture.ports.lastProgress) {
 		t.Fatalf("contract violation must not commit Progress: %+v", fixture.ports.lastProgress)
 	}
 }
@@ -627,7 +627,7 @@ func TestSlotExecutionCoordinatorDoesNotCommitProgressForUnavailableState(t *tes
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial"})
-	if fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+	if !isZeroProgressCommit(fixture.ports.lastProgress) {
 		t.Fatalf("retry-pending Slot must not commit Progress: %+v", fixture.ports.lastProgress)
 	}
 }
@@ -644,7 +644,7 @@ func TestSlotExecutionCoordinatorCompletesSiblingSeriesButKeepsSlotRetryPending(
 		"query", "gap_load", "state_load", "evaluate", "state_load", "evaluate", "sequence", "admission_initial",
 		"admission_event", "state_admission", "event_ack", "state_apply", "gap_after",
 	})
-	if fixture.ports.eventCount != 1 || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+	if fixture.ports.eventCount != 1 || !isZeroProgressCommit(fixture.ports.lastProgress) {
 		t.Fatalf("sibling evidence events=%d progress=%+v", fixture.ports.eventCount, fixture.ports.lastProgress)
 	}
 }
@@ -772,7 +772,7 @@ func TestSlotExecutionCoordinatorKeepsEventACKUnknownRetryable(t *testing.T) {
 		last.ReasonCode != execution.ReasonCode(contract.ReasonOutputACKUnknown) {
 		t.Fatalf("event ACK observation=%+v", last)
 	}
-	if fixture.ports.stateApplyCalls != 0 || fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+	if fixture.ports.stateApplyCalls != 0 || !isZeroProgressCommit(fixture.ports.lastProgress) {
 		t.Fatalf("unknown event ACK advanced state/progress: state=%d progress=%+v",
 			fixture.ports.stateApplyCalls, fixture.ports.lastProgress)
 	}
@@ -853,14 +853,6 @@ func (ports *recordingPorts) ResolveFinalization(
 	request execution.SlotExecutionRequest,
 ) (execution.QueryFreeFinalization, error) {
 	return execution.QueryFreeFinalization{Contract: request.Contract, Mode: execution.FinalizationQueryRequired}, nil
-}
-
-func (ports *recordingPorts) VerifyFrozenDuePlanTargets(
-	context.Context,
-	execution.FrozenExecutionContractRef,
-	execution.FrozenDuePlanTargets,
-) error {
-	return nil
 }
 
 func (ports *recordingPorts) LoadActivations(
@@ -1426,11 +1418,20 @@ func (ports *recordingPorts) CommitProgress(_ context.Context, request execution
 	return execution.ProgressCommitResult{Status: execution.ProgressCommitted}, ports.fail("progress_commit")
 }
 
+func (ports *recordingPorts) BeginSlot(_ context.Context, _ execution.ProgressBeginRequest) (execution.ProgressBeginResult, error) {
+	return execution.ProgressBeginResult{Status: execution.ProgressCommitted}, nil
+}
+
 func (ports *recordingPorts) LoadProgress(context.Context, execution.ProgressIdentity) (execution.ProgressLoadResult, error) {
 	return execution.ProgressLoadResult{Status: execution.ProgressMissing}, nil
 }
 
 func (ports *recordingPorts) record(stage string) { *ports.trace = append(*ports.trace, stage) }
+
+func isZeroProgressCommit(request execution.ProgressCommitRequest) bool {
+	return request.Identity == (execution.ProgressIdentity{}) && request.OwnerFence == (execution.OwnerFence{}) &&
+		request.ExpectedNextSlot == 0 && request.Completion == (execution.SlotCompletion{}) && request.Projection.IsZero()
+}
 func (ports *recordingPorts) fail(stage string) error {
 	if ports.failStage == stage {
 		return errors.New("injected " + stage)
@@ -1439,8 +1440,17 @@ func (ports *recordingPorts) fail(stage string) error {
 }
 
 func slotRequest(operation execution.Operation) execution.SlotExecutionRequest {
+	contract := frozenContract()
 	return execution.SlotExecutionRequest{
-		Contract: frozenContract(), Operation: operation, AttemptNo: 1,
+		Contract: contract,
+		DuePlanTargets: execution.FrozenDuePlanTargets{
+			DuePlanSetDigest: contract.DuePlanSetDigest,
+			Plans:            []execution.PlanIdentity{planIdentity()},
+		},
+		EarliestQueryDeadlineUnixMilli: int64(contract.Slot.EvaluationTime)*1000 + 1_000,
+		RecoveryUntilUnixMilli:         int64(contract.Slot.EvaluationTime)*1000 + 601_000,
+		KeepUntilUnixMilli:             int64(contract.Slot.EvaluationTime)*1000 + 677_000,
+		Operation:                      operation, AttemptNo: 1,
 		OwnerFence:       execution.OwnerFence{QueryGroup: "query-group", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1"},
 		ExpectedNextSlot: frozenContract().Slot.EvaluationTime,
 	}

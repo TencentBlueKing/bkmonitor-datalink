@@ -85,7 +85,7 @@ func TestSlotExecutionCoordinatorRejectsIncompleteFullEmptyCompletion(t *testing
 				t.Fatalf("Execute() result=%+v error=%v", result, err)
 			}
 			assertNoFullEmptyBusinessSideEffects(t, fixture)
-			if fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+			if !isZeroProgressCommit(fixture.ports.lastProgress) {
 				t.Fatalf("incomplete completion advanced Progress: %+v", fixture.ports.lastProgress)
 			}
 		})
@@ -125,7 +125,7 @@ func TestSlotExecutionCoordinatorRejectsNonFullEmptyCompletionOnlyInput(t *testi
 				t.Fatalf("Execute() result=%+v error=%v", result, err)
 			}
 			assertNoFullEmptyBusinessSideEffects(t, fixture)
-			if fixture.ports.lastProgress != (execution.ProgressCommitRequest{}) {
+			if !isZeroProgressCommit(fixture.ports.lastProgress) {
 				t.Fatalf("non-FULL+EMPTY input advanced Progress: %+v", fixture.ports.lastProgress)
 			}
 		})
@@ -315,6 +315,10 @@ func newCompletionOnlyFixture(
 	}
 	request := slotRequest(execution.OperationNormal)
 	request.Contract = contractRef
+	request.DuePlanTargets = execution.FrozenDuePlanTargets{DuePlanSetDigest: digest, Plans: make([]execution.PlanIdentity, len(plans))}
+	for index := range plans {
+		request.DuePlanTargets.Plans[index] = plans[index].Identity
+	}
 	request.ExpectedNextSlot = contractRef.Slot.EvaluationTime
 	return fixture{trace: &trace, observations: &observations, ports: ports, coordinator: coordinator}, request
 }

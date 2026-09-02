@@ -76,6 +76,7 @@ const (
 	ReasonKafkaUnavailable                 = "KAFKA_UNAVAILABLE"
 	ReasonRedisUnavailable                 = "REDIS_UNAVAILABLE"
 	ReasonProviderUnavailable              = "PROVIDER_UNAVAILABLE"
+	ReasonBlockedExactSetUnavailable       = "BLOCKED_EXACT_SET_UNAVAILABLE"
 	ReasonResourceHardStop                 = "RESOURCE_HARD_STOP"
 	ReasonOutputACKUnknown                 = "OUTPUT_ACK_UNKNOWN"
 	ReasonStateWriteRetryable              = "STATE_WRITE_RETRYABLE"

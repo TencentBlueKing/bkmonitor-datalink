@@ -101,6 +101,23 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		OwnerID:              request.OwnerFence.OwnerID, OwnerEpoch: request.OwnerFence.OwnerEpoch,
 		EvaluationTime: int64(request.Contract.Slot.EvaluationTime),
 	})
+	begin, err := coordinator.ports.Progress.BeginSlot(ctx, execution.ProgressBeginRequest{
+		Identity:   execution.ProgressIdentity{QueryGroup: request.Contract.Slot.QueryGroup},
+		OwnerFence: request.OwnerFence, Projection: request.UnfinishedProjection(),
+	})
+	if err != nil {
+		return activationRetry(execution.ReasonBlockedExactSetUnavailable), nil
+	}
+	if err := begin.Validate(); err != nil {
+		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid Progress BeginSlot result: %w", err)
+	}
+	if begin.Status != execution.ProgressCommitted {
+		reason := begin.ReasonCode
+		if reason == "" {
+			reason = execution.ReasonCode(contract.ReasonProviderUnavailable)
+		}
+		return activationRetry(reason), nil
+	}
 	finalization, err := coordinator.ports.Finalization.ResolveFinalization(ctx, request)
 	if err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: resolve finalization: %w", err)
@@ -108,10 +125,10 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	if err := finalization.Validate(request); err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid finalization: %w", err)
 	}
+	if finalization.Mode == execution.FinalizationSnapshotRetry || finalization.Mode == execution.FinalizationExactSetBlocked {
+		return activationRetry(finalization.ReasonCode), nil
+	}
 	if finalization.Mode != execution.FinalizationQueryRequired {
-		if err := coordinator.ports.Finalization.VerifyFrozenDuePlanTargets(ctx, request.Contract, finalization.Targets); err != nil {
-			return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: verify frozen due Plan targets: %w", err)
-		}
 		return coordinator.executeQueryFreeFinalization(ctx, request, finalization)
 	}
 	started := time.Now()
@@ -783,6 +800,7 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 	progressRequest := execution.ProgressCommitRequest{
 		Identity:   execution.ProgressIdentity{QueryGroup: request.Contract.Slot.QueryGroup},
 		OwnerFence: request.OwnerFence, ExpectedNextSlot: request.ExpectedNextSlot, Completion: completion,
+		Projection: request.UnfinishedProjection(),
 	}
 	if err := progressRequest.Validate(); err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid progress commit: %w", err)

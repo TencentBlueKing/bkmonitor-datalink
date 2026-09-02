@@ -132,16 +132,30 @@ func (fence OwnerFence) Validate(contractRef FrozenExecutionContractRef) error {
 }
 
 type SlotExecutionRequest struct {
-	Contract         FrozenExecutionContractRef
-	Operation        Operation
-	AttemptNo        uint32
-	OwnerFence       OwnerFence
-	ExpectedNextSlot EvaluationTime
+	Contract                       FrozenExecutionContractRef
+	DuePlanTargets                 FrozenDuePlanTargets
+	EarliestQueryDeadlineUnixMilli int64
+	RecoveryUntilUnixMilli         int64
+	KeepUntilUnixMilli             int64
+	Operation                      Operation
+	AttemptNo                      uint32
+	OwnerFence                     OwnerFence
+	ExpectedNextSlot               EvaluationTime
 }
 
 func (request SlotExecutionRequest) Validate() error {
 	if err := request.Contract.Validate(); err != nil {
 		return err
+	}
+	if err := request.DuePlanTargets.Validate(request.Contract); err != nil {
+		return err
+	}
+	if request.EarliestQueryDeadlineUnixMilli <= int64(request.Contract.Slot.EvaluationTime)*1000 {
+		return errors.New("alarmd execution: earliest query deadline must follow the frozen evaluation time")
+	}
+	if request.RecoveryUntilUnixMilli <= request.EarliestQueryDeadlineUnixMilli ||
+		request.KeepUntilUnixMilli <= request.RecoveryUntilUnixMilli {
+		return errors.New("alarmd execution: frozen recovery and retention boundaries are invalid")
 	}
 	if err := request.Operation.Validate(); err != nil {
 		return err
@@ -156,6 +170,14 @@ func (request SlotExecutionRequest) Validate() error {
 		return errors.New("alarmd execution: expected next slot must equal the frozen evaluation time")
 	}
 	return nil
+}
+
+func (request SlotExecutionRequest) UnfinishedProjection() UnfinishedSlotProjection {
+	return UnfinishedSlotProjection{
+		Contract: request.Contract, DuePlanTargets: request.DuePlanTargets.Clone(),
+		EarliestQueryDeadlineUnixMilli: request.EarliestQueryDeadlineUnixMilli,
+		KeepUntilUnixMilli:             request.KeepUntilUnixMilli,
+	}
 }
 
 type QueryExecutionRequest struct {
@@ -2064,6 +2086,7 @@ type ProgressCommitRequest struct {
 	OwnerFence       OwnerFence
 	ExpectedNextSlot EvaluationTime
 	Completion       SlotCompletion
+	Projection       UnfinishedSlotProjection
 }
 
 func (request ProgressCommitRequest) Validate() error {
@@ -2076,6 +2099,14 @@ func (request ProgressCommitRequest) Validate() error {
 	if request.Identity.QueryGroup != request.Completion.Contract.Slot.QueryGroup ||
 		request.ExpectedNextSlot != request.Completion.Contract.Slot.EvaluationTime {
 		return errors.New("alarmd execution: Progress request does not match the completed Slot")
+	}
+	if !request.Projection.IsZero() {
+		if err := request.Projection.Validate(); err != nil {
+			return err
+		}
+		if request.Projection.Contract != request.Completion.Contract {
+			return errors.New("alarmd execution: Progress projection does not match the completed Slot")
+		}
 	}
 	if err := request.Completion.Contract.Validate(); err != nil {
 		return err
@@ -2171,6 +2202,55 @@ type ScheduleProgress struct {
 	LastFullSlot       EvaluationTime
 	LastCompletionKind CompletionKind
 	CurrentOrRecentGap *ProgressGapSummary
+	UnfinishedSlot     *UnfinishedSlotProjection
+}
+
+type UnfinishedSlotProjection struct {
+	Contract                       FrozenExecutionContractRef
+	DuePlanTargets                 FrozenDuePlanTargets
+	EarliestQueryDeadlineUnixMilli int64
+	KeepUntilUnixMilli             int64
+}
+
+func (projection UnfinishedSlotProjection) Validate() error {
+	if err := projection.Contract.Validate(); err != nil {
+		return err
+	}
+	if err := projection.DuePlanTargets.Validate(projection.Contract); err != nil {
+		return err
+	}
+	if projection.EarliestQueryDeadlineUnixMilli <= int64(projection.Contract.Slot.EvaluationTime)*1000 ||
+		projection.KeepUntilUnixMilli <= projection.EarliestQueryDeadlineUnixMilli {
+		return errors.New("alarmd execution: invalid unfinished Slot projection boundaries")
+	}
+	return nil
+}
+
+func (projection UnfinishedSlotProjection) IsZero() bool {
+	return projection.Contract == (FrozenExecutionContractRef{}) && projection.DuePlanTargets.DuePlanSetDigest == "" &&
+		len(projection.DuePlanTargets.Plans) == 0 && projection.EarliestQueryDeadlineUnixMilli == 0 && projection.KeepUntilUnixMilli == 0
+}
+
+func (projection UnfinishedSlotProjection) Equal(other UnfinishedSlotProjection) bool {
+	return projection.Contract == other.Contract &&
+		projection.EarliestQueryDeadlineUnixMilli == other.EarliestQueryDeadlineUnixMilli &&
+		projection.KeepUntilUnixMilli == other.KeepUntilUnixMilli &&
+		projection.DuePlanTargets.Equal(other.DuePlanTargets)
+}
+
+type ProgressBeginRequest struct {
+	Identity   ProgressIdentity
+	OwnerFence OwnerFence
+	Projection UnfinishedSlotProjection
+}
+
+type ProgressBeginResult struct {
+	Status     ProgressCommitStatus
+	ReasonCode ReasonCode
+}
+
+func (result ProgressBeginResult) Validate() error {
+	return (ProgressCommitResult(result)).Validate()
 }
 
 type ProgressLoadStatus string
@@ -2223,6 +2303,15 @@ func (progress ScheduleProgress) Validate() error {
 	}
 	if progress.LastCompletionKind != "" && !validCompletionKind(progress.LastCompletionKind) {
 		return errors.New("alarmd execution: invalid last completion kind")
+	}
+	if progress.UnfinishedSlot != nil {
+		if err := progress.UnfinishedSlot.Validate(); err != nil {
+			return err
+		}
+		if progress.UnfinishedSlot.Contract.Slot.QueryGroup != progress.Identity.QueryGroup ||
+			progress.UnfinishedSlot.Contract.Slot.EvaluationTime != progress.NextSlot {
+			return errors.New("alarmd execution: unfinished Slot projection does not match Progress")
+		}
 	}
 	if progress.CurrentOrRecentGap == nil {
 		return nil
@@ -2290,7 +2379,8 @@ func requireReasonClass(reason ReasonCode, expected contract.ReasonClassV2) erro
 }
 
 type SlotExecutionResult struct {
-	Completed  bool
-	Result     Result
-	ReasonCode ReasonCode
+	Completed   bool
+	Result      Result
+	ReasonCode  ReasonCode
+	SourceRetry bool
 }

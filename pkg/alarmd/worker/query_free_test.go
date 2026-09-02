@@ -25,7 +25,7 @@ func TestSlotExecutionCoordinatorFinalizesSnapshotUnavailableWithoutQuery(t *tes
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{
-		"finalization", "target_verify", "activation", "sequence", "query_free_admission_guard", "query_free_gap_load",
+		"finalization", "activation", "sequence", "query_free_admission_guard", "query_free_gap_load",
 		"query_free_gap_apply", "activation", "query_free_admission_progress", "progress_commit",
 	})
 	if len(fixture.ports.mutations) != 1 {
@@ -60,9 +60,66 @@ func TestSlotExecutionCoordinatorSkipsGuardWhenActivationHasNoPlan(t *testing.T)
 	if err != nil || !result.Completed {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
-	assertTrace(t, fixture.trace, []string{"finalization", "target_verify", "activation", "sequence", "activation", "progress_commit"})
+	assertTrace(t, fixture.trace, []string{"finalization", "activation", "sequence", "activation", "progress_commit"})
 	if len(fixture.ports.mutations) != 0 {
 		t.Fatalf("no-Plan finalization wrote Guard: %+v", fixture.ports.mutations)
+	}
+}
+
+func TestSlotExecutionCoordinatorFinalizesSnapshotUnavailableForPendingActivation(t *testing.T) {
+	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{pendingPlanResult("state-pending", 3)})
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+	if err != nil || !result.Completed {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	if len(fixture.ports.mutations) != 1 || fixture.ports.mutations[0].Identity != (execution.PlanGapIdentity{
+		Plan: planIdentity(), StateGeneration: "state-pending",
+	}) || fixture.ports.progressCalls != 1 {
+		t.Fatalf("PENDING activation mutations=%+v progress=%d", fixture.ports.mutations, fixture.ports.progressCalls)
+	}
+}
+
+func TestSlotExecutionCoordinatorProtectsQueryFreeActivationSelectionChangesBeforeProgress(t *testing.T) {
+	tests := []struct {
+		name            string
+		before          execution.PlanActivationResult
+		after           execution.PlanActivationResult
+		wantGenerations []execution.StateGeneration
+	}{
+		{name: "pending_to_current", before: pendingPlanResult("pending-v1", 2), after: activePlanResult("current-v2", 3), wantGenerations: []execution.StateGeneration{"pending-v1", "current-v2"}},
+		{name: "current_to_pending", before: activePlanResult("current-v1", 2), after: pendingPlanResult("pending-v2", 3), wantGenerations: []execution.StateGeneration{"current-v1", "pending-v2"}},
+		{name: "pending_to_none", before: pendingPlanResult("pending-v1", 2), after: noPlanResult(), wantGenerations: []execution.StateGeneration{"pending-v1"}},
+		{name: "none_to_pending", before: noPlanResult(), after: pendingPlanResult("pending-v2", 3), wantGenerations: []execution.StateGeneration{"pending-v2"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{test.before, test.after})
+			result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+			if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
+				result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) || fixture.ports.progressCalls != 0 {
+				t.Fatalf("Execute() result=%+v error=%v progress=%d", result, err, fixture.ports.progressCalls)
+			}
+			got := make([]execution.StateGeneration, len(fixture.ports.mutations))
+			for index := range fixture.ports.mutations {
+				got[index] = fixture.ports.mutations[index].Identity.StateGeneration
+			}
+			if !reflect.DeepEqual(got, test.wantGenerations) {
+				t.Fatalf("protected generations=%v, want=%v; mutations=%+v", got, test.wantGenerations, fixture.ports.mutations)
+			}
+		})
+	}
+}
+
+func TestSlotExecutionCoordinatorDoesNotAdvancePendingActivationWhenProgressControlIsUnreadable(t *testing.T) {
+	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{pendingPlanResult("state-pending", 3)})
+	fixture.ports.activationErrorAt = 2
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+	if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) || fixture.ports.progressCalls != 0 {
+		t.Fatalf("Execute() result=%+v error=%v progress=%d", result, err, fixture.ports.progressCalls)
+	}
+	if len(fixture.ports.mutations) != 1 || fixture.ports.mutations[0].Identity.StateGeneration != "state-pending" {
+		t.Fatalf("PENDING guard before unreadable control=%+v", fixture.ports.mutations)
 	}
 }
 
@@ -96,7 +153,7 @@ func TestSlotExecutionCoordinatorRejectsWrongFrozenPlanWithEchoedDigest(t *testi
 	if err == nil || result.Completed {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
-	assertTrace(t, fixture.trace, []string{"finalization", "target_verify"})
+	assertTrace(t, fixture.trace, []string{"finalization"})
 }
 
 func TestSlotExecutionCoordinatorReprotectsChangedActivationBeforeProgress(t *testing.T) {
@@ -163,7 +220,9 @@ func TestSlotExecutionCoordinatorOnlyReprotectsChangedPlanBeforeProgress(t *test
 	fixture.ports.expectedTargets.Plans = []execution.PlanIdentity{stablePlan, changedPlan}
 	fixture.ports.finalization.Targets.Plans = append([]execution.PlanIdentity(nil), fixture.ports.expectedTargets.Plans...)
 
-	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+	request := slotRequest(execution.OperationReplay)
+	request.DuePlanTargets.Plans = []execution.PlanIdentity{stablePlan, changedPlan}
+	result, err := fixture.coordinator.Execute(context.Background(), request)
 	if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
 		result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
@@ -333,19 +392,6 @@ type queryFreePorts struct {
 	progressCalls     int
 }
 
-func (ports *queryFreePorts) VerifyFrozenDuePlanTargets(
-	_ context.Context,
-	_ execution.FrozenExecutionContractRef,
-	targets execution.FrozenDuePlanTargets,
-) error {
-	ports.record("target_verify")
-	if targets.DuePlanSetDigest != ports.expectedTargets.DuePlanSetDigest ||
-		!reflect.DeepEqual(targets.Plans, ports.expectedTargets.Plans) {
-		return errors.New("frozen due Plan exact-set mismatch")
-	}
-	return nil
-}
-
 func (ports *queryFreePorts) ResolveFinalization(
 	_ context.Context,
 	_ execution.SlotExecutionRequest,
@@ -466,6 +512,10 @@ func (ports *queryFreePorts) CommitProgress(
 	return execution.ProgressCommitResult{Status: execution.ProgressCommitted}, nil
 }
 
+func (ports *queryFreePorts) BeginSlot(_ context.Context, _ execution.ProgressBeginRequest) (execution.ProgressBeginResult, error) {
+	return execution.ProgressBeginResult{Status: execution.ProgressCommitted}, nil
+}
+
 func activePlanResult(generation execution.StateGeneration, epoch execution.StateApplyEpoch) execution.PlanActivationResult {
 	return execution.PlanActivationResult{
 		Contract: frozenContract(),
@@ -477,6 +527,12 @@ func activePlanResult(generation execution.StateGeneration, epoch execution.Stat
 			},
 		}},
 	}
+}
+
+func pendingPlanResult(generation execution.StateGeneration, epoch execution.StateApplyEpoch) execution.PlanActivationResult {
+	result := activePlanResult(generation, epoch)
+	result.Facts[0].Selection = execution.ActivationPending
+	return result
 }
 
 func noPlanResult() execution.PlanActivationResult {

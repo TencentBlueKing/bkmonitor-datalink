@@ -166,6 +166,10 @@ func (*activationSiblingPorts) LoadProgress(context.Context, execution.ProgressI
 	return execution.ProgressLoadResult{}, nil
 }
 
+func (*activationSiblingPorts) BeginSlot(context.Context, execution.ProgressBeginRequest) (execution.ProgressBeginResult, error) {
+	return execution.ProgressBeginResult{Status: execution.ProgressCommitted}, nil
+}
+
 func (ports *activationSiblingPorts) CommitProgress(context.Context, execution.ProgressCommitRequest) (execution.ProgressCommitResult, error) {
 	ports.progressCommits++
 	return execution.ProgressCommitResult{}, errors.New("unexpected Progress commit")

@@ -41,25 +41,33 @@ type persistedSourceCandidate struct {
 // refresh calls. Its only durable intermediate fact is the candidate digest;
 // it does not own a leader, retry queue or activation state machine.
 type SourceReconciler struct {
-	repository     *RedisCatalogRepository
-	publisher      *SnapshotPublisher
-	compiler       RuntimePlanCompiler
-	stateSemantics strategy.StateSemantics
+	repository      *RedisCatalogRepository
+	publisher       *SnapshotPublisher
+	compiler        RuntimePlanCompiler
+	stateSemantics  strategy.StateSemantics
+	validateCatalog func(Catalog) error
 }
 
 func NewSourceReconciler(
 	repository *RedisCatalogRepository,
 	compiler RuntimePlanCompiler,
 	stateSemantics strategy.StateSemantics,
+	validators ...func(Catalog) error,
 ) (*SourceReconciler, error) {
-	if compiler == nil || !validStateSemantics(stateSemantics) {
+	if compiler == nil || !validStateSemantics(stateSemantics) || len(validators) > 1 ||
+		(len(validators) == 1 && validators[0] == nil) {
 		return nil, errors.New("alarmd controlplane: invalid source reconciler compiler")
 	}
 	publisher, err := NewSnapshotPublisher(repository)
 	if err != nil {
 		return nil, err
 	}
-	return &SourceReconciler{repository: repository, publisher: publisher, compiler: compiler, stateSemantics: stateSemantics}, nil
+	var validateCatalog func(Catalog) error
+	if len(validators) == 1 {
+		validateCatalog = validators[0]
+	}
+	return &SourceReconciler{repository: repository, publisher: publisher, compiler: compiler,
+		stateSemantics: stateSemantics, validateCatalog: validateCatalog}, nil
 }
 
 func (reconciler *SourceReconciler) Refresh(
@@ -93,6 +101,11 @@ func (reconciler *SourceReconciler) Refresh(
 	}
 	if catalog.ObservationID != observationID {
 		return SourceRefreshResult{}, errors.New("alarmd controlplane: source observation changed while building Catalog")
+	}
+	if reconciler.validateCatalog != nil {
+		if err := reconciler.validateCatalog(catalog); err != nil {
+			return SourceRefreshResult{}, err
+		}
 	}
 	catalog.ObservationID = observationID
 	confirmationKey, err := sourceCandidateConfirmationKey(catalog.ObservationID, catalog.SnapshotRevision, catalog.Dispositions)

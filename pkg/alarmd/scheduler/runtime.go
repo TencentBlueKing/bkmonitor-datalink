@@ -11,17 +11,36 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 var ErrSlotInFlight = errors.New("alarmd scheduler: Query Group Slot is already in flight")
 
+type SourceRetryError struct{ Err error }
+
+func (err *SourceRetryError) Error() string {
+	return "alarmd scheduler: temporary Slot source failure: " + err.Err.Error()
+}
+func (err *SourceRetryError) Unwrap() error { return err.Err }
+
+type SourceBlockedError struct{ Err error }
+
+func (err *SourceBlockedError) Error() string {
+	return "alarmd scheduler: blocked exact Slot facts: " + err.Err.Error()
+}
+func (err *SourceBlockedError) Unwrap() error { return err.Err }
+
 type FrozenSlot struct {
-	Contract         execution.FrozenExecutionContractRef
-	Dispatch         SlotDispatchContext
-	ExpectedNextSlot execution.EvaluationTime
-	Recovery         SlotRecoveryFacts
+	Contract                       execution.FrozenExecutionContractRef
+	DuePlanTargets                 execution.FrozenDuePlanTargets
+	EarliestQueryDeadlineUnixMilli int64
+	RecoveryUntilUnixMilli         int64
+	KeepUntilUnixMilli             int64
+	Dispatch                       SlotDispatchContext
+	ExpectedNextSlot               execution.EvaluationTime
+	Recovery                       SlotRecoveryFacts
 }
 
 // SlotDispatchContext contains current, replaceable execution authority. It is
@@ -35,6 +54,16 @@ type SlotDispatchContext struct {
 func (slot FrozenSlot) Validate(queryGroup execution.QueryGroupIdentity) error {
 	if err := slot.Contract.Validate(); err != nil {
 		return err
+	}
+	if err := slot.DuePlanTargets.Validate(slot.Contract); err != nil {
+		return err
+	}
+	if slot.EarliestQueryDeadlineUnixMilli <= int64(slot.Contract.Slot.EvaluationTime)*1000 {
+		return errors.New("alarmd scheduler: earliest query deadline must follow the frozen evaluation time")
+	}
+	if slot.RecoveryUntilUnixMilli <= slot.EarliestQueryDeadlineUnixMilli ||
+		slot.KeepUntilUnixMilli <= slot.RecoveryUntilUnixMilli {
+		return errors.New("alarmd scheduler: recovery and retention boundaries are invalid")
 	}
 	if err := slot.Dispatch.Operation.Validate(); err != nil || slot.Dispatch.AssignmentGeneration == 0 {
 		return errors.New("alarmd scheduler: valid dispatch context is required")
@@ -120,13 +149,15 @@ func (coordinator *FlightCoordinator) tryAcquire(queryGroup execution.QueryGroup
 // Runner is bound to one owned Query Group. normal, retry, replay and probe use
 // this same single-flight path and the same frozen Slot contract.
 type Runner struct {
-	queryGroup execution.QueryGroupIdentity
-	session    OwnerSession
-	source     SlotSource
-	executor   Executor
-	flights    *FlightCoordinator
-	now        func() time.Time
-	attempt    *recoveryAttempt
+	queryGroup     execution.QueryGroupIdentity
+	session        OwnerSession
+	source         SlotSource
+	executor       Executor
+	flights        *FlightCoordinator
+	now            func() time.Time
+	attempt        *recoveryAttempt
+	sourceFailures uint32
+	sourceNextAt   time.Time
 }
 
 func NewRunner(
@@ -163,13 +194,31 @@ func (runner *Runner) RunOne(
 	if _, err := runner.session.ValidateCurrent(ctx, runner.now()); err != nil {
 		return execution.SlotExecutionResult{}, false, err
 	}
+	if !runner.sourceNextAt.IsZero() && runner.now().Before(runner.sourceNextAt) {
+		return execution.SlotExecutionResult{}, false, nil
+	}
 	slot, due, err := runner.source.Next(ctx, runner.queryGroup)
+	if err != nil {
+		var retry *SourceRetryError
+		var blocked *SourceBlockedError
+		if errors.As(err, &retry) || errors.As(err, &blocked) {
+			runner.sourceFailures++
+			runner.sourceNextAt = runner.now().Add(retryDelay(runner.flights.limits, runner.queryGroup, runner.sourceFailures))
+			reason := execution.ReasonCode(execution.ReasonBlockedExactSetUnavailable)
+			if retry != nil {
+				reason = execution.ReasonCode(contract.ReasonProviderUnavailable)
+			}
+			return execution.SlotExecutionResult{Result: observability.ResultRetrying, ReasonCode: reason, SourceRetry: true}, true, nil
+		}
+	}
 	if err != nil || !due {
 		if err == nil && !due {
 			runner.attempt = nil
 		}
 		return execution.SlotExecutionResult{}, false, err
 	}
+	runner.sourceFailures = 0
+	runner.sourceNextAt = time.Time{}
 	if err := slot.Validate(runner.queryGroup); err != nil {
 		return execution.SlotExecutionResult{}, false, err
 	}
@@ -185,8 +234,11 @@ func (runner *Runner) RunOne(
 		return execution.SlotExecutionResult{}, false, ErrSlotOwnershipChanged
 	}
 	request := execution.SlotExecutionRequest{
-		Contract: slot.Contract, Operation: operation, AttemptNo: runner.attemptNo(slot),
-		OwnerFence: fence, ExpectedNextSlot: slot.ExpectedNextSlot,
+		Contract: slot.Contract, DuePlanTargets: slot.DuePlanTargets.Clone(),
+		EarliestQueryDeadlineUnixMilli: slot.EarliestQueryDeadlineUnixMilli,
+		RecoveryUntilUnixMilli:         slot.RecoveryUntilUnixMilli,
+		KeepUntilUnixMilli:             slot.KeepUntilUnixMilli,
+		Operation:                      operation, AttemptNo: runner.attemptNo(slot), OwnerFence: fence, ExpectedNextSlot: slot.ExpectedNextSlot,
 	}
 	if err := request.Validate(); err != nil {
 		return execution.SlotExecutionResult{}, false, err

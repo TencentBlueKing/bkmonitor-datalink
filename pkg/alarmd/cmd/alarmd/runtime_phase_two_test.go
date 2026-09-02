@@ -21,6 +21,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -752,6 +753,50 @@ func TestPhaseTwoWorkerBundleDoesNotDuplicateAttemptedRunnerFailureObservation(t
 	_ = bundle.Shutdown(context.Background())
 }
 
+func TestPhaseTwoWorkerBundleObservesOnlySourceRetryResultsWithQGTrace(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	queryGroups := []execution.QueryGroupIdentity{"query-group-blocked", "query-group-temporary"}
+	blocked := newFakePhaseTwoQueryGroup()
+	blocked.attempted = true
+	blocked.runResult = execution.SlotExecutionResult{Result: observability.ResultRetrying,
+		ReasonCode: execution.ReasonCode(contract.ReasonBlockedExactSetUnavailable), SourceRetry: true}
+	temporary := newFakePhaseTwoQueryGroup()
+	temporary.attempted = true
+	temporary.runResult = execution.SlotExecutionResult{Result: observability.ResultRetrying,
+		ReasonCode: execution.ReasonCode(contract.ReasonProviderUnavailable), SourceRetry: true}
+	owner := &fakePhaseTwoOwnership{assigned: queryGroups, runners: map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime{
+		queryGroups[0]: blocked, queryGroups[1]: temporary,
+	}}
+	var observations []observability.Observation
+	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
+		Config: cfg, Health: newPhaseTwoApplicationHealth(), Control: &fakePhaseTwoControl{queryGroups: queryGroups},
+		Ownership: owner, Now: time.Now, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := bundle.runScheduledOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[observability.ReasonCode]string)
+	for _, observation := range observations {
+		if observation.Component == observability.ComponentScheduler && observation.Stage == observability.StageScheduleDue &&
+			observation.Result == observability.ResultRetrying {
+			got[observation.ReasonCode] = observation.Trace.QueryGroupKey
+		}
+	}
+	if got[observability.ReasonCode(contract.ReasonBlockedExactSetUnavailable)] != string(queryGroups[0]) ||
+		got[observability.ReasonCode(contract.ReasonProviderUnavailable)] != string(queryGroups[1]) || len(got) != 2 {
+		t.Fatalf("source retry observations=%+v", got)
+	}
+	_ = bundle.Shutdown(context.Background())
+}
+
 func TestPhaseTwoWorkerBundleReconcileUsesCurrentSnapshotWithoutRefreshingAgain(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
@@ -1339,6 +1384,7 @@ type fakePhaseTwoQueryGroup struct {
 	runRelease    chan struct{}
 	attempted     bool
 	runErr        error
+	runResult     execution.SlotExecutionResult
 	onRun         func()
 }
 
@@ -1359,7 +1405,7 @@ func (runner *fakePhaseTwoQueryGroup) RunOne(context.Context) (execution.SlotExe
 	if runner.runRelease != nil {
 		<-runner.runRelease
 	}
-	return execution.SlotExecutionResult{}, runner.attempted, runner.runErr
+	return runner.runResult, runner.attempted, runner.runErr
 }
 
 func (runner *fakePhaseTwoQueryGroup) MaintainLease(ctx context.Context, _, _ time.Duration) error {

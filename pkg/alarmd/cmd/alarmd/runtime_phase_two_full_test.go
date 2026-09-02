@@ -489,8 +489,9 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingEventACKIsRetr
 	failedProgress, err := productionOwnership.dependencies.Progress.LoadProgress(ctx, execution.ProgressIdentity{
 		QueryGroup: queryGroupsByStrategy["1001"],
 	})
-	if err != nil || failedProgress.Status != execution.ProgressMissing {
-		t.Fatalf("failed Query Group Progress=%+v error=%v, want unchanged", failedProgress, err)
+	if err != nil || failedProgress.Status != execution.ProgressFound || failedProgress.Progress == nil ||
+		failedProgress.Progress.UnfinishedSlot == nil || failedProgress.Progress.NextSlot != execution.EvaluationTime(base) {
+		t.Fatalf("failed Query Group Progress=%+v error=%v, want durable unfinished projection", failedProgress, err)
 	}
 	healthyProgress, err := productionOwnership.dependencies.Progress.LoadProgress(ctx, execution.ProgressIdentity{
 		QueryGroup: queryGroupsByStrategy["1002"],
@@ -535,6 +536,136 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingEventACKIsRetr
 	}
 	if err := bundle.Shutdown(ctx); err != nil {
 		t.Fatalf("phase-two production Shutdown() error = %v", err)
+	}
+}
+
+func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingInitialFreezeLosesSnapshot(t *testing.T) {
+	address, redisClient := startPhaseTwoRedis(t)
+	ctx := context.Background()
+	installTwoPhaseTwoStrategies(t, ctx, redisClient)
+
+	base := time.Now().Unix()
+	var clock atomic.Int64
+	clock.Store(base * 1000)
+	now := func() time.Time { return time.UnixMilli(clock.Load()) }
+	var uqCalls atomic.Int64
+	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		uqCalls.Add(1)
+		_, _ = writer.Write([]byte(`{"series":[],"status":null,"trace_id":"g3b-snapshot-isolation","is_partial":false,"result_table_id":[]}`))
+	}))
+	defer uqServer.Close()
+
+	cfg := validGoAccessRuntimeConfig()
+	cfg.Redis.Address = address
+	cfg.Redis.StatePrefix = "alarmd-g3b-snapshot-qg-isolation"
+	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
+	cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.DownstreamExecutionReserve = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Worker.RegistrationRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.LeaseTTL = config.Duration(time.Hour)
+	cfg.PhaseTwo.Ownership.LeaseRenewInterval = config.Duration(time.Minute)
+
+	events := &recordingPhaseTwoEventSink{}
+	bundle, err := openProductionPhaseTwoBundleWithDependencies(
+		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime),
+		newPhaseTwoApplicationHealth(),
+		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
+			return controlplane.NewLegacyRedisStrategySource(client, prefix)
+		},
+		phaseTwoProductionExternalDependencies{
+			Now: now, HTTPClient: uqServer.Client(),
+			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil },
+		},
+	)
+	if err != nil {
+		t.Fatalf("openProductionPhaseTwoBundleWithDependencies() error = %v", err)
+	}
+	if err := bundle.Start(ctx); err != nil {
+		t.Fatalf("phase-two production Start() error = %v", err)
+	}
+	defer func() {
+		if shutdownErr := bundle.Shutdown(ctx); shutdownErr != nil {
+			t.Errorf("phase-two production Shutdown() error = %v", shutdownErr)
+		}
+	}()
+	if len(bundle.queryGroups) != 2 || len(bundle.runners) != 2 {
+		t.Fatalf("initial Query Groups/runners = %v/%d, want two", bundle.queryGroups, len(bundle.runners))
+	}
+
+	production := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
+	queryGroupsByStrategy := make(map[string]execution.QueryGroupIdentity, 2)
+	var snapshotRevision execution.SnapshotRevision
+	for _, queryGroup := range bundle.queryGroups {
+		schedule, scheduleErr := production.dependencies.Catalog.ReadInitialFrozenSchedule(ctx, queryGroup)
+		if scheduleErr != nil || len(schedule.Plans) != 1 {
+			t.Fatalf("Query Group %s schedule=%+v error=%v", queryGroup, schedule, scheduleErr)
+		}
+		queryGroupsByStrategy[schedule.Plans[0].Identity.StrategyID] = queryGroup
+		snapshotRevision = schedule.Segment.Publication.SnapshotRevision
+	}
+	clock.Store((base + 1) * 1000)
+	healthy := queryGroupsByStrategy["1002"]
+	failed := queryGroupsByStrategy["1001"]
+	healthyResult, healthyAttempted, err := bundle.runners[healthy].runner.RunOne(ctx)
+	if err != nil || !healthyAttempted || !healthyResult.Completed {
+		t.Fatalf("healthy RunOne() = (%+v, %t, %v)", healthyResult, healthyAttempted, err)
+	}
+	queryCallsBeforeFailure := uqCalls.Load()
+	eventsBeforeFailure := len(events.snapshot())
+	snapshotKey := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog") + ":snapshot:" + string(snapshotRevision)
+	snapshotPayload, err := redisClient.Get(ctx, snapshotKey).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.Del(ctx, snapshotKey).Err(); err != nil {
+		t.Fatal(err)
+	}
+	failedResult, failedAttempted, failedErr := bundle.runners[failed].runner.RunOne(ctx)
+	if failedErr != nil || !failedAttempted || failedResult.Completed || failedResult.Result != observability.ResultRetrying ||
+		failedResult.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) {
+		t.Fatalf("failed RunOne() = (%+v, %t, %v)", failedResult, failedAttempted, failedErr)
+	}
+	if uqCalls.Load() != queryCallsBeforeFailure || len(events.snapshot()) != eventsBeforeFailure {
+		t.Fatalf("failed initial Freeze produced Query/Event: query=%d->%d event=%d->%d",
+			queryCallsBeforeFailure, uqCalls.Load(), eventsBeforeFailure, len(events.snapshot()))
+	}
+	failedProgress, err := production.dependencies.Progress.LoadProgress(ctx, execution.ProgressIdentity{QueryGroup: failed})
+	if err != nil || failedProgress.Status != execution.ProgressMissing {
+		t.Fatalf("failed Query Group Progress=%+v error=%v, want unchanged", failedProgress, err)
+	}
+	healthyProgress, err := production.dependencies.Progress.LoadProgress(ctx, execution.ProgressIdentity{QueryGroup: healthy})
+	if err != nil || healthyProgress.Status != execution.ProgressFound || healthyProgress.Progress == nil {
+		t.Fatalf("healthy Query Group Progress=%+v error=%v", healthyProgress, err)
+	}
+	if len(bundle.runners) != 2 || !bundle.dependencies.Health.HealthSnapshot().Ready {
+		t.Fatalf("snapshot loss stopped Worker: runners=%d health=%+v", len(bundle.runners), bundle.dependencies.Health.HealthSnapshot())
+	}
+
+	// Once the same immutable Snapshot fact returns after recovery_until, the
+	// coordinator first rebuilds the missing projection with BeginSlot and then
+	// finalizes query-free. A recovered Snapshot must not reopen Query.
+	if err := redisClient.Set(ctx, snapshotKey, snapshotPayload, cfg.PhaseTwo.Control.CatalogTTL.Duration()).Err(); err != nil {
+		t.Fatal(err)
+	}
+	clock.Store((base + int64((30*time.Minute)/time.Second)) * 1000)
+	recoveredResult, recoveredAttempted, err := bundle.runners[failed].runner.RunOne(ctx)
+	if err != nil || !recoveredAttempted || !recoveredResult.Completed ||
+		recoveredResult.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) {
+		t.Fatalf("RunOne(recovered after deadline) = (%+v, %t, %v)", recoveredResult, recoveredAttempted, err)
+	}
+	if uqCalls.Load() != queryCallsBeforeFailure || len(events.snapshot()) != eventsBeforeFailure {
+		t.Fatalf("expired recovered Snapshot produced Query/Event: query=%d->%d event=%d->%d",
+			queryCallsBeforeFailure, uqCalls.Load(), eventsBeforeFailure, len(events.snapshot()))
+	}
+	completedProgress, err := production.dependencies.Progress.LoadProgress(ctx, execution.ProgressIdentity{QueryGroup: failed})
+	if err != nil || completedProgress.Progress == nil || completedProgress.Progress.UnfinishedSlot != nil ||
+		completedProgress.Progress.CurrentOrRecentGap == nil ||
+		completedProgress.Progress.CurrentOrRecentGap.Kind != execution.CompletionSnapshotUnavailable {
+		t.Fatalf("recovered query-free Progress=%+v error=%v", completedProgress, err)
 	}
 }
 

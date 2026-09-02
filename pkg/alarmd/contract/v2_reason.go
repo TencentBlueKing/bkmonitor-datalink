@@ -92,15 +92,16 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonRecordTooLarge:        {ReasonRecordTooLarge, ReasonClassCoverage, ReasonDomainSummary | ReasonDomainObservation},
 	ReasonAuditDrop:             {ReasonAuditDrop, ReasonClassCoverage, ReasonDomainObservation},
 
-	ReasonKafkaUnavailable:       {ReasonKafkaUnavailable, ReasonClassRetryable, ReasonDomainSummary | ReasonDomainObservation},
-	ReasonRedisUnavailable:       {ReasonRedisUnavailable, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonProviderUnavailable:    {ReasonProviderUnavailable, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonResourceHardStop:       {ReasonResourceHardStop, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonOutputACKUnknown:       {ReasonOutputACKUnknown, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonStateWriteRetryable:    {ReasonStateWriteRetryable, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonStateCorrupt:           {ReasonStateCorrupt, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
-	ReasonStateSchemaUnsupported: {ReasonStateSchemaUnsupported, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
-	ReasonStateBudgetExceeded:    {ReasonStateBudgetExceeded, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	ReasonKafkaUnavailable:           {ReasonKafkaUnavailable, ReasonClassRetryable, ReasonDomainSummary | ReasonDomainObservation},
+	ReasonRedisUnavailable:           {ReasonRedisUnavailable, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonProviderUnavailable:        {ReasonProviderUnavailable, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonBlockedExactSetUnavailable: {ReasonBlockedExactSetUnavailable, ReasonClassDeterministic, ReasonDomainObservation},
+	ReasonResourceHardStop:           {ReasonResourceHardStop, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonOutputACKUnknown:           {ReasonOutputACKUnknown, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonStateWriteRetryable:        {ReasonStateWriteRetryable, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonStateCorrupt:               {ReasonStateCorrupt, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	ReasonStateSchemaUnsupported:     {ReasonStateSchemaUnsupported, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	ReasonStateBudgetExceeded:        {ReasonStateBudgetExceeded, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
 }
 
 func ReasonCatalogV2() []ReasonDefinitionV2 {

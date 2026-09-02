@@ -91,35 +91,57 @@ func (source *productionFrozenExecution) ResolveFinalization(
 	}
 	fact, err := source.resolveFrozenFact(ctx, request.Contract)
 	if err != nil {
-		return execution.QueryFreeFinalization{}, err
-	}
-	if request.Operation == execution.OperationNormal {
-		expired, deadlineErr := source.g1NormalSlotDeadlineExpired(fact)
-		if deadlineErr != nil {
-			return execution.QueryFreeFinalization{}, deadlineErr
-		}
-		if !expired {
+		if errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+			if source.now().UnixMilli() < request.RecoveryUntilUnixMilli {
+				return execution.QueryFreeFinalization{
+					Contract: request.Contract, Mode: execution.FinalizationSnapshotRetry,
+					ReasonCode: execution.ReasonCode(contract.ReasonProviderUnavailable),
+				}, nil
+			}
 			return execution.QueryFreeFinalization{
-				Contract: request.Contract, Mode: execution.FinalizationQueryRequired,
+				Contract: request.Contract, Mode: execution.FinalizationSnapshotUnavailable,
+				ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
+				Targets:    request.DuePlanTargets.Clone(),
 			}, nil
 		}
-		plans := make([]execution.PlanIdentity, len(fact.DuePlans))
-		for index := range fact.DuePlans {
-			plans[index] = fact.DuePlans[index].Identity
+		var corrupt *controlplane.PersistedSnapshotCorruptError
+		if errors.As(err, &corrupt) {
+			return execution.QueryFreeFinalization{
+				Contract: request.Contract, Mode: execution.FinalizationSnapshotUnavailable,
+				ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
+				Targets:    request.DuePlanTargets.Clone(),
+			}, nil
 		}
-		// Before G3 there is no replay/recovery permit. Once the frozen normal Slot budget
-		// has expired, querying cannot produce a valid normal completion, so the
-		// existing query-free path records GAP_SKIPPED and advances Progress.
-		// G3 may select an eligible recovery before normal finalization; this is
-		// deliberately not a general max-replay-age decision.
+		if source.now().UnixMilli() >= request.RecoveryUntilUnixMilli {
+			return execution.QueryFreeFinalization{
+				Contract: request.Contract, Mode: execution.FinalizationSnapshotUnavailable,
+				ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
+				Targets:    request.DuePlanTargets.Clone(),
+			}, nil
+		}
+		return execution.QueryFreeFinalization{
+			Contract: request.Contract, Mode: execution.FinalizationSnapshotRetry,
+			ReasonCode: execution.ReasonCode(contract.ReasonProviderUnavailable),
+		}, nil
+	}
+	targets, deadline, err := frozenExecutionFacts(fact)
+	if err != nil {
+		return execution.QueryFreeFinalization{}, err
+	}
+	if !targets.Equal(request.DuePlanTargets) || deadline != request.EarliestQueryDeadlineUnixMilli {
+		return execution.QueryFreeFinalization{}, errors.New("phase-two re-frozen execution facts differ from the request")
+	}
+	if source.now().UnixMilli() >= request.RecoveryUntilUnixMilli {
 		return execution.QueryFreeFinalization{
 			Contract:   request.Contract,
-			Mode:       execution.FinalizationGapSkipped,
-			ReasonCode: execution.ReasonCode(contract.ReasonGapSkipped),
-			Targets: execution.FrozenDuePlanTargets{
-				DuePlanSetDigest: request.Contract.DuePlanSetDigest,
-				Plans:            plans,
-			},
+			Mode:       execution.FinalizationSnapshotUnavailable,
+			ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
+			Targets:    request.DuePlanTargets.Clone(),
+		}, nil
+	}
+	if request.Operation == execution.OperationNormal {
+		return execution.QueryFreeFinalization{
+			Contract: request.Contract, Mode: execution.FinalizationQueryRequired,
 		}, nil
 	}
 	return execution.QueryFreeFinalization{
@@ -127,16 +149,16 @@ func (source *productionFrozenExecution) ResolveFinalization(
 	}, nil
 }
 
-func (source *productionFrozenExecution) g1NormalSlotDeadlineExpired(
+func frozenExecutionFacts(
 	fact execution.FrozenSlotContractFact,
-) (bool, error) {
+) (execution.FrozenDuePlanTargets, int64, error) {
 	deadline := int64(0)
 	for _, requirement := range fact.Requirements {
 		for _, consumer := range requirement.Consumers {
 			if consumer.ConsumerDeadlineUnixMilli <= 0 ||
 				consumer.DownstreamExecutionReserveMilliSec <= 0 ||
 				consumer.DownstreamExecutionReserveMilliSec >= consumer.ConsumerDeadlineUnixMilli {
-				return false, errors.New("phase-two frozen contract query deadline or reserve is invalid")
+				return execution.FrozenDuePlanTargets{}, 0, errors.New("phase-two frozen contract query deadline or reserve is invalid")
 			}
 			candidate := consumer.ConsumerDeadlineUnixMilli - consumer.DownstreamExecutionReserveMilliSec
 			if deadline == 0 || candidate < deadline {
@@ -145,36 +167,19 @@ func (source *productionFrozenExecution) g1NormalSlotDeadlineExpired(
 		}
 	}
 	if deadline == 0 {
-		return false, errors.New("phase-two frozen contract query deadline has no consumer")
+		return execution.FrozenDuePlanTargets{}, 0, errors.New("phase-two frozen contract query deadline has no consumer")
 	}
-	return source.now().UnixMilli() >= deadline, nil
-}
-
-func (source *productionFrozenExecution) VerifyFrozenDuePlanTargets(
-	ctx context.Context,
-	contractRef execution.FrozenExecutionContractRef,
-	targets execution.FrozenDuePlanTargets,
-) error {
-	fact, err := source.resolveFrozenFact(ctx, contractRef)
-	if err != nil {
-		return err
+	targets := execution.FrozenDuePlanTargets{
+		DuePlanSetDigest: fact.Contract.DuePlanSetDigest,
+		Plans:            make([]execution.PlanIdentity, len(fact.DuePlans)),
 	}
-	if targets.DuePlanSetDigest != contractRef.DuePlanSetDigest || len(targets.Plans) != len(fact.DuePlans) {
-		return errors.New("phase-two frozen due Plan targets differ from exact contract")
-	}
-	want := append([]execution.PlanIdentity(nil), targets.Plans...)
-	got := make([]execution.PlanIdentity, len(fact.DuePlans))
 	for index := range fact.DuePlans {
-		got[index] = fact.DuePlans[index].Identity
+		targets.Plans[index] = fact.DuePlans[index].Identity
 	}
-	sort.Slice(want, func(i, j int) bool { return lessProductionPlanIdentity(want[i], want[j]) })
-	sort.Slice(got, func(i, j int) bool { return lessProductionPlanIdentity(got[i], got[j]) })
-	for index := range want {
-		if want[index] != got[index] {
-			return errors.New("phase-two frozen due Plan targets differ from exact contract")
-		}
+	if err := targets.Validate(fact.Contract); err != nil {
+		return execution.FrozenDuePlanTargets{}, 0, err
 	}
-	return nil
+	return targets, deadline, nil
 }
 
 func (source *productionFrozenExecution) resolveFrozenFact(
@@ -212,16 +217,6 @@ func (source *productionFrozenExecution) resolveFrozenFact(
 		return execution.FrozenSlotContractFact{}, errors.New("phase-two re-frozen Slot differs from execution contract")
 	}
 	return fact, nil
-}
-
-func lessProductionPlanIdentity(left, right execution.PlanIdentity) bool {
-	if left.TenantID != right.TenantID {
-		return left.TenantID < right.TenantID
-	}
-	if left.BusinessID != right.BusinessID {
-		return left.BusinessID < right.BusinessID
-	}
-	return left.StrategyID < right.StrategyID
 }
 
 var _ access.FrozenPlanSource = (*productionFrozenExecution)(nil)
@@ -649,17 +644,21 @@ type productionPhaseTwoProgressReader interface {
 }
 
 type productionPhaseTwoOwnershipDependencies struct {
-	Store            productionPhaseTwoOwnershipStore
-	WorkerID         string
-	Catalog          productionPhaseTwoSlotCatalog
-	Progress         productionPhaseTwoProgressReader
-	Executor         scheduler.Executor
-	Now              func() time.Time
-	Reconcile        *scheduler.Reconciler
-	ControlLeaderTTL time.Duration
-	Observer         observability.Observer
-	Flights          *scheduler.FlightCoordinator
-	RecoveryLimits   scheduler.RecoveryLimits
+	Store                     productionPhaseTwoOwnershipStore
+	WorkerID                  string
+	Catalog                   productionPhaseTwoSlotCatalog
+	Progress                  productionPhaseTwoProgressReader
+	Executor                  scheduler.Executor
+	Now                       func() time.Time
+	Reconcile                 *scheduler.Reconciler
+	ControlLeaderTTL          time.Duration
+	Observer                  observability.Observer
+	Flights                   *scheduler.FlightCoordinator
+	RecoveryLimits            scheduler.RecoveryLimits
+	PostRecoveryTerminalDelay time.Duration
+	QueryDeadlineReserve      time.Duration
+	SnapshotRetention         time.Duration
+	PublicationDelayAllowance time.Duration
 }
 
 type productionPhaseTwoOwnership struct {
@@ -679,6 +678,10 @@ func newProductionPhaseTwoOwnership(
 		dependencies.ControlLeaderTTL <= 0 || dependencies.Observer == nil || dependencies.Reconcile == nil ||
 		dependencies.Flights == nil || dependencies.RecoveryLimits.Validate() != nil {
 		return nil, errors.New("phase-two production ownership dependencies are incomplete")
+	}
+	if dependencies.PostRecoveryTerminalDelay <= 0 || dependencies.QueryDeadlineReserve <= 0 ||
+		dependencies.SnapshotRetention <= 0 || dependencies.PublicationDelayAllowance <= 0 {
+		return nil, errors.New("phase-two post-recovery terminal delay is required")
 	}
 	return &productionPhaseTwoOwnership{
 		dependencies: dependencies, reconciler: dependencies.Reconcile, flights: dependencies.Flights,
@@ -833,6 +836,9 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 		queryGroup, runtime.dependencies.WorkerID, runtime.dependencies.Store, session,
 		runtime.dependencies.Catalog, runtime.dependencies.Progress, runtime.dependencies.Now,
 		scheduler.WithRecoveryLimits(runtime.dependencies.RecoveryLimits),
+		scheduler.WithPostRecoveryTerminalDelay(runtime.dependencies.PostRecoveryTerminalDelay),
+		scheduler.WithQueryDeadlineReserve(runtime.dependencies.QueryDeadlineReserve),
+		scheduler.WithSnapshotRetention(runtime.dependencies.SnapshotRetention, runtime.dependencies.PublicationDelayAllowance),
 	)
 	if err != nil {
 		_ = session.Release(ctx)

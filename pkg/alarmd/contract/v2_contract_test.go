@@ -1048,6 +1048,10 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 		ReasonAllowedForV2(ReasonProviderUnavailable, ReasonDomainReceipt) {
 		t.Fatalf("Provider reason definition = (%#v, %t)", provider, ok)
 	}
+	blockedExactSet, ok := LookupReasonV2(ReasonBlockedExactSetUnavailable)
+	if !ok || blockedExactSet.Class != ReasonClassDeterministic || blockedExactSet.Domains != ReasonDomainObservation {
+		t.Fatalf("Blocked exact-set reason definition = (%#v, %t)", blockedExactSet, ok)
+	}
 	snapshotUnavailable, ok := LookupReasonV2(ReasonSnapshotUnavailable)
 	if !ok || snapshotUnavailable.Class != ReasonClassCoverage ||
 		snapshotUnavailable.Domains != ReasonDomainObservation ||

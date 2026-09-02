@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -76,10 +77,8 @@ func TestProductionFrozenExecutionResolvesExactPersistedContract(t *testing.T) {
 		frozen.QueryFacts[execution.LogicalQueryRef("query-1")].QueryRevision != "query-1" {
 		t.Fatalf("resolved request/facts = %+v / %+v", catalog.request, frozen)
 	}
-	finalization, err := resolver.ResolveFinalization(context.Background(), execution.SlotExecutionRequest{
-		Contract: contractRef, OwnerFence: execution.OwnerFence{QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1"},
-		ExpectedNextSlot: 120, Operation: execution.OperationNormal, AttemptNo: 1,
-	})
+	request := productionRequest(catalog.fact, execution.OperationNormal)
+	finalization, err := resolver.ResolveFinalization(context.Background(), request)
 	if err != nil || finalization.Mode != execution.FinalizationQueryRequired || finalization.Contract != contractRef {
 		t.Fatalf("ResolveFinalization() = %+v, %v", finalization, err)
 	}
@@ -138,33 +137,26 @@ func TestProductionFrozenExecutionSkipsExpiredNormalSlotWithoutRecoveryPermit(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := execution.SlotExecutionRequest{
-		Contract: contractRef,
-		OwnerFence: execution.OwnerFence{
-			QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1",
-		},
-		ExpectedNextSlot: 120, Operation: execution.OperationNormal, AttemptNo: 1,
-	}
+	request := productionRequest(catalog.fact, execution.OperationNormal)
 	finalization, err := resolver.ResolveFinalization(context.Background(), request)
 	if err != nil {
 		t.Fatalf("ResolveFinalization() error = %v", err)
 	}
-	if finalization.Mode != execution.FinalizationGapSkipped ||
-		finalization.ReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) ||
-		!reflect.DeepEqual(finalization.Targets.Plans, []execution.PlanIdentity{plan}) {
+	if finalization.Mode != execution.FinalizationQueryRequired {
 		t.Fatalf("ResolveFinalization() = %+v", finalization)
 	}
 	if err := finalization.Validate(request); err != nil {
 		t.Fatalf("ResolveFinalization() produced invalid finalization: %v", err)
 	}
-	now = time.UnixMilli(179_999)
+	now = time.UnixMilli(request.RecoveryUntilUnixMilli)
 	finalization, err = resolver.ResolveFinalization(context.Background(), request)
-	if err != nil || finalization.Mode != execution.FinalizationGapSkipped {
-		t.Fatalf("ResolveFinalization(after query deadline) = %+v, %v", finalization, err)
+	if err != nil || finalization.Mode != execution.FinalizationSnapshotUnavailable ||
+		finalization.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) {
+		t.Fatalf("ResolveFinalization(after recovery deadline) = %+v, %v", finalization, err)
 	}
 
-	// Expiry is only the pre-G3 normal-path finalization rule. A future G3 recovery
-	// scheduler must retain control of retry/replay/probe eligibility.
+	// recovery_until closes Query for every operation. The operation label cannot
+	// reopen an expired frozen Slot.
 	for _, operation := range []execution.Operation{
 		execution.OperationRetry,
 		execution.OperationReplay,
@@ -172,7 +164,8 @@ func TestProductionFrozenExecutionSkipsExpiredNormalSlotWithoutRecoveryPermit(t 
 	} {
 		request.Operation = operation
 		finalization, err = resolver.ResolveFinalization(context.Background(), request)
-		if err != nil || finalization.Mode != execution.FinalizationQueryRequired {
+		if err != nil || finalization.Mode != execution.FinalizationSnapshotUnavailable ||
+			finalization.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) {
 			t.Fatalf("ResolveFinalization(%s) = %+v, %v", operation, finalization, err)
 		}
 	}
@@ -205,10 +198,147 @@ func TestProductionFrozenExecutionSkipsExpiredNormalSlotWithoutRecoveryPermit(t 
 	}
 }
 
+func TestProductionFrozenExecutionUsesRequestFactsWhenSnapshotDisappearsAfterFreeze(t *testing.T) {
+	catalog, resolver, request := productionFinalizationFixture(t)
+	catalog.readErr = controlplane.ErrSnapshotUnavailable
+
+	finalization, err := resolver.ResolveFinalization(context.Background(), request)
+	if err != nil || finalization.Mode != execution.FinalizationSnapshotRetry ||
+		finalization.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) {
+		t.Fatalf("ResolveFinalization(snapshot unavailable) = (%+v, %v)", finalization, err)
+	}
+	resolver.now = func() time.Time { return time.UnixMilli(request.RecoveryUntilUnixMilli) }
+	finalization, err = resolver.ResolveFinalization(context.Background(), request)
+	if err != nil || finalization.Mode != execution.FinalizationSnapshotUnavailable ||
+		!finalization.Targets.Equal(request.DuePlanTargets) {
+		t.Fatalf("ResolveFinalization(expired snapshot unavailable) = (%+v, %v)", finalization, err)
+	}
+	finalization.Targets.Plans[0].StrategyID = "mutated"
+	if request.DuePlanTargets.Plans[0].StrategyID == "mutated" {
+		t.Fatal("query-free finalization aliases request frozen targets")
+	}
+}
+
+func TestProductionFrozenExecutionSeparatesTransportRetryFromPersistedCorruption(t *testing.T) {
+	catalog, resolver, request := productionFinalizationFixture(t)
+	catalog.readErr = errors.New("redis timeout")
+	finalization, err := resolver.ResolveFinalization(context.Background(), request)
+	if err != nil || finalization.Mode != execution.FinalizationSnapshotRetry ||
+		finalization.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) {
+		t.Fatalf("ResolveFinalization(transport) = (%+v, %v)", finalization, err)
+	}
+	resolver.now = func() time.Time { return time.UnixMilli(request.RecoveryUntilUnixMilli) }
+	finalization, err = resolver.ResolveFinalization(context.Background(), request)
+	if err != nil || finalization.Mode != execution.FinalizationSnapshotUnavailable ||
+		finalization.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) ||
+		!finalization.Targets.Equal(request.DuePlanTargets) {
+		t.Fatalf("ResolveFinalization(expired transport) = (%+v, %v)", finalization, err)
+	}
+	catalog.readErr = &controlplane.PersistedSnapshotCorruptError{Err: errors.New("bad digest")}
+	finalization, err = resolver.ResolveFinalization(context.Background(), request)
+	if err != nil || finalization.Mode != execution.FinalizationSnapshotUnavailable ||
+		!finalization.Targets.Equal(request.DuePlanTargets) {
+		t.Fatalf("ResolveFinalization(corrupt) = (%+v, %v)", finalization, err)
+	}
+}
+
+func TestPhaseTwoSnapshotMinimumRetentionUsesExistingRecoveryAndOwnershipParameters(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	offset := 55 * time.Second
+	want := cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration() + 2*cfg.PhaseTwo.Control.RefreshInterval.Duration() +
+		offset + cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration() + phaseTwoPostRecoveryTerminalDelay(cfg)
+	if got := phaseTwoSnapshotMinimumRetention(cfg, offset); got != want {
+		t.Fatalf("phaseTwoSnapshotMinimumRetention()=%s, want %s", got, want)
+	}
+}
+
+func TestPhaseTwoCatalogRetentionValidatorIncludesCandidateScheduleOffset(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	catalog := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{{Plans: []controlplane.FrozenPlan{{
+		ScheduleSpec: execution.ScheduleSpec{EvaluationIntervalSeconds: 60, Timezone: "UTC"},
+	}}}}}
+	validator := phaseTwoCatalogRetentionValidator(cfg)
+	if err := validator(catalog); err != nil {
+		t.Fatalf("validator(default) error=%v", err)
+	}
+	cfg.PhaseTwo.Control.CatalogTTL = config.Duration(phaseTwoSnapshotMinimumRetention(cfg, 55*time.Second) - time.Millisecond)
+	if err := phaseTwoCatalogRetentionValidator(cfg)(catalog); !errors.Is(err, scheduler.ErrSnapshotRetentionInsufficient) {
+		t.Fatalf("validator(insufficient) error=%v", err)
+	}
+}
+
+func TestProductionFrozenExecutionRejectsChangedRefrozenExecutionFacts(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*execution.FrozenSlotContractFact)
+	}{
+		{name: "exact target set", mutate: func(fact *execution.FrozenSlotContractFact) {
+			fact.DuePlans[0].Identity.StrategyID = "changed"
+			fact.Requirements[0].Consumers[0].Consumer.Plan = fact.DuePlans[0].Identity
+		}},
+		{name: "earliest query deadline", mutate: func(fact *execution.FrozenSlotContractFact) {
+			fact.Requirements[0].Consumers[0].DownstreamExecutionReserveMilliSec++
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			catalog, resolver, request := productionFinalizationFixture(t)
+			test.mutate(&catalog.fact)
+			if _, err := resolver.ResolveFinalization(context.Background(), request); err == nil ||
+				!strings.Contains(err.Error(), "re-frozen execution facts differ") {
+				t.Fatalf("ResolveFinalization(changed facts) error = %v", err)
+			}
+		})
+	}
+}
+
+func productionFinalizationFixture(t *testing.T) (*fakeFrozenCatalog, *productionFrozenExecution, execution.SlotExecutionRequest) {
+	t.Helper()
+	plan := execution.PlanIdentity{TenantID: "tenant-a", BusinessID: "2", StrategyID: "1001"}
+	spec := execution.ScheduleSpec{EvaluationIntervalSeconds: 60, Alignment: 0, Timezone: "UTC"}
+	planRevision, err := execution.DerivePlanScheduleRevision(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedulePlan := execution.FrozenPlanSchedule{Identity: plan, ScheduleRevision: planRevision, Spec: spec}
+	scheduleRevision, err := execution.DeriveQueryGroupScheduleRevision([]execution.FrozenPlanSchedule{schedulePlan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contractRef := execution.FrozenExecutionContractRef{
+		Slot:             execution.SlotIdentity{QueryGroup: "query-group-1", EvaluationTime: 120},
+		SnapshotRevision: "snapshot-1", QueryRevision: "query-1", ScheduleRevision: scheduleRevision,
+		ScheduleSegmentStart: 60, DuePlanSetDigest: "due-1",
+	}
+	catalog := &fakeFrozenCatalog{
+		schedule: execution.FrozenQueryGroupSchedule{Segment: execution.ScheduleSegmentFact{
+			Publication: execution.SnapshotPublicationRef{SnapshotRevision: "snapshot-1", PublicationEpoch: 1},
+			QueryGroup:  "query-group-1", QueryRevision: "query-1", ScheduleRevision: scheduleRevision, Start: 60,
+		}, Plans: []execution.FrozenPlanSchedule{schedulePlan}},
+		fact: execution.FrozenSlotContractFact{
+			Contract: contractRef,
+			DuePlans: []execution.DuePlan{{Identity: plan, ScheduleRevision: planRevision, ScheduleSpec: spec, CompletionDeadlineUnixMilli: 180_000}},
+			Requirements: []execution.DataRequirement{{Consumers: []execution.DataRequirementConsumer{{
+				Consumer: execution.ConsumerRef{Plan: plan}, ConsumerDeadlineUnixMilli: 180_000,
+				DownstreamExecutionReserveMilliSec: 5_000,
+			}}}},
+		},
+	}
+	resolver, err := newProductionFrozenExecution(catalog, &fakeProductionCatalogRepository{}, func() time.Time {
+		return time.UnixMilli(174_999)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return catalog, resolver, productionRequest(catalog.fact, execution.OperationNormal)
+}
+
 type fakeFrozenCatalog struct {
-	schedule execution.FrozenQueryGroupSchedule
-	fact     execution.FrozenSlotContractFact
-	request  execution.FreezeSlotContractRequest
+	schedule  execution.FrozenQueryGroupSchedule
+	fact      execution.FrozenSlotContractFact
+	request   execution.FreezeSlotContractRequest
+	readErr   error
+	freezeErr error
 }
 
 func (catalog *fakeFrozenCatalog) ReadFrozenSchedule(
@@ -216,6 +346,9 @@ func (catalog *fakeFrozenCatalog) ReadFrozenSchedule(
 	execution.QueryGroupIdentity,
 	execution.EvaluationTime,
 ) (execution.FrozenQueryGroupSchedule, error) {
+	if catalog.readErr != nil {
+		return execution.FrozenQueryGroupSchedule{}, catalog.readErr
+	}
 	return catalog.schedule, nil
 }
 
@@ -224,6 +357,9 @@ func (catalog *fakeFrozenCatalog) FreezeSlotContract(
 	request execution.FreezeSlotContractRequest,
 ) (execution.FrozenSlotContractFact, error) {
 	catalog.request = request
+	if catalog.freezeErr != nil {
+		return execution.FrozenSlotContractFact{}, catalog.freezeErr
+	}
 	return catalog.fact, nil
 }
 
@@ -822,7 +958,8 @@ func TestProductionPhaseTwoOwnershipUsesAssignmentAndLeaseBeforeRunner(t *testin
 		Progress: unavailableScheduleProgress{}, Executor: rejectingSlotExecutor{}, Now: func() time.Time { return now },
 		ControlLeaderTTL: time.Minute, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			observations = append(observations, observation)
-		}), Reconcile: reconciler, Flights: flights, RecoveryLimits: limits,
+		}), Reconcile: reconciler, Flights: flights, RecoveryLimits: limits, PostRecoveryTerminalDelay: time.Minute, QueryDeadlineReserve: 5 * time.Second,
+		SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("newProductionPhaseTwoOwnership() error = %v", err)
@@ -908,7 +1045,8 @@ func TestProductionPhaseTwoOwnershipFollowerReadsAssignmentWithoutPublishing(t *
 		Store: store, WorkerID: "worker-1", Catalog: unavailableSlotCatalog{},
 		Progress: unavailableScheduleProgress{}, Executor: rejectingSlotExecutor{}, Now: func() time.Time { return now },
 		ControlLeaderTTL: time.Minute, Observer: observability.NopObserver{}, Reconcile: reconciler,
-		Flights: flights, RecoveryLimits: limits,
+		Flights: flights, RecoveryLimits: limits, PostRecoveryTerminalDelay: time.Minute, QueryDeadlineReserve: 5 * time.Second,
+		SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -946,6 +1084,13 @@ func TestProductionSlotObservationsBracketRealExecutionWithFrozenProvenance(t *t
 		next: slotSourceFunc(func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, error) {
 			return scheduler.FrozenSlot{
 				Contract: contractRef,
+				DuePlanTargets: execution.FrozenDuePlanTargets{
+					DuePlanSetDigest: contractRef.DuePlanSetDigest,
+					Plans:            []execution.PlanIdentity{{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}},
+				},
+				EarliestQueryDeadlineUnixMilli: 121_000,
+				RecoveryUntilUnixMilli:         721_000,
+				KeepUntilUnixMilli:             797_000,
 				Dispatch: scheduler.SlotDispatchContext{
 					Operation: execution.OperationNormal, OwnerFence: fence, AssignmentGeneration: 1,
 				},
@@ -970,7 +1115,9 @@ func TestProductionSlotObservationsBracketRealExecutionWithFrozenProvenance(t *t
 		observer: observer,
 	}
 	request := execution.SlotExecutionRequest{
-		Contract: slot.Contract, Operation: slot.Dispatch.Operation,
+		Contract: slot.Contract, DuePlanTargets: slot.DuePlanTargets.Clone(),
+		EarliestQueryDeadlineUnixMilli: slot.EarliestQueryDeadlineUnixMilli, Operation: slot.Dispatch.Operation,
+		RecoveryUntilUnixMilli: slot.RecoveryUntilUnixMilli, KeepUntilUnixMilli: slot.KeepUntilUnixMilli,
 		OwnerFence: slot.Dispatch.OwnerFence, ExpectedNextSlot: slot.ExpectedNextSlot, AttemptNo: 1,
 	}
 	if _, err := executor.Execute(context.Background(), request); err != nil {
@@ -1003,6 +1150,20 @@ func TestProductionSlotObservationsBracketRealExecutionWithFrozenProvenance(t *t
 	}
 	if len(observations) != 0 {
 		t.Fatalf("not-due Slot emitted execution observations: %+v", observations)
+	}
+}
+
+func productionRequest(fact execution.FrozenSlotContractFact, operation execution.Operation) execution.SlotExecutionRequest {
+	targets, deadline, err := frozenExecutionFacts(fact)
+	if err != nil {
+		panic(err)
+	}
+	return execution.SlotExecutionRequest{
+		Contract: fact.Contract, DuePlanTargets: targets, EarliestQueryDeadlineUnixMilli: deadline,
+		RecoveryUntilUnixMilli: deadline + int64((10*time.Minute)/time.Millisecond),
+		KeepUntilUnixMilli:     deadline + int64((11*time.Minute)/time.Millisecond),
+		OwnerFence:             execution.OwnerFence{QueryGroup: fact.Contract.Slot.QueryGroup, OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1"},
+		ExpectedNextSlot:       fact.Contract.Slot.EvaluationTime, Operation: operation, AttemptNo: 1,
 	}
 }
 

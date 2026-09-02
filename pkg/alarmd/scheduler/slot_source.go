@@ -11,15 +11,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
 var (
-	ErrScheduleFactsInvalid = errors.New("alarmd scheduler: frozen schedule facts are invalid")
-	ErrProgressOffSchedule  = errors.New("alarmd scheduler: Progress next Slot is outside the frozen schedule")
-	ErrSlotContractDrift    = errors.New("alarmd scheduler: frozen Slot contract differs from requested facts")
-	ErrSlotOwnershipChanged = errors.New("alarmd scheduler: ownership changed while freezing Slot")
+	ErrScheduleFactsInvalid          = errors.New("alarmd scheduler: frozen schedule facts are invalid")
+	ErrProgressOffSchedule           = errors.New("alarmd scheduler: Progress next Slot is outside the frozen schedule")
+	ErrSlotContractDrift             = errors.New("alarmd scheduler: frozen Slot contract differs from requested facts")
+	ErrSlotOwnershipChanged          = errors.New("alarmd scheduler: ownership changed while freezing Slot")
+	ErrSnapshotRetentionInsufficient = errors.New("alarmd scheduler: Snapshot retention cannot cover recovery contract")
 )
 
 type AssignmentReader interface {
@@ -41,16 +43,19 @@ type ScheduleProgressReader interface {
 
 // ProductionSlotSource is bound to one owned Query Group. It reads current
 // control facts and returns one normal due Slot; it never executes queries,
-// evaluates data, commits state/Progress, or creates recovery state machines.
 type ProductionSlotSource struct {
-	queryGroup  execution.QueryGroupIdentity
-	workerID    string
-	assignments AssignmentReader
-	session     OwnerSession
-	catalog     SlotCatalogReader
-	progress    ScheduleProgressReader
-	now         func() time.Time
-	recovery    *RecoveryLimits
+	queryGroup                execution.QueryGroupIdentity
+	workerID                  string
+	assignments               AssignmentReader
+	session                   OwnerSession
+	catalog                   SlotCatalogReader
+	progress                  ScheduleProgressReader
+	now                       func() time.Time
+	recovery                  *RecoveryLimits
+	terminalDelay             time.Duration
+	queryReserve              time.Duration
+	snapshotRetention         time.Duration
+	publicationDelayAllowance time.Duration
 }
 
 type ProductionSlotSourceOption func(*ProductionSlotSource) error
@@ -61,6 +66,38 @@ func WithRecoveryLimits(limits RecoveryLimits) ProductionSlotSourceOption {
 			return err
 		}
 		source.recovery = &limits
+		source.terminalDelay = limits.RetryMaxDelay
+		return nil
+	}
+}
+
+func WithPostRecoveryTerminalDelay(delay time.Duration) ProductionSlotSourceOption {
+	return func(source *ProductionSlotSource) error {
+		if delay <= 0 {
+			return ErrRecoveryLimitsInvalid
+		}
+		source.terminalDelay = delay
+		return nil
+	}
+}
+
+func WithQueryDeadlineReserve(reserve time.Duration) ProductionSlotSourceOption {
+	return func(source *ProductionSlotSource) error {
+		if reserve <= 0 {
+			return ErrRecoveryLimitsInvalid
+		}
+		source.queryReserve = reserve
+		return nil
+	}
+}
+
+func WithSnapshotRetention(retention, publicationDelayAllowance time.Duration) ProductionSlotSourceOption {
+	return func(source *ProductionSlotSource) error {
+		if retention <= 0 || publicationDelayAllowance <= 0 || retention <= publicationDelayAllowance {
+			return ErrSnapshotRetentionInsufficient
+		}
+		source.snapshotRetention = retention
+		source.publicationDelayAllowance = publicationDelayAllowance
 		return nil
 	}
 }
@@ -112,6 +149,10 @@ func (source *ProductionSlotSource) Next(
 	identity := execution.ProgressIdentity{QueryGroup: source.queryGroup}
 	load, err := source.progress.LoadProgress(ctx, identity)
 	if err != nil {
+		var deterministic interface{ DeterministicControlFact() }
+		if errors.As(err, &deterministic) {
+			return FrozenSlot{}, false, &SourceBlockedError{Err: err}
+		}
 		return FrozenSlot{}, false, err
 	}
 	if err := load.Validate(identity); err != nil {
@@ -157,7 +198,22 @@ func (source *ProductionSlotSource) Next(
 	}
 	fact, err := source.catalog.FreezeSlotContract(ctx, request)
 	if err != nil {
-		return FrozenSlot{}, false, err
+		if load.Progress != nil && load.Progress.UnfinishedSlot != nil {
+			return source.slotFromProjection(ctx, initialAssignment, initialFence, *load.Progress.UnfinishedSlot, at)
+		}
+		deadline, deadlineErr := source.scheduleQueryDeadline(schedule, nextSlot)
+		if deadlineErr != nil {
+			return FrozenSlot{}, false, deadlineErr
+		}
+		recoveryUntil, _, boundaryErr := source.recoveryBoundaries(deadline)
+		if boundaryErr != nil {
+			return FrozenSlot{}, false, boundaryErr
+		}
+		var corrupt *controlplane.PersistedSnapshotCorruptError
+		if errors.As(err, &corrupt) || at.UnixMilli() >= recoveryUntil {
+			return FrozenSlot{}, false, &SourceBlockedError{Err: errors.New("frozen exact Plan set is unavailable")}
+		}
+		return FrozenSlot{}, false, &SourceRetryError{Err: err}
 	}
 	if err := fact.Validate(request); err != nil {
 		return FrozenSlot{}, false, fmt.Errorf("%w: %v", ErrSlotContractDrift, err)
@@ -166,7 +222,18 @@ func (source *ProductionSlotSource) Next(
 		fact.Contract.QueryRevision != schedule.Segment.QueryRevision {
 		return FrozenSlot{}, false, ErrSlotContractDrift
 	}
-	operation, recovery, err := source.classifyRecovery(ctx, fact, at)
+	targets, queryDeadline, err := frozenSlotExecutionFacts(fact)
+	if err != nil {
+		return FrozenSlot{}, false, err
+	}
+	recoveryUntil, keepUntil, err := source.recoveryBoundaries(queryDeadline)
+	if err != nil {
+		return FrozenSlot{}, false, err
+	}
+	if err := source.validateSnapshotRetention(fact.Contract.Slot.EvaluationTime, queryDeadline); err != nil {
+		return FrozenSlot{}, false, err
+	}
+	operation, recovery, err := source.classifyRecovery(ctx, fact.Contract.Slot.EvaluationTime, queryDeadline, at)
 	if err != nil {
 		return FrozenSlot{}, false, err
 	}
@@ -178,7 +245,11 @@ func (source *ProductionSlotSource) Next(
 		return FrozenSlot{}, false, ErrSlotOwnershipChanged
 	}
 	slot := FrozenSlot{
-		Contract: fact.Contract,
+		Contract:                       fact.Contract,
+		DuePlanTargets:                 targets.Clone(),
+		EarliestQueryDeadlineUnixMilli: queryDeadline,
+		RecoveryUntilUnixMilli:         recoveryUntil,
+		KeepUntilUnixMilli:             keepUntil,
 		Dispatch: SlotDispatchContext{Operation: operation, OwnerFence: currentFence,
 			AssignmentGeneration: currentAssignment.AssignmentGeneration},
 		ExpectedNextSlot: nextSlot,
@@ -190,26 +261,105 @@ func (source *ProductionSlotSource) Next(
 	return slot, true, nil
 }
 
+func (source *ProductionSlotSource) scheduleQueryDeadline(schedule execution.FrozenQueryGroupSchedule, slot execution.EvaluationTime) (int64, error) {
+	if source.queryReserve <= 0 {
+		return 0, ErrRecoveryLimitsInvalid
+	}
+	deadline := int64(0)
+	for _, plan := range schedule.Plans {
+		if !plan.Spec.IsAligned(slot) {
+			continue
+		}
+		candidate := time.Unix(int64(slot), 0).Add(time.Duration(plan.Spec.EvaluationIntervalSeconds)*time.Second - source.queryReserve).UnixMilli()
+		if candidate <= int64(slot)*1000 {
+			return 0, ErrSlotContractDrift
+		}
+		if deadline == 0 || candidate < deadline {
+			deadline = candidate
+		}
+	}
+	if deadline == 0 {
+		return 0, ErrSlotContractDrift
+	}
+	return deadline, nil
+}
+
+func (source *ProductionSlotSource) slotFromProjection(
+	ctx context.Context,
+	initialAssignment ownership.AssignmentRecord,
+	initialFence execution.OwnerFence,
+	projection execution.UnfinishedSlotProjection,
+	at time.Time,
+) (FrozenSlot, bool, error) {
+	if err := projection.Validate(); err != nil || projection.Contract.Slot.QueryGroup != source.queryGroup {
+		if err == nil {
+			err = ErrSlotContractDrift
+		}
+		return FrozenSlot{}, false, &SourceBlockedError{Err: err}
+	}
+	recoveryUntil, _, err := source.recoveryBoundaries(projection.EarliestQueryDeadlineUnixMilli)
+	if err != nil || projection.KeepUntilUnixMilli <= recoveryUntil {
+		return FrozenSlot{}, false, &SourceBlockedError{Err: ErrSlotContractDrift}
+	}
+	operation, recovery, err := source.classifyRecovery(ctx, projection.Contract.Slot.EvaluationTime, projection.EarliestQueryDeadlineUnixMilli, at)
+	if err != nil {
+		return FrozenSlot{}, false, err
+	}
+	currentAssignment, currentFence, err := source.currentOwnership(ctx, source.now())
+	if err != nil {
+		return FrozenSlot{}, false, err
+	}
+	if !sameAssignment(initialAssignment, currentAssignment) || initialFence != currentFence {
+		return FrozenSlot{}, false, ErrSlotOwnershipChanged
+	}
+	slot := FrozenSlot{
+		Contract: projection.Contract, DuePlanTargets: projection.DuePlanTargets.Clone(),
+		EarliestQueryDeadlineUnixMilli: projection.EarliestQueryDeadlineUnixMilli,
+		RecoveryUntilUnixMilli:         recoveryUntil, KeepUntilUnixMilli: projection.KeepUntilUnixMilli,
+		Dispatch:         SlotDispatchContext{Operation: operation, OwnerFence: currentFence, AssignmentGeneration: currentAssignment.AssignmentGeneration},
+		ExpectedNextSlot: projection.Contract.Slot.EvaluationTime, Recovery: recovery,
+	}
+	if err := slot.Validate(source.queryGroup); err != nil {
+		return FrozenSlot{}, false, &SourceBlockedError{Err: err}
+	}
+	return slot, true, nil
+}
+
+func (source *ProductionSlotSource) recoveryBoundaries(deadline int64) (int64, int64, error) {
+	if source.recovery == nil || source.terminalDelay <= 0 {
+		return 0, 0, ErrRecoveryLimitsInvalid
+	}
+	recoveryUntil := time.UnixMilli(deadline).Add(source.recovery.MaxReplayAge).UnixMilli()
+	keepUntil := time.UnixMilli(recoveryUntil).Add(source.terminalDelay).UnixMilli()
+	if recoveryUntil <= deadline || keepUntil <= recoveryUntil {
+		return 0, 0, ErrRecoveryLimitsInvalid
+	}
+	return recoveryUntil, keepUntil, nil
+}
+
+func (source *ProductionSlotSource) validateSnapshotRetention(
+	evaluationTime execution.EvaluationTime,
+	queryDeadline int64,
+) error {
+	if source.snapshotRetention == 0 {
+		return nil
+	}
+	deadlineOffset := time.Duration(queryDeadline-int64(evaluationTime)*1000) * time.Millisecond
+	required := source.publicationDelayAllowance + deadlineOffset + source.recovery.MaxReplayAge + source.terminalDelay
+	if deadlineOffset <= 0 || required <= 0 || source.snapshotRetention < required {
+		return ErrSnapshotRetentionInsufficient
+	}
+	return nil
+}
+
 func (source *ProductionSlotSource) classifyRecovery(
 	ctx context.Context,
-	fact execution.FrozenSlotContractFact,
+	evaluationTime execution.EvaluationTime,
+	deadline int64,
 	at time.Time,
 ) (execution.Operation, SlotRecoveryFacts, error) {
 	if source.recovery == nil {
 		return execution.OperationNormal, SlotRecoveryFacts{}, nil
-	}
-	deadline := int64(0)
-	for _, requirement := range fact.Requirements {
-		for _, consumer := range requirement.Consumers {
-			if consumer.ConsumerDeadlineUnixMilli <= 0 || consumer.DownstreamExecutionReserveMilliSec <= 0 ||
-				consumer.DownstreamExecutionReserveMilliSec >= consumer.ConsumerDeadlineUnixMilli {
-				return "", SlotRecoveryFacts{}, ErrSlotContractDrift
-			}
-			candidate := consumer.ConsumerDeadlineUnixMilli - consumer.DownstreamExecutionReserveMilliSec
-			if deadline == 0 || candidate < deadline {
-				deadline = candidate
-			}
-		}
 	}
 	if deadline <= 0 {
 		return "", SlotRecoveryFacts{}, ErrSlotContractDrift
@@ -218,7 +368,7 @@ func (source *ProductionSlotSource) classifyRecovery(
 		return execution.OperationNormal, SlotRecoveryFacts{Disposition: ReplayLive}, nil
 	}
 	age := at.Sub(time.UnixMilli(deadline))
-	distance, err := source.replayDistance(ctx, fact.Contract.Slot.EvaluationTime, at)
+	distance, err := source.replayDistance(ctx, evaluationTime, at)
 	if err != nil {
 		return "", SlotRecoveryFacts{}, err
 	}
@@ -228,6 +378,35 @@ func (source *ProductionSlotSource) classifyRecovery(
 		return execution.OperationNormal, facts, nil
 	}
 	return execution.OperationReplay, facts, nil
+}
+
+func frozenSlotExecutionFacts(
+	fact execution.FrozenSlotContractFact,
+) (execution.FrozenDuePlanTargets, int64, error) {
+	deadline := int64(0)
+	for _, requirement := range fact.Requirements {
+		for _, consumer := range requirement.Consumers {
+			if consumer.ConsumerDeadlineUnixMilli <= 0 || consumer.DownstreamExecutionReserveMilliSec <= 0 ||
+				consumer.DownstreamExecutionReserveMilliSec >= consumer.ConsumerDeadlineUnixMilli {
+				return execution.FrozenDuePlanTargets{}, 0, ErrSlotContractDrift
+			}
+			candidate := consumer.ConsumerDeadlineUnixMilli - consumer.DownstreamExecutionReserveMilliSec
+			if deadline == 0 || candidate < deadline {
+				deadline = candidate
+			}
+		}
+	}
+	targets := execution.FrozenDuePlanTargets{
+		DuePlanSetDigest: fact.Contract.DuePlanSetDigest,
+		Plans:            make([]execution.PlanIdentity, len(fact.DuePlans)),
+	}
+	for index := range fact.DuePlans {
+		targets.Plans[index] = fact.DuePlans[index].Identity
+	}
+	if deadline <= int64(fact.Contract.Slot.EvaluationTime)*1000 || targets.Validate(fact.Contract) != nil {
+		return execution.FrozenDuePlanTargets{}, 0, ErrSlotContractDrift
+	}
+	return targets, deadline, nil
 }
 
 func (source *ProductionSlotSource) replayDistance(

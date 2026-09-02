@@ -30,7 +30,7 @@ func TestFrozenContractKeepsScheduleAsProvenance(t *testing.T) {
 
 func TestScheduleProgressUsesQueryGroupIdentity(t *testing.T) {
 	fields := fieldNames(reflect.TypeOf(execution.ScheduleProgress{}))
-	want := []string{"Identity", "NextSlot", "LastFullSlot", "LastCompletionKind", "CurrentOrRecentGap"}
+	want := []string{"Identity", "NextSlot", "LastFullSlot", "LastCompletionKind", "CurrentOrRecentGap", "UnfinishedSlot"}
 	if !reflect.DeepEqual(fields, want) {
 		t.Fatalf("ScheduleProgress fields = %v, want %v", fields, want)
 	}
@@ -38,12 +38,60 @@ func TestScheduleProgressUsesQueryGroupIdentity(t *testing.T) {
 
 func TestProgressContractsDoNotFreezeNextSlotAfterCompletion(t *testing.T) {
 	if got, want := fieldNames(reflect.TypeOf(execution.SlotExecutionRequest{})),
-		[]string{"Contract", "Operation", "AttemptNo", "OwnerFence", "ExpectedNextSlot"}; !reflect.DeepEqual(got, want) {
+		[]string{"Contract", "DuePlanTargets", "EarliestQueryDeadlineUnixMilli", "RecoveryUntilUnixMilli", "KeepUntilUnixMilli", "Operation", "AttemptNo", "OwnerFence", "ExpectedNextSlot"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("SlotExecutionRequest fields = %v, want %v", got, want)
 	}
 	if got, want := fieldNames(reflect.TypeOf(execution.ProgressCommitRequest{})),
-		[]string{"Identity", "OwnerFence", "ExpectedNextSlot", "Completion"}; !reflect.DeepEqual(got, want) {
+		[]string{"Identity", "OwnerFence", "ExpectedNextSlot", "Completion", "Projection"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ProgressCommitRequest fields = %v, want %v", got, want)
+	}
+}
+
+func TestSlotExecutionRequestCarriesValidatedNonIdentityFrozenExecutionFacts(t *testing.T) {
+	contractRef := execution.FrozenExecutionContractRef{
+		Slot:             execution.SlotIdentity{QueryGroup: "query-group", EvaluationTime: 120},
+		SnapshotRevision: "snapshot-v1", QueryRevision: "query-v1", ScheduleRevision: "schedule-v1",
+		ScheduleSegmentStart: 60, DuePlanSetDigest: "due-v1",
+	}
+	request := execution.SlotExecutionRequest{
+		Contract: contractRef,
+		DuePlanTargets: execution.FrozenDuePlanTargets{
+			DuePlanSetDigest: contractRef.DuePlanSetDigest,
+			Plans:            []execution.PlanIdentity{{TenantID: "tenant-a", BusinessID: "2", StrategyID: "1001"}},
+		},
+		EarliestQueryDeadlineUnixMilli: 175_000,
+		RecoveryUntilUnixMilli:         775_000,
+		KeepUntilUnixMilli:             851_000,
+		Operation:                      execution.OperationNormal, AttemptNo: 1,
+		OwnerFence:       execution.OwnerFence{QueryGroup: "query-group", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1"},
+		ExpectedNextSlot: 120,
+	}
+	if err := request.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*execution.SlotExecutionRequest)
+	}{
+		{name: "missing targets", mutate: func(request *execution.SlotExecutionRequest) { request.DuePlanTargets.Plans = nil }},
+		{name: "digest mismatch", mutate: func(request *execution.SlotExecutionRequest) { request.DuePlanTargets.DuePlanSetDigest = "other" }},
+		{name: "duplicate target", mutate: func(request *execution.SlotExecutionRequest) {
+			request.DuePlanTargets.Plans = append(request.DuePlanTargets.Plans, request.DuePlanTargets.Plans[0])
+		}},
+		{name: "deadline not after Slot", mutate: func(request *execution.SlotExecutionRequest) {
+			request.EarliestQueryDeadlineUnixMilli = int64(request.Contract.Slot.EvaluationTime) * 1000
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := request
+			candidate.DuePlanTargets = request.DuePlanTargets.Clone()
+			test.mutate(&candidate)
+			if err := candidate.Validate(); err == nil {
+				t.Fatal("Validate() error=nil")
+			}
+		})
 	}
 }
 

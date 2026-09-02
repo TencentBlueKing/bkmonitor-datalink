@@ -17,15 +17,59 @@ type FinalizationMode string
 
 const (
 	FinalizationQueryRequired       FinalizationMode = "QUERY_REQUIRED"
+	FinalizationSnapshotRetry       FinalizationMode = "SNAPSHOT_RETRY"
+	FinalizationExactSetBlocked     FinalizationMode = "EXACT_SET_BLOCKED"
 	FinalizationSnapshotUnavailable FinalizationMode = "SNAPSHOT_UNAVAILABLE"
 	FinalizationGapSkipped          FinalizationMode = "GAP_SKIPPED"
 )
+
+const ReasonBlockedExactSetUnavailable ReasonCode = ReasonCode(contract.ReasonBlockedExactSetUnavailable)
 
 // FrozenDuePlanTargets is the recoverable identity projection of the frozen
 // due Plan set. Its digest must be the one already bound by the Slot contract.
 type FrozenDuePlanTargets struct {
 	DuePlanSetDigest DuePlanSetDigest
 	Plans            []PlanIdentity
+}
+
+func (targets FrozenDuePlanTargets) Clone() FrozenDuePlanTargets {
+	return FrozenDuePlanTargets{
+		DuePlanSetDigest: targets.DuePlanSetDigest,
+		Plans:            append([]PlanIdentity(nil), targets.Plans...),
+	}
+}
+
+func (targets FrozenDuePlanTargets) Validate(contractRef FrozenExecutionContractRef) error {
+	if targets.DuePlanSetDigest != contractRef.DuePlanSetDigest || len(targets.Plans) == 0 {
+		return errors.New("alarmd execution: frozen due Plan targets do not match the Slot contract")
+	}
+	seen := make(map[PlanIdentity]struct{}, len(targets.Plans))
+	for _, plan := range targets.Plans {
+		if err := plan.Validate(); err != nil {
+			return err
+		}
+		if _, duplicate := seen[plan]; duplicate {
+			return errors.New("alarmd execution: duplicate frozen due Plan target")
+		}
+		seen[plan] = struct{}{}
+	}
+	return nil
+}
+
+func (targets FrozenDuePlanTargets) Equal(other FrozenDuePlanTargets) bool {
+	if targets.DuePlanSetDigest != other.DuePlanSetDigest || len(targets.Plans) != len(other.Plans) {
+		return false
+	}
+	wanted := make(map[PlanIdentity]struct{}, len(targets.Plans))
+	for _, plan := range targets.Plans {
+		wanted[plan] = struct{}{}
+	}
+	for _, plan := range other.Plans {
+		if _, ok := wanted[plan]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // QueryFreeFinalization decides whether Execute follows the normal query path
@@ -42,6 +86,18 @@ func (finalization QueryFreeFinalization) Validate(request SlotExecutionRequest)
 		return errors.New("alarmd execution: finalization changed frozen contract")
 	}
 	switch finalization.Mode {
+	case FinalizationSnapshotRetry:
+		if finalization.ReasonCode != ReasonCode(contract.ReasonProviderUnavailable) ||
+			finalization.Targets.DuePlanSetDigest != "" || len(finalization.Targets.Plans) != 0 {
+			return errors.New("alarmd execution: Snapshot retry finalization is invalid")
+		}
+		return nil
+	case FinalizationExactSetBlocked:
+		if finalization.ReasonCode != ReasonBlockedExactSetUnavailable ||
+			finalization.Targets.DuePlanSetDigest != "" || len(finalization.Targets.Plans) != 0 {
+			return errors.New("alarmd execution: exact-set block finalization is invalid")
+		}
+		return nil
 	case FinalizationQueryRequired:
 		if finalization.ReasonCode != "" && finalization.ReasonCode != observability.ReasonNone {
 			return errors.New("alarmd execution: query-required finalization carries a reason")
@@ -58,18 +114,11 @@ func (finalization QueryFreeFinalization) Validate(request SlotExecutionRequest)
 		if finalization.ReasonCode != expectedReason {
 			return errors.New("alarmd execution: query-free finalization requires its exact reason")
 		}
-		if finalization.Targets.DuePlanSetDigest != request.Contract.DuePlanSetDigest || len(finalization.Targets.Plans) == 0 {
-			return errors.New("alarmd execution: query-free targets do not match the frozen due Plan set")
+		if err := finalization.Targets.Validate(request.Contract); err != nil {
+			return err
 		}
-		seen := make(map[PlanIdentity]struct{}, len(finalization.Targets.Plans))
-		for _, plan := range finalization.Targets.Plans {
-			if err := plan.Validate(); err != nil {
-				return err
-			}
-			if _, duplicate := seen[plan]; duplicate {
-				return errors.New("alarmd execution: duplicate query-free Plan target")
-			}
-			seen[plan] = struct{}{}
+		if !finalization.Targets.Equal(request.DuePlanTargets) {
+			return errors.New("alarmd execution: query-free targets differ from the request frozen due Plan exact-set")
 		}
 		return nil
 	default:
@@ -79,10 +128,6 @@ func (finalization QueryFreeFinalization) Validate(request SlotExecutionRequest)
 
 type QueryFreeFinalizationSource interface {
 	ResolveFinalization(context.Context, SlotExecutionRequest) (QueryFreeFinalization, error)
-	// VerifyFrozenDuePlanTargets must compare the supplied targets with the
-	// independently persisted frozen due Plan exact-set. Echoing its digest is
-	// insufficient because the identity projection cannot derive that digest.
-	VerifyFrozenDuePlanTargets(context.Context, FrozenExecutionContractRef, FrozenDuePlanTargets) error
 }
 
 type ActivationSelection string

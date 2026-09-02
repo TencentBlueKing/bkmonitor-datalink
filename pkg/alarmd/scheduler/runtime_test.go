@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
@@ -43,8 +44,14 @@ func TestRunnerUsesCurrentOwnerFenceAndOperationNormal(t *testing.T) {
 	}
 	request := executor.Request()
 	if request.Operation != execution.OperationNormal || request.OwnerFence != fence ||
-		request.ExpectedNextSlot != request.Contract.Slot.EvaluationTime {
+		request.ExpectedNextSlot != request.Contract.Slot.EvaluationTime ||
+		!request.DuePlanTargets.Equal(source.slot.DuePlanTargets) ||
+		request.EarliestQueryDeadlineUnixMilli != source.slot.EarliestQueryDeadlineUnixMilli {
 		t.Fatalf("execution request = %+v", request)
+	}
+	request.DuePlanTargets.Plans[0].StrategyID = "mutated"
+	if source.slot.DuePlanTargets.Plans[0].StrategyID == "mutated" {
+		t.Fatal("Runner request aliases FrozenSlot due Plan targets")
 	}
 }
 
@@ -118,6 +125,34 @@ func TestRunnerRejectsDispatchFenceThatChangedAfterSlotFreeze(t *testing.T) {
 	}
 }
 
+func TestRunnerBacksOffQGLocalSourceFailureAndAutomaticallyRechecks(t *testing.T) {
+	clock := newMutableClock(time.Unix(200, 0))
+	fence := execution.OwnerFence{QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "token-1"}
+	source := &fakeSlotSource{err: &SourceBlockedError{Err: errors.New("exact set unavailable")}}
+	flights, err := NewFlightCoordinatorWithRecovery(testRecoveryLimits(), clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := NewRunner("query-group-1", &fakeSession{fence: fence}, source, &blockingExecutor{}, flights, clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, attempted, err := runner.RunOne(context.Background())
+	if err != nil || !attempted || result.Result != observability.ResultRetrying ||
+		result.ReasonCode != execution.ReasonCode(execution.ReasonBlockedExactSetUnavailable) || !result.SourceRetry {
+		t.Fatalf("RunOne(blocked) = (%+v, %t, %v)", result, attempted, err)
+	}
+	if _, attempted, err = runner.RunOne(context.Background()); err != nil || attempted || source.calls != 1 {
+		t.Fatalf("RunOne(within backoff) attempted=%t calls=%d err=%v", attempted, source.calls, err)
+	}
+	clock.Advance(testRecoveryLimits().RetryMinDelay)
+	source.err = nil
+	source.slot = frozenSlot("query-group-1")
+	if _, attempted, err = runner.RunOne(context.Background()); err != nil || !attempted || source.calls != 2 {
+		t.Fatalf("RunOne(after repair) attempted=%t calls=%d err=%v", attempted, source.calls, err)
+	}
+}
+
 func frozenSlot(queryGroup execution.QueryGroupIdentity) FrozenSlot {
 	contract := execution.FrozenExecutionContractRef{
 		Slot:                 execution.SlotIdentity{QueryGroup: queryGroup, EvaluationTime: 100},
@@ -131,7 +166,11 @@ func frozenSlot(queryGroup execution.QueryGroupIdentity) FrozenSlot {
 		Operation:            execution.OperationNormal,
 		OwnerFence:           execution.OwnerFence{QueryGroup: queryGroup, OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "token-1"},
 		AssignmentGeneration: 1,
-	}, ExpectedNextSlot: contract.Slot.EvaluationTime}
+	}, DuePlanTargets: execution.FrozenDuePlanTargets{
+		DuePlanSetDigest: contract.DuePlanSetDigest,
+		Plans:            []execution.PlanIdentity{{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}},
+	}, EarliestQueryDeadlineUnixMilli: 101_000, RecoveryUntilUnixMilli: 701_000,
+		KeepUntilUnixMilli: 777_000, ExpectedNextSlot: contract.Slot.EvaluationTime}
 }
 
 type fakeSession struct {
@@ -147,10 +186,14 @@ type fakeSlotSource struct {
 	slot  FrozenSlot
 	due   bool
 	calls int
+	err   error
 }
 
 func (source *fakeSlotSource) Next(context.Context, execution.QueryGroupIdentity) (FrozenSlot, bool, error) {
 	source.calls++
+	if source.err != nil {
+		return FrozenSlot{}, false, source.err
+	}
 	if !source.due && source.slot.Contract.Slot.QueryGroup != "" {
 		return source.slot, true, nil
 	}

@@ -58,6 +58,44 @@ func TestSlotExecutionCoordinatorForwardsNonIdentityAttemptFacts(t *testing.T) {
 	}
 }
 
+func TestSlotExecutionCoordinatorReturnsScopedRetryForQueryExecutionBudgetExhaustion(t *testing.T) {
+	fixture := newFixture(t, true, "")
+	request := slotRequest(execution.OperationReplay)
+	request.AttemptNo = 3
+	fixture.ports.queryErr = &execution.QueryExecutionBudgetExhaustedError{
+		Slot: request.Contract.Slot, Operation: request.Operation, AttemptNo: request.AttemptNo,
+		Cause: context.DeadlineExceeded,
+	}
+	result, err := fixture.coordinator.Execute(context.Background(), request)
+	if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonExecutionBudgetExhausted) {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	assertTrace(t, fixture.trace, []string{"query"})
+	if len(*fixture.observations) != 1 {
+		t.Fatalf("observations=%+v, want one query completion", *fixture.observations)
+	}
+	observation := (*fixture.observations)[0]
+	if observation.Stage != observability.StageQueryCompleted || observation.Result != observability.ResultRetrying ||
+		observation.ReasonCode != observability.ReasonCode(contract.ReasonExecutionBudgetExhausted) ||
+		!errors.Is(observation.Err, context.DeadlineExceeded) {
+		t.Fatalf("query budget observation=%+v", observation)
+	}
+}
+
+func TestSlotExecutionCoordinatorDoesNotAcceptMismatchedQueryExecutionBudgetScope(t *testing.T) {
+	fixture := newFixture(t, true, "")
+	request := slotRequest(execution.OperationReplay)
+	fixture.ports.queryErr = &execution.QueryExecutionBudgetExhaustedError{
+		Slot:      execution.SlotIdentity{QueryGroup: "another-query-group", EvaluationTime: request.Contract.Slot.EvaluationTime},
+		Operation: request.Operation, AttemptNo: request.AttemptNo, Cause: context.DeadlineExceeded,
+	}
+	result, err := fixture.coordinator.Execute(context.Background(), request)
+	if err == nil || result != (execution.SlotExecutionResult{}) {
+		t.Fatalf("Execute() result=%+v error=%v, want scoped rejection", result, err)
+	}
+}
+
 func TestSlotExecutionCoordinatorProbeStopsUntilReady(t *testing.T) {
 	fixture := newFixture(t, false, "")
 	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationProbe))
@@ -961,11 +999,15 @@ type recordingPorts struct {
 	lastQuery                       execution.QueryExecutionRequest
 	eventCount                      int
 	gapMutations                    []execution.PlanGapMutation
+	queryErr                        error
 }
 
 func (ports *recordingPorts) Execute(ctx context.Context, request execution.QueryExecutionRequest, consumer execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error) {
 	ports.record("query")
 	ports.lastQuery = request
+	if ports.queryErr != nil {
+		return execution.QueryExecutionCompletion{}, ports.queryErr
+	}
 	input := validInternalExecution()
 	input.Contract = request.Contract
 	if ports.unboundEffectiveTimeFacts {

@@ -397,15 +397,27 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 	bundle.inflightWG.Add(len(runners))
 	bundle.mu.RUnlock()
 
-	for index, scheduled := range runners {
-		_, attempted, err := scheduled.lifecycle.runner.RunOne(ctx)
-		bundle.inflightWG.Done()
+	type scheduledResult struct {
+		scheduled scheduledRunner
+		attempted bool
+		err       error
+	}
+	results := make(chan scheduledResult, len(runners))
+	for _, scheduled := range runners {
+		go func(scheduled scheduledRunner) {
+			defer bundle.inflightWG.Done()
+			_, attempted, err := scheduled.lifecycle.runner.RunOne(ctx)
+			results <- scheduledResult{scheduled: scheduled, attempted: attempted, err: err}
+		}(scheduled)
+	}
+	var canceled error
+	for range runners {
+		result := <-results
+		scheduled, attempted, err := result.scheduled, result.attempted, result.err
 		if err != nil {
 			if ctx.Err() != nil {
-				for remaining := index + 1; remaining < len(runners); remaining++ {
-					bundle.inflightWG.Done()
-				}
-				return ctx.Err()
+				canceled = ctx.Err()
+				continue
 			}
 			if errors.Is(err, ownership.ErrStaleFence) || errors.Is(err, ownership.ErrNotDesired) ||
 				errors.Is(err, scheduler.ErrSlotOwnershipChanged) {
@@ -427,7 +439,7 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 			continue
 		}
 	}
-	return nil
+	return canceled
 }
 
 func (bundle *phaseTwoWorkerBundle) Shutdown(ctx context.Context) error {

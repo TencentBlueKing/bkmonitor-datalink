@@ -81,14 +81,14 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	}
 	recoveryDeadline, err := deriveRecoveryQueryDeadline(request, frozen, recoveryStartedAt)
 	if err != nil {
-		return execution.QueryExecutionCompletion{}, err
+		return execution.QueryExecutionCompletion{}, queryExecutionBudgetExhausted(request, err)
 	}
 	prepared, err := Prepare(request.Contract, frozen, source.config.MinReadyDelay)
 	if err != nil {
 		return execution.QueryExecutionCompletion{}, err
 	}
 	if !recoveryDeadline.IsZero() && !recoveryDeadline.After(source.now()) {
-		return execution.QueryExecutionCompletion{}, context.DeadlineExceeded
+		return execution.QueryExecutionCompletion{}, queryExecutionBudgetExhausted(request, context.DeadlineExceeded)
 	}
 	if err := consumer.Begin(ctx, prepared.Header); err != nil {
 		return execution.QueryExecutionCompletion{}, err
@@ -106,6 +106,9 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		}
 		permit, err := source.permits.AcquireQueryPermit(ctx, request.Contract.Slot, request.Operation, queryDeadline)
 		if err != nil {
+			if request.Operation != execution.OperationNormal && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+				return execution.QueryExecutionCompletion{}, queryExecutionBudgetExhausted(request, err)
+			}
 			return execution.QueryExecutionCompletion{}, fmt.Errorf("alarmd access: acquire physical query permit: %w", err)
 		}
 		attempt := execution.QueryAttempt{Spec: query.Spec, Slot: request.Contract.Slot, Operation: request.Operation,
@@ -135,6 +138,15 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	}
 	completion.AllRequiredCompleted = true
 	return completion, nil
+}
+
+func queryExecutionBudgetExhausted(
+	request execution.QueryExecutionRequest,
+	cause error,
+) error {
+	return &execution.QueryExecutionBudgetExhaustedError{
+		Slot: request.Contract.Slot, Operation: request.Operation, AttemptNo: request.AttemptNo, Cause: cause,
+	}
 }
 
 func deriveRecoveryQueryDeadline(

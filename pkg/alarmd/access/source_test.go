@@ -197,11 +197,11 @@ func TestSourceRejectsInvalidOrPermitConsumedRecoveryBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 		source.now = func() time.Time { return time.UnixMilli(2_000_000_000_000) }
-		if _, err := source.Execute(context.Background(), execution.QueryExecutionRequest{
+		request := execution.QueryExecutionRequest{
 			Contract: contractRef, Operation: execution.OperationReplay, AttemptNo: 2,
-		}, &recordingConsumer{}); err == nil || !strings.Contains(err.Error(), "recovery query budget") {
-			t.Fatalf("invalid recovery budget error=%v", err)
 		}
+		_, err = source.Execute(context.Background(), request, &recordingConsumer{})
+		assertQueryExecutionBudgetExhausted(t, err, request, nil)
 	})
 
 	t.Run("permit wait consumed", func(t *testing.T) {
@@ -214,12 +214,51 @@ func TestSourceRejectsInvalidOrPermitConsumedRecoveryBudget(t *testing.T) {
 		}
 		source.now = func() time.Time { return clock }
 		source.wait = func(context.Context, time.Duration) error { return nil }
-		if _, err := source.Execute(context.Background(), execution.QueryExecutionRequest{
+		request := execution.QueryExecutionRequest{
 			Contract: contractRef, Operation: execution.OperationReplay, AttemptNo: 2,
-		}, &recordingConsumer{}); !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("permit-consumed recovery budget error=%v, want deadline exceeded", err)
+		}
+		_, err = source.Execute(context.Background(), request, &recordingConsumer{})
+		assertQueryExecutionBudgetExhausted(t, err, request, context.DeadlineExceeded)
+	})
+
+	t.Run("normal permit deadline keeps live error semantics", func(t *testing.T) {
+		contractRef, frozen := frozenExecution(t)
+		clock := time.UnixMilli(2_000_000_000_000)
+		permits := deadlineCheckingQueryPermits{now: func() time.Time { return clock }, wait: func() { clock = clock.Add(26 * time.Second) }}
+		source, err := NewSource(staticFrozenPlan{plan: frozen}, &fakeProvider{}, permits, Config{MinReadyDelay: time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.now = func() time.Time { return clock }
+		source.wait = func(context.Context, time.Duration) error { return nil }
+		_, err = source.Execute(context.Background(), execution.QueryExecutionRequest{
+			Contract: contractRef, Operation: execution.OperationNormal, AttemptNo: 1,
+		}, &recordingConsumer{})
+		var exhausted *execution.QueryExecutionBudgetExhaustedError
+		if !errors.Is(err, context.DeadlineExceeded) || errors.As(err, &exhausted) {
+			t.Fatalf("normal permit deadline error=%v, want unchanged raw live deadline", err)
 		}
 	})
+}
+
+func assertQueryExecutionBudgetExhausted(
+	t *testing.T,
+	err error,
+	request execution.QueryExecutionRequest,
+	cause error,
+) {
+	t.Helper()
+	var exhausted *execution.QueryExecutionBudgetExhaustedError
+	if !errors.As(err, &exhausted) {
+		t.Fatalf("query execution budget error=%v, want typed exhaustion", err)
+	}
+	if exhausted.Slot != request.Contract.Slot || exhausted.Operation != request.Operation ||
+		exhausted.AttemptNo != request.AttemptNo {
+		t.Fatalf("query execution budget scope=%+v, want request=%+v", exhausted, request)
+	}
+	if cause != nil && !errors.Is(err, cause) {
+		t.Fatalf("query execution budget cause=%v, want %v", err, cause)
+	}
 }
 
 func TestPrepareUsesEarliestConsumerDeadlineAndDoesNotDelayEager(t *testing.T) {

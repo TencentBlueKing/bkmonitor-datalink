@@ -388,6 +388,41 @@ func TestPhaseTwoWorkerBundleTransitionsReadyAndDrainingAroundOwnedRunner(t *tes
 	}
 }
 
+func TestPhaseTwoWorkerBundleRunsOwnedQueryGroupsConcurrentlyOncePerTick(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	queryGroups := []execution.QueryGroupIdentity{"query-group-1", "query-group-2"}
+	control := &fakePhaseTwoControl{queryGroups: queryGroups}
+	first := newFakePhaseTwoQueryGroup()
+	first.runStarted, first.runRelease = make(chan struct{}), make(chan struct{})
+	second := newFakePhaseTwoQueryGroup()
+	second.runStarted, second.runRelease = make(chan struct{}), make(chan struct{})
+	owner := &fakePhaseTwoOwnership{assigned: queryGroups, runners: map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime{
+		queryGroups[0]: first, queryGroups[1]: second,
+	}}
+	bundle := mustPhaseTwoWorkerBundle(t, cfg, newPhaseTwoApplicationHealth(), control, owner)
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := bundle.Shutdown(context.Background()); err != nil {
+			t.Errorf("Shutdown() error = %v", err)
+		}
+	}()
+
+	done := make(chan error, 1)
+	go func() { done <- bundle.runScheduledOnce(context.Background()) }()
+	waitSignal(t, first.runStarted, "first concurrent Query Group")
+	waitSignal(t, second.runStarted, "second concurrent Query Group")
+	close(first.runRelease)
+	close(second.runRelease)
+	if err := <-done; err != nil {
+		t.Fatalf("runScheduledOnce() error = %v", err)
+	}
+	if first.runCount() != 1 || second.runCount() != 1 {
+		t.Fatalf("single tick runner calls = %d/%d, want 1/1", first.runCount(), second.runCount())
+	}
+}
+
 func TestPhaseTwoWorkerBundleNeverRegistersReadyAfterDraining(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(100 * time.Millisecond)

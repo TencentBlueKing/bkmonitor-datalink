@@ -66,6 +66,7 @@ const (
 	ReasonQueryPartial                     = "QUERY_PARTIAL"
 	ReasonQueryTimeout                     = "QUERY_TIMEOUT"
 	ReasonQueryUnavailable                 = "QUERY_UNAVAILABLE"
+	ReasonExecutionBudgetExhausted         = "EXECUTION_BUDGET_EXHAUSTED"
 	ReasonSnapshotUnavailable              = "SNAPSHOT_UNAVAILABLE"
 	ReasonGapSkipped                       = "GAP_SKIPPED"
 	ReasonEffectiveTimeInactive            = "EFFECTIVE_TIME_INACTIVE"

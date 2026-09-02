@@ -76,10 +76,13 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonRequiredValueTypeMismatch:        {ReasonRequiredValueTypeMismatch, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
 	ReasonRequiredValueNormalizationFailed: {ReasonRequiredValueNormalizationFailed, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
 
-	ReasonConfigDrift:           {ReasonConfigDrift, ReasonClassCoverage, reasonQueryDomainsV2},
-	ReasonQueryPartial:          {ReasonQueryPartial, ReasonClassCoverage, reasonQueryDomainsV2},
-	ReasonQueryTimeout:          {ReasonQueryTimeout, ReasonClassCoverage, reasonQueryDomainsV2},
-	ReasonQueryUnavailable:      {ReasonQueryUnavailable, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonConfigDrift:      {ReasonConfigDrift, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonQueryPartial:     {ReasonQueryPartial, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonQueryTimeout:     {ReasonQueryTimeout, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonQueryUnavailable: {ReasonQueryUnavailable, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonExecutionBudgetExhausted: {
+		ReasonExecutionBudgetExhausted, ReasonClassCoverage, ReasonDomainObservation,
+	},
 	ReasonSnapshotUnavailable:   {ReasonSnapshotUnavailable, ReasonClassCoverage, ReasonDomainObservation},
 	ReasonGapSkipped:            {ReasonGapSkipped, ReasonClassCoverage, ReasonDomainObservation},
 	ReasonEffectiveTimeInactive: {ReasonEffectiveTimeInactive, ReasonClassCoverage, ReasonDomainReceipt | ReasonDomainObservation},

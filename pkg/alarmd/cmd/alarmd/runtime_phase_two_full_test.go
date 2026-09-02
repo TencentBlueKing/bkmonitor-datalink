@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -551,7 +552,6 @@ func TestProductionPhaseTwoBundleSharesOneProcessRecoveryPermitBudgetAcrossOwned
 	releaseFirst := make(chan struct{})
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseFirst) }) }
-	defer release()
 	var uqCalls atomic.Int64
 	var inflight atomic.Int64
 	var maxInflight atomic.Int64
@@ -574,7 +574,10 @@ func TestProductionPhaseTwoBundleSharesOneProcessRecoveryPermitBudgetAcrossOwned
 		}
 		_, _ = writer.Write([]byte(`{"series":[],"status":null,"trace_id":"shared-permit","is_partial":false,"result_table_id":[]}`))
 	}))
-	defer uqServer.Close()
+	defer func() {
+		release()
+		uqServer.Close()
+	}()
 
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
@@ -627,41 +630,28 @@ func TestProductionPhaseTwoBundleSharesOneProcessRecoveryPermitBudgetAcrossOwned
 			t.Errorf("phase-two production Shutdown() error = %v", err)
 		}
 	}()
+	defer release()
 	productionOwnership := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
 	if productionOwnership.flights == nil {
 		t.Fatal("production ownership has no process-wide FlightCoordinator")
 	}
 	bundle.mu.RLock()
-	runners := make([]phaseTwoQueryGroupRuntime, 0, len(bundle.runners))
-	for _, lifecycle := range bundle.runners {
-		runners = append(runners, lifecycle.runner)
-	}
+	runnerCount := len(bundle.runners)
 	bundle.mu.RUnlock()
-	if len(runners) != 2 {
-		t.Fatalf("production runners = %d, want two owned Query Groups", len(runners))
+	if runnerCount != 2 {
+		t.Fatalf("production runners = %d, want two owned Query Groups", runnerCount)
 	}
 	clock.Store(time.Unix(base, 0).Add(500 * time.Millisecond).UnixMilli())
 
-	type runResult struct {
-		attempted bool
-		err       error
-	}
-	results := make(chan runResult, 2)
-	go func() {
-		_, attempted, runErr := runners[0].RunOne(ctx)
-		results <- runResult{attempted: attempted, err: runErr}
-	}()
+	tickDone := make(chan error, 1)
+	go func() { tickDone <- bundle.runScheduledOnce(ctx) }()
 	select {
 	case <-firstEntered:
-	case result := <-results:
-		t.Fatalf("first owned Query Group returned before UQ attempted=%t error=%v", result.attempted, result.err)
+	case err := <-tickDone:
+		t.Fatalf("production tick returned before first UQ: %v", err)
 	case <-time.After(3 * time.Second):
 		t.Fatal("first owned Query Group did not enter UQ")
 	}
-	go func() {
-		_, attempted, runErr := runners[1].RunOne(ctx)
-		results <- runResult{attempted: attempted, err: runErr}
-	}()
 	select {
 	case <-queued:
 		if got := uqCalls.Load(); got != 1 {
@@ -673,14 +663,148 @@ func TestProductionPhaseTwoBundleSharesOneProcessRecoveryPermitBudgetAcrossOwned
 		t.Fatal("second owned Query Group neither queued for recovery nor entered UQ")
 	}
 	release()
-	for range runners {
-		result := <-results
-		if result.err != nil || !result.attempted {
-			t.Fatalf("owned Query Group RunOne() attempted=%t error=%v", result.attempted, result.err)
-		}
+	if err := <-tickDone; err != nil {
+		t.Fatalf("production tick error = %v", err)
 	}
 	if uqCalls.Load() != 2 || maxInflight.Load() != 1 {
 		t.Fatalf("process UQ calls/max inflight = %d/%d, want 2/1", uqCalls.Load(), maxInflight.Load())
+	}
+}
+
+func TestProductionPhaseTwoBundleLetsNormalUseRemainingProcessPermitDuringRecovery(t *testing.T) {
+	address, redisClient := startPhaseTwoRedis(t)
+	ctx := context.Background()
+	installTwoPhaseTwoStrategies(t, ctx, redisClient)
+
+	base := time.Now().Unix()
+	var clock atomic.Int64
+	clock.Store(time.Unix(base, 0).UnixMilli())
+	now := func() time.Time { return time.UnixMilli(clock.Load()) }
+	var setup atomic.Bool
+	setup.Store(true)
+	recoveryEntered := make(chan struct{})
+	normalEntered := make(chan struct{})
+	releaseQueries := make(chan struct{})
+	var recoveryOnce, normalOnce, releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseQueries) }) }
+	var recoveryCalls, normalCalls atomic.Int64
+	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+			return
+		}
+		memoryQuery := bytes.Contains(body, []byte("system.mem"))
+		if !setup.Load() {
+			if memoryQuery {
+				normalCalls.Add(1)
+				normalOnce.Do(func() { close(normalEntered) })
+				select {
+				case <-recoveryEntered:
+				case <-releaseQueries:
+				}
+			} else {
+				recoveryCalls.Add(1)
+				recoveryOnce.Do(func() { close(recoveryEntered) })
+				<-releaseQueries
+			}
+		}
+		_, _ = writer.Write([]byte(`{"series":[],"status":null,"trace_id":"normal-recovery-isolation","is_partial":false,"result_table_id":[]}`))
+	}))
+	defer uqServer.Close()
+
+	cfg := validGoAccessRuntimeConfig()
+	cfg.Redis.Address = address
+	cfg.Redis.StatePrefix = "alarmd-g3b-normal-recovery-isolation"
+	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
+	cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.DownstreamExecutionReserve = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
+	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 1
+	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Worker.RegistrationRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.LeaseTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Ownership.LeaseRenewInterval = config.Duration(time.Minute)
+
+	var observationsMu sync.Mutex
+	var observations []observability.Observation
+	bundle, err := openProductionPhaseTwoBundleWithDependencies(
+		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime),
+		newPhaseTwoApplicationHealth(),
+		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
+			return controlplane.NewLegacyRedisStrategySource(client, prefix)
+		},
+		phaseTwoProductionExternalDependencies{
+			Now: now, HTTPClient: uqServer.Client(),
+			AdditionalObserver: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+				observationsMu.Lock()
+				defer observationsMu.Unlock()
+				observations = append(observations, observation)
+			}),
+			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
+				return &recordingPhaseTwoEventSink{}, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("openProductionPhaseTwoBundleWithDependencies() error = %v", err)
+	}
+	if err := bundle.Start(ctx); err != nil {
+		t.Fatalf("phase-two production Start() error = %v", err)
+	}
+	defer func() {
+		release()
+		if err := bundle.Shutdown(ctx); err != nil {
+			t.Errorf("phase-two production Shutdown() error = %v", err)
+		}
+	}()
+
+	productionOwnership := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
+	queryGroupsByStrategy := make(map[string]execution.QueryGroupIdentity, 2)
+	for _, queryGroup := range bundle.queryGroups {
+		schedule, scheduleErr := productionOwnership.dependencies.Catalog.ReadInitialFrozenSchedule(ctx, queryGroup)
+		if scheduleErr != nil || len(schedule.Plans) != 1 {
+			t.Fatalf("Query Group %s schedule=%+v error=%v", queryGroup, schedule, scheduleErr)
+		}
+		queryGroupsByStrategy[schedule.Plans[0].Identity.StrategyID] = queryGroup
+	}
+	bundle.mu.RLock()
+	normalRunner := bundle.runners[queryGroupsByStrategy["1002"]].runner
+	bundle.mu.RUnlock()
+	if _, attempted, runErr := normalRunner.RunOne(ctx); runErr != nil || !attempted {
+		t.Fatalf("prepare normal Query Group attempted=%t error=%v", attempted, runErr)
+	}
+	setup.Store(false)
+	observationsMu.Lock()
+	observations = nil
+	observationsMu.Unlock()
+	clock.Store(time.Unix(base+1, 0).UnixMilli())
+
+	tickDone := make(chan error, 1)
+	go func() { tickDone <- bundle.runScheduledOnce(ctx) }()
+	waitSignal(t, recoveryEntered, "recovery Query Group UQ")
+	waitSignal(t, normalEntered, "normal Query Group UQ while recovery is inflight")
+	release()
+	if err := <-tickDone; err != nil {
+		t.Fatalf("production tick error = %v", err)
+	}
+	if recoveryCalls.Load() != 1 || normalCalls.Load() != 1 {
+		t.Fatalf("single production tick recovery/normal UQ calls = %d/%d, want 1/1",
+			recoveryCalls.Load(), normalCalls.Load())
+	}
+	observationsMu.Lock()
+	defer observationsMu.Unlock()
+	admitted := make(map[observability.Operation]int)
+	for _, observation := range observations {
+		if observation.Stage == observability.StageQueryAdmission && observation.Result == observability.ResultSuccess {
+			admitted[observation.Operation]++
+		}
+	}
+	if admitted[observability.OperationReplay] == 0 || admitted[observability.OperationNormal] == 0 {
+		t.Fatalf("query permit admissions by operation = %v, want replay and normal", admitted)
 	}
 }
 

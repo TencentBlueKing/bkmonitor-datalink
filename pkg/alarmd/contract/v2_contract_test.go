@@ -1064,6 +1064,12 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 		ReasonAllowedForV2(ReasonRecordInvalid, ReasonDomainQueryResult) {
 		t.Fatal("QueryResult Reason domain accepted an invalid mapping")
 	}
+	executionBudget, ok := LookupReasonV2(ReasonExecutionBudgetExhausted)
+	if !ok || executionBudget.Class != ReasonClassCoverage ||
+		executionBudget.Domains != ReasonDomainObservation ||
+		ReasonAllowedForV2(ReasonExecutionBudgetExhausted, ReasonDomainQueryResult) {
+		t.Fatalf("execution budget reason definition = (%#v, %t)", executionBudget, ok)
+	}
 	for _, reason := range []string{
 		ReasonEffectiveTimeInactive,
 		ReasonEffectiveTimeUnknown,

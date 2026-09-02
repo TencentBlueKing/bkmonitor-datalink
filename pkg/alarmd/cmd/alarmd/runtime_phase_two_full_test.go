@@ -410,6 +410,31 @@ func TestProductionPhaseTwoBundleRebuildsExpiredSnapshotReferencedByPersistentAc
 }
 
 func TestProductionPhaseTwoBundleActivatesLatestSnapshotWhenPreviousPayloadExpired(t *testing.T) {
+	tests := []struct {
+		name                 string
+		oldValue             string
+		newValue             string
+		incompleteActivation bool
+		wantRecovery         bool
+	}{
+		{name: "same Query Group exact activation coverage", oldValue: `"threshold": 80`, newValue: `"threshold": 81`, wantRecovery: true},
+		{name: "Query Group identity changed", oldValue: `"result_table_id": "system.cpu"`, newValue: `"result_table_id": "system.cpu.changed"`},
+		{name: "activation Plan coverage incomplete", oldValue: `"threshold": 80`, newValue: `"threshold": 81`, incompleteActivation: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			testProductionPhaseTwoStrandedLatest(t, test.oldValue, test.newValue, test.incompleteActivation, test.wantRecovery)
+		})
+	}
+}
+
+func testProductionPhaseTwoStrandedLatest(
+	t *testing.T,
+	oldValue string,
+	newValue string,
+	incompleteActivation bool,
+	wantRecovery bool,
+) {
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
 	strategyDocument, err := os.ReadFile("testdata/g1_full_threshold_strategy.json")
@@ -462,7 +487,7 @@ func TestProductionPhaseTwoBundleActivatesLatestSnapshotWhenPreviousPayloadExpir
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed := bytes.Replace(strategyDocument, []byte(`"threshold": 80`), []byte(`"threshold": 81`), 1)
+	changed := bytes.Replace(strategyDocument, []byte(oldValue), []byte(newValue), 1)
 	if bytes.Equal(changed, strategyDocument) {
 		t.Fatal("test strategy threshold did not change")
 	}
@@ -489,20 +514,43 @@ func TestProductionPhaseTwoBundleActivatesLatestSnapshotWhenPreviousPayloadExpir
 	nowUnix.Add(2)
 
 	catalogPrefix := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog")
+	if incompleteActivation {
+		incomplete := oldActivation
+		extra := incomplete.Plans[0]
+		extra.Fact.Plan.StrategyID = "2002"
+		extra.Fact.Selected.Identity = extra.Fact.Plan
+		incomplete.Plans = append(incomplete.Plans, extra)
+		payload, marshalErr := json.Marshal(incomplete)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if err := redisClient.Set(ctx, catalogPrefix+":activation", payload, 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
 	oldSnapshotKey := catalogPrefix + ":snapshot:" + string(oldActivation.Current.SnapshotRevision)
 	if err := redisClient.Del(ctx, oldSnapshotKey).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if result, refreshErr := firstControl.Refresh(ctx); refreshErr != nil || result.Status != phaseTwoControlHealthy ||
-		len(result.QueryGroups) != 1 {
-		t.Fatalf("recovered Refresh()=(%+v,%v), want healthy latest activation", result, refreshErr)
+	result, refreshErr := firstControl.Refresh(ctx)
+	if wantRecovery {
+		if refreshErr != nil || result.Status != phaseTwoControlHealthy || len(result.QueryGroups) != 1 {
+			t.Fatalf("recovered Refresh()=(%+v,%v), want healthy latest activation", result, refreshErr)
+		}
+	} else if refreshErr != nil || result.Status != phaseTwoControlDegradedLastGood ||
+		!errors.Is(result.Cause, controlplane.ErrSnapshotUnavailable) {
+		t.Fatalf("rejected Refresh()=(%+v,%v), want Snapshot unavailable without activation", result, refreshErr)
 	}
 	activation, err := firstControl.dependencies.Repository.LoadActivation(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if activation.Current != latest.Publication || activation.RecordRevision != oldActivation.RecordRevision+1 {
-		t.Fatalf("recovered activation = %+v, want latest publication %+v", activation, latest.Publication)
+	if wantRecovery {
+		if activation.Current != latest.Publication || activation.RecordRevision != oldActivation.RecordRevision+1 {
+			t.Fatalf("recovered activation = %+v, want latest publication %+v", activation, latest.Publication)
+		}
+	} else if activation.Current != oldActivation.Current || activation.RecordRevision != oldActivation.RecordRevision {
+		t.Fatalf("rejected recovery mutated activation = %+v, want old publication %+v", activation, oldActivation.Current)
 	}
 }
 

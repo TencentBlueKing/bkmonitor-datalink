@@ -654,16 +654,24 @@ func TestProductionPhaseTwoControlKeepsLastGoodAcrossFailedRefreshAndRecovery(t 
 func TestProductionPhaseTwoControlPreservesPrimaryRefreshClassificationWithoutLastGoodPayload(t *testing.T) {
 	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-current", PublicationEpoch: 2}
 	tests := []struct {
-		name       string
-		cause      error
-		sourceKind observability.SourceKind
-		reason     observability.ReasonCode
+		name        string
+		cause       error
+		snapshotErr error
+		wantGroups  int
+		sourceKind  observability.SourceKind
+		reason      observability.ReasonCode
 	}{
 		{name: "legacy source", cause: controlplane.ErrLegacySourceIncomplete,
-			sourceKind: observability.SourceKindLegacyStrategy, reason: observability.ReasonContractRetryable},
+			snapshotErr: controlplane.ErrSnapshotUnavailable,
+			sourceKind:  observability.SourceKindLegacyStrategy, reason: observability.ReasonContractRetryable},
 		{name: "snapshot", cause: controlplane.ErrSnapshotUnavailable,
-			sourceKind: observability.SourceKindCompiledSnapshot, reason: observability.ReasonContractRetryable},
-		{name: "occurrence collision", cause: controlplane.ErrPublicationOccurrenceCollision,
+			snapshotErr: controlplane.ErrSnapshotUnavailable,
+			sourceKind:  observability.SourceKindCompiledSnapshot, reason: observability.ReasonContractRetryable},
+		{name: "occurrence collision without active payload", cause: controlplane.ErrPublicationOccurrenceCollision,
+			snapshotErr: controlplane.ErrSnapshotUnavailable,
+			sourceKind:  observability.SourceKindLegacyStrategy, reason: observability.ReasonContractDeterministic},
+		{name: "occurrence collision with active payload", cause: controlplane.ErrPublicationOccurrenceCollision,
+			wantGroups: 1,
 			sourceKind: observability.SourceKindLegacyStrategy, reason: observability.ReasonContractDeterministic},
 	}
 	for _, test := range tests {
@@ -672,8 +680,10 @@ func TestProductionPhaseTwoControlPreservesPrimaryRefreshClassificationWithoutLa
 				Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{},
 				Reconciler: &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{{}}, errs: []error{test.cause}},
 				Activator:  &fakeInitialScheduleActivator{}, Repository: &fakeProductionCatalogRepository{
-					activation:  controlplane.ActivationState{RecordRevision: 2, Current: publication},
-					snapshotErr: controlplane.ErrSnapshotUnavailable,
+					activation: controlplane.ActivationState{RecordRevision: 2, Current: publication},
+					snapshot: controlplane.PublishedSnapshot{Publication: publication,
+						QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-healthy"}}},
+					snapshotErr: test.snapshotErr,
 				},
 				Schedules: &fakeScheduleProjection{}, Progress: &fakeProductionProgressReader{},
 				RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
@@ -683,7 +693,7 @@ func TestProductionPhaseTwoControlPreservesPrimaryRefreshClassificationWithoutLa
 			}
 			result, err := control.Refresh(context.Background())
 			if err != nil || result.Status != phaseTwoControlDegradedLastGood || result.SourceKind != test.sourceKind ||
-				result.ReasonCode != test.reason || !errors.Is(result.Cause, test.cause) || len(result.QueryGroups) != 0 {
+				result.ReasonCode != test.reason || !errors.Is(result.Cause, test.cause) || len(result.QueryGroups) != test.wantGroups {
 				t.Fatalf("Refresh()=(%#v,%v), want degraded source=%s reason=%s cause=%v",
 					result, err, test.sourceKind, test.reason, test.cause)
 			}

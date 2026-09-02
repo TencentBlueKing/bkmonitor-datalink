@@ -423,6 +423,10 @@ func (runtime *productionPhaseTwoControl) keepLastGood(
 	sourceKind observability.SourceKind,
 	cause error,
 ) (phaseTwoControlRefreshResult, error) {
+	reason := observability.ReasonContractRetryable
+	if errors.Is(cause, controlplane.ErrPublicationOccurrenceCollision) {
+		reason = observability.ReasonContractDeterministic
+	}
 	state, err := runtime.dependencies.Repository.LoadActivation(ctx)
 	if errors.Is(err, controlplane.ErrActivationUnavailable) {
 		return phaseTwoControlRefreshResult{}, cause
@@ -433,10 +437,6 @@ func (runtime *productionPhaseTwoControl) keepLastGood(
 	queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
 	if err != nil {
 		if errors.Is(err, controlplane.ErrSnapshotUnavailable) {
-			reason := observability.ReasonContractRetryable
-			if errors.Is(cause, controlplane.ErrPublicationOccurrenceCollision) {
-				reason = observability.ReasonContractDeterministic
-			}
 			return phaseTwoControlRefreshResult{
 				Status: phaseTwoControlDegradedLastGood, SourceKind: sourceKind,
 				ReasonCode: reason, Cause: cause,
@@ -446,7 +446,7 @@ func (runtime *productionPhaseTwoControl) keepLastGood(
 	}
 	return phaseTwoControlRefreshResult{
 		QueryGroups: queryGroups, Status: phaseTwoControlDegradedLastGood, SourceKind: sourceKind,
-		ReasonCode: observability.ReasonContractRetryable, Cause: cause,
+		ReasonCode: reason, Cause: cause,
 	}, nil
 }
 

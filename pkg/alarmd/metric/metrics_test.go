@@ -10,6 +10,7 @@
 package metric
 
 import (
+	"context"
 	"math"
 	"net/http/httptest"
 	"strings"
@@ -20,7 +21,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 func TestRecorderUsesPrivateRegistries(t *testing.T) {
@@ -46,6 +49,14 @@ func TestUnknownLabelValuesCollapseToOther(t *testing.T) {
 	recorder.RecordRecords(Stage(sensitive), Mode(sensitive), Direction(sensitive), RecordType(sensitive), 1)
 	recorder.RecordPipelineLatency(Stage(sensitive), Stage(sensitive), Mode(sensitive), time.Second)
 	recorder.RecordShadowCompare(Component(sensitive), CompareResult(sensitive))
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.Component(sensitive),
+		Stage:     observability.Stage(sensitive),
+		Result:    observability.Result(sensitive),
+		ReasonCode: observability.ReasonCode(
+			sensitive,
+		),
+	})
 
 	got := scrape(t, recorder)
 	if strings.Contains(got, sensitive) || strings.Contains(got, "strategy-123") || strings.Contains(got, "internal.invalid") {
@@ -66,12 +77,92 @@ func TestRecordRecordsRejectsNonFiniteCounts(t *testing.T) {
 	}
 }
 
+func TestObservationRejectsNegativeDurationAndCounts(t *testing.T) {
+	t.Parallel()
+
+	recorder := NewRecorder(BuildInfo{})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentDetect,
+		Stage:     observability.StageDetectCompleted,
+		Result:    observability.ResultSuccess,
+		Direction: observability.DirectionInternal,
+		Duration:  -time.Second,
+		Counts:    observability.Counts{Messages: -1},
+	})
+	got := scrape(t, recorder)
+	if strings.Contains(got, "bkmonitor_alarmd_observation_duration_seconds") {
+		t.Fatalf("negative duration created a histogram:\n%s", got)
+	}
+	if strings.Contains(got, "bkmonitor_alarmd_observed_messages_total") {
+		t.Fatalf("negative count created a counter:\n%s", got)
+	}
+}
+
+func TestKnownM0ReasonMapsToBoundedMetricValue(t *testing.T) {
+	t.Parallel()
+
+	recorder := NewRecorder(BuildInfo{})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentAdapter, Stage: observability.StageRejected,
+		Result: observability.ResultTerminal, Direction: observability.DirectionInternal,
+		ReasonCode: observability.ReasonCode(contract.ReasonRecordIdentityConflict),
+	})
+	got := scrape(t, recorder)
+	if !strings.Contains(got, `reason_code="contract_deterministic"`) {
+		t.Fatalf("known M0 reason was not mapped to the bounded metric value:\n%s", got)
+	}
+	if strings.Contains(got, contract.ReasonRecordIdentityConflict) {
+		t.Fatalf("exact M0 reason leaked into metric labels:\n%s", got)
+	}
+}
+
+func TestObservationCountsRemainSeparatedByStageDirectionAndResult(t *testing.T) {
+	t.Parallel()
+
+	recorder := NewRecorder(BuildInfo{})
+	for _, observation := range []observability.Observation{
+		{
+			Component: observability.ComponentDetect,
+			Stage:     observability.StageDetectCompleted,
+			Result:    observability.ResultSuccess,
+			Direction: observability.DirectionInternal,
+			Counts:    observability.Counts{Records: 2},
+		},
+		{
+			Component: observability.ComponentTrigger,
+			Stage:     observability.StageTriggerCompleted,
+			Result:    observability.ResultTerminal,
+			Direction: observability.DirectionOutput,
+			Counts:    observability.Counts{Records: 3},
+		},
+	} {
+		recorder.Observe(context.Background(), observation)
+	}
+	got := scrape(t, recorder)
+	for _, want := range []string{
+		`bkmonitor_alarmd_observed_records_total{direction="internal",result="success",stage="detect_completed"} 2`,
+		`bkmonitor_alarmd_observed_records_total{direction="output",result="terminal",stage="trigger_completed"} 3`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stage count is missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestMetricNamesAndLabelsMatchApprovedContract(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
 	recorder.RecordProcess(StageTrigger, ModeShadow, StatusSuccess, ErrorNone, time.Second)
 	recorder.RecordRecords(StageTrigger, ModeShadow, DirectionInput, RecordDetectionOutcome, 2)
 	recorder.RecordPipelineLatency(StageDetect, StageTrigger, ModeShadow, time.Second)
 	recorder.RecordShadowCompare(ComponentTrigger, CompareMatch)
+	recorder.Observe(context.Background(), observability.Observation{
+		Component:  observability.ComponentTrigger,
+		Stage:      observability.StageTriggerCompleted,
+		Result:     observability.ResultSuccess,
+		Direction:  observability.DirectionOutput,
+		ReasonCode: observability.ReasonNone,
+		Duration:   time.Second,
+	})
 
 	got := scrape(t, recorder)
 	wants := []string{
@@ -81,6 +172,9 @@ func TestMetricNamesAndLabelsMatchApprovedContract(t *testing.T) {
 		"bkmonitor_alarmd_records_total",
 		"bkmonitor_alarmd_pipeline_latency_seconds_bucket",
 		"bkmonitor_alarmd_shadow_compare_total",
+		"bkmonitor_alarmd_observation_total",
+		"bkmonitor_alarmd_operation_total",
+		"bkmonitor_alarmd_observation_duration_seconds_bucket",
 		`error_code="none"`,
 		`record_type="detection_outcome"`,
 		`from_stage="detect"`,
@@ -100,6 +194,9 @@ func TestHistogramBucketsMatchPythonCompatibleContract(t *testing.T) {
 	if got, want := pipelineLatencyBuckets, []float64{1, 2, 3, 5, 10, 15, 20, 30, 60, 180, 300}; !equalFloats(got, want) {
 		t.Fatalf("pipeline latency buckets = %v, want %v", got, want)
 	}
+	if got, want := observationDurationBuckets, []float64{0.005, 0.01, 0.05, 0.1, 1, 30}; !equalFloats(got, want) {
+		t.Fatalf("observation duration buckets = %v, want %v", got, want)
+	}
 }
 
 func TestCustomMetricSeriesBudget(t *testing.T) {
@@ -107,13 +204,20 @@ func TestCustomMetricSeriesBudget(t *testing.T) {
 	if err := recorder.BindLifecycle(&mutableLifecycleSource{snapshot: lifecycleBudgetSnapshot()}); err != nil {
 		t.Fatalf("BindLifecycle() error = %v", err)
 	}
+	bindBudgetHealthAndResources(t, recorder)
 	populateAllCustomLabelCombinations(recorder)
 	got := countCustomSeries(t, recorder)
-	if want := 494; MaxCustomSeries() != want {
-		t.Fatalf("MaxCustomSeries() = %d, want %d", MaxCustomSeries(), want)
+	if want := 18498; MaxCustomSeries() != want {
+		t.Fatalf("MaxCustomSeries() = %d, want formula result %d", MaxCustomSeries(), want)
 	}
-	if want := MaxCustomSeries(); got != want {
-		t.Fatalf("registered custom series = %d, calculated maximum = %d", got, want)
+	if gotObservation := countObservationSeries(t, recorder); gotObservation != observationCustomSeries() {
+		t.Fatalf("observation series = %d, formula = %d", gotObservation, observationCustomSeries())
+	}
+	if got > MaxCustomSeries() {
+		t.Fatalf("registered custom series = %d, calculated maximum = %d", got, MaxCustomSeries())
+	}
+	if MaxCustomSeries() > CustomSeriesBudget {
+		t.Fatalf("calculated maximum custom series = %d, budget = %d", MaxCustomSeries(), CustomSeriesBudget)
 	}
 	if got > CustomSeriesBudget {
 		t.Fatalf("maximum custom series = %d, budget = %d", got, CustomSeriesBudget)
@@ -129,19 +233,33 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		t.Fatalf("BindLifecycle() error = %v", err)
 	}
 	expected := map[string]string{
-		"bkmonitor_alarmd_build_info":               "variableLabels: {version,commit,schema_version}",
-		"bkmonitor_alarmd_process_duration_seconds": "variableLabels: {stage,mode}",
-		"bkmonitor_alarmd_process_total":            "variableLabels: {stage,mode,status,error_code}",
-		"bkmonitor_alarmd_records_total":            "variableLabels: {stage,mode,direction,record_type}",
-		"bkmonitor_alarmd_pipeline_latency_seconds": "variableLabels: {from_stage,to_stage,mode}",
-		"bkmonitor_alarmd_shadow_compare_total":     "variableLabels: {component,result}",
-		"bkmonitor_alarmd_ready":                    "variableLabels: {}",
-		"bkmonitor_alarmd_assigned_claims":          "variableLabels: {}",
-		"bkmonitor_alarmd_fatal_total":              "variableLabels: {}",
-		"bkmonitor_alarmd_draining":                 "variableLabels: {}",
-		"bkmonitor_alarmd_drain_total":              "variableLabels: {result}",
-		"bkmonitor_alarmd_inflight_records":         "variableLabels: {}",
-		"bkmonitor_alarmd_consumer_lag_records":     "variableLabels: {}",
+		"bkmonitor_alarmd_build_info":                     "variableLabels: {version,commit,schema_version}",
+		"bkmonitor_alarmd_process_duration_seconds":       "variableLabels: {stage,mode}",
+		"bkmonitor_alarmd_process_total":                  "variableLabels: {stage,mode,status,error_code}",
+		"bkmonitor_alarmd_records_total":                  "variableLabels: {stage,mode,direction,record_type}",
+		"bkmonitor_alarmd_pipeline_latency_seconds":       "variableLabels: {from_stage,to_stage,mode}",
+		"bkmonitor_alarmd_shadow_compare_total":           "variableLabels: {component,result}",
+		"bkmonitor_alarmd_observation_total":              "variableLabels: {component,stage,result,reason_code}",
+		"bkmonitor_alarmd_operation_total":                "variableLabels: {operation,result,reason_code}",
+		"bkmonitor_alarmd_observation_duration_seconds":   "variableLabels: {component,stage,result}",
+		"bkmonitor_alarmd_observed_messages_total":        "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_observed_records_total":         "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_observed_plans_total":           "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_observed_levels_total":          "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_observed_events_total":          "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_observed_bytes_total":           "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_observed_keys_total":            "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_observed_state_bytes_total":     "variableLabels: {stage,direction,result}",
+		"bkmonitor_alarmd_message_receipt_status_total":   "variableLabels: {status}",
+		"bkmonitor_alarmd_message_receipt_business_total": "variableLabels: {field}",
+		"bkmonitor_alarmd_message_receipt_delivery_total": "variableLabels: {outcome}",
+		"bkmonitor_alarmd_ready":                          "variableLabels: {}",
+		"bkmonitor_alarmd_assigned_claims":                "variableLabels: {}",
+		"bkmonitor_alarmd_fatal_total":                    "variableLabels: {}",
+		"bkmonitor_alarmd_draining":                       "variableLabels: {}",
+		"bkmonitor_alarmd_drain_total":                    "variableLabels: {result}",
+		"bkmonitor_alarmd_inflight_records":               "variableLabels: {}",
+		"bkmonitor_alarmd_consumer_lag_records":           "variableLabels: {}",
 	}
 
 	descriptions := make(chan string)
@@ -185,6 +303,25 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 
 func lifecycleBudgetSnapshot() lifecycle.Snapshot {
 	return lifecycle.Snapshot{ConsumerLagKnown: true}
+}
+
+func bindBudgetHealthAndResources(t *testing.T, recorder *Recorder) {
+	t.Helper()
+	health := observability.NewHealthTracker(observability.HealthSnapshot{
+		State: observability.HealthReady, ConfigLoaded: true, SchemaReady: true,
+		AssignmentReady: true, RuntimeStateReady: true, OutputSinkReady: true,
+	})
+	if err := recorder.BindHealth(health); err != nil {
+		t.Fatalf("BindHealth() error = %v", err)
+	}
+	resources, err := observability.NewResourceGovernor(observability.ResourceGovernorConfig{})
+	if err != nil {
+		t.Fatalf("NewResourceGovernor() error = %v", err)
+	}
+	resources.Observe(observability.ResourceSnapshot{})
+	if err := recorder.BindResources(resources); err != nil {
+		t.Fatalf("BindResources() error = %v", err)
+	}
 }
 
 func metricNameFromDescriptor(description string) string {
@@ -250,9 +387,75 @@ func populateAllCustomLabelCombinations(recorder *Recorder) {
 			recorder.RecordShadowCompare(component, result)
 		}
 	}
+	for _, pair := range observability.AllComponentStages() {
+		for _, result := range observability.AllResults() {
+			for _, reason := range observability.AllReasons(pair.Component) {
+				recorder.Observe(context.Background(), observability.Observation{
+					Component:  pair.Component,
+					Stage:      pair.Stage,
+					Result:     result,
+					Direction:  observability.DirectionOther,
+					ReasonCode: metricInputReason(reason),
+					Duration:   time.Second,
+				})
+			}
+		}
+	}
+	for _, operation := range observability.AllOperations() {
+		for _, result := range observability.AllResults() {
+			for _, reason := range observability.AllMetricReasons() {
+				recorder.Observe(context.Background(), observability.Observation{
+					Component: observability.ComponentResource, Stage: observability.StageResourceSoft,
+					Result: result, Operation: operation, Direction: observability.DirectionOther,
+					ReasonCode: metricInputReason(reason),
+				})
+			}
+		}
+	}
+	for _, pair := range observability.AllComponentStages() {
+		for _, direction := range observability.AllDirections() {
+			for _, result := range observability.AllResults() {
+				recorder.Observe(context.Background(), observability.Observation{
+					Component: pair.Component, Stage: pair.Stage, Result: result, Direction: direction,
+					Counts: observability.Counts{
+						Messages: 1, Records: 1, Plans: 1, Levels: 1,
+						Events: 1, Bytes: 1, Keys: 1, StateBytes: 1,
+					},
+				})
+			}
+		}
+	}
+}
+
+func metricInputReason(metricReason observability.ReasonCode) observability.ReasonCode {
+	switch metricReason {
+	case observability.ReasonContractDeterministic:
+		return observability.ReasonCode(contract.ReasonRecordInvalid)
+	case observability.ReasonContractRetryable:
+		return observability.ReasonCode(contract.ReasonKafkaUnavailable)
+	case observability.ReasonContractCoverage:
+		return observability.ReasonCode(contract.ReasonQueryPartial)
+	default:
+		return metricReason
+	}
 }
 
 func countCustomSeries(t *testing.T, recorder *Recorder) int {
+	return countSeries(t, recorder, func(name string) bool {
+		return strings.HasPrefix(name, "bkmonitor_alarmd_")
+	})
+}
+
+func countObservationSeries(t *testing.T, recorder *Recorder) int {
+	return countSeries(t, recorder, func(name string) bool {
+		return name == "bkmonitor_alarmd_observation_total" ||
+			name == "bkmonitor_alarmd_operation_total" ||
+			name == "bkmonitor_alarmd_observation_duration_seconds" ||
+			strings.HasPrefix(name, "bkmonitor_alarmd_observed_")
+	})
+}
+
+func countSeries(t *testing.T, recorder *Recorder, include func(string) bool) int {
 	t.Helper()
 
 	families, err := recorder.registry.Gather()
@@ -261,7 +464,7 @@ func countCustomSeries(t *testing.T, recorder *Recorder) int {
 	}
 	total := 0
 	for _, family := range families {
-		if !strings.HasPrefix(family.GetName(), "bkmonitor_alarmd_") {
+		if !include(family.GetName()) {
 			continue
 		}
 		switch family.GetType() {

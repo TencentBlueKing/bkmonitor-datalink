@@ -31,6 +31,10 @@ type syncMessageProducer interface {
 	Close() error
 }
 
+type syncBatchMessageProducer interface {
+	SendMessages([]*sarama.ProducerMessage) error
+}
+
 type closeableClient interface {
 	Close() error
 }
@@ -134,6 +138,17 @@ func (s *DecisionSink) writeEncoded(ctx context.Context, key, payload []byte) er
 	if s == nil || s.producer == nil {
 		return ErrDecisionSinkClosed
 	}
+	return s.writeMessages(ctx, []*sarama.ProducerMessage{{
+		Topic: s.outputTopic,
+		Key:   sarama.ByteEncoder(key),
+		Value: sarama.ByteEncoder(payload),
+	}})
+}
+
+func (s *DecisionSink) writeMessages(ctx context.Context, messages []*sarama.ProducerMessage) error {
+	if s == nil || s.producer == nil {
+		return ErrDecisionSinkClosed
+	}
 	if ctx == nil {
 		return errors.New("kafka decision sink: context is required")
 	}
@@ -154,17 +169,24 @@ func (s *DecisionSink) writeEncoded(ctx context.Context, key, payload []byte) er
 	s.mu.Unlock()
 	defer s.inflight.Done()
 
-	message := &sarama.ProducerMessage{
-		Topic: s.outputTopic,
-		Key:   sarama.ByteEncoder(key),
-		Value: sarama.ByteEncoder(payload),
-	}
-	if _, _, err := s.producer.SendMessage(message); err != nil {
-		producerErr := fmt.Errorf("kafka decision sink: send batch: %w", err)
-		if contextErr := ctx.Err(); contextErr != nil {
-			return errors.Join(contextErr, producerErr)
+	if batchProducer, ok := s.producer.(syncBatchMessageProducer); ok && len(messages) > 1 {
+		if err := batchProducer.SendMessages(messages); err != nil {
+			producerErr := fmt.Errorf("kafka decision sink: send batch: %w", err)
+			if contextErr := ctx.Err(); contextErr != nil {
+				return errors.Join(contextErr, producerErr)
+			}
+			return producerErr
 		}
-		return producerErr
+		return nil
+	}
+	for _, message := range messages {
+		if _, _, err := s.producer.SendMessage(message); err != nil {
+			producerErr := fmt.Errorf("kafka decision sink: send batch: %w", err)
+			if contextErr := ctx.Err(); contextErr != nil {
+				return errors.Join(contextErr, producerErr)
+			}
+			return producerErr
+		}
 	}
 	return nil
 }

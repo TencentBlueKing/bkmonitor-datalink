@@ -17,8 +17,6 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 const (
@@ -39,6 +37,7 @@ type DecisionSinkConfig struct {
 	AllowedOutputTopics []string
 	ClientID            string
 	BrokerVersion       string
+	MaxMessageBytes     int
 }
 
 func (c DecisionSinkConfig) Validate() error {
@@ -88,6 +87,9 @@ func (c DecisionSinkConfig) Validate() error {
 			return fmt.Errorf("kafka decision producer: %s must be non-empty canonical text", name)
 		}
 	}
+	if c.MaxMessageBytes <= 0 {
+		return errors.New("kafka decision producer: max_message_bytes must be positive")
+	}
 	version, err := sarama.ParseKafkaVersion(c.BrokerVersion)
 	if err != nil {
 		return fmt.Errorf("kafka decision producer: broker_version %q: %w", c.BrokerVersion, err)
@@ -127,7 +129,7 @@ func NewDecisionProducerConfig(coordinates DecisionSinkConfig) (*sarama.Config, 
 	config.Producer.Return.Errors = true
 	config.Producer.Retry.Max = decisionProducerRetryMax
 	config.Producer.Retry.Backoff = decisionProducerRetryBackoff
-	config.Producer.MaxMessageBytes = contract.MaxTriggerDecisionBytesV1 + decisionProducerMessageOverheadCap
+	config.Producer.MaxMessageBytes = coordinates.MaxMessageBytes + decisionProducerMessageOverheadCap
 	config.Producer.Compression = sarama.CompressionNone
 	config.Producer.Partitioner = sarama.NewHashPartitioner
 	if err := config.Validate(); err != nil {

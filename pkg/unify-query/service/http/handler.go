@@ -11,6 +11,7 @@ package http
 
 import (
 	"fmt"
+	"time"
 	"unsafe"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,7 @@ import (
 	influxdbRouter "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -411,7 +413,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryTs  			true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  QueryTsResponse  "未指定 response_contract 时返回 legacy PromData；named_outputs/v1 返回命名多输出"
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts [post]
 func HandlerQueryTs(c *gin.Context) {
@@ -461,7 +463,29 @@ func HandlerQueryTs(c *gin.Context) {
 		c.Request.URL.String(), c.Request.Header, string(queryStr),
 	).Info(ctx)
 
+	settings := getNamedOutputSettings()
+	namedOutputValidationStart := time.Now()
+	if err = query.ValidateNamedOutputs(settings.MaxOutputs); err != nil {
+		if query.ResponseContract != "" || query.LegacyOutputRef != "" || len(query.OutputList) > 0 {
+			metric.NamedOutputsRequestInc(ctx, metric.NamedOutputsRequestReceived)
+			metric.NamedOutputsRequestInc(ctx, metric.NamedOutputsRequestError)
+			metric.NamedOutputsRejectInc(ctx, namedOutputsValidationRejectReason(err))
+			metric.NamedOutputsDurationObserve(ctx, metric.NamedOutputsRequestError, time.Since(namedOutputValidationStart))
+		}
+		resp.failed(ctx, metadata.NewMessage(
+			metadata.MsgQueryTs,
+			"命名多输出参数校验异常",
+		).Error(ctx, err))
+		return
+	}
+
 	if err = validateQueryTsDataSource(query); err != nil {
+		if query.ResponseContract == structured.NamedOutputsV1 {
+			metric.NamedOutputsRequestInc(ctx, metric.NamedOutputsRequestReceived)
+			metric.NamedOutputsRequestInc(ctx, metric.NamedOutputsRequestError)
+			metric.NamedOutputsRejectInc(ctx, metric.NamedOutputsRejectValidation)
+			metric.NamedOutputsDurationObserve(ctx, metric.NamedOutputsRequestError, time.Since(namedOutputValidationStart))
+		}
 		resp.failed(ctx, metadata.NewMessage(
 			metadata.MsgQueryTs,
 			"查询参数校验异常",
@@ -469,7 +493,12 @@ func HandlerQueryTs(c *gin.Context) {
 		return
 	}
 
-	res, err := queryTsWithPromEngine(ctx, query)
+	var res any
+	if query.ResponseContract == structured.NamedOutputsV1 {
+		res, err = queryTsNamedOutputs(ctx, query)
+	} else {
+		res, err = queryTsWithPromEngine(ctx, query)
+	}
 	if err != nil {
 		resp.failed(ctx, err)
 		return

@@ -69,6 +69,167 @@ func TestServiceRepeatsConsumeAfterRebalanceAndClosesNormally(t *testing.T) {
 	}
 }
 
+func TestServiceRecoversTransientConsumeReturn(t *testing.T) {
+	t.Parallel()
+
+	for _, transient := range []error{sarama.ErrOutOfBrokers, sarama.ErrNotCoordinatorForConsumer} {
+		transient := transient
+		t.Run(transient.Error(), func(t *testing.T) {
+			t.Parallel()
+
+			var consumeCalls atomic.Int32
+			group := newFakeConsumerGroup(func(ctx context.Context, _ []string, _ sarama.ConsumerGroupHandler) error {
+				if consumeCalls.Add(1) == 1 {
+					return transient
+				}
+				<-ctx.Done()
+				return ctx.Err()
+			})
+			observed := make(chan ConsumerRetry, 1)
+			service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
+			service.consumeRetryDelay = time.Nanosecond
+			service.diagnostics.OnConsumeRetry = func(event ConsumerRetry) { observed <- event }
+			runContext, cancelRun := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() { done <- service.Run(runContext) }()
+			waitFor(t, func() bool { return consumeCalls.Load() >= 2 }, "Consume retry")
+			select {
+			case event := <-observed:
+				if event.Source != ConsumerRetrySourceConsumeReturn || !errors.Is(event.Err, transient) {
+					t.Fatalf("consumer retry = %#v", event)
+				}
+			default:
+				t.Fatal("transient Consume return was not observed")
+			}
+			cancelRun()
+			if err := waitError(t, done); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if service.FatalError() != nil {
+				t.Fatalf("transient Consume return became fatal: %v", service.FatalError())
+			}
+		})
+	}
+}
+
+func TestServiceRecoversTransientErrorsChannelWithoutDoubleConsumeLoop(t *testing.T) {
+	t.Parallel()
+
+	var consumeCalls atomic.Int32
+	group := newFakeConsumerGroup(func(ctx context.Context, _ []string, _ sarama.ConsumerGroupHandler) error {
+		consumeCalls.Add(1)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	observed := make(chan ConsumerRetry, 1)
+	service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
+	service.consumeRetryDelay = time.Nanosecond
+	service.diagnostics.OnConsumeRetry = func(event ConsumerRetry) { observed <- event }
+	runContext, cancelRun := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- service.Run(runContext) }()
+	waitFor(t, func() bool { return consumeCalls.Load() == 1 }, "first Consume call")
+	groupErrorChannel(group) <- &sarama.ConsumerError{Err: sarama.ErrOutOfBrokers}
+	waitFor(t, func() bool { return consumeCalls.Load() == 2 }, "single recovered Consume call")
+	time.Sleep(10 * time.Millisecond)
+	if consumeCalls.Load() != 2 {
+		t.Fatalf("Consume calls = %d, want exactly one recovered cycle", consumeCalls.Load())
+	}
+	select {
+	case event := <-observed:
+		if event.Source != ConsumerRetrySourceErrorsChannel || !errors.Is(event.Err, sarama.ErrOutOfBrokers) {
+			t.Fatalf("consumer retry = %#v", event)
+		}
+	default:
+		t.Fatal("transient group error was not observed")
+	}
+	cancelRun()
+	if err := waitError(t, done); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+func TestServiceCancellationStopsConsumeRetryAndPreservesObservedRoot(t *testing.T) {
+	t.Parallel()
+
+	root := sarama.ErrOutOfBrokers
+	group := newFakeConsumerGroup(func(context.Context, []string, sarama.ConsumerGroupHandler) error { return root })
+	observed := make(chan ConsumerRetry, 1)
+	service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
+	service.consumeRetryDelay = time.Hour
+	service.diagnostics.OnConsumeRetry = func(event ConsumerRetry) { observed <- event }
+	runContext, cancelRun := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- service.Run(runContext) }()
+	var event ConsumerRetry
+	select {
+	case event = <-observed:
+	case <-time.After(time.Second):
+		t.Fatal("transient Consume return was not observed")
+	}
+	cancelRun()
+	if err := waitError(t, done); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if event.Source != ConsumerRetrySourceConsumeReturn || !errors.Is(event.Err, root) {
+		t.Fatalf("consumer retry = %#v", event)
+	}
+}
+
+func TestServiceDoesNotRetryAuthorizationOrLocalConsumeFailure(t *testing.T) {
+	t.Parallel()
+
+	for _, want := range []error{
+		sarama.ErrGroupAuthorizationFailed,
+		sarama.ConfigurationError("invalid config"),
+		sarama.ErrClosedConsumerGroup,
+		sarama.ErrClosedClient,
+		errors.New("handler invariant"),
+	} {
+		want := want
+		t.Run(want.Error(), func(t *testing.T) {
+			t.Parallel()
+			group := newFakeConsumerGroup(func(context.Context, []string, sarama.ConsumerGroupHandler) error { return want })
+			service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
+			if err := service.Run(context.Background()); !errors.Is(err, want) {
+				t.Fatalf("Run() error = %v, want %v", err, want)
+			}
+			if group.consumeCalls.Load() != 1 || service.FatalError() == nil {
+				t.Fatalf("Consume calls = %d, fatal = %v", group.consumeCalls.Load(), service.FatalError())
+			}
+		})
+	}
+}
+
+func TestRetryableConsumerGroupErrorClassification(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "transport", err: sarama.ErrOutOfBrokers, want: true},
+		{name: "coordinator", err: sarama.ErrNotCoordinatorForConsumer, want: true},
+		{name: "metadata", err: sarama.ErrLeaderNotAvailable, want: true},
+		{name: "wrapped consumer error", err: &sarama.ConsumerError{Err: sarama.ErrNetworkException}, want: true},
+		{name: "authorization", err: sarama.ErrGroupAuthorizationFailed},
+		{name: "configuration", err: sarama.ConfigurationError("invalid config")},
+		{name: "closed group", err: sarama.ErrClosedConsumerGroup},
+		{name: "closed client", err: sarama.ErrClosedClient},
+		{name: "context cancellation", err: context.Canceled},
+		{name: "local invariant", err: errors.New("handler invariant")},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isRetryableConsumerGroupError(test.err); got != test.want {
+				t.Fatalf("isRetryableConsumerGroupError(%v) = %t, want %t", test.err, got, test.want)
+			}
+		})
+	}
+}
+
 func TestServiceDrainsGroupErrorsBeforeConsume(t *testing.T) {
 	t.Parallel()
 
@@ -132,6 +293,78 @@ func TestServiceRecoversOffsetOutOfRangeWithoutFatalExit(t *testing.T) {
 	}
 	if snapshot := service.LifecycleSnapshot(); snapshot.FatalTotal != 0 {
 		t.Fatalf("offset recovery snapshot = %+v, want no fatal", snapshot)
+	}
+}
+
+func TestServiceRecoversTransientOffsetRepairFailure(t *testing.T) {
+	t.Parallel()
+
+	var consumeCalls atomic.Int32
+	group := newFakeConsumerGroup(func(ctx context.Context, _ []string, _ sarama.ConsumerGroupHandler) error {
+		consumeCalls.Add(1)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	observed := make(chan ConsumerRetry, 1)
+	service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
+	service.consumeRetryDelay = time.Nanosecond
+	var repairCalls atomic.Int32
+	service.repairOffsets = func(context.Context) ([]OffsetReset, error) {
+		if repairCalls.Add(1) == 1 {
+			return nil, sarama.ErrNotCoordinatorForConsumer
+		}
+		return nil, nil
+	}
+	service.diagnostics.OnConsumeRetry = func(event ConsumerRetry) { observed <- event }
+	runContext, cancelRun := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- service.Run(runContext) }()
+	waitFor(t, func() bool { return consumeCalls.Load() == 1 }, "Consume after offset-repair retry")
+	select {
+	case event := <-observed:
+		if event.Source != ConsumerRetrySource("offset_repair") || !errors.Is(event.Err, sarama.ErrNotCoordinatorForConsumer) {
+			t.Fatalf("offset-repair retry = %#v", event)
+		}
+	default:
+		t.Fatal("transient offset-repair failure was not observed")
+	}
+	if repairCalls.Load() != 2 {
+		t.Fatalf("repair calls = %d, want 2", repairCalls.Load())
+	}
+	cancelRun()
+	if err := waitError(t, done); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if service.FatalError() != nil {
+		t.Fatalf("transient offset-repair failure became fatal: %v", service.FatalError())
+	}
+}
+
+func TestServiceDoesNotRetryAuthorizationOrLocalOffsetRepairFailure(t *testing.T) {
+	t.Parallel()
+
+	for _, want := range []error{
+		sarama.ErrGroupAuthorizationFailed,
+		sarama.ConfigurationError("invalid config"),
+		errors.New("offset repair invariant"),
+	} {
+		want := want
+		t.Run(want.Error(), func(t *testing.T) {
+			t.Parallel()
+			group := newFakeConsumerGroup(nil)
+			service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
+			var repairCalls atomic.Int32
+			service.repairOffsets = func(context.Context) ([]OffsetReset, error) {
+				repairCalls.Add(1)
+				return nil, want
+			}
+			if err := service.Run(context.Background()); !errors.Is(err, want) {
+				t.Fatalf("Run() error = %v, want %v", err, want)
+			}
+			if repairCalls.Load() != 1 || group.consumeCalls.Load() != 0 || service.FatalError() == nil {
+				t.Fatalf("repair calls = %d, Consume calls = %d, fatal = %v", repairCalls.Load(), group.consumeCalls.Load(), service.FatalError())
+			}
+		})
 	}
 }
 

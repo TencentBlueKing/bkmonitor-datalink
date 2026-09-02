@@ -182,6 +182,50 @@ definitions:
       trace_id:
         type: string
     type: object
+  http.NamedOutputData:
+    properties:
+      invalid_points:
+        description: InvalidPoints 是被过滤的 NaN/Inf 点数。
+        type: integer
+      is_partial:
+        description: IsPartial 表示本输出是否部分成功或失败。
+        type: boolean
+      reference_name:
+        description: ReferenceName 对应请求 output_list 中的 reference_name。
+        example: A
+        type: string
+      series:
+        description: Tables 使用与旧 PromData.series 相同的序列结构。
+        items:
+          $ref: '#/definitions/http.TablesItem'
+        type: array
+      state:
+        allOf:
+        - $ref: '#/definitions/http.OutputState'
+        description: State 取值为 SUCCESS、SUCCESS_EMPTY、PARTIAL 或 ERROR。
+        enum:
+        - SUCCESS
+        - SUCCESS_EMPTY
+        - PARTIAL
+        - ERROR
+        example: SUCCESS
+      status:
+        allOf:
+        - $ref: '#/definitions/metadata.Status'
+        description: Status 保留本输出的路由或查询状态。
+    type: object
+  http.OutputState:
+    enum:
+    - SUCCESS
+    - SUCCESS_EMPTY
+    - PARTIAL
+    - ERROR
+    type: string
+    x-enum-varnames:
+    - OutputStateSuccess
+    - OutputStateSuccessEmpty
+    - OutputStatePartial
+    - OutputStateError
   http.Params:
     properties:
       conditions:
@@ -240,6 +284,35 @@ definitions:
           type: string
         type: array
       series:
+        items:
+          $ref: '#/definitions/http.TablesItem'
+        type: array
+      status:
+        $ref: '#/definitions/metadata.Status'
+      trace_id:
+        type: string
+    type: object
+  http.QueryTsResponse:
+    properties:
+      contract_version:
+        description: ContractVersion 仅在 named_outputs/v1 响应中返回。
+        enum:
+        - named_outputs/v1
+        example: named_outputs/v1
+        type: string
+      is_partial:
+        type: boolean
+      outputs:
+        description: Outputs 仅在 named_outputs/v1 响应中返回。
+        items:
+          $ref: '#/definitions/http.NamedOutputData'
+        type: array
+      result_table_id:
+        items:
+          type: string
+        type: array
+      series:
+        description: Series 是未指定 response_contract 时的旧单输出结果。
         items:
           $ref: '#/definitions/http.TablesItem'
         type: array
@@ -407,11 +480,28 @@ definitions:
     type: object
   query.Record:
     properties:
+      cluster_name:
+        type: string
+      db:
+        description: DB / Measurement 是该时间段的物理查询目标。ES 使用 index_set + __default__，Doris
+          使用 bkbase_table_id + doris。
+        type: string
       enable_time:
+        description: EnableTime 是该路由开始生效的 Unix 秒级时间戳。
         type: integer
+      measurement:
+        type: string
+      source_type:
+        description: SourceType 是 ES 查询入口选择依据；BKData ES 分段需要覆盖外层 RT 的 source_type。
+        type: string
       storage_id:
+        description: StorageID 是该时间段命中的存储集群 ID，用于定位底层存储实例。
+        type: string
+      storage_name:
+        description: StorageName / ClusterName 表示存储集群名，Doris 查询 BKBase 时会透传为 properties.cluster_name。
         type: string
       storage_type:
+        description: StorageType 是该时间段应查询的存储类型；Doris 在查询侧统一表达为 bk_sql。
         type: string
     type: object
   query.TsDBV2:
@@ -643,6 +733,17 @@ definitions:
         - $ref: '#/definitions/time.Duration'
         description: VectorOffset
     type: object
+  structured.QueryOutput:
+    properties:
+      expression:
+        description: Expression 输出表达式；非 legacy 输出仅允许 query reference identity 表达式。
+        example: A
+        type: string
+      reference_name:
+        description: ReferenceName 输出引用名，在同一 output_list 中必须唯一。
+        example: A
+        type: string
+    type: object
   structured.QueryPromQL:
     properties:
       add_dimensions:
@@ -738,6 +839,10 @@ definitions:
       is_search_after:
         description: IsSearchAfter 是否启用 SearchAfter 查询
         type: boolean
+      legacy_output_ref:
+        description: LegacyOutputRef 指向与 MetricMerge 等价的输出，供旧服务兼容降级。
+        example: C
+        type: string
       limit:
         description: |-
           增加公共限制
@@ -763,6 +868,11 @@ definitions:
         items:
           type: string
         type: array
+      output_list:
+        description: OutputList 按请求顺序声明命名输出。
+        items:
+          $ref: '#/definitions/structured.QueryOutput'
+        type: array
       query_list:
         description: QueryList 查询实例
         items:
@@ -775,6 +885,12 @@ definitions:
           true:  range: 10:03 - 10:23 window: 10m -> 10:03 - 10:10, 10:10 - 10:20, 10:20 - 10:23
           false: range: 10:03 - 10:23 window: 10m -> 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23
         type: boolean
+      response_contract:
+        description: ResponseContract 显式选择命名多输出响应契约；为空时保持旧单输出行为。
+        enum:
+        - named_outputs/v1
+        example: named_outputs/v1
+        type: string
       result_table_options:
         $ref: '#/definitions/metadata.ResultTableOptions'
       scroll:
@@ -1205,9 +1321,10 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: 未指定 response_contract 时返回 legacy PromData；named_outputs/v1
+            返回命名多输出
           schema:
-            $ref: '#/definitions/http.PromData'
+            $ref: '#/definitions/http.QueryTsResponse'
         "400":
           description: Bad Request
           schema:

@@ -145,7 +145,10 @@
 | `start_time`        | string | 是   | 开始时间（Unix 时间戳）                                                                                                                                                                                                               |
 | `end_time`          | string | 是   | 结束时间（Unix 时间戳）                                                                                                                                                                                                               |
 | `step`              | string | 否   | 查询步长，如 `60s`、`5m`。为空时自动补充 `1m`                                                                                                                                                                                         |
-| `metric_merge`      | string | 否   | PromQL 语法表达式，用于合并多个查询结果。表达式中的指标引用 `query_list` 中的 `reference_name`，例如：`a + b`、`a / b * 100`。如果 `query_list` 中只有一个查询项且 `reference_name` 为 `a`，则 `metric_merge` 可以设置为 `a` 或不设置 |
+| `metric_merge`      | string | 条件 | PromQL 语法表达式，用于合并多个查询结果。`named_outputs/v1` 下必填；未启用命名多输出时沿用旧行为。表达式中的指标引用 `query_list` 中的 `reference_name`，例如：`a + b`、`a / b * 100`。如果 `query_list` 中只有一个查询项且 `reference_name` 为 `a`，旧请求可将 `metric_merge` 设置为 `a` 或不设置 |
+| `response_contract` | string | 否   | 响应契约。省略时保持旧 `PromData`；当前仅支持 `named_outputs/v1`                                                                                                                                                                       |
+| `legacy_output_ref` | string | 条件 | `named_outputs/v1` 必填，指向与 `metric_merge` 等价的兼容输出                                                                                                                                                                         |
+| `output_list`       | array  | 条件 | `named_outputs/v1` 必填，按响应顺序声明命名输出；每项包含 `reference_name` 和 `expression`                                                                                                                                             |
 | `limit`             | int    | 否   | 结果数量限制                                                                                                                                                                                                                          |
 | `offset`            | string | 否   | 时间偏移，如 `5m`                                                                                                                                                                                                                     |
 | `down_sample_range` | string | 否   | 降采样范围，大于 `step` 才能生效，如 `5m`                                                                                                                                                                                             |
@@ -225,6 +228,102 @@
 | `trace_id` | string | 链路追踪 ID |
 | `is_partial` | bool | 是否为部分成功 |
 | `result_table_id` | string[] | 本次请求实际检索的结果表 ID 列表；成功响应默认返回，无可检索结果表时为空数组 |
+
+#### `named_outputs/v1` 命名多输出
+
+当一次策略评估既需要保留原 `metric_merge` 结果，又需要返回参与计算的查询引用值时，可显式请求 `named_outputs/v1`。该契约要求提供 `metric_merge`，并由 `legacy_output_ref` 指向与其等价的输出。未提供 `response_contract` 的请求完全沿用上面的旧请求和 `PromData` 响应结构。
+
+请求示例：
+
+```json
+{
+  "query_list": [
+    {
+      "table_id": "system.http_requests",
+      "field_name": "error_count",
+      "reference_name": "A"
+    },
+    {
+      "table_id": "system.http_requests",
+      "field_name": "request_count",
+      "reference_name": "B"
+    }
+  ],
+  "metric_merge": "A / B * 100",
+  "response_contract": "named_outputs/v1",
+  "legacy_output_ref": "C",
+  "output_list": [
+    {"reference_name": "A", "expression": "A"},
+    {"reference_name": "B", "expression": "B"},
+    {"reference_name": "C", "expression": "A / B * 100"}
+  ],
+  "start_time": "1724490000",
+  "end_time": "1724490060",
+  "step": "60s"
+}
+```
+
+响应示例：
+
+```json
+{
+  "contract_version": "named_outputs/v1",
+  "outputs": [
+    {
+      "reference_name": "A",
+      "state": "SUCCESS",
+      "series": [
+        {
+          "name": "_result0",
+          "metric_name": "",
+          "columns": ["_time", "_value"],
+          "types": ["float", "float"],
+          "group_keys": ["service"],
+          "group_values": ["order"],
+          "values": [[1724490000000, 42]]
+        }
+      ],
+      "is_partial": false,
+      "invalid_points": 0
+    },
+    {
+      "reference_name": "B",
+      "state": "SUCCESS_EMPTY",
+      "series": [],
+      "is_partial": false,
+      "invalid_points": 0
+    },
+    {
+      "reference_name": "C",
+      "state": "PARTIAL",
+      "series": [],
+      "status": {"code": "QUERY_TS_PARTIAL", "message": "partial result"},
+      "is_partial": true,
+      "invalid_points": 0
+    }
+  ],
+  "status": {"code": "QUERY_TS_PARTIAL", "message": "partial result"},
+  "is_partial": true,
+  "result_table_id": ["system.http_requests"],
+  "trace_id": "..."
+}
+```
+
+响应规则：
+
+- 服务内部优先执行 `legacy_output_ref`，避免可选引用先耗尽总预算；`outputs` 仍按请求中的 `output_list` 顺序返回。
+- `state` 取值为 `SUCCESS`、`SUCCESS_EMPTY`、`PARTIAL` 或 `ERROR`。`SUCCESS_EMPTY` 表示查询执行成功但没有 Series，仍属于成功输出。任一输出为 `PARTIAL/ERROR` 时，顶层 `is_partial=true`；至少一个输出有可用结果时仍返回 HTTP 200，全部输出失败时返回查询错误。
+- range 和 instant 结果中的 NaN/Inf 会被过滤，并累计到各输出的 `invalid_points`。
+- UQ 线协议使用 `outputs[].reference_name` 表示引用，不返回 `ref_values` 字段；调用方可按自身数据模型把 `outputs` 转换为引用值映射。
+
+校验规则：
+
+- 只提供 `legacy_output_ref` 或 `output_list` 而未提供 `response_contract` 时拒绝请求；未知契约版本同样拒绝。
+- `legacy_output_ref` 必须存在于 `output_list`，且其表达式必须与规范化后的 `metric_merge` 等价。
+- `output_list.reference_name` 必须是唯一的合法标识符。除 legacy 输出外，v1 只允许引用 `query_list.reference_name` 的 identity 表达式，不允许派生表达式、`offset` 或 `@` 修饰。
+- 参数、表达式或契约校验失败返回 HTTP 400；错误响应沿用 `ErrResponse`。
+
+所有输出共享同一请求预算，不会为每个输出重新计算一份上限。默认限制为：最多 4 个输出、总截止时间 30 秒、最多 10000 个 Series、1000000 个点、64 MiB 请求级 selector 缓存和 16 MiB 响应；部署方可以通过服务配置调整这些值。输出数超过上限会在查询 I/O 前按校验错误拒绝；selector 缓存、Series、点数或响应大小超限时，整次请求直接返回查询错误，不收敛为 partial。总截止时间耗尽时服务停止后续工作；若此前已有至少一个非 `ERROR` 的已完成输出，则保留已有结果、将剩余输出标记为 `ERROR` 并返回 HTTP 200 partial，否则返回查询错误。
 
 ### 2.2 PromQL 查询
 

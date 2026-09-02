@@ -43,7 +43,7 @@ func newLifecycleCollector(source lifecycle.Source) *lifecycleCollector {
 		draining:           descriptor("draining", "Whether the alarmd consumer lifecycle is draining.", nil),
 		drainTotal:         descriptor("drain_total", "alarmd consumer drain results.", []string{"result"}),
 		inflightRecords:    descriptor("inflight_records", "Records currently being processed by the alarmd consumer.", nil),
-		consumerLagRecords: descriptor("consumer_lag_records", "Known local lag across claims in the current alarmd assignment.", nil),
+		consumerLagRecords: descriptor("consumer_lag_records", "Known local high-water minus processed and marked offset across claims; this is not broker committed-group lag.", nil),
 	}
 }
 

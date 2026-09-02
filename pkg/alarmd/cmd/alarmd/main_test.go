@@ -20,9 +20,8 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/consumer"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 func TestRunPrintsVersionWithoutLoadingConfiguration(t *testing.T) {
@@ -37,6 +36,62 @@ func TestRunPrintsVersionWithoutLoadingConfiguration(t *testing.T) {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("version output %q does not contain %q", stdout.String(), want)
 		}
+	}
+}
+
+func TestRunChecksConfigurationWithoutStartingApplication(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "alarmd.yaml")
+	if err := os.WriteFile(path, []byte(validApplicationYAML()), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	want := errors.New("application must not start")
+	dependencies := applicationDependencies{
+		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
+			return nil, want
+		},
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runWithDependencies(
+		context.Background(), []string{"--check-config", "--config", path}, &stdout, &stderr, dependencies,
+	)
+	if code != 0 {
+		t.Fatalf("runWithDependencies() code = %d, stderr = %q", code, stderr.String())
+	}
+	if strings.Contains(stderr.String(), want.Error()) {
+		t.Fatalf("runWithDependencies() started application: %q", stderr.String())
+	}
+}
+
+func TestRunCheckConfigurationRejectsUnknownField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "alarmd.yaml")
+	contents := validApplicationYAML() + "unknown_field: true\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run(context.Background(), []string{"--check-config", "--config", path}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("run() code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "field unknown_field not found") {
+		t.Fatalf("run() stderr = %q, want strict field error", stderr.String())
+	}
+}
+
+func TestRunRejectsConflictingTerminalFlags(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := run(context.Background(), []string{"--version", "--check-config"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("run() code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "cannot be used together") {
+		t.Fatalf("run() stderr = %q, want flag conflict", stderr.String())
 	}
 }
 
@@ -70,7 +125,7 @@ func TestRunRejectsUnknownFlag(t *testing.T) {
 	}
 }
 
-func TestRunUsesKafkaRuntimeAfterConfigurationLoads(t *testing.T) {
+func TestRunUsesV2RuntimeAfterConfigurationLoads(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "alarmd.yaml")
@@ -79,12 +134,14 @@ func TestRunUsesKafkaRuntimeAfterConfigurationLoads(t *testing.T) {
 	}
 	want := errors.New("sink open failed")
 	dependencies := applicationDependencies{
-		openSink: func(config.KafkaConfig) (decisionSinkRuntime, error) { return nil, want },
-		openService: func(config.KafkaConfig, consumer.ProcessorFactory, time.Duration) (serviceRuntime, error) {
-			return nil, errors.New("must not open service")
+		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
+			return nil, want
 		},
-		newHTTP: func(*metric.Recorder, lifecycle.Source) (httpRuntime, error) {
-			return nil, errors.New("must not initialize HTTP")
+		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
+				<-ctx.Done()
+				return nil
+			}}, nil
 		},
 	}
 	var stdout bytes.Buffer
@@ -103,12 +160,22 @@ shutdown_timeout: 1s
 kafka:
   brokers:
     - 127.0.0.1:9092
-  input_topic: alarmd-shadow-input
-  output_topic: alarmd-shadow-output
+  input_topic: alarmd-shadow-input-v2
+  trigger_event:
+    topic: alarmd-shadow-trigger-event-v1
+    max_message_bytes: 524288
+  message_receipt:
+    topic: alarmd-shadow-message-receipt-v1
+    max_message_bytes: 524288
   allowed_output_topics:
-    - alarmd-shadow-output
-  group_id: alarmd-shadow
+    - alarmd-shadow-trigger-event-v1
+    - alarmd-shadow-message-receipt-v1
+  group_id: alarmd-shadow-v2
   client_id: alarmd
   broker_version: 2.6.0
+  initial_offset: oldest
+redis:
+  address: 127.0.0.1:6379
+  state_prefix: alarmd-shadow
 `
 }

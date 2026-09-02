@@ -67,6 +67,7 @@ func (c ComparisonAuditSinkConfig) decisionCoordinates() DecisionSinkConfig {
 		AllowedOutputTopics: append([]string(nil), c.AllowedOutputTopics...),
 		ClientID:            c.ClientID,
 		BrokerVersion:       c.BrokerVersion,
+		MaxMessageBytes:     contract.MaxComparisonAuditBytesV1,
 	}
 }
 
@@ -78,7 +79,6 @@ func NewComparisonAuditProducerConfig(coordinates ComparisonAuditSinkConfig) (*s
 	if err != nil {
 		return nil, err
 	}
-	config.Producer.MaxMessageBytes = contract.MaxComparisonAuditBytesV1 + decisionProducerMessageOverheadCap
 	return config, nil
 }
 

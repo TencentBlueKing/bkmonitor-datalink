@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 func TestNewDecisionProducerConfigForcesAcknowledgementAndBounds(t *testing.T) {
@@ -54,8 +52,9 @@ func TestNewDecisionProducerConfigForcesAcknowledgementAndBounds(t *testing.T) {
 			t.Fatalf("%s timeout = %s, want %s", name, got, decisionProducerTimeout)
 		}
 	}
-	if config.Producer.MaxMessageBytes <= contract.MaxTriggerDecisionBytesV1+32 {
-		t.Fatalf("max message bytes = %d, must include key and record overhead", config.Producer.MaxMessageBytes)
+	wantMaxMessageBytes := validDecisionSinkConfig().MaxMessageBytes + decisionProducerMessageOverheadCap
+	if config.Producer.MaxMessageBytes != wantMaxMessageBytes {
+		t.Fatalf("max message bytes = %d, want %d", config.Producer.MaxMessageBytes, wantMaxMessageBytes)
 	}
 	if config.Producer.Compression != sarama.CompressionNone {
 		t.Fatalf("compression = %d, want none", config.Producer.Compression)
@@ -128,11 +127,12 @@ func TestDecisionSinkConfigRejectsInvalidCoordinatesAndPolicy(t *testing.T) {
 			config.OutputTopic = "shadow/output"
 			config.AllowedOutputTopics = []string{config.OutputTopic}
 		},
-		"missing client":        func(config *DecisionSinkConfig) { config.ClientID = "" },
-		"missing version":       func(config *DecisionSinkConfig) { config.BrokerVersion = "" },
-		"invalid version":       func(config *DecisionSinkConfig) { config.BrokerVersion = "invalid" },
-		"version below minimum": func(config *DecisionSinkConfig) { config.BrokerVersion = "0.10.1.0" },
-		"version above maximum": func(config *DecisionSinkConfig) { config.BrokerVersion = "9.9.9" },
+		"missing client":         func(config *DecisionSinkConfig) { config.ClientID = "" },
+		"missing version":        func(config *DecisionSinkConfig) { config.BrokerVersion = "" },
+		"missing message budget": func(config *DecisionSinkConfig) { config.MaxMessageBytes = 0 },
+		"invalid version":        func(config *DecisionSinkConfig) { config.BrokerVersion = "invalid" },
+		"version below minimum":  func(config *DecisionSinkConfig) { config.BrokerVersion = "0.10.1.0" },
+		"version above maximum":  func(config *DecisionSinkConfig) { config.BrokerVersion = "9.9.9" },
 	}
 	for name, mutate := range tests {
 		name, mutate := name, mutate
@@ -156,6 +156,7 @@ func validDecisionSinkConfig() DecisionSinkConfig {
 		AllowedOutputTopics: []string{"alarmd-trigger-decision-shadow"},
 		ClientID:            "alarmd",
 		BrokerVersion:       "2.6.0",
+		MaxMessageBytes:     128 * 1024,
 	}
 }
 

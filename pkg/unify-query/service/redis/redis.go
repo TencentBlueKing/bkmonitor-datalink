@@ -16,6 +16,7 @@ import (
 	goRedis "github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
@@ -105,6 +106,7 @@ func (s *Service) initSchemaProvider(ctx context.Context) {
 	s.providerManager = pm
 
 	v1beta1.InitSchemaProvider(s.providerManager.GetProvider())
+	v1beta3.InitSchemaProvider(s.providerManager.GetProvider())
 	log.Infof(ctx, "SchemaProvider initialized with type: %s", SchemaProviderType)
 }
 

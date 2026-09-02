@@ -33,6 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	uqMetric "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
@@ -1034,6 +1035,115 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	}
 
 	return resp, err
+}
+
+func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*NamedOutputsData, error) {
+	requestStarted := time.Now()
+	settings := getNamedOutputSettings()
+	requestCtx, cancel := context.WithTimeout(ctx, settings.Timeout)
+	defer cancel()
+	ctx = requestCtx
+	uqMetric.NamedOutputsRequestInc(ctx, uqMetric.NamedOutputsRequestReceived)
+	requestMetricResult := uqMetric.NamedOutputsRequestError
+	defer func() {
+		uqMetric.NamedOutputsRequestInc(ctx, requestMetricResult)
+		uqMetric.NamedOutputsDurationObserve(ctx, requestMetricResult, time.Since(requestStarted))
+	}()
+	if err := queryTs.ValidateNamedOutputs(settings.MaxOutputs); err != nil {
+		uqMetric.NamedOutputsRejectInc(ctx, namedOutputsValidationRejectReason(err))
+		return nil, err
+	}
+	uqMetric.NamedOutputsOutputCountObserve(ctx, len(queryTs.OutputList))
+
+	var err error
+	ctx, span := trace.NewSpan(ctx, "query-ts-named-outputs")
+	defer span.End(&err)
+
+	queryRef, lookBackDelta, err := queryTsToReference(ctx, queryTs)
+	if err != nil {
+		return nil, err
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	routeInfo := queryRef.CollectRouteInfo()
+	queryParams := metadata.GetQueryParams(ctx)
+
+	var instance tsdb.Instance
+	var selectorCache *prometheus.SelectorCache
+	executionMode := uqMetric.NamedOutputsModePromEngine
+	directCalls := 0
+	defer func() {
+		calls := directCalls
+		if selectorCache != nil {
+			calls = int(selectorCache.Stats().Misses)
+		}
+		uqMetric.NamedOutputsDownstreamCallsObserve(ctx, executionMode, calls)
+		uqMetric.NamedOutputsDownstreamAmplificationObserve(ctx, executionMode, calls, len(queryTs.OutputList))
+	}()
+	promExprOption := &structured.PromExprOption{}
+	if queryParams.IsDirectQuery() {
+		executionMode = uqMetric.NamedOutputsModeDirect
+		vmExpand := query.ToVmExpand(ctx, queryRef)
+		metadata.SetExpand(ctx, vmExpand)
+		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
+			StorageID:   metadata.VictoriaMetricsStorageType,
+			StorageType: metadata.VictoriaMetricsStorageType,
+		})
+	} else {
+		promExprOption.IgnoreTimeAggregationEnable = true
+		selectorCache = prometheus.NewSelectorCache(prometheus.SelectorCacheLimits{
+			MaxSeries: settings.MaxSeries,
+			MaxPoints: settings.MaxPoints,
+			MaxBytes:  settings.MaxCacheBytes,
+		})
+		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
+			QueryMaxRouting: QueryMaxRouting,
+			Timeout:         SingleflightTimeout,
+			SelectorCache:   selectorCache,
+		}, lookBackDelta, QueryMaxRouting)
+	}
+	if instance == nil {
+		return nil, fmt.Errorf("storage get error")
+	}
+
+	execute := func(outputCtx context.Context, output structured.QueryOutput) (any, bool, error) {
+		return compileAndExecuteNamedOutput(
+			outputCtx,
+			func() (fmt.Stringer, error) {
+				return queryTs.ToPromExprFor(outputCtx, output.Expression, promExprOption)
+			},
+			func(executeCtx context.Context, stmt string) (any, bool, error) {
+				if executionMode == uqMetric.NamedOutputsModeDirect {
+					directCalls++
+				}
+				if queryTs.Instant {
+					if statusAware, ok := instance.(tsdb.InstantQueryWithPartial); ok {
+						return statusAware.DirectQueryWithPartial(executeCtx, stmt, queryParams.End)
+					}
+					result, queryErr := instance.DirectQuery(executeCtx, stmt, queryParams.End)
+					return result, false, queryErr
+				}
+				return instance.DirectQueryRange(executeCtx, stmt, queryParams.AlignStart, queryParams.End, queryParams.Step)
+			},
+		)
+	}
+
+	result, executeErr := executeNamedOutputsWith(ctx, queryTs, settings, routeInfo, span.TraceID(), execute)
+	if executeErr != nil {
+		var outputLimit *namedOutputLimitError
+		var selectorLimit *prometheus.SelectorCacheLimitError
+		switch {
+		case errors.Is(executeErr, context.DeadlineExceeded), errors.Is(executeErr, context.Canceled):
+			uqMetric.NamedOutputsRejectInc(ctx, uqMetric.NamedOutputsRejectDeadline)
+		case errors.As(executeErr, &outputLimit), errors.As(executeErr, &selectorLimit):
+			uqMetric.NamedOutputsRejectInc(ctx, uqMetric.NamedOutputsRejectCapacity)
+		}
+		err = executeErr
+		return nil, err
+	}
+	requestMetricResult = uqMetric.NamedOutputsRequestSuccess
+	return result, nil
 }
 
 func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured.QueryPromQL, error) {

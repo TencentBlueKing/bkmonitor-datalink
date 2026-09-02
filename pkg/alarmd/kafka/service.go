@@ -30,6 +30,8 @@ var (
 	errConsumeStopped      = errors.New("kafka service: consume loop stopped while running")
 )
 
+const defaultConsumeRetryDelay = time.Second
+
 type consumerGroup interface {
 	Consume(context.Context, []string, sarama.ConsumerGroupHandler) error
 	Errors() <-chan error
@@ -56,15 +58,39 @@ type OffsetReset struct {
 	Offset    int64
 }
 
-// ConsumerDiagnostics exposes bounded recovery events without coupling the
+// ConsumerRetrySource identifies where a recoverable consumer-group failure
+// surfaced.
+type ConsumerRetrySource string
+
+const (
+	ConsumerRetrySourceConsumeReturn ConsumerRetrySource = "consume_return"
+	ConsumerRetrySourceErrorsChannel ConsumerRetrySource = "errors_channel"
+	ConsumerRetrySourceOffsetRepair  ConsumerRetrySource = "offset_repair"
+)
+
+// ConsumerRetry preserves the external Kafka failure that caused one consume
+// cycle to be restarted.
+type ConsumerRetry struct {
+	Source ConsumerRetrySource
+	Err    error
+}
+
+// ConsumerDiagnostics exposes typed recovery events without coupling the
 // reusable Kafka service to a logging or metrics implementation.
 type ConsumerDiagnostics struct {
-	OnOffsetReset func(OffsetReset)
+	OnOffsetReset  func(OffsetReset)
+	OnConsumeRetry func(ConsumerRetry)
 }
 
 func (d ConsumerDiagnostics) offsetReset(event OffsetReset) {
 	if d.OnOffsetReset != nil {
 		d.OnOffsetReset(event)
+	}
+}
+
+func (d ConsumerDiagnostics) consumeRetry(event ConsumerRetry) {
+	if d.OnConsumeRetry != nil {
+		d.OnConsumeRetry(event)
 	}
 }
 
@@ -100,12 +126,14 @@ type Service struct {
 	forcedDrain   bool
 	drainTotal    [lifecycle.DrainResultCount]uint64
 
-	cancelMu      sync.Mutex
-	cancelConsume context.CancelFunc
-	cycleCancel   context.CancelFunc
-	offsetReset   atomic.Bool
-	diagnostics   ConsumerDiagnostics
-	repairOffsets func(context.Context) ([]OffsetReset, error)
+	cancelMu          sync.Mutex
+	cancelConsume     context.CancelFunc
+	cycleCancel       context.CancelFunc
+	offsetReset       atomic.Bool
+	consumeRetry      atomic.Bool
+	consumeRetryDelay time.Duration
+	diagnostics       ConsumerDiagnostics
+	repairOffsets     func(context.Context) ([]OffsetReset, error)
 
 	fatalOnce   sync.Once
 	fatalMu     sync.Mutex
@@ -206,6 +234,7 @@ func newOwnedGroupService(
 		fatal:              make(chan error, 1),
 		fatalSignal:        make(chan struct{}),
 		closeRequested:     make(chan struct{}),
+		consumeRetryDelay:  defaultConsumeRetryDelay,
 	}
 	service.groupResource.close = group.Close
 	service.clientResource.close = client.Close
@@ -356,9 +385,19 @@ func (s *Service) consumeLoop(ctx context.Context) error {
 		if s.firstFatal() != nil {
 			return nil
 		}
+		if s.consumeRetry.Swap(false) && !waitConsumeRetry(ctx, s.consumeRetryDelay) {
+			return nil
+		}
 		if s.repairOffsets != nil {
 			events, err := s.repairOffsets(ctx)
 			if err != nil {
+				if ctx.Err() != nil || s.closing.Load() || s.firstFatal() != nil {
+					return nil
+				}
+				if isRetryableConsumerGroupError(err) {
+					s.requestConsumeRetry(ConsumerRetrySourceOffsetRepair, err)
+					continue
+				}
 				return fmt.Errorf("kafka service: repair consumer offsets: %w", err)
 			}
 			for _, event := range events {
@@ -367,7 +406,7 @@ func (s *Service) consumeLoop(ctx context.Context) error {
 		}
 		cycleContext, cancelCycle := context.WithCancel(ctx)
 		s.setCycleCancel(cancelCycle)
-		if s.offsetReset.Load() {
+		if s.offsetReset.Load() || s.consumeRetry.Load() {
 			cancelCycle()
 		}
 		err := s.group.Consume(cycleContext, append([]string(nil), s.topics...), s.handler)
@@ -379,7 +418,14 @@ func (s *Service) consumeLoop(ctx context.Context) error {
 		if s.offsetReset.Swap(false) {
 			continue
 		}
+		if s.consumeRetry.Load() {
+			continue
+		}
 		if err != nil {
+			if isRetryableConsumerGroupError(err) {
+				s.requestConsumeRetry(ConsumerRetrySourceConsumeReturn, err)
+				continue
+			}
 			return fmt.Errorf("kafka service: consume group: %w", err)
 		}
 	}
@@ -421,6 +467,9 @@ func (s *Service) drainErrors(ready chan<- struct{}, done chan<- struct{}) {
 }
 
 func (s *Service) handleGroupError(err error) {
+	if s.firstFatal() != nil {
+		return
+	}
 	var consumerError *sarama.ConsumerError
 	if errors.As(err, &consumerError) &&
 		(errors.Is(consumerError.Err, sarama.ErrOffsetOutOfRange) ||
@@ -429,7 +478,66 @@ func (s *Service) handleGroupError(err error) {
 		s.cancelCurrentCycle()
 		return
 	}
+	if isRetryableConsumerGroupError(err) {
+		s.requestConsumeRetry(ConsumerRetrySourceErrorsChannel, err)
+		return
+	}
 	s.reportFatal(fmt.Errorf("kafka service: consumer group error: %w", err))
+}
+
+func (s *Service) requestConsumeRetry(source ConsumerRetrySource, err error) {
+	if !s.consumeRetry.CompareAndSwap(false, true) {
+		return
+	}
+	s.cancelCurrentCycle()
+	s.diagnostics.consumeRetry(ConsumerRetry{Source: source, Err: err})
+}
+
+func waitConsumeRetry(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
+		return ctx.Err() == nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func isRetryableConsumerGroupError(err error) bool {
+	if errors.Is(err, sarama.ErrOutOfBrokers) ||
+		errors.Is(err, sarama.ErrNotConnected) ||
+		errors.Is(err, sarama.ErrIncompleteResponse) {
+		return true
+	}
+	var kafkaError sarama.KError
+	if !errors.As(err, &kafkaError) {
+		return false
+	}
+	switch kafkaError {
+	case sarama.ErrUnknownTopicOrPartition,
+		sarama.ErrLeaderNotAvailable,
+		sarama.ErrNotLeaderForPartition,
+		sarama.ErrRequestTimedOut,
+		sarama.ErrBrokerNotAvailable,
+		sarama.ErrReplicaNotAvailable,
+		sarama.ErrNetworkException,
+		sarama.ErrOffsetsLoadInProgress,
+		sarama.ErrConsumerCoordinatorNotAvailable,
+		sarama.ErrNotCoordinatorForConsumer,
+		sarama.ErrIllegalGeneration,
+		sarama.ErrUnknownMemberId,
+		sarama.ErrRebalanceInProgress,
+		sarama.ErrOffsetNotAvailable,
+		sarama.ErrMemberIdRequired,
+		sarama.ErrPreferredLeaderNotAvailable:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) reportFatal(err error) {

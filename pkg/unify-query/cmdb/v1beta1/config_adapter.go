@@ -123,6 +123,9 @@ func convertRelationDefinition(rd *relation.RelationDefinition) (RelationConf, b
 	if rd.FromResource == "" || rd.ToResource == "" {
 		return RelationConf{}, false
 	}
+	if relation.ToRelationCategory(rd.Category) == relation.RelationCategoryDynamic {
+		return RelationConf{}, false
+	}
 	return RelationConf{
 		Resources: []cmdb.Resource{
 			cmdb.Resource(rd.FromResource),

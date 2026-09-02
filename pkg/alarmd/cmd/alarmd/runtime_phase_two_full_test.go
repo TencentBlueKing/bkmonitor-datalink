@@ -255,8 +255,14 @@ func TestProductionPhaseTwoBundleRebuildsExpiredSnapshotReferencedByPersistentAc
 	activationKey := catalogPrefix + ":activation"
 	activationHeaderKey := catalogPrefix + ":activation_header"
 	publicationEpochKey := catalogPrefix + ":publication_epoch"
+	revision := string(oldActivation.Current.SnapshotRevision)
+	snapshotKey := catalogPrefix + ":snapshot:" + revision
+	snapshotEpochKey := catalogPrefix + ":snapshot_epoch:" + revision
+	latestPublicationKey := catalogPrefix + ":latest_publication"
+	occurrenceKey := catalogPrefix + ":publication:" + strconv.FormatUint(oldActivation.Current.PublicationEpoch, 10)
 	for _, key := range catalogKeys {
-		if key == activationKey || key == activationHeaderKey || key == publicationEpochKey {
+		if key == activationKey || key == activationHeaderKey || key == publicationEpochKey ||
+			key == snapshotEpochKey || key == latestPublicationKey || key == occurrenceKey {
 			continue
 		}
 		if err := redisClient.Del(ctx, key).Err(); err != nil {
@@ -329,11 +335,6 @@ func TestProductionPhaseTwoBundleRebuildsExpiredSnapshotReferencedByPersistentAc
 			t.Fatal(err)
 		}
 	}
-	revision := string(newActivation.Current.SnapshotRevision)
-	snapshotKey := catalogPrefix + ":snapshot:" + revision
-	snapshotEpochKey := catalogPrefix + ":snapshot_epoch:" + revision
-	latestPublicationKey := catalogPrefix + ":latest_publication"
-	occurrenceKey := catalogPrefix + ":publication:" + strconv.FormatUint(newActivation.Current.PublicationEpoch, 10)
 	if err := redisClient.Set(ctx, occurrenceKey, "another-snapshot-revision", time.Hour).Err(); err != nil {
 		t.Fatal(err)
 	}

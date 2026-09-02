@@ -193,6 +193,13 @@ func (reconciler *SourceReconciler) loadCurrent(ctx context.Context) (*Published
 		return nil, nil, err
 	}
 	snapshot, err := reconciler.repository.LoadPublishedSnapshot(ctx, publication)
+	if errors.Is(err, ErrSnapshotUnavailable) {
+		// Keep the latest publication as the CAS expectation even when its
+		// immutable payload expired. A confirmed source observation can then
+		// recreate identical content at the same occurrence without guessing
+		// any LastGood Plan body.
+		return &PublishedSnapshot{Publication: publication}, nil, nil
+	}
 	if err != nil {
 		return nil, nil, err
 	}

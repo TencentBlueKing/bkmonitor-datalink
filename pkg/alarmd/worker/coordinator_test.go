@@ -44,6 +44,20 @@ func TestSlotExecutionCoordinatorUsesOneExecutePath(t *testing.T) {
 	}
 }
 
+func TestSlotExecutionCoordinatorForwardsNonIdentityAttemptFacts(t *testing.T) {
+	fixture := newFixture(t, true, "")
+	request := slotRequest(execution.OperationReplay)
+	request.AttemptNo = 3
+	if _, err := fixture.coordinator.Execute(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.ports.lastQuery.Contract != request.Contract ||
+		fixture.ports.lastQuery.Operation != request.Operation ||
+		fixture.ports.lastQuery.AttemptNo != request.AttemptNo {
+		t.Fatalf("query request=%+v, want contract/operation/attempt from %+v", fixture.ports.lastQuery, request)
+	}
+}
+
 func TestSlotExecutionCoordinatorProbeStopsUntilReady(t *testing.T) {
 	fixture := newFixture(t, false, "")
 	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationProbe))
@@ -944,12 +958,14 @@ type recordingPorts struct {
 	lastProgress                    execution.ProgressCommitRequest
 	lastEvents                      []contract.TriggerEventV1
 	lastEvaluation                  execution.EvaluationRequest
+	lastQuery                       execution.QueryExecutionRequest
 	eventCount                      int
 	gapMutations                    []execution.PlanGapMutation
 }
 
 func (ports *recordingPorts) Execute(ctx context.Context, request execution.QueryExecutionRequest, consumer execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error) {
 	ports.record("query")
+	ports.lastQuery = request
 	input := validInternalExecution()
 	input.Contract = request.Contract
 	if ports.unboundEffectiveTimeFacts {
@@ -1424,7 +1440,7 @@ func (ports *recordingPorts) fail(stage string) error {
 
 func slotRequest(operation execution.Operation) execution.SlotExecutionRequest {
 	return execution.SlotExecutionRequest{
-		Contract: frozenContract(), Operation: operation,
+		Contract: frozenContract(), Operation: operation, AttemptNo: 1,
 		OwnerFence:       execution.OwnerFence{QueryGroup: "query-group", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1"},
 		ExpectedNextSlot: frozenContract().Slot.EvaluationTime,
 	}

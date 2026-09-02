@@ -246,6 +246,15 @@ func TestCustomMetricFamilySeriesDevelopmentLimits(t *testing.T) {
 		len(observability.AllStages()); got != want {
 		t.Errorf("health last-progress stage maximum = %d, want complete legal stage catalog %d", got, want)
 	}
+	for family, want := range map[string]int{
+		"bkmonitor_alarmd_worker_ready_queue":           2,
+		"bkmonitor_alarmd_worker_query_inflight":        4,
+		"bkmonitor_alarmd_worker_query_admission_total": 20,
+	} {
+		if got := bounds[family]; got != want {
+			t.Errorf("query permit metric family %s theoretical maximum = %d, want %d", family, got, want)
+		}
+	}
 }
 
 func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
@@ -281,6 +290,9 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_worker_owned_query_groups":       "variableLabels: {worker_role}",
 		"bkmonitor_alarmd_ownership_transition_total":      "variableLabels: {transition,result,reason_class}",
 		"bkmonitor_alarmd_source_observation_total":        "variableLabels: {source_kind,result,reason_class}",
+		"bkmonitor_alarmd_worker_ready_queue":              "variableLabels: {kind}",
+		"bkmonitor_alarmd_worker_query_inflight":           "variableLabels: {kind}",
+		"bkmonitor_alarmd_worker_query_admission_total":    "variableLabels: {operation,result}",
 		"bkmonitor_alarmd_ready":                           "variableLabels: {}",
 		"bkmonitor_alarmd_assigned_claims":                 "variableLabels: {}",
 		"bkmonitor_alarmd_fatal_total":                     "variableLabels: {}",
@@ -527,6 +539,9 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("source_observation_total"):               len(observability.AllSourceKinds()) * len(phaseTwoSourceResults) * len(observability.AllReasons(observability.ComponentControlPlane)),
 		fqName("worker_owned_query_groups"):              1,
 		fqName("ownership_transition_total"):             len(phaseTwoOwnershipTransitions) * metricReasonSets(observability.ComponentOwnership),
+		fqName("worker_ready_queue"):                     len(phaseTwoReadyQueueKinds),
+		fqName("worker_query_inflight"):                  len(phaseTwoQueryInflightKinds),
+		fqName("worker_query_admission_total"):           len(phaseTwoQueryInflightKinds) * len(phaseTwoQueryAdmissionResults),
 		fqName("ready"):                                  1,
 		fqName("assigned_claims"):                        1,
 		fqName("fatal_total"):                            1,

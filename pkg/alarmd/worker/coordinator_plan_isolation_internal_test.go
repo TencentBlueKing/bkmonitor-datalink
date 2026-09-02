@@ -113,7 +113,7 @@ func newPlanIsolationFixture(t *testing.T, eventErr error) *planIsolationFixture
 		ScheduleSegmentStart: 1_787_999_940, DuePlanSetDigest: "due-set-v1",
 	}
 	request := execution.SlotExecutionRequest{
-		Contract: contractRef, Operation: execution.OperationNormal,
+		Contract: contractRef, Operation: execution.OperationNormal, AttemptNo: 1,
 		OwnerFence:       execution.OwnerFence{QueryGroup: "query-group", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1"},
 		ExpectedNextSlot: contractRef.Slot.EvaluationTime,
 	}

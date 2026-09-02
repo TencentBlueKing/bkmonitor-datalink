@@ -66,6 +66,9 @@ func TestRunnerRetriesSameFrozenSlotWithoutBlockingHealthyQueryGroup(t *testing.
 	if requests[0].Contract != requests[1].Contract || requests[0].ExpectedNextSlot != requests[1].ExpectedNextSlot {
 		t.Fatalf("retry changed frozen Slot: first=%+v retry=%+v", requests[0], requests[1])
 	}
+	if requests[0].AttemptNo != 1 || requests[1].AttemptNo != 2 {
+		t.Fatalf("retry attempt numbers = %d/%d, want 1/2", requests[0].AttemptNo, requests[1].AttemptNo)
+	}
 }
 
 func TestRunnerUsesAtMostOneProbeForRetryingPartialSlot(t *testing.T) {
@@ -98,6 +101,12 @@ func TestRunnerUsesAtMostOneProbeForRetryingPartialSlot(t *testing.T) {
 	want := []execution.Operation{execution.OperationNormal, execution.OperationProbe, execution.OperationRetry}
 	if got := executor.Operations(); !equalOperations(got, want) {
 		t.Fatalf("operations = %v, want %v", got, want)
+	}
+	requests := executor.Requests()
+	for index, request := range requests {
+		if request.AttemptNo != uint32(index+1) {
+			t.Fatalf("request %d attempt number = %d, want %d", index, request.AttemptNo, index+1)
+		}
 	}
 }
 
@@ -331,6 +340,65 @@ func TestQueryPermitRejectsRecoveryWhenRecoveryPermitsAreDisabled(t *testing.T) 
 		execution.SlotIdentity{QueryGroup: "replay", EvaluationTime: 60}, execution.OperationReplay, clock.Now().Add(time.Minute))
 	if !errors.Is(err, ErrRecoveryPermitsOff) {
 		t.Fatalf("AcquireQueryPermit(replay) error = %v, want ErrRecoveryPermitsOff", err)
+	}
+}
+
+func TestQueryPermitObserverUsesOnlyFixedQueueOperationAndAdmissionFacts(t *testing.T) {
+	clock := newMutableClock(time.Unix(200, 0))
+	limits := testRecoveryLimits()
+	var mu sync.Mutex
+	var observations []observability.Observation
+	observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		mu.Lock()
+		defer mu.Unlock()
+		observations = append(observations, observation)
+	})
+	flights, err := NewFlightCoordinatorWithRecovery(limits, clock.Now, observer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := flights.AcquireQueryPermit(context.Background(),
+		execution.SlotIdentity{QueryGroup: "normal-1", EvaluationTime: 60}, execution.OperationNormal, clock.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := flights.AcquireQueryPermit(context.Background(),
+		execution.SlotIdentity{QueryGroup: "normal-2", EvaluationTime: 60}, execution.OperationNormal, clock.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, acquireErr := flights.AcquireQueryPermit(ctx,
+			execution.SlotIdentity{QueryGroup: "recovery", EvaluationTime: 60}, execution.OperationReplay, clock.Now().Add(time.Minute))
+		done <- acquireErr
+	}()
+	waitForPermitQueue(t, flights, 0, 1)
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("AcquireQueryPermit(canceled) error = %v", err)
+	}
+	first.Release()
+	second.Release()
+
+	mu.Lock()
+	defer mu.Unlock()
+	var queued, canceled, drained bool
+	for _, observation := range observations {
+		facts := observation.QueryPermit
+		if observation.Component != observability.ComponentScheduler ||
+			observation.Stage != observability.StageQueryAdmission || facts == nil {
+			continue
+		}
+		if observation.Operation == observability.OperationReplay && facts.QueueKind == observability.QueryQueueRecovery {
+			queued = queued || observation.Result == observability.ResultStarted && facts.RecoveryWaiting == 1
+			canceled = canceled || observation.Result == observability.ResultPaused && facts.RecoveryWaiting == 0
+		}
+		drained = drained || !facts.Admission && facts.NormalInflight == 0 && facts.RecoveryInflight == 0
+	}
+	if !queued || !canceled || !drained {
+		t.Fatalf("permit observations queued=%t canceled=%t drained=%t: %+v", queued, canceled, drained, observations)
 	}
 }
 

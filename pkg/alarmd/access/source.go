@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -26,6 +27,15 @@ type FrozenPlanSource interface {
 	ResolveFrozenPlan(context.Context, execution.FrozenExecutionContractRef) (FrozenPlan, error)
 }
 
+type QueryPermit interface {
+	RecoveryPermit() *execution.RecoveryPermit
+	Release()
+}
+
+type QueryPermitAcquirer interface {
+	AcquireQueryPermit(context.Context, execution.SlotIdentity, execution.Operation, time.Time) (QueryPermit, error)
+}
+
 type Config struct {
 	MinReadyDelay time.Duration
 }
@@ -33,40 +43,52 @@ type Config struct {
 type Source struct {
 	plans    FrozenPlanSource
 	provider execution.QueryProvider
+	permits  QueryPermitAcquirer
 	config   Config
 	now      func() time.Time
 	wait     func(context.Context, time.Duration) error
 }
 
-func NewSource(plans FrozenPlanSource, provider execution.QueryProvider, config Config) (*Source, error) {
-	if plans == nil || provider == nil || config.MinReadyDelay <= 0 {
-		return nil, errors.New("alarmd access: frozen plan source, provider and non-zero readiness delay are required")
+func NewSource(
+	plans FrozenPlanSource,
+	provider execution.QueryProvider,
+	permits QueryPermitAcquirer,
+	config Config,
+) (*Source, error) {
+	if plans == nil || provider == nil || permits == nil || config.MinReadyDelay <= 0 {
+		return nil, errors.New("alarmd access: frozen plan source, provider, query permits and non-zero readiness delay are required")
 	}
-	return &Source{plans: plans, provider: provider, config: config, now: time.Now, wait: waitContext}, nil
+	return &Source{plans: plans, provider: provider, permits: permits, config: config, now: time.Now, wait: waitContext}, nil
 }
 
 func (source *Source) Execute(ctx context.Context, request execution.QueryExecutionRequest, consumer execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error) {
 	if source == nil || consumer == nil {
 		return execution.QueryExecutionCompletion{}, errors.New("alarmd access: initialized source and consumer are required")
 	}
-	if err := request.Contract.Validate(); err != nil {
+	if err := request.Validate(); err != nil {
 		return execution.QueryExecutionCompletion{}, err
 	}
-	if err := request.Operation.Validate(); err != nil {
-		return execution.QueryExecutionCompletion{}, err
-	}
-	// G1 executes only the normal path. Recovery operations remain owned by the
-	// single coordinator and scheduler in later gates.
+	var recoveryStartedAt time.Time
 	if request.Operation != execution.OperationNormal {
-		return execution.QueryExecutionCompletion{}, errors.New("alarmd access: G1 supports only normal query execution")
+		recoveryStartedAt = source.now()
+		if recoveryStartedAt.IsZero() {
+			return execution.QueryExecutionCompletion{}, errors.New("alarmd access: recovery query start time is required")
+		}
 	}
 	frozen, err := source.plans.ResolveFrozenPlan(ctx, request.Contract)
 	if err != nil {
 		return execution.QueryExecutionCompletion{}, fmt.Errorf("alarmd access: resolve frozen plan: %w", err)
 	}
+	recoveryDeadline, err := deriveRecoveryQueryDeadline(request, frozen, recoveryStartedAt)
+	if err != nil {
+		return execution.QueryExecutionCompletion{}, err
+	}
 	prepared, err := Prepare(request.Contract, frozen, source.config.MinReadyDelay)
 	if err != nil {
 		return execution.QueryExecutionCompletion{}, err
+	}
+	if !recoveryDeadline.IsZero() && !recoveryDeadline.After(source.now()) {
+		return execution.QueryExecutionCompletion{}, context.DeadlineExceeded
 	}
 	if err := consumer.Begin(ctx, prepared.Header); err != nil {
 		return execution.QueryExecutionCompletion{}, err
@@ -78,10 +100,22 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 				return execution.QueryExecutionCompletion{}, err
 			}
 		}
+		queryDeadline := time.UnixMilli(query.DeadlineUnixMilli)
+		if !recoveryDeadline.IsZero() {
+			queryDeadline = recoveryDeadline
+		}
+		permit, err := source.permits.AcquireQueryPermit(ctx, request.Contract.Slot, request.Operation, queryDeadline)
+		if err != nil {
+			return execution.QueryExecutionCompletion{}, fmt.Errorf("alarmd access: acquire physical query permit: %w", err)
+		}
 		attempt := execution.QueryAttempt{Spec: query.Spec, Slot: request.Contract.Slot, Operation: request.Operation,
-			AttemptNo: 1, DeadlineUnixMilli: query.DeadlineUnixMilli}
+			AttemptNo: request.AttemptNo, DeadlineUnixMilli: queryDeadline.UnixMilli(), RecoveryPermit: permit.RecoveryPermit()}
+		if err := attempt.Validate(); err != nil {
+			permit.Release()
+			return execution.QueryExecutionCompletion{}, err
+		}
 		adapter := &seriesAdapter{consumer: consumer, query: query, attemptNo: attempt.AttemptNo}
-		providerCompletion, err := source.provider.Execute(ctx, attempt, adapter)
+		providerCompletion, err := source.executeWithPermit(ctx, attempt, adapter, permit)
 		if err != nil {
 			return execution.QueryExecutionCompletion{}, fmt.Errorf("alarmd access: execute physical query: %w", err)
 		}
@@ -101,6 +135,48 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	}
 	completion.AllRequiredCompleted = true
 	return completion, nil
+}
+
+func deriveRecoveryQueryDeadline(
+	request execution.QueryExecutionRequest,
+	frozen FrozenPlan,
+	startedAt time.Time,
+) (time.Time, error) {
+	if request.Operation == execution.OperationNormal {
+		return time.Time{}, nil
+	}
+	if startedAt.IsZero() || request.Contract.Slot.EvaluationTime <= 0 ||
+		int64(request.Contract.Slot.EvaluationTime) > math.MaxInt64/1000 {
+		return time.Time{}, errors.New("alarmd access: recovery query budget is invalid")
+	}
+	slotUnixMilli := int64(request.Contract.Slot.EvaluationTime) * 1000
+	budgetMillis := int64(0)
+	for _, requirement := range frozen.Requirements {
+		for _, consumer := range requirement.Consumers {
+			intervalMillis := consumer.ConsumerDeadlineUnixMilli - slotUnixMilli
+			candidate := intervalMillis - consumer.DownstreamExecutionReserveMilliSec
+			if intervalMillis <= 0 || consumer.DownstreamExecutionReserveMilliSec <= 0 || candidate <= 0 {
+				return time.Time{}, errors.New("alarmd access: recovery query budget is invalid")
+			}
+			if budgetMillis == 0 || candidate < budgetMillis {
+				budgetMillis = candidate
+			}
+		}
+	}
+	if budgetMillis <= 0 || budgetMillis > math.MaxInt64/int64(time.Millisecond) {
+		return time.Time{}, errors.New("alarmd access: recovery query budget is invalid")
+	}
+	return startedAt.Add(time.Duration(budgetMillis) * time.Millisecond), nil
+}
+
+func (source *Source) executeWithPermit(
+	ctx context.Context,
+	attempt execution.QueryAttempt,
+	adapter execution.ProviderSeriesSink,
+	permit QueryPermit,
+) (execution.ProviderCompletion, error) {
+	defer permit.Release()
+	return source.provider.Execute(ctx, attempt, adapter)
 }
 
 func trustedProviderCompletion(digest execution.PhysicalQueryDigest, completion execution.ProviderCompletion) bool {

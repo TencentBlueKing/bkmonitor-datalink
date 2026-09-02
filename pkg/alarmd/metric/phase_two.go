@@ -21,6 +21,9 @@ type phaseTwoMetrics struct {
 	sourceObservations   *prometheus.CounterVec
 	ownedQueryGroups     *prometheus.GaugeVec
 	ownershipTransitions *prometheus.CounterVec
+	readyQueue           *prometheus.GaugeVec
+	queryInflight        *prometheus.GaugeVec
+	queryAdmission       *prometheus.CounterVec
 }
 
 var phaseTwoBusyStages = []string{"query", "evaluation", "event", "state", "progress", "other"}
@@ -34,6 +37,15 @@ var phaseTwoProgressKinds = []string{
 var phaseTwoBudgets = []string{"series", "retained_bytes", "state_mutations", "events", "gap_mutations", "other"}
 var phaseTwoCapacityResults = []string{"admitted", "rejected", "other"}
 var phaseTwoSourceResults = []string{"degraded", "recovered"}
+var phaseTwoReadyQueueKinds = []string{"normal", "recovery"}
+var phaseTwoQueryInflightKinds = []string{"normal", "retry", "replay", "probe"}
+var phaseTwoQueryAdmissionResults = []observability.Result{
+	observability.ResultStarted,
+	observability.ResultSuccess,
+	observability.ResultFailed,
+	observability.ResultPaused,
+	observability.ResultTimeout,
+}
 var phaseTwoOwnershipTransitions = []observability.Stage{
 	observability.StageAssignmentAcquired,
 	observability.StageAssignmentLost,
@@ -72,17 +84,34 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "ownership_transition_total",
 			Help: "Ownership lifecycle transitions by bounded transition, result and reason class.",
 		}, []string{"transition", "result", "reason_class"}),
+		readyQueue: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "worker_ready_queue",
+			Help: "Process-wide ready query queue depth by fixed normal or recovery queue kind.",
+		}, []string{"kind"}),
+		queryInflight: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "worker_query_inflight",
+			Help: "Process-wide in-flight physical queries by fixed operation kind.",
+		}, []string{"kind"}),
+		queryAdmission: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "worker_query_admission_total",
+			Help: "Process-wide physical query permit admission outcomes by fixed operation and result.",
+		}, []string{"operation", "result"}),
 	}
 }
 
 func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations,
-		m.ownedQueryGroups, m.ownershipTransitions,
+		m.ownedQueryGroups, m.ownershipTransitions, m.readyQueue, m.queryInflight,
+		m.queryAdmission,
 	}
 }
 
 func (m phaseTwoMetrics) observe(observation observability.Observation) {
+	if observation.Component == observability.ComponentScheduler &&
+		observation.Stage == observability.StageQueryAdmission && observation.QueryPermit != nil {
+		m.observeQueryPermit(observation)
+	}
 	if observation.Component == observability.ComponentControlPlane && observation.SourceKind != "" &&
 		(observation.Result == observability.ResultDegraded || observation.Result == observability.Result(observability.ResultRecovered)) {
 		m.sourceObservations.WithLabelValues(
@@ -123,6 +152,39 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 	if kind := phaseTwoProgressKind(observation.Stage); kind != "" && observation.Result == observability.ResultSuccess {
 		m.lastProgress.WithLabelValues(kind).Set(float64(time.Now().Unix()))
 	}
+}
+
+func (m phaseTwoMetrics) observeQueryPermit(observation observability.Observation) {
+	facts := observation.QueryPermit
+	m.readyQueue.WithLabelValues("normal").Set(float64(facts.NormalWaiting))
+	m.readyQueue.WithLabelValues("recovery").Set(float64(facts.RecoveryWaiting))
+	m.queryInflight.WithLabelValues("normal").Set(float64(facts.NormalInflight))
+	m.queryInflight.WithLabelValues("retry").Set(float64(facts.RetryInflight))
+	m.queryInflight.WithLabelValues("replay").Set(float64(facts.ReplayInflight))
+	m.queryInflight.WithLabelValues("probe").Set(float64(facts.ProbeInflight))
+	if facts.Admission && isPhaseTwoQueryOperation(observation.Operation) &&
+		isPhaseTwoQueryAdmissionResult(observation.Result) {
+		m.queryAdmission.WithLabelValues(string(observation.Operation), string(observation.Result)).Inc()
+	}
+}
+
+func isPhaseTwoQueryOperation(operation observability.Operation) bool {
+	switch operation {
+	case observability.OperationNormal, observability.OperationRetry,
+		observability.OperationReplay, observability.OperationProbe:
+		return true
+	default:
+		return false
+	}
+}
+
+func isPhaseTwoQueryAdmissionResult(result observability.Result) bool {
+	for _, allowed := range phaseTwoQueryAdmissionResults {
+		if result == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Recorder) SetOwnedQueryGroups(count int) {

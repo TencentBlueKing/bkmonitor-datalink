@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 var ErrSlotInFlight = errors.New("alarmd scheduler: Query Group Slot is already in flight")
@@ -78,18 +79,25 @@ type FlightCoordinator struct {
 	recoveryInflight int
 	nextRecovery     bool
 	permitSequence   uint64
+	observer         observability.Observer
+	inflightByOp     map[execution.Operation]int
 }
 
 func NewFlightCoordinator() *FlightCoordinator {
 	return &FlightCoordinator{active: make(map[execution.QueryGroupIdentity]struct{}), now: time.Now}
 }
 
-func NewFlightCoordinatorWithRecovery(limits RecoveryLimits, now func() time.Time) (*FlightCoordinator, error) {
+func NewFlightCoordinatorWithRecovery(
+	limits RecoveryLimits,
+	now func() time.Time,
+	observers ...observability.Observer,
+) (*FlightCoordinator, error) {
 	if err := limits.Validate(); err != nil || now == nil {
 		return nil, ErrRecoveryLimitsInvalid
 	}
 	return &FlightCoordinator{active: make(map[execution.QueryGroupIdentity]struct{}), recoveryEnabled: true,
-		limits: limits, now: now, nextRecovery: true}, nil
+		limits: limits, now: now, nextRecovery: true, observer: observability.Multi(observers...),
+		inflightByOp: make(map[execution.Operation]int)}, nil
 }
 
 func (coordinator *FlightCoordinator) tryAcquire(queryGroup execution.QueryGroupIdentity) (func(), bool) {
@@ -177,7 +185,7 @@ func (runner *Runner) RunOne(
 		return execution.SlotExecutionResult{}, false, ErrSlotOwnershipChanged
 	}
 	request := execution.SlotExecutionRequest{
-		Contract: slot.Contract, Operation: operation,
+		Contract: slot.Contract, Operation: operation, AttemptNo: runner.attemptNo(slot),
 		OwnerFence: fence, ExpectedNextSlot: slot.ExpectedNextSlot,
 	}
 	if err := request.Validate(); err != nil {
@@ -188,4 +196,11 @@ func (runner *Runner) RunOne(
 		runner.recordResult(slot, result, runner.now())
 	}
 	return result, true, err
+}
+
+func (runner *Runner) attemptNo(slot FrozenSlot) uint32 {
+	if runner.attempt == nil || runner.attempt.contract != slot.Contract {
+		return 1
+	}
+	return runner.attempt.failures + 1
 }

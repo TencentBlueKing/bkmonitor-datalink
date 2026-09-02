@@ -183,11 +183,16 @@ type queryPermitSnapshot struct {
 	RecoveryInflight int
 	NormalWaiting    int
 	RecoveryWaiting  int
+	NormalInflight   int
+	RetryInflight    int
+	ReplayInflight   int
+	ProbeInflight    int
 }
 
 type QueryPermit struct {
 	coordinator *FlightCoordinator
 	recovery    *execution.RecoveryPermit
+	operation   execution.Operation
 	once        sync.Once
 }
 
@@ -203,7 +208,7 @@ func (permit *QueryPermit) Release() {
 	if permit == nil || permit.coordinator == nil {
 		return
 	}
-	permit.once.Do(func() { permit.coordinator.releaseQueryPermit(permit.recovery != nil) })
+	permit.once.Do(func() { permit.coordinator.releaseQueryPermit(permit.operation) })
 }
 
 func (coordinator *FlightCoordinator) AcquireQueryPermit(
@@ -219,14 +224,17 @@ func (coordinator *FlightCoordinator) AcquireQueryPermit(
 		return nil, errors.New("alarmd scheduler: valid query permit request is required")
 	}
 	if err := ctx.Err(); err != nil {
+		coordinator.observeQueryPermit(ctx, operation, observability.ResultPaused, true, coordinator.queryPermitSnapshot())
 		return nil, err
 	}
 	if !deadline.After(coordinator.now()) {
+		coordinator.observeQueryPermit(ctx, operation, observability.ResultTimeout, true, coordinator.queryPermitSnapshot())
 		return nil, context.DeadlineExceeded
 	}
 	waiter := &queryPermitWaiter{slot: slot, operation: operation, deadline: deadline, grant: make(chan *QueryPermit, 1)}
 	recovery := operation != execution.OperationNormal
 	if recovery && coordinator.limits.RecoveryQueryPermits == 0 {
+		coordinator.observeQueryPermit(ctx, operation, observability.ResultFailed, true, coordinator.queryPermitSnapshot())
 		return nil, ErrRecoveryPermitsOff
 	}
 	coordinator.mu.Lock()
@@ -239,23 +247,32 @@ func (coordinator *FlightCoordinator) AcquireQueryPermit(
 	coordinator.expireWaitersLocked(queue)
 	if len(*queue) >= capacity || queuedForQueryGroup(*queue, slot.QueryGroup) >= coordinator.limits.MaxQueuedItemsPerQG {
 		coordinator.mu.Unlock()
+		coordinator.observeQueryPermit(ctx, operation, observability.ResultFailed, true, coordinator.queryPermitSnapshot())
 		return nil, ErrQueryPermitQueueFull
 	}
 	*queue = append(*queue, waiter)
 	coordinator.dispatchQueryPermitsLocked()
+	queued := coordinator.waiterQueuedLocked(waiter, recovery)
+	snapshot := coordinator.queryPermitSnapshotLocked()
 	coordinator.mu.Unlock()
+	if queued {
+		coordinator.observeQueryPermit(ctx, operation, observability.ResultStarted, true, snapshot)
+	}
 
 	timer := time.NewTimer(deadline.Sub(coordinator.now()))
 	defer timer.Stop()
 	select {
 	case permit := <-waiter.grant:
 		if permit == nil {
+			coordinator.observeQueryPermit(ctx, operation, observability.ResultTimeout, true, coordinator.queryPermitSnapshot())
 			return nil, context.DeadlineExceeded
 		}
 		if !deadline.After(coordinator.now()) {
 			permit.Release()
+			coordinator.observeQueryPermit(ctx, operation, observability.ResultTimeout, true, coordinator.queryPermitSnapshot())
 			return nil, context.DeadlineExceeded
 		}
+		coordinator.observeQueryPermit(ctx, operation, observability.ResultSuccess, true, coordinator.queryPermitSnapshot())
 		return permit, nil
 	case <-ctx.Done():
 		coordinator.mu.Lock()
@@ -268,6 +285,7 @@ func (coordinator *FlightCoordinator) AcquireQueryPermit(
 				permit.Release()
 			}
 		}
+		coordinator.observeQueryPermit(ctx, operation, observability.ResultPaused, true, coordinator.queryPermitSnapshot())
 		return nil, ctx.Err()
 	case <-timer.C:
 		coordinator.mu.Lock()
@@ -280,6 +298,7 @@ func (coordinator *FlightCoordinator) AcquireQueryPermit(
 				permit.Release()
 			}
 		}
+		coordinator.observeQueryPermit(ctx, operation, observability.ResultTimeout, true, coordinator.queryPermitSnapshot())
 		return nil, context.DeadlineExceeded
 	}
 }
@@ -291,19 +310,37 @@ func (coordinator *FlightCoordinator) queryPermitSnapshot() queryPermitSnapshot 
 	coordinator.mu.Lock()
 	defer coordinator.mu.Unlock()
 	return queryPermitSnapshot{Inflight: coordinator.queryInflight, RecoveryInflight: coordinator.recoveryInflight,
-		NormalWaiting: len(coordinator.normalWaiters), RecoveryWaiting: len(coordinator.recoveryWaiters)}
+		NormalWaiting: len(coordinator.normalWaiters), RecoveryWaiting: len(coordinator.recoveryWaiters),
+		NormalInflight: coordinator.inflightByOp[execution.OperationNormal],
+		RetryInflight:  coordinator.inflightByOp[execution.OperationRetry],
+		ReplayInflight: coordinator.inflightByOp[execution.OperationReplay],
+		ProbeInflight:  coordinator.inflightByOp[execution.OperationProbe]}
 }
 
-func (coordinator *FlightCoordinator) releaseQueryPermit(recovery bool) {
+func (coordinator *FlightCoordinator) queryPermitSnapshotLocked() queryPermitSnapshot {
+	return queryPermitSnapshot{Inflight: coordinator.queryInflight, RecoveryInflight: coordinator.recoveryInflight,
+		NormalWaiting: len(coordinator.normalWaiters), RecoveryWaiting: len(coordinator.recoveryWaiters),
+		NormalInflight: coordinator.inflightByOp[execution.OperationNormal],
+		RetryInflight:  coordinator.inflightByOp[execution.OperationRetry],
+		ReplayInflight: coordinator.inflightByOp[execution.OperationReplay],
+		ProbeInflight:  coordinator.inflightByOp[execution.OperationProbe]}
+}
+
+func (coordinator *FlightCoordinator) releaseQueryPermit(operation execution.Operation) {
 	coordinator.mu.Lock()
 	if coordinator.queryInflight > 0 {
 		coordinator.queryInflight--
 	}
-	if recovery && coordinator.recoveryInflight > 0 {
+	if operation != execution.OperationNormal && coordinator.recoveryInflight > 0 {
 		coordinator.recoveryInflight--
 	}
+	if coordinator.inflightByOp[operation] > 0 {
+		coordinator.inflightByOp[operation]--
+	}
 	coordinator.dispatchQueryPermitsLocked()
+	snapshot := coordinator.queryPermitSnapshotLocked()
 	coordinator.mu.Unlock()
+	coordinator.observeQueryPermit(context.Background(), operation, observability.ResultSuccess, false, snapshot)
 }
 
 func (coordinator *FlightCoordinator) dispatchQueryPermitsLocked() {
@@ -330,13 +367,55 @@ func (coordinator *FlightCoordinator) dispatchQueryPermitsLocked() {
 		}
 		coordinator.queryInflight++
 		coordinator.permitSequence++
-		permit := &QueryPermit{coordinator: coordinator}
+		permit := &QueryPermit{coordinator: coordinator, operation: waiter.operation}
+		coordinator.inflightByOp[waiter.operation]++
 		if useRecovery {
 			permit.recovery = &execution.RecoveryPermit{PermitID: fmt.Sprintf("query-recovery-%d", coordinator.permitSequence),
 				Slot: waiter.slot, Operation: waiter.operation, ExpiresAtUnixMilli: waiter.deadline.UnixMilli()}
 		}
 		waiter.grant <- permit
 	}
+}
+
+func (coordinator *FlightCoordinator) waiterQueuedLocked(waiter *queryPermitWaiter, recovery bool) bool {
+	queue := coordinator.normalWaiters
+	if recovery {
+		queue = coordinator.recoveryWaiters
+	}
+	for _, candidate := range queue {
+		if candidate == waiter {
+			return true
+		}
+	}
+	return false
+}
+
+func (coordinator *FlightCoordinator) observeQueryPermit(
+	ctx context.Context,
+	operation execution.Operation,
+	result observability.Result,
+	admission bool,
+	snapshot queryPermitSnapshot,
+) {
+	if coordinator == nil || coordinator.observer == nil {
+		return
+	}
+	queueKind := observability.QueryQueueRecovery
+	if operation == execution.OperationNormal {
+		queueKind = observability.QueryQueueNormal
+	}
+	defer func() { _ = recover() }()
+	coordinator.observer.Observe(ctx, observability.Observation{
+		Component: observability.ComponentScheduler, Stage: observability.StageQueryAdmission,
+		Result: result, Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
+		QueryPermit: &observability.QueryPermitFacts{
+			QueueKind: queueKind, Admission: admission,
+			NormalWaiting: snapshot.NormalWaiting, RecoveryWaiting: snapshot.RecoveryWaiting,
+			NormalInflight: snapshot.NormalInflight, RetryInflight: snapshot.RetryInflight,
+			ReplayInflight: snapshot.ReplayInflight, ProbeInflight: snapshot.ProbeInflight,
+			RecoveryInflight: snapshot.RecoveryInflight,
+		},
+	})
 }
 
 func queuedForQueryGroup(queue []*queryPermitWaiter, queryGroup execution.QueryGroupIdentity) int {

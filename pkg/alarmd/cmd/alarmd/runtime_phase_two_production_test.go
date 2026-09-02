@@ -78,7 +78,7 @@ func TestProductionFrozenExecutionResolvesExactPersistedContract(t *testing.T) {
 	}
 	finalization, err := resolver.ResolveFinalization(context.Background(), execution.SlotExecutionRequest{
 		Contract: contractRef, OwnerFence: execution.OwnerFence{QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1"},
-		ExpectedNextSlot: 120, Operation: execution.OperationNormal,
+		ExpectedNextSlot: 120, Operation: execution.OperationNormal, AttemptNo: 1,
 	})
 	if err != nil || finalization.Mode != execution.FinalizationQueryRequired || finalization.Contract != contractRef {
 		t.Fatalf("ResolveFinalization() = %+v, %v", finalization, err)
@@ -143,7 +143,7 @@ func TestProductionFrozenExecutionSkipsExpiredNormalSlotWithoutRecoveryPermit(t 
 		OwnerFence: execution.OwnerFence{
 			QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1",
 		},
-		ExpectedNextSlot: 120, Operation: execution.OperationNormal,
+		ExpectedNextSlot: 120, Operation: execution.OperationNormal, AttemptNo: 1,
 	}
 	finalization, err := resolver.ResolveFinalization(context.Background(), request)
 	if err != nil {
@@ -801,6 +801,11 @@ func TestProductionPhaseTwoActivationChecksExactPersistedStateEpoch(t *testing.T
 
 func TestProductionPhaseTwoOwnershipUsesAssignmentAndLeaseBeforeRunner(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
+	limits := validGoAccessRuntimeConfig().PhaseTwo.Scheduler.RecoveryLimits()
+	flights, err := scheduler.NewFlightCoordinatorWithRecovery(limits, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
 	store := &fakePhaseTwoOwnershipStore{now: now, renewed: make(chan struct{})}
 	compatibility := ownership.WorkerCompatibility{DeploymentProfile: "shadow", CapabilitiesDigest: "capabilities"}
 	eligibility, err := scheduler.NewStaticWorkerEligibility(compatibility)
@@ -817,10 +822,13 @@ func TestProductionPhaseTwoOwnershipUsesAssignmentAndLeaseBeforeRunner(t *testin
 		Progress: unavailableScheduleProgress{}, Executor: rejectingSlotExecutor{}, Now: func() time.Time { return now },
 		ControlLeaderTTL: time.Minute, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			observations = append(observations, observation)
-		}), Reconcile: reconciler,
+		}), Reconcile: reconciler, Flights: flights, RecoveryLimits: limits,
 	})
 	if err != nil {
 		t.Fatalf("newProductionPhaseTwoOwnership() error = %v", err)
+	}
+	if production.flights != flights {
+		t.Fatal("production ownership copied the process-wide FlightCoordinator")
 	}
 	if err := production.RegisterWorker(context.Background(), ownership.WorkerRegistration{
 		WorkerID: "worker-1", AssignmentReadiness: ownership.WorkerReady,
@@ -874,6 +882,11 @@ func TestProductionPhaseTwoOwnershipUsesAssignmentAndLeaseBeforeRunner(t *testin
 
 func TestProductionPhaseTwoOwnershipFollowerReadsAssignmentWithoutPublishing(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
+	limits := validGoAccessRuntimeConfig().PhaseTwo.Scheduler.RecoveryLimits()
+	flights, err := scheduler.NewFlightCoordinatorWithRecovery(limits, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
 	store := &fakePhaseTwoOwnershipStore{
 		now: now, acquireLeaderErr: ownership.ErrLeaseBusy,
 		assignment: ownership.AssignmentRecord{
@@ -895,6 +908,7 @@ func TestProductionPhaseTwoOwnershipFollowerReadsAssignmentWithoutPublishing(t *
 		Store: store, WorkerID: "worker-1", Catalog: unavailableSlotCatalog{},
 		Progress: unavailableScheduleProgress{}, Executor: rejectingSlotExecutor{}, Now: func() time.Time { return now },
 		ControlLeaderTTL: time.Minute, Observer: observability.NopObserver{}, Reconcile: reconciler,
+		Flights: flights, RecoveryLimits: limits,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -957,7 +971,7 @@ func TestProductionSlotObservationsBracketRealExecutionWithFrozenProvenance(t *t
 	}
 	request := execution.SlotExecutionRequest{
 		Contract: slot.Contract, Operation: slot.Dispatch.Operation,
-		OwnerFence: slot.Dispatch.OwnerFence, ExpectedNextSlot: slot.ExpectedNextSlot,
+		OwnerFence: slot.Dispatch.OwnerFence, ExpectedNextSlot: slot.ExpectedNextSlot, AttemptNo: 1,
 	}
 	if _, err := executor.Execute(context.Background(), request); err != nil {
 		t.Fatalf("observed Slot executor error = %v", err)

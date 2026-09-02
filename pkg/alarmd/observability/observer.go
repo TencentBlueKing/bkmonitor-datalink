@@ -25,6 +25,7 @@ type ReasonCode string
 type Direction string
 type CapacityBudget string
 type SourceKind string
+type QueryQueueKind string
 
 const (
 	ComponentRuntime        = "runtime"
@@ -57,6 +58,7 @@ const (
 	StageScheduleDue          = "schedule_due"
 	StageSlotStarted          = "slot_started"
 	StageSlotCompleted        = "slot_completed"
+	StageQueryAdmission       = "query_admission"
 	StageRestartRecovered     = "restart_recovered"
 	StageKafkaAssigned        = "kafka_assigned"
 	StageExecutionReceived    = "execution_received"
@@ -143,6 +145,9 @@ const (
 	SourceKindLegacyStrategy   SourceKind = "legacy_strategy"
 	SourceKindCompiledSnapshot SourceKind = "compiled_snapshot"
 
+	QueryQueueNormal   QueryQueueKind = "normal"
+	QueryQueueRecovery QueryQueueKind = "recovery"
+
 	ReasonNone                  ReasonCode = "none"
 	ReasonInternalUnknown       ReasonCode = "internal_unknown"
 	ReasonCPU                   ReasonCode = "resource_cpu"
@@ -173,6 +178,18 @@ type Counts struct {
 	Bytes      int64
 	Keys       int64
 	StateBytes int64
+}
+
+type QueryPermitFacts struct {
+	QueueKind        QueryQueueKind
+	Admission        bool
+	NormalWaiting    int
+	RecoveryWaiting  int
+	NormalInflight   int
+	RetryInflight    int
+	ReplayInflight   int
+	ProbeInflight    int
+	RecoveryInflight int
 }
 
 type TraceFields struct {
@@ -215,6 +232,7 @@ type Observation struct {
 	Err               error
 	CapacityBudget    CapacityBudget
 	SourceKind        SourceKind
+	QueryPermit       *QueryPermitFacts
 	normalized        bool
 	stageReasonBucket bool
 }
@@ -277,9 +295,31 @@ func NormalizeObservation(observation Observation) Observation {
 		observation.ReasonCode = NormalizeReason(observation.ReasonCode, observation.Result)
 	}
 	observation.CapacityBudget = NormalizeCapacityBudget(observation.CapacityBudget)
+	observation.QueryPermit = normalizeQueryPermitFacts(observation.QueryPermit)
 	observation.Counts = normalizeCounts(observation.Counts)
 	observation.normalized = true
 	return observation
+}
+
+func normalizeQueryPermitFacts(facts *QueryPermitFacts) *QueryPermitFacts {
+	if facts == nil {
+		return nil
+	}
+	normalized := *facts
+	if normalized.QueueKind != QueryQueueNormal && normalized.QueueKind != QueryQueueRecovery {
+		normalized.QueueKind = ""
+	}
+	values := []*int{
+		&normalized.NormalWaiting, &normalized.RecoveryWaiting, &normalized.NormalInflight,
+		&normalized.RetryInflight, &normalized.ReplayInflight, &normalized.ProbeInflight,
+		&normalized.RecoveryInflight,
+	}
+	for _, value := range values {
+		if *value < 0 {
+			*value = 0
+		}
+	}
+	return &normalized
 }
 
 func isSourceReasonClass(reason ReasonCode) bool {
@@ -511,7 +551,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentOwnership, StageTakeoverStarted}, {ComponentOwnership, StageTakeoverCompleted},
 	{ComponentOwnership, StageLeaseRenewed}, {ComponentOwnership, StageFenceChecked},
 	{ComponentScheduler, StageScheduleDue}, {ComponentScheduler, StageSlotStarted},
-	{ComponentScheduler, StageSlotCompleted},
+	{ComponentScheduler, StageSlotCompleted}, {ComponentScheduler, StageQueryAdmission},
 	{ComponentAccess, StageQueryCompleted},
 	{ComponentEvaluation, StageEvaluationCompleted},
 	{ComponentState, StageStatePreflight}, {ComponentState, StageGapLoaded},

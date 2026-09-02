@@ -1109,6 +1109,19 @@ func TestQueryProviderContractIsTypedAndClosed(t *testing.T) {
 	}
 }
 
+func TestQueryExecutionRequestRequiresTypedAttemptFacts(t *testing.T) {
+	request := execution.QueryExecutionRequest{
+		Contract: frozenContract(), Operation: execution.OperationReplay, AttemptNo: 2,
+	}
+	if err := request.Validate(); err != nil {
+		t.Fatalf("QueryExecutionRequest.Validate() error=%v", err)
+	}
+	request.AttemptNo = 0
+	if err := request.Validate(); err == nil {
+		t.Fatal("QueryExecutionRequest accepted zero attempt number")
+	}
+}
+
 func TestLocalizedBadSeriesRequiresStatePreflightOutsideDataset(t *testing.T) {
 	input := validInternalExecution()
 	badSeries := execution.SeriesIdentityDigest(strings.Repeat("d", 64))

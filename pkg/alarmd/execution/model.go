@@ -134,6 +134,7 @@ func (fence OwnerFence) Validate(contractRef FrozenExecutionContractRef) error {
 type SlotExecutionRequest struct {
 	Contract         FrozenExecutionContractRef
 	Operation        Operation
+	AttemptNo        uint32
 	OwnerFence       OwnerFence
 	ExpectedNextSlot EvaluationTime
 }
@@ -144,6 +145,9 @@ func (request SlotExecutionRequest) Validate() error {
 	}
 	if err := request.Operation.Validate(); err != nil {
 		return err
+	}
+	if request.AttemptNo == 0 {
+		return errors.New("alarmd execution: positive Slot attempt number is required")
 	}
 	if err := request.OwnerFence.Validate(request.Contract); err != nil {
 		return err
@@ -157,6 +161,20 @@ func (request SlotExecutionRequest) Validate() error {
 type QueryExecutionRequest struct {
 	Contract  FrozenExecutionContractRef
 	Operation Operation
+	AttemptNo uint32
+}
+
+func (request QueryExecutionRequest) Validate() error {
+	if err := request.Contract.Validate(); err != nil {
+		return err
+	}
+	if err := request.Operation.Validate(); err != nil {
+		return err
+	}
+	if request.AttemptNo == 0 {
+		return errors.New("alarmd execution: positive query attempt number is required")
+	}
+	return nil
 }
 
 type PlanIdentity struct {

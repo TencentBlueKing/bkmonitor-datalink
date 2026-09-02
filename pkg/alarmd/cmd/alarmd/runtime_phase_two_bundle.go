@@ -248,7 +248,12 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	querySource, err := access.NewSource(frozen, queryClient, access.Config{
+	recoveryLimits := cfg.PhaseTwo.Scheduler.RecoveryLimits()
+	flights, err := scheduler.NewFlightCoordinatorWithRecovery(recoveryLimits, external.Now, observer)
+	if err != nil {
+		return nil, err
+	}
+	querySource, err := access.NewSource(frozen, queryClient, productionQueryPermitAcquirer{flights: flights}, access.Config{
 		MinReadyDelay: cfg.PhaseTwo.Access.MinReadyDelay.Duration(),
 	})
 	if err != nil {
@@ -311,7 +316,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	productionOwnership, err := newProductionPhaseTwoOwnership(productionPhaseTwoOwnershipDependencies{
 		Store: ownershipStore, WorkerID: cfg.PhaseTwo.Worker.ID, Catalog: catalog, Progress: progressStore,
 		Executor: coordinator, Now: external.Now, ControlLeaderTTL: cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration(),
-		Observer: observer, Reconcile: assignmentReconciler,
+		Observer: observer, Reconcile: assignmentReconciler, Flights: flights, RecoveryLimits: recoveryLimits,
 	})
 	if err != nil {
 		return nil, err

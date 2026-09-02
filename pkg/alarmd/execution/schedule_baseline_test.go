@@ -38,12 +38,23 @@ func TestScheduleProgressUsesQueryGroupIdentity(t *testing.T) {
 
 func TestProgressContractsDoNotFreezeNextSlotAfterCompletion(t *testing.T) {
 	if got, want := fieldNames(reflect.TypeOf(execution.SlotExecutionRequest{})),
-		[]string{"Contract", "Operation", "OwnerFence", "ExpectedNextSlot"}; !reflect.DeepEqual(got, want) {
+		[]string{"Contract", "Operation", "AttemptNo", "OwnerFence", "ExpectedNextSlot"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("SlotExecutionRequest fields = %v, want %v", got, want)
 	}
 	if got, want := fieldNames(reflect.TypeOf(execution.ProgressCommitRequest{})),
 		[]string{"Identity", "OwnerFence", "ExpectedNextSlot", "Completion"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ProgressCommitRequest fields = %v, want %v", got, want)
+	}
+}
+
+func TestQueryAttemptFactsStayOutsideBusinessIdentity(t *testing.T) {
+	if got, want := fieldNames(reflect.TypeOf(execution.QueryExecutionRequest{})),
+		[]string{"Contract", "Operation", "AttemptNo"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("QueryExecutionRequest fields = %v, want %v", got, want)
+	}
+	if got, want := fieldNames(reflect.TypeOf(execution.SlotIdentity{})),
+		[]string{"QueryGroup", "EvaluationTime"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("SlotIdentity fields = %v, want %v", got, want)
 	}
 }
 

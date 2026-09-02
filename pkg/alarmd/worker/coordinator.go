@@ -117,7 +117,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	started := time.Now()
 	stream := &streamedExecution{coordinator: coordinator, request: request}
 	completion, err := coordinator.ports.Query.Execute(ctx, execution.QueryExecutionRequest{
-		Contract: request.Contract, Operation: request.Operation,
+		Contract: request.Contract, Operation: request.Operation, AttemptNo: request.AttemptNo,
 	}, stream)
 	if err != nil {
 		coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation, started, "", "", err)

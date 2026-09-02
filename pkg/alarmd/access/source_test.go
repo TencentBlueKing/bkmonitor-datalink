@@ -16,14 +16,17 @@ import (
 func TestSourceStreamsFullQueryAndConservesCompletion(t *testing.T) {
 	contractRef, frozen := frozenExecution(t)
 	provider := &fakeProvider{}
-	source, err := NewSource(staticFrozenPlan{plan: frozen}, provider, Config{MinReadyDelay: time.Second})
+	permits := &recordingQueryPermits{}
+	source, err := NewSource(staticFrozenPlan{plan: frozen}, provider, permits, Config{MinReadyDelay: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
 	source.now = func() time.Time { return time.UnixMilli(2_000_000_000_000) }
 	source.wait = func(context.Context, time.Duration) error { return nil }
 	consumer := &recordingConsumer{}
-	completion, err := source.Execute(context.Background(), execution.QueryExecutionRequest{Contract: contractRef, Operation: execution.OperationNormal}, consumer)
+	completion, err := source.Execute(context.Background(), execution.QueryExecutionRequest{
+		Contract: contractRef, Operation: execution.OperationNormal, AttemptNo: 1,
+	}, consumer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,6 +38,15 @@ func TestSourceStreamsFullQueryAndConservesCompletion(t *testing.T) {
 	}
 	if err := completion.Validate(consumer.header, []execution.SeriesDelivery{consumer.batches[0].Delivery}); err != nil {
 		t.Fatalf("completion conservation: %v", err)
+	}
+	if len(permits.attempts) != 1 || permits.releases != 1 || permits.attempts[0].operation != execution.OperationNormal {
+		t.Fatalf("query permits=%+v releases=%d", permits.attempts, permits.releases)
+	}
+	wantDeadline := frozen.Requirements[0].Consumers[0].ConsumerDeadlineUnixMilli -
+		frozen.Requirements[0].Consumers[0].DownstreamExecutionReserveMilliSec
+	if permits.attempts[0].deadline.UnixMilli() != wantDeadline || provider.attempts[0].DeadlineUnixMilli != wantDeadline {
+		t.Fatalf("LIVE permit/provider deadlines=%d/%d, want frozen query deadline %d",
+			permits.attempts[0].deadline.UnixMilli(), provider.attempts[0].DeadlineUnixMilli, wantDeadline)
 	}
 }
 
@@ -68,14 +80,16 @@ func TestSourceProjectsPartialAndUnavailableCompletions(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			contractRef, frozen := frozenExecution(t)
-			source, err := NewSource(staticFrozenPlan{plan: frozen}, test.provider, Config{MinReadyDelay: time.Second})
+			source, err := NewSource(staticFrozenPlan{plan: frozen}, test.provider, &recordingQueryPermits{}, Config{MinReadyDelay: time.Second})
 			if err != nil {
 				t.Fatal(err)
 			}
 			source.now = func() time.Time { return time.UnixMilli(2_000_000_000_000) }
 			source.wait = func(context.Context, time.Duration) error { return nil }
 			consumer := &recordingConsumer{}
-			completion, err := source.Execute(context.Background(), execution.QueryExecutionRequest{Contract: contractRef, Operation: execution.OperationNormal}, consumer)
+			completion, err := source.Execute(context.Background(), execution.QueryExecutionRequest{
+				Contract: contractRef, Operation: execution.OperationNormal, AttemptNo: 1,
+			}, consumer)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -93,6 +107,119 @@ func TestSourceProjectsPartialAndUnavailableCompletions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSourceGivesReplayRetryAndProbeOneFreshFrozenRecoveryBudget(t *testing.T) {
+	for _, operation := range []execution.Operation{
+		execution.OperationReplay, execution.OperationRetry, execution.OperationProbe,
+	} {
+		t.Run(string(operation), func(t *testing.T) {
+			contractRef, frozen := frozenExecution(t)
+			provider := &fakeProvider{}
+			permits := &recordingQueryPermits{}
+			source, err := NewSource(staticFrozenPlan{plan: frozen}, provider, permits, Config{MinReadyDelay: time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			startedAt := time.UnixMilli(2_000_000_000_000)
+			source.now = func() time.Time { return startedAt }
+			source.wait = func(context.Context, time.Duration) error { return nil }
+			request := execution.QueryExecutionRequest{Contract: contractRef, Operation: operation, AttemptNo: 3}
+			if _, err := source.Execute(context.Background(), request, &recordingConsumer{}); err != nil {
+				t.Fatal(err)
+			}
+			if len(provider.attempts) != 1 {
+				t.Fatalf("provider attempts=%d, want 1", len(provider.attempts))
+			}
+			attempt := provider.attempts[0]
+			if attempt.Operation != request.Operation || attempt.AttemptNo != request.AttemptNo ||
+				attempt.RecoveryPermit == nil || attempt.RecoveryPermit.Operation != request.Operation ||
+				attempt.RecoveryPermit.Slot != request.Contract.Slot {
+				t.Fatalf("provider attempt=%+v", attempt)
+			}
+			consumer := frozen.Requirements[0].Consumers[0]
+			intervalMillis := consumer.ConsumerDeadlineUnixMilli - int64(contractRef.Slot.EvaluationTime)*1000
+			wantDeadline := startedAt.Add(time.Duration(intervalMillis-consumer.DownstreamExecutionReserveMilliSec) * time.Millisecond).UnixMilli()
+			if len(permits.attempts) != 1 || permits.releases != 1 ||
+				permits.attempts[0].deadline.UnixMilli() != wantDeadline || attempt.DeadlineUnixMilli != wantDeadline {
+				t.Fatalf("permit/provider deadlines=%+v/%d releases=%d, want shared recovery deadline %d",
+					permits.attempts, attempt.DeadlineUnixMilli, permits.releases, wantDeadline)
+			}
+		})
+	}
+}
+
+func TestSourceRecoveryBudgetIsNotResetAcrossPermitWaitsOrPhysicalQueries(t *testing.T) {
+	contractRef, frozen := frozenExecution(t)
+	second := frozen.Requirements[0]
+	second.RequirementID = "secondary"
+	second.DatasetName = "secondary"
+	second.RelativeWindow.StartOffsetSeconds = -120
+	frozen.Requirements = append(frozen.Requirements, second)
+	contractRef = bindFrozenDueDigest(t, contractRef, frozen)
+	provider := &fakeProvider{}
+	clock := time.UnixMilli(2_000_000_000_000)
+	permits := &recordingQueryPermits{onAcquire: func() { clock = clock.Add(5 * time.Second) }}
+	source, err := NewSource(staticFrozenPlan{plan: frozen}, provider, permits, Config{MinReadyDelay: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	startedAt := clock
+	source.now = func() time.Time { return clock }
+	source.wait = func(context.Context, time.Duration) error { return nil }
+	if _, err := source.Execute(context.Background(), execution.QueryExecutionRequest{
+		Contract: contractRef, Operation: execution.OperationReplay, AttemptNo: 2,
+	}, &recordingConsumer{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(permits.attempts) != 2 || len(provider.attempts) != 2 || permits.releases != 2 {
+		t.Fatalf("permit/provider attempts=%d/%d releases=%d, want two physical queries", len(permits.attempts), len(provider.attempts), permits.releases)
+	}
+	consumer := frozen.Requirements[0].Consumers[0]
+	intervalMillis := consumer.ConsumerDeadlineUnixMilli - int64(contractRef.Slot.EvaluationTime)*1000
+	wantDeadline := startedAt.Add(time.Duration(intervalMillis-consumer.DownstreamExecutionReserveMilliSec) * time.Millisecond).UnixMilli()
+	for index := range permits.attempts {
+		if permits.attempts[index].deadline.UnixMilli() != wantDeadline || provider.attempts[index].DeadlineUnixMilli != wantDeadline {
+			t.Fatalf("physical query %d reset recovery deadline: permit/provider=%d/%d want=%d",
+				index, permits.attempts[index].deadline.UnixMilli(), provider.attempts[index].DeadlineUnixMilli, wantDeadline)
+		}
+	}
+}
+
+func TestSourceRejectsInvalidOrPermitConsumedRecoveryBudget(t *testing.T) {
+	t.Run("invalid frozen duration", func(t *testing.T) {
+		contractRef, frozen := frozenExecution(t)
+		consumer := &frozen.Requirements[0].Consumers[0]
+		consumer.DownstreamExecutionReserveMilliSec = consumer.ConsumerDeadlineUnixMilli - int64(contractRef.Slot.EvaluationTime)*1000
+		contractRef = bindFrozenDueDigest(t, contractRef, frozen)
+		source, err := NewSource(staticFrozenPlan{plan: frozen}, &fakeProvider{}, &recordingQueryPermits{}, Config{MinReadyDelay: time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.now = func() time.Time { return time.UnixMilli(2_000_000_000_000) }
+		if _, err := source.Execute(context.Background(), execution.QueryExecutionRequest{
+			Contract: contractRef, Operation: execution.OperationReplay, AttemptNo: 2,
+		}, &recordingConsumer{}); err == nil || !strings.Contains(err.Error(), "recovery query budget") {
+			t.Fatalf("invalid recovery budget error=%v", err)
+		}
+	})
+
+	t.Run("permit wait consumed", func(t *testing.T) {
+		contractRef, frozen := frozenExecution(t)
+		clock := time.UnixMilli(2_000_000_000_000)
+		permits := deadlineCheckingQueryPermits{now: func() time.Time { return clock }, wait: func() { clock = clock.Add(26 * time.Second) }}
+		source, err := NewSource(staticFrozenPlan{plan: frozen}, &fakeProvider{}, permits, Config{MinReadyDelay: time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.now = func() time.Time { return clock }
+		source.wait = func(context.Context, time.Duration) error { return nil }
+		if _, err := source.Execute(context.Background(), execution.QueryExecutionRequest{
+			Contract: contractRef, Operation: execution.OperationReplay, AttemptNo: 2,
+		}, &recordingConsumer{}); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("permit-consumed recovery budget error=%v, want deadline exceeded", err)
+		}
+	})
 }
 
 func TestPrepareUsesEarliestConsumerDeadlineAndDoesNotDelayEager(t *testing.T) {
@@ -162,9 +289,11 @@ type fakeProvider struct {
 	completeness execution.Completeness
 	empty        bool
 	reason       execution.ReasonCode
+	attempts     []execution.QueryAttempt
 }
 
 func (provider *fakeProvider) Execute(ctx context.Context, attempt execution.QueryAttempt, sink execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {
+	provider.attempts = append(provider.attempts, attempt)
 	completeness := provider.completeness
 	if completeness == "" {
 		completeness = execution.CompletenessFull
@@ -195,6 +324,70 @@ func (provider *fakeProvider) Execute(ctx context.Context, attempt execution.Que
 		DataState: execution.DataStateData, Delivery: delivery,
 		RouteFacts: execution.ProviderRouteFacts{ProviderRouteRef: attempt.Spec.PlanFacts.ProviderRouteRef},
 		Stats:      execution.ProviderStats{Series: 1, Records: 1}}, nil
+}
+
+type recordedPermitAttempt struct {
+	slot      execution.SlotIdentity
+	operation execution.Operation
+	deadline  time.Time
+}
+
+type recordingQueryPermits struct {
+	attempts  []recordedPermitAttempt
+	releases  int
+	onAcquire func()
+}
+
+func (permits *recordingQueryPermits) AcquireQueryPermit(
+	_ context.Context,
+	slot execution.SlotIdentity,
+	operation execution.Operation,
+	deadline time.Time,
+) (QueryPermit, error) {
+	permits.attempts = append(permits.attempts, recordedPermitAttempt{slot: slot, operation: operation, deadline: deadline})
+	if permits.onAcquire != nil {
+		permits.onAcquire()
+	}
+	permit := &recordingQueryPermit{release: func() { permits.releases++ }}
+	if operation != execution.OperationNormal {
+		permit.recovery = &execution.RecoveryPermit{
+			PermitID: "recovery-permit", Slot: slot, Operation: operation, ExpiresAtUnixMilli: deadline.UnixMilli(),
+		}
+	}
+	return permit, nil
+}
+
+type deadlineCheckingQueryPermits struct {
+	now  func() time.Time
+	wait func()
+}
+
+func (permits deadlineCheckingQueryPermits) AcquireQueryPermit(
+	_ context.Context,
+	_ execution.SlotIdentity,
+	_ execution.Operation,
+	deadline time.Time,
+) (QueryPermit, error) {
+	permits.wait()
+	if !deadline.After(permits.now()) {
+		return nil, context.DeadlineExceeded
+	}
+	return &recordingQueryPermit{}, nil
+}
+
+type recordingQueryPermit struct {
+	recovery *execution.RecoveryPermit
+	release  func()
+}
+
+func (permit *recordingQueryPermit) RecoveryPermit() *execution.RecoveryPermit {
+	return permit.recovery
+}
+func (permit *recordingQueryPermit) Release() {
+	if permit.release != nil {
+		permit.release()
+		permit.release = nil
+	}
 }
 
 type recordingConsumer struct {
@@ -236,6 +429,20 @@ func frozenExecution(t *testing.T) (execution.FrozenExecutionContractRef, Frozen
 		ScheduleSegmentStart: evaluationTime - 60, DuePlanSetDigest: dueDigest}
 	return contractRef, FrozenPlan{DuePlans: []execution.DuePlan{due}, Requirements: []execution.DataRequirement{requirement},
 		QueryFacts: map[execution.LogicalQueryRef]execution.QueryPlanFacts{"query": facts}}
+}
+
+func bindFrozenDueDigest(
+	t *testing.T,
+	contractRef execution.FrozenExecutionContractRef,
+	frozen FrozenPlan,
+) execution.FrozenExecutionContractRef {
+	t.Helper()
+	digest, err := execution.DeriveDuePlanSetDigest(frozen.DuePlans, frozen.Requirements)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contractRef.DuePlanSetDigest = digest
+	return contractRef
 }
 
 func queryFacts(t *testing.T) execution.QueryPlanFacts {

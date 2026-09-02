@@ -227,6 +227,24 @@ func lessProductionPlanIdentity(left, right execution.PlanIdentity) bool {
 var _ access.FrozenPlanSource = (*productionFrozenExecution)(nil)
 var _ execution.QueryFreeFinalizationSource = (*productionFrozenExecution)(nil)
 
+type productionQueryPermitAcquirer struct {
+	flights *scheduler.FlightCoordinator
+}
+
+func (acquirer productionQueryPermitAcquirer) AcquireQueryPermit(
+	ctx context.Context,
+	slot execution.SlotIdentity,
+	operation execution.Operation,
+	deadline time.Time,
+) (access.QueryPermit, error) {
+	if acquirer.flights == nil {
+		return nil, errors.New("phase-two production query permits are not initialized")
+	}
+	return acquirer.flights.AcquireQueryPermit(ctx, slot, operation, deadline)
+}
+
+var _ access.QueryPermitAcquirer = productionQueryPermitAcquirer{}
+
 func phaseTwoLegacyQueryRuntimeFacts(
 	runtime config.PhaseTwoLegacyQueryRuntimeConfig,
 ) controlplane.LegacyQueryRuntimeFacts {
@@ -640,6 +658,8 @@ type productionPhaseTwoOwnershipDependencies struct {
 	Reconcile        *scheduler.Reconciler
 	ControlLeaderTTL time.Duration
 	Observer         observability.Observer
+	Flights          *scheduler.FlightCoordinator
+	RecoveryLimits   scheduler.RecoveryLimits
 }
 
 type productionPhaseTwoOwnership struct {
@@ -656,11 +676,12 @@ func newProductionPhaseTwoOwnership(
 ) (*productionPhaseTwoOwnership, error) {
 	if dependencies.Store == nil || dependencies.WorkerID == "" || dependencies.Catalog == nil ||
 		dependencies.Progress == nil || dependencies.Executor == nil || dependencies.Now == nil ||
-		dependencies.ControlLeaderTTL <= 0 || dependencies.Observer == nil || dependencies.Reconcile == nil {
+		dependencies.ControlLeaderTTL <= 0 || dependencies.Observer == nil || dependencies.Reconcile == nil ||
+		dependencies.Flights == nil || dependencies.RecoveryLimits.Validate() != nil {
 		return nil, errors.New("phase-two production ownership dependencies are incomplete")
 	}
 	return &productionPhaseTwoOwnership{
-		dependencies: dependencies, reconciler: dependencies.Reconcile, flights: scheduler.NewFlightCoordinator(),
+		dependencies: dependencies, reconciler: dependencies.Reconcile, flights: dependencies.Flights,
 	}, nil
 }
 
@@ -811,6 +832,7 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 	source, err := scheduler.NewProductionSlotSource(
 		queryGroup, runtime.dependencies.WorkerID, runtime.dependencies.Store, session,
 		runtime.dependencies.Catalog, runtime.dependencies.Progress, runtime.dependencies.Now,
+		scheduler.WithRecoveryLimits(runtime.dependencies.RecoveryLimits),
 	)
 	if err != nil {
 		_ = session.Release(ctx)

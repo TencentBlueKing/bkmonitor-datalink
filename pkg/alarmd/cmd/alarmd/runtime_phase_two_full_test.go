@@ -537,6 +537,153 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingEventACKIsRetr
 	}
 }
 
+func TestProductionPhaseTwoBundleSharesOneProcessRecoveryPermitBudgetAcrossOwnedQueryGroups(t *testing.T) {
+	address, redisClient := startPhaseTwoRedis(t)
+	ctx := context.Background()
+	installTwoPhaseTwoStrategies(t, ctx, redisClient)
+
+	base := time.Now().Unix()
+	var clock atomic.Int64
+	clock.Store(time.Unix(base, 0).UnixMilli())
+	now := func() time.Time { return time.UnixMilli(clock.Load()) }
+	firstEntered := make(chan struct{})
+	secondEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseFirst) }) }
+	defer release()
+	var uqCalls atomic.Int64
+	var inflight atomic.Int64
+	var maxInflight atomic.Int64
+	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		call := uqCalls.Add(1)
+		current := inflight.Add(1)
+		defer inflight.Add(-1)
+		for {
+			maximum := maxInflight.Load()
+			if current <= maximum || maxInflight.CompareAndSwap(maximum, current) {
+				break
+			}
+		}
+		switch call {
+		case 1:
+			close(firstEntered)
+			<-releaseFirst
+		case 2:
+			close(secondEntered)
+		}
+		_, _ = writer.Write([]byte(`{"series":[],"status":null,"trace_id":"shared-permit","is_partial":false,"result_table_id":[]}`))
+	}))
+	defer uqServer.Close()
+
+	cfg := validGoAccessRuntimeConfig()
+	cfg.Redis.Address = address
+	cfg.Redis.StatePrefix = "alarmd-g3b-shared-query-permits"
+	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
+	cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.DownstreamExecutionReserve = config.Duration(500 * time.Millisecond)
+	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
+	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 1
+	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Worker.RegistrationRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.LeaseTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Ownership.LeaseRenewInterval = config.Duration(time.Minute)
+
+	queued := make(chan struct{}, 1)
+	bundle, err := openProductionPhaseTwoBundleWithDependencies(
+		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime),
+		newPhaseTwoApplicationHealth(),
+		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
+			return controlplane.NewLegacyRedisStrategySource(client, prefix)
+		},
+		phaseTwoProductionExternalDependencies{
+			Now: now, HTTPClient: uqServer.Client(),
+			AdditionalObserver: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+				if observation.Stage == observability.StageQueryAdmission && observation.Result == observability.ResultStarted &&
+					observation.Operation == observability.OperationReplay && observation.QueryPermit != nil &&
+					observation.QueryPermit.QueueKind == observability.QueryQueueRecovery && observation.QueryPermit.RecoveryWaiting > 0 {
+					select {
+					case queued <- struct{}{}:
+					default:
+					}
+				}
+			}),
+			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
+				return &recordingPhaseTwoEventSink{}, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("openProductionPhaseTwoBundleWithDependencies() error = %v", err)
+	}
+	if err := bundle.Start(ctx); err != nil {
+		t.Fatalf("phase-two production Start() error = %v", err)
+	}
+	defer func() {
+		if err := bundle.Shutdown(ctx); err != nil {
+			t.Errorf("phase-two production Shutdown() error = %v", err)
+		}
+	}()
+	productionOwnership := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
+	if productionOwnership.flights == nil {
+		t.Fatal("production ownership has no process-wide FlightCoordinator")
+	}
+	bundle.mu.RLock()
+	runners := make([]phaseTwoQueryGroupRuntime, 0, len(bundle.runners))
+	for _, lifecycle := range bundle.runners {
+		runners = append(runners, lifecycle.runner)
+	}
+	bundle.mu.RUnlock()
+	if len(runners) != 2 {
+		t.Fatalf("production runners = %d, want two owned Query Groups", len(runners))
+	}
+	clock.Store(time.Unix(base, 0).Add(500 * time.Millisecond).UnixMilli())
+
+	type runResult struct {
+		attempted bool
+		err       error
+	}
+	results := make(chan runResult, 2)
+	go func() {
+		_, attempted, runErr := runners[0].RunOne(ctx)
+		results <- runResult{attempted: attempted, err: runErr}
+	}()
+	select {
+	case <-firstEntered:
+	case result := <-results:
+		t.Fatalf("first owned Query Group returned before UQ attempted=%t error=%v", result.attempted, result.err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("first owned Query Group did not enter UQ")
+	}
+	go func() {
+		_, attempted, runErr := runners[1].RunOne(ctx)
+		results <- runResult{attempted: attempted, err: runErr}
+	}()
+	select {
+	case <-queued:
+		if got := uqCalls.Load(); got != 1 {
+			t.Fatalf("queued replay sibling observed %d concurrent UQ calls, want one", got)
+		}
+	case <-secondEntered:
+		t.Fatal("owned Query Groups used copied recovery permit budgets or bypassed recovery-aware SlotSource")
+	case <-time.After(3 * time.Second):
+		t.Fatal("second owned Query Group neither queued for recovery nor entered UQ")
+	}
+	release()
+	for range runners {
+		result := <-results
+		if result.err != nil || !result.attempted {
+			t.Fatalf("owned Query Group RunOne() attempted=%t error=%v", result.attempted, result.err)
+		}
+	}
+	if uqCalls.Load() != 2 || maxInflight.Load() != 1 {
+		t.Fatalf("process UQ calls/max inflight = %d/%d, want 2/1", uqCalls.Load(), maxInflight.Load())
+	}
+}
+
 func TestProductionPhaseTwoBundleCompletesIncompleteAccessWithoutStoppingHealthyQueryGroupAndRecovers(t *testing.T) {
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()

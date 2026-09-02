@@ -117,6 +117,15 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	if err != nil {
 		return ActivationState{}, err
 	}
+	previousRecords, err := activationRecordMap(previous.Plans)
+	if err != nil {
+		return ActivationState{}, err
+	}
+	for index := range records {
+		if _, continuouslyActive := previousRecords[records[index].Fact.Plan]; !continuouslyActive {
+			records[index].Fact.Selected.ForceWarming = true
+		}
+	}
 	if len(reactivating) > 0 {
 		planGroups := make(map[execution.PlanIdentity]execution.QueryGroupIdentity)
 		for _, group := range snapshot.QueryGroups {

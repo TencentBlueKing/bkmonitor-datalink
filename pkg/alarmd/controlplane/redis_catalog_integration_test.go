@@ -1412,6 +1412,97 @@ func TestScheduleActivationReconcilerCutsBackToHistoricalSnapshotOnNewOccurrence
 	}
 }
 
+func TestScheduleActivationReconcilerForcesWarmingWhenPlanReturnsToActiveQueryGroup(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:plan-reactivation", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	clock := []time.Time{time.Unix(60, 0), time.Unix(120, 0), time.Unix(180, 0), time.Unix(240, 0)}
+	clockCalls := 0
+	reconciler, err := controlplane.NewScheduleActivationReconciler(repository, compiler, stateSemantics, func() time.Time {
+		at := clock[clockCalls]
+		clockCalls++
+		return at
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	initialCatalog := sharedQueryGroupCatalog(t, true, false)
+	initialSnapshot, _, err := repository.PublishCatalog(ctx, initialCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := reconciler.Ensure(ctx, initialSnapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialA := activationRecordByStrategy(t, initial, "1001")
+	if initialA.Fact.Selected.ForceWarming {
+		t.Fatalf("initial Plan A unexpectedly forced WARMING: %#v", initialA)
+	}
+	expandedCatalog := sharedQueryGroupCatalog(t, true, true)
+	if expandedCatalog.QueryGroups[0].Identity != initialCatalog.QueryGroups[0].Identity {
+		t.Fatalf("Plan addition changed Query Group identity: initial=%s expanded=%s",
+			initialCatalog.QueryGroups[0].Identity, expandedCatalog.QueryGroups[0].Identity)
+	}
+	expandedSnapshot, _, err := repository.PublishCatalog(ctx, expandedCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expanded, err := reconciler.Ensure(ctx, expandedSnapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activationRecordByStrategy(t, expanded, "1001").Fact.Selected.ForceWarming {
+		t.Fatalf("continuous Plan A unexpectedly forced WARMING: %#v", expanded.Plans)
+	}
+	if !activationRecordByStrategy(t, expanded, "1002").Fact.Selected.ForceWarming {
+		t.Fatalf("new Plan B did not force WARMING: %#v", expanded.Plans)
+	}
+
+	remainingCatalog := sharedQueryGroupCatalog(t, false, true)
+	if remainingCatalog.QueryGroups[0].Identity != initialCatalog.QueryGroups[0].Identity {
+		t.Fatalf("Plan removal changed Query Group identity: initial=%s remaining=%s",
+			initialCatalog.QueryGroups[0].Identity, remainingCatalog.QueryGroups[0].Identity)
+	}
+	remainingSnapshot, _, err := repository.PublishCatalog(ctx, remainingCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := reconciler.Ensure(ctx, remainingSnapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining.Plans) != 1 || remaining.Plans[0].Fact.Plan.StrategyID != "1002" ||
+		remaining.Plans[0].Fact.Selected.ForceWarming {
+		t.Fatalf("continuous Plan B activation after sibling removal=%#v", remaining.Plans)
+	}
+
+	reenabledSnapshot, _, err := repository.PublishCatalog(ctx, expandedCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reenabled, err := reconciler.Ensure(ctx, reenabledSnapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	returnedA := activationRecordByStrategy(t, reenabled, "1001")
+	continuousB := activationRecordByStrategy(t, reenabled, "1002")
+	if !returnedA.Fact.Selected.ForceWarming ||
+		returnedA.Fact.Selected.StateApplyEpoch != execution.StateApplyEpoch(reenabledSnapshot.Publication.PublicationEpoch) ||
+		returnedA.Fact.Selected.StateApplyEpoch <= initialA.Fact.Selected.StateApplyEpoch ||
+		returnedA.Publication != reenabledSnapshot.Publication {
+		t.Fatalf("reactivated Plan A activation=%#v initial=%#v", returnedA, initialA)
+	}
+	if continuousB.Fact.Selected.ForceWarming {
+		t.Fatalf("continuous Plan B unexpectedly forced WARMING: %#v", continuousB)
+	}
+}
+
 func TestScheduleActivationReconcilerReturnsWinnerForStalePublicationWithoutClock(t *testing.T) {
 	client := newControlplaneRedis(t)
 	ctx := context.Background()
@@ -1959,6 +2050,46 @@ func validCatalog(t *testing.T, threshold int) controlplane.Catalog {
 		t.Fatal(err)
 	}
 	return catalog
+}
+
+func sharedQueryGroupCatalog(t *testing.T, includeA, includeB bool) controlplane.Catalog {
+	t.Helper()
+	documents := realThresholdDocuments(t)
+	strategies := make([]controlplane.SourceStrategy, 0, 2)
+	if includeA {
+		strategies = append(strategies, controlplane.SourceStrategy{SourceID: "1001", Document: documents[0],
+			Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}})
+	}
+	if includeB {
+		strategies = append(strategies, controlplane.SourceStrategy{SourceID: "1002", Document: documents[1],
+			Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}})
+	}
+	catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
+		Strategies: strategies,
+		Planner:    &recordingPlanner{facts: queryFacts(t)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.QueryGroups) != 1 {
+		t.Fatalf("shared Query Group catalog=%#v", catalog)
+	}
+	return catalog
+}
+
+func activationRecordByStrategy(
+	t *testing.T,
+	state controlplane.ActivationState,
+	strategyID string,
+) controlplane.PlanActivationRecord {
+	t.Helper()
+	for _, record := range state.Plans {
+		if record.Fact.Plan.StrategyID == strategyID {
+			return record
+		}
+	}
+	t.Fatalf("missing activation for strategy %s: %#v", strategyID, state.Plans)
+	return controlplane.PlanActivationRecord{}
 }
 
 func frozenSchedule(

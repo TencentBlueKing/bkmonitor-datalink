@@ -22,7 +22,6 @@ var (
 	ErrRecoveryLimitsInvalid = errors.New("alarmd scheduler: recovery limits are invalid")
 	ErrQueryPermitQueueFull  = errors.New("alarmd scheduler: query permit queue is full")
 	ErrRecoveryPermitsOff    = errors.New("alarmd scheduler: recovery query permits are disabled")
-	ErrRecoveryQueueFull     = errors.New("alarmd scheduler: recovery queue is full")
 )
 
 // RecoveryLimits are process-wide fixed bounds. They deliberately do not
@@ -93,75 +92,53 @@ type recoveryAttempt struct {
 	probeUsed bool
 }
 
-func (coordinator *FlightCoordinator) operationFor(
+func (runner *Runner) operationFor(
 	slot FrozenSlot,
 	at time.Time,
 ) (execution.Operation, bool, error) {
-	if !coordinator.recoveryEnabled {
+	if !runner.flights.recoveryEnabled {
 		return slot.Dispatch.Operation, true, nil
 	}
-	coordinator.mu.Lock()
-	defer coordinator.mu.Unlock()
 	if slot.Recovery.Disposition == ReplayExpired {
-		delete(coordinator.attempts, slot.Contract.Slot.QueryGroup)
+		runner.attempt = nil
 		return execution.OperationNormal, true, nil
 	}
-	attempt, ok := coordinator.attempts[slot.Contract.Slot.QueryGroup]
-	if !ok {
+	if runner.attempt == nil {
 		return slot.Dispatch.Operation, true, nil
 	}
-	if attempt.contract != slot.Contract {
-		delete(coordinator.attempts, slot.Contract.Slot.QueryGroup)
+	if runner.attempt.contract != slot.Contract {
+		runner.attempt = nil
 		return slot.Dispatch.Operation, true, nil
 	}
-	if at.Before(attempt.nextAt) {
+	if at.Before(runner.attempt.nextAt) {
 		return "", false, nil
 	}
-	return attempt.next, true, nil
+	return runner.attempt.next, true, nil
 }
 
-func (coordinator *FlightCoordinator) recordResult(
+func (runner *Runner) recordResult(
 	slot FrozenSlot,
-	operation execution.Operation,
 	result execution.SlotExecutionResult,
 	at time.Time,
-) error {
-	if !coordinator.recoveryEnabled {
-		return nil
-	}
-	coordinator.mu.Lock()
-	defer coordinator.mu.Unlock()
-	queryGroup := slot.Contract.Slot.QueryGroup
-	if result.Completed || result.Result != observability.ResultRetrying {
-		delete(coordinator.attempts, queryGroup)
-		return nil
-	}
-	attempt, exists := coordinator.attempts[queryGroup]
-	if !exists && len(coordinator.attempts) >= coordinator.limits.RecoveryQueueCapacity {
-		return ErrRecoveryQueueFull
-	}
-	if !exists || attempt.contract != slot.Contract {
-		attempt = recoveryAttempt{contract: slot.Contract}
-	}
-	attempt.failures++
-	if result.ReasonCode == execution.ReasonCode(contract.ReasonQueryPartial) && !attempt.probeUsed {
-		attempt.next = execution.OperationProbe
-		attempt.probeUsed = true
-	} else {
-		attempt.next = execution.OperationRetry
-	}
-	attempt.nextAt = at.Add(retryDelay(coordinator.limits, queryGroup, attempt.failures))
-	coordinator.attempts[queryGroup] = attempt
-	return nil
-}
-
-func (coordinator *FlightCoordinator) clearAttempt(queryGroup execution.QueryGroupIdentity) {
-	if coordinator == nil || !coordinator.recoveryEnabled {
+) {
+	if !runner.flights.recoveryEnabled {
 		return
 	}
-	coordinator.mu.Lock()
-	delete(coordinator.attempts, queryGroup)
-	coordinator.mu.Unlock()
+	if result.Completed || result.Result != observability.ResultRetrying {
+		runner.attempt = nil
+		return
+	}
+	if runner.attempt == nil || runner.attempt.contract != slot.Contract {
+		runner.attempt = &recoveryAttempt{contract: slot.Contract}
+	}
+	runner.attempt.failures++
+	if result.ReasonCode == execution.ReasonCode(contract.ReasonQueryPartial) && !runner.attempt.probeUsed {
+		runner.attempt.next = execution.OperationProbe
+		runner.attempt.probeUsed = true
+	} else {
+		runner.attempt.next = execution.OperationRetry
+	}
+	runner.attempt.nextAt = at.Add(retryDelay(runner.flights.limits, runner.queryGroup, runner.attempt.failures))
 }
 
 func retryDelay(limits RecoveryLimits, queryGroup execution.QueryGroupIdentity, failures uint32) time.Duration {

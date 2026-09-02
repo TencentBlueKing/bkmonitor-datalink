@@ -70,7 +70,6 @@ type FlightCoordinator struct {
 	recoveryEnabled  bool
 	limits           RecoveryLimits
 	now              func() time.Time
-	attempts         map[execution.QueryGroupIdentity]recoveryAttempt
 	normalWaiters    []*queryPermitWaiter
 	recoveryWaiters  []*queryPermitWaiter
 	queryInflight    int
@@ -88,7 +87,7 @@ func NewFlightCoordinatorWithRecovery(limits RecoveryLimits, now func() time.Tim
 		return nil, ErrRecoveryLimitsInvalid
 	}
 	return &FlightCoordinator{active: make(map[execution.QueryGroupIdentity]struct{}), recoveryEnabled: true,
-		limits: limits, now: now, attempts: make(map[execution.QueryGroupIdentity]recoveryAttempt), nextRecovery: true}, nil
+		limits: limits, now: now, nextRecovery: true}, nil
 }
 
 func (coordinator *FlightCoordinator) tryAcquire(queryGroup execution.QueryGroupIdentity) (func(), bool) {
@@ -117,6 +116,7 @@ type Runner struct {
 	executor   Executor
 	flights    *FlightCoordinator
 	now        func() time.Time
+	attempt    *recoveryAttempt
 }
 
 func NewRunner(
@@ -154,14 +154,14 @@ func (runner *Runner) RunOne(
 	slot, due, err := runner.source.Next(ctx, runner.queryGroup)
 	if err != nil || !due {
 		if err == nil && !due {
-			runner.flights.clearAttempt(runner.queryGroup)
+			runner.attempt = nil
 		}
 		return execution.SlotExecutionResult{}, false, err
 	}
 	if err := slot.Validate(runner.queryGroup); err != nil {
 		return execution.SlotExecutionResult{}, false, err
 	}
-	operation, ready, err := runner.flights.operationFor(slot, runner.now())
+	operation, ready, err := runner.operationFor(slot, runner.now())
 	if err != nil || !ready {
 		return execution.SlotExecutionResult{}, false, err
 	}
@@ -181,7 +181,7 @@ func (runner *Runner) RunOne(
 	}
 	result, err := runner.executor.Execute(ctx, request)
 	if err == nil {
-		err = runner.flights.recordResult(slot, operation, result, runner.now())
+		runner.recordResult(slot, result, runner.now())
 	}
 	return result, true, err
 }

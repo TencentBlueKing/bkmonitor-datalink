@@ -19,24 +19,15 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-// SeriesEvaluationNamedInput closes one frozen logical requirement over the
-// physical query and completion that produced its immutable series view.
-type SeriesEvaluationNamedInput struct {
-	Requirement DataRequirement
-	Query       PlannedPhysicalQueryRef
-	Binding     NamedInputBinding
-	Completion  PhysicalQueryCompletion
-}
-
 // SeriesEvaluationInputRequest is the side-effect-free, series-local input to
-// one compiled Level. It is built only after every named input has completed.
+// one compiled Level. Frozen static facts remain in the shared header; this
+// request carries only the named immutable views consumed by Evaluation.
 type SeriesEvaluationInputRequest struct {
-	Contract               FrozenExecutionContractRef
-	Consumer               ConsumerRef
-	SeriesIdentity         SeriesIdentityDigest
-	ExpectedRequirementIDs []RequirementID
-	ActualRequirementIDs   []RequirementID
-	Inputs                 []SeriesEvaluationNamedInput
+	Contract       FrozenExecutionContractRef
+	Consumer       ConsumerRef
+	SeriesIdentity SeriesIdentityDigest
+	RequirementIDs []RequirementID
+	Inputs         []NamedInputBinding
 }
 
 // EvaluationInputContractError keeps an invalid input set local to the
@@ -70,16 +61,15 @@ func BuildSeriesEvaluationInputRequest(
 	return request, nil
 }
 
-// Validate proves that the request still equals the canonical request derived
-// from the same frozen header and completed input facts.
-func (request SeriesEvaluationInputRequest) Validate(header InternalExecutionHeader) error {
-	bindings := make([]NamedInputBinding, 0, len(request.Inputs))
-	completions := make([]PhysicalQueryCompletion, 0, len(request.Inputs))
-	for _, input := range request.Inputs {
-		bindings = append(bindings, input.Binding)
-		completions = append(completions, input.Completion)
-	}
-	rebuilt, err := buildSeriesEvaluationInputRequest(header, request.Consumer, request.SeriesIdentity, bindings, completions)
+// Validate replays the contract against authoritative completion facts kept by
+// the Slot session; request-local facts cannot self-authorize a completion.
+func (request SeriesEvaluationInputRequest) Validate(
+	header InternalExecutionHeader,
+	completions []PhysicalQueryCompletion,
+) error {
+	rebuilt, err := buildSeriesEvaluationInputRequest(
+		header, request.Consumer, request.SeriesIdentity, request.Inputs, completions,
+	)
 	if err != nil {
 		return scopedEvaluationInputError(request.Consumer, request.SeriesIdentity, err)
 	}
@@ -117,7 +107,7 @@ func buildSeriesEvaluationInputRequest(
 	expected := make([]DataRequirement, 0)
 	for _, requirement := range header.Requirements {
 		if requirementHasConsumer(requirement, consumer) {
-			expected = append(expected, cloneDataRequirement(requirement))
+			expected = append(expected, requirement)
 		}
 	}
 	sort.Slice(expected, func(i, j int) bool {
@@ -188,14 +178,8 @@ func buildSeriesEvaluationInputRequest(
 		if err := validateNamedInputCompletion(binding, completion); err != nil {
 			return SeriesEvaluationInputRequest{}, err
 		}
-		request.ExpectedRequirementIDs = append(request.ExpectedRequirementIDs, requirement.RequirementID)
-		request.ActualRequirementIDs = append(request.ActualRequirementIDs, binding.RequirementID)
-		request.Inputs = append(request.Inputs, SeriesEvaluationNamedInput{
-			Requirement: requirement,
-			Query:       query,
-			Binding:     cloneNamedInputBinding(binding),
-			Completion:  clonePhysicalQueryCompletion(completion),
-		})
+		request.RequirementIDs = append(request.RequirementIDs, requirement.RequirementID)
+		request.Inputs = append(request.Inputs, cloneNamedInputBinding(binding))
 	}
 	return request, nil
 }
@@ -359,31 +343,10 @@ func validateNamedInputCompletion(binding NamedInputBinding, completion Physical
 	return nil
 }
 
-func cloneDataRequirement(source DataRequirement) DataRequirement {
-	cloned := source
-	cloned.InputProjection = cloneInputProjection(source.InputProjection)
-	cloned.RequiredColumns = append([]string(nil), source.RequiredColumns...)
-	cloned.PointOffsetsSeconds = append([]int64(nil), source.PointOffsetsSeconds...)
-	cloned.NamedPoints = append([]NamedInputPoint(nil), source.NamedPoints...)
-	cloned.Consumers = append([]DataRequirementConsumer(nil), source.Consumers...)
-	return cloned
-}
-
 func cloneNamedInputBinding(source NamedInputBinding) NamedInputBinding {
 	cloned := source
 	cloned.QualityFacts = append([]InputQualityFact(nil), source.QualityFacts...)
 	cloned.Terminals = append([]InputTerminal(nil), source.Terminals...)
-	if source.PartialEvidence != nil {
-		evidence := *source.PartialEvidence
-		cloned.PartialEvidence = &evidence
-	}
-	return cloned
-}
-
-func clonePhysicalQueryCompletion(source PhysicalQueryCompletion) PhysicalQueryCompletion {
-	cloned := source
-	cloned.RouteFacts.ResultTableIDs = append([]string(nil), source.RouteFacts.ResultTableIDs...)
-	cloned.RouteFacts.Attempts = append([]RouteAttemptFact(nil), source.RouteFacts.Attempts...)
 	if source.PartialEvidence != nil {
 		evidence := *source.PartialEvidence
 		cloned.PartialEvidence = &evidence

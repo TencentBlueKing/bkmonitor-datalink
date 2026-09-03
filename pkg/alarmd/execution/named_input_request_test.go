@@ -1,81 +1,66 @@
 package execution_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
 func TestBuildSeriesEvaluationInputRequestSupportsG4InputShapes(t *testing.T) {
 	tests := []struct {
-		name         string
-		requirements []execution.DataRequirement
-		wantNames    []execution.DatasetName
+		name      string
+		kind      string
+		wantNames []execution.DatasetName
 	}{
-		{name: "threshold primary only", requirements: []execution.DataRequirement{namedInputRequirement("primary", "primary", execution.InputRolePrimary, -60, 0, nil)}, wantNames: []execution.DatasetName{"primary"}},
-		{name: "simple ring ratio primary and previous", requirements: []execution.DataRequirement{
-			namedInputRequirement("previous", "previous", execution.InputRoleAlgorithmDependency, -120, -60, []execution.NamedInputPoint{{Name: "previous", OffsetSeconds: 60}}),
-			namedInputRequirement("primary", "primary", execution.InputRolePrimary, -60, 0, nil),
-		}, wantNames: []execution.DatasetName{"primary", "previous"}},
-		{name: "os restart primary and uptime history", requirements: []execution.DataRequirement{
-			namedInputRequirement("uptime-history", "uptime_history", execution.InputRoleAlgorithmDependency, -1500, 0, []execution.NamedInputPoint{
-				{Name: "previous", OffsetSeconds: 60}, {Name: "ten_minute", OffsetSeconds: 600}, {Name: "twenty_five_minute", OffsetSeconds: 1500},
-			}),
-			namedInputRequirement("primary", "primary", execution.InputRolePrimary, -60, 0, nil),
-		}, wantNames: []execution.DatasetName{"primary", "uptime_history"}},
+		{name: "threshold primary only", kind: strategy.DetectorKindThreshold, wantNames: []execution.DatasetName{"primary"}},
+		{name: "simple ring ratio primary and previous", kind: strategy.DetectorKindSimpleRingRatio, wantNames: []execution.DatasetName{"primary", "previous"}},
+		{name: "os restart primary and uptime history", kind: strategy.DetectorKindOsRestart, wantNames: []execution.DatasetName{"primary", "uptime_history"}},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			header, consumer, series, bindings, completions := namedInputFixture(t, test.requirements)
+			plan, requirements := compiledG4Requirements(t, test.kind)
+			header, consumer, series, bindings, completions := namedInputFixture(t, plan, requirements)
 			request, err := execution.BuildSeriesEvaluationInputRequest(header, consumer, series, bindings, completions)
 			if err != nil {
 				t.Fatalf("BuildSeriesEvaluationInputRequest() error = %v", err)
 			}
-			if err := request.Validate(header); err != nil {
+			if err := request.Validate(header, completions); err != nil {
 				t.Fatalf("Validate() error = %v", err)
 			}
 			if request.Contract != header.Contract || request.Consumer != consumer || request.SeriesIdentity != series {
 				t.Fatalf("request scope = %+v", request)
 			}
 			gotNames := make([]execution.DatasetName, 0, len(request.Inputs))
+			wantIDs := make([]execution.RequirementID, 0, len(request.Inputs))
 			for _, input := range request.Inputs {
-				gotNames = append(gotNames, input.Requirement.DatasetName)
-				if input.Requirement.InputProjection.ValueFields[0] != "value" || input.Requirement.InputProjection.IdentityFields[0] != "host" {
-					t.Fatalf("projection was not frozen: %+v", input.Requirement.InputProjection)
-				}
-				if input.Binding.Provenance.PhysicalQuery != input.Query.Digest || input.Completion.PhysicalQuery != input.Query.Digest {
-					t.Fatalf("query provenance is not closed: %+v", input)
+				gotNames = append(gotNames, input.DatasetName)
+				wantIDs = append(wantIDs, input.RequirementID)
+				if input.Provenance.PhysicalQuery == "" || input.ProviderResult == "" || input.View == nil {
+					t.Fatalf("named input lacks query or immutable view provenance: %+v", input)
 				}
 			}
 			if !reflect.DeepEqual(gotNames, test.wantNames) {
 				t.Fatalf("input order = %v, want %v", gotNames, test.wantNames)
 			}
-			wantIDs := make([]execution.RequirementID, 0, len(request.Inputs))
-			for _, input := range request.Inputs {
-				wantIDs = append(wantIDs, input.Requirement.RequirementID)
-			}
-			if !reflect.DeepEqual(request.ExpectedRequirementIDs, wantIDs) {
-				t.Fatalf("expected exact set = %v, actual = %v", request.ExpectedRequirementIDs, wantIDs)
-			}
-			if !reflect.DeepEqual(request.ActualRequirementIDs, wantIDs) {
-				t.Fatalf("actual exact set = %v, inputs = %v", request.ActualRequirementIDs, wantIDs)
+			if !reflect.DeepEqual(request.RequirementIDs, wantIDs) {
+				t.Fatalf("requirement exact set = %v, inputs = %v", request.RequirementIDs, wantIDs)
 			}
 		})
 	}
 }
 
 func TestBuildSeriesEvaluationInputRequestFailsClosedAtConsumerSeriesScope(t *testing.T) {
-	requirements := []execution.DataRequirement{
-		namedInputRequirement("primary", "primary", execution.InputRolePrimary, -60, 0, nil),
-		namedInputRequirement("previous", "previous", execution.InputRoleAlgorithmDependency, -120, -60, []execution.NamedInputPoint{{Name: "previous", OffsetSeconds: 60}}),
-	}
-	header, consumer, series, bindings, completions := namedInputFixture(t, requirements)
+	plan, requirements := compiledG4Requirements(t, strategy.DetectorKindSimpleRingRatio)
+	header, consumer, series, bindings, completions := namedInputFixture(t, plan, requirements)
 
 	tests := []struct {
 		name   string
@@ -104,7 +89,8 @@ func TestBuildSeriesEvaluationInputRequestFailsClosedAtConsumerSeriesScope(t *te
 			return bindings, completions
 		}},
 		{name: "record outside frozen time window", mutate: func(bindings []execution.NamedInputBinding, completions []execution.PhysicalQueryCompletion) ([]execution.NamedInputBinding, []execution.PhysicalQueryCompletion) {
-			dataset := namedInputDataset(string(series), bindings[1].QueryWindow.End)
+			fields, _ := namedInputIdentity(t, "host-a")
+			dataset := namedInputDataset(fields, series, bindings[1].QueryWindow.End)
 			view, err := execution.NewDatasetView(dataset, []uint32{0})
 			if err != nil {
 				t.Fatal(err)
@@ -113,7 +99,8 @@ func TestBuildSeriesEvaluationInputRequestFailsClosedAtConsumerSeriesScope(t *te
 			return bindings, completions
 		}},
 		{name: "wrong series", mutate: func(bindings []execution.NamedInputBinding, completions []execution.PhysicalQueryCompletion) ([]execution.NamedInputBinding, []execution.PhysicalQueryCompletion) {
-			dataset := namedInputDataset(strings.Repeat("f", 64), int64(header.Contract.Slot.EvaluationTime)-61)
+			fields, otherSeries := namedInputIdentity(t, "host-b")
+			dataset := namedInputDataset(fields, otherSeries, int64(header.Contract.Slot.EvaluationTime)-61)
 			view, err := execution.NewDatasetView(dataset, []uint32{0})
 			if err != nil {
 				t.Fatal(err)
@@ -132,61 +119,239 @@ func TestBuildSeriesEvaluationInputRequestFailsClosedAtConsumerSeriesScope(t *te
 			if err == nil {
 				t.Fatal("invalid named-input exact set must fail closed")
 			}
-			var violation *execution.EvaluationInputContractError
-			if !errors.As(err, &violation) {
-				t.Fatalf("error %T is not a scoped EvaluationInputContractError: %v", err, err)
-			}
-			if violation.Consumer != consumer || violation.SeriesIdentity != series {
-				t.Fatalf("violation scope = %+v", violation)
-			}
+			assertScopedInputError(t, err, consumer, series)
 		})
 	}
 }
 
-func TestBuildSeriesEvaluationInputRequestFreezesRequirementProjection(t *testing.T) {
-	requirements := []execution.DataRequirement{
-		namedInputRequirement("primary", "primary", execution.InputRolePrimary, -60, 0, nil),
-	}
-	header, consumer, series, bindings, completions := namedInputFixture(t, requirements)
+func TestSeriesEvaluationInputRequestRejectsRequestLocalCompletionTampering(t *testing.T) {
+	plan, requirements := compiledG4Requirements(t, strategy.DetectorKindSimpleRingRatio)
+	header, consumer, series, bindings, completions := namedInputFixture(t, plan, requirements)
 	request, err := execution.BuildSeriesEvaluationInputRequest(header, consumer, series, bindings, completions)
 	if err != nil {
 		t.Fatal(err)
 	}
-	header.Requirements[0].InputProjection.ValueFields[0] = "mutated"
-	header.Requirements[0].RequiredColumns[0] = "mutated"
-	if got := request.Inputs[0].Requirement.InputProjection.ValueFields[0]; got != "value" {
-		t.Fatalf("frozen value projection = %q", got)
+	request.Inputs[0].ProviderResult = "forged-provider"
+	err = request.Validate(header, completions)
+	if err == nil {
+		t.Fatal("request-local facts must not replace authoritative completion facts")
 	}
-	if got := request.Inputs[0].Requirement.RequiredColumns[0]; got != "host" {
-		t.Fatalf("frozen required column = %q", got)
+	assertScopedInputError(t, err, consumer, series)
+}
+
+func assertScopedInputError(t *testing.T, err error, consumer execution.ConsumerRef, series execution.SeriesIdentityDigest) {
+	t.Helper()
+	var violation *execution.EvaluationInputContractError
+	if !errors.As(err, &violation) {
+		t.Fatalf("error %T is not a scoped EvaluationInputContractError: %v", err, err)
+	}
+	if violation.Consumer != consumer || violation.SeriesIdentity != series {
+		t.Fatalf("violation scope = %+v", violation)
 	}
 }
 
-func namedInputRequirement(id execution.RequirementID, name execution.DatasetName, role execution.InputRole, start, end int64, points []execution.NamedInputPoint) execution.DataRequirement {
+func compiledG4Requirements(t *testing.T, kind string) (*strategy.CompiledPlan, []execution.DataRequirement) {
+	t.Helper()
+	if kind == strategy.DetectorKindThreshold {
+		return compiledPlanForTest(t), []execution.DataRequirement{
+			namedInputRequirement(t, "primary", execution.InputRolePrimary, -60, 0, nil, execution.ReadinessEager),
+		}
+	}
+
+	projection := strategy.AlgorithmInputProjection{
+		ValueFields: []string{"value"}, DimensionFields: []string{"host"}, IdentityFields: []string{"host"},
+	}
+	algorithmRequirements := []strategy.AlgorithmInputRequirement{
+		algorithmInputRequirement(t, "primary", strategy.AlgorithmInputPrimary, -60, 0, nil, strategy.AlgorithmReadinessEager, projection),
+	}
+	config := map[string]any{}
+	switch kind {
+	case strategy.DetectorKindSimpleRingRatio:
+		algorithmRequirements = append(algorithmRequirements,
+			algorithmInputRequirement(t, "previous", strategy.AlgorithmInputDependency, -120, -60,
+				[]strategy.AlgorithmNamedInputPoint{{Name: "previous", OffsetSeconds: 60}},
+				strategy.AlgorithmReadinessFinalizedRequired, projection))
+		config["floor"], config["ceil"] = 50, nil
+	case strategy.DetectorKindOsRestart:
+		algorithmRequirements = append(algorithmRequirements,
+			algorithmInputRequirement(t, "uptime_history", strategy.AlgorithmInputDependency, -1560, 0,
+				[]strategy.AlgorithmNamedInputPoint{
+					{Name: "previous", OffsetSeconds: 60}, {Name: "previous_10m", OffsetSeconds: 600},
+					{Name: "previous_25m", OffsetSeconds: 1500},
+				}, strategy.AlgorithmReadinessFinalizedRequired, projection))
+	default:
+		t.Fatalf("unsupported test detector %q", kind)
+	}
+	config["input_projection"] = projection
+	config["requirements"] = algorithmRequirements
+	compiled := compileG4Plan(t, kind, config)
+	algorithms := compiled.Levels()[0].Algorithms()
+	if len(algorithms) != 1 || algorithms[0].Kind() != kind {
+		t.Fatalf("compiled algorithms = %+v", algorithms)
+	}
+	compiledRequirements := algorithms[0].InputRequirements()
+	if len(compiledRequirements) != len(algorithmRequirements) {
+		t.Fatalf("compiled InputRequirements = %+v", compiledRequirements)
+	}
+
+	requirements := make([]execution.DataRequirement, 0, len(compiledRequirements))
+	for _, requirement := range compiledRequirements {
+		template := executionRequirementTemplate(t, requirement)
+		requirements = append(requirements, template.Bind(execution.DataRequirementConsumer{}))
+		requirements[len(requirements)-1].Consumers = nil
+	}
+	return compiled, requirements
+}
+
+func algorithmInputRequirement(
+	t *testing.T,
+	name string,
+	role strategy.AlgorithmInputRole,
+	start, end int64,
+	points []strategy.AlgorithmNamedInputPoint,
+	readiness strategy.AlgorithmReadinessClass,
+	projection strategy.AlgorithmInputProjection,
+) strategy.AlgorithmInputRequirement {
+	t.Helper()
+	offsets := make([]int64, 0, len(points))
+	executionPoints := make([]execution.NamedInputPoint, 0, len(points))
+	for _, point := range points {
+		offsets = append(offsets, point.OffsetSeconds)
+		executionPoints = append(executionPoints, execution.NamedInputPoint{Name: point.Name, OffsetSeconds: point.OffsetSeconds})
+	}
+	template, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
+		DatasetName: execution.DatasetName(name), Role: execution.InputRole(role), ConsumerLevelID: 5,
+		LogicalQueryRef: execution.LogicalQueryRef("query-" + name),
+		RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: start, EndOffsetSeconds: end, HalfOpen: true},
+		StepMillis:      60_000, AlignmentMillis: 60_000, ResultWindowPolicy: execution.ResultWindowExactHalfOpen,
+		ReadinessClass:      execution.ReadinessClass(readiness),
+		InputProjection:     execution.InputProjection{ValueFields: projection.ValueFields, DimensionFields: projection.DimensionFields, IdentityFields: projection.IdentityFields},
+		PointOffsetsSeconds: offsets, NamedPoints: executionPoints,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strategy.AlgorithmInputRequirement{
+		RequirementID: string(template.RequirementID), DatasetName: name, Role: role, ConsumerLevelID: 5,
+		LogicalQueryRef: "query-" + name,
+		RelativeWindow:  strategy.AlgorithmRelativeWindow{StartOffsetSeconds: start, EndOffsetSeconds: end, HalfOpen: true},
+		StepMillis:      60_000, AlignmentMillis: 60_000, ReadinessClass: readiness, InputProjection: projection,
+		PointOffsetsSeconds: offsets, NamedPoints: points,
+	}
+}
+
+func executionRequirementTemplate(t *testing.T, requirement strategy.AlgorithmInputRequirement) execution.DataRequirementTemplate {
+	t.Helper()
+	points := make([]execution.NamedInputPoint, len(requirement.NamedPoints))
+	for index, point := range requirement.NamedPoints {
+		points[index] = execution.NamedInputPoint{Name: point.Name, OffsetSeconds: point.OffsetSeconds}
+	}
+	template, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
+		DatasetName: execution.DatasetName(requirement.DatasetName), Role: execution.InputRole(requirement.Role),
+		ConsumerLevelID: requirement.ConsumerLevelID, LogicalQueryRef: execution.LogicalQueryRef(requirement.LogicalQueryRef),
+		RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: requirement.RelativeWindow.StartOffsetSeconds,
+			EndOffsetSeconds: requirement.RelativeWindow.EndOffsetSeconds, HalfOpen: requirement.RelativeWindow.HalfOpen},
+		StepMillis: requirement.StepMillis, AlignmentMillis: requirement.AlignmentMillis,
+		ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessClass(requirement.ReadinessClass),
+		InputProjection: execution.InputProjection{ValueFields: requirement.InputProjection.ValueFields,
+			DimensionFields: requirement.InputProjection.DimensionFields, IdentityFields: requirement.InputProjection.IdentityFields},
+		PointOffsetsSeconds: requirement.PointOffsetsSeconds, NamedPoints: points,
+	})
+	if err != nil || string(template.RequirementID) != requirement.RequirementID {
+		t.Fatalf("materialize compiled requirement %q: template=%+v err=%v", requirement.DatasetName, template, err)
+	}
+	return template
+}
+
+func compileG4Plan(t *testing.T, kind string, config map[string]any) *strategy.CompiledPlan {
+	t.Helper()
+	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{
+		MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16,
+		MaxConditionsPerAlgorithm: 64, MaxASTNodesPerLevel: 256, MaxTriggerWindowSize: 4096,
+		MaxRecoveryConsecutiveWindows: 4096, MaxRequiredHistoryPoints: 4096, MaxTriggerComputeCost: 1 << 20,
+		MaxCompiledPlanBytes: 64 << 10, MaxCacheEntries: 64, MaxCacheBytes: 4 << 20,
+		NegativeCacheTTL: time.Minute, BudgetRevision: "named-input-test-v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := contract.StrategyRefV2{TenantID: "tenant", StrategyID: "7", Revision: "strategy-v1"}
+	projection := contract.InputProjectionV2{
+		ValueFields: []string{"value"}, DimensionFields: []string{"host"}, BusinessIdentityField: "bk_biz_id",
+		MultiValueAlignment: "SINGLE_VALUE", DataUnit: "percent", MissingValuePolicy: contract.MissingValuePolicyRequired,
+	}
+	plan := contract.EvaluationPlanV2{PlanID: "7", StrategyRef: ref, InputProjection: projection,
+		StrategyIR: contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2},
+			StrategyRef: ref, InputProjection: projection,
+			ExecutionSemantics: contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries,
+				QueryWindow: 300, AggregationInterval: 60, EvaluationInterval: 60, LatenessTolerance: 120},
+			Levels: []contract.LevelIRV2{{Definition: contract.LevelDefinitionV2{LevelID: 5, Priority: 1},
+				Connector:  contract.LevelConnectorAND,
+				DetectPlan: contract.DetectPlanV2{Algorithms: []contract.AlgorithmIRV2{{Type: kind, Version: 1, Config: payload}}},
+				TriggerPlan: contract.TypedPlanV1{Type: "N_OF_M", Version: 1,
+					Config: json.RawMessage(`{"window_size":1,"required_anomalies":1,"step_seconds":60}`)},
+				RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1,
+					Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)},
+			}}}}
+	result, err := compiler.Compile(context.Background(), strategy.CompileRequest{Plan: plan,
+		DatasetContract: contract.DatasetContractV2{SchemaDigest: strings.Repeat("1", 64),
+			NormalizationDigest: strings.Repeat("2", 64), IdentityFields: []string{"host"},
+			SourceTimeField: "time", ReceivedTimeField: "received_time"},
+		StateSemantics: strategy.StateSemantics{StateSchemaVersion: "window-state-v1", CodecSemanticsVersion: "window-codec-v1",
+			IdentitySchemaDigest: strings.Repeat("3", 64), SourceTimeSemanticsVersion: "source-time-v1",
+			HistoryCellSemanticsVersion: "history-cell-v1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, ok := result.Plan()
+	if !ok {
+		t.Fatalf("compile %s terminal=%+v levels=%+v", kind, result.PlanTerminal(), result.LevelTerminals())
+	}
+	return compiled
+}
+
+func namedInputRequirement(
+	t *testing.T,
+	name execution.DatasetName,
+	role execution.InputRole,
+	start, end int64,
+	points []execution.NamedInputPoint,
+	readiness execution.ReadinessClass,
+) execution.DataRequirement {
+	t.Helper()
 	offsets := make([]int64, 0, len(points))
 	for _, point := range points {
 		offsets = append(offsets, point.OffsetSeconds)
 	}
-	return execution.DataRequirement{
-		RequirementID: id, DatasetName: name, Role: role, LogicalQueryRef: execution.LogicalQueryRef("query-" + string(id)),
+	template, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
+		DatasetName: name, Role: role, ConsumerLevelID: 5, LogicalQueryRef: execution.LogicalQueryRef("query-" + string(name)),
 		RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: start, EndOffsetSeconds: end, HalfOpen: true},
 		StepMillis:     60_000, AlignmentMillis: 60_000, ResultWindowPolicy: execution.ResultWindowExactHalfOpen,
-		ReadinessClass:  execution.ReadinessFinalizedRequired,
-		InputProjection: execution.InputProjection{ValueFields: []string{"value"}, DimensionFields: []string{"host"}, IdentityFields: []string{"host"}},
-		RequiredColumns: []string{"host", "value"}, PointOffsetsSeconds: offsets, NamedPoints: append([]execution.NamedInputPoint(nil), points...),
+		ReadinessClass:      readiness,
+		InputProjection:     execution.InputProjection{ValueFields: []string{"value"}, DimensionFields: []string{"host"}, IdentityFields: []string{"host"}},
+		PointOffsetsSeconds: offsets, NamedPoints: points,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+	return template.Bind(execution.DataRequirementConsumer{})
 }
 
-func namedInputFixture(t *testing.T, requirements []execution.DataRequirement) (execution.InternalExecutionHeader, execution.ConsumerRef, execution.SeriesIdentityDigest, []execution.NamedInputBinding, []execution.PhysicalQueryCompletion) {
+func namedInputFixture(t *testing.T, compiled *strategy.CompiledPlan, requirements []execution.DataRequirement) (execution.InternalExecutionHeader, execution.ConsumerRef, execution.SeriesIdentityDigest, []execution.NamedInputBinding, []execution.PhysicalQueryCompletion) {
 	t.Helper()
-	plans := validInternalExecution().DuePlans
-	consumer := execution.ConsumerRef{Plan: plans[0].Identity, LevelID: 5, HasLevel: true}
-	series := execution.SeriesIdentityDigest(strings.Repeat("c", 64))
+	identity := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}
+	plan := execution.DuePlan{Identity: identity, CompiledPlan: compiled, StateGeneration: "state-v1", StateApplyEpoch: 1,
+		ScheduleRevision: "plan-schedule", CompletionDeadlineUnixMilli: 1_788_000_120_000}
+	plans := []execution.DuePlan{plan}
+	consumer := execution.ConsumerRef{Plan: identity, LevelID: 5, HasLevel: true}
+	fields, series := namedInputIdentity(t, "host-a")
 	for index := range requirements {
-		requirements[index].Consumers = []execution.DataRequirementConsumer{{
-			Consumer: consumer, ConsumerDeadlineUnixMilli: plans[0].CompletionDeadlineUnixMilli,
-			DownstreamExecutionReserveMilliSec: 5_000,
-		}}
+		requirements[index].Consumers = []execution.DataRequirementConsumer{{Consumer: consumer,
+			ConsumerDeadlineUnixMilli: plan.CompletionDeadlineUnixMilli, DownstreamExecutionReserveMilliSec: 5_000}}
 	}
 	digest, err := execution.DeriveDuePlanSetDigest(plans, requirements)
 	if err != nil {
@@ -196,38 +361,53 @@ func namedInputFixture(t *testing.T, requirements []execution.DataRequirement) (
 	contractRef.QueryRevision = "query-primary"
 	contractRef.DuePlanSetDigest = digest
 	header := execution.InternalExecutionHeader{ExecutionID: "named-input-test", Contract: contractRef, DuePlans: plans,
-		Requirements: requirements, DeadlineUnixMilli: plans[0].CompletionDeadlineUnixMilli}
+		Requirements: requirements, DeadlineUnixMilli: plan.CompletionDeadlineUnixMilli}
 	bindings := make([]execution.NamedInputBinding, 0, len(requirements))
 	completions := make([]execution.PhysicalQueryCompletion, 0, len(requirements))
 	for index, requirement := range requirements {
-		query := execution.PlannedPhysicalQueryRef{Digest: execution.PhysicalQueryDigest("physical-" + string(requirement.RequirementID)), QueryRevision: execution.QueryRevision(requirement.LogicalQueryRef)}
+		query := execution.PlannedPhysicalQueryRef{Digest: execution.PhysicalQueryDigest("physical-" + string(requirement.RequirementID)),
+			QueryRevision: execution.QueryRevision(requirement.LogicalQueryRef)}
 		header.RequiredPhysicalQueries = append(header.RequiredPhysicalQueries, query)
 		sourceTime := int64(contractRef.Slot.EvaluationTime) + requirement.RelativeWindow.EndOffsetSeconds - 1
-		dataset := namedInputDataset(string(series), sourceTime)
+		dataset := namedInputDataset(fields, series, sourceTime)
 		view, viewErr := execution.NewDatasetView(dataset, []uint32{0})
 		if viewErr != nil {
 			t.Fatal(viewErr)
 		}
 		providerRef := execution.ProviderResultRef("provider-" + string(requirement.RequirementID))
-		bindings = append(bindings, execution.NamedInputBinding{
-			Consumer: consumer, RequirementID: requirement.RequirementID, DatasetName: requirement.DatasetName, Role: requirement.Role,
-			ProviderResult: providerRef, QueryWindow: requirement.AbsoluteWindow(contractRef.Slot.EvaluationTime), Dataset: dataset, View: view,
+		bindings = append(bindings, execution.NamedInputBinding{Consumer: consumer, RequirementID: requirement.RequirementID,
+			DatasetName: requirement.DatasetName, Role: requirement.Role, ProviderResult: providerRef,
+			QueryWindow: requirement.AbsoluteWindow(contractRef.Slot.EvaluationTime), Dataset: dataset, View: view,
 			Completeness: execution.CompletenessFull, DataState: execution.DataStateData, Disposition: execution.AccessAvailable,
-			ImpactScope: execution.ImpactSeries, Provenance: execution.InputProvenance{PhysicalQuery: query.Digest, AttemptNo: 1},
-		})
-		completions = append(completions, execution.PhysicalQueryCompletion{
-			Ref: providerRef, PhysicalQuery: query.Digest, QueryRevision: query.QueryRevision,
-			Completeness: execution.CompletenessFull, DataState: execution.DataStateData,
-			Delivery: execution.SeriesDelivery{PhysicalQuery: query.Digest, QueryRevision: query.QueryRevision, Series: 1, Records: 1, Digest: strings.Repeat(string(rune('a'+index)), 64)},
-		})
+			ImpactScope: execution.ImpactSeries, Provenance: execution.InputProvenance{PhysicalQuery: query.Digest, AttemptNo: 1}})
+		completions = append(completions, execution.PhysicalQueryCompletion{Ref: providerRef, PhysicalQuery: query.Digest,
+			QueryRevision: query.QueryRevision, Completeness: execution.CompletenessFull, DataState: execution.DataStateData,
+			Delivery: execution.SeriesDelivery{PhysicalQuery: query.Digest, QueryRevision: query.QueryRevision,
+				Series: 1, Records: 1, Digest: strings.Repeat(string(rune('a'+index)), 64)}})
 	}
 	return header, consumer, series, bindings, completions
 }
 
-func namedInputDataset(series string, sourceTime int64) *execution.Dataset {
+func namedInputIdentity(t *testing.T, host string) ([]contract.DimensionFieldV2, execution.SeriesIdentityDigest) {
+	t.Helper()
+	value, err := json.Marshal(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := []contract.DimensionFieldV2{{Name: "host", Value: value}}
+	digest, err := contract.DeriveDimensionIdentityDigestV2("tenant", "2", fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fields, execution.SeriesIdentityDigest(digest)
+}
+
+func namedInputDataset(fields []contract.DimensionFieldV2, series execution.SeriesIdentityDigest, sourceTime int64) *execution.Dataset {
+	host := append(json.RawMessage(nil), fields[0].Value...)
 	return execution.NewDataset([]contract.CanonicalRecordV2{{
 		RecordID: strings.Repeat("b", 64), SourceTime: sourceTime, BusinessID: "2",
-		DimensionIdentity: contract.DimensionIdentityV2{Digest: series},
-		Values:            map[string]json.RawMessage{"value": json.RawMessage(`1`)}, Dimensions: map[string]json.RawMessage{"host": json.RawMessage(`"host-a"`)}, ReceivedTime: sourceTime,
+		DimensionIdentity: contract.DimensionIdentityV2{Fields: fields, Digest: string(series)},
+		Values:            map[string]json.RawMessage{"value": json.RawMessage(`1`)},
+		Dimensions:        map[string]json.RawMessage{"host": host}, ReceivedTime: sourceTime,
 	}})
 }

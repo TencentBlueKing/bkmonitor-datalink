@@ -16,14 +16,17 @@ import (
 )
 
 func evaluatePingUnreachable(raw json.RawMessage) (pureDetectionStatus, error) {
-	var value float64
+	var value *float64
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return pureDetectionUnknown, fmt.Errorf("alarmd detect: invalid ping loss percent: %w", err)
 	}
-	if !finite(value) || value < 0 || value > 1 {
+	if value == nil {
+		return pureDetectionUnknown, errors.New("alarmd detect: ping loss percent is null")
+	}
+	if !finite(*value) || *value < 0 || *value > 1 {
 		return pureDetectionUnknown, errors.New("alarmd detect: ping loss percent is outside [0,1]")
 	}
-	if value >= 1 {
+	if *value >= 1 {
 		return pureDetectionAnomalous, nil
 	}
 	return pureDetectionNormal, nil

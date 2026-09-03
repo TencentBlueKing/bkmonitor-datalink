@@ -84,6 +84,15 @@ func TestEvaluateProcPort(t *testing.T) {
 			want:    pureDetectionUnknown,
 			wantErr: true,
 		},
+		{
+			name: "dimension json null invalid",
+			in: procPortInput{
+				procExists: json.RawMessage(`1`),
+				dimensions: map[string]json.RawMessage{"nonlisten": json.RawMessage(`null`)},
+			},
+			want:    pureDetectionUnknown,
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

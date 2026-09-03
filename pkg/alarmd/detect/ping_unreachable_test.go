@@ -26,6 +26,7 @@ func TestEvaluatePingUnreachable(t *testing.T) {
 		{name: "one", value: json.RawMessage(`1`), want: pureDetectionAnomalous},
 		{name: "negative", value: json.RawMessage(`-0.1`), want: pureDetectionUnknown, wantErr: true},
 		{name: "greater than one", value: json.RawMessage(`1.1`), want: pureDetectionUnknown, wantErr: true},
+		{name: "json null", value: json.RawMessage(`null`), want: pureDetectionUnknown, wantErr: true},
 		{name: "non numeric", value: json.RawMessage(`"one"`), want: pureDetectionUnknown, wantErr: true},
 	}
 

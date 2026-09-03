@@ -80,9 +80,12 @@ func procPortDimensionHasValue(dimensions map[string]json.RawMessage, name strin
 	if !ok {
 		return false, nil
 	}
-	var value string
+	var value *string
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return false, fmt.Errorf("alarmd detect: invalid proc port dimension %s: %w", name, err)
 	}
-	return value != "[]" && value != "null", nil
+	if value == nil {
+		return false, fmt.Errorf("alarmd detect: proc port dimension %s is null", name)
+	}
+	return *value != "[]" && *value != "null", nil
 }

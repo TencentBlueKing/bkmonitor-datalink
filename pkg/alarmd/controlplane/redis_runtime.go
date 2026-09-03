@@ -1294,7 +1294,7 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 			ScheduleRevision: plan.ScheduleRevision, ScheduleSpec: plan.ScheduleSpec,
 			CompletionDeadlineUnixMilli: deadline, PartialCapabilities: capabilities})
 	}
-	requirements, err := runtime.primaryRequirements(group, duePlans)
+	requirements, err := runtime.slotRequirements(group, duePlans, planByID)
 	if err != nil {
 		return execution.FrozenSlotContractFact{}, err
 	}
@@ -1312,6 +1312,139 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 		return execution.FrozenSlotContractFact{}, err
 	}
 	return fact, nil
+}
+
+func (runtime *RedisCatalogRuntime) slotRequirements(
+	group QueryGroup,
+	duePlans []execution.DuePlan,
+	planByID map[execution.PlanIdentity]FrozenPlan,
+) ([]execution.DataRequirement, error) {
+	byID := make(map[execution.RequirementID]*execution.DataRequirement)
+	legacyDuePlans := make([]execution.DuePlan, 0, len(duePlans))
+
+	for _, due := range duePlans {
+		plan, ok := planByID[due.Identity]
+		if !ok {
+			return nil, errors.New("alarmd controlplane: due Plan has no frozen input facts")
+		}
+		reserve := runtime.downstreamReserve.Milliseconds()
+		if reserve <= 0 || due.ScheduleSpec.EvaluationIntervalSeconds > math.MaxInt64/1000 ||
+			reserve >= due.ScheduleSpec.EvaluationIntervalSeconds*1000 {
+			return nil, errors.New("alarmd controlplane: invalid downstream execution reserve")
+		}
+
+		expected := make(map[execution.RequirementID]uint32)
+		needsLegacyPrimary := false
+		for _, level := range due.CompiledPlan.Levels() {
+			levelID := level.Definition().LevelID
+			for _, algorithm := range level.Algorithms() {
+				algorithmRequirements := algorithm.InputRequirements()
+				if len(algorithmRequirements) == 0 {
+					needsLegacyPrimary = true
+					continue
+				}
+				for _, requirement := range algorithmRequirements {
+					if requirement.ConsumerLevelID != levelID {
+						return nil, errors.New("alarmd controlplane: compiled algorithm input references a different Level")
+					}
+					identity := execution.RequirementID(requirement.RequirementID)
+					if identity == "" {
+						return nil, errors.New("alarmd controlplane: compiled algorithm input identity is missing")
+					}
+					if existingLevel, exists := expected[identity]; exists && existingLevel != levelID {
+						return nil, errors.New("alarmd controlplane: compiled algorithm input identity is shared across Levels")
+					}
+					expected[identity] = levelID
+				}
+			}
+		}
+
+		templates := make(map[execution.RequirementID]execution.DataRequirementTemplate, len(plan.RequirementTemplates))
+		for _, template := range plan.RequirementTemplates {
+			levelID, required := expected[template.RequirementID]
+			if !required {
+				continue
+			}
+			if template.ConsumerLevelID != levelID {
+				return nil, errors.New("alarmd controlplane: frozen DataRequirement template references a different Level")
+			}
+			if _, duplicate := templates[template.RequirementID]; duplicate {
+				return nil, errors.New("alarmd controlplane: duplicate frozen DataRequirement template")
+			}
+			originalID := template.RequirementID
+			template.RequirementID = ""
+			rebuilt, err := execution.BuildDataRequirementTemplate(template)
+			if err != nil {
+				return nil, fmt.Errorf("alarmd controlplane: invalid frozen DataRequirement template: %w", err)
+			}
+			if rebuilt.RequirementID != originalID || !equalStrings(rebuilt.RequiredColumns, template.RequiredColumns) {
+				return nil, errors.New("alarmd controlplane: frozen DataRequirement template differs from its identity")
+			}
+			facts, exists := plan.QueryPlans[rebuilt.LogicalQueryRef]
+			if !exists {
+				return nil, errors.New("alarmd controlplane: frozen DataRequirement has no QueryPlanFacts")
+			}
+			if err := facts.Validate(); err != nil {
+				return nil, fmt.Errorf("alarmd controlplane: invalid frozen QueryPlanFacts: %w", err)
+			}
+			if execution.LogicalQueryRef(facts.QueryRevision) != rebuilt.LogicalQueryRef {
+				return nil, errors.New("alarmd controlplane: frozen QueryPlanFacts differ from logical query reference")
+			}
+			templates[originalID] = rebuilt
+		}
+
+		for identity, levelID := range expected {
+			template, exists := templates[identity]
+			if !exists {
+				return nil, errors.New("alarmd controlplane: compiled algorithm input has no frozen DataRequirement template")
+			}
+			bound := template.Bind(execution.DataRequirementConsumer{
+				Consumer:                           execution.ConsumerRef{Plan: due.Identity, LevelID: levelID, HasLevel: true},
+				ConsumerDeadlineUnixMilli:          due.CompletionDeadlineUnixMilli,
+				DownstreamExecutionReserveMilliSec: reserve,
+			})
+			if existing := byID[identity]; existing != nil {
+				existing.Consumers = append(existing.Consumers, bound.Consumers...)
+			} else {
+				copy := bound
+				byID[identity] = &copy
+			}
+		}
+		if needsLegacyPrimary {
+			legacyDuePlans = append(legacyDuePlans, due)
+		}
+	}
+
+	legacy, err := runtime.primaryRequirements(group, legacyDuePlans)
+	if err != nil {
+		return nil, err
+	}
+	for _, requirement := range legacy {
+		if existing := byID[requirement.RequirementID]; existing != nil {
+			existing.Consumers = append(existing.Consumers, requirement.Consumers...)
+		} else {
+			copy := requirement
+			byID[requirement.RequirementID] = &copy
+		}
+	}
+
+	result := make([]execution.DataRequirement, 0, len(byID))
+	for _, requirement := range byID {
+		sort.Slice(requirement.Consumers, func(i, j int) bool {
+			left := requirement.Consumers[i].Consumer
+			right := requirement.Consumers[j].Consumer
+			if left.Plan != right.Plan {
+				return lessPlanIdentity(left.Plan, right.Plan)
+			}
+			if left.HasLevel != right.HasLevel {
+				return !left.HasLevel
+			}
+			return left.LevelID < right.LevelID
+		})
+		result = append(result, *requirement)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].RequirementID < result[j].RequirementID })
+	return result, nil
 }
 
 func (runtime *RedisCatalogRuntime) readPersistedSegment(

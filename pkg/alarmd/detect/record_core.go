@@ -34,7 +34,10 @@ func (evaluator *Evaluator) PreparePlan(plan *strategy.CompiledPlan) (PreparedPl
 	bound := boundPlan{execution: PlanExecution{Plan: plan}, levels: make([]boundLevel, len(levels))}
 	projectionKeys := make(map[projectionKey]struct{})
 	for levelIndex, level := range levels {
-		bound.levels[levelIndex] = boundLevel{compiled: level, detectors: make([]boundDetector, len(level.Detectors()))}
+		bound.levels[levelIndex] = boundLevel{
+			compiled: level, detectors: make([]boundDetector, len(level.Detectors())),
+			algorithms: make([]boundAlgorithm, len(level.Algorithms())),
+		}
 		for detectorIndex, spec := range level.Detectors() {
 			detector, ok := evaluator.registry.resolve(DetectorKey{Kind: spec.Kind(), Version: spec.Version()})
 			if !ok {
@@ -48,6 +51,28 @@ func (evaluator *Evaluator) PreparePlan(plan *strategy.CompiledPlan) (PreparedPl
 			bound.detectorCount++
 			projectionKeys[projectionKey{valueRef: spec.ValueRef(), normalizerRef: spec.NormalizerRef()}] = struct{}{}
 		}
+		standardIndex := 0
+		for algorithmIndex, algorithm := range level.Algorithms() {
+			binding := boundAlgorithm{compiled: algorithm}
+			if algorithm.Kind() == strategy.DetectorKindThreshold {
+				if standardIndex >= len(bound.levels[levelIndex].detectors) {
+					return PreparedPlan{}, errors.New("alarmd detect: compiled Threshold detector is unavailable")
+				}
+				binding.standard = &bound.levels[levelIndex].detectors[standardIndex]
+				standardIndex++
+			} else {
+				detector, ok := evaluator.registry.resolveNamedInput(DetectorKey{Kind: algorithm.Kind(), Version: algorithm.Version()})
+				if !ok {
+					return PreparedPlan{}, errors.New("alarmd detect: compiled named-input detector is unavailable")
+				}
+				binding.named = detector
+				bound.namedInputCount++
+			}
+			bound.levels[levelIndex].algorithms[algorithmIndex] = binding
+		}
+		if standardIndex != len(bound.levels[levelIndex].detectors) {
+			return PreparedPlan{}, errors.New("alarmd detect: compiled detector and algorithm plans differ")
+		}
 	}
 	bound.projectionCount = uint64(len(projectionKeys))
 	return PreparedPlan{bound: bound}, nil
@@ -56,6 +81,9 @@ func (evaluator *Evaluator) PreparePlan(plan *strategy.CompiledPlan) (PreparedPl
 func (evaluator *Evaluator) EvaluatePreparedRecord(ctx context.Context, prepared PreparedPlan, record RecordValueView) ([]LevelFact, []ProjectedValue, uint64, error) {
 	if record == nil || prepared.bound.execution.Plan == nil {
 		return nil, nil, 0, errors.New("alarmd detect: prepared plan and record are required")
+	}
+	if prepared.bound.namedInputCount != 0 {
+		return nil, nil, 0, errors.New("alarmd detect: named inputs are required")
 	}
 	projections := make([]projectionEntry, 0)
 	facts := make([]LevelFact, 0, len(prepared.bound.levels))

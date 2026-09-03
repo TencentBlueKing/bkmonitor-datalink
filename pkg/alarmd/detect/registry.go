@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -33,12 +34,21 @@ type Detector interface {
 	Evaluate(context.Context, strategy.DetectorSpec, strategy.NormalizedNumber) (AlgorithmFact, error)
 }
 
+type namedInputDetector interface {
+	Key() DetectorKey
+	Evaluate(context.Context, strategy.CompiledAlgorithmPlan, execution.SeriesEvaluationInputRequest, execution.RecordView) namedAlgorithmResult
+}
+
 type Registry struct {
-	detectors map[DetectorKey]Detector
+	detectors           map[DetectorKey]Detector
+	namedInputDetectors map[DetectorKey]namedInputDetector
 }
 
 func NewRegistry(detectors ...Detector) (*Registry, error) {
-	registry := &Registry{detectors: make(map[DetectorKey]Detector, len(detectors))}
+	registry := &Registry{
+		detectors:           make(map[DetectorKey]Detector, len(detectors)),
+		namedInputDetectors: make(map[DetectorKey]namedInputDetector),
+	}
 	for _, detector := range detectors {
 		if detector == nil {
 			return nil, errors.New("alarmd detect: nil detector")
@@ -63,7 +73,18 @@ func NewDefaultRegistry() *Registry {
 	if err != nil {
 		panic(err)
 	}
+	for _, detector := range []namedInputDetector{simpleRingRatioDetector{}, osRestartDetector{}, procPortDetector{}} {
+		registry.namedInputDetectors[detector.Key()] = detector
+	}
 	return registry
+}
+
+func (registry *Registry) resolveNamedInput(key DetectorKey) (namedInputDetector, bool) {
+	if registry == nil {
+		return nil, false
+	}
+	detector, ok := registry.namedInputDetectors[key]
+	return detector, ok
 }
 
 func (registry *Registry) resolve(key DetectorKey) (Detector, bool) {

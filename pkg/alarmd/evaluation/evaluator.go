@@ -3,6 +3,7 @@ package evaluation
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sort"
 	"time"
 
@@ -204,7 +205,16 @@ type recordResult struct {
 	state    *execution.StateEvaluation
 }
 
+type recordDetector func() ([]detect.LevelFact, []detect.ProjectedValue, error)
+
 func (e *Evaluator) evaluateRecord(ctx context.Context, request execution.EvaluationRequest, due execution.DuePlan, prepared detect.PreparedPlan, record execution.RecordView, view execution.RuntimeStateView, warmingConvergence map[uint32]bool) (recordResult, error) {
+	return e.evaluateRecordWith(ctx, request, due, record, view, warmingConvergence, func() ([]detect.LevelFact, []detect.ProjectedValue, error) {
+		facts, projected, _, err := e.detect.EvaluatePreparedRecord(ctx, prepared, record)
+		return facts, projected, err
+	})
+}
+
+func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, warmingConvergence map[uint32]bool, run recordDetector) (recordResult, error) {
 	series := execution.SeriesIdentityDigest(record.DimensionIdentity().Digest)
 	identity := execution.StateKeyIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration, SeriesIdentityDigest: series}
 	if view.Identity != identity {
@@ -227,7 +237,7 @@ func (e *Evaluator) evaluateRecord(ctx context.Context, request execution.Evalua
 			return recordResult{}, err
 		}
 	}
-	facts, projected, _, err := e.detect.EvaluatePreparedRecord(ctx, prepared, record)
+	facts, projected, err := run()
 	if err != nil {
 		return recordResult{}, err
 	}
@@ -329,6 +339,190 @@ func (e *Evaluator) evaluateRecord(ctx context.Context, request execution.Evalua
 		result.state = &execution.StateEvaluation{Mutation: mutation, Events: events}
 	}
 	return result, nil
+}
+
+// evaluateSeries is the G4 package-local seam. One request represents one
+// compiled Level; the slice must exactly cover one due Plan and one series.
+// The public Evaluator port remains unchanged until Worker performs the
+// atomic request cutover.
+func (e *Evaluator) evaluateSeries(
+	ctx context.Context,
+	header execution.InternalExecutionHeader,
+	inputs []execution.SeriesEvaluationInputRequest,
+	stateResult execution.StatePreflightResult,
+	gaps execution.GapLoadResult,
+) (execution.PlanEvaluationResult, error) {
+	if e == nil || len(inputs) == 0 {
+		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named inputs are required")
+	}
+	first := inputs[0]
+	if first.Contract != header.Contract || first.Consumer.Plan.Validate() != nil || first.SeriesIdentity == "" {
+		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named input identity differs from frozen header")
+	}
+	var due execution.DuePlan
+	foundPlan := false
+	for _, candidate := range header.DuePlans {
+		if candidate.Identity == first.Consumer.Plan {
+			due, foundPlan = candidate, true
+			break
+		}
+	}
+	if !foundPlan || due.CompiledPlan == nil || uint64(len(due.CompiledPlan.Levels())) > e.limits.MaxLevels {
+		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named input Plan is missing or over budget")
+	}
+	byLevel := make(map[uint32]execution.SeriesEvaluationInputRequest, len(inputs))
+	for _, input := range inputs {
+		if input.Contract != header.Contract || input.Consumer.Plan != due.Identity || !input.Consumer.HasLevel ||
+			input.SeriesIdentity != first.SeriesIdentity {
+			return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named inputs span Plan, contract or series")
+		}
+		if _, duplicate := byLevel[input.Consumer.LevelID]; duplicate {
+			return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: duplicate named input Level")
+		}
+		byLevel[input.Consumer.LevelID] = input
+	}
+	levels := due.CompiledPlan.Levels()
+	if len(byLevel) != len(levels) {
+		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named inputs do not exactly cover compiled Levels")
+	}
+	ordered := make([]execution.SeriesEvaluationInputRequest, len(levels))
+	for index, level := range levels {
+		if inputs[index].Consumer.LevelID != level.Definition().LevelID {
+			return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named inputs are not in compiled Level order")
+		}
+		input, ok := byLevel[level.Definition().LevelID]
+		if !ok {
+			return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named inputs do not exactly cover compiled Levels")
+		}
+		ordered[index] = input
+	}
+	primaryRecords, err := commonPrimaryRecords(ordered)
+	if err != nil {
+		return execution.PlanEvaluationResult{}, err
+	}
+	if len(primaryRecords) == 0 {
+		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named-input series has no PRIMARY record")
+	}
+	if uint64(len(primaryRecords)) > e.limits.MaxRecords {
+		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named-input record budget exceeded")
+	}
+	prepared, err := e.detect.PreparePlan(due.CompiledPlan)
+	if err != nil {
+		return execution.PlanEvaluationResult{}, err
+	}
+	identity := execution.StateKeyIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration, SeriesIdentityDigest: first.SeriesIdentity}
+	view, ok := stateResult.Find(identity)
+	if !ok {
+		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: runtime state missing")
+	}
+	warming, err := warmingConvergenceAllowed(view, levels)
+	if err != nil {
+		return execution.PlanEvaluationResult{}, err
+	}
+	legacy := execution.EvaluationRequest{Header: header, State: stateResult, Gaps: gaps}
+	result := execution.PlanEvaluationResult{Plan: due.Identity, Disposition: execution.PlanDecided, ReasonCode: observability.ReasonNone}
+	var final *execution.StateEvaluation
+	var events []contract.TriggerEventV1
+	var affected []execution.RecordAnchor
+	for _, record := range primaryRecords {
+		one, runErr := e.evaluateRecordWith(ctx, legacy, due, record, view, warming, func() ([]detect.LevelFact, []detect.ProjectedValue, error) {
+			facts, projected, _, detectErr := e.detect.EvaluatePreparedSeriesRecord(ctx, prepared, ordered, record)
+			return facts, projected, detectErr
+		})
+		if runErr != nil {
+			return execution.PlanEvaluationResult{}, runErr
+		}
+		result.LevelOutcomes = append(result.LevelOutcomes, one.outcomes...)
+		if one.state != nil {
+			view = applyProvisional(view, one.state.Mutation)
+			final = one.state
+			events = append(events, one.state.Events...)
+			affected = append(affected, execution.RecordAnchor{RecordID: record.RecordID(), SourceTime: record.SourceTime()})
+		}
+	}
+	if final != nil {
+		mutation := final.Mutation
+		mutation.MutationDigest = ""
+		mutation.AffectedRecords = affected
+		mutation, err = execution.BuildStateMutation(mutation)
+		if err != nil {
+			return execution.PlanEvaluationResult{}, err
+		}
+		final.Mutation, final.Events = mutation, events
+		result.StateResults = []execution.StateEvaluation{*final}
+	}
+	if gapMutation, gapErr := planGapRecoveryMutation(legacy, due, len(result.StateResults) > 0); gapErr != nil {
+		return execution.PlanEvaluationResult{}, gapErr
+	} else if gapMutation != nil {
+		result.GuardAfterState = []execution.PlanGapMutation{*gapMutation}
+	}
+	for _, outcome := range result.LevelOutcomes {
+		if outcome.Outcome == execution.LevelOutcomeUnknown || outcome.Outcome == execution.LevelOutcomeTerminal {
+			result.Disposition, result.ReasonCode = execution.PlanDecidedDegraded, outcome.ReasonCode
+			break
+		}
+	}
+	return result, nil
+}
+
+func commonPrimaryRecords(inputs []execution.SeriesEvaluationInputRequest) ([]execution.RecordView, error) {
+	var canonical []execution.RecordView
+	for _, input := range inputs {
+		var primary *execution.DatasetView
+		for _, binding := range input.Inputs {
+			if binding.Role == execution.InputRolePrimary {
+				if primary != nil {
+					return nil, errors.New("alarmd evaluation: duplicate PRIMARY named input")
+				}
+				if binding.Completeness != execution.CompletenessFull || binding.Disposition != execution.AccessAvailable ||
+					binding.Dataset == nil || binding.View == nil || !binding.View.Uses(binding.Dataset) {
+					return nil, errors.New("alarmd evaluation: PRIMARY named input is not FULL and available")
+				}
+				primary = binding.View
+			}
+		}
+		if primary == nil {
+			return nil, errors.New("alarmd evaluation: PRIMARY named input is missing")
+		}
+		records := make([]execution.RecordView, primary.Len())
+		for index := range records {
+			record, ok := primary.Record(index)
+			if !ok || execution.SeriesIdentityDigest(record.DimensionIdentity().Digest) != input.SeriesIdentity {
+				return nil, errors.New("alarmd evaluation: PRIMARY record differs from named-input series")
+			}
+			records[index] = record
+		}
+		sort.Slice(records, func(i, j int) bool {
+			if records[i].SourceTime() == records[j].SourceTime() {
+				return records[i].RecordID() < records[j].RecordID()
+			}
+			return records[i].SourceTime() < records[j].SourceTime()
+		})
+		if canonical == nil {
+			canonical = records
+			continue
+		}
+		if !sameRecords(canonical, records) {
+			return nil, errors.New("alarmd evaluation: Level PRIMARY views do not share one exact record set")
+		}
+	}
+	return canonical, nil
+}
+
+func sameRecords(left, right []execution.RecordView) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].RecordID() != right[index].RecordID() || left[index].SourceTime() != right[index].SourceTime() ||
+			left[index].BusinessID() != right[index].BusinessID() || left[index].ReceivedTime() != right[index].ReceivedTime() ||
+			!reflect.DeepEqual(left[index].CollectionTime(), right[index].CollectionTime()) ||
+			!reflect.DeepEqual(left[index].DimensionIdentity(), right[index].DimensionIdentity()) ||
+			!reflect.DeepEqual(left[index].Values(), right[index].Values()) || !reflect.DeepEqual(left[index].Dimensions(), right[index].Dimensions()) {
+			return false
+		}
+	}
+	return true
 }
 
 func warmingConvergenceAllowed(view execution.RuntimeStateView, levels []strategy.CompiledLevel) (map[uint32]bool, error) {

@@ -37,6 +37,7 @@ type boundPlan struct {
 	execution       PlanExecution
 	levels          []boundLevel
 	detectorCount   uint64
+	namedInputCount uint64
 	projectionCount uint64
 }
 
@@ -48,14 +49,21 @@ type planAdmission struct {
 }
 
 type boundLevel struct {
-	compiled  strategy.CompiledLevel
-	detectors []boundDetector
+	compiled   strategy.CompiledLevel
+	detectors  []boundDetector
+	algorithms []boundAlgorithm
 }
 
 type boundDetector struct {
 	spec       strategy.DetectorSpec
 	detector   Detector
 	normalizer strategy.NumericNormalizerSpec
+}
+
+type boundAlgorithm struct {
+	compiled strategy.CompiledAlgorithmPlan
+	standard *boundDetector
+	named    namedInputDetector
 }
 
 func NewEvaluator(registry *Registry, observer Observer) (*Evaluator, error) {
@@ -232,6 +240,9 @@ func (evaluator *Evaluator) bindPlan(execution PlanExecution, datasetDigest stri
 		return boundPlan{}, &InternalError{Operation: "bind detector", PlanID: planID, Err: err}
 	}
 	result := prepared.bound
+	if result.namedInputCount != 0 {
+		return boundPlan{}, &InternalError{Operation: "bind detector", PlanID: planID, Err: errors.New("named inputs are required")}
+	}
 	result.execution = execution
 	return result, nil
 }

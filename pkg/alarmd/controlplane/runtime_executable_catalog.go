@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sort"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -76,12 +77,12 @@ func retainRuntimeExecutableCatalog(
 				result.Dispositions = withoutAcceptedPlanDisposition(result.Dispositions, sourcePlan.Identity.StrategyID)
 				if disposition.Disposition == DispositionConfigRejected {
 					if entry, ok := lastGoodPlans[sourcePlan.Identity.StrategyID]; ok {
-						executable, err := runtimePlanIsTerminalFree(ctx, entry, compiler, stateSemantics)
+						lastGoodCompiled, executable, err := runtimePlanIsTerminalFree(ctx, entry, compiler, stateSemantics)
 						if err != nil {
 							return Catalog{}, err
 						}
 						if executable {
-							if err := validateRuntimePlanDependencyClosure(entry.plan); err != nil {
+							if err := validateRuntimePlanDependencyClosure(entry.plan, lastGoodCompiled); err != nil {
 								if errors.Is(err, errRuntimeCatalogClosureInvalid) {
 									rejectClosure(sourcePlan.Identity.StrategyID, disposition)
 									continue
@@ -126,7 +127,7 @@ func retainRuntimeExecutableCatalog(
 			supplementedLevels := map[uint32]struct{}{}
 			if hasConfigRejected {
 				if entry, ok := lastGoodPlans[sourcePlan.Identity.StrategyID]; ok {
-					executable, err := runtimePlanIsTerminalFree(ctx, entry, compiler, stateSemantics)
+					_, executable, err := runtimePlanIsTerminalFree(ctx, entry, compiler, stateSemantics)
 					if err != nil {
 						return Catalog{}, err
 					}
@@ -157,6 +158,13 @@ func retainRuntimeExecutableCatalog(
 				}
 				verifiedPlan, ok := verification.Plan()
 				if verification.PlanTerminal() == nil && len(verification.LevelTerminals()) == 0 && ok && len(verifiedPlan.Levels()) > 0 {
+					if err := validateRuntimePlanDependencyClosure(plan, verifiedPlan); err != nil {
+						if errors.Is(err, errRuntimeCatalogClosureInvalid) {
+							rejectClosure(sourcePlan.Identity.StrategyID, terminalDispositions...)
+							continue
+						}
+						return Catalog{}, err
+					}
 					markSupplementedLevelDispositionsStale(terminalDispositions, supplementedLevels)
 					result.Dispositions = append(result.Dispositions, terminalDispositions...)
 					if err := addPlan(sourceGroup.QueryPlan, plan); err != nil {
@@ -201,7 +209,7 @@ func runtimePlanIsTerminalFree(
 	entry lastGoodPlan,
 	compiler RuntimePlanCompiler,
 	stateSemantics strategy.StateSemantics,
-) (bool, error) {
+) (*strategy.CompiledPlan, bool, error) {
 	return runtimeFrozenPlanIsTerminalFree(
 		ctx, entry.plan, entry.facts.Normalization.DatasetContract, compiler, stateSemantics,
 	)
@@ -213,15 +221,16 @@ func runtimeFrozenPlanIsTerminalFree(
 	datasetContract contract.DatasetContractV2,
 	compiler RuntimePlanCompiler,
 	stateSemantics strategy.StateSemantics,
-) (bool, error) {
+) (*strategy.CompiledPlan, bool, error) {
 	result, err := compiler.Compile(ctx, strategy.CompileRequest{
 		Plan: plan.Plan, DatasetContract: datasetContract, StateSemantics: stateSemantics,
 	})
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	compiled, ok := result.Plan()
-	return ok && result.PlanTerminal() == nil && len(result.LevelTerminals()) == 0 && len(compiled.Levels()) > 0, nil
+	executable := ok && result.PlanTerminal() == nil && len(result.LevelTerminals()) == 0 && len(compiled.Levels()) > 0
+	return compiled, executable, nil
 }
 
 func retainCompiledLevels(plan FrozenPlan, compiled *strategy.CompiledPlan) (FrozenPlan, error) {
@@ -253,6 +262,9 @@ func retainCompiledLevels(plan FrozenPlan, compiled *strategy.CompiledPlan) (Fro
 		return FrozenPlan{}, err
 	}
 	plan.PlanRevision = revision
+	if err := validateRuntimePlanDependencyClosure(plan, compiled); err != nil {
+		return FrozenPlan{}, err
+	}
 	return plan, nil
 }
 
@@ -368,25 +380,89 @@ func supplementLevelDependencies(
 	return requirements, queryPlans, nil
 }
 
-func validateRuntimePlanDependencyClosure(plan FrozenPlan) error {
-	levels := make(map[uint32]struct{}, len(plan.Plan.StrategyIR.Levels))
-	for _, level := range plan.Plan.StrategyIR.Levels {
-		levels[level.Definition.LevelID] = struct{}{}
-	}
-	referencedQueries := make(map[execution.LogicalQueryRef]struct{}, len(plan.QueryPlans))
-	for _, requirement := range plan.RequirementTemplates {
-		if _, ok := levels[requirement.ConsumerLevelID]; !ok {
-			return errRuntimeCatalogClosureInvalid
-		}
-		if _, ok := plan.QueryPlans[requirement.LogicalQueryRef]; !ok {
-			return errRuntimeCatalogClosureInvalid
-		}
-		referencedQueries[requirement.LogicalQueryRef] = struct{}{}
-	}
-	if len(referencedQueries) != len(plan.QueryPlans) {
+type runtimeRequirementKey struct {
+	requirementID   execution.RequirementID
+	consumerLevelID uint32
+}
+
+func validateRuntimePlanDependencyClosure(plan FrozenPlan, compiled *strategy.CompiledPlan) error {
+	if compiled == nil {
 		return errRuntimeCatalogClosureInvalid
 	}
+	expected := make(map[runtimeRequirementKey]execution.DataRequirementTemplate)
+	for _, level := range compiled.Levels() {
+		for _, algorithm := range level.Algorithms() {
+			for _, requirement := range algorithm.InputRequirements() {
+				template, err := runtimeRequirementTemplate(requirement)
+				if err != nil {
+					return errRuntimeCatalogClosureInvalid
+				}
+				key := runtimeRequirementKey{requirementID: template.RequirementID, consumerLevelID: template.ConsumerLevelID}
+				if existing, duplicate := expected[key]; duplicate && !reflect.DeepEqual(existing, template) {
+					return errRuntimeCatalogClosureInvalid
+				}
+				expected[key] = template
+			}
+		}
+	}
+
+	actual := make(map[runtimeRequirementKey]execution.DataRequirementTemplate, len(plan.RequirementTemplates))
+	referencedQueries := make(map[execution.LogicalQueryRef]struct{})
+	for _, template := range plan.RequirementTemplates {
+		candidate := template
+		candidate.RequirementID = ""
+		rebuilt, err := execution.BuildDataRequirementTemplate(candidate)
+		if err != nil || !reflect.DeepEqual(rebuilt, template) {
+			return errRuntimeCatalogClosureInvalid
+		}
+		key := runtimeRequirementKey{requirementID: template.RequirementID, consumerLevelID: template.ConsumerLevelID}
+		expectedTemplate, ok := expected[key]
+		if !ok || !reflect.DeepEqual(expectedTemplate, template) {
+			return errRuntimeCatalogClosureInvalid
+		}
+		if _, duplicate := actual[key]; duplicate {
+			return errRuntimeCatalogClosureInvalid
+		}
+		actual[key] = template
+		referencedQueries[template.LogicalQueryRef] = struct{}{}
+	}
+	if len(actual) != len(expected) || len(plan.QueryPlans) != len(referencedQueries) {
+		return errRuntimeCatalogClosureInvalid
+	}
+	for ref, facts := range plan.QueryPlans {
+		if _, ok := referencedQueries[ref]; !ok || ref != execution.LogicalQueryRef(facts.QueryRevision) || facts.Validate() != nil {
+			return errRuntimeCatalogClosureInvalid
+		}
+	}
 	return nil
+}
+
+func runtimeRequirementTemplate(requirement strategy.AlgorithmInputRequirement) (execution.DataRequirementTemplate, error) {
+	namedPoints := make([]execution.NamedInputPoint, len(requirement.NamedPoints))
+	for index, point := range requirement.NamedPoints {
+		namedPoints[index] = execution.NamedInputPoint{Name: point.Name, OffsetSeconds: point.OffsetSeconds}
+	}
+	template, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
+		DatasetName: execution.DatasetName(requirement.DatasetName), Role: execution.InputRole(requirement.Role),
+		ConsumerLevelID: requirement.ConsumerLevelID, LogicalQueryRef: execution.LogicalQueryRef(requirement.LogicalQueryRef),
+		RelativeWindow: execution.RelativeQueryWindow{
+			StartOffsetSeconds: requirement.RelativeWindow.StartOffsetSeconds,
+			EndOffsetSeconds:   requirement.RelativeWindow.EndOffsetSeconds,
+			HalfOpen:           requirement.RelativeWindow.HalfOpen,
+		},
+		StepMillis: requirement.StepMillis, AlignmentMillis: requirement.AlignmentMillis,
+		ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessClass(requirement.ReadinessClass),
+		InputProjection: execution.InputProjection{
+			ValueFields:     append([]string(nil), requirement.InputProjection.ValueFields...),
+			DimensionFields: append([]string(nil), requirement.InputProjection.DimensionFields...),
+			IdentityFields:  append([]string(nil), requirement.InputProjection.IdentityFields...),
+		},
+		PointOffsetsSeconds: append([]int64(nil), requirement.PointOffsetsSeconds...), NamedPoints: namedPoints,
+	})
+	if err != nil || string(template.RequirementID) != requirement.RequirementID {
+		return execution.DataRequirementTemplate{}, errRuntimeCatalogClosureInvalid
+	}
+	return template, nil
 }
 
 func compileResultDispositions(sourceID string, result strategy.CompileResult) ([]ObjectDisposition, error) {

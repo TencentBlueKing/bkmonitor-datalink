@@ -12,6 +12,8 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -22,35 +24,34 @@ import (
 )
 
 func TestRetainCompiledLevelsRetainsLevelDependencyClosure(t *testing.T) {
-	plan := runtimeClosureFrozenPlan(t, []contract.LevelIRV2{
-		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
-		runtimeClosureLevel(2, "Unsupported"),
-	})
-	plan.RequirementTemplates = []execution.DataRequirementTemplate{
-		runtimeClosureRequirement("level-1-shared", 1, "shared"),
-		runtimeClosureRequirement("level-2-shared", 2, "shared"),
-		runtimeClosureRequirement("level-2-only", 2, "level-2-only"),
-	}
-	plan.QueryPlans = map[execution.LogicalQueryRef]execution.QueryPlanFacts{
-		"shared":       {TenantID: "shared"},
-		"level-2-only": {TenantID: "level-2-only"},
-	}
+	plan := runtimeClosureG4Plan(t, "1001", "1",
+		runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio},
+		runtimeClosureG4Level{2, strategy.DetectorKindOsRestart},
+	)
+	plan.Plan.StrategyIR.Levels[1].DetectPlan.Algorithms[0].Type = "Unsupported"
+	plan.PlanRevision = runtimeClosurePlanRevision(t, plan.Plan)
 
 	retained, err := retainCompiledLevels(plan, runtimeClosureCompile(t, plan.Plan, 1))
 	if err != nil {
 		t.Fatalf("retainCompiledLevels() error = %v", err)
 	}
-	assertRuntimeClosure(t, retained, []uint32{1}, []execution.RequirementID{"level-1-shared"}, []execution.LogicalQueryRef{"shared"})
+	if len(retained.Plan.StrategyIR.Levels) != 1 || retained.Plan.StrategyIR.Levels[0].Definition.LevelID != 1 {
+		t.Fatalf("retained Levels = %+v, want only Level 1", retained.Plan.StrategyIR.Levels)
+	}
+	for _, requirement := range retained.RequirementTemplates {
+		if requirement.ConsumerLevelID != 1 {
+			t.Fatalf("retained Requirement = %+v, want only Level 1 closure", requirement)
+		}
+	}
+	if len(retained.RequirementTemplates) != 2 || len(retained.QueryPlans) != 1 {
+		t.Fatalf("retained closure = %+v / %+v, want SimpleRingRatio exact closure", retained.RequirementTemplates, retained.QueryPlans)
+	}
 }
 
 func TestRetainCompiledLevelsAllRejectedClearsDependencyClosure(t *testing.T) {
-	plan := runtimeClosureFrozenPlan(t, []contract.LevelIRV2{runtimeClosureLevel(2, "Unsupported")})
-	plan.RequirementTemplates = []execution.DataRequirementTemplate{
-		runtimeClosureRequirement("level-2-only", 2, "level-2-only"),
-	}
-	plan.QueryPlans = map[execution.LogicalQueryRef]execution.QueryPlanFacts{
-		"level-2-only": {TenantID: "level-2-only"},
-	}
+	plan := runtimeClosureG4Plan(t, "1001", "1", runtimeClosureG4Level{2, strategy.DetectorKindOsRestart})
+	plan.Plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0].Type = "Unsupported"
+	plan.PlanRevision = runtimeClosurePlanRevision(t, plan.Plan)
 
 	retained, err := retainCompiledLevels(plan, runtimeClosureCompile(t, plan.Plan, 0))
 	if err != nil {
@@ -60,10 +61,8 @@ func TestRetainCompiledLevelsAllRejectedClearsDependencyClosure(t *testing.T) {
 }
 
 func TestRetainCompiledLevelsRejectsDanglingRequirement(t *testing.T) {
-	plan := runtimeClosureFrozenPlan(t, []contract.LevelIRV2{runtimeClosureLevel(1, strategy.DetectorKindThreshold)})
-	plan.RequirementTemplates = []execution.DataRequirementTemplate{
-		runtimeClosureRequirement("level-1", 1, "missing"),
-	}
+	plan := runtimeClosureG4Plan(t, "1001", "1", runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio})
+	plan.QueryPlans = nil
 
 	if _, err := retainCompiledLevels(plan, runtimeClosureCompile(t, plan.Plan, 1)); err == nil {
 		t.Fatal("retainCompiledLevels() accepted a retained Requirement without QueryPlan facts")
@@ -71,34 +70,15 @@ func TestRetainCompiledLevelsRejectsDanglingRequirement(t *testing.T) {
 }
 
 func TestSupplementRejectedLevelsRestoresLastGoodLevelDependencyClosure(t *testing.T) {
-	current := runtimeClosureFrozenPlan(t, []contract.LevelIRV2{
-		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
-		runtimeClosureLevel(3, strategy.DetectorKindThreshold),
-	})
-	current.RequirementTemplates = []execution.DataRequirementTemplate{
-		runtimeClosureRequirement("level-1-shared", 1, "shared"),
-		runtimeClosureRequirement("level-3-only", 3, "level-3-only"),
-	}
-	current.QueryPlans = map[execution.LogicalQueryRef]execution.QueryPlanFacts{
-		"shared":       {TenantID: "current-shared"},
-		"level-3-only": {TenantID: "current-level-3"},
-	}
-	lastGood := runtimeClosureFrozenPlan(t, []contract.LevelIRV2{
-		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
-		runtimeClosureLevel(2, strategy.DetectorKindThreshold),
-		runtimeClosureLevel(3, strategy.DetectorKindThreshold),
-	})
-	lastGood.RequirementTemplates = []execution.DataRequirementTemplate{
-		runtimeClosureRequirement("level-1-shared", 1, "shared"),
-		runtimeClosureRequirement("level-2-shared", 2, "shared"),
-		runtimeClosureRequirement("level-2-only", 2, "level-2-only"),
-		runtimeClosureRequirement("level-3-only", 3, "level-3-only"),
-	}
-	lastGood.QueryPlans = map[execution.LogicalQueryRef]execution.QueryPlanFacts{
-		"shared":       {TenantID: "last-good-shared"},
-		"level-2-only": {TenantID: "last-good-level-2"},
-		"level-3-only": {TenantID: "last-good-level-3"},
-	}
+	current := runtimeClosureG4Plan(t, "1001", "1",
+		runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio},
+		runtimeClosureG4Level{3, strategy.DetectorKindOsRestart},
+	)
+	lastGood := runtimeClosureG4Plan(t, "1001", "1",
+		runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio},
+		runtimeClosureG4Level{2, strategy.DetectorKindOsRestart},
+		runtimeClosureG4Level{3, strategy.DetectorKindOsRestart},
+	)
 
 	got, supplemented, err := supplementRejectedLevels(current, lastGood, []ObjectDisposition{{
 		Scope: "LEVEL", LevelID: 2, Disposition: DispositionConfigRejected,
@@ -109,29 +89,15 @@ func TestSupplementRejectedLevelsRestoresLastGoodLevelDependencyClosure(t *testi
 	if _, ok := supplemented[2]; !ok || len(supplemented) != 1 {
 		t.Fatalf("supplemented = %v, want only Level 2", supplemented)
 	}
-	assertRuntimeClosure(t, got, []uint32{1, 2, 3}, []execution.RequirementID{
-		"level-1-shared", "level-2-shared", "level-2-only", "level-3-only",
-	}, []execution.LogicalQueryRef{"shared", "level-2-only", "level-3-only"})
-	if got.QueryPlans["shared"].TenantID != "current-shared" {
-		t.Fatalf("shared QueryPlan = %+v, want retained current facts", got.QueryPlans["shared"])
-	}
-	if got.QueryPlans["level-2-only"].TenantID != "last-good-level-2" {
-		t.Fatalf("Level 2 QueryPlan = %+v, want last-good facts", got.QueryPlans["level-2-only"])
-	}
-	if got.QueryPlans["level-3-only"].TenantID != "current-level-3" {
-		t.Fatalf("Level 3 QueryPlan = %+v, want retained current facts", got.QueryPlans["level-3-only"])
+	compiled := runtimeClosureCompile(t, got.Plan, 3)
+	if err := validateRuntimePlanDependencyClosure(got, compiled); err != nil {
+		t.Fatalf("supplemented closure validation error = %v", err)
 	}
 }
 
 func TestSupplementRejectedLevelsWithoutLastGoodMatchLeavesClosureUnchanged(t *testing.T) {
-	current := runtimeClosureFrozenPlan(t, []contract.LevelIRV2{runtimeClosureLevel(1, strategy.DetectorKindThreshold)})
-	current.RequirementTemplates = []execution.DataRequirementTemplate{
-		runtimeClosureRequirement("level-1", 1, "level-1"),
-	}
-	current.QueryPlans = map[execution.LogicalQueryRef]execution.QueryPlanFacts{
-		"level-1": {TenantID: "current"},
-	}
-	lastGood := runtimeClosureFrozenPlan(t, []contract.LevelIRV2{runtimeClosureLevel(2, strategy.DetectorKindThreshold)})
+	current := runtimeClosureG4Plan(t, "1001", "1", runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio})
+	lastGood := runtimeClosureG4Plan(t, "1001", "1", runtimeClosureG4Level{2, strategy.DetectorKindOsRestart})
 
 	got, supplemented, err := supplementRejectedLevels(current, lastGood, []ObjectDisposition{{
 		Scope: "LEVEL", LevelID: 3, Disposition: DispositionConfigRejected,
@@ -142,17 +108,22 @@ func TestSupplementRejectedLevelsWithoutLastGoodMatchLeavesClosureUnchanged(t *t
 	if len(supplemented) != 0 {
 		t.Fatalf("supplemented = %v, want empty", supplemented)
 	}
-	assertRuntimeClosure(t, got, []uint32{1}, []execution.RequirementID{"level-1"}, []execution.LogicalQueryRef{"level-1"})
+	if !reflect.DeepEqual(got.RequirementTemplates, current.RequirementTemplates) || !reflect.DeepEqual(got.QueryPlans, current.QueryPlans) {
+		t.Fatalf("unmatched supplement changed closure: got=%+v/%+v want=%+v/%+v", got.RequirementTemplates, got.QueryPlans, current.RequirementTemplates, current.QueryPlans)
+	}
 }
 
 func TestSupplementRejectedLevelsRejectsDanglingLastGoodRequirement(t *testing.T) {
-	current := runtimeClosureFrozenPlan(t, []contract.LevelIRV2{runtimeClosureLevel(1, strategy.DetectorKindThreshold)})
-	lastGood := runtimeClosureFrozenPlan(t, []contract.LevelIRV2{
-		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
-		runtimeClosureLevel(2, strategy.DetectorKindThreshold),
-	})
-	lastGood.RequirementTemplates = []execution.DataRequirementTemplate{
-		runtimeClosureRequirement("level-2", 2, "missing"),
+	current := runtimeClosureG4Plan(t, "1001", "1", runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio})
+	lastGood := runtimeClosureG4Plan(t, "1001", "1",
+		runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio},
+		runtimeClosureG4Level{2, strategy.DetectorKindOsRestart},
+	)
+	for _, requirement := range lastGood.RequirementTemplates {
+		if requirement.ConsumerLevelID == 2 && requirement.Role == execution.InputRoleAlgorithmDependency {
+			delete(lastGood.QueryPlans, requirement.LogicalQueryRef)
+			break
+		}
 	}
 
 	if _, _, err := supplementRejectedLevels(current, lastGood, []ObjectDisposition{{
@@ -163,17 +134,13 @@ func TestSupplementRejectedLevelsRejectsDanglingLastGoodRequirement(t *testing.T
 }
 
 func TestRetainRuntimeExecutableCatalogIsolatesDanglingCurrentPlan(t *testing.T) {
-	bad := runtimeClosureNamedFrozenPlan(t, "1001", "1", []contract.LevelIRV2{
-		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
-	})
-	bad.RequirementTemplates = []execution.DataRequirementTemplate{
-		runtimeClosureRequirement("bad-current", 1, "missing"),
-	}
+	bad := runtimeClosureG4Plan(t, "1001", "1", runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio})
+	bad.QueryPlans = nil
 	healthySibling := runtimeClosureCompletePlan(t, "1002", "1")
 	healthyOtherGroup := runtimeClosureCompletePlan(t, "2001", "2")
 	catalog := runtimeClosureCatalog(
-		runtimeClosureQueryGroup("1", bad, healthySibling),
-		runtimeClosureQueryGroup("2", healthyOtherGroup),
+		runtimeClosureQueryGroup(t, "1", bad, healthySibling),
+		runtimeClosureQueryGroup(t, "2", healthyOtherGroup),
 	)
 	compiler, stateSemantics := runtimeClosureCompiler(t)
 
@@ -186,32 +153,29 @@ func TestRetainRuntimeExecutableCatalogIsolatesDanglingCurrentPlan(t *testing.T)
 }
 
 func TestRetainRuntimeExecutableCatalogIsolatesDanglingLevelLastGood(t *testing.T) {
-	invalidLevel := runtimeClosureLevel(2, strategy.DetectorKindThreshold)
-	invalidLevel.Connector = "INVALID"
-	bad := runtimeClosureNamedFrozenPlan(t, "1001", "1", []contract.LevelIRV2{
-		runtimeClosureLevel(1, strategy.DetectorKindThreshold), invalidLevel,
-	})
-	bad.RequirementTemplates = []execution.DataRequirementTemplate{
-		runtimeClosureRequirement("current-level-1", 1, "current"),
-		runtimeClosureRequirement("current-level-2", 2, "current"),
-	}
-	bad.QueryPlans = map[execution.LogicalQueryRef]execution.QueryPlanFacts{"current": {TenantID: "current"}}
+	bad := runtimeClosureG4Plan(t, "1001", "1",
+		runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio},
+		runtimeClosureG4Level{2, strategy.DetectorKindOsRestart},
+	)
+	bad.Plan.StrategyIR.Levels[1].Connector = "INVALID"
+	bad.PlanRevision = runtimeClosurePlanRevision(t, bad.Plan)
 	healthySibling := runtimeClosureCompletePlan(t, "1002", "1")
 	healthyOtherGroup := runtimeClosureCompletePlan(t, "2001", "2")
 	catalog := runtimeClosureCatalog(
-		runtimeClosureQueryGroup("1", bad, healthySibling),
-		runtimeClosureQueryGroup("2", healthyOtherGroup),
+		runtimeClosureQueryGroup(t, "1", bad, healthySibling),
+		runtimeClosureQueryGroup(t, "2", healthyOtherGroup),
 	)
-	lastGoodPlan := runtimeClosureNamedFrozenPlan(t, "1001", "1", []contract.LevelIRV2{
-		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
-		runtimeClosureLevel(2, strategy.DetectorKindThreshold),
-	})
-	lastGoodPlan.RequirementTemplates = []execution.DataRequirementTemplate{
-		runtimeClosureRequirement("last-good-level-1", 1, "last-good"),
-		runtimeClosureRequirement("last-good-level-2", 2, "missing"),
+	lastGoodPlan := runtimeClosureG4Plan(t, "1001", "1",
+		runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio},
+		runtimeClosureG4Level{2, strategy.DetectorKindOsRestart},
+	)
+	for _, requirement := range lastGoodPlan.RequirementTemplates {
+		if requirement.ConsumerLevelID == 2 && requirement.Role == execution.InputRoleAlgorithmDependency {
+			delete(lastGoodPlan.QueryPlans, requirement.LogicalQueryRef)
+			break
+		}
 	}
-	lastGoodPlan.QueryPlans = map[execution.LogicalQueryRef]execution.QueryPlanFacts{"last-good": {TenantID: "last-good"}}
-	lastGood := &PublishedSnapshot{QueryGroups: []QueryGroup{runtimeClosureQueryGroup("1", lastGoodPlan)}}
+	lastGood := &PublishedSnapshot{QueryGroups: []QueryGroup{runtimeClosureQueryGroup(t, "1", lastGoodPlan)}}
 	compiler, stateSemantics := runtimeClosureCompiler(t)
 
 	got, err := retainRuntimeExecutableCatalog(context.Background(), catalog, lastGood, compiler, stateSemantics)
@@ -229,16 +193,12 @@ func TestRetainRuntimeExecutableCatalogValidatesWholePlanLastGoodClosure(t *test
 	healthySibling := runtimeClosureCompletePlan(t, "1002", "1")
 	healthyOtherGroup := runtimeClosureCompletePlan(t, "2001", "2")
 	catalog := runtimeClosureCatalog(
-		runtimeClosureQueryGroup("1", bad, healthySibling),
-		runtimeClosureQueryGroup("2", healthyOtherGroup),
+		runtimeClosureQueryGroup(t, "1", bad, healthySibling),
+		runtimeClosureQueryGroup(t, "2", healthyOtherGroup),
 	)
-	lastGoodPlan := runtimeClosureNamedFrozenPlan(t, "1001", "1", []contract.LevelIRV2{
-		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
-	})
-	lastGoodPlan.RequirementTemplates = []execution.DataRequirementTemplate{
-		runtimeClosureRequirement("last-good", 1, "missing"),
-	}
-	lastGood := &PublishedSnapshot{QueryGroups: []QueryGroup{runtimeClosureQueryGroup("1", lastGoodPlan)}}
+	lastGoodPlan := runtimeClosureG4Plan(t, "1001", "1", runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio})
+	lastGoodPlan.QueryPlans = nil
+	lastGood := &PublishedSnapshot{QueryGroups: []QueryGroup{runtimeClosureQueryGroup(t, "1", lastGoodPlan)}}
 	compiler, stateSemantics := runtimeClosureCompiler(t)
 
 	got, err := retainRuntimeExecutableCatalog(context.Background(), catalog, lastGood, compiler, stateSemantics)
@@ -253,22 +213,12 @@ func TestRetainRuntimeExecutableCatalogCarriesWholePlanLastGoodClosure(t *testin
 	current := runtimeClosureCompletePlan(t, "1001", "1")
 	current.Plan.StrategyIR.ExecutionSemantics.EvaluationScope = contract.EvaluationScopeCrossSeries
 	current.PlanRevision = runtimeClosurePlanRevision(t, current.Plan)
-	lastGoodPlan := runtimeClosureNamedFrozenPlan(t, "1001", "1", []contract.LevelIRV2{
-		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
-	})
-	lastGoodPlan.RequirementTemplates = []execution.DataRequirementTemplate{
-		runtimeClosureRequirement("last-good-primary", 1, "last-good-primary"),
-		runtimeClosureRequirement("last-good-dependency", 1, "last-good-dependency"),
-	}
-	lastGoodPlan.QueryPlans = map[execution.LogicalQueryRef]execution.QueryPlanFacts{
-		"last-good-primary":    {TenantID: "last-good-primary"},
-		"last-good-dependency": {TenantID: "last-good-dependency"},
-	}
-	lastGood := &PublishedSnapshot{QueryGroups: []QueryGroup{runtimeClosureQueryGroup("1", lastGoodPlan)}}
+	lastGoodPlan := runtimeClosureG4Plan(t, "1001", "1", runtimeClosureG4Level{1, strategy.DetectorKindOsRestart})
+	lastGood := &PublishedSnapshot{QueryGroups: []QueryGroup{runtimeClosureQueryGroup(t, "1", lastGoodPlan)}}
 	compiler, stateSemantics := runtimeClosureCompiler(t)
 
 	got, err := retainRuntimeExecutableCatalog(
-		context.Background(), runtimeClosureCatalog(runtimeClosureQueryGroup("1", current)), lastGood, compiler, stateSemantics,
+		context.Background(), runtimeClosureCatalog(runtimeClosureQueryGroup(t, "1", current)), lastGood, compiler, stateSemantics,
 	)
 	if err != nil {
 		t.Fatalf("retainRuntimeExecutableCatalog() error = %v", err)
@@ -276,13 +226,322 @@ func TestRetainRuntimeExecutableCatalogCarriesWholePlanLastGoodClosure(t *testin
 	if len(got.QueryGroups) != 1 || len(got.QueryGroups[0].Plans) != 1 {
 		t.Fatalf("QueryGroups = %+v, want one last-good Plan", got.QueryGroups)
 	}
-	assertRuntimeClosure(t, got.QueryGroups[0].Plans[0], []uint32{1}, []execution.RequirementID{
-		"last-good-primary", "last-good-dependency",
-	}, []execution.LogicalQueryRef{"last-good-primary", "last-good-dependency"})
+	if !reflect.DeepEqual(got.QueryGroups[0].Plans[0].RequirementTemplates, lastGoodPlan.RequirementTemplates) ||
+		!reflect.DeepEqual(got.QueryGroups[0].Plans[0].QueryPlans, lastGoodPlan.QueryPlans) {
+		t.Fatalf("last-good closure changed: got=%+v/%+v want=%+v/%+v", got.QueryGroups[0].Plans[0].RequirementTemplates,
+			got.QueryGroups[0].Plans[0].QueryPlans, lastGoodPlan.RequirementTemplates, lastGoodPlan.QueryPlans)
+	}
 }
 
-func runtimeClosureFrozenPlan(t *testing.T, levels []contract.LevelIRV2) FrozenPlan {
-	return runtimeClosureNamedFrozenPlan(t, "1001", "1", levels)
+func TestValidateRuntimePlanDependencyClosureMatchesCompiledG4InputsExactly(t *testing.T) {
+	plan := runtimeClosureG4Plan(t, "1001", "1", runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio})
+	compiled := runtimeClosureCompile(t, plan.Plan, 1)
+	validOtherQuery := runtimeClosureQueryFacts(t, "1", "other")
+
+	tests := []struct {
+		name   string
+		mutate func(*FrozenPlan)
+	}{
+		{name: "missing all templates", mutate: func(plan *FrozenPlan) { plan.RequirementTemplates = nil; plan.QueryPlans = nil }},
+		{name: "missing one template", mutate: func(plan *FrozenPlan) { plan.RequirementTemplates = plan.RequirementTemplates[:1] }},
+		{name: "duplicate template", mutate: func(plan *FrozenPlan) {
+			plan.RequirementTemplates = append(plan.RequirementTemplates, plan.RequirementTemplates[0])
+		}},
+		{name: "wrong consumer level", mutate: func(plan *FrozenPlan) { plan.RequirementTemplates[0].ConsumerLevelID = 2 }},
+		{name: "tampered canonical fields", mutate: func(plan *FrozenPlan) {
+			plan.RequirementTemplates[0].RequiredColumns = append(plan.RequirementTemplates[0].RequiredColumns, "tampered")
+		}},
+		{name: "missing query facts", mutate: func(plan *FrozenPlan) { plan.QueryPlans = nil }},
+		{name: "extra query facts", mutate: func(plan *FrozenPlan) {
+			plan.QueryPlans[execution.LogicalQueryRef(validOtherQuery.QueryRevision)] = validOtherQuery
+		}},
+		{name: "wrong query revision", mutate: func(plan *FrozenPlan) {
+			for ref, facts := range plan.QueryPlans {
+				delete(plan.QueryPlans, ref)
+				plan.QueryPlans["wrong-ref"] = facts
+				break
+			}
+		}},
+		{name: "invalid query facts", mutate: func(plan *FrozenPlan) {
+			for ref, facts := range plan.QueryPlans {
+				facts.TenantID = ""
+				plan.QueryPlans[ref] = facts
+				break
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := runtimeClosureCloneFrozenPlan(plan)
+			test.mutate(&candidate)
+			if err := validateRuntimePlanDependencyClosure(candidate, compiled); !errors.Is(err, errRuntimeCatalogClosureInvalid) {
+				t.Fatalf("validateRuntimePlanDependencyClosure() error = %v, want closure invalid", err)
+			}
+		})
+	}
+	if err := validateRuntimePlanDependencyClosure(plan, compiled); err != nil {
+		t.Fatalf("validateRuntimePlanDependencyClosure(valid) error = %v", err)
+	}
+}
+
+func TestRetainRuntimeExecutableCatalogIsolatesInexactWholePlanLastGoodClosure(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*FrozenPlan)
+	}{
+		{name: "missing all templates", mutate: func(plan *FrozenPlan) { plan.RequirementTemplates = nil; plan.QueryPlans = nil }},
+		{name: "missing one template", mutate: func(plan *FrozenPlan) {
+			removed := plan.RequirementTemplates[1]
+			plan.RequirementTemplates = plan.RequirementTemplates[:1]
+			delete(plan.QueryPlans, removed.LogicalQueryRef)
+		}},
+		{name: "missing facts", mutate: func(plan *FrozenPlan) {
+			for ref := range plan.QueryPlans {
+				delete(plan.QueryPlans, ref)
+				break
+			}
+		}},
+		{name: "wrong revision", mutate: func(plan *FrozenPlan) {
+			for ref, facts := range plan.QueryPlans {
+				facts.QueryRevision = execution.QueryRevision(strings.Repeat("f", 64))
+				plan.QueryPlans[ref] = facts
+				break
+			}
+		}},
+		{name: "invalid facts", mutate: func(plan *FrozenPlan) {
+			for ref, facts := range plan.QueryPlans {
+				facts.ProviderRouteRef = ""
+				plan.QueryPlans[ref] = facts
+				break
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			bad := runtimeClosureG4Plan(t, "1001", "1", runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio})
+			bad.Plan.StrategyIR.ExecutionSemantics.EvaluationScope = contract.EvaluationScopeCrossSeries
+			bad.PlanRevision = runtimeClosurePlanRevision(t, bad.Plan)
+			lastGoodPlan := runtimeClosureG4Plan(t, "1001", "1", runtimeClosureG4Level{1, strategy.DetectorKindOsRestart})
+			test.mutate(&lastGoodPlan)
+			healthySibling := runtimeClosureG4Plan(t, "1002", "1", runtimeClosureG4Level{1, strategy.DetectorKindOsRestart})
+			healthyOtherGroup := runtimeClosureG4Plan(t, "2001", "2", runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio})
+			catalog := runtimeClosureCatalog(
+				runtimeClosureQueryGroup(t, "1", bad, healthySibling),
+				runtimeClosureQueryGroup(t, "2", healthyOtherGroup),
+			)
+			lastGood := &PublishedSnapshot{QueryGroups: []QueryGroup{runtimeClosureQueryGroup(t, "1", lastGoodPlan)}}
+			compiler, stateSemantics := runtimeClosureCompiler(t)
+
+			got, err := retainRuntimeExecutableCatalog(context.Background(), catalog, lastGood, compiler, stateSemantics)
+			if err != nil {
+				t.Fatalf("retainRuntimeExecutableCatalog() error = %v", err)
+			}
+			assertRuntimeCatalogPlans(t, got, compiler, stateSemantics, []string{"1002", "2001"})
+			assertRuntimeClosureRejected(t, got.Dispositions, "1001")
+		})
+	}
+}
+
+func TestRetainRuntimeExecutableCatalogIsolatesInexactPerLevelLastGoodClosure(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*FrozenPlan)
+	}{
+		{name: "missing dependency", mutate: func(plan *FrozenPlan) {
+			for index, requirement := range plan.RequirementTemplates {
+				if requirement.ConsumerLevelID == 2 && requirement.Role == execution.InputRoleAlgorithmDependency {
+					plan.RequirementTemplates = append(plan.RequirementTemplates[:index], plan.RequirementTemplates[index+1:]...)
+					return
+				}
+			}
+		}},
+		{name: "invalid facts", mutate: func(plan *FrozenPlan) {
+			for _, requirement := range plan.RequirementTemplates {
+				if requirement.ConsumerLevelID == 2 && requirement.Role == execution.InputRoleAlgorithmDependency {
+					facts := plan.QueryPlans[requirement.LogicalQueryRef]
+					facts.TenantID = ""
+					plan.QueryPlans[requirement.LogicalQueryRef] = facts
+					return
+				}
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			current := runtimeClosureG4Plan(t, "1001", "1",
+				runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio},
+				runtimeClosureG4Level{2, strategy.DetectorKindOsRestart},
+			)
+			current.Plan.StrategyIR.Levels[1].Connector = "INVALID"
+			current.PlanRevision = runtimeClosurePlanRevision(t, current.Plan)
+			lastGoodPlan := runtimeClosureG4Plan(t, "1001", "1",
+				runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio},
+				runtimeClosureG4Level{2, strategy.DetectorKindOsRestart},
+			)
+			test.mutate(&lastGoodPlan)
+			healthySibling := runtimeClosureG4Plan(t, "1002", "1", runtimeClosureG4Level{1, strategy.DetectorKindOsRestart})
+			healthyOtherGroup := runtimeClosureG4Plan(t, "2001", "2", runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio})
+			catalog := runtimeClosureCatalog(
+				runtimeClosureQueryGroup(t, "1", current, healthySibling),
+				runtimeClosureQueryGroup(t, "2", healthyOtherGroup),
+			)
+			lastGood := &PublishedSnapshot{QueryGroups: []QueryGroup{runtimeClosureQueryGroup(t, "1", lastGoodPlan)}}
+			compiler, stateSemantics := runtimeClosureCompiler(t)
+
+			got, err := retainRuntimeExecutableCatalog(context.Background(), catalog, lastGood, compiler, stateSemantics)
+			if err != nil {
+				t.Fatalf("retainRuntimeExecutableCatalog() error = %v", err)
+			}
+			assertRuntimeCatalogPlans(t, got, compiler, stateSemantics, []string{"1002", "2001"})
+			assertRuntimeClosureRejected(t, got.Dispositions, "1001")
+		})
+	}
+}
+
+func TestRetainRuntimeExecutableCatalogPreservesValidQueryFacts(t *testing.T) {
+	plan := runtimeClosureG4Plan(t, "1001", "1", runtimeClosureG4Level{1, strategy.DetectorKindOsRestart})
+	want := runtimeClosureCloneQueryPlans(plan.QueryPlans)
+	compiler, stateSemantics := runtimeClosureCompiler(t)
+	got, err := retainRuntimeExecutableCatalog(
+		context.Background(), runtimeClosureCatalog(runtimeClosureQueryGroup(t, "1", plan)), nil, compiler, stateSemantics,
+	)
+	if err != nil {
+		t.Fatalf("retainRuntimeExecutableCatalog() error = %v", err)
+	}
+	if len(got.QueryGroups) != 1 || len(got.QueryGroups[0].Plans) != 1 || !reflect.DeepEqual(got.QueryGroups[0].Plans[0].QueryPlans, want) {
+		t.Fatalf("retained QueryPlans = %+v, want unchanged %+v", got.QueryGroups, want)
+	}
+}
+
+func TestRetainRuntimeExecutableCatalogStillBubblesNonClosureFailures(t *testing.T) {
+	t.Run("compiler", func(t *testing.T) {
+		want := errors.New("compiler unavailable")
+		_, stateSemantics := runtimeClosureCompiler(t)
+		_, err := retainRuntimeExecutableCatalog(
+			context.Background(),
+			runtimeClosureCatalog(runtimeClosureQueryGroup(t, "1", runtimeClosureCompletePlan(t, "1001", "1"))),
+			nil, runtimeClosureCompilerFunc(func(context.Context, strategy.CompileRequest) (strategy.CompileResult, error) {
+				return strategy.CompileResult{}, want
+			}), stateSemantics,
+		)
+		if !errors.Is(err, want) {
+			t.Fatalf("retainRuntimeExecutableCatalog() error = %v, want compiler error", err)
+		}
+	})
+
+	t.Run("digest", func(t *testing.T) {
+		plan := runtimeClosureCompletePlan(t, "1001", "1")
+		validPlan := runtimeClosureCompletePlan(t, "1001", "1").Plan
+		plan.Plan.StrategyIR.Levels[0].TriggerPlan.Config = json.RawMessage(`{`)
+		normal, stateSemantics := runtimeClosureCompiler(t)
+		_, err := retainRuntimeExecutableCatalog(
+			context.Background(), runtimeClosureCatalog(runtimeClosureQueryGroup(t, "1", plan)), nil,
+			runtimeClosureCompilerFunc(func(ctx context.Context, request strategy.CompileRequest) (strategy.CompileResult, error) {
+				request.Plan = validPlan
+				return normal.Compile(ctx, request)
+			}), stateSemantics,
+		)
+		if err == nil || errors.Is(err, errRuntimeCatalogClosureInvalid) {
+			t.Fatalf("retainRuntimeExecutableCatalog() error = %v, want non-closure digest error", err)
+		}
+	})
+
+	t.Run("query group conflict", func(t *testing.T) {
+		first := runtimeClosureQueryGroup(t, "1", runtimeClosureCompletePlan(t, "1001", "1"))
+		second := runtimeClosureQueryGroup(t, "1", runtimeClosureCompletePlan(t, "1002", "1"))
+		second.QueryPlan.QueryRevision = execution.QueryRevision(strings.Repeat("f", 64))
+		compiler, stateSemantics := runtimeClosureCompiler(t)
+		_, err := retainRuntimeExecutableCatalog(
+			context.Background(), runtimeClosureCatalog(first, second), nil, compiler, stateSemantics,
+		)
+		if err == nil || errors.Is(err, errRuntimeCatalogClosureInvalid) {
+			t.Fatalf("retainRuntimeExecutableCatalog() error = %v, want Query Group conflict", err)
+		}
+	})
+}
+
+type runtimeClosureCompilerFunc func(context.Context, strategy.CompileRequest) (strategy.CompileResult, error)
+
+func (compile runtimeClosureCompilerFunc) Compile(
+	ctx context.Context,
+	request strategy.CompileRequest,
+) (strategy.CompileResult, error) {
+	return compile(ctx, request)
+}
+
+type runtimeClosureG4Level struct {
+	levelID uint32
+	kind    string
+}
+
+func runtimeClosureG4Plan(t *testing.T, strategyID, businessID string, levels ...runtimeClosureG4Level) FrozenPlan {
+	t.Helper()
+	primary := runtimeClosureQueryFacts(t, businessID, "a <= 3600")
+	history := runtimeClosureQueryFacts(t, businessID, "a")
+	inputs := &compiledPlanInputs{primary: primary, osRestartHistory: &history}
+	projection := contract.InputProjectionV2{
+		ValueFields: []string{"value"}, DimensionFields: []string{"host"}, BusinessIdentityField: "bk_biz_id",
+		MultiValueAlignment: "SINGLE_VALUE", DataUnit: "percent", MissingValuePolicy: contract.MissingValuePolicyRequired,
+	}
+	compiledLevels := make([]contract.LevelIRV2, 0, len(levels))
+	for _, level := range levels {
+		rawConfig := json.RawMessage(`{}`)
+		if level.kind == strategy.DetectorKindSimpleRingRatio {
+			rawConfig = json.RawMessage(`{"floor":50,"ceil":null}`)
+		}
+		config, err := compileAlgorithmConfig(
+			legacyAlgorithm{Level: level.levelID, Type: level.kind, Config: rawConfig}, "percent", level.levelID,
+			projection, runtimeClosureDatasetContract().IdentityFields, 60, inputs,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		compiledLevel := runtimeClosureLevel(level.levelID, strategy.DetectorKindThreshold)
+		compiledLevel.DetectPlan.Algorithms = []contract.AlgorithmIRV2{{Type: level.kind, Version: 1, Config: config}}
+		compiledLevels = append(compiledLevels, compiledLevel)
+	}
+	plan := runtimeClosureNamedFrozenPlan(t, strategyID, businessID, compiledLevels)
+	plan.RequirementTemplates = append([]execution.DataRequirementTemplate(nil), inputs.requirements...)
+	plan.QueryPlans = runtimeClosureCloneQueryPlans(inputs.queryPlans)
+	return plan
+}
+
+func runtimeClosureQueryFacts(t *testing.T, businessID, metricMerge string) execution.QueryPlanFacts {
+	t.Helper()
+	facts, err := execution.BuildQueryPlanFacts(execution.QueryPlanFacts{
+		Provider: execution.ProviderUQ, ProviderRouteRef: "uq-primary", TenantID: "default", BusinessID: businessID,
+		SpaceScope: "space-" + businessID,
+		QueryList: []execution.QueryClause{{
+			DataSource: "bk_monitor", Driver: "influxdb", TableID: "system.cpu", FieldName: "usage", TimeField: "time",
+			ReferenceName: "a", Functions: []execution.QueryFunction{{Method: "default", Position: 0}},
+			TimeAggregation: execution.QueryFunction{Method: "avg", Position: 0},
+		}},
+		MetricMerge: metricMerge, StepMillis: 60000, AlignmentMillis: 60000,
+		Normalization: execution.DatasetNormalizationSpec{
+			DatasetContract: runtimeClosureDatasetContract(), SourceTimeUnit: execution.TimeUnitMillisecond,
+			CanonicalSourceTimeUnit: execution.TimeUnitSecond, SeriesIdentityMode: execution.SeriesIdentityUQGroupKeysValuesV1,
+			GroupKeyRule: execution.GroupKeyStripTableSuffixV1, ValueSelectionMode: execution.ValueSelectionResultOrFirstReferenceV1,
+			CanonicalValueField: "value", ReceivedTimeMode: execution.ReceivedTimeProviderReceivedAt, Version: "v1",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return facts
+}
+
+func runtimeClosureCloneFrozenPlan(plan FrozenPlan) FrozenPlan {
+	plan.RequirementTemplates = append([]execution.DataRequirementTemplate(nil), plan.RequirementTemplates...)
+	plan.QueryPlans = runtimeClosureCloneQueryPlans(plan.QueryPlans)
+	return plan
+}
+
+func runtimeClosureCloneQueryPlans(source map[execution.LogicalQueryRef]execution.QueryPlanFacts) map[execution.LogicalQueryRef]execution.QueryPlanFacts {
+	result := make(map[execution.LogicalQueryRef]execution.QueryPlanFacts, len(source))
+	for ref, facts := range source {
+		result[ref] = facts
+	}
+	return result
 }
 
 func runtimeClosureNamedFrozenPlan(t *testing.T, strategyID, businessID string, levels []contract.LevelIRV2) FrozenPlan {
@@ -331,12 +590,6 @@ func runtimeClosureLevel(levelID uint32, algorithmKind string) contract.LevelIRV
 	}
 }
 
-func runtimeClosureRequirement(id string, levelID uint32, queryRef execution.LogicalQueryRef) execution.DataRequirementTemplate {
-	return execution.DataRequirementTemplate{
-		RequirementID: execution.RequirementID(id), ConsumerLevelID: levelID, LogicalQueryRef: queryRef,
-	}
-}
-
 func runtimeClosureCompile(t *testing.T, plan contract.EvaluationPlanV2, wantLevels int) *strategy.CompiledPlan {
 	t.Helper()
 	compiler, stateSemantics := runtimeClosureCompiler(t)
@@ -381,24 +634,11 @@ func runtimeClosureDatasetContract() contract.DatasetContractV2 {
 
 func runtimeClosureCompletePlan(t *testing.T, strategyID, businessID string) FrozenPlan {
 	t.Helper()
-	plan := runtimeClosureNamedFrozenPlan(t, strategyID, businessID, []contract.LevelIRV2{
-		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
-	})
-	queryRef := execution.LogicalQueryRef("query-" + strategyID)
-	plan.RequirementTemplates = []execution.DataRequirementTemplate{
-		runtimeClosureRequirement("requirement-"+strategyID, 1, queryRef),
-	}
-	plan.QueryPlans = map[execution.LogicalQueryRef]execution.QueryPlanFacts{
-		queryRef: {TenantID: "query-" + strategyID},
-	}
-	return plan
+	return runtimeClosureG4Plan(t, strategyID, businessID, runtimeClosureG4Level{1, strategy.DetectorKindSimpleRingRatio})
 }
 
-func runtimeClosureQueryGroup(businessID string, plans ...FrozenPlan) QueryGroup {
-	return QueryGroup{QueryPlan: execution.QueryPlanFacts{
-		QueryRevision: execution.QueryRevision("group-query-" + businessID), TenantID: "default", BusinessID: businessID,
-		SpaceScope: "space-" + businessID, Normalization: execution.DatasetNormalizationSpec{DatasetContract: runtimeClosureDatasetContract()},
-	}, Plans: plans}
+func runtimeClosureQueryGroup(t *testing.T, businessID string, plans ...FrozenPlan) QueryGroup {
+	return QueryGroup{QueryPlan: runtimeClosureQueryFacts(t, businessID, "a"), Plans: plans}
 }
 
 func runtimeClosureCatalog(groups ...QueryGroup) Catalog {

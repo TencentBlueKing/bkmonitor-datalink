@@ -10,6 +10,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
+const runtimeCatalogClosureInvalidReason = "RUNTIME_CATALOG_CLOSURE_INVALID"
+
+var errRuntimeCatalogClosureInvalid = errors.New("alarmd controlplane: runtime Catalog dependency closure is invalid")
+
 // retainRuntimeExecutableCatalog applies the Evaluation Core compiler before
 // publication. Deterministic Plan and Level terminals remain source-audit
 // facts; only terminal-free Plans enter the immutable scheduling Catalog.
@@ -29,6 +33,13 @@ func retainRuntimeExecutableCatalog(
 	groups := make(map[execution.QueryGroupIdentity]*QueryGroup, len(catalog.QueryGroups))
 	seenPlans := make(map[execution.PlanIdentity]struct{})
 	lastGoodPlans := indexLastGoodPlans(lastGood)
+	rejectClosure := func(sourceID string, dispositions ...ObjectDisposition) {
+		result.Dispositions = append(result.Dispositions, dispositions...)
+		result.Dispositions = withoutAcceptedPlanDisposition(result.Dispositions, sourceID)
+		result.Dispositions = append(result.Dispositions, ObjectDisposition{
+			SourceID: sourceID, Scope: "PLAN", Disposition: DispositionConfigRejected, Reason: runtimeCatalogClosureInvalidReason,
+		})
+	}
 	addPlan := func(facts execution.QueryPlanFacts, plan FrozenPlan) error {
 		if _, duplicate := seenPlans[plan.Identity]; duplicate {
 			return errors.New("alarmd controlplane: duplicate runtime executable Plan identity")
@@ -70,6 +81,13 @@ func retainRuntimeExecutableCatalog(
 							return Catalog{}, err
 						}
 						if executable {
+							if err := validateRuntimePlanDependencyClosure(entry.plan); err != nil {
+								if errors.Is(err, errRuntimeCatalogClosureInvalid) {
+									rejectClosure(sourcePlan.Identity.StrategyID, disposition)
+									continue
+								}
+								return Catalog{}, err
+							}
 							disposition.Disposition = DispositionStaleConfig
 							result.Dispositions = append(result.Dispositions, disposition)
 							if err := addPlan(entry.facts, entry.plan); err != nil {
@@ -99,6 +117,10 @@ func retainRuntimeExecutableCatalog(
 			}
 			plan, err := retainCompiledLevels(sourcePlan, compiled)
 			if err != nil {
+				if errors.Is(err, errRuntimeCatalogClosureInvalid) {
+					rejectClosure(sourcePlan.Identity.StrategyID)
+					continue
+				}
 				return Catalog{}, err
 			}
 			supplementedLevels := map[uint32]struct{}{}
@@ -111,6 +133,10 @@ func retainRuntimeExecutableCatalog(
 					if executable {
 						plan, supplementedLevels, err = supplementRejectedLevels(plan, entry.plan, terminalDispositions)
 						if err != nil {
+							if errors.Is(err, errRuntimeCatalogClosureInvalid) {
+								rejectClosure(sourcePlan.Identity.StrategyID, terminalDispositions...)
+								continue
+							}
 							return Catalog{}, err
 						}
 					}
@@ -289,7 +315,7 @@ func retainRequiredQueryPlans(
 	for _, requirement := range requirements {
 		facts, ok := source[requirement.LogicalQueryRef]
 		if !ok {
-			return nil, errors.New("alarmd controlplane: runtime executable Level dependency is missing its Query Plan")
+			return nil, errRuntimeCatalogClosureInvalid
 		}
 		retained[requirement.LogicalQueryRef] = facts
 	}
@@ -318,7 +344,7 @@ func supplementLevelDependencies(
 			for _, requirement := range lastGoodByLevel[levelID] {
 				facts, exists := lastGood.QueryPlans[requirement.LogicalQueryRef]
 				if !exists {
-					return nil, nil, errors.New("alarmd controlplane: last-good Level dependency is missing its Query Plan")
+					return nil, nil, errRuntimeCatalogClosureInvalid
 				}
 				requirements = append(requirements, requirement)
 				if _, shared := queryPlans[requirement.LogicalQueryRef]; !shared {
@@ -330,7 +356,7 @@ func supplementLevelDependencies(
 		for _, requirement := range currentByLevel[levelID] {
 			facts, exists := plan.QueryPlans[requirement.LogicalQueryRef]
 			if !exists {
-				return nil, nil, errors.New("alarmd controlplane: runtime executable Level dependency is missing its Query Plan")
+				return nil, nil, errRuntimeCatalogClosureInvalid
 			}
 			requirements = append(requirements, requirement)
 			queryPlans[requirement.LogicalQueryRef] = facts
@@ -340,6 +366,27 @@ func supplementLevelDependencies(
 		queryPlans = nil
 	}
 	return requirements, queryPlans, nil
+}
+
+func validateRuntimePlanDependencyClosure(plan FrozenPlan) error {
+	levels := make(map[uint32]struct{}, len(plan.Plan.StrategyIR.Levels))
+	for _, level := range plan.Plan.StrategyIR.Levels {
+		levels[level.Definition.LevelID] = struct{}{}
+	}
+	referencedQueries := make(map[execution.LogicalQueryRef]struct{}, len(plan.QueryPlans))
+	for _, requirement := range plan.RequirementTemplates {
+		if _, ok := levels[requirement.ConsumerLevelID]; !ok {
+			return errRuntimeCatalogClosureInvalid
+		}
+		if _, ok := plan.QueryPlans[requirement.LogicalQueryRef]; !ok {
+			return errRuntimeCatalogClosureInvalid
+		}
+		referencedQueries[requirement.LogicalQueryRef] = struct{}{}
+	}
+	if len(referencedQueries) != len(plan.QueryPlans) {
+		return errRuntimeCatalogClosureInvalid
+	}
+	return nil
 }
 
 func compileResultDispositions(sourceID string, result strategy.CompileResult) ([]ObjectDisposition, error) {

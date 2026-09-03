@@ -162,9 +162,132 @@ func TestSupplementRejectedLevelsRejectsDanglingLastGoodRequirement(t *testing.T
 	}
 }
 
+func TestRetainRuntimeExecutableCatalogIsolatesDanglingCurrentPlan(t *testing.T) {
+	bad := runtimeClosureNamedFrozenPlan(t, "1001", "1", []contract.LevelIRV2{
+		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
+	})
+	bad.RequirementTemplates = []execution.DataRequirementTemplate{
+		runtimeClosureRequirement("bad-current", 1, "missing"),
+	}
+	healthySibling := runtimeClosureCompletePlan(t, "1002", "1")
+	healthyOtherGroup := runtimeClosureCompletePlan(t, "2001", "2")
+	catalog := runtimeClosureCatalog(
+		runtimeClosureQueryGroup("1", bad, healthySibling),
+		runtimeClosureQueryGroup("2", healthyOtherGroup),
+	)
+	compiler, stateSemantics := runtimeClosureCompiler(t)
+
+	got, err := retainRuntimeExecutableCatalog(context.Background(), catalog, nil, compiler, stateSemantics)
+	if err != nil {
+		t.Fatalf("retainRuntimeExecutableCatalog() error = %v", err)
+	}
+	assertRuntimeCatalogPlans(t, got, compiler, stateSemantics, []string{"1002", "2001"})
+	assertRuntimeClosureRejected(t, got.Dispositions, "1001")
+}
+
+func TestRetainRuntimeExecutableCatalogIsolatesDanglingLevelLastGood(t *testing.T) {
+	invalidLevel := runtimeClosureLevel(2, strategy.DetectorKindThreshold)
+	invalidLevel.Connector = "INVALID"
+	bad := runtimeClosureNamedFrozenPlan(t, "1001", "1", []contract.LevelIRV2{
+		runtimeClosureLevel(1, strategy.DetectorKindThreshold), invalidLevel,
+	})
+	bad.RequirementTemplates = []execution.DataRequirementTemplate{
+		runtimeClosureRequirement("current-level-1", 1, "current"),
+		runtimeClosureRequirement("current-level-2", 2, "current"),
+	}
+	bad.QueryPlans = map[execution.LogicalQueryRef]execution.QueryPlanFacts{"current": {TenantID: "current"}}
+	healthySibling := runtimeClosureCompletePlan(t, "1002", "1")
+	healthyOtherGroup := runtimeClosureCompletePlan(t, "2001", "2")
+	catalog := runtimeClosureCatalog(
+		runtimeClosureQueryGroup("1", bad, healthySibling),
+		runtimeClosureQueryGroup("2", healthyOtherGroup),
+	)
+	lastGoodPlan := runtimeClosureNamedFrozenPlan(t, "1001", "1", []contract.LevelIRV2{
+		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
+		runtimeClosureLevel(2, strategy.DetectorKindThreshold),
+	})
+	lastGoodPlan.RequirementTemplates = []execution.DataRequirementTemplate{
+		runtimeClosureRequirement("last-good-level-1", 1, "last-good"),
+		runtimeClosureRequirement("last-good-level-2", 2, "missing"),
+	}
+	lastGoodPlan.QueryPlans = map[execution.LogicalQueryRef]execution.QueryPlanFacts{"last-good": {TenantID: "last-good"}}
+	lastGood := &PublishedSnapshot{QueryGroups: []QueryGroup{runtimeClosureQueryGroup("1", lastGoodPlan)}}
+	compiler, stateSemantics := runtimeClosureCompiler(t)
+
+	got, err := retainRuntimeExecutableCatalog(context.Background(), catalog, lastGood, compiler, stateSemantics)
+	if err != nil {
+		t.Fatalf("retainRuntimeExecutableCatalog() error = %v", err)
+	}
+	assertRuntimeCatalogPlans(t, got, compiler, stateSemantics, []string{"1002", "2001"})
+	assertRuntimeClosureRejected(t, got.Dispositions, "1001")
+}
+
+func TestRetainRuntimeExecutableCatalogValidatesWholePlanLastGoodClosure(t *testing.T) {
+	bad := runtimeClosureCompletePlan(t, "1001", "1")
+	bad.Plan.StrategyIR.ExecutionSemantics.EvaluationScope = contract.EvaluationScopeCrossSeries
+	bad.PlanRevision = runtimeClosurePlanRevision(t, bad.Plan)
+	healthySibling := runtimeClosureCompletePlan(t, "1002", "1")
+	healthyOtherGroup := runtimeClosureCompletePlan(t, "2001", "2")
+	catalog := runtimeClosureCatalog(
+		runtimeClosureQueryGroup("1", bad, healthySibling),
+		runtimeClosureQueryGroup("2", healthyOtherGroup),
+	)
+	lastGoodPlan := runtimeClosureNamedFrozenPlan(t, "1001", "1", []contract.LevelIRV2{
+		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
+	})
+	lastGoodPlan.RequirementTemplates = []execution.DataRequirementTemplate{
+		runtimeClosureRequirement("last-good", 1, "missing"),
+	}
+	lastGood := &PublishedSnapshot{QueryGroups: []QueryGroup{runtimeClosureQueryGroup("1", lastGoodPlan)}}
+	compiler, stateSemantics := runtimeClosureCompiler(t)
+
+	got, err := retainRuntimeExecutableCatalog(context.Background(), catalog, lastGood, compiler, stateSemantics)
+	if err != nil {
+		t.Fatalf("retainRuntimeExecutableCatalog() error = %v", err)
+	}
+	assertRuntimeCatalogPlans(t, got, compiler, stateSemantics, []string{"1002", "2001"})
+	assertRuntimeClosureRejected(t, got.Dispositions, "1001")
+}
+
+func TestRetainRuntimeExecutableCatalogCarriesWholePlanLastGoodClosure(t *testing.T) {
+	current := runtimeClosureCompletePlan(t, "1001", "1")
+	current.Plan.StrategyIR.ExecutionSemantics.EvaluationScope = contract.EvaluationScopeCrossSeries
+	current.PlanRevision = runtimeClosurePlanRevision(t, current.Plan)
+	lastGoodPlan := runtimeClosureNamedFrozenPlan(t, "1001", "1", []contract.LevelIRV2{
+		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
+	})
+	lastGoodPlan.RequirementTemplates = []execution.DataRequirementTemplate{
+		runtimeClosureRequirement("last-good-primary", 1, "last-good-primary"),
+		runtimeClosureRequirement("last-good-dependency", 1, "last-good-dependency"),
+	}
+	lastGoodPlan.QueryPlans = map[execution.LogicalQueryRef]execution.QueryPlanFacts{
+		"last-good-primary":    {TenantID: "last-good-primary"},
+		"last-good-dependency": {TenantID: "last-good-dependency"},
+	}
+	lastGood := &PublishedSnapshot{QueryGroups: []QueryGroup{runtimeClosureQueryGroup("1", lastGoodPlan)}}
+	compiler, stateSemantics := runtimeClosureCompiler(t)
+
+	got, err := retainRuntimeExecutableCatalog(
+		context.Background(), runtimeClosureCatalog(runtimeClosureQueryGroup("1", current)), lastGood, compiler, stateSemantics,
+	)
+	if err != nil {
+		t.Fatalf("retainRuntimeExecutableCatalog() error = %v", err)
+	}
+	if len(got.QueryGroups) != 1 || len(got.QueryGroups[0].Plans) != 1 {
+		t.Fatalf("QueryGroups = %+v, want one last-good Plan", got.QueryGroups)
+	}
+	assertRuntimeClosure(t, got.QueryGroups[0].Plans[0], []uint32{1}, []execution.RequirementID{
+		"last-good-primary", "last-good-dependency",
+	}, []execution.LogicalQueryRef{"last-good-primary", "last-good-dependency"})
+}
+
 func runtimeClosureFrozenPlan(t *testing.T, levels []contract.LevelIRV2) FrozenPlan {
+	return runtimeClosureNamedFrozenPlan(t, "1001", "1", levels)
+}
+
+func runtimeClosureNamedFrozenPlan(t *testing.T, strategyID, businessID string, levels []contract.LevelIRV2) FrozenPlan {
 	t.Helper()
-	ref := contract.StrategyRefV2{TenantID: "default", StrategyID: "1001", Revision: "strategy-r1"}
+	ref := contract.StrategyRefV2{TenantID: "default", StrategyID: strategyID, Revision: "strategy-r1"}
 	projection := contract.InputProjectionV2{
 		ValueFields: []string{"value"}, DimensionFields: []string{"host"}, BusinessIdentityField: "bk_biz_id",
 		MultiValueAlignment: "SINGLE_VALUE", DataUnit: "percent", MissingValuePolicy: contract.MissingValuePolicyRequired,
@@ -179,11 +302,15 @@ func runtimeClosureFrozenPlan(t *testing.T, levels []contract.LevelIRV2) FrozenP
 			}, Levels: levels,
 		},
 	}
-	revision, err := contract.DeriveCanonicalDigestV2("alarmd-plan-semantics-v1", plan)
+	scheduleSpec := execution.ScheduleSpec{EvaluationIntervalSeconds: 60, Alignment: 0, Timezone: "UTC"}
+	scheduleRevision, err := execution.DerivePlanScheduleRevision(scheduleSpec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return FrozenPlan{Plan: plan, PlanRevision: revision}
+	return FrozenPlan{
+		Identity: execution.PlanIdentity{TenantID: "default", BusinessID: businessID, StrategyID: strategyID},
+		Plan:     plan, PlanRevision: runtimeClosurePlanRevision(t, plan), ScheduleSpec: scheduleSpec, ScheduleRevision: scheduleRevision,
+	}
 }
 
 func runtimeClosureLevel(levelID uint32, algorithmKind string) contract.LevelIRV2 {
@@ -212,6 +339,22 @@ func runtimeClosureRequirement(id string, levelID uint32, queryRef execution.Log
 
 func runtimeClosureCompile(t *testing.T, plan contract.EvaluationPlanV2, wantLevels int) *strategy.CompiledPlan {
 	t.Helper()
+	compiler, stateSemantics := runtimeClosureCompiler(t)
+	result, err := compiler.Compile(context.Background(), strategy.CompileRequest{
+		Plan: plan, DatasetContract: runtimeClosureDatasetContract(), StateSemantics: stateSemantics,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, ok := result.Plan()
+	if !ok || len(compiled.Levels()) != wantLevels {
+		t.Fatalf("Compile() plan=%+v terminals=%+v, want %d retained Levels", compiled, result.LevelTerminals(), wantLevels)
+	}
+	return compiled
+}
+
+func runtimeClosureCompiler(t *testing.T) (*strategy.PlanCompiler, strategy.StateSemantics) {
+	t.Helper()
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{
 		MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16,
 		MaxConditionsPerAlgorithm: 64, MaxASTNodesPerLevel: 256, MaxTriggerWindowSize: 4096,
@@ -222,26 +365,111 @@ func runtimeClosureCompile(t *testing.T, plan contract.EvaluationPlanV2, wantLev
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := compiler.Compile(context.Background(), strategy.CompileRequest{
-		Plan: plan,
-		DatasetContract: contract.DatasetContractV2{
-			SchemaDigest: strings.Repeat("1", 64), NormalizationDigest: strings.Repeat("2", 64),
-			IdentityFields: []string{"host"}, SourceTimeField: "time", ReceivedTimeField: "received_time",
-		},
-		StateSemantics: strategy.StateSemantics{
-			StateSchemaVersion: "window-state-v1", CodecSemanticsVersion: "window-state-codec-v1",
-			IdentitySchemaDigest: strings.Repeat("3", 64), SourceTimeSemanticsVersion: "source-time-seconds-v1",
-			HistoryCellSemanticsVersion: "detect-history-cell-v1",
-		},
+	return compiler, strategy.StateSemantics{
+		StateSchemaVersion: "window-state-v1", CodecSemanticsVersion: "window-state-codec-v1",
+		IdentitySchemaDigest: strings.Repeat("3", 64), SourceTimeSemanticsVersion: "source-time-seconds-v1",
+		HistoryCellSemanticsVersion: "detect-history-cell-v1",
+	}
+}
+
+func runtimeClosureDatasetContract() contract.DatasetContractV2 {
+	return contract.DatasetContractV2{
+		SchemaDigest: strings.Repeat("1", 64), NormalizationDigest: strings.Repeat("2", 64),
+		IdentityFields: []string{"host"}, SourceTimeField: "time", ReceivedTimeField: "received_time",
+	}
+}
+
+func runtimeClosureCompletePlan(t *testing.T, strategyID, businessID string) FrozenPlan {
+	t.Helper()
+	plan := runtimeClosureNamedFrozenPlan(t, strategyID, businessID, []contract.LevelIRV2{
+		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
 	})
+	queryRef := execution.LogicalQueryRef("query-" + strategyID)
+	plan.RequirementTemplates = []execution.DataRequirementTemplate{
+		runtimeClosureRequirement("requirement-"+strategyID, 1, queryRef),
+	}
+	plan.QueryPlans = map[execution.LogicalQueryRef]execution.QueryPlanFacts{
+		queryRef: {TenantID: "query-" + strategyID},
+	}
+	return plan
+}
+
+func runtimeClosureQueryGroup(businessID string, plans ...FrozenPlan) QueryGroup {
+	return QueryGroup{QueryPlan: execution.QueryPlanFacts{
+		QueryRevision: execution.QueryRevision("group-query-" + businessID), TenantID: "default", BusinessID: businessID,
+		SpaceScope: "space-" + businessID, Normalization: execution.DatasetNormalizationSpec{DatasetContract: runtimeClosureDatasetContract()},
+	}, Plans: plans}
+}
+
+func runtimeClosureCatalog(groups ...QueryGroup) Catalog {
+	dispositions := make([]ObjectDisposition, 0)
+	for _, group := range groups {
+		for _, plan := range group.Plans {
+			dispositions = append(dispositions, ObjectDisposition{
+				SourceID: plan.Identity.StrategyID, Scope: "PLAN", Disposition: DispositionAccepted,
+			})
+		}
+	}
+	return Catalog{ObservationID: "runtime-closure", QueryGroups: groups, Dispositions: dispositions}
+}
+
+func runtimeClosurePlanRevision(t *testing.T, plan contract.EvaluationPlanV2) string {
+	t.Helper()
+	revision, err := contract.DeriveCanonicalDigestV2("alarmd-plan-semantics-v1", plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, ok := result.Plan()
-	if !ok || len(compiled.Levels()) != wantLevels {
-		t.Fatalf("Compile() plan=%+v terminals=%+v, want %d retained Levels", compiled, result.LevelTerminals(), wantLevels)
+	return revision
+}
+
+func assertRuntimeCatalogPlans(
+	t *testing.T,
+	catalog Catalog,
+	compiler *strategy.PlanCompiler,
+	stateSemantics strategy.StateSemantics,
+	want []string,
+) {
+	t.Helper()
+	got := make(map[string]struct{})
+	for _, group := range catalog.QueryGroups {
+		for _, plan := range group.Plans {
+			got[plan.Identity.StrategyID] = struct{}{}
+			result, err := compiler.Compile(context.Background(), strategy.CompileRequest{
+				Plan: plan.Plan, DatasetContract: group.QueryPlan.Normalization.DatasetContract, StateSemantics: stateSemantics,
+			})
+			if err != nil {
+				t.Fatalf("compile retained Plan %s: %v", plan.Identity.StrategyID, err)
+			}
+			compiled, ok := result.Plan()
+			if !ok || result.PlanTerminal() != nil || len(result.LevelTerminals()) != 0 || len(compiled.Levels()) == 0 {
+				t.Fatalf("retained Plan %s is not executable: result=%+v", plan.Identity.StrategyID, result)
+			}
+		}
 	}
-	return compiled
+	if len(got) != len(want) {
+		t.Fatalf("retained Plans = %v, want %v", got, want)
+	}
+	for _, strategyID := range want {
+		if _, ok := got[strategyID]; !ok {
+			t.Fatalf("retained Plans = %v, missing %s", got, strategyID)
+		}
+	}
+}
+
+func assertRuntimeClosureRejected(t *testing.T, dispositions []ObjectDisposition, strategyID string) {
+	t.Helper()
+	accepted := false
+	rejected := false
+	for _, disposition := range dispositions {
+		if disposition.SourceID != strategyID || disposition.Scope != "PLAN" {
+			continue
+		}
+		accepted = accepted || disposition.Disposition == DispositionAccepted
+		rejected = rejected || (disposition.Disposition == DispositionConfigRejected && disposition.Reason == "RUNTIME_CATALOG_CLOSURE_INVALID")
+	}
+	if accepted || !rejected {
+		t.Fatalf("dispositions = %+v, want only explicit runtime closure rejection for %s", dispositions, strategyID)
+	}
 }
 
 func assertRuntimeClosure(

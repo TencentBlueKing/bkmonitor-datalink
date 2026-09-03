@@ -49,6 +49,8 @@ const (
 	StageConfigLoaded         = "config_loaded"
 	StageSnapshotRefreshed    = "snapshot_refreshed"
 	StageSnapshotUnavailable  = "snapshot_unavailable"
+	StageActiveQGSet          = "active_qg_set"
+	StageLegacyQGMigration    = "legacy_active_qg_migration"
 	StageAssignmentAcquired   = "assignment_acquired"
 	StageAssignmentLost       = "assignment_lost"
 	StageTakeoverStarted      = "takeover_started"
@@ -192,6 +194,21 @@ type QueryPermitFacts struct {
 	RecoveryInflight int
 }
 
+type ActiveQGSetFacts struct {
+	Operation   string
+	Result      string
+	QueryGroups int
+	ObjectBytes int
+	Duration    time.Duration
+}
+
+type LegacyQGMigrationFacts struct {
+	Result      string
+	ReasonClass string
+	ScanKeys    int
+	Duration    time.Duration
+}
+
 type TraceFields struct {
 	TraceID                 string
 	ExecutionID             string
@@ -233,6 +250,8 @@ type Observation struct {
 	CapacityBudget    CapacityBudget
 	SourceKind        SourceKind
 	QueryPermit       *QueryPermitFacts
+	ActiveQGSet       *ActiveQGSetFacts
+	LegacyMigration   *LegacyQGMigrationFacts
 	normalized        bool
 	stageReasonBucket bool
 }
@@ -296,9 +315,60 @@ func NormalizeObservation(observation Observation) Observation {
 	}
 	observation.CapacityBudget = NormalizeCapacityBudget(observation.CapacityBudget)
 	observation.QueryPermit = normalizeQueryPermitFacts(observation.QueryPermit)
+	observation.ActiveQGSet = normalizeActiveQGSetFacts(observation.ActiveQGSet)
+	observation.LegacyMigration = normalizeLegacyQGMigrationFacts(observation.LegacyMigration)
 	observation.Counts = normalizeCounts(observation.Counts)
 	observation.normalized = true
 	return observation
+}
+
+func normalizeActiveQGSetFacts(facts *ActiveQGSetFacts) *ActiveQGSetFacts {
+	if facts == nil {
+		return nil
+	}
+	normalized := *facts
+	switch normalized.Operation {
+	case "encode", "read", "write", "renew":
+	default:
+		normalized.Operation = ""
+	}
+	if normalized.Result != "success" && normalized.Result != "failure" {
+		normalized.Result = "failure"
+	}
+	if normalized.QueryGroups < 0 {
+		normalized.QueryGroups = 0
+	}
+	if normalized.ObjectBytes < 0 {
+		normalized.ObjectBytes = 0
+	}
+	if normalized.Duration < 0 {
+		normalized.Duration = 0
+	}
+	return &normalized
+}
+
+func normalizeLegacyQGMigrationFacts(facts *LegacyQGMigrationFacts) *LegacyQGMigrationFacts {
+	if facts == nil {
+		return nil
+	}
+	normalized := *facts
+	switch normalized.Result {
+	case "success", "fail_closed", "canceled":
+	default:
+		normalized.Result = "fail_closed"
+	}
+	switch normalized.ReasonClass {
+	case "none", "config", "unsupported", "ownership", "dependency", "data_quality", "capacity", "state_progress", "output", "validation", "contract":
+	default:
+		normalized.ReasonClass = "contract"
+	}
+	if normalized.ScanKeys < 0 {
+		normalized.ScanKeys = 0
+	}
+	if normalized.Duration < 0 {
+		normalized.Duration = 0
+	}
+	return &normalized
 }
 
 func normalizeQueryPermitFacts(facts *QueryPermitFacts) *QueryPermitFacts {
@@ -547,6 +617,7 @@ var metricComponentStages = []ComponentStage{
 
 var phaseTwoComponentStages = []ComponentStage{
 	{ComponentControlPlane, StageSnapshotRefreshed}, {ComponentControlPlane, StageSnapshotUnavailable},
+	{ComponentControlPlane, StageActiveQGSet}, {ComponentControlPlane, StageLegacyQGMigration},
 	{ComponentOwnership, StageAssignmentAcquired}, {ComponentOwnership, StageAssignmentLost},
 	{ComponentOwnership, StageTakeoverStarted}, {ComponentOwnership, StageTakeoverCompleted},
 	{ComponentOwnership, StageLeaseRenewed}, {ComponentOwnership, StageFenceChecked},

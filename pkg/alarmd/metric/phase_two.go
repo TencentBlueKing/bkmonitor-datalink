@@ -24,7 +24,17 @@ type phaseTwoMetrics struct {
 	readyQueue           *prometheus.GaugeVec
 	queryInflight        *prometheus.GaugeVec
 	queryAdmission       *prometheus.CounterVec
+	activeQGSetCount     prometheus.Gauge
+	activeQGSetBytes     prometheus.Gauge
+	activeQGSetEncode    *prometheus.HistogramVec
+	activeQGSetRedis     *prometheus.HistogramVec
+	legacyMigration      *prometheus.CounterVec
+	legacyMigrationScan  prometheus.Histogram
+	legacyMigrationTime  *prometheus.HistogramVec
 }
+
+var activeQGSetDurationBuckets = []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 30}
+var legacyMigrationScanBuckets = []float64{1, 10, 100, 500, 1000, 5000, 10000, 25000, 50000}
 
 var phaseTwoBusyStages = []string{"query", "evaluation", "event", "state", "progress", "other"}
 var phaseTwoWorkKinds = []string{
@@ -55,7 +65,7 @@ var phaseTwoOwnershipTransitions = []observability.Stage{
 }
 
 func newPhaseTwoMetrics() phaseTwoMetrics {
-	return phaseTwoMetrics{
+	metrics := phaseTwoMetrics{
 		work: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "worker_work_total",
 			Help: "Bounded phase-two worker business work by stable work kind.",
@@ -97,6 +107,14 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			Help: "Process-wide physical query permit admission outcomes by fixed operation and result.",
 		}, []string{"operation", "result"}),
 	}
+	metrics.activeQGSetCount = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_query_groups", Help: "Query groups in the current immutable Active Set."})
+	metrics.activeQGSetBytes = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_object_bytes", Help: "Encoded bytes in the current immutable Active Set."})
+	metrics.activeQGSetEncode = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_encode_duration_seconds", Help: "Active Set canonical encoding duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
+	metrics.activeQGSetRedis = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_redis_duration_seconds", Help: "Active Set Redis operation duration.", Buckets: activeQGSetDurationBuckets}, []string{"operation", "result"})
+	metrics.legacyMigration = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_total", Help: "One-time legacy Active QG migration outcomes."}, []string{"result", "reason_class"})
+	metrics.legacyMigrationScan = prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_scan_keys", Help: "Redis keys scanned by one-time legacy Active QG migration.", Buckets: legacyMigrationScanBuckets})
+	metrics.legacyMigrationTime = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_duration_seconds", Help: "One-time legacy Active QG migration duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
+	return metrics
 }
 
 func (m phaseTwoMetrics) collectors() []prometheus.Collector {
@@ -104,10 +122,28 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations,
 		m.ownedQueryGroups, m.ownershipTransitions, m.readyQueue, m.queryInflight,
 		m.queryAdmission,
+		m.activeQGSetCount, m.activeQGSetBytes, m.activeQGSetEncode, m.activeQGSetRedis,
+		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 	}
 }
 
 func (m phaseTwoMetrics) observe(observation observability.Observation) {
+	if facts := observation.ActiveQGSet; facts != nil {
+		if facts.Operation == "encode" {
+			m.activeQGSetEncode.WithLabelValues(facts.Result).Observe(facts.Duration.Seconds())
+		} else if facts.Operation == "read" || facts.Operation == "write" || facts.Operation == "renew" {
+			m.activeQGSetRedis.WithLabelValues(facts.Operation, facts.Result).Observe(facts.Duration.Seconds())
+			if facts.Operation == "renew" && facts.Result == "success" {
+				m.activeQGSetCount.Set(float64(facts.QueryGroups))
+				m.activeQGSetBytes.Set(float64(facts.ObjectBytes))
+			}
+		}
+	}
+	if facts := observation.LegacyMigration; facts != nil {
+		m.legacyMigration.WithLabelValues(facts.Result, facts.ReasonClass).Inc()
+		m.legacyMigrationScan.Observe(float64(facts.ScanKeys))
+		m.legacyMigrationTime.WithLabelValues(facts.Result).Observe(facts.Duration.Seconds())
+	}
 	if observation.Component == observability.ComponentScheduler &&
 		observation.Stage == observability.StageQueryAdmission && observation.QueryPermit != nil {
 		m.observeQueryPermit(observation)

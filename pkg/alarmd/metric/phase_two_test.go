@@ -71,6 +71,38 @@ func TestPhaseTwoSourceObservationMetricRecordsOnlyFixedEpisodeTransitions(t *te
 	}
 }
 
+func TestPhaseTwoActiveSetAndLegacyMigrationMetricsUseOnlyFixedLabels(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	recorder.Observe(context.Background(), observability.Observation{Component: observability.ComponentControlPlane,
+		Stage: observability.StageActiveQGSet, Result: observability.ResultSuccess,
+		ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "encode", Result: "success", QueryGroups: 7, ObjectBytes: 321, Duration: time.Second},
+		Trace:       observability.TraceFields{QueryGroupKey: "must-not-be-a-label", SnapshotRevision: "must-not-be-a-label"}})
+	if got := testutil.ToFloat64(recorder.phaseTwo.activeQGSetCount); got != 0 {
+		t.Fatalf("unconfirmed encoded candidate changed current QG count=%v", got)
+	}
+	recorder.Observe(context.Background(), observability.Observation{Component: observability.ComponentControlPlane,
+		Stage: observability.StageActiveQGSet, Result: observability.ResultSuccess,
+		ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "renew", Result: "success", QueryGroups: 7, ObjectBytes: 321, Duration: time.Second}})
+	recorder.Observe(context.Background(), observability.Observation{Component: observability.ComponentControlPlane,
+		Stage: observability.StageLegacyQGMigration, Result: observability.ResultFailed,
+		LegacyMigration: &observability.LegacyQGMigrationFacts{Result: "fail_closed", ReasonClass: "contract", ScanKeys: 12, Duration: time.Second}})
+	if got := testutil.ToFloat64(recorder.phaseTwo.activeQGSetCount); got != 7 {
+		t.Fatalf("active QG count=%v", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.activeQGSetBytes); got != 321 {
+		t.Fatalf("active set bytes=%v", got)
+	}
+	if got := testutil.CollectAndCount(recorder.phaseTwo.activeQGSetEncode); got != 1 {
+		t.Fatalf("encode metric families=%d", got)
+	}
+	if got := testutil.CollectAndCount(recorder.phaseTwo.activeQGSetRedis); got != 1 {
+		t.Fatalf("redis metric families=%d", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.legacyMigration.WithLabelValues("fail_closed", "contract")); got != 1 {
+		t.Fatalf("migration total=%v", got)
+	}
+}
+
 func TestPhaseTwoOwnershipMetricsStayLowCardinality(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
 	recorder.SetOwnedQueryGroups(7)

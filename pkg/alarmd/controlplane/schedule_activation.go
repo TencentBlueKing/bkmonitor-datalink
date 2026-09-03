@@ -76,7 +76,20 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	if err != nil {
 		return ActivationState{}, err
 	}
+	if previous.SchemaVersion != activationSchemaVersion {
+		upgraded, upgradeErr := reconciler.upgradeLegacyActivation(ctx, previous)
+		if upgradeErr != nil {
+			return ActivationState{}, upgradeErr
+		}
+		if upgraded.Current == publication {
+			return upgraded, nil
+		}
+		return reconciler.Ensure(ctx, publication)
+	}
 	if previous.Current == publication {
+		if _, loadErr := reconciler.repository.LoadActiveQueryGroupSet(ctx, previous.ActiveQGSetRef); loadErr != nil {
+			return ActivationState{}, loadErr
+		}
 		return previous, nil
 	}
 	if publication.PublicationEpoch < previous.Current.PublicationEpoch {
@@ -100,7 +113,19 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	oldSnapshot, err := reconciler.repository.LoadPublishedSnapshot(ctx, previous.Current)
 	var oldGroups map[execution.QueryGroupIdentity]QueryGroup
 	if errors.Is(err, ErrSnapshotUnavailable) {
-		oldGroups, err = reconciler.repository.loadActivatedGroupsFromOpenSchedules(ctx, previous, newGroups)
+		if previous.SchemaVersion == activationSchemaVersion {
+			identities, loadErr := reconciler.repository.LoadActiveQueryGroupSet(ctx, previous.ActiveQGSetRef)
+			if loadErr != nil {
+				return ActivationState{}, loadErr
+			}
+			candidates := make(map[execution.QueryGroupIdentity]QueryGroup, len(identities))
+			for _, identity := range identities {
+				candidates[identity] = QueryGroup{Identity: identity}
+			}
+			oldGroups, err = reconciler.repository.loadActivatedGroupsFromOpenSchedules(ctx, previous, candidates)
+		} else {
+			oldGroups, err = reconciler.repository.loadActivatedGroupsFromScheduleScan(ctx, previous)
+		}
 	} else if err == nil {
 		oldGroups, err = queryGroupMap(oldSnapshot.QueryGroups)
 	}
@@ -161,6 +186,66 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 			return ActivationState{}, loadErr
 		}
 		return ActivationState{}, applyErr
+	}
+	return reconciler.repository.LoadActivation(ctx)
+}
+
+func (reconciler *ScheduleActivationReconciler) upgradeLegacyActivation(ctx context.Context, previous ActivationState) (ActivationState, error) {
+	snapshot, err := reconciler.repository.LoadPublishedSnapshot(ctx, previous.Current)
+	var groups map[execution.QueryGroupIdentity]QueryGroup
+	if errors.Is(err, ErrSnapshotUnavailable) {
+		groups, err = reconciler.repository.loadActivatedGroupsFromScheduleScan(ctx, previous)
+	} else if err == nil {
+		groups, err = queryGroupMap(snapshot.QueryGroups)
+	}
+	if err != nil {
+		return ActivationState{}, err
+	}
+	identities := make([]execution.QueryGroupIdentity, 0, len(groups))
+	covered := make(map[execution.PlanIdentity]struct{}, len(previous.Plans))
+	for identity := range groups {
+		timeline, _, loadErr := reconciler.repository.loadScheduleTimeline(ctx, identity)
+		if loadErr != nil {
+			return ActivationState{}, loadErr
+		}
+		if timeline.RetiredAt != nil || len(timeline.Segments) == 0 {
+			return ActivationState{}, ErrSnapshotUnavailable
+		}
+		open := timeline.Segments[len(timeline.Segments)-1]
+		if open.Schedule.Segment.End != nil || open.Schedule.Segment.Publication.SnapshotRevision != previous.Current.SnapshotRevision || uint64(open.Schedule.Segment.Publication.PublicationEpoch) != previous.Current.PublicationEpoch {
+			return ActivationState{}, ErrSnapshotUnavailable
+		}
+		if err := validateOpenSegmentActivation(previous, open); err != nil {
+			return ActivationState{}, err
+		}
+		for _, record := range open.Plans {
+			if _, duplicate := covered[record.Fact.Plan]; duplicate {
+				return ActivationState{}, ErrSnapshotUnavailable
+			}
+			covered[record.Fact.Plan] = struct{}{}
+		}
+		identities = append(identities, identity)
+	}
+	if len(covered) != len(previous.Plans) {
+		return ActivationState{}, ErrSnapshotUnavailable
+	}
+	next := previous
+	next.RecordRevision++
+	next.SchemaVersion = activationSchemaVersion
+	expected := ActivationExpectation{RecordRevision: previous.RecordRevision, Current: previous.Current, Pending: previous.Pending}
+	// persistCutoverActivation with no timeline updates performs the v1->v2
+	// same-publication CAS and leaves Current/Pending/Schedule unchanged.
+	ref, payload, err := reconciler.repository.persistAndVerifyActiveQGSet(ctx, identities)
+	if err != nil {
+		return ActivationState{}, err
+	}
+	next.ActiveQGSetRef = ref
+	if err := reconciler.repository.persistActivationRefUpgrade(ctx, expected, next, payload); err != nil {
+		winner, loadErr := reconciler.repository.LoadActivation(ctx)
+		if loadErr == nil && winner.SchemaVersion == activationSchemaVersion {
+			return winner, nil
+		}
+		return ActivationState{}, err
 	}
 	return reconciler.repository.LoadActivation(ctx)
 }

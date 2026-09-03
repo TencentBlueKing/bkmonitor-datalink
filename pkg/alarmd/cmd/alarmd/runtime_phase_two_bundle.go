@@ -174,6 +174,10 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	if err := repository.ConfigureLegacyMigration(cfg.PhaseTwo.Control.LegacyMigrationMaxScanKeys, cfg.PhaseTwo.Control.LegacyMigrationTimeout.Duration()); err != nil {
+		return nil, err
+	}
+	repository.ConfigureObserver(observer)
 	if cfg.PhaseTwo.Control.CatalogTTL.Duration() < phaseTwoSnapshotMinimumRetention(cfg, 0) {
 		return nil, scheduler.ErrSnapshotRetentionInsufficient
 	}

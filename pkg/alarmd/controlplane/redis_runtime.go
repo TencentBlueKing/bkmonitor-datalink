@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -57,13 +59,15 @@ if ARGV[1] == '' then
 elseif not header or header ~= ARGV[1] then
   return 0
 end
-for index = 3, #KEYS do
+if redis.call('GET', KEYS[3]) ~= ARGV[4] then return 0 end
+for index = 4, #KEYS do
   if redis.call('EXISTS', KEYS[index]) == 1 then return 0 end
 end
+redis.call('PEXPIRE', KEYS[3], ARGV[5])
 redis.call('SET', KEYS[1], ARGV[2])
 redis.call('SET', KEYS[2], ARGV[3])
-for index = 3, #KEYS do
-  redis.call('SET', KEYS[index], ARGV[index + 1])
+for index = 4, #KEYS do
+  redis.call('SET', KEYS[index], ARGV[index + 2])
 end
 return 1
 `
@@ -71,7 +75,8 @@ return 1
 const compareAndSetCutoverSchedulesScript = `
 local header = redis.call('GET', KEYS[1])
 if not header or header ~= ARGV[1] then return 0 end
-for index = 3, #KEYS do
+if redis.call('GET', KEYS[3]) ~= ARGV[4] then return 0 end
+for index = 4, #KEYS do
   local current = redis.call('GET', KEYS[index])
   local expected_index = 2 * index - 2
   local expected = ARGV[expected_index]
@@ -81,14 +86,40 @@ for index = 3, #KEYS do
     return 0
   end
 end
+redis.call('PEXPIRE', KEYS[3], ARGV[5])
 redis.call('SET', KEYS[1], ARGV[2])
 redis.call('SET', KEYS[2], ARGV[3])
-for index = 3, #KEYS do
+for index = 4, #KEYS do
   local next_index = 2 * index - 1
   redis.call('SET', KEYS[index], ARGV[next_index])
 end
 return 1
 `
+
+func (repository *RedisCatalogRepository) persistActivationRefUpgrade(ctx context.Context, expected ActivationExpectation, next ActivationState, activePayload []byte) error {
+	expectedHeader, err := activationHeader(expected.RecordRevision, expected.Current, expected.Pending)
+	if err != nil {
+		return err
+	}
+	nextHeader, err := activationHeader(next.RecordRevision, next.Current, next.Pending)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(next)
+	if err != nil {
+		return err
+	}
+	changed, err := repository.client.Eval(ctx, compareAndSetCutoverSchedulesScript,
+		[]string{repository.activationHeaderKey(), repository.activationKey(), repository.activeQGSetKey(next.ActiveQGSetRef.Digest)},
+		expectedHeader, nextHeader, payload, activePayload, repository.ttl.Milliseconds()).Int()
+	if err != nil {
+		return fmt.Errorf("alarmd controlplane: persist activation ref upgrade: %w", err)
+	}
+	if changed != 1 {
+		return ErrActivationConflict
+	}
+	return nil
+}
 
 // CompareAndSetPublicationScheduleActivation advances one confirmed
 // publication at one shared EvaluationTime. Every previously active Query
@@ -134,7 +165,19 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	oldSnapshot, err := repository.LoadPublishedSnapshot(ctx, previous.Current)
 	var oldGroups map[execution.QueryGroupIdentity]QueryGroup
 	if errors.Is(err, ErrSnapshotUnavailable) {
-		oldGroups, err = repository.loadActivatedGroupsFromOpenSchedules(ctx, previous, newGroups)
+		if previous.SchemaVersion == activationSchemaVersion {
+			identities, loadErr := repository.LoadActiveQueryGroupSet(ctx, previous.ActiveQGSetRef)
+			if loadErr != nil {
+				return loadErr
+			}
+			candidates := make(map[execution.QueryGroupIdentity]QueryGroup, len(identities))
+			for _, identity := range identities {
+				candidates[identity] = QueryGroup{Identity: identity}
+			}
+			oldGroups, err = repository.loadActivatedGroupsFromOpenSchedules(ctx, previous, candidates)
+		} else {
+			oldGroups, err = repository.loadActivatedGroupsFromScheduleScan(ctx, previous)
+		}
 	} else if err == nil {
 		oldGroups, err = queryGroupMap(oldSnapshot.QueryGroups)
 	}
@@ -503,6 +546,16 @@ func (repository *RedisCatalogRepository) persistInitialActivation(
 	next ActivationState,
 	timelines []persistedScheduleTimeline,
 ) error {
+	identities := make([]execution.QueryGroupIdentity, 0, len(timelines))
+	for _, timeline := range timelines {
+		identities = append(identities, timeline.QueryGroup)
+	}
+	ref, activePayload, err := repository.persistAndVerifyActiveQGSet(ctx, identities)
+	if err != nil {
+		return err
+	}
+	next.ActiveQGSetRef = ref
+	next.SchemaVersion = activationSchemaVersion
 	expectedHeader := ""
 	nextHeader, err := activationHeader(next.RecordRevision, next.Current, next.Pending)
 	if err != nil {
@@ -512,8 +565,8 @@ func (repository *RedisCatalogRepository) persistInitialActivation(
 	if err != nil {
 		return err
 	}
-	keys := []string{repository.activationHeaderKey(), repository.activationKey()}
-	args := []interface{}{expectedHeader, nextHeader, activationPayload}
+	keys := []string{repository.activationHeaderKey(), repository.activationKey(), repository.activeQGSetKey(ref.Digest)}
+	args := []interface{}{expectedHeader, nextHeader, activationPayload, activePayload, repository.ttl.Milliseconds()}
 	sort.Slice(timelines, func(i, j int) bool { return timelines[i].QueryGroup < timelines[j].QueryGroup })
 	for _, timeline := range timelines {
 		if err := validateScheduleTimeline(timeline); err != nil {
@@ -542,6 +595,39 @@ func (repository *RedisCatalogRepository) persistCutoverActivation(
 	next ActivationState,
 	updates []scheduleTimelineUpdate,
 ) error {
+	active := make(map[execution.QueryGroupIdentity]struct{})
+	previous, loadErr := repository.LoadActivation(ctx)
+	if loadErr != nil {
+		return loadErr
+	}
+	if previous.SchemaVersion == activationSchemaVersion {
+		current, activeErr := repository.LoadActiveQueryGroupSet(ctx, previous.ActiveQGSetRef)
+		if activeErr != nil {
+			return activeErr
+		}
+		for _, identity := range current {
+			active[identity] = struct{}{}
+		}
+	} else {
+		return errors.New("alarmd controlplane: legacy Activation must be upgraded before cutover persistence")
+	}
+	for _, update := range updates {
+		if update.next.RetiredAt == nil {
+			active[update.next.QueryGroup] = struct{}{}
+		} else {
+			delete(active, update.next.QueryGroup)
+		}
+	}
+	identities := make([]execution.QueryGroupIdentity, 0, len(active))
+	for identity := range active {
+		identities = append(identities, identity)
+	}
+	ref, activePayload, err := repository.persistAndVerifyActiveQGSet(ctx, identities)
+	if err != nil {
+		return err
+	}
+	next.ActiveQGSetRef = ref
+	next.SchemaVersion = activationSchemaVersion
 	expectedHeader, err := activationHeader(expected.RecordRevision, expected.Current, expected.Pending)
 	if err != nil {
 		return err
@@ -555,8 +641,8 @@ func (repository *RedisCatalogRepository) persistCutoverActivation(
 		return err
 	}
 	sort.Slice(updates, func(i, j int) bool { return updates[i].next.QueryGroup < updates[j].next.QueryGroup })
-	keys := []string{repository.activationHeaderKey(), repository.activationKey()}
-	args := []interface{}{expectedHeader, nextHeader, activationPayload}
+	keys := []string{repository.activationHeaderKey(), repository.activationKey(), repository.activeQGSetKey(ref.Digest)}
+	args := []interface{}{expectedHeader, nextHeader, activationPayload, activePayload, repository.ttl.Milliseconds()}
 	for _, update := range updates {
 		payload, err := json.Marshal(update.next)
 		if err != nil {
@@ -716,6 +802,91 @@ func (repository *RedisCatalogRepository) loadActivatedGroupsFromOpenSchedules(
 				QueryRevision: open.Schedule.Segment.QueryRevision,
 			},
 			ScheduleRevision: open.Schedule.Segment.ScheduleRevision,
+		}
+	}
+	if len(covered) != len(expected) {
+		return nil, ErrSnapshotUnavailable
+	}
+	return groups, nil
+}
+
+// loadActivatedGroupsFromScheduleScan is the one-time v1 migration fallback.
+// It is never called for a v2 Activation and is bounded independently of the
+// Redis SCAN COUNT hint.
+func (repository *RedisCatalogRepository) loadActivatedGroupsFromScheduleScan(ctx context.Context, activation ActivationState) (groupsResult map[execution.QueryGroupIdentity]QueryGroup, resultErr error) {
+	started := time.Now()
+	scanned := 0
+	defer func() {
+		result := "success"
+		reason := "none"
+		observationResult := observability.Result(observability.ResultSuccess)
+		observationReason := observability.ReasonNone
+		if resultErr != nil {
+			result, reason, observationResult = "fail_closed", "contract", observability.ResultFailed
+			observationReason = observability.ReasonContractDeterministic
+			if errors.Is(resultErr, context.Canceled) || errors.Is(resultErr, context.DeadlineExceeded) {
+				result, reason = "canceled", "dependency"
+				observationReason = observability.ReasonContractRetryable
+			}
+		}
+		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageLegacyQGMigration,
+			Result: observationResult, ReasonCode: observationReason, LegacyMigration: &observability.LegacyQGMigrationFacts{Result: result, ReasonClass: reason, ScanKeys: scanned, Duration: time.Since(started)}})
+	}()
+	if repository.legacyMigrationMaxScanKeys <= 0 || repository.legacyMigrationTimeout <= 0 {
+		return nil, errors.New("alarmd controlplane: legacy migration bounds are required")
+	}
+	migrationCtx, cancel := context.WithTimeout(ctx, repository.legacyMigrationTimeout)
+	defer cancel()
+	expected, err := activationRecordMap(activation.Plans)
+	if err != nil {
+		return nil, err
+	}
+	covered := make(map[execution.PlanIdentity]struct{}, len(expected))
+	groups := make(map[execution.QueryGroupIdentity]QueryGroup)
+	var cursor uint64
+	pattern := repository.prefix + ":schedule_timeline:*"
+	for {
+		keys, next, scanErr := repository.client.Scan(migrationCtx, cursor, pattern, 500).Result()
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		scanned += len(keys)
+		if scanned > repository.legacyMigrationMaxScanKeys {
+			return nil, errors.New("alarmd controlplane: legacy active Query Group migration scan limit exceeded")
+		}
+		for _, key := range keys {
+			identity := execution.QueryGroupIdentity(strings.TrimPrefix(key, repository.prefix+":schedule_timeline:"))
+			timeline, _, loadErr := repository.loadScheduleTimeline(migrationCtx, identity)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			if timeline.RetiredAt != nil || len(timeline.Segments) == 0 {
+				continue
+			}
+			open := timeline.Segments[len(timeline.Segments)-1]
+			if open.Schedule.Segment.End != nil {
+				return nil, ErrSnapshotUnavailable
+			}
+			if open.Schedule.Segment.Publication.SnapshotRevision != activation.Current.SnapshotRevision || uint64(open.Schedule.Segment.Publication.PublicationEpoch) != activation.Current.PublicationEpoch {
+				return nil, ErrSnapshotUnavailable
+			}
+			if err := validateOpenSegmentActivation(activation, open); err != nil {
+				return nil, err
+			}
+			for _, record := range open.Plans {
+				if expected[record.Fact.Plan] != record {
+					return nil, ErrSnapshotUnavailable
+				}
+				if _, duplicate := covered[record.Fact.Plan]; duplicate {
+					return nil, ErrSnapshotUnavailable
+				}
+				covered[record.Fact.Plan] = struct{}{}
+			}
+			groups[identity] = QueryGroup{Identity: identity, QueryPlan: execution.QueryPlanFacts{QueryRevision: open.Schedule.Segment.QueryRevision}, ScheduleRevision: open.Schedule.Segment.ScheduleRevision}
+		}
+		cursor = next
+		if cursor == 0 {
+			break
 		}
 	}
 	if len(covered) != len(expected) {

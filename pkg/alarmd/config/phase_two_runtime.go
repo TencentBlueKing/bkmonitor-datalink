@@ -25,13 +25,15 @@ type PhaseTwoWorkerConfig struct {
 }
 
 type PhaseTwoControlConfig struct {
-	StrategyCachePrefix string                           `yaml:"strategy_cache_prefix"`
-	ProviderRoute       string                           `yaml:"provider_route"`
-	Timezone            string                           `yaml:"timezone"`
-	RefreshInterval     Duration                         `yaml:"refresh_interval"`
-	ReconcileInterval   Duration                         `yaml:"reconcile_interval"`
-	CatalogTTL          Duration                         `yaml:"catalog_ttl"`
-	LegacyQueryRuntime  PhaseTwoLegacyQueryRuntimeConfig `yaml:"legacy_query_runtime"`
+	StrategyCachePrefix        string                           `yaml:"strategy_cache_prefix"`
+	ProviderRoute              string                           `yaml:"provider_route"`
+	Timezone                   string                           `yaml:"timezone"`
+	RefreshInterval            Duration                         `yaml:"refresh_interval"`
+	ReconcileInterval          Duration                         `yaml:"reconcile_interval"`
+	CatalogTTL                 Duration                         `yaml:"catalog_ttl"`
+	LegacyMigrationMaxScanKeys int                              `yaml:"legacy_migration_max_scan_keys"`
+	LegacyMigrationTimeout     Duration                         `yaml:"legacy_migration_timeout"`
+	LegacyQueryRuntime         PhaseTwoLegacyQueryRuntimeConfig `yaml:"legacy_query_runtime"`
 }
 
 type PhaseTwoRuntimeFilterConfig struct {
@@ -109,7 +111,8 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 		},
 		Control: PhaseTwoControlConfig{
 			RefreshInterval: Duration(30 * time.Second), ReconcileInterval: Duration(5 * time.Second),
-			CatalogTTL: Duration(24 * time.Hour),
+			CatalogTTL: Duration(24 * time.Hour), LegacyMigrationMaxScanKeys: 50000,
+			LegacyMigrationTimeout: Duration(30 * time.Second),
 		},
 		Ownership: PhaseTwoOwnershipConfig{
 			ControlLeaderTTL: Duration(30 * time.Second), ControlLeaderRenewInterval: Duration(10 * time.Second),
@@ -161,7 +164,8 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 		return errors.New("phase_two control legacy query runtime facts must be explicit")
 	}
 	if c.Control.RefreshInterval.Duration() <= 0 || c.Control.ReconcileInterval.Duration() <= 0 ||
-		c.Control.CatalogTTL.Duration() <= c.Control.RefreshInterval.Duration() {
+		c.Control.CatalogTTL.Duration() <= c.Control.RefreshInterval.Duration() ||
+		c.Control.LegacyMigrationMaxScanKeys <= 0 || c.Control.LegacyMigrationTimeout.Duration() <= 0 {
 		return errors.New("phase_two control refresh, reconcile and catalog TTL are invalid")
 	}
 	if !ttlExceedsRenew(c.Ownership.ControlLeaderTTL, c.Ownership.ControlLeaderRenewInterval) ||

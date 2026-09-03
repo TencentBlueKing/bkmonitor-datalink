@@ -497,6 +497,9 @@ func TestProductionPhaseTwoControlRemovesRetiredZeroSlotQueryGroupWithoutProgres
 	if err != nil || !reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-new"}) {
 		t.Fatalf("zero-Slot retired active projection=(%#v,%v)", result, err)
 	}
+	if repository.renewCalls != 0 {
+		t.Fatalf("Follower LoadActive renew calls=%d, want 0", repository.renewCalls)
+	}
 }
 
 func TestProductionPhaseTwoControlIsolatesInvalidDrainingQueryGroup(t *testing.T) {
@@ -550,12 +553,16 @@ func TestProductionPhaseTwoControlKeepsCurrentActivationWhileCandidateIsPending(
 	repository := &fakeProductionCatalogRepository{activation: controlplane.ActivationState{
 		RecordRevision: 1, Current: publication,
 	}, snapshot: controlplane.PublishedSnapshot{Publication: publication,
-		QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-1"}}}}
+		QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-1"}}}, renewErr: errors.New("renew pending current objects")}
 	activator := &fakeInitialScheduleActivator{}
+	var observations []observability.Observation
 	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
 		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
 		Activator: activator, Repository: repository, Schedules: &fakeScheduleProjection{},
 		Progress: &fakeProductionProgressReader{}, RefreshInterval: time.Second,
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		}),
 		Wait: func(context.Context, time.Duration) error { return errors.New("unexpected wait") },
 	})
 	if err != nil {
@@ -568,6 +575,12 @@ func TestProductionPhaseTwoControlKeepsCurrentActivationWhileCandidateIsPending(
 	}
 	if activator.calls != 0 {
 		t.Fatalf("pending candidate changed current activation, calls = %d", activator.calls)
+	}
+	if repository.renewCalls != 1 {
+		t.Fatalf("pending refresh renew calls=%d, want 1", repository.renewCalls)
+	}
+	if len(observations) != 1 || observations[0].Stage != observability.StageActiveQGSet || observations[0].Result != observability.ResultDegraded {
+		t.Fatalf("pending renewal observations=%#v", observations)
 	}
 }
 
@@ -603,6 +616,9 @@ func TestProductionPhaseTwoControlKeepsHealthyQueryGroupsAcrossPublicationConfli
 	}
 	if activator.calls != 2 {
 		t.Fatalf("activation calls=%d, want 2", activator.calls)
+	}
+	if repository.renewCalls != 2 {
+		t.Fatalf("conflict/unchanged refresh renew calls=%d, want 2", repository.renewCalls)
 	}
 	if len(observations) != 1 || observations[0].Stage != observability.StageSnapshotRefreshed ||
 		observations[0].Result != observability.ResultDegraded ||
@@ -648,6 +664,55 @@ func TestProductionPhaseTwoControlKeepsLastGoodAcrossFailedRefreshAndRecovery(t 
 	}
 	if activator.calls != 1 {
 		t.Fatalf("activation calls=%d, want 1 after recovery", activator.calls)
+	}
+	if repository.renewCalls != 2 {
+		t.Fatalf("failed/successful refresh renew calls=%d, want 2", repository.renewCalls)
+	}
+}
+
+func TestProductionPhaseTwoControlObservesRenewFailureAsOneRecoverableEpisode(t *testing.T) {
+	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-current", PublicationEpoch: 2}
+	sourceErr := controlplane.ErrSnapshotUnavailable
+	renewErr := errors.New("renew current control objects")
+	reconciler := &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{
+		{}, {}, {Status: controlplane.SourceRefreshUnchanged, Publication: publication},
+	}, errs: []error{sourceErr, sourceErr, nil}}
+	repository := &fakeProductionCatalogRepository{
+		activation: controlplane.ActivationState{RecordRevision: 2, Current: publication},
+		snapshot:   controlplane.PublishedSnapshot{Publication: publication, QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-healthy"}}},
+		renewErrs:  []error{renewErr, renewErr, nil},
+	}
+	activator := &fakeInitialScheduleActivator{state: repository.activation}
+	var observations []observability.Observation
+	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
+		Activator: activator, Repository: repository, Schedules: &fakeScheduleProjection{}, Progress: &fakeProductionProgressReader{},
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		}),
+		RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 3; index++ {
+		result, refreshErr := control.Refresh(context.Background())
+		if refreshErr != nil || !reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
+			t.Fatalf("Refresh(%d)=(%#v,%v)", index, result, refreshErr)
+		}
+		if index < 2 && (result.Status != phaseTwoControlDegradedLastGood || !errors.Is(result.Cause, sourceErr) || result.ReasonCode != observability.ReasonContractRetryable) {
+			t.Fatalf("source primary result was replaced: %#v", result)
+		}
+	}
+	var renewal []observability.Observation
+	for _, observation := range observations {
+		if observation.Stage == observability.StageActiveQGSet {
+			renewal = append(renewal, observation)
+		}
+	}
+	if len(renewal) != 2 || renewal[0].Result != observability.ResultDegraded || renewal[0].Err != renewErr ||
+		renewal[1].Result != observability.Result(observability.ResultRecovered) {
+		t.Fatalf("renewal episode observations=%#v", renewal)
 	}
 }
 
@@ -775,6 +840,26 @@ type fakeProductionCatalogRepository struct {
 	snapshot      controlplane.PublishedSnapshot
 	snapshotErr   error
 	snapshots     map[controlplane.SnapshotPublicationRef]controlplane.PublishedSnapshot
+	activeGroups  []execution.QueryGroupIdentity
+	activeSetErr  error
+	renewErr      error
+	renewErrs     []error
+	renewCalls    int
+}
+
+func (repository *fakeProductionCatalogRepository) RenewCurrentActivationObjects(context.Context) error {
+	repository.renewCalls++
+	if repository.renewCalls <= len(repository.renewErrs) {
+		return repository.renewErrs[repository.renewCalls-1]
+	}
+	return repository.renewErr
+}
+
+func (repository *fakeProductionCatalogRepository) LoadActiveQueryGroupSet(
+	context.Context,
+	controlplane.ActiveQueryGroupSetRef,
+) ([]execution.QueryGroupIdentity, error) {
+	return append([]execution.QueryGroupIdentity{}, repository.activeGroups...), repository.activeSetErr
 }
 
 func (repository *fakeProductionCatalogRepository) LoadPublishedSnapshot(

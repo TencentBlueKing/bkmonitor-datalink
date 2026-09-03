@@ -35,6 +35,27 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
 
+type phaseTwoScanCountingHook struct {
+	count atomic.Int64
+}
+
+func (hook *phaseTwoScanCountingHook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
+	if cmd.Name() == "scan" {
+		hook.count.Add(1)
+	}
+	return ctx, nil
+}
+
+func (*phaseTwoScanCountingHook) AfterProcess(context.Context, redis.Cmder) error { return nil }
+
+func (*phaseTwoScanCountingHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+
+func (*phaseTwoScanCountingHook) AfterProcessPipeline(context.Context, []redis.Cmder) error {
+	return nil
+}
+
 func TestProductionPhaseTwoBundleUsesCanonicalSourceAndRuntimeRedisOverride(t *testing.T) {
 	sourceAddress, sourceClient := startPhaseTwoRedis(t)
 	runtimeAddress, runtimeClient := startPhaseTwoRedis(t)
@@ -243,16 +264,44 @@ func TestProductionPhaseTwoBundleRebuildsExpiredSnapshotReferencedByPersistentAc
 	if err != nil || oldActivation.Current.SnapshotRevision == "" {
 		t.Fatalf("first activation = %+v, %v", oldActivation, err)
 	}
+	catalogPrefix := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog")
+	activationKey := catalogPrefix + ":activation"
+	scanHook := &phaseTwoScanCountingHook{}
+	redisClient.AddHook(scanHook)
+	if groups, loadErr := firstControl.LoadActive(ctx); loadErr != nil || len(groups.QueryGroups) != 1 {
+		t.Fatalf("v2 follower LoadActive()=(%+v,%v)", groups, loadErr)
+	}
+	originalActivation, err := redisClient.Get(ctx, activationKey).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyActivation := oldActivation
+	legacyActivation.SchemaVersion = "alarmd-control-activation-v1"
+	legacyActivation.ActiveQGSetRef = controlplane.ActiveQueryGroupSetRef{}
+	legacyPayload, err := json.Marshal(legacyActivation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.Set(ctx, activationKey, legacyPayload, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if groups, loadErr := firstControl.LoadActive(ctx); loadErr != nil || len(groups.QueryGroups) != 1 {
+		t.Fatalf("v1 follower LoadActive()=(%+v,%v)", groups, loadErr)
+	}
+	if got := scanHook.count.Load(); got != 0 {
+		t.Fatalf("v1/v2 follower LoadActive SCAN calls=%d, want 0", got)
+	}
+	if err := redisClient.Set(ctx, activationKey, originalActivation, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
 	if err := first.Shutdown(ctx); err != nil {
 		t.Fatalf("first Shutdown() error = %v", err)
 	}
 
-	catalogPrefix := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog")
 	catalogKeys, err := redisClient.Keys(ctx, catalogPrefix+":*").Result()
 	if err != nil {
 		t.Fatal(err)
 	}
-	activationKey := catalogPrefix + ":activation"
 	activationHeaderKey := catalogPrefix + ":activation_header"
 	publicationEpochKey := catalogPrefix + ":publication_epoch"
 	revision := string(oldActivation.Current.SnapshotRevision)
@@ -260,9 +309,10 @@ func TestProductionPhaseTwoBundleRebuildsExpiredSnapshotReferencedByPersistentAc
 	snapshotEpochKey := catalogPrefix + ":snapshot_epoch:" + revision
 	latestPublicationKey := catalogPrefix + ":latest_publication"
 	occurrenceKey := catalogPrefix + ":publication:" + strconv.FormatUint(oldActivation.Current.PublicationEpoch, 10)
+	activeQGSetKey := catalogPrefix + ":active_qg_set:" + oldActivation.ActiveQGSetRef.Digest
 	for _, key := range catalogKeys {
 		if key == activationKey || key == activationHeaderKey || key == publicationEpochKey ||
-			key == snapshotEpochKey || key == latestPublicationKey || key == occurrenceKey {
+			key == snapshotEpochKey || key == latestPublicationKey || key == occurrenceKey || key == activeQGSetKey {
 			continue
 		}
 		if err := redisClient.Del(ctx, key).Err(); err != nil {
@@ -288,8 +338,8 @@ func TestProductionPhaseTwoBundleRebuildsExpiredSnapshotReferencedByPersistentAc
 		t.Fatalf("recovered Start() error = %v", err)
 	}
 	defer func() { _ = recovered.Shutdown(ctx) }()
-	if snapshot := recoveredHealth.HealthSnapshot(); snapshot.State != observability.HealthDegraded || !snapshot.Ready {
-		t.Fatalf("expired Snapshot bootstrap health=%+v, want ready degraded", snapshot)
+	if snapshot := recoveredHealth.HealthSnapshot(); snapshot.State != observability.HealthReady || !snapshot.Ready {
+		t.Fatalf("expired Snapshot bootstrap health=%+v, want ready after bounded rebuild", snapshot)
 	}
 	recovered.mu.RLock()
 	recoveredLeader := recovered.controlLeader
@@ -419,7 +469,7 @@ func TestProductionPhaseTwoBundleActivatesLatestSnapshotWhenPreviousPayloadExpir
 		wantRecovery         bool
 	}{
 		{name: "same Query Group exact activation coverage", oldValue: `"threshold": 80`, newValue: `"threshold": 81`, wantRecovery: true},
-		{name: "Query Group identity changed", oldValue: `"result_table_id": "system.cpu"`, newValue: `"result_table_id": "system.cpu.changed"`},
+		{name: "Query Group identity changed", oldValue: `"result_table_id": "system.cpu"`, newValue: `"result_table_id": "system.cpu.changed"`, wantRecovery: true},
 		{name: "activation Plan coverage incomplete", oldValue: `"threshold": 80`, newValue: `"threshold": 81`, incompleteActivation: true},
 	}
 	for _, test := range tests {

@@ -279,6 +279,8 @@ type productionInitialScheduleActivator interface {
 
 type productionCatalogRepository interface {
 	LoadActivation(context.Context) (controlplane.ActivationState, error)
+	LoadActiveQueryGroupSet(context.Context, controlplane.ActiveQueryGroupSetRef) ([]execution.QueryGroupIdentity, error)
+	RenewCurrentActivationObjects(context.Context) error
 	LoadSnapshot(context.Context, execution.SnapshotRevision) (controlplane.PublishedSnapshot, error)
 	LoadPublishedSnapshot(context.Context, controlplane.SnapshotPublicationRef) (controlplane.PublishedSnapshot, error)
 }
@@ -305,7 +307,9 @@ type productionPhaseTwoControlDependencies struct {
 }
 
 type productionPhaseTwoControl struct {
-	dependencies productionPhaseTwoControlDependencies
+	dependencies  productionPhaseTwoControlDependencies
+	renewMu       sync.Mutex
+	renewDegraded bool
 }
 
 func newProductionPhaseTwoControl(
@@ -373,7 +377,12 @@ func (runtime *productionPhaseTwoControl) Close() error {
 
 func (runtime *productionPhaseTwoControl) refresh(
 	ctx context.Context,
-) (phaseTwoControlRefreshResult, bool, error) {
+) (refreshResult phaseTwoControlRefreshResult, pending bool, refreshErr error) {
+	defer func() {
+		// Renewal is guarded by the Activation CAS and must not replace the
+		// Source/activation result or stop pending confirmation from converging.
+		runtime.observeCurrentObjectRenewal(ctx, runtime.dependencies.Repository.RenewCurrentActivationObjects(ctx))
+	}()
 	result, err := runtime.dependencies.Reconciler.Refresh(
 		ctx, runtime.dependencies.Source, runtime.dependencies.Planner,
 	)
@@ -418,6 +427,33 @@ func (runtime *productionPhaseTwoControl) refresh(
 	return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, false, err
 }
 
+func (runtime *productionPhaseTwoControl) observeCurrentObjectRenewal(ctx context.Context, err error) {
+	if errors.Is(err, controlplane.ErrActivationConflict) || errors.Is(err, controlplane.ErrActivationUnavailable) {
+		return
+	}
+	runtime.renewMu.Lock()
+	degraded := runtime.renewDegraded
+	if err != nil {
+		runtime.renewDegraded = true
+	} else {
+		runtime.renewDegraded = false
+	}
+	runtime.renewMu.Unlock()
+	if err != nil && !degraded {
+		runtime.dependencies.Observer.Observe(ctx, observability.Observation{
+			Component: observability.ComponentControlPlane, Stage: observability.StageActiveQGSet,
+			Result: observability.ResultDegraded, ReasonCode: observability.ReasonCode(contract.ReasonRedisUnavailable),
+			SourceKind: observability.SourceKindCompiledSnapshot, Err: err,
+		})
+	} else if err == nil && degraded {
+		runtime.dependencies.Observer.Observe(ctx, observability.Observation{
+			Component: observability.ComponentControlPlane, Stage: observability.StageActiveQGSet,
+			Result: observability.Result(observability.ResultRecovered), ReasonCode: observability.ReasonCode(contract.ReasonRedisUnavailable),
+			SourceKind: observability.SourceKindCompiledSnapshot,
+		})
+	}
+}
+
 func (runtime *productionPhaseTwoControl) keepLastGood(
 	ctx context.Context,
 	sourceKind observability.SourceKind,
@@ -457,16 +493,28 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 	if state.RecordRevision == 0 || state.Current.SnapshotRevision == "" || state.Current.PublicationEpoch == 0 {
 		return nil, errors.New("phase-two activation state is incomplete")
 	}
-	snapshot, err := runtime.dependencies.Repository.LoadPublishedSnapshot(ctx, state.Current)
+	var queryGroups []execution.QueryGroupIdentity
+	var err error
+	if state.ActiveQGSetRef.Digest != "" {
+		queryGroups, err = runtime.dependencies.Repository.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef)
+	} else {
+		// Followers never migrate legacy Activation state. They may read its
+		// current immutable Snapshot while the Control Leader performs the
+		// one-time v1-to-v2 upgrade.
+		var snapshot controlplane.PublishedSnapshot
+		snapshot, err = runtime.dependencies.Repository.LoadPublishedSnapshot(ctx, state.Current)
+		if err == nil {
+			queryGroups = make([]execution.QueryGroupIdentity, len(snapshot.QueryGroups))
+			for index, queryGroup := range snapshot.QueryGroups {
+				if queryGroup.Identity == "" {
+					return nil, errors.New("phase-two active Snapshot contains an empty Query Group")
+				}
+				queryGroups[index] = queryGroup.Identity
+			}
+		}
+	}
 	if err != nil {
 		return nil, err
-	}
-	queryGroups := make([]execution.QueryGroupIdentity, len(snapshot.QueryGroups))
-	for index, queryGroup := range snapshot.QueryGroups {
-		if queryGroup.Identity == "" {
-			return nil, errors.New("phase-two active Snapshot contains an empty Query Group")
-		}
-		queryGroups[index] = queryGroup.Identity
 	}
 	sort.Slice(queryGroups, func(left, right int) bool { return queryGroups[left] < queryGroups[right] })
 	for index := 1; index < len(queryGroups); index++ {

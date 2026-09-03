@@ -8,6 +8,7 @@ import (
 	"net"
 	"os/exec"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,8 +21,85 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
+
+type scanCountingHook struct {
+	count atomic.Int64
+}
+
+func (hook *scanCountingHook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
+	if strings.EqualFold(cmd.Name(), "scan") {
+		hook.count.Add(1)
+	}
+	return ctx, nil
+}
+
+func (*scanCountingHook) AfterProcess(context.Context, redis.Cmder) error { return nil }
+
+func (*scanCountingHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+
+func (*scanCountingHook) AfterProcessPipeline(context.Context, []redis.Cmder) error { return nil }
+
+type serialActivationCASHook struct {
+	evals      atomic.Int64
+	completed  atomic.Bool
+	firstDone  chan struct{}
+	afterFirst func() error
+}
+
+func (hook *serialActivationCASHook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
+	if cmd.Name() == "eval" && hook.evals.Add(1) == 2 {
+		select {
+		case <-hook.firstDone:
+		case <-ctx.Done():
+			return ctx, ctx.Err()
+		}
+	}
+	return ctx, nil
+}
+
+func (hook *serialActivationCASHook) AfterProcess(_ context.Context, cmd redis.Cmder) error {
+	if cmd.Name() != "eval" || !hook.completed.CompareAndSwap(false, true) {
+		return nil
+	}
+	err := hook.afterFirst()
+	close(hook.firstDone)
+	return err
+}
+
+func (*serialActivationCASHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+
+func (*serialActivationCASHook) AfterProcessPipeline(context.Context, []redis.Cmder) error {
+	return nil
+}
+
+type beforeEvalHook struct {
+	once sync.Once
+	run  func() error
+}
+
+func (hook *beforeEvalHook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
+	if cmd.Name() != "eval" {
+		return ctx, nil
+	}
+	var err error
+	hook.once.Do(func() { err = hook.run() })
+	return ctx, err
+}
+
+func (*beforeEvalHook) AfterProcess(context.Context, redis.Cmder) error { return nil }
+
+func (*beforeEvalHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+
+func (*beforeEvalHook) AfterProcessPipeline(context.Context, []redis.Cmder) error { return nil }
 
 func TestRedisCatalogRepositoryPublishesImmutableContentAddressedSnapshot(t *testing.T) {
 	client := newControlplaneRedis(t)
@@ -1101,6 +1179,223 @@ func TestRedisCatalogRepositoryActivationCASAndProjection(t *testing.T) {
 	}
 }
 
+func TestRedisCatalogRepositoryRenewsOnlyActivationGuardedCurrentObjects(t *testing.T) {
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	prefix := "alarmd:control:renew-current"
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observations []observability.Observation
+	repository.ConfigureObserver(observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		observations = append(observations, observation)
+	}))
+	compiler, semantics := runtimePlanCompiler(t)
+	clock := []time.Time{time.Unix(83, 0), time.Unix(180, 0)}
+	clockIndex := 0
+	reconciler, err := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time {
+		value := clock[clockIndex]
+		clockIndex++
+		return value
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCatalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
+	oldSnapshot, _, err := repository.PublishCatalog(ctx, oldCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldState, err := reconciler.Ensure(ctx, oldSnapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentCatalog := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{}}
+	currentCatalog.SnapshotRevision = execution.SnapshotRevision(mustDigest(t, "alarmd-strategy-snapshot-v1", currentCatalog.QueryGroups))
+	currentSnapshot, _, err := repository.PublishCatalog(ctx, currentCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentState, err := reconciler.Ensure(ctx, currentSnapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKeys := []string{
+		prefix + ":snapshot:" + string(oldState.Current.SnapshotRevision),
+		prefix + ":snapshot_epoch:" + string(oldState.Current.SnapshotRevision),
+		prefix + ":publication:" + strconv.FormatUint(oldState.Current.PublicationEpoch, 10),
+		prefix + ":active_qg_set:" + oldState.ActiveQGSetRef.Digest,
+	}
+	currentKeys := []string{
+		prefix + ":snapshot:" + string(currentState.Current.SnapshotRevision),
+		prefix + ":snapshot_epoch:" + string(currentState.Current.SnapshotRevision),
+		prefix + ":publication:" + strconv.FormatUint(currentState.Current.PublicationEpoch, 10),
+		prefix + ":active_qg_set:" + currentState.ActiveQGSetRef.Digest,
+	}
+	latestKey := prefix + ":latest_publication"
+	for _, key := range append(append(append([]string{}, oldKeys...), currentKeys...), latestKey) {
+		if err := client.PExpire(ctx, key, 2*time.Second).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repository.RenewCurrentActivationObjects(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range currentKeys {
+		if ttl, ttlErr := client.PTTL(ctx, key).Result(); ttlErr != nil || ttl < 30*time.Minute {
+			t.Fatalf("current object %s TTL=(%s,%v), want renewed", key, ttl, ttlErr)
+		}
+	}
+	for _, key := range oldKeys {
+		if ttl, ttlErr := client.PTTL(ctx, key).Result(); ttlErr != nil || ttl <= 0 || ttl > 2*time.Second {
+			t.Fatalf("historical object %s TTL=(%s,%v), want unchanged", key, ttl, ttlErr)
+		}
+	}
+	if ttl, ttlErr := client.PTTL(ctx, latestKey).Result(); ttlErr != nil || ttl <= 0 || ttl > 2*time.Second {
+		t.Fatalf("latest publication TTL=(%s,%v), want unchanged", ttl, ttlErr)
+	}
+
+	for _, key := range currentKeys {
+		if err := client.PExpire(ctx, key, 2*time.Second).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	auxiliary := redis.NewClient(&redis.Options{Addr: client.Options().Addr})
+	t.Cleanup(func() { _ = auxiliary.Close() })
+	mappingClient := redis.NewClient(&redis.Options{Addr: client.Options().Addr})
+	t.Cleanup(func() { _ = mappingClient.Close() })
+	mappingClient.AddHook(&beforeEvalHook{run: func() error {
+		return auxiliary.Set(ctx, currentKeys[1], "999", 2*time.Second).Err()
+	}})
+	mappingRepository, err := controlplane.NewRedisCatalogRepository(mappingClient, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mappingRepository.RenewCurrentActivationObjects(ctx); !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+		t.Fatalf("concurrent mapping change renewal error=%v", err)
+	}
+	for _, key := range currentKeys {
+		if ttl, ttlErr := client.PTTL(ctx, key).Result(); ttlErr != nil || ttl <= 0 || ttl > 2*time.Second {
+			t.Fatalf("invalid mapping partially renewed %s TTL=(%s,%v)", key, ttl, ttlErr)
+		}
+	}
+	if err := client.Set(ctx, currentKeys[1], strconv.FormatUint(currentState.Current.PublicationEpoch, 10), 2*time.Second).Err(); err != nil {
+		t.Fatal(err)
+	}
+	guardedClient := redis.NewClient(&redis.Options{Addr: client.Options().Addr})
+	t.Cleanup(func() { _ = guardedClient.Close() })
+	guardedClient.AddHook(&beforeEvalHook{run: func() error {
+		return auxiliary.Set(ctx, prefix+":activation_header", "concurrent-activation", 0).Err()
+	}})
+	guardedRepository, err := controlplane.NewRedisCatalogRepository(guardedClient, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := guardedRepository.RenewCurrentActivationObjects(ctx); !errors.Is(err, controlplane.ErrActivationConflict) {
+		t.Fatalf("concurrent Activation renewal error=%v", err)
+	}
+	for _, key := range currentKeys {
+		if ttl, ttlErr := client.PTTL(ctx, key).Result(); ttlErr != nil || ttl <= 0 || ttl > 2*time.Second {
+			t.Fatalf("CAS loser object %s TTL=(%s,%v), want unchanged", key, ttl, ttlErr)
+		}
+	}
+	operations := make(map[string]bool)
+	for _, observation := range observations {
+		if observation.ActiveQGSet != nil {
+			operations[observation.ActiveQGSet.Operation] = true
+		}
+	}
+	for _, operation := range []string{"encode", "write", "read", "renew"} {
+		if !operations[operation] {
+			t.Fatalf("missing Active Set %s observation: %#v", operation, observations)
+		}
+	}
+}
+
+func TestRedisCatalogRepositoryRenewCurrentObjectsFailsAtomicallyOnInvalidMappings(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		missingIndex int
+		mutate       func(context.Context, *redis.Client, []string) error
+	}{
+		{name: "missing Snapshot payload", missingIndex: 0, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Del(ctx, keys[0]).Err()
+		}},
+		{name: "corrupt Snapshot payload", missingIndex: -1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Set(ctx, keys[0], "{", 2*time.Second).Err()
+		}},
+		{name: "missing revision epoch mapping", missingIndex: 1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Del(ctx, keys[1]).Err()
+		}},
+		{name: "wrong revision epoch mapping", missingIndex: -1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Set(ctx, keys[1], "999", 2*time.Second).Err()
+		}},
+		{name: "missing publication occurrence", missingIndex: 2, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Del(ctx, keys[2]).Err()
+		}},
+		{name: "wrong publication occurrence", missingIndex: -1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Set(ctx, keys[2], "wrong-revision", 2*time.Second).Err()
+		}},
+		{name: "missing Active Set", missingIndex: 3, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Del(ctx, keys[3]).Err()
+		}},
+		{name: "corrupt Active Set", missingIndex: -1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Set(ctx, keys[3], `{"schema_version":"alarmd-active-qg-set-v1","query_groups":[]}`, 2*time.Second).Err()
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := newControlplaneRedis(t)
+			prefix := "alarmd:control:renew-invalid:" + strings.ReplaceAll(test.name, " ", "-")
+			repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			catalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
+			snapshot, _, err := repository.PublishCatalog(ctx, catalog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			compiler, semantics := runtimePlanCompiler(t)
+			initial, _ := controlplane.NewInitialScheduleActivator(repository, compiler, semantics, func() time.Time { return time.Unix(83, 0) })
+			state, err := initial.Ensure(ctx, snapshot.Publication)
+			if err != nil {
+				t.Fatal(err)
+			}
+			keys := []string{
+				prefix + ":snapshot:" + string(state.Current.SnapshotRevision),
+				prefix + ":snapshot_epoch:" + string(state.Current.SnapshotRevision),
+				prefix + ":publication:" + strconv.FormatUint(state.Current.PublicationEpoch, 10),
+				prefix + ":active_qg_set:" + state.ActiveQGSetRef.Digest,
+			}
+			for _, key := range keys {
+				if err := client.PExpire(ctx, key, 2*time.Second).Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := test.mutate(ctx, client, keys); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.RenewCurrentActivationObjects(ctx); err == nil {
+				t.Fatalf("invalid mapping renewal error=%v", err)
+			}
+			for index, key := range keys {
+				ttl, err := client.PTTL(ctx, key).Result()
+				if index == test.missingIndex {
+					if err != nil || ttl != -2*time.Nanosecond {
+						t.Fatalf("missing mapping TTL=(%s,%v)", ttl, err)
+					}
+					continue
+				}
+				if err != nil || ttl <= 0 || ttl > 2*time.Second {
+					t.Fatalf("failed renewal partially renewed %s TTL=(%s,%v)", key, ttl, err)
+				}
+			}
+		})
+	}
+}
+
 func TestInitialScheduleActivatorPersistsOneNonAlignedBoundaryAcrossRestart(t *testing.T) {
 	client := newControlplaneRedis(t)
 	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:first-activation", time.Hour)
@@ -1165,6 +1460,608 @@ func TestInitialScheduleActivatorPersistsOneNonAlignedBoundaryAcrossRestart(t *t
 	if err != nil || reloadedSchedule.Segment.Start != 83 {
 		t.Fatalf("restart schedule=(%#v, %v)", reloadedSchedule, err)
 	}
+}
+
+func TestScheduleActivationReconcilerUpgradesLegacySamePublicationToActiveQGSetRef(t *testing.T) {
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	prefix := "alarmd:control:legacy-active-qg-upgrade"
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
+	snapshot, _, err := repository.PublishCatalog(ctx, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, semantics := runtimePlanCompiler(t)
+	initial, err := controlplane.NewInitialScheduleActivator(repository, compiler, semantics, func() time.Time { return time.Unix(83, 0) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := initial.Ensure(ctx, snapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Reproduce the deployed v1 shape without changing Current, Plans or Schedule.
+	legacy := state
+	legacy.SchemaVersion = "alarmd-control-activation-v1"
+	legacy.ActiveQGSetRef = controlplane.ActiveQueryGroupSetRef{}
+	payload, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(ctx, prefix+":activation", payload, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	scanHook := &scanCountingHook{}
+	client.AddHook(scanHook)
+
+	reconciler, err := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time {
+		t.Fatal("same-publication upgrade must not allocate a cutover boundary")
+		return time.Time{}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgraded, err := reconciler.Ensure(ctx, snapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := scanHook.count.Load(); got != 0 {
+		t.Fatalf("same-publication upgrade SCAN calls=%d, want 0", got)
+	}
+	if upgraded.SchemaVersion != "alarmd-control-activation-v2" || upgraded.RecordRevision != legacy.RecordRevision+1 || upgraded.Current != legacy.Current || upgraded.Pending != legacy.Pending || !reflect.DeepEqual(upgraded.Plans, legacy.Plans) || !reflect.DeepEqual(upgraded.Draining, legacy.Draining) {
+		t.Fatalf("invalid upgraded activation: %#v", upgraded)
+	}
+	groups, err := repository.LoadActiveQueryGroupSet(ctx, upgraded.ActiveQGSetRef)
+	if err != nil || !reflect.DeepEqual(groups, []execution.QueryGroupIdentity{catalog.QueryGroups[0].Identity}) {
+		t.Fatalf("active set=(%#v,%v)", groups, err)
+	}
+	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, semantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedule, err := runtime.ReadInitialFrozenSchedule(ctx, catalog.QueryGroups[0].Identity)
+	if err != nil || schedule.Segment.Start != 83 {
+		t.Fatalf("schedule changed=(%#v,%v)", schedule, err)
+	}
+}
+
+func TestScheduleActivationReconcilerDoesNotFallbackWhenV2ActiveSetInvalid(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(context.Context, *redis.Client, string) error
+	}{
+		{name: "missing", mutate: func(ctx context.Context, client *redis.Client, key string) error {
+			return client.Del(ctx, key).Err()
+		}},
+		{name: "count and digest mismatch", mutate: func(ctx context.Context, client *redis.Client, key string) error {
+			return client.Set(ctx, key, `{"schema_version":"alarmd-active-qg-set-v1","query_groups":[]}`, time.Hour).Err()
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := newControlplaneRedis(t)
+			prefix := "alarmd:control:v2-active-set-invalid:" + strings.ReplaceAll(test.name, " ", "-")
+			repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			catalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
+			snapshot, _, err := repository.PublishCatalog(ctx, catalog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			compiler, semantics := runtimePlanCompiler(t)
+			initial, _ := controlplane.NewInitialScheduleActivator(repository, compiler, semantics, func() time.Time { return time.Unix(83, 0) })
+			state, err := initial.Ensure(ctx, snapshot.Publication)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := test.mutate(ctx, client, prefix+":active_qg_set:"+state.ActiveQGSetRef.Digest); err != nil {
+				t.Fatal(err)
+			}
+			activationBefore, _ := client.Get(ctx, prefix+":activation").Bytes()
+			scheduleKey := prefix + ":schedule_timeline:" + string(catalog.QueryGroups[0].Identity)
+			scheduleBefore, _ := client.Get(ctx, scheduleKey).Bytes()
+			scanHook := &scanCountingHook{}
+			client.AddHook(scanHook)
+			reconciler, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, time.Now)
+			if _, err := reconciler.Ensure(ctx, snapshot.Publication); err == nil {
+				t.Fatal("invalid v2 Active Set must fail closed")
+			}
+			activationAfter, _ := client.Get(ctx, prefix+":activation").Bytes()
+			scheduleAfter, _ := client.Get(ctx, scheduleKey).Bytes()
+			if !bytes.Equal(activationBefore, activationAfter) || !bytes.Equal(scheduleBefore, scheduleAfter) {
+				t.Fatal("failed v2 load changed Activation or Schedule")
+			}
+			if got := scanHook.count.Load(); got != 0 {
+				t.Fatalf("invalid v2 Active Set SCAN calls=%d, want 0", got)
+			}
+		})
+	}
+}
+
+func TestScheduleActivationReconcilerMigratesLegacyAfterOldSnapshotExpiresAndQGIsDeleted(t *testing.T) {
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	prefix := "alarmd:control:legacy-expired-qg-deleted"
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var migrationObservations []observability.Observation
+	repository.ConfigureObserver(observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		if observation.LegacyMigration != nil {
+			migrationObservations = append(migrationObservations, observation)
+		}
+	}))
+	if err := repository.ConfigureLegacyMigration(50000, 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	oldCatalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
+	oldSnapshot, _, err := repository.PublishCatalog(ctx, oldCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, semantics := runtimePlanCompiler(t)
+	initial, _ := controlplane.NewInitialScheduleActivator(repository, compiler, semantics, func() time.Time { return time.Unix(83, 0) })
+	oldState, err := initial.Ensure(ctx, oldSnapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := oldState
+	legacy.SchemaVersion = "alarmd-control-activation-v1"
+	legacy.ActiveQGSetRef = controlplane.ActiveQueryGroupSetRef{}
+	legacyPayload, _ := json.Marshal(legacy)
+	if err := client.Set(ctx, prefix+":activation", legacyPayload, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Del(ctx, prefix+":snapshot:"+string(oldSnapshot.Publication.SnapshotRevision)).Err(); err != nil {
+		t.Fatal(err)
+	}
+	emptyCatalog := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{}}
+	emptyCatalog.SnapshotRevision = execution.SnapshotRevision(mustDigest(t, "alarmd-strategy-snapshot-v1", emptyCatalog.QueryGroups))
+	emptySnapshot, _, err := repository.PublishCatalog(ctx, emptyCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activationBefore, _ := client.Get(ctx, prefix+":activation").Bytes()
+	scheduleKey := prefix + ":schedule_timeline:" + string(oldCatalog.QueryGroups[0].Identity)
+	scheduleBefore, _ := client.Get(ctx, scheduleKey).Bytes()
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	canceledReconciler, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time { return time.Unix(180, 0) })
+	if _, err := canceledReconciler.Ensure(canceledCtx, emptySnapshot.Publication); !errors.Is(err, context.Canceled) {
+		t.Fatalf("parent context cancellation error=%v", err)
+	}
+	activationAfterCancel, _ := client.Get(ctx, prefix+":activation").Bytes()
+	scheduleAfterCancel, _ := client.Get(ctx, scheduleKey).Bytes()
+	if !bytes.Equal(activationBefore, activationAfterCancel) || !bytes.Equal(scheduleBefore, scheduleAfterCancel) {
+		t.Fatal("parent context cancellation changed Activation or Schedule")
+	}
+	if err := repository.ConfigureLegacyMigration(50000, time.Nanosecond); err != nil {
+		t.Fatal(err)
+	}
+	timeoutReconciler, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time { return time.Unix(180, 0) })
+	if _, err := timeoutReconciler.Ensure(ctx, emptySnapshot.Publication); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("migration timeout error=%v", err)
+	}
+	activationAfterTimeout, _ := client.Get(ctx, prefix+":activation").Bytes()
+	scheduleAfterTimeout, _ := client.Get(ctx, scheduleKey).Bytes()
+	if !bytes.Equal(activationBefore, activationAfterTimeout) || !bytes.Equal(scheduleBefore, scheduleAfterTimeout) {
+		t.Fatal("migration timeout changed Activation or Schedule")
+	}
+	if err := client.Set(ctx, prefix+":schedule_timeline:extra", `{}`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ConfigureLegacyMigration(1, 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	reconciler, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time { return time.Unix(180, 0) })
+	if _, err := reconciler.Ensure(ctx, emptySnapshot.Publication); err == nil {
+		t.Fatal("max_scan_keys overflow must fail closed")
+	}
+	activationAfter, _ := client.Get(ctx, prefix+":activation").Bytes()
+	scheduleAfter, _ := client.Get(ctx, scheduleKey).Bytes()
+	if !bytes.Equal(activationBefore, activationAfter) || !bytes.Equal(scheduleBefore, scheduleAfter) {
+		t.Fatal("scan overflow changed Activation or Schedule")
+	}
+	_ = client.Del(ctx, prefix+":schedule_timeline:extra").Err()
+	_ = repository.ConfigureLegacyMigration(50000, 30*time.Second)
+	state, err := reconciler.Ensure(ctx, emptySnapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Current != emptySnapshot.Publication || state.SchemaVersion != "alarmd-control-activation-v2" || len(state.Plans) != 0 {
+		t.Fatalf("migration state=%#v", state)
+	}
+	groups, err := repository.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef)
+	if err != nil || len(groups) != 0 {
+		t.Fatalf("active set=(%#v,%v)", groups, err)
+	}
+	if len(migrationObservations) != 3 || migrationObservations[0].LegacyMigration.Result != "canceled" ||
+		migrationObservations[1].LegacyMigration.Result != "fail_closed" || migrationObservations[2].LegacyMigration.Result != "success" ||
+		migrationObservations[2].LegacyMigration.ScanKeys == 0 {
+		t.Fatalf("legacy migration observations=%#v", migrationObservations)
+	}
+}
+
+func TestScheduleActivationReconcilerLegacyMigrationRejectsUnprovableCoverage(t *testing.T) {
+	type mutation func(*testing.T, context.Context, *redis.Client, string, controlplane.ActivationState, []string)
+	tests := []struct {
+		name   string
+		mutate mutation
+	}{
+		{name: "activation plan missing open segment", mutate: func(t *testing.T, ctx context.Context, client *redis.Client, _ string, _ controlplane.ActivationState, scheduleKeys []string) {
+			if err := client.Del(ctx, scheduleKeys[1]).Err(); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "same plan covered by two open segments", mutate: func(t *testing.T, ctx context.Context, client *redis.Client, _ string, _ controlplane.ActivationState, scheduleKeys []string) {
+			first := readJSONObject(t, ctx, client, scheduleKeys[0])
+			second := readJSONObject(t, ctx, client, scheduleKeys[1])
+			firstOpen := lastScheduleSegment(t, first)
+			secondOpen := lastScheduleSegment(t, second)
+			secondOpen["schedule"] = cloneJSONValue(t, firstOpen["schedule"])
+			secondOpen["plans"] = cloneJSONValue(t, firstOpen["plans"])
+			schedule := secondOpen["schedule"].(map[string]any)
+			segment := schedule["Segment"].(map[string]any)
+			segment["QueryGroup"] = second["query_group"]
+			writeJSONObject(t, ctx, client, scheduleKeys[1], second)
+		}},
+		{name: "orphan open segment", mutate: func(t *testing.T, ctx context.Context, client *redis.Client, prefix string, state controlplane.ActivationState, _ []string) {
+			state.Plans = append([]controlplane.PlanActivationRecord(nil), state.Plans[:1]...)
+			writeLegacyActivation(t, ctx, client, prefix, state)
+		}},
+		{name: "wrong publication", mutate: func(t *testing.T, ctx context.Context, client *redis.Client, _ string, _ controlplane.ActivationState, scheduleKeys []string) {
+			timeline := readJSONObject(t, ctx, client, scheduleKeys[0])
+			open := lastScheduleSegment(t, timeline)
+			schedule := open["schedule"].(map[string]any)
+			segment := schedule["Segment"].(map[string]any)
+			publication := segment["Publication"].(map[string]any)
+			publication["PublicationEpoch"] = publication["PublicationEpoch"].(float64) + 1
+			writeJSONObject(t, ctx, client, scheduleKeys[0], timeline)
+		}},
+		{name: "query group plan conflict", mutate: func(t *testing.T, ctx context.Context, client *redis.Client, _ string, _ controlplane.ActivationState, scheduleKeys []string) {
+			timeline := readJSONObject(t, ctx, client, scheduleKeys[0])
+			timeline["query_group"] = "conflicting-query-group"
+			writeJSONObject(t, ctx, client, scheduleKeys[0], timeline)
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := newControlplaneRedis(t)
+			prefix := "alarmd:control:legacy-negative:" + strings.ReplaceAll(test.name, " ", "-")
+			repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.ConfigureLegacyMigration(50000, 30*time.Second); err != nil {
+				t.Fatal(err)
+			}
+			catalog := twoQueryGroupCatalog(t)
+			snapshot, _, err := repository.PublishCatalog(ctx, catalog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			compiler, semantics := runtimePlanCompiler(t)
+			initial, _ := controlplane.NewInitialScheduleActivator(repository, compiler, semantics, func() time.Time { return time.Unix(83, 0) })
+			state, err := initial.Ensure(ctx, snapshot.Publication)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state.SchemaVersion = "alarmd-control-activation-v1"
+			state.ActiveQGSetRef = controlplane.ActiveQueryGroupSetRef{}
+			writeLegacyActivation(t, ctx, client, prefix, state)
+			if err := client.Del(ctx, prefix+":snapshot:"+string(snapshot.Publication.SnapshotRevision)).Err(); err != nil {
+				t.Fatal(err)
+			}
+			scheduleKeys := make([]string, 0, len(catalog.QueryGroups))
+			for _, group := range catalog.QueryGroups {
+				scheduleKeys = append(scheduleKeys, prefix+":schedule_timeline:"+string(group.Identity))
+			}
+			sort.Strings(scheduleKeys)
+			test.mutate(t, ctx, client, prefix, state, scheduleKeys)
+
+			activationBefore := readRedisValue(t, ctx, client, prefix+":activation")
+			headerBefore := readRedisValue(t, ctx, client, prefix+":activation_header")
+			schedulesBefore := readRedisValues(t, ctx, client, scheduleKeys)
+			activeSetsBefore, err := client.Keys(ctx, prefix+":active_qg_set:*").Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			sort.Strings(activeSetsBefore)
+			emptyCatalog := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{}}
+			emptyCatalog.SnapshotRevision = execution.SnapshotRevision(mustDigest(t, "alarmd-strategy-snapshot-v1", emptyCatalog.QueryGroups))
+			emptySnapshot, _, err := repository.PublishCatalog(ctx, emptyCatalog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			clockCalls := 0
+			reconciler, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time {
+				clockCalls++
+				return time.Unix(180, 0)
+			})
+			if _, err := reconciler.Ensure(ctx, emptySnapshot.Publication); err == nil {
+				t.Fatal("unprovable legacy coverage must fail closed")
+			}
+			if clockCalls != 0 {
+				t.Fatalf("cutover/business side-effect clock calls=%d, want 0", clockCalls)
+			}
+			if after := readRedisValue(t, ctx, client, prefix+":activation"); !bytes.Equal(activationBefore, after) {
+				t.Fatal("failed migration changed Activation")
+			}
+			if after := readRedisValue(t, ctx, client, prefix+":activation_header"); !bytes.Equal(headerBefore, after) {
+				t.Fatal("failed migration changed Activation header")
+			}
+			if after := readRedisValues(t, ctx, client, scheduleKeys); !reflect.DeepEqual(schedulesBefore, after) {
+				t.Fatal("failed migration changed Schedule timelines")
+			}
+			activeSetsAfter, err := client.Keys(ctx, prefix+":active_qg_set:*").Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			sort.Strings(activeSetsAfter)
+			if !reflect.DeepEqual(activeSetsBefore, activeSetsAfter) {
+				t.Fatalf("failed migration created a v2 Active Set: before=%v after=%v", activeSetsBefore, activeSetsAfter)
+			}
+		})
+	}
+}
+
+func TestScheduleActivationReconcilerLegacyMigrationResumesAfterObjectWriteBeforeCAS(t *testing.T) {
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	prefix := "alarmd:control:legacy-migration-resume"
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ConfigureLegacyMigration(50000, 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	catalog := twoQueryGroupCatalog(t)
+	snapshot, _, err := repository.PublishCatalog(ctx, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, semantics := runtimePlanCompiler(t)
+	initial, _ := controlplane.NewInitialScheduleActivator(repository, compiler, semantics, func() time.Time { return time.Unix(83, 0) })
+	state, err := initial.Ensure(ctx, snapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeSetKey := prefix + ":active_qg_set:" + state.ActiveQGSetRef.Digest
+	state.SchemaVersion = "alarmd-control-activation-v1"
+	state.ActiveQGSetRef = controlplane.ActiveQueryGroupSetRef{}
+	writeLegacyActivation(t, ctx, client, prefix, state)
+	if err := client.Del(ctx, prefix+":snapshot:"+string(snapshot.Publication.SnapshotRevision), activeSetKey).Err(); err != nil {
+		t.Fatal(err)
+	}
+	scheduleKeys := scheduleTimelineKeys(prefix, catalog)
+	activationBefore := readRedisValue(t, ctx, client, prefix+":activation")
+	schedulesBefore := readRedisValues(t, ctx, client, scheduleKeys)
+	crashErr := errors.New("simulated crash before Activation CAS")
+	client.AddHook(&beforeEvalHook{run: func() error { return crashErr }})
+	crashing, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time {
+		t.Fatal("same-publication migration must not allocate a cutover boundary")
+		return time.Time{}
+	})
+	if _, err := crashing.Ensure(ctx, snapshot.Publication); !errors.Is(err, crashErr) {
+		t.Fatalf("interrupted migration error=%v, want %v", err, crashErr)
+	}
+	if after := readRedisValue(t, ctx, client, prefix+":activation"); !bytes.Equal(activationBefore, after) {
+		t.Fatal("interrupted migration changed Activation")
+	}
+	if after := readRedisValues(t, ctx, client, scheduleKeys); !reflect.DeepEqual(schedulesBefore, after) {
+		t.Fatal("interrupted migration changed Schedule timelines")
+	}
+	if exists, err := client.Exists(ctx, activeSetKey).Result(); err != nil || exists != 1 {
+		t.Fatalf("pre-CAS Active Set exists=(%d,%v), want orphan available for retry", exists, err)
+	}
+
+	retryClient := redis.NewClient(&redis.Options{Addr: client.Options().Addr})
+	t.Cleanup(func() { _ = retryClient.Close() })
+	retryRepository, err := controlplane.NewRedisCatalogRepository(retryClient, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := retryRepository.ConfigureLegacyMigration(50000, 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	retry, _ := controlplane.NewScheduleActivationReconciler(retryRepository, compiler, semantics, func() time.Time {
+		t.Fatal("retry migration must not allocate a cutover boundary")
+		return time.Time{}
+	})
+	winner, err := retry.Ensure(ctx, snapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := retry.Ensure(ctx, snapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(winner, repeated) || winner.RecordRevision != state.RecordRevision+1 || winner.SchemaVersion != "alarmd-control-activation-v2" {
+		t.Fatalf("migration retry/repeat states=(%#v,%#v)", winner, repeated)
+	}
+	groups, err := retryRepository.LoadActiveQueryGroupSet(ctx, winner.ActiveQGSetRef)
+	if err != nil || len(groups) != len(catalog.QueryGroups) || winner.ActiveQGSetRef.QGCount != uint64(len(catalog.QueryGroups)) {
+		t.Fatalf("winner Active Set groups=%#v ref=%#v err=%v", groups, winner.ActiveQGSetRef, err)
+	}
+	if after := readRedisValues(t, ctx, retryClient, scheduleKeys); !reflect.DeepEqual(schedulesBefore, after) {
+		t.Fatal("retry/repeat migration changed Schedule timelines")
+	}
+}
+
+func TestScheduleActivationReconcilerConcurrentLegacyMigrationReadsSingleWinner(t *testing.T) {
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	prefix := "alarmd:control:legacy-migration-race"
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ConfigureLegacyMigration(50000, 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	catalog := twoQueryGroupCatalog(t)
+	snapshot, _, err := repository.PublishCatalog(ctx, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, semantics := runtimePlanCompiler(t)
+	initial, _ := controlplane.NewInitialScheduleActivator(repository, compiler, semantics, func() time.Time { return time.Unix(83, 0) })
+	state, err := initial.Ensure(ctx, snapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeSetKey := prefix + ":active_qg_set:" + state.ActiveQGSetRef.Digest
+	state.SchemaVersion = "alarmd-control-activation-v1"
+	state.ActiveQGSetRef = controlplane.ActiveQueryGroupSetRef{}
+	writeLegacyActivation(t, ctx, client, prefix, state)
+	if err := client.Del(ctx, prefix+":snapshot:"+string(snapshot.Publication.SnapshotRevision), activeSetKey).Err(); err != nil {
+		t.Fatal(err)
+	}
+	scheduleKeys := scheduleTimelineKeys(prefix, catalog)
+	schedulesBefore := readRedisValues(t, ctx, client, scheduleKeys)
+	auxiliary := redis.NewClient(&redis.Options{Addr: client.Options().Addr})
+	t.Cleanup(func() { _ = auxiliary.Close() })
+	casHook := &serialActivationCASHook{firstDone: make(chan struct{}), afterFirst: func() error {
+		return auxiliary.PExpire(ctx, activeSetKey, 2*time.Second).Err()
+	}}
+	client.AddHook(casHook)
+	first, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time {
+		t.Fatal("legacy migration must not allocate a cutover boundary")
+		return time.Time{}
+	})
+	second, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time {
+		t.Fatal("legacy migration must not allocate a cutover boundary")
+		return time.Time{}
+	})
+	type migrationResult struct {
+		state controlplane.ActivationState
+		err   error
+	}
+	results := make(chan migrationResult, 2)
+	go func() {
+		result, runErr := first.Ensure(ctx, snapshot.Publication)
+		results <- migrationResult{state: result, err: runErr}
+	}()
+	go func() {
+		result, runErr := second.Ensure(ctx, snapshot.Publication)
+		results <- migrationResult{state: result, err: runErr}
+	}()
+	one, two := <-results, <-results
+	if one.err != nil || two.err != nil || !reflect.DeepEqual(one.state, two.state) {
+		t.Fatalf("concurrent legacy migration states=(%#v,%#v) errors=(%v,%v)", one.state, two.state, one.err, two.err)
+	}
+	if one.state.RecordRevision != state.RecordRevision+1 || one.state.SchemaVersion != "alarmd-control-activation-v2" || one.state.ActiveQGSetRef.Digest == "" || one.state.ActiveQGSetRef.QGCount != uint64(len(catalog.QueryGroups)) {
+		t.Fatalf("invalid migration winner=%#v", one.state)
+	}
+	if got := casHook.evals.Load(); got != 2 {
+		t.Fatalf("legacy migration CAS attempts=%d, want 2", got)
+	}
+	if ttl, err := auxiliary.PTTL(ctx, activeSetKey).Result(); err != nil || ttl <= 0 || ttl > 2*time.Second {
+		t.Fatalf("CAS loser renewed/deleted winner object TTL=(%s,%v), want unchanged short TTL", ttl, err)
+	}
+	if after := readRedisValues(t, ctx, client, scheduleKeys); !reflect.DeepEqual(schedulesBefore, after) {
+		t.Fatal("concurrent migration changed Schedule timelines")
+	}
+	groups, err := repository.LoadActiveQueryGroupSet(ctx, one.state.ActiveQGSetRef)
+	if err != nil || len(groups) != len(catalog.QueryGroups) {
+		t.Fatalf("winner Active Set groups=%#v err=%v", groups, err)
+	}
+}
+
+func scheduleTimelineKeys(prefix string, catalog controlplane.Catalog) []string {
+	keys := make([]string, 0, len(catalog.QueryGroups))
+	for _, group := range catalog.QueryGroups {
+		keys = append(keys, prefix+":schedule_timeline:"+string(group.Identity))
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func writeLegacyActivation(t *testing.T, ctx context.Context, client *redis.Client, prefix string, state controlplane.ActivationState) {
+	t.Helper()
+	payload, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(ctx, prefix+":activation", payload, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readJSONObject(t *testing.T, ctx context.Context, client *redis.Client, key string) map[string]any {
+	t.Helper()
+	payload := readRedisValue(t, ctx, client, key)
+	var value map[string]any
+	if err := json.Unmarshal(payload, &value); err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func writeJSONObject(t *testing.T, ctx context.Context, client *redis.Client, key string, value map[string]any) {
+	t.Helper()
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(ctx, key, payload, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func cloneJSONValue(t *testing.T, value any) any {
+	t.Helper()
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cloned any
+	if err := json.Unmarshal(payload, &cloned); err != nil {
+		t.Fatal(err)
+	}
+	return cloned
+}
+
+func lastScheduleSegment(t *testing.T, timeline map[string]any) map[string]any {
+	t.Helper()
+	segments, ok := timeline["segments"].([]any)
+	if !ok || len(segments) == 0 {
+		t.Fatal("persisted Schedule has no segments")
+	}
+	segment, ok := segments[len(segments)-1].(map[string]any)
+	if !ok {
+		t.Fatal("persisted Schedule segment is not an object")
+	}
+	return segment
+}
+
+func readRedisValue(t *testing.T, ctx context.Context, client *redis.Client, key string) []byte {
+	t.Helper()
+	payload, err := client.Get(ctx, key).Bytes()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+func readRedisValues(t *testing.T, ctx context.Context, client *redis.Client, keys []string) map[string][]byte {
+	t.Helper()
+	values := make(map[string][]byte, len(keys))
+	for _, key := range keys {
+		values[key] = readRedisValue(t, ctx, client, key)
+	}
+	return values
 }
 
 func TestInitialScheduleActivatorPersistsEveryPublishedQueryGroup(t *testing.T) {
@@ -1293,6 +2190,16 @@ func TestScheduleActivationReconcilerPersistsOnePublicationBoundaryAndExactHalfO
 	if _, err := reconciler.Ensure(context.Background(), oldSnapshot.Publication); err != nil {
 		t.Fatal(err)
 	}
+	oldActivation, err := repository.LoadActivation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeSetKey := "alarmd:control:publication-cutover:active_qg_set:" + oldActivation.ActiveQGSetRef.Digest
+	if err := client.PExpire(context.Background(), activeSetKey, 2*time.Second).Err(); err != nil {
+		t.Fatal(err)
+	}
+	scanHook := &scanCountingHook{}
+	client.AddHook(scanHook)
 
 	newCatalog := catalogWithSchedule(t, validCatalog(t, 81), 60, 0)
 	newSnapshot, _, err := repository.PublishCatalog(context.Background(), newCatalog)
@@ -1308,6 +2215,12 @@ func TestScheduleActivationReconcilerPersistsOnePublicationBoundaryAndExactHalfO
 	}
 	if _, err := reconciler.Ensure(context.Background(), newSnapshot.Publication); err != nil || clockCalls != 2 {
 		t.Fatalf("winner reload error=%v clock calls=%d", err, clockCalls)
+	}
+	if got := scanHook.count.Load(); got != 0 {
+		t.Fatalf("v2 cutover and unchanged refresh SCAN calls=%d, want 0", got)
+	}
+	if ttl, ttlErr := client.PTTL(context.Background(), activeSetKey).Result(); ttlErr != nil || ttl < 30*time.Minute {
+		t.Fatalf("CAS winner Active Set TTL=(%s,%v), want refreshed", ttl, ttlErr)
 	}
 
 	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, stateSemantics, 5*time.Second)
@@ -1654,11 +2567,22 @@ func TestScheduleActivationReconcilerConcurrentCASLoserReadsWinnerBoundary(t *te
 	if _, err := initial.Ensure(context.Background(), oldSnapshot.Publication); err != nil {
 		t.Fatal(err)
 	}
+	activation, err := repository.LoadActivation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeSetKey := "alarmd:control:publication-cutover-race:active_qg_set:" + activation.ActiveQGSetRef.Digest
+	auxiliary := redis.NewClient(&redis.Options{Addr: client.Options().Addr})
+	t.Cleanup(func() { _ = auxiliary.Close() })
 	newCatalog := catalogWithSchedule(t, validCatalog(t, 81), 60, 0)
 	newSnapshot, _, err := repository.PublishCatalog(context.Background(), newCatalog)
 	if err != nil {
 		t.Fatal(err)
 	}
+	casHook := &serialActivationCASHook{firstDone: make(chan struct{}), afterFirst: func() error {
+		return auxiliary.PExpire(context.Background(), activeSetKey, 2*time.Second).Err()
+	}}
+	client.AddHook(casHook)
 
 	var entered sync.WaitGroup
 	entered.Add(2)
@@ -1696,6 +2620,9 @@ func TestScheduleActivationReconcilerConcurrentCASLoserReadsWinnerBoundary(t *te
 	one, two := <-results, <-results
 	if one.err != nil || two.err != nil || !reflect.DeepEqual(one.state, two.state) || one.state.RecordRevision != 2 {
 		t.Fatalf("concurrent publication activations states=(%#v,%#v) errors=(%v,%v)", one.state, two.state, one.err, two.err)
+	}
+	if ttl, ttlErr := auxiliary.PTTL(context.Background(), activeSetKey).Result(); ttlErr != nil || ttl <= 0 || ttl > 2*time.Second {
+		t.Fatalf("CAS loser Active Set TTL=(%s,%v), want unchanged short TTL", ttl, ttlErr)
 	}
 	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, stateSemantics, 5*time.Second)
 	if err != nil {

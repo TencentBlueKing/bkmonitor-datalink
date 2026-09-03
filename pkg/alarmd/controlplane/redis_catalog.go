@@ -12,11 +12,13 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 const (
-	snapshotSchemaVersion   = "alarmd-control-snapshot-v1"
-	activationSchemaVersion = "alarmd-control-activation-v1"
+	snapshotSchemaVersion         = "alarmd-control-snapshot-v1"
+	activationSchemaVersion       = "alarmd-control-activation-v2"
+	legacyActivationSchemaVersion = "alarmd-control-activation-v1"
 )
 
 var (
@@ -90,6 +92,7 @@ type ActivationState struct {
 	Pending        *SnapshotPublicationRef `json:"pending,omitempty"`
 	Plans          []PlanActivationRecord  `json:"plans"`
 	Draining       []DrainingQueryGroup    `json:"draining,omitempty"`
+	ActiveQGSetRef ActiveQueryGroupSetRef  `json:"active_qg_set_ref"`
 }
 
 type ActivationExpectation struct {
@@ -99,9 +102,24 @@ type ActivationExpectation struct {
 }
 
 type RedisCatalogRepository struct {
-	client redis.Cmdable
-	prefix string
-	ttl    time.Duration
+	client                     redis.Cmdable
+	prefix                     string
+	ttl                        time.Duration
+	legacyMigrationMaxScanKeys int
+	legacyMigrationTimeout     time.Duration
+	observer                   observability.Observer
+}
+
+func (repository *RedisCatalogRepository) ConfigureObserver(observer observability.Observer) {
+	if repository != nil {
+		repository.observer = observer
+	}
+}
+
+func (repository *RedisCatalogRepository) observe(ctx context.Context, observation observability.Observation) {
+	if repository != nil && repository.observer != nil {
+		repository.observer.Observe(ctx, observation)
+	}
 }
 
 func NewRedisCatalogRepository(client redis.Cmdable, prefix string, ttl time.Duration) (*RedisCatalogRepository, error) {
@@ -111,11 +129,94 @@ func NewRedisCatalogRepository(client redis.Cmdable, prefix string, ttl time.Dur
 	return &RedisCatalogRepository{client: client, prefix: prefix, ttl: ttl}, nil
 }
 
+func (repository *RedisCatalogRepository) ConfigureLegacyMigration(maxScanKeys int, timeout time.Duration) error {
+	if repository == nil || maxScanKeys <= 0 || timeout <= 0 {
+		return errors.New("alarmd controlplane: invalid legacy migration bounds")
+	}
+	repository.legacyMigrationMaxScanKeys, repository.legacyMigrationTimeout = maxScanKeys, timeout
+	return nil
+}
+
 func (repository *RedisCatalogRepository) Ping(ctx context.Context) error {
 	if repository == nil || repository.client == nil {
 		return errors.New("alarmd controlplane: Redis catalog repository is required")
 	}
 	return repository.client.Ping(ctx).Err()
+}
+
+const renewCurrentActivationObjectsScript = `
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+if redis.call('GET', KEYS[2]) ~= ARGV[5] or redis.call('GET', KEYS[3]) ~= ARGV[3] or
+   redis.call('GET', KEYS[4]) ~= ARGV[4] or redis.call('GET', KEYS[5]) ~= ARGV[6] then return -1 end
+redis.call('PEXPIRE', KEYS[2], ARGV[2])
+redis.call('PEXPIRE', KEYS[3], ARGV[2])
+redis.call('PEXPIRE', KEYS[4], ARGV[2])
+redis.call('PEXPIRE', KEYS[5], ARGV[2])
+return 1
+`
+
+// RenewCurrentActivationObjects renews only the complete Snapshot occurrence
+// and Active Set named by the same Activation header. A concurrent cutover
+// cannot renew stale facts.
+func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx context.Context) error {
+	started := time.Now()
+	metricResult := "failure"
+	queryGroups, objectBytes := 0, 0
+	defer func() {
+		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageActiveQGSet,
+			Result: observability.Result(metricResult), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "renew", Result: metricResult,
+				QueryGroups: queryGroups, ObjectBytes: objectBytes, Duration: time.Since(started)}})
+	}()
+	state, err := repository.LoadActivation(ctx)
+	if err != nil {
+		return err
+	}
+	header, err := activationHeader(state.RecordRevision, state.Current, state.Pending)
+	if err != nil {
+		return err
+	}
+	snapshotPayload, err := repository.client.Get(ctx, repository.snapshotKey(state.Current.SnapshotRevision)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return ErrSnapshotUnavailable
+	}
+	if err != nil {
+		return err
+	}
+	activePayload, err := repository.client.Get(ctx, repository.activeQGSetKey(state.ActiveQGSetRef.Digest)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return ErrSnapshotUnavailable
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := repository.LoadPublishedSnapshot(ctx, state.Current); err != nil {
+		return err
+	}
+	groups, err := repository.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef)
+	if err != nil {
+		return err
+	}
+	result, err := repository.client.Eval(ctx, renewCurrentActivationObjectsScript, []string{
+		repository.activationHeaderKey(),
+		repository.snapshotKey(state.Current.SnapshotRevision),
+		repository.epochForRevisionKey(state.Current.SnapshotRevision),
+		repository.publicationKey(state.Current.PublicationEpoch),
+		repository.activeQGSetKey(state.ActiveQGSetRef.Digest),
+	}, header, repository.ttl.Milliseconds(), strconv.FormatUint(state.Current.PublicationEpoch, 10), string(state.Current.SnapshotRevision),
+		snapshotPayload, activePayload).Int()
+	if err != nil {
+		return fmt.Errorf("alarmd controlplane: renew current activation objects: %w", err)
+	}
+	switch result {
+	case 1:
+		metricResult = "success"
+		queryGroups, objectBytes = len(groups), len(activePayload)
+		return nil
+	case 0:
+		return ErrActivationConflict
+	default:
+		return ErrSnapshotUnavailable
+	}
 }
 
 const publishSnapshotScript = `
@@ -550,8 +651,13 @@ func (repository *RedisCatalogRepository) LoadActivations(ctx context.Context, r
 }
 
 func validateActivationState(state ActivationState) error {
-	if state.SchemaVersion != "" && state.SchemaVersion != activationSchemaVersion {
+	if state.SchemaVersion != "" && state.SchemaVersion != activationSchemaVersion && state.SchemaVersion != legacyActivationSchemaVersion {
 		return errors.New("alarmd controlplane: unsupported activation schema")
+	}
+	if state.SchemaVersion == activationSchemaVersion {
+		if err := state.ActiveQGSetRef.validate(); err != nil {
+			return err
+		}
 	}
 	if state.RecordRevision == 0 || state.Current.validate() != nil {
 		return errors.New("alarmd controlplane: incomplete activation state")
@@ -664,6 +770,9 @@ func (repository *RedisCatalogRepository) activationHeaderKey() string {
 }
 func (repository *RedisCatalogRepository) activationKey() string {
 	return repository.prefix + ":activation"
+}
+func (repository *RedisCatalogRepository) activeQGSetKey(digest string) string {
+	return repository.prefix + ":active_qg_set:" + digest
 }
 
 type SnapshotPublisher struct {

@@ -14,7 +14,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
-var ErrFinalizedRequiredUnsupported = errors.New("alarmd access: FINALIZED_REQUIRED is not supported in G1")
+var ErrFrozenQueryPlanUnavailable = errors.New("alarmd access: frozen QueryPlanFacts unavailable")
 
 type FrozenPlan struct {
 	DuePlans           []execution.DuePlan
@@ -257,21 +257,22 @@ func prepare(
 	if minReadyDelay <= 0 {
 		return PreparedExecution{}, errors.New("alarmd access: non-zero readiness delay is required")
 	}
-	if len(frozen.DuePlans) == 0 || len(frozen.Requirements) == 0 || len(frozen.QueryFacts) == 0 {
+	if len(frozen.DuePlans) == 0 || len(frozen.Requirements) == 0 {
 		return PreparedExecution{}, errors.New("alarmd access: frozen execution facts are incomplete")
 	}
-	for _, requirement := range frozen.Requirements {
-		if requirement.ReadinessClass == execution.ReadinessFinalizedRequired {
-			return PreparedExecution{}, ErrFinalizedRequiredUnsupported
-		}
+	if len(frozen.QueryFacts) == 0 {
+		return PreparedExecution{}, ErrFrozenQueryPlanUnavailable
 	}
 	queriesByDigest := make(map[execution.PhysicalQueryDigest]*PlannedQuery)
 	for _, requirement := range frozen.Requirements {
 		facts, ok := frozen.QueryFacts[requirement.LogicalQueryRef]
 		if !ok {
-			return PreparedExecution{}, errors.New("alarmd access: DataRequirement has no frozen QueryPlanFacts")
+			return PreparedExecution{}, fmt.Errorf("%w: logical query %s", ErrFrozenQueryPlanUnavailable, requirement.LogicalQueryRef)
 		}
-		if facts.QueryRevision != contractRef.QueryRevision {
+		if err := facts.Validate(); err != nil || execution.LogicalQueryRef(facts.QueryRevision) != requirement.LogicalQueryRef {
+			return PreparedExecution{}, fmt.Errorf("%w: logical query %s", ErrFrozenQueryPlanUnavailable, requirement.LogicalQueryRef)
+		}
+		if requirement.Role == execution.InputRolePrimary && facts.QueryRevision != contractRef.QueryRevision {
 			return PreparedExecution{}, errors.New("alarmd access: frozen query revision mismatch")
 		}
 		window := requirement.AbsoluteWindow(contractRef.Slot.EvaluationTime)
@@ -281,7 +282,10 @@ func prepare(
 		if err != nil {
 			return PreparedExecution{}, fmt.Errorf("alarmd access: build physical query: %w", err)
 		}
-		readyAt := window.End*1000 + minReadyDelay.Milliseconds()
+		readyAt, err := frozenRequirementReadyAt(requirement, window, minReadyDelay)
+		if err != nil {
+			return PreparedExecution{}, err
+		}
 		deadline := int64(0)
 		for _, consumer := range requirement.Consumers {
 			candidate := consumer.ConsumerDeadlineUnixMilli - consumer.DownstreamExecutionReserveMilliSec
@@ -338,6 +342,22 @@ func prepare(
 		return PreparedExecution{}, err
 	}
 	return PreparedExecution{Header: header, Queries: queries}, nil
+}
+
+func frozenRequirementReadyAt(
+	requirement execution.DataRequirement,
+	window execution.QueryWindow,
+	minReadyDelay time.Duration,
+) (int64, error) {
+	switch requirement.ReadinessClass {
+	case execution.ReadinessEager, execution.ReadinessFinalizedRequired:
+		// FINALIZED_REQUIRED is queried only after the frozen window's effective
+		// readiness boundary. A bounded probe is the same Source execution with
+		// OperationProbe; it does not create another query or readiness model.
+		return window.End*1000 + minReadyDelay.Milliseconds(), nil
+	default:
+		return 0, errors.New("alarmd access: invalid frozen readiness class")
+	}
 }
 
 type seriesAdapter struct {

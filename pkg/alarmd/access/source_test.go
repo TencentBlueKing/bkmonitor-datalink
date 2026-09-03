@@ -345,7 +345,7 @@ func TestPrepareUsesEarliestConsumerDeadlineAndDoesNotDelayEager(t *testing.T) {
 	}
 }
 
-func TestPrepareRejectsFinalizedRequiredUntilProbeGate(t *testing.T) {
+func TestSourceFinalizedRequiredWaitsForFrozenReadinessAndProbeUsesSameQuery(t *testing.T) {
 	contractRef, frozen := frozenExecution(t)
 	frozen.Requirements[0].ReadinessClass = execution.ReadinessFinalizedRequired
 	digest, err := execution.DeriveDuePlanSetDigest(frozen.DuePlans, frozen.Requirements)
@@ -353,8 +353,97 @@ func TestPrepareRejectsFinalizedRequiredUntilProbeGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	contractRef.DuePlanSetDigest = digest
-	if _, err := Prepare(contractRef, frozen, time.Second); !errors.Is(err, ErrFinalizedRequiredUnsupported) {
-		t.Fatalf("error=%v", err)
+	provider := &fakeProvider{}
+	permits := &recordingQueryPermits{}
+	source, err := NewSource(staticFrozenPlan{plan: frozen}, provider, permits, Config{MinReadyDelay: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := time.UnixMilli(int64(contractRef.Slot.EvaluationTime) * 1000)
+	source.now = func() time.Time { return clock }
+	var waited time.Duration
+	source.wait = func(_ context.Context, delay time.Duration) error {
+		waited += delay
+		clock = clock.Add(delay)
+		return nil
+	}
+	request := execution.QueryExecutionRequest{Contract: contractRef, Operation: execution.OperationProbe, AttemptNo: 2}
+	consumer := &recordingConsumer{}
+	completion, err := source.Execute(context.Background(), request, consumer)
+	if err != nil {
+		t.Fatalf("Execute(FINALIZED_REQUIRED probe) error=%v", err)
+	}
+	if waited != time.Second || len(provider.attempts) != 1 || len(permits.attempts) != 1 ||
+		provider.attempts[0].Operation != execution.OperationProbe ||
+		provider.attempts[0].Spec.Digest != consumer.header.RequiredPhysicalQueries[0].Digest ||
+		len(completion.PhysicalQueries) != 1 {
+		t.Fatalf("wait=%s provider=%+v permits=%+v header=%+v completion=%+v",
+			waited, provider.attempts, permits.attempts, consumer.header, completion)
+	}
+}
+
+func TestPrepareAcceptsFrozenAuxiliaryQueryRevisionAndKeepsThresholdPrimary(t *testing.T) {
+	contractRef, frozen := frozenExecution(t)
+	primaryRef := frozen.Requirements[0].LogicalQueryRef
+	primaryFacts := frozen.QueryFacts[primaryRef]
+	auxiliaryFacts, err := primaryFacts.WithMetricMerge("a + 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	auxiliaryRef := execution.LogicalQueryRef(auxiliaryFacts.QueryRevision)
+	auxiliary := frozen.Requirements[0]
+	auxiliary.RequirementID = "uptime-history"
+	auxiliary.DatasetName = "uptime_history"
+	auxiliary.Role = execution.InputRoleAlgorithmDependency
+	auxiliary.LogicalQueryRef = auxiliaryRef
+	auxiliary.RelativeWindow = execution.RelativeQueryWindow{StartOffsetSeconds: -120, EndOffsetSeconds: -60, HalfOpen: true}
+	auxiliary.ReadinessClass = execution.ReadinessFinalizedRequired
+	frozen.Requirements = append(frozen.Requirements, auxiliary)
+	frozen.QueryFacts[auxiliaryRef] = auxiliaryFacts
+	contractRef = bindFrozenDueDigest(t, contractRef, frozen)
+
+	prepared, err := Prepare(contractRef, frozen, time.Second)
+	if err != nil {
+		t.Fatalf("Prepare(auxiliary revision) error=%v", err)
+	}
+	if len(prepared.Queries) != 2 || len(prepared.Header.RequiredPhysicalQueries) != 2 {
+		t.Fatalf("queries/header refs=%+v/%+v", prepared.Queries, prepared.Header.RequiredPhysicalQueries)
+	}
+	queryRevisions := map[execution.QueryRevision]bool{}
+	for _, query := range prepared.Queries {
+		queryRevisions[query.Spec.PlanFacts.QueryRevision] = true
+	}
+	if !queryRevisions[contractRef.QueryRevision] || !queryRevisions[auxiliaryFacts.QueryRevision] ||
+		contractRef.QueryRevision != primaryFacts.QueryRevision {
+		t.Fatalf("query revisions=%v contract=%s primary=%s auxiliary=%s", queryRevisions,
+			contractRef.QueryRevision, primaryFacts.QueryRevision, auxiliaryFacts.QueryRevision)
+	}
+}
+
+func TestPrepareRejectsMissingOrMismatchedFrozenQueryPlanFacts(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*execution.FrozenExecutionContractRef, *FrozenPlan)
+	}{
+		{name: "missing", mutate: func(_ *execution.FrozenExecutionContractRef, frozen *FrozenPlan) {
+			delete(frozen.QueryFacts, frozen.Requirements[0].LogicalQueryRef)
+		}},
+		{name: "mismatched ref", mutate: func(contractRef *execution.FrozenExecutionContractRef, frozen *FrozenPlan) {
+			queryRef := frozen.Requirements[0].LogicalQueryRef
+			facts := frozen.QueryFacts[queryRef]
+			delete(frozen.QueryFacts, queryRef)
+			frozen.QueryFacts["different-query"] = facts
+			frozen.Requirements[0].LogicalQueryRef = "different-query"
+			*contractRef = bindFrozenDueDigest(t, *contractRef, *frozen)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			contractRef, frozen := frozenExecution(t)
+			test.mutate(&contractRef, &frozen)
+			if _, err := Prepare(contractRef, frozen, time.Second); !errors.Is(err, ErrFrozenQueryPlanUnavailable) {
+				t.Fatalf("Prepare() error=%v", err)
+			}
+		})
 	}
 }
 
@@ -532,13 +621,14 @@ func frozenExecution(t *testing.T) (execution.FrozenExecutionContractRef, Frozen
 	evaluationTime := execution.EvaluationTime(1_700_124_000)
 	due := execution.DuePlan{Identity: planID, CompiledPlan: compiled, StateGeneration: "state-v1", StateApplyEpoch: 1,
 		ScheduleRevision: "plan-schedule-v1", CompletionDeadlineUnixMilli: int64(evaluationTime)*1000 + 30_000}
+	facts := queryFacts(t)
+	queryRef := execution.LogicalQueryRef(facts.QueryRevision)
 	requirement := execution.DataRequirement{RequirementID: "primary", DatasetName: "primary", Role: execution.InputRolePrimary,
-		LogicalQueryRef: "query", RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -60, EndOffsetSeconds: 0, HalfOpen: true},
+		LogicalQueryRef: queryRef, RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -60, EndOffsetSeconds: 0, HalfOpen: true},
 		StepMillis: 60_000, AlignmentMillis: 60_000, ResultWindowPolicy: execution.ResultWindowExactHalfOpen,
 		ReadinessClass: execution.ReadinessEager, RequiredColumns: []string{"value"},
 		Consumers: []execution.DataRequirementConsumer{{Consumer: execution.ConsumerRef{Plan: planID},
 			ConsumerDeadlineUnixMilli: due.CompletionDeadlineUnixMilli, DownstreamExecutionReserveMilliSec: 5_000}}}
-	facts := queryFacts(t)
 	dueDigest, err := execution.DeriveDuePlanSetDigest([]execution.DuePlan{due}, []execution.DataRequirement{requirement})
 	if err != nil {
 		t.Fatal(err)
@@ -547,7 +637,7 @@ func frozenExecution(t *testing.T) (execution.FrozenExecutionContractRef, Frozen
 		SnapshotRevision: "snapshot-v1", QueryRevision: facts.QueryRevision, ScheduleRevision: "schedule-v1",
 		ScheduleSegmentStart: evaluationTime - 60, DuePlanSetDigest: dueDigest}
 	return contractRef, FrozenPlan{DuePlans: []execution.DuePlan{due}, Requirements: []execution.DataRequirement{requirement},
-		QueryFacts: map[execution.LogicalQueryRef]execution.QueryPlanFacts{"query": facts}}
+		QueryFacts: map[execution.LogicalQueryRef]execution.QueryPlanFacts{queryRef: facts}}
 }
 
 func bindFrozenDueDigest(

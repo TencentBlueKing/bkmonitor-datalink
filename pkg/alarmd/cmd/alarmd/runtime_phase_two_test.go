@@ -20,6 +20,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
@@ -829,6 +830,60 @@ func TestPhaseTwoWorkerBundleProgressConflictDoesNotStopSiblingOrWorker(t *testi
 	if len(failures) != 1 || failures[0].Trace.QueryGroupKey != "query-group-1" {
 		t.Fatalf("scheduler failure observations = %+v, want one local Query Group trace", failures)
 	}
+	_ = bundle.Shutdown(context.Background())
+}
+
+func TestPhaseTwoWorkerBundleMissingFrozenQueryFactsDoesNotStopThresholdSiblingOrWorker(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	queryGroups := []execution.QueryGroupIdentity{"query-group-g4-bad", "query-group-threshold-healthy"}
+	control := &fakePhaseTwoControl{queryGroups: queryGroups}
+	failed := newFakePhaseTwoQueryGroup()
+	failed.attempted = true
+	failed.runErr = fmt.Errorf("resolve frozen input closure: %w", access.ErrFrozenQueryPlanUnavailable)
+	healthy := newFakePhaseTwoQueryGroup()
+	healthy.attempted = true
+	healthy.runResult = execution.SlotExecutionResult{Completed: true, Result: observability.ResultSuccess}
+	owner := &fakePhaseTwoOwnership{assigned: queryGroups, runners: map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime{
+		queryGroups[0]: failed, queryGroups[1]: healthy,
+	}}
+	var mu sync.Mutex
+	var observations []observability.Observation
+	health := newPhaseTwoApplicationHealth()
+	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
+		Config: cfg, Health: health, Control: control, Ownership: owner, Now: time.Now,
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			mu.Lock()
+			defer mu.Unlock()
+			observations = append(observations, observation)
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := bundle.runScheduledOnce(context.Background()); err != nil {
+		t.Fatalf("runScheduledOnce() error=%v", err)
+	}
+	if failed.runCount() != 1 || healthy.runCount() != 1 || failed.releaseCount() != 0 || healthy.releaseCount() != 0 {
+		t.Fatalf("run/release counts failed=%d/%d healthy=%d/%d", failed.runCount(), failed.releaseCount(),
+			healthy.runCount(), healthy.releaseCount())
+	}
+	if !errors.Is(failed.runErr, access.ErrFrozenQueryPlanUnavailable) {
+		t.Fatalf("failed reason=%v", failed.runErr)
+	}
+	if snapshot := health.HealthSnapshot(); !snapshot.Ready || snapshot.State == observability.HealthFatal {
+		t.Fatalf("worker health=%+v", snapshot)
+	}
+	mu.Lock()
+	for _, observation := range observations {
+		if observation.Stage == observability.Stage(observability.StageFatal) {
+			mu.Unlock()
+			t.Fatalf("local frozen input failure became fatal: %+v", observation)
+		}
+	}
+	mu.Unlock()
 	_ = bundle.Shutdown(context.Background())
 }
 

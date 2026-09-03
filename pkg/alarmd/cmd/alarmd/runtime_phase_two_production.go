@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -72,11 +73,34 @@ func (source *productionFrozenExecution) ResolveFrozenPlan(
 		if group.QueryPlan.QueryRevision != contractRef.QueryRevision {
 			return access.FrozenPlan{}, errors.New("phase-two frozen Query Group changed query revision")
 		}
+		queryFacts := make(map[execution.LogicalQueryRef]execution.QueryPlanFacts)
 		queryRef := execution.LogicalQueryRef(group.QueryPlan.QueryRevision)
+		queryFacts[queryRef] = group.QueryPlan
+		duePlans := make(map[execution.PlanIdentity]struct{}, len(fact.DuePlans))
+		for _, due := range fact.DuePlans {
+			duePlans[due.Identity] = struct{}{}
+		}
+		for _, plan := range group.Plans {
+			if _, due := duePlans[plan.Identity]; !due {
+				continue
+			}
+			for ref, facts := range plan.QueryPlans {
+				queryFacts[ref] = facts
+			}
+		}
+		resolvedFacts := make(map[execution.LogicalQueryRef]execution.QueryPlanFacts)
+		for _, requirement := range fact.Requirements {
+			facts, exists := queryFacts[requirement.LogicalQueryRef]
+			if !exists || facts.Validate() != nil ||
+				execution.LogicalQueryRef(facts.QueryRevision) != requirement.LogicalQueryRef {
+				return access.FrozenPlan{}, fmt.Errorf("%w: logical query %s", access.ErrFrozenQueryPlanUnavailable, requirement.LogicalQueryRef)
+			}
+			resolvedFacts[requirement.LogicalQueryRef] = facts
+		}
 		return access.FrozenPlan{
 			DuePlans:     append([]execution.DuePlan(nil), fact.DuePlans...),
 			Requirements: append([]execution.DataRequirement(nil), fact.Requirements...),
-			QueryFacts:   map[execution.LogicalQueryRef]execution.QueryPlanFacts{queryRef: group.QueryPlan},
+			QueryFacts:   resolvedFacts,
 		}, nil
 	}
 	return access.FrozenPlan{}, errors.New("phase-two frozen Query Group is absent from Snapshot")

@@ -7,8 +7,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -22,9 +25,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
 func TestProductionFrozenExecutionResolvesExactPersistedContract(t *testing.T) {
+	queryFacts := productionQueryFacts(t, "a")
+	queryRef := execution.LogicalQueryRef(queryFacts.QueryRevision)
 	plan := execution.PlanIdentity{TenantID: "tenant-a", BusinessID: "2", StrategyID: "1001"}
 	spec := execution.ScheduleSpec{EvaluationIntervalSeconds: 60, Alignment: 0, Timezone: "UTC"}
 	planRevision, err := execution.DerivePlanScheduleRevision(spec)
@@ -38,11 +44,11 @@ func TestProductionFrozenExecutionResolvesExactPersistedContract(t *testing.T) {
 	}
 	schedule := execution.FrozenQueryGroupSchedule{Segment: execution.ScheduleSegmentFact{
 		Publication: execution.SnapshotPublicationRef{SnapshotRevision: "snapshot-1", PublicationEpoch: 1},
-		QueryGroup:  "query-group-1", QueryRevision: "query-1", ScheduleRevision: scheduleRevision, Start: 60,
+		QueryGroup:  "query-group-1", QueryRevision: queryFacts.QueryRevision, ScheduleRevision: scheduleRevision, Start: 60,
 	}, Plans: []execution.FrozenPlanSchedule{schedulePlan}}
 	contractRef := execution.FrozenExecutionContractRef{
 		Slot:             execution.SlotIdentity{QueryGroup: "query-group-1", EvaluationTime: 120},
-		SnapshotRevision: "snapshot-1", QueryRevision: "query-1", ScheduleRevision: scheduleRevision,
+		SnapshotRevision: "snapshot-1", QueryRevision: queryFacts.QueryRevision, ScheduleRevision: scheduleRevision,
 		ScheduleSegmentStart: 60, DuePlanSetDigest: "due-1",
 	}
 	catalog := &fakeFrozenCatalog{schedule: schedule, fact: execution.FrozenSlotContractFact{
@@ -50,14 +56,14 @@ func TestProductionFrozenExecutionResolvesExactPersistedContract(t *testing.T) {
 			Identity: plan, ScheduleRevision: planRevision, ScheduleSpec: spec,
 			CompletionDeadlineUnixMilli: 180_000,
 		}},
-		Requirements: []execution.DataRequirement{{Consumers: []execution.DataRequirementConsumer{{
+		Requirements: []execution.DataRequirement{{LogicalQueryRef: queryRef, Consumers: []execution.DataRequirementConsumer{{
 			Consumer: execution.ConsumerRef{Plan: plan}, ConsumerDeadlineUnixMilli: 180_000,
 			DownstreamExecutionReserveMilliSec: 5_000,
 		}}}},
 	}}
 	repository := &fakeProductionCatalogRepository{snapshot: controlplane.PublishedSnapshot{
 		Publication: controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-1", PublicationEpoch: 1},
-		QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-1", QueryPlan: execution.QueryPlanFacts{QueryRevision: "query-1"}}},
+		QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-1", QueryPlan: queryFacts}},
 	}}
 	resolver, err := newProductionFrozenExecution(catalog, repository, func() time.Time {
 		return time.UnixMilli(174_999)
@@ -74,7 +80,7 @@ func TestProductionFrozenExecutionResolvesExactPersistedContract(t *testing.T) {
 		EvaluationTime: 120, DuePlans: []execution.FrozenPlanScheduleRef{{Identity: plan, ScheduleRevision: planRevision}},
 	}
 	if !reflect.DeepEqual(catalog.request, wantRequest) || len(frozen.DuePlans) != 1 ||
-		frozen.QueryFacts[execution.LogicalQueryRef("query-1")].QueryRevision != "query-1" {
+		frozen.QueryFacts[queryRef].QueryRevision != queryFacts.QueryRevision {
 		t.Fatalf("resolved request/facts = %+v / %+v", catalog.request, frozen)
 	}
 	request := productionRequest(catalog.fact, execution.OperationNormal)
@@ -82,6 +88,326 @@ func TestProductionFrozenExecutionResolvesExactPersistedContract(t *testing.T) {
 	if err != nil || finalization.Mode != execution.FinalizationQueryRequired || finalization.Contract != contractRef {
 		t.Fatalf("ResolveFinalization() = %+v, %v", finalization, err)
 	}
+}
+
+func TestProductionFrozenExecutionResolvesEveryFrozenRequirementQueryFact(t *testing.T) {
+	primary := productionQueryFacts(t, "a")
+	auxiliary, err := primary.WithMetricMerge("a + 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := execution.PlanIdentity{TenantID: "tenant-a", BusinessID: "2", StrategyID: "1001"}
+	contractRef := execution.FrozenExecutionContractRef{
+		Slot:             execution.SlotIdentity{QueryGroup: "query-group-1", EvaluationTime: 120},
+		SnapshotRevision: "snapshot-1", QueryRevision: primary.QueryRevision,
+		ScheduleRevision: "schedule-1", ScheduleSegmentStart: 60, DuePlanSetDigest: "due-1",
+	}
+	primaryRef := execution.LogicalQueryRef(primary.QueryRevision)
+	auxiliaryRef := execution.LogicalQueryRef(auxiliary.QueryRevision)
+	fact := execution.FrozenSlotContractFact{
+		Contract: contractRef,
+		DuePlans: []execution.DuePlan{{Identity: plan}},
+		Requirements: []execution.DataRequirement{
+			{RequirementID: "primary", LogicalQueryRef: primaryRef},
+			{RequirementID: "history", LogicalQueryRef: auxiliaryRef},
+		},
+	}
+	resolver, err := newProductionFrozenExecution(
+		&fakeFrozenCatalog{schedule: productionFrozenSchedule(contractRef, plan), fact: fact},
+		&fakeProductionCatalogRepository{snapshot: controlplane.PublishedSnapshot{
+			Publication: controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-1", PublicationEpoch: 1},
+			QueryGroups: []controlplane.QueryGroup{{
+				Identity: "query-group-1", QueryPlan: primary,
+				Plans: []controlplane.FrozenPlan{{
+					Identity: plan,
+					QueryPlans: map[execution.LogicalQueryRef]execution.QueryPlanFacts{
+						primaryRef: primary, auxiliaryRef: auxiliary,
+					},
+				}},
+			}},
+		}},
+		func() time.Time { return time.UnixMilli(100_000) },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	frozen, err := resolver.ResolveFrozenPlan(context.Background(), contractRef)
+	if err != nil {
+		t.Fatalf("ResolveFrozenPlan() error=%v", err)
+	}
+	if len(frozen.QueryFacts) != 2 || frozen.QueryFacts[primaryRef].QueryRevision != primary.QueryRevision ||
+		frozen.QueryFacts[auxiliaryRef].QueryRevision != auxiliary.QueryRevision {
+		t.Fatalf("resolved query facts=%+v", frozen.QueryFacts)
+	}
+
+	delete(resolver.repository.(*fakeProductionCatalogRepository).snapshot.QueryGroups[0].Plans[0].QueryPlans, auxiliaryRef)
+	if _, err := resolver.ResolveFrozenPlan(context.Background(), contractRef); !errors.Is(err, access.ErrFrozenQueryPlanUnavailable) {
+		t.Fatalf("ResolveFrozenPlan(missing auxiliary facts) error=%v", err)
+	}
+}
+
+func productionFrozenSchedule(
+	contractRef execution.FrozenExecutionContractRef,
+	plan execution.PlanIdentity,
+) execution.FrozenQueryGroupSchedule {
+	return execution.FrozenQueryGroupSchedule{
+		Segment: execution.ScheduleSegmentFact{
+			Publication: execution.SnapshotPublicationRef{SnapshotRevision: contractRef.SnapshotRevision, PublicationEpoch: 1},
+			QueryGroup:  contractRef.Slot.QueryGroup, QueryRevision: contractRef.QueryRevision,
+			ScheduleRevision: contractRef.ScheduleRevision, Start: contractRef.ScheduleSegmentStart,
+		},
+		Plans: []execution.FrozenPlanSchedule{{Identity: plan, ScheduleRevision: "plan-schedule-1",
+			Spec: execution.ScheduleSpec{EvaluationIntervalSeconds: 60, Timezone: "UTC"}}},
+	}
+}
+
+func productionQueryFacts(t *testing.T, metricMerge string) execution.QueryPlanFacts {
+	t.Helper()
+	facts, err := execution.BuildQueryPlanFacts(execution.QueryPlanFacts{
+		Provider: execution.ProviderUQ, ProviderRouteRef: "uq-main", TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2",
+		QueryList: []execution.QueryClause{{DataSource: "bkmonitor", TableID: "system.env", FieldName: "uptime",
+			ReferenceName: "a", Driver: "influxdb", TimeField: "time"}},
+		MetricMerge: metricMerge, StepMillis: 60_000, AlignmentMillis: 60_000, Timezone: "UTC",
+		Normalization: execution.DatasetNormalizationSpec{
+			DatasetContract: contract.DatasetContractV2{SchemaDigest: strings.Repeat("a", 64), NormalizationDigest: strings.Repeat("b", 64),
+				IdentityFields: []string{"host"}, SourceTimeField: "_time", ReceivedTimeField: "_received_time"},
+			SourceTimeUnit: execution.TimeUnitMillisecond, CanonicalSourceTimeUnit: execution.TimeUnitSecond,
+			SeriesIdentityMode: execution.SeriesIdentityUQGroupKeysValuesV1, GroupKeyRule: execution.GroupKeyStripTableSuffixV1,
+			ValueSelectionMode: execution.ValueSelectionResultOrFirstReferenceV1, CanonicalValueField: "value",
+			ReceivedTimeMode: execution.ReceivedTimeProviderReceivedAt, Version: "uq-threshold-normalization-v1",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return facts
+}
+
+func TestG4CatalogFrozenRequirementsReachProductionAccess(t *testing.T) {
+	tests := []struct {
+		name         string
+		kind         string
+		metric       string
+		table        string
+		dimensions   []string
+		config       any
+		wantDatasets []execution.DatasetName
+		wantQueries  int
+	}{
+		{name: "SimpleRingRatio", kind: strategy.DetectorKindSimpleRingRatio, metric: "usage", table: "system.cpu",
+			dimensions: []string{"host"}, config: map[string]any{"floor": 50, "ceil": nil},
+			wantDatasets: []execution.DatasetName{"primary", "previous"}, wantQueries: 2},
+		{name: "OsRestart", kind: strategy.DetectorKindOsRestart, metric: "uptime", table: "system.env",
+			dimensions: []string{"bk_target_cloud_id", "bk_target_ip"}, config: map[string]any{},
+			wantDatasets: []execution.DatasetName{"primary", "uptime_history"}, wantQueries: 2},
+		{name: "Threshold", kind: strategy.DetectorKindThreshold, metric: "usage", table: "system.cpu",
+			dimensions: []string{"host"}, config: [][]map[string]any{{{"method": "gte", "threshold": 80}}},
+			wantDatasets: []execution.DatasetName{"primary"}, wantQueries: 1},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			catalog := productionG4Catalog(t, int64(500+index), test.kind, test.metric, test.table, test.dimensions, test.config)
+			group := catalog.QueryGroups[0]
+			fact, schedule := productionFrozenFactFromCatalog(t, catalog)
+			resolver, err := newProductionFrozenExecution(
+				&fakeFrozenCatalog{schedule: schedule, fact: fact},
+				&fakeProductionCatalogRepository{snapshot: controlplane.PublishedSnapshot{
+					Publication: controlplane.SnapshotPublicationRef{SnapshotRevision: fact.Contract.SnapshotRevision, PublicationEpoch: 1},
+					QueryGroups: catalog.QueryGroups,
+				}},
+				func() time.Time { return time.UnixMilli(int64(fact.Contract.Slot.EvaluationTime) * 1000) },
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			frozen, err := resolver.ResolveFrozenPlan(context.Background(), fact.Contract)
+			if err != nil {
+				t.Fatalf("ResolveFrozenPlan() error=%v", err)
+			}
+			prepared, err := access.Prepare(fact.Contract, frozen, time.Second)
+			if err != nil {
+				t.Fatalf("Prepare() error=%v", err)
+			}
+			preparedAgain, err := access.Prepare(fact.Contract, frozen, time.Second)
+			if err != nil || !reflect.DeepEqual(prepared, preparedAgain) {
+				t.Fatalf("Prepare() is not stable: first=%+v second=%+v error=%v", prepared, preparedAgain, err)
+			}
+			datasets := make([]execution.DatasetName, len(frozen.Requirements))
+			for requirementIndex, requirement := range frozen.Requirements {
+				datasets[requirementIndex] = requirement.DatasetName
+				if strings.HasPrefix(string(datasets[requirementIndex]), "primary:") {
+					datasets[requirementIndex] = "primary"
+				}
+				facts, exists := frozen.QueryFacts[requirement.LogicalQueryRef]
+				if !exists || execution.LogicalQueryRef(facts.QueryRevision) != requirement.LogicalQueryRef {
+					t.Fatalf("requirement has no exact frozen query facts: requirement=%+v facts=%+v", requirement, frozen.QueryFacts)
+				}
+			}
+			if !reflect.DeepEqual(datasets, test.wantDatasets) || len(prepared.Queries) != test.wantQueries ||
+				len(prepared.Header.RequiredPhysicalQueries) != test.wantQueries ||
+				fact.Contract.QueryRevision != group.QueryPlan.QueryRevision {
+				t.Fatalf("datasets/queries/refs=%v/%d/%+v, want %v/%d", datasets, len(prepared.Queries),
+					prepared.Header.RequiredPhysicalQueries, test.wantDatasets, test.wantQueries)
+			}
+		})
+	}
+}
+
+func productionG4Catalog(
+	t *testing.T,
+	id int64,
+	kind string,
+	metric string,
+	table string,
+	dimensions []string,
+	algorithmConfig any,
+) controlplane.Catalog {
+	t.Helper()
+	accessBKData := true
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", controlplane.LegacyQueryRuntimeFacts{
+		AccessBKData: &accessBKData, BKDataCMDBLevelTables: []string{},
+		SystemDiskFilter:    controlplane.LegacyRuntimeFilterFact{FieldName: "device_type", Values: []string{"iso9660"}},
+		SystemNetworkFilter: controlplane.LegacyRuntimeFilterFact{FieldName: "device_name", Values: []string{"lo"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryConfig := map[string]any{
+		"data_source_label": "bk_monitor", "data_type_label": "time_series", "metric_field": metric,
+		"alias": "a", "agg_dimension": dimensions, "agg_method": "MAX", "agg_interval": 60,
+		"result_table_id": table,
+	}
+	item := map[string]any{
+		"id": 1, "query_md5": "query-md5", "expression": "a", "unit": "",
+		"query_configs": []any{queryConfig},
+		"algorithms":    []any{map[string]any{"level": 1, "type": kind, "config": algorithmConfig}},
+	}
+	if kind == strategy.DetectorKindOsRestart {
+		queryConfig["metric_id"] = "bk_monitor.os_restart"
+		item["functions"] = []any{map[string]any{"id": "abs", "params": []any{}}}
+	}
+	document, err := json.Marshal(map[string]any{
+		"id": id, "bk_biz_id": 2, "update_time": 1, "items": []any{item},
+		"detects": []any{map[string]any{
+			"level": 1, "priority": 1, "connector": "and",
+			"trigger_config": map[string]any{"count": 1, "check_window": 1},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
+		Strategies: []controlplane.SourceStrategy{{
+			SourceID: strconv.FormatInt(id, 10), Document: document,
+			Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
+		}},
+		Planner: planner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.QueryGroups) != 1 || len(catalog.QueryGroups[0].Plans) != 1 {
+		t.Fatalf("catalog=%+v", catalog)
+	}
+	return catalog
+}
+
+func productionFrozenFactFromCatalog(
+	t *testing.T,
+	catalog controlplane.Catalog,
+) (execution.FrozenSlotContractFact, execution.FrozenQueryGroupSchedule) {
+	t.Helper()
+	group := catalog.QueryGroups[0]
+	plan := group.Plans[0]
+	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{
+		MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 8, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16,
+		MaxConditionsPerAlgorithm: 64, MaxASTNodesPerLevel: 256, MaxTriggerWindowSize: 4096,
+		MaxRecoveryConsecutiveWindows: 4096, MaxRequiredHistoryPoints: 4096, MaxTriggerComputeCost: 1 << 20,
+		MaxCompiledPlanBytes: 64 << 10, MaxCacheEntries: 8, MaxCacheBytes: 4 << 20,
+		NegativeCacheTTL: time.Minute, BudgetRevision: "g4-production-test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiledResult, err := compiler.Compile(context.Background(), strategy.CompileRequest{
+		Plan: plan.Plan, DatasetContract: group.QueryPlan.Normalization.DatasetContract,
+		StateSemantics: strategy.StateSemantics{
+			StateSchemaVersion: "state-v1", CodecSemanticsVersion: "codec-v1",
+			IdentitySchemaDigest: strings.Repeat("c", 64), SourceTimeSemanticsVersion: "seconds-v1",
+			HistoryCellSemanticsVersion: "history-v1",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, ok := compiledResult.Plan()
+	if !ok {
+		t.Fatalf("compiled plan terminal=%+v", compiledResult.PlanTerminal())
+	}
+	evaluationTime := execution.EvaluationTime(1_700_124_000)
+	due := execution.DuePlan{
+		Identity: plan.Identity, CompiledPlan: compiled, StateGeneration: "state-v1", StateApplyEpoch: 1,
+		ScheduleRevision: plan.ScheduleRevision, ScheduleSpec: plan.ScheduleSpec,
+		CompletionDeadlineUnixMilli: (int64(evaluationTime) + plan.ScheduleSpec.EvaluationIntervalSeconds) * 1000,
+	}
+	requirements := make([]execution.DataRequirement, 0, len(plan.RequirementTemplates))
+	for _, template := range plan.RequirementTemplates {
+		requirements = append(requirements, template.Bind(execution.DataRequirementConsumer{
+			Consumer:                  execution.ConsumerRef{Plan: plan.Identity, LevelID: template.ConsumerLevelID, HasLevel: true},
+			ConsumerDeadlineUnixMilli: due.CompletionDeadlineUnixMilli, DownstreamExecutionReserveMilliSec: 5_000,
+		}))
+	}
+	if len(requirements) == 0 {
+		window := int64(compiled.EvaluationSemantics().QueryWindow)
+		identity, err := contract.DeriveCanonicalDigestV2("alarmd-primary-requirement-v1", struct {
+			QueryRevision execution.QueryRevision `json:"query_revision"`
+			WindowSeconds int64                   `json:"window_seconds"`
+		}{group.QueryPlan.QueryRevision, window})
+		if err != nil {
+			t.Fatal(err)
+		}
+		columns := append([]string{"value"}, group.QueryPlan.Normalization.DatasetContract.IdentityFields...)
+		sort.Strings(columns)
+		requirements = append(requirements, execution.DataRequirement{
+			RequirementID: execution.RequirementID(identity), DatasetName: execution.DatasetName("primary:" + identity),
+			Role: execution.InputRolePrimary, LogicalQueryRef: execution.LogicalQueryRef(group.QueryPlan.QueryRevision),
+			RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -window, EndOffsetSeconds: 0, HalfOpen: true},
+			StepMillis:     group.QueryPlan.StepMillis, AlignmentMillis: group.QueryPlan.AlignmentMillis,
+			ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessEager,
+			RequiredColumns: columns,
+			Consumers: []execution.DataRequirementConsumer{{
+				Consumer: execution.ConsumerRef{Plan: plan.Identity}, ConsumerDeadlineUnixMilli: due.CompletionDeadlineUnixMilli,
+				DownstreamExecutionReserveMilliSec: 5_000,
+			}},
+		})
+	}
+	dueDigest, err := execution.DeriveDuePlanSetDigest([]execution.DuePlan{due}, requirements)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contractRef := execution.FrozenExecutionContractRef{
+		Slot:             execution.SlotIdentity{QueryGroup: group.Identity, EvaluationTime: evaluationTime},
+		SnapshotRevision: "snapshot-g4", QueryRevision: group.QueryPlan.QueryRevision,
+		ScheduleRevision: group.ScheduleRevision, ScheduleSegmentStart: evaluationTime - 60,
+		DuePlanSetDigest: dueDigest,
+	}
+	schedule := execution.FrozenQueryGroupSchedule{
+		Segment: execution.ScheduleSegmentFact{
+			Publication: execution.SnapshotPublicationRef{SnapshotRevision: contractRef.SnapshotRevision, PublicationEpoch: 1},
+			QueryGroup:  group.Identity, QueryRevision: group.QueryPlan.QueryRevision,
+			ScheduleRevision: group.ScheduleRevision, Start: contractRef.ScheduleSegmentStart,
+		},
+		Plans: []execution.FrozenPlanSchedule{{Identity: plan.Identity, ScheduleRevision: plan.ScheduleRevision, Spec: plan.ScheduleSpec}},
+	}
+	fact := execution.FrozenSlotContractFact{Contract: contractRef, DuePlans: []execution.DuePlan{due}, Requirements: requirements}
+	if err := fact.Validate(execution.FreezeSlotContractRequest{
+		QueryGroup: group.Identity, ScheduleRevision: group.ScheduleRevision, ScheduleSegmentStart: contractRef.ScheduleSegmentStart,
+		EvaluationTime: evaluationTime, DuePlans: schedule.DuePlanRefs(evaluationTime),
+	}); err != nil {
+		t.Fatalf("frozen fact invalid: %v", err)
+	}
+	return fact, schedule
 }
 
 func TestProductionFrozenExecutionSkipsExpiredNormalSlotWithoutRecoveryPermit(t *testing.T) {

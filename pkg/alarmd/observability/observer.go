@@ -51,6 +51,7 @@ const (
 	StageSnapshotUnavailable  = "snapshot_unavailable"
 	StageActiveQGSet          = "active_qg_set"
 	StageLegacyQGMigration    = "legacy_active_qg_migration"
+	StageDrainingQGReconciled = "draining_query_groups"
 	StageAssignmentAcquired   = "assignment_acquired"
 	StageAssignmentLost       = "assignment_lost"
 	StageTakeoverStarted      = "takeover_started"
@@ -209,6 +210,23 @@ type LegacyQGMigrationFacts struct {
 	Duration    time.Duration
 }
 
+const MaxDrainingQGLogSamples = 8
+
+type DrainingQGSample struct {
+	QueryGroupKey   string `json:"query_group_key"`
+	RetiredBoundary int64  `json:"retired_boundary"`
+	NextSlot        int64  `json:"next_slot"`
+	ProgressStatus  string `json:"progress_status"`
+}
+
+type DrainingQGFacts struct {
+	Total     int                `json:"total"`
+	Undrained int                `json:"undrained"`
+	Isolated  int                `json:"isolated"`
+	Samples   []DrainingQGSample `json:"samples,omitempty"`
+	Truncated bool               `json:"truncated"`
+}
+
 type TraceFields struct {
 	TraceID                 string
 	ExecutionID             string
@@ -252,6 +270,7 @@ type Observation struct {
 	QueryPermit       *QueryPermitFacts
 	ActiveQGSet       *ActiveQGSetFacts
 	LegacyMigration   *LegacyQGMigrationFacts
+	DrainingQG        *DrainingQGFacts
 	normalized        bool
 	stageReasonBucket bool
 }
@@ -317,9 +336,40 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.QueryPermit = normalizeQueryPermitFacts(observation.QueryPermit)
 	observation.ActiveQGSet = normalizeActiveQGSetFacts(observation.ActiveQGSet)
 	observation.LegacyMigration = normalizeLegacyQGMigrationFacts(observation.LegacyMigration)
+	observation.DrainingQG = normalizeDrainingQGFacts(observation.DrainingQG)
 	observation.Counts = normalizeCounts(observation.Counts)
 	observation.normalized = true
 	return observation
+}
+
+func normalizeDrainingQGFacts(facts *DrainingQGFacts) *DrainingQGFacts {
+	if facts == nil {
+		return nil
+	}
+	normalized := *facts
+	for _, count := range []*int{&normalized.Total, &normalized.Undrained, &normalized.Isolated} {
+		if *count < 0 {
+			*count = 0
+		}
+	}
+	normalized.Samples = append([]DrainingQGSample(nil), facts.Samples...)
+	if len(normalized.Samples) > MaxDrainingQGLogSamples {
+		normalized.Samples = normalized.Samples[:MaxDrainingQGLogSamples]
+		normalized.Truncated = true
+	}
+	for index := range normalized.Samples {
+		sample := &normalized.Samples[index]
+		if sample.RetiredBoundary < 0 {
+			sample.RetiredBoundary = 0
+		}
+		if sample.NextSlot < 0 {
+			sample.NextSlot = 0
+		}
+		if sample.ProgressStatus != "FOUND" && sample.ProgressStatus != "MISSING" {
+			sample.ProgressStatus = "UNKNOWN"
+		}
+	}
+	return &normalized
 }
 
 func normalizeActiveQGSetFacts(facts *ActiveQGSetFacts) *ActiveQGSetFacts {
@@ -618,6 +668,7 @@ var metricComponentStages = []ComponentStage{
 var phaseTwoComponentStages = []ComponentStage{
 	{ComponentControlPlane, StageSnapshotRefreshed}, {ComponentControlPlane, StageSnapshotUnavailable},
 	{ComponentControlPlane, StageActiveQGSet}, {ComponentControlPlane, StageLegacyQGMigration},
+	{ComponentControlPlane, StageDrainingQGReconciled},
 	{ComponentOwnership, StageAssignmentAcquired}, {ComponentOwnership, StageAssignmentLost},
 	{ComponentOwnership, StageTakeoverStarted}, {ComponentOwnership, StageTakeoverCompleted},
 	{ComponentOwnership, StageLeaseRenewed}, {ComponentOwnership, StageFenceChecked},

@@ -103,6 +103,22 @@ func TestPhaseTwoActiveSetAndLegacyMigrationMetricsUseOnlyFixedLabels(t *testing
 	}
 }
 
+func TestPhaseTwoDrainingQueryGroupGaugeHasNoIdentityLabel(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentControlPlane, Stage: observability.StageDrainingQGReconciled,
+		Result: observability.ResultSuccess,
+		DrainingQG: &observability.DrainingQGFacts{Total: 3, Undrained: 2, Isolated: 1,
+			Samples: []observability.DrainingQGSample{{QueryGroupKey: "must-not-be-a-label"}}},
+	})
+	if got := testutil.ToFloat64(recorder.phaseTwo.undrainedDrainingQueryGroups); got != 2 {
+		t.Fatalf("undrained draining query groups = %v, want 2", got)
+	}
+	if got := testutil.CollectAndCount(recorder.phaseTwo.undrainedDrainingQueryGroups); got != 1 {
+		t.Fatalf("undrained gauge metric families=%d, want 1", got)
+	}
+}
+
 func TestPhaseTwoOwnershipMetricsStayLowCardinality(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
 	recorder.SetOwnedQueryGroups(7)

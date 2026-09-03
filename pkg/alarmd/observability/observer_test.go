@@ -62,6 +62,29 @@ func TestNormalizeObservationBoundsActiveSetAndMigrationFacts(t *testing.T) {
 	}
 }
 
+func TestNormalizeObservationBoundsDrainingQueryGroupFacts(t *testing.T) {
+	samples := make([]DrainingQGSample, MaxDrainingQGLogSamples+1)
+	for index := range samples {
+		samples[index] = DrainingQGSample{
+			QueryGroupKey: "query-group", RetiredBoundary: 90, NextSlot: 60,
+			ProgressStatus: "INVALID",
+		}
+	}
+	got := NormalizeObservation(Observation{
+		Component: ComponentControlPlane, Stage: StageDrainingQGReconciled, Result: ResultSuccess,
+		DrainingQG: &DrainingQGFacts{Total: -1, Undrained: -1, Isolated: -1, Samples: samples},
+	})
+	if got.DrainingQG.Total != 0 || got.DrainingQG.Undrained != 0 || got.DrainingQG.Isolated != 0 {
+		t.Fatalf("negative draining facts were not bounded: %#v", got.DrainingQG)
+	}
+	if len(got.DrainingQG.Samples) != MaxDrainingQGLogSamples || !got.DrainingQG.Truncated {
+		t.Fatalf("draining samples were not bounded: %#v", got.DrainingQG)
+	}
+	if got.DrainingQG.Samples[0].ProgressStatus != "UNKNOWN" {
+		t.Fatalf("progress status was not normalized: %#v", got.DrainingQG.Samples[0])
+	}
+}
+
 func TestPhaseTwoComponentValuesMatchFrozenObservabilityContract(t *testing.T) {
 	if ComponentControlPlane != "source" || ComponentOwnership != "router" || ComponentScheduler != "scheduler" {
 		t.Fatalf("phase-two components = %q/%q/%q", ComponentControlPlane, ComponentOwnership, ComponentScheduler)
@@ -127,6 +150,41 @@ func TestOwnershipLifecycleLogCarriesExactOperationalIdentity(t *testing.T) {
 		if !strings.Contains(output.String(), field) {
 			t.Fatalf("ownership lifecycle log missing %s: %s", field, output.String())
 		}
+	}
+}
+
+func TestDrainingQueryGroupLogCarriesBoundedDiagnosticFacts(t *testing.T) {
+	var output bytes.Buffer
+	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+		Component: ComponentControlPlane, Stage: StageDrainingQGReconciled, Result: ResultSuccess,
+		DrainingQG: &DrainingQGFacts{Total: 2, Undrained: 1, Isolated: 1,
+			Samples: []DrainingQGSample{{QueryGroupKey: "query-group-old", RetiredBoundary: 90,
+				NextSlot: 60, ProgressStatus: "FOUND"}}},
+	})
+	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+		Component: ComponentControlPlane, Stage: StageDrainingQGReconciled, Result: ResultSuccess,
+		DrainingQG: &DrainingQGFacts{Total: 1, Undrained: 1,
+			Samples: []DrainingQGSample{{QueryGroupKey: "must-be-rate-limited", RetiredBoundary: 120,
+				NextSlot: 90, ProgressStatus: "FOUND"}}},
+	})
+	for _, want := range []string{
+		`"draining_total":2`, `"draining_undrained":1`, `"draining_isolated":1`,
+		`"draining_samples":[{"query_group_key":"query-group-old","retired_boundary":90,"next_slot":60,"progress_status":"FOUND"}]`,
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("draining log %s does not contain %s", output.String(), want)
+		}
+	}
+	if strings.Contains(output.String(), "must-be-rate-limited") || strings.Count(output.String(), "\n") != 1 {
+		t.Fatalf("repeated draining log was not limited: %s", output.String())
 	}
 }
 

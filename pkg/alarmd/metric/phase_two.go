@@ -14,23 +14,24 @@ import (
 )
 
 type phaseTwoMetrics struct {
-	work                 *prometheus.CounterVec
-	busy                 *prometheus.CounterVec
-	lastProgress         *prometheus.GaugeVec
-	capacity             *prometheus.CounterVec
-	sourceObservations   *prometheus.CounterVec
-	ownedQueryGroups     *prometheus.GaugeVec
-	ownershipTransitions *prometheus.CounterVec
-	readyQueue           *prometheus.GaugeVec
-	queryInflight        *prometheus.GaugeVec
-	queryAdmission       *prometheus.CounterVec
-	activeQGSetCount     prometheus.Gauge
-	activeQGSetBytes     prometheus.Gauge
-	activeQGSetEncode    *prometheus.HistogramVec
-	activeQGSetRedis     *prometheus.HistogramVec
-	legacyMigration      *prometheus.CounterVec
-	legacyMigrationScan  prometheus.Histogram
-	legacyMigrationTime  *prometheus.HistogramVec
+	work                         *prometheus.CounterVec
+	busy                         *prometheus.CounterVec
+	lastProgress                 *prometheus.GaugeVec
+	capacity                     *prometheus.CounterVec
+	sourceObservations           *prometheus.CounterVec
+	ownedQueryGroups             *prometheus.GaugeVec
+	ownershipTransitions         *prometheus.CounterVec
+	readyQueue                   *prometheus.GaugeVec
+	queryInflight                *prometheus.GaugeVec
+	queryAdmission               *prometheus.CounterVec
+	activeQGSetCount             prometheus.Gauge
+	activeQGSetBytes             prometheus.Gauge
+	activeQGSetEncode            *prometheus.HistogramVec
+	activeQGSetRedis             *prometheus.HistogramVec
+	legacyMigration              *prometheus.CounterVec
+	legacyMigrationScan          prometheus.Histogram
+	legacyMigrationTime          *prometheus.HistogramVec
+	undrainedDrainingQueryGroups prometheus.Gauge
 }
 
 var activeQGSetDurationBuckets = []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 30}
@@ -114,6 +115,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.legacyMigration = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_total", Help: "One-time legacy Active QG migration outcomes."}, []string{"result", "reason_class"})
 	metrics.legacyMigrationScan = prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_scan_keys", Help: "Redis keys scanned by one-time legacy Active QG migration.", Buckets: legacyMigrationScanBuckets})
 	metrics.legacyMigrationTime = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_duration_seconds", Help: "One-time legacy Active QG migration duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
+	metrics.undrainedDrainingQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "undrained_draining_query_groups", Help: "Replicated per-Pod view of retired Query Groups still requiring ownership until their retirement boundary is drained; aggregate replicas with max, not sum."})
 	return metrics
 }
 
@@ -124,10 +126,14 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.queryAdmission,
 		m.activeQGSetCount, m.activeQGSetBytes, m.activeQGSetEncode, m.activeQGSetRedis,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
+		m.undrainedDrainingQueryGroups,
 	}
 }
 
 func (m phaseTwoMetrics) observe(observation observability.Observation) {
+	if facts := observation.DrainingQG; facts != nil {
+		m.undrainedDrainingQueryGroups.Set(float64(facts.Undrained))
+	}
 	if facts := observation.ActiveQGSet; facts != nil {
 		if facts.Operation == "encode" {
 			m.activeQGSetEncode.WithLabelValues(facts.Result).Observe(facts.Duration.Seconds())

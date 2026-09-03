@@ -141,6 +141,15 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation) {
 	}
 	attributes = appendObservationCounts(attributes, observation.Counts)
 	attributes = appendTraceFields(attributes, observation.Trace)
+	if facts := observation.DrainingQG; facts != nil {
+		attributes = append(attributes,
+			slog.Int("draining_total", facts.Total),
+			slog.Int("draining_undrained", facts.Undrained),
+			slog.Int("draining_isolated", facts.Isolated),
+			slog.Bool("draining_samples_truncated", facts.Truncated),
+			slog.Any("draining_samples", facts.Samples),
+		)
+	}
 	if observation.Err != nil {
 		attributes = append(attributes, slog.String("error_type", fmt.Sprintf("%T", observation.Err)))
 	}

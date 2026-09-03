@@ -444,9 +444,13 @@ func TestProductionPhaseTwoControlDrainsRetiredQueryGroupBeforeRemovingIt(t *tes
 			Identity: execution.ProgressIdentity{QueryGroup: retired}, NextSlot: 60,
 		}},
 	}}
+	var observations []observability.Observation
 	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
 		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: &fakeSourceReconciler{},
 		Activator: &fakeInitialScheduleActivator{}, Repository: repository, Schedules: schedules, Progress: progress,
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		}),
 		RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
 	})
 	if err != nil {
@@ -456,6 +460,15 @@ func TestProductionPhaseTwoControlDrainsRetiredQueryGroupBeforeRemovingIt(t *tes
 	if err != nil || !reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-new", retired}) {
 		t.Fatalf("draining active projection=(%#v,%v)", result, err)
 	}
+	if len(observations) != 1 || observations[0].DrainingQG == nil || observations[0].DrainingQG.Total != 1 ||
+		observations[0].DrainingQG.Undrained != 1 || observations[0].DrainingQG.Isolated != 0 ||
+		len(observations[0].DrainingQG.Samples) != 1 ||
+		observations[0].DrainingQG.Samples[0].QueryGroupKey != string(retired) ||
+		observations[0].DrainingQG.Samples[0].RetiredBoundary != int64(boundary) ||
+		observations[0].DrainingQG.Samples[0].NextSlot != 60 ||
+		observations[0].DrainingQG.Samples[0].ProgressStatus != string(execution.ProgressFound) {
+		t.Fatalf("undrained observations=%#v", observations)
+	}
 	progress.byGroup[retired] = execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
 		Identity: execution.ProgressIdentity{QueryGroup: retired}, NextSlot: boundary, LastFullSlot: 60,
 		LastCompletionKind: execution.CompletionFull,
@@ -463,6 +476,10 @@ func TestProductionPhaseTwoControlDrainsRetiredQueryGroupBeforeRemovingIt(t *tes
 	result, err = control.LoadActive(context.Background())
 	if err != nil || !reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-new"}) {
 		t.Fatalf("drained active projection=(%#v,%v)", result, err)
+	}
+	if len(observations) != 2 || observations[1].DrainingQG == nil || observations[1].DrainingQG.Total != 1 ||
+		observations[1].DrainingQG.Undrained != 0 || len(observations[1].DrainingQG.Samples) != 0 {
+		t.Fatalf("drained observations=%#v", observations)
 	}
 }
 
@@ -539,9 +556,13 @@ func TestProductionPhaseTwoControlIsolatesInvalidDrainingQueryGroup(t *testing.T
 	if err != nil || !reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
 		t.Fatalf("isolated active projection=(%#v,%v)", result, err)
 	}
-	if len(observations) != 1 || observations[0].Result != observability.ResultDegraded ||
+	if len(observations) != 2 || observations[0].Result != observability.ResultDegraded ||
 		observations[0].Trace.QueryGroupKey != string(bad) || observations[0].Err == nil {
 		t.Fatalf("draining isolation observation=%#v", observations)
+	}
+	if observations[1].DrainingQG == nil || observations[1].DrainingQG.Total != 1 ||
+		observations[1].DrainingQG.Undrained != 0 || observations[1].DrainingQG.Isolated != 1 {
+		t.Fatalf("draining aggregate observation=%#v", observations)
 	}
 }
 
@@ -588,9 +609,10 @@ func TestProductionPhaseTwoControlKeepsCurrentActivationWhileCandidateIsPending(
 	if repository.renewCalls != 2 {
 		t.Fatalf("pending refresh renew calls=%d, want 2", repository.renewCalls)
 	}
-	if len(observations) != 2 || observations[0].Stage != observability.StageActiveQGSet ||
-		observations[0].Result != observability.ResultDegraded || observations[1].Result != observability.ResultRecovered {
-		t.Fatalf("pending renewal observations=%#v", observations)
+	renewal := observationsWithoutDrainingFacts(observations)
+	if len(renewal) != 2 || renewal[0].Stage != observability.StageActiveQGSet ||
+		renewal[0].Result != observability.ResultDegraded || renewal[1].Result != observability.ResultRecovered {
+		t.Fatalf("pending renewal observations=%#v", renewal)
 	}
 }
 
@@ -630,10 +652,11 @@ func TestProductionPhaseTwoControlKeepsHealthyQueryGroupsAcrossPublicationConfli
 	if repository.renewCalls != 2 {
 		t.Fatalf("conflict/unchanged refresh renew calls=%d, want 2", repository.renewCalls)
 	}
-	if len(observations) != 1 || observations[0].Stage != observability.StageSnapshotRefreshed ||
-		observations[0].Result != observability.ResultDegraded ||
-		observations[0].ReasonCode != observability.ReasonContractRetryable {
-		t.Fatalf("publication conflict observations=%#v", observations)
+	conflict := observationsWithoutDrainingFacts(observations)
+	if len(conflict) != 1 || conflict[0].Stage != observability.StageSnapshotRefreshed ||
+		conflict[0].Result != observability.ResultDegraded ||
+		conflict[0].ReasonCode != observability.ReasonContractRetryable {
+		t.Fatalf("publication conflict observations=%#v", conflict)
 	}
 }
 
@@ -716,7 +739,7 @@ func TestProductionPhaseTwoControlObservesRenewFailureAsOneRecoverableEpisode(t 
 	}
 	var renewal []observability.Observation
 	for _, observation := range observations {
-		if observation.Stage == observability.StageActiveQGSet {
+		if observation.Stage == observability.StageActiveQGSet && observation.DrainingQG == nil {
 			renewal = append(renewal, observation)
 		}
 	}
@@ -724,6 +747,16 @@ func TestProductionPhaseTwoControlObservesRenewFailureAsOneRecoverableEpisode(t 
 		renewal[1].Result != observability.Result(observability.ResultRecovered) {
 		t.Fatalf("renewal episode observations=%#v", renewal)
 	}
+}
+
+func observationsWithoutDrainingFacts(observations []observability.Observation) []observability.Observation {
+	filtered := make([]observability.Observation, 0, len(observations))
+	for _, observation := range observations {
+		if observation.DrainingQG == nil {
+			filtered = append(filtered, observation)
+		}
+	}
+	return filtered
 }
 
 func TestProductionPhaseTwoControlPreservesPrimaryRefreshClassificationWithoutLastGoodPayload(t *testing.T) {

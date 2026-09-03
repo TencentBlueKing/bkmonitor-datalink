@@ -543,8 +543,10 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 	for _, queryGroup := range queryGroups {
 		active[queryGroup] = struct{}{}
 	}
+	drainingFacts := &observability.DrainingQGFacts{Total: len(state.Draining)}
 	for _, draining := range state.Draining {
 		if _, current := active[draining.QueryGroup]; current {
+			drainingFacts.Isolated++
 			runtime.isolateDrainingQueryGroup(ctx, draining.QueryGroup,
 				errors.New("phase-two Query Group cannot be current and draining"))
 			continue
@@ -552,11 +554,13 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 		retiredAt, retired, err := runtime.dependencies.Schedules.ReadScheduleRetirement(ctx, draining.QueryGroup)
 		if err != nil {
 			if runtime.isLocalDrainingError(ctx, draining.QueryGroup, err) {
+				drainingFacts.Isolated++
 				continue
 			}
 			return nil, err
 		}
 		if !retired || retiredAt != draining.RetiredBoundary {
+			drainingFacts.Isolated++
 			runtime.isolateDrainingQueryGroup(ctx, draining.QueryGroup,
 				errors.New("phase-two draining projection differs from persisted Schedule retirement"))
 			continue
@@ -565,11 +569,13 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 		load, err := runtime.dependencies.Progress.LoadProgress(ctx, identity)
 		if err != nil {
 			if runtime.isLocalDrainingError(ctx, draining.QueryGroup, err) {
+				drainingFacts.Isolated++
 				continue
 			}
 			return nil, err
 		}
 		if err := load.Validate(identity); err != nil {
+			drainingFacts.Isolated++
 			runtime.isolateDrainingQueryGroup(ctx, draining.QueryGroup, err)
 			continue
 		}
@@ -578,6 +584,7 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 			initial, err := runtime.dependencies.Schedules.ReadInitialFrozenSchedule(ctx, draining.QueryGroup)
 			if err != nil {
 				if runtime.isLocalDrainingError(ctx, draining.QueryGroup, err) {
+					drainingFacts.Isolated++
 					continue
 				}
 				return nil, err
@@ -585,6 +592,7 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 			isolated := false
 			for {
 				if err := initial.Validate(); err != nil || initial.Segment.QueryGroup != draining.QueryGroup {
+					drainingFacts.Isolated++
 					runtime.isolateDrainingQueryGroup(ctx, draining.QueryGroup,
 						errors.New("phase-two draining Schedule is invalid"))
 					isolated = true
@@ -594,6 +602,7 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 					break
 				}
 				if initial.Segment.End == nil || *initial.Segment.End > draining.RetiredBoundary {
+					drainingFacts.Isolated++
 					runtime.isolateDrainingQueryGroup(ctx, draining.QueryGroup,
 						errors.New("phase-two draining Schedule does not reach its retirement boundary"))
 					isolated = true
@@ -608,12 +617,14 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 				)
 				if err != nil {
 					if runtime.isLocalDrainingError(ctx, draining.QueryGroup, err) {
+						drainingFacts.Isolated++
 						isolated = true
 						break
 					}
 					return nil, err
 				}
 				if next.Segment.Start < *initial.Segment.End {
+					drainingFacts.Isolated++
 					runtime.isolateDrainingQueryGroup(ctx, draining.QueryGroup,
 						errors.New("phase-two draining Schedule Segments overlap"))
 					isolated = true
@@ -627,8 +638,26 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 		}
 		if !drained {
 			active[draining.QueryGroup] = struct{}{}
+			drainingFacts.Undrained++
+			if len(drainingFacts.Samples) < observability.MaxDrainingQGLogSamples {
+				nextSlot := int64(0)
+				if load.Progress != nil {
+					nextSlot = int64(load.Progress.NextSlot)
+				}
+				drainingFacts.Samples = append(drainingFacts.Samples, observability.DrainingQGSample{
+					QueryGroupKey: string(draining.QueryGroup), RetiredBoundary: int64(draining.RetiredBoundary),
+					NextSlot: nextSlot, ProgressStatus: string(load.Status),
+				})
+			} else {
+				drainingFacts.Truncated = true
+			}
 		}
 	}
+	runtime.dependencies.Observer.Observe(ctx, observability.Observation{
+		Component: observability.ComponentControlPlane, Stage: observability.StageDrainingQGReconciled,
+		Result: observability.ResultSuccess, Operation: observability.OperationLoad,
+		DrainingQG: drainingFacts,
+	})
 	queryGroups = queryGroups[:0]
 	for queryGroup := range active {
 		queryGroups = append(queryGroups, queryGroup)

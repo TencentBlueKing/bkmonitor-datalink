@@ -11,6 +11,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
 type SourceIdentity struct {
@@ -27,17 +28,22 @@ type SourceStrategy struct {
 }
 
 type PrimaryQuerySource struct {
-	Identity     SourceIdentity
-	StrategyID   string
-	ItemID       string
-	QueryMD5     string
-	Expression   string
-	Functions    []json.RawMessage
-	QueryConfigs []json.RawMessage
+	Identity       SourceIdentity
+	StrategyID     string
+	ItemID         string
+	QueryMD5       string
+	Expression     string
+	IdentityFields []string
+	Functions      []json.RawMessage
+	QueryConfigs   []json.RawMessage
 }
 
 type PrimaryQueryCompiler interface {
 	CompilePrimaryQuery(context.Context, PrimaryQuerySource) (execution.QueryPlanFacts, error)
+}
+
+type AlgorithmDependencyQueryCompiler interface {
+	CompileAlgorithmDependencyQuery(context.Context, PrimaryQuerySource, string) (execution.QueryPlanFacts, error)
 }
 
 type BuildRequest struct {
@@ -47,11 +53,13 @@ type BuildRequest struct {
 }
 
 type FrozenPlan struct {
-	Identity         execution.PlanIdentity
-	Plan             contract.EvaluationPlanV2
-	PlanRevision     string
-	ScheduleSpec     execution.ScheduleSpec
-	ScheduleRevision execution.PlanScheduleRevision
+	Identity             execution.PlanIdentity
+	Plan                 contract.EvaluationPlanV2
+	PlanRevision         string
+	ScheduleSpec         execution.ScheduleSpec
+	ScheduleRevision     execution.PlanScheduleRevision
+	RequirementTemplates []execution.DataRequirementTemplate                    `json:"RequirementTemplates,omitempty"`
+	QueryPlans           map[execution.LogicalQueryRef]execution.QueryPlanFacts `json:"QueryPlans,omitempty"`
 }
 
 type QueryGroup struct {
@@ -311,11 +319,17 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 	if item.ID <= 0 || item.QueryMD5 == "" || item.Expression == "" || len(item.QueryConfigs) == 0 || len(item.Algorithms) == 0 {
 		return candidate, errors.New("INCOMPLETE_SERIES_THRESHOLD_ITEM")
 	}
-	facts, err := planner.CompilePrimaryQuery(ctx, PrimaryQuerySource{
+	primaryExpression, identityFields := primaryQueryContract(item)
+	functions := append([]json.RawMessage(nil), item.Functions...)
+	if itemHasAlgorithm(item, strategy.DetectorKindOsRestart) {
+		functions = nil
+	}
+	querySource := PrimaryQuerySource{
 		Identity: source.Identity, StrategyID: source.SourceID, ItemID: strconv.FormatInt(item.ID, 10),
-		QueryMD5: item.QueryMD5, Expression: item.Expression,
-		Functions: append([]json.RawMessage(nil), item.Functions...), QueryConfigs: append([]json.RawMessage(nil), item.QueryConfigs...),
-	})
+		QueryMD5: item.QueryMD5, Expression: primaryExpression, IdentityFields: identityFields,
+		Functions: functions, QueryConfigs: append([]json.RawMessage(nil), item.QueryConfigs...),
+	}
+	facts, err := planner.CompilePrimaryQuery(ctx, querySource)
 	if err != nil {
 		var compileFailure *QueryPlanCompileError
 		if errors.As(err, &compileFailure) && compileFailure.Disposition != "" && compileFailure.Reason != "" {
@@ -326,7 +340,24 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 	if err := validateQueryIdentity(source.Identity, facts); err != nil {
 		return candidate, err
 	}
-	plan, scheduleSpec, schedule, dispositions, err := compilePlan(legacy, item, source.Identity, facts.Normalization.DatasetContract, source.SourceID)
+	compiledInputs := compiledPlanInputs{primary: facts}
+	if itemHasAlgorithm(item, strategy.DetectorKindOsRestart) {
+		dependencyCompiler, ok := planner.(AlgorithmDependencyQueryCompiler)
+		if !ok {
+			return candidate, errors.New("ALGORITHM_DEPENDENCY_QUERY_COMPILER_UNAVAILABLE")
+		}
+		history, historyErr := dependencyCompiler.CompileAlgorithmDependencyQuery(ctx, querySource, "a")
+		if historyErr != nil {
+			return candidate, fmt.Errorf("QUERY_PLAN_INVALID: %w", historyErr)
+		}
+		if err := validateQueryIdentity(source.Identity, history); err != nil {
+			return candidate, err
+		}
+		compiledInputs.osRestartHistory = &history
+	}
+	plan, scheduleSpec, schedule, dispositions, err := compilePlan(
+		legacy, item, source.Identity, facts.Normalization.DatasetContract, source.SourceID, &compiledInputs,
+	)
 	if err != nil {
 		candidate.dispositions = append(candidate.dispositions, dispositions...)
 		return candidate, err
@@ -336,9 +367,33 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 		return sourceCandidate{}, err
 	}
 	candidate.facts = facts
-	candidate.plan = FrozenPlan{Identity: execution.PlanIdentity{TenantID: source.Identity.TenantID, BusinessID: source.Identity.BusinessID, StrategyID: source.SourceID}, Plan: plan, PlanRevision: revision, ScheduleSpec: scheduleSpec, ScheduleRevision: schedule}
+	candidate.plan = FrozenPlan{
+		Identity: execution.PlanIdentity{TenantID: source.Identity.TenantID, BusinessID: source.Identity.BusinessID, StrategyID: source.SourceID},
+		Plan:     plan, PlanRevision: revision, ScheduleSpec: scheduleSpec, ScheduleRevision: schedule,
+		RequirementTemplates: compiledInputs.requirements, QueryPlans: compiledInputs.queryPlans,
+	}
 	candidate.dispositions = append(candidate.dispositions, dispositions...)
 	return candidate, nil
+}
+
+func primaryQueryContract(item legacyItem) (string, []string) {
+	expression := item.Expression
+	if itemHasAlgorithm(item, strategy.DetectorKindOsRestart) {
+		expression = "a <= 3600"
+	}
+	if itemHasAlgorithm(item, strategy.DetectorKindProcPort) {
+		return expression, []string{"bk_target_cloud_id", "bk_target_ip", "display_name"}
+	}
+	return expression, nil
+}
+
+func itemHasAlgorithm(item legacyItem, kind string) bool {
+	for _, algorithm := range item.Algorithms {
+		if algorithm.Type == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func (identity SourceIdentity) validate() error {
@@ -446,7 +501,22 @@ func decodeLegacyStrategy(document json.RawMessage) (legacyStrategy, error) {
 	return value, nil
 }
 
-func compilePlan(source legacyStrategy, item legacyItem, identity SourceIdentity, dataset contract.DatasetContractV2, sourceID string) (contract.EvaluationPlanV2, execution.ScheduleSpec, execution.PlanScheduleRevision, []ObjectDisposition, error) {
+type compiledPlanInputs struct {
+	primary          execution.QueryPlanFacts
+	osRestartHistory *execution.QueryPlanFacts
+	requirements     []execution.DataRequirementTemplate
+	queryPlans       map[execution.LogicalQueryRef]execution.QueryPlanFacts
+	seenRequirements map[execution.RequirementID]struct{}
+}
+
+func compilePlan(
+	source legacyStrategy,
+	item legacyItem,
+	identity SourceIdentity,
+	dataset contract.DatasetContractV2,
+	sourceID string,
+	inputs *compiledPlanInputs,
+) (contract.EvaluationPlanV2, execution.ScheduleSpec, execution.PlanScheduleRevision, []ObjectDisposition, error) {
 	if hasJSONValue(source.Priority) || source.PriorityGroupKey != "" {
 		return contract.EvaluationPlanV2{}, execution.ScheduleSpec{}, "", nil, errors.New("alarmd controlplane: G1 does not support priority semantics")
 	}
@@ -472,7 +542,11 @@ func compilePlan(source legacyStrategy, item legacyItem, identity SourceIdentity
 		}
 	}
 	ref := contract.StrategyRefV2{TenantID: identity.TenantID, StrategyID: strategyID, Revision: revision}
-	projection := contract.InputProjectionV2{ValueFields: []string{"value"}, DimensionFields: append([]string(nil), dataset.IdentityFields...), BusinessIdentityField: "bk_biz_id", MultiValueAlignment: "SINGLE_VALUE", DataUnit: item.Unit, MissingValuePolicy: contract.MissingValuePolicyRequired}
+	dimensionFields := append([]string(nil), dataset.IdentityFields...)
+	if itemHasAlgorithm(item, strategy.DetectorKindProcPort) {
+		dimensionFields = []string{"bind_ip", "listen", "nonlisten", "not_accurate_listen", "protocol"}
+	}
+	projection := contract.InputProjectionV2{ValueFields: []string{"value"}, DimensionFields: dimensionFields, BusinessIdentityField: "bk_biz_id", MultiValueAlignment: "SINGLE_VALUE", DataUnit: item.Unit, MissingValuePolicy: contract.MissingValuePolicyRequired}
 	detectByLevel := make(map[uint32]legacyDetect, len(source.Detects))
 	duplicateDetect := make(map[uint32]struct{})
 	for _, detect := range source.Detects {
@@ -507,21 +581,26 @@ func compilePlan(source legacyStrategy, item legacyItem, identity SourceIdentity
 			dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigRejected, Reason: "TRIGGER_CONFIG_MISSING"})
 			continue
 		}
+		levelInputs := compiledPlanInputs{primary: inputs.primary, osRestartHistory: inputs.osRestartHistory}
 		compiledAlgorithms := make([]contract.AlgorithmIRV2, 0, len(rawAlgorithms[levelID]))
 		invalid := false
 		for _, raw := range rawAlgorithms[levelID] {
-			if raw.Type != "Threshold" {
+			if !supportedAlgorithmKind(raw.Type) {
 				dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionUnsupported, Reason: "ALGORITHM_NOT_MIGRATED"})
 				invalid = true
 				break
 			}
-			config, err := thresholdConfig(raw, item.Unit)
+			config, err := compileAlgorithmConfig(raw, item.Unit, levelID, projection, dataset.IdentityFields, interval, &levelInputs)
 			if err != nil {
-				dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigRejected, Reason: "THRESHOLD_CONFIG_INVALID"})
+				reason := "ALGORITHM_CONFIG_INVALID"
+				if raw.Type == strategy.DetectorKindThreshold {
+					reason = "THRESHOLD_CONFIG_INVALID"
+				}
+				dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigRejected, Reason: reason})
 				invalid = true
 				break
 			}
-			compiledAlgorithms = append(compiledAlgorithms, contract.AlgorithmIRV2{Type: "Threshold", Version: 1, Config: config})
+			compiledAlgorithms = append(compiledAlgorithms, contract.AlgorithmIRV2{Type: raw.Type, Version: 1, Config: config})
 		}
 		if invalid {
 			continue
@@ -550,6 +629,7 @@ func compilePlan(source legacyStrategy, item legacyItem, identity SourceIdentity
 			connector = contract.LevelConnectorOR
 		}
 		levels = append(levels, contract.LevelIRV2{Definition: contract.LevelDefinitionV2{LevelID: levelID, Priority: priority}, Connector: connector, DetectPlan: contract.DetectPlanV2{Algorithms: compiledAlgorithms}, TriggerPlan: contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: trigger}, RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: recovery}})
+		inputs.merge(levelInputs)
 	}
 	if len(levels) == 0 {
 		return contract.EvaluationPlanV2{}, execution.ScheduleSpec{}, "", dispositions, errors.New("alarmd controlplane: no executable level")
@@ -560,6 +640,184 @@ func compilePlan(source legacyStrategy, item legacyItem, identity SourceIdentity
 	scheduleSpec := execution.ScheduleSpec{EvaluationIntervalSeconds: interval, Alignment: 0, Timezone: "UTC"}
 	schedule, err := execution.DerivePlanScheduleRevision(scheduleSpec)
 	return plan, scheduleSpec, schedule, dispositions, err
+}
+
+func supportedAlgorithmKind(kind string) bool {
+	switch kind {
+	case strategy.DetectorKindThreshold, strategy.DetectorKindSimpleRingRatio, strategy.DetectorKindOsRestart,
+		strategy.DetectorKindProcPort, strategy.DetectorKindPingUnreachable:
+		return true
+	default:
+		return false
+	}
+}
+
+func compileAlgorithmConfig(
+	raw legacyAlgorithm,
+	unit string,
+	levelID uint32,
+	projection contract.InputProjectionV2,
+	identityFields []string,
+	interval int64,
+	inputs *compiledPlanInputs,
+) (json.RawMessage, error) {
+	if raw.Type == strategy.DetectorKindThreshold {
+		return thresholdConfig(raw, unit)
+	}
+	if inputs == nil {
+		return nil, errors.New("alarmd controlplane: algorithm input facts are missing")
+	}
+	inputProjection := execution.InputProjection{
+		ValueFields:     append([]string(nil), projection.ValueFields...),
+		DimensionFields: append([]string(nil), projection.DimensionFields...),
+		IdentityFields:  append([]string(nil), identityFields...),
+	}
+	requirements, err := inputs.buildRequirements(raw.Type, levelID, interval, inputProjection)
+	if err != nil {
+		return nil, err
+	}
+	algorithmProjection := strategy.AlgorithmInputProjection{
+		ValueFields:     append([]string(nil), inputProjection.ValueFields...),
+		DimensionFields: append([]string(nil), inputProjection.DimensionFields...),
+		IdentityFields:  append([]string(nil), inputProjection.IdentityFields...),
+	}
+	algorithmRequirements := make([]strategy.AlgorithmInputRequirement, len(requirements))
+	for index, requirement := range requirements {
+		algorithmRequirements[index] = strategy.AlgorithmInputRequirement{
+			RequirementID: string(requirement.RequirementID), DatasetName: string(requirement.DatasetName),
+			Role: strategy.AlgorithmInputRole(requirement.Role), ConsumerLevelID: requirement.ConsumerLevelID,
+			LogicalQueryRef: string(requirement.LogicalQueryRef),
+			RelativeWindow: strategy.AlgorithmRelativeWindow{
+				StartOffsetSeconds: requirement.RelativeWindow.StartOffsetSeconds,
+				EndOffsetSeconds:   requirement.RelativeWindow.EndOffsetSeconds,
+				HalfOpen:           requirement.RelativeWindow.HalfOpen,
+			},
+			StepMillis: requirement.StepMillis, AlignmentMillis: requirement.AlignmentMillis,
+			ReadinessClass:      strategy.AlgorithmReadinessClass(requirement.ReadinessClass),
+			InputProjection:     algorithmProjection,
+			PointOffsetsSeconds: append([]int64(nil), requirement.PointOffsetsSeconds...),
+			NamedPoints:         make([]strategy.AlgorithmNamedInputPoint, len(requirement.NamedPoints)),
+		}
+		for pointIndex, point := range requirement.NamedPoints {
+			algorithmRequirements[index].NamedPoints[pointIndex] = strategy.AlgorithmNamedInputPoint{
+				Name: point.Name, OffsetSeconds: point.OffsetSeconds,
+			}
+		}
+	}
+	if raw.Type == strategy.DetectorKindSimpleRingRatio {
+		var sourceConfig struct {
+			Floor json.RawMessage `json:"floor"`
+			Ceil  json.RawMessage `json:"ceil"`
+		}
+		if err := json.Unmarshal(raw.Config, &sourceConfig); err != nil {
+			return nil, errors.New("alarmd controlplane: invalid SimpleRingRatio config")
+		}
+		return json.Marshal(struct {
+			Floor           json.RawMessage                      `json:"floor"`
+			Ceil            json.RawMessage                      `json:"ceil"`
+			InputProjection strategy.AlgorithmInputProjection    `json:"input_projection"`
+			Requirements    []strategy.AlgorithmInputRequirement `json:"requirements"`
+		}{sourceConfig.Floor, sourceConfig.Ceil, algorithmProjection, algorithmRequirements})
+	}
+	return json.Marshal(struct {
+		InputProjection strategy.AlgorithmInputProjection    `json:"input_projection"`
+		Requirements    []strategy.AlgorithmInputRequirement `json:"requirements"`
+	}{algorithmProjection, algorithmRequirements})
+}
+
+func (inputs *compiledPlanInputs) buildRequirements(
+	kind string,
+	levelID uint32,
+	interval int64,
+	projection execution.InputProjection,
+) ([]execution.DataRequirementTemplate, error) {
+	if err := inputs.primary.Validate(); err != nil {
+		return nil, err
+	}
+	primaryRef := execution.LogicalQueryRef(inputs.primary.QueryRevision)
+	primary, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
+		DatasetName: "primary", Role: execution.InputRolePrimary, ConsumerLevelID: levelID,
+		LogicalQueryRef: primaryRef,
+		RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -interval, EndOffsetSeconds: 0, HalfOpen: true},
+		StepMillis:      inputs.primary.StepMillis, AlignmentMillis: inputs.primary.AlignmentMillis,
+		ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessEager,
+		InputProjection: projection,
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := []execution.DataRequirementTemplate{primary}
+	inputs.addRequirement(primary)
+	inputs.addQuery(primaryRef, inputs.primary)
+
+	switch kind {
+	case strategy.DetectorKindSimpleRingRatio:
+		dependency, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
+			DatasetName: "previous", Role: execution.InputRoleAlgorithmDependency, ConsumerLevelID: levelID,
+			LogicalQueryRef: primaryRef,
+			RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -2 * interval, EndOffsetSeconds: -interval, HalfOpen: true},
+			StepMillis:      inputs.primary.StepMillis, AlignmentMillis: inputs.primary.AlignmentMillis,
+			ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessFinalizedRequired,
+			InputProjection: projection, PointOffsetsSeconds: []int64{interval},
+			NamedPoints: []execution.NamedInputPoint{{Name: "previous", OffsetSeconds: interval}},
+		})
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, dependency)
+		inputs.addRequirement(dependency)
+	case strategy.DetectorKindOsRestart:
+		if inputs.osRestartHistory == nil {
+			return nil, errors.New("alarmd controlplane: OsRestart history query facts are missing")
+		}
+		historyRef := execution.LogicalQueryRef(inputs.osRestartHistory.QueryRevision)
+		dependency, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
+			DatasetName: "uptime_history", Role: execution.InputRoleAlgorithmDependency, ConsumerLevelID: levelID,
+			LogicalQueryRef: historyRef,
+			RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -(1500 + interval), EndOffsetSeconds: 0, HalfOpen: true},
+			StepMillis:      inputs.osRestartHistory.StepMillis, AlignmentMillis: inputs.osRestartHistory.AlignmentMillis,
+			ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessFinalizedRequired,
+			InputProjection: projection, PointOffsetsSeconds: []int64{interval, 600, 1500},
+			NamedPoints: []execution.NamedInputPoint{
+				{Name: "previous", OffsetSeconds: interval}, {Name: "previous_10m", OffsetSeconds: 600},
+				{Name: "previous_25m", OffsetSeconds: 1500},
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, dependency)
+		inputs.addRequirement(dependency)
+		inputs.addQuery(historyRef, *inputs.osRestartHistory)
+	}
+	return result, nil
+}
+
+func (inputs *compiledPlanInputs) addRequirement(requirement execution.DataRequirementTemplate) {
+	if inputs.seenRequirements == nil {
+		inputs.seenRequirements = make(map[execution.RequirementID]struct{})
+	}
+	if _, exists := inputs.seenRequirements[requirement.RequirementID]; exists {
+		return
+	}
+	inputs.seenRequirements[requirement.RequirementID] = struct{}{}
+	inputs.requirements = append(inputs.requirements, requirement)
+}
+
+func (inputs *compiledPlanInputs) addQuery(ref execution.LogicalQueryRef, facts execution.QueryPlanFacts) {
+	if inputs.queryPlans == nil {
+		inputs.queryPlans = make(map[execution.LogicalQueryRef]execution.QueryPlanFacts)
+	}
+	inputs.queryPlans[ref] = facts
+}
+
+func (inputs *compiledPlanInputs) merge(source compiledPlanInputs) {
+	for _, requirement := range source.requirements {
+		inputs.addRequirement(requirement)
+	}
+	for ref, facts := range source.queryPlans {
+		inputs.addQuery(ref, facts)
+	}
 }
 
 func decodeLegacyRecovery(raw json.RawMessage) (legacyRecovery, bool, error) {

@@ -113,10 +113,6 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 	if terminal := c.validatePlan(request); terminal != nil {
 		return CompileResult{planTerminal: terminal}, nil
 	}
-	stateHash, err := c.deriveStateCompatibilityHash(request)
-	if err != nil {
-		return CompileResult{}, fmt.Errorf("strategy: derive state compatibility: %w", err)
-	}
 	levelsByID := make(map[uint32]struct{}, len(request.Plan.StrategyIR.Levels))
 	for _, level := range request.Plan.StrategyIR.Levels {
 		if _, duplicate := levelsByID[level.Definition.LevelID]; duplicate {
@@ -132,7 +128,6 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 	compiled := &CompiledPlan{
 		planRef: contract.RuntimePlanRefV1{
 			StrategyID: request.Plan.StrategyRef.StrategyID, StrategyRevision: request.Plan.StrategyRef.Revision,
-			StateCompatibilityHash: stateHash,
 		},
 		projection:          cloneProjection(request.Plan.InputProjection),
 		evaluationSemantics: request.Plan.StrategyIR.ExecutionSemantics,
@@ -142,7 +137,10 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 	terminals := make([]Terminal, 0)
 	var triggerComputeCost uint64
 	for _, rawLevel := range request.Plan.StrategyIR.Levels {
-		level, normalizers, terminal, err := c.compileLevel(ctx, request.Plan.InputProjection, request.Plan.StrategyIR.ExecutionSemantics, rawLevel)
+		level, normalizers, terminal, err := c.compileLevel(
+			ctx, request.Plan.InputProjection, request.DatasetContract.IdentityFields,
+			request.Plan.StrategyIR.ExecutionSemantics, rawLevel,
+		)
 		if err != nil {
 			return CompileResult{}, err
 		}
@@ -163,6 +161,11 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 	sort.Slice(compiled.levels, func(left, right int) bool {
 		return compiled.levels[left].definition.LevelID < compiled.levels[right].definition.LevelID
 	})
+	stateHash, err := c.deriveStateCompatibilityHash(request, compiled.levels)
+	if err != nil {
+		return CompileResult{}, fmt.Errorf("strategy: derive state compatibility: %w", err)
+	}
+	compiled.planRef.StateCompatibilityHash = stateHash
 	if err := compilePlanFingerprints(compiled); err != nil {
 		return CompileResult{}, err
 	}
@@ -202,17 +205,36 @@ func (c *PlanCompiler) validatePlan(request CompileRequest) *Terminal {
 	projection := plan.InputProjection
 	if projection.MissingValuePolicy != contract.MissingValuePolicyRequired || projection.MultiValueAlignment != "SINGLE_VALUE" ||
 		len(projection.ValueFields) == 0 || !sortedUnique(projection.ValueFields, false) || !sortedUnique(projection.DimensionFields, true) ||
-		projection.BusinessIdentityField != "bk_biz_id" || !equalStrings(projection.DimensionFields, request.DatasetContract.IdentityFields) {
+		projection.BusinessIdentityField != "bk_biz_id" || !sortedUnique(request.DatasetContract.IdentityFields, false) {
 		return &Terminal{ReasonCode: contract.ReasonProjectionInvalid, FieldPath: "input_projection"}
 	}
 	return nil
 }
 
-func (c *PlanCompiler) deriveStateCompatibilityHash(request CompileRequest) (string, error) {
+func (c *PlanCompiler) deriveStateCompatibilityHash(request CompileRequest, levels []CompiledLevel) (string, error) {
 	semantics := request.StateSemantics
+	algorithmClosure := make([]struct {
+		LevelID    uint32                      `json:"level_id"`
+		Algorithms []compiledAlgorithmSemantic `json:"algorithms"`
+	}, len(levels))
+	for levelIndex, level := range levels {
+		algorithmClosure[levelIndex].LevelID = level.definition.LevelID
+		algorithmClosure[levelIndex].Algorithms = make([]compiledAlgorithmSemantic, len(level.algorithms))
+		for algorithmIndex, algorithm := range level.algorithms {
+			algorithmClosure[levelIndex].Algorithms[algorithmIndex] = algorithm.semantic()
+		}
+	}
+	identityAndAlgorithmDigest, err := contract.DeriveCanonicalDigestV2("strategy-state-input-closure-v1", struct {
+		IdentitySchemaDigest  string   `json:"identity_schema_digest"`
+		DatasetIdentityFields []string `json:"dataset_identity_fields"`
+		AlgorithmClosure      any      `json:"algorithm_closure"`
+	}{semantics.IdentitySchemaDigest, request.DatasetContract.IdentityFields, algorithmClosure})
+	if err != nil {
+		return "", err
+	}
 	return contract.DeriveStateCompatibilityHashV1(contract.StateCompatibilityInputV1{
 		StateSchemaVersion: semantics.StateSchemaVersion, CodecSemanticsVersion: semantics.CodecSemanticsVersion,
-		IdentitySchemaDigest:        semantics.IdentitySchemaDigest,
+		IdentitySchemaDigest:        identityAndAlgorithmDigest,
 		EvaluationScope:             request.Plan.StrategyIR.ExecutionSemantics.EvaluationScope,
 		AggregationInterval:         request.Plan.StrategyIR.ExecutionSemantics.AggregationInterval,
 		EvaluationInterval:          request.Plan.StrategyIR.ExecutionSemantics.EvaluationInterval,
@@ -224,6 +246,7 @@ func (c *PlanCompiler) deriveStateCompatibilityHash(request CompileRequest) (str
 func (c *PlanCompiler) compileLevel(
 	ctx context.Context,
 	projection contract.InputProjectionV2,
+	identityFields []string,
 	execution contract.ExecutionSemanticsV2,
 	raw contract.LevelIRV2,
 ) (CompiledLevel, []NumericNormalizerSpec, *Terminal, error) {
@@ -240,8 +263,9 @@ func (c *PlanCompiler) compileLevel(
 	}
 	detectors := make([]DetectorSpec, 0, len(raw.DetectPlan.Algorithms))
 	normalizers := make([]NumericNormalizerSpec, 0, len(raw.DetectPlan.Algorithms))
+	algorithms := make([]CompiledAlgorithmPlan, 0, len(raw.DetectPlan.Algorithms))
 	astNodes := 1
-	for _, algorithm := range raw.DetectPlan.Algorithms {
+	for position, algorithm := range raw.DetectPlan.Algorithms {
 		registration, ok := c.registry.lookup(algorithm.Type, algorithm.Version)
 		if !ok {
 			return terminal(contract.ReasonAlgorithmUnsupported, "level.detect_plan.algorithms")
@@ -250,7 +274,8 @@ func (c *PlanCompiler) compileLevel(
 			return terminal(contract.ReasonAlgorithmUnsupported, "level.detect_plan.algorithms")
 		}
 		compiled, err := registration.compiler.Compile(ctx, AlgorithmCompileContext{
-			Projection: projection, ExecutionSemantics: execution, Limits: c.limits,
+			Projection: projection, IdentityFields: append([]string(nil), identityFields...),
+			ExecutionSemantics: execution, Limits: c.limits,
 		}, algorithm)
 		if errors.Is(err, errAlgorithmBudget) {
 			return terminal(contract.ReasonLevelBudgetExceeded, "level.detect_plan.algorithms")
@@ -264,12 +289,26 @@ func (c *PlanCompiler) compileLevel(
 		if err := validateAlgorithmCompileResult(algorithm, registration.capability, projection, &compiled); err != nil {
 			return CompiledLevel{}, nil, nil, err
 		}
+		for _, requirement := range compiled.InputRequirements {
+			if requirement.ConsumerLevelID != levelID {
+				return terminal(contract.ReasonLevelInvalid, "level.detect_plan.algorithms.requirements")
+			}
+		}
 		astNodes += compiled.ASTNodes
 		if astNodes > c.limits.MaxASTNodesPerLevel {
 			return terminal(contract.ReasonLevelBudgetExceeded, "level.detect_plan")
 		}
-		detectors = append(detectors, compiled.Detector)
-		normalizers = append(normalizers, compiled.Normalizer)
+		algorithmPlan, err := buildCompiledAlgorithmPlan(
+			levelID, position, algorithm, registration.capability, registration.capabilityDigest, compiled,
+		)
+		if err != nil {
+			return CompiledLevel{}, nil, nil, fmt.Errorf("strategy: freeze %s@%d: %w", algorithm.Type, algorithm.Version, err)
+		}
+		algorithms = append(algorithms, algorithmPlan)
+		if compiled.Detector.kind != "" {
+			detectors = append(detectors, compiled.Detector)
+			normalizers = append(normalizers, compiled.Normalizer)
+		}
 	}
 	trigger, effectiveTime, canonicalTrigger, err := compileTriggerPlan(raw.TriggerPlan, execution)
 	if err != nil {
@@ -300,11 +339,12 @@ func (c *PlanCompiler) compileLevel(
 		return terminal(contract.ReasonLevelBudgetExceeded, "level.state_requirement")
 	}
 	level := CompiledLevel{
-		definition: raw.Definition, connector: raw.Connector, detectors: detectors, trigger: trigger, recovery: recovery,
+		definition: raw.Definition, connector: raw.Connector, algorithms: algorithms,
+		detectors: detectors, trigger: trigger, recovery: recovery,
 		effectiveTime:    effectiveTime,
 		stateRequirement: StateRequirement{RequiredDetectHistoryPoints: requiredPoints, RetentionPoints: requiredPoints},
 	}
-	level.resourceEstimate.Algorithms = len(detectors)
+	level.resourceEstimate.Algorithms = len(algorithms)
 	level.resourceEstimate.ASTNodes = astNodes
 	level.resourceEstimate.StatePointsPerSeries = uint64(requiredPoints)
 	level.resourceEstimate.FixedComputeCost = 1
@@ -318,13 +358,13 @@ func (c *PlanCompiler) compileLevel(
 	if err != nil {
 		return CompiledLevel{}, nil, nil, fmt.Errorf("strategy: derive projection digest: %w", err)
 	}
-	semantics := make([]detectorSemantic, len(detectors))
-	for index := range detectors {
-		semantics[index] = detectors[index].semantic(normalizers[index])
+	semantics := make([]compiledAlgorithmSemantic, len(algorithms))
+	for index := range algorithms {
+		semantics[index] = algorithms[index].semantic()
 	}
-	detectorDigest, err := contract.DeriveCanonicalDigestV2("level-detector-semantics-v1", struct {
-		Connector string             `json:"connector"`
-		Detectors []detectorSemantic `json:"detectors"`
+	detectorDigest, err := contract.DeriveCanonicalDigestV2("level-algorithm-semantics-v1", struct {
+		Connector  string                      `json:"connector"`
+		Algorithms []compiledAlgorithmSemantic `json:"algorithms"`
 	}{raw.Connector, semantics})
 	if err != nil {
 		return CompiledLevel{}, nil, nil, fmt.Errorf("strategy: derive detector digest: %w", err)
@@ -359,11 +399,25 @@ func validateAlgorithmCompileResult(
 	if result == nil {
 		return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
 	}
-	if capability.Kind != raw.Type || capability.Version != raw.Version || result.Detector.kind != raw.Type || result.Detector.version != raw.Version ||
-		result.Detector.valueRef == "" || !contains(projection.ValueFields, result.Detector.valueRef) ||
-		result.Detector.normalizerRef == "" || result.Detector.normalizerRef != result.Normalizer.ref || len(result.Normalizer.ref) != 64 ||
-		result.Normalizer.sourceMultiplier <= 0 || result.Normalizer.decimalPlaces != 6 || result.Normalizer.rounding != "HALF_EVEN" ||
-		result.ASTNodes <= 0 {
+	if capability.Kind != raw.Type || capability.Version != raw.Version || result.CompilerVersion == "" || result.ProofVersion == "" ||
+		result.ASTNodes <= 0 || result.InputProjection.validate() != nil ||
+		!equalStrings(result.InputProjection.ValueFields, projection.ValueFields) ||
+		!equalStrings(result.InputProjection.DimensionFields, projection.DimensionFields) ||
+		(result.Detector.kind == "" && !compiledConfigMatchesKind(result.Config, raw.Type)) {
+		return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
+	}
+	for _, requirement := range result.InputRequirements {
+		if err := requirement.validate(); err != nil {
+			return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
+		}
+	}
+	if result.Detector.kind == "" {
+		return nil
+	}
+	if result.Detector.kind != raw.Type || result.Detector.version != raw.Version || result.Detector.valueRef == "" ||
+		!contains(projection.ValueFields, result.Detector.valueRef) || result.Detector.normalizerRef == "" ||
+		result.Detector.normalizerRef != result.Normalizer.ref || len(result.Normalizer.ref) != 64 ||
+		result.Normalizer.sourceMultiplier <= 0 || result.Normalizer.decimalPlaces != 6 || result.Normalizer.rounding != "HALF_EVEN" {
 		return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
 	}
 	nodes, err := result.Detector.predicate.root.validate()
@@ -385,6 +439,35 @@ func validateAlgorithmCompileResult(
 	}
 	result.Detector.declaredExecutorErrors = canonicalReasons
 	return nil
+}
+
+func compiledConfigMatchesKind(config compiledAlgorithmConfig, kind string) bool {
+	count := 0
+	for _, configured := range []bool{
+		config.Threshold != nil, config.SimpleRingRatio != nil, config.OsRestart != nil,
+		config.ProcPort != nil, config.PingUnreachable != nil,
+	} {
+		if configured {
+			count++
+		}
+	}
+	if count != 1 {
+		return false
+	}
+	switch kind {
+	case DetectorKindThreshold:
+		return config.Threshold != nil
+	case DetectorKindSimpleRingRatio:
+		return config.SimpleRingRatio != nil
+	case DetectorKindOsRestart:
+		return config.OsRestart != nil
+	case DetectorKindProcPort:
+		return config.ProcPort != nil
+	case DetectorKindPingUnreachable:
+		return config.PingUnreachable != nil
+	default:
+		return false
+	}
 }
 
 func compileTriggerPlan(
@@ -507,6 +590,7 @@ func deriveDatasetContractDigest(dataset contract.DatasetContractV2) (string, er
 type compiledLevelWire struct {
 	Definition       contract.LevelDefinitionV2   `json:"definition"`
 	Connector        string                       `json:"connector"`
+	Algorithms       []compiledAlgorithmSemantic  `json:"algorithms"`
 	Detectors        []detectorSemantic           `json:"detectors"`
 	Trigger          TriggerPlan                  `json:"trigger"`
 	Recovery         RecoveryPlan                 `json:"recovery"`
@@ -529,9 +613,13 @@ func compileResourceEstimate(plan *CompiledPlan) error {
 			detectors[detectorIndex] = detector.semantic(normalizer)
 		}
 		wire := compiledLevelWire{
-			Definition: level.definition, Connector: level.connector, Detectors: detectors,
-			Trigger: level.trigger, Recovery: level.recovery, EffectiveTime: level.effectiveTime.wire(),
+			Definition: level.definition, Connector: level.connector, Algorithms: make([]compiledAlgorithmSemantic, len(level.algorithms)),
+			Detectors: detectors,
+			Trigger:   level.trigger, Recovery: level.recovery, EffectiveTime: level.effectiveTime.wire(),
 			StateRequirement: level.stateRequirement, Fingerprints: level.fingerprints,
+		}
+		for algorithmIndex, algorithm := range level.algorithms {
+			wire.Algorithms[algorithmIndex] = algorithm.semantic()
 		}
 		encoded, err := contract.CanonicalJSONV2(wire)
 		if err != nil {

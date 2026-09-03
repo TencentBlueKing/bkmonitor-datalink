@@ -191,8 +191,8 @@ func TestCompilerCalculatesTriggerRecoveryAndFingerprints(t *testing.T) {
 	if firstFingerprints.Detect == secondFingerprints.Detect || firstFingerprints.Trigger == secondFingerprints.Trigger {
 		t.Fatalf("threshold change did not change both fingerprints: before=%+v after=%+v", firstFingerprints, secondFingerprints)
 	}
-	if first.StateCompatibilityHash() != second.StateCompatibilityHash() {
-		t.Fatal("threshold change unexpectedly changed state compatibility hash")
+	if first.StateCompatibilityHash() == second.StateCompatibilityHash() {
+		t.Fatal("threshold change unexpectedly reused state compatibility hash")
 	}
 
 	triggerChanged := base

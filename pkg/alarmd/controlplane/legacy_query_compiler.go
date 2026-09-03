@@ -177,6 +177,17 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 		identityFields = append(identityFields, field)
 	}
 	sort.Strings(identityFields)
+	if source.IdentityFields != nil {
+		if !sortedUniqueNonEmpty(source.IdentityFields) {
+			return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_IDENTITY_FIELDS_INVALID", nil)
+		}
+		for _, field := range source.IdentityFields {
+			if _, ok := identitySet[field]; !ok {
+				return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_IDENTITY_FIELD_NOT_RETURNED", nil)
+			}
+		}
+		identityFields = append([]string{}, source.IdentityFields...)
+	}
 	metricMerge, err := compileMetricMerge(source.Expression, source.Functions, queryList)
 	if err != nil {
 		return execution.QueryPlanFacts{}, err
@@ -204,6 +215,28 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 		return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_FACTS_INVALID", err)
 	}
 	return facts, nil
+}
+
+func (compiler *LegacyPrimaryQueryCompiler) CompileAlgorithmDependencyQuery(
+	ctx context.Context,
+	source PrimaryQuerySource,
+	expression string,
+) (execution.QueryPlanFacts, error) {
+	if expression == "" {
+		return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_DEPENDENCY_EXPRESSION_INVALID", nil)
+	}
+	source.Expression = expression
+	source.Functions = nil
+	return compiler.CompilePrimaryQuery(ctx, source)
+}
+
+func sortedUniqueNonEmpty(values []string) bool {
+	for index, value := range values {
+		if value == "" || (index > 0 && value <= values[index-1]) {
+			return false
+		}
+	}
+	return true
 }
 
 func decodeLegacyQueryConfig(raw json.RawMessage) (legacyQueryConfig, error) {

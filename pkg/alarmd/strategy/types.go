@@ -23,7 +23,11 @@ import (
 )
 
 const (
-	DetectorKindThreshold = "Threshold"
+	DetectorKindThreshold       = "Threshold"
+	DetectorKindSimpleRingRatio = "SimpleRingRatio"
+	DetectorKindOsRestart       = "OsRestart"
+	DetectorKindProcPort        = "ProcPort"
+	DetectorKindPingUnreachable = "PingUnreachable"
 
 	TriggerPlanTypeNOfM                   = "N_OF_M"
 	RecoveryPlanTypeContinuousTriggerMiss = "CONTINUOUS_TRIGGER_MISS"
@@ -396,6 +400,7 @@ func (s NumericNormalizerSpec) Rounding() string {
 type CompiledLevel struct {
 	definition       contract.LevelDefinitionV2
 	connector        string
+	algorithms       []CompiledAlgorithmPlan
 	detectors        []DetectorSpec
 	trigger          TriggerPlan
 	recovery         RecoveryPlan
@@ -415,6 +420,10 @@ func (l CompiledLevel) Connector() string {
 
 func (l CompiledLevel) Detectors() []DetectorSpec {
 	return append([]DetectorSpec(nil), l.detectors...)
+}
+
+func (l CompiledLevel) Algorithms() []CompiledAlgorithmPlan {
+	return append([]CompiledAlgorithmPlan(nil), l.algorithms...)
 }
 
 func (l CompiledLevel) Trigger() TriggerPlan {

@@ -238,3 +238,18 @@ func (facts QueryPlanFacts) Validate() error {
 	}
 	return nil
 }
+
+// WithMetricMerge derives an immutable logical query variant. It is used when
+// one algorithm needs the same physical source facts with different expression
+// semantics, such as OsRestart's filtered primary input and raw history input.
+func (facts QueryPlanFacts) WithMetricMerge(metricMerge string) (QueryPlanFacts, error) {
+	if err := facts.Validate(); err != nil {
+		return QueryPlanFacts{}, err
+	}
+	if metricMerge == "" {
+		return QueryPlanFacts{}, errors.New("alarmd execution: metric merge is required")
+	}
+	facts.QueryRevision = ""
+	facts.MetricMerge = metricMerge
+	return BuildQueryPlanFacts(facts)
+}

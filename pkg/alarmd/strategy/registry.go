@@ -19,14 +19,20 @@ import (
 
 type AlgorithmCompileContext struct {
 	Projection         contract.InputProjectionV2
+	IdentityFields     []string
 	ExecutionSemantics contract.ExecutionSemanticsV2
 	Limits             Limits
 }
 
 type AlgorithmCompileResult struct {
-	Detector   DetectorSpec
-	Normalizer NumericNormalizerSpec
-	ASTNodes   int
+	Detector          DetectorSpec
+	Normalizer        NumericNormalizerSpec
+	Config            compiledAlgorithmConfig
+	InputProjection   AlgorithmInputProjection
+	InputRequirements []AlgorithmInputRequirement
+	CompilerVersion   string
+	ProofVersion      string
+	ASTNodes          int
 }
 
 type AlgorithmCapability struct {
@@ -53,8 +59,9 @@ type algorithmKey struct {
 }
 
 type registeredAlgorithm struct {
-	compiler   AlgorithmCompiler
-	capability AlgorithmCapability
+	compiler         AlgorithmCompiler
+	capability       AlgorithmCapability
+	capabilityDigest string
 }
 
 type AlgorithmCompilerRegistry struct {
@@ -79,7 +86,13 @@ func NewAlgorithmCompilerRegistry(compilers ...AlgorithmCompiler) (*AlgorithmCom
 		if _, exists := registry.compilers[key]; exists {
 			return nil, fmt.Errorf("strategy: duplicate algorithm compiler %s@%d", key.kind, key.version)
 		}
-		registry.compilers[key] = registeredAlgorithm{compiler: compiler, capability: capability}
+		capabilityDigest, err := contract.DeriveCanonicalDigestV2("algorithm-capability-v1", capability)
+		if err != nil {
+			return nil, fmt.Errorf("strategy: derive algorithm capability digest: %w", err)
+		}
+		registry.compilers[key] = registeredAlgorithm{
+			compiler: compiler, capability: capability, capabilityDigest: capabilityDigest,
+		}
 		capabilities = append(capabilities, capability)
 	}
 	sort.Slice(capabilities, func(left, right int) bool {
@@ -101,7 +114,10 @@ func NewAlgorithmCompilerRegistry(compilers ...AlgorithmCompiler) (*AlgorithmCom
 }
 
 func NewDefaultAlgorithmCompilerRegistry() *AlgorithmCompilerRegistry {
-	registry, err := NewAlgorithmCompilerRegistry(thresholdAlgorithmCompiler{})
+	registry, err := NewAlgorithmCompilerRegistry(
+		thresholdAlgorithmCompiler{}, simpleRingRatioAlgorithmCompiler{}, osRestartAlgorithmCompiler{},
+		procPortAlgorithmCompiler{}, pingUnreachableAlgorithmCompiler{},
+	)
 	if err != nil {
 		panic(err)
 	}
@@ -181,13 +197,22 @@ func (thresholdAlgorithmCompiler) Compile(_ context.Context, compileContext Algo
 	if err != nil {
 		return AlgorithmCompileResult{}, fmt.Errorf("threshold predicate digest: %w", err)
 	}
+	semantic := DetectorSpec{
+		kind: DetectorKindThreshold, version: 1, valueRef: config.ValueField, normalizerRef: normalizer.ref,
+		predicate: Predicate{root: root, digest: predicateDigest}, declaredExecutorErrors: []string{},
+	}.semantic(normalizer)
 	return AlgorithmCompileResult{
 		Detector: DetectorSpec{
 			kind: DetectorKindThreshold, version: 1, valueRef: config.ValueField, normalizerRef: normalizer.ref,
 			predicate: Predicate{root: root, digest: predicateDigest}, declaredExecutorErrors: []string{},
 		},
-		Normalizer: normalizer,
-		ASTNodes:   nodes,
+		Normalizer: normalizer, Config: compiledAlgorithmConfig{Threshold: &semantic},
+		InputProjection: AlgorithmInputProjection{
+			ValueFields:     append([]string(nil), compileContext.Projection.ValueFields...),
+			DimensionFields: append([]string(nil), compileContext.Projection.DimensionFields...),
+			IdentityFields:  append([]string(nil), compileContext.IdentityFields...),
+		},
+		CompilerVersion: "threshold-compiler-v1", ProofVersion: "requires-full-v1", ASTNodes: nodes,
 	}, nil
 }
 

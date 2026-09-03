@@ -212,17 +212,29 @@ func TestRedisCatalogRuntimeG4RequirementOrderIsStable(t *testing.T) {
 	}
 }
 
-func TestRedisCatalogRuntimeKeepsLegacyThresholdRequirement(t *testing.T) {
-	catalog := buildG4Catalog(t, g4SourceStrategy(t, 450, strategy.DetectorKindThreshold,
+func TestRedisCatalogRuntimeExpandsLegacyThresholdRequirementToEveryCompiledLevel(t *testing.T) {
+	document := withSecondG4Level(t, g4LegacyStrategyDocument(
+		t, 450, strategy.DetectorKindThreshold, "usage", "system.cpu", []string{"host"},
 		[]any{map[string]any{"method": "gt", "threshold": 80}},
 	))
+	catalog := buildG4Catalog(t, controlplane.SourceStrategy{
+		SourceID: "450", Document: document,
+		Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
+	})
 	fact, err := freezeG4Catalog(t, catalog)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(fact.Requirements) != 1 || fact.Requirements[0].Role != execution.InputRolePrimary ||
-		len(fact.Requirements[0].Consumers) != 1 || fact.Requirements[0].Consumers[0].Consumer.HasLevel {
+		len(fact.Requirements[0].Consumers) != 2 {
 		t.Fatalf("legacy Threshold requirement = %+v", fact.Requirements)
+	}
+	got := fact.Requirements[0].Consumers
+	for index, levelID := range []uint32{1, 2} {
+		if got[index].Consumer.Plan.StrategyID != "450" || !got[index].Consumer.HasLevel ||
+			got[index].Consumer.LevelID != levelID {
+			t.Fatalf("legacy Threshold consumers = %+v", got)
+		}
 	}
 }
 

@@ -1500,15 +1500,25 @@ func (runtime *RedisCatalogRuntime) primaryRequirements(group QueryGroup, duePla
 			reserve >= due.ScheduleSpec.EvaluationIntervalSeconds*1000 {
 			return nil, errors.New("alarmd controlplane: invalid downstream execution reserve")
 		}
-		requirement.Consumers = append(requirement.Consumers, execution.DataRequirementConsumer{
-			Consumer: execution.ConsumerRef{Plan: due.Identity}, ConsumerDeadlineUnixMilli: due.CompletionDeadlineUnixMilli,
-			DownstreamExecutionReserveMilliSec: reserve,
-		})
+		for _, level := range due.CompiledPlan.Levels() {
+			requirement.Consumers = append(requirement.Consumers, execution.DataRequirementConsumer{
+				Consumer: execution.ConsumerRef{
+					Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true,
+				},
+				ConsumerDeadlineUnixMilli:          due.CompletionDeadlineUnixMilli,
+				DownstreamExecutionReserveMilliSec: reserve,
+			})
+		}
 	}
 	result := make([]execution.DataRequirement, 0, len(byWindow))
 	for _, requirement := range byWindow {
 		sort.Slice(requirement.Consumers, func(i, j int) bool {
-			return lessPlanIdentity(requirement.Consumers[i].Consumer.Plan, requirement.Consumers[j].Consumer.Plan)
+			left := requirement.Consumers[i].Consumer
+			right := requirement.Consumers[j].Consumer
+			if left.Plan != right.Plan {
+				return lessPlanIdentity(left.Plan, right.Plan)
+			}
+			return left.LevelID < right.LevelID
 		})
 		result = append(result, *requirement)
 	}

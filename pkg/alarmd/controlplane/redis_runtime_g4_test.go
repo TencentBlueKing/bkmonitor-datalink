@@ -238,6 +238,48 @@ func TestRedisCatalogRuntimeExpandsLegacyThresholdRequirementToEveryCompiledLeve
 	}
 }
 
+func TestRedisCatalogRuntimeAddsLegacyPrimaryOnlyToUncoveredLevels(t *testing.T) {
+	document := mixedLegacyAndG4Levels(t, g4LegacyStrategyDocument(
+		t, 451, strategy.DetectorKindSimpleRingRatio, "usage", "system.cpu", []string{"host"},
+		map[string]any{"floor": 50, "ceil": nil},
+	))
+	catalog := buildG4Catalog(t, controlplane.SourceStrategy{
+		SourceID: "451", Document: document,
+		Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
+	})
+	fact, err := freezeG4Catalog(t, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	primaryByLevel := map[uint32][]execution.DataRequirement{}
+	for _, requirement := range fact.Requirements {
+		if requirement.Role != execution.InputRolePrimary {
+			continue
+		}
+		for _, consumer := range requirement.Consumers {
+			primaryByLevel[consumer.Consumer.LevelID] = append(primaryByLevel[consumer.Consumer.LevelID], requirement)
+		}
+	}
+	for _, levelID := range []uint32{1, 2} {
+		if len(primaryByLevel[levelID]) != 1 {
+			t.Fatalf("Level %d PRIMARY requirements = %+v, want exactly one", levelID, primaryByLevel[levelID])
+		}
+	}
+	legacy := primaryByLevel[1][0]
+	explicit := primaryByLevel[2][0]
+	if legacy.DatasetName == "primary" || explicit.DatasetName != "primary" {
+		t.Fatalf("legacy/explicit PRIMARY = %+v / %+v", legacy, explicit)
+	}
+	if legacy.LogicalQueryRef != explicit.LogicalQueryRef || legacy.RelativeWindow != explicit.RelativeWindow ||
+		legacy.StepMillis != explicit.StepMillis || legacy.AlignmentMillis != explicit.AlignmentMillis {
+		t.Fatalf("legacy/explicit PRIMARY query facts drifted: legacy=%+v explicit=%+v", legacy, explicit)
+	}
+	if len(fact.Requirements) != 3 {
+		t.Fatalf("requirements = %+v, want legacy PRIMARY plus SRR PRIMARY/previous", fact.Requirements)
+	}
+}
+
 func freezeG4Slot(
 	t *testing.T,
 	strategyID int64,
@@ -338,6 +380,33 @@ func withSecondG4Level(t *testing.T, document json.RawMessage) json.RawMessage {
 	}
 	secondAlgorithm["level"] = float64(2)
 	item["algorithms"] = append(item["algorithms"].([]any), secondAlgorithm)
+	value["detects"] = append(value["detects"].([]any), map[string]any{
+		"level": float64(2), "priority": float64(2), "connector": "and",
+		"trigger_config": map[string]any{"count": float64(1), "check_window": float64(1)},
+	})
+	result, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func mixedLegacyAndG4Levels(t *testing.T, document json.RawMessage) json.RawMessage {
+	t.Helper()
+	var value map[string]any
+	if err := json.Unmarshal(document, &value); err != nil {
+		t.Fatal(err)
+	}
+	item := value["items"].([]any)[0].(map[string]any)
+	g4 := item["algorithms"].([]any)[0].(map[string]any)
+	g4["level"] = float64(2)
+	item["algorithms"] = []any{
+		map[string]any{
+			"level": float64(1), "type": strategy.DetectorKindThreshold,
+			"config": []any{map[string]any{"method": "gt", "threshold": float64(80)}},
+		},
+		g4,
+	}
 	value["detects"] = append(value["detects"].([]any), map[string]any{
 		"level": float64(2), "priority": float64(2), "connector": "and",
 		"trigger_config": map[string]any{"count": float64(1), "check_window": float64(1)},

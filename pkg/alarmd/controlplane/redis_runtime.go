@@ -1321,6 +1321,7 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 ) ([]execution.DataRequirement, error) {
 	byID := make(map[execution.RequirementID]*execution.DataRequirement)
 	legacyDuePlans := make([]execution.DuePlan, 0, len(duePlans))
+	legacyLevels := make(map[execution.PlanIdentity]map[uint32]struct{}, len(duePlans))
 
 	for _, due := range duePlans {
 		plan, ok := planByID[due.Identity]
@@ -1334,13 +1335,12 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 		}
 
 		expected := make(map[execution.RequirementID]uint32)
-		needsLegacyPrimary := false
+		explicitPrimary := make(map[uint32]map[execution.RequirementID]struct{})
 		for _, level := range due.CompiledPlan.Levels() {
 			levelID := level.Definition().LevelID
 			for _, algorithm := range level.Algorithms() {
 				algorithmRequirements := algorithm.InputRequirements()
 				if len(algorithmRequirements) == 0 {
-					needsLegacyPrimary = true
 					continue
 				}
 				for _, requirement := range algorithmRequirements {
@@ -1355,7 +1355,27 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 						return nil, errors.New("alarmd controlplane: compiled algorithm input identity is shared across Levels")
 					}
 					expected[identity] = levelID
+					if requirement.Role == strategy.AlgorithmInputPrimary {
+						if explicitPrimary[levelID] == nil {
+							explicitPrimary[levelID] = make(map[execution.RequirementID]struct{})
+						}
+						explicitPrimary[levelID][identity] = struct{}{}
+					}
 				}
+			}
+		}
+		for _, level := range due.CompiledPlan.Levels() {
+			levelID := level.Definition().LevelID
+			switch len(explicitPrimary[levelID]) {
+			case 0:
+				if legacyLevels[due.Identity] == nil {
+					legacyLevels[due.Identity] = make(map[uint32]struct{})
+					legacyDuePlans = append(legacyDuePlans, due)
+				}
+				legacyLevels[due.Identity][levelID] = struct{}{}
+			case 1:
+			default:
+				return nil, errors.New("alarmd controlplane: compiled Level has multiple PRIMARY input requirements")
 			}
 		}
 
@@ -1410,12 +1430,9 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 				byID[identity] = &copy
 			}
 		}
-		if needsLegacyPrimary {
-			legacyDuePlans = append(legacyDuePlans, due)
-		}
 	}
 
-	legacy, err := runtime.primaryRequirements(group, legacyDuePlans)
+	legacy, err := runtime.primaryRequirements(group, legacyDuePlans, legacyLevels)
 	if err != nil {
 		return nil, err
 	}
@@ -1443,8 +1460,32 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 		})
 		result = append(result, *requirement)
 	}
+	if err := validateExactlyOnePrimaryPerLevel(duePlans, result); err != nil {
+		return nil, err
+	}
 	sort.Slice(result, func(i, j int) bool { return result[i].RequirementID < result[j].RequirementID })
 	return result, nil
+}
+
+func validateExactlyOnePrimaryPerLevel(duePlans []execution.DuePlan, requirements []execution.DataRequirement) error {
+	primary := make(map[execution.ConsumerRef]int)
+	for _, requirement := range requirements {
+		if requirement.Role != execution.InputRolePrimary {
+			continue
+		}
+		for _, consumer := range requirement.Consumers {
+			primary[consumer.Consumer]++
+		}
+	}
+	for _, due := range duePlans {
+		for _, level := range due.CompiledPlan.Levels() {
+			consumer := execution.ConsumerRef{Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true}
+			if primary[consumer] != 1 {
+				return errors.New("alarmd controlplane: compiled Level must have exactly one PRIMARY input requirement")
+			}
+		}
+	}
+	return nil
 }
 
 func (runtime *RedisCatalogRuntime) readPersistedSegment(
@@ -1467,7 +1508,11 @@ func (runtime *RedisCatalogRuntime) readPersistedSegment(
 	return persistedScheduleSegment{}, ErrScheduleUnavailable
 }
 
-func (runtime *RedisCatalogRuntime) primaryRequirements(group QueryGroup, duePlans []execution.DuePlan) ([]execution.DataRequirement, error) {
+func (runtime *RedisCatalogRuntime) primaryRequirements(
+	group QueryGroup,
+	duePlans []execution.DuePlan,
+	levelsByPlan map[execution.PlanIdentity]map[uint32]struct{},
+) ([]execution.DataRequirement, error) {
 	type requirementKey struct {
 		window int64
 	}
@@ -1500,10 +1545,15 @@ func (runtime *RedisCatalogRuntime) primaryRequirements(group QueryGroup, duePla
 			reserve >= due.ScheduleSpec.EvaluationIntervalSeconds*1000 {
 			return nil, errors.New("alarmd controlplane: invalid downstream execution reserve")
 		}
-		for _, level := range due.CompiledPlan.Levels() {
+		levelIDs := make([]uint32, 0, len(levelsByPlan[due.Identity]))
+		for levelID := range levelsByPlan[due.Identity] {
+			levelIDs = append(levelIDs, levelID)
+		}
+		sort.Slice(levelIDs, func(i, j int) bool { return levelIDs[i] < levelIDs[j] })
+		for _, levelID := range levelIDs {
 			requirement.Consumers = append(requirement.Consumers, execution.DataRequirementConsumer{
 				Consumer: execution.ConsumerRef{
-					Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true,
+					Plan: due.Identity, LevelID: levelID, HasLevel: true,
 				},
 				ConsumerDeadlineUnixMilli:          due.CompletionDeadlineUnixMilli,
 				DownstreamExecutionReserveMilliSec: reserve,

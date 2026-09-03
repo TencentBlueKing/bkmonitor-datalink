@@ -1,0 +1,141 @@
+logging:
+  level: info
+  format: json
+
+telemetry:
+  metrics:
+    exporter: prometheus
+    prometheus:
+      listen_address: 127.0.0.1:9464
+
+cleaner:
+  worker_count: 8
+  max_batch_messages: 128
+  max_batch_bytes: 4194304
+  batch_wait_milliseconds: 20
+  max_concurrent_batches: 2
+  max_inflight_messages: 512
+  max_inflight_bytes: 16777216
+  max_inflight_per_lane: 256
+  resume_inflight_per_lane: 128
+  process_timeout_seconds: 30
+  retry_max_attempts: 3
+  retry_max_elapsed_seconds: 120
+  shutdown_drain_timeout_seconds: 30
+
+storage:
+  repository: elasticsearch
+  elasticsearch:
+    addresses:
+      - http://127.0.0.1:9200
+    index_prefix: linkd-pm2
+    number_of_replicas: 0
+    time_partition:
+      event_bucket_days: 7
+      alert_history_bucket_days: 7
+      alert_log_bucket_days: 7
+      precreate_past_buckets: 1
+      precreate_future_buckets: 1
+      max_buckets_per_entity: 512
+      max_future_skew_seconds: 300
+  redis:
+    address: 127.0.0.1:16379
+    password: test123456
+    database: 0
+
+lifecycle:
+  concurrency: 8
+  process_timeout_seconds: 30
+  retry_max_attempts: 3
+  retry_max_elapsed_seconds: 120
+  signal:
+    stream: linkd:pm2:lifecycle:signals
+    group: linkd-pm2-lifecycle
+    consumer_prefix: linkd-pm2-lifecycle
+    create_group: true
+    read_block_milliseconds: 1000
+    claim_min_idle_seconds: 300
+    max_batch_messages: 128
+    max_message_bytes: 65536
+  mailbox:
+    key_prefix: linkd:pm2:lifecycle:mailbox
+    max_pending: 128
+    max_drain_events: 512
+    backpressure:
+      cache_ttl_seconds: 3
+      query_timeout_seconds: 1
+      high_watermark: 100000
+      low_watermark: 80000
+  lock:
+    key_prefix: linkd:pm2:lifecycle:lock
+    ttl_seconds: 60
+    renew_interval_seconds: 20
+    retry_delay_milliseconds: 500
+    release_timeout_seconds: 3
+  output:
+    kafka:
+      brokers:
+        - 127.0.0.1:9092
+      topic: linkd-pm2-alerts
+      client_id: linkd-pm2-lifecycle
+      max_message_bytes: 1048576
+      security:
+        protocol: plaintext
+
+control_plane:
+  elasticsearch:
+    schema_and_active_reconcile_interval_seconds: 3600
+    bucket_reconcile_interval_seconds: 21600
+    archive_interval_seconds: 30
+    archive_batch_size: 1000
+    archive_worker_count: 4
+  redis_stream:
+    reconcile_interval_seconds: 60
+    operation_timeout_seconds: 10
+    max_entries: 100000
+    trim_batch_size: 10000
+
+event_sources:
+  - event_source_id: standard-infra
+    related_tenant_id: tenant-infra
+    enabled: true
+    cleaner:
+      type: standard
+      runtime:
+        worker_count: 4
+        max_batch_messages: 64
+        max_concurrent_batches: 1
+    fingerprint_mode: field
+    fingerprint_field: source_alert_id
+    storage:
+      type: kafka
+      kafka:
+        brokers:
+          - 127.0.0.1:9092
+        topic: linkd-standard-infra
+        consumer_group: linkd-cleaner-standard-infra
+        security:
+          protocol: plaintext
+
+  - event_source_id: standard-service
+    related_tenant_id: tenant-service
+    enabled: true
+    cleaner:
+      type: standard
+      runtime:
+        worker_count: 8
+        max_batch_messages: 128
+        max_concurrent_batches: 2
+    fingerprint_mode: fields
+    fingerprint_fields:
+      - condition_key
+      - dimensions.generator_id
+    storage:
+      type: kafka
+      kafka:
+        brokers:
+          - 127.0.0.1:9092
+        topic: linkd-standard-service
+        consumer_group: linkd-cleaner-standard-service
+        security:
+          protocol: plaintext

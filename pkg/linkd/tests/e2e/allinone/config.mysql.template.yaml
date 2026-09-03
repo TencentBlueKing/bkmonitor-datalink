@@ -1,0 +1,73 @@
+logging:
+  level: info
+  format: json
+
+storage:
+  repository: mysql
+  mysql:
+    address: {{MYSQL_ADDRESS}}
+    database: {{MYSQL_DATABASE}}
+    username: {{MYSQL_USERNAME}}
+    password: {{MYSQL_PASSWORD}}
+  redis:
+    address: {{REDIS_ADDRESS}}
+    password: {{REDIS_PASSWORD}}
+    database: {{REDIS_DATABASE}}
+
+lifecycle:
+  concurrency: 4
+  process_timeout_seconds: 10
+  retry_max_attempts: 3
+  retry_max_elapsed_seconds: 15
+  signal:
+    stream: {{SIGNAL_STREAM}}
+    group: {{SIGNAL_GROUP}}
+    consumer_prefix: {{SIGNAL_CONSUMER_PREFIX}}
+    create_group: true
+    read_block_milliseconds: 100
+    claim_min_idle_seconds: 60
+    max_batch_messages: 64
+    max_message_bytes: 65536
+  mailbox:
+    key_prefix: {{LOCK_PREFIX}}:mailbox
+    max_pending: 128
+    max_drain_events: 512
+    backpressure:
+      cache_ttl_seconds: 3
+      query_timeout_seconds: 1
+      high_watermark: 100000
+      low_watermark: 80000
+  lock:
+    key_prefix: {{LOCK_PREFIX}}
+    ttl_seconds: 15
+    renew_interval_seconds: 5
+    retry_delay_milliseconds: 100
+    release_timeout_seconds: 3
+  output:
+    kafka:
+      brokers: [{{KAFKA_BROKER}}]
+      topic: {{OUTPUT_TOPIC}}
+      client_id: {{OUTPUT_CLIENT_ID}}
+      max_message_bytes: 1048576
+      security:
+        protocol: plaintext
+
+event_sources:
+  - event_source_id: {{EVENT_SOURCE_ID}}
+    enabled: true
+    cleaner:
+      type: standard
+    fingerprint_mode: field
+    fingerprint_field: source_alert_id
+    severity_mapping:
+      critical: critical
+      warning: warning
+      info: info
+    storage:
+      type: kafka
+      kafka:
+        brokers: [{{KAFKA_BROKER}}]
+        topic: {{RAW_TOPIC}}
+        consumer_group: {{CLEANER_GROUP}}
+        security:
+          protocol: plaintext

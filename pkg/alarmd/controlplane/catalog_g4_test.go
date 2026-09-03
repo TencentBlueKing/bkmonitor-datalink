@@ -157,10 +157,12 @@ func TestG4CatalogRejectsNonCanonicalFixedAlgorithmQueries(t *testing.T) {
 		{"OsRestart/metric", strategy.DetectorKindOsRestart, "uptime", "system.env", []string{"bk_target_cloud_id", "bk_target_ip"}, "metric_field", "procs"},
 		{"OsRestart/aggregation", strategy.DetectorKindOsRestart, "uptime", "system.env", []string{"bk_target_cloud_id", "bk_target_ip"}, "agg_method", "AVG"},
 		{"OsRestart/interval", strategy.DetectorKindOsRestart, "uptime", "system.env", []string{"bk_target_cloud_id", "bk_target_ip"}, "agg_interval", 30},
+		{"OsRestart/metric_id", strategy.DetectorKindOsRestart, "uptime", "system.env", []string{"bk_target_cloud_id", "bk_target_ip"}, "metric_id", "bk_monitor.proc_port"},
 		{"ProcPort/table", strategy.DetectorKindProcPort, "proc_exists", "system.proc_port", []string{"bk_target_cloud_id", "bk_target_ip", "display_name"}, "result_table_id", "system.env"},
 		{"ProcPort/metric", strategy.DetectorKindProcPort, "proc_exists", "system.proc_port", []string{"bk_target_cloud_id", "bk_target_ip", "display_name"}, "metric_field", "port_health"},
 		{"ProcPort/aggregation", strategy.DetectorKindProcPort, "proc_exists", "system.proc_port", []string{"bk_target_cloud_id", "bk_target_ip", "display_name"}, "agg_method", "AVG"},
 		{"ProcPort/interval", strategy.DetectorKindProcPort, "proc_exists", "system.proc_port", []string{"bk_target_cloud_id", "bk_target_ip", "display_name"}, "agg_interval", 30},
+		{"ProcPort/metric_id", strategy.DetectorKindProcPort, "proc_exists", "system.proc_port", []string{"bk_target_cloud_id", "bk_target_ip", "display_name"}, "metric_id", "bk_monitor.os_restart"},
 		{"PingUnreachable/table", controlplane.SourceAlgorithmTypePingUnreachable, "loss_percent", "pingserver.base", []string{"bk_target_cloud_id", "bk_target_ip"}, "result_table_id", "system.env"},
 		{"PingUnreachable/metric", controlplane.SourceAlgorithmTypePingUnreachable, "loss_percent", "pingserver.base", []string{"bk_target_cloud_id", "bk_target_ip"}, "metric_field", "available"},
 		{"PingUnreachable/aggregation", controlplane.SourceAlgorithmTypePingUnreachable, "loss_percent", "pingserver.base", []string{"bk_target_cloud_id", "bk_target_ip"}, "agg_method", "AVG"},
@@ -190,6 +192,43 @@ func TestG4CatalogRejectsNonCanonicalFixedAlgorithmQueries(t *testing.T) {
 				t.Fatalf("disposition = %+v", disposition)
 			}
 		})
+	}
+}
+
+func TestG4CatalogSimpleRingRatioUsesArbitraryPrimaryQueryInterval(t *testing.T) {
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := g4LegacyStrategyDocument(
+		t, 300, strategy.DetectorKindSimpleRingRatio, "request_latency", "custom.application", []string{"service"},
+		map[string]any{"floor": 50, "ceil": nil},
+	)
+	document = mutateG4QueryConfig(t, document, "agg_interval", 120)
+	catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
+		Strategies: []controlplane.SourceStrategy{{
+			SourceID: "300", Document: document,
+			Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
+		}},
+		Planner: planner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.QueryGroups) != 1 || len(catalog.QueryGroups[0].Plans) != 1 {
+		t.Fatalf("catalog = %+v", catalog)
+	}
+	requirements := catalog.QueryGroups[0].Plans[0].RequirementTemplates
+	if len(requirements) != 2 {
+		t.Fatalf("requirements = %+v", requirements)
+	}
+	primary, previous := requirements[0], requirements[1]
+	if primary.DatasetName != "primary" || primary.RelativeWindow.StartOffsetSeconds != -120 || primary.RelativeWindow.EndOffsetSeconds != 0 ||
+		previous.DatasetName != "previous" || previous.RelativeWindow.StartOffsetSeconds != -240 || previous.RelativeWindow.EndOffsetSeconds != -120 ||
+		!reflect.DeepEqual(previous.PointOffsetsSeconds, []int64{120}) ||
+		!reflect.DeepEqual(previous.NamedPoints, []execution.NamedInputPoint{{Name: "previous", OffsetSeconds: 120}}) ||
+		primary.LogicalQueryRef != previous.LogicalQueryRef {
+		t.Fatalf("SimpleRingRatio requirements = %+v", requirements)
 	}
 }
 

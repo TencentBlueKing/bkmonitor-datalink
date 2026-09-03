@@ -378,7 +378,11 @@ func (runtime *productionPhaseTwoControl) Close() error {
 func (runtime *productionPhaseTwoControl) refresh(
 	ctx context.Context,
 ) (refreshResult phaseTwoControlRefreshResult, pending bool, refreshErr error) {
+	renewed := false
 	defer func() {
+		if renewed {
+			return
+		}
 		// Renewal is guarded by the Activation CAS and must not replace the
 		// Source/activation result or stop pending confirmation from converging.
 		runtime.observeCurrentObjectRenewal(ctx, runtime.dependencies.Repository.RenewCurrentActivationObjects(ctx))
@@ -403,7 +407,20 @@ func (runtime *productionPhaseTwoControl) refresh(
 			return phaseTwoControlRefreshResult{}, false, err
 		}
 		queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
-		return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, false, err
+		if err != nil {
+			return phaseTwoControlRefreshResult{}, false, err
+		}
+		renewErr := runtime.dependencies.Repository.RenewCurrentActivationObjects(ctx)
+		renewed = true
+		runtime.observeCurrentObjectRenewal(ctx, renewErr)
+		if renewErr != nil {
+			return phaseTwoControlRefreshResult{
+				QueryGroups: queryGroups, Status: phaseTwoControlDegradedLastGood,
+				SourceKind: observability.SourceKindCompiledSnapshot,
+				ReasonCode: observability.ReasonCode(contract.ReasonRedisUnavailable), Cause: renewErr,
+			}, false, nil
+		}
+		return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, false, nil
 	}
 	if result.Status != controlplane.SourceRefreshPublished && result.Status != controlplane.SourceRefreshUnchanged &&
 		result.Status != controlplane.SourceRefreshPublicationConflict {

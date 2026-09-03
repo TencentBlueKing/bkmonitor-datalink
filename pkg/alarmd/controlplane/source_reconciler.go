@@ -108,6 +108,17 @@ func (reconciler *SourceReconciler) Refresh(
 		}
 	}
 	catalog.ObservationID = observationID
+	// The active revision remains the execution authority even when latest points
+	// at a stranded candidate. Restore its occurrence directly; requiring two
+	// identical source observations here can leave the active Snapshot expired
+	// forever when non-semantic observation details change between refreshes.
+	activation, activationErr := reconciler.repository.LoadActivation(ctx)
+	if activationErr == nil && activation.Current.SnapshotRevision == catalog.SnapshotRevision {
+		return reconciler.publish(ctx, current, catalog, SourceRefreshUnchanged)
+	}
+	if activationErr != nil && !errors.Is(activationErr, ErrActivationUnavailable) {
+		return SourceRefreshResult{}, activationErr
+	}
 	confirmationKey, err := sourceCandidateConfirmationKey(catalog.ObservationID, catalog.SnapshotRevision, catalog.Dispositions)
 	if err != nil {
 		return SourceRefreshResult{}, err
@@ -142,22 +153,20 @@ func (reconciler *SourceReconciler) publish(
 	catalog Catalog,
 	status SourceRefreshStatus,
 ) (SourceRefreshResult, error) {
-	if current == nil {
-		activation, err := reconciler.repository.LoadActivation(ctx)
-		if err == nil && activation.Current.SnapshotRevision == catalog.SnapshotRevision {
-			snapshot, _, restoreErr := reconciler.publisher.restoreIfActivationCurrent(ctx, activation, catalog)
-			if restoreErr != nil {
-				return SourceRefreshResult{}, restoreErr
-			}
-			if clearErr := reconciler.clearPending(ctx); clearErr != nil {
-				return SourceRefreshResult{}, clearErr
-			}
-			return SourceRefreshResult{Status: status, Observation: catalog.ObservationID,
-				Publication: snapshot.Publication}, nil
+	activation, activationErr := reconciler.repository.LoadActivation(ctx)
+	if activationErr == nil && activation.Current.SnapshotRevision == catalog.SnapshotRevision {
+		snapshot, _, loadErr := reconciler.publisher.restoreIfActivationCurrent(ctx, activation, catalog)
+		if loadErr != nil {
+			return SourceRefreshResult{}, loadErr
 		}
-		if err != nil && !errors.Is(err, ErrActivationUnavailable) {
-			return SourceRefreshResult{}, err
+		if clearErr := reconciler.clearPending(ctx); clearErr != nil {
+			return SourceRefreshResult{}, clearErr
 		}
+		return SourceRefreshResult{Status: status, Observation: catalog.ObservationID,
+			Publication: snapshot.Publication}, nil
+	}
+	if activationErr != nil && !errors.Is(activationErr, ErrActivationUnavailable) {
+		return SourceRefreshResult{}, activationErr
 	}
 	expected := SnapshotPublicationRef{}
 	if current != nil {

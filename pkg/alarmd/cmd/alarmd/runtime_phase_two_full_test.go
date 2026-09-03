@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -395,9 +396,6 @@ func TestProductionPhaseTwoBundleRebuildsExpiredSnapshotReferencedByPersistentAc
 		return recoveredControl.dependencies.Reconciler.Refresh(ctx,
 			recoveredControl.dependencies.Source, recoveredControl.dependencies.Planner)
 	}
-	if result, err := refreshSource(); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
-		t.Fatalf("latest occurrence collision first confirmation=(%+v,%v), want pending", result, err)
-	}
 	if _, err := refreshSource(); !errors.Is(err, controlplane.ErrPublicationOccurrenceCollision) {
 		t.Fatalf("latest occurrence collision error = %v, want collision", err)
 	}
@@ -441,9 +439,6 @@ func TestProductionPhaseTwoBundleRebuildsExpiredSnapshotReferencedByPersistentAc
 	if err := redisClient.Set(ctx, occurrenceKey, "another-snapshot-revision", time.Hour).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := refreshSource(); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
-		t.Fatalf("first conflicting recovery confirmation=(%+v,%v), want pending", result, err)
-	}
 	if _, err := refreshSource(); !errors.Is(err, controlplane.ErrPublicationOccurrenceCollision) {
 		t.Fatalf("conflicting occurrence recovery error = %v, want collision", err)
 	}
@@ -467,14 +462,16 @@ func TestProductionPhaseTwoBundleActivatesLatestSnapshotWhenPreviousPayloadExpir
 		newValue             string
 		incompleteActivation bool
 		wantRecovery         bool
+		revertToOld          bool
 	}{
 		{name: "same Query Group exact activation coverage", oldValue: `"threshold": 80`, newValue: `"threshold": 81`, wantRecovery: true},
 		{name: "Query Group identity changed", oldValue: `"result_table_id": "system.cpu"`, newValue: `"result_table_id": "system.cpu.changed"`, wantRecovery: true},
 		{name: "activation Plan coverage incomplete", oldValue: `"threshold": 80`, newValue: `"threshold": 81`, incompleteActivation: true},
+		{name: "live source returns to active revision while latest differs", oldValue: `"threshold": 80`, newValue: `"threshold": 81`, wantRecovery: true, revertToOld: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			testProductionPhaseTwoStrandedLatest(t, test.oldValue, test.newValue, test.incompleteActivation, test.wantRecovery)
+			testProductionPhaseTwoStrandedLatest(t, test.oldValue, test.newValue, test.incompleteActivation, test.wantRecovery, test.revertToOld)
 		})
 	}
 }
@@ -485,6 +482,7 @@ func testProductionPhaseTwoStrandedLatest(
 	newValue string,
 	incompleteActivation bool,
 	wantRecovery bool,
+	revertToOld bool,
 ) {
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
@@ -563,6 +561,11 @@ func testProductionPhaseTwoStrandedLatest(
 	}
 	defer func() { _ = first.Shutdown(ctx) }()
 	nowUnix.Add(2)
+	if revertToOld {
+		if err := redisClient.Set(ctx, "alarm-config.strategy_1001", strategyDocument, 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	catalogPrefix := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog")
 	oldSnapshot, err := firstControl.dependencies.Repository.LoadPublishedSnapshot(ctx, oldActivation.Current)
@@ -621,8 +624,31 @@ func testProductionPhaseTwoStrandedLatest(
 		t.Fatal(err)
 	}
 	if wantRecovery {
-		if activation.Current != latest.Publication || activation.RecordRevision != oldActivation.RecordRevision+1 {
-			t.Fatalf("recovered activation = %+v, want latest publication %+v", activation, latest.Publication)
+		wantPublication, wantRevision := latest.Publication, oldActivation.RecordRevision+1
+		if revertToOld {
+			wantPublication, wantRevision = oldActivation.Current, oldActivation.RecordRevision
+		}
+		if activation.Current != wantPublication || activation.RecordRevision != wantRevision {
+			t.Fatalf("recovered activation = %+v, want publication %+v revision %d", activation, wantPublication, wantRevision)
+		}
+		if _, err := firstControl.dependencies.Repository.LoadPublishedSnapshot(ctx, activation.Current); err != nil {
+			t.Fatalf("recovered current Snapshot is unreadable: %v", err)
+		}
+		if revertToOld {
+			publication, err := redisClient.Get(ctx, catalogPrefix+":latest_publication").Result()
+			want := fmt.Sprintf("%d\n%s", oldActivation.Current.PublicationEpoch, oldActivation.Current.SnapshotRevision)
+			if err != nil || publication != want {
+				t.Fatalf("recovered source publication=(%q,%v), want active occurrence %q", publication, err, want)
+			}
+		}
+		if err := firstControl.dependencies.Repository.RenewCurrentActivationObjects(ctx); err != nil {
+			t.Fatalf("recovered current objects cannot renew: %v", err)
+		}
+		if revertToOld {
+			stable, stableErr := firstControl.Refresh(ctx)
+			if stableErr != nil || stable.Status != phaseTwoControlHealthy || len(stable.QueryGroups) != 1 {
+				t.Fatalf("recovered current objects did not remain healthy: result=%+v error=%v", stable, stableErr)
+			}
 		}
 	} else {
 		if !reflect.DeepEqual(activation, activationBefore) {

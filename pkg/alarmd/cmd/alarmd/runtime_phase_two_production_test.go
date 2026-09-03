@@ -547,13 +547,15 @@ func TestProductionPhaseTwoControlIsolatesInvalidDrainingQueryGroup(t *testing.T
 
 func TestProductionPhaseTwoControlKeepsCurrentActivationWhileCandidateIsPending(t *testing.T) {
 	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-current", PublicationEpoch: 2}
-	reconciler := &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{{
-		Status: controlplane.SourceRefreshPendingConfirmation, Observation: "observation-next",
-	}}}
+	reconciler := &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{
+		{Status: controlplane.SourceRefreshPendingConfirmation, Observation: "observation-next"},
+		{Status: controlplane.SourceRefreshPendingConfirmation, Observation: "observation-next-changed"},
+	}}
+	renewErr := errors.New("renew pending current objects")
 	repository := &fakeProductionCatalogRepository{activation: controlplane.ActivationState{
 		RecordRevision: 1, Current: publication,
 	}, snapshot: controlplane.PublishedSnapshot{Publication: publication,
-		QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-1"}}}, renewErr: errors.New("renew pending current objects")}
+		QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-1"}}}, renewErrs: []error{renewErr, nil}}
 	activator := &fakeInitialScheduleActivator{}
 	var observations []observability.Observation
 	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
@@ -569,17 +571,25 @@ func TestProductionPhaseTwoControlKeepsCurrentActivationWhileCandidateIsPending(
 		t.Fatal(err)
 	}
 	result, err := control.Refresh(context.Background())
-	if err != nil || result.Status != phaseTwoControlHealthy ||
+	if err != nil || result.Status != phaseTwoControlDegradedLastGood ||
+		result.ReasonCode != observability.ReasonCode(contract.ReasonRedisUnavailable) ||
+		!errors.Is(result.Cause, renewErr) ||
 		!reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-1"}) {
 		t.Fatalf("Refresh() = %#v, %v", result, err)
 	}
 	if activator.calls != 0 {
 		t.Fatalf("pending candidate changed current activation, calls = %d", activator.calls)
 	}
-	if repository.renewCalls != 1 {
-		t.Fatalf("pending refresh renew calls=%d, want 1", repository.renewCalls)
+	recovered, err := control.Refresh(context.Background())
+	if err != nil || recovered.Status != phaseTwoControlHealthy ||
+		!reflect.DeepEqual(recovered.QueryGroups, []execution.QueryGroupIdentity{"query-group-1"}) {
+		t.Fatalf("recovered Refresh() = %#v, %v", recovered, err)
 	}
-	if len(observations) != 1 || observations[0].Stage != observability.StageActiveQGSet || observations[0].Result != observability.ResultDegraded {
+	if repository.renewCalls != 2 {
+		t.Fatalf("pending refresh renew calls=%d, want 2", repository.renewCalls)
+	}
+	if len(observations) != 2 || observations[0].Stage != observability.StageActiveQGSet ||
+		observations[0].Result != observability.ResultDegraded || observations[1].Result != observability.ResultRecovered {
 		t.Fatalf("pending renewal observations=%#v", observations)
 	}
 }

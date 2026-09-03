@@ -271,7 +271,12 @@ return {tonumber(epoch), 1}
 const restoreSnapshotPublicationScript = `
 local header = redis.call('GET', KEYS[1])
 if not header or header ~= ARGV[1] then return 0 end
-if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+local latest = redis.call('GET', KEYS[2])
+if ARGV[7] == '' then
+  if latest then return 0 end
+elseif not latest or latest ~= ARGV[7] then
+  return 0
+end
 local snapshot = redis.call('GET', KEYS[3])
 if snapshot and snapshot ~= ARGV[2] then return -1 end
 local occurrence = redis.call('GET', KEYS[5])
@@ -315,12 +320,18 @@ func (repository *RedisCatalogRepository) restoreCatalogPublicationIfActivationC
 		return PublishedSnapshot{}, err
 	}
 	epoch := strconv.FormatUint(activation.Current.PublicationEpoch, 10)
+	latest, latestErr := repository.client.Get(ctx, repository.latestPublicationKey()).Result()
+	if errors.Is(latestErr, redis.Nil) {
+		latest = ""
+	} else if latestErr != nil {
+		return PublishedSnapshot{}, latestErr
+	}
 	changed, err := repository.client.Eval(ctx, restoreSnapshotPublicationScript, []string{
 		repository.activationHeaderKey(), repository.latestPublicationKey(),
 		repository.snapshotKey(catalog.SnapshotRevision), repository.epochForRevisionKey(catalog.SnapshotRevision),
 		repository.publicationKey(activation.Current.PublicationEpoch),
 	}, header, payload, repository.ttl.Milliseconds(), epoch, publicationValue(activation.Current),
-		string(catalog.SnapshotRevision)).Int()
+		string(catalog.SnapshotRevision), latest).Int()
 	if err != nil {
 		return PublishedSnapshot{}, fmt.Errorf("alarmd controlplane: restore expired Snapshot: %w", err)
 	}

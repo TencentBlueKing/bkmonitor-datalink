@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"sort"
 	"strconv"
@@ -1658,6 +1659,28 @@ func TestProductionSlotObservationsBracketRealExecutionWithFrozenProvenance(t *t
 	}
 	if len(observations) != 0 {
 		t.Fatalf("not-due Slot emitted execution observations: %+v", observations)
+	}
+}
+
+func TestObservedProductionSlotExecutorClassifiesMissingFrozenQueryFacts(t *testing.T) {
+	var observations []observability.Observation
+	wantErr := fmt.Errorf("resolve frozen input closure: %w", access.ErrFrozenQueryPlanUnavailable)
+	executor := observedProductionSlotExecutor{
+		next: slotExecutorFunc(func(context.Context, execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
+			return execution.SlotExecutionResult{}, wantErr
+		}),
+		observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		}),
+	}
+	_, err := executor.Execute(context.Background(), execution.SlotExecutionRequest{})
+	if !errors.Is(err, access.ErrFrozenQueryPlanUnavailable) {
+		t.Fatalf("Execute() error=%v", err)
+	}
+	if len(observations) != 2 || observations[1].Stage != observability.StageSlotCompleted ||
+		observations[1].Result != observability.ResultFailed ||
+		observations[1].ReasonCode != observability.ReasonContractDeterministic {
+		t.Fatalf("observations=%+v", observations)
 	}
 }
 

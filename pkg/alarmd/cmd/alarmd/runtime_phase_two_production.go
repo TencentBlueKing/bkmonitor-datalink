@@ -1061,6 +1061,9 @@ func (executor observedProductionSlotExecutor) Execute(
 	if err != nil {
 		observedResult = observability.ResultFailed
 		reason = observability.ReasonInternalUnknown
+		if errors.Is(err, access.ErrFrozenQueryPlanUnavailable) {
+			reason = observability.ReasonContractDeterministic
+		}
 	} else if observedResult == "" {
 		observedResult = observability.ResultSuccess
 	}

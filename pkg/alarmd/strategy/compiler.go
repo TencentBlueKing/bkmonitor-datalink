@@ -445,7 +445,7 @@ func compiledConfigMatchesKind(config compiledAlgorithmConfig, kind string) bool
 	count := 0
 	for _, configured := range []bool{
 		config.Threshold != nil, config.SimpleRingRatio != nil, config.OsRestart != nil,
-		config.ProcPort != nil, config.PingUnreachable != nil,
+		config.ProcPort != nil,
 	} {
 		if configured {
 			count++
@@ -463,8 +463,6 @@ func compiledConfigMatchesKind(config compiledAlgorithmConfig, kind string) bool
 		return config.OsRestart != nil
 	case DetectorKindProcPort:
 		return config.ProcPort != nil
-	case DetectorKindPingUnreachable:
-		return config.PingUnreachable != nil
 	default:
 		return false
 	}

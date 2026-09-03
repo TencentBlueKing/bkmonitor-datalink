@@ -133,18 +133,18 @@ type ProcPortConfig struct {
 	BindIPField            string `json:"bind_ip_field"`
 }
 
-type PingUnreachableConfig struct {
-	ValueField       string `json:"value_field"`
-	SourceMetric     string `json:"source_metric"`
-	ThresholdDecimal string `json:"threshold_decimal"`
+type AlgorithmSourceProvenance struct {
+	SourceAlgorithmFamily string `json:"source_algorithm_family"`
+	SourceMappingVersion  string `json:"source_mapping_version"`
+	CanonicalQueryDigest  string `json:"canonical_query_digest"`
 }
 
 type compiledAlgorithmConfig struct {
-	Threshold       *detectorSemantic      `json:"threshold,omitempty"`
-	SimpleRingRatio *SimpleRingRatioConfig `json:"simple_ring_ratio,omitempty"`
-	OsRestart       *OsRestartConfig       `json:"os_restart,omitempty"`
-	ProcPort        *ProcPortConfig        `json:"proc_port,omitempty"`
-	PingUnreachable *PingUnreachableConfig `json:"ping_unreachable,omitempty"`
+	Threshold        *detectorSemantic          `json:"threshold,omitempty"`
+	SimpleRingRatio  *SimpleRingRatioConfig     `json:"simple_ring_ratio,omitempty"`
+	OsRestart        *OsRestartConfig           `json:"os_restart,omitempty"`
+	ProcPort         *ProcPortConfig            `json:"proc_port,omitempty"`
+	SourceProvenance *AlgorithmSourceProvenance `json:"source_provenance,omitempty"`
 }
 
 type CompiledAlgorithmPlan struct {
@@ -199,11 +199,11 @@ func (plan CompiledAlgorithmPlan) ProcPortConfig() (ProcPortConfig, bool) {
 	}
 	return *plan.config.ProcPort, true
 }
-func (plan CompiledAlgorithmPlan) PingUnreachableConfig() (PingUnreachableConfig, bool) {
-	if plan.config.PingUnreachable == nil {
-		return PingUnreachableConfig{}, false
+func (plan CompiledAlgorithmPlan) SourceProvenance() (AlgorithmSourceProvenance, bool) {
+	if plan.config.SourceProvenance == nil {
+		return AlgorithmSourceProvenance{}, false
 	}
-	return *plan.config.PingUnreachable, true
+	return *plan.config.SourceProvenance, true
 }
 
 type compiledAlgorithmSemantic struct {

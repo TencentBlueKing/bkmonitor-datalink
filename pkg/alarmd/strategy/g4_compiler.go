@@ -149,36 +149,6 @@ func (procPortAlgorithmCompiler) Compile(_ context.Context, compileContext Algor
 	), nil
 }
 
-type pingUnreachableAlgorithmCompiler struct{}
-
-func (pingUnreachableAlgorithmCompiler) Capability() AlgorithmCapability {
-	return AlgorithmCapability{
-		Kind: DetectorKindPingUnreachable, Version: 1, EvaluationScope: contract.EvaluationScopeSeries,
-		InputShape: "ROW", RequiredHistoryKind: algorithmHistoryNone,
-		StateSchemaVersion: "ping-unreachable-v1", Deterministic: true,
-		FixedComputeCost: 1, CostPerRecord: 1,
-	}
-}
-
-func (pingUnreachableAlgorithmCompiler) Compile(_ context.Context, compileContext AlgorithmCompileContext, raw contract.AlgorithmIRV2) (AlgorithmCompileResult, error) {
-	var config g4AlgorithmInputsV1
-	if err := decodeStrict(raw.Config, &config); err != nil {
-		return AlgorithmCompileResult{}, configErrorf("PingUnreachable config: %v", err)
-	}
-	requirements, err := validateG4Inputs(compileContext, config.InputProjection, config.Requirements, "")
-	if err != nil {
-		return AlgorithmCompileResult{}, configErrorf("PingUnreachable config: %v", err)
-	}
-	if len(requirements) != 1 || len(config.InputProjection.ValueFields) != 1 || config.InputProjection.ValueFields[0] != "value" {
-		return AlgorithmCompileResult{}, configErrorf("PingUnreachable config: canonical value primary input is required")
-	}
-	normalized := &PingUnreachableConfig{ValueField: "value", SourceMetric: "loss_percent", ThresholdDecimal: "1.000000"}
-	return g4CompileResult(
-		compiledAlgorithmConfig{PingUnreachable: normalized}, config.InputProjection, requirements,
-		"ping-unreachable-compiler-v1", "gte-one-v1", 1,
-	), nil
-}
-
 func g4CompileResult(
 	config compiledAlgorithmConfig,
 	projection AlgorithmInputProjection,

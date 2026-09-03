@@ -14,6 +14,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
+const SourceAlgorithmTypePingUnreachable = "PingUnreachable"
+
 type SourceIdentity struct {
 	TenantID   string
 	BusinessID string
@@ -590,6 +592,11 @@ func compilePlan(
 				invalid = true
 				break
 			}
+			if err := validateCanonicalAlgorithmQuery(raw.Type, item.QueryConfigs); err != nil {
+				dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigRejected, Reason: "ALGORITHM_QUERY_INVALID"})
+				invalid = true
+				break
+			}
 			config, err := compileAlgorithmConfig(raw, item.Unit, levelID, projection, dataset.IdentityFields, interval, &levelInputs)
 			if err != nil {
 				reason := "ALGORITHM_CONFIG_INVALID"
@@ -600,7 +607,11 @@ func compilePlan(
 				invalid = true
 				break
 			}
-			compiledAlgorithms = append(compiledAlgorithms, contract.AlgorithmIRV2{Type: raw.Type, Version: 1, Config: config})
+			detectorKind := raw.Type
+			if raw.Type == SourceAlgorithmTypePingUnreachable {
+				detectorKind = strategy.DetectorKindThreshold
+			}
+			compiledAlgorithms = append(compiledAlgorithms, contract.AlgorithmIRV2{Type: detectorKind, Version: 1, Config: config})
 		}
 		if invalid {
 			continue
@@ -645,7 +656,7 @@ func compilePlan(
 func supportedAlgorithmKind(kind string) bool {
 	switch kind {
 	case strategy.DetectorKindThreshold, strategy.DetectorKindSimpleRingRatio, strategy.DetectorKindOsRestart,
-		strategy.DetectorKindProcPort, strategy.DetectorKindPingUnreachable:
+		strategy.DetectorKindProcPort, SourceAlgorithmTypePingUnreachable:
 		return true
 	default:
 		return false
@@ -719,10 +730,75 @@ func compileAlgorithmConfig(
 			Requirements    []strategy.AlgorithmInputRequirement `json:"requirements"`
 		}{sourceConfig.Floor, sourceConfig.Ceil, algorithmProjection, algorithmRequirements})
 	}
+	if raw.Type == SourceAlgorithmTypePingUnreachable {
+		if !emptyAlgorithmConfig(raw.Config) {
+			return nil, errors.New("alarmd controlplane: invalid PingUnreachable config")
+		}
+		return json.Marshal(struct {
+			ValueField            string                               `json:"value_field"`
+			DataUnit              string                               `json:"data_unit"`
+			ThresholdUnitPrefix   string                               `json:"threshold_unit_prefix"`
+			Precision             map[string]any                       `json:"precision"`
+			Groups                []map[string]any                     `json:"groups"`
+			SourceAlgorithmFamily string                               `json:"source_algorithm_family"`
+			SourceMappingVersion  string                               `json:"source_mapping_version"`
+			CanonicalQueryDigest  string                               `json:"canonical_query_digest"`
+			InputProjection       strategy.AlgorithmInputProjection    `json:"input_projection"`
+			Requirements          []strategy.AlgorithmInputRequirement `json:"requirements"`
+		}{
+			ValueField: "value", DataUnit: unit, ThresholdUnitPrefix: "",
+			Precision:             map[string]any{"decimal_places": 6, "rounding": "HALF_EVEN"},
+			Groups:                []map[string]any{{"conditions": []map[string]any{{"operator": "GTE", "threshold_decimal": "1"}}}},
+			SourceAlgorithmFamily: strategy.SourceAlgorithmFamilyPingUnreachable,
+			SourceMappingVersion:  strategy.SourceMappingPingUnreachableV1,
+			CanonicalQueryDigest:  string(inputs.primary.QueryRevision),
+			InputProjection:       algorithmProjection, Requirements: algorithmRequirements,
+		})
+	}
 	return json.Marshal(struct {
 		InputProjection strategy.AlgorithmInputProjection    `json:"input_projection"`
 		Requirements    []strategy.AlgorithmInputRequirement `json:"requirements"`
 	}{algorithmProjection, algorithmRequirements})
+}
+
+type canonicalAlgorithmQuery struct {
+	ResultTableID string
+	MetricID      string
+	MetricField   string
+	AggMethod     string
+	AggInterval   int64
+}
+
+func validateCanonicalAlgorithmQuery(kind string, rawConfigs []json.RawMessage) error {
+	expected, fixed := map[string]canonicalAlgorithmQuery{
+		strategy.DetectorKindOsRestart:     {ResultTableID: "system.env", MetricID: "bk_monitor.os_restart", MetricField: "uptime", AggMethod: "MAX", AggInterval: 60},
+		strategy.DetectorKindProcPort:      {ResultTableID: "system.proc_port", MetricID: "bk_monitor.proc_port", MetricField: "proc_exists", AggMethod: "MAX", AggInterval: 60},
+		SourceAlgorithmTypePingUnreachable: {ResultTableID: "pingserver.base", MetricID: "bk_monitor.ping-gse", MetricField: "loss_percent", AggMethod: "MAX", AggInterval: 60},
+	}[kind]
+	if !fixed {
+		return nil
+	}
+	if len(rawConfigs) != 1 {
+		return errors.New("alarmd controlplane: fixed algorithm requires one canonical query")
+	}
+	config, err := decodeLegacyQueryConfig(rawConfigs[0])
+	if err != nil {
+		return err
+	}
+	table := config.ResultTableID
+	if config.DataLabel != "" {
+		table = config.DataLabel
+	}
+	if config.ResultTableID != expected.ResultTableID || table != expected.ResultTableID || config.MetricID != expected.MetricID || config.MetricField != expected.MetricField ||
+		config.AggMethod != expected.AggMethod || config.AggInterval != expected.AggInterval || len(config.Values) != 0 {
+		return errors.New("alarmd controlplane: fixed algorithm query differs from canonical source")
+	}
+	return nil
+}
+
+func emptyAlgorithmConfig(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	return trimmed == "" || trimmed == "null" || trimmed == "{}" || trimmed == "[]"
 }
 
 func (inputs *compiledPlanInputs) buildRequirements(

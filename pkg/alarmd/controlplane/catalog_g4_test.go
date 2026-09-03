@@ -18,15 +18,16 @@ func TestG4CatalogFreezesFourAlgorithmQueryAndRequirementContracts(t *testing.T)
 		t.Fatal(err)
 	}
 	tests := []struct {
-		id         int64
-		kind       string
-		metric     string
-		table      string
-		dimensions []string
-		config     any
-		assert     func(*testing.T, controlplane.FrozenPlan)
+		id           int64
+		sourceKind   string
+		detectorKind string
+		metric       string
+		table        string
+		dimensions   []string
+		config       any
+		assert       func(*testing.T, controlplane.FrozenPlan)
 	}{
-		{101, strategy.DetectorKindSimpleRingRatio, "usage", "system.cpu", []string{"host"}, map[string]any{"floor": 50, "ceil": nil}, func(t *testing.T, plan controlplane.FrozenPlan) {
+		{101, strategy.DetectorKindSimpleRingRatio, strategy.DetectorKindSimpleRingRatio, "usage", "system.cpu", []string{"host"}, map[string]any{"floor": 50, "ceil": nil}, func(t *testing.T, plan controlplane.FrozenPlan) {
 			if len(plan.RequirementTemplates) != 2 || plan.RequirementTemplates[1].DatasetName != "previous" ||
 				!reflect.DeepEqual(plan.RequirementTemplates[1].PointOffsetsSeconds, []int64{60}) ||
 				!reflect.DeepEqual(plan.RequirementTemplates[1].NamedPoints, []execution.NamedInputPoint{{Name: "previous", OffsetSeconds: 60}}) ||
@@ -34,7 +35,7 @@ func TestG4CatalogFreezesFourAlgorithmQueryAndRequirementContracts(t *testing.T)
 				t.Fatalf("SimpleRingRatio requirements = %+v", plan.RequirementTemplates)
 			}
 		}},
-		{102, strategy.DetectorKindOsRestart, "uptime", "system.env", []string{"bk_target_cloud_id", "bk_target_ip"}, map[string]any{}, func(t *testing.T, plan controlplane.FrozenPlan) {
+		{102, strategy.DetectorKindOsRestart, strategy.DetectorKindOsRestart, "uptime", "system.env", []string{"bk_target_cloud_id", "bk_target_ip"}, map[string]any{}, func(t *testing.T, plan controlplane.FrozenPlan) {
 			if len(plan.RequirementTemplates) != 2 || len(plan.QueryPlans) != 2 {
 				t.Fatalf("OsRestart frozen inputs = %+v / %+v", plan.RequirementTemplates, plan.QueryPlans)
 			}
@@ -48,7 +49,7 @@ func TestG4CatalogFreezesFourAlgorithmQueryAndRequirementContracts(t *testing.T)
 				t.Fatalf("OsRestart primary=%+v history=%+v requirements=%+v", primary, history, plan.RequirementTemplates)
 			}
 		}},
-		{103, strategy.DetectorKindProcPort, "proc_exists", "system.proc_port", []string{
+		{103, strategy.DetectorKindProcPort, strategy.DetectorKindProcPort, "proc_exists", "system.proc_port", []string{
 			"protocol", "listen", "nonlisten", "not_accurate_listen", "bind_ip", "bk_target_ip", "bk_target_cloud_id", "display_name",
 		}, map[string]any{}, func(t *testing.T, plan controlplane.FrozenPlan) {
 			projection := plan.RequirementTemplates[0].InputProjection
@@ -63,7 +64,7 @@ func TestG4CatalogFreezesFourAlgorithmQueryAndRequirementContracts(t *testing.T)
 				}
 			}
 		}},
-		{104, strategy.DetectorKindPingUnreachable, "loss_percent", "pingserver.base", []string{"bk_target_ip"}, map[string]any{}, func(t *testing.T, plan controlplane.FrozenPlan) {
+		{104, "PingUnreachable", strategy.DetectorKindThreshold, "loss_percent", "pingserver.base", []string{"bk_target_ip"}, []any{}, func(t *testing.T, plan controlplane.FrozenPlan) {
 			if len(plan.RequirementTemplates) != 1 || len(plan.QueryPlans) != 1 ||
 				!reflect.DeepEqual(plan.RequirementTemplates[0].InputProjection.ValueFields, []string{"value"}) {
 				t.Fatalf("PingUnreachable frozen inputs = %+v / %+v", plan.RequirementTemplates, plan.QueryPlans)
@@ -72,8 +73,8 @@ func TestG4CatalogFreezesFourAlgorithmQueryAndRequirementContracts(t *testing.T)
 	}
 
 	for _, test := range tests {
-		t.Run(test.kind, func(t *testing.T) {
-			document := g4LegacyStrategyDocument(t, test.id, test.kind, test.metric, test.table, test.dimensions, test.config)
+		t.Run(test.sourceKind, func(t *testing.T) {
+			document := g4LegacyStrategyDocument(t, test.id, test.sourceKind, test.metric, test.table, test.dimensions, test.config)
 			catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
 				Strategies: []controlplane.SourceStrategy{{
 					SourceID: strconv.FormatInt(test.id, 10), Document: document,
@@ -89,24 +90,105 @@ func TestG4CatalogFreezesFourAlgorithmQueryAndRequirementContracts(t *testing.T)
 			}
 			plan := catalog.QueryGroups[0].Plans[0]
 			algorithm := plan.Plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0]
-			if algorithm.Type != test.kind || algorithm.Version != 1 || plan.RequirementTemplates[0].ConsumerLevelID != 1 {
+			if algorithm.Type != test.detectorKind || algorithm.Version != 1 || plan.RequirementTemplates[0].ConsumerLevelID != 1 {
 				t.Fatalf("frozen plan = %+v", plan)
 			}
 			compiled := compileWithEvaluationCore(t, plan.Plan, catalog.QueryGroups[0].QueryPlan.Normalization.DatasetContract)
 			compiledAlgorithm := compiled.Levels()[0].Algorithms()[0]
-			switch test.kind {
+			if compiledAlgorithm.Kind() != test.detectorKind {
+				t.Fatalf("compiled detector kind = %q, want %q", compiledAlgorithm.Kind(), test.detectorKind)
+			}
+			switch test.sourceKind {
 			case strategy.DetectorKindProcPort:
 				config, ok := compiledAlgorithm.ProcPortConfig()
 				if !ok || config.ValueField != "value" || config.SourceMetric != "proc_exists" {
 					t.Fatalf("ProcPort canonical/source value contract = %+v, ok=%v", config, ok)
 				}
-			case strategy.DetectorKindPingUnreachable:
-				config, ok := compiledAlgorithm.PingUnreachableConfig()
-				if !ok || config.ValueField != "value" || config.SourceMetric != "loss_percent" || config.ThresholdDecimal != "1.000000" {
-					t.Fatalf("PingUnreachable canonical/source value contract = %+v, ok=%v", config, ok)
+			case "PingUnreachable":
+				var config map[string]any
+				if err := json.Unmarshal(algorithm.Config, &config); err != nil {
+					t.Fatal(err)
+				}
+				if config["source_algorithm_family"] != "ping_unreachable" || config["source_mapping_version"] != "ping-unreachable-to-threshold-v1" ||
+					config["canonical_query_digest"] != string(plan.RequirementTemplates[0].LogicalQueryRef) {
+					t.Fatalf("PingUnreachable source provenance = %+v", config)
+				}
+				provenance, ok := compiledAlgorithm.SourceProvenance()
+				if !ok || provenance.SourceAlgorithmFamily != "ping_unreachable" || provenance.SourceMappingVersion != "ping-unreachable-to-threshold-v1" ||
+					provenance.CanonicalQueryDigest != string(plan.RequirementTemplates[0].LogicalQueryRef) {
+					t.Fatalf("PingUnreachable compiled provenance = %+v, ok=%v", provenance, ok)
+				}
+				detectors := compiled.Levels()[0].Detectors()
+				if len(detectors) != 1 || detectors[0].Kind() != strategy.DetectorKindThreshold {
+					t.Fatalf("PingUnreachable detectors = %+v", detectors)
+				}
+				normalizer, ok := compiled.Normalizer(detectors[0].NormalizerRef())
+				if !ok {
+					t.Fatal("PingUnreachable threshold normalizer is missing")
+				}
+				for value, want := range map[string]bool{"0": false, "1": true} {
+					normalized := normalizer.Normalize(json.RawMessage(value))
+					evaluated, err := detectors[0].Predicate().Evaluate(normalized.Value())
+					if err != nil || !normalized.Available() || evaluated.Matched() != want {
+						t.Fatalf("PingUnreachable Threshold(%s) = %+v, normalized=%+v, want %v", value, evaluated, normalized, want)
+					}
 				}
 			}
 			test.assert(t, plan)
+		})
+	}
+}
+
+func TestG4CatalogRejectsNonCanonicalFixedAlgorithmQueries(t *testing.T) {
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name       string
+		kind       string
+		metric     string
+		table      string
+		dimensions []string
+		field      string
+		value      any
+	}{
+		{"OsRestart/table", strategy.DetectorKindOsRestart, "uptime", "system.env", []string{"bk_target_cloud_id", "bk_target_ip"}, "result_table_id", "system.cpu"},
+		{"OsRestart/metric", strategy.DetectorKindOsRestart, "uptime", "system.env", []string{"bk_target_cloud_id", "bk_target_ip"}, "metric_field", "procs"},
+		{"OsRestart/aggregation", strategy.DetectorKindOsRestart, "uptime", "system.env", []string{"bk_target_cloud_id", "bk_target_ip"}, "agg_method", "AVG"},
+		{"OsRestart/interval", strategy.DetectorKindOsRestart, "uptime", "system.env", []string{"bk_target_cloud_id", "bk_target_ip"}, "agg_interval", 30},
+		{"ProcPort/table", strategy.DetectorKindProcPort, "proc_exists", "system.proc_port", []string{"bk_target_cloud_id", "bk_target_ip", "display_name"}, "result_table_id", "system.env"},
+		{"ProcPort/metric", strategy.DetectorKindProcPort, "proc_exists", "system.proc_port", []string{"bk_target_cloud_id", "bk_target_ip", "display_name"}, "metric_field", "port_health"},
+		{"ProcPort/aggregation", strategy.DetectorKindProcPort, "proc_exists", "system.proc_port", []string{"bk_target_cloud_id", "bk_target_ip", "display_name"}, "agg_method", "AVG"},
+		{"ProcPort/interval", strategy.DetectorKindProcPort, "proc_exists", "system.proc_port", []string{"bk_target_cloud_id", "bk_target_ip", "display_name"}, "agg_interval", 30},
+		{"PingUnreachable/table", controlplane.SourceAlgorithmTypePingUnreachable, "loss_percent", "pingserver.base", []string{"bk_target_cloud_id", "bk_target_ip"}, "result_table_id", "system.env"},
+		{"PingUnreachable/metric", controlplane.SourceAlgorithmTypePingUnreachable, "loss_percent", "pingserver.base", []string{"bk_target_cloud_id", "bk_target_ip"}, "metric_field", "available"},
+		{"PingUnreachable/aggregation", controlplane.SourceAlgorithmTypePingUnreachable, "loss_percent", "pingserver.base", []string{"bk_target_cloud_id", "bk_target_ip"}, "agg_method", "AVG"},
+		{"PingUnreachable/interval", controlplane.SourceAlgorithmTypePingUnreachable, "loss_percent", "pingserver.base", []string{"bk_target_cloud_id", "bk_target_ip"}, "agg_interval", 30},
+		{"PingUnreachable/source_type", controlplane.SourceAlgorithmTypePingUnreachable, "loss_percent", "pingserver.base", []string{"bk_target_cloud_id", "bk_target_ip"}, "metric_id", "bk_monitor.system.env.uptime"},
+	}
+
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document := g4LegacyStrategyDocument(t, int64(200+index), test.kind, test.metric, test.table, test.dimensions, map[string]any{})
+			document = mutateG4QueryConfig(t, document, test.field, test.value)
+			catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
+				Strategies: []controlplane.SourceStrategy{{
+					SourceID: strconv.Itoa(200 + index), Document: document,
+					Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
+				}},
+				Planner: planner,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(catalog.QueryGroups) != 0 || len(catalog.Dispositions) != 1 {
+				t.Fatalf("catalog = %+v", catalog)
+			}
+			disposition := catalog.Dispositions[0]
+			if disposition.Scope != "LEVEL" || disposition.LevelID != 1 || disposition.Disposition != controlplane.DispositionConfigRejected || disposition.Reason != "ALGORITHM_QUERY_INVALID" {
+				t.Fatalf("disposition = %+v", disposition)
+			}
 		})
 	}
 }
@@ -121,6 +203,14 @@ func g4LegacyStrategyDocument(t *testing.T, id int64, kind, metric, table string
 			"result_table_id": table,
 		}},
 		"algorithms": []any{map[string]any{"level": 1, "type": kind, "config": config}},
+	}
+	metricID := map[string]string{
+		strategy.DetectorKindOsRestart:                  "bk_monitor.os_restart",
+		strategy.DetectorKindProcPort:                   "bk_monitor.proc_port",
+		controlplane.SourceAlgorithmTypePingUnreachable: "bk_monitor.ping-gse",
+	}[kind]
+	if metricID != "" {
+		item["query_configs"].([]any)[0].(map[string]any)["metric_id"] = metricID
 	}
 	if kind == strategy.DetectorKindOsRestart {
 		item["functions"] = []any{map[string]any{"id": "abs", "params": []any{}}}
@@ -146,4 +236,21 @@ func containsG4String(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func mutateG4QueryConfig(t *testing.T, document json.RawMessage, field string, value any) json.RawMessage {
+	t.Helper()
+	var strategyDocument map[string]any
+	if err := json.Unmarshal(document, &strategyDocument); err != nil {
+		t.Fatal(err)
+	}
+	items := strategyDocument["items"].([]any)
+	item := items[0].(map[string]any)
+	queryConfigs := item["query_configs"].([]any)
+	queryConfigs[0].(map[string]any)[field] = value
+	mutated, err := json.Marshal(strategyDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mutated
 }

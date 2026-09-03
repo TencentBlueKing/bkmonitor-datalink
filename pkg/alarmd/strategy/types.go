@@ -27,7 +27,9 @@ const (
 	DetectorKindSimpleRingRatio = "SimpleRingRatio"
 	DetectorKindOsRestart       = "OsRestart"
 	DetectorKindProcPort        = "ProcPort"
-	DetectorKindPingUnreachable = "PingUnreachable"
+
+	SourceAlgorithmFamilyPingUnreachable = "ping_unreachable"
+	SourceMappingPingUnreachableV1       = "ping-unreachable-to-threshold-v1"
 
 	TriggerPlanTypeNOfM                   = "N_OF_M"
 	RecoveryPlanTypeContinuousTriggerMiss = "CONTINUOUS_TRIGGER_MISS"
@@ -546,11 +548,16 @@ func (p *CompiledPlan) DatasetContractDigest() string {
 }
 
 type thresholdConfigV1 struct {
-	ValueField          string             `json:"value_field"`
-	DataUnit            string             `json:"data_unit"`
-	ThresholdUnitPrefix *string            `json:"threshold_unit_prefix"`
-	Precision           thresholdPrecision `json:"precision"`
-	Groups              []thresholdGroup   `json:"groups"`
+	ValueField            string                      `json:"value_field"`
+	DataUnit              string                      `json:"data_unit"`
+	ThresholdUnitPrefix   *string                     `json:"threshold_unit_prefix"`
+	Precision             thresholdPrecision          `json:"precision"`
+	Groups                []thresholdGroup            `json:"groups"`
+	SourceAlgorithmFamily string                      `json:"source_algorithm_family,omitempty"`
+	SourceMappingVersion  string                      `json:"source_mapping_version,omitempty"`
+	CanonicalQueryDigest  string                      `json:"canonical_query_digest,omitempty"`
+	InputProjection       *AlgorithmInputProjection   `json:"input_projection,omitempty"`
+	Requirements          []AlgorithmInputRequirement `json:"requirements,omitempty"`
 }
 
 type thresholdPrecision struct {

@@ -116,7 +116,7 @@ func NewAlgorithmCompilerRegistry(compilers ...AlgorithmCompiler) (*AlgorithmCom
 func NewDefaultAlgorithmCompilerRegistry() *AlgorithmCompilerRegistry {
 	registry, err := NewAlgorithmCompilerRegistry(
 		thresholdAlgorithmCompiler{}, simpleRingRatioAlgorithmCompiler{}, osRestartAlgorithmCompiler{},
-		procPortAlgorithmCompiler{}, pingUnreachableAlgorithmCompiler{},
+		procPortAlgorithmCompiler{},
 	)
 	if err != nil {
 		panic(err)
@@ -158,6 +158,34 @@ func (thresholdAlgorithmCompiler) Compile(_ context.Context, compileContext Algo
 		config.DataUnit != compileContext.Projection.DataUnit || config.Precision.DecimalPlaces != 6 || config.Precision.Rounding != "HALF_EVEN" ||
 		config.ThresholdUnitPrefix == nil || len(config.Groups) == 0 || len(config.Groups) > compileContext.Limits.MaxGroupsPerAlgorithm {
 		return AlgorithmCompileResult{}, configErrorf("threshold config: invalid projection, precision, or groups")
+	}
+	inputProjection := AlgorithmInputProjection{
+		ValueFields:     append([]string(nil), compileContext.Projection.ValueFields...),
+		DimensionFields: append([]string(nil), compileContext.Projection.DimensionFields...),
+		IdentityFields:  append([]string(nil), compileContext.IdentityFields...),
+	}
+	var inputRequirements []AlgorithmInputRequirement
+	var provenance *AlgorithmSourceProvenance
+	if config.SourceAlgorithmFamily == "" {
+		if config.SourceMappingVersion != "" || config.CanonicalQueryDigest != "" || config.InputProjection != nil || len(config.Requirements) != 0 {
+			return AlgorithmCompileResult{}, configErrorf("threshold config: incomplete source mapping provenance")
+		}
+	} else {
+		if config.SourceAlgorithmFamily != SourceAlgorithmFamilyPingUnreachable ||
+			config.SourceMappingVersion != SourceMappingPingUnreachableV1 || len(config.CanonicalQueryDigest) != 64 || config.InputProjection == nil {
+			return AlgorithmCompileResult{}, configErrorf("threshold config: unsupported source mapping provenance")
+		}
+		requirements, err := validateG4Inputs(compileContext, *config.InputProjection, config.Requirements, "")
+		if err != nil || len(requirements) != 1 || requirements[0].LogicalQueryRef != config.CanonicalQueryDigest {
+			return AlgorithmCompileResult{}, configErrorf("threshold config: source mapping input contract is invalid")
+		}
+		inputProjection = cloneAlgorithmInputProjection(*config.InputProjection)
+		inputRequirements = requirements
+		provenance = &AlgorithmSourceProvenance{
+			SourceAlgorithmFamily: config.SourceAlgorithmFamily,
+			SourceMappingVersion:  config.SourceMappingVersion,
+			CanonicalQueryDigest:  config.CanonicalQueryDigest,
+		}
 	}
 	normalizer, thresholdMultiplier, ok := compileUnitNormalizer(config.DataUnit, *config.ThresholdUnitPrefix)
 	if !ok {
@@ -206,12 +234,8 @@ func (thresholdAlgorithmCompiler) Compile(_ context.Context, compileContext Algo
 			kind: DetectorKindThreshold, version: 1, valueRef: config.ValueField, normalizerRef: normalizer.ref,
 			predicate: Predicate{root: root, digest: predicateDigest}, declaredExecutorErrors: []string{},
 		},
-		Normalizer: normalizer, Config: compiledAlgorithmConfig{Threshold: &semantic},
-		InputProjection: AlgorithmInputProjection{
-			ValueFields:     append([]string(nil), compileContext.Projection.ValueFields...),
-			DimensionFields: append([]string(nil), compileContext.Projection.DimensionFields...),
-			IdentityFields:  append([]string(nil), compileContext.IdentityFields...),
-		},
+		Normalizer: normalizer, Config: compiledAlgorithmConfig{Threshold: &semantic, SourceProvenance: provenance},
+		InputProjection: inputProjection, InputRequirements: inputRequirements,
 		CompilerVersion: "threshold-compiler-v1", ProofVersion: "requires-full-v1", ASTNodes: nodes,
 	}, nil
 }

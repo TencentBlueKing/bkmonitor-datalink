@@ -88,6 +88,7 @@ func cloneStringsPreservingNil(values []string) []string {
 type legacyQueryConfig struct {
 	DataSourceLabel string            `json:"data_source_label"`
 	DataTypeLabel   string            `json:"data_type_label"`
+	MetricID        string            `json:"metric_id"`
 	MetricField     string            `json:"metric_field"`
 	Alias           string            `json:"alias"`
 	Values          []string          `json:"values"`

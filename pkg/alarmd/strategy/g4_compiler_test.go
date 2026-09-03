@@ -3,12 +3,13 @@ package strategy
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
-func TestG4DefaultRegistryCompilesFourIndependentAlgorithmKinds(t *testing.T) {
+func TestG4DefaultRegistryCompilesThreeIndependentAlgorithmKinds(t *testing.T) {
 	tests := []struct {
 		kind         string
 		config       map[string]any
@@ -59,17 +60,6 @@ func TestG4DefaultRegistryCompilesFourIndependentAlgorithmKinds(t *testing.T) {
 				}
 			},
 		},
-		{
-			kind: DetectorKindPingUnreachable, config: map[string]any{},
-			projection:   AlgorithmInputProjection{ValueFields: []string{"value"}, IdentityFields: []string{"host"}},
-			requirements: g4PrimaryRequirements(t, AlgorithmInputProjection{ValueFields: []string{"value"}, IdentityFields: []string{"host"}}),
-			assert: func(t *testing.T, algorithm CompiledAlgorithmPlan) {
-				config, ok := algorithm.PingUnreachableConfig()
-				if !ok || config.ValueField != "value" || config.SourceMetric != "loss_percent" || config.ThresholdDecimal != "1.000000" {
-					t.Fatalf("PingUnreachable config = %+v, ok=%v", config, ok)
-				}
-			},
-		},
 	}
 
 	stateCompatibility := make(map[string]string, len(tests))
@@ -87,7 +77,7 @@ func TestG4DefaultRegistryCompilesFourIndependentAlgorithmKinds(t *testing.T) {
 			capability := algorithms[0].Capability()
 			if capability.EvaluationScope != contract.EvaluationScopeSeries ||
 				((test.kind == DetectorKindSimpleRingRatio || test.kind == DetectorKindOsRestart) && capability.RequiredHistoryKind != algorithmHistoryPlanLocalInput) ||
-				((test.kind == DetectorKindProcPort || test.kind == DetectorKindPingUnreachable) && capability.RequiredHistoryKind != algorithmHistoryNone) {
+				(test.kind == DetectorKindProcPort && capability.RequiredHistoryKind != algorithmHistoryNone) {
 				t.Fatalf("capability = %+v", capability)
 			}
 			if got := algorithms[0].InputRequirements(); !reflect.DeepEqual(got, test.requirements) {
@@ -105,6 +95,83 @@ func TestG4DefaultRegistryCompilesFourIndependentAlgorithmKinds(t *testing.T) {
 			t.Fatalf("algorithm kinds %s and %s reused state compatibility %q", previous, kind, digest)
 		}
 		seenState[digest] = kind
+	}
+}
+
+func TestG4DefaultRegistryDoesNotRegisterPingDetector(t *testing.T) {
+	if _, ok := NewDefaultAlgorithmCompilerRegistry().lookup("PingUnreachable", 1); ok {
+		t.Fatal("PingUnreachable source type was registered as an independent detector")
+	}
+}
+
+func TestThresholdSourceMappingProvenanceEntersCompatibility(t *testing.T) {
+	compiler := newTestCompiler(t)
+	canonical := mustCompileG4Request(t, compiler, validRequest(validPlan()))
+	queryDigest := strings.Repeat("a", 64)
+	projection := AlgorithmInputProjection{ValueFields: []string{"value"}, DimensionFields: []string{"host"}, IdentityFields: []string{"host"}}
+	requirements := g4PrimaryRequirements(t, projection)
+	requirements[0].LogicalQueryRef = queryDigest
+	requirements[0] = withG4RequirementID(t, requirements[0])
+	config := thresholdConfig("1")
+	config["source_algorithm_family"] = "ping_unreachable"
+	config["source_mapping_version"] = "ping-unreachable-to-threshold-v1"
+	config["canonical_query_digest"] = queryDigest
+	config["input_projection"] = projection
+	config["requirements"] = requirements
+	plan := validPlan()
+	plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0].Config = mustJSON(config)
+	mapped := mustCompileG4Request(t, compiler, validRequest(plan))
+	algorithm := mapped.Levels()[0].Algorithms()[0]
+	provenance, ok := algorithm.SourceProvenance()
+	if !ok || provenance.SourceAlgorithmFamily != "ping_unreachable" || provenance.SourceMappingVersion != "ping-unreachable-to-threshold-v1" ||
+		provenance.CanonicalQueryDigest != queryDigest {
+		t.Fatalf("SourceProvenance() = %+v, ok=%v", provenance, ok)
+	}
+	if algorithm.Kind() != DetectorKindThreshold || len(algorithm.InputRequirements()) != 1 {
+		t.Fatalf("mapped algorithm = %+v", algorithm)
+	}
+	if mapped.StateCompatibilityHash() == canonical.StateCompatibilityHash() || mapped.Fingerprints().Detect == canonical.Fingerprints().Detect {
+		t.Fatal("source mapping provenance reused canonical Threshold compatibility")
+	}
+}
+
+func TestThresholdRejectsUnregisteredSourceMappingProvenance(t *testing.T) {
+	queryDigest := strings.Repeat("a", 64)
+	projection := AlgorithmInputProjection{ValueFields: []string{"value"}, DimensionFields: []string{"host"}, IdentityFields: []string{"host"}}
+	requirements := g4PrimaryRequirements(t, projection)
+	requirements[0].LogicalQueryRef = queryDigest
+	requirements[0] = withG4RequirementID(t, requirements[0])
+	baseConfig := thresholdConfig("1")
+	baseConfig["source_algorithm_family"] = "ping_unreachable"
+	baseConfig["source_mapping_version"] = "ping-unreachable-to-threshold-v1"
+	baseConfig["canonical_query_digest"] = queryDigest
+	baseConfig["input_projection"] = projection
+	baseConfig["requirements"] = requirements
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{"family", func(config map[string]any) { config["source_algorithm_family"] = "proc_port" }},
+		{"version", func(config map[string]any) { config["source_mapping_version"] = "ping-unreachable-to-threshold-v2" }},
+		{"query", func(config map[string]any) { config["canonical_query_digest"] = strings.Repeat("b", 64) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := make(map[string]any, len(baseConfig))
+			for key, value := range baseConfig {
+				config[key] = value
+			}
+			test.mutate(config)
+			plan := validPlan()
+			plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0].Config = mustJSON(config)
+			result, err := newTestCompiler(t).Compile(context.Background(), validRequest(plan))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if terminals := result.LevelTerminals(); len(terminals) != 1 || terminals[0].ReasonCode != contract.ReasonLevelInvalid {
+				t.Fatalf("LevelTerminals() = %+v", terminals)
+			}
+		})
 	}
 }
 

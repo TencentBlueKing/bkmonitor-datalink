@@ -1810,6 +1810,14 @@ func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 			IsGlobal:          true,
 			QueryRouterConfig: `{"filter_key":"custom_biz"}`,
 		},
+		{
+			BkTenantId:        "system",
+			SpaceType:         "bkci",
+			SpaceId:           "project_a",
+			TableId:           "invalid_config_vm_short_link_rt",
+			IsGlobal:          true,
+			QueryRouterConfig: `{"space_type":"all","filter_key":"fallback_biz","filter_value":"space_uid"}`,
+		},
 	}
 	spaceList := []space.Space{
 		{Id: 100, BkTenantId: "system", SpaceTypeId: "bkcc", SpaceId: "1001"},
@@ -1828,6 +1836,9 @@ func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 			"configured_global_vm_short_link_rt.__default__": {
 				"filters": []map[string]any{{"project_id": "1001"}},
 			},
+			"invalid_config_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"fallback_biz": "1001"}},
+			},
 		},
 		SpaceRouteKeyWithTenant("system", "bkci", "project_a"): {
 			"global_vm_short_link_rt.__default__": {
@@ -1837,6 +1848,9 @@ func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 				"filters": []map[string]any{},
 			},
 			"partial_config_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{},
+			},
+			"invalid_config_vm_short_link_rt.__default__": {
 				"filters": []map[string]any{},
 			},
 		},
@@ -1850,8 +1864,82 @@ func TestSpacePusher_ComposeVMShortLinkTableIdValuesBySpace(t *testing.T) {
 			"partial_config_vm_short_link_rt.__default__": {
 				"filters": []map[string]any{{"custom_biz": "-102"}},
 			},
+			"invalid_config_vm_short_link_rt.__default__": {
+				"filters": []map[string]any{{"fallback_biz": "-102"}},
+			},
 		},
 	}, data)
+}
+
+func TestSpacePusher_ComposeLogGlobalTableIdValuesBySpace(t *testing.T) {
+	pusher := NewSpacePusher()
+	spaces := []space.Space{
+		{Id: 1, BkTenantId: "system", SpaceTypeId: models.SpaceTypeBKCC, SpaceId: "1"},
+		{Id: 101, BkTenantId: "system", SpaceTypeId: models.SpaceTypeBKCI, SpaceId: "project_a"},
+		{Id: 102, BkTenantId: "system", SpaceTypeId: models.SpaceTypeBKSAAS, SpaceId: "app_a"},
+		{Id: 201, BkTenantId: "other", SpaceTypeId: models.SpaceTypeBKCI, SpaceId: "project_other"},
+	}
+	resultTables := []resulttable.ResultTable{
+		{TableId: "global_bkci.log", BkTenantId: "system", BkBizId: 999, DefaultStorage: models.StorageTypeES, IsEnable: true},
+		{TableId: "global_all.log", BkTenantId: "system", BkBizId: 999, DefaultStorage: models.StorageTypeDoris, IsEnable: true},
+		{TableId: "owner_global.log", BkTenantId: "system", BkBizId: 1, DefaultStorage: models.StorageTypeES, IsEnable: true},
+		{TableId: "invalid_json.log", BkTenantId: "system", BkBizId: 999, DefaultStorage: models.StorageTypeES, IsEnable: true},
+		{TableId: "invalid_value_type.log", BkTenantId: "system", BkBizId: 999, DefaultStorage: models.StorageTypeES, IsEnable: true},
+		{TableId: "empty_filter_key.log", BkTenantId: "system", BkBizId: 999, DefaultStorage: models.StorageTypeES, IsEnable: true},
+		{TableId: "unsupported_space_type.log", BkTenantId: "system", BkBizId: 999, DefaultStorage: models.StorageTypeES, IsEnable: true},
+		{TableId: "unsupported_filter_value.log", BkTenantId: "system", BkBizId: 999, DefaultStorage: models.StorageTypeES, IsEnable: true},
+		{TableId: "disabled.log", BkTenantId: "system", BkBizId: 999, DefaultStorage: models.StorageTypeES},
+		{TableId: "deleted.log", BkTenantId: "system", BkBizId: 999, DefaultStorage: models.StorageTypeES, IsEnable: true, IsDeleted: true},
+		{TableId: "vm_storage.log", BkTenantId: "system", BkBizId: 999, DefaultStorage: models.StorageTypeVM, IsEnable: true},
+		{TableId: "other_global.log", BkTenantId: "other", BkBizId: 999, DefaultStorage: models.StorageTypeES, IsEnable: true},
+	}
+	options := []resulttable.ResultTableOption{
+		{BkTenantId: "system", TableID: "global_bkci.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{"space_type":"bkci","filter_key":"space_id","filter_value":"space_id"}`}},
+		{BkTenantId: "system", TableID: "global_all.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{}`}},
+		{BkTenantId: "system", TableID: "owner_global.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{}`}},
+		{BkTenantId: "system", TableID: "invalid_json.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{`}},
+		{BkTenantId: "system", TableID: "invalid_value_type.log", OptionBase: models.OptionBase{ValueType: "string", Value: `{}`}},
+		{BkTenantId: "system", TableID: "empty_filter_key.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{"space_type":"all","filter_key":"","filter_value":"space_id"}`}},
+		{BkTenantId: "system", TableID: "unsupported_space_type.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{"space_type":"bcs"}`}},
+		{BkTenantId: "system", TableID: "unsupported_filter_value.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{"filter_value":"space_uid"}`}},
+		{BkTenantId: "system", TableID: "disabled.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{}`}},
+		{BkTenantId: "system", TableID: "deleted.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{}`}},
+		{BkTenantId: "system", TableID: "vm_storage.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{}`}},
+		{BkTenantId: "other", TableID: "other_global.log", OptionBase: models.OptionBase{ValueType: "dict", Value: `{}`}},
+	}
+
+	data := pusher.ComposeLogGlobalTableIdValuesBySpace(options, resultTables, spaces)
+
+	bkccValues := data[SpaceRouteKeyWithTenant("system", models.SpaceTypeBKCC, "1")]
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "1"}}}, bkccValues["global_all.log"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "1"}}}, bkccValues["empty_filter_key.log"])
+	assert.NotContains(t, bkccValues, "global_bkci.log")
+	assert.NotContains(t, bkccValues, "owner_global.log", "owner route must keep the normal unfiltered ES route")
+
+	bkciValues := data[SpaceRouteKeyWithTenant("system", models.SpaceTypeBKCI, "project_a")]
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"space_id": "project_a"}}}, bkciValues["global_bkci.log"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "-101"}}}, bkciValues["global_all.log"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "project_a"}}}, bkciValues["empty_filter_key.log"])
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "-101"}}}, bkciValues["owner_global.log"])
+	encodedBkciValues, err := json.Marshal(bkciValues)
+	assert.NoError(t, err)
+	var consumerValues map[string]struct {
+		Filters []map[string]string `json:"filters"`
+	}
+	assert.NoError(t, json.Unmarshal(encodedBkciValues, &consumerValues), "filters must keep the UQ []map[string]string contract")
+
+	otherValues := data[SpaceRouteKeyWithTenant("other", models.SpaceTypeBKCI, "project_other")]
+	assert.Equal(t, map[string]any{"filters": []map[string]any{{"bk_biz_id": "-201"}}}, otherValues["other_global.log"])
+	assert.NotContains(t, otherValues, "global_all.log")
+
+	for _, values := range data {
+		for _, tableID := range []string{
+			"invalid_json.log", "invalid_value_type.log", "unsupported_space_type.log",
+			"unsupported_filter_value.log", "disabled.log", "deleted.log", "vm_storage.log",
+		} {
+			assert.NotContains(t, values, tableID)
+		}
+	}
 }
 
 func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {

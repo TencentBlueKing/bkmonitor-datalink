@@ -17,12 +17,14 @@ import (
 
 	ants "github.com/panjf2000/ants/v2"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/recordrule"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -32,7 +34,7 @@ const (
 )
 
 // preFetchSpaceTableIds 提前获取部分空间路由信息，减少后续的查询次数
-// 1. 预计算表路由 2. VM 短链路表路由 3. APM 全局表路由
+// 1. 预计算表路由 2. VM 短链路表路由 3. APM 全局表路由 4. ES/Doris 日志全局表路由
 func preFetchSpaceTableIds(ctx context.Context, t *t.Task, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
 	logger.Info("start pre fetch space table ids task")
 
@@ -62,6 +64,13 @@ func preFetchSpaceTableIds(ctx context.Context, t *t.Task, spaceList []space.Spa
 		return nil, err
 	}
 	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, apmValuesBySpace)
+
+	logGlobalValuesBySpace, err := preFetchLogGlobalTableIdValues(pusher, spaceList)
+	if err != nil {
+		return nil, err
+	}
+	// 日志全局表与 Python metadata 的组装顺序一致，最后覆盖同名的其他特殊路由。
+	mergeSpaceTableIdValuesBySpace(prefetchedValuesBySpace, logGlobalValuesBySpace)
 
 	logger.Infof("pre fetch space table ids success, space_count [%d]", len(prefetchedValuesBySpace))
 	return prefetchedValuesBySpace, nil
@@ -157,6 +166,60 @@ func preFetchApmAllTypeTableIdValues(pusher *service.SpacePusher, spaceList []sp
 
 	valuesBySpace := pusher.ComposeApmAllTypeTableIdValuesBySpace(rtList, spaceList)
 	logger.Infof("pre fetch apm all type table ids success, result_table_count [%d], space_count [%d]", len(rtList), len(valuesBySpace))
+	return valuesBySpace, nil
+}
+
+func preFetchLogGlobalTableIdValues(pusher *service.SpacePusher, spaceList []space.Space) (service.SpaceTableIdValuesBySpace, error) {
+	db := mysql.GetDBSession().DB
+	var options []resulttable.ResultTableOption
+	if err := db.Model(&resulttable.ResultTableOption{}).
+		Select("bk_tenant_id, table_id, value, value_type").
+		Where("name = ?", models.OptionQueryRouterConfig).
+		Find(&options).Error; err != nil {
+		logger.Errorf("pre fetch log global table ids failed, err: %s", err)
+		return nil, err
+	}
+	if len(options) == 0 {
+		return make(service.SpaceTableIdValuesBySpace), nil
+	}
+
+	tableIDSet := make(map[string]struct{}, len(options))
+	for _, option := range options {
+		tableIDSet[option.TableID] = struct{}{}
+	}
+	tableIDs := make([]string, 0, len(tableIDSet))
+	for tableID := range tableIDSet {
+		tableIDs = append(tableIDs, tableID)
+	}
+
+	var resultTables []resulttable.ResultTable
+	for _, chunkTableIDs := range slicex.ChunkSlice(tableIDs, 0) {
+		var chunkResultTables []resulttable.ResultTable
+		if err := resulttable.NewResultTableQuerySet(db).
+			Select(
+				resulttable.ResultTableDBSchema.BkTenantId,
+				resulttable.ResultTableDBSchema.TableId,
+				resulttable.ResultTableDBSchema.BkBizId,
+				resulttable.ResultTableDBSchema.DefaultStorage,
+				resulttable.ResultTableDBSchema.IsDeleted,
+				resulttable.ResultTableDBSchema.IsEnable,
+			).
+			TableIdIn(chunkTableIDs...).
+			DefaultStorageIn(models.StorageTypeES, models.StorageTypeDoris).
+			IsDeletedEq(false).
+			IsEnableEq(true).
+			All(&chunkResultTables); err != nil {
+			logger.Errorf("pre fetch log global result tables failed, err: %s", err)
+			return nil, err
+		}
+		resultTables = append(resultTables, chunkResultTables...)
+	}
+
+	valuesBySpace := pusher.ComposeLogGlobalTableIdValuesBySpace(options, resultTables, spaceList)
+	logger.Infof(
+		"pre fetch log global table ids success, option_count [%d], result_table_count [%d], space_count [%d]",
+		len(options), len(resultTables), len(valuesBySpace),
+	)
 	return valuesBySpace, nil
 }
 

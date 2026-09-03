@@ -210,6 +210,18 @@ func retainCompiledLevels(plan FrozenPlan, compiled *strategy.CompiledPlan) (Fro
 		}
 	}
 	plan.Plan.StrategyIR.Levels = levels
+	requirements := make([]execution.DataRequirementTemplate, 0, len(plan.RequirementTemplates))
+	for _, requirement := range plan.RequirementTemplates {
+		if _, ok := retained[requirement.ConsumerLevelID]; ok {
+			requirements = append(requirements, requirement)
+		}
+	}
+	queryPlans, err := retainRequiredQueryPlans(plan.QueryPlans, requirements)
+	if err != nil {
+		return FrozenPlan{}, err
+	}
+	plan.RequirementTemplates = requirements
+	plan.QueryPlans = queryPlans
 	revision, err := contract.DeriveCanonicalDigestV2("alarmd-plan-semantics-v1", plan.Plan)
 	if err != nil {
 		return FrozenPlan{}, err
@@ -251,12 +263,83 @@ func supplementRejectedLevels(
 	sort.Slice(plan.Plan.StrategyIR.Levels, func(i, j int) bool {
 		return plan.Plan.StrategyIR.Levels[i].Definition.LevelID < plan.Plan.StrategyIR.Levels[j].Definition.LevelID
 	})
+	if len(supplemented) > 0 {
+		var err error
+		plan.RequirementTemplates, plan.QueryPlans, err = supplementLevelDependencies(plan, lastGood, supplemented)
+		if err != nil {
+			return FrozenPlan{}, nil, err
+		}
+	}
 	revision, err := contract.DeriveCanonicalDigestV2("alarmd-plan-semantics-v1", plan.Plan)
 	if err != nil {
 		return FrozenPlan{}, nil, err
 	}
 	plan.PlanRevision = revision
 	return plan, supplemented, nil
+}
+
+func retainRequiredQueryPlans(
+	source map[execution.LogicalQueryRef]execution.QueryPlanFacts,
+	requirements []execution.DataRequirementTemplate,
+) (map[execution.LogicalQueryRef]execution.QueryPlanFacts, error) {
+	if len(requirements) == 0 {
+		return nil, nil
+	}
+	retained := make(map[execution.LogicalQueryRef]execution.QueryPlanFacts)
+	for _, requirement := range requirements {
+		facts, ok := source[requirement.LogicalQueryRef]
+		if !ok {
+			return nil, errors.New("alarmd controlplane: runtime executable Level dependency is missing its Query Plan")
+		}
+		retained[requirement.LogicalQueryRef] = facts
+	}
+	return retained, nil
+}
+
+func supplementLevelDependencies(
+	plan FrozenPlan,
+	lastGood FrozenPlan,
+	supplemented map[uint32]struct{},
+) ([]execution.DataRequirementTemplate, map[execution.LogicalQueryRef]execution.QueryPlanFacts, error) {
+	currentByLevel := make(map[uint32][]execution.DataRequirementTemplate)
+	for _, requirement := range plan.RequirementTemplates {
+		currentByLevel[requirement.ConsumerLevelID] = append(currentByLevel[requirement.ConsumerLevelID], requirement)
+	}
+	lastGoodByLevel := make(map[uint32][]execution.DataRequirementTemplate)
+	for _, requirement := range lastGood.RequirementTemplates {
+		lastGoodByLevel[requirement.ConsumerLevelID] = append(lastGoodByLevel[requirement.ConsumerLevelID], requirement)
+	}
+
+	requirements := make([]execution.DataRequirementTemplate, 0, len(plan.RequirementTemplates)+len(lastGood.RequirementTemplates))
+	queryPlans := make(map[execution.LogicalQueryRef]execution.QueryPlanFacts)
+	for _, level := range plan.Plan.StrategyIR.Levels {
+		levelID := level.Definition.LevelID
+		if _, ok := supplemented[levelID]; ok {
+			for _, requirement := range lastGoodByLevel[levelID] {
+				facts, exists := lastGood.QueryPlans[requirement.LogicalQueryRef]
+				if !exists {
+					return nil, nil, errors.New("alarmd controlplane: last-good Level dependency is missing its Query Plan")
+				}
+				requirements = append(requirements, requirement)
+				if _, shared := queryPlans[requirement.LogicalQueryRef]; !shared {
+					queryPlans[requirement.LogicalQueryRef] = facts
+				}
+			}
+			continue
+		}
+		for _, requirement := range currentByLevel[levelID] {
+			facts, exists := plan.QueryPlans[requirement.LogicalQueryRef]
+			if !exists {
+				return nil, nil, errors.New("alarmd controlplane: runtime executable Level dependency is missing its Query Plan")
+			}
+			requirements = append(requirements, requirement)
+			queryPlans[requirement.LogicalQueryRef] = facts
+		}
+	}
+	if len(queryPlans) == 0 {
+		queryPlans = nil
+	}
+	return requirements, queryPlans, nil
 }
 
 func compileResultDispositions(sourceID string, result strategy.CompileResult) ([]ObjectDisposition, error) {

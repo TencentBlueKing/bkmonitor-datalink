@@ -1684,6 +1684,28 @@ func TestObservedProductionSlotSourcePreservesRetryCauseBeforeRunnerReduction(t 
 	}
 }
 
+func TestObservedProductionSlotSourcePreservesBlockedCauseBeforeRunnerReduction(t *testing.T) {
+	wantErr := errors.New("test classified source cause")
+	var observations []observability.Observation
+	source := observedProductionSlotSource{
+		next: slotSourceFunc(func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, error) {
+			return scheduler.FrozenSlot{}, false, &scheduler.SourceBlockedError{Err: wantErr}
+		}),
+		observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		}),
+	}
+	if _, due, err := source.Next(context.Background(), "query-group-1"); due || !errors.Is(err, wantErr) {
+		t.Fatalf("Next() due=%t error=%v", due, err)
+	}
+	if len(observations) != 1 || observations[0].Stage != observability.StageScheduleDue ||
+		observations[0].Result != observability.ResultRetrying ||
+		observations[0].ReasonCode != observability.ReasonCode(contract.ReasonBlockedExactSetUnavailable) ||
+		observations[0].Trace.QueryGroupKey != "query-group-1" || observations[0].Err != wantErr {
+		t.Fatalf("source blocked observations=%+v, want one cause-preserving retry", observations)
+	}
+}
+
 func TestObservedProductionSlotExecutorClassifiesMissingFrozenQueryFacts(t *testing.T) {
 	var observations []observability.Observation
 	wantErr := fmt.Errorf("resolve frozen input closure: %w", access.ErrFrozenQueryPlanUnavailable)

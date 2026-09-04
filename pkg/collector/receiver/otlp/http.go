@@ -17,6 +17,7 @@ import (
 
 	"github.com/gogo/protobuf/jsonpb"
 	"github.com/gogo/protobuf/proto"
+	"github.com/pkg/errors"
 	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
 	"go.opentelemetry.io/collector/pdata/pmetric/pmetricotlp"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
@@ -151,7 +152,11 @@ func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype 
 	code, processorName, err := s.Validate(r)
 	if err != nil {
 		writeError(w, rh, err, int(code))
-		logger.Warnf("run pre-check failed, rtype=%s, code=%d, ip=%v, error: %s", rtype.S(), code, ip, err)
+		// 按 Token 限频：限流场景下持续被拒的应用会让每个请求都同步写一行日志。
+		logger.WarnRate(
+			time.Minute, r.Token.Original,
+			errors.Wrapf(err, "run pre-check failed, rtype=%s, code=%d, ip=%v", rtype.S(), code, ip),
+		)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, rtype, processorName, r.Token.Original, code)
 		return
 	}

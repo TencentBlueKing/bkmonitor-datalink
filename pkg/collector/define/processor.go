@@ -15,6 +15,7 @@ const (
 	ProcessorMetricsFilter   = "metrics_filter"
 	ProcessorProxyValidator  = "proxy_validator"
 	ProcessorRateLimiter     = "rate_limiter"
+	ProcessorTrafficLimiter  = "traffic_limiter"
 	ProcessorResourceFilter  = "resource_filter"
 	ProcessorSampler         = "sampler"
 	ProcessorServiceDiscover = "service_discover"

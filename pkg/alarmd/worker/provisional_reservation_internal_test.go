@@ -90,3 +90,23 @@ func TestStreamedExecutionReleaseProvisionalIsIdempotentAndReusable(t *testing.T
 	}
 	coordinator.releaseProvisional(1, 100)
 }
+
+func TestStreamedExecutionReleasesAcceptedReservationAfterLaterBudgetRejection(t *testing.T) {
+	coordinator := &SlotExecutionCoordinator{budget: ProvisionalBudget{MaxSeries: 10, MaxRetainedBytes: 1_000}}
+	stream := &streamedExecution{coordinator: coordinator}
+	if err := stream.reserveProvisional(context.Background(), 1, 600); err != nil {
+		t.Fatal(err)
+	}
+	stream.series, stream.retained = 1, 600
+	if err := stream.reserveProvisional(context.Background(), 1, 600); err == nil {
+		t.Fatal("second reservation unexpectedly fit the retained-byte budget")
+	}
+
+	stream.releaseProvisional()
+	coordinator.reservations.mu.Lock()
+	series, retained := coordinator.reservations.series, coordinator.reservations.retainedBytes
+	coordinator.reservations.mu.Unlock()
+	if series != 0 || retained != 0 {
+		t.Fatalf("reservation after rejection=%d/%d, want 0/0", series, retained)
+	}
+}

@@ -390,6 +390,7 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 				if err != nil {
 					return execution.ProviderCompletion{}, err
 				}
+				batch.Delivery.Bytes = uint64(len(raw))
 				if batch.Dataset.Len() == 0 {
 					continue
 				}

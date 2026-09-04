@@ -150,11 +150,38 @@ func TestSlotExecutionCoordinatorBudgetsRetainedSeriesAndBytes(t *testing.T) {
 	}
 }
 
+func TestSlotExecutionCoordinatorRejectsCumulativeUQPayloadBeforeSideEffectsAndReleasesReservation(t *testing.T) {
+	fixture := newFixtureWithBudget(t, worker.ProvisionalBudget{
+		MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10,
+	})
+	fixture.ports.reverseStateReceipts = true
+	fixture.ports.queryDeliveryBytes = []uint64{600 << 10, 600 << 10}
+
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err == nil || result.Completed {
+		t.Fatalf("Execute() result=%+v error=%v, want cumulative retained-byte rejection", result, err)
+	}
+	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || !isZeroProgressCommit(fixture.ports.lastProgress) {
+		t.Fatal("retained-byte rejection reached Event, State or Progress")
+	}
+	assertCapacityRejection(t, fixture.observations, observability.CapacityBudgetRetainedBytes)
+
+	// A complete single-series execution fitting the same budget proves the
+	// failed attempt released its accepted first-batch reservation.
+	fixture.ports.reverseStateReceipts = false
+	fixture.ports.queryDeliveryBytes = []uint64{600 << 10}
+	result, err = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err != nil || !result.Completed {
+		t.Fatalf("Execute() after rejection result=%+v error=%v", result, err)
+	}
+}
+
 func TestSlotExecutionCoordinatorReleasesProcessReservationAfterQueryExit(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
 	}{
+		{name: "success"},
 		{name: "failure", err: errors.New("query failed after series delivery")},
 		{name: "cancellation", err: context.Canceled},
 	}
@@ -165,7 +192,11 @@ func TestSlotExecutionCoordinatorReleasesProcessReservationAfterQueryExit(t *tes
 			})
 			fixture.ports.queryAfterSeriesError = test.err
 			result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
-			if !errors.Is(err, test.err) || result.Completed {
+			if test.err == nil {
+				if err != nil || !result.Completed {
+					t.Fatalf("first Execute() result=%+v error=%v, want success", result, err)
+				}
+			} else if !errors.Is(err, test.err) || result.Completed {
 				t.Fatalf("first Execute() result=%+v error=%v, want %v", result, err, test.err)
 			}
 
@@ -1006,6 +1037,7 @@ type recordingPorts struct {
 	gapMutations                    []execution.PlanGapMutation
 	executeOverride                 func(context.Context, execution.QueryExecutionRequest, execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error)
 	queryAfterSeriesError           error
+	queryDeliveryBytes              []uint64
 }
 
 func (ports *recordingPorts) Execute(ctx context.Context, request execution.QueryExecutionRequest, consumer execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error) {
@@ -1110,6 +1142,9 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 		batchDelivery := execution.SeriesDelivery{
 			PhysicalQuery: "physical-query-1", QueryRevision: queryRevision,
 			Series: 1, Records: 1, Digest: fmt.Sprintf("delivery-%d", index+1),
+		}
+		if index < len(ports.queryDeliveryBytes) {
+			batchDelivery.Bytes = ports.queryDeliveryBytes[index]
 		}
 		accumulated, accumulateErr := execution.AccumulateSeriesDelivery(delivery, batchDelivery)
 		if accumulateErr != nil {

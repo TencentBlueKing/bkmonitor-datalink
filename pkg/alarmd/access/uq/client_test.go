@@ -124,6 +124,30 @@ func TestClientNormalizesNoDimensionSeriesWithStableIdentity(t *testing.T) {
 	}
 }
 
+func TestClientMeasuresSeriesPayloadBytesAndAccumulatesCompletion(t *testing.T) {
+	first := `{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["bk_target_ip"],"group_values":["` + strings.Repeat("a", 32<<10) + `"],"values":[[1700123456789,12.5],[1700123516789,13.5]]}`
+	second := `{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["bk_target_ip"],"group_values":["` + strings.Repeat("b", 8<<10) + `"],"values":[[1700123456789,14.5]]}`
+	client := fixtureClient(t, http.StatusOK,
+		`{"series":[`+first+`,`+second+`],"is_partial":false}`, DefaultLimits())
+	sink := &collectingSink{}
+
+	completion, err := client.Execute(context.Background(), validAttempt(t), sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.batches) != 2 {
+		t.Fatalf("batches=%d, want 2", len(sink.batches))
+	}
+	wantFirst, wantSecond := uint64(len(first)), uint64(len(second))
+	if sink.batches[0].Delivery.Bytes != wantFirst || sink.batches[1].Delivery.Bytes != wantSecond {
+		t.Fatalf("batch bytes=%d/%d, want %d/%d", sink.batches[0].Delivery.Bytes,
+			sink.batches[1].Delivery.Bytes, wantFirst, wantSecond)
+	}
+	if completion.Delivery.Bytes != wantFirst+wantSecond {
+		t.Fatalf("completion bytes=%d, want %d", completion.Delivery.Bytes, wantFirst+wantSecond)
+	}
+}
+
 func TestClientRejectsInvalidCanonicalBoolean(t *testing.T) {
 	if _, err := parseQueryBool("is_wildcard", "yes"); err == nil || !strings.Contains(err.Error(), "is_wildcard must be true or false") {
 		t.Fatalf("error=%v", err)

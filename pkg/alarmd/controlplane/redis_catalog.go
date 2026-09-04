@@ -463,7 +463,7 @@ func (repository *RedisCatalogRepository) LoadSnapshot(ctx context.Context, revi
 	}
 	values, err := repository.client.MGet(ctx, repository.snapshotKey(revision), repository.epochForRevisionKey(revision)).Result()
 	if err != nil {
-		return PublishedSnapshot{}, err
+		return PublishedSnapshot{}, activationDependencyIO(err)
 	}
 	if len(values) != 2 || values[0] == nil || values[1] == nil {
 		return PublishedSnapshot{}, ErrSnapshotUnavailable
@@ -520,9 +520,11 @@ func (repository *RedisCatalogRepository) LoadPublishedSnapshot(
 			return PublishedSnapshot{}, ErrSnapshotUnavailable
 		}
 	} else if err != nil {
-		return PublishedSnapshot{}, err
+		return PublishedSnapshot{}, activationDependencyIO(err)
 	} else if revision != string(publication.SnapshotRevision) {
-		return PublishedSnapshot{}, errors.New("alarmd controlplane: publication occurrence differs from Snapshot revision")
+		return PublishedSnapshot{}, &PersistedSnapshotCorruptError{
+			Err: errors.New("publication occurrence differs from Snapshot revision"),
+		}
 	}
 	snapshot.Publication = publication
 	return snapshot, nil
@@ -625,14 +627,14 @@ func (repository *RedisCatalogRepository) LoadActivation(ctx context.Context) (A
 		return ActivationState{}, ErrActivationUnavailable
 	}
 	if err != nil {
-		return ActivationState{}, err
+		return ActivationState{}, activationDependencyIO(err)
 	}
 	var state ActivationState
 	if err := json.Unmarshal(payload, &state); err != nil {
-		return ActivationState{}, fmt.Errorf("alarmd controlplane: decode activation: %w", err)
+		return ActivationState{}, &PersistedActivationCorruptError{Err: fmt.Errorf("decode: %w", err)}
 	}
 	if err := validateActivationState(state); err != nil {
-		return ActivationState{}, err
+		return ActivationState{}, &PersistedActivationCorruptError{Err: err}
 	}
 	return state, nil
 }

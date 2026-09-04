@@ -318,14 +318,14 @@ func activationReconciliationCounts(
 	draining []DrainingQueryGroup,
 	newGroups map[execution.QueryGroupIdentity]QueryGroup,
 ) ActivationFailure {
-	reactivating := 0
+	reappeared := 0
 	for _, projection := range draining {
 		if _, exists := newGroups[projection.QueryGroup]; exists {
-			reactivating++
+			reappeared++
 		}
 	}
 	return ActivationFailure{
 		DrainingQueryGroups: len(draining), CandidateQueryGroups: len(newGroups),
-		ReactivatingQueryGroups: reactivating,
+		ReappearedQueryGroups: reappeared,
 	}
 }

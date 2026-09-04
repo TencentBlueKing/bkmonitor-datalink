@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os/exec"
 	"reflect"
@@ -100,6 +101,43 @@ func (*beforeEvalHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmde
 }
 
 func (*beforeEvalHook) AfterProcessPipeline(context.Context, []redis.Cmder) error { return nil }
+
+type oneCommandErrorHook struct {
+	name        string
+	argContains string
+	err         error
+	fired       atomic.Bool
+}
+
+func (hook *oneCommandErrorHook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
+	if !strings.EqualFold(cmd.Name(), hook.name) || hook.fired.Load() {
+		return ctx, nil
+	}
+	if hook.argContains != "" {
+		matched := false
+		for _, argument := range cmd.Args() {
+			if strings.Contains(fmt.Sprint(argument), hook.argContains) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return ctx, nil
+		}
+	}
+	if hook.fired.CompareAndSwap(false, true) {
+		return ctx, hook.err
+	}
+	return ctx, nil
+}
+
+func (*oneCommandErrorHook) AfterProcess(context.Context, redis.Cmder) error { return nil }
+
+func (*oneCommandErrorHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+
+func (*oneCommandErrorHook) AfterProcessPipeline(context.Context, []redis.Cmder) error { return nil }
 
 func TestRedisCatalogRepositoryPublishesImmutableContentAddressedSnapshot(t *testing.T) {
 	client := newControlplaneRedis(t)
@@ -1396,6 +1434,122 @@ func TestRedisCatalogRepositoryRenewCurrentObjectsFailsAtomicallyOnInvalidMappin
 	}
 }
 
+type activationFailureFixture struct {
+	client      *redis.Client
+	prefix      string
+	repository  *controlplane.RedisCatalogRepository
+	reconciler  *controlplane.ScheduleActivationReconciler
+	current     controlplane.SnapshotPublicationRef
+	candidate   controlplane.SnapshotPublicationRef
+	activeState controlplane.ActivationState
+}
+
+func newActivationFailureFixture(t *testing.T, suffix string) activationFailureFixture {
+	t.Helper()
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	prefix := "alarmd:control:activation-failure:" + suffix
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentCatalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
+	current, _, err := repository.PublishCatalog(ctx, currentCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, semantics := runtimePlanCompiler(t)
+	initial, err := controlplane.NewInitialScheduleActivator(
+		repository, compiler, semantics, func() time.Time { return time.Unix(83, 0) },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeState, err := initial.Ensure(ctx, current.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateCatalog := catalogWithSchedule(t, validCatalog(t, 81), 60, 0)
+	candidate, _, err := repository.PublishCatalog(ctx, candidateCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler, err := controlplane.NewScheduleActivationReconciler(
+		repository, compiler, semantics, func() time.Time { return time.Unix(180, 0) },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return activationFailureFixture{
+		client: client, prefix: prefix, repository: repository, reconciler: reconciler,
+		current: current.Publication, candidate: candidate.Publication, activeState: activeState,
+	}
+}
+
+func TestScheduleActivationReconcilerClassifiesInjectedDependencyIOByStage(t *testing.T) {
+	tests := []struct {
+		name        string
+		command     string
+		argContains string
+		wantStage   controlplane.ActivationFailureStage
+		publication func(activationFailureFixture) controlplane.SnapshotPublicationRef
+		prepare     func(*testing.T, activationFailureFixture)
+	}{
+		{
+			name: "activation load", command: "get", argContains: ":activation",
+			wantStage:   controlplane.ActivationFailureStageActivationLoad,
+			publication: func(f activationFailureFixture) controlplane.SnapshotPublicationRef { return f.current },
+		},
+		{
+			name: "active set load", command: "get", argContains: ":active_qg_set:",
+			wantStage:   controlplane.ActivationFailureStageCurrentRecovery,
+			publication: func(f activationFailureFixture) controlplane.SnapshotPublicationRef { return f.current },
+		},
+		{
+			name: "candidate snapshot load", command: "mget", argContains: ":snapshot:",
+			wantStage:   controlplane.ActivationFailureStageCandidateLoad,
+			publication: func(f activationFailureFixture) controlplane.SnapshotPublicationRef { return f.candidate },
+		},
+		{
+			name: "schedule cutover eval", command: "eval",
+			wantStage:   controlplane.ActivationFailureStageScheduleCutover,
+			publication: func(f activationFailureFixture) controlplane.SnapshotPublicationRef { return f.candidate },
+		},
+		{
+			name: "legacy persist eval", command: "eval",
+			wantStage:   controlplane.ActivationFailureStagePersist,
+			publication: func(f activationFailureFixture) controlplane.SnapshotPublicationRef { return f.current },
+			prepare: func(t *testing.T, f activationFailureFixture) {
+				legacy := f.activeState
+				legacy.SchemaVersion = "alarmd-control-activation-v1"
+				legacy.ActiveQGSetRef = controlplane.ActiveQueryGroupSetRef{}
+				writeLegacyActivation(t, context.Background(), f.client, f.prefix, legacy)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newActivationFailureFixture(t, strings.ReplaceAll(test.name, " ", "-"))
+			if test.prepare != nil {
+				test.prepare(t, fixture)
+			}
+			injected := errors.New("injected activation dependency I/O")
+			hook := &oneCommandErrorHook{
+				name: test.command, argContains: test.argContains, err: injected,
+			}
+			fixture.client.AddHook(hook)
+			_, err := fixture.reconciler.Ensure(context.Background(), test.publication(fixture))
+			failure, ok := controlplane.ActivationFailureFromError(err)
+			var dependencyIO *controlplane.ActivationDependencyIOError
+			if !hook.fired.Load() || !errors.Is(err, injected) || !errors.As(err, &dependencyIO) || !ok ||
+				failure.Stage != test.wantStage || failure.Class != controlplane.ActivationFailureClassDependencyIO {
+				t.Fatalf("activation dependency I/O fired=%t error=%v typed=%t failure=(%#v,%t)",
+					hook.fired.Load(), err, errors.As(err, &dependencyIO), failure, ok)
+			}
+		})
+	}
+}
+
 func TestInitialScheduleActivatorPersistsOneNonAlignedBoundaryAcrossRestart(t *testing.T) {
 	client := newControlplaneRedis(t)
 	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:first-activation", time.Hour)
@@ -1532,13 +1686,14 @@ func TestScheduleActivationReconcilerUpgradesLegacySamePublicationToActiveQGSetR
 
 func TestScheduleActivationReconcilerDoesNotFallbackWhenV2ActiveSetInvalid(t *testing.T) {
 	for _, test := range []struct {
-		name   string
-		mutate func(context.Context, *redis.Client, string) error
+		name      string
+		wantClass controlplane.ActivationFailureClass
+		mutate    func(context.Context, *redis.Client, string) error
 	}{
-		{name: "missing", mutate: func(ctx context.Context, client *redis.Client, key string) error {
+		{name: "missing", wantClass: controlplane.ActivationFailureClassUnavailable, mutate: func(ctx context.Context, client *redis.Client, key string) error {
 			return client.Del(ctx, key).Err()
 		}},
-		{name: "count and digest mismatch", mutate: func(ctx context.Context, client *redis.Client, key string) error {
+		{name: "count and digest mismatch", wantClass: controlplane.ActivationFailureClassProjectionConflict, mutate: func(ctx context.Context, client *redis.Client, key string) error {
 			return client.Set(ctx, key, `{"schema_version":"alarmd-active-qg-set-v1","query_groups":[]}`, time.Hour).Err()
 		}},
 	} {
@@ -1572,6 +1727,9 @@ func TestScheduleActivationReconcilerDoesNotFallbackWhenV2ActiveSetInvalid(t *te
 			reconciler, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, time.Now)
 			if _, err := reconciler.Ensure(ctx, snapshot.Publication); err == nil {
 				t.Fatal("invalid v2 Active Set must fail closed")
+			} else if failure, ok := controlplane.ActivationFailureFromError(err); !ok ||
+				failure.Stage != controlplane.ActivationFailureStageCurrentRecovery || failure.Class != test.wantClass {
+				t.Fatalf("invalid Active Set classification=(%#v,%t), want current_recovery/%s", failure, ok, test.wantClass)
 			}
 			activationAfter, _ := client.Get(ctx, prefix+":activation").Bytes()
 			scheduleAfter, _ := client.Get(ctx, scheduleKey).Bytes()
@@ -2758,7 +2916,7 @@ func TestScheduleActivationReconcilerReactivatesDrainedQueryGroupOnSameProgressT
 	} else if failure, ok := controlplane.ActivationFailureFromError(err); !ok ||
 		failure.Stage != controlplane.ActivationFailureStageReactivation ||
 		failure.Class != controlplane.ActivationFailureClassNotDrained ||
-		failure.DrainingQueryGroups != 1 || failure.CandidateQueryGroups != 1 || failure.ReactivatingQueryGroups != 1 ||
+		failure.DrainingQueryGroups != 1 || failure.CandidateQueryGroups != 1 || failure.ReappearedQueryGroups != 1 ||
 		!errors.Is(err, controlplane.ErrReactivationNotDrained) {
 		t.Fatalf("undrained reactivation classification=(%#v,%t)", failure, ok)
 	}

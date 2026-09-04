@@ -179,7 +179,7 @@ func TestLoggingObserverWritesBoundedActivationFailureWithoutIdentity(t *testing
 		ActivationFailure: &ActivationFailureFacts{
 			Stage:               ActivationFailureStageReactivation,
 			Class:               ActivationFailureClassNotDrained,
-			DrainingQueryGroups: 2, CandidateQueryGroups: 364, ReactivatingQueryGroups: 1,
+			DrainingQueryGroups: 2, CandidateQueryGroups: 364, ReappearedQueryGroups: 1,
 		},
 		Err: errors.New("must-not-be-observed"),
 	})
@@ -189,11 +189,11 @@ func TestLoggingObserverWritesBoundedActivationFailureWithoutIdentity(t *testing
 		t.Fatalf("decode activation failure log: %v; log=%s", err, output.String())
 	}
 	for field, want := range map[string]any{
-		"activation_failure_stage":  "reactivation",
-		"activation_failure_class":  "not_drained",
-		"draining_query_groups":     float64(2),
-		"candidate_query_groups":    float64(364),
-		"reactivating_query_groups": float64(1),
+		"activation_failure_stage": "reactivation",
+		"activation_failure_class": "not_drained",
+		"draining_query_groups":    float64(2),
+		"candidate_query_groups":   float64(364),
+		"reappeared_query_groups":  float64(1),
 	} {
 		if event[field] != want {
 			t.Fatalf("event[%q]=%#v, want %#v; event=%#v", field, event[field], want, event)

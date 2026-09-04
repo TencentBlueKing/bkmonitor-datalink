@@ -142,7 +142,7 @@ func (repository *RedisCatalogRepository) persistActivationRefUpgrade(ctx contex
 		[]string{repository.activationHeaderKey(), repository.activationKey(), repository.activeQGSetKey(next.ActiveQGSetRef.Digest)},
 		expectedHeader, nextHeader, payload, activePayload, repository.ttl.Milliseconds()).Int()
 	if err != nil {
-		return fmt.Errorf("alarmd controlplane: persist activation ref upgrade: %w", err)
+		return activationDependencyIO(fmt.Errorf("persist activation ref upgrade: %w", err))
 	}
 	if changed != 1 {
 		return ErrActivationConflict
@@ -226,7 +226,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 			return err
 		}
 		if !drained {
-			return errors.New("alarmd controlplane: Query Group cannot reactivate before retirement drains")
+			return ErrReactivationNotDrained
 		}
 		reactivating[draining.QueryGroup] = struct{}{}
 	}
@@ -610,7 +610,7 @@ func (repository *RedisCatalogRepository) persistInitialActivation(
 	}
 	changed, err := repository.client.Eval(ctx, compareAndSetInitialSchedulesScript, keys, args...).Int()
 	if err != nil {
-		return fmt.Errorf("alarmd controlplane: persist initial schedule activation: %w", err)
+		return activationDependencyIO(fmt.Errorf("persist initial schedule activation: %w", err))
 	}
 	if changed != 1 {
 		return ErrActivationConflict
@@ -682,7 +682,7 @@ func (repository *RedisCatalogRepository) persistCutoverActivation(
 	}
 	changed, err := repository.client.Eval(ctx, compareAndSetCutoverSchedulesScript, keys, args...).Int()
 	if err != nil {
-		return fmt.Errorf("alarmd controlplane: persist schedule cutover: %w", err)
+		return activationDependencyIO(fmt.Errorf("persist schedule cutover: %w", err))
 	}
 	if changed != 1 {
 		return ErrActivationConflict
@@ -877,7 +877,7 @@ func (repository *RedisCatalogRepository) loadActivatedGroupsFromScheduleScan(ct
 	for {
 		keys, next, scanErr := repository.client.Scan(migrationCtx, cursor, pattern, 500).Result()
 		if scanErr != nil {
-			return nil, scanErr
+			return nil, activationDependencyIO(scanErr)
 		}
 		scanned += len(keys)
 		if scanned > repository.legacyMigrationMaxScanKeys {
@@ -988,7 +988,7 @@ func (repository *RedisCatalogRepository) queryGroupDrained(
 	identity := execution.ProgressIdentity{QueryGroup: queryGroup}
 	load, err := progress.LoadProgress(ctx, identity)
 	if err != nil {
-		return false, err
+		return false, activationDependencyIO(err)
 	}
 	if err := load.Validate(identity); err != nil {
 		return false, err
@@ -1084,7 +1084,7 @@ func (repository *RedisCatalogRepository) loadScheduleTimeline(
 		return persistedScheduleTimeline{}, nil, ErrScheduleUnavailable
 	}
 	if err != nil {
-		return persistedScheduleTimeline{}, nil, err
+		return persistedScheduleTimeline{}, nil, activationDependencyIO(err)
 	}
 	var timeline persistedScheduleTimeline
 	if err := json.Unmarshal(payload, &timeline); err != nil {

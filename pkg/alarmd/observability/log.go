@@ -182,7 +182,7 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation) {
 			attributes = append(attributes,
 				slog.Int("draining_query_groups", facts.DrainingQueryGroups),
 				slog.Int("candidate_query_groups", facts.CandidateQueryGroups),
-				slog.Int("reactivating_query_groups", facts.ReactivatingQueryGroups),
+				slog.Int("reappeared_query_groups", facts.ReappearedQueryGroups),
 			)
 		}
 	}

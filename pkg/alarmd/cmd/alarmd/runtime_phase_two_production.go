@@ -495,11 +495,11 @@ func (runtime *productionPhaseTwoControl) refresh(
 				Direction:  observability.DirectionInternal,
 				ReasonCode: observability.ReasonContractRetryable,
 				ActivationFailure: &observability.ActivationFailureFacts{
-					Stage:                   observability.ActivationFailureStage(failure.Stage),
-					Class:                   observability.ActivationFailureClass(failure.Class),
-					DrainingQueryGroups:     failure.DrainingQueryGroups,
-					CandidateQueryGroups:    failure.CandidateQueryGroups,
-					ReactivatingQueryGroups: failure.ReactivatingQueryGroups,
+					Stage:                 observability.ActivationFailureStage(failure.Stage),
+					Class:                 observability.ActivationFailureClass(failure.Class),
+					DrainingQueryGroups:   failure.DrainingQueryGroups,
+					CandidateQueryGroups:  failure.CandidateQueryGroups,
+					ReappearedQueryGroups: failure.ReappearedQueryGroups,
 				},
 				Err: err,
 			})

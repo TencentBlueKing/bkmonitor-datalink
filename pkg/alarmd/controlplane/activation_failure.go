@@ -38,16 +38,55 @@ const (
 // Counts are populated only for reactivation; identities and raw errors stay in
 // the underlying error and never become metric labels.
 type ActivationFailure struct {
-	Stage                   ActivationFailureStage
-	Class                   ActivationFailureClass
-	DrainingQueryGroups     int
-	CandidateQueryGroups    int
-	ReactivatingQueryGroups int
+	Stage                 ActivationFailureStage
+	Class                 ActivationFailureClass
+	DrainingQueryGroups   int
+	CandidateQueryGroups  int
+	ReappearedQueryGroups int
 }
 
 type ActivationFailureError struct {
 	Failure ActivationFailure
 	Err     error
+}
+
+// ActivationDependencyIOError marks an activation dependency call that did
+// not complete. Unwrap preserves the original Redis, Progress or context error.
+type ActivationDependencyIOError struct{ Err error }
+
+func (failure *ActivationDependencyIOError) Error() string {
+	return "alarmd controlplane: activation dependency I/O failed"
+}
+
+func (failure *ActivationDependencyIOError) Unwrap() error {
+	if failure == nil {
+		return nil
+	}
+	return failure.Err
+}
+
+func activationDependencyIO(err error) error {
+	if err == nil {
+		return nil
+	}
+	var typed *ActivationDependencyIOError
+	if errors.As(err, &typed) {
+		return err
+	}
+	return &ActivationDependencyIOError{Err: err}
+}
+
+type PersistedActivationCorruptError struct{ Err error }
+
+func (failure *PersistedActivationCorruptError) Error() string {
+	return "alarmd controlplane: persisted activation is corrupt"
+}
+
+func (failure *PersistedActivationCorruptError) Unwrap() error {
+	if failure == nil {
+		return nil
+	}
+	return failure.Err
 }
 
 func (failure *ActivationFailureError) Error() string {
@@ -88,12 +127,16 @@ func wrapActivationFailure(
 	if stage == ActivationFailureStageReactivation && len(counts) > 0 {
 		failure.DrainingQueryGroups = counts[0].DrainingQueryGroups
 		failure.CandidateQueryGroups = counts[0].CandidateQueryGroups
-		failure.ReactivatingQueryGroups = counts[0].ReactivatingQueryGroups
+		failure.ReappearedQueryGroups = counts[0].ReappearedQueryGroups
 	}
 	return &ActivationFailureError{Failure: failure, Err: err}
 }
 
 func classifyActivationFailure(err error, fallback ActivationFailureClass) ActivationFailureClass {
+	var dependencyIO *ActivationDependencyIOError
+	if errors.As(err, &dependencyIO) {
+		return ActivationFailureClassDependencyIO
+	}
 	switch {
 	case errors.Is(err, ErrSnapshotUnavailable), errors.Is(err, ErrCatalogObjectUnavailable),
 		errors.Is(err, ErrActivationUnavailable), errors.Is(err, ErrScheduleUnavailable):
@@ -110,12 +153,17 @@ func classifyActivationFailure(err error, fallback ActivationFailureClass) Activ
 		return ActivationFailureClassDependencyIO
 	}
 	var snapshotCorrupt *PersistedSnapshotCorruptError
-	if errors.As(err, &snapshotCorrupt) {
+	var activationCorrupt *PersistedActivationCorruptError
+	if errors.As(err, &snapshotCorrupt) || errors.As(err, &activationCorrupt) {
 		return ActivationFailureClassCorrupt
 	}
 	var scheduleCorrupt *DeterministicScheduleError
 	if errors.As(err, &scheduleCorrupt) {
 		return ActivationFailureClassCorrupt
+	}
+	var activeSetConflict *ActiveQueryGroupSetConflictError
+	if errors.As(err, &activeSetConflict) {
+		return ActivationFailureClassProjectionConflict
 	}
 	return fallback
 }

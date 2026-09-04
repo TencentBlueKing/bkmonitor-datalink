@@ -155,7 +155,7 @@ func TestPhaseTwoActivationFailureMetricUsesOnlyFixedStageAndClass(t *testing.T)
 		ActivationFailure: &observability.ActivationFailureFacts{
 			Stage:               observability.ActivationFailureStageReactivation,
 			Class:               observability.ActivationFailureClassNotDrained,
-			DrainingQueryGroups: 2, CandidateQueryGroups: 364, ReactivatingQueryGroups: 1,
+			DrainingQueryGroups: 2, CandidateQueryGroups: 364, ReappearedQueryGroups: 1,
 		},
 		Trace: observability.TraceFields{QueryGroupKey: "must-not-be-a-label", StrategyID: "must-not-be-a-label"},
 	})

@@ -309,11 +309,11 @@ type SourceRefreshFacts struct {
 // ActivationFailureFacts carries only fixed classification and bounded counts.
 // It intentionally excludes Query Group, Plan and error text from metric labels.
 type ActivationFailureFacts struct {
-	Stage                   ActivationFailureStage
-	Class                   ActivationFailureClass
-	DrainingQueryGroups     int
-	CandidateQueryGroups    int
-	ReactivatingQueryGroups int
+	Stage                 ActivationFailureStage
+	Class                 ActivationFailureClass
+	DrainingQueryGroups   int
+	CandidateQueryGroups  int
+	ReappearedQueryGroups int
 }
 
 // AlgorithmProvenance carries bounded diagnostic coordinates for one
@@ -483,10 +483,10 @@ func normalizeActivationFailureFacts(
 	normalized := *facts
 	if normalized.Stage != ActivationFailureStageReactivation ||
 		normalized.DrainingQueryGroups < 0 || normalized.CandidateQueryGroups < 0 ||
-		normalized.ReactivatingQueryGroups < 0 {
+		normalized.ReappearedQueryGroups < 0 {
 		normalized.DrainingQueryGroups = 0
 		normalized.CandidateQueryGroups = 0
-		normalized.ReactivatingQueryGroups = 0
+		normalized.ReappearedQueryGroups = 0
 	}
 	return &normalized
 }

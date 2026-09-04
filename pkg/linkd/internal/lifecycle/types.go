@@ -67,18 +67,50 @@ type Logger interface {
 	WarnContext(ctx context.Context, message string, args ...any)
 }
 
+// RecentAlertCache 保存 Elasticsearch 最近写入的 Alert 快照，只用于跨越搜索 refresh 可见性窗口。
+// Redis 错误必须返回给 Processor；found=false 只表示对应 key 明确不存在。
+type RecentAlertCache interface {
+	GetCurrent(ctx context.Context, key store.ActiveAlertKey) (stored store.StoredAlert, found bool, err error)
+	GetEndedByEvent(ctx context.Context, bkTenantID, eventID string) (stored store.StoredAlert, found bool, err error)
+	PutCurrent(ctx context.Context, stored store.StoredAlert) error
+	PutEnded(ctx context.Context, stored store.StoredAlert) error
+	PutTerminal(ctx context.Context, stored store.StoredAlert) error
+	Repair(ctx context.Context, stored store.StoredAlert) error
+}
+
+// NoopRecentAlertCache 供不依赖 Elasticsearch 近实时搜索的存储后端使用。
+type NoopRecentAlertCache struct{}
+
+func (NoopRecentAlertCache) GetCurrent(context.Context, store.ActiveAlertKey) (store.StoredAlert, bool, error) {
+	return store.StoredAlert{}, false, nil
+}
+
+func (NoopRecentAlertCache) GetEndedByEvent(context.Context, string, string) (store.StoredAlert, bool, error) {
+	return store.StoredAlert{}, false, nil
+}
+
+func (NoopRecentAlertCache) PutCurrent(context.Context, store.StoredAlert) error { return nil }
+
+func (NoopRecentAlertCache) PutEnded(context.Context, store.StoredAlert) error { return nil }
+
+func (NoopRecentAlertCache) PutTerminal(context.Context, store.StoredAlert) error { return nil }
+
+func (NoopRecentAlertCache) Repair(context.Context, store.StoredAlert) error { return nil }
+
 type Processor struct {
-	repository  store.Repository
-	idGenerator AlertIDGenerator
-	enricher    AlertEnricher
-	finalHook   FinalHook
-	severity    SeverityTable
-	clock       Clock
-	logger      Logger
+	repository   store.Repository
+	recentAlerts RecentAlertCache
+	idGenerator  AlertIDGenerator
+	enricher     AlertEnricher
+	finalHook    FinalHook
+	severity     SeverityTable
+	clock        Clock
+	logger       Logger
 }
 
 func NewProcessor(
 	repository store.Repository,
+	recentAlerts RecentAlertCache,
 	idGenerator AlertIDGenerator,
 	enricher AlertEnricher,
 	finalHook FinalHook,
@@ -87,14 +119,14 @@ func NewProcessor(
 	logger Logger,
 ) (*Processor, error) {
 	for name, dependency := range map[string]any{
-		"repository": repository, "id_generator": idGenerator, "enricher": enricher,
+		"repository": repository, "recent_alert_cache": recentAlerts, "id_generator": idGenerator, "enricher": enricher,
 		"final_hook": finalHook, "severity": severity, "clock": clock, "logger": logger,
 	} {
 		if dependency == nil {
 			return nil, fmt.Errorf("lifecycle %s must not be nil", name)
 		}
 	}
-	return &Processor{repository: repository, idGenerator: idGenerator, enricher: enricher,
+	return &Processor{repository: repository, recentAlerts: recentAlerts, idGenerator: idGenerator, enricher: enricher,
 		finalHook: finalHook, severity: severity, clock: clock, logger: logger}, nil
 }
 

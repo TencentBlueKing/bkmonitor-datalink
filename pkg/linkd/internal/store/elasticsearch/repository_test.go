@@ -706,10 +706,14 @@ func TestAlertCreateAndCASWaitForRefresh(t *testing.T) {
 			}
 			response := `{"_index":"linkd-test-alerts","_id":"` + documentID + `","_seq_no":1,"_primary_term":1}`
 			return &http.Response{StatusCode: http.StatusCreated, Body: io.NopCloser(strings.NewReader(response))}, nil
-		case "/_msearch":
-			response := `{"responses":[{"status":200,"hits":{"hits":[{"_index":"linkd-test-alerts","_id":"` + documentID + `","_seq_no":1,"_primary_term":1,"_source":` + string(document) + `}]}}]}`
-			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
 		case "/linkd-test-alerts/_doc/" + documentID:
+			if request.Method == http.MethodGet {
+				if request.URL.Query().Get("realtime") != "true" {
+					t.Fatalf("GET query=%s", request.URL.RawQuery)
+				}
+				response := `{"_index":"linkd-test-alerts","_id":"` + documentID + `","_seq_no":1,"_primary_term":1,"found":true,"_source":` + string(document) + `}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
+			}
 			if request.URL.Query().Get("refresh") != "wait_for" {
 				t.Fatalf("CAS query=%s", request.URL.RawQuery)
 			}
@@ -742,6 +746,61 @@ func TestAlertCreateAndCASWaitForRefresh(t *testing.T) {
 		alert.AlertID,
 		created.Version,
 		replacement,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLifecycleAlertCreateAndCASDoNotWaitForRefresh(t *testing.T) {
+	router, err := NewStaticRouter("linkd-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alert := storetest.Alert("tenant-1", "alert-fast", "event-1", "fp", "warning")
+	document, err := encodeAlertDocument(alert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	documentID := alertDocumentID(alert)
+	transport := transportFunc(func(request *http.Request) (*http.Response, error) {
+		switch {
+		case request.Method == http.MethodPut && strings.Contains(request.URL.Path, "/_create/"):
+			if request.URL.Query().Get("refresh") != "false" {
+				t.Fatalf("create query=%s", request.URL.RawQuery)
+			}
+			response := `{"_index":"linkd-test-alerts","_id":"` + documentID + `","_seq_no":1,"_primary_term":1}`
+			return &http.Response{StatusCode: http.StatusCreated, Body: io.NopCloser(strings.NewReader(response))}, nil
+		case request.Method == http.MethodGet:
+			if request.URL.Query().Get("realtime") != "true" {
+				t.Fatalf("GET query=%s", request.URL.RawQuery)
+			}
+			response := `{"_index":"linkd-test-alerts","_id":"` + documentID + `","_seq_no":1,"_primary_term":1,"found":true,"_source":` + string(document) + `}`
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
+		case request.Method == http.MethodPut:
+			if request.URL.Query().Get("refresh") != "false" {
+				t.Fatalf("CAS query=%s", request.URL.RawQuery)
+			}
+			response := `{"_index":"linkd-test-alerts","_id":"` + documentID + `","_seq_no":2,"_primary_term":1}`
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
+		default:
+			t.Fatalf("unexpected request=%s %s", request.Method, request.URL.String())
+			return nil, nil
+		}
+	})
+	repository, err := New(transport, router, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := repository.CreateAlertAfterActiveLookup(context.Background(), alert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := alert.Clone()
+	replacement.LatestEventID = "event-2"
+	replacement.LastOccurredAt = replacement.LastOccurredAt.Add(time.Minute)
+	replacement.UpdateAt = replacement.UpdateAt.Add(time.Minute)
+	if _, err := repository.CompareAndSetAlertAfterActiveLookup(
+		context.Background(), alert.BKTenantID, alert.AlertID, created.Version, replacement,
 	); err != nil {
 		t.Fatal(err)
 	}

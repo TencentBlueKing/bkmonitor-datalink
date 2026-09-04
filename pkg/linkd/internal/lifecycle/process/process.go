@@ -25,6 +25,7 @@ import (
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/kafkahook"
 	"linkd/internal/lifecycle/mailbox"
+	"linkd/internal/lifecycle/recentalert"
 	"linkd/internal/lifecycle/scheduler"
 	repositoryassembly "linkd/internal/store/assembly"
 	"linkd/internal/telemetry"
@@ -85,6 +86,21 @@ func Run(
 	if err := lockClient.Ping(startupCtx).Err(); err != nil {
 		return fmt.Errorf("connect lifecycle redis: %w", err)
 	}
+	recentAlerts := lifecycle.RecentAlertCache(lifecycle.NoopRecentAlertCache{})
+	recentAlertCacheEnabled := false
+	recentAlertCacheTTL := time.Duration(0)
+	if repositoryRuntime.Backend == config.RepositoryTypeElasticsearch {
+		cacheConfig := recentalert.Config{
+			KeyPrefix:       lifecycleConfig.Mailbox.KeyPrefix + ":recent-alert",
+			RefreshInterval: storageConfig.Elasticsearch.ActiveAlertRefreshInterval(),
+		}
+		recentAlerts, err = recentalert.NewStore(lockClient, cacheConfig, telemetryRuntime.RecentAlertCacheObserver())
+		if err != nil {
+			return fmt.Errorf("initialize lifecycle recent alert cache: %w", err)
+		}
+		recentAlertCacheEnabled = true
+		recentAlertCacheTTL = cacheConfig.TTL()
+	}
 	mailboxStore, err := mailbox.NewStore(lockClient, lifecycleConfig.MailboxConfig())
 	if err != nil {
 		return fmt.Errorf("initialize lifecycle mailbox: %w", err)
@@ -108,6 +124,7 @@ func Run(
 
 	processor, err := lifecycle.NewProcessor(
 		observedRepository,
+		recentAlerts,
 		lifecycle.DeterministicAlertIDGenerator{},
 		lifecycle.NoopEnricher{},
 		observedHook,
@@ -146,6 +163,8 @@ func Run(
 		"group", lifecycleConfig.Signal.Group,
 		"concurrency", lifecycleConfig.Concurrency,
 		"mailbox_max_drain_events", lifecycleConfig.Mailbox.MaxDrainEvents,
+		"recent_alert_cache_enabled", recentAlertCacheEnabled,
+		"recent_alert_cache_ttl_seconds", int(recentAlertCacheTTL/time.Second),
 		"output_topic", lifecycleConfig.Output.Kafka.Topic,
 	)
 	defer logger.InfoContext(context.Background(), "linkd lifecycle stopped", "consumer", consumerName)

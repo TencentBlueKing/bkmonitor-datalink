@@ -116,6 +116,22 @@ const panelDefinitions: PanelDefinition[] = [
       `sum(rate(linkd_lifecycle_lease_operations_total${selector}[${window}])) by (linkd_operation, linkd_outcome)`,
   },
   {
+    id: "lifecycle-recent-alert-cache",
+    title: "Recent Alert 缓存操作速率",
+    unit: "operation/s",
+    kind: "area",
+    query: (selector, window) =>
+      `sum(rate(linkd_lifecycle_recent_alert_cache_operations_total${selector}[${window}])) by (linkd_operation, linkd_outcome)`,
+  },
+  {
+    id: "lifecycle-recent-alert-hit-ratio",
+    title: "Recent Alert 缓存命中率",
+    unit: "%",
+    kind: "line",
+    query: (selector, window) =>
+      `100 * sum(rate(linkd_lifecycle_recent_alert_cache_operations_total${mergeSelector(selector, 'linkd_operation=~"get_.*",linkd_outcome="hit"')}[${window}])) / clamp_min(sum(rate(linkd_lifecycle_recent_alert_cache_operations_total${mergeSelector(selector, 'linkd_operation=~"get_.*",linkd_outcome=~"hit|miss"')}[${window}])), 0.000000001)`,
+  },
+  {
     id: "final-hook",
     title: "FinalHook 速率",
     unit: "operation/s",
@@ -381,6 +397,8 @@ export class PrometheusConnector {
         "sum(rate(linkd_lifecycle_mailbox_operations_total[5m])) by (instance,linkd_event_source_id,linkd_operation,linkd_outcome)",
       lease:
         "sum(rate(linkd_lifecycle_lease_operations_total[5m])) by (instance,linkd_operation,linkd_outcome)",
+      recentAlertCache:
+        "sum(rate(linkd_lifecycle_recent_alert_cache_operations_total[5m])) by (instance,linkd_operation,linkd_outcome)",
       finalHook:
         "sum(rate(linkd_final_hook_operations_total[5m])) by (instance,linkd_event_source_id,linkd_hook_name,messaging_system,linkd_outcome)",
     });

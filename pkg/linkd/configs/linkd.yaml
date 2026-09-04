@@ -35,6 +35,7 @@ storage:
       - http://127.0.0.1:9200
     index_prefix: linkd
     number_of_replicas: 0
+    active_alert_refresh_interval_seconds: 5
     time_partition:
       event_bucket_days: 7
       alert_history_bucket_days: 7

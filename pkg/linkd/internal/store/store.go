@@ -50,6 +50,19 @@ type AlertStore interface {
 	) (StoredAlert, error)
 }
 
+// LifecycleAlertStore 提供已经由 fingerprint lease 和 Recent Alert 缓存完成 active 裁决后的快速写入。
+// Elasticsearch 实现可以跳过重复 active 搜索和 refresh 等待；其他后端可以保持原有强一致写入。
+type LifecycleAlertStore interface {
+	CreateAlertAfterActiveLookup(ctx context.Context, alert domain.Alert) (CreateAlertResult, error)
+	CompareAndSetAlertAfterActiveLookup(
+		ctx context.Context,
+		bkTenantID, alertID string,
+		expected VersionToken,
+		replacement domain.Alert,
+	) (StoredAlert, error)
+	GetAlertCurrent(ctx context.Context, bkTenantID, alertID string) (StoredAlert, error)
+}
+
 // AlertLogStore 定义不可变 AlertLog 的批量追加和分页读取。
 type AlertLogStore interface {
 	AppendAlertLog(ctx context.Context, log domain.AlertLog) (AppendAlertLogResult, error)

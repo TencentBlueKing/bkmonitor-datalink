@@ -8,6 +8,7 @@ storage:
     addresses:
       - {{ELASTICSEARCH_URL}}
     index_prefix: {{INDEX_PREFIX}}
+    active_alert_refresh_interval_seconds: 5
   redis:
     address: {{REDIS_ADDRESS}}
     password: {{REDIS_PASSWORD}}

@@ -120,6 +120,25 @@ func (r *observedRepository) CreateAlert(
 	return result, err
 }
 
+func (r *observedRepository) CreateAlertAfterActiveLookup(
+	ctx context.Context,
+	alert domain.Alert,
+) (store.CreateAlertResult, error) {
+	startedAt := time.Now()
+	var result store.CreateAlertResult
+	var err error
+	if next, ok := r.next.(store.LifecycleAlertStore); ok {
+		result, err = next.CreateAlertAfterActiveLookup(ctx, alert)
+	} else {
+		result, err = r.next.CreateAlert(ctx, alert)
+	}
+	r.record(ctx, "alert", "create", startedAt, err)
+	if err == nil && !result.Created {
+		r.replay(ctx, "alert", "create")
+	}
+	return result, err
+}
+
 func (r *observedRepository) GetAlert(
 	ctx context.Context,
 	bkTenantID, alertID string,
@@ -127,6 +146,22 @@ func (r *observedRepository) GetAlert(
 	startedAt := time.Now()
 	result, err := r.next.GetAlert(ctx, bkTenantID, alertID)
 	r.record(ctx, "alert", "get", startedAt, err)
+	return result, err
+}
+
+func (r *observedRepository) GetAlertCurrent(
+	ctx context.Context,
+	bkTenantID, alertID string,
+) (store.StoredAlert, error) {
+	startedAt := time.Now()
+	var result store.StoredAlert
+	var err error
+	if next, ok := r.next.(store.LifecycleAlertStore); ok {
+		result, err = next.GetAlertCurrent(ctx, bkTenantID, alertID)
+	} else {
+		result, err = r.next.GetAlert(ctx, bkTenantID, alertID)
+	}
+	r.record(ctx, "alert", "get_current", startedAt, err)
 	return result, err
 }
 
@@ -169,6 +204,26 @@ func (r *observedRepository) CompareAndSetAlert(
 ) (store.StoredAlert, error) {
 	startedAt := time.Now()
 	result, err := r.next.CompareAndSetAlert(ctx, bkTenantID, alertID, expected, replacement)
+	r.record(ctx, "alert", "compare_and_set", startedAt, err)
+	return result, err
+}
+
+func (r *observedRepository) CompareAndSetAlertAfterActiveLookup(
+	ctx context.Context,
+	bkTenantID, alertID string,
+	expected store.VersionToken,
+	replacement domain.Alert,
+) (store.StoredAlert, error) {
+	startedAt := time.Now()
+	var result store.StoredAlert
+	var err error
+	if next, ok := r.next.(store.LifecycleAlertStore); ok {
+		result, err = next.CompareAndSetAlertAfterActiveLookup(
+			ctx, bkTenantID, alertID, expected, replacement,
+		)
+	} else {
+		result, err = r.next.CompareAndSetAlert(ctx, bkTenantID, alertID, expected, replacement)
+	}
 	r.record(ctx, "alert", "compare_and_set", startedAt, err)
 	return result, err
 }
@@ -291,3 +346,5 @@ func storeOutcome(err error) string {
 }
 
 var _ store.Repository = (*observedRepository)(nil)
+
+var _ store.LifecycleAlertStore = (*observedRepository)(nil)

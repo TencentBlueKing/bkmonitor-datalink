@@ -22,7 +22,7 @@ func TestBucketRouterRoutesStructuredIDs(t *testing.T) {
 	now := time.Date(2026, 9, 2, 16, 0, 0, 0, time.UTC)
 	router, err := newBucketRouter("linkd-test", BucketConfig{
 		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 14,
-		MaxFutureSkew: 5 * time.Minute,
+		MaxFutureSkew: 5 * time.Minute, ActiveAlertRefreshInterval: 5 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestBucketRouterRejectsFutureEvent(t *testing.T) {
 	now := time.Date(2026, 9, 2, 16, 0, 0, 0, time.UTC)
 	router, err := newBucketRouter("linkd-test", BucketConfig{
 		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
-		MaxFutureSkew: time.Minute,
+		MaxFutureSkew: time.Minute, ActiveAlertRefreshInterval: 5 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestBucketRouterConfiguresReplicaCountForNewIndices(t *testing.T) {
 	zero := 0
 	router, err := NewBucketRouter("linkd-test", BucketConfig{
 		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
-		MaxFutureSkew: 5 * time.Minute, NumberOfReplicas: &zero,
+		MaxFutureSkew: 5 * time.Minute, ActiveAlertRefreshInterval: 17 * time.Second, NumberOfReplicas: &zero,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -93,6 +93,9 @@ func TestBucketRouterConfiguresReplicaCountForNewIndices(t *testing.T) {
 		if replicas, exists := spec.Settings["number_of_replicas"]; !exists || replicas != 0 {
 			t.Fatalf("template %q settings=%#v", spec.Name, spec.Settings)
 		}
+		if spec.Entity == entityAlert && spec.Settings["refresh_interval"] != "17s" {
+			t.Fatalf("active template settings=%#v", spec.Settings)
+		}
 	}
 }
 
@@ -100,12 +103,18 @@ func TestBucketRouterLeavesReplicaCountUnmanagedWhenOmitted(t *testing.T) {
 	t.Parallel()
 	router, err := NewBucketRouter("linkd-test", BucketConfig{
 		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
-		MaxFutureSkew: 5 * time.Minute,
+		MaxFutureSkew: 5 * time.Minute, ActiveAlertRefreshInterval: 5 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, spec := range router.SchemaConfig().Templates() {
+		if spec.Entity == entityAlert {
+			if len(spec.Settings) != 1 || spec.Settings["refresh_interval"] != "5s" {
+				t.Fatalf("active template settings=%#v", spec.Settings)
+			}
+			continue
+		}
 		if spec.Settings != nil {
 			t.Fatalf("template %q settings=%#v, want nil", spec.Name, spec.Settings)
 		}

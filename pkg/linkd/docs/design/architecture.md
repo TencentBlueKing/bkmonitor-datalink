@@ -50,6 +50,8 @@ Repository 不提供 Event、Alert、AlertLog 与 Kafka 的跨对象事务。生
 - fingerprint Redis lease 降低同一问题的并发竞争；
 - Redis Mailbox 用单一 List 保存待处理 Event ID，空到非空时原子写入唤醒 Signal；
 - Event 去重由 Repository 负责；Mailbox 允许少量重复引用，终态 Event 在 Lifecycle 中直接短路；
+- Elasticsearch Lifecycle 使用共享 Redis Recent Alert 缓存保存最近 refresh 窗口内的 Alert 写入；Event 裁决先查
+  缓存，写 Alert 后先更新缓存，借此取消数据路径上的 search refresh 等待；
 - Cleaner 以目标 Signal Group 的 `lag + pending` 做 3 秒缓存的近似全局背压；
 - 使用 `latest_event_id + end_type` 恢复来源终结或等级升级；
 - AlertLog、直接关闭 operation 和 Kafka message ID 均使用稳定输入生成确定性身份。

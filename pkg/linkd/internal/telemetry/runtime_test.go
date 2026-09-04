@@ -66,6 +66,7 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 	}}})
 	runtime.ObserveCleanerBackpressureCheck(ctx, "sampled", 42, true)
 	runtime.ObserveCleanerBackpressureTransition(ctx, "pause")
+	runtime.RecentAlertCacheObserver().Operation(ctx, "get_current", "hit")
 	panicRecovered := false
 	func() {
 		defer func() { panicRecovered = recover() != nil }()
@@ -113,8 +114,8 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 	for _, expected := range []string{
 		"linkd_pipeline_attempts_total",
 		"linkd_pipeline_attempt_duration_seconds_bucket",
-		`linkd_pipeline_attempt_duration_seconds_bucket{linkd_event_source_id="source-a",linkd_outcome="succeeded",linkd_stage="clean",linkd_trigger="queue",messaging_system="kafka",otel_scope_name="linkd",otel_scope_schema_url="",otel_scope_version="",le="0.9"}`,
-		`linkd_pipeline_attempt_duration_seconds_bucket{linkd_event_source_id="source-a",linkd_outcome="succeeded",linkd_stage="clean",linkd_trigger="queue",messaging_system="kafka",otel_scope_name="linkd",otel_scope_schema_url="",otel_scope_version="",le="1.1"}`,
+		`linkd_pipeline_attempt_duration_seconds_bucket{linkd_event_source_id="source-a",linkd_outcome="complete",linkd_stage="clean",linkd_trigger="queue",messaging_system="kafka",otel_scope_name="linkd",otel_scope_schema_url="",otel_scope_version="",le="0.9"}`,
+		`linkd_pipeline_attempt_duration_seconds_bucket{linkd_event_source_id="source-a",linkd_outcome="complete",linkd_stage="clean",linkd_trigger="queue",messaging_system="kafka",otel_scope_name="linkd",otel_scope_schema_url="",otel_scope_version="",le="1.1"}`,
 		"linkd_messaging_inflight",
 		"linkd_messaging_received_messages_total",
 		"linkd_messaging_settled_messages_total",
@@ -126,6 +127,8 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 		"linkd_cleaner_backpressure_transitions_total",
 		"linkd_final_hook_operations_total",
 		"linkd_final_hook_duration_seconds_bucket",
+		"linkd_lifecycle_recent_alert_cache_operations_total",
+		`linkd_lifecycle_recent_alert_cache_operations_total{linkd_operation="get_current",linkd_outcome="hit"`,
 		"linkd_redis_stream_entries",
 		"linkd_redis_stream_memory_bytes",
 		"linkd_redis_stream_pending",

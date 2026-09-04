@@ -237,11 +237,35 @@ func TestLoadStorage(t *testing.T) {
 	if cfg.Storage.Elasticsearch.NumberOfReplicas == nil || *cfg.Storage.Elasticsearch.NumberOfReplicas != 0 {
 		t.Fatalf("load() elasticsearch number of replicas = %v", cfg.Storage.Elasticsearch.NumberOfReplicas)
 	}
+	if cfg.Storage.Elasticsearch.ActiveAlertRefreshIntervalSeconds !=
+		defaultElasticsearchActiveAlertRefreshIntervalSeconds {
+		t.Fatalf(
+			"load() elasticsearch active alert refresh interval = %d",
+			cfg.Storage.Elasticsearch.ActiveAlertRefreshIntervalSeconds,
+		)
+	}
 	partition := cfg.Storage.Elasticsearch.TimePartition
 	if partition.EventBucketDays != 7 || partition.AlertHistoryBucketDays != 7 ||
 		partition.AlertLogBucketDays != 7 || partition.PrecreatePastBuckets != 1 ||
 		partition.PrecreateFutureBuckets != 1 || partition.MaxBucketsPerEntity != 512 {
 		t.Fatalf("load() elasticsearch time partition = %#v", partition)
+	}
+}
+
+func TestLoadStorageAllowsCustomActiveAlertRefreshInterval(t *testing.T) {
+	t.Parallel()
+
+	path := writeConfig(t, `storage:
+  elasticsearch:
+    addresses: [http://127.0.0.1:9200]
+    active_alert_refresh_interval_seconds: 17
+`)
+	cfg, err := load(path, Overrides{}, mapLookup(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Storage.Elasticsearch.ActiveAlertRefreshInterval(); got != 17*time.Second {
+		t.Fatalf("ActiveAlertRefreshInterval()=%s", got)
 	}
 }
 
@@ -430,6 +454,15 @@ func TestLoadRejectsInvalidStorage(t *testing.T) {
     number_of_replicas: -1
 `,
 			wantError: "number_of_replicas",
+		},
+		{
+			name: "elasticsearch invalid active alert refresh interval",
+			content: `storage:
+  elasticsearch:
+    addresses: [http://127.0.0.1:9200]
+    active_alert_refresh_interval_seconds: 3601
+`,
+			wantError: "active_alert_refresh_interval_seconds",
 		},
 		{
 			name: "elasticsearch invalid bucket days",

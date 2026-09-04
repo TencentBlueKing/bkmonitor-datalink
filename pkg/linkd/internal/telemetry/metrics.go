@@ -52,12 +52,13 @@ type instruments struct {
 	cleanerBackpressurePaused      metric.Int64Gauge
 	cleanerBackpressureTransitions metric.Int64Counter
 
-	lifecycleResults    metric.Int64Counter
-	lifecycleMailboxOps metric.Int64Counter
-	lifecycleDrained    metric.Int64Histogram
-	lifecycleLeaseOps   metric.Int64Counter
-	finalHookOperations metric.Int64Counter
-	finalHookDuration   metric.Float64Histogram
+	lifecycleResults             metric.Int64Counter
+	lifecycleMailboxOps          metric.Int64Counter
+	lifecycleDrained             metric.Int64Histogram
+	lifecycleLeaseOps            metric.Int64Counter
+	lifecycleRecentAlertCacheOps metric.Int64Counter
+	finalHookOperations          metric.Int64Counter
+	finalHookDuration            metric.Float64Histogram
 
 	controlPlaneTaskActive      metric.Int64Gauge
 	controlPlaneTaskRuns        metric.Int64Counter
@@ -338,6 +339,12 @@ func newInstruments(meter metric.Meter) (*instruments, error) {
 	); err != nil {
 		return nil, err
 	}
+	if result.lifecycleRecentAlertCacheOps, err = meter.Int64Counter(
+		"linkd.lifecycle.recent_alert_cache.operations", metric.WithUnit("{operation}"),
+		metric.WithDescription("Lifecycle Recent Alert 缓存操作结果"),
+	); err != nil {
+		return nil, err
+	}
 	if result.finalHookOperations, err = meter.Int64Counter(
 		"linkd.final_hook.operations", metric.WithUnit("{operation}"),
 		metric.WithDescription("Lifecycle FinalHook 调用结果"),
@@ -570,8 +577,7 @@ func metricViews() []sdkmetric.View {
 		sdkmetric.NewView(
 			sdkmetric.Instrument{Name: "linkd.pipeline.attempt.duration"},
 			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
-				// Elasticsearch refresh=wait_for 会让 Lifecycle 耗时集中在 1 秒附近；
-				// 加密该区间可避免 P95/P99 在 1～2.5 秒宽桶内产生过大的插值误差。
+				// 保留 1 秒附近的加密边界，用于比较移除 Lifecycle Alert refresh 等待前后的尾延迟。
 				Boundaries: []float64{
 					0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5,
 					0.75, 0.9, 1, 1.1, 1.25, 1.5, 2, 2.5, 5, 10, 30,

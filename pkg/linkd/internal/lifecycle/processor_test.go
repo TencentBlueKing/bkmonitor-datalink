@@ -12,6 +12,7 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"testing"
@@ -166,7 +167,7 @@ func TestEnricherCreationResults(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := memory.New()
-			processor, err := NewProcessor(repo, DeterministicAlertIDGenerator{}, stubEnricher{fn: tt.enrich},
+			processor, err := NewProcessor(repo, NoopRecentAlertCache{}, DeterministicAlertIDGenerator{}, stubEnricher{fn: tt.enrich},
 				NoopFinalHook{}, testSeverity{}, fixedClock{time.Date(2026, 9, 1, 0, 10, 0, 0, time.UTC)}, discardLogger{})
 			if err != nil {
 				t.Fatal(err)
@@ -389,13 +390,403 @@ func TestCloseAlertBatchesOperationAndHookLogs(t *testing.T) {
 	}
 }
 
+func TestProcessEventUsesRecentActiveAlertBeforeRepositorySearch(t *testing.T) {
+	base := memory.New()
+	opening := testEvent("event-cache-opening", "warning")
+	alert := storetestAlert(opening, "alert-cache")
+	created, err := base.CreateAlert(context.Background(), alert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	incoming := testEvent("event-cache-update", "warning")
+	if _, err := base.CreateEvent(context.Background(), incoming); err != nil {
+		t.Fatal(err)
+	}
+	repository := &lookupTrackingRepository{Repository: base}
+	cache := newMemoryRecentAlertCache()
+	if err := cache.PutCurrent(context.Background(), created.StoredAlert); err != nil {
+		t.Fatal(err)
+	}
+	processor := newTestProcessorWithCache(t, repository, cache, NoopFinalHook{})
+	result, err := processor.ProcessEvent(context.Background(), incoming.BKTenantID, incoming.EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != OutcomeAlertUpdated || repository.findActiveCalls != 0 {
+		t.Fatalf("result=%#v find_active_calls=%d", result, repository.findActiveCalls)
+	}
+	cached, found, err := cache.GetCurrent(context.Background(), activeKeyForTest(incoming))
+	if err != nil || !found || cached.Alert.LatestEventID != incoming.EventID {
+		t.Fatalf("cached=%#v found=%t err=%v", cached, found, err)
+	}
+}
+
+func TestProcessEventUsesRecentTerminalAlertForRecovery(t *testing.T) {
+	base := memory.New()
+	opening := testEvent("event-terminal-opening", "warning")
+	alert := storetestAlert(opening, "alert-terminal")
+	created, err := base.CreateAlert(context.Background(), alert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endedEvent := testEvent("event-terminal-cache", "warning")
+	endedEvent.Action = domain.EventActionResolved
+	terminal := alert.Clone()
+	terminal.Status = domain.AlertStatusRecovered
+	terminal.LatestEventID = endedEvent.EventID
+	terminal.LastOccurredAt = terminal.LastOccurredAt.Add(time.Minute)
+	terminal.UpdateAt = terminal.UpdateAt.Add(time.Minute)
+	endAt := terminal.LastOccurredAt
+	terminal.EndAt = &endAt
+	terminal.EndType = domain.AlertEndTypeSource
+	ended, err := base.CompareAndSetAlert(
+		context.Background(), alert.BKTenantID, alert.AlertID, created.Version, terminal,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := base.CreateEvent(context.Background(), endedEvent); err != nil {
+		t.Fatal(err)
+	}
+	repository := &lookupTrackingRepository{Repository: base}
+	cache := newMemoryRecentAlertCache()
+	if err := cache.PutTerminal(context.Background(), ended); err != nil {
+		t.Fatal(err)
+	}
+	processor := newTestProcessorWithCache(t, repository, cache, NoopFinalHook{})
+	result, err := processor.ProcessEvent(context.Background(), endedEvent.BKTenantID, endedEvent.EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != OutcomeAlertRecovered || repository.findActiveCalls != 0 || repository.findEndedCalls != 0 {
+		t.Fatalf("result=%#v active_calls=%d ended_calls=%d", result, repository.findActiveCalls, repository.findEndedCalls)
+	}
+}
+
+func TestProcessEventKeepsEventUnprocessedWhenRecentCacheWriteFails(t *testing.T) {
+	base := memory.New()
+	event := testEvent("event-cache-failure", "warning")
+	if _, err := base.CreateEvent(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	cache := newMemoryRecentAlertCache()
+	cache.putErr = errors.New("redis unavailable")
+	processor := newTestProcessorWithCache(t, base, cache, NoopFinalHook{})
+	if _, err := processor.ProcessEvent(context.Background(), event.BKTenantID, event.EventID); err == nil ||
+		!errors.Is(err, cache.putErr) {
+		t.Fatalf("ProcessEvent() error=%v", err)
+	}
+	stored, err := base.GetEvent(context.Background(), event.BKTenantID, event.EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Processing.State != domain.EventProcessStateUnprocessed {
+		t.Fatalf("event state=%q", stored.Processing.State)
+	}
+}
+
+func TestProcessEventDoesNotFallbackWhenRecentCacheReadFails(t *testing.T) {
+	base := memory.New()
+	event := testEvent("event-cache-read-failure", "warning")
+	if _, err := base.CreateEvent(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	repository := &lookupTrackingRepository{Repository: base}
+	cache := newMemoryRecentAlertCache()
+	cache.getErr = errors.New("redis unavailable")
+	processor := newTestProcessorWithCache(t, repository, cache, NoopFinalHook{})
+	if _, err := processor.ProcessEvent(context.Background(), event.BKTenantID, event.EventID); err == nil ||
+		!errors.Is(err, cache.getErr) {
+		t.Fatalf("ProcessEvent() error=%v", err)
+	}
+	if repository.findActiveCalls != 0 || repository.findEndedCalls != 0 {
+		t.Fatalf("repository fallback active=%d ended=%d", repository.findActiveCalls, repository.findEndedCalls)
+	}
+}
+
+func TestProcessEventRepairsRecentCacheAfterAlertCASConflict(t *testing.T) {
+	base := memory.New()
+	opening := testEvent("event-conflict-opening", "warning")
+	alert := storetestAlert(opening, "alert-conflict")
+	created, err := base.CreateAlert(context.Background(), alert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	incoming := testEvent("event-conflict-update", "warning")
+	if _, err := base.CreateEvent(context.Background(), incoming); err != nil {
+		t.Fatal(err)
+	}
+	repository := &conflictingLifecycleRepository{Repository: base}
+	cache := newMemoryRecentAlertCache()
+	if err := cache.PutCurrent(context.Background(), created.StoredAlert); err != nil {
+		t.Fatal(err)
+	}
+	processor := newTestProcessorWithCache(t, repository, cache, NoopFinalHook{})
+	result, err := processor.ProcessEvent(context.Background(), incoming.BKTenantID, incoming.EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != OutcomeAlertUpdated || repository.conflicts != 1 || repository.currentReads != 1 {
+		t.Fatalf("result=%#v conflicts=%d current_reads=%d", result, repository.conflicts, repository.currentReads)
+	}
+	cached, found, err := cache.GetCurrent(context.Background(), activeKeyForTest(incoming))
+	if err != nil || !found || cached.Alert.LatestEventID != incoming.EventID {
+		t.Fatalf("cached=%#v found=%t err=%v", cached, found, err)
+	}
+}
+
+func TestProcessEventRecoversRotationFromRecentEndedAlert(t *testing.T) {
+	base := memory.New()
+	cache := newMemoryRecentAlertCache()
+	opening := testEvent("event-rotation-opening", "warning")
+	persistAndProcess(t, base, newTestProcessorWithCache(t, base, cache, NoopFinalHook{}), opening)
+
+	upgrade := testEvent("event-rotation-upgrade", "critical")
+	if _, err := base.CreateEvent(context.Background(), upgrade); err != nil {
+		t.Fatal(err)
+	}
+	failing := &trackingRepository{Repository: base, failBatchIndex: 0}
+	first := newTestProcessorWithCache(t, failing, cache, NoopFinalHook{})
+	if _, err := first.ProcessEvent(context.Background(), upgrade.BKTenantID, upgrade.EventID); err == nil {
+		t.Fatal("first rotation unexpectedly completed")
+	}
+	storedEvent, err := base.GetEvent(context.Background(), upgrade.BKTenantID, upgrade.EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedEvent.Processing.State != domain.EventProcessStateUnprocessed {
+		t.Fatalf("event state=%q", storedEvent.Processing.State)
+	}
+	if _, found, err := cache.GetEndedByEvent(context.Background(), upgrade.BKTenantID, upgrade.EventID); err != nil || !found {
+		t.Fatalf("ended cache found=%t err=%v", found, err)
+	}
+
+	repository := &lookupTrackingRepository{Repository: base}
+	retry := newTestProcessorWithCache(t, repository, cache, NoopFinalHook{})
+	result, err := retry.ProcessEvent(context.Background(), upgrade.BKTenantID, upgrade.EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != OutcomeAlertRotated || repository.findActiveCalls != 0 || repository.findEndedCalls != 0 {
+		t.Fatalf("result=%#v active_calls=%d ended_calls=%d", result, repository.findActiveCalls, repository.findEndedCalls)
+	}
+}
+
+func TestProcessEventUsesLifecycleAlertFastWrites(t *testing.T) {
+	base := memory.New()
+	repository := &fastLifecycleRepository{Repository: base}
+	processor := newTestProcessor(t, repository, NoopFinalHook{})
+	opening := testEvent("event-fast-opening", "warning")
+	persistAndProcess(t, repository, processor, opening)
+	update := testEvent("event-fast-update", "warning")
+	persistAndProcess(t, repository, processor, update)
+	if repository.createCalls != 1 || repository.casCalls != 1 {
+		t.Fatalf("fast create=%d cas=%d", repository.createCalls, repository.casCalls)
+	}
+}
+
 func newTestProcessor(t *testing.T, repo store.Repository, hook FinalHook) *Processor {
 	t.Helper()
-	processor, err := NewProcessor(repo, DeterministicAlertIDGenerator{}, NoopEnricher{}, hook, testSeverity{}, fixedClock{time.Date(2026, 9, 1, 0, 10, 0, 0, time.UTC)}, discardLogger{})
+	return newTestProcessorWithCache(t, repo, NoopRecentAlertCache{}, hook)
+}
+
+func newTestProcessorWithCache(
+	t *testing.T,
+	repo store.Repository,
+	cache RecentAlertCache,
+	hook FinalHook,
+) *Processor {
+	t.Helper()
+	processor, err := NewProcessor(repo, cache, DeterministicAlertIDGenerator{}, NoopEnricher{}, hook, testSeverity{}, fixedClock{time.Date(2026, 9, 1, 0, 10, 0, 0, time.UTC)}, discardLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return processor
+}
+
+type lookupTrackingRepository struct {
+	store.Repository
+	findActiveCalls int
+	findEndedCalls  int
+}
+
+type conflictingLifecycleRepository struct {
+	store.Repository
+	conflicts    int
+	currentReads int
+}
+
+type fastLifecycleRepository struct {
+	store.Repository
+	createCalls int
+	casCalls    int
+}
+
+func (r *fastLifecycleRepository) CreateAlertAfterActiveLookup(
+	ctx context.Context,
+	alert domain.Alert,
+) (store.CreateAlertResult, error) {
+	r.createCalls++
+	return r.CreateAlert(ctx, alert)
+}
+
+func (r *fastLifecycleRepository) CompareAndSetAlertAfterActiveLookup(
+	ctx context.Context,
+	bkTenantID, alertID string,
+	expected store.VersionToken,
+	replacement domain.Alert,
+) (store.StoredAlert, error) {
+	r.casCalls++
+	return r.CompareAndSetAlert(ctx, bkTenantID, alertID, expected, replacement)
+}
+
+func (r *fastLifecycleRepository) GetAlertCurrent(
+	ctx context.Context,
+	bkTenantID, alertID string,
+) (store.StoredAlert, error) {
+	return r.GetAlert(ctx, bkTenantID, alertID)
+}
+
+func (r *conflictingLifecycleRepository) CreateAlertAfterActiveLookup(
+	ctx context.Context,
+	alert domain.Alert,
+) (store.CreateAlertResult, error) {
+	return r.CreateAlert(ctx, alert)
+}
+
+func (r *conflictingLifecycleRepository) CompareAndSetAlertAfterActiveLookup(
+	ctx context.Context,
+	bkTenantID, alertID string,
+	expected store.VersionToken,
+	replacement domain.Alert,
+) (store.StoredAlert, error) {
+	if r.conflicts == 0 {
+		r.conflicts++
+		if _, err := r.CompareAndSetAlert(ctx, bkTenantID, alertID, expected, replacement); err != nil {
+			return store.StoredAlert{}, err
+		}
+		return store.StoredAlert{}, fmt.Errorf("%w: injected conflict", store.ErrVersionConflict)
+	}
+	return r.CompareAndSetAlert(ctx, bkTenantID, alertID, expected, replacement)
+}
+
+func (r *conflictingLifecycleRepository) GetAlertCurrent(
+	ctx context.Context,
+	bkTenantID, alertID string,
+) (store.StoredAlert, error) {
+	r.currentReads++
+	return r.GetAlert(ctx, bkTenantID, alertID)
+}
+
+func (r *lookupTrackingRepository) FindActiveAlert(
+	ctx context.Context,
+	key store.ActiveAlertKey,
+) (store.StoredAlert, error) {
+	r.findActiveCalls++
+	return r.Repository.FindActiveAlert(ctx, key)
+}
+
+func (r *lookupTrackingRepository) FindAlertEndedByEvent(
+	ctx context.Context,
+	bkTenantID, eventID string,
+) (store.StoredAlert, error) {
+	r.findEndedCalls++
+	return r.Repository.FindAlertEndedByEvent(ctx, bkTenantID, eventID)
+}
+
+type memoryRecentAlertCache struct {
+	current map[string]store.StoredAlert
+	ended   map[string]store.StoredAlert
+	getErr  error
+	putErr  error
+}
+
+func newMemoryRecentAlertCache() *memoryRecentAlertCache {
+	return &memoryRecentAlertCache{
+		current: make(map[string]store.StoredAlert),
+		ended:   make(map[string]store.StoredAlert),
+	}
+}
+
+func (c *memoryRecentAlertCache) GetCurrent(
+	_ context.Context,
+	key store.ActiveAlertKey,
+) (store.StoredAlert, bool, error) {
+	if c.getErr != nil {
+		return store.StoredAlert{}, false, c.getErr
+	}
+	stored, found := c.current[recentCurrentTestKey(key)]
+	return stored, found, nil
+}
+
+func (c *memoryRecentAlertCache) GetEndedByEvent(
+	_ context.Context,
+	bkTenantID, eventID string,
+) (store.StoredAlert, bool, error) {
+	if c.getErr != nil {
+		return store.StoredAlert{}, false, c.getErr
+	}
+	stored, found := c.ended[bkTenantID+"/"+eventID]
+	return stored, found, nil
+}
+
+func (c *memoryRecentAlertCache) PutCurrent(_ context.Context, stored store.StoredAlert) error {
+	if c.putErr != nil {
+		return c.putErr
+	}
+	c.current[recentCurrentTestKey(activeKeyForTest(stored.Alert))] = stored
+	return nil
+}
+
+func (c *memoryRecentAlertCache) PutEnded(_ context.Context, stored store.StoredAlert) error {
+	if c.putErr != nil {
+		return c.putErr
+	}
+	c.ended[stored.Alert.BKTenantID+"/"+stored.Alert.LatestEventID] = stored
+	return nil
+}
+
+func (c *memoryRecentAlertCache) PutTerminal(ctx context.Context, stored store.StoredAlert) error {
+	if err := c.PutCurrent(ctx, stored); err != nil {
+		return err
+	}
+	return c.PutEnded(ctx, stored)
+}
+
+func (c *memoryRecentAlertCache) Repair(ctx context.Context, stored store.StoredAlert) error {
+	if stored.Alert.Status.Terminal() {
+		return c.PutTerminal(ctx, stored)
+	}
+	return c.PutCurrent(ctx, stored)
+}
+
+func recentCurrentTestKey(key store.ActiveAlertKey) string {
+	return key.BKTenantID + "/" + key.EventSourceID + "/" + key.Fingerprint
+}
+
+func activeKeyForTest(value any) store.ActiveAlertKey {
+	switch item := value.(type) {
+	case domain.Event:
+		return store.ActiveAlertKey{BKTenantID: item.BKTenantID, EventSourceID: item.EventSourceID, Fingerprint: item.Fingerprint}
+	case domain.Alert:
+		return store.ActiveAlertKey{BKTenantID: item.BKTenantID, EventSourceID: item.EventSourceID, Fingerprint: item.Fingerprint}
+	default:
+		panic("unsupported active key value")
+	}
+}
+
+func storetestAlert(event domain.Event, alertID string) domain.Alert {
+	now := event.CreateAt.Add(time.Second)
+	return domain.Alert{
+		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
+		Fingerprint: event.Fingerprint, Title: event.Title, Severity: event.Severity,
+		ConditionKey: event.ConditionKey, Dimensions: event.Dimensions.Clone(),
+		SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID,
+		Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive,
+		LatestEventID: event.EventID, LastOccurredAt: event.OccurredAt, UpdateAt: now,
+		TriggerEventID: event.EventID, BeginAt: event.OccurredAt, CreateAt: event.CreateAt,
+		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{},
+	}
 }
 
 func persistAndProcess(t *testing.T, repo store.Repository, processor *Processor, event domain.Event) ProcessResult {

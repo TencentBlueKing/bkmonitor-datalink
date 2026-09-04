@@ -132,6 +132,8 @@ export function LifecyclePage() {
         "lifecycle-mailbox",
         "lifecycle-drain-p95",
         "lifecycle-lease",
+        "lifecycle-recent-alert-cache",
+        "lifecycle-recent-alert-hit-ratio",
         ...pipelinePanelIDs,
         "final-hook",
         "final-hook-p95",
@@ -435,6 +437,8 @@ function lifecycleNodePanels(panels: MetricPanel[], step: string) {
     mailbox_peek: ["lifecycle-mailbox", "lifecycle-drain-p95"],
     process_event: [
       "lifecycle-results",
+      "lifecycle-recent-alert-cache",
+      "lifecycle-recent-alert-hit-ratio",
       "pipeline-average",
       "pipeline-p95",
       "pipeline-p99",

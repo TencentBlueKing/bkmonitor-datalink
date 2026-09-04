@@ -205,11 +205,12 @@ func newElasticsearchComponents(
 		return nil, nil, nil, err
 	}
 	router, err := elasticsearchstore.NewBucketRouter(cfg.IndexPrefix, elasticsearchstore.BucketConfig{
-		EventBucketDays:        cfg.TimePartition.EventBucketDays,
-		AlertHistoryBucketDays: cfg.TimePartition.AlertHistoryBucketDays,
-		AlertLogBucketDays:     cfg.TimePartition.AlertLogBucketDays,
-		MaxFutureSkew:          cfg.TimePartition.MaxFutureSkew(),
-		NumberOfReplicas:       cfg.NumberOfReplicas,
+		EventBucketDays:            cfg.TimePartition.EventBucketDays,
+		AlertHistoryBucketDays:     cfg.TimePartition.AlertHistoryBucketDays,
+		AlertLogBucketDays:         cfg.TimePartition.AlertLogBucketDays,
+		MaxFutureSkew:              cfg.TimePartition.MaxFutureSkew(),
+		ActiveAlertRefreshInterval: cfg.ActiveAlertRefreshInterval(),
+		NumberOfReplicas:           cfg.NumberOfReplicas,
 	})
 	if err != nil {
 		transport.Close()

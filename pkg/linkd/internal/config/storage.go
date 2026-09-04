@@ -27,12 +27,14 @@ const (
 	// RepositoryTypeElasticsearch 使用 Elasticsearch 保存 Event、Alert 和 AlertLog。
 	RepositoryTypeElasticsearch = "elasticsearch"
 
-	defaultElasticsearchIndexPrefix = "linkd"
-	defaultBucketDays               = 7
-	defaultPrecreatePastBuckets     = 1
-	defaultPrecreateFutureBuckets   = 1
-	defaultMaxBucketsPerEntity      = 512
-	defaultMaxFutureSkewSeconds     = 300
+	defaultElasticsearchIndexPrefix                       = "linkd"
+	defaultElasticsearchActiveAlertRefreshIntervalSeconds = 5
+	maxElasticsearchActiveAlertRefreshIntervalSeconds     = 3600
+	defaultBucketDays                                     = 7
+	defaultPrecreatePastBuckets                           = 1
+	defaultPrecreateFutureBuckets                         = 1
+	defaultMaxBucketsPerEntity                            = 512
+	defaultMaxFutureSkewSeconds                           = 300
 )
 
 var elasticsearchIndexPrefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,127}$`)
@@ -58,6 +60,8 @@ type MySQLConfig struct {
 type ElasticsearchConfig struct {
 	Addresses   []string `yaml:"addresses"`
 	IndexPrefix string   `yaml:"index_prefix"`
+	// ActiveAlertRefreshIntervalSeconds 同时驱动 Active Alert 模板、现有索引对账和 Recent Alert 缓存 TTL。
+	ActiveAlertRefreshIntervalSeconds int `yaml:"active_alert_refresh_interval_seconds"`
 	// NumberOfReplicas 非 nil 时写入 index template；零值适用于单节点测试。
 	NumberOfReplicas *int                             `yaml:"number_of_replicas,omitempty"`
 	TimePartition    ElasticsearchTimePartitionConfig `yaml:"time_partition,omitempty"`
@@ -98,6 +102,9 @@ func (c StorageConfig) WithDefaults() StorageConfig {
 		if elasticsearch.IndexPrefix == "" {
 			elasticsearch.IndexPrefix = defaultElasticsearchIndexPrefix
 		}
+		if elasticsearch.ActiveAlertRefreshIntervalSeconds == 0 {
+			elasticsearch.ActiveAlertRefreshIntervalSeconds = defaultElasticsearchActiveAlertRefreshIntervalSeconds
+		}
 		elasticsearch.TimePartition = elasticsearch.TimePartition.WithDefaults()
 	}
 	return normalized
@@ -132,6 +139,16 @@ func (c ElasticsearchTimePartitionConfig) WithDefaults() ElasticsearchTimePartit
 // MaxFutureSkew 返回 Event 路由允许的最大未来偏移。
 func (c ElasticsearchTimePartitionConfig) MaxFutureSkew() time.Duration {
 	return time.Duration(c.MaxFutureSkewSeconds) * time.Second
+}
+
+// ActiveAlertRefreshInterval 返回 Active Alert 索引配置的 refresh_interval。
+// 零值按默认五秒处理，便于直接构造配置的调用方与 YAML 加载行为一致。
+func (c ElasticsearchConfig) ActiveAlertRefreshInterval() time.Duration {
+	seconds := c.ActiveAlertRefreshIntervalSeconds
+	if seconds == 0 {
+		seconds = defaultElasticsearchActiveAlertRefreshIntervalSeconds
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // Validate 校验已经声明的存储连接和可选权威 Repository 选择。
@@ -277,6 +294,13 @@ func (c ElasticsearchConfig) Validate() error {
 	}
 	if c.NumberOfReplicas != nil && *c.NumberOfReplicas < 0 {
 		return fmt.Errorf("number_of_replicas must not be negative")
+	}
+	refreshIntervalSeconds := c.ActiveAlertRefreshIntervalSeconds
+	if refreshIntervalSeconds == 0 {
+		refreshIntervalSeconds = defaultElasticsearchActiveAlertRefreshIntervalSeconds
+	}
+	if refreshIntervalSeconds < 1 || refreshIntervalSeconds > maxElasticsearchActiveAlertRefreshIntervalSeconds {
+		return fmt.Errorf("active_alert_refresh_interval_seconds must be between 1 and %d", maxElasticsearchActiveAlertRefreshIntervalSeconds)
 	}
 	if err := c.TimePartition.Validate(); err != nil {
 		return fmt.Errorf("time_partition.%w", err)

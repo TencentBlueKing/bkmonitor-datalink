@@ -121,6 +121,10 @@ Leader Election 完成前，`linkd run control-plane` 只能部署单副本，�
 - 滚动升级期间，消息和存储契约必须保持兼容。需要破坏性变更时先停止相关角色并按明确步骤升级，
   不依赖不同模式之间的双写兜底。
 
+启用 Elasticsearch Recent Alert 缓存和取消 Lifecycle Alert refresh 等待时，新旧 Lifecycle 不能混合
+消费同一 Mailbox。升级或回滚前应暂停 Cleaner、排空 Signal lag/PEL 和 Mailbox，再同时替换 Lifecycle；
+控制面须先把 Active 索引的 `refresh_interval` 对账为 YAML 中的配置值（默认 `5s`）。
+
 ## 故障与扩缩容边界
 
 | 异常角色 | 直接影响 | 恢复后行为 |

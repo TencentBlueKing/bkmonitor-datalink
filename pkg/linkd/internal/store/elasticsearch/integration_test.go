@@ -107,7 +107,8 @@ func TestElasticsearchArchiveDrainsMoreThanOneDefaultBatch(t *testing.T) {
 	prefix := "linkd-archive-" + strconv.Itoa(os.Getpid())
 	now := time.Now().Round(0).UTC()
 	router, err := newBucketRouter(prefix, BucketConfig{
-		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7, MaxFutureSkew: time.Minute,
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		MaxFutureSkew: time.Minute, ActiveAlertRefreshInterval: 5 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)

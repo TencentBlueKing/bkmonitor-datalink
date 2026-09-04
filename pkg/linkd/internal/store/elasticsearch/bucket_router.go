@@ -28,6 +28,8 @@ type BucketConfig struct {
 	AlertHistoryBucketDays int
 	AlertLogBucketDays     int
 	MaxFutureSkew          time.Duration
+	// ActiveAlertRefreshInterval 配置 Active Alert 模板及现有索引的 refresh_interval。
+	ActiveAlertRefreshInterval time.Duration
 	// NumberOfReplicas 非 nil 时写入模板，仅影响之后新建的索引。
 	NumberOfReplicas *int
 }
@@ -39,6 +41,7 @@ type BucketRouter struct {
 	alertBucketDays        int
 	alertLogBucketDays     int
 	maxFutureSkew          time.Duration
+	activeRefreshInterval  time.Duration
 	numberOfReplicas       int
 	replicaCountConfigured bool
 	now                    func() time.Time
@@ -59,6 +62,9 @@ func newBucketRouter(prefix string, config BucketConfig, now func() time.Time) (
 	if config.MaxFutureSkew < 0 {
 		return nil, fmt.Errorf("create elasticsearch bucket router: max future skew must not be negative")
 	}
+	if config.ActiveAlertRefreshInterval < time.Second || config.ActiveAlertRefreshInterval%time.Second != 0 {
+		return nil, fmt.Errorf("create elasticsearch bucket router: active alert refresh interval must be whole seconds and positive")
+	}
 	if config.NumberOfReplicas != nil && *config.NumberOfReplicas < 0 {
 		return nil, fmt.Errorf("create elasticsearch bucket router: number of replicas must not be negative")
 	}
@@ -68,7 +74,7 @@ func newBucketRouter(prefix string, config BucketConfig, now func() time.Time) (
 	router := &BucketRouter{
 		prefix: prefix, eventBucketDays: config.EventBucketDays,
 		alertBucketDays: config.AlertHistoryBucketDays, alertLogBucketDays: config.AlertLogBucketDays,
-		maxFutureSkew: config.MaxFutureSkew, now: now,
+		maxFutureSkew: config.MaxFutureSkew, activeRefreshInterval: config.ActiveAlertRefreshInterval, now: now,
 	}
 	if config.NumberOfReplicas != nil {
 		router.numberOfReplicas = *config.NumberOfReplicas
@@ -94,7 +100,7 @@ func (r *BucketRouter) SchemaConfig() SchemaConfig {
 		},
 		Alert: TemplateSpec{
 			Name: r.prefix + "-alerts-active-template", IndexPatterns: []string{r.prefix + "-alerts-active-*"},
-			Priority: 200, Settings: r.templateSettings(), Entity: entityAlert, Role: "active",
+			Priority: 200, Settings: r.activeTemplateSettings(), Entity: entityAlert, Role: "active",
 		},
 		AlertHistory: TemplateSpec{
 			Name: r.prefix + "-alert-history-template", IndexPatterns: []string{r.prefix + "-alert-history-*"},
@@ -105,6 +111,15 @@ func (r *BucketRouter) SchemaConfig() SchemaConfig {
 			Priority: 200, Settings: r.templateSettings(), Entity: entityAlertLog, Role: "bucket", BucketDays: r.alertLogBucketDays,
 		},
 	}
+}
+
+func (r *BucketRouter) activeTemplateSettings() map[string]any {
+	settings := r.templateSettings()
+	if settings == nil {
+		settings = make(map[string]any, 1)
+	}
+	settings["refresh_interval"] = r.activeRefreshInterval.String()
+	return settings
 }
 
 func (r *BucketRouter) templateSettings() map[string]any {

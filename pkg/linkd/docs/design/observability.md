@@ -44,6 +44,7 @@ telemetry runtime，Resource 的 `linkd.role` 区分 cleaner、lifecycle、contr
 | `linkd.elasticsearch_alert_archiver.*` | Alert Archiver 批次与累计归档工作量                                   |
 | `linkd.redis_stream.*`             | Stream 条目/内存、Group/Consumer、PEL、lag、年龄、软上限和安全裁剪        |
 | `linkd.store.*`                    | Repository 操作、耗时、幂等重放和冲突                                     |
+| `linkd.lifecycle.recent_alert_cache.*` | Recent Alert 命中、缺失、写入、解码失败和冲突修复                      |
 
 `linkd.store.operations` 对所有 Repository 调用统一计数，`not_found` 作为查询结果保留，便于分析查询命中率。
 Lifecycle 的 `find_active` 和 `find_terminal_by_event` 会把 `store.ErrNotFound` 作为正常控制流处理；它不会
@@ -58,8 +59,8 @@ Go/process 指标，以及三个 Elasticsearch 管理任务和 Redis Stream 管�
 和 lane gauge，不进入 histogram。reason code 使用封闭枚举，未知值归入 `other`。tenant、实体 ID、
 fingerprint、Mailbox ID、topic、group、错误全文和 payload 禁止进入指标属性。
 
-`linkd.pipeline.attempt.duration` 和 `linkd.store.operation.duration` 在 0.75～2.5 秒区间使用加密的固定
-分桶，以区分 Elasticsearch `refresh=wait_for` 附近的尾延迟。DevTools 同时展示由 `_sum / _count`
+`linkd.pipeline.attempt.duration` 和 `linkd.store.operation.duration` 保留 0.75～2.5 秒区间的加密固定
+分桶，用于对比移除 Lifecycle Alert `refresh=wait_for` 前后的尾延迟。DevTools 同时展示由 `_sum / _count`
 计算的平均耗时和 P95/P99；平均值不受 histogram 桶内插值影响，分位数仍是所选时间窗内的近似值。
 Cleaner 页面使用 `linkd.pipeline.attempt.duration` 展示整体平均耗时、P95 和 P99，并使用
 `linkd.cleaner.step.duration` 展示已埋点步骤的平均耗时、P95 和 P99。`receive` 当前没有独立步骤耗时，
@@ -75,6 +76,10 @@ Kafka assignment/offset/lag、Signal Group `lag + pending` 和 Mailbox List 扫�
 `control_plane.redis_stream` 后，控制面周期采集 Redis Stream 的 `XLEN`、`MEMORY USAGE`、Group、Consumer、
 PEL、最大 lag、最老条目/Pending 年龄和软上限超量，并通过自身 `/metrics` 暴露。指标不携带 Stream 或
 Group 名称，避免配置值形成高基数标签；未启用任务时不生成虚假零值。
+
+`linkd.lifecycle.recent_alert_cache.operations` 使用固定 `linkd.operation` 和 `linkd.outcome` 记录 current、
+ended、terminal 和 repair 操作。DevTools 展示操作速率与读取命中率；指标不携带租户、AlertID、EventID、
+fingerprint、MailboxID 或缓存 key。
 
 四个固定任务使用 `linkd_control_plane_task_active_ratio`、`linkd_control_plane_task_runs_total`、
 `linkd_control_plane_task_run_duration_seconds` 和 `linkd_control_plane_task_last_success_seconds`。`linkd_task`

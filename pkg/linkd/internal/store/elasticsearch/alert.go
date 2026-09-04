@@ -28,18 +28,9 @@ func (r *Repository) CreateAlert(ctx context.Context, alert domain.Alert) (store
 	if err := contextError(ctx); err != nil {
 		return store.CreateAlertResult{}, err
 	}
-	normalized, err := alert.Normalize()
+	normalized, err := r.normalizeNewAlert(alert)
 	if err != nil {
-		return store.CreateAlertResult{}, fmt.Errorf("%w: normalize alert: %w", store.ErrInvalidArgument, err)
-	}
-	if normalized.Status != domain.AlertStatusActive {
-		return store.CreateAlertResult{}, fmt.Errorf("%w: new alert must be active", store.ErrInvalidArgument)
-	}
-	if err := validateAlertIdentity(normalized); err != nil {
 		return store.CreateAlertResult{}, err
-	}
-	if err := validateBucketAlertIdentity(r.router, normalized); err != nil {
-		return store.CreateAlertResult{}, fmt.Errorf("%w: %w", store.ErrInvalidArgument, err)
 	}
 	active, err := r.FindActiveAlert(ctx, store.ActiveAlertKey{
 		BKTenantID: normalized.BKTenantID, EventSourceID: normalized.EventSourceID,
@@ -59,6 +50,47 @@ func (r *Repository) CreateAlert(ctx context.Context, alert domain.Alert) (store
 	if !errors.Is(err, store.ErrNotFound) {
 		return store.CreateAlertResult{}, err
 	}
+	return r.createAlertDocument(ctx, normalized, "wait_for")
+}
+
+// CreateAlertAfterActiveLookup 在调用方已经持有 fingerprint lease 并完成 Recent Alert/active 查询后创建 Alert。
+// refresh=false 只取消搜索可见性等待；确定性 _id 和 create-only 仍保证同一 Alert 的幂等写入。
+func (r *Repository) CreateAlertAfterActiveLookup(
+	ctx context.Context,
+	alert domain.Alert,
+) (store.CreateAlertResult, error) {
+	if err := contextError(ctx); err != nil {
+		return store.CreateAlertResult{}, err
+	}
+	normalized, err := r.normalizeNewAlert(alert)
+	if err != nil {
+		return store.CreateAlertResult{}, err
+	}
+	return r.createAlertDocument(ctx, normalized, "false")
+}
+
+func (r *Repository) normalizeNewAlert(alert domain.Alert) (domain.Alert, error) {
+	normalized, err := alert.Normalize()
+	if err != nil {
+		return domain.Alert{}, fmt.Errorf("%w: normalize alert: %w", store.ErrInvalidArgument, err)
+	}
+	if normalized.Status != domain.AlertStatusActive {
+		return domain.Alert{}, fmt.Errorf("%w: new alert must be active", store.ErrInvalidArgument)
+	}
+	if err := validateAlertIdentity(normalized); err != nil {
+		return domain.Alert{}, err
+	}
+	if err := validateBucketAlertIdentity(r.router, normalized); err != nil {
+		return domain.Alert{}, fmt.Errorf("%w: %w", store.ErrInvalidArgument, err)
+	}
+	return normalized, nil
+}
+
+func (r *Repository) createAlertDocument(
+	ctx context.Context,
+	normalized domain.Alert,
+	refresh string,
+) (store.CreateAlertResult, error) {
 	route, err := r.router.AlertRoute(ctx, normalized.AlertID)
 	if err != nil {
 		return store.CreateAlertResult{}, fmt.Errorf("route alert %q: %w", normalized.AlertID, err)
@@ -77,7 +109,7 @@ func (r *Repository) CreateAlert(ctx context.Context, alert domain.Alert) (store
 		)
 	}
 	documentID := alertDocumentID(normalized)
-	query := url.Values{"refresh": []string{"wait_for"}}
+	query := url.Values{"refresh": []string{refresh}}
 	if route.RequireAlias {
 		query.Set("require_alias", "true")
 	}
@@ -131,6 +163,45 @@ func (r *Repository) GetAlert(ctx context.Context, bkTenantID, alertID string) (
 		return store.StoredAlert{}, fmt.Errorf("%w: alert %q", store.ErrNotFound, alertID)
 	}
 	return stored, nil
+}
+
+// GetAlertCurrent 使用确定性文档 ID 依次实时读取 Active 和对应 History 桶。
+// 本方法供 Lifecycle 在 CAS 冲突后修复五秒 Recent Alert 缓存，不依赖 search refresh。
+func (r *Repository) GetAlertCurrent(
+	ctx context.Context,
+	bkTenantID, alertID string,
+) (store.StoredAlert, error) {
+	if err := contextError(ctx); err != nil {
+		return store.StoredAlert{}, err
+	}
+	if err := validateIdentity(bkTenantID, "alert_id", alertID); err != nil {
+		return store.StoredAlert{}, err
+	}
+	route, err := r.router.AlertRoute(ctx, alertID)
+	if err != nil {
+		return store.StoredAlert{}, fmt.Errorf("route alert %q: %w", alertID, err)
+	}
+	route, err = normalizeRoute(route, r.config.MaxReadTargets)
+	if err != nil {
+		return store.StoredAlert{}, err
+	}
+	documentID := documentID(bkTenantID, alertID)
+	targets := append([]string{route.WriteTarget}, route.ReadTargets...)
+	seen := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		if _, exists := seen[target]; exists {
+			continue
+		}
+		seen[target] = struct{}{}
+		stored, readErr := r.getAlertFromTarget(ctx, target, bkTenantID, alertID, documentID)
+		if readErr == nil {
+			return stored, nil
+		}
+		if !errors.Is(readErr, store.ErrNotFound) {
+			return store.StoredAlert{}, fmt.Errorf("read current alert %q: %w", alertID, readErr)
+		}
+	}
+	return store.StoredAlert{}, fmt.Errorf("%w: alert %q", store.ErrNotFound, alertID)
 }
 
 // GetAlerts 按首次出现顺序批量读取 Alert 并单列缺失 ID。
@@ -297,6 +368,26 @@ func (r *Repository) CompareAndSetAlert(
 	expected store.VersionToken,
 	replacement domain.Alert,
 ) (store.StoredAlert, error) {
+	return r.compareAndSetAlert(ctx, bkTenantID, alertID, expected, replacement, "wait_for")
+}
+
+// CompareAndSetAlertAfterActiveLookup 在 Lifecycle 已通过 Recent Alert 完成裁决后执行不等待 refresh 的 CAS。
+func (r *Repository) CompareAndSetAlertAfterActiveLookup(
+	ctx context.Context,
+	bkTenantID, alertID string,
+	expected store.VersionToken,
+	replacement domain.Alert,
+) (store.StoredAlert, error) {
+	return r.compareAndSetAlert(ctx, bkTenantID, alertID, expected, replacement, "false")
+}
+
+func (r *Repository) compareAndSetAlert(
+	ctx context.Context,
+	bkTenantID, alertID string,
+	expected store.VersionToken,
+	replacement domain.Alert,
+	refresh string,
+) (store.StoredAlert, error) {
 	if err := contextError(ctx); err != nil {
 		return store.StoredAlert{}, err
 	}
@@ -310,7 +401,7 @@ func (r *Repository) CompareAndSetAlert(
 	if !ok {
 		return store.StoredAlert{}, fmt.Errorf("%w: alert %q", store.ErrVersionConflict, alertID)
 	}
-	current, err := r.GetAlert(ctx, bkTenantID, alertID)
+	current, err := r.getAlertFromTarget(ctx, version.Index, bkTenantID, alertID, version.DocumentID)
 	if err != nil {
 		return store.StoredAlert{}, err
 	}
@@ -339,7 +430,7 @@ func (r *Repository) CompareAndSetAlert(
 	query := url.Values{
 		"if_seq_no":       []string{strconv.FormatInt(version.SeqNo, 10)},
 		"if_primary_term": []string{strconv.FormatInt(version.PrimaryTerm, 10)},
-		"refresh":         []string{"wait_for"},
+		"refresh":         []string{refresh},
 	}
 	var response indexResponse
 	err = r.performJSON(

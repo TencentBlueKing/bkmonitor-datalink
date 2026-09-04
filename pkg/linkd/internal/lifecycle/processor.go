@@ -55,11 +55,11 @@ func (p *Processor) ProcessEvent(ctx context.Context, bkTenantID, eventID string
 
 func (p *Processor) processUnprocessed(ctx context.Context, stored store.StoredEvent) (ProcessResult, error) {
 	event := stored.Event
-	active, err := p.repository.FindActiveAlert(ctx, store.ActiveAlertKey{
+	active, err := p.findActiveAlert(ctx, store.ActiveAlertKey{
 		BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint,
 	})
 	if errors.Is(err, store.ErrNotFound) {
-		ended, endedErr := p.repository.FindAlertEndedByEvent(ctx, event.BKTenantID, event.EventID)
+		ended, endedErr := p.findAlertEndedByEvent(ctx, event.BKTenantID, event.EventID)
 		if endedErr == nil {
 			return p.resumeEndedEvent(ctx, stored, ended)
 		}
@@ -104,6 +104,115 @@ func (p *Processor) processUnprocessed(ctx context.Context, stored store.StoredE
 	return p.finishEvent(ctx, stored, domain.EventProcessStateRejected, "", OutcomeRejected, ReasonInvalidTransition)
 }
 
+func (p *Processor) findActiveAlert(
+	ctx context.Context,
+	key store.ActiveAlertKey,
+) (store.StoredAlert, error) {
+	cached, found, err := p.recentAlerts.GetCurrent(ctx, key)
+	if err != nil {
+		return store.StoredAlert{}, fmt.Errorf("read recent active alert cache: %w", err)
+	}
+	if found {
+		if cached.Alert.Status == domain.AlertStatusActive {
+			return cached, nil
+		}
+		return store.StoredAlert{}, fmt.Errorf("%w: active alert", store.ErrNotFound)
+	}
+	active, err := p.repository.FindActiveAlert(ctx, key)
+	if err != nil {
+		return store.StoredAlert{}, err
+	}
+	if err := p.recentAlerts.PutCurrent(ctx, active); err != nil {
+		return store.StoredAlert{}, fmt.Errorf("cache active alert from repository: %w", err)
+	}
+	return active, nil
+}
+
+func (p *Processor) findAlertEndedByEvent(
+	ctx context.Context,
+	bkTenantID, eventID string,
+) (store.StoredAlert, error) {
+	cached, found, err := p.recentAlerts.GetEndedByEvent(ctx, bkTenantID, eventID)
+	if err != nil {
+		return store.StoredAlert{}, fmt.Errorf("read recent ended alert cache: %w", err)
+	}
+	if found {
+		return cached, nil
+	}
+	ended, err := p.repository.FindAlertEndedByEvent(ctx, bkTenantID, eventID)
+	if err != nil {
+		return store.StoredAlert{}, err
+	}
+	if err := p.recentAlerts.PutEnded(ctx, ended); err != nil {
+		return store.StoredAlert{}, fmt.Errorf("cache ended alert from repository: %w", err)
+	}
+	return ended, nil
+}
+
+func (p *Processor) createAlertAfterActiveLookup(
+	ctx context.Context,
+	alert domain.Alert,
+) (store.CreateAlertResult, error) {
+	if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
+		return repository.CreateAlertAfterActiveLookup(ctx, alert)
+	}
+	return p.repository.CreateAlert(ctx, alert)
+}
+
+func (p *Processor) compareAndSetAlert(
+	ctx context.Context,
+	current store.StoredAlert,
+	replacement domain.Alert,
+) (store.StoredAlert, error) {
+	var updated store.StoredAlert
+	var err error
+	if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
+		updated, err = repository.CompareAndSetAlertAfterActiveLookup(
+			ctx,
+			current.Alert.BKTenantID,
+			current.Alert.AlertID,
+			current.Version,
+			replacement,
+		)
+	} else {
+		updated, err = p.repository.CompareAndSetAlert(
+			ctx,
+			current.Alert.BKTenantID,
+			current.Alert.AlertID,
+			current.Version,
+			replacement,
+		)
+	}
+	if !errors.Is(err, store.ErrVersionConflict) {
+		return updated, err
+	}
+	if repairErr := p.repairRecentAlert(ctx, current.Alert.BKTenantID, current.Alert.AlertID); repairErr != nil {
+		return store.StoredAlert{}, errors.Join(err, repairErr)
+	}
+	return store.StoredAlert{}, err
+}
+
+func (p *Processor) repairRecentAlert(ctx context.Context, bkTenantID, alertID string) error {
+	current, err := p.getAlertCurrent(ctx, bkTenantID, alertID)
+	if err != nil {
+		return fmt.Errorf("read current alert %q after CAS conflict: %w", alertID, err)
+	}
+	if err := p.recentAlerts.Repair(ctx, current); err != nil {
+		return fmt.Errorf("repair recent alert cache for %q: %w", alertID, err)
+	}
+	return nil
+}
+
+func (p *Processor) getAlertCurrent(
+	ctx context.Context,
+	bkTenantID, alertID string,
+) (store.StoredAlert, error) {
+	if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
+		return repository.GetAlertCurrent(ctx, bkTenantID, alertID)
+	}
+	return p.repository.GetAlert(ctx, bkTenantID, alertID)
+}
+
 // compareSeverity 返回 -1 表示 incoming 更严重，0 表示相同，1 表示更低。
 func (p *Processor) compareSeverity(incoming, current string) (int, error) {
 	incomingPriority, ok := p.severity.Priority(incoming)
@@ -129,16 +238,22 @@ func (p *Processor) createAlert(ctx context.Context, stored store.StoredEvent) (
 	if err != nil {
 		return ProcessResult{}, err
 	}
-	created, err := p.repository.CreateAlert(ctx, alert)
+	created, err := p.createAlertAfterActiveLookup(ctx, alert)
 	if errors.Is(err, store.ErrIdentityConflict) {
-		existing, readErr := p.repository.GetAlert(ctx, alert.BKTenantID, alert.AlertID)
+		existing, readErr := p.getAlertCurrent(ctx, alert.BKTenantID, alert.AlertID)
 		if readErr == nil && existing.Alert.TriggerEventID == stored.Event.EventID {
+			if cacheErr := p.recentAlerts.PutCurrent(ctx, existing); cacheErr != nil {
+				return ProcessResult{}, fmt.Errorf("cache existing alert for event %q: %w", stored.Event.EventID, cacheErr)
+			}
 			return p.resumeActiveEvent(ctx, stored, existing)
 		}
 		return ProcessResult{}, fmt.Errorf("%w: active alert appeared while creating", errRetryDecision)
 	}
 	if err != nil {
 		return ProcessResult{}, fmt.Errorf("create alert for event %q: %w", stored.Event.EventID, err)
+	}
+	if err := p.recentAlerts.PutCurrent(ctx, created.StoredAlert); err != nil {
+		return ProcessResult{}, fmt.Errorf("cache alert created for event %q: %w", stored.Event.EventID, err)
 	}
 	operationLog, err := eventAlertLog(stored.Event, created.Alert, domain.OperationKindTrigger,
 		string(OutcomeAlertCreated), created.Alert.UpdateAt, nil)
@@ -169,9 +284,12 @@ func (p *Processor) updateAlert(ctx context.Context, stored store.StoredEvent, a
 	replacement.LatestEventID = stored.Event.EventID
 	replacement.LastOccurredAt = stored.Event.OccurredAt
 	replacement.UpdateAt = nextAlertUpdateTime(now, active.Alert.UpdateAt)
-	updated, err := p.repository.CompareAndSetAlert(ctx, active.Alert.BKTenantID, active.Alert.AlertID, active.Version, replacement)
+	updated, err := p.compareAndSetAlert(ctx, active, replacement)
 	if err != nil {
 		return ProcessResult{}, fmt.Errorf("update alert %q: %w", active.Alert.AlertID, err)
+	}
+	if err := p.recentAlerts.PutCurrent(ctx, updated); err != nil {
+		return ProcessResult{}, fmt.Errorf("cache updated alert %q: %w", active.Alert.AlertID, err)
 	}
 	hookLog, err := p.runFinalHook(ctx, sourceEventCause(stored.Event), updated.Alert, OutcomeAlertUpdated)
 	if err != nil {
@@ -191,9 +309,12 @@ func (p *Processor) terminateAlert(ctx context.Context, stored store.StoredEvent
 		return ProcessResult{}, err
 	}
 	replacement := sourceTerminalAlert(active.Alert, stored.Event, status, now)
-	updated, err := p.repository.CompareAndSetAlert(ctx, active.Alert.BKTenantID, active.Alert.AlertID, active.Version, replacement)
+	updated, err := p.compareAndSetAlert(ctx, active, replacement)
 	if err != nil {
 		return ProcessResult{}, fmt.Errorf("terminate alert %q as %s: %w", active.Alert.AlertID, status, err)
+	}
+	if err := p.recentAlerts.PutTerminal(ctx, updated); err != nil {
+		return ProcessResult{}, fmt.Errorf("cache terminal alert %q: %w", active.Alert.AlertID, err)
 	}
 	operation, outcome := domain.OperationKindRecover, OutcomeAlertRecovered
 	if status == domain.AlertStatusClosed {
@@ -239,17 +360,20 @@ func (p *Processor) rotateAlert(ctx context.Context, stored store.StoredEvent, a
 		return ProcessResult{}, err
 	}
 	closed := severityUpgradeAlert(active.Alert, stored.Event, now)
-	closedStored, err := p.repository.CompareAndSetAlert(ctx, active.Alert.BKTenantID, active.Alert.AlertID, active.Version, closed)
+	closedStored, err := p.compareAndSetAlert(ctx, active, closed)
 	if err != nil {
 		return ProcessResult{}, fmt.Errorf("close alert %q for severity upgrade: %w", active.Alert.AlertID, err)
+	}
+	if err := p.recentAlerts.PutTerminal(ctx, closedStored); err != nil {
+		return ProcessResult{}, fmt.Errorf("cache upgraded terminal alert %q: %w", active.Alert.AlertID, err)
 	}
 	return p.completeRotation(ctx, stored, closedStored, newAlert)
 }
 
 func (p *Processor) completeRotation(ctx context.Context, stored store.StoredEvent, closed store.StoredAlert, newAlert domain.Alert) (ProcessResult, error) {
-	created, err := p.repository.CreateAlert(ctx, newAlert)
+	created, err := p.createAlertAfterActiveLookup(ctx, newAlert)
 	if errors.Is(err, store.ErrIdentityConflict) {
-		existing, readErr := p.repository.GetAlert(ctx, newAlert.BKTenantID, newAlert.AlertID)
+		existing, readErr := p.getAlertCurrent(ctx, newAlert.BKTenantID, newAlert.AlertID)
 		if readErr != nil {
 			return ProcessResult{}, fmt.Errorf("read upgraded alert %q: %w", newAlert.AlertID, readErr)
 		}
@@ -259,6 +383,9 @@ func (p *Processor) completeRotation(ctx context.Context, stored store.StoredEve
 		created = store.CreateAlertResult{StoredAlert: existing, Created: false}
 	} else if err != nil {
 		return ProcessResult{}, fmt.Errorf("create upgraded alert %q: %w", newAlert.AlertID, err)
+	}
+	if err := p.recentAlerts.PutCurrent(ctx, created.StoredAlert); err != nil {
+		return ProcessResult{}, fmt.Errorf("cache upgraded alert %q: %w", newAlert.AlertID, err)
 	}
 	return p.finishRotation(ctx, stored, closed, created.StoredAlert)
 }
@@ -317,7 +444,7 @@ func (p *Processor) resumeActiveEvent(ctx context.Context, stored store.StoredEv
 		}
 		return p.finishEvent(ctx, stored, domain.EventProcessStateAccepted, active.Alert.AlertID, OutcomeAlertUpdated, "")
 	}
-	ended, err := p.repository.FindAlertEndedByEvent(ctx, stored.Event.BKTenantID, stored.Event.EventID)
+	ended, err := p.findAlertEndedByEvent(ctx, stored.Event.BKTenantID, stored.Event.EventID)
 	if err == nil {
 		return p.finishRotation(ctx, stored, ended, active)
 	}
@@ -470,12 +597,15 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 		replacement.EndAt = &endAt
 		replacement.EndType = endType
 		replacement.EndReason = command.Reason
-		updated, err := p.repository.CompareAndSetAlert(ctx, command.BKTenantID, command.AlertID, stored.Version, replacement)
+		updated, err := p.compareAndSetAlert(ctx, stored, replacement)
 		if errors.Is(err, store.ErrVersionConflict) {
 			continue
 		}
 		if err != nil {
 			return CloseAlertResult{}, err
+		}
+		if err := p.recentAlerts.PutCurrent(ctx, updated); err != nil {
+			return CloseAlertResult{}, fmt.Errorf("cache directly closed alert %q: %w", command.AlertID, err)
 		}
 		operationLog, err := operationCloseLog(command, updated.Alert)
 		if err != nil {

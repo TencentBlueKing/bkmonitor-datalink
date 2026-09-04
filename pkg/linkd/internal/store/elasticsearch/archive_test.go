@@ -80,7 +80,8 @@ func TestArchiveTerminalAlertsBulkCreatesHistoryThenConditionallyDeletesActive(t
 		}
 	})
 	router, err := newBucketRouter("linkd-test", BucketConfig{
-		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7, MaxFutureSkew: time.Minute,
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		MaxFutureSkew: time.Minute, ActiveAlertRefreshInterval: 5 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -171,7 +172,8 @@ func TestArchiveTerminalAlertsBulkIsolatesCreateConflictAndDeleteFailures(t *tes
 		}
 	})
 	router, err := newBucketRouter("linkd-test", BucketConfig{
-		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7, MaxFutureSkew: 30 * 24 * time.Hour,
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		MaxFutureSkew: 30 * 24 * time.Hour, ActiveAlertRefreshInterval: 5 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -237,10 +239,12 @@ func TestTerminalAlertCASLeavesPhysicalArchiveToManager(t *testing.T) {
 		requests++
 		switch requests {
 		case 1:
-			if request.Method != http.MethodPost || request.URL.Path != "/_msearch" {
+			if request.Method != http.MethodGet ||
+				request.URL.Path != "/linkd-test-alerts-active-000001/_doc/"+documentID ||
+				request.URL.Query().Get("realtime") != "true" {
 				t.Fatalf("read request=%s %s", request.Method, request.URL.String())
 			}
-			response := `{"responses":[{"status":200,"hits":{"hits":[{"_index":"linkd-test-alerts-active-000001","_id":"` + documentID + `","_seq_no":7,"_primary_term":2,"_source":` + string(document) + `}]}}]}`
+			response := `{"_index":"linkd-test-alerts-active-000001","_id":"` + documentID + `","_seq_no":7,"_primary_term":2,"found":true,"_source":` + string(document) + `}`
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
 		case 2:
 			if request.Method != http.MethodPut || request.URL.Path != "/linkd-test-alerts-active-000001/_doc/"+documentID ||
@@ -255,7 +259,8 @@ func TestTerminalAlertCASLeavesPhysicalArchiveToManager(t *testing.T) {
 		}
 	})
 	router, err := newBucketRouter("linkd-test", BucketConfig{
-		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7, MaxFutureSkew: time.Minute,
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		MaxFutureSkew: time.Minute, ActiveAlertRefreshInterval: 5 * time.Second,
 	}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)

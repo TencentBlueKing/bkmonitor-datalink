@@ -137,6 +137,9 @@ func (m *Manager) VerifyReady(ctx context.Context) error {
 			return fmt.Errorf("elasticsearch write alias %q must point to %q with is_write_index=true", alias, expectedIndex)
 		}
 	}
+	if err := m.verifyActiveAlertRefreshInterval(ctx, m.router.activeAlertIndex()); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -178,6 +181,9 @@ func (m *Manager) ensureActiveAlert(ctx context.Context) error {
 	if err := m.ensureManagedIndex(ctx, index, metadata); err != nil {
 		return fmt.Errorf("ensure active alert index: %w", err)
 	}
+	if err := m.ensureActiveAlertRefreshInterval(ctx, index); err != nil {
+		return err
+	}
 	if err := m.ensureAlias(ctx, m.router.alertReadAlias(), index, false, false); err != nil {
 		return err
 	}
@@ -185,6 +191,44 @@ func (m *Manager) ensureActiveAlert(ctx context.Context) error {
 		return err
 	}
 	return m.ensureAlias(ctx, m.router.activeAlertWriteAlias(), index, true, true)
+}
+
+func (m *Manager) ensureActiveAlertRefreshInterval(ctx context.Context, index string) error {
+	refreshInterval := m.router.activeRefreshInterval.String()
+	body, err := marshalRequest(map[string]any{"index": map[string]any{"refresh_interval": refreshInterval}})
+	if err != nil {
+		return err
+	}
+	if err := m.repository.performJSON(ctx, http.MethodPut, "/"+index+"/_settings", nil, body, nil); err != nil {
+		return fmt.Errorf("ensure active alert index refresh interval: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) verifyActiveAlertRefreshInterval(ctx context.Context, index string) error {
+	var response map[string]struct {
+		Settings struct {
+			Index struct {
+				RefreshInterval string `json:"refresh_interval"`
+			} `json:"index"`
+		} `json:"settings"`
+	}
+	if err := m.repository.performJSON(
+		ctx,
+		http.MethodGet,
+		"/"+index+"/_settings/index.refresh_interval",
+		nil,
+		nil,
+		&response,
+	); err != nil {
+		return fmt.Errorf("verify active alert index refresh interval: %w", err)
+	}
+	item, ok := response[index]
+	expected := m.router.activeRefreshInterval.String()
+	if !ok || len(response) != 1 || item.Settings.Index.RefreshInterval != expected {
+		return fmt.Errorf("elasticsearch active alert index %q refresh_interval must be %s", index, expected)
+	}
+	return nil
 }
 
 func (m *Manager) ensureBucket(ctx context.Context, family bucketFamily, start time.Time) error {

@@ -69,6 +69,12 @@ Mailbox 上限 128、单次持锁最多排空 512 条。Signal Stream/Group 默�
 `linkd:lifecycle:signals` / `linkd-lifecycle`。Signal payload 使用独立的 `schema_version` 校验；代码
 不提供其他字段名或 namespace 的兼容读取。
 
+选择 Elasticsearch Repository 时，Lifecycle 还会从 Mailbox prefix 派生
+`<key_prefix>:recent-alert` namespace，保存最近 Alert 写入。缓存 TTL 没有独立配置项，始终等于
+Active Alert `refresh_interval + 5s`，默认为 10 秒。Redis 读写错误不会回落到可能尚未 refresh 的
+Elasticsearch，而是保留 Event 重试。生产 Redis 应使用 `noeviction`，避免 current/ended key 被提前
+淘汰。MySQL Repository 不创建这些 key。
+
 Cleaner 对目标 Signal Group 启用近似全局背压：默认每 3 秒最多执行一次 `XINFO GROUPS`，查询超时
 1 秒，`lag + pending >= 100000` 时暂停新 Kafka fetch，降到 80000 时恢复。要求
 `0 < low_watermark < high_watermark`、TTL 为 1～60 秒且查询超时不大于 TTL。查询失败或 lag 未知
@@ -121,7 +127,11 @@ Prometheus exporter 后，每个进程分别暴露 `/metrics`；部署在独立 
 ## Elasticsearch schema 重建
 
 当前 Elasticsearch schema version 为 3，Event、Alert 和 AlertLog 的完整稳定领域字段直接保存在
-`_source` 根层。Event、AlertHistory、AlertLog 默认使用 7 天 UTC 时间桶；Active Alert 使用单一热索引。
+`_source` 根层。Event、AlertHistory、AlertLog 默认使用 7 天 UTC 时间桶；Active Alert 使用单一热索引，
+模板和控制面对账会把它的 `refresh_interval` 设为
+`storage.elasticsearch.active_alert_refresh_interval_seconds`，默认 5 秒。Recent Alert 缓存 TTL 自动为该值加 5 秒，
+为缓存过期后的查询回源提供可见性边界。可配置范围为 1～3600 秒，修改后需由控制面对账已有
+Active 索引。
 `control-plane` 当前分别装配 Elasticsearch Schema 与 Active 资源对账、时间桶维护和终态 Alert 归档任务。三项任务共享
 连接和进程级监督；前两项按独立周期执行，归档按连续批量循环执行。数据进程遇到缺失 write alias 时直接失败。这些任务没有独立
 启动 command。
@@ -133,6 +143,7 @@ storage:
   elasticsearch:
     # 单节点本地环境可设为 0；生产环境按节点拓扑和容灾要求设置或省略。
     number_of_replicas: 0
+    active_alert_refresh_interval_seconds: 5
     time_partition:
       event_bucket_days: 7
       alert_history_bucket_days: 7

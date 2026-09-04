@@ -170,5 +170,19 @@ describe("PrometheusConnector", () => {
         unit: "次",
       }),
     );
+    expect(result.panels).toContainEqual(
+      expect.objectContaining({
+        id: "lifecycle-recent-alert-hit-ratio",
+        title: "Recent Alert 缓存命中率",
+        unit: "%",
+      }),
+    );
+    expect(
+      requests.some((request) =>
+        decodeURIComponent(request).includes(
+          "linkd_lifecycle_recent_alert_cache_operations_total",
+        ),
+      ),
+    ).toBe(true);
   });
 });

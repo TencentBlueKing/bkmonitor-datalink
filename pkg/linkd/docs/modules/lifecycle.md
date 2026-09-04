@@ -43,6 +43,18 @@ Mailbox 允许相同 Event ID 出现多次。Event 业务去重由 Repository �
 lease 保护同一 Mailbox 的跨进程串行处理。RedisLocker 使用 `SET NX PX` 获取随机 token，并通过
 compare-token Lua 续租和释放；旧 owner 不能误续租或删除新 owner 的 lease。
 
+### 1.5 Recent Alert 缓存
+
+Elasticsearch 后端使用所有 Lifecycle 实例共享的 Redis Recent Alert 缓存跨越搜索 refresh 窗口。缓存
+从 Mailbox `key_prefix` 派生 namespace，分别按 MailboxID 保存最近的 current Alert、按租户和 EventID
+保存最近的 terminal Alert。TTL 等于 Active Alert `refresh_interval + 5s`，默认为 10 秒。value 包含
+完整 Alert 快照和存储 `VersionToken`，但它不是
+Alert 事实源，也不会保存全部 active Alert。
+
+Event 裁决先查缓存；命中 active 时直接使用，命中 terminal 时把它视为“当前无 active”，并通过 ended
+条目恢复同一 Event 的终结或等级升级。只有 Redis 明确返回 key 不存在时才查询 Elasticsearch；Redis
+错误、缓存损坏或身份不一致均保留 Mailbox 队首重试。MySQL 后端不启用该缓存。
+
 ## 2. 关键抽象
 
 ### 2.1 Scheduler Handler
@@ -75,6 +87,7 @@ Handler 只负责编排 Mailbox、lease 和 Processor，不包含 Alert 状态�
 `lifecycle.Processor` 的依赖是窄能力：
 
 - `store.Repository`：Event/Alert/AlertLog 读写和单对象 CAS；
+- `RecentAlertCache`：Elasticsearch 最近 refresh 窗口内 Alert 写入和终态恢复锚点；
 - `AlertIDGenerator`：由 opening Event 生成稳定 Alert ID；
 - `SeverityTable`：比较 incoming Event 与 active Alert 等级；
 - `AlertEnricher`：创建新 Alert 前同步丰富；
@@ -163,7 +176,8 @@ Alert。Alert 的继承字段始终来自 opening Event，后续 Event 的 title
 ```text
 构造稳定 Alert ID
   → Enrich
-  → CreateAlert(refresh=wait_for)
+  → CreateAlert(refresh=false)
+  → Recent Alert current SET EX 5
   → FinalHook
   → trigger + push AlertLog Bulk(refresh=false)
   → Event CAS accepted + related_alert_id(refresh=false)
@@ -172,7 +186,8 @@ Alert。Alert 的继承字段始终来自 opening Event，后续 Event 的 title
 ### 5.2 同等级推进
 
 ```text
-Alert CAS(refresh=wait_for)
+Alert CAS(refresh=false)
+  → Recent Alert current SET EX 5
   → FinalHook
   → push AlertLog Bulk(refresh=false)
   → Event CAS accepted(refresh=false)
@@ -181,7 +196,8 @@ Alert CAS(refresh=wait_for)
 ### 5.3 来源终结
 
 ```text
-Alert CAS recovered/closed(refresh=wait_for)
+Alert CAS recovered/closed(refresh=false)
+  → Recent Alert current + ended MULTI/EXEC EX 5
   → FinalHook
   → recover/close + push AlertLog Bulk(refresh=false)
   → Event CAS accepted(refresh=false)
@@ -199,8 +215,10 @@ suppress AlertLog Bulk(refresh=false)
 ### 5.5 等级升级
 
 ```text
-旧 Alert CAS closed/severity_upgrade(refresh=wait_for)
-  → Create 新 Alert(refresh=wait_for)
+旧 Alert CAS closed/severity_upgrade(refresh=false)
+  → Recent Alert terminal current + ended MULTI/EXEC EX 5
+  → Create 新 Alert(refresh=false)
+  → Recent Alert current 覆盖为新 active Alert，ended 保留
   → 旧 Alert FinalHook
   → 新 Alert FinalHook
   → close/push/trigger/push AlertLog Bulk(refresh=false)
@@ -236,11 +254,13 @@ Alert，也不让 Lifecycle 重试已经成功的终态 CAS。归档过渡期间
 Bulk 部分成功时 Event 已经终态而日志无法由现有重试路径补齐。Alert 与 Event/AlertLog 位于不同
 索引，Bulk 不提供跨文档事务。
 
-Elasticsearch 的 Alert create/CAS 使用 `refresh=wait_for`，保证后续事件按 active Alert 裁决时可见；
-AlertLog Bulk 和最终 Event CAS 使用 `refresh=false`。后两者成功返回只表示写请求完成，可能在一个
-refresh interval 内仍无法被 search 查询。Lifecycle 的单 Event 读取使用 realtime GET，重复 Mailbox
-引用可以立即看到终态；若其他部分成功窗口发生重投，仍允许 FinalHook 重复，下游必须按稳定 Kafka
-message ID 承担至少一次去重。
+Elasticsearch Lifecycle 专用的 Alert create/CAS、AlertLog Bulk 和最终 Event CAS 都使用
+`refresh=false`。Alert 写入成功后必须先更新 Redis Recent Alert 缓存，缓存失败时不能继续 FinalHook、
+AlertLog 或 Event CAS。Active 索引 `refresh_interval` 由
+`storage.elasticsearch.active_alert_refresh_interval_seconds` 配置，默认 5 秒；缓存 TTL 在此基础上
+再增加 5 秒安全余量，默认 10 秒。缓存过期后搜索结果应已经可见；CAS
+冲突通过物理文档 realtime GET 回读并修复缓存。重复 Mailbox 引用仍通过 Event realtime GET 立即看到
+终态；若其他部分成功窗口发生重投，仍允许 FinalHook 重复，下游必须按稳定 Kafka message ID 去重。
 
 Elasticsearch 不使用 Active 文档 `_id` 额外防御跨进程 fingerprint 重复；正常处理路径依赖 Mailbox
 lease 串行化同一 fingerprint。物理归档由 Alert Archiver 异步完成，不属于 Event 的处理成功条件。

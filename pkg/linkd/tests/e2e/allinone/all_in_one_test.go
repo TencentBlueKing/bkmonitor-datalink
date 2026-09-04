@@ -76,6 +76,7 @@ type resourceNames struct {
 	IndexPrefix          string
 	EventIndex           string
 	AlertIndex           string
+	ActiveAlertIndex     string
 	AlertLogIndex        string
 	RawTopic             string
 	OutputTopic          string
@@ -175,7 +176,7 @@ func TestAllInOneElasticsearchE2E(t *testing.T) {
 	produceDataset(ctx, t, environment.KafkaBroker, names.RawTopic, dataset)
 	events := waitForAcceptedEvents(ctx, t, process, es, names.EventIndex, expected)
 	assertEvents(t, events, dataset)
-	alerts := loadAlerts(ctx, t, es, names.AlertIndex)
+	alerts := waitForAlertsVisible(ctx, t, process, es, names.AlertIndex, expected.Alerts)
 	assertAlerts(t, alerts, expected.Alerts)
 	logs := waitForAlertLogsVisible(ctx, t, process, es, names.AlertLogIndex, expected.OperationCounts)
 	assertAlertLogs(t, logs, expected.OperationCounts)
@@ -196,6 +197,37 @@ func TestAllInOneElasticsearchE2E(t *testing.T) {
 		len(outputs),
 		names.SignalStream,
 	)
+}
+
+func waitForAlertsVisible(
+	ctx context.Context,
+	t *testing.T,
+	process *linkdProcess,
+	es *elasticsearchClient,
+	index string,
+	expected []rawgen.ExpectedAlert,
+) []domain.Alert {
+	t.Helper()
+	want := 0
+	for _, item := range expected {
+		want += item.Count
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if exited, err := process.checkExited(); exited {
+			t.Fatalf("all-in-one exited while waiting for Alert refresh: %v", err)
+		}
+		alerts := loadAlerts(ctx, t, es, index)
+		if len(alerts) >= want {
+			return alerts
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("wait for Alert refresh: found %d/%d: %v", len(alerts), want, ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func waitForAlertLogsVisible(
@@ -376,6 +408,7 @@ func newResourceNames() resourceNames {
 		IndexPrefix:          prefix,
 		EventIndex:           prefix + "-events",
 		AlertIndex:           prefix + "-alerts",
+		ActiveAlertIndex:     prefix + "-alerts-active-000001",
 		AlertLogIndex:        prefix + "-alert-logs",
 		RawTopic:             prefix + "-raw",
 		OutputTopic:          prefix + "-output",
@@ -872,7 +905,24 @@ func waitUntilReady(
 		}
 		groups, err := redisClient.XInfoGroups(ctx, names.SignalStream).Result()
 		groupReady := err == nil && len(groups) == 1 && groups[0].Name == names.SignalGroup
-		if indicesReady && groupReady {
+		refreshReady := false
+		var settings map[string]struct {
+			Settings struct {
+				Index struct {
+					RefreshInterval string `json:"refresh_interval"`
+				} `json:"index"`
+			} `json:"settings"`
+		}
+		if status, settingsErr := es.do(
+			ctx,
+			http.MethodGet,
+			"/"+names.ActiveAlertIndex+"/_settings/index.refresh_interval",
+			nil,
+			&settings,
+		); settingsErr == nil && status == http.StatusOK {
+			refreshReady = settings[names.ActiveAlertIndex].Settings.Index.RefreshInterval == "5s"
+		}
+		if indicesReady && refreshReady && groupReady {
 			return
 		}
 		select {

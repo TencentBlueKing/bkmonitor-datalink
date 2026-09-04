@@ -41,13 +41,16 @@
 ## Alert
 
 - 同一 `(bk_tenant_id, event_source_id, fingerprint)` 同时最多一个 active Alert。MySQL 用唯一键约束；
-  Elasticsearch 依赖 lifecycle lease 和 active 查询保证正常处理路径中的唯一性，不额外维护全局
-  fingerprint 唯一索引。
+  Elasticsearch 依赖 lifecycle lease、active 查询和覆盖 refresh 窗口的 Redis Recent Alert 缓存保证正常处理路径中的
+  唯一性，不额外维护全局 fingerprint 唯一索引。
 - Elasticsearch Active 与 History 文档都使用租户与 `alert_id` 摘要作为 `_id`。归档过渡期间同一
   Alert 可以同时存在于两个索引，内容必须一致；不同 Alert 即使 fingerprint 相同也使用不同 `_id`。
 - Alert CAS 必须保留所有继承字段和创建锚点，只允许推进生命周期字段；终态 Alert 不可再替换。
 - `FindAlertEndedByEvent` 只匹配 `latest_event_id` 等于目标 Event 且 `end_type` 为 source 或
   severity_upgrade 的终态 Alert，用于恢复跨对象部分成功。
+- Lifecycle 专用 Alert create/CAS 使用 `refresh=false`，写成功后必须先更新 Recent Alert 缓存再推进
+  Hook、日志和 Event；普通 Repository 契约仍可使用 `refresh=wait_for` 保证独立调用后的搜索可见性。
+- CAS 冲突修复按 VersionToken 指向的物理文档执行 realtime GET，不依赖 `_search` refresh。
 
 ## AlertLog 与查询
 
@@ -65,7 +68,7 @@
 - MySQL：`linkd_events`、`linkd_alerts`、`linkd_alert_logs`。
 - Elasticsearch 稳定读 alias 为 `<prefix>-events`、`<prefix>-alerts`、`<prefix>-alerts-active`、
   `<prefix>-alert-history`、`<prefix>-alert-logs`。Event、AlertHistory、AlertLog 物理索引按 UTC 时间桶创建，
-  Active Alert 使用单一热索引；时间桶默认 7 天。
+  Active Alert 使用单一热索引，`refresh_interval` 默认 5 秒且可通过 YAML 配置；时间桶默认 7 天。
 - 数据进程只通过 `require_alias=true` 写入 Bucket Manager 创建的 per-bucket write alias。
   `control-plane` 分别装配 Schema 与 Active 资源对账、时间桶维护和遗留终态 Alert 归档任务；三者共享连接，
   前两项使用独立周期，归档使用连续批量循环，且没有各自的常驻 command。缺失目标时数据写入和归档失败，

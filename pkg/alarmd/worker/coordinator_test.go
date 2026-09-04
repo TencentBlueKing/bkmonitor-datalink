@@ -1782,6 +1782,10 @@ func validTriggerEventFor(recordID, seriesDigest string) contract.TriggerEventV1
 }
 
 func compiledPlanForTest(t testing.TB) *strategy.CompiledPlan {
+	return compiledPlanForStrategyTest(t, "7")
+}
+
+func compiledPlanForStrategyTest(t testing.TB, strategyID string) *strategy.CompiledPlan {
 	if t != nil {
 		t.Helper()
 	}
@@ -1795,13 +1799,13 @@ func compiledPlanForTest(t testing.TB) *strategy.CompiledPlan {
 	if err != nil {
 		panic(err)
 	}
-	ref := contract.StrategyRefV2{TenantID: "tenant", StrategyID: "7", Revision: "strategy-v1"}
+	ref := contract.StrategyRefV2{TenantID: "tenant", StrategyID: strategyID, Revision: "strategy-v1"}
 	projection := contract.InputProjectionV2{
 		ValueFields: []string{"value"}, DimensionFields: []string{"host"}, BusinessIdentityField: "bk_biz_id",
 		MultiValueAlignment: "SINGLE_VALUE", DataUnit: "percent", MissingValuePolicy: contract.MissingValuePolicyRequired,
 	}
 	plan := contract.EvaluationPlanV2{
-		PlanID: "7", StrategyRef: ref, InputProjection: projection,
+		PlanID: strategyID, StrategyRef: ref, InputProjection: projection,
 		StrategyIR: contract.StrategyIRV2{
 			Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2}, StrategyRef: ref,
 			InputProjection: projection,

@@ -523,7 +523,7 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 		}
 	}
 	if len(stream.evaluated.Plans) == 0 {
-		return stream.completeWithoutSeries(completion)
+		return stream.completeWithoutSeries(ctx, completion)
 	}
 	for _, due := range stream.header.DuePlans {
 		if len(stream.planSeries[due.Identity]) != 0 {
@@ -533,6 +533,7 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 		if err != nil {
 			return err
 		}
+		stream.observeCompletionOnlyPlan(ctx, due, result)
 		if err := mergeProvisional(&stream.evaluated, result, stream.coordinator.budget); err != nil {
 			return err
 		}
@@ -595,12 +596,16 @@ func (stream *streamedExecution) loadGaps(ctx context.Context) error {
 	return nil
 }
 
-func (stream *streamedExecution) completeWithoutSeries(completion execution.QueryExecutionCompletion) error {
+func (stream *streamedExecution) completeWithoutSeries(
+	ctx context.Context,
+	completion execution.QueryExecutionCompletion,
+) error {
 	if stream.request.Operation == execution.OperationProbe {
 		for _, binding := range completion.CompletionBindings {
 			if binding.Completeness != execution.CompletenessFull {
 				stream.evaluated = execution.EvaluationResult{Contract: stream.header.Contract,
 					Result: observability.ResultDegraded, ReasonCode: binding.ReasonCode}
+				stream.observeCompletionOnlyProbe(ctx)
 				return nil
 			}
 		}
@@ -612,12 +617,27 @@ func (stream *streamedExecution) completeWithoutSeries(completion execution.Quer
 		if err != nil {
 			return err
 		}
+		stream.observeCompletionOnlyPlan(ctx, due, planResult)
 		if err := mergeProvisional(&result, planResult, stream.coordinator.budget); err != nil {
 			return err
 		}
 	}
 	stream.evaluated = result
 	return nil
+}
+
+func (stream *streamedExecution) observeCompletionOnlyProbe(ctx context.Context) {
+	for _, due := range stream.header.DuePlans {
+		result := execution.EvaluationResult{Contract: stream.header.Contract,
+			Result: observability.ResultSuccess, ReasonCode: observability.ReasonNone}
+		for _, binding := range planBindings(stream.bindings, due.Identity) {
+			if binding.Completeness != execution.CompletenessFull {
+				result.Result, result.ReasonCode = observability.ResultDegraded, binding.ReasonCode
+				break
+			}
+		}
+		stream.observeCompletionOnlyPlan(ctx, due, result)
+	}
 }
 
 func (stream *streamedExecution) noSeriesPlanResult(due execution.DuePlan) (execution.EvaluationResult, error) {
@@ -931,7 +951,24 @@ func (stream *streamedExecution) observeEvaluationCompleted(
 		Result: evaluated.Result, Operation: observability.Operation(stream.request.Operation),
 		Direction: observability.DirectionInternal, ReasonCode: evaluated.ReasonCode,
 		Duration: time.Since(started), Counts: observability.Counts{Records: evaluationRecordCount(inputs)},
+		Trace:                observability.TraceFields{StrategyID: due.Identity.StrategyID},
 		AlgorithmEvaluations: evaluations, AlgorithmInputs: namedInputs,
+	}
+	stream.coordinator.ports.Observer.Observe(ctx, observation)
+}
+
+func (stream *streamedExecution) observeCompletionOnlyPlan(
+	ctx context.Context,
+	due execution.DuePlan,
+	evaluated execution.EvaluationResult,
+) {
+	defer func() { _ = recover() }()
+	observation := observability.Observation{
+		Component: observability.ComponentEvaluation, Stage: observability.StageEvaluationCompleted,
+		Result: evaluated.Result, Operation: observability.Operation(stream.request.Operation),
+		Direction: observability.DirectionInternal, ReasonCode: evaluated.ReasonCode,
+		Trace:           observability.TraceFields{StrategyID: due.Identity.StrategyID},
+		AlgorithmInputs: stream.completionOnlyAlgorithmInputFacts(due),
 	}
 	stream.coordinator.ports.Observer.Observe(ctx, observation)
 }
@@ -1023,6 +1060,102 @@ func algorithmObservesBinding(algorithm observedAlgorithm, binding execution.Nam
 	}
 	_, found := algorithm.requirements[binding.RequirementID]
 	return found
+}
+
+func (stream *streamedExecution) completionOnlyAlgorithmInputFacts(
+	due execution.DuePlan,
+) []observability.AlgorithmInputFact {
+	if due.CompiledPlan == nil {
+		return nil
+	}
+	bindings := planBindings(stream.bindings, due.Identity)
+	facts := make([]observability.AlgorithmInputFact, 0)
+	for _, level := range due.CompiledPlan.Levels() {
+		levelID := level.Definition().LevelID
+		for _, compiled := range level.Algorithms() {
+			algorithm, observed := observeAlgorithm(compiled)
+			if !observed {
+				continue
+			}
+			for _, binding := range bindings {
+				if !binding.Consumer.HasLevel || binding.Consumer.LevelID != levelID ||
+					!algorithmObservesBinding(algorithm, binding) {
+					continue
+				}
+				facts = append(facts, stream.completionOnlyAlgorithmBindingFacts(algorithm, levelID, binding)...)
+			}
+		}
+	}
+	return facts
+}
+
+func (stream *streamedExecution) completionOnlyAlgorithmBindingFacts(
+	algorithm observedAlgorithm,
+	levelID uint32,
+	binding execution.NamedInputBinding,
+) []observability.AlgorithmInputFact {
+	key := struct {
+		consumer    execution.ConsumerRef
+		requirement execution.RequirementID
+	}{consumer: binding.Consumer, requirement: binding.RequirementID}
+	requirement, known := stream.prepared.requirementByKey[key]
+	query, queryKnown := stream.prepared.queries[binding.Provenance.PhysicalQuery]
+	if !known || !queryKnown || execution.LogicalQueryRef(query.QueryRevision) != requirement.LogicalQueryRef {
+		return nil
+	}
+	result, reason, valid := completionOnlyAlgorithmInputResult(binding)
+	if !valid {
+		return nil
+	}
+	points := make([]struct {
+		name       observability.AlgorithmInputName
+		dependency observability.AlgorithmDependencyPoint
+	}, 0, len(requirement.NamedPoints)+1)
+	if binding.Role == execution.InputRolePrimary {
+		points = append(points, struct {
+			name       observability.AlgorithmInputName
+			dependency observability.AlgorithmDependencyPoint
+		}{name: observability.AlgorithmInputNamePrimary, dependency: observability.AlgorithmDependencyPointCurrent})
+	} else {
+		for _, point := range requirement.NamedPoints {
+			dependency, observed := observedDependencyPoint(point.Name)
+			if observed {
+				points = append(points, struct {
+					name       observability.AlgorithmInputName
+					dependency observability.AlgorithmDependencyPoint
+				}{name: observability.AlgorithmInputNameHistory, dependency: dependency})
+			}
+		}
+	}
+	facts := make([]observability.AlgorithmInputFact, 0, len(points))
+	for _, point := range points {
+		facts = append(facts, observability.AlgorithmInputFact{
+			SourceAlgorithmFamily: algorithm.family, DetectorKind: algorithm.detector,
+			InputName: point.name, DependencyPoint: point.dependency, Result: result, ReasonCode: reason,
+			Provenance: observability.AlgorithmProvenance{
+				LevelID: levelID, RequirementID: string(binding.RequirementID),
+				QueryRef: string(binding.Provenance.PhysicalQuery), QueryRevision: string(query.QueryRevision),
+				QueryStart: binding.QueryWindow.Start, QueryEnd: binding.QueryWindow.End,
+			},
+		})
+	}
+	return facts
+}
+
+func completionOnlyAlgorithmInputResult(
+	binding execution.NamedInputBinding,
+) (observability.AlgorithmInputResult, observability.ReasonCode, bool) {
+	switch binding.Completeness {
+	case execution.CompletenessFull:
+		if binding.DataState == execution.DataStateEmpty && binding.Disposition == execution.AccessAvailable {
+			return observability.AlgorithmInputResultMissing, observability.ReasonNone, true
+		}
+	case execution.CompletenessPartial:
+		return observability.AlgorithmInputResultPartial, binding.ReasonCode, true
+	case execution.CompletenessUnavailable:
+		return observability.AlgorithmInputResultUnavailable, binding.ReasonCode, true
+	}
+	return "", "", false
 }
 
 func algorithmEvaluationResult(outcome execution.LevelOutcomeKind) observability.AlgorithmEvaluationResult {

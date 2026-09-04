@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -404,6 +405,9 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 	for queryGroup, lifecycle := range bundle.runners {
 		runners = append(runners, scheduledRunner{queryGroup: queryGroup, lifecycle: lifecycle})
 	}
+	sort.Slice(runners, func(left, right int) bool {
+		return runners[left].queryGroup < runners[right].queryGroup
+	})
 	bundle.inflightWG.Add(len(runners))
 	bundle.mu.RUnlock()
 
@@ -419,10 +423,16 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 	if processPermits < fanout {
 		fanout = processPermits
 	}
-	for workerIndex := 0; workerIndex < fanout; workerIndex++ {
-		go func(workerIndex int) {
-			for runnerIndex := workerIndex; runnerIndex < len(runners); runnerIndex += fanout {
-				scheduled := runners[runnerIndex]
+	jobs := make(chan scheduledRunner, len(runners))
+	for _, runner := range runners {
+		jobs <- runner
+	}
+	close(jobs)
+	// A shared queue lets every released permit take the next Query Group;
+	// a slow runner therefore cannot pin later work to a fixed worker lane.
+	for range fanout {
+		go func() {
+			for scheduled := range jobs {
 				result := func() scheduledResult {
 					defer bundle.inflightWG.Done()
 					result, attempted, err := scheduled.lifecycle.runner.RunOne(ctx)
@@ -430,7 +440,7 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 				}()
 				results <- result
 			}
-		}(workerIndex)
+		}()
 	}
 	var canceled error
 	for range runners {

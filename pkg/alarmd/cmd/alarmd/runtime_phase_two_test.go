@@ -491,6 +491,70 @@ func TestPhaseTwoWorkerBundleBoundsPrePermitRunnerFanoutByProcessQueryPermits(t 
 	}
 }
 
+func TestPhaseTwoWorkerBundleRunsNextQueuedQueryGroupWhenCapacityIsReleased(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
+
+	started := make(chan execution.QueryGroupIdentity, 4)
+	firstRelease := make(chan struct{})
+	secondRelease := make(chan struct{})
+	var firstReleaseOnce, secondReleaseOnce sync.Once
+	releaseFirst := func() { firstReleaseOnce.Do(func() { close(firstRelease) }) }
+	releaseSecond := func() { secondReleaseOnce.Do(func() { close(secondRelease) }) }
+	defer releaseFirst()
+	defer releaseSecond()
+
+	runners := make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle, 4)
+	for index := 1; index <= 4; index++ {
+		queryGroup := execution.QueryGroupIdentity(fmt.Sprintf("query-group-%d", index))
+		runner := newFakePhaseTwoQueryGroup()
+		runner.onRun = func() { started <- queryGroup }
+		switch index {
+		case 1:
+			runner.runRelease = firstRelease
+		case 2:
+			runner.runRelease = secondRelease
+		}
+		runners[queryGroup] = &phaseTwoQueryGroupLifecycle{runner: runner}
+	}
+
+	bundle := &phaseTwoWorkerBundle{
+		dependencies: phaseTwoWorkerBundleDependencies{Config: cfg},
+		runners:      runners,
+	}
+	done := make(chan error, 1)
+	go func() { done <- bundle.runScheduledOnce(context.Background()) }()
+
+	firstTwo := make(map[execution.QueryGroupIdentity]struct{}, 2)
+	for len(firstTwo) < 2 {
+		select {
+		case queryGroup := <-started:
+			firstTwo[queryGroup] = struct{}{}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for the initial runner fanout")
+		}
+	}
+	for _, queryGroup := range []execution.QueryGroupIdentity{"query-group-1", "query-group-2"} {
+		if _, ok := firstTwo[queryGroup]; !ok {
+			t.Fatalf("initial runners = %v, want query-group-1 and query-group-2", firstTwo)
+		}
+	}
+
+	releaseSecond()
+	select {
+	case queryGroup := <-started:
+		if queryGroup != "query-group-3" {
+			t.Fatalf("runner after query-group-2 released = %s, want query-group-3", queryGroup)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the next queued Query Group")
+	}
+	releaseFirst()
+	if err := <-done; err != nil {
+		t.Fatalf("runScheduledOnce() error = %v", err)
+	}
+}
+
 func TestPhaseTwoWorkerBundleNeverRegistersReadyAfterDraining(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(100 * time.Millisecond)

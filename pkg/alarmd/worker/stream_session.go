@@ -1045,6 +1045,15 @@ func (stream *streamedExecution) algorithmInputFacts(
 	outcome execution.LevelOutcome,
 	binding execution.NamedInputBinding,
 ) []observability.AlgorithmInputFact {
+	key := struct {
+		consumer    execution.ConsumerRef
+		requirement execution.RequirementID
+	}{consumer: binding.Consumer, requirement: binding.RequirementID}
+	requirement, known := stream.prepared.requirementByKey[key]
+	query, queryKnown := stream.prepared.queries[binding.Provenance.PhysicalQuery]
+	if !known || !queryKnown || execution.LogicalQueryRef(query.QueryRevision) != requirement.LogicalQueryRef {
+		return nil
+	}
 	points := []struct {
 		name       observability.AlgorithmInputName
 		dependency observability.AlgorithmDependencyPoint
@@ -1057,31 +1066,18 @@ func (stream *streamedExecution) algorithmInputFacts(
 			sourceTime int64
 		}{observability.AlgorithmInputNamePrimary, observability.AlgorithmDependencyPointCurrent, outcome.Record.SourceTime})
 	} else {
-		for _, requirement := range stream.header.Requirements {
-			if requirement.RequirementID != binding.RequirementID {
-				continue
+		for _, point := range requirement.NamedPoints {
+			dependency, ok := observedDependencyPoint(point.Name)
+			if ok {
+				points = append(points, struct {
+					name       observability.AlgorithmInputName
+					dependency observability.AlgorithmDependencyPoint
+					sourceTime int64
+				}{observability.AlgorithmInputNameHistory, dependency, outcome.Record.SourceTime - point.OffsetSeconds})
 			}
-			for _, point := range requirement.NamedPoints {
-				dependency, ok := observedDependencyPoint(point.Name)
-				if ok {
-					points = append(points, struct {
-						name       observability.AlgorithmInputName
-						dependency observability.AlgorithmDependencyPoint
-						sourceTime int64
-					}{observability.AlgorithmInputNameHistory, dependency, outcome.Record.SourceTime - point.OffsetSeconds})
-				}
-			}
-			break
 		}
 	}
 	facts := make([]observability.AlgorithmInputFact, 0, len(points))
-	queryRevision := ""
-	for _, query := range stream.header.RequiredPhysicalQueries {
-		if query.Digest == binding.Provenance.PhysicalQuery {
-			queryRevision = string(query.QueryRevision)
-			break
-		}
-	}
 	for _, point := range points {
 		result, reason := algorithmInputResult(binding, outcome.SeriesIdentityDigest, point.sourceTime)
 		facts = append(facts, observability.AlgorithmInputFact{
@@ -1089,7 +1085,7 @@ func (stream *streamedExecution) algorithmInputFacts(
 			InputName: point.name, DependencyPoint: point.dependency, Result: result, ReasonCode: reason,
 			Provenance: observability.AlgorithmProvenance{
 				LevelID: outcome.LevelID, RequirementID: string(binding.RequirementID),
-				QueryRef: string(binding.Provenance.PhysicalQuery), QueryRevision: queryRevision,
+				QueryRef: string(binding.Provenance.PhysicalQuery), QueryRevision: string(query.QueryRevision),
 				SourceTime: point.sourceTime, QueryStart: binding.QueryWindow.Start, QueryEnd: binding.QueryWindow.End,
 			},
 		})

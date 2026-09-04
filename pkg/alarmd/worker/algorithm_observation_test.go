@@ -18,6 +18,7 @@ func TestSlotExecutionCoordinatorEmitsValidatedAlgorithmFacts(t *testing.T) {
 	tests := []struct {
 		name                string
 		previousUnavailable bool
+		poisonHeaderScan    bool
 		wantEvaluations     []observability.AlgorithmEvaluationFact
 		wantInputs          []observability.AlgorithmInputFact
 	}{
@@ -46,6 +47,19 @@ func TestSlotExecutionCoordinatorEmitsValidatedAlgorithmFacts(t *testing.T) {
 				{SourceAlgorithmFamily: observability.AlgorithmFamilySimpleRingRatio, DetectorKind: observability.AlgorithmDetectorKindSimpleRingRatio, InputName: observability.AlgorithmInputNameHistory, DependencyPoint: observability.AlgorithmDependencyPointPrevious, Result: observability.AlgorithmInputResultUnavailable, ReasonCode: observability.ReasonCode(contract.ReasonQueryUnavailable)},
 			},
 		},
+		{
+			name:             "prepared index remains authoritative after begin",
+			poisonHeaderScan: true,
+			wantEvaluations: []observability.AlgorithmEvaluationFact{
+				{SourceAlgorithmFamily: observability.AlgorithmFamilyThreshold, DetectorKind: observability.AlgorithmDetectorKindThreshold, Result: observability.AlgorithmEvaluationResultAbnormal, ReasonCode: observability.ReasonNone, Provenance: observability.AlgorithmProvenance{LevelID: 4}},
+				{SourceAlgorithmFamily: observability.AlgorithmFamilySimpleRingRatio, DetectorKind: observability.AlgorithmDetectorKindSimpleRingRatio, Result: observability.AlgorithmEvaluationResultAbnormal, ReasonCode: observability.ReasonNone, Provenance: observability.AlgorithmProvenance{LevelID: 5}},
+			},
+			wantInputs: []observability.AlgorithmInputFact{
+				{SourceAlgorithmFamily: observability.AlgorithmFamilyThreshold, DetectorKind: observability.AlgorithmDetectorKindThreshold, InputName: observability.AlgorithmInputNamePrimary, DependencyPoint: observability.AlgorithmDependencyPointCurrent, Result: observability.AlgorithmInputResultAvailable, ReasonCode: observability.ReasonNone},
+				{SourceAlgorithmFamily: observability.AlgorithmFamilySimpleRingRatio, DetectorKind: observability.AlgorithmDetectorKindSimpleRingRatio, InputName: observability.AlgorithmInputNamePrimary, DependencyPoint: observability.AlgorithmDependencyPointCurrent, Result: observability.AlgorithmInputResultAvailable, ReasonCode: observability.ReasonNone},
+				{SourceAlgorithmFamily: observability.AlgorithmFamilySimpleRingRatio, DetectorKind: observability.AlgorithmDetectorKindSimpleRingRatio, InputName: observability.AlgorithmInputNameHistory, DependencyPoint: observability.AlgorithmDependencyPointPrevious, Result: observability.AlgorithmInputResultAvailable, ReasonCode: observability.ReasonNone},
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -59,6 +73,27 @@ func TestSlotExecutionCoordinatorEmitsValidatedAlgorithmFacts(t *testing.T) {
 			})
 			ports.gapMissing = test.previousUnavailable
 			ports.executeOverride = streamExecution(header, batches, completion)
+			if test.poisonHeaderScan {
+				ports.executeOverride = func(ctx context.Context, _ execution.QueryExecutionRequest, consumer execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error) {
+					if err := consumer.Begin(ctx, header); err != nil {
+						return execution.QueryExecutionCompletion{}, err
+					}
+					// The prepared index owns the validated frozen facts after Begin.
+					// Poisoning the shallow header copy makes any later full-header
+					// rescan lose the historical named point.
+					for index := range header.Requirements {
+						if header.Requirements[index].Role != execution.InputRolePrimary {
+							header.Requirements[index] = execution.DataRequirement{}
+						}
+					}
+					for _, batch := range batches {
+						if err := consumer.ConsumeSeries(ctx, batch); err != nil {
+							return execution.QueryExecutionCompletion{}, err
+						}
+					}
+					return completion, nil
+				}
+			}
 
 			result, err := coordinator.Execute(context.Background(), workerSlotRequest(header.Contract))
 			if err != nil || !result.Completed {

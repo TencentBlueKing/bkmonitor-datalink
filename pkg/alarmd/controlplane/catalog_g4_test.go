@@ -139,6 +139,46 @@ func TestG4CatalogFreezesFourAlgorithmQueryAndRequirementContracts(t *testing.T)
 	}
 }
 
+func TestG4CatalogCanonicalizesLegacyAggregateDimensionsForQueryIdentity(t *testing.T) {
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := func(dimensions []string) controlplane.QueryGroup {
+		t.Helper()
+		document := g4LegacyStrategyDocument(t, 105, strategy.DetectorKindThreshold, "usage", "system.cpu", dimensions,
+			[]any{map[string]any{"method": "gte", "threshold": 90}})
+		catalog, buildErr := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
+			Strategies: []controlplane.SourceStrategy{{
+				SourceID: "105", Document: document,
+				Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
+			}},
+			Planner: planner,
+		})
+		if buildErr != nil {
+			t.Fatal(buildErr)
+		}
+		if len(catalog.QueryGroups) != 1 {
+			t.Fatalf("query groups = %+v", catalog.QueryGroups)
+		}
+		return catalog.QueryGroups[0]
+	}
+
+	first := build([]string{"pod", "", "namespace", "pod"})
+	second := build([]string{"namespace", "pod"})
+	if first.QueryPlan.QueryRevision != second.QueryPlan.QueryRevision {
+		t.Fatalf("query revision changed for equivalent aggregate dimensions: %q != %q",
+			first.QueryPlan.QueryRevision, second.QueryPlan.QueryRevision)
+	}
+	if first.Identity != second.Identity {
+		t.Fatalf("query group identity changed for equivalent aggregate dimensions: %q != %q", first.Identity, second.Identity)
+	}
+	want := []string{"namespace", "pod"}
+	if got := first.QueryPlan.QueryList[0].Dimensions; !reflect.DeepEqual(got, want) {
+		t.Fatalf("query dimensions = %v, want %v", got, want)
+	}
+}
+
 func TestG4CatalogRejectsNonCanonicalFixedAlgorithmQueries(t *testing.T) {
 	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
 	if err != nil {

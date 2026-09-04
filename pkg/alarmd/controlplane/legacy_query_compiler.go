@@ -146,6 +146,7 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 		if config.ResultTableID == "" {
 			return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_CONFIG_INVALID", errors.New("result table is required"))
 		}
+		config.AggDimensions = canonicalDimensionStrings(config.AggDimensions)
 		// Python alarm Access does not pass cached query_config.filter_dict to
 		// TimeSeriesDataSource.init_by_query_config. Only the runtime filters
 		// below participate in the effective UQ request.
@@ -257,7 +258,7 @@ func decodeLegacyQueryConfig(raw json.RawMessage) (legacyQueryConfig, error) {
 }
 
 func (compiler *LegacyPrimaryQueryCompiler) compileLegacyQueryConfig(config legacyQueryConfig) ([]execution.QueryClause, error) {
-	dimensions := nonEmptyStrings(config.AggDimensions)
+	dimensions := append([]string{}, config.AggDimensions...)
 	conditionsSource := append([]legacyCondition(nil), config.AggConditions...)
 	if filter, matched, err := compiler.runtimeFilter(config); err != nil {
 		return nil, err
@@ -785,13 +786,18 @@ func pythonStringValue(value any) (string, error) {
 	}
 }
 
-func nonEmptyStrings(values []string) []string {
-	result := make([]string, 0, len(values))
+func canonicalDimensionStrings(values []string) []string {
+	unique := make(map[string]struct{}, len(values))
 	for _, value := range values {
 		if value != "" {
-			result = append(result, value)
+			unique[value] = struct{}{}
 		}
 	}
+	result := make([]string, 0, len(unique))
+	for value := range unique {
+		result = append(result, value)
+	}
+	sort.Strings(result)
 	return result
 }
 

@@ -1152,6 +1152,66 @@ func TestValidateQueryTsDataSource(t *testing.T) {
 	}
 }
 
+func TestValidateQueryTsRawPagination(t *testing.T) {
+	from := 3
+	zeroFrom := 0
+	testCases := map[string]struct {
+		queryTs   *structured.QueryTs
+		expectErr string
+	}{
+		"search after without offset": {
+			queryTs:   &structured.QueryTs{IsSearchAfter: true},
+			expectErr: "",
+		},
+		"search after with top-level from": {
+			queryTs:   &structured.QueryTs{IsSearchAfter: true, From: 3},
+			expectErr: "from cannot be combined with is_search_after",
+		},
+		"search after with query from": {
+			queryTs: &structured.QueryTs{
+				IsSearchAfter: true,
+				QueryList:     []*structured.Query{{ReferenceName: "logs", From: 1}},
+			},
+			expectErr: "query from cannot be combined with is_search_after",
+		},
+		"search after with non-zero result table from": {
+			queryTs: &structured.QueryTs{
+				IsSearchAfter: true,
+				ResultTableOptions: metadata.ResultTableOptions{
+					"logs|1": {From: &from},
+				},
+			},
+			expectErr: "result table option from cannot be combined with is_search_after",
+		},
+		"search after with zero result table from": {
+			queryTs: &structured.QueryTs{
+				IsSearchAfter: true,
+				ResultTableOptions: metadata.ResultTableOptions{
+					"logs|1": {From: &zeroFrom},
+				},
+			},
+			expectErr: "",
+		},
+		"search after with scroll": {
+			queryTs:   &structured.QueryTs{IsSearchAfter: true, Scroll: "1m"},
+			expectErr: "is_search_after cannot be combined with scroll",
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			err := validateQueryTsRawPagination(tc.queryTs)
+			if tc.expectErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			if assert.Error(t, err) {
+				assert.Contains(t, err.Error(), tc.expectErr)
+			}
+		})
+	}
+}
+
 func TestPromQLQueryHandler(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())

@@ -61,6 +61,19 @@ func TestQueryFactory_SearchAfterValues(t *testing.T) {
 	assert.EqualError(t, err, "search_after order field _value is missing from query result")
 }
 
+func TestQueryFactory_SearchAfterRejectsFrom(t *testing.T) {
+	query := &metadata.Query{
+		From:          1,
+		IsSearchAfter: true,
+		Orders: metadata.Orders{
+			{Name: "dtEventTimeStamp", Ast: false},
+		},
+	}
+
+	_, err := bksql.NewQueryFactory(metadata.InitHashID(context.Background()), query).SQL()
+	assert.EqualError(t, err, "from cannot be combined with is_search_after")
+}
+
 func TestNewSqlFactory(t *testing.T) {
 	start := time.Unix(1741795260, 0)
 	end := time.Unix(1741796260, 0)

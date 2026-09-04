@@ -1355,6 +1355,9 @@ func isUnionQualifiedWildcardToken(s string, idx int) bool {
 
 func (f *QueryFactory) SQL() (sql string, err error) {
 	if f.query.IsSearchAfter {
+		if f.query.From != 0 {
+			return "", fmt.Errorf("from cannot be combined with is_search_after")
+		}
 		if err := f.prepareSearchAfter(); err != nil {
 			return "", err
 		}

@@ -204,6 +204,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
 
+	if err = validateQueryTsRawPagination(queryTs); err != nil {
+		return total, list, resultTableOptions, routeInfo, err
+	}
+
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
@@ -224,6 +228,14 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		return total, list, resultTableOptions, routeInfo, err
 	}
 	queryRef = excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRaw, nil)
+	// IsSearchAfter is deliberately scoped to the raw execution path. QueryTs is
+	// also used by time-series/reference endpoints, where Doris must keep its
+	// normal aggregate/series query behavior.
+	if queryTs.IsSearchAfter {
+		queryRef.Range("", func(qry *metadata.Query) {
+			qry.IsSearchAfter = true
+		})
+	}
 	// routeInfo 只描述本次解析出的路由范围，不能从返回行或分页状态反推。
 	routeInfo = queryRef.CollectRouteInfo()
 

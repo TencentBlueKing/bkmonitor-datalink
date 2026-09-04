@@ -896,9 +896,7 @@ func (stream *streamedExecution) evaluateCompletedSeries(
 			stream.request.Operation, started, "", "", err)
 		return fmt.Errorf("alarmd worker: invalid series evaluation: %w", err)
 	}
-	stream.coordinator.observeWithCounts(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
-		stream.request.Operation, started, evaluated.Result, evaluated.ReasonCode,
-		observability.Counts{Records: evaluationRecordCount(inputs)}, nil)
+	stream.observeEvaluationCompleted(ctx, started, due, inputs, evaluated)
 	retained, err := evaluationRetainedSize(loaded, evaluated)
 	if err != nil {
 		return fmt.Errorf("alarmd worker: measure evaluated retention: %w", err)
@@ -917,6 +915,248 @@ func (stream *streamedExecution) evaluateCompletedSeries(
 	stream.state.Items = append(stream.state.Items, loaded.Items...)
 	stream.stateItems = append(stream.stateItems, stateItems...)
 	return nil
+}
+
+func (stream *streamedExecution) observeEvaluationCompleted(
+	ctx context.Context,
+	started time.Time,
+	due execution.DuePlan,
+	inputs []execution.SeriesEvaluationInputRequest,
+	evaluated execution.EvaluationResult,
+) {
+	defer func() { _ = recover() }()
+	evaluations, namedInputs := stream.algorithmObservationFacts(due, inputs, evaluated)
+	observation := observability.Observation{
+		Component: observability.ComponentEvaluation, Stage: observability.StageEvaluationCompleted,
+		Result: evaluated.Result, Operation: observability.Operation(stream.request.Operation),
+		Direction: observability.DirectionInternal, ReasonCode: evaluated.ReasonCode,
+		Duration: time.Since(started), Counts: observability.Counts{Records: evaluationRecordCount(inputs)},
+		AlgorithmEvaluations: evaluations, AlgorithmInputs: namedInputs,
+	}
+	stream.coordinator.ports.Observer.Observe(ctx, observation)
+}
+
+type observedAlgorithm struct {
+	family       observability.AlgorithmFamily
+	detector     observability.AlgorithmDetectorKind
+	requirements map[execution.RequirementID]struct{}
+}
+
+func (stream *streamedExecution) algorithmObservationFacts(
+	due execution.DuePlan,
+	inputs []execution.SeriesEvaluationInputRequest,
+	evaluated execution.EvaluationResult,
+) ([]observability.AlgorithmEvaluationFact, []observability.AlgorithmInputFact) {
+	if due.CompiledPlan == nil || len(evaluated.Plans) != 1 || evaluated.Plans[0].Plan != due.Identity {
+		return nil, nil
+	}
+	levels := make(map[uint32][]observedAlgorithm, len(due.CompiledPlan.Levels()))
+	for _, level := range due.CompiledPlan.Levels() {
+		for _, algorithm := range level.Algorithms() {
+			observed, ok := observeAlgorithm(algorithm)
+			if ok {
+				levels[level.Definition().LevelID] = append(levels[level.Definition().LevelID], observed)
+			}
+		}
+	}
+	evaluations := make([]observability.AlgorithmEvaluationFact, 0)
+	inputsByLevel := make(map[uint32]execution.SeriesEvaluationInputRequest, len(inputs))
+	for _, input := range inputs {
+		inputsByLevel[input.Consumer.LevelID] = input
+	}
+	inputFacts := make([]observability.AlgorithmInputFact, 0)
+	for _, outcome := range evaluated.Plans[0].LevelOutcomes {
+		algorithms := levels[outcome.LevelID]
+		for _, algorithm := range algorithms {
+			evaluations = append(evaluations, observability.AlgorithmEvaluationFact{
+				SourceAlgorithmFamily: algorithm.family, DetectorKind: algorithm.detector,
+				Result: algorithmEvaluationResult(outcome.Outcome), ReasonCode: outcome.ReasonCode,
+				Provenance: observability.AlgorithmProvenance{LevelID: outcome.LevelID, SourceTime: outcome.Record.SourceTime},
+			})
+			input, found := inputsByLevel[outcome.LevelID]
+			if !found {
+				continue
+			}
+			for _, binding := range input.Inputs {
+				if !algorithmObservesBinding(algorithm, binding) {
+					continue
+				}
+				inputFacts = append(inputFacts, stream.algorithmInputFacts(algorithm, outcome, binding)...)
+			}
+		}
+	}
+	return evaluations, inputFacts
+}
+
+func observeAlgorithm(algorithm strategy.CompiledAlgorithmPlan) (observedAlgorithm, bool) {
+	observed := observedAlgorithm{requirements: make(map[execution.RequirementID]struct{})}
+	switch algorithm.Kind() {
+	case strategy.DetectorKindThreshold:
+		observed.family = observability.AlgorithmFamilyThreshold
+		observed.detector = observability.AlgorithmDetectorKindThreshold
+	case strategy.DetectorKindSimpleRingRatio:
+		observed.family = observability.AlgorithmFamilySimpleRingRatio
+		observed.detector = observability.AlgorithmDetectorKindSimpleRingRatio
+	case strategy.DetectorKindOsRestart:
+		observed.family = observability.AlgorithmFamilyOsRestart
+		observed.detector = observability.AlgorithmDetectorKindOsRestart
+	case strategy.DetectorKindProcPort:
+		observed.family = observability.AlgorithmFamilyProcPort
+		observed.detector = observability.AlgorithmDetectorKindProcPort
+	default:
+		return observedAlgorithm{}, false
+	}
+	if provenance, ok := algorithm.SourceProvenance(); ok &&
+		provenance.SourceAlgorithmFamily == strategy.SourceAlgorithmFamilyPingUnreachable &&
+		algorithm.Kind() == strategy.DetectorKindThreshold {
+		observed.family = observability.AlgorithmFamilyPingUnreachable
+	}
+	for _, requirement := range algorithm.InputRequirements() {
+		observed.requirements[execution.RequirementID(requirement.RequirementID)] = struct{}{}
+	}
+	return observed, true
+}
+
+func algorithmObservesBinding(algorithm observedAlgorithm, binding execution.NamedInputBinding) bool {
+	if len(algorithm.requirements) == 0 {
+		return binding.Role == execution.InputRolePrimary
+	}
+	_, found := algorithm.requirements[binding.RequirementID]
+	return found
+}
+
+func algorithmEvaluationResult(outcome execution.LevelOutcomeKind) observability.AlgorithmEvaluationResult {
+	switch outcome {
+	case execution.LevelOutcomeNormal:
+		return observability.AlgorithmEvaluationResultNormal
+	case execution.LevelOutcomeAbnormal:
+		return observability.AlgorithmEvaluationResultAbnormal
+	case execution.LevelOutcomeRecovery:
+		return observability.AlgorithmEvaluationResultRecovery
+	case execution.LevelOutcomeTerminal:
+		return observability.AlgorithmEvaluationResultTerminal
+	default:
+		return observability.AlgorithmEvaluationResultUnavailable
+	}
+}
+
+func (stream *streamedExecution) algorithmInputFacts(
+	algorithm observedAlgorithm,
+	outcome execution.LevelOutcome,
+	binding execution.NamedInputBinding,
+) []observability.AlgorithmInputFact {
+	points := []struct {
+		name       observability.AlgorithmInputName
+		dependency observability.AlgorithmDependencyPoint
+		sourceTime int64
+	}{}
+	if binding.Role == execution.InputRolePrimary {
+		points = append(points, struct {
+			name       observability.AlgorithmInputName
+			dependency observability.AlgorithmDependencyPoint
+			sourceTime int64
+		}{observability.AlgorithmInputNamePrimary, observability.AlgorithmDependencyPointCurrent, outcome.Record.SourceTime})
+	} else {
+		for _, requirement := range stream.header.Requirements {
+			if requirement.RequirementID != binding.RequirementID {
+				continue
+			}
+			for _, point := range requirement.NamedPoints {
+				dependency, ok := observedDependencyPoint(point.Name)
+				if ok {
+					points = append(points, struct {
+						name       observability.AlgorithmInputName
+						dependency observability.AlgorithmDependencyPoint
+						sourceTime int64
+					}{observability.AlgorithmInputNameHistory, dependency, outcome.Record.SourceTime - point.OffsetSeconds})
+				}
+			}
+			break
+		}
+	}
+	facts := make([]observability.AlgorithmInputFact, 0, len(points))
+	queryRevision := ""
+	for _, query := range stream.header.RequiredPhysicalQueries {
+		if query.Digest == binding.Provenance.PhysicalQuery {
+			queryRevision = string(query.QueryRevision)
+			break
+		}
+	}
+	for _, point := range points {
+		result, reason := algorithmInputResult(binding, outcome.SeriesIdentityDigest, point.sourceTime)
+		facts = append(facts, observability.AlgorithmInputFact{
+			SourceAlgorithmFamily: algorithm.family, DetectorKind: algorithm.detector,
+			InputName: point.name, DependencyPoint: point.dependency, Result: result, ReasonCode: reason,
+			Provenance: observability.AlgorithmProvenance{
+				LevelID: outcome.LevelID, RequirementID: string(binding.RequirementID),
+				QueryRef: string(binding.Provenance.PhysicalQuery), QueryRevision: queryRevision,
+				SourceTime: point.sourceTime, QueryStart: binding.QueryWindow.Start, QueryEnd: binding.QueryWindow.End,
+			},
+		})
+	}
+	return facts
+}
+
+func observedDependencyPoint(name string) (observability.AlgorithmDependencyPoint, bool) {
+	switch name {
+	case "previous":
+		return observability.AlgorithmDependencyPointPrevious, true
+	case "previous_10m":
+		return observability.AlgorithmDependencyPointTenMinute, true
+	case "previous_25m":
+		return observability.AlgorithmDependencyPointTwentyFiveMinute, true
+	default:
+		return "", false
+	}
+}
+
+func algorithmInputResult(
+	binding execution.NamedInputBinding,
+	series execution.SeriesIdentityDigest,
+	sourceTime int64,
+) (observability.AlgorithmInputResult, observability.ReasonCode) {
+	switch binding.Completeness {
+	case execution.CompletenessPartial:
+		return observability.AlgorithmInputResultPartial, binding.ReasonCode
+	case execution.CompletenessUnavailable:
+		return observability.AlgorithmInputResultUnavailable, binding.ReasonCode
+	case execution.CompletenessFull:
+	default:
+		return observability.AlgorithmInputResultUnavailable, binding.ReasonCode
+	}
+	if binding.Disposition != execution.AccessAvailable || binding.Dataset == nil || binding.View == nil {
+		return observability.AlgorithmInputResultUnavailable, binding.ReasonCode
+	}
+	for _, fact := range binding.QualityFacts {
+		if inputFactApplies(fact.ImpactScope, fact.SeriesIdentity, fact.SourceTime, series, sourceTime) {
+			return observability.AlgorithmInputResultUnavailable, fact.ReasonCode
+		}
+	}
+	for _, terminal := range binding.Terminals {
+		if inputFactApplies(terminal.ImpactScope, terminal.SeriesIdentity, terminal.SourceTime, series, sourceTime) {
+			return observability.AlgorithmInputResultUnavailable, terminal.ReasonCode
+		}
+	}
+	for index := 0; index < binding.View.Len(); index++ {
+		record, ok := binding.View.Record(index)
+		if ok && execution.SeriesIdentityDigest(record.DimensionIdentity().Digest) == series && record.SourceTime() == sourceTime {
+			return observability.AlgorithmInputResultAvailable, observability.ReasonNone
+		}
+	}
+	return observability.AlgorithmInputResultMissing, observability.ReasonCode(contract.ReasonHistoryGapped)
+}
+
+func inputFactApplies(
+	scope execution.ImpactScope,
+	factSeries execution.SeriesIdentityDigest,
+	factSourceTime int64,
+	series execution.SeriesIdentityDigest,
+	sourceTime int64,
+) bool {
+	if scope == execution.ImpactPlan || scope == execution.ImpactLevel {
+		return true
+	}
+	return scope == execution.ImpactSeries && factSeries == series && factSourceTime == sourceTime
 }
 
 func evaluationRecordCount(inputs []execution.SeriesEvaluationInputRequest) int64 {

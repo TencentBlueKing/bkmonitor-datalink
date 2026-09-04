@@ -26,6 +26,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
+const (
+	controlledG4SyntheticBusinessID = 900001
+	controlledG4SyntheticSpaceUID   = "bkcc__900001"
+)
+
 // These fixtures are controlled production-path Golden evidence. They prove
 // the Go path itself; they are deliberately not classified as a natural Python
 // comparison cohort.
@@ -382,7 +387,8 @@ func controlledG4StrategyDocument(
 		item["functions"] = []any{map[string]any{"id": "abs", "params": []any{}}}
 	}
 	document, err := json.Marshal(map[string]any{
-		"id": id, "bk_biz_id": 2, "bk_tenant_id": "tenant-a", "space_uid": "bkcc__2", "update_time": 1,
+		"id": id, "bk_biz_id": controlledG4SyntheticBusinessID, "bk_tenant_id": "tenant-a",
+		"space_uid": controlledG4SyntheticSpaceUID, "update_time": 1,
 		"items": []any{item},
 		"detects": []any{map[string]any{
 			"level": 1, "priority": 1, "connector": "and",

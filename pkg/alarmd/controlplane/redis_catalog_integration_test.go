@@ -2323,6 +2323,13 @@ func TestScheduleActivationReconcilerCutsBackToHistoricalSnapshotOnNewOccurrence
 	if err != nil || fact.Contract.SnapshotRevision != first.Publication.SnapshotRevision {
 		t.Fatalf("historical occurrence replay=(%#v, %v)", fact, err)
 	}
+	activations, err := repository.LoadActivations(ctx, execution.PlanActivationRequest{
+		Contract: fact.Contract,
+		Plans:    []execution.PlanIdentity{fact.DuePlans[0].Identity},
+	})
+	if err != nil || len(activations.Facts) != 1 || activations.Facts[0].Selection != execution.ActivationNone {
+		t.Fatalf("A@e1 historical activation=(%#v, %v), want NONE while A@e3 is current", activations, err)
+	}
 }
 
 func TestScheduleActivationReconcilerForcesWarmingWhenPlanReturnsToActiveQueryGroup(t *testing.T) {

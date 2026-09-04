@@ -72,14 +72,14 @@ func TestSurrealDBRouteResolvesStorageAndExecutesDirectQuery(t *testing.T) {
 	assert.Empty(t, graphs)
 }
 
-func TestSurrealDBDirectQueryNormalizesObjectGraphResult(t *testing.T) {
+func TestSurrealDBDirectQuerySkipsSessionAndEmptyStatements(t *testing.T) {
 	const storageID = "700008"
 
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		assert.Equal(t, http.MethodPost, request.Method)
 		assert.Equal(t, "/sql", request.URL.Path)
 		response.Header().Set("Content-Type", "application/json")
-		_, err := response.Write([]byte(`[{"result":{"namespace":"mapleleaf_2","database":"2_graph_rt"}},{"result":{"root":{"entity_type":"node","entity_id":"node:node-1","entity_data":{"node":"node-1"}}}}]`))
+		_, err := response.Write([]byte(`[{"result":{"namespace":"mapleleaf_2","database":"2_graph_rt"}},{"result":null},{"result":{"root":{"entity_type":"node","entity_id":"node:node-1","entity_data":{"node":"node-1"}}}}]`))
 		require.NoError(t, err)
 	}))
 	defer server.Close()

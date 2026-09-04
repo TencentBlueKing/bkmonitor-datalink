@@ -396,6 +396,10 @@ func normalizeDirectSurrealDBResponse(payload []map[string]any) ([]any, error) {
 		if !exists {
 			return nil, fmt.Errorf("parse surrealdb response: response[%d].%s: missing field", statementIndex, ResponseFieldResult)
 		}
+		// LET and other control statements can return null without producing graph rows.
+		if result == nil {
+			continue
+		}
 
 		if resultObject, ok := result.(map[string]any); ok {
 			if _, hasRoot := resultObject[ResponseFieldRoot]; !hasRoot {

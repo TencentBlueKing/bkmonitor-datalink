@@ -557,37 +557,63 @@ func (source *ProductionSlotSource) nextSlotAfterProgress(
 	ctx context.Context,
 	progress execution.ScheduleProgress,
 ) (execution.FrozenQueryGroupSchedule, execution.EvaluationTime, error) {
+	schedule, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, progress.NextSlot)
+	if err == nil {
+		if validationErr := source.validateSchedule(schedule, progress.NextSlot); validationErr != nil {
+			return execution.FrozenQueryGroupSchedule{}, 0, failClosedScheduleNavigation(validationErr)
+		}
+		if len(schedule.DuePlanRefs(progress.NextSlot)) > 0 {
+			return schedule, progress.NextSlot, nil
+		}
+	} else if !errors.Is(err, controlplane.ErrScheduleUnavailable) && !errors.Is(err, ErrProgressOffSchedule) {
+		return execution.FrozenQueryGroupSchedule{}, 0, failClosedScheduleNavigation(err)
+	}
+
 	completed := progress.LastFullSlot
 	if progress.CurrentOrRecentGap != nil && progress.CurrentOrRecentGap.LastSlot > completed {
 		completed = progress.CurrentOrRecentGap.LastSlot
 	}
 	if completed <= 0 {
-		schedule, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, progress.NextSlot)
-		if err == nil {
-			return schedule, progress.NextSlot, nil
-		}
 		schedule, err = source.catalog.ReadSuccessorFrozenSchedule(ctx, source.queryGroup, progress.NextSlot)
 		if err != nil {
-			return execution.FrozenQueryGroupSchedule{}, 0, err
+			return execution.FrozenQueryGroupSchedule{}, 0, failClosedScheduleNavigation(err)
 		}
 		schedule, next, retired, err := source.firstAvailableSchedule(ctx, schedule)
 		if retired && err == nil {
-			return execution.FrozenQueryGroupSchedule{}, 0, ErrScheduleFactsInvalid
+			return execution.FrozenQueryGroupSchedule{}, 0, &SourceBlockedError{Err: ErrScheduleFactsInvalid}
 		}
-		return schedule, next, err
+		if err != nil {
+			return execution.FrozenQueryGroupSchedule{}, 0, failClosedScheduleNavigation(err)
+		}
+		return schedule, next, nil
 	}
 	next, err := source.catalog.NextSlotAfter(ctx, source.queryGroup, completed)
 	if err != nil {
-		return execution.FrozenQueryGroupSchedule{}, 0, err
+		return execution.FrozenQueryGroupSchedule{}, 0, failClosedScheduleNavigation(err)
 	}
 	if next <= completed {
-		return execution.FrozenQueryGroupSchedule{}, 0, ErrScheduleFactsInvalid
+		return execution.FrozenQueryGroupSchedule{}, 0, &SourceBlockedError{Err: ErrScheduleFactsInvalid}
 	}
-	schedule, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, next)
+	schedule, err = source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, next)
 	if err != nil {
-		return execution.FrozenQueryGroupSchedule{}, 0, err
+		return execution.FrozenQueryGroupSchedule{}, 0, failClosedScheduleNavigation(err)
+	}
+	if err := source.validateSchedule(schedule, next); err != nil {
+		return execution.FrozenQueryGroupSchedule{}, 0, failClosedScheduleNavigation(err)
+	}
+	if len(schedule.DuePlanRefs(next)) == 0 {
+		return execution.FrozenQueryGroupSchedule{}, 0, &SourceBlockedError{Err: ErrProgressOffSchedule}
 	}
 	return schedule, next, nil
+}
+
+func failClosedScheduleNavigation(err error) error {
+	var deterministic *controlplane.DeterministicScheduleError
+	if errors.Is(err, controlplane.ErrScheduleUnavailable) || errors.Is(err, ErrScheduleFactsInvalid) ||
+		errors.Is(err, ErrProgressOffSchedule) || errors.As(err, &deterministic) {
+		return &SourceBlockedError{Err: err}
+	}
+	return err
 }
 
 func (source *ProductionSlotSource) validateSchedule(

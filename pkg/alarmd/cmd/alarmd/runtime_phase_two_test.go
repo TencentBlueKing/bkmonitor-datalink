@@ -491,7 +491,7 @@ func TestPhaseTwoWorkerBundleBoundsPrePermitRunnerFanoutByProcessQueryPermits(t 
 	}
 }
 
-func TestPhaseTwoWorkerBundleRunsNextQueuedQueryGroupWhenCapacityIsReleased(t *testing.T) {
+func TestPhaseTwoWorkerBundleRunsRetiredBacklogWhenCapacityIsReleased(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
 
@@ -507,6 +507,9 @@ func TestPhaseTwoWorkerBundleRunsNextQueuedQueryGroupWhenCapacityIsReleased(t *t
 	runners := make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle, 4)
 	for index := 1; index <= 4; index++ {
 		queryGroup := execution.QueryGroupIdentity(fmt.Sprintf("query-group-%d", index))
+		if index == 3 {
+			queryGroup = "query-group-3-retired-backlog"
+		}
 		runner := newFakePhaseTwoQueryGroup()
 		runner.onRun = func() { started <- queryGroup }
 		switch index {
@@ -543,11 +546,11 @@ func TestPhaseTwoWorkerBundleRunsNextQueuedQueryGroupWhenCapacityIsReleased(t *t
 	releaseSecond()
 	select {
 	case queryGroup := <-started:
-		if queryGroup != "query-group-3" {
-			t.Fatalf("runner after query-group-2 released = %s, want query-group-3", queryGroup)
+		if queryGroup != "query-group-3-retired-backlog" {
+			t.Fatalf("runner after query-group-2 released = %s, want retired backlog", queryGroup)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for the next queued Query Group")
+		t.Fatal("timed out waiting for the retired backlog Query Group")
 	}
 	releaseFirst()
 	if err := <-done; err != nil {

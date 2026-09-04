@@ -1140,6 +1140,142 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingInitialFreezeL
 	}
 }
 
+func TestProductionPhaseTwoBundleDrainsExpiredRetiredBacklogWithoutProjection(t *testing.T) {
+	address, redisClient := startPhaseTwoRedis(t)
+	ctx := context.Background()
+	installTwoPhaseTwoStrategies(t, ctx, redisClient)
+
+	base := time.Now().Unix()
+	base -= base % 60
+	var clock atomic.Int64
+	clock.Store(base * 1000)
+	now := func() time.Time { return time.UnixMilli(clock.Load()) }
+	var uqCalls atomic.Int64
+	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		uqCalls.Add(1)
+		_, _ = writer.Write([]byte(`{"series":[],"status":null,"trace_id":"unexpected-retired-query","is_partial":false,"result_table_id":[]}`))
+	}))
+	defer uqServer.Close()
+
+	cfg := validGoAccessRuntimeConfig()
+	cfg.Redis.Address = address
+	cfg.Redis.StatePrefix = "alarmd-g4-retired-backlog-projection"
+	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
+	cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.DownstreamExecutionReserve = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Worker.RegistrationRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.LeaseTTL = config.Duration(time.Hour)
+	cfg.PhaseTwo.Ownership.LeaseRenewInterval = config.Duration(time.Minute)
+
+	bundle, err := openProductionPhaseTwoBundleWithDependencies(
+		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime),
+		newPhaseTwoApplicationHealth(),
+		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
+			return controlplane.NewLegacyRedisStrategySource(client, prefix)
+		},
+		phaseTwoProductionExternalDependencies{
+			Now: now, HTTPClient: uqServer.Client(),
+			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
+				return &recordingPhaseTwoEventSink{}, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("openProductionPhaseTwoBundleWithDependencies() error = %v", err)
+	}
+	if err := bundle.Start(ctx); err != nil {
+		t.Fatalf("phase-two production Start() error = %v", err)
+	}
+	defer func() {
+		if shutdownErr := bundle.Shutdown(ctx); shutdownErr != nil {
+			t.Errorf("phase-two production Shutdown() error = %v", shutdownErr)
+		}
+	}()
+
+	production := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
+	queryGroupsByStrategy := make(map[string]execution.QueryGroupIdentity, 2)
+	for _, queryGroup := range bundle.queryGroups {
+		schedule, scheduleErr := production.dependencies.Catalog.ReadInitialFrozenSchedule(ctx, queryGroup)
+		if scheduleErr != nil || len(schedule.Plans) != 1 {
+			t.Fatalf("Query Group %s schedule=%+v error=%v", queryGroup, schedule, scheduleErr)
+		}
+		queryGroupsByStrategy[schedule.Plans[0].Identity.StrategyID] = queryGroup
+	}
+	retired := queryGroupsByStrategy["1001"]
+	if retired == "" {
+		t.Fatalf("strategy Query Groups = %v, want strategy 1001", queryGroupsByStrategy)
+	}
+	initialProgress, err := production.dependencies.Progress.LoadProgress(ctx, execution.ProgressIdentity{QueryGroup: retired})
+	if err != nil || initialProgress.Status != execution.ProgressMissing {
+		t.Fatalf("retired candidate Progress=%+v error=%v, want missing projection", initialProgress, err)
+	}
+
+	strategyPayload, err := redisClient.Get(ctx, "alarm-config.strategy_1001").Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changedStrategy map[string]any
+	if err := json.Unmarshal(strategyPayload, &changedStrategy); err != nil {
+		t.Fatal(err)
+	}
+	changedItem := changedStrategy["items"].([]any)[0].(map[string]any)
+	changedItem["query_md5"] = "g4-retired-backlog-query-md5"
+	changedItem["query_configs"].([]any)[0].(map[string]any)["result_table_id"] = "system.disk"
+	strategyPayload, err = json.Marshal(changedStrategy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.Set(ctx, "alarm-config.strategy_1001", strategyPayload, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	clock.Store((base + 1) * 1000)
+	if err := bundle.refreshAndReconcile(ctx, true); err != nil {
+		t.Fatalf("refreshAndReconcile(observe strategy 1001 retirement) error = %v", err)
+	}
+	if err := bundle.refreshAndReconcile(ctx, true); err != nil {
+		t.Fatalf("refreshAndReconcile(confirm strategy 1001 retirement) error = %v", err)
+	}
+	productionControl := bundle.dependencies.Control.(*productionPhaseTwoControl)
+	activation, err := productionControl.dependencies.Repository.LoadActivation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retiredBoundary execution.EvaluationTime
+	for _, draining := range activation.Draining {
+		if draining.QueryGroup == retired {
+			retiredBoundary = draining.RetiredBoundary
+			break
+		}
+	}
+	if retiredBoundary == 0 {
+		t.Fatalf("activation Draining=%+v, want retired Query Group %s", activation.Draining, retired)
+	}
+	if _, stillOwned := bundle.runners[retired]; !stillOwned {
+		t.Fatalf("retired Query Group %s was removed before Progress reached %d", retired, retiredBoundary)
+	}
+
+	clock.Store((int64(retiredBoundary) + int64((30*time.Minute)/time.Second)) * 1000)
+	result, attempted, err := bundle.runners[retired].runner.RunOne(ctx)
+	if err != nil || !attempted || !result.Completed ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) {
+		t.Fatalf("RunOne(expired retired backlog) = (%+v, %t, %v)", result, attempted, err)
+	}
+	if uqCalls.Load() != 0 {
+		t.Fatalf("expired retired backlog issued %d UQ calls, want query-free finalization", uqCalls.Load())
+	}
+	completed, err := production.dependencies.Progress.LoadProgress(ctx, execution.ProgressIdentity{QueryGroup: retired})
+	if err != nil || completed.Status != execution.ProgressFound || completed.Progress == nil ||
+		completed.Progress.NextSlot != retiredBoundary || completed.Progress.UnfinishedSlot != nil ||
+		completed.Progress.CurrentOrRecentGap == nil ||
+		completed.Progress.CurrentOrRecentGap.Kind != execution.CompletionSnapshotUnavailable {
+		t.Fatalf("retired Progress=%+v error=%v, want query-free completion at boundary %d", completed, err, retiredBoundary)
+	}
+}
+
 func TestProductionPhaseTwoBundleSharesOneProcessRecoveryPermitBudgetAcrossOwnedQueryGroups(t *testing.T) {
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()

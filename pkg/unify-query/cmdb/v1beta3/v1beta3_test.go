@@ -2917,6 +2917,44 @@ func TestQueryLivenessGraphRejectsExplicitSameTypeWithoutSelfRelation(t *testing
 	assert.ErrorContains(t, err, "empty paths")
 }
 
+func TestQueryLivenessGraphLegacyCompatibilityReturnsEmptyForMissingExplicitSelfRelation(t *testing.T) {
+	ctx := context.Background()
+	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{
+		ResourcePrimaryKeys: map[string][]string{
+			"system": {"bk_target_ip"},
+			"pod":    {"pod"},
+		},
+		RelationSchemas: []relation.RelationSchema{
+			{
+				RelationName:  "system_to_pod",
+				Category:      relation.RelationCategoryStatic,
+				FromType:      "system",
+				ToType:        "pod",
+				IsDirectional: true,
+			},
+		},
+	})
+	model, err := NewModel(ctx, &mockGraphQueryExecutor{})
+	require.NoError(t, err)
+	model.SetSchemaProvider(NewSchemaProviderFromRelation(provider))
+
+	graphs, paths, matchers, err := model.QueryLivenessGraph(ctx, &QueryRequest{
+		Timestamp:           300000,
+		SourceType:          ResourceTypeSystem,
+		SourceInfo:          map[string]string{"bk_target_ip": "127.0.0.1"},
+		TargetType:          ResourceTypeSystem,
+		TargetTypeExplicit:  true,
+		LegacyCompatibility: true,
+		LookBackDelta:       600000,
+		LookBackDeltaSet:    true,
+	})
+
+	require.NoError(t, err)
+	assert.Empty(t, graphs)
+	assert.Empty(t, paths)
+	assert.Empty(t, matchers)
+}
+
 func TestQueryLivenessGraphExecutesInstantQueryPathByPath(t *testing.T) {
 	ctx := context.Background()
 	provider := relation.NewStaticSchemaProvider(relation.StaticProviderConfig{

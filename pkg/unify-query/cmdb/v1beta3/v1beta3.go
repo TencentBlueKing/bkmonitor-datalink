@@ -561,9 +561,17 @@ func (m *Model) queryLivenessGraph(
 	} else {
 		paths, err = pf.FindAllPaths(req.SourceType, req.TargetType, req.PathResource)
 		if err != nil {
-			span.Set("path-discovery-duration", time.Since(pathDiscoveryStarted))
-			span.Set("failure-stage", "path-discovery")
-			return nil, nil, nil, err
+			// 旧 Relation API 对显式 source==target 且没有自关联边的请求
+			// 返回空结果成功；仅在兼容模式保留这个行为。原生 v1beta3
+			// 仍然报告无路径，帮助调用方发现错误的自关联请求。
+			if req.LegacyCompatibility && isLegacyExplicitSelfTargetWithoutPath(req) {
+				paths = nil
+				err = nil
+			} else {
+				span.Set("path-discovery-duration", time.Since(pathDiscoveryStarted))
+				span.Set("failure-stage", "path-discovery")
+				return nil, nil, nil, err
+			}
 		}
 	}
 	span.Set("path-discovery-duration", time.Since(pathDiscoveryStarted))
@@ -1527,6 +1535,14 @@ func shouldIncludeRootTarget(req *QueryRequest) bool {
 
 func isExplicitDirectSelfTarget(req *QueryRequest) bool {
 	return req != nil && req.TargetTypeExplicit && req.SourceType == req.TargetType && len(req.PathResource) == 0
+}
+
+func isLegacyExplicitSelfTargetWithoutPath(req *QueryRequest) bool {
+	return req != nil &&
+		req.TargetTypeExplicit &&
+		req.SourceType == req.TargetType &&
+		len(req.PathResource) == 1 &&
+		req.PathResource[0] == ""
 }
 
 func targetExtractionPathResource(req *QueryRequest) []ResourceType {

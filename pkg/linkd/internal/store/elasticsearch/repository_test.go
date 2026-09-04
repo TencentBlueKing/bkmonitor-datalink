@@ -426,7 +426,7 @@ func TestCreateEventsUsesNDJSONBulkAndKeepsTemporaryItemFailure(t *testing.T) {
 	event1 := storetest.Event("tenant-1", "event-1", "fp-1", "warning")
 	event2 := storetest.Event("tenant-1", "event-2", "fp-2", "warning")
 	transport := transportFunc(func(request *http.Request) (*http.Response, error) {
-		if request.Method != http.MethodPost || request.URL.Path != "/_bulk" || request.URL.Query().Get("refresh") != "wait_for" {
+		if request.Method != http.MethodPost || request.URL.Path != "/_bulk" || request.URL.Query().Get("refresh") != "false" {
 			t.Fatalf("request=%s %s", request.Method, request.URL.String())
 		}
 		if request.Header.Get("Content-Type") != "application/x-ndjson" {
@@ -458,6 +458,69 @@ func TestCreateEventsUsesNDJSONBulkAndKeepsTemporaryItemFailure(t *testing.T) {
 	}
 	if errors.Is(results[1].Err, store.ErrInvalidArgument) {
 		t.Fatalf("429 must remain retryable: %v", results[1].Err)
+	}
+}
+
+func TestCreateEventsConflictUsesRealtimeGetWithoutRefreshWait(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		mutate       func(*domain.Event)
+		wantConflict bool
+	}{
+		{name: "same content is idempotent"},
+		{name: "different content conflicts", mutate: func(event *domain.Event) { event.Title = "different" }, wantConflict: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			router, err := NewStaticRouter("linkd-test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			requested := storetest.Event("tenant-1", "event-conflict", "fp", "warning")
+			existing := requested.Clone()
+			if test.mutate != nil {
+				test.mutate(&existing)
+			}
+			document, err := encodeEventDocument(existing, store.NewUnprocessedEventProcessing())
+			if err != nil {
+				t.Fatal(err)
+			}
+			documentID := documentID(requested.BKTenantID, requested.EventID)
+			calls := 0
+			transport := transportFunc(func(request *http.Request) (*http.Response, error) {
+				calls++
+				switch request.URL.Path {
+				case "/_bulk":
+					if request.URL.Query().Get("refresh") != "false" {
+						t.Fatalf("bulk query=%s", request.URL.RawQuery)
+					}
+					response := `{"items":[{"create":{"_index":"linkd-test-events","_id":"` + documentID + `","status":409,"error":{"type":"version_conflict_engine_exception","reason":"exists"}}}]}`
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
+				case "/linkd-test-events/_doc/" + documentID:
+					if request.Method != http.MethodGet || request.URL.Query().Get("realtime") != "true" {
+						t.Fatalf("GET request=%s %s", request.Method, request.URL.String())
+					}
+					response := `{"_index":"linkd-test-events","_id":"` + documentID + `","_seq_no":1,"_primary_term":1,"found":true,"_source":` + string(document) + `}`
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
+				default:
+					t.Fatalf("unexpected request=%s %s", request.Method, request.URL.String())
+					return nil, nil
+				}
+			})
+			repository, err := New(transport, router, DefaultConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			items, err := repository.CreateEvents(context.Background(), []domain.Event{requested})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(items) != 1 || calls != 2 || errors.Is(items[0].Err, store.ErrIdentityConflict) != test.wantConflict {
+				t.Fatalf("items=%+v calls=%d", items, calls)
+			}
+			if !test.wantConflict && (items[0].Err != nil || items[0].Result.Created) {
+				t.Fatalf("idempotent item=%+v", items[0])
+			}
+		})
 	}
 }
 

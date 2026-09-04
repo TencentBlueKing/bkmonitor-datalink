@@ -134,7 +134,7 @@ func RunRepositoryContract(t *testing.T, factory Factory) {
 		if err != nil || result.Alert == nil || result.Alert.Alert.AlertID != alert.AlertID {
 			t.Fatalf("query=%#v,%v", result, err)
 		}
-		events, err := repo.ListEventsByAlert(ctx, event.BKTenantID, alert.AlertID, store.EventByAlertRequest{})
+		events, err := waitForEventsByAlert(ctx, repo, event.BKTenantID, alert.AlertID, 1)
 		if err != nil || len(events.Events) != 1 || events.Events[0].Event.EventID != event.EventID {
 			t.Fatalf("events by alert=%#v,%v", events, err)
 		}
@@ -181,6 +181,27 @@ func RunRepositoryContract(t *testing.T, factory Factory) {
 			t.Fatalf("empty AppendAlertLogs() error=%v", err)
 		}
 	})
+}
+
+func waitForEventsByAlert(
+	ctx context.Context,
+	repo store.Repository,
+	tenantID, alertID string,
+	want int,
+) (store.EventPage, error) {
+	deadline := time.Now().Add(3 * time.Second)
+	var last store.EventPage
+	var lastErr error
+	for {
+		last, lastErr = repo.ListEventsByAlert(ctx, tenantID, alertID, store.EventByAlertRequest{})
+		if lastErr == nil && len(last.Events) >= want {
+			return last, nil
+		}
+		if time.Now().After(deadline) {
+			return last, lastErr
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func waitForAlertByEvent(

@@ -28,15 +28,17 @@
   `ErrIdentityConflict`。
 - `CreateEvents` 按输入顺序返回逐项创建、幂等、冲突或暂时失败结果；请求级错误表示无法可靠解释
   整批响应。`CreateEvent` 委托 batch-of-one，避免维护两套语义。
-- Elasticsearch 使用 `_bulk?refresh=wait_for` 的逐项 `create`；409 回读并校验内容，429/5xx 保持
-  可重试。MySQL 首版通过统一批量接口逐项写入，不宣称多行 SQL 性能。
+- Elasticsearch 使用 `_bulk?refresh=false` 的逐项 `create`；成功表示主分片已确认写入，不保证搜索立即
+  可见。409 使用 realtime GET 回读并校验内容，429/5xx 保持可重试。MySQL 首版通过统一批量接口逐项
+  写入，不宣称多行 SQL 性能。
 - `CompareAndSetEventResult` 在一次 CAS 中同时写 processing 和 `related_alert_id`。accepted 与 suppressed
   必须关联 Alert；orphaned 与 rejected 必须保持为空。
 - `ListEventsByAlert` 按 `related_alert_id + received_at + event_id` 稳定分页；ES 使用 Alert 生命周期边界
   缩小 Event 桶范围，跨度过大时回退到 read alias。
-- Elasticsearch 的 Event 结果 CAS 使用 `refresh=false`：成功只表示写请求已经完成，不保证新的
-  processing 状态已经能被 `_search` 查询到。单 Event `GetEvent` 根据稳定 EventID 路由到写 alias 并使用
-  realtime GET，使 Lifecycle 能立即识别重复 Mailbox 引用对应的终态；列表和统计查询仍接受 refresh 延迟。
+- Elasticsearch 的 Event 创建和结果 CAS 均使用 `refresh=false`：成功只表示主分片已经确认写请求，不
+  保证 Event 或新的 processing 状态已经能被 `_search` 查询到。单 Event `GetEvent` 根据稳定 EventID
+  路由到写 alias 并使用 realtime GET，使 Cleaner 幂等核对和 Lifecycle 处理不依赖 refresh；列表和统计
+  查询仍接受 refresh 延迟。
 
 ## Alert
 

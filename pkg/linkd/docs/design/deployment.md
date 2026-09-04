@@ -117,6 +117,8 @@ Leader Election 完成前，`linkd run control-plane` 只能部署单副本，�
 - 三种进程使用相同的租户作用域、稳定身份和版本化外部协议，拆分部署不得改变业务结果；
 - 每个进程只校验并使用自身职责所需的配置和凭据，部署时按最小权限分别授权；
 - 进程的并发、批次、重试、队列和关闭等待均有硬上限，并传播 `context.Context` 取消；
+- Elasticsearch Repository runtime 使用独立 HTTP 连接池，按 Cleaner、Lifecycle 或 Control Plane 的
+  并发预算派生每节点硬上限；达到上限的请求等待连接并服从自身 Context，不由 Transport 自动重试写入；
 - 日志和指标必须带进程角色与实例标识；控制面额外暴露 Leader 状态和各任务最近一次执行结果；
 - 滚动升级期间，消息和存储契约必须保持兼容。需要破坏性变更时先停止相关角色并按明确步骤升级，
   不依赖不同模式之间的双写兜底。
@@ -124,6 +126,8 @@ Leader Election 完成前，`linkd run control-plane` 只能部署单副本，�
 启用 Elasticsearch Recent Alert 缓存和取消 Lifecycle Alert refresh 等待时，新旧 Lifecycle 不能混合
 消费同一 Mailbox。升级或回滚前应暂停 Cleaner、排空 Signal lag/PEL 和 Mailbox，再同时替换 Lifecycle；
 控制面须先把 Active 索引的 `refresh_interval` 对账为 YAML 中的配置值（默认 `5s`）。
+Event create 改用 `refresh=false` 不改变 Redis 或存储 schema；新旧 Cleaner 可以滚动替换，差异只在
+Event 搜索可见等待，Lifecycle 和幂等冲突核对均使用 realtime GET。
 
 ## 故障与扩缩容边界
 

@@ -70,7 +70,7 @@ type Mailbox interface {
 }
 
 type EventProcessor interface {
-    ProcessEvent(ctx context.Context, tenantID, eventID string) (ProcessResult, error)
+    ProcessEvent(ctx context.Context, stored store.StoredEvent) (ProcessResult, error)
 }
 
 type Locker interface {
@@ -80,7 +80,9 @@ type Locker interface {
 }
 ```
 
-Handler 只负责编排 Mailbox、lease 和 Processor，不包含 Alert 状态机。
+Handler 只负责编排 Mailbox、lease 和 Processor，不包含 Alert 状态机。Handler 从 Repository 读取并校验
+Mailbox 队首 Event 后把同一 `StoredEvent` 快照交给 Processor；Processor 仅在并发冲突重裁决时重新读取，
+避免正常路径重复 realtime GET。
 
 ### 2.2 Processor
 

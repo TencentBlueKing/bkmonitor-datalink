@@ -33,6 +33,8 @@ MQ delivery
 - Enricher 在 Alert 创建前同步执行一次；未配置规则视为 succeeded 空结果，错误降级为 failed。
 - MySQL 和 Elasticsearch 都只承诺单对象 CAS；跨对象步骤依赖稳定身份和幂等流水恢复。Cleaner 确认
   原消息后不再扫描 Event 补发 Signal，因此 Redis Mailbox 必须依靠自身持久化和复制保证已确认数据。
+- Elasticsearch Event create 使用 `refresh=false`；Cleaner 在主分片确认后入 Mailbox，Lifecycle 和重复
+  Event 核对通过 realtime GET 读取，不依赖 `_search` 可见性。
 - Elasticsearch Lifecycle 使用共享 Redis Recent Alert 缓存跨越可配置的 search refresh 窗口；Alert create/CAS
   使用 `refresh=false`，缓存写入失败时 Event 保留在 Mailbox 重试。MySQL 不启用该缓存。
 - Elasticsearch 使用控制面进程内三个独立任务分别执行 Schema 与 Active 资源对账、时间桶维护和 Alert 归档：

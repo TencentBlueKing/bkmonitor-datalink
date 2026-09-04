@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
@@ -90,6 +91,93 @@ func TestElasticsearchRepositoryContract(t *testing.T) {
 		})
 		return repository
 	})
+}
+
+func TestElasticsearchEventCreateDoesNotDependOnRefresh(t *testing.T) {
+	endpoint := os.Getenv(elasticsearchIntegrationURLEnv)
+	if endpoint == "" {
+		t.Skipf("set %s to run Elasticsearch event refresh integration", elasticsearchIntegrationURLEnv)
+	}
+	baseURL, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := endpointTransport{
+		baseURL: baseURL,
+		client:  &http.Client{Timeout: 15 * time.Second},
+		apiKey:  os.Getenv("LINKD_TEST_ELASTICSEARCH_API_KEY"),
+	}
+	prefix := "linkd-event-refresh-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	router, err := NewStaticRouter(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := New(transport, router, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	schema := router.SchemaConfig()
+	if err := repository.EnsureSchema(ctx, schema); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.EnsureIndex(ctx, router.eventIndex, entityEvent); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cleanupCancel()
+		_ = repository.performJSON(cleanup, http.MethodDelete, "/"+router.eventIndex, nil, nil, nil)
+		for _, spec := range schema.Templates() {
+			_ = repository.performJSON(cleanup, http.MethodDelete, "/_index_template/"+spec.Name, nil, nil, nil)
+		}
+	})
+	settings, err := marshalRequest(map[string]any{"index": map[string]any{"refresh_interval": "-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.performJSON(ctx, http.MethodPut, "/"+router.eventIndex+"/_settings", nil, settings, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	event := storetest.Event("tenant-1", "event-no-refresh", "fingerprint-1", "warning")
+	created, err := repository.CreateEvent(ctx, event)
+	if err != nil || !created.Created {
+		t.Fatalf("CreateEvent()=%#v,%v", created, err)
+	}
+	stored, err := repository.GetEvent(ctx, event.BKTenantID, event.EventID)
+	if err != nil || stored.Event.EventID != event.EventID {
+		t.Fatalf("GetEvent()=%#v,%v", stored, err)
+	}
+	duplicate, err := repository.CreateEvent(ctx, event)
+	if err != nil || duplicate.Created {
+		t.Fatalf("duplicate CreateEvent()=%#v,%v", duplicate, err)
+	}
+	conflict := event.Clone()
+	conflict.Title = "different"
+	if _, err := repository.CreateEvent(ctx, conflict); !errors.Is(err, store.ErrIdentityConflict) {
+		t.Fatalf("conflicting CreateEvent() error=%v", err)
+	}
+
+	var count struct {
+		Count int `json:"count"`
+	}
+	if err := repository.performJSON(ctx, http.MethodGet, "/"+router.eventIndex+"/_count", nil, nil, &count); err != nil {
+		t.Fatal(err)
+	}
+	if count.Count != 0 {
+		t.Fatalf("event became searchable without refresh: count=%d", count.Count)
+	}
+	if err := repository.performJSON(ctx, http.MethodPost, "/"+router.eventIndex+"/_refresh", nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.performJSON(ctx, http.MethodGet, "/"+router.eventIndex+"/_count", nil, nil, &count); err != nil {
+		t.Fatal(err)
+	}
+	if count.Count != 1 {
+		t.Fatalf("event count after refresh=%d", count.Count)
+	}
 }
 
 func TestElasticsearchArchiveDrainsMoreThanOneDefaultBatch(t *testing.T) {

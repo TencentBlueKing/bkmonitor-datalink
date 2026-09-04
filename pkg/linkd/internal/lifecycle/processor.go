@@ -21,19 +21,25 @@ import (
 
 var errRetryDecision = errors.New("lifecycle decision changed concurrently")
 
-// ProcessEvent 按唯一 fingerprint 关联通道处理一个未完成 Event。
-func (p *Processor) ProcessEvent(ctx context.Context, bkTenantID, eventID string) (ProcessResult, error) {
+// ProcessEvent 按唯一 fingerprint 关联通道处理调用方已读取的 Event 快照。
+// 第一次裁决直接使用传入版本；只有并发冲突需要重新裁决时才 realtime GET 最新 Event。
+func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent) (ProcessResult, error) {
 	if ctx == nil {
 		return ProcessResult{}, fmt.Errorf("process lifecycle event: context must not be nil")
 	}
-	if bkTenantID == "" || eventID == "" {
-		return ProcessResult{}, fmt.Errorf("process lifecycle event: tenant and event id are required")
+	bkTenantID, eventID := initial.Event.BKTenantID, initial.Event.EventID
+	if bkTenantID == "" || eventID == "" || initial.Version.IsZero() {
+		return ProcessResult{}, fmt.Errorf("process lifecycle event: stored event identity and version are required")
 	}
 	var lastConflict error
+	stored := initial
 	for attempt := 0; attempt < maxCASAttempts; attempt++ {
-		stored, err := p.repository.GetEvent(ctx, bkTenantID, eventID)
-		if err != nil {
-			return ProcessResult{}, fmt.Errorf("read lifecycle event %q: %w", eventID, err)
+		if attempt > 0 {
+			var err error
+			stored, err = p.repository.GetEvent(ctx, bkTenantID, eventID)
+			if err != nil {
+				return ProcessResult{}, fmt.Errorf("read lifecycle event %q: %w", eventID, err)
+			}
 		}
 		if stored.Processing.State != domain.EventProcessStateUnprocessed {
 			return ProcessResult{EventID: stored.Event.EventID, AlertID: stored.Event.RelatedAlertID,

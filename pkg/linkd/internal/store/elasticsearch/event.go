@@ -65,6 +65,7 @@ func (r *Repository) CreateEvent(
 }
 
 // CreateEvents 使用 Elasticsearch Bulk create API 按输入顺序返回逐项结果。
+// refresh=false 只取消搜索可见性等待；成功返回前主分片仍已确认创建，后续 GetEvent 使用 realtime GET。
 func (r *Repository) CreateEvents(
 	ctx context.Context,
 	events []domain.Event,
@@ -161,7 +162,7 @@ func (r *Repository) createEventBulkGroup(
 		body.Write(item.body)
 		body.WriteByte('\n')
 	}
-	query := url.Values{"refresh": []string{"wait_for"}}
+	query := url.Values{"refresh": []string{"false"}}
 	if requireAlias {
 		query.Set("require_alias", "true")
 	}

@@ -21,7 +21,7 @@ import (
 )
 
 type EventProcessor interface {
-	ProcessEvent(ctx context.Context, bkTenantID, eventID string) (lifecycle.ProcessResult, error)
+	ProcessEvent(ctx context.Context, stored store.StoredEvent) (lifecycle.ProcessResult, error)
 }
 
 type EventReader interface {
@@ -164,7 +164,7 @@ func (h *Handler) drain(
 		if stored.Event.EventSourceID != signal.EventSourceID || stored.Event.Fingerprint != signal.Fingerprint {
 			return processed, last, false, fmt.Errorf("mailbox %q contains event %q with mismatched identity", signal.MailboxID, eventID), nil
 		}
-		result, processErr := h.processor.ProcessEvent(ctx, signal.BKTenantID, eventID)
+		result, processErr := h.processor.ProcessEvent(ctx, stored)
 		h.observer.EventProcessed(ctx, stored.Event.EventSourceID, stored.Event.Action, result, processErr)
 		if processErr != nil {
 			h.observer.MailboxOperation(ctx, stored.Event.EventSourceID, "process", "failed")

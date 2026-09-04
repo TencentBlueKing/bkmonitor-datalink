@@ -55,7 +55,7 @@ func Run(
 
 	startupCtx, cancelStartup := context.WithTimeout(ctx, startupTimeout)
 	defer cancelStartup()
-	repositoryRuntime, err := repositoryassembly.Open(startupCtx, *cfg.Storage, enabled*4)
+	repositoryRuntime, err := repositoryassembly.Open(startupCtx, *cfg.Storage, repositoryConnectionBudget(cfg))
 	if err != nil {
 		return fmt.Errorf("initialize cleaner repository: %w", err)
 	}
@@ -120,6 +120,18 @@ func Run(
 		return fmt.Errorf("run default cleaner scheduler: %w", err)
 	}
 	return nil
+}
+
+func repositoryConnectionBudget(cfg config.Config) int {
+	// Event 持久化并发由每个 Flow 的 batch slot 限制；额外两个连接留给启动校验和失败核对。
+	budget := 2
+	for _, source := range cfg.EventSources {
+		if !source.Enabled {
+			continue
+		}
+		budget += source.Cleaner.RuntimeConfig(cfg.Cleaner).MaxConcurrentBatches
+	}
+	return budget
 }
 
 // ValidateConfig 校验默认 cleaner 运行所需的共享存储和 lifecycle signal 配置。

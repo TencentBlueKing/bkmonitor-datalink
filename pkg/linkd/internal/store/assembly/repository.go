@@ -24,7 +24,11 @@ import (
 	mysqlstore "linkd/internal/store/mysql"
 )
 
-const databaseMaxLifetime = 30 * time.Minute
+const (
+	databaseMaxLifetime                = 30 * time.Minute
+	minElasticsearchConnectionsPerHost = 4
+	maxElasticsearchConnectionsPerHost = 1024
+)
 
 // Runtime 持有一个已经完成连接检查和 schema 初始化的 Repository 及其资源。
 type Runtime struct {
@@ -84,7 +88,7 @@ func Open(
 	case config.RepositoryTypeMySQL:
 		return openMySQL(ctx, *cfg.MySQL, maxConnections)
 	case config.RepositoryTypeElasticsearch:
-		return openElasticsearch(ctx, *cfg.Elasticsearch)
+		return openElasticsearch(ctx, *cfg.Elasticsearch, maxConnections)
 	default:
 		return nil, fmt.Errorf("open repository: storage.repository is required")
 	}
@@ -144,8 +148,8 @@ func openMySQL(ctx context.Context, cfg config.MySQLConfig, maxConnections int) 
 	}, nil
 }
 
-func openElasticsearch(ctx context.Context, cfg config.ElasticsearchConfig) (*Runtime, error) {
-	repository, router, transport, err := newElasticsearchComponents(cfg)
+func openElasticsearch(ctx context.Context, cfg config.ElasticsearchConfig, maxConnections int) (*Runtime, error) {
+	repository, router, transport, err := newElasticsearchComponents(cfg, maxConnections)
 	if err != nil {
 		return nil, err
 	}
@@ -172,11 +176,15 @@ func openElasticsearch(ctx context.Context, cfg config.ElasticsearchConfig) (*Ru
 func OpenElasticsearchManager(
 	ctx context.Context,
 	cfg config.ElasticsearchConfig,
+	maxConnections int,
 ) (*ElasticsearchManagerRuntime, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("open elasticsearch manager: context must not be nil")
 	}
-	repository, router, transport, err := newElasticsearchComponents(cfg)
+	if maxConnections < 1 {
+		return nil, fmt.Errorf("open elasticsearch manager: max connections must be positive")
+	}
+	repository, router, transport, err := newElasticsearchComponents(cfg, maxConnections)
 	if err != nil {
 		return nil, err
 	}
@@ -190,11 +198,13 @@ func OpenElasticsearchManager(
 
 func newElasticsearchComponents(
 	cfg config.ElasticsearchConfig,
+	maxConnections int,
 ) (*elasticsearchstore.Repository, *elasticsearchstore.BucketRouter, *elasticsearchstore.HTTPTransport, error) {
 	cfg.TimePartition = cfg.TimePartition.WithDefaults()
 	transportConfig := elasticsearchstore.HTTPTransportConfig{
-		Addresses: append([]string(nil), cfg.Addresses...),
-		APIKey:    cfg.APIKey,
+		Addresses:             append([]string(nil), cfg.Addresses...),
+		APIKey:                cfg.APIKey,
+		MaxConnectionsPerHost: elasticsearchConnectionBudget(maxConnections),
 	}
 	if cfg.BasicAuth != nil {
 		transportConfig.BasicUsername = cfg.BasicAuth.Username
@@ -222,6 +232,10 @@ func newElasticsearchComponents(
 		return nil, nil, nil, fmt.Errorf("initialize elasticsearch repository: %w", err)
 	}
 	return repository, router, transport, nil
+}
+
+func elasticsearchConnectionBudget(requested int) int {
+	return min(max(requested, minElasticsearchConnectionsPerHost), maxElasticsearchConnectionsPerHost)
 }
 
 func newElasticsearchManager(

@@ -60,7 +60,7 @@ Go/process 指标，以及三个 Elasticsearch 管理任务和 Redis Stream 管�
 fingerprint、Mailbox ID、topic、group、错误全文和 payload 禁止进入指标属性。
 
 `linkd.pipeline.attempt.duration` 和 `linkd.store.operation.duration` 保留 0.75～2.5 秒区间的加密固定
-分桶，用于对比移除 Lifecycle Alert `refresh=wait_for` 前后的尾延迟。DevTools 同时展示由 `_sum / _count`
+分桶，用于对比移除 Elasticsearch Event/Alert 数据路径 `refresh=wait_for` 前后的尾延迟。DevTools 同时展示由 `_sum / _count`
 计算的平均耗时和 P95/P99；平均值不受 histogram 桶内插值影响，分位数仍是所选时间窗内的近似值。
 Cleaner 页面使用 `linkd.pipeline.attempt.duration` 展示整体平均耗时、P95 和 P99，并使用
 `linkd.cleaner.step.duration` 展示已埋点步骤的平均耗时、P95 和 P99。`receive` 当前没有独立步骤耗时，

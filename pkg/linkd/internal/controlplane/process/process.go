@@ -25,7 +25,11 @@ import (
 	"linkd/internal/telemetry"
 )
 
-const startupTimeout = 10 * time.Second
+const (
+	startupTimeout                         = 10 * time.Second
+	elasticsearchPrepareConnections        = 4
+	elasticsearchManagementConnectionSpare = 4
+)
 
 type runtime struct {
 	tasks    []taskgroup.Task
@@ -133,7 +137,11 @@ func PrepareDataPlane(ctx context.Context, cfg config.Config) error {
 	}
 	startupCtx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
-	runtime, err := repositoryassembly.OpenElasticsearchManager(startupCtx, *cfg.Storage.Elasticsearch)
+	runtime, err := repositoryassembly.OpenElasticsearchManager(
+		startupCtx,
+		*cfg.Storage.Elasticsearch,
+		elasticsearchPrepareConnections,
+	)
 	if err != nil {
 		return fmt.Errorf("initialize elasticsearch storage management task: %w", err)
 	}
@@ -181,7 +189,12 @@ func openRuntime(
 	}
 
 	if hasElasticsearchTask(cfg) {
-		elasticsearchRuntime, err := repositoryassembly.OpenElasticsearchManager(ctx, *cfg.Storage.Elasticsearch)
+		settings := elasticsearchTaskSettings(cfg)
+		elasticsearchRuntime, err := repositoryassembly.OpenElasticsearchManager(
+			ctx,
+			*cfg.Storage.Elasticsearch,
+			settings.ArchiveWorkerCount+elasticsearchManagementConnectionSpare,
+		)
 		if err != nil {
 			return fail(fmt.Errorf("initialize elasticsearch storage management task: %w", err))
 		}
@@ -192,7 +205,6 @@ func openRuntime(
 		if err := prepareElasticsearchDataPlane(ctx, elasticsearchRuntime.Manager); err != nil {
 			return fail(err)
 		}
-		settings := elasticsearchTaskSettings(cfg)
 		tasks = append(tasks,
 			newPeriodicTask(
 				logger,

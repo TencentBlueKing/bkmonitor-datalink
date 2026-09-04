@@ -23,9 +23,13 @@ import (
 	"linkd/internal/store"
 )
 
-type fakeEventReader struct{ events map[string]store.StoredEvent }
+type fakeEventReader struct {
+	events map[string]store.StoredEvent
+	reads  int
+}
 
 func (r *fakeEventReader) GetEvent(_ context.Context, _, eventID string) (store.StoredEvent, error) {
+	r.reads++
 	event, ok := r.events[eventID]
 	if !ok {
 		return store.StoredEvent{}, store.ErrNotFound
@@ -38,7 +42,8 @@ type fakeProcessor struct {
 	err error
 }
 
-func (p *fakeProcessor) ProcessEvent(_ context.Context, _, eventID string) (lifecycle.ProcessResult, error) {
+func (p *fakeProcessor) ProcessEvent(_ context.Context, stored store.StoredEvent) (lifecycle.ProcessResult, error) {
+	eventID := stored.Event.EventID
 	p.ids = append(p.ids, eventID)
 	if p.err != nil {
 		return lifecycle.ProcessResult{}, p.err
@@ -47,7 +52,8 @@ func (p *fakeProcessor) ProcessEvent(_ context.Context, _, eventID string) (life
 }
 
 type fakeMailbox struct {
-	ids []string
+	ids    []string
+	ackErr error
 }
 
 func (m *fakeMailbox) Peek(context.Context, string) (string, error) {
@@ -58,6 +64,9 @@ func (m *fakeMailbox) Peek(context.Context, string) (string, error) {
 }
 
 func (m *fakeMailbox) AckHead(_ context.Context, _, eventID string) error {
+	if m.ackErr != nil {
+		return m.ackErr
+	}
 	if len(m.ids) == 0 || m.ids[0] != eventID {
 		return errors.New("head mismatch")
 	}
@@ -82,9 +91,10 @@ func TestHandlerDrainsMailboxBeforeComplete(t *testing.T) {
 	mailbox := &fakeMailbox{ids: []string{"event-1", "event-2"}}
 	processor := &fakeProcessor{}
 	handler := newMailboxHandler(t, mailbox, processor, &fakeLocker{}, 512)
+	reader := handler.eventReader.(*fakeEventReader)
 	outcome := handler.Handle(context.Background(), signalMessage(t, testEvent("event-1")))
-	if outcome.Kind != consume.OutcomeComplete || len(mailbox.ids) != 0 || len(processor.ids) != 2 {
-		t.Fatalf("outcome=%#v mailbox=%v processed=%v", outcome, mailbox.ids, processor.ids)
+	if outcome.Kind != consume.OutcomeComplete || len(mailbox.ids) != 0 || len(processor.ids) != 2 || reader.reads != 2 {
+		t.Fatalf("outcome=%#v mailbox=%v processed=%v reads=%d", outcome, mailbox.ids, processor.ids, reader.reads)
 	}
 }
 
@@ -125,6 +135,41 @@ func TestHandlerKeepsHeadUntilEventProcessingSucceeds(t *testing.T) {
 	}
 	if len(mailbox.ids) != 1 || mailbox.ids[0] != "event-1" {
 		t.Fatalf("mailbox head was removed before success: %v", mailbox.ids)
+	}
+}
+
+func TestHandlerKeepsHeadUntilAckSucceeds(t *testing.T) {
+	ackErr := errors.New("temporary ack failure")
+	mailbox := &fakeMailbox{ids: []string{"event-1"}, ackErr: ackErr}
+	processor := &fakeProcessor{}
+	handler := newMailboxHandler(t, mailbox, processor, &fakeLocker{}, 512)
+	outcome := handler.Handle(context.Background(), signalMessage(t, testEvent("event-1")))
+	if outcome.Kind != consume.OutcomeRetry || !errors.Is(outcome.Err, ackErr) {
+		t.Fatalf("outcome=%#v", outcome)
+	}
+	if len(mailbox.ids) != 1 || len(processor.ids) != 1 {
+		t.Fatalf("mailbox=%v processed=%v", mailbox.ids, processor.ids)
+	}
+}
+
+func TestHandlerBlocksMismatchedMailboxIdentityBeforeProcessing(t *testing.T) {
+	mailbox := &fakeMailbox{ids: []string{"event-1"}}
+	processor := &fakeProcessor{}
+	handler := newMailboxHandler(t, mailbox, processor, &fakeLocker{}, 512)
+	reader := handler.eventReader.(*fakeEventReader)
+	stored := reader.events["event-1"]
+	stored.Event.Fingerprint = "other"
+	reader.events["event-1"] = stored
+
+	outcome := handler.Handle(context.Background(), signalMessage(t, testEvent("event-1")))
+	if outcome.Kind != consume.OutcomeBlock || len(processor.ids) != 0 || len(mailbox.ids) != 1 || reader.reads != 1 {
+		t.Fatalf(
+			"outcome=%#v processed=%v mailbox=%v reads=%d",
+			outcome,
+			processor.ids,
+			mailbox.ids,
+			reader.reads,
+		)
 	}
 }
 

@@ -16,10 +16,11 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"linkd/internal/lifecycle"
+	"linkd/internal/store"
 )
 
 type lifecycleProcessor interface {
-	ProcessEvent(ctx context.Context, bkTenantID, eventID string) (lifecycle.ProcessResult, error)
+	ProcessEvent(ctx context.Context, stored store.StoredEvent) (lifecycle.ProcessResult, error)
 }
 
 type observedLifecycleProcessor struct {
@@ -37,10 +38,10 @@ func (r *Runtime) ObserveLifecycleProcessor(next lifecycleProcessor) lifecyclePr
 
 func (p *observedLifecycleProcessor) ProcessEvent(
 	ctx context.Context,
-	bkTenantID, eventID string,
+	stored store.StoredEvent,
 ) (lifecycle.ProcessResult, error) {
 	startedAt := time.Now()
-	result, err := p.next.ProcessEvent(ctx, bkTenantID, eventID)
+	result, err := p.next.ProcessEvent(ctx, stored)
 	outcome := lifecycleMetricOutcome(result, err)
 	attributes := []attribute.KeyValue{
 		attribute.String("linkd.stage", "lifecycle"),

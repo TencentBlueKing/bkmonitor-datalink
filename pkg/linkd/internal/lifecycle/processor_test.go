@@ -52,12 +52,13 @@ func TestProcessEventCreateAndRepeatedTrigger(t *testing.T) {
 }
 
 func TestProcessEventTerminalReplayDoesNotRepeatSideEffects(t *testing.T) {
-	repo := memory.New()
+	base := memory.New()
+	repo := &eventReadTrackingRepository{Repository: base}
 	hook := &recordingHook{}
 	processor := newTestProcessor(t, repo, hook)
 	event := testEvent("event-replayed", "warning")
 	first := persistAndProcess(t, repo, processor, event)
-	second, err := processor.ProcessEvent(context.Background(), event.BKTenantID, event.EventID)
+	second, err := processor.ProcessEvent(context.Background(), mustGetStoredEvent(t, base, event))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,6 +67,27 @@ func TestProcessEventTerminalReplayDoesNotRepeatSideEffects(t *testing.T) {
 	}
 	if len(hook.inputs) != 1 {
 		t.Fatalf("hook calls=%d, want 1", len(hook.inputs))
+	}
+	if repo.eventReads != 0 {
+		t.Fatalf("terminal replay event reads=%d, want 0", repo.eventReads)
+	}
+}
+
+func TestProcessEventUsesInitialStoredEventUntilConflict(t *testing.T) {
+	base := memory.New()
+	repository := &eventReadTrackingRepository{Repository: base}
+	processor := newTestProcessor(t, repository, NoopFinalHook{})
+	event := testEvent("event-initial-snapshot", "warning")
+	created, err := repository.CreateEvent(context.Background(), event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := processor.ProcessEvent(context.Background(), created.StoredEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != OutcomeAlertCreated || repository.eventReads != 0 {
+		t.Fatalf("result=%#v event_reads=%d", result, repository.eventReads)
 	}
 }
 
@@ -200,7 +222,7 @@ func TestResumePartiallyCreatedAlert(t *testing.T) {
 	if _, err := repo.CreateAlert(context.Background(), alert); err != nil {
 		t.Fatal(err)
 	}
-	result, err := processor.ProcessEvent(context.Background(), event.BKTenantID, event.EventID)
+	result, err := processor.ProcessEvent(context.Background(), stored.StoredEvent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,10 +360,11 @@ func TestProcessEventDoesNotFinishEventWhenLogBatchHasItemFailure(t *testing.T) 
 	repository := &trackingRepository{Repository: base, failBatchIndex: 1}
 	processor := newTestProcessor(t, repository, trackingHook{repository: repository})
 	event := testEvent("event-batch-partial", "warning")
-	if _, err := repository.CreateEvent(context.Background(), event); err != nil {
+	created, err := repository.CreateEvent(context.Background(), event)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := processor.ProcessEvent(context.Background(), event.BKTenantID, event.EventID); err == nil {
+	if _, err := processor.ProcessEvent(context.Background(), created.StoredEvent); err == nil {
 		t.Fatal("ProcessEvent() error = nil, want alert log item failure")
 	}
 	stored, err := base.GetEvent(context.Background(), event.BKTenantID, event.EventID)
@@ -357,7 +380,7 @@ func TestProcessEventDoesNotFinishEventWhenLogBatchHasItemFailure(t *testing.T) 
 	}
 
 	repository.reset(-1)
-	result, err := processor.ProcessEvent(context.Background(), event.BKTenantID, event.EventID)
+	result, err := processor.ProcessEvent(context.Background(), mustGetStoredEvent(t, repository, event))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +422,8 @@ func TestProcessEventUsesRecentActiveAlertBeforeRepositorySearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	incoming := testEvent("event-cache-update", "warning")
-	if _, err := base.CreateEvent(context.Background(), incoming); err != nil {
+	storedIncoming, err := base.CreateEvent(context.Background(), incoming)
+	if err != nil {
 		t.Fatal(err)
 	}
 	repository := &lookupTrackingRepository{Repository: base}
@@ -408,7 +432,7 @@ func TestProcessEventUsesRecentActiveAlertBeforeRepositorySearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	processor := newTestProcessorWithCache(t, repository, cache, NoopFinalHook{})
-	result, err := processor.ProcessEvent(context.Background(), incoming.BKTenantID, incoming.EventID)
+	result, err := processor.ProcessEvent(context.Background(), storedIncoming.StoredEvent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +469,8 @@ func TestProcessEventUsesRecentTerminalAlertForRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := base.CreateEvent(context.Background(), endedEvent); err != nil {
+	storedEndedEvent, err := base.CreateEvent(context.Background(), endedEvent)
+	if err != nil {
 		t.Fatal(err)
 	}
 	repository := &lookupTrackingRepository{Repository: base}
@@ -454,7 +479,7 @@ func TestProcessEventUsesRecentTerminalAlertForRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	processor := newTestProcessorWithCache(t, repository, cache, NoopFinalHook{})
-	result, err := processor.ProcessEvent(context.Background(), endedEvent.BKTenantID, endedEvent.EventID)
+	result, err := processor.ProcessEvent(context.Background(), storedEndedEvent.StoredEvent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,13 +491,14 @@ func TestProcessEventUsesRecentTerminalAlertForRecovery(t *testing.T) {
 func TestProcessEventKeepsEventUnprocessedWhenRecentCacheWriteFails(t *testing.T) {
 	base := memory.New()
 	event := testEvent("event-cache-failure", "warning")
-	if _, err := base.CreateEvent(context.Background(), event); err != nil {
+	storedEvent, err := base.CreateEvent(context.Background(), event)
+	if err != nil {
 		t.Fatal(err)
 	}
 	cache := newMemoryRecentAlertCache()
 	cache.putErr = errors.New("redis unavailable")
 	processor := newTestProcessorWithCache(t, base, cache, NoopFinalHook{})
-	if _, err := processor.ProcessEvent(context.Background(), event.BKTenantID, event.EventID); err == nil ||
+	if _, err := processor.ProcessEvent(context.Background(), storedEvent.StoredEvent); err == nil ||
 		!errors.Is(err, cache.putErr) {
 		t.Fatalf("ProcessEvent() error=%v", err)
 	}
@@ -488,14 +514,15 @@ func TestProcessEventKeepsEventUnprocessedWhenRecentCacheWriteFails(t *testing.T
 func TestProcessEventDoesNotFallbackWhenRecentCacheReadFails(t *testing.T) {
 	base := memory.New()
 	event := testEvent("event-cache-read-failure", "warning")
-	if _, err := base.CreateEvent(context.Background(), event); err != nil {
+	storedEvent, err := base.CreateEvent(context.Background(), event)
+	if err != nil {
 		t.Fatal(err)
 	}
 	repository := &lookupTrackingRepository{Repository: base}
 	cache := newMemoryRecentAlertCache()
 	cache.getErr = errors.New("redis unavailable")
 	processor := newTestProcessorWithCache(t, repository, cache, NoopFinalHook{})
-	if _, err := processor.ProcessEvent(context.Background(), event.BKTenantID, event.EventID); err == nil ||
+	if _, err := processor.ProcessEvent(context.Background(), storedEvent.StoredEvent); err == nil ||
 		!errors.Is(err, cache.getErr) {
 		t.Fatalf("ProcessEvent() error=%v", err)
 	}
@@ -513,7 +540,8 @@ func TestProcessEventRepairsRecentCacheAfterAlertCASConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	incoming := testEvent("event-conflict-update", "warning")
-	if _, err := base.CreateEvent(context.Background(), incoming); err != nil {
+	storedIncoming, err := base.CreateEvent(context.Background(), incoming)
+	if err != nil {
 		t.Fatal(err)
 	}
 	repository := &conflictingLifecycleRepository{Repository: base}
@@ -522,12 +550,19 @@ func TestProcessEventRepairsRecentCacheAfterAlertCASConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	processor := newTestProcessorWithCache(t, repository, cache, NoopFinalHook{})
-	result, err := processor.ProcessEvent(context.Background(), incoming.BKTenantID, incoming.EventID)
+	result, err := processor.ProcessEvent(context.Background(), storedIncoming.StoredEvent)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Outcome != OutcomeAlertUpdated || repository.conflicts != 1 || repository.currentReads != 1 {
-		t.Fatalf("result=%#v conflicts=%d current_reads=%d", result, repository.conflicts, repository.currentReads)
+	if result.Outcome != OutcomeAlertUpdated || repository.conflicts != 1 || repository.currentReads != 1 ||
+		repository.eventReads != 1 {
+		t.Fatalf(
+			"result=%#v conflicts=%d current_reads=%d event_reads=%d",
+			result,
+			repository.conflicts,
+			repository.currentReads,
+			repository.eventReads,
+		)
 	}
 	cached, found, err := cache.GetCurrent(context.Background(), activeKeyForTest(incoming))
 	if err != nil || !found || cached.Alert.LatestEventID != incoming.EventID {
@@ -542,12 +577,13 @@ func TestProcessEventRecoversRotationFromRecentEndedAlert(t *testing.T) {
 	persistAndProcess(t, base, newTestProcessorWithCache(t, base, cache, NoopFinalHook{}), opening)
 
 	upgrade := testEvent("event-rotation-upgrade", "critical")
-	if _, err := base.CreateEvent(context.Background(), upgrade); err != nil {
+	storedUpgrade, err := base.CreateEvent(context.Background(), upgrade)
+	if err != nil {
 		t.Fatal(err)
 	}
 	failing := &trackingRepository{Repository: base, failBatchIndex: 0}
 	first := newTestProcessorWithCache(t, failing, cache, NoopFinalHook{})
-	if _, err := first.ProcessEvent(context.Background(), upgrade.BKTenantID, upgrade.EventID); err == nil {
+	if _, err := first.ProcessEvent(context.Background(), storedUpgrade.StoredEvent); err == nil {
 		t.Fatal("first rotation unexpectedly completed")
 	}
 	storedEvent, err := base.GetEvent(context.Background(), upgrade.BKTenantID, upgrade.EventID)
@@ -563,7 +599,7 @@ func TestProcessEventRecoversRotationFromRecentEndedAlert(t *testing.T) {
 
 	repository := &lookupTrackingRepository{Repository: base}
 	retry := newTestProcessorWithCache(t, repository, cache, NoopFinalHook{})
-	result, err := retry.ProcessEvent(context.Background(), upgrade.BKTenantID, upgrade.EventID)
+	result, err := retry.ProcessEvent(context.Background(), storedEvent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -614,6 +650,12 @@ type conflictingLifecycleRepository struct {
 	store.Repository
 	conflicts    int
 	currentReads int
+	eventReads   int
+}
+
+type eventReadTrackingRepository struct {
+	store.Repository
+	eventReads int
 }
 
 type fastLifecycleRepository struct {
@@ -676,6 +718,22 @@ func (r *conflictingLifecycleRepository) GetAlertCurrent(
 ) (store.StoredAlert, error) {
 	r.currentReads++
 	return r.GetAlert(ctx, bkTenantID, alertID)
+}
+
+func (r *conflictingLifecycleRepository) GetEvent(
+	ctx context.Context,
+	bkTenantID, eventID string,
+) (store.StoredEvent, error) {
+	r.eventReads++
+	return r.Repository.GetEvent(ctx, bkTenantID, eventID)
+}
+
+func (r *eventReadTrackingRepository) GetEvent(
+	ctx context.Context,
+	bkTenantID, eventID string,
+) (store.StoredEvent, error) {
+	r.eventReads++
+	return r.Repository.GetEvent(ctx, bkTenantID, eventID)
 }
 
 func (r *lookupTrackingRepository) FindActiveAlert(
@@ -791,14 +849,24 @@ func storetestAlert(event domain.Event, alertID string) domain.Alert {
 
 func persistAndProcess(t *testing.T, repo store.Repository, processor *Processor, event domain.Event) ProcessResult {
 	t.Helper()
-	if _, err := repo.CreateEvent(context.Background(), event); err != nil {
+	created, err := repo.CreateEvent(context.Background(), event)
+	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := processor.ProcessEvent(context.Background(), event.BKTenantID, event.EventID)
+	result, err := processor.ProcessEvent(context.Background(), created.StoredEvent)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return result
+}
+
+func mustGetStoredEvent(t *testing.T, repo store.Repository, event domain.Event) store.StoredEvent {
+	t.Helper()
+	stored, err := repo.GetEvent(context.Background(), event.BKTenantID, event.EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return stored
 }
 
 func testEvent(id, severity string) domain.Event {

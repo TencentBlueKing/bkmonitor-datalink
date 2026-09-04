@@ -53,6 +53,11 @@ event_sources:
 字段。每条 Flow 内共享清洗 worker pool，但 Event 持久化、Mailbox 入队和原消息确认始终按 lane 独立推进，
 `max_concurrent_batches` 只限制同时执行副作用的 lane 数量，不启用跨 lane 合批。
 
+Elasticsearch HTTP 连接池不增加独立 YAML。每个进程按职责并发预算派生 4～1024 个每节点连接上限：
+Cleaner 使用各 enabled 来源有效 `max_concurrent_batches` 总和加 2，Lifecycle 使用 `concurrency + 4`，
+Control Plane 使用 `archive_worker_count + 4`。每个 Repository runtime 拥有独立连接池，关闭时不会影响
+同进程其他职责。
+
 未声明 severity 或 levels 为空时整体使用默认表。自定义表整体替换默认表；name 和 priority 必须唯一，
 priority 越小越严重。EventSource mapping/default 的目标必须存在于全局表。来源值先匹配 mapping；未命中
 但已经是全局 name 时直接使用，否则依次使用来源和全局 default_severity。

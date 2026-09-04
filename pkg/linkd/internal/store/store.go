@@ -16,6 +16,7 @@ import (
 )
 
 // EventStore 定义 Event 的创建、读取和处理结果单对象 CAS。
+// 创建成功不承诺列表或搜索立即可见；需要立即读取单个 Event 的调用方必须使用 GetEvent。
 type EventStore interface {
 	CreateEvent(ctx context.Context, event domain.Event) (CreateEventResult, error)
 	CreateEvents(ctx context.Context, events []domain.Event) ([]CreateEventItemResult, error)

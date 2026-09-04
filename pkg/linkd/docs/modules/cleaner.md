@@ -190,6 +190,7 @@ Cleaner 不扫描 unprocessed Event 补发 Mailbox。确认后 Redis 整体丢�
 
 - 已实现 `standard`、Kafka FlowFactory、MySQL/Elasticsearch Event batch、Redis Mailbox 和单元/race 测试；
 - MySQL batch 当前逐项幂等写入，没有多行 SQL 优化；
-- Elasticsearch 使用 `_bulk?refresh=wait_for` 的逐项 create；
+- Elasticsearch 使用 `_bulk?refresh=false` 的逐项 create；成功表示主分片已确认写入，不保证 `_search`
+  立即可见，重复身份通过 realtime GET 核对；
 - RabbitMQ 和 Redis Streams 有通用 Session，但尚未进入 EventSource Cleaner 装配；
 - RocketMQ、声明式 Cleaner 脚本和生产容量压测尚未实现。

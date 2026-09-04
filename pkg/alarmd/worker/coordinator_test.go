@@ -80,7 +80,7 @@ func TestSlotExecutionCoordinatorDiscardsProvisionalResultsWithoutCompletion(t *
 	if err == nil || result.Completed {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
-	assertTrace(t, fixture.trace, []string{"query", "gap_load", "state_load", "evaluate"})
+	assertTrace(t, fixture.trace, []string{"query"})
 	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || !isZeroProgressCommit(fixture.ports.lastProgress) {
 		t.Fatal("provisional result escaped before trustworthy completion")
 	}
@@ -421,13 +421,18 @@ func TestSlotExecutionCoordinatorPersistsDegradedGapBeforeEvents(t *testing.T) {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{
-		"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial", "gap_before",
-		"admission_event", "state_admission", "event_ack", "state_apply", "admission_progress", "progress_commit",
+		"query", "gap_load", "sequence", "admission_initial", "gap_before", "admission_progress", "progress_commit",
 	})
 	if fixture.ports.lastProgress.Completion.Kind != execution.CompletionPartialGap {
 		t.Fatalf("completion=%q, want=%q", fixture.ports.lastProgress.Completion.Kind, execution.CompletionPartialGap)
 	}
-	queryObservation := (*fixture.observations)[3]
+	var queryObservation observability.Observation
+	for _, observation := range *fixture.observations {
+		if observation.Component == observability.ComponentAccess && observation.Stage == observability.StageQueryCompleted {
+			queryObservation = observation
+			break
+		}
+	}
 	if queryObservation.Result != observability.ResultDegraded || queryObservation.ReasonCode != contract.ReasonQueryPartial {
 		t.Fatalf("query observation result=%q reason=%q", queryObservation.Result, queryObservation.ReasonCode)
 	}
@@ -441,8 +446,8 @@ func TestSlotExecutionCoordinatorDiscardsProvisionalEffectsForPartialData(t *tes
 		result.ReasonCode != execution.ReasonCode(contract.ReasonQueryPartial) {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
-	if fixture.ports.stateLoadCalls == 0 {
-		t.Fatal("provisional DATA did not exercise the pure evaluation path")
+	if fixture.ports.stateLoadCalls != 0 {
+		t.Fatal("authoritative PARTIAL PRIMARY loaded State before it could produce a trustworthy detection input")
 	}
 	if fixture.ports.eventCount != 0 || fixture.ports.stateAdmissionCalls != 0 || fixture.ports.stateApplyCalls != 0 {
 		t.Fatalf("PARTIAL DATA leaked provisional effects: events=%d state_admit=%d state_apply=%d",
@@ -728,7 +733,7 @@ func TestSlotExecutionCoordinatorFailsClosedBeforeLaterSideEffects(t *testing.T)
 		stage string
 		want  []string
 	}{
-		{stage: "query", want: []string{"query", "gap_load"}},
+		{stage: "query", want: []string{"query"}},
 		{stage: "sequence", want: fullTrace[:5]},
 		{stage: "state_load", want: fullTrace[:3]},
 		{stage: "gap_load", want: fullTrace[:2]},
@@ -942,6 +947,7 @@ type recordingPorts struct {
 	stateRetryableFirstOnly         bool
 	stateLoadCalls                  int
 	gapLoadStatus                   execution.GapLoadStatus
+	gapMissing                      bool
 	eventSeriesDrift                bool
 	eventTimeDrift                  bool
 	eventRecordDrift                bool
@@ -1010,11 +1016,19 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 			OmissionOnly: true, ReturnedRecordsStable: true,
 		}
 	}
+	degradedEvidence := input.Inputs[0].PartialEvidence
+	if ports.degraded {
+		input.Inputs[0].Completeness = execution.CompletenessFull
+		input.Inputs[0].Disposition = execution.AccessAvailable
+		input.Inputs[0].ReasonCode = ""
+		input.Inputs[0].PartialEvidence = nil
+	}
+	queryRevision := execution.QueryRevision(input.Requirements[0].LogicalQueryRef)
 	header := execution.InternalExecutionHeader{
 		ExecutionID: "execution-1", Contract: input.Contract, DuePlans: input.DuePlans,
 		Requirements: input.Requirements, EffectiveTimeFacts: input.EffectiveTimeFacts,
 		RequiredPhysicalQueries: []execution.PlannedPhysicalQueryRef{{
-			Digest: "physical-query-1", QueryRevision: input.Contract.QueryRevision,
+			Digest: "physical-query-1", QueryRevision: queryRevision,
 		}}, DeadlineUnixMilli: 1_788_000_030_000,
 	}
 	if err := consumer.Begin(ctx, header); err != nil {
@@ -1030,7 +1044,7 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 		binding.Disposition, binding.ReasonCode = execution.AccessUnavailable, execution.ReasonCode(contract.ReasonQueryUnavailable)
 		return execution.QueryExecutionCompletion{AllRequiredCompleted: true, CompletionBindings: []execution.NamedInputBinding{binding},
 			PhysicalQueries: []execution.PhysicalQueryCompletion{{
-				Ref: "provider-result-1", PhysicalQuery: "physical-query-1", QueryRevision: input.Contract.QueryRevision,
+				Ref: "provider-result-1", PhysicalQuery: "physical-query-1", QueryRevision: queryRevision,
 				Completeness: execution.CompletenessUnavailable, DataState: execution.DataStateUnknown,
 			}}}, nil
 	}
@@ -1048,7 +1062,7 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 		binding := input.Inputs[0]
 		binding.Dataset, binding.View = seriesDataset, view
 		batchDelivery := execution.SeriesDelivery{
-			PhysicalQuery: "physical-query-1", QueryRevision: input.Contract.QueryRevision,
+			PhysicalQuery: "physical-query-1", QueryRevision: queryRevision,
 			Series: 1, Records: 1, Digest: fmt.Sprintf("delivery-%d", index+1),
 		}
 		accumulated, accumulateErr := execution.AccumulateSeriesDelivery(delivery, batchDelivery)
@@ -1057,7 +1071,7 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 		}
 		delivery = accumulated
 		if err := consumer.ConsumeSeries(ctx, execution.SeriesExecutionBatch{
-			PhysicalQuery: "physical-query-1", QueryRevision: input.Contract.QueryRevision,
+			PhysicalQuery: "physical-query-1", QueryRevision: queryRevision,
 			CompletionRef: "provider-result-1", Dataset: seriesDataset, Inputs: []execution.NamedInputBinding{binding},
 			Delivery: batchDelivery,
 		}); err != nil {
@@ -1068,12 +1082,14 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 		return execution.QueryExecutionCompletion{}, err
 	}
 	completeness := input.Inputs[0].Completeness
-	if ports.completionCompleteness != "" {
+	if ports.degraded {
+		completeness = execution.CompletenessPartial
+	} else if ports.completionCompleteness != "" {
 		completeness = ports.completionCompleteness
 	}
 	return execution.QueryExecutionCompletion{AllRequiredCompleted: true, PhysicalQueries: []execution.PhysicalQueryCompletion{{
-		Ref: "provider-result-1", PhysicalQuery: "physical-query-1", QueryRevision: input.Contract.QueryRevision,
-		Completeness: completeness, DataState: input.Inputs[0].DataState, Delivery: delivery,
+		Ref: "provider-result-1", PhysicalQuery: "physical-query-1", QueryRevision: queryRevision,
+		Completeness: completeness, DataState: input.Inputs[0].DataState, Delivery: delivery, PartialEvidence: degradedEvidence,
 	}}}, nil
 }
 
@@ -1265,6 +1281,9 @@ func (ports *recordingPorts) LoadGaps(_ context.Context, request execution.GapLo
 			continue
 		}
 		items[index] = execution.GapGuardSnapshot{Identity: item.Identity, Status: execution.GapMissing}
+		if ports.gapMissing {
+			continue
+		}
 		if ports.gapLoadStatus == execution.GapUnavailable {
 			items[index].Status = execution.GapUnavailable
 			items[index].ReasonCode = execution.ReasonCode(contract.ReasonRedisUnavailable)
@@ -1504,7 +1523,7 @@ func validInternalExecution() execution.InternalExecution {
 			Consumer: consumer, RequirementID: "main", DatasetName: "main",
 			Role: execution.InputRolePrimary, ProviderResult: "provider-result-1",
 			Provenance:  execution.InputProvenance{PhysicalQuery: "physical-query-1", AttemptNo: 1},
-			QueryWindow: execution.QueryWindow{Start: 1_787_999_940, End: 1_788_000_000}, ImpactScope: execution.ImpactPlan,
+			QueryWindow: execution.QueryWindow{Start: 1_787_999_940, End: 1_788_000_001}, ImpactScope: execution.ImpactPlan,
 			Dataset: dataset, View: view,
 			Completeness: execution.CompletenessFull, DataState: execution.DataStateData, Disposition: execution.AccessAvailable,
 		}},
@@ -1537,10 +1556,10 @@ func baseDuePlanAndRequirements() ([]execution.DuePlan, []execution.DataRequirem
 			},
 		}},
 	}
-	consumer := execution.ConsumerRef{Plan: plan}
+	consumer := execution.ConsumerRef{Plan: plan, LevelID: 5, HasLevel: true}
 	requirement := execution.DataRequirement{
 		RequirementID: "main", DatasetName: "main", Role: execution.InputRolePrimary, LogicalQueryRef: "query-main",
-		RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -60, EndOffsetSeconds: 0, HalfOpen: true},
+		RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -60, EndOffsetSeconds: 1, HalfOpen: true},
 		StepMillis:     60_000, AlignmentMillis: 60_000, ResultWindowPolicy: execution.ResultWindowExactHalfOpen,
 		ReadinessClass: execution.ReadinessEager, RequiredColumns: []string{"value"},
 		Consumers: []execution.DataRequirementConsumer{{

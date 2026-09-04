@@ -1153,7 +1153,7 @@ func gapSnapshotHasPayload(item GapGuardSnapshot) bool {
 
 type EvaluationRequest struct {
 	Header InternalExecutionHeader
-	Batch  SeriesExecutionBatch
+	Inputs []SeriesEvaluationInputRequest
 	State  StatePreflightResult
 	Gaps   GapLoadResult
 }
@@ -1275,8 +1275,78 @@ type EvaluationResult struct {
 	ReasonCode ReasonCode
 }
 
+func buildEvaluationInternalExecution(request EvaluationRequest) (InternalExecution, error) {
+	if len(request.Inputs) == 0 {
+		return InternalExecution{}, errors.New("alarmd execution: evaluation named inputs are required")
+	}
+	first := request.Inputs[0]
+	if first.Contract != request.Header.Contract || !first.Consumer.HasLevel || first.SeriesIdentity == "" {
+		return InternalExecution{}, errors.New("alarmd execution: incomplete evaluation named-input scope")
+	}
+	var due DuePlan
+	found := false
+	for _, candidate := range request.Header.DuePlans {
+		if candidate.Identity == first.Consumer.Plan {
+			due, found = candidate, true
+			break
+		}
+	}
+	if !found || due.CompiledPlan == nil || len(request.Inputs) != len(due.CompiledPlan.Levels()) {
+		return InternalExecution{}, errors.New("alarmd execution: evaluation inputs do not exactly cover one due Plan")
+	}
+	input := InternalExecution{Contract: request.Header.Contract, DuePlans: []DuePlan{due}}
+	for index, level := range due.CompiledPlan.Levels() {
+		current := request.Inputs[index]
+		if current.Contract != request.Header.Contract || current.Consumer.Plan != due.Identity || !current.Consumer.HasLevel ||
+			current.Consumer.LevelID != level.Definition().LevelID || current.SeriesIdentity != first.SeriesIdentity ||
+			len(current.RequirementIDs) == 0 || len(current.RequirementIDs) != len(current.Inputs) {
+			return InternalExecution{}, errors.New("alarmd execution: evaluation inputs are not one ordered Plan/series Level cover")
+		}
+		primary := 0
+		for bindingIndex, binding := range current.Inputs {
+			if binding.Consumer != current.Consumer || binding.RequirementID != current.RequirementIDs[bindingIndex] {
+				return InternalExecution{}, errors.New("alarmd execution: evaluation binding differs from its named-input exact set")
+			}
+			if binding.Role == InputRolePrimary {
+				primary++
+			}
+			input.Inputs = append(input.Inputs, binding)
+		}
+		if primary != 1 {
+			return InternalExecution{}, errors.New("alarmd execution: each evaluation Level requires one PRIMARY input")
+		}
+	}
+	for _, requirement := range request.Header.Requirements {
+		filtered := requirement
+		filtered.Consumers = nil
+		for _, consumer := range requirement.Consumers {
+			if consumer.Consumer.Plan == due.Identity {
+				filtered.Consumers = append(filtered.Consumers, consumer)
+			}
+		}
+		if len(filtered.Consumers) != 0 {
+			input.Requirements = append(input.Requirements, filtered)
+		}
+	}
+	version, err := BuildApplyVersion(request.Header.Contract, due.StateApplyEpoch)
+	if err != nil {
+		return InternalExecution{}, err
+	}
+	identity := StateKeyIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration,
+		SeriesIdentityDigest: first.SeriesIdentity}
+	input.StatePreflight = []StatePreflightItem{{Identity: identity, ApplyVersion: version}}
+	for _, fact := range request.Header.EffectiveTimeFacts {
+		if fact.Consumer.Plan == due.Identity && fact.SeriesIdentity == first.SeriesIdentity {
+			input.EffectiveTimeFacts = append(input.EffectiveTimeFacts, fact)
+		}
+	}
+	input.GapPreflight = []PlanGapLoadItem{{Identity: PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration},
+		ApplyVersion: version, ScheduleRevision: due.ScheduleRevision}}
+	return input, nil
+}
+
 func (result EvaluationResult) Validate(request EvaluationRequest) error {
-	input, err := buildSeriesInternalExecution(request.Header, request.Batch)
+	input, err := buildEvaluationInternalExecution(request)
 	if err != nil {
 		return err
 	}

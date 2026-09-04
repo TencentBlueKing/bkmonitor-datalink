@@ -36,7 +36,7 @@ func TestSlotExecutionCoordinatorCompletesFullEmptySharedQueryForEveryPlan(t *te
 	second.Identity.BusinessID = "3"
 	plans = append(plans, second)
 	requirements[0].Consumers = append(requirements[0].Consumers, execution.DataRequirementConsumer{
-		Consumer:                           execution.ConsumerRef{Plan: second.Identity},
+		Consumer:                           execution.ConsumerRef{Plan: second.Identity, LevelID: 5, HasLevel: true},
 		ConsumerDeadlineUnixMilli:          second.CompletionDeadlineUnixMilli,
 		DownstreamExecutionReserveMilliSec: 5_000,
 	})
@@ -55,7 +55,7 @@ func TestSlotExecutionCoordinatorRejectsIncompleteFullEmptyCompletion(t *testing
 	second.Identity.BusinessID = "3"
 	plans = append(plans, second)
 	requirements[0].Consumers = append(requirements[0].Consumers, execution.DataRequirementConsumer{
-		Consumer:                           execution.ConsumerRef{Plan: second.Identity},
+		Consumer:                           execution.ConsumerRef{Plan: second.Identity, LevelID: 5, HasLevel: true},
 		ConsumerDeadlineUnixMilli:          second.CompletionDeadlineUnixMilli,
 		DownstreamExecutionReserveMilliSec: 5_000,
 	})
@@ -138,7 +138,7 @@ func TestSlotExecutionCoordinatorCompletesUnavailableAfterPlanGap(t *testing.T) 
 	second.Identity.BusinessID = "3"
 	plans = append(plans, second)
 	requirements[0].Consumers = append(requirements[0].Consumers, execution.DataRequirementConsumer{
-		Consumer:                           execution.ConsumerRef{Plan: second.Identity},
+		Consumer:                           execution.ConsumerRef{Plan: second.Identity, LevelID: 5, HasLevel: true},
 		ConsumerDeadlineUnixMilli:          second.CompletionDeadlineUnixMilli,
 		DownstreamExecutionReserveMilliSec: 5_000,
 	})
@@ -260,7 +260,7 @@ func newCompletionOnlyFixture(
 	header := execution.InternalExecutionHeader{
 		ExecutionID: "empty-execution-1", Contract: contractRef, DuePlans: plans, Requirements: requirements,
 		RequiredPhysicalQueries: []execution.PlannedPhysicalQueryRef{{
-			Digest: "physical-query-1", QueryRevision: contractRef.QueryRevision,
+			Digest: "physical-query-1", QueryRevision: execution.QueryRevision(requirements[0].LogicalQueryRef),
 		}},
 		DeadlineUnixMilli: 1_788_000_030_000,
 	}
@@ -287,7 +287,7 @@ func newCompletionOnlyFixture(
 	completion := execution.QueryExecutionCompletion{
 		AllRequiredCompleted: true,
 		PhysicalQueries: []execution.PhysicalQueryCompletion{{
-			Ref: "provider-result-1", PhysicalQuery: "physical-query-1", QueryRevision: contractRef.QueryRevision,
+			Ref: "provider-result-1", PhysicalQuery: "physical-query-1", QueryRevision: execution.QueryRevision(requirements[0].LogicalQueryRef),
 			Completeness: execution.CompletenessFull, DataState: execution.DataStateEmpty,
 		}},
 		CompletionBindings: bindings,

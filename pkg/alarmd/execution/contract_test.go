@@ -1021,21 +1021,23 @@ func TestLocalizedBadSeriesOutsideDatasetCanProduceExactGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := evaluationRequest(input, execution.StatePreflightResult{Items: []execution.RuntimeStateView{
-		{Identity: input.StatePreflight[0].Identity, Status: execution.StateMissingWarming},
 		{Identity: badPreflight.Identity, Status: execution.StateDeterministicInvalid, BlobRevision: 1, ReasonCode: reason},
 	}}, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
 		Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
 	}}})
+	request.Inputs[0].SeriesIdentity = badSeries
+	request.Inputs[0].Inputs[0].Dataset, request.Inputs[0].Inputs[0].View = nil, nil
+	request.Inputs[0].Inputs[0].Completeness = execution.CompletenessUnavailable
+	request.Inputs[0].Inputs[0].DataState = execution.DataStateUnknown
+	request.Inputs[0].Inputs[0].Disposition = execution.AccessTerminal
+	request.Inputs[0].Inputs[0].ReasonCode = reason
 	result := execution.EvaluationResult{
 		Contract: input.Contract, Result: observability.ResultTerminal, ReasonCode: reason,
 		Plans: []execution.PlanEvaluationResult{{
-			Plan: input.DuePlans[0].Identity, Disposition: execution.PlanDecidedDegraded, ReasonCode: reason,
-			LevelOutcomes: []execution.LevelOutcome{
-				normalLevelOutcome(),
-				{Plan: input.DuePlans[0].Identity, LevelID: 5, SeriesIdentityDigest: badSeries,
-					Record: badAnchor, Outcome: execution.LevelOutcomeTerminal, ReasonCode: reason},
-			},
-			StateResults: []execution.StateEvaluation{normalStateEvaluation(), {Mutation: badGuard}},
+			Plan: input.DuePlans[0].Identity, Disposition: execution.PlanTerminal, ReasonCode: reason,
+			LevelOutcomes: []execution.LevelOutcome{{Plan: input.DuePlans[0].Identity, LevelID: 5, SeriesIdentityDigest: badSeries,
+				Record: badAnchor, Outcome: execution.LevelOutcomeTerminal, ReasonCode: reason}},
+			StateResults: []execution.StateEvaluation{{Mutation: badGuard}},
 		}},
 	}
 	if err := result.Validate(request); err != nil {
@@ -1387,6 +1389,12 @@ func evaluationRequest(
 	gaps execution.GapLoadResult,
 ) execution.EvaluationRequest {
 	binding := input.Inputs[0]
+	consumer := binding.Consumer
+	if !consumer.HasLevel {
+		consumer = execution.ConsumerRef{Plan: consumer.Plan, LevelID: input.DuePlans[0].CompiledPlan.Levels()[0].Definition().LevelID, HasLevel: true}
+		binding.Consumer = consumer
+	}
+	series := execution.SeriesIdentityDigest(strings.Repeat("c", 64))
 	header := execution.InternalExecutionHeader{
 		ExecutionID: "execution-test", Contract: input.Contract, DuePlans: input.DuePlans,
 		Requirements: input.Requirements, EffectiveTimeFacts: input.EffectiveTimeFacts,
@@ -1396,14 +1404,9 @@ func evaluationRequest(
 	}
 	return execution.EvaluationRequest{
 		Header: header,
-		Batch: execution.SeriesExecutionBatch{
-			PhysicalQuery: binding.Provenance.PhysicalQuery, QueryRevision: input.Contract.QueryRevision,
-			CompletionRef: binding.ProviderResult, Dataset: binding.Dataset, Inputs: input.Inputs,
-			Delivery: execution.SeriesDelivery{
-				PhysicalQuery: binding.Provenance.PhysicalQuery, QueryRevision: input.Contract.QueryRevision,
-				Series: 1, Records: uint64(binding.Dataset.Len()), Digest: "delivery-test",
-			},
-		},
+		Inputs: []execution.SeriesEvaluationInputRequest{{Contract: input.Contract, Consumer: consumer,
+			SeriesIdentity: series, RequirementIDs: []execution.RequirementID{binding.RequirementID},
+			Inputs: []execution.NamedInputBinding{binding}}},
 		State: state, Gaps: gaps,
 	}
 }
@@ -1434,7 +1437,7 @@ func validInternalExecution() execution.InternalExecution {
 			Consumer: consumer, RequirementID: "main", DatasetName: "main",
 			Role: execution.InputRolePrimary, ProviderResult: "provider-result-1",
 			Provenance:  execution.InputProvenance{PhysicalQuery: "physical-query-1", AttemptNo: 1},
-			QueryWindow: execution.QueryWindow{Start: 1_787_999_940, End: 1_788_000_000}, ImpactScope: execution.ImpactPlan,
+			QueryWindow: execution.QueryWindow{Start: 1_787_999_940, End: 1_788_000_001}, ImpactScope: execution.ImpactPlan,
 			Dataset: dataset, View: view,
 			Completeness: execution.CompletenessFull, DataState: execution.DataStateData,
 			Disposition: execution.AccessAvailable,
@@ -1649,7 +1652,7 @@ func baseDuePlanAndRequirements() ([]execution.DuePlan, []execution.DataRequirem
 	consumer := execution.ConsumerRef{Plan: plan}
 	requirement := execution.DataRequirement{
 		RequirementID: "main", DatasetName: "main", Role: execution.InputRolePrimary, LogicalQueryRef: "query-main",
-		RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -60, EndOffsetSeconds: 0, HalfOpen: true},
+		RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -60, EndOffsetSeconds: 1, HalfOpen: true},
 		StepMillis:     60_000, AlignmentMillis: 60_000, ResultWindowPolicy: execution.ResultWindowExactHalfOpen,
 		ReadinessClass: execution.ReadinessEager, RequiredColumns: []string{"value"},
 		Consumers: []execution.DataRequirementConsumer{{

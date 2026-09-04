@@ -6,13 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/evaluation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
 )
 
 func TestSlotExecutionCoordinatorWaitsForAuthoritativeG4NamedInputCompletion(t *testing.T) {
@@ -56,6 +62,155 @@ func TestSlotExecutionCoordinatorWaitsForAuthoritativeG4NamedInputCompletion(t *
 				})
 			}
 		})
+	}
+}
+
+func TestSlotExecutionCoordinatorRejectsTamperedCompletionBeforeLoadingGapOrState(t *testing.T) {
+	header, batches, completion := workerG4MultiLevelStreamFixture(t, false)
+	tampered := batches[0].Inputs[0]
+	tampered.RequirementID = "tampered-requirement"
+	completion.CompletionBindings = append(completion.CompletionBindings, tampered)
+	ports, evaluator, coordinator := workerG4Coordinator(t)
+	ports.executeOverride = streamExecution(header, batches, completion)
+
+	result, err := coordinator.Execute(context.Background(), workerSlotRequest(header.Contract))
+	if err == nil || result.Completed {
+		t.Fatalf("Execute() result=%+v error=%v, want local completion rejection", result, err)
+	}
+	if ports.stateLoadCalls != 0 || len(evaluator.requests) != 0 {
+		t.Fatalf("tampered completion loaded state or evaluated: state=%d evaluate=%d", ports.stateLoadCalls, len(evaluator.requests))
+	}
+	if trace := strings.Join(*ports.trace, ","); strings.Contains(trace, "gap_load") {
+		t.Fatalf("tampered completion loaded Gap before exact input validation: %s", trace)
+	}
+}
+
+func TestSlotExecutionCoordinatorFansInTwoLevelsOnceAfterAllQueriesComplete(t *testing.T) {
+	header, batches, completion := workerG4MultiLevelStreamFixture(t, false)
+	ports, evaluator, coordinator := workerG4Coordinator(t)
+	ports.executeOverride = streamExecution(header, batches, completion)
+
+	result, err := coordinator.Execute(context.Background(), workerSlotRequest(header.Contract))
+	if err != nil || !result.Completed {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	if len(evaluator.requests) != 1 {
+		t.Fatalf("Evaluate requests=%d, want one Plan+series request after completion", len(evaluator.requests))
+	}
+	request := evaluator.requests[0]
+	if len(request.Inputs) != 2 {
+		t.Fatalf("plural A0 inputs=%+v", request.Inputs)
+	}
+	inputsByLevel := make(map[uint32]execution.SeriesEvaluationInputRequest, len(request.Inputs))
+	for _, input := range request.Inputs {
+		inputsByLevel[input.Consumer.LevelID] = input
+	}
+	if len(inputsByLevel[5].Inputs) != 2 || len(inputsByLevel[4].Inputs) != 1 {
+		t.Fatalf("named input exact cover=%+v", request.Inputs)
+	}
+	if inputsByLevel[5].Inputs[0].Provenance.PhysicalQuery != inputsByLevel[4].Inputs[0].Provenance.PhysicalQuery {
+		t.Fatalf("shared PRIMARY logical query was not reused: %+v", request.Inputs)
+	}
+	if ports.stateLoadCalls != 1 {
+		t.Fatalf("State loads=%d, want once for one Plan+series", ports.stateLoadCalls)
+	}
+}
+
+func TestSlotExecutionCoordinatorKeepsHealthyLevelAndQueryGroupRunningWhenOneDependencyIsUnavailable(t *testing.T) {
+	header, batches, completion := workerG4MultiLevelStreamFixture(t, true)
+	ports, evaluator, coordinator := workerG4Coordinator(t)
+	ports.gapMissing = true
+	ports.executeOverride = streamExecution(header, batches, completion)
+
+	result, err := coordinator.Execute(context.Background(), workerSlotRequest(header.Contract))
+	if err != nil || !result.Completed || result.Result != observability.ResultDegraded {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	if len(evaluator.results) != 1 || len(evaluator.results[0].Plans) != 1 {
+		t.Fatalf("evaluation results=%+v", evaluator.results)
+	}
+	outcomes := evaluator.results[0].Plans[0].LevelOutcomes
+	outcomeByLevel := make(map[uint32]execution.LevelOutcome, len(outcomes))
+	for _, outcome := range outcomes {
+		outcomeByLevel[outcome.LevelID] = outcome
+	}
+	if len(outcomeByLevel) != 2 || outcomeByLevel[5].Outcome != execution.LevelOutcomeUnknown ||
+		outcomeByLevel[4].Outcome != execution.LevelOutcomeAbnormal {
+		t.Fatalf("Level-local unavailable result=%+v", outcomes)
+	}
+	if ports.stateApplyCalls != 1 || ports.eventCount != 1 {
+		t.Fatalf("healthy Level side effects state=%d events=%d", ports.stateApplyCalls, ports.eventCount)
+	}
+	if len(ports.gapMutations) != 1 || len(ports.gapMutations[0].Scopes) != 1 ||
+		ports.gapMutations[0].Scopes[0].Scope.LevelID != 5 {
+		t.Fatalf("unavailable dependency was not isolated to Level 5: %+v", ports.gapMutations)
+	}
+
+	healthy := newFixture(t, true, "")
+	healthyResult, healthyErr := healthy.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if healthyErr != nil || !healthyResult.Completed || healthy.ports.stateApplyCalls != 1 {
+		t.Fatalf("healthy sibling QG result=%+v error=%v state=%d", healthyResult, healthyErr, healthy.ports.stateApplyCalls)
+	}
+}
+
+type recordingEvaluator struct {
+	inner    execution.Evaluator
+	requests []execution.EvaluationRequest
+	results  []execution.EvaluationResult
+}
+
+func (e *recordingEvaluator) Evaluate(ctx context.Context, request execution.EvaluationRequest) (execution.EvaluationResult, error) {
+	e.requests = append(e.requests, request)
+	result, err := e.inner.Evaluate(ctx, request)
+	if err == nil {
+		e.results = append(e.results, result)
+	}
+	return result, err
+}
+
+func workerG4Coordinator(t *testing.T) (*recordingPorts, *recordingEvaluator, *worker.SlotExecutionCoordinator) {
+	t.Helper()
+	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner, err := evaluation.New(detector, evaluation.Limits{MaxPlans: 4, MaxRecords: 16, MaxLevels: 16,
+		Trigger: trigger.EvaluationLimitsV2{MaxLevels: 16, MaxTriggerWindowSize: 16,
+			MaxRecoveryConsecutiveWindows: 16, MaxRequiredHistoryPoints: 32,
+			MaxLevelResultsPerEvent: 16, MaxEvidenceBytesPerEvent: 1 << 20, MaxComputeCost: 1 << 20}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &recordingEvaluator{inner: inner}
+	trace := make([]string, 0)
+	ports := &recordingPorts{trace: &trace, ready: true}
+	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{
+		Finalization: ports, Activation: ports, Query: ports, Sequencer: ports, Evaluator: recorder,
+		Admission: ports, GapGuard: ports, Events: ports, State: ports, Progress: ports,
+		Observer: observability.ObserverFunc(func(context.Context, observability.Observation) {}),
+	}, worker.ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20,
+		MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ports, recorder, coordinator
+}
+
+func streamExecution(
+	header execution.InternalExecutionHeader,
+	batches []execution.SeriesExecutionBatch,
+	completion execution.QueryExecutionCompletion,
+) func(context.Context, execution.QueryExecutionRequest, execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error) {
+	return func(ctx context.Context, _ execution.QueryExecutionRequest, consumer execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error) {
+		if err := consumer.Begin(ctx, header); err != nil {
+			return execution.QueryExecutionCompletion{}, err
+		}
+		for _, batch := range batches {
+			if err := consumer.ConsumeSeries(ctx, batch); err != nil {
+				return execution.QueryExecutionCompletion{}, err
+			}
+		}
+		return completion, nil
 	}
 }
 
@@ -240,8 +395,215 @@ func workerG4CompiledPlan(t *testing.T, kind string) (*strategy.CompiledPlan, []
 	return compiled, executionRequirements
 }
 
+func workerG4MultiLevelStreamFixture(
+	t *testing.T,
+	previousUnavailable bool,
+) (execution.InternalExecutionHeader, []execution.SeriesExecutionBatch, execution.QueryExecutionCompletion) {
+	t.Helper()
+	projection := strategy.AlgorithmInputProjection{
+		ValueFields: []string{"value"}, DimensionFields: []string{"host"}, IdentityFields: []string{"host"},
+	}
+	simpleRequirements := []strategy.AlgorithmInputRequirement{
+		workerAlgorithmRequirementForLevel(t, 5, "primary", strategy.AlgorithmInputPrimary, -60, 0, nil,
+			strategy.AlgorithmReadinessEager, projection),
+		workerAlgorithmRequirementForLevel(t, 5, "previous", strategy.AlgorithmInputDependency, -120, -60,
+			[]strategy.AlgorithmNamedInputPoint{{Name: "previous", OffsetSeconds: 60}},
+			strategy.AlgorithmReadinessFinalizedRequired, projection),
+	}
+	simpleConfig, err := json.Marshal(map[string]any{
+		"floor": 20, "ceil": nil, "input_projection": projection, "requirements": simpleRequirements,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thresholdConfig := json.RawMessage(`{"value_field":"value","data_unit":"percent","threshold_unit_prefix":"","precision":{"decimal_places":6,"rounding":"HALF_EVEN"},"groups":[{"conditions":[{"operator":"GTE","threshold_decimal":"50"}]}]}`)
+	compiled := compileWorkerG4MultiLevelPlan(t, simpleConfig, thresholdConfig)
+
+	var algorithmRequirements []strategy.AlgorithmInputRequirement
+	for _, level := range compiled.Levels() {
+		if level.Definition().LevelID == 5 {
+			algorithmRequirements = append(algorithmRequirements, level.Algorithms()[0].InputRequirements()...)
+		}
+	}
+	algorithmRequirements = append(algorithmRequirements,
+		workerAlgorithmRequirementForLevel(t, 4, "primary", strategy.AlgorithmInputPrimary, -60, 0, nil,
+			strategy.AlgorithmReadinessEager, projection))
+	requirements := make([]execution.DataRequirement, 0, len(algorithmRequirements))
+	identity := planIdentity()
+	due := execution.DuePlan{Identity: identity, CompiledPlan: compiled, StateGeneration: "state-v1", StateApplyEpoch: 1,
+		ScheduleRevision: "plan-schedule-v1", CompletionDeadlineUnixMilli: 1_788_000_060_000}
+	for _, requirement := range algorithmRequirements {
+		materialized := materializeWorkerRequirement(t, requirement)
+		materialized.Consumers = []execution.DataRequirementConsumer{{
+			Consumer:                  execution.ConsumerRef{Plan: identity, LevelID: requirement.ConsumerLevelID, HasLevel: true},
+			ConsumerDeadlineUnixMilli: due.CompletionDeadlineUnixMilli, DownstreamExecutionReserveMilliSec: 5_000,
+		}}
+		requirements = append(requirements, materialized)
+	}
+	digest, err := execution.DeriveDuePlanSetDigest([]execution.DuePlan{due}, requirements)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contractRef := frozenContract()
+	contractRef.QueryRevision = "query-primary"
+	contractRef.DuePlanSetDigest = digest
+	header := execution.InternalExecutionHeader{ExecutionID: "g4-two-level-fan-in", Contract: contractRef,
+		DuePlans: []execution.DuePlan{due}, Requirements: requirements, DeadlineUnixMilli: due.CompletionDeadlineUnixMilli}
+
+	byQuery := make(map[execution.LogicalQueryRef][]execution.DataRequirement)
+	for _, requirement := range requirements {
+		byQuery[requirement.LogicalQueryRef] = append(byQuery[requirement.LogicalQueryRef], requirement)
+	}
+	queryRefs := make([]execution.LogicalQueryRef, 0, len(byQuery))
+	for queryRef := range byQuery {
+		queryRefs = append(queryRefs, queryRef)
+	}
+	sort.Slice(queryRefs, func(i, j int) bool { return queryRefs[i] < queryRefs[j] })
+	series := execution.SeriesIdentityDigest(strings.Repeat("c", 64))
+	var batches []execution.SeriesExecutionBatch
+	completion := execution.QueryExecutionCompletion{AllRequiredCompleted: true}
+	for queryIndex, queryRef := range queryRefs {
+		physical := execution.PhysicalQueryDigest("physical-" + string(queryRef))
+		queryRevision := execution.QueryRevision(queryRef)
+		header.RequiredPhysicalQueries = append(header.RequiredPhysicalQueries,
+			execution.PlannedPhysicalQueryRef{Digest: physical, QueryRevision: queryRevision})
+		providerRef := execution.ProviderResultRef("provider-" + string(queryRef))
+		representative := byQuery[queryRef][0]
+		sourceTime := int64(contractRef.Slot.EvaluationTime) + representative.RelativeWindow.EndOffsetSeconds - 1
+		value := json.RawMessage(`80`)
+		if queryRef == "query-previous" {
+			value = json.RawMessage(`100`)
+		}
+		dataset := execution.NewDataset([]contract.CanonicalRecordV2{{
+			RecordID: fmt.Sprintf("%064x", queryIndex+1), SourceTime: sourceTime, BusinessID: "2",
+			DimensionIdentity: contract.DimensionIdentityV2{Digest: string(series)},
+			Values:            map[string]json.RawMessage{"value": value}, Dimensions: map[string]json.RawMessage{},
+			ReceivedTime: sourceTime,
+		}})
+		view, viewErr := execution.NewDatasetView(dataset, []uint32{0})
+		if viewErr != nil {
+			t.Fatal(viewErr)
+		}
+		bindings := make([]execution.NamedInputBinding, 0, len(byQuery[queryRef]))
+		for _, requirement := range byQuery[queryRef] {
+			bindings = append(bindings, execution.NamedInputBinding{
+				Consumer: requirement.Consumers[0].Consumer, RequirementID: requirement.RequirementID,
+				DatasetName: requirement.DatasetName, Role: requirement.Role, ProviderResult: providerRef,
+				QueryWindow: requirement.AbsoluteWindow(contractRef.Slot.EvaluationTime), Dataset: dataset, View: view,
+				Completeness: execution.CompletenessFull, DataState: execution.DataStateData,
+				Disposition: execution.AccessAvailable, ImpactScope: execution.ImpactSeries,
+				Provenance: execution.InputProvenance{PhysicalQuery: physical, AttemptNo: 1},
+			})
+		}
+		delivery := execution.SeriesDelivery{PhysicalQuery: physical, QueryRevision: queryRevision,
+			Series: 1, Records: 1, Bytes: 64, Digest: strings.Repeat(string(rune('e'+queryIndex)), 64)}
+		batches = append(batches, execution.SeriesExecutionBatch{PhysicalQuery: physical,
+			QueryRevision: queryRevision, CompletionRef: providerRef, Dataset: dataset, Inputs: bindings, Delivery: delivery})
+		if previousUnavailable && queryRef == "query-previous" {
+			completion.PhysicalQueries = append(completion.PhysicalQueries, execution.PhysicalQueryCompletion{
+				Ref: providerRef, PhysicalQuery: physical, QueryRevision: queryRevision,
+				Completeness: execution.CompletenessUnavailable, DataState: execution.DataStateData, Delivery: delivery,
+				RouteFacts: execution.ProviderRouteFacts{Attempts: []execution.RouteAttemptFact{{
+					AttemptNo: 1, Endpoint: "uq", Result: execution.RouteAttemptFailed,
+					ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable),
+				}}},
+			})
+			continue
+		}
+		completion.PhysicalQueries = append(completion.PhysicalQueries, execution.PhysicalQueryCompletion{
+			Ref: providerRef, PhysicalQuery: physical, QueryRevision: queryRevision,
+			Completeness: execution.CompletenessFull, DataState: execution.DataStateData, Delivery: delivery,
+		})
+	}
+	return header, batches, completion
+}
+
+func compileWorkerG4MultiLevelPlan(t *testing.T, simpleConfig, thresholdConfig json.RawMessage) *strategy.CompiledPlan {
+	t.Helper()
+	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{
+		MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16,
+		MaxConditionsPerAlgorithm: 64, MaxASTNodesPerLevel: 256, MaxTriggerWindowSize: 4096,
+		MaxRecoveryConsecutiveWindows: 4096, MaxRequiredHistoryPoints: 4096, MaxTriggerComputeCost: 1 << 20,
+		MaxCompiledPlanBytes: 64 << 10, MaxCacheEntries: 64, MaxCacheBytes: 4 << 20,
+		NegativeCacheTTL: time.Minute, BudgetRevision: "worker-g4-two-level-test-v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := contract.StrategyRefV2{TenantID: "tenant", StrategyID: "7", Revision: "strategy-v1"}
+	projection := contract.InputProjectionV2{ValueFields: []string{"value"}, DimensionFields: []string{"host"},
+		BusinessIdentityField: "bk_biz_id", MultiValueAlignment: "SINGLE_VALUE", DataUnit: "percent",
+		MissingValuePolicy: contract.MissingValuePolicyRequired}
+	level := func(id uint32, kind string, config json.RawMessage) contract.LevelIRV2 {
+		return contract.LevelIRV2{Definition: contract.LevelDefinitionV2{LevelID: id, Priority: id}, Connector: contract.LevelConnectorAND,
+			DetectPlan: contract.DetectPlanV2{Algorithms: []contract.AlgorithmIRV2{{Type: kind, Version: 1, Config: config}}},
+			TriggerPlan: contract.TypedPlanV1{Type: "N_OF_M", Version: 1,
+				Config: json.RawMessage(`{"window_size":1,"required_anomalies":1,"step_seconds":60}`)},
+			RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1,
+				Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)}}
+	}
+	plan := contract.EvaluationPlanV2{PlanID: "7", StrategyRef: ref, InputProjection: projection,
+		StrategyIR: contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2},
+			StrategyRef: ref, InputProjection: projection,
+			ExecutionSemantics: contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries,
+				QueryWindow: 300, AggregationInterval: 60, EvaluationInterval: 60, LatenessTolerance: 120},
+			Levels: []contract.LevelIRV2{level(5, strategy.DetectorKindSimpleRingRatio, simpleConfig),
+				level(4, strategy.DetectorKindThreshold, thresholdConfig)}}}
+	result, err := compiler.Compile(context.Background(), strategy.CompileRequest{Plan: plan,
+		DatasetContract: contract.DatasetContractV2{SchemaDigest: strings.Repeat("1", 64),
+			NormalizationDigest: strings.Repeat("2", 64), IdentityFields: []string{"host"},
+			SourceTimeField: "time", ReceivedTimeField: "received_time"},
+		StateSemantics: strategy.StateSemantics{StateSchemaVersion: "window-state-v1", CodecSemanticsVersion: "window-codec-v1",
+			IdentitySchemaDigest: strings.Repeat("3", 64), SourceTimeSemanticsVersion: "source-time-v1",
+			HistoryCellSemanticsVersion: "history-cell-v1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, ok := result.Plan()
+	if !ok {
+		t.Fatalf("compile terminal=%+v levels=%+v", result.PlanTerminal(), result.LevelTerminals())
+	}
+	return compiled
+}
+
+func materializeWorkerRequirement(t *testing.T, requirement strategy.AlgorithmInputRequirement) execution.DataRequirement {
+	t.Helper()
+	points := make([]execution.NamedInputPoint, len(requirement.NamedPoints))
+	for index, point := range requirement.NamedPoints {
+		points[index] = execution.NamedInputPoint{Name: point.Name, OffsetSeconds: point.OffsetSeconds}
+	}
+	template, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
+		DatasetName: execution.DatasetName(requirement.DatasetName), Role: execution.InputRole(requirement.Role),
+		ConsumerLevelID: requirement.ConsumerLevelID, LogicalQueryRef: execution.LogicalQueryRef(requirement.LogicalQueryRef),
+		RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: requirement.RelativeWindow.StartOffsetSeconds,
+			EndOffsetSeconds: requirement.RelativeWindow.EndOffsetSeconds, HalfOpen: requirement.RelativeWindow.HalfOpen},
+		StepMillis: requirement.StepMillis, AlignmentMillis: requirement.AlignmentMillis,
+		ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessClass(requirement.ReadinessClass),
+		InputProjection: execution.InputProjection{ValueFields: requirement.InputProjection.ValueFields,
+			DimensionFields: requirement.InputProjection.DimensionFields, IdentityFields: requirement.InputProjection.IdentityFields},
+		PointOffsetsSeconds: requirement.PointOffsetsSeconds, NamedPoints: points,
+	})
+	if err != nil || string(template.RequirementID) != requirement.RequirementID {
+		t.Fatalf("materialize %q: template=%+v error=%v", requirement.DatasetName, template, err)
+	}
+	return template.Bind(execution.DataRequirementConsumer{})
+}
+
 func workerAlgorithmRequirement(
 	t *testing.T,
+	name string,
+	role strategy.AlgorithmInputRole,
+	start, end int64,
+	points []strategy.AlgorithmNamedInputPoint,
+	readiness strategy.AlgorithmReadinessClass,
+	projection strategy.AlgorithmInputProjection,
+) strategy.AlgorithmInputRequirement {
+	return workerAlgorithmRequirementForLevel(t, 5, name, role, start, end, points, readiness, projection)
+}
+
+func workerAlgorithmRequirementForLevel(
+	t *testing.T,
+	levelID uint32,
 	name string,
 	role strategy.AlgorithmInputRole,
 	start, end int64,
@@ -257,7 +619,7 @@ func workerAlgorithmRequirement(
 		executionPoints = append(executionPoints, execution.NamedInputPoint{Name: point.Name, OffsetSeconds: point.OffsetSeconds})
 	}
 	template, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
-		DatasetName: execution.DatasetName(name), Role: execution.InputRole(role), ConsumerLevelID: 5,
+		DatasetName: execution.DatasetName(name), Role: execution.InputRole(role), ConsumerLevelID: levelID,
 		LogicalQueryRef: execution.LogicalQueryRef("query-" + name),
 		RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: start, EndOffsetSeconds: end, HalfOpen: true},
 		StepMillis:      60_000, AlignmentMillis: 60_000, ResultWindowPolicy: execution.ResultWindowExactHalfOpen,
@@ -270,7 +632,7 @@ func workerAlgorithmRequirement(
 		t.Fatal(err)
 	}
 	return strategy.AlgorithmInputRequirement{
-		RequirementID: string(template.RequirementID), DatasetName: name, Role: role, ConsumerLevelID: 5,
+		RequirementID: string(template.RequirementID), DatasetName: name, Role: role, ConsumerLevelID: levelID,
 		LogicalQueryRef: "query-" + name,
 		RelativeWindow:  strategy.AlgorithmRelativeWindow{StartOffsetSeconds: start, EndOffsetSeconds: end, HalfOpen: true},
 		StepMillis:      60_000, AlignmentMillis: 60_000, ReadinessClass: readiness, InputProjection: projection,

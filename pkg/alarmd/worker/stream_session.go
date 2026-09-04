@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -13,13 +14,16 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
-// streamedExecution is the Coordinator-owned provisional lifetime. It owns no
-// external side effect: Begin and ConsumeSeries may only read State/Gap and
-// invoke the pure Evaluator.
+// streamedExecution is the Coordinator-owned provisional lifetime. Begin and
+// ConsumeSeries only validate and retain immutable query facts. State/Gap
+// reads and evaluation start after the authoritative completion is validated.
 type streamedExecution struct {
 	coordinator *SlotExecutionCoordinator
 	request     execution.SlotExecutionRequest
 	header      execution.InternalExecutionHeader
+	prepared    preparedNamedInputIndex
+	streamed    map[streamedInputKey]execution.NamedInputBinding
+	planSeries  map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]struct{}
 	bindings    []execution.NamedInputBinding
 	stateItems  []execution.StatePreflightItem
 	gapItems    []execution.PlanGapLoadItem
@@ -33,6 +37,22 @@ type streamedExecution struct {
 	began       bool
 }
 
+type streamedInputKey struct {
+	consumer    execution.ConsumerRef
+	series      execution.SeriesIdentityDigest
+	requirement execution.RequirementID
+}
+
+type preparedNamedInputIndex struct {
+	queries                map[execution.PhysicalQueryDigest]execution.PlannedPhysicalQueryRef
+	requirementsByConsumer map[execution.ConsumerRef][]execution.DataRequirement
+	requirementByKey       map[struct {
+		consumer    execution.ConsumerRef
+		requirement execution.RequirementID
+	}]execution.DataRequirement
+	consumersByPlan map[execution.PlanIdentity][]execution.ConsumerRef
+}
+
 func (stream *streamedExecution) Begin(ctx context.Context, header execution.InternalExecutionHeader) error {
 	if stream.began {
 		return errors.New("alarmd worker: QueryExecutionSource called Begin more than once")
@@ -40,32 +60,20 @@ func (stream *streamedExecution) Begin(ctx context.Context, header execution.Int
 	if err := header.Validate(stream.request.Contract); err != nil {
 		return fmt.Errorf("alarmd worker: invalid execution header: %w", err)
 	}
+	prepared, err := prepareNamedInputIndex(header)
+	if err != nil {
+		return fmt.Errorf("alarmd worker: prepare named-input index: %w", err)
+	}
 	stream.began = true
 	stream.header = header
+	stream.prepared = prepared
+	stream.streamed = make(map[streamedInputKey]execution.NamedInputBinding)
+	stream.planSeries = make(map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]struct{})
 	effective, err := prepareAlwaysEffectiveTimeFacts(ctx, header)
 	if err != nil {
 		return fmt.Errorf("alarmd worker: prepare EffectiveTime facts: %w", err)
 	}
 	stream.effective = effective
-	items, err := gapPreflightForHeader(header)
-	if err != nil {
-		return err
-	}
-	stream.gapItems = items
-	request := execution.GapLoadRequest{Contract: header.Contract, Items: items}
-	started := time.Now()
-	stream.gaps, err = stream.coordinator.ports.GapGuard.LoadGaps(ctx, request)
-	if err == nil {
-		err = execution.ValidateGapLoad(request, stream.gaps)
-	}
-	if err != nil {
-		stream.coordinator.observe(ctx, observability.ComponentState, observability.StageGapLoaded,
-			stream.request.Operation, started, "", "", err)
-		return fmt.Errorf("alarmd worker: gap preflight: %w", err)
-	}
-	gapResult, gapReason := summarizeGapLoad(stream.gaps)
-	stream.coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageGapLoaded,
-		stream.request.Operation, started, gapResult, gapReason, observability.Counts{Keys: int64(len(stream.gaps.Items))}, nil)
 	return nil
 }
 
@@ -73,54 +81,11 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 	if !stream.began {
 		return errors.New("alarmd worker: QueryExecutionSource delivered series before Begin")
 	}
-	if err := batch.Validate(stream.header); err != nil {
+	series, err := stream.validateSeriesBatch(batch)
+	if err != nil {
 		return fmt.Errorf("alarmd worker: invalid series batch: %w", err)
 	}
-	stateItems, err := execution.DeriveSeriesStatePreflight(stream.header, batch)
-	if err != nil {
-		return fmt.Errorf("alarmd worker: derive series execution: %w", err)
-	}
-	stateRequest := execution.StatePreflightRequest{Contract: stream.request.Contract, Items: stateItems}
-	started := time.Now()
-	loaded, err := stream.coordinator.ports.State.LoadRuntime(ctx, stateRequest)
-	if err == nil {
-		loaded, err = execution.ClassifyStatePreflight(stateRequest, loaded)
-	}
-	if err != nil {
-		stream.coordinator.observe(ctx, observability.ComponentState, observability.StageStatePreflight,
-			stream.request.Operation, started, "", "", err)
-		return fmt.Errorf("alarmd worker: series state preflight: %w", err)
-	}
-	stateResult, stateReason := summarizeStateLoad(loaded)
-	stream.coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageStatePreflight,
-		stream.request.Operation, started, stateResult, stateReason, observability.Counts{Keys: int64(len(loaded.Items))}, nil)
-	evaluationHeader, err := bindAlwaysEffectiveTimeFacts(stream.header, stateItems, stream.effective)
-	if err != nil {
-		return fmt.Errorf("alarmd worker: bind series EffectiveTime facts: %w", err)
-	}
-	evaluationRequest := execution.EvaluationRequest{Header: evaluationHeader, Batch: batch, State: loaded, Gaps: stream.gaps}
-	started = time.Now()
-	evaluated, err := stream.coordinator.ports.Evaluator.Evaluate(ctx, evaluationRequest)
-	if err != nil {
-		stream.coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
-			stream.request.Operation, started, "", "", err)
-		return fmt.Errorf("alarmd worker: evaluate series: %w", err)
-	}
-	if err := evaluated.Validate(evaluationRequest); err != nil {
-		stream.coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
-			stream.request.Operation, started, "", "", err)
-		return fmt.Errorf("alarmd worker: invalid series evaluation: %w", err)
-	}
-	stream.coordinator.observeWithCounts(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
-		stream.request.Operation, started, evaluated.Result, evaluated.ReasonCode,
-		observability.Counts{Records: int64(batch.Delivery.Records)}, nil)
-	compactBindings := make([]execution.NamedInputBinding, len(batch.Inputs))
-	copy(compactBindings, batch.Inputs)
-	for index := range compactBindings {
-		compactBindings[index].Dataset = nil
-		compactBindings[index].View = nil
-	}
-	retained, err := provisionalRetainedSize(compactBindings, loaded, evaluated, batch.Delivery)
+	retained, err := streamedRetainedSize(batch.Inputs, batch.Delivery)
 	if err != nil {
 		return fmt.Errorf("alarmd worker: measure provisional retention: %w", err)
 	}
@@ -136,17 +101,20 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 		stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, observability.CapacityBudgetRetainedBytes, err)
 		return err
 	}
-	if err := mergeProvisional(&stream.evaluated, evaluated, stream.coordinator.budget); err != nil {
-		var exceeded *provisionalBudgetExceededError
-		if errors.As(err, &exceeded) {
-			stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, exceeded.budget, err)
+	for _, binding := range batch.Inputs {
+		key := streamedInputKey{consumer: binding.Consumer, series: series, requirement: binding.RequirementID}
+		if _, duplicate := stream.streamed[key]; duplicate {
+			return errors.New("alarmd worker: duplicate streamed named input")
 		}
-		return err
-	}
-	stream.state.Items = append(stream.state.Items, loaded.Items...)
-	stream.stateItems = append(stream.stateItems, stateItems...)
-	for _, binding := range compactBindings {
-		stream.bindings = append(stream.bindings, binding)
+		stream.streamed[key] = binding
+		if binding.Role == execution.InputRolePrimary {
+			seriesByPlan := stream.planSeries[binding.Consumer.Plan]
+			if seriesByPlan == nil {
+				seriesByPlan = make(map[execution.SeriesIdentityDigest]struct{})
+				stream.planSeries[binding.Consumer.Plan] = seriesByPlan
+			}
+			seriesByPlan[series] = struct{}{}
+		}
 	}
 	merged := false
 	for index := range stream.delivered {
@@ -165,22 +133,139 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 	return nil
 }
 
-func provisionalRetainedSize(
-	bindings []execution.NamedInputBinding,
-	state execution.StatePreflightResult,
-	result execution.EvaluationResult,
-	delivery execution.SeriesDelivery,
-) (uint64, error) {
+func streamedRetainedSize(bindings []execution.NamedInputBinding, delivery execution.SeriesDelivery) (uint64, error) {
+	compact := make([]execution.NamedInputBinding, len(bindings))
+	copy(compact, bindings)
+	for index := range compact {
+		compact[index].Dataset = nil
+		compact[index].View = nil
+	}
 	encoded, err := json.Marshal(struct {
 		Bindings []execution.NamedInputBinding
-		State    execution.StatePreflightResult
-		Result   execution.EvaluationResult
 		Delivery execution.SeriesDelivery
-	}{Bindings: bindings, State: state, Result: result, Delivery: delivery})
+	}{Bindings: compact, Delivery: delivery})
 	if err != nil {
 		return 0, err
 	}
-	return uint64(len(encoded)), nil
+	return uint64(len(encoded)) + delivery.Bytes, nil
+}
+
+func prepareNamedInputIndex(header execution.InternalExecutionHeader) (preparedNamedInputIndex, error) {
+	prepared := preparedNamedInputIndex{
+		queries:                make(map[execution.PhysicalQueryDigest]execution.PlannedPhysicalQueryRef, len(header.RequiredPhysicalQueries)),
+		requirementsByConsumer: make(map[execution.ConsumerRef][]execution.DataRequirement),
+		requirementByKey: make(map[struct {
+			consumer    execution.ConsumerRef
+			requirement execution.RequirementID
+		}]execution.DataRequirement),
+		consumersByPlan: make(map[execution.PlanIdentity][]execution.ConsumerRef, len(header.DuePlans)),
+	}
+	for _, due := range header.DuePlans {
+		for _, level := range due.CompiledPlan.Levels() {
+			prepared.consumersByPlan[due.Identity] = append(prepared.consumersByPlan[due.Identity], execution.ConsumerRef{
+				Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true,
+			})
+		}
+	}
+	for _, query := range header.RequiredPhysicalQueries {
+		prepared.queries[query.Digest] = query
+	}
+	for _, requirement := range header.Requirements {
+		for _, binding := range requirement.Consumers {
+			consumer := binding.Consumer
+			if !consumer.HasLevel {
+				return preparedNamedInputIndex{}, errors.New("alarmd worker: frozen named input consumer requires a Level")
+			}
+			key := struct {
+				consumer    execution.ConsumerRef
+				requirement execution.RequirementID
+			}{consumer: consumer, requirement: requirement.RequirementID}
+			if _, duplicate := prepared.requirementByKey[key]; duplicate {
+				return preparedNamedInputIndex{}, errors.New("alarmd worker: duplicate frozen consumer requirement")
+			}
+			prepared.requirementByKey[key] = requirement
+			prepared.requirementsByConsumer[consumer] = append(prepared.requirementsByConsumer[consumer], requirement)
+		}
+	}
+	for plan, consumers := range prepared.consumersByPlan {
+		for _, consumer := range consumers {
+			requirements := prepared.requirementsByConsumer[consumer]
+			if len(requirements) == 0 {
+				return preparedNamedInputIndex{}, fmt.Errorf("alarmd worker: Plan %s Level %d has no frozen named input", plan.StrategyID, consumer.LevelID)
+			}
+			sort.Slice(requirements, func(i, j int) bool {
+				if requirements[i].Role != requirements[j].Role {
+					return requirements[i].Role == execution.InputRolePrimary
+				}
+				return requirements[i].RequirementID < requirements[j].RequirementID
+			})
+			primary := 0
+			for _, requirement := range requirements {
+				if requirement.Role == execution.InputRolePrimary {
+					primary++
+				}
+			}
+			if primary != 1 {
+				return preparedNamedInputIndex{}, fmt.Errorf("alarmd worker: Plan %s Level %d requires exactly one PRIMARY named input", plan.StrategyID, consumer.LevelID)
+			}
+			prepared.requirementsByConsumer[consumer] = requirements
+		}
+	}
+	return prepared, nil
+}
+
+func (stream *streamedExecution) validateSeriesBatch(batch execution.SeriesExecutionBatch) (execution.SeriesIdentityDigest, error) {
+	query, found := stream.prepared.queries[batch.PhysicalQuery]
+	if !found || query.QueryRevision != batch.QueryRevision || batch.CompletionRef == "" || batch.Dataset == nil ||
+		batch.Dataset.Len() == 0 || len(batch.Inputs) == 0 || batch.Delivery.PhysicalQuery != batch.PhysicalQuery ||
+		batch.Delivery.QueryRevision != batch.QueryRevision || batch.Delivery.Series != 1 ||
+		batch.Delivery.Records != uint64(batch.Dataset.Len()) || batch.Delivery.Digest == "" {
+		return "", errors.New("incomplete batch or frozen query mismatch")
+	}
+	var series execution.SeriesIdentityDigest
+	for index := 0; index < batch.Dataset.Len(); index++ {
+		record, ok := batch.Dataset.Record(index)
+		candidate := execution.SeriesIdentityDigest(record.DimensionIdentity().Digest)
+		if !ok || candidate == "" || (series != "" && candidate != series) {
+			return "", errors.New("batch does not contain exactly one stable series")
+		}
+		series = candidate
+	}
+	seen := make(map[struct {
+		consumer    execution.ConsumerRef
+		requirement execution.RequirementID
+	}]struct{}, len(batch.Inputs))
+	for _, binding := range batch.Inputs {
+		key := struct {
+			consumer    execution.ConsumerRef
+			requirement execution.RequirementID
+		}{consumer: binding.Consumer, requirement: binding.RequirementID}
+		requirement, known := stream.prepared.requirementByKey[key]
+		if !known {
+			return "", errors.New("binding is outside the frozen consumer requirement set")
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return "", errors.New("batch repeats a frozen consumer requirement")
+		}
+		seen[key] = struct{}{}
+		if binding.Dataset != batch.Dataset || binding.View == nil || !binding.View.Uses(batch.Dataset) ||
+			binding.Consumer != key.consumer || binding.DatasetName != requirement.DatasetName ||
+			binding.Role != requirement.Role || binding.QueryWindow != requirement.AbsoluteWindow(stream.header.Contract.Slot.EvaluationTime) ||
+			binding.ProviderResult != batch.CompletionRef || binding.Provenance.PhysicalQuery != batch.PhysicalQuery ||
+			binding.Provenance.AttemptNo == 0 || execution.LogicalQueryRef(query.QueryRevision) != requirement.LogicalQueryRef ||
+			binding.Completeness != execution.CompletenessFull || binding.DataState != execution.DataStateData ||
+			binding.Disposition != execution.AccessAvailable {
+			return "", errors.New("binding differs from frozen DataRequirement or physical query")
+		}
+		for recordIndex := 0; recordIndex < binding.View.Len(); recordIndex++ {
+			record, ok := binding.View.Record(recordIndex)
+			if !ok || execution.SeriesIdentityDigest(record.DimensionIdentity().Digest) != series ||
+				record.SourceTime() < binding.QueryWindow.Start || record.SourceTime() >= binding.QueryWindow.End {
+				return "", errors.New("binding contains a record outside its series or frozen query window")
+			}
+		}
+	}
+	return series, nil
 }
 
 func gapPreflightForHeader(header execution.InternalExecutionHeader) ([]execution.PlanGapLoadItem, error) {
@@ -303,7 +388,7 @@ func appendUniqueGapMutations(current, next []execution.PlanGapMutation) []execu
 	return current
 }
 
-func (stream *streamedExecution) complete(completion execution.QueryExecutionCompletion) error {
+func (stream *streamedExecution) complete(ctx context.Context, completion execution.QueryExecutionCompletion) error {
 	if !stream.began {
 		return errors.New("alarmd worker: QueryExecutionSource returned completion before Begin")
 	}
@@ -314,9 +399,31 @@ func (stream *streamedExecution) complete(completion execution.QueryExecutionCom
 	for _, item := range completion.PhysicalQueries {
 		physical[item.PhysicalQuery] = item
 	}
-	forced := make(map[execution.PlanIdentity]execution.NamedInputBinding)
-	for index := range stream.bindings {
-		binding := &stream.bindings[index]
+	completionBindings := make(map[struct {
+		consumer    execution.ConsumerRef
+		requirement execution.RequirementID
+	}]execution.NamedInputBinding, len(completion.CompletionBindings))
+	for _, binding := range completion.CompletionBindings {
+		key := struct {
+			consumer    execution.ConsumerRef
+			requirement execution.RequirementID
+		}{consumer: binding.Consumer, requirement: binding.RequirementID}
+		requirement, known := stream.prepared.requirementByKey[key]
+		item, ok := physical[binding.Provenance.PhysicalQuery]
+		query, queryOK := stream.prepared.queries[binding.Provenance.PhysicalQuery]
+		if !known || !ok || !queryOK || item.Ref != binding.ProviderResult || item.Completeness != binding.Completeness ||
+			item.DataState != binding.DataState || execution.LogicalQueryRef(query.QueryRevision) != requirement.LogicalQueryRef ||
+			binding.DatasetName != requirement.DatasetName || binding.Role != requirement.Role ||
+			binding.QueryWindow != requirement.AbsoluteWindow(stream.header.Contract.Slot.EvaluationTime) ||
+			binding.Provenance.AttemptNo == 0 {
+			return errors.New("alarmd worker: completion binding differs from frozen requirement or physical completion")
+		}
+		if _, duplicate := completionBindings[key]; duplicate {
+			return errors.New("alarmd worker: duplicate completion binding")
+		}
+		completionBindings[key] = binding
+	}
+	for key, binding := range stream.streamed {
 		item, ok := physical[binding.Provenance.PhysicalQuery]
 		if !ok || item.Ref != binding.ProviderResult {
 			return errors.New("alarmd worker: streamed binding differs from physical completion")
@@ -328,108 +435,456 @@ func (stream *streamedExecution) complete(completion execution.QueryExecutionCom
 			}
 		case execution.CompletenessPartial:
 			if binding.Completeness != execution.CompletenessFull {
-				// A provider that supplied typed PARTIAL evidence earlier remains
-				// owned by the existing evaluator capability path.
-				continue
+				return errors.New("alarmd worker: streamed binding differs from PARTIAL physical completion")
 			}
 			binding.Completeness = execution.CompletenessPartial
 			binding.Disposition = execution.AccessDegraded
 			binding.ReasonCode = execution.ReasonCode(contract.ReasonQueryPartial)
 			binding.PartialEvidence = item.PartialEvidence
-			forced[binding.Consumer.Plan] = *binding
 		case execution.CompletenessUnavailable:
+			binding.Dataset, binding.View = nil, nil
 			binding.Completeness = execution.CompletenessUnavailable
 			binding.DataState = execution.DataStateUnknown
 			binding.Disposition = execution.AccessUnavailable
 			binding.ReasonCode = physicalFailureReason(item.RouteFacts)
 			binding.PartialEvidence = nil
-			forced[binding.Consumer.Plan] = *binding
 		default:
 			return errors.New("alarmd worker: invalid physical completion completeness")
 		}
+		stream.streamed[key] = binding
+	}
+
+	type preparedSeries struct {
+		due      execution.DuePlan
+		identity execution.SeriesIdentityDigest
+		inputs   []execution.SeriesEvaluationInputRequest
+	}
+	preparedSeriesEvaluations := make([]preparedSeries, 0, len(stream.streamed))
+	for _, due := range stream.header.DuePlans {
+		series := make([]execution.SeriesIdentityDigest, 0, len(stream.planSeries[due.Identity]))
+		for identity := range stream.planSeries[due.Identity] {
+			series = append(series, identity)
+		}
+		sort.Slice(series, func(i, j int) bool { return series[i] < series[j] })
+		for _, identity := range series {
+			inputs, err := stream.seriesInputs(due, identity, physical, completionBindings)
+			if err != nil {
+				return err
+			}
+			preparedSeriesEvaluations = append(preparedSeriesEvaluations,
+				preparedSeries{due: due, identity: identity, inputs: inputs})
+		}
+	}
+	for _, binding := range stream.streamed {
+		stream.bindings = append(stream.bindings, compactNamedInputBinding(binding))
 	}
 	for _, binding := range completion.CompletionBindings {
-		item, ok := physical[binding.Provenance.PhysicalQuery]
-		if !ok || item.Ref != binding.ProviderResult || item.Completeness != binding.Completeness {
-			return errors.New("alarmd worker: completion binding differs from physical completion")
-		}
-		switch binding.Completeness {
-		case execution.CompletenessFull:
-		case execution.CompletenessPartial, execution.CompletenessUnavailable:
-			forced[binding.Consumer.Plan] = binding
-		default:
-			return errors.New("alarmd worker: invalid completion binding completeness")
-		}
+		stream.bindings = append(stream.bindings, compactNamedInputBinding(binding))
 	}
-	stream.bindings = append(stream.bindings, completion.CompletionBindings...)
-	if len(forced) == 0 {
-		return stream.completeFullEmpty(completion)
+	sort.SliceStable(stream.bindings, func(i, j int) bool {
+		left, right := stream.bindings[i], stream.bindings[j]
+		if left.Consumer.Plan != right.Consumer.Plan {
+			return planIdentityLess(left.Consumer.Plan, right.Consumer.Plan)
+		}
+		if left.Consumer.LevelID != right.Consumer.LevelID {
+			return left.Consumer.LevelID < right.Consumer.LevelID
+		}
+		return left.RequirementID < right.RequirementID
+	})
+	if err := stream.loadGaps(ctx); err != nil {
+		return err
 	}
-	if stream.request.Operation == execution.OperationProbe {
-		for _, binding := range forced {
-			stream.evaluated = execution.EvaluationResult{
-				Contract: stream.header.Contract, Result: observability.ResultDegraded, ReasonCode: binding.ReasonCode,
-			}
-			return nil
+	for _, prepared := range preparedSeriesEvaluations {
+		if err := stream.evaluateCompletedSeries(ctx, prepared.due, prepared.identity, prepared.inputs); err != nil {
+			return err
 		}
 	}
-	result := stream.evaluated
-	result.Contract, result.Result, result.ReasonCode = stream.header.Contract, observability.ResultDegraded, observability.ReasonNone
-	byPlan := make(map[execution.PlanIdentity]int, len(result.Plans))
-	for index, plan := range result.Plans {
-		byPlan[plan.Plan] = index
+	if len(stream.evaluated.Plans) == 0 {
+		return stream.completeWithoutSeries(completion)
 	}
 	for _, due := range stream.header.DuePlans {
-		binding, affected := forced[due.Identity]
-		if !affected {
-			if _, found := byPlan[due.Identity]; found {
-				continue
-			}
-			if !planCompletedFullEmpty(stream.bindings, due.Identity) {
-				return errors.New("alarmd worker: trustworthy completion produced no provisional evaluation")
-			}
-			result.Plans = append(result.Plans, execution.PlanEvaluationResult{Plan: due.Identity, Disposition: execution.PlanDecided})
+		if len(stream.planSeries[due.Identity]) != 0 {
 			continue
 		}
-		mutation, err := stream.completionGapMutation(due, binding.ReasonCode)
+		result, err := stream.noSeriesPlanResult(due)
 		if err != nil {
 			return err
 		}
-		disposition := execution.PlanDecidedDegraded
-		if binding.Completeness == execution.CompletenessUnavailable {
-			disposition = execution.PlanUnavailable
+		if err := mergeProvisional(&stream.evaluated, result, stream.coordinator.budget); err != nil {
+			return err
 		}
-		plan := execution.PlanEvaluationResult{Plan: due.Identity, Disposition: disposition, ReasonCode: binding.ReasonCode,
-			GuardBeforeEvents: []execution.PlanGapMutation{mutation}}
-		if index, found := byPlan[due.Identity]; found {
-			result.Plans[index] = plan
-		} else {
-			result.Plans = append(result.Plans, plan)
+	}
+	if len(stream.evaluated.Plans) != len(stream.header.DuePlans) {
+		return errors.New("alarmd worker: trustworthy completion did not produce every due Plan result")
+	}
+	return nil
+}
+
+func (stream *streamedExecution) loadGaps(ctx context.Context) error {
+	items, err := gapPreflightForHeader(stream.header)
+	if err != nil {
+		return err
+	}
+	stream.gapItems = items
+	request := execution.GapLoadRequest{Contract: stream.header.Contract, Items: items}
+	started := time.Now()
+	stream.gaps, err = stream.coordinator.ports.GapGuard.LoadGaps(ctx, request)
+	if err == nil {
+		err = execution.ValidateGapLoad(request, stream.gaps)
+	}
+	if err != nil {
+		stream.coordinator.observe(ctx, observability.ComponentState, observability.StageGapLoaded,
+			stream.request.Operation, started, "", "", err)
+		return fmt.Errorf("alarmd worker: gap preflight: %w", err)
+	}
+	result, reason := summarizeGapLoad(stream.gaps)
+	stream.coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageGapLoaded,
+		stream.request.Operation, started, result, reason, observability.Counts{Keys: int64(len(stream.gaps.Items))}, nil)
+	return nil
+}
+
+func (stream *streamedExecution) completeWithoutSeries(completion execution.QueryExecutionCompletion) error {
+	if stream.request.Operation == execution.OperationProbe {
+		for _, binding := range completion.CompletionBindings {
+			if binding.Completeness != execution.CompletenessFull {
+				stream.evaluated = execution.EvaluationResult{Contract: stream.header.Contract,
+					Result: observability.ResultDegraded, ReasonCode: binding.ReasonCode}
+				return nil
+			}
 		}
-		result.ReasonCode = binding.ReasonCode
+	}
+	result := execution.EvaluationResult{Contract: stream.header.Contract, Result: observability.ResultSuccess,
+		ReasonCode: observability.ReasonNone}
+	for _, due := range stream.header.DuePlans {
+		planResult, err := stream.noSeriesPlanResult(due)
+		if err != nil {
+			return err
+		}
+		if err := mergeProvisional(&result, planResult, stream.coordinator.budget); err != nil {
+			return err
+		}
 	}
 	stream.evaluated = result
 	return nil
 }
 
-func (stream *streamedExecution) completeFullEmpty(completion execution.QueryExecutionCompletion) error {
-	if len(stream.evaluated.Plans) != 0 {
-		return nil
+func (stream *streamedExecution) noSeriesPlanResult(due execution.DuePlan) (execution.EvaluationResult, error) {
+	bindings := planBindings(stream.bindings, due.Identity)
+	primary, found := firstNonFullPrimary(bindings)
+	if !found {
+		if !planCompletedFullEmpty(bindings, due.Identity) {
+			return execution.EvaluationResult{}, errors.New("alarmd worker: trustworthy completion produced no series or FULL EMPTY Plan")
+		}
+		return execution.EvaluationResult{Contract: stream.header.Contract, Result: observability.ResultSuccess,
+			ReasonCode: observability.ReasonNone,
+			Plans:      []execution.PlanEvaluationResult{{Plan: due.Identity, Disposition: execution.PlanDecided}}}, nil
 	}
-	for _, physical := range completion.PhysicalQueries {
-		if physical.Completeness != execution.CompletenessFull || physical.DataState != execution.DataStateEmpty {
-			return errors.New("alarmd worker: trustworthy completion produced no provisional evaluation")
+	mutation, err := stream.completionGapMutation(due, bindings)
+	if err != nil {
+		return execution.EvaluationResult{}, err
+	}
+	disposition := execution.PlanDecidedDegraded
+	if primary.Completeness == execution.CompletenessUnavailable {
+		disposition = execution.PlanUnavailable
+	}
+	return execution.EvaluationResult{Contract: stream.header.Contract, Result: observability.ResultDegraded,
+		ReasonCode: primary.ReasonCode,
+		Plans: []execution.PlanEvaluationResult{{Plan: due.Identity, Disposition: disposition,
+			ReasonCode: primary.ReasonCode, GuardBeforeEvents: []execution.PlanGapMutation{mutation}}}}, nil
+}
+
+func planBindings(bindings []execution.NamedInputBinding, plan execution.PlanIdentity) []execution.NamedInputBinding {
+	result := make([]execution.NamedInputBinding, 0)
+	for _, binding := range bindings {
+		if binding.Consumer.Plan == plan {
+			result = append(result, binding)
 		}
 	}
-	stream.evaluated = execution.EvaluationResult{Contract: stream.header.Contract, Result: observability.ResultSuccess,
-		Plans: make([]execution.PlanEvaluationResult, len(stream.header.DuePlans))}
-	for index, due := range stream.header.DuePlans {
-		if !planCompletedFullEmpty(stream.bindings, due.Identity) {
-			return errors.New("alarmd worker: trustworthy completion produced no provisional evaluation")
+	return result
+}
+
+func firstNonFullPrimary(bindings []execution.NamedInputBinding) (execution.NamedInputBinding, bool) {
+	for _, binding := range bindings {
+		if binding.Role == execution.InputRolePrimary && binding.Completeness != execution.CompletenessFull {
+			return binding, true
 		}
-		stream.evaluated.Plans[index] = execution.PlanEvaluationResult{Plan: due.Identity, Disposition: execution.PlanDecided}
 	}
+	return execution.NamedInputBinding{}, false
+}
+
+func compactNamedInputBinding(binding execution.NamedInputBinding) execution.NamedInputBinding {
+	binding.Dataset, binding.View = nil, nil
+	return binding
+}
+
+func planIdentityLess(left, right execution.PlanIdentity) bool {
+	if left.TenantID != right.TenantID {
+		return left.TenantID < right.TenantID
+	}
+	if left.BusinessID != right.BusinessID {
+		return left.BusinessID < right.BusinessID
+	}
+	return left.StrategyID < right.StrategyID
+}
+
+func (stream *streamedExecution) seriesInputs(
+	due execution.DuePlan,
+	series execution.SeriesIdentityDigest,
+	physical map[execution.PhysicalQueryDigest]execution.PhysicalQueryCompletion,
+	completionBindings map[struct {
+		consumer    execution.ConsumerRef
+		requirement execution.RequirementID
+	}]execution.NamedInputBinding,
+) ([]execution.SeriesEvaluationInputRequest, error) {
+	consumers := stream.prepared.consumersByPlan[due.Identity]
+	inputs := make([]execution.SeriesEvaluationInputRequest, 0, len(consumers))
+	for _, consumer := range consumers {
+		input := execution.SeriesEvaluationInputRequest{Contract: stream.header.Contract,
+			Consumer: consumer, SeriesIdentity: series}
+		for _, requirement := range stream.prepared.requirementsByConsumer[consumer] {
+			binding, err := stream.completedBinding(consumer, series, requirement, physical, completionBindings)
+			if err != nil {
+				return nil, fmt.Errorf("alarmd worker: Plan %s Level %d named input: %w",
+					due.Identity.StrategyID, consumer.LevelID, err)
+			}
+			input.RequirementIDs = append(input.RequirementIDs, requirement.RequirementID)
+			input.Inputs = append(input.Inputs, binding)
+		}
+		inputs = append(inputs, input)
+	}
+	return inputs, nil
+}
+
+func (stream *streamedExecution) completedBinding(
+	consumer execution.ConsumerRef,
+	series execution.SeriesIdentityDigest,
+	requirement execution.DataRequirement,
+	physical map[execution.PhysicalQueryDigest]execution.PhysicalQueryCompletion,
+	completionBindings map[struct {
+		consumer    execution.ConsumerRef
+		requirement execution.RequirementID
+	}]execution.NamedInputBinding,
+) (execution.NamedInputBinding, error) {
+	key := streamedInputKey{consumer: consumer, series: series, requirement: requirement.RequirementID}
+	if binding, found := stream.streamed[key]; found {
+		return binding, nil
+	}
+	templateKey := struct {
+		consumer    execution.ConsumerRef
+		requirement execution.RequirementID
+	}{consumer: consumer, requirement: requirement.RequirementID}
+	if binding, found := completionBindings[templateKey]; found {
+		return binding, nil
+	}
+	query, err := stream.queryForRequirement(consumer, requirement, completionBindings)
+	if err != nil {
+		return execution.NamedInputBinding{}, err
+	}
+	completed, found := physical[query.Digest]
+	if !found {
+		return execution.NamedInputBinding{}, errors.New("authoritative physical completion is missing")
+	}
+	binding := execution.NamedInputBinding{
+		Consumer: consumer, RequirementID: requirement.RequirementID, DatasetName: requirement.DatasetName,
+		Role: requirement.Role, ProviderResult: completed.Ref,
+		QueryWindow:  requirement.AbsoluteWindow(stream.header.Contract.Slot.EvaluationTime),
+		Completeness: completed.Completeness, Disposition: execution.AccessAvailable, ImpactScope: execution.ImpactLevel,
+		PartialEvidence: completed.PartialEvidence,
+		Provenance:      execution.InputProvenance{PhysicalQuery: query.Digest, AttemptNo: stream.request.AttemptNo},
+	}
+	switch completed.Completeness {
+	case execution.CompletenessFull:
+		binding.DataState = execution.DataStateEmpty
+		binding.Dataset = execution.NewDataset(nil)
+		binding.View, _ = execution.NewDatasetView(binding.Dataset, nil)
+	case execution.CompletenessPartial:
+		binding.DataState = execution.DataStateEmpty
+		binding.Dataset = execution.NewDataset(nil)
+		binding.View, _ = execution.NewDatasetView(binding.Dataset, nil)
+		binding.Disposition = execution.AccessDegraded
+		binding.ReasonCode = execution.ReasonCode(contract.ReasonQueryPartial)
+	case execution.CompletenessUnavailable:
+		binding.DataState = execution.DataStateUnknown
+		binding.Disposition = execution.AccessUnavailable
+		binding.ReasonCode = physicalFailureReason(completed.RouteFacts)
+	default:
+		return execution.NamedInputBinding{}, errors.New("invalid physical completion completeness")
+	}
+	return binding, nil
+}
+
+func (stream *streamedExecution) queryForRequirement(
+	consumer execution.ConsumerRef,
+	requirement execution.DataRequirement,
+	completionBindings map[struct {
+		consumer    execution.ConsumerRef
+		requirement execution.RequirementID
+	}]execution.NamedInputBinding,
+) (execution.PlannedPhysicalQueryRef, error) {
+	for key, binding := range stream.streamed {
+		if key.consumer == consumer && key.requirement == requirement.RequirementID {
+			return stream.prepared.queries[binding.Provenance.PhysicalQuery], nil
+		}
+	}
+	templateKey := struct {
+		consumer    execution.ConsumerRef
+		requirement execution.RequirementID
+	}{consumer: consumer, requirement: requirement.RequirementID}
+	if binding, found := completionBindings[templateKey]; found {
+		return stream.prepared.queries[binding.Provenance.PhysicalQuery], nil
+	}
+	var selected execution.PlannedPhysicalQueryRef
+	found := false
+	for _, query := range stream.prepared.queries {
+		if execution.LogicalQueryRef(query.QueryRevision) != requirement.LogicalQueryRef {
+			continue
+		}
+		if found {
+			return execution.PlannedPhysicalQueryRef{}, errors.New("frozen requirement physical query is ambiguous")
+		}
+		selected, found = query, true
+	}
+	if !found {
+		return execution.PlannedPhysicalQueryRef{}, errors.New("frozen requirement physical query is missing")
+	}
+	return selected, nil
+}
+
+func (stream *streamedExecution) evaluateCompletedSeries(
+	ctx context.Context,
+	due execution.DuePlan,
+	series execution.SeriesIdentityDigest,
+	inputs []execution.SeriesEvaluationInputRequest,
+) error {
+	primaryIncomplete := make([]execution.NamedInputBinding, 0)
+	for _, input := range inputs {
+		for _, binding := range input.Inputs {
+			if binding.Role == execution.InputRolePrimary && binding.Completeness != execution.CompletenessFull {
+				primaryIncomplete = append(primaryIncomplete, binding)
+			}
+		}
+	}
+	if len(primaryIncomplete) != 0 {
+		mutation, err := stream.completionGapMutation(due, primaryIncomplete)
+		if err != nil {
+			return err
+		}
+		disposition := execution.PlanDecidedDegraded
+		reason := primaryIncomplete[0].ReasonCode
+		for _, binding := range primaryIncomplete {
+			if binding.Completeness == execution.CompletenessUnavailable {
+				disposition = execution.PlanUnavailable
+				reason = binding.ReasonCode
+				break
+			}
+		}
+		return mergeProvisional(&stream.evaluated, execution.EvaluationResult{Contract: stream.header.Contract,
+			Result: observability.ResultDegraded, ReasonCode: reason,
+			Plans: []execution.PlanEvaluationResult{{Plan: due.Identity, Disposition: disposition,
+				ReasonCode: reason, GuardBeforeEvents: []execution.PlanGapMutation{mutation}}}}, stream.coordinator.budget)
+	}
+	version, err := execution.BuildApplyVersion(stream.header.Contract, due.StateApplyEpoch)
+	if err != nil {
+		return err
+	}
+	stateItems := []execution.StatePreflightItem{{Identity: execution.StateKeyIdentity{
+		Plan: due.Identity, StateGeneration: due.StateGeneration, SeriesIdentityDigest: series,
+	}, ApplyVersion: version}}
+	stateRequest := execution.StatePreflightRequest{Contract: stream.request.Contract, Items: stateItems}
+	started := time.Now()
+	loaded, err := stream.coordinator.ports.State.LoadRuntime(ctx, stateRequest)
+	if err == nil {
+		loaded, err = execution.ClassifyStatePreflight(stateRequest, loaded)
+	}
+	if err != nil {
+		stream.coordinator.observe(ctx, observability.ComponentState, observability.StageStatePreflight,
+			stream.request.Operation, started, "", "", err)
+		return fmt.Errorf("alarmd worker: series state preflight: %w", err)
+	}
+	stateResult, stateReason := summarizeStateLoad(loaded)
+	stream.coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageStatePreflight,
+		stream.request.Operation, started, stateResult, stateReason, observability.Counts{Keys: int64(len(loaded.Items))}, nil)
+	evaluationHeader, err := bindAlwaysEffectiveTimeFacts(stream.header, stateItems, stream.effective)
+	if err != nil {
+		return fmt.Errorf("alarmd worker: bind series EffectiveTime facts: %w", err)
+	}
+	request := execution.EvaluationRequest{Header: evaluationHeader, Inputs: inputs, State: loaded, Gaps: stream.gaps}
+	started = time.Now()
+	evaluated, err := stream.coordinator.ports.Evaluator.Evaluate(ctx, request)
+	if err != nil {
+		stream.coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
+			stream.request.Operation, started, "", "", err)
+		return fmt.Errorf("alarmd worker: evaluate series: %w", err)
+	}
+	incomplete := make([]execution.NamedInputBinding, 0)
+	for _, input := range inputs {
+		for _, binding := range input.Inputs {
+			if binding.Completeness != execution.CompletenessFull {
+				incomplete = append(incomplete, binding)
+			}
+		}
+	}
+	if len(incomplete) != 0 {
+		if len(evaluated.Plans) != 1 || evaluated.Plans[0].Plan != due.Identity {
+			return errors.New("alarmd worker: incomplete named input produced an invalid Plan result")
+		}
+		mutation, mutationErr := stream.completionGapMutation(due, incomplete)
+		if mutationErr != nil {
+			return mutationErr
+		}
+		evaluated.Plans[0].GuardBeforeEvents = []execution.PlanGapMutation{mutation}
+		evaluated.Plans[0].GuardAfterState = nil
+	}
+	if err := evaluated.Validate(request); err != nil {
+		stream.coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
+			stream.request.Operation, started, "", "", err)
+		return fmt.Errorf("alarmd worker: invalid series evaluation: %w", err)
+	}
+	stream.coordinator.observeWithCounts(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
+		stream.request.Operation, started, evaluated.Result, evaluated.ReasonCode,
+		observability.Counts{Records: evaluationRecordCount(inputs)}, nil)
+	retained, err := evaluationRetainedSize(loaded, evaluated)
+	if err != nil {
+		return fmt.Errorf("alarmd worker: measure evaluated retention: %w", err)
+	}
+	stream.retained += retained
+	if stream.retained > stream.coordinator.budget.MaxRetainedBytes {
+		err := errors.New("alarmd worker: provisional retained byte budget exceeded")
+		stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, observability.CapacityBudgetRetainedBytes, err)
+		return err
+	}
+	if err := mergeProvisional(&stream.evaluated, evaluated, stream.coordinator.budget); err != nil {
+		var exceeded *provisionalBudgetExceededError
+		if errors.As(err, &exceeded) {
+			stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, exceeded.budget, err)
+		}
+		return err
+	}
+	stream.state.Items = append(stream.state.Items, loaded.Items...)
+	stream.stateItems = append(stream.stateItems, stateItems...)
 	return nil
+}
+
+func evaluationRecordCount(inputs []execution.SeriesEvaluationInputRequest) int64 {
+	for _, input := range inputs {
+		for _, binding := range input.Inputs {
+			if binding.Role == execution.InputRolePrimary && binding.View != nil {
+				return int64(binding.View.Len())
+			}
+		}
+	}
+	return 0
+}
+
+func evaluationRetainedSize(state execution.StatePreflightResult, result execution.EvaluationResult) (uint64, error) {
+	encoded, err := json.Marshal(struct {
+		State  execution.StatePreflightResult
+		Result execution.EvaluationResult
+	}{State: state, Result: result})
+	if err != nil {
+		return 0, err
+	}
+	return uint64(len(encoded)), nil
 }
 
 func planCompletedFullEmpty(bindings []execution.NamedInputBinding, plan execution.PlanIdentity) bool {
@@ -449,7 +904,7 @@ func planCompletedFullEmpty(bindings []execution.NamedInputBinding, plan executi
 
 func (stream *streamedExecution) completionGapMutation(
 	due execution.DuePlan,
-	reason execution.ReasonCode,
+	bindings []execution.NamedInputBinding,
 ) (execution.PlanGapMutation, error) {
 	identity := execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}
 	marker, found := stream.gaps.Find(identity)
@@ -468,12 +923,39 @@ func (stream *streamedExecution) completionGapMutation(
 	if required == 0 {
 		return execution.PlanGapMutation{}, errors.New("alarmd worker: Plan gap requires positive FULL warmup slots")
 	}
+	reasons := make(map[execution.GapScope]execution.ReasonCode)
+	for _, binding := range bindings {
+		if binding.Consumer.Plan != due.Identity || binding.Completeness == execution.CompletenessFull {
+			continue
+		}
+		scope := execution.GapScope{LevelID: binding.Consumer.LevelID, HasLevel: binding.Consumer.HasLevel}
+		if previous, duplicate := reasons[scope]; duplicate && previous != binding.ReasonCode {
+			return execution.PlanGapMutation{}, errors.New("alarmd worker: one gap scope has conflicting completion reasons")
+		}
+		reasons[scope] = binding.ReasonCode
+	}
+	if len(reasons) == 0 {
+		return execution.PlanGapMutation{}, errors.New("alarmd worker: incomplete named input requires a gap scope")
+	}
+	scopes := make([]execution.GapScope, 0, len(reasons))
+	for scope := range reasons {
+		scopes = append(scopes, scope)
+	}
+	sort.Slice(scopes, func(i, j int) bool {
+		if scopes[i].HasLevel != scopes[j].HasLevel {
+			return !scopes[i].HasLevel
+		}
+		return scopes[i].LevelID < scopes[j].LevelID
+	})
+	mutations := make([]execution.GapScopeMutation, 0, len(scopes))
+	for _, scope := range scopes {
+		mutations = append(mutations, execution.GapScopeMutation{Scope: scope, Kind: kind,
+			ReasonCode: reasons[scope], RequiredFullSlots: required})
+	}
 	mutation, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{
 		Identity: identity, ExpectedMarkerRevision: marker.MarkerRevision,
 		ApplyVersion: version, ScheduleRevision: due.ScheduleRevision,
-		Scopes: []execution.GapScopeMutation{{
-			Kind: kind, ReasonCode: reason, RequiredFullSlots: required,
-		}},
+		Scopes: mutations,
 	})
 	if err != nil {
 		return execution.PlanGapMutation{}, fmt.Errorf("alarmd worker: build completion Plan gap: %w", err)

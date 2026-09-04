@@ -34,129 +34,25 @@ func New(detector *detect.Evaluator, limits Limits) (*Evaluator, error) {
 }
 
 func (e *Evaluator) Evaluate(ctx context.Context, request execution.EvaluationRequest) (execution.EvaluationResult, error) {
-	if e == nil || request.Batch.Dataset == nil || uint64(request.Batch.Dataset.Len()) > e.limits.MaxRecords {
+	if e == nil || len(request.Inputs) == 0 || e.limits.MaxPlans < 1 {
 		return execution.EvaluationResult{}, errors.New("alarmd evaluation: invalid or over-budget request")
 	}
-	selected := map[execution.PlanIdentity]bool{}
-	for _, b := range request.Batch.Inputs {
-		selected[b.Consumer.Plan] = true
-	}
-	if uint64(len(selected)) > e.limits.MaxPlans {
-		return execution.EvaluationResult{}, errors.New("alarmd evaluation: plan budget exceeded")
-	}
-	result := execution.EvaluationResult{Contract: request.Header.Contract, Result: observability.ResultSuccess, ReasonCode: observability.ReasonNone}
-	for _, due := range request.Header.DuePlans {
-		if !selected[due.Identity] {
-			continue
-		}
-		planResult, err := e.evaluatePlan(ctx, request, due)
-		if err != nil {
-			return execution.EvaluationResult{}, err
-		}
-		result.Plans = append(result.Plans, planResult)
-		if planResult.Disposition == execution.PlanDecidedDegraded {
-			result.Result = observability.ResultDegraded
-			result.ReasonCode = planResult.ReasonCode
-		}
-	}
-	if err := result.Validate(request); err != nil {
+	plan, err := e.evaluateSeries(ctx, request.Header, request.Inputs, request.State, request.Gaps)
+	if err != nil {
 		return execution.EvaluationResult{}, err
 	}
-	return result, nil
-}
-
-func (e *Evaluator) evaluatePlan(ctx context.Context, request execution.EvaluationRequest, due execution.DuePlan) (execution.PlanEvaluationResult, error) {
-	if uint64(len(due.CompiledPlan.Levels())) > e.limits.MaxLevels {
-		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: level budget exceeded")
-	}
-	prepared, err := e.detect.PreparePlan(due.CompiledPlan)
-	if err != nil {
-		return execution.PlanEvaluationResult{}, err
-	}
-	result := execution.PlanEvaluationResult{Plan: due.Identity, Disposition: execution.PlanDecided, ReasonCode: observability.ReasonNone}
-	type group struct {
-		identity execution.StateKeyIdentity
-		records  []execution.RecordView
-	}
-	groups := map[execution.StateKeyIdentity]*group{}
-	for _, binding := range request.Batch.Inputs {
-		if binding.Consumer.Plan != due.Identity || binding.Role != execution.InputRolePrimary {
-			continue
-		}
-		if binding.Completeness != execution.CompletenessFull {
-			return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: G1 requires FULL input")
-		}
-		for i := 0; i < binding.View.Len(); i++ {
-			record, ok := binding.View.Record(i)
-			if !ok {
-				return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: selected record missing")
-			}
-			identity := execution.StateKeyIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration, SeriesIdentityDigest: execution.SeriesIdentityDigest(record.DimensionIdentity().Digest)}
-			current := groups[identity]
-			if current == nil {
-				current = &group{identity: identity}
-				groups[identity] = current
-			}
-			current.records = append(current.records, record)
-		}
-	}
-	for _, current := range groups {
-		sort.Slice(current.records, func(i, j int) bool {
-			if current.records[i].SourceTime() == current.records[j].SourceTime() {
-				return current.records[i].RecordID() < current.records[j].RecordID()
-			}
-			return current.records[i].SourceTime() < current.records[j].SourceTime()
-		})
-		view, ok := request.State.Find(current.identity)
-		if !ok {
-			return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: runtime state missing")
-		}
-		warmingConvergence, err := warmingConvergenceAllowed(view, due.CompiledPlan.Levels())
-		if err != nil {
-			return execution.PlanEvaluationResult{}, err
-		}
-		var final *execution.StateEvaluation
-		var events []contract.TriggerEventV1
-		var affected []execution.RecordAnchor
-		for _, record := range current.records {
-			one, err := e.evaluateRecord(ctx, request, due, prepared, record, view, warmingConvergence)
-			if err != nil {
-				return execution.PlanEvaluationResult{}, err
-			}
-			result.LevelOutcomes = append(result.LevelOutcomes, one.outcomes...)
-			if one.state != nil {
-				view = applyProvisional(view, one.state.Mutation)
-				final = one.state
-				events = append(events, one.state.Events...)
-				affected = append(affected, execution.RecordAnchor{RecordID: record.RecordID(), SourceTime: record.SourceTime()})
-			}
-		}
-		if final != nil {
-			mutation := final.Mutation
-			mutation.MutationDigest = ""
-			mutation.AffectedRecords = affected
-			mutation, err = execution.BuildStateMutation(mutation)
-			if err != nil {
-				return execution.PlanEvaluationResult{}, err
-			}
-			final.Mutation = mutation
-			final.Events = events
-			result.StateResults = append(result.StateResults, *final)
-		}
-	}
-	gapMutation, err := planGapRecoveryMutation(request, due, len(result.StateResults) > 0)
-	if err != nil {
-		return execution.PlanEvaluationResult{}, err
-	}
-	if gapMutation != nil {
-		result.GuardAfterState = []execution.PlanGapMutation{*gapMutation}
-	}
-	for _, outcome := range result.LevelOutcomes {
-		if outcome.Outcome == execution.LevelOutcomeUnknown || outcome.Outcome == execution.LevelOutcomeTerminal {
-			result.Disposition = execution.PlanDecidedDegraded
-			result.ReasonCode = outcome.ReasonCode
-			break
-		}
+	result := execution.EvaluationResult{Contract: request.Header.Contract, Plans: []execution.PlanEvaluationResult{plan},
+		Result: observability.ResultSuccess, ReasonCode: observability.ReasonNone}
+	switch plan.Disposition {
+	case execution.PlanDecided:
+	case execution.PlanDecidedDegraded, execution.PlanUnavailable, execution.PlanReadinessGap:
+		result.Result, result.ReasonCode = observability.ResultDegraded, plan.ReasonCode
+	case execution.PlanTerminal:
+		result.Result, result.ReasonCode = observability.ResultTerminal, plan.ReasonCode
+	case execution.PlanRetryPending:
+		result.Result, result.ReasonCode = observability.ResultRetrying, plan.ReasonCode
+	default:
+		return execution.EvaluationResult{}, errors.New("alarmd evaluation: invalid named-input Plan result")
 	}
 	return result, nil
 }
@@ -206,13 +102,6 @@ type recordResult struct {
 }
 
 type recordDetector func() ([]detect.LevelFact, []detect.ProjectedValue, error)
-
-func (e *Evaluator) evaluateRecord(ctx context.Context, request execution.EvaluationRequest, due execution.DuePlan, prepared detect.PreparedPlan, record execution.RecordView, view execution.RuntimeStateView, warmingConvergence map[uint32]bool) (recordResult, error) {
-	return e.evaluateRecordWith(ctx, request, due, record, view, warmingConvergence, func() ([]detect.LevelFact, []detect.ProjectedValue, error) {
-		facts, projected, _, err := e.detect.EvaluatePreparedRecord(ctx, prepared, record)
-		return facts, projected, err
-	})
-}
 
 func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, warmingConvergence map[uint32]bool, run recordDetector) (recordResult, error) {
 	series := execution.SeriesIdentityDigest(record.DimensionIdentity().Digest)
@@ -341,10 +230,8 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 	return result, nil
 }
 
-// evaluateSeries is the G4 package-local seam. One request represents one
-// compiled Level; the slice must exactly cover one due Plan and one series.
-// The public Evaluator port remains unchanged until Worker performs the
-// atomic request cutover.
+// evaluateSeries evaluates one due Plan and one series. The slice contains one
+// named-input request per compiled Level and must exactly cover the Plan.
 func (e *Evaluator) evaluateSeries(
 	ctx context.Context,
 	header execution.InternalExecutionHeader,

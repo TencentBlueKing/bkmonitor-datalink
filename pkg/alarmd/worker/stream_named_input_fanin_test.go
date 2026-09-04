@@ -127,6 +127,43 @@ func TestSlotExecutionCoordinatorRejectsCompletionOnlyMissingLevelRequirement(t 
 	}
 }
 
+func TestSlotExecutionCoordinatorValidatesCompletionOnlyBindingsBeforeLoadingGapOrState(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*execution.NamedInputBinding)
+	}{
+		{name: "impact scope", mutate: func(binding *execution.NamedInputBinding) { binding.ImpactScope = "" }},
+		{name: "dataset view", mutate: func(binding *execution.NamedInputBinding) { binding.View = nil }},
+		{name: "disposition", mutate: func(binding *execution.NamedInputBinding) {
+			binding.Disposition = execution.AccessDegraded
+		}},
+		{name: "reason", mutate: func(binding *execution.NamedInputBinding) {
+			binding.ReasonCode = execution.ReasonCode(contract.ReasonQueryPartial)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			header, completion := workerG4MultiLevelCompletionOnlyFixture(t)
+			test.mutate(&completion.CompletionBindings[0])
+			ports, evaluator, coordinator := workerG4Coordinator(t)
+			ports.executeOverride = streamExecution(header, nil, completion)
+
+			result, err := coordinator.Execute(context.Background(), workerSlotRequest(header.Contract))
+			if err == nil || result.Completed {
+				t.Fatalf("Execute() result=%+v error=%v, want invalid completion-only binding rejection", result, err)
+			}
+			if ports.stateLoadCalls != 0 || ports.stateApplyCalls != 0 || ports.eventCount != 0 ||
+				len(evaluator.requests) != 0 || !isZeroProgressCommit(ports.lastProgress) {
+				t.Fatalf("invalid completion-only binding escaped: State load/apply=%d/%d Events=%d Evaluate=%d Progress=%+v",
+					ports.stateLoadCalls, ports.stateApplyCalls, ports.eventCount, len(evaluator.requests), ports.lastProgress)
+			}
+			if trace := strings.Join(*ports.trace, ","); strings.Contains(trace, "gap_load") {
+				t.Fatalf("invalid completion-only binding loaded Gap: %s", trace)
+			}
+		})
+	}
+}
+
 func TestSlotExecutionCoordinatorFansInTwoLevelsOnceAfterAllQueriesComplete(t *testing.T) {
 	header, batches, completion := workerG4MultiLevelStreamFixture(t, false)
 	ports, evaluator, coordinator := workerG4Coordinator(t)

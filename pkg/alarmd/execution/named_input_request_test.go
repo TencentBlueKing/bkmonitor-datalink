@@ -168,6 +168,17 @@ func TestPrepareSeriesEvaluationInputBuilderRejectsInvalidHeader(t *testing.T) {
 	}
 }
 
+func TestSeriesEvaluationInputBuilderZeroValueFailsClosed(t *testing.T) {
+	var builder execution.SeriesEvaluationInputBuilder
+	consumer := execution.ConsumerRef{Plan: execution.PlanIdentity{TenantID: "t", BusinessID: "2", StrategyID: "7"}, LevelID: 1, HasLevel: true}
+	if _, err := builder.Build(consumer, "series", nil, nil); err == nil {
+		t.Fatal("zero-value SeriesEvaluationInputBuilder.Build() must fail closed")
+	}
+	if err := builder.ValidateCompletionOnly(consumer, nil, nil); err == nil {
+		t.Fatal("zero-value SeriesEvaluationInputBuilder.ValidateCompletionOnly() must fail closed")
+	}
+}
+
 func assertScopedInputError(t *testing.T, err error, consumer execution.ConsumerRef, series execution.SeriesIdentityDigest) {
 	t.Helper()
 	var violation *execution.EvaluationInputContractError

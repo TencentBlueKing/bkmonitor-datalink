@@ -44,7 +44,7 @@ type streamedInputKey struct {
 }
 
 type preparedNamedInputIndex struct {
-	inputBuilder           execution.SeriesEvaluationInputBuilder
+	inputBuilder           *execution.SeriesEvaluationInputBuilder
 	queries                map[execution.PhysicalQueryDigest]execution.PlannedPhysicalQueryRef
 	requirementsByConsumer map[execution.ConsumerRef][]execution.DataRequirement
 	requirementByKey       map[struct {
@@ -509,7 +509,7 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 	})
 	for _, due := range stream.header.DuePlans {
 		if len(stream.planSeries[due.Identity]) == 0 {
-			if err := stream.validateCompletionOnlyExactSet(due, completionBindings); err != nil {
+			if err := stream.validateCompletionOnlyExactSet(due, completionBindings, completion.PhysicalQueries); err != nil {
 				return err
 			}
 		}
@@ -549,8 +549,10 @@ func (stream *streamedExecution) validateCompletionOnlyExactSet(
 		consumer    execution.ConsumerRef
 		requirement execution.RequirementID
 	}]execution.NamedInputBinding,
+	completions []execution.PhysicalQueryCompletion,
 ) error {
 	for _, consumer := range stream.prepared.consumersByPlan[due.Identity] {
+		bindings := make([]execution.NamedInputBinding, 0, len(stream.prepared.requirementsByConsumer[consumer]))
 		for _, requirement := range stream.prepared.requirementsByConsumer[consumer] {
 			key := struct {
 				consumer    execution.ConsumerRef
@@ -560,6 +562,11 @@ func (stream *streamedExecution) validateCompletionOnlyExactSet(
 				return fmt.Errorf("alarmd worker: completion-only Plan %s Level %d is missing frozen requirement %s",
 					due.Identity.StrategyID, consumer.LevelID, requirement.RequirementID)
 			}
+			bindings = append(bindings, completionBindings[key])
+		}
+		if err := stream.prepared.inputBuilder.ValidateCompletionOnly(consumer, bindings, completions); err != nil {
+			return fmt.Errorf("alarmd worker: Plan %s Level %d completion-only exact set: %w",
+				due.Identity.StrategyID, consumer.LevelID, err)
 		}
 	}
 	return nil

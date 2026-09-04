@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"context"
 	"sync"
 	"testing"
 )
@@ -66,4 +67,26 @@ func TestProcessProvisionalReservationCapsConcurrentSlotsAndReleases(t *testing.
 			}
 		})
 	}
+}
+
+func TestStreamedExecutionReleaseProvisionalIsIdempotentAndReusable(t *testing.T) {
+	coordinator := &SlotExecutionCoordinator{budget: ProvisionalBudget{MaxSeries: 1, MaxRetainedBytes: 100}}
+	stream := &streamedExecution{coordinator: coordinator}
+	if err := stream.reserveProvisional(context.Background(), 1, 100); err != nil {
+		t.Fatal(err)
+	}
+	stream.series, stream.retained = 1, 100
+	stream.releaseProvisional()
+	stream.releaseProvisional()
+
+	coordinator.reservations.mu.Lock()
+	series, retained := coordinator.reservations.series, coordinator.reservations.retainedBytes
+	coordinator.reservations.mu.Unlock()
+	if series != 0 || retained != 0 {
+		t.Fatalf("repeated stream release leaked or underflowed series/bytes=%d/%d", series, retained)
+	}
+	if err := coordinator.acquireProvisional(1, 100); err != nil {
+		t.Fatalf("budget is not reusable after repeated stream release: %v", err)
+	}
+	coordinator.releaseProvisional(1, 100)
 }

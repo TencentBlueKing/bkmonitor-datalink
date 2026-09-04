@@ -30,19 +30,9 @@ type SeriesEvaluationInputRequest struct {
 	Inputs         []NamedInputBinding
 }
 
-// SeriesEvaluationInputBuilder is created only from a fully validated frozen
-// header. Its implementation is private so callers cannot construct an
-// unvalidated builder.
-type SeriesEvaluationInputBuilder interface {
-	Build(
-		consumer ConsumerRef,
-		series SeriesIdentityDigest,
-		bindings []NamedInputBinding,
-		completions []PhysicalQueryCompletion,
-	) (SeriesEvaluationInputRequest, error)
-}
-
-type validatedSeriesEvaluationInputBuilder struct {
+// SeriesEvaluationInputBuilder holds one validated, immutable Slot-local
+// named-input index. Its zero value rejects all operations.
+type SeriesEvaluationInputBuilder struct {
 	contract  FrozenExecutionContractRef
 	consumers map[ConsumerRef]preparedSeriesEvaluationConsumer
 	queries   map[PhysicalQueryDigest]PlannedPhysicalQueryRef
@@ -86,11 +76,11 @@ func BuildSeriesEvaluationInputRequest(
 
 // PrepareSeriesEvaluationInputBuilder validates and indexes the frozen header
 // once for one Slot-local streamed execution.
-func PrepareSeriesEvaluationInputBuilder(header InternalExecutionHeader) (SeriesEvaluationInputBuilder, error) {
+func PrepareSeriesEvaluationInputBuilder(header InternalExecutionHeader) (*SeriesEvaluationInputBuilder, error) {
 	if err := header.Validate(header.Contract); err != nil {
 		return nil, err
 	}
-	builder := &validatedSeriesEvaluationInputBuilder{
+	builder := &SeriesEvaluationInputBuilder{
 		contract:  header.Contract,
 		consumers: make(map[ConsumerRef]preparedSeriesEvaluationConsumer),
 		queries:   make(map[PhysicalQueryDigest]PlannedPhysicalQueryRef, len(header.RequiredPhysicalQueries)),
@@ -146,13 +136,13 @@ func PrepareSeriesEvaluationInputBuilder(header InternalExecutionHeader) (Series
 	return builder, nil
 }
 
-func (builder *validatedSeriesEvaluationInputBuilder) Build(
+func (builder *SeriesEvaluationInputBuilder) Build(
 	consumer ConsumerRef,
 	series SeriesIdentityDigest,
 	bindings []NamedInputBinding,
 	completions []PhysicalQueryCompletion,
 ) (SeriesEvaluationInputRequest, error) {
-	if builder == nil {
+	if builder == nil || builder.consumers == nil {
 		return SeriesEvaluationInputRequest{}, scopedEvaluationInputError(consumer, series, errors.New("unprepared named-input builder"))
 	}
 	request, err := buildSeriesEvaluationInputRequest(builder, consumer, series, bindings, completions)
@@ -160,6 +150,33 @@ func (builder *validatedSeriesEvaluationInputBuilder) Build(
 		return SeriesEvaluationInputRequest{}, scopedEvaluationInputError(consumer, series, err)
 	}
 	return request, nil
+}
+
+// ValidateCompletionOnly validates one Plan Level's exact no-series binding
+// set against the same frozen requirements and physical completions as Build.
+func (builder *SeriesEvaluationInputBuilder) ValidateCompletionOnly(
+	consumer ConsumerRef,
+	bindings []NamedInputBinding,
+	completions []PhysicalQueryCompletion,
+) error {
+	if builder == nil || builder.consumers == nil {
+		return scopedEvaluationInputError(consumer, "", errors.New("unprepared named-input builder"))
+	}
+	prepared, actualByID, err := validateNamedInputExactSet(builder, consumer, "", bindings, completions)
+	if err != nil {
+		return scopedEvaluationInputError(consumer, "", err)
+	}
+	for _, requirement := range prepared.requirements {
+		binding := actualByID[requirement.RequirementID]
+		if binding.ImpactScope == ImpactSeries {
+			return scopedEvaluationInputError(consumer, "", errors.New("completion-only named input cannot use series impact scope"))
+		}
+		if binding.Completeness != CompletenessUnavailable &&
+			(binding.DataState != DataStateEmpty || binding.Dataset == nil || binding.View == nil || binding.View.Len() != 0) {
+			return scopedEvaluationInputError(consumer, "", errors.New("completion-only available input must carry an empty dataset view"))
+		}
+	}
+	return nil
 }
 
 // Validate replays the contract against authoritative completion facts kept by
@@ -184,7 +201,7 @@ func (request SeriesEvaluationInputRequest) Validate(
 }
 
 func buildSeriesEvaluationInputRequest(
-	builder *validatedSeriesEvaluationInputBuilder,
+	builder *SeriesEvaluationInputBuilder,
 	consumer ConsumerRef,
 	series SeriesIdentityDigest,
 	bindings []NamedInputBinding,
@@ -193,49 +210,69 @@ func buildSeriesEvaluationInputRequest(
 	if series == "" || !consumer.HasLevel || consumer.LevelID == 0 {
 		return SeriesEvaluationInputRequest{}, errors.New("complete Level and series scope is required")
 	}
+	prepared, actualByID, err := validateNamedInputExactSet(builder, consumer, series, bindings, completions)
+	if err != nil {
+		return SeriesEvaluationInputRequest{}, err
+	}
+
+	request := SeriesEvaluationInputRequest{Contract: builder.contract, Consumer: consumer, SeriesIdentity: series}
+	for _, requirement := range prepared.requirements {
+		request.RequirementIDs = append(request.RequirementIDs, requirement.RequirementID)
+		request.Inputs = append(request.Inputs, cloneNamedInputBinding(actualByID[requirement.RequirementID]))
+	}
+	return request, nil
+}
+
+func validateNamedInputExactSet(
+	builder *SeriesEvaluationInputBuilder,
+	consumer ConsumerRef,
+	series SeriesIdentityDigest,
+	bindings []NamedInputBinding,
+	completions []PhysicalQueryCompletion,
+) (preparedSeriesEvaluationConsumer, map[RequirementID]NamedInputBinding, error) {
+	if !consumer.HasLevel || consumer.LevelID == 0 {
+		return preparedSeriesEvaluationConsumer{}, nil, errors.New("complete Level consumer scope is required")
+	}
 	prepared, dueFound := builder.consumers[consumer]
 	if !dueFound {
-		return SeriesEvaluationInputRequest{}, errors.New("consumer does not reference a frozen due Plan Level")
+		return preparedSeriesEvaluationConsumer{}, nil, errors.New("consumer does not reference a frozen due Plan Level")
 	}
 
 	actualByID := make(map[RequirementID]NamedInputBinding, len(bindings))
 	for _, binding := range bindings {
 		if binding.Consumer != consumer {
-			return SeriesEvaluationInputRequest{}, errors.New("named input has a different consumer")
+			return preparedSeriesEvaluationConsumer{}, nil, errors.New("named input has a different consumer")
 		}
 		if _, known := prepared.byID[binding.RequirementID]; !known {
-			return SeriesEvaluationInputRequest{}, errors.New("named input is not in the frozen exact set")
+			return preparedSeriesEvaluationConsumer{}, nil, errors.New("named input is not in the frozen exact set")
 		}
 		if _, duplicate := actualByID[binding.RequirementID]; duplicate {
-			return SeriesEvaluationInputRequest{}, errors.New("duplicate named input requirement")
+			return preparedSeriesEvaluationConsumer{}, nil, errors.New("duplicate named input requirement")
 		}
 		actualByID[binding.RequirementID] = binding
 	}
 	if len(actualByID) != len(prepared.byID) {
-		return SeriesEvaluationInputRequest{}, errors.New("named inputs do not cover the frozen exact set")
+		return preparedSeriesEvaluationConsumer{}, nil, errors.New("named inputs do not cover the frozen exact set")
 	}
 
-	request := SeriesEvaluationInputRequest{Contract: builder.contract, Consumer: consumer, SeriesIdentity: series}
 	for _, requirement := range prepared.requirements {
 		binding := actualByID[requirement.RequirementID]
 		if err := validateSeriesNamedInputBinding(binding, requirement, series, builder.contract.Slot.EvaluationTime); err != nil {
-			return SeriesEvaluationInputRequest{}, err
+			return preparedSeriesEvaluationConsumer{}, nil, err
 		}
 		query, ok := builder.queries[binding.Provenance.PhysicalQuery]
 		if !ok || LogicalQueryRef(query.QueryRevision) != requirement.LogicalQueryRef {
-			return SeriesEvaluationInputRequest{}, errors.New("named input differs from its frozen physical query")
+			return preparedSeriesEvaluationConsumer{}, nil, errors.New("named input differs from its frozen physical query")
 		}
 		completion, err := matchingPhysicalQueryCompletion(completions, query)
 		if err != nil {
-			return SeriesEvaluationInputRequest{}, err
+			return preparedSeriesEvaluationConsumer{}, nil, err
 		}
 		if err := validateNamedInputCompletion(binding, completion); err != nil {
-			return SeriesEvaluationInputRequest{}, err
+			return preparedSeriesEvaluationConsumer{}, nil, err
 		}
-		request.RequirementIDs = append(request.RequirementIDs, requirement.RequirementID)
-		request.Inputs = append(request.Inputs, cloneNamedInputBinding(binding))
 	}
-	return request, nil
+	return prepared, actualByID, nil
 }
 
 func cloneBuilderDataRequirement(requirement DataRequirement) DataRequirement {

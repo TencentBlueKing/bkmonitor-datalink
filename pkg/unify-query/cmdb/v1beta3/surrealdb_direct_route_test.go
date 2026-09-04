@@ -71,3 +71,39 @@ func TestSurrealDBRouteResolvesStorageAndExecutesDirectQuery(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, graphs)
 }
+
+func TestSurrealDBDirectQueryNormalizesObjectGraphResult(t *testing.T) {
+	const storageID = "700008"
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, http.MethodPost, request.Method)
+		assert.Equal(t, "/sql", request.URL.Path)
+		response.Header().Set("Content-Type", "application/json")
+		_, err := response.Write([]byte(`[{"result":{"namespace":"mapleleaf_2","database":"2_graph_rt"}},{"result":{"root":{"entity_type":"node","entity_id":"node:node-1","entity_data":{"node":"node-1"}}}}]`))
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	tsdb.SetStorage(storageID, &tsdb.Storage{
+		Type:    metadata.SurrealDBStorageType,
+		Address: server.URL,
+	})
+
+	binding := BindingInfo{
+		StorageID: storageID,
+		Namespace: "mapleleaf_2",
+		Database:  "2_graph_rt",
+	}
+	graphs, err := (&BKBaseSurrealDBClient{}).ExecuteWithBinding(
+		contextWithTenantForBindingResolverTest("tenant-a"),
+		"bkcc__2",
+		binding,
+		"RETURN {root: {entity_type: 'node', entity_id: 'node:node-1'}};",
+		1000,
+		2000,
+	)
+
+	require.NoError(t, err)
+	require.Len(t, graphs, 1)
+	assert.Equal(t, "node:node-1", graphs[0].RootID)
+}

@@ -373,5 +373,62 @@ func (c *BKBaseSurrealDBClient) executeDirect(ctx context.Context, storageID, na
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, fmt.Errorf("decode surrealdb response: %w", err)
 	}
-	return NewSurrealResponseParser(start, end).Parse(payload)
+	rows, err := normalizeDirectSurrealDBResponse(payload)
+	if err != nil {
+		return nil, err
+	}
+	rawResponse := []map[string]any{
+		{
+			ResponseFieldResult: rows,
+		},
+	}
+	return NewSurrealResponseParser(start, end).Parse(rawResponse)
+}
+
+// normalizeDirectSurrealDBResponse adapts the statement-oriented response from
+// SurrealDB's /sql endpoint to the graph row shape consumed by the parser.
+// USE NS/DB statements return a session object instead of a graph row and are
+// intentionally omitted from the normalized result.
+func normalizeDirectSurrealDBResponse(payload []map[string]any) ([]any, error) {
+	rows := make([]any, 0)
+	for statementIndex, statement := range payload {
+		result, exists := statement[ResponseFieldResult]
+		if !exists {
+			return nil, fmt.Errorf("parse surrealdb response: response[%d].%s: missing field", statementIndex, ResponseFieldResult)
+		}
+
+		if resultObject, ok := result.(map[string]any); ok {
+			if _, hasRoot := resultObject[ResponseFieldRoot]; !hasRoot {
+				if isSurrealDBSessionResult(resultObject) {
+					continue
+				}
+				return nil, fmt.Errorf("parse surrealdb response: response[%d].%s: missing field %s", statementIndex, ResponseFieldResult, ResponseFieldRoot)
+			}
+			rows = append(rows, map[string]any{ResponseFieldResult: resultObject})
+			continue
+		}
+
+		resultRows, ok := responseArray(result)
+		if !ok {
+			return nil, fmt.Errorf("parse surrealdb response: response[%d].%s: expected array, got %T", statementIndex, ResponseFieldResult, result)
+		}
+		for rowIndex, rowValue := range resultRows {
+			row, ok := rowValue.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("parse surrealdb response: response[%d].%s[%d]: expected object, got %T", statementIndex, ResponseFieldResult, rowIndex, rowValue)
+			}
+			normalizedRows, err := normalizeBKBaseGraphRows([]map[string]any{row})
+			if err != nil {
+				return nil, fmt.Errorf("parse surrealdb response: response[%d].%s[%d]: %w", statementIndex, ResponseFieldResult, rowIndex, err)
+			}
+			rows = append(rows, normalizedRows...)
+		}
+	}
+	return rows, nil
+}
+
+func isSurrealDBSessionResult(result map[string]any) bool {
+	_, hasNamespace := result["namespace"]
+	_, hasDatabase := result["database"]
+	return hasNamespace && hasDatabase
 }

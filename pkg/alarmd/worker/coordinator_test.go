@@ -953,11 +953,15 @@ type recordingPorts struct {
 	lastQuery                       execution.QueryExecutionRequest
 	eventCount                      int
 	gapMutations                    []execution.PlanGapMutation
+	executeOverride                 func(context.Context, execution.QueryExecutionRequest, execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error)
 }
 
 func (ports *recordingPorts) Execute(ctx context.Context, request execution.QueryExecutionRequest, consumer execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error) {
 	ports.record("query")
 	ports.lastQuery = request
+	if ports.executeOverride != nil {
+		return ports.executeOverride(ctx, request, consumer)
+	}
 	input := validInternalExecution()
 	input.Contract = request.Contract
 	if ports.unboundEffectiveTimeFacts {

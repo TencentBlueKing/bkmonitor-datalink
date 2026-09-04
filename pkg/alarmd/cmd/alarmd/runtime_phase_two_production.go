@@ -447,11 +447,15 @@ func (runtime *productionPhaseTwoControl) refresh(
 		if renewErr != nil {
 			return phaseTwoControlRefreshResult{
 				QueryGroups: queryGroups, Status: phaseTwoControlDegradedLastGood,
-				SourceKind: observability.SourceKindCompiledSnapshot,
-				ReasonCode: observability.ReasonCode(contract.ReasonRedisUnavailable), Cause: renewErr,
+				SourceRefresh: runtime.sourceRefreshFacts(ctx, result.Status, state.Current, state, nil, state),
+				SourceKind:    observability.SourceKindCompiledSnapshot,
+				ReasonCode:    observability.ReasonCode(contract.ReasonRedisUnavailable), Cause: renewErr,
 			}, false, nil
 		}
-		return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, false, nil
+		return phaseTwoControlRefreshResult{
+			QueryGroups: queryGroups, Status: phaseTwoControlHealthy,
+			SourceRefresh: runtime.sourceRefreshFacts(ctx, result.Status, state.Current, state, nil, state),
+		}, false, nil
 	}
 	if result.Status != controlplane.SourceRefreshPublished && result.Status != controlplane.SourceRefreshUnchanged &&
 		result.Status != controlplane.SourceRefreshPublicationConflict {
@@ -466,13 +470,102 @@ func (runtime *productionPhaseTwoControl) refresh(
 			Result: observability.ResultDegraded, ReasonCode: observability.ReasonContractRetryable,
 		})
 	}
+	previous := controlplane.ActivationState{}
+	previousErr := controlplane.ErrActivationUnavailable
+	if result.Status != controlplane.SourceRefreshUnchanged {
+		previous, previousErr = runtime.dependencies.Repository.LoadActivation(ctx)
+	}
 	state, err := runtime.dependencies.Activator.Ensure(ctx, result.Publication)
 	if err != nil {
 		fallback, fallbackErr := runtime.keepLastGood(ctx, observability.SourceKindCompiledSnapshot, err)
 		return fallback, false, fallbackErr
 	}
+	if result.Status == controlplane.SourceRefreshUnchanged {
+		previous, previousErr = state, nil
+	}
+	sourceRefresh := runtime.sourceRefreshFacts(ctx, result.Status, result.Publication, previous, previousErr, state)
 	queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
-	return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, false, err
+	return phaseTwoControlRefreshResult{
+		QueryGroups: queryGroups, Status: phaseTwoControlHealthy, SourceRefresh: sourceRefresh,
+	}, false, err
+}
+
+func (runtime *productionPhaseTwoControl) sourceRefreshFacts(
+	ctx context.Context,
+	status controlplane.SourceRefreshStatus,
+	publication controlplane.SnapshotPublicationRef,
+	previous controlplane.ActivationState,
+	previousErr error,
+	current controlplane.ActivationState,
+) *observability.SourceRefreshFacts {
+	facts := &observability.SourceRefreshFacts{
+		Status:           observability.SourceRefreshStatus(status),
+		SnapshotRevision: string(publication.SnapshotRevision),
+		PublicationEpoch: publication.PublicationEpoch,
+	}
+	sameSet := previousErr == nil && previous.Current == current.Current &&
+		previous.ActiveQGSetRef == current.ActiveQGSetRef
+	if sameSet {
+		if count, ok := activeQueryGroupRefCount(current.ActiveQGSetRef); ok {
+			facts.CountsKnown = true
+			facts.OldQueryGroups = count
+			facts.NewQueryGroups = count
+			return facts
+		}
+	}
+	previousMissing := errors.Is(previousErr, controlplane.ErrActivationUnavailable)
+	if previousMissing {
+		if count, ok := activeQueryGroupRefCount(current.ActiveQGSetRef); ok {
+			facts.CountsKnown = true
+			facts.NewQueryGroups = count
+			facts.AddedQueryGroups = count
+			return facts
+		}
+	}
+	if previousErr != nil && !previousMissing {
+		return facts
+	}
+
+	// Exact set reads are diagnostic only and are limited to legacy references
+	// or a real publication transition where added/retired overlap is unknown.
+	currentGroups, err := runtime.loadCurrentActiveQueryGroups(ctx, current)
+	if err != nil {
+		return facts
+	}
+	previousGroups := []execution.QueryGroupIdentity{}
+	if sameSet {
+		previousGroups = append(previousGroups, currentGroups...)
+	} else if !previousMissing {
+		previousGroups, err = runtime.loadCurrentActiveQueryGroups(ctx, previous)
+		if err != nil {
+			return facts
+		}
+	}
+	facts.CountsKnown = true
+	facts.OldQueryGroups = len(previousGroups)
+	facts.NewQueryGroups = len(currentGroups)
+	previousSet := make(map[execution.QueryGroupIdentity]struct{}, len(previousGroups))
+	for _, queryGroup := range previousGroups {
+		previousSet[queryGroup] = struct{}{}
+	}
+	currentSet := make(map[execution.QueryGroupIdentity]struct{}, len(currentGroups))
+	for _, queryGroup := range currentGroups {
+		currentSet[queryGroup] = struct{}{}
+		if _, existed := previousSet[queryGroup]; !existed {
+			facts.AddedQueryGroups++
+		}
+	}
+	for _, queryGroup := range previousGroups {
+		if _, exists := currentSet[queryGroup]; !exists {
+			facts.RetiredQueryGroups++
+		}
+	}
+	return facts
+}
+
+func activeQueryGroupRefCount(reference controlplane.ActiveQueryGroupSetRef) (int, bool) {
+	count := int(reference.QGCount)
+	return count, reference.Digest != "" && count >= 0 && uint64(count) == reference.QGCount
 }
 
 func (runtime *productionPhaseTwoControl) observeCurrentObjectRenewal(ctx context.Context, err error) {
@@ -541,34 +634,9 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 	if state.RecordRevision == 0 || state.Current.SnapshotRevision == "" || state.Current.PublicationEpoch == 0 {
 		return nil, errors.New("phase-two activation state is incomplete")
 	}
-	var queryGroups []execution.QueryGroupIdentity
-	var err error
-	if state.ActiveQGSetRef.Digest != "" {
-		queryGroups, err = runtime.dependencies.Repository.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef)
-	} else {
-		// Followers never migrate legacy Activation state. They may read its
-		// current immutable Snapshot while the Control Leader performs the
-		// one-time v1-to-v2 upgrade.
-		var snapshot controlplane.PublishedSnapshot
-		snapshot, err = runtime.dependencies.Repository.LoadPublishedSnapshot(ctx, state.Current)
-		if err == nil {
-			queryGroups = make([]execution.QueryGroupIdentity, len(snapshot.QueryGroups))
-			for index, queryGroup := range snapshot.QueryGroups {
-				if queryGroup.Identity == "" {
-					return nil, errors.New("phase-two active Snapshot contains an empty Query Group")
-				}
-				queryGroups[index] = queryGroup.Identity
-			}
-		}
-	}
+	queryGroups, err := runtime.loadCurrentActiveQueryGroups(ctx, state)
 	if err != nil {
 		return nil, err
-	}
-	sort.Slice(queryGroups, func(left, right int) bool { return queryGroups[left] < queryGroups[right] })
-	for index := 1; index < len(queryGroups); index++ {
-		if queryGroups[index-1] == queryGroups[index] {
-			return nil, errors.New("phase-two active Snapshot contains duplicate Query Groups")
-		}
 	}
 	active := make(map[execution.QueryGroupIdentity]struct{}, len(queryGroups)+len(state.Draining))
 	for _, queryGroup := range queryGroups {
@@ -694,6 +762,42 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 		queryGroups = append(queryGroups, queryGroup)
 	}
 	sort.Slice(queryGroups, func(left, right int) bool { return queryGroups[left] < queryGroups[right] })
+	return queryGroups, nil
+}
+
+func (runtime *productionPhaseTwoControl) loadCurrentActiveQueryGroups(
+	ctx context.Context,
+	state controlplane.ActivationState,
+) ([]execution.QueryGroupIdentity, error) {
+	var queryGroups []execution.QueryGroupIdentity
+	var err error
+	if state.ActiveQGSetRef.Digest != "" {
+		queryGroups, err = runtime.dependencies.Repository.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef)
+	} else {
+		// Followers never migrate legacy Activation state. They may read its
+		// current immutable Snapshot while the Control Leader performs the
+		// one-time v1-to-v2 upgrade.
+		var snapshot controlplane.PublishedSnapshot
+		snapshot, err = runtime.dependencies.Repository.LoadPublishedSnapshot(ctx, state.Current)
+		if err == nil {
+			queryGroups = make([]execution.QueryGroupIdentity, len(snapshot.QueryGroups))
+			for index, queryGroup := range snapshot.QueryGroups {
+				if queryGroup.Identity == "" {
+					return nil, errors.New("phase-two active Snapshot contains an empty Query Group")
+				}
+				queryGroups[index] = queryGroup.Identity
+			}
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(queryGroups, func(left, right int) bool { return queryGroups[left] < queryGroups[right] })
+	for index := 1; index < len(queryGroups); index++ {
+		if queryGroups[index-1] == queryGroups[index] {
+			return nil, errors.New("phase-two active Snapshot contains duplicate Query Groups")
+		}
+	}
 	return queryGroups, nil
 }
 

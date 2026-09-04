@@ -150,6 +150,22 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation) {
 			slog.Any("draining_samples", facts.Samples),
 		)
 	}
+	if facts := observation.SourceRefresh; facts != nil {
+		attributes = append(attributes,
+			slog.String("source_refresh_status", string(facts.Status)),
+			slog.String("snapshot_revision", facts.SnapshotRevision),
+			slog.Uint64("publication_epoch", facts.PublicationEpoch),
+			slog.Bool("source_refresh_counts_known", facts.CountsKnown),
+		)
+		if facts.CountsKnown {
+			attributes = append(attributes,
+				slog.Int("old_query_groups", facts.OldQueryGroups),
+				slog.Int("new_query_groups", facts.NewQueryGroups),
+				slog.Int("added_query_groups", facts.AddedQueryGroups),
+				slog.Int("retired_query_groups", facts.RetiredQueryGroups),
+			)
+		}
+	}
 	if len(observation.AlgorithmEvaluations) > 0 {
 		attributes = append(attributes, slog.Any("algorithm_evaluations", observation.AlgorithmEvaluations))
 	}

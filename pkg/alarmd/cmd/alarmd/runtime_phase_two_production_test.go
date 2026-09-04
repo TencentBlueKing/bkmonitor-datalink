@@ -738,6 +738,11 @@ func TestProductionPhaseTwoControlConfirmsColdStartBeforeInitialActivation(t *te
 		!reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-1"}) {
 		t.Fatalf("InitialRefresh() = %#v, %v", result, err)
 	}
+	if result.SourceRefresh == nil || result.SourceRefresh.Status != observability.SourceRefreshPublished ||
+		result.SourceRefresh.SnapshotRevision != string(publication.SnapshotRevision) ||
+		result.SourceRefresh.PublicationEpoch != publication.PublicationEpoch {
+		t.Fatalf("InitialRefresh() source facts = %#v", result.SourceRefresh)
+	}
 	if reconciler.calls != 2 || waits != 1 || activator.calls != 1 || activator.publication != publication {
 		t.Fatalf("cold-start calls refresh/wait/activate=%d/%d/%d publication=%+v",
 			reconciler.calls, waits, activator.calls, activator.publication)
@@ -943,6 +948,11 @@ func TestProductionPhaseTwoControlKeepsCurrentActivationWhileCandidateIsPending(
 		!reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-1"}) {
 		t.Fatalf("Refresh() = %#v, %v", result, err)
 	}
+	if result.SourceRefresh == nil || result.SourceRefresh.Status != observability.SourceRefreshPending ||
+		result.SourceRefresh.SnapshotRevision != string(publication.SnapshotRevision) ||
+		result.SourceRefresh.PublicationEpoch != publication.PublicationEpoch {
+		t.Fatalf("pending Refresh() source facts = %#v", result.SourceRefresh)
+	}
 	if activator.calls != 0 {
 		t.Fatalf("pending candidate changed current activation, calls = %d", activator.calls)
 	}
@@ -950,6 +960,9 @@ func TestProductionPhaseTwoControlKeepsCurrentActivationWhileCandidateIsPending(
 	if err != nil || recovered.Status != phaseTwoControlHealthy ||
 		!reflect.DeepEqual(recovered.QueryGroups, []execution.QueryGroupIdentity{"query-group-1"}) {
 		t.Fatalf("recovered Refresh() = %#v, %v", recovered, err)
+	}
+	if recovered.SourceRefresh == nil || recovered.SourceRefresh.Status != observability.SourceRefreshPending {
+		t.Fatalf("recovered pending Refresh() source facts = %#v", recovered.SourceRefresh)
 	}
 	if repository.renewCalls != 2 {
 		t.Fatalf("pending refresh renew calls=%d, want 2", repository.renewCalls)
@@ -984,11 +997,20 @@ func TestProductionPhaseTwoControlKeepsHealthyQueryGroupsAcrossPublicationConfli
 	if err != nil {
 		t.Fatal(err)
 	}
+	statuses := []observability.SourceRefreshStatus{
+		observability.SourceRefreshConflict,
+		observability.SourceRefreshUnchanged,
+	}
 	for index := 0; index < 2; index++ {
 		result, err := control.Refresh(context.Background())
 		if err != nil || result.Status != phaseTwoControlHealthy ||
 			!reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
 			t.Fatalf("Refresh(%d)=(%#v,%v)", index, result, err)
+		}
+		if result.SourceRefresh == nil || result.SourceRefresh.Status != statuses[index] ||
+			result.SourceRefresh.SnapshotRevision != string(publication.SnapshotRevision) ||
+			result.SourceRefresh.PublicationEpoch != publication.PublicationEpoch {
+			t.Fatalf("Refresh(%d) source facts=%#v", index, result.SourceRefresh)
 		}
 	}
 	if activator.calls != 2 {
@@ -1002,6 +1024,96 @@ func TestProductionPhaseTwoControlKeepsHealthyQueryGroupsAcrossPublicationConfli
 		conflict[0].Result != observability.ResultDegraded ||
 		conflict[0].ReasonCode != observability.ReasonContractRetryable {
 		t.Fatalf("publication conflict observations=%#v", conflict)
+	}
+}
+
+func TestProductionPhaseTwoControlReportsUnchangedRefreshWithoutChangingActiveSet(t *testing.T) {
+	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-current", PublicationEpoch: 2}
+	activeSetRef := controlplane.ActiveQueryGroupSetRef{
+		SchemaVersion: "alarmd-active-qg-set-v1", Digest: strings.Repeat("a", 64), QGCount: 2,
+	}
+	activation := controlplane.ActivationState{
+		SchemaVersion: "alarmd-control-activation-v2", RecordRevision: 2, Current: publication,
+		ActiveQGSetRef: activeSetRef,
+		Draining:       []controlplane.DrainingQueryGroup{},
+	}
+	reconciler := &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{
+		{Status: controlplane.SourceRefreshUnchanged, Observation: "observation-current", Publication: publication},
+		{Status: controlplane.SourceRefreshUnchanged, Observation: "observation-current", Publication: publication},
+	}}
+	repository := &fakeProductionCatalogRepository{
+		activation:   activation,
+		activeGroups: []execution.QueryGroupIdentity{"query-group-1", "query-group-2"},
+	}
+	activator := &fakeInitialScheduleActivator{state: activation}
+	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
+		Activator: activator, Repository: repository, Schedules: &fakeScheduleProjection{},
+		Progress: &fakeProductionProgressReader{}, RefreshInterval: time.Second,
+		Wait: func(context.Context, time.Duration) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 2; index++ {
+		result, refreshErr := control.Refresh(context.Background())
+		if refreshErr != nil {
+			t.Fatalf("Refresh(%d) error = %v", index, refreshErr)
+		}
+		if result.SourceRefresh == nil ||
+			result.SourceRefresh.Status != observability.SourceRefreshUnchanged ||
+			result.SourceRefresh.SnapshotRevision != string(publication.SnapshotRevision) ||
+			result.SourceRefresh.PublicationEpoch != publication.PublicationEpoch ||
+			!result.SourceRefresh.CountsKnown || result.SourceRefresh.OldQueryGroups != 2 ||
+			result.SourceRefresh.NewQueryGroups != 2 || result.SourceRefresh.AddedQueryGroups != 0 ||
+			result.SourceRefresh.RetiredQueryGroups != 0 {
+			t.Fatalf("Refresh(%d) source facts = %#v", index, result.SourceRefresh)
+		}
+	}
+	if !reflect.DeepEqual(repository.activation.ActiveQGSetRef, activeSetRef) ||
+		!reflect.DeepEqual(repository.activation.Draining, activation.Draining) ||
+		!reflect.DeepEqual(activator.state.ActiveQGSetRef, activeSetRef) ||
+		!reflect.DeepEqual(activator.state.Draining, activation.Draining) {
+		t.Fatalf("unchanged refresh mutated ActiveQGSet/Draining: repository=%+v activator=%+v",
+			repository.activation, activator.state)
+	}
+	if repository.activeSetLoads != 2 {
+		t.Fatalf("unchanged refresh active set reads=%d, want only the two execution reads", repository.activeSetLoads)
+	}
+}
+
+func TestProductionPhaseTwoControlSourceRefreshFactsUseExactChangedSetsAndKeepReadFailureDiagnostic(t *testing.T) {
+	previousPublication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-1", PublicationEpoch: 1}
+	currentPublication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-2", PublicationEpoch: 2}
+	currentRef := controlplane.ActiveQueryGroupSetRef{
+		SchemaVersion: "alarmd-active-qg-set-v1", Digest: strings.Repeat("b", 64), QGCount: 2,
+	}
+	repository := &fakeProductionCatalogRepository{
+		activeGroups: []execution.QueryGroupIdentity{"query-group-b", "query-group-c"},
+		snapshots: map[controlplane.SnapshotPublicationRef]controlplane.PublishedSnapshot{
+			previousPublication: {Publication: previousPublication, QueryGroups: []controlplane.QueryGroup{
+				{Identity: "query-group-a"}, {Identity: "query-group-b"},
+			}},
+		},
+	}
+	runtime := &productionPhaseTwoControl{dependencies: productionPhaseTwoControlDependencies{Repository: repository}}
+	previous := controlplane.ActivationState{RecordRevision: 1, Current: previousPublication}
+	current := controlplane.ActivationState{RecordRevision: 2, Current: currentPublication, ActiveQGSetRef: currentRef}
+
+	facts := runtime.sourceRefreshFacts(context.Background(), controlplane.SourceRefreshPublished,
+		currentPublication, previous, nil, current)
+	if !facts.CountsKnown || facts.OldQueryGroups != 2 || facts.NewQueryGroups != 2 ||
+		facts.AddedQueryGroups != 1 || facts.RetiredQueryGroups != 1 {
+		t.Fatalf("changed source refresh facts = %#v", facts)
+	}
+
+	repository.activeSetErr = errors.New("diagnostic active set read failed")
+	facts = runtime.sourceRefreshFacts(context.Background(), controlplane.SourceRefreshPublished,
+		currentPublication, previous, nil, current)
+	if facts.CountsKnown || facts.Status != observability.SourceRefreshPublished ||
+		facts.SnapshotRevision != string(currentPublication.SnapshotRevision) ||
+		facts.PublicationEpoch != currentPublication.PublicationEpoch {
+		t.Fatalf("failed diagnostic read changed refresh identity/status: %#v", facts)
 	}
 }
 
@@ -1223,16 +1335,17 @@ func (reconciler *fakeSourceReconciler) Refresh(
 }
 
 type fakeProductionCatalogRepository struct {
-	activation    controlplane.ActivationState
-	activationErr error
-	snapshot      controlplane.PublishedSnapshot
-	snapshotErr   error
-	snapshots     map[controlplane.SnapshotPublicationRef]controlplane.PublishedSnapshot
-	activeGroups  []execution.QueryGroupIdentity
-	activeSetErr  error
-	renewErr      error
-	renewErrs     []error
-	renewCalls    int
+	activation     controlplane.ActivationState
+	activationErr  error
+	snapshot       controlplane.PublishedSnapshot
+	snapshotErr    error
+	snapshots      map[controlplane.SnapshotPublicationRef]controlplane.PublishedSnapshot
+	activeGroups   []execution.QueryGroupIdentity
+	activeSetErr   error
+	activeSetLoads int
+	renewErr       error
+	renewErrs      []error
+	renewCalls     int
 }
 
 func (repository *fakeProductionCatalogRepository) RenewCurrentActivationObjects(context.Context) error {
@@ -1247,6 +1360,7 @@ func (repository *fakeProductionCatalogRepository) LoadActiveQueryGroupSet(
 	context.Context,
 	controlplane.ActiveQueryGroupSetRef,
 ) ([]execution.QueryGroupIdentity, error) {
+	repository.activeSetLoads++
 	return append([]execution.QueryGroupIdentity{}, repository.activeGroups...), repository.activeSetErr
 }
 

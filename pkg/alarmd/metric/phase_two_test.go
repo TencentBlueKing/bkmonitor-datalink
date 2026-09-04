@@ -146,6 +146,36 @@ func TestPhaseTwoSourceObservationMetricRecordsOnlyFixedEpisodeTransitions(t *te
 	}
 }
 
+func TestPhaseTwoSourceRefreshMetricUsesOnlyFixedStatus(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	for _, status := range observability.AllSourceRefreshStatuses() {
+		recorder.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentControlPlane,
+			Stage:     observability.StageSnapshotRefreshed,
+			Result:    observability.ResultSuccess,
+			SourceRefresh: &observability.SourceRefreshFacts{
+				Status: status, SnapshotRevision: "must-not-be-a-label", PublicationEpoch: 9,
+				CountsKnown: true, OldQueryGroups: 10, NewQueryGroups: 11,
+				AddedQueryGroups: 2, RetiredQueryGroups: 1,
+			},
+		})
+		if got := testutil.ToFloat64(recorder.phaseTwo.sourceRefreshes.WithLabelValues(string(status))); got != 1 {
+			t.Fatalf("source refresh %s = %v, want 1", status, got)
+		}
+	}
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentControlPlane,
+		Stage:     observability.StageSnapshotRefreshed,
+		Result:    observability.ResultSuccess,
+		SourceRefresh: &observability.SourceRefreshFacts{
+			Status: "strategy-123", SnapshotRevision: "snapshot-invalid", PublicationEpoch: 10,
+		},
+	})
+	if got := testutil.CollectAndCount(recorder.phaseTwo.sourceRefreshes); got != len(observability.AllSourceRefreshStatuses()) {
+		t.Fatalf("source refresh series = %d, want %d fixed statuses", got, len(observability.AllSourceRefreshStatuses()))
+	}
+}
+
 func TestPhaseTwoActiveSetAndLegacyMigrationMetricsUseOnlyFixedLabels(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
 	recorder.Observe(context.Background(), observability.Observation{Component: observability.ComponentControlPlane,

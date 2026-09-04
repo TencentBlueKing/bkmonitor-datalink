@@ -115,3 +115,46 @@ func TestLoggingObserverWritesExactAlgorithmReasonAndProvenanceWithoutPayload(t 
 		t.Fatalf("raw payload leaked into algorithm observation log: %#v", event)
 	}
 }
+
+func TestLoggingObserverWritesActionableSourceRefreshFacts(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+		Component: ComponentControlPlane,
+		Stage:     StageSnapshotRefreshed,
+		Result:    ResultSuccess,
+		SourceRefresh: &SourceRefreshFacts{
+			Status: SourceRefreshPublished, SnapshotRevision: "snapshot-new", PublicationEpoch: 7,
+			CountsKnown: true, OldQueryGroups: 11, NewQueryGroups: 12,
+			AddedQueryGroups: 2, RetiredQueryGroups: 1,
+		},
+	})
+
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode source refresh observation log: %v; log=%s", err, output.String())
+	}
+	want := map[string]any{
+		"source_refresh_status": "PUBLISHED",
+		"snapshot_revision":     "snapshot-new",
+		"publication_epoch":     float64(7),
+		"old_query_groups":      float64(11),
+		"new_query_groups":      float64(12),
+		"added_query_groups":    float64(2),
+		"retired_query_groups":  float64(1),
+	}
+	for field, value := range want {
+		if event[field] != value {
+			t.Fatalf("event[%q] = %#v, want %#v; event=%#v", field, event[field], value, event)
+		}
+	}
+}

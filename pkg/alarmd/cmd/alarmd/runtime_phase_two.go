@@ -192,11 +192,12 @@ const (
 )
 
 type phaseTwoControlRefreshResult struct {
-	QueryGroups []execution.QueryGroupIdentity
-	Status      phaseTwoControlRefreshStatus
-	SourceKind  observability.SourceKind
-	ReasonCode  observability.ReasonCode
-	Cause       error
+	QueryGroups   []execution.QueryGroupIdentity
+	Status        phaseTwoControlRefreshStatus
+	SourceRefresh *observability.SourceRefreshFacts
+	SourceKind    observability.SourceKind
+	ReasonCode    observability.ReasonCode
+	Cause         error
 }
 
 type phaseTwoControlRuntime interface {
@@ -953,6 +954,14 @@ func (bundle *phaseTwoWorkerBundle) applyControlRefresh(
 			result.ReasonCode == "" || result.Cause == nil) {
 		return errors.New("phase-two degraded Control refresh returned an incomplete health fact")
 	}
+	if result.SourceRefresh != nil {
+		observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
+			Component:     observability.ComponentControlPlane,
+			Stage:         observability.StageSnapshotRefreshed,
+			Result:        observability.ResultSuccess,
+			SourceRefresh: result.SourceRefresh,
+		})
+	}
 
 	var transitionResult observability.Result
 	var transitionSource observability.SourceKind
@@ -980,7 +989,7 @@ func (bundle *phaseTwoWorkerBundle) applyControlRefresh(
 			bundle.lastControlRecoveryAt = bundle.dependencies.Now()
 			bundle.controlSourceKind = ""
 			bundle.controlReason = ""
-		} else {
+		} else if result.SourceRefresh == nil {
 			transitionResult = observability.ResultSuccess
 		}
 	}

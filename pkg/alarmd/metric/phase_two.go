@@ -19,6 +19,7 @@ type phaseTwoMetrics struct {
 	lastProgress                 *prometheus.GaugeVec
 	capacity                     *prometheus.CounterVec
 	sourceObservations           *prometheus.CounterVec
+	sourceRefreshes              *prometheus.CounterVec
 	ownedQueryGroups             *prometheus.GaugeVec
 	ownershipTransitions         *prometheus.CounterVec
 	readyQueue                   *prometheus.GaugeVec
@@ -89,6 +90,10 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_observation_total",
 			Help: "Phase-two source health episode transitions by bounded source, result and reason class.",
 		}, []string{"source_kind", "result", "reason_class"}),
+		sourceRefreshes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_refresh_total",
+			Help: "Phase-two source refresh outcomes by fixed status.",
+		}, []string{"status"}),
 		ownedQueryGroups: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "worker_owned_query_groups",
 			Help: "Query groups currently owned by this complete worker role.",
@@ -131,7 +136,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 
 func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 	return []prometheus.Collector{
-		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations,
+		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations, m.sourceRefreshes,
 		m.ownedQueryGroups, m.ownershipTransitions, m.readyQueue, m.queryInflight,
 		m.queryAdmission,
 		m.activeQGSetCount, m.activeQGSetBytes, m.activeQGSetEncode, m.activeQGSetRedis,
@@ -142,6 +147,9 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 }
 
 func (m phaseTwoMetrics) observe(observation observability.Observation) {
+	if facts := observation.SourceRefresh; facts != nil {
+		m.sourceRefreshes.WithLabelValues(string(facts.Status)).Inc()
+	}
 	if facts := observation.DrainingQG; facts != nil {
 		m.undrainedDrainingQueryGroups.Set(float64(facts.Undrained))
 	}

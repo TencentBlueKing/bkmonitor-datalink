@@ -32,6 +32,7 @@ type AlgorithmEvaluationResult string
 type AlgorithmInputName string
 type AlgorithmDependencyPoint string
 type AlgorithmInputResult string
+type SourceRefreshStatus string
 
 const (
 	ComponentRuntime        = "runtime"
@@ -187,6 +188,11 @@ const (
 	AlgorithmInputResultPartial     AlgorithmInputResult = "partial"
 	AlgorithmInputResultUnavailable AlgorithmInputResult = "unavailable"
 
+	SourceRefreshPending   SourceRefreshStatus = "PENDING_CONFIRMATION"
+	SourceRefreshPublished SourceRefreshStatus = "PUBLISHED"
+	SourceRefreshUnchanged SourceRefreshStatus = "UNCHANGED"
+	SourceRefreshConflict  SourceRefreshStatus = "PUBLICATION_CONFLICT"
+
 	ReasonNone                  ReasonCode = "none"
 	ReasonInternalUnknown       ReasonCode = "internal_unknown"
 	ReasonCPU                   ReasonCode = "resource_cpu"
@@ -261,6 +267,19 @@ type DrainingQGFacts struct {
 	Isolated  int                `json:"isolated"`
 	Samples   []DrainingQGSample `json:"samples,omitempty"`
 	Truncated bool               `json:"truncated"`
+}
+
+// SourceRefreshFacts carries one bounded source refresh outcome. Snapshot
+// identity is diagnostic log context only; Prometheus consumes Status alone.
+type SourceRefreshFacts struct {
+	Status             SourceRefreshStatus
+	SnapshotRevision   string
+	PublicationEpoch   uint64
+	CountsKnown        bool
+	OldQueryGroups     int
+	NewQueryGroups     int
+	AddedQueryGroups   int
+	RetiredQueryGroups int
 }
 
 // AlgorithmProvenance carries bounded diagnostic coordinates for one
@@ -338,6 +357,7 @@ type Observation struct {
 	ActiveQGSet          *ActiveQGSetFacts
 	LegacyMigration      *LegacyQGMigrationFacts
 	DrainingQG           *DrainingQGFacts
+	SourceRefresh        *SourceRefreshFacts
 	AlgorithmEvaluations []AlgorithmEvaluationFact
 	AlgorithmInputs      []AlgorithmInputFact
 	normalized           bool
@@ -406,10 +426,45 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.ActiveQGSet = normalizeActiveQGSetFacts(observation.ActiveQGSet)
 	observation.LegacyMigration = normalizeLegacyQGMigrationFacts(observation.LegacyMigration)
 	observation.DrainingQG = normalizeDrainingQGFacts(observation.DrainingQG)
+	observation.SourceRefresh = normalizeSourceRefreshFacts(observation.Component, observation.Stage, observation.SourceRefresh)
 	observation.AlgorithmEvaluations, observation.AlgorithmInputs = normalizeAlgorithmFacts(observation)
 	observation.Counts = normalizeCounts(observation.Counts)
 	observation.normalized = true
 	return observation
+}
+
+func normalizeSourceRefreshFacts(component Component, stage Stage, facts *SourceRefreshFacts) *SourceRefreshFacts {
+	if facts == nil || component != ComponentControlPlane || stage != StageSnapshotRefreshed ||
+		!validSourceRefreshStatus(facts.Status) || facts.SnapshotRevision == "" || facts.PublicationEpoch == 0 {
+		return nil
+	}
+	normalized := *facts
+	if !normalized.CountsKnown || normalized.OldQueryGroups < 0 || normalized.NewQueryGroups < 0 ||
+		normalized.AddedQueryGroups < 0 || normalized.RetiredQueryGroups < 0 ||
+		normalized.OldQueryGroups+normalized.AddedQueryGroups !=
+			normalized.NewQueryGroups+normalized.RetiredQueryGroups {
+		normalized.CountsKnown = false
+		normalized.OldQueryGroups = 0
+		normalized.NewQueryGroups = 0
+		normalized.AddedQueryGroups = 0
+		normalized.RetiredQueryGroups = 0
+	}
+	return &normalized
+}
+
+func validSourceRefreshStatus(status SourceRefreshStatus) bool {
+	switch status {
+	case SourceRefreshPending, SourceRefreshPublished, SourceRefreshUnchanged, SourceRefreshConflict:
+		return true
+	default:
+		return false
+	}
+}
+
+func AllSourceRefreshStatuses() []SourceRefreshStatus {
+	return []SourceRefreshStatus{
+		SourceRefreshPending, SourceRefreshPublished, SourceRefreshUnchanged, SourceRefreshConflict,
+	}
 }
 
 func normalizeAlgorithmFacts(observation Observation) ([]AlgorithmEvaluationFact, []AlgorithmInputFact) {

@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
@@ -291,6 +292,160 @@ func TestRedisCatalogRuntimeAddsLegacyPrimaryOnlyToUncoveredLevels(t *testing.T)
 	if len(fact.Requirements) != 3 {
 		t.Fatalf("requirements = %+v, want legacy PRIMARY plus SRR PRIMARY/previous", fact.Requirements)
 	}
+}
+
+func TestRedisCatalogRuntimeReplaysPreG4HistoricalSegmentAfterG4StateGenerationUpgrade(t *testing.T) {
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:g4-generation-upgrade", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, stateSemantics := runtimePlanCompiler(t)
+	threshold := g4SourceStrategy(t, 460, strategy.DetectorKindThreshold,
+		[]any{map[string]any{"method": "gt", "threshold": 80}},
+	)
+	previousCatalog := buildG4Catalog(t, threshold)
+	previousSnapshot, _, err := repository.PublishCatalog(ctx, previousCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousSchedule := frozenSchedule(t, previousSnapshot.Publication, previousCatalog.QueryGroups[0], 60, nil)
+	previousActivation := activationState(t, 1, previousSnapshot, previousSchedule, nil)
+	legacyGeneration := legacyStateGeneration(t, previousCatalog.QueryGroups[0].Plans[0], stateSemantics)
+	currentGeneration := compiledStateGeneration(t, compiler, previousCatalog.QueryGroups[0], previousCatalog.QueryGroups[0].Plans[0], stateSemantics)
+	if legacyGeneration == currentGeneration {
+		t.Fatal("pre-G4 and G4 state generations unexpectedly match")
+	}
+	if len(previousActivation.Plans) != 1 {
+		t.Fatalf("previous activation Plans = %+v", previousActivation.Plans)
+	}
+	previousActivation.Plans[0].Fact.Selected.StateGeneration = legacyGeneration
+	if err := repository.CompareAndSetInitialScheduleActivation(
+		ctx, controlplane.ActivationExpectation{}, previousActivation,
+		[]execution.InitialScheduleActivationFact{{Segment: previousSchedule.Segment}},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	currentCatalog := buildG4Catalog(t, threshold,
+		g4SourceStrategy(t, 461, strategy.DetectorKindSimpleRingRatio, map[string]any{"floor": 50, "ceil": nil}),
+	)
+	if currentCatalog.QueryGroups[0].Identity != previousCatalog.QueryGroups[0].Identity {
+		t.Fatalf("G4 cutover changed Query Group identity: previous=%q current=%q",
+			previousCatalog.QueryGroups[0].Identity, currentCatalog.QueryGroups[0].Identity)
+	}
+	currentSnapshot, _, err := repository.PublishCatalog(ctx, currentCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler, err := controlplane.NewScheduleActivationReconciler(
+		repository, compiler, stateSemantics, func() time.Time { return time.Unix(120, 0) },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentActivation, err := reconciler.Ensure(ctx, currentSnapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(currentActivation.Plans) != 2 {
+		t.Fatalf("current G4 activation Plans = %+v", currentActivation.Plans)
+	}
+	currentThreshold, ok := activationForStrategy(currentActivation, "460")
+	if !ok || currentThreshold.Fact.Selected.StateGeneration != currentGeneration {
+		t.Fatalf("current Threshold activation = %+v, want generation %q", currentThreshold, currentGeneration)
+	}
+
+	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, stateSemantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryGroup := previousCatalog.QueryGroups[0].Identity
+	currentSchedule, err := runtime.ReadFrozenSchedule(ctx, queryGroup, 120)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.FreezeSlotContract(ctx, execution.FreezeSlotContractRequest{
+		QueryGroup: queryGroup, ScheduleRevision: currentSchedule.Segment.ScheduleRevision,
+		ScheduleSegmentStart: currentSchedule.Segment.Start, EvaluationTime: 120,
+		DuePlans: currentSchedule.DuePlanRefs(120),
+	}); err != nil {
+		t.Fatalf("current G4 Segment did not freeze: %v", err)
+	}
+
+	historicalSchedule, err := runtime.ReadFrozenSchedule(ctx, queryGroup, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if historicalSchedule.Segment.End == nil || *historicalSchedule.Segment.End != 120 ||
+		historicalSchedule.Segment.Publication.SnapshotRevision != previousSnapshot.Publication.SnapshotRevision ||
+		len(historicalSchedule.DuePlanRefs(60)) != 1 {
+		t.Fatalf("historical Segment facts = %+v", historicalSchedule)
+	}
+	_, err = runtime.FreezeSlotContract(ctx, execution.FreezeSlotContractRequest{
+		QueryGroup: queryGroup, ScheduleRevision: historicalSchedule.Segment.ScheduleRevision,
+		ScheduleSegmentStart: historicalSchedule.Segment.Start, EvaluationTime: 60,
+		DuePlans: historicalSchedule.DuePlanRefs(60),
+	})
+	if err != nil {
+		var classified *controlplane.FreezeSlotContractError
+		if !errors.As(err, &classified) || classified.Class != controlplane.FreezeSlotFailurePlanMaterialize ||
+			errors.Unwrap(err) == nil || !strings.Contains(errors.Unwrap(err).Error(), "state generation differs") {
+			t.Fatalf("historical Segment failed outside state-generation compatibility: %v", err)
+		}
+		t.Fatalf("pre-G4 historical Segment was recompiled with the G4 state-generation formula: %v", err)
+	}
+}
+
+func legacyStateGeneration(
+	t *testing.T,
+	plan controlplane.FrozenPlan,
+	semantics strategy.StateSemantics,
+) execution.StateGeneration {
+	t.Helper()
+	executionSemantics := plan.Plan.StrategyIR.ExecutionSemantics
+	digest, err := contract.DeriveStateCompatibilityHashV1(contract.StateCompatibilityInputV1{
+		StateSchemaVersion: semantics.StateSchemaVersion, CodecSemanticsVersion: semantics.CodecSemanticsVersion,
+		IdentitySchemaDigest: semantics.IdentitySchemaDigest, EvaluationScope: executionSemantics.EvaluationScope,
+		AggregationInterval: executionSemantics.AggregationInterval, EvaluationInterval: executionSemantics.EvaluationInterval,
+		SourceTimeSemanticsVersion:  semantics.SourceTimeSemanticsVersion,
+		HistoryCellSemanticsVersion: semantics.HistoryCellSemanticsVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return execution.StateGeneration(digest)
+}
+
+func compiledStateGeneration(
+	t *testing.T,
+	compiler *strategy.PlanCompiler,
+	group controlplane.QueryGroup,
+	plan controlplane.FrozenPlan,
+	semantics strategy.StateSemantics,
+) execution.StateGeneration {
+	t.Helper()
+	result, err := compiler.Compile(context.Background(), strategy.CompileRequest{
+		Plan: plan.Plan, DatasetContract: group.QueryPlan.Normalization.DatasetContract, StateSemantics: semantics,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, ok := result.Plan()
+	if !ok || result.PlanTerminal() != nil || len(result.LevelTerminals()) != 0 {
+		t.Fatalf("real G4 Plan did not compile: plan=%v terminal=%+v levels=%+v", ok, result.PlanTerminal(), result.LevelTerminals())
+	}
+	return execution.StateGeneration(compiled.StateCompatibilityHash())
+}
+
+func activationForStrategy(state controlplane.ActivationState, strategyID string) (controlplane.PlanActivationRecord, bool) {
+	for _, record := range state.Plans {
+		if record.Fact.Plan.StrategyID == strategyID {
+			return record, true
+		}
+	}
+	return controlplane.PlanActivationRecord{}, false
 }
 
 func freezeG4Slot(

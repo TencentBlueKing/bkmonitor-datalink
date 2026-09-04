@@ -51,6 +51,164 @@ func TestNormalizeObservationBoundsCatalogAndCounts(t *testing.T) {
 	}
 }
 
+func TestNormalizeObservationKeepsOnlyFixedAlgorithmFacts(t *testing.T) {
+	t.Parallel()
+
+	observation := Observation{
+		Component: ComponentEvaluation,
+		Stage:     StageEvaluationCompleted,
+		Result:    ResultSuccess,
+		AlgorithmEvaluations: []AlgorithmEvaluationFact{
+			{
+				SourceAlgorithmFamily: AlgorithmFamilyPingUnreachable,
+				DetectorKind:          AlgorithmDetectorKindThreshold,
+				Result:                AlgorithmEvaluationResultAbnormal,
+				ReasonCode:            ReasonNone,
+				Provenance: AlgorithmProvenance{
+					LevelID: 1, QueryRef: "ping-query", QueryRevision: "query-v1", SourceTime: 100,
+				},
+			},
+			{
+				SourceAlgorithmFamily: AlgorithmFamilyPingUnreachable,
+				DetectorKind:          AlgorithmDetectorKind("PingUnreachable"),
+				Result:                AlgorithmEvaluationResultAbnormal,
+			},
+			{
+				SourceAlgorithmFamily: AlgorithmFamily("strategy-123"),
+				DetectorKind:          AlgorithmDetectorKindThreshold,
+				Result:                AlgorithmEvaluationResultNormal,
+			},
+		},
+		AlgorithmInputs: []AlgorithmInputFact{
+			{
+				SourceAlgorithmFamily: AlgorithmFamilySimpleRingRatio,
+				DetectorKind:          AlgorithmDetectorKindSimpleRingRatio,
+				InputName:             AlgorithmInputNameHistory,
+				DependencyPoint:       AlgorithmDependencyPointPrevious,
+				Result:                AlgorithmInputResultAvailable,
+				ReasonCode:            ReasonNone,
+				Provenance: AlgorithmProvenance{
+					LevelID: 2, RequirementID: "previous", QueryRef: "history-query", QueryRevision: "query-v2",
+					SourceTime: 200, QueryStart: 140, QueryEnd: 200,
+				},
+			},
+			{
+				SourceAlgorithmFamily: AlgorithmFamilySimpleRingRatio,
+				DetectorKind:          AlgorithmDetectorKindSimpleRingRatio,
+				InputName:             AlgorithmInputName("raw-user-input"),
+				DependencyPoint:       AlgorithmDependencyPointPrevious,
+				Result:                AlgorithmInputResultAvailable,
+			},
+		},
+	}
+
+	got := NormalizeObservation(observation)
+	if len(got.AlgorithmEvaluations) != 1 {
+		t.Fatalf("normalized algorithm evaluations = %#v, want one fixed ping/Threshold fact", got.AlgorithmEvaluations)
+	}
+	if fact := got.AlgorithmEvaluations[0]; fact.SourceAlgorithmFamily != AlgorithmFamilyPingUnreachable ||
+		fact.DetectorKind != AlgorithmDetectorKindThreshold || fact.Result != AlgorithmEvaluationResultAbnormal ||
+		fact.Provenance.LevelID != 1 || fact.Provenance.QueryRef != "ping-query" || fact.Provenance.SourceTime != 100 {
+		t.Fatalf("normalized algorithm evaluation = %#v", fact)
+	}
+	if len(got.AlgorithmInputs) != 1 {
+		t.Fatalf("normalized algorithm inputs = %#v, want one fixed named-input fact", got.AlgorithmInputs)
+	}
+	if fact := got.AlgorithmInputs[0]; fact.SourceAlgorithmFamily != AlgorithmFamilySimpleRingRatio ||
+		fact.DetectorKind != AlgorithmDetectorKindSimpleRingRatio || fact.InputName != AlgorithmInputNameHistory ||
+		fact.DependencyPoint != AlgorithmDependencyPointPrevious || fact.Result != AlgorithmInputResultAvailable ||
+		fact.Provenance.RequirementID != "previous" || fact.Provenance.QueryStart != 140 {
+		t.Fatalf("normalized algorithm input = %#v", fact)
+	}
+
+	observation.AlgorithmEvaluations[0].Provenance.QueryRef = "mutated"
+	observation.AlgorithmInputs[0].Provenance.RequirementID = "mutated"
+	if got.AlgorithmEvaluations[0].Provenance.QueryRef != "ping-query" ||
+		got.AlgorithmInputs[0].Provenance.RequirementID != "previous" {
+		t.Fatalf("normalization retained caller-owned algorithm fact slices: %#v / %#v",
+			got.AlgorithmEvaluations, got.AlgorithmInputs)
+	}
+}
+
+func TestNormalizeObservationRejectsAlgorithmFactsOutsideEvaluationCompletion(t *testing.T) {
+	t.Parallel()
+
+	got := NormalizeObservation(Observation{
+		Component: ComponentAccess,
+		Stage:     StageQueryCompleted,
+		Result:    ResultSuccess,
+		AlgorithmEvaluations: []AlgorithmEvaluationFact{{
+			SourceAlgorithmFamily: AlgorithmFamilyThreshold,
+			DetectorKind:          AlgorithmDetectorKindThreshold,
+			Result:                AlgorithmEvaluationResultNormal,
+		}},
+		AlgorithmInputs: []AlgorithmInputFact{{
+			SourceAlgorithmFamily: AlgorithmFamilyThreshold,
+			DetectorKind:          AlgorithmDetectorKindThreshold,
+			InputName:             AlgorithmInputNamePrimary,
+			DependencyPoint:       AlgorithmDependencyPointCurrent,
+			Result:                AlgorithmInputResultAvailable,
+		}},
+	})
+	if len(got.AlgorithmEvaluations) != 0 || len(got.AlgorithmInputs) != 0 {
+		t.Fatalf("algorithm facts escaped evaluation completion: %#v / %#v", got.AlgorithmEvaluations, got.AlgorithmInputs)
+	}
+}
+
+func TestAlgorithmFactCatalogHasExactPerMetricFamilySeriesBounds(t *testing.T) {
+	t.Parallel()
+
+	families := []struct {
+		family   AlgorithmFamily
+		detector AlgorithmDetectorKind
+	}{
+		{AlgorithmFamilyThreshold, AlgorithmDetectorKindThreshold},
+		{AlgorithmFamilySimpleRingRatio, AlgorithmDetectorKindSimpleRingRatio},
+		{AlgorithmFamilyOsRestart, AlgorithmDetectorKindOsRestart},
+		{AlgorithmFamilyProcPort, AlgorithmDetectorKindProcPort},
+		{AlgorithmFamilyPingUnreachable, AlgorithmDetectorKindThreshold},
+	}
+	evaluationResults := []AlgorithmEvaluationResult{
+		AlgorithmEvaluationResultNormal, AlgorithmEvaluationResultAbnormal, AlgorithmEvaluationResultRecovery,
+		AlgorithmEvaluationResultUnavailable, AlgorithmEvaluationResultTerminal,
+	}
+	inputNames := []AlgorithmInputName{AlgorithmInputNamePrimary, AlgorithmInputNameHistory}
+	dependencyPoints := []AlgorithmDependencyPoint{
+		AlgorithmDependencyPointCurrent, AlgorithmDependencyPointPrevious,
+		AlgorithmDependencyPointTenMinute, AlgorithmDependencyPointTwentyFiveMinute,
+	}
+	inputResults := []AlgorithmInputResult{
+		AlgorithmInputResultAvailable, AlgorithmInputResultMissing,
+		AlgorithmInputResultPartial, AlgorithmInputResultUnavailable,
+	}
+	observation := Observation{Component: ComponentEvaluation, Stage: StageEvaluationCompleted, Result: ResultSuccess}
+	for _, source := range families {
+		for _, result := range evaluationResults {
+			observation.AlgorithmEvaluations = append(observation.AlgorithmEvaluations, AlgorithmEvaluationFact{
+				SourceAlgorithmFamily: source.family, DetectorKind: source.detector, Result: result,
+			})
+		}
+		for _, inputName := range inputNames {
+			for _, point := range dependencyPoints {
+				for _, result := range inputResults {
+					observation.AlgorithmInputs = append(observation.AlgorithmInputs, AlgorithmInputFact{
+						SourceAlgorithmFamily: source.family, DetectorKind: source.detector,
+						InputName: inputName, DependencyPoint: point, Result: result,
+					})
+				}
+			}
+		}
+	}
+
+	got := NormalizeObservation(observation)
+	if len(got.AlgorithmEvaluations) != 25 {
+		t.Fatalf("algorithm evaluation label combinations = %d, want 5 families * 5 results = 25", len(got.AlgorithmEvaluations))
+	}
+	if len(got.AlgorithmInputs) != 160 {
+		t.Fatalf("algorithm input label combinations = %d, want 5 families * 2 inputs * 4 points * 4 results = 160", len(got.AlgorithmInputs))
+	}
+}
+
 func TestNormalizeObservationBoundsActiveSetAndMigrationFacts(t *testing.T) {
 	got := NormalizeObservation(Observation{Component: ComponentControlPlane, Stage: StageActiveQGSet,
 		Result: ResultSuccess, ActiveQGSet: &ActiveQGSetFacts{Operation: "identity", Result: "dynamic", QueryGroups: -1, ObjectBytes: -1},

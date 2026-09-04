@@ -150,6 +150,12 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation) {
 			slog.Any("draining_samples", facts.Samples),
 		)
 	}
+	if len(observation.AlgorithmEvaluations) > 0 {
+		attributes = append(attributes, slog.Any("algorithm_evaluations", observation.AlgorithmEvaluations))
+	}
+	if len(observation.AlgorithmInputs) > 0 {
+		attributes = append(attributes, slog.Any("algorithm_inputs", observation.AlgorithmInputs))
+	}
 	if observation.Err != nil {
 		attributes = append(attributes, slog.String("error_type", fmt.Sprintf("%T", observation.Err)))
 	}

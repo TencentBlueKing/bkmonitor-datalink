@@ -43,6 +43,81 @@ func TestPhaseTwoObservationRecordsOnlyBoundedWorkflowMetrics(t *testing.T) {
 	}
 }
 
+func TestPhaseTwoAlgorithmMetricsUseOnlyFixedLowCardinalityLabels(t *testing.T) {
+	t.Parallel()
+
+	recorder := NewRecorder(BuildInfo{})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentEvaluation,
+		Stage:     observability.StageEvaluationCompleted,
+		Result:    observability.ResultSuccess,
+		AlgorithmEvaluations: []observability.AlgorithmEvaluationFact{
+			{
+				SourceAlgorithmFamily: observability.AlgorithmFamilySimpleRingRatio,
+				DetectorKind:          observability.AlgorithmDetectorKindSimpleRingRatio,
+				Result:                observability.AlgorithmEvaluationResultAbnormal,
+				ReasonCode:            observability.ReasonCode("high-cardinality-reason"),
+				Provenance: observability.AlgorithmProvenance{
+					LevelID: 7, RequirementID: "high-cardinality-requirement", QueryRef: "high-cardinality-query",
+				},
+			},
+			{
+				SourceAlgorithmFamily: observability.AlgorithmFamilyPingUnreachable,
+				DetectorKind:          observability.AlgorithmDetectorKindThreshold,
+				Result:                observability.AlgorithmEvaluationResultNormal,
+			},
+			{
+				SourceAlgorithmFamily: observability.AlgorithmFamily("strategy-123"),
+				DetectorKind:          observability.AlgorithmDetectorKindThreshold,
+				Result:                observability.AlgorithmEvaluationResultNormal,
+			},
+		},
+		AlgorithmInputs: []observability.AlgorithmInputFact{
+			{
+				SourceAlgorithmFamily: observability.AlgorithmFamilySimpleRingRatio,
+				DetectorKind:          observability.AlgorithmDetectorKindSimpleRingRatio,
+				InputName:             observability.AlgorithmInputNameHistory,
+				DependencyPoint:       observability.AlgorithmDependencyPointPrevious,
+				Result:                observability.AlgorithmInputResultAvailable,
+			},
+			{
+				SourceAlgorithmFamily: observability.AlgorithmFamilyOsRestart,
+				DetectorKind:          observability.AlgorithmDetectorKindOsRestart,
+				InputName:             observability.AlgorithmInputNameHistory,
+				DependencyPoint:       observability.AlgorithmDependencyPointTenMinute,
+				Result:                observability.AlgorithmInputResultMissing,
+			},
+			{
+				SourceAlgorithmFamily: observability.AlgorithmFamilyOsRestart,
+				DetectorKind:          observability.AlgorithmDetectorKindOsRestart,
+				InputName:             observability.AlgorithmInputName("strategy-input"),
+				DependencyPoint:       observability.AlgorithmDependencyPointCurrent,
+				Result:                observability.AlgorithmInputResultAvailable,
+			},
+		},
+	})
+
+	for _, check := range []struct {
+		name string
+		got  float64
+	}{
+		{"SimpleRingRatio abnormal", testutil.ToFloat64(recorder.phaseTwo.algorithmEvaluations.WithLabelValues("simple_ring_ratio", "abnormal"))},
+		{"PingUnreachable through Threshold normal", testutil.ToFloat64(recorder.phaseTwo.algorithmEvaluations.WithLabelValues("ping_unreachable", "normal"))},
+		{"SimpleRingRatio previous available", testutil.ToFloat64(recorder.phaseTwo.algorithmInputs.WithLabelValues("simple_ring_ratio", "history", "previous", "available"))},
+		{"OsRestart ten-minute missing", testutil.ToFloat64(recorder.phaseTwo.algorithmInputs.WithLabelValues("os_restart", "history", "ten_minute", "missing"))},
+	} {
+		if check.got != 1 {
+			t.Errorf("%s = %v, want 1", check.name, check.got)
+		}
+	}
+	if got := testutil.CollectAndCount(recorder.phaseTwo.algorithmEvaluations); got != 2 {
+		t.Fatalf("algorithm evaluation series = %d, want only the two valid fixed combinations", got)
+	}
+	if got := testutil.CollectAndCount(recorder.phaseTwo.algorithmInputs); got != 2 {
+		t.Fatalf("algorithm input series = %d, want only the two valid fixed combinations", got)
+	}
+}
+
 func TestPhaseTwoSourceObservationMetricRecordsOnlyFixedEpisodeTransitions(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
 	for _, observation := range []observability.Observation{

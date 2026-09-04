@@ -32,6 +32,8 @@ type phaseTwoMetrics struct {
 	legacyMigrationScan          prometheus.Histogram
 	legacyMigrationTime          *prometheus.HistogramVec
 	undrainedDrainingQueryGroups prometheus.Gauge
+	algorithmEvaluations         *prometheus.CounterVec
+	algorithmInputs              *prometheus.CounterVec
 }
 
 var activeQGSetDurationBuckets = []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 30}
@@ -116,6 +118,14 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.legacyMigrationScan = prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_scan_keys", Help: "Redis keys scanned by one-time legacy Active QG migration.", Buckets: legacyMigrationScanBuckets})
 	metrics.legacyMigrationTime = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_duration_seconds", Help: "One-time legacy Active QG migration duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
 	metrics.undrainedDrainingQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "undrained_draining_query_groups", Help: "Replicated per-Pod view of retired Query Groups still requiring ownership until their retirement boundary is drained; aggregate replicas with max, not sum."})
+	metrics.algorithmEvaluations = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "algorithm_evaluation_total",
+		Help: "Algorithm evaluation outcomes by fixed source family and result.",
+	}, []string{"algorithm_family", "result"})
+	metrics.algorithmInputs = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "algorithm_input_total",
+		Help: "Named algorithm input completion by fixed source family, input, dependency point and result.",
+	}, []string{"algorithm_family", "input_name", "dependency_point", "result"})
 	return metrics
 }
 
@@ -127,6 +137,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.activeQGSetCount, m.activeQGSetBytes, m.activeQGSetEncode, m.activeQGSetRedis,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 		m.undrainedDrainingQueryGroups,
+		m.algorithmEvaluations, m.algorithmInputs,
 	}
 }
 
@@ -149,6 +160,17 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 		m.legacyMigration.WithLabelValues(facts.Result, facts.ReasonClass).Inc()
 		m.legacyMigrationScan.Observe(float64(facts.ScanKeys))
 		m.legacyMigrationTime.WithLabelValues(facts.Result).Observe(facts.Duration.Seconds())
+	}
+	for _, fact := range observation.AlgorithmEvaluations {
+		m.algorithmEvaluations.WithLabelValues(
+			string(fact.SourceAlgorithmFamily), string(fact.Result),
+		).Inc()
+	}
+	for _, fact := range observation.AlgorithmInputs {
+		m.algorithmInputs.WithLabelValues(
+			string(fact.SourceAlgorithmFamily), string(fact.InputName),
+			string(fact.DependencyPoint), string(fact.Result),
+		).Inc()
 	}
 	if observation.Component == observability.ComponentScheduler &&
 		observation.Stage == observability.StageQueryAdmission && observation.QueryPermit != nil {

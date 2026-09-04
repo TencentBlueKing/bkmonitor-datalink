@@ -26,6 +26,12 @@ type Direction string
 type CapacityBudget string
 type SourceKind string
 type QueryQueueKind string
+type AlgorithmFamily string
+type AlgorithmDetectorKind string
+type AlgorithmEvaluationResult string
+type AlgorithmInputName string
+type AlgorithmDependencyPoint string
+type AlgorithmInputResult string
 
 const (
 	ComponentRuntime        = "runtime"
@@ -151,6 +157,36 @@ const (
 	QueryQueueNormal   QueryQueueKind = "normal"
 	QueryQueueRecovery QueryQueueKind = "recovery"
 
+	AlgorithmFamilyThreshold       AlgorithmFamily = "threshold"
+	AlgorithmFamilySimpleRingRatio AlgorithmFamily = "simple_ring_ratio"
+	AlgorithmFamilyOsRestart       AlgorithmFamily = "os_restart"
+	AlgorithmFamilyProcPort        AlgorithmFamily = "proc_port"
+	AlgorithmFamilyPingUnreachable AlgorithmFamily = "ping_unreachable"
+
+	AlgorithmDetectorKindThreshold       AlgorithmDetectorKind = "Threshold"
+	AlgorithmDetectorKindSimpleRingRatio AlgorithmDetectorKind = "SimpleRingRatio"
+	AlgorithmDetectorKindOsRestart       AlgorithmDetectorKind = "OsRestart"
+	AlgorithmDetectorKindProcPort        AlgorithmDetectorKind = "ProcPort"
+
+	AlgorithmEvaluationResultNormal      AlgorithmEvaluationResult = "normal"
+	AlgorithmEvaluationResultAbnormal    AlgorithmEvaluationResult = "abnormal"
+	AlgorithmEvaluationResultRecovery    AlgorithmEvaluationResult = "recovery"
+	AlgorithmEvaluationResultUnavailable AlgorithmEvaluationResult = "unavailable"
+	AlgorithmEvaluationResultTerminal    AlgorithmEvaluationResult = "terminal"
+
+	AlgorithmInputNamePrimary AlgorithmInputName = "primary"
+	AlgorithmInputNameHistory AlgorithmInputName = "history"
+
+	AlgorithmDependencyPointCurrent          AlgorithmDependencyPoint = "current"
+	AlgorithmDependencyPointPrevious         AlgorithmDependencyPoint = "previous"
+	AlgorithmDependencyPointTenMinute        AlgorithmDependencyPoint = "ten_minute"
+	AlgorithmDependencyPointTwentyFiveMinute AlgorithmDependencyPoint = "twenty_five_minute"
+
+	AlgorithmInputResultAvailable   AlgorithmInputResult = "available"
+	AlgorithmInputResultMissing     AlgorithmInputResult = "missing"
+	AlgorithmInputResultPartial     AlgorithmInputResult = "partial"
+	AlgorithmInputResultUnavailable AlgorithmInputResult = "unavailable"
+
 	ReasonNone                  ReasonCode = "none"
 	ReasonInternalUnknown       ReasonCode = "internal_unknown"
 	ReasonCPU                   ReasonCode = "resource_cpu"
@@ -227,6 +263,37 @@ type DrainingQGFacts struct {
 	Truncated bool               `json:"truncated"`
 }
 
+// AlgorithmProvenance carries bounded diagnostic coordinates for one
+// evaluation or named input. It intentionally contains no series identity,
+// dimensions or payload; those remain in the request and are never logged.
+type AlgorithmProvenance struct {
+	LevelID       uint32 `json:"level_id,omitempty"`
+	RequirementID string `json:"requirement_id,omitempty"`
+	QueryRef      string `json:"query_ref,omitempty"`
+	QueryRevision string `json:"query_revision,omitempty"`
+	SourceTime    int64  `json:"source_time,omitempty"`
+	QueryStart    int64  `json:"query_start,omitempty"`
+	QueryEnd      int64  `json:"query_end,omitempty"`
+}
+
+type AlgorithmEvaluationFact struct {
+	SourceAlgorithmFamily AlgorithmFamily           `json:"source_algorithm_family"`
+	DetectorKind          AlgorithmDetectorKind     `json:"detector_kind"`
+	Result                AlgorithmEvaluationResult `json:"result"`
+	ReasonCode            ReasonCode                `json:"reason_code"`
+	Provenance            AlgorithmProvenance       `json:"provenance,omitempty"`
+}
+
+type AlgorithmInputFact struct {
+	SourceAlgorithmFamily AlgorithmFamily          `json:"source_algorithm_family"`
+	DetectorKind          AlgorithmDetectorKind    `json:"detector_kind"`
+	InputName             AlgorithmInputName       `json:"input_name"`
+	DependencyPoint       AlgorithmDependencyPoint `json:"dependency_point"`
+	Result                AlgorithmInputResult     `json:"result"`
+	ReasonCode            ReasonCode               `json:"reason_code"`
+	Provenance            AlgorithmProvenance      `json:"provenance,omitempty"`
+}
+
 type TraceFields struct {
 	TraceID                 string
 	ExecutionID             string
@@ -255,24 +322,26 @@ type TraceFields struct {
 }
 
 type Observation struct {
-	Component         Component
-	Stage             Stage
-	Result            Result
-	Operation         Operation
-	Direction         Direction
-	ReasonCode        ReasonCode
-	Duration          time.Duration
-	Counts            Counts
-	Trace             TraceFields
-	Err               error
-	CapacityBudget    CapacityBudget
-	SourceKind        SourceKind
-	QueryPermit       *QueryPermitFacts
-	ActiveQGSet       *ActiveQGSetFacts
-	LegacyMigration   *LegacyQGMigrationFacts
-	DrainingQG        *DrainingQGFacts
-	normalized        bool
-	stageReasonBucket bool
+	Component            Component
+	Stage                Stage
+	Result               Result
+	Operation            Operation
+	Direction            Direction
+	ReasonCode           ReasonCode
+	Duration             time.Duration
+	Counts               Counts
+	Trace                TraceFields
+	Err                  error
+	CapacityBudget       CapacityBudget
+	SourceKind           SourceKind
+	QueryPermit          *QueryPermitFacts
+	ActiveQGSet          *ActiveQGSetFacts
+	LegacyMigration      *LegacyQGMigrationFacts
+	DrainingQG           *DrainingQGFacts
+	AlgorithmEvaluations []AlgorithmEvaluationFact
+	AlgorithmInputs      []AlgorithmInputFact
+	normalized           bool
+	stageReasonBucket    bool
 }
 
 type Observer interface {
@@ -337,9 +406,99 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.ActiveQGSet = normalizeActiveQGSetFacts(observation.ActiveQGSet)
 	observation.LegacyMigration = normalizeLegacyQGMigrationFacts(observation.LegacyMigration)
 	observation.DrainingQG = normalizeDrainingQGFacts(observation.DrainingQG)
+	observation.AlgorithmEvaluations, observation.AlgorithmInputs = normalizeAlgorithmFacts(observation)
 	observation.Counts = normalizeCounts(observation.Counts)
 	observation.normalized = true
 	return observation
+}
+
+func normalizeAlgorithmFacts(observation Observation) ([]AlgorithmEvaluationFact, []AlgorithmInputFact) {
+	if observation.Component != ComponentEvaluation || observation.Stage != StageEvaluationCompleted {
+		return nil, nil
+	}
+	evaluations := make([]AlgorithmEvaluationFact, 0, len(observation.AlgorithmEvaluations))
+	for _, fact := range observation.AlgorithmEvaluations {
+		if !validAlgorithmFamilyDetector(fact.SourceAlgorithmFamily, fact.DetectorKind) ||
+			!validAlgorithmEvaluationResult(fact.Result) {
+			continue
+		}
+		fact.ReasonCode = NormalizeReason(fact.ReasonCode, algorithmEvaluationObservationResult(fact.Result))
+		evaluations = append(evaluations, fact)
+	}
+	inputs := make([]AlgorithmInputFact, 0, len(observation.AlgorithmInputs))
+	for _, fact := range observation.AlgorithmInputs {
+		if !validAlgorithmFamilyDetector(fact.SourceAlgorithmFamily, fact.DetectorKind) ||
+			!validAlgorithmInputName(fact.InputName) || !validAlgorithmDependencyPoint(fact.DependencyPoint) ||
+			!validAlgorithmInputResult(fact.Result) {
+			continue
+		}
+		fact.ReasonCode = NormalizeReason(fact.ReasonCode, algorithmInputObservationResult(fact.Result))
+		inputs = append(inputs, fact)
+	}
+	return evaluations, inputs
+}
+
+func validAlgorithmFamilyDetector(family AlgorithmFamily, detector AlgorithmDetectorKind) bool {
+	switch family {
+	case AlgorithmFamilyThreshold, AlgorithmFamilyPingUnreachable:
+		return detector == AlgorithmDetectorKindThreshold
+	case AlgorithmFamilySimpleRingRatio:
+		return detector == AlgorithmDetectorKindSimpleRingRatio
+	case AlgorithmFamilyOsRestart:
+		return detector == AlgorithmDetectorKindOsRestart
+	case AlgorithmFamilyProcPort:
+		return detector == AlgorithmDetectorKindProcPort
+	default:
+		return false
+	}
+}
+
+func validAlgorithmEvaluationResult(result AlgorithmEvaluationResult) bool {
+	switch result {
+	case AlgorithmEvaluationResultNormal, AlgorithmEvaluationResultAbnormal, AlgorithmEvaluationResultRecovery,
+		AlgorithmEvaluationResultUnavailable, AlgorithmEvaluationResultTerminal:
+		return true
+	default:
+		return false
+	}
+}
+
+func validAlgorithmInputName(name AlgorithmInputName) bool {
+	return name == AlgorithmInputNamePrimary || name == AlgorithmInputNameHistory
+}
+
+func validAlgorithmDependencyPoint(point AlgorithmDependencyPoint) bool {
+	switch point {
+	case AlgorithmDependencyPointCurrent, AlgorithmDependencyPointPrevious,
+		AlgorithmDependencyPointTenMinute, AlgorithmDependencyPointTwentyFiveMinute:
+		return true
+	default:
+		return false
+	}
+}
+
+func validAlgorithmInputResult(result AlgorithmInputResult) bool {
+	switch result {
+	case AlgorithmInputResultAvailable, AlgorithmInputResultMissing,
+		AlgorithmInputResultPartial, AlgorithmInputResultUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+func algorithmEvaluationObservationResult(result AlgorithmEvaluationResult) Result {
+	if result == AlgorithmEvaluationResultUnavailable || result == AlgorithmEvaluationResultTerminal {
+		return ResultDegraded
+	}
+	return ResultSuccess
+}
+
+func algorithmInputObservationResult(result AlgorithmInputResult) Result {
+	if result == AlgorithmInputResultPartial || result == AlgorithmInputResultUnavailable {
+		return ResultDegraded
+	}
+	return ResultSuccess
 }
 
 func normalizeDrainingQGFacts(facts *DrainingQGFacts) *DrainingQGFacts {

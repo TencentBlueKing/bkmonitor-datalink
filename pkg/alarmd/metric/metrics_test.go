@@ -309,6 +309,8 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_inflight_records":                            "variableLabels: {}",
 		"bkmonitor_alarmd_consumer_lag_records":                        "variableLabels: {}",
 	}
+	expected["bkmonitor_alarmd_algorithm_evaluation_total"] = "variableLabels: {algorithm_family,result}"
+	expected["bkmonitor_alarmd_algorithm_input_total"] = "variableLabels: {algorithm_family,input_name,dependency_point,result}"
 
 	descriptions := make(chan string)
 	go func() {
@@ -577,6 +579,8 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("health_last_recovery_timestamp_seconds"): 1,
 		fqName("resource_state"):                         len(observability.AllResourceStates()),
 	}
+	bounds[fqName("algorithm_evaluation_total")] = 25
+	bounds[fqName("algorithm_input_total")] = 160
 	for _, name := range []string{
 		"messages", "records", "plans", "levels", "events", "bytes", "keys", "state_bytes",
 	} {

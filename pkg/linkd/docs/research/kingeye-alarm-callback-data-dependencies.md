@@ -3,19 +3,15 @@
 ## 调研信息
 
 - 记录日期：2026-08-31
-- 调研对象：Kingeye `develop/5.3.0@cde8c800ff767ee53b558ec0add43973952ec87b`
-- 主要源码：
-  `src/kingeye/kmc/home_application/utils/callback_utils/basic_push_alarm_data.py`
+- 调研对象：Kingeye 告警回调数据生成链路的历史源码快照
 - 主要符号：`BasicPushAlarmData`、`BasicPushAlarmData.clean_alarm_data()`、
   `DataPushAlarmData.clean_alarm_data()`
-- 目标文件最近修改：`072ad150e1a24fc0c4ff79e9651b0935844ab55a`
-  （`[kmc] refactor: K8s 与监控对象统一使用实例存储 #0`）
-- 记录来源：对 Kingeye `callback_utils` 中告警数据结构生成逻辑的源码盘点
+- 记录来源：对 Kingeye 告警回调数据结构生成逻辑的源码盘点
 - 用途：为 Linkd 后续告警丰富、字段归属、外部依赖收敛和失败语义设计提供输入
 
-本文记录的是 Kingeye/KMC 旧回调链路在上述源码快照中的行为，不是 Linkd 当前实现、目标字段
-契约或必须兼容的历史协议。归档时已核对主要文件与符号仍存在，但没有逐项执行外部服务或运行时
-验证；涉及 Linkd 的结论仍需结合当前[核心数据模型](../design/define.md)、
+本文记录的是 Kingeye/KMC 旧回调链路在历史源码快照中的行为，不是 Linkd 当前实现、目标字段
+契约或必须兼容的历史协议。归档时已核对主要符号仍存在，但没有逐项执行外部服务或运行时验证；
+涉及 Linkd 的结论仍需结合当前[核心数据模型](../design/define.md)、
 [Lifecycle](../modules/lifecycle.md) 设计和真实用例重新确认。
 
 ## 结论摘要
@@ -51,13 +47,13 @@
 
 ## 2. Meta HTTP
 
-Meta 请求由 `META_SERVER_HOST` 指向的服务提供。
+Meta 请求由内部元数据服务提供。
 
-| 调用 | 接口 | 用途 |
+| 调用 | 接口能力 | 用途 |
 |---|---|---|
-| `MetaApiSearch.search_obj_model({})` | `POST .../object_model_login_exempt/search/` | 拉取全量对象模型的 `object_model_id`、名称、`bk_cmdb_obj_id`、`host_related_field`、`object_model_group_id`，用于 `bk_obj_id`、`model_name`、策略 URL 的 `classId` 和主机关联字段 |
+| `MetaApiSearch.search_obj_model({})` | 对象模型查询 | 拉取全量对象模型的 `object_model_id`、名称、`bk_cmdb_obj_id`、`host_related_field`、`object_model_group_id`，用于 `bk_obj_id`、`model_name`、策略 URL 的 `classId` 和主机关联字段 |
 | `get_object_model_mapping()` | 同一对象模型能力 | 把维度中的 `cw_object_model_id` 映射为 `object_model_code` |
-| `MetaApiSearch.get_metadata_settings()` | `GET .../metadata/settings/` | 获取 `source_name`；失败时回落为“鲸眼监控” |
+| `MetaApiSearch.get_metadata_settings()` | 元数据设置查询 | 获取 `source_name`；失败时回落为默认监控产品名 |
 
 `search_obj_model` 带 120 秒缓存；对象模型 mapping 还会写入 Redis，具体见缓存部分。
 
@@ -71,62 +67,61 @@ Meta 请求由 `META_SERVER_HOST` 指向的服务提供。
 | `biz_id_name_map()` | `onemodel.search_businesses` | `bk_biz_name`；K8s/APM 覆盖业务名时也使用 |
 | `set_id_name_map()` | 按业务扫描 set 实例 | `bk_set_name` |
 | `module_id_name_map()` | 按业务扫描 module 实例 | `bk_module_name` |
-| `search_inst_cw_biz_id()` | `onemodel.search_instances`，读取 `settings.CMDB_BIZ_FIELD` | 实例自身的业务属性；主机和服务实例会跳过 |
+| `search_inst_cw_biz_id()` | `onemodel.search_instances`，读取实例业务字段配置 | 实例自身的业务属性；主机和服务实例会跳过 |
 | `_search_host_ids()` | `onemodel.find_related_host_ids` | 非主机模型根据 `host_related_field` 查找关联主机 |
 | `_find_host_biz_relations()` | `onemodel.find_host_biz_relations` | 从主机获取业务、集群和模块关系；清洗代码读取 `bk_biz_id`、`bk_set_id`、`bk_module_id` |
 | `search_k8s_instance_document()` | `onemodel.search_tenant_entity_documents` | K8s cluster、namespace、pod 的 `bk_biz_id`、`cluster_name`、`pod_ip` |
 | `ActiveAlarmService.build_k8s_inst_id()` | 同上 | 只读取 `cw_object_model_inst_id`，用于 `model_inst_id` |
-| `search_cloud_area_msg()` | `third_party_api.cmdb.search_cloud_area` | `bk_cloud_name`；该调用不经过 OneModel |
+| `search_cloud_area_msg()` | CMDB 云区域查询 | `bk_cloud_name`；该调用不经过 OneModel |
 
-业务、集群和模块映射使用 `cc_data` 缓存，TTL 为 600 秒；云区域缓存 TTL 为 120 秒。
+业务、集群和模块映射使用包装缓存，TTL 为 600 秒；云区域缓存 TTL 为 120 秒。
 `cloud_id != 0` 时直接跳过拓扑查询，topology 相关字段保持为空。
 
 ## 4. Redis / Django cache
 
 | Key 或缓存 | 内容 | 主要影响字段或行为 |
 |---|---|---|
-| `OBJECT_MODEL_MAPPING_CACHE`（`{KMC_REDIS_KEY_PREFIX}object_model_mapping_cache`） | `object_model_code → {object_model_id}`，TTL 300 秒 | 把维度中的 `cw_object_model_id` 转换为模型 code |
-| `MetaRedisKey.DYNAMIC_INST_GROUP_CACHE_KEY`（`...meta_saas_cache_dynamic_inst_group_{object_model_code}`） | Redis hash；field 为 `bk_inst_id`，value 为 `{"group_ids": [...]}` | `dynamic_group_id` |
-| `cc_data` / `meta_data` 包装缓存 | 上述 CMDB 和 Meta 查询结果 | 避免每次完整扫描外部数据 |
+| 对象模型映射缓存 | `object_model_code → {object_model_id}`，TTL 300 秒 | 把维度中的 `cw_object_model_id` 转换为模型 code |
+| 动态实例分组缓存 | Redis hash；field 为 `bk_inst_id`，value 为 `{"group_ids": [...]}` | `dynamic_group_id` |
+| CMDB / Meta 包装缓存 | 上述 CMDB 和 Meta 查询结果 | 避免每次完整扫描外部数据 |
 
 动态分组读取没有命中时返回空列表。该字段反映的是 Meta 侧预先写入的投影，不是事件本体事实。
 
 ## 5. 监控平台告警 ES
 
 `clean_close_reason()` 优先使用事件中的 `event_message.event_description`。事件已经恢复或关闭且
-该描述不存在时，才访问 `settings.MONITOR_ALERT_ES_SERVERS`：
+该描述不存在时，才访问配置的监控平台告警日志 ES：
 
-- 索引：`bkfta_log_alert_{end_time:%Y%m%d}_read`；
+- 索引：按 `end_time` 日期分区的告警日志只读索引；
 - 条件：`op_type ∈ {RECOVER, CLOSE}` 且 `alert_id = alarm_id`；
 - 结果：读取 `_source.description`；
 - 重试：最多 5 次，每次等待 1 秒。
 
-这里访问的是 bk-monitor FTA 告警流转日志，不是 Kingeye 自己的 ES。该同步补查会把关闭原因
-生成和外部日志索引的可用性、延迟及日期分区绑定在一起。
+这里访问的是监控平台告警流转日志，不是 Kingeye 自己的 ES。该同步补查会把关闭原因生成和外部
+日志索引的可用性、延迟及日期分区绑定在一起。
 
 ## 6. KAPM HTTP
 
 该依赖只出现在 `DataPushAlarmData`。当 `result_table_id` 包含 `bkapm` 时：
 
 1. 调用 `KapmApis.monitor_app(namespace=apm_app_name)`；
-2. 请求 `GET {KAPM_SERVER_HOST}api/v1/monitor/internal/app/`；
+2. 请求内部应用元数据查询接口；
 3. 接口是模糊查询，代码再按 `name` 精确匹配应用；
 4. 读取应用 `id` 和 `alias`；
 5. 写出 `apm_app_id`、`apm_app_name`、`apm_app_alias`，并重写 `cw_labels`。
 
-应用名来自 `data_source` 中的 `应用-xxx`，或者从形如
-`..._bkapm_metric_{app}.xxx` 的 result table ID 中解析。
+应用名来自 `data_source` 中的应用标识，或者从 APM metric result table ID 中解析。
 
-## 7. 影响结果的配置项
+## 7. 影响结果的配置
 
 这些配置不是业务数据源，但会改变清洗结果：
 
-| 配置 | 影响 |
+| 配置能力 | 影响 |
 |---|---|
-| `settings.KINGEYE_WEB_SAAS_MODULE_URL` | `field_extra_info.strategy_name.url` |
-| `settings.NEED_CHANGE_ALARM_CONTENT` | 告警内容和关闭原因的小数位，属于定制行为 |
-| `settings.CMDB_BIZ_FIELD` | 实例业务字段名 |
-| `settings.MONITOR_ALERT_ES_SERVERS` | 关闭原因补查使用的 ES |
+| Web SaaS 地址 | `field_extra_info.strategy_name.url` |
+| 告警内容格式化开关 | 告警内容和关闭原因的小数位，属于定制行为 |
+| 实例业务字段名 | 实例业务归属读取 |
+| 告警日志 ES 连接 | 关闭原因补查 |
 
 ## 8. 按输出字段观察依赖
 
@@ -219,7 +214,7 @@ Meta 请求由 `META_SERVER_HOST` 指向的服务提供。
 - 为每个清洗对象预拉全量业务、集群和模块映射；
 - 绕过 OneModel 直接全量查询云区域。
 
-但“改成只走 OneModel”不能作为先验目标。指标、策略、用户/权限、动态分组、APM 应用和 FTA
+但“改成只走 OneModel”不能作为先验目标。指标、策略、用户/权限、动态分组、APM 应用和告警
 关闭日志是否属于 OneModel 的权威边界，需要按数据所有权逐项确认。
 
 ### 11.3 失败与性能语义

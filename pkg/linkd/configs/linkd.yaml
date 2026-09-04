@@ -29,7 +29,7 @@ storage:
     address: 127.0.0.1:13306
     database: test
     username: test
-    password: test123456
+    password: ""
   elasticsearch:
     addresses:
       - http://127.0.0.1:9200
@@ -46,7 +46,7 @@ storage:
       max_future_skew_seconds: 300
   redis:
     address: 127.0.0.1:16379
-    password: test123456
+    password: ""
     database: 0
 
 lifecycle:

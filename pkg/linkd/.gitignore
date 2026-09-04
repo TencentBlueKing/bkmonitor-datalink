@@ -18,3 +18,15 @@ coverage.out
 *.swp
 .idea/
 .vscode/
+
+# Local configuration and environment files
+.env*
+/configs/*.local.yaml
+
+# Private keys and keystores
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore

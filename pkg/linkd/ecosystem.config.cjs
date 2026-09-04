@@ -1,7 +1,10 @@
 const path = require("node:path");
 
 const root = __dirname;
-const linkdConfig = path.join(root, "configs", "linkd.pm2.yaml");
+const configuredLinkdConfig = process.env.LINKD_CONFIG?.trim();
+const linkdConfig = configuredLinkdConfig
+  ? path.resolve(root, configuredLinkdConfig)
+  : path.join(root, "configs", "linkd.pm2.yaml");
 const linkdBinary = path.join(root, "bin", "linkd");
 const eventgenBinary = path.join(root, "bin", "linkd-eventgen");
 

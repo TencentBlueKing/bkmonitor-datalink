@@ -76,6 +76,10 @@ go run ./cmd/linkd-eventgen --config ./configs/linkd.yaml --event-source-id demo
 make check
 ```
 
+仓库内配置不保存凭据。本机服务需要认证时，复制对应示例为被 Git 忽略的
+`configs/linkd.local.yaml` 或 `configs/linkd.pm2.local.yaml`，只在本地副本中填写凭据，并通过
+`--config` 或 `LINKD_CONFIG` 选择该文件。具体步骤见[配置指南](docs/guides/configuration.md)。
+
 独立模拟器的速率、生命周期、场景和重启边界见
 [`docs/guides/event-generator.md`](docs/guides/event-generator.md)。
 

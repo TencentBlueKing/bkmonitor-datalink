@@ -20,15 +20,20 @@ PM2 托管预编译二进制；`bin/` 已被 Git 忽略：
 mkdir -p ./bin
 go build -o ./bin/linkd ./cmd/linkd
 go build -o ./bin/linkd-eventgen ./cmd/linkd-eventgen
-./bin/linkd config validate --config ./configs/linkd.pm2.yaml
-pm2 start ./ecosystem.config.cjs
+cp ./configs/linkd.pm2.yaml ./configs/linkd.pm2.local.yaml
+# 仅在被 Git 忽略的 local 文件中填写本机凭据。
+./bin/linkd config validate --config ./configs/linkd.pm2.local.yaml
+LINKD_CONFIG=./configs/linkd.pm2.local.yaml pm2 start ./ecosystem.config.cjs
 ```
+
+`LINKD_CONFIG` 未设置时仍使用 `configs/linkd.pm2.yaml`；相对路径按 `pkg/linkd` 根目录解析，绝对路径
+保持不变。三个 PM2 进程始终共享同一个配置路径。
 
 配置默认连接以下本地服务：
 
 - Kafka：`127.0.0.1:9092`；
 - Elasticsearch：`http://127.0.0.1:9200`；
-- Redis：`127.0.0.1:16379`，密码 `test123456`；
+- Redis：`127.0.0.1:16379`，跟踪示例使用空密码；启用认证时在 local 配置中填写；
 - Prometheus metrics：`127.0.0.1:9464`。
 
 PM2 会在依赖暂时不可用或进程异常退出时按 3 秒间隔重启，最多连续重启 20 次。Kafka topic 需要由
@@ -52,5 +57,5 @@ cleaner/lifecycle；Schema 与 Active 资源对账、时间桶维护和终态 Al
 归档任务以有界 Worker 连续处理积压，只在空闲、无进展或失败时等待配置间隔，并且不阻塞数据面启动。
 拆分部署时必须先启动 `linkd run control-plane`；三项任务没有独立入口。
 
-修改 `configs/linkd.pm2.yaml` 后需要同时重启 all-in-one 和两个模拟器。只调整某个模拟器的速率、周期、
-生命周期或场景时，修改 `ecosystem.config.cjs` 中对应 app，再单独重启该 PM2 进程即可。
+修改当前 `LINKD_CONFIG` 指向的配置后，需要同时重启 all-in-one 和两个模拟器。只调整某个模拟器的
+速率、周期、生命周期或场景时，修改 `ecosystem.config.cjs` 中对应 app，再单独重启该 PM2 进程即可。

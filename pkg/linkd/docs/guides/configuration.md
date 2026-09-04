@@ -3,6 +3,19 @@
 配置是严格单文档 YAML。未知字段、重复来源 ID、重复 Kafka subscription、无效 Cleaner、fingerprint
 路径和 severity 引用都会使进程启动失败。
 
+仓库跟踪的 `configs/linkd.yaml` 和 `configs/linkd.pm2.yaml` 只提供无凭据示例。本机 MySQL、Redis、
+Elasticsearch 或 Kafka 需要认证时，复制一份本地配置并仅在副本中填写凭据：
+
+```bash
+cp ./configs/linkd.yaml ./configs/linkd.local.yaml
+chmod 600 ./configs/linkd.local.yaml
+go run ./cmd/linkd config validate --config ./configs/linkd.local.yaml
+```
+
+`configs/*.local.yaml` 和 `.env*` 已被 Git 忽略。普通命令使用 `--config` 选择本地文件；PM2 和 DevTools
+也可以通过 `LINKD_CONFIG` 使用同一份 YAML。当前 Linkd 进程不提供逐项环境变量或 secret-file 覆盖，
+生产部署必须把配置文件作为受权限保护的 Secret 挂载，且不得提交包含凭据的副本。
+
 ```yaml
 cleaner:
   worker_count: 8

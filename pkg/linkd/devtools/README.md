@@ -11,7 +11,9 @@ Linkd 业务 API，也不参与消息消费、确认或数据写入。
 ```bash
 cd devtools
 pnpm install
-export LINKD_CONFIG=../configs/linkd.yaml
+cp ../configs/linkd.yaml ../configs/linkd.local.yaml
+# 仅在被 Git 忽略的 local 文件中填写本机凭据。
+export LINKD_CONFIG=../configs/linkd.local.yaml
 export LINKD_DEVTOOLS_PROMETHEUS_URL=http://127.0.0.1:9090
 pnpm dev
 ```

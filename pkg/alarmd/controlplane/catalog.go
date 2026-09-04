@@ -58,6 +58,7 @@ type FrozenPlan struct {
 	Identity             execution.PlanIdentity
 	Plan                 contract.EvaluationPlanV2
 	PlanRevision         string
+	StateGeneration      execution.StateGeneration `json:",omitempty"`
 	ScheduleSpec         execution.ScheduleSpec
 	ScheduleRevision     execution.PlanScheduleRevision
 	RequirementTemplates []execution.DataRequirementTemplate                    `json:"RequirementTemplates,omitempty"`

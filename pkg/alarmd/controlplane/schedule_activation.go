@@ -149,7 +149,9 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		return ActivationState{}, err
 	}
 	for index := range records {
-		if _, continuouslyActive := previousRecords[records[index].Fact.Plan]; !continuouslyActive {
+		previousRecord, continuouslyActive := previousRecords[records[index].Fact.Plan]
+		if !continuouslyActive ||
+			previousRecord.Fact.Selected.StateGeneration != records[index].Fact.Selected.StateGeneration {
 			records[index].Fact.Selected.ForceWarming = true
 		}
 	}

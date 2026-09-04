@@ -41,7 +41,11 @@ func retainRuntimeExecutableCatalog(
 			SourceID: sourceID, Scope: "PLAN", Disposition: DispositionConfigRejected, Reason: runtimeCatalogClosureInvalidReason,
 		})
 	}
-	addPlan := func(facts execution.QueryPlanFacts, plan FrozenPlan) error {
+	addPlan := func(facts execution.QueryPlanFacts, plan FrozenPlan, compiled *strategy.CompiledPlan) error {
+		if compiled == nil || compiled.StateCompatibilityHash() == "" {
+			return errors.New("alarmd controlplane: runtime executable Plan has no state compatibility")
+		}
+		plan.StateGeneration = execution.StateGeneration(compiled.StateCompatibilityHash())
 		if _, duplicate := seenPlans[plan.Identity]; duplicate {
 			return errors.New("alarmd controlplane: duplicate runtime executable Plan identity")
 		}
@@ -91,7 +95,7 @@ func retainRuntimeExecutableCatalog(
 							}
 							disposition.Disposition = DispositionStaleConfig
 							result.Dispositions = append(result.Dispositions, disposition)
-							if err := addPlan(entry.facts, entry.plan); err != nil {
+							if err := addPlan(entry.facts, entry.plan, lastGoodCompiled); err != nil {
 								return Catalog{}, err
 							}
 							continue
@@ -167,7 +171,7 @@ func retainRuntimeExecutableCatalog(
 					}
 					markSupplementedLevelDispositionsStale(terminalDispositions, supplementedLevels)
 					result.Dispositions = append(result.Dispositions, terminalDispositions...)
-					if err := addPlan(sourceGroup.QueryPlan, plan); err != nil {
+					if err := addPlan(sourceGroup.QueryPlan, plan, verifiedPlan); err != nil {
 						return Catalog{}, err
 					}
 					continue
@@ -182,7 +186,7 @@ func retainRuntimeExecutableCatalog(
 				continue
 			}
 			result.Dispositions = append(result.Dispositions, terminalDispositions...)
-			if err := addPlan(sourceGroup.QueryPlan, plan); err != nil {
+			if err := addPlan(sourceGroup.QueryPlan, plan, compiled); err != nil {
 				return Catalog{}, err
 			}
 		}

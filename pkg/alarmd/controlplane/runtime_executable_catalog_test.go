@@ -48,6 +48,62 @@ func TestRetainCompiledLevelsRetainsLevelDependencyClosure(t *testing.T) {
 	}
 }
 
+func TestRetainRuntimeExecutableCatalogBindsStateCompatibilityToSnapshot(t *testing.T) {
+	compiler, initialSemantics := runtimeClosureCompiler(t)
+	plan := runtimeClosureNamedFrozenPlan(t, "1001", "1", []contract.LevelIRV2{
+		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
+	})
+	catalog := runtimeClosureCatalog(runtimeClosureQueryGroup(t, "1", plan))
+
+	initial, err := retainRuntimeExecutableCatalog(
+		context.Background(), catalog, nil, compiler, initialSemantics,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedSemantics := initialSemantics
+	changedSemantics.IdentitySchemaDigest = strings.Repeat("4", 64)
+	changed, err := retainRuntimeExecutableCatalog(
+		context.Background(), catalog, nil, compiler, changedSemantics,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stable, err := retainRuntimeExecutableCatalog(
+		context.Background(), catalog, nil, compiler, changedSemantics,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if initial.QueryGroups[0].Plans[0].PlanRevision != changed.QueryGroups[0].Plans[0].PlanRevision {
+		t.Fatal("raw Threshold Plan revision changed with runtime state semantics")
+	}
+	initialGeneration := initial.QueryGroups[0].Plans[0].StateGeneration
+	changedGeneration := changed.QueryGroups[0].Plans[0].StateGeneration
+	if initialGeneration == "" || changedGeneration == "" || initialGeneration == changedGeneration {
+		t.Fatalf("frozen state generations = (%q, %q), want distinct non-empty facts",
+			initialGeneration, changedGeneration)
+	}
+	if initial.SnapshotRevision == changed.SnapshotRevision {
+		t.Fatalf("Snapshot revision remained %q after state compatibility changed", initial.SnapshotRevision)
+	}
+	if changed.SnapshotRevision != stable.SnapshotRevision {
+		t.Fatalf("unchanged state compatibility revision is unstable: changed=%q stable=%q",
+			changed.SnapshotRevision, stable.SnapshotRevision)
+	}
+	tampered := changed
+	tampered.QueryGroups = append([]QueryGroup(nil), changed.QueryGroups...)
+	tampered.QueryGroups[0].Plans = append([]FrozenPlan(nil), changed.QueryGroups[0].Plans...)
+	tampered.QueryGroups[0].Plans[0].StateGeneration = execution.StateGeneration(strings.Repeat("f", 64))
+	if _, _, err := compilePublishedActivation(context.Background(), compiler, changedSemantics, PublishedSnapshot{
+		Publication: SnapshotPublicationRef{SnapshotRevision: tampered.SnapshotRevision, PublicationEpoch: 1},
+		QueryGroups: tampered.QueryGroups,
+	}, 60); err == nil {
+		t.Fatal("activation accepted a frozen state generation that differs from the compiler")
+	}
+}
+
 func TestRetainCompiledLevelsAllRejectedClearsDependencyClosure(t *testing.T) {
 	plan := runtimeClosureG4Plan(t, "1001", "1", runtimeClosureG4Level{2, strategy.DetectorKindOsRestart})
 	plan.Plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0].Type = "Unsupported"

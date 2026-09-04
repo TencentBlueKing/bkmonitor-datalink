@@ -378,6 +378,23 @@ func TestSlotExecutionCoordinatorConvergesCurrentActivationSelectionChange(t *te
 	})
 }
 
+func TestSlotExecutionCoordinatorCompletesHistoricalPlanAsConfigDriftWhenActivationIsNone(t *testing.T) {
+	fixture := newFixture(t, true, "")
+	fixture.ports.activationChangeAt = 1
+	fixture.ports.activationSelection = execution.ActivationNone
+
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err != nil || !result.Completed || result.Result != observability.ResultDegraded ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) ||
+		fixture.ports.lastProgress.Completion.Kind != execution.CompletionPartialGap {
+		t.Fatalf("Execute() result=%+v error=%v Progress=%+v", result, err, fixture.ports.lastProgress)
+	}
+	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || len(fixture.ports.gapMutations) != 0 {
+		t.Fatalf("historical CONFIG_DRIFT emitted side effects or a new activation Guard: events=%d state=%d gaps=%+v",
+			fixture.ports.eventCount, fixture.ports.stateApplyCalls, fixture.ports.gapMutations)
+	}
+}
+
 func TestSlotExecutionCoordinatorReprotectsForceWarmingActivationChangedBetweenGuardAndProgress(t *testing.T) {
 	fixture := newFixture(t, true, "")
 	fixture.ports.activationChangeAt = 1

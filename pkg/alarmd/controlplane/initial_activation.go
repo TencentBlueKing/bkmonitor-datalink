@@ -95,6 +95,10 @@ func compilePublishedActivation(
 			if !ok || compiledResult.PlanTerminal() != nil || len(compiledResult.LevelTerminals()) != 0 {
 				return nil, nil, errors.New("alarmd controlplane: activation Plan cannot be compiled")
 			}
+			compiledGeneration := execution.StateGeneration(compiled.StateCompatibilityHash())
+			if plan.StateGeneration != "" && plan.StateGeneration != compiledGeneration {
+				return nil, nil, errors.New("alarmd controlplane: frozen Plan state generation differs from compiled Plan")
+			}
 			requiredFullSlots := requiredFullSlots(compiled)
 			if requiredFullSlots == 0 {
 				return nil, nil, errors.New("alarmd controlplane: activation Plan has no recovery window")
@@ -104,7 +108,7 @@ func compilePublishedActivation(
 			}
 			fact := execution.PlanActivationFact{Plan: plan.Identity, Selection: execution.ActivationCurrent,
 				Selected: execution.ActivatedPlan{Identity: plan.Identity,
-					StateGeneration:  execution.StateGeneration(compiled.StateCompatibilityHash()),
+					StateGeneration:  compiledGeneration,
 					StateApplyEpoch:  execution.StateApplyEpoch(snapshot.Publication.PublicationEpoch),
 					ScheduleRevision: plan.ScheduleRevision, RequiredFullSlots: requiredFullSlots}}
 			records = append(records, PlanActivationRecord{Fact: fact, Publication: snapshot.Publication})

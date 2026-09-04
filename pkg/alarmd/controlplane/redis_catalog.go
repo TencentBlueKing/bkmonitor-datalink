@@ -643,6 +643,12 @@ func (repository *RedisCatalogRepository) LoadActivations(ctx context.Context, r
 	if err != nil {
 		return execution.PlanActivationResult{}, err
 	}
+	historical := request.Contract.SnapshotRevision != state.Current.SnapshotRevision
+	if historical {
+		if err := repository.validateClosedHistoricalContract(ctx, request.Contract, state.Current); err != nil {
+			return execution.PlanActivationResult{}, err
+		}
+	}
 	byPlan := make(map[execution.PlanIdentity]execution.PlanActivationFact, len(state.Plans))
 	for _, record := range state.Plans {
 		byPlan[record.Fact.Plan] = record.Fact
@@ -650,7 +656,7 @@ func (repository *RedisCatalogRepository) LoadActivations(ctx context.Context, r
 	result := execution.PlanActivationResult{Contract: request.Contract, Facts: make([]execution.PlanActivationFact, 0, len(request.Plans))}
 	for _, plan := range request.Plans {
 		fact, found := byPlan[plan]
-		if !found {
+		if historical || !found {
 			fact = execution.PlanActivationFact{Plan: plan, Selection: execution.ActivationNone}
 		}
 		result.Facts = append(result.Facts, fact)
@@ -659,6 +665,33 @@ func (repository *RedisCatalogRepository) LoadActivations(ctx context.Context, r
 		return execution.PlanActivationResult{}, err
 	}
 	return result, nil
+}
+
+func (repository *RedisCatalogRepository) validateClosedHistoricalContract(
+	ctx context.Context,
+	contractRef execution.FrozenExecutionContractRef,
+	current SnapshotPublicationRef,
+) error {
+	timeline, _, err := repository.loadScheduleTimeline(ctx, contractRef.Slot.QueryGroup)
+	if err != nil {
+		return err
+	}
+	for _, segment := range timeline.Segments {
+		schedule := segment.Schedule
+		if !schedule.Segment.Contains(contractRef.Slot.EvaluationTime) {
+			continue
+		}
+		if schedule.Segment.Start != contractRef.ScheduleSegmentStart ||
+			schedule.Segment.ScheduleRevision != contractRef.ScheduleRevision ||
+			schedule.Segment.Publication.SnapshotRevision != contractRef.SnapshotRevision ||
+			schedule.Segment.QueryRevision != contractRef.QueryRevision || schedule.Segment.End == nil ||
+			(schedule.Segment.Publication.SnapshotRevision == current.SnapshotRevision &&
+				uint64(schedule.Segment.Publication.PublicationEpoch) == current.PublicationEpoch) {
+			return errors.New("alarmd controlplane: activation request does not reference a closed historical Segment")
+		}
+		return nil
+	}
+	return errors.New("alarmd controlplane: activation request has no persisted historical Segment")
 }
 
 func validateActivationState(state ActivationState) error {

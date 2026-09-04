@@ -1311,7 +1311,16 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize,
 				errors.New("alarmd controlplane: frozen Plan cannot be compiled for G1 FULL execution"))
 		}
-		if execution.StateGeneration(compiled.StateCompatibilityHash()) != record.Fact.Selected.StateGeneration {
+		compiledGeneration := execution.StateGeneration(compiled.StateCompatibilityHash())
+		if plan.StateGeneration != "" && plan.StateGeneration != compiledGeneration {
+			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize,
+				errors.New("alarmd controlplane: frozen Plan state generation differs from compiled Plan"))
+		}
+		generationCompatible, err := runtime.stateGenerationCompatibleWithSegment(plan, record, segment, compiledGeneration)
+		if err != nil {
+			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)
+		}
+		if !generationCompatible {
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize,
 				errors.New("alarmd controlplane: Plan activation state generation differs from compiled Plan"))
 		}
@@ -1346,6 +1355,32 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureContractValidation, err)
 	}
 	return fact, nil
+}
+
+func (runtime *RedisCatalogRuntime) stateGenerationCompatibleWithSegment(
+	plan FrozenPlan,
+	record PlanActivationRecord,
+	segment persistedScheduleSegment,
+	compiled execution.StateGeneration,
+) (bool, error) {
+	if compiled == record.Fact.Selected.StateGeneration {
+		return true, nil
+	}
+	if plan.StateGeneration != "" || segment.Schedule.Segment.End == nil {
+		return false, nil
+	}
+	executionSemantics := plan.Plan.StrategyIR.ExecutionSemantics
+	legacy, err := contract.DeriveStateCompatibilityHashV1(contract.StateCompatibilityInputV1{
+		StateSchemaVersion: runtime.stateSemantics.StateSchemaVersion, CodecSemanticsVersion: runtime.stateSemantics.CodecSemanticsVersion,
+		IdentitySchemaDigest: runtime.stateSemantics.IdentitySchemaDigest, EvaluationScope: executionSemantics.EvaluationScope,
+		AggregationInterval: executionSemantics.AggregationInterval, EvaluationInterval: executionSemantics.EvaluationInterval,
+		SourceTimeSemanticsVersion:  runtime.stateSemantics.SourceTimeSemanticsVersion,
+		HistoryCellSemanticsVersion: runtime.stateSemantics.HistoryCellSemanticsVersion,
+	})
+	if err != nil {
+		return false, err
+	}
+	return execution.StateGeneration(legacy) == record.Fact.Selected.StateGeneration, nil
 }
 
 func (runtime *RedisCatalogRuntime) slotRequirements(

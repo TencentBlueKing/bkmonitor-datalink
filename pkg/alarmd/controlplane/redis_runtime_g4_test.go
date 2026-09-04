@@ -294,6 +294,84 @@ func TestRedisCatalogRuntimeAddsLegacyPrimaryOnlyToUncoveredLevels(t *testing.T)
 	}
 }
 
+func TestSourceReconcilerPublishesStateCompatibilityChangeAndForcesWarming(t *testing.T) {
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	document := realThresholdDocuments(t)[0]
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", `[1001]`, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", string(document), 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	source := newRedisStrategySource(t, client)
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:state-compat-refresh", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, initialSemantics := runtimePlanCompiler(t)
+	initialReconciler, err := controlplane.NewSourceReconciler(repository, compiler, initialSemantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := initialReconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("initial pending = (%+v, %v)", result, err)
+	}
+	initial, err := initialReconciler.Refresh(ctx, source, planner)
+	if err != nil || initial.Status != controlplane.SourceRefreshPublished {
+		t.Fatalf("initial publish = (%+v, %v)", initial, err)
+	}
+	initialActivator, err := controlplane.NewInitialScheduleActivator(
+		repository, compiler, initialSemantics, func() time.Time { return time.Unix(60, 0) },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialActivation, err := initialActivator.Ensure(ctx, initial.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	changedSemantics := initialSemantics
+	changedSemantics.IdentitySchemaDigest = strings.Repeat("4", 64)
+	changedReconciler, err := controlplane.NewSourceReconciler(repository, compiler, changedSemantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := changedReconciler.Refresh(ctx, source, planner)
+	if err != nil || pending.Status != controlplane.SourceRefreshPendingConfirmation {
+		t.Fatalf("state compatibility change = (%+v, %v), want new candidate instead of UNCHANGED", pending, err)
+	}
+	changed, err := changedReconciler.Refresh(ctx, source, planner)
+	if err != nil || changed.Status != controlplane.SourceRefreshPublished || changed.Publication == initial.Publication {
+		t.Fatalf("state compatibility publish = (%+v, %v), initial=%+v", changed, err, initial.Publication)
+	}
+	cutover, err := controlplane.NewScheduleActivationReconciler(
+		repository, compiler, changedSemantics, func() time.Time { return time.Unix(120, 0) },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedActivation, err := cutover.Ensure(ctx, changed.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(initialActivation.Plans) != 1 || len(changedActivation.Plans) != 1 ||
+		initialActivation.Plans[0].Fact.Selected.StateGeneration == changedActivation.Plans[0].Fact.Selected.StateGeneration ||
+		!changedActivation.Plans[0].Fact.Selected.ForceWarming {
+		t.Fatalf("state compatibility activation did not force WARMING: initial=%+v changed=%+v",
+			initialActivation.Plans, changedActivation.Plans)
+	}
+	stable, err := changedReconciler.Refresh(ctx, source, planner)
+	if err != nil || stable.Status != controlplane.SourceRefreshUnchanged || stable.Publication != changed.Publication {
+		t.Fatalf("stable compatibility refresh = (%+v, %v), want UNCHANGED at %+v", stable, err, changed.Publication)
+	}
+}
+
 func TestRedisCatalogRuntimeReplaysPreG4HistoricalSegmentAfterG4StateGenerationUpgrade(t *testing.T) {
 	ctx := context.Background()
 	client := newControlplaneRedis(t)
@@ -327,10 +405,25 @@ func TestRedisCatalogRuntimeReplaysPreG4HistoricalSegmentAfterG4StateGenerationU
 	); err != nil {
 		t.Fatal(err)
 	}
+	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, stateSemantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialOpen, err := runtime.ReadFrozenSchedule(ctx, previousCatalog.QueryGroups[0].Identity, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.FreezeSlotContract(ctx, execution.FreezeSlotContractRequest{
+		QueryGroup: initialOpen.Segment.QueryGroup, ScheduleRevision: initialOpen.Segment.ScheduleRevision,
+		ScheduleSegmentStart: initialOpen.Segment.Start, EvaluationTime: 60, DuePlans: initialOpen.DuePlanRefs(60),
+	}); err == nil {
+		t.Fatal("open pre-G4 Segment accepted a state-generation mismatch")
+	}
 
 	currentCatalog := buildG4Catalog(t, threshold,
 		g4SourceStrategy(t, 461, strategy.DetectorKindSimpleRingRatio, map[string]any{"floor": 50, "ceil": nil}),
 	)
+	freezeCatalogStateGenerations(t, &currentCatalog, compiler, stateSemantics)
 	if currentCatalog.QueryGroups[0].Identity != previousCatalog.QueryGroups[0].Identity {
 		t.Fatalf("G4 cutover changed Query Group identity: previous=%q current=%q",
 			previousCatalog.QueryGroups[0].Identity, currentCatalog.QueryGroups[0].Identity)
@@ -353,14 +446,11 @@ func TestRedisCatalogRuntimeReplaysPreG4HistoricalSegmentAfterG4StateGenerationU
 		t.Fatalf("current G4 activation Plans = %+v", currentActivation.Plans)
 	}
 	currentThreshold, ok := activationForStrategy(currentActivation, "460")
-	if !ok || currentThreshold.Fact.Selected.StateGeneration != currentGeneration {
+	if !ok || currentThreshold.Fact.Selected.StateGeneration != currentGeneration ||
+		!currentThreshold.Fact.Selected.ForceWarming {
 		t.Fatalf("current Threshold activation = %+v, want generation %q", currentThreshold, currentGeneration)
 	}
 
-	runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, stateSemantics, 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
 	queryGroup := previousCatalog.QueryGroups[0].Identity
 	currentSchedule, err := runtime.ReadFrozenSchedule(ctx, queryGroup, 120)
 	if err != nil {
@@ -383,11 +473,12 @@ func TestRedisCatalogRuntimeReplaysPreG4HistoricalSegmentAfterG4StateGenerationU
 		len(historicalSchedule.DuePlanRefs(60)) != 1 {
 		t.Fatalf("historical Segment facts = %+v", historicalSchedule)
 	}
-	_, err = runtime.FreezeSlotContract(ctx, execution.FreezeSlotContractRequest{
+	historicalRequest := execution.FreezeSlotContractRequest{
 		QueryGroup: queryGroup, ScheduleRevision: historicalSchedule.Segment.ScheduleRevision,
 		ScheduleSegmentStart: historicalSchedule.Segment.Start, EvaluationTime: 60,
 		DuePlans: historicalSchedule.DuePlanRefs(60),
-	})
+	}
+	historical, err := runtime.FreezeSlotContract(ctx, historicalRequest)
 	if err != nil {
 		var classified *controlplane.FreezeSlotContractError
 		if !errors.As(err, &classified) || classified.Class != controlplane.FreezeSlotFailurePlanMaterialize ||
@@ -395,6 +486,35 @@ func TestRedisCatalogRuntimeReplaysPreG4HistoricalSegmentAfterG4StateGenerationU
 			t.Fatalf("historical Segment failed outside state-generation compatibility: %v", err)
 		}
 		t.Fatalf("pre-G4 historical Segment was recompiled with the G4 state-generation formula: %v", err)
+	}
+	if len(historical.DuePlans) != 1 || historical.DuePlans[0].StateGeneration != legacyGeneration {
+		t.Fatalf("historical due Plans = %+v, want legacy generation %q", historical.DuePlans, legacyGeneration)
+	}
+	if len(historical.Requirements) != 1 || historical.Requirements[0].Role != execution.InputRolePrimary ||
+		len(historical.Requirements[0].Consumers) != 1 ||
+		historical.Requirements[0].Consumers[0].Consumer.Plan != historical.DuePlans[0].Identity {
+		t.Fatalf("historical PRIMARY query contract = %+v", historical.Requirements)
+	}
+	repeated, err := runtime.FreezeSlotContract(ctx, historicalRequest)
+	if err != nil || !reflect.DeepEqual(repeated, historical) {
+		t.Fatalf("historical Freeze repeat = (%+v, %v), want %+v", repeated, err, historical)
+	}
+	activations, err := repository.LoadActivations(ctx, execution.PlanActivationRequest{
+		Contract: historical.Contract, Plans: []execution.PlanIdentity{historical.DuePlans[0].Identity},
+	})
+	if err != nil || len(activations.Facts) != 1 || activations.Facts[0].Selection != execution.ActivationNone {
+		t.Fatalf("historical activation admission = (%+v, %v), want NONE without a new-generation Guard", activations, err)
+	}
+
+	scheduleKey := "alarmd:control:g4-generation-upgrade:schedule_timeline:" + string(queryGroup)
+	timeline := readJSONObject(t, ctx, client, scheduleKey)
+	closed := timeline["segments"].([]any)[0].(map[string]any)
+	plans := closed["plans"].([]any)
+	selected := plans[0].(map[string]any)["fact"].(map[string]any)["Selected"].(map[string]any)
+	selected["StateGeneration"] = strings.Repeat("f", 64)
+	writeJSONObject(t, ctx, client, scheduleKey, timeline)
+	if _, err := runtime.FreezeSlotContract(ctx, historicalRequest); err == nil {
+		t.Fatal("closed historical Segment accepted an arbitrary state generation")
 	}
 }
 
@@ -437,6 +557,24 @@ func compiledStateGeneration(
 		t.Fatalf("real G4 Plan did not compile: plan=%v terminal=%+v levels=%+v", ok, result.PlanTerminal(), result.LevelTerminals())
 	}
 	return execution.StateGeneration(compiled.StateCompatibilityHash())
+}
+
+func freezeCatalogStateGenerations(
+	t *testing.T,
+	catalog *controlplane.Catalog,
+	compiler *strategy.PlanCompiler,
+	semantics strategy.StateSemantics,
+) {
+	t.Helper()
+	for groupIndex := range catalog.QueryGroups {
+		group := &catalog.QueryGroups[groupIndex]
+		for planIndex := range group.Plans {
+			group.Plans[planIndex].StateGeneration = compiledStateGeneration(
+				t, compiler, *group, group.Plans[planIndex], semantics,
+			)
+		}
+	}
+	catalog.SnapshotRevision = execution.SnapshotRevision(mustDigest(t, "alarmd-strategy-snapshot-v1", catalog.QueryGroups))
 }
 
 func activationForStrategy(state controlplane.ActivationState, strategyID string) (controlplane.PlanActivationRecord, bool) {

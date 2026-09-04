@@ -463,12 +463,19 @@ func (source *ProductionSlotSource) classifyRecovery(
 		return execution.OperationNormal, SlotRecoveryFacts{Disposition: ReplayLive}, nil
 	}
 	age := at.Sub(time.UnixMilli(deadline))
+	if age > source.recovery.MaxReplayAge {
+		return execution.OperationNormal, SlotRecoveryFacts{
+			Disposition: ReplayExpired,
+			Distance:    1,
+			Age:         age,
+		}, nil
+	}
 	distance, err := source.replayDistance(ctx, evaluationTime, at)
 	if err != nil {
 		return "", SlotRecoveryFacts{}, err
 	}
 	facts := SlotRecoveryFacts{Disposition: ReplayEligible, Distance: distance, Age: age}
-	if age > source.recovery.MaxReplayAge || distance > source.recovery.MaxReplaySlots {
+	if distance > source.recovery.MaxReplaySlots {
 		facts.Disposition = ReplayExpired
 		return execution.OperationNormal, facts, nil
 	}
@@ -509,6 +516,10 @@ func (source *ProductionSlotSource) replayDistance(
 	first execution.EvaluationTime,
 	at time.Time,
 ) (uint32, error) {
+	retiredAt, retired, err := source.catalog.ReadScheduleRetirement(ctx, source.queryGroup)
+	if err != nil {
+		return 0, err
+	}
 	distance := uint32(1)
 	cursor := first
 	for distance <= source.recovery.MaxReplaySlots {
@@ -518,6 +529,9 @@ func (source *ProductionSlotSource) replayDistance(
 		}
 		if next <= cursor {
 			return 0, ErrScheduleFactsInvalid
+		}
+		if retired && next == retiredAt {
+			return distance, nil
 		}
 		if int64(next) > at.Unix() {
 			return distance, nil

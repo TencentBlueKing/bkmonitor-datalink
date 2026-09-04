@@ -467,6 +467,45 @@ func TestProductionSlotSourceLeavesExpiredBacklogForExistingGapFinalizer(t *test
 	}
 }
 
+func TestProductionSlotSourceExpiresRetiredBacklogByAgeWithoutReadingPastBoundary(t *testing.T) {
+	boundary := execution.EvaluationTime(137)
+	schedule := schedulerSchedule(t, 60, 60, &boundary, "snapshot-retired", 9)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}, retiredAt: &boundary}
+	limits := testRecoveryLimits()
+	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, foundProgress(120, 60), time.Unix(1000, 0), limits)
+
+	slot, due, err := source.Next(context.Background(), "query-group-1")
+	if err != nil || !due {
+		t.Fatalf("Next() due=%v error=%v", due, err)
+	}
+	if slot.Dispatch.Operation != execution.OperationNormal || slot.Recovery.Disposition != ReplayExpired ||
+		slot.Recovery.Distance != 1 || slot.Recovery.Age <= limits.MaxReplayAge {
+		t.Fatalf("age-expired retired Slot recovery facts = %+v dispatch=%+v", slot.Recovery, slot.Dispatch)
+	}
+	if !reflect.DeepEqual(catalog.nextSlotAfterCalls, []execution.EvaluationTime{60}) {
+		t.Fatalf("NextSlotAfter calls = %v, want only Progress advancement before age classification", catalog.nextSlotAfterCalls)
+	}
+}
+
+func TestProductionSlotSourceReplayDistanceStopsAtRetirementBoundary(t *testing.T) {
+	boundary := execution.EvaluationTime(137)
+	schedule := schedulerSchedule(t, 60, 60, &boundary, "snapshot-retired", 9)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}, retiredAt: &boundary}
+	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, foundProgress(120, 60), time.Unix(200, 0), testRecoveryLimits())
+
+	slot, due, err := source.Next(context.Background(), "query-group-1")
+	if err != nil || !due {
+		t.Fatalf("Next() due=%v error=%v", due, err)
+	}
+	if slot.Dispatch.Operation != execution.OperationReplay || slot.Recovery.Disposition != ReplayEligible ||
+		slot.Recovery.Distance != 1 {
+		t.Fatalf("retired Slot recovery facts = %+v dispatch=%+v", slot.Recovery, slot.Dispatch)
+	}
+	if !reflect.DeepEqual(catalog.nextSlotAfterCalls, []execution.EvaluationTime{60, 120}) {
+		t.Fatalf("NextSlotAfter calls = %v, want no read at retirement boundary %d", catalog.nextSlotAfterCalls, boundary)
+	}
+}
+
 func schedulerSchedule(
 	t *testing.T,
 	interval int64,
@@ -616,14 +655,15 @@ func (session *sequenceOwnerSession) ValidateCurrent(context.Context, time.Time)
 }
 
 type fakeSlotCatalog struct {
-	t                *testing.T
-	schedules        []execution.FrozenQueryGroupSchedule
-	initialReads     int
-	readTimes        []execution.EvaluationTime
-	requests         []execution.FreezeSlotContractRequest
-	progressIdentity execution.ProgressIdentity
-	retiredAt        *execution.EvaluationTime
-	freezeErr        error
+	t                  *testing.T
+	schedules          []execution.FrozenQueryGroupSchedule
+	initialReads       int
+	readTimes          []execution.EvaluationTime
+	nextSlotAfterCalls []execution.EvaluationTime
+	requests           []execution.FreezeSlotContractRequest
+	progressIdentity   execution.ProgressIdentity
+	retiredAt          *execution.EvaluationTime
+	freezeErr          error
 }
 
 func (catalog *fakeSlotCatalog) ReadInitialFrozenSchedule(
@@ -698,6 +738,7 @@ func (catalog *fakeSlotCatalog) NextSlotAfter(
 	queryGroup execution.QueryGroupIdentity,
 	completed execution.EvaluationTime,
 ) (execution.EvaluationTime, error) {
+	catalog.nextSlotAfterCalls = append(catalog.nextSlotAfterCalls, completed)
 	for index, schedule := range catalog.schedules {
 		if schedule.Segment.QueryGroup != queryGroup || !schedule.Segment.Contains(completed) {
 			continue
@@ -710,6 +751,9 @@ func (catalog *fakeSlotCatalog) NextSlotAfter(
 				return next, nil
 			}
 		}
+	}
+	if catalog.retiredAt != nil && *catalog.retiredAt > completed {
+		return *catalog.retiredAt, nil
 	}
 	return 0, ErrProgressOffSchedule
 }

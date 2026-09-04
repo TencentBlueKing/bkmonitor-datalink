@@ -12,6 +12,8 @@ package controlplane_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"reflect"
 	"sort"
 	"strconv"
@@ -184,8 +186,19 @@ func TestRedisCatalogRuntimeRejectsDanglingG4QueryReference(t *testing.T) {
 	catalog.SnapshotRevision = execution.SnapshotRevision(mustDigest(t, "alarmd-strategy-snapshot-v1", catalog.QueryGroups))
 
 	_, err := freezeG4Catalog(t, catalog)
-	if err == nil || !strings.Contains(err.Error(), "no QueryPlanFacts") {
-		t.Fatalf("FreezeSlotContract() error = %v, want dangling query rejection", err)
+	if err == nil {
+		t.Fatal("FreezeSlotContract() error = nil, want dangling query rejection")
+	}
+	if got := fmt.Sprintf("%T", err); got != "*controlplane.FreezeSlotContractError" {
+		t.Fatalf("FreezeSlotContract() error type = %s, want classified input-closure failure", got)
+	}
+	var classified *controlplane.FreezeSlotContractError
+	if !errors.As(err, &classified) || classified.Class != controlplane.FreezeSlotFailureInputClosure {
+		t.Fatalf("FreezeSlotContract() class = %+v, want %q", classified, controlplane.FreezeSlotFailureInputClosure)
+	}
+	if strings.Contains(err.Error(), "QueryPlanFacts") || errors.Unwrap(err) == nil ||
+		!strings.Contains(errors.Unwrap(err).Error(), "no QueryPlanFacts") {
+		t.Fatalf("FreezeSlotContract() error = %v, unwrap=%v, want safe class with preserved cause", err, errors.Unwrap(err))
 	}
 }
 

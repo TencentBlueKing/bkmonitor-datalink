@@ -124,8 +124,28 @@ func TestClassifySlotFreezeFailureUsesFixedLowCardinalityTypes(t *testing.T) {
 			want: "*scheduler.slotFreezeSnapshotCorruptFailure"},
 		{name: "schedule unavailable", err: controlplane.ErrScheduleUnavailable,
 			want: "*scheduler.slotFreezeScheduleUnavailableFailure"},
+		{name: "schedule corrupt", err: &controlplane.DeterministicScheduleError{Err: errors.New("sensitive payload")},
+			want: "*scheduler.slotFreezeScheduleCorruptFailure"},
 		{name: "catalog object unavailable", err: controlplane.ErrCatalogObjectUnavailable,
 			want: "*scheduler.slotFreezeCatalogObjectUnavailableFailure"},
+		{name: "schedule read", err: &controlplane.FreezeSlotContractError{
+			Class: controlplane.FreezeSlotFailureScheduleRead, Err: errors.New("sensitive payload")},
+			want: "*scheduler.slotFreezeScheduleReadFailure"},
+		{name: "schedule mismatch", err: &controlplane.FreezeSlotContractError{
+			Class: controlplane.FreezeSlotFailureScheduleMismatch, Err: errors.New("sensitive payload")},
+			want: "*scheduler.slotFreezeScheduleMismatchFailure"},
+		{name: "snapshot read", err: &controlplane.FreezeSlotContractError{
+			Class: controlplane.FreezeSlotFailureSnapshotRead, Err: errors.New("sensitive payload")},
+			want: "*scheduler.slotFreezeSnapshotReadFailure"},
+		{name: "plan materialize", err: &controlplane.FreezeSlotContractError{
+			Class: controlplane.FreezeSlotFailurePlanMaterialize, Err: errors.New("sensitive payload")},
+			want: "*scheduler.slotFreezePlanMaterializeFailure"},
+		{name: "input closure", err: &controlplane.FreezeSlotContractError{
+			Class: controlplane.FreezeSlotFailureInputClosure, Err: errors.New("sensitive payload")},
+			want: "*scheduler.slotFreezeInputClosureFailure"},
+		{name: "contract validation", err: &controlplane.FreezeSlotContractError{
+			Class: controlplane.FreezeSlotFailureContractValidation, Err: errors.New("sensitive payload")},
+			want: "*scheduler.slotFreezeContractValidationFailure"},
 		{name: "other", err: errors.New("sensitive payload"),
 			want: "*scheduler.slotFreezeOtherFailure"},
 	}

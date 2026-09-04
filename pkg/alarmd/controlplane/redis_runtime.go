@@ -25,6 +25,35 @@ var (
 	ErrScheduleConflict    = errors.New("alarmd controlplane: schedule activation conflict")
 )
 
+type FreezeSlotContractFailureClass string
+
+const (
+	FreezeSlotFailureScheduleRead       FreezeSlotContractFailureClass = "schedule_read"
+	FreezeSlotFailureScheduleMismatch   FreezeSlotContractFailureClass = "schedule_mismatch"
+	FreezeSlotFailureSnapshotRead       FreezeSlotContractFailureClass = "snapshot_read"
+	FreezeSlotFailurePlanMaterialize    FreezeSlotContractFailureClass = "plan_materialize"
+	FreezeSlotFailureInputClosure       FreezeSlotContractFailureClass = "input_closure"
+	FreezeSlotFailureContractValidation FreezeSlotContractFailureClass = "contract_validation"
+)
+
+// FreezeSlotContractError identifies the bounded stage that rejected a frozen
+// Slot. Error deliberately omits the underlying fact while Unwrap preserves it
+// for errors.Is/errors.As and local tests.
+type FreezeSlotContractError struct {
+	Class FreezeSlotContractFailureClass
+	Err   error
+}
+
+func (err *FreezeSlotContractError) Error() string {
+	return "alarmd controlplane: FreezeSlotContract failed"
+}
+
+func (err *FreezeSlotContractError) Unwrap() error { return err.Err }
+
+func freezeSlotContractError(class FreezeSlotContractFailureClass, err error) error {
+	return &FreezeSlotContractError{Class: class, Err: err}
+}
+
 type DeterministicScheduleError struct{ Err error }
 
 func (err *DeterministicScheduleError) Error() string {
@@ -1229,29 +1258,31 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 	request execution.FreezeSlotContractRequest,
 ) (execution.FrozenSlotContractFact, error) {
 	if err := request.Validate(); err != nil {
-		return execution.FrozenSlotContractFact{}, err
+		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureContractValidation, err)
 	}
 	segment, err := runtime.readPersistedSegment(ctx, request.QueryGroup, request.EvaluationTime)
 	if err != nil {
-		return execution.FrozenSlotContractFact{}, err
+		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureScheduleRead, err)
 	}
 	schedule := segment.Schedule
 	if schedule.Segment.ScheduleRevision != request.ScheduleRevision || schedule.Segment.Start != request.ScheduleSegmentStart {
-		return execution.FrozenSlotContractFact{}, errors.New("alarmd controlplane: frozen Slot request differs from persisted Segment")
+		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureScheduleMismatch,
+			errors.New("alarmd controlplane: frozen Slot request differs from persisted Segment"))
 	}
 	expectedDue := schedule.DuePlanRefs(request.EvaluationTime)
 	if !equalDuePlanRefs(expectedDue, request.DuePlans) {
-		return execution.FrozenSlotContractFact{}, errors.New("alarmd controlplane: frozen Slot request differs from exact due Plan set")
+		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureScheduleMismatch,
+			errors.New("alarmd controlplane: frozen Slot request differs from exact due Plan set"))
 	}
 	publication := SnapshotPublicationRef{SnapshotRevision: schedule.Segment.Publication.SnapshotRevision,
 		PublicationEpoch: uint64(schedule.Segment.Publication.PublicationEpoch)}
 	snapshot, err := runtime.repository.LoadPublishedSnapshot(ctx, publication)
 	if err != nil {
-		return execution.FrozenSlotContractFact{}, err
+		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureSnapshotRead, err)
 	}
 	group, err := findQueryGroup(snapshot, request.QueryGroup)
 	if err != nil {
-		return execution.FrozenSlotContractFact{}, err
+		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)
 	}
 	activationByPlan := make(map[execution.PlanIdentity]PlanActivationRecord, len(segment.Plans))
 	for _, record := range segment.Plans {
@@ -1267,23 +1298,26 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 		record, active := activationByPlan[dueRef.Identity]
 		if !ok || !active || plan.ScheduleRevision != dueRef.ScheduleRevision ||
 			record.Fact.Selected.ScheduleRevision != dueRef.ScheduleRevision {
-			return execution.FrozenSlotContractFact{}, errors.New("alarmd controlplane: due Plan is absent from frozen Catalog or activation")
+			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize,
+				errors.New("alarmd controlplane: due Plan is absent from frozen Catalog or activation"))
 		}
 		compiledResult, err := runtime.compiler.Compile(ctx, strategy.CompileRequest{Plan: plan.Plan,
 			DatasetContract: group.QueryPlan.Normalization.DatasetContract, StateSemantics: runtime.stateSemantics})
 		if err != nil {
-			return execution.FrozenSlotContractFact{}, err
+			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)
 		}
 		compiled, compiledOK := compiledResult.Plan()
 		if !compiledOK || compiledResult.PlanTerminal() != nil || len(compiledResult.LevelTerminals()) != 0 {
-			return execution.FrozenSlotContractFact{}, errors.New("alarmd controlplane: frozen Plan cannot be compiled for G1 FULL execution")
+			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize,
+				errors.New("alarmd controlplane: frozen Plan cannot be compiled for G1 FULL execution"))
 		}
 		if execution.StateGeneration(compiled.StateCompatibilityHash()) != record.Fact.Selected.StateGeneration {
-			return execution.FrozenSlotContractFact{}, errors.New("alarmd controlplane: Plan activation state generation differs from compiled Plan")
+			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize,
+				errors.New("alarmd controlplane: Plan activation state generation differs from compiled Plan"))
 		}
 		deadline, err := completionDeadline(request.EvaluationTime, plan.ScheduleSpec)
 		if err != nil {
-			return execution.FrozenSlotContractFact{}, err
+			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureContractValidation, err)
 		}
 		capabilities := make([]execution.LevelPartialCapability, 0, len(compiled.Levels()))
 		for _, level := range compiled.Levels() {
@@ -1296,11 +1330,11 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 	}
 	requirements, err := runtime.slotRequirements(group, duePlans, planByID)
 	if err != nil {
-		return execution.FrozenSlotContractFact{}, err
+		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureInputClosure, err)
 	}
 	digest, err := execution.DeriveDuePlanSetDigest(duePlans, requirements)
 	if err != nil {
-		return execution.FrozenSlotContractFact{}, err
+		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureContractValidation, err)
 	}
 	fact := execution.FrozenSlotContractFact{Contract: execution.FrozenExecutionContractRef{
 		Slot:             execution.SlotIdentity{QueryGroup: request.QueryGroup, EvaluationTime: request.EvaluationTime},
@@ -1309,7 +1343,7 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 		DuePlanSetDigest: digest,
 	}, DuePlans: duePlans, Requirements: requirements}
 	if err := fact.Validate(request); err != nil {
-		return execution.FrozenSlotContractFact{}, err
+		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureContractValidation, err)
 	}
 	return fact, nil
 }

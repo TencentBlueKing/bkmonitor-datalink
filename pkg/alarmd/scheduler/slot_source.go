@@ -45,9 +45,37 @@ type slotFreezeScheduleUnavailableFailure struct{ slotFreezeFailure }
 
 func (*slotFreezeScheduleUnavailableFailure) Error() string { return slotFreezeFailureMessage }
 
+type slotFreezeScheduleCorruptFailure struct{ slotFreezeFailure }
+
+func (*slotFreezeScheduleCorruptFailure) Error() string { return slotFreezeFailureMessage }
+
 type slotFreezeCatalogObjectUnavailableFailure struct{ slotFreezeFailure }
 
 func (*slotFreezeCatalogObjectUnavailableFailure) Error() string { return slotFreezeFailureMessage }
+
+type slotFreezeScheduleReadFailure struct{ slotFreezeFailure }
+
+func (*slotFreezeScheduleReadFailure) Error() string { return slotFreezeFailureMessage }
+
+type slotFreezeScheduleMismatchFailure struct{ slotFreezeFailure }
+
+func (*slotFreezeScheduleMismatchFailure) Error() string { return slotFreezeFailureMessage }
+
+type slotFreezeSnapshotReadFailure struct{ slotFreezeFailure }
+
+func (*slotFreezeSnapshotReadFailure) Error() string { return slotFreezeFailureMessage }
+
+type slotFreezePlanMaterializeFailure struct{ slotFreezeFailure }
+
+func (*slotFreezePlanMaterializeFailure) Error() string { return slotFreezeFailureMessage }
+
+type slotFreezeInputClosureFailure struct{ slotFreezeFailure }
+
+func (*slotFreezeInputClosureFailure) Error() string { return slotFreezeFailureMessage }
+
+type slotFreezeContractValidationFailure struct{ slotFreezeFailure }
+
+func (*slotFreezeContractValidationFailure) Error() string { return slotFreezeFailureMessage }
 
 type slotFreezeOtherFailure struct{ slotFreezeFailure }
 
@@ -56,6 +84,8 @@ func (*slotFreezeOtherFailure) Error() string { return slotFreezeFailureMessage 
 func classifySlotFreezeFailure(err error) error {
 	failure := slotFreezeFailure{err: err}
 	var corrupt *controlplane.PersistedSnapshotCorruptError
+	var corruptSchedule *controlplane.DeterministicScheduleError
+	var classified *controlplane.FreezeSlotContractError
 	switch {
 	case errors.As(err, &corrupt):
 		return &slotFreezeSnapshotCorruptFailure{slotFreezeFailure: failure}
@@ -63,8 +93,26 @@ func classifySlotFreezeFailure(err error) error {
 		return &slotFreezeSnapshotUnavailableFailure{slotFreezeFailure: failure}
 	case errors.Is(err, controlplane.ErrScheduleUnavailable):
 		return &slotFreezeScheduleUnavailableFailure{slotFreezeFailure: failure}
+	case errors.As(err, &corruptSchedule):
+		return &slotFreezeScheduleCorruptFailure{slotFreezeFailure: failure}
 	case errors.Is(err, controlplane.ErrCatalogObjectUnavailable):
 		return &slotFreezeCatalogObjectUnavailableFailure{slotFreezeFailure: failure}
+	case errors.As(err, &classified):
+		switch classified.Class {
+		case controlplane.FreezeSlotFailureScheduleRead:
+			return &slotFreezeScheduleReadFailure{slotFreezeFailure: failure}
+		case controlplane.FreezeSlotFailureScheduleMismatch:
+			return &slotFreezeScheduleMismatchFailure{slotFreezeFailure: failure}
+		case controlplane.FreezeSlotFailureSnapshotRead:
+			return &slotFreezeSnapshotReadFailure{slotFreezeFailure: failure}
+		case controlplane.FreezeSlotFailurePlanMaterialize:
+			return &slotFreezePlanMaterializeFailure{slotFreezeFailure: failure}
+		case controlplane.FreezeSlotFailureInputClosure:
+			return &slotFreezeInputClosureFailure{slotFreezeFailure: failure}
+		case controlplane.FreezeSlotFailureContractValidation:
+			return &slotFreezeContractValidationFailure{slotFreezeFailure: failure}
+		}
+		return &slotFreezeOtherFailure{slotFreezeFailure: failure}
 	default:
 		return &slotFreezeOtherFailure{slotFreezeFailure: failure}
 	}

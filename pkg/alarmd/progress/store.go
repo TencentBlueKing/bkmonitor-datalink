@@ -105,13 +105,28 @@ func (store *Store) BeginSlot(ctx context.Context, request execution.ProgressBeg
 		if err != nil {
 			return execution.ProgressBeginResult{}, &DeterministicInvalidError{Err: err}
 		}
-		if current.Identity != request.Identity || current.NextSlot != request.Projection.Contract.Slot.EvaluationTime {
+		if current.Identity != request.Identity {
 			return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
 		}
 		if current.UnfinishedSlot != nil {
+			if current.NextSlot != request.Projection.Contract.Slot.EvaluationTime {
+				return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
+			}
 			if !current.UnfinishedSlot.Equal(request.Projection) {
 				return execution.ProgressBeginResult{}, &DeterministicInvalidError{Err: fmt.Errorf("unfinished Slot projection differs from persisted facts")}
 			}
+		} else if current.NextSlot != request.Projection.Contract.Slot.EvaluationTime {
+			// A cutover can leave the persisted cursor on the old Schedule grid.
+			// Only the exact successor independently resolved from completed facts
+			// may replace that cursor before the unfinished projection is written.
+			currentNext, resolveErr := store.resolveCurrentNextSlot(ctx, current)
+			if resolveErr != nil {
+				return execution.ProgressBeginResult{}, resolveErr
+			}
+			if currentNext != request.Projection.Contract.Slot.EvaluationTime {
+				return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
+			}
+			current.NextSlot = currentNext
 		}
 	}
 	projection := request.Projection

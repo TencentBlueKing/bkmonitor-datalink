@@ -364,6 +364,70 @@ func TestProductionSlotSourceUsesFirstLegalSlotOnNewCutoverGrid(t *testing.T) {
 	}
 }
 
+func TestProductionSlotSourceTimelineSuccessorCanBeginUnfinishedProgress(t *testing.T) {
+	oldSchedule := schedulerSchedule(t, 60, 30, nil, "snapshot-old", 7)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{oldSchedule}}
+	control := &slotProgressControlStore{missing: true}
+	store, err := progress.NewStore(progress.StoreOptions{
+		Prefix: "alarmd", Control: control, Slots: slotProgressResolver{catalog: catalog},
+		Now: func() time.Time { return time.Unix(200, 0) },
+	})
+	if err != nil {
+		t.Fatalf("progress.NewStore() error = %v", err)
+	}
+	source := mustProductionSlotSource(t,
+		&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
+		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog, store, time.Unix(200, 0))
+
+	oldSlot, due, err := source.Next(context.Background(), "query-group-1")
+	if err != nil || !due || oldSlot.ExpectedNextSlot != 60 {
+		t.Fatalf("freeze old Slot = (%+v, %v, %v)", oldSlot, due, err)
+	}
+	committed, err := store.CommitProgress(context.Background(), execution.ProgressCommitRequest{
+		Identity: execution.ProgressIdentity{QueryGroup: "query-group-1"}, OwnerFence: oldSlot.Dispatch.OwnerFence,
+		ExpectedNextSlot: oldSlot.ExpectedNextSlot,
+		Completion: execution.SlotCompletion{
+			Contract: oldSlot.Contract, Kind: execution.CompletionFull,
+			Primary: &execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateData},
+			Result:  observability.ResultSuccess,
+		},
+	})
+	if err != nil || committed.Status != execution.ProgressCommitted {
+		t.Fatalf("CommitProgress(old Slot) = (%+v, %v)", committed, err)
+	}
+	loaded, err := store.LoadProgress(context.Background(), execution.ProgressIdentity{QueryGroup: "query-group-1"})
+	if err != nil || loaded.Progress == nil || loaded.Progress.NextSlot != 120 {
+		t.Fatalf("old-grid Progress = (%+v, %v), want NextSlot 120", loaded, err)
+	}
+
+	boundary := execution.EvaluationTime(75)
+	oldSchedule.Segment.End = &boundary
+	newSchedule := schedulerSchedule(t, 90, boundary, nil, "snapshot-new", 8)
+	catalog.schedules = []execution.FrozenQueryGroupSchedule{oldSchedule, newSchedule}
+	successor, due, err := source.Next(context.Background(), "query-group-1")
+	if err != nil || !due || successor.ExpectedNextSlot != 90 ||
+		successor.Contract.ScheduleRevision != newSchedule.Segment.ScheduleRevision {
+		t.Fatalf("freeze timeline successor = (%+v, %v, %v)", successor, due, err)
+	}
+	projection := execution.UnfinishedSlotProjection{
+		Contract: successor.Contract, DuePlanTargets: successor.DuePlanTargets.Clone(),
+		EarliestQueryDeadlineUnixMilli: successor.EarliestQueryDeadlineUnixMilli,
+		KeepUntilUnixMilli:             successor.KeepUntilUnixMilli,
+	}
+	begun, err := store.BeginSlot(context.Background(), execution.ProgressBeginRequest{
+		Identity:   execution.ProgressIdentity{QueryGroup: "query-group-1"},
+		OwnerFence: successor.Dispatch.OwnerFence, Projection: projection,
+	})
+	if err != nil || begun.Status != execution.ProgressCommitted {
+		t.Fatalf("BeginSlot(timeline successor) = (%+v, %v)", begun, err)
+	}
+	loaded, err = store.LoadProgress(context.Background(), execution.ProgressIdentity{QueryGroup: "query-group-1"})
+	if err != nil || loaded.Progress == nil || loaded.Progress.NextSlot != 90 ||
+		loaded.Progress.UnfinishedSlot == nil || !loaded.Progress.UnfinishedSlot.Equal(projection) {
+		t.Fatalf("successor unfinished Progress = (%+v, %v)", loaded, err)
+	}
+}
+
 func TestProductionSlotSourceCrossesReactivationForEveryNonFullCompletion(t *testing.T) {
 	retiredAt := execution.EvaluationTime(90)
 	oldSchedule := schedulerSchedule(t, 60, 60, &retiredAt, "snapshot-old", 7)

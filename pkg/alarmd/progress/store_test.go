@@ -81,6 +81,96 @@ func TestBeginSlotRejectsDifferentProjectionAndHonorsFenceOnIdempotentRetry(t *t
 	}
 }
 
+func TestBeginSlotAcceptsTimelineProvenSuccessorAndSnapshotUnavailableAdvancesToRetiredBoundary(t *testing.T) {
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	fence := execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"}
+	current := execution.ScheduleProgress{
+		Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull,
+	}
+	fake := &controlFake{value: mustEncode(t, current)}
+	store := mustStoreWithSlots(t, fake, mappedSlotResolver{60: 90, 90: 150})
+	projection := progressProjectionAt(90)
+
+	begin, err := store.BeginSlot(context.Background(), execution.ProgressBeginRequest{
+		Identity: identity, OwnerFence: fence, Projection: projection,
+	})
+	if err != nil || begin.Status != execution.ProgressCommitted {
+		t.Fatalf("BeginSlot(timeline successor) = (%+v, %v), want committed", begin, err)
+	}
+	loaded, err := store.LoadProgress(context.Background(), identity)
+	if err != nil || loaded.Progress == nil || loaded.Progress.NextSlot != 90 ||
+		loaded.Progress.LastFullSlot != 60 || loaded.Progress.LastCompletionKind != execution.CompletionFull ||
+		loaded.Progress.UnfinishedSlot == nil || !loaded.Progress.UnfinishedSlot.Equal(projection) {
+		t.Fatalf("LoadProgress(after successor BeginSlot) = (%+v, %v)", loaded, err)
+	}
+
+	commit, err := store.CommitProgress(context.Background(), execution.ProgressCommitRequest{
+		Identity: identity, OwnerFence: fence, ExpectedNextSlot: 90, Projection: projection,
+		Completion: execution.SlotCompletion{
+			Contract: projection.Contract, Kind: execution.CompletionSnapshotUnavailable,
+			Result:     observability.ResultDegraded,
+			ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
+		},
+	})
+	if err != nil || commit.Status != execution.ProgressCommitted {
+		t.Fatalf("CommitProgress(snapshot unavailable) = (%+v, %v)", commit, err)
+	}
+	loaded, err = store.LoadProgress(context.Background(), identity)
+	if err != nil || loaded.Progress == nil || loaded.Progress.NextSlot != 150 ||
+		loaded.Progress.LastFullSlot != 60 || loaded.Progress.UnfinishedSlot != nil ||
+		loaded.Progress.CurrentOrRecentGap == nil ||
+		loaded.Progress.CurrentOrRecentGap.Kind != execution.CompletionSnapshotUnavailable ||
+		loaded.Progress.CurrentOrRecentGap.FirstSlot != 90 || loaded.Progress.CurrentOrRecentGap.LastSlot != 90 {
+		t.Fatalf("LoadProgress(after query-free retirement) = (%+v, %v)", loaded, err)
+	}
+}
+
+func TestBeginSlotRejectsUnprovenSuccessorWithoutChangingProgress(t *testing.T) {
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	current := execution.ScheduleProgress{
+		Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull,
+	}
+	raw := mustEncode(t, current)
+	fake := &controlFake{value: raw}
+	store := mustStoreWithSlots(t, fake, mappedSlotResolver{60: 90})
+
+	result, err := store.BeginSlot(context.Background(), execution.ProgressBeginRequest{
+		Identity:   identity,
+		OwnerFence: execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"},
+		Projection: progressProjectionAt(180),
+	})
+	if err != nil || result.Status != execution.ProgressConflict {
+		t.Fatalf("BeginSlot(unproven successor) = (%+v, %v), want conflict", result, err)
+	}
+	if string(fake.value) != string(raw) {
+		t.Fatal("unproven successor changed persisted Progress")
+	}
+}
+
+func TestBeginSlotDoesNotReplaceExistingUnfinishedProjectionWithTimelineSuccessor(t *testing.T) {
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	persistedProjection := progressProjectionAt(120)
+	current := execution.ScheduleProgress{
+		Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull,
+		UnfinishedSlot: &persistedProjection,
+	}
+	raw := mustEncode(t, current)
+	fake := &controlFake{value: raw}
+	store := mustStoreWithSlots(t, fake, mappedSlotResolver{60: 90})
+
+	result, err := store.BeginSlot(context.Background(), execution.ProgressBeginRequest{
+		Identity:   identity,
+		OwnerFence: execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"},
+		Projection: progressProjectionAt(90),
+	})
+	if err != nil || result.Status != execution.ProgressConflict {
+		t.Fatalf("BeginSlot(with unfinished projection) = (%+v, %v), want conflict", result, err)
+	}
+	if string(fake.value) != string(raw) {
+		t.Fatal("successor BeginSlot replaced an existing unfinished projection")
+	}
+}
+
 func TestCommitProgressUsesExplicitNextSlotAndFence(t *testing.T) {
 	fake := &controlFake{missing: true}
 	store := mustStore(t, fake)
@@ -678,14 +768,19 @@ func progressContractAt(evaluationTime execution.EvaluationTime) execution.Froze
 }
 
 func progressProjection() execution.UnfinishedSlotProjection {
+	return progressProjectionAt(60)
+}
+
+func progressProjectionAt(evaluationTime execution.EvaluationTime) execution.UnfinishedSlotProjection {
+	contractRef := progressContractAt(evaluationTime)
 	return execution.UnfinishedSlotProjection{
-		Contract: progressContract(),
+		Contract: contractRef,
 		DuePlanTargets: execution.FrozenDuePlanTargets{
-			DuePlanSetDigest: progressContract().DuePlanSetDigest,
+			DuePlanSetDigest: contractRef.DuePlanSetDigest,
 			Plans:            []execution.PlanIdentity{{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy"}},
 		},
-		EarliestQueryDeadlineUnixMilli: 61_000,
-		KeepUntilUnixMilli:             661_000,
+		EarliestQueryDeadlineUnixMilli: int64(evaluationTime)*1000 + 1_000,
+		KeepUntilUnixMilli:             int64(evaluationTime)*1000 + 601_000,
 	}
 }
 

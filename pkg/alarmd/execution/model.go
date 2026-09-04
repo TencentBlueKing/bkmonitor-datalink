@@ -137,10 +137,13 @@ type SlotExecutionRequest struct {
 	EarliestQueryDeadlineUnixMilli int64
 	RecoveryUntilUnixMilli         int64
 	KeepUntilUnixMilli             int64
-	Operation                      Operation
-	AttemptNo                      uint32
-	OwnerFence                     OwnerFence
-	ExpectedNextSlot               EvaluationTime
+	// ReplayExpired is a non-identity scheduler fact. Finalization still uses
+	// RecoveryUntilUnixMilli to distinguish distance expiry from age expiry.
+	ReplayExpired    bool
+	Operation        Operation
+	AttemptNo        uint32
+	OwnerFence       OwnerFence
+	ExpectedNextSlot EvaluationTime
 }
 
 func (request SlotExecutionRequest) Validate() error {
@@ -156,6 +159,9 @@ func (request SlotExecutionRequest) Validate() error {
 	if request.RecoveryUntilUnixMilli <= request.EarliestQueryDeadlineUnixMilli ||
 		request.KeepUntilUnixMilli <= request.RecoveryUntilUnixMilli {
 		return errors.New("alarmd execution: frozen recovery and retention boundaries are invalid")
+	}
+	if request.ReplayExpired && request.Operation != OperationNormal {
+		return errors.New("alarmd execution: replay-expired Slot must use normal dispatch")
 	}
 	if err := request.Operation.Validate(); err != nil {
 		return err

@@ -113,6 +113,13 @@ func (source *productionFrozenExecution) ResolveFinalization(
 	if err := request.Validate(); err != nil {
 		return execution.QueryFreeFinalization{}, err
 	}
+	if request.ReplayExpired && source.now().UnixMilli() < request.RecoveryUntilUnixMilli {
+		return execution.QueryFreeFinalization{
+			Contract: request.Contract, Mode: execution.FinalizationGapSkipped,
+			ReasonCode: execution.ReasonCode(contract.ReasonGapSkipped),
+			Targets:    request.DuePlanTargets.Clone(),
+		}, nil
+	}
 	fact, err := source.resolveFrozenFact(ctx, request.Contract)
 	if err != nil {
 		if errors.Is(err, controlplane.ErrSnapshotUnavailable) {

@@ -38,7 +38,7 @@ func TestScheduleProgressUsesQueryGroupIdentity(t *testing.T) {
 
 func TestProgressContractsDoNotFreezeNextSlotAfterCompletion(t *testing.T) {
 	if got, want := fieldNames(reflect.TypeOf(execution.SlotExecutionRequest{})),
-		[]string{"Contract", "DuePlanTargets", "EarliestQueryDeadlineUnixMilli", "RecoveryUntilUnixMilli", "KeepUntilUnixMilli", "Operation", "AttemptNo", "OwnerFence", "ExpectedNextSlot"}; !reflect.DeepEqual(got, want) {
+		[]string{"Contract", "DuePlanTargets", "EarliestQueryDeadlineUnixMilli", "RecoveryUntilUnixMilli", "KeepUntilUnixMilli", "ReplayExpired", "Operation", "AttemptNo", "OwnerFence", "ExpectedNextSlot"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("SlotExecutionRequest fields = %v, want %v", got, want)
 	}
 	if got, want := fieldNames(reflect.TypeOf(execution.ProgressCommitRequest{})),
@@ -81,6 +81,10 @@ func TestSlotExecutionRequestCarriesValidatedNonIdentityFrozenExecutionFacts(t *
 		}},
 		{name: "deadline not after Slot", mutate: func(request *execution.SlotExecutionRequest) {
 			request.EarliestQueryDeadlineUnixMilli = int64(request.Contract.Slot.EvaluationTime) * 1000
+		}},
+		{name: "replay expired with recovery dispatch", mutate: func(request *execution.SlotExecutionRequest) {
+			request.ReplayExpired = true
+			request.Operation = execution.OperationReplay
 		}},
 	}
 	for _, test := range tests {

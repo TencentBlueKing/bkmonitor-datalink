@@ -475,12 +475,23 @@ func TestProductionFrozenExecutionSkipsExpiredNormalSlotWithoutRecoveryPermit(t 
 	if err := finalization.Validate(request); err != nil {
 		t.Fatalf("ResolveFinalization() produced invalid finalization: %v", err)
 	}
+	request.ReplayExpired = true
+	finalization, err = resolver.ResolveFinalization(context.Background(), request)
+	if err != nil || finalization.Mode != execution.FinalizationGapSkipped ||
+		finalization.ReasonCode != execution.ReasonCode(contract.ReasonGapSkipped) ||
+		!finalization.Targets.Equal(request.DuePlanTargets) {
+		t.Fatalf("ResolveFinalization(replay distance expired) = %+v, %v", finalization, err)
+	}
+	if err := finalization.Validate(request); err != nil {
+		t.Fatalf("ResolveFinalization(replay distance expired) produced invalid finalization: %v", err)
+	}
 	now = time.UnixMilli(request.RecoveryUntilUnixMilli)
 	finalization, err = resolver.ResolveFinalization(context.Background(), request)
 	if err != nil || finalization.Mode != execution.FinalizationSnapshotUnavailable ||
 		finalization.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) {
 		t.Fatalf("ResolveFinalization(after recovery deadline) = %+v, %v", finalization, err)
 	}
+	request.ReplayExpired = false
 
 	// recovery_until closes Query for every operation. The operation label cannot
 	// reopen an expired frozen Slot.
@@ -534,6 +545,13 @@ func TestProductionFrozenExecutionUsesRequestFactsWhenSnapshotDisappearsAfterFre
 		finalization.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) {
 		t.Fatalf("ResolveFinalization(snapshot unavailable) = (%+v, %v)", finalization, err)
 	}
+	request.ReplayExpired = true
+	finalization, err = resolver.ResolveFinalization(context.Background(), request)
+	if err != nil || finalization.Mode != execution.FinalizationGapSkipped ||
+		!finalization.Targets.Equal(request.DuePlanTargets) {
+		t.Fatalf("ResolveFinalization(distance expired with Snapshot unavailable) = (%+v, %v)", finalization, err)
+	}
+	request.ReplayExpired = false
 	resolver.now = func() time.Time { return time.UnixMilli(request.RecoveryUntilUnixMilli) }
 	finalization, err = resolver.ResolveFinalization(context.Background(), request)
 	if err != nil || finalization.Mode != execution.FinalizationSnapshotUnavailable ||

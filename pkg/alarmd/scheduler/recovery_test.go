@@ -131,13 +131,22 @@ func TestRunnerStopsRetryWhenFrozenSlotExceedsReplayEligibility(t *testing.T) {
 		t.Fatalf("first RunOne() attempted=%v error=%v", attempted, err)
 	}
 	clock.Advance(limits.RetryMaxDelay)
-	source.slot.Recovery = SlotRecoveryFacts{Disposition: ReplayExpired, Distance: limits.MaxReplaySlots + 1, Age: limits.MaxReplayAge + time.Second}
+	source.slot.Recovery = SlotRecoveryFacts{
+		Disposition: ReplayExpired,
+		Distance:    limits.MaxReplaySlots + 1,
+		Age:         limits.MaxReplayAge - time.Second,
+	}
 	if _, attempted, err := runner.RunOne(context.Background()); err != nil || !attempted {
 		t.Fatalf("expired RunOne() attempted=%v error=%v", attempted, err)
 	}
 	want := []execution.Operation{execution.OperationNormal, execution.OperationNormal}
 	if got := executor.Operations(); !equalOperations(got, want) {
 		t.Fatalf("expired operations = %v, want %v", got, want)
+	}
+	requests := executor.Requests()
+	if requests[0].ReplayExpired || !requests[1].ReplayExpired {
+		t.Fatalf("replay-expired request facts = %t/%t, want false/true",
+			requests[0].ReplayExpired, requests[1].ReplayExpired)
 	}
 }
 

@@ -238,6 +238,7 @@ func (runner *Runner) RunOne(
 		EarliestQueryDeadlineUnixMilli: slot.EarliestQueryDeadlineUnixMilli,
 		RecoveryUntilUnixMilli:         slot.RecoveryUntilUnixMilli,
 		KeepUntilUnixMilli:             slot.KeepUntilUnixMilli,
+		ReplayExpired:                  slot.Recovery.Disposition == ReplayExpired,
 		Operation:                      operation, AttemptNo: runner.attemptNo(slot), OwnerFence: fence, ExpectedNextSlot: slot.ExpectedNextSlot,
 	}
 	if err := request.Validate(); err != nil {

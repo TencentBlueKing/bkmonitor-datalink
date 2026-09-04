@@ -152,6 +152,10 @@ func classifyActivationFailure(err error, fallback ActivationFailureClass) Activ
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return ActivationFailureClassDependencyIO
 	}
+	var deterministicControlFact interface{ DeterministicControlFact() }
+	if errors.As(err, &deterministicControlFact) {
+		return ActivationFailureClassCorrupt
+	}
 	var snapshotCorrupt *PersistedSnapshotCorruptError
 	var activationCorrupt *PersistedActivationCorruptError
 	if errors.As(err, &snapshotCorrupt) || errors.As(err, &activationCorrupt) {

@@ -15,6 +15,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	alarmdprogress "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -988,10 +989,14 @@ func (repository *RedisCatalogRepository) queryGroupDrained(
 	identity := execution.ProgressIdentity{QueryGroup: queryGroup}
 	load, err := progress.LoadProgress(ctx, identity)
 	if err != nil {
+		var deterministicControlFact interface{ DeterministicControlFact() }
+		if errors.As(err, &deterministicControlFact) {
+			return false, err
+		}
 		return false, activationDependencyIO(err)
 	}
 	if err := load.Validate(identity); err != nil {
-		return false, err
+		return false, &alarmdprogress.DeterministicInvalidError{Err: err}
 	}
 	if load.Status == execution.ProgressFound {
 		return load.Progress.NextSlot >= retiredBoundary, nil

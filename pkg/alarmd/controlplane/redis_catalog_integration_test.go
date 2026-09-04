@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -2953,6 +2954,152 @@ func TestScheduleActivationReconcilerReactivatesDrainedQueryGroupOnSameProgressT
 	}
 }
 
+type reactivationProgressFailureFixture struct {
+	client      *redis.Client
+	prefix      string
+	queryGroup  execution.QueryGroupIdentity
+	progress    *activationProgressReader
+	reconciler  *controlplane.ScheduleActivationReconciler
+	publication controlplane.SnapshotPublicationRef
+}
+
+func newReactivationProgressFailureFixture(t *testing.T, suffix string) reactivationProgressFailureFixture {
+	t.Helper()
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	prefix := "alarmd:control:reactivation-progress-failure:" + suffix
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialCatalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
+	initialSnapshot, _, err := repository.PublishCatalog(ctx, initialCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryGroup := initialCatalog.QueryGroups[0].Identity
+	progressReader := &activationProgressReader{byGroup: map[execution.QueryGroupIdentity]execution.ProgressLoadResult{
+		queryGroup: {Status: execution.ProgressMissing},
+	}}
+	compiler, semantics := runtimePlanCompiler(t)
+	clock := []time.Time{time.Unix(60, 0), time.Unix(90, 0), time.Unix(180, 0)}
+	clockCall := 0
+	reconciler, err := controlplane.NewScheduleActivationReconcilerWithProgress(
+		repository, compiler, semantics, progressReader, func() time.Time {
+			at := clock[clockCall]
+			clockCall++
+			return at
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Ensure(ctx, initialSnapshot.Publication); err != nil {
+		t.Fatal(err)
+	}
+	emptyCatalog := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{}}
+	emptyCatalog.SnapshotRevision = execution.SnapshotRevision(mustDigest(t, "alarmd-strategy-snapshot-v1", emptyCatalog.QueryGroups))
+	emptySnapshot, _, err := repository.PublishCatalog(ctx, emptyCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state, err := reconciler.Ensure(ctx, emptySnapshot.Publication); err != nil || len(state.Draining) != 1 {
+		t.Fatalf("retirement=(%#v,%v)", state, err)
+	}
+	reenabledCatalog := catalogWithSchedule(t, validCatalog(t, 82), 60, 0)
+	if reenabledCatalog.QueryGroups[0].Identity != queryGroup {
+		t.Fatalf("query identity changed across reactivation: old=%s new=%s", queryGroup, reenabledCatalog.QueryGroups[0].Identity)
+	}
+	reenabledSnapshot, _, err := repository.PublishCatalog(ctx, reenabledCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reactivationProgressFailureFixture{
+		client: client, prefix: prefix, queryGroup: queryGroup, progress: progressReader,
+		reconciler: reconciler, publication: reenabledSnapshot.Publication,
+	}
+}
+
+func assertReactivationFailureKeepsPersistedState(t *testing.T, fixture reactivationProgressFailureFixture, run func() error) error {
+	t.Helper()
+	ctx := context.Background()
+	activationKey := fixture.prefix + ":activation"
+	scheduleKey := fixture.prefix + ":schedule_timeline:" + string(fixture.queryGroup)
+	activationBefore, err := fixture.client.Get(ctx, activationKey).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduleBefore, err := fixture.client.Get(ctx, scheduleKey).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runErr := run()
+	activationAfter, err := fixture.client.Get(ctx, activationKey).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduleAfter, err := fixture.client.Get(ctx, scheduleKey).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(activationBefore, activationAfter) || !bytes.Equal(scheduleBefore, scheduleAfter) {
+		t.Fatal("failed reactivation changed persisted Activation or Schedule")
+	}
+	return runErr
+}
+
+func TestScheduleActivationReconcilerClassifiesReactivationProgressIO(t *testing.T) {
+	fixture := newReactivationProgressFailureFixture(t, "io")
+	injected := errors.New("injected Progress I/O")
+	fixture.progress.errorsByGroup = map[execution.QueryGroupIdentity]error{fixture.queryGroup: injected}
+	err := assertReactivationFailureKeepsPersistedState(t, fixture, func() error {
+		_, ensureErr := fixture.reconciler.Ensure(context.Background(), fixture.publication)
+		return ensureErr
+	})
+	failure, ok := controlplane.ActivationFailureFromError(err)
+	var dependencyIO *controlplane.ActivationDependencyIOError
+	if !errors.Is(err, injected) || !errors.As(err, &dependencyIO) || !ok ||
+		failure.Stage != controlplane.ActivationFailureStageReactivation ||
+		failure.Class != controlplane.ActivationFailureClassDependencyIO {
+		t.Fatalf("Progress I/O classification error=%v typed=%t failure=(%#v,%t)", err, errors.As(err, &dependencyIO), failure, ok)
+	}
+}
+
+func TestScheduleActivationReconcilerClassifiesReactivationProgressCorruption(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		prepare func(*testing.T, reactivationProgressFailureFixture) error
+	}{
+		{name: "load deterministic invalid", prepare: func(_ *testing.T, fixture reactivationProgressFailureFixture) error {
+			cause := errors.New("injected corrupt Progress")
+			fixture.progress.errorsByGroup = map[execution.QueryGroupIdentity]error{
+				fixture.queryGroup: &progress.DeterministicInvalidError{Err: cause},
+			}
+			return cause
+		}},
+		{name: "load result validation", prepare: func(_ *testing.T, fixture reactivationProgressFailureFixture) error {
+			fixture.progress.byGroup[fixture.queryGroup] = execution.ProgressLoadResult{Status: execution.ProgressFound}
+			return nil
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newReactivationProgressFailureFixture(t, strings.ReplaceAll(test.name, " ", "-"))
+			cause := test.prepare(t, fixture)
+			err := assertReactivationFailureKeepsPersistedState(t, fixture, func() error {
+				_, ensureErr := fixture.reconciler.Ensure(context.Background(), fixture.publication)
+				return ensureErr
+			})
+			failure, ok := controlplane.ActivationFailureFromError(err)
+			var deterministic *progress.DeterministicInvalidError
+			if (cause != nil && !errors.Is(err, cause)) || !errors.As(err, &deterministic) || !ok ||
+				failure.Stage != controlplane.ActivationFailureStageReactivation ||
+				failure.Class != controlplane.ActivationFailureClassCorrupt {
+				t.Fatalf("corrupt Progress classification error=%v typed=%t failure=(%#v,%t)", err, errors.As(err, &deterministic), failure, ok)
+			}
+		})
+	}
+}
+
 func TestRedisCatalogRuntimePersistsInitialScheduleAndFreezesExactSlot(t *testing.T) {
 	client := newControlplaneRedis(t)
 	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:runtime", time.Hour)
@@ -3318,13 +3465,17 @@ func catalogWithQueryTable(t *testing.T, tableID string) controlplane.Catalog {
 type queryPlannerFunc func(context.Context, controlplane.PrimaryQuerySource) (execution.QueryPlanFacts, error)
 
 type activationProgressReader struct {
-	byGroup map[execution.QueryGroupIdentity]execution.ProgressLoadResult
+	byGroup       map[execution.QueryGroupIdentity]execution.ProgressLoadResult
+	errorsByGroup map[execution.QueryGroupIdentity]error
 }
 
 func (reader *activationProgressReader) LoadProgress(
 	_ context.Context,
 	identity execution.ProgressIdentity,
 ) (execution.ProgressLoadResult, error) {
+	if err := reader.errorsByGroup[identity.QueryGroup]; err != nil {
+		return execution.ProgressLoadResult{}, err
+	}
 	result, ok := reader.byGroup[identity.QueryGroup]
 	if !ok {
 		return execution.ProgressLoadResult{}, errors.New("missing activation Progress fixture")

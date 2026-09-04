@@ -2357,7 +2357,7 @@ const docTemplate = `{
                     "example": "1657851600"
                 },
                 "from": {
-                    "description": "From 翻页开启数字",
+                    "description": "From 翻页开启数字，不能与 IsSearchAfter 同时使用",
                     "type": "integer",
                     "example": 0
                 },
@@ -2386,7 +2386,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "is_search_after": {
-                    "description": "IsSearchAfter 是否启用 SearchAfter 查询",
+                    "description": "IsSearchAfter 是否启用 SearchAfter 查询。仅用于 /query/raw 原始查询：Elasticsearch 使用原生游标，Doris 使用 keyset pagination（支持 NULL 游标值）；不能与 from 或 scroll 同时使用。",
                     "type": "boolean"
                 },
                 "legacy_output_ref": {

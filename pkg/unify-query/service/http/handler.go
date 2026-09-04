@@ -247,7 +247,9 @@ func HandlerQueryRaw(c *gin.Context) {
 
 	// 解析请求 body
 	queryTs := &structured.QueryTs{}
-	err = json.NewDecoder(c.Request.Body).Decode(queryTs)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.UseNumber()
+	err = decoder.Decode(queryTs)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -264,6 +266,13 @@ func HandlerQueryRaw(c *gin.Context) {
 	listData.TraceID = span.TraceID()
 
 	if err = validateQueryTsDataSource(queryTs); err != nil {
+		resp.failed(ctx, metadata.NewMessage(
+			metadata.MsgQueryRaw,
+			"查询参数校验异常",
+		).Error(ctx, err))
+		return
+	}
+	if err = validateQueryTsRawPagination(queryTs); err != nil {
 		resp.failed(ctx, metadata.NewMessage(
 			metadata.MsgQueryRaw,
 			"查询参数校验异常",
@@ -334,7 +343,9 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	span.Set("query-space-uid", user.SpaceUID)
 
 	queryTs := &structured.QueryTs{}
-	err = json.NewDecoder(c.Request.Body).Decode(queryTs)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.UseNumber()
+	err = decoder.Decode(queryTs)
 	if err != nil {
 		return
 	}
@@ -344,6 +355,10 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	}
 
 	if err = validateQueryTsDataSource(queryTs); err != nil {
+		return
+	}
+	if queryTs.IsSearchAfter {
+		err = fmt.Errorf("is_search_after is not supported by query_raw_with_scroll")
 		return
 	}
 
@@ -743,6 +758,32 @@ func validateQueryTsDataSource(queryTs *structured.QueryTs) error {
 				"data_source 为 %q 时，table_id 与 table_id_conditions 不能同时为空（reference_name=%s）",
 				ds, q.ReferenceName,
 			)
+		}
+	}
+	return nil
+}
+
+// validateQueryTsRawPagination validates options that are meaningful only for
+// the raw SearchAfter execution path. A non-zero from would either be sent
+// alongside the keyset predicate or be folded into the per-route size.
+func validateQueryTsRawPagination(queryTs *structured.QueryTs) error {
+	if queryTs == nil || !queryTs.IsSearchAfter {
+		return nil
+	}
+	if queryTs.Scroll != "" {
+		return fmt.Errorf("is_search_after cannot be combined with scroll")
+	}
+	if queryTs.From != 0 {
+		return fmt.Errorf("from cannot be combined with is_search_after")
+	}
+	for _, query := range queryTs.QueryList {
+		if query != nil && query.From != 0 {
+			return fmt.Errorf("query from cannot be combined with is_search_after (reference_name=%s)", query.ReferenceName)
+		}
+	}
+	for tableUUID, option := range queryTs.ResultTableOptions {
+		if option != nil && option.From != nil && *option.From != 0 {
+			return fmt.Errorf("result table option from cannot be combined with is_search_after (table=%s)", tableUUID)
 		}
 	}
 	return nil

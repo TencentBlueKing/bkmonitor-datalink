@@ -44,6 +44,7 @@ type streamedInputKey struct {
 }
 
 type preparedNamedInputIndex struct {
+	inputBuilder           execution.SeriesEvaluationInputBuilder
 	queries                map[execution.PhysicalQueryDigest]execution.PlannedPhysicalQueryRef
 	requirementsByConsumer map[execution.ConsumerRef][]execution.DataRequirement
 	requirementByKey       map[struct {
@@ -57,13 +58,18 @@ func (stream *streamedExecution) Begin(ctx context.Context, header execution.Int
 	if stream.began {
 		return errors.New("alarmd worker: QueryExecutionSource called Begin more than once")
 	}
-	if err := header.Validate(stream.request.Contract); err != nil {
+	if header.Contract != stream.request.Contract {
+		return errors.New("alarmd worker: execution header changed frozen contract")
+	}
+	inputBuilder, err := execution.PrepareSeriesEvaluationInputBuilder(header)
+	if err != nil {
 		return fmt.Errorf("alarmd worker: invalid execution header: %w", err)
 	}
 	prepared, err := prepareNamedInputIndex(header)
 	if err != nil {
 		return fmt.Errorf("alarmd worker: prepare named-input index: %w", err)
 	}
+	prepared.inputBuilder = inputBuilder
 	stream.began = true
 	stream.header = header
 	stream.prepared = prepared
@@ -89,18 +95,11 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 	if err != nil {
 		return fmt.Errorf("alarmd worker: measure provisional retention: %w", err)
 	}
+	if err := stream.reserveProvisional(ctx, batch.Delivery.Series, retained); err != nil {
+		return err
+	}
 	stream.series += batch.Delivery.Series
 	stream.retained += retained
-	if stream.series > stream.coordinator.budget.MaxSeries {
-		err := errors.New("alarmd worker: provisional series budget exceeded")
-		stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, observability.CapacityBudgetSeries, err)
-		return err
-	}
-	if stream.retained > stream.coordinator.budget.MaxRetainedBytes {
-		err := errors.New("alarmd worker: provisional retained byte budget exceeded")
-		stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, observability.CapacityBudgetRetainedBytes, err)
-		return err
-	}
 	for _, binding := range batch.Inputs {
 		key := streamedInputKey{consumer: binding.Consumer, series: series, requirement: binding.RequirementID}
 		if _, duplicate := stream.streamed[key]; duplicate {
@@ -131,6 +130,23 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 		stream.delivered = append(stream.delivered, batch.Delivery)
 	}
 	return nil
+}
+
+func (stream *streamedExecution) reserveProvisional(ctx context.Context, series, retainedBytes uint64) error {
+	err := stream.coordinator.acquireProvisional(series, retainedBytes)
+	if err == nil {
+		return nil
+	}
+	var exceeded *provisionalBudgetExceededError
+	if errors.As(err, &exceeded) {
+		stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, exceeded.budget, err)
+	}
+	return err
+}
+
+func (stream *streamedExecution) releaseProvisional() {
+	stream.coordinator.releaseProvisional(stream.series, stream.retained)
+	stream.series, stream.retained = 0, 0
 }
 
 func streamedRetainedSize(bindings []execution.NamedInputBinding, delivery execution.SeriesDelivery) (uint64, error) {
@@ -467,7 +483,7 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 		}
 		sort.Slice(series, func(i, j int) bool { return series[i] < series[j] })
 		for _, identity := range series {
-			inputs, err := stream.seriesInputs(due, identity, physical, completionBindings)
+			inputs, err := stream.seriesInputs(due, identity, physical, completionBindings, completion.PhysicalQueries)
 			if err != nil {
 				return err
 			}
@@ -491,6 +507,13 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 		}
 		return left.RequirementID < right.RequirementID
 	})
+	for _, due := range stream.header.DuePlans {
+		if len(stream.planSeries[due.Identity]) == 0 {
+			if err := stream.validateCompletionOnlyExactSet(due, completionBindings); err != nil {
+				return err
+			}
+		}
+	}
 	if err := stream.loadGaps(ctx); err != nil {
 		return err
 	}
@@ -516,6 +539,28 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 	}
 	if len(stream.evaluated.Plans) != len(stream.header.DuePlans) {
 		return errors.New("alarmd worker: trustworthy completion did not produce every due Plan result")
+	}
+	return nil
+}
+
+func (stream *streamedExecution) validateCompletionOnlyExactSet(
+	due execution.DuePlan,
+	completionBindings map[struct {
+		consumer    execution.ConsumerRef
+		requirement execution.RequirementID
+	}]execution.NamedInputBinding,
+) error {
+	for _, consumer := range stream.prepared.consumersByPlan[due.Identity] {
+		for _, requirement := range stream.prepared.requirementsByConsumer[consumer] {
+			key := struct {
+				consumer    execution.ConsumerRef
+				requirement execution.RequirementID
+			}{consumer: consumer, requirement: requirement.RequirementID}
+			if _, found := completionBindings[key]; !found {
+				return fmt.Errorf("alarmd worker: completion-only Plan %s Level %d is missing frozen requirement %s",
+					due.Identity.StrategyID, consumer.LevelID, requirement.RequirementID)
+			}
+		}
 	}
 	return nil
 }
@@ -635,20 +680,24 @@ func (stream *streamedExecution) seriesInputs(
 		consumer    execution.ConsumerRef
 		requirement execution.RequirementID
 	}]execution.NamedInputBinding,
+	completions []execution.PhysicalQueryCompletion,
 ) ([]execution.SeriesEvaluationInputRequest, error) {
 	consumers := stream.prepared.consumersByPlan[due.Identity]
 	inputs := make([]execution.SeriesEvaluationInputRequest, 0, len(consumers))
 	for _, consumer := range consumers {
-		input := execution.SeriesEvaluationInputRequest{Contract: stream.header.Contract,
-			Consumer: consumer, SeriesIdentity: series}
+		bindings := make([]execution.NamedInputBinding, 0, len(stream.prepared.requirementsByConsumer[consumer]))
 		for _, requirement := range stream.prepared.requirementsByConsumer[consumer] {
 			binding, err := stream.completedBinding(consumer, series, requirement, physical, completionBindings)
 			if err != nil {
 				return nil, fmt.Errorf("alarmd worker: Plan %s Level %d named input: %w",
 					due.Identity.StrategyID, consumer.LevelID, err)
 			}
-			input.RequirementIDs = append(input.RequirementIDs, requirement.RequirementID)
-			input.Inputs = append(input.Inputs, binding)
+			bindings = append(bindings, binding)
+		}
+		input, err := stream.prepared.inputBuilder.Build(consumer, series, bindings, completions)
+		if err != nil {
+			return nil, fmt.Errorf("alarmd worker: Plan %s Level %d named-input exact set: %w",
+				due.Identity.StrategyID, consumer.LevelID, err)
 		}
 		inputs = append(inputs, input)
 	}
@@ -847,12 +896,10 @@ func (stream *streamedExecution) evaluateCompletedSeries(
 	if err != nil {
 		return fmt.Errorf("alarmd worker: measure evaluated retention: %w", err)
 	}
-	stream.retained += retained
-	if stream.retained > stream.coordinator.budget.MaxRetainedBytes {
-		err := errors.New("alarmd worker: provisional retained byte budget exceeded")
-		stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, observability.CapacityBudgetRetainedBytes, err)
+	if err := stream.reserveProvisional(ctx, 0, retained); err != nil {
 		return err
 	}
+	stream.retained += retained
 	if err := mergeProvisional(&stream.evaluated, evaluated, stream.coordinator.budget); err != nil {
 		var exceeded *provisionalBudgetExceededError
 		if errors.As(err, &exceeded) {

@@ -85,6 +85,48 @@ func TestSlotExecutionCoordinatorRejectsTamperedCompletionBeforeLoadingGapOrStat
 	}
 }
 
+func TestSlotExecutionCoordinatorRejectsTamperedNamedInputBeforeLoadingGapOrState(t *testing.T) {
+	header, batches, completion := workerG4MultiLevelStreamFixture(t, false)
+	batches[0].Inputs[0].ImpactScope = ""
+	ports, evaluator, coordinator := workerG4Coordinator(t)
+	ports.executeOverride = streamExecution(header, batches, completion)
+
+	result, err := coordinator.Execute(context.Background(), workerSlotRequest(header.Contract))
+	if err == nil || result.Completed {
+		t.Fatalf("Execute() result=%+v error=%v, want tampered binding rejection", result, err)
+	}
+	if ports.stateLoadCalls != 0 || ports.stateApplyCalls != 0 || ports.eventCount != 0 ||
+		len(evaluator.requests) != 0 || !isZeroProgressCommit(ports.lastProgress) {
+		t.Fatalf("tampered binding escaped: State load/apply=%d/%d Events=%d Evaluate=%d Progress=%+v",
+			ports.stateLoadCalls, ports.stateApplyCalls, ports.eventCount, len(evaluator.requests), ports.lastProgress)
+	}
+	if trace := strings.Join(*ports.trace, ","); strings.Contains(trace, "gap_load") {
+		t.Fatalf("tampered binding loaded Gap before A0 validation: %s", trace)
+	}
+}
+
+func TestSlotExecutionCoordinatorRejectsCompletionOnlyMissingLevelRequirement(t *testing.T) {
+	header, completion := workerG4MultiLevelCompletionOnlyFixture(t)
+	for index, binding := range completion.CompletionBindings {
+		if binding.Consumer.LevelID == 4 {
+			completion.CompletionBindings = append(completion.CompletionBindings[:index], completion.CompletionBindings[index+1:]...)
+			break
+		}
+	}
+	ports, evaluator, coordinator := workerG4Coordinator(t)
+	ports.executeOverride = streamExecution(header, nil, completion)
+
+	result, err := coordinator.Execute(context.Background(), workerSlotRequest(header.Contract))
+	if err == nil || result.Completed {
+		t.Fatalf("Execute() result=%+v error=%v, want missing Level requirement rejection", result, err)
+	}
+	if ports.stateLoadCalls != 0 || ports.stateApplyCalls != 0 || ports.eventCount != 0 ||
+		len(evaluator.requests) != 0 || !isZeroProgressCommit(ports.lastProgress) {
+		t.Fatalf("missing Level exact set escaped: State load/apply=%d/%d Events=%d Evaluate=%d Progress=%+v",
+			ports.stateLoadCalls, ports.stateApplyCalls, ports.eventCount, len(evaluator.requests), ports.lastProgress)
+	}
+}
+
 func TestSlotExecutionCoordinatorFansInTwoLevelsOnceAfterAllQueriesComplete(t *testing.T) {
 	header, batches, completion := workerG4MultiLevelStreamFixture(t, false)
 	ports, evaluator, coordinator := workerG4Coordinator(t)
@@ -497,12 +539,10 @@ func workerG4MultiLevelStreamFixture(
 		}
 		delivery := execution.SeriesDelivery{PhysicalQuery: physical, QueryRevision: queryRevision,
 			Series: 1, Records: 1, Bytes: 64, Digest: strings.Repeat(string(rune('e'+queryIndex)), 64)}
-		batches = append(batches, execution.SeriesExecutionBatch{PhysicalQuery: physical,
-			QueryRevision: queryRevision, CompletionRef: providerRef, Dataset: dataset, Inputs: bindings, Delivery: delivery})
 		if previousUnavailable && queryRef == "query-previous" {
 			completion.PhysicalQueries = append(completion.PhysicalQueries, execution.PhysicalQueryCompletion{
 				Ref: providerRef, PhysicalQuery: physical, QueryRevision: queryRevision,
-				Completeness: execution.CompletenessUnavailable, DataState: execution.DataStateData, Delivery: delivery,
+				Completeness: execution.CompletenessUnavailable, DataState: execution.DataStateUnknown,
 				RouteFacts: execution.ProviderRouteFacts{Attempts: []execution.RouteAttemptFact{{
 					AttemptNo: 1, Endpoint: "uq", Result: execution.RouteAttemptFailed,
 					ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable),
@@ -510,12 +550,48 @@ func workerG4MultiLevelStreamFixture(
 			})
 			continue
 		}
+		batches = append(batches, execution.SeriesExecutionBatch{PhysicalQuery: physical,
+			QueryRevision: queryRevision, CompletionRef: providerRef, Dataset: dataset, Inputs: bindings, Delivery: delivery})
 		completion.PhysicalQueries = append(completion.PhysicalQueries, execution.PhysicalQueryCompletion{
 			Ref: providerRef, PhysicalQuery: physical, QueryRevision: queryRevision,
 			Completeness: execution.CompletenessFull, DataState: execution.DataStateData, Delivery: delivery,
 		})
 	}
 	return header, batches, completion
+}
+
+func workerG4MultiLevelCompletionOnlyFixture(t *testing.T) (execution.InternalExecutionHeader, execution.QueryExecutionCompletion) {
+	t.Helper()
+	header, _, _ := workerG4MultiLevelStreamFixture(t, false)
+	queries := make(map[execution.LogicalQueryRef]execution.PlannedPhysicalQueryRef, len(header.RequiredPhysicalQueries))
+	completion := execution.QueryExecutionCompletion{AllRequiredCompleted: true}
+	for _, query := range header.RequiredPhysicalQueries {
+		queries[execution.LogicalQueryRef(query.QueryRevision)] = query
+		completion.PhysicalQueries = append(completion.PhysicalQueries, execution.PhysicalQueryCompletion{
+			Ref: "empty-" + execution.ProviderResultRef(query.Digest), PhysicalQuery: query.Digest,
+			QueryRevision: query.QueryRevision, Completeness: execution.CompletenessFull, DataState: execution.DataStateEmpty,
+		})
+	}
+	empty := execution.NewDataset(nil)
+	view, err := execution.NewDatasetView(empty, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, requirement := range header.Requirements {
+		query := queries[requirement.LogicalQueryRef]
+		for _, consumer := range requirement.Consumers {
+			completion.CompletionBindings = append(completion.CompletionBindings, execution.NamedInputBinding{
+				Consumer: consumer.Consumer, RequirementID: requirement.RequirementID,
+				DatasetName: requirement.DatasetName, Role: requirement.Role,
+				ProviderResult: "empty-" + execution.ProviderResultRef(query.Digest),
+				QueryWindow:    requirement.AbsoluteWindow(header.Contract.Slot.EvaluationTime),
+				Dataset:        empty, View: view, Completeness: execution.CompletenessFull, DataState: execution.DataStateEmpty,
+				Disposition: execution.AccessAvailable, ImpactScope: execution.ImpactPlan,
+				Provenance: execution.InputProvenance{PhysicalQuery: query.Digest, AttemptNo: 1},
+			})
+		}
+	}
+	return header, completion
 }
 
 func compileWorkerG4MultiLevelPlan(t *testing.T, simpleConfig, thresholdConfig json.RawMessage) *strategy.CompiledPlan {

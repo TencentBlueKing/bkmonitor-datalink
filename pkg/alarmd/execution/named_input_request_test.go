@@ -139,6 +139,35 @@ func TestSeriesEvaluationInputRequestRejectsRequestLocalCompletionTampering(t *t
 	assertScopedInputError(t, err, consumer, series)
 }
 
+func TestPreparedSeriesEvaluationInputBuilderKeepsValidatedFrozenFacts(t *testing.T) {
+	plan, requirements := compiledG4Requirements(t, strategy.DetectorKindSimpleRingRatio)
+	header, consumer, series, bindings, completions := namedInputFixture(t, plan, requirements)
+	builder, err := execution.PrepareSeriesEvaluationInputBuilder(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	header.Requirements[0].DatasetName = "mutated-after-prepare"
+	header.Requirements[0].Consumers = nil
+	header.RequiredPhysicalQueries[0].QueryRevision = "mutated-after-prepare"
+	request, err := builder.Build(consumer, series, bindings, completions)
+	if err != nil {
+		t.Fatalf("Build() after source header mutation error = %v", err)
+	}
+	if request.Contract.Slot.QueryGroup == "" || len(request.Inputs) != 2 {
+		t.Fatalf("Build() request = %+v", request)
+	}
+}
+
+func TestPrepareSeriesEvaluationInputBuilderRejectsInvalidHeader(t *testing.T) {
+	plan, requirements := compiledG4Requirements(t, strategy.DetectorKindSimpleRingRatio)
+	header, _, _, _, _ := namedInputFixture(t, plan, requirements)
+	header.Contract.DuePlanSetDigest = "tampered"
+	if _, err := execution.PrepareSeriesEvaluationInputBuilder(header); err == nil {
+		t.Fatal("PrepareSeriesEvaluationInputBuilder() accepted an invalid frozen header")
+	}
+}
+
 func assertScopedInputError(t *testing.T, err error, consumer execution.ConsumerRef, series execution.SeriesIdentityDigest) {
 	t.Helper()
 	var violation *execution.EvaluationInputContractError

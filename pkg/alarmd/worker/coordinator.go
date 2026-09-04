@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -39,8 +40,15 @@ type Ports struct {
 }
 
 type SlotExecutionCoordinator struct {
-	ports  Ports
-	budget ProvisionalBudget
+	ports        Ports
+	budget       ProvisionalBudget
+	reservations processProvisionalReservations
+}
+
+type processProvisionalReservations struct {
+	mu            sync.Mutex
+	series        uint64
+	retainedBytes uint64
 }
 
 type ProvisionalBudget struct {
@@ -73,6 +81,27 @@ func NewSlotExecutionCoordinator(ports Ports, budget ProvisionalBudget) (*SlotEx
 		return nil, errors.New("alarmd worker: positive process provisional budgets are required")
 	}
 	return &SlotExecutionCoordinator{ports: ports, budget: budget}, nil
+}
+
+func (coordinator *SlotExecutionCoordinator) acquireProvisional(series, retainedBytes uint64) error {
+	coordinator.reservations.mu.Lock()
+	defer coordinator.reservations.mu.Unlock()
+	if series > coordinator.budget.MaxSeries-coordinator.reservations.series {
+		return &provisionalBudgetExceededError{budget: observability.CapacityBudgetSeries}
+	}
+	if retainedBytes > coordinator.budget.MaxRetainedBytes-coordinator.reservations.retainedBytes {
+		return &provisionalBudgetExceededError{budget: observability.CapacityBudgetRetainedBytes}
+	}
+	coordinator.reservations.series += series
+	coordinator.reservations.retainedBytes += retainedBytes
+	return nil
+}
+
+func (coordinator *SlotExecutionCoordinator) releaseProvisional(series, retainedBytes uint64) {
+	coordinator.reservations.mu.Lock()
+	coordinator.reservations.series -= series
+	coordinator.reservations.retainedBytes -= retainedBytes
+	coordinator.reservations.mu.Unlock()
 }
 
 // Execute performs one already-scheduled attempt. normal, retry, replay and
@@ -133,6 +162,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	}
 	started := time.Now()
 	stream := &streamedExecution{coordinator: coordinator, request: request}
+	defer stream.releaseProvisional()
 	queryRequest := execution.QueryExecutionRequest{
 		Contract: request.Contract, Operation: request.Operation, AttemptNo: request.AttemptNo,
 	}

@@ -30,6 +30,29 @@ type SeriesEvaluationInputRequest struct {
 	Inputs         []NamedInputBinding
 }
 
+// SeriesEvaluationInputBuilder is created only from a fully validated frozen
+// header. Its implementation is private so callers cannot construct an
+// unvalidated builder.
+type SeriesEvaluationInputBuilder interface {
+	Build(
+		consumer ConsumerRef,
+		series SeriesIdentityDigest,
+		bindings []NamedInputBinding,
+		completions []PhysicalQueryCompletion,
+	) (SeriesEvaluationInputRequest, error)
+}
+
+type validatedSeriesEvaluationInputBuilder struct {
+	contract  FrozenExecutionContractRef
+	consumers map[ConsumerRef]preparedSeriesEvaluationConsumer
+	queries   map[PhysicalQueryDigest]PlannedPhysicalQueryRef
+}
+
+type preparedSeriesEvaluationConsumer struct {
+	requirements []DataRequirement
+	byID         map[RequirementID]DataRequirement
+}
+
 // EvaluationInputContractError keeps an invalid input set local to the
 // affected Plan/Level/series. It does not authorize Event, State or Progress.
 type EvaluationInputContractError struct {
@@ -54,7 +77,85 @@ func BuildSeriesEvaluationInputRequest(
 	bindings []NamedInputBinding,
 	completions []PhysicalQueryCompletion,
 ) (SeriesEvaluationInputRequest, error) {
-	request, err := buildSeriesEvaluationInputRequest(header, consumer, series, bindings, completions)
+	builder, err := PrepareSeriesEvaluationInputBuilder(header)
+	if err != nil {
+		return SeriesEvaluationInputRequest{}, scopedEvaluationInputError(consumer, series, err)
+	}
+	return builder.Build(consumer, series, bindings, completions)
+}
+
+// PrepareSeriesEvaluationInputBuilder validates and indexes the frozen header
+// once for one Slot-local streamed execution.
+func PrepareSeriesEvaluationInputBuilder(header InternalExecutionHeader) (SeriesEvaluationInputBuilder, error) {
+	if err := header.Validate(header.Contract); err != nil {
+		return nil, err
+	}
+	builder := &validatedSeriesEvaluationInputBuilder{
+		contract:  header.Contract,
+		consumers: make(map[ConsumerRef]preparedSeriesEvaluationConsumer),
+		queries:   make(map[PhysicalQueryDigest]PlannedPhysicalQueryRef, len(header.RequiredPhysicalQueries)),
+	}
+	for _, due := range header.DuePlans {
+		for _, level := range due.CompiledPlan.Levels() {
+			builder.consumers[ConsumerRef{Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true}] = preparedSeriesEvaluationConsumer{}
+		}
+	}
+	for _, requirement := range header.Requirements {
+		for _, consumer := range requirement.Consumers {
+			prepared, due := builder.consumers[consumer.Consumer]
+			if due {
+				prepared.requirements = append(prepared.requirements, cloneBuilderDataRequirement(requirement))
+				builder.consumers[consumer.Consumer] = prepared
+			}
+		}
+	}
+	for consumer, prepared := range builder.consumers {
+		sort.Slice(prepared.requirements, func(i, j int) bool {
+			if prepared.requirements[i].Role != prepared.requirements[j].Role {
+				return prepared.requirements[i].Role == InputRolePrimary
+			}
+			return prepared.requirements[i].RequirementID < prepared.requirements[j].RequirementID
+		})
+		prepared.byID = make(map[RequirementID]DataRequirement, len(prepared.requirements))
+		datasetNames := make(map[DatasetName]struct{}, len(prepared.requirements))
+		primaryCount := 0
+		for _, requirement := range prepared.requirements {
+			if _, duplicate := prepared.byID[requirement.RequirementID]; duplicate {
+				return nil, errors.New("duplicate frozen requirement identity")
+			}
+			if _, duplicate := datasetNames[requirement.DatasetName]; duplicate {
+				return nil, errors.New("duplicate frozen named-input dataset")
+			}
+			prepared.byID[requirement.RequirementID] = requirement
+			datasetNames[requirement.DatasetName] = struct{}{}
+			if requirement.Role == InputRolePrimary {
+				primaryCount++
+			}
+		}
+		if len(prepared.requirements) == 0 {
+			return nil, errors.New("consumer has no frozen DataRequirement")
+		}
+		if primaryCount != 1 {
+			return nil, errors.New("one frozen PRIMARY named input is required")
+		}
+		builder.consumers[consumer] = prepared
+	}
+	for _, query := range header.RequiredPhysicalQueries {
+		builder.queries[query.Digest] = query
+	}
+	return builder, nil
+}
+
+func (builder *validatedSeriesEvaluationInputBuilder) Build(
+	consumer ConsumerRef,
+	series SeriesIdentityDigest,
+	bindings []NamedInputBinding,
+	completions []PhysicalQueryCompletion,
+) (SeriesEvaluationInputRequest, error) {
+	if builder == nil {
+		return SeriesEvaluationInputRequest{}, scopedEvaluationInputError(consumer, series, errors.New("unprepared named-input builder"))
+	}
+	request, err := buildSeriesEvaluationInputRequest(builder, consumer, series, bindings, completions)
 	if err != nil {
 		return SeriesEvaluationInputRequest{}, scopedEvaluationInputError(consumer, series, err)
 	}
@@ -67,11 +168,13 @@ func (request SeriesEvaluationInputRequest) Validate(
 	header InternalExecutionHeader,
 	completions []PhysicalQueryCompletion,
 ) error {
-	rebuilt, err := buildSeriesEvaluationInputRequest(
-		header, request.Consumer, request.SeriesIdentity, request.Inputs, completions,
-	)
+	builder, err := PrepareSeriesEvaluationInputBuilder(header)
 	if err != nil {
 		return scopedEvaluationInputError(request.Consumer, request.SeriesIdentity, err)
+	}
+	rebuilt, err := builder.Build(request.Consumer, request.SeriesIdentity, request.Inputs, completions)
+	if err != nil {
+		return err
 	}
 	if !reflect.DeepEqual(request, rebuilt) {
 		return scopedEvaluationInputError(request.Consumer, request.SeriesIdentity,
@@ -81,75 +184,26 @@ func (request SeriesEvaluationInputRequest) Validate(
 }
 
 func buildSeriesEvaluationInputRequest(
-	header InternalExecutionHeader,
+	builder *validatedSeriesEvaluationInputBuilder,
 	consumer ConsumerRef,
 	series SeriesIdentityDigest,
 	bindings []NamedInputBinding,
 	completions []PhysicalQueryCompletion,
 ) (SeriesEvaluationInputRequest, error) {
-	if err := header.Validate(header.Contract); err != nil {
-		return SeriesEvaluationInputRequest{}, err
-	}
 	if series == "" || !consumer.HasLevel || consumer.LevelID == 0 {
 		return SeriesEvaluationInputRequest{}, errors.New("complete Level and series scope is required")
 	}
-	dueFound := false
-	for _, due := range header.DuePlans {
-		if due.Identity == consumer.Plan {
-			dueFound = compiledPlanHasLevel(due.CompiledPlan, consumer.LevelID)
-			break
-		}
-	}
+	prepared, dueFound := builder.consumers[consumer]
 	if !dueFound {
 		return SeriesEvaluationInputRequest{}, errors.New("consumer does not reference a frozen due Plan Level")
 	}
 
-	expected := make([]DataRequirement, 0)
-	for _, requirement := range header.Requirements {
-		if requirementHasConsumer(requirement, consumer) {
-			expected = append(expected, requirement)
-		}
-	}
-	sort.Slice(expected, func(i, j int) bool {
-		if expected[i].Role != expected[j].Role {
-			return expected[i].Role == InputRolePrimary
-		}
-		return expected[i].RequirementID < expected[j].RequirementID
-	})
-	if len(expected) == 0 {
-		return SeriesEvaluationInputRequest{}, errors.New("consumer has no frozen DataRequirement")
-	}
-
-	expectedByID := make(map[RequirementID]DataRequirement, len(expected))
-	datasetNames := make(map[DatasetName]struct{}, len(expected))
-	primaryCount := 0
-	for _, requirement := range expected {
-		if _, duplicate := expectedByID[requirement.RequirementID]; duplicate {
-			return SeriesEvaluationInputRequest{}, errors.New("duplicate frozen requirement identity")
-		}
-		if _, duplicate := datasetNames[requirement.DatasetName]; duplicate {
-			return SeriesEvaluationInputRequest{}, errors.New("duplicate frozen named-input dataset")
-		}
-		expectedByID[requirement.RequirementID] = requirement
-		datasetNames[requirement.DatasetName] = struct{}{}
-		if requirement.Role == InputRolePrimary {
-			primaryCount++
-		}
-	}
-	if primaryCount != 1 {
-		return SeriesEvaluationInputRequest{}, errors.New("one frozen PRIMARY named input is required")
-	}
-
-	queries := make(map[PhysicalQueryDigest]PlannedPhysicalQueryRef, len(header.RequiredPhysicalQueries))
-	for _, query := range header.RequiredPhysicalQueries {
-		queries[query.Digest] = query
-	}
 	actualByID := make(map[RequirementID]NamedInputBinding, len(bindings))
 	for _, binding := range bindings {
 		if binding.Consumer != consumer {
 			return SeriesEvaluationInputRequest{}, errors.New("named input has a different consumer")
 		}
-		if _, known := expectedByID[binding.RequirementID]; !known {
+		if _, known := prepared.byID[binding.RequirementID]; !known {
 			return SeriesEvaluationInputRequest{}, errors.New("named input is not in the frozen exact set")
 		}
 		if _, duplicate := actualByID[binding.RequirementID]; duplicate {
@@ -157,17 +211,17 @@ func buildSeriesEvaluationInputRequest(
 		}
 		actualByID[binding.RequirementID] = binding
 	}
-	if len(actualByID) != len(expectedByID) {
+	if len(actualByID) != len(prepared.byID) {
 		return SeriesEvaluationInputRequest{}, errors.New("named inputs do not cover the frozen exact set")
 	}
 
-	request := SeriesEvaluationInputRequest{Contract: header.Contract, Consumer: consumer, SeriesIdentity: series}
-	for _, requirement := range expected {
+	request := SeriesEvaluationInputRequest{Contract: builder.contract, Consumer: consumer, SeriesIdentity: series}
+	for _, requirement := range prepared.requirements {
 		binding := actualByID[requirement.RequirementID]
-		if err := validateSeriesNamedInputBinding(binding, requirement, series, header.Contract.Slot.EvaluationTime); err != nil {
+		if err := validateSeriesNamedInputBinding(binding, requirement, series, builder.contract.Slot.EvaluationTime); err != nil {
 			return SeriesEvaluationInputRequest{}, err
 		}
-		query, ok := queries[binding.Provenance.PhysicalQuery]
+		query, ok := builder.queries[binding.Provenance.PhysicalQuery]
 		if !ok || LogicalQueryRef(query.QueryRevision) != requirement.LogicalQueryRef {
 			return SeriesEvaluationInputRequest{}, errors.New("named input differs from its frozen physical query")
 		}
@@ -184,20 +238,22 @@ func buildSeriesEvaluationInputRequest(
 	return request, nil
 }
 
+func cloneBuilderDataRequirement(requirement DataRequirement) DataRequirement {
+	requirement.InputProjection.ValueFields = append([]string(nil), requirement.InputProjection.ValueFields...)
+	requirement.InputProjection.DimensionFields = append([]string(nil), requirement.InputProjection.DimensionFields...)
+	requirement.InputProjection.IdentityFields = append([]string(nil), requirement.InputProjection.IdentityFields...)
+	requirement.RequiredColumns = append([]string(nil), requirement.RequiredColumns...)
+	requirement.PointOffsetsSeconds = append([]int64(nil), requirement.PointOffsetsSeconds...)
+	requirement.NamedPoints = append([]NamedInputPoint(nil), requirement.NamedPoints...)
+	requirement.Consumers = append([]DataRequirementConsumer(nil), requirement.Consumers...)
+	return requirement
+}
+
 func scopedEvaluationInputError(consumer ConsumerRef, series SeriesIdentityDigest, err error) error {
 	if err == nil {
 		return nil
 	}
 	return &EvaluationInputContractError{Consumer: consumer, SeriesIdentity: series, err: err}
-}
-
-func requirementHasConsumer(requirement DataRequirement, consumer ConsumerRef) bool {
-	for _, candidate := range requirement.Consumers {
-		if candidate.Consumer == consumer {
-			return true
-		}
-	}
-	return false
 }
 
 func matchingPhysicalQueryCompletion(

@@ -150,6 +150,34 @@ func TestSlotExecutionCoordinatorBudgetsRetainedSeriesAndBytes(t *testing.T) {
 	}
 }
 
+func TestSlotExecutionCoordinatorReleasesProcessReservationAfterQueryExit(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "failure", err: errors.New("query failed after series delivery")},
+		{name: "cancellation", err: context.Canceled},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newFixtureWithBudget(t, worker.ProvisionalBudget{
+				MaxSeries: 1, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10,
+			})
+			fixture.ports.queryAfterSeriesError = test.err
+			result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+			if !errors.Is(err, test.err) || result.Completed {
+				t.Fatalf("first Execute() result=%+v error=%v, want %v", result, err, test.err)
+			}
+
+			fixture.ports.queryAfterSeriesError = nil
+			result, err = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+			if err != nil || !result.Completed {
+				t.Fatalf("Execute() after release result=%+v error=%v", result, err)
+			}
+		})
+	}
+}
+
 func assertCapacityRejection(t *testing.T, observations *[]observability.Observation, want observability.CapacityBudget) {
 	t.Helper()
 	for _, observation := range *observations {
@@ -960,6 +988,7 @@ type recordingPorts struct {
 	eventCount                      int
 	gapMutations                    []execution.PlanGapMutation
 	executeOverride                 func(context.Context, execution.QueryExecutionRequest, execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error)
+	queryAfterSeriesError           error
 }
 
 func (ports *recordingPorts) Execute(ctx context.Context, request execution.QueryExecutionRequest, consumer execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error) {
@@ -1080,6 +1109,9 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 	}
 	if err := ports.fail("query_after_series"); err != nil {
 		return execution.QueryExecutionCompletion{}, err
+	}
+	if ports.queryAfterSeriesError != nil {
+		return execution.QueryExecutionCompletion{}, ports.queryAfterSeriesError
 	}
 	completeness := input.Inputs[0].Completeness
 	if ports.degraded {

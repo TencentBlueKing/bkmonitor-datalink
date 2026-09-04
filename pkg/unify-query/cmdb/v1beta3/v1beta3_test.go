@@ -3316,6 +3316,76 @@ func TestQueryLivenessGraphFlattensBusinessSevenTwoHopEventPath(t *testing.T) {
 	}
 }
 
+func TestDirectSurrealDBRouteFlattensActiveMultiHopPath(t *testing.T) {
+	const timestamp = int64(1786731939847)
+
+	previousServingRelations := ActiveEdgeServingRelations
+	previousFlatMultiHopRelations := FlatMultiHopActiveEdgeServingRelations
+	ActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
+	FlatMultiHopActiveEdgeServingRelations = nil
+	t.Cleanup(func() {
+		ActiveEdgeServingRelations = previousServingRelations
+		FlatMultiHopActiveEdgeServingRelations = previousFlatMultiHopRelations
+	})
+
+	provider := businessSevenTwoHopSchemaProvider()
+	firstHop := businessSevenSingleHopGraph(
+		ResourceTypeHost,
+		"host:`185667`",
+		map[string]string{"bk_host_id": "185667"},
+		RelationHostWithModule,
+		"host_with_module:`185667_73`",
+		ResourceTypeModule,
+		"module:`73`",
+		map[string]string{"bk_module_id": "73"},
+		[]*VisiblePeriod{{Start: timestamp, End: timestamp}},
+	)
+	secondHop := businessSevenSingleHopGraph(
+		ResourceTypeModule,
+		"module:`73`",
+		map[string]string{"bk_module_id": "73"},
+		RelationModuleWithSet,
+		"module_with_set:`73_15`",
+		ResourceTypeSet,
+		"set:`15`",
+		map[string]string{"bk_set_id": "15"},
+		[]*VisiblePeriod{{Start: timestamp, End: timestamp}},
+	)
+
+	var sqls []string
+	runner := func(_ context.Context, sql string, _, _ int64) ([]*LivenessGraph, error) {
+		sqls = append(sqls, sql)
+		switch {
+		case strings.Contains(sql, "FROM host_with_module_active_edge_view"):
+			return []*LivenessGraph{cloneLivenessGraphForTest(firstHop, 0, 0)}, nil
+		case strings.Contains(sql, "FROM module_with_set_active_edge_view"):
+			return []*LivenessGraph{cloneLivenessGraphForTest(secondHop, 0, 0)}, nil
+		default:
+			return nil, errors.New("unexpected SurrealQL")
+		}
+	}
+
+	result := (&Model{}).executeOneGraphQueryPath(
+		withDirectSurrealDBRoute(context.Background()),
+		businessSevenTwoHopRequest(timestamp, "185667"),
+		provider,
+		businessSevenTwoHopPath(),
+		0,
+		0,
+		timestamp,
+		graphQueryModeInstant,
+		runner,
+	)
+
+	require.NoError(t, result.err)
+	require.Len(t, result.graphs, 1)
+	assert.Equal(t, "host:`185667`", result.graphs[0].RootID)
+	assert.Len(t, sqls, 2)
+	for _, sql := range sqls {
+		assert.NotContains(t, sql, "$parent")
+	}
+}
+
 func TestLivenessGraphMergesDuplicateEdgePeriods(t *testing.T) {
 	graph := NewLivenessGraph(0, 0)
 	graph.RootID = "host:`185667`"

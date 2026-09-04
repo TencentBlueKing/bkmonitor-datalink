@@ -10,6 +10,7 @@
 package v1beta3
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -106,4 +107,70 @@ func TestSurrealDBDirectQuerySkipsSessionAndEmptyStatements(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, graphs, 1)
 	assert.Equal(t, "node:node-1", graphs[0].RootID)
+}
+
+func TestNormalizeDirectSurrealDBResponse(t *testing.T) {
+	tests := []struct {
+		name     string
+		response string
+		wantRows int
+		wantErr  string
+	}{
+		{
+			name:     "session and null statements with graph object",
+			response: `[{"result":{"namespace":"mapleleaf_2","database":"2_graph_rt"}},{"result":null},{"result":{"root":{"entity_type":"node","entity_id":"node:node-1"}}}]`,
+			wantRows: 1,
+		},
+		{
+			name:     "graph array with direct rows",
+			response: `[{"result":[{"root":{"entity_type":"node","entity_id":"node:node-1"}}]}]`,
+			wantRows: 1,
+		},
+		{
+			name:     "graph array with wrapped rows",
+			response: `[{"result":[{"result":{"root":{"entity_type":"node","entity_id":"node:node-1"}}}]}]`,
+			wantRows: 1,
+		},
+		{
+			name:     "only control statements produce no rows",
+			response: `[{"result":{"namespace":"mapleleaf_2","database":"2_graph_rt"}},{"result":null},{"result":[]}]`,
+			wantRows: 0,
+		},
+		{
+			name:     "missing result field",
+			response: `[{"status":"OK"}]`,
+			wantErr:  "response[0].result: missing field",
+		},
+		{
+			name:     "non session object without root",
+			response: `[{"result":{"status":"OK"}}]`,
+			wantErr:  "response[0].result: missing field root",
+		},
+		{
+			name:     "scalar result",
+			response: `[{"result":"Exceeded query recursion depth limit"}]`,
+			wantErr:  "response[0].result: expected array, got string",
+		},
+		{
+			name:     "array row must be object",
+			response: `[{"result":["broken-row"]}]`,
+			wantErr:  "response[0].result[0]: expected object, got string",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var payload []map[string]any
+			require.NoError(t, json.Unmarshal([]byte(tt.response), &payload))
+
+			rows, err := normalizeDirectSurrealDBResponse(payload)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Len(t, rows, tt.wantRows)
+		})
+	}
 }

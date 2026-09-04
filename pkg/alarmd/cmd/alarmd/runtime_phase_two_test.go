@@ -426,11 +426,11 @@ func TestPhaseTwoWorkerBundleRunsOwnedQueryGroupsConcurrentlyOncePerTick(t *test
 	}
 }
 
-func TestPhaseTwoWorkerBundleBoundsPrePermitRunnerFanoutFromExistingSchedulerLimits(t *testing.T) {
+func TestPhaseTwoWorkerBundleBoundsPrePermitRunnerFanoutByProcessQueryPermits(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
 	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 1
-	cfg.PhaseTwo.Scheduler.RecoveryQueueCapacity = 2
+	cfg.PhaseTwo.Scheduler.RecoveryQueueCapacity = 100
 	cfg.PhaseTwo.Scheduler.MaxQueuedItemsPerQG = 1
 	queryGroups := []execution.QueryGroupIdentity{
 		"query-group-1", "query-group-2", "query-group-3",
@@ -464,7 +464,7 @@ func TestPhaseTwoWorkerBundleBoundsPrePermitRunnerFanoutFromExistingSchedulerLim
 
 	done := make(chan error, 1)
 	go func() { done <- bundle.runScheduledOnce(context.Background()) }()
-	wantFanout := cfg.PhaseTwo.Scheduler.ProcessQueryPermits + cfg.PhaseTwo.Scheduler.RecoveryQueueCapacity
+	wantFanout := cfg.PhaseTwo.Scheduler.ProcessQueryPermits
 	for index := 0; index < wantFanout; index++ {
 		select {
 		case <-started:

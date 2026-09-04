@@ -417,12 +417,6 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 	processPermits := bundle.dependencies.Config.PhaseTwo.Scheduler.ProcessQueryPermits
 	if processPermits < fanout {
 		fanout = processPermits
-		remaining := len(runners) - fanout
-		recoveryWaiters := bundle.dependencies.Config.PhaseTwo.Scheduler.RecoveryQueueCapacity
-		if recoveryWaiters > remaining {
-			recoveryWaiters = remaining
-		}
-		fanout += recoveryWaiters
 	}
 	for workerIndex := 0; workerIndex < fanout; workerIndex++ {
 		go func(workerIndex int) {

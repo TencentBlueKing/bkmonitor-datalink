@@ -71,6 +71,17 @@ type GraphQueryExecutorWithBinding interface {
 
 type graphQueryRunner func(ctx context.Context, sql string, start, end int64) ([]*LivenessGraph, error)
 
+type directSurrealDBRouteContextKey struct{}
+
+func withDirectSurrealDBRoute(ctx context.Context) context.Context {
+	return context.WithValue(ctx, directSurrealDBRouteContextKey{}, true)
+}
+
+func isDirectSurrealDBRoute(ctx context.Context) bool {
+	value, _ := ctx.Value(directSurrealDBRouteContextKey{}).(bool)
+	return value
+}
+
 var sourceInferencePriority = buildSourceInferencePriority()
 
 func buildSourceInferencePriority() map[ResourceType]int {
@@ -550,9 +561,17 @@ func (m *Model) queryLivenessGraph(
 	} else {
 		paths, err = pf.FindAllPaths(req.SourceType, req.TargetType, req.PathResource)
 		if err != nil {
-			span.Set("path-discovery-duration", time.Since(pathDiscoveryStarted))
-			span.Set("failure-stage", "path-discovery")
-			return nil, nil, nil, err
+			// 旧 Relation API 对显式 source==target 且没有自关联边的请求
+			// 返回空结果成功；仅在兼容模式保留这个行为。原生 v1beta3
+			// 仍然报告无路径，帮助调用方发现错误的自关联请求。
+			if req.LegacyCompatibility && isLegacyExplicitSelfTargetWithoutPath(req) {
+				paths = nil
+				err = nil
+			} else {
+				span.Set("path-discovery-duration", time.Since(pathDiscoveryStarted))
+				span.Set("failure-stage", "path-discovery")
+				return nil, nil, nil, err
+			}
 		}
 	}
 	span.Set("path-discovery-duration", time.Since(pathDiscoveryStarted))
@@ -565,7 +584,7 @@ func (m *Model) queryLivenessGraph(
 	if m.executor != nil {
 		start := time.Now()
 		bindingResolveStarted := time.Now()
-		runner, err := m.newGraphQueryRunner(ctx, req)
+		runner, directSurrealDB, err := m.newGraphQueryRunnerWithRoute(ctx, req)
 		span.Set("binding-resolve-duration", time.Since(bindingResolveStarted))
 		if err != nil {
 			span.Set("failure-stage", "binding-resolution")
@@ -576,7 +595,11 @@ func (m *Model) queryLivenessGraph(
 			return nil, nil, nil, err
 		}
 		if len(paths) > 0 {
-			graphs, paths, err = m.executeGraphQueryPathByPath(ctx, req, provider, paths, queryStart, queryEnd, mode, rangeStart, rangeEnd, stepMs, runner)
+			queryCtx := ctx
+			if directSurrealDB {
+				queryCtx = withDirectSurrealDBRoute(ctx)
+			}
+			graphs, paths, err = m.executeGraphQueryPathByPath(queryCtx, req, provider, paths, queryStart, queryEnd, mode, rangeStart, rangeEnd, stepMs, runner)
 		}
 		elapsed := time.Since(start).Seconds()
 		status := "ok"
@@ -793,6 +816,13 @@ func (m *Model) executeOneGraphQueryPath(
 	configureBuilderForGraphQueryMode(builder, mode)
 	route := builder.routeName()
 	usesFlatMultiHop := usesFlatMultiHopActiveEdgeServingPath(req, provider, path, mode)
+	if !usesFlatMultiHop && isDirectSurrealDBRoute(ctx) {
+		// The native SurrealDB /sql endpoint enforces a query AST recursion limit.
+		// For direct bindings, active-edge paths can be evaluated hop by hop using
+		// literal primary-key filters, which preserves the graph shape without
+		// embedding all hops in one deeply nested statement.
+		usesFlatMultiHop = usesDirectSurrealDBFlatMultiHopPath(req, provider, path, mode)
+	}
 	if usesFlatMultiHop {
 		route = "active_edge_serving_flat_multi_hop"
 	}
@@ -900,6 +930,38 @@ func usesFlatMultiHopActiveEdgeServingPath(
 			return false
 		}
 		if _, ok := flatRelations[relationType]; !ok {
+			return false
+		}
+		currentType := ResourceType(path.Steps[hop-1].ResourceType)
+		nextType := ResourceType(path.Steps[hop].ResourceType)
+		if len(provider.GetResourcePrimaryKeys(req.SchemaNamespace(), currentType)) == 0 ||
+			len(provider.GetResourcePrimaryKeys(req.SchemaNamespace(), nextType)) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func usesDirectSurrealDBFlatMultiHopPath(
+	req *QueryRequest,
+	provider SchemaProvider,
+	path resourcePath,
+	mode graphQueryMode,
+) bool {
+	if req == nil || provider == nil || len(path.Steps) <= 2 || len(req.SourceExpandInfo) > 0 {
+		return false
+	}
+	if mode != graphQueryModeInstant && mode != graphQueryModeRange {
+		return false
+	}
+
+	servingRelations := make(map[RelationType]struct{}, len(ActiveEdgeServingRelations))
+	for _, relationType := range ActiveEdgeServingRelations {
+		servingRelations[RelationType(relationType)] = struct{}{}
+	}
+	for hop := 1; hop < len(path.Steps); hop++ {
+		relationType := RelationType(path.Steps[hop].RelationType)
+		if _, ok := servingRelations[relationType]; !ok {
 			return false
 		}
 		currentType := ResourceType(path.Steps[hop-1].ResourceType)
@@ -1256,14 +1318,19 @@ func resourcePathSortKey(path resourcePath) string {
 // 逐路径查询会依次执行多条 SQL；绑定元数据只和 space_uid 相关，提前解析一次
 // 可以避免每条路径重复访问绑定解析器，同时保证所有路径使用同一份路由上下文。
 func (m *Model) newGraphQueryRunner(ctx context.Context, req *QueryRequest) (graphQueryRunner, error) {
+	runner, _, err := m.newGraphQueryRunnerWithRoute(ctx, req)
+	return runner, err
+}
+
+func (m *Model) newGraphQueryRunnerWithRoute(ctx context.Context, req *QueryRequest) (graphQueryRunner, bool, error) {
 	if m.resolver != nil {
 		if ex, ok := m.executor.(GraphQueryExecutorWithBinding); ok {
 			if req.SpaceUID == "" {
-				return nil, fmt.Errorf("space_uid is required for binding graph query")
+				return nil, false, fmt.Errorf("space_uid is required for binding graph query")
 			}
 			binding, err := m.resolver.Resolve(ctx, req.SpaceUID)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			return func(ctx context.Context, sql string, start, end int64) ([]*LivenessGraph, error) {
 				graphs, err := ex.ExecuteWithBinding(ctx, req.SpaceUID, *binding, sql, start, end)
@@ -1274,7 +1341,7 @@ func (m *Model) newGraphQueryRunner(ctx context.Context, req *QueryRequest) (gra
 					return nil, err
 				}
 				return graphs, nil
-			}, nil
+			}, binding.StorageID != "", nil
 		}
 	}
 	return func(ctx context.Context, sql string, start, end int64) ([]*LivenessGraph, error) {
@@ -1286,7 +1353,7 @@ func (m *Model) newGraphQueryRunner(ctx context.Context, req *QueryRequest) (gra
 			return nil, err
 		}
 		return graphs, nil
-	}, nil
+	}, false, nil
 }
 
 // executeGraphQuery 根据 resolver / executor 能力选择最合适的调用路径。
@@ -1468,6 +1535,14 @@ func shouldIncludeRootTarget(req *QueryRequest) bool {
 
 func isExplicitDirectSelfTarget(req *QueryRequest) bool {
 	return req != nil && req.TargetTypeExplicit && req.SourceType == req.TargetType && len(req.PathResource) == 0
+}
+
+func isLegacyExplicitSelfTargetWithoutPath(req *QueryRequest) bool {
+	return req != nil &&
+		req.TargetTypeExplicit &&
+		req.SourceType == req.TargetType &&
+		len(req.PathResource) == 1 &&
+		req.PathResource[0] == ""
 }
 
 func targetExtractionPathResource(req *QueryRequest) []ResourceType {

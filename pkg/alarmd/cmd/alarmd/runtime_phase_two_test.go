@@ -1097,29 +1097,21 @@ func TestPhaseTwoWorkerBundleKeepsTwoQueryGroupsReadyWhileControlDegradedAndReco
 	}
 }
 
-func TestPhaseTwoWorkerBundlePreservesSourceRefreshFacts(t *testing.T) {
-	facts := &observability.SourceRefreshFacts{
-		Status: observability.SourceRefreshPublished, SnapshotRevision: "snapshot-2", PublicationEpoch: 2,
-		CountsKnown: true, OldQueryGroups: 1, NewQueryGroups: 2, AddedQueryGroups: 1,
-	}
-	var got observability.Observation
+func TestPhaseTwoWorkerBundleDoesNotDuplicateObservedSourceRefresh(t *testing.T) {
+	observations := 0
 	bundle := &phaseTwoWorkerBundle{dependencies: phaseTwoWorkerBundleDependencies{
-		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
-			if observation.SourceRefresh != nil {
-				got = observation
-			}
+		Observer: observability.ObserverFunc(func(context.Context, observability.Observation) {
+			observations++
 		}),
 		Now: time.Now,
 	}}
 	if err := bundle.applyControlRefresh(context.Background(), phaseTwoControlRefreshResult{
-		Status: phaseTwoControlHealthy, SourceRefresh: facts,
+		Status: phaseTwoControlHealthy, SourceRefreshObserved: true,
 	}); err != nil {
 		t.Fatalf("applyControlRefresh() error = %v", err)
 	}
-	if got.SourceRefresh == nil || *got.SourceRefresh != *facts ||
-		got.Component != observability.ComponentControlPlane ||
-		got.Stage != observability.StageSnapshotRefreshed || got.Result != observability.ResultSuccess {
-		t.Fatalf("source refresh observation = %#v", got)
+	if observations != 0 {
+		t.Fatalf("duplicate source refresh observations = %d", observations)
 	}
 }
 

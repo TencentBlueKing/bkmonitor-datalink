@@ -153,10 +153,17 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation) {
 	if facts := observation.SourceRefresh; facts != nil {
 		attributes = append(attributes,
 			slog.String("source_refresh_status", string(facts.Status)),
-			slog.String("snapshot_revision", facts.SnapshotRevision),
-			slog.Uint64("publication_epoch", facts.PublicationEpoch),
 			slog.Bool("source_refresh_counts_known", facts.CountsKnown),
 		)
+		if facts.ObservationID != "" {
+			attributes = append(attributes, slog.String("source_observation_id", facts.ObservationID))
+		}
+		if facts.SnapshotRevision != "" {
+			attributes = append(attributes, slog.String("snapshot_revision", facts.SnapshotRevision))
+		}
+		if facts.PublicationEpoch > 0 {
+			attributes = append(attributes, slog.Uint64("publication_epoch", facts.PublicationEpoch))
+		}
 		if facts.CountsKnown {
 			attributes = append(attributes,
 				slog.Int("old_query_groups", facts.OldQueryGroups),

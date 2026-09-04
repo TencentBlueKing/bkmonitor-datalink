@@ -158,3 +158,33 @@ func TestLoggingObserverWritesActionableSourceRefreshFacts(t *testing.T) {
 		}
 	}
 }
+
+func TestLoggingObserverKeepsPendingCandidateWithoutInventingPublication(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+		Component: ComponentControlPlane, Stage: StageSnapshotRefreshed, Result: ResultSuccess,
+		SourceRefresh: &SourceRefreshFacts{
+			Status: SourceRefreshPending, ObservationID: "observation-candidate",
+		},
+	})
+
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode pending source refresh log: %v; log=%s", err, output.String())
+	}
+	if event["source_refresh_status"] != "PENDING_CONFIRMATION" ||
+		event["source_observation_id"] != "observation-candidate" ||
+		event["snapshot_revision"] != nil || event["publication_epoch"] != nil {
+		t.Fatalf("pending source refresh log invented publication: %#v", event)
+	}
+}

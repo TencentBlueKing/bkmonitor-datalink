@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -429,6 +430,16 @@ func (runtime *productionPhaseTwoControl) refresh(
 		result, fallbackErr := runtime.keepLastGood(ctx, sourceKind, err)
 		return result, false, fallbackErr
 	}
+	if !knownSourceRefreshStatus(result.Status) {
+		return phaseTwoControlRefreshResult{}, false, errors.New("phase-two source refresh returned an invalid status")
+	}
+	sourceRefresh := sourceRefreshIdentity(result, result.Publication)
+	defer func() {
+		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+			Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotRefreshed,
+			Result: observability.ResultSuccess, SourceRefresh: sourceRefresh,
+		})
+	}()
 	if result.Status == controlplane.SourceRefreshPendingConfirmation {
 		state, err := runtime.dependencies.Repository.LoadActivation(ctx)
 		if errors.Is(err, controlplane.ErrActivationUnavailable) {
@@ -441,25 +452,23 @@ func (runtime *productionPhaseTwoControl) refresh(
 		if err != nil {
 			return phaseTwoControlRefreshResult{}, false, err
 		}
+		sourceRefresh.SnapshotRevision = string(state.Current.SnapshotRevision)
+		sourceRefresh.PublicationEpoch = state.Current.PublicationEpoch
+		currentCount := sourceRefreshCurrentCount(state, queryGroups)
+		runtime.enrichSourceRefreshCounts(ctx, sourceRefresh, state, nil, state, currentCount)
 		renewErr := runtime.dependencies.Repository.RenewCurrentActivationObjects(ctx)
 		renewed = true
 		runtime.observeCurrentObjectRenewal(ctx, renewErr)
 		if renewErr != nil {
 			return phaseTwoControlRefreshResult{
 				QueryGroups: queryGroups, Status: phaseTwoControlDegradedLastGood,
-				SourceRefresh: runtime.sourceRefreshFacts(ctx, result.Status, state.Current, state, nil, state),
-				SourceKind:    observability.SourceKindCompiledSnapshot,
-				ReasonCode:    observability.ReasonCode(contract.ReasonRedisUnavailable), Cause: renewErr,
+				SourceKind: observability.SourceKindCompiledSnapshot,
+				ReasonCode: observability.ReasonCode(contract.ReasonRedisUnavailable), Cause: renewErr,
 			}, false, nil
 		}
 		return phaseTwoControlRefreshResult{
-			QueryGroups: queryGroups, Status: phaseTwoControlHealthy,
-			SourceRefresh: runtime.sourceRefreshFacts(ctx, result.Status, state.Current, state, nil, state),
+			QueryGroups: queryGroups, Status: phaseTwoControlHealthy, SourceRefreshObserved: true,
 		}, false, nil
-	}
-	if result.Status != controlplane.SourceRefreshPublished && result.Status != controlplane.SourceRefreshUnchanged &&
-		result.Status != controlplane.SourceRefreshPublicationConflict {
-		return phaseTwoControlRefreshResult{}, false, errors.New("phase-two source refresh returned an invalid status")
 	}
 	if result.Publication.SnapshotRevision == "" || result.Publication.PublicationEpoch == 0 {
 		return phaseTwoControlRefreshResult{}, false, errors.New("phase-two source refresh returned an incomplete publication")
@@ -483,54 +492,53 @@ func (runtime *productionPhaseTwoControl) refresh(
 	if result.Status == controlplane.SourceRefreshUnchanged {
 		previous, previousErr = state, nil
 	}
-	sourceRefresh := runtime.sourceRefreshFacts(ctx, result.Status, result.Publication, previous, previousErr, state)
 	queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
+	if err != nil {
+		return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, false, err
+	}
+	currentCount := sourceRefreshCurrentCount(state, queryGroups)
+	runtime.enrichSourceRefreshCounts(ctx, sourceRefresh, previous, previousErr, state, currentCount)
 	return phaseTwoControlRefreshResult{
-		QueryGroups: queryGroups, Status: phaseTwoControlHealthy, SourceRefresh: sourceRefresh,
-	}, false, err
+		QueryGroups: queryGroups, Status: phaseTwoControlHealthy, SourceRefreshObserved: true,
+	}, false, nil
 }
 
-func (runtime *productionPhaseTwoControl) sourceRefreshFacts(
+func (runtime *productionPhaseTwoControl) enrichSourceRefreshCounts(
 	ctx context.Context,
-	status controlplane.SourceRefreshStatus,
-	publication controlplane.SnapshotPublicationRef,
+	facts *observability.SourceRefreshFacts,
 	previous controlplane.ActivationState,
 	previousErr error,
 	current controlplane.ActivationState,
-) *observability.SourceRefreshFacts {
-	facts := &observability.SourceRefreshFacts{
-		Status:           observability.SourceRefreshStatus(status),
-		SnapshotRevision: string(publication.SnapshotRevision),
-		PublicationEpoch: publication.PublicationEpoch,
-	}
+	currentCount *int,
+) {
 	sameSet := previousErr == nil && previous.Current == current.Current &&
 		previous.ActiveQGSetRef == current.ActiveQGSetRef
 	if sameSet {
-		if count, ok := activeQueryGroupRefCount(current.ActiveQGSetRef); ok {
+		if currentCount != nil {
 			facts.CountsKnown = true
-			facts.OldQueryGroups = count
-			facts.NewQueryGroups = count
-			return facts
+			facts.OldQueryGroups = *currentCount
+			facts.NewQueryGroups = *currentCount
 		}
+		return
 	}
 	previousMissing := errors.Is(previousErr, controlplane.ErrActivationUnavailable)
 	if previousMissing {
-		if count, ok := activeQueryGroupRefCount(current.ActiveQGSetRef); ok {
+		if currentCount != nil {
 			facts.CountsKnown = true
-			facts.NewQueryGroups = count
-			facts.AddedQueryGroups = count
-			return facts
+			facts.NewQueryGroups = *currentCount
+			facts.AddedQueryGroups = *currentCount
 		}
+		return
 	}
 	if previousErr != nil && !previousMissing {
-		return facts
+		return
 	}
 
 	// Exact set reads are diagnostic only and are limited to legacy references
 	// or a real publication transition where added/retired overlap is unknown.
 	currentGroups, err := runtime.loadCurrentActiveQueryGroups(ctx, current)
 	if err != nil {
-		return facts
+		return
 	}
 	previousGroups := []execution.QueryGroupIdentity{}
 	if sameSet {
@@ -538,7 +546,7 @@ func (runtime *productionPhaseTwoControl) sourceRefreshFacts(
 	} else if !previousMissing {
 		previousGroups, err = runtime.loadCurrentActiveQueryGroups(ctx, previous)
 		if err != nil {
-			return facts
+			return
 		}
 	}
 	facts.CountsKnown = true
@@ -560,12 +568,51 @@ func (runtime *productionPhaseTwoControl) sourceRefreshFacts(
 			facts.RetiredQueryGroups++
 		}
 	}
-	return facts
 }
 
-func activeQueryGroupRefCount(reference controlplane.ActiveQueryGroupSetRef) (int, bool) {
-	count := int(reference.QGCount)
-	return count, reference.Digest != "" && count >= 0 && uint64(count) == reference.QGCount
+func knownSourceRefreshStatus(status controlplane.SourceRefreshStatus) bool {
+	switch status {
+	case controlplane.SourceRefreshPendingConfirmation, controlplane.SourceRefreshPublished,
+		controlplane.SourceRefreshUnchanged, controlplane.SourceRefreshPublicationConflict:
+		return true
+	default:
+		return false
+	}
+}
+
+func sourceRefreshIdentity(
+	result controlplane.SourceRefreshResult,
+	publication controlplane.SnapshotPublicationRef,
+) *observability.SourceRefreshFacts {
+	return &observability.SourceRefreshFacts{
+		Status: observability.SourceRefreshStatus(result.Status), ObservationID: result.Observation,
+		SnapshotRevision: string(publication.SnapshotRevision), PublicationEpoch: publication.PublicationEpoch,
+	}
+}
+
+func sourceRefreshCurrentCount(
+	state controlplane.ActivationState,
+	queryGroups []execution.QueryGroupIdentity,
+) *int {
+	reference := state.ActiveQGSetRef
+	if reference != (controlplane.ActiveQueryGroupSetRef{}) {
+		if reference.SchemaVersion != "alarmd-active-qg-set-v1" || len(reference.Digest) != 64 {
+			return nil
+		}
+		if _, err := hex.DecodeString(reference.Digest); err != nil {
+			return nil
+		}
+		count := int(reference.QGCount)
+		if count < 0 || uint64(count) != reference.QGCount {
+			return nil
+		}
+		return &count
+	}
+	if len(state.Draining) == 0 && queryGroups != nil {
+		count := len(queryGroups)
+		return &count
+	}
+	return nil
 }
 
 func (runtime *productionPhaseTwoControl) observeCurrentObjectRenewal(ctx context.Context, err error) {

@@ -273,6 +273,7 @@ type DrainingQGFacts struct {
 // identity is diagnostic log context only; Prometheus consumes Status alone.
 type SourceRefreshFacts struct {
 	Status             SourceRefreshStatus
+	ObservationID      string
 	SnapshotRevision   string
 	PublicationEpoch   uint64
 	CountsKnown        bool
@@ -435,10 +436,14 @@ func NormalizeObservation(observation Observation) Observation {
 
 func normalizeSourceRefreshFacts(component Component, stage Stage, facts *SourceRefreshFacts) *SourceRefreshFacts {
 	if facts == nil || component != ComponentControlPlane || stage != StageSnapshotRefreshed ||
-		!validSourceRefreshStatus(facts.Status) || facts.SnapshotRevision == "" || facts.PublicationEpoch == 0 {
+		!validSourceRefreshStatus(facts.Status) {
 		return nil
 	}
 	normalized := *facts
+	if (normalized.SnapshotRevision == "") != (normalized.PublicationEpoch == 0) {
+		normalized.SnapshotRevision = ""
+		normalized.PublicationEpoch = 0
+	}
 	if !normalized.CountsKnown || normalized.OldQueryGroups < 0 || normalized.NewQueryGroups < 0 ||
 		normalized.AddedQueryGroups < 0 || normalized.RetiredQueryGroups < 0 ||
 		normalized.OldQueryGroups+normalized.AddedQueryGroups !=

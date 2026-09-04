@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -63,6 +64,10 @@ func TestProductionSlotSourceDoesNotConstructFirstSlotWhenSnapshotIsUnavailable(
 	if !errors.Is(err, controlplane.ErrSnapshotUnavailable) || due || !reflect.DeepEqual(slot, FrozenSlot{}) {
 		t.Fatalf("Next(snapshot unavailable) = (%+v, %v, %v)", slot, due, err)
 	}
+	var retry *SourceRetryError
+	if !errors.As(err, &retry) || fmt.Sprintf("%T", retry.Err) != "*scheduler.slotFreezeSnapshotUnavailableFailure" {
+		t.Fatalf("Next(snapshot unavailable) error=%T unwrap=%T, want fixed freeze-contract cause class", err, retry.Err)
+	}
 	if len(catalog.requests) != 1 {
 		t.Fatalf("FreezeSlotContract calls = %d, want 1", len(catalog.requests))
 	}
@@ -101,6 +106,36 @@ func TestProductionSlotSourceBlocksCorruptSnapshotWithoutProjection(t *testing.T
 	var blocked *SourceBlockedError
 	if due || !errors.As(err, &blocked) {
 		t.Fatalf("Next(corrupt snapshot) due=%t error=%v", due, err)
+	}
+	if fmt.Sprintf("%T", blocked.Err) != "*scheduler.slotFreezeSnapshotCorruptFailure" {
+		t.Fatalf("Next(corrupt snapshot) unwrap=%T, want fixed freeze-contract cause class", blocked.Err)
+	}
+}
+
+func TestClassifySlotFreezeFailureUsesFixedLowCardinalityTypes(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "snapshot unavailable", err: controlplane.ErrSnapshotUnavailable,
+			want: "*scheduler.slotFreezeSnapshotUnavailableFailure"},
+		{name: "snapshot corrupt", err: &controlplane.PersistedSnapshotCorruptError{Err: errors.New("sensitive payload")},
+			want: "*scheduler.slotFreezeSnapshotCorruptFailure"},
+		{name: "schedule unavailable", err: controlplane.ErrScheduleUnavailable,
+			want: "*scheduler.slotFreezeScheduleUnavailableFailure"},
+		{name: "catalog object unavailable", err: controlplane.ErrCatalogObjectUnavailable,
+			want: "*scheduler.slotFreezeCatalogObjectUnavailableFailure"},
+		{name: "other", err: errors.New("sensitive payload"),
+			want: "*scheduler.slotFreezeOtherFailure"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := classifySlotFreezeFailure(test.err)
+			if fmt.Sprintf("%T", got) != test.want || !errors.Is(got, test.err) || strings.Contains(got.Error(), "sensitive") {
+				t.Fatalf("classifySlotFreezeFailure()=(%T,%q), want type=%s with preserved chain and safe text", got, got, test.want)
+			}
+		})
 	}
 }
 

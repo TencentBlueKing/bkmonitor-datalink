@@ -917,7 +917,7 @@ func TestPhaseTwoWorkerBundleDoesNotDuplicateAttemptedRunnerFailureObservation(t
 	_ = bundle.Shutdown(context.Background())
 }
 
-func TestPhaseTwoWorkerBundleObservesOnlySourceRetryResultsWithQGTrace(t *testing.T) {
+func TestPhaseTwoWorkerBundleDoesNotReobserveSourceRetryResults(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	queryGroups := []execution.QueryGroupIdentity{"query-group-blocked", "query-group-temporary"}
 	blocked := newFakePhaseTwoQueryGroup()
@@ -947,16 +947,15 @@ func TestPhaseTwoWorkerBundleObservesOnlySourceRetryResultsWithQGTrace(t *testin
 	if err := bundle.runScheduledOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	got := make(map[observability.ReasonCode]string)
+	var got []observability.Observation
 	for _, observation := range observations {
 		if observation.Component == observability.ComponentScheduler && observation.Stage == observability.StageScheduleDue &&
 			observation.Result == observability.ResultRetrying {
-			got[observation.ReasonCode] = observation.Trace.QueryGroupKey
+			got = append(got, observation)
 		}
 	}
-	if got[observability.ReasonCode(contract.ReasonBlockedExactSetUnavailable)] != string(queryGroups[0]) ||
-		got[observability.ReasonCode(contract.ReasonProviderUnavailable)] != string(queryGroups[1]) || len(got) != 2 {
-		t.Fatalf("source retry observations=%+v", got)
+	if len(got) != 0 {
+		t.Fatalf("source retries were re-observed after SlotSource observation: %+v", got)
 	}
 	_ = bundle.Shutdown(context.Background())
 }

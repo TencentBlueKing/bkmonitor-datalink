@@ -24,6 +24,52 @@ var (
 	ErrSnapshotRetentionInsufficient = errors.New("alarmd scheduler: Snapshot retention cannot cover recovery contract")
 )
 
+const slotFreezeFailureMessage = "alarmd scheduler: FreezeSlotContract failed"
+
+// These concrete error types are the bounded cause classes exposed as
+// error_type by the runtime logger. Their messages deliberately omit the
+// underlying control fact while Unwrap preserves errors.Is/errors.As.
+type slotFreezeFailure struct{ err error }
+
+func (err slotFreezeFailure) Unwrap() error { return err.err }
+
+type slotFreezeSnapshotUnavailableFailure struct{ slotFreezeFailure }
+
+func (*slotFreezeSnapshotUnavailableFailure) Error() string { return slotFreezeFailureMessage }
+
+type slotFreezeSnapshotCorruptFailure struct{ slotFreezeFailure }
+
+func (*slotFreezeSnapshotCorruptFailure) Error() string { return slotFreezeFailureMessage }
+
+type slotFreezeScheduleUnavailableFailure struct{ slotFreezeFailure }
+
+func (*slotFreezeScheduleUnavailableFailure) Error() string { return slotFreezeFailureMessage }
+
+type slotFreezeCatalogObjectUnavailableFailure struct{ slotFreezeFailure }
+
+func (*slotFreezeCatalogObjectUnavailableFailure) Error() string { return slotFreezeFailureMessage }
+
+type slotFreezeOtherFailure struct{ slotFreezeFailure }
+
+func (*slotFreezeOtherFailure) Error() string { return slotFreezeFailureMessage }
+
+func classifySlotFreezeFailure(err error) error {
+	failure := slotFreezeFailure{err: err}
+	var corrupt *controlplane.PersistedSnapshotCorruptError
+	switch {
+	case errors.As(err, &corrupt):
+		return &slotFreezeSnapshotCorruptFailure{slotFreezeFailure: failure}
+	case errors.Is(err, controlplane.ErrSnapshotUnavailable):
+		return &slotFreezeSnapshotUnavailableFailure{slotFreezeFailure: failure}
+	case errors.Is(err, controlplane.ErrScheduleUnavailable):
+		return &slotFreezeScheduleUnavailableFailure{slotFreezeFailure: failure}
+	case errors.Is(err, controlplane.ErrCatalogObjectUnavailable):
+		return &slotFreezeCatalogObjectUnavailableFailure{slotFreezeFailure: failure}
+	default:
+		return &slotFreezeOtherFailure{slotFreezeFailure: failure}
+	}
+}
+
 type AssignmentReader interface {
 	ReadAssignment(context.Context, execution.QueryGroupIdentity) (ownership.AssignmentRecord, error)
 }
@@ -210,10 +256,11 @@ func (source *ProductionSlotSource) Next(
 			return FrozenSlot{}, false, boundaryErr
 		}
 		var corrupt *controlplane.PersistedSnapshotCorruptError
+		cause := classifySlotFreezeFailure(err)
 		if errors.As(err, &corrupt) || at.UnixMilli() >= recoveryUntil {
-			return FrozenSlot{}, false, &SourceBlockedError{Err: errors.New("frozen exact Plan set is unavailable")}
+			return FrozenSlot{}, false, &SourceBlockedError{Err: cause}
 		}
-		return FrozenSlot{}, false, &SourceRetryError{Err: err}
+		return FrozenSlot{}, false, &SourceRetryError{Err: cause}
 	}
 	if err := fact.Validate(request); err != nil {
 		return FrozenSlot{}, false, fmt.Errorf("%w: %v", ErrSlotContractDrift, err)

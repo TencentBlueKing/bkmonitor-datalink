@@ -1030,6 +1030,23 @@ func (source observedProductionSlotSource) Next(
 	queryGroup execution.QueryGroupIdentity,
 ) (scheduler.FrozenSlot, bool, error) {
 	slot, due, err := source.next.Next(ctx, queryGroup)
+	var retry *scheduler.SourceRetryError
+	var blocked *scheduler.SourceBlockedError
+	if errors.As(err, &retry) || errors.As(err, &blocked) {
+		reason := observability.ReasonCode(contract.ReasonBlockedExactSetUnavailable)
+		var cause error
+		if retry != nil {
+			reason = observability.ReasonCode(contract.ReasonProviderUnavailable)
+			cause = retry.Err
+		} else {
+			cause = blocked.Err
+		}
+		observeRuntime(ctx, source.observer, observability.Observation{
+			Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
+			Result: observability.Result(observability.ResultRetrying), ReasonCode: reason, Direction: observability.DirectionInternal,
+			Trace: observability.TraceFields{QueryGroupKey: string(queryGroup)}, Err: cause,
+		})
+	}
 	if err == nil && due {
 		observeRuntime(ctx, source.observer, observability.Observation{
 			Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,

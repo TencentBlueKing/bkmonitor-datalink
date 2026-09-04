@@ -465,14 +465,6 @@ func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error 
 			// later Gates may add bounded recovery without changing this isolation.
 			continue
 		}
-		if attempted && result.result.SourceRetry && result.result.Result != "" {
-			observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
-				Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
-				Result: observability.Result(result.result.Result), ReasonCode: observability.ReasonCode(result.result.ReasonCode),
-				Direction: observability.DirectionInternal,
-				Trace:     observability.TraceFields{QueryGroupKey: string(scheduled.queryGroup)},
-			})
-		}
 	}
 	return canceled
 }

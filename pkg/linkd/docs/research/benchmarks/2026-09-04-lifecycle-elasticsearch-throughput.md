@@ -498,9 +498,249 @@ high_watermark ≈ 可接受恢复秒数 × 实际 drain rate
 例如希望停止输入后 60 秒内排空，按 500 Events/s drain rate 计算，high watermark 可从约 30,000
 开始验证。背压阈值控制的是未处理 Signal，不能替代已 ACK Stream 的裁剪治理。
 
-## 13. 后续部署指导
+## 13. 配置调整建议专项
 
-### 13.1 上线前置条件
+### 13.1 调整原则与结论
+
+当前配置有收敛必要，但不应把所有并发、批次和容量参数一起调大。本轮压测已经证明 Cleaner 在约
+800 Events/s 输入时仍能接近 796.5 Events/s，当前瓶颈主要来自 Lifecycle 预取过深、背压触发过晚、
+Redis Stream 裁剪能力不足，以及 Alert Archiver 的 `refresh=wait_for`。
+
+本节推荐值是基于本轮观测提出的**下一轮候选默认值**，尚未经过调整后长稳测试，不代表已经验证的
+生产配置。建议先收敛纯配置默认值，再把 Archiver 作为独立代码改造验证，避免多个变量同时变化后
+无法归因。
+
+### 13.2 建议修改的默认值
+
+| 配置 | 当前值 | 候选默认值 | 调整依据 |
+| --- | ---: | ---: | --- |
+| `lifecycle.signal.max_batch_messages` | 128 | 32 | `concurrency=8` 时保留 4 倍预取即可；临界档 `pending` 长期保持 128 |
+| `lifecycle.signal.claim_min_idle_seconds` | 300 | 180 | 当前安全预算为 process 30 秒 + retry 120 秒，再保留 30 秒抖动余量 |
+| `lifecycle.mailbox.max_pending` | 128 | 32 | 本轮正常 Mailbox 通常为 1，绝大多数不超过 5；降低异常热 fingerprint 影响 |
+| `lifecycle.mailbox.max_drain_events` | 512 | 128 | 维持 Mailbox 容量的 4 倍，限制单个热 Mailbox 连续占用 Worker |
+| 背压 `high_watermark` | 100,000 | 30,000 | 按约 500 Events/s drain rate，约等于 60 秒恢复量 |
+| 背压 `low_watermark` | 80,000 | 15,000 | 保留足够滞回，恢复到约 30 秒积压后再接收 |
+| Stream `reconcile_interval_seconds` | 60 | 10 | 缩短发现与追赶周期，降低积压超调 |
+| Stream `operation_timeout_seconds` | 10 | 3 | 必须小于新的 10 秒周期；本轮单次任务仅需毫秒级 |
+| Stream `trim_batch_size` | 10,000 | 10,000 | 周期缩短后理论裁剪能力由 166.7 提升至 1,000 entries/s |
+
+建议用于下一轮复测的 YAML 如下，未列出的参数保持当前值：
+
+```yaml
+lifecycle:
+  concurrency: 8
+  process_timeout_seconds: 30
+  retry_max_attempts: 3
+  retry_max_elapsed_seconds: 120
+
+  signal:
+    read_block_milliseconds: 1000
+    claim_min_idle_seconds: 180
+    max_batch_messages: 32
+    max_message_bytes: 65536
+
+  mailbox:
+    max_pending: 32
+    max_drain_events: 128
+    backpressure:
+      cache_ttl_seconds: 3
+      query_timeout_seconds: 1
+      high_watermark: 30000
+      low_watermark: 15000
+
+control_plane:
+  redis_stream:
+    reconcile_interval_seconds: 10
+    operation_timeout_seconds: 3
+    max_entries: 100000
+    trim_batch_size: 10000
+```
+
+### 13.3 降低 Lifecycle 预取与故障接管时间
+
+[`lifecycle.go`](../../../internal/config/lifecycle.go) 当前按下式计算消费运行时的最大 inflight：
+
+```text
+max_inflight = max(concurrency × 4, signal.max_batch_messages)
+```
+
+当前配置的计算结果是 `max(8 × 4, 128) = 128`。Redis 一次读取的 128 条消息都会进入 PEL，但只有
+8 个 Worker 实际执行；这与临界状态中反复观察到的 `pending=128` 一致。它会让单实例提前占有大量
+尚未开始处理的消息，进程故障后需等待 Claim，横向扩容时也容易出现先读取实例过度预取。
+
+将 `signal.max_batch_messages` 调为 32 后，`max_inflight=max(8 × 4, 32)=32`，仍保留 4 倍 Worker
+数量的缓冲，可覆盖 Redis 读取和调度间隙，同时把单实例故障影响从 128 条降到 32 条。其代价是
+`XREADGROUP` 调用频率增加，因此复测时需同步观察 Redis CPU、命令延迟和读取调用率；本轮没有证据
+表明 Redis 是实时处理瓶颈。
+
+当前代码还要求：
+
+```text
+claim_min_idle > process_timeout + retry_max_elapsed
+```
+
+安全下限为 `30s + 120s = 150s`。候选值 180 秒在其上保留 30 秒抖动余量，可将崩溃消息的最短
+接管等待从 300 秒缩短约 2 分钟，同时避免在正常处理和重试预算内误抢。长期应考虑由主参数派生：
+
+```text
+claim_min_idle = process_timeout + retry_max_elapsed + claim_safety_margin
+```
+
+其中 `claim_safety_margin` 可默认取 30 秒。
+
+### 13.4 收敛 Mailbox 容量
+
+`max_pending=128` 不是本轮吞吐瓶颈，但与压测中的正常分布差距较大。候选值保持以下比例：
+
+```text
+max_pending = 32
+max_drain_events = 4 × max_pending = 128
+```
+
+这样仍能容纳突发和重复引用，并减少异常热 fingerprint 在一个 Worker 上连续处理 512 次的风险。
+由于本轮没有形成完整的 Mailbox 长度直方图，实际修改默认值前应先增加并观察：
+
+- Mailbox 长度 P50/P95/P99/P99.9；
+- 长度达到 8、16、32 的次数；
+- `mailbox_full` 次数。
+
+若真实流量的 P99.9 已接近 32，应选择 64，而不是直接落到 32。
+
+### 13.5 按恢复时间推导背压阈值
+
+当前 `100000/80000` 没有按处理能力和恢复目标推导。600 Events/s 超载时，Signal lag 已在数分钟内
+持续增长，但仍远未达到 100,000，Cleaner 不会及时停止输入。建议使用：
+
+```text
+high_watermark = 目标最大恢复秒数 × Lifecycle drain rate
+```
+
+按实测约 500 Events/s drain rate 和 60 秒目标恢复时间，候选 high watermark 为 `500 × 60 = 30,000`；
+low watermark 取 15,000，使恢复到约 30 秒积压后再接收。3 秒背压缓存可继续保留：即使输入达到
+600 Events/s，一次缓存窗口最多额外接收约 1,800 条，相对 30,000 仍可控。
+
+该阈值只控制未处理 Signal，不能替代已 ACK Stream 的裁剪和容量治理。
+
+### 13.6 提高 Redis Stream 裁剪能力
+
+这是最明确需要调整的默认配置。当前单周期最多裁剪一次，理论能力为：
+
+```text
+10,000 entries / 60s = 166.7 entries/s
+```
+
+440 Events/s 档实测 Signal 新增约 357/s，即使实时消费完全追平，Stream 仍会持续增长。保持
+`trim_batch_size=10,000` 并把周期改为 10 秒后，理论裁剪能力可达到 1,000 entries/s。本轮单次
+Stream Manager 任务仅需毫秒级，也没有观察到对 Lifecycle 的可见影响，因此它比增加
+`max_entries` 更适合作为短期缓解；`max_entries=100,000` 只扩大缓冲时间，不能解决净增长。
+
+更根本的实现方案仍是让 Manager 在超过 `max_entries` 后循环裁剪多个安全批次，直到 Stream 回落
+到目标长度、达到单轮耗时或删除量预算，或失去所有 Consumer Group 的安全边界；
+`trim_batch_size` 应作为单次 Redis 命令上限，而不是整个周期的总追赶能力。
+
+### 13.7 暂时保持不变的参数
+
+#### Cleaner 参数
+
+Cleaner 当前参数形成了相对一致的批次和 inflight 比例：
+
+```text
+max_batch_messages        = 128
+max_concurrent_batches    = 2
+max_inflight_messages     = 128 × 2 × 2 = 512
+max_inflight_per_lane     = 128 × 2 = 256
+resume_inflight_per_lane  = 128
+```
+
+约 800 Events/s 输入时 Cleaner 仍可接近 796.5 Events/s，因此继续保持 `worker_count=8`、
+`batch_wait_milliseconds=20` 及上述参数。不要因 Lifecycle 积压提高 Cleaner 并发，否则只会更快制造
+Signal backlog。
+
+#### Lifecycle 并发、时间、刷新与连接预算
+
+在处理 Archiver 前，`lifecycle.concurrency` 保持 8。本轮已证明它可持续处理 440 Events/s、短时达到
+600 Events/s，且 ES CPU 未耗尽；现在提高到 12 或 16 更可能加剧共享 ES 节点上的资源竞争。
+
+以下时间参数也保持不变：
+
+```yaml
+read_block_milliseconds: 1000
+process_timeout_seconds: 30
+retry_max_attempts: 3
+retry_max_elapsed_seconds: 120
+lock:
+  ttl_seconds: 60
+  renew_interval_seconds: 20
+  retry_delay_milliseconds: 500
+```
+
+Redis blocking read 在有新消息时会立即返回，1 秒不会固定增加处理延迟；ES HTTP timeout 为 15 秒，
+一次 Lifecycle 可能包含多个顺序请求，30 秒 process timeout 仍属合理；lock 在 TTL 内至少有两次续租
+机会。本轮没有证据表明这些参数限制了吞吐。
+
+同时保持 `active_alert_refresh_interval_seconds=5`，Recent Alert Cache TTL 继续由其派生为 10 秒。
+Cleaner、Lifecycle、Control Plane 和 Storage prepare 的 Elasticsearch 每地址连接预算分别维持
+5、12、8、4；本轮连接数长期稳定在 15～17，没有连接等待或线性增长证据。
+
+### 13.8 Archiver 不能只靠调配置解决
+
+当前主要限制位于 [`archive.go`](../../../internal/store/elasticsearch/archive.go) 的 History bulk create
+和 Active bulk delete，两处都使用 `refresh=wait_for`，使 1,000 条归档批次平均耗时约 4.92 秒，吞吐
+被限制在约 200 Alerts/s。
+
+现阶段不建议直接提高 `archive_batch_size=1000`、`archive_worker_count=4` 或连接预算；这些参数无法
+消除约 5 秒的 refresh 等待。正确顺序是：
+
+1. 将归档 create/delete 改为 `refresh=false`；
+2. 保持 batch 1,000、worker 4 重新压测；
+3. 再比较 worker 4/8 和 batch 1,000/2,000；
+4. 改造后再评估把空闲扫描间隔从 30 秒降到 10 秒，以平滑归档负载。
+
+### 13.9 减少独立配置项
+
+长期不应要求用户分别填写所有互相关联的数字。建议保留少数主参数，并按统一关系派生：
+
+```text
+Cleaner:
+worker_count                = max(4, 2 × max_concurrent_batches)
+max_inflight_messages       = 2 × max_batch_messages × max_concurrent_batches
+max_inflight_per_lane       = 2 × max_batch_messages
+resume_inflight_per_lane    = max_batch_messages
+
+Lifecycle:
+signal.max_batch_messages   = 4 × concurrency
+runtime.max_inflight        = 4 × concurrency
+max_drain_events            = 4 × mailbox.max_pending
+claim_min_idle              = process_timeout + retry_elapsed + 30s
+```
+
+并补充以下跨字段校验，防止修改主参数后留下矛盾配置：
+
+- `worker_count >= max_concurrent_batches`；
+- `max_inflight_messages >= max_batch_messages × max_concurrent_batches`；
+- `resume_inflight_per_lane <= max_inflight_per_lane - max_batch_messages`；
+- `max_drain_events >= max_pending`；
+- `claim_min_idle > process_timeout + retry_max_elapsed`。
+
+这些派生关系属于后续配置模型建议，不表示当前代码已经全部实现。
+
+### 13.10 推荐实施顺序
+
+1. 修改 Stream 默认裁剪周期和操作超时；
+2. 将 Lifecycle Signal batch 调为 32、Claim 调为 180 秒；
+3. 增加 Mailbox 长度分布指标，再将默认容量调为 32/128；
+4. 将背压候选默认值调为 30,000/15,000；
+5. 以独立代码改造移除 Archiver 两处 `refresh=wait_for`；
+6. 使用 Lifecycle 并发 8，对 400、500、600 Events/s 各执行至少 30 分钟长稳测试；
+7. 最后再测试 Lifecycle 并发 12 和 16；
+8. 根据复测结果把稳定的派生关系固化到配置默认值和校验中。
+
+前四项属于候选配置收敛，Archiver 应作为独立代码变更提交和验证。任何一项在复测前都不应被描述为
+已确认可提升当前 440 Events/s 的可持续容量。
+
+## 14. 后续部署指导
+
+### 14.1 上线前置条件
 
 1. 从干净 commit 构建并记录制品 SHA-256；
 2. 完成 `make check`、Elasticsearch 7.17.7 和 MySQL 8.4.10 双后端 E2E；
@@ -510,7 +750,7 @@ high_watermark ≈ 可接受恢复秒数 × 实际 drain rate
 6. 验证 Kafka、Signal、Mailbox 和 terminal Alert backlog 均能排空；
 7. 验证 Redis 使用 `noeviction` 并设置明确容量告警。
 
-### 13.2 推荐启动顺序
+### 14.2 推荐启动顺序
 
 分角色部署时建议：
 
@@ -527,7 +767,7 @@ Mailbox 和 Recent Alert Cache 协议发生不兼容变化时，不应混合滚�
 - 不存在非空 Mailbox；
 - Archiver 没有 terminal backlog。
 
-### 13.3 灰度阶梯
+### 14.3 灰度阶梯
 
 单实例建议按以下流量逐级灰度：
 
@@ -545,7 +785,7 @@ Mailbox 和 Recent Alert Cache 协议发生不兼容变化时，不应混合滚�
 - Elasticsearch CPU 建议长期低于 70%；
 - Lifecycle P99 满足部署环境的业务 SLO。
 
-### 13.4 必备监控
+### 14.4 必备监控
 
 - Cleaner mailbox enqueue rate 与 Lifecycle process rate 差值；
 - Signal lag 的绝对值和增长率；
@@ -557,7 +797,7 @@ Mailbox 和 Recent Alert Cache 协议发生不兼容变化时，不应混合滚�
 - Repository failure、retry、CAS conflict；
 - Event GET / Lifecycle processed 比例。
 
-## 14. 后续验证矩阵
+## 15. 后续验证矩阵
 
 完成 P0 优化后，建议使用相同数据模型执行：
 

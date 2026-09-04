@@ -146,6 +146,35 @@ func TestPhaseTwoSourceObservationMetricRecordsOnlyFixedEpisodeTransitions(t *te
 	}
 }
 
+func TestPhaseTwoActivationFailureMetricUsesOnlyFixedStageAndClass(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentControlPlane,
+		Stage:     observability.StageActivationFailed,
+		Result:    observability.ResultDegraded,
+		ActivationFailure: &observability.ActivationFailureFacts{
+			Stage:               observability.ActivationFailureStageReactivation,
+			Class:               observability.ActivationFailureClassNotDrained,
+			DrainingQueryGroups: 2, CandidateQueryGroups: 364, ReactivatingQueryGroups: 1,
+		},
+		Trace: observability.TraceFields{QueryGroupKey: "must-not-be-a-label", StrategyID: "must-not-be-a-label"},
+	})
+	if got := testutil.ToFloat64(recorder.phaseTwo.activationFailures.WithLabelValues("reactivation", "not_drained")); got != 1 {
+		t.Fatalf("reactivation/not_drained activation failures=%v, want 1", got)
+	}
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentControlPlane,
+		Stage:     observability.StageActivationFailed,
+		Result:    observability.ResultDegraded,
+		ActivationFailure: &observability.ActivationFailureFacts{
+			Stage: "qg-high-cardinality", Class: "error-high-cardinality",
+		},
+	})
+	if got := testutil.CollectAndCount(recorder.phaseTwo.activationFailures); got != 1 {
+		t.Fatalf("activation failure series=%d, want only one fixed stage/class pair", got)
+	}
+}
+
 func TestPhaseTwoSourceRefreshMetricUsesOnlyFixedStatus(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
 	for _, status := range observability.AllSourceRefreshStatuses() {

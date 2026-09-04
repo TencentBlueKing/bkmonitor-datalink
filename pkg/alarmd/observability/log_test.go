@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -155,6 +156,55 @@ func TestLoggingObserverWritesActionableSourceRefreshFacts(t *testing.T) {
 	for field, value := range want {
 		if event[field] != value {
 			t.Fatalf("event[%q] = %#v, want %#v; event=%#v", field, event[field], value, event)
+		}
+	}
+}
+
+func TestLoggingObserverWritesBoundedActivationFailureWithoutIdentity(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+		Component: ComponentControlPlane,
+		Stage:     StageActivationFailed,
+		Result:    ResultDegraded,
+		ActivationFailure: &ActivationFailureFacts{
+			Stage:               ActivationFailureStageReactivation,
+			Class:               ActivationFailureClassNotDrained,
+			DrainingQueryGroups: 2, CandidateQueryGroups: 364, ReactivatingQueryGroups: 1,
+		},
+		Err: errors.New("must-not-be-observed"),
+	})
+
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode activation failure log: %v; log=%s", err, output.String())
+	}
+	for field, want := range map[string]any{
+		"activation_failure_stage":  "reactivation",
+		"activation_failure_class":  "not_drained",
+		"draining_query_groups":     float64(2),
+		"candidate_query_groups":    float64(364),
+		"reactivating_query_groups": float64(1),
+	} {
+		if event[field] != want {
+			t.Fatalf("event[%q]=%#v, want %#v; event=%#v", field, event[field], want, event)
+		}
+	}
+	if event["error"] != nil || event["error_message"] != nil {
+		t.Fatalf("raw error leaked into activation failure log: %#v", event)
+	}
+	for _, field := range []string{"query_group_key", "strategy_id", "record_id"} {
+		if event[field] != nil {
+			t.Fatalf("activation identity leaked into %q: %#v", field, event)
 		}
 	}
 }

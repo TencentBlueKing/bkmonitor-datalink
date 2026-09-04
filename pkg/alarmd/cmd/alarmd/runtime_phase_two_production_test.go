@@ -1423,13 +1423,24 @@ func TestProductionPhaseTwoControlKeepsLastGoodAcrossFailedCutoverAndRecovery(t 
 			candidate: {Publication: candidate, QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-healthy"}}},
 		},
 	}
+	activationErr := &controlplane.ActivationFailureError{
+		Failure: controlplane.ActivationFailure{
+			Stage: controlplane.ActivationFailureStageScheduleCutover,
+			Class: controlplane.ActivationFailureClassScheduleConflict,
+		},
+		Err: controlplane.ErrScheduleConflict,
+	}
 	activator := &fakeInitialScheduleActivator{
 		state: controlplane.ActivationState{RecordRevision: 3, Current: candidate},
-		errs:  []error{controlplane.ErrScheduleConflict, nil},
+		errs:  []error{activationErr, nil},
 	}
+	var observations []observability.Observation
 	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
 		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
 		Activator: activator, Repository: repository, Schedules: &fakeScheduleProjection{},
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		}),
 		Progress:        &fakeProductionProgressReader{},
 		RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
 	})
@@ -1451,6 +1462,18 @@ func TestProductionPhaseTwoControlKeepsLastGoodAcrossFailedCutoverAndRecovery(t 
 	}
 	if activator.calls != 2 {
 		t.Fatalf("activation calls=%d, want 2", activator.calls)
+	}
+	var failures []observability.Observation
+	for _, observation := range observations {
+		if observation.Stage == observability.StageActivationFailed {
+			failures = append(failures, observation)
+		}
+	}
+	if len(failures) != 1 || failures[0].ActivationFailure == nil ||
+		failures[0].ActivationFailure.Stage != observability.ActivationFailureStageScheduleCutover ||
+		failures[0].ActivationFailure.Class != observability.ActivationFailureClassScheduleConflict ||
+		!errors.Is(failures[0].Err, controlplane.ErrScheduleConflict) {
+		t.Fatalf("activation failure observations=%#v", failures)
 	}
 }
 

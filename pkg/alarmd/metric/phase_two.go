@@ -20,6 +20,7 @@ type phaseTwoMetrics struct {
 	capacity                     *prometheus.CounterVec
 	sourceObservations           *prometheus.CounterVec
 	sourceRefreshes              *prometheus.CounterVec
+	activationFailures           *prometheus.CounterVec
 	ownedQueryGroups             *prometheus.GaugeVec
 	ownershipTransitions         *prometheus.CounterVec
 	readyQueue                   *prometheus.GaugeVec
@@ -94,6 +95,10 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_refresh_total",
 			Help: "Phase-two source refresh outcomes by fixed status.",
 		}, []string{"status"}),
+		activationFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "activation_failure_total",
+			Help: "Control activation failures by fixed stage and class.",
+		}, []string{"activation_failure_stage", "activation_failure_class"}),
 		ownedQueryGroups: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "worker_owned_query_groups",
 			Help: "Query groups currently owned by this complete worker role.",
@@ -137,6 +142,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations, m.sourceRefreshes,
+		m.activationFailures,
 		m.ownedQueryGroups, m.ownershipTransitions, m.readyQueue, m.queryInflight,
 		m.queryAdmission,
 		m.activeQGSetCount, m.activeQGSetBytes, m.activeQGSetEncode, m.activeQGSetRedis,
@@ -149,6 +155,9 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 func (m phaseTwoMetrics) observe(observation observability.Observation) {
 	if facts := observation.SourceRefresh; facts != nil {
 		m.sourceRefreshes.WithLabelValues(string(facts.Status)).Inc()
+	}
+	if facts := observation.ActivationFailure; facts != nil {
+		m.activationFailures.WithLabelValues(string(facts.Stage), string(facts.Class)).Inc()
 	}
 	if facts := observation.DrainingQG; facts != nil {
 		m.undrainedDrainingQueryGroups.Set(float64(facts.Undrained))

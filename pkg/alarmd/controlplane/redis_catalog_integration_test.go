@@ -2489,6 +2489,10 @@ func TestScheduleActivationReconcilerRejectsEqualEpochDifferentRevision(t *testi
 	before := clockCalls
 	if _, err := reconciler.Ensure(ctx, forged); err == nil || clockCalls != before {
 		t.Fatalf("equal-epoch collision error=%v clock=%d/%d", err, clockCalls, before)
+	} else if failure, ok := controlplane.ActivationFailureFromError(err); !ok ||
+		failure.Stage != controlplane.ActivationFailureStageActivationLoad ||
+		failure.Class != controlplane.ActivationFailureClassEpochCollision {
+		t.Fatalf("equal-epoch collision classification=(%#v,%t), want activation_load/epoch_collision", failure, ok)
 	}
 }
 
@@ -2715,7 +2719,7 @@ func TestScheduleActivationReconcilerReactivatesDrainedQueryGroupOnSameProgressT
 		queryGroup: {Status: execution.ProgressMissing},
 	}}
 	compiler, stateSemantics := runtimePlanCompiler(t)
-	clock := []time.Time{time.Unix(60, 0), time.Unix(90, 0), time.Unix(180, 0)}
+	clock := []time.Time{time.Unix(60, 0), time.Unix(90, 0), time.Unix(180, 0), time.Unix(180, 0)}
 	clockCalls := 0
 	reconciler, err := controlplane.NewScheduleActivationReconcilerWithProgress(
 		repository, compiler, stateSemantics, progress, func() time.Time {
@@ -2741,11 +2745,6 @@ func TestScheduleActivationReconcilerReactivatesDrainedQueryGroupOnSameProgressT
 	if err != nil || len(retired.Draining) != 1 || retired.Draining[0].QueryGroup != queryGroup || retired.Draining[0].RetiredBoundary != 90 {
 		t.Fatalf("retirement=(%#v,%v)", retired, err)
 	}
-	progress.byGroup[queryGroup] = execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
-		Identity: execution.ProgressIdentity{QueryGroup: queryGroup}, NextSlot: 90, LastFullSlot: 60,
-		LastCompletionKind: execution.CompletionFull,
-	}}
-
 	reenabledCatalog := catalogWithSchedule(t, validCatalog(t, 82), 60, 0)
 	if reenabledCatalog.QueryGroups[0].Identity != queryGroup {
 		t.Fatalf("query identity changed across reactivation: old=%s new=%s", queryGroup, reenabledCatalog.QueryGroups[0].Identity)
@@ -2754,6 +2753,19 @@ func TestScheduleActivationReconcilerReactivatesDrainedQueryGroupOnSameProgressT
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := reconciler.Ensure(context.Background(), reenabledSnapshot.Publication); err == nil {
+		t.Fatal("undrained Query Group reactivation unexpectedly succeeded")
+	} else if failure, ok := controlplane.ActivationFailureFromError(err); !ok ||
+		failure.Stage != controlplane.ActivationFailureStageReactivation ||
+		failure.Class != controlplane.ActivationFailureClassNotDrained ||
+		failure.DrainingQueryGroups != 1 || failure.CandidateQueryGroups != 1 || failure.ReactivatingQueryGroups != 1 ||
+		!errors.Is(err, controlplane.ErrReactivationNotDrained) {
+		t.Fatalf("undrained reactivation classification=(%#v,%t)", failure, ok)
+	}
+	progress.byGroup[queryGroup] = execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+		Identity: execution.ProgressIdentity{QueryGroup: queryGroup}, NextSlot: 90, LastFullSlot: 60,
+		LastCompletionKind: execution.CompletionFull,
+	}}
 	active, err := reconciler.Ensure(context.Background(), reenabledSnapshot.Publication)
 	if err != nil || active.RecordRevision != 3 || len(active.Draining) != 0 || len(active.Plans) != 1 {
 		t.Fatalf("reactivation=(%#v,%v)", active, err)

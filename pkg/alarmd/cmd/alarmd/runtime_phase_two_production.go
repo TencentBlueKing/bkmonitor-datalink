@@ -486,6 +486,24 @@ func (runtime *productionPhaseTwoControl) refresh(
 	}
 	state, err := runtime.dependencies.Activator.Ensure(ctx, result.Publication)
 	if err != nil {
+		if failure, ok := controlplane.ActivationFailureFromError(err); ok {
+			observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+				Component:  observability.ComponentControlPlane,
+				Stage:      observability.StageActivationFailed,
+				Result:     observability.ResultDegraded,
+				Operation:  observability.OperationTransition,
+				Direction:  observability.DirectionInternal,
+				ReasonCode: observability.ReasonContractRetryable,
+				ActivationFailure: &observability.ActivationFailureFacts{
+					Stage:                   observability.ActivationFailureStage(failure.Stage),
+					Class:                   observability.ActivationFailureClass(failure.Class),
+					DrainingQueryGroups:     failure.DrainingQueryGroups,
+					CandidateQueryGroups:    failure.CandidateQueryGroups,
+					ReactivatingQueryGroups: failure.ReactivatingQueryGroups,
+				},
+				Err: err,
+			})
+		}
 		fallback, fallbackErr := runtime.keepLastGood(ctx, observability.SourceKindCompiledSnapshot, err)
 		return fallback, false, fallbackErr
 	}

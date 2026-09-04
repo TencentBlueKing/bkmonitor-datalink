@@ -37,10 +37,15 @@ func NewInitialScheduleActivator(
 func (activator *InitialScheduleActivator) Ensure(
 	ctx context.Context,
 	publication SnapshotPublicationRef,
-) (ActivationState, error) {
+) (state ActivationState, err error) {
+	failureStage := ActivationFailureStageActivationLoad
+	failureClass := ActivationFailureClassOther
+	defer func() { err = wrapActivationFailure(failureStage, failureClass, err) }()
+
 	if activator == nil || activator.repository == nil || activator.compiler == nil || activator.now == nil || publication.validate() != nil {
 		return ActivationState{}, errors.New("alarmd controlplane: valid initial activation publication is required")
 	}
+	failureClass = ActivationFailureClassDependencyIO
 	existing, err := activator.repository.LoadActivation(ctx)
 	if err == nil {
 		return existing, nil
@@ -49,15 +54,18 @@ func (activator *InitialScheduleActivator) Ensure(
 		return ActivationState{}, err
 	}
 
+	failureStage = ActivationFailureStageCandidateLoad
 	snapshot, err := activator.repository.LoadPublishedSnapshot(ctx, publication)
 	if err != nil {
 		return ActivationState{}, err
 	}
+	failureStage, failureClass = ActivationFailureStageCompile, ActivationFailureClassOther
 	boundary := execution.EvaluationTime(activator.now().Unix())
 	if boundary <= 0 {
 		return ActivationState{}, errors.New("alarmd controlplane: initial activation clock must produce a positive Unix second")
 	}
 
+	failureClass = ActivationFailureClassCorrupt
 	records, segments, err := compilePublishedActivation(ctx, activator.compiler, activator.stateSemantics, snapshot, boundary)
 	if err != nil {
 		return ActivationState{}, err
@@ -67,9 +75,11 @@ func (activator *InitialScheduleActivator) Ensure(
 		initial[index] = execution.InitialScheduleActivationFact{Segment: segment}
 	}
 	next := ActivationState{RecordRevision: 1, Current: publication, Plans: records}
+	failureStage, failureClass = ActivationFailureStageScheduleCutover, ActivationFailureClassScheduleConflict
 	if err := activator.repository.CompareAndSetInitialScheduleActivation(ctx, ActivationExpectation{}, next, initial); err != nil && !errors.Is(err, ErrActivationConflict) {
 		return ActivationState{}, err
 	}
+	failureStage, failureClass = ActivationFailureStagePersist, ActivationFailureClassDependencyIO
 	return activator.repository.LoadActivation(ctx)
 }
 

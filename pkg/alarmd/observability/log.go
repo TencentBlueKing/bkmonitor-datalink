@@ -173,6 +173,19 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation) {
 			)
 		}
 	}
+	if facts := observation.ActivationFailure; facts != nil {
+		attributes = append(attributes,
+			slog.String("activation_failure_stage", string(facts.Stage)),
+			slog.String("activation_failure_class", string(facts.Class)),
+		)
+		if facts.Stage == ActivationFailureStageReactivation {
+			attributes = append(attributes,
+				slog.Int("draining_query_groups", facts.DrainingQueryGroups),
+				slog.Int("candidate_query_groups", facts.CandidateQueryGroups),
+				slog.Int("reactivating_query_groups", facts.ReactivatingQueryGroups),
+			)
+		}
+	}
 	if len(observation.AlgorithmEvaluations) > 0 {
 		attributes = append(attributes, slog.Any("algorithm_evaluations", observation.AlgorithmEvaluations))
 	}

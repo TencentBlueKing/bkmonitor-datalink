@@ -11,6 +11,7 @@ package observability
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"time"
 
@@ -33,6 +34,8 @@ type AlgorithmInputName string
 type AlgorithmDependencyPoint string
 type AlgorithmInputResult string
 type SourceRefreshStatus string
+type ActivationFailureStage string
+type ActivationFailureClass string
 
 const (
 	ComponentRuntime        = "runtime"
@@ -56,6 +59,7 @@ const (
 	StageConfigLoaded         = "config_loaded"
 	StageSnapshotRefreshed    = "snapshot_refreshed"
 	StageSnapshotUnavailable  = "snapshot_unavailable"
+	StageActivationFailed     = "activation_failed"
 	StageActiveQGSet          = "active_qg_set"
 	StageLegacyQGMigration    = "legacy_active_qg_migration"
 	StageDrainingQGReconciled = "draining_query_groups"
@@ -116,6 +120,25 @@ const (
 	ResultResumed  = "resumed"
 	ResultDegraded = "degraded"
 	ResultOther    = "_other"
+
+	ActivationFailureStageActivationLoad  ActivationFailureStage = "activation_load"
+	ActivationFailureStageCandidateLoad   ActivationFailureStage = "candidate_load"
+	ActivationFailureStageCurrentRecovery ActivationFailureStage = "current_recovery"
+	ActivationFailureStageReactivation    ActivationFailureStage = "reactivation"
+	ActivationFailureStageCompile         ActivationFailureStage = "compile"
+	ActivationFailureStageScheduleCutover ActivationFailureStage = "schedule_cutover"
+	ActivationFailureStagePersist         ActivationFailureStage = "persist"
+
+	ActivationFailureClassUnavailable        ActivationFailureClass = "unavailable"
+	ActivationFailureClassCorrupt            ActivationFailureClass = "corrupt"
+	ActivationFailureClassEpochCollision     ActivationFailureClass = "epoch_collision"
+	ActivationFailureClassNotDrained         ActivationFailureClass = "not_drained"
+	ActivationFailureClassProjectionConflict ActivationFailureClass = "projection_conflict"
+	ActivationFailureClassScheduleConflict   ActivationFailureClass = "schedule_conflict"
+	ActivationFailureClassCoverageConflict   ActivationFailureClass = "coverage_conflict"
+	ActivationFailureClassCASConflict        ActivationFailureClass = "cas_conflict"
+	ActivationFailureClassDependencyIO       ActivationFailureClass = "dependency_io"
+	ActivationFailureClassOther              ActivationFailureClass = "other"
 
 	OperationNone               = "none"
 	OperationCompile            = "compile"
@@ -283,6 +306,16 @@ type SourceRefreshFacts struct {
 	RetiredQueryGroups int
 }
 
+// ActivationFailureFacts carries only fixed classification and bounded counts.
+// It intentionally excludes Query Group, Plan and error text from metric labels.
+type ActivationFailureFacts struct {
+	Stage                   ActivationFailureStage
+	Class                   ActivationFailureClass
+	DrainingQueryGroups     int
+	CandidateQueryGroups    int
+	ReactivatingQueryGroups int
+}
+
 // AlgorithmProvenance carries bounded diagnostic coordinates for one
 // evaluation or named input. It intentionally contains no series identity,
 // dimensions or payload; those remain in the request and are never logged.
@@ -359,6 +392,7 @@ type Observation struct {
 	LegacyMigration      *LegacyQGMigrationFacts
 	DrainingQG           *DrainingQGFacts
 	SourceRefresh        *SourceRefreshFacts
+	ActivationFailure    *ActivationFailureFacts
 	AlgorithmEvaluations []AlgorithmEvaluationFact
 	AlgorithmInputs      []AlgorithmInputFact
 	normalized           bool
@@ -428,10 +462,64 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.LegacyMigration = normalizeLegacyQGMigrationFacts(observation.LegacyMigration)
 	observation.DrainingQG = normalizeDrainingQGFacts(observation.DrainingQG)
 	observation.SourceRefresh = normalizeSourceRefreshFacts(observation.Component, observation.Stage, observation.SourceRefresh)
+	observation.ActivationFailure = normalizeActivationFailureFacts(
+		observation.Component, observation.Stage, observation.ActivationFailure,
+	)
 	observation.AlgorithmEvaluations, observation.AlgorithmInputs = normalizeAlgorithmFacts(observation)
 	observation.Counts = normalizeCounts(observation.Counts)
 	observation.normalized = true
 	return observation
+}
+
+func normalizeActivationFailureFacts(
+	component Component,
+	stage Stage,
+	facts *ActivationFailureFacts,
+) *ActivationFailureFacts {
+	if facts == nil || component != ComponentControlPlane || stage != StageActivationFailed ||
+		!validActivationFailureStage(facts.Stage) || !validActivationFailureClass(facts.Class) {
+		return nil
+	}
+	normalized := *facts
+	if normalized.Stage != ActivationFailureStageReactivation ||
+		normalized.DrainingQueryGroups < 0 || normalized.CandidateQueryGroups < 0 ||
+		normalized.ReactivatingQueryGroups < 0 {
+		normalized.DrainingQueryGroups = 0
+		normalized.CandidateQueryGroups = 0
+		normalized.ReactivatingQueryGroups = 0
+	}
+	return &normalized
+}
+
+var allActivationFailureStages = []ActivationFailureStage{
+	ActivationFailureStageActivationLoad, ActivationFailureStageCandidateLoad,
+	ActivationFailureStageCurrentRecovery, ActivationFailureStageReactivation,
+	ActivationFailureStageCompile, ActivationFailureStageScheduleCutover,
+	ActivationFailureStagePersist,
+}
+
+var allActivationFailureClasses = []ActivationFailureClass{
+	ActivationFailureClassUnavailable, ActivationFailureClassCorrupt,
+	ActivationFailureClassEpochCollision, ActivationFailureClassNotDrained,
+	ActivationFailureClassProjectionConflict, ActivationFailureClassScheduleConflict,
+	ActivationFailureClassCoverageConflict, ActivationFailureClassCASConflict,
+	ActivationFailureClassDependencyIO, ActivationFailureClassOther,
+}
+
+func validActivationFailureStage(stage ActivationFailureStage) bool {
+	return slices.Contains(allActivationFailureStages, stage)
+}
+
+func validActivationFailureClass(class ActivationFailureClass) bool {
+	return slices.Contains(allActivationFailureClasses, class)
+}
+
+func AllActivationFailureStages() []ActivationFailureStage {
+	return append([]ActivationFailureStage(nil), allActivationFailureStages...)
+}
+
+func AllActivationFailureClasses() []ActivationFailureClass {
+	return append([]ActivationFailureClass(nil), allActivationFailureClasses...)
 }
 
 func normalizeSourceRefreshFacts(component Component, stage Stage, facts *SourceRefreshFacts) *SourceRefreshFacts {
@@ -886,6 +974,7 @@ var metricComponentStages = []ComponentStage{
 
 var phaseTwoComponentStages = []ComponentStage{
 	{ComponentControlPlane, StageSnapshotRefreshed}, {ComponentControlPlane, StageSnapshotUnavailable},
+	{ComponentControlPlane, StageActivationFailed},
 	{ComponentControlPlane, StageActiveQGSet}, {ComponentControlPlane, StageLegacyQGMigration},
 	{ComponentControlPlane, StageDrainingQGReconciled},
 	{ComponentOwnership, StageAssignmentAcquired}, {ComponentOwnership, StageAssignmentLost},

@@ -26,6 +26,8 @@ var (
 	ErrCatalogObjectUnavailable       = errors.New("alarmd controlplane: catalog object unavailable")
 	ErrActivationUnavailable          = errors.New("alarmd controlplane: activation unavailable")
 	ErrActivationConflict             = errors.New("alarmd controlplane: activation conflict")
+	ErrActivationEpochCollision       = errors.New("alarmd controlplane: Schedule activation publication epoch collision")
+	ErrReactivationNotDrained         = errors.New("alarmd controlplane: Query Group cannot reactivate before retirement drains")
 	ErrPublicationConflict            = errors.New("alarmd controlplane: publication conflict")
 	ErrPublicationOccurrenceCollision = errors.New("alarmd controlplane: publication occurrence collision")
 )

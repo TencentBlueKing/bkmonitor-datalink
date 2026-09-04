@@ -38,6 +38,7 @@ export async function getMetrics(input: {
   from: Date;
   to: Date;
   step: number;
+  calculationWindowSeconds?: number;
   instance?: string;
   eventSourceId?: string;
   partition?: number;
@@ -47,6 +48,12 @@ export async function getMetrics(input: {
     to: input.to.toISOString(),
     step: String(input.step),
   });
+  if (input.calculationWindowSeconds !== undefined) {
+    query.set(
+      "calculation_window_seconds",
+      String(input.calculationWindowSeconds),
+    );
+  }
   if (input.instance) query.set("instance", input.instance);
   if (input.eventSourceId) query.set("event_source_id", input.eventSourceId);
   if (input.partition !== undefined)

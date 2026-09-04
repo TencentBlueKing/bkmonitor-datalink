@@ -10,8 +10,14 @@ import type {
 import { getKafkaInfrastructure, getMetrics } from "../api";
 import { HelpLabel, HelpTableHeader, HelpTip } from "../components/HelpTip";
 import { MetricPanelCard } from "../components/MetricPanelCard";
+import { MetricQueryControls } from "../components/MetricQueryControls";
 import { RefreshControls } from "../components/RefreshControls";
 import { StatusBadge } from "../components/StatusBadge";
+import {
+  defaultMetricCalculationWindowSeconds,
+  defaultMetricRangeSeconds,
+  metricStep,
+} from "../metricRange";
 import { useReportPageQueryFailure } from "../navigation";
 import { formatTime, useTimeMode } from "../time";
 import {
@@ -22,6 +28,10 @@ import {
 const TOPICS_PER_PAGE = 20;
 
 export function KafkaPage() {
+  const [rangeSeconds, setRangeSeconds] = useState(defaultMetricRangeSeconds);
+  const [calculationWindowSeconds, setCalculationWindowSeconds] = useState(
+    defaultMetricCalculationWindowSeconds,
+  );
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab: KafkaResource["kind"] =
@@ -64,14 +74,20 @@ export function KafkaPage() {
     visibleResources.find((resource) => resource.status === "available") ??
     visibleResources[0];
   const metrics = useQuery({
-    queryKey: ["kafka-resource-metrics", selected?.eventSourceId],
+    queryKey: [
+      "kafka-resource-metrics",
+      selected?.eventSourceId,
+      rangeSeconds,
+      calculationWindowSeconds,
+    ],
     enabled: selected?.kind === "input" && Boolean(selected.eventSourceId),
     queryFn: () => {
       const to = new Date();
       return getMetrics({
-        from: new Date(to.getTime() - 3_600_000),
+        from: new Date(to.getTime() - rangeSeconds * 1000),
         to,
-        step: 15,
+        step: metricStep(rangeSeconds),
+        calculationWindowSeconds,
         eventSourceId: selected?.eventSourceId,
       });
     },
@@ -146,15 +162,23 @@ export function KafkaPage() {
             查看分区归属、offset、lag 和副本健康。
           </p>
         </div>
-        <RefreshControls
-          status={infrastructure.data?.status}
-          lastSuccessfulAt={infrastructure.dataUpdatedAt || undefined}
-          isFetching={refreshing}
-          autoRefresh={autoRefresh}
-          intervalSeconds={30}
-          onRefresh={refresh}
-          onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
-        />
+        <div className="metric-page-control-stack">
+          <MetricQueryControls
+            rangeSeconds={rangeSeconds}
+            calculationWindowSeconds={calculationWindowSeconds}
+            onRangeChange={setRangeSeconds}
+            onCalculationWindowChange={setCalculationWindowSeconds}
+          />
+          <RefreshControls
+            status={infrastructure.data?.status}
+            lastSuccessfulAt={infrastructure.dataUpdatedAt || undefined}
+            isFetching={refreshing}
+            autoRefresh={autoRefresh}
+            intervalSeconds={30}
+            onRefresh={refresh}
+            onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
+          />
+        </div>
       </div>
 
       {infrastructure.isError && !infrastructure.data && (

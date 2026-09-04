@@ -1667,7 +1667,37 @@ a {
   color: #e7fff8;
   background: #183128;
 }
-.overview-control-stack {
+.metric-query-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.metric-calculation-window-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #71849a;
+  font:
+    600 9px ui-monospace,
+    monospace;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.metric-calculation-window-control select {
+  color: #b9cad8;
+  border: 1px solid #29394b;
+  background: #101822;
+  padding: 7px 24px 7px 9px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+.metric-calculation-window-control select:hover,
+.metric-calculation-window-control select:focus-visible {
+  border-color: #46627d;
+}
+.overview-control-stack,
+.metric-page-control-stack {
   display: grid;
   justify-items: end;
   gap: 7px;

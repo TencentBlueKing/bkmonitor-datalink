@@ -17,17 +17,16 @@ import type {
 import { getControlPlaneRuntime, getMetrics } from "../api";
 import { JsonViewer } from "../components/JsonViewer";
 import { MetricPanelCard } from "../components/MetricPanelCard";
+import { MetricQueryControls } from "../components/MetricQueryControls";
 import { RefreshControls } from "../components/RefreshControls";
+import {
+  defaultMetricCalculationWindowSeconds,
+  defaultMetricRangeSeconds,
+  metricRanges,
+  metricStep,
+} from "../metricRange";
 import { useReportPageQueryFailure } from "../navigation";
 import { formatTime, useTimeMode } from "../time";
-
-const ranges = [
-  { label: "15m", seconds: 900 },
-  { label: "1h", seconds: 3600 },
-  { label: "6h", seconds: 21600 },
-  { label: "24h", seconds: 86400 },
-  { label: "7d", seconds: 604800 },
-];
 
 const taskOrder: ControlPlaneTaskId[] = [
   "elasticsearch-schema-and-active-reconciler",
@@ -66,7 +65,10 @@ type TaskState =
   "healthy" | "warning" | "stale" | "unobserved" | "unavailable" | "disabled";
 
 export function ControlPlanePage() {
-  const [rangeSeconds, setRangeSeconds] = useState(3600);
+  const [rangeSeconds, setRangeSeconds] = useState(defaultMetricRangeSeconds);
+  const [calculationWindowSeconds, setCalculationWindowSeconds] = useState(
+    defaultMetricCalculationWindowSeconds,
+  );
   const [instance, setInstance] = useState("");
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [configOpen, setConfigOpen] = useState(false);
@@ -83,13 +85,19 @@ export function ControlPlanePage() {
     refetchInterval: interval,
   });
   const metrics = useQuery({
-    queryKey: ["control-plane-metrics", rangeSeconds, instance],
+    queryKey: [
+      "control-plane-metrics",
+      rangeSeconds,
+      calculationWindowSeconds,
+      instance,
+    ],
     queryFn: () => {
       const to = new Date();
       return getMetrics({
         from: new Date(to.getTime() - rangeSeconds * 1000),
         to,
-        step: Math.max(15, Math.ceil(rangeSeconds / 240)),
+        step: metricStep(rangeSeconds),
+        calculationWindowSeconds,
         instance: instance || undefined,
       });
     },
@@ -159,18 +167,12 @@ export function ControlPlanePage() {
               ))}
             </select>
           </label>
-          <div className="range-controls">
-            {ranges.map((range) => (
-              <button
-                key={range.seconds}
-                className={range.seconds === rangeSeconds ? "selected" : ""}
-                type="button"
-                onClick={() => setRangeSeconds(range.seconds)}
-              >
-                {range.label}
-              </button>
-            ))}
-          </div>
+          <MetricQueryControls
+            rangeSeconds={rangeSeconds}
+            calculationWindowSeconds={calculationWindowSeconds}
+            onRangeChange={setRangeSeconds}
+            onCalculationWindowChange={setCalculationWindowSeconds}
+          />
           <RefreshControls
             status={data?.status}
             lastSuccessfulAt={lastSuccessfulAt}
@@ -736,7 +738,8 @@ function formatCount(value: number): string {
 
 function rangeLabel(seconds: number): string {
   return (
-    ranges.find((range) => range.seconds === seconds)?.label ?? `${seconds}s`
+    metricRanges.find((range) => range.seconds === seconds)?.label ??
+    `${seconds}s`
   );
 }
 

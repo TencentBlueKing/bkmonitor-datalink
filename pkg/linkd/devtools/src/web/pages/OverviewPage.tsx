@@ -11,32 +11,34 @@ import {
 } from "../api";
 import { HelpLabel, HelpTableHeader } from "../components/HelpTip";
 import { MetricPanelCard } from "../components/MetricPanelCard";
+import { MetricQueryControls } from "../components/MetricQueryControls";
 import { RefreshControls } from "../components/RefreshControls";
+import {
+  defaultMetricCalculationWindowSeconds,
+  defaultMetricRangeSeconds,
+  metricStep,
+} from "../metricRange";
 import { useReportPageQueryFailure } from "../navigation";
-
-const ranges = [
-  { label: "15m", seconds: 900 },
-  { label: "1h", seconds: 3600 },
-  { label: "6h", seconds: 21600 },
-  { label: "24h", seconds: 86400 },
-  { label: "7d", seconds: 604800 },
-];
 
 const pipelineStages = ["clean", "lifecycle"];
 
 export function OverviewPage() {
-  const [rangeSeconds, setRangeSeconds] = useState(3600);
+  const [rangeSeconds, setRangeSeconds] = useState(defaultMetricRangeSeconds);
+  const [calculationWindowSeconds, setCalculationWindowSeconds] = useState(
+    defaultMetricCalculationWindowSeconds,
+  );
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [instance, setInstance] = useState("");
   const [instanceDraft, setInstanceDraft] = useState("");
   const metrics = useQuery({
-    queryKey: ["metrics", rangeSeconds, instance],
+    queryKey: ["metrics", rangeSeconds, calculationWindowSeconds, instance],
     queryFn: () => {
       const to = new Date();
       return getMetrics({
         to,
         from: new Date(to.getTime() - rangeSeconds * 1000),
-        step: Math.max(15, Math.ceil(rangeSeconds / 240)),
+        step: metricStep(rangeSeconds),
+        calculationWindowSeconds,
         instance: instance || undefined,
       });
     },
@@ -156,18 +158,12 @@ export function OverviewPage() {
               </button>
             )}
           </form>
-          <div className="range-controls">
-            {ranges.map((range) => (
-              <button
-                key={range.seconds}
-                className={range.seconds === rangeSeconds ? "selected" : ""}
-                type="button"
-                onClick={() => setRangeSeconds(range.seconds)}
-              >
-                {range.label}
-              </button>
-            ))}
-          </div>
+          <MetricQueryControls
+            rangeSeconds={rangeSeconds}
+            calculationWindowSeconds={calculationWindowSeconds}
+            onRangeChange={setRangeSeconds}
+            onCalculationWindowChange={setCalculationWindowSeconds}
+          />
           <RefreshControls
             status={
               metrics.isError

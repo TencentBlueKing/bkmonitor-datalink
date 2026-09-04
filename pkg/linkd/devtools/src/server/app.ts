@@ -30,6 +30,12 @@ const metricQuerySchema = z.object({
   from: z.string().datetime(),
   to: z.string().datetime(),
   step: z.coerce.number().int().min(1).max(3600),
+  calculation_window_seconds: z.coerce
+    .number()
+    .int()
+    .min(15)
+    .max(3600)
+    .default(60),
   instance: z.string().max(512).optional(),
   event_source_id: z.string().max(128).optional(),
   partition: z.coerce.number().int().nonnegative().optional(),
@@ -193,6 +199,7 @@ export async function createApp(
       instance: query.instance,
       eventSourceId: query.event_source_id,
       partition: query.partition,
+      calculationWindowSeconds: query.calculation_window_seconds,
     });
   });
   app.get("/local-api/elasticsearch/topology", async () => {

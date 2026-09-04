@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -45,6 +51,31 @@ describe("OverviewPage", () => {
     expect(statCard("确认阻塞消息")).toHaveTextContent("1");
     expect(screen.queryByText("可用面板")).toBeNull();
   });
+
+  it("changes calculation window independently from chart range", async () => {
+    const requests: string[] = [];
+    stubOverviewAPI(requests);
+    renderPage();
+
+    expect(screen.queryByRole("button", { name: "1m" })).toBeNull();
+    expect(await screen.findByRole("button", { name: "1h" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("combobox", { name: "指标计算窗口" })).toHaveValue(
+      "60",
+    );
+    await waitFor(() => expect(metricRanges(requests)).toContain(3600));
+    await waitFor(() => expect(calculationWindows(requests)).toContain(60));
+
+    fireEvent.change(screen.getByRole("combobox", { name: "指标计算窗口" }), {
+      target: { value: "300" },
+    });
+    await waitFor(() => expect(calculationWindows(requests)).toContain(300));
+
+    fireEvent.click(screen.getByRole("button", { name: "15m" }));
+    await waitFor(() => expect(metricRanges(requests)).toContain(900));
+  });
 });
 
 function statCard(title: string): HTMLElement {
@@ -68,11 +99,12 @@ function renderPage() {
   );
 }
 
-function stubOverviewAPI() {
+function stubOverviewAPI(requests?: string[]) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      requests?.push(url);
       if (url.includes("/local-api/metrics")) {
         return response({
           from: "2026-09-02T00:00:00.000Z",
@@ -128,6 +160,28 @@ function stubOverviewAPI() {
       throw new Error(`unexpected fetch ${url}`);
     }),
   );
+}
+
+function metricRanges(requests: string[]): number[] {
+  return requests
+    .filter((request) => request.includes("/local-api/metrics"))
+    .map((request) => {
+      const url = new URL(request, "http://localhost");
+      return (
+        (Date.parse(url.searchParams.get("to") ?? "") -
+          Date.parse(url.searchParams.get("from") ?? "")) /
+        1000
+      );
+    });
+}
+
+function calculationWindows(requests: string[]): number[] {
+  return requests
+    .filter((request) => request.includes("/local-api/metrics"))
+    .map((request) => {
+      const url = new URL(request, "http://localhost");
+      return Number(url.searchParams.get("calculation_window_seconds"));
+    });
 }
 
 function panel(

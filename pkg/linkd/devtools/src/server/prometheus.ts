@@ -285,7 +285,12 @@ export class PrometheusConnector {
     step: number,
     scope?:
       | string
-      | { instance?: string; eventSourceId?: string; partition?: number },
+      | {
+          instance?: string;
+          eventSourceId?: string;
+          partition?: number;
+          calculationWindowSeconds?: number;
+        },
   ): Promise<MetricsResponse> {
     if (to <= from) throw new Error("metrics to must be later than from");
     const normalizedScope =
@@ -304,7 +309,18 @@ export class PrometheusConnector {
         ? `messaging_kafka_partition=${JSON.stringify(String(normalizedScope.partition))}`
         : undefined,
     ].filter((value): value is string => Boolean(value));
-    const rateWindow = `${Math.max(300, step * 4)}s`;
+    const calculationWindowSeconds =
+      normalizedScope.calculationWindowSeconds ?? 60;
+    if (
+      !Number.isInteger(calculationWindowSeconds) ||
+      calculationWindowSeconds < 15 ||
+      calculationWindowSeconds > 3600
+    ) {
+      throw new Error(
+        "metrics calculation window must be an integer between 15 and 3600 seconds",
+      );
+    }
+    const rateWindow = `${calculationWindowSeconds}s`;
     const panels = await Promise.all(
       panelDefinitions.map(async (definition): Promise<MetricPanel> => {
         if (!this.baseUrl) return unavailable(definition, "Prometheus 未配置");

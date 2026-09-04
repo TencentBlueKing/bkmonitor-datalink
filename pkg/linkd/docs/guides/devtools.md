@@ -27,6 +27,8 @@ EventSource / Kafka partition
 ```
 
 Kafka 和 Redis 页面展示请求时的当前快照；历史趋势只来自 Prometheus，不通过 DevTools 自建时序存储。
+Prometheus 图表页面统一提供 15 分钟到 7 天的查询时间范围，默认 1 小时；采样步长随所选范围调整。
+页面另行提供独立的“计算窗口”，默认 1 分钟，并直接用于速率、增量与直方图分位计算。
 
 Control Plane 页面不展示 ES 集群、分片或索引容量，而是按当前四个 management task 展示 owner、依赖、
 执行新鲜度和工作量。三个 ES 任务依次依赖 Schema/Active 资源、时间桶和 History write alias；Redis Stream

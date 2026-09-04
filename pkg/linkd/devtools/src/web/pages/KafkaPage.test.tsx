@@ -37,6 +37,15 @@ describe("KafkaPage", () => {
       "aria-pressed",
       "true",
     );
+    expect(
+      within(screen.getByRole("group", { name: "图表时间范围" })).getByRole(
+        "button",
+        { name: "1h" },
+      ),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("combobox", { name: "指标计算窗口" })).toHaveValue(
+      "60",
+    );
     expect(screen.getByText("1/2 partitions 可计算")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /LAG 3 · PARTIAL/ }),

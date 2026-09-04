@@ -47,6 +47,10 @@ Kafka TLS 相对文件路径按 Linkd 配置文件所在目录解析。浏览器
 
 历史处理趋势来自 Prometheus。Kafka assignment/offset/lag、Redis PEL、目标 Signal Group 的
 `lag + pending` 和 Mailbox List 扫描是 DevTools 请求时读取的当前快照，不会被伪装成历史时序。
+处理状态、Cleaner、Lifecycle、Control Plane 和 Kafka 的 Prometheus 图表统一提供 `15m`、`1h`、`6h`、
+`24h` 和 `7d` 查询时间范围，默认 `1h`；采样步长随所选范围调整。页面同时提供独立的“计算窗口”，
+默认 1 分钟，可选择 30 秒、1 分钟、2 分钟、5 分钟或 15 分钟；该窗口直接用于 `rate()`、`increase()`
+和 histogram quantile。计算窗口建议不小于 Prometheus scrape interval 的两倍，窗口越短越及时，但更容易抖动或因样本不足无数据。
 
 Kafka 页面使用 `Input Topics` 与 `Output Topics` 一级 Tab 分开呈现消费端和生产端事实，
 并把每个 EventSource consumer group 和 Lifecycle FinalHook Output 作为独立资源展示。

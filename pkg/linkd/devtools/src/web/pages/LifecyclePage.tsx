@@ -15,6 +15,7 @@ import { getLifecycleRuntime, getMetrics } from "../api";
 import { HelpLabel, HelpTableHeader } from "../components/HelpTip";
 import { JsonViewer } from "../components/JsonViewer";
 import { MetricPanelCard } from "../components/MetricPanelCard";
+import { MetricQueryControls } from "../components/MetricQueryControls";
 import { RefreshControls } from "../components/RefreshControls";
 import { StageMetricCards } from "../components/StageMetricCards";
 import {
@@ -23,6 +24,11 @@ import {
   type StepGuide,
 } from "../components/StepGuide";
 import { StatusBadge } from "../components/StatusBadge";
+import {
+  defaultMetricCalculationWindowSeconds,
+  defaultMetricRangeSeconds,
+  metricStep,
+} from "../metricRange";
 import { formatTime, useTimeMode } from "../time";
 
 type LifecycleConfig = Record<string, unknown>;
@@ -100,6 +106,10 @@ const lifecycleSnapshotHelp: Record<string, string> = {
 };
 
 export function LifecyclePage() {
+  const [rangeSeconds, setRangeSeconds] = useState(defaultMetricRangeSeconds);
+  const [calculationWindowSeconds, setCalculationWindowSeconds] = useState(
+    defaultMetricCalculationWindowSeconds,
+  );
   const [selectedStep, setSelectedStep] = useState<string>();
   const [configOpen, setConfigOpen] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -111,13 +121,14 @@ export function LifecyclePage() {
     refetchInterval: autoRefresh ? 15_000 : false,
   });
   const metrics = useQuery({
-    queryKey: ["lifecycle-metrics"],
+    queryKey: ["lifecycle-metrics", rangeSeconds, calculationWindowSeconds],
     queryFn: () => {
       const to = new Date();
       return getMetrics({
-        from: new Date(to.getTime() - 3600_000),
+        from: new Date(to.getTime() - rangeSeconds * 1000),
         to,
-        step: 15,
+        step: metricStep(rangeSeconds),
+        calculationWindowSeconds,
       });
     },
     refetchInterval: autoRefresh ? 15_000 : false,
@@ -171,26 +182,34 @@ export function LifecyclePage() {
           <h1>Lifecycle</h1>
           <p>查看 Redis Stream、PEL、Mailbox drain、Event 裁决与 FinalHook。</p>
         </div>
-        <RefreshControls
-          status={runtime.data?.status}
-          lastSuccessfulAt={lastSuccessfulAt}
-          isFetching={refreshing}
-          autoRefresh={autoRefresh}
-          intervalSeconds={15}
-          onRefresh={refresh}
-          onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
-        >
-          <button
-            ref={configButtonRef}
-            className="lifecycle-config-button"
-            type="button"
-            aria-haspopup="dialog"
-            aria-expanded={configOpen}
-            onClick={() => setConfigOpen(true)}
+        <div className="metric-page-control-stack">
+          <MetricQueryControls
+            rangeSeconds={rangeSeconds}
+            calculationWindowSeconds={calculationWindowSeconds}
+            onRangeChange={setRangeSeconds}
+            onCalculationWindowChange={setCalculationWindowSeconds}
+          />
+          <RefreshControls
+            status={runtime.data?.status}
+            lastSuccessfulAt={lastSuccessfulAt}
+            isFetching={refreshing}
+            autoRefresh={autoRefresh}
+            intervalSeconds={15}
+            onRefresh={refresh}
+            onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
           >
-            Lifecycle 配置 <span aria-hidden="true">↗</span>
-          </button>
-        </RefreshControls>
+            <button
+              ref={configButtonRef}
+              className="lifecycle-config-button"
+              type="button"
+              aria-haspopup="dialog"
+              aria-expanded={configOpen}
+              onClick={() => setConfigOpen(true)}
+            >
+              Lifecycle 配置 <span aria-hidden="true">↗</span>
+            </button>
+          </RefreshControls>
+        </div>
       </div>
 
       <article className="runtime-flow-panel lifecycle-flow-panel">

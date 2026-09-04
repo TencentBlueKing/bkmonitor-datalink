@@ -71,6 +71,25 @@ describe("local API", () => {
     expect(response.json().error.code).toBe("invalid_argument");
   });
 
+  it("validates the chart calculation window", async () => {
+    const app = await createApp(config);
+    const baseQuery =
+      "from=2026-09-04T00%3A00%3A00.000Z&to=2026-09-04T01%3A00%3A00.000Z&step=15";
+    const accepted = await app.inject({
+      method: "GET",
+      url: `/local-api/metrics?${baseQuery}&calculation_window_seconds=60`,
+    });
+    const rejected = await app.inject({
+      method: "GET",
+      url: `/local-api/metrics?${baseQuery}&calculation_window_seconds=14`,
+    });
+    await app.close();
+
+    expect(accepted.statusCode).toBe(200);
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json().error.code).toBe("invalid_argument");
+  });
+
   it("returns an explicit unavailable Redis shape when it is not configured", async () => {
     const app = await createApp(config);
     const response = await app.inject({

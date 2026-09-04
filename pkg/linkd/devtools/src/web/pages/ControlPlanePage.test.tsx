@@ -32,6 +32,15 @@ describe("ControlPlanePage", () => {
       await screen.findByRole("heading", { name: "Control Plane" }),
     ).toBeInTheDocument();
     expect(
+      within(screen.getByRole("group", { name: "图表时间范围" })).getByRole(
+        "button",
+        { name: "1h" },
+      ),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("combobox", { name: "指标计算窗口" })).toHaveValue(
+      "60",
+    );
+    expect(
       screen.getByRole("heading", { name: "任务依赖与故障边界" }),
     ).toBeInTheDocument();
     expect(

@@ -185,4 +185,31 @@ describe("PrometheusConnector", () => {
       ),
     ).toBe(true);
   });
+
+  it("uses the configured calculation window independently of chart range", async () => {
+    const queries: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: URL | Request | string) => {
+        queries.push(new URL(String(input)).searchParams.get("query") ?? "");
+        return new Response(
+          JSON.stringify({ status: "success", data: { result: [] } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    await new PrometheusConnector(config).panels(
+      new Date("2026-09-04T00:00:00Z"),
+      new Date("2026-09-04T01:00:00Z"),
+      15,
+      { calculationWindowSeconds: 60 },
+    );
+
+    const rollingQueries = queries.filter(
+      (query) => query.includes("rate(") || query.includes("increase("),
+    );
+    expect(rollingQueries.length).toBeGreaterThan(0);
+    expect(rollingQueries.every((query) => query.includes("[60s]"))).toBe(true);
+  });
 });

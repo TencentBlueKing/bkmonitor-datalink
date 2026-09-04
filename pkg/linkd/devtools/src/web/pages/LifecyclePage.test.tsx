@@ -35,6 +35,15 @@ describe("LifecyclePage", () => {
       "aria-pressed",
       "true",
     );
+    expect(
+      within(screen.getByRole("group", { name: "图表时间范围" })).getByRole(
+        "button",
+        { name: "1h" },
+      ),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("combobox", { name: "指标计算窗口" })).toHaveValue(
+      "60",
+    );
     const flowPanel = screen
       .getByRole("heading", { name: "Lifecycle 处理链路" })
       .closest("article");

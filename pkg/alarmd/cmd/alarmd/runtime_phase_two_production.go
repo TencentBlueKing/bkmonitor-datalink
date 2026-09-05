@@ -1297,6 +1297,20 @@ func (runtime *productionPhaseTwoQueryGroup) RunOne(
 	return runtime.runner.RunOne(ctx)
 }
 
+func (runtime *productionPhaseTwoQueryGroup) RunOneAdmitted(
+	ctx context.Context,
+	admission scheduler.ExecutionAdmission,
+) (execution.SlotExecutionResult, bool, bool, error) {
+	return runtime.runner.RunOneAdmitted(ctx, admission)
+}
+
+func (runtime *productionPhaseTwoQueryGroup) NextReadyAt() time.Time {
+	if runtime == nil || runtime.runner == nil {
+		return time.Time{}
+	}
+	return runtime.runner.NextReadyAt()
+}
+
 func (runtime *productionPhaseTwoQueryGroup) MaintainLease(
 	ctx context.Context,
 	interval time.Duration,

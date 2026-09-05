@@ -18,6 +18,8 @@ import (
 
 var ErrSlotInFlight = errors.New("alarmd scheduler: Query Group Slot is already in flight")
 
+var errExecutionAdmissionDenied = errors.New("alarmd scheduler: execution admission denied")
+
 type SourceRetryError struct{ Err error }
 
 func (err *SourceRetryError) Error() string {
@@ -91,6 +93,11 @@ type SlotSource interface {
 type Executor interface {
 	Execute(context.Context, execution.SlotExecutionRequest) (execution.SlotExecutionResult, error)
 }
+
+// ExecutionAdmission applies process-local concurrency bounds after the
+// Runner has resolved the authoritative frozen operation and before it enters
+// Access or the execution coordinator.
+type ExecutionAdmission func(execution.Operation) (release func(), admitted bool)
 
 // FlightCoordinator is one process-wide gate keyed by Query Group. It keeps
 // query execution single-flight without introducing a Redis business lock.
@@ -174,8 +181,42 @@ func NewRunner(
 	return &Runner{queryGroup: queryGroup, session: session, source: source, executor: executor, flights: flights, now: now}, nil
 }
 
+// NextReadyAt reports when the Runner can make its next QG-local attempt.
+// A zero value means there is no active source or execution backoff.
+func (runner *Runner) NextReadyAt() time.Time {
+	if runner == nil {
+		return time.Time{}
+	}
+	nextAt := runner.sourceNextAt
+	if runner.attempt != nil && runner.attempt.nextAt.After(nextAt) {
+		nextAt = runner.attempt.nextAt
+	}
+	return nextAt
+}
+
 func (runner *Runner) RunOne(
 	ctx context.Context,
+) (execution.SlotExecutionResult, bool, error) {
+	return runner.runOne(ctx, nil)
+}
+
+func (runner *Runner) RunOneAdmitted(
+	ctx context.Context,
+	admission ExecutionAdmission,
+) (execution.SlotExecutionResult, bool, bool, error) {
+	if admission == nil {
+		return execution.SlotExecutionResult{}, false, false, errors.New("alarmd scheduler: execution admission is required")
+	}
+	result, attempted, err := runner.runOne(ctx, admission)
+	if errors.Is(err, errExecutionAdmissionDenied) {
+		return result, attempted, true, nil
+	}
+	return result, attempted, false, err
+}
+
+func (runner *Runner) runOne(
+	ctx context.Context,
+	admission ExecutionAdmission,
 ) (execution.SlotExecutionResult, bool, error) {
 	// One invocation executes at most one frozen Slot. Replay therefore has a
 	// fixed one-Slot-per-tick bound instead of a configurable batch surface.
@@ -243,6 +284,16 @@ func (runner *Runner) RunOne(
 	}
 	if err := request.Validate(); err != nil {
 		return execution.SlotExecutionResult{}, false, err
+	}
+	if admission != nil {
+		releaseAdmission, admitted := admission(operation)
+		if !admitted {
+			return execution.SlotExecutionResult{}, false, errExecutionAdmissionDenied
+		}
+		if releaseAdmission == nil {
+			return execution.SlotExecutionResult{}, false, errors.New("alarmd scheduler: admitted execution requires release")
+		}
+		defer releaseAdmission()
 	}
 	result, err := runner.executor.Execute(ctx, request)
 	if err == nil {

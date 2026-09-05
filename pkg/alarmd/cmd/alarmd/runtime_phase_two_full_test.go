@@ -33,6 +33,7 @@ import (
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
 
@@ -1392,17 +1393,17 @@ func TestProductionPhaseTwoBundleSharesOneProcessRecoveryPermitBudgetAcrossOwned
 	}
 	select {
 	case <-queued:
-		if got := uqCalls.Load(); got != 1 {
-			t.Fatalf("queued replay sibling observed %d concurrent UQ calls, want one", got)
-		}
+		t.Fatal("replay sibling reached the inner query-permit queue instead of waiting for the next scheduler tick")
 	case <-secondEntered:
 		t.Fatal("owned Query Groups used copied recovery permit budgets or bypassed recovery-aware SlotSource")
-	case <-time.After(3 * time.Second):
-		t.Fatal("second owned Query Group neither queued for recovery nor entered UQ")
+	case <-time.After(20 * time.Millisecond):
 	}
 	release()
 	if err := <-tickDone; err != nil {
 		t.Fatalf("production tick error = %v", err)
+	}
+	if err := bundle.runScheduledOnce(ctx); err != nil {
+		t.Fatalf("second production tick error = %v", err)
 	}
 	if uqCalls.Load() != 2 || maxInflight.Load() != 1 {
 		t.Fatalf("process UQ calls/max inflight = %d/%d, want 2/1", uqCalls.Load(), maxInflight.Load())
@@ -1482,8 +1483,10 @@ func TestProductionPhaseTwoBundleCommitsBudgetExhaustedRecoveryCompletionWithout
 	}()
 
 	clock.Store(time.Unix(base, 0).Add(500 * time.Millisecond).UnixMilli())
-	if err := bundle.runScheduledOnce(ctx); err != nil {
-		t.Fatalf("budget-exhausted production tick error = %v", err)
+	for tick := 1; tick <= 2; tick++ {
+		if err := bundle.runScheduledOnce(ctx); err != nil {
+			t.Fatalf("budget-exhausted production tick %d error = %v", tick, err)
+		}
 	}
 	if uqCalls.Load() != 0 {
 		t.Fatalf("budget-exhausted completion issued %d UQ calls", uqCalls.Load())
@@ -1951,6 +1954,23 @@ func (runtime *recordingPhaseTwoQueryGroupRuntime) RunOne(ctx context.Context) (
 	runtime.err = err
 	runtime.mu.Unlock()
 	return result, attempted, err
+}
+
+func (runtime *recordingPhaseTwoQueryGroupRuntime) RunOneAdmitted(
+	ctx context.Context,
+	admission scheduler.ExecutionAdmission,
+) (execution.SlotExecutionResult, bool, bool, error) {
+	result, attempted, admissionDenied, err := runtime.next.RunOneAdmitted(ctx, admission)
+	runtime.mu.Lock()
+	runtime.result = result
+	runtime.attempted = attempted
+	runtime.err = err
+	runtime.mu.Unlock()
+	return result, attempted, admissionDenied, err
+}
+
+func (runtime *recordingPhaseTwoQueryGroupRuntime) NextReadyAt() time.Time {
+	return runtime.next.NextReadyAt()
 }
 
 func (runtime *recordingPhaseTwoQueryGroupRuntime) MaintainLease(ctx context.Context, interval, ttl time.Duration) error {

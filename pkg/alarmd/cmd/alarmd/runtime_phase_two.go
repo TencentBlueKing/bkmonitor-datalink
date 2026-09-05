@@ -232,6 +232,8 @@ type phaseTwoQueryGroupLifecycle struct {
 
 type phaseTwoQueryGroupRuntime interface {
 	RunOne(context.Context) (execution.SlotExecutionResult, bool, error)
+	RunOneAdmitted(context.Context, scheduler.ExecutionAdmission) (execution.SlotExecutionResult, bool, bool, error)
+	NextReadyAt() time.Time
 	MaintainLease(context.Context, time.Duration, time.Duration) error
 	Release(context.Context) error
 }
@@ -272,6 +274,77 @@ type phaseTwoWorkerBundle struct {
 	inflightWG            sync.WaitGroup
 	shutdownOnce          sync.Once
 	shutdownErr           error
+}
+
+type phaseTwoScheduledRunner struct {
+	queryGroup execution.QueryGroupIdentity
+	lifecycle  *phaseTwoQueryGroupLifecycle
+}
+
+type phaseTwoScheduledResult struct {
+	scheduled       phaseTwoScheduledRunner
+	attempted       bool
+	admissionDenied bool
+	err             error
+}
+
+type phaseTwoQueuedRunner struct {
+	scheduled phaseTwoScheduledRunner
+	readyAt   time.Time
+}
+
+type phaseTwoRunnerGeneration struct {
+	lifecycle  *phaseTwoQueryGroupLifecycle
+	generation uint64
+}
+
+type phaseTwoRunnerDispatcher struct {
+	bundle *phaseTwoWorkerBundle
+	fanout int
+
+	jobs    chan phaseTwoScheduledRunner
+	results chan phaseTwoScheduledResult
+	workers sync.WaitGroup
+
+	generation uint64
+	cursor     execution.QueryGroupIdentity
+	lastQueued map[execution.QueryGroupIdentity]phaseTwoRunnerGeneration
+	queued     map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle
+	active     map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle
+	normal     []phaseTwoQueuedRunner
+	delayed    []phaseTwoQueuedRunner
+
+	admission      *phaseTwoExecutionAdmission
+	preferDelayed  bool
+	oneShot        bool
+	oneShotTargets map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle
+}
+
+type phaseTwoExecutionAdmission struct {
+	mu             sync.Mutex
+	recoveryActive int
+	recoveryLimit  int
+}
+
+func (admission *phaseTwoExecutionAdmission) acquire(operation execution.Operation) (func(), bool) {
+	if operation == execution.OperationNormal {
+		return func() {}, true
+	}
+	admission.mu.Lock()
+	if admission.recoveryActive >= admission.recoveryLimit {
+		admission.mu.Unlock()
+		return nil, false
+	}
+	admission.recoveryActive++
+	admission.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			admission.mu.Lock()
+			admission.recoveryActive--
+			admission.mu.Unlock()
+		})
+	}, true
 }
 
 func newPhaseTwoWorkerBundle(dependencies phaseTwoWorkerBundleDependencies) (*phaseTwoWorkerBundle, error) {
@@ -369,18 +442,41 @@ func (bundle *phaseTwoWorkerBundle) Run(ctx context.Context) error {
 	defer scheduleTicker.Stop()
 	defer refreshTicker.Stop()
 	defer reconcileTicker.Stop()
+	schedulerCtx, cancelScheduler := context.WithCancel(ctx)
+	schedulerWake := make(chan struct{}, 1)
+	schedulerDone := make(chan error, 1)
+	go func() {
+		schedulerDone <- bundle.runScheduler(schedulerCtx, schedulerWake, false)
+	}()
 
 	var runErr error
+	schedulerRunning := true
 	for runErr == nil {
 		select {
 		case <-ctx.Done():
 			runErr = ctx.Err()
 		case <-scheduleTicker.C:
-			runErr = bundle.runScheduledOnce(ctx)
+			select {
+			case schedulerWake <- struct{}{}:
+			default:
+			}
 		case <-refreshTicker.C:
 			runErr = bundle.refreshAndReconcile(ctx, true)
 		case <-reconcileTicker.C:
 			runErr = bundle.refreshAndReconcile(ctx, false)
+		case schedulerErr := <-schedulerDone:
+			schedulerRunning = false
+			if schedulerErr == nil {
+				schedulerErr = errPhaseTwoWorkerStopped
+			}
+			runErr = schedulerErr
+		}
+	}
+	cancelScheduler()
+	if schedulerRunning {
+		schedulerErr := <-schedulerDone
+		if schedulerErr != nil && !errors.Is(schedulerErr, context.Canceled) {
+			runErr = errors.Join(runErr, schedulerErr)
 		}
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), bundle.dependencies.Config.ShutdownTimeout.Duration())
@@ -393,86 +489,359 @@ func (bundle *phaseTwoWorkerBundle) Run(ctx context.Context) error {
 }
 
 func (bundle *phaseTwoWorkerBundle) runScheduledOnce(ctx context.Context) error {
-	bundle.mu.RLock()
+	wake := make(chan struct{}, 1)
+	wake <- struct{}{}
+	return bundle.runScheduler(ctx, wake, true)
+}
+
+func (bundle *phaseTwoWorkerBundle) runScheduler(
+	ctx context.Context,
+	wake <-chan struct{},
+	oneShot bool,
+) error {
+	bundle.mu.Lock()
 	if bundle.draining || bundle.closed {
-		bundle.mu.RUnlock()
+		bundle.mu.Unlock()
 		return errPhaseTwoWorkerDraining
 	}
-	type scheduledRunner struct {
-		queryGroup execution.QueryGroupIdentity
-		lifecycle  *phaseTwoQueryGroupLifecycle
+	// Shutdown takes the same lock before waiting, so this sentinel prevents
+	// WaitGroup Add/Wait races while the dispatcher can still run QG work.
+	bundle.inflightWG.Add(1)
+	bundle.mu.Unlock()
+	defer bundle.inflightWG.Done()
+
+	dispatcher := newPhaseTwoRunnerDispatcher(bundle, oneShot)
+	dispatcher.start(ctx)
+	defer dispatcher.stop()
+	return dispatcher.run(ctx, wake)
+}
+
+func newPhaseTwoRunnerDispatcher(
+	bundle *phaseTwoWorkerBundle,
+	oneShot bool,
+) *phaseTwoRunnerDispatcher {
+	schedulerConfig := bundle.dependencies.Config.PhaseTwo.Scheduler
+	fanout := schedulerConfig.ProcessQueryPermits
+	if schedulerConfig.ReadyQueueCapacity < fanout {
+		fanout = schedulerConfig.ReadyQueueCapacity
 	}
-	runners := make([]scheduledRunner, 0, len(bundle.runners))
+	return &phaseTwoRunnerDispatcher{
+		bundle: bundle, fanout: fanout,
+		jobs: make(chan phaseTwoScheduledRunner), results: make(chan phaseTwoScheduledResult, fanout),
+		lastQueued: make(map[execution.QueryGroupIdentity]phaseTwoRunnerGeneration),
+		queued:     make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
+		active:     make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
+		admission: &phaseTwoExecutionAdmission{
+			recoveryLimit: schedulerConfig.RecoveryQueryPermits,
+		},
+		preferDelayed: true, oneShot: oneShot,
+	}
+}
+
+func (dispatcher *phaseTwoRunnerDispatcher) start(ctx context.Context) {
+	for range dispatcher.fanout {
+		dispatcher.workers.Add(1)
+		go func() {
+			defer dispatcher.workers.Done()
+			for scheduled := range dispatcher.jobs {
+				result := phaseTwoScheduledResult{scheduled: scheduled}
+				if ctx.Err() == nil && dispatcher.bundle.isCurrentScheduledRunner(scheduled) {
+					_, result.attempted, result.admissionDenied, result.err =
+						scheduled.lifecycle.runner.RunOneAdmitted(ctx, dispatcher.admission.acquire)
+				}
+				dispatcher.results <- result
+			}
+		}()
+	}
+}
+
+func (dispatcher *phaseTwoRunnerDispatcher) stop() {
+	close(dispatcher.jobs)
+	dispatcher.workers.Wait()
+}
+
+func (dispatcher *phaseTwoRunnerDispatcher) run(ctx context.Context, wake <-chan struct{}) error {
+	var canceled error
+	ctxDone := ctx.Done()
+	for {
+		if canceled != nil && len(dispatcher.active) == 0 {
+			return canceled
+		}
+		if dispatcher.oneShot && dispatcher.generation > 0 && len(dispatcher.oneShotTargets) == 0 &&
+			len(dispatcher.active) == 0 {
+			return nil
+		}
+
+		// Consume completed work before admitting another normal item. This
+		// makes a newly ready recovery visible to the fairness decision.
+		select {
+		case result := <-dispatcher.results:
+			dispatcher.handleResult(ctx, result, canceled == nil)
+			continue
+		default:
+		}
+
+		dispatcher.dropStaleQueued()
+		dispatcher.fillQueues()
+		now := dispatcher.bundle.schedulerNow()
+		dispatcher.sortDelayed()
+		delayedDue := len(dispatcher.delayed) > 0 && !dispatcher.delayed[0].readyAt.After(now)
+		normalReady := len(dispatcher.normal) > 0
+		selectDelayed := canceled == nil && delayedDue && (!normalReady || dispatcher.preferDelayed)
+		selectNormal := canceled == nil && normalReady && !selectDelayed
+
+		var dispatch chan phaseTwoScheduledRunner
+		var scheduled phaseTwoScheduledRunner
+		if selectDelayed {
+			dispatch = dispatcher.jobs
+			scheduled = dispatcher.delayed[0].scheduled
+		} else if selectNormal {
+			dispatch = dispatcher.jobs
+			scheduled = dispatcher.normal[0].scheduled
+		}
+
+		var retryTimer *time.Timer
+		var retryReady <-chan time.Time
+		if canceled == nil && dispatch == nil && len(dispatcher.delayed) > 0 {
+			delay := dispatcher.delayed[0].readyAt.Sub(now)
+			if delay < 0 {
+				delay = 0
+			}
+			retryTimer = time.NewTimer(delay)
+			retryReady = retryTimer.C
+		}
+
+		select {
+		case dispatch <- scheduled:
+			dispatcher.markDispatched(scheduled, selectDelayed, delayedDue)
+		case result := <-dispatcher.results:
+			dispatcher.handleResult(ctx, result, canceled == nil)
+		case <-wake:
+			if canceled == nil {
+				dispatcher.beginGeneration()
+			}
+		case <-retryReady:
+		case <-ctxDone:
+			canceled = ctx.Err()
+			ctxDone = nil
+		}
+		if retryTimer != nil && !retryTimer.Stop() {
+			select {
+			case <-retryTimer.C:
+			default:
+			}
+		}
+	}
+}
+
+func (dispatcher *phaseTwoRunnerDispatcher) beginGeneration() {
+	dispatcher.generation++
+	if dispatcher.oneShot && dispatcher.generation == 1 {
+		dispatcher.oneShotTargets = make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle)
+		for _, scheduled := range dispatcher.bundle.snapshotScheduledRunners() {
+			dispatcher.oneShotTargets[scheduled.queryGroup] = scheduled.lifecycle
+		}
+	}
+}
+
+func (dispatcher *phaseTwoRunnerDispatcher) fillQueues() {
+	if dispatcher.generation == 0 {
+		return
+	}
+	runners := dispatcher.bundle.snapshotScheduledRunners()
+	if len(runners) == 0 {
+		return
+	}
+	start := sort.Search(len(runners), func(index int) bool {
+		return runners[index].queryGroup > dispatcher.cursor
+	})
+	for offset := 0; offset < len(runners); offset++ {
+		scheduled := runners[(start+offset)%len(runners)]
+		if dispatcher.active[scheduled.queryGroup] != nil || dispatcher.queued[scheduled.queryGroup] != nil {
+			continue
+		}
+		last := dispatcher.lastQueued[scheduled.queryGroup]
+		if last.lifecycle == scheduled.lifecycle && last.generation == dispatcher.generation {
+			continue
+		}
+		readyAt := scheduled.lifecycle.runner.NextReadyAt()
+		queued := phaseTwoQueuedRunner{scheduled: scheduled, readyAt: readyAt}
+		if readyAt.IsZero() {
+			if len(dispatcher.normal) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.ReadyQueueCapacity {
+				continue
+			}
+			dispatcher.normal = append(dispatcher.normal, queued)
+		} else {
+			if len(dispatcher.delayed) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.RecoveryQueueCapacity {
+				latest := dispatcher.latestDelayedIndex()
+				if latest < 0 || !delayedBefore(queued, dispatcher.delayed[latest]) {
+					continue
+				}
+				evicted := dispatcher.delayed[latest].scheduled
+				if dispatcher.queued[evicted.queryGroup] == evicted.lifecycle {
+					delete(dispatcher.queued, evicted.queryGroup)
+				}
+				if dispatcher.oneShot {
+					delete(dispatcher.lastQueued, evicted.queryGroup)
+				}
+				dispatcher.delayed[latest] = queued
+			} else {
+				dispatcher.delayed = append(dispatcher.delayed, queued)
+			}
+		}
+		dispatcher.queued[scheduled.queryGroup] = scheduled.lifecycle
+		dispatcher.lastQueued[scheduled.queryGroup] = phaseTwoRunnerGeneration{
+			lifecycle: scheduled.lifecycle, generation: dispatcher.generation,
+		}
+		dispatcher.cursor = scheduled.queryGroup
+	}
+}
+
+func (dispatcher *phaseTwoRunnerDispatcher) markDispatched(
+	scheduled phaseTwoScheduledRunner,
+	delayed bool,
+	delayedDue bool,
+) {
+	delete(dispatcher.queued, scheduled.queryGroup)
+	dispatcher.active[scheduled.queryGroup] = scheduled.lifecycle
+	if delayed {
+		dispatcher.delayed = dispatcher.delayed[1:]
+		dispatcher.preferDelayed = false
+		return
+	}
+	dispatcher.normal = dispatcher.normal[1:]
+	if delayedDue {
+		dispatcher.preferDelayed = true
+	}
+}
+
+func (dispatcher *phaseTwoRunnerDispatcher) handleResult(
+	ctx context.Context,
+	result phaseTwoScheduledResult,
+	requeue bool,
+) {
+	scheduled := result.scheduled
+	if dispatcher.active[scheduled.queryGroup] == scheduled.lifecycle {
+		delete(dispatcher.active, scheduled.queryGroup)
+	}
+	if dispatcher.oneShotTargets[scheduled.queryGroup] == scheduled.lifecycle {
+		delete(dispatcher.oneShotTargets, scheduled.queryGroup)
+	}
+	if result.err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		if errors.Is(result.err, ownership.ErrStaleFence) || errors.Is(result.err, ownership.ErrNotDesired) ||
+			errors.Is(result.err, scheduler.ErrSlotOwnershipChanged) {
+			dispatcher.bundle.stopLostQueryGroup(scheduled.queryGroup, scheduled.lifecycle, result.err)
+			return
+		}
+		if !result.attempted {
+			observeRuntime(ctx, dispatcher.bundle.dependencies.Observer, observability.Observation{
+				Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
+				Result: observability.ResultFailed, ReasonCode: observability.ReasonInternalUnknown,
+				Direction: observability.DirectionInternal,
+				Trace:     observability.TraceFields{QueryGroupKey: string(scheduled.queryGroup)},
+				Err:       result.err,
+			})
+		}
+	}
+	if result.admissionDenied {
+		// A scheduler tick received while this attempt was still active cannot
+		// authorize an immediate denied retry. Only a later tick may requeue it.
+		dispatcher.lastQueued[scheduled.queryGroup] = phaseTwoRunnerGeneration{
+			lifecycle: scheduled.lifecycle, generation: dispatcher.generation,
+		}
+		return
+	}
+	if !requeue || !dispatcher.bundle.isCurrentScheduledRunner(scheduled) {
+		return
+	}
+	readyAt := scheduled.lifecycle.runner.NextReadyAt()
+	if readyAt.IsZero() || len(dispatcher.delayed) >=
+		dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.RecoveryQueueCapacity {
+		return
+	}
+	dispatcher.delayed = append(dispatcher.delayed, phaseTwoQueuedRunner{scheduled: scheduled, readyAt: readyAt})
+	dispatcher.queued[scheduled.queryGroup] = scheduled.lifecycle
+}
+
+func (dispatcher *phaseTwoRunnerDispatcher) sortDelayed() {
+	sort.SliceStable(dispatcher.delayed, func(left, right int) bool {
+		return delayedBefore(dispatcher.delayed[left], dispatcher.delayed[right])
+	})
+}
+
+func (dispatcher *phaseTwoRunnerDispatcher) latestDelayedIndex() int {
+	latest := -1
+	for index := range dispatcher.delayed {
+		if latest < 0 || delayedBefore(dispatcher.delayed[latest], dispatcher.delayed[index]) {
+			latest = index
+		}
+	}
+	return latest
+}
+
+func delayedBefore(left, right phaseTwoQueuedRunner) bool {
+	if left.readyAt.Equal(right.readyAt) {
+		return left.scheduled.queryGroup < right.scheduled.queryGroup
+	}
+	return left.readyAt.Before(right.readyAt)
+}
+
+func (dispatcher *phaseTwoRunnerDispatcher) dropStaleQueued() {
+	drop := func(queue []phaseTwoQueuedRunner) []phaseTwoQueuedRunner {
+		kept := queue[:0]
+		for _, queued := range queue {
+			if dispatcher.bundle.isCurrentScheduledRunner(queued.scheduled) {
+				kept = append(kept, queued)
+				continue
+			}
+			if dispatcher.queued[queued.scheduled.queryGroup] == queued.scheduled.lifecycle {
+				delete(dispatcher.queued, queued.scheduled.queryGroup)
+			}
+			if dispatcher.oneShotTargets[queued.scheduled.queryGroup] == queued.scheduled.lifecycle {
+				delete(dispatcher.oneShotTargets, queued.scheduled.queryGroup)
+			}
+		}
+		return kept
+	}
+	dispatcher.normal = drop(dispatcher.normal)
+	dispatcher.delayed = drop(dispatcher.delayed)
+	for queryGroup, generation := range dispatcher.lastQueued {
+		if !dispatcher.bundle.isCurrentScheduledRunner(phaseTwoScheduledRunner{
+			queryGroup: queryGroup,
+			lifecycle:  generation.lifecycle,
+		}) {
+			delete(dispatcher.lastQueued, queryGroup)
+		}
+	}
+}
+
+func (bundle *phaseTwoWorkerBundle) snapshotScheduledRunners() []phaseTwoScheduledRunner {
+	bundle.mu.RLock()
+	defer bundle.mu.RUnlock()
+	runners := make([]phaseTwoScheduledRunner, 0, len(bundle.runners))
 	for queryGroup, lifecycle := range bundle.runners {
-		runners = append(runners, scheduledRunner{queryGroup: queryGroup, lifecycle: lifecycle})
+		runners = append(runners, phaseTwoScheduledRunner{queryGroup: queryGroup, lifecycle: lifecycle})
 	}
 	sort.Slice(runners, func(left, right int) bool {
 		return runners[left].queryGroup < runners[right].queryGroup
 	})
-	bundle.inflightWG.Add(len(runners))
-	bundle.mu.RUnlock()
+	return runners
+}
 
-	type scheduledResult struct {
-		scheduled scheduledRunner
-		result    execution.SlotExecutionResult
-		attempted bool
-		err       error
+func (bundle *phaseTwoWorkerBundle) isCurrentScheduledRunner(scheduled phaseTwoScheduledRunner) bool {
+	bundle.mu.RLock()
+	defer bundle.mu.RUnlock()
+	return !bundle.draining && !bundle.closed && bundle.runners[scheduled.queryGroup] == scheduled.lifecycle
+}
+
+func (bundle *phaseTwoWorkerBundle) schedulerNow() time.Time {
+	if bundle.dependencies.Now != nil {
+		return bundle.dependencies.Now()
 	}
-	results := make(chan scheduledResult, len(runners))
-	fanout := len(runners)
-	processPermits := bundle.dependencies.Config.PhaseTwo.Scheduler.ProcessQueryPermits
-	if processPermits < fanout {
-		fanout = processPermits
-	}
-	jobs := make(chan scheduledRunner, len(runners))
-	for _, runner := range runners {
-		jobs <- runner
-	}
-	close(jobs)
-	// A shared queue lets every released permit take the next Query Group;
-	// a slow runner therefore cannot pin later work to a fixed worker lane.
-	for range fanout {
-		go func() {
-			for scheduled := range jobs {
-				result := func() scheduledResult {
-					defer bundle.inflightWG.Done()
-					result, attempted, err := scheduled.lifecycle.runner.RunOne(ctx)
-					return scheduledResult{scheduled: scheduled, result: result, attempted: attempted, err: err}
-				}()
-				results <- result
-			}
-		}()
-	}
-	var canceled error
-	for range runners {
-		result := <-results
-		scheduled, attempted, err := result.scheduled, result.attempted, result.err
-		if err != nil {
-			if ctx.Err() != nil {
-				canceled = ctx.Err()
-				continue
-			}
-			if errors.Is(err, ownership.ErrStaleFence) || errors.Is(err, ownership.ErrNotDesired) ||
-				errors.Is(err, scheduler.ErrSlotOwnershipChanged) {
-				bundle.stopLostQueryGroup(scheduled.queryGroup, scheduled.lifecycle, err)
-				continue
-			}
-			if !attempted {
-				observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
-					Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
-					Result: observability.ResultFailed, ReasonCode: observability.ReasonInternalUnknown,
-					Direction: observability.DirectionInternal,
-					Trace:     observability.TraceFields{QueryGroupKey: string(scheduled.queryGroup)},
-					Err:       err,
-				})
-			}
-			// RunOne errors are scoped to this Query Group. Progress remains on the
-			// same Slot, ownership stays local, and sibling Query Groups continue;
-			// later Gates may add bounded recovery without changing this isolation.
-			continue
-		}
-	}
-	return canceled
+	return time.Now()
 }
 
 func (bundle *phaseTwoWorkerBundle) Shutdown(ctx context.Context) error {

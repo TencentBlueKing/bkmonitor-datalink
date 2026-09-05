@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -555,6 +556,649 @@ func TestPhaseTwoWorkerBundleRunsRetiredBacklogWhenCapacityIsReleased(t *testing
 	releaseFirst()
 	if err := <-done; err != nil {
 		t.Fatalf("runScheduledOnce() error = %v", err)
+	}
+}
+
+func TestPhaseTwoWorkerBundleRetriesReadyQueryGroupBeforeFullSweepCompletes(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
+	cfg.PhaseTwo.Scheduler.RetryMinDelay = config.Duration(5 * time.Millisecond)
+	cfg.PhaseTwo.Scheduler.RetryMaxDelay = config.Duration(5 * time.Millisecond)
+
+	var concurrencyMu sync.Mutex
+	active, maxActive := 0, 0
+	activeByQueryGroup := make(map[execution.QueryGroupIdentity]int)
+	maxActiveByQueryGroup := make(map[execution.QueryGroupIdentity]int)
+	enter := func(queryGroup execution.QueryGroupIdentity) func() {
+		concurrencyMu.Lock()
+		active++
+		if active > maxActive {
+			maxActive = active
+		}
+		activeByQueryGroup[queryGroup]++
+		if activeByQueryGroup[queryGroup] > maxActiveByQueryGroup[queryGroup] {
+			maxActiveByQueryGroup[queryGroup] = activeByQueryGroup[queryGroup]
+		}
+		concurrencyMu.Unlock()
+		return func() {
+			concurrencyMu.Lock()
+			active--
+			activeByQueryGroup[queryGroup]--
+			concurrencyMu.Unlock()
+		}
+	}
+
+	retried := make(chan struct{})
+	var retryMu sync.Mutex
+	retryCalls := 0
+	retryReadyAt := time.Time{}
+	var normalMu sync.Mutex
+	normalCompleted := 0
+	normalCompletedAtRetry := 0
+	retrying := &callbackPhaseTwoQueryGroup{run: func(context.Context) (execution.SlotExecutionResult, bool, error) {
+		leave := enter("query-group-a-retrying")
+		defer leave()
+		retryMu.Lock()
+		retryCalls++
+		call := retryCalls
+		if call == 1 {
+			retryReadyAt = time.Now()
+		} else {
+			retryReadyAt = time.Time{}
+		}
+		retryMu.Unlock()
+		if call == 1 {
+			return execution.SlotExecutionResult{
+				Result:     observability.ResultRetrying,
+				ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable),
+			}, true, nil
+		}
+		if call == 2 {
+			normalMu.Lock()
+			normalCompletedAtRetry = normalCompleted
+			normalMu.Unlock()
+			close(retried)
+		}
+		return execution.SlotExecutionResult{Completed: true, Result: observability.ResultSuccess}, true, nil
+	}, nextReadyAt: func() time.Time {
+		retryMu.Lock()
+		defer retryMu.Unlock()
+		return retryReadyAt
+	}}
+
+	blockingStarted := make(chan struct{})
+	blockingRelease := make(chan struct{})
+	blocking := &callbackPhaseTwoQueryGroup{run: func(context.Context) (execution.SlotExecutionResult, bool, error) {
+		leave := enter("query-group-b-blocking")
+		defer leave()
+		close(blockingStarted)
+		<-blockingRelease
+		return execution.SlotExecutionResult{Completed: true, Result: observability.ResultSuccess}, true, nil
+	}}
+	const normalBacklogCount = 500
+
+	bundle := &phaseTwoWorkerBundle{
+		dependencies: phaseTwoWorkerBundleDependencies{Config: cfg, Now: time.Now},
+		runners: map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle{
+			"query-group-a-retrying": {runner: retrying},
+			"query-group-b-blocking": {runner: blocking},
+		},
+	}
+	for index := 0; index < normalBacklogCount; index++ {
+		queryGroup := execution.QueryGroupIdentity(fmt.Sprintf("query-group-c-normal-%02d", index))
+		bundle.runners[queryGroup] = &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
+			run: func(context.Context) (execution.SlotExecutionResult, bool, error) {
+				leave := enter(queryGroup)
+				defer leave()
+				normalMu.Lock()
+				normalCompleted++
+				normalMu.Unlock()
+				return execution.SlotExecutionResult{Completed: true, Result: observability.ResultSuccess}, true, nil
+			},
+		}}
+	}
+	done := make(chan error, 1)
+	go func() { done <- bundle.runScheduledOnce(context.Background()) }()
+	waitSignal(t, blockingStarted, "blocking Query Group")
+
+	retriedBeforeSweepCompleted := false
+	select {
+	case <-retried:
+		retriedBeforeSweepCompleted = true
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(blockingRelease)
+	if err := <-done; err != nil {
+		t.Fatalf("runScheduledOnce() error = %v", err)
+	}
+	if !retriedBeforeSweepCompleted {
+		t.Fatal("retry-ready Query Group was starved behind the full sweep barrier")
+	}
+	if normalCompletedAtRetry >= normalBacklogCount {
+		t.Fatalf("retry-ready Query Group ran only after normal backlog drained: completed=%d", normalCompletedAtRetry)
+	}
+
+	concurrencyMu.Lock()
+	defer concurrencyMu.Unlock()
+	if maxActive > cfg.PhaseTwo.Scheduler.ProcessQueryPermits {
+		t.Fatalf("runner fanout = %d, want <= %d", maxActive, cfg.PhaseTwo.Scheduler.ProcessQueryPermits)
+	}
+	if maxActiveByQueryGroup["query-group-a-retrying"] > 1 {
+		t.Fatalf("retrying Query Group concurrency = %d, want single-flight", maxActiveByQueryGroup["query-group-a-retrying"])
+	}
+}
+
+func TestPhaseTwoWorkerBundleNextTickReentersNormalQueryGroupBeforeSlowSweepCompletes(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
+
+	var normalCalls atomic.Int32
+	firstNormal := make(chan struct{})
+	secondNormal := make(chan struct{})
+	normal := &callbackPhaseTwoQueryGroup{run: func(context.Context) (
+		execution.SlotExecutionResult, bool, error,
+	) {
+		switch normalCalls.Add(1) {
+		case 1:
+			close(firstNormal)
+		case 2:
+			close(secondNormal)
+		}
+		return execution.SlotExecutionResult{}, false, nil
+	}}
+	blockingStarted := make(chan struct{})
+	blockingRelease := make(chan struct{})
+	blocking := &callbackPhaseTwoQueryGroup{run: func(context.Context) (
+		execution.SlotExecutionResult, bool, error,
+	) {
+		close(blockingStarted)
+		<-blockingRelease
+		return execution.SlotExecutionResult{}, false, nil
+	}}
+	bundle := &phaseTwoWorkerBundle{
+		dependencies: phaseTwoWorkerBundleDependencies{Config: cfg, Now: time.Now},
+		runners: map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle{
+			"query-group-a-normal":   {runner: normal},
+			"query-group-b-blocking": {runner: blocking},
+		},
+	}
+	for index := 0; index < 500; index++ {
+		queryGroup := execution.QueryGroupIdentity(fmt.Sprintf("query-group-c-backlog-%03d", index))
+		bundle.runners[queryGroup] = &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
+			run: func(context.Context) (execution.SlotExecutionResult, bool, error) {
+				return execution.SlotExecutionResult{}, false, nil
+			},
+		}}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	wake := make(chan struct{}, 1)
+	done := make(chan error, 1)
+	go func() { done <- bundle.runScheduler(ctx, wake, false) }()
+	wake <- struct{}{}
+	waitSignal(t, firstNormal, "first normal Query Group run")
+	waitSignal(t, blockingStarted, "blocking Query Group")
+	wake <- struct{}{}
+	waitSignal(t, secondNormal, "normal Query Group on next scheduler tick")
+	close(blockingRelease)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("runScheduler(cancel) error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("persistent dispatcher did not drain after cancellation")
+	}
+}
+
+func TestPhaseTwoWorkerBundleNormalQueueRotatesPastFastPrefixAcrossTicks(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 1
+	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 0
+	cfg.PhaseTwo.Scheduler.ReadyQueueCapacity = 2
+
+	started := make(chan execution.QueryGroupIdentity)
+	release := make(chan struct{})
+	bundle := &phaseTwoWorkerBundle{
+		dependencies: phaseTwoWorkerBundleDependencies{Config: cfg, Now: time.Now},
+		runners:      make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
+	}
+	const queryGroupCount = 10
+	for index := 0; index < queryGroupCount; index++ {
+		queryGroup := execution.QueryGroupIdentity(fmt.Sprintf("query-group-%02d", index))
+		bundle.runners[queryGroup] = &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
+			run: func(ctx context.Context) (execution.SlotExecutionResult, bool, error) {
+				select {
+				case started <- queryGroup:
+				case <-ctx.Done():
+					return execution.SlotExecutionResult{}, false, ctx.Err()
+				}
+				select {
+				case <-release:
+					return execution.SlotExecutionResult{}, false, nil
+				case <-ctx.Done():
+					return execution.SlotExecutionResult{}, false, ctx.Err()
+				}
+			},
+		}}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wake := make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- bundle.runScheduler(ctx, wake, false) }()
+	wake <- struct{}{}
+	target := execution.QueryGroupIdentity("query-group-09")
+	reachedTarget := false
+	for attempt := 0; attempt < queryGroupCount+2; attempt++ {
+		select {
+		case queryGroup := <-started:
+			if queryGroup == target {
+				reachedTarget = true
+				cancel()
+				break
+			}
+			wake <- struct{}{}
+			release <- struct{}{}
+		case <-time.After(time.Second):
+			cancel()
+			t.Fatal("normal dispatcher stopped making progress")
+		}
+		if reachedTarget {
+			break
+		}
+	}
+	if !reachedTarget {
+		cancel()
+		t.Fatal("tail Query Group was starved by repeated scheduler ticks")
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("runScheduler(cancel) error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("normal dispatcher did not drain after cancellation")
+	}
+}
+
+func TestPhaseTwoWorkerBundleDelayedQueueKeepsEarliestReadyQueryGroups(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 1
+	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 0
+	cfg.PhaseTwo.Scheduler.RecoveryQueueCapacity = 2
+	now := time.Now()
+	target := execution.QueryGroupIdentity("query-group-z-ready")
+	started := make(chan execution.QueryGroupIdentity, 1)
+	var targetDelayed atomic.Bool
+	targetDelayed.Store(true)
+	bundle := &phaseTwoWorkerBundle{
+		dependencies: phaseTwoWorkerBundleDependencies{Config: cfg, Now: func() time.Time { return now }},
+		runners:      make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
+	}
+	for _, queryGroup := range []execution.QueryGroupIdentity{"query-group-a-future", "query-group-b-future"} {
+		bundle.runners[queryGroup] = &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
+			nextReadyAt: func() time.Time { return now.Add(time.Hour) },
+			run: func(context.Context) (execution.SlotExecutionResult, bool, error) {
+				started <- queryGroup
+				return execution.SlotExecutionResult{}, false, nil
+			},
+		}}
+	}
+	bundle.runners[target] = &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
+		nextReadyAt: func() time.Time {
+			if targetDelayed.Load() {
+				return now.Add(-time.Second)
+			}
+			return time.Time{}
+		},
+		run: func(context.Context) (execution.SlotExecutionResult, bool, error) {
+			targetDelayed.Store(false)
+			started <- target
+			return execution.SlotExecutionResult{}, false, nil
+		},
+	}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wake := make(chan struct{}, 1)
+	done := make(chan error, 1)
+	go func() { done <- bundle.runScheduler(ctx, wake, false) }()
+	wake <- struct{}{}
+	select {
+	case queryGroup := <-started:
+		if queryGroup != target {
+			t.Fatalf("first delayed Query Group = %s, want %s", queryGroup, target)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ready Query Group was hidden behind a full future delayed queue")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("runScheduler(cancel) error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("delayed dispatcher did not stop after cancellation")
+	}
+}
+
+func TestPhaseTwoRunnerDispatcherPrunesRemovedGenerationState(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	queryGroup := execution.QueryGroupIdentity("query-group-removed")
+	lifecycle := &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
+		run: func(context.Context) (execution.SlotExecutionResult, bool, error) {
+			return execution.SlotExecutionResult{}, false, nil
+		},
+	}}
+	bundle := &phaseTwoWorkerBundle{
+		dependencies: phaseTwoWorkerBundleDependencies{Config: cfg, Now: time.Now},
+		runners: map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle{
+			queryGroup: lifecycle,
+		},
+	}
+	dispatcher := newPhaseTwoRunnerDispatcher(bundle, false)
+	dispatcher.generation = 1
+	dispatcher.fillQueues()
+	if len(dispatcher.lastQueued) != 1 || len(dispatcher.queued) != 1 {
+		t.Fatalf("dispatcher generation state = %d/%d, want 1/1", len(dispatcher.lastQueued), len(dispatcher.queued))
+	}
+	bundle.mu.Lock()
+	delete(bundle.runners, queryGroup)
+	bundle.mu.Unlock()
+	dispatcher.dropStaleQueued()
+	if len(dispatcher.lastQueued) != 0 || len(dispatcher.queued) != 0 || len(dispatcher.normal) != 0 {
+		t.Fatalf("removed lifecycle remained in dispatcher: generation=%d queued=%d normal=%d",
+			len(dispatcher.lastQueued), len(dispatcher.queued), len(dispatcher.normal))
+	}
+}
+
+func TestPhaseTwoWorkerBundleDispatcherUsesFrozenOperationForRecoveryCapacity(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 4
+	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 1
+
+	holderStarted := make(chan struct{})
+	bundle := &phaseTwoWorkerBundle{
+		dependencies: phaseTwoWorkerBundleDependencies{Config: cfg, Now: time.Now},
+		runners: map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle{
+			"query-group-a-first-replay": {runner: &callbackPhaseTwoQueryGroup{
+				operation: execution.OperationReplay,
+				run: func(ctx context.Context) (execution.SlotExecutionResult, bool, error) {
+					close(holderStarted)
+					<-ctx.Done()
+					return execution.SlotExecutionResult{}, false, ctx.Err()
+				},
+			}},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	wake := make(chan struct{})
+	done := make(chan error, 1)
+	dispatcher := newPhaseTwoRunnerDispatcher(bundle, false)
+	dispatcher.start(ctx)
+	go func() { done <- dispatcher.run(ctx, wake) }()
+	wake <- struct{}{}
+	waitSignal(t, holderStarted, "first-attempt Replay")
+
+	normalStarted := make(chan struct{})
+	var normalStartOnce sync.Once
+	var normalDelayed atomic.Bool
+	normalDelayed.Store(true)
+	deniedAdmission := make(chan execution.QueryGroupIdentity, 2)
+	var deniedRuns atomic.Int32
+	pastReadyAt := time.Now().Add(-time.Second)
+	bundle.mu.Lock()
+	for index := 0; index < 2; index++ {
+		queryGroup := execution.QueryGroupIdentity(fmt.Sprintf("query-group-b-recovery-%d", index))
+		operation := execution.OperationReplay
+		var nextReadyAt func() time.Time
+		if index == 1 {
+			operation = execution.OperationRetry
+			nextReadyAt = func() time.Time { return pastReadyAt }
+		}
+		bundle.runners[queryGroup] = &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
+			operation:   operation,
+			nextReadyAt: nextReadyAt,
+			beforeAdmission: func(execution.Operation) {
+				deniedAdmission <- queryGroup
+			},
+			run: func(context.Context) (execution.SlotExecutionResult, bool, error) {
+				deniedRuns.Add(1)
+				return execution.SlotExecutionResult{}, false, nil
+			},
+		}}
+	}
+	bundle.runners["query-group-c-source-retry-normal"] = &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
+		operation: execution.OperationNormal,
+		nextReadyAt: func() time.Time {
+			if normalDelayed.Load() {
+				return pastReadyAt
+			}
+			return time.Time{}
+		},
+		run: func(context.Context) (execution.SlotExecutionResult, bool, error) {
+			normalDelayed.Store(false)
+			normalStartOnce.Do(func() { close(normalStarted) })
+			return execution.SlotExecutionResult{}, false, nil
+		},
+	}}
+	bundle.mu.Unlock()
+	wake <- struct{}{}
+	waitSignal(t, normalStarted, "actual Normal operation after delayed source retry")
+	for index := 0; index < 2; index++ {
+		select {
+		case <-deniedAdmission:
+		case <-time.After(time.Second):
+			cancel()
+			t.Fatal("first-attempt Replay did not reach operation admission")
+		}
+	}
+	if deniedRuns.Load() != 0 {
+		t.Fatalf("denied recovery executions = %d, want 0", deniedRuns.Load())
+	}
+	select {
+	case queryGroup := <-deniedAdmission:
+		cancel()
+		t.Fatalf("admission-denied Query Group spun without a new scheduler tick: %s", queryGroup)
+	case <-time.After(20 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("dispatcher(cancel) error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher did not drain recovery after cancellation")
+	}
+	dispatcher.stop()
+	dispatcher.admission.mu.Lock()
+	recoveryActive := dispatcher.admission.recoveryActive
+	dispatcher.admission.mu.Unlock()
+	if recoveryActive != 0 {
+		t.Fatalf("recovery admission tokens after cancellation = %d, want 0", recoveryActive)
+	}
+}
+
+func TestPhaseTwoWorkerBundleSchedulerCancellationStopsAdmissionAndDrainsInflight(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
+
+	started := make(chan struct{}, 2)
+	blockingRunner := func() *callbackPhaseTwoQueryGroup {
+		return &callbackPhaseTwoQueryGroup{run: func(ctx context.Context) (execution.SlotExecutionResult, bool, error) {
+			started <- struct{}{}
+			<-ctx.Done()
+			return execution.SlotExecutionResult{}, false, ctx.Err()
+		}}
+	}
+	var queuedCalls atomic.Int32
+	bundle := &phaseTwoWorkerBundle{
+		dependencies: phaseTwoWorkerBundleDependencies{Config: cfg, Now: time.Now},
+		runners: map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle{
+			"query-group-a-blocking": {runner: blockingRunner()},
+			"query-group-b-blocking": {runner: blockingRunner()},
+			"query-group-c-queued": {runner: &callbackPhaseTwoQueryGroup{run: func(context.Context) (
+				execution.SlotExecutionResult, bool, error,
+			) {
+				queuedCalls.Add(1)
+				return execution.SlotExecutionResult{}, false, nil
+			}}},
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- bundle.runScheduledOnce(ctx) }()
+	waitSignal(t, started, "first inflight Query Group")
+	waitSignal(t, started, "second inflight Query Group")
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("runScheduledOnce(cancel) error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher did not drain canceled inflight Query Groups")
+	}
+	if got := queuedCalls.Load(); got != 0 {
+		t.Fatalf("dispatcher admitted %d queued runs after cancellation", got)
+	}
+}
+
+func TestPhaseTwoWorkerBundleDispatcherDropsReplacedLifecycleBeforeDispatch(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 1
+	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 0
+
+	blockingStarted := make(chan struct{})
+	blockingRelease := make(chan struct{})
+	blocking := &callbackPhaseTwoQueryGroup{run: func(context.Context) (
+		execution.SlotExecutionResult, bool, error,
+	) {
+		close(blockingStarted)
+		<-blockingRelease
+		return execution.SlotExecutionResult{}, false, nil
+	}}
+	var oldCalls, newCalls atomic.Int32
+	oldLifecycle := &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{run: func(context.Context) (
+		execution.SlotExecutionResult, bool, error,
+	) {
+		oldCalls.Add(1)
+		return execution.SlotExecutionResult{}, false, nil
+	}}}
+	newLifecycle := &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{run: func(context.Context) (
+		execution.SlotExecutionResult, bool, error,
+	) {
+		newCalls.Add(1)
+		return execution.SlotExecutionResult{}, false, nil
+	}}}
+	bundle := &phaseTwoWorkerBundle{
+		dependencies: phaseTwoWorkerBundleDependencies{Config: cfg, Now: time.Now},
+		runners: map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle{
+			"query-group-a-blocking": {runner: blocking},
+			"query-group-z-replaced": oldLifecycle,
+		},
+	}
+	done := make(chan error, 1)
+	go func() { done <- bundle.runScheduledOnce(context.Background()) }()
+	waitSignal(t, blockingStarted, "blocking Query Group")
+	bundle.mu.Lock()
+	bundle.runners["query-group-z-replaced"] = newLifecycle
+	bundle.mu.Unlock()
+	close(blockingRelease)
+	if err := <-done; err != nil {
+		t.Fatalf("runScheduledOnce(replacement) error = %v", err)
+	}
+	if got := oldCalls.Load(); got != 0 {
+		t.Fatalf("replaced lifecycle ran %d times", got)
+	}
+	newCallsBeforeNextTick := newCalls.Load()
+	bundle.mu.Lock()
+	delete(bundle.runners, "query-group-a-blocking")
+	bundle.mu.Unlock()
+	if err := bundle.runScheduledOnce(context.Background()); err != nil {
+		t.Fatalf("runScheduledOnce(current replacement) error = %v", err)
+	}
+	if got := newCalls.Load(); got != newCallsBeforeNextTick+1 {
+		t.Fatalf("current replacement lifecycle runs = %d, want %d", got, newCallsBeforeNextTick+1)
+	}
+}
+
+func TestPhaseTwoWorkerBundleRunKeepsControlTicksActiveWhileSchedulerIsBusy(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*config.Config)
+		observe   func(*signalingPhaseTwoControl, *signalingPhaseTwoOwnership) <-chan struct{}
+	}{
+		{
+			name: "refresh",
+			configure: func(cfg *config.Config) {
+				cfg.PhaseTwo.Control.RefreshInterval = config.Duration(2 * time.Millisecond)
+				cfg.PhaseTwo.Control.ReconcileInterval = config.Duration(time.Hour)
+			},
+			observe: func(control *signalingPhaseTwoControl, _ *signalingPhaseTwoOwnership) <-chan struct{} {
+				return control.refreshed
+			},
+		},
+		{
+			name: "reconcile",
+			configure: func(cfg *config.Config) {
+				cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Hour)
+				cfg.PhaseTwo.Control.ReconcileInterval = config.Duration(2 * time.Millisecond)
+			},
+			observe: func(_ *signalingPhaseTwoControl, owner *signalingPhaseTwoOwnership) <-chan struct{} {
+				return owner.assigned
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validGoAccessRuntimeConfig()
+			cfg.PhaseTwo.Scheduler.TickInterval = config.Duration(time.Millisecond)
+			test.configure(&cfg)
+			queryGroup := execution.QueryGroupIdentity("query-group-busy")
+			var schedulerBusy atomic.Bool
+			control := &signalingPhaseTwoControl{
+				fakePhaseTwoControl: &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{queryGroup}},
+				refreshed:           make(chan struct{}, 1),
+				busy:                &schedulerBusy,
+			}
+			owner := &signalingPhaseTwoOwnership{
+				fakePhaseTwoOwnership: &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{queryGroup}},
+				assigned:              make(chan struct{}, 4),
+				busy:                  &schedulerBusy,
+			}
+			runStarted := make(chan struct{})
+			var startOnce sync.Once
+			owner.runner = &callbackPhaseTwoQueryGroup{run: func(ctx context.Context) (
+				execution.SlotExecutionResult, bool, error,
+			) {
+				schedulerBusy.Store(true)
+				startOnce.Do(func() { close(runStarted) })
+				<-ctx.Done()
+				return execution.SlotExecutionResult{}, false, ctx.Err()
+			}}
+			bundle := mustPhaseTwoWorkerBundle(t, cfg, newPhaseTwoApplicationHealth(), control, owner)
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() { done <- bundle.Run(ctx) }()
+			waitSignal(t, runStarted, "busy scheduler Query Group")
+			waitSignal(t, test.observe(control, owner), test.name+" tick")
+			cancel()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("Run(cancel) error = %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("Run did not stop after scheduler and control cancellation")
+			}
+		})
 	}
 }
 
@@ -1466,6 +2110,22 @@ type fakePhaseTwoControl struct {
 	closeCalls           int
 }
 
+type signalingPhaseTwoControl struct {
+	*fakePhaseTwoControl
+	refreshed chan struct{}
+	busy      *atomic.Bool
+}
+
+func (control *signalingPhaseTwoControl) Refresh(ctx context.Context) (phaseTwoControlRefreshResult, error) {
+	if control.busy.Load() {
+		select {
+		case control.refreshed <- struct{}{}:
+		default:
+		}
+	}
+	return control.fakePhaseTwoControl.Refresh(ctx)
+}
+
 func (control *fakePhaseTwoControl) InitialRefresh(context.Context) (phaseTwoControlRefreshResult, error) {
 	control.initialRefreshCalls++
 	if control.beforeInitialRefresh != nil {
@@ -1532,6 +2192,25 @@ type fakePhaseTwoOwnership struct {
 	controlLeader  int
 	published      int
 	closeCalls     int
+}
+
+type signalingPhaseTwoOwnership struct {
+	*fakePhaseTwoOwnership
+	assigned chan struct{}
+	busy     *atomic.Bool
+}
+
+func (owner *signalingPhaseTwoOwnership) AssignedQueryGroups(
+	ctx context.Context,
+	queryGroups []execution.QueryGroupIdentity,
+) ([]execution.QueryGroupIdentity, error) {
+	if owner.busy.Load() {
+		select {
+		case owner.assigned <- struct{}{}:
+		default:
+		}
+	}
+	return owner.fakePhaseTwoOwnership.AssignedQueryGroups(ctx, queryGroups)
 }
 
 func (owner *fakePhaseTwoOwnership) TryAcquireControlLeader(context.Context, time.Time, time.Duration) (bool, error) {
@@ -1645,6 +2324,51 @@ type fakePhaseTwoQueryGroup struct {
 	onRun         func()
 }
 
+type callbackPhaseTwoQueryGroup struct {
+	run             func(context.Context) (execution.SlotExecutionResult, bool, error)
+	nextReadyAt     func() time.Time
+	operation       execution.Operation
+	beforeAdmission func(execution.Operation)
+}
+
+func (runner *callbackPhaseTwoQueryGroup) RunOne(ctx context.Context) (execution.SlotExecutionResult, bool, error) {
+	return runner.run(ctx)
+}
+
+func (runner *callbackPhaseTwoQueryGroup) RunOneAdmitted(
+	ctx context.Context,
+	admission scheduler.ExecutionAdmission,
+) (execution.SlotExecutionResult, bool, bool, error) {
+	operation := runner.operation
+	if operation == "" {
+		operation = execution.OperationNormal
+	}
+	if runner.beforeAdmission != nil {
+		runner.beforeAdmission(operation)
+	}
+	release, admitted := admission(operation)
+	if !admitted {
+		return execution.SlotExecutionResult{}, false, true, nil
+	}
+	defer release()
+	result, attempted, err := runner.run(ctx)
+	return result, attempted, false, err
+}
+
+func (runner *callbackPhaseTwoQueryGroup) NextReadyAt() time.Time {
+	if runner.nextReadyAt == nil {
+		return time.Time{}
+	}
+	return runner.nextReadyAt()
+}
+
+func (*callbackPhaseTwoQueryGroup) MaintainLease(ctx context.Context, _, _ time.Duration) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (*callbackPhaseTwoQueryGroup) Release(context.Context) error { return nil }
+
 func newFakePhaseTwoQueryGroup() *fakePhaseTwoQueryGroup {
 	return &fakePhaseTwoQueryGroup{leaseStarted: make(chan struct{}), leaseFinished: make(chan struct{})}
 }
@@ -1664,6 +2388,21 @@ func (runner *fakePhaseTwoQueryGroup) RunOne(context.Context) (execution.SlotExe
 	}
 	return runner.runResult, runner.attempted, runner.runErr
 }
+
+func (runner *fakePhaseTwoQueryGroup) RunOneAdmitted(
+	ctx context.Context,
+	admission scheduler.ExecutionAdmission,
+) (execution.SlotExecutionResult, bool, bool, error) {
+	release, admitted := admission(execution.OperationNormal)
+	if !admitted {
+		return execution.SlotExecutionResult{}, false, true, nil
+	}
+	defer release()
+	result, attempted, err := runner.RunOne(ctx)
+	return result, attempted, false, err
+}
+
+func (*fakePhaseTwoQueryGroup) NextReadyAt() time.Time { return time.Time{} }
 
 func (runner *fakePhaseTwoQueryGroup) MaintainLease(ctx context.Context, _, _ time.Duration) error {
 	close(runner.leaseStarted)

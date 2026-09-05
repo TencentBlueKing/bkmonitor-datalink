@@ -148,8 +148,85 @@ func TestRunnerBacksOffQGLocalSourceFailureAndAutomaticallyRechecks(t *testing.T
 	clock.Advance(testRecoveryLimits().RetryMinDelay)
 	source.err = nil
 	source.slot = frozenSlot("query-group-1")
-	if _, attempted, err = runner.RunOne(context.Background()); err != nil || !attempted || source.calls != 2 {
-		t.Fatalf("RunOne(after repair) attempted=%t calls=%d err=%v", attempted, source.calls, err)
+	var operation execution.Operation
+	if _, attempted, denied, runErr := runner.RunOneAdmitted(context.Background(), func(actual execution.Operation) (func(), bool) {
+		operation = actual
+		return func() {}, true
+	}); runErr != nil || denied || !attempted || source.calls != 2 {
+		t.Fatalf("RunOne(after repair) attempted=%t denied=%t calls=%d err=%v", attempted, denied, source.calls, runErr)
+	}
+	if operation != execution.OperationNormal {
+		t.Fatalf("operation after source retry = %s, want %s", operation, execution.OperationNormal)
+	}
+}
+
+func TestRunnerNextReadyAtUsesLatestSourceOrExecutionBackoff(t *testing.T) {
+	base := time.Unix(200, 0)
+	tests := []struct {
+		name         string
+		sourceNextAt time.Time
+		attemptNext  time.Time
+		want         time.Time
+	}{
+		{name: "immediate"},
+		{name: "source", sourceNextAt: base.Add(time.Second), attemptNext: base, want: base.Add(time.Second)},
+		{name: "execution", sourceNextAt: base, attemptNext: base.Add(2 * time.Second), want: base.Add(2 * time.Second)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &Runner{sourceNextAt: test.sourceNextAt}
+			if !test.attemptNext.IsZero() {
+				runner.attempt = &recoveryAttempt{nextAt: test.attemptNext}
+			}
+			if got := runner.NextReadyAt(); !got.Equal(test.want) {
+				t.Fatalf("NextReadyAt() = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
+func TestRunnerUsesFrozenOperationForExecutionAdmission(t *testing.T) {
+	now := time.UnixMilli(1_700_000_000_000)
+	slot := frozenSlot("query-group-1")
+	slot.Dispatch.Operation = execution.OperationReplay
+	slot.Recovery = SlotRecoveryFacts{Disposition: ReplayEligible, Distance: 1, Age: time.Minute}
+	source := &fakeSlotSource{slot: slot}
+	executor := &blockingExecutor{}
+	runner, err := NewRunner(
+		"query-group-1", &fakeSession{fence: slot.Dispatch.OwnerFence}, source, executor,
+		NewFlightCoordinator(), func() time.Time { return now },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var operation execution.Operation
+	result, attempted, denied, err := runner.RunOneAdmitted(context.Background(), func(actual execution.Operation) (func(), bool) {
+		operation = actual
+		return nil, false
+	})
+	if err != nil || !denied || attempted || result != (execution.SlotExecutionResult{}) {
+		t.Fatalf("RunOneAdmitted(denied) = (%+v, %t, %t, %v)", result, attempted, denied, err)
+	}
+	if operation != execution.OperationReplay {
+		t.Fatalf("admission operation = %s, want %s", operation, execution.OperationReplay)
+	}
+	if source.calls != 1 || executor.calls != 0 || runner.attempt != nil {
+		t.Fatalf("denied admission changed execution state: source=%d executor=%d attempt=%+v",
+			source.calls, executor.calls, runner.attempt)
+	}
+	released := false
+	result, attempted, denied, err = runner.RunOneAdmitted(context.Background(), func(actual execution.Operation) (func(), bool) {
+		if actual != execution.OperationReplay {
+			t.Fatalf("second admission operation = %s, want %s", actual, execution.OperationReplay)
+		}
+		return func() { released = true }, true
+	})
+	if err != nil || denied || !attempted || !result.Completed {
+		t.Fatalf("RunOneAdmitted(retry) = (%+v, %t, %t, %v)", result, attempted, denied, err)
+	}
+	if source.calls != 2 || executor.calls != 1 || !released {
+		t.Fatalf("re-read open Slot state: source=%d executor=%d released=%t, want 2/1/true",
+			source.calls, executor.calls, released)
 	}
 }
 

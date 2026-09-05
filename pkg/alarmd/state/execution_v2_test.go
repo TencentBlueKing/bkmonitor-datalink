@@ -8,6 +8,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -19,14 +20,43 @@ import (
 type casMemoryBackend struct {
 	values   map[string][]byte
 	conflict bool
+	reads    int
 }
 
 func (backend *casMemoryBackend) MGet(_ context.Context, keys []string) ([][]byte, error) {
+	backend.reads += len(keys)
 	result := make([][]byte, len(keys))
 	for i, key := range keys {
 		result[i] = append([]byte(nil), backend.values[key]...)
 	}
 	return result, nil
+}
+
+func TestIncrementalGapLoadStopsBeforeNextReadOnRejectionAndCancel(t *testing.T) {
+	backend := &casMemoryBackend{values: make(map[string][]byte)}
+	router, _ := NewFixedRouter("target", backend)
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, RuntimeTTL: time.Hour})
+	loader, ok := any(store).(interface {
+		LoadGapsInto(context.Context, execution.GapLoadRequest, func(execution.GapGuardSnapshot) error) error
+	})
+	if !ok {
+		t.Fatal("Gap loader cannot admit facts before retaining the complete result")
+	}
+	first := execution.PlanGapLoadItem{Identity: execution.PlanGapIdentity{Plan: stateIdentityV2().Plan, StateGeneration: "generation"}, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1"}
+	second := first
+	second.Identity.Plan.StrategyID = "10"
+	request := execution.GapLoadRequest{Contract: frozenRef(), Items: []execution.PlanGapLoadItem{first, second}}
+	denied := errors.New("budget denied")
+	err := loader.LoadGapsInto(context.Background(), request, func(execution.GapGuardSnapshot) error { return denied })
+	if !errors.Is(err, denied) || backend.reads != 1 {
+		t.Fatalf("rejection err=%v reads=%d", err, backend.reads)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	backend.reads = 0
+	err = loader.LoadGapsInto(ctx, request, func(execution.GapGuardSnapshot) error { cancel(); return nil })
+	if !errors.Is(err, context.Canceled) || backend.reads != 1 {
+		t.Fatalf("cancel err=%v reads=%d", err, backend.reads)
+	}
 }
 func (*casMemoryBackend) SetMany(context.Context, []BackendWrite) error { return nil }
 func (backend *casMemoryBackend) CompareAndSet(_ context.Context, key string, expected []byte, missing bool, value []byte, _ time.Duration) (bool, error) {

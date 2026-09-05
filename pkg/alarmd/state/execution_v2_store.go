@@ -277,11 +277,28 @@ func (store *ExecutionStore) readOne(ctx context.Context, plan execution.PlanIde
 }
 
 func (store *ExecutionStore) LoadGaps(ctx context.Context, request execution.GapLoadRequest) (execution.GapLoadResult, error) {
-	if err := request.Contract.Validate(); err != nil || len(request.Items) == 0 || len(request.Items) > store.options.MaxItemsPerCall {
-		return execution.GapLoadResult{}, fmt.Errorf("state: invalid gap load request")
+	result := execution.GapLoadResult{}
+	err := store.LoadGapsInto(ctx, request, func(snapshot execution.GapGuardSnapshot) error {
+		result.Items = append(result.Items, snapshot)
+		return nil
+	})
+	if err != nil {
+		return execution.GapLoadResult{}, err
 	}
-	result := execution.GapLoadResult{Items: make([]execution.GapGuardSnapshot, len(request.Items))}
-	for index, item := range request.Items {
+	return result, execution.ValidateGapLoad(request, result)
+}
+
+func (store *ExecutionStore) LoadGapsInto(ctx context.Context, request execution.GapLoadRequest, accept func(execution.GapGuardSnapshot) error) error {
+	if err := request.Contract.Validate(); err != nil || len(request.Items) == 0 || len(request.Items) > store.options.MaxItemsPerCall {
+		return fmt.Errorf("state: invalid gap load request")
+	}
+	if accept == nil {
+		return fmt.Errorf("state: gap consumer is required")
+	}
+	for _, item := range request.Items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		snapshot := execution.GapGuardSnapshot{Identity: item.Identity, Status: execution.GapMissing}
 		raw, err := store.readOne(ctx, item.Identity.Plan, func() (string, error) { return PlanGapKeyV2(store.options.Prefix, item.Identity) })
 		if err != nil {
@@ -298,9 +315,15 @@ func (store *ExecutionStore) LoadGaps(ctx context.Context, request execution.Gap
 				snapshot = decodeGap(raw, item.Identity, request.Contract, item)
 			}
 		}
-		result.Items[index] = snapshot
+		one := execution.GapLoadRequest{Contract: request.Contract, Items: []execution.PlanGapLoadItem{item}}
+		if err := execution.ValidateGapLoad(one, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{snapshot}}); err != nil {
+			return err
+		}
+		if err := accept(snapshot); err != nil {
+			return err
+		}
 	}
-	return result, execution.ValidateGapLoad(request, result)
+	return nil
 }
 
 func (store *ExecutionStore) ApplyGap(ctx context.Context, request execution.GapGuardApplyRequest) (execution.GapGuardApplyResult, error) {

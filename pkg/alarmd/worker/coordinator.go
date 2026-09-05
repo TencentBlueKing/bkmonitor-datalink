@@ -49,6 +49,10 @@ type processProvisionalReservations struct {
 	mu            sync.Mutex
 	series        uint64
 	retainedBytes uint64
+	states        uint64
+	events        uint64
+	gaps          uint64
+	gapFacts      uint64
 }
 
 type ProvisionalBudget struct {
@@ -218,6 +222,11 @@ func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(
 	request execution.SlotExecutionRequest,
 	finalization execution.QueryFreeFinalization,
 ) (execution.SlotExecutionResult, error) {
+	owner := &streamedExecution{coordinator: coordinator, request: request}
+	defer owner.releaseProvisional()
+	if err := owner.retainTargets(ctx, len(finalization.Targets.Plans), finalization.Targets.Plans); err != nil {
+		return execution.SlotExecutionResult{}, err
+	}
 	plans := append([]execution.PlanIdentity(nil), finalization.Targets.Plans...)
 	sort.Slice(plans, func(left, right int) bool { return lessPlanIdentity(plans[left], plans[right]) })
 	activationRequest := execution.PlanActivationRequest{Contract: request.Contract, Plans: plans}
@@ -464,6 +473,11 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 	activations execution.PlanActivationResult,
 	reuseSufficientQueryFreeProtection bool,
 ) (bool, error) {
+	owner := &streamedExecution{coordinator: coordinator, request: request}
+	defer owner.releaseProvisional()
+	if err := owner.retainTargets(ctx, len(activations.Facts), activations); err != nil {
+		return false, err
+	}
 	items := make([]execution.PlanGapLoadItem, 0, len(activations.Facts))
 	for _, fact := range activations.Facts {
 		if fact.Selection == execution.ActivationNone {
@@ -489,7 +503,7 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 	}
 	started := time.Now()
 	loadRequest := execution.GapLoadRequest{Contract: request.Contract, Items: items}
-	loaded, err := coordinator.ports.GapGuard.LoadGaps(ctx, loadRequest)
+	loaded, err := owner.loadGapFacts(ctx, loadRequest)
 	if err == nil {
 		err = execution.ValidateGapLoad(loadRequest, loaded)
 	}
@@ -543,6 +557,9 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 				}
 				return false, errors.New("alarmd worker: activated Plan gap marker conflicts with the Slot")
 			}
+		}
+		if err := owner.retainGapMutation(ctx, mutation); err != nil {
+			return false, err
 		}
 		mutations = append(mutations, mutation)
 	}

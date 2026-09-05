@@ -283,15 +283,12 @@ func (e *Evaluator) evaluateSeries(
 		}
 		ordered[index] = input
 	}
-	primaryRecords, err := commonPrimaryRecords(ordered)
+	primaryRecords, err := commonPrimaryRecords(ordered, e.limits.MaxRecords)
 	if err != nil {
 		return execution.PlanEvaluationResult{}, err
 	}
 	if len(primaryRecords) == 0 {
 		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named-input series has no PRIMARY record")
-	}
-	if uint64(len(primaryRecords)) > e.limits.MaxRecords {
-		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named-input record budget exceeded")
 	}
 	prepared, err := e.detect.PreparePlan(due.CompiledPlan)
 	if err != nil {
@@ -352,7 +349,7 @@ func (e *Evaluator) evaluateSeries(
 	return result, nil
 }
 
-func commonPrimaryRecords(inputs []execution.SeriesEvaluationInputRequest) ([]execution.RecordView, error) {
+func commonPrimaryRecords(inputs []execution.SeriesEvaluationInputRequest, maxRecords uint64) ([]execution.RecordView, error) {
 	var canonical []execution.RecordView
 	for _, input := range inputs {
 		var primary *execution.DatasetView
@@ -370,6 +367,9 @@ func commonPrimaryRecords(inputs []execution.SeriesEvaluationInputRequest) ([]ex
 		}
 		if primary == nil {
 			return nil, errors.New("alarmd evaluation: PRIMARY named input is missing")
+		}
+		if uint64(primary.Len()) > maxRecords {
+			return nil, errors.New("alarmd evaluation: named-input record budget exceeded")
 		}
 		records := make([]execution.RecordView, primary.Len())
 		for index := range records {

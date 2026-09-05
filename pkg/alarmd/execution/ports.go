@@ -51,6 +51,10 @@ type SideEffectAdmitter interface {
 
 type GapGuardStore interface {
 	LoadGaps(context.Context, GapLoadRequest) (GapLoadResult, error)
+	// LoadGapsInto emits one validated fact at a time, in request order. It
+	// does not retain emitted facts and stops before the next read when accept
+	// fails or the context is canceled. The caller owns accepted references.
+	LoadGapsInto(context.Context, GapLoadRequest, func(GapGuardSnapshot) error) error
 	ApplyGap(context.Context, GapGuardApplyRequest) (GapGuardApplyResult, error)
 }
 

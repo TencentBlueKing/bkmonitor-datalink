@@ -1389,6 +1389,19 @@ func (ports *recordingPorts) LoadRuntime(_ context.Context, request execution.St
 	return execution.StatePreflightResult{Items: items}, ports.fail("state_load")
 }
 
+func (ports *recordingPorts) LoadGapsInto(ctx context.Context, request execution.GapLoadRequest, accept func(execution.GapGuardSnapshot) error) error {
+	result, err := ports.LoadGaps(ctx, request)
+	if err != nil {
+		return err
+	}
+	for _, item := range result.Items {
+		if err := accept(item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (ports *recordingPorts) LoadGaps(_ context.Context, request execution.GapLoadRequest) (execution.GapLoadResult, error) {
 	ports.record("gap_load")
 	items := make([]execution.GapGuardSnapshot, len(request.Items))

@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -37,8 +38,9 @@ var errPhaseTwoWorkerDraining = errors.New("phase-two Go Access worker is draini
 var errPhaseTwoWorkerStopped = errors.New("phase-two Go Access worker stopped before application shutdown")
 
 type phaseTwoApplicationDependencies struct {
-	run        func(context.Context, config.Config, *metric.Recorder, *observability.Logger) error
-	openBundle func(
+	configureCPU func() (string, error)
+	run          func(context.Context, config.Config, *metric.Recorder, *observability.Logger) error
+	openBundle   func(
 		context.Context,
 		config.Config,
 		*metric.Recorder,
@@ -56,7 +58,8 @@ type runtimeModeDependencies struct {
 
 func defaultPhaseTwoApplicationDependencies() phaseTwoApplicationDependencies {
 	return phaseTwoApplicationDependencies{
-		run: runPhaseTwoApplication, openBundle: openProductionPhaseTwoBundle,
+		configureCPU: configurePhaseTwoCPU,
+		run:          runPhaseTwoApplication, openBundle: openProductionPhaseTwoBundle,
 		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource) (httpRuntime, error) {
 			return defaultApplicationDependencies(nil).newHTTP(recorder, source)
 		},
@@ -115,6 +118,17 @@ func runPhaseTwoApplicationWithDependencies(
 	if err != nil {
 		return err
 	}
+	cpuSource := "runtime_default"
+	if dependencies.configureCPU != nil {
+		cpuSource, err = dependencies.configureCPU()
+		if err != nil {
+			return err
+		}
+	}
+	profile, err := phaseTwoRuntimeProfile(cfg, cpuSource, runtime.GOMAXPROCS(0))
+	if err != nil {
+		return fmt.Errorf("derive phase-two runtime profile: %w", err)
+	}
 	if logger == nil {
 		logger = observability.Discard(observability.ComponentRuntime)
 	}
@@ -137,6 +151,7 @@ func runPhaseTwoApplicationWithDependencies(
 		return errors.Join(err, normalizeRuntimeShutdownError(httpErr, false))
 	}
 	bundleDone := make(chan error, 1)
+	bundle.runtimeConfig = &profile
 	go func() { bundleDone <- bundle.Run(runtimeContext) }()
 
 	var runErr, httpErr error
@@ -250,7 +265,8 @@ type phaseTwoWorkerBundleDependencies struct {
 }
 
 type phaseTwoWorkerBundle struct {
-	dependencies phaseTwoWorkerBundleDependencies
+	runtimeConfig *observability.RuntimeConfigFacts
+	dependencies  phaseTwoWorkerBundleDependencies
 
 	registrationMu        sync.Mutex
 	mu                    sync.RWMutex
@@ -349,7 +365,10 @@ func (bundle *phaseTwoWorkerBundle) Start(ctx context.Context) error {
 	bundle.maintenanceCtx, bundle.cancelMaintain = context.WithCancel(context.Background())
 	bundle.mu.Unlock()
 	bundle.observe(ctx, observability.ComponentRuntime, observability.Stage(observability.StageStartup), observability.ResultStarted, nil)
-	bundle.observe(ctx, observability.ComponentRuntime, observability.StageConfigLoaded, observability.ResultSuccess, nil)
+	bundle.dependencies.Observer.Observe(ctx, observability.Observation{
+		Component: observability.ComponentRuntime, Stage: observability.StageConfigLoaded,
+		Result: observability.ResultSuccess, RuntimeConfig: bundle.runtimeConfig,
+	})
 	if err := bundle.register(ctx, ownership.WorkerStarting); err != nil {
 		return err
 	}

@@ -2,6 +2,7 @@ import {
   capabilitySchema,
   controlPlaneRuntimeSchema,
   elasticsearchTopologySchema,
+  elasticsearchPerformanceSchema,
   kafkaInfrastructureSchema,
   entityItemSchema,
   entityPageSchema,
@@ -149,6 +150,12 @@ export async function getConfigSummary(): Promise<ConfigResponse> {
 export async function getElasticsearchTopology(): Promise<ElasticsearchTopology> {
   return elasticsearchTopologySchema.parse(
     await request("/local-api/elasticsearch/topology"),
+  );
+}
+
+export async function getElasticsearchPerformance() {
+  return elasticsearchPerformanceSchema.parse(
+    await request("/local-api/elasticsearch/performance"),
   );
 }
 

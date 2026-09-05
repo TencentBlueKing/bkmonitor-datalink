@@ -60,6 +60,9 @@
   相同 log_id 和内容为幂等，内容不同返回 `ErrIdentityConflict`；
 - Elasticsearch 使用 `_bulk?refresh=false` 追加 AlertLog；409 使用 realtime GET 核对内容。Bulk
   成功不保证日志已经能被 `_search` 或 PIT 查询到，调用方必须接受 refresh interval 内的短暂缺口；
+- AlertLog 索引的 translog durability 默认使用 `async`，降低逐 Event AlertLog 写入的同步成本；进程、
+  宿主或存储故障时可能丢失最近一个 translog sync interval 内已确认的日志。Event、Active Alert 和
+  Alert History 保持 `request` durability；
 - `ListAlertLogs` 只读取指定租户和 Alert，按 `created_time + log_id` 稳定升序分页；
 - 默认分页 100，最大 500；cursor 绑定对象类型、租户、父 Alert 和物理读目标，不能跨查询复用；
 - `QueryAlertByEvent` 总是返回 Event；Event accepted/suppressed 且 related_alert_id 存在时返回关联 Alert；
@@ -70,7 +73,9 @@
 - MySQL：`linkd_events`、`linkd_alerts`、`linkd_alert_logs`。
 - Elasticsearch 稳定读 alias 为 `<prefix>-events`、`<prefix>-alerts`、`<prefix>-alerts-active`、
   `<prefix>-alert-history`、`<prefix>-alert-logs`。Event、AlertHistory、AlertLog 物理索引按 UTC 时间桶创建，
-  Active Alert 使用单一热索引，`refresh_interval` 默认 5 秒且可通过 YAML 配置；时间桶默认 7 天。
+  Active Alert 使用单一热索引；Active 和非 Active 时间桶的 `refresh_interval` 分别配置，默认均为 5 秒；
+  AlertLog 的 translog durability 可独立配置，默认 `async`；
+  时间桶默认 7 天。
 - 数据进程只通过 `require_alias=true` 写入 Bucket Manager 创建的 per-bucket write alias。
   `control-plane` 分别装配 Schema 与 Active 资源对账、时间桶维护和遗留终态 Alert 归档任务；三者共享连接，
   前两项使用独立周期，归档使用连续批量循环，且没有各自的常驻 command。缺失目标时数据写入和归档失败，

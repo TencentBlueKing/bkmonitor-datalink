@@ -36,8 +36,8 @@ control_plane:
 		t.Fatalf("control plane=%#v", cfg.ControlPlane)
 	}
 	stream := cfg.ControlPlane.RedisStream
-	if stream.ReconcileInterval() != time.Minute || stream.OperationTimeout() != 10*time.Second ||
-		stream.MaxEntries != 100000 || stream.TrimBatchSize != 10000 {
+	if stream.ReconcileInterval() != 10*time.Second || stream.OperationTimeout() != 3*time.Second ||
+		stream.MaxEntries != 100000 || stream.TrimBatchSize != 10000 || stream.MaxTrimEntriesPerCycle != 100000 {
 		t.Fatalf("redis stream defaults=%#v", stream)
 	}
 }
@@ -61,8 +61,8 @@ control_plane:
 	manager := cfg.ControlPlane.Elasticsearch
 	if manager.SchemaAndActiveReconcileInterval() != time.Hour ||
 		manager.BucketReconcileInterval() != 6*time.Hour ||
-		manager.ArchiveInterval() != 30*time.Second || manager.ArchiveBatchSize != 1000 ||
-		manager.ArchiveWorkerCount != 4 {
+		manager.ArchiveInterval() != 5*time.Second || manager.ArchiveBatchSize != 1000 ||
+		manager.ArchiveWorkerCount != 1 {
 		t.Fatalf("elasticsearch control plane defaults=%#v", manager)
 	}
 }
@@ -183,6 +183,22 @@ func TestRedisStreamManagerConfigValidation(t *testing.T) {
 		},
 		{name: "max entries", config: RedisStreamManagerConfig{MaxEntries: -1}, wantError: "max_entries"},
 		{name: "trim batch", config: RedisStreamManagerConfig{TrimBatchSize: -1}, wantError: "trim_batch_size"},
+		{
+			name: "cycle trim below batch",
+			config: RedisStreamManagerConfig{
+				TrimBatchSize:          100,
+				MaxTrimEntriesPerCycle: 99,
+			},
+			wantError: "must not be less than trim_batch_size",
+		},
+		{
+			name: "cycle trim exceeds command budget",
+			config: RedisStreamManagerConfig{
+				TrimBatchSize:          100,
+				MaxTrimEntriesPerCycle: 10001,
+			},
+			wantError: "must not exceed 100 times trim_batch_size",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -191,5 +207,19 @@ func TestRedisStreamManagerConfigValidation(t *testing.T) {
 				t.Fatalf("Validate() error=%v, want containing %q", err, test.wantError)
 			}
 		})
+	}
+}
+
+func TestRedisStreamManagerConfigDefaultsDeriveCycleTrimBudget(t *testing.T) {
+	t.Parallel()
+	defaults := (RedisStreamManagerConfig{}).WithDefaults()
+	if defaults.ReconcileIntervalSeconds != 10 || defaults.OperationTimeoutSeconds != 3 ||
+		defaults.MaxEntries != 100000 || defaults.TrimBatchSize != 10000 || defaults.MaxTrimEntriesPerCycle != 100000 {
+		t.Fatalf("defaults=%#v", defaults)
+	}
+
+	custom := (RedisStreamManagerConfig{TrimBatchSize: 250}).WithDefaults()
+	if custom.MaxTrimEntriesPerCycle != 2500 {
+		t.Fatalf("derived max trim entries per cycle=%d, want 2500", custom.MaxTrimEntriesPerCycle)
 	}
 }

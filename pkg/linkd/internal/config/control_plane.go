@@ -17,13 +17,14 @@ import (
 const (
 	defaultElasticsearchSchemaAndActiveReconcileIntervalSeconds = 3600
 	defaultElasticsearchBucketReconcileIntervalSeconds          = 21600
-	defaultElasticsearchArchiveIntervalSeconds                  = 30
+	defaultElasticsearchArchiveIntervalSeconds                  = 5
 	defaultElasticsearchArchiveBatchSize                        = 1000
-	defaultElasticsearchArchiveWorkerCount                      = 4
-	defaultRedisStreamReconcileIntervalSeconds                  = 60
-	defaultRedisStreamOperationTimeoutSeconds                   = 10
+	defaultElasticsearchArchiveWorkerCount                      = 1
+	defaultRedisStreamReconcileIntervalSeconds                  = 10
+	defaultRedisStreamOperationTimeoutSeconds                   = 3
 	defaultRedisStreamMaxEntries                                = 100000
 	defaultRedisStreamTrimBatchSize                             = 10000
+	defaultRedisStreamTrimBatchesPerCycle                       = 10
 )
 
 // ControlPlaneConfig 描述控制面独占执行的低吞吐管理任务。
@@ -54,8 +55,10 @@ type RedisStreamManagerConfig struct {
 	OperationTimeoutSeconds int `yaml:"operation_timeout_seconds"`
 	// MaxEntries 是触发安全裁剪的软长度上限。
 	MaxEntries int64 `yaml:"max_entries"`
-	// TrimBatchSize 限制单轮裁剪检查和删除的条目数。
+	// TrimBatchSize 限制单条 Redis 裁剪命令检查和删除的条目数。
 	TrimBatchSize int64 `yaml:"trim_batch_size"`
+	// MaxTrimEntriesPerCycle 限制单轮累计裁剪的条目数。
+	MaxTrimEntriesPerCycle int64 `yaml:"max_trim_entries_per_cycle"`
 }
 
 // WithDefaults 返回补齐控制面管理任务默认值且不共享嵌套配置的副本。
@@ -105,6 +108,9 @@ func (c RedisStreamManagerConfig) WithDefaults() RedisStreamManagerConfig {
 	}
 	if c.TrimBatchSize == 0 {
 		c.TrimBatchSize = defaultRedisStreamTrimBatchSize
+	}
+	if c.MaxTrimEntriesPerCycle == 0 {
+		c.MaxTrimEntriesPerCycle = c.TrimBatchSize * defaultRedisStreamTrimBatchesPerCycle
 	}
 	return c
 }
@@ -185,6 +191,12 @@ func (c RedisStreamManagerConfig) Validate() error {
 	}
 	if c.TrimBatchSize < 1 || c.TrimBatchSize > 1_000_000 {
 		return fmt.Errorf("trim_batch_size must be between 1 and 1000000")
+	}
+	if c.MaxTrimEntriesPerCycle < c.TrimBatchSize {
+		return fmt.Errorf("max_trim_entries_per_cycle must not be less than trim_batch_size")
+	}
+	if c.MaxTrimEntriesPerCycle > c.TrimBatchSize*100 {
+		return fmt.Errorf("max_trim_entries_per_cycle must not exceed 100 times trim_batch_size")
 	}
 	return nil
 }

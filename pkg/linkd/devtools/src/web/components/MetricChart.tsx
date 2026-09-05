@@ -70,7 +70,9 @@ export function MetricChart({ panel }: { panel: MetricPanel }) {
       series: panel.series.map((series) => ({
         name: series.name,
         type: "line",
-        smooth: 0.25,
+        // 保留真实采样拐点，避免平滑曲线掩盖吞吐下降或虚构峰值。
+        smooth: false,
+        connectNulls: false,
         symbol: "none",
         areaStyle: panel.kind === "area" ? { opacity: 0.08 } : undefined,
         data: series.points.map(([timestamp, value]) => [
@@ -89,6 +91,17 @@ export function MetricChart({ panel }: { panel: MetricPanel }) {
 
   if (panel.status === "unavailable") {
     return <div className="chart-empty">{panel.message ?? "未接入"}</div>;
+  }
+  if (
+    !panel.series.some((s) =>
+      s.points.some(([, value]) => value !== null && Number.isFinite(value)),
+    )
+  ) {
+    return (
+      <div className="chart-empty">
+        窗口内没有可计算样本；无请求时均值和分位数不等于 0。
+      </div>
+    );
   }
   return <div ref={root} className="metric-chart" />;
 }

@@ -1,5 +1,14 @@
 # Lifecycle
 
+Elasticsearch runtime 默认使用进程内共享合批器，将不同 Mailbox 已就绪的 Event result CAS、Alert
+CAS/create 和 AlertLog create 合并发送。现有校验、缓存修复和错误映射由 Repository 继续负责；
+调用方收到对应 item 成功后才进入下一步，不能提前输出或 ACK。批次内 CAS 校验与冲突核对使用
+realtime `_mget`；正常关联查询保持不变。写批次参数自动匹配 Lifecycle 并发，不允许独立手调：
+单批上限为并发的一半（向下取整、最少 1、最多 100），等待为该上限的毫秒值（单项不等待），
+执行上限为并发数与 32 的较小值；默认并发 32 对应 16 项、16ms、32 批，字节预算默认 4 MiB。
+读队列只合入已就绪请求，不等待写期限；
+读写共享执行并发上限。实际批次大小还受调用方并发与写入依赖限制。完整配置见[配置指南](../guides/configuration.md)。
+
 Lifecycle 负责把已经持久化的 unprocessed Event 裁决为 Alert 创建、推进、终结、等级升级、抑制或
 孤儿结果，并写回 EventProcessing。它不接收原始 MQ payload，也不负责 Cleaner 的 Event 创建和 ACK。
 
@@ -239,7 +248,8 @@ Control Plane 的 Alert Archiver 使用稳定游标连续扫描 Active 索引中
 Worker 先 Bulk create-only 写入对应 History 时间桶，再只对 History 已确认成功或内容一致的幂等副本按 Active
 原 `_seq_no/_primary_term` 执行 Bulk delete。单项失败保留 Active 并在下一轮扫描重试，不阻塞当前轮后续
 Alert，也不让 Lifecycle 重试已经成功的终态 CAS。归档过渡期间 Active 与 History 中允许存在内容完全一致的
-同一 Alert，逻辑读取将其折叠为一个对象。
+同一 Alert，逻辑读取将其折叠为一个对象。History create 和 Active delete 都使用 `refresh=false`，
+409 幂等冲突使用 realtime `_mget` 核对；搜索可见性由 Elasticsearch refresh 最终提供，不属于归档提交点。
 
 ## 6. 幂等与部分成功恢复
 

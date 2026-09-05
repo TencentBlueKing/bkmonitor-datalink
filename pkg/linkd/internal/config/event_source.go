@@ -61,10 +61,12 @@ type EventSourceStorageConfig struct {
 
 // KafkaStorageConfig 定义 EventSource 的 Kafka subscription 与安全参数。
 type KafkaStorageConfig struct {
-	Brokers       []string                   `yaml:"brokers"`
-	Topic         string                     `yaml:"topic"`
-	ConsumerGroup string                     `yaml:"consumer_group"`
-	Security      kafkaclient.SecurityConfig `yaml:"security"`
+	Brokers       []string `yaml:"brokers"`
+	Topic         string   `yaml:"topic"`
+	ConsumerGroup string   `yaml:"consumer_group"`
+	// FetchMaxWaitMilliseconds 限制 broker 空拉取等待；不控制 Cleaner 或 ES 合批。
+	FetchMaxWaitMilliseconds int                        `yaml:"fetch_max_wait_milliseconds"`
+	Security                 kafkaclient.SecurityConfig `yaml:"security"`
 }
 
 // WithDefaults 补齐 fingerprint、Cleaner 和安全协议默认值并深拷贝配置。
@@ -80,6 +82,9 @@ func (s EventSource) WithDefaults() EventSource {
 		s.FingerprintField = "source_alert_id"
 	}
 	s.Storage.Kafka.Security = s.Storage.Kafka.Security.WithDefaults()
+	if s.Storage.Kafka.FetchMaxWaitMilliseconds == 0 {
+		s.Storage.Kafka.FetchMaxWaitMilliseconds = 100
+	}
 	return s
 }
 
@@ -238,6 +243,9 @@ func (s EventSource) MapSeverity(raw string, severity SeverityConfig) (string, e
 }
 
 func (c KafkaStorageConfig) validate() error {
+	if c.FetchMaxWaitMilliseconds < 10 || c.FetchMaxWaitMilliseconds > 5000 {
+		return fmt.Errorf("fetch_max_wait_milliseconds must be between 10 and 5000")
+	}
 	if len(c.Brokers) == 0 {
 		return fmt.Errorf("brokers must contain at least one broker")
 	}

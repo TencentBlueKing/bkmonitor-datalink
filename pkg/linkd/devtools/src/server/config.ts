@@ -86,6 +86,56 @@ const lifecycleMailboxBackpressureSchema = z
     }
   });
 
+const redisConfigSchema = z
+  .object({
+    mode: z.enum(["standalone", "sentinel"]).default("standalone"),
+    address: z.string().min(1).optional(),
+    username: z.string().optional(),
+    password: z.string().optional(),
+    database: z.number().int().nonnegative().default(0),
+    sentinel: z
+      .object({
+        master_name: z.string().min(1),
+        addresses: z.array(z.string().min(1)).min(1),
+        username: z.string().optional(),
+        password: z.string().optional(),
+      })
+      .optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.mode === "standalone") {
+      if (!value.address) {
+        context.addIssue({
+          code: "custom",
+          path: ["address"],
+          message: "is required in standalone mode",
+        });
+      }
+      if (value.sentinel) {
+        context.addIssue({
+          code: "custom",
+          path: ["sentinel"],
+          message: "must be omitted in standalone mode",
+        });
+      }
+      return;
+    }
+    if (value.address) {
+      context.addIssue({
+        code: "custom",
+        path: ["address"],
+        message: "must be omitted in sentinel mode",
+      });
+    }
+    if (!value.sentinel) {
+      context.addIssue({
+        code: "custom",
+        path: ["sentinel"],
+        message: "is required in sentinel mode",
+      });
+    }
+  });
+
 const linkdConfigSchema = z
   .object({
     storage: z
@@ -148,20 +198,25 @@ const linkdConfigSchema = z
               .optional(),
           })
           .optional(),
-        redis: z
-          .object({
-            address: z.string().min(1),
-            username: z.string().optional(),
-            password: z.string().optional(),
-            database: z.number().int().nonnegative().default(0),
-          })
-          .optional(),
+        redis: redisConfigSchema.optional(),
       })
       .passthrough(),
     cleaner: cleanerRuntimeSchema,
     lifecycle: z
       .object({
-        concurrency: z.number().int().positive().default(8),
+        concurrency: z.number().int().min(1).max(1024).default(32),
+        elasticsearch_write_batch: z
+          .object({
+            enabled: z.boolean().default(true),
+            max_bytes: z
+              .number()
+              .int()
+              .min(1048576)
+              .max(16777216)
+              .default(4194304),
+          })
+          .strict()
+          .prefault({}),
         process_timeout_seconds: z.number().int().positive().default(30),
         retry_max_attempts: z.number().int().positive().default(3),
         retry_max_elapsed_seconds: z.number().int().positive().default(120),
@@ -230,17 +285,36 @@ const linkdConfigSchema = z
               .int()
               .positive()
               .default(21600),
-            archive_interval_seconds: z.number().int().positive().default(30),
+            archive_interval_seconds: z.number().int().positive().default(5),
             archive_batch_size: z.number().int().positive().default(1000),
-            archive_worker_count: z.number().int().positive().default(4),
+            archive_worker_count: z.number().int().positive().default(1),
           })
           .optional(),
         redis_stream: z
           .object({
-            reconcile_interval_seconds: z.number().int().positive().default(60),
-            operation_timeout_seconds: z.number().int().positive().default(10),
+            reconcile_interval_seconds: z.number().int().positive().default(10),
+            operation_timeout_seconds: z.number().int().positive().default(3),
             max_entries: z.number().int().positive().default(100_000),
             trim_batch_size: z.number().int().positive().default(10_000),
+            max_trim_entries_per_cycle: z.number().int().positive().optional(),
+          })
+          .superRefine((value, context) => {
+            const maxTrimEntriesPerCycle =
+              value.max_trim_entries_per_cycle ?? value.trim_batch_size * 10;
+            if (maxTrimEntriesPerCycle < value.trim_batch_size) {
+              context.addIssue({
+                code: "custom",
+                path: ["max_trim_entries_per_cycle"],
+                message: "must not be less than trim_batch_size",
+              });
+            }
+            if (maxTrimEntriesPerCycle > value.trim_batch_size * 100) {
+              context.addIssue({
+                code: "custom",
+                path: ["max_trim_entries_per_cycle"],
+                message: "must not exceed 100 times trim_batch_size",
+              });
+            }
           })
           .optional(),
       })
@@ -273,6 +347,12 @@ const linkdConfigSchema = z
               type: z.literal("kafka"),
               kafka: kafkaConfigSchema.extend({
                 consumer_group: z.string().min(1),
+                fetch_max_wait_milliseconds: z
+                  .number()
+                  .int()
+                  .min(10)
+                  .max(5000)
+                  .default(100),
               }),
             }),
           })
@@ -304,7 +384,10 @@ export interface EventSourceConfig {
   enabled: boolean;
   cleanerType: string;
   runtime: CleanerRuntime;
-  kafka: KafkaConnection & { consumerGroup: string };
+  kafka: KafkaConnection & {
+    consumerGroup: string;
+    fetchMaxWaitMilliseconds?: number;
+  };
 }
 
 export interface DevtoolsConfig {
@@ -345,12 +428,26 @@ export interface DevtoolsConfig {
     };
   };
   redis?: {
-    address: string;
+    mode: "standalone" | "sentinel";
+    address?: string;
     username?: string;
     password?: string;
     database: number;
+    sentinel?: {
+      masterName: string;
+      addresses: string[];
+      username?: string;
+      password?: string;
+    };
   };
   lifecycle?: {
+    elasticsearchWriteBatch?: {
+      enabled: boolean;
+      max_operations: number;
+      max_bytes: number;
+      wait_milliseconds: number;
+      max_concurrent_batches: number;
+    };
     concurrency: number;
     processTimeoutSeconds: number;
     retryMaxAttempts: number;
@@ -384,6 +481,7 @@ export interface DevtoolsConfig {
     operationTimeoutSeconds: number;
     maxEntries: number;
     trimBatchSize: number;
+    maxTrimEntriesPerCycle: number;
   };
   elasticsearchControlPlane?: {
     explicit: boolean;
@@ -478,10 +576,12 @@ export async function loadConfig(
         ...cleanerDefaults,
         ...(source.cleaner.runtime ?? {}),
       }),
-      kafka: normalizeKafka(
-        source.storage.kafka,
-        configDir,
-      ) as KafkaConnection & { consumerGroup: string },
+      kafka: {
+        ...normalizeKafka(source.storage.kafka, configDir),
+        consumerGroup: source.storage.kafka.consumer_group,
+        fetchMaxWaitMilliseconds:
+          source.storage.kafka.fetch_max_wait_milliseconds,
+      },
     })),
   };
   validateLoopback(config.server.host);
@@ -534,23 +634,46 @@ export async function loadConfig(
           manager?.schema_and_active_reconcile_interval_seconds ?? 3600,
         bucketReconcileIntervalSeconds:
           manager?.bucket_reconcile_interval_seconds ?? 21600,
-        archiveIntervalSeconds: manager?.archive_interval_seconds ?? 30,
+        archiveIntervalSeconds: manager?.archive_interval_seconds ?? 5,
         archiveBatchSize: manager?.archive_batch_size ?? 1000,
-        archiveWorkerCount: manager?.archive_worker_count ?? 4,
+        archiveWorkerCount: manager?.archive_worker_count ?? 1,
       };
     }
   }
   if (decoded.storage.redis) {
+    const storage = decoded.storage.redis;
     config.redis = {
-      ...decoded.storage.redis,
-      password:
-        process.env.LINKD_DEVTOOLS_REDIS_PASSWORD ??
-        decoded.storage.redis.password,
+      mode: storage.mode,
+      address: storage.address,
+      username: storage.username,
+      password: process.env.LINKD_DEVTOOLS_REDIS_PASSWORD ?? storage.password,
+      database: storage.database,
+      sentinel: storage.sentinel
+        ? {
+            masterName: storage.sentinel.master_name,
+            addresses: [...storage.sentinel.addresses],
+            username: storage.sentinel.username,
+            password:
+              process.env.LINKD_DEVTOOLS_REDIS_SENTINEL_PASSWORD ??
+              storage.sentinel.password,
+          }
+        : undefined,
     };
   }
   if (decoded.lifecycle) {
     const lifecycle = decoded.lifecycle;
+    // 与 Go WithDefaults 保持同一推导规则；只读展示，不接受独立调度参数。
+    const batchOperations = Math.min(
+      100,
+      Math.max(1, Math.floor(lifecycle.concurrency / 2)),
+    );
     config.lifecycle = {
+      elasticsearchWriteBatch: {
+        ...lifecycle.elasticsearch_write_batch,
+        max_operations: batchOperations,
+        wait_milliseconds: batchOperations === 1 ? 0 : batchOperations,
+        max_concurrent_batches: Math.min(32, lifecycle.concurrency),
+      },
       concurrency: lifecycle.concurrency,
       processTimeoutSeconds: lifecycle.process_timeout_seconds,
       retryMaxAttempts: lifecycle.retry_max_attempts,
@@ -588,6 +711,8 @@ export async function loadConfig(
       operationTimeoutSeconds: manager.operation_timeout_seconds,
       maxEntries: manager.max_entries,
       trimBatchSize: manager.trim_batch_size,
+      maxTrimEntriesPerCycle:
+        manager.max_trim_entries_per_cycle ?? manager.trim_batch_size * 10,
     };
   }
   validateSources(config);
@@ -788,10 +913,19 @@ export function redactedConfig(config: DevtoolsConfig) {
         : undefined,
       redis: config.redis
         ? {
+            mode: config.redis.mode,
             address: config.redis.address,
             database: config.redis.database,
             username: config.redis.username,
             password: config.redis.password ? "******" : "",
+            sentinel: config.redis.sentinel
+              ? {
+                  masterName: config.redis.sentinel.masterName,
+                  addresses: config.redis.sentinel.addresses,
+                  username: config.redis.sentinel.username,
+                  password: config.redis.sentinel.password ? "******" : "",
+                }
+              : undefined,
           }
         : undefined,
     },
@@ -805,12 +939,14 @@ export function redactedConfig(config: DevtoolsConfig) {
           brokers: source.kafka.brokers,
           topic: source.kafka.topic,
           consumerGroup: source.kafka.consumerGroup,
+          fetchMaxWaitMilliseconds: source.kafka.fetchMaxWaitMilliseconds,
           security: source.kafka.security.protocol,
         },
       })) ?? [],
     lifecycle: config.lifecycle
       ? {
           concurrency: config.lifecycle.concurrency,
+          elasticsearchWriteBatch: config.lifecycle.elasticsearchWriteBatch,
           signal: config.lifecycle.signal,
           mailbox: config.lifecycle.mailbox,
           lock: config.lifecycle.lock,

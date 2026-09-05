@@ -5,9 +5,22 @@ import {
   normalizePendingEntries,
   normalizeStreamCounters,
   parseRedisInfo,
+  parseRedisNodeAddress,
 } from "./redis.js";
 
 describe("Redis read-only response normalization", () => {
+  it("parses Sentinel seed addresses", () => {
+    expect(parseRedisNodeAddress("sentinel.example.com:26379")).toEqual({
+      host: "sentinel.example.com",
+      port: 26379,
+    });
+    expect(parseRedisNodeAddress("[::1]:26379")).toEqual({
+      host: "::1",
+      port: 26379,
+    });
+    expect(() => parseRedisNodeAddress("sentinel.example.com")).toThrow();
+  });
+
   it("accepts RESP3 objects and RESP2 alternating maps", () => {
     expect(
       normalizeMap({ name: "linkd-lifecycle", pending: 3, lag: null }),

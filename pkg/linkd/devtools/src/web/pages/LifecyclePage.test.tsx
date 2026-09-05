@@ -264,7 +264,7 @@ function stubLifecycleAPI() {
 
 function stageMetricPanels() {
   return [
-    metricPanel("pipeline-throughput", [
+    metricPanel("pipeline-completed", [
       metricSeries("clean", 9),
       metricSeries("lifecycle", 5, { linkd_outcome: "accepted" }),
       metricSeries("lifecycle", 2, { linkd_outcome: "suppressed" }),

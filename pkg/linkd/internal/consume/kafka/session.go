@@ -83,6 +83,7 @@ func NewSession(config Config) (*Session, error) {
 		kgo.DisableAutoCommit(),
 		kgo.BlockRebalanceOnPoll(),
 		kgo.FetchMaxBytes(config.MaxFetchBytes),
+		kgo.FetchMaxWait(config.FetchMaxWait),
 		kgo.OnPartitionsAssigned(ownership.assigned),
 		kgo.OnPartitionsRevoked(ownership.revoked),
 		kgo.OnPartitionsLost(ownership.lost),

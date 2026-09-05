@@ -53,6 +53,7 @@ export function MetricPanelCard({
   className?: string;
 }) {
   const help =
+    panel.description ??
     metricHelp[panel.id] ??
     "展示所选时间范围内的 Prometheus 时序；没有时序不等同于数值为 0。";
   return (
@@ -66,7 +67,7 @@ export function MetricPanelCard({
           <span className="metric-panel-unit">{panel.unit}</span>
         </div>
         <span className={`panel-state ${panel.status}`}>
-          {panel.status === "available" ? "LIVE" : "NO DATA"}
+          {panel.status === "available" ? "DATA" : "NO DATA"}
         </span>
       </header>
       <MetricChart panel={panel} />

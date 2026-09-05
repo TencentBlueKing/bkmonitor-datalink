@@ -1,5 +1,33 @@
 # Linkd 可观测性设计
 
+## Lifecycle 与 ES 合批指标口径
+
+Event Processor 使用 `linkd_pipeline_attempt_duration_seconds`；Signal Handler 单独使用
+`linkd_messaging_handler_duration_seconds`。一次 Signal 可能处理多个 Event，两种耗时不能混算。
+各阶段 P99 不相加；Cleaner 成功规范化数含重复投递，Lifecycle 完成速率取成功 Mailbox ACK，
+两者不取最小值作为端到端吞吐，也不直接相减推算积压。
+
+以下指标统一以 `linkd_elasticsearch_write_batch_` 为前缀，
+`linkd_batch_kind=read|write` 区分 `_mget` 与 `_bulk`。跨来源请求不添加租户、Event ID 或来源标签。
+
+| 后缀 | 类型 | 语义 |
+| --- | --- | --- |
+| `batches_total` | Counter | 已执行的请求尝试次数；结果分 succeeded / partial_failed / failed |
+| `items_total` | Counter | 子操作逐项结果；succeeded / failed，failed 包含结果未知 |
+| `operations` | Histogram | 每批子操作数；count 是请求数，sum 是提交的操作数 |
+| `size_bytes` | Histogram | 编码后的物理请求字节数 |
+| `queue_duration_seconds` | Histogram | 每批首项从入队到开始执行，包含聚合与执行槽位等待 |
+| `duration_seconds` | Histogram | 请求执行与响应解码时间，包含网络，不包含入队等待，不等同于 ES took |
+
+耗时桶覆盖 0.5ms～30s，使用固定 `linkd_metric_schema=2` 标记；DevTools 使用该口径。
+均值按 sum/count 计算；分位数按合并后的 histogram 计算，不能相加实例 P99。
+保留原 Repository 逻辑操作指标，用于与物理 Bulk 的执行/排队成本对照。
+
+DevTools 的批次次数及写操作总量使用所选时间范围的 `increase` 估算，并在范围结束时取值；
+速率、均值、分位数使用独立的滚动计算窗口。成功表示收到成功逐项结果，不表示搜索已刷新可见；
+失败/未知不表示写入必定未生效。未接入与无样本不当作零，空闲窗口中的均值和分位数不填零。
+只读配置展示与实例运行遥测区分，不能仅凭 YAML 推导值认定所有实例已应用该配置。
+
 ## 边界
 
 可观测信号用于诊断运行状态，不能替代 Event、EventProcessing、Alert 和 AlertLog 等领域事实，也不能参与 event ID、fingerprint、CAS、Kafka offset 或业务幂等。
@@ -108,6 +136,7 @@ Prometheus endpoint 暴露以下 Redis Stream 指标：
 
 `consumer_group_max_lag=-1` 表示 Redis 无法计算 lag。`entries_above_max>0` 不等于裁剪故障：如果超出的
 条目尚未被所有 Group 确认，控制面必须继续保留；应结合 `pending`、`max_lag` 和最老 Pending 年龄告警。
+`trim_last_entries` 记录整轮多批裁剪的累计量，不是最后一条 `XTRIM` 命令的返回值。
 
 ## 建议 Span
 

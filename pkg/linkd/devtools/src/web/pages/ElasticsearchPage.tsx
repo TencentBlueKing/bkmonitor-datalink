@@ -10,7 +10,8 @@ import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 
 import type { ElasticsearchTopology, EntityKind } from "../../shared/contracts";
-import { getElasticsearchTopology } from "../api";
+import { getElasticsearchTopology, getElasticsearchPerformance } from "../api";
+import { ElasticsearchPerformancePanel } from "../components/ElasticsearchPerformancePanel";
 import { HelpLabel, HelpTableHeader, HelpTip } from "../components/HelpTip";
 import { RefreshControls } from "../components/RefreshControls";
 import { StatusBadge } from "../components/StatusBadge";
@@ -46,13 +47,20 @@ export function ElasticsearchPage() {
     refetchInterval: autoRefresh ? 30_000 : false,
   });
   useReportPageQueryFailure(topology.isError);
+  const performance = useQuery({
+    queryKey: ["elasticsearch-performance"],
+    queryFn: getElasticsearchPerformance,
+    refetchInterval: autoRefresh ? 30_000 : false,
+  });
   const heading = (
     <PageHeading
       status={topology.data?.cluster.status}
       lastSuccessfulAt={topology.dataUpdatedAt || undefined}
       isFetching={topology.isFetching}
       autoRefresh={autoRefresh}
-      onRefresh={() => void topology.refetch()}
+      onRefresh={() =>
+        void Promise.all([topology.refetch(), performance.refetch()])
+      }
       onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
     />
   );
@@ -170,6 +178,11 @@ export function ElasticsearchPage() {
   return (
     <section>
       {heading}
+
+      <ElasticsearchPerformancePanel
+        data={performance.data}
+        error={performance.error?.message}
+      />
 
       <div className="es-stat-grid">
         <StorageStat

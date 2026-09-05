@@ -7,6 +7,57 @@ import { describe, expect, it } from "vitest";
 import { loadConfig, redactedConfig } from "./config.js";
 
 describe("Linkd config loader", () => {
+  it.each([
+    [1, 1, 0, 1],
+    [2, 1, 0, 2],
+    [3, 1, 0, 3],
+    [8, 4, 4, 8],
+    [32, 16, 16, 32],
+    [64, 32, 32, 32],
+    [256, 100, 100, 32],
+    [1024, 100, 100, 32],
+  ])(
+    "derives batch scheduling from concurrency %i",
+    async (concurrency, operations, wait, parallel) => {
+      const directory = await mkdtemp(path.join(tmpdir(), "linkd-batch-auto-"));
+      try {
+        const configPath = path.join(directory, "linkd.yaml");
+        const yaml = `storage:
+  repository: elasticsearch
+  elasticsearch:
+    addresses: [http://127.0.0.1:9200]
+    index_prefix: demo
+lifecycle:
+  concurrency: ${concurrency}
+  output:
+    kafka:
+      brokers: [127.0.0.1:9092]
+      topic: output
+`;
+        await writeFile(configPath, yaml);
+        const config = await loadConfig(configPath);
+        expect(config.lifecycle?.elasticsearchWriteBatch).toMatchObject({
+          max_operations: operations,
+          wait_milliseconds: wait,
+          max_concurrent_batches: parallel,
+        });
+        for (const key of [
+          "max_operations",
+          "wait_milliseconds",
+          "max_concurrent_batches",
+        ]) {
+          await writeFile(
+            configPath,
+            yaml + `  elasticsearch_write_batch:\n    ${key}: 1\n`,
+          );
+          await expect(loadConfig(configPath)).rejects.toThrow();
+        }
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("derives DevTools sources, targets and effective EventSource runtime", async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), "linkd-devtools-config-"),
@@ -65,8 +116,16 @@ telemetry:
       );
       const config = await loadConfig(configPath);
       expect(config.entities.events).toBe("elasticsearch");
+      expect(config.lifecycle?.elasticsearchWriteBatch).toEqual({
+        enabled: true,
+        max_operations: 16,
+        max_bytes: 4194304,
+        wait_milliseconds: 16,
+        max_concurrent_batches: 32,
+      });
       expect(config.elasticsearch?.eventTargets).toEqual(["demo-events"]);
       expect(config.eventSources?.[0].runtime.worker_count).toBe(4);
+      expect(config.eventSources?.[0].kafka.fetchMaxWaitMilliseconds).toBe(100);
       expect(config.eventSources?.[0].runtime.max_batch_messages).toBe(32);
       expect(config.telemetry?.listenAddress).toBe("127.0.0.1:9464");
       expect(config.redisStreamManager).toEqual({
@@ -74,6 +133,7 @@ telemetry:
         operationTimeoutSeconds: 5,
         maxEntries: 80_000,
         trimBatchSize: 4_000,
+        maxTrimEntriesPerCycle: 40_000,
       });
       expect(config.elasticsearchControlPlane).toEqual({
         explicit: true,
@@ -97,6 +157,92 @@ telemetry:
         archiveBatchSize: 150,
         archiveWorkerCount: 3,
       });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("loads and redacts Redis Sentinel credentials", async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "linkd-devtools-sentinel-"),
+    );
+    try {
+      const configPath = path.join(directory, "linkd.yaml");
+      await writeFile(
+        configPath,
+        `storage:
+  repository: mysql
+  mysql:
+    address: 127.0.0.1:3306
+    database: linkd
+    username: linkd
+    password: mysql-secret
+  redis:
+    mode: sentinel
+    username: redis-user
+    password: redis-secret
+    database: 2
+    sentinel:
+      master_name: linkd-master
+      addresses: [sentinel-a.example.com:26379, sentinel-b.example.com:26379]
+      username: sentinel-user
+      password: sentinel-secret
+`,
+        "utf8",
+      );
+
+      const config = await loadConfig(configPath);
+      expect(config.redis).toEqual({
+        mode: "sentinel",
+        address: undefined,
+        username: "redis-user",
+        password: "redis-secret",
+        database: 2,
+        sentinel: {
+          masterName: "linkd-master",
+          addresses: [
+            "sentinel-a.example.com:26379",
+            "sentinel-b.example.com:26379",
+          ],
+          username: "sentinel-user",
+          password: "sentinel-secret",
+        },
+      });
+      const serialized = JSON.stringify(redactedConfig(config));
+      expect(serialized).not.toContain("redis-secret");
+      expect(serialized).not.toContain("sentinel-secret");
+      expect(serialized).toContain('"password":"******"');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects Redis Stream cycle trim budgets outside the command bounds", async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "linkd-devtools-stream-budget-"),
+    );
+    try {
+      for (const maxTrimEntriesPerCycle of [99, 10_001]) {
+        const configPath = path.join(directory, "linkd.yaml");
+        await writeFile(
+          configPath,
+          `storage:
+  repository: mysql
+  mysql:
+    address: 127.0.0.1:3306
+    database: linkd
+    username: linkd
+control_plane:
+  redis_stream:
+    trim_batch_size: 100
+    max_trim_entries_per_cycle: ${maxTrimEntriesPerCycle}
+`,
+          "utf8",
+        );
+        await expect(loadConfig(configPath)).rejects.toThrow(
+          "max_trim_entries_per_cycle",
+        );
+      }
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

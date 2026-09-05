@@ -20,16 +20,24 @@ import (
 
 const bucketDateLayout = "20060102"
 
+const defaultBucketRefreshInterval = 5 * time.Second
+
+const defaultAlertLogTranslogDurability = "async"
+
 var bucketEpoch = time.Date(1970, time.January, 5, 0, 0, 0, 0, time.UTC)
 
-// BucketConfig 定义时间桶周期、Event 允许的未来偏移和可选的新索引副本数。
+// BucketConfig 定义时间桶周期、Event 允许的未来偏移、刷新周期和可选的新索引副本数。
 type BucketConfig struct {
 	EventBucketDays        int
 	AlertHistoryBucketDays int
 	AlertLogBucketDays     int
 	MaxFutureSkew          time.Duration
+	// RefreshInterval 配置 Event、Alert History 和 AlertLog 模板的 refresh_interval。
+	RefreshInterval time.Duration
 	// ActiveAlertRefreshInterval 配置 Active Alert 模板及现有索引的 refresh_interval。
 	ActiveAlertRefreshInterval time.Duration
+	// AlertLogTranslogDurability 配置 AlertLog 模板及既有桶的 translog durability。
+	AlertLogTranslogDurability string
 	// NumberOfReplicas 非 nil 时写入模板，仅影响之后新建的索引。
 	NumberOfReplicas *int
 }
@@ -41,7 +49,9 @@ type BucketRouter struct {
 	alertBucketDays        int
 	alertLogBucketDays     int
 	maxFutureSkew          time.Duration
+	refreshInterval        time.Duration
 	activeRefreshInterval  time.Duration
+	alertLogDurability     string
 	numberOfReplicas       int
 	replicaCountConfigured bool
 	now                    func() time.Time
@@ -62,8 +72,20 @@ func newBucketRouter(prefix string, config BucketConfig, now func() time.Time) (
 	if config.MaxFutureSkew < 0 {
 		return nil, fmt.Errorf("create elasticsearch bucket router: max future skew must not be negative")
 	}
+	if config.RefreshInterval == 0 {
+		config.RefreshInterval = defaultBucketRefreshInterval
+	}
+	if config.RefreshInterval < time.Second || config.RefreshInterval%time.Second != 0 {
+		return nil, fmt.Errorf("create elasticsearch bucket router: refresh interval must be whole seconds and positive")
+	}
 	if config.ActiveAlertRefreshInterval < time.Second || config.ActiveAlertRefreshInterval%time.Second != 0 {
 		return nil, fmt.Errorf("create elasticsearch bucket router: active alert refresh interval must be whole seconds and positive")
+	}
+	if config.AlertLogTranslogDurability == "" {
+		config.AlertLogTranslogDurability = defaultAlertLogTranslogDurability
+	}
+	if config.AlertLogTranslogDurability != "request" && config.AlertLogTranslogDurability != "async" {
+		return nil, fmt.Errorf("create elasticsearch bucket router: alert log translog durability must be request or async")
 	}
 	if config.NumberOfReplicas != nil && *config.NumberOfReplicas < 0 {
 		return nil, fmt.Errorf("create elasticsearch bucket router: number of replicas must not be negative")
@@ -74,7 +96,9 @@ func newBucketRouter(prefix string, config BucketConfig, now func() time.Time) (
 	router := &BucketRouter{
 		prefix: prefix, eventBucketDays: config.EventBucketDays,
 		alertBucketDays: config.AlertHistoryBucketDays, alertLogBucketDays: config.AlertLogBucketDays,
-		maxFutureSkew: config.MaxFutureSkew, activeRefreshInterval: config.ActiveAlertRefreshInterval, now: now,
+		maxFutureSkew: config.MaxFutureSkew, refreshInterval: config.RefreshInterval,
+		activeRefreshInterval: config.ActiveAlertRefreshInterval,
+		alertLogDurability:    config.AlertLogTranslogDurability, now: now,
 	}
 	if config.NumberOfReplicas != nil {
 		router.numberOfReplicas = *config.NumberOfReplicas
@@ -108,9 +132,15 @@ func (r *BucketRouter) SchemaConfig() SchemaConfig {
 		},
 		AlertLog: TemplateSpec{
 			Name: r.prefix + "-alert-logs-template", IndexPatterns: []string{r.prefix + "-alert-logs-*"},
-			Priority: 200, Settings: r.templateSettings(), Entity: entityAlertLog, Role: "bucket", BucketDays: r.alertLogBucketDays,
+			Priority: 200, Settings: r.alertLogTemplateSettings(), Entity: entityAlertLog, Role: "bucket", BucketDays: r.alertLogBucketDays,
 		},
 	}
+}
+
+func (r *BucketRouter) alertLogTemplateSettings() map[string]any {
+	settings := r.templateSettings()
+	settings["index.translog.durability"] = r.alertLogDurability
+	return settings
 }
 
 func (r *BucketRouter) activeTemplateSettings() map[string]any {
@@ -123,10 +153,11 @@ func (r *BucketRouter) activeTemplateSettings() map[string]any {
 }
 
 func (r *BucketRouter) templateSettings() map[string]any {
-	if !r.replicaCountConfigured {
-		return nil
+	settings := map[string]any{"refresh_interval": r.refreshInterval.String()}
+	if r.replicaCountConfigured {
+		settings["number_of_replicas"] = r.numberOfReplicas
 	}
-	return map[string]any{"number_of_replicas": r.numberOfReplicas}
+	return settings
 }
 
 func (r *BucketRouter) EventRoute(_ context.Context, eventID string) (Route, error) {

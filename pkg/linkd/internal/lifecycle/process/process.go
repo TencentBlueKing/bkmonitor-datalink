@@ -18,7 +18,6 @@ import (
 	"strings"
 	"time"
 
-	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/config"
 	"linkd/internal/consume"
 	"linkd/internal/consume/redisstream"
@@ -27,7 +26,9 @@ import (
 	"linkd/internal/lifecycle/mailbox"
 	"linkd/internal/lifecycle/recentalert"
 	"linkd/internal/lifecycle/scheduler"
+	"linkd/internal/redisclient"
 	repositoryassembly "linkd/internal/store/assembly"
+	elasticsearchstore "linkd/internal/store/elasticsearch"
 	"linkd/internal/telemetry"
 )
 
@@ -70,14 +71,34 @@ func Run(
 		return fmt.Errorf("initialize lifecycle repository: %w", err)
 	}
 	defer repositoryassembly.JoinCloseError(&runErr, repositoryRuntime)
+	batchConfig := lifecycleConfig.ElasticsearchWriteBatch
+	if repositoryRuntime.Backend == config.RepositoryTypeElasticsearch && *batchConfig.Enabled {
+		repository, ok := repositoryRuntime.Repository.(*elasticsearchstore.Repository)
+		if !ok {
+			return fmt.Errorf("lifecycle elasticsearch batch requires elasticsearch repository")
+		}
+		observer, err := telemetryRuntime.NewWriteBatchObserver()
+		if err != nil {
+			return err
+		}
+		batched, closer, err := repository.EnableWriteBatch(elasticsearchstore.WriteBatchConfig{
+			MaxOperations: batchConfig.MaxOperations, MaxBytes: batchConfig.MaxBytes,
+			Wait:                 time.Duration(batchConfig.WaitMilliseconds) * time.Millisecond,
+			MaxConcurrentBatches: batchConfig.MaxConcurrentBatches, MaxCalls: lifecycleConfig.Concurrency,
+			Timeout: time.Duration(lifecycleConfig.ProcessTimeoutSeconds) * time.Second,
+		}, observer)
+		if err != nil {
+			return err
+		}
+		defer closer.Close()
+		repositoryRuntime.Repository = batched
+	}
 	observedRepository := telemetryRuntime.ObserveRepository(repositoryRuntime.Repository)
 
-	lockClient := redis.NewClient(&redis.Options{
-		Addr:     storageConfig.Redis.Address,
-		Username: storageConfig.Redis.Username,
-		Password: storageConfig.Redis.Password,
-		DB:       storageConfig.Redis.Database,
-	})
+	lockClient, err := redisclient.New(storageConfig.Redis.ClientOptions())
+	if err != nil {
+		return fmt.Errorf("initialize lifecycle redis: %w", err)
+	}
 	defer func() {
 		if err := lockClient.Close(); err != nil {
 			runErr = errors.Join(runErr, fmt.Errorf("close lifecycle redis: %w", err))

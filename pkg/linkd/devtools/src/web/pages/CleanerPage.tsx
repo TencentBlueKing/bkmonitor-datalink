@@ -731,6 +731,7 @@ function CleanerConfigDialog({
 function MetricPanels({ panels }: { panels: MetricPanel[] }) {
   const panelIDs = [
     "received-rate",
+    "kafka-lane-paused",
     "settled-rate",
     ...cleanerPipelineDurationPanelIDs,
     "cleaner-steps",

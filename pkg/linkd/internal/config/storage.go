@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"linkd/internal/redisclient"
 )
 
 const (
@@ -26,10 +28,20 @@ const (
 	RepositoryTypeMySQL = "mysql"
 	// RepositoryTypeElasticsearch 使用 Elasticsearch 保存 Event、Alert 和 AlertLog。
 	RepositoryTypeElasticsearch = "elasticsearch"
+	// ElasticsearchTranslogDurabilityRequest 在每次写请求返回前同步 translog。
+	ElasticsearchTranslogDurabilityRequest = "request"
+	// ElasticsearchTranslogDurabilityAsync 按 Elasticsearch sync_interval 异步同步 translog。
+	ElasticsearchTranslogDurabilityAsync = "async"
+	// RedisModeStandalone 直连单个 Redis 数据节点。
+	RedisModeStandalone = "standalone"
+	// RedisModeSentinel 通过 Sentinel 发现并跟随当前 master。
+	RedisModeSentinel = "sentinel"
 
 	defaultElasticsearchIndexPrefix                       = "linkd"
+	defaultElasticsearchRefreshIntervalSeconds            = 5
 	defaultElasticsearchActiveAlertRefreshIntervalSeconds = 5
-	maxElasticsearchActiveAlertRefreshIntervalSeconds     = 3600
+	defaultElasticsearchAlertLogTranslogDurability        = ElasticsearchTranslogDurabilityAsync
+	maxElasticsearchRefreshIntervalSeconds                = 3600
 	defaultBucketDays                                     = 7
 	defaultPrecreatePastBuckets                           = 1
 	defaultPrecreateFutureBuckets                         = 1
@@ -60,8 +72,12 @@ type MySQLConfig struct {
 type ElasticsearchConfig struct {
 	Addresses   []string `yaml:"addresses"`
 	IndexPrefix string   `yaml:"index_prefix"`
+	// RefreshIntervalSeconds 驱动 Event、Alert History 和 AlertLog 时间桶模板的 refresh_interval。
+	RefreshIntervalSeconds int `yaml:"refresh_interval_seconds"`
 	// ActiveAlertRefreshIntervalSeconds 同时驱动 Active Alert 模板、现有索引对账和 Recent Alert 缓存 TTL。
 	ActiveAlertRefreshIntervalSeconds int `yaml:"active_alert_refresh_interval_seconds"`
+	// AlertLogTranslogDurability 配置 AlertLog 索引的 translog durability。
+	AlertLogTranslogDurability string `yaml:"alert_log_translog_durability"`
 	// NumberOfReplicas 非 nil 时写入 index template；零值适用于单节点测试。
 	NumberOfReplicas *int                             `yaml:"number_of_replicas,omitempty"`
 	TimePartition    ElasticsearchTimePartitionConfig `yaml:"time_partition,omitempty"`
@@ -86,12 +102,23 @@ type BasicAuthConfig struct {
 	Password string `yaml:"password"`
 }
 
-// RedisConfig 描述 Redis 连接、可选 ACL 认证和逻辑数据库。
+// RedisConfig 描述 Redis 数据节点认证、逻辑数据库和连接发现模式。
 type RedisConfig struct {
-	Address  string `yaml:"address"`
-	Username string `yaml:"username,omitempty"`
-	Password string `yaml:"password,omitempty"`
-	Database int    `yaml:"database"`
+	Mode     string               `yaml:"mode,omitempty"`
+	Address  string               `yaml:"address,omitempty"`
+	Username string               `yaml:"username,omitempty"`
+	Password string               `yaml:"password,omitempty"`
+	Database int                  `yaml:"database"`
+	Sentinel *RedisSentinelConfig `yaml:"sentinel,omitempty"`
+}
+
+// RedisSentinelConfig 描述 Sentinel seed、master 名称和 Sentinel 自身认证。
+// Redis 数据节点认证仍由 RedisConfig.Username 和 RedisConfig.Password 提供。
+type RedisSentinelConfig struct {
+	MasterName string   `yaml:"master_name"`
+	Addresses  []string `yaml:"addresses"`
+	Username   string   `yaml:"username,omitempty"`
+	Password   string   `yaml:"password,omitempty"`
 }
 
 // WithDefaults 返回补齐非敏感默认值且不共享嵌套配置的副本。
@@ -102,12 +129,48 @@ func (c StorageConfig) WithDefaults() StorageConfig {
 		if elasticsearch.IndexPrefix == "" {
 			elasticsearch.IndexPrefix = defaultElasticsearchIndexPrefix
 		}
+		if elasticsearch.RefreshIntervalSeconds == 0 {
+			elasticsearch.RefreshIntervalSeconds = defaultElasticsearchRefreshIntervalSeconds
+		}
 		if elasticsearch.ActiveAlertRefreshIntervalSeconds == 0 {
 			elasticsearch.ActiveAlertRefreshIntervalSeconds = defaultElasticsearchActiveAlertRefreshIntervalSeconds
 		}
+		if elasticsearch.AlertLogTranslogDurability == "" {
+			elasticsearch.AlertLogTranslogDurability = defaultElasticsearchAlertLogTranslogDurability
+		}
 		elasticsearch.TimePartition = elasticsearch.TimePartition.WithDefaults()
 	}
+	if normalized.Redis != nil {
+		redis := normalized.Redis.WithDefaults()
+		normalized.Redis = &redis
+	}
 	return normalized
+}
+
+// WithDefaults 返回补齐连接模式且不共享 Sentinel 地址列表的副本。
+func (c RedisConfig) WithDefaults() RedisConfig {
+	normalized := c.clone()
+	if normalized.Mode == "" {
+		normalized.Mode = RedisModeStandalone
+	}
+	return normalized
+}
+
+// ClientOptions 构造所有 Redis 使用方共享的建连参数。
+func (c RedisConfig) ClientOptions() redisclient.Options {
+	c = c.WithDefaults()
+	options := redisclient.Options{
+		Address: c.Address, Username: c.Username, Password: c.Password, Database: c.Database,
+	}
+	if c.Mode == RedisModeSentinel && c.Sentinel != nil {
+		options.Sentinel = &redisclient.SentinelOptions{
+			MasterName: c.Sentinel.MasterName,
+			Addresses:  append([]string(nil), c.Sentinel.Addresses...),
+			Username:   c.Sentinel.Username,
+			Password:   c.Sentinel.Password,
+		}
+	}
+	return options
 }
 
 // WithDefaults 返回补齐时间桶默认值的配置。
@@ -139,6 +202,16 @@ func (c ElasticsearchTimePartitionConfig) WithDefaults() ElasticsearchTimePartit
 // MaxFutureSkew 返回 Event 路由允许的最大未来偏移。
 func (c ElasticsearchTimePartitionConfig) MaxFutureSkew() time.Duration {
 	return time.Duration(c.MaxFutureSkewSeconds) * time.Second
+}
+
+// RefreshInterval 返回非 Active 时间桶索引配置的 refresh_interval。
+// 零值按默认五秒处理，便于直接构造配置的调用方与 YAML 加载行为一致。
+func (c ElasticsearchConfig) RefreshInterval() time.Duration {
+	seconds := c.RefreshIntervalSeconds
+	if seconds == 0 {
+		seconds = defaultElasticsearchRefreshIntervalSeconds
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // ActiveAlertRefreshInterval 返回 Active Alert 索引配置的 refresh_interval。
@@ -215,6 +288,9 @@ func (c StorageConfig) Redacted() StorageConfig {
 		if redacted.Redis.Password != "" {
 			redacted.Redis.Password = redactedSecret
 		}
+		if redacted.Redis.Sentinel != nil && redacted.Redis.Sentinel.Password != "" {
+			redacted.Redis.Sentinel.Password = redactedSecret
+		}
 	}
 	return redacted
 }
@@ -239,8 +315,18 @@ func (c StorageConfig) clone() StorageConfig {
 		cloned.Elasticsearch = &elasticsearch
 	}
 	if c.Redis != nil {
-		redis := *c.Redis
+		redis := c.Redis.clone()
 		cloned.Redis = &redis
+	}
+	return cloned
+}
+
+func (c RedisConfig) clone() RedisConfig {
+	cloned := c
+	if c.Sentinel != nil {
+		sentinel := *c.Sentinel
+		sentinel.Addresses = append([]string(nil), c.Sentinel.Addresses...)
+		cloned.Sentinel = &sentinel
 	}
 	return cloned
 }
@@ -295,12 +381,36 @@ func (c ElasticsearchConfig) Validate() error {
 	if c.NumberOfReplicas != nil && *c.NumberOfReplicas < 0 {
 		return fmt.Errorf("number_of_replicas must not be negative")
 	}
-	refreshIntervalSeconds := c.ActiveAlertRefreshIntervalSeconds
-	if refreshIntervalSeconds == 0 {
-		refreshIntervalSeconds = defaultElasticsearchActiveAlertRefreshIntervalSeconds
+	durability := c.AlertLogTranslogDurability
+	if durability == "" {
+		durability = defaultElasticsearchAlertLogTranslogDurability
 	}
-	if refreshIntervalSeconds < 1 || refreshIntervalSeconds > maxElasticsearchActiveAlertRefreshIntervalSeconds {
-		return fmt.Errorf("active_alert_refresh_interval_seconds must be between 1 and %d", maxElasticsearchActiveAlertRefreshIntervalSeconds)
+	if durability != ElasticsearchTranslogDurabilityRequest && durability != ElasticsearchTranslogDurabilityAsync {
+		return fmt.Errorf(
+			"alert_log_translog_durability must be one of %q, %q: %q",
+			ElasticsearchTranslogDurabilityRequest,
+			ElasticsearchTranslogDurabilityAsync,
+			durability,
+		)
+	}
+	for name, setting := range map[string]struct {
+		seconds      int
+		defaultValue int
+	}{
+		"refresh_interval_seconds": {
+			seconds: c.RefreshIntervalSeconds, defaultValue: defaultElasticsearchRefreshIntervalSeconds,
+		},
+		"active_alert_refresh_interval_seconds": {
+			seconds: c.ActiveAlertRefreshIntervalSeconds, defaultValue: defaultElasticsearchActiveAlertRefreshIntervalSeconds,
+		},
+	} {
+		seconds := setting.seconds
+		if seconds == 0 {
+			seconds = setting.defaultValue
+		}
+		if seconds < 1 || seconds > maxElasticsearchRefreshIntervalSeconds {
+			return fmt.Errorf("%s must be between 1 and %d", name, maxElasticsearchRefreshIntervalSeconds)
+		}
 	}
 	if err := c.TimePartition.Validate(); err != nil {
 		return fmt.Errorf("time_partition.%w", err)
@@ -335,15 +445,22 @@ func (c ElasticsearchTimePartitionConfig) Validate() error {
 	return nil
 }
 
-// Validate 校验 Redis 地址和逻辑数据库编号。
+// Validate 校验 Redis 连接模式、地址和逻辑数据库编号。
 func (c RedisConfig) Validate() error {
-	if err := validateHostPort("address", c.Address); err != nil {
-		return err
+	c = c.WithDefaults()
+	switch c.Mode {
+	case RedisModeStandalone:
+		if c.Sentinel != nil {
+			return fmt.Errorf("sentinel must be omitted when mode is %q", RedisModeStandalone)
+		}
+	case RedisModeSentinel:
+		if c.Sentinel == nil {
+			return fmt.Errorf("sentinel is required when mode is %q", RedisModeSentinel)
+		}
+	default:
+		return fmt.Errorf("mode must be one of %q, %q: %q", RedisModeStandalone, RedisModeSentinel, c.Mode)
 	}
-	if c.Database < 0 {
-		return fmt.Errorf("database must not be negative")
-	}
-	return nil
+	return c.ClientOptions().Validate()
 }
 
 func validateHostPort(name, address string) error {

@@ -87,7 +87,7 @@ func (o *consumeObserver) HandlerFinished(
 			attribute.String("linkd.outcome", outcomeName),
 		)...),
 	)
-	o.metrics.pipelineAttemptDuration.Record(
+	o.metrics.messagingHandlerDuration.Record(
 		ctx,
 		duration.Seconds(),
 		metric.WithAttributes(append(o.baseAttributes(),
@@ -96,6 +96,12 @@ func (o *consumeObserver) HandlerFinished(
 		)...),
 	)
 	if o.recordPipelineAttempts {
+		// Lifecycle 的 Event 耗时由 Processor 记录，不能再混入整条 Signal drain。
+		o.metrics.pipelineAttemptDuration.Record(ctx, duration.Seconds(),
+			metric.WithAttributes(append(o.baseAttributes(),
+				attribute.String("linkd.outcome", outcomeName),
+				attribute.String("linkd.trigger", "queue"),
+			)...))
 		o.metrics.pipelineAttempts.Add(
 			ctx,
 			1,

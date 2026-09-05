@@ -24,6 +24,7 @@ type instruments struct {
 	pipelineRetries         metric.Int64Counter
 
 	messagingHandlerOutcomes metric.Int64Counter
+	messagingHandlerDuration metric.Float64Histogram
 	messagingReceived        metric.Int64Counter
 	messagingReceivedBytes   metric.Int64Counter
 	messagingRedelivered     metric.Int64Counter
@@ -144,6 +145,13 @@ func newInstruments(meter metric.Meter) (*instruments, error) {
 		"linkd.messaging.handler.outcomes",
 		metric.WithUnit("{message}"),
 		metric.WithDescription("消息 Handler 结构化结果"),
+	); err != nil {
+		return nil, err
+	}
+	if result.messagingHandlerDuration, err = meter.Float64Histogram(
+		"linkd.messaging.handler.duration", metric.WithUnit("s"),
+		metric.WithDescription("单条消息 Handler 耗时；Lifecycle 的处理单元是 Signal，不是 Event"),
+		metric.WithExplicitBucketBoundaries(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60),
 	); err != nil {
 		return nil, err
 	}

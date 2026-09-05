@@ -27,6 +27,99 @@ const config = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("PrometheusConnector", () => {
+  it("uses range totals at the selected endpoint, precise timing schema, and Event-only latency", async () => {
+    const urls: URL[] = [];
+    const from = new Date("2026-09-04T00:00:00Z"),
+      to = new Date("2026-09-04T01:00:00Z");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: URL | Request | string) => {
+        const u = new URL(String(input));
+        urls.push(u);
+        return new Response(
+          JSON.stringify({
+            status: "success",
+            data: {
+              result: [
+                {
+                  metric: { linkd_stage: "lifecycle" },
+                  values: [[from.getTime() / 1000, "NaN"]],
+                  value: [to.getTime() / 1000, "3"],
+                },
+              ],
+            },
+          }),
+        );
+      }),
+    );
+    const result = await new PrometheusConnector(config).panels(from, to, 15, {
+      instance: "worker-a",
+      calculationWindowSeconds: 30,
+    });
+    const totals = urls.filter((u) => u.pathname === "/api/v1/query");
+    expect(totals).toHaveLength(2);
+    expect(
+      totals.every(
+        (u) =>
+          u.searchParams.get("query")?.includes("[3600s]") &&
+          u.searchParams.get("time") === String(to.getTime() / 1000),
+      ),
+    ).toBe(true);
+    const queries = urls.map((u) => u.searchParams.get("query") ?? "");
+    expect(
+      queries.find((q) => q.includes("write_batch_duration_seconds_bucket")),
+    ).toContain('linkd_metric_schema="2"');
+    expect(
+      queries.find((q) => q.includes("pipeline_attempt_duration_seconds_sum")),
+    ).toContain('linkd_outcome=~"accepted|rejected|replayed|failed"');
+    expect(
+      queries
+        .filter((q) => q.includes("write_batch"))
+        .every(
+          (q) =>
+            q.includes('instance="worker-a"') &&
+            q.includes('linkd_batch_kind="write"'),
+        ),
+    ).toBe(true);
+    expect(
+      result.panels
+        .find((p) => p.id === "pipeline-average")
+        ?.series[0].points.at(-1),
+    ).toEqual([to.getTime() / 1000, null]);
+    expect(
+      result.panels.find((p) => p.id === "lifecycle-batch-executions")
+        ?.series[0].points,
+    ).toEqual([[to.getTime() / 1000, 3]]);
+  });
+
+  it("does not attribute cross-source Bulk requests to a selected EventSource", async () => {
+    const queries: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: URL | Request | string) => {
+        queries.push(new URL(String(input)).searchParams.get("query") ?? "");
+        return new Response(
+          JSON.stringify({ status: "success", data: { result: [] } }),
+        );
+      }),
+    );
+    const result = await new PrometheusConnector(config).panels(
+      new Date("2026-09-04T00:00:00Z"),
+      new Date("2026-09-04T01:00:00Z"),
+      15,
+      { eventSourceId: "source-a", partition: 1 },
+    );
+    expect(queries.some((q) => q.includes("write_batch"))).toBe(false);
+    expect(
+      result.panels
+        .filter((p) => p.id.startsWith("lifecycle-batch-"))
+        .every((p) => p.status === "unavailable"),
+    ).toBe(true);
+    expect(queries.find((q) => q.includes("lane_paused_ratio"))).toContain(
+      'messaging_kafka_partition="1"',
+    );
+  });
+
   it("queries the four fixed control-plane tasks without dynamic labels", async () => {
     const queries: string[] = [];
     vi.stubGlobal(
@@ -83,6 +176,7 @@ describe("PrometheusConnector", () => {
               result: [
                 {
                   metric: { linkd_stage: "clean" },
+                  value: [1_788_000_000, "2.5"],
                   values: [[1_788_000_000, "2.5"]],
                 },
               ],
@@ -210,6 +304,22 @@ describe("PrometheusConnector", () => {
       (query) => query.includes("rate(") || query.includes("increase("),
     );
     expect(rollingQueries.length).toBeGreaterThan(0);
-    expect(rollingQueries.every((query) => query.includes("[60s]"))).toBe(true);
+    expect(
+      rollingQueries
+        .filter(
+          (query) =>
+            !query.includes("linkd_elasticsearch_write_batch_batches_total") &&
+            !query.includes("linkd_elasticsearch_write_batch_items_total"),
+        )
+        .every((query) => query.includes("[60s]")),
+    ).toBe(true);
+    expect(
+      queries.some(
+        (q) =>
+          q.includes(
+            "increase(linkd_elasticsearch_write_batch_batches_total",
+          ) && q.includes("[3600s]"),
+      ),
+    ).toBe(true);
   });
 });

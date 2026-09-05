@@ -330,7 +330,7 @@ function stubCleanerAPI() {
 
 function stageMetricPanels() {
   return [
-    metricPanel("pipeline-throughput", [
+    metricPanel("pipeline-completed", [
       metricSeries("clean", 3, { linkd_outcome: "succeeded" }),
       metricSeries("clean", 2, { linkd_outcome: "failed" }),
       metricSeries("lifecycle", 9),

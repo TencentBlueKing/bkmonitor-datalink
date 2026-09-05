@@ -11,7 +11,6 @@ package redisstream
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +18,7 @@ import (
 
 	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/consume"
+	"linkd/internal/redisclient"
 )
 
 type redisClient interface {
@@ -53,18 +53,12 @@ func NewSession(config Config) (*Session, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("create redis streams session: %w", err)
 	}
-	options := &redis.Options{
-		Addr:     config.Address,
-		Username: config.Username,
-		Password: config.Password,
-		DB:       config.DB,
+	client, err := redisclient.New(config.Connection)
+	if err != nil {
+		return nil, fmt.Errorf("create redis streams session: %w", err)
 	}
-	if config.UseTLS {
-		options.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	}
-	client := redis.NewClient(options)
 	if config.CreateGroup {
-		err := client.XGroupCreateMkStream(context.Background(), config.Stream, config.Group, "0").Err()
+		err = client.XGroupCreateMkStream(context.Background(), config.Stream, config.Group, "0").Err()
 		if err != nil && !redis.HasErrorPrefix(err, "BUSYGROUP") {
 			_ = client.Close()
 			return nil, fmt.Errorf("create redis streams consumer group: %w", err)

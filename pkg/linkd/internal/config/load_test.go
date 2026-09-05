@@ -231,17 +231,32 @@ func TestLoadStorage(t *testing.T) {
 		cfg.Storage.Redis.Password != "redis-secret" {
 		t.Fatalf("load() did not preserve runtime storage secrets: %#v", cfg.Storage)
 	}
+	if cfg.Storage.Redis.Mode != RedisModeStandalone {
+		t.Fatalf("load() redis mode = %q", cfg.Storage.Redis.Mode)
+	}
 	if cfg.Storage.Elasticsearch.IndexPrefix != defaultElasticsearchIndexPrefix {
 		t.Fatalf("load() elasticsearch index prefix = %q", cfg.Storage.Elasticsearch.IndexPrefix)
 	}
 	if cfg.Storage.Elasticsearch.NumberOfReplicas == nil || *cfg.Storage.Elasticsearch.NumberOfReplicas != 0 {
 		t.Fatalf("load() elasticsearch number of replicas = %v", cfg.Storage.Elasticsearch.NumberOfReplicas)
 	}
+	if cfg.Storage.Elasticsearch.RefreshIntervalSeconds != defaultElasticsearchRefreshIntervalSeconds {
+		t.Fatalf(
+			"load() elasticsearch refresh interval = %d",
+			cfg.Storage.Elasticsearch.RefreshIntervalSeconds,
+		)
+	}
 	if cfg.Storage.Elasticsearch.ActiveAlertRefreshIntervalSeconds !=
 		defaultElasticsearchActiveAlertRefreshIntervalSeconds {
 		t.Fatalf(
 			"load() elasticsearch active alert refresh interval = %d",
 			cfg.Storage.Elasticsearch.ActiveAlertRefreshIntervalSeconds,
+		)
+	}
+	if cfg.Storage.Elasticsearch.AlertLogTranslogDurability != ElasticsearchTranslogDurabilityAsync {
+		t.Fatalf(
+			"load() elasticsearch alert log translog durability = %q",
+			cfg.Storage.Elasticsearch.AlertLogTranslogDurability,
 		)
 	}
 	partition := cfg.Storage.Elasticsearch.TimePartition
@@ -252,13 +267,53 @@ func TestLoadStorage(t *testing.T) {
 	}
 }
 
-func TestLoadStorageAllowsCustomActiveAlertRefreshInterval(t *testing.T) {
+func TestLoadRedisSentinel(t *testing.T) {
+	t.Parallel()
+
+	path := writeConfig(t, `storage:
+  redis:
+    mode: sentinel
+    username: redis-user
+    password: redis-secret
+    database: 2
+    sentinel:
+      master_name: linkd-master
+      addresses:
+        - sentinel-a.example.com:26379
+        - sentinel-b.example.com:26379
+      username: sentinel-user
+      password: sentinel-secret
+`)
+
+	cfg, err := load(path, Overrides{}, mapLookup(nil))
+	if err != nil {
+		t.Fatalf("load() error = %v", err)
+	}
+	redisConfig := cfg.Storage.Redis
+	if redisConfig == nil || redisConfig.Mode != RedisModeSentinel || redisConfig.Address != "" ||
+		redisConfig.Username != "redis-user" || redisConfig.Password != "redis-secret" || redisConfig.Database != 2 ||
+		redisConfig.Sentinel == nil || redisConfig.Sentinel.MasterName != "linkd-master" ||
+		!reflect.DeepEqual(redisConfig.Sentinel.Addresses, []string{
+			"sentinel-a.example.com:26379", "sentinel-b.example.com:26379",
+		}) || redisConfig.Sentinel.Username != "sentinel-user" || redisConfig.Sentinel.Password != "sentinel-secret" {
+		t.Fatalf("load() redis sentinel = %#v", redisConfig)
+	}
+	clientOptions := redisConfig.ClientOptions()
+	clientOptions.Sentinel.Addresses[0] = "changed.example.com:26379"
+	if redisConfig.Sentinel.Addresses[0] != "sentinel-a.example.com:26379" {
+		t.Fatal("ClientOptions() shares Sentinel addresses with RedisConfig")
+	}
+}
+
+func TestLoadStorageAllowsCustomRefreshIntervals(t *testing.T) {
 	t.Parallel()
 
 	path := writeConfig(t, `storage:
   elasticsearch:
     addresses: [http://127.0.0.1:9200]
+    refresh_interval_seconds: 11
     active_alert_refresh_interval_seconds: 17
+    alert_log_translog_durability: request
 `)
 	cfg, err := load(path, Overrides{}, mapLookup(nil))
 	if err != nil {
@@ -266,6 +321,12 @@ func TestLoadStorageAllowsCustomActiveAlertRefreshInterval(t *testing.T) {
 	}
 	if got := cfg.Storage.Elasticsearch.ActiveAlertRefreshInterval(); got != 17*time.Second {
 		t.Fatalf("ActiveAlertRefreshInterval()=%s", got)
+	}
+	if got := cfg.Storage.Elasticsearch.RefreshInterval(); got != 11*time.Second {
+		t.Fatalf("RefreshInterval()=%s", got)
+	}
+	if cfg.Storage.Elasticsearch.AlertLogTranslogDurability != ElasticsearchTranslogDurabilityRequest {
+		t.Fatalf("AlertLogTranslogDurability=%q", cfg.Storage.Elasticsearch.AlertLogTranslogDurability)
 	}
 }
 
@@ -456,6 +517,24 @@ func TestLoadRejectsInvalidStorage(t *testing.T) {
 			wantError: "number_of_replicas",
 		},
 		{
+			name: "elasticsearch invalid alert log translog durability",
+			content: `storage:
+  elasticsearch:
+    addresses: [http://127.0.0.1:9200]
+    alert_log_translog_durability: invalid
+`,
+			wantError: "alert_log_translog_durability",
+		},
+		{
+			name: "elasticsearch invalid bucket refresh interval",
+			content: `storage:
+  elasticsearch:
+    addresses: [http://127.0.0.1:9200]
+    refresh_interval_seconds: 3601
+`,
+			wantError: "refresh_interval_seconds",
+		},
+		{
 			name: "elasticsearch invalid active alert refresh interval",
 			content: `storage:
   elasticsearch:
@@ -482,6 +561,68 @@ func TestLoadRejectsInvalidStorage(t *testing.T) {
     database: -1
 `,
 			wantError: "database must not be negative",
+		},
+		{
+			name: "redis unsupported mode",
+			content: `storage:
+  redis:
+    mode: cluster
+    address: 127.0.0.1:16379
+`,
+			wantError: "mode must be one of",
+		},
+		{
+			name: "redis standalone with sentinel",
+			content: `storage:
+  redis:
+    mode: standalone
+    address: 127.0.0.1:16379
+    sentinel:
+      master_name: linkd-master
+      addresses: [127.0.0.1:26379]
+`,
+			wantError: "sentinel must be omitted",
+		},
+		{
+			name: "redis sentinel missing settings",
+			content: `storage:
+  redis:
+    mode: sentinel
+`,
+			wantError: "sentinel is required",
+		},
+		{
+			name: "redis sentinel keeps standalone address",
+			content: `storage:
+  redis:
+    mode: sentinel
+    address: 127.0.0.1:16379
+    sentinel:
+      master_name: linkd-master
+      addresses: [127.0.0.1:26379]
+`,
+			wantError: "address must be empty",
+		},
+		{
+			name: "redis sentinel missing master name",
+			content: `storage:
+  redis:
+    mode: sentinel
+    sentinel:
+      addresses: [127.0.0.1:26379]
+`,
+			wantError: "sentinel.master_name",
+		},
+		{
+			name: "redis sentinel invalid address",
+			content: `storage:
+  redis:
+    mode: sentinel
+    sentinel:
+      master_name: linkd-master
+      addresses: [sentinel-without-port]
+`,
+			wantError: "sentinel.addresses[0] must be host:port",
 		},
 		{
 			name: "unknown storage field",
@@ -810,7 +951,12 @@ func TestMarshalRedactedStorageSecrets(t *testing.T) {
 			Elasticsearch: &ElasticsearchConfig{
 				Addresses: []string{"http://elasticsearch:9200"}, APIKey: "elastic-secret",
 			},
-			Redis: &RedisConfig{Address: "redis:6379", Password: "redis-secret"},
+			Redis: &RedisConfig{
+				Mode: RedisModeSentinel, Password: "redis-secret",
+				Sentinel: &RedisSentinelConfig{
+					MasterName: "linkd-master", Addresses: []string{"sentinel:26379"}, Password: "sentinel-secret",
+				},
+			},
 		},
 		EventSources: []EventSource{},
 	}
@@ -819,17 +965,20 @@ func TestMarshalRedactedStorageSecrets(t *testing.T) {
 		t.Fatalf("MarshalRedacted() error = %v", err)
 	}
 	output := string(data)
-	for _, secret := range []string{"mysql-secret", "elastic-secret", "redis-secret"} {
+	for _, secret := range []string{"mysql-secret", "elastic-secret", "redis-secret", "sentinel-secret"} {
 		if strings.Contains(output, secret) {
 			t.Fatalf("MarshalRedacted() leaked %q: %s", secret, output)
 		}
 	}
-	if strings.Count(output, "'******'") != 3 {
+	if strings.Count(output, "'******'") != 4 {
 		t.Fatalf("MarshalRedacted() = %s", output)
 	}
 	if cfg.Storage.MySQL.Password != "mysql-secret" || cfg.Storage.Elasticsearch.APIKey != "elastic-secret" ||
-		cfg.Storage.Redis.Password != "redis-secret" {
+		cfg.Storage.Redis.Password != "redis-secret" || cfg.Storage.Redis.Sentinel.Password != "sentinel-secret" {
 		t.Fatalf("MarshalRedacted() changed original storage config = %#v", cfg.Storage)
+	}
+	if cfg.Storage.Redis.Sentinel.Addresses[0] != "sentinel:26379" {
+		t.Fatalf("MarshalRedacted() changed Sentinel addresses = %#v", cfg.Storage.Redis.Sentinel.Addresses)
 	}
 }
 

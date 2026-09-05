@@ -1,4 +1,9 @@
-import { createClient, type RedisClientType } from "redis";
+import {
+  createClient,
+  createSentinel,
+  type RedisClientType,
+  type RedisSentinelType,
+} from "redis";
 
 import type {
   RedisGroup,
@@ -24,21 +29,25 @@ interface CommandResult {
   value?: unknown;
 }
 
+type RedisConnection = RedisClientType | RedisSentinelType;
+
 export class RedisConnector {
-  private client?: RedisClientType;
+  private client?: RedisConnection;
 
   constructor(private readonly config: DevtoolsConfig) {}
 
   async close(): Promise<void> {
-    if (this.client?.isOpen) await this.client.quit();
+    const client = this.client;
+    this.client = undefined;
+    if (client?.isOpen) await client.close();
   }
 
   async inspect(): Promise<RedisInfrastructure> {
     const snapshotAt = new Date().toISOString();
     if (!this.config.redis) return this.unavailable(snapshotAt, "Redis 未配置");
     try {
-      const client = await this.getClient();
-      const ping = await client.ping();
+      await this.getClient();
+      const ping = String(await this.command(["PING"]));
       const [instance, signalQueue, mailbox, leases] = await Promise.all([
         this.inspectInstance(),
         this.inspectSignalQueue(),
@@ -61,7 +70,10 @@ export class RedisConnector {
         snapshotAt,
         connection: {
           status: "available",
+          mode: this.config.redis.mode,
           address: this.config.redis.address,
+          masterName: this.config.redis.sentinel?.masterName,
+          sentinelAddresses: this.config.redis.sentinel?.addresses,
           database: this.config.redis.database,
           ping,
         },
@@ -669,9 +681,36 @@ export class RedisConnector {
     }
   }
 
-  private async getClient(): Promise<RedisClientType> {
+  private async getClient(): Promise<RedisConnection> {
     if (this.client?.isReady) return this.client;
     const config = this.config.redis!;
+    if (config.mode === "sentinel") {
+      const sentinel = config.sentinel!;
+      this.client = createSentinel({
+        name: sentinel.masterName,
+        sentinelRootNodes: sentinel.addresses.map(parseRedisNodeAddress),
+        nodeClientOptions: {
+          username: config.username,
+          password: config.password,
+          database: config.database,
+          socket: {
+            connectTimeout: this.config.query.timeoutMilliseconds,
+          },
+        },
+        sentinelClientOptions: {
+          username: sentinel.username,
+          password: sentinel.password,
+          socket: {
+            connectTimeout: this.config.query.timeoutMilliseconds,
+          },
+        },
+        replicaPoolSize: 0,
+        passthroughClientErrorEvents: true,
+      });
+      this.client.on("error", () => undefined);
+      await this.client.connect();
+      return this.client;
+    }
     const url = new URL(`redis://${config.address}/${config.database}`);
     if (config.username) url.username = config.username;
     if (config.password) url.password = config.password;
@@ -688,7 +727,11 @@ export class RedisConnector {
   }
 
   private async command(values: string[]): Promise<unknown> {
-    return this.getClient().then((client) => client.sendCommand(values));
+    const client = await this.getClient();
+    if (this.config.redis?.mode === "sentinel") {
+      return (client as RedisSentinelType).sendCommand(true, values);
+    }
+    return (client as RedisClientType).sendCommand(values);
   }
 
   private async safeCommand(values: string[]): Promise<CommandResult> {
@@ -731,6 +774,19 @@ export class RedisConnector {
     } while (cursor !== "0");
     return { keys: [...keys], truncated };
   }
+}
+
+export function parseRedisNodeAddress(address: string): {
+  host: string;
+  port: number;
+} {
+  const url = new URL(`redis://${address}`);
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  const port = Number(url.port);
+  if (!host || !Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`invalid Redis address: ${address}`);
+  }
+  return { host, port };
 }
 
 export function normalizeMap(value: unknown): Record<string, unknown> {

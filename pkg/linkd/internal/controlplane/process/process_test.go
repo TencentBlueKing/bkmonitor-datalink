@@ -178,7 +178,7 @@ func TestPeriodicTaskRecordsImmediateRunAndFailure(t *testing.T) {
 	}
 }
 
-func TestAlertArchiveTaskDrainsBatchesWithoutIntervalDelay(t *testing.T) {
+func TestAlertArchiveTaskDrainsSweepPagesWithoutIntervalDelay(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -198,8 +198,10 @@ func TestAlertArchiveTaskDrainsBatchesWithoutIntervalDelay(t *testing.T) {
 					Scanned: 1000, Archived: 1000, NextCursor: "alert-1000",
 				}, nil
 			case 2:
+				cancel()
 				return elasticsearchstore.ArchiveBatchResult{Scanned: 1, Archived: 1}, nil
 			default:
+				t.Errorf("archive task started a new sweep without waiting")
 				cancel()
 				return elasticsearchstore.ArchiveBatchResult{}, nil
 			}
@@ -208,8 +210,7 @@ func TestAlertArchiveTaskDrainsBatchesWithoutIntervalDelay(t *testing.T) {
 	if err := task.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(requests) != 3 || requests[0].AfterAlertID != "" ||
-		requests[1].AfterAlertID != "alert-1000" || requests[2].AfterAlertID != "" {
+	if len(requests) != 2 || requests[0].AfterAlertID != "" || requests[1].AfterAlertID != "alert-1000" {
 		t.Fatalf("archive requests=%#v", requests)
 	}
 	for _, request := range requests {
@@ -219,11 +220,11 @@ func TestAlertArchiveTaskDrainsBatchesWithoutIntervalDelay(t *testing.T) {
 	}
 }
 
-func TestAlertArchiveTaskIsolatesItemFailuresAndWaitsWithoutProgress(t *testing.T) {
+func TestAlertArchiveTaskWaitsAfterCompletedSweepWithProgress(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	secondCall := make(chan struct{})
+	firstCall := make(chan struct{})
 	done := make(chan error, 1)
 	calls := 0
 	observer := &recordingTaskObserver{}
@@ -237,17 +238,19 @@ func TestAlertArchiveTaskIsolatesItemFailuresAndWaitsWithoutProgress(t *testing.
 		func(context.Context, elasticsearchstore.ArchiveBatchRequest) (elasticsearchstore.ArchiveBatchResult, error) {
 			calls++
 			if calls == 1 {
+				close(firstCall)
 				return elasticsearchstore.ArchiveBatchResult{Scanned: 2, Archived: 1, Failed: 1}, nil
 			}
-			close(secondCall)
-			return elasticsearchstore.ArchiveBatchResult{Scanned: 1, Failed: 1}, nil
+			t.Errorf("archive task started a new sweep without waiting")
+			cancel()
+			return elasticsearchstore.ArchiveBatchResult{}, nil
 		},
 	)
 	go func() { done <- task.Run(ctx) }()
 	select {
-	case <-secondCall:
+	case <-firstCall:
 	case <-time.After(time.Second):
-		t.Fatal("archive task did not begin the next sweep")
+		t.Fatal("archive task did not begin the first sweep")
 	}
 	select {
 	case err := <-done:
@@ -260,7 +263,7 @@ func TestAlertArchiveTaskIsolatesItemFailuresAndWaitsWithoutProgress(t *testing.
 	}
 	observer.mu.Lock()
 	defer observer.mu.Unlock()
-	if got := fmt.Sprint(observer.succeeded); got != "[false false]" {
+	if got := fmt.Sprint(observer.succeeded); got != "[false]" {
 		t.Fatalf("archive outcomes=%s", got)
 	}
 }

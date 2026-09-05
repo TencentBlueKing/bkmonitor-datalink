@@ -10,7 +10,7 @@ import {
   getRuntimeProcesses,
 } from "../api";
 import { HelpLabel, HelpTableHeader } from "../components/HelpTip";
-import { MetricPanelCard } from "../components/MetricPanelCard";
+import { MetricSection } from "../components/MetricSection";
 import { MetricQueryControls } from "../components/MetricQueryControls";
 import { RefreshControls } from "../components/RefreshControls";
 import {
@@ -101,9 +101,8 @@ export function OverviewPage() {
         }>
       | undefined) ?? [];
   const throughputStages = latestStageValues(
-    panels.find((panel) => panel.id === "pipeline-throughput"),
+    panels.find((panel) => panel.id === "pipeline-completed"),
   );
-  const latestThroughput = minimumStageValue(throughputStages);
   const p99Stages = latestStageValues(
     panels.find((panel) => panel.id === "pipeline-p99"),
   );
@@ -189,31 +188,44 @@ export function OverviewPage() {
       )}
 
       <div className="stat-grid">
-        <Stat
-          title="吞吐"
-          value={formatMetric(latestThroughput, " /s")}
-          detail={<StageBreakdown values={throughputStages} suffix="/s" />}
-          help="当前各处理阶段尝试速率的最小值；失败重试仍会计入对应阶段。"
-        />
-        <Stat
-          title="P99 耗时合计"
-          value={formatMetric(sumStageValues(p99Stages), " s")}
-          detail={<StageBreakdown values={p99Stages} suffix="s" />}
-          help="当前各阶段 P99 的合计值，用作流水线尾延迟的保守诊断；分位数相加不等同于严格的端到端 P99。"
-          tone="amber"
-        />
-        <Stat
-          title="平均耗时合计"
-          value={formatMetric(sumStageValues(averageStages), " s")}
-          detail={<StageBreakdown values={averageStages} suffix="s" />}
-          help="当前各阶段平均处理耗时之和；小字保留每个阶段的独立值。"
-        />
+        {pipelineStages.map((stage) => (
+          <Stat
+            key={stage}
+            title={`${stageLabel(stage)} 完成速率`}
+            value={formatMetric(
+              throughputStages.find((v) => v.stage === stage)?.value,
+              " /s",
+            )}
+            detail={
+              stage === "clean"
+                ? "成功规范化，含重复投递"
+                : "成功移出 Mailbox 的 Event"
+            }
+            help="各阶段分别显示，不取最小值或把差值直接解释为积压。失败尝试不计入完成速率。"
+          />
+        ))}
+        {pipelineStages.map((stage) => (
+          <Stat
+            key={`${stage}-latency`}
+            title={`${stageLabel(stage)} P99`}
+            value={formatMetric(
+              p99Stages.find((v) => v.stage === stage)?.value,
+              " s",
+            )}
+            detail={`平均 ${formatCompactMetric(averageStages.find((v) => v.stage === stage)?.value, "s")}`}
+            help="当前阶段的独立耗时分布；分位数不能相加作为端到端 P99。Lifecycle 只包含 Event Processor，不包含 Signal Handler。"
+          />
+        ))}
         {inflightStages.map((stage) => (
           <Stat
             key={stage.stage}
-            title={`${stageLabel(stage.stage)} 在途消息`}
+            title={`${stageLabel(stage.stage)} 在途${stage.stage === "lifecycle" ? " Signal" : "消息"}`}
             value={formatCount(stage.value)}
-            detail="已接管，尚未确认完成"
+            detail={
+              stage.stage === "lifecycle"
+                ? "Signal 数，不是 Event 数"
+                : "已接管，尚未确认完成"
+            }
             help={`${stageLabel(stage.stage)} 阶段已读取、但尚未确认或确定性丢弃的消息数。`}
           />
         ))}
@@ -332,25 +344,43 @@ export function OverviewPage() {
         </div>
       </article>
 
-      <div className="chart-grid">
-        {metrics.isLoading
-          ? Array.from({ length: 6 }, (_, index) => (
-              <div className="panel skeleton" key={index} />
-            ))
-          : panels
-              .filter((panel) =>
-                [
-                  "pipeline-throughput",
-                  "pipeline-average",
-                  "pipeline-p99",
-                  "messaging-inflight",
-                  "retry-rate",
-                  "settlement-gap",
-                  "store-errors",
-                ].includes(panel.id),
-              )
-              .map((panel) => <MetricPanelCard key={panel.id} panel={panel} />)}
-      </div>
+      <MetricSection
+        title="1 · 是否跟得上输入"
+        description="分别观察各阶段完成速率与 Signal 积压趋势；不能把 Event、Signal 和请求数量混为一谈。"
+        panels={panels}
+        ids={[
+          "pipeline-completed",
+          "signal-backlog",
+          "pipeline-average",
+          "pipeline-p99",
+        ]}
+      />
+      <MetricSection
+        title="2 · 等待发生在哪里"
+        description="分区暂停说明拉取受控；批次排队高而执行低，优先检查客户端合批与并发。ES 请求执行耗时仍包含网络，不等同于服务端耗时。"
+        panels={panels}
+        ids={[
+          "kafka-lane-paused",
+          "cleaner-backpressure",
+          "lifecycle-batch-queue",
+          "lifecycle-batch-duration",
+          "lifecycle-batch-size",
+          "store-latency",
+        ]}
+      />
+      <MetricSection
+        title="3 · 失败与恢复"
+        description="确认失败发生在存储、重试还是连续提交边界；指标缺失不等同于零错误。"
+        panels={panels}
+        ids={[
+          "retry-rate",
+          "store-errors",
+          "settlement-gap",
+          "control-plane-archive-rate",
+          "control-plane-redis-trim-rate",
+          "signal-handler-duration",
+        ]}
+      />
     </section>
   );
 }
@@ -398,27 +428,19 @@ function latestStageValues(panel: MetricPanel | undefined): StageValue[] {
     const value = series.points.at(-1)?.[1];
     if (value === null || value === undefined) continue;
     const stage = series.labels.linkd_stage || "unknown";
-    values.set(stage, (values.get(stage) ?? 0) + value);
+    const nonAdditive =
+      panel?.id === "pipeline-average" || panel?.id === "pipeline-p99";
+    values.set(
+      stage,
+      nonAdditive && values.has(stage) ? NaN : (values.get(stage) ?? 0) + value,
+    );
   }
   return [...values.entries()]
-    .map(([stage, value]) => ({ stage, value }))
+    .map(([stage, value]) => ({
+      stage,
+      value: Number.isFinite(value) ? value : undefined,
+    }))
     .sort((left, right) => stageOrder(left.stage) - stageOrder(right.stage));
-}
-
-function minimumStageValue(values: StageValue[]): number | undefined {
-  const known = values.flatMap((value) =>
-    value.value === undefined ? [] : [value.value],
-  );
-  return known.length ? Math.min(...known) : undefined;
-}
-
-function sumStageValues(values: StageValue[]): number | undefined {
-  const known = values.flatMap((value) =>
-    value.value === undefined ? [] : [value.value],
-  );
-  return known.length
-    ? known.reduce((total, value) => total + value, 0)
-    : undefined;
 }
 
 function overviewInflightStages(values: StageValue[]): StageValue[] {
@@ -427,30 +449,6 @@ function overviewInflightStages(values: StageValue[]): StageValue[] {
     ...pipelineStages.map((stage) => ({ stage, value: byStage.get(stage) })),
     ...values.filter((value) => !pipelineStages.includes(value.stage)),
   ];
-}
-
-function StageBreakdown({
-  values,
-  suffix,
-}: {
-  values: StageValue[];
-  suffix: string;
-}) {
-  const byStage = new Map(values.map((value) => [value.stage, value.value]));
-  const stages = [
-    ...pipelineStages.map((stage) => ({ stage, value: byStage.get(stage) })),
-    ...values.filter((value) => !pipelineStages.includes(value.stage)),
-  ];
-  return (
-    <span className="stat-breakdown">
-      {stages.map((stage) => (
-        <span key={stage.stage}>
-          {stageLabel(stage.stage)}
-          <b>{formatCompactMetric(stage.value, suffix)}</b>
-        </span>
-      ))}
-    </span>
-  );
 }
 
 function stageLabel(stage: string): string {

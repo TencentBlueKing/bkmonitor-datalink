@@ -219,7 +219,9 @@ func newElasticsearchComponents(
 		AlertHistoryBucketDays:     cfg.TimePartition.AlertHistoryBucketDays,
 		AlertLogBucketDays:         cfg.TimePartition.AlertLogBucketDays,
 		MaxFutureSkew:              cfg.TimePartition.MaxFutureSkew(),
+		RefreshInterval:            cfg.RefreshInterval(),
 		ActiveAlertRefreshInterval: cfg.ActiveAlertRefreshInterval(),
+		AlertLogTranslogDurability: cfg.AlertLogTranslogDurability,
 		NumberOfReplicas:           cfg.NumberOfReplicas,
 	})
 	if err != nil {

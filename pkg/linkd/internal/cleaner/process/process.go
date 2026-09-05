@@ -16,10 +16,10 @@ import (
 	"log/slog"
 	"time"
 
-	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/cleaner"
 	"linkd/internal/config"
 	"linkd/internal/consume"
+	"linkd/internal/redisclient"
 	repositoryassembly "linkd/internal/store/assembly"
 	"linkd/internal/telemetry"
 )
@@ -63,12 +63,10 @@ func Run(
 	observedRepository := telemetryRuntime.ObserveRepository(repositoryRuntime.Repository)
 
 	redisConfig := cfg.Storage.Redis
-	redisClient := redis.NewClient(&redis.Options{
-		Addr:     redisConfig.Address,
-		Username: redisConfig.Username,
-		Password: redisConfig.Password,
-		DB:       redisConfig.Database,
-	})
+	redisClient, err := redisclient.New(redisConfig.ClientOptions())
+	if err != nil {
+		return fmt.Errorf("initialize cleaner redis: %w", err)
+	}
 	defer func() {
 		if err := redisClient.Close(); err != nil {
 			runErr = errors.Join(runErr, fmt.Errorf("close cleaner redis: %w", err))

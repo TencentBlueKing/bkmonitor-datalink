@@ -16,9 +16,9 @@ import (
 	"log/slog"
 	"time"
 
-	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/config"
 	controlplaneredisstream "linkd/internal/controlplane/redisstream"
+	"linkd/internal/redisclient"
 	repositoryassembly "linkd/internal/store/assembly"
 	elasticsearchstore "linkd/internal/store/elasticsearch"
 	"linkd/internal/taskgroup"
@@ -232,10 +232,10 @@ func openRuntime(
 
 	if hasRedisStreamTask(cfg) {
 		redisConfig := cfg.Storage.Redis
-		client := redis.NewClient(&redis.Options{
-			Addr: redisConfig.Address, Username: redisConfig.Username,
-			Password: redisConfig.Password, DB: redisConfig.Database,
-		})
+		client, err := redisclient.New(redisConfig.ClientOptions())
+		if err != nil {
+			return fail(fmt.Errorf("initialize control plane redis: %w", err))
+		}
 		closers = append(closers, func() error {
 			if err := client.Close(); err != nil {
 				return fmt.Errorf("close control plane redis: %w", err)
@@ -251,6 +251,7 @@ func openRuntime(
 			Stream: lifecycleConfig.Signal.Stream, ExpectedGroup: lifecycleConfig.Signal.Group,
 			ReconcileInterval: settings.ReconcileInterval(), OperationTimeout: settings.OperationTimeout(),
 			MaxEntries: settings.MaxEntries, TrimBatchSize: settings.TrimBatchSize,
+			MaxTrimEntriesPerCycle: settings.MaxTrimEntriesPerCycle,
 		}, telemetryRuntime.RedisStreamObserver())
 		if err != nil {
 			return fail(fmt.Errorf("initialize redis stream management task: %w", err))
@@ -361,7 +362,6 @@ func newAlertArchiveTask(
 
 			cursor := ""
 			effectiveLimit := settings.ArchiveBatchSize
-			sweepArchived := 0
 			for {
 				startedAt := time.Now()
 				result, err := runBatch(ctx, elasticsearchstore.ArchiveBatchRequest{
@@ -410,7 +410,6 @@ func newAlertArchiveTask(
 						"failure_samples", result.FailureItems,
 					)
 				}
-				sweepArchived += result.Archived
 				if result.NextCursor != "" {
 					cursor = result.NextCursor
 					continue
@@ -418,10 +417,8 @@ func newAlertArchiveTask(
 
 				cursor = ""
 				effectiveLimit = settings.ArchiveBatchSize
-				if sweepArchived > 0 {
-					sweepArchived = 0
-					continue
-				}
+				// refresh=false 的 Active 删除在下一次 Elasticsearch refresh 前仍可能被 search 返回。
+				// 一次 sweep 内仍连续翻页追赶积压，但到达尾部后必须等待，避免立即重扫已删除文档。
 				if !waitForArchiveRetry(ctx, settings.ArchiveInterval()) {
 					return nil
 				}

@@ -128,6 +128,11 @@ Leader Election 完成前，`linkd run control-plane` 只能部署单副本，�
 控制面须先把 Active 索引的 `refresh_interval` 对账为 YAML 中的配置值（默认 `5s`）。
 Event create 改用 `refresh=false` 不改变 Redis 或存储 schema；新旧 Cleaner 可以滚动替换，差异只在
 Event 搜索可见等待，Lifecycle 和幂等冲突核对均使用 realtime GET。
+Event、Alert History 和 AlertLog 的新时间桶也通过模板使用默认 `5s` refresh；修改该值只影响后续
+refresh 周期，不改变实时 GET 或 CAS 的可见性。
+AlertLog 默认使用 `async` translog durability，而 Event、Active Alert 和 Alert History 保持
+`request`；部署方必须接受节点异常时最近一个 translog sync interval 内 AlertLog 可能丢失，不能把
+AlertLog 当作零丢失审计账本。
 
 ## 故障与扩缩容边界
 
@@ -150,7 +155,8 @@ Event 搜索可见等待，Lifecycle 和幂等冲突核对均使用 realtime GET
 - `linkd run cleaner` 和 `linkd run lifecycle` 已提供独立进程入口；
 - `linkd run control-plane` 已提供控制面进程入口和多任务监督边界，当前可装配两个周期性 Elasticsearch
   对账任务、一个连续批量归档任务和 `redis-stream-manager`；后者采集 Signal Stream、Consumer Group、
-  PEL、lag 和内存状态，并只裁剪全部 Group 已确认的前缀。API 和 Leader Election 尚未实现，因此只能部署单副本；
+  PEL、lag 和内存状态，并在单轮预算内分批追赶、只裁剪全部 Group 已确认的前缀。API 和 Leader Election
+  尚未实现，因此只能部署单副本；
 - `linkd storage prepare` 是历史回放前预创建 Elasticsearch 时间桶的一次性管理命令，不是常驻进程。
 
 因此，本文确认的是目标部署边界，不表示三进程模式已经具备完整生产交付能力。控制面实现、健康与

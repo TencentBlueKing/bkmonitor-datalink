@@ -242,6 +242,11 @@ func (m *Manager) ensureBucket(ctx context.Context, family bucketFamily, start t
 	if err := m.ensureManagedIndex(ctx, index, metadata); err != nil {
 		return fmt.Errorf("ensure %s bucket %q: %w", family.entity, index, err)
 	}
+	if family.entity == entityAlertLog {
+		if err := m.ensureAlertLogTranslogDurability(ctx, index); err != nil {
+			return err
+		}
+	}
 	indices, err := m.aliasIndices(ctx, family.readAlias)
 	if err != nil {
 		return err
@@ -258,6 +263,19 @@ func (m *Manager) ensureBucket(ctx context.Context, family bucketFamily, start t
 		}
 	}
 	return m.ensureAlias(ctx, family.writeAlias(start), index, true, true)
+}
+
+func (m *Manager) ensureAlertLogTranslogDurability(ctx context.Context, index string) error {
+	body, err := marshalRequest(map[string]any{
+		"index": map[string]any{"translog.durability": m.router.alertLogDurability},
+	})
+	if err != nil {
+		return err
+	}
+	if err := m.repository.performJSON(ctx, http.MethodPut, "/"+index+"/_settings", nil, body, nil); err != nil {
+		return fmt.Errorf("ensure alert log index %q translog durability: %w", index, err)
+	}
+	return nil
 }
 
 func (m *Manager) ensureManagedIndex(ctx context.Context, index string, metadata schemaMetadata) error {

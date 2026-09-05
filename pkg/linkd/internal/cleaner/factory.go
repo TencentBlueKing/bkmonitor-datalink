@@ -12,6 +12,7 @@ package cleaner
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"linkd/internal/config"
 	"linkd/internal/consume"
@@ -97,6 +98,7 @@ func kafkaConfig(source config.EventSource) consumekafka.Config {
 		Brokers:       append([]string(nil), storage.Brokers...),
 		Topic:         storage.Topic,
 		ConsumerGroup: storage.ConsumerGroup,
+		FetchMaxWait:  time.Duration(storage.FetchMaxWaitMilliseconds) * time.Millisecond,
 		ClientID:      "linkd-cleaner-" + source.EventSourceID,
 		Security:      storage.Security.Clone(),
 	}

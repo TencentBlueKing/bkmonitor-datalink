@@ -8,7 +8,6 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
 vi.mock("../components/MetricPanelCard", () => ({
   MetricPanelCard: () => null,
 }));
@@ -31,23 +30,19 @@ describe("OverviewPage", () => {
       "true",
     );
 
-    const throughput = statCard("吞吐");
-    expect(throughput).toHaveTextContent("Cleaner12.00/s");
-    expect(throughput).toHaveTextContent("Lifecycle7.00/s");
-    expect(throughput).not.toHaveTextContent("瓶颈");
-
-    const p99 = statCard("P99 耗时合计");
-    expect(p99).toHaveTextContent("1.10 s");
-    expect(p99).toHaveTextContent("Cleaner400ms");
-    expect(p99).toHaveTextContent("Lifecycle700ms");
-
-    const average = statCard("平均耗时合计");
-    expect(average).toHaveTextContent("0.50 s");
-    expect(average).toHaveTextContent("Cleaner200ms");
-    expect(average).toHaveTextContent("Lifecycle300ms");
+    expect(statCard("Cleaner 完成速率")).toHaveTextContent("10.00 /s");
+    expect(statCard("Lifecycle 完成速率")).toHaveTextContent("7.00 /s");
+    expect(statCard("Cleaner P99")).toHaveTextContent("0.40 s");
+    expect(statCard("Cleaner P99")).toHaveTextContent("平均 200ms");
+    expect(statCard("Lifecycle P99")).toHaveTextContent("0.70 s");
+    expect(statCard("Lifecycle P99")).toHaveTextContent("平均 300ms");
+    expect(screen.queryByText("P99 耗时合计")).toBeNull();
+    expect(
+      screen.getByRole("region", { name: "2 · 等待发生在哪里" }),
+    ).toBeVisible();
 
     expect(statCard("Cleaner 在途消息")).toHaveTextContent("4");
-    expect(statCard("Lifecycle 在途消息")).toHaveTextContent("2");
+    expect(statCard("Lifecycle 在途 Signal")).toHaveTextContent("2");
     expect(statCard("确认阻塞消息")).toHaveTextContent("1");
     expect(screen.queryByText("可用面板")).toBeNull();
   });
@@ -111,12 +106,9 @@ function stubOverviewAPI(requests?: string[]) {
           to: "2026-09-02T01:00:00.000Z",
           step: 15,
           panels: [
-            panel("pipeline-throughput", "阶段处理速率", "attempt/s", [
+            panel("pipeline-completed", "阶段完成速率", "event/s", [
               series("clean succeeded", "clean", 10, {
                 linkd_outcome: "succeeded",
-              }),
-              series("clean failed", "clean", 2, {
-                linkd_outcome: "failed",
               }),
               series("lifecycle accepted", "lifecycle", 7, {
                 linkd_outcome: "accepted",

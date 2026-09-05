@@ -84,7 +84,8 @@ func TestBucketRouterConfiguresReplicaCountForNewIndices(t *testing.T) {
 	zero := 0
 	router, err := NewBucketRouter("linkd-test", BucketConfig{
 		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
-		MaxFutureSkew: 5 * time.Minute, ActiveAlertRefreshInterval: 17 * time.Second, NumberOfReplicas: &zero,
+		MaxFutureSkew: 5 * time.Minute, RefreshInterval: 11 * time.Second,
+		ActiveAlertRefreshInterval: 17 * time.Second, NumberOfReplicas: &zero,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -96,10 +97,16 @@ func TestBucketRouterConfiguresReplicaCountForNewIndices(t *testing.T) {
 		if spec.Entity == entityAlert && spec.Settings["refresh_interval"] != "17s" {
 			t.Fatalf("active template settings=%#v", spec.Settings)
 		}
+		if spec.Entity != entityAlert && spec.Settings["refresh_interval"] != "11s" {
+			t.Fatalf("bucket template settings=%#v", spec.Settings)
+		}
+		if spec.Entity == entityAlertLog && spec.Settings["index.translog.durability"] != "async" {
+			t.Fatalf("alert log template settings=%#v", spec.Settings)
+		}
 	}
 }
 
-func TestBucketRouterLeavesReplicaCountUnmanagedWhenOmitted(t *testing.T) {
+func TestBucketRouterUsesDefaultRefreshAndLeavesReplicaCountUnmanagedWhenOmitted(t *testing.T) {
 	t.Parallel()
 	router, err := NewBucketRouter("linkd-test", BucketConfig{
 		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
@@ -109,15 +116,34 @@ func TestBucketRouterLeavesReplicaCountUnmanagedWhenOmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, spec := range router.SchemaConfig().Templates() {
-		if spec.Entity == entityAlert {
-			if len(spec.Settings) != 1 || spec.Settings["refresh_interval"] != "5s" {
-				t.Fatalf("active template settings=%#v", spec.Settings)
+		wantSettings := 1
+		if spec.Entity == entityAlertLog {
+			wantSettings = 2
+			if spec.Settings["index.translog.durability"] != "async" {
+				t.Fatalf("alert log template settings=%#v", spec.Settings)
 			}
-			continue
 		}
-		if spec.Settings != nil {
-			t.Fatalf("template %q settings=%#v, want nil", spec.Name, spec.Settings)
+		if len(spec.Settings) != wantSettings || spec.Settings["refresh_interval"] != "5s" {
+			t.Fatalf("template %q settings=%#v", spec.Name, spec.Settings)
 		}
+		if _, exists := spec.Settings["number_of_replicas"]; exists {
+			t.Fatalf("template %q unexpectedly manages replicas: %#v", spec.Name, spec.Settings)
+		}
+	}
+}
+
+func TestBucketRouterAllowsRequestDurabilityForAlertLog(t *testing.T) {
+	t.Parallel()
+	router, err := NewBucketRouter("linkd-test", BucketConfig{
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+		MaxFutureSkew: 5 * time.Minute, ActiveAlertRefreshInterval: 5 * time.Second,
+		AlertLogTranslogDurability: "request",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := router.SchemaConfig().AlertLog.Settings["index.translog.durability"]; got != "request" {
+		t.Fatalf("alert log translog durability=%v", got)
 	}
 }
 

@@ -1810,6 +1810,44 @@ a {
 .stat-card.red strong {
   color: var(--red);
 }
+.diagnostic-section {
+  margin-top: 28px;
+}
+.diagnostic-section,
+.diagnostic-section .chart-grid {
+  min-width: 0;
+}
+.diagnostic-section > header {
+  margin-bottom: 16px;
+}
+.diagnostic-section > header h2 {
+  margin: 0 0 8px;
+  font-size: 19px;
+}
+.diagnostic-section > header p,
+.diagnostic-note {
+  color: #8495a8;
+  line-height: 1.7;
+  font-size: 13px;
+}
+.batch-diagnostics {
+  border: 1px solid #263447;
+  border-radius: 14px;
+  padding: 24px;
+  background: #101923;
+}
+.batch-config-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.batch-config-summary > span {
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: #182331;
+  color: #c8d8e8;
+  font-size: 12px;
+}
 .stage-metric-panel {
   min-width: 0;
   margin-bottom: 14px;
@@ -1906,6 +1944,7 @@ a {
   gap: 12px;
 }
 .panel {
+  min-width: 0;
   min-height: 300px;
   border: 1px solid var(--line);
   background: rgba(14, 21, 30, 0.86);
@@ -3832,5 +3871,85 @@ td:last-child {
   }
   .control-plane-chain-arrow {
     transform: none;
+  }
+}
+
+@media (max-width: 720px) {
+  body {
+    min-width: 0;
+  }
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sidebar {
+    position: static;
+    width: auto;
+    min-width: 0;
+    border-right: 0;
+    border-bottom: 1px solid #263447;
+  }
+  .sidebar .brand {
+    height: 56px;
+  }
+  .sidebar nav {
+    display: flex;
+    overflow-x: auto;
+    padding: 8px;
+    gap: 8px;
+  }
+  .sidebar .nav-group {
+    flex: 0 0 auto;
+  }
+  .sidebar .nav-group-title,
+  .sidebar-footer {
+    display: none;
+  }
+  .sidebar .nav-group-items {
+    display: flex;
+    white-space: nowrap;
+  }
+  .workspace {
+    grid-column: 1;
+  }
+  .page-container {
+    padding: 18px 12px 40px;
+  }
+  .topbar {
+    height: 42px;
+    padding: 0 12px;
+  }
+  .environment-label {
+    display: none;
+  }
+  .topbar-actions {
+    margin-left: auto;
+  }
+  .page-heading {
+    flex-direction: column;
+    gap: 14px;
+  }
+  .overview-control-stack,
+  .metric-page-control-stack {
+    justify-items: start;
+    max-width: 100%;
+  }
+  .metric-query-controls,
+  .refresh-controls-summary,
+  .refresh-controls-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  .stat-grid,
+  .stage-stat-grid,
+  .lifecycle-state-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .batch-diagnostics {
+    padding: 14px;
+  }
+  .lifecycle-runtime-panel > header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
   }
 }

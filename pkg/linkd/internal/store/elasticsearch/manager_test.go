@@ -32,12 +32,12 @@ type managerTransport struct {
 	searches   int
 	searchBody string
 	lastSearch string
-	settings   map[string]string
+	settings   map[string]map[string]string
 }
 
 func newManagerTransport() *managerTransport {
 	return &managerTransport{
-		indices: map[string]schemaMetadata{}, aliases: map[string]map[string]bool{}, settings: map[string]string{},
+		indices: map[string]schemaMetadata{}, aliases: map[string]map[string]bool{}, settings: map[string]map[string]string{},
 	}
 }
 
@@ -76,16 +76,25 @@ func (t *managerTransport) Perform(request *http.Request) (*http.Response, error
 		var body struct {
 			Index struct {
 				RefreshInterval string `json:"refresh_interval"`
+				Durability      string `json:"translog.durability"`
 			} `json:"index"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			return nil, err
 		}
-		t.settings[index] = body.Index.RefreshInterval
+		if t.settings[index] == nil {
+			t.settings[index] = map[string]string{}
+		}
+		if body.Index.RefreshInterval != "" {
+			t.settings[index]["refresh_interval"] = body.Index.RefreshInterval
+		}
+		if body.Index.Durability != "" {
+			t.settings[index]["translog.durability"] = body.Index.Durability
+		}
 		return managerJSONResponse(http.StatusOK, `{"acknowledged":true}`), nil
 	case request.Method == http.MethodGet && strings.Contains(path, "/_settings/"):
 		index := strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/_settings/index.refresh_interval")
-		value := t.settings[index]
+		value := t.settings[index]["refresh_interval"]
 		data, _ := json.Marshal(map[string]any{index: map[string]any{
 			"settings": map[string]any{"index": map[string]any{"refresh_interval": value}},
 		}})
@@ -200,7 +209,7 @@ func TestManagerReconcileSchemaAndActiveDoesNotCreateBucketsOrArchive(t *testing
 	if len(transport.indices) != 1 {
 		t.Fatalf("indices=%d %#v, want only active alert index", len(transport.indices), transport.indices)
 	}
-	if transport.settings["linkd-test-alerts-active-000001"] != "17s" {
+	if transport.settings["linkd-test-alerts-active-000001"]["refresh_interval"] != "17s" {
 		t.Fatalf("active refresh interval=%q", transport.settings["linkd-test-alerts-active-000001"])
 	}
 }
@@ -261,6 +270,13 @@ func TestManagerIndependentOperationsCreateStableLayout(t *testing.T) {
 		!transport.aliases["linkd-test-alerts-write"]["linkd-test-alerts-active-000001"] {
 		t.Fatalf("active write alias=%#v", transport.aliases["linkd-test-alerts-write"])
 	}
+	for _, index := range []string{
+		"linkd-test-alert-logs-20260824", "linkd-test-alert-logs-20260831", "linkd-test-alert-logs-20260907",
+	} {
+		if got := transport.settings[index]["translog.durability"]; got != "async" {
+			t.Fatalf("alert log index %q translog durability=%q", index, got)
+		}
+	}
 }
 
 func TestManagerVerifyReadyRequiresConfiguredActiveRefresh(t *testing.T) {
@@ -294,7 +310,7 @@ func TestManagerVerifyReadyRequiresConfiguredActiveRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	transport.mu.Lock()
-	transport.settings[router.activeAlertIndex()] = "1s"
+	transport.settings[router.activeAlertIndex()]["refresh_interval"] = "1s"
 	transport.mu.Unlock()
 	if err := manager.VerifyReady(context.Background()); err == nil || !strings.Contains(err.Error(), "must be 5s") {
 		t.Fatalf("VerifyReady() error=%v", err)

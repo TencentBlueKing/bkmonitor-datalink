@@ -19,6 +19,7 @@ import (
 
 	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/consume"
+	"linkd/internal/redisclient"
 )
 
 func TestSessionClaimsPendingAndAcknowledgesStreamID(t *testing.T) {
@@ -128,10 +129,10 @@ func TestSessionValidatesClaimAgainstRuntimeBudget(t *testing.T) {
 
 func testRedisConfig() Config {
 	config := (Config{
-		Address:  "redis:6379",
-		Stream:   "raw-events",
-		Group:    "linkd",
-		Consumer: "linkd-1",
+		Connection: redisclient.Options{Address: "redis:6379"},
+		Stream:     "raw-events",
+		Group:      "linkd",
+		Consumer:   "linkd-1",
 	}).WithDefaults()
 	config.ClaimMinIdle = 5 * time.Minute
 	return config

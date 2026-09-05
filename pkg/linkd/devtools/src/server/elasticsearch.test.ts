@@ -28,6 +28,56 @@ const config = {
 
 afterEach(() => vi.unstubAllGlobals());
 
+describe("Elasticsearch node performance", () => {
+  it("keeps missing node values unknown and exposes server-side queue separately", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: URL | Request | string) => {
+        expect(String(input)).toContain("/_nodes/stats/");
+        return new Response(
+          JSON.stringify({
+            _nodes: { failed: 1 },
+            nodes: {
+              a: {
+                name: "node-a",
+                process: { cpu: { percent: 120 } },
+                jvm: { mem: { heap_used_percent: 40 } },
+                thread_pool: { write: { active: 2, queue: 0, rejected: 9 } },
+                indices: {
+                  merges: { current: 1 },
+                  translog: { uncommitted_size_in_bytes: 1048576 },
+                },
+              },
+              b: { name: "node-b" },
+            },
+          }),
+        );
+      }),
+    );
+    const result = await new ElasticsearchConnector(config).performance();
+    expect(result.status).toBe("partial");
+    expect(result.nodes[0]).toMatchObject({
+      cpuPercent: 120,
+      heapPercent: 40,
+      writeActive: 2,
+      writeQueue: 0,
+      writeRejected: 9,
+      mergeCurrent: 1,
+      uncommittedTranslogBytes: 1048576,
+    });
+    expect(result.nodes[1].writeQueue).toBeNull();
+  });
+  it("does not turn a permission failure into zero queue or zero rejections", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("forbidden", { status: 403 })),
+    );
+    const result = await new ElasticsearchConnector(config).performance();
+    expect(result.status).toBe("unavailable");
+    expect(result.nodes).toEqual([]);
+  });
+});
+
 describe("ElasticsearchConnector", () => {
   it("counts only terminal Alerts through the fixed Active alias", async () => {
     let requestedPath = "";

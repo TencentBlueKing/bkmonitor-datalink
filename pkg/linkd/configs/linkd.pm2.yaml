@@ -30,7 +30,9 @@ storage:
       - http://127.0.0.1:9200
     index_prefix: linkd-pm2
     number_of_replicas: 0
+    refresh_interval_seconds: 5
     active_alert_refresh_interval_seconds: 5
+    alert_log_translog_durability: async
     time_partition:
       event_bucket_days: 7
       alert_history_bucket_days: 7
@@ -40,12 +42,16 @@ storage:
       max_buckets_per_entity: 512
       max_future_skew_seconds: 300
   redis:
+    mode: standalone
     address: 127.0.0.1:16379
     password: ""
     database: 0
 
 lifecycle:
-  concurrency: 8
+  concurrency: 32
+  elasticsearch_write_batch:
+    enabled: true
+    max_bytes: 4194304
   process_timeout_seconds: 30
   retry_max_attempts: 3
   retry_max_elapsed_seconds: 120
@@ -87,14 +93,15 @@ control_plane:
   elasticsearch:
     schema_and_active_reconcile_interval_seconds: 3600
     bucket_reconcile_interval_seconds: 21600
-    archive_interval_seconds: 30
+    archive_interval_seconds: 5
     archive_batch_size: 1000
-    archive_worker_count: 4
+    archive_worker_count: 1
   redis_stream:
-    reconcile_interval_seconds: 60
-    operation_timeout_seconds: 10
+    reconcile_interval_seconds: 10
+    operation_timeout_seconds: 3
     max_entries: 100000
     trim_batch_size: 10000
+    max_trim_entries_per_cycle: 100000
 
 event_sources:
   - event_source_id: standard-infra
@@ -115,6 +122,7 @@ event_sources:
           - 127.0.0.1:9092
         topic: linkd-standard-infra
         consumer_group: linkd-cleaner-standard-infra
+        fetch_max_wait_milliseconds: 100
         security:
           protocol: plaintext
 
@@ -138,5 +146,6 @@ event_sources:
           - 127.0.0.1:9092
         topic: linkd-standard-service
         consumer_group: linkd-cleaner-standard-service
+        fetch_max_wait_milliseconds: 100
         security:
           protocol: plaintext

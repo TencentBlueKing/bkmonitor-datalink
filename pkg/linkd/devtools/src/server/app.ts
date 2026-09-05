@@ -207,6 +207,16 @@ export async function createApp(
       throw new Error("elasticsearch source is unavailable");
     return elasticsearchConnector.topology();
   });
+  app.get("/local-api/elasticsearch/performance", async () => {
+    if (!elasticsearchConnector)
+      return {
+        status: "unavailable",
+        sampledAt: new Date().toISOString(),
+        nodes: [],
+        message: "Elasticsearch 未配置",
+      };
+    return elasticsearchConnector.performance();
+  });
 
   for (const entity of entityKindSchema.options) {
     app.get(`/local-api/${entity}`, async (request): Promise<EntityPage> => {
@@ -300,9 +310,9 @@ function controlPlaneTasks(
     explicit: false,
     schemaAndActiveReconcileIntervalSeconds: 3600,
     bucketReconcileIntervalSeconds: 21600,
-    archiveIntervalSeconds: 30,
+    archiveIntervalSeconds: 5,
     archiveBatchSize: 1000,
-    archiveWorkerCount: 4,
+    archiveWorkerCount: 1,
   };
   const partition = config.elasticsearch?.timePartition ?? {
     eventBucketDays: 7,
@@ -319,10 +329,11 @@ function controlPlaneTasks(
       : ("default" as const)
     : ("disabled" as const);
   const redis = config.redisStreamManager ?? {
-    reconcileIntervalSeconds: 60,
-    operationTimeoutSeconds: 10,
+    reconcileIntervalSeconds: 10,
+    operationTimeoutSeconds: 3,
     maxEntries: 100000,
     trimBatchSize: 10000,
+    maxTrimEntriesPerCycle: 100000,
   };
   return [
     {
@@ -374,6 +385,7 @@ function controlPlaneTasks(
         operationTimeoutSeconds: redis.operationTimeoutSeconds,
         maxEntries: redis.maxEntries,
         trimBatchSize: redis.trimBatchSize,
+        maxTrimEntriesPerCycle: redis.maxTrimEntriesPerCycle,
         stream: config.lifecycle?.signal.stream ?? "",
         group: config.lifecycle?.signal.group ?? "",
       },

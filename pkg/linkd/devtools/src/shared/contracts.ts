@@ -69,6 +69,7 @@ export const metricPanelSchema = z.object({
   kind: z.enum(["line", "area", "stat"]),
   status: z.enum(["available", "unavailable"]),
   message: z.string().optional(),
+  description: z.string().optional(),
   series: z.array(metricSeriesSchema),
 });
 export type MetricPanel = z.infer<typeof metricPanelSchema>;
@@ -168,6 +169,28 @@ export const elasticsearchTopologySchema = z.object({
     .default([]),
 });
 export type ElasticsearchTopology = z.infer<typeof elasticsearchTopologySchema>;
+
+export const elasticsearchPerformanceSchema = z.object({
+  status: z.enum(["available", "partial", "unavailable"]),
+  sampledAt: z.string(),
+  message: z.string().optional(),
+  nodes: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      cpuPercent: z.number().nullable(),
+      heapPercent: z.number().nullable(),
+      writeActive: z.number().nullable(),
+      writeQueue: z.number().nullable(),
+      writeRejected: z.number().nullable(),
+      mergeCurrent: z.number().nullable(),
+      uncommittedTranslogBytes: z.number().nullable(),
+    }),
+  ),
+});
+export type ElasticsearchPerformance = z.infer<
+  typeof elasticsearchPerformanceSchema
+>;
 
 export const kafkaIssueSchema = z.object({
   code: z.enum([
@@ -286,7 +309,10 @@ export const redisInfrastructureSchema = z.object({
   status: availabilitySchema,
   snapshotAt: z.string().datetime(),
   connection: redisSectionBaseSchema.extend({
+    mode: z.enum(["standalone", "sentinel"]).optional(),
     address: z.string().optional(),
+    masterName: z.string().optional(),
+    sentinelAddresses: z.array(z.string()).optional(),
     database: z.number().int().nonnegative().optional(),
     ping: z.string().optional(),
   }),

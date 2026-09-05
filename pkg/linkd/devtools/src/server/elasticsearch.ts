@@ -1,4 +1,5 @@
 import type {
+  ElasticsearchPerformance,
   ElasticsearchTopology,
   EntityItem,
   EntityKind,
@@ -343,6 +344,64 @@ export class ElasticsearchConnector {
         entity === "alerts"
           ? ["Alert 归档短暂重叠期间，聚合统计可能重复计数。"]
           : [],
+    };
+  }
+
+  async performance(): Promise<ElasticsearchPerformance> {
+    const paths = {
+      cpuPercent: "process.cpu.percent",
+      heapPercent: "jvm.mem.heap_used_percent",
+      writeActive: "thread_pool.write.active",
+      writeQueue: "thread_pool.write.queue",
+      writeRejected: "thread_pool.write.rejected",
+      mergeCurrent: "indices.merges.current",
+      uncommittedTranslogBytes: "indices.translog.uncommitted_size_in_bytes",
+    };
+    const fields = [
+      "_nodes.failed",
+      "nodes.*.name",
+      ...Object.values(paths).map((p) => `nodes.*.${p}`),
+    ].join(",");
+    const raw = await this.optionalRequest<{
+      _nodes?: { failed?: number };
+      nodes?: Record<string, Record<string, unknown>>;
+    }>(`/_nodes/stats/indices,jvm,process,thread_pool?filter_path=${fields}`);
+    const number = (node: unknown, path: string): number | null => {
+      let value = node;
+      for (const key of path.split("."))
+        value =
+          value && typeof value === "object"
+            ? (value as Record<string, unknown>)[key]
+            : undefined;
+      return typeof value === "number" && Number.isFinite(value) && value >= 0
+        ? value
+        : null;
+    };
+    const nodes = Object.entries(raw?.nodes ?? {}).map(([id, node]) => ({
+      id,
+      name: typeof node.name === "string" ? node.name : id,
+      cpuPercent: number(node, paths.cpuPercent),
+      heapPercent: number(node, paths.heapPercent),
+      writeActive: number(node, paths.writeActive),
+      writeQueue: number(node, paths.writeQueue),
+      writeRejected: number(node, paths.writeRejected),
+      mergeCurrent: number(node, paths.mergeCurrent),
+      uncommittedTranslogBytes: number(node, paths.uncommittedTranslogBytes),
+    }));
+    const partial = (raw?._nodes?.failed ?? 0) > 0;
+    return {
+      status: nodes.length
+        ? partial
+          ? "partial"
+          : "available"
+        : "unavailable",
+      sampledAt: new Date().toISOString(),
+      nodes,
+      message: nodes.length
+        ? partial
+          ? "部分节点统计不可用"
+          : undefined
+        : "节点统计不可用，请检查权限或连接",
     };
   }
 

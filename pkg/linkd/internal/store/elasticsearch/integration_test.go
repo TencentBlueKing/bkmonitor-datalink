@@ -48,6 +48,14 @@ func (t endpointTransport) Perform(request *http.Request) (*http.Response, error
 }
 
 func TestElasticsearchRepositoryContract(t *testing.T) {
+	runElasticsearchRepositoryContract(t, false)
+}
+
+func TestElasticsearchBatchedRepositoryContract(t *testing.T) {
+	runElasticsearchRepositoryContract(t, true)
+}
+
+func runElasticsearchRepositoryContract(t *testing.T, batched bool) {
 	endpoint := os.Getenv(elasticsearchIntegrationURLEnv)
 	if endpoint == "" {
 		t.Skipf("set %s to run Elasticsearch contract", elasticsearchIntegrationURLEnv)
@@ -89,6 +97,14 @@ func TestElasticsearchRepositoryContract(t *testing.T) {
 				_ = repository.performJSON(cleanup, http.MethodDelete, "/_index_template/"+name, nil, nil, nil)
 			}
 		})
+		if batched {
+			wrapped, closer, err := repository.EnableWriteBatch(WriteBatchConfig{MaxOperations: 32, MaxBytes: 4 << 20, Wait: 2 * time.Millisecond, MaxConcurrentBatches: 2, MaxCalls: 32, Timeout: 15 * time.Second}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(closer.Close)
+			return wrapped
+		}
 		return repository
 	})
 }
@@ -230,8 +246,12 @@ func TestElasticsearchArchiveDrainsMoreThanOneDefaultBatch(t *testing.T) {
 
 	const total = 1001
 	var createBody bytes.Buffer
+	var firstTerminal store.StoredAlert
 	for index := range total {
 		terminal := archiveStoredAlert(t, "integration-"+strconv.Itoa(index), now.Add(time.Duration(index)*time.Millisecond))
+		if index == 0 {
+			firstTerminal = terminal
+		}
 		metadata, err := json.Marshal(map[string]any{"create": map[string]string{
 			"_index": router.activeAlertWriteAlias(), "_id": alertDocumentID(terminal.Alert),
 		}})
@@ -266,6 +286,15 @@ func TestElasticsearchArchiveDrainsMoreThanOneDefaultBatch(t *testing.T) {
 			t.Fatalf("bulk create item[%d] status=%d", index, item.Create.Status)
 		}
 	}
+	refreshDisabled, err := marshalRequest(map[string]any{"index": map[string]any{"refresh_interval": "-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{router.activeAlertIndex(), router.alertHistoryIndex(now)} {
+		if err := repository.performJSON(ctx, http.MethodPut, "/"+target+"/_settings", nil, refreshDisabled, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	first, err := manager.ArchiveTerminalAlerts(ctx, ArchiveBatchRequest{Limit: 1000, WorkerCount: 4})
 	if err != nil {
@@ -282,6 +311,40 @@ func TestElasticsearchArchiveDrainsMoreThanOneDefaultBatch(t *testing.T) {
 	}
 	if second.Scanned != 1 || second.Archived != 1 || second.Failed != 0 || second.NextCursor != "" {
 		t.Fatalf("second archive batch=%#v", second)
+	}
+	repeated, err := manager.ArchiveTerminalAlerts(ctx, ArchiveBatchRequest{Limit: 1, WorkerCount: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated.Scanned != 1 || repeated.Archived != 1 || repeated.Failed != 0 || repeated.NextCursor == "" {
+		t.Fatalf("repeated unrefreshed archive batch=%#v", repeated)
+	}
+	current, err := repository.GetAlertCurrent(
+		ctx,
+		firstTerminal.Alert.BKTenantID,
+		firstTerminal.Alert.AlertID,
+	)
+	if err != nil || current.Alert.AlertID != firstTerminal.Alert.AlertID {
+		t.Fatalf("GetAlertCurrent()=%#v,%v", current, err)
+	}
+
+	for target, want := range map[string]int{
+		router.activeAlertAlias(): total, router.alertHistoryReadAlias(): 0,
+	} {
+		var response struct {
+			Count int `json:"count"`
+		}
+		if err := repository.performJSON(ctx, http.MethodGet, "/"+target+"/_count", nil, nil, &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Count != want {
+			t.Fatalf("count before explicit refresh %s=%d, want %d", target, response.Count, want)
+		}
+	}
+	for _, target := range []string{router.activeAlertIndex(), router.alertHistoryIndex(now)} {
+		if err := repository.performJSON(ctx, http.MethodPost, "/"+target+"/_refresh", nil, nil, nil); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	for target, want := range map[string]int{

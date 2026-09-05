@@ -33,8 +33,10 @@ type Config struct {
 	OperationTimeout time.Duration
 	// MaxEntries 是触发安全裁剪的软长度上限。
 	MaxEntries int64
-	// TrimBatchSize 限制单轮裁剪检查和删除的条目数。
+	// TrimBatchSize 限制单条 Redis 裁剪命令检查和删除的条目数。
 	TrimBatchSize int64
+	// MaxTrimEntriesPerCycle 限制单轮累计裁剪的条目数。
+	MaxTrimEntriesPerCycle int64
 }
 
 // Snapshot 是一轮采集得到的低基数 Stream 状态。
@@ -116,7 +118,9 @@ func newManager(client redisClient, config Config, observer Observer, now func()
 		return nil, fmt.Errorf("create redis stream manager: stream and expected group are required")
 	}
 	if config.ReconcileInterval < time.Second || config.OperationTimeout <= 0 ||
-		config.OperationTimeout >= config.ReconcileInterval || config.MaxEntries < 1 || config.TrimBatchSize < 1 {
+		config.OperationTimeout >= config.ReconcileInterval || config.MaxEntries < 1 || config.TrimBatchSize < 1 ||
+		config.MaxTrimEntriesPerCycle < config.TrimBatchSize ||
+		config.MaxTrimEntriesPerCycle > config.TrimBatchSize*100 {
 		return nil, fmt.Errorf("create redis stream manager: invalid resource limits")
 	}
 	if observer == nil {
@@ -165,18 +169,22 @@ func (m *Manager) ReconcileOnce(ctx context.Context) error {
 	startedAt := time.Now()
 	trimmed := int64(0)
 	snapshot, boundary, safeToTrim, err := m.inspect(ctx)
-	if err == nil && snapshot.TrimRequired && safeToTrim {
-		trimmed, err = m.client.XTrimMinIDApprox(
-			ctx,
-			m.config.Stream,
-			boundary,
-			m.config.TrimBatchSize,
-		).Result()
+	for err == nil && snapshot.TrimRequired && safeToTrim && trimmed < m.config.MaxTrimEntriesPerCycle {
+		// 每批后重读所有 Group/PEL，不复用旧边界连续删除。这既能追赶已确认积压，
+		// 也能在 Pending 或 Group 变化时立即停止，避免为满足长度目标删除未确认消息。
+		limit := min(m.config.TrimBatchSize, m.config.MaxTrimEntriesPerCycle-trimmed)
+		var trimmedBatch int64
+		trimmedBatch, err = m.client.XTrimMinIDApprox(ctx, m.config.Stream, boundary, limit).Result()
 		if err != nil {
 			err = fmt.Errorf("trim redis stream %q before %q: %w", m.config.Stream, boundary, err)
-		} else if trimmed > 0 {
-			snapshot, _, _, err = m.inspect(ctx)
+			break
 		}
+		trimmed += trimmedBatch
+		if trimmedBatch == 0 {
+			// 近似 XTRIM 可能暂时找不到可释放的 radix-tree 节点；本轮停止避免忙循环。
+			break
+		}
+		snapshot, boundary, safeToTrim, err = m.inspect(ctx)
 	}
 	if err != nil {
 		m.observer.ReconcileFinished(ctx, "failed", time.Since(startedAt), trimmed)

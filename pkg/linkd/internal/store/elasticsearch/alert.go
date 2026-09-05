@@ -247,7 +247,7 @@ func (r *Repository) FindActiveAlert(
 			return store.StoredAlert{}, fmt.Errorf("%w: %s is invalid", store.ErrInvalidArgument, name)
 		}
 	}
-	targets, err := r.router.TerminalAlertTargets(ctx)
+	targets, err := r.router.ActiveAlertTargets(ctx)
 	if err != nil {
 		return store.StoredAlert{}, fmt.Errorf("route active alert search: %w", err)
 	}
@@ -306,7 +306,7 @@ func (r *Repository) FindAlertEndedByEvent(
 	if err := validateIdentity(bkTenantID, "event_id", eventID); err != nil {
 		return store.StoredAlert{}, err
 	}
-	targets, err := r.router.ActiveAlertTargets(ctx)
+	targets, err := r.router.TerminalAlertTargets(ctx)
 	if err != nil {
 		return store.StoredAlert{}, fmt.Errorf("route terminal alert search: %w", err)
 	}

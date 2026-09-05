@@ -252,8 +252,16 @@ function InstanceTab({
         <Fact
           label="连接"
           value={data.connection.ping ?? "不可用"}
-          detail={`${data.connection.address ?? "—"} / DB ${data.connection.database ?? "—"}`}
-          help="DevTools 对配置 Redis 地址执行 PING 的结果。"
+          detail={
+            data.connection.mode === "sentinel"
+              ? `Sentinel ${data.connection.masterName ?? "—"} / DB ${data.connection.database ?? "—"}`
+              : `${data.connection.address ?? "—"} / DB ${data.connection.database ?? "—"}`
+          }
+          help={
+            data.connection.mode === "sentinel"
+              ? `DevTools 通过 ${data.connection.sentinelAddresses?.length ?? 0} 个 Sentinel seed 发现 master 后执行 PING。`
+              : "DevTools 对配置 Redis 地址执行 PING 的结果。"
+          }
         />
         <Fact
           label="版本 / 模式"

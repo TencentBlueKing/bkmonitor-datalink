@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	defaultLifecycleConcurrency             = 8
+	defaultLifecycleConcurrency             = 32
 	defaultLifecycleProcessTimeoutSeconds   = 30
 	defaultLifecycleRetryMaxAttempts        = 3
 	defaultLifecycleRetryMaxElapsedSeconds  = 120
@@ -53,14 +53,16 @@ const (
 
 // LifecycleConfig 描述 lifecycle 独立进程的消费、并发、锁和输出配置。
 type LifecycleConfig struct {
-	Concurrency            int                    `yaml:"concurrency"`
-	ProcessTimeoutSeconds  int                    `yaml:"process_timeout_seconds"`
-	RetryMaxAttempts       int                    `yaml:"retry_max_attempts"`
-	RetryMaxElapsedSeconds int                    `yaml:"retry_max_elapsed_seconds"`
-	Signal                 LifecycleSignalConfig  `yaml:"signal"`
-	Mailbox                LifecycleMailboxConfig `yaml:"mailbox"`
-	Lock                   LifecycleLockConfig    `yaml:"lock"`
-	Output                 LifecycleOutputConfig  `yaml:"output"`
+	// ElasticsearchWriteBatch 控制 Lifecycle 专用跨 Event 合批。
+	ElasticsearchWriteBatch ElasticsearchWriteBatchConfig `yaml:"elasticsearch_write_batch"`
+	Concurrency             int                           `yaml:"concurrency"`
+	ProcessTimeoutSeconds   int                           `yaml:"process_timeout_seconds"`
+	RetryMaxAttempts        int                           `yaml:"retry_max_attempts"`
+	RetryMaxElapsedSeconds  int                           `yaml:"retry_max_elapsed_seconds"`
+	Signal                  LifecycleSignalConfig         `yaml:"signal"`
+	Mailbox                 LifecycleMailboxConfig        `yaml:"mailbox"`
+	Lock                    LifecycleLockConfig           `yaml:"lock"`
+	Output                  LifecycleOutputConfig         `yaml:"output"`
 }
 
 // LifecycleSignalConfig 描述 Redis Stream 和单批资源边界。
@@ -119,6 +121,7 @@ func (c LifecycleConfig) WithDefaults() LifecycleConfig {
 	if c.Concurrency == 0 {
 		c.Concurrency = defaultLifecycleConcurrency
 	}
+	c.ElasticsearchWriteBatch = c.ElasticsearchWriteBatch.WithDefaults(c.Concurrency)
 	if c.ProcessTimeoutSeconds == 0 {
 		c.ProcessTimeoutSeconds = defaultLifecycleProcessTimeoutSeconds
 	}
@@ -207,6 +210,9 @@ func (c LifecycleConfig) WithDefaults() LifecycleConfig {
 // Validate 校验 lifecycle 资源上限和跨组件时间预算。
 func (c LifecycleConfig) Validate() error {
 	c = c.WithDefaults()
+	if err := c.ElasticsearchWriteBatch.Validate(); err != nil {
+		return err
+	}
 	if c.Concurrency < 1 || c.Concurrency > 1024 {
 		return fmt.Errorf("lifecycle.concurrency must be between 1 and 1024")
 	}
@@ -307,10 +313,7 @@ func (c LifecycleConfig) RuntimeConfig() consume.Config {
 func (c LifecycleConfig) RedisStreamConfig(redisConfig RedisConfig, consumerName string) redisstream.Config {
 	c = c.WithDefaults()
 	return redisstream.Config{
-		Address:        redisConfig.Address,
-		Username:       redisConfig.Username,
-		Password:       redisConfig.Password,
-		DB:             redisConfig.Database,
+		Connection:     redisConfig.ClientOptions(),
 		Stream:         c.Signal.Stream,
 		Group:          c.Signal.Group,
 		Consumer:       consumerName,

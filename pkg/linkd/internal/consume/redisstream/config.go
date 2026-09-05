@@ -15,15 +15,12 @@ import (
 	"time"
 
 	"linkd/internal/consume"
+	"linkd/internal/redisclient"
 )
 
 // Config 描述一个 Redis Streams Consumer Group Session。
 type Config struct {
-	Address        string
-	Username       string
-	Password       string
-	DB             int
-	UseTLS         bool
+	Connection     redisclient.Options
 	Stream         string
 	Group          string
 	Consumer       string
@@ -61,8 +58,8 @@ func (c Config) WithDefaults() Config {
 
 // Validate 校验 Redis Streams Session 配置。
 func (c Config) Validate() error {
-	if strings.TrimSpace(c.Address) == "" {
-		return fmt.Errorf("address must not be empty")
+	if err := c.Connection.Validate(); err != nil {
+		return fmt.Errorf("redis connection: %w", err)
 	}
 	if strings.TrimSpace(c.Stream) == "" {
 		return fmt.Errorf("stream must not be empty")
@@ -72,9 +69,6 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.Consumer) == "" {
 		return fmt.Errorf("consumer must not be empty")
-	}
-	if c.DB < 0 {
-		return fmt.Errorf("db must not be negative: %d", c.DB)
 	}
 	if c.ReadBlock <= 0 {
 		return fmt.Errorf("read_block must be positive: %s", c.ReadBlock)

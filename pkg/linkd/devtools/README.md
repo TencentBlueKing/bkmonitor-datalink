@@ -30,18 +30,19 @@ DevTools 不再维护第二份基础设施 YAML。以下环境变量只覆盖 De
 - `LINKD_DEVTOOLS_MYSQL_PASSWORD`
 - `LINKD_DEVTOOLS_ELASTICSEARCH_API_KEY`、`LINKD_DEVTOOLS_ELASTICSEARCH_PASSWORD`
 - `LINKD_DEVTOOLS_REDIS_PASSWORD`
+- `LINKD_DEVTOOLS_REDIS_SENTINEL_PASSWORD`
 - `LINKD_DEVTOOLS_TIMEOUT_MILLISECONDS`、`LINKD_DEVTOOLS_MAX_RANGE_SECONDS`
 
 Kafka TLS 相对文件路径按 Linkd 配置文件所在目录解析。浏览器只能看到脱敏后的连接摘要。
 
 ## 页面与数据来源
 
-- 系统总览：Prometheus 进程、实际 Cleaner/Lifecycle 链路和配置/运行差异。
+- 系统总览：按完成速率与积压、等待位置、失败恢复分组诊断；各阶段延迟单独展示，不合计 P99。
 - Cleaner：EventSource、Kafka partition、transform、Event store、Mailbox 和 Kafka confirm。
-- Lifecycle：Redis Stream/PEL、Mailbox drain、lease、Event 裁决和 FinalHook。
+- Lifecycle：Event 处理与 Signal 调度分离；独立 ES 合批区展示范围执行次数、提交/成功/失败操作数、每批大小、字节数、排队与执行耗时，并显示配置推导值。
 - Control Plane：四个固定管理任务的 owner、依赖、周期、最近结果、耗时和收敛工作量。
 - Events、Alerts、AlertLogs：只读列表、详情、关联跳转和当前 schema 能力内的统计。
-- Kafka、Redis、Elasticsearch：实时只读基础设施状态。
+- Kafka、Redis、Elasticsearch：实时只读基础设施状态；ES 节点快照单独显示 CPU、heap、write active/queue、累计 rejected、当前 merge 和未提交 translog，不把累计量解释为待处理队列。
 - Configuration：Linkd YAML 的脱敏有效摘要。
 
 处理状态、Cleaner、Lifecycle、Control Plane 与 Redis 默认每 15 秒刷新，Kafka 与 Elasticsearch 默认每 30 秒刷新。

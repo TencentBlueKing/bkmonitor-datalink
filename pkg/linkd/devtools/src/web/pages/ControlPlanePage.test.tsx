@@ -152,10 +152,11 @@ function runtimeFixture(): ControlPlaneRuntime {
             }
           : id === "redis-stream-manager"
             ? {
-                reconcileIntervalSeconds: 60,
-                operationTimeoutSeconds: 10,
+                reconcileIntervalSeconds: 10,
+                operationTimeoutSeconds: 3,
                 maxEntries: 100000,
                 trimBatchSize: 10000,
+                maxTrimEntriesPerCycle: 100000,
                 stream: "signals",
                 group: "lifecycle",
               }

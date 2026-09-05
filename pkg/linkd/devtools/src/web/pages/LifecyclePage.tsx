@@ -18,6 +18,8 @@ import { MetricPanelCard } from "../components/MetricPanelCard";
 import { MetricQueryControls } from "../components/MetricQueryControls";
 import { RefreshControls } from "../components/RefreshControls";
 import { StageMetricCards } from "../components/StageMetricCards";
+import { LifecycleBatchPanel } from "../components/LifecycleBatchPanel";
+import { MetricSection } from "../components/MetricSection";
 import {
   ProcessingFlowHeader,
   StepGuideCard,
@@ -180,7 +182,10 @@ export function LifecyclePage() {
         <div>
           <p className="eyebrow">LIFECYCLE RUNTIME</p>
           <h1>Lifecycle</h1>
-          <p>查看 Redis Stream、PEL、Mailbox drain、Event 裁决与 FinalHook。</p>
+          <p>
+            从积压与完成速率判断进度，沿 Signal、Event、ES Bulk
+            和输出定位等待与失败。
+          </p>
         </div>
         <div className="metric-page-control-stack">
           <MetricQueryControls
@@ -255,11 +260,36 @@ export function LifecyclePage() {
         <LifecycleRuntimeSnapshot redis={redis} loading={runtime.isLoading} />
       )}
 
-      <div className="chart-grid runtime-charts">
-        {panels.map((panel) => (
-          <MetricPanelCard key={panel.id} panel={panel} />
-        ))}
-      </div>
+      <MetricSection
+        title="处理性能与积压"
+        description="单 Event 延迟与 Signal 调度分开观察；Signal 积压不可与 Mailbox 相加。"
+        panels={metrics.data?.panels ?? []}
+        ids={[
+          "pipeline-completed",
+          "signal-backlog",
+          "pipeline-average",
+          "pipeline-p99",
+          "cleaner-backpressure",
+          "signal-handler-duration",
+        ]}
+      />
+      <LifecycleBatchPanel
+        panels={metrics.data?.panels ?? []}
+        config={config}
+      />
+      <MetricSection
+        title="定位慢操作与恢复"
+        description="物理 Bulk 执行慢、客户端排队慢和逻辑 Repository 调用慢并不等价；结合错误、重试及 lease 结果判断。"
+        panels={metrics.data?.panels ?? []}
+        ids={[
+          "store-latency",
+          "store-errors",
+          "retry-rate",
+          "lifecycle-lease",
+          "lifecycle-mailbox",
+          "final-hook-p95",
+        ]}
+      />
 
       {configOpen && (
         <LifecycleConfigDialog
@@ -694,7 +724,7 @@ function LifecycleConfigDialog({
         <div className="lifecycle-config-dialog-content">
           <JsonViewer
             value={config}
-            description="Lifecycle 的脱敏有效配置，包含并发、Mailbox、lease 与 FinalHook 输出参数。"
+            description="Lifecycle 的脱敏配置，包含并发、自动合批参数、Mailbox、lease 与 FinalHook；配置不代表所有运行实例已重载。"
           />
         </div>
       </section>

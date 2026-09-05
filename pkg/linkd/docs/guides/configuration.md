@@ -1,5 +1,64 @@
 # 配置与启动
 
+## Kafka 分区恢复延迟
+
+`event_sources[].storage.kafka.fetch_max_wait_milliseconds` 默认 100，允许 10～5000。
+它限制 broker 等待空 fetch 的时间，不是 Cleaner 的批次等待，也不是 ES 合批期限。
+显式配置可用于对照；普通运行无需手调。较短的等待会增加空闲 fetch 请求量，
+但避免某个有积压分区从暂停恢复后，被同 broker 上其他空分区的长轮询拖住数秒。
+单分区在途上限、暂停/恢复滞回与连续 ACK 规则不变。
+
+独立定向集成测试（创建并清理唯一测试 topic/group，不使用业务 topic）：
+
+```bash
+LINKD_TEST_KAFKA_BROKERS=127.0.0.1:9092 go test -race ./internal/consume/kafka -run TestKafkaPartitionTailFetchWait -count=3 -v
+```
+
+测试使用同 broker 的三个分区，仅向 partition 1 预写 1024 条有序消息，停止生产后再消费，
+按 256 条模拟达到 lane 上限，每次暂停 200ms 并持续 Poll 空分区，比较 5s 与 100ms 的恢复空档。
+这个测试定位 Kafka Session 的恢复行为，不代表 ES/Lifecycle 端到端吞吐。
+
+## Lifecycle Elasticsearch 合批
+
+Lifecycle 默认并发为 32；`lifecycle.elasticsearch_write_batch` 默认启用，仅作用于 Elasticsearch
+Lifecycle runtime。Event result CAS、Alert CAS/create、AlertLog create 跨独立调用合并为 Bulk，
+CAS 校验和冲突核对的 realtime GET 合并为 `_mget`。每项成功后调用方才继续缓存、输出和 ACK；
+批次没有跨文档事务语义，Cleaner 与 Archiver 不使用这个队列。
+
+```yaml
+lifecycle:
+  concurrency: 32
+  elasticsearch_write_batch:
+    enabled: true
+    max_bytes: 4194304
+```
+
+`max_bytes` 可配置为 1～16 MiB。其他调度参数只读，由 Lifecycle 并发 C 在启动时自动推导：
+单批操作数 B = `min(100, max(1, floor(C / 2)))`；最大等待为 B 毫秒，B=1 时不等待；
+执行并发上限为 `min(32, C)`。数量阈值或首项等待期限达到即发送，
+编码字节预算也可提前触发发送。realtime 读取使用独立队列，只合入已经就绪的读请求，
+不等待写批次期限、不计入写操作阈值；读写请求共享总执行并发上限。
+单个合法超预算操作独立发送，仍受
+Repository 单文档/单请求硬上限保护。排队及执行中的调用总数上限为 `concurrency`。
+操作数是 ES 文档操作数，不是 Event 数；同一 Event 的依赖写入不能预先入队。
+单批至多占用一半调用方，给其他阶段留出流水线余量；执行上限不会超过调用方数量。
+等待预算按每项 1ms 取上限，这不是 ES 执行时间估计，也不是在线自适应控制。
+低流量仍可能由等待期限触发部分批次，实际并行度、吞吐和最优值取决于负载与 ES 服务时间。
+
+| Lifecycle 并发 | 操作数上限 | 最大等待 | 执行并发上限 |
+| --- | ---: | ---: | ---: |
+| 1 | 1 | 0ms | 1 |
+| 32 | 16 | 16ms | 32 |
+| 64 | 32 | 32ms | 32 |
+| 256 | 100 | 100ms | 32 |
+| 1024 | 100 | 100ms | 32 |
+
+旧的 `max_operations`、`wait_milliseconds`、`max_concurrent_batches` YAML 键已删除，
+严格解析会拒绝它们；应移除这些键，只配置 `lifecycle.concurrency`。
+DevTools 生效配置展示推导后的三项值。当前不是热更新：调整并发后需重启。
+调用取消不会取消其他调用已经发送的批次；该调用不继续 ACK，按可能部分成功重试。
+关闭时取消未完成批次并等待 worker 退出后关闭连接池。设 `enabled: false` 可做同并发对照。
+
 配置是严格单文档 YAML。未知字段、重复来源 ID、重复 Kafka subscription、无效 Cleaner、fingerprint
 路径和 severity 引用都会使进程启动失败。
 
@@ -82,6 +141,48 @@ fingerprint_mode=field 默认读取 source_alert_id，目标必须是非空字�
 EventSource 各字段的职责、fingerprint/Severity 规则和“一来源一 Flow”边界见
 [EventSource 文档](../modules/event-source.md)。
 
+Redis 支持直连单节点和 Sentinel 两种发现模式。`mode` 省略时默认为 `standalone`，继续使用单个
+`address`：
+
+```yaml
+storage:
+  redis:
+    mode: standalone
+    address: redis.example.com:6379
+    username: linkd
+    password: redis-data-secret
+    database: 0
+```
+
+Sentinel 模式必须省略 `address`，提供 master 名称和至少一个 Sentinel seed：
+
+```yaml
+storage:
+  redis:
+    mode: sentinel
+    username: linkd
+    password: redis-data-secret
+    database: 0
+    sentinel:
+      master_name: linkd-master
+      addresses:
+        - sentinel-a.example.com:26379
+        - sentinel-b.example.com:26379
+        - sentinel-c.example.com:26379
+      username: sentinel-user
+      password: sentinel-secret
+```
+
+顶层 `username/password` 用于 Sentinel 返回的数据节点，`sentinel.username/password` 只用于 Sentinel
+自身认证；两组认证都可按服务端配置省略。Cleaner、Lifecycle、Redis Stream Session 和 Control Plane
+统一通过这些 seed 发现并跟随当前 master。所有读写都指向 master，不把只读命令路由到 replica，避免
+Mailbox、lease 和 Recent Alert 缓存出现读写不一致。Sentinel 负责故障发现和切换，但不能替代 Redis
+持久化、复制和备份；`config print` 会同时隐藏数据节点和 Sentinel 密码。
+
+开发环境可通过 `LINKD_TEST_REDIS_SENTINEL_ADDRESSES`（逗号分隔）和
+`LINKD_TEST_REDIS_SENTINEL_MASTER_NAME` 启用 Sentinel 发现集成测试；需要认证时分别补充
+`LINKD_TEST_REDIS_USERNAME/PASSWORD` 和 `LINKD_TEST_REDIS_SENTINEL_USERNAME/PASSWORD`。
+
 Lifecycle 使用单 Redis List Mailbox 保存待处理 Event ID。默认 `key_prefix=linkd:lifecycle:mailbox`、单
 Mailbox 上限 128、单次持锁最多排空 512 条。Signal Stream/Group 默认为
 `linkd:lifecycle:signals` / `linkd-lifecycle`。Signal payload 使用独立的 `schema_version` 校验；代码
@@ -105,19 +206,23 @@ control_plane:
   elasticsearch:
     schema_and_active_reconcile_interval_seconds: 3600
     bucket_reconcile_interval_seconds: 21600
-    archive_interval_seconds: 30
+    archive_interval_seconds: 5
     archive_batch_size: 1000
-    archive_worker_count: 4
+    archive_worker_count: 1
   redis_stream:
-    reconcile_interval_seconds: 60
-    operation_timeout_seconds: 10
+    reconcile_interval_seconds: 10
+    operation_timeout_seconds: 3
     max_entries: 100000
     trim_batch_size: 10000
+    max_trim_entries_per_cycle: 100000
 ```
 
-`max_entries` 是软上限。只有 Stream 超过该值时才启动裁剪，每轮最多检查并删除
-`trim_batch_size` 条安全前缀。控制面会读取全部 Consumer Group 的 `last-delivered-id` 和最老 PEL ID，
-只删除所有 Group 都已经确认的连续前缀；未读或 Pending Signal 即使使 Stream 暂时超过上限也会保留。
+`max_entries` 是软上限。只有 Stream 超过该值时才启动裁剪；`trim_batch_size` 限制单条
+Redis 命令的删除量，`max_trim_entries_per_cycle` 限制单轮累计删除量。后者省略时默认为
+`10 × trim_batch_size`，且必须不小于单批、不超过单批的 100 倍。每批后控制面都重新读取全部
+Consumer Group 的 `last-delivered-id` 和最老 PEL ID，直到回落到软上限、达到单轮预算、
+没有删除进展或无法证明新边界安全。任务只删除所有 Group 都已经确认的连续前缀；
+未读或 Pending Signal 即使使 Stream 暂时超过上限也会保留。
 配置的 `lifecycle.signal.group` 不存在、跨命令观察到 PEL 正在变化，或无法证明边界安全时，本轮只采集
 指标而不裁剪。该任务要求同时配置 `storage.redis` 和 `lifecycle`，但不要求使用 Elasticsearch
 Repository，因此 Redis-only 控制面也可以独立启动。
@@ -146,8 +251,10 @@ Prometheus exporter 后，每个进程分别暴露 `/metrics`；部署在独立 
 
 当前 Elasticsearch schema version 为 3，Event、Alert 和 AlertLog 的完整稳定领域字段直接保存在
 `_source` 根层。Event、AlertHistory、AlertLog 默认使用 7 天 UTC 时间桶；Active Alert 使用单一热索引，
-模板和控制面对账会把它的 `refresh_interval` 设为
-`storage.elasticsearch.active_alert_refresh_interval_seconds`，默认 5 秒。Recent Alert 缓存 TTL 自动为该值加 5 秒，
+模板和控制面对账会把 Active Alert 的 `refresh_interval` 设为
+`storage.elasticsearch.active_alert_refresh_interval_seconds`，默认 5 秒。Event、Alert History 和 AlertLog
+时间桶模板的 `refresh_interval` 由 `storage.elasticsearch.refresh_interval_seconds` 配置，同样默认 5 秒，
+用于减少持续写入时的 refresh 开销；这些对象通过搜索读取时需要接受该近实时可见性窗口。Recent Alert 缓存 TTL 自动为 Active 配置加 5 秒，
 为缓存过期后的查询回源提供可见性边界。可配置范围为 1～3600 秒，修改后需由控制面对账已有
 Active 索引。
 `control-plane` 当前分别装配 Elasticsearch Schema 与 Active 资源对账、时间桶维护和终态 Alert 归档任务。三项任务共享
@@ -161,7 +268,9 @@ storage:
   elasticsearch:
     # 单节点本地环境可设为 0；生产环境按节点拓扑和容灾要求设置或省略。
     number_of_replicas: 0
+    refresh_interval_seconds: 5
     active_alert_refresh_interval_seconds: 5
+    alert_log_translog_durability: async
     time_partition:
       event_bucket_days: 7
       alert_history_bucket_days: 7
@@ -175,10 +284,14 @@ storage:
 `schema_and_active_reconcile_interval_seconds` 只驱动模板、Active Alert 索引和静态 alias 对账；
 `bucket_reconcile_interval_seconds` 只驱动当前预创建窗口内的时间桶和 alias 维护；
 `archive_batch_size` 是终态 Alert 单次扫描上限，`archive_worker_count` 是批内最大并发 Worker 数；默认每批
-1000 条、4 个 Worker，配置范围分别为 1～10000 和 1～64，且 Worker 数不得超过批量上限。每个 Worker
+1000 条、1 个 Worker，配置范围分别为 1～10000 和 1～64，且 Worker 数不得超过批量上限。单 Worker
+用于降低归档 Bulk 与 Lifecycle 实时读写争抢；一次 sweep 内仍会连续翻页追赶积压，因此并不把整轮吞吐
+限制为每 5 秒 1000 条。每个 Worker
 使用 Bulk create History 和 Bulk CAS delete Active，单个 Bulk 子批最多 500 条并受 Repository 16 MiB
-请求上限约束。`archive_interval_seconds` 是积压清空、整轮无进展或请求失败后的等待时间；有归档进展时
-批次连续执行，不等待该间隔。单次搜索仍受 64 MiB 响应上限保护，超过时会自动缩小本轮拉取数量。
+请求上限约束。History create 和 Active delete 使用 `refresh=false`，归档成功不代表搜索立即可见；
+409 冲突通过 realtime `_mget` 核对。`archive_interval_seconds` 是一次完整 sweep 到达尾部或请求失败后的
+等待时间，默认 5 秒；有后续页时批次连续执行，不等待该间隔。这避免 Active 删除在下一次 refresh 前被立即重复
+扫描。单次搜索仍受 64 MiB 响应上限保护，超过时会自动缩小本轮拉取数量。
 
 独立 `control-plane` 启动时会先按“Schema 与 Active 资源对账、时间桶对账”的顺序完成一次准备，再启动管理任务；
 归档不阻塞数据面启动。
@@ -190,6 +303,12 @@ storage:
 被自动修改。单节点本地环境设为 `0` 可以避免因无法分配副本而长期处于 `yellow`，但这也意味着没有
 副本冗余，不应直接照搬到生产环境。已有索引如需调整，应由操作者明确选择目标后通过动态 index
 settings 原地修改，不需要删除索引或 reindex。
+
+`alert_log_translog_durability` 只作用于 AlertLog 索引，支持 `request` 和 `async`，默认 `async`；Event、
+Active Alert 和 Alert History 仍使用 Elasticsearch 的 `request` 默认值。`async` 会减少每次 AlertLog
+写请求等待 translog `fsync` 的成本，但 Elasticsearch 或宿主异常退出时，最近一个
+`index.translog.sync_interval`（Elasticsearch 默认 5 秒）内已经返回成功的 AlertLog 可能丢失。
+模板负责新索引，Bucket Manager 会把当前预创建窗口内既有 AlertLog bucket 动态对账到该值。
 
 历史消息回放前显式准备桶：
 

@@ -23,6 +23,135 @@ interface PrometheusInstantResponse {
   };
 }
 
+function namedSeries(
+  query: string,
+  value: string,
+  label = "linkd_statistic",
+): string {
+  return `label_replace((${query}), "${label}", "${value}", "__name__", ".*")`;
+}
+
+// 历史数据也排除 Lifecycle Handler complete/retry 等 Signal 样本。
+function eventDurationSeries(
+  suffix: string,
+  selector: string,
+  window: string,
+): string {
+  const by = suffix === "bucket" ? "le, linkd_stage" : "linkd_stage";
+  const metric = `linkd_pipeline_attempt_duration_seconds_${suffix}`;
+  return `(sum(rate(${metric}${mergeSelector(selector, 'linkd_stage!="lifecycle"')}[${window}])) by (${by}) or sum(rate(${metric}${mergeSelector(selector, 'linkd_stage="lifecycle",linkd_outcome=~"accepted|rejected|replayed|failed"')}[${window}])) by (${by}))`;
+}
+
+function batchPanels(): PanelDefinition[] {
+  const prefix = "linkd_elasticsearch_write_batch_";
+  const select = (selector: string) =>
+    mergeSelector(selector, 'linkd_batch_kind="write"');
+  const histogram = (
+    metric: string,
+    selector: string,
+    window: string,
+    scale = 1,
+  ) => {
+    const selected = metric.endsWith("_seconds")
+      ? mergeSelector(select(selector), 'linkd_metric_schema="2"')
+      : select(selector);
+    const average = `${scale} * sum(rate(${prefix}${metric}_sum${selected}[${window}])) / sum(rate(${prefix}${metric}_count${selected}[${window}]))`;
+    const quantile = (q: number) =>
+      `${scale} * histogram_quantile(${q}, sum(rate(${prefix}${metric}_bucket${selected}[${window}])) by (le))`;
+    return `${namedSeries(average, "平均")} or ${namedSeries(quantile(0.95), "P95")} or ${namedSeries(quantile(0.99), "P99")}`;
+  };
+  const common = { processWide: true };
+  return [
+    {
+      ...common,
+      id: "lifecycle-batch-executions",
+      title: "范围内批次执行次数",
+      unit: "batch",
+      kind: "stat",
+      rangeTotal: true,
+      description:
+        "按选定时间范围 increase 估算，包含失败尝试；不是瞬时速率，也不是审计精确计数。",
+      query: (s, w) =>
+        `round(sum(increase(${prefix}batches_total${select(s)}[${w}])) by (linkd_outcome))`,
+    },
+    {
+      ...common,
+      id: "lifecycle-batch-items",
+      title: "范围内写操作数量",
+      unit: "operation",
+      kind: "stat",
+      rangeTotal: true,
+      description:
+        "逐项结果计数。失败包含结果未知，不代表 ES 一定未写入；操作数不是 Event 数。",
+      query: (s, w) =>
+        `round(sum(increase(${prefix}items_total${select(s)}[${w}])) by (linkd_outcome))`,
+    },
+    {
+      ...common,
+      id: "lifecycle-batch-rate",
+      title: "Bulk 执行速率",
+      unit: "batch/s",
+      kind: "line",
+      description:
+        "仅 Lifecycle 写 Bulk，按全部成功、部分失败和全部失败拆分；不含 _mget、Cleaner 和 Archiver。",
+      query: (s, w) =>
+        `sum(rate(${prefix}batches_total${select(s)}[${w}])) by (linkd_outcome)`,
+    },
+    {
+      ...common,
+      id: "lifecycle-batch-write-rate",
+      title: "写操作结果速率",
+      unit: "operation/s",
+      kind: "line",
+      description:
+        "每秒 Bulk 子操作结果，失败包含传输失败时的结果未知，不是每秒处理的 Event 数。",
+      query: (s, w) =>
+        `sum(rate(${prefix}items_total${select(s)}[${w}])) by (linkd_outcome)`,
+    },
+    {
+      ...common,
+      id: "lifecycle-batch-size",
+      title: "实际每批操作数",
+      unit: "operation/batch",
+      kind: "line",
+      description:
+        "平均值为操作总数/批次数；P95/P99 是桶近似值。观察实际合批效果，不把配置上限当作实际大小。",
+      query: (s, w) => histogram("operations", s, w),
+    },
+    {
+      ...common,
+      id: "lifecycle-batch-queue",
+      title: "批次首项排队耗时",
+      unit: "ms",
+      kind: "line",
+      description:
+        "包括聚合等待和执行槽位等待，每个物理批次记录首项等待；不是所有子操作等待的平均值。",
+      query: (s, w) => histogram("queue_duration_seconds", s, w, 1000),
+    },
+    {
+      ...common,
+      id: "lifecycle-batch-duration",
+      title: "Bulk 请求执行耗时",
+      unit: "ms",
+      kind: "line",
+      description:
+        "包含网络、请求与响应解码，不含入队等待，也不等同于 ES 服务端 took。毫秒级直方图只适用于新版采样。",
+      query: (s, w) => histogram("duration_seconds", s, w, 1000),
+    },
+    {
+      ...common,
+      id: "lifecycle-batch-bytes",
+      title: "平均批次字节数",
+      unit: "MiB",
+      kind: "line",
+      description:
+        "编码后的物理 Bulk 请求大小；用于确认是否被字节预算提前切批。",
+      query: (s, w) =>
+        `sum(rate(${prefix}size_bytes_sum${select(s)}[${w}])) / sum(rate(${prefix}size_bytes_count${select(s)}[${w}])) / 1048576`,
+    },
+  ];
+}
+
 interface PanelDefinition {
   id: string;
   title: string;
@@ -30,9 +159,77 @@ interface PanelDefinition {
   kind: MetricPanel["kind"];
   query: (selector: string, window: string) => string;
   partitioned?: boolean;
+  processWide?: boolean;
+  rangeTotal?: boolean;
+  description?: string;
 }
 
 const panelDefinitions: PanelDefinition[] = [
+  {
+    id: "pipeline-completed",
+    title: "阶段完成速率",
+    unit: "event/s",
+    kind: "line",
+    description:
+      "Cleaner 为成功规范化（含重复投递），Lifecycle 为成功移出 Mailbox 的 Event。处理单元不同，不能取最小值作为端到端吞吐。",
+    query: (selector, window) =>
+      `${namedSeries(`sum(rate(linkd_pipeline_attempts_total${mergeSelector(selector, 'linkd_stage="clean",linkd_outcome="normalized"')}[${window}]))`, "clean", "linkd_stage")} or ${namedSeries(`sum(rate(linkd_lifecycle_mailbox_operations_total${mergeSelector(selector, 'linkd_operation="ack",linkd_outcome="succeeded"')}[${window}]))`, "lifecycle", "linkd_stage")}`,
+  },
+  {
+    id: "signal-backlog",
+    title: "Signal 近似积压",
+    unit: "signal",
+    kind: "line",
+    processWide: true,
+    description:
+      "目标 Consumer Group 的 lag + pending，不是 Event 数，不能与 Mailbox 相加；负值表示未知，不绘制为零。",
+    query: (selector) =>
+      `max(linkd_cleaner_backpressure_unresolved${selector} >= 0) by (instance)`,
+  },
+  {
+    id: "cleaner-backpressure",
+    title: "接入背压状态",
+    unit: "%",
+    kind: "line",
+    processWide: true,
+    description:
+      "100% 表示接入因 Signal 积压暂停拉取，0% 表示未暂停；这是进程级控制状态。",
+    query: (selector) =>
+      `100 * max(linkd_cleaner_backpressure_paused_ratio${selector}) by (instance)`,
+  },
+  {
+    id: "kafka-lane-paused",
+    title: "Kafka 分区暂停状态",
+    unit: "%",
+    kind: "line",
+    partitioned: true,
+    description:
+      "每个分区的采样暂停状态。短暂 pause/resume 可能落在采样间隔内，图中没有高点不能证明从未暂停。",
+    query: (selector) =>
+      `100 * max(linkd_messaging_lane_paused_ratio${mergeSelector(selector, 'linkd_stage="clean"')}) by (linkd_event_source_id, messaging_kafka_partition)`,
+  },
+  {
+    id: "signal-handler-duration",
+    title: "Signal Handler P95",
+    unit: "ms",
+    kind: "line",
+    description:
+      "一次 Signal 调度可能处理多个 Event；此耗时不可混入单 Event 的延迟或与其相加。",
+    query: (selector, window) =>
+      `1000 * histogram_quantile(0.95, sum(rate(linkd_messaging_handler_duration_seconds_bucket${mergeSelector(selector, 'linkd_stage="lifecycle"')}[${window}])) by (le))`,
+  },
+  {
+    id: "store-latency",
+    title: "Repository 逻辑操作平均耗时",
+    unit: "ms",
+    kind: "line",
+    processWide: true,
+    description:
+      "包含逻辑操作的读取校验、合批排队和请求执行，不等同于 ES 服务端执行时间。用于与物理批次耗时对照。",
+    query: (selector, window) =>
+      `1000 * sum(rate(linkd_store_operation_duration_seconds_sum${selector}[${window}])) by (linkd_object_type, linkd_operation) / sum(rate(linkd_store_operation_duration_seconds_count${selector}[${window}])) by (linkd_object_type, linkd_operation)`,
+  },
+  ...batchPanels(),
   {
     id: "received-rate",
     title: "消息拉取速率",
@@ -161,7 +358,7 @@ const panelDefinitions: PanelDefinition[] = [
     unit: "s",
     kind: "line",
     query: (selector, window) =>
-      `sum(rate(linkd_pipeline_attempt_duration_seconds_sum${selector}[${window}])) by (linkd_stage) / sum(rate(linkd_pipeline_attempt_duration_seconds_count${selector}[${window}])) by (linkd_stage)`,
+      `${eventDurationSeries("sum", selector, window)} / ${eventDurationSeries("count", selector, window)}`,
   },
   {
     id: "pipeline-p95",
@@ -169,7 +366,7 @@ const panelDefinitions: PanelDefinition[] = [
     unit: "s",
     kind: "line",
     query: (selector, window) =>
-      `histogram_quantile(0.95, sum(rate(linkd_pipeline_attempt_duration_seconds_bucket${selector}[${window}])) by (le, linkd_stage))`,
+      `histogram_quantile(0.95, ${eventDurationSeries("bucket", selector, window)})`,
   },
   {
     id: "pipeline-p99",
@@ -177,7 +374,7 @@ const panelDefinitions: PanelDefinition[] = [
     unit: "s",
     kind: "line",
     query: (selector, window) =>
-      `histogram_quantile(0.99, sum(rate(linkd_pipeline_attempt_duration_seconds_bucket${selector}[${window}])) by (le, linkd_stage))`,
+      `histogram_quantile(0.99, ${eventDurationSeries("bucket", selector, window)})`,
   },
   {
     id: "messaging-inflight",
@@ -324,12 +521,31 @@ export class PrometheusConnector {
     const panels = await Promise.all(
       panelDefinitions.map(async (definition): Promise<MetricPanel> => {
         if (!this.baseUrl) return unavailable(definition, "Prometheus 未配置");
+        if (definition.processWide && normalizedScope.eventSourceId)
+          return unavailable(
+            definition,
+            "跨来源共享指标不能按 EventSource 拆分，请在总览或 Lifecycle 查看",
+          );
         try {
           const selector = matcherSelector(
             definition.partitioned ? laneMatchers : baseMatchers,
           );
-          const query = definition.query(selector, rateWindow);
-          const response = await this.queryRange(query, from, to, step);
+          const query = definition.query(
+            selector,
+            definition.rangeTotal
+              ? `${Math.ceil((to.getTime() - from.getTime()) / 1000)}s`
+              : rateWindow,
+          );
+          const response = definition.rangeTotal
+            ? await this.queryInstant(query, to).then((r) => ({
+                data: {
+                  result: (r.data?.result ?? []).map((item) => ({
+                    metric: item.metric,
+                    values: [item.value],
+                  })),
+                },
+              }))
+            : await this.queryRange(query, from, to, step);
           const series = (response.data?.result ?? []).map((item, index) => ({
             name: seriesName(item.metric, index),
             labels: item.metric,
@@ -338,6 +554,17 @@ export class PrometheusConnector {
                 [timestamp, finiteNumber(value)] as [number, number | null],
             ),
           }));
+          if (!definition.rangeTotal) {
+            const lastEvaluation =
+              from.getTime() / 1000 +
+              Math.floor((to.getTime() - from.getTime()) / 1000 / step) * step;
+            for (const item of series) {
+              const last = item.points.at(-1);
+              // 不把已经停止上报的历史末值冒充“当前”值。
+              if (last && last[0] < lastEvaluation - 0.001)
+                item.points.push([lastEvaluation, null]);
+            }
+          }
           if (series.length === 0)
             return unavailable(definition, "查询范围内没有对应时序");
           return { ...definition, status: "available", series };
@@ -392,8 +619,8 @@ export class PrometheusConnector {
       settled:
         'sum(rate(linkd_messaging_settled_messages_total{linkd_stage="clean",linkd_outcome="succeeded"}[5m])) by (instance,linkd_event_source_id,messaging_kafka_partition)',
       inflight: 'linkd_messaging_lane_inflight{linkd_stage="clean"}',
-      paused: 'linkd_messaging_lane_paused{linkd_stage="clean"}',
-      owned: 'linkd_messaging_lane_owned{linkd_stage="clean"}',
+      paused: 'linkd_messaging_lane_paused_ratio{linkd_stage="clean"}',
+      owned: 'linkd_messaging_lane_owned_ratio{linkd_stage="clean"}',
       steps:
         "sum(rate(linkd_cleaner_step_items_total[5m])) by (instance,linkd_event_source_id,linkd_step,linkd_outcome)",
     });
@@ -512,10 +739,12 @@ export class PrometheusConnector {
 
   private async queryInstant(
     query: string,
+    at?: Date,
   ): Promise<PrometheusInstantResponse> {
     if (!this.baseUrl) throw new Error("Prometheus is not configured");
     const url = new URL(`${this.baseUrl}/api/v1/query`);
     url.searchParams.set("query", query);
+    if (at) url.searchParams.set("time", String(at.getTime() / 1000));
     const response = await fetch(url, {
       headers: { accept: "application/json", ...this.headers },
       signal: AbortSignal.timeout(this.timeoutMilliseconds),
@@ -553,6 +782,8 @@ function seriesName(labels: Record<string, string>, index: number): string {
     labels.linkd_object_type,
     labels.linkd_operation,
     labels.linkd_task,
+    labels.linkd_batch_kind,
+    labels.linkd_statistic,
     labels.__name__,
     labels.instance,
   ].filter(Boolean);

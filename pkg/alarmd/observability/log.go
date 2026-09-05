@@ -141,6 +141,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation) {
 	}
 	attributes = appendObservationCounts(attributes, observation.Counts)
 	attributes = appendTraceFields(attributes, observation.Trace)
+	if f := observation.QueryFailure; f != nil {
+		attributes = append(attributes, slog.String("failure_stage", f.Stage), slog.String("failure_category", f.Category), slog.String("failure_code", f.Code))
+	}
 	if observation.RuntimeConfig != nil {
 		attributes = append(attributes, slog.Any("runtime_config", observation.RuntimeConfig))
 	}

@@ -395,6 +395,7 @@ type Observation struct {
 	SourceKind           SourceKind
 	QueryPermit          *QueryPermitFacts
 	RuntimeConfig        *RuntimeConfigFacts
+	QueryFailure         *QueryFailureFacts
 	ActiveQGSet          *ActiveQGSetFacts
 	LegacyMigration      *LegacyQGMigrationFacts
 	DrainingQG           *DrainingQGFacts
@@ -465,6 +466,7 @@ func NormalizeObservation(observation Observation) Observation {
 	}
 	observation.CapacityBudget = NormalizeCapacityBudget(observation.CapacityBudget)
 	observation.QueryPermit = normalizeQueryPermitFacts(observation.QueryPermit)
+	observation.QueryFailure = normalizeQueryFailure(observation.Component, observation.Stage, observation.Err, observation.QueryFailure)
 	if observation.RuntimeConfig != nil {
 		if observation.Component != ComponentRuntime || observation.Stage != StageConfigLoaded {
 			observation.RuntimeConfig = nil

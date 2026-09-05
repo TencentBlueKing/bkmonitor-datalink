@@ -436,7 +436,7 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 		return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: unexpected trailing token %v", token)
 	}
 	if status != nil && status.Code != "" && status.Code != queryTSPartial {
-		return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: query status %s", status.Code)
+		return execution.ProviderCompletion{}, &backendStatusError{code: status.Code}
 	}
 	dataState := execution.DataStateEmpty
 	if delivery.Records > 0 {
@@ -476,7 +476,7 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 	for _, name := range spec.PlanFacts.Normalization.DatasetContract.IdentityFields {
 		value, ok := dimensions[name]
 		if !ok {
-			return execution.ProviderSeriesBatch{}, fmt.Errorf("alarmd access uq: identity field %s is missing", name)
+			return execution.ProviderSeriesBatch{}, &identityFieldMissingError{field: name}
 		}
 		identityFields = append(identityFields, contract.DimensionFieldV2{Name: name, Value: value})
 	}

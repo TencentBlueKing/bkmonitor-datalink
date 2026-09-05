@@ -176,12 +176,12 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 			coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation,
 				started, observability.ResultRetrying, observability.ReasonNone, nil)
 		} else {
-			coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation, started, "", "", err)
+			coordinator.observeQueryFailure(ctx, request.Operation, started, "execute", err)
 		}
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: query: %w", err)
 	}
 	if err := stream.complete(ctx, completion); err != nil {
-		coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation, started, "", "", err)
+		coordinator.observeQueryFailure(ctx, request.Operation, started, "stream_complete", err)
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid query result: %w", err)
 	}
 	queryResult, queryReason := provisionalResult(stream.evaluated)

@@ -52,7 +52,7 @@ func TestDefaultPhaseTwoRuntimeHasBoundedLifecycleBudgets(t *testing.T) {
 		cfg.Coordinator.MaxEvents == 0 || cfg.Coordinator.MaxGapMutations == 0 {
 		t.Fatalf("phase-two Coordinator budgets = %+v, want positive values", cfg.Coordinator)
 	}
-	if cfg.Scheduler.ProcessQueryPermits <= cfg.Scheduler.RecoveryQueryPermits ||
+	if cfg.Scheduler.ActiveExecutionLimit <= 0 || cfg.Scheduler.ProcessQueryPermits <= cfg.Scheduler.RecoveryQueryPermits ||
 		cfg.Scheduler.RecoveryQueryPermits <= 0 || cfg.Scheduler.ReadyQueueCapacity <= 0 ||
 		cfg.Scheduler.RecoveryQueueCapacity <= 0 || cfg.Scheduler.MaxQueuedItemsPerQG <= 0 ||
 		cfg.Scheduler.MaxReplaySlots == 0 || cfg.Scheduler.MaxReplayAge.Duration() <= 0 ||
@@ -86,15 +86,16 @@ func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
 	}
 
 	for name, mutate := range map[string]func(*Config){
-		"worker identity":    func(cfg *Config) { cfg.PhaseTwo.Worker.ID = "" },
-		"deployment profile": func(cfg *Config) { cfg.PhaseTwo.Worker.DeploymentProfile = "" },
-		"strategy cache":     func(cfg *Config) { cfg.PhaseTwo.Control.StrategyCachePrefix = "" },
-		"UQ endpoint":        func(cfg *Config) { cfg.PhaseTwo.Access.UQEndpoint = "" },
-		"query source":       func(cfg *Config) { cfg.PhaseTwo.Access.QuerySource = "" },
-		"downstream reserve": func(cfg *Config) { cfg.PhaseTwo.Access.DownstreamExecutionReserve = 0 },
-		"provider route":     func(cfg *Config) { cfg.PhaseTwo.Control.ProviderRoute = "" },
-		"timezone":           func(cfg *Config) { cfg.PhaseTwo.Control.Timezone = "" },
-		"access bkdata fact": func(cfg *Config) { cfg.PhaseTwo.Control.LegacyQueryRuntime.AccessBKData = nil },
+		"active execution limit": func(cfg *Config) { cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 0 },
+		"worker identity":        func(cfg *Config) { cfg.PhaseTwo.Worker.ID = "" },
+		"deployment profile":     func(cfg *Config) { cfg.PhaseTwo.Worker.DeploymentProfile = "" },
+		"strategy cache":         func(cfg *Config) { cfg.PhaseTwo.Control.StrategyCachePrefix = "" },
+		"UQ endpoint":            func(cfg *Config) { cfg.PhaseTwo.Access.UQEndpoint = "" },
+		"query source":           func(cfg *Config) { cfg.PhaseTwo.Access.QuerySource = "" },
+		"downstream reserve":     func(cfg *Config) { cfg.PhaseTwo.Access.DownstreamExecutionReserve = 0 },
+		"provider route":         func(cfg *Config) { cfg.PhaseTwo.Control.ProviderRoute = "" },
+		"timezone":               func(cfg *Config) { cfg.PhaseTwo.Control.Timezone = "" },
+		"access bkdata fact":     func(cfg *Config) { cfg.PhaseTwo.Control.LegacyQueryRuntime.AccessBKData = nil },
 		"cmdb level tables fact": func(cfg *Config) {
 			cfg.PhaseTwo.Control.LegacyQueryRuntime.BKDataCMDBLevelTables = nil
 		},

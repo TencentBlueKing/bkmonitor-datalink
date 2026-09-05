@@ -427,10 +427,10 @@ func TestPhaseTwoWorkerBundleRunsOwnedQueryGroupsConcurrentlyOncePerTick(t *test
 	}
 }
 
-func TestPhaseTwoWorkerBundleBoundsPrePermitRunnerFanoutByProcessQueryPermits(t *testing.T) {
+func TestPhaseTwoWorkerBundleBoundsRunnerFanoutIndependentlyOfQueryPermits(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
-	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
-	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 1
+	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 1
+	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 0
 	cfg.PhaseTwo.Scheduler.RecoveryQueueCapacity = 100
 	cfg.PhaseTwo.Scheduler.MaxQueuedItemsPerQG = 1
 	queryGroups := []execution.QueryGroupIdentity{
@@ -465,7 +465,7 @@ func TestPhaseTwoWorkerBundleBoundsPrePermitRunnerFanoutByProcessQueryPermits(t 
 
 	done := make(chan error, 1)
 	go func() { done <- bundle.runScheduledOnce(context.Background()) }()
-	wantFanout := cfg.PhaseTwo.Scheduler.ProcessQueryPermits
+	wantFanout := 2 // Initial execution profile remains two, independent of one query permit.
 	for index := 0; index < wantFanout; index++ {
 		select {
 		case <-started:
@@ -947,7 +947,7 @@ func TestPhaseTwoRunnerDispatcherPrunesRemovedGenerationState(t *testing.T) {
 	}
 }
 
-func TestPhaseTwoWorkerBundleDispatcherUsesFrozenOperationForRecoveryCapacity(t *testing.T) {
+func TestPhaseTwoWorkerBundleDispatcherDoesNotHoldQueryRecoveryAllowanceAcrossRunner(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 4
 	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 1
@@ -980,26 +980,32 @@ func TestPhaseTwoWorkerBundleDispatcherUsesFrozenOperationForRecoveryCapacity(t 
 	var normalStartOnce sync.Once
 	var normalDelayed atomic.Bool
 	normalDelayed.Store(true)
-	deniedAdmission := make(chan execution.QueryGroupIdentity, 2)
-	var deniedRuns atomic.Int32
+	recoveryRan := make(chan struct{}, 2)
+	var recoveryRuns atomic.Int32
 	pastReadyAt := time.Now().Add(-time.Second)
 	bundle.mu.Lock()
 	for index := 0; index < 2; index++ {
 		queryGroup := execution.QueryGroupIdentity(fmt.Sprintf("query-group-b-recovery-%d", index))
 		operation := execution.OperationReplay
 		var nextReadyAt func() time.Time
+		var delayed atomic.Bool
 		if index == 1 {
 			operation = execution.OperationRetry
-			nextReadyAt = func() time.Time { return pastReadyAt }
+			delayed.Store(true)
+			nextReadyAt = func() time.Time {
+				if delayed.Load() {
+					return pastReadyAt
+				}
+				return time.Time{}
+			}
 		}
 		bundle.runners[queryGroup] = &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
 			operation:   operation,
 			nextReadyAt: nextReadyAt,
-			beforeAdmission: func(execution.Operation) {
-				deniedAdmission <- queryGroup
-			},
 			run: func(context.Context) (execution.SlotExecutionResult, bool, error) {
-				deniedRuns.Add(1)
+				delayed.Store(false)
+				recoveryRuns.Add(1)
+				recoveryRan <- struct{}{}
 				return execution.SlotExecutionResult{}, false, nil
 			},
 		}}
@@ -1023,20 +1029,17 @@ func TestPhaseTwoWorkerBundleDispatcherUsesFrozenOperationForRecoveryCapacity(t 
 	waitSignal(t, normalStarted, "actual Normal operation after delayed source retry")
 	for index := 0; index < 2; index++ {
 		select {
-		case <-deniedAdmission:
+		case <-recoveryRan:
 		case <-time.After(time.Second):
 			cancel()
-			t.Fatal("first-attempt Replay did not reach operation admission")
+			t.Fatal("recovery Runner was blocked by another Runner holding query recovery allowance")
 		}
 	}
-	if deniedRuns.Load() != 0 {
-		t.Fatalf("denied recovery executions = %d, want 0", deniedRuns.Load())
-	}
-	select {
-	case queryGroup := <-deniedAdmission:
+	if recoveryRuns.Load() < 2 {
 		cancel()
-		t.Fatalf("admission-denied Query Group spun without a new scheduler tick: %s", queryGroup)
-	case <-time.After(20 * time.Millisecond):
+		<-done
+		dispatcher.stop()
+		t.Fatalf("recovery executions while earlier Runner was blocked = %d, want at least 2", recoveryRuns.Load())
 	}
 	cancel()
 	select {
@@ -1048,12 +1051,6 @@ func TestPhaseTwoWorkerBundleDispatcherUsesFrozenOperationForRecoveryCapacity(t 
 		t.Fatal("dispatcher did not drain recovery after cancellation")
 	}
 	dispatcher.stop()
-	dispatcher.admission.mu.Lock()
-	recoveryActive := dispatcher.admission.recoveryActive
-	dispatcher.admission.mu.Unlock()
-	if recoveryActive != 0 {
-		t.Fatalf("recovery admission tokens after cancellation = %d, want 0", recoveryActive)
-	}
 }
 
 func TestPhaseTwoWorkerBundleSchedulerCancellationStopsAdmissionAndDrainsInflight(t *testing.T) {
@@ -1103,6 +1100,7 @@ func TestPhaseTwoWorkerBundleSchedulerCancellationStopsAdmissionAndDrainsInfligh
 
 func TestPhaseTwoWorkerBundleDispatcherDropsReplacedLifecycleBeforeDispatch(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 1
 	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 1
 	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 0
 

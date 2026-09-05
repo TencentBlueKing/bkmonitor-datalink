@@ -1396,10 +1396,12 @@ func TestProductionPhaseTwoBundleSharesOneProcessRecoveryPermitBudgetAcrossOwned
 	}
 	select {
 	case <-queued:
-		t.Fatal("replay sibling reached the inner query-permit queue instead of waiting for the next scheduler tick")
+		// Both complete Runners can progress, but only one physical recovery
+		// Query enters UQ; R is enforced at this shared inner boundary.
 	case <-secondEntered:
 		t.Fatal("owned Query Groups used copied recovery permit budgets or bypassed recovery-aware SlotSource")
-	case <-time.After(20 * time.Millisecond):
+	case <-time.After(time.Second):
+		t.Fatal("replay sibling did not reach the shared query-permit queue")
 	}
 	release()
 	if err := <-tickDone; err != nil {

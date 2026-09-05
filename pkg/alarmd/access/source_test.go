@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -471,6 +472,7 @@ func (source staticFrozenPlan) ResolveFrozenPlan(context.Context, execution.Froz
 }
 
 type fakeProvider struct {
+	mu           sync.Mutex
 	completeness execution.Completeness
 	empty        bool
 	reason       execution.ReasonCode
@@ -478,7 +480,9 @@ type fakeProvider struct {
 }
 
 func (provider *fakeProvider) Execute(ctx context.Context, attempt execution.QueryAttempt, sink execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {
+	provider.mu.Lock()
 	provider.attempts = append(provider.attempts, attempt)
+	provider.mu.Unlock()
 	completeness := provider.completeness
 	if completeness == "" {
 		completeness = execution.CompletenessFull
@@ -518,6 +522,7 @@ type recordedPermitAttempt struct {
 }
 
 type recordingQueryPermits struct {
+	mu        sync.Mutex
 	attempts  []recordedPermitAttempt
 	releases  int
 	onAcquire func()
@@ -529,11 +534,17 @@ func (permits *recordingQueryPermits) AcquireQueryPermit(
 	operation execution.Operation,
 	deadline time.Time,
 ) (QueryPermit, error) {
+	permits.mu.Lock()
+	defer permits.mu.Unlock()
 	permits.attempts = append(permits.attempts, recordedPermitAttempt{slot: slot, operation: operation, deadline: deadline})
 	if permits.onAcquire != nil {
 		permits.onAcquire()
 	}
-	permit := &recordingQueryPermit{release: func() { permits.releases++ }}
+	permit := &recordingQueryPermit{release: func() {
+		permits.mu.Lock()
+		defer permits.mu.Unlock()
+		permits.releases++
+	}}
 	if operation != execution.OperationNormal {
 		permit.recovery = &execution.RecoveryPermit{
 			PermitID: "recovery-permit", Slot: slot, Operation: operation, ExpiresAtUnixMilli: deadline.UnixMilli(),

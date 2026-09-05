@@ -56,6 +56,9 @@ type PhaseTwoOwnershipConfig struct {
 }
 
 type PhaseTwoSchedulerConfig struct {
+	// ActiveExecutionLimit bounds complete Runner lifetimes, not HTTP calls.
+	// It is part of the product capacity profile, not an environment tuning knob.
+	ActiveExecutionLimit  int      `yaml:"active_execution_limit"`
 	TickInterval          Duration `yaml:"tick_interval"`
 	ProcessQueryPermits   int      `yaml:"process_query_permits"`
 	RecoveryQueryPermits  int      `yaml:"recovery_query_permits"`
@@ -119,7 +122,8 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 			LeaseTTL: Duration(30 * time.Second), LeaseRenewInterval: Duration(10 * time.Second),
 		},
 		Scheduler: PhaseTwoSchedulerConfig{
-			TickInterval: Duration(time.Second), ProcessQueryPermits: 2, RecoveryQueryPermits: 1,
+			ActiveExecutionLimit: 2,
+			TickInterval:         Duration(time.Second), ProcessQueryPermits: 2, RecoveryQueryPermits: 1,
 			ReadyQueueCapacity: 256, RecoveryQueueCapacity: 64,
 			MaxQueuedItemsPerQG: 16, MaxReplaySlots: 3, MaxReplayAge: Duration(10 * time.Minute),
 			RetryMinDelay: Duration(time.Second), RetryMaxDelay: Duration(30 * time.Second),
@@ -172,7 +176,7 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 		!ttlExceedsRenew(c.Ownership.LeaseTTL, c.Ownership.LeaseRenewInterval) {
 		return errors.New("phase_two ownership TTL must exceed its renew interval")
 	}
-	if c.Scheduler.TickInterval.Duration() <= 0 || c.Scheduler.RecoveryLimits().Validate() != nil {
+	if c.Scheduler.ActiveExecutionLimit <= 0 || c.Scheduler.TickInterval.Duration() <= 0 || c.Scheduler.RecoveryLimits().Validate() != nil {
 		return errors.New("phase_two scheduler cadence and recovery limits are invalid")
 	}
 	endpoint, err := url.Parse(c.Access.UQEndpoint)

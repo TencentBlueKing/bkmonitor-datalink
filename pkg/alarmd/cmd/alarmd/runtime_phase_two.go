@@ -314,37 +314,9 @@ type phaseTwoRunnerDispatcher struct {
 	normal     []phaseTwoQueuedRunner
 	delayed    []phaseTwoQueuedRunner
 
-	admission      *phaseTwoExecutionAdmission
 	preferDelayed  bool
 	oneShot        bool
 	oneShotTargets map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle
-}
-
-type phaseTwoExecutionAdmission struct {
-	mu             sync.Mutex
-	recoveryActive int
-	recoveryLimit  int
-}
-
-func (admission *phaseTwoExecutionAdmission) acquire(operation execution.Operation) (func(), bool) {
-	if operation == execution.OperationNormal {
-		return func() {}, true
-	}
-	admission.mu.Lock()
-	if admission.recoveryActive >= admission.recoveryLimit {
-		admission.mu.Unlock()
-		return nil, false
-	}
-	admission.recoveryActive++
-	admission.mu.Unlock()
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			admission.mu.Lock()
-			admission.recoveryActive--
-			admission.mu.Unlock()
-		})
-	}, true
 }
 
 func newPhaseTwoWorkerBundle(dependencies phaseTwoWorkerBundleDependencies) (*phaseTwoWorkerBundle, error) {
@@ -534,19 +506,16 @@ func newPhaseTwoRunnerDispatcher(
 	oneShot bool,
 ) *phaseTwoRunnerDispatcher {
 	schedulerConfig := bundle.dependencies.Config.PhaseTwo.Scheduler
-	fanout := schedulerConfig.ProcessQueryPermits
+	fanout := schedulerConfig.ActiveExecutionLimit
 	if schedulerConfig.ReadyQueueCapacity < fanout {
 		fanout = schedulerConfig.ReadyQueueCapacity
 	}
 	return &phaseTwoRunnerDispatcher{
 		bundle: bundle, fanout: fanout,
 		jobs: make(chan phaseTwoScheduledRunner), results: make(chan phaseTwoScheduledResult, fanout),
-		lastQueued: make(map[execution.QueryGroupIdentity]phaseTwoRunnerGeneration),
-		queued:     make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
-		active:     make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
-		admission: &phaseTwoExecutionAdmission{
-			recoveryLimit: schedulerConfig.RecoveryQueryPermits,
-		},
+		lastQueued:    make(map[execution.QueryGroupIdentity]phaseTwoRunnerGeneration),
+		queued:        make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
+		active:        make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
 		preferDelayed: true, oneShot: oneShot,
 	}
 }
@@ -560,7 +529,11 @@ func (dispatcher *phaseTwoRunnerDispatcher) start(ctx context.Context) {
 				result := phaseTwoScheduledResult{scheduled: scheduled}
 				if ctx.Err() == nil && dispatcher.bundle.isCurrentScheduledRunner(scheduled) {
 					_, result.attempted, result.admissionDenied, result.err =
-						scheduled.lifecycle.runner.RunOneAdmitted(ctx, dispatcher.admission.acquire)
+						scheduled.lifecycle.runner.RunOneAdmitted(ctx, func(execution.Operation) (func(), bool) {
+							// F was acquired by this dispatcher before preparation.
+							// P/R belong only to actual Query admission in Access.
+							return func() {}, ctx.Err() == nil
+						})
 				}
 				dispatcher.results <- result
 			}

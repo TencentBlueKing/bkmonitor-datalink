@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -128,42 +129,108 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	if err := consumer.Begin(ctx, prepared.Header); err != nil {
 		return execution.QueryExecutionCompletion{}, err
 	}
-	completion := execution.QueryExecutionCompletion{PhysicalQueries: make([]execution.PhysicalQueryCompletion, 0, len(prepared.Queries))}
-	for queryIndex, query := range prepared.Queries {
+	// Only one permit acquisition per Source is pending at a time. Queries
+	// already admitted run independently; all attempts join before returning.
+	queryCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var running sync.WaitGroup
+	var queryFailure sync.Once
+	var firstQueryErr error
+	consumer = &serializedQueryConsumer{QueryExecutionConsumer: consumer}
+	results := make([]physicalQueryResult, len(prepared.Queries))
+	pending := make([]int, len(prepared.Queries))
+	for index := range pending {
+		pending[index] = index
+	}
+	var dispatchErr error
+	for len(pending) != 0 {
+		if err := queryCtx.Err(); err != nil {
+			dispatchErr = err
+			break
+		}
+		position := nextReadyQuery(prepared.Queries, pending, source.now())
+		queryIndex := pending[position]
+		pending = append(pending[:position], pending[position+1:]...)
+		query := prepared.Queries[queryIndex]
 		if len(query.Requirements) == 0 {
-			completion = completeReadinessInvalidQuery(completion, query, request.AttemptNo)
+			results[queryIndex].invalid = true
 			continue
 		}
 		if delay := time.UnixMilli(query.ReadyAtUnixMilli).Sub(source.now()); delay > 0 {
-			if err := source.wait(ctx, delay); err != nil {
-				return execution.QueryExecutionCompletion{}, err
+			if err := source.wait(queryCtx, delay); err != nil {
+				dispatchErr = err
+				break
 			}
 		}
 		queryDeadline := time.UnixMilli(query.DeadlineUnixMilli)
 		if !recoveryDeadline.IsZero() {
 			queryDeadline = recoveryDeadline
 		}
-		permit, err := source.permits.AcquireQueryPermit(ctx, request.Contract.Slot, request.Operation, queryDeadline)
+		permit, err := source.permits.AcquireQueryPermit(queryCtx, request.Contract.Slot, request.Operation, queryDeadline)
 		if err != nil {
 			if request.Operation != execution.OperationNormal && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
-				return completeBudgetExhaustedQueries(completion, prepared.Queries[queryIndex:], request.AttemptNo), nil
+				results[queryIndex].budgetExhausted = true
+				for _, remaining := range pending {
+					results[remaining].budgetExhausted = true
+				}
+				break
 			}
-			return execution.QueryExecutionCompletion{}, fmt.Errorf("alarmd access: acquire physical query permit: %w", err)
+			dispatchErr = fmt.Errorf("alarmd access: acquire physical query permit: %w", err)
+			break
+		}
+		if err := queryCtx.Err(); err != nil {
+			permit.Release()
+			dispatchErr = err
+			break
 		}
 		attempt := execution.QueryAttempt{Spec: query.Spec, Slot: request.Contract.Slot, Operation: request.Operation,
 			AttemptNo: request.AttemptNo, DeadlineUnixMilli: queryDeadline.UnixMilli(), RecoveryPermit: permit.RecoveryPermit()}
 		if err := attempt.Validate(); err != nil {
 			permit.Release()
-			return execution.QueryExecutionCompletion{}, err
+			dispatchErr = err
+			break
 		}
-		adapter := &seriesAdapter{consumer: consumer, query: query, attemptNo: attempt.AttemptNo}
-		providerCompletion, err := source.executeWithPermit(ctx, attempt, adapter, permit)
-		if err != nil {
-			return execution.QueryExecutionCompletion{}, fmt.Errorf("alarmd access: execute physical query: %w", err)
+		running.Add(1)
+		go func(index int, query PlannedQuery, attempt execution.QueryAttempt, permit QueryPermit) {
+			defer running.Done()
+			adapter := &seriesAdapter{consumer: consumer, query: query, attemptNo: attempt.AttemptNo}
+			completion, err := source.executeWithPermit(queryCtx, attempt, adapter, permit)
+			if err != nil {
+				err = fmt.Errorf("alarmd access: execute physical query: %w", err)
+			} else if !trustedProviderCompletion(query.Spec.Digest, completion) {
+				err = errors.New("alarmd access: G1 provider returned an untrusted completion")
+			}
+			results[index].completion = completion
+			if err != nil {
+				queryFailure.Do(func() {
+					firstQueryErr = err
+					cancel()
+				})
+			}
+		}(queryIndex, query, attempt, permit)
+	}
+	if dispatchErr != nil {
+		cancel()
+	}
+	running.Wait()
+	if firstQueryErr != nil {
+		return execution.QueryExecutionCompletion{}, firstQueryErr
+	}
+	if dispatchErr != nil {
+		return execution.QueryExecutionCompletion{}, dispatchErr
+	}
+	completion := execution.QueryExecutionCompletion{PhysicalQueries: make([]execution.PhysicalQueryCompletion, 0, len(prepared.Queries))}
+	for index, query := range prepared.Queries {
+		result := results[index]
+		if result.invalid {
+			completion = completeReadinessInvalidQuery(completion, query, request.AttemptNo)
+			continue
 		}
-		if !trustedProviderCompletion(query.Spec.Digest, providerCompletion) {
-			return execution.QueryExecutionCompletion{}, errors.New("alarmd access: G1 provider returned an untrusted completion")
+		if result.budgetExhausted {
+			completion = completeBudgetExhaustedQueries(completion, []PlannedQuery{query}, request.AttemptNo)
+			continue
 		}
+		providerCompletion := result.completion
 		completion.PhysicalQueries = append(completion.PhysicalQueries, execution.PhysicalQueryCompletion{
 			Ref: providerCompletion.Ref, PhysicalQuery: providerCompletion.PhysicalQuery,
 			QueryRevision: query.Spec.PlanFacts.QueryRevision, Completeness: providerCompletion.Completeness,
@@ -172,13 +239,48 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 			Stats: providerCompletion.Stats,
 		})
 		if providerCompletion.DataState != execution.DataStateData {
-			completion.CompletionBindings = append(completion.CompletionBindings, completionBindings(query, providerCompletion, attempt.AttemptNo)...)
+			completion.CompletionBindings = append(completion.CompletionBindings, completionBindings(query, providerCompletion, request.AttemptNo)...)
 		}
 		completion.CompletionBindings = append(completion.CompletionBindings,
-			readinessInvalidBindings(query, providerCompletion.Ref, attempt.AttemptNo)...)
+			readinessInvalidBindings(query, providerCompletion.Ref, request.AttemptNo)...)
 	}
 	completion.AllRequiredCompleted = true
 	return completion, nil
+}
+
+type physicalQueryResult struct {
+	completion      execution.ProviderCompletion
+	invalid         bool
+	budgetExhausted bool
+}
+
+// prepared queries already have stable deadline ordering. Select the first
+// ready query in that order, or the earliest readiness when all must wait.
+func nextReadyQuery(queries []PlannedQuery, pending []int, now time.Time) int {
+	earliest := 0
+	for position, index := range pending {
+		if len(queries[index].Requirements) == 0 || queries[index].ReadyAtUnixMilli <= now.UnixMilli() {
+			return position
+		}
+		if queries[index].ReadyAtUnixMilli < queries[pending[earliest]].ReadyAtUnixMilli {
+			earliest = position
+		}
+	}
+	return earliest
+}
+
+type serializedQueryConsumer struct {
+	execution.QueryExecutionConsumer
+	mu sync.Mutex
+}
+
+func (consumer *serializedQueryConsumer) ConsumeSeries(ctx context.Context, batch execution.SeriesExecutionBatch) error {
+	consumer.mu.Lock()
+	defer consumer.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return consumer.QueryExecutionConsumer.ConsumeSeries(ctx, batch)
 }
 
 func completeBudgetExhaustedQueries(

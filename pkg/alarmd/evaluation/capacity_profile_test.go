@@ -48,7 +48,7 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 			plan := capacityCompiled(t, shape.window, shape.levels)
 			records := make([]contract.CanonicalRecordV2, shape.r)
 			for i := range records {
-				records[i] = contract.CanonicalRecordV2{RecordID: fmt.Sprintf("%064d", i+10000), SourceTime: int64(1000000 + i*60), BusinessID: "2", DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)}, Values: map[string]json.RawMessage{"value": json.RawMessage(`80`)}, Dimensions: map[string]json.RawMessage{"host": json.RawMessage(`"` + strings.Repeat("h", dimensionBytes) + `"`)}, ReceivedTime: int64(1000000 + i*60)}
+				records[i] = contract.CanonicalRecordV2{RecordID: fmt.Sprintf("%064d", i+10000), SourceTime: int64(1000020 + i*60), BusinessID: "2", DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)}, Values: map[string]json.RawMessage{"value": json.RawMessage(`80`)}, Dimensions: map[string]json.RawMessage{"host": json.RawMessage(`"` + strings.Repeat("h", dimensionBytes) + `"`)}, ReceivedTime: int64(1000020 + i*60)}
 				if dimensionBytes >= 4096 {
 					for metric := 0; metric < 64; metric++ {
 						records[i].Values[fmt.Sprintf("metric_%02d", metric)] = json.RawMessage(`123456.789`)
@@ -56,17 +56,17 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 				}
 			}
 			req := requestFixtureForPlan(t, plan, records, nil)
-			req.Header.Contract.Slot.EvaluationTime = 1000060
+			req.Header.Contract.Slot.EvaluationTime = 1000080
 			req.Header.DeadlineUnixMilli = 1000120000
 			req.Header.DuePlans[0].CompletionDeadlineUnixMilli = 1000120000
 			req.Header.Requirements[0].LogicalQueryRef = "query"
 			for i := range req.Inputs {
 				for j := range req.Inputs[i].Inputs {
-					req.Inputs[i].Inputs[j].QueryWindow = execution.QueryWindow{Start: 1000000, End: 1000060}
+					req.Inputs[i].Inputs[j].QueryWindow = execution.QueryWindow{Start: 1000020, End: 1000080}
 				}
 			}
 			provider := strategy.NewStaticScheduleProvider(strategy.TimezoneResolverFunc(func(context.Context, string, string, string) (*time.Location, error) { return time.UTC, nil }))
-			freshFacts, resolveErr := provider.Resolve(context.Background(), []strategy.EffectiveTimeRequest{{TenantID: "tenant", BusinessID: "2", EvaluationTime: 1000060, Requirement: plan.Levels()[0].EffectiveTimeRequirement()}})
+			freshFacts, resolveErr := provider.Resolve(context.Background(), []strategy.EffectiveTimeRequest{{TenantID: "tenant", BusinessID: "2", EvaluationTime: 1000080, Requirement: plan.Levels()[0].EffectiveTimeRequirement()}})
 			if resolveErr != nil {
 				t.Fatal(resolveErr)
 			}
@@ -124,7 +124,7 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 			history := []execution.StateHistoryPoint{}
 			var raw []byte
 			for n := 1; n <= int(shape.window); n++ {
-				point := execution.StateHistoryPoint{RecordID: fmt.Sprintf("%064d", n), SourceTime: int64(1000000 - (cfg.Limits.Codec.MaxPoints-n+1)*60)}
+				point := execution.StateHistoryPoint{RecordID: fmt.Sprintf("%064d", n), SourceTime: int64(1000020 - (cfg.Limits.Codec.MaxPoints-n+1)*60)}
 				for _, level := range plan.Levels() {
 					point.Levels = append(point.Levels, execution.StateLevelFact{LevelID: level.Definition().LevelID, DetectFingerprint: level.Fingerprints().Detect, Result: execution.LevelFactAnomalous})
 				}
@@ -141,7 +141,7 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 			}
 			// Make the selected legal history contiguous immediately before PRIMARY.
 			for i := range history {
-				history[i].SourceTime = int64(1000000 - (len(history)-i)*60)
+				history[i].SourceTime = int64(1000020 - (len(history)-i)*60)
 			}
 			raw, err = json.Marshal(map[string]any{"schema": "alarmd-runtime-state-v2", "identity": req.State.Items[0].Identity, "blob_revision": 1, "apply_version": version, "mutation_digest": "capacity", "last_event_time": history[len(history)-1].SourceTime, "levels": levelMutations, "history": history})
 			if err != nil || len(raw) > cfg.Limits.Codec.MaxEncodedBytes {

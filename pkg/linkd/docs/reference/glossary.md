@@ -26,3 +26,17 @@
 | orphaned        | resolved/closed 未找到 active Alert，Event 不关联 Alert                                           |
 | rejected        | Event 在清洗或领域校验阶段被确定性拒绝                                                            |
 | cause           | FinalHook 变更原因，包含 source event、user operation 或 system operation 的类型和稳定 ID         |
+
+## 动态配置候选术语
+
+以下术语分别用于[EventSource 动态配置](../design/event-source-dynamic-configuration.md)和
+[部分配置动态化](../design/dynamic-configuration.md)，尚未成为实现或外部契约。两项独立管理版本与发布，
+不定义跨来源与全局配置的统一 ConfigRelease。
+
+| 术语 | 候选定义 |
+| --- | --- |
+| EventSourceRecord | 带管理作用域、资源版本与管理者的来源定义，仅属于 EventSource 项目 |
+| EventSourceRelease | 仅引用来源版本的一致发布快照，不包含全局配置 |
+| SeverityPolicy | 部分配置动态化中的全局等级定义与默认值，独立于来源版本管理 |
+| SourceActivation | 来源订阅在各 partition offset 区间使用的规则版本及切换代次 |
+| desired / applied revision | 期望发布版本与运行时实际应用版本，保存成功不等于生效成功 |

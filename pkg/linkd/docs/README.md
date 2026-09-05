@@ -20,6 +20,11 @@ Linkd 项目仍处于早期开发阶段，本文档只描述当前代码、测�
 
 ## 当前文档与归档
 
+动态化分为两项独立的待评审方案，分别开发、验收和交付，均尚未实现，不覆盖当前静态配置契约：
+
+- [EventSource 动态配置](design/event-source-dynamic-configuration.md)：来源独立管理、主动拉取/API 修改、版本与 Flow 生效。
+- [部分配置动态化](design/dynamic-configuration.md)：Severity 等选定配置项的消费者、生效和恢复边界，不包含来源管理。
+
 `design/`、`modules/`、`guides/` 和 `reference/` 是现行文档，修改行为时必须同步更新。已经被当前
 模型替换的早期占位页和重复模块页不再保留。
 

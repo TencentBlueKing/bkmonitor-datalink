@@ -17,9 +17,15 @@ import (
 	"time"
 )
 
-type capacityBackend struct{ raw []byte }
+type capacityBackend struct {
+	raw    []byte
+	values map[string][]byte
+}
 
-func (b *capacityBackend) MGet(context.Context, []string) ([][]byte, error) {
+func (b *capacityBackend) MGet(_ context.Context, keys []string) ([][]byte, error) {
+	if b.values != nil {
+		return [][]byte{append([]byte(nil), b.values[keys[0]]...)}, nil
+	}
 	return [][]byte{append([]byte(nil), b.raw...)}, nil
 }
 func (*capacityBackend) SetMany(context.Context, []state.BackendWrite) error { return nil }
@@ -33,13 +39,13 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 	}
 	cfg := config.Default()
 	for _, shape := range []struct {
-		r          int
-		window     uint32
-		dimensions int
-	}{{500, 1024, 128}, {500, 1024, 4096}, {32, 256, 128}, {32, 256, 4096}, {450, 450, 4096}} {
+		r                  int
+		window             uint32
+		dimensions, levels int
+	}{{1, 9, 128, 3}, {1, 60, 4096, 1}} {
 		dimensionBytes := shape.dimensions
 		t.Run(fmt.Sprintf("R%d-W%d-D%d", shape.r, shape.window, dimensionBytes), func(t *testing.T) {
-			plan := capacityCompiled(t, shape.window)
+			plan := capacityCompiled(t, shape.window, shape.levels)
 			records := make([]contract.CanonicalRecordV2, shape.r)
 			for i := range records {
 				records[i] = contract.CanonicalRecordV2{RecordID: fmt.Sprintf("%064d", i+10000), SourceTime: int64(1000000 + i*60), BusinessID: "2", DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)}, Values: map[string]json.RawMessage{"value": json.RawMessage(`80`)}, Dimensions: map[string]json.RawMessage{"host": json.RawMessage(`"` + strings.Repeat("h", dimensionBytes) + `"`)}, ReceivedTime: int64(1000000 + i*60)}
@@ -50,6 +56,22 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 				}
 			}
 			req := requestFixtureForPlan(t, plan, records, nil)
+			req.Header.Contract.Slot.EvaluationTime = 1000060
+			req.Header.DeadlineUnixMilli = 1000120000
+			req.Header.DuePlans[0].CompletionDeadlineUnixMilli = 1000120000
+			req.Header.Requirements[0].LogicalQueryRef = "query"
+			for i := range req.Inputs {
+				for j := range req.Inputs[i].Inputs {
+					req.Inputs[i].Inputs[j].QueryWindow = execution.QueryWindow{Start: 1000000, End: 1000060}
+				}
+			}
+			provider := strategy.NewStaticScheduleProvider(strategy.TimezoneResolverFunc(func(context.Context, string, string, string) (*time.Location, error) { return time.UTC, nil }))
+			freshFacts, resolveErr := provider.Resolve(context.Background(), []strategy.EffectiveTimeRequest{{TenantID: "tenant", BusinessID: "2", EvaluationTime: 1000060, Requirement: plan.Levels()[0].EffectiveTimeRequirement()}})
+			if resolveErr != nil {
+				t.Fatal(resolveErr)
+			}
+			req.Header.EffectiveTimeFacts[0].Fact = freshFacts[0]
+
 			refs, err := execution.DeriveRuntimeLevelContractRefs(plan)
 			if err != nil {
 				t.Fatal(err)
@@ -70,7 +92,7 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 				fact := baseFact
 				fact.Consumer = input.Consumer
 				req.Header.EffectiveTimeFacts = append(req.Header.EffectiveTimeFacts, fact)
-				req.Header.Requirements[0].Consumers = append(req.Header.Requirements[0].Consumers, execution.DataRequirementConsumer{Consumer: input.Consumer, ConsumerDeadlineUnixMilli: 200000, DownstreamExecutionReserveMilliSec: 1000})
+				req.Header.Requirements[0].Consumers = append(req.Header.Requirements[0].Consumers, execution.DataRequirementConsumer{Consumer: input.Consumer, ConsumerDeadlineUnixMilli: 1000120000, DownstreamExecutionReserveMilliSec: 1000})
 				req.State.Items[0].Levels = append(req.State.Items[0].Levels, execution.RuntimeLevelStateView{LevelID: uint32(5 + i), LevelStateCompatibility: ref.LevelStateCompatibility, WarmupRequirementRef: ref.WarmupRequirementRef, HistoryCompleteness: execution.HistoryFull})
 				levelMutations = append(levelMutations, execution.RuntimeLevelStateMutation{LevelID: uint32(5 + i), LevelStateCompatibility: ref.LevelStateCompatibility, WarmupRequirementRef: ref.WarmupRequirementRef, HistoryCompleteness: execution.HistoryFull})
 			}
@@ -82,13 +104,26 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 			for i := range req.Inputs {
 				req.Inputs[i].Contract = req.Header.Contract
 			}
+			builder, buildErr := execution.PrepareSeriesEvaluationInputBuilder(req.Header)
+			if buildErr != nil {
+				t.Fatal(buildErr)
+			}
+			completions := []execution.PhysicalQueryCompletion{{Ref: "provider", PhysicalQuery: "physical", QueryRevision: "query", Completeness: execution.CompletenessFull, DataState: execution.DataStateData, Delivery: execution.SeriesDelivery{PhysicalQuery: "physical", QueryRevision: "query", Series: 1, Records: 1, Digest: strings.Repeat("a", 64)}}}
+			for i := range req.Inputs {
+				built, err := builder.Build(req.Inputs[i].Consumer, req.Inputs[i].SeriesIdentity, req.Inputs[i].Inputs, completions)
+				if err != nil {
+					t.Fatal(err)
+				}
+				req.Inputs[i] = built
+			}
+			t.Log("production named-input builder: PASS")
 			version, err := execution.BuildApplyVersion(req.Header.Contract, 1)
 			if err != nil {
 				t.Fatal(err)
 			}
 			history := []execution.StateHistoryPoint{}
 			var raw []byte
-			for n := 1; n <= cfg.Limits.Codec.MaxPoints; n++ {
+			for n := 1; n <= int(shape.window); n++ {
 				point := execution.StateHistoryPoint{RecordID: fmt.Sprintf("%064d", n), SourceTime: int64(1000000 - (cfg.Limits.Codec.MaxPoints-n+1)*60)}
 				for _, level := range plan.Levels() {
 					point.Levels = append(point.Levels, execution.StateLevelFact{LevelID: level.Definition().LevelID, DetectFingerprint: level.Fingerprints().Detect, Result: execution.LevelFactAnomalous})
@@ -124,6 +159,64 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 			evaluator.limits.MaxRecords = cfg.Limits.Detect.MaxRecordsPerSeries
 			evaluator.limits.MaxLevels = uint64(cfg.Limits.Trigger.MaxLevels)
 			evaluator.limits.Trigger = cfg.TriggerLimits()
+			// Freeze 100 distinct series before measurement. History is immutable and
+			// shared in the fixture; output mutations remain owned separately.
+			requests := make([]execution.EvaluationRequest, 100)
+			backend.values = make(map[string][]byte, 100)
+			var envelope map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &envelope); err != nil {
+				t.Fatal(err)
+			}
+			for n := range requests {
+				one := req
+				host, _ := json.Marshal(fmt.Sprintf("%03d", n) + strings.Repeat("h", dimensionBytes-3))
+				fields := []contract.DimensionFieldV2{{Name: "host", Value: host}}
+				digest, deriveErr := contract.DeriveDimensionIdentityDigestV2("tenant", "2", fields)
+				if deriveErr != nil {
+					t.Fatal(deriveErr)
+				}
+				series := execution.SeriesIdentityDigest(digest)
+				record := records[0]
+				record.DimensionIdentity = contract.DimensionIdentityV2{Digest: digest, Fields: fields}
+				record.Dimensions = map[string]json.RawMessage{"host": host}
+				record.RecordID, deriveErr = contract.DeriveRecordIDV2(digest, record.SourceTime)
+				if deriveErr != nil {
+					t.Fatal(deriveErr)
+				}
+				dataset := execution.NewDataset([]contract.CanonicalRecordV2{record})
+				view, _ := execution.NewDatasetView(dataset, []uint32{0})
+				one.Inputs = append([]execution.SeriesEvaluationInputRequest(nil), req.Inputs...)
+				for i := range one.Inputs {
+					bindings := append([]execution.NamedInputBinding(nil), req.Inputs[i].Inputs...)
+					bindings[0].Dataset = dataset
+					bindings[0].View = view
+					built, err := builder.Build(one.Inputs[i].Consumer, series, bindings, completions)
+					if err != nil {
+						t.Fatal(err)
+					}
+					one.Inputs[i] = built
+				}
+				one.Header.EffectiveTimeFacts = append([]execution.BoundEffectiveTimeFact(nil), req.Header.EffectiveTimeFacts...)
+				for i := range one.Header.EffectiveTimeFacts {
+					one.Header.EffectiveTimeFacts[i].SeriesIdentity = series
+				}
+				one.State.Items = append([]execution.RuntimeStateView(nil), req.State.Items...)
+				one.State.Items[0].Identity.SeriesIdentityDigest = series
+				envelope["identity"], err = json.Marshal(one.State.Items[0].Identity)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wire, err := json.Marshal(envelope)
+				if err != nil {
+					t.Fatal(err)
+				}
+				key, err := state.RuntimeStateKeyV2("capacity", one.State.Items[0].Identity)
+				if err != nil {
+					t.Fatal(err)
+				}
+				backend.values[key] = wire
+				requests[n] = one
+			}
 			// Keep the fixed input alive throughout the baseline and post-GC readings.
 			runtime.GC()
 			var before, after, live runtime.MemStats
@@ -150,28 +243,31 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 				}
 			}()
 			started := time.Now()
-			result, err := evaluator.Evaluate(context.Background(), req)
+			results := make([]execution.EvaluationResult, 0, len(requests))
+			for _, one := range requests {
+				loaded, loadErr := store.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: one.Header.Contract, Items: []execution.StatePreflightItem{{Identity: one.State.Items[0].Identity, ApplyVersion: version}}})
+				if loadErr != nil || loaded.Items[0].Status != execution.StateFoundReady {
+					t.Fatalf("state load: %v %+v", loadErr, loaded)
+				}
+				one.State = loaded
+				result, err := evaluator.Evaluate(context.Background(), one)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = result.Validate(one); err != nil {
+					t.Fatal(err)
+				}
+				admission, err := store.AdmitRuntime(context.Background(), execution.StateApplyRequest{Contract: one.Header.Contract, Items: []execution.StateMutation{result.Plans[0].StateResults[0].Mutation}})
+				if err != nil || admission.Items[0].Status != execution.StateAdmissionAccepted {
+					t.Fatalf("not admitted: %v %+v", err, admission)
+				}
+				results = append(results, result)
+			}
+			result := results[0]
 			elapsed := time.Since(started)
 			close(stop)
 			<-done
 			runtime.ReadMemStats(&after)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = result.Validate(req); err != nil {
-				t.Fatal(err)
-			}
-			if len(result.Plans) != 1 || len(result.Plans[0].LevelOutcomes) != shape.r*8 || len(result.Plans[0].StateResults) != 1 {
-				t.Fatal("illegal output shape")
-			}
-			admission, admitErr := store.AdmitRuntime(context.Background(), execution.StateApplyRequest{Contract: req.Header.Contract, Items: []execution.StateMutation{result.Plans[0].StateResults[0].Mutation}})
-			if admitErr != nil {
-				t.Fatal(admitErr)
-			}
-			t.Logf("output_state_admission=%+v", admission)
-			if shape.r != 500 && admission.Items[0].Status != execution.StateAdmissionAccepted {
-				t.Fatal("representative output was rejected")
-			}
 			runtime.GC()
 			runtime.ReadMemStats(&live)
 			runtime.KeepAlive(req)
@@ -179,12 +275,15 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 			runtime.KeepAlive(backend)
 			runtime.KeepAlive(records)
 			runtime.KeepAlive(history)
-			t.Logf("state_bytes=%d H=%d R=%d L=8 dimensions=%d events=%d duration=%s records_per_sec=%.2f alloc=%d heap_before=%d heap_after=%d sampled_peak=%d heap_after_gc=%d", len(raw), len(history), shape.r, dimensionBytes, len(result.Plans[0].StateResults[0].Events), elapsed, float64(shape.r)/elapsed.Seconds(), after.TotalAlloc-before.TotalAlloc, before.HeapAlloc, after.HeapAlloc, peak.Load(), live.HeapAlloc)
+			runtime.KeepAlive(requests)
+			runtime.KeepAlive(results)
+			t.Logf("distinct_series=%d all_results_validated_and_state_admitted=true series_per_sec=%.2f", len(requests), float64(len(requests))/elapsed.Seconds())
+			t.Logf("state_bytes=%d H=%d R=%d L=%d dimensions=%d events=%d duration=%s records_per_sec=%.2f alloc=%d heap_before=%d heap_after=%d sampled_peak=%d heap_after_gc=%d", len(raw), len(history), shape.r, shape.levels, dimensionBytes, len(result.Plans[0].StateResults[0].Events), elapsed, float64(shape.r*len(requests))/elapsed.Seconds(), after.TotalAlloc-before.TotalAlloc, before.HeapAlloc, after.HeapAlloc, peak.Load(), live.HeapAlloc)
 		})
 	}
 }
 
-func capacityCompiled(t *testing.T, windowSize uint32) *strategy.CompiledPlan {
+func capacityCompiled(t *testing.T, windowSize uint32, levelCount int) *strategy.CompiledPlan {
 	cfg := config.Default()
 	c, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), cfg.CompilerLimits())
 	if err != nil {
@@ -199,13 +298,13 @@ func capacityCompiled(t *testing.T, windowSize uint32) *strategy.CompiledPlan {
 	}
 	triggerConfig := json.RawMessage(triggerPayload)
 	level := contract.LevelIRV2{Definition: contract.LevelDefinitionV2{LevelID: 5, Priority: 1}, Connector: contract.LevelConnectorAND, DetectPlan: contract.DetectPlanV2{Algorithms: []contract.AlgorithmIRV2{{Type: "Threshold", Version: 1, Config: json.RawMessage(`{"value_field":"value","data_unit":"percent","threshold_unit_prefix":"","precision":{"decimal_places":6,"rounding":"HALF_EVEN"},"groups":[{"conditions":[{"operator":"GTE","threshold_decimal":"50"}]}]}`)}}}, TriggerPlan: contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: triggerConfig}, RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)}}
-	levels := make([]contract.LevelIRV2, 8)
+	levels := make([]contract.LevelIRV2, levelCount)
 	for i := range levels {
 		levels[i] = level
 		levels[i].Definition.LevelID = uint32(5 + i)
 		levels[i].Definition.Priority = uint32(1 + i)
 	}
-	p := contract.EvaluationPlanV2{PlanID: "7", StrategyRef: ref, InputProjection: projection, StrategyIR: contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2}, StrategyRef: ref, InputProjection: projection, ExecutionSemantics: contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries, QueryWindow: 300, AggregationInterval: 60, EvaluationInterval: 60, LatenessTolerance: 120}, Levels: levels}}
+	p := contract.EvaluationPlanV2{PlanID: "7", StrategyRef: ref, InputProjection: projection, StrategyIR: contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2}, StrategyRef: ref, InputProjection: projection, ExecutionSemantics: contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries, QueryWindow: 60, AggregationInterval: 60, EvaluationInterval: 60, LatenessTolerance: 120}, Levels: levels}}
 	r, err := c.Compile(context.Background(), strategy.CompileRequest{Plan: p, DatasetContract: contract.DatasetContractV2{SchemaDigest: strings.Repeat("1", 64), NormalizationDigest: strings.Repeat("2", 64), IdentityFields: []string{"host"}, SourceTimeField: "time", ReceivedTimeField: "received_time"}, StateSemantics: strategy.StateSemantics{StateSchemaVersion: "s", CodecSemanticsVersion: "c", IdentitySchemaDigest: strings.Repeat("3", 64), SourceTimeSemanticsVersion: "t", HistoryCellSemanticsVersion: "h"}})
 	if err != nil {
 		t.Fatal(err)

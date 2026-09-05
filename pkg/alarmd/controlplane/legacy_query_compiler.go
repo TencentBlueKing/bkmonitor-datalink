@@ -143,9 +143,6 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 		if config.DataSourceLabel != "bk_monitor" || config.DataTypeLabel != "time_series" {
 			return execution.QueryPlanFacts{}, queryUnsupported("QUERY_SOURCE_NOT_MIGRATED", nil)
 		}
-		if config.ResultTableID == "" {
-			return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_CONFIG_INVALID", errors.New("result table is required"))
-		}
 		config.AggDimensions = canonicalDimensionStrings(config.AggDimensions)
 		// Python alarm Access does not pass cached query_config.filter_dict to
 		// TimeSeriesDataSource.init_by_query_config. Only the runtime filters

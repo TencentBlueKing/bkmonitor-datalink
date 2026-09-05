@@ -80,6 +80,57 @@ func TestLegacyPrimaryQueryCompilerReproducesPythonThresholdUQFacts(t *testing.T
 	}
 }
 
+func TestLegacyPrimaryQueryCompilerAcceptsPythonUnifyQueryWithoutResultTable(t *testing.T) {
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := planner.CompilePrimaryQuery(context.Background(), controlplane.PrimaryQuerySource{
+		Identity: controlplane.SourceIdentity{
+			TenantID:   "default",
+			BusinessID: "2",
+			SpaceScope: "bkcc__2",
+		},
+		StrategyID: "8565",
+		ItemID:     "8683",
+		QueryMD5:   "python-query-md5",
+		Expression: "a",
+		QueryConfigs: []json.RawMessage{json.RawMessage(`{
+			"data_source_label":"bk_monitor","data_type_label":"time_series",
+			"metric_id":"bk_monitor..bmw_metadata_rt_metric_num",
+			"metric_field":"bmw_metadata_rt_metric_num","alias":"a",
+			"agg_method":"AVG","agg_interval":600,
+			"agg_dimension":["table_id"],"agg_condition":[],
+			"result_table_id":"","functions":[]
+		}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := facts.Validate(); err != nil {
+		t.Fatalf("compiled empty-table query facts are invalid: %v", err)
+	}
+	if facts.StepMillis != 600_000 || facts.AlignmentMillis != 600_000 || facts.MetricMerge != "a" {
+		t.Fatalf("schedule/merge facts=%+v", facts)
+	}
+	if len(facts.QueryList) != 1 {
+		t.Fatalf("query_list=%+v", facts.QueryList)
+	}
+	clause := facts.QueryList[0]
+	if clause.TableID != "" || clause.FieldName != "bmw_metadata_rt_metric_num" || clause.ReferenceName != "a" || clause.Driver != "influxdb" || clause.TimeField != "time" {
+		t.Fatalf("query clause=%+v", clause)
+	}
+	if len(clause.Dimensions) != 1 || clause.Dimensions[0] != "table_id" {
+		t.Fatalf("dimensions=%v", clause.Dimensions)
+	}
+	if len(clause.Functions) != 1 || clause.Functions[0].Method != "mean" || clause.TimeAggregation.Method != "avg_over_time" || clause.TimeAggregation.Window != "600s" {
+		t.Fatalf("aggregation facts functions=%+v time_aggregation=%+v", clause.Functions, clause.TimeAggregation)
+	}
+	if len(clause.KeepColumns) != 3 || clause.KeepColumns[0] != "_time" || clause.KeepColumns[1] != "a" || clause.KeepColumns[2] != "table_id" {
+		t.Fatalf("keep_columns=%v", clause.KeepColumns)
+	}
+}
+
 func TestLegacyPrimaryQueryCompilerPreservesOrderedMultiQueryAndExpressionFunctions(t *testing.T) {
 	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
 	if err != nil {

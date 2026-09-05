@@ -111,6 +111,22 @@ func TestVerifiedSnapshotCacheHonorsByteBound(t *testing.T) {
 	}
 }
 
+func TestVerifiedSnapshotCacheEvictionReleasesBackingReferences(t *testing.T) {
+	cache := newVerifiedSnapshotCache(1, 1<<20)
+	for _, identity := range []execution.QueryGroupIdentity{"qg-a", "qg-b"} {
+		revision, payload := neutralSnapshotPayload(t, identity)
+		if _, err := cache.loadSnapshot(context.Background(), revision, payload); err != nil {
+			t.Fatal(err)
+		}
+	}
+	backing := cache.entries[:cap(cache.entries)]
+	for index := len(cache.entries); index < len(backing); index++ {
+		if backing[index].payload != nil || backing[index].queryGroups != nil {
+			t.Fatalf("evicted backing slot %d still retains Snapshot references", index)
+		}
+	}
+}
+
 func TestVerifiedSnapshotCacheHonorsCancellationAndConcurrentIsolation(t *testing.T) {
 	revision, payload := neutralSnapshotPayload(t, "qg-a")
 	cache := newVerifiedSnapshotCache(2, 1<<20)

@@ -151,6 +151,7 @@ func (cache *verifiedSnapshotCache) insert(entry verifiedSnapshotCacheEntry) {
 	for len(cache.entries) > cache.maxEntries || cache.bytes > cache.maxBytes {
 		last := len(cache.entries) - 1
 		cache.bytes -= verifiedSnapshotCacheEntryBytes(cache.entries[last])
+		cache.entries[last] = verifiedSnapshotCacheEntry{}
 		cache.entries = cache.entries[:last]
 	}
 }

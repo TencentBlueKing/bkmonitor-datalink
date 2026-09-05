@@ -271,6 +271,20 @@ func TestExecutionStorePlanGapRoundTripAndTombstone(t *testing.T) {
 	if err != nil || apply.Items[0].Status != execution.GapGuardApplied {
 		t.Fatalf("ApplyGap(open) = (%+v, %v)", apply, err)
 	}
+	conflicting := opened
+	conflicting.ExpectedMarkerRevision = 1
+	conflicting.MutationDigest = ""
+	conflicting.Scopes[0].ReasonCode = execution.ReasonCode(contract.ReasonConfigDrift)
+	conflicting, err = execution.BuildPlanGapMutation(conflicting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := PlanGapKeyV2("alarmd", identity)
+	original := append([]byte(nil), backend.values[key]...)
+	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{conflicting}})
+	if err != nil || apply.Items[0].Status != execution.GapGuardConflict || string(backend.values[key]) != string(original) {
+		t.Fatalf("ApplyGap(same version, different digest) = (%+v, %v)", apply, err)
+	}
 	loaded, err := store.LoadGaps(context.Background(), execution.GapLoadRequest{Contract: frozenRef(), Items: []execution.PlanGapLoadItem{{Identity: identity, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1"}}})
 	if err != nil || loaded.Items[0].Status != execution.GapFound || len(loaded.Items[0].Scopes) != 1 {
 		t.Fatalf("LoadGaps() = (%+v, %v)", loaded, err)

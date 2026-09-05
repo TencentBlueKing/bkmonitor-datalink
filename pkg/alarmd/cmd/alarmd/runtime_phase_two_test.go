@@ -1544,6 +1544,53 @@ func TestPhaseTwoWorkerBundleProgressConflictDoesNotStopSiblingOrWorker(t *testi
 	_ = bundle.Shutdown(context.Background())
 }
 
+func TestPhaseTwoWorkerBundleQueryFreeGapConflictDoesNotStopSiblingOrWorker(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	queryGroups := []execution.QueryGroupIdentity{"query-free-gap-conflict", "healthy-sibling"}
+	control := &fakePhaseTwoControl{queryGroups: queryGroups}
+	failed := newFakePhaseTwoQueryGroup()
+	failed.runErr = errors.New("finalize query-free Slot: activated Plan gap marker conflicts with the Slot")
+	healthy := newFakePhaseTwoQueryGroup()
+	healthy.runResult = execution.SlotExecutionResult{Completed: true, Result: observability.ResultSuccess}
+	owner := &fakePhaseTwoOwnership{assigned: queryGroups, runners: map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime{
+		queryGroups[0]: failed,
+		queryGroups[1]: healthy,
+	}}
+	var mu sync.Mutex
+	var observations []observability.Observation
+	health := newPhaseTwoApplicationHealth()
+	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
+		Config: cfg, Health: health, Control: control, Ownership: owner, Now: time.Now,
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			mu.Lock()
+			defer mu.Unlock()
+			observations = append(observations, observation)
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bundle.Shutdown(context.Background()) })
+	if err := bundle.runScheduledOnce(context.Background()); err != nil {
+		t.Fatalf("runScheduledOnce() error=%v", err)
+	}
+	if failed.runCount() != 1 || healthy.runCount() != 1 || failed.releaseCount() != 0 {
+		t.Fatalf("run/release counts failed=%d/%d healthy=%d", failed.runCount(), failed.releaseCount(), healthy.runCount())
+	}
+	if snapshot := health.HealthSnapshot(); !snapshot.Ready || snapshot.State == observability.HealthFatal {
+		t.Fatalf("worker health=%+v", snapshot)
+	}
+	mu.Lock()
+	failures := schedulerFailureObservations(observations)
+	mu.Unlock()
+	if len(failures) != 1 || failures[0].Trace.QueryGroupKey != string(queryGroups[0]) {
+		t.Fatalf("scheduler failures=%+v", failures)
+	}
+}
+
 func TestPhaseTwoWorkerBundleMissingFrozenQueryFactsDoesNotStopThresholdSiblingOrWorker(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	queryGroups := []execution.QueryGroupIdentity{"query-group-g4-bad", "query-group-threshold-healthy"}

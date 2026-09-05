@@ -219,7 +219,13 @@ func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(
 	var result execution.SlotExecutionResult
 	var changedActivations *execution.PlanActivationResult
 	err = coordinator.ports.Sequencer.Sequence(ctx, activatedPlanSequencingScope(request.Contract.Slot, guardFacts), func(sequenceCtx context.Context) error {
-		if _, err := coordinator.ensureActivatedPlanGaps(sequenceCtx, request, finalization.ReasonCode, guardFacts); err != nil {
+		if _, err := coordinator.ensureActivatedPlanGaps(
+			sequenceCtx,
+			request,
+			finalization.ReasonCode,
+			guardFacts,
+			finalization.Mode == execution.FinalizationSnapshotUnavailable,
+		); err != nil {
 			return err
 		}
 		progressFacts, err := coordinator.loadActivations(sequenceCtx, activationRequest)
@@ -250,7 +256,13 @@ func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: finalize query-free Slot: %w", err)
 	}
 	if changedActivations != nil {
-		if err := coordinator.protectActivatedPlanGaps(ctx, request, finalization.ReasonCode, *changedActivations); err != nil {
+		if err := coordinator.protectActivatedPlanGaps(
+			ctx,
+			request,
+			finalization.ReasonCode,
+			*changedActivations,
+			finalization.Mode == execution.FinalizationSnapshotUnavailable,
+		); err != nil {
 			return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: protect changed query-free activation: %w", err)
 		}
 	}
@@ -362,12 +374,19 @@ func (coordinator *SlotExecutionCoordinator) protectActivatedPlanGaps(
 	request execution.SlotExecutionRequest,
 	reason execution.ReasonCode,
 	activations execution.PlanActivationResult,
+	reuseSufficientQueryFreeProtection bool,
 ) error {
 	return coordinator.ports.Sequencer.Sequence(
 		ctx,
 		activatedPlanSequencingScope(request.Contract.Slot, activations),
 		func(sequenceCtx context.Context) error {
-			_, err := coordinator.ensureActivatedPlanGaps(sequenceCtx, request, reason, activations)
+			_, err := coordinator.ensureActivatedPlanGaps(
+				sequenceCtx,
+				request,
+				reason,
+				activations,
+				reuseSufficientQueryFreeProtection,
+			)
 			return err
 		},
 	)
@@ -389,6 +408,7 @@ func (coordinator *SlotExecutionCoordinator) convergeNormalActivation(
 				request,
 				execution.ReasonCode(contract.ReasonConfigDrift),
 				protection.activations,
+				false,
 			)
 			if err != nil || !alreadyProtected {
 				return err
@@ -419,6 +439,7 @@ func (coordinator *SlotExecutionCoordinator) convergeNormalActivation(
 			request,
 			execution.ReasonCode(contract.ReasonConfigDrift),
 			*changedActivations,
+			false,
 		); err != nil {
 			return execution.SlotExecutionResult{}, err
 		}
@@ -431,6 +452,7 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 	request execution.SlotExecutionRequest,
 	reason execution.ReasonCode,
 	activations execution.PlanActivationResult,
+	reuseSufficientQueryFreeProtection bool,
 ) (bool, error) {
 	items := make([]execution.PlanGapLoadItem, 0, len(activations.Facts))
 	for _, fact := range activations.Facts {
@@ -502,15 +524,45 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 			case execution.ApplyVersionPersistedNewer:
 				return false, errors.New("alarmd worker: activated Plan gap marker is newer than the Slot")
 			case execution.ApplyVersionEqual:
-				if marker.Status != execution.GapFound || marker.PersistedMutationDigest != mutation.MutationDigest {
-					return false, errors.New("alarmd worker: activated Plan gap marker conflicts with the Slot")
+				if marker.Status == execution.GapFound && marker.PersistedMutationDigest == mutation.MutationDigest {
+					requireAlready[item.Identity] = struct{}{}
+					break
 				}
-				requireAlready[item.Identity] = struct{}{}
+				if reuseSufficientQueryFreeProtection && queryFreeGapAlreadyProtects(marker, item, plan) {
+					continue
+				}
+				return false, errors.New("alarmd worker: activated Plan gap marker conflicts with the Slot")
 			}
 		}
 		mutations = append(mutations, mutation)
 	}
+	if len(mutations) == 0 {
+		return true, nil
+	}
 	return coordinator.applyActivatedPlanGaps(ctx, request.Operation, request.Contract, mutations, requireAlready)
+}
+
+func queryFreeGapAlreadyProtects(
+	marker execution.GapGuardSnapshot,
+	item execution.PlanGapLoadItem,
+	plan execution.ActivatedPlan,
+) bool {
+	// The existing Guard reason explains how recovery protection was established.
+	// Query-free finalization records SNAPSHOT_UNAVAILABLE in Progress without rewriting it.
+	if marker.Status != execution.GapFound || marker.Identity != item.Identity ||
+		plan.Identity != item.Identity.Plan || plan.StateGeneration != item.Identity.StateGeneration ||
+		plan.StateApplyEpoch != item.ApplyVersion.StateApplyEpoch || plan.ScheduleRevision != item.ScheduleRevision ||
+		execution.CompareApplyVersion(marker.PersistedApplyVersion, item.ApplyVersion) != execution.ApplyVersionEqual ||
+		marker.LastScheduleRevision != item.ScheduleRevision {
+		return false
+	}
+	for _, scope := range marker.Scopes {
+		if !scope.Scope.HasLevel {
+			return scope.Status == execution.GapStatusGapped && scope.ObservedFullSlots == 0 &&
+				scope.RequiredFullSlots == plan.RequiredFullSlots
+		}
+	}
+	return false
 }
 
 func ensureGappedKind(marker execution.GapGuardSnapshot) (execution.GapMutationKind, error) {
@@ -623,7 +675,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	forced := unsatisfiedForcedWarmingActivations(guardActivations, loadedGaps, changedPlans)
 	if len(forced.Facts) > 0 {
 		if _, err := coordinator.ensureActivatedPlanGaps(
-			ctx, request, execution.ReasonCode(contract.ReasonConfigDrift), forced,
+			ctx, request, execution.ReasonCode(contract.ReasonConfigDrift), forced, false,
 		); err != nil {
 			return execution.SlotExecutionResult{}, err
 		}

@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,6 +53,359 @@ func TestSlotExecutionCoordinatorFinalizesSnapshotUnavailableWithoutQuery(t *tes
 		lastObservation.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) {
 		t.Fatalf("query-free completion observation=%+v", lastObservation)
 	}
+}
+
+func TestSlotExecutionCoordinatorReusesSufficientQueryFreeGapWithoutRewrite(t *testing.T) {
+	activation := activePlanResult("state-v2", 2)
+	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activation})
+	marker := queryFreeGapMarker(t, activation.Facts[0].Selected, currentQueryFreeApplyVersion(t), "plan-schedule-v2", []execution.GapScopeState{
+		{
+			Scope: execution.GapScope{}, Status: execution.GapStatusGapped,
+			ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift), RequiredFullSlots: 3,
+		},
+		{
+			Scope: execution.GapScope{LevelID: 5, HasLevel: true}, Status: execution.GapStatusWarming,
+			ReasonCode: execution.ReasonCode(contract.ReasonHistoryGapped), RequiredFullSlots: 4, ObservedFullSlots: 1,
+		},
+	})
+	before := cloneGapGuardSnapshot(marker)
+	fixture.ports.markers[marker.Identity] = marker
+
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+	if err != nil || !result.Completed {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	assertTrace(t, fixture.trace, []string{
+		"finalization", "activation", "sequence", "query_free_admission_guard", "query_free_gap_load",
+		"activation", "query_free_admission_progress", "progress_commit",
+	})
+	if fixture.ports.applyCalls != 0 || len(fixture.ports.mutations) != 0 || fixture.ports.progressCalls != 1 {
+		t.Fatalf("query-free reuse apply=%d mutations=%d progress=%d",
+			fixture.ports.applyCalls, len(fixture.ports.mutations), fixture.ports.progressCalls)
+	}
+	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 {
+		t.Fatalf("query-free reuse leaked business effects: events=%d state=%d",
+			fixture.ports.eventCount, fixture.ports.stateApplyCalls)
+	}
+	if got := fixture.ports.markers[marker.Identity]; !reflect.DeepEqual(got, before) {
+		t.Fatalf("existing Guard changed: got=%+v want=%+v", got, before)
+	}
+	completion := fixture.ports.lastProgress.Completion
+	if completion.Kind != execution.CompletionSnapshotUnavailable ||
+		completion.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) {
+		t.Fatalf("query-free completion=%+v", completion)
+	}
+}
+
+func TestSlotExecutionCoordinatorDoesNotReuseInsufficientSameSlotGap(t *testing.T) {
+	activation := activePlanResult("state-v2", 2)
+	selected := activation.Facts[0].Selected
+	version := currentQueryFreeApplyVersion(t)
+	planWide := func(status execution.GapStatus, required, observed uint32) []execution.GapScopeState {
+		return []execution.GapScopeState{{
+			Scope: execution.GapScope{}, Status: status,
+			ReasonCode:        execution.ReasonCode(contract.ReasonConfigDrift),
+			RequiredFullSlots: required, ObservedFullSlots: observed,
+		}}
+	}
+	tests := []struct {
+		name   string
+		marker func(*testing.T) execution.GapGuardSnapshot
+	}{
+		{
+			name: "different schedule revision",
+			marker: func(t *testing.T) execution.GapGuardSnapshot {
+				return queryFreeGapMarker(t, selected, version, "different-plan-schedule", planWide(execution.GapStatusGapped, 3, 0))
+			},
+		},
+		{
+			name: "plan scope warming",
+			marker: func(t *testing.T) execution.GapGuardSnapshot {
+				return queryFreeGapMarker(t, selected, version, selected.ScheduleRevision, planWide(execution.GapStatusWarming, 3, 1))
+			},
+		},
+		{
+			name: "observed full slot",
+			marker: func(t *testing.T) execution.GapGuardSnapshot {
+				return queryFreeGapMarker(t, selected, version, selected.ScheduleRevision, planWide(execution.GapStatusGapped, 3, 1))
+			},
+		},
+		{
+			name: "lower required full slots",
+			marker: func(t *testing.T) execution.GapGuardSnapshot {
+				return queryFreeGapMarker(t, selected, version, selected.ScheduleRevision, planWide(execution.GapStatusGapped, 2, 0))
+			},
+		},
+		{
+			name: "higher required full slots",
+			marker: func(t *testing.T) execution.GapGuardSnapshot {
+				return queryFreeGapMarker(t, selected, version, selected.ScheduleRevision, planWide(execution.GapStatusGapped, 4, 0))
+			},
+		},
+		{
+			name: "level scope only",
+			marker: func(t *testing.T) execution.GapGuardSnapshot {
+				return queryFreeGapMarker(t, selected, version, selected.ScheduleRevision, []execution.GapScopeState{{
+					Scope: execution.GapScope{LevelID: 5, HasLevel: true}, Status: execution.GapStatusGapped,
+					ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift), RequiredFullSlots: 3,
+				}})
+			},
+		},
+		{
+			name: "same version tombstone",
+			marker: func(t *testing.T) execution.GapGuardSnapshot {
+				marker := queryFreeGapMarker(t, selected, version, selected.ScheduleRevision, planWide(execution.GapStatusGapped, 3, 0))
+				marker.Status = execution.GapClearedTombstone
+				marker.Scopes = nil
+				return marker
+			},
+		},
+		{
+			name: "newer slot digest",
+			marker: func(t *testing.T) execution.GapGuardSnapshot {
+				newer := version
+				newer.SlotDigest = execution.SlotIdentityDigest(strings.Repeat("f", 64))
+				return queryFreeGapMarker(t, selected, newer, selected.ScheduleRevision, planWide(execution.GapStatusGapped, 3, 0))
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activation})
+			marker := test.marker(t)
+			fixture.ports.markers[marker.Identity] = marker
+			result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+			if err == nil || result.Completed {
+				t.Fatalf("Execute() result=%+v error=%v", result, err)
+			}
+			if fixture.ports.applyCalls != 0 || len(fixture.ports.mutations) != 0 || fixture.ports.progressCalls != 0 {
+				t.Fatalf("insufficient Guard apply=%d mutations=%d progress=%d",
+					fixture.ports.applyCalls, len(fixture.ports.mutations), fixture.ports.progressCalls)
+			}
+		})
+	}
+}
+
+func TestSlotExecutionCoordinatorKeepsExistingGapWritePaths(t *testing.T) {
+	activation := activePlanResult("state-v2", 2)
+	selected := activation.Facts[0].Selected
+	version := currentQueryFreeApplyVersion(t)
+	oldVersion := version
+	oldVersion.StateApplyEpoch--
+	olderSlotDigest := version
+	olderSlotDigest.SlotDigest = execution.SlotIdentityDigest(strings.Repeat("0", 64))
+	tests := []struct {
+		name       string
+		seedMarker func(*testing.T, *queryFreePorts)
+	}{
+		{name: "missing"},
+		{
+			name: "older version",
+			seedMarker: func(t *testing.T, ports *queryFreePorts) {
+				marker := queryFreeGapMarker(t, selected, oldVersion, selected.ScheduleRevision, []execution.GapScopeState{{
+					Scope: execution.GapScope{}, Status: execution.GapStatusGapped,
+					ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift), RequiredFullSlots: 3,
+				}})
+				ports.markers[marker.Identity] = marker
+			},
+		},
+		{
+			name: "older slot digest",
+			seedMarker: func(t *testing.T, ports *queryFreePorts) {
+				marker := queryFreeGapMarker(t, selected, olderSlotDigest, selected.ScheduleRevision, []execution.GapScopeState{{
+					Scope: execution.GapScope{}, Status: execution.GapStatusGapped,
+					ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift), RequiredFullSlots: 3,
+				}})
+				ports.markers[marker.Identity] = marker
+			},
+		},
+		{
+			name: "different state generation is missing for selected Plan",
+			seedMarker: func(t *testing.T, ports *queryFreePorts) {
+				other := selected
+				other.StateGeneration = "other-generation"
+				marker := queryFreeGapMarker(t, other, version, other.ScheduleRevision, []execution.GapScopeState{{
+					Scope: execution.GapScope{}, Status: execution.GapStatusGapped,
+					ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift), RequiredFullSlots: 3,
+				}})
+				ports.markers[marker.Identity] = marker
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activation})
+			if test.seedMarker != nil {
+				test.seedMarker(t, fixture.ports)
+			}
+			result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+			if err != nil || !result.Completed {
+				t.Fatalf("Execute() result=%+v error=%v", result, err)
+			}
+			if fixture.ports.applyCalls != 1 || len(fixture.ports.mutations) != 1 || fixture.ports.progressCalls != 1 {
+				t.Fatalf("existing write path apply=%d mutations=%d progress=%d",
+					fixture.ports.applyCalls, len(fixture.ports.mutations), fixture.ports.progressCalls)
+			}
+		})
+	}
+}
+
+func TestSlotExecutionCoordinatorDoesNotReuseGapForGapSkipped(t *testing.T) {
+	activation := activePlanResult("state-v2", 2)
+	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activation})
+	selected := activation.Facts[0].Selected
+	marker := queryFreeGapMarker(t, selected, currentQueryFreeApplyVersion(t), selected.ScheduleRevision, []execution.GapScopeState{{
+		Scope: execution.GapScope{}, Status: execution.GapStatusGapped,
+		ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift), RequiredFullSlots: 3,
+	}})
+	fixture.ports.markers[marker.Identity] = marker
+	fixture.ports.finalization.Mode = execution.FinalizationGapSkipped
+	fixture.ports.finalization.ReasonCode = execution.ReasonCode(contract.ReasonGapSkipped)
+
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+	if err == nil || result.Completed || fixture.ports.progressCalls != 0 {
+		t.Fatalf("Execute() result=%+v error=%v progress=%d", result, err, fixture.ports.progressCalls)
+	}
+}
+
+func TestSlotExecutionCoordinatorHandlesMixedAndFullyReusedQueryFreePlans(t *testing.T) {
+	first := planIdentity()
+	second := planIdentity()
+	second.StrategyID = "8"
+	activation := execution.PlanActivationResult{
+		Contract: frozenContract(),
+		Facts: []execution.PlanActivationFact{
+			{Plan: first, Selection: execution.ActivationCurrent, Selected: execution.ActivatedPlan{
+				Identity: first, StateGeneration: "first-state", StateApplyEpoch: 2,
+				ScheduleRevision: "first-schedule", RequiredFullSlots: 3,
+			}},
+			{Plan: second, Selection: execution.ActivationCurrent, Selected: execution.ActivatedPlan{
+				Identity: second, StateGeneration: "second-state", StateApplyEpoch: 2,
+				ScheduleRevision: "second-schedule", RequiredFullSlots: 4,
+			}},
+		},
+	}
+	tests := []struct {
+		name          string
+		reuseSecond   bool
+		wantApply     int
+		wantMutations []execution.PlanIdentity
+	}{
+		{name: "mixed", wantApply: 1, wantMutations: []execution.PlanIdentity{second}},
+		{name: "all reused", reuseSecond: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activation})
+			plans := []execution.PlanIdentity{first, second}
+			fixture.ports.expectedTargets.Plans = append([]execution.PlanIdentity(nil), plans...)
+			fixture.ports.finalization.Targets.Plans = append([]execution.PlanIdentity(nil), plans...)
+			request := slotRequest(execution.OperationReplay)
+			request.DuePlanTargets.Plans = append([]execution.PlanIdentity(nil), plans...)
+			for index, fact := range activation.Facts {
+				if index == 1 && !test.reuseSecond {
+					continue
+				}
+				marker := queryFreeGapMarker(t, fact.Selected, applyVersionForActivatedPlan(t, request, fact.Selected), fact.Selected.ScheduleRevision, []execution.GapScopeState{{
+					Scope: execution.GapScope{}, Status: execution.GapStatusGapped,
+					ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift), RequiredFullSlots: fact.Selected.RequiredFullSlots,
+				}})
+				fixture.ports.markers[marker.Identity] = marker
+			}
+
+			result, err := fixture.coordinator.Execute(context.Background(), request)
+			if err != nil || !result.Completed {
+				t.Fatalf("Execute() result=%+v error=%v", result, err)
+			}
+			if fixture.ports.applyCalls != test.wantApply || len(fixture.ports.mutations) != len(test.wantMutations) || fixture.ports.progressCalls != 1 {
+				t.Fatalf("apply=%d mutations=%+v progress=%d", fixture.ports.applyCalls, fixture.ports.mutations, fixture.ports.progressCalls)
+			}
+			for index, want := range test.wantMutations {
+				if fixture.ports.mutations[index].Identity.Plan != want {
+					t.Fatalf("mutation[%d]=%+v want Plan=%+v", index, fixture.ports.mutations[index], want)
+				}
+			}
+		})
+	}
+}
+
+func TestSlotExecutionCoordinatorRechecksActivationAndAdmissionAfterQueryFreeGapReuse(t *testing.T) {
+	t.Run("activation changes", func(t *testing.T) {
+		before := activePlanResult("state-v2", 2)
+		after := activePlanResult("state-v3", 3)
+		fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{before, after})
+		selected := before.Facts[0].Selected
+		marker := queryFreeGapMarker(t, selected, currentQueryFreeApplyVersion(t), selected.ScheduleRevision, []execution.GapScopeState{{
+			Scope: execution.GapScope{}, Status: execution.GapStatusGapped,
+			ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift), RequiredFullSlots: 3,
+		}})
+		fixture.ports.markers[marker.Identity] = marker
+		newSelected := after.Facts[0].Selected
+		newMarker := queryFreeGapMarker(t, newSelected, applyVersionForActivatedPlan(t, slotRequest(execution.OperationReplay), newSelected), newSelected.ScheduleRevision, []execution.GapScopeState{{
+			Scope: execution.GapScope{}, Status: execution.GapStatusGapped,
+			ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift), RequiredFullSlots: 3,
+		}})
+		fixture.ports.markers[newMarker.Identity] = newMarker
+
+		result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+		if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
+			result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
+			t.Fatalf("Execute() result=%+v error=%v", result, err)
+		}
+		if fixture.ports.progressCalls != 0 || len(fixture.ports.mutations) != 0 || fixture.ports.applyCalls != 0 {
+			t.Fatalf("activation change mutations=%+v progress=%d", fixture.ports.mutations, fixture.ports.progressCalls)
+		}
+	})
+
+	t.Run("progress admission lost", func(t *testing.T) {
+		activation := activePlanResult("state-v2", 2)
+		fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activation})
+		selected := activation.Facts[0].Selected
+		marker := queryFreeGapMarker(t, selected, currentQueryFreeApplyVersion(t), selected.ScheduleRevision, []execution.GapScopeState{{
+			Scope: execution.GapScope{}, Status: execution.GapStatusGapped,
+			ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift), RequiredFullSlots: 3,
+		}})
+		fixture.ports.markers[marker.Identity] = marker
+		fixture.ports.admissionRejectAt = 2
+
+		result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+		if err == nil || result.Completed || fixture.ports.progressCalls != 0 || fixture.ports.applyCalls != 0 {
+			t.Fatalf("Execute() result=%+v error=%v apply=%d progress=%d",
+				result, err, fixture.ports.applyCalls, fixture.ports.progressCalls)
+		}
+	})
+}
+
+func TestSlotExecutionCoordinatorDoesNotReuseUnreadableQueryFreeGap(t *testing.T) {
+	activation := activePlanResult("state-v2", 2)
+	selected := activation.Facts[0].Selected
+	t.Run("corrupt", func(t *testing.T) {
+		fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activation})
+		marker := queryFreeGapMarker(t, selected, currentQueryFreeApplyVersion(t), selected.ScheduleRevision, []execution.GapScopeState{{
+			Scope: execution.GapScope{}, Status: execution.GapStatusGapped,
+			ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift), RequiredFullSlots: 3,
+		}})
+		marker.MarkerRevision = 0
+		fixture.ports.markers[marker.Identity] = marker
+		result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+		if err == nil || result.Completed || fixture.ports.applyCalls != 0 || fixture.ports.progressCalls != 0 {
+			t.Fatalf("Execute() result=%+v error=%v apply=%d progress=%d",
+				result, err, fixture.ports.applyCalls, fixture.ports.progressCalls)
+		}
+	})
+
+	t.Run("unavailable", func(t *testing.T) {
+		fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activation})
+		fixture.ports.markers[execution.PlanGapIdentity{Plan: selected.Identity, StateGeneration: selected.StateGeneration}] = execution.GapGuardSnapshot{
+			Identity: execution.PlanGapIdentity{Plan: selected.Identity, StateGeneration: selected.StateGeneration},
+			Status:   execution.GapUnavailable, ReasonCode: execution.ReasonCode(contract.ReasonProviderUnavailable),
+		}
+		result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+		if err == nil || result.Completed || fixture.ports.applyCalls != 0 || fixture.ports.progressCalls != 0 {
+			t.Fatalf("Execute() result=%+v error=%v apply=%d progress=%d",
+				result, err, fixture.ports.applyCalls, fixture.ports.progressCalls)
+		}
+	})
 }
 
 func TestSlotExecutionCoordinatorSkipsGuardWhenActivationHasNoPlan(t *testing.T) {
@@ -389,6 +743,7 @@ type queryFreePorts struct {
 	markers           map[execution.PlanGapIdentity]execution.GapGuardSnapshot
 	mutations         []execution.PlanGapMutation
 	applyStatuses     []execution.GapGuardApplyStatus
+	applyCalls        int
 	progressCalls     int
 }
 
@@ -474,6 +829,7 @@ func (ports *queryFreePorts) ApplyGap(
 	request execution.GapGuardApplyRequest,
 ) (execution.GapGuardApplyResult, error) {
 	ports.record("query_free_gap_apply")
+	ports.applyCalls++
 	items := make([]execution.GapGuardApplyItemResult, len(request.Items))
 	for index, mutation := range request.Items {
 		status := execution.GapGuardApplied
@@ -527,6 +883,63 @@ func activePlanResult(generation execution.StateGeneration, epoch execution.Stat
 			},
 		}},
 	}
+}
+
+func currentQueryFreeApplyVersion(t *testing.T) execution.ApplyVersion {
+	t.Helper()
+	return applyVersionForActivatedPlan(t, slotRequest(execution.OperationReplay), activePlanResult("state-v2", 2).Facts[0].Selected)
+}
+
+func applyVersionForActivatedPlan(
+	t *testing.T,
+	request execution.SlotExecutionRequest,
+	plan execution.ActivatedPlan,
+) execution.ApplyVersion {
+	t.Helper()
+	version, err := execution.BuildApplyVersion(request.Contract, plan.StateApplyEpoch)
+	if err != nil {
+		t.Fatalf("BuildApplyVersion() error: %v", err)
+	}
+	return version
+}
+
+func queryFreeGapMarker(
+	t *testing.T,
+	plan execution.ActivatedPlan,
+	version execution.ApplyVersion,
+	scheduleRevision execution.PlanScheduleRevision,
+	scopes []execution.GapScopeState,
+) execution.GapGuardSnapshot {
+	t.Helper()
+	mutations := make([]execution.GapScopeMutation, len(scopes))
+	for index, scope := range scopes {
+		kind := execution.GapOpen
+		if scope.Status == execution.GapStatusWarming {
+			kind = execution.GapWarmup
+		}
+		mutations[index] = execution.GapScopeMutation{
+			Scope: scope.Scope, Kind: kind, ReasonCode: scope.ReasonCode,
+			RequiredFullSlots: scope.RequiredFullSlots,
+		}
+	}
+	mutation, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{
+		Identity:     execution.PlanGapIdentity{Plan: plan.Identity, StateGeneration: plan.StateGeneration},
+		ApplyVersion: version, ScheduleRevision: scheduleRevision, Scopes: mutations,
+	})
+	if err != nil {
+		t.Fatalf("BuildPlanGapMutation() error: %v", err)
+	}
+	return execution.GapGuardSnapshot{
+		Identity: mutation.Identity, MarkerRevision: 7,
+		PersistedApplyVersion: mutation.ApplyVersion, PersistedMutationDigest: mutation.MutationDigest,
+		Status: execution.GapFound, LastScheduleRevision: scheduleRevision,
+		Scopes: append([]execution.GapScopeState(nil), scopes...),
+	}
+}
+
+func cloneGapGuardSnapshot(marker execution.GapGuardSnapshot) execution.GapGuardSnapshot {
+	marker.Scopes = append([]execution.GapScopeState(nil), marker.Scopes...)
+	return marker
 }
 
 func pendingPlanResult(generation execution.StateGeneration, epoch execution.StateApplyEpoch) execution.PlanActivationResult {

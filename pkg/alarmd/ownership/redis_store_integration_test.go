@@ -261,6 +261,10 @@ func TestRedisStoreReadControlComposesWithFencedCompareAndSet(t *testing.T) {
 	if err != nil || missing || !bytes.Equal(value, want) {
 		t.Fatalf("ReadControl(roundtrip) = (%q, %t, %v), want (%q, false, nil)", value, missing, err, want)
 	}
+	casRead, err := store.ReadControlForTemporaryLegacyDrainingCAS(ctx, queryGroup, namespace)
+	if err != nil || casRead.Missing || casRead.RedisKey == "" || !bytes.Equal(casRead.Raw, want) {
+		t.Fatalf("ReadControlForTemporaryLegacyDrainingCAS(roundtrip) = (%#v, %v)", casRead, err)
+	}
 	wantNext := []byte("progress-v2")
 	status, err = store.FencedCompareAndSet(ctx, FencedCASRequest{
 		Fence: lease.Fence, At: now, Namespace: namespace, Expected: value, Value: wantNext,

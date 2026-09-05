@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -192,6 +193,53 @@ func TestRunDefaultGoAccessDoesNotConstructPhaseOneBundle(t *testing.T) {
 	}
 	if phaseOneOpened {
 		t.Fatal("default Go Access opened the phase-one application bundle")
+	}
+}
+
+func TestRunTemporaryLegacyDrainingCleanupIsAnExplicitTerminalMode(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "alarmd.yaml")
+	if err := os.WriteFile(path, []byte(validGoAccessApplicationYAML()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	phaseTwoStarted := false
+	cleanupStarted := false
+	digest := strings.Repeat("a", 64)
+	dependencies := runtimeModeDependencies{
+		phaseTwo: phaseTwoApplicationDependencies{run: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) error {
+			phaseTwoStarted = true
+			return errors.New("phase-two must not start")
+		}},
+		temporaryLegacyDrainingCleanup: func(
+			_ context.Context,
+			cfg config.Config,
+			requestPath string,
+			planDigest string,
+			stdout io.Writer,
+		) error {
+			cleanupStarted = cfg.Input.Mode == config.InputModeGoAccess && requestPath == "/tmp/request.json" && planDigest == digest
+			_, err := io.WriteString(stdout, `{"status":"APPLIED"}`+"\n")
+			return err
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	code := runWithRuntimeModeDependencies(context.Background(), []string{
+		"--config", path,
+		"--temporary-admin-legacy-draining-cleanup-request", "/tmp/request.json",
+		"--temporary-admin-legacy-draining-cleanup-apply-digest", digest,
+	}, &stdout, &stderr, dependencies)
+	if code != 0 || !cleanupStarted || phaseTwoStarted || !strings.Contains(stdout.String(), `"APPLIED"`) {
+		t.Fatalf("temporary cleanup code=%d cleanup=%t phaseTwo=%t stdout=%q stderr=%q", code, cleanupStarted, phaseTwoStarted, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunTemporaryLegacyDrainingCleanupRejectsDigestWithoutRequest(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runWithRuntimeModeDependencies(context.Background(), []string{
+		"--temporary-admin-legacy-draining-cleanup-apply-digest", strings.Repeat("a", 64),
+	}, &stdout, &stderr, runtimeModeDependencies{})
+	if code != 2 || !strings.Contains(stderr.String(), "requires") {
+		t.Fatalf("digest without request code=%d stderr=%q", code, stderr.String())
 	}
 }
 

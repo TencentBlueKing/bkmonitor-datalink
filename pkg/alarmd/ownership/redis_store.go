@@ -41,6 +41,14 @@ type RedisStore struct {
 	ownsClient bool
 }
 
+// TemporaryLegacyDrainingCASRead exists only for the approved one-shot
+// administrative cleanup and is removed with that command.
+type TemporaryLegacyDrainingCASRead struct {
+	RedisKey string
+	Raw      []byte
+	Missing  bool
+}
+
 func NewRedisStore(options RedisStoreOptions) (*RedisStore, error) {
 	if options.Address == "" || options.Prefix == "" || options.DB < 0 || options.DialTimeout <= 0 ||
 		options.ReadTimeout <= 0 || options.WriteTimeout <= 0 || options.PoolSize <= 0 {
@@ -415,6 +423,26 @@ func (store *RedisStore) ReadControl(
 		return nil, false, err
 	}
 	return append([]byte(nil), value...), false, nil
+}
+
+func (store *RedisStore) ReadControlForTemporaryLegacyDrainingCAS(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	namespace string,
+) (TemporaryLegacyDrainingCASRead, error) {
+	if store == nil || store.client == nil || queryGroup == "" || namespace == "" ||
+		strings.ContainsAny(namespace, "{} \t\r\n") {
+		return TemporaryLegacyDrainingCASRead{}, errors.New("alarmd ownership: invalid control read")
+	}
+	key := store.controlKey(queryGroup, namespace)
+	value, err := store.client.Get(ctx, key).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return TemporaryLegacyDrainingCASRead{RedisKey: key, Missing: true}, nil
+	}
+	if err != nil {
+		return TemporaryLegacyDrainingCASRead{}, err
+	}
+	return TemporaryLegacyDrainingCASRead{RedisKey: key, Raw: append([]byte(nil), value...)}, nil
 }
 
 func (store *RedisStore) workerRegistryKey() string {

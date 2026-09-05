@@ -49,8 +49,9 @@ func runWithDependencies(
 	dependencies applicationDependencies,
 ) int {
 	return runWithRuntimeModeDependencies(ctx, args, stdout, stderr, runtimeModeDependencies{
-		phaseOne: dependencies,
-		phaseTwo: defaultPhaseTwoApplicationDependencies(),
+		phaseOne:                       dependencies,
+		phaseTwo:                       defaultPhaseTwoApplicationDependencies(),
+		temporaryLegacyDrainingCleanup: runTemporaryLegacyDrainingCleanup,
 	})
 }
 
@@ -65,6 +66,16 @@ func runWithRuntimeModeDependencies(
 	configPath := flags.String("config", "", "path to alarmd YAML configuration")
 	checkConfig := flags.Bool("check-config", false, "validate configuration and exit")
 	showVersion := flags.Bool("version", false, "print build information and exit")
+	temporaryCleanupRequest := flags.String(
+		"temporary-admin-legacy-draining-cleanup-request",
+		"",
+		"path to the approved one-shot legacy Draining cleanup request JSON",
+	)
+	temporaryCleanupDigest := flags.String(
+		"temporary-admin-legacy-draining-cleanup-apply-digest",
+		"",
+		"dry-run plan digest to apply; omit for dry-run",
+	)
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -72,8 +83,18 @@ func runWithRuntimeModeDependencies(
 		fmt.Fprintf(stderr, "unexpected arguments: %v\n", flags.Args())
 		return 2
 	}
-	if *showVersion && *checkConfig {
-		fmt.Fprintln(stderr, "--version and --check-config cannot be used together")
+	if *temporaryCleanupDigest != "" && *temporaryCleanupRequest == "" {
+		fmt.Fprintln(stderr, "--temporary-admin-legacy-draining-cleanup-apply-digest requires --temporary-admin-legacy-draining-cleanup-request")
+		return 2
+	}
+	terminalModes := 0
+	for _, enabled := range []bool{*showVersion, *checkConfig, *temporaryCleanupRequest != ""} {
+		if enabled {
+			terminalModes++
+		}
+	}
+	if terminalModes > 1 {
+		fmt.Fprintln(stderr, "--version, --check-config, and temporary legacy Draining cleanup cannot be used together")
 		return 2
 	}
 	if *showVersion {
@@ -87,6 +108,19 @@ func runWithRuntimeModeDependencies(
 		return 1
 	}
 	if *checkConfig {
+		return 0
+	}
+	if *temporaryCleanupRequest != "" {
+		if dependencies.temporaryLegacyDrainingCleanup == nil {
+			fmt.Fprintln(stderr, "temporary legacy Draining cleanup is not assembled")
+			return 1
+		}
+		if err := dependencies.temporaryLegacyDrainingCleanup(
+			ctx, cfg, *temporaryCleanupRequest, *temporaryCleanupDigest, stdout,
+		); err != nil {
+			fmt.Fprintf(stderr, "run temporary legacy Draining cleanup: %v\n", err)
+			return 1
+		}
 		return 0
 	}
 

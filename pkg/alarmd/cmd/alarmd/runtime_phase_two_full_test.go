@@ -1282,7 +1282,10 @@ func TestProductionPhaseTwoBundleSharesOneProcessRecoveryPermitBudgetAcrossOwned
 	ctx := context.Background()
 	installTwoPhaseTwoStrategies(t, ctx, redisClient)
 
-	base := time.Now().Unix()
+	// Scheduler time is frozen, but the real HTTP transport uses wall-clock
+	// context deadlines. Keep fixture deadlines ahead of setup/race overhead;
+	// the logical one-second Slot and 500ms recovery budget stay unchanged.
+	base := time.Now().Add(time.Minute).Unix()
 	var clock atomic.Int64
 	clock.Store(time.Unix(base, 0).UnixMilli())
 	now := func() time.Time { return time.UnixMilli(clock.Load()) }

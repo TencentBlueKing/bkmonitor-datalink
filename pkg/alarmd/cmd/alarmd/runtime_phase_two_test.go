@@ -722,10 +722,15 @@ func TestPhaseTwoWorkerBundleNextTickReentersNormalQueryGroupBeforeSlowSweepComp
 			"query-group-b-blocking": {runner: blocking},
 		},
 	}
+	backlogProgress := make(chan struct{}, 1)
 	for index := 0; index < 500; index++ {
 		queryGroup := execution.QueryGroupIdentity(fmt.Sprintf("query-group-c-backlog-%03d", index))
 		bundle.runners[queryGroup] = &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
 			run: func(context.Context) (execution.SlotExecutionResult, bool, error) {
+				select {
+				case backlogProgress <- struct{}{}:
+				default:
+				}
 				return execution.SlotExecutionResult{}, false, nil
 			},
 		}}
@@ -735,20 +740,46 @@ func TestPhaseTwoWorkerBundleNextTickReentersNormalQueryGroupBeforeSlowSweepComp
 	wake := make(chan struct{}, 1)
 	done := make(chan error, 1)
 	go func() { done <- bundle.runScheduler(ctx, wake, false) }()
+	defer func() {
+		cancel()
+		close(blockingRelease)
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("runScheduler(cancel) error = %v, want context canceled", err)
+			}
+		case <-time.After(time.Second):
+			t.Error("persistent dispatcher did not drain after cancellation")
+		}
+	}()
 	wake <- struct{}{}
 	waitSignal(t, firstNormal, "first normal Query Group run")
 	waitSignal(t, blockingStarted, "blocking Query Group")
 	wake <- struct{}{}
-	waitSignal(t, secondNormal, "normal Query Group on next scheduler tick")
-	close(blockingRelease)
-	cancel()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("runScheduler(cancel) error = %v, want context canceled", err)
+	// This is a 500-QG ordering test, not a one-second throughput contract.
+	// Keep a short stalled-work watchdog and a separate total test bound;
+	// backlog progress alone must never substitute for normal reentry.
+	stalled := time.NewTimer(time.Second)
+	defer stalled.Stop()
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case <-secondNormal:
+			return
+		case <-backlogProgress:
+			if !stalled.Stop() {
+				select {
+				case <-stalled.C:
+				default:
+				}
+			}
+			stalled.Reset(time.Second)
+		case <-stalled.C:
+			t.Fatal("normal reentry and backlog processing both stalled")
+		case <-deadline.C:
+			t.Fatal("normal Query Group did not reenter within bounded test window")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("persistent dispatcher did not drain after cancellation")
 	}
 }
 

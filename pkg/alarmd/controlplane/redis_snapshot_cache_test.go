@@ -46,6 +46,9 @@ func TestVerifiedSnapshotCacheRevalidatesChangedPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, changed := neutralSnapshotPayload(t, "qg-b")
+	if len(changed) != len(payload) {
+		t.Fatal("changed-content counterexample must preserve payload length")
+	}
 	if _, err := cache.loadSnapshot(context.Background(), revision, changed); err == nil {
 		t.Fatal("same revision with changed content was accepted from cache")
 	} else {
@@ -54,7 +57,7 @@ func TestVerifiedSnapshotCacheRevalidatesChangedPayload(t *testing.T) {
 			t.Fatalf("changed payload error=%T %v, want persisted corruption", err, err)
 		}
 	}
-	if _, err := cache.loadSnapshot(context.Background(), revision, []byte(`{"schema_version":`)); err == nil {
+	if _, err := cache.loadSnapshot(context.Background(), revision, `{"schema_version":`); err == nil {
 		t.Fatal("malformed payload was accepted from cache")
 	}
 	loaded, err := cache.loadSnapshot(context.Background(), revision, payload)
@@ -70,7 +73,7 @@ func TestVerifiedSnapshotCacheIsBoundedAndIsolatesCorruptSibling(t *testing.T) {
 	revisionC, payloadC := neutralSnapshotPayload(t, "qg-c")
 	for _, item := range []struct {
 		revision execution.SnapshotRevision
-		payload  []byte
+		payload  string
 	}{{revisionA, payloadA}, {revisionB, payloadB}, {revisionA, payloadA}, {revisionC, payloadC}} {
 		if _, err := cache.loadSnapshot(context.Background(), item.revision, item.payload); err != nil {
 			t.Fatal(err)
@@ -82,7 +85,7 @@ func TestVerifiedSnapshotCacheIsBoundedAndIsolatesCorruptSibling(t *testing.T) {
 	if cache.contains(revisionB) || !cache.contains(revisionA) {
 		t.Fatal("A-B-A access did not evict the least recently used Snapshot B")
 	}
-	if _, err := cache.loadSnapshot(context.Background(), revisionA, []byte(`not-json`)); err == nil {
+	if _, err := cache.loadSnapshot(context.Background(), revisionA, `not-json`); err == nil {
 		t.Fatal("corrupt sibling was accepted")
 	}
 	group, err := cache.loadQueryGroup(context.Background(), revisionC, payloadC, "qg-c")
@@ -121,7 +124,7 @@ func TestVerifiedSnapshotCacheEvictionReleasesBackingReferences(t *testing.T) {
 	}
 	backing := cache.entries[:cap(cache.entries)]
 	for index := len(cache.entries); index < len(backing); index++ {
-		if backing[index].payload != nil || backing[index].queryGroups != nil {
+		if backing[index].payload != "" || backing[index].queryGroups != nil {
 			t.Fatalf("evicted backing slot %d still retains Snapshot references", index)
 		}
 	}
@@ -168,7 +171,7 @@ func TestVerifiedSnapshotCacheHonorsCancellationAndConcurrentIsolation(t *testin
 func neutralSnapshotPayload(
 	t *testing.T,
 	identity execution.QueryGroupIdentity,
-) (execution.SnapshotRevision, []byte) {
+) (execution.SnapshotRevision, string) {
 	t.Helper()
 	groups := []QueryGroup{{Identity: identity}}
 	revision, err := deriveSnapshotRevision(groups)
@@ -183,5 +186,5 @@ func neutralSnapshotPayload(
 	if err != nil {
 		t.Fatal(err)
 	}
-	return revision, payload
+	return revision, string(payload)
 }

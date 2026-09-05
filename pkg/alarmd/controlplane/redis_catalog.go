@@ -478,25 +478,32 @@ func (repository *RedisCatalogRepository) LoadSnapshot(ctx context.Context, revi
 func (repository *RedisCatalogRepository) loadSnapshotPayload(
 	ctx context.Context,
 	revision execution.SnapshotRevision,
-) ([]byte, uint64, error) {
+) (string, uint64, error) {
 	values, err := repository.client.MGet(ctx, repository.snapshotKey(revision), repository.epochForRevisionKey(revision)).Result()
 	if err != nil {
-		return nil, 0, activationDependencyIO(err)
+		return "", 0, activationDependencyIO(err)
 	}
 	if len(values) != 2 || values[0] == nil || values[1] == nil {
-		return nil, 0, ErrSnapshotUnavailable
+		return "", 0, ErrSnapshotUnavailable
 	}
-	payload, ok := legacyRedisBytes(values[0])
-	if !ok {
-		return nil, 0, &PersistedSnapshotCorruptError{Err: errors.New("invalid payload")}
+	// go-redis returns immutable strings. Keep that representation through a
+	// warm verified-cache lookup rather than copying the entire Snapshot.
+	var payload string
+	switch value := values[0].(type) {
+	case string:
+		payload = value
+	case []byte:
+		payload = string(value)
+	default:
+		return "", 0, &PersistedSnapshotCorruptError{Err: errors.New("invalid payload")}
 	}
 	epochText, ok := values[1].(string)
 	if !ok {
-		return nil, 0, &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
+		return "", 0, &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
 	}
 	epoch, err := strconv.ParseUint(epochText, 10, 64)
 	if err != nil || epoch == 0 {
-		return nil, 0, &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
+		return "", 0, &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
 	}
 	return payload, epoch, nil
 }

@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,7 +19,7 @@ const (
 
 type verifiedSnapshotCacheEntry struct {
 	revision    execution.SnapshotRevision
-	payload     []byte
+	payload     string
 	queryGroups map[execution.QueryGroupIdentity]json.RawMessage
 }
 
@@ -42,14 +41,14 @@ func newVerifiedSnapshotCache(maxEntries, maxBytes int) *verifiedSnapshotCache {
 func (cache *verifiedSnapshotCache) loadSnapshot(
 	ctx context.Context,
 	revision execution.SnapshotRevision,
-	payload []byte,
+	payload string,
 ) (PublishedSnapshot, error) {
 	entry, content, err := cache.load(ctx, revision, payload)
 	if err != nil {
 		return PublishedSnapshot{}, err
 	}
 	if content == nil {
-		content, err = decodeSnapshotPayload(entry.payload)
+		content, err = decodeSnapshotPayload([]byte(entry.payload))
 		if err != nil {
 			return PublishedSnapshot{}, err
 		}
@@ -60,7 +59,7 @@ func (cache *verifiedSnapshotCache) loadSnapshot(
 func (cache *verifiedSnapshotCache) loadQueryGroup(
 	ctx context.Context,
 	revision execution.SnapshotRevision,
-	payload []byte,
+	payload string,
 	identity execution.QueryGroupIdentity,
 ) (QueryGroup, error) {
 	entry, _, err := cache.load(ctx, revision, payload)
@@ -90,7 +89,7 @@ func decodeCachedQueryGroup(
 func (cache *verifiedSnapshotCache) load(
 	ctx context.Context,
 	revision execution.SnapshotRevision,
-	payload []byte,
+	payload string,
 ) (verifiedSnapshotCacheEntry, *snapshotPayloadContent, error) {
 	if err := ctx.Err(); err != nil {
 		return verifiedSnapshotCacheEntry{}, nil, err
@@ -101,20 +100,20 @@ func (cache *verifiedSnapshotCache) load(
 		return verifiedSnapshotCacheEntry{}, nil, err
 	}
 	for index := range cache.entries {
-		if cache.entries[index].revision != revision || !bytes.Equal(cache.entries[index].payload, payload) {
+		if cache.entries[index].revision != revision || cache.entries[index].payload != payload {
 			continue
 		}
 		entry := cache.entries[index]
 		cache.touch(index)
 		return entry, nil, nil
 	}
-	content, err := decodeAndVerifySnapshotPayload(revision, payload)
+	content, err := decodeAndVerifySnapshotPayload(revision, []byte(payload))
 	if err != nil {
 		return verifiedSnapshotCacheEntry{}, nil, err
 	}
 	entry := verifiedSnapshotCacheEntry{
 		revision:    revision,
-		payload:     bytes.Clone(payload),
+		payload:     payload,
 		queryGroups: make(map[execution.QueryGroupIdentity]json.RawMessage, len(content.QueryGroups)),
 	}
 	for index := range content.QueryGroups {

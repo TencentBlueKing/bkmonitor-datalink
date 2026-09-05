@@ -168,7 +168,12 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	}
 	completion, err := coordinator.ports.Query.Execute(ctx, queryRequest, stream)
 	if err != nil {
-		coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation, started, "", "", err)
+		if isReadinessDeferred(err) {
+			coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation,
+				started, observability.ResultRetrying, observability.ReasonNone, nil)
+		} else {
+			coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation, started, "", "", err)
+		}
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: query: %w", err)
 	}
 	if err := stream.complete(ctx, completion); err != nil {
@@ -201,6 +206,11 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: execute frozen Slot: %w", err)
 	}
 	return result, nil
+}
+
+func isReadinessDeferred(err error) bool {
+	var deferred interface{ ReadinessReadyAt() time.Time }
+	return errors.As(err, &deferred) && !deferred.ReadinessReadyAt().IsZero()
 }
 
 func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(

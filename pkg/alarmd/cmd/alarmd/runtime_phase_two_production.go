@@ -1268,11 +1268,18 @@ func (executor observedProductionSlotExecutor) Execute(
 	result, err := executor.next.Execute(ctx, request)
 	observedResult := result.Result
 	reason := result.ReasonCode
+	observedErr := err
 	if err != nil {
-		observedResult = observability.ResultFailed
-		reason = observability.ReasonInternalUnknown
-		if errors.Is(err, access.ErrFrozenQueryPlanUnavailable) {
-			reason = observability.ReasonContractDeterministic
+		if _, deferred := access.ReadinessDeferredAt(err); deferred {
+			observedResult = observability.ResultRetrying
+			reason = observability.ReasonNone
+			observedErr = nil
+		} else {
+			observedResult = observability.ResultFailed
+			reason = observability.ReasonInternalUnknown
+			if errors.Is(err, access.ErrFrozenQueryPlanUnavailable) {
+				reason = observability.ReasonContractDeterministic
+			}
 		}
 	} else if observedResult == "" {
 		observedResult = observability.ResultSuccess
@@ -1280,7 +1287,7 @@ func (executor observedProductionSlotExecutor) Execute(
 	observeRuntime(ctx, executor.observer, observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageSlotCompleted,
 		Result: observedResult, ReasonCode: reason, Direction: observability.DirectionInternal,
-		Duration: time.Since(started), Trace: trace, Err: err,
+		Duration: time.Since(started), Trace: trace, Err: observedErr,
 	})
 	return result, err
 }

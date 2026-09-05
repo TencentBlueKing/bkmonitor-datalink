@@ -427,11 +427,13 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 		requirement, known := stream.prepared.requirementByKey[key]
 		item, ok := physical[binding.Provenance.PhysicalQuery]
 		query, queryOK := stream.prepared.queries[binding.Provenance.PhysicalQuery]
-		if !known || !ok || !queryOK || item.Ref != binding.ProviderResult || item.Completeness != binding.Completeness ||
-			item.DataState != binding.DataState || execution.LogicalQueryRef(query.QueryRevision) != requirement.LogicalQueryRef ||
+		if !known || !ok || !queryOK || execution.LogicalQueryRef(query.QueryRevision) != requirement.LogicalQueryRef ||
 			binding.DatasetName != requirement.DatasetName || binding.Role != requirement.Role ||
 			binding.QueryWindow != requirement.AbsoluteWindow(stream.header.Contract.Slot.EvaluationTime) ||
 			binding.Provenance.AttemptNo == 0 {
+			return errors.New("alarmd worker: completion binding differs from frozen requirement or physical completion")
+		}
+		if err := execution.ValidateNamedInputCompletion(binding, item); err != nil {
 			return errors.New("alarmd worker: completion binding differs from frozen requirement or physical completion")
 		}
 		if _, duplicate := completionBindings[key]; duplicate {

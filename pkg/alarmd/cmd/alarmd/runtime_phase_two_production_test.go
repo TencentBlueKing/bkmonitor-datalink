@@ -2154,6 +2154,34 @@ func TestObservedProductionSlotExecutorClassifiesMissingFrozenQueryFacts(t *test
 	}
 }
 
+func TestObservedProductionSlotExecutorDoesNotReportReadinessDeferralAsFailure(t *testing.T) {
+	var observations []observability.Observation
+	readyAt := time.Unix(1_800_000_030, 0)
+	wantErr := fmt.Errorf("wrapped readiness: %w", phaseTwoReadinessDeferredError{readyAt: readyAt})
+	executor := observedProductionSlotExecutor{
+		next: slotExecutorFunc(func(context.Context, execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
+			return execution.SlotExecutionResult{}, wantErr
+		}),
+		observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		}),
+	}
+	_, err := executor.Execute(context.Background(), execution.SlotExecutionRequest{})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Execute() error=%v, want wrapped readiness error", err)
+	}
+	if len(observations) != 2 || observations[1].Stage != observability.StageSlotCompleted ||
+		observations[1].Result != observability.ResultRetrying ||
+		observations[1].ReasonCode != observability.ReasonNone || observations[1].Err != nil {
+		t.Fatalf("readiness observations=%+v, want non-failure retrying completion", observations)
+	}
+}
+
+type phaseTwoReadinessDeferredError struct{ readyAt time.Time }
+
+func (err phaseTwoReadinessDeferredError) Error() string               { return "readiness deferred" }
+func (err phaseTwoReadinessDeferredError) ReadinessReadyAt() time.Time { return err.readyAt }
+
 func productionRequest(fact execution.FrozenSlotContractFact, operation execution.Operation) execution.SlotExecutionRequest {
 	targets, deadline, err := frozenExecutionFacts(fact)
 	if err != nil {

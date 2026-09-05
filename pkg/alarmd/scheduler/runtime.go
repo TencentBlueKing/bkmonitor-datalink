@@ -296,6 +296,16 @@ func (runner *Runner) runOne(
 		defer releaseAdmission()
 	}
 	result, err := runner.executor.Execute(ctx, request)
+	if err != nil && operation == execution.OperationNormal {
+		var deferred interface{ ReadinessReadyAt() time.Time }
+		if errors.As(err, &deferred) {
+			readyAt := deferred.ReadinessReadyAt()
+			if readyAt.After(runner.now()) {
+				runner.sourceNextAt = readyAt
+				return execution.SlotExecutionResult{}, true, nil
+			}
+		}
+	}
 	if err == nil {
 		runner.recordResult(slot, result, runner.now())
 	}

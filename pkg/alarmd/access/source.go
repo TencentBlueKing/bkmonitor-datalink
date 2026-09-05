@@ -16,6 +16,30 @@ import (
 
 var ErrFrozenQueryPlanUnavailable = errors.New("alarmd access: frozen QueryPlanFacts unavailable")
 
+const thirtySecondReadyDelay = 10 * time.Second
+
+type ReadinessDeferredError struct{ readyAt time.Time }
+
+func (err *ReadinessDeferredError) Error() string { return "alarmd access: execution is not ready" }
+
+func (err *ReadinessDeferredError) ReadinessReadyAt() time.Time {
+	if err == nil {
+		return time.Time{}
+	}
+	return err.readyAt
+}
+
+// ReadinessDeferredAt returns the next normal-execution readiness boundary
+// carried by err. Wrapped errors preserve the boundary.
+func ReadinessDeferredAt(err error) (time.Time, bool) {
+	var deferred interface{ ReadinessReadyAt() time.Time }
+	if !errors.As(err, &deferred) {
+		return time.Time{}, false
+	}
+	readyAt := deferred.ReadinessReadyAt()
+	return readyAt, !readyAt.IsZero()
+}
+
 type FrozenPlan struct {
 	DuePlans           []execution.DuePlan
 	Requirements       []execution.DataRequirement
@@ -38,6 +62,7 @@ type QueryPermitAcquirer interface {
 
 type Config struct {
 	MinReadyDelay time.Duration
+	Now           func() time.Time // Defaults to time.Now.
 }
 
 type Source struct {
@@ -58,7 +83,11 @@ func NewSource(
 	if plans == nil || provider == nil || permits == nil || config.MinReadyDelay <= 0 {
 		return nil, errors.New("alarmd access: frozen plan source, provider, query permits and non-zero readiness delay are required")
 	}
-	return &Source{plans: plans, provider: provider, permits: permits, config: config, now: time.Now, wait: waitContext}, nil
+	now := config.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &Source{plans: plans, provider: provider, permits: permits, config: config, now: now, wait: waitContext}, nil
 }
 
 func (source *Source) Execute(ctx context.Context, request execution.QueryExecutionRequest, consumer execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error) {
@@ -90,11 +119,21 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		}
 		return completeBudgetExhaustedQueries(execution.QueryExecutionCompletion{}, prepared.Queries, request.AttemptNo), nil
 	}
+	if request.Operation == execution.OperationNormal {
+		readyAt := sharedPendingReadiness(prepared.Queries, source.now())
+		if !readyAt.IsZero() {
+			return execution.QueryExecutionCompletion{}, &ReadinessDeferredError{readyAt: readyAt}
+		}
+	}
 	if err := consumer.Begin(ctx, prepared.Header); err != nil {
 		return execution.QueryExecutionCompletion{}, err
 	}
 	completion := execution.QueryExecutionCompletion{PhysicalQueries: make([]execution.PhysicalQueryCompletion, 0, len(prepared.Queries))}
 	for queryIndex, query := range prepared.Queries {
+		if len(query.Requirements) == 0 {
+			completion = completeReadinessInvalidQuery(completion, query, request.AttemptNo)
+			continue
+		}
 		if delay := time.UnixMilli(query.ReadyAtUnixMilli).Sub(source.now()); delay > 0 {
 			if err := source.wait(ctx, delay); err != nil {
 				return execution.QueryExecutionCompletion{}, err
@@ -135,6 +174,8 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		if providerCompletion.DataState != execution.DataStateData {
 			completion.CompletionBindings = append(completion.CompletionBindings, completionBindings(query, providerCompletion, attempt.AttemptNo)...)
 		}
+		completion.CompletionBindings = append(completion.CompletionBindings,
+			readinessInvalidBindings(query, providerCompletion.Ref, attempt.AttemptNo)...)
 	}
 	completion.AllRequiredCompleted = true
 	return completion, nil
@@ -170,6 +211,46 @@ func completeBudgetExhaustedQueries(
 	}
 	completion.AllRequiredCompleted = true
 	return completion
+}
+
+func completeReadinessInvalidQuery(
+	completion execution.QueryExecutionCompletion,
+	query PlannedQuery,
+	attemptNo uint32,
+) execution.QueryExecutionCompletion {
+	ref := execution.ProviderResultRef(fmt.Sprintf("%s:readiness:%d", query.Spec.Digest, attemptNo))
+	completion.PhysicalQueries = append(completion.PhysicalQueries, execution.PhysicalQueryCompletion{
+		Ref: ref, PhysicalQuery: query.Spec.Digest, QueryRevision: query.Spec.PlanFacts.QueryRevision,
+		Completeness: execution.CompletenessUnavailable, DataState: execution.DataStateUnknown,
+	})
+	completion.CompletionBindings = append(completion.CompletionBindings,
+		readinessInvalidBindings(query, ref, attemptNo)...)
+	return completion
+}
+
+func readinessInvalidBindings(
+	query PlannedQuery,
+	ref execution.ProviderResultRef,
+	attemptNo uint32,
+) []execution.NamedInputBinding {
+	bindings := make([]execution.NamedInputBinding, 0)
+	for _, requirement := range query.ReadinessInvalidRequirements {
+		for _, consumer := range requirement.Consumers {
+			bindings = append(bindings, execution.NamedInputBinding{
+				Consumer: consumer.Consumer, RequirementID: requirement.RequirementID,
+				DatasetName: requirement.DatasetName, Role: requirement.Role,
+				ProviderResult: ref, QueryWindow: query.Spec.LogicalWindow,
+				Completeness: execution.CompletenessUnavailable, DataState: execution.DataStateUnknown,
+				Disposition: execution.AccessUnavailable,
+				ReasonCode:  execution.ReasonCode(contract.ReasonReadinessBudgetInvalid),
+				ImpactScope: execution.ImpactPlan,
+				Provenance: execution.InputProvenance{
+					PhysicalQuery: query.Spec.Digest, AttemptNo: attemptNo,
+				},
+			})
+		}
+	}
+	return bindings
 }
 
 func deriveRecoveryQueryDeadline(
@@ -235,10 +316,11 @@ type PreparedExecution struct {
 }
 
 type PlannedQuery struct {
-	Spec              execution.PhysicalQuerySpec
-	Requirements      []execution.DataRequirement
-	ReadyAtUnixMilli  int64
-	DeadlineUnixMilli int64
+	Spec                         execution.PhysicalQuerySpec
+	Requirements                 []execution.DataRequirement
+	ReadinessInvalidRequirements []execution.DataRequirement
+	ReadyAtUnixMilli             int64
+	DeadlineUnixMilli            int64
 }
 
 func Prepare(contractRef execution.FrozenExecutionContractRef, frozen FrozenPlan, minReadyDelay time.Duration) (PreparedExecution, error) {
@@ -282,33 +364,44 @@ func prepare(
 		if err != nil {
 			return PreparedExecution{}, fmt.Errorf("alarmd access: build physical query: %w", err)
 		}
-		readyAt, err := frozenRequirementReadyAt(requirement, window, minReadyDelay)
-		if err != nil {
+		if _, err := frozenRequirementReadyAt(requirement, window, minReadyDelay); err != nil {
 			return PreparedExecution{}, err
-		}
-		deadline := int64(0)
-		for _, consumer := range requirement.Consumers {
-			candidate := consumer.ConsumerDeadlineUnixMilli - consumer.DownstreamExecutionReserveMilliSec
-			if candidate <= readyAt && !allowExhaustedRecoveryBudget {
-				return PreparedExecution{}, errors.New("alarmd access: readiness budget is invalid")
-			}
-			if deadline == 0 || candidate < deadline {
-				deadline = candidate
-			}
 		}
 		planned, exists := queriesByDigest[spec.Digest]
 		if !exists {
-			planned = &PlannedQuery{Spec: spec, ReadyAtUnixMilli: readyAt, DeadlineUnixMilli: deadline}
+			planned = &PlannedQuery{Spec: spec}
 			queriesByDigest[spec.Digest] = planned
-		} else {
-			if readyAt < planned.ReadyAtUnixMilli {
+		}
+		validRequirement := requirement
+		validRequirement.Consumers = nil
+		invalidRequirement := requirement
+		invalidRequirement.Consumers = nil
+		for _, consumer := range requirement.Consumers {
+			readyAt, err := frozenConsumerReadyAt(
+				contractRef, requirement, window, consumer, minReadyDelay, allowExhaustedRecoveryBudget,
+			)
+			if err != nil {
+				return PreparedExecution{}, err
+			}
+			candidate := consumer.ConsumerDeadlineUnixMilli - consumer.DownstreamExecutionReserveMilliSec
+			if candidate <= readyAt && !allowExhaustedRecoveryBudget {
+				invalidRequirement.Consumers = append(invalidRequirement.Consumers, consumer)
+				continue
+			}
+			validRequirement.Consumers = append(validRequirement.Consumers, consumer)
+			if planned.ReadyAtUnixMilli == 0 || readyAt < planned.ReadyAtUnixMilli {
 				planned.ReadyAtUnixMilli = readyAt
 			}
-			if deadline < planned.DeadlineUnixMilli {
-				planned.DeadlineUnixMilli = deadline
+			if planned.DeadlineUnixMilli == 0 || candidate < planned.DeadlineUnixMilli {
+				planned.DeadlineUnixMilli = candidate
 			}
 		}
-		planned.Requirements = append(planned.Requirements, requirement)
+		if len(validRequirement.Consumers) != 0 {
+			planned.Requirements = append(planned.Requirements, validRequirement)
+		}
+		if len(invalidRequirement.Consumers) != 0 {
+			planned.ReadinessInvalidRequirements = append(planned.ReadinessInvalidRequirements, invalidRequirement)
+		}
 	}
 	queries := make([]PlannedQuery, 0, len(queriesByDigest))
 	refs := make([]execution.PlannedPhysicalQueryRef, 0, len(queriesByDigest))
@@ -316,6 +409,9 @@ func prepare(
 		queries = append(queries, *query)
 	}
 	sort.Slice(queries, func(i, j int) bool {
+		if queries[i].DeadlineUnixMilli == 0 || queries[j].DeadlineUnixMilli == 0 {
+			return queries[j].DeadlineUnixMilli == 0 && queries[i].DeadlineUnixMilli != 0
+		}
 		if queries[i].DeadlineUnixMilli == queries[j].DeadlineUnixMilli {
 			return queries[i].Spec.Digest < queries[j].Spec.Digest
 		}
@@ -342,6 +438,46 @@ func prepare(
 		return PreparedExecution{}, err
 	}
 	return PreparedExecution{Header: header, Queries: queries}, nil
+}
+
+func frozenConsumerReadyAt(
+	contractRef execution.FrozenExecutionContractRef,
+	requirement execution.DataRequirement,
+	window execution.QueryWindow,
+	consumer execution.DataRequirementConsumer,
+	configuredDelay time.Duration,
+	allowExhaustedRecoveryBudget bool,
+) (int64, error) {
+	if int64(contractRef.Slot.EvaluationTime) > math.MaxInt64/1000 {
+		return 0, errors.New("alarmd access: evaluation time exceeds readiness range")
+	}
+	intervalMillis := consumer.ConsumerDeadlineUnixMilli - int64(contractRef.Slot.EvaluationTime)*1000
+	readyDelay := configuredDelay
+	if !allowExhaustedRecoveryBudget && intervalMillis == int64((30*time.Second)/time.Millisecond) && readyDelay > thirtySecondReadyDelay {
+		readyDelay = thirtySecondReadyDelay
+	}
+	return frozenRequirementReadyAt(requirement, window, readyDelay)
+}
+
+func sharedPendingReadiness(queries []PlannedQuery, now time.Time) time.Time {
+	var shared time.Time
+	for _, query := range queries {
+		if len(query.Requirements) == 0 {
+			continue
+		}
+		readyAt := time.UnixMilli(query.ReadyAtUnixMilli)
+		if !readyAt.After(now) {
+			return time.Time{}
+		}
+		if shared.IsZero() {
+			shared = readyAt
+			continue
+		}
+		if !shared.Equal(readyAt) {
+			return time.Time{}
+		}
+	}
+	return shared
 }
 
 func frozenRequirementReadyAt(

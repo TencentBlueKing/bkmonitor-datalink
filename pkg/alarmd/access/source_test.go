@@ -672,6 +672,10 @@ func queryFacts(t *testing.T) execution.QueryPlanFacts {
 }
 
 func compilePlan(t *testing.T) *strategy.CompiledPlan {
+	return compilePlanForStrategy(t, "1001")
+}
+
+func compilePlanForStrategy(t *testing.T, strategyID string) *strategy.CompiledPlan {
 	t.Helper()
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 4,
 		MaxAlgorithmsPerLevel: 4, MaxGroupsPerAlgorithm: 4, MaxConditionsPerAlgorithm: 8, MaxASTNodesPerLevel: 32,
@@ -680,7 +684,7 @@ func compilePlan(t *testing.T) *strategy.CompiledPlan {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := contract.StrategyRefV2{TenantID: "tenant", StrategyID: "1001", Revision: "r1"}
+	ref := contract.StrategyRefV2{TenantID: "tenant", StrategyID: strategyID, Revision: "r1"}
 	projection := contract.InputProjectionV2{ValueFields: []string{"value"}, DimensionFields: []string{"host"}, BusinessIdentityField: "bk_biz_id", MultiValueAlignment: "SINGLE_VALUE", DataUnit: "percent", MissingValuePolicy: contract.MissingValuePolicyRequired}
 	level := contract.LevelIRV2{
 		Definition: contract.LevelDefinitionV2{LevelID: 1, Priority: 1},
@@ -692,7 +696,7 @@ func compilePlan(t *testing.T) *strategy.CompiledPlan {
 		TriggerPlan:  contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: json.RawMessage(`{"window_size":1,"required_anomalies":1,"step_seconds":60}`)},
 		RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)},
 	}
-	plan := contract.EvaluationPlanV2{PlanID: "1001", StrategyRef: ref, InputProjection: projection,
+	plan := contract.EvaluationPlanV2{PlanID: strategyID, StrategyRef: ref, InputProjection: projection,
 		StrategyIR: contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2},
 			StrategyRef: ref, InputProjection: projection,
 			ExecutionSemantics: contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries, QueryWindow: 60, AggregationInterval: 60, EvaluationInterval: 60},

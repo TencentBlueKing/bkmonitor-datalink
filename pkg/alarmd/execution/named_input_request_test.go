@@ -58,6 +58,29 @@ func TestBuildSeriesEvaluationInputRequestSupportsG4InputShapes(t *testing.T) {
 	}
 }
 
+func TestValidateNamedInputCompletionNarrowsOnlyReadinessInvalidConsumer(t *testing.T) {
+	completion := execution.PhysicalQueryCompletion{
+		Ref: "provider-1", PhysicalQuery: "query-1", QueryRevision: "revision-1",
+		Completeness: execution.CompletenessFull, DataState: execution.DataStateEmpty,
+	}
+	binding := execution.NamedInputBinding{
+		ProviderResult: completion.Ref,
+		Completeness:   execution.CompletenessUnavailable,
+		DataState:      execution.DataStateUnknown,
+		Disposition:    execution.AccessUnavailable,
+		ReasonCode:     execution.ReasonCode(contract.ReasonReadinessBudgetInvalid),
+		ImpactScope:    execution.ImpactPlan,
+		Provenance:     execution.InputProvenance{PhysicalQuery: completion.PhysicalQuery, AttemptNo: 1},
+	}
+	if err := execution.ValidateNamedInputCompletion(binding, completion); err != nil {
+		t.Fatalf("readiness-invalid consumer should narrow shared completion: %v", err)
+	}
+	binding.ReasonCode = execution.ReasonCode(contract.ReasonQueryUnavailable)
+	if err := execution.ValidateNamedInputCompletion(binding, completion); err == nil {
+		t.Fatal("ordinary query failure widened the readiness-only completion exception")
+	}
+}
+
 func TestBuildSeriesEvaluationInputRequestFailsClosedAtConsumerSeriesScope(t *testing.T) {
 	plan, requirements := compiledG4Requirements(t, strategy.DetectorKindSimpleRingRatio)
 	header, consumer, series, bindings, completions := namedInputFixture(t, plan, requirements)

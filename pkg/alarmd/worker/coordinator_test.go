@@ -86,6 +86,39 @@ func TestSlotExecutionCoordinatorDiscardsProvisionalResultsWithoutCompletion(t *
 	}
 }
 
+func TestSlotExecutionCoordinatorObservesReadinessDeferralWithoutFailureOrSideEffects(t *testing.T) {
+	fixture := newFixture(t, true, "")
+	readyAt := time.Unix(1_800_000_030, 0)
+	fixture.ports.executeOverride = func(
+		context.Context,
+		execution.QueryExecutionRequest,
+		execution.QueryExecutionConsumer,
+	) (execution.QueryExecutionCompletion, error) {
+		return execution.QueryExecutionCompletion{}, fmt.Errorf("wrapped readiness: %w", coordinatorReadinessDeferredError{readyAt: readyAt})
+	}
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err == nil || result != (execution.SlotExecutionResult{}) {
+		t.Fatalf("Execute() result=%+v error=%v, want deferred zero result and propagated error", result, err)
+	}
+	if fixture.ports.eventCount != 0 || fixture.ports.stateLoadCalls != 0 || fixture.ports.stateApplyCalls != 0 ||
+		!isZeroProgressCommit(fixture.ports.lastProgress) {
+		t.Fatal("readiness deferral crossed State/Event/Progress side-effect boundary")
+	}
+	if len(*fixture.observations) != 1 {
+		t.Fatalf("observations=%+v, want only query completion", *fixture.observations)
+	}
+	observation := (*fixture.observations)[0]
+	if observation.Stage != observability.StageQueryCompleted || observation.Result != observability.ResultRetrying ||
+		observation.Err != nil {
+		t.Fatalf("readiness observation=%+v, want retrying without failure", observation)
+	}
+}
+
+type coordinatorReadinessDeferredError struct{ readyAt time.Time }
+
+func (err coordinatorReadinessDeferredError) Error() string               { return "readiness deferred" }
+func (err coordinatorReadinessDeferredError) ReadinessReadyAt() time.Time { return err.readyAt }
+
 func TestSlotExecutionCoordinatorBindsAlwaysEffectiveTimeToRealSeries(t *testing.T) {
 	fixture := newFixture(t, true, "")
 	fixture.ports.unboundEffectiveTimeFacts = true

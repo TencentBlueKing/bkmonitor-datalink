@@ -163,6 +163,46 @@ func TestSlotExecutionCoordinatorCompletesUnavailableAfterPlanGap(t *testing.T) 
 	assertCompletionGapBeforeProgress(t, fixture, execution.CompletenessUnavailable, execution.CompletionUnavailable, reason, len(plans))
 }
 
+func TestSlotExecutionCoordinatorIsolatesReadinessInvalidConsumerOnSharedPhysicalQuery(t *testing.T) {
+	plans, requirements := baseDuePlanAndRequirements()
+	healthyPlan := plans[0]
+	invalidPlan := healthyPlan
+	invalidPlan.Identity.BusinessID = "3"
+	plans = append(plans, invalidPlan)
+	requirements[0].Consumers = append(requirements[0].Consumers, execution.DataRequirementConsumer{
+		Consumer:                           execution.ConsumerRef{Plan: invalidPlan.Identity, LevelID: 5, HasLevel: true},
+		ConsumerDeadlineUnixMilli:          invalidPlan.CompletionDeadlineUnixMilli,
+		DownstreamExecutionReserveMilliSec: 5_000,
+	})
+	reason := execution.ReasonCode(contract.ReasonReadinessBudgetInvalid)
+	fixture, request := newCompletionOnlyFixture(t, plans, requirements, func(completion *execution.QueryExecutionCompletion) {
+		for index := range completion.CompletionBindings {
+			binding := &completion.CompletionBindings[index]
+			if binding.Consumer.Plan != invalidPlan.Identity {
+				continue
+			}
+			binding.Dataset, binding.View = nil, nil
+			binding.Completeness = execution.CompletenessUnavailable
+			binding.DataState = execution.DataStateUnknown
+			binding.Disposition = execution.AccessUnavailable
+			binding.ReasonCode = reason
+			binding.ImpactScope = execution.ImpactPlan
+		}
+	})
+
+	result, err := fixture.coordinator.Execute(context.Background(), request)
+	if err != nil || !result.Completed || result.Result != observability.ResultDegraded || result.ReasonCode != reason {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	assertCompletionGapBeforeProgress(t, fixture, execution.CompletenessUnavailable, execution.CompletionUnavailable, reason, 1)
+	if len(fixture.ports.gapMutations) != 1 || fixture.ports.gapMutations[0].Identity.Plan != invalidPlan.Identity {
+		t.Fatalf("gap mutations=%+v, want only readiness-invalid Plan", fixture.ports.gapMutations)
+	}
+	if fixture.ports.gapMutations[0].Identity.Plan == healthyPlan.Identity {
+		t.Fatal("healthy consumer was widened into readiness gap")
+	}
+}
+
 func TestSlotExecutionCoordinatorCompletesPartialEmptyAfterPlanGap(t *testing.T) {
 	plans, requirements := baseDuePlanAndRequirements()
 	reason := execution.ReasonCode(contract.ReasonQueryPartial)

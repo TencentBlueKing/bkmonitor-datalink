@@ -268,7 +268,7 @@ func validateNamedInputExactSet(
 		if err != nil {
 			return preparedSeriesEvaluationConsumer{}, nil, err
 		}
-		if err := validateNamedInputCompletion(binding, completion); err != nil {
+		if err := ValidateNamedInputCompletion(binding, completion); err != nil {
 			return preparedSeriesEvaluationConsumer{}, nil, err
 		}
 	}
@@ -417,12 +417,19 @@ func validateSeriesBindingAvailability(binding NamedInputBinding) error {
 	}
 }
 
-func validateNamedInputCompletion(binding NamedInputBinding, completion PhysicalQueryCompletion) error {
+// ValidateNamedInputCompletion verifies that a consumer binding belongs to its
+// physical completion. The readiness-invalid Plan-local disposition is the
+// sole case allowed to narrow a healthy shared physical result.
+func ValidateNamedInputCompletion(binding NamedInputBinding, completion PhysicalQueryCompletion) error {
 	if completion.Ref == "" || completion.Ref != binding.ProviderResult ||
-		completion.PhysicalQuery != binding.Provenance.PhysicalQuery ||
-		completion.Completeness != binding.Completeness || completion.DataState != binding.DataState ||
-		!reflect.DeepEqual(completion.PartialEvidence, binding.PartialEvidence) {
+		completion.PhysicalQuery != binding.Provenance.PhysicalQuery {
 		return errors.New("named input differs from its physical query completion")
+	}
+	if completion.Completeness != binding.Completeness || completion.DataState != binding.DataState ||
+		!reflect.DeepEqual(completion.PartialEvidence, binding.PartialEvidence) {
+		if !readinessBudgetInvalidBinding(binding) {
+			return errors.New("named input differs from its physical query completion")
+		}
 	}
 	if completion.DataState == DataStateData {
 		if completion.Delivery.PhysicalQuery != completion.PhysicalQuery ||
@@ -434,6 +441,14 @@ func validateNamedInputCompletion(binding NamedInputBinding, completion Physical
 		return errors.New("non-DATA completion claims delivered series")
 	}
 	return nil
+}
+
+func readinessBudgetInvalidBinding(binding NamedInputBinding) bool {
+	return binding.Dataset == nil && binding.View == nil && binding.PartialEvidence == nil &&
+		binding.Completeness == CompletenessUnavailable && binding.DataState == DataStateUnknown &&
+		binding.Disposition == AccessUnavailable &&
+		binding.ReasonCode == ReasonCode(contract.ReasonReadinessBudgetInvalid) &&
+		binding.ImpactScope == ImpactPlan
 }
 
 func cloneNamedInputBinding(source NamedInputBinding) NamedInputBinding {

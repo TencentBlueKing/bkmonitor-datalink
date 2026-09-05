@@ -263,6 +263,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	}
 	querySource, err := access.NewSource(frozen, queryClient, productionQueryPermitAcquirer{flights: flights}, access.Config{
 		MinReadyDelay: cfg.PhaseTwo.Access.MinReadyDelay.Duration(),
+		Now:           external.Now,
 	})
 	if err != nil {
 		return nil, err

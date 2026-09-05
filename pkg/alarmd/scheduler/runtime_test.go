@@ -8,6 +8,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -185,6 +186,47 @@ func TestRunnerNextReadyAtUsesLatestSourceOrExecutionBackoff(t *testing.T) {
 	}
 }
 
+func TestRunnerReusesDelayedReadyAtForExecutionReadiness(t *testing.T) {
+	current := time.UnixMilli(1_700_000_000_000)
+	readyAt := current.Add(30 * time.Second)
+	slot := frozenSlot("query-group-1")
+	executor := &readinessDeferredExecutor{readyAt: readyAt}
+	runner, err := NewRunner(
+		"query-group-1", &fakeSession{fence: slot.Dispatch.OwnerFence}, &fakeSlotSource{slot: slot}, executor,
+		NewFlightCoordinator(), func() time.Time { return current },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admissions, releases := 0, 0
+	admission := func(execution.Operation) (func(), bool) {
+		admissions++
+		return func() { releases++ }, true
+	}
+	result, attempted, denied, err := runner.RunOneAdmitted(context.Background(), admission)
+	if err != nil || !attempted || denied || result != (execution.SlotExecutionResult{}) {
+		t.Fatalf("RunOneAdmitted(deferred)=(%+v,%t,%t,%v), want zero/true/false/nil", result, attempted, denied, err)
+	}
+	if admissions != 1 || releases != 1 {
+		t.Fatalf("deferred admission calls/releases=%d/%d, want 1/1", admissions, releases)
+	}
+	if got := runner.NextReadyAt(); !got.Equal(readyAt) {
+		t.Fatalf("NextReadyAt()=%s, want %s", got, readyAt)
+	}
+	if _, attempted, denied, err = runner.RunOneAdmitted(context.Background(), admission); err != nil || attempted || denied ||
+		executor.calls != 1 || admissions != 1 || releases != 1 {
+		t.Fatalf("RunOneAdmitted(before ready) attempted=%t denied=%t calls=%d admission=%d/%d err=%v",
+			attempted, denied, executor.calls, admissions, releases, err)
+	}
+	current = readyAt
+	executor.deferred = false
+	result, attempted, denied, err = runner.RunOneAdmitted(context.Background(), admission)
+	if err != nil || !attempted || denied || !result.Completed || executor.calls != 2 || admissions != 2 || releases != 2 {
+		t.Fatalf("RunOneAdmitted(at ready)=(%+v,%t,%t,%v) calls=%d admission=%d/%d",
+			result, attempted, denied, err, executor.calls, admissions, releases)
+	}
+}
+
 func TestRunnerUsesFrozenOperationForExecutionAdmission(t *testing.T) {
 	now := time.UnixMilli(1_700_000_000_000)
 	slot := frozenSlot("query-group-1")
@@ -284,6 +326,28 @@ type blockingExecutor struct {
 	mu      sync.Mutex
 	request execution.SlotExecutionRequest
 	calls   int
+}
+
+type readinessDeferredExecutor struct {
+	readyAt  time.Time
+	deferred bool
+	calls    int
+}
+
+type readinessDeferredTestError struct{ readyAt time.Time }
+
+func (err readinessDeferredTestError) Error() string               { return "readiness deferred" }
+func (err readinessDeferredTestError) ReadinessReadyAt() time.Time { return err.readyAt }
+
+func (executor *readinessDeferredExecutor) Execute(
+	_ context.Context,
+	_ execution.SlotExecutionRequest,
+) (execution.SlotExecutionResult, error) {
+	executor.calls++
+	if executor.deferred || executor.calls == 1 {
+		return execution.SlotExecutionResult{}, fmt.Errorf("wrapped executor result: %w", readinessDeferredTestError{readyAt: executor.readyAt})
+	}
+	return execution.SlotExecutionResult{Completed: true}, nil
 }
 
 func (executor *blockingExecutor) Execute(

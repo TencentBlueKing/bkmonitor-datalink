@@ -1525,7 +1525,9 @@ func TestProductionPhaseTwoBundleLetsNormalUseRemainingProcessPermitDuringRecove
 
 	base := time.Now().Unix()
 	var clock atomic.Int64
-	clock.Store(time.Unix(base, 0).UnixMilli())
+	// Keep the configured one-millisecond readiness boundary due without
+	// changing the integer-second Slot identities exercised below.
+	clock.Store(time.Unix(base, 0).Add(2 * time.Millisecond).UnixMilli())
 	now := func() time.Time { return time.UnixMilli(clock.Load()) }
 	var setup atomic.Bool
 	setup.Store(true)
@@ -1628,7 +1630,7 @@ func TestProductionPhaseTwoBundleLetsNormalUseRemainingProcessPermitDuringRecove
 	observationsMu.Lock()
 	observations = nil
 	observationsMu.Unlock()
-	clock.Store(time.Unix(base+1, 0).UnixMilli())
+	clock.Store(time.Unix(base+1, 0).Add(2 * time.Millisecond).UnixMilli())
 
 	tickDone := make(chan error, 1)
 	go func() { tickDone <- bundle.runScheduledOnce(ctx) }()
@@ -1663,7 +1665,9 @@ func TestProductionPhaseTwoBundleCompletesIncompleteAccessWithoutStoppingHealthy
 	base := time.Now().Add(2 * time.Second).Unix()
 	var clock atomic.Int64
 	clock.Store(base)
-	now := func() time.Time { return time.Unix(clock.Load(), 0) }
+	// Keep the one-millisecond readiness boundary due while retaining the same
+	// integer-second Slot identity used by this recovery test.
+	now := func() time.Time { return time.Unix(clock.Load(), 0).Add(2 * time.Millisecond) }
 	var cpuAttempts atomic.Int64
 	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		var payload struct {

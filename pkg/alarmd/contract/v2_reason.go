@@ -80,6 +80,9 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonQueryPartial:     {ReasonQueryPartial, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryTimeout:     {ReasonQueryTimeout, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryUnavailable: {ReasonQueryUnavailable, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonReadinessBudgetInvalid: {
+		ReasonReadinessBudgetInvalid, ReasonClassCoverage, reasonQueryDomainsV2,
+	},
 	ReasonExecutionBudgetExhausted: {
 		ReasonExecutionBudgetExhausted, ReasonClassCoverage, ReasonDomainQueryResult | ReasonDomainObservation,
 	},

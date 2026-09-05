@@ -21,7 +21,7 @@ func (stream *streamedExecution) retainTargetBytes(ctx context.Context, count in
 	// Covers target copies, the selected-Plan index and mutation lookup tables.
 	// No Dataset or compiled Plan graph is passed into this measurement.
 	retained := 4 * size
-	if err := stream.reserveProvisional(ctx, 0, retained); err != nil {
+	if err := stream.reserveProvisionalAt(ctx, 0, retained, stream.reservationPhase("normal_gap")); err != nil {
 		return err
 	}
 	stream.retained += retained
@@ -40,9 +40,9 @@ func (stream *streamedExecution) loadGapFacts(ctx context.Context, request execu
 		reservations.mu.Lock()
 		var err error
 		if reservations.gapFacts >= stream.coordinator.budget.MaxGapMutations {
-			err = &provisionalBudgetExceededError{budget: observability.CapacityBudgetGapMutations}
+			err = budgetRejection(observability.CapacityBudgetGapMutations, stream.reservationPhase("normal_gap"), reservations.gapFacts, 1, stream.coordinator.budget.MaxGapMutations, stream.ownReservation(stream.gapFacts))
 		} else if retained > stream.coordinator.budget.MaxRetainedBytes-reservations.retainedBytes {
-			err = &provisionalBudgetExceededError{budget: observability.CapacityBudgetRetainedBytes}
+			err = budgetRejection(observability.CapacityBudgetRetainedBytes, stream.reservationPhase("normal_gap"), reservations.retainedBytes, retained, stream.coordinator.budget.MaxRetainedBytes, stream.ownBudget(observability.CapacityBudgetRetainedBytes))
 		} else {
 			reservations.gapFacts++
 			reservations.retainedBytes += retained
@@ -72,7 +72,7 @@ func (stream *streamedExecution) loadGapFacts(ctx context.Context, request execu
 func (stream *streamedExecution) retainGapMutation(ctx context.Context, mutation execution.PlanGapMutation) error {
 	retained := 2 * retainedObjectBytes(mutation)
 	delta := effectCounts{gaps: 1}
-	if err := stream.coordinator.acquireEffects(delta, retained); err != nil {
+	if err := stream.coordinator.acquireEffects(delta, retained, stream, stream.reservationPhase("normal_gap")); err != nil {
 		var exceeded *provisionalBudgetExceededError
 		if errors.As(err, &exceeded) {
 			stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, exceeded.budget, err)

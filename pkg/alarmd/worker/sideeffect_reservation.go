@@ -95,7 +95,7 @@ func (stream *streamedExecution) mergeProvisional(ctx context.Context, next exec
 	previous := countEffects(stream.evaluated)
 	delta := effectCounts{count.states - previous.states, count.events - previous.events, count.gaps - previous.gaps}
 	retained += newEffectBytes(stream.evaluated, next)
-	if err := stream.coordinator.acquireEffects(delta, retained); err != nil {
+	if err := stream.coordinator.acquireEffects(delta, retained, stream, stream.reservationPhase("normal_output")); err != nil {
 		var exceeded *provisionalBudgetExceededError
 		if errors.As(err, &exceeded) {
 			stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, exceeded.budget, err)
@@ -147,17 +147,30 @@ func newEffectBytes(current, next execution.EvaluationResult) uint64 {
 	return retained
 }
 
-func (coordinator *SlotExecutionCoordinator) acquireEffects(delta effectCounts, retained uint64) error {
+func (coordinator *SlotExecutionCoordinator) acquireEffects(delta effectCounts, retained uint64, stream *streamedExecution, phase string) error {
 	reservation := &coordinator.reservations
 	reservation.mu.Lock()
 	defer reservation.mu.Unlock()
 	remaining := ProvisionalBudget{MaxStateMutations: coordinator.budget.MaxStateMutations - reservation.states,
 		MaxEvents: coordinator.budget.MaxEvents - reservation.events, MaxGapMutations: coordinator.budget.MaxGapMutations - reservation.gaps}
 	if err := checkEffectCounts(delta, remaining); err != nil {
+		var exceeded *provisionalBudgetExceededError
+		if errors.As(err, &exceeded) {
+			var used, requested, limit uint64
+			switch exceeded.budget {
+			case observability.CapacityBudgetStateMutations:
+				used, requested, limit = reservation.states, delta.states, coordinator.budget.MaxStateMutations
+			case observability.CapacityBudgetEvents:
+				used, requested, limit = reservation.events, delta.events, coordinator.budget.MaxEvents
+			case observability.CapacityBudgetGapMutations:
+				used, requested, limit = reservation.gaps, delta.gaps, coordinator.budget.MaxGapMutations
+			}
+			return budgetRejection(exceeded.budget, phase, used, requested, limit, stream.ownBudget(exceeded.budget))
+		}
 		return err
 	}
 	if retained > coordinator.budget.MaxRetainedBytes-reservation.retainedBytes {
-		return &provisionalBudgetExceededError{budget: observability.CapacityBudgetRetainedBytes}
+		return budgetRejection(observability.CapacityBudgetRetainedBytes, phase, reservation.retainedBytes, retained, coordinator.budget.MaxRetainedBytes, stream.ownBudget(observability.CapacityBudgetRetainedBytes))
 	}
 	reservation.states += delta.states
 	reservation.events += delta.events

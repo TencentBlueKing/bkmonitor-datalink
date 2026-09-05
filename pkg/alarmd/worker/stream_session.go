@@ -135,7 +135,11 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 }
 
 func (stream *streamedExecution) reserveProvisional(ctx context.Context, series, retainedBytes uint64) error {
-	err := stream.coordinator.acquireProvisional(series, retainedBytes)
+	return stream.reserveProvisionalAt(ctx, series, retainedBytes, stream.reservationPhase("normal_input"))
+}
+
+func (stream *streamedExecution) reserveProvisionalAt(ctx context.Context, series, retainedBytes uint64, phase string) error {
+	err := stream.coordinator.acquireProvisional(series, retainedBytes, stream, phase)
 	if err == nil {
 		return nil
 	}
@@ -355,6 +359,7 @@ func mergeProvisional(target *execution.EvaluationResult, next execution.Evaluat
 
 type provisionalBudgetExceededError struct {
 	budget observability.CapacityBudget
+	facts  *observability.CapacityRejectionFacts
 }
 
 func (err *provisionalBudgetExceededError) Error() string {

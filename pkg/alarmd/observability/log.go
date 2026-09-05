@@ -133,6 +133,12 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation) {
 		slog.String("direction", string(observation.Direction)),
 		slog.Int64("duration_ms", observation.Duration.Milliseconds()),
 	}
+	if f := observation.CapacityRejection; f != nil {
+		attributes = append(attributes, slog.String("capacity_phase", f.Phase), slog.Uint64("capacity_shared_used", f.SharedUsed), slog.Uint64("capacity_requested", f.Requested), slog.Uint64("capacity_limit", f.Limit))
+		if f.OwnUsed != nil {
+			attributes = append(attributes, slog.Uint64("capacity_own_used", *f.OwnUsed))
+		}
+	}
 	if observation.CapacityBudget != "" {
 		attributes = append(attributes, slog.String("capacity_budget", string(observation.CapacityBudget)))
 	}

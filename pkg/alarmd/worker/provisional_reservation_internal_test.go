@@ -31,7 +31,7 @@ func TestProcessProvisionalReservationCapsConcurrentSlotsAndReleases(t *testing.
 				go func() {
 					waiting.Done()
 					<-start
-					results <- coordinator.acquireProvisional(test.series, test.retained)
+					results <- coordinator.acquireProvisional(test.series, test.retained, nil, "query_free")
 				}()
 			}
 			waiting.Wait()
@@ -55,7 +55,7 @@ func TestProcessProvisionalReservationCapsConcurrentSlotsAndReleases(t *testing.
 			}
 
 			coordinator.releaseProvisional(test.series, test.retained)
-			if err := coordinator.acquireProvisional(test.series, test.retained); err != nil {
+			if err := coordinator.acquireProvisional(test.series, test.retained, nil, "query_free"); err != nil {
 				t.Fatalf("reservation after release failed: %v", err)
 			}
 			coordinator.releaseProvisional(test.series, test.retained)
@@ -85,7 +85,7 @@ func TestStreamedExecutionReleaseProvisionalIsIdempotentAndReusable(t *testing.T
 	if series != 0 || retained != 0 {
 		t.Fatalf("repeated stream release leaked or underflowed series/bytes=%d/%d", series, retained)
 	}
-	if err := coordinator.acquireProvisional(1, 100); err != nil {
+	if err := coordinator.acquireProvisional(1, 100, nil, "query_free"); err != nil {
 		t.Fatalf("budget is not reusable after repeated stream release: %v", err)
 	}
 	coordinator.releaseProvisional(1, 100)

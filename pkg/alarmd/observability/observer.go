@@ -392,6 +392,7 @@ type Observation struct {
 	Trace                TraceFields
 	Err                  error
 	CapacityBudget       CapacityBudget
+	CapacityRejection    *CapacityRejectionFacts
 	SourceKind           SourceKind
 	QueryPermit          *QueryPermitFacts
 	RuntimeConfig        *RuntimeConfigFacts
@@ -465,6 +466,7 @@ func NormalizeObservation(observation Observation) Observation {
 		observation.ReasonCode = NormalizeReason(observation.ReasonCode, observation.Result)
 	}
 	observation.CapacityBudget = NormalizeCapacityBudget(observation.CapacityBudget)
+	observation.CapacityRejection = normalizeCapacityRejection(observation)
 	observation.QueryPermit = normalizeQueryPermitFacts(observation.QueryPermit)
 	observation.QueryFailure = normalizeQueryFailure(observation.Component, observation.Stage, observation.Err, observation.QueryFailure)
 	if observation.RuntimeConfig != nil {

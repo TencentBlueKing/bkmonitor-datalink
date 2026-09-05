@@ -199,6 +199,19 @@ func TestSlotExecutionCoordinatorRejectsCumulativeUQPayloadBeforeSideEffectsAndR
 	}
 	assertCapacityRejection(t, fixture.observations, observability.CapacityBudgetRetainedBytes)
 
+	var rejection *observability.CapacityRejectionFacts
+	for _, observation := range *fixture.observations {
+		if observation.CapacityBudget == observability.CapacityBudgetRetainedBytes {
+			rejection = observation.CapacityRejection
+		}
+	}
+	if rejection == nil || rejection.Phase != "normal_input" || rejection.OwnUsed == nil ||
+		*rejection.OwnUsed != rejection.SharedUsed || rejection.SharedUsed < 600<<10 ||
+		rejection.Requested < 600<<10 || rejection.Limit != 1<<20 {
+		t.Fatalf("missing exact failed-reservation facts: %+v", rejection)
+	}
+	usedAtRejection := rejection.SharedUsed
+
 	// A complete single-series execution fitting the same budget proves the
 	// failed attempt released its accepted first-batch reservation.
 	fixture.ports.reverseStateReceipts = false
@@ -206,6 +219,9 @@ func TestSlotExecutionCoordinatorRejectsCumulativeUQPayloadBeforeSideEffectsAndR
 	result, err = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
 	if err != nil || !result.Completed {
 		t.Fatalf("Execute() after rejection result=%+v error=%v", result, err)
+	}
+	if rejection.SharedUsed != usedAtRejection || *rejection.OwnUsed != usedAtRejection {
+		t.Fatal("rejection snapshot changed after healthy execution completed")
 	}
 }
 

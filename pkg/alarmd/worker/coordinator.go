@@ -87,14 +87,14 @@ func NewSlotExecutionCoordinator(ports Ports, budget ProvisionalBudget) (*SlotEx
 	return &SlotExecutionCoordinator{ports: ports, budget: budget}, nil
 }
 
-func (coordinator *SlotExecutionCoordinator) acquireProvisional(series, retainedBytes uint64) error {
+func (coordinator *SlotExecutionCoordinator) acquireProvisional(series, retainedBytes uint64, stream *streamedExecution, phase string) error {
 	coordinator.reservations.mu.Lock()
 	defer coordinator.reservations.mu.Unlock()
 	if series > coordinator.budget.MaxSeries-coordinator.reservations.series {
-		return &provisionalBudgetExceededError{budget: observability.CapacityBudgetSeries}
+		return budgetRejection(observability.CapacityBudgetSeries, phase, coordinator.reservations.series, series, coordinator.budget.MaxSeries, stream.ownBudget(observability.CapacityBudgetSeries))
 	}
 	if retainedBytes > coordinator.budget.MaxRetainedBytes-coordinator.reservations.retainedBytes {
-		return &provisionalBudgetExceededError{budget: observability.CapacityBudgetRetainedBytes}
+		return budgetRejection(observability.CapacityBudgetRetainedBytes, phase, coordinator.reservations.retainedBytes, retainedBytes, coordinator.budget.MaxRetainedBytes, stream.ownBudget(observability.CapacityBudgetRetainedBytes))
 	}
 	coordinator.reservations.series += series
 	coordinator.reservations.retainedBytes += retainedBytes
@@ -1230,6 +1230,10 @@ func (coordinator *SlotExecutionCoordinator) observeCapacityRejection(
 		Result: observability.ResultPaused, Operation: observability.Operation(operation),
 		Direction: observability.DirectionInternal, ReasonCode: observability.ReasonCode(contract.ReasonResourceHardStop),
 		CapacityBudget: budget, Err: err,
+	}
+	var exceeded *provisionalBudgetExceededError
+	if errors.As(err, &exceeded) {
+		observation.CapacityRejection = exceeded.facts
 	}
 	defer func() { _ = recover() }()
 	coordinator.ports.Observer.Observe(ctx, observation)

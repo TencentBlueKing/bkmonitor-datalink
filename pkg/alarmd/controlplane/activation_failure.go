@@ -131,10 +131,12 @@ func wrapActivationFailure(
 		failure.DrainingQueryGroups = counts[0].DrainingQueryGroups
 		failure.CandidateQueryGroups = counts[0].CandidateQueryGroups
 		failure.ReappearedQueryGroups = counts[0].ReappearedQueryGroups
-		failure.ReappearedQueryGroupSamples = append(
-			[]execution.QueryGroupIdentity(nil), counts[0].ReappearedQueryGroupSamples...,
-		)
-		failure.ReappearedQueryGroupSamplesTruncated = counts[0].ReappearedQueryGroupSamplesTruncated
+		if failure.Class == ActivationFailureClassNotDrained {
+			failure.ReappearedQueryGroupSamples = append(
+				[]execution.QueryGroupIdentity(nil), counts[0].ReappearedQueryGroupSamples...,
+			)
+			failure.ReappearedQueryGroupSamplesTruncated = counts[0].ReappearedQueryGroupSamplesTruncated
+		}
 	}
 	return &ActivationFailureError{Failure: failure, Err: err}
 }

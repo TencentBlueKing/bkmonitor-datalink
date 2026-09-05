@@ -487,9 +487,14 @@ func (runtime *productionPhaseTwoControl) refresh(
 	state, err := runtime.dependencies.Activator.Ensure(ctx, result.Publication)
 	if err != nil {
 		if failure, ok := controlplane.ActivationFailureFromError(err); ok {
-			samples := make([]string, len(failure.ReappearedQueryGroupSamples))
-			for index, identity := range failure.ReappearedQueryGroupSamples {
-				samples[index] = string(identity)
+			var samples []string
+			samplesTruncated := false
+			if failure.Class == controlplane.ActivationFailureClassNotDrained {
+				samples = make([]string, len(failure.ReappearedQueryGroupSamples))
+				for index, identity := range failure.ReappearedQueryGroupSamples {
+					samples[index] = string(identity)
+				}
+				samplesTruncated = failure.ReappearedQueryGroupSamplesTruncated
 			}
 			observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
 				Component:  observability.ComponentControlPlane,
@@ -505,7 +510,7 @@ func (runtime *productionPhaseTwoControl) refresh(
 					CandidateQueryGroups:                 failure.CandidateQueryGroups,
 					ReappearedQueryGroups:                failure.ReappearedQueryGroups,
 					ReappearedQueryGroupSamples:          samples,
-					ReappearedQueryGroupSamplesTruncated: failure.ReappearedQueryGroupSamplesTruncated,
+					ReappearedQueryGroupSamplesTruncated: samplesTruncated,
 				},
 				Err: err,
 			})

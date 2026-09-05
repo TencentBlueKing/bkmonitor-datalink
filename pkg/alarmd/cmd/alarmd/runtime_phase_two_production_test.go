@@ -1183,6 +1183,14 @@ func TestProductionPhaseTwoControlObservesPublishedBeforeActivationFailure(t *te
 		},
 		Err: controlplane.ErrReactivationNotDrained,
 	}
+	dependencyErr := &controlplane.ActivationFailureError{
+		Failure: controlplane.ActivationFailure{
+			Stage: controlplane.ActivationFailureStageReactivation, Class: controlplane.ActivationFailureClassDependencyIO,
+			DrainingQueryGroups: 47, CandidateQueryGroups: 362, ReappearedQueryGroups: len(reappeared),
+			ReappearedQueryGroupSamples: reappeared,
+		},
+		Err: errors.New("dependency unavailable"),
+	}
 	repository := &fakeProductionCatalogRepository{
 		activation: controlplane.ActivationState{RecordRevision: 1, Current: current},
 		snapshot: controlplane.PublishedSnapshot{Publication: current,
@@ -1193,8 +1201,10 @@ func TestProductionPhaseTwoControlObservesPublishedBeforeActivationFailure(t *te
 		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{},
 		Reconciler: &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{{
 			Status: controlplane.SourceRefreshPublished, Observation: "observation-candidate", Publication: candidate,
+		}, {
+			Status: controlplane.SourceRefreshPublished, Observation: "observation-candidate", Publication: candidate,
 		}}},
-		Activator:  &fakeInitialScheduleActivator{errs: []error{activationErr}},
+		Activator:  &fakeInitialScheduleActivator{errs: []error{activationErr, dependencyErr}},
 		Repository: repository, Schedules: &fakeScheduleProjection{}, Progress: &fakeProductionProgressReader{},
 		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			observations = append(observations, observation)
@@ -1204,11 +1214,13 @@ func TestProductionPhaseTwoControlObservesPublishedBeforeActivationFailure(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, refreshErr := control.Refresh(context.Background()); refreshErr != nil {
-		t.Fatalf("Refresh() error = %v", refreshErr)
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, refreshErr := control.Refresh(context.Background()); refreshErr != nil {
+			t.Fatalf("Refresh(attempt=%d) error = %v", attempt, refreshErr)
+		}
 	}
 	got := sourceRefreshObservations(observations, observability.SourceRefreshPublished)
-	if len(got) != 1 || got[0].SourceRefresh.CountsKnown {
+	if len(got) != 2 || got[0].SourceRefresh.CountsKnown || got[1].SourceRefresh.CountsKnown {
 		t.Fatalf("published observations after activation failure = %#v", got)
 	}
 	var failures []observability.Observation
@@ -1217,11 +1229,17 @@ func TestProductionPhaseTwoControlObservesPublishedBeforeActivationFailure(t *te
 			failures = append(failures, observation)
 		}
 	}
-	if len(failures) != 1 || failures[0].ActivationFailure == nil ||
+	if len(failures) != 2 || failures[0].ActivationFailure == nil ||
 		!reflect.DeepEqual(failures[0].ActivationFailure.ReappearedQueryGroupSamples,
 			[]string{"query-group-a", "query-group-b", "query-group-c"}) ||
 		failures[0].ActivationFailure.ReappearedQueryGroupSamplesTruncated {
 		t.Fatalf("activation failure observations = %#v", failures)
+	}
+	if failures[1].ActivationFailure == nil ||
+		failures[1].ActivationFailure.Class != observability.ActivationFailureClassDependencyIO ||
+		len(failures[1].ActivationFailure.ReappearedQueryGroupSamples) != 0 ||
+		failures[1].ActivationFailure.ReappearedQueryGroupSamplesTruncated {
+		t.Fatalf("dependency failure leaked query group samples = %#v", failures[1])
 	}
 }
 

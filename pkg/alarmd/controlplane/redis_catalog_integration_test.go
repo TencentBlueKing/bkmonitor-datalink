@@ -3062,7 +3062,8 @@ func TestScheduleActivationReconcilerClassifiesReactivationProgressIO(t *testing
 	var dependencyIO *controlplane.ActivationDependencyIOError
 	if !errors.Is(err, injected) || !errors.As(err, &dependencyIO) || !ok ||
 		failure.Stage != controlplane.ActivationFailureStageReactivation ||
-		failure.Class != controlplane.ActivationFailureClassDependencyIO {
+		failure.Class != controlplane.ActivationFailureClassDependencyIO ||
+		len(failure.ReappearedQueryGroupSamples) != 0 || failure.ReappearedQueryGroupSamplesTruncated {
 		t.Fatalf("Progress I/O classification error=%v typed=%t failure=(%#v,%t)", err, errors.As(err, &dependencyIO), failure, ok)
 	}
 }
@@ -3095,7 +3096,8 @@ func TestScheduleActivationReconcilerClassifiesReactivationProgressCorruption(t 
 			var deterministic *progress.DeterministicInvalidError
 			if (cause != nil && !errors.Is(err, cause)) || !errors.As(err, &deterministic) || !ok ||
 				failure.Stage != controlplane.ActivationFailureStageReactivation ||
-				failure.Class != controlplane.ActivationFailureClassCorrupt {
+				failure.Class != controlplane.ActivationFailureClassCorrupt ||
+				len(failure.ReappearedQueryGroupSamples) != 0 || failure.ReappearedQueryGroupSamplesTruncated {
 				t.Fatalf("corrupt Progress classification error=%v typed=%t failure=(%#v,%t)", err, errors.As(err, &deterministic), failure, ok)
 			}
 		})

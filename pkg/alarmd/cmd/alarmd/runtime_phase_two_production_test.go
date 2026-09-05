@@ -1174,6 +1174,15 @@ func TestProductionPhaseTwoControlSourceRefreshFactsUseExactChangedSetsAndKeepRe
 func TestProductionPhaseTwoControlObservesPublishedBeforeActivationFailure(t *testing.T) {
 	current := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-current", PublicationEpoch: 1}
 	candidate := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-candidate", PublicationEpoch: 2}
+	reappeared := []execution.QueryGroupIdentity{"query-group-a", "query-group-b", "query-group-c"}
+	activationErr := &controlplane.ActivationFailureError{
+		Failure: controlplane.ActivationFailure{
+			Stage: controlplane.ActivationFailureStageReactivation, Class: controlplane.ActivationFailureClassNotDrained,
+			DrainingQueryGroups: 47, CandidateQueryGroups: 362, ReappearedQueryGroups: len(reappeared),
+			ReappearedQueryGroupSamples: reappeared,
+		},
+		Err: controlplane.ErrReactivationNotDrained,
+	}
 	repository := &fakeProductionCatalogRepository{
 		activation: controlplane.ActivationState{RecordRevision: 1, Current: current},
 		snapshot: controlplane.PublishedSnapshot{Publication: current,
@@ -1185,7 +1194,7 @@ func TestProductionPhaseTwoControlObservesPublishedBeforeActivationFailure(t *te
 		Reconciler: &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{{
 			Status: controlplane.SourceRefreshPublished, Observation: "observation-candidate", Publication: candidate,
 		}}},
-		Activator:  &fakeInitialScheduleActivator{errs: []error{errors.New("activation failed")}},
+		Activator:  &fakeInitialScheduleActivator{errs: []error{activationErr}},
 		Repository: repository, Schedules: &fakeScheduleProjection{}, Progress: &fakeProductionProgressReader{},
 		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			observations = append(observations, observation)
@@ -1201,6 +1210,18 @@ func TestProductionPhaseTwoControlObservesPublishedBeforeActivationFailure(t *te
 	got := sourceRefreshObservations(observations, observability.SourceRefreshPublished)
 	if len(got) != 1 || got[0].SourceRefresh.CountsKnown {
 		t.Fatalf("published observations after activation failure = %#v", got)
+	}
+	var failures []observability.Observation
+	for _, observation := range observations {
+		if observation.Stage == observability.StageActivationFailed {
+			failures = append(failures, observation)
+		}
+	}
+	if len(failures) != 1 || failures[0].ActivationFailure == nil ||
+		!reflect.DeepEqual(failures[0].ActivationFailure.ReappearedQueryGroupSamples,
+			[]string{"query-group-a", "query-group-b", "query-group-c"}) ||
+		failures[0].ActivationFailure.ReappearedQueryGroupSamplesTruncated {
+		t.Fatalf("activation failure observations = %#v", failures)
 	}
 }
 

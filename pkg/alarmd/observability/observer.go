@@ -275,7 +275,10 @@ type LegacyQGMigrationFacts struct {
 	Duration    time.Duration
 }
 
-const MaxDrainingQGLogSamples = 8
+const (
+	MaxDrainingQGLogSamples          = 8
+	MaxActivationFailureQGLogSamples = 8
+)
 
 type DrainingQGSample struct {
 	QueryGroupKey   string `json:"query_group_key"`
@@ -306,14 +309,17 @@ type SourceRefreshFacts struct {
 	RetiredQueryGroups int
 }
 
-// ActivationFailureFacts carries only fixed classification and bounded counts.
-// It intentionally excludes Query Group, Plan and error text from metric labels.
+// ActivationFailureFacts carries fixed classification, bounded counts and a
+// bounded diagnostic sample. Query Group identity is logged only for
+// reactivation/not_drained and never becomes a metric label.
 type ActivationFailureFacts struct {
-	Stage                 ActivationFailureStage
-	Class                 ActivationFailureClass
-	DrainingQueryGroups   int
-	CandidateQueryGroups  int
-	ReappearedQueryGroups int
+	Stage                                ActivationFailureStage
+	Class                                ActivationFailureClass
+	DrainingQueryGroups                  int
+	CandidateQueryGroups                 int
+	ReappearedQueryGroups                int
+	ReappearedQueryGroupSamples          []string
+	ReappearedQueryGroupSamplesTruncated bool
 }
 
 // AlgorithmProvenance carries bounded diagnostic coordinates for one
@@ -487,6 +493,23 @@ func normalizeActivationFailureFacts(
 		normalized.DrainingQueryGroups = 0
 		normalized.CandidateQueryGroups = 0
 		normalized.ReappearedQueryGroups = 0
+		normalized.ReappearedQueryGroupSamples = nil
+		normalized.ReappearedQueryGroupSamplesTruncated = false
+		return &normalized
+	}
+	if normalized.Class != ActivationFailureClassNotDrained {
+		normalized.ReappearedQueryGroupSamples = nil
+		normalized.ReappearedQueryGroupSamplesTruncated = false
+		return &normalized
+	}
+	normalized.ReappearedQueryGroupSamples = append([]string(nil), facts.ReappearedQueryGroupSamples...)
+	limit := normalized.ReappearedQueryGroups
+	if limit > MaxActivationFailureQGLogSamples {
+		limit = MaxActivationFailureQGLogSamples
+	}
+	if len(normalized.ReappearedQueryGroupSamples) > limit {
+		normalized.ReappearedQueryGroupSamples = normalized.ReappearedQueryGroupSamples[:limit]
+		normalized.ReappearedQueryGroupSamplesTruncated = true
 	}
 	return &normalized
 }

@@ -184,6 +184,12 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation) {
 				slog.Int("candidate_query_groups", facts.CandidateQueryGroups),
 				slog.Int("reappeared_query_groups", facts.ReappearedQueryGroups),
 			)
+			if facts.Class == ActivationFailureClassNotDrained {
+				attributes = append(attributes,
+					slog.Bool("reappeared_query_group_samples_truncated", facts.ReappearedQueryGroupSamplesTruncated),
+					slog.Any("reappeared_query_group_samples", facts.ReappearedQueryGroupSamples),
+				)
+			}
 		}
 	}
 	if len(observation.AlgorithmEvaluations) > 0 {

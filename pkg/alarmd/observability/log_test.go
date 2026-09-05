@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -160,7 +161,7 @@ func TestLoggingObserverWritesActionableSourceRefreshFacts(t *testing.T) {
 	}
 }
 
-func TestLoggingObserverWritesBoundedActivationFailureWithoutIdentity(t *testing.T) {
+func TestLoggingObserverWritesBoundedActivationFailureReappearedSamples(t *testing.T) {
 	t.Parallel()
 
 	var output bytes.Buffer
@@ -179,7 +180,11 @@ func TestLoggingObserverWritesBoundedActivationFailureWithoutIdentity(t *testing
 		ActivationFailure: &ActivationFailureFacts{
 			Stage:               ActivationFailureStageReactivation,
 			Class:               ActivationFailureClassNotDrained,
-			DrainingQueryGroups: 2, CandidateQueryGroups: 364, ReappearedQueryGroups: 1,
+			DrainingQueryGroups: 10, CandidateQueryGroups: 364, ReappearedQueryGroups: 10,
+			ReappearedQueryGroupSamples: []string{
+				"query-group-00", "query-group-01", "query-group-02", "query-group-03", "query-group-04",
+				"query-group-05", "query-group-06", "query-group-07", "query-group-08", "query-group-09",
+			},
 		},
 		Err: errors.New("must-not-be-observed"),
 	})
@@ -191,13 +196,21 @@ func TestLoggingObserverWritesBoundedActivationFailureWithoutIdentity(t *testing
 	for field, want := range map[string]any{
 		"activation_failure_stage": "reactivation",
 		"activation_failure_class": "not_drained",
-		"draining_query_groups":    float64(2),
+		"draining_query_groups":    float64(10),
 		"candidate_query_groups":   float64(364),
-		"reappeared_query_groups":  float64(1),
+		"reappeared_query_groups":  float64(10),
 	} {
 		if event[field] != want {
 			t.Fatalf("event[%q]=%#v, want %#v; event=%#v", field, event[field], want, event)
 		}
+	}
+	wantSamples := []any{
+		"query-group-00", "query-group-01", "query-group-02", "query-group-03",
+		"query-group-04", "query-group-05", "query-group-06", "query-group-07",
+	}
+	if !reflect.DeepEqual(event["reappeared_query_group_samples"], wantSamples) ||
+		event["reappeared_query_group_samples_truncated"] != true {
+		t.Fatalf("reappeared samples were not bounded: %#v", event)
 	}
 	if event["error"] != nil || event["error_message"] != nil {
 		t.Fatalf("raw error leaked into activation failure log: %#v", event)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -35,14 +36,16 @@ const (
 )
 
 // ActivationFailure is bounded diagnostic context for one activation attempt.
-// Counts are populated only for reactivation; identities and raw errors stay in
-// the underlying error and never become metric labels.
+// Counts are populated only for reactivation; identities are bounded diagnostic
+// samples, and neither identities nor raw errors become metric labels.
 type ActivationFailure struct {
-	Stage                 ActivationFailureStage
-	Class                 ActivationFailureClass
-	DrainingQueryGroups   int
-	CandidateQueryGroups  int
-	ReappearedQueryGroups int
+	Stage                                ActivationFailureStage
+	Class                                ActivationFailureClass
+	DrainingQueryGroups                  int
+	CandidateQueryGroups                 int
+	ReappearedQueryGroups                int
+	ReappearedQueryGroupSamples          []execution.QueryGroupIdentity
+	ReappearedQueryGroupSamplesTruncated bool
 }
 
 type ActivationFailureError struct {
@@ -128,6 +131,10 @@ func wrapActivationFailure(
 		failure.DrainingQueryGroups = counts[0].DrainingQueryGroups
 		failure.CandidateQueryGroups = counts[0].CandidateQueryGroups
 		failure.ReappearedQueryGroups = counts[0].ReappearedQueryGroups
+		failure.ReappearedQueryGroupSamples = append(
+			[]execution.QueryGroupIdentity(nil), counts[0].ReappearedQueryGroupSamples...,
+		)
+		failure.ReappearedQueryGroupSamplesTruncated = counts[0].ReappearedQueryGroupSamplesTruncated
 	}
 	return &ActivationFailureError{Failure: failure, Err: err}
 }

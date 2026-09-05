@@ -25,6 +25,8 @@ type ScheduleActivationProgressReader interface {
 	LoadProgress(context.Context, execution.ProgressIdentity) (execution.ProgressLoadResult, error)
 }
 
+const maxReappearedQueryGroupFailureSamples = 8
+
 func NewScheduleActivationReconciler(
 	repository *RedisCatalogRepository,
 	compiler RuntimePlanCompiler,
@@ -318,14 +320,22 @@ func activationReconciliationCounts(
 	draining []DrainingQueryGroup,
 	newGroups map[execution.QueryGroupIdentity]QueryGroup,
 ) ActivationFailure {
-	reappeared := 0
+	reappeared := make([]execution.QueryGroupIdentity, 0)
 	for _, projection := range draining {
 		if _, exists := newGroups[projection.QueryGroup]; exists {
-			reappeared++
+			reappeared = append(reappeared, projection.QueryGroup)
 		}
+	}
+	sort.Slice(reappeared, func(i, j int) bool { return reappeared[i] < reappeared[j] })
+	samples := reappeared
+	truncated := len(samples) > maxReappearedQueryGroupFailureSamples
+	if truncated {
+		samples = samples[:maxReappearedQueryGroupFailureSamples]
 	}
 	return ActivationFailure{
 		DrainingQueryGroups: len(draining), CandidateQueryGroups: len(newGroups),
-		ReappearedQueryGroups: reappeared,
+		ReappearedQueryGroups:                len(reappeared),
+		ReappearedQueryGroupSamples:          append([]execution.QueryGroupIdentity(nil), samples...),
+		ReappearedQueryGroupSamplesTruncated: truncated,
 	}
 }

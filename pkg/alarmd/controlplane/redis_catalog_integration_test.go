@@ -2918,6 +2918,8 @@ func TestScheduleActivationReconcilerReactivatesDrainedQueryGroupOnSameProgressT
 		failure.Stage != controlplane.ActivationFailureStageReactivation ||
 		failure.Class != controlplane.ActivationFailureClassNotDrained ||
 		failure.DrainingQueryGroups != 1 || failure.CandidateQueryGroups != 1 || failure.ReappearedQueryGroups != 1 ||
+		!reflect.DeepEqual(failure.ReappearedQueryGroupSamples, []execution.QueryGroupIdentity{queryGroup}) ||
+		failure.ReappearedQueryGroupSamplesTruncated ||
 		!errors.Is(err, controlplane.ErrReactivationNotDrained) {
 		t.Fatalf("undrained reactivation classification=(%#v,%t)", failure, ok)
 	}

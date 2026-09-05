@@ -487,6 +487,10 @@ func (runtime *productionPhaseTwoControl) refresh(
 	state, err := runtime.dependencies.Activator.Ensure(ctx, result.Publication)
 	if err != nil {
 		if failure, ok := controlplane.ActivationFailureFromError(err); ok {
+			samples := make([]string, len(failure.ReappearedQueryGroupSamples))
+			for index, identity := range failure.ReappearedQueryGroupSamples {
+				samples[index] = string(identity)
+			}
 			observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
 				Component:  observability.ComponentControlPlane,
 				Stage:      observability.StageActivationFailed,
@@ -495,11 +499,13 @@ func (runtime *productionPhaseTwoControl) refresh(
 				Direction:  observability.DirectionInternal,
 				ReasonCode: observability.ReasonContractRetryable,
 				ActivationFailure: &observability.ActivationFailureFacts{
-					Stage:                 observability.ActivationFailureStage(failure.Stage),
-					Class:                 observability.ActivationFailureClass(failure.Class),
-					DrainingQueryGroups:   failure.DrainingQueryGroups,
-					CandidateQueryGroups:  failure.CandidateQueryGroups,
-					ReappearedQueryGroups: failure.ReappearedQueryGroups,
+					Stage:                                observability.ActivationFailureStage(failure.Stage),
+					Class:                                observability.ActivationFailureClass(failure.Class),
+					DrainingQueryGroups:                  failure.DrainingQueryGroups,
+					CandidateQueryGroups:                 failure.CandidateQueryGroups,
+					ReappearedQueryGroups:                failure.ReappearedQueryGroups,
+					ReappearedQueryGroupSamples:          samples,
+					ReappearedQueryGroupSamplesTruncated: failure.ReappearedQueryGroupSamplesTruncated,
 				},
 				Err: err,
 			})

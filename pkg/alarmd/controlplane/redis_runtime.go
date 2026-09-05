@@ -700,28 +700,22 @@ func (repository *RedisCatalogRepository) materializeSchedule(
 	}
 	publication := SnapshotPublicationRef{SnapshotRevision: segment.Publication.SnapshotRevision,
 		PublicationEpoch: uint64(segment.Publication.PublicationEpoch)}
-	snapshot, err := repository.LoadPublishedSnapshot(ctx, publication)
+	group, err := repository.loadPublishedQueryGroup(ctx, publication, segment.QueryGroup)
 	if err != nil {
 		return execution.FrozenQueryGroupSchedule{}, err
 	}
-	for _, group := range snapshot.QueryGroups {
-		if group.Identity != segment.QueryGroup {
-			continue
-		}
-		if group.QueryPlan.QueryRevision != segment.QueryRevision || group.ScheduleRevision != segment.ScheduleRevision {
-			return execution.FrozenQueryGroupSchedule{}, errors.New("alarmd controlplane: Schedule Segment differs from frozen Catalog")
-		}
-		plans := make([]execution.FrozenPlanSchedule, len(group.Plans))
-		for index, plan := range group.Plans {
-			plans[index] = execution.FrozenPlanSchedule{Identity: plan.Identity, ScheduleRevision: plan.ScheduleRevision, Spec: plan.ScheduleSpec}
-		}
-		schedule := execution.FrozenQueryGroupSchedule{Segment: segment, Plans: plans}
-		if err := schedule.Validate(); err != nil {
-			return execution.FrozenQueryGroupSchedule{}, err
-		}
-		return schedule, nil
+	if group.QueryPlan.QueryRevision != segment.QueryRevision || group.ScheduleRevision != segment.ScheduleRevision {
+		return execution.FrozenQueryGroupSchedule{}, errors.New("alarmd controlplane: Schedule Segment differs from frozen Catalog")
 	}
-	return execution.FrozenQueryGroupSchedule{}, ErrCatalogObjectUnavailable
+	plans := make([]execution.FrozenPlanSchedule, len(group.Plans))
+	for index, plan := range group.Plans {
+		plans[index] = execution.FrozenPlanSchedule{Identity: plan.Identity, ScheduleRevision: plan.ScheduleRevision, Spec: plan.ScheduleSpec}
+	}
+	schedule := execution.FrozenQueryGroupSchedule{Segment: segment, Plans: plans}
+	if err := schedule.Validate(); err != nil {
+		return execution.FrozenQueryGroupSchedule{}, err
+	}
+	return schedule, nil
 }
 
 func activationRecordsForSchedule(state ActivationState, schedule execution.FrozenQueryGroupSchedule) ([]PlanActivationRecord, error) {
@@ -1281,13 +1275,12 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 	}
 	publication := SnapshotPublicationRef{SnapshotRevision: schedule.Segment.Publication.SnapshotRevision,
 		PublicationEpoch: uint64(schedule.Segment.Publication.PublicationEpoch)}
-	snapshot, err := runtime.repository.LoadPublishedSnapshot(ctx, publication)
+	group, err := runtime.repository.loadPublishedQueryGroup(ctx, publication, request.QueryGroup)
 	if err != nil {
+		if errors.Is(err, ErrCatalogObjectUnavailable) {
+			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)
+		}
 		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureSnapshotRead, err)
-	}
-	group, err := findQueryGroup(snapshot, request.QueryGroup)
-	if err != nil {
-		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)
 	}
 	activationByPlan := make(map[execution.PlanIdentity]PlanActivationRecord, len(segment.Plans))
 	for _, record := range segment.Plans {
@@ -1659,15 +1652,6 @@ func completionDeadline(at execution.EvaluationTime, spec execution.ScheduleSpec
 		return 0, errors.New("alarmd controlplane: frozen Plan deadline overflows")
 	}
 	return seconds * 1000, nil
-}
-
-func findQueryGroup(snapshot PublishedSnapshot, identity execution.QueryGroupIdentity) (QueryGroup, error) {
-	for _, group := range snapshot.QueryGroups {
-		if group.Identity == identity {
-			return group, nil
-		}
-	}
-	return QueryGroup{}, ErrCatalogObjectUnavailable
 }
 
 func equalDuePlanRefs(left, right []execution.FrozenPlanScheduleRef) bool {

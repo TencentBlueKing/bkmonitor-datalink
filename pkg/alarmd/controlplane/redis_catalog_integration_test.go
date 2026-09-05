@@ -46,6 +46,31 @@ func (*scanCountingHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cm
 
 func (*scanCountingHook) AfterProcessPipeline(context.Context, []redis.Cmder) error { return nil }
 
+type snapshotReadCountingHook struct {
+	mget atomic.Int64
+	get  atomic.Int64
+}
+
+func (hook *snapshotReadCountingHook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
+	switch strings.ToLower(cmd.Name()) {
+	case "mget":
+		hook.mget.Add(1)
+	case "get":
+		hook.get.Add(1)
+	}
+	return ctx, nil
+}
+
+func (*snapshotReadCountingHook) AfterProcess(context.Context, redis.Cmder) error { return nil }
+
+func (*snapshotReadCountingHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+
+func (*snapshotReadCountingHook) AfterProcessPipeline(context.Context, []redis.Cmder) error {
+	return nil
+}
+
 type serialActivationCASHook struct {
 	evals      atomic.Int64
 	completed  atomic.Bool
@@ -210,6 +235,84 @@ func TestRedisCatalogRepositoryTypesPersistedSnapshotCorruption(t *testing.T) {
 	var corrupt *controlplane.PersistedSnapshotCorruptError
 	if !errors.As(err, &corrupt) {
 		t.Fatalf("LoadSnapshot(corrupt) error=%v", err)
+	}
+}
+
+func TestRedisCatalogRepositorySnapshotCachePreservesCurrentRedisFactsAndCallerIsolation(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	prefix := "alarmd:control:verified-snapshot-cache"
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := validCatalog(t, 80)
+	published, _, err := repository.PublishCatalog(ctx, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := &snapshotReadCountingHook{}
+	client.AddHook(reads)
+
+	loaded, err := repository.LoadPublishedSnapshot(ctx, published.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded.QueryGroups[0].QueryPlan.QueryList[0].FieldName = "caller-mutated-field"
+	loaded.QueryGroups[0].Plans[0].Plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0].Config[0] ^= 1
+	if loaded.QueryGroups[0].Plans[0].Plan.SourceCompatibility == nil {
+		t.Fatal("test fixture is missing SourceCompatibility")
+	}
+	loaded.QueryGroups[0].Plans[0].Plan.SourceCompatibility.ItemID = "caller-mutated-item"
+	if _, err := repository.LoadPublishedSnapshot(ctx, published.Publication); err != nil {
+		t.Fatal(err)
+	}
+	if reads.mget.Load() != 2 || reads.get.Load() != 2 {
+		t.Fatalf("repeated published reads commands mget=%d get=%d, want 2 each", reads.mget.Load(), reads.get.Load())
+	}
+
+	group, err := repository.LoadQueryGroup(ctx, catalog.SnapshotRevision, catalog.QueryGroups[0].Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(group, catalog.QueryGroups[0]) {
+		t.Fatal("caller mutation polluted a later cached Query Group read")
+	}
+	group.QueryPlan.QueryList[0].FieldName = "second-caller-mutation"
+	again, err := repository.LoadQueryGroup(ctx, catalog.SnapshotRevision, catalog.QueryGroups[0].Identity)
+	if err != nil || !reflect.DeepEqual(again, catalog.QueryGroups[0]) {
+		t.Fatalf("cached Query Group was not isolated: err=%v", err)
+	}
+
+	epochKey := prefix + ":snapshot_epoch:" + string(catalog.SnapshotRevision)
+	if err := client.Set(ctx, epochKey, "999", time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repository.LoadSnapshot(ctx, catalog.SnapshotRevision)
+	if err != nil || current.Publication.PublicationEpoch != 999 {
+		t.Fatalf("current publication epoch=(%d,%v), want 999", current.Publication.PublicationEpoch, err)
+	}
+
+	snapshotKey := prefix + ":snapshot:" + string(catalog.SnapshotRevision)
+	client.AddHook(&oneCommandErrorHook{name: "mget", argContains: snapshotKey, err: errors.New("injected snapshot read failure")})
+	_, err = repository.LoadSnapshot(ctx, catalog.SnapshotRevision)
+	var dependencyIO *controlplane.ActivationDependencyIOError
+	if !errors.As(err, &dependencyIO) {
+		t.Fatalf("Snapshot cache hid current Redis I/O failure: %v", err)
+	}
+	if err := client.Set(ctx, snapshotKey, []byte("{"), time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = repository.LoadSnapshot(ctx, catalog.SnapshotRevision)
+	var corrupt *controlplane.PersistedSnapshotCorruptError
+	if !errors.As(err, &corrupt) {
+		t.Fatalf("changed corrupt Redis payload was hidden by cache: %v", err)
+	}
+	if err := client.Del(ctx, snapshotKey).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.LoadSnapshot(ctx, catalog.SnapshotRevision); !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+		t.Fatalf("missing Redis payload was hidden by cache: %v", err)
 	}
 }
 

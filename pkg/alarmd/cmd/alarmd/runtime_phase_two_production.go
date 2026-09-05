@@ -35,7 +35,7 @@ type productionFrozenCatalog interface {
 }
 
 type productionSnapshotReader interface {
-	LoadSnapshot(context.Context, execution.SnapshotRevision) (controlplane.PublishedSnapshot, error)
+	LoadQueryGroup(context.Context, execution.SnapshotRevision, execution.QueryGroupIdentity) (controlplane.QueryGroup, error)
 }
 
 type productionFrozenExecution struct {
@@ -63,48 +63,45 @@ func (source *productionFrozenExecution) ResolveFrozenPlan(
 	if err != nil {
 		return access.FrozenPlan{}, err
 	}
-	snapshot, err := source.repository.LoadSnapshot(ctx, contractRef.SnapshotRevision)
+	group, err := source.repository.LoadQueryGroup(ctx, contractRef.SnapshotRevision, contractRef.Slot.QueryGroup)
 	if err != nil {
+		if errors.Is(err, controlplane.ErrCatalogObjectUnavailable) {
+			return access.FrozenPlan{}, errors.New("phase-two frozen Query Group is absent from Snapshot")
+		}
 		return access.FrozenPlan{}, err
 	}
-	for _, group := range snapshot.QueryGroups {
-		if group.Identity != contractRef.Slot.QueryGroup {
+	if group.QueryPlan.QueryRevision != contractRef.QueryRevision {
+		return access.FrozenPlan{}, errors.New("phase-two frozen Query Group changed query revision")
+	}
+	queryFacts := make(map[execution.LogicalQueryRef]execution.QueryPlanFacts)
+	queryRef := execution.LogicalQueryRef(group.QueryPlan.QueryRevision)
+	queryFacts[queryRef] = group.QueryPlan
+	duePlans := make(map[execution.PlanIdentity]struct{}, len(fact.DuePlans))
+	for _, due := range fact.DuePlans {
+		duePlans[due.Identity] = struct{}{}
+	}
+	for _, plan := range group.Plans {
+		if _, due := duePlans[plan.Identity]; !due {
 			continue
 		}
-		if group.QueryPlan.QueryRevision != contractRef.QueryRevision {
-			return access.FrozenPlan{}, errors.New("phase-two frozen Query Group changed query revision")
+		for ref, facts := range plan.QueryPlans {
+			queryFacts[ref] = facts
 		}
-		queryFacts := make(map[execution.LogicalQueryRef]execution.QueryPlanFacts)
-		queryRef := execution.LogicalQueryRef(group.QueryPlan.QueryRevision)
-		queryFacts[queryRef] = group.QueryPlan
-		duePlans := make(map[execution.PlanIdentity]struct{}, len(fact.DuePlans))
-		for _, due := range fact.DuePlans {
-			duePlans[due.Identity] = struct{}{}
-		}
-		for _, plan := range group.Plans {
-			if _, due := duePlans[plan.Identity]; !due {
-				continue
-			}
-			for ref, facts := range plan.QueryPlans {
-				queryFacts[ref] = facts
-			}
-		}
-		resolvedFacts := make(map[execution.LogicalQueryRef]execution.QueryPlanFacts)
-		for _, requirement := range fact.Requirements {
-			facts, exists := queryFacts[requirement.LogicalQueryRef]
-			if !exists || facts.Validate() != nil ||
-				execution.LogicalQueryRef(facts.QueryRevision) != requirement.LogicalQueryRef {
-				return access.FrozenPlan{}, fmt.Errorf("%w: logical query %s", access.ErrFrozenQueryPlanUnavailable, requirement.LogicalQueryRef)
-			}
-			resolvedFacts[requirement.LogicalQueryRef] = facts
-		}
-		return access.FrozenPlan{
-			DuePlans:     append([]execution.DuePlan(nil), fact.DuePlans...),
-			Requirements: append([]execution.DataRequirement(nil), fact.Requirements...),
-			QueryFacts:   resolvedFacts,
-		}, nil
 	}
-	return access.FrozenPlan{}, errors.New("phase-two frozen Query Group is absent from Snapshot")
+	resolvedFacts := make(map[execution.LogicalQueryRef]execution.QueryPlanFacts)
+	for _, requirement := range fact.Requirements {
+		facts, exists := queryFacts[requirement.LogicalQueryRef]
+		if !exists || facts.Validate() != nil ||
+			execution.LogicalQueryRef(facts.QueryRevision) != requirement.LogicalQueryRef {
+			return access.FrozenPlan{}, fmt.Errorf("%w: logical query %s", access.ErrFrozenQueryPlanUnavailable, requirement.LogicalQueryRef)
+		}
+		resolvedFacts[requirement.LogicalQueryRef] = facts
+	}
+	return access.FrozenPlan{
+		DuePlans:     append([]execution.DuePlan(nil), fact.DuePlans...),
+		Requirements: append([]execution.DataRequirement(nil), fact.Requirements...),
+		QueryFacts:   resolvedFacts,
+	}, nil
 }
 
 func (source *productionFrozenExecution) ResolveFinalization(

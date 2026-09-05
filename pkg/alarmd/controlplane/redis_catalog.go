@@ -107,6 +107,7 @@ type RedisCatalogRepository struct {
 	client                     redis.Cmdable
 	prefix                     string
 	ttl                        time.Duration
+	snapshotCache              *verifiedSnapshotCache
 	legacyMigrationMaxScanKeys int
 	legacyMigrationTimeout     time.Duration
 	observer                   observability.Observer
@@ -128,7 +129,8 @@ func NewRedisCatalogRepository(client redis.Cmdable, prefix string, ttl time.Dur
 	if client == nil || prefix == "" || strings.ContainsAny(prefix, "{} \t\r\n") || ttl <= 0 {
 		return nil, errors.New("alarmd controlplane: invalid Redis catalog repository")
 	}
-	return &RedisCatalogRepository{client: client, prefix: prefix, ttl: ttl}, nil
+	return &RedisCatalogRepository{client: client, prefix: prefix, ttl: ttl,
+		snapshotCache: newVerifiedSnapshotCache(verifiedSnapshotCacheMaxEntries, verifiedSnapshotCacheMaxBytes)}, nil
 }
 
 func (repository *RedisCatalogRepository) ConfigureLegacyMigration(maxScanKeys int, timeout time.Duration) error {
@@ -461,39 +463,42 @@ func (repository *RedisCatalogRepository) LoadSnapshot(ctx context.Context, revi
 	if repository == nil || repository.client == nil || revision == "" {
 		return PublishedSnapshot{}, errors.New("alarmd controlplane: snapshot revision is required")
 	}
+	payload, epoch, err := repository.loadSnapshotPayload(ctx, revision)
+	if err != nil {
+		return PublishedSnapshot{}, err
+	}
+	snapshot, err := repository.snapshotCache.loadSnapshot(ctx, revision, payload)
+	if err != nil {
+		return PublishedSnapshot{}, err
+	}
+	snapshot.Publication = SnapshotPublicationRef{SnapshotRevision: revision, PublicationEpoch: epoch}
+	return snapshot, nil
+}
+
+func (repository *RedisCatalogRepository) loadSnapshotPayload(
+	ctx context.Context,
+	revision execution.SnapshotRevision,
+) ([]byte, uint64, error) {
 	values, err := repository.client.MGet(ctx, repository.snapshotKey(revision), repository.epochForRevisionKey(revision)).Result()
 	if err != nil {
-		return PublishedSnapshot{}, activationDependencyIO(err)
+		return nil, 0, activationDependencyIO(err)
 	}
 	if len(values) != 2 || values[0] == nil || values[1] == nil {
-		return PublishedSnapshot{}, ErrSnapshotUnavailable
+		return nil, 0, ErrSnapshotUnavailable
 	}
 	payload, ok := legacyRedisBytes(values[0])
 	if !ok {
-		return PublishedSnapshot{}, &PersistedSnapshotCorruptError{Err: errors.New("invalid payload")}
-	}
-	var content struct {
-		SchemaVersion    string       `json:"schema_version"`
-		SnapshotRevision string       `json:"snapshot_revision"`
-		QueryGroups      []QueryGroup `json:"query_groups"`
-	}
-	if err := json.Unmarshal(payload, &content); err != nil {
-		return PublishedSnapshot{}, &PersistedSnapshotCorruptError{Err: fmt.Errorf("decode: %w", err)}
+		return nil, 0, &PersistedSnapshotCorruptError{Err: errors.New("invalid payload")}
 	}
 	epochText, ok := values[1].(string)
 	if !ok {
-		return PublishedSnapshot{}, &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
+		return nil, 0, &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
 	}
 	epoch, err := strconv.ParseUint(epochText, 10, 64)
-	if err != nil || epoch == 0 || content.SchemaVersion != snapshotSchemaVersion || content.SnapshotRevision != string(revision) || content.QueryGroups == nil {
-		return PublishedSnapshot{}, &PersistedSnapshotCorruptError{Err: errors.New("invalid schema, identity, or publication epoch")}
+	if err != nil || epoch == 0 {
+		return nil, 0, &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
 	}
-	derivedRevision, err := deriveSnapshotRevision(content.QueryGroups)
-	if err != nil || derivedRevision != revision {
-		return PublishedSnapshot{}, &PersistedSnapshotCorruptError{Err: errors.New("content does not match revision")}
-	}
-	return PublishedSnapshot{SchemaVersion: content.SchemaVersion,
-		Publication: SnapshotPublicationRef{SnapshotRevision: revision, PublicationEpoch: epoch}, QueryGroups: content.QueryGroups}, nil
+	return payload, epoch, nil
 }
 
 // LoadPublishedSnapshot resolves one exact publication occurrence without
@@ -509,6 +514,18 @@ func (repository *RedisCatalogRepository) LoadPublishedSnapshot(
 	if err != nil {
 		return PublishedSnapshot{}, err
 	}
+	if err := repository.validatePublicationOccurrence(ctx, publication, snapshot.Publication); err != nil {
+		return PublishedSnapshot{}, err
+	}
+	snapshot.Publication = publication
+	return snapshot, nil
+}
+
+func (repository *RedisCatalogRepository) validatePublicationOccurrence(
+	ctx context.Context,
+	publication SnapshotPublicationRef,
+	current SnapshotPublicationRef,
+) error {
 	revision, err := repository.client.Get(ctx, repository.publicationKey(publication.PublicationEpoch)).Result()
 	if errors.Is(err, redis.Nil) {
 		revision, err = repository.client.HGet(
@@ -516,18 +533,17 @@ func (repository *RedisCatalogRepository) LoadPublishedSnapshot(
 		).Result()
 	}
 	if errors.Is(err, redis.Nil) {
-		if snapshot.Publication != publication {
-			return PublishedSnapshot{}, ErrSnapshotUnavailable
+		if current != publication {
+			return ErrSnapshotUnavailable
 		}
 	} else if err != nil {
-		return PublishedSnapshot{}, activationDependencyIO(err)
+		return activationDependencyIO(err)
 	} else if revision != string(publication.SnapshotRevision) {
-		return PublishedSnapshot{}, &PersistedSnapshotCorruptError{
+		return &PersistedSnapshotCorruptError{
 			Err: errors.New("publication occurrence differs from Snapshot revision"),
 		}
 	}
-	snapshot.Publication = publication
-	return snapshot, nil
+	return nil
 }
 
 func (repository *RedisCatalogRepository) LoadLatestPublication(ctx context.Context) (SnapshotPublicationRef, error) {
@@ -559,16 +575,34 @@ func (repository *RedisCatalogRepository) LoadQueryGroup(ctx context.Context, re
 	if identity == "" {
 		return QueryGroup{}, errors.New("alarmd controlplane: query group identity is required")
 	}
-	snapshot, err := repository.LoadSnapshot(ctx, revision)
+	payload, _, err := repository.loadSnapshotPayload(ctx, revision)
 	if err != nil {
 		return QueryGroup{}, err
 	}
-	for _, group := range snapshot.QueryGroups {
-		if group.Identity == identity {
-			return group, nil
-		}
+	return repository.snapshotCache.loadQueryGroup(ctx, revision, payload, identity)
+}
+
+func (repository *RedisCatalogRepository) loadPublishedQueryGroup(
+	ctx context.Context,
+	publication SnapshotPublicationRef,
+	identity execution.QueryGroupIdentity,
+) (QueryGroup, error) {
+	if publication.validate() != nil || identity == "" {
+		return QueryGroup{}, errors.New("alarmd controlplane: complete publication and Query Group are required")
 	}
-	return QueryGroup{}, ErrCatalogObjectUnavailable
+	payload, epoch, err := repository.loadSnapshotPayload(ctx, publication.SnapshotRevision)
+	if err != nil {
+		return QueryGroup{}, err
+	}
+	entry, _, err := repository.snapshotCache.load(ctx, publication.SnapshotRevision, payload)
+	if err != nil {
+		return QueryGroup{}, err
+	}
+	current := SnapshotPublicationRef{SnapshotRevision: publication.SnapshotRevision, PublicationEpoch: epoch}
+	if err := repository.validatePublicationOccurrence(ctx, publication, current); err != nil {
+		return QueryGroup{}, err
+	}
+	return decodeCachedQueryGroup(entry, identity)
 }
 
 // LoadPlan resolves a Plan by its stable identity inside one frozen Snapshot.

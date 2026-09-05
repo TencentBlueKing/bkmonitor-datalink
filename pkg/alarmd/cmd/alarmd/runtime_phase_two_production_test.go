@@ -1616,6 +1616,22 @@ func (repository *fakeProductionCatalogRepository) LoadSnapshot(
 	return repository.snapshot, nil
 }
 
+func (repository *fakeProductionCatalogRepository) LoadQueryGroup(
+	_ context.Context,
+	revision execution.SnapshotRevision,
+	identity execution.QueryGroupIdentity,
+) (controlplane.QueryGroup, error) {
+	if repository.snapshot.Publication.SnapshotRevision != revision {
+		return controlplane.QueryGroup{}, errors.New("unexpected Snapshot revision")
+	}
+	for _, group := range repository.snapshot.QueryGroups {
+		if group.Identity == identity {
+			return group, nil
+		}
+	}
+	return controlplane.QueryGroup{}, controlplane.ErrCatalogObjectUnavailable
+}
+
 type fakeInitialScheduleActivator struct {
 	state       controlplane.ActivationState
 	publication controlplane.SnapshotPublicationRef

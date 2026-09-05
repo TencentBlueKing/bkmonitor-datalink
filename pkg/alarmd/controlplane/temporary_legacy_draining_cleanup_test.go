@@ -19,18 +19,25 @@ import (
 
 	"github.com/go-redis/redis/v8"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
+const temporaryLegacyRuntimeScopeDigest = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+
 type temporaryLegacyProgressReader struct {
-	facts map[execution.QueryGroupIdentity]controlplane.TemporaryLegacyDrainingProgressFact
+	facts  map[execution.QueryGroupIdentity]controlplane.TemporaryLegacyDrainingProgressFact
+	errors map[execution.QueryGroupIdentity]error
 }
 
 func (reader *temporaryLegacyProgressReader) LoadTemporaryLegacyDrainingProgress(
 	_ context.Context,
 	identity execution.ProgressIdentity,
 ) (controlplane.TemporaryLegacyDrainingProgressFact, error) {
+	if err := reader.errors[identity.QueryGroup]; err != nil {
+		return controlplane.TemporaryLegacyDrainingProgressFact{}, err
+	}
 	return reader.facts[identity.QueryGroup], nil
 }
 
@@ -38,6 +45,9 @@ func (reader *temporaryLegacyProgressReader) LoadProgress(
 	_ context.Context,
 	identity execution.ProgressIdentity,
 ) (execution.ProgressLoadResult, error) {
+	if err := reader.errors[identity.QueryGroup]; err != nil {
+		return execution.ProgressLoadResult{}, err
+	}
 	return reader.facts[identity.QueryGroup].Load, nil
 }
 
@@ -121,7 +131,9 @@ func TestTemporaryLegacyDrainingCleanupDryRunAndApplyOneAtomicTransition(t *test
 		CutoverBoundary:            240,
 		Targets:                    targets,
 	}
-	cleanup, err := controlplane.NewTemporaryLegacyDrainingCleanup(repository, compiler, semantics, progressReader)
+	cleanup, err := controlplane.NewTemporaryLegacyDrainingCleanup(
+		repository, compiler, semantics, progressReader, temporaryLegacyRuntimeScopeDigest,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,6 +215,16 @@ type temporaryLegacyCleanupFixture struct {
 
 func newTemporaryLegacyCleanupFixture(t *testing.T) temporaryLegacyCleanupFixture {
 	t.Helper()
+	return newTemporaryLegacyCleanupFixtureWithCatalog(t, twoQueryGroupCatalog(t), true, 0)
+}
+
+func newTemporaryLegacyCleanupFixtureWithCatalog(
+	t *testing.T,
+	source controlplane.Catalog,
+	addAbsentDraining bool,
+	nonTargetNextSlot execution.EvaluationTime,
+) temporaryLegacyCleanupFixture {
+	t.Helper()
 	client := newControlplaneRedis(t)
 	ctx := context.Background()
 	prefix := "alarmd:control:temporary-legacy-draining-fixture"
@@ -224,7 +246,7 @@ func newTemporaryLegacyCleanupFixture(t *testing.T) temporaryLegacyCleanupFixtur
 	if err != nil {
 		t.Fatal(err)
 	}
-	initialCatalog := catalogWithAllSchedules(t, twoQueryGroupCatalog(t), 60, 0)
+	initialCatalog := catalogWithAllSchedules(t, source, 60, 0)
 	initialSnapshot, _, err := repository.PublishCatalog(ctx, initialCatalog)
 	if err != nil {
 		t.Fatal(err)
@@ -239,19 +261,23 @@ func newTemporaryLegacyCleanupFixture(t *testing.T) temporaryLegacyCleanupFixtur
 		t.Fatal(err)
 	}
 	retired, err := reconciler.Ensure(ctx, emptySnapshot.Publication)
-	if err != nil || len(retired.Draining) != 2 {
+	if err != nil || len(retired.Draining) < 2 {
 		t.Fatalf("retirement=(%#v,%v)", retired, err)
 	}
-	legacyTargets := append([]controlplane.DrainingQueryGroup(nil), retired.Draining...)
-	retired.Draining = append(retired.Draining, controlplane.DrainingQueryGroup{
-		QueryGroup: execution.QueryGroupIdentity(strings.Repeat("c", 64)), RetiredBoundary: 180,
-	})
-	retiredRaw, err := json.Marshal(retired)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Set(ctx, prefix+":activation", retiredRaw, 0).Err(); err != nil {
-		t.Fatal(err)
+	orderedDraining := append([]controlplane.DrainingQueryGroup(nil), retired.Draining...)
+	sort.Slice(orderedDraining, func(i, j int) bool { return orderedDraining[i].QueryGroup < orderedDraining[j].QueryGroup })
+	legacyTargets := orderedDraining[:2]
+	if addAbsentDraining {
+		retired.Draining = append(retired.Draining, controlplane.DrainingQueryGroup{
+			QueryGroup: execution.QueryGroupIdentity(strings.Repeat("c", 64)), RetiredBoundary: 180,
+		})
+		retiredRaw, marshalErr := json.Marshal(retired)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if err := client.Set(ctx, prefix+":activation", retiredRaw, 0).Err(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	candidateSnapshot, _, err := repository.PublishCatalog(ctx, initialCatalog)
 	if err != nil {
@@ -275,6 +301,14 @@ func newTemporaryLegacyCleanupFixture(t *testing.T) temporaryLegacyCleanupFixtur
 			QueryGroup: draining.QueryGroup, RetiredBoundary: 180, ProgressNextSlot: 120,
 		})
 	}
+	for _, draining := range orderedDraining[2:] {
+		progressReader.facts[draining.QueryGroup] = controlplane.TemporaryLegacyDrainingProgressFact{
+			Load: execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+				Identity: execution.ProgressIdentity{QueryGroup: draining.QueryGroup},
+				NextSlot: nonTargetNextSlot, LastFullSlot: 120, LastCompletionKind: execution.CompletionFull,
+			}},
+		}
+	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].QueryGroup < targets[j].QueryGroup })
 	request := controlplane.TemporaryLegacyDrainingCleanupRequest{
 		SchemaVersion:              controlplane.TemporaryLegacyDrainingCleanupSchemaVersion,
@@ -285,7 +319,9 @@ func newTemporaryLegacyCleanupFixture(t *testing.T) temporaryLegacyCleanupFixtur
 		CutoverBoundary:            240,
 		Targets:                    targets,
 	}
-	cleanup, err := controlplane.NewTemporaryLegacyDrainingCleanup(repository, compiler, semantics, progressReader)
+	cleanup, err := controlplane.NewTemporaryLegacyDrainingCleanup(
+		repository, compiler, semantics, progressReader, temporaryLegacyRuntimeScopeDigest,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,6 +342,122 @@ func TestTemporaryLegacyDrainingCleanupRemovesOnlyExplicitTargets(t *testing.T) 
 	activation, err := fixture.repository.LoadActivation(context.Background())
 	if err != nil || len(activation.Draining) != 1 || activation.Draining[0].QueryGroup != execution.QueryGroupIdentity(strings.Repeat("c", 64)) {
 		t.Fatalf("non-target Draining after Apply=(%#v,%v)", activation.Draining, err)
+	}
+}
+
+func TestTemporaryLegacyDrainingCleanupReactivatesNormallyDrainedNonTarget(t *testing.T) {
+	fixture := newTemporaryLegacyCleanupFixtureWithCatalog(t, threeQueryGroupCatalog(t), false, 180)
+	nonTarget := temporaryLegacyNonTargetQueryGroup(t, fixture)
+	result, err := fixture.cleanup.Apply(context.Background(), fixture.request, fixture.plan.Digest)
+	if err != nil || result.Status != controlplane.TemporaryLegacyDrainingCleanupApplied {
+		t.Fatalf("Apply()=(%#v,%v)", result, err)
+	}
+	activation, err := fixture.repository.LoadActivation(context.Background())
+	if err != nil || len(activation.Draining) != 0 || activation.ActiveQGSetRef.QGCount != 3 {
+		t.Fatalf("Activation after normal non-target reactivation=(%#v,%v)", activation, err)
+	}
+	compiler, semantics := runtimePlanCompiler(t)
+	runtime, err := controlplane.NewRedisCatalogRuntime(fixture.repository, compiler, semantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSchedule, err := runtime.ReadFrozenSchedule(context.Background(), nonTarget, 120)
+	if err != nil || oldSchedule.Segment.End == nil || *oldSchedule.Segment.End != 180 {
+		t.Fatalf("normal non-target old Schedule=(%#v,%v), want retirement B=180", oldSchedule, err)
+	}
+	newSchedule, err := runtime.ReadFrozenSchedule(context.Background(), nonTarget, fixture.request.CutoverBoundary)
+	if err != nil || newSchedule.Segment.Start != fixture.request.CutoverBoundary {
+		t.Fatalf("normal non-target new Schedule=(%#v,%v)", newSchedule, err)
+	}
+}
+
+func TestTemporaryLegacyDrainingCleanupFailsClosedForUnsafeNonTarget(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*temporaryLegacyCleanupFixture, execution.QueryGroupIdentity)
+	}{
+		{name: "not drained", mutate: func(fixture *temporaryLegacyCleanupFixture, queryGroup execution.QueryGroupIdentity) {
+			fixture.progressReader.facts[queryGroup].Load.Progress.NextSlot = 120
+		}},
+		{name: "Progress read failure", mutate: func(fixture *temporaryLegacyCleanupFixture, queryGroup execution.QueryGroupIdentity) {
+			fixture.progressReader.errors = map[execution.QueryGroupIdentity]error{queryGroup: errors.New("Progress unavailable")}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newTemporaryLegacyCleanupFixtureWithCatalog(t, threeQueryGroupCatalog(t), false, 180)
+			nonTarget := temporaryLegacyNonTargetQueryGroup(t, fixture)
+			test.mutate(&fixture, nonTarget)
+			before := temporaryLegacyRedisValues(t, fixture.client)
+			if _, err := fixture.cleanup.Apply(context.Background(), fixture.request, fixture.plan.Digest); err == nil {
+				t.Fatalf("Apply(%s) unexpectedly succeeded", test.name)
+			}
+			if after := temporaryLegacyRedisValues(t, fixture.client); !reflect.DeepEqual(after, before) {
+				t.Fatalf("Apply(%s) changed Redis\nbefore=%#v\nafter=%#v", test.name, before, after)
+			}
+		})
+	}
+}
+
+func TestTemporaryLegacyDrainingCleanupRequiresPAsNextLegalSlotAfterCompletion(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*execution.ScheduleProgress)
+	}{
+		{name: "corrupt FULL watermark", mutate: func(progress *execution.ScheduleProgress) {
+			progress.LastFullSlot = 30
+		}},
+		{name: "off-schedule skipped watermark", mutate: func(progress *execution.ScheduleProgress) {
+			progress.LastFullSlot = 0
+			progress.LastCompletionKind = execution.CompletionGapSkipped
+			progress.CurrentOrRecentGap = &execution.ProgressGapSummary{
+				Kind: execution.CompletionGapSkipped, ReasonCode: execution.ReasonCode(contract.ReasonGapSkipped),
+				FirstSlot: 30, LastSlot: 30, Count: 1,
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newTemporaryLegacyCleanupFixture(t)
+			target := fixture.request.Targets[0].QueryGroup
+			fact := fixture.progressReader.facts[target]
+			test.mutate(fact.Load.Progress)
+			fixture.progressReader.facts[target] = fact
+			before := temporaryLegacyRedisValues(t, fixture.client)
+			if _, err := fixture.cleanup.DryRun(context.Background(), fixture.request); err == nil {
+				t.Fatal("DryRun() accepted P without proving it is the next legal Slot after completion")
+			}
+			if after := temporaryLegacyRedisValues(t, fixture.client); !reflect.DeepEqual(after, before) {
+				t.Fatalf("DryRun() changed Redis\nbefore=%#v\nafter=%#v", before, after)
+			}
+		})
+	}
+}
+
+func TestTemporaryLegacyDrainingCleanupApplyRejectsDifferentRuntimeScopeBeforeEval(t *testing.T) {
+	fixture := newTemporaryLegacyCleanupFixture(t)
+	compiler, semantics := runtimePlanCompiler(t)
+	otherScopeCleanup, err := controlplane.NewTemporaryLegacyDrainingCleanup(
+		fixture.repository,
+		compiler,
+		semantics,
+		fixture.progressReader,
+		"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook := &temporaryLegacyEvalHook{}
+	fixture.client.AddHook(hook)
+	before := temporaryLegacyRedisValues(t, fixture.client)
+	result, err := otherScopeCleanup.Apply(context.Background(), fixture.request, fixture.plan.Digest)
+	if !errors.Is(err, controlplane.ErrTemporaryLegacyDrainingCleanupConflict) ||
+		result.Status != controlplane.TemporaryLegacyDrainingCleanupConflictZeroWrite {
+		t.Fatalf("Apply(other runtime scope)=(%#v,%v)", result, err)
+	}
+	if hook.evalCalls != 0 {
+		t.Fatalf("Apply(other runtime scope) EVAL calls=%d, want 0", hook.evalCalls)
+	}
+	if after := temporaryLegacyRedisValues(t, fixture.client); !reflect.DeepEqual(after, before) {
+		t.Fatalf("Apply(other runtime scope) changed Redis\nbefore=%#v\nafter=%#v", before, after)
 	}
 }
 
@@ -585,4 +737,58 @@ func temporaryLegacyActiveSetPayload(
 		t.Fatal(err)
 	}
 	return encoded
+}
+
+func temporaryLegacyNonTargetQueryGroup(
+	t *testing.T,
+	fixture temporaryLegacyCleanupFixture,
+) execution.QueryGroupIdentity {
+	t.Helper()
+	targets := make(map[execution.QueryGroupIdentity]struct{}, len(fixture.request.Targets))
+	for _, target := range fixture.request.Targets {
+		targets[target.QueryGroup] = struct{}{}
+	}
+	for queryGroup := range fixture.progressReader.facts {
+		if _, target := targets[queryGroup]; !target {
+			return queryGroup
+		}
+	}
+	t.Fatal("non-target Query Group is absent")
+	return ""
+}
+
+func threeQueryGroupCatalog(t *testing.T) controlplane.Catalog {
+	t.Helper()
+	documents := realThresholdDocuments(t)
+	identities := []controlplane.SourceIdentity{
+		{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
+		{TenantID: "tenant-a", BusinessID: "3", SpaceScope: "bkcc__3"},
+		{TenantID: "tenant-a", BusinessID: "4", SpaceScope: "bkcc__4"},
+	}
+	strategies := make([]controlplane.SourceStrategy, 0, len(identities))
+	sourceIDs := []string{"1001", "1002", "1003"}
+	for index, identity := range identities {
+		var document map[string]any
+		if err := json.Unmarshal(documents[index%len(documents)], &document); err != nil {
+			t.Fatal(err)
+		}
+		document["bk_biz_id"] = float64(index + 2)
+		document["id"] = float64(1001 + index)
+		document["space_uid"] = identity.SpaceScope
+		payload, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		strategies = append(strategies, controlplane.SourceStrategy{
+			SourceID: sourceIDs[index], Document: payload, Identity: identity,
+		})
+	}
+	planner := queryPlannerFunc(func(_ context.Context, source controlplane.PrimaryQuerySource) (execution.QueryPlanFacts, error) {
+		return queryFactsFor(t, source.Identity.BusinessID, source.Identity.SpaceScope), nil
+	})
+	catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{Strategies: strategies, Planner: planner})
+	if err != nil || len(catalog.QueryGroups) != 3 {
+		t.Fatalf("three Query Group Catalog=(%#v,%v)", catalog, err)
+	}
+	return catalog
 }

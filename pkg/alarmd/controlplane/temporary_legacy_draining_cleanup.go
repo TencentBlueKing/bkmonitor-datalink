@@ -56,6 +56,7 @@ type TemporaryLegacyDrainingProgressFact struct {
 }
 
 type TemporaryLegacyDrainingProgressReader interface {
+	ScheduleActivationProgressReader
 	LoadTemporaryLegacyDrainingProgress(context.Context, execution.ProgressIdentity) (TemporaryLegacyDrainingProgressFact, error)
 }
 
@@ -71,6 +72,7 @@ type TemporaryLegacyDrainingTargetPlan struct {
 type TemporaryLegacyDrainingCleanupPlan struct {
 	SchemaVersion            string                              `json:"schema_version"`
 	Digest                   string                              `json:"digest,omitempty"`
+	RuntimeScopeDigest       string                              `json:"runtime_scope_digest"`
 	ActivationDigest         string                              `json:"activation_digest"`
 	NextActivationDigest     string                              `json:"next_activation_digest"`
 	ScheduleTransitionDigest string                              `json:"schedule_transition_digest"`
@@ -109,6 +111,7 @@ type TemporaryLegacyDrainingCleanup struct {
 	compiler       RuntimePlanCompiler
 	stateSemantics strategy.StateSemantics
 	progress       TemporaryLegacyDrainingProgressReader
+	runtimeScope   string
 }
 
 type temporaryLegacyDrainingPrepared struct {
@@ -134,11 +137,16 @@ func NewTemporaryLegacyDrainingCleanup(
 	compiler RuntimePlanCompiler,
 	stateSemantics strategy.StateSemantics,
 	progress TemporaryLegacyDrainingProgressReader,
+	runtimeScopeDigest string,
 ) (*TemporaryLegacyDrainingCleanup, error) {
-	if repository == nil || compiler == nil || !validStateSemantics(stateSemantics) || progress == nil {
+	if repository == nil || compiler == nil || !validStateSemantics(stateSemantics) || progress == nil ||
+		!completeSHA256Digest(runtimeScopeDigest) {
 		return nil, errors.New("alarmd controlplane: temporary legacy Draining cleanup dependencies are incomplete")
 	}
-	return &TemporaryLegacyDrainingCleanup{repository: repository, compiler: compiler, stateSemantics: stateSemantics, progress: progress}, nil
+	return &TemporaryLegacyDrainingCleanup{
+		repository: repository, compiler: compiler, stateSemantics: stateSemantics,
+		progress: progress, runtimeScope: runtimeScopeDigest,
+	}, nil
 }
 
 func (cleanup *TemporaryLegacyDrainingCleanup) DryRun(
@@ -288,7 +296,13 @@ func (cleanup *TemporaryLegacyDrainingCleanup) prepare(
 			continue
 		}
 		if _, target := targetByGroup[draining.QueryGroup]; !target {
-			return temporaryLegacyDrainingPrepared{}, ErrTemporaryLegacyDrainingCleanupConflict
+			drained, loadErr := repository.queryGroupDrained(ctx, draining.QueryGroup, draining.RetiredBoundary, cleanup.progress)
+			if loadErr != nil {
+				return temporaryLegacyDrainingPrepared{}, loadErr
+			}
+			if !drained {
+				return temporaryLegacyDrainingPrepared{}, ErrReactivationNotDrained
+			}
 		}
 		reactivating[draining.QueryGroup] = struct{}{}
 	}
@@ -343,6 +357,7 @@ func (cleanup *TemporaryLegacyDrainingCleanup) prepare(
 	}
 	plan := TemporaryLegacyDrainingCleanupPlan{
 		SchemaVersion:            TemporaryLegacyDrainingCleanupSchemaVersion,
+		RuntimeScopeDigest:       cleanup.runtimeScope,
 		ActivationDigest:         digestBytes(activationRaw),
 		NextActivationDigest:     digestBytes(nextActivationRaw),
 		ScheduleTransitionDigest: scheduleTransitionDigest,
@@ -411,11 +426,15 @@ func validateTemporaryLegacyDrainingCleanupRequest(request TemporaryLegacyDraini
 }
 
 func completeQueryGroupIdentity(identity execution.QueryGroupIdentity) bool {
-	if len(identity) != 64 {
+	return completeSHA256Digest(string(identity))
+}
+
+func completeSHA256Digest(digest string) bool {
+	if len(digest) != 64 {
 		return false
 	}
-	decoded, err := hex.DecodeString(string(identity))
-	return err == nil && len(decoded) == sha256.Size && string(identity) == strings.ToLower(string(identity))
+	decoded, err := hex.DecodeString(digest)
+	return err == nil && len(decoded) == sha256.Size && digest == strings.ToLower(digest)
 }
 
 func digestTemporaryLegacyDrainingPlan(plan TemporaryLegacyDrainingCleanupPlan) (string, error) {
@@ -633,6 +652,13 @@ func (cleanup *TemporaryLegacyDrainingCleanup) validateTargetProgress(
 		completed = fact.Load.Progress.CurrentOrRecentGap.LastSlot
 	}
 	if completed <= 0 || completed >= target.ProgressNextSlot {
+		return TemporaryLegacyDrainingProgressFact{}, TemporaryLegacyDrainingTargetPlan{}, ErrTemporaryLegacyDrainingCleanupConflict
+	}
+	if !last.Schedule.Segment.Contains(completed) || len(last.Schedule.DuePlanRefs(completed)) == 0 {
+		return TemporaryLegacyDrainingProgressFact{}, TemporaryLegacyDrainingTargetPlan{}, ErrTemporaryLegacyDrainingCleanupConflict
+	}
+	next, ok := last.Schedule.NextSlotAfter(completed)
+	if !ok || next != target.ProgressNextSlot {
 		return TemporaryLegacyDrainingProgressFact{}, TemporaryLegacyDrainingTargetPlan{}, ErrTemporaryLegacyDrainingCleanupConflict
 	}
 	return fact, TemporaryLegacyDrainingTargetPlan{

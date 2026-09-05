@@ -7,11 +7,15 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
@@ -68,7 +72,12 @@ func runTemporaryLegacyDrainingCleanup(
 	if err != nil {
 		return err
 	}
-	runtimeClient, err := openProductionRedis(ctx, cfg.ResolvedRuntimeRedis())
+	runtimeConnection := cfg.ResolvedRuntimeRedis()
+	runtimeScopeDigest, err := temporaryLegacyDrainingRuntimeScopeDigest(runtimeConnection, cfg.Redis.StatePrefix)
+	if err != nil {
+		return err
+	}
+	runtimeClient, err := openProductionRedis(ctx, runtimeConnection)
 	if err != nil {
 		return fmt.Errorf("open temporary cleanup runtime Redis: %w", err)
 	}
@@ -127,6 +136,7 @@ func runTemporaryLegacyDrainingCleanup(
 		compiler,
 		strategySemantics,
 		temporaryLegacyProgressAdapter{store: progressStore},
+		runtimeScopeDigest,
 	)
 	if err != nil {
 		return err
@@ -145,6 +155,47 @@ func runTemporaryLegacyDrainingCleanup(
 		return errors.Join(applyErr, err)
 	}
 	return applyErr
+}
+
+func temporaryLegacyDrainingRuntimeScopeDigest(
+	connection config.RedisConnectionConfig,
+	statePrefix string,
+) (string, error) {
+	type runtimeScope struct {
+		Mode              string   `json:"mode"`
+		Address           string   `json:"address,omitempty"`
+		SentinelAddresses []string `json:"sentinel_addresses,omitempty"`
+		MasterName        string   `json:"master_name,omitempty"`
+		DB                int      `json:"db"`
+		StatePrefix       string   `json:"state_prefix"`
+	}
+	if connection.DB < 0 || statePrefix == "" || strings.TrimSpace(statePrefix) != statePrefix ||
+		strings.ContainsAny(statePrefix, "{} \t\r\n") {
+		return "", errors.New("temporary legacy Draining cleanup runtime scope is invalid")
+	}
+	scope := runtimeScope{Mode: connection.Mode, DB: connection.DB, StatePrefix: statePrefix}
+	switch connection.Mode {
+	case config.RedisModeStandalone:
+		if connection.Address == "" {
+			return "", errors.New("temporary legacy Draining cleanup standalone Redis address is required")
+		}
+		scope.Address = connection.Address
+	case config.RedisModeSentinel:
+		if len(connection.SentinelAddress) == 0 || connection.MasterName == "" {
+			return "", errors.New("temporary legacy Draining cleanup Sentinel Redis scope is incomplete")
+		}
+		scope.SentinelAddresses = append([]string(nil), connection.SentinelAddress...)
+		sort.Strings(scope.SentinelAddresses)
+		scope.MasterName = connection.MasterName
+	default:
+		return "", errors.New("temporary legacy Draining cleanup Redis mode is invalid")
+	}
+	payload, err := json.Marshal(scope)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(payload)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func loadTemporaryLegacyDrainingCleanupRequest(

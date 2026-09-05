@@ -445,6 +445,23 @@ func (bundle *phaseTwoWorkerBundle) Run(ctx context.Context) error {
 	schedulerCtx, cancelScheduler := context.WithCancel(ctx)
 	schedulerWake := make(chan struct{}, 1)
 	schedulerDone := make(chan error, 1)
+	ticksDone := make(chan struct{})
+	// Control refresh and reconcile can wait on dependencies. Keep normal
+	// generations advancing independently, with at most one pending wake.
+	go func() {
+		defer close(ticksDone)
+		for {
+			select {
+			case <-schedulerCtx.Done():
+				return
+			case <-scheduleTicker.C:
+				select {
+				case schedulerWake <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
 	go func() {
 		schedulerDone <- bundle.runScheduler(schedulerCtx, schedulerWake, false)
 	}()
@@ -455,11 +472,6 @@ func (bundle *phaseTwoWorkerBundle) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			runErr = ctx.Err()
-		case <-scheduleTicker.C:
-			select {
-			case schedulerWake <- struct{}{}:
-			default:
-			}
 		case <-refreshTicker.C:
 			runErr = bundle.refreshAndReconcile(ctx, true)
 		case <-reconcileTicker.C:
@@ -473,6 +485,7 @@ func (bundle *phaseTwoWorkerBundle) Run(ctx context.Context) error {
 		}
 	}
 	cancelScheduler()
+	<-ticksDone
 	if schedulerRunning {
 		schedulerErr := <-schedulerDone
 		if schedulerErr != nil && !errors.Is(schedulerErr, context.Canceled) {

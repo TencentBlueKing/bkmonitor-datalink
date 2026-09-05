@@ -37,7 +37,7 @@ func TestFinalizePreparedPreservesStableSiblingReceiptsDuringForceWarmingActivat
 		return execution.StateMutation{Identity: identity, ApplyVersion: applyVersion, MutationDigest: digest}
 	}
 	ports := &activationSiblingPorts{contract: contractRef, changedPlan: changedPlan, stablePlan: stablePlan}
-	coordinator := &SlotExecutionCoordinator{ports: Ports{
+	coordinator := &SlotExecutionCoordinator{budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10}, ports: Ports{
 		Activation: ports, Sequencer: ports, Admission: ports, GapGuard: ports, Events: ports, State: ports, Progress: ports,
 		Observer: observability.ObserverFunc(func(context.Context, observability.Observation) {}),
 	}}
@@ -117,6 +117,19 @@ func (ports *activationSiblingPorts) LoadActivations(_ context.Context, request 
 func (ports *activationSiblingPorts) Check(_ context.Context, request execution.SideEffectAdmissionRequest) (execution.SideEffectAdmissionResult, error) {
 	ports.admitted = append(ports.admitted, request.Plan)
 	return execution.SideEffectAdmissionResult{Admitted: true}, nil
+}
+
+func (ports *activationSiblingPorts) LoadGapsInto(ctx context.Context, request execution.GapLoadRequest, accept func(execution.GapGuardSnapshot) error) error {
+	result, err := ports.LoadGaps(ctx, request)
+	if err != nil {
+		return err
+	}
+	for _, item := range result.Items {
+		if err := accept(item); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (ports *activationSiblingPorts) LoadGaps(_ context.Context, request execution.GapLoadRequest) (execution.GapLoadResult, error) {

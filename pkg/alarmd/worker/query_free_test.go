@@ -808,6 +808,19 @@ func (ports *queryFreePorts) Check(
 	return execution.SideEffectAdmissionResult{Admitted: true}, nil
 }
 
+func (ports *queryFreePorts) LoadGapsInto(ctx context.Context, request execution.GapLoadRequest, accept func(execution.GapGuardSnapshot) error) error {
+	result, err := ports.LoadGaps(ctx, request)
+	if err != nil {
+		return err
+	}
+	for _, item := range result.Items {
+		if err := accept(item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (ports *queryFreePorts) LoadGaps(
 	_ context.Context,
 	request execution.GapLoadRequest,

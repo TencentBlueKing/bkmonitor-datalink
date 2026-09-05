@@ -34,6 +34,8 @@ type streamedExecution struct {
 	delivered   []execution.SeriesDelivery
 	series      uint64
 	retained    uint64
+	effects     effectCounts
+	gapFacts    uint64
 	began       bool
 }
 
@@ -145,6 +147,20 @@ func (stream *streamedExecution) reserveProvisional(ctx context.Context, series,
 }
 
 func (stream *streamedExecution) releaseProvisional() {
+	// QueryExecutionSource has joined all deliveries before Execute returns.
+	// Drop the owning references before advertising reusable capacity.
+	stream.header = execution.InternalExecutionHeader{}
+	stream.prepared = preparedNamedInputIndex{}
+	stream.streamed, stream.planSeries, stream.effective = nil, nil, nil
+	stream.bindings, stream.stateItems, stream.gapItems, stream.delivered = nil, nil, nil, nil
+	stream.state, stream.gaps = execution.StatePreflightResult{}, execution.GapLoadResult{}
+	stream.evaluated = execution.EvaluationResult{}
+	stream.coordinator.reservations.mu.Lock()
+	stream.coordinator.reservations.gapFacts -= stream.gapFacts
+	stream.coordinator.reservations.mu.Unlock()
+	stream.gapFacts = 0
+	stream.coordinator.releaseEffects(stream.effects)
+	stream.effects = effectCounts{}
 	stream.coordinator.releaseProvisional(stream.series, stream.retained)
 	stream.series, stream.retained = 0, 0
 }
@@ -300,6 +316,12 @@ func gapPreflightForHeader(header execution.InternalExecutionHeader) ([]executio
 }
 
 func mergeProvisional(target *execution.EvaluationResult, next execution.EvaluationResult, budget ProvisionalBudget) error {
+	if target.Contract != (execution.FrozenExecutionContractRef{}) && target.Contract != next.Contract {
+		return errors.New("alarmd worker: series evaluations changed frozen contract")
+	}
+	if err := checkEffectCounts(mergedEffectCounts(*target, next), budget); err != nil {
+		return err
+	}
 	if target.Contract == (execution.FrozenExecutionContractRef{}) {
 		target.Contract, target.Result, target.ReasonCode = next.Contract, next.Result, next.ReasonCode
 	} else if target.Contract != next.Contract {
@@ -327,23 +349,6 @@ func mergeProvisional(target *execution.EvaluationResult, next execution.Evaluat
 		plan.StateResults = append(plan.StateResults, nextPlan.StateResults...)
 		plan.GuardBeforeEvents = appendUniqueGapMutations(plan.GuardBeforeEvents, nextPlan.GuardBeforeEvents)
 		plan.GuardAfterState = appendUniqueGapMutations(plan.GuardAfterState, nextPlan.GuardAfterState)
-	}
-	var states, events, gaps uint64
-	for _, plan := range target.Plans {
-		states += uint64(len(plan.StateResults))
-		gaps += uint64(len(plan.GuardBeforeEvents) + len(plan.GuardAfterState))
-		for _, state := range plan.StateResults {
-			events += uint64(len(state.Events))
-		}
-	}
-	if states > budget.MaxStateMutations {
-		return &provisionalBudgetExceededError{budget: observability.CapacityBudgetStateMutations}
-	}
-	if events > budget.MaxEvents {
-		return &provisionalBudgetExceededError{budget: observability.CapacityBudgetEvents}
-	}
-	if gaps > budget.MaxGapMutations {
-		return &provisionalBudgetExceededError{budget: observability.CapacityBudgetGapMutations}
 	}
 	return nil
 }
@@ -536,7 +541,7 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 			return err
 		}
 		stream.observeCompletionOnlyPlan(ctx, due, result)
-		if err := mergeProvisional(&stream.evaluated, result, stream.coordinator.budget); err != nil {
+		if err := stream.mergeProvisional(ctx, result, 0); err != nil {
 			return err
 		}
 	}
@@ -576,6 +581,13 @@ func (stream *streamedExecution) validateCompletionOnlyExactSet(
 }
 
 func (stream *streamedExecution) loadGaps(ctx context.Context) error {
+	var targetBytes uint64
+	for _, due := range stream.header.DuePlans {
+		targetBytes += retainedObjectBytes(execution.PlanGapLoadItem{Identity: execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}})
+	}
+	if err := stream.retainTargetBytes(ctx, len(stream.header.DuePlans), targetBytes); err != nil {
+		return err
+	}
 	items, err := gapPreflightForHeader(stream.header)
 	if err != nil {
 		return err
@@ -583,7 +595,7 @@ func (stream *streamedExecution) loadGaps(ctx context.Context) error {
 	stream.gapItems = items
 	request := execution.GapLoadRequest{Contract: stream.header.Contract, Items: items}
 	started := time.Now()
-	stream.gaps, err = stream.coordinator.ports.GapGuard.LoadGaps(ctx, request)
+	stream.gaps, err = stream.loadGapFacts(ctx, request)
 	if err == nil {
 		err = execution.ValidateGapLoad(request, stream.gaps)
 	}
@@ -612,7 +624,7 @@ func (stream *streamedExecution) completeWithoutSeries(
 			}
 		}
 	}
-	result := execution.EvaluationResult{Contract: stream.header.Contract, Result: observability.ResultSuccess,
+	stream.evaluated = execution.EvaluationResult{Contract: stream.header.Contract, Result: observability.ResultSuccess,
 		ReasonCode: observability.ReasonNone}
 	for _, due := range stream.header.DuePlans {
 		planResult, err := stream.noSeriesPlanResult(due)
@@ -620,11 +632,10 @@ func (stream *streamedExecution) completeWithoutSeries(
 			return err
 		}
 		stream.observeCompletionOnlyPlan(ctx, due, planResult)
-		if err := mergeProvisional(&result, planResult, stream.coordinator.budget); err != nil {
+		if err := stream.mergeProvisional(ctx, planResult, 0); err != nil {
 			return err
 		}
 	}
-	stream.evaluated = result
 	return nil
 }
 
@@ -856,10 +867,10 @@ func (stream *streamedExecution) evaluateCompletedSeries(
 				break
 			}
 		}
-		return mergeProvisional(&stream.evaluated, execution.EvaluationResult{Contract: stream.header.Contract,
+		return stream.mergeProvisional(ctx, execution.EvaluationResult{Contract: stream.header.Contract,
 			Result: observability.ResultDegraded, ReasonCode: reason,
 			Plans: []execution.PlanEvaluationResult{{Plan: due.Identity, Disposition: disposition,
-				ReasonCode: reason, GuardBeforeEvents: []execution.PlanGapMutation{mutation}}}}, stream.coordinator.budget)
+				ReasonCode: reason, GuardBeforeEvents: []execution.PlanGapMutation{mutation}}}}, 0)
 	}
 	version, err := execution.BuildApplyVersion(stream.header.Contract, due.StateApplyEpoch)
 	if err != nil {
@@ -919,19 +930,11 @@ func (stream *streamedExecution) evaluateCompletedSeries(
 		return fmt.Errorf("alarmd worker: invalid series evaluation: %w", err)
 	}
 	stream.observeEvaluationCompleted(ctx, started, due, inputs, evaluated)
-	retained, err := evaluationRetainedSize(loaded, evaluated)
+	retained, err := evaluationRetainedSize(loaded, execution.EvaluationResult{})
 	if err != nil {
 		return fmt.Errorf("alarmd worker: measure evaluated retention: %w", err)
 	}
-	if err := stream.reserveProvisional(ctx, 0, retained); err != nil {
-		return err
-	}
-	stream.retained += retained
-	if err := mergeProvisional(&stream.evaluated, evaluated, stream.coordinator.budget); err != nil {
-		var exceeded *provisionalBudgetExceededError
-		if errors.As(err, &exceeded) {
-			stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, exceeded.budget, err)
-		}
+	if err := stream.mergeProvisional(ctx, evaluated, retained); err != nil {
 		return err
 	}
 	stream.state.Items = append(stream.state.Items, loaded.Items...)
@@ -1302,14 +1305,7 @@ func evaluationRecordCount(inputs []execution.SeriesEvaluationInputRequest) int6
 }
 
 func evaluationRetainedSize(state execution.StatePreflightResult, result execution.EvaluationResult) (uint64, error) {
-	encoded, err := json.Marshal(struct {
-		State  execution.StatePreflightResult
-		Result execution.EvaluationResult
-	}{State: state, Result: result})
-	if err != nil {
-		return 0, err
-	}
-	return uint64(len(encoded)), nil
+	return retainedObjectBytes(state) + retainedObjectBytes(result), nil
 }
 
 func planCompletedFullEmpty(bindings []execution.NamedInputBinding, plan execution.PlanIdentity) bool {

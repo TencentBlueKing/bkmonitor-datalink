@@ -3,6 +3,7 @@ package evaluation
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,70 @@ func TestEvaluatorRejectsBatchBudgetWithoutSideEffectPorts(t *testing.T) {
 	if _, err := e.Evaluate(context.Background(), requestFixture(t, json.RawMessage(`80`), nil)); err == nil {
 		t.Fatal("Evaluate accepted zero budget")
 	}
+}
+
+func TestEvaluatorRejectsRecordLimitBeforeCopyingPrimaryView(t *testing.T) {
+	req := requestFixture(t, json.RawMessage(`80`), nil)
+	count := 20_000
+	records := make([]contract.CanonicalRecordV2, count)
+	ordinals := make([]uint32, count)
+	for index := range records {
+		records[index] = contract.CanonicalRecordV2{RecordID: strings.Repeat("b", 64), SourceTime: 60,
+			DimensionIdentity: contract.DimensionIdentityV2{Digest: string(req.Inputs[0].SeriesIdentity)}}
+		ordinals[index] = uint32(index)
+	}
+	dataset := execution.NewDataset(records)
+	view, err := execution.NewDatasetView(dataset, ordinals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for input := range req.Inputs {
+		for binding := range req.Inputs[input].Inputs {
+			if req.Inputs[input].Inputs[binding].Role == execution.InputRolePrimary {
+				req.Inputs[input].Inputs[binding].Dataset, req.Inputs[input].Inputs[binding].View = dataset, view
+			}
+		}
+	}
+	evaluator := newEvaluator(t)
+	allocation := testing.Benchmark(func(b *testing.B) {
+		for index := 0; index < b.N; index++ {
+			_, err := evaluator.Evaluate(context.Background(), req)
+			if err == nil || !strings.Contains(err.Error(), "record budget exceeded") {
+				b.Fatalf("error=%v", err)
+			}
+		}
+	})
+	if allocation.AllocedBytesPerOp() > 64<<10 {
+		t.Fatalf("oversized PRIMARY was copied before rejection: %d bytes/op", allocation.AllocedBytesPerOp())
+	}
+}
+
+// This measures one supported 500-record series, not the process heap or the
+// maximum combination of levels and history. The input is built outside timing.
+func TestEvaluatorRetainsSupportedRecordLimit(t *testing.T) {
+	records := make([]contract.CanonicalRecordV2, 500)
+	for i := range records {
+		records[i] = contract.CanonicalRecordV2{RecordID: fmt.Sprintf("%064d", i), SourceTime: int64(100 + i*60), BusinessID: "2",
+			DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)},
+			Values:            map[string]json.RawMessage{"value": json.RawMessage(`80`)},
+			Dimensions:        map[string]json.RawMessage{"host": json.RawMessage(`"` + strings.Repeat("h", 4096) + `"`)}, ReceivedTime: int64(100 + i*60)}
+	}
+	req := requestFixtureForPlan(t, compiled(t), records, nil)
+	evaluator := newEvaluator(t)
+	evaluator.limits.MaxRecords = 500
+	evaluator.limits.Trigger.MaxEvidenceBytesPerEvent = 64 << 10
+	allocation := testing.Benchmark(func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			result, err := evaluator.Evaluate(context.Background(), req)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if len(result.Plans) != 1 || len(result.Plans[0].LevelOutcomes) != 500 || len(result.Plans[0].StateResults) != 1 || len(result.Plans[0].StateResults[0].Events) != 500 {
+				b.Fatal("supported series lost records or exceeded one folded state mutation")
+			}
+		}
+	})
+	t.Logf("500 records, one level, 4 KiB dimensions: %d bytes/op (total allocations, not live heap)", allocation.AllocedBytesPerOp())
 }
 
 func TestEvaluatorFoldsSameSeriesRecordsInSourceOrder(t *testing.T) {

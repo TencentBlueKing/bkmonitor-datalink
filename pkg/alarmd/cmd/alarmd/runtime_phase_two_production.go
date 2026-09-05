@@ -118,6 +118,15 @@ func (source *productionFrozenExecution) ResolveFinalization(
 			Targets:    request.DuePlanTargets.Clone(),
 		}, nil
 	}
+	// The Coordinator has already persisted this validated request as the unfinished
+	// projection. After recovery_until, that exact set no longer depends on Snapshot availability.
+	if source.now().UnixMilli() >= request.RecoveryUntilUnixMilli {
+		return execution.QueryFreeFinalization{
+			Contract: request.Contract, Mode: execution.FinalizationSnapshotUnavailable,
+			ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
+			Targets:    request.DuePlanTargets.Clone(),
+		}, nil
+	}
 	fact, err := source.resolveFrozenFact(ctx, request.Contract)
 	if err != nil {
 		if errors.Is(err, controlplane.ErrSnapshotUnavailable) {

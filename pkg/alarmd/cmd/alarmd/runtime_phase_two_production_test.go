@@ -509,6 +509,7 @@ func TestProductionFrozenExecutionSkipsExpiredNormalSlotWithoutRecoveryPermit(t 
 	}
 
 	request.Operation = execution.OperationNormal
+	now = time.UnixMilli(request.RecoveryUntilUnixMilli - 1)
 	for _, test := range []struct {
 		name         string
 		requirements []execution.DataRequirement
@@ -561,6 +562,59 @@ func TestProductionFrozenExecutionUsesRequestFactsWhenSnapshotDisappearsAfterFre
 	finalization.Targets.Plans[0].StrategyID = "mutated"
 	if request.DuePlanTargets.Plans[0].StrategyID == "mutated" {
 		t.Fatal("query-free finalization aliases request frozen targets")
+	}
+}
+
+func TestProductionFrozenExecutionExpiredValidProjectionDoesNotRefreeze(t *testing.T) {
+	catalog, resolver, request := productionFinalizationFixture(t)
+	resolver.now = func() time.Time { return time.UnixMilli(request.RecoveryUntilUnixMilli) }
+
+	finalization, err := resolver.ResolveFinalization(context.Background(), request)
+	if err != nil || finalization.Mode != execution.FinalizationSnapshotUnavailable ||
+		finalization.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) ||
+		!finalization.Targets.Equal(request.DuePlanTargets) {
+		t.Fatalf("ResolveFinalization(expired valid projection) = (%+v, %v)", finalization, err)
+	}
+	if catalog.readCalls != 0 || catalog.freezeCalls != 0 {
+		t.Fatalf("expired valid projection catalog reads=%d freezes=%d, want 0/0", catalog.readCalls, catalog.freezeCalls)
+	}
+}
+
+func TestProductionFrozenExecutionExpiredShortcutKeepsRequestValidation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*execution.SlotExecutionRequest)
+	}{
+		{name: "missing exact targets", mutate: func(request *execution.SlotExecutionRequest) {
+			request.DuePlanTargets = execution.FrozenDuePlanTargets{}
+		}},
+		{name: "invalid keep boundary", mutate: func(request *execution.SlotExecutionRequest) {
+			request.KeepUntilUnixMilli = request.RecoveryUntilUnixMilli
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			catalog, resolver, request := productionFinalizationFixture(t)
+			test.mutate(&request)
+			resolver.now = func() time.Time { return time.UnixMilli(request.RecoveryUntilUnixMilli) }
+			if _, err := resolver.ResolveFinalization(context.Background(), request); err == nil {
+				t.Fatal("ResolveFinalization(invalid expired request) error = nil")
+			}
+			if catalog.readCalls != 0 || catalog.freezeCalls != 0 {
+				t.Fatalf("invalid request catalog reads=%d freezes=%d, want 0/0", catalog.readCalls, catalog.freezeCalls)
+			}
+		})
+	}
+}
+
+func TestProductionFrozenExecutionUnexpiredRequestStillRefreezes(t *testing.T) {
+	catalog, resolver, request := productionFinalizationFixture(t)
+	finalization, err := resolver.ResolveFinalization(context.Background(), request)
+	if err != nil || finalization.Mode != execution.FinalizationQueryRequired {
+		t.Fatalf("ResolveFinalization(unexpired) = (%+v, %v)", finalization, err)
+	}
+	if catalog.readCalls != 1 || catalog.freezeCalls != 1 {
+		t.Fatalf("unexpired catalog reads=%d freezes=%d, want 1/1", catalog.readCalls, catalog.freezeCalls)
 	}
 }
 
@@ -679,11 +733,13 @@ func productionFinalizationFixture(t *testing.T) (*fakeFrozenCatalog, *productio
 }
 
 type fakeFrozenCatalog struct {
-	schedule  execution.FrozenQueryGroupSchedule
-	fact      execution.FrozenSlotContractFact
-	request   execution.FreezeSlotContractRequest
-	readErr   error
-	freezeErr error
+	schedule    execution.FrozenQueryGroupSchedule
+	fact        execution.FrozenSlotContractFact
+	request     execution.FreezeSlotContractRequest
+	readErr     error
+	freezeErr   error
+	readCalls   int
+	freezeCalls int
 }
 
 func (catalog *fakeFrozenCatalog) ReadFrozenSchedule(
@@ -691,6 +747,7 @@ func (catalog *fakeFrozenCatalog) ReadFrozenSchedule(
 	execution.QueryGroupIdentity,
 	execution.EvaluationTime,
 ) (execution.FrozenQueryGroupSchedule, error) {
+	catalog.readCalls++
 	if catalog.readErr != nil {
 		return execution.FrozenQueryGroupSchedule{}, catalog.readErr
 	}
@@ -701,6 +758,7 @@ func (catalog *fakeFrozenCatalog) FreezeSlotContract(
 	_ context.Context,
 	request execution.FreezeSlotContractRequest,
 ) (execution.FrozenSlotContractFact, error) {
+	catalog.freezeCalls++
 	catalog.request = request
 	if catalog.freezeErr != nil {
 		return execution.FrozenSlotContractFact{}, catalog.freezeErr

@@ -79,3 +79,20 @@ func TestShortPeriodRecoveryKeepsFiveOrTenSecondsAcrossQueriesAndPermits(t *test
 		}
 	}
 }
+
+func TestShortPeriodObserverPanicDoesNotChangeReadiness(t *testing.T) {
+	ref, frozen := frozenExecution(t)
+	frozen.DuePlans[0].ScheduleSpec = execution.ScheduleSpec{EvaluationIntervalSeconds: 10, Timezone: "UTC", CompletionDeadlineOffsetSeconds: 30}
+	frozen.DuePlans[0].CompletionDeadlineUnixMilli = int64(ref.Slot.EvaluationTime)*1000 + 30000
+	frozen.Requirements[0].Consumers[0].ConsumerDeadlineUnixMilli = frozen.DuePlans[0].CompletionDeadlineUnixMilli
+	ref = bindFrozenDueDigest(t, ref, frozen)
+	source, err := NewSource(staticFrozenPlan{plan: frozen}, &fakeProvider{}, &recordingQueryPermits{}, Config{MinReadyDelay: 30 * time.Second, Now: func() time.Time { return time.Unix(int64(ref.Slot.EvaluationTime), 0) }, Observer: observability.ObserverFunc(func(context.Context, observability.Observation) { panic("observer failure") })})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = source.Execute(context.Background(), execution.QueryExecutionRequest{Contract: ref, Operation: execution.OperationNormal, AttemptNo: 1}, &recordingConsumer{})
+	ready, ok := ReadinessDeferredAt(err)
+	if !ok || ready.Unix() != int64(ref.Slot.EvaluationTime)+10 {
+		t.Fatalf("observer changed readiness: %v", err)
+	}
+}

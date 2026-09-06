@@ -9,6 +9,8 @@ import (
 )
 
 func (source *Source) observeQueryTiming(ctx context.Context, request execution.QueryExecutionRequest, frozen FrozenPlan, prepared PreparedExecution, recoveryStart, recoveryDeadline time.Time) {
+	// Observability is a fail-open side channel, as at the Coordinator boundary.
+	defer func() { _ = recover() }()
 	if source.config.Observer == nil {
 		return
 	}

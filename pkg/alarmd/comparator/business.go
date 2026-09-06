@@ -19,6 +19,8 @@ type BusinessRun struct {
 	epoch            string
 	limits           BusinessLimits
 	entries          map[string]*businessEntry
+	scopes           map[string]*businessScope
+	goCaptureCounts  *GoCaptureCounts
 	partitions       map[BusinessPartition]*businessPartition
 	bytes            int
 	invalid          bool
@@ -55,6 +57,7 @@ type businessEntry struct {
 	subject          contract.ShadowSubjectV1
 	python, goResult *businessEvidence
 	first            time.Time
+	auditFirst       *int64
 	conflict         bool
 	goClosed         bool
 	goCompleted      time.Time
@@ -81,6 +84,8 @@ type BusinessAudit struct {
 	Completed     int64                    `json:"completed"`
 	GraceDeadline int64                    `json:"grace_deadline"`
 	ReceiptDigest string                   `json:"go_receipt_digest"`
+	ScopeIdentity string                   `json:"scope_identity,omitempty"`
+	CaptureCounts *GoCaptureCounts         `json:"go_capture_counts,omitempty"`
 }
 type BusinessEvidenceRef struct {
 	Digest   string         `json:"evidence_digest"`
@@ -107,6 +112,11 @@ func EncodeBusinessAudit(a *BusinessAudit, limit int) ([]byte, error) {
 			}
 		default:
 			return nil, errors.New("business Audit verdict")
+		}
+	case "COVERAGE":
+		want, _ = contract.DeriveCanonicalDigestV2("business-audit-id-v1", []string{a.Epoch, a.ScopeIdentity, "COVERAGE"})
+		if a.ScopeIdentity == "" || a.ReceiptDigest == "" || a.Verdict != "" || (a.Eligibility != "ELIGIBLE_FULL" && a.Eligibility != "UNPROVEN") {
+			return nil, errors.New("business coverage Audit")
 		}
 	case "EPOCH_GAP":
 		want, _ = contract.DeriveCanonicalDigestV2("business-audit-id-v1", []string{a.Epoch, "EPOCH_GAP"})
@@ -135,7 +145,7 @@ func NewBusinessRun(epoch string, ranges []BusinessRange, limits BusinessLimits)
 	if epoch == "" || len(ranges) == 0 || len(ranges) > 256 || limits.Entries <= 0 || limits.Bytes <= 0 || limits.MessageBytes <= 0 || limits.OffsetEntries <= 0 || limits.MaxAge <= 0 {
 		return nil, errors.New("business comparator limits or Epoch")
 	}
-	r := &BusinessRun{epoch: epoch, limits: limits, entries: map[string]*businessEntry{}, partitions: map[BusinessPartition]*businessPartition{}}
+	r := &BusinessRun{epoch: epoch, limits: limits, entries: map[string]*businessEntry{}, scopes: map[string]*businessScope{}, partitions: map[BusinessPartition]*businessPartition{}}
 	for _, p := range ranges {
 		if (p.Chain != contract.ShadowGo && p.Chain != contract.ShadowPython) || p.Topic == "" || p.Partition < 0 || p.Start < 0 || p.End < p.Start {
 			return nil, errors.New("business range")
@@ -200,7 +210,7 @@ func (r *BusinessRun) Observe(at time.Time, offset BusinessOffset, wire []byte) 
 		r.invalid = true
 		return errors.New("business late after terminal")
 	}
-	if old == nil && len(r.entries) >= r.limits.Entries {
+	if old == nil && len(r.entries)+len(r.scopes) >= r.limits.Entries {
 		return ErrBusinessBackpressure
 	}
 	fact := &businessEvidence{Context: frozen, Digest: e.SemanticDigest, NativeID: e.Native.EventID, Config: e.ConfigDigest, Primary: e.Primary, Locator: offset}
@@ -314,6 +324,9 @@ func (r *BusinessRun) Finalize(now, pythonCompleted time.Time, grace time.Durati
 			return nil, nil
 		}
 	}
+	if err := r.bindCoverageScopes(); err != nil {
+		return nil, err
+	}
 	keys := make([]string, 0, len(r.entries))
 	for k := range r.entries {
 		keys = append(keys, k)
@@ -343,6 +356,9 @@ func (r *BusinessRun) Finalize(now, pythonCompleted time.Time, grace time.Durati
 			continue
 		}
 		a := BusinessAudit{Schema: "business-comparison-audit-v1", Epoch: r.epoch, SubjectKind: "POINT", Subject: e.subject, Eligibility: "ELIGIBLE_BUSINESS_RESULT", Differences: []string{}, FirstSeen: e.first.UnixMilli(), Completed: completed.UnixMilli(), GraceDeadline: deadline.UnixMilli(), ReceiptDigest: e.receiptDigest}
+		if e.auditFirst != nil {
+			a.FirstSeen = *e.auditFirst
+		}
 		a.ID, _ = contract.DeriveCanonicalDigestV2("business-audit-id-v1", []string{r.epoch, key, "POINT"})
 		ref := func(f *businessEvidence) *BusinessEvidenceRef {
 			if f == nil {
@@ -394,6 +410,9 @@ func (r *BusinessRun) Finalize(now, pythonCompleted time.Time, grace time.Durati
 		_ = json.Unmarshal(wire, &copy)
 		out = append(out, copy)
 	}
+	if err := r.finalizeCoverageScopes(now, pythonCompleted, grace); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -428,7 +447,7 @@ func (r *BusinessRun) advance(p *businessPartition) {
 		if !ok {
 			return
 		}
-		if key != "" && !r.entries[key].acked {
+		if key != "" && !r.offsetAcknowledged(key) {
 			return
 		}
 		delete(p.pending, p.committed)
@@ -497,6 +516,7 @@ func (r *BusinessRun) publishPending(ctx context.Context, sink BusinessAuditSink
 			clear(p.pending)
 		}
 		clear(r.entries)
+		clear(r.scopes)
 		r.bytes = 0
 		return nil
 	}
@@ -542,7 +562,7 @@ func (r *BusinessRun) publishPending(ctx context.Context, sink BusinessAuditSink
 			return err
 		}
 	}
-	return nil
+	return r.publishCoverageScopes(ctx, sink, expired)
 }
 
 // Gap handles an actual read/codec/retention/capacity failure. Only a fixed
@@ -561,10 +581,15 @@ func (r *BusinessRun) Gap(reason string) error {
 	if err != nil {
 		return err
 	}
-	r.gap = &BusinessAudit{Schema: "business-comparison-audit-v1", Epoch: r.epoch, ID: id, SubjectKind: "EPOCH_GAP", Eligibility: "UNPROVEN", Reason: reason, Differences: []string{}}
+	r.gap = &BusinessAudit{CaptureCounts: r.captureCountsCopy(), Schema: "business-comparison-audit-v1", Epoch: r.epoch, ID: id, SubjectKind: "EPOCH_GAP", Eligibility: "UNPROVEN", Reason: reason, Differences: []string{}}
 	return nil
 }
 func (r *BusinessRun) Expire(now time.Time) error {
+	for _, scope := range r.scopes {
+		if !scope.acked && now.Sub(scope.first) > r.limits.MaxAge {
+			return r.Gap("COMPARATOR_CAPACITY_GAP")
+		}
+	}
 	for _, e := range r.entries {
 		if !e.acked && now.Sub(e.first) > r.limits.MaxAge {
 			return r.Gap("COMPARATOR_CAPACITY_GAP")

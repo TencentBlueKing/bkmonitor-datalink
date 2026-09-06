@@ -28,11 +28,15 @@ func TestFiniteRecordOfficialBusinessAndNativeClassification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	coverage, err := os.ReadFile("../contract/testdata/go-coverage-v1/envelope.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name string
 		raw  []byte
 		kind string
-	}{{"business", encoded.CopyBytes(), FiniteBusiness}, {"native", native, FiniteNative}, {"unwrapped Python", raw, FiniteGap}, {"malformed", []byte("{"), FiniteGap}} {
+	}{{"business", encoded.CopyBytes(), FiniteBusiness}, {"coverage", coverage, FiniteReceipt}, {"native", native, FiniteNative}, {"unwrapped Python", raw, FiniteGap}, {"malformed", []byte("{"), FiniteGap}} {
 		t.Run(tc.name, func(t *testing.T) {
 			msg := &sarama.ConsumerMessage{Topic: "fixture", Partition: 0, Offset: 7, Key: []byte("key"), Value: append([]byte(nil), tc.raw...), Timestamp: time.Unix(10, 0)}
 			got := finiteRecord(msg, time.Unix(20, 0), MaxConsumerRecordBytes())

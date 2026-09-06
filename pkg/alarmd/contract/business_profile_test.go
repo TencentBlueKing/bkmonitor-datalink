@@ -61,22 +61,36 @@ func TestBusinessRecoveryDifferenceDoesNotReopenEquivalence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := validateBusinessConfig(r.Config)
+	var object map[string]json.RawMessage
+	if err = json.Unmarshal(r.Config, &object); err != nil {
+		t.Fatal(err)
+	}
+	object["schema_version"] = json.RawMessage(`"comparison-config-v2"`)
+	var levels []map[string]json.RawMessage
+	if err = json.Unmarshal(object["levels"], &levels); err != nil {
+		t.Fatal(err)
+	}
+	for _, level := range levels {
+		level["recovery"] = json.RawMessage(`{"enabled":false,"consecutive_windows":0,"mode":"CONTINUOUS_TRIGGER_MISS","input_requirement":"DATA_DRIVEN"}`)
+	}
+	object["levels"], _ = json.Marshal(levels)
+	full, _ := json.Marshal(object)
+	c, err := DecodeComparisonConfigV2(full, len(full))
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, ad, err := CanonicalBusinessConfigV1(c)
+	a, ad, err := CanonicalBusinessConfigV1(*c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c.Levels[0].Recovery.Enabled = true
 	c.Levels[0].Recovery.ConsecutiveWindows = 100
-	b, bd, err := CanonicalBusinessConfigV1(c)
+	b, bd, err := CanonicalBusinessConfigV1(*c)
 	if err != nil || !bytes.Equal(a, b) || ad != bd {
 		t.Fatal("Recovery-only difference changed ABNORMAL")
 	}
 	c.Levels[0].Trigger.WindowPoints = 3
-	_, changed, err := CanonicalBusinessConfigV1(c)
+	_, changed, err := CanonicalBusinessConfigV1(*c)
 	if err != nil || changed == bd {
 		t.Fatal("actual Trigger difference omitted")
 	}

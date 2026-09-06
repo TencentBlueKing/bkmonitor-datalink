@@ -281,6 +281,11 @@ func (r *BusinessRun) BindGoReceipt(subject contract.ShadowSubjectV1, receipt *c
 	if err != nil {
 		return err
 	}
+	return r.bindGoReceipt(subject, receipt, fullDigest, configDigest, completed)
+}
+func (r *BusinessRun) bindGoReceipt(subject contract.ShadowSubjectV1, receipt *contract.ChainCoverageReceiptV1, fullDigest, configDigest string, completed time.Time) error {
+	// Both callers own a receipt validated by the public typed entry or the
+	// official envelope decoder; do not repeat codec work for every subject.
 	if receipt.Chain != contract.ShadowGo || receipt.EpochID != r.epoch || receipt.TenantID != subject.TenantID || receipt.BusinessID != subject.BusinessID || receipt.StrategyID != subject.StrategyID || receipt.Context.ComparisonConfigDigest != fullDigest || !receipt.CoverageComplete || !receipt.TerminalFact || completed.IsZero() {
 		return errors.New("business receipt closure")
 	}

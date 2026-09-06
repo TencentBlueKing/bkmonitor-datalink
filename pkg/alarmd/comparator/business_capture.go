@@ -245,7 +245,7 @@ func runBusinessCaptureWithClock(ctx context.Context, input io.Reader, sink Busi
 		case "GO_COVERAGE":
 			err = r.ObserveGoCoverage(admittedAt, frame.Offset, frame.Value)
 			if err == nil {
-				e, _ := contract.DecodeGoCoverageEnvelopeV1(frame.Value, header.Limits.MessageBytes)
+				e, _ := contract.DecodeGoCoverageRecord(frame.Value, header.Limits.MessageBytes)
 				var observed time.Time
 				if frame.ObservedAt > 0 {
 					observed = time.UnixMilli(frame.ObservedAt)

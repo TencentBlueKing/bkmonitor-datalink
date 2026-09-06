@@ -7,6 +7,7 @@ import (
 )
 
 const BusinessAbnormalConfigV1 = "python-business-abnormal-config-v1"
+const BusinessAbnormalConfigV2 = "python-business-abnormal-config-v2"
 const BusinessAbnormalReferenceV1 = "python-business-abnormal-v1"
 
 // BusinessPrimaryV1 contains only shared, actually observable ABNORMAL facts.
@@ -46,6 +47,20 @@ func CanonicalBusinessConfigV1(c ComparisonConfigV2) (json.RawMessage, string, e
 	if err != nil {
 		return nil, "", err
 	}
+	return canonicalBusinessConfig(wire, BusinessAbnormalConfigV1)
+}
+
+// CanonicalBusinessConfigV2 carries the ordered executed Query V3 closure.
+func CanonicalBusinessConfigV2(c ComparisonConfigV3) (json.RawMessage, string, error) {
+	wire, _, err := CanonicalComparisonConfigV3(c)
+	if err != nil {
+		return nil, "", err
+	}
+	return canonicalBusinessConfig(wire, BusinessAbnormalConfigV2)
+}
+
+func canonicalBusinessConfig(wire []byte, domain string) (json.RawMessage, string, error) {
+	var err error
 	var object map[string]json.RawMessage
 	if err = json.Unmarshal(wire, &object); err != nil {
 		return nil, "", err
@@ -58,12 +73,12 @@ func CanonicalBusinessConfigV1(c ComparisonConfigV2) (json.RawMessage, string, e
 		delete(l, "recovery")
 	}
 	object["levels"], _ = json.Marshal(levels)
-	object["schema_version"], _ = json.Marshal(BusinessAbnormalConfigV1)
+	object["schema_version"], _ = json.Marshal(domain)
 	wire, err = CanonicalJSONV2(object)
 	if err != nil {
 		return nil, "", err
 	}
-	digest, err := DeriveCanonicalDigestV2(BusinessAbnormalConfigV1, json.RawMessage(wire))
+	digest, err := DeriveCanonicalDigestV2(domain, json.RawMessage(wire))
 	return wire, digest, err
 }
 
@@ -79,35 +94,57 @@ func BusinessSemanticDigestV1(r BusinessAbnormalV1) (string, error) {
 // validateBusinessConfig checks the reduced domain using the existing full
 // validator. The temporary Recovery value is a validator witness only: it is
 // discarded before byte comparison and is never an execution/config fact.
-func validateBusinessConfig(raw json.RawMessage) (ComparisonConfigV2, error) {
+type businessConfigFacts struct {
+	Levels  []ShadowLevelConfigV2
+	Numeric ShadowNumericConfigV2
+	Domain  string
+}
+
+func validateBusinessConfig(raw json.RawMessage) (businessConfigFacts, error) {
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &object); err != nil {
-		return ComparisonConfigV2{}, err
+		return businessConfigFacts{}, err
 	}
 	var version string
-	if err := json.Unmarshal(object["schema_version"], &version); err != nil || version != BusinessAbnormalConfigV1 {
-		return ComparisonConfigV2{}, errors.New("business config version")
+	if err := json.Unmarshal(object["schema_version"], &version); err != nil || (version != BusinessAbnormalConfigV1 && version != BusinessAbnormalConfigV2) {
+		return businessConfigFacts{}, errors.New("business config version")
 	}
 	var levels []map[string]json.RawMessage
 	if err := json.Unmarshal(object["levels"], &levels); err != nil {
-		return ComparisonConfigV2{}, err
+		return businessConfigFacts{}, err
 	}
 	for _, l := range levels {
 		if _, exists := l["recovery"]; exists {
-			return ComparisonConfigV2{}, errors.New("business config recovery field")
+			return businessConfigFacts{}, errors.New("business config recovery field")
 		}
 		l["recovery"] = json.RawMessage(`{"enabled":false,"consecutive_windows":0,"mode":"CONTINUOUS_TRIGGER_MISS","input_requirement":"DATA_DRIVEN"}`)
 	}
 	object["levels"], _ = json.Marshal(levels)
-	object["schema_version"] = json.RawMessage(`"comparison-config-v2"`)
-	wire, _ := json.Marshal(object)
-	var c ComparisonConfigV2
-	d := json.NewDecoder(bytes.NewReader(wire))
-	d.DisallowUnknownFields()
-	if err := d.Decode(&c); err != nil {
-		return c, err
+	var c businessConfigFacts
+	var canonical []byte
+	var err error
+	if version == BusinessAbnormalConfigV1 {
+		object["schema_version"] = json.RawMessage(`"comparison-config-v2"`)
+		wire, _ := json.Marshal(object)
+		var config ComparisonConfigV2
+		d := json.NewDecoder(bytes.NewReader(wire))
+		d.DisallowUnknownFields()
+		if err = d.Decode(&config); err != nil {
+			return c, err
+		}
+		canonical, _, err = CanonicalBusinessConfigV1(config)
+		c = businessConfigFacts{Levels: config.Levels, Numeric: config.Numeric, Domain: version}
+	} else {
+		object["schema_version"] = json.RawMessage(`"comparison-config-v3"`)
+		wire, _ := json.Marshal(object)
+		var config *ComparisonConfigV3
+		config, err = DecodeComparisonConfigV3(wire, len(wire))
+		if err != nil {
+			return c, err
+		}
+		canonical, _, err = CanonicalBusinessConfigV2(*config)
+		c = businessConfigFacts{Levels: config.Levels, Numeric: config.Numeric, Domain: version}
 	}
-	canonical, _, err := CanonicalBusinessConfigV1(c)
 	if err != nil {
 		return c, err
 	}
@@ -129,7 +166,7 @@ func ValidateBusinessAbnormalV1(r *BusinessAbnormalV1) error {
 	if err != nil {
 		return err
 	}
-	digest, err := DeriveCanonicalDigestV2(BusinessAbnormalConfigV1, r.Config)
+	digest, err := DeriveCanonicalDigestV2(c.Domain, r.Config)
 	if err != nil || digest != r.ConfigDigest {
 		return errors.New("business config digest")
 	}

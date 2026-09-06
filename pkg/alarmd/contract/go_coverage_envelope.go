@@ -23,16 +23,19 @@ type EncodedGoCoverageV1 struct{ payload []byte }
 
 func (e EncodedGoCoverageV1) CopyBytes() []byte { return append([]byte(nil), e.payload...) }
 func goCoverageIdentity(e GoCoverageEnvelopeV1) (string, error) {
+	return goCoverageScopeIdentity(e.EpochID, e.Receipt)
+}
+func goCoverageScopeIdentity(epoch string, receipt ChainCoverageReceiptV1) (string, error) {
 	scope := "attempt"
-	attempt := e.Receipt.Input.QueryAttempts.ExecutionRef
-	if e.Receipt.TerminalFact {
+	attempt := receipt.Input.QueryAttempts.ExecutionRef
+	if receipt.TerminalFact {
 		scope = "terminal"
 		attempt = ""
 	}
 	return DeriveCanonicalDigestV2("go-coverage-identity-v1", struct {
 		Epoch, Tenant, Business, Strategy, Scope, Attempt string
 		Context                                           ShadowContextV1
-	}{e.EpochID, e.Receipt.TenantID, e.Receipt.BusinessID, e.Receipt.StrategyID, scope, attempt, e.Receipt.Context})
+	}{epoch, receipt.TenantID, receipt.BusinessID, receipt.StrategyID, scope, attempt, receipt.Context})
 }
 func goCoverageDigest(e GoCoverageEnvelopeV1) (string, error) {
 	e.Digest = ""
@@ -49,27 +52,8 @@ func ValidateGoCoverageEnvelopeV1(e *GoCoverageEnvelopeV1) error {
 	if err != nil || digest != e.Receipt.Context.ComparisonConfigDigest {
 		return errors.New("Go coverage config mismatch")
 	}
-	if len(e.Receipt.Levels) != len(e.Config.Levels) {
-		return errors.New("Go coverage Level closure")
-	}
-	ids := map[uint32]bool{}
-	for _, l := range e.Config.Levels {
-		ids[l.LevelID] = true
-	}
-	for _, l := range e.Receipt.Levels {
-		if !ids[l.LevelID] {
-			return errors.New("Go coverage Level closure")
-		}
-	}
-	window := e.Receipt.Input.SourceWindow
-	if window.FromTime < 0 || window.UntilTime != e.Receipt.Context.EvaluationTime || window.FromTime != window.UntilTime-int64(e.Config.Schedule.WindowSeconds) {
-		return errors.New("Go coverage source window mismatch")
-	}
-	if e.CompletedAt != nil && (!e.Receipt.TerminalFact || *e.CompletedAt <= 0) {
-		return errors.New("Go coverage terminal time")
-	}
-	if e.Receipt.CoverageComplete && e.CompletedAt == nil {
-		return errors.New("Go coverage complete requires actual terminal time")
+	if err := validateGoCoverageFacts(e.Receipt, e.Config.Levels, e.Config.Schedule.WindowSeconds, e.CompletedAt); err != nil {
+		return err
 	}
 	identity, err := goCoverageIdentity(*e)
 	if err != nil || identity != e.Identity {
@@ -145,4 +129,30 @@ func DecodeGoCoverageEnvelopeV1(wire []byte, maxBytes int) (*GoCoverageEnvelopeV
 		return nil, err
 	}
 	return &e, nil
+}
+
+func validateGoCoverageFacts(receipt ChainCoverageReceiptV1, levels []ShadowLevelConfigV2, windowSeconds uint32, completedAt *int64) error {
+	if len(receipt.Levels) != len(levels) {
+		return errors.New("Go coverage Level closure")
+	}
+	ids := map[uint32]bool{}
+	for _, l := range levels {
+		ids[l.LevelID] = true
+	}
+	for _, l := range receipt.Levels {
+		if !ids[l.LevelID] {
+			return errors.New("Go coverage Level closure")
+		}
+	}
+	window := receipt.Input.SourceWindow
+	if window.FromTime < 0 || window.UntilTime != receipt.Context.EvaluationTime || window.FromTime != window.UntilTime-int64(windowSeconds) {
+		return errors.New("Go coverage source window mismatch")
+	}
+	if completedAt != nil && (!receipt.TerminalFact || *completedAt <= 0) {
+		return errors.New("Go coverage terminal time")
+	}
+	if receipt.CoverageComplete && completedAt == nil {
+		return errors.New("Go coverage complete requires actual terminal time")
+	}
+	return nil
 }

@@ -52,10 +52,7 @@ func EncodeGoFinalEvidenceV2(input GoFrozenEvidenceInputV2, maxBytes int) (contr
 }
 
 func buildGoFinalEvidenceV2(input GoFrozenEvidenceInputV2) (*contract.FinalResultEvidenceV1, error) {
-	if !input.ACK.Confirmed || input.ACK.EventID != input.Event.EventID || input.ACK.SemanticDigest != input.Event.EventSemanticDigest {
-		return nil, errors.New("alarmd shadow: ACK does not identify this event")
-	}
-	projected, err := ProjectTriggerEventV1(ChainGo, input.Event)
+	projected, err := projectFrozenACK(input)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +64,31 @@ func buildGoFinalEvidenceV2(input GoFrozenEvidenceInputV2) (*contract.FinalResul
 	if err != nil {
 		return nil, err
 	}
+	return buildGoFinalEvidenceWithProjection(input, finalComparisonFacts{cfg.Levels, cfg.Numeric, cfg.SelectionMappingVersion}, configDigest, projected)
+}
+
+type finalComparisonFacts struct {
+	Levels                  []contract.ShadowLevelConfigV2
+	Numeric                 contract.ShadowNumericConfigV2
+	SelectionMappingVersion string
+}
+
+func projectFrozenACK(input GoFrozenEvidenceInputV2) (Projection, error) {
+	if !input.ACK.Confirmed || input.ACK.EventID != input.Event.EventID || input.ACK.SemanticDigest != input.Event.EventSemanticDigest {
+		return Projection{}, errors.New("alarmd shadow: ACK does not identify this event")
+	}
+	return ProjectTriggerEventV1(ChainGo, input.Event)
+}
+
+func buildGoFinalEvidenceWithConfig(input GoFrozenEvidenceInputV2, cfg finalComparisonFacts, configDigest string) (*contract.FinalResultEvidenceV1, error) {
+	projected, err := projectFrozenACK(input)
+	if err != nil {
+		return nil, err
+	}
+	return buildGoFinalEvidenceWithProjection(input, cfg, configDigest, projected)
+}
+
+func buildGoFinalEvidenceWithProjection(input GoFrozenEvidenceInputV2, cfg finalComparisonFacts, configDigest string, projected Projection) (*contract.FinalResultEvidenceV1, error) {
 	plan, event, ctx, frozen := input.Due.CompiledPlan, input.Event, input.Context, input.Frozen
 	version, err := execution.BuildApplyVersion(frozen, input.Due.StateApplyEpoch)
 	if err != nil {

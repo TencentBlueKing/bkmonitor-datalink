@@ -64,7 +64,7 @@ func (r *BusinessRun) observeGoCapture(at time.Time, wire []byte) (err error) {
 		return errors.New("Go original bytes/hash bound")
 	}
 	offset := BusinessOffset{BusinessPartition{contract.ShadowGo, row.Topic, row.Partition}, row.Offset, row.ValueSHA256}
-	if e, decodeErr := contract.DecodeGoCoverageEnvelopeV1(row.Value, r.limits.MessageBytes); decodeErr == nil {
+	if e, decodeErr := contract.DecodeGoCoverageRecord(row.Value, r.limits.MessageBytes); decodeErr == nil {
 		if e.EpochID != r.epoch {
 			return errors.New("Go coverage Epoch mismatch")
 		}

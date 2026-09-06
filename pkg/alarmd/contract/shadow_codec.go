@@ -119,6 +119,22 @@ func EncodeFinalResultEvidenceV1(e *FinalResultEvidenceV1, maxBytes int) ([]byte
 	}
 	return encodeShadowJSON(e, maxBytes)
 }
+
+// EncodedFinalResultV1 owns an officially validated immutable wire record.
+// Its zero value is invalid. Callers can only obtain a detached byte copy.
+type EncodedFinalResultV1 struct{ payload []byte }
+
+func EncodeImmutableFinalResultV1(e *FinalResultEvidenceV1, maxBytes int) (EncodedFinalResultV1, error) {
+	wire, err := EncodeFinalResultEvidenceV1(e, maxBytes)
+	if err != nil {
+		return EncodedFinalResultV1{}, err
+	}
+	return EncodedFinalResultV1{payload: wire}, nil
+}
+
+func (e EncodedFinalResultV1) CopyBytes() []byte {
+	return append([]byte(nil), e.payload...)
+}
 func EncodeChainCoverageReceiptV1(r *ChainCoverageReceiptV1, maxBytes int) ([]byte, error) {
 	if err := ValidateChainCoverageReceiptV1(r); err != nil {
 		return nil, err

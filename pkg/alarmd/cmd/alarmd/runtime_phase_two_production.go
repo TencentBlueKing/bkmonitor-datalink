@@ -1292,7 +1292,8 @@ func (executor observedProductionSlotExecutor) Execute(
 	observeRuntime(ctx, executor.observer, observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageSlotCompleted,
 		Operation: observability.Operation(request.Operation), ShortPeriodCompletion: shortCompletion,
-		Result: observedResult, ReasonCode: reason, Direction: observability.DirectionInternal,
+		ExecuteOutcome: executeReturnOutcome(result, err),
+		Result:         observedResult, ReasonCode: reason, Direction: observability.DirectionInternal,
 		Duration: time.Since(started), Trace: trace, Err: observedErr,
 	})
 	observability.EmitTargetFlow(ctx, "execution_outcome", trace, observability.TargetFlowFacts{ExecutionOutcomeKnown: true, Attempted: true, Completed: result.Completed, Completion: string(result.CompletionKind)})
@@ -1378,4 +1379,23 @@ func observeProductionOwnership(
 		Component: observability.ComponentOwnership, Stage: stage, Result: result,
 		Direction: observability.DirectionInternal, ReasonCode: reason, Err: err,
 	})
+}
+
+func executeReturnOutcome(result execution.SlotExecutionResult, err error) string {
+	if err != nil {
+		if _, ok := access.ReadinessDeferredAt(err); ok {
+			return "readiness_deferred"
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return "cancelled"
+		}
+		return "error"
+	}
+	if result.Completed {
+		return "completed"
+	}
+	if result.Result == observability.ResultRetrying {
+		return "retrying"
+	}
+	return "incomplete"
 }

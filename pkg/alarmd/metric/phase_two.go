@@ -14,6 +14,7 @@ import (
 )
 
 type phaseTwoMetrics struct {
+	workflow                     workflowMetrics
 	shortPeriod                  shortPeriodMetrics
 	slotTiming                   *prometheus.HistogramVec
 	work                         *prometheus.CounterVec
@@ -124,6 +125,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	}
 	metrics.shortPeriod = newShortPeriodMetrics()
 	metrics.slotTiming = newSlotTimingMetrics()
+	metrics.workflow = newWorkflowMetrics()
 	metrics.activeQGSetCount = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_query_groups", Help: "Query groups in the current immutable Active Set."})
 	metrics.activeQGSetBytes = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_object_bytes", Help: "Encoded bytes in the current immutable Active Set."})
 	metrics.activeQGSetEncode = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_encode_duration_seconds", Help: "Active Set canonical encoding duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
@@ -144,7 +146,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 }
 
 func (m phaseTwoMetrics) collectors() []prometheus.Collector {
-	return []prometheus.Collector{
+	return append(m.workflow.collectors(), []prometheus.Collector{
 		m.shortPeriod.completed, m.shortPeriod.duration, m.shortPeriod.lag,
 		m.slotTiming,
 		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations, m.sourceRefreshes,
@@ -155,10 +157,11 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 		m.undrainedDrainingQueryGroups,
 		m.algorithmEvaluations, m.algorithmInputs,
-	}
+	}...)
 }
 
 func (m phaseTwoMetrics) observe(observation observability.Observation) {
+	m.workflow.observe(observation)
 	m.shortPeriod.observe(observation)
 	m.observeSlotTiming(observation)
 	if facts := observation.SourceRefresh; facts != nil {

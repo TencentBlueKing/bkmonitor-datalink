@@ -953,7 +953,7 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 			c.ProgressCommitted(progressRequest, progress)
 		}
 	})
-	coordinator.observe(ctx, observability.ComponentProgress, observability.StageProgressCommitted, request.Operation, started, observationResult, observationReason, nil)
+	coordinator.observeCommittedProgress(ctx, request.Operation, started, observationResult, observationReason, string(completion.Kind))
 	return execution.SlotExecutionResult{Completed: true, CompletionKind: completion.Kind, Result: completion.Result, ReasonCode: completion.ReasonCode}, nil
 }
 
@@ -1394,5 +1394,18 @@ func sortTriggerEvents(events []contract.TriggerEventV1) {
 			return leftEvent.RecordRef.RecordID < rightEvent.RecordRef.RecordID
 		}
 		return leftEvent.EventID < rightEvent.EventID
+	})
+}
+
+// Called only after this invocation received and validated ProgressCommitted.
+func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx context.Context, operation execution.Operation, started time.Time, result observability.Result, reason observability.ReasonCode, kind string) {
+	if reason == "" {
+		reason = observability.ReasonNone
+	}
+	defer func() { _ = recover() }()
+	coordinator.ports.Observer.Observe(ctx, observability.Observation{
+		Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
+		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
+		Result: result, ReasonCode: reason, Duration: time.Since(started), ProgressCompletionKind: kind,
 	})
 }

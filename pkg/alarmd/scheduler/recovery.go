@@ -217,6 +217,18 @@ func (coordinator *FlightCoordinator) AcquireQueryPermit(
 	operation execution.Operation,
 	deadline time.Time,
 ) (*QueryPermit, error) {
+
+	started := time.Now()
+	defer func() {
+		if coordinator == nil || coordinator.observer == nil {
+			return
+		}
+		defer func() { _ = recover() }()
+		coordinator.observer.Observe(ctx, observability.Observation{
+			Component: observability.ComponentScheduler, Stage: observability.StageQueryPermitWait, Result: observability.ResultTerminal,
+			Duration: time.Since(started), PermitWait: &observability.PermitWaitFacts{Recovery: operation != execution.OperationNormal},
+		})
+	}()
 	if coordinator == nil || !coordinator.recoveryEnabled {
 		return nil, ErrRecoveryLimitsInvalid
 	}

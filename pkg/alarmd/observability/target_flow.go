@@ -38,6 +38,12 @@ func (c TargetFlowConfig) Validate() error {
 
 // TargetFlowFacts contains bounded lifecycle facts, never input or per-point values.
 type TargetFlowFacts struct {
+	StatePreflightCalls   uint64 `json:"state_preflight_calls_observed"`
+	StatePreflightKeys    uint64 `json:"state_preflight_keys_observed"`
+	StatePreflightNS      int64  `json:"state_preflight_ns_observed"`
+	StateApplyCalls       uint64 `json:"state_apply_calls_observed"`
+	StateApplyKeys        uint64 `json:"state_apply_keys_observed"`
+	StateApplyNS          int64  `json:"state_apply_ns_observed"`
 	EvaluationNS          int64  `json:"evaluation_ns_observed"`
 	RunID                 uint64 `json:"run_id,omitempty"`
 	FailureStage          string `json:"failure_stage,omitempty"`
@@ -122,11 +128,17 @@ func (f *TargetFlow) Selected(q string) bool {
 
 type targetFlowContextKey struct{}
 type targetFlowContext struct {
-	flow         *TargetFlow
-	queryGroup   string
-	evaluations  atomic.Uint64
-	evaluationNS atomic.Int64
-	runID        uint64
+	preflightCalls atomic.Uint64
+	preflightKeys  atomic.Uint64
+	preflightNS    atomic.Int64
+	applyCalls     atomic.Uint64
+	applyKeys      atomic.Uint64
+	applyNS        atomic.Int64
+	flow           *TargetFlow
+	queryGroup     string
+	evaluations    atomic.Uint64
+	evaluationNS   atomic.Int64
+	runID          uint64
 }
 
 func (f *TargetFlow) Context(ctx context.Context, q string) context.Context {
@@ -158,6 +170,12 @@ func EmitTargetFlow(ctx context.Context, stage string, trace TraceFields, facts 
 	}
 	facts.RunID = v.runID
 	if stage == "runner_decision" {
+		facts.StatePreflightCalls = v.preflightCalls.Load()
+		facts.StatePreflightKeys = v.preflightKeys.Load()
+		facts.StatePreflightNS = v.preflightNS.Load()
+		facts.StateApplyCalls = v.applyCalls.Load()
+		facts.StateApplyKeys = v.applyKeys.Load()
+		facts.StateApplyNS = v.applyNS.Load()
 		facts.Evaluations = v.evaluations.Load()
 		facts.EvaluationNS = v.evaluationNS.Load()
 	}
@@ -165,6 +183,24 @@ func EmitTargetFlow(ctx context.Context, stage string, trace TraceFields, facts 
 }
 func (f *TargetFlow) Observe(ctx context.Context, o Observation) {
 	if f == nil {
+		return
+	}
+	if o.Stage == StageStatePreflight || o.Stage == StageStateApplied {
+		if ctx != nil {
+			if v, ok := ctx.Value(targetFlowContextKey{}).(*targetFlowContext); ok && (o.Trace.QueryGroupKey == "" || o.Trace.QueryGroupKey == v.queryGroup) {
+				calls, keys, ns := &v.preflightCalls, &v.preflightKeys, &v.preflightNS
+				if o.Stage == StageStateApplied {
+					calls, keys, ns = &v.applyCalls, &v.applyKeys, &v.applyNS
+				}
+				calls.Add(1)
+				if o.Counts.Keys > 0 {
+					keys.Add(uint64(o.Counts.Keys))
+				}
+				if o.Duration > 0 {
+					ns.Add(int64(o.Duration))
+				}
+			}
+		}
 		return
 	}
 	if o.Stage == StageEvaluationCompleted {
@@ -189,6 +225,14 @@ func (f *TargetFlow) Observe(ctx context.Context, o Observation) {
 	}
 	o = NormalizeObservation(o)
 	facts := TargetFlowFacts{}
+	if ValidExecuteOutcome(o.ExecuteOutcome) {
+		facts.Decision = o.ExecuteOutcome
+	}
+	if ValidProgressCompletionKind(o.ProgressCompletionKind) {
+		facts.Completion = o.ProgressCompletionKind
+		facts.ExecutionOutcomeKnown = true
+		facts.Completed = true
+	}
 	if ctx != nil {
 		if v, ok := ctx.Value(targetFlowContextKey{}).(*targetFlowContext); ok {
 			facts.RunID = v.runID

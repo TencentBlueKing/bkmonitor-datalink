@@ -1686,10 +1686,13 @@ func TestPhaseTwoWorkerBundleDoesNotDuplicateAttemptedRunnerFailureObservation(t
 	failed.runErr = errors.New("executor already observed this failure")
 	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{"query-group-1"}, runner: failed}
 	var observations []observability.Observation
+	var observationsMu sync.Mutex
 	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
 		Config: cfg, Health: newPhaseTwoApplicationHealth(), Control: control, Ownership: owner, Now: time.Now,
 		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observationsMu.Lock()
 			observations = append(observations, observation)
+			observationsMu.Unlock()
 		}),
 	})
 	if err != nil {
@@ -1702,7 +1705,10 @@ func TestPhaseTwoWorkerBundleDoesNotDuplicateAttemptedRunnerFailureObservation(t
 	if err := bundle.runScheduledOnce(context.Background()); err != nil {
 		t.Fatalf("runScheduledOnce(attempted failure) error = %v", err)
 	}
-	if failures := schedulerFailureObservations(observations); len(failures) != 0 {
+	observationsMu.Lock()
+	failures := schedulerFailureObservations(observations)
+	observationsMu.Unlock()
+	if failures := failures; len(failures) != 0 {
 		t.Fatalf("attempted runner failure was observed twice: %+v", failures)
 	}
 	_ = bundle.Shutdown(context.Background())

@@ -116,6 +116,14 @@ func (l *Logger) Error(stage, result string, records int, duration time.Duration
 }
 
 func (l *LoggingObserver) Observe(ctx context.Context, observation Observation) {
+	// These facts feed complete counters/gauges. TargetFlow already carries the
+	// selected run's decision; do not spend ordinary log quota on every update.
+	if observation.Component == ComponentScheduler {
+		switch observation.Stage {
+		case StageRunnerReturned, StageDispatcherSnapshot, StageQueryPermitWait:
+			return
+		}
+	}
 	if l == nil || l.logger == nil || l.logger.next == nil || l.policy == nil {
 		return
 	}

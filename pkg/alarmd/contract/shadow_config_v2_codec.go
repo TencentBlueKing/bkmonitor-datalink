@@ -20,16 +20,17 @@ func DecodeComparisonConfigV2(b []byte, maxBytes int) (*ComparisonConfigV2, erro
 
 func checkConfigV2Fields(b []byte, kind string) error {
 	fieldsByKind := map[string][]string{
-		"config":     {"schema_version", "primary_selection_mapping_version", "selection_order", "levels", "selector", "projection", "numeric", "effective_time", "schedule"},
-		"level":      {"level_id", "priority", "connector", "detectors", "trigger", "recovery"},
-		"detector":   {"kind", "mapping_version", "source_algorithm_family", "source_mapping_version", "operator", "threshold"},
-		"trigger":    {"window_points", "required_anomalies", "step_seconds"},
-		"recovery":   {"enabled", "consecutive_windows", "mode", "input_requirement"},
-		"selector":   {"table", "metric", "aggregation", "step_millis", "query_alignment_millis", "timezone", "not_time_align", "filters", "filter_connectors", "data_source", "expression"},
-		"filter":     {"field", "operator", "values"},
-		"projection": {"value_fields", "identity_fields", "required_dimensions"},
-		"numeric":    {"source_unit", "target_unit", "multiplier", "decimal_places", "rounding"},
-		"schedule":   {"interval_seconds", "window_seconds", "alignment_seconds", "timezone"},
+		"config":            {"schema_version", "primary_selection_mapping_version", "selection_order", "levels", "selector", "projection", "numeric", "effective_time", "schedule"},
+		"level":             {"level_id", "priority", "connector", "detectors", "trigger", "recovery"},
+		"detector":          {"kind", "mapping_version", "source_algorithm_family", "source_mapping_version", "operator", "threshold"},
+		"trigger":           {"window_points", "required_anomalies", "step_seconds"},
+		"recovery":          {"enabled", "consecutive_windows", "mode", "input_requirement"},
+		"selector":          {"table", "metric", "aggregation", "step_millis", "query_alignment_millis", "timezone", "not_time_align", "filters", "filter_connectors", "data_source", "expression"},
+		"filter":            {"field", "operator", "values"},
+		"projection":        {"value_fields", "identity_fields", "required_dimensions"},
+		"numeric_proc_port": {"source_unit", "target_unit", "multiplier"},
+		"numeric":           {"source_unit", "target_unit", "multiplier", "decimal_places", "rounding"},
+		"schedule":          {"interval_seconds", "window_seconds", "alignment_seconds", "timezone"},
 	}
 	if kind == "detector" {
 		var header struct {
@@ -38,7 +39,7 @@ func checkConfigV2Fields(b []byte, kind string) error {
 		if err := json.Unmarshal(b, &header); err != nil {
 			return err
 		}
-		if header.MappingVersion == "canonical-threshold-dnf-v2" {
+		if header.MappingVersion == "canonical-threshold-dnf-v2" || header.MappingVersion == "canonical-proc-port-v1" {
 			fieldsByKind[kind] = []string{"kind", "mapping_version", "source_algorithm_family", "source_mapping_version", "semantic_config"}
 		}
 	}
@@ -64,6 +65,19 @@ func checkConfigV2Fields(b []byte, kind string) error {
 			array = true
 		case "selector", "projection", "numeric", "schedule", "trigger", "recovery":
 			child = key
+			if key == "numeric" {
+				var config ComparisonConfigV2
+				if err := json.Unmarshal(b, &config); err != nil {
+					return err
+				}
+				for _, level := range config.Levels {
+					for _, detector := range level.Detectors {
+						if detector.Kind == "ProcPort" {
+							child = "numeric_proc_port"
+						}
+					}
+				}
+			}
 		}
 		if child == "" {
 			if len(raw) > 0 && raw[0] == '[' {

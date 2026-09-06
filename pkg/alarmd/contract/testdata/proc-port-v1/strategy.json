@@ -1,0 +1,54 @@
+{
+  "bk_biz_id": 2,
+  "detects": [
+    {
+      "connector": "and",
+      "level": 1,
+      "priority": 1,
+      "trigger_config": {
+        "check_window": 1,
+        "count": 1
+      }
+    }
+  ],
+  "id": 103,
+  "items": [
+    {
+      "algorithms": [
+        {
+          "config": {},
+          "level": 1,
+          "type": "ProcPort"
+        }
+      ],
+      "expression": "a",
+      "id": 1,
+      "query_configs": [
+        {
+          "agg_dimension": [
+            "protocol",
+            "listen",
+            "nonlisten",
+            "not_accurate_listen",
+            "bind_ip",
+            "bk_target_ip",
+            "bk_target_cloud_id",
+            "display_name"
+          ],
+          "agg_interval": 60,
+          "agg_method": "MAX",
+          "alias": "a",
+          "data_source_label": "bk_monitor",
+          "data_type_label": "time_series",
+          "metric_field": "proc_exists",
+          "metric_id": "bk_monitor.proc_port",
+          "result_table_id": "system.proc_port",
+          "unit": ""
+        }
+      ],
+      "query_md5": "query-md5",
+      "unit": ""
+    }
+  ],
+  "update_time": 1
+}

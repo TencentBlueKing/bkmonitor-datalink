@@ -328,13 +328,18 @@ func mergeProvisional(target *execution.EvaluationResult, next execution.Evaluat
 	if target.Contract != (execution.FrozenExecutionContractRef{}) && target.Contract != next.Contract {
 		return errors.New("alarmd worker: series evaluations changed frozen contract")
 	}
-	if err := checkEffectCounts(mergedEffectCounts(*target, next), budget); err != nil {
+	previous, delta := countEffects(*target), addedEffectCounts(*target, next)
+	if err := checkEffectCounts(effectCounts{previous.states + delta.states, previous.events + delta.events, previous.gaps + delta.gaps}, budget); err != nil {
 		return err
 	}
+	appendProvisional(target, next)
+	return nil
+}
+
+// appendProvisional is called only after contract and capacity checks succeed.
+func appendProvisional(target *execution.EvaluationResult, next execution.EvaluationResult) {
 	if target.Contract == (execution.FrozenExecutionContractRef{}) {
 		target.Contract, target.Result, target.ReasonCode = next.Contract, next.Result, next.ReasonCode
-	} else if target.Contract != next.Contract {
-		return errors.New("alarmd worker: series evaluations changed frozen contract")
 	} else if resultRank(next.Result) > resultRank(target.Result) {
 		target.Result, target.ReasonCode = next.Result, next.ReasonCode
 	}
@@ -359,7 +364,6 @@ func mergeProvisional(target *execution.EvaluationResult, next execution.Evaluat
 		plan.GuardBeforeEvents = appendUniqueGapMutations(plan.GuardBeforeEvents, nextPlan.GuardBeforeEvents)
 		plan.GuardAfterState = appendUniqueGapMutations(plan.GuardAfterState, nextPlan.GuardAfterState)
 	}
-	return nil
 }
 
 type provisionalBudgetExceededError struct {

@@ -56,9 +56,9 @@ func containsGap(current []execution.PlanGapMutation, candidate execution.PlanGa
 	return false
 }
 
-// Mirrors mergeProvisional without appending to either source's backing arrays.
-func mergedEffectCounts(current, next execution.EvaluationResult) effectCounts {
-	count := countEffects(current)
+// Counts only additions; existing State/Event collections are never revisited.
+func addedEffectCounts(current, next execution.EvaluationResult) effectCounts {
+	var count effectCounts
 	for _, plan := range next.Plans {
 		count.states += uint64(len(plan.StateResults))
 		for _, state := range plan.StateResults {
@@ -84,7 +84,8 @@ func (stream *streamedExecution) mergeProvisional(ctx context.Context, next exec
 	if stream.evaluated.Contract != (execution.FrozenExecutionContractRef{}) && stream.evaluated.Contract != next.Contract {
 		return errors.New("alarmd worker: series evaluations changed frozen contract")
 	}
-	count := mergedEffectCounts(stream.evaluated, next)
+	delta := addedEffectCounts(stream.evaluated, next)
+	count := effectCounts{stream.effects.states + delta.states, stream.effects.events + delta.events, stream.effects.gaps + delta.gaps}
 	if err := checkEffectCounts(count, stream.coordinator.budget); err != nil {
 		var exceeded *provisionalBudgetExceededError
 		if errors.As(err, &exceeded) {
@@ -92,8 +93,6 @@ func (stream *streamedExecution) mergeProvisional(ctx context.Context, next exec
 		}
 		return err
 	}
-	previous := countEffects(stream.evaluated)
-	delta := effectCounts{count.states - previous.states, count.events - previous.events, count.gaps - previous.gaps}
 	retained += newEffectBytes(stream.evaluated, next)
 	if err := stream.coordinator.acquireEffects(delta, retained, stream, stream.reservationPhase("normal_output")); err != nil {
 		var exceeded *provisionalBudgetExceededError
@@ -102,13 +101,9 @@ func (stream *streamedExecution) mergeProvisional(ctx context.Context, next exec
 		}
 		return err
 	}
-	// The preflight above makes this merge infallible; no retained collection was
-	// touched until all shared dimensions had been acquired in the same lock.
-	if err := mergeProvisional(&stream.evaluated, next, stream.coordinator.budget); err != nil {
-		stream.coordinator.releaseEffects(delta)
-		stream.coordinator.releaseProvisional(0, retained)
-		return err
-	}
+	// The contract check and shared reservation make this append infallible.
+	// Loaded Gap facts remain independently accounted in stream.gapFacts.
+	appendProvisional(&stream.evaluated, next)
 	stream.effects.states += delta.states
 	stream.effects.events += delta.events
 	stream.effects.gaps += delta.gaps

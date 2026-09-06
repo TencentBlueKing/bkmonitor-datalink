@@ -723,6 +723,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	sort.Slice(planResults, func(left, right int) bool {
 		return lessPlanIdentity(planResults[left].Plan, planResults[right].Plan)
 	})
+	stateIndex := indexStatePreflight(loadedState)
 	var retryPendingReason execution.ReasonCode
 	var stateAdmissionTerminalReason execution.ReasonCode
 	for _, planResult := range planResults {
@@ -747,10 +748,11 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			return lessStateIdentity(stateResults[left].Mutation.Identity, stateResults[right].Mutation.Identity)
 		})
 		for _, stateResult := range stateResults {
-			view, found := loadedState.Find(stateResult.Mutation.Identity)
+			statePosition, found := stateIndex[stateResult.Mutation.Identity]
 			if !found {
 				return execution.SlotExecutionResult{}, errors.New("alarmd worker: evaluation returned state without preflight view")
 			}
+			view := loadedState.Items[statePosition]
 			started := time.Now()
 			disposition := execution.ClassifyStateMutation(view, stateResult.Mutation)
 			switch disposition {
@@ -1395,4 +1397,17 @@ func sortTriggerEvents(events []contract.TriggerEventV1) {
 		}
 		return leftEvent.EventID < rightEvent.EventID
 	})
+}
+
+// indexStatePreflight is call-local and preserves Find's first-match behavior.
+// Values refer to the already retained views; no history or level data is copied.
+func indexStatePreflight(result execution.StatePreflightResult) map[execution.StateKeyIdentity]int {
+	index := make(map[execution.StateKeyIdentity]int, len(result.Items))
+	for position := range result.Items {
+		identity := result.Items[position].Identity
+		if _, exists := index[identity]; !exists {
+			index[identity] = position
+		}
+	}
+	return index
 }

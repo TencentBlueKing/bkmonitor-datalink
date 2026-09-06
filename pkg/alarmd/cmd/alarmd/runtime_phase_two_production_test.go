@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/shadow"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -225,6 +226,36 @@ func TestG4CatalogFrozenRequirementsReachProductionAccess(t *testing.T) {
 			frozen, err := resolver.ResolveFrozenPlan(context.Background(), fact.Contract)
 			if err != nil {
 				t.Fatalf("ResolveFrozenPlan() error=%v", err)
+			}
+			if test.kind == strategy.DetectorKindThreshold {
+				if len(frozen.Requirements[0].InputProjection.ValueFields) != 0 {
+					t.Fatal("expected legacy RequiredColumns contract")
+				}
+				c, err := shadow.BuildFrozenComparisonConfigV2(frozen.DuePlans[0], frozen.Requirements, frozen.QueryFacts)
+				if err != nil || len(c.Levels) != 1 {
+					t.Fatalf("legacy frozen adapter: %v", err)
+				}
+				if len(frozen.Requirements[0].InputProjection.ValueFields) != 0 {
+					t.Fatal("adapter synthesized caller projection")
+				}
+				for _, corrupt := range []string{"identity", "dataset", "columns", "readiness", "partial_projection"} {
+					bad := append([]execution.DataRequirement(nil), frozen.Requirements...)
+					switch corrupt {
+					case "identity":
+						bad[0].RequirementID = "unproven"
+					case "dataset":
+						bad[0].DatasetName = "unproven"
+					case "columns":
+						bad[0].RequiredColumns = []string{"value"}
+					case "readiness":
+						bad[0].ReadinessClass = execution.ReadinessFinalizedRequired
+					case "partial_projection":
+						bad[0].InputProjection.ValueFields = []string{"value"}
+					}
+					if _, err := shadow.BuildFrozenComparisonConfigV2(frozen.DuePlans[0], bad, frozen.QueryFacts); !errors.Is(err, shadow.ErrFrozenConfigUnsupported) {
+						t.Fatalf("accepted unproven legacy %s: %v", corrupt, err)
+					}
+				}
 			}
 			prepared, err := access.Prepare(fact.Contract, frozen, time.Second)
 			if err != nil {

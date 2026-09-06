@@ -234,6 +234,44 @@ func (publisher *ReceiptPublisher) TryEnqueue(receipt *contract.MessageReceiptV1
 	}
 	publisher.diagnostics.ObserveValidated(receipt)
 
+	return publisher.enqueuePayload(payload)
+}
+
+// TryEnqueueFinalEvidence reuses the same bounded queue and ACK lifecycle.
+func (publisher *ReceiptPublisher) TryEnqueueFinalEvidence(evidence *contract.FinalResultEvidenceV1, maxBytes int) bool {
+	if publisher == nil || publisher.core == nil {
+		return false
+	}
+	payload, err := contract.EncodeFinalResultEvidenceV1(evidence, maxBytes)
+	if err != nil {
+		publisher.mu.Lock()
+		publisher.drops.EncodeFailed++
+		publisher.recordError(err)
+		publisher.mu.Unlock()
+		publisher.diagnostics.drop(ReceiptDropEncodeFailed, 1)
+		return false
+	}
+	return publisher.enqueuePayload(payload)
+}
+
+// TryEnqueueEncodedFinalEvidence accepts only the official codec's immutable
+// value, never caller-supplied unvalidated wire. Queue ownership is a byte copy.
+func (publisher *ReceiptPublisher) TryEnqueueEncodedFinalEvidence(evidence contract.EncodedFinalResultV1) bool {
+	if publisher == nil || publisher.core == nil {
+		return false
+	}
+	payload := evidence.CopyBytes()
+	if len(payload) == 0 {
+		publisher.mu.Lock()
+		publisher.drops.EncodeFailed++
+		publisher.mu.Unlock()
+		publisher.diagnostics.drop(ReceiptDropEncodeFailed, 1)
+		return false
+	}
+	return publisher.enqueuePayload(payload)
+}
+
+func (publisher *ReceiptPublisher) enqueuePayload(payload []byte) bool {
 	publisher.mu.Lock()
 	if !publisher.accepting {
 		publisher.drops.Closed++

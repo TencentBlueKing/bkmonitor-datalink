@@ -1,6 +1,7 @@
 package shadow_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -12,6 +13,34 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/shadow"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
+
+func TestFinalEvidenceV2EncodedRuntimePath(t *testing.T) {
+	in := frozenFinalInput(t, true)
+	e, err := shadow.BuildGoFinalEvidenceV2(in, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := contract.EncodeFinalResultEvidenceV1(e, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := shadow.EncodeGoFinalEvidenceV2(in, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(encoded.CopyBytes(), want) {
+		t.Fatal("runtime encoding changed canonical envelope")
+	}
+	copy := encoded.CopyBytes()
+	copy[0] = 'x'
+	in.Event.LevelResults[0].Result = "caller mutation"
+	if !bytes.Equal(encoded.CopyBytes(), want) {
+		t.Fatal("immutable encoding aliases caller")
+	}
+	if _, err := shadow.EncodeGoFinalEvidenceV2(frozenFinalInput(t, true), len(want)-1); err == nil {
+		t.Fatal("encoded path bypassed message bound")
+	}
+}
 
 func frozenFinalInput(t *testing.T, emptyUnit bool) shadow.GoFrozenEvidenceInputV2 {
 	t.Helper()

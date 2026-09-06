@@ -143,6 +143,9 @@ func runPhaseTwoApplicationWithDependencies(
 	httpDone := make(chan error, 1)
 	go func() { httpDone <- server.Run(httpContext, cfg.HTTP.Listen, cfg.ShutdownTimeout.Duration()) }()
 
+	if cfg.PhaseTwo.ShadowManifestPath != "" {
+		runtimeContext = context.WithValue(runtimeContext, phaseTwoShadowProfileKey{}, profile)
+	}
 	bundle, err := dependencies.openBundle(runtimeContext, cfg, recorder, logger, application.health)
 	if err != nil {
 		cancelRuntime()

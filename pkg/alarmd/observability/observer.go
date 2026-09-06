@@ -104,6 +104,9 @@ const (
 	StageCoverageCompleted    = "coverage_completed"
 	StageCoverageGap          = "coverage_gap"
 	StageReceiptQueued        = "receipt_queued"
+	StageFinalEvidenceQueued  = "final_evidence_queued"
+	StageFinalEvidenceACKed   = "final_evidence_acked"
+	StageFinalEvidenceDropped = "final_evidence_dropped"
 	StageResourceSoft         = "resource_soft"
 	StageResourceHard         = "resource_hard"
 	StageResourceResumed      = "resource_resumed"
@@ -1016,6 +1019,9 @@ var metricComponentStages = []ComponentStage{
 }
 
 var phaseTwoComponentStages = []ComponentStage{
+	{ComponentCoverage, StageFinalEvidenceQueued},
+	{ComponentCoverage, StageFinalEvidenceACKed},
+	{ComponentCoverage, StageFinalEvidenceDropped},
 	{ComponentControlPlane, StageSnapshotRefreshed}, {ComponentControlPlane, StageSnapshotUnavailable},
 	{ComponentControlPlane, StageActivationFailed},
 	{ComponentControlPlane, StageActiveQGSet}, {ComponentControlPlane, StageLegacyQGMigration},

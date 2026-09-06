@@ -98,13 +98,15 @@ type PhaseTwoCoordinatorConfig struct {
 }
 
 type PhaseTwoRuntimeConfig struct {
-	Worker       PhaseTwoWorkerConfig      `yaml:"worker"`
-	Control      PhaseTwoControlConfig     `yaml:"control"`
-	Ownership    PhaseTwoOwnershipConfig   `yaml:"ownership"`
-	Scheduler    PhaseTwoSchedulerConfig   `yaml:"scheduler"`
-	Access       PhaseTwoAccessConfig      `yaml:"access"`
-	Coordinator  PhaseTwoCoordinatorConfig `yaml:"coordinator"`
-	RuntimeRedis *RedisConnectionConfig    `yaml:"runtime_redis,omitempty"`
+	// Empty disables final Shadow evidence; the file is the frozen Epoch manifest.
+	ShadowManifestPath string                    `yaml:"shadow_manifest_path,omitempty"`
+	Worker             PhaseTwoWorkerConfig      `yaml:"worker"`
+	Control            PhaseTwoControlConfig     `yaml:"control"`
+	Ownership          PhaseTwoOwnershipConfig   `yaml:"ownership"`
+	Scheduler          PhaseTwoSchedulerConfig   `yaml:"scheduler"`
+	Access             PhaseTwoAccessConfig      `yaml:"access"`
+	Coordinator        PhaseTwoCoordinatorConfig `yaml:"coordinator"`
+	RuntimeRedis       *RedisConnectionConfig    `yaml:"runtime_redis,omitempty"`
 }
 
 func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {

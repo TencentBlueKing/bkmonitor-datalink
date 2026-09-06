@@ -49,6 +49,7 @@ type phaseTwoProductionExternalDependencies struct {
 	HTTPClient         *http.Client
 	OpenEvents         func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error)
 	AdditionalObserver observability.Observer
+	OpenFinalEvidence  func(enginekafka.DecisionSinkConfig, enginekafka.ReceiptPublisherLimits, enginekafka.ReceiptPublisherDiagnostics) (phaseTwoFinalPublisher, error)
 }
 
 func defaultPhaseTwoProductionExternalDependencies() phaseTwoProductionExternalDependencies {
@@ -104,6 +105,10 @@ func openProductionPhaseTwoBundleWithDependencies(
 		return nil, errors.New("phase-two production Bundle dependencies are incomplete")
 	}
 	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	manifest, err := loadPhaseTwoShadowManifest(ctx, cfg)
+	if err != nil {
 		return nil, err
 	}
 	if !phaseTwoProductionBudgetsFitPlatform(cfg) {
@@ -261,7 +266,13 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	querySource, err := access.NewSource(frozen, queryClient, productionQueryPermitAcquirer{flights: flights}, access.Config{
+	var finalEmitter *phaseTwoFinalEmitter
+	var frozenSource access.FrozenPlanSource = frozen
+	if manifest != nil {
+		finalEmitter = &phaseTwoFinalEmitter{manifest: *manifest, observer: observer, maxEvents: cfg.PhaseTwo.Coordinator.MaxEvents}
+		frozenSource = phaseTwoShadowResolver{next: frozen}
+	}
+	querySource, err := access.NewSource(frozenSource, queryClient, productionQueryPermitAcquirer{flights: flights}, access.Config{
 		MinReadyDelay: cfg.PhaseTwo.Access.MinReadyDelay.Duration(),
 		Now:           external.Now,
 		Observer:      observer,
@@ -294,6 +305,34 @@ func openProductionPhaseTwoBundleWithDependencies(
 			resultErr = errors.Join(resultErr, events.Close())
 		}
 	}()
+	var evaluatorPort execution.Evaluator = evaluator
+	var eventsPort execution.EventSink = events
+	if finalEmitter != nil {
+		openFinal := external.OpenFinalEvidence
+		if openFinal == nil {
+			openFinal = func(c enginekafka.DecisionSinkConfig, l enginekafka.ReceiptPublisherLimits, d enginekafka.ReceiptPublisherDiagnostics) (phaseTwoFinalPublisher, error) {
+				return enginekafka.OpenReceiptPublisherWithDiagnostics(c, l, d)
+			}
+		}
+		coordinates := cfg.Kafka.TriggerEventCoordinates()
+		coordinates.OutputTopic = manifest.GoTopic.Name
+		diagnostics := enginekafka.ReceiptPublisherDiagnostics{OnACKed: func(count uint64) {
+			finalEmitter.observeCount(context.Background(), observability.StageFinalEvidenceACKed, observability.ResultSuccess, count)
+		}, OnDrop: func(drop enginekafka.ReceiptDropEvidence) {
+			finalEmitter.observeCount(context.Background(), observability.StageFinalEvidenceDropped, observability.ResultFailed, drop.Count)
+		}}
+		finalEmitter.publisher, err = openFinal(coordinates, enginekafka.ReceiptPublisherLimits{MaxQueuedMessages: int(manifest.Limits.MaxQueueEntries), MaxQueuedBytes: int(manifest.Limits.MaxQueueBytes)}, diagnostics)
+		if err != nil {
+			finalEmitter.observe(ctx, observability.StageFinalEvidenceDropped, observability.ResultFailed)
+		}
+		defer func() {
+			if resultErr != nil && finalEmitter.publisher != nil {
+				finalEmitter.shutdown(ctx)
+			}
+		}()
+		evaluatorPort = phaseTwoShadowEvaluator{next: evaluator, emitter: finalEmitter}
+		eventsPort = phaseTwoShadowEventSink{productionPhaseTwoEventSink: events, emitter: finalEmitter}
+	}
 	activation := productionPhaseTwoActivation{source: repository}
 	admitter, err := ownership.NewAdmitter(ownershipStore, activation, external.Now)
 	if err != nil {
@@ -301,7 +340,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	}
 	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{
 		Finalization: frozen, Activation: repository, Query: querySource, Sequencer: sequencer,
-		Evaluator: evaluator, Admission: admitter, GapGuard: executionStore, Events: events,
+		Evaluator: evaluatorPort, Admission: admitter, GapGuard: executionStore, Events: eventsPort,
 		State: executionStore, Progress: progressStore, Observer: observer,
 	}, worker.ProvisionalBudget{
 		MaxSeries: cfg.PhaseTwo.Coordinator.MaxSeries, MaxRetainedBytes: cfg.PhaseTwo.Coordinator.MaxRetainedBytes,
@@ -323,9 +362,13 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	var executor scheduler.Executor = coordinator
+	if finalEmitter != nil {
+		executor = phaseTwoShadowExecutor{next: coordinator}
+	}
 	productionOwnership, err := newProductionPhaseTwoOwnership(productionPhaseTwoOwnershipDependencies{
 		Store: ownershipStore, WorkerID: cfg.PhaseTwo.Worker.ID, Catalog: catalog, Progress: progressStore,
-		Executor: coordinator, Now: external.Now, ControlLeaderTTL: cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration(),
+		Executor: executor, Now: external.Now, ControlLeaderTTL: cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration(),
 		Observer: observer, Reconcile: assignmentReconciler, Flights: flights, RecoveryLimits: recoveryLimits,
 		PostRecoveryTerminalDelay: phaseTwoPostRecoveryTerminalDelay(cfg),
 		QueryDeadlineReserve:      cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration(),
@@ -340,6 +383,9 @@ func openProductionPhaseTwoBundleWithDependencies(
 		Recorder: recorder, Observer: observer, Now: external.Now,
 		CloseResources: func(shutdownCtx context.Context) error {
 			eventsClosed = true
+			if finalEmitter != nil && finalEmitter.publisher != nil {
+				finalEmitter.shutdown(shutdownCtx)
+			}
 			if runtimeClientIsSource {
 				return events.Shutdown(shutdownCtx)
 			}

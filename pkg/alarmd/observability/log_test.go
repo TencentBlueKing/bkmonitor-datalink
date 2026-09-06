@@ -251,3 +251,37 @@ func TestLoggingObserverKeepsPendingCandidateWithoutInventingPublication(t *test
 		t.Fatalf("pending source refresh log invented publication: %#v", event)
 	}
 }
+
+func TestSeriesTraceDoesNotExpandEvaluationLogBudget(t *testing.T) {
+	var output bytes.Buffer
+	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := NewLoggingObserver(New("alarmd", &output), policy)
+	for _, series := range []string{"series-a", "series-b"} {
+		observer.Observe(context.Background(), Observation{
+			Component: ComponentEvaluation, Stage: StageEvaluationCompleted, Result: ResultSuccess,
+			Operation: OperationNormal, ReasonCode: ReasonNone,
+			Trace: TraceFields{StrategyID: "7", DimensionIdentityDigest: series},
+		})
+	}
+	lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n"))
+	if len(lines) != 1 {
+		t.Fatalf("series identity bypassed shared log budget: %s", output.String())
+	}
+	var event map[string]any
+	if err := json.Unmarshal(lines[0], &event); err != nil {
+		t.Fatal(err)
+	}
+	if event["dimension_identity_digest"] != "series-a" {
+		t.Fatalf("series trace missing: %#v", event)
+	}
+	if _, exists := event["payload"]; exists {
+		t.Fatalf("unexpected payload: %#v", event)
+	}
+}

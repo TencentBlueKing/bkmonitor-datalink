@@ -934,7 +934,7 @@ func (stream *streamedExecution) evaluateCompletedSeries(
 			stream.request.Operation, started, "", "", err)
 		return fmt.Errorf("alarmd worker: invalid series evaluation: %w", err)
 	}
-	stream.observeEvaluationCompleted(ctx, started, due, inputs, evaluated)
+	stream.observeEvaluationCompleted(ctx, started, due, series, inputs, evaluated)
 	retained, err := evaluationRetainedSize(loaded, execution.EvaluationResult{})
 	if err != nil {
 		return fmt.Errorf("alarmd worker: measure evaluated retention: %w", err)
@@ -951,6 +951,7 @@ func (stream *streamedExecution) observeEvaluationCompleted(
 	ctx context.Context,
 	started time.Time,
 	due execution.DuePlan,
+	series execution.SeriesIdentityDigest,
 	inputs []execution.SeriesEvaluationInputRequest,
 	evaluated execution.EvaluationResult,
 ) {
@@ -961,7 +962,7 @@ func (stream *streamedExecution) observeEvaluationCompleted(
 		Result: evaluated.Result, Operation: observability.Operation(stream.request.Operation),
 		Direction: observability.DirectionInternal, ReasonCode: evaluated.ReasonCode,
 		Duration: time.Since(started), Counts: observability.Counts{Records: evaluationRecordCount(inputs)},
-		Trace:                observability.TraceFields{StrategyID: due.Identity.StrategyID},
+		Trace:                observability.TraceFields{StrategyID: due.Identity.StrategyID, DimensionIdentityDigest: string(series)},
 		AlgorithmEvaluations: evaluations, AlgorithmInputs: namedInputs,
 	}
 	stream.coordinator.ports.Observer.Observe(ctx, observation)

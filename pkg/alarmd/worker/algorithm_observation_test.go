@@ -2,7 +2,9 @@ package worker_test
 
 import (
 	"context"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -102,6 +104,9 @@ func TestSlotExecutionCoordinatorEmitsValidatedAlgorithmFacts(t *testing.T) {
 			if len(completed) != 1 {
 				t.Fatalf("evaluation observations=%+v, want one validated series observation", completed)
 			}
+			if got := completed[0].Trace.DimensionIdentityDigest; got != strings.Repeat("c", 64) {
+				t.Fatalf("series trace=%q, want validated primary series", got)
+			}
 			gotEvaluations := completed[0].AlgorithmEvaluations
 			for index := range gotEvaluations {
 				if gotEvaluations[index].Provenance.SourceTime <= 0 {
@@ -188,6 +193,9 @@ func TestSlotExecutionCoordinatorObservesCompletionOnlyG4InputsWithoutEvaluation
 				t.Fatalf("evaluation observations=%+v, want one completion-only Plan observation", completed)
 			}
 			observation := completed[0]
+			if observation.Trace.DimensionIdentityDigest != "" {
+				t.Fatalf("completion-only fabricated series: %+v", observation.Trace)
+			}
 			if len(observation.AlgorithmEvaluations) != 0 {
 				t.Fatalf("completion-only input fabricated algorithm evaluation=%+v", observation.AlgorithmEvaluations)
 			}
@@ -342,3 +350,70 @@ func workerAlgorithmObservationCoordinator(
 }
 
 var _ execution.Evaluator = (*evaluation.Evaluator)(nil)
+
+func TestSlotExecutionCoordinatorDistinguishesSeriesWithNamedHistory(t *testing.T) {
+	header, batches, completion := workerG4MultiLevelStreamFixture(t, false)
+	var doubled []execution.SeriesExecutionBatch
+	for i, batch := range batches {
+		second := batch
+		record, _ := batch.Dataset.Record(0)
+		second.Dataset = execution.NewDataset([]contract.CanonicalRecordV2{{
+			RecordID: fmt.Sprintf("%064x", i+100), SourceTime: record.SourceTime(), BusinessID: record.BusinessID(),
+			DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("d", 64)},
+			Values:            record.Values(), Dimensions: record.Dimensions(), ReceivedTime: record.ReceivedTime(),
+		}})
+		view, err := execution.NewDatasetView(second.Dataset, []uint32{0})
+		if err != nil {
+			t.Fatal(err)
+		}
+		second.Inputs = append([]execution.NamedInputBinding(nil), batch.Inputs...)
+		for j := range second.Inputs {
+			second.Inputs[j].Dataset = second.Dataset
+			second.Inputs[j].View = view
+		}
+		second.Delivery.Digest = fmt.Sprintf("%064x", i+100)
+		doubled = append(doubled, batch, second)
+		for j := range completion.PhysicalQueries {
+			if completion.PhysicalQueries[j].PhysicalQuery == batch.PhysicalQuery {
+				delivery, err := execution.AccumulateSeriesDelivery(batch.Delivery, second.Delivery)
+				if err != nil {
+					t.Fatal(err)
+				}
+				completion.PhysicalQueries[j].Delivery = delivery
+			}
+		}
+	}
+	var observations []observability.Observation
+	ports, coordinator := workerAlgorithmObservationCoordinator(t, func(o observability.Observation) {
+		if o.Component == observability.ComponentEvaluation && o.Stage == observability.StageEvaluationCompleted {
+			observations = append(observations, o)
+		}
+	})
+	ports.executeOverride = streamExecution(header, doubled, completion)
+	result, err := coordinator.Execute(context.Background(), workerSlotRequest(header.Contract))
+	if err != nil || !result.Completed {
+		t.Fatalf("Execute result=%+v error=%v", result, err)
+	}
+	if len(observations) != 2 {
+		t.Fatalf("observations=%+v", observations)
+	}
+	seen := map[string]bool{}
+	for _, o := range observations {
+		seen[o.Trace.DimensionIdentityDigest] = true
+		var historical bool
+		for _, input := range o.AlgorithmInputs {
+			if input.InputName == observability.AlgorithmInputNameHistory {
+				historical = true
+				if input.Provenance.SourceTime != int64(header.Contract.Slot.EvaluationTime)-61 || input.Result != observability.AlgorithmInputResultAvailable {
+					t.Fatalf("history=%+v", input)
+				}
+			}
+		}
+		if !historical {
+			t.Fatalf("missing history: %+v", o)
+		}
+	}
+	if !reflect.DeepEqual(seen, map[string]bool{strings.Repeat("c", 64): true, strings.Repeat("d", 64): true}) {
+		t.Fatalf("series traces=%v", seen)
+	}
+}

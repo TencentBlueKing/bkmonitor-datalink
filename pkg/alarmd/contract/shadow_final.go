@@ -55,12 +55,14 @@ type PrimaryComparableProjectionV1 struct {
 	Priority                uint32            `json:"priority"`
 	Result                  string            `json:"primary_result"`
 	Values                  map[string]string `json:"values"`
-	Unit                    string            `json:"unit"`
-	WindowStart             int64             `json:"window_start"`
-	WindowEnd               int64             `json:"window_end"`
-	DetectConfigDigest      string            `json:"detect_config_digest"`
-	TriggerConfigDigest     string            `json:"trigger_config_digest"`
-	Digest                  string            `json:"comparable_projection_digest"`
+	// Empty is a known dimensionless unit. Typed adapters must establish its
+	// source; the wire reader separately rejects missing or null unit fields.
+	Unit                string `json:"unit"`
+	WindowStart         int64  `json:"window_start"`
+	WindowEnd           int64  `json:"window_end"`
+	DetectConfigDigest  string `json:"detect_config_digest"`
+	TriggerConfigDigest string `json:"trigger_config_digest"`
+	Digest              string `json:"comparable_projection_digest"`
 }
 
 type ShadowNativeRefV1 struct {
@@ -160,7 +162,7 @@ func ValidateFinalResultEvidenceV1(e *FinalResultEvidenceV1) error {
 		return invalid("shadow.completeness", "invalid final input status")
 	}
 	p := e.Primary
-	if p.Version == "" || p.SelectionMappingVersion == "" || p.LevelID == 0 || p.Priority == 0 || p.Result != e.ResultKind || p.Values == nil || p.Unit == "" || p.WindowStart < 0 || p.WindowEnd < p.WindowStart || !sha256Pattern.MatchString(p.DetectConfigDigest) || !sha256Pattern.MatchString(p.TriggerConfigDigest) {
+	if p.Version == "" || p.SelectionMappingVersion == "" || p.LevelID == 0 || p.Priority == 0 || p.Result != e.ResultKind || p.Values == nil || p.WindowStart < 0 || p.WindowEnd < p.WindowStart || !sha256Pattern.MatchString(p.DetectConfigDigest) || !sha256Pattern.MatchString(p.TriggerConfigDigest) {
 		return invalid("shadow.primary", "incomplete comparable projection")
 	}
 	for _, v := range p.Values {

@@ -81,6 +81,16 @@ func DecodeShadowResultRecordV1(b []byte, maxBytes int) (ShadowResultRecordV1, e
 		}
 		return ShadowResultRecordV1{Kind: ShadowNativeEvent, NativeEvent: e}, nil
 	case header.Schema == (Schema{Name: FinalResultEvidenceSchemaV1, Major: 1}) && header.RecordType == ShadowFinalResult:
+		fields, err := validateJSONObjectFields(b, "shadow.evidence", []string{"primary_comparable_projection"}, nil, true)
+		if err != nil {
+			return ShadowResultRecordV1{}, err
+		}
+		// A string's zero value cannot distinguish a known empty unit from a
+		// missing or null field. Check presence before typed decoding; that
+		// decoder still rejects non-string values and unknown fields.
+		if _, err := validateJSONObjectFields(fields["primary_comparable_projection"], "shadow.primary", []string{"unit"}, nil, true); err != nil {
+			return ShadowResultRecordV1{}, err
+		}
 		var e FinalResultEvidenceV1
 		if err := decodeShadowJSON(b, maxBytes, &e); err != nil {
 			return ShadowResultRecordV1{}, err

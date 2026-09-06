@@ -351,6 +351,31 @@ func (e *phaseTwoFinalEmitter) finishZeroQueryPrefix(f *phaseTwoReceiptFacts, no
 	if completed || f.calls != 0 || f.lost || !f.beginKnown || (f.priorUnfinished && !f.prefixKnown) {
 		return
 	}
+	at := int64(f.request.Contract.Slot.EvaluationTime)
+	if at < e.manifest.EligibleFrom || at >= e.manifest.ExpectedEnd {
+		return
+	}
+	targeted := false
+	for _, p := range f.request.DuePlanTargets.Plans {
+		if p.TenantID == e.manifest.Target.TenantID && p.BusinessID == e.manifest.Target.BusinessID {
+			targeted = true
+			break
+		}
+	}
+	if !targeted {
+		return
+	}
+	// Retired QGs need not reenter takeZeroQueryPrefix. Reclaim their expired
+	// proofs only under capacity pressure; the normal path performs no scan.
+	if uint64(len(e.zeroPrefixes)) >= e.manifest.Limits.MaxEntries {
+		maxAge := time.Duration(e.manifest.Limits.MaxAgeSeconds) * time.Second
+		for qg, prefix := range e.zeroPrefixes {
+			age := now.Sub(prefix.Started)
+			if age < 0 || age > maxAge {
+				delete(e.zeroPrefixes, qg)
+			}
+		}
+	}
 	if uint64(len(e.zeroPrefixes)) >= e.manifest.Limits.MaxEntries {
 		return
 	}

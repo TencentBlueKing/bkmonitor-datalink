@@ -404,6 +404,11 @@ func (source *Source) executeWithPermit(
 	permit QueryPermit,
 ) (execution.ProviderCompletion, error) {
 	defer permit.Release()
+	execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
+		if c.QueryCalled != nil {
+			c.QueryCalled(attempt)
+		}
+	})
 	return source.provider.Execute(ctx, attempt, adapter)
 }
 

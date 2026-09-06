@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
@@ -27,10 +28,12 @@ type phaseTwoFinalPublisher interface {
 }
 
 type phaseTwoFinalEmitter struct {
-	manifest  contract.ValidationEpochManifestV1
-	publisher phaseTwoFinalPublisher
-	observer  observability.Observer
-	maxEvents uint64
+	manifest     contract.ValidationEpochManifestV1
+	publisher    phaseTwoFinalPublisher
+	observer     observability.Observer
+	maxEvents    uint64
+	zeroPrefixMu sync.Mutex
+	zeroPrefixes map[execution.QueryGroupIdentity]phaseTwoZeroQueryPrefix
 }
 
 // Only fixed-size facts and references to already retained immutable strings
@@ -92,12 +95,21 @@ func (e *phaseTwoFinalEmitter) observeCount(ctx context.Context, stage observabi
 }
 
 type phaseTwoShadowExecutor struct {
-	next scheduler.Executor
+	emitter *phaseTwoFinalEmitter
+	next    scheduler.Executor
 }
 
 func (w phaseTwoShadowExecutor) Execute(ctx context.Context, r execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
 	s := &phaseTwoShadowExecution{contract: r.Contract, events: make(map[string]phaseTwoEventFacts)}
-	return w.next.Execute(context.WithValue(ctx, phaseTwoShadowExecutionKey{}, s), r)
+	ctx = context.WithValue(ctx, phaseTwoShadowExecutionKey{}, s)
+	if w.emitter == nil || w.emitter.manifest.ComparisonVersion != "python-business-kafka-v1" {
+		return w.next.Execute(ctx, r)
+	}
+	facts := newPhaseTwoReceiptFacts(w.emitter, s, r)
+	ctx = execution.WithSlotCoverageCapture(ctx, facts.capture())
+	result, err := w.next.Execute(ctx, r)
+	facts.emit(ctx, result, err)
+	return result, err
 }
 
 type phaseTwoShadowResolver struct{ next access.FrozenPlanSource }
@@ -120,6 +132,11 @@ type phaseTwoShadowEvaluator struct {
 func (w phaseTwoShadowEvaluator) Evaluate(ctx context.Context, r execution.EvaluationRequest) (execution.EvaluationResult, error) {
 	out, err := w.next.Evaluate(ctx, r)
 	if err == nil {
+		execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
+			if c.Evaluated != nil {
+				c.Evaluated(r, out)
+			}
+		})
 		w.capture(ctx, r, out)
 	}
 	return out, err

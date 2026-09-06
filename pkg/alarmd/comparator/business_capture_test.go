@@ -29,7 +29,7 @@ func TestBusinessExecutableCaptureRequiresReceiptRangeAndAuditACK(t *testing.T) 
 		t.Fatal(err)
 	}
 	header := BusinessCaptureHeader{Manifest: m, Ranges: []BusinessRange{{p, 0, 1}, {g, 0, 0}}, Limits: BusinessLimits{10, 1 << 20, 1 << 18, 20, time.Hour}, GraceMillis: 1000, PythonSnapshotsSHA256: d, PythonSourceManifest: json.RawMessage(`{"topic":"native","partitions":[{"partition":0,"start":0,"end":1}],"strategy_ids":[1001]}`)}
-	for _, variant := range []string{"complete", "missing_receipt", "range_gap", "audit_failure", "malformed", "bad_hash", "capacity", "missing_summary"} {
+	for _, variant := range []string{"complete", "missing_receipt", "range_gap", "audit_failure", "malformed", "bad_hash", "capacity", "missing_summary", "resident_expired", "archive_time"} {
 		t.Run(variant, func(t *testing.T) {
 			var input bytes.Buffer
 			enc := json.NewEncoder(&input)
@@ -65,9 +65,17 @@ func TestBusinessExecutableCaptureRequiresReceiptRangeAndAuditACK(t *testing.T) 
 			}
 			_ = enc.Encode(BusinessCaptureFrame{Kind: "CLOSE", ObservedAt: 203000, PythonSummary: summary})
 			sink := &businessSink{fail: variant == "audit_failure"}
-			status, offsets, err := RunBusinessCapture(context.Background(), &input, sink)
+			clockCalls := 0
+			now := func() time.Time {
+				clockCalls++
+				if variant == "resident_expired" {
+					return time.Unix(100000, 0).Add(time.Duration(clockCalls) * time.Hour)
+				}
+				return time.Unix(100000, 0)
+			}
+			status, offsets, err := runBusinessCaptureWithClock(context.Background(), &input, sink, now)
 			switch variant {
-			case "complete":
+			case "complete", "archive_time":
 				if err != nil || status != "FAILED" || offsets[p] != 1 || len(sink.audits) != 1 || sink.audits[0].Verdict != "PYTHON_ONLY" {
 					t.Fatal(status, offsets, err, sink.audits)
 				}
@@ -75,7 +83,7 @@ func TestBusinessExecutableCaptureRequiresReceiptRangeAndAuditACK(t *testing.T) 
 				if err != nil || status != "PENDING" || offsets[p] != 0 || len(sink.audits) != 0 {
 					t.Fatal("missing Receipt became terminal", status, err)
 				}
-			case "range_gap", "malformed", "bad_hash", "capacity", "missing_summary":
+			case "resident_expired", "range_gap", "malformed", "bad_hash", "capacity", "missing_summary":
 				if err == nil || len(sink.audits) != 1 || sink.audits[0].SubjectKind != "EPOCH_GAP" {
 					t.Fatal("range gap accepted")
 				}

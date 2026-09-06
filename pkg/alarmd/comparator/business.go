@@ -404,18 +404,24 @@ func (r *BusinessRun) ACKAudit(id, digest string) error {
 		if e.audit == nil || e.audit.ID != id {
 			continue
 		}
-		want, err := contract.DeriveCanonicalDigestV2("business-audit-payload-v1", e.audit)
-		if err != nil || want != digest {
-			return errors.New("business audit ACK payload mismatch")
-		}
-		e.acked = true
-		for _, p := range r.partitions {
-			r.advance(p)
-		}
-		return nil
+		return r.ackEntry(e, digest)
 	}
 	return errors.New("business audit ACK unknown")
 }
+
+// ackEntry uses an already located entry; publishing N Audits never rescans N entries.
+func (r *BusinessRun) ackEntry(e *businessEntry, digest string) error {
+	want, err := contract.DeriveCanonicalDigestV2("business-audit-payload-v1", e.audit)
+	if err != nil || want != digest {
+		return errors.New("business audit ACK payload mismatch")
+	}
+	e.acked = true
+	for _, p := range r.partitions {
+		r.advance(p)
+	}
+	return nil
+}
+
 func (r *BusinessRun) advance(p *businessPartition) {
 	for p.committed < p.read {
 		key, ok := p.pending[p.committed]
@@ -473,6 +479,10 @@ type BusinessAuditSink interface {
 // PublishPending keeps one bounded Audit write in flight. It never marks an
 // input offset before the real sink call confirms broker ACK.
 func (r *BusinessRun) PublishPending(ctx context.Context, sink BusinessAuditSink) error {
+	return r.publishPending(ctx, sink, nil)
+}
+
+func (r *BusinessRun) publishPending(ctx context.Context, sink BusinessAuditSink, expired func() bool) error {
 	if sink == nil {
 		return errors.New("business Audit sink required")
 	}
@@ -500,6 +510,10 @@ func (r *BusinessRun) PublishPending(ctx context.Context, sink BusinessAuditSink
 		if e.audit == nil || e.acked {
 			continue
 		}
+		if expired != nil && expired() {
+			_ = r.Gap("COMPARATOR_CAPACITY_GAP")
+			return r.PublishPending(ctx, sink)
+		}
 		wire, err := contract.CanonicalJSONV2(e.audit)
 		if err != nil {
 			return err
@@ -516,11 +530,15 @@ func (r *BusinessRun) PublishPending(ctx context.Context, sink BusinessAuditSink
 		if err = sink.WriteBusinessAudit(ctx, &detached); err != nil {
 			return err
 		}
+		if expired != nil && expired() {
+			_ = r.Gap("COMPARATOR_CAPACITY_GAP")
+			return r.PublishPending(ctx, sink)
+		}
 		digest, err := contract.DeriveCanonicalDigestV2("business-audit-payload-v1", e.audit)
 		if err != nil {
 			return err
 		}
-		if err = r.ACKAudit(e.audit.ID, digest); err != nil {
+		if err = r.ackEntry(e, digest); err != nil {
 			return err
 		}
 	}

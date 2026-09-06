@@ -90,6 +90,10 @@ func decodeBusinessLine(wire []byte, out any) error {
 // Comparator profile. Audit output is broker-ACKed by sink before committable
 // offsets are returned. No source consumer-group commit is performed here.
 func RunBusinessCapture(ctx context.Context, input io.Reader, sink BusinessAuditSink) (string, map[BusinessPartition]int64, error) {
+	return runBusinessCaptureWithClock(ctx, input, sink, time.Now)
+}
+
+func runBusinessCaptureWithClock(ctx context.Context, input io.Reader, sink BusinessAuditSink, now func() time.Time) (string, map[BusinessPartition]int64, error) {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
 	if !scanner.Scan() {
@@ -143,14 +147,22 @@ func RunBusinessCapture(ctx context.Context, input io.Reader, sink BusinessAudit
 		}
 		return "UNPROVEN", nil, cause
 	}
+	var retainedSince time.Time
+	expired := func() bool {
+		return !retainedSince.IsZero() && now().Sub(retainedSince) > r.limits.MaxAge
+	}
 	closed := false
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
 			return "PENDING", nil, err
 		}
+		if expired() {
+			return abort("COMPARATOR_CAPACITY_GAP", ErrBusinessBackpressure)
+		}
 		if closed {
 			return abort("EVIDENCE_GAP", errors.New("business data after close"))
 		}
+		admittedAt := now()
 		var frame BusinessCaptureFrame
 		if len(scanner.Bytes()) > header.Limits.MessageBytes {
 			return abort("COMPARATOR_CAPACITY_GAP", errors.New("business capture frame bound"))
@@ -160,13 +172,16 @@ func RunBusinessCapture(ctx context.Context, input io.Reader, sink BusinessAudit
 			Classification string `json:"classification"`
 		}
 		if err = json.Unmarshal(scanner.Bytes(), &discriminator); err == nil && discriminator.Kind == "" && discriminator.Classification != "" {
-			err = r.ObservePythonCapture(time.Now(), scanner.Bytes())
+			err = r.ObservePythonCapture(admittedAt, scanner.Bytes())
 			if err != nil {
 				_ = r.Gap("REFERENCE_GAP")
 				if auditErr := r.PublishPending(ctx, sink); auditErr != nil {
 					return "PENDING_AUDIT", nil, auditErr
 				}
 				return "UNPROVEN", nil, err
+			}
+			if retainedSince.IsZero() && len(r.entries) > 0 {
+				retainedSince = admittedAt
 			}
 			continue
 		}
@@ -183,7 +198,7 @@ func RunBusinessCapture(ctx context.Context, input io.Reader, sink BusinessAudit
 				err = errors.New("Python evidence requires original capture row")
 				break
 			}
-			err = r.Observe(time.UnixMilli(frame.ObservedAt), frame.Offset, frame.Value)
+			err = r.Observe(admittedAt, frame.Offset, frame.Value)
 		case "NATIVE":
 			record, decodeErr := contract.DecodeShadowResultRecordV1(frame.Value, header.Limits.MessageBytes)
 			knownSingleChain := record.Kind == contract.ShadowFinalResult && record.Evidence != nil && record.Evidence.Chain == contract.ShadowGo && record.Evidence.EpochID == header.Manifest.EpochID && record.Evidence.ResultKind == contract.TriggerEventRecovery
@@ -231,6 +246,12 @@ func RunBusinessCapture(ctx context.Context, input io.Reader, sink BusinessAudit
 			}
 			return "UNPROVEN", nil, err
 		}
+		if retainedSince.IsZero() && len(r.entries) > 0 {
+			retainedSince = admittedAt
+		}
+	}
+	if expired() {
+		return abort("COMPARATOR_CAPACITY_GAP", ErrBusinessBackpressure)
 	}
 	if err = scanner.Err(); err != nil {
 		return abort("EVIDENCE_GAP", err)
@@ -238,7 +259,7 @@ func RunBusinessCapture(ctx context.Context, input io.Reader, sink BusinessAudit
 	if !closed {
 		return "PENDING", nil, errors.New("business capture has no closed range")
 	}
-	if err = r.PublishPending(ctx, sink); err != nil {
+	if err = r.publishPending(ctx, sink, expired); err != nil {
 		return "PENDING_AUDIT", nil, err
 	}
 	offsets := map[BusinessPartition]int64{}

@@ -82,6 +82,11 @@ func (stream *streamedExecution) Begin(ctx context.Context, header execution.Int
 		return fmt.Errorf("alarmd worker: prepare EffectiveTime facts: %w", err)
 	}
 	stream.effective = effective
+	execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
+		if c.Prepared != nil {
+			c.Prepared(header, effective)
+		}
+	})
 	return nil
 }
 

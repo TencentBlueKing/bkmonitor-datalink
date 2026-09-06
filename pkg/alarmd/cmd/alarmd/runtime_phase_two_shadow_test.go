@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -32,6 +33,21 @@ type recordingFinalPublisher struct {
 	evidence       []*contract.FinalResultEvidenceV1
 	panicOnEnqueue bool
 	business       []*contract.BusinessAbnormalV1
+	receipts       []*contract.ChainCoverageReceiptV1
+}
+
+func (p *recordingFinalPublisher) TryEnqueueCoverageReceipt(e contract.EncodedGoCoverageV1) bool {
+	if p.panicOnEnqueue {
+		panic("isolated receipt publisher")
+	}
+	envelope, err := contract.DecodeGoCoverageEnvelopeV1(e.CopyBytes(), 1<<20)
+	if err != nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.receipts = append(p.receipts, &envelope.Receipt)
+	return true
 }
 
 func (p *recordingFinalPublisher) TryEnqueueBusinessAbnormal(e contract.EncodedBusinessAbnormalV1) bool {
@@ -93,7 +109,11 @@ func TestPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T) {
 func TestPhaseTwoBusinessActualThresholdACKAndIsolation(t *testing.T) {
 	testPhaseTwoShadowActualThresholdACKAndIsolation(t, true)
 }
-func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business bool) {
+func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business bool, modes ...string) {
+	mode := ""
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
 	previousCommit := commit
 	commit = strings.Repeat("b", 40)
 	t.Cleanup(func() { commit = previousCommit })
@@ -154,10 +174,16 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 					}
 					series := controlledG4UQSeries(base, end, "system.cpu", p.MetricMerge)
 					value := 0.0
-					if end == base {
+					if end == base && mode == "" {
 						value = 81
 					}
 					series["values"] = []any{[]any{(end - 1) * 1000, value}}
+					if mode == "query_failure" {
+						return nil, fmt.Errorf("controlled source failure")
+					}
+					if mode == "empty" {
+						return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"series":[],"status":null,"trace_id":"receipt-empty","is_partial":false,"result_table_id":["system.cpu"]}`)), Request: req}, nil
+					}
 					return controlledG4UQResponse(req, "system.cpu", series)
 				})}
 			}
@@ -198,11 +224,47 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 			}
 			for _, evaluation := range []int64{base, base + 60} {
 				clock.Store(evaluation + 1)
-				if err = bundle.runScheduledOnce(ctx); err != nil {
+				if err = bundle.runScheduledOnce(ctx); err != nil && mode != "query_failure" {
 					t.Fatal(err)
 				}
 			}
 			native := events.snapshot()
+			if mode != "" {
+				for _, event := range native {
+					if event.EventKind == contract.TriggerEventAbnormal || mode == "empty" {
+						t.Fatal("normal/empty invented abnormal", event.EventKind)
+					}
+				}
+				publisher.mu.Lock()
+				defer publisher.mu.Unlock()
+				if publisherPanics {
+					if len(publisher.receipts) != 0 {
+						t.Fatal("panic publisher emitted")
+					}
+					return
+				}
+				if len(publisher.receipts) == 0 {
+					t.Fatal("missing actual receipt")
+				}
+				for _, r := range publisher.receipts {
+					if mode == "query_failure" {
+						if r.CoverageComplete || r.Input.Completion != "UNAVAILABLE" || r.Input.QueryAttempts.CurrentExecution.Value == nil {
+							t.Fatalf("failure receipt: %+v", r)
+						}
+						continue
+					}
+					if !r.CoverageComplete || !r.TerminalFact || r.Input.Completion != "FULL" || *r.Records.PrimaryAbnormal.Value != 0 {
+						t.Fatalf("normal/empty receipt: %+v", r)
+					}
+					if mode == "empty" && (*r.Input.Series.Value != 0 || *r.Input.SelectedPlanRecords.Value != 0) {
+						t.Fatal("FULL_EMPTY invented series/record")
+					}
+					if mode == "normal" && *r.Input.SelectedPlanRecords.Value == 0 {
+						t.Fatal("normal record count absent")
+					}
+				}
+				return
+			}
 			if len(native) != 2 {
 				b, _ := json.Marshal(observations)
 				t.Fatalf("native=%d observations=%s", len(native), b)
@@ -233,6 +295,14 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 				t.Fatalf("final=%d want=%d observations=%s", len(publisher.evidence), want, b)
 			}
 			if business && !publisherPanics {
+				if len(publisher.receipts) != 2 {
+					t.Fatalf("actual Slot receipts=%d want2", len(publisher.receipts))
+				}
+				for _, receipt := range publisher.receipts {
+					if !receipt.CoverageComplete {
+						t.Fatalf("receipt incomplete: %+v", receipt)
+					}
+				}
 				if len(publisher.business) != 1 || publisher.business[0].Native.EventID != native[0].EventID {
 					t.Fatal("actual ABNORMAL business profile absent")
 				}

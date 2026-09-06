@@ -364,7 +364,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	}
 	var executor scheduler.Executor = coordinator
 	if finalEmitter != nil {
-		executor = phaseTwoShadowExecutor{next: coordinator}
+		executor = phaseTwoShadowExecutor{next: coordinator, emitter: finalEmitter}
 	}
 	productionOwnership, err := newProductionPhaseTwoOwnership(productionPhaseTwoOwnershipDependencies{
 		Store: ownershipStore, WorkerID: cfg.PhaseTwo.Worker.ID, Catalog: catalog, Progress: progressStore,

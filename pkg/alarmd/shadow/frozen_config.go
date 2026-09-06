@@ -94,8 +94,26 @@ func BuildFrozenComparisonConfigV2(due execution.DuePlan, requirements []executi
 		return fail("dataset binding")
 	}
 	projection := plan.Projection()
-	if !slices.Equal(projection.ValueFields, selected.InputProjection.ValueFields) || !slices.Equal(projection.DimensionFields, selected.InputProjection.DimensionFields) || !slices.Equal(query.Normalization.DatasetContract.IdentityFields, selected.InputProjection.IdentityFields) {
-		return fail("projection binding")
+	identityFields := selected.InputProjection.IdentityFields
+	if len(selected.InputProjection.ValueFields) == 0 && len(selected.InputProjection.DimensionFields) == 0 && len(identityFields) == 0 {
+		// RedisCatalogRuntime.primaryRequirements predates explicit InputProjection.
+		// Recognize its exact stored identity/columns contract, then read the
+		// already bound Plan and Query facts. Never mutate or synthesize a
+		// DataRequirement projection, and never treat an arbitrary omission as valid.
+		digest, err := contract.DeriveCanonicalDigestV2("alarmd-primary-requirement-v1", struct {
+			QueryRevision execution.QueryRevision `json:"query_revision"`
+			WindowSeconds int64                   `json:"window_seconds"`
+		}{query.QueryRevision, int64(semantics.QueryWindow)})
+		columns := append([]string{"value"}, query.Normalization.DatasetContract.IdentityFields...)
+		slices.Sort(columns)
+		if err != nil || selected.RequirementID != execution.RequirementID(digest) || selected.DatasetName != execution.DatasetName("primary:"+digest) || selected.ReadinessClass != execution.ReadinessEager || !slices.Equal(columns, selected.RequiredColumns) {
+			return fail("legacy projection binding")
+		}
+		identityFields = query.Normalization.DatasetContract.IdentityFields
+	} else {
+		if !slices.Equal(projection.ValueFields, selected.InputProjection.ValueFields) || !slices.Equal(projection.DimensionFields, selected.InputProjection.DimensionFields) || !slices.Equal(query.Normalization.DatasetContract.IdentityFields, identityFields) {
+			return fail("projection binding")
+		}
 	}
 	if projection.MultiValueAlignment != "SINGLE_VALUE" || len(projection.ValueFields) != 1 || projection.ValueFields[0] != "value" || projection.MissingValuePolicy != contract.MissingValuePolicyRequired || projection.BusinessIdentityField != "bk_biz_id" {
 		return fail("projection semantics")
@@ -109,7 +127,7 @@ func BuildFrozenComparisonConfigV2(due execution.DuePlan, requirements []executi
 	}
 	c := contract.ComparisonConfigV2{
 		SchemaVersion: "comparison-config-v2", SelectionMappingVersion: "effective-order-v1", Selector: selector,
-		Projection:    contract.ShadowProjectionConfigV2{ValueFields: append([]string{}, projection.ValueFields...), IdentityFields: append([]string{}, selected.InputProjection.IdentityFields...), RequiredDimensions: append([]string{}, projection.DimensionFields...)},
+		Projection:    contract.ShadowProjectionConfigV2{ValueFields: append([]string{}, projection.ValueFields...), IdentityFields: append([]string{}, identityFields...), RequiredDimensions: append([]string{}, projection.DimensionFields...)},
 		EffectiveTime: "ALWAYS", Schedule: contract.ShadowScheduleConfigV2{IntervalSeconds: semantics.EvaluationInterval, WindowSeconds: semantics.QueryWindow, AlignmentSeconds: int64(due.ScheduleSpec.Alignment), Timezone: due.ScheduleSpec.Timezone},
 	}
 	for _, level := range plan.LevelsByPriority() {

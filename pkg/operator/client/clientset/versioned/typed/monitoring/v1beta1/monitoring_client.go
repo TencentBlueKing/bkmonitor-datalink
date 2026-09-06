@@ -22,6 +22,7 @@ import (
 type MonitoringV1beta1Interface interface {
 	RESTClient() rest.Interface
 	DataIDsGetter
+	ProcessMonitorsGetter
 	QCloudMonitorsGetter
 }
 
@@ -32,6 +33,10 @@ type MonitoringV1beta1Client struct {
 
 func (c *MonitoringV1beta1Client) DataIDs(namespace string) DataIDInterface {
 	return newDataIDs(c, namespace)
+}
+
+func (c *MonitoringV1beta1Client) ProcessMonitors(namespace string) ProcessMonitorInterface {
+	return newProcessMonitors(c, namespace)
 }
 
 func (c *MonitoringV1beta1Client) QCloudMonitors(namespace string) QCloudMonitorInterface {

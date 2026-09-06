@@ -32,6 +32,8 @@ require (
 require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0
 	github.com/grafana/regexp v0.0.0-20221122212121-6b5c0a4cb7fd
+	github.com/mitchellh/hashstructure v1.1.0
+	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/polarismesh/polaris-go v1.5.9
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cdn v1.0.1207
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/clb v1.0.1200

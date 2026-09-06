@@ -8,7 +8,6 @@ package contract
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 )
 
 const (
@@ -238,6 +237,3 @@ func ShadowCanonicalDigestV1(value any) (string, error) {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:]), nil
 }
-
-// Keep the common JSON type in the contract; adapters own the semantic fields.
-type ShadowSemanticConfigV1 = json.RawMessage

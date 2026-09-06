@@ -190,6 +190,15 @@ func ValidateChainCoverageReceiptV1(r *ChainCoverageReceiptV1) error {
 	if err := shadowSubset(r.PhysicalACKed, r.PhysicalProduced); err != nil {
 		return err
 	}
+	if err := shadowConservation(r.PhysicalProduced, r.Records.PrimaryAbnormal, r.Records.PrimaryRecovery); err != nil {
+		return err
+	}
+	if r.Input.Completion != "FULL" && r.Records.PrimaryRecovery.Known && *r.Records.PrimaryRecovery.Value != 0 {
+		return invalid("shadow.records", "incomplete input cannot claim Recovery")
+	}
+	if (r.Input.Completion == "UNAVAILABLE" || r.Input.Completion == "QUERY_FREE") && r.Records.PrimaryAbnormal.Known && *r.Records.PrimaryAbnormal.Value != 0 {
+		return invalid("shadow.records", "no Query result cannot claim Abnormal")
+	}
 	for _, l := range r.Levels {
 		if err := shadowConservation(l.Selected, l.Normal, l.Abnormal, l.Recovery, l.Unavailable, l.Terminal, l.Excluded, l.PythonShortCircuited); err != nil {
 			return err

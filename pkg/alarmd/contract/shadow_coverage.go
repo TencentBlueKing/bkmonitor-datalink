@@ -214,6 +214,9 @@ func ValidateChainCoverageReceiptV1(r *ChainCoverageReceiptV1) error {
 		if r.Input.Completion != "FULL" && ((l.Normal.Known && *l.Normal.Value != 0) || (l.Recovery.Known && *l.Recovery.Value != 0)) {
 			return invalid("shadow.levels", "incomplete input cannot claim NORMAL or RECOVERY")
 		}
+		if (r.Input.Completion == "QUERY_FREE" || r.Input.Completion == "UNAVAILABLE") && l.Abnormal.Known && *l.Abnormal.Value != 0 {
+			return invalid("shadow.levels", "no Query result cannot claim ABNORMAL")
+		}
 		if r.Chain == ShadowGo && l.PythonShortCircuited.Known && *l.PythonShortCircuited.Value != 0 {
 			return invalid("shadow.levels", "Go cannot claim Python short circuit")
 		}

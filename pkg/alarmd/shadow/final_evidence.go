@@ -52,9 +52,11 @@ func BuildGoFinalEvidence(input GoEvidenceInput, maxBytes int) (*contract.FinalR
 		return nil, errors.New("alarmd shadow: frozen config digest mismatch")
 	}
 	// Sub-projection fingerprints use the same normalized semantic object.
-	if err := json.Unmarshal(canonicalConfig, &input.Config); err != nil {
+	var normalizedConfig contract.ComparisonConfigV1
+	if err := json.Unmarshal(canonicalConfig, &normalizedConfig); err != nil {
 		return nil, err
 	}
+	input.Config = normalizedConfig
 	if len(input.Config.Levels) != len(input.Event.LevelResults) {
 		return nil, errors.New("alarmd shadow: incomplete Level config closure")
 	}

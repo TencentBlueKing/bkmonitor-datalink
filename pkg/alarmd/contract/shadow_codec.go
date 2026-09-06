@@ -21,13 +21,17 @@ type ShadowResultRecordV1 struct {
 }
 
 func (c *KnownCountV1) UnmarshalJSON(b []byte) error {
-	if _, err := validateJSONObjectFields(b, "shadow.count", []string{"known"}, []string{"value"}, false); err != nil {
+	fields, err := validateJSONObjectFields(b, "shadow.count", []string{"known"}, []string{"value"}, false)
+	if err != nil {
 		return err
 	}
 	type plain KnownCountV1
 	var value plain
 	if err := json.Unmarshal(b, &value); err != nil {
 		return err
+	}
+	if _, present := fields["value"]; present && !value.Known {
+		return invalid("shadow.count", "unknown must omit the value field")
 	}
 	*c = KnownCountV1(value)
 	return c.Validate()

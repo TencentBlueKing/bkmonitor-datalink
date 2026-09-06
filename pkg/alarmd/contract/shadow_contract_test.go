@@ -125,6 +125,35 @@ func TestShadowDecimalNormalization(t *testing.T) {
 	}
 }
 
+func TestShadowNoInputCannotInventLevelAbnormal(t *testing.T) {
+	for _, completion := range []string{"QUERY_FREE", "UNAVAILABLE"} {
+		t.Run(completion, func(t *testing.T) {
+			r := shadowTestReceipt()
+			r.Input.Completion = completion
+			r.Input.QueryAttempts.CurrentExecution = KnownShadowCountV1(0)
+			r.Input.QueryAttempts.LogicalSlot = KnownShadowCountV1(0)
+			r.Levels[0].Normal = KnownShadowCountV1(0)
+			r.Levels[0].Abnormal = KnownShadowCountV1(1)
+			if err := ValidateChainCoverageReceiptV1(&r); err == nil {
+				t.Fatal("no input invented a complete sibling ABNORMAL")
+			}
+		})
+	}
+}
+
+func TestShadowUnknownCountMustOmitValue(t *testing.T) {
+	for _, payload := range []string{`{"known":false,"value":null}`, `{"known":false,"value":0}`, `{"known":true,"value":null}`} {
+		if err := json.Unmarshal([]byte(payload), new(KnownCountV1)); err == nil {
+			t.Fatalf("invalid count accepted: %s", payload)
+		}
+	}
+	for _, payload := range []string{`{"known":false}`, `{"known":true,"value":0}`} {
+		if err := json.Unmarshal([]byte(payload), new(KnownCountV1)); err != nil {
+			t.Fatalf("valid count rejected: %s: %v", payload, err)
+		}
+	}
+}
+
 func TestShadowComparisonCanonicalGolden(t *testing.T) {
 	payload, err := os.ReadFile("testdata/shadow-final-v1/comparison_config.json")
 	if err != nil {

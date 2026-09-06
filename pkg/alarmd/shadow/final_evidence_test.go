@@ -145,6 +145,26 @@ func TestFinalEvidenceIdentityAndDigestSeparation(t *testing.T) {
 	}
 }
 
+func TestFinalEvidencePreservesFrozenConfig(t *testing.T) {
+	input := finalTestInput(t)
+	input.Config.Levels[0].Detectors[0].Threshold = "090.00"
+	_, input.Context.ComparisonConfigDigest, _ = contract.CanonicalComparisonConfigV1(input.Config)
+	before, err := json.Marshal(input.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BuildGoFinalEvidence(input, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	after, err := json.Marshal(input.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("pure builder mutated caller's frozen config")
+	}
+}
+
 func TestFinalEvidenceDifferentPrimaryAndRecovery(t *testing.T) {
 	input := finalTestInput(t)
 	first, err := BuildGoFinalEvidence(input, 1<<20)

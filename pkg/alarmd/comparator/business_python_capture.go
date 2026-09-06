@@ -72,7 +72,12 @@ func (r *BusinessRun) ObservePythonCapture(now time.Time, line []byte) error {
 		if native.EventID != ref.Native.EventID || native.Status != "ABNORMAL" || native.Tenant != ref.Subject.TenantID || identifier(native.Strategy) != ref.Subject.StrategyID || identifier(native.Business) != ref.Subject.BusinessID || native.Time != ref.Subject.SourceTime || native.Level != ref.Primary.LevelID {
 			return errors.New("Python raw/reference identity mismatch")
 		}
-		return r.Observe(now, offset, row.Reference)
+		if err = r.Observe(now, offset, row.Reference); err != nil {
+			return err
+		}
+		unknown := int64(0)
+		r.entries[businessKey(ref.Subject)].auditFirst = &unknown
+		return nil
 	case "OUT_OF_SCOPE":
 		var native struct {
 			Strategy json.RawMessage `json:"strategy_id"`

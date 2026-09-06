@@ -95,7 +95,7 @@ func RunBusinessCapture(ctx context.Context, input io.Reader, sink BusinessAudit
 
 func runBusinessCaptureWithClock(ctx context.Context, input io.Reader, sink BusinessAuditSink, now func() time.Time) (string, map[BusinessPartition]int64, error) {
 	scanner := bufio.NewScanner(input)
-	scanner.Buffer(make([]byte, 4096), 1<<20)
+	scanner.Buffer(make([]byte, 4096), (2<<20)+4096)
 	if !scanner.Scan() {
 		return "UNPROVEN", nil, errors.New("business capture header missing")
 	}
@@ -152,6 +152,7 @@ func runBusinessCaptureWithClock(ctx context.Context, input io.Reader, sink Busi
 		return !retainedSince.IsZero() && now().Sub(retainedSince) > r.limits.MaxAge
 	}
 	closed := false
+	goCaptureStarted, goCaptureClosed := false, false
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
 			return "PENDING", nil, err
@@ -164,6 +165,40 @@ func runBusinessCaptureWithClock(ctx context.Context, input io.Reader, sink Busi
 		}
 		admittedAt := now()
 		var frame BusinessCaptureFrame
+		if len(scanner.Bytes()) > header.Limits.MessageBytes*2+4096 {
+			return abort("COMPARATOR_CAPACITY_GAP", errors.New("business capture frame bound"))
+		}
+		var nativeDiscriminator struct {
+			Schema string           `json:"schema"`
+			Raw    *json.RawMessage `json:"value_base64"`
+		}
+		if json.Unmarshal(scanner.Bytes(), &nativeDiscriminator) == nil && (nativeDiscriminator.Raw != nil || nativeDiscriminator.Schema == "go-finite-capture-v1" || nativeDiscriminator.Schema == "go-finite-capture-summary-v1") {
+			if nativeDiscriminator.Schema == "go-finite-capture-v1" {
+				if goCaptureStarted {
+					return abort("EVIDENCE_GAP", errors.New("duplicate Go capture header"))
+				}
+				err = validateGoCaptureHeader(scanner.Bytes(), header)
+				goCaptureStarted = err == nil
+			} else if nativeDiscriminator.Schema == "go-finite-capture-summary-v1" {
+				if !goCaptureStarted || goCaptureClosed {
+					return abort("EVIDENCE_GAP", errors.New("Go capture summary sequence"))
+				}
+				err = r.verifyGoCaptureSummary(scanner.Bytes())
+				goCaptureClosed = err == nil
+			} else {
+				if !goCaptureStarted || goCaptureClosed {
+					return abort("EVIDENCE_GAP", errors.New("Go raw capture sequence"))
+				}
+				err = r.observeGoCapture(admittedAt, scanner.Bytes())
+			}
+			if err != nil {
+				return abort("EVIDENCE_GAP", err)
+			}
+			if retainedSince.IsZero() && (len(r.entries) > 0 || len(r.scopes) > 0) {
+				retainedSince = admittedAt
+			}
+			continue
+		}
 		if len(scanner.Bytes()) > header.Limits.MessageBytes {
 			return abort("COMPARATOR_CAPACITY_GAP", errors.New("business capture frame bound"))
 		}
@@ -180,7 +215,7 @@ func runBusinessCaptureWithClock(ctx context.Context, input io.Reader, sink Busi
 				}
 				return "UNPROVEN", nil, err
 			}
-			if retainedSince.IsZero() && len(r.entries) > 0 {
+			if retainedSince.IsZero() && (len(r.entries) > 0 || len(r.scopes) > 0) {
 				retainedSince = admittedAt
 			}
 			continue
@@ -207,11 +242,24 @@ func runBusinessCaptureWithClock(ctx context.Context, input io.Reader, sink Busi
 			} else {
 				err = r.SkipNative(frame.Offset)
 			}
+		case "GO_COVERAGE":
+			err = r.ObserveGoCoverage(admittedAt, frame.Offset, frame.Value)
+			if err == nil {
+				e, _ := contract.DecodeGoCoverageEnvelopeV1(frame.Value, header.Limits.MessageBytes)
+				var observed time.Time
+				if frame.ObservedAt > 0 {
+					observed = time.UnixMilli(frame.ObservedAt)
+				}
+				r.setScopeAuditFirst(e.Identity, observed)
+			}
 		case "GO_RECEIPT":
 			err = r.BindGoReceipt(frame.Subject, frame.Receipt, frame.Config, time.UnixMilli(frame.CompletedAt))
 		case "GAP":
 			err = r.Gap(frame.Reason)
 		case "CLOSE":
+			if goCaptureStarted && !goCaptureClosed {
+				return abort("EVIDENCE_GAP", errors.New("Go range proof missing"))
+			}
 			if len(frame.PythonSummary) != 0 {
 				var proof BusinessPythonCompletion
 				proof, err = projectPythonSummary(frame.PythonSummary, header)
@@ -246,7 +294,7 @@ func runBusinessCaptureWithClock(ctx context.Context, input io.Reader, sink Busi
 			}
 			return "UNPROVEN", nil, err
 		}
-		if retainedSince.IsZero() && len(r.entries) > 0 {
+		if retainedSince.IsZero() && (len(r.entries) > 0 || len(r.scopes) > 0) {
 			retainedSince = admittedAt
 		}
 	}

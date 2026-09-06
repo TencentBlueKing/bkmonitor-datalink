@@ -29,14 +29,19 @@ func TestBusinessExecutableCaptureRequiresReceiptRangeAndAuditACK(t *testing.T) 
 		t.Fatal(err)
 	}
 	header := BusinessCaptureHeader{Manifest: m, Ranges: []BusinessRange{{p, 0, 1}, {g, 0, 0}}, Limits: BusinessLimits{10, 1 << 20, 1 << 18, 20, time.Hour}, GraceMillis: 1000, PythonSnapshotsSHA256: d, PythonSourceManifest: json.RawMessage(`{"topic":"native","partitions":[{"partition":0,"start":0,"end":1}],"strategy_ids":[1001]}`)}
-	for _, variant := range []string{"complete", "missing_receipt", "range_gap", "audit_failure", "malformed", "bad_hash", "capacity", "missing_summary", "resident_expired", "archive_time"} {
+	var firstAuditBytes []byte
+	for _, variant := range []string{"complete", "missing_receipt", "range_gap", "audit_failure", "malformed", "bad_hash", "capacity", "missing_summary", "resident_expired", "archive_time", "scope_capture", "scope_missing_summary"} {
 		t.Run(variant, func(t *testing.T) {
 			var input bytes.Buffer
 			enc := json.NewEncoder(&input)
 			if variant == "capacity" {
 				header.Limits.Bytes = 1
 			}
+			if variant == "scope_capture" || variant == "scope_missing_summary" {
+				header.Ranges[1].End = 1
+			}
 			_ = enc.Encode(header)
+			header.Ranges[1].End = 0
 			header.Limits.Bytes = 1 << 20
 			raw, readErr := os.ReadFile("../contract/testdata/business-kafka-v1/native.json")
 			if readErr != nil {
@@ -50,7 +55,15 @@ func TestBusinessExecutableCaptureRequiresReceiptRangeAndAuditACK(t *testing.T) 
 				rawHash = [32]byte{}
 			}
 			_ = enc.Encode(pythonCaptureRecord{Topic: p.Topic, Partition: 0, Offset: 0, RawSHA256: hex.EncodeToString(rawHash[:]), RawBase64: base64.StdEncoding.EncodeToString(raw), Classification: "REFERENCE", Reference: businessFixture(t)})
-			if variant != "missing_receipt" {
+			if variant == "scope_capture" || variant == "scope_missing_summary" {
+				_ = enc.Encode(map[string]any{"schema": "go-finite-capture-v1", "ranges": []map[string]any{{"topic": "shadow", "partition": 0, "start": 0, "end": 1}}, "max_records": 10, "max_bytes": 1 << 20, "max_partitions": 1, "timeout_millis": 1000})
+				raw := scopeWire(t, false)
+				sum := sha256.Sum256(raw)
+				_ = enc.Encode(goCaptureRecord{Topic: "shadow", Partition: 0, Offset: 0, Value: raw, ValueSHA256: hex.EncodeToString(sum[:]), Kind: "COVERAGE_RECEIPT", ObservedAt: time.Unix(200, 0)})
+				if variant != "scope_missing_summary" {
+					_ = enc.Encode(map[string]any{"schema": "go-finite-capture-summary-v1", "summary": map[string]any{"started_at": time.Unix(200, 0), "finished_at": time.Unix(201, 0), "complete": true, "reference_complete": true, "records": 1, "bytes": len(raw), "gaps": 0, "partitions": []map[string]any{{"topic": "shadow", "partition": 0, "start": 0, "end": 1, "low": 0, "high": 1, "final_low": 0, "final_high": 1, "read_end": 1}}}})
+				}
+			} else if variant != "missing_receipt" {
 				_ = enc.Encode(BusinessCaptureFrame{Kind: "GO_RECEIPT", Subject: ref.Subject, Receipt: receipt, Config: config, CompletedAt: 201000})
 			}
 			proof := &BusinessPythonCompletion{Topic: "native", Complete: true, ReferenceComplete: true, FinishedAt: 202000, SummarySHA256: d, Partitions: []BusinessPythonPartition{{Partition: 0, Start: 0, End: 1, Low: 0, High: 1, ReadEnd: 1}}}
@@ -71,11 +84,22 @@ func TestBusinessExecutableCaptureRequiresReceiptRangeAndAuditACK(t *testing.T) 
 				if variant == "resident_expired" {
 					return time.Unix(100000, 0).Add(time.Duration(clockCalls) * time.Hour)
 				}
+				if variant == "archive_time" {
+					return time.Unix(200000, 0)
+				}
 				return time.Unix(100000, 0)
 			}
 			status, offsets, err := runBusinessCaptureWithClock(context.Background(), &input, sink, now)
 			switch variant {
 			case "complete", "archive_time":
+				if len(sink.audits) > 0 {
+					got, _ := EncodeBusinessAudit(&sink.audits[0], 1<<18)
+					if variant == "complete" {
+						firstAuditBytes = got
+					} else if !bytes.Equal(firstAuditBytes, got) {
+						t.Fatal("same Python capture changed Audit payload on replay")
+					}
+				}
 				if err != nil || status != "FAILED" || offsets[p] != 1 || len(sink.audits) != 1 || sink.audits[0].Verdict != "PYTHON_ONLY" {
 					t.Fatal(status, offsets, err, sink.audits)
 				}
@@ -83,7 +107,11 @@ func TestBusinessExecutableCaptureRequiresReceiptRangeAndAuditACK(t *testing.T) 
 				if err != nil || status != "PENDING" || offsets[p] != 0 || len(sink.audits) != 0 {
 					t.Fatal("missing Receipt became terminal", status, err)
 				}
-			case "resident_expired", "range_gap", "malformed", "bad_hash", "capacity", "missing_summary":
+			case "scope_capture":
+				if err != nil || status != "FAILED" || offsets[g] != 1 || len(sink.audits) != 2 {
+					t.Fatal(status, offsets, err, sink.audits)
+				}
+			case "scope_missing_summary", "resident_expired", "range_gap", "malformed", "bad_hash", "capacity", "missing_summary":
 				if err == nil || len(sink.audits) != 1 || sink.audits[0].SubjectKind != "EPOCH_GAP" {
 					t.Fatal("range gap accepted")
 				}

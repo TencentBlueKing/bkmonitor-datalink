@@ -263,6 +263,7 @@ type phaseTwoWorkerBundleDependencies struct {
 	Ownership      phaseTwoOwnershipRuntime
 	Recorder       *metric.Recorder
 	Observer       observability.Observer
+	TargetFlow     *observability.TargetFlow
 	CloseResources func(context.Context) error
 	Now            func() time.Time
 }
@@ -296,6 +297,7 @@ type phaseTwoWorkerBundle struct {
 }
 
 type phaseTwoScheduledRunner struct {
+	queuedAt   time.Time
 	queryGroup execution.QueryGroupIdentity
 	lifecycle  *phaseTwoQueryGroupLifecycle
 }
@@ -549,17 +551,23 @@ func (dispatcher *phaseTwoRunnerDispatcher) start(ctx context.Context) {
 			defer dispatcher.workers.Done()
 			for scheduled := range dispatcher.jobs {
 				result := phaseTwoScheduledResult{scheduled: scheduled}
+				runCtx := dispatcher.bundle.dependencies.TargetFlow.Context(ctx, string(scheduled.queryGroup))
+				if observability.TargetFlowEnabled(runCtx) {
+					runCtx = observability.ContextWithTraceFields(runCtx, observability.TraceFields{QueryGroupKey: string(scheduled.queryGroup)})
+					observability.EmitTargetFlow(runCtx, "runner_dispatch", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "execution_slot_acquired", QueuedAtMS: scheduled.queuedAt.UnixMilli(), QueueWaitNS: time.Since(scheduled.queuedAt).Nanoseconds()})
+				}
 				if ctx.Err() == nil && dispatcher.bundle.isCurrentScheduledRunner(scheduled) {
 					func() {
-						defer startSlotTiming(ctx, dispatcher.bundle.dependencies.Observer, observability.StageRunnerCompleted, time.Now)()
+						defer startSlotTiming(runCtx, dispatcher.bundle.dependencies.Observer, observability.StageRunnerCompleted, time.Now)()
 						_, result.attempted, result.admissionDenied, result.err =
-							scheduled.lifecycle.runner.RunOneAdmitted(ctx, func(execution.Operation) (func(), bool) {
+							scheduled.lifecycle.runner.RunOneAdmitted(runCtx, func(execution.Operation) (func(), bool) {
 								// F was acquired by this dispatcher before preparation.
 								// P/R belong only to actual Query admission in Access.
 								return func() {}, ctx.Err() == nil
 							})
 					}()
 				}
+				observability.EmitTargetFlow(runCtx, "runner_return", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "returned", Attempted: result.attempted})
 				dispatcher.results <- result
 			}
 		}()
@@ -675,10 +683,14 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues() {
 		if last.lifecycle == scheduled.lifecycle && last.generation == dispatcher.generation {
 			continue
 		}
+		if dispatcher.bundle.dependencies.TargetFlow.Selected(string(scheduled.queryGroup)) {
+			scheduled.queuedAt = time.Now()
+		}
 		readyAt := scheduled.lifecycle.runner.NextReadyAt()
 		queued := phaseTwoQueuedRunner{scheduled: scheduled, readyAt: readyAt}
 		if readyAt.IsZero() {
 			if len(dispatcher.normal) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.ReadyQueueCapacity {
+				dispatcher.bundle.dependencies.TargetFlow.Record("queue_skipped", string(scheduled.queryGroup), observability.TargetFlowFacts{Decision: "normal_queue_full"})
 				continue
 			}
 			dispatcher.normal = append(dispatcher.normal, queued)
@@ -686,9 +698,11 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues() {
 			if len(dispatcher.delayed) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.RecoveryQueueCapacity {
 				latest := dispatcher.latestDelayedIndex()
 				if latest < 0 || !delayedBefore(queued, dispatcher.delayed[latest]) {
+					dispatcher.bundle.dependencies.TargetFlow.Record("queue_skipped", string(scheduled.queryGroup), observability.TargetFlowFacts{Decision: "delayed_queue_full", ReadyAtMS: diagnosticTimeMS(readyAt)})
 					continue
 				}
 				evicted := dispatcher.delayed[latest].scheduled
+				dispatcher.bundle.dependencies.TargetFlow.Record("queue_skipped", string(evicted.queryGroup), observability.TargetFlowFacts{Decision: "delayed_queue_evicted"})
 				if dispatcher.queued[evicted.queryGroup] == evicted.lifecycle {
 					delete(dispatcher.queued, evicted.queryGroup)
 				}
@@ -700,6 +714,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues() {
 				dispatcher.delayed = append(dispatcher.delayed, queued)
 			}
 		}
+		dispatcher.bundle.dependencies.TargetFlow.Record("runner_queued", string(scheduled.queryGroup), observability.TargetFlowFacts{Decision: "queued", QueuedAtMS: scheduled.queuedAt.UnixMilli(), ReadyAtMS: diagnosticTimeMS(readyAt)})
 		dispatcher.queued[scheduled.queryGroup] = scheduled.lifecycle
 		dispatcher.lastQueued[scheduled.queryGroup] = phaseTwoRunnerGeneration{
 			lifecycle: scheduled.lifecycle, generation: dispatcher.generation,
@@ -767,6 +782,9 @@ func (dispatcher *phaseTwoRunnerDispatcher) handleResult(
 	}
 	if !requeue || !dispatcher.bundle.isCurrentScheduledRunner(scheduled) {
 		return
+	}
+	if dispatcher.bundle.dependencies.TargetFlow.Selected(string(scheduled.queryGroup)) {
+		scheduled.queuedAt = time.Now()
 	}
 	readyAt := scheduled.lifecycle.runner.NextReadyAt()
 	if readyAt.IsZero() || len(dispatcher.delayed) >=
@@ -1531,4 +1549,11 @@ func (h *phaseTwoApplicationHealth) HealthSnapshot() observability.HealthSnapsho
 	snapshot.ConsumerLagRecords = 0
 	snapshot.ConsumerLagKnown = false
 	return observability.NormalizeHealthSnapshot(snapshot)
+}
+
+func diagnosticTimeMS(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixMilli()
 }

@@ -118,7 +118,11 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	observer = observability.Multi(observer, external.AdditionalObserver)
+	targetFlow, err := observability.NewTargetFlow(logger, cfg.PhaseTwo.TargetFlow)
+	if err != nil {
+		return nil, err
+	}
+	observer = observability.Multi(observer, external.AdditionalObserver, targetFlow)
 	observer = phaseTwoRuntimeObserver(observer)
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), cfg.CompilerLimits())
 	if err != nil {
@@ -380,7 +384,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	}
 	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
 		Config: cfg, Health: health, Control: control, Ownership: productionOwnership,
-		Recorder: recorder, Observer: observer, Now: external.Now,
+		Recorder: recorder, Observer: observer, TargetFlow: targetFlow, Now: external.Now,
 		CloseResources: func(shutdownCtx context.Context) error {
 			eventsClosed = true
 			if finalEmitter != nil && finalEmitter.publisher != nil {

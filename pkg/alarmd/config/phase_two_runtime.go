@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
@@ -98,6 +99,7 @@ type PhaseTwoCoordinatorConfig struct {
 }
 
 type PhaseTwoRuntimeConfig struct {
+	TargetFlow observability.TargetFlowConfig `yaml:"target_flow,omitempty"`
 	// Empty disables final Shadow evidence; the file is the frozen Epoch manifest.
 	ShadowManifestPath string                    `yaml:"shadow_manifest_path,omitempty"`
 	Worker             PhaseTwoWorkerConfig      `yaml:"worker"`
@@ -150,6 +152,9 @@ func (c *Config) resolvePhaseTwoWorkerIDFromEnvironment() {
 }
 
 func (c PhaseTwoRuntimeConfig) validate() error {
+	if err := c.TargetFlow.Validate(); err != nil {
+		return err
+	}
 	if !canonicalText(c.Worker.ID) || !canonicalText(c.Worker.DeploymentProfile) {
 		return errors.New("phase_two worker identity and deployment_profile must be canonical text")
 	}

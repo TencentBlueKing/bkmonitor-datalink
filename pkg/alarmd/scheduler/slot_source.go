@@ -13,6 +13,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
@@ -232,6 +233,12 @@ func (source *ProductionSlotSource) Next(
 	if err := ctx.Err(); err != nil {
 		return FrozenSlot{}, false, err
 	}
+	decision := "ownership"
+	trace := observability.TraceFields{QueryGroupKey: string(queryGroup)}
+	facts := observability.TargetFlowFacts{}
+	if observability.TargetFlowEnabled(ctx) {
+		defer func() { facts.Decision = decision; observability.EmitTargetFlow(ctx, "slot_selection", trace, facts) }()
+	}
 	at := source.now()
 	if at.IsZero() {
 		return FrozenSlot{}, false, errors.New("alarmd scheduler: current time is required")
@@ -240,6 +247,7 @@ func (source *ProductionSlotSource) Next(
 	if err != nil {
 		return FrozenSlot{}, false, err
 	}
+	decision = "progress_load"
 	identity := execution.ProgressIdentity{QueryGroup: source.queryGroup}
 	load, err := source.progress.LoadProgress(ctx, identity)
 	if err != nil {
@@ -252,6 +260,11 @@ func (source *ProductionSlotSource) Next(
 	if err := load.Validate(identity); err != nil {
 		return FrozenSlot{}, false, err
 	}
+	decision = "schedule_navigation"
+	if load.Progress != nil {
+		facts.NextSlot = int64(load.Progress.NextSlot)
+		facts.LastFullSlot = int64(load.Progress.LastFullSlot)
+	}
 	var schedule execution.FrozenQueryGroupSchedule
 	var nextSlot execution.EvaluationTime
 	if load.Status == execution.ProgressMissing {
@@ -260,6 +273,7 @@ func (source *ProductionSlotSource) Next(
 			var retired bool
 			schedule, nextSlot, retired, err = source.firstAvailableSchedule(ctx, schedule)
 			if retired {
+				decision = "retired"
 				return FrozenSlot{}, false, nil
 			}
 		}
@@ -269,6 +283,7 @@ func (source *ProductionSlotSource) Next(
 			return FrozenSlot{}, false, retirementErr
 		}
 		if retired {
+			decision = "retired"
 			return FrozenSlot{}, false, nil
 		}
 		schedule, nextSlot, err = source.nextSlotAfterProgress(ctx, *load.Progress)
@@ -279,20 +294,39 @@ func (source *ProductionSlotSource) Next(
 	if err := source.validateSchedule(schedule, nextSlot); err != nil {
 		return FrozenSlot{}, false, err
 	}
+	decision = "schedule_validated"
+	trace.EvaluationTime = int64(nextSlot)
+	trace.SnapshotRevision = string(schedule.Segment.Publication.SnapshotRevision)
+	trace.QueryRevision = string(schedule.Segment.QueryRevision)
+	trace.ScheduleRevision = string(schedule.Segment.ScheduleRevision)
+	trace.ScheduleSegmentStart = int64(schedule.Segment.Start)
+	if observability.TargetFlowEnabled(ctx) {
+		for i, plan := range schedule.Plans {
+			if i >= 32 {
+				break
+			}
+			pt := trace
+			pt.StrategyID = plan.Identity.StrategyID
+			observability.EmitTargetFlow(ctx, "plan_schedule_binding", pt, observability.TargetFlowFacts{BusinessID: plan.Identity.BusinessID, TenantID: plan.Identity.TenantID, PlansTruncated: len(schedule.Plans) > 32})
+		}
+	}
 	duePlans := schedule.DuePlanRefs(nextSlot)
 	if len(duePlans) == 0 {
 		return FrozenSlot{}, false, ErrProgressOffSchedule
 	}
 	if at.Unix() < int64(nextSlot) {
+		decision = "future_slot"
 		return FrozenSlot{}, false, nil
 	}
 	request := execution.FreezeSlotContractRequest{
 		QueryGroup: source.queryGroup, ScheduleRevision: schedule.Segment.ScheduleRevision,
 		ScheduleSegmentStart: schedule.Segment.Start, EvaluationTime: nextSlot, DuePlans: duePlans,
 	}
+	decision = "freeze"
 	fact, err := source.catalog.FreezeSlotContract(ctx, request)
 	if err != nil {
 		if load.Progress != nil && load.Progress.UnfinishedSlot != nil {
+			decision = "projection_fallback"
 			slot, due, err := source.slotFromProjection(ctx, initialAssignment, initialFence, *load.Progress.UnfinishedSlot, at)
 			if err == nil && slot.Contract.ScheduleRevision == schedule.Segment.ScheduleRevision && slot.Contract.ScheduleSegmentStart == schedule.Segment.Start && slot.Contract.Slot.EvaluationTime == nextSlot {
 				slot.ShortPeriodCohort = shortPeriodCohort(schedule, nextSlot)
@@ -314,6 +348,7 @@ func (source *ProductionSlotSource) Next(
 		}
 		return FrozenSlot{}, false, &SourceRetryError{Err: cause}
 	}
+	decision = "frozen_contract_validate"
 	if err := fact.Validate(request); err != nil {
 		return FrozenSlot{}, false, fmt.Errorf("%w: %v", ErrSlotContractDrift, err)
 	}
@@ -358,6 +393,9 @@ func (source *ProductionSlotSource) Next(
 	if err := slot.Validate(queryGroup); err != nil {
 		return FrozenSlot{}, false, err
 	}
+	decision = "selected"
+	trace.OwnerID = currentFence.OwnerID
+	trace.OwnerEpoch = currentFence.OwnerEpoch
 	return slot, true, nil
 }
 

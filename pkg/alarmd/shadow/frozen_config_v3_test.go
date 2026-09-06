@@ -15,24 +15,15 @@ import (
 	"testing"
 )
 
-func queryV3FrozenInput(t *testing.T, units ...string) (execution.DuePlan, []execution.DataRequirement, map[execution.LogicalQueryRef]execution.QueryPlanFacts) {
+func queryV3FrozenInput(t *testing.T, fixtures ...string) (execution.DuePlan, []execution.DataRequirement, map[execution.LogicalQueryRef]execution.QueryPlanFacts) {
 	t.Helper()
-	document, err := os.ReadFile("../contract/testdata/query-v3/strategy.json")
+	path := "../contract/testdata/query-v3/strategy.json"
+	if len(fixtures) > 0 {
+		path = "../contract/testdata/query-v3/" + fixtures[0] + "-strategy.json"
+	}
+	document, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(units) != 0 {
-		var source map[string]any
-		if err := json.Unmarshal(document, &source); err != nil {
-			t.Fatal(err)
-		}
-		item := source["items"].([]any)[0].(map[string]any)
-		item["unit"] = units[0]
-		item["query_configs"].([]any)[0].(map[string]any)["unit"] = units[0]
-		document, err = json.Marshal(source)
-		if err != nil {
-			t.Fatal(err)
-		}
 	}
 	access := true
 	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("route-v1", "UTC", controlplane.LegacyQueryRuntimeFacts{AccessBKData: &access, BKDataCMDBLevelTables: []string{}, SystemDiskFilter: controlplane.LegacyRuntimeFilterFact{}, SystemNetworkFilter: controlplane.LegacyRuntimeFilterFact{}})
@@ -107,5 +98,34 @@ func TestQueryV3ActualCatalogCompiler(t *testing.T) {
 	after, _ := json.Marshal(queries)
 	if !reflect.DeepEqual(before, after) {
 		t.Fatal("caller facts mutated")
+	}
+}
+
+func TestQueryV3FrozenVariants(t *testing.T) {
+	for _, name := range []string{"expression-functions", "rate-functions", "time-shift", "subquery", "minimum-step", "typed-conditions", "metric-expansion"} {
+		t.Run(name, func(t *testing.T) {
+			due, req, queries := queryV3FrozenInput(t, name)
+			c, err := shadow.BuildFrozenComparisonConfigV3(due, req, queries)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wire, _, err := contract.CanonicalComparisonConfigV3(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := "../contract/testdata/query-v3/" + name + "-config.json"
+			if os.Getenv("ALARMD_UPDATE_QUERY_V3_GOLDEN") == "1" {
+				if err := os.WriteFile(path, append(wire, '\n'), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(wire)+"\n" != string(want) {
+				t.Fatal("variant golden differs")
+			}
+		})
 	}
 }

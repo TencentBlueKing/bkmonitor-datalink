@@ -1319,6 +1319,21 @@ func TestRedisCatalogRepositoryActivationCASAndProjection(t *testing.T) {
 	if err != nil || len(activations.Facts) != 2 || activations.Facts[0] != fact || activations.Facts[1].Selection != execution.ActivationNone {
 		t.Fatalf("activation projection=(%#v, %v)", activations, err)
 	}
+
+	// Each authorization must reread live bytes, even if record_revision is unchanged.
+	activations.Facts[0].Selected.StateGeneration = "caller-mutation"
+	state.Plans[0].Fact.Selected.StateApplyEpoch++
+	payload, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(context.Background(), "alarmd:control:test:activation", payload, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	again, err := repository.LoadActivations(context.Background(), execution.PlanActivationRequest{Contract: contract, Plans: []execution.PlanIdentity{plan.Identity}})
+	if err != nil || len(again.Facts) != 1 || again.Facts[0] != state.Plans[0].Fact {
+		t.Fatal("second authorization missed current facts or caller isolation", err)
+	}
 }
 
 func TestRedisCatalogRepositoryRenewsOnlyActivationGuardedCurrentObjects(t *testing.T) {

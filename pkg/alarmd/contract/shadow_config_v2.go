@@ -100,53 +100,71 @@ func CanonicalComparisonConfigV2(input ComparisonConfigV2) ([]byte, string, erro
 	if err := json.Unmarshal(payload, &c); err != nil {
 		return nil, "", err
 	}
-	if c.SchemaVersion != "comparison-config-v2" || c.SelectionMappingVersion == "" || len(c.Levels) == 0 || len(c.SelectionOrder) != len(c.Levels) || c.EffectiveTime != "ALWAYS" {
+	if c.SchemaVersion != "comparison-config-v2" {
 		return nil, "", invalid("shadow.config", "version, complete Levels and migrated effective time required")
+	}
+	if err := normalizeComparisonCommon(&c, true); err != nil {
+		return nil, "", err
+	}
+	b, err := CanonicalJSONV2(c)
+	if err != nil {
+		return nil, "", err
+	}
+	digest, err := ShadowCanonicalDigestV1(json.RawMessage(b))
+	return b, digest, err
+}
+
+// normalizeComparisonCommon validates shared Level/numeric/projection facts.
+// Only the V2 wrapper requests its legacy selector checks.
+func normalizeComparisonCommon(c *ComparisonConfigV2, checkSelector bool) error {
+	var err error
+	if c.SelectionMappingVersion == "" || len(c.Levels) == 0 || len(c.SelectionOrder) != len(c.Levels) || c.EffectiveTime != "ALWAYS" {
+		return invalid("shadow.config", "version, complete Levels and migrated effective time required")
 	}
 	ids := map[uint32]bool{}
 	procPort, threshold := false, false
 	for i := range c.Levels {
 		l := &c.Levels[i]
 		if l.LevelID == 0 || l.Priority == 0 || ids[l.LevelID] || (l.Connector != "AND" && l.Connector != "OR") || len(l.Detectors) == 0 || l.Trigger.WindowPoints == 0 || l.Trigger.RequiredAnomalies == 0 || l.Trigger.RequiredAnomalies > l.Trigger.WindowPoints || l.Trigger.StepSeconds == 0 || l.Recovery.Mode != "CONTINUOUS_TRIGGER_MISS" || l.Recovery.InputRequirement != "DATA_DRIVEN" || (l.Recovery.Enabled && l.Recovery.ConsecutiveWindows == 0) {
-			return nil, "", invalid("shadow.config.level", "incomplete or unmigrated Level config")
+			return invalid("shadow.config.level", "incomplete or unmigrated Level config")
 		}
 		ids[l.LevelID] = true
 		for j := range l.Detectors {
 			d := &l.Detectors[j]
 			if d.Kind == "ProcPort" {
 				if err := validateProcPortDetector(*d); err != nil {
-					return nil, "", err
+					return err
 				}
 				procPort = true
 				continue
 			}
 			threshold = true
 			if (d.MappingVersion != "canonical-threshold-v2" && d.MappingVersion != "canonical-threshold-dnf-v2") || d.SourceAlgorithmFamily != "" || d.SourceMappingVersion != "" {
-				return nil, "", invalid("shadow.config.detector", "mapping version required")
+				return invalid("shadow.config.detector", "mapping version required")
 			}
 			if d.Kind == "Threshold" {
 				if d.MappingVersion == "canonical-threshold-dnf-v2" {
 					if d.Operator != "" || d.Threshold != "" {
-						return nil, "", invalid("shadow.config.threshold", "ambiguous DNF predicate")
+						return invalid("shadow.config.threshold", "ambiguous DNF predicate")
 					}
 					d.SemanticConfig, err = normalizeThresholdDNFV2(d.SemanticConfig)
 					if err != nil {
-						return nil, "", err
+						return err
 					}
 					continue
 				}
 				if d.Operator != "GTE" && d.Operator != "GT" && d.Operator != "LTE" && d.Operator != "LT" && d.Operator != "EQ" && d.Operator != "NE" {
-					return nil, "", invalid("shadow.config.threshold", "operator required")
+					return invalid("shadow.config.threshold", "operator required")
 				}
 				d.Threshold, err = NormalizeShadowDecimalV1(d.Threshold)
 				if err != nil {
-					return nil, "", err
+					return err
 				}
 				if len(d.SemanticConfig) != 0 {
-					return nil, "", invalid("shadow.config.threshold", "ambiguous predicate")
+					return invalid("shadow.config.threshold", "ambiguous predicate")
 				}
 			} else {
-				return nil, "", invalid("shadow.config.detector", "semantic adapter not yet implemented")
+				return invalid("shadow.config.detector", "semantic adapter not yet implemented")
 			}
 		}
 	}
@@ -159,60 +177,57 @@ func CanonicalComparisonConfigV2(input ComparisonConfigV2) ([]byte, string, erro
 	})
 	for i, l := range order {
 		if c.SelectionOrder[i] != l.LevelID {
-			return nil, "", invalid("shadow.config.selection", "selection order disagrees with mapped priority")
+			return invalid("shadow.config.selection", "selection order disagrees with mapped priority")
 		}
 	}
 	sort.Slice(c.Levels, func(i, j int) bool { return c.Levels[i].LevelID < c.Levels[j].LevelID })
-	if c.Selector.Metric == "" || c.Selector.Aggregation == "" || c.Selector.StepMillis <= 0 || c.Selector.QueryAlignmentMillis <= 0 || c.Selector.Timezone == "" || c.Selector.Expression == "" || c.Selector.FilterConnectors == nil || c.Schedule.Timezone == "" || c.Selector.Filters == nil || len(c.Projection.ValueFields) == 0 || c.Projection.IdentityFields == nil || c.Projection.RequiredDimensions == nil || c.Schedule.IntervalSeconds == 0 || c.Schedule.WindowSeconds == 0 || c.Schedule.AlignmentSeconds < 0 {
-		return nil, "", invalid("shadow.config", "selector, projection, numeric and Schedule facts required")
+	if (checkSelector && (c.Selector.Metric == "" || c.Selector.Aggregation == "" || c.Selector.StepMillis <= 0 || c.Selector.QueryAlignmentMillis <= 0 || c.Selector.Timezone == "" || c.Selector.Expression == "" || c.Selector.FilterConnectors == nil || c.Selector.Filters == nil)) || c.Schedule.Timezone == "" || len(c.Projection.ValueFields) == 0 || c.Projection.IdentityFields == nil || c.Projection.RequiredDimensions == nil || c.Schedule.IntervalSeconds == 0 || c.Schedule.WindowSeconds == 0 || c.Schedule.AlignmentSeconds < 0 {
+		return invalid("shadow.config", "selector, projection, numeric and Schedule facts required")
 	}
 	c.Numeric.Multiplier, err = NormalizeShadowDecimalV1(c.Numeric.Multiplier)
 	if err != nil {
-		return nil, "", err
+		return err
 	}
 	for _, fields := range [][]string{c.Projection.IdentityFields, c.Projection.RequiredDimensions} {
 		sort.Strings(fields)
 		for i, f := range fields {
 			if f == "" || (i > 0 && fields[i-1] == f) {
-				return nil, "", invalid("shadow.config.projection", "empty or duplicate field")
+				return invalid("shadow.config.projection", "empty or duplicate field")
 			}
 		}
 	}
 	valueFields := map[string]bool{}
 	for _, field := range c.Projection.ValueFields {
 		if field == "" || valueFields[field] {
-			return nil, "", invalid("shadow.config.projection", "invalid value fields")
+			return invalid("shadow.config.projection", "invalid value fields")
 		}
 		valueFields[field] = true
 	}
 	if procPort && (threshold || c.Numeric.DecimalPlaces != 0 || c.Numeric.Rounding != "" || c.Numeric.Multiplier != "1") {
-		return nil, "", invalid("shadow.config.numeric", "ProcPort native value mapping required")
+		return invalid("shadow.config.numeric", "ProcPort native value mapping required")
 	}
 	if procPort {
 		if err := validateProcPortProjection(c.Projection); err != nil {
-			return nil, "", err
+			return err
 		}
 	}
 	if c.Schedule.AlignmentSeconds >= int64(c.Schedule.IntervalSeconds) || (!procPort && (c.Numeric.DecimalPlaces != 6 || c.Numeric.Rounding != "HALF_EVEN")) || c.Numeric.Multiplier == "0" || strings.HasPrefix(c.Numeric.Multiplier, "-") {
-		return nil, "", invalid("shadow.config", "unsupported schedule or numeric semantics")
+		return invalid("shadow.config", "unsupported schedule or numeric semantics")
 	}
-	if len(c.Selector.FilterConnectors) != max(0, len(c.Selector.Filters)-1) {
-		return nil, "", invalid("shadow.config.filters", "missing connectors")
-	}
-	for _, connector := range c.Selector.FilterConnectors {
-		if connector != "and" && connector != "or" {
-			return nil, "", invalid("shadow.config.filters", "unsupported connector")
+	if checkSelector {
+		if len(c.Selector.FilterConnectors) != max(0, len(c.Selector.Filters)-1) {
+			return invalid("shadow.config.filters", "missing connectors")
+		}
+		for _, connector := range c.Selector.FilterConnectors {
+			if connector != "and" && connector != "or" {
+				return invalid("shadow.config.filters", "unsupported connector")
+			}
+		}
+		for _, filter := range c.Selector.Filters {
+			if filter.Field == "" || filter.Operator == "" || len(filter.Values) == 0 {
+				return invalid("shadow.config.filters", "incomplete filter")
+			}
 		}
 	}
-	for _, filter := range c.Selector.Filters {
-		if filter.Field == "" || filter.Operator == "" || len(filter.Values) == 0 {
-			return nil, "", invalid("shadow.config.filters", "incomplete filter")
-		}
-	}
-	b, err := CanonicalJSONV2(c)
-	if err != nil {
-		return nil, "", err
-	}
-	digest, err := ShadowCanonicalDigestV1(json.RawMessage(b))
-	return b, digest, err
+	return nil
 }

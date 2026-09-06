@@ -32,7 +32,7 @@ type FiniteRecord struct {
 	Reason          string                         `json:"reason,omitempty"`
 	Business        *contract.GoBusinessAbnormalV1 `json:"-"`
 	Shadow          *contract.ShadowResultRecordV1 `json:"-"`
-	Coverage        *contract.GoCoverageEnvelopeV1 `json:"-"`
+	Coverage        *contract.GoCoverageRecord     `json:"-"`
 }
 
 func finiteRecord(message *sarama.ConsumerMessage, observed time.Time, limit int) FiniteRecord {
@@ -44,7 +44,7 @@ func finiteRecord(message *sarama.ConsumerMessage, observed time.Time, limit int
 		r.Kind, r.Reason, r.Business = FiniteBusiness, "", business
 		return r
 	}
-	if coverage, err := contract.DecodeGoCoverageEnvelopeV1(message.Value, limit); err == nil {
+	if coverage, err := contract.DecodeGoCoverageRecord(message.Value, limit); err == nil {
 		r.Kind, r.Reason, r.Coverage = FiniteReceipt, "", coverage
 		return r
 	}

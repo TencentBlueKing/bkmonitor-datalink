@@ -46,9 +46,10 @@ type phaseTwoEventFacts struct {
 }
 
 type phaseTwoShadowExecution struct {
-	frozen   access.FrozenPlan
-	contract execution.FrozenExecutionContractRef
-	events   map[string]phaseTwoEventFacts
+	comparisons map[execution.PlanIdentity]*shadow.PreparedFrozenEvidence
+	frozen      access.FrozenPlan
+	contract    execution.FrozenExecutionContractRef
+	events      map[string]phaseTwoEventFacts
 }
 
 func loadPhaseTwoShadowManifest(ctx context.Context, cfg config.Config) (*contract.ValidationEpochManifestV1, error) {
@@ -273,16 +274,12 @@ func (e *phaseTwoFinalEmitter) emitACKed(ctx context.Context, events []contract.
 				due = d
 			}
 		}
-		cfg, err := shadow.BuildFrozenComparisonConfigV2(due, s.frozen.Requirements, s.frozen.QueryFacts)
+		prepared, err := s.comparison(due)
 		if err != nil {
 			e.observe(ctx, observability.StageFinalEvidenceDropped, observability.ResultFailed)
 			continue
 		}
-		_, digest, err := contract.CanonicalComparisonConfigV2(cfg)
-		if err != nil {
-			e.observe(ctx, observability.StageFinalEvidenceDropped, observability.ResultFailed)
-			continue
-		}
+		digest := prepared.Digest()
 		version, err := execution.BuildApplyVersion(s.contract, due.StateApplyEpoch)
 		if err != nil {
 			e.observe(ctx, observability.StageFinalEvidenceDropped, observability.ResultFailed)
@@ -291,10 +288,10 @@ func (e *phaseTwoFinalEmitter) emitACKed(ctx context.Context, events []contract.
 		c := contract.ShadowContextV1{ComparisonConfigDigest: digest, PlanScheduleRevision: string(due.ScheduleRevision), EvaluationTime: event.EvaluationTime, SlotIdentity: string(version.SlotDigest), SnapshotRevision: string(s.contract.SnapshotRevision), QueryRevision: string(s.contract.QueryRevision), QueryGroupScheduleRevision: string(s.contract.ScheduleRevision), ScheduleSegmentStart: int64(s.contract.ScheduleSegmentStart), DuePlanSetDigest: string(s.contract.DuePlanSetDigest), EffectiveTimeRequirementDigest: facts.effective.RequirementDigest(), EffectiveTimeFactDigest: facts.effective.FactDigest()}
 		input := shadow.GoFrozenEvidenceInputV2{EpochID: e.manifest.EpochID, IdentityVersion: e.manifest.IdentityVersion, ProjectionVersion: "primary-v1", Event: event, ACK: shadow.BusinessACK{Confirmed: true, EventID: event.EventID, SemanticDigest: event.EventSemanticDigest}, Context: c, Completeness: facts.completeness, Due: due, Requirements: s.frozen.Requirements, Queries: s.frozen.QueryFacts, Frozen: s.contract, PrimaryEffectiveTime: facts.effective}
 		if e.manifest.ComparisonVersion == "python-business-kafka-v1" && event.EventKind == contract.TriggerEventAbnormal {
-			e.emitBusiness(ctx, input)
+			e.emitBusiness(ctx, input, prepared)
 			continue
 		}
-		evidence, err := shadow.EncodeGoFinalEvidenceV2(input, int(e.manifest.Limits.MaxMessageBytes))
+		evidence, err := prepared.EncodeFinal(input, int(e.manifest.Limits.MaxMessageBytes))
 		if err != nil || e.publisher == nil {
 			e.observe(ctx, observability.StageFinalEvidenceDropped, observability.ResultFailed)
 			continue
@@ -307,8 +304,8 @@ func (e *phaseTwoFinalEmitter) emitACKed(ctx context.Context, events []contract.
 
 // The new business profile uses the existing actual ACK capture and queue.
 // Recovery continues on its existing single-chain final evidence schema.
-func (e *phaseTwoFinalEmitter) emitBusiness(ctx context.Context, input shadow.GoFrozenEvidenceInputV2) {
-	r, err := shadow.BuildGoBusinessAbnormal(input, int(e.manifest.Limits.MaxMessageBytes))
+func (e *phaseTwoFinalEmitter) emitBusiness(ctx context.Context, input shadow.GoFrozenEvidenceInputV2, prepared *shadow.PreparedFrozenEvidence) {
+	r, err := prepared.Business(input, int(e.manifest.Limits.MaxMessageBytes))
 	if err != nil {
 		e.observe(ctx, observability.StageFinalEvidenceDropped, observability.ResultFailed)
 		return
@@ -324,4 +321,19 @@ func (e *phaseTwoFinalEmitter) emitBusiness(ctx context.Context, input shadow.Go
 	if publisher.TryEnqueueBusinessAbnormal(wire) {
 		e.observe(ctx, observability.StageFinalEvidenceQueued, observability.ResultSuccess)
 	}
+}
+
+func (s *phaseTwoShadowExecution) comparison(due execution.DuePlan) (*shadow.PreparedFrozenEvidence, error) {
+	if p := s.comparisons[due.Identity]; p != nil {
+		return p, nil
+	}
+	p, err := shadow.PrepareFrozenEvidence(due, s.frozen.Requirements, s.frozen.QueryFacts, s.contract)
+	if err != nil {
+		return nil, err
+	}
+	if s.comparisons == nil {
+		s.comparisons = make(map[execution.PlanIdentity]*shadow.PreparedFrozenEvidence)
+	}
+	s.comparisons[due.Identity] = p
+	return p, nil
 }

@@ -14,7 +14,7 @@ import (
 const coverageOffsetPrefix = "coverage:"
 
 type businessScope struct {
-	envelope      *contract.GoCoverageEnvelopeV1
+	envelope      *contract.GoCoverageRecord
 	first         time.Time
 	auditFirst    int64
 	auditFirstSet bool
@@ -36,7 +36,7 @@ func (r *BusinessRun) ObserveGoCoverage(at time.Time, offset BusinessOffset, wir
 	if r.offsetCount() >= r.limits.OffsetEntries {
 		return ErrBusinessBackpressure
 	}
-	e, err := contract.DecodeGoCoverageEnvelopeV1(wire, r.limits.MessageBytes)
+	e, err := contract.DecodeGoCoverageRecord(wire, r.limits.MessageBytes)
 	if err != nil {
 		return err
 	}
@@ -71,7 +71,7 @@ func (r *BusinessRun) ObserveGoCoverage(at time.Time, offset BusinessOffset, wir
 	p.read++
 	return nil
 }
-func scopeMatches(e *contract.GoCoverageEnvelopeV1, subject contract.ShadowSubjectV1) bool {
+func scopeMatches(e *contract.GoCoverageRecord, subject contract.ShadowSubjectV1) bool {
 	receipt := e.Receipt
 	return subject.TenantID == receipt.TenantID && subject.BusinessID == receipt.BusinessID && subject.StrategyID == receipt.StrategyID && subject.SourceTime >= receipt.Input.SourceWindow.FromTime && subject.SourceTime < receipt.Input.SourceWindow.UntilTime
 }
@@ -93,7 +93,7 @@ func (r *BusinessRun) bindCoverageScopes() error {
 		}
 		for _, entry := range r.entries {
 			if scopeMatches(e, entry.subject) {
-				if err := r.BindGoReceipt(entry.subject, &e.Receipt, e.Config, time.UnixMilli(*e.CompletedAt)); err != nil {
+				if err := r.bindGoReceipt(entry.subject, &e.Receipt, e.FullConfigDigest, e.BusinessConfigDigest, time.UnixMilli(*e.CompletedAt)); err != nil {
 					return err
 				}
 			}

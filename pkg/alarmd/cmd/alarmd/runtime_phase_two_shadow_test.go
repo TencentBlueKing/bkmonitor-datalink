@@ -29,24 +29,29 @@ import (
 )
 
 type recordingFinalPublisher struct {
+	published      [][]byte
 	mu             sync.Mutex
 	evidence       []*contract.FinalResultEvidenceV1
 	panicOnEnqueue bool
 	business       []*contract.BusinessAbnormalV1
 	receipts       []*contract.ChainCoverageReceiptV1
+	coverageWire   [][]byte
+	businessWire   [][]byte
 }
 
 func (p *recordingFinalPublisher) TryEnqueueCoverageReceipt(e contract.EncodedGoCoverageV1) bool {
 	if p.panicOnEnqueue {
 		panic("isolated receipt publisher")
 	}
-	envelope, err := contract.DecodeGoCoverageEnvelopeV1(e.CopyBytes(), 1<<20)
+	envelope, err := contract.DecodeGoCoverageRecord(e.CopyBytes(), 1<<20)
 	if err != nil {
 		return false
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.receipts = append(p.receipts, &envelope.Receipt)
+	p.coverageWire = append(p.coverageWire, e.CopyBytes())
+	p.published = append(p.published, e.CopyBytes())
 	return true
 }
 
@@ -61,6 +66,8 @@ func (p *recordingFinalPublisher) TryEnqueueBusinessAbnormal(e contract.EncodedB
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.business = append(p.business, &envelope.Reference)
+	p.businessWire = append(p.businessWire, e.CopyBytes())
+	p.published = append(p.published, e.CopyBytes())
 	return true
 }
 
@@ -114,6 +121,8 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 	if len(modes) > 0 {
 		mode = modes[0]
 	}
+	queryV3 := strings.HasPrefix(mode, "v3:")
+	mode = strings.TrimPrefix(mode, "v3:")
 	previousCommit := commit
 	commit = strings.Repeat("b", 40)
 	t.Cleanup(func() { commit = previousCommit })
@@ -121,6 +130,9 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 		t.Run(fmt.Sprintf("publisher_panic_%v", publisherPanics), func(t *testing.T) {
 			address, client := startPhaseTwoRedis(t)
 			base := controlledG4Base(t)
+			if queryV3 {
+				base = 4102444800
+			} // shared controlled source time, all deadlines still derived
 			var clock atomic.Int64
 			clock.Store(base)
 			cfg := controlledG4RuntimeConfig(address, "http://controlled-uq", "shadow-runtime")
@@ -153,6 +165,16 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 					t.Fatal(err)
 				}
 				source := snapshots["snapshot-fixture"].Strategy
+				if queryV3 {
+					raw, err := os.ReadFile("../../contract/testdata/query-v3/strategy.json")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err = json.Unmarshal(raw, &source); err != nil {
+						t.Fatal(err)
+					}
+				}
+
 				// Only native routing identity differs from the public Python source;
 				// the actual selector/detector/units/schedule closure is unchanged.
 				source["id"] = 5101
@@ -243,6 +265,9 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 					}
 					return
 				}
+				if queryV3 && !publisherPanics {
+					assertV3RuntimeCoverage(t, publisher, manifest)
+				}
 				if len(publisher.receipts) == 0 {
 					t.Fatal("missing actual receipt")
 				}
@@ -265,11 +290,15 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 				}
 				return
 			}
-			if len(native) != 2 {
+			wantNative := 2
+			if queryV3 {
+				wantNative = 1
+			}
+			if len(native) != wantNative {
 				b, _ := json.Marshal(observations)
 				t.Fatalf("native=%d observations=%s", len(native), b)
 			}
-			if native[0].EventID == native[1].EventID || native[0].EvaluationTime != base || native[1].EvaluationTime != base+60 || native[0].EventKind != contract.TriggerEventAbnormal || native[1].EventKind != contract.TriggerEventRecovery {
+			if native[0].EvaluationTime != base || native[0].EventKind != contract.TriggerEventAbnormal || (!queryV3 && (native[0].EventID == native[1].EventID || native[1].EvaluationTime != base+60 || native[1].EventKind != contract.TriggerEventRecovery)) {
 				t.Fatalf("two distinct Slot results required: %+v", native)
 			}
 			production := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
@@ -286,6 +315,9 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 			want := 2
 			if business {
 				want = 1
+			}
+			if queryV3 {
+				want = 0
 			}
 			if publisherPanics {
 				want = 0
@@ -306,8 +338,11 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 				if len(publisher.business) != 1 || publisher.business[0].Native.EventID != native[0].EventID {
 					t.Fatal("actual ABNORMAL business profile absent")
 				}
-				if publisher.business[0].ConfigDigest != "c80841863ec8277a1b4e0a408df335ebccdaec4ed5e816fc5517705b7004b735" {
+				if !queryV3 && publisher.business[0].ConfigDigest != "c80841863ec8277a1b4e0a408df335ebccdaec4ed5e816fc5517705b7004b735" {
 					t.Fatal("actual Python/Go config closure differs", string(publisher.business[0].Config))
+				}
+				if queryV3 {
+					assertV3RuntimeCoverage(t, publisher, manifest)
 				}
 				if publisher.business[0].Primary.Status != "ABNORMAL" {
 					t.Fatal("Recovery entered business equivalence")
@@ -412,5 +447,33 @@ func TestPhaseTwoShadowManifestBindsActualProfileAndBounds(t *testing.T) {
 				t.Fatalf("err=%v bad=%v", err, test.bad)
 			}
 		})
+	}
+}
+
+func assertV3RuntimeCoverage(t *testing.T, p *recordingFinalPublisher, manifest contract.ValidationEpochManifestV1) {
+	t.Helper()
+	for _, wire := range p.coverageWire {
+		e, err := contract.DecodeGoCoverageEnvelopeV2(wire, 1<<20)
+		if err != nil || !e.Receipt.CoverageComplete || e.CompletedAt == nil || len(e.Config.Query.Selectors) != 2 {
+			t.Fatalf("actual v3 coverage: %v", err)
+		}
+	}
+	for _, wire := range p.businessWire {
+		e, err := contract.DecodeGoBusinessAbnormalV1(wire, 1<<20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var c struct {
+			Schema string `json:"schema_version"`
+		}
+		if err = json.Unmarshal(e.Reference.Config, &c); err != nil || c.Schema != contract.BusinessAbnormalConfigV2 {
+			t.Fatal("actual v3 business config absent", err)
+		}
+	}
+	assertV3RuntimeConsumer(t, p, manifest)
+}
+func TestPhaseTwoBusinessV3ActualACKAndZeroAbnormalReceipt(t *testing.T) {
+	for _, mode := range []string{"v3:", "v3:normal", "v3:empty"} {
+		t.Run(mode, func(t *testing.T) { testPhaseTwoShadowActualThresholdACKAndIsolation(t, true, mode) })
 	}
 }

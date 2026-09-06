@@ -1,6 +1,7 @@
 package shadow
 
 import (
+	"encoding/json"
 	"errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -24,6 +25,10 @@ func BuildGoBusinessAbnormal(input GoFrozenEvidenceInputV2, limit int) (*contrac
 	if err != nil {
 		return nil, err
 	}
+	return buildBusinessReference(input, e, config, digest, limit)
+}
+func buildBusinessReference(input GoFrozenEvidenceInputV2, e *contract.FinalResultEvidenceV1, config json.RawMessage, digest string, limit int) (*contract.BusinessAbnormalV1, error) {
+	var err error
 	r := &contract.BusinessAbnormalV1{Schema: contract.BusinessAbnormalReferenceV1, Subject: e.Subject,
 		Primary: contract.BusinessPrimaryV1{LevelID: e.Primary.LevelID, Status: e.Primary.Result, Priority: e.Primary.Priority, Values: e.Primary.Values, Unit: e.Primary.Unit},
 		Config:  config, ConfigDigest: digest, InputQuality: e.Completeness.Input,

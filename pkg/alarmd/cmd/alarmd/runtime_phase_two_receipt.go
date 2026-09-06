@@ -248,16 +248,12 @@ func (f *phaseTwoReceiptFacts) emit(_ context.Context, result execution.SlotExec
 	}
 	k := contract.KnownShadowCountV1
 	for _, p := range f.plans {
-		cfg, err := shadow.BuildFrozenComparisonConfigV2(p.due, f.execution.frozen.Requirements, f.execution.frozen.QueryFacts)
+		prepared, err := f.execution.comparison(p.due)
 		if err != nil {
 			publisher.TryEnqueueCoverageReceipt(contract.EncodedGoCoverageV1{})
 			continue
 		}
-		_, digest, err := contract.CanonicalComparisonConfigV2(cfg)
-		if err != nil {
-			publisher.TryEnqueueCoverageReceipt(contract.EncodedGoCoverageV1{})
-			continue
-		}
+		digest := prepared.Digest()
 		version, err := execution.BuildApplyVersion(f.request.Contract, p.due.StateApplyEpoch)
 		if err != nil {
 			publisher.TryEnqueueCoverageReceipt(contract.EncodedGoCoverageV1{})
@@ -265,7 +261,7 @@ func (f *phaseTwoReceiptFacts) emit(_ context.Context, result execution.SlotExec
 		}
 		c := contract.ShadowContextV1{ComparisonConfigDigest: digest, PlanScheduleRevision: string(p.due.ScheduleRevision), EvaluationTime: int64(f.request.Contract.Slot.EvaluationTime), SlotIdentity: string(version.SlotDigest), SnapshotRevision: string(f.request.Contract.SnapshotRevision), QueryRevision: string(f.request.Contract.QueryRevision), QueryGroupScheduleRevision: string(f.request.Contract.ScheduleRevision), ScheduleSegmentStart: int64(f.request.Contract.ScheduleSegmentStart), DuePlanSetDigest: string(f.request.Contract.DuePlanSetDigest), EffectiveTimeRequirementDigest: p.effective.RequirementDigest(), EffectiveTimeFactDigest: p.effective.FactDigest()}
 		executionRef, _ := contract.DeriveCanonicalDigestV2("go-slot-execution-observation-v1", f.request)
-		r := contract.ChainCoverageReceiptV1{EpochID: f.emitter.manifest.EpochID, Chain: contract.ShadowGo, TenantID: p.due.Identity.TenantID, BusinessID: p.due.Identity.BusinessID, StrategyID: p.due.Identity.StrategyID, Context: c, Input: contract.ShadowInputCoverageV1{QueryAttempts: contract.ShadowAttemptObservationV1{ExecutionRef: executionRef, CurrentExecution: k(f.calls)}, Completion: f.completion, Series: k(f.series), Records: k(f.records), SelectedPlanRecords: k(p.selected), SourceWindow: contract.SourceWindowV2{FromTime: c.EvaluationTime - int64(cfg.Schedule.WindowSeconds), UntilTime: c.EvaluationTime}, ResultBytesDigest: f.resultDigest}, Records: p.outcomes, PhysicalProduced: k(p.produced), PhysicalACKed: k(p.acked), TerminalFact: f.committed, TerminalFactRef: f.terminalRef, GapReasons: []string{}, ReasonCounts: []contract.ReasonCountV1{}}
+		r := contract.ChainCoverageReceiptV1{EpochID: f.emitter.manifest.EpochID, Chain: contract.ShadowGo, TenantID: p.due.Identity.TenantID, BusinessID: p.due.Identity.BusinessID, StrategyID: p.due.Identity.StrategyID, Context: c, Input: contract.ShadowInputCoverageV1{QueryAttempts: contract.ShadowAttemptObservationV1{ExecutionRef: executionRef, CurrentExecution: k(f.calls)}, Completion: f.completion, Series: k(f.series), Records: k(f.records), SelectedPlanRecords: k(p.selected), SourceWindow: contract.SourceWindowV2{FromTime: c.EvaluationTime - int64(prepared.WindowSeconds()), UntilTime: c.EvaluationTime}, ResultBytesDigest: f.resultDigest}, Records: p.outcomes, PhysicalProduced: k(p.produced), PhysicalACKed: k(p.acked), TerminalFact: f.committed, TerminalFactRef: f.terminalRef, GapReasons: []string{}, ReasonCounts: []contract.ReasonCountV1{}}
 		if r.Input.Completion == "" {
 			r.Input.Completion = "UNAVAILABLE"
 		}
@@ -311,12 +307,12 @@ func (f *phaseTwoReceiptFacts) emit(_ context.Context, result execution.SlotExec
 			publisher.TryEnqueueCoverageReceipt(contract.EncodedGoCoverageV1{})
 			continue
 		}
-		envelope := contract.GoCoverageEnvelopeV1{EpochID: r.EpochID, Receipt: *receipt, Config: cfg}
+		var completedAt *int64
 		if f.committed && f.completedAt > 0 {
 			at := f.completedAt
-			envelope.CompletedAt = &at
+			completedAt = &at
 		}
-		wire, err := contract.EncodeGoCoverageEnvelopeV1(envelope, int(f.emitter.manifest.Limits.MaxMessageBytes))
+		wire, err := prepared.EncodeCoverage(*receipt, completedAt, int(f.emitter.manifest.Limits.MaxMessageBytes))
 		if err != nil {
 			publisher.TryEnqueueCoverageReceipt(contract.EncodedGoCoverageV1{})
 			continue

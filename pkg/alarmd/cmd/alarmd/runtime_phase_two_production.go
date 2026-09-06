@@ -1314,6 +1314,8 @@ func frozenSlotTrace(
 func (runtime *productionPhaseTwoQueryGroup) RunOne(
 	ctx context.Context,
 ) (execution.SlotExecutionResult, bool, error) {
+	ctx, releaseSnapshot := controlplane.WithSnapshotReadScope(ctx)
+	defer releaseSnapshot()
 	return runtime.runner.RunOne(ctx)
 }
 
@@ -1321,6 +1323,8 @@ func (runtime *productionPhaseTwoQueryGroup) RunOneAdmitted(
 	ctx context.Context,
 	admission scheduler.ExecutionAdmission,
 ) (execution.SlotExecutionResult, bool, bool, error) {
+	ctx, releaseSnapshot := controlplane.WithSnapshotReadScope(ctx)
+	defer releaseSnapshot()
 	return runtime.runner.RunOneAdmitted(ctx, admission)
 }
 

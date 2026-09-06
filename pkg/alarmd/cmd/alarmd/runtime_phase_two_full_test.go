@@ -2116,3 +2116,135 @@ func startPhaseTwoRedis(t *testing.T) (string, *redis.Client) {
 	t.Fatalf("redis-server did not become ready: %s", output.String())
 	return "", nil
 }
+
+func TestProductionSnapshotScopeUsesOnePayloadPerRun(t *testing.T) {
+	address, redisClient := startPhaseTwoRedis(t)
+	ctx := context.Background()
+	installTwoPhaseTwoStrategies(t, ctx, redisClient)
+
+	base := time.Now().Unix() + 3
+	var clock atomic.Int64
+	clock.Store(base * 1000)
+	now := func() time.Time { return time.UnixMilli(clock.Load()) }
+	var uqCalls atomic.Int64
+	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		uqCalls.Add(1)
+		_, _ = writer.Write([]byte(`{"series":[],"status":null,"trace_id":"g3b-snapshot-isolation","is_partial":false,"result_table_id":[]}`))
+	}))
+	defer uqServer.Close()
+
+	cfg := validGoAccessRuntimeConfig()
+	cfg.Redis.Address = address
+	cfg.Redis.StatePrefix = "alarmd-g3b-snapshot-qg-isolation"
+	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
+	cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(100 * time.Millisecond)
+	cfg.PhaseTwo.Access.DownstreamExecutionReserve = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Worker.RegistrationRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderTTL = config.Duration(10 * time.Minute)
+	cfg.PhaseTwo.Ownership.ControlLeaderRenewInterval = config.Duration(time.Minute)
+	cfg.PhaseTwo.Ownership.LeaseTTL = config.Duration(time.Hour)
+	cfg.PhaseTwo.Ownership.LeaseRenewInterval = config.Duration(time.Minute)
+
+	events := &recordingPhaseTwoEventSink{}
+	bundle, err := openProductionPhaseTwoBundleWithDependencies(
+		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime),
+		newPhaseTwoApplicationHealth(),
+		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
+			return controlplane.NewLegacyRedisStrategySource(client, prefix)
+		},
+		phaseTwoProductionExternalDependencies{
+			Now: now, HTTPClient: uqServer.Client(),
+			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil },
+		},
+	)
+	if err != nil {
+		t.Fatalf("openProductionPhaseTwoBundleWithDependencies() error = %v", err)
+	}
+	if err := redisClient.ConfigSet(ctx, "slowlog-log-slower-than", "0").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.ConfigSet(ctx, "slowlog-max-len", "2048").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := bundle.Start(ctx); err != nil {
+		t.Fatalf("phase-two production Start() error = %v", err)
+	}
+	defer func() {
+		if shutdownErr := bundle.Shutdown(ctx); shutdownErr != nil {
+			t.Errorf("phase-two production Shutdown() error = %v", shutdownErr)
+		}
+	}()
+	if len(bundle.queryGroups) != 2 || len(bundle.runners) != 2 {
+		t.Fatalf("initial Query Groups/runners = %v/%d, want two", bundle.queryGroups, len(bundle.runners))
+	}
+
+	production := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
+	queryGroupsByStrategy := make(map[string]execution.QueryGroupIdentity, 2)
+	var snapshotRevision execution.SnapshotRevision
+	for _, queryGroup := range bundle.queryGroups {
+		schedule, scheduleErr := production.dependencies.Catalog.ReadInitialFrozenSchedule(ctx, queryGroup)
+		if scheduleErr != nil || len(schedule.Plans) != 1 {
+			t.Fatalf("Query Group %s schedule=%+v error=%v", queryGroup, schedule, scheduleErr)
+		}
+		queryGroupsByStrategy[schedule.Plans[0].Identity.StrategyID] = queryGroup
+		snapshotRevision = schedule.Segment.Publication.SnapshotRevision
+	}
+	snapshotKey := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog") + ":snapshot:" + string(snapshotRevision)
+	clock.Store((base + 1) * 1000)
+	for _, strategyID := range []string{"1002", "1001"} {
+		before, err := redisClient.SlowLogGet(ctx, 1).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		lastID := int64(-1)
+		if len(before) > 0 {
+			lastID = before[0].ID
+		}
+		var result execution.SlotExecutionResult
+		var attempted bool
+		if strategyID == "1002" {
+			result, attempted, err = bundle.runners[queryGroupsByStrategy[strategyID]].runner.RunOne(ctx)
+		} else {
+			var denied bool
+			result, attempted, denied, err = bundle.runners[queryGroupsByStrategy[strategyID]].runner.RunOneAdmitted(ctx, func(execution.Operation) (func(), bool) { return func() {}, true })
+			if denied {
+				t.Fatal("denied")
+			}
+		}
+		if err != nil || !attempted || !result.Completed {
+			t.Fatal(result, attempted, err)
+		}
+		entries, err := redisClient.SlowLogGet(ctx, 2048).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		payloadReads := 0
+		snapshotKey := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog") + ":snapshot:" + string(snapshotRevision)
+		for _, entry := range entries {
+			if entry.ID <= lastID {
+				continue
+			}
+			if len(entry.Args) > 1 && entry.Args[0] == "mget" && entry.Args[1] == snapshotKey {
+				payloadReads++
+			}
+		}
+		if payloadReads != 1 {
+			t.Fatalf("actual RunOne full-payload reads=%d want1", payloadReads)
+		}
+	}
+	beforeDeferredCalls := uqCalls.Load()
+	deferredResult, deferredAttempted, err := bundle.runners[queryGroupsByStrategy["1002"]].runner.RunOne(ctx)
+	if err != nil || !deferredAttempted || deferredResult.Completed || uqCalls.Load() != beforeDeferredCalls {
+		t.Fatalf("expected readiness deferral before Query: %+v %v calls=%d", deferredResult, err, uqCalls.Load())
+	}
+	if err := redisClient.Del(ctx, snapshotKey).Err(); err != nil {
+		t.Fatal(err)
+	}
+	clock.Store(bundle.runners[queryGroupsByStrategy["1002"]].runner.NextReadyAt().UnixMilli())
+	reentry, _, err := bundle.runners[queryGroupsByStrategy["1002"]].runner.RunOne(ctx)
+	if err != nil || reentry.Completed || reentry.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) || uqCalls.Load() != beforeDeferredCalls {
+		t.Fatalf("deferred reentry result=%+v error=%v clock=%v", reentry, err, now())
+	}
+}

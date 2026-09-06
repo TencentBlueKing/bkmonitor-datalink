@@ -119,7 +119,13 @@ func BuildFrozenComparisonConfigV2(due execution.DuePlan, requirements []executi
 	if projection.MultiValueAlignment != "SINGLE_VALUE" || len(projection.ValueFields) != 1 || projection.ValueFields[0] != "value" || projection.MissingValuePolicy != contract.MissingValuePolicyRequired || projection.BusinessIdentityField != "bk_biz_id" {
 		return fail("projection semantics")
 	}
-	if len(query.QueryList) != 1 || !slices.Equal(query.QueryList[0].Dimensions, projection.DimensionFields) {
+	procPort := frozenProcPortPlan(plan)
+	aggregationDimensions := append([]string{}, projection.DimensionFields...)
+	if procPort {
+		aggregationDimensions = append(aggregationDimensions, identityFields...)
+		slices.Sort(aggregationDimensions)
+	}
+	if len(query.QueryList) != 1 || !slices.Equal(query.QueryList[0].Dimensions, aggregationDimensions) {
 		return fail("aggregation dimensions")
 	}
 	selector, err := frozenSelectorV2(query)
@@ -141,11 +147,21 @@ func BuildFrozenComparisonConfigV2(due execution.DuePlan, requirements []executi
 		}
 		algorithms := level.Algorithms()
 		detectors := level.Detectors()
-		if len(algorithms) != len(detectors) || len(detectors) == 0 {
+		if len(algorithms) == 0 || (!procPort && (len(algorithms) != len(detectors) || len(detectors) == 0)) {
 			return fail("detector closure")
 		}
 		trigger, recovery := level.Trigger(), level.Recovery()
 		l := contract.ShadowLevelConfigV2{LevelID: level.Definition().LevelID, Priority: level.Definition().Priority, Connector: level.Connector(), Trigger: contract.ShadowTriggerConfigV2{WindowPoints: trigger.WindowSize, RequiredAnomalies: trigger.RequiredAnomalies, StepSeconds: trigger.StepSeconds}, Recovery: contract.ShadowRecoveryConfigV2{Enabled: recovery.Enabled, ConsecutiveWindows: recovery.ConsecutiveWindows, Mode: "CONTINUOUS_TRIGGER_MISS", InputRequirement: "DATA_DRIVEN"}}
+		if procPort {
+			for _, algorithm := range algorithms {
+				detector, err := frozenProcPortDetector(algorithm, query)
+				if err != nil {
+					return fail("ProcPort source mapping")
+				}
+				l.Detectors = append(l.Detectors, detector)
+			}
+			c.Numeric = contract.ShadowNumericConfigV2{SourceUnit: projection.DataUnit, TargetUnit: projection.DataUnit, Multiplier: "1"}
+		}
 		for i, detector := range detectors {
 			provenance, _ := algorithms[i].SourceProvenance()
 			if detector.Kind() != "Threshold" || detector.Version() != 1 || provenance.SourceAlgorithmFamily != "" || provenance.SourceMappingVersion != "" || provenance.CanonicalQueryDigest != "" {

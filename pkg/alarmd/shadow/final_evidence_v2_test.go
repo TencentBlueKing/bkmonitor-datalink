@@ -54,6 +54,11 @@ func frozenFinalInput(t *testing.T, emptyUnit bool) shadow.GoFrozenEvidenceInput
 			a.Config = []byte(strings.ReplaceAll(string(a.Config), `"percent"`, `""`))
 		}
 	})
+	return frozenFinalFrom(t, due, req, queries, nil)
+}
+
+func frozenFinalFrom(t *testing.T, due execution.DuePlan, req []execution.DataRequirement, queries map[execution.LogicalQueryRef]execution.QueryPlanFacts, change func(*contract.TriggerEventV1)) shadow.GoFrozenEvidenceInputV2 {
+	t.Helper()
 	due.StateApplyEpoch = 1
 	cfg, err := shadow.BuildFrozenComparisonConfigV2(due, req, queries)
 	if err != nil {
@@ -67,6 +72,9 @@ func frozenFinalInput(t *testing.T, emptyUnit bool) shadow.GoFrozenEvidenceInput
 	if err != nil {
 		t.Fatal(err)
 	}
+	if change != nil {
+		change(native)
+	}
 	for i := range native.LevelResults {
 		l := &native.LevelResults[i]
 		for _, compiled := range due.CompiledPlan.Levels() {
@@ -76,6 +84,7 @@ func frozenFinalInput(t *testing.T, emptyUnit bool) shadow.GoFrozenEvidenceInput
 			l.LevelTriggerFingerprint = compiled.Fingerprints().Trigger
 			l.DecisionWindow.Trigger.WindowSize = compiled.Trigger().WindowSize
 			l.DecisionWindow.Trigger.RequiredAnomalies = compiled.Trigger().RequiredAnomalies
+			l.DecisionWindow.Recovery.Enabled = compiled.Recovery().Enabled
 			l.DecisionWindow.Recovery.RequiredConsecutiveWindows = compiled.Recovery().ConsecutiveWindows
 		}
 	}

@@ -66,8 +66,8 @@ type ShadowNumericConfigV2 struct {
 	SourceUnit    string `json:"source_unit"`
 	TargetUnit    string `json:"target_unit"`
 	Multiplier    string `json:"multiplier"`
-	DecimalPlaces uint32 `json:"decimal_places"`
-	Rounding      string `json:"rounding"`
+	DecimalPlaces uint32 `json:"decimal_places,omitempty"`
+	Rounding      string `json:"rounding,omitempty"`
 }
 type ShadowScheduleConfigV2 struct {
 	Timezone         string `json:"timezone"`
@@ -104,6 +104,7 @@ func CanonicalComparisonConfigV2(input ComparisonConfigV2) ([]byte, string, erro
 		return nil, "", invalid("shadow.config", "version, complete Levels and migrated effective time required")
 	}
 	ids := map[uint32]bool{}
+	procPort, threshold := false, false
 	for i := range c.Levels {
 		l := &c.Levels[i]
 		if l.LevelID == 0 || l.Priority == 0 || ids[l.LevelID] || (l.Connector != "AND" && l.Connector != "OR") || len(l.Detectors) == 0 || l.Trigger.WindowPoints == 0 || l.Trigger.RequiredAnomalies == 0 || l.Trigger.RequiredAnomalies > l.Trigger.WindowPoints || l.Trigger.StepSeconds == 0 || l.Recovery.Mode != "CONTINUOUS_TRIGGER_MISS" || l.Recovery.InputRequirement != "DATA_DRIVEN" || (l.Recovery.Enabled && l.Recovery.ConsecutiveWindows == 0) {
@@ -112,6 +113,14 @@ func CanonicalComparisonConfigV2(input ComparisonConfigV2) ([]byte, string, erro
 		ids[l.LevelID] = true
 		for j := range l.Detectors {
 			d := &l.Detectors[j]
+			if d.Kind == "ProcPort" {
+				if err := validateProcPortDetector(*d); err != nil {
+					return nil, "", err
+				}
+				procPort = true
+				continue
+			}
+			threshold = true
 			if (d.MappingVersion != "canonical-threshold-v2" && d.MappingVersion != "canonical-threshold-dnf-v2") || d.SourceAlgorithmFamily != "" || d.SourceMappingVersion != "" {
 				return nil, "", invalid("shadow.config.detector", "mapping version required")
 			}
@@ -154,7 +163,7 @@ func CanonicalComparisonConfigV2(input ComparisonConfigV2) ([]byte, string, erro
 		}
 	}
 	sort.Slice(c.Levels, func(i, j int) bool { return c.Levels[i].LevelID < c.Levels[j].LevelID })
-	if c.Selector.Metric == "" || c.Selector.Aggregation == "" || c.Selector.StepMillis <= 0 || c.Selector.QueryAlignmentMillis <= 0 || c.Selector.Timezone == "" || c.Selector.Expression == "" || c.Selector.FilterConnectors == nil || c.Schedule.Timezone == "" || c.Selector.Filters == nil || len(c.Projection.ValueFields) == 0 || c.Projection.IdentityFields == nil || c.Projection.RequiredDimensions == nil || c.Numeric.Rounding == "" || c.Schedule.IntervalSeconds == 0 || c.Schedule.WindowSeconds == 0 || c.Schedule.AlignmentSeconds < 0 {
+	if c.Selector.Metric == "" || c.Selector.Aggregation == "" || c.Selector.StepMillis <= 0 || c.Selector.QueryAlignmentMillis <= 0 || c.Selector.Timezone == "" || c.Selector.Expression == "" || c.Selector.FilterConnectors == nil || c.Schedule.Timezone == "" || c.Selector.Filters == nil || len(c.Projection.ValueFields) == 0 || c.Projection.IdentityFields == nil || c.Projection.RequiredDimensions == nil || c.Schedule.IntervalSeconds == 0 || c.Schedule.WindowSeconds == 0 || c.Schedule.AlignmentSeconds < 0 {
 		return nil, "", invalid("shadow.config", "selector, projection, numeric and Schedule facts required")
 	}
 	c.Numeric.Multiplier, err = NormalizeShadowDecimalV1(c.Numeric.Multiplier)
@@ -176,7 +185,15 @@ func CanonicalComparisonConfigV2(input ComparisonConfigV2) ([]byte, string, erro
 		}
 		valueFields[field] = true
 	}
-	if c.Schedule.AlignmentSeconds >= int64(c.Schedule.IntervalSeconds) || c.Numeric.DecimalPlaces != 6 || c.Numeric.Rounding != "HALF_EVEN" || c.Numeric.Multiplier == "0" || strings.HasPrefix(c.Numeric.Multiplier, "-") {
+	if procPort && (threshold || c.Numeric.DecimalPlaces != 0 || c.Numeric.Rounding != "" || c.Numeric.Multiplier != "1") {
+		return nil, "", invalid("shadow.config.numeric", "ProcPort native value mapping required")
+	}
+	if procPort {
+		if err := validateProcPortProjection(c.Projection); err != nil {
+			return nil, "", err
+		}
+	}
+	if c.Schedule.AlignmentSeconds >= int64(c.Schedule.IntervalSeconds) || (!procPort && (c.Numeric.DecimalPlaces != 6 || c.Numeric.Rounding != "HALF_EVEN")) || c.Numeric.Multiplier == "0" || strings.HasPrefix(c.Numeric.Multiplier, "-") {
 		return nil, "", invalid("shadow.config", "unsupported schedule or numeric semantics")
 	}
 	if len(c.Selector.FilterConnectors) != max(0, len(c.Selector.Filters)-1) {

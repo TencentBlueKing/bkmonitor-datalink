@@ -189,6 +189,11 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		coordinator.observeQueryFailure(ctx, request.Operation, started, "stream_complete", err)
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid query result: %w", err)
 	}
+	execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
+		if c.InputCompleted != nil {
+			c.InputCompleted(completion)
+		}
+	})
 	queryResult, queryReason := provisionalResult(stream.evaluated)
 	coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation, started, queryResult, queryReason, nil)
 	if len(stream.evaluated.Plans) == 0 {
@@ -754,6 +759,11 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 				mutations = append(mutations, stateResult.Mutation)
 				eventsByState[stateResult.Mutation.Identity] = append([]contract.TriggerEventV1(nil), stateResult.Events...)
 			case execution.StateAlreadyApplied:
+				execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
+					if c.PriorStateApplied != nil {
+						c.PriorStateApplied()
+					}
+				})
 				coordinator.observe(ctx, observability.ComponentState, observability.StageMutationCompared, request.Operation, started, observability.ResultSuccess, observability.ReasonNone, nil)
 				continue
 			case execution.StateStaleVersion, execution.StateVersionConflict:
@@ -938,6 +948,11 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 		observationResult = observability.ResultDegraded
 		observationReason = completion.ReasonCode
 	}
+	execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
+		if c.ProgressCommitted != nil {
+			c.ProgressCommitted(progressRequest, progress)
+		}
+	})
 	coordinator.observe(ctx, observability.ComponentProgress, observability.StageProgressCommitted, request.Operation, started, observationResult, observationReason, nil)
 	return execution.SlotExecutionResult{Completed: true, CompletionKind: completion.Kind, Result: completion.Result, ReasonCode: completion.ReasonCode}, nil
 }
@@ -1027,6 +1042,11 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 	ctx = observability.ContextWithTraceFields(ctx, observability.TraceFields{StrategyID: events[0].PlanRef.StrategyID})
 	started := time.Now()
 	err := coordinator.ports.Events.WriteBatch(ctx, events)
+	execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
+		if c.OutputWritten != nil {
+			c.OutputWritten(events, err)
+		}
+	})
 	reason := execution.ReasonCode(observability.ReasonNone)
 	if err != nil {
 		reason = execution.ReasonCode(observability.ReasonInternalUnknown)

@@ -62,7 +62,8 @@ func phaseTwoRuntimeCapacity(cfg config.Config) observability.RuntimeCapacityFac
 	c := cfg.PhaseTwo.Coordinator
 	uq := phaseTwoUQLimits(cfg)
 	return observability.RuntimeCapacityFacts{
-		ActiveExecutions: min(s.ActiveExecutionLimit, s.ReadyQueueCapacity), ConfiguredActiveExecutions: s.ActiveExecutionLimit,
+		ExpiredRangeEnabled: s.ExpiredRangeEnabled,
+		ActiveExecutions:    min(s.ActiveExecutionLimit, s.ReadyQueueCapacity), ConfiguredActiveExecutions: s.ActiveExecutionLimit,
 		QueryPermits: s.ProcessQueryPermits, RecoveryQueryPermits: s.RecoveryQueryPermits,
 		ReadyQueue: s.ReadyQueueCapacity, RecoveryQueue: s.RecoveryQueueCapacity, QueuedPerQG: s.MaxQueuedItemsPerQG,
 		TickNS: int64(s.TickInterval), ReplaySlots: s.MaxReplaySlots, ReplayAgeNS: int64(s.MaxReplayAge),

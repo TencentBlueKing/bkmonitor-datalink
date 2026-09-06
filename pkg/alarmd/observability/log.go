@@ -120,7 +120,7 @@ func (l *LoggingObserver) Observe(ctx context.Context, observation Observation) 
 	// selected run's decision; do not spend ordinary log quota on every update.
 	if observation.Component == ComponentScheduler {
 		switch observation.Stage {
-		case StageRunnerReturned, StageDispatcherSnapshot, StageQueryPermitWait:
+		case StageRunnerReturned, StageDispatcherSnapshot, StageQueryPermitWait, StageExpiredRangeReturned:
 			return
 		}
 	}

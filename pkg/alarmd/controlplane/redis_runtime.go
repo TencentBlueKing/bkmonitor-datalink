@@ -993,7 +993,7 @@ func (repository *RedisCatalogRepository) queryGroupDrained(
 		return false, &alarmdprogress.DeterministicInvalidError{Err: err}
 	}
 	if load.Status == execution.ProgressFound {
-		return load.Progress.NextSlot >= retiredBoundary, nil
+		return load.Progress.UnfinishedRange == nil && load.Progress.NextSlot >= retiredBoundary, nil
 	}
 	for _, segment := range timeline.Segments {
 		if _, hasSlot := segment.Schedule.FirstSlot(); hasSlot {

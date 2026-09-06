@@ -6,6 +6,7 @@ import (
 )
 
 type workflowMetrics struct {
+	ranges, expiredSlots   *prometheus.CounterVec
 	run, execute, progress *prometheus.CounterVec
 	attempted              prometheus.Counter
 	active, ready, delayed prometheus.Gauge
@@ -20,21 +21,33 @@ func newWorkflowMetrics() workflowMetrics {
 		return prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: name, Help: help})
 	}
 	return workflowMetrics{
-		run:        counter("run_one_return_total", "RunOne exits including panic, classified once by actual control flow.", "outcome"),
-		execute:    counter("execute_return_total", "Executor returns; not successful Slot completions.", "outcome"),
-		progress:   counter("progress_completed_total", "Acknowledged Progress commit observations by existing completion kind.", "kind"),
-		attempted:  prometheus.NewCounter(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "run_one_attempted_total", Help: "Returned attempted=true, including source retries without Execute."}),
-		active:     gauge("scheduler_active_executions", "Worker task occupancy, including preparation and execution, excluding pending result delivery."),
-		ready:      gauge("scheduler_ready_runners", "Runners in the outer ready queue."),
-		delayed:    gauge("scheduler_delayed_runners", "Runners in the outer delayed queue."),
-		permitWait: prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "query_permit_wait_seconds", Help: "Actual query admission call wall duration including immediate grants and failures; parallel waits are not additive Slot time.", Buckets: []float64{0.001, 0.01, 0.1, 1, 5, 15, 30, 60}}, []string{"queue_kind"}),
+		ranges:       counter("expired_range_total", "Expired range operation returns, not logical Slot completions.", "result"),
+		expiredSlots: counter("expired_slots_finalized_total", "Logical age-expired Slots finalized by a new successful range commit.", "reason"),
+		run:          counter("run_one_return_total", "RunOne exits including panic, classified once by actual control flow.", "outcome"),
+		execute:      counter("execute_return_total", "Executor returns; not successful Slot completions.", "outcome"),
+		progress:     counter("progress_completed_total", "Acknowledged Progress commit observations by existing completion kind.", "kind"),
+		attempted:    prometheus.NewCounter(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "run_one_attempted_total", Help: "Returned attempted=true, including source retries without Execute."}),
+		active:       gauge("scheduler_active_executions", "Worker task occupancy, including preparation and execution, excluding pending result delivery."),
+		ready:        gauge("scheduler_ready_runners", "Runners in the outer ready queue."),
+		delayed:      gauge("scheduler_delayed_runners", "Runners in the outer delayed queue."),
+		permitWait:   prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "query_permit_wait_seconds", Help: "Actual query admission call wall duration including immediate grants and failures; parallel waits are not additive Slot time.", Buckets: []float64{0.001, 0.01, 0.1, 1, 5, 15, 30, 60}}, []string{"queue_kind"}),
 	}
 }
 func (m workflowMetrics) collectors() []prometheus.Collector {
-	return []prometheus.Collector{m.run, m.execute, m.progress, m.attempted, m.active, m.ready, m.delayed, m.permitWait}
+	return []prometheus.Collector{m.run, m.execute, m.progress, m.attempted, m.active, m.ready, m.delayed, m.permitWait, m.ranges, m.expiredSlots}
 }
 func (m workflowMetrics) observe(o observability.Observation) {
 	switch {
+	case o.Component == observability.ComponentScheduler && o.Stage == observability.StageExpiredRangeReturned:
+		if f := o.ExpiredRange; f != nil {
+			switch f.Result {
+			case "committed", "retrying", "blocked", "error":
+				m.ranges.WithLabelValues(f.Result).Inc()
+				if f.Result == "committed" && f.CommittedSlots > 0 {
+					m.expiredSlots.WithLabelValues("recovery_expired").Add(float64(f.CommittedSlots))
+				}
+			}
+		}
 	case o.Component == observability.ComponentScheduler && o.Stage == observability.StageRunnerReturned:
 		if observability.ValidRunOutcome(o.RunOutcome) {
 			m.run.WithLabelValues(o.RunOutcome).Inc()

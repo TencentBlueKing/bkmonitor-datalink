@@ -134,6 +134,9 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		OwnerID:              request.OwnerFence.OwnerID, OwnerEpoch: request.OwnerFence.OwnerEpoch,
 		EvaluationTime: int64(request.Contract.Slot.EvaluationTime),
 	})
+	if request.ExpiredRange != nil {
+		return coordinator.executeExpiredRange(ctx, request)
+	}
 	begin, err := coordinator.ports.Progress.BeginSlot(ctx, execution.ProgressBeginRequest{
 		Identity:   execution.ProgressIdentity{QueryGroup: request.Contract.Slot.QueryGroup},
 		OwnerFence: request.OwnerFence, Projection: request.UnfinishedProjection(),
@@ -922,6 +925,9 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 	request execution.SlotExecutionRequest,
 	completion execution.SlotCompletion,
 ) (execution.SlotExecutionResult, error) {
+	if request.ExpiredRange != nil {
+		return coordinator.commitExpiredRange(ctx, request, completion)
+	}
 	started := time.Now()
 	progressRequest := execution.ProgressCommitRequest{
 		Identity:   execution.ProgressIdentity{QueryGroup: request.Contract.Slot.QueryGroup},

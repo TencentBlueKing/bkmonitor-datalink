@@ -6,6 +6,7 @@
 package progress
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 )
 
 const schemaV2 = "alarmd-schedule-progress-v2"
+const schemaRangeV1 = "alarmd-schedule-progress-expired-range-v1"
 
 type ControlStore interface {
 	ReadControl(context.Context, execution.QueryGroupIdentity, string) ([]byte, bool, error)
@@ -153,6 +155,9 @@ func (store *Store) BeginSlot(ctx context.Context, request execution.ProgressBeg
 		if current.Identity != request.Identity {
 			return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
 		}
+		if current.UnfinishedRange != nil {
+			return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
+		}
 		if current.UnfinishedSlot != nil {
 			if current.NextSlot != request.Projection.Contract.Slot.EvaluationTime {
 				return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
@@ -227,6 +232,9 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 		}
 		if current.Identity != request.Identity {
 			return execution.ProgressCommitResult{}, &DeterministicInvalidError{Err: fmt.Errorf("persisted identity does not match commit identity")}
+		}
+		if current.UnfinishedRange != nil {
+			return execution.ProgressCommitResult{Status: execution.ProgressConflict}, nil
 		}
 		currentNext, resolveErr := store.resolveCurrentNextSlot(ctx, current)
 		if resolveErr != nil {
@@ -370,16 +378,53 @@ func encode(progress execution.ScheduleProgress) ([]byte, error) {
 	if err := progress.Validate(); err != nil {
 		return nil, err
 	}
-	return json.Marshal(envelope{Schema: schemaV2, Progress: progress})
+	schema := schemaV2
+	if progress.UnfinishedRange != nil {
+		schema = schemaRangeV1
+	}
+	raw, err := json.Marshal(envelope{Schema: schema, Progress: progress})
+	if err == nil && progress.UnfinishedRange != nil && len(raw) > execution.MaxExpiredRangeProjectionBytes {
+		return nil, execution.ErrExpiredRangeProofTooLarge
+	}
+	return raw, err
 }
 
 func decode(raw []byte) (execution.ScheduleProgress, error) {
+	if len(raw) > execution.MaxExpiredRangeProjectionBytes {
+		// Inspect only the envelope discriminator before allocating a range's
+		// nested schedules/targets. Existing single-slot v2 remains unchanged.
+		var header struct {
+			Schema string `json:"schema"`
+		}
+		if err := json.Unmarshal(raw, &header); err != nil {
+			return execution.ScheduleProgress{}, err
+		}
+		if header.Schema == schemaRangeV1 {
+			return execution.ScheduleProgress{}, execution.ErrExpiredRangeProofTooLarge
+		}
+	}
 	var value envelope
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return execution.ScheduleProgress{}, err
 	}
-	if value.Schema != schemaV2 {
+	if value.Schema != schemaV2 && value.Schema != schemaRangeV1 {
 		return execution.ScheduleProgress{}, fmt.Errorf("unsupported schema %q", value.Schema)
+	}
+	if (value.Schema == schemaRangeV1) != (value.Progress.UnfinishedRange != nil) {
+		return execution.ScheduleProgress{}, fmt.Errorf("progress schema does not match pending representation")
+	}
+	if value.Schema == schemaRangeV1 {
+		if len(raw) > execution.MaxExpiredRangeProjectionBytes {
+			return execution.ScheduleProgress{}, execution.ErrExpiredRangeProofTooLarge
+		}
+		if _, err := contract.CanonicalJSONV2(json.RawMessage(raw)); err != nil {
+			return execution.ScheduleProgress{}, err
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil {
+			return execution.ScheduleProgress{}, err
+		}
 	}
 	if err := value.Progress.Validate(); err != nil {
 		return execution.ScheduleProgress{}, err

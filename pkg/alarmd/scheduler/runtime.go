@@ -35,6 +35,7 @@ func (err *SourceBlockedError) Error() string {
 func (err *SourceBlockedError) Unwrap() error { return err.Err }
 
 type FrozenSlot struct {
+	ExpiredRange                   *execution.ExpiredRangeProjectionV1
 	ShortPeriodCohort              string
 	Contract                       execution.FrozenExecutionContractRef
 	DuePlanTargets                 execution.FrozenDuePlanTargets
@@ -77,7 +78,17 @@ func (slot FrozenSlot) Validate(queryGroup execution.QueryGroupIdentity) error {
 	if err := slot.Dispatch.OwnerFence.Validate(slot.Contract); err != nil {
 		return err
 	}
-	if slot.Contract.Slot.QueryGroup != queryGroup || slot.ExpectedNextSlot != slot.Contract.Slot.EvaluationTime {
+	if slot.ExpiredRange != nil {
+		if err := slot.ExpiredRange.Validate(); err != nil {
+			return err
+		}
+		if slot.ExpectedNextSlot != slot.ExpiredRange.First.Contract.Slot.EvaluationTime || slot.Contract != slot.ExpiredRange.Last.Contract {
+			return errors.New("alarmd scheduler: range differs from persisted head or frozen tail")
+		}
+	} else if slot.ExpectedNextSlot != slot.Contract.Slot.EvaluationTime {
+		return errors.New("alarmd scheduler: frozen Slot does not match Query Group Progress")
+	}
+	if slot.Contract.Slot.QueryGroup != queryGroup {
 		return errors.New("alarmd scheduler: frozen Slot does not match Query Group Progress")
 	}
 	return nil
@@ -274,6 +285,9 @@ func (runner *Runner) runOneTracked(
 		return execution.SlotExecutionResult{}, false, ErrSlotInFlight
 	}
 	defer release()
+	if source, ok := runner.source.(interface{ RangeCreationEnabled() bool }); ok && source.RangeCreationEnabled() {
+		ctx = context.WithValue(ctx, rangeFlightContextKey{}, runner.queryGroup)
+	}
 
 	if _, err := runner.session.ValidateCurrent(ctx, runner.now()); err != nil {
 		decision = "ownership_rejected"
@@ -333,6 +347,7 @@ func (runner *Runner) runOneTracked(
 		return execution.SlotExecutionResult{}, false, ErrSlotOwnershipChanged
 	}
 	request := execution.SlotExecutionRequest{
+		ExpiredRange:      slot.ExpiredRange,
 		ShortPeriodCohort: slot.ShortPeriodCohort,
 		Contract:          slot.Contract, DuePlanTargets: slot.DuePlanTargets.Clone(),
 		EarliestQueryDeadlineUnixMilli: slot.EarliestQueryDeadlineUnixMilli,

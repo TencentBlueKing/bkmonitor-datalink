@@ -139,6 +139,7 @@ type ScheduleProgressReader interface {
 // ProductionSlotSource is bound to one owned Query Group. It reads current
 // control facts and returns one normal due Slot; it never executes queries,
 type ProductionSlotSource struct {
+	expiredRangeEnabled       bool
 	queryGroup                execution.QueryGroupIdentity
 	workerID                  string
 	assignments               AssignmentReader
@@ -259,6 +260,9 @@ func (source *ProductionSlotSource) Next(
 	}
 	if err := load.Validate(identity); err != nil {
 		return FrozenSlot{}, false, err
+	}
+	if load.Progress != nil && load.Progress.UnfinishedRange != nil {
+		return source.resumeExpiredRange(ctx, *load.Progress.UnfinishedRange, initialAssignment, initialFence)
 	}
 	decision = "schedule_navigation"
 	if load.Progress != nil {
@@ -389,6 +393,14 @@ func (source *ProductionSlotSource) Next(
 			AssignmentGeneration: currentAssignment.AssignmentGeneration},
 		ExpectedNextSlot: nextSlot,
 		Recovery:         recovery,
+	}
+	if source.expiredRangeEnabled && load.Progress != nil && load.Progress.NextSlot == nextSlot && load.Progress.UnfinishedSlot == nil &&
+		ctx.Value(rangeFlightContextKey{}) == queryGroup && recovery.Disposition == ReplayExpired {
+		if rangeSlot, eligible, rangeErr := source.buildExpiredRange(ctx, slot, schedule, at); rangeErr != nil {
+			return FrozenSlot{}, false, rangeErr
+		} else if eligible && rangeFitsProgress(*load.Progress, rangeSlot.ExpiredRange) {
+			slot = rangeSlot
+		}
 	}
 	if err := slot.Validate(queryGroup); err != nil {
 		return FrozenSlot{}, false, err

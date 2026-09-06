@@ -393,6 +393,7 @@ type Observation struct {
 	ProgressCompletionKind string
 	Dispatcher             *DispatcherFacts
 	PermitWait             *PermitWaitFacts
+	ExpiredRange           *ExpiredRangeFacts
 	Component              Component
 	Stage                  Stage
 	Result                 Result
@@ -1038,6 +1039,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentScheduler, StageScheduleDue}, {ComponentScheduler, StageSlotStarted},
 	{ComponentScheduler, StageSlotCompleted}, {ComponentScheduler, StageQueryAdmission},
 	{ComponentScheduler, StageRunnerReturned}, {ComponentScheduler, StageDispatcherSnapshot}, {ComponentScheduler, StageQueryPermitWait},
+	{ComponentScheduler, StageExpiredRangeReturned},
 	{ComponentScheduler, StageRunnerCompleted}, {ComponentScheduler, StageSlotSourceCompleted},
 	{ComponentAccess, StageQueryCompleted},
 	{ComponentAccess, StageQueryBudgetResolved},

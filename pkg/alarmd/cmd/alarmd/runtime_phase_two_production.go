@@ -760,7 +760,7 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 			runtime.isolateDrainingQueryGroup(ctx, draining.QueryGroup, err)
 			continue
 		}
-		drained := load.Status == execution.ProgressFound && load.Progress.NextSlot >= draining.RetiredBoundary
+		drained := load.Status == execution.ProgressFound && load.Progress.UnfinishedRange == nil && load.Progress.NextSlot >= draining.RetiredBoundary
 		if load.Status == execution.ProgressMissing {
 			initial, err := runtime.dependencies.Schedules.ReadInitialFrozenSchedule(ctx, draining.QueryGroup)
 			if err != nil {
@@ -969,6 +969,7 @@ type productionPhaseTwoProgressReader interface {
 }
 
 type productionPhaseTwoOwnershipDependencies struct {
+	ExpiredRangeEnabled       bool
 	Store                     productionPhaseTwoOwnershipStore
 	WorkerID                  string
 	Catalog                   productionPhaseTwoSlotCatalog
@@ -1164,6 +1165,7 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 		scheduler.WithPostRecoveryTerminalDelay(runtime.dependencies.PostRecoveryTerminalDelay),
 		scheduler.WithQueryDeadlineReserve(runtime.dependencies.QueryDeadlineReserve),
 		scheduler.WithSnapshotRetention(runtime.dependencies.SnapshotRetention, runtime.dependencies.PublicationDelayAllowance),
+		scheduler.WithExpiredRangeCreation(runtime.dependencies.ExpiredRangeEnabled),
 	)
 	if err != nil {
 		_ = session.Release(ctx)
@@ -1216,6 +1218,11 @@ type productionPhaseTwoQueryGroup struct {
 type observedProductionSlotSource struct {
 	next     scheduler.SlotSource
 	observer observability.Observer
+}
+
+func (source observedProductionSlotSource) RangeCreationEnabled() bool {
+	next, ok := source.next.(interface{ RangeCreationEnabled() bool })
+	return ok && next.RangeCreationEnabled()
 }
 
 func (source observedProductionSlotSource) Next(

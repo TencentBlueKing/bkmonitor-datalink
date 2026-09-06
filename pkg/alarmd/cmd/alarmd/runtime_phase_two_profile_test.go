@@ -93,12 +93,13 @@ func TestPhaseTwoRuntimeProfileTracksSchedulerFieldsAndCPU(t *testing.T) {
 	cfg := config.Default()
 	base, _ := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
 	for name, change := range map[string]func(*config.Config){
-		"F":      func(c *config.Config) { c.PhaseTwo.Scheduler.ActiveExecutionLimit++ },
-		"P":      func(c *config.Config) { c.PhaseTwo.Scheduler.ProcessQueryPermits++ },
-		"R":      func(c *config.Config) { c.PhaseTwo.Scheduler.RecoveryQueryPermits++ },
-		"retry":  func(c *config.Config) { c.PhaseTwo.Scheduler.RetryMaxDelay++ },
-		"replay": func(c *config.Config) { c.PhaseTwo.Scheduler.MaxReplayAge++ },
-		"bytes":  func(c *config.Config) { c.PhaseTwo.Coordinator.MaxRetainedBytes++ },
+		"expired_range": func(c *config.Config) { c.PhaseTwo.Scheduler.ExpiredRangeEnabled = true },
+		"F":             func(c *config.Config) { c.PhaseTwo.Scheduler.ActiveExecutionLimit++ },
+		"P":             func(c *config.Config) { c.PhaseTwo.Scheduler.ProcessQueryPermits++ },
+		"R":             func(c *config.Config) { c.PhaseTwo.Scheduler.RecoveryQueryPermits++ },
+		"retry":         func(c *config.Config) { c.PhaseTwo.Scheduler.RetryMaxDelay++ },
+		"replay":        func(c *config.Config) { c.PhaseTwo.Scheduler.MaxReplayAge++ },
+		"bytes":         func(c *config.Config) { c.PhaseTwo.Coordinator.MaxRetainedBytes++ },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := cfg
@@ -129,7 +130,9 @@ func TestPhaseTwoRuntimeProfileIncludesEverySchedulerField(t *testing.T) {
 	for i := 0; i < reflect.TypeOf(cfg.PhaseTwo.Scheduler).NumField(); i++ {
 		changed := cfg
 		field := reflect.ValueOf(&changed.PhaseTwo.Scheduler).Elem().Field(i)
-		if field.Kind() == reflect.Uint32 {
+		if field.Kind() == reflect.Bool {
+			field.SetBool(!field.Bool())
+		} else if field.Kind() == reflect.Uint32 {
 			field.SetUint(field.Uint() + 1)
 		} else {
 			field.SetInt(field.Int() + 1)

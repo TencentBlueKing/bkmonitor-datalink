@@ -100,6 +100,11 @@ type phaseTwoShadowExecutor struct {
 }
 
 func (w phaseTwoShadowExecutor) Execute(ctx context.Context, r execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
+	// A persisted expired range is one query-free operation, not a completed
+	// ordinary Slot. Its logical count is reported by the range observer.
+	if r.ExpiredRange != nil {
+		return w.next.Execute(ctx, r)
+	}
 	s := &phaseTwoShadowExecution{contract: r.Contract, events: make(map[string]phaseTwoEventFacts)}
 	ctx = context.WithValue(ctx, phaseTwoShadowExecutionKey{}, s)
 	if w.emitter == nil || w.emitter.manifest.ComparisonVersion != "python-business-kafka-v1" {

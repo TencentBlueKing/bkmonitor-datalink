@@ -1,10 +1,16 @@
 package observability
 
 const (
-	StageRunnerReturned     = "runner_returned"
-	StageDispatcherSnapshot = "dispatcher_snapshot"
-	StageQueryPermitWait    = "query_permit_wait"
+	StageRunnerReturned       = "runner_returned"
+	StageDispatcherSnapshot   = "dispatcher_snapshot"
+	StageQueryPermitWait      = "query_permit_wait"
+	StageExpiredRangeReturned = "expired_range_returned"
 )
+
+type ExpiredRangeFacts struct {
+	Result         string
+	CommittedSlots uint32
+}
 
 type DispatcherFacts struct {
 	Active, Ready, Delayed int

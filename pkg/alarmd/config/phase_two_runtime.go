@@ -57,6 +57,8 @@ type PhaseTwoOwnershipConfig struct {
 }
 
 type PhaseTwoSchedulerConfig struct {
+	// Disabling creation never disables recovery of an existing pending range.
+	ExpiredRangeEnabled bool `yaml:"expired_range_enabled"`
 	// ActiveExecutionLimit bounds complete Runner lifetimes, not HTTP calls.
 	// It is part of the product capacity profile, not an environment tuning knob.
 	ActiveExecutionLimit  int      `yaml:"active_execution_limit"`

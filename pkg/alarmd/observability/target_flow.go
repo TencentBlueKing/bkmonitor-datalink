@@ -38,6 +38,10 @@ func (c TargetFlowConfig) Validate() error {
 
 // TargetFlowFacts contains bounded lifecycle facts, never input or per-point values.
 type TargetFlowFacts struct {
+	RangeFirst            int64  `json:"range_first,omitempty"`
+	RangeLast             int64  `json:"range_last,omitempty"`
+	RangeCount            uint32 `json:"range_count,omitempty"`
+	RangeDigest           string `json:"range_digest,omitempty"`
 	StatePreflightCalls   uint64 `json:"state_preflight_calls_observed"`
 	StatePreflightKeys    uint64 `json:"state_preflight_keys_observed"`
 	StatePreflightNS      int64  `json:"state_preflight_ns_observed"`

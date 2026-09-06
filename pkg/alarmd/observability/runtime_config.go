@@ -17,6 +17,7 @@ type RuntimeConfigFacts struct {
 }
 
 type RuntimeCapacityFacts struct {
+	ExpiredRangeEnabled        bool   `json:"expired_range_enabled"`
 	ActiveExecutions           int    `json:"active_executions"`
 	ConfiguredActiveExecutions int    `json:"configured_active_executions"`
 	QueryPermits               int    `json:"query_permits"`

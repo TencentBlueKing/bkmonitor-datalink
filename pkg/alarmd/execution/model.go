@@ -146,6 +146,7 @@ type SlotExecutionRequest struct {
 	AttemptNo        uint32
 	OwnerFence       OwnerFence
 	ExpectedNextSlot EvaluationTime
+	ExpiredRange     *ExpiredRangeProjectionV1
 }
 
 func (request SlotExecutionRequest) Validate() error {
@@ -174,7 +175,16 @@ func (request SlotExecutionRequest) Validate() error {
 	if err := request.OwnerFence.Validate(request.Contract); err != nil {
 		return err
 	}
-	if request.ExpectedNextSlot != request.Contract.Slot.EvaluationTime {
+	if request.ExpiredRange != nil {
+		if err := request.ExpiredRange.Validate(); err != nil {
+			return err
+		}
+		if !request.ReplayExpired || request.Operation != OperationNormal ||
+			request.ExpectedNextSlot != request.ExpiredRange.First.Contract.Slot.EvaluationTime ||
+			!request.UnfinishedProjection().Equal(request.ExpiredRange.Last) {
+			return errors.New("alarmd execution: expired range request differs from fixed tail")
+		}
+	} else if request.ExpectedNextSlot != request.Contract.Slot.EvaluationTime {
 		return errors.New("alarmd execution: expected next slot must equal the frozen evaluation time")
 	}
 	return nil
@@ -2282,6 +2292,7 @@ type ScheduleProgress struct {
 	LastCompletionKind CompletionKind
 	CurrentOrRecentGap *ProgressGapSummary
 	UnfinishedSlot     *UnfinishedSlotProjection
+	UnfinishedRange    *ExpiredRangeProjectionV1 `json:",omitempty"`
 }
 
 type UnfinishedSlotProjection struct {
@@ -2374,6 +2385,15 @@ type ProgressGapSummary struct {
 }
 
 func (progress ScheduleProgress) Validate() error {
+	if progress.UnfinishedRange != nil {
+		if progress.UnfinishedSlot != nil || progress.UnfinishedRange.First.Contract.Slot.QueryGroup != progress.Identity.QueryGroup ||
+			progress.UnfinishedRange.First.Contract.Slot.EvaluationTime != progress.NextSlot {
+			return errors.New("alarmd execution: expired range does not match exclusive Progress pending")
+		}
+		if err := progress.UnfinishedRange.Validate(); err != nil {
+			return err
+		}
+	}
 	if progress.Identity.QueryGroup == "" || progress.NextSlot <= 0 {
 		return errors.New("alarmd execution: incomplete Schedule Progress")
 	}

@@ -89,6 +89,11 @@ func OpenFiniteSource(brokers []string, cfg *sarama.Config) (*SaramaFiniteSource
 	return &SaramaFiniteSource{client, consumer}, nil
 }
 func (s *SaramaFiniteSource) Partitions(topic string) ([]int32, error) {
+	// Sarama caches partition metadata; both finite-population checks need a
+	// broker refresh, otherwise a newly added partition is invisible.
+	if err := s.client.RefreshMetadata(topic); err != nil {
+		return nil, errors.New("finite partition metadata unavailable")
+	}
 	return s.client.Partitions(topic)
 }
 func (s *SaramaFiniteSource) GetOffset(topic string, p int32, at int64) (int64, error) {

@@ -160,3 +160,41 @@ func TestFiniteReaderFinalRetentionAndPartitionDrift(t *testing.T) {
 		})
 	}
 }
+
+func TestFiniteReaderActualSaramaRefreshesPartitionPopulation(t *testing.T) {
+	broker := sarama.NewMockBroker(t, 1)
+	defer broker.Close()
+	metadata := func(extra bool) *sarama.MockMetadataResponse {
+		m := sarama.NewMockMetadataResponse(t).SetBroker(broker.Addr(), broker.BrokerID()).SetLeader("fixture", 0, broker.BrokerID())
+		if extra {
+			m.SetLeader("fixture", 1, broker.BrokerID())
+		}
+		return m
+	}
+	handlers := func(extra bool) map[string]sarama.MockResponse {
+		return map[string]sarama.MockResponse{
+			"MetadataRequest": metadata(extra),
+			"OffsetRequest":   sarama.NewMockOffsetResponse(t).SetVersion(1).SetOffset("fixture", 0, sarama.OffsetOldest, 0).SetOffset("fixture", 0, sarama.OffsetNewest, 1),
+			"FetchRequest":    sarama.NewMockFetchResponse(t, 1).SetVersion(3).SetHighWaterMark("fixture", 0, 1).SetMessage("fixture", 0, 0, sarama.StringEncoder("bad JSON")),
+		}
+	}
+	broker.SetHandlerByMap(handlers(false))
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V0_10_2_0
+	source, err := OpenFiniteSource([]string{broker.Addr()}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	got, err := ReadFinite(context.Background(), source, []FiniteRange{{Topic: "fixture", End: 1}}, FiniteLimits{MaxRecords: 2, MaxBytes: 1024, MaxPartitions: 2, Timeout: time.Second}, func(FiniteRecord) error { broker.SetHandlerByMap(handlers(true)); return nil })
+	if err == nil || got.Complete || got.Reason != "PARTITION_SET_GAP" {
+		t.Fatalf("cached metadata hid new partition: %+v err=%v", got, err)
+	}
+	for _, request := range broker.History() {
+		switch request.Request.(type) {
+		case *sarama.MetadataRequest, *sarama.OffsetRequest, *sarama.FetchRequest:
+		default:
+			t.Fatalf("group request %T", request.Request)
+		}
+	}
+}

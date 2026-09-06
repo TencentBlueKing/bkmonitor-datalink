@@ -13,6 +13,80 @@ import (
 
 const flowQG = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
+func TestTargetFlowQueueNoisePreservesExecutionBudget(t *testing.T) {
+	f, b := newTestFlow(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 2000; j++ {
+				f.Record("queue_skipped", flowQG, TargetFlowFacts{Decision: "normal_queue_full"})
+			}
+		}()
+	}
+	wg.Wait()
+	for _, stage := range []string{"runner_dispatch", "slot_selection", "query_completed", "progress_committed", "execution_outcome"} {
+		f.Record(stage, flowQG, TargetFlowFacts{})
+	}
+	if f.records != 6 || f.dropped != 0 {
+		t.Fatalf("queue noise consumed execution quota: records=%d dropped=%d", f.records, f.dropped)
+	}
+	lines := bytes.Split(bytes.TrimSpace(b.Bytes()), []byte("\n"))
+	var last map[string]interface{}
+	if err := json.Unmarshal(lines[len(lines)-1], &last); err != nil {
+		t.Fatal(err)
+	}
+	if last["queue_suppressed_total"] != float64(15999) {
+		t.Fatalf("suppression facts missing: %+v", last)
+	}
+}
+
+func TestTargetFlowQueueThrottleScopesAndWindow(t *testing.T) {
+	f, _ := newTestFlow(t)
+	brother := strings.Repeat("b", 64)
+	f.groups[brother] = struct{}{}
+	for _, qg := range []string{flowQG, brother} {
+		for _, reason := range []string{"normal_queue_full", "delayed_queue_full", "delayed_queue_evicted"} {
+			for i := 0; i < 2; i++ {
+				f.Record("queue_skipped", qg, TargetFlowFacts{Decision: reason})
+			}
+		}
+	}
+	if f.records != 6 {
+		t.Fatalf("QG/reason first occurrence lost: %d", f.records)
+	}
+	// Unrecognized reasons and other stages are not silently suppressed.
+	for i := 0; i < 2; i++ {
+		f.Record("queue_skipped", flowQG, TargetFlowFacts{Decision: "unknown"})
+		f.Record("runner_queued", flowQG, TargetFlowFacts{Decision: "normal_queue_full"})
+	}
+	if f.records != 10 {
+		t.Fatal("throttle escaped its finite queue-rejection scope")
+	}
+	f.now = func() time.Time { return time.Unix(161, 0) }
+	f.Record("queue_skipped", flowQG, TargetFlowFacts{Decision: "normal_queue_full"})
+	if f.records != 1 {
+		t.Fatal("new window first occurrence suppressed")
+	}
+	f.now = func() time.Time { return time.Unix(90, 0) }
+	f.Record("queue_skipped", flowQG, TargetFlowFacts{Decision: "normal_queue_full"})
+	if f.records != 1 {
+		t.Fatal("clock rollback retained stale suppression")
+	}
+}
+
+func BenchmarkTargetFlowRepeatedQueueRejection(b *testing.B) {
+	f, _ := NewTargetFlow(New("runtime", io.Discard), TargetFlowConfig{QueryGroups: []string{flowQG}})
+	f.now = func() time.Time { return time.Unix(100, 0) }
+	f.Record("queue_skipped", flowQG, TargetFlowFacts{Decision: "normal_queue_full"})
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		f.Record("queue_skipped", flowQG, TargetFlowFacts{Decision: "normal_queue_full"})
+	}
+}
+
 func newTestFlow(t *testing.T) (*TargetFlow, *bytes.Buffer) {
 	t.Helper()
 	b := new(bytes.Buffer)

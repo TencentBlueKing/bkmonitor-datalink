@@ -47,6 +47,9 @@ func TestPhaseTwoReceiptZeroQueryPrefixBoundaries(t *testing.T) {
 			e := &phaseTwoFinalEmitter{}
 			e.manifest.Limits.MaxEntries = 1
 			e.manifest.Limits.MaxAgeSeconds = 10
+			e.manifest.EligibleFrom, e.manifest.ExpectedEnd = 90, 110
+			e.manifest.Target.TenantID, e.manifest.Target.BusinessID = "t", "1"
+			request.DuePlanTargets.Plans = []execution.PlanIdentity{{TenantID: "t", BusinessID: "1", StrategyID: "2"}}
 			f := &phaseTwoReceiptFacts{request: request, beginKnown: true}
 			switch mode {
 			case "cas_failed":
@@ -82,6 +85,45 @@ func TestPhaseTwoReceiptZeroQueryPrefixBoundaries(t *testing.T) {
 				if !e.takeZeroQueryPrefix(request, now.Add(11*time.Second)).IsZero() {
 					t.Fatal("retry reset age")
 				}
+			}
+		})
+	}
+}
+
+func TestPhaseTwoReceiptExpiredRetiredPrefixDoesNotBlockNewQG(t *testing.T) {
+	for _, mode := range []string{"expired", "live", "before_epoch", "after_epoch", "other_business"} {
+		t.Run(mode, func(t *testing.T) {
+			e := &phaseTwoFinalEmitter{}
+			e.manifest.Limits.MaxEntries, e.manifest.Limits.MaxAgeSeconds = 1, 10
+			e.manifest.EligibleFrom, e.manifest.ExpectedEnd = 90, 110
+			e.manifest.Target.TenantID, e.manifest.Target.BusinessID = "t", "1"
+			r := execution.SlotExecutionRequest{Contract: execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{QueryGroup: "a", EvaluationTime: 100}}, DuePlanTargets: execution.FrozenDuePlanTargets{Plans: []execution.PlanIdentity{{TenantID: "t", BusinessID: "1", StrategyID: "2"}}}}
+			now := time.Unix(1000, 0)
+			if mode == "before_epoch" {
+				r.Contract.Slot.EvaluationTime = 89
+			}
+			if mode == "after_epoch" {
+				r.Contract.Slot.EvaluationTime = 110
+			}
+			if mode == "other_business" {
+				r.DuePlanTargets.Plans[0].BusinessID = "other"
+			}
+			e.finishZeroQueryPrefix(&phaseTwoReceiptFacts{request: r, beginKnown: true}, now, false)
+			if mode != "expired" && mode != "live" {
+				if len(e.zeroPrefixes) != 0 {
+					t.Fatal("out-of-scope Slot occupied prefix capacity")
+				}
+				return
+			}
+			later := now.Add(11 * time.Second)
+			if mode == "live" {
+				later = now.Add(time.Second)
+			}
+			r.Contract.Slot.QueryGroup = "b"
+			e.finishZeroQueryPrefix(&phaseTwoReceiptFacts{request: r, beginKnown: true}, later, false)
+			got := e.takeZeroQueryPrefix(r, later.Add(time.Second))
+			if (!got.IsZero()) != (mode == "expired") {
+				t.Fatal("new QG prefix", mode, got)
 			}
 		})
 	}

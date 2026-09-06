@@ -583,11 +583,18 @@ func (repository *RedisCatalogRepository) LoadQueryGroup(ctx context.Context, re
 	if identity == "" {
 		return QueryGroup{}, errors.New("alarmd controlplane: query group identity is required")
 	}
-	payload, _, err := repository.loadSnapshotPayload(ctx, revision)
+	payload, epoch, err := repository.loadScopedSnapshotPayload(ctx, revision, identity)
 	if err != nil {
+		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
-	return repository.snapshotCache.loadQueryGroup(ctx, revision, payload, identity)
+	group, err := repository.snapshotCache.loadQueryGroup(ctx, revision, payload, identity)
+	if err != nil {
+		clearSnapshotScope(ctx)
+		return QueryGroup{}, err
+	}
+	repository.retainScopedSnapshot(ctx, revision, identity, payload, epoch)
+	return group, nil
 }
 
 func (repository *RedisCatalogRepository) loadPublishedQueryGroup(
@@ -598,19 +605,28 @@ func (repository *RedisCatalogRepository) loadPublishedQueryGroup(
 	if publication.validate() != nil || identity == "" {
 		return QueryGroup{}, errors.New("alarmd controlplane: complete publication and Query Group are required")
 	}
-	payload, epoch, err := repository.loadSnapshotPayload(ctx, publication.SnapshotRevision)
+	payload, epoch, err := repository.loadScopedSnapshotPayload(ctx, publication.SnapshotRevision, identity)
 	if err != nil {
+		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
 	entry, _, err := repository.snapshotCache.load(ctx, publication.SnapshotRevision, payload)
 	if err != nil {
+		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
 	current := SnapshotPublicationRef{SnapshotRevision: publication.SnapshotRevision, PublicationEpoch: epoch}
 	if err := repository.validatePublicationOccurrence(ctx, publication, current); err != nil {
+		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
-	return decodeCachedQueryGroup(entry, identity)
+	group, err := decodeCachedQueryGroup(entry, identity)
+	if err != nil {
+		clearSnapshotScope(ctx)
+		return QueryGroup{}, err
+	}
+	repository.retainScopedSnapshot(ctx, publication.SnapshotRevision, identity, payload, epoch)
+	return group, nil
 }
 
 // LoadPlan resolves a Plan by its stable identity inside one frozen Snapshot.

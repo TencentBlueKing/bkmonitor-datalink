@@ -35,6 +35,8 @@ func NewNoopBackend(ctx context.Context, name string) (*NoopBackend, error) {
 	return backend, nil
 }
 
+func (b *NoopBackend) SetETLRecordFields(f *define.ETLRecordFields) {}
+
 // Push : raw data from payload
 func (b *NoopBackend) Push(d define.Payload, killChan chan<- error) {}
 

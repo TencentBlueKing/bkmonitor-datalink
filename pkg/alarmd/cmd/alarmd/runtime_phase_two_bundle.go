@@ -264,6 +264,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	querySource, err := access.NewSource(frozen, queryClient, productionQueryPermitAcquirer{flights: flights}, access.Config{
 		MinReadyDelay: cfg.PhaseTwo.Access.MinReadyDelay.Duration(),
 		Now:           external.Now,
+		Observer:      observer,
 	})
 	if err != nil {
 		return nil, err
@@ -376,7 +377,7 @@ func phaseTwoCatalogRetentionValidator(cfg config.Config) func(controlplane.Cata
 		var maximumOffset time.Duration
 		for _, group := range catalog.QueryGroups {
 			for _, plan := range group.Plans {
-				offset := time.Duration(plan.ScheduleSpec.EvaluationIntervalSeconds)*time.Second -
+				offset := time.Duration(plan.ScheduleSpec.CompletionOffsetSeconds())*time.Second -
 					cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration()
 				if offset <= 0 {
 					return scheduler.ErrSnapshotRetentionInsufficient

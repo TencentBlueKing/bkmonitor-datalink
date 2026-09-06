@@ -19,12 +19,16 @@ type PublicationEpoch uint64
 
 // ScheduleSpec is the complete immutable cadence input for one Plan.
 type ScheduleSpec struct {
-	EvaluationIntervalSeconds int64          `json:"evaluation_interval"`
-	Alignment                 EvaluationTime `json:"alignment"`
-	Timezone                  string         `json:"timezone"`
+	EvaluationIntervalSeconds       int64          `json:"evaluation_interval"`
+	Alignment                       EvaluationTime `json:"alignment"`
+	Timezone                        string         `json:"timezone"`
+	CompletionDeadlineOffsetSeconds int64          `json:"completion_deadline_offset_seconds,omitempty"`
 }
 
 func (spec ScheduleSpec) Validate() error {
+	if spec.CompletionDeadlineOffsetSeconds < 0 {
+		return errors.New("alarmd execution: completion offset cannot be negative")
+	}
 	if spec.EvaluationIntervalSeconds <= 0 {
 		return errors.New("alarmd execution: positive evaluation interval is required")
 	}
@@ -70,10 +74,23 @@ func (spec ScheduleSpec) nextAtOrAfter(at EvaluationTime) (EvaluationTime, bool)
 }
 
 func (spec ScheduleSpec) completionDeadlineUnixMilli(at EvaluationTime) (int64, bool) {
-	if spec.Validate() != nil || at <= 0 || int64(at) > math.MaxInt64-spec.EvaluationIntervalSeconds {
+	return spec.CompletionDeadlineUnixMilli(at)
+}
+
+// CompletionOffsetSeconds preserves the meaning of pre-offset frozen schedules.
+func (spec ScheduleSpec) CompletionOffsetSeconds() int64 {
+	if spec.CompletionDeadlineOffsetSeconds != 0 {
+		return spec.CompletionDeadlineOffsetSeconds
+	}
+	return spec.EvaluationIntervalSeconds
+}
+
+func (spec ScheduleSpec) CompletionDeadlineUnixMilli(at EvaluationTime) (int64, bool) {
+	offset := spec.CompletionOffsetSeconds()
+	if spec.Validate() != nil || at <= 0 || int64(at) > math.MaxInt64-offset {
 		return 0, false
 	}
-	deadlineSeconds := int64(at) + spec.EvaluationIntervalSeconds
+	deadlineSeconds := int64(at) + offset
 	if deadlineSeconds > math.MaxInt64/1000 {
 		return 0, false
 	}

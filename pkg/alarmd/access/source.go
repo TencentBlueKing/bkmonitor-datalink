@@ -13,6 +13,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 var ErrFrozenQueryPlanUnavailable = errors.New("alarmd access: frozen QueryPlanFacts unavailable")
@@ -64,6 +65,7 @@ type QueryPermitAcquirer interface {
 type Config struct {
 	MinReadyDelay time.Duration
 	Now           func() time.Time // Defaults to time.Now.
+	Observer      observability.Observer
 }
 
 type Source struct {
@@ -114,6 +116,7 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		return execution.QueryExecutionCompletion{}, err
 	}
 	recoveryDeadline, budgetErr := deriveRecoveryQueryDeadline(request, frozen, recoveryStartedAt)
+	source.observeQueryTiming(ctx, request, frozen, prepared, recoveryStartedAt, recoveryDeadline)
 	if budgetErr != nil || (!recoveryDeadline.IsZero() && !recoveryDeadline.After(source.now())) {
 		if err := consumer.Begin(ctx, prepared.Header); err != nil {
 			return execution.QueryExecutionCompletion{}, err
@@ -367,11 +370,18 @@ func deriveRecoveryQueryDeadline(
 		int64(request.Contract.Slot.EvaluationTime) > math.MaxInt64/1000 {
 		return time.Time{}, errors.New("alarmd access: recovery query budget is invalid")
 	}
-	slotUnixMilli := int64(request.Contract.Slot.EvaluationTime) * 1000
+	schedules, err := frozenSchedules(frozen)
+	if err != nil {
+		return time.Time{}, err
+	}
 	budgetMillis := int64(0)
 	for _, requirement := range frozen.Requirements {
 		for _, consumer := range requirement.Consumers {
-			intervalMillis := consumer.ConsumerDeadlineUnixMilli - slotUnixMilli
+			spec, found := schedules[consumer.Consumer.Plan]
+			if !found || spec.EvaluationIntervalSeconds > math.MaxInt64/1000 {
+				return time.Time{}, errors.New("alarmd access: frozen consumer schedule unavailable")
+			}
+			intervalMillis := spec.EvaluationIntervalSeconds * 1000
 			candidate := intervalMillis - consumer.DownstreamExecutionReserveMilliSec
 			if intervalMillis <= 0 || consumer.DownstreamExecutionReserveMilliSec <= 0 || candidate <= 0 {
 				return time.Time{}, errors.New("alarmd access: recovery query budget is invalid")
@@ -447,6 +457,10 @@ func prepare(
 	if len(frozen.QueryFacts) == 0 {
 		return PreparedExecution{}, ErrFrozenQueryPlanUnavailable
 	}
+	schedules, err := frozenSchedules(frozen)
+	if err != nil {
+		return PreparedExecution{}, err
+	}
 	queriesByDigest := make(map[execution.PhysicalQueryDigest]*PlannedQuery)
 	for _, requirement := range frozen.Requirements {
 		facts, ok := frozen.QueryFacts[requirement.LogicalQueryRef]
@@ -479,8 +493,12 @@ func prepare(
 		invalidRequirement := requirement
 		invalidRequirement.Consumers = nil
 		for _, consumer := range requirement.Consumers {
+			schedule, found := schedules[consumer.Consumer.Plan]
+			if !found {
+				return PreparedExecution{}, errors.New("alarmd access: frozen consumer schedule unavailable")
+			}
 			readyAt, err := frozenConsumerReadyAt(
-				contractRef, requirement, window, consumer, minReadyDelay, allowExhaustedRecoveryBudget,
+				contractRef, requirement, window, schedule, minReadyDelay, allowExhaustedRecoveryBudget,
 			)
 			if err != nil {
 				return PreparedExecution{}, err
@@ -546,19 +564,35 @@ func frozenConsumerReadyAt(
 	contractRef execution.FrozenExecutionContractRef,
 	requirement execution.DataRequirement,
 	window execution.QueryWindow,
-	consumer execution.DataRequirementConsumer,
+	schedule execution.ScheduleSpec,
 	configuredDelay time.Duration,
 	allowExhaustedRecoveryBudget bool,
 ) (int64, error) {
 	if int64(contractRef.Slot.EvaluationTime) > math.MaxInt64/1000 {
 		return 0, errors.New("alarmd access: evaluation time exceeds readiness range")
 	}
-	intervalMillis := consumer.ConsumerDeadlineUnixMilli - int64(contractRef.Slot.EvaluationTime)*1000
 	readyDelay := configuredDelay
-	if !allowExhaustedRecoveryBudget && intervalMillis == int64((30*time.Second)/time.Millisecond) && readyDelay > thirtySecondReadyDelay {
+	short := (schedule.EvaluationIntervalSeconds == 10 || schedule.EvaluationIntervalSeconds == 15) && schedule.CompletionDeadlineOffsetSeconds == 30
+	if !allowExhaustedRecoveryBudget && short {
+		readyDelay = thirtySecondReadyDelay
+	} else if !allowExhaustedRecoveryBudget && schedule.EvaluationIntervalSeconds == 30 && readyDelay > thirtySecondReadyDelay {
 		readyDelay = thirtySecondReadyDelay
 	}
 	return frozenRequirementReadyAt(requirement, window, readyDelay)
+}
+
+func frozenSchedules(frozen FrozenPlan) (map[execution.PlanIdentity]execution.ScheduleSpec, error) {
+	schedules := make(map[execution.PlanIdentity]execution.ScheduleSpec, len(frozen.DuePlans))
+	for _, due := range frozen.DuePlans {
+		if due.ScheduleSpec.Validate() != nil {
+			return nil, errors.New("alarmd access: frozen ScheduleSpec required")
+		}
+		if _, duplicate := schedules[due.Identity]; duplicate {
+			return nil, errors.New("alarmd access: duplicate frozen ScheduleSpec")
+		}
+		schedules[due.Identity] = due.ScheduleSpec
+	}
+	return schedules, nil
 }
 
 func sharedPendingReadiness(queries []PlannedQuery, now time.Time) time.Time {

@@ -35,6 +35,7 @@ func (err *SourceBlockedError) Error() string {
 func (err *SourceBlockedError) Unwrap() error { return err.Err }
 
 type FrozenSlot struct {
+	ShortPeriodCohort              string
 	Contract                       execution.FrozenExecutionContractRef
 	DuePlanTargets                 execution.FrozenDuePlanTargets
 	EarliestQueryDeadlineUnixMilli int64
@@ -275,7 +276,8 @@ func (runner *Runner) runOne(
 		return execution.SlotExecutionResult{}, false, ErrSlotOwnershipChanged
 	}
 	request := execution.SlotExecutionRequest{
-		Contract: slot.Contract, DuePlanTargets: slot.DuePlanTargets.Clone(),
+		ShortPeriodCohort: slot.ShortPeriodCohort,
+		Contract:          slot.Contract, DuePlanTargets: slot.DuePlanTargets.Clone(),
 		EarliestQueryDeadlineUnixMilli: slot.EarliestQueryDeadlineUnixMilli,
 		RecoveryUntilUnixMilli:         slot.RecoveryUntilUnixMilli,
 		KeepUntilUnixMilli:             slot.KeepUntilUnixMilli,

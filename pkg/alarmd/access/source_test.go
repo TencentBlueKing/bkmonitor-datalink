@@ -631,6 +631,7 @@ func frozenExecution(t *testing.T) (execution.FrozenExecutionContractRef, Frozen
 	planID := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "1001"}
 	evaluationTime := execution.EvaluationTime(1_700_124_000)
 	due := execution.DuePlan{Identity: planID, CompiledPlan: compiled, StateGeneration: "state-v1", StateApplyEpoch: 1,
+		ScheduleSpec:     execution.ScheduleSpec{EvaluationIntervalSeconds: 30, Timezone: "UTC"},
 		ScheduleRevision: "plan-schedule-v1", CompletionDeadlineUnixMilli: int64(evaluationTime)*1000 + 30_000}
 	facts := queryFacts(t)
 	queryRef := execution.LogicalQueryRef(facts.QueryRevision)

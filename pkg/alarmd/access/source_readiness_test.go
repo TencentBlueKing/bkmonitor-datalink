@@ -178,6 +178,7 @@ func TestSourceFutureReadinessReturnsWithoutWaitingInExecution(t *testing.T) {
 	contractRef, frozen := frozenExecution(t)
 	evaluationTime := time.UnixMilli(int64(contractRef.Slot.EvaluationTime) * 1000)
 	frozen.DuePlans[0].CompletionDeadlineUnixMilli = evaluationTime.Add(time.Minute).UnixMilli()
+	frozen.DuePlans[0].ScheduleSpec.EvaluationIntervalSeconds = 60
 	frozen.Requirements[0].Consumers[0].ConsumerDeadlineUnixMilli = frozen.DuePlans[0].CompletionDeadlineUnixMilli
 	contractRef = bindFrozenDueDigest(t, contractRef, frozen)
 	provider := &fakeProvider{}
@@ -233,6 +234,7 @@ func TestSourceMixedReadinessPreservesPerQueryWaitInsteadOfSlotWideDeferral(t *t
 	contractRef, frozen := frozenExecution(t)
 	evaluationTime := time.UnixMilli(int64(contractRef.Slot.EvaluationTime) * 1000)
 	frozen.DuePlans[0].CompletionDeadlineUnixMilli = evaluationTime.Add(2 * time.Minute).UnixMilli()
+	frozen.DuePlans[0].ScheduleSpec.EvaluationIntervalSeconds = 120
 	frozen.Requirements[0].Consumers[0].ConsumerDeadlineUnixMilli = frozen.DuePlans[0].CompletionDeadlineUnixMilli
 
 	primaryFacts := frozen.QueryFacts[frozen.Requirements[0].LogicalQueryRef]

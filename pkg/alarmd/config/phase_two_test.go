@@ -157,6 +157,27 @@ func TestLoadPhaseTwoWorkerIdentityUsesDeploymentEnvironmentBeforeYAML(t *testin
 	}
 }
 
+func TestLoadPhaseTwoRetainedBudgetDefaultAndExplicitOverride(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		override string
+		want     uint64
+	}{
+		{name: "product default", want: 96 << 20},
+		{name: "explicit legacy budget", override: "  coordinator:\n    max_retained_bytes: 67108864\n", want: 64 << 20},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg, err := Load(writeConfig(t, validGoAccessRuntimeConfigYAML("worker")+test.override))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.PhaseTwo.Coordinator.MaxRetainedBytes != test.want {
+				t.Fatalf("resolved retained bytes = %d, want %d", cfg.PhaseTwo.Coordinator.MaxRetainedBytes, test.want)
+			}
+		})
+	}
+}
+
 func TestLoadPhaseTwoWorkerIdentityFallsBackToYAML(t *testing.T) {
 	previous, present := os.LookupEnv(PhaseTwoWorkerIDEnvironment)
 	if err := os.Unsetenv(PhaseTwoWorkerIDEnvironment); err != nil {

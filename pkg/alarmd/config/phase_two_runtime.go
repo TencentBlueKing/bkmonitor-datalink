@@ -132,7 +132,7 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 			MinReadyDelay: Duration(30 * time.Second), DownstreamExecutionReserve: Duration(5 * time.Second),
 		},
 		Coordinator: PhaseTwoCoordinatorConfig{
-			MaxSequencerReservations: 8192, MaxSeries: 100_000, MaxRetainedBytes: 64 << 20,
+			MaxSequencerReservations: 8192, MaxSeries: 100_000, MaxRetainedBytes: 96 << 20,
 			MaxStateMutations: 8192, MaxEvents: 8192, MaxGapMutations: 8192,
 		},
 	}

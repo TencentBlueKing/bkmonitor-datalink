@@ -42,6 +42,34 @@ func TestPhaseTwoRuntimeProfileUsesEffectiveCapacityAndExcludesSecrets(t *testin
 	}
 }
 
+func TestPhaseTwoRetainedBudgetProfileUsesResolvedDefaultAndOverride(t *testing.T) {
+	cfg := config.Default()
+	base, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.Capacity.RetainedBytes != 96<<20 || base.Capacity.UQBodyBytes != 96<<20 {
+		t.Fatalf("resolved default capacity = %+v", base.Capacity)
+	}
+	if base.Capacity.ActiveExecutions != 2 || base.Capacity.QueryPermits != 2 || base.Capacity.RecoveryQueryPermits != 1 {
+		t.Fatalf("concurrency changed: %+v", base.Capacity)
+	}
+	cfg.PhaseTwo.Coordinator.MaxRetainedBytes = 64 << 20
+	legacy, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Digest == base.Digest || legacy.Capacity.RetainedBytes != 64<<20 || legacy.Capacity.UQBodyBytes != 64<<20 {
+		t.Fatalf("explicit override missing from runtime facts: %+v", legacy)
+	}
+	// Retained bytes also bounds the existing UQ body limit; all other limits stay fixed.
+	legacy.Capacity.RetainedBytes = base.Capacity.RetainedBytes
+	legacy.Capacity.UQBodyBytes = base.Capacity.UQBodyBytes
+	if legacy.Capacity != base.Capacity {
+		t.Fatalf("unrelated capacity changed: before=%+v after=%+v", base.Capacity, legacy.Capacity)
+	}
+}
+
 func TestPhaseTwoCPUInitializationFailsBeforeOpeningServices(t *testing.T) {
 	want := errors.New("CPU quota unavailable")
 	dependencies := phaseTwoApplicationDependencies{

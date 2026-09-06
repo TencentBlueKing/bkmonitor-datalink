@@ -547,12 +547,15 @@ func (dispatcher *phaseTwoRunnerDispatcher) start(ctx context.Context) {
 			for scheduled := range dispatcher.jobs {
 				result := phaseTwoScheduledResult{scheduled: scheduled}
 				if ctx.Err() == nil && dispatcher.bundle.isCurrentScheduledRunner(scheduled) {
-					_, result.attempted, result.admissionDenied, result.err =
-						scheduled.lifecycle.runner.RunOneAdmitted(ctx, func(execution.Operation) (func(), bool) {
-							// F was acquired by this dispatcher before preparation.
-							// P/R belong only to actual Query admission in Access.
-							return func() {}, ctx.Err() == nil
-						})
+					func() {
+						defer startSlotTiming(ctx, dispatcher.bundle.dependencies.Observer, observability.StageRunnerCompleted, time.Now)()
+						_, result.attempted, result.admissionDenied, result.err =
+							scheduled.lifecycle.runner.RunOneAdmitted(ctx, func(execution.Operation) (func(), bool) {
+								// F was acquired by this dispatcher before preparation.
+								// P/R belong only to actual Query admission in Access.
+								return func() {}, ctx.Err() == nil
+							})
+					}()
 				}
 				dispatcher.results <- result
 			}

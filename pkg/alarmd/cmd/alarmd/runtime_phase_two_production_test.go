@@ -2072,7 +2072,7 @@ func TestProductionSlotObservationsBracketRealExecutionWithFrozenProvenance(t *t
 	executor := observedProductionSlotExecutor{
 		next: slotExecutorFunc(func(context.Context, execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
 			if got := observedStages(observations); !reflect.DeepEqual(got, []observability.Stage{
-				observability.StageScheduleDue, observability.StageSlotStarted,
+				observability.StageScheduleDue, observability.StageSlotSourceCompleted, observability.StageSlotStarted,
 			}) {
 				t.Fatalf("observations before real execution = %v", got)
 			}
@@ -2090,11 +2090,14 @@ func TestProductionSlotObservationsBracketRealExecutionWithFrozenProvenance(t *t
 		t.Fatalf("observed Slot executor error = %v", err)
 	}
 	if got := observedStages(observations); !reflect.DeepEqual(got, []observability.Stage{
-		observability.StageScheduleDue, observability.StageSlotStarted, observability.StageSlotCompleted,
+		observability.StageScheduleDue, observability.StageSlotSourceCompleted, observability.StageSlotStarted, observability.StageSlotCompleted,
 	}) {
 		t.Fatalf("Slot observations = %v", got)
 	}
 	for _, observation := range observations {
+		if observation.Stage == observability.StageSlotSourceCompleted {
+			continue
+		}
 		trace := observation.Trace
 		if trace.QueryGroupKey != "query-group-1" || trace.EvaluationTime != 120 ||
 			trace.SnapshotRevision != "snapshot-1" || trace.QueryRevision != "query-1" ||
@@ -2114,7 +2117,7 @@ func TestProductionSlotObservationsBracketRealExecutionWithFrozenProvenance(t *t
 	if _, due, err := notDue.Next(context.Background(), "query-group-1"); err != nil || due {
 		t.Fatalf("not-due SlotSource.Next() due=%v error=%v", due, err)
 	}
-	if len(observations) != 0 {
+	if len(observations) != 1 || observations[0].Stage != observability.StageSlotSourceCompleted {
 		t.Fatalf("not-due Slot emitted execution observations: %+v", observations)
 	}
 }
@@ -2133,7 +2136,7 @@ func TestObservedProductionSlotSourcePreservesRetryCauseBeforeRunnerReduction(t 
 	if _, due, err := source.Next(context.Background(), "query-group-1"); due || !errors.Is(err, wantErr) {
 		t.Fatalf("Next() due=%t error=%v", due, err)
 	}
-	if len(observations) != 1 || observations[0].Stage != observability.StageScheduleDue ||
+	if len(observations) != 2 || observations[1].Stage != observability.StageSlotSourceCompleted || observations[0].Stage != observability.StageScheduleDue ||
 		observations[0].Result != observability.ResultRetrying ||
 		observations[0].ReasonCode != observability.ReasonCode(contract.ReasonProviderUnavailable) ||
 		observations[0].Trace.QueryGroupKey != "query-group-1" || observations[0].Err != wantErr {
@@ -2155,7 +2158,7 @@ func TestObservedProductionSlotSourcePreservesBlockedCauseBeforeRunnerReduction(
 	if _, due, err := source.Next(context.Background(), "query-group-1"); due || !errors.Is(err, wantErr) {
 		t.Fatalf("Next() due=%t error=%v", due, err)
 	}
-	if len(observations) != 1 || observations[0].Stage != observability.StageScheduleDue ||
+	if len(observations) != 2 || observations[1].Stage != observability.StageSlotSourceCompleted || observations[0].Stage != observability.StageScheduleDue ||
 		observations[0].Result != observability.ResultRetrying ||
 		observations[0].ReasonCode != observability.ReasonCode(contract.ReasonBlockedExactSetUnavailable) ||
 		observations[0].Trace.QueryGroupKey != "query-group-1" || observations[0].Err != wantErr {

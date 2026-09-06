@@ -1222,6 +1222,7 @@ func (source observedProductionSlotSource) Next(
 	ctx context.Context,
 	queryGroup execution.QueryGroupIdentity,
 ) (scheduler.FrozenSlot, bool, error) {
+	defer startSlotTiming(ctx, source.observer, observability.StageSlotSourceCompleted, time.Now)()
 	slot, due, err := source.next.Next(ctx, queryGroup)
 	var retry *scheduler.SourceRetryError
 	var blocked *scheduler.SourceBlockedError

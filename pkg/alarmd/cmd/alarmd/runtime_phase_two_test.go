@@ -1723,10 +1723,13 @@ func TestPhaseTwoWorkerBundleDoesNotReobserveSourceRetryResults(t *testing.T) {
 		queryGroups[0]: blocked, queryGroups[1]: temporary,
 	}}
 	var observations []observability.Observation
+	var observationsMu sync.Mutex
 	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
 		Config: cfg, Health: newPhaseTwoApplicationHealth(), Control: &fakePhaseTwoControl{queryGroups: queryGroups},
 		Ownership: owner, Now: time.Now, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observationsMu.Lock()
 			observations = append(observations, observation)
+			observationsMu.Unlock()
 		}),
 	})
 	if err != nil {

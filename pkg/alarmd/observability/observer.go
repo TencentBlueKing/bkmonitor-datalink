@@ -72,6 +72,8 @@ const (
 	StageScheduleDue          = "schedule_due"
 	StageSlotStarted          = "slot_started"
 	StageSlotCompleted        = "slot_completed"
+	StageRunnerCompleted      = "runner_completed"
+	StageSlotSourceCompleted  = "slot_source_completed"
 	StageQueryAdmission       = "query_admission"
 	StageRestartRecovered     = "restart_recovered"
 	StageKafkaAssigned        = "kafka_assigned"
@@ -1023,6 +1025,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentOwnership, StageLeaseRenewed}, {ComponentOwnership, StageFenceChecked},
 	{ComponentScheduler, StageScheduleDue}, {ComponentScheduler, StageSlotStarted},
 	{ComponentScheduler, StageSlotCompleted}, {ComponentScheduler, StageQueryAdmission},
+	{ComponentScheduler, StageRunnerCompleted}, {ComponentScheduler, StageSlotSourceCompleted},
 	{ComponentAccess, StageQueryCompleted},
 	{ComponentAccess, StageQueryBudgetResolved},
 	{ComponentEvaluation, StageEvaluationCompleted},

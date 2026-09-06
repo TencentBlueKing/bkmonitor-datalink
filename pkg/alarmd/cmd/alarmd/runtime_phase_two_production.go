@@ -1266,6 +1266,10 @@ func (executor observedProductionSlotExecutor) Execute(
 	})
 	started := time.Now()
 	result, err := executor.next.Execute(ctx, request)
+	var shortCompletion *observability.ShortPeriodCompletionFacts
+	if err == nil && result.Completed && result.CompletionKind != "" && (request.ShortPeriodCohort == "10s" || request.ShortPeriodCohort == "15s") {
+		shortCompletion = &observability.ShortPeriodCompletionFacts{Cohort: request.ShortPeriodCohort, CompletionKind: string(result.CompletionKind), LagSeconds: time.Since(time.Unix(int64(request.Contract.Slot.EvaluationTime), 0)).Seconds()}
+	}
 	observedResult := result.Result
 	reason := result.ReasonCode
 	observedErr := err
@@ -1286,6 +1290,7 @@ func (executor observedProductionSlotExecutor) Execute(
 	}
 	observeRuntime(ctx, executor.observer, observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageSlotCompleted,
+		Operation: observability.Operation(request.Operation), ShortPeriodCompletion: shortCompletion,
 		Result: observedResult, ReasonCode: reason, Direction: observability.DirectionInternal,
 		Duration: time.Since(started), Trace: trace, Err: observedErr,
 	})

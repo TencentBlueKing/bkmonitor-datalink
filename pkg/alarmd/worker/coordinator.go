@@ -180,6 +180,11 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		}
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: query: %w", err)
 	}
+	ctx, cancelCompletion := shortPeriodCompletionContext(ctx, request.Operation, stream.header)
+	defer cancelCompletion()
+	if err := ctx.Err(); err != nil {
+		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: completion deadline: %w", err)
+	}
 	if err := stream.complete(ctx, completion); err != nil {
 		coordinator.observeQueryFailure(ctx, request.Operation, started, "stream_complete", err)
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid query result: %w", err)
@@ -934,7 +939,7 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 		observationReason = completion.ReasonCode
 	}
 	coordinator.observe(ctx, observability.ComponentProgress, observability.StageProgressCommitted, request.Operation, started, observationResult, observationReason, nil)
-	return execution.SlotExecutionResult{Completed: true, Result: completion.Result, ReasonCode: completion.ReasonCode}, nil
+	return execution.SlotExecutionResult{Completed: true, CompletionKind: completion.Kind, Result: completion.Result, ReasonCode: completion.ReasonCode}, nil
 }
 
 func (coordinator *SlotExecutionCoordinator) admit(

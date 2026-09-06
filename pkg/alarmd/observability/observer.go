@@ -83,6 +83,7 @@ const (
 	StageRejected             = "rejected"
 	StagePlanCompiled         = "plan_compiled"
 	StageQueryCompleted       = "query_completed"
+	StageQueryBudgetResolved  = "query_budget_resolved"
 	StageStatePreflight       = "state_preflight"
 	StageGapLoaded            = "gap_loaded"
 	StageEvaluationCompleted  = "evaluation_completed"
@@ -381,31 +382,33 @@ type TraceFields struct {
 }
 
 type Observation struct {
-	Component            Component
-	Stage                Stage
-	Result               Result
-	Operation            Operation
-	Direction            Direction
-	ReasonCode           ReasonCode
-	Duration             time.Duration
-	Counts               Counts
-	Trace                TraceFields
-	Err                  error
-	CapacityBudget       CapacityBudget
-	CapacityRejection    *CapacityRejectionFacts
-	SourceKind           SourceKind
-	QueryPermit          *QueryPermitFacts
-	RuntimeConfig        *RuntimeConfigFacts
-	QueryFailure         *QueryFailureFacts
-	ActiveQGSet          *ActiveQGSetFacts
-	LegacyMigration      *LegacyQGMigrationFacts
-	DrainingQG           *DrainingQGFacts
-	SourceRefresh        *SourceRefreshFacts
-	ActivationFailure    *ActivationFailureFacts
-	AlgorithmEvaluations []AlgorithmEvaluationFact
-	AlgorithmInputs      []AlgorithmInputFact
-	normalized           bool
-	stageReasonBucket    bool
+	Component             Component
+	Stage                 Stage
+	Result                Result
+	Operation             Operation
+	Direction             Direction
+	ReasonCode            ReasonCode
+	Duration              time.Duration
+	Counts                Counts
+	Trace                 TraceFields
+	Err                   error
+	CapacityBudget        CapacityBudget
+	CapacityRejection     *CapacityRejectionFacts
+	SourceKind            SourceKind
+	QueryPermit           *QueryPermitFacts
+	RuntimeConfig         *RuntimeConfigFacts
+	QueryFailure          *QueryFailureFacts
+	QueryTiming           *QueryTimingFacts
+	ShortPeriodCompletion *ShortPeriodCompletionFacts
+	ActiveQGSet           *ActiveQGSetFacts
+	LegacyMigration       *LegacyQGMigrationFacts
+	DrainingQG            *DrainingQGFacts
+	SourceRefresh         *SourceRefreshFacts
+	ActivationFailure     *ActivationFailureFacts
+	AlgorithmEvaluations  []AlgorithmEvaluationFact
+	AlgorithmInputs       []AlgorithmInputFact
+	normalized            bool
+	stageReasonBucket     bool
 }
 
 type Observer interface {
@@ -468,6 +471,8 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.CapacityBudget = NormalizeCapacityBudget(observation.CapacityBudget)
 	observation.CapacityRejection = normalizeCapacityRejection(observation)
 	observation.QueryPermit = normalizeQueryPermitFacts(observation.QueryPermit)
+	observation.QueryTiming = normalizeTimingFacts(observation)
+	observation.ShortPeriodCompletion = normalizeShortPeriodCompletion(observation)
 	observation.QueryFailure = normalizeQueryFailure(observation.Component, observation.Stage, observation.Err, observation.QueryFailure)
 	if observation.RuntimeConfig != nil {
 		if observation.Component != ComponentRuntime || observation.Stage != StageConfigLoaded {
@@ -1019,6 +1024,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentScheduler, StageScheduleDue}, {ComponentScheduler, StageSlotStarted},
 	{ComponentScheduler, StageSlotCompleted}, {ComponentScheduler, StageQueryAdmission},
 	{ComponentAccess, StageQueryCompleted},
+	{ComponentAccess, StageQueryBudgetResolved},
 	{ComponentEvaluation, StageEvaluationCompleted},
 	{ComponentState, StageStatePreflight}, {ComponentState, StageGapLoaded},
 	{ComponentState, StageSideEffectAdmission}, {ComponentState, StageGapGuardCommitted},

@@ -1644,14 +1644,11 @@ func (runtime *RedisCatalogRuntime) primaryRequirements(
 }
 
 func completionDeadline(at execution.EvaluationTime, spec execution.ScheduleSpec) (int64, error) {
-	if err := spec.Validate(); err != nil || at <= 0 || int64(at) > math.MaxInt64-spec.EvaluationIntervalSeconds {
+	deadline, ok := spec.CompletionDeadlineUnixMilli(at)
+	if !ok {
 		return 0, errors.New("alarmd controlplane: invalid frozen Plan deadline")
 	}
-	seconds := int64(at) + spec.EvaluationIntervalSeconds
-	if seconds > math.MaxInt64/1000 {
-		return 0, errors.New("alarmd controlplane: frozen Plan deadline overflows")
-	}
-	return seconds * 1000, nil
+	return deadline, nil
 }
 
 func equalDuePlanRefs(left, right []execution.FrozenPlanScheduleRef) bool {

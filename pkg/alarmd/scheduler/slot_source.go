@@ -293,7 +293,11 @@ func (source *ProductionSlotSource) Next(
 	fact, err := source.catalog.FreezeSlotContract(ctx, request)
 	if err != nil {
 		if load.Progress != nil && load.Progress.UnfinishedSlot != nil {
-			return source.slotFromProjection(ctx, initialAssignment, initialFence, *load.Progress.UnfinishedSlot, at)
+			slot, due, err := source.slotFromProjection(ctx, initialAssignment, initialFence, *load.Progress.UnfinishedSlot, at)
+			if err == nil && slot.Contract.ScheduleRevision == schedule.Segment.ScheduleRevision && slot.Contract.ScheduleSegmentStart == schedule.Segment.Start && slot.Contract.Slot.EvaluationTime == nextSlot {
+				slot.ShortPeriodCohort = shortPeriodCohort(schedule, nextSlot)
+			}
+			return slot, due, err
 		}
 		deadline, deadlineErr := source.scheduleQueryDeadline(schedule, nextSlot)
 		if deadlineErr != nil {
@@ -341,6 +345,7 @@ func (source *ProductionSlotSource) Next(
 	}
 	slot := FrozenSlot{
 		Contract:                       fact.Contract,
+		ShortPeriodCohort:              shortPeriodCohort(schedule, nextSlot),
 		DuePlanTargets:                 targets.Clone(),
 		EarliestQueryDeadlineUnixMilli: queryDeadline,
 		RecoveryUntilUnixMilli:         recoveryUntil,
@@ -365,7 +370,11 @@ func (source *ProductionSlotSource) scheduleQueryDeadline(schedule execution.Fro
 		if !plan.Spec.IsAligned(slot) {
 			continue
 		}
-		candidate := time.Unix(int64(slot), 0).Add(time.Duration(plan.Spec.EvaluationIntervalSeconds)*time.Second - source.queryReserve).UnixMilli()
+		completion, valid := plan.Spec.CompletionDeadlineUnixMilli(slot)
+		if !valid {
+			return 0, ErrSlotContractDrift
+		}
+		candidate := completion - source.queryReserve.Milliseconds()
 		if candidate <= int64(slot)*1000 {
 			return 0, ErrSlotContractDrift
 		}
@@ -377,6 +386,24 @@ func (source *ProductionSlotSource) scheduleQueryDeadline(schedule execution.Fro
 		return 0, ErrSlotContractDrift
 	}
 	return deadline, nil
+}
+
+// One QG Slot receives at most one cohort, including mixed-cadence due sets.
+func shortPeriodCohort(schedule execution.FrozenQueryGroupSchedule, slot execution.EvaluationTime) string {
+	minimum := int64(0)
+	for _, plan := range schedule.Plans {
+		if plan.Spec.IsAligned(slot) && (minimum == 0 || plan.Spec.EvaluationIntervalSeconds < minimum) {
+			minimum = plan.Spec.EvaluationIntervalSeconds
+		}
+	}
+	switch minimum {
+	case 10:
+		return "10s"
+	case 15:
+		return "15s"
+	default:
+		return ""
+	}
 }
 
 func (source *ProductionSlotSource) slotFromProjection(

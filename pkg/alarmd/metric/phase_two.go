@@ -14,6 +14,7 @@ import (
 )
 
 type phaseTwoMetrics struct {
+	shortPeriod                  shortPeriodMetrics
 	work                         *prometheus.CounterVec
 	busy                         *prometheus.CounterVec
 	lastProgress                 *prometheus.GaugeVec
@@ -120,6 +121,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			Help: "Process-wide physical query permit admission outcomes by fixed operation and result.",
 		}, []string{"operation", "result"}),
 	}
+	metrics.shortPeriod = newShortPeriodMetrics()
 	metrics.activeQGSetCount = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_query_groups", Help: "Query groups in the current immutable Active Set."})
 	metrics.activeQGSetBytes = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_object_bytes", Help: "Encoded bytes in the current immutable Active Set."})
 	metrics.activeQGSetEncode = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_encode_duration_seconds", Help: "Active Set canonical encoding duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
@@ -141,6 +143,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 
 func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 	return []prometheus.Collector{
+		m.shortPeriod.completed, m.shortPeriod.duration, m.shortPeriod.lag,
 		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations, m.sourceRefreshes,
 		m.activationFailures,
 		m.ownedQueryGroups, m.ownershipTransitions, m.readyQueue, m.queryInflight,
@@ -153,6 +156,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 }
 
 func (m phaseTwoMetrics) observe(observation observability.Observation) {
+	m.shortPeriod.observe(observation)
 	if facts := observation.SourceRefresh; facts != nil {
 		m.sourceRefreshes.WithLabelValues(string(facts.Status)).Inc()
 	}

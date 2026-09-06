@@ -650,6 +650,9 @@ func compilePlan(
 	ir := contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2, Minor: 0}, RequiredFeatures: []string{}, StrategyRef: ref, ExecutionSemantics: semantics, InputProjection: projection, Levels: levels}
 	plan := contract.EvaluationPlanV2{PlanID: strategyID, StrategyRef: ref, InputProjection: projection, SourceCompatibility: &contract.SourceCompatibilityV2{ItemID: strconv.FormatInt(item.ID, 10)}, StrategyIR: ir}
 	scheduleSpec := execution.ScheduleSpec{EvaluationIntervalSeconds: interval, Alignment: 0, Timezone: "UTC"}
+	if interval == 10 || interval == 15 {
+		scheduleSpec.CompletionDeadlineOffsetSeconds = 30
+	}
 	schedule, err := execution.DerivePlanScheduleRevision(scheduleSpec)
 	return plan, scheduleSpec, schedule, dispositions, err
 }

@@ -132,6 +132,8 @@ func (fence OwnerFence) Validate(contractRef FrozenExecutionContractRef) error {
 }
 
 type SlotExecutionRequest struct {
+	// Observation-only cadence; never part of persisted projection or identity.
+	ShortPeriodCohort              string `json:"-"`
 	Contract                       FrozenExecutionContractRef
 	DuePlanTargets                 FrozenDuePlanTargets
 	EarliestQueryDeadlineUnixMilli int64
@@ -2455,8 +2457,10 @@ func requireReasonClass(reason ReasonCode, expected contract.ReasonClassV2) erro
 }
 
 type SlotExecutionResult struct {
-	Completed   bool
-	Result      Result
-	ReasonCode  ReasonCode
-	SourceRetry bool
+	// Set only after a successful Progress commit, not inferred from Result.
+	CompletionKind CompletionKind
+	Completed      bool
+	Result         Result
+	ReasonCode     ReasonCode
+	SourceRetry    bool
 }

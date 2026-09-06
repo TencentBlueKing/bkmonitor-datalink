@@ -17,4 +17,4 @@
 
 | 日期 | 文档 | 内容 |
 | --- | --- | --- |
-| 2026-09-04～09-06 | [Lifecycle 与 Elasticsearch 吞吐压测](2026-09-04-lifecycle-elasticsearch-throughput.md) | 各轮吞吐对照、归档与裁剪改进、ES 内存与 durability、大批次写入及 Kafka 分区尾部等待验证 |
+| 2026-09-04～09-06 | [Lifecycle 与 Elasticsearch 吞吐压测](2026-09-04-lifecycle-elasticsearch-throughput.md) | 各轮吞吐对照、归档与裁剪改进、ES 内存与 durability、并发收敛与最终两轮 1000/s 验证 |

@@ -64,6 +64,55 @@ function batchPanels(): PanelDefinition[] {
   return [
     {
       ...common,
+      id: "lifecycle-batch-server-client",
+      title: "同批写请求：服务端与客户端",
+      unit: "ms",
+      kind: "line",
+      description:
+        "仅比较同时取得合法 server_took 与 paired_execution 的同批写请求均值。ES took 不是纯写盘时间，两者差值也不是纯网络耗时；无 took 的响应不补零。",
+      query: (s, w) => {
+        const selected = mergeSelector(
+          select(s),
+          'linkd_batch_phase=~"server_took|paired_execution"',
+        );
+        return `1000 * sum(rate(${prefix}phase_duration_seconds_sum${selected}[${w}])) by (linkd_batch_phase) / sum(rate(${prefix}phase_duration_seconds_count${selected}[${w}])) by (linkd_batch_phase)`;
+      },
+    },
+    {
+      ...common,
+      id: "lifecycle-batch-phases",
+      title: "读写请求分段耗时",
+      unit: "ms",
+      kind: "line",
+      description:
+        "按 read/write 和阶段分别计算均值。server_took 与 paired_execution 仅包含同一批有合法 took 的写响应；took 不是纯写盘时间，差值也不只是网络。response_items 是逐项解析映射；collect 是首项等待，operation_queue 按操作计数，各阶段不可直接相加。",
+      query: (s, w) =>
+        `1000 * sum(rate(${prefix}phase_duration_seconds_sum${s}[${w}])) by (linkd_batch_kind, linkd_batch_phase) / sum(rate(${prefix}phase_duration_seconds_count${s}[${w}])) by (linkd_batch_kind, linkd_batch_phase)`,
+    },
+    {
+      ...common,
+      id: "lifecycle-batch-triggers",
+      title: "读写聚合触发原因",
+      unit: "group/s",
+      kind: "line",
+      description:
+        "operations 数量、bytes 原始字节、deadline 等待到期、ready 不主动等待。聚合提交可能再按编码字节切片，所以不是物理请求次数。",
+      query: (s, w) =>
+        `sum(rate(${prefix}triggers_total${s}[${w}])) by (linkd_batch_kind, linkd_batch_trigger)`,
+    },
+    {
+      ...common,
+      id: "lifecycle-batch-executing",
+      title: "读写平均执行中批次数",
+      unit: "batch",
+      kind: "line",
+      description:
+        "执行耗时总量的每秒速率，分别展示读写平均占用；不含凑批和编码，不是瞬时峰值，低均值不能排除短时槽位耗尽。",
+      query: (s, w) =>
+        `sum(rate(${prefix}duration_seconds_sum${mergeSelector(s, 'linkd_metric_schema="2"')}[${w}])) by (linkd_batch_kind)`,
+    },
+    {
+      ...common,
       id: "lifecycle-batch-executions",
       title: "范围内批次执行次数",
       unit: "batch",
@@ -783,6 +832,8 @@ function seriesName(labels: Record<string, string>, index: number): string {
     labels.linkd_operation,
     labels.linkd_task,
     labels.linkd_batch_kind,
+    labels.linkd_batch_phase,
+    labels.linkd_batch_trigger,
     labels.linkd_statistic,
     labels.__name__,
     labels.instance,

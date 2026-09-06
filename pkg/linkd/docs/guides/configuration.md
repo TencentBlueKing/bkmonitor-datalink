@@ -1,6 +1,31 @@
 # 配置与启动
 
+## 本地 pprof 诊断
+
+`telemetry.profiling` 默认关闭。只在有界现场诊断中开启，并使用与 Prometheus 不同的回环端口：
+
+```yaml
+telemetry:
+  profiling:
+    enabled: true
+    listen_address: 127.0.0.1:9474
+    block_profile_rate: 100000
+    mutex_profile_fraction: 10
+```
+
+开启后提供标准 `/debug/pprof/`、CPU、allocs、heap、goroutine、block、mutex 和 trace endpoint。
+监听地址必须是 IP 回环地址；配置非回环地址会使进程在接管消息前启动失败。block/mutex 采样
+存在运行时开销，普通运行不要配置这些字段。不同常驻角色需要使用不同端口。
+
 ## Kafka 分区恢复延迟
+
+Cleaner 的组批等待仅在批次尚未执行、存在空闲执行槽位且期限尚未到达时驱动定时唤醒。
+执行中和等待槽位的批次由完成通知推进，不能用过期组批期限忙等；批次槽位在通知之前释放。
+重试、撤销所有权与退出截止时间独立调度，不依赖忙等检查期限。
+
+Cleaner 的 ES Event Bulk 遇到多个 create 冲突时，使用有界 realtime `_mget` 核对内容和最新
+processing，避免重复投递比例升高时逐条 GET 占住批次槽位。单个冲突保留 realtime GET；
+读取失败不重放本批已成功创建的项，也不跳过内容或租户校验。
 
 `event_sources[].storage.kafka.fetch_max_wait_milliseconds` 默认 100，允许 10～5000。
 它限制 broker 等待空 fetch 的时间，不是 Cleaner 的批次等待，也不是 ES 合批期限。
@@ -21,8 +46,10 @@ LINKD_TEST_KAFKA_BROKERS=127.0.0.1:9092 go test -race ./internal/consume/kafka -
 ## Lifecycle Elasticsearch 合批
 
 Lifecycle 默认并发为 32；`lifecycle.elasticsearch_write_batch` 默认启用，仅作用于 Elasticsearch
-Lifecycle runtime。Event result CAS、Alert CAS/create、AlertLog create 跨独立调用合并为 Bulk，
-CAS 校验和冲突核对的 realtime GET 合并为 `_mget`。每项成功后调用方才继续缓存、输出和 ACK；
+Lifecycle runtime。Event result update、Alert CAS/create、AlertLog create 跨独立调用合并为 Bulk，
+CAS 校验和冲突核对的 realtime GET 合并为 `_mget`。Lifecycle Event 点读通过 `_source` 投影排除
+不参与裁决的 `source_raw_data`，Event 终态 update 只写 `related_alert_id` 和 `processing`；
+公共 Event 查询仍返回完整文档。每项成功后调用方才继续缓存、输出和 ACK；
 批次没有跨文档事务语义，Cleaner 与 Archiver 不使用这个队列。
 
 ```yaml
@@ -34,28 +61,38 @@ lifecycle:
 ```
 
 `max_bytes` 可配置为 1～16 MiB。其他调度参数只读，由 Lifecycle 并发 C 在启动时自动推导：
-单批操作数 B = `min(100, max(1, floor(C / 2)))`；最大等待为 B 毫秒，B=1 时不等待；
+单批操作数 B = `min(128, max(1, floor(C / 2)))`；写侧最大等待为 B 毫秒，B=1 时不等待；
+读侧最大等待为 `min(10, 写侧最大等待)` 毫秒，B=1 时同样不等待；
 执行并发上限为 `min(32, C)`。数量阈值或首项等待期限达到即发送，
-编码字节预算也可提前触发发送。realtime 读取使用独立队列，只合入已经就绪的读请求，
-不等待写批次期限、不计入写操作阈值；读写请求共享总执行并发上限。
+编码字节预算也可提前触发发送。realtime 点读使用独立队列和短收集窗口，
+复用写侧的满批/字节/期限触发规则；达到上限立即发送，不等待写批次期限、不计入写操作阈值。
+读写请求共享总执行并发上限。读取元信息与 mget 外层 JSON/分隔符一并计入字节预算，
+请求仍使用 realtime 语义；短窗口不改变 CAS、逐项结果或失败恢复边界。
 单个合法超预算操作独立发送，仍受
 Repository 单文档/单请求硬上限保护。排队及执行中的调用总数上限为 `concurrency`。
 操作数是 ES 文档操作数，不是 Event 数；同一 Event 的依赖写入不能预先入队。
 单批至多占用一半调用方，给其他阶段留出流水线余量；执行上限不会超过调用方数量。
-等待预算按每项 1ms 取上限，这不是 ES 执行时间估计，也不是在线自适应控制。
+等待预算按每项 1ms 取值，这不是 ES 执行时间估计，也不是在线自适应控制。
+单批封顶 128 项/128ms。压测表明，继续随高并发放大到 192～256 项会让更多依赖步骤
+等待同一个响应，并放大客户端解析、GC 和调度延迟；因此高并发只增加调用/在途预算，
+不再继续扩大单个物理批次。
 低流量仍可能由等待期限触发部分批次，实际并行度、吞吐和最优值取决于负载与 ES 服务时间。
 
-| Lifecycle 并发 | 操作数上限 | 最大等待 | 执行并发上限 |
-| --- | ---: | ---: | ---: |
-| 1 | 1 | 0ms | 1 |
-| 32 | 16 | 16ms | 32 |
-| 64 | 32 | 32ms | 32 |
-| 256 | 100 | 100ms | 32 |
-| 1024 | 100 | 100ms | 32 |
+| Lifecycle 并发 | 操作数上限 | 写最大等待 | 读最大等待 | 执行并发上限 |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 1 | 0ms | 0ms | 1 |
+| 8 | 4 | 4ms | 4ms | 8 |
+| 32 | 16 | 16ms | 10ms | 32 |
+| 64 | 32 | 32ms | 10ms | 32 |
+| 256 | 128 | 128ms | 10ms | 32 |
+| 384 | 128 | 128ms | 10ms | 32 |
+| 512 | 128 | 128ms | 10ms | 32 |
+| 1024 | 128 | 128ms | 10ms | 32 |
 
 旧的 `max_operations`、`wait_milliseconds`、`max_concurrent_batches` YAML 键已删除，
 严格解析会拒绝它们；应移除这些键，只配置 `lifecycle.concurrency`。
-DevTools 生效配置展示推导后的三项值。当前不是热更新：调整并发后需重启。
+`read_wait_milliseconds` 同样是派生字段，不接受 YAML 手动配置；DevTools 生效配置展示上述四项值。
+当前不是热更新：调整并发后需重启。
 调用取消不会取消其他调用已经发送的批次；该调用不继续 ACK，按可能部分成功重试。
 关闭时取消未完成批次并等待 worker 退出后关闭连接池。设 `enabled: false` 可做同并发对照。
 
@@ -184,9 +221,27 @@ Mailbox、lease 和 Recent Alert 缓存出现读写不一致。Sentinel 负责�
 `LINKD_TEST_REDIS_USERNAME/PASSWORD` 和 `LINKD_TEST_REDIS_SENTINEL_USERNAME/PASSWORD`。
 
 Lifecycle 使用单 Redis List Mailbox 保存待处理 Event ID。默认 `key_prefix=linkd:lifecycle:mailbox`、单
-Mailbox 上限 128、单次持锁最多排空 512 条。Signal Stream/Group 默认为
+Mailbox 上限 128、单次持锁最多排空 128 条。Signal Stream/Group 默认为
 `linkd:lifecycle:signals` / `linkd-lifecycle`。Signal payload 使用独立的 `schema_version` 校验；代码
 不提供其他字段名或 namespace 的兼容读取。
+
+`lifecycle.signal.max_batch_messages` 默认 64，只限制单次 Redis Stream 读取和确认批次；
+`max_inflight_messages` 才限制从接收到安全确认之间的总在途 Signal。后者省略时按
+`max(2 × lifecycle.concurrency, max_batch_messages)` 派生，允许用两个并发窗口覆盖 I/O 等待，
+但不会因提高 Handler 并发而保留四倍消息。重试预算继续包含在同一在途上限内，默认不超过
+`min(lifecycle.concurrency, max_inflight_messages / 2)`。
+
+Cleaner 同一 lane 的已落库前缀通过有界 Redis 脚本批量入 Mailbox，每次最多 128 项且参数预算
+不超过 1 MiB，超过预算顺序切片，不新增凑批等待。每项仍只在 Mailbox 从空变为非空时生成 Signal；
+首个失败之后不执行后项，已成功切片保留结果。传输失败时当前切片结果未知，重投允许重复引用，
+依赖 Lifecycle 终态短路收敛；不允许以批量 Pipeline 越过失败项执行后项。Stream 当前仍按已有配置共享，
+本次不按 EventSource 拆分。Redis 脚本没有事务回滚，Signal 先于 List 追加，异常至多留下空唤醒，
+不能将已经入队的 Event 留在没有 Signal 的 Mailbox 中。
+
+Signal 仅在 Handler 安全完成后确认。Redis 按消息 ID 独立确认，同 lane 已完成项可以合入
+尚未发送的确认批次，上限复用 `lifecycle.signal.max_batch_messages`（默认 64）；
+不新增凑批等待，通道空闲立即发送。确认成功后才释放在途名额，失败保持原批重试；
+已发送或等待重试的批次不再扩大。Kafka 的连续 offset 前缀确认不受影响。
 
 选择 Elasticsearch Repository 时，Lifecycle 还会从 Mailbox prefix 派生
 `<key_prefix>:recent-alert` namespace，保存最近 Alert 写入。缓存 TTL 没有独立配置项，始终等于
@@ -194,10 +249,13 @@ Active Alert `refresh_interval + 5s`，默认为 10 秒。Redis 读写错误不�
 Elasticsearch，而是保留 Event 重试。生产 Redis 应使用 `noeviction`，避免 current/ended key 被提前
 淘汰。MySQL Repository 不创建这些 key。
 
-Cleaner 对目标 Signal Group 启用近似全局背压：默认每 3 秒最多执行一次 `XINFO GROUPS`，查询超时
-1 秒，`lag + pending >= 100000` 时暂停新 Kafka fetch，降到 80000 时恢复。要求
-`0 < low_watermark < high_watermark`、TTL 为 1～60 秒且查询超时不大于 TTL。查询失败或 lag 未知
-fail-open，明确缺少 Group 时暂停。
+Cleaner 对目标 Signal Group 启用近似全局背压：默认每秒最多执行一次 `XINFO GROUPS`，查询超时
+1 秒。省略水位时，高水位按 Lifecycle 在途上限的 4 倍派生，低水位按 2 倍派生；默认并发 32 时
+分别为 256 和 128，压测配置并发 256、在途 512 时分别为 2048 和 1024。达到高水位暂停新 Kafka
+fetch，降到低水位恢复，中间区间保持原状态。要求 `0 < low_watermark < high_watermark`、TTL 为
+1～60 秒且查询超时不大于 TTL。查询失败或 lag 未知时保持上次准入状态，明确缺少 Group 时暂停，
+避免短暂观测故障解除已经生效的背压。该水位统计的是 `lag + pending` Signal，并不等同于精确的
+Mailbox Event 数量；容量判断必须同时观察 Mailbox 深度。
 
 控制面可分别配置 Elasticsearch 三项管理任务的周期，以及 Redis Signal Stream 的指标采集和安全裁剪：
 
@@ -248,6 +306,10 @@ Prometheus exporter 后，每个进程分别暴露 `/metrics`；部署在独立 
 `control-plane` 或 `all-in-one` endpoint 暴露，指标名、单位和告警含义见[可观测性设计](../design/observability.md)。
 
 ## Elasticsearch schema 重建
+
+`storage.elasticsearch.number_of_shards` 可选，范围 1～1024，仅设置新建索引的主分片数；
+省略时使用 ES 默认值。修改该配置不会重分片已有索引，已有数据应另行设计 reindex 或 split，
+不能把模板更新当作数据迁移。双节点实验使用两个主分片、零副本，并核对各主分片实际分布。
 
 当前 Elasticsearch schema version 为 3，Event、Alert 和 AlertLog 的完整稳定领域字段直接保存在
 `_source` 根层。Event、AlertHistory、AlertLog 默认使用 7 天 UTC 时间桶；Active Alert 使用单一热索引，

@@ -223,6 +223,7 @@ func newElasticsearchComponents(
 		ActiveAlertRefreshInterval: cfg.ActiveAlertRefreshInterval(),
 		AlertLogTranslogDurability: cfg.AlertLogTranslogDurability,
 		NumberOfReplicas:           cfg.NumberOfReplicas,
+		NumberOfShards:             cfg.NumberOfShards,
 	})
 	if err != nil {
 		transport.Close()

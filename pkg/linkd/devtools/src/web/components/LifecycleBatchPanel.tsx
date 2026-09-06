@@ -54,7 +54,8 @@ export function LifecycleBatchPanel({
         </span>
         <span>Lifecycle 并发 {value(config.concurrency)}</span>
         <span>单批上限 {value(batch.max_operations)} 操作</span>
-        <span>最大等待 {value(batch.wait_milliseconds)} ms</span>
+        <span>写收集上限 {value(batch.wait_milliseconds)} ms</span>
+        <span>读收集上限 {value(batch.read_wait_milliseconds)} ms</span>
         <span>执行上限 {value(batch.max_concurrent_batches)} 批</span>
         <span>
           字节上限{" "}
@@ -101,6 +102,17 @@ export function LifecycleBatchPanel({
           </article>
         ))}
       </div>
+      <MetricSection
+        title="读写等待定位"
+        description="读写共享执行槽位。先看 worker_slot，再看 connection 与 first_byte；operation_queue 是逐项等待，不能与首项凑批耗时相加。"
+        panels={panels}
+        ids={[
+          "lifecycle-batch-server-client",
+          "lifecycle-batch-phases",
+          "lifecycle-batch-triggers",
+          "lifecycle-batch-executing",
+        ]}
+      />
       <MetricSection
         title="批次效率与等待"
         description="曲线使用指标计算窗口；总量卡片使用完整图表时间范围。没有请求时，均值和分位数显示为缺口。"

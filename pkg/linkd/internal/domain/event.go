@@ -66,7 +66,7 @@ func (e Event) Normalize() (Event, error) {
 	e.ProducedAt = normalizeTime(e.ProducedAt)
 	e.ReceivedAt = normalizeTime(e.ReceivedAt)
 	e.CreateAt = normalizeTime(e.CreateAt)
-	if err := e.Validate(); err != nil {
+	if err := e.validate(false); err != nil {
 		return Event{}, err
 	}
 	return e, nil
@@ -83,6 +83,12 @@ func (e Event) Clone() Event {
 
 // Validate 校验 define.md 规定的 Event 字段和边界。
 func (e Event) Validate() error {
+	return e.validate(true)
+}
+
+// 只有 Normalize 完成所有动态 JSON 的校验和深拷贝后才跳过二次规范化。
+// 公共 Validate 仍必须检查任意调用方传入的动态字段，不能信任对象曾经被规范化。
+func (e Event) validate(validateJSON bool) error {
 	for _, field := range []struct {
 		name  string
 		value string
@@ -136,11 +142,13 @@ func (e Event) Validate() error {
 	if err := e.Labels.Validate(); err != nil {
 		return fmt.Errorf("event labels: %w", err)
 	}
-	if _, err := e.SourceRawData.Normalize(); err != nil {
-		return fmt.Errorf("event source_raw_data: %w", err)
-	}
-	if _, err := e.ExtraData.Normalize(); err != nil {
-		return fmt.Errorf("event extra_data: %w", err)
+	if validateJSON {
+		if _, err := e.SourceRawData.Normalize(); err != nil {
+			return fmt.Errorf("event source_raw_data: %w", err)
+		}
+		if _, err := e.ExtraData.Normalize(); err != nil {
+			return fmt.Errorf("event extra_data: %w", err)
+		}
 	}
 	for name, value := range map[string]time.Time{
 		"occurred_at": e.OccurredAt,
@@ -160,6 +168,19 @@ func ValidateNewEvent(event Event) error {
 	if err := event.Validate(); err != nil {
 		return err
 	}
+	return validateNewEventState(event)
+}
+
+// ValidateNormalizedNewEvent 校验刚由 Event.Normalize 返回的 Event 是否可首次创建。
+// 调用方必须在其间不暴露或修改动态字段；任意外部输入仍使用 ValidateNewEvent。
+func ValidateNormalizedNewEvent(event Event) error {
+	if err := event.validate(false); err != nil {
+		return err
+	}
+	return validateNewEventState(event)
+}
+
+func validateNewEventState(event Event) error {
 	if event.RelatedAlertID != "" {
 		return fmt.Errorf("new event related_alert_id must be empty")
 	}

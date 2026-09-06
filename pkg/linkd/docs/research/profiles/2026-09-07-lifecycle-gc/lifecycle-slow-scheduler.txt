@@ -1,0 +1,56 @@
+File: linkd
+Type: delay
+Showing nodes accounting for 166547918.42us, 76.04% of 219026695.56us total
+Dropped 883 nodes (cum <= 1095133.48us)
+Showing top 50 nodes out of 73
+      flat  flat%   sum%        cum   cum%
+130340423.20us 59.51% 59.51% 130343709.92us 59.51%  runtime.chansend1
+14017710.90us  6.40% 65.91% 14017710.90us  6.40%  runtime.systemstack_switch
+13893462.77us  6.34% 72.25% 13893462.77us  6.34%  runtime.traceLocker.stack
+5126503.60us  2.34% 74.59% 5126503.60us  2.34%  sync.(*WaitGroup).Add
+1555855.01us  0.71% 75.30% 16189207.84us  7.39%  runtime.gcMarkDone
+577927.53us  0.26% 75.57% 5688999.66us  2.60%  runtime.gcStart
+574027.52us  0.26% 75.83% 904409.03us  0.41%  runtime.selectgo
+172829.44us 0.079% 75.91% 4435204.75us  2.02%  encoding/json.Marshal
+90644.48us 0.041% 75.95% 7067580.99us  3.23%  runtime.newobject
+86880.77us  0.04% 75.99% 2399301.18us  1.10%  encoding/json.(*Decoder).Decode
+34095.93us 0.016% 76.00% 16323773.62us  7.45%  runtime.mallocgc
+25843.78us 0.012% 76.02% 2998106.27us  1.37%  runtime.makeslice
+20477.57us 0.0093% 76.03% 4359064.40us  1.99%  runtime.mallocgcSmallNoscan
+15698.50us 0.0072% 76.03% 1736686.20us  0.79%  runtime.mallocgcSmallScanNoHeader
+ 8168.26us 0.0037% 76.04% 1227481.47us  0.56%  encoding/json.(*decodeState).value
+ 2546.82us 0.0012% 76.04% 1262201.53us  0.58%  encoding/json.(*decodeState).unmarshal
+ 2093.63us 0.00096% 76.04% 2876174.40us  1.31%  linkd/internal/domain.decodeJSONToken
+  976.32us 0.00045% 76.04% 5426393.09us  2.48%  runtime.growslice
+  828.86us 0.00038% 76.04% 3116948.23us  1.42%  linkd/internal/domain.decodeJSONValue
+  330.24us 0.00015% 76.04% 11346997.96us  5.18%  linkd/internal/lifecycle.(*Processor).ProcessEvent
+  208.19us 9.5e-05% 76.04% 10030129.34us  4.58%  runtime.deductAssistCredit
+  184.64us 8.4e-05% 76.04% 1701713.16us  0.78%  linkd/internal/telemetry.(*observedRepository).CompareAndSetAlertAfterActiveLookup
+  177.28us 8.1e-05% 76.04% 2342679.37us  1.07%  encoding/json.(*Decoder).refill
+      16us 7.3e-06% 76.04% 6733298.20us  3.07%  linkd/internal/store/elasticsearch.(*WriteBatchTransport).Perform
+    5.25us 2.4e-06% 76.04% 10029921.15us  4.58%  runtime.gcAssistAlloc
+    1.92us 8.8e-07% 76.04% 5126505.01us  2.34%  github.com/twmb/franz-go/pkg/kgo.(*Client).finishRecordPromise
+         0     0% 76.04% 4435748.15us  2.03%  bytes.NewReader
+         0     0% 76.04% 2868626.18us  1.31%  encoding/json.(*Decoder).Token
+         0     0% 76.04% 1873839.94us  0.86%  encoding/json.(*Decoder).readValue
+         0     0% 76.04% 1037862.14us  0.47%  encoding/json.(*decodeState).object
+         0     0% 76.04% 1001322.76us  0.46%  encoding/json.Unmarshal
+         0     0% 76.04% 5126503.09us  2.34%  github.com/twmb/franz-go/pkg/kgo.(*Client).ProduceSync.func1
+         0     0% 76.04% 5126524.85us  2.34%  github.com/twmb/franz-go/pkg/kgo.(*producer).finishPromises
+         0     0% 76.04% 1052934.15us  0.48%  io.LimitReader
+         0     0% 76.04% 18306560.99us  8.36%  linkd/internal/consume.(*Runtime).handle
+         0     0% 76.04% 18727867.78us  8.55%  linkd/internal/consume.(*Runtime).workerLoop
+         0     0% 76.04% 1819820.42us  0.83%  linkd/internal/domain.Event.Normalize
+         0     0% 76.04% 890960.53us  0.41%  linkd/internal/domain.Event.Validate
+         0     0% 76.04% 898871.57us  0.41%  linkd/internal/domain.Event.validate
+         0     0% 76.04% 3447899.59us  1.57%  linkd/internal/domain.JSONObject.Normalize
+         0     0% 76.04% 1701717.96us  0.78%  linkd/internal/lifecycle.(*Processor).compareAndSetAlert
+         0     0% 76.04% 5267985.44us  2.41%  linkd/internal/lifecycle.(*Processor).createAlert
+         0     0% 76.04% 3270792.43us  1.49%  linkd/internal/lifecycle.(*Processor).createAlertAfterActiveLookup
+         0     0% 76.04% 3659827.33us  1.67%  linkd/internal/lifecycle.(*Processor).finishEvent
+         0     0% 76.04% 11346667.72us  5.18%  linkd/internal/lifecycle.(*Processor).processUnprocessed
+         0     0% 76.04% 5381596.52us  2.46%  linkd/internal/lifecycle.(*Processor).terminateAlert
+         0     0% 76.04% 18303632.80us  8.36%  linkd/internal/lifecycle/scheduler.(*Handler).Handle
+         0     0% 76.04% 18101873.48us  8.26%  linkd/internal/lifecycle/scheduler.(*Handler).drain
+         0     0% 76.04% 1701229.06us  0.78%  linkd/internal/store/elasticsearch.(*Repository).CompareAndSetAlertAfterActiveLookup
+         0     0% 76.04% 3287842.44us  1.50%  linkd/internal/store/elasticsearch.(*Repository).CompareAndSetEventResult

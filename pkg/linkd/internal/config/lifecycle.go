@@ -23,32 +23,33 @@ import (
 )
 
 const (
-	defaultLifecycleConcurrency             = 32
-	defaultLifecycleProcessTimeoutSeconds   = 30
-	defaultLifecycleRetryMaxAttempts        = 3
-	defaultLifecycleRetryMaxElapsedSeconds  = 120
-	defaultSignalStream                     = "linkd:lifecycle:signals"
-	defaultSignalGroup                      = "linkd-lifecycle"
-	defaultSignalConsumerPrefix             = "linkd-lifecycle"
-	defaultSignalReadBlockMilliseconds      = 1000
-	defaultSignalClaimMinIdleSeconds        = 300
-	defaultSignalMaxBatchMessages           = 128
-	defaultSignalMaxMessageBytes            = 64 << 10
-	defaultMailboxKeyPrefix                 = "linkd:lifecycle:mailbox"
-	defaultMailboxMaxPending                = 128
-	defaultMailboxMaxDrainEvents            = 512
-	defaultMailboxBackpressureCacheTTL      = 3
-	defaultMailboxBackpressureQueryTimeout  = 1
-	defaultMailboxBackpressureHighWatermark = 100000
-	defaultMailboxBackpressureLowWatermark  = 80000
-	defaultLockKeyPrefix                    = "linkd:lifecycle:lock"
-	defaultLockTTLSeconds                   = 60
-	defaultLockRenewIntervalSeconds         = 20
-	defaultLockRetryDelayMilliseconds       = 500
-	defaultLockReleaseTimeoutSeconds        = 3
-	defaultKafkaMaxMessageBytes             = 1 << 20
-	maxLifecycleBatchBytes                  = 64 << 20
-	maxLifecycleInflightBytes               = 256 << 20
+	defaultLifecycleConcurrency            = 32
+	defaultLifecycleProcessTimeoutSeconds  = 30
+	defaultLifecycleRetryMaxAttempts       = 3
+	defaultLifecycleRetryMaxElapsedSeconds = 120
+	defaultSignalStream                    = "linkd:lifecycle:signals"
+	defaultSignalGroup                     = "linkd-lifecycle"
+	defaultSignalConsumerPrefix            = "linkd-lifecycle"
+	defaultSignalReadBlockMilliseconds     = 1000
+	defaultSignalClaimMinIdleSeconds       = 300
+	defaultSignalMaxBatchMessages          = 64
+	defaultSignalMaxMessageBytes           = 64 << 10
+	defaultMailboxKeyPrefix                = "linkd:lifecycle:mailbox"
+	defaultMailboxMaxPending               = 128
+	defaultMailboxMaxDrainEvents           = 128
+	defaultMailboxBackpressureCacheTTL     = 1
+	defaultMailboxBackpressureQueryTimeout = 1
+	defaultLifecycleInflightFactor         = 2
+	defaultMailboxBackpressureHighFactor   = 4
+	defaultMailboxBackpressureLowFactor    = 2
+	defaultLockKeyPrefix                   = "linkd:lifecycle:lock"
+	defaultLockTTLSeconds                  = 60
+	defaultLockRenewIntervalSeconds        = 20
+	defaultLockRetryDelayMilliseconds      = 500
+	defaultLockReleaseTimeoutSeconds       = 3
+	defaultKafkaMaxMessageBytes            = 1 << 20
+	maxLifecycleBatchBytes                 = 64 << 20
+	maxLifecycleInflightBytes              = 256 << 20
 )
 
 // LifecycleConfig 描述 lifecycle 独立进程的消费、并发、锁和输出配置。
@@ -74,6 +75,7 @@ type LifecycleSignalConfig struct {
 	ReadBlockMilliseconds int    `yaml:"read_block_milliseconds"`
 	ClaimMinIdleSeconds   int    `yaml:"claim_min_idle_seconds"`
 	MaxBatchMessages      int    `yaml:"max_batch_messages"`
+	MaxInflightMessages   int    `yaml:"max_inflight_messages"`
 	MaxMessageBytes       int    `yaml:"max_message_bytes"`
 }
 
@@ -156,6 +158,12 @@ func (c LifecycleConfig) WithDefaults() LifecycleConfig {
 	if c.Signal.MaxBatchMessages == 0 {
 		c.Signal.MaxBatchMessages = defaultSignalMaxBatchMessages
 	}
+	if c.Signal.MaxInflightMessages == 0 {
+		c.Signal.MaxInflightMessages = max(
+			c.Concurrency*defaultLifecycleInflightFactor,
+			c.Signal.MaxBatchMessages,
+		)
+	}
 	if c.Signal.MaxMessageBytes == 0 {
 		c.Signal.MaxMessageBytes = defaultSignalMaxMessageBytes
 	}
@@ -175,10 +183,10 @@ func (c LifecycleConfig) WithDefaults() LifecycleConfig {
 		c.Mailbox.Backpressure.QueryTimeoutSeconds = defaultMailboxBackpressureQueryTimeout
 	}
 	if c.Mailbox.Backpressure.HighWatermark == 0 {
-		c.Mailbox.Backpressure.HighWatermark = defaultMailboxBackpressureHighWatermark
+		c.Mailbox.Backpressure.HighWatermark = int64(c.Signal.MaxInflightMessages * defaultMailboxBackpressureHighFactor)
 	}
 	if c.Mailbox.Backpressure.LowWatermark == 0 {
-		c.Mailbox.Backpressure.LowWatermark = defaultMailboxBackpressureLowWatermark
+		c.Mailbox.Backpressure.LowWatermark = int64(c.Signal.MaxInflightMessages * defaultMailboxBackpressureLowFactor)
 	}
 	if c.Lock.KeyPrefix == "" {
 		c.Lock.KeyPrefix = defaultLockKeyPrefix
@@ -243,6 +251,9 @@ func (c LifecycleConfig) Validate() error {
 	if c.Signal.MaxBatchMessages < 1 || c.Signal.MaxBatchMessages > 4096 {
 		return fmt.Errorf("lifecycle.signal.max_batch_messages must be between 1 and 4096")
 	}
+	if c.Signal.MaxInflightMessages < c.Signal.MaxBatchMessages || c.Signal.MaxInflightMessages > 4096 {
+		return fmt.Errorf("lifecycle.signal.max_inflight_messages must be between max_batch_messages and 4096")
+	}
 	if c.Signal.MaxMessageBytes < 1 || c.Signal.MaxMessageBytes > 1<<20 {
 		return fmt.Errorf("lifecycle.signal.max_message_bytes must be between 1 and 1048576")
 	}
@@ -263,7 +274,7 @@ func (c LifecycleConfig) Validate() error {
 	if batchBytes > maxLifecycleBatchBytes {
 		return fmt.Errorf("lifecycle signal batch capacity must not exceed %d bytes", maxLifecycleBatchBytes)
 	}
-	inflightMessages := max(c.Concurrency*4, c.Signal.MaxBatchMessages)
+	inflightMessages := c.Signal.MaxInflightMessages
 	inflightBytes := int64(inflightMessages) * int64(c.Signal.MaxMessageBytes)
 	if inflightBytes > maxLifecycleInflightBytes {
 		return fmt.Errorf("lifecycle signal inflight capacity must not exceed %d bytes", maxLifecycleInflightBytes)
@@ -299,13 +310,16 @@ func (c LifecycleConfig) RuntimeConfig() consume.Config {
 	runtimeConfig.WorkerCount = c.Concurrency
 	runtimeConfig.MaxBatchMessages = c.Signal.MaxBatchMessages
 	runtimeConfig.MaxBatchBytes = c.Signal.MaxBatchMessages * c.Signal.MaxMessageBytes
-	runtimeConfig.MaxInflightMessages = max(c.Concurrency*4, c.Signal.MaxBatchMessages)
+	runtimeConfig.MaxInflightMessages = c.Signal.MaxInflightMessages
 	runtimeConfig.MaxInflightBytes = runtimeConfig.MaxInflightMessages * c.Signal.MaxMessageBytes
 	runtimeConfig.MaxInflightPerLane = runtimeConfig.MaxInflightMessages
 	runtimeConfig.ProcessTimeout = time.Duration(c.ProcessTimeoutSeconds) * time.Second
 	runtimeConfig.RetryMaxAttempts = c.RetryMaxAttempts
 	runtimeConfig.RetryMaxElapsed = time.Duration(c.RetryMaxElapsedSeconds) * time.Second
-	runtimeConfig.MaxRetryMessages = min(runtimeConfig.MaxInflightMessages, max(c.Concurrency*2, 1))
+	runtimeConfig.MaxRetryMessages = min(
+		c.Concurrency,
+		max(runtimeConfig.MaxInflightMessages/2, 1),
+	)
 	return runtimeConfig
 }
 

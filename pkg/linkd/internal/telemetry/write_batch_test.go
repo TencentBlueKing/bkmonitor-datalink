@@ -39,6 +39,8 @@ func TestBatchMetricsAndSignalDurationIsolation(t *testing.T) {
 	b.BatchFinished(ctx, "write", 100, 4096, 20*time.Millisecond, 3*time.Millisecond, 1)
 	b.BatchFinished(ctx, "write", 2, 100, 0, time.Millisecond, 2)
 	b.BatchFinished(ctx, "write", 4, 200, time.Millisecond, 2*time.Millisecond, 0)
+	b.BatchPhase(ctx, "write", "connection", 3*time.Millisecond)
+	b.BatchTriggered(ctx, "write", "operations")
 	o := r.ConsumeObserver(consume.RuntimeLabels{Stage: "lifecycle", Transport: "redis_streams"})
 	o.HandlerStarted(ctx, consume.Message{})
 	o.HandlerFinished(ctx, consume.OutcomeComplete, 2*time.Second)
@@ -67,6 +69,8 @@ func TestBatchMetricsAndSignalDurationIsolation(t *testing.T) {
 		{"linkd_elasticsearch_write_batch_items_total", `linkd_outcome="failed"`, 3},
 		{"linkd_elasticsearch_write_batch_operations_count", "", 3},
 		{"linkd_elasticsearch_write_batch_operations_sum", "", 106},
+		{"linkd_elasticsearch_write_batch_phase_duration_seconds_count", `linkd_batch_phase="connection"`, 1},
+		{"linkd_elasticsearch_write_batch_triggers_total", `linkd_batch_trigger="operations"`, 1},
 		{"linkd_elasticsearch_write_batch_duration_seconds_bucket", `le="0.005"`, 3},
 		{"linkd_elasticsearch_write_batch_queue_duration_seconds_bucket", `le="0.025"`, 3},
 	} {

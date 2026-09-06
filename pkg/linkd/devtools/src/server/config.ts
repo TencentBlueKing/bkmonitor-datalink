@@ -64,10 +64,10 @@ const kafkaConfigSchema = z.object({
 
 const lifecycleMailboxBackpressureSchema = z
   .object({
-    cache_ttl_seconds: z.number().int().min(1).max(60).default(3),
+    cache_ttl_seconds: z.number().int().min(1).max(60).default(1),
     query_timeout_seconds: z.number().int().positive().default(1),
-    high_watermark: z.number().int().positive().default(100_000),
-    low_watermark: z.number().int().positive().default(80_000),
+    high_watermark: z.number().int().positive().optional(),
+    low_watermark: z.number().int().positive().optional(),
   })
   .superRefine((value, context) => {
     if (value.query_timeout_seconds > value.cache_ttl_seconds) {
@@ -77,7 +77,11 @@ const lifecycleMailboxBackpressureSchema = z
         message: "must not exceed cache_ttl_seconds",
       });
     }
-    if (value.low_watermark >= value.high_watermark) {
+    if (
+      value.low_watermark !== undefined &&
+      value.high_watermark !== undefined &&
+      value.low_watermark >= value.high_watermark
+    ) {
       context.addIssue({
         code: "custom",
         path: ["low_watermark"],
@@ -153,6 +157,7 @@ const linkdConfigSchema = z
           .object({
             addresses: z.array(z.string().url()).min(1),
             index_prefix: z.string().min(1).default("linkd"),
+            number_of_shards: z.number().int().min(1).max(1024).optional(),
             time_partition: z
               .object({
                 event_bucket_days: z.number().int().positive().default(7),
@@ -226,34 +231,45 @@ const linkdConfigSchema = z
             group: z.string().default("linkd-lifecycle"),
             consumer_prefix: z.string().default("linkd-lifecycle"),
             claim_min_idle_seconds: z.number().int().positive().default(300),
+            max_batch_messages: z.number().int().min(1).max(4096).default(64),
+            max_inflight_messages: z.number().int().min(1).max(4096).optional(),
+          })
+          .superRefine((value, context) => {
+            if (
+              value.max_inflight_messages !== undefined &&
+              value.max_inflight_messages < value.max_batch_messages
+            ) {
+              context.addIssue({
+                code: "custom",
+                path: ["max_inflight_messages"],
+                message: "must not be less than max_batch_messages",
+              });
+            }
           })
           .default({
             stream: "linkd:lifecycle:signals",
             group: "linkd-lifecycle",
             consumer_prefix: "linkd-lifecycle",
             claim_min_idle_seconds: 300,
+            max_batch_messages: 64,
           }),
         mailbox: z
           .object({
             key_prefix: z.string().default("linkd:lifecycle:mailbox"),
             max_pending: z.number().int().positive().default(128),
-            max_drain_events: z.number().int().positive().default(512),
+            max_drain_events: z.number().int().positive().default(128),
             backpressure: lifecycleMailboxBackpressureSchema.default({
-              cache_ttl_seconds: 3,
+              cache_ttl_seconds: 1,
               query_timeout_seconds: 1,
-              high_watermark: 100_000,
-              low_watermark: 80_000,
             }),
           })
           .default({
             key_prefix: "linkd:lifecycle:mailbox",
             max_pending: 128,
-            max_drain_events: 512,
+            max_drain_events: 128,
             backpressure: {
-              cache_ttl_seconds: 3,
+              cache_ttl_seconds: 1,
               query_timeout_seconds: 1,
-              high_watermark: 100_000,
-              low_watermark: 80_000,
             },
           }),
         lock: z
@@ -446,6 +462,7 @@ export interface DevtoolsConfig {
       max_operations: number;
       max_bytes: number;
       wait_milliseconds: number;
+      read_wait_milliseconds: number;
       max_concurrent_batches: number;
     };
     concurrency: number;
@@ -457,6 +474,8 @@ export interface DevtoolsConfig {
       group: string;
       consumerPrefix: string;
       claimMinIdleSeconds: number;
+      maxBatchMessages: number;
+      maxInflightMessages: number;
     };
     mailbox: {
       keyPrefix: string;
@@ -662,9 +681,23 @@ export async function loadConfig(
   }
   if (decoded.lifecycle) {
     const lifecycle = decoded.lifecycle;
+    const signalInflightMessages =
+      lifecycle.signal.max_inflight_messages ??
+      Math.max(lifecycle.concurrency * 2, lifecycle.signal.max_batch_messages);
+    const backpressureHighWatermark =
+      lifecycle.mailbox.backpressure.high_watermark ??
+      signalInflightMessages * 4;
+    const backpressureLowWatermark =
+      lifecycle.mailbox.backpressure.low_watermark ??
+      signalInflightMessages * 2;
+    if (backpressureLowWatermark >= backpressureHighWatermark) {
+      throw new Error(
+        "lifecycle.mailbox.backpressure.low_watermark must be less than high_watermark",
+      );
+    }
     // 与 Go WithDefaults 保持同一推导规则；只读展示，不接受独立调度参数。
     const batchOperations = Math.min(
-      100,
+      128,
       Math.max(1, Math.floor(lifecycle.concurrency / 2)),
     );
     config.lifecycle = {
@@ -672,6 +705,8 @@ export async function loadConfig(
         ...lifecycle.elasticsearch_write_batch,
         max_operations: batchOperations,
         wait_milliseconds: batchOperations === 1 ? 0 : batchOperations,
+        read_wait_milliseconds:
+          batchOperations === 1 ? 0 : Math.min(10, batchOperations),
         max_concurrent_batches: Math.min(32, lifecycle.concurrency),
       },
       concurrency: lifecycle.concurrency,
@@ -683,6 +718,8 @@ export async function loadConfig(
         group: lifecycle.signal.group,
         consumerPrefix: lifecycle.signal.consumer_prefix,
         claimMinIdleSeconds: lifecycle.signal.claim_min_idle_seconds,
+        maxBatchMessages: lifecycle.signal.max_batch_messages,
+        maxInflightMessages: signalInflightMessages,
       },
       mailbox: {
         keyPrefix: lifecycle.mailbox.key_prefix,
@@ -692,8 +729,8 @@ export async function loadConfig(
           cacheTTLSeconds: lifecycle.mailbox.backpressure.cache_ttl_seconds,
           queryTimeoutSeconds:
             lifecycle.mailbox.backpressure.query_timeout_seconds,
-          highWatermark: lifecycle.mailbox.backpressure.high_watermark,
-          lowWatermark: lifecycle.mailbox.backpressure.low_watermark,
+          highWatermark: backpressureHighWatermark,
+          lowWatermark: backpressureLowWatermark,
         },
       },
       lock: {

@@ -679,6 +679,18 @@ func (s *runtimeState) pauseLane(laneName string) error {
 func (s *runtimeState) queueSettlement(entry *trackedDelivery) {
 	lane := s.lane(entry.delivery.Meta.Lane)
 	if s.capabilities.Settlement == SettlementIndividual {
+		// 不主动等待凑批：确认通道空闲时立即提交；在途请求期间，将陆续完成的
+		// 同 lane 消息合入尚未提交的尾批。已发送或待重试的批次保持不变，
+		// 防止修改 worker 正在读取的 receipts 或扩大结果未知请求的重试范围。
+		if s.capabilities.BatchIndividualConfirm && len(s.settleQueue) > 0 {
+			tail := s.settleQueue[len(s.settleQueue)-1]
+			if tail.lane == entry.delivery.Meta.Lane && tail.startedAt.IsZero() && tail.nextAttempt.IsZero() &&
+				len(tail.entries) < s.runtime.config.MaxBatchMessages {
+				tail.entries = append(tail.entries, entry)
+				tail.receipts = append(tail.receipts, entry.delivery.Receipt)
+				return
+			}
+		}
 		s.settleQueue = append(s.settleQueue, &settleBatch{
 			lane:     entry.delivery.Meta.Lane,
 			entries:  []*trackedDelivery{entry},

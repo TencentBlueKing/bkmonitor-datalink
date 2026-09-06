@@ -145,10 +145,26 @@ func decodeEventHit(hit searchHit) (store.StoredEvent, error) {
 		return store.StoredEvent{}, err
 	}
 	stored := store.StoredEvent{Event: normalized, Processing: processing, Version: version}
-	if err := stored.Validate(); err != nil {
+	// Event.Normalize 和 Processing.Normalize 已完成不可信 ES 文档的全量校验；
+	// 此处只检查跨字段关系，避免对动态 JSON 再做一次完整解码和规范化。
+	if err := validateNormalizedStoredEvent(stored); err != nil {
 		return store.StoredEvent{}, err
 	}
 	return stored, nil
+}
+
+func validateNormalizedStoredEvent(stored store.StoredEvent) error {
+	if stored.Version.IsZero() {
+		return fmt.Errorf("stored event version must not be empty")
+	}
+	associated := stored.Processing.State == domain.EventProcessStateAccepted || stored.Processing.State == domain.EventProcessStateSuppressed
+	if associated && stored.Event.RelatedAlertID == "" {
+		return fmt.Errorf("associated event requires related_alert_id")
+	}
+	if !associated && stored.Event.RelatedAlertID != "" {
+		return fmt.Errorf("only accepted or suppressed event may contain related_alert_id")
+	}
+	return nil
 }
 
 func encodeAlertDocument(alert domain.Alert) ([]byte, error) {

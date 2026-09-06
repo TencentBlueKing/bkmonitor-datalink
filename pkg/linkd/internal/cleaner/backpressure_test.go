@@ -150,6 +150,30 @@ func TestSignalBackpressureCheckerFailureModes(t *testing.T) {
 	}
 }
 
+func TestSignalBackpressureCheckerKeepsPausedStateWhenObservationFails(t *testing.T) {
+	now := time.Unix(100, 0)
+	client := &backpressureTestRedis{groups: []redis.XInfoGroup{{Name: "lifecycle", Lag: 100000}}}
+	checker, err := newSignalBackpressureChecker(client, backpressureTestConfig(), nil, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision := checker.Check(context.Background()); decision.Allowed {
+		t.Fatalf("high watermark decision=%+v", decision)
+	}
+
+	now = now.Add(3 * time.Second)
+	client.set(nil, errors.New("redis unavailable"))
+	if decision := checker.Check(context.Background()); decision.Allowed {
+		t.Fatalf("query failure decision=%+v", decision)
+	}
+
+	now = now.Add(3 * time.Second)
+	client.set([]redis.XInfoGroup{{Name: "lifecycle", Lag: -1, Pending: 10}}, nil)
+	if decision := checker.Check(context.Background()); decision.Allowed {
+		t.Fatalf("unknown lag decision=%+v", decision)
+	}
+}
+
 func TestSignalBackpressureCheckerAllowsConcurrentCallersToUseCache(t *testing.T) {
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})

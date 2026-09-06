@@ -3,10 +3,13 @@
 Elasticsearch runtime 默认使用进程内共享合批器，将不同 Mailbox 已就绪的 Event result CAS、Alert
 CAS/create 和 AlertLog create 合并发送。现有校验、缓存修复和错误映射由 Repository 继续负责；
 调用方收到对应 item 成功后才进入下一步，不能提前输出或 ACK。批次内 CAS 校验与冲突核对使用
-realtime `_mget`；正常关联查询保持不变。写批次参数自动匹配 Lifecycle 并发，不允许独立手调：
-单批上限为并发的一半（向下取整、最少 1、最多 100），等待为该上限的毫秒值（单项不等待），
+realtime `_mget`；Lifecycle 的 Event 点读排除不参与裁决的 `source_raw_data`，终态 CAS 使用局部
+Bulk update，只修改 `related_alert_id` 和 `processing`。公共 Event 查询仍返回完整文档。
+写批次参数自动匹配 Lifecycle 并发，不允许独立手调：
+单批上限为并发的一半（向下取整、最少 1、最多 128），写侧等待为该上限的毫秒值（单项不等待），
 执行上限为并发数与 32 的较小值；默认并发 32 对应 16 项、16ms、32 批，字节预算默认 4 MiB。
-读队列只合入已就绪请求，不等待写期限；
+读侧等待取写侧等待与 10ms 的较小值，使用独立收集队列；达到操作数或字节上限立即发送，
+未满则在首项期限到达时发送，不等待写期限；
 读写共享执行并发上限。实际批次大小还受调用方并发与写入依赖限制。完整配置见[配置指南](../guides/configuration.md)。
 
 Lifecycle 负责把已经持久化的 unprocessed Event 裁决为 Alert 创建、推进、终结、等级升级、抑制或
@@ -155,7 +158,7 @@ Redis Signal
 10. 达到排空上限但仍非空时释放 lease 并返回 `Defer(0)`，让 Signal 回到本地公平队列；
 11. 最终释放 lease；释放失败只记录警告，不能误删新 owner 的锁。
 
-默认单次最多排空 512 条。ProcessEvent 失败或进程崩溃时队首尚未移除，后续 owner 会重新执行；
+默认单次最多排空 128 条。ProcessEvent 失败或进程崩溃时队首尚未移除，后续 owner 会重新执行；
 Processor 必须幂等。最后一次 `LPOP` 前发生的新入队会由当前 Handler 继续读取；`LPOP` 后的空到非空
 入队会创建新的 Stream ID，确认旧 Signal 不会删除新 Signal。处理期间已创建的新 Signal 可能成为冗余
 空唤醒，可以安全完成。

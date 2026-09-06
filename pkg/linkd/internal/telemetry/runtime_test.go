@@ -113,6 +113,8 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 	text := string(body)
 	for _, expected := range []string{
 		"linkd_pipeline_attempts_total",
+		"go_sched_latencies_seconds_bucket",
+		"go_cpu_classes_gc_mark_assist_cpu_seconds_total",
 		"linkd_pipeline_attempt_duration_seconds_bucket",
 		`linkd_pipeline_attempt_duration_seconds_bucket{linkd_event_source_id="source-a",linkd_outcome="complete",linkd_stage="clean",linkd_trigger="queue",messaging_system="kafka",otel_scope_name="linkd",otel_scope_schema_url="",otel_scope_version="",le="0.9"}`,
 		`linkd_pipeline_attempt_duration_seconds_bucket{linkd_event_source_id="source-a",linkd_outcome="complete",linkd_stage="clean",linkd_trigger="queue",messaging_system="kafka",otel_scope_name="linkd",otel_scope_schema_url="",otel_scope_version="",le="1.1"}`,
@@ -210,4 +212,70 @@ func TestDisabledMetricsUsesNoopProvider(t *testing.T) {
 	if err := runtime.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
 	}
+}
+
+func TestProfilingEndpointWithoutMetrics(t *testing.T) {
+	config := Config{Profiling: ProfilingConfig{
+		Enabled: true, ListenAddress: "127.0.0.1:0", BlockProfileRate: 100000, MutexProfileFraction: 10,
+	}}
+	runtime, err := Start(context.Background(), config, RoleLifecycle, "test")
+	if err != nil && strings.Contains(err.Error(), "operation not permitted") {
+		t.Skipf("sandbox does not allow local listeners: %v", err)
+	}
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	address := runtime.ProfilingListenAddress()
+	if address == "" || runtime.PrometheusListenAddress() != "" {
+		t.Fatalf("profiling runtime addresses: profiling=%q prometheus=%q", address, runtime.PrometheusListenAddress())
+	}
+	request, err := http.NewRequestWithContext(
+		t.Context(), http.MethodGet, "http://"+address+"/debug/pprof/goroutine?debug=1", nil,
+	)
+	if err != nil {
+		t.Fatalf("build goroutine profile request: %v", err)
+	}
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err != nil {
+		t.Fatalf("GET goroutine profile: %v", err)
+	}
+	body, readErr := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if readErr != nil || response.StatusCode != http.StatusOK || !strings.Contains(string(body), "goroutine profile") {
+		t.Fatalf("profile response status=%d error=%v body=%q", response.StatusCode, readErr, body)
+	}
+	if err := runtime.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+}
+
+func TestProfilingStartupFailureReleasesMetricsListener(t *testing.T) {
+	listenConfig := net.ListenConfig{}
+	profileListener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve profiling address: %v", err)
+	}
+	defer func() { _ = profileListener.Close() }()
+
+	metricsListener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve metrics address: %v", err)
+	}
+	metricsAddress := metricsListener.Addr().String()
+	if err := metricsListener.Close(); err != nil {
+		t.Fatalf("release metrics address: %v", err)
+	}
+
+	config := testConfig()
+	config.Metrics.Prometheus.ListenAddress = metricsAddress
+	config.Profiling = ProfilingConfig{Enabled: true, ListenAddress: profileListener.Addr().String()}
+	if _, err := Start(t.Context(), config, RoleLifecycle, "test"); err == nil {
+		t.Fatal("Start() error = nil, want profiling bind failure")
+	}
+
+	rebound, err := listenConfig.Listen(t.Context(), "tcp", metricsAddress)
+	if err != nil {
+		t.Fatalf("metrics listener was not released after startup failure: %v", err)
+	}
+	_ = rebound.Close()
 }

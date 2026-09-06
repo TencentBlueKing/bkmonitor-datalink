@@ -18,6 +18,31 @@ Event Processor 使用 `linkd_pipeline_attempt_duration_seconds`；Signal Handle
 | `size_bytes` | Histogram | 编码后的物理请求字节数 |
 | `queue_duration_seconds` | Histogram | 每批首项从入队到开始执行，包含聚合与执行槽位等待 |
 | `duration_seconds` | Histogram | 请求执行与响应解码时间，包含网络，不包含入队等待，不等同于 ES took |
+| `phase_duration_seconds` | Histogram | 按 `linkd_batch_phase` 拆分诊断阶段，读写分别统计，无样本不填零 |
+| `triggers_total` | Counter | 按 `linkd_batch_trigger` 统计聚合提交原因，不等同于物理请求次数 |
+
+诊断阶段的采样单位不同，均值不能直接相加：`admission` 每个已接收调用记录调用总量槽位等待；
+`collect` 每个聚合组记录首项取得调用槽位至收集完成（含请求预处理、读元信息编码与队列等待）；
+`worker_slot` 每个聚合组记录共享执行槽位等待；
+`operation_queue` 每个实际发送的子操作记录从取得调用槽位至请求开始的等待（含请求解析、编码与前序切片）；
+`encode` 每个物理请求记录请求体组装（不含此前为切片预算做的预编码；读写均复用已编码操作）；
+`connection`、`request_write`、`first_byte` 分别为连接获取、取得连接至请求写完、写完至响应首字节；
+`response_body` 为响应体读取及关闭，`response_decode` 为顶层 JSON 解码，不含逐项结果分发。
+`response_items` 记录物理请求逐项结果的解析和映射，不包含随后向调用方包装并交付响应。
+`server_took` 使用 Bulk 响应提供的毫秒计时，`paired_execution` 记录相同请求的客户端执行区间；
+只对有合法非负 `took` 且响应结构完整的写响应同时采样，包括逐项失败。缺失、非法值和读取请求不补零，
+不能拿两者与包含其他样本的全量批次均值相减。`took` 不是纯写盘时间，两端差值也不等于网络耗时。
+Go 运行时另采集 runnable goroutine 的调度延迟分布及 GC CPU 时间估算；后者不是停顿时长，
+也不能直接除以操作系统进程 CPU 时间计算占比。它只适合与同口径 Go CPU classes 指标比较。
+HTTP 阶段只记录完成的回调，同一逻辑请求重连时累计完成阶段；连接获取包含建连，首字节包含网络、
+ES 处理和本机调度，不能直接当作 ES 服务端 took。诊断阶段不使用旧耗时的 schema 标签。
+
+触发原因是 `operations`（数量上限）、`bytes`（写侧原始字节预算，读侧编码后字节预算）、
+`deadline`（首项期限）、`ready`（零等待模式下只合并已就绪项）。
+读侧复用写侧的触发逻辑，默认派生最长 10ms 的短窗口；达到数量或字节阈值仍立即发送。
+编码后的字节限制可能再切片，取消也可能使整组无需发送。
+DevTools 单独展示同批写请求的服务端/客户端计时，并分别展示读写阶段均值、触发速率与 `rate(duration_seconds_sum)` 推导的平均执行占用；
+平均占用不是峰值，不能单凭低均值排除短时槽位拥堵。
 
 耗时桶覆盖 0.5ms～30s，使用固定 `linkd_metric_schema=2` 标记；DevTools 使用该口径。
 均值按 sum/count 计算；分位数按合并后的 histogram 计算，不能相加实例 P99。
@@ -29,6 +54,10 @@ DevTools 的批次次数及写操作总量使用所选时间范围的 `increase`
 只读配置展示与实例运行遥测区分，不能仅凭 YAML 推导值认定所有实例已应用该配置。
 
 ## 边界
+
+Cleaner `mailbox_enqueue` 与 `mailbox_signal` 的步骤耗时现在按一次逻辑入队批次记录，
+items 仍是实际 Event 数。一个批次存在多个结果类型时分别记录该批耗时，不能跨 outcome 相加；
+不再将这两个步骤的平均耗时解释为单条 Redis 往返。失败计数包含未执行或结果未知的未完成项。
 
 可观测信号用于诊断运行状态，不能替代 Event、EventProcessing、Alert 和 AlertLog 等领域事实，也不能参与 event ID、fingerprint、CAS、Kafka offset 或业务幂等。
 
@@ -58,6 +87,12 @@ Enricher 在创建 Alert 的 lifecycle attempt 内同步执行，不设计独立
 Prometheus exporter 使用单一 `telemetry.metrics.prometheus.listen_address`。每个常驻进程都初始化独立
 telemetry runtime，Resource 的 `linkd.role` 区分 cleaner、lifecycle、control-plane 和 all-in-one。
 
+现场性能诊断可显式启用独立的 `telemetry.profiling` pprof 服务。该服务默认关闭并强制绑定
+IP 回环地址，不与 Prometheus 端口共用，也不应通过反向代理或容器端口暴露到业务网络。
+`block_profile_rate` 和 `mutex_profile_fraction` 会增加采样成本，只在有界诊断窗口开启；
+进程退出时停止服务并复位运行时采样率。容量结论需要比较正常段与降速段的 CPU、allocs、
+block、mutex 和 execution trace，不能用单张 CPU 火焰图代替因果分析。
+
 | 指标族                             | 作用                                                                      |
 | ---------------------------------- | ------------------------------------------------------------------------- |
 | `linkd.messaging.*`                | receive、redelivery、handler、inflight、retry、settlement、lane、shutdown |
@@ -78,6 +113,10 @@ telemetry runtime，Resource 的 `linkd.role` 区分 cleaner、lifecycle、contr
 Lifecycle 的 `find_active` 和 `find_terminal_by_event` 会把 `store.ErrNotFound` 作为正常控制流处理；它不会
 因此成为处理失败。DevTools 的“存储异常速率”排除 `succeeded` 和 `not_found`，其余冲突、非法请求和
 底层失败仍按结果分类展示。
+
+消费 Observer 在创建时缓存固定 stage、transport、EventSource、outcome 组合的不可变 AttributeSet，
+并按有限 lane 缓存 partition AttributeSet。缓存只减少逐条指标上报的切片构造和属性排序，
+不改变标签集合、基数或指标口径。
 
 Cleaner 和 Lifecycle 在拆分部署时继续输出上述职责指标。Control Plane 当前提供独立 endpoint、Resource、
 Go/process 指标，以及三个 Elasticsearch 管理任务和 Redis Stream 管理任务的职责指标；Leader Election

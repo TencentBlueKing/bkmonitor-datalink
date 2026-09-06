@@ -79,10 +79,12 @@ type ElasticsearchConfig struct {
 	// AlertLogTranslogDurability 配置 AlertLog 索引的 translog durability。
 	AlertLogTranslogDurability string `yaml:"alert_log_translog_durability"`
 	// NumberOfReplicas 非 nil 时写入 index template；零值适用于单节点测试。
-	NumberOfReplicas *int                             `yaml:"number_of_replicas,omitempty"`
-	TimePartition    ElasticsearchTimePartitionConfig `yaml:"time_partition,omitempty"`
-	APIKey           string                           `yaml:"api_key,omitempty"`
-	BasicAuth        *BasicAuthConfig                 `yaml:"basic_auth,omitempty"`
+	NumberOfReplicas *int `yaml:"number_of_replicas,omitempty"`
+	// NumberOfShards 仅影响之后新建的索引，不能修改已有索引的主分片数。
+	NumberOfShards *int                             `yaml:"number_of_shards,omitempty"`
+	TimePartition  ElasticsearchTimePartitionConfig `yaml:"time_partition,omitempty"`
+	APIKey         string                           `yaml:"api_key,omitempty"`
+	BasicAuth      *BasicAuthConfig                 `yaml:"basic_auth,omitempty"`
 }
 
 // ElasticsearchTimePartitionConfig 定义时间桶划分、预创建范围和资源上限。
@@ -380,6 +382,9 @@ func (c ElasticsearchConfig) Validate() error {
 	}
 	if c.NumberOfReplicas != nil && *c.NumberOfReplicas < 0 {
 		return fmt.Errorf("number_of_replicas must not be negative")
+	}
+	if c.NumberOfShards != nil && (*c.NumberOfShards < 1 || *c.NumberOfShards > 1024) {
+		return fmt.Errorf("number_of_shards must be between 1 and 1024")
 	}
 	durability := c.AlertLogTranslogDurability
 	if durability == "" {

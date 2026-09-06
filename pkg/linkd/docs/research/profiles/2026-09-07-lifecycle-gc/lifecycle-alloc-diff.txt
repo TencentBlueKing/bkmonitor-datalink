@@ -1,0 +1,57 @@
+File: linkd
+Type: alloc_space
+Time: 2026-09-07 00:52:28 CST
+Showing nodes accounting for 135.26GB, 91.54% of 147.75GB total
+Dropped 587 nodes (cum <= 0.74GB)
+Showing top 50 nodes out of 156
+      flat  flat%   sum%        cum   cum%
+   64.50GB 43.66% 43.66%    64.50GB 43.66%  encoding/json.(*Decoder).refill
+   10.98GB  7.43% 51.09%    10.98GB  7.43%  encoding/json.NewDecoder (inline)
+    8.90GB  6.02% 57.11%    11.62GB  7.87%  io.ReadAll
+    4.36GB  2.95% 60.06%     4.36GB  2.95%  bytes.growSlice
+    3.87GB  2.62% 62.68%     3.87GB  2.62%  linkd/internal/domain.DimensionMap.Clone (inline)
+    3.51GB  2.37% 65.06%     7.26GB  4.91%  encoding/json.Marshal
+    3.24GB  2.19% 67.25%     3.24GB  2.19%  encoding/json.(*RawMessage).UnmarshalJSON
+    2.87GB  1.94% 69.19%    75.51GB 51.11%  linkd/internal/domain.JSONObject.Normalize
+    2.50GB  1.69% 70.88%     2.50GB  1.69%  linkd/internal/domain.JSONObject.Clone (inline)
+    2.40GB  1.63% 72.51%     2.40GB  1.63%  reflect.mapassign_faststr0
+    2.39GB  1.62% 74.12%     2.91GB  1.97%  encoding/json.(*scanner).error (inline)
+    2.20GB  1.49% 75.61%    11.87GB  8.03%  encoding/json.(*decodeState).literalStore
+    1.90GB  1.29% 76.90%     1.90GB  1.29%  reflect.unsafe_New
+    1.75GB  1.19% 78.09%     1.75GB  1.19%  bytes.NewReader (inline)
+    1.66GB  1.12% 79.21%     3.49GB  2.36%  encoding/json.mapEncoder.encode
+    1.60GB  1.08% 80.29%     1.60GB  1.08%  net/url.parseQuery
+    1.57GB  1.06% 81.35%     2.10GB  1.42%  linkd/internal/store/elasticsearch.encodeBatchOperation
+    1.50GB  1.01% 82.36%     2.76GB  1.87%  go.opentelemetry.io/otel/metric.WithAttributes
+    1.50GB  1.01% 83.38%    59.31GB 40.14%  linkd/internal/domain.decodeJSONToken
+    1.26GB  0.85% 84.23%     1.26GB  0.85%  go.opentelemetry.io/otel/attribute.computeDataFixed (inline)
+    1.23GB  0.83% 85.06%     1.23GB  0.83%  compress/flate.(*dictDecoder).init (inline)
+    1.22GB  0.83% 85.89%    57.81GB 39.13%  encoding/json.(*Decoder).Token
+    1.22GB  0.82% 86.72%     1.22GB  0.82%  net/http.init.func16
+    1.10GB  0.75% 87.46%     1.10GB  0.75%  bufio.NewReaderSize (inline)
+    0.86GB  0.58% 88.04%     7.60GB  5.14%  linkd/internal/store/elasticsearch.(*WriteBatchTransport).Perform
+    0.68GB  0.46% 88.50%    12.45GB  8.43%  linkd/internal/store/elasticsearch.(*WriteBatchTransport).execute
+    0.60GB  0.41% 88.91%     6.09GB  4.13%  linkd/internal/store/elasticsearch.(*Repository).FindActiveAlert
+    0.48GB  0.33% 89.24%    15.26GB 10.33%  encoding/json.Unmarshal
+    0.44GB   0.3% 89.53%    16.98GB 11.49%  encoding/json.(*decodeState).object
+    0.33GB  0.22% 89.76%     1.93GB  1.31%  linkd/internal/store/elasticsearch.(*Repository).FindAlertEndedByEvent
+    0.31GB  0.21% 89.96%     1.54GB  1.04%  compress/flate.NewReader
+    0.28GB  0.19% 90.15%     0.91GB  0.61%  linkd/internal/store/elasticsearch.encodeVersion
+    0.27GB  0.19% 90.34%     3.75GB  2.54%  linkd/internal/lifecycle/kafkahook.(*Hook).Execute
+    0.27GB  0.18% 90.52%     3.95GB  2.67%  linkd/internal/store/elasticsearch.(*Repository).createAlertLogBulkGroup
+    0.20GB  0.14% 90.66%     1.80GB  1.22%  net/url.ParseQuery (inline)
+    0.18GB  0.12% 90.78%    53.04GB 35.90%  linkd/internal/store/elasticsearch.decodeEventHit
+    0.17GB  0.11% 90.90%    21.23GB 14.37%  linkd/internal/store/elasticsearch.(*Repository).performContent
+    0.12GB 0.082% 90.98%     9.56GB  6.47%  linkd/internal/store/elasticsearch.(*Repository).AppendAlertLogs
+    0.12GB 0.081% 91.06%     4.06GB  2.75%  linkd/internal/lifecycle/recentalert.encode
+    0.09GB 0.063% 91.12%    61.45GB 41.59%  linkd/internal/store/elasticsearch.(*Repository).getEventFromTarget
+    0.09GB 0.062% 91.19%     1.25GB  0.85%  linkd/internal/store/elasticsearch.encodeEventDocument
+    0.09GB 0.061% 91.25%     2.72GB  1.84%  linkd/internal/domain.ValidateAlertReplacement
+    0.09GB  0.06% 91.31%   130.11GB 88.06%  linkd/internal/lifecycle/scheduler.(*Handler).Handle
+    0.07GB 0.048% 91.36%     4.99GB  3.38%  linkd/internal/store/elasticsearch.decodeAlertHit
+    0.07GB 0.045% 91.40%     9.88GB  6.69%  linkd/internal/store/elasticsearch.(*WriteBatchTransport).send
+    0.06GB  0.04% 91.44%     9.57GB  6.48%  linkd/internal/domain.(*Scalar).UnmarshalJSON
+    0.05GB 0.036% 91.48%    43.99GB 29.77%  linkd/internal/store/elasticsearch.(*Repository).CompareAndSetEventResult
+    0.04GB 0.025% 91.50%     0.79GB  0.53%  linkd/internal/telemetry.(*WriteBatchObserver).BatchPhase
+    0.04GB 0.024% 91.52%    41.28GB 27.94%  linkd/internal/lifecycle.(*Processor).createAlert
+    0.03GB  0.02% 91.54%     1.21GB  0.82%  linkd/internal/store/elasticsearch.(*HTTPTransport).Perform

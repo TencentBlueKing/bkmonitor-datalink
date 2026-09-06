@@ -78,9 +78,9 @@ func newSession(config Config, client redisClient) *Session {
 	}
 }
 
-// Capabilities 返回 Redis Streams 的逐条 XACK 能力。
+// Capabilities 返回按 ID 独立确认且可有界合批的 XACK 能力。
 func (s *Session) Capabilities() consume.Capabilities {
-	return consume.Capabilities{Settlement: consume.SettlementIndividual}
+	return consume.Capabilities{Settlement: consume.SettlementIndividual, BatchIndividualConfirm: true}
 }
 
 // ValidateRuntime 防止 XAUTOCLAIM 在本地处理和重试预算尚未结束时接管消息。

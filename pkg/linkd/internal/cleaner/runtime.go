@@ -29,6 +29,8 @@ type EventBatchWriter interface {
 }
 
 type MailboxWriter interface {
+	// EnqueueBatch 只执行成功前缀；首个失败后的项不得产生副作用并必须返回错误。
+	// 返回值与输入逐项对应；顶层错误表示本次调用结果未知。
 	EnqueueBatch(ctx context.Context, events []domain.Event) ([]MailboxEnqueueResult, error)
 }
 
@@ -300,7 +302,14 @@ func (r *Runtime) Run(ctx context.Context) (runErr error) {
 			break
 		}
 
-		wake := r.nextWake(lanes, now, shuttingDown)
+		wake := r.nextWake(lanes, now, shuttingDown, len(batchSlots) < cap(batchSlots))
+		// 不再借过期组批期限空转后，退出和撤销所有权的截止时间必须独立唤醒。
+		if shuttingDown && (wake.IsZero() || shutdownDeadline.Before(wake)) {
+			wake = shutdownDeadline
+		}
+		if pendingRevoke != nil && (wake.IsZero() || revokeDeadline.Before(wake)) {
+			wake = revokeDeadline
+		}
 		if !backpressureWake.IsZero() && (wake.IsZero() || backpressureWake.Before(wake)) {
 			wake = backpressureWake
 		}
@@ -562,8 +571,10 @@ func (r *Runtime) maybeStartBatch(ctx context.Context, lane *cleanerLane, now ti
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer func() { <-slots }()
 		result := r.runLaneBatch(ctx, lane.name, entries)
+		// 必须先释放槽位再通知事件循环。否则循环可能消费完成通知后仍看到
+		// 槽位已满，进入等待，而稍后的槽位释放不再产生任何唤醒事件。
+		<-slots
 		select {
 		case results <- result:
 		case <-ctx.Done():
@@ -582,7 +593,7 @@ func (r *Runtime) runLaneBatch(ctx context.Context, lane string, entries []*clea
 	}
 	if len(toStore) > 0 {
 		startedAt := time.Now()
-		items, err := r.events.CreateEvents(ctx, toStore)
+		items, err := createNormalizedEvents(ctx, r.events, toStore)
 		if err != nil {
 			r.observeStep(ctx, "event_store", "failed", len(toStore), time.Since(startedAt))
 			return laneBatchResult{lane: lane, err: err}
@@ -626,10 +637,22 @@ func (r *Runtime) runLaneBatch(ctx context.Context, lane string, entries []*clea
 	return r.finishLanePrefix(ctx, lane, entries, nil)
 }
 
+func createNormalizedEvents(ctx context.Context, writer EventBatchWriter, events []domain.Event) ([]store.CreateEventItemResult, error) {
+	if normalized, ok := writer.(store.NormalizedEventBatchStore); ok {
+		return normalized.CreateNormalizedEvents(ctx, events)
+	}
+	return writer.CreateEvents(ctx, events)
+}
+
 // finishLanePrefix 只把已经持久化或确定性丢弃的连续队首推进到原消息确认。
 // unprocessed Event 必须先入 Mailbox；Repository 返回的终态重投直接跳过 Mailbox。
 // 后项暂时失败不回滚前项，也绝不能让更后的 Event 越过缺口先产生副作用。
 func (r *Runtime) finishLanePrefix(ctx context.Context, lane string, entries []*cleanerEntry, pendingErr error) laneBatchResult {
+	if err, blocked := r.enqueueLanePrefix(ctx, entries); blocked != nil {
+		return laneBatchResult{lane: lane, blocked: blocked}
+	} else if err != nil {
+		pendingErr = err
+	}
 	settled := 0
 	for _, entry := range entries {
 		if entry.discard != nil {
@@ -645,29 +668,7 @@ func (r *Runtime) finishLanePrefix(ctx context.Context, lane string, entries []*
 			entry.mailbox = true
 		}
 		if !entry.mailbox {
-			startedAt := time.Now()
-			mailResults, err := r.mailboxes.EnqueueBatch(ctx, []domain.Event{entry.event})
-			if err != nil {
-				r.observeStep(ctx, "mailbox_enqueue", "failed", 1, time.Since(startedAt))
-				pendingErr = err
-				break
-			}
-			if len(mailResults) != 1 {
-				r.observeStep(ctx, "mailbox_enqueue", "failed", 1, time.Since(startedAt))
-				return laneBatchResult{lane: lane, settled: settled, blocked: fmt.Errorf("mailbox writer returned %d items, want 1", len(mailResults))}
-			}
-			if mailResults[0].Err != nil {
-				r.observeStep(ctx, "mailbox_enqueue", "failed", 1, time.Since(startedAt))
-				pendingErr = mailResults[0].Err
-				break
-			}
-			r.observeStep(ctx, "mailbox_enqueue", "added", 1, time.Since(startedAt))
-			if mailResults[0].Signaled {
-				r.observeStep(ctx, "mailbox_signal", "emitted", 1, time.Since(startedAt))
-			} else {
-				r.observeStep(ctx, "mailbox_signal", "coalesced", 1, time.Since(startedAt))
-			}
-			entry.mailbox = true
+			break
 		}
 		entry.terminal = true
 		settled++
@@ -699,6 +700,68 @@ func (r *Runtime) finishLanePrefix(ctx context.Context, lane string, entries []*
 		})
 	}
 	return laneBatchResult{lane: lane, settled: settled, err: pendingErr}
+}
+
+// enqueueLanePrefix 只提交已落库前缀中尚未入队的项，保留旧的原消息连续确认边界。
+func (r *Runtime) enqueueLanePrefix(ctx context.Context, entries []*cleanerEntry) (error, error) {
+	var events []domain.Event
+	var targets []*cleanerEntry
+	for _, entry := range entries {
+		if entry.discard != nil {
+			continue
+		}
+		if !entry.stored {
+			break
+		}
+		if !entry.mailbox && !entry.skipMailbox {
+			events = append(events, entry.event)
+			targets = append(targets, entry)
+		}
+	}
+	if len(events) == 0 {
+		return nil, nil
+	}
+	started := time.Now()
+	results, err := r.mailboxes.EnqueueBatch(ctx, events)
+	elapsed := time.Since(started)
+	if err != nil {
+		r.observeStep(ctx, "mailbox_enqueue", "failed", len(events), elapsed)
+		return err, nil
+	}
+	if len(results) != len(events) {
+		return nil, fmt.Errorf("mailbox writer returned %d items, want %d", len(results), len(events))
+	}
+	added, emitted := 0, 0
+	var firstErr error
+	for i, result := range results {
+		if result.Err != nil {
+			if firstErr == nil {
+				firstErr = result.Err
+			}
+			continue
+		}
+		if firstErr != nil {
+			return nil, fmt.Errorf("mailbox writer succeeded after a failed prefix")
+		}
+		targets[i].mailbox = true
+		added++
+		if result.Signaled {
+			emitted++
+		}
+	}
+	if added > 0 {
+		r.observeStep(ctx, "mailbox_enqueue", "added", added, elapsed)
+	}
+	if added < len(events) {
+		r.observeStep(ctx, "mailbox_enqueue", "failed", len(events)-added, elapsed)
+	}
+	if emitted > 0 {
+		r.observeStep(ctx, "mailbox_signal", "emitted", emitted, elapsed)
+	}
+	if added > emitted {
+		r.observeStep(ctx, "mailbox_signal", "coalesced", added-emitted, elapsed)
+	}
+	return firstErr, nil
 }
 
 func (r *Runtime) observeStep(ctx context.Context, step, outcome string, items int, duration time.Duration) {
@@ -759,24 +822,29 @@ func (r *Runtime) scheduleProcessRetry(entry *cleanerEntry, cause error, now tim
 	}
 }
 
-func (r *Runtime) nextWake(lanes map[string]*cleanerLane, now time.Time, force bool) time.Time {
+// nextWake 只返回尚未到期且到期后可推进工作的期限。已就绪的工作已由本轮
+// 调度尝试过；执行中或等待槽位的批次应由完成通知唤醒，不能用旧期限忙等。
+func (r *Runtime) nextWake(lanes map[string]*cleanerLane, now time.Time, force, canBatch bool) time.Time {
 	var wake time.Time
-	for _, lane := range lanes {
-		candidate := lane.retryAt
-		for _, entry := range lane.entries {
-			if !entry.processRetryAt.IsZero() && (candidate.IsZero() || entry.processRetryAt.Before(candidate)) {
-				candidate = entry.processRetryAt
-			}
-		}
-		if candidate.IsZero() && !force && len(lane.entries) > 0 && !lane.entries[0].readyAt.IsZero() {
-			candidate = lane.entries[0].readyAt.Add(time.Duration(r.config.BatchWaitMilliseconds) * time.Millisecond)
-		}
-		if !candidate.IsZero() && (wake.IsZero() || candidate.Before(wake)) {
+	consider := func(candidate time.Time) {
+		if candidate.After(now) && (wake.IsZero() || candidate.Before(wake)) {
 			wake = candidate
 		}
 	}
-	if !wake.IsZero() && wake.Before(now) {
-		return now
+	for _, lane := range lanes {
+		for _, entry := range lane.entries {
+			if !entry.processing {
+				consider(entry.processRetryAt)
+			}
+		}
+		if lane.batching || !canBatch {
+			continue
+		}
+		if !lane.retryAt.IsZero() {
+			consider(lane.retryAt)
+		} else if !force && !lane.revoking && len(lane.entries) > 0 && !lane.entries[0].readyAt.IsZero() {
+			consider(lane.entries[0].readyAt.Add(time.Duration(r.config.BatchWaitMilliseconds) * time.Millisecond))
+		}
 	}
 	return wake
 }

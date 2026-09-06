@@ -86,8 +86,9 @@ const cleanerStepGuides: Record<string, StepGuide> = {
   },
   mailbox_enqueue: {
     summary:
-      "把已持久化 Event 的稳定 ID 写入按关联键划分的 Redis Mailbox List 与去重 Set。",
-    success: "Event ID 已新增或被幂等去重，后续可由 Lifecycle 恢复处理。",
+      "把已持久化 Event ID 按成功前缀批量写入 Redis Mailbox List，空到非空时原子生成 Signal；不使用去重 Set。",
+    success:
+      "Event ID 已入队；重复引用由 Lifecycle 终态短路收敛。耗时为整次入队批次，不是单条请求。",
     boundary:
       "只有已持久化 Event 才能入队；入队失败时上游 Kafka 消息仍不能确认。",
   },

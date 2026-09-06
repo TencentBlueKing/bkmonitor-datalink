@@ -11,6 +11,7 @@ package elasticsearchstore
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -103,6 +104,31 @@ func TestBucketRouterConfiguresReplicaCountForNewIndices(t *testing.T) {
 		if spec.Entity == entityAlertLog && spec.Settings["index.translog.durability"] != "async" {
 			t.Fatalf("alert log template settings=%#v", spec.Settings)
 		}
+	}
+}
+
+func TestBucketRouterPrimaryShards(t *testing.T) {
+	for _, count := range []int{-1, 0, 1, 2, 1024, 1025} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			router, err := NewBucketRouter("linkd-test", BucketConfig{
+				EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7,
+				ActiveAlertRefreshInterval: 5 * time.Second, NumberOfShards: &count,
+			})
+			if count < 1 || count > 1024 {
+				if err == nil {
+					t.Fatal("invalid shard count accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, spec := range router.SchemaConfig().Templates() {
+				if spec.Settings["number_of_shards"] != count {
+					t.Fatalf("template %s shards=%v", spec.Name, spec.Settings["number_of_shards"])
+				}
+			}
+		})
 	}
 }
 

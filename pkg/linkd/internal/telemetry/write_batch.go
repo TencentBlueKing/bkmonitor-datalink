@@ -26,12 +26,14 @@ type WriteBatchObserver struct {
 	duration   metric.Float64Histogram
 	items      metric.Int64Counter
 	batches    metric.Int64Counter
+	phases     metric.Float64Histogram
+	triggers   metric.Int64Counter
 }
 
 // NewWriteBatchObserver 创建 Lifecycle 物理批次指标。
 func (r *Runtime) NewWriteBatchObserver() (*WriteBatchObserver, error) {
 	o := &WriteBatchObserver{}
-	var e1, e2, e3, e4, e5, e6 error
+	var e1, e2, e3, e4, e5, e6, e7, e8 error
 	o.operations, e1 = r.meter.Int64Histogram("linkd.elasticsearch.write_batch.operations", metric.WithExplicitBucketBoundaries(1, 2, 4, 8, 16, 32, 64, 100, 128, 512, 1000))
 	o.bytes, e2 = r.meter.Int64Histogram("linkd.elasticsearch.write_batch.size", metric.WithUnit("By"),
 		metric.WithDescription("物理批次编码请求字节数"),
@@ -45,7 +47,11 @@ func (r *Runtime) NewWriteBatchObserver() (*WriteBatchObserver, error) {
 		metric.WithDescription("物理批次逐项结果；failed 包含传输错误导致的结果未知，不等同于写入一定未生效"))
 	o.batches, e6 = r.meter.Int64Counter("linkd.elasticsearch.write_batch.batches",
 		metric.WithDescription("已执行的物理批次尝试次数，按全部成功、部分失败或全部失败分类"))
-	if err := errors.Join(e1, e2, e3, e4, e5, e6); err != nil {
+	o.phases, e7 = r.meter.Float64Histogram("linkd.elasticsearch.write_batch.phase_duration", metric.WithUnit("s"),
+		metric.WithDescription("批次诊断阶段耗时；各阶段样本口径不同，不可直接相加；HTTP 阶段不是 ES 服务端耗时"), durationBuckets)
+	o.triggers, e8 = r.meter.Int64Counter("linkd.elasticsearch.write_batch.triggers",
+		metric.WithDescription("聚合器提交次数及触发原因；提交后可能因编码字节限制切成多个物理批次"))
+	if err := errors.Join(e1, e2, e3, e4, e5, e6, e7, e8); err != nil {
 		return nil, err
 	}
 	// 显式区分已接入但空闲的零值与未启用/未上报指标。
@@ -58,6 +64,16 @@ func (r *Runtime) NewWriteBatchObserver() (*WriteBatchObserver, error) {
 		}
 	}
 	return o, nil
+}
+
+// BatchPhase 使用固定阶段名记录诊断耗时，不包含文档、租户或请求身份标签。
+func (o *WriteBatchObserver) BatchPhase(ctx context.Context, kind, phase string, duration time.Duration) {
+	o.phases.Record(ctx, duration.Seconds(), metric.WithAttributes(attribute.String("linkd.batch_kind", kind), attribute.String("linkd.batch_phase", phase)))
+}
+
+// BatchTriggered 记录聚合器触发原因，不计为已执行的物理请求。
+func (o *WriteBatchObserver) BatchTriggered(ctx context.Context, kind, reason string) {
+	o.triggers.Add(ctx, 1, metric.WithAttributes(attribute.String("linkd.batch_kind", kind), attribute.String("linkd.batch_trigger", reason)))
 }
 
 // BatchFinished 记录逐项成功/失败及批次耗时，kind 只允许 read/write。

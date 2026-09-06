@@ -157,7 +157,7 @@ func (h *Handler) drain(
 		if eventID == "" {
 			return processed, last, true, nil, nil
 		}
-		stored, readErr := h.eventReader.GetEvent(ctx, signal.BKTenantID, eventID)
+		stored, readErr := readLifecycleEvent(ctx, h.eventReader, signal.BKTenantID, eventID)
 		if readErr != nil {
 			return processed, last, false, nil, fmt.Errorf("read mailbox event %q: %w", eventID, readErr)
 		}
@@ -180,6 +180,13 @@ func (h *Handler) drain(
 		last = result
 	}
 	return processed, last, false, nil, nil
+}
+
+func readLifecycleEvent(ctx context.Context, reader EventReader, bkTenantID, eventID string) (store.StoredEvent, error) {
+	if lifecycleStore, ok := reader.(store.LifecycleEventStore); ok {
+		return lifecycleStore.GetLifecycleEvent(ctx, bkTenantID, eventID)
+	}
+	return reader.GetEvent(ctx, bkTenantID, eventID)
 }
 
 func (h *Handler) renewLoop(ctx context.Context, cancelWork context.CancelFunc, lease Lease, done chan<- error) {

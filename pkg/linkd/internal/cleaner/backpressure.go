@@ -130,7 +130,8 @@ func newSignalBackpressureChecker(
 }
 
 // Check 返回缓存的准入状态；缓存过期时最多由一个调用方刷新。
-// Redis 查询失败或 lag 未知时 fail-open，Group 明确缺失时 fail-closed。
+// Redis 查询失败或 lag 未知时维持上次状态，避免短暂观测故障绕过已经生效的背压；
+// Group 明确缺失时 fail-closed。
 func (c *SignalBackpressureChecker) Check(ctx context.Context) ReceiveDecision {
 	now := c.now()
 	c.mu.Lock()
@@ -155,7 +156,6 @@ func (c *SignalBackpressureChecker) Check(ctx context.Context) ReceiveDecision {
 		allowed = false
 		outcome = "group_missing"
 	} else if err != nil {
-		allowed = true
 		outcome = "query_failed"
 	} else {
 		found := false
@@ -165,7 +165,6 @@ func (c *SignalBackpressureChecker) Check(ctx context.Context) ReceiveDecision {
 			}
 			found = true
 			if group.Lag < 0 {
-				allowed = true
 				outcome = "lag_unknown"
 				break
 			}

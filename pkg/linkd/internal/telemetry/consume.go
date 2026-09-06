@@ -13,6 +13,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -20,12 +21,31 @@ import (
 	"linkd/internal/consume"
 )
 
+const unknownConsumeOutcome consume.OutcomeKind = 255
+
 type consumeObserver struct {
 	metrics                *instruments
 	stage                  string
 	transport              string
 	eventSourceID          string
 	recordPipelineAttempts bool
+	baseAttributesCache    []attribute.KeyValue
+	baseOption             metric.MeasurementOption
+	queueOption            metric.MeasurementOption
+	retryOption            metric.MeasurementOption
+	outcomeOptions         map[consume.OutcomeKind]consumeOutcomeOptions
+	laneOptions            sync.Map
+}
+
+type consumeOutcomeOptions struct {
+	handler         metric.MeasurementOption
+	duration        metric.MeasurementOption
+	pipelineAttempt metric.MeasurementOption
+}
+
+type consumeLaneOptions struct {
+	attributes  []attribute.KeyValue
+	measurement metric.MeasurementOption
 }
 
 // ConsumeObserver 创建一个只使用封闭 stage/transport 标签的消费运行时观察器。
@@ -33,37 +53,60 @@ func (r *Runtime) ConsumeObserver(labels consume.RuntimeLabels) consume.Observer
 	if r == nil || r.metrics == nil {
 		return nil
 	}
-	return &consumeObserver{
+	observer := &consumeObserver{
 		metrics:                r.metrics,
 		stage:                  labels.Stage,
 		transport:              labels.Transport,
 		eventSourceID:          labels.EventSourceID,
 		recordPipelineAttempts: labels.RecordPipelineAttempts,
+		outcomeOptions:         make(map[consume.OutcomeKind]consumeOutcomeOptions, 6),
 	}
+	observer.baseAttributesCache = []attribute.KeyValue{
+		attribute.String("linkd.stage", labels.Stage),
+		attribute.String("messaging.system", labels.Transport),
+	}
+	if labels.EventSourceID != "" {
+		observer.baseAttributesCache = append(observer.baseAttributesCache, attribute.String("linkd.event_source_id", labels.EventSourceID))
+	}
+	observer.baseAttributesCache = observer.baseAttributesCache[:len(observer.baseAttributesCache):len(observer.baseAttributesCache)]
+	observer.baseOption = cachedMetricOption(observer.baseAttributesCache)
+	observer.queueOption = cachedMetricOption(observer.baseAttributesCache,
+		attribute.String("linkd.queue.role", labels.Stage+"_signal"), attribute.String("linkd.trigger", "queue"))
+	observer.retryOption = cachedMetricOption(observer.baseAttributesCache, attribute.String("linkd.reason_code", "handler_retry"))
+	for _, outcome := range []consume.OutcomeKind{
+		consume.OutcomeComplete, consume.OutcomeRetry, consume.OutcomeDiscard,
+		consume.OutcomeBlock, consume.OutcomeDefer, unknownConsumeOutcome,
+	} {
+		outcomeName := consumeOutcomeName(outcome)
+		observer.outcomeOptions[outcome] = consumeOutcomeOptions{
+			handler: cachedMetricOption(observer.baseAttributesCache, attribute.String("linkd.outcome", outcomeName)),
+			duration: cachedMetricOption(observer.baseAttributesCache,
+				attribute.String("linkd.outcome", outcomeName), attribute.String("linkd.trigger", "queue")),
+			pipelineAttempt: cachedMetricOption(observer.baseAttributesCache,
+				attribute.String("linkd.outcome", pipelineOutcomeName(labels.Stage, outcome)), attribute.String("linkd.trigger", "queue")),
+		}
+	}
+	return observer
 }
 
 func (o *consumeObserver) DeliveryReceived(ctx context.Context, observation consume.DeliveryObservation) {
-	attributes := o.laneAttributes(observation.Lane)
-	o.metrics.messagingReceived.Add(ctx, 1, metric.WithAttributes(attributes...))
-	o.metrics.messagingReceivedBytes.Add(ctx, int64(observation.Bytes), metric.WithAttributes(attributes...))
+	attributes := o.cachedLaneOptions(observation.Lane)
+	o.metrics.messagingReceived.Add(ctx, 1, attributes.measurement)
+	o.metrics.messagingReceivedBytes.Add(ctx, int64(observation.Bytes), attributes.measurement)
 	if observation.Redelivered {
-		o.metrics.messagingRedelivered.Add(ctx, 1, metric.WithAttributes(attributes...))
+		o.metrics.messagingRedelivered.Add(ctx, 1, attributes.measurement)
 	}
 }
 
 func (o *consumeObserver) HandlerStarted(ctx context.Context, message consume.Message) {
-	attributes := metric.WithAttributes(o.baseAttributes()...)
-	o.metrics.pipelineInflight.Add(ctx, 1, attributes)
+	o.metrics.pipelineInflight.Add(ctx, 1, o.baseOption)
 	if !message.EnqueuedAt.IsZero() {
 		delay := time.Since(message.EnqueuedAt)
 		if delay >= 0 {
 			o.metrics.pipelineQueueDelay.Record(
 				ctx,
 				delay.Seconds(),
-				metric.WithAttributes(append(o.baseAttributes(),
-					attribute.String("linkd.queue.role", o.stage+"_signal"),
-					attribute.String("linkd.trigger", "queue"),
-				)...),
+				o.queueOption,
 			)
 		}
 	}
@@ -74,53 +117,38 @@ func (o *consumeObserver) HandlerFinished(
 	outcome consume.OutcomeKind,
 	duration time.Duration,
 ) {
-	outcomeName := consumeOutcomeName(outcome)
+	options, ok := o.outcomeOptions[outcome]
+	if !ok {
+		options = o.outcomeOptions[unknownConsumeOutcome]
+	}
 	o.metrics.pipelineInflight.Add(
 		ctx,
 		-1,
-		metric.WithAttributes(o.baseAttributes()...),
+		o.baseOption,
 	)
 	o.metrics.messagingHandlerOutcomes.Add(
 		ctx,
 		1,
-		metric.WithAttributes(append(o.baseAttributes(),
-			attribute.String("linkd.outcome", outcomeName),
-		)...),
+		options.handler,
 	)
 	o.metrics.messagingHandlerDuration.Record(
 		ctx,
 		duration.Seconds(),
-		metric.WithAttributes(append(o.baseAttributes(),
-			attribute.String("linkd.outcome", outcomeName),
-			attribute.String("linkd.trigger", "queue"),
-		)...),
+		options.duration,
 	)
 	if o.recordPipelineAttempts {
 		// Lifecycle 的 Event 耗时由 Processor 记录，不能再混入整条 Signal drain。
-		o.metrics.pipelineAttemptDuration.Record(ctx, duration.Seconds(),
-			metric.WithAttributes(append(o.baseAttributes(),
-				attribute.String("linkd.outcome", outcomeName),
-				attribute.String("linkd.trigger", "queue"),
-			)...))
+		o.metrics.pipelineAttemptDuration.Record(ctx, duration.Seconds(), options.duration)
 		o.metrics.pipelineAttempts.Add(
 			ctx,
 			1,
-			metric.WithAttributes(append(o.baseAttributes(),
-				attribute.String("linkd.outcome", pipelineOutcomeName(o.stage, outcome)),
-				attribute.String("linkd.trigger", "queue"),
-			)...),
+			options.pipelineAttempt,
 		)
 	}
 }
 
 func (o *consumeObserver) RetryScheduled(ctx context.Context) {
-	o.metrics.pipelineRetries.Add(
-		ctx,
-		1,
-		metric.WithAttributes(append(o.baseAttributes(),
-			attribute.String("linkd.reason_code", "handler_retry"),
-		)...),
-	)
+	o.metrics.pipelineRetries.Add(ctx, 1, o.retryOption)
 }
 
 func (o *consumeObserver) StepFinished(ctx context.Context, observation consume.StepObservation) {
@@ -167,9 +195,9 @@ func (o *consumeObserver) FlowTransition(ctx context.Context, action string) {
 	if o.stage == "clean" && o.eventSourceID != "" {
 		switch action {
 		case "start":
-			o.metrics.cleanerFlowActive.Record(ctx, 1, metric.WithAttributes(o.baseAttributes()...))
+			o.metrics.cleanerFlowActive.Record(ctx, 1, o.baseOption)
 		case "stop":
-			o.metrics.cleanerFlowActive.Record(ctx, 0, metric.WithAttributes(o.baseAttributes()...))
+			o.metrics.cleanerFlowActive.Record(ctx, 0, o.baseOption)
 		}
 	}
 	attributes := append(o.baseAttributes(), attribute.String("linkd.action", action))
@@ -185,20 +213,19 @@ func (o *consumeObserver) OwnershipChanged(ctx context.Context, observation cons
 		owned = 0
 	}
 	for _, lane := range observation.Lanes {
-		o.metrics.messagingLaneOwned.Record(ctx, owned, metric.WithAttributes(o.laneAttributes(lane)...))
+		o.metrics.messagingLaneOwned.Record(ctx, owned, o.cachedLaneOptions(lane).measurement)
 	}
 }
 
 func (o *consumeObserver) Snapshot(ctx context.Context, snapshot consume.RuntimeSnapshot) {
-	transport := metric.WithAttributes(o.baseAttributes()...)
-	o.metrics.messagingInflight.Record(ctx, int64(snapshot.InflightMessages), transport)
-	o.metrics.messagingInflightSize.Record(ctx, int64(snapshot.InflightBytes), transport)
-	o.metrics.messagingRetryItems.Record(ctx, int64(snapshot.RetryItems), transport)
-	o.metrics.messagingRetryOldestAge.Record(ctx, snapshot.RetryOldestAge.Seconds(), transport)
-	o.metrics.messagingSettlementGap.Record(ctx, int64(snapshot.SettlementGap), transport)
-	o.metrics.messagingGapOldestAge.Record(ctx, snapshot.SettlementGapOldestAge.Seconds(), transport)
+	o.metrics.messagingInflight.Record(ctx, int64(snapshot.InflightMessages), o.baseOption)
+	o.metrics.messagingInflightSize.Record(ctx, int64(snapshot.InflightBytes), o.baseOption)
+	o.metrics.messagingRetryItems.Record(ctx, int64(snapshot.RetryItems), o.baseOption)
+	o.metrics.messagingRetryOldestAge.Record(ctx, snapshot.RetryOldestAge.Seconds(), o.baseOption)
+	o.metrics.messagingSettlementGap.Record(ctx, int64(snapshot.SettlementGap), o.baseOption)
+	o.metrics.messagingGapOldestAge.Record(ctx, snapshot.SettlementGapOldestAge.Seconds(), o.baseOption)
 	for _, lane := range snapshot.Lanes {
-		attributes := metric.WithAttributes(o.laneAttributes(lane.Lane)...)
+		attributes := o.cachedLaneOptions(lane.Lane).measurement
 		o.metrics.messagingLaneInflight.Record(ctx, int64(lane.InflightMessages), attributes)
 		o.metrics.messagingLaneBytes.Record(ctx, int64(lane.InflightBytes), attributes)
 		o.metrics.messagingLanePaused.Record(ctx, boolInt64(lane.Paused), attributes)
@@ -207,22 +234,32 @@ func (o *consumeObserver) Snapshot(ctx context.Context, snapshot consume.Runtime
 }
 
 func (o *consumeObserver) baseAttributes() []attribute.KeyValue {
-	attributes := []attribute.KeyValue{
-		attribute.String("linkd.stage", o.stage),
-		attribute.String("messaging.system", o.transport),
-	}
-	if o.eventSourceID != "" {
-		attributes = append(attributes, attribute.String("linkd.event_source_id", o.eventSourceID))
-	}
-	return attributes
+	return o.baseAttributesCache
 }
 
 func (o *consumeObserver) laneAttributes(lane string) []attribute.KeyValue {
-	attributes := o.baseAttributes()
+	return o.cachedLaneOptions(lane).attributes
+}
+
+func (o *consumeObserver) cachedLaneOptions(lane string) consumeLaneOptions {
+	if cached, ok := o.laneOptions.Load(lane); ok {
+		return cached.(consumeLaneOptions)
+	}
+	attributes := append([]attribute.KeyValue(nil), o.baseAttributesCache...)
 	if partition, ok := kafkaPartition(lane); ok && o.transport == "kafka" {
 		attributes = append(attributes, attribute.Int("messaging.kafka.partition", partition))
 	}
-	return attributes
+	attributes = attributes[:len(attributes):len(attributes)]
+	options := consumeLaneOptions{attributes: attributes, measurement: cachedMetricOption(attributes)}
+	actual, _ := o.laneOptions.LoadOrStore(lane, options)
+	return actual.(consumeLaneOptions)
+}
+
+func cachedMetricOption(base []attribute.KeyValue, extra ...attribute.KeyValue) metric.MeasurementOption {
+	attributes := make([]attribute.KeyValue, 0, len(base)+len(extra))
+	attributes = append(attributes, base...)
+	attributes = append(attributes, extra...)
+	return metric.WithAttributeSet(attribute.NewSet(attributes...))
 }
 
 func (o *consumeObserver) withoutPartition(attributes []attribute.KeyValue) []attribute.KeyValue {

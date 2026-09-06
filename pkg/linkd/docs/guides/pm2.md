@@ -59,3 +59,37 @@ cleaner/lifecycle；Schema 与 Active 资源对账、时间桶维护和终态 Al
 
 修改当前 `LINKD_CONFIG` 指向的配置后，需要同时重启 all-in-one 和两个模拟器。只调整某个模拟器的
 速率、周期、生命周期或场景时，修改 `ecosystem.config.cjs` 中对应 app，再单独重启该 PM2 进程即可。
+
+## 独立角色运行
+
+高吞吐对照可以使用现有的三个角色入口，不需要改业务协议。先停止生成器并排空，再停止
+`linkd-all-in-one`，避免它与独立角色同时消费。先启动控制面，确认索引、alias 和时间桶
+就绪后，再启动 Cleaner 与 Lifecycle。
+
+三份配置的业务字段必须一致，只区分 Prometheus 监听端口；生成器和 DevTools 使用
+Lifecycle 对应的共同业务配置。下面是本地测试使用的映射，不是新的默认端口分配规则：
+
+| 角色 | 配置文件 | metrics 地址 |
+| --- | --- | --- |
+| control-plane | `configs/linkd.control-plane.local.yaml` | `127.0.0.1:9466` |
+| cleaner | `configs/linkd.cleaner.local.yaml` | `127.0.0.1:9465` |
+| lifecycle | `configs/linkd.pm2.local.yaml` | `127.0.0.1:9464` |
+
+```bash
+./bin/linkd run control-plane --config ./configs/linkd.control-plane.local.yaml
+./bin/linkd run cleaner --config ./configs/linkd.cleaner.local.yaml
+./bin/linkd run lifecycle --config ./configs/linkd.pm2.local.yaml
+```
+
+上述命令是三个独立的常驻进程，应分别交给 PM2 等进程管理器托管，而不是在同一终端中
+顺序等待退出。Prometheus 必须分别抓取三个端点，保留不同 `instance`/job；尤其不要
+把三个进程的 GC 暂停占比相加当作 Lifecycle 的暂停占比。
+
+本地两轮十分钟吞吐验证后采用的配置为 Lifecycle 并发 256、写批量和最长等待自动派生为 128 项/
+128ms、读等待 10ms、共享批次执行上限 32。只需设置 `lifecycle.concurrency`，
+不要把派生出的数值再次写成一组互相独立的 YAML 参数。该配置仍需结合实际 CPU、
+事件大小和负载分布评估；完整数据和验证状态见[吞吐压测报告](../research/benchmarks/2026-09-04-lifecycle-elasticsearch-throughput.md)。
+
+Go 执行并行度与业务并发不是同一个值。测试主机的 Go 执行并行度为 14，这不是通用部署默认值；
+不要照搬到不同核数的机器，也不要把业务并发 256 当作 Go 可同时运行的线程数。
+测试中的 ES 零副本、AlertLog async 和 Redis 持久化设置也不代表生产可靠性配置。

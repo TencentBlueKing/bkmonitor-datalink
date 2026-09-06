@@ -25,6 +25,9 @@ Linkd 项目仍处于早期开发阶段，本文档只描述当前代码、测�
 - [EventSource 动态配置](design/event-source-dynamic-configuration.md)：来源独立管理、主动拉取/API 修改、版本与 Flow 生效。
 - [部分配置动态化](design/dynamic-configuration.md)：Severity 等选定配置项的消费者、生效和恢复边界，不包含来源管理。
 
+跨模块运行协议：[中心化任务调度](design/task-scheduling-protocol.md)，由 EventSource 首先接入，后续可供
+Lifecycle 等模块复用；包含停止确认、失联自停、超时强切及服务/容器发布防抖，尚未实现。
+
 `design/`、`modules/`、`guides/` 和 `reference/` 是现行文档，修改行为时必须同步更新。已经被当前
 模型替换的早期占位页和重复模块页不再保留。
 

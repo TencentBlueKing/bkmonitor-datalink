@@ -36,20 +36,22 @@ func (f *fakeRedis) Eval(ctx context.Context, script string, keys []string, args
 	value := int64(0)
 	switch script {
 	case enqueueScript:
-		eventID := args[0].(string)
-		perLimit, _ := strconv.Atoi(fmtString(args[1]))
-		if len(f.lists[keys[0]]) >= perLimit {
-			value = -1
-		} else {
-			wasEmpty := len(f.lists[keys[0]]) == 0
-			f.lists[keys[0]] = append(f.lists[keys[0]], eventID)
-			if wasEmpty {
+		values := make([]any, 0, len(keys)-1)
+		perLimit, _ := strconv.Atoi(fmtString(args[0]))
+		for i, key := range keys[1:] {
+			if len(f.lists[key]) >= perLimit {
+				values = append(values, int64(-1))
+				break
+			}
+			value = int64(1)
+			if len(f.lists[key]) == 0 {
 				f.signals++
 				value = 2
-			} else {
-				value = 1
 			}
+			f.lists[key] = append(f.lists[key], args[1+4*i].(string))
+			values = append(values, value)
 		}
+		return redis.NewCmdResult(values, nil)
 	case ackHeadScript:
 		eventID := args[0].(string)
 		if len(f.lists[keys[0]]) == 0 {

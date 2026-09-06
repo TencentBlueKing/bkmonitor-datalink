@@ -151,11 +151,12 @@ worker:     done  slow  done  done
 Receive，直到容量下降。适配器返回超过本次 ReceiveLimits 的数据会使 Runtime 失败并关闭 Session，
 防止突破内存硬上限。
 
-所有 Cleaner Flow 还共享一个 Lifecycle Signal 背压检查器。它最多每 3 秒执行一次 `XINFO GROUPS`，
-以目标 Group 的 `lag + pending` 作为近似未完成 Signal 数：达到 100000 暂停整个 Flow 的 Kafka fetch，
-降到 80000 恢复，中间区间保持原状态。Kafka topic 暂停期间仍每秒 Poll 一次以维持 consumer group；
-已有 inflight 继续完成。查询失败、超时或 lag 未知时 fail-open，明确缺少目标 Group 时暂停等待 Lifecycle
-创建。该数值不是精确 Event 数，允许采样超调和冗余 Signal 高估。
+所有 Cleaner Flow 还共享一个 Lifecycle Signal 背压检查器。它默认最多每秒执行一次 `XINFO GROUPS`，
+以目标 Group 的 `lag + pending` 作为近似未完成 Signal 数：默认高低水位分别按 Lifecycle 在途上限的
+4 倍和 2 倍派生，达到高水位暂停整个 Flow 的 Kafka fetch，降到低水位恢复，中间区间保持原状态。
+Kafka topic 暂停期间仍每秒 Poll 一次以维持 consumer group；
+已有 inflight 继续完成。查询失败、超时或 lag 未知时保持上次准入状态，明确缺少目标 Group 时暂停等待
+Lifecycle 创建。该数值不是精确 Event 数，允许采样超调和冗余 Signal 高估。
 
 默认值和 EventSource 局部覆盖见[配置指南](../guides/configuration.md)。默认值只用于功能验证，生产
 预算必须通过真实载荷压测确定。

@@ -42,7 +42,14 @@ describe("PrometheusConnector", () => {
             data: {
               result: [
                 {
-                  metric: { linkd_stage: "lifecycle" },
+                  metric: u.searchParams
+                    .get("query")
+                    ?.includes("phase_duration")
+                    ? {
+                        linkd_batch_kind: "write",
+                        linkd_batch_phase: "connection",
+                      }
+                    : { linkd_stage: "lifecycle" },
                   values: [[from.getTime() / 1000, "NaN"]],
                   value: [to.getTime() / 1000, "3"],
                 },
@@ -57,6 +64,10 @@ describe("PrometheusConnector", () => {
       calculationWindowSeconds: 30,
     });
     const totals = urls.filter((u) => u.pathname === "/api/v1/query");
+    expect(
+      result.panels.find((p) => p.id === "lifecycle-batch-phases")?.series[0]
+        .name,
+    ).toBe("write · connection");
     expect(totals).toHaveLength(2);
     expect(
       totals.every(
@@ -66,6 +77,13 @@ describe("PrometheusConnector", () => {
       ),
     ).toBe(true);
     const queries = urls.map((u) => u.searchParams.get("query") ?? "");
+    const paired = queries.find((q) =>
+      q.includes("server_took|paired_execution"),
+    );
+    expect(paired).toContain('linkd_batch_kind="write"');
+    expect(paired).toContain("phase_duration_seconds_sum");
+    expect(paired).toContain("phase_duration_seconds_count");
+    expect(paired).not.toContain("linkd_metric_schema");
     expect(
       queries.find((q) => q.includes("write_batch_duration_seconds_bucket")),
     ).toContain('linkd_metric_schema="2"');
@@ -74,13 +92,29 @@ describe("PrometheusConnector", () => {
     ).toContain('linkd_outcome=~"accepted|rejected|replayed|failed"');
     expect(
       queries
-        .filter((q) => q.includes("write_batch"))
+        .filter(
+          (q) =>
+            q.includes("write_batch") &&
+            !q.includes("phase_duration") &&
+            !q.includes("triggers_total") &&
+            !q.includes("by (linkd_batch_kind)"),
+        )
         .every(
           (q) =>
             q.includes('instance="worker-a"') &&
             q.includes('linkd_batch_kind="write"'),
         ),
     ).toBe(true);
+    expect(queries.find((q) => q.includes("phase_duration"))).toContain(
+      'instance="worker-a"',
+    );
+    expect(
+      queries.find(
+        (q) =>
+          q.includes("phase_duration") &&
+          !q.includes("server_took|paired_execution"),
+      ),
+    ).not.toContain('linkd_batch_kind="write"');
     expect(
       result.panels
         .find((p) => p.id === "pipeline-average")

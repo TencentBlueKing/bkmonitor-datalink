@@ -12,6 +12,7 @@ const config = {
     max_operations: 100,
     max_bytes: 4194304,
     wait_milliseconds: 100,
+    read_wait_milliseconds: 10,
     max_concurrent_batches: 32,
   },
 };
@@ -50,6 +51,8 @@ it("separates range execution counts, submitted operations and item outcomes", (
   expect(card("成功写操作").getByText("380")).toBeVisible();
   expect(card("失败 / 未知写操作").getByText("20")).toBeVisible();
   expect(screen.getByText("单批上限 100 操作")).toBeVisible();
+  expect(screen.getByText("写收集上限 100 ms")).toBeVisible();
+  expect(screen.getByText("读收集上限 10 ms")).toBeVisible();
   expect(screen.getByText(/非运行实例遥测/)).toBeVisible();
 });
 it("does not turn missing or non-finite samples into zero", () => {

@@ -36,7 +36,20 @@
 | 术语 | 候选定义 |
 | --- | --- |
 | EventSourceRecord | 带管理作用域、资源版本与管理者的来源定义，仅属于 EventSource 项目 |
-| EventSourceRelease | 仅引用来源版本的一致发布快照，不包含全局配置 |
+| EventSourceRelease | 单来源一次发布的完整不可变配置快照，不包含全局配置；与 Record 兼容 ES/MySQL 单对象操作 |
 | SeverityPolicy | 部分配置动态化中的全局等级定义与默认值，独立于来源版本管理 |
 | SourceActivation | 来源订阅在各 partition offset 区间使用的规则版本及切换代次 |
 | desired / applied revision | 期望发布版本与运行时实际应用版本，保存成功不等于生效成功 |
+
+## 中心调度候选术语
+
+以下术语用于[中心化任务调度协议](../design/task-scheduling-protocol.md)，尚未实现。
+
+| 术语 | 候选定义 |
+| --- | --- |
+| TaskKey | 带 deployment、管理/租户作用域、模块与稳定资源/分片身份的互斥执行单元 |
+| assignment_epoch | 同一 TaskKey 的执行代次，每次重新分配递增，不等于来源发布版本 |
+| session_id | 本次 worker 进程启动的会话身份，重启不可复用 |
+| StoppedConfirmed | 中心原子确认旧任务已停止，允许后续分配 |
+| ForcedStopped | 授权到期及安全余量后完成必要隔离的强切决议，不伪造为 worker 的停止报告 |
+| FastRestart | 满足模块停止契约后快速完成停止、确认和新分配，不跳过互斥交接 |

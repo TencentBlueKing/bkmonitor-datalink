@@ -33,7 +33,7 @@ func (l AlertLog) Normalize() (AlertLog, error) {
 	}
 	l.Params = normalizedParams
 	l.CreatedTime = normalizeTime(l.CreatedTime)
-	if err := l.Validate(); err != nil {
+	if err := l.validate(false); err != nil {
 		return AlertLog{}, err
 	}
 	return l, nil
@@ -47,6 +47,11 @@ func (l AlertLog) Clone() AlertLog {
 
 // Validate 校验 AlertLog 的身份、类型和时间。
 func (l AlertLog) Validate() error {
+	return l.validate(true)
+}
+
+// Normalize 的 Params 已经完成校验与深拷贝，不再丢弃第二份规范化结果。
+func (l AlertLog) validate(validateJSON bool) error {
 	required := []struct {
 		name  string
 		value string
@@ -72,8 +77,10 @@ func (l AlertLog) Validate() error {
 	if l.CreatedTime.IsZero() {
 		return fmt.Errorf("alert log created_time must not be zero")
 	}
-	if _, err := l.Params.Normalize(); err != nil {
-		return fmt.Errorf("alert log params: %w", err)
+	if validateJSON {
+		if _, err := l.Params.Normalize(); err != nil {
+			return fmt.Errorf("alert log params: %w", err)
+		}
 	}
 	return nil
 }

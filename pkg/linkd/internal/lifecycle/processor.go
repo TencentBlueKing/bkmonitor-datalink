@@ -36,7 +36,7 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 	for attempt := 0; attempt < maxCASAttempts; attempt++ {
 		if attempt > 0 {
 			var err error
-			stored, err = p.repository.GetEvent(ctx, bkTenantID, eventID)
+			stored, err = p.getLifecycleEvent(ctx, bkTenantID, eventID)
 			if err != nil {
 				return ProcessResult{}, fmt.Errorf("read lifecycle event %q: %w", eventID, err)
 			}
@@ -57,6 +57,13 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 		return ProcessResult{}, err
 	}
 	return ProcessResult{}, fmt.Errorf("process lifecycle event %q after %d CAS attempts: %w", eventID, maxCASAttempts, lastConflict)
+}
+
+func (p *Processor) getLifecycleEvent(ctx context.Context, bkTenantID, eventID string) (store.StoredEvent, error) {
+	if lifecycleStore, ok := p.repository.(store.LifecycleEventStore); ok {
+		return lifecycleStore.GetLifecycleEvent(ctx, bkTenantID, eventID)
+	}
+	return p.repository.GetEvent(ctx, bkTenantID, eventID)
 }
 
 func (p *Processor) processUnprocessed(ctx context.Context, stored store.StoredEvent) (ProcessResult, error) {
@@ -540,8 +547,17 @@ func (p *Processor) finishEvent(ctx context.Context, stored store.StoredEvent, s
 	if err != nil {
 		return ProcessResult{}, err
 	}
-	updated, err := p.repository.CompareAndSetEventResult(ctx, stored.Event.BKTenantID, stored.Event.EventID, stored.Version,
-		store.EventResult{State: state, RelatedAlertID: alertID, Outcome: string(outcome), ReasonCode: reasonCode, ProcessedAt: now})
+	result := store.EventResult{State: state, RelatedAlertID: alertID, Outcome: string(outcome), ReasonCode: reasonCode, ProcessedAt: now}
+	var updated store.StoredEvent
+	if lifecycleStore, ok := p.repository.(store.LifecycleEventStore); ok {
+		updated, err = lifecycleStore.CompareAndSetLifecycleEventResult(
+			ctx, stored.Event.BKTenantID, stored.Event.EventID, stored.Version, result,
+		)
+	} else {
+		updated, err = p.repository.CompareAndSetEventResult(
+			ctx, stored.Event.BKTenantID, stored.Event.EventID, stored.Version, result,
+		)
+	}
 	if err != nil {
 		return ProcessResult{}, fmt.Errorf("finish event %q: %w", stored.Event.EventID, err)
 	}

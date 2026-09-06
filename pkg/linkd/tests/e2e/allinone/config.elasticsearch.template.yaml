@@ -27,16 +27,17 @@ lifecycle:
     read_block_milliseconds: 100
     claim_min_idle_seconds: 60
     max_batch_messages: 64
+    max_inflight_messages: 64
     max_message_bytes: 65536
   mailbox:
     key_prefix: {{LOCK_PREFIX}}:mailbox
     max_pending: 128
-    max_drain_events: 512
+    max_drain_events: 128
     backpressure:
-      cache_ttl_seconds: 3
+      cache_ttl_seconds: 1
       query_timeout_seconds: 1
-      high_watermark: 100000
-      low_watermark: 80000
+      high_watermark: 256
+      low_watermark: 128
   lock:
     key_prefix: {{LOCK_PREFIX}}
     ttl_seconds: 15

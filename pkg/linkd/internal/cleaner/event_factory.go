@@ -154,7 +154,7 @@ func (f *EventFactory) Build(message RawEventMessage, draft EventDraft) (domain.
 	if err != nil {
 		return domain.Event{}, fmt.Errorf("normalize Event: %w", err)
 	}
-	if err := domain.ValidateNewEvent(normalized); err != nil {
+	if err := domain.ValidateNormalizedNewEvent(normalized); err != nil {
 		return domain.Event{}, fmt.Errorf("validate new Event: %w", err)
 	}
 	return normalized, nil

@@ -205,6 +205,7 @@ func TestLoadStorage(t *testing.T) {
   elasticsearch:
     addresses: [http://127.0.0.1:9200]
     number_of_replicas: 0
+    number_of_shards: 2
     basic_auth:
       username: elastic
       password: elastic-secret
@@ -239,6 +240,9 @@ func TestLoadStorage(t *testing.T) {
 	}
 	if cfg.Storage.Elasticsearch.NumberOfReplicas == nil || *cfg.Storage.Elasticsearch.NumberOfReplicas != 0 {
 		t.Fatalf("load() elasticsearch number of replicas = %v", cfg.Storage.Elasticsearch.NumberOfReplicas)
+	}
+	if cfg.Storage.Elasticsearch.NumberOfShards == nil || *cfg.Storage.Elasticsearch.NumberOfShards != 2 {
+		t.Fatalf("load() elasticsearch number of shards = %v", cfg.Storage.Elasticsearch.NumberOfShards)
 	}
 	if cfg.Storage.Elasticsearch.RefreshIntervalSeconds != defaultElasticsearchRefreshIntervalSeconds {
 		t.Fatalf(
@@ -363,12 +367,16 @@ func TestLoadLifecycleWithDefaults(t *testing.T) {
 		lifecycle.Mailbox.MaxDrainEvents != defaultMailboxMaxDrainEvents ||
 		lifecycle.Mailbox.Backpressure.CacheTTLSeconds != defaultMailboxBackpressureCacheTTL ||
 		lifecycle.Mailbox.Backpressure.QueryTimeoutSeconds != defaultMailboxBackpressureQueryTimeout ||
-		lifecycle.Mailbox.Backpressure.HighWatermark != defaultMailboxBackpressureHighWatermark ||
-		lifecycle.Mailbox.Backpressure.LowWatermark != defaultMailboxBackpressureLowWatermark ||
+		lifecycle.Signal.MaxBatchMessages != defaultSignalMaxBatchMessages ||
+		lifecycle.Signal.MaxInflightMessages != 64 ||
+		lifecycle.Mailbox.Backpressure.HighWatermark != 256 ||
+		lifecycle.Mailbox.Backpressure.LowWatermark != 128 ||
 		lifecycle.Signal.CreateGroup == nil || !*lifecycle.Signal.CreateGroup {
 		t.Fatalf("load() lifecycle defaults = %#v", lifecycle)
 	}
-	if lifecycle.RuntimeConfig().WorkerCount != 4 || lifecycle.Output.Kafka.Security.SASL.Password != "lifecycle-secret" {
+	runtimeConfig := lifecycle.RuntimeConfig()
+	if runtimeConfig.WorkerCount != 4 || runtimeConfig.MaxInflightMessages != 64 ||
+		runtimeConfig.MaxRetryMessages != 4 || lifecycle.Output.Kafka.Security.SASL.Password != "lifecycle-secret" {
 		t.Fatalf("load() lifecycle runtime = %#v", lifecycle)
 	}
 }
@@ -398,6 +406,14 @@ func TestLoadRejectsInvalidLifecycle(t *testing.T) {
     max_message_bytes: 1048576
 `,
 			wantError: "batch capacity",
+		},
+		{
+			name: "inflight below batch",
+			override: `  signal:
+    max_batch_messages: 65
+    max_inflight_messages: 64
+`,
+			wantError: "max_inflight_messages",
 		},
 		{name: "mailbox backpressure watermarks", override: "  mailbox:\n    backpressure:\n      low_watermark: 100\n      high_watermark: 99\n", wantError: "watermarks"},
 		{name: "mailbox backpressure ttl", override: "  mailbox:\n    backpressure:\n      cache_ttl_seconds: 61\n", wantError: "cache_ttl_seconds"},
@@ -515,6 +531,16 @@ func TestLoadRejectsInvalidStorage(t *testing.T) {
     number_of_replicas: -1
 `,
 			wantError: "number_of_replicas",
+		},
+		{
+			name:      "elasticsearch zero primary shards",
+			content:   "storage:\n  elasticsearch:\n    addresses: [http://127.0.0.1:9200]\n    number_of_shards: 0\n",
+			wantError: "number_of_shards",
+		},
+		{
+			name:      "elasticsearch excessive primary shards",
+			content:   "storage:\n  elasticsearch:\n    addresses: [http://127.0.0.1:9200]\n    number_of_shards: 1025\n",
+			wantError: "number_of_shards",
 		},
 		{
 			name: "elasticsearch invalid alert log translog durability",

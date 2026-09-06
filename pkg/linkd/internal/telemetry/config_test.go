@@ -36,6 +36,27 @@ func TestConfigValidation(t *testing.T) {
 			change:    func(config *Config) { config.Metrics.Prometheus.ListenAddress = "" },
 			wantError: "is required",
 		},
+		{
+			name: "profiling requires loopback",
+			change: func(config *Config) {
+				config.Profiling = ProfilingConfig{Enabled: true, ListenAddress: "0.0.0.0:6060"}
+			},
+			wantError: "loopback",
+		},
+		{
+			name: "disabled profiling rejects options",
+			change: func(config *Config) {
+				config.Profiling.ListenAddress = "127.0.0.1:6060"
+			},
+			wantError: "enabled is required",
+		},
+		{
+			name: "negative block profile rate",
+			change: func(config *Config) {
+				config.Profiling = ProfilingConfig{Enabled: true, ListenAddress: "127.0.0.1:6060", BlockProfileRate: -1}
+			},
+			wantError: "must not be negative",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -47,6 +68,16 @@ func TestConfigValidation(t *testing.T) {
 				t.Fatalf("Validate() error = %v, want containing %q", err, test.wantError)
 			}
 		})
+	}
+}
+
+func TestProfilingConfigValidation(t *testing.T) {
+	t.Parallel()
+	config := Config{Profiling: ProfilingConfig{
+		Enabled: true, ListenAddress: "127.0.0.1:6060", BlockProfileRate: 100000, MutexProfileFraction: 10,
+	}}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }
 

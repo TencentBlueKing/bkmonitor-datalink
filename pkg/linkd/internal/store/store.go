@@ -35,6 +35,24 @@ type EventStore interface {
 	) (StoredEvent, error)
 }
 
+// NormalizedEventBatchStore 是 Cleaner 在同一调用链中已经完成 Event.Normalize 后使用的窄快速路径。
+// 实现仍须校验身份、路由和载荷上限，但可以跳过动态 JSON 的重复规范化；任意外部输入不得调用。
+type NormalizedEventBatchStore interface {
+	CreateNormalizedEvents(ctx context.Context, events []domain.Event) ([]CreateEventItemResult, error)
+}
+
+// LifecycleEventStore 提供 Lifecycle 专用的 Event 投影读取和局部结果 CAS。
+// 返回的 Event 可以省略 Lifecycle 不消费的大字段，不得作为公共完整 Event 快照使用。
+type LifecycleEventStore interface {
+	GetLifecycleEvent(ctx context.Context, bkTenantID, eventID string) (StoredEvent, error)
+	CompareAndSetLifecycleEventResult(
+		ctx context.Context,
+		bkTenantID, eventID string,
+		expected VersionToken,
+		result EventResult,
+	) (StoredEvent, error)
+}
+
 // AlertStore 定义逻辑 Alert 的创建、读取、活动关联查询和单对象 CAS。
 // 具体存储可以在内部使用多个物理集合，但不得向调用方暴露位置或归档编排状态。
 type AlertStore interface {

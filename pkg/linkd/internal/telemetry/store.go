@@ -63,12 +63,47 @@ func (r *observedRepository) CreateEvents(
 	return results, err
 }
 
+func (r *observedRepository) CreateNormalizedEvents(
+	ctx context.Context,
+	events []domain.Event,
+) ([]store.CreateEventItemResult, error) {
+	startedAt := time.Now()
+	next, ok := r.next.(store.NormalizedEventBatchStore)
+	if !ok {
+		return r.CreateEvents(ctx, events)
+	}
+	results, err := next.CreateNormalizedEvents(ctx, events)
+	r.record(ctx, "event", "create_batch", startedAt, err)
+	if err == nil {
+		for _, item := range results {
+			if item.Err == nil && !item.Result.Created {
+				r.replay(ctx, "event", "create_batch")
+			}
+		}
+	}
+	return results, err
+}
+
 func (r *observedRepository) GetEvent(
 	ctx context.Context,
 	bkTenantID, eventID string,
 ) (store.StoredEvent, error) {
 	startedAt := time.Now()
 	result, err := r.next.GetEvent(ctx, bkTenantID, eventID)
+	r.record(ctx, "event", "get", startedAt, err)
+	return result, err
+}
+
+func (r *observedRepository) GetLifecycleEvent(
+	ctx context.Context,
+	bkTenantID, eventID string,
+) (store.StoredEvent, error) {
+	startedAt := time.Now()
+	next, ok := r.next.(store.LifecycleEventStore)
+	if !ok {
+		return r.GetEvent(ctx, bkTenantID, eventID)
+	}
+	result, err := next.GetLifecycleEvent(ctx, bkTenantID, eventID)
 	r.record(ctx, "event", "get", startedAt, err)
 	return result, err
 }
@@ -103,6 +138,22 @@ func (r *observedRepository) CompareAndSetEventResult(
 ) (store.StoredEvent, error) {
 	startedAt := time.Now()
 	stored, err := r.next.CompareAndSetEventResult(ctx, bkTenantID, eventID, expected, result)
+	r.record(ctx, "event", "compare_and_set_result", startedAt, err)
+	return stored, err
+}
+
+func (r *observedRepository) CompareAndSetLifecycleEventResult(
+	ctx context.Context,
+	bkTenantID, eventID string,
+	expected store.VersionToken,
+	result store.EventResult,
+) (store.StoredEvent, error) {
+	startedAt := time.Now()
+	next, ok := r.next.(store.LifecycleEventStore)
+	if !ok {
+		return r.CompareAndSetEventResult(ctx, bkTenantID, eventID, expected, result)
+	}
+	stored, err := next.CompareAndSetLifecycleEventResult(ctx, bkTenantID, eventID, expected, result)
 	r.record(ctx, "event", "compare_and_set_result", startedAt, err)
 	return stored, err
 }
@@ -348,3 +399,5 @@ func storeOutcome(err error) string {
 var _ store.Repository = (*observedRepository)(nil)
 
 var _ store.LifecycleAlertStore = (*observedRepository)(nil)
+
+var _ store.LifecycleEventStore = (*observedRepository)(nil)

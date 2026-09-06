@@ -84,6 +84,7 @@ func Run(
 		batched, closer, err := repository.EnableWriteBatch(elasticsearchstore.WriteBatchConfig{
 			MaxOperations: batchConfig.MaxOperations, MaxBytes: batchConfig.MaxBytes,
 			Wait:                 time.Duration(batchConfig.WaitMilliseconds) * time.Millisecond,
+			ReadWait:             time.Duration(batchConfig.ReadWaitMilliseconds) * time.Millisecond,
 			MaxConcurrentBatches: batchConfig.MaxConcurrentBatches, MaxCalls: lifecycleConfig.Concurrency,
 			Timeout: time.Duration(lifecycleConfig.ProcessTimeoutSeconds) * time.Second,
 		}, observer)

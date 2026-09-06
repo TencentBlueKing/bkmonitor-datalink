@@ -17,12 +17,12 @@ import (
 )
 
 func TestWriteBatchDerivedLimits(t *testing.T) {
-	for _, tc := range []struct{ concurrency, operations, wait, parallel int }{
-		{1, 1, 0, 1}, {2, 1, 0, 2}, {3, 1, 0, 3}, {8, 4, 4, 8}, {32, 16, 16, 32}, {64, 32, 32, 32}, {256, 100, 100, 32}, {1024, 100, 100, 32},
+	for _, tc := range []struct{ concurrency, operations, wait, readWait, parallel int }{
+		{1, 1, 0, 0, 1}, {2, 1, 0, 0, 2}, {3, 1, 0, 0, 3}, {4, 2, 2, 2, 4}, {8, 4, 4, 4, 8}, {32, 16, 16, 10, 32}, {64, 32, 32, 10, 32}, {255, 127, 127, 10, 32}, {256, 128, 128, 10, 32}, {384, 128, 128, 10, 32}, {512, 128, 128, 10, 32}, {1024, 128, 128, 10, 32},
 	} {
 		c := (LifecycleConfig{Concurrency: tc.concurrency}).WithDefaults()
 		b := c.ElasticsearchWriteBatch
-		if b.MaxOperations != tc.operations || b.WaitMilliseconds != tc.wait || b.MaxConcurrentBatches != tc.parallel || b.MaxBytes != 4<<20 || !*b.Enabled {
+		if b.MaxOperations != tc.operations || b.WaitMilliseconds != tc.wait || b.ReadWaitMilliseconds != tc.readWait || b.MaxConcurrentBatches != tc.parallel || b.MaxBytes != 4<<20 || !*b.Enabled {
 			t.Fatalf("concurrency=%d batch=%+v", tc.concurrency, b)
 		}
 		if err := b.Validate(); err != nil {
@@ -35,12 +35,12 @@ func TestWriteBatchRecomputesAfterConcurrencyChange(t *testing.T) {
 	c := (LifecycleConfig{}).WithDefaults()
 	c.Concurrency = 256
 	c = c.WithDefaults()
-	if c.ElasticsearchWriteBatch.MaxOperations != 100 {
+	if c.ElasticsearchWriteBatch.MaxOperations != 128 {
 		t.Fatal("stale derived batch size")
 	}
 	c.Concurrency = 1
 	c = c.WithDefaults()
-	if c.ElasticsearchWriteBatch.MaxOperations != 1 || c.ElasticsearchWriteBatch.WaitMilliseconds != 0 || c.ElasticsearchWriteBatch.MaxConcurrentBatches != 1 {
+	if c.ElasticsearchWriteBatch.MaxOperations != 1 || c.ElasticsearchWriteBatch.WaitMilliseconds != 0 || c.ElasticsearchWriteBatch.ReadWaitMilliseconds != 0 || c.ElasticsearchWriteBatch.MaxConcurrentBatches != 1 {
 		t.Fatal("stale derived limits")
 	}
 	disabled := false
@@ -55,7 +55,7 @@ func TestWriteBatchRecomputesAfterConcurrencyChange(t *testing.T) {
 }
 
 func TestWriteBatchRejectsManualScheduling(t *testing.T) {
-	for _, field := range []string{"max_operations", "wait_milliseconds", "max_concurrent_batches"} {
+	for _, field := range []string{"max_operations", "wait_milliseconds", "read_wait_milliseconds", "max_concurrent_batches"} {
 		var c LifecycleConfig
 		decoder := yaml.NewDecoder(strings.NewReader("elasticsearch_write_batch:\n  " + field + ": 1\n"))
 		decoder.KnownFields(true)

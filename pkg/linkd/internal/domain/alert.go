@@ -69,7 +69,7 @@ func (a Alert) Normalize() (Alert, error) {
 	a.BeginAt = normalizeTime(a.BeginAt)
 	a.CreateAt = normalizeTime(a.CreateAt)
 	a.EndAt = normalizeOptionalTime(a.EndAt)
-	if err := a.Validate(); err != nil {
+	if err := a.validate(false); err != nil {
 		return Alert{}, err
 	}
 	return a, nil
@@ -87,6 +87,11 @@ func (a Alert) Clone() Alert {
 
 // Validate 校验 Alert 字段及活动态、终态不变量。
 func (a Alert) Validate() error {
+	return a.validate(true)
+}
+
+// Normalize 已校验并深拷贝动态 JSON；公共 Validate 不得走此跳过路径。
+func (a Alert) validate(validateJSON bool) error {
 	for _, field := range []struct {
 		name  string
 		value string
@@ -144,11 +149,13 @@ func (a Alert) Validate() error {
 	if err := a.Labels.Validate(); err != nil {
 		return fmt.Errorf("alert labels: %w", err)
 	}
-	if _, err := a.ExtraData.Normalize(); err != nil {
-		return fmt.Errorf("alert extra_data: %w", err)
-	}
-	if _, err := a.Enrich.Normalize(); err != nil {
-		return fmt.Errorf("alert enrich: %w", err)
+	if validateJSON {
+		if _, err := a.ExtraData.Normalize(); err != nil {
+			return fmt.Errorf("alert extra_data: %w", err)
+		}
+		if _, err := a.Enrich.Normalize(); err != nil {
+			return fmt.Errorf("alert enrich: %w", err)
+		}
 	}
 	for name, value := range map[string]time.Time{
 		"last_occurred_at": a.LastOccurredAt,

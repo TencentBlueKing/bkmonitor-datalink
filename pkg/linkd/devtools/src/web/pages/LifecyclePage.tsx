@@ -536,6 +536,7 @@ function lifecycleNodeSnapshot(
     expectedGroup?.lag === null || expectedGroup === undefined
       ? undefined
       : expectedGroup.lag + expectedGroup.pending;
+  const signalConfig = asRecord(config.signal);
   const mailboxConfig = asRecord(config.mailbox);
   const lockConfig = asRecord(config.lock);
   const outputKafka = asRecord(config.outputKafka);
@@ -546,6 +547,14 @@ function lifecycleNodeSnapshot(
       { label: "Stream", value: signal?.streamKey ?? "—" },
       { label: "Stream entries", value: displayNumber(stream?.length) },
       { label: "Pending", value: displayNumber(pending) },
+      {
+        label: "Receive batch",
+        value: displayUnknown(signalConfig.maxBatchMessages),
+      },
+      {
+        label: "In-flight limit",
+        value: displayUnknown(signalConfig.maxInflightMessages),
+      },
       { label: "Consumer groups", value: displayNumber(groups.length) },
       { label: "Last generated ID", value: stream?.lastGeneratedId ?? "—" },
     ];

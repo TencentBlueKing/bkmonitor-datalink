@@ -28,7 +28,7 @@ func newTestWriteBatch(t *testing.T, transport Transport, modify func(*WriteBatc
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := WriteBatchConfig{MaxOperations: 32, MaxBytes: 4 << 20, Wait: 20 * time.Millisecond, MaxConcurrentBatches: 2, MaxCalls: 32, Timeout: time.Second}
+	cfg := WriteBatchConfig{MaxOperations: 32, MaxBytes: 4 << 20, Wait: 20 * time.Millisecond, ReadWait: 10 * time.Millisecond, MaxConcurrentBatches: 2, MaxCalls: 32, Timeout: time.Second}
 	if modify != nil {
 		modify(&cfg)
 	}
@@ -40,16 +40,37 @@ func newTestWriteBatch(t *testing.T, transport Transport, modify func(*WriteBatc
 	return b
 }
 
+func TestWriteBatchWaitBoundary(t *testing.T) {
+	for _, wait := range []time.Duration{256 * time.Millisecond, 257 * time.Millisecond, -time.Millisecond} {
+		t.Run(wait.String(), func(t *testing.T) {
+			r, err := New(transportFunc(func(*http.Request) (*http.Response, error) {
+				t.Error("idle writer must not send requests")
+				return batchHTTPResponse(200, nil), nil
+			}), mustStaticRouter(t), DefaultConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, b, err := r.EnableWriteBatch(WriteBatchConfig{MaxOperations: 256, MaxBytes: 4 << 20, Wait: wait, MaxConcurrentBatches: 32, MaxCalls: 512, Timeout: time.Second}, nil)
+			if b != nil {
+				b.Close()
+			}
+			if (err == nil) != (wait == 256*time.Millisecond) {
+				t.Fatalf("wait=%s error=%v", wait, err)
+			}
+		})
+	}
+}
+
 func TestWriteBatchAlreadyQueuedCallsFillBatch(t *testing.T) {
-	for _, wait := range []time.Duration{0, 2 * time.Millisecond, 100 * time.Millisecond} {
+	for _, wait := range []time.Duration{0, 2 * time.Millisecond, 100 * time.Millisecond, 256 * time.Millisecond} {
 		t.Run(wait.String(), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			requests := 0
 			b := &WriteBatchTransport{
 				ctx: ctx, cancel: cancel,
-				config: WriteBatchConfig{MaxOperations: 100, MaxBytes: 4 << 20, Wait: wait, Timeout: time.Second},
-				queue:  make(chan *batchCall, 100), slots: make(chan struct{}, 100), workers: make(chan struct{}, 1),
+				config: WriteBatchConfig{MaxOperations: 256, MaxBytes: 4 << 20, Wait: wait, Timeout: time.Second},
+				queue:  make(chan *batchCall, 256), slots: make(chan struct{}, 256), workers: make(chan struct{}, 1),
 				next: transportFunc(func(req *http.Request) (*http.Response, error) {
 					requests++
 					data, _ := io.ReadAll(req.Body)
@@ -63,7 +84,7 @@ func TestWriteBatchAlreadyQueuedCallsFillBatch(t *testing.T) {
 				}),
 			}
 			// 预先就绪且期限已过，模拟执行槽位曾经占满后的队列；不得主动等待新项。
-			calls := make([]*batchCall, 100)
+			calls := make([]*batchCall, 256)
 			for i := range calls {
 				calls[i] = &batchCall{ctx: ctx, queued: time.Now().Add(-time.Second), reply: make(chan batchReply, 1), operations: []batchOperation{{Action: "create", Metadata: map[string]any{"_index": "logs", "_id": fmt.Sprint(i)}, Source: json.RawMessage(`{}`)}}}
 				b.slots <- struct{}{}

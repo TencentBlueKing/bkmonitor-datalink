@@ -43,23 +43,32 @@ Lifecycle 本次继续读取持久化 Event，不因来源新增或启停切换�
 
 ## 3. 管理模型、存储与权限
 
-候选对象仅服务于来源管理，不预先抽象成通用 ConfigResource/ConfigRelease：
+来源权威存储只保留以下两个对象，兼容 ES/MySQL；调度协议见
+[中心化任务调度协议](task-scheduling-protocol.md)，不另建来源运行状态表。
 
 | 对象 | 用途 |
 | --- | --- |
-| EventSourceRecord | 来源定义、scope、owner_tenant_id、managed_by、resource_revision、删除标记 |
-| EventSourceRelease | 来源清单的一致快照、base revision、来源版本引用、摘要与发布状态 |
-| SourceSyncState | provider、上游游标、最后成功时间、错误与任期 |
-| SourceRuntimeStatus | instance/session、来源期望/加载/应用版本、phase、心跳和错误 |
-| SourceActivation | 来源订阅在各 partition offset 区间使用的规则版本与切换代次 |
+| EventSourceRecord | 来源身份、管理归属、当前编辑配置/版本、published_release_id 与删除标记；单对象 CAS |
+| EventSourceRelease | 单来源一次发布的完整不可变配置快照、发布版本、摘要、操作者与原因；幂等创建 |
 
-每 deployment 串行推进来源发布，限制来源数量、快照大小和候选版本数；不分页拼接变化中的清单。
-来源 release 不包含 Severity，也不与全局配置共用版本序列或发布事务。
+Release 改为单来源发布，不是整份来源清单的原子快照；来源分别发布和生效，不包含全局 Severity。
+先校验 Record 的编辑版本，再幂等创建完整 Release，最后 CAS 更新 Record 的 published_release_id。
+指针提交成功才表示发布成立。CAS 失败留下未引用 Release，不执行它；指针成功但 Redis 更新失败由
+持续对账恢复。ES/MySQL 使用相同的单对象契约，不承诺跨来源、Record/Release 或 Redis 的事务。
+worker 按明确 Release ID 读取完整快照，不回读可编辑 Record 拼接配置，也不通过搜索“最新版本”猜发布。
 
-持久化候选为独立 MySQL 来源表与仓储，使用已有驱动；不向 Event/Alert Repository 添加通用配置接口。
-需要事务性保存来源变更、审计、幂等请求结果、同步游标与期望指针；生效确认在事务外异步完成。
-代价是 ES 业务存储部署也需提供 MySQL，是否接受仍待评审，不因为另一项也可能需要存储而默认确定。
-替代存储必须明确 CAS、持久化、一致快照和 fencing 语义，不能直接用缓存替代。
+来源数量、发布尺寸和历史保留有硬上限。编辑时初查 subscription 冲突，调度准入还需对实际消费范围做
+原子互斥检查；并发发布导致相同订阅冲突时阻止后者运行并显示 blocked，不用仅跨文档查询保证唯一性。
+
+Redis 保存来源同步缓存/可重建游标、worker 注册/心跳、assignment、运行状态与交接确认。
+同步游标只有上游允许完整重新拉取/重复回放时才可仅缓存；需要长期 checkpoint 时保存到对应 Release
+的提供方元数据，不能新建第三类权威对象或因 Redis 游标丢失跳过配置。
+长期用户调度意图随 Record/Release 保存，具体 worker 分配在 Redis；Redis 协调历史丢失按调度协议
+进入恢复屏障，不能直接重建分配后并行启动旧任务。
+
+ES 与 MySQL 使用独立来源仓储并复用既有连接/底层能力，不向 Event/Alert Repository 加通用配置接口。
+ES 发布按 ID 的实时读取验证指针/快照，列表查询的搜索可见性不能作为发布线性化点；不要求 ES 部署额外
+提供 MySQL。列表发现延迟由有界对账处理，明确发布的 Release 可按 ID 加载。
 
 管理键、缓存、审计和租约带 deployment 与管理作用域。`related_tenant_id` 是数据归属规则，不是配置
 所有者。建议 platform 来源仅平台权限可管；tenant 来源绑定 owner 租户，不允许跨租户覆盖。
@@ -79,9 +88,10 @@ API 修改 provider 业务字段返回冲突，接管需显式带 base revision 
 
 主动拉取流程：
 
-1. 单副本控制面或有效 Leader 携带持久化游标拉取，限制超时、分页数、响应字节与并发。
+1. 单副本控制面或有效 Leader 携带有效游标拉取，限制超时、分页数、响应字节与并发。
 2. 转换为 EventSource，校验租户、ID、Cleaner 注册、subscription 唯一性、预算及静态 Severity 引用。
-3. 完整有效的批次一次提交，成功游标和来源变更同事务保存；失败不推进游标。
+3. 完整有效批次校验后逐来源幂等发布；允许部分成功，失败条目重试。全部成功才推进批次游标，
+   不承诺跨来源事务；中途崩溃可安全重复同步。
 4. 相同上游版本/内容不重复发布，错误按有上限退避加抖动重试。
 
 网络失败、权限错误、分页中断、非法载荷不是删除指令。增量删除需要 tombstone；全量缺失对账必须有
@@ -102,7 +112,8 @@ flowchart TD
     API --> Write
     Write --> Store[来源存储与版本]
     Store --> Reconcile[来源发布对账]
-    Reconcile --> Cleaner[Cleaner 来源快照与 Flow 管理]
+    Reconcile --> Scheduler[中心调度协议：撤销、停止确认、重新分配]
+    Scheduler --> Cleaner[Cleaner 来源快照与 Flow 管理]
     Cleaner --> Status[来源运行状态]
     Status --> Reconcile
 ```
@@ -110,8 +121,10 @@ flowchart TD
 复用 `control-plane` 进程与 all-in-one 装配，不新增常驻进程。通知只加速加载，周期轮询来源发布指针
 兜底；跳号时读取一致快照。消息热路径只读内存中的确定版本，不逐消息请求配置库。
 
-Leader 协调来源同步与生效，不承接数据消费。首期可让所有合格 Cleaner 订阅同一来源清单，由 Kafka
-按既定 consumer group 分配 partition。来源级节点放置和容量调度另行演进。
+Leader 协调来源同步与生效，不承接数据消费。采用中心化调度协议：首期一个来源 TaskKey 同时只分配
+给一个 worker，worker 内并行处理 Kafka partition。未来跨 worker 扩容需明确不相交的 shard 领取范围。
+worker 发现已发布版本变化立即开始停止，中心确认 Stopped 后分配下一代；失联自停与超时强切、防抖
+和容器发布预算统一由调度协议定义。已健康 worker 的简单变更可 FastRestart，但不跳过停止确认。
 
 来源状态为 `pending → preparing → applying → applied`，失败报告 blocked/failed、阶段与已生效范围。
 准备校验类型、静态 Severity、节点能力、凭据可达性与总预算；加载快照不等于生效。实例报告每个来源
@@ -174,11 +187,10 @@ source-a / subscription-X / partition-0
 上游不可用时继续使用有效来源清单；冷启动无可信来源版本不进入 ready，不用空清单冒充成功。
 本地缓存校验 deployment、schema、摘要和权限，只用于加速加载。
 
-多副本实施前必须定义来源执行资格与租约：控制面短暂不可用时，有效资格内可继续，过期停止领取，
-已领取任务按固定版本有界完成。发布不能直接忽略失联旧实例；必须证明其所有权已撤销或受到有效 fencing。
-新 Leader 从持久化阶段、边界与确认状态恢复；存储事务校验有效任期，旧 Leader 不能推进来源发布。
-选举完成前保持单控制面部署。任意副本写 API 或只由 Leader 写需独立评审并同步部署文档。
-
+多副本运行使用调度协议的 session、assignment_epoch 和任务授权。短暂控制断连先暂停领取并容错，
+持续失联在授权期限内自停；中心按最后已提交授权的到期时间加安全余量强切，不因一次心跳超时立即迁移。
+普通来源发布/容器滚动重启采用主动停止确认，可立即接续；控制面或 Redis 权威历史丢失单独走恢复屏障。
+异常接管必须验证旧代次隔离，不能把 Redis owner 更新等同于已阻止旧业务副作用。
 所有来源操作有超时、并发和载荷上限，限制每 deployment 来源数和进程连接/内存/worker 总量。
 新增来源超过预算时明确拒绝或等待准入，不按来源数无限扩容。历史保留容量不足阻止新发布。
 
@@ -192,7 +204,7 @@ source-a / subscription-X / partition-0
 | E1：来源管理 | 来源存储、导入、API、版本、审计 | CAS/幂等、租户隔离、脱敏、一致来源清单、空清单 |
 | E2：动态运行与同步 | 零来源监听、启停、局部重建、主动拉取、状态；先单控制面 | 排空/取消、连续 ACK、预算、单源故障隔离、部分拉取失败不删源 |
 | E3：来源语义修改 | 来源映射等规则的 offset 版本区间和回滚 | Event 已写但未入 Mailbox 时重投、多 Event 展开、切换崩溃恢复 |
-| E4：多副本 | Leader fencing、资格/租约、状态聚合 | rebalance、旧 Leader 拒写、失联旧实例不能带过期规则接管 |
+| E4：多副本 | 接入公共调度协议、资格/租约、停止确认和超时强切 | rebalance、旧 Leader 拒写、失联自停/自动接管、发布防抖与旧代次隔离 |
 
 E2 已形成来源动态管理闭环，但尚未验证的语义字段保持禁止在线修改。E3 只处理来源规则，不加入全局
 Severity 动态更新；E4 完成后才承诺多副本可靠切换。每阶段单独改动、测试和交付。
@@ -200,9 +212,19 @@ Severity 动态更新；E4 完成后才承诺多副本可靠切换。每阶段�
 代码实现按本项真实消费者定义窄接口，不创建通用配置框架或空包。实施时更新现行配置/来源文档，执行
 `make check` 与 race；显式启用 Kafka/数据库集成和故障注入。当前只改设计，未实现或验证运行能力。
 
-## 9. 本项待收敛决策
+## 9. 事件与告警的版本追溯
 
-- 来源存储是否接受 MySQL 的部署依赖。
+Event 新增 event_source_version，由 EventFactory 注入实际使用的 EventSourceRelease 发布版本，
+不是 Record 编辑版本；同一原始消息展开的 Event 固定该版本，不加入 Event ID 或 fingerprint。
+Alert 创建时继承触发 Event 的版本，创建阶段 enrich 也使用同一 Release；以后普通更新不覆盖，
+等级升级创建的新 Alert 继承本次触发 Event 的版本。Release 后续可包含来源 enrich 配置。
+AlertLog 暂不新增顶层 event_source_version，避免混淆本次 Event 与历史 Alert 的来源版本；携带 Alert
+快照时自然包含其版本。未来重新 enrich 的实际版本独立记录，不覆盖 Alert 创建依据。
+以上字段尚未实现，实施时同步领域模型、存储、消费者和测试；不能把版本字段替代跨版本重放规则。
+
+## 10. 本项待收敛决策
+
+- ES/MySQL 两个来源对象的单对象操作、发布指针与历史清理细节。
 - provider 的全量/增量、删除、版本与所有权转移契约。
 - 来源执行租约、失联预算与上游可回放窗口。
 - 第一批开放的在线修改字段，以及危险身份/指纹变更的独立处理流程。

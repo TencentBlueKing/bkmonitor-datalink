@@ -32,7 +32,17 @@ const (
 
 // Config 定义 Linkd 的 OpenTelemetry 配置。
 type Config struct {
-	Metrics MetricsConfig `yaml:"metrics"`
+	Metrics   MetricsConfig   `yaml:"metrics"`
+	Profiling ProfilingConfig `yaml:"profiling"`
+}
+
+// ProfilingConfig 定义仅供现场诊断的 Go pprof 服务。默认关闭；开启时必须绑定回环地址，
+// 避免将 goroutine、命令行和内存采样暴露到业务网络。
+type ProfilingConfig struct {
+	Enabled              bool   `yaml:"enabled"`
+	ListenAddress        string `yaml:"listen_address"`
+	BlockProfileRate     int    `yaml:"block_profile_rate"`
+	MutexProfileFraction int    `yaml:"mutex_profile_fraction"`
 }
 
 // MetricsConfig 定义指标 exporter。Exporter 为空表示不启用指标 SDK 和监听端口。
@@ -54,7 +64,7 @@ func (c Config) Validate() error {
 		if c.Metrics.Prometheus != (PrometheusConfig{}) {
 			return fmt.Errorf("telemetry.metrics.exporter is required when prometheus endpoints are configured")
 		}
-		return nil
+		return c.Profiling.validate()
 	}
 	if c.Metrics.Exporter != ExporterPrometheus {
 		return fmt.Errorf("telemetry.metrics.exporter must be %q: %q", ExporterPrometheus, c.Metrics.Exporter)
@@ -64,6 +74,28 @@ func (c Config) Validate() error {
 	}
 	if err := validateListenAddress(c.Metrics.Prometheus.ListenAddress); err != nil {
 		return fmt.Errorf("telemetry.metrics.prometheus.listen_address: %w", err)
+	}
+	return c.Profiling.validate()
+}
+
+func (c ProfilingConfig) validate() error {
+	if !c.Enabled {
+		if c.ListenAddress != "" || c.BlockProfileRate != 0 || c.MutexProfileFraction != 0 {
+			return fmt.Errorf("telemetry.profiling.enabled is required when profiling options are configured")
+		}
+		return nil
+	}
+	if c.ListenAddress == "" {
+		return fmt.Errorf("telemetry.profiling.listen_address is required")
+	}
+	if err := validateLoopbackListenAddress(c.ListenAddress); err != nil {
+		return fmt.Errorf("telemetry.profiling.listen_address: %w", err)
+	}
+	if c.BlockProfileRate < 0 {
+		return fmt.Errorf("telemetry.profiling.block_profile_rate must not be negative")
+	}
+	if c.MutexProfileFraction < 0 {
+		return fmt.Errorf("telemetry.profiling.mutex_profile_fraction must not be negative")
 	}
 	return nil
 }
@@ -85,6 +117,18 @@ func validateListenAddress(address string) error {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil || host == "" || port == "" {
 		return fmt.Errorf("must be host:port")
+	}
+	return nil
+}
+
+func validateLoopbackListenAddress(address string) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil || host == "" {
+		return fmt.Errorf("must be host:port")
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("must bind an IP loopback address")
 	}
 	return nil
 }

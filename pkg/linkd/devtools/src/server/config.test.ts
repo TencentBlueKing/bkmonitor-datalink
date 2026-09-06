@@ -11,11 +11,14 @@ describe("Linkd config loader", () => {
     [1, 1, 0, 1],
     [2, 1, 0, 2],
     [3, 1, 0, 3],
+    [4, 2, 2, 4],
     [8, 4, 4, 8],
     [32, 16, 16, 32],
     [64, 32, 32, 32],
-    [256, 100, 100, 32],
-    [1024, 100, 100, 32],
+    [256, 128, 128, 32],
+    [511, 128, 128, 32],
+    [512, 128, 128, 32],
+    [1024, 128, 128, 32],
   ])(
     "derives batch scheduling from concurrency %i",
     async (concurrency, operations, wait, parallel) => {
@@ -39,11 +42,13 @@ lifecycle:
         expect(config.lifecycle?.elasticsearchWriteBatch).toMatchObject({
           max_operations: operations,
           wait_milliseconds: wait,
+          read_wait_milliseconds: Math.min(10, wait),
           max_concurrent_batches: parallel,
         });
         for (const key of [
           "max_operations",
           "wait_milliseconds",
+          "read_wait_milliseconds",
           "max_concurrent_batches",
         ]) {
           await writeFile(
@@ -121,7 +126,21 @@ telemetry:
         max_operations: 16,
         max_bytes: 4194304,
         wait_milliseconds: 16,
+        read_wait_milliseconds: 10,
         max_concurrent_batches: 32,
+      });
+      expect(config.lifecycle?.signal).toMatchObject({
+        maxBatchMessages: 64,
+        maxInflightMessages: 64,
+      });
+      expect(config.lifecycle?.mailbox).toMatchObject({
+        maxDrainEvents: 128,
+        backpressure: {
+          cacheTTLSeconds: 1,
+          queryTimeoutSeconds: 1,
+          highWatermark: 256,
+          lowWatermark: 128,
+        },
       });
       expect(config.elasticsearch?.eventTargets).toEqual(["demo-events"]);
       expect(config.eventSources?.[0].runtime.worker_count).toBe(4);

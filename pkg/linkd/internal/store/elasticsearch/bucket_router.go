@@ -40,6 +40,8 @@ type BucketConfig struct {
 	AlertLogTranslogDurability string
 	// NumberOfReplicas 非 nil 时写入模板，仅影响之后新建的索引。
 	NumberOfReplicas *int
+	// NumberOfShards 仅设置新建索引的主分片数；已有索引不会重分片。
+	NumberOfShards *int
 }
 
 // BucketRouter 根据结构化 EventID/AlertID 把逻辑对象稳定路由到时间桶和 alias。
@@ -53,6 +55,7 @@ type BucketRouter struct {
 	activeRefreshInterval  time.Duration
 	alertLogDurability     string
 	numberOfReplicas       int
+	numberOfShards         int
 	replicaCountConfigured bool
 	now                    func() time.Time
 }
@@ -90,6 +93,9 @@ func newBucketRouter(prefix string, config BucketConfig, now func() time.Time) (
 	if config.NumberOfReplicas != nil && *config.NumberOfReplicas < 0 {
 		return nil, fmt.Errorf("create elasticsearch bucket router: number of replicas must not be negative")
 	}
+	if config.NumberOfShards != nil && (*config.NumberOfShards < 1 || *config.NumberOfShards > 1024) {
+		return nil, fmt.Errorf("create elasticsearch bucket router: number of shards must be between 1 and 1024")
+	}
 	if now == nil {
 		return nil, fmt.Errorf("create elasticsearch bucket router: clock must not be nil")
 	}
@@ -103,6 +109,9 @@ func newBucketRouter(prefix string, config BucketConfig, now func() time.Time) (
 	if config.NumberOfReplicas != nil {
 		router.numberOfReplicas = *config.NumberOfReplicas
 		router.replicaCountConfigured = true
+	}
+	if config.NumberOfShards != nil {
+		router.numberOfShards = *config.NumberOfShards
 	}
 	for _, target := range []string{
 		router.eventReadAlias(), router.alertReadAlias(), router.activeAlertAlias(),
@@ -154,6 +163,9 @@ func (r *BucketRouter) activeTemplateSettings() map[string]any {
 
 func (r *BucketRouter) templateSettings() map[string]any {
 	settings := map[string]any{"refresh_interval": r.refreshInterval.String()}
+	if r.numberOfShards > 0 {
+		settings["number_of_shards"] = r.numberOfShards
+	}
 	if r.replicaCountConfigured {
 		settings["number_of_replicas"] = r.numberOfReplicas
 	}

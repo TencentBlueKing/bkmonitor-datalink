@@ -38,8 +38,11 @@ const (
 
 // Capabilities 描述一个 Session 对核心运行时暴露的可靠性能力。
 type Capabilities struct {
-	Settlement   SettlementMode
-	CanPauseLane bool
+	// BatchIndividualConfirm 允许合并同 lane 已完成的独立确认；失败时必须允许
+	// 原 receipts 整批重试，即使前次请求已经部分或全部生效。累计确认不使用此能力。
+	BatchIndividualConfirm bool
+	Settlement             SettlementMode
+	CanPauseLane           bool
 }
 
 // ReceiveLimits 是运行时本次允许 Session 接管的消息与载荷上限。

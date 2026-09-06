@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"linkd/internal/domain"
 	"linkd/internal/store"
 	"linkd/internal/store/storetest"
 )
@@ -98,7 +99,7 @@ func runElasticsearchRepositoryContract(t *testing.T, batched bool) {
 			}
 		})
 		if batched {
-			wrapped, closer, err := repository.EnableWriteBatch(WriteBatchConfig{MaxOperations: 32, MaxBytes: 4 << 20, Wait: 2 * time.Millisecond, MaxConcurrentBatches: 2, MaxCalls: 32, Timeout: 15 * time.Second}, nil)
+			wrapped, closer, err := repository.EnableWriteBatch(WriteBatchConfig{MaxOperations: 32, MaxBytes: 4 << 20, Wait: 2 * time.Millisecond, ReadWait: 10 * time.Millisecond, MaxConcurrentBatches: 2, MaxCalls: 32, Timeout: 15 * time.Second}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -170,6 +171,15 @@ func TestElasticsearchEventCreateDoesNotDependOnRefresh(t *testing.T) {
 	if err != nil || duplicate.Created {
 		t.Fatalf("duplicate CreateEvent()=%#v,%v", duplicate, err)
 	}
+	duplicates, err := repository.CreateEvents(ctx, []domain.Event{event, event})
+	if err != nil || len(duplicates) != 2 {
+		t.Fatalf("duplicate batch=%+v error=%v", duplicates, err)
+	}
+	for _, item := range duplicates {
+		if item.Err != nil || item.Result.Created || item.Result.Event.EventID != event.EventID {
+			t.Fatalf("realtime duplicate batch item=%+v", item)
+		}
+	}
 	conflict := event.Clone()
 	conflict.Title = "different"
 	if _, err := repository.CreateEvent(ctx, conflict); !errors.Is(err, store.ErrIdentityConflict) {
@@ -193,6 +203,84 @@ func TestElasticsearchEventCreateDoesNotDependOnRefresh(t *testing.T) {
 	}
 	if count.Count != 1 {
 		t.Fatalf("event count after refresh=%d", count.Count)
+	}
+}
+
+func TestElasticsearchLifecycleEventProjectionAndPartialCAS(t *testing.T) {
+	endpoint := os.Getenv(elasticsearchIntegrationURLEnv)
+	if endpoint == "" {
+		t.Skipf("set %s to run Elasticsearch lifecycle event integration", elasticsearchIntegrationURLEnv)
+	}
+	baseURL, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, batched := range []bool{false, true} {
+		t.Run("batched="+strconv.FormatBool(batched), func(t *testing.T) {
+			transport := endpointTransport{baseURL: baseURL, client: &http.Client{Timeout: 15 * time.Second}, apiKey: os.Getenv("LINKD_TEST_ELASTICSEARCH_API_KEY")}
+			prefix := "linkd-lifecycle-projection-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatBool(batched)
+			router, err := NewStaticRouter(prefix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			repository, err := New(transport, router, DefaultConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			schema := router.SchemaConfig()
+			if err := repository.EnsureSchema(ctx, schema); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.EnsureIndex(ctx, router.eventIndex, entityEvent); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				cleanup, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cleanupCancel()
+				_ = repository.performJSON(cleanup, http.MethodDelete, "/"+router.eventIndex, nil, nil, nil)
+				for _, spec := range schema.Templates() {
+					_ = repository.performJSON(cleanup, http.MethodDelete, "/_index_template/"+spec.Name, nil, nil, nil)
+				}
+			})
+			var lifecycleStore store.LifecycleEventStore = repository
+			if batched {
+				wrapped, closer, err := repository.EnableWriteBatch(WriteBatchConfig{MaxOperations: 32, MaxBytes: 4 << 20, Wait: 2 * time.Millisecond, ReadWait: 10 * time.Millisecond, MaxConcurrentBatches: 2, MaxCalls: 32, Timeout: 15 * time.Second}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(closer.Close)
+				lifecycleStore = wrapped
+			}
+			event := storetest.Event("tenant-1", "event-projection", "fingerprint-1", "warning")
+			event.SourceRawData = domain.JSONObject{"large": json.RawMessage(`{"preserved":true}`)}
+			event.ExtraData = domain.JSONObject{"needed": json.RawMessage(`{"value":1}`)}
+			created, err := repository.CreateEvent(ctx, event)
+			if err != nil || !created.Created {
+				t.Fatalf("CreateEvent()=%#v,%v", created, err)
+			}
+			projected, err := lifecycleStore.GetLifecycleEvent(ctx, event.BKTenantID, event.EventID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(projected.Event.SourceRawData) != 0 || len(projected.Event.ExtraData) != 1 {
+				t.Fatalf("lifecycle projection=%#v", projected.Event)
+			}
+			updated, err := lifecycleStore.CompareAndSetLifecycleEventResult(ctx, event.BKTenantID, event.EventID, projected.Version, store.EventResult{
+				State: domain.EventProcessStateAccepted, RelatedAlertID: "alert-1", Outcome: "alert_created", ProcessedAt: time.Now().Round(0).UTC(),
+			})
+			if err != nil || updated.Event.RelatedAlertID != "alert-1" || updated.Processing.State != domain.EventProcessStateAccepted {
+				t.Fatalf("CompareAndSetLifecycleEventResult()=%#v,%v", updated, err)
+			}
+			complete, err := repository.GetEvent(ctx, event.BKTenantID, event.EventID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(complete.Event.SourceRawData["large"]) != `{"preserved":true}` || complete.Event.RelatedAlertID != "alert-1" {
+				t.Fatalf("complete event after partial CAS=%#v", complete.Event)
+			}
+		})
 	}
 }
 

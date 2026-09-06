@@ -194,6 +194,19 @@ func (w runtimeCountingWriter) CreateEvents(_ context.Context, events []domain.E
 	return (&runtimeTestWriter{}).CreateEvents(context.Background(), events)
 }
 
+type runtimeNormalizedWriter struct {
+	runtimeTestWriter
+	used bool
+}
+
+func (w *runtimeNormalizedWriter) CreateNormalizedEvents(
+	ctx context.Context,
+	events []domain.Event,
+) ([]store.CreateEventItemResult, error) {
+	w.used = true
+	return w.CreateEvents(ctx, events)
+}
+
 type runtimeTerminalReplayWriter struct{}
 
 func (runtimeTerminalReplayWriter) CreateEvents(_ context.Context, events []domain.Event) ([]store.CreateEventItemResult, error) {
@@ -499,3 +512,15 @@ func TestRuntimeFlushesLaneBatchByCountBytesOrWait(t *testing.T) {
 var _ consume.Session = (*runtimeTestSession)(nil)
 
 var _ consume.FlowController = (*runtimeTestSession)(nil)
+
+func TestCreateNormalizedEventsUsesFastPath(t *testing.T) {
+	writer := &runtimeNormalizedWriter{}
+	events := []domain.Event{{EventID: "event-a"}}
+	results, err := createNormalizedEvents(t.Context(), writer, events)
+	if err != nil || len(results) != 1 {
+		t.Fatalf("createNormalizedEvents() results=%#v error=%v", results, err)
+	}
+	if !writer.used {
+		t.Fatal("normalized event writer was not used")
+	}
+}

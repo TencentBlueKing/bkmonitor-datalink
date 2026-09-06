@@ -112,10 +112,20 @@ func CanonicalComparisonConfigV2(input ComparisonConfigV2) ([]byte, string, erro
 		ids[l.LevelID] = true
 		for j := range l.Detectors {
 			d := &l.Detectors[j]
-			if d.MappingVersion != "canonical-threshold-v2" || d.SourceAlgorithmFamily != "" || d.SourceMappingVersion != "" {
+			if (d.MappingVersion != "canonical-threshold-v2" && d.MappingVersion != "canonical-threshold-dnf-v2") || d.SourceAlgorithmFamily != "" || d.SourceMappingVersion != "" {
 				return nil, "", invalid("shadow.config.detector", "mapping version required")
 			}
 			if d.Kind == "Threshold" {
+				if d.MappingVersion == "canonical-threshold-dnf-v2" {
+					if d.Operator != "" || d.Threshold != "" {
+						return nil, "", invalid("shadow.config.threshold", "ambiguous DNF predicate")
+					}
+					d.SemanticConfig, err = normalizeThresholdDNFV2(d.SemanticConfig)
+					if err != nil {
+						return nil, "", err
+					}
+					continue
+				}
 				if d.Operator != "GTE" && d.Operator != "GT" && d.Operator != "LTE" && d.Operator != "LT" && d.Operator != "EQ" && d.Operator != "NE" {
 					return nil, "", invalid("shadow.config.threshold", "operator required")
 				}

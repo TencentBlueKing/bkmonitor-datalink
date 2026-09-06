@@ -232,8 +232,8 @@ func TestFrozenComparisonConfigEmptyUnitsNEQAndComplexBoundary(t *testing.T) {
 		config["groups"] = append(groups, groups[0])
 		a.Config, _ = json.Marshal(config)
 	})
-	if _, err := shadow.BuildFrozenComparisonConfigV2(due, req, queries); !errors.Is(err, shadow.ErrFrozenConfigUnsupported) {
-		t.Fatal("complex predicate silently flattened", err)
+	if c, err := shadow.BuildFrozenComparisonConfigV2(due, req, queries); err != nil || c.Levels[0].Detectors[0].MappingVersion != "canonical-threshold-dnf-v2" || len(c.Levels[0].Detectors[0].SemanticConfig) == 0 {
+		t.Fatal("complex predicate not preserved", err)
 	}
 }
 

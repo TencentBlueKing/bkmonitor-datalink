@@ -31,6 +31,17 @@ func checkConfigV2Fields(b []byte, kind string) error {
 		"numeric":    {"source_unit", "target_unit", "multiplier", "decimal_places", "rounding"},
 		"schedule":   {"interval_seconds", "window_seconds", "alignment_seconds", "timezone"},
 	}
+	if kind == "detector" {
+		var header struct {
+			MappingVersion string `json:"mapping_version"`
+		}
+		if err := json.Unmarshal(b, &header); err != nil {
+			return err
+		}
+		if header.MappingVersion == "canonical-threshold-dnf-v2" {
+			fieldsByKind[kind] = []string{"kind", "mapping_version", "source_algorithm_family", "source_mapping_version", "semantic_config"}
+		}
+	}
 	fields, err := validateJSONObjectFields(b, "shadow.config.v2."+kind, fieldsByKind[kind], nil, false)
 	if err != nil {
 		return err

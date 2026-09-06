@@ -108,6 +108,7 @@ type RedisCatalogRepository struct {
 	prefix                     string
 	ttl                        time.Duration
 	snapshotCache              *verifiedSnapshotCache
+	activationCache            parsedActivationCache
 	legacyMigrationMaxScanKeys int
 	legacyMigrationTimeout     time.Duration
 	observer                   observability.Observer
@@ -660,45 +661,45 @@ func (repository *RedisCatalogRepository) LoadLatestAudit(ctx context.Context) (
 }
 
 func (repository *RedisCatalogRepository) LoadActivation(ctx context.Context) (ActivationState, error) {
-	if repository == nil || repository.client == nil {
-		return ActivationState{}, errors.New("alarmd controlplane: Redis catalog repository is required")
+	entry, err := repository.loadParsedActivation(ctx)
+	if err != nil {
+		return ActivationState{}, err
 	}
-	payload, err := repository.client.Get(ctx, repository.activationKey()).Bytes()
+	return entry.cloneState(), nil
+}
+
+func (repository *RedisCatalogRepository) loadParsedActivation(ctx context.Context) (*parsedActivation, error) {
+	if repository == nil || repository.client == nil {
+		return nil, errors.New("alarmd controlplane: Redis catalog repository is required")
+	}
+	// Each authorization still obtains its own live payload before cache lookup.
+	payload, err := repository.client.Get(ctx, repository.activationKey()).Result()
 	if errors.Is(err, redis.Nil) {
-		return ActivationState{}, ErrActivationUnavailable
+		repository.activationCache.clear()
+		return nil, ErrActivationUnavailable
 	}
 	if err != nil {
-		return ActivationState{}, activationDependencyIO(err)
+		repository.activationCache.clear()
+		return nil, activationDependencyIO(err)
 	}
-	var state ActivationState
-	if err := json.Unmarshal(payload, &state); err != nil {
-		return ActivationState{}, &PersistedActivationCorruptError{Err: fmt.Errorf("decode: %w", err)}
-	}
-	if err := validateActivationState(state); err != nil {
-		return ActivationState{}, &PersistedActivationCorruptError{Err: err}
-	}
-	return state, nil
+	return repository.activationCache.load(payload)
 }
 
 func (repository *RedisCatalogRepository) LoadActivations(ctx context.Context, request execution.PlanActivationRequest) (execution.PlanActivationResult, error) {
 	if err := request.Contract.Validate(); err != nil || len(request.Plans) == 0 {
 		return execution.PlanActivationResult{}, errors.New("alarmd controlplane: invalid activation request")
 	}
-	state, err := repository.LoadActivation(ctx)
+	entry, err := repository.loadParsedActivation(ctx)
 	if err != nil {
 		return execution.PlanActivationResult{}, err
 	}
-	historical, err := repository.validateClosedHistoricalContract(ctx, request.Contract, state.Current)
+	historical, err := repository.validateClosedHistoricalContract(ctx, request.Contract, entry.state.Current)
 	if err != nil {
 		return execution.PlanActivationResult{}, err
-	}
-	byPlan := make(map[execution.PlanIdentity]execution.PlanActivationFact, len(state.Plans))
-	for _, record := range state.Plans {
-		byPlan[record.Fact.Plan] = record.Fact
 	}
 	result := execution.PlanActivationResult{Contract: request.Contract, Facts: make([]execution.PlanActivationFact, 0, len(request.Plans))}
 	for _, plan := range request.Plans {
-		fact, found := byPlan[plan]
+		fact, found := entry.byPlan[plan]
 		if historical || !found {
 			fact = execution.PlanActivationFact{Plan: plan, Selection: execution.ActivationNone}
 		}

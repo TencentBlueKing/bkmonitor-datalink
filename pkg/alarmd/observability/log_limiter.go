@@ -76,9 +76,10 @@ func (l *WindowLogLimiter) Allow(observation Observation) bool {
 		key.reason = ReasonNone
 		key.stage = observation.Stage
 	}
-	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	// Sample in admission order so delayed callers cannot look like a clock rollback.
+	now := l.now()
 	bucket, ok := l.buckets[key]
 	if !ok {
 		return false

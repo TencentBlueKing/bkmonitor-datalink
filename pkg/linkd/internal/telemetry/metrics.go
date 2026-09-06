@@ -61,6 +61,16 @@ type instruments struct {
 	finalHookOperations          metric.Int64Counter
 	finalHookDuration            metric.Float64Histogram
 
+	enrichAttempts             metric.Int64Counter
+	enrichAttemptDuration      metric.Float64Histogram
+	enrichInflight             metric.Int64UpDownCounter
+	enrichPayloadSize          metric.Int64Histogram
+	enrichProcessorAttempts    metric.Int64Counter
+	enrichProcessorDuration    metric.Float64Histogram
+	enrichProcessorDiagnostics metric.Int64Counter
+	enrichDatasourceOperations metric.Int64Counter
+	enrichDatasourceDuration   metric.Float64Histogram
+
 	controlPlaneTaskActive      metric.Int64Gauge
 	controlPlaneTaskRuns        metric.Int64Counter
 	controlPlaneTaskRunDuration metric.Float64Histogram
@@ -359,6 +369,61 @@ func newInstruments(meter metric.Meter) (*instruments, error) {
 	); err != nil {
 		return nil, err
 	}
+	if result.enrichAttempts, err = meter.Int64Counter(
+		"linkd.enrich.attempts", metric.WithUnit("{attempt}"),
+		metric.WithDescription("新 Alert 同步丰富尝试结果"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichAttemptDuration, err = meter.Float64Histogram(
+		"linkd.enrich.attempt.duration", metric.WithUnit("s"),
+		metric.WithDescription("新 Alert 同步丰富总耗时"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichInflight, err = meter.Int64UpDownCounter(
+		"linkd.enrich.inflight", metric.WithUnit("{attempt}"),
+		metric.WithDescription("正在执行的同步丰富调用数"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichPayloadSize, err = meter.Int64Histogram(
+		"linkd.enrich.payload.size", metric.WithUnit("By"),
+		metric.WithDescription("最终 Alert enrich payload 字节数"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichProcessorAttempts, err = meter.Int64Counter(
+		"linkd.enrich.processor.attempts", metric.WithUnit("{attempt}"),
+		metric.WithDescription("Enrich Processor 执行结果"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichProcessorDuration, err = meter.Float64Histogram(
+		"linkd.enrich.processor.duration", metric.WithUnit("s"),
+		metric.WithDescription("Enrich Processor 执行耗时"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichProcessorDiagnostics, err = meter.Int64Counter(
+		"linkd.enrich.processor.diagnostics", metric.WithUnit("{diagnostic}"),
+		metric.WithDescription("Enrich Processor 诊断结果"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichDatasourceOperations, err = meter.Int64Counter(
+		"linkd.enrich.datasource.operations", metric.WithUnit("{operation}"),
+		metric.WithDescription("Enrich DataSource 调用结果"),
+	); err != nil {
+		return nil, err
+	}
+	if result.enrichDatasourceDuration, err = meter.Float64Histogram(
+		"linkd.enrich.datasource.duration", metric.WithUnit("s"),
+		metric.WithDescription("Enrich DataSource 调用耗时"),
+	); err != nil {
+		return nil, err
+	}
+
 	if result.finalHookDuration, err = meter.Float64Histogram(
 		"linkd.final_hook.duration", metric.WithUnit("s"),
 		metric.WithDescription("Lifecycle FinalHook 调用耗时"),
@@ -580,8 +645,36 @@ func newInstruments(meter metric.Meter) (*instruments, error) {
 	return result, nil
 }
 
+func enrichDurationBuckets() []float64 {
+	return []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30}
+}
+
 func metricViews() []sdkmetric.View {
 	return []sdkmetric.View{
+		sdkmetric.NewView(
+			sdkmetric.Instrument{Name: "linkd.enrich.attempt.duration"},
+			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+				Boundaries: enrichDurationBuckets(),
+			}},
+		),
+		sdkmetric.NewView(
+			sdkmetric.Instrument{Name: "linkd.enrich.processor.duration"},
+			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+				Boundaries: enrichDurationBuckets(),
+			}},
+		),
+		sdkmetric.NewView(
+			sdkmetric.Instrument{Name: "linkd.enrich.datasource.duration"},
+			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+				Boundaries: enrichDurationBuckets(),
+			}},
+		),
+		sdkmetric.NewView(
+			sdkmetric.Instrument{Name: "linkd.enrich.payload.size"},
+			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+				Boundaries: []float64{512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144},
+			}},
+		),
 		sdkmetric.NewView(
 			sdkmetric.Instrument{Name: "linkd.pipeline.attempt.duration"},
 			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{

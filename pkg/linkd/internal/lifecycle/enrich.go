@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"linkd/internal/domain"
 )
@@ -41,6 +42,20 @@ func (p *Processor) enrichNewAlert(
 	if err != nil {
 		return domain.Alert{}, fmt.Errorf("normalize base alert before enrich: %w", err)
 	}
+	startedAt := time.Now()
+	chainKind := EnrichChainUnknown
+	if classifier, ok := p.enricher.(EnrichRouteClassifier); ok {
+		chainKind = classifier.EnrichChainKind(normalized.EventSourceID)
+	}
+	p.enrichObserver.Started(ctx, normalized.EventSourceID)
+	observation := EnrichObservation{
+		EventSourceID: normalized.EventSourceID, Status: domain.EnrichStatusFailed,
+		Outcome: EnrichOutcomeError, ChainKind: chainKind,
+	}
+	defer func() {
+		observation.Duration = time.Since(startedAt)
+		p.enrichObserver.Finished(ctx, observation)
+	}()
 	result, failureReason := p.callEnricher(ctx, EnrichInput{Alert: normalized.Clone()})
 	if err := ctx.Err(); err != nil {
 		return domain.Alert{}, err
@@ -60,6 +75,7 @@ func (p *Processor) enrichNewAlert(
 			failureReason = "invalid_enrich_data"
 		}
 	}
+	observation.Outcome = enrichMetricOutcome(failureReason)
 	if failureReason != "" {
 		p.logger.WarnContext(
 			ctx,
@@ -71,6 +87,10 @@ func (p *Processor) enrichNewAlert(
 		)
 		result = failedEnrichResult()
 	}
+	observation.Status = result.Status
+	if encoded, encodeErr := json.Marshal(result.Data); encodeErr == nil {
+		observation.PayloadBytes = int64(len(encoded))
+	}
 	normalized.EnrichStatus = result.Status
 	normalized.Enrich = result.Data.Clone()
 	normalized, err = normalized.Normalize()
@@ -78,6 +98,21 @@ func (p *Processor) enrichNewAlert(
 		return domain.Alert{}, fmt.Errorf("normalize enriched alert: %w", err)
 	}
 	return normalized, nil
+}
+
+func enrichMetricOutcome(failureReason string) string {
+	switch failureReason {
+	case "":
+		return EnrichOutcomeCompleted
+	case "enricher_error":
+		return EnrichOutcomeError
+	case "enricher_panic":
+		return EnrichOutcomePanic
+	case "invalid_enrich_status":
+		return EnrichOutcomeInvalidStatus
+	default:
+		return EnrichOutcomeInvalidData
+	}
 }
 
 func failedEnrichResult() EnrichResult {

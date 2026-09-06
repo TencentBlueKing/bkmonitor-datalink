@@ -330,6 +330,86 @@ const panelDefinitions: PanelDefinition[] = [
       `histogram_quantile(0.99, sum(rate(linkd_cleaner_step_duration_seconds_bucket${selector}[${window}])) by (le, linkd_event_source_id, linkd_step, linkd_outcome))`,
   },
   {
+    id: "enrich-attempt-rate",
+    title: "Enrich 状态速率",
+    unit: "attempt/s",
+    kind: "area",
+    query: (selector, window) =>
+      `sum(rate(linkd_enrich_attempts_total${selector}[${window}])) by (linkd_event_source_id, linkd_status, linkd_outcome, linkd_chain_kind)`,
+  },
+  {
+    id: "enrich-duration",
+    title: "Enrich 总体耗时",
+    unit: "s",
+    kind: "line",
+    query: (selector, window) =>
+      `${namedSeries(`sum(rate(linkd_enrich_attempt_duration_seconds_sum${selector}[${window}])) / sum(rate(linkd_enrich_attempt_duration_seconds_count${selector}[${window}]))`, "平均")} or ${namedSeries(`histogram_quantile(0.95, sum(rate(linkd_enrich_attempt_duration_seconds_bucket${selector}[${window}])) by (le))`, "P95")} or ${namedSeries(`histogram_quantile(0.99, sum(rate(linkd_enrich_attempt_duration_seconds_bucket${selector}[${window}])) by (le))`, "P99")}`,
+  },
+  {
+    id: "enrich-inflight",
+    title: "Enrich 在途调用",
+    unit: "attempt",
+    kind: "area",
+    query: (selector) =>
+      `sum(linkd_enrich_inflight${selector}) by (linkd_event_source_id)`,
+  },
+  {
+    id: "enrich-processor-rate",
+    title: "Enrich Processor 状态速率",
+    unit: "attempt/s",
+    kind: "area",
+    query: (selector, window) =>
+      `sum(rate(linkd_enrich_processor_attempts_total${selector}[${window}])) by (linkd_processor, linkd_status, linkd_outcome)`,
+  },
+  {
+    id: "enrich-processor-p99",
+    title: "Enrich Processor P99",
+    unit: "s",
+    kind: "line",
+    query: (selector, window) =>
+      `histogram_quantile(0.99, sum(rate(linkd_enrich_processor_duration_seconds_bucket${selector}[${window}])) by (le, linkd_processor))`,
+  },
+  {
+    id: "enrich-diagnostics",
+    title: "Enrich 诊断速率",
+    unit: "diagnostic/s",
+    kind: "area",
+    query: (selector, window) =>
+      `sum(rate(linkd_enrich_processor_diagnostics_total${selector}[${window}])) by (linkd_processor, linkd_diagnostic_code, linkd_dependency)`,
+  },
+  {
+    id: "enrich-datasource-rate",
+    title: "Enrich DataSource 调用速率",
+    unit: "operation/s",
+    kind: "area",
+    query: (selector, window) =>
+      `sum(rate(linkd_enrich_datasource_operations_total${selector}[${window}])) by (linkd_datasource, linkd_operation, linkd_outcome)`,
+  },
+  {
+    id: "enrich-datasource-p99",
+    title: "Enrich DataSource P99",
+    unit: "s",
+    kind: "line",
+    query: (selector, window) =>
+      `histogram_quantile(0.99, sum(rate(linkd_enrich_datasource_duration_seconds_bucket${selector}[${window}])) by (le, linkd_datasource, linkd_operation))`,
+  },
+  {
+    id: "enrich-lifecycle-duration-ratio",
+    title: "Enrich / Lifecycle 平均耗时",
+    unit: "%",
+    kind: "line",
+    query: (selector, window) =>
+      `100 * (sum(rate(linkd_enrich_attempt_duration_seconds_sum${selector}[${window}])) / sum(rate(linkd_enrich_attempt_duration_seconds_count${selector}[${window}]))) / (sum(rate(linkd_pipeline_attempt_duration_seconds_sum${mergeSelector(selector, 'linkd_stage="lifecycle",linkd_outcome=~"accepted|rejected|replayed|failed"')}[${window}])) / sum(rate(linkd_pipeline_attempt_duration_seconds_count${mergeSelector(selector, 'linkd_stage="lifecycle",linkd_outcome=~"accepted|rejected|replayed|failed"')}[${window}])))`,
+  },
+  {
+    id: "enrich-payload-size",
+    title: "Enrich Payload 大小",
+    unit: "bytes",
+    kind: "line",
+    query: (selector, window) =>
+      `${namedSeries(`sum(rate(linkd_enrich_payload_size_bytes_sum${selector}[${window}])) / sum(rate(linkd_enrich_payload_size_bytes_count${selector}[${window}]))`, "平均")} or ${namedSeries(`histogram_quantile(0.95, sum(rate(linkd_enrich_payload_size_bytes_bucket${selector}[${window}])) by (le))`, "P95")} or ${namedSeries(`histogram_quantile(0.99, sum(rate(linkd_enrich_payload_size_bytes_bucket${selector}[${window}])) by (le))`, "P99")}`,
+  },
+  {
     id: "lifecycle-results",
     title: "Lifecycle 裁决速率",
     unit: "event/s",
@@ -691,6 +771,16 @@ export class PrometheusConnector {
         "sum(rate(linkd_lifecycle_lease_operations_total[5m])) by (instance,linkd_operation,linkd_outcome)",
       recentAlertCache:
         "sum(rate(linkd_lifecycle_recent_alert_cache_operations_total[5m])) by (instance,linkd_operation,linkd_outcome)",
+      enrichAttempts:
+        "sum(rate(linkd_enrich_attempts_total[5m])) by (instance,linkd_event_source_id,linkd_status,linkd_outcome,linkd_chain_kind)",
+      enrichInflight:
+        "sum(linkd_enrich_inflight) by (instance,linkd_event_source_id)",
+      enrichProcessors:
+        "sum(rate(linkd_enrich_processor_attempts_total[5m])) by (instance,linkd_processor,linkd_status,linkd_outcome)",
+      enrichDataSources:
+        "sum(rate(linkd_enrich_datasource_operations_total[5m])) by (instance,linkd_datasource,linkd_operation,linkd_outcome)",
+      enrichDiagnostics:
+        "sum(rate(linkd_enrich_processor_diagnostics_total[5m])) by (instance,linkd_processor,linkd_diagnostic_code,linkd_dependency)",
       finalHook:
         "sum(rate(linkd_final_hook_operations_total[5m])) by (instance,linkd_event_source_id,linkd_hook_name,messaging_system,linkd_outcome)",
     });
@@ -823,6 +913,10 @@ function unavailable(
 function seriesName(labels: Record<string, string>, index: number): string {
   const preferred = [
     labels.linkd_stage,
+    labels.linkd_processor,
+    labels.linkd_datasource,
+    labels.linkd_status,
+    labels.linkd_outcome,
     labels.linkd_event_source_id,
     labels.messaging_kafka_partition,
     labels.linkd_step,

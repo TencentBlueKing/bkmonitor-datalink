@@ -22,12 +22,20 @@ import (
 
 // Router 依据 Alert.EventSourceID 选择启动时冻结的 Processor Chain。
 type Router struct {
-	routes map[string]lifecycle.AlertEnricher
+	routes     map[string]lifecycle.AlertEnricher
+	chainKinds map[string]lifecycle.EnrichChainKind
 }
 
 // NewRouter 装配全部 enabled 和 disabled EventSource 的丰富路由。
-func NewRouter(sources []config.EventSource, dataSources enrich.Sources) (*Router, error) {
+func NewRouter(sources []config.EventSource, dataSources enrich.Sources, options ...RouterOption) (*Router, error) {
+	settings := routerOptions{observer: enrich.NoopObserver()}
+	for _, option := range options {
+		if option != nil {
+			option(&settings)
+		}
+	}
 	routes := make(map[string]lifecycle.AlertEnricher, len(sources))
+	chainKinds := make(map[string]lifecycle.EnrichChainKind, len(sources))
 	for sourceIndex, source := range sources {
 		if _, exists := routes[source.EventSourceID]; exists {
 			return nil, fmt.Errorf("event_sources[%d] duplicates event source %q", sourceIndex, source.EventSourceID)
@@ -42,15 +50,29 @@ func NewRouter(sources []config.EventSource, dataSources enrich.Sources) (*Route
 		}
 		if len(chainProcessors) == 0 {
 			routes[source.EventSourceID] = enrich.NoopEnricher{}
+			chainKinds[source.EventSourceID] = lifecycle.EnrichChainNoop
 			continue
 		}
-		chain, err := enrich.NewChain(chainProcessors, dataSources)
+		chain, err := enrich.NewChain(chainProcessors, dataSources, enrich.WithObserver(settings.observer))
 		if err != nil {
 			return nil, fmt.Errorf("event_sources[%d].enrich: %w", sourceIndex, err)
 		}
 		routes[source.EventSourceID] = chain
+		chainKinds[source.EventSourceID] = lifecycle.EnrichChainConfigured
 	}
-	return &Router{routes: routes}, nil
+	return &Router{routes: routes, chainKinds: chainKinds}, nil
+}
+
+// EnrichChainKind 返回指定 EventSource 使用的丰富链类型。
+func (r *Router) EnrichChainKind(eventSourceID string) lifecycle.EnrichChainKind {
+	if r == nil {
+		return lifecycle.EnrichChainUnknown
+	}
+	kind, exists := r.chainKinds[eventSourceID]
+	if !exists {
+		return lifecycle.EnrichChainUnknown
+	}
+	return kind
 }
 
 // Enrich 路由已知来源；未知来源作为装配与持久化不一致返回错误。

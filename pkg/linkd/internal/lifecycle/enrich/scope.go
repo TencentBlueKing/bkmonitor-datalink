@@ -11,12 +11,16 @@ package enrich
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle/enrich/models"
 )
+
+// ErrInvalidDataSourceResponse 表示外部请求成功后返回的数据违反 Reader 契约。
+var ErrInvalidDataSourceResponse = errors.New("invalid enrich datasource response")
 
 // InstanceQuery 描述 OneModel 实例存储的一次单实例查询。
 // Filters 使用 ES 文档的扁平字段名；Client 会强制追加租户和模型过滤。

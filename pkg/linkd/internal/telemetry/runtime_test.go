@@ -22,6 +22,8 @@ import (
 	controlplaneredisstream "linkd/internal/controlplane/redisstream"
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
+	"linkd/internal/lifecycle/enrich"
+	"linkd/internal/lifecycle/enrich/rules"
 )
 
 func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) {
@@ -66,6 +68,20 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 	}}})
 	runtime.ObserveCleanerBackpressureCheck(ctx, "sampled", 42, true)
 	runtime.ObserveCleanerBackpressureTransition(ctx, "pause")
+	enrichObserver := runtime.EnrichObserver()
+	enrichObserver.Started(ctx, "source-a")
+	enrichObserver.Finished(ctx, lifecycle.EnrichObservation{
+		EventSourceID: "source-a", Status: domain.EnrichStatusPartial,
+		Outcome: lifecycle.EnrichOutcomeCompleted, ChainKind: lifecycle.EnrichChainConfigured,
+		Duration: 12 * time.Millisecond, PayloadBytes: 2048,
+	})
+	runtime.EnrichProcessorObserver().ProcessorFinished(ctx, enrich.ProcessorObservation{
+		Processor: rules.ResourceProcessor, Status: domain.EnrichStatusFailed,
+		Outcome: enrich.ProcessorOutcomeCompleted, Duration: 8 * time.Millisecond,
+		Diagnostics: []enrich.Diagnostic{{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel}},
+	})
+	observedSources := runtime.ObserveEnrichSources(enrich.Sources{AlarmSource: testAlarmSourceReader{}})
+	_, _, _ = observedSources.AlarmSource.GetAlarmSourceName(ctx, "sensitive-tenant", "source-a")
 	runtime.RecentAlertCacheObserver().Operation(ctx, "get_current", "hit")
 	panicRecovered := false
 	func() {
@@ -128,6 +144,19 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 		"linkd_cleaner_backpressure_paused_ratio",
 		"linkd_cleaner_backpressure_transitions_total",
 		"linkd_final_hook_operations_total",
+		"linkd_enrich_attempts_total",
+		"linkd_enrich_attempt_duration_seconds_bucket",
+		"linkd_enrich_inflight",
+		"linkd_enrich_payload_size_bytes_bucket",
+		"linkd_enrich_processor_attempts_total",
+		"linkd_enrich_processor_duration_seconds_bucket",
+		"linkd_enrich_processor_diagnostics_total",
+		"linkd_enrich_datasource_operations_total",
+		"linkd_enrich_datasource_duration_seconds_bucket",
+		`linkd_enrich_payload_size_bytes_bucket{linkd_event_source_id="source-a",linkd_status="partial"`,
+		`le="512"`,
+		`le="65536"`,
+		`le="262144"`,
 		"linkd_final_hook_duration_seconds_bucket",
 		"linkd_lifecycle_recent_alert_cache_operations_total",
 		`linkd_lifecycle_recent_alert_cache_operations_total{linkd_operation="get_current",linkd_outcome="hit"`,
@@ -162,11 +191,17 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 			t.Fatalf("metrics missing %q:\n%s", expected, text)
 		}
 	}
-	for _, forbidden := range []string{"bk_tenant_id", "event_id", "alert_id", "raw-events", `consumer_group="`} {
+	for _, forbidden := range []string{"bk_tenant_id", "event_id", "alert_id", "raw-events", `consumer_group="`, "sensitive-tenant"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("metrics contain forbidden attribute %q", forbidden)
 		}
 	}
+}
+
+type testAlarmSourceReader struct{}
+
+func (testAlarmSourceReader) GetAlarmSourceName(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
 }
 
 type panickingFinalHook struct{}

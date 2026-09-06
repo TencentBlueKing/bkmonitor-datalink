@@ -144,7 +144,7 @@ func Run(
 	defer hook.Close()
 	observedHook := telemetryRuntime.ObserveFinalHook(hook)
 
-	enricher, enrichRuntime, err := openEnricher(startupCtx, cfg.EventSources, lifecycleConfig)
+	enricher, enrichRuntime, err := openEnricher(startupCtx, cfg.EventSources, lifecycleConfig, telemetryRuntime)
 	if err != nil {
 		closeSession(session)
 		return fmt.Errorf("initialize lifecycle enricher: %w", err)
@@ -164,6 +164,7 @@ func Run(
 		cfg.Severity,
 		lifecycle.SystemClock{},
 		logger,
+		lifecycle.WithEnrichObserver(telemetryRuntime.EnrichObserver()),
 	)
 	if err != nil {
 		closeSession(session)

@@ -98,14 +98,15 @@ func (NoopRecentAlertCache) PutTerminal(context.Context, store.StoredAlert) erro
 func (NoopRecentAlertCache) Repair(context.Context, store.StoredAlert) error { return nil }
 
 type Processor struct {
-	repository   store.Repository
-	recentAlerts RecentAlertCache
-	idGenerator  AlertIDGenerator
-	enricher     AlertEnricher
-	finalHook    FinalHook
-	severity     SeverityTable
-	clock        Clock
-	logger       Logger
+	repository     store.Repository
+	recentAlerts   RecentAlertCache
+	idGenerator    AlertIDGenerator
+	enricher       AlertEnricher
+	enrichObserver EnrichObserver
+	finalHook      FinalHook
+	severity       SeverityTable
+	clock          Clock
+	logger         Logger
 }
 
 func NewProcessor(
@@ -117,6 +118,7 @@ func NewProcessor(
 	severity SeverityTable,
 	clock Clock,
 	logger Logger,
+	options ...ProcessorOption,
 ) (*Processor, error) {
 	for name, dependency := range map[string]any{
 		"repository": repository, "recent_alert_cache": recentAlerts, "id_generator": idGenerator, "enricher": enricher,
@@ -126,8 +128,16 @@ func NewProcessor(
 			return nil, fmt.Errorf("lifecycle %s must not be nil", name)
 		}
 	}
-	return &Processor{repository: repository, recentAlerts: recentAlerts, idGenerator: idGenerator, enricher: enricher,
-		finalHook: finalHook, severity: severity, clock: clock, logger: logger}, nil
+	processor := &Processor{
+		repository: repository, recentAlerts: recentAlerts, idGenerator: idGenerator, enricher: enricher,
+		enrichObserver: noopEnrichObserver{}, finalHook: finalHook, severity: severity, clock: clock, logger: logger,
+	}
+	for _, option := range options {
+		if option != nil {
+			option(processor)
+		}
+	}
+	return processor, nil
 }
 
 // CloseAlertCommand 是用户或系统直接关闭 active Alert 的稳定幂等命令。

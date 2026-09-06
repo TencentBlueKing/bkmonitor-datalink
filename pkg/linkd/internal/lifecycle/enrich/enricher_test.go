@@ -93,6 +93,46 @@ func TestChainOrderIsolationAndFailureContinuation(t *testing.T) {
 	}
 }
 
+func TestChainObserverClassifiesProcessorOutcomes(t *testing.T) {
+	t.Parallel()
+	observer := &recordingProcessorObserver{}
+	processors := []Processor{
+		&testProcessor{name: "ok", fn: func(context.Context, *Scope) (ProcessorResult, error) {
+			return ProcessorResult{Status: domain.EnrichStatusSucceeded, Value: domain.JSONObject{}}, nil
+		}},
+		&testProcessor{name: "error", fn: func(context.Context, *Scope) (ProcessorResult, error) {
+			return ProcessorResult{}, errors.New("failed")
+		}},
+		&testProcessor{name: "panic", fn: func(context.Context, *Scope) (ProcessorResult, error) {
+			panic("failed")
+		}},
+		&testProcessor{name: "invalid", fn: func(context.Context, *Scope) (ProcessorResult, error) {
+			return ProcessorResult{Status: "invalid", Value: domain.JSONObject{}}, nil
+		}},
+	}
+	chain, err := NewChain(processors, Sources{}, WithObserver(observer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chain.Enrich(context.Background(), lifecycle.EnrichInput{Alert: testAlert()}); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, len(observer.values))
+	for index, value := range observer.values {
+		got[index] = value.Processor + ":" + value.Outcome
+	}
+	want := []string{"ok:completed", "error:process_error", "panic:panic", "invalid:invalid_result"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("observations=%v, want %v", got, want)
+	}
+}
+
+type recordingProcessorObserver struct{ values []ProcessorObservation }
+
+func (o *recordingProcessorObserver) ProcessorFinished(_ context.Context, observation ProcessorObservation) {
+	o.values = append(o.values, observation)
+}
+
 func TestChainCancellationStopsFollowingProcessor(t *testing.T) {
 	cancelled, cancel := context.WithCancel(context.Background())
 	calls := 0

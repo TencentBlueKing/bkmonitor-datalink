@@ -12,6 +12,7 @@ package enrich
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
@@ -29,10 +30,11 @@ type Processor interface {
 type Chain struct {
 	processors []Processor
 	sources    Sources
+	observer   Observer
 }
 
 // NewChain 创建不可变的 Processor 执行链。
-func NewChain(processors []Processor, sources Sources) (*Chain, error) {
+func NewChain(processors []Processor, sources Sources, options ...ChainOption) (*Chain, error) {
 	copied := append([]Processor(nil), processors...)
 	seen := make(map[string]struct{}, len(copied))
 	for index, processor := range copied {
@@ -48,7 +50,13 @@ func NewChain(processors []Processor, sources Sources) (*Chain, error) {
 		}
 		seen[name] = struct{}{}
 	}
-	return &Chain{processors: copied, sources: sources}, nil
+	chain := &Chain{processors: copied, sources: sources, observer: NoopObserver()}
+	for _, option := range options {
+		if option != nil {
+			option(chain)
+		}
+	}
+	return chain, nil
 }
 
 // Enrich 执行完整处理链；单步骤错误隔离后继续后续步骤，父 Context 取消立即停止。
@@ -69,11 +77,19 @@ func (c *Chain) Enrich(ctx context.Context, input lifecycle.EnrichInput) (lifecy
 		if err := ctx.Err(); err != nil {
 			return lifecycle.EnrichResult{}, err
 		}
-		result := runProcessor(ctx, processor, scope)
+		startedAt := time.Now()
+		result, outcome := runProcessor(ctx, processor, scope)
+		result, valid := normalizeProcessorResult(result)
+		if !valid {
+			outcome = ProcessorOutcomeInvalidResult
+		}
+		c.observer.ProcessorFinished(ctx, ProcessorObservation{
+			Processor: processor.Name(), Status: result.Status, Outcome: outcome,
+			Duration: time.Since(startedAt), Diagnostics: cloneDiagnostics(result.Diagnostics),
+		})
 		if err := ctx.Err(); err != nil {
 			return lifecycle.EnrichResult{}, err
 		}
-		result = normalizeProcessorResult(result)
 		results = append(results, result)
 		entries = append(entries, ProcessorEntry{processor.Name(): ProcessorEnvelope{
 			Status: result.Status, Value: result.Value, Diagnostics: cloneDiagnostics(result.Diagnostics),
@@ -87,24 +103,26 @@ func (c *Chain) Enrich(ctx context.Context, input lifecycle.EnrichInput) (lifecy
 	return lifecycle.EnrichResult{Status: payload.Status, Data: data}, nil
 }
 
-func runProcessor(ctx context.Context, processor Processor, scope *Scope) (result ProcessorResult) {
+func runProcessor(ctx context.Context, processor Processor, scope *Scope) (result ProcessorResult, outcome string) {
+	outcome = ProcessorOutcomeCompleted
 	defer func() {
 		if recover() != nil {
 			result = failedProcessorResult(processor.Name())
+			outcome = ProcessorOutcomePanic
 		}
 	}()
 	matched, err := processor.Match(ctx, scope)
 	if err != nil {
-		return failedProcessorResult(processor.Name())
+		return failedProcessorResult(processor.Name()), ProcessorOutcomeMatchError
 	}
 	if !matched {
-		return ProcessorResult{Status: domain.EnrichStatusSkipped, Value: domain.JSONObject{}}
+		return ProcessorResult{Status: domain.EnrichStatusSkipped, Value: domain.JSONObject{}}, ProcessorOutcomeCompleted
 	}
 	result, err = processor.Process(ctx, scope)
 	if err != nil {
-		return failedProcessorResult(processor.Name())
+		return failedProcessorResult(processor.Name()), ProcessorOutcomeProcessError
 	}
-	return result
+	return result, outcome
 }
 
 func failedProcessorResult(name string) ProcessorResult {
@@ -117,18 +135,27 @@ func failedProcessorResult(name string) ProcessorResult {
 	}
 }
 
-func normalizeProcessorResult(result ProcessorResult) ProcessorResult {
+func normalizeProcessorResult(result ProcessorResult) (ProcessorResult, bool) {
 	if !processorStatusValid(result.Status) {
-		return ProcessorResult{
-			Status:      domain.EnrichStatusFailed,
-			Value:       domain.JSONObject{},
-			Diagnostics: []Diagnostic{{Code: DiagnosticCodeInvalidField, Fields: []string{"status"}}},
-		}
+		return invalidProcessorResult(), false
 	}
 	if result.Value == nil {
 		result.Value = domain.JSONObject{}
 	}
-	return result
+	normalized, err := result.Value.Normalize()
+	if err != nil {
+		return invalidProcessorResult(), false
+	}
+	result.Value = normalized
+	return result, true
+}
+
+func invalidProcessorResult() ProcessorResult {
+	return ProcessorResult{
+		Status:      domain.EnrichStatusFailed,
+		Value:       domain.JSONObject{},
+		Diagnostics: []Diagnostic{{Code: DiagnosticCodeInvalidField, Fields: []string{"status"}}},
+	}
 }
 
 func cloneDiagnostics(diagnostics []Diagnostic) []Diagnostic {

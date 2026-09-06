@@ -273,6 +273,23 @@ export function LifecyclePage() {
           "signal-handler-duration",
         ]}
       />
+      <MetricSection
+        title="Enrich"
+        description="从总体状态下钻到 Processor 与 DataSource，定位同步丰富的失败、延迟和载荷增长。"
+        panels={metrics.data?.panels ?? []}
+        ids={[
+          "enrich-attempt-rate",
+          "enrich-duration",
+          "enrich-inflight",
+          "enrich-processor-rate",
+          "enrich-processor-p99",
+          "enrich-diagnostics",
+          "enrich-datasource-rate",
+          "enrich-datasource-p99",
+          "enrich-payload-size",
+          "enrich-lifecycle-duration-ratio",
+        ]}
+      />
       <LifecycleBatchPanel
         panels={metrics.data?.panels ?? []}
         config={config}
@@ -486,6 +503,9 @@ function lifecycleNodePanels(panels: MetricPanel[], step: string) {
     mailbox_peek: ["lifecycle-mailbox", "lifecycle-drain-p95"],
     process_event: [
       "lifecycle-results",
+      "enrich-attempt-rate",
+      "enrich-duration",
+      "enrich-processor-p99",
       "lifecycle-recent-alert-cache",
       "lifecycle-recent-alert-hit-ratio",
       "pipeline-average",

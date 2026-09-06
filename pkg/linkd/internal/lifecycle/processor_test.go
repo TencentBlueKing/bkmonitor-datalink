@@ -216,6 +216,47 @@ func TestEnricherCreationResults(t *testing.T) {
 	}
 }
 
+func TestEnrichObserverSeesFinalDegradedResult(t *testing.T) {
+	t.Parallel()
+	repo := memory.New()
+	observer := &recordingEnrichObserver{}
+	processor, err := NewProcessor(
+		repo, NoopRecentAlertCache{}, DeterministicAlertIDGenerator{},
+		stubEnricher{fn: func(EnrichInput) (EnrichResult, error) { panic("broken") }},
+		NoopFinalHook{}, testSeverity{}, fixedClock{time.Date(2026, 9, 1, 0, 10, 0, 0, time.UTC)}, discardLogger{},
+		WithEnrichObserver(observer),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := testEvent("event-enrich-observer", "warning")
+	result := persistAndProcess(t, repo, processor, event)
+	stored, err := repo.GetAlert(context.Background(), event.BKTenantID, result.AlertID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observer.started != 1 || len(observer.finished) != 1 {
+		t.Fatalf("started=%d finished=%d", observer.started, len(observer.finished))
+	}
+	observation := observer.finished[0]
+	encoded, _ := json.Marshal(stored.Alert.Enrich)
+	if observation.Status != domain.EnrichStatusFailed || observation.Outcome != EnrichOutcomePanic ||
+		observation.ChainKind != EnrichChainUnknown || observation.PayloadBytes != int64(len(encoded)) {
+		t.Fatalf("observation=%#v payload_bytes=%d", observation, len(encoded))
+	}
+}
+
+type recordingEnrichObserver struct {
+	started  int
+	finished []EnrichObservation
+}
+
+func (o *recordingEnrichObserver) Started(context.Context, string) { o.started++ }
+
+func (o *recordingEnrichObserver) Finished(_ context.Context, observation EnrichObservation) {
+	o.finished = append(o.finished, observation)
+}
+
 func TestResumePartiallyCreatedAlert(t *testing.T) {
 	repo := memory.New()
 	processor := newTestProcessor(t, repo, &recordingHook{})

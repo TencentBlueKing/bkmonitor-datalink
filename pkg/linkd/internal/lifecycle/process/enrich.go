@@ -22,6 +22,7 @@ import (
 	"linkd/internal/lifecycle/enrich/datasources"
 	"linkd/internal/lifecycle/enrich/rules"
 	elasticsearchstore "linkd/internal/store/elasticsearch"
+	"linkd/internal/telemetry"
 )
 
 type enrichRuntime struct {
@@ -72,6 +73,7 @@ func openEnricher(
 	ctx context.Context,
 	eventSources []config.EventSource,
 	lifecycleConfig config.LifecycleConfig,
+	telemetryRuntime *telemetry.Runtime,
 ) (lifecycle.AlertEnricher, *enrichRuntime, error) {
 	requirements := requiredEnrichDataSources(eventSources)
 	runtime := &enrichRuntime{}
@@ -124,10 +126,21 @@ func openEnricher(
 		}
 		sources.OneModel = client
 	}
-	router, err := assembly.NewRouter(eventSources, sources)
-	if err != nil {
+	if telemetryRuntime != nil {
+		sources = telemetryRuntime.ObserveEnrichSources(sources)
+	}
+	router, routerErr := func() (*assembly.Router, error) {
+		if telemetryRuntime == nil {
+			return assembly.NewRouter(eventSources, sources)
+		}
+		return assembly.NewRouter(
+			eventSources, sources,
+			assembly.WithEnrichObserver(telemetryRuntime.EnrichProcessorObserver()),
+		)
+	}()
+	if routerErr != nil {
 		_ = runtime.Close()
-		return nil, runtime, fmt.Errorf("create enrich router: %w", err)
+		return nil, runtime, fmt.Errorf("create enrich router: %w", routerErr)
 	}
 	return router, runtime, nil
 }

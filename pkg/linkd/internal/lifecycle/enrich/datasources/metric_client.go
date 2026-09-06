@@ -94,7 +94,7 @@ func takeMetricMetadata(query *gorm.DB, operation string) (models.MetricMetadata
 	dimensions := make([]models.MetricDimension, 0)
 	if len(row.DimensionList) != 0 {
 		if err := json.Unmarshal(row.DimensionList, &dimensions); err != nil {
-			return models.MetricMetadata{}, false, fmt.Errorf("%s dimension_list: %w", operation, err)
+			return models.MetricMetadata{}, false, fmt.Errorf("%w: %s dimension_list: %v", enrich.ErrInvalidDataSourceResponse, operation, err)
 		}
 	}
 	return models.MetricMetadata{

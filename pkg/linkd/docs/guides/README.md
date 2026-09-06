@@ -9,6 +9,7 @@
 - [Standard Event 模拟器](event-generator.md)；
 - [使用 PM2 托管本地 Linkd 拓扑](pm2.md)；
 - [Linkd DevTools 运维调试工具](devtools.md)；
+- [主机推送告警 Enrich 示例](host-alert-enrich-example.md)；
 
 后续按实际交付能力补充以下文档，而不提前记录尚未实现的操作步骤：
 

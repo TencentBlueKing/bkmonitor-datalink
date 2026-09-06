@@ -78,7 +78,7 @@ func (c *BKStrategyClient) GetStrategyHistory(ctx context.Context, strategyID, h
 	}
 	content, err := decodeJSONObject("alarm_strategy_history.content", row.Content)
 	if err != nil {
-		return models.BkStrategyHistory{}, false, err
+		return models.BkStrategyHistory{}, false, fmt.Errorf("%w: %v", enrich.ErrInvalidDataSourceResponse, err)
 	}
 	return models.BkStrategyHistory{ID: row.ID, StrategyID: row.StrategyID, Content: content}, true, nil
 }

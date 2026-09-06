@@ -147,7 +147,7 @@ func parseFindInstanceResponse(
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	if err := decoder.Decode(&result); err != nil {
-		return enrich.Instance{}, false, fmt.Errorf("decode response: %w", err)
+		return enrich.Instance{}, false, fmt.Errorf("%w: decode response: %v", enrich.ErrInvalidDataSourceResponse, err)
 	}
 	if len(result.Hits.Hits) == 0 {
 		return enrich.Instance{}, false, nil
@@ -157,11 +157,11 @@ func parseFindInstanceResponse(
 
 func parseInstanceSource(source map[string]any, tenantID, modelCode string) (enrich.Instance, bool, error) {
 	if source["bk_tenant_id"] != tenantID || source["cw_object_model_code"] != modelCode {
-		return enrich.Instance{}, false, fmt.Errorf("response identity does not match query")
+		return enrich.Instance{}, false, fmt.Errorf("%w: response identity does not match query", enrich.ErrInvalidDataSourceResponse)
 	}
 	instanceID, ok := source["cw_object_model_inst_id"].(string)
 	if !ok || instanceID == "" {
-		return enrich.Instance{}, false, fmt.Errorf("response has invalid instance identity")
+		return enrich.Instance{}, false, fmt.Errorf("%w: response has invalid instance identity", enrich.ErrInvalidDataSourceResponse)
 	}
 	return enrich.Instance{TenantID: tenantID, ModelCode: modelCode, InstanceID: instanceID, Fields: source}, true, nil
 }

@@ -120,7 +120,7 @@ func (c *CWStrategyClient) take(query *gorm.DB, operation string) (models.CWStra
 	}
 	result, err := cwStrategyFromRow(row)
 	if err != nil {
-		return models.CWStrategy{}, false, err
+		return models.CWStrategy{}, false, fmt.Errorf("%w: %v", enrich.ErrInvalidDataSourceResponse, err)
 	}
 	return result, true, nil
 }

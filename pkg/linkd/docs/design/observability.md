@@ -108,6 +108,7 @@ block、mutex 和 execution trace，不能用单张 CPU 火焰图代替因果分
 | `linkd.redis_stream.*`             | Stream 条目/内存、Group/Consumer、PEL、lag、年龄、软上限和安全裁剪        |
 | `linkd.store.*`                    | Repository 操作、耗时、幂等重放和冲突                                     |
 | `linkd.lifecycle.recent_alert_cache.*` | Recent Alert 命中、缺失、写入、解码失败和冲突修复                      |
+| `linkd.enrich.*`                 | 新 Alert 同步丰富的总体结果、Processor、DataSource、在途调用和载荷大小 |
 
 `linkd.store.operations` 对所有 Repository 调用统一计数，`not_found` 作为查询结果保留，便于分析查询命中率。
 Lifecycle 的 `find_active` 和 `find_terminal_by_event` 会把 `store.ErrNotFound` 作为正常控制流处理；它不会
@@ -147,6 +148,16 @@ Group 名称，避免配置值形成高基数标签；未启用任务时不生�
 `linkd.lifecycle.recent_alert_cache.operations` 使用固定 `linkd.operation` 和 `linkd.outcome` 记录 current、
 ended、terminal 和 repair 操作。DevTools 展示操作速率与读取命中率；指标不携带租户、AlertID、EventID、
 fingerprint、MailboxID 或缓存 key。
+
+Enrich 使用 `linkd_enrich_attempts_total`、`linkd_enrich_attempt_duration_seconds`、
+`linkd_enrich_inflight` 和 `linkd_enrich_payload_size_bytes` 记录新 Alert 丰富的最终状态、执行结果、并发占用与载荷大小；
+使用 `linkd_enrich_processor_attempts_total`、`linkd_enrich_processor_duration_seconds` 和
+`linkd_enrich_processor_diagnostics_total` 下钻到固定 Processor；使用
+`linkd_enrich_datasource_operations_total` 和 `linkd_enrich_datasource_duration_seconds` 区分 Reader 的
+`found/not_found/failed/canceled/invalid_response`。这些指标共享 Lifecycle/All-in-one 的 OTel Resource，
+并保留 `linkd.pipeline.*{linkd.stage="lifecycle"}` 作为完整 Event 裁决口径。指标标签只允许已校验的
+EventSource ID、固定 Processor、固定 DataSource/operation、状态和原因枚举；租户、实体 ID、查询字段、
+错误全文和 payload 不进入指标。
 
 四个固定任务使用 `linkd_control_plane_task_active_ratio`、`linkd_control_plane_task_runs_total`、
 `linkd_control_plane_task_run_duration_seconds` 和 `linkd_control_plane_task_last_success_seconds`。`linkd_task`

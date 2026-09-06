@@ -152,6 +152,22 @@ func TestRouterRunsConfiguredBaseCollectSlice(t *testing.T) {
 	}
 }
 
+func TestRouterReportsEnrichChainKind(t *testing.T) {
+	t.Parallel()
+	router, err := NewRouter([]config.EventSource{
+		{EventSourceID: "configured", Enrich: config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "source"}}}},
+		{EventSourceID: "noop"},
+	}, enrich.Sources{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if router.EnrichChainKind("configured") != lifecycle.EnrichChainConfigured ||
+		router.EnrichChainKind("noop") != lifecycle.EnrichChainNoop ||
+		router.EnrichChainKind("missing") != lifecycle.EnrichChainUnknown {
+		t.Fatalf("configured=%q noop=%q missing=%q", router.EnrichChainKind("configured"), router.EnrichChainKind("noop"), router.EnrichChainKind("missing"))
+	}
+}
+
 func TestRouterRejectsUnknownSourceAndProcessor(t *testing.T) {
 	t.Parallel()
 	router, err := NewRouter([]config.EventSource{{EventSourceID: "known"}}, enrich.Sources{})

@@ -279,6 +279,27 @@ describe("PrometheusConnector", () => {
     );
     expect(result.panels).toContainEqual(
       expect.objectContaining({
+        id: "enrich-duration",
+        title: "Enrich 总体耗时",
+        unit: "s",
+      }),
+    );
+    expect(result.panels).toContainEqual(
+      expect.objectContaining({
+        id: "enrich-datasource-p99",
+        title: "Enrich DataSource P99",
+        unit: "s",
+      }),
+    );
+    expect(
+      requests.some((request) =>
+        decodeURIComponent(request).includes(
+          "linkd_enrich_processor_diagnostics_total",
+        ),
+      ),
+    ).toBe(true);
+    expect(result.panels).toContainEqual(
+      expect.objectContaining({
         id: "pipeline-average",
         title: "阶段处理平均耗时",
         unit: "s",

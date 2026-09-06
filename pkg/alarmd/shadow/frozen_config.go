@@ -20,8 +20,15 @@ var ErrFrozenConfigUnsupported = errors.New("shadow: frozen comparison shape uns
 // BuildFrozenComparisonConfigV2 reads one actual frozen Plan and its bound
 // dependencies. It performs no lookup and creates no execution/ACK facts.
 func BuildFrozenComparisonConfigV2(due execution.DuePlan, requirements []execution.DataRequirement, queries map[execution.LogicalQueryRef]execution.QueryPlanFacts) (contract.ComparisonConfigV2, error) {
-	fail := func(field string) (contract.ComparisonConfigV2, error) {
-		return contract.ComparisonConfigV2{}, fmt.Errorf("%w: %s", ErrFrozenConfigUnsupported, field)
+	c, _, err := buildFrozenComparisonFacts(due, requirements, queries, false)
+	return c, err
+}
+
+func buildFrozenComparisonFacts(due execution.DuePlan, requirements []execution.DataRequirement, queries map[execution.LogicalQueryRef]execution.QueryPlanFacts, version3 bool) (contract.ComparisonConfigV2, execution.QueryPlanFacts, error) {
+	var query execution.QueryPlanFacts
+
+	fail := func(field string) (contract.ComparisonConfigV2, execution.QueryPlanFacts, error) {
+		return contract.ComparisonConfigV2{}, execution.QueryPlanFacts{}, fmt.Errorf("%w: %s", ErrFrozenConfigUnsupported, field)
 	}
 	if due.Identity.Validate() != nil || due.CompiledPlan == nil {
 		return fail("plan identity")
@@ -83,7 +90,8 @@ func BuildFrozenComparisonConfigV2(due execution.DuePlan, requirements []executi
 	if selected == nil {
 		return fail("missing primary requirement")
 	}
-	query, ok := queries[selected.LogicalQueryRef]
+	var ok bool
+	query, ok = queries[selected.LogicalQueryRef]
 	if !ok || query.Validate() != nil || execution.LogicalQueryRef(query.QueryRevision) != selected.LogicalQueryRef || query.TenantID != due.Identity.TenantID || query.BusinessID != due.Identity.BusinessID {
 		return fail("query binding")
 	}
@@ -125,12 +133,15 @@ func BuildFrozenComparisonConfigV2(due execution.DuePlan, requirements []executi
 		aggregationDimensions = append(aggregationDimensions, identityFields...)
 		slices.Sort(aggregationDimensions)
 	}
-	if len(query.QueryList) != 1 || !slices.Equal(query.QueryList[0].Dimensions, aggregationDimensions) {
+	if !version3 && (len(query.QueryList) != 1 || !slices.Equal(query.QueryList[0].Dimensions, aggregationDimensions)) {
 		return fail("aggregation dimensions")
 	}
-	selector, err := frozenSelectorV2(query)
-	if err != nil {
-		return fail("query shape")
+	var selector contract.ShadowSelectorConfigV2
+	if !version3 {
+		selector, err = frozenSelectorV2(query)
+		if err != nil {
+			return fail("query shape")
+		}
 	}
 	c := contract.ComparisonConfigV2{
 		SchemaVersion: "comparison-config-v2", SelectionMappingVersion: "effective-order-v1", Selector: selector,
@@ -189,6 +200,9 @@ func BuildFrozenComparisonConfigV2(due execution.DuePlan, requirements []executi
 		}
 		c.Levels = append(c.Levels, l)
 	}
+	if version3 {
+		return c, query, nil
+	}
 	b, _, err := contract.CanonicalComparisonConfigV2(c)
 	if err != nil {
 		return fail("canonical config")
@@ -197,7 +211,7 @@ func BuildFrozenComparisonConfigV2(due execution.DuePlan, requirements []executi
 	if err != nil {
 		return fail("canonical codec")
 	}
-	return *normalized, nil
+	return *normalized, query, nil
 }
 
 func frozenSelectorV2(query execution.QueryPlanFacts) (contract.ShadowSelectorConfigV2, error) {

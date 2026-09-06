@@ -14,7 +14,7 @@ func newSlotTimingMetrics() *prometheus.HistogramVec {
 }
 
 func (m phaseTwoMetrics) observeSlotTiming(o observability.Observation) {
-	if o.Component != observability.ComponentScheduler || o.Duration < 0 {
+	if (o.Component != observability.ComponentScheduler && o.Component != observability.ComponentState) || o.Duration < 0 {
 		return
 	}
 	var stage string
@@ -25,6 +25,10 @@ func (m phaseTwoMetrics) observeSlotTiming(o observability.Observation) {
 		stage = "source_next"
 	case observability.StageSlotCompleted:
 		stage = "execute"
+	case observability.StageStatePreflight:
+		stage = "state_preflight"
+	case observability.StageStateApplied:
+		stage = "state_apply"
 	default:
 		return
 	}

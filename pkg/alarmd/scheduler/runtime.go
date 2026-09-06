@@ -215,11 +215,44 @@ func (runner *Runner) RunOneAdmitted(
 	return result, attempted, false, err
 }
 
-func (runner *Runner) runOne(
+func (runner *Runner) runOne(ctx context.Context, admission ExecutionAdmission) (result execution.SlotExecutionResult, attempted bool, err error) {
+	outcome := "other_error"
+	returned := false
+	defer func() {
+		if !returned {
+			outcome = "panic"
+		}
+		if runner == nil || runner.flights == nil || runner.flights.observer == nil {
+			return
+		}
+		func() {
+			defer func() { _ = recover() }()
+			runner.flights.observer.Observe(ctx, observability.Observation{Component: observability.ComponentScheduler, Stage: observability.StageRunnerReturned, Result: observability.ResultTerminal, RunOutcome: outcome, Attempted: attempted})
+		}()
+	}()
+	result, attempted, err = runner.runOneTracked(ctx, admission, &outcome)
+	returned = true
+	return
+}
+
+func (runner *Runner) runOneTracked(
 	ctx context.Context,
 	admission ExecutionAdmission,
+	outcome *string,
 ) (flowResult execution.SlotExecutionResult, flowAttempted bool, flowErr error) {
 	decision := "preflight"
+	defer func() {
+		switch decision {
+		case "execution_returned", "query_readiness_deferred", "execute":
+			*outcome = "execute_returned"
+		default:
+			if observability.ValidRunOutcome(decision) {
+				*outcome = decision
+			} else {
+				*outcome = "other_error"
+			}
+		}
+	}()
 	var diagnosticReadyAt int64
 	if observability.TargetFlowEnabled(ctx) {
 		defer func() {
@@ -232,6 +265,7 @@ func (runner *Runner) runOne(
 		return execution.SlotExecutionResult{}, false, errors.New("alarmd scheduler: initialized Runner is required")
 	}
 	if err := ctx.Err(); err != nil {
+		decision = "cancelled"
 		return execution.SlotExecutionResult{}, false, err
 	}
 	release, acquired := runner.flights.tryAcquire(runner.queryGroup)
@@ -242,6 +276,7 @@ func (runner *Runner) runOne(
 	defer release()
 
 	if _, err := runner.session.ValidateCurrent(ctx, runner.now()); err != nil {
+		decision = "ownership_rejected"
 		return execution.SlotExecutionResult{}, false, err
 	}
 	if !runner.sourceNextAt.IsZero() && runner.now().Before(runner.sourceNextAt) {
@@ -255,6 +290,10 @@ func (runner *Runner) runOne(
 		var retry *SourceRetryError
 		var blocked *SourceBlockedError
 		if errors.As(err, &retry) || errors.As(err, &blocked) {
+			decision = "source_blocked"
+			if retry != nil {
+				decision = "source_retry"
+			}
 			runner.sourceFailures++
 			runner.sourceNextAt = runner.now().Add(retryDelay(runner.flights.limits, runner.queryGroup, runner.sourceFailures))
 			reason := execution.ReasonCode(execution.ReasonBlockedExactSetUnavailable)
@@ -265,7 +304,10 @@ func (runner *Runner) runOne(
 		}
 	}
 	if err != nil || !due {
-		decision = "source_not_due_or_error"
+		decision = "source_error"
+		if err == nil {
+			decision = "source_not_due"
+		}
 		if err == nil && !due {
 			runner.attempt = nil
 		}
@@ -283,9 +325,11 @@ func (runner *Runner) runOne(
 	}
 	fence, err := runner.session.ValidateCurrent(ctx, runner.now())
 	if err != nil {
+		decision = "ownership_rejected"
 		return execution.SlotExecutionResult{}, false, err
 	}
 	if fence != slot.Dispatch.OwnerFence {
+		decision = "ownership_rejected"
 		return execution.SlotExecutionResult{}, false, ErrSlotOwnershipChanged
 	}
 	request := execution.SlotExecutionRequest{
@@ -303,6 +347,7 @@ func (runner *Runner) runOne(
 	if admission != nil {
 		releaseAdmission, admitted := admission(operation)
 		if !admitted {
+			decision = "admission_denied"
 			return execution.SlotExecutionResult{}, false, errExecutionAdmissionDenied
 		}
 		if releaseAdmission == nil {

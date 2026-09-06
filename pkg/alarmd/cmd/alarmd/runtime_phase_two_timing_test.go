@@ -70,6 +70,9 @@ func TestSlotTimingDispatcherPreservesRunOneReturns(t *testing.T) {
 					return execution.SlotExecutionResult{}, attempted, wantErr
 				}}}
 				bundle := &phaseTwoWorkerBundle{dependencies: phaseTwoWorkerBundleDependencies{Config: validGoAccessRuntimeConfig(), Observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) {
+					if o.Stage != observability.StageRunnerCompleted {
+						return
+					}
 					if !called {
 						t.Error("observation before RunOne returned")
 					}

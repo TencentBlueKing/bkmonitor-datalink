@@ -320,8 +320,10 @@ type phaseTwoRunnerGeneration struct {
 }
 
 type phaseTwoRunnerDispatcher struct {
-	bundle *phaseTwoWorkerBundle
-	fanout int
+	occupancyMu sync.Mutex
+	executing   int
+	bundle      *phaseTwoWorkerBundle
+	fanout      int
 
 	jobs    chan phaseTwoScheduledRunner
 	results chan phaseTwoScheduledResult
@@ -550,23 +552,27 @@ func (dispatcher *phaseTwoRunnerDispatcher) start(ctx context.Context) {
 		go func() {
 			defer dispatcher.workers.Done()
 			for scheduled := range dispatcher.jobs {
+				dispatcher.changeExecuting(ctx, 1)
 				result := phaseTwoScheduledResult{scheduled: scheduled}
 				runCtx := dispatcher.bundle.dependencies.TargetFlow.Context(ctx, string(scheduled.queryGroup))
 				if observability.TargetFlowEnabled(runCtx) {
 					runCtx = observability.ContextWithTraceFields(runCtx, observability.TraceFields{QueryGroupKey: string(scheduled.queryGroup)})
 					observability.EmitTargetFlow(runCtx, "runner_dispatch", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "execution_slot_acquired", QueuedAtMS: scheduled.queuedAt.UnixMilli(), QueueWaitNS: time.Since(scheduled.queuedAt).Nanoseconds()})
 				}
-				if ctx.Err() == nil && dispatcher.bundle.isCurrentScheduledRunner(scheduled) {
-					func() {
-						defer startSlotTiming(runCtx, dispatcher.bundle.dependencies.Observer, observability.StageRunnerCompleted, time.Now)()
-						_, result.attempted, result.admissionDenied, result.err =
-							scheduled.lifecycle.runner.RunOneAdmitted(runCtx, func(execution.Operation) (func(), bool) {
-								// F was acquired by this dispatcher before preparation.
-								// P/R belong only to actual Query admission in Access.
-								return func() {}, ctx.Err() == nil
-							})
-					}()
-				}
+				func() {
+					defer dispatcher.changeExecuting(ctx, -1)
+					if ctx.Err() == nil && dispatcher.bundle.isCurrentScheduledRunner(scheduled) {
+						func() {
+							defer startSlotTiming(runCtx, dispatcher.bundle.dependencies.Observer, observability.StageRunnerCompleted, time.Now)()
+							_, result.attempted, result.admissionDenied, result.err =
+								scheduled.lifecycle.runner.RunOneAdmitted(runCtx, func(execution.Operation) (func(), bool) {
+									// F was acquired by this dispatcher before preparation.
+									// P/R belong only to actual Query admission in Access.
+									return func() {}, ctx.Err() == nil
+								})
+						}()
+					}
+				}()
 				observability.EmitTargetFlow(runCtx, "runner_return", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "returned", Attempted: result.attempted})
 				dispatcher.results <- result
 			}
@@ -583,6 +589,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) run(ctx context.Context, wake <-chan
 	var canceled error
 	ctxDone := ctx.Done()
 	for {
+		dispatcher.observeOccupancy(ctx)
 		if canceled != nil && len(dispatcher.active) == 0 {
 			return canceled
 		}
@@ -604,6 +611,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) run(ctx context.Context, wake <-chan
 		dispatcher.fillQueues()
 		now := dispatcher.bundle.schedulerNow()
 		dispatcher.sortDelayed()
+		dispatcher.observeOccupancy(ctx)
 		delayedDue := len(dispatcher.delayed) > 0 && !dispatcher.delayed[0].readyAt.After(now)
 		normalReady := len(dispatcher.normal) > 0
 		selectDelayed := canceled == nil && delayedDue && (!normalReady || dispatcher.preferDelayed)
@@ -1556,4 +1564,28 @@ func diagnosticTimeMS(t time.Time) int64 {
 		return 0
 	}
 	return t.UnixMilli()
+}
+
+// The dispatcher loop is the sole writer; publish after handling the previous event.
+func (dispatcher *phaseTwoRunnerDispatcher) observeOccupancy(ctx context.Context) {
+	dispatcher.occupancyMu.Lock()
+	defer dispatcher.occupancyMu.Unlock()
+	observeRuntime(ctx, dispatcher.bundle.dependencies.Observer, observability.Observation{
+		Component: observability.ComponentScheduler, Stage: observability.StageDispatcherSnapshot,
+		Result: observability.ResultSuccess, Dispatcher: &observability.DispatcherFacts{
+			Active: dispatcher.executing, Ready: len(dispatcher.normal), Delayed: len(dispatcher.delayed), QueuesKnown: true,
+		},
+	})
+}
+
+// Publish under the observation lock so a delayed observer cannot roll F backward.
+// This is independent of the dispatcher's pending-result membership map.
+func (dispatcher *phaseTwoRunnerDispatcher) changeExecuting(ctx context.Context, delta int) {
+	dispatcher.occupancyMu.Lock()
+	defer dispatcher.occupancyMu.Unlock()
+	dispatcher.executing += delta
+	observeRuntime(ctx, dispatcher.bundle.dependencies.Observer, observability.Observation{
+		Component: observability.ComponentScheduler, Stage: observability.StageDispatcherSnapshot,
+		Result: observability.ResultSuccess, Dispatcher: &observability.DispatcherFacts{Active: dispatcher.executing},
+	})
 }

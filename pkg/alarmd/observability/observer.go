@@ -387,33 +387,39 @@ type TraceFields struct {
 }
 
 type Observation struct {
-	Component             Component
-	Stage                 Stage
-	Result                Result
-	Operation             Operation
-	Direction             Direction
-	ReasonCode            ReasonCode
-	Duration              time.Duration
-	Counts                Counts
-	Trace                 TraceFields
-	Err                   error
-	CapacityBudget        CapacityBudget
-	CapacityRejection     *CapacityRejectionFacts
-	SourceKind            SourceKind
-	QueryPermit           *QueryPermitFacts
-	RuntimeConfig         *RuntimeConfigFacts
-	QueryFailure          *QueryFailureFacts
-	QueryTiming           *QueryTimingFacts
-	ShortPeriodCompletion *ShortPeriodCompletionFacts
-	ActiveQGSet           *ActiveQGSetFacts
-	LegacyMigration       *LegacyQGMigrationFacts
-	DrainingQG            *DrainingQGFacts
-	SourceRefresh         *SourceRefreshFacts
-	ActivationFailure     *ActivationFailureFacts
-	AlgorithmEvaluations  []AlgorithmEvaluationFact
-	AlgorithmInputs       []AlgorithmInputFact
-	normalized            bool
-	stageReasonBucket     bool
+	RunOutcome             string
+	Attempted              bool
+	ExecuteOutcome         string
+	ProgressCompletionKind string
+	Dispatcher             *DispatcherFacts
+	PermitWait             *PermitWaitFacts
+	Component              Component
+	Stage                  Stage
+	Result                 Result
+	Operation              Operation
+	Direction              Direction
+	ReasonCode             ReasonCode
+	Duration               time.Duration
+	Counts                 Counts
+	Trace                  TraceFields
+	Err                    error
+	CapacityBudget         CapacityBudget
+	CapacityRejection      *CapacityRejectionFacts
+	SourceKind             SourceKind
+	QueryPermit            *QueryPermitFacts
+	RuntimeConfig          *RuntimeConfigFacts
+	QueryFailure           *QueryFailureFacts
+	QueryTiming            *QueryTimingFacts
+	ShortPeriodCompletion  *ShortPeriodCompletionFacts
+	ActiveQGSet            *ActiveQGSetFacts
+	LegacyMigration        *LegacyQGMigrationFacts
+	DrainingQG             *DrainingQGFacts
+	SourceRefresh          *SourceRefreshFacts
+	ActivationFailure      *ActivationFailureFacts
+	AlgorithmEvaluations   []AlgorithmEvaluationFact
+	AlgorithmInputs        []AlgorithmInputFact
+	normalized             bool
+	stageReasonBucket      bool
 }
 
 type Observer interface {
@@ -1031,6 +1037,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentOwnership, StageLeaseRenewed}, {ComponentOwnership, StageFenceChecked},
 	{ComponentScheduler, StageScheduleDue}, {ComponentScheduler, StageSlotStarted},
 	{ComponentScheduler, StageSlotCompleted}, {ComponentScheduler, StageQueryAdmission},
+	{ComponentScheduler, StageRunnerReturned}, {ComponentScheduler, StageDispatcherSnapshot}, {ComponentScheduler, StageQueryPermitWait},
 	{ComponentScheduler, StageRunnerCompleted}, {ComponentScheduler, StageSlotSourceCompleted},
 	{ComponentAccess, StageQueryCompleted},
 	{ComponentAccess, StageQueryBudgetResolved},

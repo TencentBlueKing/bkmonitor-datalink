@@ -55,6 +55,17 @@ func checkConfigV2Fields(b []byte, kind string) error {
 			child = key
 		}
 		if child == "" {
+			if len(raw) > 0 && raw[0] == '[' {
+				var entries []json.RawMessage
+				if err := json.Unmarshal(raw, &entries); err != nil {
+					return err
+				}
+				for _, entry := range entries {
+					if string(entry) == "null" {
+						return invalid("shadow.config.v2."+key, "known array entries required")
+					}
+				}
+			}
 			continue
 		}
 		if !array {

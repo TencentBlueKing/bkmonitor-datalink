@@ -159,6 +159,13 @@ func CanonicalComparisonConfigV2(input ComparisonConfigV2) ([]byte, string, erro
 			}
 		}
 	}
+	valueFields := map[string]bool{}
+	for _, field := range c.Projection.ValueFields {
+		if field == "" || valueFields[field] {
+			return nil, "", invalid("shadow.config.projection", "invalid value fields")
+		}
+		valueFields[field] = true
+	}
 	if c.Schedule.AlignmentSeconds >= int64(c.Schedule.IntervalSeconds) || c.Numeric.DecimalPlaces != 6 || c.Numeric.Rounding != "HALF_EVEN" || c.Numeric.Multiplier == "0" || strings.HasPrefix(c.Numeric.Multiplier, "-") {
 		return nil, "", invalid("shadow.config", "unsupported schedule or numeric semantics")
 	}

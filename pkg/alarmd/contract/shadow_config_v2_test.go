@@ -38,6 +38,7 @@ func TestComparisonConfigV2SharedVectors(t *testing.T) {
 				strings.Replace(string(got), `"source_unit":"",`, ``, 1),
 				strings.Replace(string(got), `"not_time_align":false,`, ``, 1),
 				strings.Replace(string(got), `"table":`, `"unknown":false,"table":`, 1),
+				strings.Replace(string(got), `"value_fields":["value"]`, `"value_fields":[null]`, 1),
 				strings.Replace(string(got), `"schema_version":"comparison-config-v2"`, `"schema_version":"comparison-config-v1"`, 1),
 			} {
 				if _, err := DecodeComparisonConfigV2([]byte(bad), 1<<20); err == nil {

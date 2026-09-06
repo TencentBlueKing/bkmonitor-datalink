@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -51,6 +52,7 @@ const (
 type Logger struct {
 	component string
 	next      *slog.Logger
+	writer    *serializedLogWriter
 }
 
 // BoundedLogPolicy always records one-time lifecycle transitions. Routine
@@ -91,9 +93,11 @@ func New(component string, writer io.Writer) *Logger {
 	if writer == nil {
 		writer = io.Discard
 	}
+	locked := &serializedLogWriter{next: writer}
 	return &Logger{
+		writer:    locked,
 		component: component,
-		next: slog.New(slog.NewJSONHandler(writer, &slog.HandlerOptions{
+		next: slog.New(slog.NewJSONHandler(locked, &slog.HandlerOptions{
 			Level: slog.LevelInfo,
 		})),
 	}
@@ -347,3 +351,14 @@ func exceptionalLogResult(result Result) bool {
 }
 
 var _ Observer = (*LoggingObserver)(nil)
+
+type serializedLogWriter struct {
+	mu   sync.Mutex
+	next io.Writer
+}
+
+func (w *serializedLogWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.next.Write(p)
+}

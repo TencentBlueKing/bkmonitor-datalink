@@ -218,7 +218,14 @@ func (runner *Runner) RunOneAdmitted(
 func (runner *Runner) runOne(
 	ctx context.Context,
 	admission ExecutionAdmission,
-) (execution.SlotExecutionResult, bool, error) {
+) (flowResult execution.SlotExecutionResult, flowAttempted bool, flowErr error) {
+	decision := "preflight"
+	var diagnosticReadyAt int64
+	if observability.TargetFlowEnabled(ctx) {
+		defer func() {
+			observability.EmitTargetFlow(ctx, "runner_decision", observability.TraceFields{}, observability.TargetFlowFacts{ExecutionOutcomeKnown: true, ReadyAtMS: diagnosticReadyAt, Decision: decision, Attempted: flowAttempted, Completed: flowResult.Completed, Completion: string(flowResult.CompletionKind)})
+		}()
+	}
 	// One invocation executes at most one frozen Slot. Replay therefore has a
 	// fixed one-Slot-per-tick bound instead of a configurable batch surface.
 	if runner == nil {
@@ -229,6 +236,7 @@ func (runner *Runner) runOne(
 	}
 	release, acquired := runner.flights.tryAcquire(runner.queryGroup)
 	if !acquired {
+		decision = "single_flight_busy"
 		return execution.SlotExecutionResult{}, false, ErrSlotInFlight
 	}
 	defer release()
@@ -237,8 +245,11 @@ func (runner *Runner) runOne(
 		return execution.SlotExecutionResult{}, false, err
 	}
 	if !runner.sourceNextAt.IsZero() && runner.now().Before(runner.sourceNextAt) {
+		decision = "source_backoff"
+		diagnosticReadyAt = runner.sourceNextAt.UnixMilli()
 		return execution.SlotExecutionResult{}, false, nil
 	}
+	decision = "source_next"
 	slot, due, err := runner.source.Next(ctx, runner.queryGroup)
 	if err != nil {
 		var retry *SourceRetryError
@@ -254,6 +265,7 @@ func (runner *Runner) runOne(
 		}
 	}
 	if err != nil || !due {
+		decision = "source_not_due_or_error"
 		if err == nil && !due {
 			runner.attempt = nil
 		}
@@ -266,6 +278,7 @@ func (runner *Runner) runOne(
 	}
 	operation, ready := runner.operationFor(slot, runner.now())
 	if !ready {
+		decision = "operation_not_ready"
 		return execution.SlotExecutionResult{}, false, nil
 	}
 	fence, err := runner.session.ValidateCurrent(ctx, runner.now())
@@ -297,10 +310,12 @@ func (runner *Runner) runOne(
 		}
 		defer releaseAdmission()
 	}
+	decision = "execute"
 	result, err := runner.executor.Execute(ctx, request)
 	if err != nil && operation == execution.OperationNormal {
 		var deferred interface{ ReadinessReadyAt() time.Time }
 		if errors.As(err, &deferred) {
+			decision = "query_readiness_deferred"
 			readyAt := deferred.ReadinessReadyAt()
 			if readyAt.After(runner.now()) {
 				runner.sourceNextAt = readyAt
@@ -311,6 +326,7 @@ func (runner *Runner) runOne(
 	if err == nil {
 		runner.recordResult(slot, result, runner.now())
 	}
+	decision = "execution_returned"
 	return result, true, err
 }
 

@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -664,6 +665,10 @@ func testProductionPhaseTwoStrandedLatest(
 }
 
 func TestProductionPhaseTwoBundleExecutesFullNonEmptySlotEndToEnd(t *testing.T) {
+	testProductionFullTargetFlow(t, false)
+}
+func TestTargetFlowProductionFullSequence(t *testing.T) { testProductionFullTargetFlow(t, true) }
+func testProductionFullTargetFlow(t *testing.T, diagnostic bool) {
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
 	strategyDocument, err := os.ReadFile("testdata/g1_full_threshold_strategy.json")
@@ -716,9 +721,14 @@ func TestProductionPhaseTwoBundleExecutesFullNonEmptySlotEndToEnd(t *testing.T) 
 	cfg.PhaseTwo.Ownership.LeaseRenewInterval = config.Duration(time.Minute)
 
 	events := &recordingPhaseTwoEventSink{}
+	var flow atomic.Pointer[observability.TargetFlow]
+	var flowOutput bytes.Buffer
 	var observationsMu sync.Mutex
 	var observations []observability.Observation
-	additionalObserver := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+	additionalObserver := observability.ObserverFunc(func(ctx context.Context, observation observability.Observation) {
+		if f := flow.Load(); f != nil {
+			f.Observe(ctx, observation)
+		}
 		observationsMu.Lock()
 		defer observationsMu.Unlock()
 		observations = append(observations, observation)
@@ -741,6 +751,14 @@ func TestProductionPhaseTwoBundleExecutesFullNonEmptySlotEndToEnd(t *testing.T) 
 	}
 	if err := bundle.Start(ctx); err != nil {
 		t.Fatalf("phase-two production Start() error = %v", err)
+	}
+	if diagnostic {
+		f, e := observability.NewTargetFlow(observability.New("runtime", &flowOutput), observability.TargetFlowConfig{QueryGroups: []string{string(bundle.queryGroups[0])}})
+		if e != nil {
+			t.Fatal(e)
+		}
+		flow.Store(f)
+		bundle.dependencies.TargetFlow = f
 	}
 	clock.Store(base + 1)
 	if err := bundle.runScheduledOnce(ctx); err != nil {
@@ -832,6 +850,17 @@ func TestProductionPhaseTwoBundleExecutesFullNonEmptySlotEndToEnd(t *testing.T) 
 	})
 	if err := bundle.Shutdown(ctx); err != nil {
 		t.Fatalf("phase-two production Shutdown() error = %v", err)
+	}
+	if diagnostic {
+		output := flowOutput.String()
+		for _, stage := range []string{"plan_schedule_binding", "slot_selection", "runner_dispatch", "slot_started", "query_completed", "progress_committed", "execution_outcome", "runner_decision", "runner_return"} {
+			if !strings.Contains(output, `"stage":"`+stage+`"`) {
+				t.Errorf("target flow missing %s", stage)
+			}
+		}
+		if !strings.Contains(output, `"evaluations_observed":1`) || !strings.Contains(output, `"completion":"FULL_COMPLETED"`) {
+			t.Errorf("missing actual evaluation/completion: %s", output)
+		}
 	}
 	if !events.isClosed() {
 		t.Fatal("production shutdown did not close TriggerEvent sink")

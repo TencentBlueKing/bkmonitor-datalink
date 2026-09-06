@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -30,6 +31,21 @@ type recordingFinalPublisher struct {
 	mu             sync.Mutex
 	evidence       []*contract.FinalResultEvidenceV1
 	panicOnEnqueue bool
+	business       []*contract.BusinessAbnormalV1
+}
+
+func (p *recordingFinalPublisher) TryEnqueueBusinessAbnormal(e contract.EncodedBusinessAbnormalV1) bool {
+	if p.panicOnEnqueue {
+		panic("isolated shadow publisher")
+	}
+	envelope, err := contract.DecodeGoBusinessAbnormalV1(e.CopyBytes(), 1<<20)
+	if err != nil {
+		panic(err)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.business = append(p.business, &envelope.Reference)
+	return true
 }
 
 func (p *recordingFinalPublisher) TryEnqueueEncodedFinalEvidence(e contract.EncodedFinalResultV1) bool {
@@ -72,6 +88,12 @@ func shadowRuntimeManifest(t *testing.T, cfg config.Config, base int64) (context
 }
 
 func TestPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T) {
+	testPhaseTwoShadowActualThresholdACKAndIsolation(t, false)
+}
+func TestPhaseTwoBusinessActualThresholdACKAndIsolation(t *testing.T) {
+	testPhaseTwoShadowActualThresholdACKAndIsolation(t, true)
+}
+func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business bool) {
 	previousCommit := commit
 	commit = strings.Repeat("b", 40)
 	t.Cleanup(func() { commit = previousCommit })
@@ -82,8 +104,14 @@ func TestPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T) {
 			var clock atomic.Int64
 			clock.Store(base)
 			cfg := controlledG4RuntimeConfig(address, "http://controlled-uq", "shadow-runtime")
+			if business {
+				cfg.PhaseTwo.Control.Timezone = "UTC"
+			}
 			cfg.PhaseTwo.ShadowManifestPath = filepath.Join(t.TempDir(), "manifest.json")
 			ctx, manifest := shadowRuntimeManifest(t, cfg, base)
+			if business {
+				manifest.ComparisonVersion = "python-business-kafka-v1"
+			}
 			wire, err := contract.EncodeValidationEpochManifestV1(&manifest, 1<<20)
 			if err != nil {
 				t.Fatal(err)
@@ -92,6 +120,48 @@ func TestPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T) {
 				t.Fatal(err)
 			}
 			document := controlledG4StrategyDocument(t, 5101, strategy.DetectorKindThreshold, "usage", "system.cpu", []string{"host"}, []any{[]any{map[string]any{"method": "lt", "threshold": 50}}})
+			clientUQ := controlledG4UQClient(t, base, "system.cpu")
+			if business {
+				wire, readErr := os.ReadFile("../../contract/testdata/business-kafka-v1/snapshots.json")
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				var snapshots map[string]struct {
+					Strategy map[string]any `json:"strategy"`
+				}
+				if err = json.Unmarshal(wire, &snapshots); err != nil {
+					t.Fatal(err)
+				}
+				source := snapshots["snapshot-fixture"].Strategy
+				// Only native routing identity differs from the public Python source;
+				// the actual selector/detector/units/schedule closure is unchanged.
+				source["id"] = 5101
+				source["bk_biz_id"] = controlledG4SyntheticBusinessID
+				source["bk_tenant_id"] = "tenant-a"
+				source["space_uid"] = controlledG4SyntheticSpaceUID
+				document, err = json.Marshal(source)
+				if err != nil {
+					t.Fatal(err)
+				}
+				clientUQ = &http.Client{Transport: controlledRoundTripper(func(req *http.Request) (*http.Response, error) {
+					p, err := decodeControlledG4UQRequest(req)
+					if err != nil {
+						return nil, err
+					}
+					end, err := strconv.ParseInt(p.EndTime, 10, 64)
+					if err != nil {
+						return nil, err
+					}
+					series := controlledG4UQSeries(base, end, "system.cpu", p.MetricMerge)
+					value := 0.0
+					if end == base {
+						value = 81
+					}
+					series["values"] = []any{[]any{(end - 1) * 1000, value}}
+					return controlledG4UQResponse(req, "system.cpu", series)
+				})}
+			}
+
 			for key, value := range map[string]string{"alarm-config.strategy_ids": "[5101]", "alarm-config.strategy_5101": string(document)} {
 				if err = client.Set(ctx, key, value, 0).Err(); err != nil {
 					t.Fatal(err)
@@ -105,7 +175,7 @@ func TestPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T) {
 				func(c redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
 					return controlplane.NewLegacyRedisStrategySource(c, prefix)
 				},
-				phaseTwoProductionExternalDependencies{Now: func() time.Time { return time.Unix(clock.Load(), 0) }, HTTPClient: controlledG4UQClient(t, base, "system.cpu"),
+				phaseTwoProductionExternalDependencies{Now: func() time.Time { return time.Unix(clock.Load(), 0) }, HTTPClient: clientUQ,
 					OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil },
 					OpenFinalEvidence: func(c enginekafka.DecisionSinkConfig, _ enginekafka.ReceiptPublisherLimits, _ enginekafka.ReceiptPublisherDiagnostics) (phaseTwoFinalPublisher, error) {
 						if c.OutputTopic != manifest.GoTopic.Name {
@@ -152,6 +222,9 @@ func TestPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T) {
 			publisher.mu.Lock()
 			defer publisher.mu.Unlock()
 			want := 2
+			if business {
+				want = 1
+			}
 			if publisherPanics {
 				want = 0
 			}
@@ -159,7 +232,21 @@ func TestPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T) {
 				b, _ := json.Marshal(observations)
 				t.Fatalf("final=%d want=%d observations=%s", len(publisher.evidence), want, b)
 			}
+			if business && !publisherPanics {
+				if len(publisher.business) != 1 || publisher.business[0].Native.EventID != native[0].EventID {
+					t.Fatal("actual ABNORMAL business profile absent")
+				}
+				if publisher.business[0].ConfigDigest != "c80841863ec8277a1b4e0a408df335ebccdaec4ed5e816fc5517705b7004b735" {
+					t.Fatal("actual Python/Go config closure differs", string(publisher.business[0].Config))
+				}
+				if publisher.business[0].Primary.Status != "ABNORMAL" {
+					t.Fatal("Recovery entered business equivalence")
+				}
+			}
 			for i, e := range publisher.evidence {
+				if business {
+					i++
+				}
 				if e.Native.EventID != native[i].EventID || e.Native.SemanticDigest != native[i].EventSemanticDigest || !e.Delivery.BusinessACK {
 					t.Fatalf("wrong actual ACK association: %+v", e)
 				}

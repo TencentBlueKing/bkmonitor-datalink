@@ -401,3 +401,20 @@ func (publisher *ReceiptPublisher) recordError(err error) {
 func hasReceiptDrops(drops ReceiptDropCounts) bool {
 	return drops != (ReceiptDropCounts{})
 }
+
+// TryEnqueueBusinessAbnormal shares outstanding bytes/count and broker ACKs
+// with the existing immutable final publisher; no second transport or queue.
+func (publisher *ReceiptPublisher) TryEnqueueBusinessAbnormal(e contract.EncodedBusinessAbnormalV1) bool {
+	if publisher == nil || publisher.core == nil {
+		return false
+	}
+	payload := e.CopyBytes()
+	if len(payload) == 0 {
+		publisher.mu.Lock()
+		publisher.drops.EncodeFailed++
+		publisher.mu.Unlock()
+		publisher.diagnostics.drop(ReceiptDropEncodeFailed, 1)
+		return false
+	}
+	return publisher.enqueuePayload(payload)
+}

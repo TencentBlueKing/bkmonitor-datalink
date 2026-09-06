@@ -170,7 +170,18 @@ func TestAlertLifecycleValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	mismatch := normalized.Clone()
+	mismatch.EnrichStatus = domain.EnrichStatusPartial
+	if err := mismatch.Validate(); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("mismatched enrich status error=%v", err)
+	}
+	multipleKeys := normalized.Clone()
+	multipleKeys.Enrich["processors"] = json.RawMessage(`[{"first":{"status":"succeeded","value":{}},"second":{"status":"succeeded","value":{}}}]`)
+	if err := multipleKeys.Validate(); err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("multi-key processor error=%v", err)
+	}
 	replacement := normalized.Clone()
+
 	replacement.LatestEventID = "event-2"
 	replacement.LastOccurredAt = replacement.LastOccurredAt.Add(-time.Minute)
 	replacement.UpdateAt = replacement.UpdateAt.Add(time.Nanosecond)
@@ -222,10 +233,10 @@ func TestEventAndAlertCloneDynamicFields(t *testing.T) {
 		t.Fatal("Event clone shares dynamic fields")
 	}
 	alert := validAlert()
-	alert.Enrich["owner"] = json.RawMessage(`{"id":1}`)
+	alert.Enrich["processors"] = json.RawMessage(`[{"test":{"status":"succeeded","value":{"owner":{"id":1}}}}]`)
 	clonedAlert := alert.Clone()
 	clonedAlert.Dimensions["host"] = domain.NewStringScalar("changed")
-	clonedAlert.Enrich["owner"][0] = '['
+	clonedAlert.Enrich["processors"][0] = '{'
 	if reflect.DeepEqual(alert, clonedAlert) {
 		t.Fatal("Alert clone shares dynamic fields")
 	}
@@ -239,5 +250,5 @@ func validEvent() domain.Event {
 func validAlert() domain.Alert {
 	event := validEvent()
 	now := event.CreateAt.Add(time.Second)
-	return domain.Alert{AlertID: "alert-1", BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint, Title: event.Title, Severity: event.Severity, ConditionKey: event.ConditionKey, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: event.EventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: event.EventID, BeginAt: event.OccurredAt, CreateAt: now, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{}}
+	return domain.Alert{AlertID: "alert-1", BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint, Title: event.Title, Severity: event.Severity, ConditionKey: event.ConditionKey, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: event.EventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: event.EventID, BeginAt: event.OccurredAt, CreateAt: now, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"status": json.RawMessage(`"succeeded"`), "processors": json.RawMessage(`[]`)}}
 }

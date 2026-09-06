@@ -87,11 +87,12 @@ const (
 	EnrichStatusSucceeded EnrichStatus = "succeeded"
 	EnrichStatusPartial   EnrichStatus = "partial"
 	EnrichStatusFailed    EnrichStatus = "failed"
+	EnrichStatusSkipped   EnrichStatus = "skipped"
 )
 
 func (s EnrichStatus) Valid() bool {
 	switch s {
-	case EnrichStatusPending, EnrichStatusSucceeded, EnrichStatusPartial, EnrichStatusFailed:
+	case EnrichStatusPending, EnrichStatusSucceeded, EnrichStatusPartial, EnrichStatusFailed, EnrichStatusSkipped:
 		return true
 	default:
 		return false

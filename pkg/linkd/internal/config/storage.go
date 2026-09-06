@@ -347,6 +347,24 @@ func (c MySQLConfig) Validate() error {
 	return nil
 }
 
+func (c ElasticsearchConfig) WithDefaults() ElasticsearchConfig {
+	cloned := c
+	cloned.Addresses = append([]string(nil), c.Addresses...)
+	if cloned.IndexPrefix == "" {
+		cloned.IndexPrefix = defaultElasticsearchIndexPrefix
+	}
+	cloned.TimePartition = cloned.TimePartition.WithDefaults()
+	if c.NumberOfReplicas != nil {
+		value := *c.NumberOfReplicas
+		cloned.NumberOfReplicas = &value
+	}
+	if c.BasicAuth != nil {
+		value := *c.BasicAuth
+		cloned.BasicAuth = &value
+	}
+	return cloned
+}
+
 // Validate 校验 Elasticsearch URL 与认证方式。
 func (c ElasticsearchConfig) Validate() error {
 	c.TimePartition = c.TimePartition.WithDefaults()

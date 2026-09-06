@@ -149,6 +149,13 @@ event_sources:
       P1: critical
       P2: warning
     default_severity: warning
+    enrich:
+      processors:
+        - { type: strategy }
+        - { type: resource }
+        - { type: display }
+        - { type: metric }
+        - { type: source }
     storage:
       type: kafka
       kafka:
@@ -157,6 +164,15 @@ event_sources:
         consumer_group: linkd-source-a
         security: { protocol: plaintext }
 ```
+
+`event_sources[].enrich.processors` 是新 Alert 创建前的有序丰富链。当前注册名为
+`strategy/resource/display/metric/source`；空列表输出 `{"status":"succeeded","processors":[]}`。
+重复类型、空 type 和装配阶段发现的未知类型都会使进程启动失败。disabled 来源同样进入 Lifecycle
+路由快照，已有 Event 恢复处理时仍采用该来源配置。
+
+当前 Lifecycle 装配使用开发期固定 mock DataSource，仅匹配 `tenant-1`、策略 `123`、历史 `70001`
+与业务 `2` 的 BASE_COLLECT 样例。该模式用于验证处理器与存储/输出链路，真实平台库、鲸眼存储、
+CMDB、Redis、Elasticsearch 和远端服务仍待接入及集成验证。
 
 顶层 `cleaner` 是每条 EventSource Flow 的默认预算；`event_sources[].cleaner.runtime` 只覆盖非零
 字段。每条 Flow 内共享清洗 worker pool，但 Event 持久化、Mailbox 入队和原消息确认始终按 lane 独立推进，
@@ -296,6 +312,10 @@ linkd run lifecycle --config /etc/linkd/linkd.yaml
 linkd run control-plane --config /etc/linkd/linkd.yaml
 linkd run all-in-one --config /etc/linkd/linkd.yaml
 ```
+
+`lifecycle.datasources.alarm_source` 配置 Kingeye MySQL 连接，source Processor 使用 GORM 按 `bk_tenant_id + EventSourceID` 查询 `alarm_collect_alarmsource.name`。
+
+`lifecycle.datasources.onemodel` 配置 Resource Processor 使用的 OneModel Elasticsearch 读连接。`index_prefix` 使用 Kingeye ES 前缀；例如 `bk_monitor_base_` 会查询 `bk_monitor_base_cmdb_instance`，K8s、APM 和云模型由 OneModel Client 路由到对应固定实例索引。该连接独立于 `storage.elasticsearch`，两段配置可以指向同一集群。
 
 `config print` 会隐藏 MySQL、Redis、Elasticsearch 和 Kafka 认证信息。进程运行期间 EventSource 和
 Severity 配置冻结；修改配置需要重启进程。

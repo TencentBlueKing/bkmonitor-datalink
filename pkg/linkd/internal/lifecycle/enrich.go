@@ -11,14 +11,14 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"linkd/internal/domain"
 )
 
-// EnrichInput 是 Enricher 可读取但不得修改的 Event 与待创建 Alert 副本。
+// EnrichInput 是 Enricher 可读取但不得修改的待创建 Alert 副本。
 type EnrichInput struct {
-	Event domain.Event
 	Alert domain.Alert
 }
 
@@ -33,30 +33,15 @@ type AlertEnricher interface {
 	Enrich(ctx context.Context, input EnrichInput) (EnrichResult, error)
 }
 
-// NoopEnricher 保留丰富入口，但不产生实际丰富数据。
-type NoopEnricher struct{}
-
-// Enrich 把未配置丰富规则视为一次成功的空丰富，使正常创建不会落入 pending。
-func (NoopEnricher) Enrich(ctx context.Context, _ EnrichInput) (EnrichResult, error) {
-	if err := ctx.Err(); err != nil {
-		return EnrichResult{}, err
-	}
-	return EnrichResult{Status: domain.EnrichStatusSucceeded, Data: domain.JSONObject{}}, nil
-}
-
 func (p *Processor) enrichNewAlert(
 	ctx context.Context,
-	event domain.Event,
 	alert domain.Alert,
 ) (domain.Alert, error) {
 	normalized, err := alert.Normalize()
 	if err != nil {
 		return domain.Alert{}, fmt.Errorf("normalize base alert before enrich: %w", err)
 	}
-	result, failureReason := p.callEnricher(ctx, EnrichInput{
-		Event: event.Clone(),
-		Alert: normalized.Clone(),
-	})
+	result, failureReason := p.callEnricher(ctx, EnrichInput{Alert: normalized.Clone()})
 	if err := ctx.Err(); err != nil {
 		return domain.Alert{}, err
 	}
@@ -66,9 +51,12 @@ func (p *Processor) enrichNewAlert(
 		switch {
 		case result.Status != domain.EnrichStatusSucceeded &&
 			result.Status != domain.EnrichStatusPartial &&
-			result.Status != domain.EnrichStatusFailed:
+			result.Status != domain.EnrichStatusFailed &&
+			result.Status != domain.EnrichStatusSkipped:
 			failureReason = "invalid_enrich_status"
 		case normalizeErr != nil:
+			failureReason = "invalid_enrich_data"
+		case domain.ValidateEnrichPayload(result.Status, result.Data) != nil:
 			failureReason = "invalid_enrich_data"
 		}
 	}
@@ -76,12 +64,12 @@ func (p *Processor) enrichNewAlert(
 		p.logger.WarnContext(
 			ctx,
 			"alert enrich degraded",
-			"bk_tenant_id", event.BKTenantID,
-			"event_id", event.EventID,
+			"bk_tenant_id", normalized.BKTenantID,
+			"event_id", normalized.TriggerEventID,
 			"alert_id", normalized.AlertID,
 			"reason_code", failureReason,
 		)
-		result = EnrichResult{Status: domain.EnrichStatusFailed, Data: domain.JSONObject{}}
+		result = failedEnrichResult()
 	}
 	normalized.EnrichStatus = result.Status
 	normalized.Enrich = result.Data.Clone()
@@ -90,6 +78,13 @@ func (p *Processor) enrichNewAlert(
 		return domain.Alert{}, fmt.Errorf("normalize enriched alert: %w", err)
 	}
 	return normalized, nil
+}
+
+func failedEnrichResult() EnrichResult {
+	return EnrichResult{Status: domain.EnrichStatusFailed, Data: domain.JSONObject{
+		"status":     json.RawMessage(`"failed"`),
+		"processors": json.RawMessage(`[{"enricher":{"status":"failed","value":{},"diagnostics":[{"code":"dependency_invalid","dependency":"enricher"}]}}]`),
+	}}
 }
 
 func (p *Processor) callEnricher(

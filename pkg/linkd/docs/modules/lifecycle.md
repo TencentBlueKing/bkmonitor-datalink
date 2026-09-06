@@ -124,8 +124,21 @@ type FinalHook interface {
 }
 ```
 
-Enricher 只在创建新 Alert 前同步执行一次，允许 succeeded/partial/failed。error、panic、非法状态或
-非法 JSON 降级为 failed 和空对象，不阻断 Alert 创建。当前 Noop Enricher 返回 succeeded 空结果。
+Enricher 在每次新 Alert 持久化前同步执行，允许 succeeded/partial/failed。首次创建与等级升级产生的
+新 Alert 都执行丰富；同等级推进和终态转换保留已有丰富结果。error、panic、非法状态或
+非法 JSON/协议降级为 failed 的固定 payload，同时保留 Alert 创建流程。
+
+Enricher 输入只包含已完成基础构造和 Normalize 的 Alert 深拷贝。具体实现位于
+`internal/lifecycle/enrich`，Scope 保存 Alert 深拷贝并向每个 Processor 返回隔离副本；处理器只通过
+返回值追加丰富信息。Lifecycle 按 EventSource 路由有序链，单 Processor error/panic 会形成 failed
+信封并继续执行，父 Context 取消会立即停止。
+
+`Alert.enrich` 固定包含 `status` 与 `processors` 两个顶层 key；每个 processors 元素是以稳定处理器名
+为唯一 key 的 envelope，包含 status、value 和可选 diagnostics。`Alert.enrich_status` 与 payload status
+由同一次聚合产生，并在领域校验中保持一致。
+
+当前 `strategy → resource → display → metric → source` 的 BASE_COLLECT 样例使用固定 mock DataSource
+贯通。真实平台历史、鲸眼配置和资源数据源仍待接入与集成验证。
 
 FinalHook 在 Alert 真实变化后执行，当前实现是 Kafka Alert V1 快照。hook error、panic 或非法结果会
 写一条 failed push AlertLog；只要失败流水写入成功，就不回滚已经完成的 Alert 状态。输出契约见

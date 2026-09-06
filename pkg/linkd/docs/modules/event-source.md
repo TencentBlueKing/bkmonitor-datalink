@@ -31,6 +31,7 @@ EventSource 不负责 Alert 状态裁决、Event/Alert 持久化实现或 Lifecy
 | `fingerprint_fields` | fields 模式 1–32 项                      | 多字段按路径排序后计算 SHA-256                  |
 | `severity_mapping`   | 来源值 → 已定义 Severity name            | 来源等级映射                                    |
 | `default_severity`   | 已定义 Severity name                     | 来源值无法映射为标准 name 时的兜底              |
+| `enrich.processors`  | 有序且 type 不重复                       | 创建新 Alert 时执行的丰富处理链                 |
 | `storage.type`       | 当前必须为 `kafka`                       | 当前字段名表示输入 MQ 类型                      |
 | `storage.kafka`      | brokers/topic/consumer_group/security    | Kafka subscription 与认证配置                   |
 
@@ -73,7 +74,17 @@ source severity
 Event 和 Alert 只保存 Severity name。Lifecycle 在处理 triggered Event 时通过当前进程冻结的 Severity
 表比较等级；配置修改需要重启，不会回溯修改已有对象。
 
-## 5. Flow 装配
+## 5. Enrichment 路由
+
+Lifecycle 启动时从完整 EventSource 清单冻结 `event_source_id → Processor Chain` 路由，enabled 与
+disabled 来源都包含在内。空链使用成功的 Noop；未知来源表示配置与持久化数据不一致并进入 Lifecycle
+丰富降级。当前已注册 `strategy/resource/display/metric/source`，列表顺序同时决定执行顺序和
+`Alert.enrich.processors` 输出顺序。
+
+当前数据源适配器采用开发期固定 mock，只贯通一个 BASE_COLLECT 样例；真实依赖连接与联调状态见
+[配置指南](../guides/configuration.md)。
+
+## 6. Flow 装配
 
 关键抽象为：
 
@@ -98,7 +109,7 @@ Flow。每条 Flow 拥有自己的 MQ Session、Cleaner Runtime、确认状态�
 本身与 MQ 解耦；增加其他来源适配器时，需要同时扩展 EventSource storage 配置和 FlowFactory，不能在
 Cleaner 核心中判断具体 MQ 类型。
 
-## 6. 生命周期与变更边界
+## 7. 生命周期与变更边界
 
 - EventSource 在进程启动时加载并冻结；当前不支持热更新或 revision；
 - 修改、启用或停用来源需要重启对应进程；

@@ -36,7 +36,18 @@ type EventSource struct {
 	FingerprintFields []string                 `yaml:"fingerprint_fields,omitempty"`
 	SeverityMapping   map[string]string        `yaml:"severity_mapping,omitempty"`
 	DefaultSeverity   string                   `yaml:"default_severity,omitempty"`
+	Enrich            EnrichConfig             `yaml:"enrich,omitempty"`
 	Storage           EventSourceStorageConfig `yaml:"storage"`
+}
+
+// EnrichConfig 定义该来源创建新 Alert 时按顺序执行的丰富处理链。
+type EnrichConfig struct {
+	Processors []EnrichProcessorConfig `yaml:"processors,omitempty"`
+}
+
+// EnrichProcessorConfig 通过稳定注册名选择丰富处理器。
+type EnrichProcessorConfig struct {
+	Type string `yaml:"type"`
 }
 
 // CleanerConfig 选择一个进程内注册的来源 Cleaner。
@@ -102,6 +113,7 @@ func (s EventSource) clone() EventSource {
 		cloned.Cleaner.Runtime = &runtimeConfig
 	}
 	cloned.FingerprintFields = append([]string(nil), s.FingerprintFields...)
+	cloned.Enrich.Processors = append([]EnrichProcessorConfig(nil), s.Enrich.Processors...)
 	cloned.Storage.Kafka.Brokers = append([]string(nil), s.Storage.Kafka.Brokers...)
 	cloned.Storage.Kafka.Security = s.Storage.Kafka.Security.Clone()
 	if s.SeverityMapping != nil {
@@ -173,6 +185,16 @@ func (s EventSource) validate(severity SeverityConfig) error {
 	}
 	if s.DefaultSeverity != "" && !severity.Has(s.DefaultSeverity) {
 		return fmt.Errorf("default_severity references unknown severity %q", s.DefaultSeverity)
+	}
+	seenProcessors := make(map[string]int, len(s.Enrich.Processors))
+	for index, processor := range s.Enrich.Processors {
+		if strings.TrimSpace(processor.Type) == "" {
+			return fmt.Errorf("enrich.processors[%d].type is required", index)
+		}
+		if previous, exists := seenProcessors[processor.Type]; exists {
+			return fmt.Errorf("enrich.processors[%d].type duplicates enrich.processors[%d]: %q", index, previous, processor.Type)
+		}
+		seenProcessors[processor.Type] = index
 	}
 	if s.Storage.Type != StorageTypeKafka {
 		return fmt.Errorf("storage.type must be %q: %q", StorageTypeKafka, s.Storage.Type)

@@ -61,6 +61,20 @@ func TestEventSourceDefaultsAndValidation(t *testing.T) {
 	if err := ValidateEventSources([]EventSource{legacy}, SeverityConfig{}); err == nil || !strings.Contains(err.Error(), "not registered") {
 		t.Fatalf("legacy cleaner type error = %v", err)
 	}
+	source.Enrich.Processors = []EnrichProcessorConfig{{Type: "strategy"}, {Type: "display"}}
+	if err := ValidateEventSources([]EventSource{source}, SeverityConfig{}); err != nil {
+		t.Fatalf("ValidateEventSources() enrich error = %v", err)
+	}
+	duplicateProcessor := source
+	duplicateProcessor.Enrich.Processors = []EnrichProcessorConfig{{Type: "strategy"}, {Type: "strategy"}}
+	if err := ValidateEventSources([]EventSource{duplicateProcessor}, SeverityConfig{}); err == nil || !strings.Contains(err.Error(), "duplicates") {
+		t.Fatalf("duplicate enrich processor error = %v", err)
+	}
+	emptyProcessor := source
+	emptyProcessor.Enrich.Processors = []EnrichProcessorConfig{{}}
+	if err := ValidateEventSources([]EventSource{emptyProcessor}, SeverityConfig{}); err == nil || !strings.Contains(err.Error(), "type is required") {
+		t.Fatalf("empty enrich processor error = %v", err)
+	}
 }
 
 func TestEventSourceFingerprintAndSeverity(t *testing.T) {
@@ -107,11 +121,13 @@ func TestEventSourceCloneAndRedaction(t *testing.T) {
 	source.FingerprintFields = []string{"source_alert_id", "dimensions.host"}
 	source.SeverityMapping = map[string]string{"P1": "critical"}
 	source.Storage.Kafka.Security.SASL = &kafkaclient.SASLConfig{Mechanism: "plain", Username: "user", Password: "secret"}
+	source.Enrich.Processors = []EnrichProcessorConfig{{Type: "strategy"}}
 	redacted := source.Redacted()
+	redacted.Enrich.Processors[0].Type = "display"
 	redacted.FingerprintFields[0] = "condition_key"
 	redacted.SeverityMapping["P1"] = "info"
 	redacted.Storage.Kafka.Brokers[0] = "changed"
-	if reflect.DeepEqual(source, redacted) || source.FingerprintFields[0] != "source_alert_id" || source.SeverityMapping["P1"] != "critical" {
+	if reflect.DeepEqual(source, redacted) || source.Enrich.Processors[0].Type != "strategy" || source.FingerprintFields[0] != "source_alert_id" || source.SeverityMapping["P1"] != "critical" {
 		t.Fatalf("Redacted changed original: %#v", source)
 	}
 }

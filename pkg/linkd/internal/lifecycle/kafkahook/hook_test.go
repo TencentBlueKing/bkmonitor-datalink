@@ -54,7 +54,7 @@ func TestHookEmitsV1AlertChange(t *testing.T) {
 
 func testAlert() domain.Alert {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	return domain.Alert{AlertID: "alert-1", BKTenantID: "tenant-1", EventSourceID: "source", Fingerprint: "fp", Title: "CPU high", Severity: "warning", Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: "event-1", LastOccurredAt: now, UpdateAt: now, TriggerEventID: "event-1", BeginAt: now, CreateAt: now, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{}}
+	return domain.Alert{AlertID: "alert-1", BKTenantID: "tenant-1", EventSourceID: "source", Fingerprint: "fp", Title: "CPU high", Severity: "warning", Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: "event-1", LastOccurredAt: now, UpdateAt: now, TriggerEventID: "event-1", BeginAt: now, CreateAt: now, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"status": json.RawMessage(`"succeeded"`), "processors": json.RawMessage(`[]`)}}
 }
 
 type fakeProducer struct{ records []*kgo.Record }

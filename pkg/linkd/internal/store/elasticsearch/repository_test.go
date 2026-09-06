@@ -109,7 +109,10 @@ func TestDocumentCodecs(t *testing.T) {
 	alert.SubjectType = event.SubjectType
 	alert.SubjectID = event.SubjectID
 	alert.SubjectName = event.SubjectName
-	alert.Enrich = domain.JSONObject{"owner": json.RawMessage(`"ops"`)}
+	alert.Enrich = domain.JSONObject{
+		"status":     json.RawMessage(`"succeeded"`),
+		"processors": json.RawMessage(`[{"test":{"status":"succeeded","value":{"owner":"ops"}}}]`),
+	}
 	data, err = encodeAlertDocument(alert)
 	if err != nil {
 		t.Fatal(err)

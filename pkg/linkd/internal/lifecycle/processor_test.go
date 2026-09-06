@@ -11,6 +11,7 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -160,13 +161,13 @@ func TestEnricherCreationResults(t *testing.T) {
 		wantStatus domain.EnrichStatus
 	}{
 		{name: "succeeded", enrich: func(EnrichInput) (EnrichResult, error) {
-			return EnrichResult{Status: domain.EnrichStatusSucceeded, Data: domain.JSONObject{"owner": []byte(`"ops"`)}}, nil
+			return testEnrichResult(domain.EnrichStatusSucceeded, domain.JSONObject{"owner": []byte(`"ops"`)}), nil
 		}, wantStatus: domain.EnrichStatusSucceeded},
 		{name: "partial", enrich: func(EnrichInput) (EnrichResult, error) {
-			return EnrichResult{Status: domain.EnrichStatusPartial, Data: domain.JSONObject{}}, nil
+			return testEnrichResult(domain.EnrichStatusPartial, domain.JSONObject{}), nil
 		}, wantStatus: domain.EnrichStatusPartial},
 		{name: "reported failed", enrich: func(EnrichInput) (EnrichResult, error) {
-			return EnrichResult{Status: domain.EnrichStatusFailed, Data: domain.JSONObject{}}, nil
+			return testEnrichResult(domain.EnrichStatusFailed, domain.JSONObject{}), nil
 		}, wantStatus: domain.EnrichStatusFailed},
 		{name: "pending is reserved", enrich: func(EnrichInput) (EnrichResult, error) {
 			return EnrichResult{Status: domain.EnrichStatusPending}, nil
@@ -181,9 +182,11 @@ func TestEnricherCreationResults(t *testing.T) {
 			panic("broken enricher")
 		}, wantStatus: domain.EnrichStatusFailed},
 		{name: "input mutation is isolated", enrich: func(input EnrichInput) (EnrichResult, error) {
-			input.Event.Dimensions["host"] = domain.NewStringScalar("changed")
+			input.Alert.Dimensions["host"] = domain.NewStringScalar("changed")
+			input.Alert.Labels["changed"] = domain.NewBoolScalar(true)
+			input.Alert.ExtraData["changed"] = []byte(`true`)
 			input.Alert.Title = "changed"
-			return EnrichResult{Status: domain.EnrichStatusSucceeded, Data: domain.JSONObject{}}, nil
+			return testEnrichResult(domain.EnrichStatusSucceeded, domain.JSONObject{}), nil
 		}, wantStatus: domain.EnrichStatusSucceeded},
 	}
 	for _, tt := range tests {
@@ -202,6 +205,9 @@ func TestEnricherCreationResults(t *testing.T) {
 			}
 			if stored.Alert.EnrichStatus != tt.wantStatus || stored.Alert.Title != event.Title {
 				t.Fatalf("enriched Alert = %#v", stored.Alert)
+			}
+			if err := domain.ValidateEnrichPayload(stored.Alert.EnrichStatus, stored.Alert.Enrich); err != nil {
+				t.Fatalf("stored enrich payload: %v", err)
 			}
 			if host, _ := stored.Alert.Dimensions["host"].StringValue(); host != "host-1" {
 				t.Fatalf("enricher mutated inherited dimensions: %#v", stored.Alert.Dimensions)
@@ -633,7 +639,7 @@ func newTestProcessorWithCache(
 	hook FinalHook,
 ) *Processor {
 	t.Helper()
-	processor, err := NewProcessor(repo, cache, DeterministicAlertIDGenerator{}, NoopEnricher{}, hook, testSeverity{}, fixedClock{time.Date(2026, 9, 1, 0, 10, 0, 0, time.UTC)}, discardLogger{})
+	processor, err := NewProcessor(repo, cache, DeterministicAlertIDGenerator{}, testNoopEnricher{}, hook, testSeverity{}, fixedClock{time.Date(2026, 9, 1, 0, 10, 0, 0, time.UTC)}, discardLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -843,7 +849,9 @@ func storetestAlert(event domain.Event, alertID string) domain.Alert {
 		Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive,
 		LatestEventID: event.EventID, LastOccurredAt: event.OccurredAt, UpdateAt: now,
 		TriggerEventID: event.EventID, BeginAt: event.OccurredAt, CreateAt: event.CreateAt,
-		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{},
+		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{
+			"status": []byte(`"succeeded"`), "processors": []byte(`[]`),
+		},
 	}
 }
 
@@ -879,6 +887,28 @@ type fixedClock struct{ now time.Time }
 func (c fixedClock) Now() time.Time { return c.now }
 
 type testSeverity struct{}
+
+func testEnrichResult(status domain.EnrichStatus, value domain.JSONObject) EnrichResult {
+	valueData, _ := json.Marshal(value)
+	processorStatus := status
+	if status == domain.EnrichStatusPartial {
+		processorStatus = domain.EnrichStatusPartial
+	}
+	processors, _ := json.Marshal([]map[string]any{{"test": map[string]any{"status": processorStatus, "value": json.RawMessage(valueData)}}})
+	statusData, _ := json.Marshal(status)
+	return EnrichResult{Status: status, Data: domain.JSONObject{"status": statusData, "processors": processors}}
+}
+
+type testNoopEnricher struct{}
+
+func (testNoopEnricher) Enrich(ctx context.Context, _ EnrichInput) (EnrichResult, error) {
+	if err := ctx.Err(); err != nil {
+		return EnrichResult{}, err
+	}
+	return EnrichResult{Status: domain.EnrichStatusSucceeded, Data: domain.JSONObject{
+		"status": []byte(`"succeeded"`), "processors": []byte(`[]`),
+	}}, nil
+}
 
 type stubEnricher struct {
 	fn func(EnrichInput) (EnrichResult, error)

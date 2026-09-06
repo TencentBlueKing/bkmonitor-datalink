@@ -21,4 +21,5 @@
 | [2026-09-06-lifecycle-execution-flow.md](2026-09-06-lifecycle-execution-flow.md) | Lifecycle 处理顺序、并发控制、中转队列及一致性边界审查 |
 | [profiles/2026-09-07-lifecycle-gc/README.md](profiles/2026-09-07-lifecycle-gc/README.md) | Lifecycle/Cleaner 正常段、降速段和优化后的 pprof SVG 与 top 摘要 |
 | [data-pipeline-observability.md](data-pipeline-observability.md) | OpenTelemetry、Kafka、Flink 与 CloudEvents 的数据流指标和 Trace 划分方案 |
-| [kingeye-alarm-callback-data-dependencies.md](kingeye-alarm-callback-data-dependencies.md) | Kingeye 告警回调数据生成的外部依赖、字段来源、调用时机及对 Linkd 丰富设计的输入 |
+| [kingeye-alarm-callback-data-dependencies.md](kingeye-alarm-callback-data-dependencies.md) | Kingeye `callback_utils` 告警数据生成的外部依赖、字段来源、调用时机及对 Linkd 丰富设计的输入 |
+| [alarm-callback-input-field-inventory.md](alarm-callback-input-field-inventory.md) | 指定 `kac/alarm_callback` 的回调读取字段、14 个旧测试样本，以及 S01–S18 的鲸眼配置覆盖情况；新映射与按需读取监控平台的原则见迁移计划 |

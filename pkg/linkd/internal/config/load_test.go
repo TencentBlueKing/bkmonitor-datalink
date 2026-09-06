@@ -159,6 +159,13 @@ func TestLoadEventSources(t *testing.T) {
     fingerprint_fields: [subject_id, dimensions.port]
     severity_mapping:
       P1: critical
+    enrich:
+      processors:
+        - type: strategy
+        - type: resource
+        - type: display
+        - type: metric
+        - type: source
     storage:
       type: kafka
       kafka:
@@ -183,6 +190,9 @@ func TestLoadEventSources(t *testing.T) {
 	}
 	if cfg.EventSources[1].Storage.Kafka.Security.Protocol != kafkaclient.SecurityProtocolPlaintext {
 		t.Fatalf("load() default protocol = %q", cfg.EventSources[1].Storage.Kafka.Security.Protocol)
+	}
+	if got := cfg.EventSources[1].Enrich.Processors; !reflect.DeepEqual(got, []EnrichProcessorConfig{{Type: "strategy"}, {Type: "resource"}, {Type: "display"}, {Type: "metric"}, {Type: "source"}}) {
+		t.Fatalf("load() enrich processors = %#v", got)
 	}
 	if !reflect.DeepEqual(
 		cfg.EventSources[1].FingerprintFields,

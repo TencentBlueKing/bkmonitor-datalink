@@ -538,7 +538,7 @@ func (p *Processor) newAlert(ctx context.Context, event domain.Event) (domain.Al
 		UpdateAt: now, TriggerEventID: event.EventID, BeginAt: event.OccurredAt, CreateAt: event.CreateAt,
 		EnrichStatus: domain.EnrichStatusPending, Enrich: domain.JSONObject{},
 	}
-	return p.enrichNewAlert(ctx, event, alert)
+	return p.enrichNewAlert(ctx, alert)
 }
 
 func (p *Processor) finishEvent(ctx context.Context, stored store.StoredEvent, state domain.EventProcessState,

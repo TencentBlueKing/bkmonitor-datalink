@@ -10,6 +10,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"time"
@@ -157,6 +158,9 @@ func (a Alert) validate(validateJSON bool) error {
 			return fmt.Errorf("alert enrich: %w", err)
 		}
 	}
+	if err := ValidateEnrichPayload(a.EnrichStatus, a.Enrich); err != nil {
+		return err
+	}
 	for name, value := range map[string]time.Time{
 		"last_occurred_at": a.LastOccurredAt,
 		"update_at":        a.UpdateAt,
@@ -181,6 +185,83 @@ func (a Alert) validate(validateJSON bool) error {
 	}
 	if a.Status == AlertStatusRecovered && a.EndType != AlertEndTypeSource {
 		return fmt.Errorf("recovered alert end_type must be source")
+	}
+	return nil
+}
+
+// ValidateEnrichPayload 校验 Alert.enrich 固定结构及其与 enrich_status 的一致性。
+func ValidateEnrichPayload(status EnrichStatus, object JSONObject) error {
+	if status == EnrichStatusPending {
+		if len(object) != 0 {
+			return fmt.Errorf("pending alert enrich must be empty")
+		}
+		return nil
+	}
+	if len(object) != 2 {
+		return fmt.Errorf("alert enrich must contain status and processors")
+	}
+	statusRaw, statusExists := object["status"]
+	processorsRaw, processorsExists := object["processors"]
+	if !statusExists || !processorsExists {
+		return fmt.Errorf("alert enrich must contain status and processors")
+	}
+	var payloadStatus EnrichStatus
+	if err := json.Unmarshal(statusRaw, &payloadStatus); err != nil {
+		return fmt.Errorf("alert enrich status: %w", err)
+	}
+	if payloadStatus != status {
+		return fmt.Errorf("alert enrich status %q does not match enrich_status %q", payloadStatus, status)
+	}
+	var processors []map[string]struct {
+		Status      EnrichStatus `json:"status"`
+		Value       JSONObject   `json:"value"`
+		Diagnostics []struct {
+			Code string `json:"code"`
+		} `json:"diagnostics,omitempty"`
+	}
+	if err := json.Unmarshal(processorsRaw, &processors); err != nil {
+		return fmt.Errorf("alert enrich processors: %w", err)
+	}
+	succeeded, failed, skipped := 0, 0, 0
+	for index, entry := range processors {
+		if len(entry) != 1 {
+			return fmt.Errorf("alert enrich processors[%d] must contain exactly one entry", index)
+		}
+		for name, envelope := range entry {
+			if name == "" || (envelope.Status != EnrichStatusSucceeded && envelope.Status != EnrichStatusPartial && envelope.Status != EnrichStatusFailed && envelope.Status != EnrichStatusSkipped) || envelope.Value == nil {
+				return fmt.Errorf("alert enrich processors[%d] is invalid", index)
+			}
+			switch envelope.Status {
+			case EnrichStatusSucceeded:
+				succeeded++
+			case EnrichStatusFailed:
+				failed++
+			case EnrichStatusSkipped:
+				skipped++
+			}
+			for _, diagnostic := range envelope.Diagnostics {
+				switch diagnostic.Code {
+				case "missing_field", "invalid_field", "dependency_invalid", "classification_failed":
+				default:
+					return fmt.Errorf("alert enrich processors[%d] diagnostic code is invalid: %q", index, diagnostic.Code)
+				}
+			}
+		}
+	}
+	aggregate := EnrichStatusPartial
+	applicable := len(processors) - skipped
+	switch {
+	case len(processors) == 0:
+		aggregate = EnrichStatusSucceeded
+	case skipped == len(processors):
+		aggregate = EnrichStatusSkipped
+	case succeeded == applicable:
+		aggregate = EnrichStatusSucceeded
+	case failed == applicable:
+		aggregate = EnrichStatusFailed
+	}
+	if payloadStatus != aggregate {
+		return fmt.Errorf("alert enrich status %q does not match processor aggregate %q", payloadStatus, aggregate)
 	}
 	return nil
 }

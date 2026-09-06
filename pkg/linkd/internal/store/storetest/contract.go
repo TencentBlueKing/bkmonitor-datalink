@@ -11,6 +11,7 @@ package storetest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -255,5 +256,5 @@ func Event(tenantID, eventID, fingerprint, severity string) domain.Event {
 func Alert(tenantID, alertID, eventID, fingerprint, severity string) domain.Alert {
 	event := Event(tenantID, eventID, fingerprint, severity)
 	now := event.CreateAt.Add(time.Second)
-	return domain.Alert{AlertID: alertID, BKTenantID: tenantID, EventSourceID: event.EventSourceID, Fingerprint: fingerprint, Title: event.Title, Severity: severity, ConditionKey: event.ConditionKey, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: eventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: eventID, BeginAt: event.OccurredAt, CreateAt: event.CreateAt, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{}}
+	return domain.Alert{AlertID: alertID, BKTenantID: tenantID, EventSourceID: event.EventSourceID, Fingerprint: fingerprint, Title: event.Title, Severity: severity, ConditionKey: event.ConditionKey, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: eventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: eventID, BeginAt: event.OccurredAt, CreateAt: event.CreateAt, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"status": json.RawMessage(`"succeeded"`), "processors": json.RawMessage(`[]`)}}
 }

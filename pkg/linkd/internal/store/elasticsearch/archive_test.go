@@ -35,7 +35,7 @@ func TestArchiveTerminalAlertsBulkCreatesHistoryThenConditionallyDeletesActive(t
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusRecovered, LatestEventID: eventID,
 		LastOccurredAt: endAt, UpdateAt: endAt, TriggerEventID: eventID, BeginAt: now,
 		CreateAt: now, EndAt: &endAt, EndType: domain.AlertEndTypeSource,
-		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{},
+		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: succeededEnrich(),
 	}
 	activeID := alertDocumentID(alert)
 	activeVersion, err := encodeVersion(versionPayload{
@@ -285,7 +285,7 @@ func TestTerminalAlertCASLeavesPhysicalArchiveToManager(t *testing.T) {
 		Fingerprint: event.Fingerprint, Severity: event.Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: eventID,
 		LastOccurredAt: now, UpdateAt: now, TriggerEventID: eventID, BeginAt: now, CreateAt: now,
-		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{},
+		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: succeededEnrich(),
 	}
 	document, err := encodeAlertDocument(active)
 	if err != nil {
@@ -370,7 +370,7 @@ func archiveStoredAlert(t *testing.T, stableID string, createAt time.Time) store
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusRecovered, LatestEventID: eventID,
 		LastOccurredAt: endAt, UpdateAt: endAt, TriggerEventID: eventID, BeginAt: createAt,
 		CreateAt: createAt, EndAt: &endAt, EndType: domain.AlertEndTypeSource,
-		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{},
+		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: succeededEnrich(),
 	}
 	version, err := encodeVersion(versionPayload{
 		Index: "linkd-test-alerts-active-000001", DocumentID: alertDocumentID(alert), SeqNo: 7, PrimaryTerm: 2,
@@ -379,6 +379,10 @@ func archiveStoredAlert(t *testing.T, stableID string, createAt time.Time) store
 		t.Fatal(err)
 	}
 	return store.StoredAlert{Alert: alert, Version: version}
+}
+
+func succeededEnrich() domain.JSONObject {
+	return domain.JSONObject{"status": json.RawMessage(`"succeeded"`), "processors": json.RawMessage(`[]`)}
 }
 
 func jsonResponse(t *testing.T, value any) *http.Response {

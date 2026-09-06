@@ -1,0 +1,181 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package lifecycleprocess
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"linkd/internal/config"
+	"linkd/internal/lifecycle"
+	"linkd/internal/lifecycle/enrich"
+	"linkd/internal/lifecycle/enrich/assembly"
+	"linkd/internal/lifecycle/enrich/datasources"
+	"linkd/internal/lifecycle/enrich/rules"
+	elasticsearchstore "linkd/internal/store/elasticsearch"
+)
+
+type enrichRuntime struct {
+	dataSources *datasources.Runtime
+	transport   *elasticsearchstore.HTTPTransport
+}
+
+func (r *enrichRuntime) Close() error {
+	if r == nil {
+		return nil
+	}
+	var result error
+	if r.dataSources != nil {
+		result = errors.Join(result, r.dataSources.Close())
+	}
+	if r.transport != nil {
+		r.transport.Close()
+	}
+	return result
+}
+
+func validateEnricherConfig(eventSources []config.EventSource, lifecycleConfig config.LifecycleConfig) error {
+	requirements := requiredEnrichDataSources(eventSources)
+	if requirements.metric && lifecycleConfig.DataSources.Metric == nil {
+		return fmt.Errorf("lifecycle.datasources.metric is required by configured metric processor")
+	}
+	if requirements.alarmSource && lifecycleConfig.DataSources.AlarmSource == nil {
+		return fmt.Errorf("lifecycle.datasources.alarm_source is required by configured source processor")
+	}
+	if requirements.bkStrategy && lifecycleConfig.DataSources.BKStrategy == nil {
+		return fmt.Errorf("lifecycle.datasources.bk_strategy is required by configured enrich processors")
+	}
+	if requirements.cwStrategy && lifecycleConfig.DataSources.CWStrategy == nil {
+		return fmt.Errorf("lifecycle.datasources.cw_strategy is required by configured enrich processors")
+	}
+	if requirements.oneModel && lifecycleConfig.DataSources.OneModel == nil {
+		return fmt.Errorf("lifecycle.datasources.onemodel is required by configured resource processor")
+	}
+	if _, err := assembly.NewRouter(eventSources, enrich.Sources{}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// openEnricher 按已配置的 Processor 创建所需数据源并装配事件来源路由。
+// 返回的 Runtime 持有 MySQL 连接池和 Elasticsearch 空闲连接，调用方负责关闭。
+func openEnricher(
+	ctx context.Context,
+	eventSources []config.EventSource,
+	lifecycleConfig config.LifecycleConfig,
+) (lifecycle.AlertEnricher, *enrichRuntime, error) {
+	requirements := requiredEnrichDataSources(eventSources)
+	runtime := &enrichRuntime{}
+	sources := enrich.Sources{}
+	if requirements.mysql() {
+		dataSourceConfig := datasources.Config{}
+		if requirements.metric {
+			dataSourceConfig.Metric = mysqlDataSourceConfig(lifecycleConfig.DataSources.Metric)
+		}
+		if requirements.alarmSource {
+			dataSourceConfig.AlarmSource = mysqlDataSourceConfig(lifecycleConfig.DataSources.AlarmSource)
+		}
+		if requirements.bkStrategy {
+			dataSourceConfig.BKStrategy = mysqlDataSourceConfig(lifecycleConfig.DataSources.BKStrategy)
+		}
+		if requirements.cwStrategy {
+			dataSourceConfig.CWStrategy = mysqlDataSourceConfig(lifecycleConfig.DataSources.CWStrategy)
+		}
+		dataSourceRuntime, err := datasources.Open(ctx, dataSourceConfig, lifecycleConfig.Concurrency+4)
+		if err != nil {
+			return nil, runtime, fmt.Errorf("open enrich mysql datasources: %w", err)
+		}
+		runtime.dataSources = dataSourceRuntime
+		sources = dataSourceRuntime.Sources()
+	}
+	if requirements.oneModel {
+		oneModelConfig := lifecycleConfig.DataSources.OneModel
+		transportConfig := elasticsearchstore.HTTPTransportConfig{
+			Addresses: append([]string(nil), oneModelConfig.Addresses...),
+			APIKey:    oneModelConfig.APIKey,
+			Timeout:   time.Duration(lifecycleConfig.ProcessTimeoutSeconds) * time.Second,
+		}
+		if oneModelConfig.BasicAuth != nil {
+			transportConfig.BasicUsername = oneModelConfig.BasicAuth.Username
+			transportConfig.BasicPassword = oneModelConfig.BasicAuth.Password
+		}
+		transport, err := elasticsearchstore.NewHTTPTransport(transportConfig)
+		if err != nil {
+			_ = runtime.Close()
+			return nil, runtime, fmt.Errorf("create onemodel transport: %w", err)
+		}
+		runtime.transport = transport
+		client, err := datasources.NewOneModelClient(datasources.OneModelClientConfig{
+			Transport: transport,
+			CMDBIndex: oneModelConfig.IndexPrefix + "cmdb_instance",
+		})
+		if err != nil {
+			_ = runtime.Close()
+			return nil, runtime, fmt.Errorf("create onemodel client: %w", err)
+		}
+		sources.OneModel = client
+	}
+	router, err := assembly.NewRouter(eventSources, sources)
+	if err != nil {
+		_ = runtime.Close()
+		return nil, runtime, fmt.Errorf("create enrich router: %w", err)
+	}
+	return router, runtime, nil
+}
+
+type enrichDataSourceRequirements struct {
+	bkStrategy  bool
+	cwStrategy  bool
+	alarmSource bool
+	metric      bool
+	oneModel    bool
+}
+
+func (r enrichDataSourceRequirements) mysql() bool {
+	return r.bkStrategy || r.cwStrategy || r.alarmSource || r.metric
+}
+
+func requiredEnrichDataSources(sources []config.EventSource) enrichDataSourceRequirements {
+	var requirements enrichDataSourceRequirements
+	for _, source := range sources {
+		for _, processor := range source.Enrich.Processors {
+			switch processor.Type {
+			case rules.StrategyProcessor:
+				requirements.bkStrategy = true
+				requirements.cwStrategy = true
+				requirements.oneModel = true
+			case rules.ResourceProcessor:
+				requirements.cwStrategy = true
+				requirements.oneModel = true
+			case rules.DisplayProcessor:
+				requirements.cwStrategy = true
+			case rules.SourceProcessor:
+				requirements.alarmSource = true
+			case rules.MetricProcessor:
+				requirements.bkStrategy = true
+				requirements.cwStrategy = true
+				requirements.metric = true
+			}
+		}
+	}
+	return requirements
+}
+
+func mysqlDataSourceConfig(value *config.MySQLConfig) *datasources.MySQLConfig {
+	if value == nil {
+		return nil
+	}
+	return &datasources.MySQLConfig{
+		Address: value.Address, Database: value.Database,
+		Username: value.Username, Password: value.Password,
+	}
+}

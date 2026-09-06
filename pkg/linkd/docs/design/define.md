@@ -107,13 +107,16 @@ Alert 是一次异常的当前生命周期快照。它从 opening Event 创建�
 | 当前进度 | `latest_event_id`、`last_occurred_at`、`update_at`                                             | 最近被接受 Event 及严格单调的服务端快照时间           |
 | 创建锚点 | `trigger_event_id`、`begin_at`、`create_at`                                                    | `create_at` 继承 opening Event 创建时间，创建后不变   |
 | 终态     | `end_at`、`end_type`、`end_reason`                                                             | active 时必须为空；终态时必须完整                     |
-| 丰富     | `enrich_status`、`enrich`                                                                      | 创建前同步计算一次，不覆盖来源事实                    |
+| 丰富     | `enrich_status`、`enrich`                                                                      | 每个新 Alert 持久化前同步计算，不覆盖来源事实                |
 
 `end_type` 只允许 `source/user/system/severity_upgrade`。recovered 的 end_type 固定为 source；closed
 可以由来源关闭、用户/系统直接关闭或等级升级产生。
 
-`enrich_status` 允许 `pending/succeeded/partial/failed`，但正常创建流程只产生 succeeded、partial
-或 failed；当前 Noop Enricher 产生 succeeded 和空对象。
+`enrich_status` 允许 `pending/succeeded/partial/failed`，正常创建流程产生 succeeded、partial
+或 failed。`enrich` 固定包含 `status` 与 `processors` 两个顶层 key，status 必须与 enrich_status
+一致；processors 按 EventSource 配置顺序保存，每项是以 Processor 名称为唯一 key 的结果信封。
+Noop 使用 `{"status":"succeeded","processors":[]}`。pending 仅用于丰富前的内部构造状态，此时
+enrich 为空对象。
 
 ### 5.2 不变量
 

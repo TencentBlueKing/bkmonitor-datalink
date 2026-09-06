@@ -144,11 +144,22 @@ func Run(
 	defer hook.Close()
 	observedHook := telemetryRuntime.ObserveFinalHook(hook)
 
+	enricher, enrichRuntime, err := openEnricher(startupCtx, cfg.EventSources, lifecycleConfig)
+	if err != nil {
+		closeSession(session)
+		return fmt.Errorf("initialize lifecycle enricher: %w", err)
+	}
+	defer func() {
+		if closeErr := enrichRuntime.Close(); closeErr != nil {
+			runErr = errors.Join(runErr, closeErr)
+		}
+	}()
+
 	processor, err := lifecycle.NewProcessor(
 		observedRepository,
 		recentAlerts,
 		lifecycle.DeterministicAlertIDGenerator{},
-		lifecycle.NoopEnricher{},
+		enricher,
 		observedHook,
 		cfg.Severity,
 		lifecycle.SystemClock{},
@@ -217,6 +228,9 @@ func ValidateConfig(cfg config.Config) error {
 	}
 	if cfg.Storage.Redis == nil {
 		return fmt.Errorf("run lifecycle process: storage.redis is required")
+	}
+	if err := validateEnricherConfig(cfg.EventSources, *cfg.Lifecycle); err != nil {
+		return fmt.Errorf("run lifecycle process: enrich config: %w", err)
 	}
 	return nil
 }

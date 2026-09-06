@@ -60,10 +60,21 @@ type LifecycleConfig struct {
 	ProcessTimeoutSeconds   int                           `yaml:"process_timeout_seconds"`
 	RetryMaxAttempts        int                           `yaml:"retry_max_attempts"`
 	RetryMaxElapsedSeconds  int                           `yaml:"retry_max_elapsed_seconds"`
+	DataSources             LifecycleDataSources          `yaml:"datasources,omitempty"`
 	Signal                  LifecycleSignalConfig         `yaml:"signal"`
 	Mailbox                 LifecycleMailboxConfig        `yaml:"mailbox"`
 	Lock                    LifecycleLockConfig           `yaml:"lock"`
 	Output                  LifecycleOutputConfig         `yaml:"output"`
+}
+
+// LifecycleDataSources 定义 lifecycle enrich 使用的外部数据库连接。
+// 平台策略与鲸眼策略分别配置，不复用 Linkd Repository 连接。
+type LifecycleDataSources struct {
+	BKStrategy  *MySQLConfig         `yaml:"bk_strategy,omitempty"`
+	CWStrategy  *MySQLConfig         `yaml:"cw_strategy,omitempty"`
+	AlarmSource *MySQLConfig         `yaml:"alarm_source,omitempty"`
+	Metric      *MySQLConfig         `yaml:"metric,omitempty"`
+	OneModel    *ElasticsearchConfig `yaml:"onemodel,omitempty"`
 }
 
 // LifecycleSignalConfig 描述 Redis Stream 和单批资源边界。
@@ -120,6 +131,31 @@ type LifecycleKafkaConfig struct {
 
 // WithDefaults 返回补齐 lifecycle 默认值且不共享嵌套数据的副本。
 func (c LifecycleConfig) WithDefaults() LifecycleConfig {
+	if c.DataSources.OneModel != nil {
+		oneModel := *c.DataSources.OneModel
+		oneModel.Addresses = append([]string(nil), c.DataSources.OneModel.Addresses...)
+		if oneModel.BasicAuth != nil {
+			basicAuth := *oneModel.BasicAuth
+			oneModel.BasicAuth = &basicAuth
+		}
+		c.DataSources.OneModel = &oneModel
+	}
+	if c.DataSources.Metric != nil {
+		metric := *c.DataSources.Metric
+		c.DataSources.Metric = &metric
+	}
+	if c.DataSources.AlarmSource != nil {
+		alarmSource := *c.DataSources.AlarmSource
+		c.DataSources.AlarmSource = &alarmSource
+	}
+	if c.DataSources.BKStrategy != nil {
+		bkStrategy := *c.DataSources.BKStrategy
+		c.DataSources.BKStrategy = &bkStrategy
+	}
+	if c.DataSources.CWStrategy != nil {
+		cwStrategy := *c.DataSources.CWStrategy
+		c.DataSources.CWStrategy = &cwStrategy
+	}
 	if c.Concurrency == 0 {
 		c.Concurrency = defaultLifecycleConcurrency
 	}
@@ -218,9 +254,6 @@ func (c LifecycleConfig) WithDefaults() LifecycleConfig {
 // Validate 校验 lifecycle 资源上限和跨组件时间预算。
 func (c LifecycleConfig) Validate() error {
 	c = c.WithDefaults()
-	if err := c.ElasticsearchWriteBatch.Validate(); err != nil {
-		return err
-	}
 	if c.Concurrency < 1 || c.Concurrency > 1024 {
 		return fmt.Errorf("lifecycle.concurrency must be between 1 and 1024")
 	}
@@ -294,9 +327,25 @@ func (c LifecycleConfig) Validate() error {
 	return c.RuntimeConfig().Validate()
 }
 
-// Redacted 返回隐藏 Kafka SASL password 的深拷贝。
+// Redacted 返回隐藏数据源与 Kafka 凭据的深拷贝。
 func (c LifecycleConfig) Redacted() LifecycleConfig {
 	redacted := c.WithDefaults()
+	if redacted.DataSources.OneModel != nil {
+		storage := StorageConfig{Elasticsearch: redacted.DataSources.OneModel}.Redacted()
+		redacted.DataSources.OneModel = storage.Elasticsearch
+	}
+	if redacted.DataSources.Metric != nil && redacted.DataSources.Metric.Password != "" {
+		redacted.DataSources.Metric.Password = redactedSecret
+	}
+	if redacted.DataSources.AlarmSource != nil && redacted.DataSources.AlarmSource.Password != "" {
+		redacted.DataSources.AlarmSource.Password = redactedSecret
+	}
+	if redacted.DataSources.BKStrategy != nil && redacted.DataSources.BKStrategy.Password != "" {
+		redacted.DataSources.BKStrategy.Password = redactedSecret
+	}
+	if redacted.DataSources.CWStrategy != nil && redacted.DataSources.CWStrategy.Password != "" {
+		redacted.DataSources.CWStrategy.Password = redactedSecret
+	}
 	if redacted.Output.Kafka != nil {
 		redacted.Output.Kafka.Security = redacted.Output.Kafka.Security.Redacted()
 	}

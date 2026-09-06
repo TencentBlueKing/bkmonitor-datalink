@@ -15,6 +15,15 @@ require (
 	go.opentelemetry.io/otel/sdk v1.46.0
 	go.opentelemetry.io/otel/sdk/metric v1.46.0
 	go.yaml.in/yaml/v3 v3.0.5
+	gorm.io/datatypes v1.2.7
+	gorm.io/driver/mysql v1.5.6
+	gorm.io/gorm v1.31.2
+)
+
+require (
+	github.com/jinzhu/inflection v1.0.0 // indirect
+	github.com/jinzhu/now v1.1.5 // indirect
+	golang.org/x/text v0.40.0 // indirect
 )
 
 require (

@@ -370,7 +370,7 @@ func TestManagerArchiveTerminalAlertsDoesNotManageBuckets(t *testing.T) {
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusRecovered, LatestEventID: eventID,
 		LastOccurredAt: endAt, UpdateAt: endAt, TriggerEventID: eventID, BeginAt: now,
 		CreateAt: now, EndAt: &endAt, EndType: domain.AlertEndTypeSource,
-		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{},
+		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: succeededEnrich(),
 	}
 	document, err := encodeAlertDocument(alert)
 	if err != nil {

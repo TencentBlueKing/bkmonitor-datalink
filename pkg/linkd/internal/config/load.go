@@ -48,6 +48,7 @@ type fileEventSource struct {
 	FingerprintFields []string           `yaml:"fingerprint_fields"`
 	SeverityMapping   map[string]string  `yaml:"severity_mapping"`
 	DefaultSeverity   string             `yaml:"default_severity"`
+	Enrich            EnrichConfig       `yaml:"enrich"`
 	Storage           *fileStorageConfig `yaml:"storage"`
 }
 
@@ -170,6 +171,9 @@ func decodeEventSources(decoded []fileEventSource) ([]EventSource, error) {
 			FingerprintFields: append([]string(nil), source.FingerprintFields...),
 			SeverityMapping:   source.SeverityMapping,
 			DefaultSeverity:   source.DefaultSeverity,
+			Enrich: EnrichConfig{
+				Processors: append([]EnrichProcessorConfig(nil), source.Enrich.Processors...),
+			},
 			Storage: EventSourceStorageConfig{
 				Type:  source.Storage.Type,
 				Kafka: *source.Storage.Kafka,

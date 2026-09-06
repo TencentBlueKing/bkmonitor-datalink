@@ -20,6 +20,50 @@ import (
 	"linkd/internal/telemetry"
 )
 
+func TestValidateConfigRequiresAlarmSourceDataSource(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		Lifecycle: validLifecycleConfig(),
+		Storage: &config.StorageConfig{
+			Repository: config.RepositoryTypeMySQL,
+			MySQL:      validMySQLConfig(),
+			Redis:      validRedisConfig(),
+		},
+		EventSources: []config.EventSource{{
+			EventSourceID: "built_in_bk",
+			Enrich:        config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "source"}}},
+		}},
+	}
+	if err := ValidateConfig(cfg); err == nil || !strings.Contains(err.Error(), "lifecycle.datasources.alarm_source") {
+		t.Fatalf("ValidateConfig() error=%v", err)
+	}
+}
+
+func TestValidateConfigRequiresEnrichDataSources(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		Lifecycle: validLifecycleConfig(),
+		Storage: &config.StorageConfig{
+			Repository: config.RepositoryTypeMySQL,
+			MySQL:      validMySQLConfig(),
+			Redis:      validRedisConfig(),
+		},
+		EventSources: []config.EventSource{{
+			EventSourceID: "built_in_bk",
+			Enrich:        config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "resource"}}},
+		}},
+	}
+	if err := ValidateConfig(cfg); err == nil || !strings.Contains(err.Error(), "lifecycle.datasources.cw_strategy") {
+		t.Fatalf("ValidateConfig() error=%v", err)
+	}
+	cfg.Lifecycle.DataSources.CWStrategy = validMySQLConfig()
+	if err := ValidateConfig(cfg); err == nil || !strings.Contains(err.Error(), "lifecycle.datasources.onemodel") {
+		t.Fatalf("ValidateConfig() error=%v", err)
+	}
+}
+
 func TestValidateConfigRequiresLifecycleDependencies(t *testing.T) {
 	t.Parallel()
 

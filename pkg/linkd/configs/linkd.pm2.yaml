@@ -48,6 +48,17 @@ storage:
     database: 0
 
 lifecycle:
+  datasources:
+    alarm_source:
+      address: 127.0.0.1:3306
+      database: kingeye
+      username: root
+      password: ""
+    # resource Processor 从 OneModel 的 Elasticsearch 读后端查询统一实例。
+    onemodel:
+      addresses:
+        - http://127.0.0.1:9200
+      index_prefix: bk_monitor_base_
   concurrency: 32
   elasticsearch_write_batch:
     enabled: true
@@ -116,6 +127,10 @@ event_sources:
         max_concurrent_batches: 1
     fingerprint_mode: field
     fingerprint_field: source_alert_id
+    # 空链使用 succeeded Noop；BASE_COLLECT mock 样例可配置
+    # strategy/resource/display/metric/source 进行开发验证。
+    enrich:
+      processors: []
     storage:
       type: kafka
       kafka:
@@ -137,6 +152,8 @@ event_sources:
         max_batch_messages: 128
         max_concurrent_batches: 2
     fingerprint_mode: fields
+    enrich:
+      processors: []
     fingerprint_fields:
       - condition_key
       - dimensions.generator_id

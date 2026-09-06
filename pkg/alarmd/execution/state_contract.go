@@ -84,17 +84,49 @@ func DeriveRuntimeLevelContractRefs(plan *strategy.CompiledPlan) ([]RuntimeLevel
 	return refs, nil
 }
 
-func runtimeLevelContractRef(plan *strategy.CompiledPlan, levelID uint32) (RuntimeLevelContractRef, bool) {
-	refs, err := DeriveRuntimeLevelContractRefs(plan)
-	if err != nil {
-		return RuntimeLevelContractRef{}, false
-	}
+// One validator owns this lazy lookup. It must not outlive that call or cache
+// validation of a mutable StateMutation. Unused contracts remain unexamined.
+type runtimeLevelContracts struct {
+	plan   *strategy.CompiledPlan
+	loaded bool
+	refs   []RuntimeLevelContractRef
+	index  map[uint32]RuntimeLevelContractRef
+	err    error
+}
+
+func indexRuntimeLevelContracts(refs []RuntimeLevelContractRef) map[uint32]RuntimeLevelContractRef {
+	index := make(map[uint32]RuntimeLevelContractRef, len(refs))
 	for _, ref := range refs {
-		if ref.LevelID == levelID {
-			return ref, true
+		if _, found := index[ref.LevelID]; !found {
+			index[ref.LevelID] = ref
 		}
 	}
-	return RuntimeLevelContractRef{}, false
+	return index
+}
+
+func (contracts *runtimeLevelContracts) load() {
+	if contracts.loaded {
+		return
+	}
+	contracts.loaded = true
+	contracts.refs, contracts.err = DeriveRuntimeLevelContractRefs(contracts.plan)
+	if contracts.err == nil {
+		contracts.index = indexRuntimeLevelContracts(contracts.refs)
+	}
+}
+
+func (contracts *runtimeLevelContracts) find(levelID uint32) (RuntimeLevelContractRef, bool) {
+	contracts.load()
+	ref, found := contracts.index[levelID]
+	return ref, found
+}
+
+func (contracts *runtimeLevelContracts) seriesWarmup() (string, error) {
+	contracts.load()
+	if contracts.err != nil {
+		return "", contracts.err
+	}
+	return contract.DeriveCanonicalDigestV2("alarmd-series-warmup-requirement-v1", contracts.refs)
 }
 
 // DeriveRuntimeSeriesWarmupRequirementRef closes a series-wide guard over the

@@ -12,11 +12,13 @@ package contract
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"unicode/utf8"
@@ -47,8 +49,12 @@ func CanonicalJSONV2(value any) ([]byte, error) {
 	if err := validateJSONSurrogateEscapes(raw); err != nil {
 		return nil, err
 	}
-	if err := rejectDuplicateJSONFields(raw); err != nil {
-		return nil, err
+	// Only the standard encoder over a closed type can establish unique keys.
+	// Raw fragments, interfaces and custom marshalers retain the strict walk.
+	if !canonicalClosedType(reflect.TypeOf(value), nil) {
+		if err := rejectDuplicateJSONFields(raw); err != nil {
+			return nil, err
+		}
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -73,6 +79,9 @@ func CanonicalJSONV2(value any) ([]byte, error) {
 // keeps non-ASCII UTF-8 literal; an even preceding backslash count represents
 // a literal "\\u2028" string and must remain escaped.
 func restoreJSONLineSeparatorsV2(encoded []byte) []byte {
+	if !bytes.Contains(encoded, []byte(`\u2028`)) && !bytes.Contains(encoded, []byte(`\u2029`)) {
+		return encoded[:len(encoded):len(encoded)]
+	}
 	result := make([]byte, 0, len(encoded))
 	for index := 0; index < len(encoded); {
 		if encoded[index] != '\\' {
@@ -99,6 +108,52 @@ func restoreJSONLineSeparatorsV2(encoded []byte) []byte {
 		result = append(result, encoded[start:index]...)
 	}
 	return result
+}
+
+// Recursive types conservatively use the existing strict path. This check is
+// local to one call; it neither caches types nor inspects mutable values.
+func canonicalClosedType(t reflect.Type, path map[reflect.Type]bool) bool {
+	if t == nil || t == reflect.TypeOf(json.Number("")) || t == reflect.TypeOf(json.RawMessage(nil)) || t == reflect.TypeOf([]byte(nil)) {
+		return false
+	}
+	jsonMarshaler := reflect.TypeOf((*json.Marshaler)(nil)).Elem()
+	textMarshaler := reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
+	if t.Implements(jsonMarshaler) || reflect.PointerTo(t).Implements(jsonMarshaler) ||
+		t.Implements(textMarshaler) || reflect.PointerTo(t).Implements(textMarshaler) {
+		return false
+	}
+	switch t.Kind() {
+	case reflect.Bool, reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64:
+		return true
+	case reflect.Struct, reflect.Pointer, reflect.Slice, reflect.Array:
+		if path[t] {
+			return false
+		}
+		if path == nil {
+			path = make(map[reflect.Type]bool)
+		}
+		path[t] = true
+		defer delete(path, t)
+		if t.Kind() != reflect.Struct {
+			return canonicalClosedType(t.Elem(), path)
+		}
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			if field.Anonymous {
+				return false
+			}
+			if field.PkgPath != "" || field.Tag.Get("json") == "-" {
+				continue
+			}
+			if !canonicalClosedType(field.Type, path) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 func deriveLengthPrefixedSHA256(field string, version string, values ...[]byte) (string, error) {

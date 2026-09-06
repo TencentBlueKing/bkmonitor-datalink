@@ -1415,7 +1415,8 @@ func (result EvaluationResult) Validate(request EvaluationRequest) error {
 		if err := validateLoadedFactDisposition(planResult, request.State, request.Gaps); err != nil {
 			return err
 		}
-		if err := validateLoadedStateContracts(plan, request.State); err != nil {
+		levelContracts := runtimeLevelContracts{plan: plan.CompiledPlan}
+		if err := validateLoadedStateContracts(plan, request.State, &levelContracts); err != nil {
 			return err
 		}
 		if err := validateLevelOutcomes(input, plan, planResult, request.State, request.Gaps); err != nil {
@@ -1513,14 +1514,14 @@ func (result EvaluationResult) Validate(request EvaluationRequest) error {
 				return errors.New("alarmd execution: unavailable or terminal state cannot be mutated")
 			}
 			for _, level := range mutation.Levels {
-				ref, found := runtimeLevelContractRef(plan.CompiledPlan, level.LevelID)
+				ref, found := levelContracts.find(level.LevelID)
 				if !found || level.LevelStateCompatibility != ref.LevelStateCompatibility ||
 					level.WarmupRequirementRef != ref.WarmupRequirementRef {
 					return errors.New("alarmd execution: State mutation Level contract differs from the compiled Plan")
 				}
 			}
 			if mutation.SeriesGuard != nil {
-				seriesWarmup, err := DeriveRuntimeSeriesWarmupRequirementRef(plan.CompiledPlan)
+				seriesWarmup, err := levelContracts.seriesWarmup()
 				if err != nil || mutation.SeriesGuard.WarmupRequirementRef != seriesWarmup {
 					return errors.New("alarmd execution: State mutation series guard differs from the compiled Plan")
 				}
@@ -1751,14 +1752,14 @@ func validateLoadedFactDisposition(
 	return nil
 }
 
-func validateLoadedStateContracts(plan DuePlan, states StatePreflightResult) error {
+func validateLoadedStateContracts(plan DuePlan, states StatePreflightResult, levelContracts *runtimeLevelContracts) error {
 	for _, state := range states.Items {
 		if state.Identity.Plan != plan.Identity ||
 			(state.Status != StateFoundReady && state.Status != StateFoundWarming && state.Status != StateFoundGapped) {
 			continue
 		}
 		for _, level := range state.Levels {
-			ref, found := runtimeLevelContractRef(plan.CompiledPlan, level.LevelID)
+			ref, found := levelContracts.find(level.LevelID)
 			if !found || level.LevelStateCompatibility != ref.LevelStateCompatibility ||
 				level.WarmupRequirementRef != ref.WarmupRequirementRef {
 				return errors.New("alarmd execution: loaded Runtime State Level contract differs from the compiled Plan")
@@ -1766,14 +1767,14 @@ func validateLoadedStateContracts(plan DuePlan, states StatePreflightResult) err
 		}
 		for _, point := range state.History {
 			for _, fact := range point.Levels {
-				ref, found := runtimeLevelContractRef(plan.CompiledPlan, fact.LevelID)
+				ref, found := levelContracts.find(fact.LevelID)
 				if !found || fact.DetectFingerprint != ref.DetectFingerprint {
 					return errors.New("alarmd execution: loaded Runtime State history differs from the compiled Plan")
 				}
 			}
 		}
 		if state.SeriesGuard != nil {
-			seriesWarmup, err := DeriveRuntimeSeriesWarmupRequirementRef(plan.CompiledPlan)
+			seriesWarmup, err := levelContracts.seriesWarmup()
 			if err != nil || state.SeriesGuard.WarmupRequirementRef != seriesWarmup {
 				return errors.New("alarmd execution: loaded Runtime State series guard differs from the compiled Plan")
 			}

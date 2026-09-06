@@ -1,6 +1,7 @@
 package shadow
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -151,12 +152,12 @@ func BuildFrozenComparisonConfigV2(due execution.DuePlan, requirements []executi
 				return fail("source mapping")
 			}
 			tree := detector.Predicate().Facts()
-			if tree.Kind != strategy.PredicateAny || len(tree.Children) != 1 || tree.Children[0].Kind != strategy.PredicateAll || len(tree.Children[0].Children) != 1 {
-				return fail("complex predicate")
+			if detector.ValueRef() != projection.ValueFields[0] {
+				return fail("scalar value reference")
 			}
-			leaf := tree.Children[0].Children[0]
-			if leaf.Kind != strategy.PredicateCompare || len(leaf.Children) != 0 || detector.ValueRef() != projection.ValueFields[0] {
-				return fail("scalar predicate")
+			predicate, err := frozenThresholdPredicateV2(tree)
+			if err != nil {
+				return fail("predicate shape")
 			}
 			normalizer, ok := plan.Normalizer(detector.NormalizerRef())
 			if !ok {
@@ -168,11 +169,7 @@ func BuildFrozenComparisonConfigV2(due execution.DuePlan, requirements []executi
 			}
 			c.Numeric = numeric
 			numericSet = true
-			operator := leaf.Operator
-			if operator == "NEQ" {
-				operator = "NE"
-			}
-			l.Detectors = append(l.Detectors, contract.ShadowDetectorConfigV2{Kind: "Threshold", MappingVersion: "canonical-threshold-v2", Operator: operator, Threshold: leaf.NormalizedThreshold})
+			l.Detectors = append(l.Detectors, predicate)
 		}
 		c.Levels = append(c.Levels, l)
 	}
@@ -234,4 +231,40 @@ func frozenSelectorV2(query execution.QueryPlanFacts) (contract.ShadowSelectorCo
 		c.Filters = append(c.Filters, filter)
 	}
 	return c, nil
+}
+
+func frozenThresholdPredicateV2(tree strategy.PredicateFacts) (contract.ShadowDetectorConfigV2, error) {
+	fail := func() (contract.ShadowDetectorConfigV2, error) {
+		return contract.ShadowDetectorConfigV2{}, ErrFrozenConfigUnsupported
+	}
+	if tree.Kind != strategy.PredicateAny || len(tree.Children) == 0 {
+		return fail()
+	}
+	dnf := contract.ThresholdDNFConfigV2{Groups: make([]contract.ThresholdDNFGroupV2, 0, len(tree.Children))}
+	for _, group := range tree.Children {
+		if group.Kind != strategy.PredicateAll || len(group.Children) == 0 {
+			return fail()
+		}
+		g := contract.ThresholdDNFGroupV2{Conditions: make([]contract.ThresholdDNFConditionV2, 0, len(group.Children))}
+		for _, leaf := range group.Children {
+			if leaf.Kind != strategy.PredicateCompare || len(leaf.Children) != 0 {
+				return fail()
+			}
+			op := leaf.Operator
+			if op == "NEQ" {
+				op = "NE"
+			}
+			g.Conditions = append(g.Conditions, contract.ThresholdDNFConditionV2{Operator: op, Threshold: leaf.NormalizedThreshold})
+		}
+		dnf.Groups = append(dnf.Groups, g)
+	}
+	if len(dnf.Groups) == 1 && len(dnf.Groups[0].Conditions) == 1 {
+		leaf := dnf.Groups[0].Conditions[0]
+		return contract.ShadowDetectorConfigV2{Kind: "Threshold", MappingVersion: "canonical-threshold-v2", Operator: leaf.Operator, Threshold: leaf.Threshold}, nil
+	}
+	raw, err := json.Marshal(dnf)
+	if err != nil {
+		return fail()
+	}
+	return contract.ShadowDetectorConfigV2{Kind: "Threshold", MappingVersion: "canonical-threshold-dnf-v2", SemanticConfig: raw}, nil
 }

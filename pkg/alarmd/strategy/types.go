@@ -224,6 +224,28 @@ type predicateNode struct {
 	children  []predicateNode
 }
 
+// PredicateFacts is a detached view of the compiled predicate, never a new
+// executable predicate. Changing its slices cannot change the frozen plan.
+type PredicateFacts struct {
+	Kind                string
+	Operator            string
+	NormalizedThreshold string
+	Children            []PredicateFacts
+}
+
+func (p Predicate) Facts() PredicateFacts { return p.root.facts() }
+
+func (n predicateNode) facts() PredicateFacts {
+	f := PredicateFacts{Kind: n.kind, Operator: n.operator}
+	if n.kind == PredicateCompare {
+		f.NormalizedThreshold = n.threshold.CanonicalDecimal()
+	}
+	for _, child := range n.children {
+		f.Children = append(f.Children, child.facts())
+	}
+	return f
+}
+
 type PredicateEvaluation struct {
 	matched         bool
 	matchedGroup    int
@@ -386,6 +408,8 @@ func (s NumericNormalizerSpec) Ref() string {
 func (s NumericNormalizerSpec) SourceUnit() string {
 	return s.sourceUnit
 }
+
+func (s NumericNormalizerSpec) SourceMultiplier() int64 { return s.sourceMultiplier }
 
 func (s NumericNormalizerSpec) TargetUnit() string {
 	return s.targetUnit

@@ -41,6 +41,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	configPath := flags.String("config", "", "path to alarmd comparator YAML configuration")
 	showVersion := flags.Bool("version", false, "print build information and exit")
+	businessInput := flags.String("business-input", "", "finite business Kafka evidence capture JSONL; publishes Audit through configured isolated sink")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -56,6 +57,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "load configuration: %v\n", err)
 		return 1
+	}
+	if *businessInput != "" {
+		return runBusinessCaptureFile(ctx, configuration, *businessInput, stdout, stderr)
 	}
 	recorder := metric.NewRecorder(metric.BuildInfo{Version: version, Commit: commit, SchemaVersion: schemaVersion})
 	eventLogger := observability.New(observability.ComponentComparator, stderr)

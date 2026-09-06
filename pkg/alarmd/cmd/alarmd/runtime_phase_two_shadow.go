@@ -67,7 +67,7 @@ func loadPhaseTwoShadowManifest(ctx context.Context, cfg config.Config) (*contra
 		return nil, err
 	}
 	profile, ok := ctx.Value(phaseTwoShadowProfileKey{}).(observability.RuntimeConfigFacts)
-	if !ok || !slices.Contains(m.RuntimeConfigDigests, profile.Digest) || m.Go.Commit != commit || m.Go.Schema != "go-final-v1" || m.ComparisonVersion != "comparison-v1" {
+	if !ok || !slices.Contains(m.RuntimeConfigDigests, profile.Digest) || m.Go.Commit != commit || m.Go.Schema != "go-final-v1" || (m.ComparisonVersion != "comparison-v1" && m.ComparisonVersion != "python-business-kafka-v1") {
 		return nil, errors.New("phase-two shadow: manifest differs from actual runtime or supported versions")
 	}
 	if m.Limits.MaxQueueEntries > uint64(cfg.ReceiptQueue.MaxQueuedMessages) || m.Limits.MaxQueueBytes > uint64(cfg.ReceiptQueue.MaxQueuedBytes) || m.Limits.MaxMessageBytes > uint64(bound) || m.Limits.MaxMessageBytes > m.Limits.MaxQueueBytes {
@@ -268,6 +268,10 @@ func (e *phaseTwoFinalEmitter) emitACKed(ctx context.Context, events []contract.
 		}
 		c := contract.ShadowContextV1{ComparisonConfigDigest: digest, PlanScheduleRevision: string(due.ScheduleRevision), EvaluationTime: event.EvaluationTime, SlotIdentity: string(version.SlotDigest), SnapshotRevision: string(s.contract.SnapshotRevision), QueryRevision: string(s.contract.QueryRevision), QueryGroupScheduleRevision: string(s.contract.ScheduleRevision), ScheduleSegmentStart: int64(s.contract.ScheduleSegmentStart), DuePlanSetDigest: string(s.contract.DuePlanSetDigest), EffectiveTimeRequirementDigest: facts.effective.RequirementDigest(), EffectiveTimeFactDigest: facts.effective.FactDigest()}
 		input := shadow.GoFrozenEvidenceInputV2{EpochID: e.manifest.EpochID, IdentityVersion: e.manifest.IdentityVersion, ProjectionVersion: "primary-v1", Event: event, ACK: shadow.BusinessACK{Confirmed: true, EventID: event.EventID, SemanticDigest: event.EventSemanticDigest}, Context: c, Completeness: facts.completeness, Due: due, Requirements: s.frozen.Requirements, Queries: s.frozen.QueryFacts, Frozen: s.contract, PrimaryEffectiveTime: facts.effective}
+		if e.manifest.ComparisonVersion == "python-business-kafka-v1" && event.EventKind == contract.TriggerEventAbnormal {
+			e.emitBusiness(ctx, input)
+			continue
+		}
 		evidence, err := shadow.EncodeGoFinalEvidenceV2(input, int(e.manifest.Limits.MaxMessageBytes))
 		if err != nil || e.publisher == nil {
 			e.observe(ctx, observability.StageFinalEvidenceDropped, observability.ResultFailed)
@@ -276,5 +280,26 @@ func (e *phaseTwoFinalEmitter) emitACKed(ctx context.Context, events []contract.
 		if e.publisher.TryEnqueueEncodedFinalEvidence(evidence) {
 			e.observe(ctx, observability.StageFinalEvidenceQueued, observability.ResultSuccess)
 		}
+	}
+}
+
+// The new business profile uses the existing actual ACK capture and queue.
+// Recovery continues on its existing single-chain final evidence schema.
+func (e *phaseTwoFinalEmitter) emitBusiness(ctx context.Context, input shadow.GoFrozenEvidenceInputV2) {
+	r, err := shadow.BuildGoBusinessAbnormal(input, int(e.manifest.Limits.MaxMessageBytes))
+	if err != nil {
+		e.observe(ctx, observability.StageFinalEvidenceDropped, observability.ResultFailed)
+		return
+	}
+	wire, err := contract.EncodeGoBusinessAbnormalV1(contract.GoBusinessAbnormalV1{Schema: "go-business-abnormal-v1", RecordType: "BUSINESS_ABNORMAL", EpochID: input.EpochID, Context: input.Context, Reference: *r}, int(e.manifest.Limits.MaxMessageBytes))
+	publisher, ok := e.publisher.(interface {
+		TryEnqueueBusinessAbnormal(contract.EncodedBusinessAbnormalV1) bool
+	})
+	if err != nil || !ok {
+		e.observe(ctx, observability.StageFinalEvidenceDropped, observability.ResultFailed)
+		return
+	}
+	if publisher.TryEnqueueBusinessAbnormal(wire) {
+		e.observe(ctx, observability.StageFinalEvidenceQueued, observability.ResultSuccess)
 	}
 }

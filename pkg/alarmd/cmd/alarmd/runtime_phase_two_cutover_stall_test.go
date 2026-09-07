@@ -88,6 +88,17 @@ func (fixture *cutoverStallFixture) progress(ctx context.Context) execution.Sche
 
 func newCutoverStalledFixture(t *testing.T, configure func(*config.Config)) *cutoverStallFixture {
 	t.Helper()
+	fixture := startCutoverFixture(t, configure)
+	fixture.stallInFlightAcrossCutover(context.Background(), fixture.base, fixture.redisClient, fixture.bundle)
+	return fixture
+}
+
+// startCutoverFixture opens the production bundle on the initial publication
+// and completes the first Slot of the initial Segment FULL. It returns with
+// the cursor at the second grid point and no Slot in flight, so a test can
+// choose how the Query Group falls behind before the cutover.
+func startCutoverFixture(t *testing.T, configure func(*config.Config)) *cutoverStallFixture {
+	t.Helper()
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
 	installCutoverStallStrategies(t, ctx, redisClient, "system.mem", 1725000000)
@@ -202,12 +213,22 @@ func newCutoverStalledFixture(t *testing.T, configure func(*config.Config)) *cut
 		t.Fatalf("Progress after first Slot = %+v, want LastFullSlot=%d NextSlot=%d", committed, base, base+60)
 	}
 
+	return fixture
+}
+
+// stallInFlightAcrossCutover begins the second grid point under the initial
+// Segment (the query is deferred by readiness, so the unfinished projection
+// stays persisted) and then cuts over to a publication whose boundary
+// precedes that Slot.
+func (fixture *cutoverStallFixture) stallInFlightAcrossCutover(ctx context.Context, base int64, redisClient *redis.Client, bundle *phaseTwoWorkerBundle) {
+	t := fixture.t
+	t.Helper()
 	// Step 2: the next grid point is begun under the still-open initial
 	// Segment; the query is deferred by readiness, so the unfinished projection
 	// stays persisted with the initial Segment's contract.
 	fixture.firstNewSlot = execution.EvaluationTime(base + 60)
 	fixture.clock.Store(int64(fixture.firstNewSlot) * 1000)
-	result, attempted, err = fixture.runner.RunOne(ctx)
+	result, attempted, err := fixture.runner.RunOne(ctx)
 	if err != nil || !attempted || result.Completed {
 		t.Fatalf("deferred Slot RunOne = (%+v, %t, %v), want an attempted, uncompleted Slot", result, attempted, err)
 	}
@@ -252,7 +273,6 @@ func newCutoverStalledFixture(t *testing.T, configure func(*config.Config)) *cut
 	t.Logf("cutover: old Segment [%d,%d) -> new Segment [%d,open) first Slot %d; Progress NextSlot=%d LastFullSlot=%d gap=%v unfinished Segment start=%d",
 		fixture.initialSchedule.Segment.Start, fixture.boundary, fixture.boundary, newFirst, fixture.inFlight.NextSlot, fixture.inFlight.LastFullSlot,
 		fixture.inFlight.CurrentOrRecentGap, fixture.oldProjection.Contract.ScheduleSegmentStart)
-	return fixture
 }
 
 // The newer Segment supersedes the persisted projection: BeginSlot commits,

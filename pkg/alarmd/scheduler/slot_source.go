@@ -385,6 +385,18 @@ func (source *ProductionSlotSource) Next(
 		}
 		var corrupt *controlplane.PersistedSnapshotCorruptError
 		cause := classifySlotFreezeFailure(err)
+		if at.UnixMilli() >= recoveryUntil && errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+			// The Slot is past its recovery window, so the worker finalizes it
+			// query-free as SNAPSHOT_UNAVAILABLE without reading the Snapshot
+			// (the finalization source decides on recovery_until alone). The
+			// persisted Segment facts therefore identify the Slot on their own.
+			// Without this a Query Group whose Progress cursor rests in a closed
+			// Segment whose publication is no longer retained (Catalog TTL) could
+			// never freeze that Slot, never advance and stayed blocked with
+			// BLOCKED_EXACT_SET_UNAVAILABLE on every attempt.
+			decision = "snapshot_unavailable_finalization"
+			return source.snapshotUnavailableSlot(ctx, schedule, nextSlot, duePlans, deadline, recoveryUntil, initialAssignment, initialFence, at)
+		}
 		if errors.As(err, &corrupt) || at.UnixMilli() >= recoveryUntil {
 			return FrozenSlot{}, false, &SourceBlockedError{Err: cause}
 		}
@@ -528,6 +540,73 @@ func (source *ProductionSlotSource) slotFromProjection(
 		RecoveryUntilUnixMilli:         recoveryUntil, KeepUntilUnixMilli: projection.KeepUntilUnixMilli,
 		Dispatch:         SlotDispatchContext{Operation: operation, OwnerFence: currentFence, AssignmentGeneration: currentAssignment.AssignmentGeneration},
 		ExpectedNextSlot: projection.Contract.Slot.EvaluationTime, Recovery: recovery,
+	}
+	if err := slot.Validate(source.queryGroup); err != nil {
+		return FrozenSlot{}, false, &SourceBlockedError{Err: err}
+	}
+	return slot, true, nil
+}
+
+// snapshotUnavailableSlot builds the Slot of a due grid point whose Segment
+// Snapshot publication can no longer be read and whose recovery window has
+// passed. The contract carries the persisted Segment facts and a due Plan set
+// digest derived from the Segment and the due Plan schedule references, so the
+// same Slot always yields the same contract. The worker finalizes it
+// query-free as SNAPSHOT_UNAVAILABLE and advances Progress.
+func (source *ProductionSlotSource) snapshotUnavailableSlot(
+	ctx context.Context,
+	schedule execution.FrozenQueryGroupSchedule,
+	nextSlot execution.EvaluationTime,
+	duePlans []execution.FrozenPlanScheduleRef,
+	deadline int64,
+	recoveryUntil int64,
+	initialAssignment ownership.AssignmentRecord,
+	initialFence execution.OwnerFence,
+	at time.Time,
+) (FrozenSlot, bool, error) {
+	_, keepUntil, err := source.recoveryBoundaries(deadline)
+	if err != nil {
+		return FrozenSlot{}, false, err
+	}
+	digest, err := execution.DeriveSnapshotUnavailableDuePlanSetDigest(schedule.Segment, nextSlot, duePlans)
+	if err != nil {
+		return FrozenSlot{}, false, &SourceBlockedError{Err: err}
+	}
+	targets := execution.FrozenDuePlanTargets{DuePlanSetDigest: digest, Plans: make([]execution.PlanIdentity, len(duePlans))}
+	for index, due := range duePlans {
+		targets.Plans[index] = due.Identity
+	}
+	contractRef := execution.FrozenExecutionContractRef{
+		Slot:             execution.SlotIdentity{QueryGroup: source.queryGroup, EvaluationTime: nextSlot},
+		SnapshotRevision: schedule.Segment.Publication.SnapshotRevision, QueryRevision: schedule.Segment.QueryRevision,
+		ScheduleRevision: schedule.Segment.ScheduleRevision, ScheduleSegmentStart: schedule.Segment.Start,
+		DuePlanSetDigest: digest,
+	}
+	if err := source.validateSnapshotRetention(nextSlot, deadline); err != nil {
+		return FrozenSlot{}, false, err
+	}
+	operation, recovery, err := source.classifyRecovery(ctx, nextSlot, deadline, at)
+	if err != nil {
+		return FrozenSlot{}, false, err
+	}
+	currentAssignment, currentFence, err := source.currentOwnership(ctx, source.now())
+	if err != nil {
+		return FrozenSlot{}, false, err
+	}
+	if !sameAssignment(initialAssignment, currentAssignment) || initialFence != currentFence {
+		return FrozenSlot{}, false, ErrSlotOwnershipChanged
+	}
+	slot := FrozenSlot{
+		Contract:                       contractRef,
+		ShortPeriodCohort:              shortPeriodCohort(schedule, nextSlot),
+		DuePlanTargets:                 targets,
+		EarliestQueryDeadlineUnixMilli: deadline,
+		RecoveryUntilUnixMilli:         recoveryUntil,
+		KeepUntilUnixMilli:             keepUntil,
+		Dispatch: SlotDispatchContext{Operation: operation, OwnerFence: currentFence,
+			AssignmentGeneration: currentAssignment.AssignmentGeneration},
+		ExpectedNextSlot: nextSlot,
+		Recovery:         recovery,
 	}
 	if err := slot.Validate(source.queryGroup); err != nil {
 		return FrozenSlot{}, false, &SourceBlockedError{Err: err}

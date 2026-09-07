@@ -37,6 +37,51 @@ type duePlanDigestEntry struct {
 	Levels                      []duePlanDigestLevel      `json:"levels"`
 }
 
+// DeriveSnapshotUnavailableDuePlanSetDigest identifies the due Plan set of a
+// Slot that is finalized query-free because the Snapshot publication of its
+// Schedule Segment can no longer be read. No compiled Plan exists to bind, so
+// the digest binds the persisted Segment facts, the evaluation time and the
+// due Plan schedule references. It is deterministic across attempts and lives
+// in its own domain, so it never collides with a compiled due Plan set digest.
+func DeriveSnapshotUnavailableDuePlanSetDigest(
+	segment ScheduleSegmentFact,
+	evaluationTime EvaluationTime,
+	duePlans []FrozenPlanScheduleRef,
+) (DuePlanSetDigest, error) {
+	if err := segment.Validate(); err != nil {
+		return "", err
+	}
+	if evaluationTime < segment.Start || len(duePlans) == 0 {
+		return "", fmt.Errorf("alarmd execution: snapshot-unavailable due Plan set requires an in-segment Slot with due Plans")
+	}
+	sorted := append([]FrozenPlanScheduleRef(nil), duePlans...)
+	sort.Slice(sorted, func(left, right int) bool { return lessPlanIdentity(sorted[left].Identity, sorted[right].Identity) })
+	for index := range sorted {
+		if err := sorted[index].Identity.Validate(); err != nil || sorted[index].ScheduleRevision == "" {
+			return "", fmt.Errorf("alarmd execution: snapshot-unavailable due Plan %d is incomplete", index)
+		}
+	}
+	digest, err := contract.DeriveCanonicalDigestV2("alarmd-snapshot-unavailable-due-plan-set-v1", struct {
+		QueryGroup           QueryGroupIdentity      `json:"query_group"`
+		SnapshotRevision     SnapshotRevision        `json:"snapshot_revision"`
+		PublicationEpoch     PublicationEpoch        `json:"publication_epoch"`
+		QueryRevision        QueryRevision           `json:"query_revision"`
+		ScheduleRevision     ScheduleRevision        `json:"schedule_revision"`
+		ScheduleSegmentStart EvaluationTime          `json:"schedule_segment_start"`
+		EvaluationTime       EvaluationTime          `json:"evaluation_time"`
+		DuePlans             []FrozenPlanScheduleRef `json:"due_plans"`
+	}{
+		QueryGroup: segment.QueryGroup, SnapshotRevision: segment.Publication.SnapshotRevision,
+		PublicationEpoch: segment.Publication.PublicationEpoch, QueryRevision: segment.QueryRevision,
+		ScheduleRevision: segment.ScheduleRevision, ScheduleSegmentStart: segment.Start,
+		EvaluationTime: evaluationTime, DuePlans: sorted,
+	})
+	if err != nil {
+		return "", err
+	}
+	return DuePlanSetDigest(digest), nil
+}
+
 // DeriveDuePlanSetDigest binds the frozen due Plan set, capability closure and
 // logical data dependencies. It excludes ownership and attempt facts.
 func DeriveDuePlanSetDigest(plans []DuePlan, requirements []DataRequirement) (DuePlanSetDigest, error) {

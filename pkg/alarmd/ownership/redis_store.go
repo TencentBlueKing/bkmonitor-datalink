@@ -454,6 +454,30 @@ func (store *RedisStore) workerKey(workerID string) string {
 	return store.prefix + ":worker:" + hex.EncodeToString(digest[:])
 }
 
+// FenceKeys is a read-only descriptor of the Redis facts one fenced write must
+// consult before it mutates anything: the assignment HASH that names the
+// desired worker and the ownership HASH that holds the live lease. It exposes
+// no mutation; other stores use it to verify the same fence rule as
+// CheckFence and FencedCompareAndSet inside their own scripts.
+type FenceKeys struct {
+	AssignmentKey     string
+	OwnershipKey      string
+	RequireAssignment bool
+}
+
+// FenceKeys locates the ownership facts of one query group. The control
+// leader identity has no assignment record, exactly as in CheckFence.
+func (store *RedisStore) FenceKeys(queryGroup execution.QueryGroupIdentity) FenceKeys {
+	if store == nil {
+		return FenceKeys{}
+	}
+	return FenceKeys{
+		AssignmentKey:     store.assignmentKey(queryGroup),
+		OwnershipKey:      store.ownershipKey(queryGroup),
+		RequireAssignment: queryGroup != ControlLeaderIdentity,
+	}
+}
+
 func (store *RedisStore) assignmentKey(queryGroup execution.QueryGroupIdentity) string {
 	return store.controlKey(queryGroup, "assignment")
 }

@@ -6,14 +6,50 @@
 package execution
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
+
+// StatePreflightBatchItems bounds how many series one Runtime State preflight
+// read carries. The worker groups completed series up to this size so a Slot
+// with S series costs about S/StatePreflightBatchItems storage round trips
+// instead of one per series. It is a constant, not a tenant knob: it protects
+// storage and worker memory and never changes evaluation semantics.
+const StatePreflightBatchItems = 256
+
+// StateApplyFence carries the owner fence one Runtime State apply must verify
+// inside the storage write itself. At is the wall-clock instant the fence is
+// compared against the lease deadline; it uses the same rule as admission.
+type StateApplyFence struct {
+	Fence OwnerFence
+	At    time.Time
+}
+
+func (fence StateApplyFence) Validate(contractRef FrozenExecutionContractRef) error {
+	if err := fence.Fence.Validate(contractRef); err != nil {
+		return err
+	}
+	if fence.At.IsZero() {
+		return errors.New("alarmd execution: state apply fence time is required")
+	}
+	return nil
+}
+
+// FencedStateStore is an optional StateStore extension. Stores that can verify
+// the owner fence together with every Runtime State write expose it; the worker
+// prefers it whenever the Slot carries a valid fence and otherwise keeps using
+// StateStore.ApplyRuntime. A stale fence is reported as an error for the whole
+// request, never as a partial per-item result.
+type FencedStateStore interface {
+	ApplyRuntimeFenced(context.Context, StateApplyRequest, StateApplyFence) (StateApplyResult, error)
+}
 
 // RecordAnchor identifies one selected source point without copying it.
 type RecordAnchor struct {

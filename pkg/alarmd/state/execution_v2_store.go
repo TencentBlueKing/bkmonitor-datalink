@@ -31,9 +31,16 @@ type ExecutionStoreOptions struct {
 	MaxValueBytes   int
 	MaxItemsPerCall int
 	RuntimeTTL      time.Duration
+	// FenceKeys locates the ownership lease that fenced Runtime State writes
+	// verify inside storage. It is optional: without it ApplyRuntimeFenced
+	// applies unfenced and the admission-time fence check stands alone.
+	FenceKeys FenceKeyResolver
 }
 
-type ExecutionStore struct{ options ExecutionStoreOptions }
+type ExecutionStore struct {
+	options   ExecutionStoreOptions
+	witnesses *runtimeWitnessCache
+}
 
 type runtimeEnvelope struct {
 	Schema         string                                `json:"schema"`
@@ -62,33 +69,39 @@ func NewExecutionStore(options ExecutionStoreOptions) (*ExecutionStore, error) {
 		options.MaxItemsPerCall <= 0 || options.RuntimeTTL <= 0 {
 		return nil, fmt.Errorf("state: invalid execution store options")
 	}
-	return &ExecutionStore{options: options}, nil
+	return &ExecutionStore{options: options, witnesses: newRuntimeWitnessCache()}, nil
 }
 
+// LoadRuntime reads the requested keys in bounded MGET batches, grouping
+// consecutive items that route to the same storage target. Each value is still
+// classified on its own; a preflight witness is kept per readable key so the
+// following ApplyRuntime can prove what it saw without reading again.
 func (store *ExecutionStore) LoadRuntime(ctx context.Context, request execution.StatePreflightRequest) (execution.StatePreflightResult, error) {
 	if err := request.Contract.Validate(); err != nil || len(request.Items) == 0 || len(request.Items) > store.options.MaxItemsPerCall {
 		return execution.StatePreflightResult{}, fmt.Errorf("state: invalid runtime load request")
 	}
 	result := execution.StatePreflightResult{Items: make([]execution.RuntimeStateView, len(request.Items))}
+	batch := &runtimeLoadBatch{}
 	for index, item := range request.Items {
 		view := execution.RuntimeStateView{Identity: item.Identity, Status: execution.StateMissingWarming}
-		raw, err := store.readOne(ctx, item.Identity.Plan, func() (string, error) { return RuntimeStateKeyV2(store.options.Prefix, item.Identity) })
-		if err != nil {
-			var identityErr *IdentityError
-			if errors.As(err, &identityErr) {
-				view.BlobRevision, view.Status, view.ReasonCode = 1, execution.StateDeterministicInvalid, execution.ReasonCode(contract.ReasonStateCorrupt)
-			} else {
-				view.Status, view.ReasonCode = execution.StateRetryableIO, execution.ReasonCode(contract.ReasonRedisUnavailable)
-			}
-		} else if raw != nil {
-			if len(raw) > store.options.MaxValueBytes {
-				view.BlobRevision, view.Status, view.ReasonCode = 1, execution.StateDeterministicInvalid, execution.ReasonCode(contract.ReasonStateBudgetExceeded)
-			} else {
-				view = decodeRuntime(raw, item.Identity, request.Contract, item.ApplyVersion)
-			}
+		key, err := RuntimeStateKeyV2(store.options.Prefix, item.Identity)
+		var target StorageTarget
+		if err == nil {
+			target, err = store.options.Router.Route(item.Identity.Plan.TenantID, item.Identity.Plan.StrategyID)
 		}
-		result.Items[index] = view
+		if err != nil {
+			result.Items[index] = runtimeLoadFailure(view, err)
+			continue
+		}
+		if len(batch.indexes) > 0 && (batch.target.Name != target.Name || len(batch.indexes) >= runtimeLoadBatchItems) {
+			store.loadRuntimeBatch(ctx, request, batch, result.Items)
+			batch.reset()
+		}
+		batch.target = target
+		batch.indexes = append(batch.indexes, index)
+		batch.keys = append(batch.keys, key)
 	}
+	store.loadRuntimeBatch(ctx, request, batch, result.Items)
 	return execution.ClassifyStatePreflight(request, result)
 }
 
@@ -113,90 +126,11 @@ func (store *ExecutionStore) AdmitRuntime(_ context.Context, request execution.S
 	return result, result.Validate()
 }
 
+// ApplyRuntime applies without an owner fence. Items whose key was witnessed by
+// the preceding LoadRuntime are compared by digest in pipelined batches; the
+// rest take the sequential read-then-compare path unchanged.
 func (store *ExecutionStore) ApplyRuntime(ctx context.Context, request execution.StateApplyRequest) (execution.StateApplyResult, error) {
-	if err := request.Contract.Validate(); err != nil || len(request.Items) == 0 || len(request.Items) > store.options.MaxItemsPerCall {
-		return execution.StateApplyResult{}, fmt.Errorf("state: invalid runtime apply request")
-	}
-	result := execution.StateApplyResult{Items: make([]execution.StateApplyItemResult, len(request.Items))}
-	for index, mutation := range request.Items {
-		item := execution.StateApplyItemResult{Identity: mutation.Identity}
-		if err := mutation.ValidateDigest(); err != nil {
-			item.Status, item.ReasonCode = execution.StateApplyDeterministicInvalid, execution.ReasonCode(contract.ReasonStateCorrupt)
-			result.Items[index] = item
-			continue
-		}
-		key, err := RuntimeStateKeyV2(store.options.Prefix, mutation.Identity)
-		if err != nil {
-			item.Status, item.ReasonCode = execution.StateApplyDeterministicInvalid, execution.ReasonCode(contract.ReasonStateCorrupt)
-			result.Items[index] = item
-			continue
-		}
-		target, err := store.options.Router.Route(mutation.Identity.Plan.TenantID, mutation.Identity.Plan.StrategyID)
-		backend, ok := target.Backend.(CompareAndSetBackend)
-		if err != nil || !ok {
-			item.Status, item.ReasonCode = execution.StateApplyRetryable, execution.ReasonCode(contract.ReasonRedisUnavailable)
-			result.Items[index] = item
-			continue
-		}
-		values, err := backend.MGet(ctx, []string{key})
-		if err != nil {
-			item.Status, item.ReasonCode = execution.StateApplyRetryable, execution.ReasonCode(contract.ReasonRedisUnavailable)
-			result.Items[index] = item
-			continue
-		}
-		var raw []byte
-		if len(values) == 1 {
-			raw = values[0]
-		}
-		if raw != nil {
-			if len(raw) > store.options.MaxValueBytes {
-				item.Status, item.ReasonCode = execution.StateApplyDeterministicInvalid, execution.ReasonCode(contract.ReasonStateBudgetExceeded)
-				result.Items[index] = item
-				continue
-			}
-			view := decodeRuntime(raw, mutation.Identity, request.Contract, mutation.ApplyVersion)
-			if view.Status == execution.StateDeterministicInvalid {
-				item.Status, item.ReasonCode = execution.StateApplyDeterministicInvalid, view.ReasonCode
-				result.Items[index] = item
-				continue
-			}
-			view.VersionComparison = execution.CompareApplyVersion(view.PersistedApplyVersion, mutation.ApplyVersion)
-			switch execution.ClassifyStateMutation(view, mutation) {
-			case execution.StateAlreadyApplied:
-				item.Status = execution.StateApplyAlreadyApplied
-				result.Items[index] = item
-				continue
-			case execution.StateStaleVersion:
-				item.Status = execution.StateApplyStale
-				result.Items[index] = item
-				continue
-			case execution.StateVersionConflict:
-				item.Status = execution.StateApplyVersionConflict
-				result.Items[index] = item
-				continue
-			}
-		} else if mutation.ExpectedBlobRevision != 0 {
-			item.Status = execution.StateApplyVersionConflict
-			result.Items[index] = item
-			continue
-		}
-		encoded, err := encodeRuntime(mutation, mutation.ExpectedBlobRevision+1)
-		if err != nil || len(encoded) > store.options.MaxValueBytes {
-			item.Status, item.ReasonCode = execution.StateApplyDeterministicInvalid, execution.ReasonCode(contract.ReasonStateBudgetExceeded)
-			result.Items[index] = item
-			continue
-		}
-		applied, err := backend.CompareAndSet(ctx, key, raw, raw == nil, encoded, store.options.RuntimeTTL)
-		if err != nil {
-			item.Status, item.ReasonCode = execution.StateApplyRetryable, execution.ReasonCode(contract.ReasonStateWriteRetryable)
-		} else if !applied {
-			item.Status, item.ReasonCode = execution.StateApplyCASConflict, execution.ReasonCode(contract.ReasonStateWriteRetryable)
-		} else {
-			item.Status = execution.StateApplied
-		}
-		result.Items[index] = item
-	}
-	return result, result.Validate()
+	return store.applyRuntime(ctx, request, nil)
 }
 
 func encodeRuntime(mutation execution.StateMutation, revision uint64) ([]byte, error) {

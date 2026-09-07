@@ -6,6 +6,7 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -152,10 +153,52 @@ func TestClassifySlotFreezeFailureUsesFixedLowCardinalityTypes(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			got := classifySlotFreezeFailure(test.err)
-			if fmt.Sprintf("%T", got) != test.want || !errors.Is(got, test.err) || strings.Contains(got.Error(), "sensitive") {
-				t.Fatalf("classifySlotFreezeFailure()=(%T,%q), want type=%s with preserved chain and safe text", got, got, test.want)
+			if fmt.Sprintf("%T", got) != test.want || !errors.Is(got, test.err) || strings.Contains(got.Error(), "sensitive") ||
+				!strings.HasPrefix(got.Error(), slotFreezeFailureMessage+" [class=") {
+				t.Fatalf("classifySlotFreezeFailure()=(%T,%q), want type=%s with preserved chain, the class token and safe text", got, got, test.want)
 			}
 		})
+	}
+}
+
+// The schedule_due line for a blocked Query Group rendered only the bare
+// "FreezeSlotContract failed" text: the class lived in error_type and the
+// underlying control cause was lost by the blocked/retry wrapping. The line
+// must name the class, the control-plane stage and the bounded cause.
+func TestSlotFreezeFailureScheduleDueLineCarriesClassStageAndCause(t *testing.T) {
+	cause := classifySlotFreezeFailure(&controlplane.FreezeSlotContractError{
+		Class: controlplane.FreezeSlotFailureSnapshotRead, Err: controlplane.ErrSnapshotUnavailable,
+	})
+	blocked := &SourceBlockedError{Err: cause}
+	var output bytes.Buffer
+	limiter, err := observability.NewWindowLogLimiter(observability.WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := observability.NewBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observability.NewLoggingObserver(observability.New("alarmd", &output), policy).Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
+		Result: observability.ResultRetrying, ReasonCode: observability.ReasonCode(contract.ReasonBlockedExactSetUnavailable),
+		Direction: observability.DirectionInternal, Trace: observability.TraceFields{QueryGroupKey: "query-group-1"}, Err: blocked.Err,
+	})
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("log line is not JSON: %v: %s", err, output.String())
+	}
+	const wantError = "alarmd scheduler: FreezeSlotContract failed [class=snapshot_unavailable stage=snapshot_read]: alarmd controlplane: snapshot unavailable"
+	if event["error"] != wantError || event["error_type"] != "*scheduler.slotFreezeSnapshotUnavailableFailure" ||
+		event["reason_code"] != contract.ReasonBlockedExactSetUnavailable {
+		t.Fatalf("schedule_due line = %s, want error %q with its class type", output.String(), wantError)
+	}
+	// Free-text causes stay out of the line; the class and stage remain.
+	opaque := classifySlotFreezeFailure(&controlplane.FreezeSlotContractError{
+		Class: controlplane.FreezeSlotFailurePlanMaterialize, Err: errors.New("compiler detail with table names"),
+	})
+	if opaque.Error() != "alarmd scheduler: FreezeSlotContract failed [class=plan_materialize stage=plan_materialize]" {
+		t.Fatalf("opaque cause rendered as %q", opaque.Error())
 	}
 }
 

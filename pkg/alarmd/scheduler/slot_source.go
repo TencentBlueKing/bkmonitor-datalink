@@ -28,59 +28,97 @@ var (
 const slotFreezeFailureMessage = "alarmd scheduler: FreezeSlotContract failed"
 
 // These concrete error types are the bounded cause classes exposed as
-// error_type by the runtime logger. Their messages deliberately omit the
-// underlying control fact while Unwrap preserves errors.Is/errors.As.
+// error_type by the runtime logger. Error names the class, the control-plane
+// stage that rejected the freeze and, when the underlying cause is one of the
+// bounded control sentinels, that cause; free-text causes (corrupt payloads,
+// compiler errors) stay out of the message. Unwrap preserves
+// errors.Is/errors.As. Before, every class rendered the same bare message and
+// the schedule_due line could not say why a Query Group was blocked.
 type slotFreezeFailure struct{ err error }
 
 func (err slotFreezeFailure) Unwrap() error { return err.err }
 
+func (err slotFreezeFailure) message(class string) string {
+	text := slotFreezeFailureMessage + " [class=" + class
+	var classified *controlplane.FreezeSlotContractError
+	if errors.As(err.err, &classified) && classified.Class != "" {
+		text += " stage=" + string(classified.Class)
+	}
+	text += "]"
+	if cause := boundedSlotFreezeCause(err.err); cause != "" {
+		text += ": " + cause
+	}
+	return text
+}
+
+// boundedSlotFreezeCause returns the text of the control sentinel the freeze
+// failure wraps, or "" when the cause is not one of the bounded sentinels.
+func boundedSlotFreezeCause(err error) string {
+	for _, sentinel := range []error{
+		controlplane.ErrSnapshotUnavailable, controlplane.ErrScheduleUnavailable, controlplane.ErrCatalogObjectUnavailable,
+	} {
+		if errors.Is(err, sentinel) {
+			return sentinel.Error()
+		}
+	}
+	return ""
+}
+
 type slotFreezeSnapshotUnavailableFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeSnapshotUnavailableFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeSnapshotUnavailableFailure) Error() string {
+	return err.message("snapshot_unavailable")
+}
 
 type slotFreezeSnapshotCorruptFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeSnapshotCorruptFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeSnapshotCorruptFailure) Error() string { return err.message("snapshot_corrupt") }
 
 type slotFreezeScheduleUnavailableFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeScheduleUnavailableFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeScheduleUnavailableFailure) Error() string {
+	return err.message("schedule_unavailable")
+}
 
 type slotFreezeScheduleCorruptFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeScheduleCorruptFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeScheduleCorruptFailure) Error() string { return err.message("schedule_corrupt") }
 
 type slotFreezeCatalogObjectUnavailableFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeCatalogObjectUnavailableFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeCatalogObjectUnavailableFailure) Error() string {
+	return err.message("catalog_object_unavailable")
+}
 
 type slotFreezeScheduleReadFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeScheduleReadFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeScheduleReadFailure) Error() string { return err.message("schedule_read") }
 
 type slotFreezeScheduleMismatchFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeScheduleMismatchFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeScheduleMismatchFailure) Error() string { return err.message("schedule_mismatch") }
 
 type slotFreezeSnapshotReadFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeSnapshotReadFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeSnapshotReadFailure) Error() string { return err.message("snapshot_read") }
 
 type slotFreezePlanMaterializeFailure struct{ slotFreezeFailure }
 
-func (*slotFreezePlanMaterializeFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezePlanMaterializeFailure) Error() string { return err.message("plan_materialize") }
 
 type slotFreezeInputClosureFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeInputClosureFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeInputClosureFailure) Error() string { return err.message("input_closure") }
 
 type slotFreezeContractValidationFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeContractValidationFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeContractValidationFailure) Error() string {
+	return err.message("contract_validation")
+}
 
 type slotFreezeOtherFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeOtherFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeOtherFailure) Error() string { return err.message("other") }
 
 func classifySlotFreezeFailure(err error) error {
 	failure := slotFreezeFailure{err: err}
@@ -347,6 +385,18 @@ func (source *ProductionSlotSource) Next(
 		}
 		var corrupt *controlplane.PersistedSnapshotCorruptError
 		cause := classifySlotFreezeFailure(err)
+		if at.UnixMilli() >= recoveryUntil && errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+			// The Slot is past its recovery window, so the worker finalizes it
+			// query-free as SNAPSHOT_UNAVAILABLE without reading the Snapshot
+			// (the finalization source decides on recovery_until alone). The
+			// persisted Segment facts therefore identify the Slot on their own.
+			// Without this a Query Group whose Progress cursor rests in a closed
+			// Segment whose publication is no longer retained (Catalog TTL) could
+			// never freeze that Slot, never advance and stayed blocked with
+			// BLOCKED_EXACT_SET_UNAVAILABLE on every attempt.
+			decision = "snapshot_unavailable_finalization"
+			return source.snapshotUnavailableSlot(ctx, schedule, nextSlot, duePlans, deadline, recoveryUntil, initialAssignment, initialFence, at)
+		}
 		if errors.As(err, &corrupt) || at.UnixMilli() >= recoveryUntil {
 			return FrozenSlot{}, false, &SourceBlockedError{Err: cause}
 		}
@@ -490,6 +540,73 @@ func (source *ProductionSlotSource) slotFromProjection(
 		RecoveryUntilUnixMilli:         recoveryUntil, KeepUntilUnixMilli: projection.KeepUntilUnixMilli,
 		Dispatch:         SlotDispatchContext{Operation: operation, OwnerFence: currentFence, AssignmentGeneration: currentAssignment.AssignmentGeneration},
 		ExpectedNextSlot: projection.Contract.Slot.EvaluationTime, Recovery: recovery,
+	}
+	if err := slot.Validate(source.queryGroup); err != nil {
+		return FrozenSlot{}, false, &SourceBlockedError{Err: err}
+	}
+	return slot, true, nil
+}
+
+// snapshotUnavailableSlot builds the Slot of a due grid point whose Segment
+// Snapshot publication can no longer be read and whose recovery window has
+// passed. The contract carries the persisted Segment facts and a due Plan set
+// digest derived from the Segment and the due Plan schedule references, so the
+// same Slot always yields the same contract. The worker finalizes it
+// query-free as SNAPSHOT_UNAVAILABLE and advances Progress.
+func (source *ProductionSlotSource) snapshotUnavailableSlot(
+	ctx context.Context,
+	schedule execution.FrozenQueryGroupSchedule,
+	nextSlot execution.EvaluationTime,
+	duePlans []execution.FrozenPlanScheduleRef,
+	deadline int64,
+	recoveryUntil int64,
+	initialAssignment ownership.AssignmentRecord,
+	initialFence execution.OwnerFence,
+	at time.Time,
+) (FrozenSlot, bool, error) {
+	_, keepUntil, err := source.recoveryBoundaries(deadline)
+	if err != nil {
+		return FrozenSlot{}, false, err
+	}
+	digest, err := execution.DeriveSnapshotUnavailableDuePlanSetDigest(schedule.Segment, nextSlot, duePlans)
+	if err != nil {
+		return FrozenSlot{}, false, &SourceBlockedError{Err: err}
+	}
+	targets := execution.FrozenDuePlanTargets{DuePlanSetDigest: digest, Plans: make([]execution.PlanIdentity, len(duePlans))}
+	for index, due := range duePlans {
+		targets.Plans[index] = due.Identity
+	}
+	contractRef := execution.FrozenExecutionContractRef{
+		Slot:             execution.SlotIdentity{QueryGroup: source.queryGroup, EvaluationTime: nextSlot},
+		SnapshotRevision: schedule.Segment.Publication.SnapshotRevision, QueryRevision: schedule.Segment.QueryRevision,
+		ScheduleRevision: schedule.Segment.ScheduleRevision, ScheduleSegmentStart: schedule.Segment.Start,
+		DuePlanSetDigest: digest,
+	}
+	if err := source.validateSnapshotRetention(nextSlot, deadline); err != nil {
+		return FrozenSlot{}, false, err
+	}
+	operation, recovery, err := source.classifyRecovery(ctx, nextSlot, deadline, at)
+	if err != nil {
+		return FrozenSlot{}, false, err
+	}
+	currentAssignment, currentFence, err := source.currentOwnership(ctx, source.now())
+	if err != nil {
+		return FrozenSlot{}, false, err
+	}
+	if !sameAssignment(initialAssignment, currentAssignment) || initialFence != currentFence {
+		return FrozenSlot{}, false, ErrSlotOwnershipChanged
+	}
+	slot := FrozenSlot{
+		Contract:                       contractRef,
+		ShortPeriodCohort:              shortPeriodCohort(schedule, nextSlot),
+		DuePlanTargets:                 targets,
+		EarliestQueryDeadlineUnixMilli: deadline,
+		RecoveryUntilUnixMilli:         recoveryUntil,
+		KeepUntilUnixMilli:             keepUntil,
+		Dispatch: SlotDispatchContext{Operation: operation, OwnerFence: currentFence,
+			AssignmentGeneration: currentAssignment.AssignmentGeneration},
+		ExpectedNextSlot: nextSlot,
+		Recovery:         recovery,
 	}
 	if err := slot.Validate(source.queryGroup); err != nil {
 		return FrozenSlot{}, false, &SourceBlockedError{Err: err}

@@ -14,6 +14,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
 var ErrSlotInFlight = errors.New("alarmd scheduler: Query Group Slot is already in flight")
@@ -382,6 +383,8 @@ func (runner *Runner) runOneTracked(
 				runner.sourceNextAt = readyAt
 				return execution.SlotExecutionResult{}, true, nil
 			}
+		} else if executionErrorBacksOff(ctx, err) {
+			runner.recordExecutionFailure(slot, runner.now())
 		}
 	}
 	if err == nil {
@@ -389,6 +392,18 @@ func (runner *Runner) runOneTracked(
 	}
 	decision = "execution_returned"
 	return result, true, err
+}
+
+// executionErrorBacksOff reports whether a Go error returned by Execute counts
+// as a failed attempt of the frozen Slot. Cancellation is not a Slot failure,
+// and ownership errors already stop the Runner through the dispatcher, so
+// neither may schedule a retry of this Slot.
+func executionErrorBacksOff(ctx context.Context, err error) bool {
+	if err == nil || ctx.Err() != nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	return !errors.Is(err, ownership.ErrStaleFence) && !errors.Is(err, ownership.ErrNotDesired) &&
+		!errors.Is(err, ErrSlotOwnershipChanged)
 }
 
 func (runner *Runner) attemptNo(slot FrozenSlot) uint32 {

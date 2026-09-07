@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net"
 	"net/http"
 	"reflect"
 	"time"
@@ -54,11 +55,37 @@ type phaseTwoProductionExternalDependencies struct {
 
 func defaultPhaseTwoProductionExternalDependencies() phaseTwoProductionExternalDependencies {
 	return phaseTwoProductionExternalDependencies{
-		Now: time.Now, HTTPClient: &http.Client{},
+		Now: time.Now, HTTPClient: newPhaseTwoUQHTTPClient(),
 		OpenEvents: func(coordinates enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
 			return enginekafka.OpenTriggerEventSink(coordinates)
 		},
 	}
+}
+
+// phaseTwoUQDialer bounds connection establishment to the query provider and
+// keeps established connections alive between Slot queries.
+func phaseTwoUQDialer() *net.Dialer {
+	return &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
+}
+
+// newPhaseTwoUQHTTPClient returns the client used for query provider
+// requests. The zero-value http.Client kept only two idle connections per
+// host, so with P concurrent Slot queries most connections were torn down and
+// re-established after every request. The pool below covers the P/R profiles
+// in use with headroom. Requests are bounded by the per-attempt context
+// deadline, so no client-level or response-header timeout is set.
+func newPhaseTwoUQHTTPClient() *http.Client {
+	dialer := phaseTwoUQDialer()
+	return &http.Client{Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           dialer.DialContext,
+		MaxIdleConns:          128,
+		MaxIdleConnsPerHost:   64,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+		ResponseHeaderTimeout: 0,
+	}}
 }
 
 func openProductionPhaseTwoBundle(

@@ -360,20 +360,26 @@ func foldRecentGap(
 	}
 }
 
-// abandonUnfinishedSlot records the superseded unfinished Slot as one skipped
-// Slot in the recent gap summary, exactly as a GAP_SKIPPED completion would,
-// and moves the cursor to the successor the completed facts prove. A
-// requested Slot that is not that successor conflicts and nothing is written.
+// abandonUnfinishedSlot drops the superseded unfinished Slot and moves the
+// cursor to the successor the completed facts prove. A later requested Slot
+// means the abandoned Slot was skipped, so it is first recorded in the recent
+// gap summary exactly as a GAP_SKIPPED completion would be; an earlier one
+// means the new grid still reaches that time, so nothing is recorded. A
+// requested Slot that is not the proven successor conflicts and nothing is
+// written.
 func (store *Store) abandonUnfinishedSlot(
 	ctx context.Context,
 	current *execution.ScheduleProgress,
 	requested execution.EvaluationTime,
 ) (bool, error) {
-	skipped := execution.ProgressCommitRequest{ExpectedNextSlot: current.NextSlot, Completion: execution.SlotCompletion{
-		Kind: execution.CompletionGapSkipped, ReasonCode: execution.ReasonCode(contract.ReasonGapSkipped)}}
-	current.CurrentOrRecentGap = foldRecentGap(*current, skipped)
-	current.LastCompletionKind = execution.CompletionGapSkipped
+	abandoned := current.NextSlot
 	current.UnfinishedSlot = nil
+	if requested > abandoned {
+		skipped := execution.ProgressCommitRequest{ExpectedNextSlot: abandoned, Completion: execution.SlotCompletion{
+			Kind: execution.CompletionGapSkipped, ReasonCode: execution.ReasonCode(contract.ReasonGapSkipped)}}
+		current.CurrentOrRecentGap = foldRecentGap(*current, skipped)
+		current.LastCompletionKind = execution.CompletionGapSkipped
+	}
 	next, err := store.resolveCurrentNextSlot(ctx, *current)
 	if err != nil {
 		return false, err

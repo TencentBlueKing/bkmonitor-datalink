@@ -52,8 +52,19 @@ func TestProductionPhaseTwoBundleReRunsChunkedSlotIdempotently(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The Slot is scheduled on the controlled clock, but the UQ client puts
+	// the frozen query deadline (evaluation time plus the 300 s interval,
+	// minus the downstream reserve) on the HTTP request as a wall-clock
+	// deadline. Anchor the Slot on the next five-minute boundary so that
+	// deadline stays at least five minutes ahead of the wall clock for the
+	// whole test; anchored on the current boundary it was anywhere from
+	// already expired to expiring mid-test, which made both attempts fail
+	// under load with an UNAVAILABLE query.
 	base := time.Now().Unix()
-	base -= base % 300
+	base = base - base%300 + 300
+	if margin := time.Until(time.Unix(base+300, 0)); margin < 4*time.Minute {
+		t.Fatalf("frozen query deadline is only %s ahead of the wall clock", margin)
+	}
 	var clock atomic.Int64
 	clock.Store(base)
 	now := func() time.Time { return time.Unix(clock.Load(), 0) }
@@ -180,19 +191,19 @@ func TestProductionPhaseTwoBundleReRunsChunkedSlotIdempotently(t *testing.T) {
 		t.Fatalf("first attempt chunk observations = %+v commits=%d", firstApplied, firstCommits)
 	}
 
-	// Attempt 2: the retry of the same Slot through the real path.
+	// Attempt 2: the retry of the same Slot through the real path. On the
+	// controlled clock the first retry is due retry_min_delay after the failed
+	// attempt, so one tick at that instant dispatches it; nothing here waits
+	// on wall time.
+	clock.Store(base + 1 + int64(cfg.PhaseTwo.Scheduler.RetryMinDelay.Duration()/time.Second))
 	secondStarted := time.Now()
-	var completed bool
-	for tick := 1; tick <= 6 && !completed; tick++ {
-		clock.Store(base + 1 + int64(tick)*5)
-		if err := bundle.runScheduledOnce(ctx); err != nil {
-			t.Fatalf("runScheduledOnce(retry %d) error = %v", tick, err)
-		}
-		progress = loadPhaseTwoProgress(t, ctx, productionOwnership, queryGroup)
-		completed = progress.LastFullSlot == execution.EvaluationTime(base)
+	if err := bundle.runScheduledOnce(ctx); err != nil {
+		t.Fatalf("runScheduledOnce(retry) error = %v", err)
 	}
 	secondElapsed := time.Since(secondStarted)
-	if !completed || progress.LastCompletionKind != execution.CompletionFull || progress.NextSlot != execution.EvaluationTime(base+300) {
+	progress = loadPhaseTwoProgress(t, ctx, productionOwnership, queryGroup)
+	if progress.LastFullSlot != execution.EvaluationTime(base) || progress.LastCompletionKind != execution.CompletionFull ||
+		progress.NextSlot != execution.EvaluationTime(base+300) {
 		t.Fatalf("Progress after the re-run = %+v, want FULL at %d", progress, base)
 	}
 	if uqCalls.Load() != 2 {

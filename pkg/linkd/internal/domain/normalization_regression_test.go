@@ -36,7 +36,10 @@ func TestNormalizationPreservesJSONValidationAndOwnership(t *testing.T) {
 			event.ExtraData = input
 			alert := validAlert()
 			alert.ExtraData = input
-			alert.Enrich = input
+			alert.Enrich = domain.JSONObject{
+				"status":     json.RawMessage(`"succeeded"`),
+				"processors": json.RawMessage(`[{"test":{"status":"succeeded","value":{"value":` + tc.raw + `}}}]`),
+			}
 			log := domain.AlertLog{LogID: "log", BKTenantID: "tenant", AlertID: "alert", OperatorKind: domain.OperatorKindSystem, OperationKind: domain.OperationKindTrigger, Params: input, CreatedTime: time.Now()}
 			en, ee := event.Normalize()
 			an, ae := alert.Normalize()
@@ -62,7 +65,7 @@ func TestNormalizationPreservesJSONValidationAndOwnership(t *testing.T) {
 				t.Fatal("normalized value shares input bytes")
 			}
 			en.SourceRawData["value"] = json.RawMessage(`{"a":1,"a":2}`)
-			an.Enrich["value"] = json.RawMessage(`{"a":1,"a":2}`)
+			an.Enrich["processors"] = json.RawMessage(`[{"test":{"status":"succeeded","value":{"a":1,"a":2}}}]`)
 			ln.Params["value"] = json.RawMessage(`{"a":1,"a":2}`)
 			if en.Validate() == nil || an.Validate() == nil || ln.Validate() == nil {
 				t.Fatal("Validate trusted previously normalized value after mutation")

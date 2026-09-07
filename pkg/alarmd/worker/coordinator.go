@@ -62,6 +62,12 @@ type ProvisionalBudget struct {
 	MaxStateMutations uint64
 	MaxEvents         uint64
 	MaxGapMutations   uint64
+	// StoreMaxItems is the State store's per-call item bound. One Plan's
+	// State or Gap mutations beyond it are applied in successive calls of at
+	// most this size, up to execution.StateApplyMaxChunks calls, which also
+	// caps what one Slot may produce (see slotBudget). Zero means the store
+	// has no bound below the process budget.
+	StoreMaxItems uint64
 }
 
 type activationProtectionRequiredError struct {
@@ -655,42 +661,69 @@ func (coordinator *SlotExecutionCoordinator) applyActivatedPlanGaps(
 	items []execution.PlanGapMutation,
 	requireAlready map[execution.PlanGapIdentity]struct{},
 ) (bool, error) {
-	started := time.Now()
-	result, err := coordinator.ports.GapGuard.ApplyGap(ctx, execution.GapGuardApplyRequest{Contract: contractRef, Items: items})
-	var reason execution.ReasonCode
 	allAlready := len(items) > 0
-	if err == nil {
-		if err = result.Validate(); err == nil {
-			expected := make([]execution.PlanGapIdentity, len(items))
-			actual := make([]execution.PlanGapIdentity, len(result.Items))
-			for index, item := range items {
-				expected[index] = item.Identity
+	err := coordinator.applyGapChunks(ctx, operation, contractRef, items, "activated Plan gap guard",
+		func(item execution.GapGuardApplyItemResult) error {
+			if item.Status != execution.GapGuardAlreadyApplied {
+				allAlready = false
 			}
-			for index, item := range result.Items {
-				actual[index] = item.Identity
-				reason = item.ReasonCode
-				if item.Status != execution.GapGuardAlreadyApplied {
-					allAlready = false
-				}
-				if _, redo := requireAlready[item.Identity]; redo && item.Status != execution.GapGuardAlreadyApplied {
-					err = fmt.Errorf("activated Plan gap redo did not converge: %s", item.Status)
-					break
-				}
-				if item.Status != execution.GapGuardApplied && item.Status != execution.GapGuardAlreadyApplied {
-					err = fmt.Errorf("activated Plan gap guard did not complete: %s", item.Status)
-					break
-				}
+			if _, redo := requireAlready[item.Identity]; redo && item.Status != execution.GapGuardAlreadyApplied {
+				return fmt.Errorf("activated Plan gap redo did not converge: %s", item.Status)
 			}
-			if err == nil {
-				err = validateIdentitySet(expected, actual, "activated Plan gap guard")
+			if item.Status != execution.GapGuardApplied && item.Status != execution.GapGuardAlreadyApplied {
+				return fmt.Errorf("activated Plan gap guard did not complete: %s", item.Status)
 			}
-		}
-	}
-	coordinator.observe(ctx, observability.ComponentState, observability.StageGapGuardCommitted, operation, started, "", reason, err)
+			return nil
+		})
 	if err != nil {
 		return false, fmt.Errorf("alarmd worker: apply activated Plan gap guard: %w", err)
 	}
 	return allAlready, nil
+}
+
+// applyGapChunks writes Plan gap mutations in Store-sized chunks in slice
+// order and validates every receipt; accept decides which item statuses
+// complete an item. The chunk loop stops at the first failed chunk, so a
+// later chunk is never sent after an earlier one failed.
+func (coordinator *SlotExecutionCoordinator) applyGapChunks(
+	ctx context.Context,
+	operation execution.Operation,
+	contractRef execution.FrozenExecutionContractRef,
+	items []execution.PlanGapMutation,
+	subject string,
+	accept func(execution.GapGuardApplyItemResult) error,
+) error {
+	started := time.Now()
+	var totals applyTotals
+	return forEachChunk(ctx, len(items), coordinator.applyChunkItems(coordinator.budget.MaxGapMutations), func(chunk applyChunk) error {
+		chunkItems := items[chunk.start:chunk.end]
+		chunkStarted := time.Now()
+		result, err := coordinator.ports.GapGuard.ApplyGap(ctx, execution.GapGuardApplyRequest{Contract: contractRef, Items: chunkItems})
+		var reason execution.ReasonCode
+		if err == nil {
+			if err = result.Validate(); err == nil {
+				expected := make([]execution.PlanGapIdentity, len(chunkItems))
+				actual := make([]execution.PlanGapIdentity, len(result.Items))
+				for index, item := range chunkItems {
+					expected[index] = item.Identity
+				}
+				for index, item := range result.Items {
+					actual[index] = item.Identity
+					reason = item.ReasonCode
+					if err = accept(item); err != nil {
+						break
+					}
+				}
+				if err == nil {
+					err = validateIdentitySet(expected, actual, subject)
+				}
+			}
+		}
+		totals.keys += int64(len(chunkItems))
+		coordinator.observeChunk(ctx, observability.StageGapGuardCommitted, operation, chunkStarted, started, "", reason,
+			chunk, totals, observability.Counts{}, err)
+		return err
+	})
 }
 
 func activatedPlanSequencingScope(slot execution.SlotIdentity, activations execution.PlanActivationResult) execution.SequencingScope {
@@ -811,13 +844,14 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			if err := coordinator.admit(ctx, request, due); err != nil {
 				return execution.SlotExecutionResult{}, err
 			}
-			rejected, err := coordinator.admitState(ctx, request.Operation, request.Contract, mutations)
+			rejected, encodedBytes, err := coordinator.admitState(ctx, request.Operation, request.Contract, mutations)
 			if err != nil {
 				return execution.SlotExecutionResult{}, err
 			}
 			accepted := make([]execution.StateMutation, 0, len(mutations)-len(rejected))
+			acceptedBytes := make([]int64, 0, len(mutations)-len(rejected))
 			events := make([]contract.TriggerEventV1, 0)
-			for _, mutation := range mutations {
+			for index, mutation := range mutations {
 				if reason, terminal := rejected[mutation.Identity]; terminal {
 					if stateAdmissionTerminalReason == "" {
 						stateAdmissionTerminalReason = reason
@@ -825,6 +859,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 					continue
 				}
 				accepted = append(accepted, mutation)
+				acceptedBytes = append(acceptedBytes, encodedBytes[index])
 				events = append(events, eventsByState[mutation.Identity]...)
 			}
 			sortTriggerEvents(events)
@@ -841,7 +876,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 				continue
 			}
 			if len(accepted) > 0 {
-				rejectedApply, err := coordinator.applyState(ctx, request.Operation, request.Contract, request.OwnerFence, accepted)
+				rejectedApply, err := coordinator.applyState(ctx, request.Operation, request.Contract, request.OwnerFence, accepted, acceptedBytes)
 				if err != nil {
 					return execution.SlotExecutionResult{}, err
 				}
@@ -1028,36 +1063,13 @@ func (coordinator *SlotExecutionCoordinator) applyGap(
 	contractRef execution.FrozenExecutionContractRef,
 	items []execution.PlanGapMutation,
 ) error {
-	if len(items) == 0 {
-		return nil
-	}
-	started := time.Now()
-	result, err := coordinator.ports.GapGuard.ApplyGap(ctx, execution.GapGuardApplyRequest{Contract: contractRef, Items: items})
-	var reason execution.ReasonCode
-	if err == nil {
-		if err = result.Validate(); err != nil {
-			// Keep exact typed receipt errors instead of normalizing them to an
-			// unrelated successful status.
-		} else {
-			expected := make([]execution.PlanGapIdentity, len(items))
-			actual := make([]execution.PlanGapIdentity, len(result.Items))
-			for index, item := range items {
-				expected[index] = item.Identity
+	err := coordinator.applyGapChunks(ctx, operation, contractRef, items, "gap guard",
+		func(item execution.GapGuardApplyItemResult) error {
+			if item.Status != execution.GapGuardApplied && item.Status != execution.GapGuardAlreadyApplied {
+				return fmt.Errorf("gap guard did not complete: %s", item.Status)
 			}
-			for index, item := range result.Items {
-				actual[index] = item.Identity
-				reason = item.ReasonCode
-				if item.Status != execution.GapGuardApplied && item.Status != execution.GapGuardAlreadyApplied {
-					err = fmt.Errorf("gap guard did not complete: %s", item.Status)
-					break
-				}
-			}
-			if err == nil {
-				err = validateIdentitySet(expected, actual, "gap guard")
-			}
-		}
-	}
-	coordinator.observe(ctx, observability.ComponentState, observability.StageGapGuardCommitted, operation, started, "", reason, err)
+			return nil
+		})
 	if err != nil {
 		return fmt.Errorf("alarmd worker: apply gap guard: %w", err)
 	}
@@ -1103,89 +1115,115 @@ func isRetryableOutputDependency(err error) bool {
 	return errors.As(err, &dependencyErr) && dependencyErr != nil
 }
 
+// admitState admits one Plan's mutations in Store-sized chunks. It returns the
+// deterministic rejections by identity and, aligned with mutations, the
+// encoded size the store measured for each admitted mutation.
 func (coordinator *SlotExecutionCoordinator) admitState(
 	ctx context.Context,
 	operation execution.Operation,
 	contractRef execution.FrozenExecutionContractRef,
 	mutations []execution.StateMutation,
-) (map[execution.StateKeyIdentity]execution.ReasonCode, error) {
+) (map[execution.StateKeyIdentity]execution.ReasonCode, []int64, error) {
 	started := time.Now()
-	result, err := coordinator.ports.State.AdmitRuntime(ctx, execution.StateApplyRequest{Contract: contractRef, Items: mutations})
-	var reason execution.ReasonCode
 	deterministic := make(map[execution.StateKeyIdentity]execution.ReasonCode)
-	if err == nil {
-		if err = result.Validate(); err != nil {
-		} else {
-			expected := make([]execution.StateKeyIdentity, len(mutations))
-			actual := make([]execution.StateKeyIdentity, len(result.Items))
-			for index, mutation := range mutations {
-				expected[index] = mutation.Identity
+	encodedBytes := make([]int64, len(mutations))
+	var totals applyTotals
+	err := forEachChunk(ctx, len(mutations), coordinator.applyChunkItems(coordinator.budget.MaxStateMutations), func(chunk applyChunk) error {
+		chunkItems := mutations[chunk.start:chunk.end]
+		chunkStarted := time.Now()
+		result, err := coordinator.ports.State.AdmitRuntime(ctx, execution.StateApplyRequest{Contract: contractRef, Items: chunkItems})
+		var reason execution.ReasonCode
+		var chunkBytes int64
+		rejected := 0
+		if err == nil {
+			if err = result.Validate(); err == nil {
+				actual := make([]execution.StateKeyIdentity, len(result.Items))
+				for index, item := range result.Items {
+					actual[index] = item.Identity
+				}
+				err = validateIdentitySet(stateIdentities(chunkItems), actual, "state admission")
 			}
-			for index, item := range result.Items {
-				actual[index] = item.Identity
-			}
-			err = validateIdentitySet(expected, actual, "state admission")
 			if err == nil {
 				reason = firstStateAdmissionFailureReason(result.Items)
+				position := make(map[execution.StateKeyIdentity]int, len(chunkItems))
+				for index, mutation := range chunkItems {
+					position[mutation.Identity] = chunk.start + index
+				}
 				for _, item := range result.Items {
 					switch item.Status {
 					case execution.StateAdmissionAccepted:
+						encodedBytes[position[item.Identity]] = int64(item.EncodedBytes)
+						chunkBytes += int64(item.EncodedBytes)
 					case execution.StateAdmissionDeterministicInvalid:
 						deterministic[item.Identity] = item.ReasonCode
+						rejected++
 					default:
 						err = fmt.Errorf("state admission did not complete: %s", item.Status)
 					}
 				}
 			}
 		}
-	}
-	observationResult := observability.Result(observability.ResultSuccess)
-	if len(deterministic) > 0 {
-		observationResult = observability.ResultTerminal
-	}
-	coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageStateAdmission, operation, started,
-		observationResult, reason, observability.Counts{Keys: int64(len(mutations))}, err)
+		observationResult := observability.Result(observability.ResultSuccess)
+		if rejected > 0 {
+			observationResult = observability.ResultTerminal
+		}
+		totals.keys += int64(len(chunkItems))
+		totals.bytes += chunkBytes
+		coordinator.observeChunk(ctx, observability.StageStateAdmission, operation, chunkStarted, started, observationResult, reason,
+			chunk, totals, observability.Counts{Keys: int64(len(chunkItems)), StateBytes: chunkBytes}, err)
+		return err
+	})
 	if err != nil {
-		return nil, fmt.Errorf("alarmd worker: state admission: %w", err)
+		return nil, nil, fmt.Errorf("alarmd worker: state admission: %w", err)
 	}
-	return deterministic, nil
+	return deterministic, encodedBytes, nil
 }
 
-// applyState writes the accepted mutations of one Plan. When the State store
-// can fence writes and the Slot carries a valid owner fence, the fence is
-// verified inside the write itself so a stale owner cannot advance State after
-// admission; a stale fence surfaces as the ownership error, the same as a
-// failed admission, and the Plan neither advances State nor commits Progress.
+// applyState writes the accepted mutations of one Plan in Store-sized chunks
+// in slice order. When the State store can fence writes and the Slot carries
+// a valid owner fence, the fence is verified inside every write so a stale
+// owner cannot advance State after admission; the fence instant is taken per
+// chunk so a lease that expired while an earlier chunk was written is not
+// carried past its deadline. A stale fence surfaces as the ownership error,
+// the same as a failed admission. A failed chunk stops the loop: the keys of
+// earlier chunks stay written, later chunks are not sent, and the Plan
+// neither advances State nor commits Progress until the Slot is re-run, when
+// the written keys read back ALREADY_APPLIED. encodedBytes, aligned with
+// mutations, only feeds the observation and may be nil.
 func (coordinator *SlotExecutionCoordinator) applyState(
 	ctx context.Context,
 	operation execution.Operation,
 	contractRef execution.FrozenExecutionContractRef,
 	fence execution.OwnerFence,
 	mutations []execution.StateMutation,
+	encodedBytes []int64,
 ) (map[execution.StateKeyIdentity]execution.ReasonCode, error) {
 	started := time.Now()
-	applyRequest := execution.StateApplyRequest{Contract: contractRef, Items: mutations}
-	var result execution.StateApplyResult
-	var err error
-	if fenced, ok := coordinator.ports.State.(execution.FencedStateStore); ok && fence.Validate(contractRef) == nil {
-		result, err = fenced.ApplyRuntimeFenced(ctx, applyRequest, execution.StateApplyFence{Fence: fence, At: started})
-	} else {
-		result, err = coordinator.ports.State.ApplyRuntime(ctx, applyRequest)
-	}
-	var reason execution.ReasonCode
+	fenced, ok := coordinator.ports.State.(execution.FencedStateStore)
+	useFence := ok && fence.Validate(contractRef) == nil
 	deterministic := make(map[execution.StateKeyIdentity]execution.ReasonCode)
-	if err == nil {
-		if err = result.Validate(); err != nil {
+	var totals applyTotals
+	err := forEachChunk(ctx, len(mutations), coordinator.applyChunkItems(coordinator.budget.MaxStateMutations), func(chunk applyChunk) error {
+		chunkItems := mutations[chunk.start:chunk.end]
+		applyRequest := execution.StateApplyRequest{Contract: contractRef, Items: chunkItems}
+		chunkStarted := time.Now()
+		var result execution.StateApplyResult
+		var err error
+		if useFence {
+			result, err = fenced.ApplyRuntimeFenced(ctx, applyRequest, execution.StateApplyFence{Fence: fence, At: chunkStarted})
 		} else {
-			expected := make([]execution.StateKeyIdentity, len(mutations))
-			actual := make([]execution.StateKeyIdentity, len(result.Items))
-			for index, mutation := range mutations {
-				expected[index] = mutation.Identity
+			result, err = coordinator.ports.State.ApplyRuntime(ctx, applyRequest)
+		}
+		var reason execution.ReasonCode
+		rejected := 0
+		if err == nil {
+			if err = result.Validate(); err == nil {
+				actual := make([]execution.StateKeyIdentity, len(result.Items))
+				for index, item := range result.Items {
+					actual[index] = item.Identity
+				}
+				err = validateIdentitySet(stateIdentities(chunkItems), actual, "state apply")
 			}
-			for index, item := range result.Items {
-				actual[index] = item.Identity
-			}
-			err = validateIdentitySet(expected, actual, "state apply")
 			if err == nil {
 				reason = firstStateApplyFailureReason(result.Items)
 				for _, item := range result.Items {
@@ -1193,19 +1231,29 @@ func (coordinator *SlotExecutionCoordinator) applyState(
 					case execution.StateApplied, execution.StateApplyAlreadyApplied:
 					case execution.StateApplyDeterministicInvalid:
 						deterministic[item.Identity] = item.ReasonCode
+						rejected++
 					default:
 						err = fmt.Errorf("state apply did not complete: %s", item.Status)
 					}
 				}
 			}
 		}
-	}
-	observationResult := observability.Result(observability.ResultSuccess)
-	if len(deterministic) > 0 {
-		observationResult = observability.ResultTerminal
-	}
-	coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageStateApplied, operation, started,
-		observationResult, reason, observability.Counts{Keys: int64(len(mutations))}, err)
+		var chunkBytes int64
+		if len(encodedBytes) == len(mutations) {
+			for _, size := range encodedBytes[chunk.start:chunk.end] {
+				chunkBytes += size
+			}
+		}
+		observationResult := observability.Result(observability.ResultSuccess)
+		if rejected > 0 {
+			observationResult = observability.ResultTerminal
+		}
+		totals.keys += int64(len(chunkItems))
+		totals.bytes += chunkBytes
+		coordinator.observeChunk(ctx, observability.StageStateApplied, operation, chunkStarted, started, observationResult, reason,
+			chunk, totals, observability.Counts{Keys: int64(len(chunkItems)), StateBytes: chunkBytes}, err)
+		return err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("alarmd worker: apply state: %w", err)
 	}
@@ -1268,23 +1316,29 @@ func (coordinator *SlotExecutionCoordinator) observeWithCounts(
 	counts observability.Counts,
 	err error,
 ) {
-	if err != nil {
-		result = observability.Result(observability.ResultFailed)
-		if reason == "" || reason == observability.ReasonNone {
-			reason = observability.ReasonInternalUnknown
-		}
-	} else {
-		if result == "" {
-			result = observability.ResultSuccess
-		}
-		if reason == "" {
-			reason = observability.ReasonNone
-		}
-	}
-	observation := observability.Observation{
+	coordinator.emitObservation(ctx, observability.Observation{
 		Component: component, Stage: stage, Result: result,
 		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
 		ReasonCode: reason, Duration: time.Since(started), Counts: counts, Err: err,
+	})
+}
+
+// emitObservation applies the shared result and reason defaults of internal
+// stage observations and hands the observation to the Observer; an observer
+// panic never fails the Slot.
+func (coordinator *SlotExecutionCoordinator) emitObservation(ctx context.Context, observation observability.Observation) {
+	if observation.Err != nil {
+		observation.Result = observability.Result(observability.ResultFailed)
+		if observation.ReasonCode == "" || observation.ReasonCode == observability.ReasonNone {
+			observation.ReasonCode = observability.ReasonInternalUnknown
+		}
+	} else {
+		if observation.Result == "" {
+			observation.Result = observability.ResultSuccess
+		}
+		if observation.ReasonCode == "" {
+			observation.ReasonCode = observability.ReasonNone
+		}
 	}
 	defer func() { _ = recover() }()
 	coordinator.ports.Observer.Observe(ctx, observation)
@@ -1305,6 +1359,11 @@ func (coordinator *SlotExecutionCoordinator) observeCapacityRejection(
 	var exceeded *provisionalBudgetExceededError
 	if errors.As(err, &exceeded) {
 		observation.CapacityRejection = exceeded.facts
+		if exceeded.slot {
+			// The Slot itself is too large for this process: not a pause that
+			// resumes when shared capacity frees up.
+			observation.ReasonCode = observability.ReasonCode(contract.ReasonSlotBudgetExceeded)
+		}
 	}
 	defer func() { _ = recover() }()
 	coordinator.ports.Observer.Observe(ctx, observation)

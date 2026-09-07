@@ -37,15 +37,21 @@ type RuntimeCapacityFacts struct {
 	Events                     uint64 `json:"events"`
 	GapMutations               uint64 `json:"gap_mutations"`
 	GapFacts                   uint64 `json:"gap_facts"`
-	StoreMaxValueBytes         int    `json:"store_max_value_bytes"`
-	StoreMaxItems              int    `json:"store_max_items"`
-	EvaluatorMaxPlans          uint64 `json:"evaluator_max_plans"`
-	EvaluatorMaxRecords        uint64 `json:"evaluator_max_records"`
-	EvaluatorMaxLevels         uint64 `json:"evaluator_max_levels"`
-	EvidenceBytes              int    `json:"evidence_bytes"`
-	OutputMessageBytes         int    `json:"output_message_bytes"`
-	UQBodyBytes                int64  `json:"uq_body_bytes"`
-	UQSeriesBytes              int64  `json:"uq_series_bytes"`
-	UQSeries                   uint64 `json:"uq_series"`
-	UQRecords                  uint64 `json:"uq_records"`
+	// SlotStateMutations and SlotGapMutations are the derived per-Slot caps:
+	// the smaller of the process budget and what StateApplyChunks Store calls
+	// of StoreMaxItems can carry. A Slot above its cap completes UNAVAILABLE.
+	SlotStateMutations  uint64 `json:"slot_state_mutations"`
+	SlotGapMutations    uint64 `json:"slot_gap_mutations"`
+	StateApplyChunks    int    `json:"state_apply_chunks"`
+	StoreMaxValueBytes  int    `json:"store_max_value_bytes"`
+	StoreMaxItems       int    `json:"store_max_items"`
+	EvaluatorMaxPlans   uint64 `json:"evaluator_max_plans"`
+	EvaluatorMaxRecords uint64 `json:"evaluator_max_records"`
+	EvaluatorMaxLevels  uint64 `json:"evaluator_max_levels"`
+	EvidenceBytes       int    `json:"evidence_bytes"`
+	OutputMessageBytes  int    `json:"output_message_bytes"`
+	UQBodyBytes         int64  `json:"uq_body_bytes"`
+	UQSeriesBytes       int64  `json:"uq_series_bytes"`
+	UQSeries            uint64 `json:"uq_series"`
+	UQRecords           uint64 `json:"uq_records"`
 }

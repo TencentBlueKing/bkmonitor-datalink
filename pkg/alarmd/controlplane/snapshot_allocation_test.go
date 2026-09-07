@@ -2,10 +2,60 @@ package controlplane
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
 )
+
+func TestWarmSnapshotDecodeReservationsReleaseOnDenialAndSuccess(t *testing.T) {
+	for _, denyAt := range []int{1, 2} {
+		t.Run(fmt.Sprint(denyAt), func(t *testing.T) {
+			ctx := context.Background()
+			revision, raw := neutralSnapshotPayload(t, "qg-a")
+			var used uint64
+			calls, rejection := 0, 0
+			denied := errors.New("preparation exhausted")
+			admit := func(_ context.Context, n uint64) (func(), error) {
+				calls++
+				if calls == rejection {
+					return nil, denied
+				}
+				used += n
+				return func() { used -= n }, nil
+			}
+			repo := &RedisCatalogRepository{snapshotCache: newVerifiedSnapshotCache(1, 64<<20)}
+			repo.ConfigureSnapshotMemory(admit, worker.PreparationObjectBytes)
+			defer repo.ReleaseSnapshotCache()
+			first, err := repo.snapshotCache.loadSnapshot(ctx, revision, string(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			steady := used
+			calls, rejection = 0, denyAt
+			if _, err := repo.snapshotCache.loadSnapshot(ctx, revision, string(raw)); !errors.Is(err, denied) {
+				t.Fatalf("denial at reservation %d: %v", denyAt, err)
+			}
+			if used != steady {
+				t.Fatalf("failed decode retained %d bytes, want %d", used, steady)
+			}
+			calls, rejection = 0, 0
+			next, err := repo.snapshotCache.loadSnapshot(ctx, revision, string(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if calls != 2 || used != steady || !reflect.DeepEqual(first, next) {
+				t.Fatalf("warm decode changed result/account: calls=%d used=%d want=%d", calls, used, steady)
+			}
+			repo.ReleaseSnapshotCache()
+			if used != 0 {
+				t.Fatalf("cache close leaked %d bytes", used)
+			}
+		})
+	}
+}
 
 func TestSnapshotCacheAndScopeShareOneAllocationUntilLastReference(t *testing.T) {
 	ctx, closeScope := WithSnapshotReadScope(context.Background())

@@ -53,9 +53,19 @@ func (cache *verifiedSnapshotCache) loadSnapshot(
 		return PublishedSnapshot{}, err
 	}
 	if content == nil {
+		temporary, reserveErr := reserveSnapshotAllocation(ctx, cache.admit, uint64(len(entry.payload)))
+		if reserveErr != nil {
+			return PublishedSnapshot{}, reserveErr
+		}
+		defer temporary.release()
 		content, err = decodeSnapshotPayload([]byte(entry.payload))
 		if err != nil {
 			return PublishedSnapshot{}, err
+		}
+		if cache.objectBytes != nil {
+			if err := temporary.extend(ctx, cache.objectBytes(content)); err != nil {
+				return PublishedSnapshot{}, err
+			}
 		}
 	}
 	return PublishedSnapshot{SchemaVersion: content.SchemaVersion, QueryGroups: content.QueryGroups}, nil

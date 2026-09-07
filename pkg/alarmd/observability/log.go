@@ -174,6 +174,10 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	if f := observation.ShortPeriodCompletion; f != nil {
 		attributes = append(attributes, slog.Any("short_period_completion", f))
 	}
+	if f := observation.StateApplyChunk; f != nil {
+		attributes = append(attributes, slog.Int("chunk_index", f.Index), slog.Int("chunk_count", f.Count),
+			slog.Int64("applied_keys", f.AppliedKeys), slog.Int64("applied_bytes", f.AppliedBytes), slog.Int64("elapsed_ms", f.ElapsedMillis))
+	}
 	if f := observation.CapacityRejection; f != nil {
 		attributes = append(attributes, slog.String("capacity_phase", f.Phase), slog.Uint64("capacity_shared_used", f.SharedUsed), slog.Uint64("capacity_requested", f.Requested), slog.Uint64("capacity_limit", f.Limit))
 		if f.OwnUsed != nil {

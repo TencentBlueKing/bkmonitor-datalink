@@ -139,19 +139,48 @@ func TestSlotExecutionCoordinatorBindsAlwaysEffectiveTimeToRealSeries(t *testing
 	}
 }
 
-func TestSlotExecutionCoordinatorEnforcesProcessProvisionalBudget(t *testing.T) {
+// A Slot whose own State output exceeds the per-Slot cap can never be applied
+// by this process, so it completes UNAVAILABLE with a Plan-wide gap instead of
+// being retried into the same rejection. Nothing reaches Events or State.
+func TestSlotExecutionCoordinatorCompletesSlotBeyondItsOwnBudgetAsUnavailable(t *testing.T) {
 	fixture := newFixtureWithBudget(t, worker.ProvisionalBudget{
-		MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 1, MaxEvents: 1, MaxGapMutations: 1,
+		MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 1, MaxEvents: 1, MaxGapMutations: 1, StoreMaxItems: 8192,
 	})
 	fixture.ports.reverseStateReceipts = true
 	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
-	if err == nil || result.Completed {
-		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	if err != nil || !result.Completed || result.CompletionKind != execution.CompletionUnavailable ||
+		result.Result != observability.ResultDegraded ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonExecutionBudgetExhausted) {
+		t.Fatalf("Execute() result=%+v error=%v, want a deterministic UNAVAILABLE completion", result, err)
 	}
-	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 || !isZeroProgressCommit(fixture.ports.lastProgress) {
-		t.Fatal("over-budget provisional result reached side effects")
+	if fixture.ports.eventCount != 0 || fixture.ports.stateApplyCalls != 0 {
+		t.Fatal("over-budget Slot reached Events or State")
 	}
-	assertCapacityRejection(t, fixture.observations, observability.CapacityBudgetStateMutations)
+	completion := fixture.ports.lastProgress.Completion
+	if completion.Kind != execution.CompletionUnavailable || completion.Result != observability.ResultDegraded ||
+		completion.ReasonCode != execution.ReasonCode(contract.ReasonExecutionBudgetExhausted) || completion.Primary == nil {
+		t.Fatalf("Progress completion = %+v", completion)
+	}
+	gaps := fixture.ports.gapMutations
+	if len(gaps) != 1 || len(gaps[0].Scopes) != 1 || gaps[0].Scopes[0].Scope != (execution.GapScope{}) ||
+		gaps[0].Scopes[0].ReasonCode != execution.ReasonCode(contract.ReasonExecutionBudgetExhausted) {
+		t.Fatalf("gap mutations = %+v, want one Plan-wide gap with the completion reason", gaps)
+	}
+	var rejection *observability.Observation
+	for index := range *fixture.observations {
+		if (*fixture.observations)[index].Stage == observability.StageResourceHard {
+			rejection = &(*fixture.observations)[index]
+		}
+	}
+	if rejection == nil || rejection.CapacityBudget != observability.CapacityBudgetStateMutations ||
+		rejection.ReasonCode != execution.ReasonCode(contract.ReasonSlotBudgetExceeded) {
+		t.Fatalf("capacity rejection = %+v, want the per-Slot budget reason", rejection)
+	}
+	facts := rejection.CapacityRejection
+	if facts == nil || facts.Phase != "slot_output" || facts.OwnUsed == nil || *facts.OwnUsed != 2 ||
+		facts.Requested != 1 || facts.Limit != 1 || facts.SharedUsed != 0 {
+		t.Fatalf("capacity rejection facts = %+v, want own_used=2 requested=1 limit=1", facts)
+	}
 }
 
 func TestSlotExecutionCoordinatorBudgetsRetainedSeriesAndBytes(t *testing.T) {

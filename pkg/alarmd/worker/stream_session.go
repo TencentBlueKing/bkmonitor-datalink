@@ -418,6 +418,10 @@ func appendProvisional(target *execution.EvaluationResult, next execution.Evalua
 type provisionalBudgetExceededError struct {
 	budget observability.CapacityBudget
 	facts  *observability.CapacityRejectionFacts
+	// slot marks the Slot's own output exceeding a per-Slot cap, which no
+	// retry in this process can satisfy; a shared reservation rejection is
+	// left false because concurrent Slots free their share.
+	slot bool
 }
 
 func (err *provisionalBudgetExceededError) Error() string {
@@ -540,11 +544,6 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 		stream.streamed[key] = binding
 	}
 
-	type preparedSeries struct {
-		due      execution.DuePlan
-		identity execution.SeriesIdentityDigest
-		inputs   []execution.SeriesEvaluationInputRequest
-	}
 	preparedSeriesEvaluations := make([]preparedSeries, 0, len(stream.streamed))
 	for _, due := range stream.header.DuePlans {
 		series := make([]execution.SeriesIdentityDigest, 0, len(stream.planSeries[due.Identity]))
@@ -587,6 +586,31 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 	if err := stream.loadGaps(ctx); err != nil {
 		return err
 	}
+	if err := stream.evaluateSeries(ctx, completion, preparedSeriesEvaluations); err != nil {
+		var exceeded *provisionalBudgetExceededError
+		if errors.As(err, &exceeded) && exceeded.slot {
+			return stream.completeBeyondSlotBudget(ctx)
+		}
+		return err
+	}
+	return nil
+}
+
+// preparedSeries is one PRIMARY series of a due Plan with its complete named
+// inputs, ready for the Runtime State read and evaluation.
+type preparedSeries struct {
+	due      execution.DuePlan
+	identity execution.SeriesIdentityDigest
+	inputs   []execution.SeriesEvaluationInputRequest
+}
+
+// evaluateSeries reads Runtime State and evaluates every prepared series in
+// Plan-then-series order, then completes the Plans without series.
+func (stream *streamedExecution) evaluateSeries(
+	ctx context.Context,
+	completion execution.QueryExecutionCompletion,
+	preparedSeriesEvaluations []preparedSeries,
+) error {
 	// Runtime State is read in bounded batches ahead of evaluation while
 	// evaluation itself keeps the exact Plan-then-series order. A series whose
 	// PRIMARY input is incomplete needs no State read; the pending batch is
@@ -981,15 +1005,43 @@ type completedSeries struct {
 	item   execution.StatePreflightItem
 }
 
-// statePreflightBatchLimit is the shared batch bound clamped to the Slot's
-// State mutation budget, which validated configuration keeps at or below the
-// store's per-call item limit.
+// statePreflightBatchLimit is the shared batch bound clamped to the per-Slot
+// State mutation cap, which stays at or below the store's per-call limit.
 func (stream *streamedExecution) statePreflightBatchLimit() int {
 	limit := execution.StatePreflightBatchItems
-	if budget := stream.coordinator.budget.MaxStateMutations; budget > 0 && budget < uint64(limit) {
+	if budget := stream.coordinator.slotBudget().MaxStateMutations; budget > 0 && budget < uint64(limit) {
 		limit = int(budget)
 	}
 	return limit
+}
+
+// completeBeyondSlotBudget replaces the provisional results of a Slot whose
+// own output exceeded a per-Slot cap with one UNAVAILABLE result per due
+// Plan, each opening a Plan-wide gap. Nothing evaluated so far reaches Events
+// or State; Progress records the coverage completion so the Slot is not
+// retried into the same deterministic rejection.
+func (stream *streamedExecution) completeBeyondSlotBudget(ctx context.Context) error {
+	// The discarded results give back their State, Event and Gap shares so
+	// the replacement gaps are counted against an empty Slot; the retained
+	// bytes stay reserved until the stream releases everything.
+	stream.coordinator.releaseEffects(stream.effects)
+	stream.effects = effectCounts{}
+	stream.evaluated = execution.EvaluationResult{}
+	reason := execution.ReasonCode(contract.ReasonExecutionBudgetExhausted)
+	for _, due := range stream.header.DuePlans {
+		mutation, err := stream.gapMutationForReasons(due, map[execution.GapScope]execution.ReasonCode{{}: reason})
+		if err != nil {
+			return err
+		}
+		result := execution.EvaluationResult{Contract: stream.header.Contract, Result: observability.ResultDegraded,
+			ReasonCode: reason, Plans: []execution.PlanEvaluationResult{{Plan: due.Identity,
+				Disposition: execution.PlanUnavailable, ReasonCode: reason,
+				GuardBeforeEvents: []execution.PlanGapMutation{mutation}}}}
+		if err := stream.mergeProvisional(ctx, result, 0); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func primaryIncompleteBindings(inputs []execution.SeriesEvaluationInputRequest) []execution.NamedInputBinding {
@@ -1515,6 +1567,29 @@ func (stream *streamedExecution) completionGapMutation(
 	due execution.DuePlan,
 	bindings []execution.NamedInputBinding,
 ) (execution.PlanGapMutation, error) {
+	reasons := make(map[execution.GapScope]execution.ReasonCode)
+	for _, binding := range bindings {
+		if binding.Consumer.Plan != due.Identity || binding.Completeness == execution.CompletenessFull {
+			continue
+		}
+		scope := execution.GapScope{LevelID: binding.Consumer.LevelID, HasLevel: binding.Consumer.HasLevel}
+		if previous, duplicate := reasons[scope]; duplicate && previous != binding.ReasonCode {
+			return execution.PlanGapMutation{}, errors.New("alarmd worker: one gap scope has conflicting completion reasons")
+		}
+		reasons[scope] = binding.ReasonCode
+	}
+	if len(reasons) == 0 {
+		return execution.PlanGapMutation{}, errors.New("alarmd worker: incomplete named input requires a gap scope")
+	}
+	return stream.gapMutationForReasons(due, reasons)
+}
+
+// gapMutationForReasons builds the Plan gap mutation that opens or
+// strengthens the Plan's loaded marker with one scope per reason.
+func (stream *streamedExecution) gapMutationForReasons(
+	due execution.DuePlan,
+	reasons map[execution.GapScope]execution.ReasonCode,
+) (execution.PlanGapMutation, error) {
 	identity := execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}
 	marker, found := stream.gaps.Find(identity)
 	if !found {
@@ -1531,20 +1606,6 @@ func (stream *streamedExecution) completionGapMutation(
 	required := requiredFullSlots(due.CompiledPlan)
 	if required == 0 {
 		return execution.PlanGapMutation{}, errors.New("alarmd worker: Plan gap requires positive FULL warmup slots")
-	}
-	reasons := make(map[execution.GapScope]execution.ReasonCode)
-	for _, binding := range bindings {
-		if binding.Consumer.Plan != due.Identity || binding.Completeness == execution.CompletenessFull {
-			continue
-		}
-		scope := execution.GapScope{LevelID: binding.Consumer.LevelID, HasLevel: binding.Consumer.HasLevel}
-		if previous, duplicate := reasons[scope]; duplicate && previous != binding.ReasonCode {
-			return execution.PlanGapMutation{}, errors.New("alarmd worker: one gap scope has conflicting completion reasons")
-		}
-		reasons[scope] = binding.ReasonCode
-	}
-	if len(reasons) == 0 {
-		return execution.PlanGapMutation{}, errors.New("alarmd worker: incomplete named input requires a gap scope")
 	}
 	scopes := make([]execution.GapScope, 0, len(reasons))
 	for scope := range reasons {

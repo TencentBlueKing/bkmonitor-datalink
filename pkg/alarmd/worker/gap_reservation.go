@@ -13,7 +13,7 @@ func (stream *streamedExecution) retainTargets(ctx context.Context, count int, t
 }
 
 func (stream *streamedExecution) retainTargetBytes(ctx context.Context, count int, size uint64) error {
-	if uint64(count) > stream.coordinator.budget.MaxGapMutations {
+	if uint64(count) > stream.coordinator.slotBudget().MaxGapMutations {
 		err := &provisionalBudgetExceededError{budget: observability.CapacityBudgetGapMutations}
 		stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, err.budget, err)
 		return err

@@ -9,6 +9,24 @@ func budgetRejection(kind observability.CapacityBudget, phase string, shared, re
 	}}
 }
 
+// slotBudgetRejection describes the Slot's own output exceeding a per-Slot
+// cap. No shared usage is involved: own_used is the total the Slot would
+// reach, requested the addition that crossed the cap and limit the cap.
+func (stream *streamedExecution) slotBudgetRejection(kind observability.CapacityBudget, total, delta effectCounts, budget ProvisionalBudget) error {
+	var used, requested, limit uint64
+	switch kind {
+	case observability.CapacityBudgetStateMutations:
+		used, requested, limit = total.states, delta.states, budget.MaxStateMutations
+	case observability.CapacityBudgetEvents:
+		used, requested, limit = total.events, delta.events, budget.MaxEvents
+	case observability.CapacityBudgetGapMutations:
+		used, requested, limit = total.gaps, delta.gaps, budget.MaxGapMutations
+	}
+	return &provisionalBudgetExceededError{budget: kind, slot: true, facts: &observability.CapacityRejectionFacts{
+		Phase: stream.reservationPhase("slot_output"), OwnUsed: stream.ownReservation(used), Requested: requested, Limit: limit,
+	}}
+}
+
 func (stream *streamedExecution) reservationPhase(normal string) string {
 	if stream != nil && stream.began {
 		return normal

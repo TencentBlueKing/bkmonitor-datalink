@@ -2243,6 +2243,24 @@ type fakePhaseTwoOwnershipStore struct {
 	releaseCalls           int
 	renewed                chan struct{}
 	renewOnce              sync.Once
+	// renewErr and renewLeaderErr inject the outcome of the next lease or
+	// Control Leader renewal; a nil hook or a nil result renews normally.
+	renewErr         func() error
+	renewCalls       int
+	renewLeaderErr   func() error
+	renewLeaderCalls int
+}
+
+func (store *fakePhaseTwoOwnershipStore) renewCount() int {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.renewCalls
+}
+
+func (store *fakePhaseTwoOwnershipStore) renewLeaderCount() int {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.renewLeaderCalls
 }
 
 func (store *fakePhaseTwoOwnershipStore) RegisterWorker(_ context.Context, worker ownership.WorkerRegistration) error {
@@ -2306,6 +2324,15 @@ func (store *fakePhaseTwoOwnershipStore) RenewControlLeader(
 	at time.Time,
 	ttl time.Duration,
 ) (ownership.PublicationAuthority, error) {
+	store.mu.Lock()
+	store.renewLeaderCalls++
+	hook := store.renewLeaderErr
+	store.mu.Unlock()
+	if hook != nil {
+		if err := hook(); err != nil {
+			return ownership.PublicationAuthority{}, err
+		}
+	}
 	authority.Deadline = at.Add(ttl)
 	return authority, nil
 }
@@ -2331,7 +2358,20 @@ func (store *fakePhaseTwoOwnershipStore) Renew(
 	at time.Time,
 	ttl time.Duration,
 ) (ownership.Lease, error) {
-	store.renewOnce.Do(func() { close(store.renewed) })
+	store.renewOnce.Do(func() {
+		if store.renewed != nil {
+			close(store.renewed)
+		}
+	})
+	store.mu.Lock()
+	store.renewCalls++
+	hook := store.renewErr
+	store.mu.Unlock()
+	if hook != nil {
+		if err := hook(); err != nil {
+			return ownership.Lease{}, err
+		}
+	}
 	return ownership.Lease{Fence: fence, Deadline: at.Add(ttl)}, nil
 }
 
@@ -2419,6 +2459,264 @@ func (function slotExecutorFunc) Execute(
 
 var _ scheduler.AssignmentStore = (*fakePhaseTwoOwnershipStore)(nil)
 var _ ownership.LeaseStore = (*fakePhaseTwoOwnershipStore)(nil)
+
+// steppingClock is a manual clock for renewal tests: TTL exhaustion is
+// simulated by advancing it instead of waiting.
+type steppingClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (clock *steppingClock) Now() time.Time {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	return clock.now
+}
+
+func (clock *steppingClock) Advance(delta time.Duration) {
+	clock.mu.Lock()
+	clock.now = clock.now.Add(delta)
+	clock.mu.Unlock()
+}
+
+type renewFailureSwitch struct {
+	mu  sync.Mutex
+	err error
+}
+
+func (failure *renewFailureSwitch) set(err error) {
+	failure.mu.Lock()
+	failure.err = err
+	failure.mu.Unlock()
+}
+
+func (failure *renewFailureSwitch) get() error {
+	failure.mu.Lock()
+	defer failure.mu.Unlock()
+	return failure.err
+}
+
+type renewalTestFixture struct {
+	clock        *steppingClock
+	store        *fakePhaseTwoOwnershipStore
+	production   *productionPhaseTwoOwnership
+	observations func() []observability.Observation
+}
+
+func newRenewalTestFixture(t *testing.T) renewalTestFixture {
+	t.Helper()
+	clock := &steppingClock{now: time.UnixMilli(1_700_000_000_000)}
+	limits := validGoAccessRuntimeConfig().PhaseTwo.Scheduler.RecoveryLimits()
+	flights, err := scheduler.NewFlightCoordinatorWithRecovery(limits, clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakePhaseTwoOwnershipStore{now: clock.Now(), renewed: make(chan struct{})}
+	eligibility, err := scheduler.NewStaticWorkerEligibility(ownership.WorkerCompatibility{
+		DeploymentProfile: "shadow", CapabilitiesDigest: "capabilities",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler, err := scheduler.NewReconciler(scheduler.NewRouter(eligibility), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var observations []observability.Observation
+	production, err := newProductionPhaseTwoOwnership(productionPhaseTwoOwnershipDependencies{
+		Store: store, WorkerID: "worker-1", Catalog: unavailableSlotCatalog{},
+		Progress: unavailableScheduleProgress{}, Executor: rejectingSlotExecutor{}, Now: clock.Now,
+		ControlLeaderTTL: time.Minute, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			mu.Lock()
+			observations = append(observations, observation)
+			mu.Unlock()
+		}), Reconcile: reconciler, Flights: flights, RecoveryLimits: limits, PostRecoveryTerminalDelay: time.Minute,
+		QueryDeadlineReserve: 5 * time.Second, SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("newProductionPhaseTwoOwnership() error = %v", err)
+	}
+	return renewalTestFixture{clock: clock, store: store, production: production, observations: func() []observability.Observation {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]observability.Observation(nil), observations...)
+	}}
+}
+
+func countLeaseRenewalObservations(observations []observability.Observation, result observability.Result, reason observability.ReasonCode) int {
+	count := 0
+	for _, observation := range observations {
+		if observation.Component == observability.ComponentOwnership && observation.Stage == observability.StageLeaseRenewed &&
+			observation.Result == result && observation.ReasonCode == reason {
+			count++
+		}
+	}
+	return count
+}
+
+func TestProductionMaintainLeaseRetriesTransientRenewFailureInsideTTL(t *testing.T) {
+	fixture := newRenewalTestFixture(t)
+	transient := errors.New("ownership store unreachable")
+	failure := &renewFailureSwitch{}
+	failure.set(transient)
+	fixture.store.renewErr = failure.get
+	runner, err := fixture.production.OpenQueryGroup(context.Background(), "query-group-1", fixture.clock.Now(), time.Minute)
+	if err != nil {
+		t.Fatalf("OpenQueryGroup() error = %v", err)
+	}
+	queryGroup := runner.(*productionPhaseTwoQueryGroup)
+	leaseCtx, cancelLease := context.WithCancel(context.Background())
+	defer cancelLease()
+	leaseDone := make(chan error, 1)
+	go func() { leaseDone <- runner.MaintainLease(leaseCtx, time.Millisecond, time.Minute) }()
+
+	waitPhaseTwoCondition(t, 3*time.Second, "lease renewal retries", func() bool { return fixture.store.renewCount() >= 6 })
+	select {
+	case err := <-leaseDone:
+		t.Fatalf("MaintainLease() returned %v while the lease was still inside its TTL", err)
+	default:
+	}
+	if _, err := queryGroup.session.ValidateCurrent(context.Background(), fixture.clock.Now()); err != nil {
+		t.Fatalf("ValidateCurrent(during transient renew failure) error = %v, want the fence still validated by the store", err)
+	}
+	if countLeaseRenewalObservations(fixture.observations(), observability.ResultFailed, phaseTwoControlDependencyReason) == 0 {
+		t.Fatalf("observations = %+v, want retryable lease renewal failures", observedStages(fixture.observations()))
+	}
+
+	failure.set(nil)
+	waitPhaseTwoCondition(t, 3*time.Second, "lease renewal recovery", func() bool {
+		return countLeaseRenewalObservations(fixture.observations(), observability.ResultSuccess, observability.ReasonNone) > 0
+	})
+	select {
+	case err := <-leaseDone:
+		t.Fatalf("MaintainLease() returned %v after the store recovered", err)
+	default:
+	}
+
+	failure.set(transient)
+	fixture.clock.Advance(2 * time.Minute)
+	select {
+	case err := <-leaseDone:
+		if !errors.Is(err, transient) {
+			t.Fatalf("MaintainLease(TTL exhausted) error = %v, want the store error", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("MaintainLease() kept running after the lease TTL was exhausted")
+	}
+	if _, err := queryGroup.session.ValidateCurrent(context.Background(), fixture.clock.Now()); !errors.Is(err, ownership.ErrStaleFence) {
+		t.Fatalf("ValidateCurrent(after TTL exhausted) error = %v, want ErrStaleFence", err)
+	}
+}
+
+func TestProductionMaintainLeaseReturnsAuthoritativeDecisionImmediately(t *testing.T) {
+	fixture := newRenewalTestFixture(t)
+	fixture.store.renewErr = func() error { return ownership.ErrStaleFence }
+	runner, err := fixture.production.OpenQueryGroup(context.Background(), "query-group-1", fixture.clock.Now(), time.Minute)
+	if err != nil {
+		t.Fatalf("OpenQueryGroup() error = %v", err)
+	}
+	leaseDone := make(chan error, 1)
+	go func() { leaseDone <- runner.MaintainLease(context.Background(), time.Millisecond, time.Minute) }()
+	select {
+	case err := <-leaseDone:
+		if !errors.Is(err, ownership.ErrStaleFence) {
+			t.Fatalf("MaintainLease(stale) error = %v, want ErrStaleFence", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("MaintainLease() retried an authoritative stale fence decision")
+	}
+	if fixture.store.renewCount() != 1 {
+		t.Fatalf("renew calls = %d, want a single call before giving up on a stale fence", fixture.store.renewCount())
+	}
+	if countLeaseRenewalObservations(fixture.observations(), observability.ResultFailed, phaseTwoControlDependencyReason) != 0 {
+		t.Fatal("stale fence decision was reported as a retryable failure")
+	}
+}
+
+func TestProductionMaintainControlLeaderRetriesTransientRenewFailureInsideTTL(t *testing.T) {
+	fixture := newRenewalTestFixture(t)
+	transient := errors.New("ownership store unreachable")
+	failure := &renewFailureSwitch{}
+	failure.set(transient)
+	fixture.store.renewLeaderErr = failure.get
+	leader, err := fixture.production.TryAcquireControlLeader(context.Background(), fixture.clock.Now(), time.Minute)
+	if err != nil || !leader {
+		t.Fatalf("TryAcquireControlLeader() leader=%v error=%v", leader, err)
+	}
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	defer cancelLeader()
+	leaderDone := make(chan error, 1)
+	go func() {
+		leaderDone <- fixture.production.MaintainControlLeader(leaderCtx, time.Millisecond, time.Minute)
+	}()
+
+	waitPhaseTwoCondition(t, 3*time.Second, "control leader renewal retries", func() bool {
+		return fixture.store.renewLeaderCount() >= 6
+	})
+	select {
+	case err := <-leaderDone:
+		t.Fatalf("MaintainControlLeader() returned %v while the authority was still inside its TTL", err)
+	default:
+	}
+	if _, err := fixture.production.ensureControlAuthority(context.Background(), fixture.clock.Now()); err != nil {
+		t.Fatalf("ensureControlAuthority(during transient renew failure) error = %v", err)
+	}
+	if fixture.store.acquireLeaderCalls != 1 {
+		t.Fatalf("acquire leader calls = %d, want the authority kept across transient renew failures", fixture.store.acquireLeaderCalls)
+	}
+
+	failure.set(nil)
+	waitPhaseTwoCondition(t, 3*time.Second, "control leader renewal recovery", func() bool {
+		return countLeaseRenewalObservations(fixture.observations(), observability.ResultSuccess, observability.ReasonNone) > 0
+	})
+
+	failure.set(transient)
+	fixture.clock.Advance(2 * time.Minute)
+	select {
+	case err := <-leaderDone:
+		if !errors.Is(err, transient) {
+			t.Fatalf("MaintainControlLeader(TTL exhausted) error = %v, want the store error", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("MaintainControlLeader() kept running after the authority TTL was exhausted")
+	}
+	leader, err = fixture.production.TryAcquireControlLeader(context.Background(), fixture.clock.Now(), time.Minute)
+	if err != nil || !leader || fixture.store.acquireLeaderCalls != 2 {
+		t.Fatalf("TryAcquireControlLeader(after TTL exhausted) leader=%v error=%v acquires=%d, want a fresh acquisition",
+			leader, err, fixture.store.acquireLeaderCalls)
+	}
+}
+
+func TestProductionMaintainControlLeaderClearsAuthorityOnStaleDecision(t *testing.T) {
+	fixture := newRenewalTestFixture(t)
+	fixture.store.renewLeaderErr = func() error { return ownership.ErrStaleFence }
+	leader, err := fixture.production.TryAcquireControlLeader(context.Background(), fixture.clock.Now(), time.Minute)
+	if err != nil || !leader {
+		t.Fatalf("TryAcquireControlLeader() leader=%v error=%v", leader, err)
+	}
+	leaderDone := make(chan error, 1)
+	go func() {
+		leaderDone <- fixture.production.MaintainControlLeader(context.Background(), time.Millisecond, time.Minute)
+	}()
+	select {
+	case err := <-leaderDone:
+		if !errors.Is(err, ownership.ErrStaleFence) {
+			t.Fatalf("MaintainControlLeader(stale) error = %v, want ErrStaleFence", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("MaintainControlLeader() retried an authoritative stale fence decision")
+	}
+	if fixture.store.renewLeaderCount() != 1 {
+		t.Fatalf("renew leader calls = %d, want a single call before giving up on a stale fence", fixture.store.renewLeaderCount())
+	}
+	fixture.production.mu.Lock()
+	authority := fixture.production.authority
+	fixture.production.mu.Unlock()
+	if authority.Fence.QueryGroup != "" {
+		t.Fatalf("authority after stale decision = %+v, want cleared", authority)
+	}
+}
 
 func hasObservedStage(observations []observability.Observation, stage observability.Stage) bool {
 	for _, observation := range observations {

@@ -1105,6 +1105,13 @@ func (runtime *productionPhaseTwoOwnership) AssignedQueryGroups(
 	return assigned, nil
 }
 
+// MaintainControlLeader renews the Control Leader authority every interval.
+// A failure to reach the Ownership Store is retried inside the interval and
+// again on the following ticks for as long as the authority is still inside
+// its TTL; the authority is kept meanwhile because every Assignment publish
+// re-validates the leader fence in the store. The authority is cleared and
+// the error returned only when the store answers that the fence is stale,
+// when the TTL has run out, on an invariant error or on cancellation.
 func (runtime *productionPhaseTwoOwnership) MaintainControlLeader(
 	ctx context.Context,
 	interval time.Duration,
@@ -1119,25 +1126,43 @@ func (runtime *productionPhaseTwoOwnership) MaintainControlLeader(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case at := <-ticker.C:
-			runtime.mu.Lock()
-			authority := runtime.authority
-			runtime.mu.Unlock()
-			if authority.Fence.QueryGroup == "" {
-				return ownership.ErrStaleFence
+		case <-ticker.C:
+		}
+		runtime.mu.Lock()
+		authority := runtime.authority
+		runtime.mu.Unlock()
+		if authority.Fence.QueryGroup == "" {
+			return ownership.ErrStaleFence
+		}
+		var renewed ownership.PublicationAuthority
+		err := renewPhaseTwoWithinInterval(ctx, interval, func(attemptCtx context.Context) error {
+			var renewErr error
+			renewed, renewErr = runtime.dependencies.Store.RenewControlLeader(
+				attemptCtx, authority, runtime.dependencies.Now(), ttl,
+			)
+			return renewErr
+		}, func(err error) {
+			observeProductionRenewalFailure(ctx, runtime.dependencies.Observer, observability.StageLeaseRenewed, err)
+		}, func() bool {
+			return authority.Deadline.After(runtime.dependencies.Now())
+		})
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
-			renewed, err := runtime.dependencies.Store.RenewControlLeader(ctx, authority, at, ttl)
-			if err != nil {
+			if isPhaseTwoInvariantError(err) || ownership.IsLeaseDecision(err) ||
+				!authority.Deadline.After(runtime.dependencies.Now()) {
 				runtime.clearControlAuthority(authority)
 				return err
 			}
-			observeProductionOwnership(ctx, runtime.dependencies.Observer, observability.StageLeaseRenewed, nil)
-			runtime.mu.Lock()
-			if runtime.authority.Fence == authority.Fence {
-				runtime.authority = renewed
-			}
-			runtime.mu.Unlock()
+			continue
 		}
+		observeProductionOwnership(ctx, runtime.dependencies.Observer, observability.StageLeaseRenewed, nil)
+		runtime.mu.Lock()
+		if runtime.authority.Fence == authority.Fence {
+			runtime.authority = renewed
+		}
+		runtime.mu.Unlock()
 	}
 }
 
@@ -1184,7 +1209,9 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 		_ = session.Release(ctx)
 		return nil, err
 	}
-	return &productionPhaseTwoQueryGroup{session: session, runner: runner, observer: runtime.dependencies.Observer}, nil
+	return &productionPhaseTwoQueryGroup{
+		session: session, runner: runner, observer: runtime.dependencies.Observer, now: runtime.dependencies.Now,
+	}, nil
 }
 
 func (runtime *productionPhaseTwoOwnership) Close() error {
@@ -1217,6 +1244,7 @@ type productionPhaseTwoQueryGroup struct {
 	session  *ownership.Session
 	runner   *scheduler.Runner
 	observer observability.Observer
+	now      func() time.Time
 }
 
 type observedProductionSlotSource struct {
@@ -1347,6 +1375,13 @@ func (runtime *productionPhaseTwoQueryGroup) NextReadyAt() time.Time {
 	return runtime.runner.NextReadyAt()
 }
 
+// MaintainLease renews the Query Group lease every interval. A failure to
+// reach the Ownership Store is retried inside the interval and again on the
+// following ticks for as long as the lease is still inside its TTL; the
+// Session keeps validating every side effect against the store meanwhile.
+// The error is returned, and the Query Group reported lost by the caller,
+// only when the store answers that the fence is stale, when the TTL has run
+// out, on an invariant error or on cancellation.
 func (runtime *productionPhaseTwoQueryGroup) MaintainLease(
 	ctx context.Context,
 	interval time.Duration,
@@ -1361,18 +1396,56 @@ func (runtime *productionPhaseTwoQueryGroup) MaintainLease(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case at := <-ticker.C:
-			err := runtime.session.Renew(ctx, at, ttl)
+		case <-ticker.C:
+		}
+		err := renewPhaseTwoWithinInterval(ctx, interval, func(attemptCtx context.Context) error {
+			return runtime.session.Renew(attemptCtx, runtime.clock(), ttl)
+		}, func(err error) {
+			observeProductionRenewalFailure(ctx, runtime.observer, observability.StageLeaseRenewed, err)
+		}, func() bool {
+			return runtime.session.Deadline().After(runtime.clock())
+		})
+		if err == nil {
+			observeProductionOwnership(ctx, runtime.observer, observability.StageLeaseRenewed, nil)
+			continue
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if isPhaseTwoInvariantError(err) || ownership.IsLeaseDecision(err) {
 			observeProductionOwnership(ctx, runtime.observer, observability.StageLeaseRenewed, err)
-			if err != nil {
-				return err
-			}
+			return err
+		}
+		if !runtime.session.Deadline().After(runtime.clock()) {
+			return err
 		}
 	}
 }
 
+func (runtime *productionPhaseTwoQueryGroup) clock() time.Time {
+	if runtime.now == nil {
+		return time.Now()
+	}
+	return runtime.now()
+}
+
 func (runtime *productionPhaseTwoQueryGroup) Release(ctx context.Context) error {
 	return runtime.session.Release(ctx)
+}
+
+// observeProductionRenewalFailure reports one failed renewal attempt that is
+// going to be retried. It carries the shared retryable dependency reason so
+// the bounded log policy folds repeats into one limited bucket.
+func observeProductionRenewalFailure(
+	ctx context.Context,
+	observer observability.Observer,
+	stage observability.Stage,
+	err error,
+) {
+	observeRuntime(ctx, observer, observability.Observation{
+		Component: observability.ComponentOwnership, Stage: stage, Result: observability.ResultFailed,
+		Direction: observability.DirectionInternal, ReasonCode: phaseTwoControlDependencyReason, Err: err,
+	})
 }
 
 var _ phaseTwoOwnershipRuntime = (*productionPhaseTwoOwnership)(nil)

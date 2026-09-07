@@ -129,11 +129,107 @@ func TestReconcilerPublishesRouterDecisionWithControlAuthority(t *testing.T) {
 	}
 }
 
+func TestReconcilerKeepsReadyIncumbentWithoutRerunningRendezvous(t *testing.T) {
+	now := time.UnixMilli(1_700_000_000_000)
+	authority := ownership.PublicationAuthority{
+		Fence: execution.OwnerFence{
+			QueryGroup: ownership.ControlLeaderIdentity, OwnerID: "control-1", OwnerEpoch: 3, LeaseToken: "leader-token",
+		},
+		Deadline: now.Add(time.Minute),
+	}
+	workers := []ownership.WorkerRegistration{readyWorker("worker-1", now), readyWorker("worker-2", now)}
+	router := NewRouter(nil)
+	rendezvous, err := router.Select("query-group-1", workers, now)
+	if err != nil {
+		t.Fatalf("Select() error = %v", err)
+	}
+	// The incumbent is the Worker Rendezvous would not pick, so a kept
+	// Assignment proves the incumbent wins over a fresh Rendezvous pass.
+	incumbent := "worker-1"
+	if rendezvous.WorkerID == incumbent {
+		incumbent = "worker-2"
+	}
+	current := ownership.AssignmentRecord{
+		QueryGroup: "query-group-1", DesiredWorkerID: incumbent, AssignmentGeneration: 2, RecordRevision: 4,
+		ControlEpoch: 2, PlacementReason: ownership.PlacementRendezvous, AssignedAt: now.Add(-time.Minute),
+	}
+	store := &fakeAssignmentStore{workers: workers, current: current}
+	reconciler, err := NewReconciler(router, store)
+	if err != nil {
+		t.Fatalf("NewReconciler() error = %v", err)
+	}
+	record, err := reconciler.Reconcile(context.Background(), authority, "query-group-1", now)
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if record != current || store.publishCalls != 0 {
+		t.Fatalf("Reconcile(ready incumbent) record=%+v publishes=%d, want the current record and no publish", record, store.publishCalls)
+	}
+}
+
+func TestReconcilerRerunsRendezvousWhenIncumbentIsNotReady(t *testing.T) {
+	now := time.UnixMilli(1_700_000_000_000)
+	authority := ownership.PublicationAuthority{
+		Fence: execution.OwnerFence{
+			QueryGroup: ownership.ControlLeaderIdentity, OwnerID: "control-1", OwnerEpoch: 3, LeaseToken: "leader-token",
+		},
+		Deadline: now.Add(time.Minute),
+	}
+	current := ownership.AssignmentRecord{
+		QueryGroup: "query-group-1", DesiredWorkerID: "worker-1", AssignmentGeneration: 2, RecordRevision: 4,
+		ControlEpoch: 2, PlacementReason: ownership.PlacementRendezvous, AssignedAt: now.Add(-time.Minute),
+	}
+	expired := readyWorker("worker-1", now)
+	expired.ExpiresAt = now.Add(-time.Second)
+	draining := readyWorker("worker-1", now)
+	draining.AssignmentReadiness = ownership.WorkerDraining
+	ineligible := readyWorker("worker-1", now)
+	ineligible.DeploymentProfile = "standard"
+	survivor := readyWorker("worker-2", now)
+	survivor.DeploymentProfile = "large"
+	for _, test := range []struct {
+		name        string
+		workers     []ownership.WorkerRegistration
+		eligibility WorkerEligibility
+	}{
+		{name: "absent", workers: []ownership.WorkerRegistration{readyWorker("worker-2", now)}},
+		{name: "expired", workers: []ownership.WorkerRegistration{expired, readyWorker("worker-2", now)}},
+		{name: "draining", workers: []ownership.WorkerRegistration{draining, readyWorker("worker-2", now)}},
+		{name: "ineligible", workers: []ownership.WorkerRegistration{ineligible, survivor}, eligibility: profileEligibility("large")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &fakeAssignmentStore{workers: test.workers, current: current}
+			reconciler, err := NewReconciler(NewRouter(test.eligibility), store)
+			if err != nil {
+				t.Fatalf("NewReconciler() error = %v", err)
+			}
+			record, err := reconciler.Reconcile(context.Background(), authority, "query-group-1", now)
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			if record.DesiredWorkerID != "worker-2" || store.publishedWorker != "worker-2" ||
+				store.expectedRevision != current.RecordRevision || store.publishCalls != 1 {
+				t.Fatalf("Reconcile(%s incumbent) record=%+v published=%q revision=%d publishes=%d, want worker-2 at revision %d",
+					test.name, record, store.publishedWorker, store.expectedRevision, store.publishCalls, current.RecordRevision)
+			}
+		})
+	}
+}
+
+func readyWorker(workerID string, now time.Time) ownership.WorkerRegistration {
+	return ownership.WorkerRegistration{
+		WorkerID: workerID, AssignmentReadiness: ownership.WorkerReady, DependencyStatus: ownership.DependencyHealthy,
+		DeploymentProfile: "standard", CapabilitiesDigest: "cap-v1", ExpiresAt: now.Add(time.Minute),
+	}
+}
+
 type fakeAssignmentStore struct {
 	workers            []ownership.WorkerRegistration
+	current            ownership.AssignmentRecord
 	publishedWorker    string
 	publishedAuthority ownership.PublicationAuthority
 	expectedRevision   uint64
+	publishCalls       int
 }
 
 type profileEligibility string
@@ -158,6 +254,7 @@ func (store *fakeAssignmentStore) PublishAssignment(
 	store.publishedAuthority = authority
 	store.publishedWorker = decision.DesiredWorkerID
 	store.expectedRevision = decision.ExpectedRecordRevision
+	store.publishCalls++
 	return ownership.AssignmentRecord{
 		QueryGroup: decision.QueryGroup, DesiredWorkerID: decision.DesiredWorkerID, AssignmentGeneration: 1, RecordRevision: 1,
 		ControlEpoch: authority.Fence.OwnerEpoch, PlacementReason: decision.PlacementReason, AssignedAt: decision.DecidedAt,
@@ -168,5 +265,8 @@ func (store *fakeAssignmentStore) ReadAssignment(
 	context.Context,
 	execution.QueryGroupIdentity,
 ) (ownership.AssignmentRecord, error) {
-	return ownership.AssignmentRecord{}, ownership.ErrAssignmentAbsent
+	if store.current.QueryGroup == "" {
+		return ownership.AssignmentRecord{}, ownership.ErrAssignmentAbsent
+	}
+	return store.current, nil
 }

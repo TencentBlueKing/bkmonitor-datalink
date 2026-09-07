@@ -117,7 +117,10 @@ type PhaseTwoRuntimeConfig struct {
 func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 	return PhaseTwoRuntimeConfig{
 		Worker: PhaseTwoWorkerConfig{
-			RegistrationTTL: Duration(30 * time.Second), RegistrationRenewInterval: Duration(10 * time.Second),
+			// A 60 second TTL survives several missed 10 second renewals
+			// during a short Ownership Store outage before the Worker
+			// drops out of the ready set.
+			RegistrationTTL: Duration(60 * time.Second), RegistrationRenewInterval: Duration(10 * time.Second),
 		},
 		Control: PhaseTwoControlConfig{
 			RefreshInterval: Duration(30 * time.Second), ReconcileInterval: Duration(5 * time.Second),

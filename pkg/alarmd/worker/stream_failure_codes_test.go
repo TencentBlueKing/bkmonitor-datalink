@@ -2,6 +2,7 @@ package worker_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -150,6 +151,68 @@ func TestStreamCompletionRejectionsSurfaceStableFailureCodes(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), test.text) {
 				t.Fatalf("Execute() error=%v, want original text preserved", err)
+			}
+		})
+	}
+}
+
+// A series evaluation that errors, or whose result the result contract
+// rejects, fails the Slot at stream_complete. Those errors are plain errors,
+// so the query_completed facts collapsed to other/OTHER and the target-flow
+// line (which never carries the error text) could not be told apart from a
+// decode or deadline problem. The worker must name them.
+func TestEvaluationFailuresSurfaceStableFailureCodes(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(*recordingEvaluator)
+		code    string
+		text    string
+	}{
+		{
+			name:    "evaluator error",
+			prepare: func(evaluator *recordingEvaluator) { evaluator.fail = errors.New("alarmd evaluation: boom") },
+			code:    "EVALUATION_FAILED", text: "alarmd worker: evaluate series: alarmd evaluation: boom",
+		},
+		{
+			name: "result contract rejection",
+			prepare: func(evaluator *recordingEvaluator) {
+				evaluator.mutate = func(result *execution.EvaluationResult) {
+					for plan := range result.Plans {
+						for outcome := range result.Plans[plan].LevelOutcomes {
+							result.Plans[plan].LevelOutcomes[outcome].ReasonCode = "BOGUS_GUARD_REASON"
+						}
+					}
+				}
+			},
+			code: "EVALUATION_RESULT_INVALID", text: "alarmd worker: invalid series evaluation: alarmd execution:",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			header, batches, completion := workerG4MultiLevelStreamFixture(t, false)
+			recorder := &queryCompletedRecorder{}
+			ports, evaluator, coordinator := workerG4CoordinatorWithObserver(t, recorder)
+			test.prepare(evaluator)
+			ports.executeOverride = streamExecution(header, batches, completion)
+
+			result, err := coordinator.Execute(context.Background(), workerSlotRequest(header.Contract))
+			if err == nil || result.Completed {
+				t.Fatalf("Execute() result=%+v error=%v, want evaluation rejection", result, err)
+			}
+			if ports.stateApplyCalls != 0 || ports.eventCount != 0 || !isZeroProgressCommit(ports.lastProgress) {
+				t.Fatalf("rejected evaluation reached side effects: state=%d events=%d progress=%+v",
+					ports.stateApplyCalls, ports.eventCount, ports.lastProgress)
+			}
+			observation := recorder.last(t)
+			facts := observation.QueryFailure
+			if observation.Result != observability.Result(observability.ResultFailed) || facts == nil {
+				t.Fatalf("query_completed observation=%+v, want failed with failure facts", observation)
+			}
+			if facts.Stage != "stream_complete" || facts.Category != "evaluation" || facts.Code != test.code {
+				t.Fatalf("failure facts=%+v, want stage=stream_complete category=evaluation code=%s", *facts, test.code)
+			}
+			if observation.Err == nil || !strings.Contains(observation.Err.Error(), test.text) {
+				t.Fatalf("error text=%v, want it to contain %q", observation.Err, test.text)
 			}
 		})
 	}

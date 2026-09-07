@@ -143,7 +143,10 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 		},
 		Coordinator: PhaseTwoCoordinatorConfig{
 			MaxSequencerReservations: 8192, MaxSeries: 100_000, MaxRetainedBytes: 96 << 20,
-			MaxStateMutations: 8192, MaxEvents: 8192, MaxGapMutations: 8192,
+			// State and Gap mutations above one Store call (8192 items) are
+			// applied in chunks, so the process budgets may exceed it up to
+			// StateApplyMaxChunks calls; events have no Store call bound.
+			MaxStateMutations: 65536, MaxEvents: 8192, MaxGapMutations: 65536,
 		},
 	}
 }

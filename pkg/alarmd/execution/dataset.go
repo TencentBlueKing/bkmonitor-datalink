@@ -77,6 +77,20 @@ func (dataset *Dataset) Len() int {
 	return len(dataset.records)
 }
 
+// Records returns independent copies of every record in Dataset order. The
+// Dataset stays immutable: callers that fold or re-shape records build a new
+// Dataset from the copies.
+func (dataset *Dataset) Records() []contract.CanonicalRecordV2 {
+	if dataset == nil {
+		return nil
+	}
+	records := make([]contract.CanonicalRecordV2, len(dataset.records))
+	for index := range dataset.records {
+		records[index] = cloneCanonicalRecord(dataset.records[index])
+	}
+	return records
+}
+
 func (dataset *Dataset) Record(index int) (RecordView, bool) {
 	if dataset == nil || index < 0 || index >= len(dataset.records) {
 		return RecordView{}, false

@@ -105,11 +105,15 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonSlotSourceRetry:            {ReasonSlotSourceRetry, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonBlockedExactSetUnavailable: {ReasonBlockedExactSetUnavailable, ReasonClassDeterministic, ReasonDomainObservation},
 	ReasonResourceHardStop:           {ReasonResourceHardStop, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonOutputACKUnknown:           {ReasonOutputACKUnknown, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonStateWriteRetryable:        {ReasonStateWriteRetryable, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonStateCorrupt:               {ReasonStateCorrupt, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
-	ReasonStateSchemaUnsupported:     {ReasonStateSchemaUnsupported, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
-	ReasonStateBudgetExceeded:        {ReasonStateBudgetExceeded, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	// One Slot's own State, Event or Gap output exceeds the per-Slot cap the
+	// process can ever apply; the Slot completes deterministically. The code
+	// is observation-only: Progress records the coverage completion reason.
+	ReasonSlotBudgetExceeded:     {ReasonSlotBudgetExceeded, ReasonClassCoverage, ReasonDomainObservation},
+	ReasonOutputACKUnknown:       {ReasonOutputACKUnknown, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonStateWriteRetryable:    {ReasonStateWriteRetryable, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonStateCorrupt:           {ReasonStateCorrupt, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	ReasonStateSchemaUnsupported: {ReasonStateSchemaUnsupported, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	ReasonStateBudgetExceeded:    {ReasonStateBudgetExceeded, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
 }
 
 func ReasonCatalogV2() []ReasonDefinitionV2 {

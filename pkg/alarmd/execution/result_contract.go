@@ -299,8 +299,12 @@ func loadedSeriesWarmingCompleted(
 	identity := StateKeyIdentity{
 		Plan: plan.Identity, StateGeneration: plan.StateGeneration, SeriesIdentityDigest: outcome.SeriesIdentityDigest,
 	}
+	// A loaded WARMING or GAPPED Level converges when this record's mutation
+	// writes it FULL without a reason: the live window formed the required full
+	// Slots, exactly as the evaluator decides (guardConvergenceAllowed). A
+	// series guard or a gap marker on the Level still forbids it.
 	loaded, found := states.Find(identity)
-	if !found || loaded.Status != StateFoundWarming || loaded.SeriesGuard != nil {
+	if !found || (loaded.Status != StateFoundWarming && loaded.Status != StateFoundGapped) || loaded.SeriesGuard != nil {
 		return false
 	}
 	matchingLoadedLevel := false
@@ -308,7 +312,8 @@ func loadedSeriesWarmingCompleted(
 		if level.LevelID != outcome.LevelID {
 			continue
 		}
-		if matchingLoadedLevel || level.HistoryCompleteness != HistoryWarming || level.GapReasonCode == "" {
+		if matchingLoadedLevel || level.GapReasonCode == "" ||
+			(level.HistoryCompleteness != HistoryWarming && level.HistoryCompleteness != HistoryGapped) {
 			return false
 		}
 		matchingLoadedLevel = true

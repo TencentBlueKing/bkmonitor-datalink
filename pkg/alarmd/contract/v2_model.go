@@ -84,6 +84,7 @@ const (
 	ReasonSlotSourceRetry                  = "SLOT_SOURCE_RETRY"
 	ReasonBlockedExactSetUnavailable       = "BLOCKED_EXACT_SET_UNAVAILABLE"
 	ReasonResourceHardStop                 = "RESOURCE_HARD_STOP"
+	ReasonSlotBudgetExceeded               = "SLOT_BUDGET_EXCEEDED"
 	ReasonOutputACKUnknown                 = "OUTPUT_ACK_UNKNOWN"
 	ReasonStateWriteRetryable              = "STATE_WRITE_RETRYABLE"
 	ReasonStateCorrupt                     = "STATE_CORRUPT"

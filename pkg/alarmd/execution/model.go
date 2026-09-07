@@ -1968,6 +1968,9 @@ type StateAdmissionItemResult struct {
 	Identity   StateKeyIdentity
 	Status     StateAdmissionStatus
 	ReasonCode ReasonCode
+	// EncodedBytes is the stored size of an admitted mutation as the store
+	// measured it; it is observation input only and zero when unknown.
+	EncodedBytes int
 }
 
 type StateAdmissionResult struct {

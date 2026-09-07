@@ -224,6 +224,91 @@ func TestEvaluatorClearsSeriesWarmingOnlyOnFollowingFullSlot(t *testing.T) {
 	}
 }
 
+// A Level left GAPPED by a gap episode (GAP_SKIPPED) never converged: the
+// evaluator re-forced GAPPED from runtime state on every Slot although the
+// loaded history already formed the required full window, so the Slot stayed
+// COMPLETED_WITH_UNAVAILABLE for ever, and the mutation wrote GAPPED back.
+// Only WARMING had a convergence path. A GAPPED Level whose live window is
+// FULL at the last processed record must converge exactly as WARMING does,
+// for RequiredFullSlots 1 and 2; a Level whose window still has a hole stays
+// GAPPED under its reason.
+func TestEvaluatorConvergesGappedLevelWhenLiveWindowIsFull(t *testing.T) {
+	series := strings.Repeat("c", 64)
+	point := func(plan *strategy.CompiledPlan, id string, sourceTime int64) execution.StateHistoryPoint {
+		return execution.StateHistoryPoint{RecordID: strings.Repeat(id, 64), SourceTime: sourceTime,
+			Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactNormal}}}
+	}
+	tests := []struct {
+		name       string
+		window     uint32
+		history    func(*strategy.CompiledPlan) []execution.StateHistoryPoint
+		converges  bool
+		wantReason execution.ReasonCode
+	}{
+		{
+			name: "required full slots 1", window: 1,
+			history: func(plan *strategy.CompiledPlan) []execution.StateHistoryPoint {
+				return []execution.StateHistoryPoint{point(plan, "d", 240)}
+			},
+			converges: true,
+		},
+		{
+			name: "required full slots 2 with a full loaded window", window: 2,
+			history: func(plan *strategy.CompiledPlan) []execution.StateHistoryPoint {
+				return []execution.StateHistoryPoint{point(plan, "d", 180), point(plan, "e", 240)}
+			},
+			converges: true,
+		},
+		{
+			name: "required full slots 2 with a hole in the loaded window", window: 2,
+			history: func(plan *strategy.CompiledPlan) []execution.StateHistoryPoint {
+				return []execution.StateHistoryPoint{point(plan, "d", 120), point(plan, "e", 240)}
+			},
+			converges: false, wantReason: execution.ReasonCode(contract.ReasonGapSkipped),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			plan := compiledWindow(t, test.window, test.window)
+			if plan.Levels()[0].RequiredDetectHistoryPoints() != test.window {
+				t.Fatalf("required detect history points = %d, want %d", plan.Levels()[0].RequiredDetectHistoryPoints(), test.window)
+			}
+			history := test.history(plan)
+			request := requestFixtureForPlan(t, plan, []contract.CanonicalRecordV2{{RecordID: strings.Repeat("f", 64), SourceTime: 300, BusinessID: "2",
+				DimensionIdentity: contract.DimensionIdentityV2{Digest: series}, Values: map[string]json.RawMessage{"value": json.RawMessage(`10`)},
+				Dimensions: map[string]json.RawMessage{}, ReceivedTime: 300}}, history)
+			request.State.Items[0].Status = execution.StateFoundGapped
+			request.State.Items[0].Levels[0].HistoryCompleteness = execution.HistoryGapped
+			request.State.Items[0].Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonGapSkipped)
+			request.State.Items[0].Levels[0].LastProcessedEventTime = history[len(history)-1].SourceTime
+
+			result, err := newEvaluator(t).Evaluate(context.Background(), request)
+			if err != nil {
+				t.Fatalf("Evaluate()=%v", err)
+			}
+			evaluated := result.Plans[0]
+			if len(evaluated.LevelOutcomes) != 1 || len(evaluated.StateResults) != 1 || len(evaluated.StateResults[0].Mutation.Levels) != 1 {
+				t.Fatalf("result=%+v, want one outcome and one State mutation", evaluated)
+			}
+			outcome, level := evaluated.LevelOutcomes[0], evaluated.StateResults[0].Mutation.Levels[0]
+			if test.converges {
+				// The first FULL record after a guard is a RECOVERY business outcome,
+				// as after WARMING; the State Level converges to FULL without reason.
+				if (outcome.Outcome != execution.LevelOutcomeNormal && outcome.Outcome != execution.LevelOutcomeRecovery) ||
+					evaluated.Disposition != execution.PlanDecided || level.HistoryCompleteness != execution.HistoryFull || level.GapReasonCode != "" {
+					t.Fatalf("GAPPED Level with a FULL live window did not converge: outcome=%+v level=%+v disposition=%s", outcome, level, evaluated.Disposition)
+				}
+			} else if outcome.Outcome != execution.LevelOutcomeUnknown || outcome.ReasonCode != test.wantReason ||
+				level.HistoryCompleteness != execution.HistoryGapped || level.GapReasonCode != test.wantReason {
+				t.Fatalf("GAPPED Level with an incomplete live window changed: outcome=%+v level=%+v", outcome, level)
+			}
+			if err := result.Validate(request); err != nil {
+				t.Fatalf("result did not validate: %v", err)
+			}
+		})
+	}
+}
+
 func TestEvaluatorDoesNotClearLoadedGappedWithoutEvidence(t *testing.T) {
 	req := requestFixture(t, json.RawMessage(`10`), nil)
 	req.State.Items[0].Status = execution.StateFoundGapped

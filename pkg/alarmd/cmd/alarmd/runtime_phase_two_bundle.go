@@ -386,7 +386,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	}, worker.ProvisionalBudget{
 		MaxSeries: cfg.PhaseTwo.Coordinator.MaxSeries, MaxRetainedBytes: cfg.PhaseTwo.Coordinator.MaxRetainedBytes,
 		MaxStateMutations: cfg.PhaseTwo.Coordinator.MaxStateMutations, MaxEvents: cfg.PhaseTwo.Coordinator.MaxEvents,
-		MaxGapMutations: cfg.PhaseTwo.Coordinator.MaxGapMutations,
+		MaxGapMutations: cfg.PhaseTwo.Coordinator.MaxGapMutations, StoreMaxItems: uint64(cfg.Limits.Store.MaxKeysPerBatch),
 	})
 	if err != nil {
 		return nil, err

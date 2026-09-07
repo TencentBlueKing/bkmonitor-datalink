@@ -103,7 +103,7 @@ type recordResult struct {
 
 type recordDetector func() ([]detect.LevelFact, []detect.ProjectedValue, error)
 
-func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, warmingConvergence map[uint32]bool, run recordDetector) (recordResult, error) {
+func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, guardConvergence map[uint32]bool, run recordDetector) (recordResult, error) {
 	series := execution.SeriesIdentityDigest(record.DimensionIdentity().Digest)
 	identity := execution.StateKeyIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration, SeriesIdentityDigest: series}
 	if view.Identity != identity {
@@ -139,23 +139,36 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 	}
 	histories := make([]trigger.LevelHistory, len(levels))
 	historyCompleteness := make(map[uint32]execution.HistoryCompleteness, len(levels))
-	activeHistoryGuardReasons := make(map[uint32]execution.ReasonCode, len(levels))
+	// durableGuardReasons holds, per Level, the reason of the guard that is
+	// active in durable state before this record: the loaded Level's WARMING or
+	// GAPPED reason, superseded by a loaded Plan or Level gap marker. It is the
+	// same set the result contract reads as the active guard, so it also keeps
+	// a WARMING Level whose loaded history already allows convergence: a record
+	// that does not converge it leaves that guard in place, and every UNKNOWN
+	// outcome under it must preserve its reason.
+	durableGuardReasons := make(map[uint32]execution.ReasonCode, len(levels))
 	effective := make([]trigger.LevelEffectiveTimeFact, len(levels))
 	for i, l := range levels {
 		h, _ := window.History(l.Definition().LevelID)
 		completeness := ""
 		if current, found := levelState(view, l.Definition().LevelID); found {
-			if current.HistoryCompleteness == execution.HistoryGapped ||
-				(current.HistoryCompleteness == execution.HistoryWarming && !warmingConvergence[l.Definition().LevelID]) {
+			guarded := current.HistoryCompleteness == execution.HistoryGapped || current.HistoryCompleteness == execution.HistoryWarming
+			if guarded && current.GapReasonCode != "" {
+				durableGuardReasons[l.Definition().LevelID] = current.GapReasonCode
+			}
+			// A WARMING or GAPPED Level keeps forcing its completeness onto the
+			// trigger until the loaded history already forms the required full
+			// window at the last processed record; from then on the live window
+			// decides, so the guard converges on the first FULL record. Before
+			// this also covered GAPPED, a Plan whose gap episode was cleared
+			// after RequiredFullSlots == 1 data Slot stayed GAPPED for ever.
+			if guarded && !guardConvergence[l.Definition().LevelID] {
 				completeness = string(current.HistoryCompleteness)
-				if current.GapReasonCode != "" {
-					activeHistoryGuardReasons[l.Definition().LevelID] = current.GapReasonCode
-				}
 			}
 		}
 		if guarded, reason, found := gapCompleteness(request.Gaps, due, l.Definition().LevelID); found {
 			completeness = guarded
-			activeHistoryGuardReasons[l.Definition().LevelID] = reason
+			durableGuardReasons[l.Definition().LevelID] = reason
 		}
 		histories[i] = trigger.LevelHistory{LevelID: l.Definition().LevelID, View: historyView{HistoryView: h, completeness: completeness}}
 		summary := histories[i].View.Summarize(record.SourceTime(), l.RequiredDetectHistoryPoints())
@@ -201,10 +214,12 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 			if reason == "" {
 				reason = execution.ReasonCode(o.SuppressedReason)
 			}
-			if o.HistoryCompleteness != "" {
-				if guarded, found := activeHistoryGuardReasons[o.LevelID]; found {
-					reason = guarded
-				}
+			// The result contract requires an UNKNOWN outcome under an active
+			// guard to carry that guard's reason, whether the trigger, a missing
+			// dependency point or the EffectiveTime made it UNKNOWN. Only a
+			// record that converges the guard keeps its own local reason.
+			if guarded, found := durableGuardReasons[o.LevelID]; found && guardStaysActive(o, historyCompleteness[o.LevelID]) {
+				reason = guarded
 			}
 		}
 		outcomes[i] = execution.LevelOutcome{Plan: due.Identity, LevelID: o.LevelID, SeriesIdentityDigest: series, Record: execution.RecordAnchor{RecordID: record.RecordID(), SourceTime: record.SourceTime()}, Outcome: kind, ReasonCode: reason}
@@ -221,7 +236,7 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 	}
 	result := recordResult{outcomes: outcomes}
 	if advance {
-		mutation, err := buildMutation(request, due, record, view, facts, tr.LevelOutcomes, historyCompleteness, activeHistoryGuardReasons)
+		mutation, err := buildMutation(request, due, record, view, facts, tr.LevelOutcomes, historyCompleteness, durableGuardReasons)
 		if err != nil {
 			return recordResult{}, err
 		}
@@ -299,7 +314,7 @@ func (e *Evaluator) evaluateSeries(
 	if !ok {
 		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: runtime state missing")
 	}
-	warming, err := warmingConvergenceAllowed(view, levels)
+	converged, err := guardConvergenceAllowed(view, levels)
 	if err != nil {
 		return execution.PlanEvaluationResult{}, err
 	}
@@ -309,7 +324,7 @@ func (e *Evaluator) evaluateSeries(
 	var events []contract.TriggerEventV1
 	var affected []execution.RecordAnchor
 	for _, record := range primaryRecords {
-		one, runErr := e.evaluateRecordWith(ctx, legacy, due, record, view, warming, func() ([]detect.LevelFact, []detect.ProjectedValue, error) {
+		one, runErr := e.evaluateRecordWith(ctx, legacy, due, record, view, converged, func() ([]detect.LevelFact, []detect.ProjectedValue, error) {
 			facts, projected, _, detectErr := e.detect.EvaluatePreparedSeriesRecord(ctx, prepared, ordered, record)
 			return facts, projected, detectErr
 		})
@@ -412,7 +427,11 @@ func sameRecords(left, right []execution.RecordView) bool {
 	return true
 }
 
-func warmingConvergenceAllowed(view execution.RuntimeStateView, levels []strategy.CompiledLevel) (map[uint32]bool, error) {
+// guardConvergenceAllowed reports, per Level, whether the loaded history
+// already forms the required full window at the last processed record, so a
+// WARMING or GAPPED Level guard may converge on the next FULL record. A Level
+// whose live window still lacks points stays guarded.
+func guardConvergenceAllowed(view execution.RuntimeStateView, levels []strategy.CompiledLevel) (map[uint32]bool, error) {
 	allowed := make(map[uint32]bool, len(levels))
 	requirements := make([]state.LevelRequirement, len(levels))
 	for i, level := range levels {
@@ -429,7 +448,8 @@ func warmingConvergenceAllowed(view execution.RuntimeStateView, levels []strateg
 	}
 	for _, level := range levels {
 		current, found := levelState(view, level.Definition().LevelID)
-		if !found || current.HistoryCompleteness != execution.HistoryWarming || current.LastProcessedEventTime <= 0 {
+		if !found || current.LastProcessedEventTime <= 0 ||
+			(current.HistoryCompleteness != execution.HistoryWarming && current.HistoryCompleteness != execution.HistoryGapped) {
 			continue
 		}
 		history, found := window.History(level.Definition().LevelID)
@@ -530,7 +550,26 @@ func stateFact(v string) state.LevelFactResult {
 		return state.LevelFactUnavailable
 	}
 }
-func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, facts []detect.LevelFact, outcomes []trigger.LevelOutcomeV2, summaries map[uint32]execution.HistoryCompleteness, activeHistoryGuardReasons map[uint32]execution.ReasonCode) (execution.StateMutation, error) {
+
+// guardStaysActive reports whether the durable Level guard survives this
+// record: the Level does not advance State, or it advances with a WARMING or
+// GAPPED history, which buildMutation writes under the guard reason. The
+// completeness derivation mirrors buildMutation exactly.
+func guardStaysActive(outcome trigger.LevelOutcomeV2, summary execution.HistoryCompleteness) bool {
+	if outcome.StateDisposition != trigger.StateAdvance {
+		return true
+	}
+	completeness := summary
+	if completeness == "" {
+		completeness = execution.HistoryWarming
+	}
+	if outcome.HistoryCompleteness != "" {
+		completeness = execution.HistoryCompleteness(outcome.HistoryCompleteness)
+	}
+	return completeness == execution.HistoryWarming || completeness == execution.HistoryGapped
+}
+
+func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, facts []detect.LevelFact, outcomes []trigger.LevelOutcomeV2, summaries map[uint32]execution.HistoryCompleteness, durableGuardReasons map[uint32]execution.ReasonCode) (execution.StateMutation, error) {
 	refs, err := execution.DeriveRuntimeLevelContractRefs(due.CompiledPlan)
 	if err != nil {
 		return execution.StateMutation{}, err
@@ -567,7 +606,7 @@ func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, r
 				}
 			}
 		}
-		if guarded, found := activeHistoryGuardReasons[r.LevelID]; found &&
+		if guarded, found := durableGuardReasons[r.LevelID]; found &&
 			(completeness == execution.HistoryWarming || completeness == execution.HistoryGapped) {
 			reason = guarded
 		}

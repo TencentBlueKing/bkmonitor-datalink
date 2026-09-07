@@ -24,6 +24,29 @@ import (
 // storage and worker memory and never changes evaluation semantics.
 const StatePreflightBatchItems = 256
 
+// StateApplyMaxChunks bounds how many Store calls the worker may split one
+// Plan's Runtime State (or Plan gap) apply into when its mutation count
+// exceeds the Store per-call item limit. Together with that limit it fixes
+// the largest Slot the Store side supports (8192 x 64 = 524288 mutations);
+// a Slot beyond that bound is unsupported and completes deterministically
+// instead of being retried. It is a constant, not a tenant or deployment
+// knob: the Store call size itself never grows with process resources.
+const StateApplyMaxChunks = 64
+
+// SlotMutationCap derives the largest number of State (or Gap) mutations one
+// Slot may produce: the process budget, additionally bounded by what
+// StateApplyMaxChunks Store calls of storeItems can carry. A zero storeItems
+// means the store has no per-call bound below the process budget.
+func SlotMutationCap(storeItems, processBudget uint64) uint64 {
+	if storeItems == 0 {
+		return processBudget
+	}
+	if chunked := storeItems * StateApplyMaxChunks; chunked < processBudget {
+		return chunked
+	}
+	return processBudget
+}
+
 // StateApplyFence carries the owner fence one Runtime State apply must verify
 // inside the storage write itself. At is the wall-clock instant the fence is
 // compared against the lease deadline; it uses the same rule as admission.

@@ -13,6 +13,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -70,6 +71,9 @@ func phaseTwoRuntimeCapacity(cfg config.Config) observability.RuntimeCapacityFac
 		RetryMinNS: int64(s.RetryMinDelay), RetryMaxNS: int64(s.RetryMaxDelay),
 		SequencerReservations: c.MaxSequencerReservations, Series: c.MaxSeries, RetainedBytes: c.MaxRetainedBytes,
 		StateMutations: c.MaxStateMutations, Events: c.MaxEvents, GapMutations: c.MaxGapMutations, GapFacts: c.MaxGapMutations,
+		SlotStateMutations: execution.SlotMutationCap(uint64(cfg.Limits.Store.MaxKeysPerBatch), c.MaxStateMutations),
+		SlotGapMutations:   execution.SlotMutationCap(uint64(cfg.Limits.Store.MaxKeysPerBatch), c.MaxGapMutations),
+		StateApplyChunks:   execution.StateApplyMaxChunks,
 		StoreMaxValueBytes: cfg.Limits.Codec.MaxEncodedBytes, StoreMaxItems: cfg.Limits.Store.MaxKeysPerBatch,
 		EvaluatorMaxPlans: cfg.Limits.Detect.MaxPlans, EvaluatorMaxRecords: cfg.Limits.Detect.MaxRecordsPerSeries,
 		EvaluatorMaxLevels: uint64(cfg.Limits.Compiler.MaxLevelsPerPlan), EvidenceBytes: cfg.TriggerLimits().MaxEvidenceBytesPerEvent,

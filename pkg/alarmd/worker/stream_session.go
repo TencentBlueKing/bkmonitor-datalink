@@ -58,6 +58,14 @@ type preparedNamedInputIndex struct {
 		requirement execution.RequirementID
 	}]execution.DataRequirement
 	consumersByPlan map[execution.PlanIdentity][]execution.ConsumerRef
+	// foldPolicies holds, per frozen (consumer, requirement), the fold policy
+	// the compiled algorithm consuming that requirement declares for provider
+	// rows that share one series identity. Requirements without a policy keep
+	// the one-batch-per-series contract.
+	foldPolicies map[struct {
+		consumer    execution.ConsumerRef
+		requirement execution.RequirementID
+	}]strategy.SeriesFoldPolicy
 }
 
 func (stream *streamedExecution) Begin(ctx context.Context, header execution.InternalExecutionHeader) error {
@@ -112,10 +120,31 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 	}
 	stream.series += batch.Delivery.Series
 	stream.retained += retained
+	folded := make(map[*execution.Dataset]foldedDataset)
 	for _, binding := range batch.Inputs {
 		key := streamedInputKey{consumer: binding.Consumer, series: series, requirement: binding.RequirementID}
-		if _, duplicate := stream.streamed[key]; duplicate {
-			return namedInputError(codeStreamedNamedInputDuplicate, "alarmd worker: duplicate streamed named input")
+		if existing, duplicate := stream.streamed[key]; duplicate {
+			// A second batch for one (consumer, series, requirement) key is a
+			// provider row finer than the series identity. Only a requirement
+			// whose compiled algorithm declares a fold policy may fold it; every
+			// other plan keeps failing deterministically.
+			policy, declared := stream.prepared.foldPolicies[struct {
+				consumer    execution.ConsumerRef
+				requirement execution.RequirementID
+			}{consumer: binding.Consumer, requirement: binding.RequirementID}]
+			if !declared {
+				return namedInputError(codeStreamedNamedInputDuplicate, "alarmd worker: duplicate streamed named input")
+			}
+			merged, known := folded[existing.Dataset]
+			if !known {
+				var foldErr error
+				merged, foldErr = foldStreamedDataset(existing.Dataset, batch.Dataset, policy)
+				if foldErr != nil {
+					return wrapNamedInputError(codeStreamedNamedInputFoldInvalid, fmt.Errorf("alarmd worker: fold streamed named input: %w", foldErr))
+				}
+				folded[existing.Dataset] = merged
+			}
+			binding.Dataset, binding.View = merged.dataset, merged.view
 		}
 		stream.streamed[key] = binding
 		if binding.Role == execution.InputRolePrimary {
@@ -205,12 +234,27 @@ func prepareNamedInputIndex(header execution.InternalExecutionHeader) (preparedN
 			requirement execution.RequirementID
 		}]execution.DataRequirement),
 		consumersByPlan: make(map[execution.PlanIdentity][]execution.ConsumerRef, len(header.DuePlans)),
+		foldPolicies: make(map[struct {
+			consumer    execution.ConsumerRef
+			requirement execution.RequirementID
+		}]strategy.SeriesFoldPolicy),
 	}
 	for _, due := range header.DuePlans {
 		for _, level := range due.CompiledPlan.Levels() {
-			prepared.consumersByPlan[due.Identity] = append(prepared.consumersByPlan[due.Identity], execution.ConsumerRef{
-				Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true,
-			})
+			consumer := execution.ConsumerRef{Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true}
+			prepared.consumersByPlan[due.Identity] = append(prepared.consumersByPlan[due.Identity], consumer)
+			for _, algorithm := range level.Algorithms() {
+				policy, declared := algorithm.SeriesFoldPolicy()
+				if !declared {
+					continue
+				}
+				for _, requirement := range algorithm.InputRequirements() {
+					prepared.foldPolicies[struct {
+						consumer    execution.ConsumerRef
+						requirement execution.RequirementID
+					}{consumer: consumer, requirement: execution.RequirementID(requirement.RequirementID)}] = policy
+				}
+			}
 		}
 	}
 	for _, query := range header.RequiredPhysicalQueries {
@@ -374,6 +418,10 @@ func appendProvisional(target *execution.EvaluationResult, next execution.Evalua
 type provisionalBudgetExceededError struct {
 	budget observability.CapacityBudget
 	facts  *observability.CapacityRejectionFacts
+	// slot marks the Slot's own output exceeding a per-Slot cap, which no
+	// retry in this process can satisfy; a shared reservation rejection is
+	// left false because concurrent Slots free their share.
+	slot bool
 }
 
 func (err *provisionalBudgetExceededError) Error() string {
@@ -496,11 +544,6 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 		stream.streamed[key] = binding
 	}
 
-	type preparedSeries struct {
-		due      execution.DuePlan
-		identity execution.SeriesIdentityDigest
-		inputs   []execution.SeriesEvaluationInputRequest
-	}
 	preparedSeriesEvaluations := make([]preparedSeries, 0, len(stream.streamed))
 	for _, due := range stream.header.DuePlans {
 		series := make([]execution.SeriesIdentityDigest, 0, len(stream.planSeries[due.Identity]))
@@ -543,6 +586,31 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 	if err := stream.loadGaps(ctx); err != nil {
 		return err
 	}
+	if err := stream.evaluateSeries(ctx, completion, preparedSeriesEvaluations); err != nil {
+		var exceeded *provisionalBudgetExceededError
+		if errors.As(err, &exceeded) && exceeded.slot {
+			return stream.completeBeyondSlotBudget(ctx)
+		}
+		return err
+	}
+	return nil
+}
+
+// preparedSeries is one PRIMARY series of a due Plan with its complete named
+// inputs, ready for the Runtime State read and evaluation.
+type preparedSeries struct {
+	due      execution.DuePlan
+	identity execution.SeriesIdentityDigest
+	inputs   []execution.SeriesEvaluationInputRequest
+}
+
+// evaluateSeries reads Runtime State and evaluates every prepared series in
+// Plan-then-series order, then completes the Plans without series.
+func (stream *streamedExecution) evaluateSeries(
+	ctx context.Context,
+	completion execution.QueryExecutionCompletion,
+	preparedSeriesEvaluations []preparedSeries,
+) error {
 	// Runtime State is read in bounded batches ahead of evaluation while
 	// evaluation itself keeps the exact Plan-then-series order. A series whose
 	// PRIMARY input is incomplete needs no State read; the pending batch is
@@ -937,15 +1005,43 @@ type completedSeries struct {
 	item   execution.StatePreflightItem
 }
 
-// statePreflightBatchLimit is the shared batch bound clamped to the Slot's
-// State mutation budget, which validated configuration keeps at or below the
-// store's per-call item limit.
+// statePreflightBatchLimit is the shared batch bound clamped to the per-Slot
+// State mutation cap, which stays at or below the store's per-call limit.
 func (stream *streamedExecution) statePreflightBatchLimit() int {
 	limit := execution.StatePreflightBatchItems
-	if budget := stream.coordinator.budget.MaxStateMutations; budget > 0 && budget < uint64(limit) {
+	if budget := stream.coordinator.slotBudget().MaxStateMutations; budget > 0 && budget < uint64(limit) {
 		limit = int(budget)
 	}
 	return limit
+}
+
+// completeBeyondSlotBudget replaces the provisional results of a Slot whose
+// own output exceeded a per-Slot cap with one UNAVAILABLE result per due
+// Plan, each opening a Plan-wide gap. Nothing evaluated so far reaches Events
+// or State; Progress records the coverage completion so the Slot is not
+// retried into the same deterministic rejection.
+func (stream *streamedExecution) completeBeyondSlotBudget(ctx context.Context) error {
+	// The discarded results give back their State, Event and Gap shares so
+	// the replacement gaps are counted against an empty Slot; the retained
+	// bytes stay reserved until the stream releases everything.
+	stream.coordinator.releaseEffects(stream.effects)
+	stream.effects = effectCounts{}
+	stream.evaluated = execution.EvaluationResult{}
+	reason := execution.ReasonCode(contract.ReasonExecutionBudgetExhausted)
+	for _, due := range stream.header.DuePlans {
+		mutation, err := stream.gapMutationForReasons(due, map[execution.GapScope]execution.ReasonCode{{}: reason})
+		if err != nil {
+			return err
+		}
+		result := execution.EvaluationResult{Contract: stream.header.Contract, Result: observability.ResultDegraded,
+			ReasonCode: reason, Plans: []execution.PlanEvaluationResult{{Plan: due.Identity,
+				Disposition: execution.PlanUnavailable, ReasonCode: reason,
+				GuardBeforeEvents: []execution.PlanGapMutation{mutation}}}}
+		if err := stream.mergeProvisional(ctx, result, 0); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func primaryIncompleteBindings(inputs []execution.SeriesEvaluationInputRequest) []execution.NamedInputBinding {
@@ -1029,7 +1125,7 @@ func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry
 	if err != nil {
 		stream.coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
 			stream.request.Operation, started, "", "", err)
-		return fmt.Errorf("alarmd worker: evaluate series: %w", err)
+		return wrapEvaluationError(codeEvaluationFailed, fmt.Errorf("alarmd worker: evaluate series: %w", err))
 	}
 	incomplete := make([]execution.NamedInputBinding, 0)
 	for _, input := range inputs {
@@ -1053,7 +1149,7 @@ func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry
 	if err := evaluated.Validate(request); err != nil {
 		stream.coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
 			stream.request.Operation, started, "", "", err)
-		return fmt.Errorf("alarmd worker: invalid series evaluation: %w", err)
+		return wrapEvaluationError(codeEvaluationResultInvalid, fmt.Errorf("alarmd worker: invalid series evaluation: %w", err))
 	}
 	stream.observeEvaluationCompleted(ctx, started, due, series, inputs, evaluated)
 	retained, err := evaluationRetainedSize(loaded, execution.EvaluationResult{})
@@ -1435,15 +1531,27 @@ func evaluationRetainedSize(state execution.StatePreflightResult, result executi
 	return retainedObjectBytes(state) + retainedObjectBytes(result), nil
 }
 
-// planCompletedFullEmpty reports whether every binding of the Plan is the FULL
-// EMPTY share of an available completion. It is fed the Plan's no-series
-// bindings, so for a completion-only Plan a DATA binding means the completion
-// itself claims delivered series that no PRIMARY series of the Plan consumed,
-// which is not a valid no-series result.
+// planCompletedFullEmpty reports whether every PRIMARY binding of the Plan is
+// the FULL EMPTY share of an available completion and no binding of the Plan
+// claims delivered records. It is fed the Plan's no-series bindings, so for a
+// completion-only Plan a DATA binding means the completion itself claims
+// delivered series that no PRIMARY series of the Plan consumed, which is not a
+// valid no-series result. A PARTIAL or UNAVAILABLE ALGORITHM_DEPENDENCY binding
+// does not change the judgement: without a PRIMARY series there is no record
+// the dependency could have fed, exactly as the Python detect stage never
+// reads history for a record it never received. Rejecting it would fail the
+// Slot deterministically on every attempt although the PRIMARY completion is
+// trustworthy and FULL EMPTY.
 func planCompletedFullEmpty(bindings []execution.NamedInputBinding, plan execution.PlanIdentity) bool {
 	found := false
 	for _, binding := range bindings {
 		if binding.Consumer.Plan != plan {
+			continue
+		}
+		if binding.DataState == execution.DataStateData {
+			return false
+		}
+		if binding.Role != execution.InputRolePrimary {
 			continue
 		}
 		found = true
@@ -1458,6 +1566,29 @@ func planCompletedFullEmpty(bindings []execution.NamedInputBinding, plan executi
 func (stream *streamedExecution) completionGapMutation(
 	due execution.DuePlan,
 	bindings []execution.NamedInputBinding,
+) (execution.PlanGapMutation, error) {
+	reasons := make(map[execution.GapScope]execution.ReasonCode)
+	for _, binding := range bindings {
+		if binding.Consumer.Plan != due.Identity || binding.Completeness == execution.CompletenessFull {
+			continue
+		}
+		scope := execution.GapScope{LevelID: binding.Consumer.LevelID, HasLevel: binding.Consumer.HasLevel}
+		if previous, duplicate := reasons[scope]; duplicate && previous != binding.ReasonCode {
+			return execution.PlanGapMutation{}, errors.New("alarmd worker: one gap scope has conflicting completion reasons")
+		}
+		reasons[scope] = binding.ReasonCode
+	}
+	if len(reasons) == 0 {
+		return execution.PlanGapMutation{}, errors.New("alarmd worker: incomplete named input requires a gap scope")
+	}
+	return stream.gapMutationForReasons(due, reasons)
+}
+
+// gapMutationForReasons builds the Plan gap mutation that opens or
+// strengthens the Plan's loaded marker with one scope per reason.
+func (stream *streamedExecution) gapMutationForReasons(
+	due execution.DuePlan,
+	reasons map[execution.GapScope]execution.ReasonCode,
 ) (execution.PlanGapMutation, error) {
 	identity := execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}
 	marker, found := stream.gaps.Find(identity)
@@ -1475,20 +1606,6 @@ func (stream *streamedExecution) completionGapMutation(
 	required := requiredFullSlots(due.CompiledPlan)
 	if required == 0 {
 		return execution.PlanGapMutation{}, errors.New("alarmd worker: Plan gap requires positive FULL warmup slots")
-	}
-	reasons := make(map[execution.GapScope]execution.ReasonCode)
-	for _, binding := range bindings {
-		if binding.Consumer.Plan != due.Identity || binding.Completeness == execution.CompletenessFull {
-			continue
-		}
-		scope := execution.GapScope{LevelID: binding.Consumer.LevelID, HasLevel: binding.Consumer.HasLevel}
-		if previous, duplicate := reasons[scope]; duplicate && previous != binding.ReasonCode {
-			return execution.PlanGapMutation{}, errors.New("alarmd worker: one gap scope has conflicting completion reasons")
-		}
-		reasons[scope] = binding.ReasonCode
-	}
-	if len(reasons) == 0 {
-		return execution.PlanGapMutation{}, errors.New("alarmd worker: incomplete named input requires a gap scope")
 	}
 	scopes := make([]execution.GapScope, 0, len(reasons))
 	for scope := range reasons {

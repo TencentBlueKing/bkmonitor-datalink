@@ -255,6 +255,9 @@ func openProductionPhaseTwoBundleWithDependencies(
 	executionStore, err := state.NewExecutionStore(state.ExecutionStoreOptions{
 		Prefix: cfg.Redis.StatePrefix, Router: storageRouter, MaxValueBytes: cfg.Limits.Codec.MaxEncodedBytes,
 		MaxItemsPerCall: cfg.Limits.Store.MaxKeysPerBatch, RuntimeTTL: cfg.Redis.MaxTTL.Duration(),
+		// Runtime State writes verify the owner lease inside Redis; without the
+		// resolver the store would fall back to unfenced batched writes.
+		FenceKeys: ownershipStore,
 	})
 	if err != nil {
 		return nil, err

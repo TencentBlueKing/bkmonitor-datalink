@@ -88,6 +88,31 @@ func (router *Router) Select(
 	return selected, nil
 }
 
+// incumbentEligible reports whether the Worker named by workerID is in the
+// ready set under the same membership rules Select applies: a valid READY
+// registration that has not expired at the given time and, when configured,
+// the additional eligibility. Select itself is left untouched.
+func (router *Router) incumbentEligible(
+	queryGroup execution.QueryGroupIdentity,
+	workerID string,
+	workers []ownership.WorkerRegistration,
+	at time.Time,
+) bool {
+	if router == nil || workerID == "" {
+		return false
+	}
+	for _, worker := range workers {
+		if worker.WorkerID != workerID {
+			continue
+		}
+		if worker.Validate() != nil || worker.AssignmentReadiness != ownership.WorkerReady || !worker.ExpiresAt.After(at) {
+			return false
+		}
+		return router.additionalEligibility == nil || router.additionalEligibility.Eligible(queryGroup, worker, at)
+	}
+	return false
+}
+
 type AssignmentStore interface {
 	ListReadyWorkers(context.Context, time.Time) ([]ownership.WorkerRegistration, error)
 	ReadAssignment(context.Context, execution.QueryGroupIdentity) (ownership.AssignmentRecord, error)
@@ -110,6 +135,14 @@ func NewReconciler(router *Router, store AssignmentStore) (*Reconciler, error) {
 	return &Reconciler{router: router, store: store}, nil
 }
 
+// Reconcile publishes the Assignment of one Query Group under the Control
+// Leader authority. The incumbent is sticky: when a current Assignment exists
+// and its desired Worker is still in the ready set (and passes the
+// additional eligibility, if any), the current record is returned as-is and
+// Rendezvous is not re-run. Rendezvous runs only when there is no Assignment
+// yet or the incumbent is no longer ready. Assignments therefore stay put
+// when another Worker joins or re-registers, and move only when their owner
+// drops out of the ready set.
 func (reconciler *Reconciler) Reconcile(
 	ctx context.Context,
 	authority ownership.PublicationAuthority,
@@ -121,7 +154,8 @@ func (reconciler *Reconciler) Reconcile(
 	}
 	expectedRevision := uint64(0)
 	current, err := reconciler.store.ReadAssignment(ctx, queryGroup)
-	if err == nil {
+	hasCurrent := err == nil
+	if hasCurrent {
 		expectedRevision = current.RecordRevision
 	} else if !errors.Is(err, ownership.ErrAssignmentAbsent) {
 		return ownership.AssignmentRecord{}, err
@@ -129,6 +163,9 @@ func (reconciler *Reconciler) Reconcile(
 	workers, err := reconciler.store.ListReadyWorkers(ctx, at)
 	if err != nil {
 		return ownership.AssignmentRecord{}, err
+	}
+	if hasCurrent && reconciler.router.incumbentEligible(queryGroup, current.DesiredWorkerID, workers, at) {
+		return current, nil
 	}
 	selected, err := reconciler.router.Select(queryGroup, workers, at)
 	if err != nil {

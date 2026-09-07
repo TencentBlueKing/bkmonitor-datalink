@@ -30,6 +30,16 @@ func TestDefaultPhaseTwoInputUsesGoAccessWithoutPhaseOneCoordinates(t *testing.T
 	}
 }
 
+func TestDefaultPhaseTwoRegistrationSurvivesShortStoreOutage(t *testing.T) {
+	worker := Default().PhaseTwo.Worker
+	if worker.RegistrationTTL.Duration() != 60*time.Second || worker.RegistrationRenewInterval.Duration() != 10*time.Second {
+		t.Fatalf("registration ttl/renew = %v/%v, want 60s/10s", worker.RegistrationTTL.Duration(), worker.RegistrationRenewInterval.Duration())
+	}
+	if worker.RegistrationTTL.Duration() < 3*worker.RegistrationRenewInterval.Duration() {
+		t.Fatalf("registration ttl %v must cover several missed %v renewals", worker.RegistrationTTL.Duration(), worker.RegistrationRenewInterval.Duration())
+	}
+}
+
 func TestDefaultPhaseTwoRuntimeHasBoundedLifecycleBudgets(t *testing.T) {
 	cfg := Default().PhaseTwo
 

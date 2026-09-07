@@ -92,6 +92,65 @@ func TestSessionConditionallyReleasesAfterStoppingAdmission(t *testing.T) {
 	}
 }
 
+func TestSessionKeepsAcceptingAcrossTransientRenewFailureInsideTTL(t *testing.T) {
+	now := time.UnixMilli(1_700_000_000_000)
+	fence := execution.OwnerFence{QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "token-1"}
+	store := &fakeLeaseStore{lease: Lease{Fence: fence, Deadline: now.Add(time.Minute)}}
+	session, err := OpenSession(context.Background(), store, "query-group-1", "worker-1", now, time.Minute)
+	if err != nil {
+		t.Fatalf("OpenSession() error = %v", err)
+	}
+	transient := errors.New("lease store unreachable")
+	store.renewErr = transient
+	if err := session.Renew(context.Background(), now.Add(10*time.Second), time.Minute); !errors.Is(err, transient) {
+		t.Fatalf("Renew(transient) error = %v, want the store error", err)
+	}
+	if got, err := session.ValidateCurrent(context.Background(), now.Add(20*time.Second)); err != nil || got != fence {
+		t.Fatalf("ValidateCurrent(after transient renew failure) fence=%+v error=%v, want the lease still accepted", got, err)
+	}
+	if got := session.Deadline(); !got.Equal(now.Add(time.Minute)) {
+		t.Fatalf("Deadline() after transient failure = %s, want unchanged %s", got, now.Add(time.Minute))
+	}
+
+	store.renewErr = nil
+	store.renewed = Lease{Fence: fence, Deadline: now.Add(90 * time.Second)}
+	if err := session.Renew(context.Background(), now.Add(30*time.Second), time.Minute); err != nil {
+		t.Fatalf("Renew(recovered) error = %v", err)
+	}
+	if got := session.Deadline(); !got.Equal(store.renewed.Deadline) {
+		t.Fatalf("Deadline() after recovery = %s, want %s", got, store.renewed.Deadline)
+	}
+
+	store.renewErr = transient
+	if err := session.Renew(context.Background(), now.Add(90*time.Second), time.Minute); !errors.Is(err, transient) {
+		t.Fatalf("Renew(transient at deadline) error = %v, want the store error", err)
+	}
+	if _, err := session.ValidateCurrent(context.Background(), now.Add(90*time.Second)); !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("ValidateCurrent(expired) error = %v, want ErrStaleFence", err)
+	}
+}
+
+func TestSessionStopsAcceptingOnAuthoritativeRenewDecision(t *testing.T) {
+	now := time.UnixMilli(1_700_000_000_000)
+	for _, decision := range []error{ErrStaleFence, ErrNotDesired} {
+		store := &fakeLeaseStore{lease: Lease{
+			Fence:    execution.OwnerFence{QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "token-1"},
+			Deadline: now.Add(time.Minute),
+		}}
+		session, err := OpenSession(context.Background(), store, "query-group-1", "worker-1", now, time.Minute)
+		if err != nil {
+			t.Fatalf("OpenSession() error = %v", err)
+		}
+		store.renewErr = decision
+		if err := session.Renew(context.Background(), now.Add(time.Second), time.Minute); !errors.Is(err, decision) {
+			t.Fatalf("Renew(%v) error = %v", decision, err)
+		}
+		if _, err := session.ValidateCurrent(context.Background(), now.Add(2*time.Second)); !errors.Is(err, ErrStaleFence) {
+			t.Fatalf("ValidateCurrent(after %v) error = %v, want ErrStaleFence", decision, err)
+		}
+	}
+}
+
 type fakeLeaseStore struct {
 	lease        Lease
 	renewed      Lease

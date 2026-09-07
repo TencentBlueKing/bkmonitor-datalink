@@ -2276,14 +2276,17 @@ type fakePhaseTwoOwnership struct {
 	mu             sync.Mutex
 	registrations  []ownership.WorkerRegistration
 	beforeRegister func(ownership.WorkerRegistration)
-	assigned       []execution.QueryGroupIdentity
-	runner         phaseTwoQueryGroupRuntime
-	runners        map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime
-	openErrors     map[execution.QueryGroupIdentity]error
-	follower       bool
-	controlLeader  int
-	published      int
-	closeCalls     int
+	// registerHook may reject or block one registration. It runs before the
+	// registration is recorded and receives the per-attempt context.
+	registerHook  func(context.Context, ownership.WorkerRegistration) error
+	assigned      []execution.QueryGroupIdentity
+	runner        phaseTwoQueryGroupRuntime
+	runners       map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime
+	openErrors    map[execution.QueryGroupIdentity]error
+	follower      bool
+	controlLeader int
+	published     int
+	closeCalls    int
 	// failSite injects failErr into the next failRemaining calls of one store
 	// method ("publish", "assigned" or "open"); a negative count never recovers.
 	failSite      string
@@ -2336,9 +2339,14 @@ func (owner *fakePhaseTwoOwnership) TryAcquireControlLeader(context.Context, tim
 	return true, nil
 }
 
-func (owner *fakePhaseTwoOwnership) RegisterWorker(_ context.Context, registration ownership.WorkerRegistration) error {
+func (owner *fakePhaseTwoOwnership) RegisterWorker(ctx context.Context, registration ownership.WorkerRegistration) error {
 	if owner.beforeRegister != nil {
 		owner.beforeRegister(registration)
+	}
+	if owner.registerHook != nil {
+		if err := owner.registerHook(ctx, registration); err != nil {
+			return err
+		}
 	}
 	owner.mu.Lock()
 	defer owner.mu.Unlock()
@@ -2665,4 +2673,212 @@ func validGoAccessRuntimeConfig() config.Config {
 	cfg.PhaseTwo.Access.UQEndpoint = "http://unify-query.service"
 	cfg.PhaseTwo.Access.QuerySource = "alarmd"
 	return cfg
+}
+
+func TestPhaseTwoWorkerBundleRegistrationRenewalSurvivesTransientStoreFailure(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(100 * time.Millisecond)
+	cfg.PhaseTwo.Worker.RegistrationRenewInterval = config.Duration(time.Millisecond)
+	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
+	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{"query-group-1"}, runner: newFakePhaseTwoQueryGroup()}
+	transient := errors.New("ownership store unreachable")
+	var started, failed atomic.Bool
+	owner.registerHook = func(_ context.Context, registration ownership.WorkerRegistration) error {
+		if registration.AssignmentReadiness == ownership.WorkerReady && started.Load() && failed.CompareAndSwap(false, true) {
+			return transient
+		}
+		return nil
+	}
+	health := newPhaseTwoApplicationHealth()
+	bundle, observations := mustObservedPhaseTwoWorkerBundle(t, cfg, health, control, owner)
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	readyBefore := readyRegistrationCount(owner)
+	started.Store(true)
+	waitPhaseTwoCondition(t, 3*time.Second, "READY renewals after the transient failure", func() bool {
+		return failed.Load() && readyRegistrationCount(owner) >= readyBefore+2
+	})
+	waitPhaseTwoCondition(t, 3*time.Second, "registration renewal failure and resumption observations", func() bool {
+		return hasRegistrationRenewalObservation(observations(), observability.ResultFailed, phaseTwoControlDependencyReason) &&
+			hasRegistrationRenewalObservation(observations(), observability.ResultResumed, observability.ReasonNone)
+	})
+	if snapshot := health.HealthSnapshot(); snapshot.State == observability.HealthNotReady {
+		t.Fatalf("health after transient registration failure = %+v, want the Worker kept ready or degraded", snapshot)
+	}
+	for _, observation := range observations() {
+		if observation.Component == observability.ComponentOwnership && observation.Stage == observability.StageLeaseRenewed &&
+			(observation.Trace.QueryGroupKey != "" || observation.Trace.OwnerID != "") {
+			t.Fatalf("registration renewal observation carries identity: %+v", observation)
+		}
+	}
+	if err := bundle.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+}
+
+func TestPhaseTwoWorkerBundleRegistrationRenewalCutsHungStoreCall(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(10 * time.Second)
+	cfg.PhaseTwo.Worker.RegistrationRenewInterval = config.Duration(time.Millisecond)
+	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
+	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{"query-group-1"}, runner: newFakePhaseTwoQueryGroup()}
+	var started, hung, deadlineMissing atomic.Bool
+	hungReleased := make(chan struct{})
+	owner.registerHook = func(ctx context.Context, registration ownership.WorkerRegistration) error {
+		if registration.AssignmentReadiness == ownership.WorkerReady && started.Load() && hung.CompareAndSwap(false, true) {
+			if _, ok := ctx.Deadline(); !ok {
+				deadlineMissing.Store(true)
+			}
+			<-ctx.Done()
+			close(hungReleased)
+			return ctx.Err()
+		}
+		return nil
+	}
+	health := newPhaseTwoApplicationHealth()
+	bundle, observations := mustObservedPhaseTwoWorkerBundle(t, cfg, health, control, owner)
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	readyBefore := readyRegistrationCount(owner)
+	started.Store(true)
+	hungAt := time.Now()
+	select {
+	case <-hungReleased:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hung registration call was not cut by the per-attempt timeout")
+	}
+	if cut := time.Since(hungAt); cut > 3*time.Second {
+		t.Fatalf("hung registration call was cut after %s, want about the one second minimum attempt timeout", cut)
+	}
+	if deadlineMissing.Load() {
+		t.Fatal("registration renewal attempt ran without a per-attempt deadline")
+	}
+	waitPhaseTwoCondition(t, 3*time.Second, "READY renewals after the hung call", func() bool {
+		return readyRegistrationCount(owner) >= readyBefore+2
+	})
+	if !hasRegistrationRenewalObservation(observations(), observability.ResultFailed, phaseTwoControlDependencyReason) {
+		t.Fatalf("observations = %+v, want a retryable registration renewal failure", observations())
+	}
+	if snapshot := health.HealthSnapshot(); snapshot.State == observability.HealthNotReady {
+		t.Fatalf("health after hung registration call = %+v, want the Worker kept ready or degraded", snapshot)
+	}
+	if err := bundle.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+}
+
+func TestPhaseTwoWorkerBundleRegistrationRenewalStopsOnInvariantError(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(100 * time.Millisecond)
+	cfg.PhaseTwo.Worker.RegistrationRenewInterval = config.Duration(time.Millisecond)
+	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"}}
+	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{"query-group-1"}, runner: newFakePhaseTwoQueryGroup()}
+	var started atomic.Bool
+	owner.registerHook = func(_ context.Context, registration ownership.WorkerRegistration) error {
+		if registration.AssignmentReadiness == ownership.WorkerReady && started.Load() {
+			return newPhaseTwoInvariantError("phase-two registration invariant violated")
+		}
+		return nil
+	}
+	health := newPhaseTwoApplicationHealth()
+	bundle, observations := mustObservedPhaseTwoWorkerBundle(t, cfg, health, control, owner)
+	if err := bundle.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	started.Store(true)
+	waitForHealthState(t, health, observability.HealthNotReady)
+	snapshot := health.HealthSnapshot()
+	if len(snapshot.Reasons) != 1 || snapshot.Reasons[0] != observability.ReasonInternalUnknown {
+		t.Fatalf("health reasons after invariant registration error = %+v, want internal_unknown", snapshot)
+	}
+	unsafeObserved := false
+	for _, observation := range observations() {
+		if observation.Component == observability.ComponentOwnership && observation.Stage == observability.StageAssignmentLost &&
+			observation.Result == observability.ResultFailed && isPhaseTwoInvariantError(observation.Err) {
+			unsafeObserved = true
+		}
+		if observation.Component == observability.ComponentOwnership && observation.Stage == observability.StageLeaseRenewed &&
+			observation.Result == observability.ResultFailed {
+			t.Fatalf("invariant registration error was reported as retryable: %+v", observation)
+		}
+	}
+	if !unsafeObserved {
+		t.Fatalf("observations = %+v, want ownership marked unsafe with the invariant error", observations())
+	}
+	readyCount := readyRegistrationCount(owner)
+	time.Sleep(20 * time.Millisecond)
+	if again := readyRegistrationCount(owner); again != readyCount {
+		t.Fatalf("READY registrations kept flowing after the invariant error: %d -> %d", readyCount, again)
+	}
+	if err := bundle.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	waitForRegistration(t, owner, ownership.WorkerDraining)
+}
+
+func mustObservedPhaseTwoWorkerBundle(
+	t *testing.T,
+	cfg config.Config,
+	health *phaseTwoApplicationHealth,
+	control phaseTwoControlRuntime,
+	owner phaseTwoOwnershipRuntime,
+) (*phaseTwoWorkerBundle, func() []observability.Observation) {
+	t.Helper()
+	var mu sync.Mutex
+	var observations []observability.Observation
+	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
+		Config: cfg, Health: health, Control: control, Ownership: owner,
+		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			mu.Lock()
+			observations = append(observations, observation)
+			mu.Unlock()
+		}),
+		Now: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("newPhaseTwoWorkerBundle() error = %v", err)
+	}
+	return bundle, func() []observability.Observation {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]observability.Observation(nil), observations...)
+	}
+}
+
+func readyRegistrationCount(owner *fakePhaseTwoOwnership) int {
+	count := 0
+	for _, readiness := range owner.registrationStates() {
+		if readiness == ownership.WorkerReady {
+			count++
+		}
+	}
+	return count
+}
+
+func hasRegistrationRenewalObservation(
+	observations []observability.Observation,
+	result observability.Result,
+	reason observability.ReasonCode,
+) bool {
+	for _, observation := range observations {
+		if observation.Component == observability.ComponentOwnership && observation.Stage == observability.StageLeaseRenewed &&
+			observation.Result == result && observation.ReasonCode == reason {
+			return true
+		}
+	}
+	return false
+}
+
+func waitPhaseTwoCondition(t *testing.T, timeout time.Duration, name string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", name)
 }

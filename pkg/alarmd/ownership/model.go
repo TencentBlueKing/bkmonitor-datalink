@@ -24,6 +24,14 @@ var (
 	ErrAssignmentConflict = errors.New("alarmd ownership: Assignment record revision conflict")
 )
 
+// IsLeaseDecision reports whether err is an authoritative answer from the
+// lease store about the fence (stale, not desired, held by another owner)
+// rather than a failure to reach the store. Renewal loops retry only the
+// latter while the lease is still inside its TTL.
+func IsLeaseDecision(err error) bool {
+	return errors.Is(err, ErrStaleFence) || errors.Is(err, ErrNotDesired) || errors.Is(err, ErrLeaseBusy)
+}
+
 const ControlLeaderIdentity execution.QueryGroupIdentity = "alarmd-control-leader"
 
 type AssignmentReadiness string

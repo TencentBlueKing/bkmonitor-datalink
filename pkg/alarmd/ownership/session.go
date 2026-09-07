@@ -79,7 +79,15 @@ func (session *Session) Renew(ctx context.Context, at time.Time, ttl time.Durati
 	}
 	renewed, err := session.store.Renew(ctx, lease.Fence, at, ttl)
 	if err != nil {
-		session.stopAccepting()
+		// An authoritative store decision or a lease whose deadline has
+		// already passed ends admission here. A failure to reach the store
+		// while the lease is still inside its TTL does not: the caller
+		// retries, and every side effect keeps validating the fence against
+		// the store through ValidateCurrent, so nothing runs on a lease the
+		// store no longer confirms.
+		if IsLeaseDecision(err) || !lease.Deadline.After(at) {
+			session.stopAccepting()
+		}
 		return err
 	}
 	session.mu.Lock()

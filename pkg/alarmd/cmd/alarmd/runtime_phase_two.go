@@ -1100,19 +1100,45 @@ func (bundle *phaseTwoWorkerBundle) startControlMaintenance() {
 	}()
 }
 
+// maintainRegistration renews the READY registration every
+// RegistrationRenewInterval for as long as the Worker runs. A failure to
+// reach the Ownership Store is transient: it is observed with the shared
+// retryable dependency reason, marks the Worker degraded, is retried inside
+// the same interval first and the loop keeps running, so one short store
+// outage never lets the registration lapse for the rest of the process
+// lifetime. Only cancellation of the maintenance context or a phase-two
+// invariant error ends the loop; the invariant case is the one that marks
+// ownership unsafe.
 func (bundle *phaseTwoWorkerBundle) maintainRegistration() {
 	defer bundle.maintenanceWG.Done()
-	ticker := time.NewTicker(bundle.dependencies.Config.PhaseTwo.Worker.RegistrationRenewInterval.Duration())
+	interval := bundle.dependencies.Config.PhaseTwo.Worker.RegistrationRenewInterval.Duration()
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	failing := false
 	for {
 		select {
 		case <-bundle.maintenanceCtx.Done():
 			return
 		case <-ticker.C:
-			if err := bundle.register(bundle.maintenanceCtx, ownership.WorkerReady); err != nil {
-				bundle.markOwnershipUnsafe(err)
-				return
+		}
+		err := renewPhaseTwoWithinInterval(bundle.maintenanceCtx, interval, func(attemptCtx context.Context) error {
+			return bundle.register(attemptCtx, ownership.WorkerReady)
+		}, func(err error) {
+			failing = true
+			bundle.observeRegistrationRenewal(observability.ResultFailed, err)
+			bundle.markControlDependencyDegraded()
+		}, nil)
+		switch {
+		case err == nil:
+			if failing {
+				failing = false
+				bundle.observeRegistrationRenewal(observability.ResultResumed, nil)
 			}
+		case bundle.maintenanceCtx.Err() != nil:
+			return
+		case isPhaseTwoInvariantError(err):
+			bundle.markOwnershipUnsafe(err)
+			return
 		}
 	}
 }
@@ -1574,6 +1600,9 @@ func (bundle *phaseTwoWorkerBundle) markControlFollower(err error) {
 	bundle.observe(context.Background(), observability.ComponentControlPlane, observability.StageSnapshotUnavailable, observability.ResultFailed, err)
 }
 
+// markOwnershipUnsafe is reserved for a phase-two invariant violation in
+// registration maintenance. Transient Ownership Store failures never reach
+// it; they are retried by maintainRegistration.
 func (bundle *phaseTwoWorkerBundle) markOwnershipUnsafe(err error) {
 	bundle.dependencies.Health.Update(phaseTwoReadiness{
 		State: observability.HealthNotReady, Reasons: []observability.ReasonCode{observability.ReasonInternalUnknown},
@@ -1592,6 +1621,24 @@ func (bundle *phaseTwoWorkerBundle) observe(
 	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
 		Component: component, Stage: stage, Result: result,
 		Direction: observability.DirectionInternal, Err: err,
+	})
+}
+
+// observeRegistrationRenewal reports one failed READY registration renewal
+// attempt, or the recovery after such failures. The registration is the
+// Worker's membership lease in the Ownership Store, so it reuses the
+// lease_renewed stage. Failures carry the shared retryable dependency reason
+// so the bounded log policy folds repeats into one limited bucket. It is a
+// Worker-level event and deliberately carries no Query Group or owner
+// identity.
+func (bundle *phaseTwoWorkerBundle) observeRegistrationRenewal(result observability.Result, err error) {
+	reason := observability.ReasonNone
+	if err != nil {
+		reason = phaseTwoControlDependencyReason
+	}
+	observeRuntime(context.Background(), bundle.dependencies.Observer, observability.Observation{
+		Component: observability.ComponentOwnership, Stage: observability.StageLeaseRenewed, Result: result,
+		Direction: observability.DirectionInternal, ReasonCode: reason, Err: err,
 	})
 }
 

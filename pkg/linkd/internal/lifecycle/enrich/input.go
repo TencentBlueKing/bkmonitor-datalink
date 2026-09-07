@@ -10,8 +10,6 @@
 package enrich
 
 import (
-	"encoding/json"
-	"fmt"
 	"math"
 
 	"linkd/internal/domain"
@@ -65,16 +63,4 @@ func ValidateRequiredIDs(alert domain.Alert) (RequiredIDs, []Diagnostic) {
 		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticCodeInvalidField, Fields: invalid})
 	}
 	return ids, diagnostics
-}
-
-func jsonObject(values map[string]any) (domain.JSONObject, error) {
-	object := make(domain.JSONObject, len(values))
-	for key, value := range values {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			return nil, fmt.Errorf("encode enrich field %q: %w", key, err)
-		}
-		object[key] = encoded
-	}
-	return object.Normalize()
 }

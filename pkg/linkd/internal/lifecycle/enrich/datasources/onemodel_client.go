@@ -75,7 +75,7 @@ func (c *OneModelClient) FindInstance(
 	if err != nil {
 		return enrich.Instance{}, false, fmt.Errorf("find onemodel instance: search: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	instance, found, err := parseFindInstanceResponse(response, tenantID, query.ModelCode)
 	if err != nil {
@@ -147,7 +147,7 @@ func parseFindInstanceResponse(
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	if err := decoder.Decode(&result); err != nil {
-		return enrich.Instance{}, false, fmt.Errorf("%w: decode response: %v", enrich.ErrInvalidDataSourceResponse, err)
+		return enrich.Instance{}, false, fmt.Errorf("%w: decode response: %w", enrich.ErrInvalidDataSourceResponse, err)
 	}
 	if len(result.Hits.Hits) == 0 {
 		return enrich.Instance{}, false, nil

@@ -16,11 +16,10 @@ import (
 	"fmt"
 	"time"
 
-	"linkd/internal/lifecycle/enrich"
-	"linkd/internal/lifecycle/enrich/models"
-
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"linkd/internal/lifecycle/enrich"
+	"linkd/internal/lifecycle/enrich/models"
 )
 
 var (
@@ -120,7 +119,7 @@ func (c *CWStrategyClient) take(query *gorm.DB, operation string) (models.CWStra
 	}
 	result, err := cwStrategyFromRow(row)
 	if err != nil {
-		return models.CWStrategy{}, false, fmt.Errorf("%w: %v", enrich.ErrInvalidDataSourceResponse, err)
+		return models.CWStrategy{}, false, fmt.Errorf("%w: %w", enrich.ErrInvalidDataSourceResponse, err)
 	}
 	return result, true, nil
 }

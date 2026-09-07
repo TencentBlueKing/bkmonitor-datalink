@@ -13,12 +13,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"linkd/internal/lifecycle/enrich/models"
 
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
-
 	"linkd/internal/lifecycle/enrich"
+	"linkd/internal/lifecycle/enrich/models"
 )
 
 var (
@@ -78,7 +77,7 @@ func (c *BKStrategyClient) GetStrategyHistory(ctx context.Context, strategyID, h
 	}
 	content, err := decodeJSONObject("alarm_strategy_history.content", row.Content)
 	if err != nil {
-		return models.BkStrategyHistory{}, false, fmt.Errorf("%w: %v", enrich.ErrInvalidDataSourceResponse, err)
+		return models.BkStrategyHistory{}, false, fmt.Errorf("%w: %w", enrich.ErrInvalidDataSourceResponse, err)
 	}
 	return models.BkStrategyHistory{ID: row.ID, StrategyID: row.StrategyID, Content: content}, true, nil
 }

@@ -14,11 +14,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"linkd/internal/lifecycle/enrich/models"
 
 	"gorm.io/gorm"
-
 	"linkd/internal/lifecycle/enrich"
+	"linkd/internal/lifecycle/enrich/models"
 )
 
 var _ enrich.MetricReader = (*MetricClient)(nil)
@@ -94,7 +93,7 @@ func takeMetricMetadata(query *gorm.DB, operation string) (models.MetricMetadata
 	dimensions := make([]models.MetricDimension, 0)
 	if len(row.DimensionList) != 0 {
 		if err := json.Unmarshal(row.DimensionList, &dimensions); err != nil {
-			return models.MetricMetadata{}, false, fmt.Errorf("%w: %s dimension_list: %v", enrich.ErrInvalidDataSourceResponse, operation, err)
+			return models.MetricMetadata{}, false, fmt.Errorf("%w: %s dimension_list: %w", enrich.ErrInvalidDataSourceResponse, operation, err)
 		}
 	}
 	return models.MetricMetadata{

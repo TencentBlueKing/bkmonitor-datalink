@@ -34,9 +34,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
-// Reproduction of the production stall after a catalog publication.
-//
-// Timeline of the incident, expressed on a one-minute grid:
+// cutoverStallFixture is a production bundle against Redis whose Query Group
+// for strategy 1001 holds the persisted state of a Query Group caught by a
+// publication, expressed on a one-minute grid:
 //
 //	base       first Slot of the initial Segment, executed to a FULL completion
 //	base+60    the Worker begins the next Slot under the still-open initial
@@ -46,33 +46,67 @@ import (
 //	           before the Worker began base+60 and persisted the cutover
 //	           afterwards, so the initial Segment closes at base+59 and the
 //	           new Segment [base+59, ...) owns base+60
-//	base+61    every later tick selects base+60 on the new Segment
 //
-// The newer Segment supersedes the persisted projection: BeginSlot commits,
-// the Worker finalizes base+60 on the new Segment and the cursor moves on.
-// Before the fix BeginSlot returned a deterministic error for the same Slot
-// forever and the Coordinator mapped it to BLOCKED_EXACT_SET_UNAVAILABLE.
-func TestProductionPhaseTwoCutoverStallsUnfinishedSlotOnNewSegment(t *testing.T) {
+// The clock is left at base+60 with the unfinished projection still on the
+// initial Segment's contract.
+type cutoverStallFixture struct {
+	t                *testing.T
+	cfg              config.Config
+	redisClient      *redis.Client
+	bundle           *phaseTwoWorkerBundle
+	production       *productionPhaseTwoOwnership
+	repository       *controlplane.RedisCatalogRepository
+	runner           phaseTwoQueryGroupRuntime
+	session          *ownership.Session
+	progressStore    *progress.Store
+	queryGroup       execution.QueryGroupIdentity
+	initialSchedule  execution.FrozenQueryGroupSchedule
+	openSchedule     execution.FrozenQueryGroupSchedule
+	base             int64
+	boundary         execution.EvaluationTime
+	firstNewSlot     execution.EvaluationTime
+	inFlight         execution.ScheduleProgress
+	oldProjection    execution.UnfinishedSlotProjection
+	clock            *atomic.Int64
+	now              func() time.Time
+	uqCalls          *atomic.Int64
+	uqCallsAtCutover int64
+	observationsMu   sync.Mutex
+	observations     []observability.Observation
+}
+
+func (fixture *cutoverStallFixture) observed() []observability.Observation {
+	fixture.observationsMu.Lock()
+	defer fixture.observationsMu.Unlock()
+	return append([]observability.Observation(nil), fixture.observations...)
+}
+
+func (fixture *cutoverStallFixture) progress(ctx context.Context) execution.ScheduleProgress {
+	fixture.t.Helper()
+	return loadPhaseTwoProgress(fixture.t, ctx, fixture.production, fixture.queryGroup)
+}
+
+func newCutoverStalledFixture(t *testing.T, configure func(*config.Config)) *cutoverStallFixture {
+	t.Helper()
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
 	installCutoverStallStrategies(t, ctx, redisClient, "system.mem", 1725000000)
 
 	base := time.Now().Unix()
 	base -= base % 60
-	var clock atomic.Int64
-	clock.Store(base * 1000)
-	now := func() time.Time { return time.UnixMilli(clock.Load()) }
+	fixture := &cutoverStallFixture{t: t, redisClient: redisClient, base: base, clock: &atomic.Int64{}, uqCalls: &atomic.Int64{}}
+	fixture.clock.Store(base * 1000)
+	fixture.now = func() time.Time { return time.UnixMilli(fixture.clock.Load()) }
 
-	var uqCalls atomic.Int64
 	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		uqCalls.Add(1)
+		fixture.uqCalls.Add(1)
 		var payload struct {
 			EndTime string `json:"end_time"`
 		}
 		_ = json.NewDecoder(request.Body).Decode(&payload)
 		end, err := strconv.ParseInt(payload.EndTime, 10, 64)
 		if err != nil || end <= 0 {
-			end = clock.Load() / 1000
+			end = fixture.clock.Load() / 1000
 		}
 		if end > 1_000_000_000_000 {
 			end /= 1000
@@ -80,7 +114,7 @@ func TestProductionPhaseTwoCutoverStallsUnfinishedSlotOnNewSegment(t *testing.T)
 		_, _ = writer.Write([]byte(`{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["host"],"group_values":["127.0.0.1"],"values":[[` +
 			strconv.FormatInt((end-1)*1000, 10) + `,5]]}],"status":null,"trace_id":"cutover-stall","is_partial":false,"result_table_id":["system.cpu"]}`))
 	}))
-	defer uqServer.Close()
+	t.Cleanup(uqServer.Close)
 
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
@@ -89,22 +123,21 @@ func TestProductionPhaseTwoCutoverStallsUnfinishedSlotOnNewSegment(t *testing.T)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
 	cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(500 * time.Millisecond)
 	cfg.PhaseTwo.Access.DownstreamExecutionReserve = config.Duration(time.Millisecond)
-	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(time.Hour)
+	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(6 * time.Hour)
 	cfg.PhaseTwo.Worker.RegistrationRenewInterval = config.Duration(time.Minute)
-	cfg.PhaseTwo.Ownership.ControlLeaderTTL = config.Duration(time.Hour)
+	cfg.PhaseTwo.Ownership.ControlLeaderTTL = config.Duration(6 * time.Hour)
 	cfg.PhaseTwo.Ownership.ControlLeaderRenewInterval = config.Duration(time.Minute)
-	cfg.PhaseTwo.Ownership.LeaseTTL = config.Duration(time.Hour)
+	cfg.PhaseTwo.Ownership.LeaseTTL = config.Duration(6 * time.Hour)
 	cfg.PhaseTwo.Ownership.LeaseRenewInterval = config.Duration(time.Minute)
+	if configure != nil {
+		configure(&cfg)
+	}
+	fixture.cfg = cfg
 
-	var observationsMu sync.Mutex
-	var slotCompletions []observability.Observation
 	additionalObserver := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
-		if observation.Stage != observability.StageSlotCompleted {
-			return
-		}
-		observationsMu.Lock()
-		defer observationsMu.Unlock()
-		slotCompletions = append(slotCompletions, observation)
+		fixture.observationsMu.Lock()
+		defer fixture.observationsMu.Unlock()
+		fixture.observations = append(fixture.observations, observation)
 	})
 	events := &recordingPhaseTwoEventSink{}
 	bundle, err := openProductionPhaseTwoBundleWithDependencies(
@@ -114,7 +147,7 @@ func TestProductionPhaseTwoCutoverStallsUnfinishedSlotOnNewSegment(t *testing.T)
 			return controlplane.NewLegacyRedisStrategySource(client, prefix)
 		},
 		phaseTwoProductionExternalDependencies{
-			Now: now, HTTPClient: uqServer.Client(), AdditionalObserver: additionalObserver,
+			Now: fixture.now, HTTPClient: uqServer.Client(), AdditionalObserver: additionalObserver,
 			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil },
 		},
 	)
@@ -124,46 +157,47 @@ func TestProductionPhaseTwoCutoverStallsUnfinishedSlotOnNewSegment(t *testing.T)
 	if err := bundle.Start(ctx); err != nil {
 		t.Fatalf("phase-two production Start() error = %v", err)
 	}
-	defer func() {
-		if shutdownErr := bundle.Shutdown(ctx); shutdownErr != nil {
+	t.Cleanup(func() {
+		if shutdownErr := bundle.Shutdown(context.Background()); shutdownErr != nil {
 			t.Errorf("phase-two production Shutdown() error = %v", shutdownErr)
 		}
-	}()
+	})
+	fixture.bundle = bundle
 	if len(bundle.queryGroups) != 2 || len(bundle.runners) != 2 {
 		t.Fatalf("initial Query Groups/runners = %v/%d, want two", bundle.queryGroups, len(bundle.runners))
 	}
-	production := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
-	var queryGroup execution.QueryGroupIdentity
-	var initialSchedule execution.FrozenQueryGroupSchedule
+	fixture.production = bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
+	fixture.repository = bundle.dependencies.Control.(*productionPhaseTwoControl).dependencies.Repository.(*controlplane.RedisCatalogRepository)
 	for _, candidate := range bundle.queryGroups {
-		schedule, scheduleErr := production.dependencies.Catalog.ReadInitialFrozenSchedule(ctx, candidate)
+		schedule, scheduleErr := fixture.production.dependencies.Catalog.ReadInitialFrozenSchedule(ctx, candidate)
 		if scheduleErr != nil || len(schedule.Plans) != 1 {
 			t.Fatalf("Query Group %s schedule=%+v error=%v", candidate, schedule, scheduleErr)
 		}
 		if schedule.Plans[0].Identity.StrategyID == "1001" {
-			queryGroup, initialSchedule = candidate, schedule
+			fixture.queryGroup, fixture.initialSchedule = candidate, schedule
 		}
 	}
-	if queryGroup == "" {
+	if fixture.queryGroup == "" {
 		t.Fatal("strategy 1001 has no Query Group")
 	}
-	if initialSchedule.Segment.Start != execution.EvaluationTime(base) || initialSchedule.Plans[0].Spec.EvaluationIntervalSeconds != 60 {
-		t.Fatalf("initial Segment = %+v, want start %d on a 60s grid", initialSchedule.Segment, base)
+	if fixture.initialSchedule.Segment.Start != execution.EvaluationTime(base) || fixture.initialSchedule.Plans[0].Spec.EvaluationIntervalSeconds != 60 {
+		t.Fatalf("initial Segment = %+v, want start %d on a 60s grid", fixture.initialSchedule.Segment, base)
 	}
-	runner := bundle.runners[queryGroup].runner
-	progressStore, ok := production.dependencies.Progress.(*progress.Store)
+	fixture.runner = bundle.runners[fixture.queryGroup].runner
+	progressStore, ok := fixture.production.dependencies.Progress.(*progress.Store)
 	if !ok {
-		t.Fatalf("production Progress store type = %T", production.dependencies.Progress)
+		t.Fatalf("production Progress store type = %T", fixture.production.dependencies.Progress)
 	}
-	session := runner.(*productionPhaseTwoQueryGroup).session
+	fixture.progressStore = progressStore
+	fixture.session = fixture.runner.(*productionPhaseTwoQueryGroup).session
 
 	// Step 1: the first Slot of the initial Segment completes FULL.
-	clock.Store((base + 1) * 1000)
-	result, attempted, err := runner.RunOne(ctx)
+	fixture.clock.Store((base + 1) * 1000)
+	result, attempted, err := fixture.runner.RunOne(ctx)
 	if err != nil || !attempted || !result.Completed {
 		t.Fatalf("first Slot RunOne = (%+v, %t, %v), want a completed Slot", result, attempted, err)
 	}
-	committed := loadPhaseTwoProgress(t, ctx, production, queryGroup)
+	committed := fixture.progress(ctx)
 	if committed.LastFullSlot != execution.EvaluationTime(base) || committed.NextSlot != execution.EvaluationTime(base+60) || committed.UnfinishedSlot != nil {
 		t.Fatalf("Progress after first Slot = %+v, want LastFullSlot=%d NextSlot=%d", committed, base, base+60)
 	}
@@ -171,66 +205,80 @@ func TestProductionPhaseTwoCutoverStallsUnfinishedSlotOnNewSegment(t *testing.T)
 	// Step 2: the next grid point is begun under the still-open initial
 	// Segment; the query is deferred by readiness, so the unfinished projection
 	// stays persisted with the initial Segment's contract.
-	firstNewSlot := execution.EvaluationTime(base + 60)
-	clock.Store(int64(firstNewSlot) * 1000)
-	result, attempted, err = runner.RunOne(ctx)
+	fixture.firstNewSlot = execution.EvaluationTime(base + 60)
+	fixture.clock.Store(int64(fixture.firstNewSlot) * 1000)
+	result, attempted, err = fixture.runner.RunOne(ctx)
 	if err != nil || !attempted || result.Completed {
 		t.Fatalf("deferred Slot RunOne = (%+v, %t, %v), want an attempted, uncompleted Slot", result, attempted, err)
 	}
-	inFlight := loadPhaseTwoProgress(t, ctx, production, queryGroup)
-	if inFlight.NextSlot != firstNewSlot || inFlight.UnfinishedSlot == nil ||
-		inFlight.UnfinishedSlot.Contract.ScheduleSegmentStart != initialSchedule.Segment.Start {
-		t.Fatalf("Progress with in-flight Slot = %+v, want unfinished Slot %d on Segment start %d", inFlight, firstNewSlot, initialSchedule.Segment.Start)
+	fixture.inFlight = fixture.progress(ctx)
+	if fixture.inFlight.NextSlot != fixture.firstNewSlot || fixture.inFlight.UnfinishedSlot == nil ||
+		fixture.inFlight.UnfinishedSlot.Contract.ScheduleSegmentStart != fixture.initialSchedule.Segment.Start {
+		t.Fatalf("Progress with in-flight Slot = %+v, want unfinished Slot %d on Segment start %d", fixture.inFlight, fixture.firstNewSlot, fixture.initialSchedule.Segment.Start)
 	}
-	oldProjection := *inFlight.UnfinishedSlot
-	uqCallsBeforeCutover := uqCalls.Load()
+	fixture.oldProjection = *fixture.inFlight.UnfinishedSlot
+	fixture.uqCallsAtCutover = fixture.uqCalls.Load()
 
 	// Step 3: a publication that changes the query revision of the sibling
 	// strategy cuts over every remaining Query Group. The reconciler's
 	// boundary is one second before the Slot begun in step 2: in production the
 	// reconciler reads its clock before compiling and persists afterwards, so
-	// the boundary precedes a Slot the Worker already began.
+	// the boundary precedes a Slot the Worker already began. The first refresh
+	// publishes the candidate, the second confirms and activates it; the
+	// activation boundary is the clock of the second one.
 	installCutoverStallStrategies(t, ctx, redisClient, "system.disk", 1725000600)
-	boundary := firstNewSlot - 1
-	clock.Store(int64(boundary) * 1000)
-	// The first refresh publishes the candidate, the second confirms and
-	// activates it; the activation boundary is the clock of the second one.
+	fixture.boundary = fixture.firstNewSlot - 1
+	fixture.clock.Store(int64(fixture.boundary) * 1000)
 	if err := bundle.refreshAndReconcile(ctx, true); err != nil {
 		t.Fatalf("publication refresh error = %v", err)
 	}
 	if err := bundle.refreshAndReconcile(ctx, true); err != nil {
 		t.Fatalf("confirming refresh error = %v", err)
 	}
-	closedSchedule, err := production.dependencies.Catalog.ReadFrozenSchedule(ctx, queryGroup, execution.EvaluationTime(base))
-	if err != nil || closedSchedule.Segment.End == nil || *closedSchedule.Segment.End != boundary {
-		t.Fatalf("initial Segment after cutover = (%+v, %v), want End=%d", closedSchedule.Segment, err, boundary)
+	closedSchedule, err := fixture.production.dependencies.Catalog.ReadFrozenSchedule(ctx, fixture.queryGroup, execution.EvaluationTime(base))
+	if err != nil || closedSchedule.Segment.End == nil || *closedSchedule.Segment.End != fixture.boundary {
+		t.Fatalf("initial Segment after cutover = (%+v, %v), want End=%d", closedSchedule.Segment, err, fixture.boundary)
 	}
-	openSchedule, err := production.dependencies.Catalog.ReadFrozenSchedule(ctx, queryGroup, firstNewSlot)
-	if err != nil || openSchedule.Segment.Start != boundary || openSchedule.Segment.End != nil ||
-		openSchedule.Segment.Publication.SnapshotRevision == initialSchedule.Segment.Publication.SnapshotRevision {
-		t.Fatalf("new Segment after cutover = (%+v, %v), want an open Segment at %d under a new publication", openSchedule.Segment, err, boundary)
+	fixture.openSchedule, err = fixture.production.dependencies.Catalog.ReadFrozenSchedule(ctx, fixture.queryGroup, fixture.firstNewSlot)
+	if err != nil || fixture.openSchedule.Segment.Start != fixture.boundary || fixture.openSchedule.Segment.End != nil ||
+		fixture.openSchedule.Segment.Publication.SnapshotRevision == fixture.initialSchedule.Segment.Publication.SnapshotRevision {
+		t.Fatalf("new Segment after cutover = (%+v, %v), want an open Segment at %d under a new publication", fixture.openSchedule.Segment, err, fixture.boundary)
 	}
-	newFirst, ok := openSchedule.FirstSlot()
-	if !ok || newFirst != firstNewSlot {
-		t.Fatalf("new Segment first Slot = (%d, %t), want %d", newFirst, ok, firstNewSlot)
+	newFirst, ok := fixture.openSchedule.FirstSlot()
+	if !ok || newFirst != fixture.firstNewSlot {
+		t.Fatalf("new Segment first Slot = (%d, %t), want %d", newFirst, ok, fixture.firstNewSlot)
 	}
+	fixture.clock.Store(int64(fixture.firstNewSlot) * 1000)
 	t.Logf("cutover: old Segment [%d,%d) -> new Segment [%d,open) first Slot %d; Progress NextSlot=%d LastFullSlot=%d gap=%v unfinished Segment start=%d",
-		initialSchedule.Segment.Start, boundary, boundary, newFirst, inFlight.NextSlot, inFlight.LastFullSlot, inFlight.CurrentOrRecentGap, oldProjection.Contract.ScheduleSegmentStart)
+		fixture.initialSchedule.Segment.Start, fixture.boundary, fixture.boundary, newFirst, fixture.inFlight.NextSlot, fixture.inFlight.LastFullSlot,
+		fixture.inFlight.CurrentOrRecentGap, fixture.oldProjection.Contract.ScheduleSegmentStart)
+	return fixture
+}
+
+// The newer Segment supersedes the persisted projection: BeginSlot commits,
+// the Worker finalizes base+60 on the new Segment and the cursor moves on.
+// Before the fix BeginSlot returned a deterministic error for the same Slot
+// forever and the Coordinator mapped it to BLOCKED_EXACT_SET_UNAVAILABLE.
+func TestProductionPhaseTwoCutoverStallsUnfinishedSlotOnNewSegment(t *testing.T) {
+	fixture := newCutoverStalledFixture(t, nil)
+	ctx := context.Background()
+	runner, production, queryGroup := fixture.runner, fixture.production, fixture.queryGroup
+	firstNewSlot, boundary := fixture.firstNewSlot, fixture.boundary
 
 	// Step 4: drive the production SlotSource, BeginSlot and finalization
 	// directly through the bundle's (cached) control-plane readers.
-	clock.Store(int64(firstNewSlot)*1000 + 1000)
-	repository := bundle.dependencies.Control.(*productionPhaseTwoControl).dependencies.Repository.(*controlplane.RedisCatalogRepository)
+	fixture.clock.Store(int64(firstNewSlot)*1000 + 1000)
 	cached := cutoverStallProbe{
-		label: "cached control reads", catalog: production.dependencies.Catalog, progress: progressStore,
-		repository: repository,
+		label: "cached control reads", catalog: production.dependencies.Catalog, progress: fixture.progressStore,
+		repository: fixture.repository,
 	}
-	cachedOutcome := cached.run(t, ctx, production, session, queryGroup, inFlight, oldProjection, now)
+	cachedOutcome := cached.run(t, ctx, production, fixture.session, queryGroup, fixture.inFlight, fixture.oldProjection, fixture.now)
 
 	// Step 5: the same probes through fresh readers whose control read cache
 	// is cold, so every activation and timeline read transfers the body.
+	cfg := fixture.cfg
 	freshRepository, err := controlplane.NewRedisCatalogRepository(
-		redisClient, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog"), cfg.PhaseTwo.Control.CatalogTTL.Duration(),
+		fixture.redisClient, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog"), cfg.PhaseTwo.Control.CatalogTTL.Duration(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -259,7 +307,7 @@ func TestProductionPhaseTwoCutoverStallsUnfinishedSlotOnNewSegment(t *testing.T)
 	}
 	freshProgress, err := progress.NewStore(progress.StoreOptions{
 		Prefix: productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "schedule"), Control: controlStore,
-		Slots: freshCatalog, Now: now,
+		Slots: freshCatalog, Now: fixture.now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -267,7 +315,7 @@ func TestProductionPhaseTwoCutoverStallsUnfinishedSlotOnNewSegment(t *testing.T)
 	fresh := cutoverStallProbe{
 		label: "cold control reads", catalog: freshCatalog, progress: freshProgress, repository: freshRepository,
 	}
-	freshOutcome := fresh.run(t, ctx, production, session, queryGroup, inFlight, oldProjection, now)
+	freshOutcome := fresh.run(t, ctx, production, fixture.session, queryGroup, fixture.inFlight, fixture.oldProjection, fixture.now)
 	if cachedOutcome != freshOutcome {
 		t.Errorf("outcome differs between cached and cold control reads:\n cached=%+v\n cold=%+v", cachedOutcome, freshOutcome)
 	}
@@ -276,24 +324,24 @@ func TestProductionPhaseTwoCutoverStallsUnfinishedSlotOnNewSegment(t *testing.T)
 		cachedOutcome.storeNextAfter != firstNewSlot || cachedOutcome.newFinalization != execution.FinalizationQueryRequired {
 		t.Fatalf("probe after the cutover = %+v, want the Slot %d re-frozen on Segment %d, BeginSlot committed and QUERY_REQUIRED", cachedOutcome, firstNewSlot, boundary)
 	}
-	superseded := loadPhaseTwoProgress(t, ctx, production, queryGroup)
-	if superseded.NextSlot != firstNewSlot || superseded.LastFullSlot != execution.EvaluationTime(base) || superseded.CurrentOrRecentGap != nil ||
+	superseded := fixture.progress(ctx)
+	if superseded.NextSlot != firstNewSlot || superseded.LastFullSlot != execution.EvaluationTime(fixture.base) || superseded.CurrentOrRecentGap != nil ||
 		superseded.UnfinishedSlot == nil || superseded.UnfinishedSlot.Contract.ScheduleSegmentStart != boundary ||
-		superseded.UnfinishedSlot.Contract.SnapshotRevision != openSchedule.Segment.Publication.SnapshotRevision {
+		superseded.UnfinishedSlot.Contract.SnapshotRevision != fixture.openSchedule.Segment.Publication.SnapshotRevision {
 		t.Fatalf("Progress after the superseding BeginSlot = %+v, want the unfinished Slot re-projected on Segment %d", superseded, boundary)
 	}
 
 	// Step 6: the real Runner path finalizes the Slot on the new Segment.
-	observationsMu.Lock()
-	completionsBeforeRunner := len(slotCompletions)
-	observationsMu.Unlock()
+	completionsBeforeRunner := len(fixture.observed())
+	var result execution.SlotExecutionResult
+	var attempted bool
 	for tick := 1; tick <= 4 && !result.Completed; tick++ {
 		nextAt := runner.NextReadyAt()
-		at := now().Add(time.Second)
+		at := fixture.now().Add(time.Second)
 		if nextAt.After(at) {
 			at = nextAt.Add(time.Millisecond)
 		}
-		clock.Store(at.UnixMilli())
+		fixture.clock.Store(at.UnixMilli())
 		result, attempted, err = runner.RunOne(ctx)
 		if err != nil {
 			t.Fatalf("tick %d RunOne error = %v", tick, err)
@@ -306,18 +354,18 @@ func TestProductionPhaseTwoCutoverStallsUnfinishedSlotOnNewSegment(t *testing.T)
 	if !result.Completed || result.CompletionKind != execution.CompletionFull {
 		t.Fatalf("Runner result after the cutover = %+v, want a FULL completion of Slot %d", result, firstNewSlot)
 	}
-	if uqCalls.Load() != uqCallsBeforeCutover+1 {
-		t.Fatalf("UQ calls after the cutover = %d, want exactly one query for Slot %d", uqCalls.Load()-uqCallsBeforeCutover, firstNewSlot)
+	if fixture.uqCalls.Load() != fixture.uqCallsAtCutover+1 {
+		t.Fatalf("UQ calls after the cutover = %d, want exactly one query for Slot %d", fixture.uqCalls.Load()-fixture.uqCallsAtCutover, firstNewSlot)
 	}
-	advanced := loadPhaseTwoProgress(t, ctx, production, queryGroup)
+	advanced := fixture.progress(ctx)
 	if advanced.NextSlot != firstNewSlot+60 || advanced.LastFullSlot != firstNewSlot || advanced.UnfinishedSlot != nil || advanced.CurrentOrRecentGap != nil {
 		t.Fatalf("Progress after the Runner = %+v, want LastFullSlot=%d NextSlot=%d without an unfinished Slot", advanced, firstNewSlot, firstNewSlot+60)
 	}
 
-	observationsMu.Lock()
-	completions := append([]observability.Observation(nil), slotCompletions[completionsBeforeRunner:]...)
-	observationsMu.Unlock()
-	for _, observation := range completions {
+	for _, observation := range fixture.observed()[completionsBeforeRunner:] {
+		if observation.Stage != observability.StageSlotCompleted {
+			continue
+		}
 		t.Logf("slot_completed observation: result=%s reason=%s evaluation_time=%d segment_start=%d err=%v",
 			observation.Result, observation.ReasonCode, observation.Trace.EvaluationTime, observation.Trace.ScheduleSegmentStart, observation.Err)
 		if observation.Result == observability.ResultRetrying || observation.ReasonCode == observability.ReasonCode(contract.ReasonBlockedExactSetUnavailable) ||

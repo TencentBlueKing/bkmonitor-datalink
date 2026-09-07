@@ -30,7 +30,7 @@ func WithExpiredRangeCreation(enabled bool) ProductionSlotSourceOption {
 func (source *ProductionSlotSource) RangeCreationEnabled() bool { return source.expiredRangeEnabled }
 
 func (source *ProductionSlotSource) buildExpiredRange(ctx context.Context, first FrozenSlot, schedule execution.FrozenQueryGroupSchedule, at time.Time) (FrozenSlot, bool, error) {
-	if source.recovery == nil || at.UnixMilli() < first.RecoveryUntilUnixMilli || len(schedule.Plans) == 0 {
+	if source.recovery == nil || len(schedule.Plans) == 0 {
 		return FrozenSlot{}, false, nil
 	}
 	spec := schedule.Plans[0].Spec
@@ -45,7 +45,31 @@ func (source *ProductionSlotSource) buildExpiredRange(ctx context.Context, first
 	start := first.Contract.Slot.EvaluationTime
 	// Subtract from the already validated first deadline, avoiding negative
 	// floor division and products involving unbounded absolute timestamps.
-	steps := (at.UnixMilli() - first.RecoveryUntilUnixMilli) / 1000 / spec.EvaluationIntervalSeconds
+	eligibility := &execution.ExpiredRangeEligibilityV2{Reason: execution.RangeAgeExpired}
+	steps := int64(0)
+	if at.UnixMilli() >= first.RecoveryUntilUnixMilli {
+		steps = (at.UnixMilli() - first.RecoveryUntilUnixMilli) / 1000 / spec.EvaluationIntervalSeconds
+	} else {
+		// Prove the suffix using this real homogeneous segment. At cutovers we
+		// conservatively stop unless this segment alone witnesses K successors.
+		if at.UnixMilli() < first.EarliestQueryDeadlineUnixMilli {
+			return FrozenSlot{}, false, nil
+		}
+		headSteps := (at.Unix() - int64(start)) / spec.EvaluationIntervalSeconds
+		if schedule.Segment.End != nil {
+			endSteps := (int64(*schedule.Segment.End) - 1 - int64(start)) / spec.EvaluationIntervalSeconds
+			if endSteps < headSteps {
+				headSteps = endSteps
+			}
+		}
+		steps = headSteps - int64(source.recovery.MaxReplaySlots)
+		deadlineSteps := (at.UnixMilli() - first.EarliestQueryDeadlineUnixMilli) / 1000 / spec.EvaluationIntervalSeconds
+		if deadlineSteps < steps {
+			steps = deadlineSteps
+		}
+		eligibility = &execution.ExpiredRangeEligibilityV2{Reason: execution.RangeDistanceExpired,
+			MaxReplaySlots: source.recovery.MaxReplaySlots, DistanceHead: execution.EvaluationTime(int64(start) + headSteps*spec.EvaluationIntervalSeconds)}
+	}
 	if steps > math.MaxUint32-1 {
 		steps = math.MaxUint32 - 1
 	}
@@ -89,6 +113,7 @@ func (source *ProductionSlotSource) buildExpiredRange(ctx context.Context, first
 		Last: execution.UnfinishedSlotProjection{Contract: fact.Contract, DuePlanTargets: targets, EarliestQueryDeadlineUnixMilli: deadline, KeepUntilUnixMilli: keep},
 		Next: next, Count: uint32(steps + 1), QueryReserveMillis: source.queryReserve.Milliseconds(),
 		ReplayAgeMillis: source.recovery.MaxReplayAge.Milliseconds(), JudgedAtMillis: at.UnixMilli(),
+		EligibilityV2: eligibility,
 	})
 	if err != nil {
 		if errors.Is(err, execution.ErrExpiredRangeProofTooLarge) {

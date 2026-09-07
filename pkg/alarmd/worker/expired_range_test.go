@@ -70,14 +70,34 @@ func workerRangeRequest(t *testing.T) execution.SlotExecutionRequest {
 }
 
 func TestExpiredRangeTailGuardCommitConflictRestartsSameProof(t *testing.T) {
+	testRangeTailGuardCommitConflict(t, false)
+}
+
+func TestExpiredRangeV2DistanceGuardCommitConflictRestartsSameProof(t *testing.T) {
+	testRangeTailGuardCommitConflict(t, true)
+}
+
+func testRangeTailGuardCommitConflict(t *testing.T, distance bool) {
 	ctx := context.Background()
 	request := workerRangeRequest(t)
+	if distance {
+		p := request.ExpiredRange.Clone()
+		p.JudgedAtMillis = p.Last.EarliestQueryDeadlineUnixMilli + 180000
+		p.EligibilityV2 = &execution.ExpiredRangeEligibilityV2{Reason: execution.RangeDistanceExpired, MaxReplaySlots: 3, DistanceHead: p.Last.Contract.Slot.EvaluationTime + 180}
+		var err error
+		p, err = execution.SealExpiredRange(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.ExpiredRange = &p
+	}
+	now := time.UnixMilli(request.ExpiredRange.JudgedAtMillis)
 	activation := activePlanResult("state-v2", 2)
 	activation.Contract = request.Contract
 	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activation})
 	control := &rangeControl{}
 	newStore := func() *progress.Store {
-		s, err := progress.NewStore(progress.StoreOptions{Prefix: "alarmd", Control: control, Slots: rangeSlots{}, Now: func() time.Time { return time.Unix(1, 0) }})
+		s, err := progress.NewStore(progress.StoreOptions{Prefix: "alarmd", Control: control, Slots: rangeSlots{}, Now: func() time.Time { return now }})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -113,9 +133,13 @@ func TestExpiredRangeTailGuardCommitConflictRestartsSameProof(t *testing.T) {
 	if err != nil || load.Progress.UnfinishedRange == nil || !load.Progress.UnfinishedRange.Equal(*request.ExpiredRange) {
 		t.Fatalf("pending=%+v err=%v", load, err)
 	}
+	now = now.Add(time.Hour) // Recovery must keep the original reason, not reclassify by new time.
 	result, err = newCoordinator(newStore()).Execute(ctx, request)
 	if err != nil || !result.Completed {
 		t.Fatalf("restart result=%+v err=%v", result, err)
+	}
+	if result.CompletionKind != request.ExpiredRange.CompletionKind() || result.ReasonCode != request.ExpiredRange.CompletionReason() {
+		t.Fatalf("changed cause: %+v", result)
 	}
 	load, err = store.LoadProgress(ctx, execution.ProgressIdentity{QueryGroup: prior.Slot.QueryGroup})
 	if err != nil || load.Progress.NextSlot != request.ExpiredRange.Next || load.Progress.UnfinishedRange != nil || load.Progress.CurrentOrRecentGap.Count != 3 || load.Progress.LastFullSlot != prior.Slot.EvaluationTime {

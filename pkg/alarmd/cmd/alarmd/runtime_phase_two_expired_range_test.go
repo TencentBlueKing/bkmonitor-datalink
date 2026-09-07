@@ -49,6 +49,14 @@ func TestExpiredRangeBypassesOrdinaryReceipt(t *testing.T) {
 }
 
 func TestExpiredRangeSharesF2WithHealthyFull(t *testing.T) {
+	testExpiredRangeSharesF2WithHealthyFull(t, false)
+}
+
+func TestExpiredRangeV2DistanceSharesF2WithHealthyFull(t *testing.T) {
+	testExpiredRangeSharesF2WithHealthyFull(t, true)
+}
+
+func testExpiredRangeSharesF2WithHealthyFull(t *testing.T, distance bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	rangeEntered, queryEntered := make(chan struct{}), make(chan struct{})
@@ -98,6 +106,12 @@ func TestExpiredRangeSharesF2WithHealthyFull(t *testing.T) {
 	if err != nil || !attempted || !first.Completed {
 		t.Fatalf("hot initialization %+v %v %v", first, attempted, err)
 	}
+	if distance {
+		age, attempted, err := f.bundle.runners[hot].runner.RunOne(ctx)
+		if err != nil || !attempted || !age.Completed || age.CompletionKind != execution.CompletionSnapshotUnavailable {
+			t.Fatalf("age prefix initialization %+v %v %v", age, attempted, err)
+		}
+	}
 	// Controlled prior empty execution history initializes the healthy cursor;
 	// the measured Slot must itself perform real Query/Evaluate/ACK/State/Progress.
 	p := execution.ScheduleProgress{Identity: execution.ProgressIdentity{QueryGroup: healthy}, NextSlot: execution.EvaluationTime(slot), LastFullSlot: execution.EvaluationTime(slot - 1)}
@@ -140,6 +154,9 @@ func TestExpiredRangeSharesF2WithHealthyFull(t *testing.T) {
 	rp := loadPhaseTwoProgress(t, ctx, f.production, hot)
 	if rp.UnfinishedRange != nil || rp.CurrentOrRecentGap == nil || rp.CurrentOrRecentGap.Count < 2 || rp.LastFullSlot != 0 {
 		t.Fatalf("range completion missing: %+v", rp)
+	}
+	if distance && rp.CurrentOrRecentGap.Kind != execution.CompletionGapSkipped {
+		t.Fatalf("distance prefix lost cause: %+v", rp)
 	}
 	events := f.events.snapshot()
 	if len(events) != 1 || events[0].PlanRef.StrategyID != "1002" {

@@ -104,6 +104,42 @@ func TestRetainRuntimeExecutableCatalogBindsStateCompatibilityToSnapshot(t *test
 	}
 }
 
+func TestRetainRuntimeExecutableCatalogDoesNotResurrectDroppedSource(t *testing.T) {
+	compiler, semantics := runtimeClosureCompiler(t)
+	kept := runtimeClosureNamedFrozenPlan(t, "1001", "1", []contract.LevelIRV2{
+		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
+	})
+	dropped := runtimeClosureNamedFrozenPlan(t, "1002", "1", []contract.LevelIRV2{
+		runtimeClosureLevel(1, strategy.DetectorKindThreshold),
+	})
+	lastGood := &PublishedSnapshot{
+		Publication: SnapshotPublicationRef{SnapshotRevision: "last-good", PublicationEpoch: 1},
+		QueryGroups: []QueryGroup{runtimeClosureQueryGroup(t, "1", kept, dropped)},
+	}
+	catalog := runtimeClosureCatalog(runtimeClosureQueryGroup(t, "1", kept))
+	removed := ObjectDisposition{SourceID: "1002", Scope: "STRATEGY", Disposition: DispositionRemoved, Reason: "ABSENT_FROM_ACTIVE_SET"}
+	catalog.Dispositions = append(catalog.Dispositions, removed)
+
+	result, err := retainRuntimeExecutableCatalog(context.Background(), catalog, lastGood, compiler, semantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.QueryGroups) != 1 || len(result.QueryGroups[0].Plans) != 1 ||
+		result.QueryGroups[0].Plans[0].Identity.StrategyID != "1001" {
+		t.Fatalf("runtime Catalog resurrected a dropped source: %+v", result.QueryGroups)
+	}
+	sawRemoved := false
+	for _, disposition := range result.Dispositions {
+		if disposition.SourceID == "1002" && disposition != removed {
+			t.Fatalf("dropped source gained disposition %+v", disposition)
+		}
+		sawRemoved = sawRemoved || disposition == removed
+	}
+	if !sawRemoved {
+		t.Fatalf("REMOVED disposition was lost: %+v", result.Dispositions)
+	}
+}
+
 func TestRetainCompiledLevelsAllRejectedClearsDependencyClosure(t *testing.T) {
 	plan := runtimeClosureG4Plan(t, "1001", "1", runtimeClosureG4Level{2, strategy.DetectorKindOsRestart})
 	plan.Plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0].Type = "Unsupported"

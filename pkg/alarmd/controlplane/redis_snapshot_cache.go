@@ -21,17 +21,20 @@ type verifiedSnapshotCacheEntry struct {
 	revision    execution.SnapshotRevision
 	payload     string
 	queryGroups map[execution.QueryGroupIdentity]json.RawMessage
+	allocation  *snapshotAllocation
 }
 
 // verifiedSnapshotCache only reuses immutable content after the bytes read by
 // the current Redis request exactly match a previously verified Snapshot. It
 // does not cache Redis availability or publication/activation authority.
 type verifiedSnapshotCache struct {
-	mu         sync.Mutex
-	maxEntries int
-	maxBytes   int
-	bytes      int
-	entries    []verifiedSnapshotCacheEntry
+	mu          sync.Mutex
+	maxEntries  int
+	maxBytes    int
+	bytes       int
+	entries     []verifiedSnapshotCacheEntry
+	admit       SnapshotMemoryAdmission
+	objectBytes func(any) uint64
 }
 
 func newVerifiedSnapshotCache(maxEntries, maxBytes int) *verifiedSnapshotCache {
@@ -42,8 +45,10 @@ func (cache *verifiedSnapshotCache) loadSnapshot(
 	ctx context.Context,
 	revision execution.SnapshotRevision,
 	payload string,
+	allocation ...*snapshotAllocation,
 ) (PublishedSnapshot, error) {
-	entry, content, err := cache.load(ctx, revision, payload)
+	entry, content, err := cache.load(ctx, revision, payload, allocation...)
+	defer entry.allocation.release()
 	if err != nil {
 		return PublishedSnapshot{}, err
 	}
@@ -63,6 +68,7 @@ func (cache *verifiedSnapshotCache) loadQueryGroup(
 	identity execution.QueryGroupIdentity,
 ) (QueryGroup, error) {
 	entry, _, err := cache.load(ctx, revision, payload)
+	defer entry.allocation.release()
 	if err != nil {
 		return QueryGroup{}, err
 	}
@@ -90,6 +96,7 @@ func (cache *verifiedSnapshotCache) load(
 	ctx context.Context,
 	revision execution.SnapshotRevision,
 	payload string,
+	allocations ...*snapshotAllocation,
 ) (verifiedSnapshotCacheEntry, *snapshotPayloadContent, error) {
 	if err := ctx.Err(); err != nil {
 		return verifiedSnapshotCacheEntry{}, nil, err
@@ -105,8 +112,27 @@ func (cache *verifiedSnapshotCache) load(
 		}
 		entry := cache.entries[index]
 		cache.touch(index)
+		entry.allocation.retain()
 		return entry, nil, nil
 	}
+	var allocation *snapshotAllocation
+	if len(allocations) != 0 {
+		allocation = allocations[0]
+	}
+	if allocation == nil && cache.admit != nil {
+		var err error
+		allocation, err = reserveSnapshotAllocation(ctx, cache.admit, uint64(len(payload)))
+		if err != nil {
+			return verifiedSnapshotCacheEntry{}, nil, err
+		}
+		defer allocation.release()
+	}
+	// The byte conversion is live alongside the Redis string during decode.
+	temporary, err := reserveSnapshotAllocation(ctx, cache.admit, uint64(len(payload)))
+	if err != nil {
+		return verifiedSnapshotCacheEntry{}, nil, err
+	}
+	defer temporary.release()
 	content, err := decodeAndVerifySnapshotPayload(revision, []byte(payload))
 	if err != nil {
 		return verifiedSnapshotCacheEntry{}, nil, err
@@ -115,6 +141,12 @@ func (cache *verifiedSnapshotCache) load(
 		revision:    revision,
 		payload:     payload,
 		queryGroups: make(map[execution.QueryGroupIdentity]json.RawMessage, len(content.QueryGroups)),
+		allocation:  allocation,
+	}
+	if cache.objectBytes != nil {
+		if err := temporary.extend(ctx, cache.objectBytes(content)); err != nil {
+			return verifiedSnapshotCacheEntry{}, nil, err
+		}
 	}
 	for index := range content.QueryGroups {
 		group := content.QueryGroups[index]
@@ -127,7 +159,13 @@ func (cache *verifiedSnapshotCache) load(
 		}
 		entry.queryGroups[group.Identity] = encoded
 	}
+	if cache.objectBytes != nil {
+		if err := allocation.extend(ctx, cache.objectBytes(entry.queryGroups)); err != nil {
+			return verifiedSnapshotCacheEntry{}, nil, err
+		}
+	}
 	cache.insert(entry)
+	entry.allocation.retain()
 	return entry, content, nil
 }
 
@@ -145,12 +183,15 @@ func (cache *verifiedSnapshotCache) insert(entry verifiedSnapshotCacheEntry) {
 	if cache.maxEntries <= 0 || cache.maxBytes <= 0 || entryBytes > cache.maxBytes {
 		return
 	}
+	entry.allocation.retain()
 	cache.entries = append([]verifiedSnapshotCacheEntry{entry}, cache.entries...)
 	cache.bytes += entryBytes
 	for len(cache.entries) > cache.maxEntries || cache.bytes > cache.maxBytes {
 		last := len(cache.entries) - 1
 		cache.bytes -= verifiedSnapshotCacheEntryBytes(cache.entries[last])
+		allocation := cache.entries[last].allocation
 		cache.entries[last] = verifiedSnapshotCacheEntry{}
+		allocation.release()
 		cache.entries = cache.entries[:last]
 	}
 }

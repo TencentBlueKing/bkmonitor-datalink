@@ -273,6 +273,9 @@ func (acquirer productionQueryPermitAcquirer) AcquireQueryPermit(
 	if acquirer.flights == nil {
 		return nil, errors.New("phase-two production query permits are not initialized")
 	}
+	// Preparation has extracted the frozen QG facts. Do not retain the full
+	// Snapshot body while waiting for downstream capacity or consuming it.
+	controlplane.ClearSnapshotReadScope(ctx)
 	return acquirer.flights.AcquireQueryPermit(ctx, slot, operation, deadline)
 }
 
@@ -1409,4 +1412,20 @@ func executeReturnOutcome(result execution.SlotExecutionResult, err error) strin
 		return "retrying"
 	}
 	return "incomplete"
+}
+
+func (acquirer productionQueryPermitAcquirer) AcquireRecoveryChannels(ctx context.Context, slot execution.SlotIdentity, operation execution.Operation, deadline time.Time, maximum int, beforeWait func()) (access.RecoveryChannels, error) {
+	channels, err := acquirer.flights.AcquireRecoveryChannels(ctx, slot, operation, deadline, maximum, func() { controlplane.ClearSnapshotReadScope(ctx); beforeWait() })
+	if err != nil {
+		return nil, err
+	}
+	return productionRecoveryChannels{channels}, nil
+}
+
+type productionRecoveryChannels struct{ channels *scheduler.RecoveryChannels }
+
+func (channels productionRecoveryChannels) Release() { channels.channels.Release() }
+func (channels productionRecoveryChannels) AcquireQueryPermit(ctx context.Context, slot execution.SlotIdentity, operation execution.Operation, deadline time.Time) (access.QueryPermit, error) {
+	controlplane.ClearSnapshotReadScope(ctx)
+	return channels.channels.AcquireQueryPermit(ctx, slot, operation, deadline)
 }

@@ -112,6 +112,13 @@ type RedisCatalogRepository struct {
 	legacyMigrationMaxScanKeys int
 	legacyMigrationTimeout     time.Duration
 	observer                   observability.Observer
+	snapshotAdmission          SnapshotMemoryAdmission
+}
+
+// ConfigureSnapshotMemory is called before starting repository users.
+func (repository *RedisCatalogRepository) ConfigureSnapshotMemory(admit SnapshotMemoryAdmission, size func(any) uint64) {
+	repository.snapshotAdmission = admit
+	repository.snapshotCache.admit, repository.snapshotCache.objectBytes = admit, size
 }
 
 func (repository *RedisCatalogRepository) ConfigureObserver(observer observability.Observer) {
@@ -464,11 +471,12 @@ func (repository *RedisCatalogRepository) LoadSnapshot(ctx context.Context, revi
 	if repository == nil || repository.client == nil || revision == "" {
 		return PublishedSnapshot{}, errors.New("alarmd controlplane: snapshot revision is required")
 	}
-	payload, epoch, err := repository.loadSnapshotPayload(ctx, revision)
+	payload, epoch, allocation, err := repository.loadAdmittedSnapshotPayload(ctx, revision)
+	defer allocation.release()
 	if err != nil {
 		return PublishedSnapshot{}, err
 	}
-	snapshot, err := repository.snapshotCache.loadSnapshot(ctx, revision, payload)
+	snapshot, err := repository.snapshotCache.loadSnapshot(ctx, revision, payload, allocation)
 	if err != nil {
 		return PublishedSnapshot{}, err
 	}
@@ -484,6 +492,10 @@ func (repository *RedisCatalogRepository) loadSnapshotPayload(
 	if err != nil {
 		return "", 0, activationDependencyIO(err)
 	}
+	return decodeSnapshotRead(values)
+}
+
+func decodeSnapshotRead(values []interface{}) (string, uint64, error) {
 	if len(values) != 2 || values[0] == nil || values[1] == nil {
 		return "", 0, ErrSnapshotUnavailable
 	}
@@ -583,17 +595,24 @@ func (repository *RedisCatalogRepository) LoadQueryGroup(ctx context.Context, re
 	if identity == "" {
 		return QueryGroup{}, errors.New("alarmd controlplane: query group identity is required")
 	}
-	payload, epoch, err := repository.loadScopedSnapshotPayload(ctx, revision, identity)
+	payload, epoch, allocation, err := repository.loadScopedSnapshotPayload(ctx, revision, identity)
+	defer allocation.release()
 	if err != nil {
 		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
-	group, err := repository.snapshotCache.loadQueryGroup(ctx, revision, payload, identity)
+	entry, _, err := repository.snapshotCache.load(ctx, revision, payload, allocation)
+	defer entry.allocation.release()
 	if err != nil {
 		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
-	repository.retainScopedSnapshot(ctx, revision, identity, payload, epoch)
+	group, err := decodeCachedQueryGroup(entry, identity)
+	if err != nil {
+		clearSnapshotScope(ctx)
+		return QueryGroup{}, err
+	}
+	repository.retainScopedSnapshot(ctx, revision, identity, entry.payload, epoch, entry.allocation)
 	return group, nil
 }
 
@@ -605,12 +624,14 @@ func (repository *RedisCatalogRepository) loadPublishedQueryGroup(
 	if publication.validate() != nil || identity == "" {
 		return QueryGroup{}, errors.New("alarmd controlplane: complete publication and Query Group are required")
 	}
-	payload, epoch, err := repository.loadScopedSnapshotPayload(ctx, publication.SnapshotRevision, identity)
+	payload, epoch, allocation, err := repository.loadScopedSnapshotPayload(ctx, publication.SnapshotRevision, identity)
+	defer allocation.release()
 	if err != nil {
 		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
-	entry, _, err := repository.snapshotCache.load(ctx, publication.SnapshotRevision, payload)
+	entry, _, err := repository.snapshotCache.load(ctx, publication.SnapshotRevision, payload, allocation)
+	defer entry.allocation.release()
 	if err != nil {
 		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
@@ -625,7 +646,7 @@ func (repository *RedisCatalogRepository) loadPublishedQueryGroup(
 		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
-	repository.retainScopedSnapshot(ctx, publication.SnapshotRevision, identity, payload, epoch)
+	repository.retainScopedSnapshot(ctx, publication.SnapshotRevision, identity, entry.payload, epoch, entry.allocation)
 	return group, nil
 }
 

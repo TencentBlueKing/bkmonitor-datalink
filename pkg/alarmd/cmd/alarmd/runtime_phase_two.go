@@ -538,7 +538,7 @@ func newPhaseTwoRunnerDispatcher(
 	}
 	return &phaseTwoRunnerDispatcher{
 		bundle: bundle, fanout: fanout,
-		jobs: make(chan phaseTwoScheduledRunner), results: make(chan phaseTwoScheduledResult, fanout),
+		jobs: make(chan phaseTwoScheduledRunner), results: make(chan phaseTwoScheduledResult, schedulerConfig.ReadyQueueCapacity),
 		lastQueued:    make(map[execution.QueryGroupIdentity]phaseTwoRunnerGeneration),
 		queued:        make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
 		active:        make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
@@ -547,37 +547,55 @@ func newPhaseTwoRunnerDispatcher(
 }
 
 func (dispatcher *phaseTwoRunnerDispatcher) start(ctx context.Context) {
-	for range dispatcher.fanout {
+	// Zero removes the complete-Runner gate. The dispatcher active map still
+	// admits each owned QG once; this loop never spawns repeated waiters per tick.
+	workers := dispatcher.fanout
+	if workers == 0 {
+		workers = 1
+	}
+	for range workers {
 		dispatcher.workers.Add(1)
 		go func() {
 			defer dispatcher.workers.Done()
 			for scheduled := range dispatcher.jobs {
-				dispatcher.changeExecuting(ctx, 1)
-				result := phaseTwoScheduledResult{scheduled: scheduled}
-				runCtx := dispatcher.bundle.dependencies.TargetFlow.Context(ctx, string(scheduled.queryGroup))
-				if observability.TargetFlowEnabled(runCtx) {
-					runCtx = observability.ContextWithTraceFields(runCtx, observability.TraceFields{QueryGroupKey: string(scheduled.queryGroup)})
-					observability.EmitTargetFlow(runCtx, "runner_dispatch", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "execution_slot_acquired", QueuedAtMS: scheduled.queuedAt.UnixMilli(), QueueWaitNS: time.Since(scheduled.queuedAt).Nanoseconds()})
+				if dispatcher.fanout == 0 {
+					dispatcher.workers.Add(1)
+					go func(scheduled phaseTwoScheduledRunner) {
+						defer dispatcher.workers.Done()
+						dispatcher.executeScheduled(ctx, scheduled)
+					}(scheduled)
+				} else {
+					dispatcher.executeScheduled(ctx, scheduled)
 				}
-				func() {
-					defer dispatcher.changeExecuting(ctx, -1)
-					if ctx.Err() == nil && dispatcher.bundle.isCurrentScheduledRunner(scheduled) {
-						func() {
-							defer startSlotTiming(runCtx, dispatcher.bundle.dependencies.Observer, observability.StageRunnerCompleted, time.Now)()
-							_, result.attempted, result.admissionDenied, result.err =
-								scheduled.lifecycle.runner.RunOneAdmitted(runCtx, func(execution.Operation) (func(), bool) {
-									// F was acquired by this dispatcher before preparation.
-									// P/R belong only to actual Query admission in Access.
-									return func() {}, ctx.Err() == nil
-								})
-						}()
-					}
-				}()
-				observability.EmitTargetFlow(runCtx, "runner_return", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "returned", Attempted: result.attempted})
-				dispatcher.results <- result
 			}
 		}()
 	}
+}
+
+func (dispatcher *phaseTwoRunnerDispatcher) executeScheduled(ctx context.Context, scheduled phaseTwoScheduledRunner) {
+	dispatcher.changeExecuting(ctx, 1)
+	result := phaseTwoScheduledResult{scheduled: scheduled}
+	runCtx := dispatcher.bundle.dependencies.TargetFlow.Context(ctx, string(scheduled.queryGroup))
+	if observability.TargetFlowEnabled(runCtx) {
+		runCtx = observability.ContextWithTraceFields(runCtx, observability.TraceFields{QueryGroupKey: string(scheduled.queryGroup)})
+		observability.EmitTargetFlow(runCtx, "runner_dispatch", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "execution_slot_acquired", QueuedAtMS: scheduled.queuedAt.UnixMilli(), QueueWaitNS: time.Since(scheduled.queuedAt).Nanoseconds()})
+	}
+	func() {
+		defer dispatcher.changeExecuting(ctx, -1)
+		if ctx.Err() == nil && dispatcher.bundle.isCurrentScheduledRunner(scheduled) {
+			func() {
+				defer startSlotTiming(runCtx, dispatcher.bundle.dependencies.Observer, observability.StageRunnerCompleted, time.Now)()
+				_, result.attempted, result.admissionDenied, result.err =
+					scheduled.lifecycle.runner.RunOneAdmitted(runCtx, func(execution.Operation) (func(), bool) {
+						// A positive F is an emergency guard; zero has no Runner gate.
+						// P/R belong only to actual Query admission in Access.
+						return func() {}, ctx.Err() == nil
+					})
+			}()
+		}
+	}()
+	observability.EmitTargetFlow(runCtx, "runner_return", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "returned", Attempted: result.attempted})
+	dispatcher.results <- result
 }
 
 func (dispatcher *phaseTwoRunnerDispatcher) stop() {

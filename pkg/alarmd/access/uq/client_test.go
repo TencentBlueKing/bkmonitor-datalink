@@ -124,6 +124,83 @@ func TestClientNormalizesNoDimensionSeriesWithStableIdentity(t *testing.T) {
 	}
 }
 
+// The ProcPort production failure: the query groups by the dynamic port
+// dimensions that the identity contract excludes, so one process with two port
+// rows arrives as two UQ series with one SeriesIdentityDigest. Delivering both
+// violated the one-batch-per-series consumer contract on every Slot
+// ("duplicate streamed named input"). The client must fold them into one
+// series: one record per source time, the later series in response order
+// winning, and series of other identities keep their own batch.
+func TestClientFoldsSeriesSharingOneIdentityWhenGroupingIsFinerThanIdentity(t *testing.T) {
+	series := func(protocol, ip string, values string) string {
+		return `{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],` +
+			`"group_keys":["bind_ip","bk_target_cloud_id","bk_target_ip","display_name","listen","nonlisten","not_accurate_listen","protocol"],` +
+			`"group_values":["0.0.0.0","0","` + ip + `","nginx","[80]","[]","[]","` + protocol + `"],"values":[` + values + `]}`
+	}
+	first := series("tcp", "127.0.0.1", `[1700123456789,1],[1700123516789,1]`)
+	other := series("tcp", "127.0.0.2", `[1700123456789,1]`)
+	second := series("udp", "127.0.0.1", `[1700123516789,0],[1700123576789,0]`)
+	client := fixtureClient(t, http.StatusOK, `{"series":[`+first+`,`+other+`,`+second+`],"is_partial":false}`, DefaultLimits())
+	sink := &collectingSink{}
+
+	completion, err := client.Execute(context.Background(), procPortAttempt(t), sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.batches) != 2 {
+		t.Fatalf("batches=%d, want the two identities folded from three series", len(sink.batches))
+	}
+	folded, separate := sink.batches[0], sink.batches[1]
+	if folded.Dataset.Len() != 3 || folded.Delivery.Series != 1 || folded.Delivery.Records != 3 ||
+		folded.Delivery.Bytes != uint64(len(first)+len(second)) {
+		t.Fatalf("folded batch=%d records delivery=%+v", folded.Dataset.Len(), folded.Delivery)
+	}
+	identity, _ := folded.Dataset.Record(0)
+	wantTimes := []int64{1_700_123_456, 1_700_123_516, 1_700_123_576}
+	wantProtocols := []string{`"tcp"`, `"udp"`, `"udp"`}
+	for index, wantTime := range wantTimes {
+		record, ok := folded.Dataset.Record(index)
+		if !ok || record.SourceTime() != wantTime || string(record.Dimensions()["protocol"]) != wantProtocols[index] ||
+			record.DimensionIdentity().Digest != identity.DimensionIdentity().Digest {
+			t.Fatalf("folded record %d = %+v, want time %d protocol %s", index, record, wantTime, wantProtocols[index])
+		}
+	}
+	if separate.Dataset.Len() != 1 || separate.Delivery.Series != 1 || separate.Delivery.Bytes != uint64(len(other)) {
+		t.Fatalf("separate identity batch=%d records delivery=%+v", separate.Dataset.Len(), separate.Delivery)
+	}
+	if completion.Completeness != execution.CompletenessFull || completion.DataState != execution.DataStateData ||
+		completion.Delivery.Series != 2 || completion.Delivery.Records != 4 || completion.Stats.Series != 2 {
+		t.Fatalf("completion=%+v, want two folded series with four records", completion)
+	}
+}
+
+func procPortAttempt(t *testing.T) execution.QueryAttempt {
+	t.Helper()
+	attempt := validAttempt(t)
+	facts := attempt.Spec.PlanFacts
+	facts.QueryRevision = ""
+	facts.QueryList = append([]execution.QueryClause(nil), facts.QueryList...)
+	dimensions := []string{"bind_ip", "bk_target_cloud_id", "bk_target_ip", "display_name", "listen", "nonlisten", "not_accurate_listen", "protocol"}
+	facts.QueryList[0].TableID, facts.QueryList[0].FieldName = "system.proc_port", "proc_exists"
+	facts.QueryList[0].Functions = []execution.QueryFunction{{Method: "max", Position: 0, Dimensions: dimensions}}
+	facts.QueryList[0].Dimensions = dimensions
+	facts.Normalization.DatasetContract.IdentityFields = []string{"bk_target_cloud_id", "bk_target_ip", "display_name"}
+	var err error
+	facts, err = execution.BuildQueryPlanFacts(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := attempt.Spec
+	spec.Digest = ""
+	spec.PlanFacts = facts
+	spec, err = execution.BuildPhysicalQuerySpec(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt.Spec = spec
+	return attempt
+}
+
 func TestClientMeasuresSeriesPayloadBytesAndAccumulatesCompletion(t *testing.T) {
 	first := `{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["bk_target_ip"],"group_values":["` + strings.Repeat("a", 32<<10) + `"],"values":[[1700123456789,12.5],[1700123516789,13.5]]}`
 	second := `{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["bk_target_ip"],"group_values":["` + strings.Repeat("b", 8<<10) + `"],"values":[[1700123456789,14.5]]}`

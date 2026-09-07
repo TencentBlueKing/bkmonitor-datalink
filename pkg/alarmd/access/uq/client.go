@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -404,6 +405,22 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 	var resultTableIDs []string
 	var totalSeries, totalRecords, nullIdentityFields uint64
 	receivedAt := client.now().Unix()
+	// When the provider series grain is finer than the dataset identity, series
+	// sharing one identity are folded into one batch after the series array
+	// closes; every other query keeps delivering one series at a time.
+	fold := foldsProviderSeries(attempt.Spec)
+	var folder seriesFolder
+	deliver := func(normalized normalizedSeries) error {
+		batch, err := seriesBatch(attempt.Spec, ref, normalized.records, normalized.bytes)
+		if err != nil {
+			return err
+		}
+		if err := sink.ConsumeProviderSeries(ctx, batch); err != nil {
+			return err
+		}
+		delivery, err = execution.AccumulateSeriesDelivery(delivery, batch.Delivery)
+		return err
+	}
 	for decoder.More() {
 		if err := ctx.Err(); err != nil {
 			return execution.ProviderCompletion{}, err
@@ -442,25 +459,33 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 					return execution.ProviderCompletion{}, ErrTotalRecordsExceeded
 				}
 				totalRecords += uint64(len(series.Values))
-				batch, nullFields, err := normalizeSeries(attempt.Spec, ref, series, receivedAt)
+				normalized, err := normalizeSeriesRecords(attempt.Spec, series, receivedAt)
 				if err != nil {
 					return execution.ProviderCompletion{}, err
 				}
-				nullIdentityFields += nullFields
-				batch.Delivery.Bytes = uint64(len(raw))
-				if batch.Dataset.Len() == 0 {
+				nullIdentityFields += normalized.nullIdentityFields
+				normalized.bytes = uint64(len(raw))
+				if len(normalized.records) == 0 {
 					continue
 				}
-				if err := sink.ConsumeProviderSeries(ctx, batch); err != nil {
-					return execution.ProviderCompletion{}, err
+				if fold {
+					folder.add(normalized)
+					continue
 				}
-				delivery, err = execution.AccumulateSeriesDelivery(delivery, batch.Delivery)
-				if err != nil {
+				if err := deliver(normalized); err != nil {
 					return execution.ProviderCompletion{}, err
 				}
 			}
 			if _, err := decoder.Token(); err != nil {
 				return execution.ProviderCompletion{}, err
+			}
+			for _, folded := range folder.folded() {
+				if err := ctx.Err(); err != nil {
+					return execution.ProviderCompletion{}, err
+				}
+				if err := deliver(folded); err != nil {
+					return execution.ProviderCompletion{}, err
+				}
 			}
 		case "status":
 			if err := decoder.Decode(&status); err != nil {
@@ -562,8 +587,120 @@ var nullDimension = json.RawMessage("null")
 // where None is the value in both cases. Series that carry the field keep
 // their previous identity unchanged.
 func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderResultRef, source responseSeries, receivedAt int64) (execution.ProviderSeriesBatch, uint64, error) {
+	normalized, err := normalizeSeriesRecords(spec, source, receivedAt)
+	if err != nil {
+		return execution.ProviderSeriesBatch{}, 0, err
+	}
+	batch, err := seriesBatch(spec, ref, normalized.records, 0)
+	if err != nil {
+		return execution.ProviderSeriesBatch{}, 0, err
+	}
+	return batch, normalized.nullIdentityFields, nil
+}
+
+// normalizedSeries is one UQ series after normalization: its canonical
+// records in source order, the SeriesIdentityDigest they share, the number of
+// declared identity fields bound to null and the raw payload bytes.
+type normalizedSeries struct {
+	identity           string
+	records            []contract.CanonicalRecordV2
+	nullIdentityFields uint64
+	bytes              uint64
+}
+
+// seriesBatch builds the immutable single-series batch the consumer contract
+// requires from canonical records that share one identity and have strictly
+// increasing source times.
+func seriesBatch(spec execution.PhysicalQuerySpec, ref execution.ProviderResultRef, records []contract.CanonicalRecordV2, bytes uint64) (execution.ProviderSeriesBatch, error) {
+	dataset := execution.NewDataset(records)
+	digest, err := contract.DeriveCanonicalDigestV2("alarmd-provider-series-delivery-v1", records)
+	if err != nil {
+		return execution.ProviderSeriesBatch{}, err
+	}
+	return execution.ProviderSeriesBatch{PhysicalQuery: spec.Digest, CompletionRef: ref, Dataset: dataset,
+		Delivery: execution.SeriesDelivery{PhysicalQuery: spec.Digest, QueryRevision: spec.PlanFacts.QueryRevision,
+			Series: 1, Records: uint64(len(records)), Bytes: bytes, Digest: digest}}, nil
+}
+
+// foldsProviderSeries reports whether the provider series grain is finer than
+// the dataset identity: a group-by dimension of the query is not an identity
+// field, so several UQ series can share one SeriesIdentityDigest. The ProcPort
+// plan is the production case: the query groups by the five dynamic port
+// dimensions (bind_ip, listen, nonlisten, not_accurate_listen, protocol) that
+// the identity contract excludes, exactly as Python drops them from the record
+// id, so one process with two port rows arrives as two UQ series that the
+// consumer must receive as one series. Delivering both would violate the
+// one-batch-per-series contract (duplicate streamed named input).
+func foldsProviderSeries(spec execution.PhysicalQuerySpec) bool {
+	identity := make(map[string]struct{}, len(spec.PlanFacts.Normalization.DatasetContract.IdentityFields))
+	for _, name := range spec.PlanFacts.Normalization.DatasetContract.IdentityFields {
+		identity[name] = struct{}{}
+	}
+	for _, query := range spec.PlanFacts.QueryList {
+		for _, dimension := range query.Dimensions {
+			if _, ok := identity[stripTableSuffix(dimension)]; !ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// seriesFolder groups normalized series by SeriesIdentityDigest in first
+// appearance order and folds each group into one series. Records that share a
+// source time collapse to one record, the record of the later series in
+// response order: both carry the same record id (identity digest plus source
+// time), which is the key Python de-duplicates records by, and the consumer
+// contract admits one record per id.
+type seriesFolder struct {
+	order  []string
+	groups map[string]*normalizedSeries
+}
+
+func (folder *seriesFolder) add(series normalizedSeries) {
+	if folder.groups == nil {
+		folder.groups = make(map[string]*normalizedSeries)
+	}
+	if group, found := folder.groups[series.identity]; found {
+		group.records = foldRecords(group.records, series.records)
+		group.bytes += series.bytes
+		return
+	}
+	copied := series
+	folder.groups[series.identity] = &copied
+	folder.order = append(folder.order, series.identity)
+}
+
+func (folder *seriesFolder) folded() []normalizedSeries {
+	result := make([]normalizedSeries, 0, len(folder.order))
+	for _, identity := range folder.order {
+		result = append(result, *folder.groups[identity])
+	}
+	return result
+}
+
+// foldRecords merges next into current: one record per source time, the
+// record from next winning, ordered by source time.
+func foldRecords(current, next []contract.CanonicalRecordV2) []contract.CanonicalRecordV2 {
+	byTime := make(map[int64]int, len(current)+len(next))
+	for index, record := range current {
+		byTime[record.SourceTime] = index
+	}
+	for _, record := range next {
+		if index, found := byTime[record.SourceTime]; found {
+			current[index] = record
+			continue
+		}
+		byTime[record.SourceTime] = len(current)
+		current = append(current, record)
+	}
+	sort.SliceStable(current, func(left, right int) bool { return current[left].SourceTime < current[right].SourceTime })
+	return current
+}
+
+func normalizeSeriesRecords(spec execution.PhysicalQuerySpec, source responseSeries, receivedAt int64) (normalizedSeries, error) {
 	if len(source.Columns) == 0 || len(source.Columns) != len(source.Types) || len(source.GroupKeys) != len(source.GroupValues) {
-		return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: invalid series schema")
+		return normalizedSeries{}, errors.New("alarmd access uq: invalid series schema")
 	}
 	dimensions := make(map[string]json.RawMessage, len(source.GroupKeys))
 	for index, key := range source.GroupKeys {
@@ -592,24 +729,24 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 	}
 	dimensionDigest, err := contract.DeriveDimensionIdentityDigestV2(spec.PlanFacts.TenantID, spec.PlanFacts.BusinessID, identityFields)
 	if err != nil {
-		return execution.ProviderSeriesBatch{}, 0, err
+		return normalizedSeries{}, err
 	}
 	records := make([]contract.CanonicalRecordV2, 0, len(source.Values))
 	lastTime := int64(-1)
 	for _, row := range source.Values {
 		if len(row) != len(source.Columns) {
-			return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: row width differs from columns")
+			return normalizedSeries{}, errors.New("alarmd access uq: row width differs from columns")
 		}
 		timestamp, value, err := rowFacts(source.Columns, row, spec.PlanFacts.QueryList)
 		if err != nil {
-			return execution.ProviderSeriesBatch{}, 0, err
+			return normalizedSeries{}, err
 		}
 		sourceTime, err := spec.PlanFacts.Normalization.NormalizeSourceTime(timestamp)
 		if err != nil {
-			return execution.ProviderSeriesBatch{}, 0, err
+			return normalizedSeries{}, err
 		}
 		if sourceTime <= lastTime {
-			return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: source order contract violation")
+			return normalizedSeries{}, errors.New("alarmd access uq: source order contract violation")
 		}
 		lastTime = sourceTime
 		if sourceTime < spec.AcceptedRange.Start || sourceTime >= spec.AcceptedRange.End {
@@ -617,7 +754,7 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 		}
 		recordID, err := contract.DeriveRecordIDV2(dimensionDigest, sourceTime)
 		if err != nil {
-			return execution.ProviderSeriesBatch{}, 0, err
+			return normalizedSeries{}, err
 		}
 		records = append(records, contract.CanonicalRecordV2{RecordID: recordID, SourceTime: sourceTime,
 			BusinessID:        spec.PlanFacts.BusinessID,
@@ -625,14 +762,7 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 			Values:            map[string]json.RawMessage{spec.PlanFacts.Normalization.CanonicalValueField: value},
 			Dimensions:        dimensions, ReceivedTime: receivedAt})
 	}
-	dataset := execution.NewDataset(records)
-	digest, err := contract.DeriveCanonicalDigestV2("alarmd-provider-series-delivery-v1", records)
-	if err != nil {
-		return execution.ProviderSeriesBatch{}, 0, err
-	}
-	return execution.ProviderSeriesBatch{PhysicalQuery: spec.Digest, CompletionRef: ref, Dataset: dataset,
-		Delivery: execution.SeriesDelivery{PhysicalQuery: spec.Digest, QueryRevision: spec.PlanFacts.QueryRevision,
-			Series: 1, Records: uint64(len(records)), Digest: digest}}, nullIdentityFields, nil
+	return normalizedSeries{identity: dimensionDigest, records: records, nullIdentityFields: nullIdentityFields}, nil
 }
 
 func rowFacts(columns []string, row []json.RawMessage, queries []execution.QueryClause) (int64, json.RawMessage, error) {

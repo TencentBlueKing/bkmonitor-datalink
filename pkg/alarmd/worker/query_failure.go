@@ -40,6 +40,7 @@ const (
 	codeSeriesBindingMismatch             = "SERIES_BINDING_MISMATCH"
 	codeSeriesRecordOutsideWindow         = "SERIES_RECORD_OUTSIDE_WINDOW"
 	codeStreamedNamedInputDuplicate       = "STREAMED_NAMED_INPUT_DUPLICATE"
+	codeStreamedNamedInputFoldInvalid     = "STREAMED_NAMED_INPUT_FOLD_INVALID"
 	codeEvaluationFailed                  = "EVALUATION_FAILED"
 	codeEvaluationResultInvalid           = "EVALUATION_RESULT_INVALID"
 )

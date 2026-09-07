@@ -124,14 +124,14 @@ func TestClientNormalizesNoDimensionSeriesWithStableIdentity(t *testing.T) {
 	}
 }
 
-// The ProcPort production failure: the query groups by the dynamic port
-// dimensions that the identity contract excludes, so one process with two port
-// rows arrives as two UQ series with one SeriesIdentityDigest. Delivering both
-// violated the one-batch-per-series consumer contract on every Slot
-// ("duplicate streamed named input"). The client must fold them into one
-// series: one record per source time, the later series in response order
-// winning, and series of other identities keep their own batch.
-func TestClientFoldsSeriesSharingOneIdentityWhenGroupingIsFinerThanIdentity(t *testing.T) {
+// The ProcPort query groups by the dynamic port dimensions that the identity
+// contract excludes, so one process with two port rows arrives as two UQ
+// series with one SeriesIdentityDigest. The client keeps delivering one batch
+// per UQ series and never folds or picks a row: folding is the worker's job
+// and follows the fold policy the compiled ProcPort algorithm declares
+// (strategy.CompiledAlgorithmPlan.SeriesFoldPolicy), so that every anomalous
+// row is preserved. Series of other identities keep their own batch.
+func TestClientDeliversSeriesSharingOneIdentityAsSeparateBatches(t *testing.T) {
 	series := func(protocol, ip string, values string) string {
 		return `{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],` +
 			`"group_keys":["bind_ip","bk_target_cloud_id","bk_target_ip","display_name","listen","nonlisten","not_accurate_listen","protocol"],` +
@@ -147,30 +147,28 @@ func TestClientFoldsSeriesSharingOneIdentityWhenGroupingIsFinerThanIdentity(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sink.batches) != 2 {
-		t.Fatalf("batches=%d, want the two identities folded from three series", len(sink.batches))
+	if len(sink.batches) != 3 {
+		t.Fatalf("batches=%d, want one batch per UQ series", len(sink.batches))
 	}
-	folded, separate := sink.batches[0], sink.batches[1]
-	if folded.Dataset.Len() != 3 || folded.Delivery.Series != 1 || folded.Delivery.Records != 3 ||
-		folded.Delivery.Bytes != uint64(len(first)+len(second)) {
-		t.Fatalf("folded batch=%d records delivery=%+v", folded.Dataset.Len(), folded.Delivery)
+	firstRecord, _ := sink.batches[0].Dataset.Record(0)
+	otherRecord, _ := sink.batches[1].Dataset.Record(0)
+	secondRecord, _ := sink.batches[2].Dataset.Record(0)
+	if firstRecord.DimensionIdentity().Digest != secondRecord.DimensionIdentity().Digest ||
+		firstRecord.DimensionIdentity().Digest == otherRecord.DimensionIdentity().Digest {
+		t.Fatalf("identity digests first=%s other=%s second=%s, want first and second shared",
+			firstRecord.DimensionIdentity().Digest, otherRecord.DimensionIdentity().Digest, secondRecord.DimensionIdentity().Digest)
 	}
-	identity, _ := folded.Dataset.Record(0)
-	wantTimes := []int64{1_700_123_456, 1_700_123_516, 1_700_123_576}
-	wantProtocols := []string{`"tcp"`, `"udp"`, `"udp"`}
-	for index, wantTime := range wantTimes {
-		record, ok := folded.Dataset.Record(index)
-		if !ok || record.SourceTime() != wantTime || string(record.Dimensions()["protocol"]) != wantProtocols[index] ||
-			record.DimensionIdentity().Digest != identity.DimensionIdentity().Digest {
-			t.Fatalf("folded record %d = %+v, want time %d protocol %s", index, record, wantTime, wantProtocols[index])
+	if string(firstRecord.Dimensions()["protocol"]) != `"tcp"` || string(secondRecord.Dimensions()["protocol"]) != `"udp"` {
+		t.Fatalf("row dimensions were altered: first=%s second=%s", firstRecord.Dimensions()["protocol"], secondRecord.Dimensions()["protocol"])
+	}
+	for index, want := range []uint64{uint64(len(first)), uint64(len(other)), uint64(len(second))} {
+		if sink.batches[index].Delivery.Series != 1 || sink.batches[index].Delivery.Bytes != want {
+			t.Fatalf("batch %d delivery=%+v, want one series of %d bytes", index, sink.batches[index].Delivery, want)
 		}
 	}
-	if separate.Dataset.Len() != 1 || separate.Delivery.Series != 1 || separate.Delivery.Bytes != uint64(len(other)) {
-		t.Fatalf("separate identity batch=%d records delivery=%+v", separate.Dataset.Len(), separate.Delivery)
-	}
 	if completion.Completeness != execution.CompletenessFull || completion.DataState != execution.DataStateData ||
-		completion.Delivery.Series != 2 || completion.Delivery.Records != 4 || completion.Stats.Series != 2 {
-		t.Fatalf("completion=%+v, want two folded series with four records", completion)
+		completion.Delivery.Series != 3 || completion.Delivery.Records != 5 || completion.Stats.Series != 3 {
+		t.Fatalf("completion=%+v, want three series with five records", completion)
 	}
 }
 

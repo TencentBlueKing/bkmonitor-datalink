@@ -58,6 +58,14 @@ type preparedNamedInputIndex struct {
 		requirement execution.RequirementID
 	}]execution.DataRequirement
 	consumersByPlan map[execution.PlanIdentity][]execution.ConsumerRef
+	// foldPolicies holds, per frozen (consumer, requirement), the fold policy
+	// the compiled algorithm consuming that requirement declares for provider
+	// rows that share one series identity. Requirements without a policy keep
+	// the one-batch-per-series contract.
+	foldPolicies map[struct {
+		consumer    execution.ConsumerRef
+		requirement execution.RequirementID
+	}]strategy.SeriesFoldPolicy
 }
 
 func (stream *streamedExecution) Begin(ctx context.Context, header execution.InternalExecutionHeader) error {
@@ -112,10 +120,31 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 	}
 	stream.series += batch.Delivery.Series
 	stream.retained += retained
+	folded := make(map[*execution.Dataset]foldedDataset)
 	for _, binding := range batch.Inputs {
 		key := streamedInputKey{consumer: binding.Consumer, series: series, requirement: binding.RequirementID}
-		if _, duplicate := stream.streamed[key]; duplicate {
-			return namedInputError(codeStreamedNamedInputDuplicate, "alarmd worker: duplicate streamed named input")
+		if existing, duplicate := stream.streamed[key]; duplicate {
+			// A second batch for one (consumer, series, requirement) key is a
+			// provider row finer than the series identity. Only a requirement
+			// whose compiled algorithm declares a fold policy may fold it; every
+			// other plan keeps failing deterministically.
+			policy, declared := stream.prepared.foldPolicies[struct {
+				consumer    execution.ConsumerRef
+				requirement execution.RequirementID
+			}{consumer: binding.Consumer, requirement: binding.RequirementID}]
+			if !declared {
+				return namedInputError(codeStreamedNamedInputDuplicate, "alarmd worker: duplicate streamed named input")
+			}
+			merged, known := folded[existing.Dataset]
+			if !known {
+				var foldErr error
+				merged, foldErr = foldStreamedDataset(existing.Dataset, batch.Dataset, policy)
+				if foldErr != nil {
+					return wrapNamedInputError(codeStreamedNamedInputFoldInvalid, fmt.Errorf("alarmd worker: fold streamed named input: %w", foldErr))
+				}
+				folded[existing.Dataset] = merged
+			}
+			binding.Dataset, binding.View = merged.dataset, merged.view
 		}
 		stream.streamed[key] = binding
 		if binding.Role == execution.InputRolePrimary {
@@ -205,12 +234,27 @@ func prepareNamedInputIndex(header execution.InternalExecutionHeader) (preparedN
 			requirement execution.RequirementID
 		}]execution.DataRequirement),
 		consumersByPlan: make(map[execution.PlanIdentity][]execution.ConsumerRef, len(header.DuePlans)),
+		foldPolicies: make(map[struct {
+			consumer    execution.ConsumerRef
+			requirement execution.RequirementID
+		}]strategy.SeriesFoldPolicy),
 	}
 	for _, due := range header.DuePlans {
 		for _, level := range due.CompiledPlan.Levels() {
-			prepared.consumersByPlan[due.Identity] = append(prepared.consumersByPlan[due.Identity], execution.ConsumerRef{
-				Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true,
-			})
+			consumer := execution.ConsumerRef{Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true}
+			prepared.consumersByPlan[due.Identity] = append(prepared.consumersByPlan[due.Identity], consumer)
+			for _, algorithm := range level.Algorithms() {
+				policy, declared := algorithm.SeriesFoldPolicy()
+				if !declared {
+					continue
+				}
+				for _, requirement := range algorithm.InputRequirements() {
+					prepared.foldPolicies[struct {
+						consumer    execution.ConsumerRef
+						requirement execution.RequirementID
+					}{consumer: consumer, requirement: execution.RequirementID(requirement.RequirementID)}] = policy
+				}
+			}
 		}
 	}
 	for _, query := range header.RequiredPhysicalQueries {

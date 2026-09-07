@@ -816,7 +816,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 				continue
 			}
 			if len(accepted) > 0 {
-				rejectedApply, err := coordinator.applyState(ctx, request.Operation, request.Contract, accepted)
+				rejectedApply, err := coordinator.applyState(ctx, request.Operation, request.Contract, request.OwnerFence, accepted)
 				if err != nil {
 					return execution.SlotExecutionResult{}, err
 				}
@@ -1126,14 +1126,27 @@ func (coordinator *SlotExecutionCoordinator) admitState(
 	return deterministic, nil
 }
 
+// applyState writes the accepted mutations of one Plan. When the State store
+// can fence writes and the Slot carries a valid owner fence, the fence is
+// verified inside the write itself so a stale owner cannot advance State after
+// admission; a stale fence surfaces as the ownership error, the same as a
+// failed admission, and the Plan neither advances State nor commits Progress.
 func (coordinator *SlotExecutionCoordinator) applyState(
 	ctx context.Context,
 	operation execution.Operation,
 	contractRef execution.FrozenExecutionContractRef,
+	fence execution.OwnerFence,
 	mutations []execution.StateMutation,
 ) (map[execution.StateKeyIdentity]execution.ReasonCode, error) {
 	started := time.Now()
-	result, err := coordinator.ports.State.ApplyRuntime(ctx, execution.StateApplyRequest{Contract: contractRef, Items: mutations})
+	applyRequest := execution.StateApplyRequest{Contract: contractRef, Items: mutations}
+	var result execution.StateApplyResult
+	var err error
+	if fenced, ok := coordinator.ports.State.(execution.FencedStateStore); ok && fence.Validate(contractRef) == nil {
+		result, err = fenced.ApplyRuntimeFenced(ctx, applyRequest, execution.StateApplyFence{Fence: fence, At: started})
+	} else {
+		result, err = coordinator.ports.State.ApplyRuntime(ctx, applyRequest)
+	}
 	var reason execution.ReasonCode
 	deterministic := make(map[execution.StateKeyIdentity]execution.ReasonCode)
 	if err == nil {

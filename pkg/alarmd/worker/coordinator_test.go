@@ -666,7 +666,7 @@ func TestSlotExecutionCoordinatorIsolatesDeterministicStateAdmission(t *testing.
 				t.Fatalf("Execute() result=%+v error=%v", result, err)
 			}
 			assertTrace(t, fixture.trace, []string{
-				"query", "gap_load", "state_load", "evaluate", "state_load", "evaluate", "sequence", "admission_initial",
+				"query", "gap_load", "state_load", "evaluate", "evaluate", "sequence", "admission_initial",
 				"admission_event", "state_admission", "event_ack", "state_apply", "gap_after",
 				"admission_progress", "progress_commit",
 			})
@@ -771,7 +771,7 @@ func TestSlotExecutionCoordinatorCompletesSiblingSeriesButKeepsSlotRetryPending(
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{
-		"query", "gap_load", "state_load", "evaluate", "state_load", "evaluate", "sequence", "admission_initial",
+		"query", "gap_load", "state_load", "evaluate", "evaluate", "sequence", "admission_initial",
 		"admission_event", "state_admission", "event_ack", "state_apply", "gap_after",
 	})
 	if fixture.ports.eventCount != 1 || !isZeroProgressCommit(fixture.ports.lastProgress) {
@@ -845,7 +845,7 @@ func TestSlotExecutionCoordinatorAcceptsUnorderedStoreReceipts(t *testing.T) {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{
-		"query", "gap_load", "state_load", "evaluate", "state_load", "evaluate", "sequence", "admission_initial",
+		"query", "gap_load", "state_load", "evaluate", "evaluate", "sequence", "admission_initial",
 		"admission_event", "state_admission", "event_ack", "state_apply", "gap_after", "admission_progress", "progress_commit",
 	})
 	if len(fixture.ports.lastSequenceScope.StateKeys) != 2 || len(fixture.ports.lastSequenceScope.GapKeys) != 1 {

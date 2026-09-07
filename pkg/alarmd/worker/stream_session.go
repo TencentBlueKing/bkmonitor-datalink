@@ -538,10 +538,46 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 	if err := stream.loadGaps(ctx); err != nil {
 		return err
 	}
+	// Runtime State is read in bounded batches ahead of evaluation while
+	// evaluation itself keeps the exact Plan-then-series order. A series whose
+	// PRIMARY input is incomplete needs no State read; the pending batch is
+	// flushed first so its degraded result merges in order.
+	batchLimit := stream.statePreflightBatchLimit()
+	pending := make([]completedSeries, 0, batchLimit)
+	flush := func() error {
+		if len(pending) == 0 {
+			return nil
+		}
+		err := stream.evaluateCompletedSeriesBatch(ctx, pending)
+		pending = pending[:0]
+		return err
+	}
 	for _, prepared := range preparedSeriesEvaluations {
-		if err := stream.evaluateCompletedSeries(ctx, prepared.due, prepared.identity, prepared.inputs); err != nil {
+		if incomplete := primaryIncompleteBindings(prepared.inputs); len(incomplete) != 0 {
+			if err := flush(); err != nil {
+				return err
+			}
+			if err := stream.mergePrimaryIncompleteSeries(ctx, prepared.due, incomplete); err != nil {
+				return err
+			}
+			continue
+		}
+		version, err := execution.BuildApplyVersion(stream.header.Contract, prepared.due.StateApplyEpoch)
+		if err != nil {
 			return err
 		}
+		pending = append(pending, completedSeries{due: prepared.due, series: prepared.identity, inputs: prepared.inputs,
+			item: execution.StatePreflightItem{Identity: execution.StateKeyIdentity{
+				Plan: prepared.due.Identity, StateGeneration: prepared.due.StateGeneration, SeriesIdentityDigest: prepared.identity,
+			}, ApplyVersion: version}})
+		if len(pending) >= batchLimit {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+	}
+	if err := flush(); err != nil {
+		return err
 	}
 	if len(stream.evaluated.Plans) == 0 {
 		return stream.completeWithoutSeries(ctx, completion)
@@ -856,12 +892,28 @@ func (stream *streamedExecution) queryForRequirement(
 	return selected, nil
 }
 
-func (stream *streamedExecution) evaluateCompletedSeries(
-	ctx context.Context,
-	due execution.DuePlan,
-	series execution.SeriesIdentityDigest,
-	inputs []execution.SeriesEvaluationInputRequest,
-) error {
+// completedSeries is one series whose inputs are complete and whose Runtime
+// State view is still to be read. Views are read in one bounded batch and the
+// series are then evaluated one by one in their original order.
+type completedSeries struct {
+	due    execution.DuePlan
+	series execution.SeriesIdentityDigest
+	inputs []execution.SeriesEvaluationInputRequest
+	item   execution.StatePreflightItem
+}
+
+// statePreflightBatchLimit is the shared batch bound clamped to the Slot's
+// State mutation budget, which validated configuration keeps at or below the
+// store's per-call item limit.
+func (stream *streamedExecution) statePreflightBatchLimit() int {
+	limit := execution.StatePreflightBatchItems
+	if budget := stream.coordinator.budget.MaxStateMutations; budget > 0 && budget < uint64(limit) {
+		limit = int(budget)
+	}
+	return limit
+}
+
+func primaryIncompleteBindings(inputs []execution.SeriesEvaluationInputRequest) []execution.NamedInputBinding {
 	primaryIncomplete := make([]execution.NamedInputBinding, 0)
 	for _, input := range inputs {
 		for _, binding := range input.Inputs {
@@ -870,32 +922,42 @@ func (stream *streamedExecution) evaluateCompletedSeries(
 			}
 		}
 	}
-	if len(primaryIncomplete) != 0 {
-		mutation, err := stream.completionGapMutation(due, primaryIncomplete)
-		if err != nil {
-			return err
-		}
-		disposition := execution.PlanDecidedDegraded
-		reason := primaryIncomplete[0].ReasonCode
-		for _, binding := range primaryIncomplete {
-			if binding.Completeness == execution.CompletenessUnavailable {
-				disposition = execution.PlanUnavailable
-				reason = binding.ReasonCode
-				break
-			}
-		}
-		return stream.mergeProvisional(ctx, execution.EvaluationResult{Contract: stream.header.Contract,
-			Result: observability.ResultDegraded, ReasonCode: reason,
-			Plans: []execution.PlanEvaluationResult{{Plan: due.Identity, Disposition: disposition,
-				ReasonCode: reason, GuardBeforeEvents: []execution.PlanGapMutation{mutation}}}}, 0)
-	}
-	version, err := execution.BuildApplyVersion(stream.header.Contract, due.StateApplyEpoch)
+	return primaryIncomplete
+}
+
+func (stream *streamedExecution) mergePrimaryIncompleteSeries(
+	ctx context.Context,
+	due execution.DuePlan,
+	primaryIncomplete []execution.NamedInputBinding,
+) error {
+	mutation, err := stream.completionGapMutation(due, primaryIncomplete)
 	if err != nil {
 		return err
 	}
-	stateItems := []execution.StatePreflightItem{{Identity: execution.StateKeyIdentity{
-		Plan: due.Identity, StateGeneration: due.StateGeneration, SeriesIdentityDigest: series,
-	}, ApplyVersion: version}}
+	disposition := execution.PlanDecidedDegraded
+	reason := primaryIncomplete[0].ReasonCode
+	for _, binding := range primaryIncomplete {
+		if binding.Completeness == execution.CompletenessUnavailable {
+			disposition = execution.PlanUnavailable
+			reason = binding.ReasonCode
+			break
+		}
+	}
+	return stream.mergeProvisional(ctx, execution.EvaluationResult{Contract: stream.header.Contract,
+		Result: observability.ResultDegraded, ReasonCode: reason,
+		Plans: []execution.PlanEvaluationResult{{Plan: due.Identity, Disposition: disposition,
+			ReasonCode: reason, GuardBeforeEvents: []execution.PlanGapMutation{mutation}}}}, 0)
+}
+
+// evaluateCompletedSeriesBatch reads the Runtime State of every series in the
+// batch with one preflight call, then evaluates each series against exactly its
+// own view. Per-item read outcomes stay isolated: a corrupt blob degrades only
+// its series, as it did when every series was read alone.
+func (stream *streamedExecution) evaluateCompletedSeriesBatch(ctx context.Context, batch []completedSeries) error {
+	stateItems := make([]execution.StatePreflightItem, len(batch))
+	for index, entry := range batch {
+		stateItems[index] = entry.item
+	}
 	stateRequest := execution.StatePreflightRequest{Contract: stream.request.Contract, Items: stateItems}
 	started := time.Now()
 	loaded, err := stream.coordinator.ports.State.LoadRuntime(ctx, stateRequest)
@@ -910,12 +972,24 @@ func (stream *streamedExecution) evaluateCompletedSeries(
 	stateResult, stateReason := summarizeStateLoad(loaded)
 	stream.coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageStatePreflight,
 		stream.request.Operation, started, stateResult, stateReason, observability.Counts{Keys: int64(len(loaded.Items))}, nil)
+	for index, entry := range batch {
+		if err := stream.evaluateLoadedSeries(ctx, entry, loaded.Items[index]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry completedSeries, view execution.RuntimeStateView) error {
+	due, series, inputs := entry.due, entry.series, entry.inputs
+	stateItems := []execution.StatePreflightItem{entry.item}
+	loaded := execution.StatePreflightResult{Items: []execution.RuntimeStateView{view}}
 	evaluationHeader, err := bindAlwaysEffectiveTimeFacts(stream.header, stateItems, stream.effective)
 	if err != nil {
 		return fmt.Errorf("alarmd worker: bind series EffectiveTime facts: %w", err)
 	}
 	request := execution.EvaluationRequest{Header: evaluationHeader, Inputs: inputs, State: loaded, Gaps: stream.gaps}
-	started = time.Now()
+	started := time.Now()
 	evaluated, err := stream.coordinator.ports.Evaluator.Evaluate(ctx, request)
 	if err != nil {
 		stream.coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,

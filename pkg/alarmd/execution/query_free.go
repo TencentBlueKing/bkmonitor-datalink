@@ -87,7 +87,7 @@ func (finalization QueryFreeFinalization) Validate(request SlotExecutionRequest)
 	}
 	switch finalization.Mode {
 	case FinalizationSnapshotRetry:
-		if finalization.ReasonCode != ReasonCode(contract.ReasonProviderUnavailable) ||
+		if finalization.ReasonCode != ReasonCode(contract.ReasonSnapshotRetryPending) ||
 			finalization.Targets.DuePlanSetDigest != "" || len(finalization.Targets.Plans) != 0 {
 			return errors.New("alarmd execution: Snapshot retry finalization is invalid")
 		}

@@ -515,7 +515,7 @@ func TestSlotExecutionCoordinatorDoesNotCommitNormalProgressWhenActivationIsUnre
 			fixture.ports.activationErrorAt = failAt
 			result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
 			if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
-				result.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) {
+				result.ReasonCode != execution.ReasonCode(contract.ReasonActivationReadFailed) {
 				t.Fatalf("Execute() result=%+v error=%v", result, err)
 			}
 			if !isZeroProgressCommit(fixture.ports.lastProgress) {

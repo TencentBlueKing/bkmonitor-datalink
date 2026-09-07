@@ -1052,6 +1052,19 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 	if !ok || blockedExactSet.Class != ReasonClassDeterministic || blockedExactSet.Domains != ReasonDomainObservation {
 		t.Fatalf("Blocked exact-set reason definition = (%#v, %t)", blockedExactSet, ok)
 	}
+	// PROVIDER_UNAVAILABLE used to stand in for every retryable control
+	// condition; these split it by cause. They are observation-only: they
+	// appear on non-committed Retrying results and are never persisted or
+	// carried by receipts.
+	for _, reason := range []string{
+		ReasonProgressBeginRejected, ReasonActivationReadFailed, ReasonSnapshotRetryPending, ReasonSlotSourceRetry,
+	} {
+		definition, ok := LookupReasonV2(reason)
+		if !ok || definition.Class != ReasonClassRetryable || definition.Domains != ReasonDomainObservation ||
+			ReasonAllowedForV2(reason, ReasonDomainReceipt) || ReasonAllowedForV2(reason, ReasonDomainQueryResult) {
+			t.Fatalf("split provider reason %q definition = (%#v, %t)", reason, definition, ok)
+		}
+	}
 	snapshotUnavailable, ok := LookupReasonV2(ReasonSnapshotUnavailable)
 	if !ok || snapshotUnavailable.Class != ReasonClassCoverage ||
 		snapshotUnavailable.Domains != ReasonDomainObservation ||

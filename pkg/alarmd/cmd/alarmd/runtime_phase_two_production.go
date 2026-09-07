@@ -133,7 +133,7 @@ func (source *productionFrozenExecution) ResolveFinalization(
 			if source.now().UnixMilli() < request.RecoveryUntilUnixMilli {
 				return execution.QueryFreeFinalization{
 					Contract: request.Contract, Mode: execution.FinalizationSnapshotRetry,
-					ReasonCode: execution.ReasonCode(contract.ReasonProviderUnavailable),
+					ReasonCode: execution.ReasonCode(contract.ReasonSnapshotRetryPending),
 				}, nil
 			}
 			return execution.QueryFreeFinalization{
@@ -159,7 +159,7 @@ func (source *productionFrozenExecution) ResolveFinalization(
 		}
 		return execution.QueryFreeFinalization{
 			Contract: request.Contract, Mode: execution.FinalizationSnapshotRetry,
-			ReasonCode: execution.ReasonCode(contract.ReasonProviderUnavailable),
+			ReasonCode: execution.ReasonCode(contract.ReasonSnapshotRetryPending),
 		}, nil
 	}
 	targets, deadline, err := frozenExecutionFacts(fact)
@@ -1240,7 +1240,7 @@ func (source observedProductionSlotSource) Next(
 		reason := observability.ReasonCode(contract.ReasonBlockedExactSetUnavailable)
 		var cause error
 		if retry != nil {
-			reason = observability.ReasonCode(contract.ReasonProviderUnavailable)
+			reason = observability.ReasonCode(contract.ReasonSlotSourceRetry)
 			cause = retry.Err
 		} else {
 			cause = blocked.Err

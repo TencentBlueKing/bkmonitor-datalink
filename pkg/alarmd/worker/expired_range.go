@@ -47,7 +47,7 @@ func (coordinator *SlotExecutionCoordinator) executeExpiredRange(ctx context.Con
 	if begin.Status != execution.ProgressCommitted {
 		reason := begin.ReasonCode
 		if reason == "" {
-			reason = execution.ReasonCode(contract.ReasonProviderUnavailable)
+			reason = execution.ReasonCode(contract.ReasonProgressBeginRejected)
 		}
 		return activationRetry(reason), nil
 	}

@@ -1029,7 +1029,7 @@ func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry
 	if err != nil {
 		stream.coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
 			stream.request.Operation, started, "", "", err)
-		return fmt.Errorf("alarmd worker: evaluate series: %w", err)
+		return wrapEvaluationError(codeEvaluationFailed, fmt.Errorf("alarmd worker: evaluate series: %w", err))
 	}
 	incomplete := make([]execution.NamedInputBinding, 0)
 	for _, input := range inputs {
@@ -1053,7 +1053,7 @@ func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry
 	if err := evaluated.Validate(request); err != nil {
 		stream.coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
 			stream.request.Operation, started, "", "", err)
-		return fmt.Errorf("alarmd worker: invalid series evaluation: %w", err)
+		return wrapEvaluationError(codeEvaluationResultInvalid, fmt.Errorf("alarmd worker: invalid series evaluation: %w", err))
 	}
 	stream.observeEvaluationCompleted(ctx, started, due, series, inputs, evaluated)
 	retained, err := evaluationRetainedSize(loaded, execution.EvaluationResult{})

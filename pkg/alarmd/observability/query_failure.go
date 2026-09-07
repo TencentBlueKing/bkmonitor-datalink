@@ -20,7 +20,14 @@ const (
 	QueryFailureCategoryCompletionContract = "completion_contract"
 	QueryFailureCategoryNamedInput         = "named_input"
 	QueryFailureCategoryProviderTransport  = "provider_transport"
-	QueryFailureCategoryOther              = "other"
+	// QueryFailureCategoryAdmission names a physical query that never reached
+	// the provider because its permit wait ended at the frozen query deadline.
+	QueryFailureCategoryAdmission = "admission"
+	// QueryFailureCategoryEvaluation names a Slot that failed at
+	// stream_complete because a series evaluation errored or produced a result
+	// the result contract rejected.
+	QueryFailureCategoryEvaluation = "evaluation"
+	QueryFailureCategoryOther      = "other"
 
 	QueryFailureCodeOther = "OTHER"
 
@@ -90,7 +97,8 @@ func normalizeQueryFailure(component Component, stage Stage, input *QueryFailure
 			f.Code = NormalizeQueryFailureCode(f.Code)
 		}
 	case QueryFailureCategorySourceBackend, QueryFailureCategorySeriesIdentity, QueryFailureCategoryCompletionContract,
-		QueryFailureCategoryNamedInput, QueryFailureCategoryProviderTransport:
+		QueryFailureCategoryNamedInput, QueryFailureCategoryProviderTransport, QueryFailureCategoryAdmission,
+		QueryFailureCategoryEvaluation:
 		f.Code = NormalizeQueryFailureCode(f.Code)
 	default:
 		f.Category = QueryFailureCategoryOther

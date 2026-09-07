@@ -236,12 +236,22 @@ type recordingEvaluator struct {
 	inner    execution.Evaluator
 	requests []execution.EvaluationRequest
 	results  []execution.EvaluationResult
+	// fail replaces every evaluation with this error; mutate alters a
+	// successful result before the worker validates it.
+	fail   error
+	mutate func(*execution.EvaluationResult)
 }
 
 func (e *recordingEvaluator) Evaluate(ctx context.Context, request execution.EvaluationRequest) (execution.EvaluationResult, error) {
 	e.requests = append(e.requests, request)
+	if e.fail != nil {
+		return execution.EvaluationResult{}, e.fail
+	}
 	result, err := e.inner.Evaluate(ctx, request)
 	if err == nil {
+		if e.mutate != nil {
+			e.mutate(&result)
+		}
 		e.results = append(e.results, result)
 	}
 	return result, err

@@ -233,6 +233,9 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 				}
 				break
 			}
+			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+				err = &queryPermitDeadlineError{err: err}
+			}
 			dispatchErr = fmt.Errorf("alarmd access: acquire physical query permit: %w", err)
 			break
 		}
@@ -316,6 +319,19 @@ type physicalQueryResult struct {
 	completion      execution.ProviderCompletion
 	invalid         bool
 	budgetExhausted bool
+}
+
+// queryPermitDeadlineError names a normal-operation permit wait that ended at
+// the frozen query deadline (consumer deadline minus the downstream reserve)
+// while the caller's context was still live. It keeps the historical error
+// text and exposes the bounded admission facts so that the query_completed
+// line and the target-flow facts name the cause instead of other/OTHER.
+type queryPermitDeadlineError struct{ err error }
+
+func (e *queryPermitDeadlineError) Error() string { return e.err.Error() }
+func (e *queryPermitDeadlineError) Unwrap() error { return e.err }
+func (e *queryPermitDeadlineError) QueryFailure() (string, string) {
+	return observability.QueryFailureCategoryAdmission, "QUERY_PERMIT_DEADLINE"
 }
 
 // prepared queries already have stable deadline ordering. Select the first

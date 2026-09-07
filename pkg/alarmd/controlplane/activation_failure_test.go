@@ -4,9 +4,74 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
+
+func TestDrainingQueryGroupTerminatedUsesDoubledReplayAge(t *testing.T) {
+	window := DrainingTerminationWindow(10 * time.Minute)
+	if window != 20*time.Minute || DrainingTerminationWindow(0) != 0 || DrainingTerminationWindow(-time.Second) != 0 {
+		t.Fatalf("termination window=%s, zero=%s", window, DrainingTerminationWindow(0))
+	}
+	draining := DrainingQueryGroup{QueryGroup: "query-group", RetiredBoundary: 1000}
+	for _, test := range []struct {
+		name   string
+		now    execution.EvaluationTime
+		window time.Duration
+		want   bool
+	}{
+		{name: "before the boundary", now: 900, window: window, want: false},
+		{name: "at the boundary", now: 1000, window: window, want: false},
+		{name: "exactly at the window", now: 1000 + 1200, window: window, want: false},
+		{name: "past the window", now: 1000 + 1201, window: window, want: true},
+		{name: "no window never terminates", now: 1000 + 1201, window: 0, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := DrainingQueryGroupTerminated(draining, test.now, test.window); got != test.want {
+				t.Fatalf("terminated=%t, want %t", got, test.want)
+			}
+		})
+	}
+	if DrainingQueryGroupTerminated(DrainingQueryGroup{QueryGroup: "query-group"}, 5000, window) {
+		t.Fatal("zero retirement boundary must not terminate")
+	}
+}
+
+func TestExpectedDrainingProjectionPrunesRetiredEntries(t *testing.T) {
+	oldGroups := map[execution.QueryGroupIdentity]QueryGroup{"retiring": {Identity: "retiring"}, "staying": {Identity: "staying"}}
+	newGroups := map[execution.QueryGroupIdentity]QueryGroup{"staying": {Identity: "staying"}, "reappearing": {Identity: "reappearing"}}
+	previous := []DrainingQueryGroup{
+		{QueryGroup: "drained", RetiredBoundary: 90},
+		{QueryGroup: "timed-out", RetiredBoundary: 30},
+		{QueryGroup: "undrained", RetiredBoundary: 120},
+		{QueryGroup: "reappearing", RetiredBoundary: 60},
+	}
+	reactivating := map[execution.QueryGroupIdentity]struct{}{"reappearing": {}}
+	retired := func(draining DrainingQueryGroup) bool {
+		return draining.QueryGroup == "drained" || draining.QueryGroup == "timed-out"
+	}
+	for _, test := range []struct {
+		name    string
+		retired func(DrainingQueryGroup) bool
+		want    []DrainingQueryGroup
+	}{
+		{name: "nil predicate keeps every previous entry", retired: nil, want: []DrainingQueryGroup{
+			{QueryGroup: "drained", RetiredBoundary: 90}, {QueryGroup: "retiring", RetiredBoundary: 180},
+			{QueryGroup: "timed-out", RetiredBoundary: 30}, {QueryGroup: "undrained", RetiredBoundary: 120},
+		}},
+		{name: "retired entries are pruned and the newly retired group is added", retired: retired, want: []DrainingQueryGroup{
+			{QueryGroup: "retiring", RetiredBoundary: 180}, {QueryGroup: "undrained", RetiredBoundary: 120},
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := expectedDrainingProjection(previous, oldGroups, newGroups, reactivating, 180, test.retired)
+			if err != nil || !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("projection=(%+v,%v), want %+v", got, err, test.want)
+			}
+		})
+	}
+}
 
 func TestActivationReconciliationCountsIncludesBoundedSortedReappearedSamples(t *testing.T) {
 	draining := make([]DrainingQueryGroup, 0, 10)

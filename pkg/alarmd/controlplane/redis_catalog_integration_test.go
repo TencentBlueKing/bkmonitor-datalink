@@ -2980,6 +2980,90 @@ func TestScheduleActivationReconcilerProjectsQueryIdentityChangeAsIndependentNew
 	}
 }
 
+func TestScheduleActivationReconcilerPrunesDrainedAndTerminatedDrainingEntries(t *testing.T) {
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:draining-prune", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ten minutes of replay age terminate a draining Query Group 1200 seconds
+	// after its retirement boundary.
+	if err := repository.ConfigureDrainingTermination(10 * time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	progress := &activationProgressReader{byGroup: map[execution.QueryGroupIdentity]execution.ProgressLoadResult{}}
+	compiler, semantics := runtimePlanCompiler(t)
+	at := time.Unix(60, 0)
+	reconciler, err := controlplane.NewScheduleActivationReconcilerWithProgress(
+		repository, compiler, semantics, progress, func() time.Time { return at },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publish := func(tableID string) (controlplane.SnapshotPublicationRef, execution.QueryGroupIdentity) {
+		t.Helper()
+		catalog := catalogWithQueryTable(t, tableID)
+		snapshot, _, err := repository.PublishCatalog(ctx, catalog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snapshot.Publication, catalog.QueryGroups[0].Identity
+	}
+	ensure := func(publication controlplane.SnapshotPublicationRef, boundary int64) map[execution.QueryGroupIdentity]execution.EvaluationTime {
+		t.Helper()
+		at = time.Unix(boundary, 0)
+		state, err := reconciler.Ensure(ctx, publication)
+		if err != nil {
+			t.Fatalf("activation at %d: %v", boundary, err)
+		}
+		draining := make(map[execution.QueryGroupIdentity]execution.EvaluationTime, len(state.Draining))
+		for _, entry := range state.Draining {
+			draining[entry.QueryGroup] = entry.RetiredBoundary
+		}
+		return draining
+	}
+	undrained := func(queryGroup execution.QueryGroupIdentity) execution.ProgressLoadResult {
+		return execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+			Identity: execution.ProgressIdentity{QueryGroup: queryGroup}, NextSlot: 60,
+		}}
+	}
+
+	cpuPublication, cpu := publish("system.cpu")
+	if draining := ensure(cpuPublication, 60); len(draining) != 0 {
+		t.Fatalf("initial draining=%v", draining)
+	}
+	memPublication, mem := publish("system.mem")
+	if draining := ensure(memPublication, 90); !reflect.DeepEqual(draining, map[execution.QueryGroupIdentity]execution.EvaluationTime{cpu: 90}) {
+		t.Fatalf("first retirement draining=%v", draining)
+	}
+
+	// A drained entry is pruned as soon as the next activation observes it.
+	progress.byGroup[cpu] = execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+		Identity: execution.ProgressIdentity{QueryGroup: cpu}, NextSlot: 90, LastFullSlot: 60,
+		LastCompletionKind: execution.CompletionFull,
+	}}
+	diskPublication, disk := publish("system.disk")
+	if draining := ensure(diskPublication, 180); !reflect.DeepEqual(draining, map[execution.QueryGroupIdentity]execution.EvaluationTime{mem: 180}) {
+		t.Fatalf("drained entry was not pruned: draining=%v", draining)
+	}
+
+	// An undrained entry inside the termination window is kept.
+	progress.byGroup[mem] = undrained(mem)
+	netPublication, net := publish("system.net")
+	if draining := ensure(netPublication, 300); !reflect.DeepEqual(draining, map[execution.QueryGroupIdentity]execution.EvaluationTime{mem: 180, disk: 300}) {
+		t.Fatalf("undrained entry inside the window was not kept: draining=%v", draining)
+	}
+
+	// Past the window the still undrained entry is pruned by age alone while
+	// a younger undrained entry stays.
+	progress.byGroup[disk] = undrained(disk)
+	loadPublication, _ := publish("system.load")
+	if draining := ensure(loadPublication, 1400); !reflect.DeepEqual(draining, map[execution.QueryGroupIdentity]execution.EvaluationTime{disk: 300, net: 1400}) {
+		t.Fatalf("terminated entry was not pruned: draining=%v", draining)
+	}
+}
+
 func TestScheduleActivationReconcilerReactivatesDrainedQueryGroupOnSameProgressTimeline(t *testing.T) {
 	client := newControlplaneRedis(t)
 	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:same-qg-reactivation", time.Hour)

@@ -229,7 +229,9 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		}
 		reactivating[draining.QueryGroup] = struct{}{}
 	}
-	wantedDraining, err := expectedDrainingProjection(previous.Draining, oldGroups, newGroups, reactivating, boundary)
+	wantedDraining, err := expectedDrainingProjection(
+		previous.Draining, oldGroups, newGroups, reactivating, boundary, repository.drainingRetirement(ctx, progress, boundary),
+	)
 	if err != nil {
 		return err
 	}
@@ -917,12 +919,59 @@ func (repository *RedisCatalogRepository) loadActivatedGroupsFromScheduleScan(ct
 	return groups, nil
 }
 
+// DrainingTerminationWindow is the age past its retirement boundary after
+// which a draining Query Group can no longer execute any Slot: every Slot
+// before the boundary is then older than the replay age, so neither a normal
+// tick nor a replay can still pick it up. The doubled replay age keeps the
+// window clear of one replay window worth of clock and delivery skew.
+func DrainingTerminationWindow(maxReplayAge time.Duration) time.Duration {
+	if maxReplayAge <= 0 {
+		return 0
+	}
+	return 2 * maxReplayAge
+}
+
+// DrainingQueryGroupTerminated reports whether the draining Query Group is
+// past its termination window at now. A non-positive window never terminates.
+func DrainingQueryGroupTerminated(draining DrainingQueryGroup, now execution.EvaluationTime, window time.Duration) bool {
+	if window <= 0 || draining.RetiredBoundary <= 0 || now <= draining.RetiredBoundary {
+		return false
+	}
+	return time.Duration(now-draining.RetiredBoundary)*time.Second > window
+}
+
+// drainingRetirement decides whether one previously draining Query Group may
+// leave the persisted Draining projection at boundary. A terminated entry is
+// dropped by age alone; otherwise the entry is dropped only when the Progress
+// reader confirms it drained. Every read failure keeps the entry, so pruning
+// never blocks an activation and the age bound remains the only guarantee.
+func (repository *RedisCatalogRepository) drainingRetirement(
+	ctx context.Context,
+	progress ScheduleActivationProgressReader,
+	boundary execution.EvaluationTime,
+) func(DrainingQueryGroup) bool {
+	return func(draining DrainingQueryGroup) bool {
+		if DrainingQueryGroupTerminated(draining, boundary, repository.drainingRetireAfter) {
+			return true
+		}
+		if progress == nil {
+			return false
+		}
+		drained, err := repository.queryGroupDrained(ctx, draining.QueryGroup, draining.RetiredBoundary, progress)
+		return err == nil && drained
+	}
+}
+
+// expectedDrainingProjection derives the Draining list of the next activation.
+// retired, when non-nil, drops previous entries that no longer carry execution
+// meaning; it must be the same decision on the reconciler and the CAS side.
 func expectedDrainingProjection(
 	previous []DrainingQueryGroup,
 	oldGroups map[execution.QueryGroupIdentity]QueryGroup,
 	newGroups map[execution.QueryGroupIdentity]QueryGroup,
 	reactivating map[execution.QueryGroupIdentity]struct{},
 	boundary execution.EvaluationTime,
+	retired func(DrainingQueryGroup) bool,
 ) ([]DrainingQueryGroup, error) {
 	byGroup := make(map[execution.QueryGroupIdentity]DrainingQueryGroup, len(previous)+len(oldGroups))
 	for _, draining := range previous {
@@ -931,6 +980,9 @@ func expectedDrainingProjection(
 		}
 		if _, duplicate := byGroup[draining.QueryGroup]; duplicate {
 			return nil, errors.New("alarmd controlplane: duplicate previous draining Query Group")
+		}
+		if retired != nil && retired(draining) {
+			continue
 		}
 		byGroup[draining.QueryGroup] = draining
 	}

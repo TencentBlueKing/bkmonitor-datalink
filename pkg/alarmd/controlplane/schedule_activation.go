@@ -154,7 +154,10 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		return ActivationState{}, err
 	}
 	failureClass = ActivationFailureClassProjectionConflict
-	draining, err := expectedDrainingProjection(previous.Draining, oldGroups, newGroups, reactivating, boundary)
+	draining, err := expectedDrainingProjection(
+		previous.Draining, oldGroups, newGroups, reactivating, boundary,
+		reconciler.repository.drainingRetirement(ctx, reconciler.progress, boundary),
+	)
 	if err != nil {
 		return ActivationState{}, err
 	}

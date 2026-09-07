@@ -968,6 +968,111 @@ func TestProductionPhaseTwoControlRemovesRetiredZeroSlotQueryGroupWithoutProgres
 	}
 }
 
+func TestProductionPhaseTwoControlRetiresUndrainedQueryGroupPastTerminationWindow(t *testing.T) {
+	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-new", PublicationEpoch: 2}
+	boundary := execution.EvaluationTime(90)
+	retired := execution.QueryGroupIdentity("query-group-old")
+	undrained := execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+		Identity: execution.ProgressIdentity{QueryGroup: retired}, NextSlot: 60,
+	}}
+	drained := execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+		Identity: execution.ProgressIdentity{QueryGroup: retired}, NextSlot: boundary, LastFullSlot: 60,
+		LastCompletionKind: execution.CompletionFull,
+	}}
+	for _, test := range []struct {
+		name            string
+		now             time.Time
+		maxReplayAge    time.Duration
+		progress        execution.ProgressLoadResult
+		wantActive      []execution.QueryGroupIdentity
+		wantUndrained   int
+		wantRetired     int
+		wantDisposition string
+		wantSamples     int
+	}{
+		{
+			name: "undrained past the window is retired from the active set", now: time.Unix(111, 0),
+			maxReplayAge: 10 * time.Second, progress: undrained,
+			wantActive: []execution.QueryGroupIdentity{"query-group-new"}, wantRetired: 1,
+			wantDisposition: observability.DrainingQGSampleRetired, wantSamples: 1,
+		},
+		{
+			name: "undrained within the window stays active", now: time.Unix(110, 0),
+			maxReplayAge: 10 * time.Second, progress: undrained,
+			wantActive: []execution.QueryGroupIdentity{"query-group-new", retired}, wantUndrained: 1, wantSamples: 1,
+		},
+		{
+			name: "drained past the window leaves without retirement", now: time.Unix(111, 0),
+			maxReplayAge: 10 * time.Second, progress: drained,
+			wantActive: []execution.QueryGroupIdentity{"query-group-new"},
+		},
+		{
+			name: "no replay age never retires by age", now: time.Unix(111, 0),
+			maxReplayAge: 0, progress: undrained,
+			wantActive: []execution.QueryGroupIdentity{"query-group-new", retired}, wantUndrained: 1, wantSamples: 1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &fakeProductionCatalogRepository{
+				activation: controlplane.ActivationState{RecordRevision: 2, Current: publication,
+					Draining: []controlplane.DrainingQueryGroup{{QueryGroup: retired, RetiredBoundary: boundary}}},
+				snapshot: controlplane.PublishedSnapshot{Publication: publication,
+					QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-new"}}},
+			}
+			schedules := &fakeScheduleProjection{
+				initial: map[execution.QueryGroupIdentity]execution.FrozenQueryGroupSchedule{
+					retired: schedulerScheduleForProductionControl(t, retired, 60, 60, &boundary),
+				},
+				retired: map[execution.QueryGroupIdentity]execution.EvaluationTime{retired: boundary},
+			}
+			progress := &fakeProductionProgressReader{byGroup: map[execution.QueryGroupIdentity]execution.ProgressLoadResult{
+				retired: test.progress,
+			}}
+			var observations []observability.Observation
+			control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+				Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: &fakeSourceReconciler{},
+				Activator: &fakeInitialScheduleActivator{}, Repository: repository, Schedules: schedules, Progress: progress,
+				Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+					observations = append(observations, observation)
+				}),
+				RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
+				Now: func() time.Time { return test.now }, MaxReplayAge: test.maxReplayAge,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := control.LoadActive(context.Background())
+			if err != nil || !reflect.DeepEqual(result.QueryGroups, test.wantActive) {
+				t.Fatalf("active projection=(%#v,%v), want %v", result, err, test.wantActive)
+			}
+			if len(observations) != 1 || observations[0].DrainingQG == nil {
+				t.Fatalf("draining observations=%#v", observations)
+			}
+			facts := observations[0].DrainingQG
+			if facts.Total != 1 || facts.Isolated != 0 || facts.Undrained != test.wantUndrained || facts.Retired != test.wantRetired ||
+				len(facts.Samples) != test.wantSamples {
+				t.Fatalf("draining facts=%#v, want undrained=%d retired=%d samples=%d",
+					facts, test.wantUndrained, test.wantRetired, test.wantSamples)
+			}
+			if test.wantSamples == 1 && (facts.Samples[0].QueryGroupKey != string(retired) ||
+				facts.Samples[0].RetiredBoundary != int64(boundary) || facts.Samples[0].NextSlot != 60 ||
+				facts.Samples[0].ProgressStatus != string(execution.ProgressFound) ||
+				facts.Samples[0].Disposition != test.wantDisposition) {
+				t.Fatalf("draining sample=%#v, want disposition %q", facts.Samples[0], test.wantDisposition)
+			}
+		})
+	}
+	if _, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: &fakeSourceReconciler{},
+		Activator: &fakeInitialScheduleActivator{}, Repository: &fakeProductionCatalogRepository{},
+		Schedules: &fakeScheduleProjection{}, Progress: &fakeProductionProgressReader{},
+		RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
+		MaxReplayAge: -time.Second,
+	}); err == nil {
+		t.Fatal("negative replay age was accepted")
+	}
+}
+
 func TestProductionPhaseTwoControlIsolatesInvalidDrainingQueryGroup(t *testing.T) {
 	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-current", PublicationEpoch: 3}
 	boundary := execution.EvaluationTime(90)

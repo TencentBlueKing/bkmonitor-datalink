@@ -2980,6 +2980,235 @@ func TestScheduleActivationReconcilerProjectsQueryIdentityChangeAsIndependentNew
 	}
 }
 
+// TestSourceReconcilerRemovesAbsentStrategyAfterOnePublishedGraceCycle drives
+// the real source reconciler against the legacy Redis strategy source. It
+// proves that the removal grace memory survives the UNCHANGED refresh path:
+// the audit published there carries PENDING_REMOVAL while the snapshot still
+// holds the Plan, and the next refresh drops the Plan with REMOVED.
+func TestSourceReconcilerRemovesAbsentStrategyAfterOnePublishedGraceCycle(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		separateGroup   bool
+		returnsInCycle3 bool
+	}{
+		{name: "removed Plan leaves its shared Query Group without draining"},
+		{name: "removed Plan retires its own Query Group into draining", separateGroup: true},
+		{name: "strategy returning after PENDING_REMOVAL is accepted without a removal fact", returnsInCycle3: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := newControlplaneRedis(t)
+			documents := realThresholdDocuments(t)
+			if test.separateGroup {
+				documents[1] = withResultTable(t, documents[1], "system.mem")
+			}
+			setStrategyIDs := func(ids string) {
+				t.Helper()
+				if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", ids, 0).Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			setStrategyIDs(`[1001,1002]`)
+			for index, id := range []string{"1001", "1002"} {
+				if err := client.Set(ctx, "bkmonitor.cache.strategy_"+id, string(documents[index]), 0).Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			source := newRedisStrategySource(t, client)
+			planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
+			if err != nil {
+				t.Fatal(err)
+			}
+			repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:removal-grace", time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			compiler, semantics := runtimePlanCompiler(t)
+			reconciler, err := controlplane.NewSourceReconciler(repository, compiler, semantics)
+			if err != nil {
+				t.Fatal(err)
+			}
+			at := time.Unix(60, 0)
+			activator, err := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time { return at })
+			if err != nil {
+				t.Fatal(err)
+			}
+			// settle runs one source cycle: a changed candidate needs the second
+			// identical observation before it publishes.
+			settle := func() controlplane.SourceRefreshResult {
+				t.Helper()
+				result, err := reconciler.Refresh(ctx, source, planner)
+				if err == nil && result.Status == controlplane.SourceRefreshPendingConfirmation {
+					result, err = reconciler.Refresh(ctx, source, planner)
+				}
+				if err != nil || result.Status == controlplane.SourceRefreshPendingConfirmation {
+					t.Fatalf("source refresh did not settle: (%+v, %v)", result, err)
+				}
+				return result
+			}
+			publishedPlans := func(publication controlplane.SnapshotPublicationRef) ([]string, []controlplane.QueryGroup) {
+				t.Helper()
+				snapshot, err := repository.LoadPublishedSnapshot(ctx, publication)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ids := make([]string, 0)
+				for _, group := range snapshot.QueryGroups {
+					for _, plan := range group.Plans {
+						ids = append(ids, plan.Identity.StrategyID)
+					}
+				}
+				sort.Strings(ids)
+				return ids, snapshot.QueryGroups
+			}
+			strategyDispositions := func(sourceID string) []controlplane.ObjectDisposition {
+				t.Helper()
+				audit, err := repository.LoadLatestAudit(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var result []controlplane.ObjectDisposition
+				for _, disposition := range audit.Dispositions {
+					if disposition.Scope == "STRATEGY" && disposition.SourceID == sourceID {
+						result = append(result, disposition)
+					}
+				}
+				return result
+			}
+			activatedPlans := func(state controlplane.ActivationState) []string {
+				ids := make([]string, 0, len(state.Plans))
+				for _, record := range state.Plans {
+					ids = append(ids, record.Fact.Plan.StrategyID)
+				}
+				sort.Strings(ids)
+				return ids
+			}
+			pendingRemoval := []controlplane.ObjectDisposition{{SourceID: "1002", Scope: "STRATEGY",
+				Disposition: controlplane.DispositionPendingRemoval, Reason: "REMOVED_FROM_ACTIVE_SET"}}
+			removed := []controlplane.ObjectDisposition{{SourceID: "1002", Scope: "STRATEGY",
+				Disposition: controlplane.DispositionRemoved, Reason: "ABSENT_FROM_ACTIVE_SET"}}
+
+			// Cycle 1: both strategies are observed, published and activated.
+			first := settle()
+			if first.Status != controlplane.SourceRefreshPublished {
+				t.Fatalf("cycle 1 = %+v, want PUBLISHED", first)
+			}
+			firstPlans, firstGroups := publishedPlans(first.Publication)
+			wantGroups := 1
+			if test.separateGroup {
+				wantGroups = 2
+			}
+			if !reflect.DeepEqual(firstPlans, []string{"1001", "1002"}) || len(firstGroups) != wantGroups {
+				t.Fatalf("cycle 1 snapshot plans=%v groups=%d, want both plans in %d group(s)", firstPlans, len(firstGroups), wantGroups)
+			}
+			var removedGroup execution.QueryGroupIdentity
+			for _, group := range firstGroups {
+				for _, plan := range group.Plans {
+					if plan.Identity.StrategyID == "1002" {
+						removedGroup = group.Identity
+					}
+				}
+			}
+			if _, err := activator.Ensure(ctx, first.Publication); err != nil {
+				t.Fatal(err)
+			}
+			if dispositions := strategyDispositions("1002"); len(dispositions) != 0 {
+				t.Fatalf("cycle 1 strategy dispositions=%+v, want none", dispositions)
+			}
+
+			// Cycle 2: strategy 1002 disappears upstream. The snapshot is unchanged
+			// because the Plan is retained, but the audit records the grace fact.
+			setStrategyIDs(`[1001]`)
+			second := settle()
+			if second.Status != controlplane.SourceRefreshUnchanged || second.Publication != first.Publication {
+				t.Fatalf("cycle 2 = %+v, want UNCHANGED at %+v", second, first.Publication)
+			}
+			if plans, _ := publishedPlans(second.Publication); !reflect.DeepEqual(plans, []string{"1001", "1002"}) {
+				t.Fatalf("cycle 2 snapshot plans=%v, want the retained Plan", plans)
+			}
+			if dispositions := strategyDispositions("1002"); !reflect.DeepEqual(dispositions, pendingRemoval) {
+				t.Fatalf("cycle 2 strategy dispositions=%+v, want %+v", dispositions, pendingRemoval)
+			}
+			at = time.Unix(90, 0)
+			if state, err := activator.Ensure(ctx, second.Publication); err != nil || state.Current != first.Publication {
+				t.Fatalf("cycle 2 activation=(%+v,%v), want unchanged", state, err)
+			}
+
+			if test.returnsInCycle3 {
+				// Cycle 3: the strategy is observed again before its grace cycle
+				// expired. It is accepted normally and the grace fact disappears.
+				setStrategyIDs(`[1001,1002]`)
+				third := settle()
+				if third.Status != controlplane.SourceRefreshUnchanged || third.Publication != first.Publication {
+					t.Fatalf("cycle 3 = %+v, want UNCHANGED at %+v", third, first.Publication)
+				}
+				if plans, _ := publishedPlans(third.Publication); !reflect.DeepEqual(plans, []string{"1001", "1002"}) {
+					t.Fatalf("cycle 3 snapshot plans=%v, want both", plans)
+				}
+				if dispositions := strategyDispositions("1002"); len(dispositions) != 0 {
+					t.Fatalf("cycle 3 strategy dispositions=%+v, want none after the strategy returned", dispositions)
+				}
+				return
+			}
+
+			// Cycle 3: still absent, the grace cycle is spent. The Plan leaves the
+			// snapshot, the audit records REMOVED and activation follows.
+			third := settle()
+			if third.Status != controlplane.SourceRefreshPublished || third.Publication == first.Publication {
+				t.Fatalf("cycle 3 = %+v, want a new PUBLISHED snapshot", third)
+			}
+			thirdPlans, thirdGroups := publishedPlans(third.Publication)
+			if !reflect.DeepEqual(thirdPlans, []string{"1001"}) || len(thirdGroups) != 1 {
+				t.Fatalf("cycle 3 snapshot plans=%v groups=%d, want only 1001 in one group", thirdPlans, len(thirdGroups))
+			}
+			if dispositions := strategyDispositions("1002"); !reflect.DeepEqual(dispositions, removed) {
+				t.Fatalf("cycle 3 strategy dispositions=%+v, want %+v", dispositions, removed)
+			}
+			at = time.Unix(120, 0)
+			state, err := activator.Ensure(ctx, third.Publication)
+			if err != nil || state.Current != third.Publication || !reflect.DeepEqual(activatedPlans(state), []string{"1001"}) {
+				t.Fatalf("cycle 3 activation=(%+v,%v), want only 1001 active", state, err)
+			}
+			active, err := repository.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef)
+			if err != nil || !reflect.DeepEqual(active, []execution.QueryGroupIdentity{thirdGroups[0].Identity}) {
+				t.Fatalf("cycle 3 active Query Groups=(%v,%v), want %s", active, err, thirdGroups[0].Identity)
+			}
+			if test.separateGroup {
+				if len(state.Draining) != 1 || state.Draining[0].QueryGroup != removedGroup || state.Draining[0].RetiredBoundary != 120 {
+					t.Fatalf("cycle 3 draining=%+v, want %s retired at 120", state.Draining, removedGroup)
+				}
+			} else if len(state.Draining) != 0 || removedGroup != thirdGroups[0].Identity {
+				t.Fatalf("cycle 3 draining=%+v group=%s, want the shared group %s to stay active", state.Draining, thirdGroups[0].Identity, removedGroup)
+			}
+
+			// Cycle 4: nothing is left to remove; the removal fact does not linger.
+			fourth := settle()
+			if fourth.Status != controlplane.SourceRefreshUnchanged || fourth.Publication != third.Publication {
+				t.Fatalf("cycle 4 = %+v, want UNCHANGED at %+v", fourth, third.Publication)
+			}
+			if dispositions := strategyDispositions("1002"); len(dispositions) != 0 {
+				t.Fatalf("cycle 4 strategy dispositions=%+v, want none", dispositions)
+			}
+		})
+	}
+}
+
+func withResultTable(t *testing.T, document json.RawMessage, tableID string) json.RawMessage {
+	t.Helper()
+	var value map[string]any
+	if err := json.Unmarshal(document, &value); err != nil {
+		t.Fatal(err)
+	}
+	items := value["items"].([]any)
+	queryConfigs := items[0].(map[string]any)["query_configs"].([]any)
+	queryConfigs[0].(map[string]any)["result_table_id"] = tableID
+	result, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
 func TestScheduleActivationReconcilerPrunesDrainedAndTerminatedDrainingEntries(t *testing.T) {
 	ctx := context.Background()
 	client := newControlplaneRedis(t)

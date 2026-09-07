@@ -28,59 +28,97 @@ var (
 const slotFreezeFailureMessage = "alarmd scheduler: FreezeSlotContract failed"
 
 // These concrete error types are the bounded cause classes exposed as
-// error_type by the runtime logger. Their messages deliberately omit the
-// underlying control fact while Unwrap preserves errors.Is/errors.As.
+// error_type by the runtime logger. Error names the class, the control-plane
+// stage that rejected the freeze and, when the underlying cause is one of the
+// bounded control sentinels, that cause; free-text causes (corrupt payloads,
+// compiler errors) stay out of the message. Unwrap preserves
+// errors.Is/errors.As. Before, every class rendered the same bare message and
+// the schedule_due line could not say why a Query Group was blocked.
 type slotFreezeFailure struct{ err error }
 
 func (err slotFreezeFailure) Unwrap() error { return err.err }
 
+func (err slotFreezeFailure) message(class string) string {
+	text := slotFreezeFailureMessage + " [class=" + class
+	var classified *controlplane.FreezeSlotContractError
+	if errors.As(err.err, &classified) && classified.Class != "" {
+		text += " stage=" + string(classified.Class)
+	}
+	text += "]"
+	if cause := boundedSlotFreezeCause(err.err); cause != "" {
+		text += ": " + cause
+	}
+	return text
+}
+
+// boundedSlotFreezeCause returns the text of the control sentinel the freeze
+// failure wraps, or "" when the cause is not one of the bounded sentinels.
+func boundedSlotFreezeCause(err error) string {
+	for _, sentinel := range []error{
+		controlplane.ErrSnapshotUnavailable, controlplane.ErrScheduleUnavailable, controlplane.ErrCatalogObjectUnavailable,
+	} {
+		if errors.Is(err, sentinel) {
+			return sentinel.Error()
+		}
+	}
+	return ""
+}
+
 type slotFreezeSnapshotUnavailableFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeSnapshotUnavailableFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeSnapshotUnavailableFailure) Error() string {
+	return err.message("snapshot_unavailable")
+}
 
 type slotFreezeSnapshotCorruptFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeSnapshotCorruptFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeSnapshotCorruptFailure) Error() string { return err.message("snapshot_corrupt") }
 
 type slotFreezeScheduleUnavailableFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeScheduleUnavailableFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeScheduleUnavailableFailure) Error() string {
+	return err.message("schedule_unavailable")
+}
 
 type slotFreezeScheduleCorruptFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeScheduleCorruptFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeScheduleCorruptFailure) Error() string { return err.message("schedule_corrupt") }
 
 type slotFreezeCatalogObjectUnavailableFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeCatalogObjectUnavailableFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeCatalogObjectUnavailableFailure) Error() string {
+	return err.message("catalog_object_unavailable")
+}
 
 type slotFreezeScheduleReadFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeScheduleReadFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeScheduleReadFailure) Error() string { return err.message("schedule_read") }
 
 type slotFreezeScheduleMismatchFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeScheduleMismatchFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeScheduleMismatchFailure) Error() string { return err.message("schedule_mismatch") }
 
 type slotFreezeSnapshotReadFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeSnapshotReadFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeSnapshotReadFailure) Error() string { return err.message("snapshot_read") }
 
 type slotFreezePlanMaterializeFailure struct{ slotFreezeFailure }
 
-func (*slotFreezePlanMaterializeFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezePlanMaterializeFailure) Error() string { return err.message("plan_materialize") }
 
 type slotFreezeInputClosureFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeInputClosureFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeInputClosureFailure) Error() string { return err.message("input_closure") }
 
 type slotFreezeContractValidationFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeContractValidationFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeContractValidationFailure) Error() string {
+	return err.message("contract_validation")
+}
 
 type slotFreezeOtherFailure struct{ slotFreezeFailure }
 
-func (*slotFreezeOtherFailure) Error() string { return slotFreezeFailureMessage }
+func (err *slotFreezeOtherFailure) Error() string { return err.message("other") }
 
 func classifySlotFreezeFailure(err error) error {
 	failure := slotFreezeFailure{err: err}

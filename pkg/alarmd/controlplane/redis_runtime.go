@@ -217,14 +217,11 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		if _, reappeared := newGroups[draining.QueryGroup]; !reappeared {
 			continue
 		}
-		if progress == nil {
-			return errors.New("alarmd controlplane: reactivation requires the single Progress reader")
-		}
-		drained, err := repository.queryGroupDrained(ctx, draining.QueryGroup, draining.RetiredBoundary, progress)
+		reactivatable, err := repository.drainingReactivatable(ctx, draining, boundary, progress)
 		if err != nil {
 			return err
 		}
-		if !drained {
+		if !reactivatable {
 			return ErrReactivationNotDrained
 		}
 		reactivating[draining.QueryGroup] = struct{}{}
@@ -938,6 +935,28 @@ func DrainingQueryGroupTerminated(draining DrainingQueryGroup, now execution.Eva
 		return false
 	}
 	return time.Duration(now-draining.RetiredBoundary)*time.Second > window
+}
+
+// drainingReactivatable reports whether a previously draining Query Group
+// that reappears in the new Snapshot may be reactivated at boundary. Past the
+// termination window the entry is retired by rule: nothing can execute its
+// retired Slots anymore, so waiting for Progress that cannot advance would
+// block every later activation of that Query Group. Inside the window the
+// Query Group must have drained, which needs the single Progress reader. The
+// reconciler and the CAS side take the same decision from the same inputs.
+func (repository *RedisCatalogRepository) drainingReactivatable(
+	ctx context.Context,
+	draining DrainingQueryGroup,
+	boundary execution.EvaluationTime,
+	progress ScheduleActivationProgressReader,
+) (bool, error) {
+	if DrainingQueryGroupTerminated(draining, boundary, repository.drainingRetireAfter) {
+		return true, nil
+	}
+	if progress == nil {
+		return false, errors.New("alarmd controlplane: reactivation requires the single Progress reader")
+	}
+	return repository.queryGroupDrained(ctx, draining.QueryGroup, draining.RetiredBoundary, progress)
 }
 
 // drainingRetirement decides whether one previously draining Query Group may

@@ -3064,6 +3064,119 @@ func TestScheduleActivationReconcilerPrunesDrainedAndTerminatedDrainingEntries(t
 	}
 }
 
+func TestScheduleActivationReconcilerReactivationHonoursDrainingTermination(t *testing.T) {
+	undrained := func(queryGroup execution.QueryGroupIdentity) execution.ProgressLoadResult {
+		return execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+			Identity: execution.ProgressIdentity{QueryGroup: queryGroup}, NextSlot: 60,
+		}}
+	}
+	drained := func(queryGroup execution.QueryGroupIdentity) execution.ProgressLoadResult {
+		return execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+			Identity: execution.ProgressIdentity{QueryGroup: queryGroup}, NextSlot: 90, LastFullSlot: 60,
+			LastCompletionKind: execution.CompletionFull,
+		}}
+	}
+	// Ten minutes of replay age terminate the entry retired at 90 once the
+	// activation boundary passes 90 + 1200.
+	for _, test := range []struct {
+		name            string
+		progress        func(execution.QueryGroupIdentity) execution.ProgressLoadResult
+		boundary        int64
+		wantReactivated bool
+	}{
+		{name: "terminated undrained entry reappears and is reactivated", progress: undrained, boundary: 90 + 1201, wantReactivated: true},
+		{name: "undrained entry inside the window still blocks reactivation", progress: undrained, boundary: 180, wantReactivated: false},
+		{name: "drained entry inside the window is reactivated", progress: drained, boundary: 180, wantReactivated: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := newControlplaneRedis(t)
+			repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:reactivation-termination", time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.ConfigureDrainingTermination(10 * time.Minute); err != nil {
+				t.Fatal(err)
+			}
+			initialCatalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
+			initialSnapshot, _, err := repository.PublishCatalog(ctx, initialCatalog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			queryGroup := initialCatalog.QueryGroups[0].Identity
+			progress := &activationProgressReader{byGroup: map[execution.QueryGroupIdentity]execution.ProgressLoadResult{
+				queryGroup: test.progress(queryGroup),
+			}}
+			compiler, semantics := runtimePlanCompiler(t)
+			at := time.Unix(60, 0)
+			reconciler, err := controlplane.NewScheduleActivationReconcilerWithProgress(
+				repository, compiler, semantics, progress, func() time.Time { return at },
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := reconciler.Ensure(ctx, initialSnapshot.Publication); err != nil {
+				t.Fatal(err)
+			}
+			emptyCatalog := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{}}
+			emptyCatalog.SnapshotRevision = execution.SnapshotRevision(mustDigest(t, "alarmd-strategy-snapshot-v1", emptyCatalog.QueryGroups))
+			emptySnapshot, _, err := repository.PublishCatalog(ctx, emptyCatalog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			at = time.Unix(90, 0)
+			if retired, err := reconciler.Ensure(ctx, emptySnapshot.Publication); err != nil || len(retired.Draining) != 1 ||
+				retired.Draining[0].QueryGroup != queryGroup || retired.Draining[0].RetiredBoundary != 90 {
+				t.Fatalf("retirement=(%#v,%v)", retired, err)
+			}
+			reenabledCatalog := catalogWithSchedule(t, validCatalog(t, 82), 60, 0)
+			if reenabledCatalog.QueryGroups[0].Identity != queryGroup {
+				t.Fatalf("query identity changed across reactivation: old=%s new=%s", queryGroup, reenabledCatalog.QueryGroups[0].Identity)
+			}
+			reenabledSnapshot, _, err := repository.PublishCatalog(ctx, reenabledCatalog)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			at = time.Unix(test.boundary, 0)
+			state, err := reconciler.Ensure(ctx, reenabledSnapshot.Publication)
+			if !test.wantReactivated {
+				failure, ok := controlplane.ActivationFailureFromError(err)
+				if !errors.Is(err, controlplane.ErrReactivationNotDrained) || !ok ||
+					failure.Class != controlplane.ActivationFailureClassNotDrained {
+					t.Fatalf("in-window undrained reactivation=(%#v,%v), want not drained", state, err)
+				}
+				current, loadErr := repository.LoadActivation(ctx)
+				if loadErr != nil || current.Current != emptySnapshot.Publication || len(current.Draining) != 1 {
+					t.Fatalf("blocked reactivation changed activation: (%#v,%v)", current, loadErr)
+				}
+				return
+			}
+			if err != nil || state.RecordRevision != 3 || state.Current != reenabledSnapshot.Publication ||
+				len(state.Draining) != 0 || len(state.Plans) != 1 {
+				t.Fatalf("reactivation=(%#v,%v)", state, err)
+			}
+			if !state.Plans[0].Fact.Selected.ForceWarming ||
+				state.Plans[0].Fact.Selected.StateApplyEpoch != execution.StateApplyEpoch(reenabledSnapshot.Publication.PublicationEpoch) {
+				t.Fatalf("reactivated Plan activation=%#v, want ForceWarming at the new epoch", state.Plans[0])
+			}
+			runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, semantics, 5*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, retiredNow, err := runtime.ReadScheduleRetirement(ctx, queryGroup); err != nil || retiredNow {
+				t.Fatalf("reactivated retirement=(%t,%v)", retiredNow, err)
+			}
+			boundary := execution.EvaluationTime(test.boundary)
+			schedule, err := runtime.ReadFrozenSchedule(ctx, queryGroup, boundary)
+			if err != nil || schedule.Segment.Start != boundary ||
+				schedule.Segment.Publication.SnapshotRevision != reenabledSnapshot.Publication.SnapshotRevision {
+				t.Fatalf("reactivated Schedule=(%#v,%v)", schedule, err)
+			}
+		})
+	}
+}
+
 func TestScheduleActivationReconcilerReactivatesDrainedQueryGroupOnSameProgressTimeline(t *testing.T) {
 	client := newControlplaneRedis(t)
 	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:same-qg-reactivation", time.Hour)

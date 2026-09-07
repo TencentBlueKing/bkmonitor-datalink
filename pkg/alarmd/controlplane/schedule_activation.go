@@ -149,7 +149,7 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	}
 	failureStage, failureClass = ActivationFailureStageReactivation, ActivationFailureClassDependencyIO
 	failureCounts = activationReconciliationCounts(previous.Draining, newGroups)
-	reactivating, err := reconciler.reactivatingQueryGroups(ctx, previous.Draining, newGroups)
+	reactivating, err := reconciler.reactivatingQueryGroups(ctx, previous.Draining, newGroups, boundary)
 	if err != nil {
 		return ActivationState{}, err
 	}
@@ -296,22 +296,18 @@ func (reconciler *ScheduleActivationReconciler) reactivatingQueryGroups(
 	ctx context.Context,
 	draining []DrainingQueryGroup,
 	newGroups map[execution.QueryGroupIdentity]QueryGroup,
+	boundary execution.EvaluationTime,
 ) (map[execution.QueryGroupIdentity]struct{}, error) {
 	result := make(map[execution.QueryGroupIdentity]struct{})
 	for _, projection := range draining {
 		if _, reappeared := newGroups[projection.QueryGroup]; !reappeared {
 			continue
 		}
-		if reconciler.progress == nil {
-			return nil, errors.New("alarmd controlplane: reactivation requires the single Progress reader")
-		}
-		drained, err := reconciler.repository.queryGroupDrained(
-			ctx, projection.QueryGroup, projection.RetiredBoundary, reconciler.progress,
-		)
+		reactivatable, err := reconciler.repository.drainingReactivatable(ctx, projection, boundary, reconciler.progress)
 		if err != nil {
 			return nil, err
 		}
-		if !drained {
+		if !reactivatable {
 			return nil, ErrReactivationNotDrained
 		}
 		result[projection.QueryGroup] = struct{}{}

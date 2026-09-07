@@ -99,9 +99,16 @@ func kafkaConfig(source config.EventSource) consumekafka.Config {
 		Topic:         storage.Topic,
 		ConsumerGroup: storage.ConsumerGroup,
 		FetchMaxWait:  time.Duration(storage.FetchMaxWaitMilliseconds) * time.Millisecond,
-		ClientID:      "linkd-cleaner-" + source.EventSourceID,
+		ClientID:      sourceClientID(source),
 		Security:      storage.Security.Clone(),
 	}
 }
 
 var _ FlowFactory = (*Factory)(nil)
+
+func sourceClientID(source config.EventSource) string {
+	if source.RuntimeClientID != "" {
+		return source.RuntimeClientID
+	}
+	return "linkd-cleaner-" + source.EventSourceID
+}

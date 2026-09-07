@@ -20,6 +20,7 @@ import (
 	cleanerprocess "linkd/internal/cleaner/process"
 	"linkd/internal/config"
 	controlplaneprocess "linkd/internal/controlplane/process"
+	"linkd/internal/eventsource"
 	lifecycleprocess "linkd/internal/lifecycle/process"
 	"linkd/internal/telemetry"
 )
@@ -65,6 +66,8 @@ type ControlPlaneRunner = ProcessRunner
 // Dependencies 汇总各职责启动命令需要的进程装配依赖。
 // 已完成职责可在 nil 时使用正式默认实现；尚未完成职责必须在接管数据前明确失败。
 type Dependencies struct {
+	// SourceProviders 是显式注入的来源增量提供方，与 API 共用配置对象。
+	SourceProviders []eventsource.Provider
 	// CleanerFlowFactory 为每个启用 EventSource 创建 cleaner 处理流程。
 	CleanerFlowFactory cleaner.FlowFactory
 	// CleanerRunner 可在嵌入或测试场景替换默认 cleaner 进程；nil 使用正式实现。
@@ -96,7 +99,9 @@ func NewRootCommand(version string, dependencies Dependencies) *cobra.Command {
 	controlPlaneRunner := dependencies.ControlPlaneRunner
 	controlPlaneValidate := ProcessValidator(nil)
 	if controlPlaneRunner == nil {
-		controlPlaneRunner = controlplaneprocess.Run
+		controlPlaneRunner = func(ctx context.Context, cfg config.Config, logger *slog.Logger, rt *telemetry.Runtime) error {
+			return controlplaneprocess.RunWithProviders(ctx, cfg, logger, rt, dependencies.SourceProviders...)
+		}
 		controlPlaneValidate = controlplaneprocess.ValidateConfig
 	}
 	options := &commandOptions{
@@ -132,6 +137,8 @@ func NewRootCommand(version string, dependencies Dependencies) *cobra.Command {
 		newStorageCommand(options),
 		newConfigCommand(options),
 		newVersionCommand(options),
+		newEventSourceCommand(options),
+		newSchedulingCommand(options),
 	)
 	return root
 }

@@ -38,7 +38,7 @@ func TestDeterministicAlertID(t *testing.T) {
 
 func TestLifecycleIdentityDomains(t *testing.T) {
 	event := testEvent("event-1", "warning")
-	alert := domain.Alert{AlertID: "alert-1", BKTenantID: event.BKTenantID, UpdateAt: time.Unix(100, 0)}
+	alert := domain.Alert{EventSourceVersion: 1, AlertID: "alert-1", BKTenantID: event.BKTenantID, UpdateAt: time.Unix(100, 0)}
 	cause := AlertChangeCause{Type: AlertChangeCauseSourceEvent, ID: event.EventID}
 	result := FinalHookResult{Name: "output", Transport: "kafka", Destination: "alerts", MessageID: "message-1"}
 	command := CloseAlertCommand{BKTenantID: event.BKTenantID, AlertID: alert.AlertID, OperationID: "operation-1"}

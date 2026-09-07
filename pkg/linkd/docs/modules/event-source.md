@@ -1,7 +1,7 @@
 # EventSource
 
-EventSource 是一类事件来源在 Linkd 进程中的静态定义。它不是 Event/Alert 一样的持久化领域对象，
-而是 Cleaner 生成 Event 时使用的来源、租户、标准化和 MQ subscription 权威配置。
+EventSource 是由控制面管理并持久化发布的来源配置。Record/Release 兼容 ES/MySQL，运行时按固定 Release
+创建 Cleaner/Lifecycle Flow；配置和调度详见[动态来源设计](../design/event-source-dynamic-configuration.md)。
 
 ## 1. 职责
 
@@ -76,43 +76,21 @@ Event 和 Alert 只保存 Severity name。Lifecycle 在处理 triggered Event �
 
 ## 5. Enrichment 路由
 
-Lifecycle 启动时从完整 EventSource 清单冻结 `event_source_id → Processor Chain` 路由，enabled 与
-disabled 来源都包含在内。空链使用成功的 Noop；未知来源表示配置与持久化数据不一致并进入 Lifecycle
-丰富降级。当前已注册 `strategy/resource/display/metric/source`，列表顺序同时决定执行顺序和
+每个 Lifecycle 任务按调度分配的 EventSource Release 冻结 `event_source_id → Processor Chain` 路由，
+发布变更通过停止确认后重启任务生效。数据源连接由进程持有并共享；空链使用成功的 Noop，
+未知来源表示配置与持久化数据不一致并进入 Lifecycle 丰富降级。当前已注册 `strategy/resource/display/metric/source`，列表顺序同时决定执行顺序和
 `Alert.enrich.processors` 输出顺序。
 
-当前数据源适配器采用开发期固定 mock，只贯通一个 BASE_COLLECT 样例；真实依赖连接与联调状态见
+丰富数据源使用进程静态配置的 MySQL 与 OneModel Elasticsearch 连接；配置与联调边界见
 [配置指南](../guides/configuration.md)。
 
-## 6. Flow 装配
+## 6. Flow 装配与变更
 
-关键抽象为：
+中心调度器分别规划 Cleaner/Lifecycle 副本，默认 all，支持标签、数字数量和 0；enabled=false 为总停用。
+Cleaner 的数量自动受 Kafka topic partition 数限制。每个进程同源同角色最多一个 Flow，all-in-one 两角色可共存。
+两类 Flow 复用进程连接资源；任务各自拥有消费 Session、确认和重试状态。
+配置变更通过停止报告/确认后重新分配，失联按有界自停与超时强切恢复。
 
-```go
-type FlowFactory interface {
-    NewFlow(ctx context.Context, source config.EventSource) (Flow, error)
-}
-
-type Flow interface {
-    Run(ctx context.Context) error
-}
-```
-
-`cleaner.Scheduler` 在启动时深拷贝并校验全部 EventSource，然后为每个 enabled 来源并发创建一条独立
-Flow。每条 Flow 拥有自己的 MQ Session、Cleaner Runtime、确认状态和重试状态；不同来源不得共享
-这些可变状态。
-
-当前 Scheduler 采用 fail-fast：任一 Flow 创建失败、panic、异常返回或运行失败都会取消其他 Flow，
-等待它们完成清理后返回聚合错误。当前没有来源级健康状态、自动重建或部分可用控制面。
-
-默认 `FlowFactory` 当前只把 EventSource 的 Kafka 配置装配为 `consume/kafka.Session`。Cleaner Runtime
-本身与 MQ 解耦；增加其他来源适配器时，需要同时扩展 EventSource storage 配置和 FlowFactory，不能在
-Cleaner 核心中判断具体 MQ 类型。
-
-## 7. 生命周期与变更边界
-
-- EventSource 在进程启动时加载并冻结；当前不支持热更新或 revision；
-- 修改、启用或停用来源需要重启对应进程；
-- `event_source_id`、fingerprint 和 Severity name 会进入持久化对象，变更前必须评估存量数据关系；
-- 当前没有 EventSource 数据库、控制面同步或来源级迁移协议；
-- 当前配置只接受 `event_sources[].event_source_id`，不提供其他来源字段名的别名。
+Event、Alert 均保存 event_source_version。Event 绑定生成时的 Release，Alert 继承创建 Event 的版本，普通更新不覆盖。
+不保存 offset 版本区间，未落库消息按当前任务配置处理；已持久化相同原始事实的重投复用原 Event。
+来源只通过 API/provider 或显式 import 命令修改，启动不自动导入 YAML。旧数据不自动迁移或清理。

@@ -20,17 +20,19 @@ import (
 
 // Config 描述一个 Redis Streams Consumer Group Session。
 type Config struct {
-	Connection     redisclient.Options
-	Stream         string
-	Group          string
-	Consumer       string
-	CreateGroup    bool
-	ReadBlock      time.Duration
-	ClaimMinIdle   time.Duration
-	BodyField      string
-	MessageIDField string
-	TenantIDField  string
-	OrderKeyField  string
+	// RetiredConsumers 仅由中心确认退出或授权强切后提供，允许定向接管。
+	RetiredConsumers []string
+	Connection       redisclient.Options
+	Stream           string
+	Group            string
+	Consumer         string
+	CreateGroup      bool
+	ReadBlock        time.Duration
+	ClaimMinIdle     time.Duration
+	BodyField        string
+	MessageIDField   string
+	TenantIDField    string
+	OrderKeyField    string
 }
 
 // WithDefaults 返回补齐适配器默认值的副本。

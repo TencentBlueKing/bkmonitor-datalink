@@ -186,9 +186,11 @@ type testProcessor struct {
 }
 
 func (p *testProcessor) Name() string { return p.name }
+
 func (p *testProcessor) Match(context.Context, *Scope) (bool, error) {
 	return true, nil
 }
+
 func (p *testProcessor) Process(ctx context.Context, scope *Scope) (ProcessorResult, error) {
 	return p.fn(ctx, scope)
 }
@@ -199,7 +201,8 @@ func testAlert() domain.Alert {
 	historyID, _ := domain.NewNumberScalar(70001)
 	bizID, _ := domain.NewNumberScalar(2)
 	return domain.Alert{
-		AlertID: "alert-1", BKTenantID: "tenant-1", EventSourceID: "built_in_bk", Fingerprint: "fp",
+		EventSourceVersion: 1,
+		AlertID:            "alert-1", BKTenantID: "tenant-1", EventSourceID: "built_in_bk", Fingerprint: "fp",
 		Title: "CPU high", Content: "usage is high", Severity: "warning", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")},
 		Labels:    domain.DimensionMap{labelStrategyID: strategyID, labelStrategyHistoryID: historyID, labelBizID: bizID},
 		ExtraData: domain.JSONObject{"nested": json.RawMessage(`{"value":1}`)}, Status: domain.AlertStatusActive,

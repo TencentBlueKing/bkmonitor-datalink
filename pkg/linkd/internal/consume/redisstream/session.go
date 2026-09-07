@@ -90,6 +90,9 @@ func (s *Session) ValidateRuntime(config consume.Config) error {
 
 // Receive 优先接管超时 Pending，再读取当前 Consumer Group 的新消息。
 func (s *Session) Receive(ctx context.Context, limits consume.ReceiveLimits) ([]consume.Delivery, error) {
+	if err := consume.WaitForAdmission(ctx); err != nil {
+		return nil, err
+	}
 	if limits.MaxMessages <= 0 || limits.MaxBytes <= 0 {
 		return nil, fmt.Errorf("redis streams receive: invalid limits: %+v", limits)
 	}
@@ -176,6 +179,12 @@ func (s *Session) Receive(ctx context.Context, limits consume.ReceiveLimits) ([]
 }
 
 func (s *Session) claim(ctx context.Context, maxMessages int) ([]redis.XMessage, bool, error) {
+	if len(s.config.RetiredConsumers) > 0 {
+		messages, err := s.claimRetired(ctx, maxMessages)
+		if err != nil || len(messages) > 0 {
+			return messages, len(messages) > 0, err
+		}
+	}
 	s.mu.Lock()
 	start := s.claimStart
 	s.mu.Unlock()
@@ -275,7 +284,7 @@ func (s *Session) Close(ctx context.Context) error {
 	go func() { done <- s.client.Close() }()
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("%w: %w", consume.ErrStopIncomplete, ctx.Err())
 	case err := <-done:
 		if err != nil {
 			return fmt.Errorf("close redis streams session: %w", err)
@@ -329,3 +338,51 @@ func valueHeaders(values map[string]any) map[string][]byte {
 var _ consume.Session = (*Session)(nil)
 
 var _ consume.RuntimeValidator = (*Session)(nil)
+
+// claimRetired 在同一 Lua 中选择退休 consumer 的 Pending 并转交，不零等待扫描整个 Group。
+func (s *Session) claimRetired(ctx context.Context, limit int) ([]redis.XMessage, error) {
+	client, ok := s.client.(interface {
+		Eval(context.Context, string, []string, ...any) *redis.Cmd
+	})
+	if !ok {
+		return nil, fmt.Errorf("retired consumer recovery requires atomic Redis scripting")
+	}
+	const script = `local pending=redis.call('XPENDING',KEYS[1],ARGV[1],'-','+',ARGV[4],ARGV[2]); local result={}; for _,p in ipairs(pending) do local messages=redis.call('XCLAIM',KEYS[1],ARGV[1],ARGV[3],0,p[1]); for _,m in ipairs(messages) do result[#result+1]=m end end; return result`
+	for len(s.config.RetiredConsumers) > 0 {
+		old := s.config.RetiredConsumers[0]
+		values, e := client.Eval(ctx, script, []string{s.config.Stream}, s.config.Group, old, s.config.Consumer, limit).Slice()
+		if e != nil {
+			return nil, e
+		}
+		if len(values) == 0 {
+			s.config.RetiredConsumers = s.config.RetiredConsumers[1:]
+			continue
+		}
+		messages := make([]redis.XMessage, 0, len(values))
+		for _, value := range values {
+			row, ok := value.([]any)
+			if !ok || len(row) != 2 {
+				return nil, fmt.Errorf("invalid retired claim response")
+			}
+			id, ok := row[0].(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid retired stream id")
+			}
+			fields, ok := row[1].([]any)
+			if !ok || len(fields)%2 != 0 {
+				return nil, fmt.Errorf("invalid retired stream fields")
+			}
+			m := redis.XMessage{ID: id, Values: map[string]any{}}
+			for i := 0; i < len(fields); i += 2 {
+				k, ok := fields[i].(string)
+				if !ok {
+					return nil, fmt.Errorf("invalid retired field name")
+				}
+				m.Values[k] = fields[i+1]
+			}
+			messages = append(messages, m)
+		}
+		return messages, nil
+	}
+	return nil, nil
+}

@@ -62,6 +62,15 @@ tests/       数据生成和 all-in-one E2E
 `all-in-one`，以及 Cleaner、Lifecycle、控制面（API / Leader / Manager）三进程模式；当前实现与目标
 边界见 [`docs/design/deployment.md`](docs/design/deployment.md)。
 
+## 动态来源与任务调度
+
+EventSource 通过控制面 API/自定义 provider 管理，显式 `linkd event-source import --file <yaml>` 导入；常驻进程不自动加载文件中的来源。
+Cleaner/Lifecycle 按来源和标签分配多副本，数量默认 all，支持 0 和 enabled 总开关；Cleaner 自动受 Kafka partition 数限制。
+Event/Alert 保存实际使用的 event_source_version，来源级 Stream 支持多个 Lifecycle consumer。
+启动前设置不同的 LINKD_API_TOKEN / LINKD_WORKER_TOKEN；DevTools 的 Event Sources 页面通过正式 API 修改配置。
+
+实现和边界见[来源管理](docs/design/event-source-dynamic-configuration.md)与[调度协议](docs/design/task-scheduling-protocol.md)。
+
 ## 本地开发
 
 要求 Go 1.26.7、golangci-lint v2.13.2，以及已安装依赖的 Node.js/pnpm 环境。

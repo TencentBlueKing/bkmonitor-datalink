@@ -96,8 +96,8 @@ func (r *Runtime) Run(ctx context.Context) error {
 		return fmt.Errorf("run message consumption runtime: unsupported settlement mode: %d", capabilities.Settlement)
 	}
 
-	receiveCtx, cancelReceive := context.WithCancel(context.Background())
-	workCtx, cancelWork := context.WithCancel(context.Background())
+	receiveCtx, cancelReceive := context.WithCancel(context.WithoutCancel(ctx))
+	workCtx, cancelWork := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelReceive()
 	defer cancelWork()
 
@@ -143,14 +143,14 @@ func (r *Runtime) Run(ctx context.Context) error {
 	select {
 	case <-backgroundDone:
 	case <-time.After(r.config.SessionCloseTimeout):
-		runErr = errors.Join(runErr, fmt.Errorf("stop message consumption workers: %w", context.DeadlineExceeded))
+		runErr = errors.Join(runErr, ErrStopIncomplete, fmt.Errorf("stop message consumption workers: %w", context.DeadlineExceeded))
 	}
 
 	closeCtx, closeCancel := context.WithTimeout(context.Background(), r.config.SessionCloseTimeout)
 	defer closeCancel()
 	closeErr := r.session.Close(closeCtx)
 	if closeErr != nil && !errors.Is(closeErr, ErrSessionClosed) {
-		closeErr = fmt.Errorf("close message consumption session: %w", closeErr)
+		closeErr = errors.Join(ErrStopIncomplete, fmt.Errorf("close message consumption session: %w", closeErr))
 	} else {
 		closeErr = nil
 	}

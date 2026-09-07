@@ -39,29 +39,29 @@ const redactedSecret = "******"
 
 // SecurityConfig 描述 Kafka 传输、TLS 与 SASL 配置。
 type SecurityConfig struct {
-	Protocol string      `yaml:"protocol"`
-	TLS      *TLSConfig  `yaml:"tls,omitempty"`
-	SASL     *SASLConfig `yaml:"sasl,omitempty"`
+	Protocol string      `yaml:"protocol" json:"protocol"`
+	TLS      *TLSConfig  `yaml:"tls,omitempty" json:"tls,omitempty"`
+	SASL     *SASLConfig `yaml:"sasl,omitempty" json:"sasl,omitempty"`
 }
 
 // TLSConfig 描述 Kafka TLS 信任根、客户端证书和服务端校验配置。
 // 文件路径和内联 PEM 分别适合挂载 Secret 与单文件配置；同一类材料不得重复声明来源。
 type TLSConfig struct {
-	CAFile             string `yaml:"ca_file,omitempty"`
-	CAPEM              string `yaml:"ca_pem,omitempty"`
-	ClientCertFile     string `yaml:"client_cert_file,omitempty"`
-	ClientKeyFile      string `yaml:"client_key_file,omitempty"`
-	ClientCertPEM      string `yaml:"client_cert_pem,omitempty"`
-	ClientKeyPEM       string `yaml:"client_key_pem,omitempty"`
-	ServerName         string `yaml:"server_name,omitempty"`
-	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
+	CAFile             string `yaml:"ca_file,omitempty" json:"ca_file,omitempty"`
+	CAPEM              string `yaml:"ca_pem,omitempty" json:"ca_pem,omitempty"`
+	ClientCertFile     string `yaml:"client_cert_file,omitempty" json:"client_cert_file,omitempty"`
+	ClientKeyFile      string `yaml:"client_key_file,omitempty" json:"client_key_file,omitempty"`
+	ClientCertPEM      string `yaml:"client_cert_pem,omitempty" json:"client_cert_pem,omitempty"`
+	ClientKeyPEM       string `yaml:"client_key_pem,omitempty" json:"client_key_pem,omitempty"`
+	ServerName         string `yaml:"server_name,omitempty" json:"server_name,omitempty"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty" json:"insecure_skip_verify,omitempty"`
 }
 
 // SASLConfig 描述 Kafka 用户名密码认证。
 type SASLConfig struct {
-	Mechanism string `yaml:"mechanism"`
-	Username  string `yaml:"username"`
-	Password  string `yaml:"password"`
+	Mechanism string `yaml:"mechanism" json:"mechanism"`
+	Username  string `yaml:"username" json:"username"`
+	Password  string `yaml:"password" json:"password"`
 }
 
 // WithDefaults 返回补齐 plaintext 默认协议且不共享嵌套对象的副本。

@@ -111,6 +111,9 @@ func (s *Session) Capabilities() consume.Capabilities {
 
 // Receive 从 push consumer channel 桥接出有界批次。
 func (s *Session) Receive(ctx context.Context, limits consume.ReceiveLimits) ([]consume.Delivery, error) {
+	if err := consume.WaitForAdmission(ctx); err != nil {
+		return nil, err
+	}
 	if limits.MaxMessages <= 0 || limits.MaxBytes <= 0 {
 		return nil, fmt.Errorf("rabbitmq receive: invalid limits: %+v", limits)
 	}

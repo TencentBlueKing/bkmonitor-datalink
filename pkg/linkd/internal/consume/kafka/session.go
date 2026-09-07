@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -39,14 +40,17 @@ type receiptData struct {
 }
 
 type ownershipBridge struct {
-	mu       sync.RWMutex
-	events   chan consume.OwnershipEvent
-	owned    map[string]bool
-	enforced bool
+	closed    chan struct{}
+	closeOnce sync.Once
+	observer  func([]string)
+	mu        sync.RWMutex
+	events    chan consume.OwnershipEvent
+	owned     map[string]bool
+	enforced  bool
 }
 
 func newOwnershipBridge() *ownershipBridge {
-	return &ownershipBridge{events: make(chan consume.OwnershipEvent, 8), owned: make(map[string]bool)}
+	return &ownershipBridge{closed: make(chan struct{}), events: make(chan consume.OwnershipEvent, 8), owned: make(map[string]bool)}
 }
 
 // Session 把 Kafka partition offset 映射为 lane 级累计确认。
@@ -115,6 +119,15 @@ func (s *Session) Capabilities() consume.Capabilities {
 
 // Receive 拉取一个有界批次；Runtime 通过全局和 lane 上限控制多个 poll 的在途规模。
 func (s *Session) Receive(ctx context.Context, limits consume.ReceiveLimits) ([]consume.Delivery, error) {
+	if s.ownership != nil {
+		s.ownership.mu.Lock()
+		s.ownership.observer = consume.PartitionObserver(ctx)
+		s.ownership.mu.Unlock()
+		s.ownership.reportOwned()
+	}
+	if err := consume.WaitForAdmission(ctx); err != nil {
+		return nil, err
+	}
 	if limits.MaxMessages <= 0 || limits.MaxBytes <= 0 {
 		return nil, fmt.Errorf("kafka receive: invalid limits: %+v", limits)
 	}
@@ -131,6 +144,16 @@ func (s *Session) Receive(ctx context.Context, limits consume.ReceiveLimits) ([]
 	}
 	fetches := s.client.PollRecords(pollCtx, limits.MaxMessages)
 	cancelPoll()
+	if s.ownership != nil {
+		s.ownership.mu.Lock()
+		lanes := make([]string, 0, len(s.ownership.owned))
+		for lane := range s.ownership.owned {
+			lanes = append(lanes, lane)
+		}
+		s.ownership.mu.Unlock()
+		sort.Strings(lanes)
+		consume.ReportPartitions(ctx, lanes)
+	}
 	if fetchErrors := fetches.Errors(); len(fetchErrors) > 0 {
 		if paused && errors.Is(fetchErrors[0].Err, context.DeadlineExceeded) && ctx.Err() == nil {
 			s.allowRebalanceIfIdle()
@@ -337,6 +360,9 @@ func (s *Session) Close(ctx context.Context) error {
 	s.mu.Unlock()
 	s.client.AllowRebalance()
 
+	if s.ownership != nil {
+		s.ownership.closeOnce.Do(func() { close(s.ownership.closed) })
+	}
 	done := make(chan struct{})
 	go func() {
 		s.client.Close()
@@ -344,7 +370,7 @@ func (s *Session) Close(ctx context.Context) error {
 	}()
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("%w: %w", consume.ErrStopIncomplete, ctx.Err())
 	case <-done:
 		return nil
 	}
@@ -367,6 +393,7 @@ func (b *ownershipBridge) assigned(ctx context.Context, _ *kgo.Client, partition
 		b.owned[lane] = true
 	}
 	b.mu.Unlock()
+	b.reportOwned()
 	b.send(ctx, consume.OwnershipAssigned, lanes, nil)
 }
 
@@ -378,6 +405,7 @@ func (b *ownershipBridge) revoked(ctx context.Context, _ *kgo.Client, partitions
 			delete(b.owned, lane)
 		}
 		b.mu.Unlock()
+		b.reportOwned()
 	})
 }
 
@@ -389,6 +417,7 @@ func (b *ownershipBridge) lost(ctx context.Context, _ *kgo.Client, partitions ma
 		delete(b.owned, lane)
 	}
 	b.mu.Unlock()
+	b.reportOwned()
 	b.send(ctx, consume.OwnershipLost, lanes, nil)
 }
 
@@ -406,12 +435,18 @@ func (b *ownershipBridge) send(ctx context.Context, kind consume.OwnershipEventK
 	event := consume.OwnershipEvent{Kind: kind, Lanes: append([]string(nil), lanes...), Complete: complete}
 	select {
 	case b.events <- event:
+	case <-b.closed:
+		complete()
+		return
 	case <-ctx.Done():
 		complete()
 		return
 	}
 	select {
 	case <-done:
+	case <-b.closed:
+		complete()
+		return
 	case <-ctx.Done():
 		complete()
 	}
@@ -479,3 +514,18 @@ var _ consume.LaneController = (*Session)(nil)
 var _ consume.FlowController = (*Session)(nil)
 
 var _ consume.OwnershipSession = (*Session)(nil)
+
+// reportOwned 在 ownership 回调时即时上报，空 topic 的 PollRecords 不返回也能看到分配。
+func (b *ownershipBridge) reportOwned() {
+	b.mu.Lock()
+	observer := b.observer
+	lanes := make([]string, 0, len(b.owned))
+	for lane := range b.owned {
+		lanes = append(lanes, lane)
+	}
+	b.mu.Unlock()
+	sort.Strings(lanes)
+	if observer != nil {
+		observer(lanes)
+	}
+}

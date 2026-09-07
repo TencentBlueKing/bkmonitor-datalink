@@ -209,5 +209,5 @@ func signalMessage(t *testing.T, event domain.Event) consume.Message {
 }
 
 func testEvent(id string) domain.Event {
-	return domain.Event{BKTenantID: "tenant-1", EventSourceID: "source-1", EventID: id, Fingerprint: "fp-1"}
+	return domain.Event{EventSourceVersion: 1, BKTenantID: "tenant-1", EventSourceID: "source-1", EventID: id, Fingerprint: "fp-1"}
 }

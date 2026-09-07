@@ -29,7 +29,7 @@ func TestArchiveTerminalAlertsBulkCreatesHistoryThenConditionallyDeletesActive(t
 	event := eventForIDTest(t, eventID, now)
 	alertID, _ := domain.GenerateAlertID(event, event.CreateAt)
 	endAt := now.Add(time.Minute)
-	alert := domain.Alert{
+	alert := domain.Alert{EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
 		Fingerprint: event.Fingerprint, Severity: event.Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusRecovered, LatestEventID: eventID,
@@ -280,7 +280,7 @@ func TestTerminalAlertCASLeavesPhysicalArchiveToManager(t *testing.T) {
 	eventID, _ := domain.GenerateEventID("tenant-1", "source-1", "event-1", now)
 	event := eventForIDTest(t, eventID, now)
 	alertID, _ := domain.GenerateAlertID(event, event.CreateAt)
-	active := domain.Alert{
+	active := domain.Alert{EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
 		Fingerprint: event.Fingerprint, Severity: event.Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: eventID,
@@ -364,7 +364,7 @@ func archiveStoredAlert(t *testing.T, stableID string, createAt time.Time) store
 		t.Fatal(err)
 	}
 	endAt := createAt.Add(time.Minute)
-	alert := domain.Alert{
+	alert := domain.Alert{EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
 		Fingerprint: event.Fingerprint, Severity: event.Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusRecovered, LatestEventID: eventID,

@@ -34,7 +34,7 @@ record timestamp 作为 received_at。`event_sources[].cleaner.type=standard` �
 - action 必填且只允许 `triggered | resolved | closed`。
 - payload severity 是来源原值；默认 SeverityResolver 依次使用 severity_mapping、全局同名 Severity、来源 default_severity 和全局 default_severity。
 - event_id 和 alert_id 分别映射为 Event.source_event_id 和 Event.source_alert_id，二者都允许为空。
-- bk_tenant_id、event_source_id、related_alert_id、fingerprint、received_at、create_at 和 source_raw_data 即使出现在 payload 中也不会覆盖 EventFactory 的结果，只会保留在原始快照中。
+- bk_tenant_id、event_source_id、event_source_version、related_alert_id、fingerprint、received_at、create_at 和 source_raw_data 即使出现在 payload 中也不会覆盖 EventFactory 的结果，只会保留在原始快照中。
 - `RawEventMessage.bk_tenant_id` 来自适配器；EventSource.related_tenant_id 非空时强制覆盖消息租户，否则消息租户必填。
 - occurred_at 缺失时使用稳定 received_at；produced_at 缺失时同样使用 received_at。
 - event_id 为空时使用稳定 record ID 参与 Linkd Event ID 摘要。

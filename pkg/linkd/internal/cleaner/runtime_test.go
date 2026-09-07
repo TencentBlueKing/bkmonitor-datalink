@@ -136,7 +136,7 @@ func (runtimeTestProcessor) Process(_ context.Context, message consume.Message) 
 	if message.ID == "bad" {
 		return ProcessResult{DiscardErr: context.Canceled}, nil
 	}
-	return ProcessResult{Event: domain.Event{
+	return ProcessResult{Event: domain.Event{EventSourceVersion: 1,
 		BKTenantID: "tenant", EventSourceID: "source", EventID: message.ID,
 		Fingerprint: message.ID, Title: message.ID,
 	}}, nil
@@ -284,7 +284,7 @@ func TestRuntimeRestoresLaneOrderAfterConcurrentProcessing(t *testing.T) {
 	}
 }
 
-func TestRuntimeIgnoresSessionCloseDeadlineAfterRequestedShutdown(t *testing.T) {
+func TestRuntimeReportsIncompleteSessionCloseAfterRequestedShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	session := newRuntimeTestSession(nil)
@@ -301,7 +301,7 @@ func TestRuntimeIgnoresSessionCloseDeadlineAfterRequestedShutdown(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runtime.Run(ctx); err != nil {
+	if err := runtime.Run(ctx); !errors.Is(err, consume.ErrStopIncomplete) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if !session.closed {
@@ -370,7 +370,7 @@ func TestRuntimePartialBulkResultAdvancesOnlyContinuousPrefix(t *testing.T) {
 		entries[index] = &cleanerEntry{
 			delivery: delivery,
 			readyAt:  time.Now(),
-			event: domain.Event{
+			event: domain.Event{EventSourceVersion: 1,
 				BKTenantID: "tenant", EventSourceID: "source", EventID: delivery.Message.ID,
 				Fingerprint: delivery.Message.ID, Title: delivery.Message.ID,
 			},
@@ -400,7 +400,7 @@ func TestRuntimeTerminalReplaySkipsMailboxAndConfirmsSource(t *testing.T) {
 	session := newRuntimeTestSession(nil, struct{ lane, id string }{"lane-a", "event-1"})
 	entry := &cleanerEntry{
 		delivery: session.deliveries[0], readyAt: time.Now(),
-		event: domain.Event{
+		event: domain.Event{EventSourceVersion: 1,
 			BKTenantID: "tenant", EventSourceID: "source", EventID: "event-1", Fingerprint: "fp-1", Title: "event-1",
 		},
 	}
@@ -428,7 +428,7 @@ func TestRuntimeUnprocessedReplayStillEnqueuesMailbox(t *testing.T) {
 	session := newRuntimeTestSession(nil, struct{ lane, id string }{"lane-a", "event-1"})
 	entry := &cleanerEntry{
 		delivery: session.deliveries[0], readyAt: time.Now(),
-		event: domain.Event{
+		event: domain.Event{EventSourceVersion: 1,
 			BKTenantID: "tenant", EventSourceID: "source", EventID: "event-1", Fingerprint: "fp-1", Title: "event-1",
 		},
 	}
@@ -474,7 +474,7 @@ func TestRuntimeFlushesLaneBatchByCountBytesOrWait(t *testing.T) {
 				delivery.Message.Body = []byte(test.bodies[index])
 				entries[index] = &cleanerEntry{
 					delivery: delivery, readyAt: now.Add(-test.readyAgo),
-					event: domain.Event{BKTenantID: "tenant", EventSourceID: "source", EventID: delivery.Message.ID,
+					event: domain.Event{EventSourceVersion: 1, BKTenantID: "tenant", EventSourceID: "source", EventID: delivery.Message.ID,
 						Fingerprint: delivery.Message.ID, Title: delivery.Message.ID},
 				}
 			}

@@ -148,11 +148,8 @@ func (r *Runtime) Run(ctx context.Context) (runErr error) {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := r.session.Close(closeCtx); err != nil && !errors.Is(err, consume.ErrSessionClosed) {
-			if ctx.Err() != nil && errors.Is(err, context.DeadlineExceeded) {
-				r.logger.WarnContext(context.Background(), "cleaner session close timed out after shutdown")
-				return
-			}
-			runErr = errors.Join(runErr, fmt.Errorf("close cleaner session: %w", err))
+
+			runErr = errors.Join(runErr, consume.ErrStopIncomplete, fmt.Errorf("close cleaner session: %w", err))
 		}
 	}()
 
@@ -163,7 +160,7 @@ func (r *Runtime) Run(ctx context.Context) (runErr error) {
 	batches := make(chan laneBatchResult, r.config.MaxConcurrentBatches)
 	batchSlots := make(chan struct{}, r.config.MaxConcurrentBatches)
 	var batchWG sync.WaitGroup
-	workCtx, cancelWork := context.WithCancel(context.Background())
+	workCtx, cancelWork := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelWork()
 	var background sync.WaitGroup
 	background.Add(1)

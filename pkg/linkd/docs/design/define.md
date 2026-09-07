@@ -9,7 +9,7 @@ EventSource 的配置与运行边界见 [EventSource](../modules/event-source.md
 ## 1. 对象关系
 
 ```text
-EventSource（静态配置）
+EventSourceRelease（持久化配置快照）
   └─ 产生多个 Event
        ├─ EventProcessing：该 Event 的生命周期处理结果
        └─ accepted/suppressed 时 related_alert_id → Alert
@@ -39,6 +39,8 @@ Event、Alert 和 AlertLog 是独立对象，Repository 不提供跨对象事务
 ## 3. Event
 
 Event 是 `RawEventMessage` 经来源 Cleaner 和 EventFactory 标准化后的来源事实。
+
+Event 的 `event_source_version` 是正整数，记录实际使用的来源 Release。Alert 创建时继承触发 Event 的该值，普通更新不可覆盖；AlertLog 不增加独立顶层版本。
 
 ### 3.1 字段
 

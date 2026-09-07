@@ -15,7 +15,8 @@ FinalHook 在 Alert 发生真实变更后发送一个完整 V1 快照：
   },
   "enrich_status": "succeeded",
   "alert": {
-    "event_source_id": "source-a"
+    "event_source_id": "source-a",
+    "event_source_version": 1
   }
 }
 ```
@@ -23,6 +24,8 @@ FinalHook 在 Alert 发生真实变更后发送一个完整 V1 快照：
 `cause.type` 只允许 `source_event | user_operation | system_operation`，`cause.id` 是对应 Event ID 或稳定 operation ID。Kafka headers 同步携带 `message_id`、`schema_version`、`bk_tenant_id`、`alert_id`、`cause_type` 和 `cause_id`。
 
 `message_id` 由租户、`alert_id` 和 `update_at` 确定性生成；partition key 由租户和 `alert_id` 确定性生成。生产端等待 all-ISR ACK，失败不伪装成已投递。
+
+Alert 快照中的 `event_source_version` 为正整数，记录创建时继承的来源发布版本；普通更新不覆盖。
 
 输出规则：
 

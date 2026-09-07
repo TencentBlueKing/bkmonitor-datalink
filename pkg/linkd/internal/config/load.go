@@ -28,6 +28,8 @@ const (
 )
 
 type fileConfig struct {
+	Dispatch     DispatchConfig       `yaml:"dispatch"`
+	Worker       WorkerConfig         `yaml:"worker"`
 	Logging      logging.Config       `yaml:"logging"`
 	Storage      *StorageConfig       `yaml:"storage"`
 	Lifecycle    *LifecycleConfig     `yaml:"lifecycle"`
@@ -39,6 +41,7 @@ type fileConfig struct {
 }
 
 type fileEventSource struct {
+	Scheduling        SourceScheduling   `yaml:"scheduling"`
 	EventSourceID     string             `yaml:"event_source_id"`
 	RelatedTenantID   string             `yaml:"related_tenant_id"`
 	Enabled           *bool              `yaml:"enabled"`
@@ -115,6 +118,7 @@ func load(path string, overrides Overrides, lookupEnv func(string) (string, bool
 		controlPlane = &normalized
 	}
 	cfg := Config{
+		Dispatch: decoded.Dispatch, Worker: decoded.Worker,
 		Logging:      decoded.Logging,
 		Storage:      storage,
 		Lifecycle:    lifecycle,
@@ -123,6 +127,15 @@ func load(path string, overrides Overrides, lookupEnv func(string) (string, bool
 		Cleaner:      decoded.Cleaner.WithDefaults(),
 		Severity:     decoded.Severity.WithDefaults(),
 		EventSources: eventSources,
+	}
+	if value, ok := lookupEnv("LINKD_API_TOKEN"); ok {
+		cfg.Dispatch.APIToken = value
+	}
+	if value, ok := lookupEnv("LINKD_WORKER_TOKEN"); ok {
+		cfg.Dispatch.WorkerToken = value
+	}
+	if value, ok := lookupEnv("LINKD_CONTROL_PLANE_URL"); ok {
+		cfg.Dispatch.URL = value
 	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -163,6 +176,7 @@ func decodeEventSources(decoded []fileEventSource) ([]EventSource, error) {
 		}
 		sources[index] = EventSource{
 			EventSourceID:     source.EventSourceID,
+			Scheduling:        source.Scheduling,
 			RelatedTenantID:   source.RelatedTenantID,
 			Enabled:           *source.Enabled,
 			Cleaner:           cleaner,

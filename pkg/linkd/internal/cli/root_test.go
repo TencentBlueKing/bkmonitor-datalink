@@ -213,24 +213,12 @@ func TestCompletionCommand(t *testing.T) {
 	}
 }
 
-func TestCleanerStopsWhenContextIsCanceled(t *testing.T) {
-	t.Parallel()
-
-	path := writeCLIConfig(t, `logging:
-  level: info
-  format: json
-`)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	command, stdout, _ := testCommand("test-version")
+func TestCleanerWithoutDynamicDependenciesFailsBeforeRunning(t *testing.T) {
+	path := writeCLIConfig(t, "{}\n")
+	command, _, _ := testCommand("test-version")
 	command.SetArgs([]string{"run", "cleaner", "--config", path})
-	if err := command.ExecuteContext(ctx); err != nil {
-		t.Fatalf("ExecuteContext() error = %v", err)
-	}
-	if output := stdout.String(); !strings.Contains(output, `"msg":"linkd cleaner started"`) ||
-		!strings.Contains(output, `"msg":"linkd cleaner stopped"`) {
-		t.Fatalf("cleaner output = %s", output)
+	if err := command.ExecuteContext(context.Background()); err == nil || !strings.Contains(err.Error(), "storage config is required") {
+		t.Fatalf("expected dynamic dependencies, got %v", err)
 	}
 }
 

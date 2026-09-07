@@ -17,10 +17,12 @@ import (
 	"testing"
 
 	"linkd/internal/config"
+	"linkd/internal/lifecycle"
+	"linkd/internal/lifecycle/enrich/assembly"
 	"linkd/internal/telemetry"
 )
 
-func TestValidateConfigRequiresAlarmSourceDataSource(t *testing.T) {
+func TestReleaseRequiresAlarmSourceDataSource(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{
@@ -35,12 +37,12 @@ func TestValidateConfigRequiresAlarmSourceDataSource(t *testing.T) {
 			Enrich:        config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "source"}}},
 		}},
 	}
-	if err := ValidateConfig(cfg); err == nil || !strings.Contains(err.Error(), "lifecycle.datasources.alarm_source") {
+	if err := validateEnricherConfig(cfg.EventSources, *cfg.Lifecycle); err == nil || !strings.Contains(err.Error(), "lifecycle.datasources.alarm_source") {
 		t.Fatalf("ValidateConfig() error=%v", err)
 	}
 }
 
-func TestValidateConfigRequiresEnrichDataSources(t *testing.T) {
+func TestReleaseRequiresEnrichDataSources(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{
@@ -55,11 +57,11 @@ func TestValidateConfigRequiresEnrichDataSources(t *testing.T) {
 			Enrich:        config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "resource"}}},
 		}},
 	}
-	if err := ValidateConfig(cfg); err == nil || !strings.Contains(err.Error(), "lifecycle.datasources.cw_strategy") {
+	if err := validateEnricherConfig(cfg.EventSources, *cfg.Lifecycle); err == nil || !strings.Contains(err.Error(), "lifecycle.datasources.cw_strategy") {
 		t.Fatalf("ValidateConfig() error=%v", err)
 	}
 	cfg.Lifecycle.DataSources.CWStrategy = validMySQLConfig()
-	if err := ValidateConfig(cfg); err == nil || !strings.Contains(err.Error(), "lifecycle.datasources.onemodel") {
+	if err := validateEnricherConfig(cfg.EventSources, *cfg.Lifecycle); err == nil || !strings.Contains(err.Error(), "lifecycle.datasources.onemodel") {
 		t.Fatalf("ValidateConfig() error=%v", err)
 	}
 }
@@ -161,4 +163,39 @@ func validMySQLConfig() *config.MySQLConfig {
 
 func validRedisConfig() *config.RedisConfig {
 	return &config.RedisConfig{Address: "redis.example.com:6379"}
+}
+
+func TestReleaseEnrichRoutesAreIndependent(t *testing.T) {
+	t.Parallel()
+	runtime := &enrichRuntime{}
+	cfg := *validLifecycleConfig()
+	source := config.EventSource{EventSourceID: "dynamic-source", Version: 1}
+	first, err := runtime.router(source, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.Version = 2
+	source.Enrich.Processors = []config.EnrichProcessorConfig{{Type: "source"}}
+	if _, err := runtime.router(source, cfg, nil); err == nil {
+		t.Fatal("missing data source accepted")
+	}
+	cfg.DataSources.AlarmSource = validMySQLConfig()
+	second, err := runtime.router(source, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.Enrich.Processors[0].Type = "unknown"
+	if _, err := runtime.router(source, cfg, nil); err == nil {
+		t.Fatal("unknown processor accepted")
+	}
+	if first.(*assembly.Router).EnrichChainKind(source.EventSourceID) != lifecycle.EnrichChainNoop || second.(*assembly.Router).EnrichChainKind(source.EventSourceID) != lifecycle.EnrichChainConfigured {
+		t.Fatal("new release changed an existing route")
+	}
+}
+
+func TestValidateConfigDoesNotLoadYAMLSourceRoutes(t *testing.T) {
+	cfg := config.Config{Lifecycle: validLifecycleConfig(), Storage: &config.StorageConfig{Repository: config.RepositoryTypeMySQL, MySQL: validMySQLConfig(), Redis: validRedisConfig()}, EventSources: []config.EventSource{{EventSourceID: "yaml-only", Enrich: config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "unknown"}}}}}}
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("startup used YAML source route: %v", err)
+	}
 }

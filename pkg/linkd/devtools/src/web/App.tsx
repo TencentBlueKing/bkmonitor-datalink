@@ -1,3 +1,4 @@
+import { EventSourcesPage } from "./pages/EventSourcesPage";
 import { useQuery } from "@tanstack/react-query";
 import { Component, lazy, type ReactNode, Suspense, useState } from "react";
 import {
@@ -100,11 +101,15 @@ const navigationGroups: Array<{
   },
   {
     label: "系统",
-    items: [{ to: "/config", label: "Configuration", glyph: "⚙" }],
+    items: [
+      { to: "/event-sources", label: "Event Sources", glyph: "◈" },
+      { to: "/config", label: "Configuration", glyph: "⚙" },
+    ],
   },
 ];
 
 export function App() {
+  const routeLocation = useLocation();
   const [timeMode, setTimeMode] = useState<TimeMode>("local");
   const [pageQueryFailed, setPageQueryFailed] = useState(false);
   const capabilities = useQuery({
@@ -174,7 +179,11 @@ export function App() {
                 </span>
               </div>
               <div className="topbar-actions">
-                <span className="readonly-pill">READ ONLY</span>
+                <span className="readonly-pill">
+                  {routeLocation.pathname === "/event-sources"
+                    ? "CONFIGURATION API"
+                    : "READ ONLY"}
+                </span>
                 <button
                   className="timezone-button"
                   type="button"
@@ -288,6 +297,7 @@ function PageRoutes() {
             </Suspense>
           }
         />
+        <Route path="/event-sources" element={<EventSourcesPage />} />
         <Route
           path="/config"
           element={

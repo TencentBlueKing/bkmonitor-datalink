@@ -27,33 +27,37 @@ const (
 
 // EventSource 是一个全局唯一、供进程调度和事件标准化使用的事件源定义。
 type EventSource struct {
-	EventSourceID     string                   `yaml:"event_source_id"`
-	RelatedTenantID   string                   `yaml:"related_tenant_id,omitempty"`
-	Enabled           bool                     `yaml:"enabled"`
-	Cleaner           CleanerConfig            `yaml:"cleaner"`
-	FingerprintMode   string                   `yaml:"fingerprint_mode,omitempty"`
-	FingerprintField  string                   `yaml:"fingerprint_field,omitempty"`
-	FingerprintFields []string                 `yaml:"fingerprint_fields,omitempty"`
-	SeverityMapping   map[string]string        `yaml:"severity_mapping,omitempty"`
-	DefaultSeverity   string                   `yaml:"default_severity,omitempty"`
-	Enrich            EnrichConfig             `yaml:"enrich,omitempty"`
-	Storage           EventSourceStorageConfig `yaml:"storage"`
+	// RuntimeClientID 由任务代次注入，不属于可编辑配置或发布摘要。
+	RuntimeClientID   string                   `yaml:"-" json:"-"`
+	Version           int64                    `yaml:"-" json:"-"`
+	Scheduling        SourceScheduling         `yaml:"scheduling" json:"scheduling"`
+	EventSourceID     string                   `yaml:"event_source_id" json:"event_source_id"`
+	RelatedTenantID   string                   `yaml:"related_tenant_id,omitempty" json:"related_tenant_id,omitempty"`
+	Enabled           bool                     `yaml:"enabled" json:"enabled"`
+	Cleaner           CleanerConfig            `yaml:"cleaner" json:"cleaner"`
+	FingerprintMode   string                   `yaml:"fingerprint_mode,omitempty" json:"fingerprint_mode,omitempty"`
+	FingerprintField  string                   `yaml:"fingerprint_field,omitempty" json:"fingerprint_field,omitempty"`
+	FingerprintFields []string                 `yaml:"fingerprint_fields,omitempty" json:"fingerprint_fields,omitempty"`
+	SeverityMapping   map[string]string        `yaml:"severity_mapping,omitempty" json:"severity_mapping,omitempty"`
+	DefaultSeverity   string                   `yaml:"default_severity,omitempty" json:"default_severity,omitempty"`
+	Enrich            EnrichConfig             `yaml:"enrich,omitempty" json:"enrich,omitempty"`
+	Storage           EventSourceStorageConfig `yaml:"storage" json:"storage"`
 }
 
 // EnrichConfig 定义该来源创建新 Alert 时按顺序执行的丰富处理链。
 type EnrichConfig struct {
-	Processors []EnrichProcessorConfig `yaml:"processors,omitempty"`
+	Processors []EnrichProcessorConfig `yaml:"processors,omitempty" json:"processors,omitempty"`
 }
 
 // EnrichProcessorConfig 通过稳定注册名选择丰富处理器。
 type EnrichProcessorConfig struct {
-	Type string `yaml:"type"`
+	Type string `yaml:"type" json:"type"`
 }
 
 // CleanerConfig 选择一个进程内注册的来源 Cleaner。
 type CleanerConfig struct {
-	Type    string                `yaml:"type"`
-	Runtime *CleanerRuntimeConfig `yaml:"runtime,omitempty"`
+	Type    string                `yaml:"type" json:"type"`
+	Runtime *CleanerRuntimeConfig `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 }
 
 // RuntimeConfig 将该事件源的非零局部预算覆盖到进程级 Cleaner 默认预算上。
@@ -66,23 +70,26 @@ func (c CleanerConfig) RuntimeConfig(global CleanerRuntimeConfig) CleanerRuntime
 
 // EventSourceStorageConfig 定义 EventSource 当前使用的输入消息队列配置。
 type EventSourceStorageConfig struct {
-	Type  string             `yaml:"type"`
-	Kafka KafkaStorageConfig `yaml:"kafka"`
+	Type  string             `yaml:"type" json:"type"`
+	Kafka KafkaStorageConfig `yaml:"kafka" json:"kafka"`
 }
 
 // KafkaStorageConfig 定义 EventSource 的 Kafka subscription 与安全参数。
 type KafkaStorageConfig struct {
-	Brokers       []string `yaml:"brokers"`
-	Topic         string   `yaml:"topic"`
-	ConsumerGroup string   `yaml:"consumer_group"`
+	Brokers       []string `yaml:"brokers" json:"brokers"`
+	Topic         string   `yaml:"topic" json:"topic"`
+	ConsumerGroup string   `yaml:"consumer_group" json:"consumer_group"`
 	// FetchMaxWaitMilliseconds 限制 broker 空拉取等待；不控制 Cleaner 或 ES 合批。
-	FetchMaxWaitMilliseconds int                        `yaml:"fetch_max_wait_milliseconds"`
-	Security                 kafkaclient.SecurityConfig `yaml:"security"`
+	FetchMaxWaitMilliseconds int                        `yaml:"fetch_max_wait_milliseconds" json:"fetch_max_wait_milliseconds"`
+	Security                 kafkaclient.SecurityConfig `yaml:"security" json:"security"`
 }
 
 // WithDefaults 补齐 fingerprint、Cleaner 和安全协议默认值并深拷贝配置。
 func (s EventSource) WithDefaults() EventSource {
 	s = s.clone()
+	if s.Version == 0 {
+		s.Version = 1
+	}
 	if s.Cleaner.Type == "" {
 		s.Cleaner.Type = CleanerTypeStandard
 	}
@@ -108,6 +115,7 @@ func (s EventSource) Redacted() EventSource {
 
 func (s EventSource) clone() EventSource {
 	cloned := s
+	cloned.Scheduling = s.Scheduling.Clone()
 	if s.Cleaner.Runtime != nil {
 		runtimeConfig := *s.Cleaner.Runtime
 		cloned.Cleaner.Runtime = &runtimeConfig
@@ -116,7 +124,10 @@ func (s EventSource) clone() EventSource {
 	cloned.Enrich.Processors = append([]EnrichProcessorConfig(nil), s.Enrich.Processors...)
 	cloned.Storage.Kafka.Brokers = append([]string(nil), s.Storage.Kafka.Brokers...)
 	cloned.Storage.Kafka.Security = s.Storage.Kafka.Security.Clone()
-	if s.SeverityMapping != nil {
+	if len(s.SeverityMapping) == 0 {
+		cloned.SeverityMapping = nil
+	}
+	if len(s.SeverityMapping) > 0 {
 		cloned.SeverityMapping = make(map[string]string, len(s.SeverityMapping))
 		for source, target := range s.SeverityMapping {
 			cloned.SeverityMapping[source] = target
@@ -151,6 +162,9 @@ func ValidateEventSources(sources []EventSource, severity SeverityConfig) error 
 }
 
 func (s EventSource) validate(severity SeverityConfig) error {
+	if err := s.Scheduling.Validate(); err != nil {
+		return err
+	}
 	if err := validateBoundedText("event_source_id", s.EventSourceID, 1, 32); err != nil {
 		return err
 	}

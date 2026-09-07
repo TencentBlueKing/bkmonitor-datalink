@@ -135,7 +135,8 @@ func (f *EventFactory) Build(message RawEventMessage, draft EventDraft) (domain.
 		return domain.Event{}, err
 	}
 	event := domain.Event{
-		BKTenantID: tenantID, EventSourceID: f.source.EventSourceID,
+		EventSourceVersion: f.source.Version,
+		BKTenantID:         tenantID, EventSourceID: f.source.EventSourceID,
 		EventID: eventID,
 		Title:   draft.Title, Content: draft.Content, Severity: severity,
 		Action: draft.Action, ActionReason: draft.ActionReason,

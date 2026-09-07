@@ -46,7 +46,8 @@ func TestBuildStrategyURLInstance(t *testing.T) {
 	hostID, _ := domain.NewNumberScalar(101)
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	alert := domain.Alert{
-		AlertID: "alert-1", BKTenantID: "tenant-a", EventSourceID: "built_in_bk", Fingerprint: "fp",
+		EventSourceVersion: 1,
+		AlertID:            "alert-1", BKTenantID: "tenant-a", EventSourceID: "built_in_bk", Fingerprint: "fp",
 		Title: "CPU", Severity: "warning", Status: domain.AlertStatusActive,
 		Dimensions: domain.DimensionMap{"bk_inst_id": hostID}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{},
 		LatestEventID: "event-1", TriggerEventID: "event-1", SourceEventID: "source-event-1",

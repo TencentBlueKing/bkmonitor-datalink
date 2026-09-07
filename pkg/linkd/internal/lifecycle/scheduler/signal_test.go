@@ -18,7 +18,7 @@ import (
 )
 
 func TestMailboxSignalRoundTrip(t *testing.T) {
-	event := domain.Event{BKTenantID: "tenant-1", EventSourceID: "source-1", Fingerprint: "fp-1"}
+	event := domain.Event{EventSourceVersion: 1, BKTenantID: "tenant-1", EventSourceID: "source-1", Fingerprint: "fp-1"}
 	signal := NewSignal(event, time.Unix(100, 0))
 	body, err := EncodeSignal(signal)
 	if err != nil {
@@ -38,7 +38,7 @@ func TestMailboxSignalRoundTrip(t *testing.T) {
 }
 
 func TestMailboxSignalRejectsForgedIdentity(t *testing.T) {
-	event := domain.Event{BKTenantID: "tenant-1", EventSourceID: "source-1", Fingerprint: "fp-1"}
+	event := domain.Event{EventSourceVersion: 1, BKTenantID: "tenant-1", EventSourceID: "source-1", Fingerprint: "fp-1"}
 	signal := NewSignal(event, time.Unix(100, 0))
 	signal.MailboxID = "forged"
 	if _, err := EncodeSignal(signal); err == nil {
@@ -47,7 +47,7 @@ func TestMailboxSignalRejectsForgedIdentity(t *testing.T) {
 }
 
 func TestMailboxSignalRejectsTrailingJSON(t *testing.T) {
-	event := domain.Event{BKTenantID: "tenant-1", EventSourceID: "source-1", Fingerprint: "fp-1"}
+	event := domain.Event{EventSourceVersion: 1, BKTenantID: "tenant-1", EventSourceID: "source-1", Fingerprint: "fp-1"}
 	body, err := EncodeSignal(NewSignal(event, time.Unix(100, 0)))
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestMailboxSignalRejectsTrailingJSON(t *testing.T) {
 }
 
 func TestMailboxSignalRejectsLegacySourceField(t *testing.T) {
-	event := domain.Event{BKTenantID: "tenant-1", EventSourceID: "source-1", Fingerprint: "fp-1"}
+	event := domain.Event{EventSourceVersion: 1, BKTenantID: "tenant-1", EventSourceID: "source-1", Fingerprint: "fp-1"}
 	body, err := EncodeSignal(NewSignal(event, time.Unix(100, 0)))
 	if err != nil {
 		t.Fatal(err)

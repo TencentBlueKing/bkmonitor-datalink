@@ -17,6 +17,7 @@ import (
 )
 
 type instruments struct {
+	dispatch                *dispatchInstruments
 	pipelineAttempts        metric.Int64Counter
 	pipelineAttemptDuration metric.Float64Histogram
 	pipelineInflight        metric.Int64UpDownCounter
@@ -640,6 +641,9 @@ func newInstruments(meter metric.Meter) (*instruments, error) {
 		metric.WithUnit("{conflict}"),
 		metric.WithDescription("存储 CAS 冲突次数"),
 	); err != nil {
+		return nil, err
+	}
+	if result.dispatch, err = newDispatchInstruments(meter); err != nil {
 		return nil, err
 	}
 	return result, nil

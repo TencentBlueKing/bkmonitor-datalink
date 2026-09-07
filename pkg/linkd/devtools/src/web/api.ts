@@ -101,13 +101,18 @@ export async function getKafkaInfrastructure(): Promise<KafkaInfrastructure> {
   );
 }
 
-export async function getRedisInfrastructure(): Promise<RedisInfrastructure> {
+export async function getRedisInfrastructure(
+  eventSourceId?: string,
+): Promise<RedisInfrastructure> {
   return redisInfrastructureSchema.parse(
-    await request("/local-api/infrastructure/redis"),
+    await request(
+      `/local-api/infrastructure/redis${eventSourceId ? `?event_source_id=${encodeURIComponent(eventSourceId)}` : ""}`,
+    ),
   );
 }
 
 export async function getRedisPending(input: {
+  eventSourceId?: string;
   group?: string;
   limit?: number;
 }): Promise<RedisPendingResponse> {
@@ -120,6 +125,7 @@ export async function getRedisPending(input: {
 }
 
 export async function getRedisMailboxes(input: {
+  eventSourceId?: string;
   query?: string;
   limit?: number;
 }): Promise<RedisMailboxResponse> {
@@ -132,6 +138,7 @@ export async function getRedisMailboxes(input: {
 }
 
 export async function getRedisLeases(input: {
+  eventSourceId?: string;
   query?: string;
   limit?: number;
 }): Promise<RedisLeaseResponse> {

@@ -882,7 +882,7 @@ func activeKeyForTest(value any) store.ActiveAlertKey {
 
 func storetestAlert(event domain.Event, alertID string) domain.Alert {
 	now := event.CreateAt.Add(time.Second)
-	return domain.Alert{
+	return domain.Alert{EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
 		Fingerprint: event.Fingerprint, Title: event.Title, Severity: event.Severity,
 		ConditionKey: event.ConditionKey, Dimensions: event.Dimensions.Clone(),
@@ -920,7 +920,7 @@ func mustGetStoredEvent(t *testing.T, repo store.Repository, event domain.Event)
 
 func testEvent(id, severity string) domain.Event {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	return domain.Event{BKTenantID: "tenant-1", EventSourceID: "source", EventID: id, Fingerprint: "fingerprint-1", Title: "CPU high", Severity: severity, Action: domain.EventActionTriggered, ConditionKey: "cpu", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-" + id, SourceAlertID: "source-alert", SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
+	return domain.Event{EventSourceVersion: 1, BKTenantID: "tenant-1", EventSourceID: "source", EventID: id, Fingerprint: "fingerprint-1", Title: "CPU high", Severity: severity, Action: domain.EventActionTriggered, ConditionKey: "cpu", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-" + id, SourceAlertID: "source-alert", SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
 }
 
 type fixedClock struct{ now time.Time }

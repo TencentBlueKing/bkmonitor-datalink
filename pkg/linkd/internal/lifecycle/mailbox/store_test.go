@@ -166,7 +166,7 @@ func TestStoreDoesNotAckUnexpectedHead(t *testing.T) {
 }
 
 func mailboxEvent(id string) domain.Event {
-	return domain.Event{BKTenantID: "tenant-1", EventSourceID: "source-1", Fingerprint: "fp-1", EventID: id}
+	return domain.Event{EventSourceVersion: 1, BKTenantID: "tenant-1", EventSourceID: "source-1", Fingerprint: "fp-1", EventID: id}
 }
 
 var _ redisClient = (*fakeRedis)(nil)

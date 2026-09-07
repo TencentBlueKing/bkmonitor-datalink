@@ -416,24 +416,31 @@ type panicSources struct{}
 func (panicSources) GetStrategyHistory(context.Context, int64, int64) (models.BkStrategyHistory, bool, error) {
 	panic("data source called")
 }
+
 func (panicSources) GetStrategy(context.Context, int64) (models.BkStrategy, bool, error) {
 	panic("data source called")
 }
+
 func (panicSources) GetByBKStrategyID(context.Context, int64) (models.CWStrategy, bool, error) {
 	panic("data source called")
 }
+
 func (panicSources) GetByMonitorTemplateID(context.Context, int64) (models.CWStrategy, bool, error) {
 	panic("data source called")
 }
+
 func (panicSources) GetAlarmSourceName(context.Context, string, string) (string, bool, error) {
 	panic("data source called")
 }
+
 func (panicSources) FindMetricLibrary(context.Context, models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
 	panic("data source called")
 }
+
 func (panicSources) FindInstance(context.Context, string, enrich.InstanceQuery) (enrich.Instance, bool, error) {
 	panic("data source called")
 }
+
 func (p panicSources) Sources() enrich.Sources {
 	return enrich.Sources{BKStrategy: p, CWStrategy: p, Metric: p, OneModel: p, AlarmSource: p}
 }
@@ -445,7 +452,8 @@ func baseCollectAlert(source string) domain.Alert {
 	historyID, _ := domain.NewNumberScalar(float64(datasources.SampleHistoryID))
 	bizID, _ := domain.NewNumberScalar(float64(datasources.SampleBizID))
 	return domain.Alert{
-		AlertID: "alert-1", BKTenantID: datasources.SampleTenantID, EventSourceID: source, Fingerprint: "fp",
+		EventSourceVersion: 1,
+		AlertID:            "alert-1", BKTenantID: datasources.SampleTenantID, EventSourceID: source, Fingerprint: "fp",
 		Title: "CPU high", Content: "CPU usage is high", Severity: "warning", SubjectName: "host-101",
 		SourceEventID: "source-event-1", Dimensions: domain.DimensionMap{"bk_inst_id": hostID},
 		Labels:    domain.DimensionMap{"bk_strategy_id": strategyID, "bk_strategy_history_id": historyID, "bk_biz_id": bizID},

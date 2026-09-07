@@ -30,19 +30,19 @@ const (
 // CleanerRuntimeConfig 定义一条 EventSource Flow 的并发、批量和资源预算。
 // EventSource 中的零值字段继承顶层 cleaner 配置。
 type CleanerRuntimeConfig struct {
-	WorkerCount                 int `yaml:"worker_count"`
-	MaxBatchMessages            int `yaml:"max_batch_messages"`
-	MaxBatchBytes               int `yaml:"max_batch_bytes"`
-	BatchWaitMilliseconds       int `yaml:"batch_wait_milliseconds"`
-	MaxConcurrentBatches        int `yaml:"max_concurrent_batches"`
-	MaxInflightMessages         int `yaml:"max_inflight_messages"`
-	MaxInflightBytes            int `yaml:"max_inflight_bytes"`
-	MaxInflightPerLane          int `yaml:"max_inflight_per_lane"`
-	ResumeInflightPerLane       int `yaml:"resume_inflight_per_lane"`
-	ProcessTimeoutSeconds       int `yaml:"process_timeout_seconds"`
-	RetryMaxAttempts            int `yaml:"retry_max_attempts"`
-	RetryMaxElapsedSeconds      int `yaml:"retry_max_elapsed_seconds"`
-	ShutdownDrainTimeoutSeconds int `yaml:"shutdown_drain_timeout_seconds"`
+	WorkerCount                 int `yaml:"worker_count" json:"worker_count"`
+	MaxBatchMessages            int `yaml:"max_batch_messages" json:"max_batch_messages"`
+	MaxBatchBytes               int `yaml:"max_batch_bytes" json:"max_batch_bytes"`
+	BatchWaitMilliseconds       int `yaml:"batch_wait_milliseconds" json:"batch_wait_milliseconds"`
+	MaxConcurrentBatches        int `yaml:"max_concurrent_batches" json:"max_concurrent_batches"`
+	MaxInflightMessages         int `yaml:"max_inflight_messages" json:"max_inflight_messages"`
+	MaxInflightBytes            int `yaml:"max_inflight_bytes" json:"max_inflight_bytes"`
+	MaxInflightPerLane          int `yaml:"max_inflight_per_lane" json:"max_inflight_per_lane"`
+	ResumeInflightPerLane       int `yaml:"resume_inflight_per_lane" json:"resume_inflight_per_lane"`
+	ProcessTimeoutSeconds       int `yaml:"process_timeout_seconds" json:"process_timeout_seconds"`
+	RetryMaxAttempts            int `yaml:"retry_max_attempts" json:"retry_max_attempts"`
+	RetryMaxElapsedSeconds      int `yaml:"retry_max_elapsed_seconds" json:"retry_max_elapsed_seconds"`
+	ShutdownDrainTimeoutSeconds int `yaml:"shutdown_drain_timeout_seconds" json:"shutdown_drain_timeout_seconds"`
 }
 
 func DefaultCleanerRuntimeConfig() CleanerRuntimeConfig {

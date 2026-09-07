@@ -18,6 +18,8 @@ import (
 )
 
 var (
+	// ErrStopIncomplete 表示消费客户端尚未确认关闭，不能报告任务安全停止。
+	ErrStopIncomplete = errors.New("consumer stop incomplete")
 	// ErrSessionClosed 表示当前 Broker Session 已关闭，Receipt 也随之失效。
 	ErrSessionClosed = errors.New("message consumption session is closed")
 	// ErrReceiveLimitExceeded 表示适配器返回的数据超过运行时本次允许接管的上限。

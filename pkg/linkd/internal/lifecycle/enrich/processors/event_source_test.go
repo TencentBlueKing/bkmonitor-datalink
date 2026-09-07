@@ -23,7 +23,8 @@ func TestEventSourceUsesEventSourceIDForLookupAndSourceEventIDForMeta(t *testing
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	reader := &recordingAlarmSourceReader{name: "自定义告警源"}
 	scope, err := enrich.NewScope(domain.Alert{
-		AlertID: "alert-1", BKTenantID: "tenant-a", EventSourceID: "alarm-source-1", Fingerprint: "fp",
+		EventSourceVersion: 1,
+		AlertID:            "alert-1", BKTenantID: "tenant-a", EventSourceID: "alarm-source-1", Fingerprint: "fp",
 		Title: "alarm", Severity: "warning", Status: domain.AlertStatusActive,
 		Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{},
 		SourceEventID: "source-event-1", LatestEventID: "event-1", TriggerEventID: "event-1",

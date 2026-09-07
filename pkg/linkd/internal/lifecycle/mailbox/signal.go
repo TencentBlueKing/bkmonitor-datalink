@@ -119,3 +119,11 @@ func writeLengthPrefixed(destination hash.Hash, value string) {
 	_, _ = destination.Write(length[:])
 	_, _ = destination.Write([]byte(value))
 }
+
+// SourceKey 编码部署和来源，避免任意字符产生 Redis 键碰撞。
+func SourceKey(deployment, source string) string { return CorrelationKey(deployment, source, "source") }
+
+// SourceStream 为同来源所有 Lifecycle 副本提供稳定 Stream，发布不会切走积压。
+func SourceStream(prefix, deployment, source string) string {
+	return prefix + ":" + SourceKey(deployment, source)
+}

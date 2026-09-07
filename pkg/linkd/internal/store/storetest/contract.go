@@ -249,12 +249,12 @@ func waitForAlertLogs(
 // Event 返回一个有效的新 Event 测试夹具。
 func Event(tenantID, eventID, fingerprint, severity string) domain.Event {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	return domain.Event{BKTenantID: tenantID, EventSourceID: "source", EventID: eventID, Fingerprint: fingerprint, Title: "CPU high", Severity: severity, Action: domain.EventActionTriggered, ConditionKey: "cpu", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-" + eventID, SourceAlertID: fingerprint, SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
+	return domain.Event{EventSourceVersion: 1, BKTenantID: tenantID, EventSourceID: "source", EventID: eventID, Fingerprint: fingerprint, Title: "CPU high", Severity: severity, Action: domain.EventActionTriggered, ConditionKey: "cpu", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-" + eventID, SourceAlertID: fingerprint, SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
 }
 
 // Alert 返回一个有效的 active Alert 测试夹具。
 func Alert(tenantID, alertID, eventID, fingerprint, severity string) domain.Alert {
 	event := Event(tenantID, eventID, fingerprint, severity)
 	now := event.CreateAt.Add(time.Second)
-	return domain.Alert{AlertID: alertID, BKTenantID: tenantID, EventSourceID: event.EventSourceID, Fingerprint: fingerprint, Title: event.Title, Severity: severity, ConditionKey: event.ConditionKey, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: eventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: eventID, BeginAt: event.OccurredAt, CreateAt: event.CreateAt, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"status": json.RawMessage(`"succeeded"`), "processors": json.RawMessage(`[]`)}}
+	return domain.Alert{EventSourceVersion: 1, AlertID: alertID, BKTenantID: tenantID, EventSourceID: event.EventSourceID, Fingerprint: fingerprint, Title: event.Title, Severity: severity, ConditionKey: event.ConditionKey, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: eventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: eventID, BeginAt: event.OccurredAt, CreateAt: event.CreateAt, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"status": json.RawMessage(`"succeeded"`), "processors": json.RawMessage(`[]`)}}
 }

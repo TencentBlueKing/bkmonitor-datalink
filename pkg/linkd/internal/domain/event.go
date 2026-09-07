@@ -21,32 +21,34 @@ var eventSourceIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 // Event 是来源消息经过 SourceCleaner 和通用事件工厂标准化后的事件事实。
 // Event 创建后只有 RelatedAlertID 可以由生命周期处理器写入，其他来源事实不可覆盖。
 type Event struct {
-	BKTenantID     string       `json:"bk_tenant_id"`
-	EventSourceID  string       `json:"event_source_id"`
-	RelatedAlertID string       `json:"related_alert_id,omitempty"`
-	EventID        string       `json:"event_id"`
-	Fingerprint    string       `json:"fingerprint"`
-	Title          string       `json:"title"`
-	Content        string       `json:"content"`
-	Severity       string       `json:"severity"`
-	Action         EventAction  `json:"action"`
-	ActionReason   string       `json:"action_reason"`
-	ConditionKey   string       `json:"condition_key"`
-	ConditionName  string       `json:"condition_name"`
-	Dimensions     DimensionMap `json:"dimensions"`
-	SubjectSystem  string       `json:"subject_system"`
-	SubjectType    string       `json:"subject_type"`
-	SubjectID      string       `json:"subject_id"`
-	SubjectName    string       `json:"subject_name"`
-	OccurredAt     time.Time    `json:"occurred_at"`
-	ProducedAt     time.Time    `json:"produced_at"`
-	ReceivedAt     time.Time    `json:"received_at"`
-	CreateAt       time.Time    `json:"create_at"`
-	SourceEventID  string       `json:"source_event_id"`
-	SourceAlertID  string       `json:"source_alert_id"`
-	SourceRawData  JSONObject   `json:"source_raw_data,omitempty"`
-	Labels         DimensionMap `json:"labels"`
-	ExtraData      JSONObject   `json:"extra_data,omitempty"`
+	// EventSourceVersion 是创建时实际使用的不可变来源发布版本。
+	EventSourceVersion int64        `json:"event_source_version"`
+	BKTenantID         string       `json:"bk_tenant_id"`
+	EventSourceID      string       `json:"event_source_id"`
+	RelatedAlertID     string       `json:"related_alert_id,omitempty"`
+	EventID            string       `json:"event_id"`
+	Fingerprint        string       `json:"fingerprint"`
+	Title              string       `json:"title"`
+	Content            string       `json:"content"`
+	Severity           string       `json:"severity"`
+	Action             EventAction  `json:"action"`
+	ActionReason       string       `json:"action_reason"`
+	ConditionKey       string       `json:"condition_key"`
+	ConditionName      string       `json:"condition_name"`
+	Dimensions         DimensionMap `json:"dimensions"`
+	SubjectSystem      string       `json:"subject_system"`
+	SubjectType        string       `json:"subject_type"`
+	SubjectID          string       `json:"subject_id"`
+	SubjectName        string       `json:"subject_name"`
+	OccurredAt         time.Time    `json:"occurred_at"`
+	ProducedAt         time.Time    `json:"produced_at"`
+	ReceivedAt         time.Time    `json:"received_at"`
+	CreateAt           time.Time    `json:"create_at"`
+	SourceEventID      string       `json:"source_event_id"`
+	SourceAlertID      string       `json:"source_alert_id"`
+	SourceRawData      JSONObject   `json:"source_raw_data,omitempty"`
+	Labels             DimensionMap `json:"labels"`
+	ExtraData          JSONObject   `json:"extra_data,omitempty"`
 }
 
 // Normalize 深拷贝动态字段、规范 UTC 时间并校验 Event。
@@ -89,6 +91,9 @@ func (e Event) Validate() error {
 // 只有 Normalize 完成所有动态 JSON 的校验和深拷贝后才跳过二次规范化。
 // 公共 Validate 仍必须检查任意调用方传入的动态字段，不能信任对象曾经被规范化。
 func (e Event) validate(validateJSON bool) error {
+	if e.EventSourceVersion <= 0 {
+		return fmt.Errorf("event_source_version must be positive")
+	}
 	for _, field := range []struct {
 		name  string
 		value string
@@ -231,4 +236,13 @@ func validateOptionalTextLength(name, value string, maxLength int) error {
 		return fmt.Errorf("%s length must not exceed %d bytes", name, maxLength)
 	}
 	return nil
+}
+
+// ValidateEventRedelivery 允许跨发布重投复用已保存的 Event，但不允许同一身份携带不同原始事实。
+// 这只用于 create 冲突核对；生命周期 CAS 仍使用 ValidateEventReplacement。
+func ValidateEventRedelivery(incoming, stored Event) error {
+	if incoming.EventSourceVersion != stored.EventSourceVersion && incoming.EventID == stored.EventID && incoming.BKTenantID == stored.BKTenantID && incoming.EventSourceID == stored.EventSourceID && incoming.ReceivedAt.Equal(stored.ReceivedAt) && incoming.SourceEventID == stored.SourceEventID && incoming.SourceAlertID == stored.SourceAlertID && len(incoming.SourceRawData) > 0 && reflect.DeepEqual(incoming.SourceRawData, stored.SourceRawData) {
+		return nil
+	}
+	return ValidateEventReplacement(incoming, stored)
 }

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"linkd/internal/cleaner"
@@ -21,6 +22,7 @@ import (
 	"linkd/internal/consume"
 	"linkd/internal/redisclient"
 	repositoryassembly "linkd/internal/store/assembly"
+	"linkd/internal/taskdispatch"
 	"linkd/internal/telemetry"
 )
 
@@ -47,11 +49,6 @@ func Run(
 	if err := ValidateConfig(cfg); err != nil {
 		return err
 	}
-	enabled := enabledSourceCount(cfg.EventSources)
-	if enabled == 0 {
-		<-ctx.Done()
-		return nil
-	}
 
 	startupCtx, cancelStartup := context.WithTimeout(ctx, startupTimeout)
 	defer cancelStartup()
@@ -77,66 +74,45 @@ func Run(
 	}
 
 	lifecycleConfig := cfg.Lifecycle.WithDefaults()
-	publisher, err := cleaner.NewRedisMailboxPublisher(redisClient, lifecycleConfig.MailboxConfig())
-	if err != nil {
-		return err
-	}
-	backpressure := lifecycleConfig.Mailbox.Backpressure
-	receiveGate, err := cleaner.NewSignalBackpressureChecker(redisClient, cleaner.BackpressureConfig{
-		Stream:        lifecycleConfig.Signal.Stream,
-		Group:         lifecycleConfig.Signal.Group,
-		CacheTTL:      time.Duration(backpressure.CacheTTLSeconds) * time.Second,
-		QueryTimeout:  time.Duration(backpressure.QueryTimeoutSeconds) * time.Second,
-		HighWatermark: backpressure.HighWatermark,
-		LowWatermark:  backpressure.LowWatermark,
-	}, telemetryBackpressureObserver{runtime: telemetryRuntime})
-	if err != nil {
-		return err
-	}
-	factory, err := cleaner.NewFactory(
-		observedRepository,
-		publisher,
-		receiveGate,
-		logger,
-		cfg.Cleaner,
-		cfg.Severity,
-		func(source config.EventSource) consume.Observer {
-			return telemetryRuntime.ConsumeObserver(consume.RuntimeLabels{
-				Stage: "clean", Transport: "kafka", EventSourceID: source.EventSourceID,
-				RecordPipelineAttempts: true,
-			})
-		},
-	)
-	if err != nil {
-		return err
-	}
-	scheduler, err := cleaner.NewScheduler(cfg.EventSources, cfg.Severity, factory)
-	if err != nil {
-		return fmt.Errorf("initialize default cleaner scheduler: %w", err)
-	}
-	if err := scheduler.Run(ctx); err != nil {
-		return fmt.Errorf("run default cleaner scheduler: %w", err)
-	}
-	return nil
+	return taskdispatch.Serve(ctx, cfg, "cleaner", func(taskCtx context.Context, task taskdispatch.Task, source config.EventSource) error {
+		source.RuntimeClientID = taskdispatch.ConsumerName(task)
+		lc := lifecycleConfig.ForSource(cfg.Dispatch.WithDefaults().Deployment, source.EventSourceID)
+		if err := redisClient.XGroupCreateMkStream(taskCtx, lc.Signal.Stream, lc.Signal.Group, "0").Err(); err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
+			return err
+		}
+		publisher, err := cleaner.NewRedisMailboxPublisher(redisClient, lc.MailboxConfig())
+		if err != nil {
+			return err
+		}
+		backpressure := lc.Mailbox.Backpressure
+		receiveGate, err := cleaner.NewSignalBackpressureChecker(redisClient, cleaner.BackpressureConfig{Stream: lc.Signal.Stream, Group: lc.Signal.Group, CacheTTL: time.Duration(backpressure.CacheTTLSeconds) * time.Second, QueryTimeout: time.Duration(backpressure.QueryTimeoutSeconds) * time.Second, HighWatermark: backpressure.HighWatermark, LowWatermark: backpressure.LowWatermark}, telemetryBackpressureObserver{runtime: telemetryRuntime})
+		if err != nil {
+			return err
+		}
+		runtimeConfig := source.Cleaner.RuntimeConfig(cfg.Cleaner)
+		runtimeConfig.ShutdownDrainTimeoutSeconds = int(taskdispatch.DrainTimeout / time.Second)
+		source.Cleaner.Runtime = &runtimeConfig
+		factory, err := cleaner.NewFactory(observedRepository, publisher, receiveGate, logger, cfg.Cleaner, cfg.Severity, func(s config.EventSource) consume.Observer {
+			return telemetryRuntime.ConsumeObserver(consume.RuntimeLabels{Stage: "clean", Transport: "kafka", EventSourceID: s.EventSourceID, RecordPipelineAttempts: true})
+		})
+		if err != nil {
+			return err
+		}
+		flow, err := factory.NewFlow(taskCtx, source)
+		if err != nil {
+			return err
+		}
+		return flow.Run(taskCtx)
+	}, telemetryRuntime.DispatchObserver())
 }
 
 func repositoryConnectionBudget(cfg config.Config) int {
-	// Event 持久化并发由每个 Flow 的 batch slot 限制；额外两个连接留给启动校验和失败核对。
-	budget := 2
-	for _, source := range cfg.EventSources {
-		if !source.Enabled {
-			continue
-		}
-		budget += source.Cleaner.RuntimeConfig(cfg.Cleaner).MaxConcurrentBatches
-	}
-	return budget
+	return min(1024, cfg.Dispatch.WithDefaults().MaxTasks*64+2)
 }
 
 // ValidateConfig 校验默认 cleaner 运行所需的共享存储和 lifecycle signal 配置。
 func ValidateConfig(cfg config.Config) error {
-	if enabledSourceCount(cfg.EventSources) == 0 {
-		return nil
-	}
+
 	if cfg.Storage == nil {
 		return fmt.Errorf("run cleaner process: storage config is required for enabled event sources")
 	}
@@ -153,16 +129,6 @@ func ValidateConfig(cfg config.Config) error {
 		return fmt.Errorf("run cleaner process: lifecycle.signal.stream is required")
 	}
 	return nil
-}
-
-func enabledSourceCount(sources []config.EventSource) int {
-	count := 0
-	for _, source := range sources {
-		if source.Enabled {
-			count++
-		}
-	}
-	return count
 }
 
 type telemetryBackpressureObserver struct{ runtime *telemetry.Runtime }

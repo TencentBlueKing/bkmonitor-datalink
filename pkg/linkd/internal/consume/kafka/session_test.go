@@ -362,3 +362,15 @@ func (c *fakeKafkaClient) allowCalls() int {
 }
 
 var _ kafkaClient = (*fakeKafkaClient)(nil)
+
+func TestOwnershipCallbacksDoNotBlockAfterRuntimeStops(t *testing.T) {
+	bridge := newOwnershipBridge()
+	bridge.closeOnce.Do(func() { close(bridge.closed) })
+	done := make(chan struct{})
+	go func() { bridge.revoked(context.Background(), nil, map[string][]int32{"events": {0}}); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Kafka close callback waits for an exited runtime")
+	}
+}

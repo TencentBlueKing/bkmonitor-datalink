@@ -167,12 +167,13 @@ event_sources:
 
 `event_sources[].enrich.processors` 是新 Alert 创建前的有序丰富链。当前注册名为
 `strategy/resource/display/metric/source`；空列表输出 `{"status":"succeeded","processors":[]}`。
-重复类型、空 type 和装配阶段发现的未知类型都会使进程启动失败。disabled 来源同样进入 Lifecycle
-路由快照，已有 Event 恢复处理时仍采用该来源配置。
+重复类型和空 type 在来源配置校验时拒绝；未知处理器或缺少所需数据源配置会使对应
+Lifecycle 任务启动失败。路由按任务固定的 Release 创建，来源发布后通过停止确认与重新调度生效，
+不从启动 YAML 装配路由。停用来源按调度协议停止任务，积压保留。
 
-当前 Lifecycle 装配使用开发期固定 mock DataSource，仅匹配 `tenant-1`、策略 `123`、历史 `70001`
-与业务 `2` 的 BASE_COLLECT 样例。该模式用于验证处理器与存储/输出链路，真实平台库、鲸眼存储、
-CMDB、Redis、Elasticsearch 和远端服务仍待接入及集成验证。
+丰富数据源使用 `lifecycle.datasources` 中静态配置的 MySQL 与 OneModel Elasticsearch 连接。
+进程启动时打开已配置的数据源并供各来源任务共享，新增来源可以直接使用这些连接；修改数据源
+连接配置需要重启进程。真实依赖的联调结果需单独验证，普通单元测试使用 mock 不代表生产链路已验证。
 
 顶层 `cleaner` 是每条 EventSource Flow 的默认预算；`event_sources[].cleaner.runtime` 只覆盖非零
 字段。每条 Flow 内共享清洗 worker pool，但 Event 持久化、Mailbox 入队和原消息确认始终按 lane 独立推进，
@@ -411,3 +412,38 @@ linkd storage prepare --config /etc/linkd/linkd.yaml \
 
 删除操作不可恢复。本仓库不提供旧 schema 的 reindex、双读或双写逻辑，也不会在启动时替操作者执行
 删除。本轮不自动执行 retention；达到 `max_buckets_per_entity` 时 Bucket Manager 会失败并要求人工处理。
+
+## 动态 EventSource 与调度
+
+来源运行配置以 ES/MySQL 中的 Record/Release 为准。文件中的 `event_sources` 只供显式导入和本地模拟器使用，常驻进程不会自动导入。
+
+```yaml
+dispatch:
+  deployment: default
+  listen: 127.0.0.1:8090
+  url: http://127.0.0.1:8090
+  max_tasks: 16
+worker:
+  labels:
+    pool: ingestion
+  require_explicit_selector: false
+  max_concurrency: 128
+  max_inflight_bytes: 268435456
+```
+
+`LINKD_API_TOKEN` 与 `LINKD_WORKER_TOKEN` 必须显式设置且不同；也可在受保护的本地 YAML 中配置 `dispatch.api_token` 和 `dispatch.worker_token`。
+`LINKD_CONTROL_PLANE_URL` 可覆盖 worker/CLI 的控制面地址。不要把 token 提交到仓库。
+
+```bash
+# 先运行控制面或 all-in-one，再在另一个终端显式导入。
+linkd event-source import --config configs/linkd.local.yaml --file configs/linkd.local.yaml
+```
+
+来源新增 `scheduling.cleaner` / `scheduling.lifecycle`，各含 `replicas`（默认 all，或非负整数）与 `selector`（精确 AND 标签）。
+0 停止对应角色，enabled=false 停止整个来源。Cleaner 有 Kafka partition 上限，Lifecycle 无此上限。
+同一进程同源同角色最多一个 Flow；all-in-one 的两种角色允许共存。资源上限作用于整个 worker，不随来源数量无限增长。
+
+`lifecycle.signal.stream` 现在作为来源 Stream 的基础前缀；最终键由 deployment/EventSource 稳定派生。
+不要手工在前缀中加入 Release 或 worker ID。背压、Mailbox、lease 和 Stream 诊断均使用同一派生规则。
+
+详细 API 见[动态来源设计](../design/event-source-dynamic-configuration.md)，恢复与容器关闭预算见[调度协议](../design/task-scheduling-protocol.md)。

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -37,10 +38,14 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
 	"linkd/internal/cleaner"
+	"linkd/internal/config"
 	"linkd/internal/domain"
+	"linkd/internal/eventsource"
 	"linkd/internal/lifecycle/kafkahook"
+	"linkd/internal/lifecycle/mailbox"
 	"linkd/internal/lifecycle/scheduler"
 	"linkd/internal/store"
+	"linkd/internal/taskdispatch"
 	"linkd/internal/testkit/rawgen"
 )
 
@@ -161,6 +166,7 @@ func TestAllInOneElasticsearchE2E(t *testing.T) {
 	)
 
 	process := startAllInOne(t, repoRoot, binaryPath, configPath, temporaryDirectory)
+	names.SignalStream = mailbox.SourceStream(names.SignalStream, names.Token, dataset.Config.EventSourceID)
 	t.Cleanup(func() {
 		if err := process.stop(); err != nil {
 			t.Logf("stop all-in-one during cleanup: %v", err)
@@ -171,7 +177,9 @@ func TestAllInOneElasticsearchE2E(t *testing.T) {
 			}
 		}
 	})
+	importSources(ctx, t, process, configPath)
 	waitUntilReady(ctx, t, process, es, redisClient, names)
+	startExtraWorkers(ctx, t, repoRoot, binaryPath, configPath, temporaryDirectory, dataset.Config.EventSourceID)
 
 	produceDataset(ctx, t, environment.KafkaBroker, names.RawTopic, dataset)
 	events := waitForAcceptedEvents(ctx, t, process, es, names.EventIndex, expected)
@@ -183,6 +191,7 @@ func TestAllInOneElasticsearchE2E(t *testing.T) {
 	outputs := consumeOutputs(ctx, t, environment.KafkaBroker, names, expected.OutputMessages)
 	assertOutputs(t, outputs, events, expected.OutputMessages)
 	waitForRedisDrain(ctx, t, redisClient, names)
+	verifySourceMutationCycle(ctx, t, configPath)
 
 	if err := process.stop(); err != nil {
 		t.Fatalf("gracefully stop all-in-one: %v", err)
@@ -324,6 +333,7 @@ func TestAllInOneMySQLE2E(t *testing.T) {
 	)
 
 	process := startAllInOne(t, repoRoot, binaryPath, configPath, temporaryDirectory)
+	names.SignalStream = mailbox.SourceStream(names.SignalStream, names.Token, dataset.Config.EventSourceID)
 	t.Cleanup(func() {
 		if err := process.stop(); err != nil {
 			t.Logf("stop all-in-one during cleanup: %v", err)
@@ -334,7 +344,9 @@ func TestAllInOneMySQLE2E(t *testing.T) {
 			}
 		}
 	})
+	importSources(ctx, t, process, configPath)
 	waitUntilMySQLReady(ctx, t, process, repositoryDatabase, redisClient, names)
+	startExtraWorkers(ctx, t, repoRoot, binaryPath, configPath, temporaryDirectory, dataset.Config.EventSourceID)
 
 	produceDataset(ctx, t, environment.KafkaBroker, names.RawTopic, dataset)
 	events := waitForAcceptedMySQLEvents(ctx, t, process, repositoryDatabase, expected)
@@ -346,6 +358,7 @@ func TestAllInOneMySQLE2E(t *testing.T) {
 	outputs := consumeOutputs(ctx, t, environment.KafkaBroker, names, expected.OutputMessages)
 	assertOutputs(t, outputs, events, expected.OutputMessages)
 	waitForRedisDrain(ctx, t, redisClient, names)
+	verifySourceMutationCycle(ctx, t, configPath)
 
 	if err := process.stop(); err != nil {
 		t.Fatalf("gracefully stop all-in-one: %v", err)
@@ -806,6 +819,13 @@ func writeConfig(
 	if strings.Contains(configText, "{{") {
 		t.Fatal("E2E config contains unresolved placeholders")
 	}
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	_ = listener.Close()
+	configText += fmt.Sprintf("\ndispatch:\n  deployment: %s\n  listen: %s\n  url: http://%s\n  api_token: e2e-admin-%s\n  worker_token: e2e-worker-%s\n", names.Token, address, address, names.Token, names.Token)
 	path := filepath.Join(directory, "linkd-e2e.yaml")
 	// path 位于 testing.T.TempDir 创建的隔离目录中。
 	//nolint:gosec // G703: 不包含外部可控路径片段。
@@ -1525,6 +1545,171 @@ func redisMailboxesDrained(ctx context.Context, client *redis.Client, keyPrefix 
 		cursor = next
 		if cursor == 0 {
 			return true, nil
+		}
+	}
+}
+
+func importSources(ctx context.Context, t *testing.T, process *linkdProcess, path string) {
+	t.Helper()
+	cfg, err := config.Load(path, config.Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := taskdispatch.Client{URL: cfg.Dispatch.URL, Token: cfg.Dispatch.APIToken}
+	for {
+		var records []any
+		e := client.Call(ctx, http.MethodGet, "/api/v1/event-sources", nil, &records)
+		if e == nil {
+			break
+		}
+		if exited, err := process.checkExited(); exited {
+			t.Fatalf("process exited before source import: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("control API did not become ready")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	for _, source := range cfg.EventSources {
+		var record any
+		if err := client.Call(ctx, http.MethodPut, "/api/v1/event-sources/"+source.EventSourceID, taskdispatch.Mutation{Spec: source}, &record); err != nil {
+			t.Fatal("explicit source import", err)
+		}
+	}
+}
+
+// startExtraWorkers 验证 all 模式、多副本分担和 Kafka 三分片上限；资源仅属于本次测试。
+func startExtraWorkers(ctx context.Context, t *testing.T, root, binary, configPath, directory, sourceID string) {
+	t.Helper()
+	for i, role := range []string{"cleaner", "cleaner", "cleaner", "lifecycle"} {
+		dir := filepath.Join(directory, fmt.Sprintf("worker-%d", i))
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		//nolint:gosec // G304: dir 来自当前测试 TempDir 的固定子目录。
+		logFile, err := os.Create(filepath.Join(dir, "worker.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		//nolint:gosec // G204: binary/configPath 均由本测试创建，role 来自固定枚举。
+		command := exec.CommandContext(context.Background(), binary, "run", role, "--config", configPath)
+		command.Dir = root
+		command.Stdout = logFile
+		command.Stderr = logFile
+		if err := command.Start(); err != nil {
+			_ = logFile.Close()
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- command.Wait() }()
+		p := &linkdProcess{command: command, wait: done, logFile: logFile, logPath: logFile.Name()}
+		t.Cleanup(func() {
+			if err := p.stop(); err != nil {
+				t.Logf("stop extra %s worker: %v", role, err)
+			}
+		})
+	}
+	cfg, err := config.Load(configPath, config.Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := taskdispatch.Client{URL: cfg.Dispatch.URL, Token: cfg.Dispatch.APIToken}
+	for {
+		var state taskdispatch.State
+		if err := client.Call(ctx, http.MethodGet, "/api/v1/runtime", nil, &state); err == nil {
+			cleanerCount, lifecycleCount, assigned := 0, 0, 0
+			seen := map[string]bool{}
+			for _, task := range state.Tasks {
+				if task.Source != sourceID || task.Phase != "running" {
+					continue
+				}
+				key := task.Worker + task.Role
+				if seen[key] {
+					t.Fatal("same worker has duplicate source role")
+				}
+				seen[key] = true
+				if task.Role == "cleaner" {
+					cleanerCount++
+					if len(task.Partitions) > 0 {
+						assigned++
+					}
+				} else {
+					lifecycleCount++
+				}
+			}
+			if cleanerCount == 3 && lifecycleCount == 2 && assigned == 3 {
+				t.Log("multi-worker verified: 4 cleaner-capable workers capped at 3 partitions; 2 lifecycle replicas")
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("multi-worker scheduling did not converge; verify task state and broker assignments")
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+func verifySourceMutationCycle(ctx context.Context, t *testing.T, path string) {
+	t.Helper()
+	cfg, err := config.Load(path, config.Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := taskdispatch.Client{URL: cfg.Dispatch.URL, Token: cfg.Dispatch.APIToken}
+	spec := cfg.EventSources[0]
+	endpoint := "/api/v1/event-sources/" + spec.EventSourceID
+	var record eventsource.Record
+	zero := 0
+	spec.Scheduling.Cleaner.Replicas.Number = &zero
+	if err := client.Call(ctx, http.MethodPut, endpoint, taskdispatch.Mutation{Expected: 1, Spec: spec}, &record); err != nil || record.Published != 2 {
+		t.Fatalf("zero replicas publication: %v %+v", err, record.Redacted())
+	}
+	waitTaskCounts(ctx, t, client, 0, 2)
+	spec.Scheduling.Cleaner.Replicas.Number = nil
+	if err := client.Call(ctx, http.MethodPut, endpoint, taskdispatch.Mutation{Expected: 2, Spec: spec}, &record); err != nil || record.Published != 3 {
+		t.Fatal("resume publication failed", err)
+	}
+	waitTaskCounts(ctx, t, client, 3, 2)
+	if err := client.Call(ctx, http.MethodDelete, endpoint, map[string]int{"expected_revision": 3}, &record); err != nil || !record.Deleted {
+		t.Fatal("delete publication failed", err)
+	}
+	waitTaskCounts(ctx, t, client, 0, 0)
+	var first eventsource.Release
+	if err := client.Call(ctx, http.MethodGet, endpoint+"/releases/1", nil, &first); err != nil || !first.Spec.Enabled {
+		t.Fatal("immutable release lost", err)
+	}
+	t.Log("source API verified: replicas 0, resume all, tombstone delete and immutable old release")
+}
+
+func waitTaskCounts(ctx context.Context, t *testing.T, client taskdispatch.Client, cleanerCount, lifecycleCount int) {
+	t.Helper()
+	for {
+		var state taskdispatch.State
+		if err := client.Call(ctx, http.MethodGet, "/api/v1/runtime", nil, &state); err == nil {
+			c, l, pending := 0, 0, 0
+			for _, task := range state.Tasks {
+				switch task.Phase {
+				case "running":
+					if task.Role == "cleaner" {
+						c++
+					} else {
+						l++
+					}
+				case "stopped":
+				default:
+					pending++
+				}
+			}
+			if c == cleanerCount && l == lifecycleCount && pending == 0 {
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("task counts did not converge to %d/%d", cleanerCount, lifecycleCount)
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
 }

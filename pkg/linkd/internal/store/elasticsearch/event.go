@@ -305,7 +305,7 @@ func (r *Repository) verifyEventCreateConflictChunk(ctx context.Context, prepare
 
 func eventCreateConflictResult(item *bulkEventCreateItem, existing store.StoredEvent, err error) store.CreateEventItemResult {
 	if err == nil {
-		if validationErr := domain.ValidateEventReplacement(item.event, existing.Event); validationErr != nil {
+		if validationErr := domain.ValidateEventRedelivery(item.event, existing.Event); validationErr != nil {
 			err = fmt.Errorf("%w: event %q already contains different content: %w", store.ErrIdentityConflict, item.event.EventID, validationErr)
 		}
 	}

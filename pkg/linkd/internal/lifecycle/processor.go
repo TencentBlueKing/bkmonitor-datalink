@@ -530,7 +530,8 @@ func (p *Processor) newAlert(ctx context.Context, event domain.Event) (domain.Al
 	}
 	alert := domain.Alert{
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
-		Fingerprint: event.Fingerprint, Title: event.Title, Content: event.Content, Severity: event.Severity,
+		EventSourceVersion: event.EventSourceVersion,
+		Fingerprint:        event.Fingerprint, Title: event.Title, Content: event.Content, Severity: event.Severity,
 		ConditionKey: event.ConditionKey, ConditionName: event.ConditionName, Dimensions: event.Dimensions.Clone(),
 		SubjectSystem: event.SubjectSystem, SubjectType: event.SubjectType, SubjectID: event.SubjectID, SubjectName: event.SubjectName,
 		SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: event.Labels.Clone(), ExtraData: event.ExtraData.Clone(),

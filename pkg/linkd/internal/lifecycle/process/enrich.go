@@ -28,6 +28,7 @@ import (
 type enrichRuntime struct {
 	dataSources *datasources.Runtime
 	transport   *elasticsearchstore.HTTPTransport
+	sources     enrich.Sources
 }
 
 func (r *enrichRuntime) Close() error {
@@ -67,15 +68,20 @@ func validateEnricherConfig(eventSources []config.EventSource, lifecycleConfig c
 	return nil
 }
 
-// openEnricher 按已配置的 Processor 创建所需数据源并装配事件来源路由。
-// 返回的 Runtime 持有 MySQL 连接池和 Elasticsearch 空闲连接，调用方负责关闭。
-func openEnricher(
+// openEnrichRuntime 打开进程配置的数据源，供各 Release 的独立路由共享。
+// 来源可在启动后发布，因此连接范围由静态数据源配置决定；仅进程退出时关闭。
+func openEnrichRuntime(
 	ctx context.Context,
-	eventSources []config.EventSource,
 	lifecycleConfig config.LifecycleConfig,
 	telemetryRuntime *telemetry.Runtime,
-) (lifecycle.AlertEnricher, *enrichRuntime, error) {
-	requirements := requiredEnrichDataSources(eventSources)
+) (*enrichRuntime, error) {
+	requirements := enrichDataSourceRequirements{
+		metric:      lifecycleConfig.DataSources.Metric != nil,
+		alarmSource: lifecycleConfig.DataSources.AlarmSource != nil,
+		bkStrategy:  lifecycleConfig.DataSources.BKStrategy != nil,
+		cwStrategy:  lifecycleConfig.DataSources.CWStrategy != nil,
+		oneModel:    lifecycleConfig.DataSources.OneModel != nil,
+	}
 	runtime := &enrichRuntime{}
 	sources := enrich.Sources{}
 	if requirements.mysql() {
@@ -94,7 +100,7 @@ func openEnricher(
 		}
 		dataSourceRuntime, err := datasources.Open(ctx, dataSourceConfig, lifecycleConfig.Concurrency+4)
 		if err != nil {
-			return nil, runtime, fmt.Errorf("open enrich mysql datasources: %w", err)
+			return nil, fmt.Errorf("open enrich mysql datasources: %w", err)
 		}
 		runtime.dataSources = dataSourceRuntime
 		sources = dataSourceRuntime.Sources()
@@ -113,7 +119,7 @@ func openEnricher(
 		transport, err := elasticsearchstore.NewHTTPTransport(transportConfig)
 		if err != nil {
 			_ = runtime.Close()
-			return nil, runtime, fmt.Errorf("create onemodel transport: %w", err)
+			return nil, fmt.Errorf("create onemodel transport: %w", err)
 		}
 		runtime.transport = transport
 		client, err := datasources.NewOneModelClient(datasources.OneModelClientConfig{
@@ -122,27 +128,27 @@ func openEnricher(
 		})
 		if err != nil {
 			_ = runtime.Close()
-			return nil, runtime, fmt.Errorf("create onemodel client: %w", err)
+			return nil, fmt.Errorf("create onemodel client: %w", err)
 		}
 		sources.OneModel = client
 	}
 	if telemetryRuntime != nil {
 		sources = telemetryRuntime.ObserveEnrichSources(sources)
 	}
-	router, routerErr := func() (*assembly.Router, error) {
-		if telemetryRuntime == nil {
-			return assembly.NewRouter(eventSources, sources)
-		}
-		return assembly.NewRouter(
-			eventSources, sources,
-			assembly.WithEnrichObserver(telemetryRuntime.EnrichProcessorObserver()),
-		)
-	}()
-	if routerErr != nil {
-		_ = runtime.Close()
-		return nil, runtime, fmt.Errorf("create enrich router: %w", routerErr)
+	runtime.sources = sources
+	return runtime, nil
+}
+
+// router 按任务固定的 Release 构建独立路由，后续发布不修改已经运行的链。
+func (r *enrichRuntime) router(source config.EventSource, cfg config.LifecycleConfig, telemetryRuntime *telemetry.Runtime) (lifecycle.AlertEnricher, error) {
+	sources := []config.EventSource{source}
+	if err := validateEnricherConfig(sources, cfg); err != nil {
+		return nil, err
 	}
-	return router, runtime, nil
+	if telemetryRuntime == nil {
+		return assembly.NewRouter(sources, r.sources)
+	}
+	return assembly.NewRouter(sources, r.sources, assembly.WithEnrichObserver(telemetryRuntime.EnrichProcessorObserver()))
 }
 
 type enrichDataSourceRequirements struct {

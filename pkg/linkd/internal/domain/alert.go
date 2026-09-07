@@ -18,24 +18,26 @@ import (
 
 // Alert 表示一次异常从发生到结束的当前生命周期快照。
 type Alert struct {
-	AlertID       string       `json:"alert_id"`
-	BKTenantID    string       `json:"bk_tenant_id"`
-	EventSourceID string       `json:"event_source_id"`
-	Fingerprint   string       `json:"fingerprint"`
-	Title         string       `json:"title"`
-	Content       string       `json:"content"`
-	Severity      string       `json:"severity"`
-	ConditionKey  string       `json:"condition_key"`
-	ConditionName string       `json:"condition_name"`
-	Dimensions    DimensionMap `json:"dimensions"`
-	SubjectSystem string       `json:"subject_system"`
-	SubjectType   string       `json:"subject_type"`
-	SubjectID     string       `json:"subject_id"`
-	SubjectName   string       `json:"subject_name"`
-	SourceEventID string       `json:"source_event_id"`
-	SourceAlertID string       `json:"source_alert_id"`
-	Labels        DimensionMap `json:"labels"`
-	ExtraData     JSONObject   `json:"extra_data,omitempty"`
+	// EventSourceVersion 是创建时实际使用的不可变来源发布版本。
+	EventSourceVersion int64        `json:"event_source_version"`
+	AlertID            string       `json:"alert_id"`
+	BKTenantID         string       `json:"bk_tenant_id"`
+	EventSourceID      string       `json:"event_source_id"`
+	Fingerprint        string       `json:"fingerprint"`
+	Title              string       `json:"title"`
+	Content            string       `json:"content"`
+	Severity           string       `json:"severity"`
+	ConditionKey       string       `json:"condition_key"`
+	ConditionName      string       `json:"condition_name"`
+	Dimensions         DimensionMap `json:"dimensions"`
+	SubjectSystem      string       `json:"subject_system"`
+	SubjectType        string       `json:"subject_type"`
+	SubjectID          string       `json:"subject_id"`
+	SubjectName        string       `json:"subject_name"`
+	SourceEventID      string       `json:"source_event_id"`
+	SourceAlertID      string       `json:"source_alert_id"`
+	Labels             DimensionMap `json:"labels"`
+	ExtraData          JSONObject   `json:"extra_data,omitempty"`
 
 	Status         AlertStatus  `json:"status"`
 	LatestEventID  string       `json:"latest_event_id"`
@@ -93,6 +95,9 @@ func (a Alert) Validate() error {
 
 // Normalize 已校验并深拷贝动态 JSON；公共 Validate 不得走此跳过路径。
 func (a Alert) validate(validateJSON bool) error {
+	if a.EventSourceVersion <= 0 {
+		return fmt.Errorf("event_source_version must be positive")
+	}
 	for _, field := range []struct {
 		name  string
 		value string

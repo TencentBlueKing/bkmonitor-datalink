@@ -1,8 +1,8 @@
 # Linkd DevTools
 
-Linkd DevTools 是只监听 loopback 的只读运行感知工具。React 页面只访问本机 `/local-api/*`；Node
-连接层直接读取 Linkd YAML，并查询 Prometheus、Kafka、Redis、MySQL 和 Elasticsearch。它不提供
-Linkd 业务 API，也不参与消息消费、确认或数据写入。
+Linkd DevTools 是只监听 loopback 的运行感知与来源配置工具。React 页面只访问本机 `/local-api/*`；Node
+连接层读取静态连接配置并代理正式 EventSource API，其他基础设施和实体查询保持只读。
+它不参与消息消费或确认，不直接写入业务存储。
 
 ## 启动
 
@@ -126,3 +126,11 @@ GET /local-api/{events|alerts|alert-logs}/:id
 pnpm check
 pnpm test:e2e
 ```
+
+## EventSource 管理与来源队列
+
+Event Sources 页面通过正式控制面 API 增删改来源、enabled、标签和两种角色的 replicas，并展示 Kafka 上限、有效目标、worker 标签和实际分区。
+需要设置 Linkd YAML 的 dispatch.url（或 LINKD_CONTROL_PLANE_URL）和服务端 LINKD_API_TOKEN；token 不下发浏览器。
+来源配置不再以启动 YAML 为运行权威，编辑时省略 security 保留旧凭据，禁止把脱敏占位内容提交为凭据。
+Redis 页面可按来源选择派生 Stream、Mailbox 和 lease。Kafka 输入诊断采用中心元数据和 worker ownership 报告，未重复采集的 offset/ISR 显示未知。
+本次新增的配置写入仅代理控制面，实体存储和其他运维查询仍只读。

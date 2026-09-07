@@ -50,3 +50,11 @@ go run ./tests/tools/rawgen \
 ```
 
 生成器的随机性只影响稳定输入字段和生命周期块顺序；相同 seed/profile 产生字节级一致记录，同一生命周期内部顺序不变。
+
+动态调度 E2E 使用测试专属部署命名空间和临时 API 端口，启动后显式调用 API 导入来源。
+随后增加 3 个 Cleaner worker 和 1 个 Lifecycle worker，验证 4 个 Cleaner 候选受 3 partition 限制、2 个 Lifecycle 副本共享来源 Stream，再校验业务处理和输出。
+普通测试不自动访问外部服务；所有清理仅针对本次测试生成的专属资源。
+
+独立的多进程故障演练入口是 `TestSchedulingDrillE2E`，步骤和断言见
+[核心任务调度验证流程](../../../docs/guides/task-scheduling-validation.md)。该演练保留本轮外部资源与证据，
+只停止本轮子进程，不使用上述业务 E2E 的资源自动清理逻辑。

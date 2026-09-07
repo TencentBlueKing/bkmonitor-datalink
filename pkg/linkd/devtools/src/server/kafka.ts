@@ -1,3 +1,4 @@
+import { sourceRuntime } from "./source-runtime.js";
 import { readFile } from "node:fs/promises";
 
 import {
@@ -26,6 +27,14 @@ export class KafkaConnector {
   constructor(private readonly config: DevtoolsConfig) {}
 
   async inspect(): Promise<KafkaInfrastructure> {
+    if (this.config.dispatch?.apiToken) {
+      const dynamic = await sourceRuntime(this.config);
+      if (this.config.lifecycle)
+        dynamic.kafka.resources.push(
+          await this.inspectOutput(this.config.lifecycle.outputKafka),
+        );
+      return dynamic.kafka;
+    }
     const resources = await Promise.all([
       ...(this.config.eventSources ?? []).map((source) =>
         this.inspectInput(source),

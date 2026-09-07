@@ -208,3 +208,6 @@ Span、Metric 和默认日志不得包含完整 payload、凭据、未经脱敏�
 必须按处理协议重试或阻塞，不能因为“已经打点”而确认消息。
 
 当前已接入 OpenTelemetry Metric API 与 Prometheus exporter；Trace、exemplar 和 OTLP exporter 尚未实现，相关 span 名是落地约束而非已运行事实。
+
+公共任务调度的中心与 worker 指标见 [任务调度可观测性](task-scheduling-observability.md)，
+包含心跳、授权、交接、元数据和副本缺额；它们与 Lifecycle fingerprint lease 指标分别统计。

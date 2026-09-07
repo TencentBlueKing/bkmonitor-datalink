@@ -91,7 +91,7 @@ func (r *Repository) createEvent(ctx context.Context, event domain.Event) (store
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existing, ok := r.events[key]; ok {
-		if err := domain.ValidateEventReplacement(normalized, existing.event); err != nil {
+		if err := domain.ValidateEventRedelivery(normalized, existing.event); err != nil {
 			return store.CreateEventResult{}, fmt.Errorf(
 				"%w: event %q already contains different content: %w",
 				store.ErrIdentityConflict,

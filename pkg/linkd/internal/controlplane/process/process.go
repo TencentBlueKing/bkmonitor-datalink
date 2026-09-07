@@ -17,8 +17,7 @@ import (
 	"time"
 
 	"linkd/internal/config"
-	controlplaneredisstream "linkd/internal/controlplane/redisstream"
-	"linkd/internal/redisclient"
+	"linkd/internal/eventsource"
 	repositoryassembly "linkd/internal/store/assembly"
 	elasticsearchstore "linkd/internal/store/elasticsearch"
 	"linkd/internal/taskgroup"
@@ -44,6 +43,11 @@ func Run(
 	logger *slog.Logger,
 	telemetryRuntime *telemetry.Runtime,
 ) (runErr error) {
+	return RunWithProviders(ctx, cfg, logger, telemetryRuntime)
+}
+
+// RunWithProviders 将自定义增量提供方显式加入控制面的统一来源服务。
+func RunWithProviders(ctx context.Context, cfg config.Config, logger *slog.Logger, telemetryRuntime *telemetry.Runtime, providers ...eventsource.Provider) (runErr error) {
 	if ctx == nil || logger == nil || telemetryRuntime == nil {
 		return fmt.Errorf("run control plane: context, logger and telemetry runtime are required")
 	}
@@ -52,7 +56,7 @@ func Run(
 	}
 
 	startupCtx, cancel := context.WithTimeout(ctx, startupTimeout)
-	runtime, err := openRuntime(startupCtx, cfg, logger, telemetryRuntime)
+	runtime, err := openRuntime(startupCtx, cfg, logger, telemetryRuntime, providers...)
 	cancel()
 	if err != nil {
 		return err
@@ -106,7 +110,7 @@ func ValidateConfig(cfg config.Config) error {
 
 // HasManagementTasks 报告当前配置是否启用了至少一个已经实现的控制面管理任务。
 func HasManagementTasks(cfg config.Config) bool {
-	return hasElasticsearchTask(cfg) || hasRedisStreamTask(cfg)
+	return cfg.Storage != nil || hasRedisStreamTask(cfg)
 }
 
 func hasElasticsearchTask(cfg config.Config) bool {
@@ -172,6 +176,7 @@ func openRuntime(
 	cfg config.Config,
 	logger *slog.Logger,
 	telemetryRuntime *telemetry.Runtime,
+	providers ...eventsource.Provider,
 ) (*runtime, error) {
 	tasks := make([]taskgroup.Task, 0, 4)
 	closers := make([]func() error, 0, 2)
@@ -230,45 +235,9 @@ func openRuntime(
 		)
 	}
 
-	if hasRedisStreamTask(cfg) {
-		redisConfig := cfg.Storage.Redis
-		client, err := redisclient.New(redisConfig.ClientOptions())
-		if err != nil {
-			return fail(fmt.Errorf("initialize control plane redis: %w", err))
-		}
-		closers = append(closers, func() error {
-			if err := client.Close(); err != nil {
-				return fmt.Errorf("close control plane redis: %w", err)
-			}
-			return nil
-		})
-		if err := client.Ping(ctx).Err(); err != nil {
-			return fail(fmt.Errorf("connect control plane redis: %w", err))
-		}
-		settings := cfg.ControlPlane.RedisStream.WithDefaults()
-		lifecycleConfig := cfg.Lifecycle.WithDefaults()
-		manager, err := controlplaneredisstream.NewManager(client, controlplaneredisstream.Config{
-			Stream: lifecycleConfig.Signal.Stream, ExpectedGroup: lifecycleConfig.Signal.Group,
-			ReconcileInterval: settings.ReconcileInterval(), OperationTimeout: settings.OperationTimeout(),
-			MaxEntries: settings.MaxEntries, TrimBatchSize: settings.TrimBatchSize,
-			MaxTrimEntriesPerCycle: settings.MaxTrimEntriesPerCycle,
-		}, telemetryRuntime.RedisStreamObserver())
-		if err != nil {
-			return fail(fmt.Errorf("initialize redis stream management task: %w", err))
-		}
-		taskName := "redis-stream-manager"
-		taskObserver := telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskRedisStreamManager)
-		tasks = append(tasks, taskgroup.Task{
-			Name: taskName,
-			Run: func(taskCtx context.Context) error {
-				taskObserver.SetActive(taskCtx, true)
-				defer taskObserver.SetActive(context.Background(), false)
-				logger.InfoContext(taskCtx, "control plane management task started", "task", taskName)
-				defer logger.InfoContext(context.Background(), "control plane management task stopped", "task", taskName)
-				return manager.Run(taskCtx)
-			},
-		})
-	}
+	tasks = append(tasks, taskgroup.Task{Name: "event-source-dispatch", Run: func(taskCtx context.Context) error {
+		return runDispatch(taskCtx, cfg, logger, telemetryRuntime, providers...)
+	}})
 
 	return &runtime{tasks: tasks, closeAll: closeAll}, nil
 }

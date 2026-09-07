@@ -64,8 +64,8 @@
 
 ## 动态配置候选术语
 
-以下术语分别用于[EventSource 动态配置](../design/event-source-dynamic-configuration.md)和
-[部分配置动态化](../design/dynamic-configuration.md)，尚未成为实现或外部契约。两项独立管理版本与发布，
+来源管理术语分别用于[EventSource 动态配置](../design/event-source-dynamic-configuration.md)和
+[部分配置动态化](../design/dynamic-configuration.md)，来源管理已接入实现，全局配置动态化仍为方案。两项独立管理版本与发布，
 不定义跨来源与全局配置的统一 ConfigRelease。
 
 | 术语 | 候选定义 |
@@ -73,12 +73,12 @@
 | EventSourceRecord | 带管理作用域、资源版本与管理者的来源定义，仅属于 EventSource 项目 |
 | EventSourceRelease | 单来源一次发布的完整不可变配置快照，不包含全局配置；与 Record 兼容 ES/MySQL 单对象操作 |
 | SeverityPolicy | 部分配置动态化中的全局等级定义与默认值，独立于来源版本管理 |
-| SourceActivation | 来源订阅在各 partition offset 区间使用的规则版本及切换代次 |
+| event_source_version | Event 生成/Alert 创建时实际使用的来源 Release 版本，不是执行代次 |
 | desired / applied revision | 期望发布版本与运行时实际应用版本，保存成功不等于生效成功 |
 
 ## 中心调度候选术语
 
-以下术语用于[中心化任务调度协议](../design/task-scheduling-protocol.md)，尚未实现。
+以下术语用于[中心化任务调度协议](../design/task-scheduling-protocol.md)。当前容灾边界为有界自停模型。
 
 | 术语 | 候选定义 |
 | --- | --- |

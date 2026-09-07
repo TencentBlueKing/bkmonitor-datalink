@@ -427,3 +427,12 @@ func (c LifecycleConfig) KafkaHookConfig() kafkahook.Config {
 		Security:        kafka.Security.Clone(),
 	}
 }
+
+// ForSource 派生同来源所有副本共享的 Signal Stream 与 Mailbox 存储范围。
+func (c LifecycleConfig) ForSource(deployment, source string) LifecycleConfig {
+	c = c.WithDefaults()
+	c.Signal.Stream = mailbox.SourceStream(c.Signal.Stream, deployment, source)
+	c.Mailbox.KeyPrefix = c.Mailbox.KeyPrefix + ":" + mailbox.SourceKey(deployment, source)
+	c.Lock.KeyPrefix = c.Lock.KeyPrefix + ":" + mailbox.SourceKey(deployment, source)
+	return c
+}

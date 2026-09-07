@@ -59,6 +59,24 @@ const redisFieldHelp: Record<string, string> = {
 export function RedisPage() {
   const timeMode = useTimeMode();
   const [searchParams, setSearchParams] = useSearchParams();
+  const selectedSource = searchParams.get("event_source_id") || "";
+  const sourceList = useQuery({
+    queryKey: ["redis-source-list"],
+    queryFn: async () => {
+      const r = await fetch("/local-api/event-sources");
+      if (!r.ok) return [];
+      const value: unknown = await r.json();
+      return Array.isArray(value)
+        ? value.filter(
+            (x): x is { id: string } =>
+              typeof x === "object" &&
+              x !== null &&
+              "id" in x &&
+              typeof x.id === "string",
+          )
+        : [];
+    },
+  });
   const requestedTab = searchParams.get("tab");
   const activeTab = isRedisTab(requestedTab) ? requestedTab : "overview";
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -73,8 +91,8 @@ export function RedisPage() {
     useState<RedisLeaseResponse["items"][number]>();
   const interval = autoRefresh ? 15_000 : false;
   const overview = useQuery({
-    queryKey: ["redis-infrastructure"],
-    queryFn: getRedisInfrastructure,
+    queryKey: ["redis-infrastructure", selectedSource],
+    queryFn: () => getRedisInfrastructure(selectedSource),
     refetchInterval: interval,
     refetchOnWindowFocus: false,
   });
@@ -84,22 +102,37 @@ export function RedisPage() {
     groups.find((group) => group.expected) ??
     groups[0];
   const pending = useQuery({
-    queryKey: ["redis-pending", selectedGroup?.name],
-    queryFn: () => getRedisPending({ group: selectedGroup?.name, limit: 100 }),
+    queryKey: ["redis-pending", selectedSource, selectedGroup?.name],
+    queryFn: () =>
+      getRedisPending({
+        eventSourceId: selectedSource,
+        group: selectedGroup?.name,
+        limit: 100,
+      }),
     enabled: activeTab === "signal" && Boolean(selectedGroup),
     refetchInterval: interval,
     refetchOnWindowFocus: false,
   });
   const mailboxes = useQuery({
-    queryKey: ["redis-mailboxes", mailboxFilter],
-    queryFn: () => getRedisMailboxes({ query: mailboxFilter, limit: 100 }),
+    queryKey: ["redis-mailboxes", selectedSource, mailboxFilter],
+    queryFn: () =>
+      getRedisMailboxes({
+        eventSourceId: selectedSource,
+        query: mailboxFilter,
+        limit: 100,
+      }),
     enabled: activeTab === "mailbox",
     refetchInterval: interval,
     refetchOnWindowFocus: false,
   });
   const leases = useQuery({
-    queryKey: ["redis-leases", leaseFilter],
-    queryFn: () => getRedisLeases({ query: leaseFilter, limit: 100 }),
+    queryKey: ["redis-leases", selectedSource, leaseFilter],
+    queryFn: () =>
+      getRedisLeases({
+        eventSourceId: selectedSource,
+        query: leaseFilter,
+        limit: 100,
+      }),
     enabled: activeTab === "lease",
     refetchInterval: interval,
     refetchOnWindowFocus: false,
@@ -148,6 +181,28 @@ export function RedisPage() {
 
   return (
     <section className="redis-page">
+      <label>
+        事件来源{" "}
+        <select
+          value={selectedSource}
+          onChange={(event) =>
+            setSearchParams((previous) => {
+              const next = new URLSearchParams(previous);
+              if (event.target.value)
+                next.set("event_source_id", event.target.value);
+              else next.delete("event_source_id");
+              return next;
+            })
+          }
+        >
+          <option value="">默认来源</option>
+          {sourceList.data?.map((source) => (
+            <option key={source.id} value={source.id}>
+              {source.id}
+            </option>
+          ))}
+        </select>
+      </label>
       <div className="page-heading redis-page-heading">
         <div>
           <p className="eyebrow">REDIS OPERATIONS</p>

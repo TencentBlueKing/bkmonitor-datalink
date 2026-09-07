@@ -1,3 +1,5 @@
+import { sourceRuntime } from "./source-runtime.js";
+import { registerSourceRoutes } from "./sources.js";
 import { fileURLToPath } from "node:url";
 
 import fastifyStatic from "@fastify/static";
@@ -41,10 +43,12 @@ const metricQuerySchema = z.object({
   partition: z.coerce.number().int().nonnegative().optional(),
 });
 const redisDetailQuerySchema = z.object({
+  event_source_id: z.string().optional(),
   query: z.string().trim().max(128).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 const redisPendingQuerySchema = z.object({
+  event_source_id: z.string().optional(),
   group: z.string().trim().min(1).max(256).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
@@ -59,7 +63,7 @@ export async function createApp(
   const config = configOverride ?? (await loadConfig());
   const app = Fastify({
     logger: true,
-    bodyLimit: 64 * 1024,
+    bodyLimit: 1024 * 1024,
   });
   const mysqlConnector = config.mysql ? new MysqlConnector(config) : undefined;
   const elasticsearchConnector = config.elasticsearch
@@ -88,6 +92,41 @@ export async function createApp(
     });
   });
 
+  async function sourceRedis(query: unknown): Promise<RedisConnector> {
+    if (!config.dispatch?.apiToken || !config.lifecycle) return redisConnector;
+    const { event_source_id } = z
+      .object({ event_source_id: z.string().optional() })
+      .parse(query ?? {});
+    const response = await fetch(
+      `${config.dispatch.url.replace(/\/$/, "")}/api/v1/runtime`,
+      {
+        headers: { Authorization: `Bearer ${config.dispatch.apiToken}` },
+        signal: AbortSignal.timeout(config.query.timeoutMilliseconds),
+      },
+    );
+    if (!response.ok) throw new Error("source routing unavailable");
+    const state = z
+      .object({
+        routes: z.record(
+          z.string(),
+          z.object({
+            stream: z.string(),
+            mailbox_prefix: z.string(),
+            lock_prefix: z.string(),
+          }),
+        ),
+      })
+      .parse(await response.json());
+    const id = event_source_id || Object.keys(state.routes).sort()[0];
+    const route = id ? state.routes[id] : undefined;
+    if (!route) throw new Error("event source routing unavailable");
+    const selected = structuredClone(config);
+    selected.lifecycle!.signal.stream = route.stream;
+    selected.lifecycle!.mailbox.keyPrefix = route.mailbox_prefix;
+    selected.lifecycle!.lock.keyPrefix = route.lock_prefix;
+    return new RedisConnector(selected);
+  }
+  registerSourceRoutes(app, config);
   app.get("/local-api/capabilities", async () => publicConfig(config));
   app.get("/local-api/config", async () => redactedConfig(config));
   app.get("/local-api/runtime/processes", async () =>
@@ -101,17 +140,19 @@ export async function createApp(
     ]);
     return {
       status: combinedStatus(processes, metrics, kafka),
-      eventSources: redactedConfig(config).eventSources,
+      eventSources: config.dispatch?.apiToken
+        ? (await sourceRuntime(config)).eventSources
+        : redactedConfig(config).eventSources,
       processes,
       metrics,
       kafka,
     };
   });
-  app.get("/local-api/runtime/lifecycle", async () => {
+  app.get("/local-api/runtime/lifecycle", async (request) => {
     const [processes, metrics, redis] = await Promise.all([
       prometheusConnector.processes(),
       prometheusConnector.lifecycleSnapshot(),
-      redisConnector.inspect(),
+      (await sourceRedis(request.query)).inspect(),
     ]);
     return {
       status: combinedStatus(processes, metrics, redis),
@@ -148,7 +189,9 @@ export async function createApp(
             message: "Elasticsearch 控制面任务未启用",
             backlog: null,
           }),
-      redisEnabled ? redisConnector.inspect() : Promise.resolve(undefined),
+      redisEnabled
+        ? (await sourceRedis(request.query)).inspect()
+        : Promise.resolve(undefined),
     ]);
     const processes = controlPlaneProcesses(allProcesses);
     const redisSummary = redisTaskSummary(redis, redisEnabled);
@@ -171,20 +214,23 @@ export async function createApp(
   app.get("/local-api/infrastructure/kafka", async () =>
     kafkaConnector.inspect(),
   );
-  app.get("/local-api/infrastructure/redis", async () =>
-    redisConnector.inspect(),
+  app.get("/local-api/infrastructure/redis", async (request) =>
+    (await sourceRedis(request.query)).inspect(),
   );
   app.get("/local-api/infrastructure/redis/pending", async (request) => {
     const query = redisPendingQuerySchema.parse(request.query);
-    return redisConnector.inspectPending(query.group, query.limit);
+    return (await sourceRedis(query)).inspectPending(query.group, query.limit);
   });
   app.get("/local-api/infrastructure/redis/mailboxes", async (request) => {
     const query = redisDetailQuerySchema.parse(request.query);
-    return redisConnector.inspectMailboxes(query.query, query.limit);
+    return (await sourceRedis(query)).inspectMailboxes(
+      query.query,
+      query.limit,
+    );
   });
   app.get("/local-api/infrastructure/redis/leases", async (request) => {
     const query = redisDetailQuerySchema.parse(request.query);
-    return redisConnector.inspectLeases(query.query, query.limit);
+    return (await sourceRedis(query)).inspectLeases(query.query, query.limit);
   });
   app.get("/local-api/metrics", async (request) => {
     const query = metricQuerySchema.parse(request.query);

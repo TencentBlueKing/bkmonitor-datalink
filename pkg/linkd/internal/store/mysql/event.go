@@ -67,7 +67,7 @@ func (r *Repository) createEvent(ctx context.Context, event domain.Event) (store
 	if getErr != nil {
 		return store.CreateEventResult{}, fmt.Errorf("read duplicate event %q: %w", normalized.EventID, getErr)
 	}
-	if err := domain.ValidateEventReplacement(normalized, existing.Event); err != nil {
+	if err := domain.ValidateEventRedelivery(normalized, existing.Event); err != nil {
 		return store.CreateEventResult{}, fmt.Errorf("%w: event %q contains different content: %w", store.ErrIdentityConflict, normalized.EventID, err)
 	}
 	return store.CreateEventResult{StoredEvent: existing, Created: false}, nil

@@ -51,6 +51,10 @@ func TestAllInOneCommandStartsAndGracefullyStopsServices(t *testing.T) {
 	command := NewRootCommand("test-version", Dependencies{
 		CleanerFlowFactory: cleanerFactory,
 		LifecycleRunner:    lifecycleRunner,
+		ControlPlaneRunner: func(ctx context.Context, _ config.Config, _ *slog.Logger, _ *telemetry.Runtime) error {
+			<-ctx.Done()
+			return nil
+		},
 	})
 	command.SetOut(stdout)
 	command.SetErr(&bytes.Buffer{})
@@ -88,7 +92,7 @@ func TestAllInOneCommandValidatesEveryServiceBeforeStarting(t *testing.T) {
 	command, _, _ := testCommand("test-version")
 	command.SetArgs([]string{"run", "all-in-one", "--config", path})
 	err := command.ExecuteContext(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "lifecycle config is required") {
+	if err == nil || !strings.Contains(err.Error(), "storage config is required") {
 		t.Fatalf("ExecuteContext() error = %v", err)
 	}
 }

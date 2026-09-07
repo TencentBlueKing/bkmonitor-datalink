@@ -14,7 +14,10 @@ export function ConfigPage() {
         <div>
           <p className="eyebrow">EFFECTIVE CONFIG</p>
           <h1>Linkd Configuration</h1>
-          <p>直接读取 Linkd YAML，并隐藏全部凭据和私钥。</p>
+          <p>
+            这里只展示静态启动配置；事件来源在 Event Sources 中通过控制面 API
+            管理。
+          </p>
         </div>
       </div>
       {config.isError ? (
@@ -23,7 +26,7 @@ export function ConfigPage() {
         <article className="runtime-config-panel">
           <JsonViewer
             value={config.data ?? {}}
-            description="Linkd 当前生效的脱敏配置；凭据和私钥不会下发到浏览器。"
+            description="Linkd 静态启动配置的脱敏副本；凭据和私钥不会下发到浏览器。"
           />
         </article>
       )}

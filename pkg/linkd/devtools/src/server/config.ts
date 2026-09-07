@@ -407,6 +407,7 @@ export interface EventSourceConfig {
 }
 
 export interface DevtoolsConfig {
+  dispatch?: { url: string; apiToken: string; deployment: string };
   configPath?: string;
   server: { host: string; port: number };
   query: {
@@ -566,7 +567,19 @@ export async function loadConfig(
   }
 
   const prometheusUrl = process.env.LINKD_DEVTOOLS_PROMETHEUS_URL;
+  const dispatch = z
+    .object({
+      url: z.string().url().default("http://127.0.0.1:8090"),
+      api_token: z.string().default(""),
+      deployment: z.string().default("default"),
+    })
+    .parse(decoded.dispatch ?? {});
   const config: DevtoolsConfig = {
+    dispatch: {
+      url: process.env.LINKD_CONTROL_PLANE_URL ?? dispatch.url,
+      apiToken: process.env.LINKD_API_TOKEN ?? dispatch.api_token,
+      deployment: dispatch.deployment,
+    },
     configPath,
     server: {
       host: process.env.LINKD_DEVTOOLS_HOST ?? "127.0.0.1",

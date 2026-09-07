@@ -21,7 +21,7 @@ MQ RawEventMessage
 
 ## 模块边界
 
-- `internal/config` 严格读取 YAML，启动时冻结全局 Severity 表和 EventSource 定义；未知 Cleaner 类型直接失败。
+- `internal/config` 严格读取静态 YAML 和全局 Severity；来源由 `internal/eventsource` 持久化发布，`internal/taskdispatch` 为 Cleaner/Lifecycle 分配任务。
 - `internal/cleaner` 的 Processor 通过具体 SourceCleaner 解析来源事实，再由 EventFactory 补齐受控字段并构造 `domain.Event`；专用 Runtime 负责消息队列无关的并发、lane 内连续批量副作用和确认。内置 `standard` 接收 JSON object；租户、来源、稳定 record ID 和接收时间来自信封，完整 payload 写入 `source_raw_data`。
 - `internal/store` 保存 Event、独立处理元数据、Alert 和 AlertLog。Elasticsearch 数据进程只访问控制面
   存储管理任务准备好的 alias；Lifecycle 只提交 Alert 逻辑终态，Active 到 History 的搬迁由控制面异步完成。
@@ -30,7 +30,7 @@ MQ RawEventMessage
   不增加独立常驻 command。
 - `internal/lifecycle` 只按 `(bk_tenant_id, event_source_id, fingerprint)` 关联 active Alert，执行等级比较、状态流转、同步 Enricher、CAS 重试和部分成功恢复。
 - `internal/lifecycle/kafkahook` 根据 Alert change/cause 输出 V1 完整快照，不要求每次变更都存在 Event。
-- `devtools` 只读查询当前资源，不提供任意查询或写入能力。
+- `devtools` 通过正式 API 管理 EventSource；其他资源查询保持只读。
 
 ## 身份与租户
 

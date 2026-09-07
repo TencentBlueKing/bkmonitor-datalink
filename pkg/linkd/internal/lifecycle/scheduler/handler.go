@@ -40,13 +40,14 @@ type Logger interface {
 
 // Handler 按 Signal 指向的 Mailbox 获取跨进程 lease，并有界连续处理队首 Event。
 type Handler struct {
-	eventReader EventReader
-	mailbox     Mailbox
-	processor   EventProcessor
-	locker      Locker
-	config      Config
-	logger      Logger
-	observer    Observer
+	expectedSource string
+	eventReader    EventReader
+	mailbox        Mailbox
+	processor      EventProcessor
+	locker         Locker
+	config         Config
+	logger         Logger
+	observer       Observer
 }
 
 func NewHandler(
@@ -80,6 +81,9 @@ func (h *Handler) Handle(ctx context.Context, message consume.Message) consume.O
 	if err != nil {
 		h.logger.WarnContext(ctx, "discard invalid lifecycle mailbox signal", "message_id", message.ID, "reason_code", "invalid_signal")
 		return consume.Discard(fmt.Errorf("invalid lifecycle mailbox signal: %w", err))
+	}
+	if h.expectedSource != "" && signal.EventSourceID != h.expectedSource {
+		return consume.Block(fmt.Errorf("signal belongs to another event source"))
 	}
 	if message.ID != signal.MessageID || message.TenantID != signal.BKTenantID || message.OrderKey != signal.MailboxID {
 		return consume.Discard(fmt.Errorf("lifecycle mailbox signal transport metadata does not match payload"))
@@ -210,3 +214,6 @@ func (h *Handler) renewLoop(ctx context.Context, cancelWork context.CancelFunc, 
 }
 
 var _ consume.Handler = (*Handler)(nil)
+
+// BindSource 在开始消费前固定来源作用域，不允许运行中修改。
+func (h *Handler) BindSource(id string) { h.expectedSource = id }

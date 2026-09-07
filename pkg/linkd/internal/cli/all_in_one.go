@@ -12,10 +12,12 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 	controlplaneprocess "linkd/internal/controlplane/process"
 	"linkd/internal/logging"
+	"linkd/internal/taskdispatch"
 	"linkd/internal/taskgroup"
 	"linkd/internal/telemetry"
 )
@@ -57,6 +59,8 @@ func newAllInOneCommand(options *commandOptions) *cobra.Command {
 				telemetry.RoleAllInOne,
 				options.version,
 				func(ctx context.Context, telemetryRuntime *telemetry.Runtime) error {
+					ctx = taskdispatch.WithForcedExit(ctx, func() { os.Exit(1) })
+					ctx = taskdispatch.WithHost(ctx, &taskdispatch.Host{Config: cfg.Dispatch, Worker: cfg.Worker, Roles: []string{"cleaner", "lifecycle"}})
 					tasks := []taskgroup.Task{
 						{
 							Name: "cleaner",

@@ -1052,7 +1052,7 @@ func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 	at time.Time,
 ) error {
 	if runtime == nil || at.IsZero() {
-		return errors.New("phase-two production Assignment reconcile is invalid")
+		return newPhaseTwoInvariantError("phase-two production Assignment reconcile is invalid")
 	}
 	authority, err := runtime.ensureControlAuthority(ctx, at)
 	if err != nil {
@@ -1062,7 +1062,7 @@ func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
 	for index, queryGroup := range ordered {
 		if queryGroup == "" || (index > 0 && ordered[index-1] == queryGroup) {
-			return errors.New("phase-two production reconcile contains an invalid Query Group set")
+			return newPhaseTwoInvariantError("phase-two production reconcile contains an invalid Query Group set")
 		}
 		if _, err := runtime.reconciler.Reconcile(ctx, authority, queryGroup, at); err != nil {
 			if errors.Is(err, ownership.ErrStaleFence) {
@@ -1086,7 +1086,7 @@ func (runtime *productionPhaseTwoOwnership) AssignedQueryGroups(
 	assigned := make([]execution.QueryGroupIdentity, 0, len(ordered))
 	for index, queryGroup := range ordered {
 		if queryGroup == "" || (index > 0 && ordered[index-1] == queryGroup) {
-			return nil, errors.New("phase-two production Assignment read contains an invalid Query Group set")
+			return nil, newPhaseTwoInvariantError("phase-two production Assignment read contains an invalid Query Group set")
 		}
 		record, err := runtime.dependencies.Store.ReadAssignment(ctx, queryGroup)
 		if errors.Is(err, ownership.ErrAssignmentAbsent) {
@@ -1096,7 +1096,7 @@ func (runtime *productionPhaseTwoOwnership) AssignedQueryGroups(
 			return nil, err
 		}
 		if record.QueryGroup != queryGroup {
-			return nil, errors.New("phase-two production Assignment identity mismatch")
+			return nil, newPhaseTwoInvariantError("phase-two production Assignment identity mismatch")
 		}
 		if record.DesiredWorkerID == runtime.dependencies.WorkerID {
 			assigned = append(assigned, queryGroup)

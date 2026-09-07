@@ -314,7 +314,7 @@ func (runner *Runner) runOneTracked(
 			runner.sourceNextAt = runner.now().Add(retryDelay(runner.flights.limits, runner.queryGroup, runner.sourceFailures))
 			reason := execution.ReasonCode(execution.ReasonBlockedExactSetUnavailable)
 			if retry != nil {
-				reason = execution.ReasonCode(contract.ReasonProviderUnavailable)
+				reason = execution.ReasonCode(contract.ReasonSlotSourceRetry)
 			}
 			return execution.SlotExecutionResult{Result: observability.ResultRetrying, ReasonCode: reason, SourceRetry: true}, true, nil
 		}

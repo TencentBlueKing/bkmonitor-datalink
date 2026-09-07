@@ -1127,7 +1127,7 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingInitialFreezeL
 	}
 	failedResult, failedAttempted, failedErr := bundle.runners[failed].runner.RunOne(ctx)
 	if failedErr != nil || !failedAttempted || failedResult.Completed || failedResult.Result != observability.ResultRetrying ||
-		failedResult.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) {
+		failedResult.ReasonCode != execution.ReasonCode(contract.ReasonSlotSourceRetry) {
 		t.Fatalf("failed RunOne() = (%+v, %t, %v)", failedResult, failedAttempted, failedErr)
 	}
 	if uqCalls.Load() != queryCallsBeforeFailure || len(events.snapshot()) != eventsBeforeFailure {

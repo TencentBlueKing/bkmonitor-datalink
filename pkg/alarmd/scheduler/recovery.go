@@ -103,21 +103,38 @@ func (runner *Runner) operationFor(
 	if !runner.flights.recoveryEnabled {
 		return slot.Dispatch.Operation, true
 	}
-	if slot.Recovery.Disposition == ReplayExpired {
+	if runner.attempt != nil && runner.attempt.contract != slot.Contract {
 		runner.attempt = nil
+	}
+	if runner.attempt != nil && at.Before(runner.attempt.nextAt) {
+		return "", false
+	}
+	if slot.Recovery.Disposition == ReplayExpired {
+		// Expired replay always uses normal dispatch. The failure count of the
+		// same frozen contract is kept so repeated failures still back off.
 		return execution.OperationNormal, true
 	}
 	if runner.attempt == nil {
 		return slot.Dispatch.Operation, true
 	}
-	if runner.attempt.contract != slot.Contract {
-		runner.attempt = nil
-		return slot.Dispatch.Operation, true
-	}
-	if at.Before(runner.attempt.nextAt) {
-		return "", false
-	}
 	return runner.attempt.next, true
+}
+
+// recordExecutionFailure treats a Go error from Execute as one failed attempt
+// of the frozen Slot so NextReadyAt becomes non-zero and the dispatcher parks
+// the Query Group in its delayed queue instead of retrying on every tick.
+// There is deliberately no attempt-count cap here: the Slot is already time
+// bounded by recovery_until, after which the source finalizes it.
+func (runner *Runner) recordExecutionFailure(slot FrozenSlot, at time.Time) {
+	if !runner.flights.recoveryEnabled {
+		return
+	}
+	if runner.attempt == nil || runner.attempt.contract != slot.Contract {
+		runner.attempt = &recoveryAttempt{contract: slot.Contract}
+	}
+	runner.attempt.failures++
+	runner.attempt.next = execution.OperationRetry
+	runner.attempt.nextAt = at.Add(retryDelay(runner.flights.limits, runner.queryGroup, runner.attempt.failures))
 }
 
 func (runner *Runner) recordResult(

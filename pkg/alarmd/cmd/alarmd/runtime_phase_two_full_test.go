@@ -2246,7 +2246,7 @@ func TestProductionSnapshotScopeUsesOnePayloadPerRun(t *testing.T) {
 	}
 	clock.Store(bundle.runners[queryGroupsByStrategy["1002"]].runner.NextReadyAt().UnixMilli())
 	reentry, _, err := bundle.runners[queryGroupsByStrategy["1002"]].runner.RunOne(ctx)
-	if err != nil || reentry.Completed || reentry.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) || uqCalls.Load() != beforeDeferredCalls {
+	if err != nil || reentry.Completed || reentry.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotRetryPending) || uqCalls.Load() != beforeDeferredCalls {
 		t.Fatalf("deferred reentry result=%+v error=%v clock=%v", reentry, err, now())
 	}
 }

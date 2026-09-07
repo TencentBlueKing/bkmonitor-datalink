@@ -91,8 +91,8 @@ func TestLegacyPrimaryQueryCompilerAcceptsPythonUnifyQueryWithoutResultTable(t *
 			BusinessID: "2",
 			SpaceScope: "bkcc__2",
 		},
-		StrategyID: "8565",
-		ItemID:     "8683",
+		StrategyID: "910565",
+		ItemID:     "910683",
 		QueryMD5:   "python-query-md5",
 		Expression: "a",
 		QueryConfigs: []json.RawMessage{json.RawMessage(`{

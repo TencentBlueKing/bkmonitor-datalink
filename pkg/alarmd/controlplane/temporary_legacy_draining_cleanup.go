@@ -7,7 +7,8 @@ package controlplane
 
 // This file implements one approved administrative migration for two explicit
 // legacy Draining facts. It is not a recovery path and must be deleted after
-// the BKOP write/readback and rollback-window checks are complete.
+// the target environment's write/readback and rollback-window checks are
+// complete.
 
 import (
 	"context"

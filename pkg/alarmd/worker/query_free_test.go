@@ -469,7 +469,7 @@ func TestSlotExecutionCoordinatorDoesNotAdvancePendingActivationWhenProgressCont
 	fixture.ports.activationErrorAt = 2
 	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
 	if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
-		result.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) || fixture.ports.progressCalls != 0 {
+		result.ReasonCode != execution.ReasonCode(contract.ReasonActivationReadFailed) || fixture.ports.progressCalls != 0 {
 		t.Fatalf("Execute() result=%+v error=%v progress=%d", result, err, fixture.ports.progressCalls)
 	}
 	if len(fixture.ports.mutations) != 1 || fixture.ports.mutations[0].Identity.StateGeneration != "state-pending" {
@@ -622,7 +622,7 @@ func TestSlotExecutionCoordinatorSnapshotUnavailableRedoUsesCanonicalEnsureGappe
 	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activePlanResult("state-v2", 2)})
 	fixture.ports.activationErrorAt = 2
 	if result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay)); err != nil || result.Completed || result.Result != observability.ResultRetrying ||
-		result.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) {
+		result.ReasonCode != execution.ReasonCode(contract.ReasonActivationReadFailed) {
 		t.Fatalf("first Execute() result=%+v error=%v", result, err)
 	}
 	if fixture.ports.progressCalls != 0 {
@@ -654,7 +654,7 @@ func TestSlotExecutionCoordinatorDoesNotAdvanceWhenActivationIsUnreadable(t *tes
 			fixture.ports.activationErrorAt = failAt
 			result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
 			if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
-				result.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) || fixture.ports.progressCalls != 0 {
+				result.ReasonCode != execution.ReasonCode(contract.ReasonActivationReadFailed) || fixture.ports.progressCalls != 0 {
 				t.Fatalf("Execute() result=%+v error=%v progress=%d", result, err, fixture.ports.progressCalls)
 			}
 			if failAt == 1 && len(fixture.ports.mutations) != 0 {

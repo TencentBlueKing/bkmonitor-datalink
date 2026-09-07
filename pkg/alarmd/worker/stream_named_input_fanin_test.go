@@ -249,6 +249,14 @@ func (e *recordingEvaluator) Evaluate(ctx context.Context, request execution.Eva
 
 func workerG4Coordinator(t *testing.T) (*recordingPorts, *recordingEvaluator, *worker.SlotExecutionCoordinator) {
 	t.Helper()
+	return workerG4CoordinatorWithObserver(t, observability.ObserverFunc(func(context.Context, observability.Observation) {}))
+}
+
+func workerG4CoordinatorWithObserver(
+	t *testing.T,
+	observer observability.Observer,
+) (*recordingPorts, *recordingEvaluator, *worker.SlotExecutionCoordinator) {
+	t.Helper()
 	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -266,7 +274,7 @@ func workerG4Coordinator(t *testing.T) (*recordingPorts, *recordingEvaluator, *w
 	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{
 		Finalization: ports, Activation: ports, Query: ports, Sequencer: ports, Evaluator: recorder,
 		Admission: ports, GapGuard: ports, Events: ports, State: ports, Progress: ports,
-		Observer: observability.ObserverFunc(func(context.Context, observability.Observation) {}),
+		Observer: observer,
 	}, worker.ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20,
 		MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10})
 	if err != nil {

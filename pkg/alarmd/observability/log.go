@@ -15,8 +15,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -57,10 +59,12 @@ type Logger struct {
 
 // BoundedLogPolicy always records one-time lifecycle transitions. Routine
 // success is omitted. Repeated transitions, recovery and exceptional results
-// use a concrete limiter with fixed per-reason or reason-empty stage buckets;
-// M8 does not hard-code a sampling rate or time window before G3 calibration.
+// use a concrete limiter: phase one buckets by reason or reason-empty stage,
+// phase two additionally buckets by Query Group scope and reports suppressed
+// counts. M8 does not hard-code a sampling rate or time window before G3
+// calibration.
 type BoundedLogPolicy struct {
-	repeated *WindowLogLimiter
+	repeated RepeatedLogLimiter
 }
 
 func NewBoundedLogPolicy(limiter *WindowLogLimiter) (*BoundedLogPolicy, error) {
@@ -70,14 +74,29 @@ func NewBoundedLogPolicy(limiter *WindowLogLimiter) (*BoundedLogPolicy, error) {
 	return &BoundedLogPolicy{repeated: limiter}, nil
 }
 
+// NewScopedBoundedLogPolicy builds the phase-two policy that limits repeated
+// lines per (reason, Query Group) bucket and records merged counts.
+func NewScopedBoundedLogPolicy(limiter *ScopedLogLimiter) (*BoundedLogPolicy, error) {
+	if limiter == nil {
+		return nil, errors.New("observability: bounded log policy requires a scoped limiter")
+	}
+	return &BoundedLogPolicy{repeated: limiter}, nil
+}
+
 func (p *BoundedLogPolicy) ShouldLog(observation Observation) bool {
+	return p.Admit(observation).Allowed
+}
+
+// Admit decides whether the observation is logged and how many earlier lines
+// of the same bucket were merged into it.
+func (p *BoundedLogPolicy) Admit(observation Observation) LogAdmission {
 	if mandatoryLogStage(observation.Stage) {
-		return true
+		return LogAdmission{Allowed: true}
 	}
 	if !repeatedLogObservation(observation) || p == nil || p.repeated == nil {
-		return false
+		return LogAdmission{}
 	}
-	return p.repeated.Allow(observation)
+	return p.repeated.Admit(observation)
 }
 
 type LoggingObserver struct {
@@ -128,13 +147,17 @@ func (l *LoggingObserver) Observe(ctx context.Context, observation Observation) 
 		return
 	}
 	observation = NormalizeObservation(observation)
-	if !l.policy.ShouldLog(observation) {
+	// Merge the context coordinates before admission so a scoped limiter sees
+	// the Query Group the Coordinator attached to ctx.
+	observation.Trace = mergeTraceFields(observation.Trace, TraceFieldsFromContext(ctx))
+	admission := l.policy.Admit(observation)
+	if !admission.Allowed {
 		return
 	}
-	l.logger.logObservation(ctx, observation)
+	l.logger.logObservation(ctx, observation, admission)
 }
 
-func (l *Logger) logObservation(ctx context.Context, observation Observation) {
+func (l *Logger) logObservation(ctx context.Context, observation Observation, admission LogAdmission) {
 	observation.Trace = mergeTraceFields(observation.Trace, TraceFieldsFromContext(ctx))
 	attributes := []slog.Attr{
 		slog.String("component", string(observation.Component)),
@@ -167,6 +190,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation) {
 	attributes = appendTraceFields(attributes, observation.Trace)
 	if f := observation.QueryFailure; f != nil {
 		attributes = append(attributes, slog.String("failure_stage", f.Stage), slog.String("failure_category", f.Category), slog.String("failure_code", f.Code))
+		if f.Detail != "" {
+			attributes = append(attributes, slog.String("failure_detail", f.Detail))
+		}
 	}
 	if observation.RuntimeConfig != nil {
 		attributes = append(attributes, slog.Any("runtime_config", observation.RuntimeConfig))
@@ -229,7 +255,16 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation) {
 		attributes = append(attributes, slog.Any("algorithm_inputs", observation.AlgorithmInputs))
 	}
 	if observation.Err != nil {
-		attributes = append(attributes, slog.String("error_type", fmt.Sprintf("%T", observation.Err)))
+		attributes = append(attributes,
+			slog.String("error_type", fmt.Sprintf("%T", observation.Err)),
+			slog.String("error", SanitizeErrorText(observation.Err.Error())),
+		)
+	}
+	if admission.Suppressed > 0 {
+		attributes = append(attributes, slog.Uint64("suppressed_logs", admission.Suppressed))
+	}
+	if admission.SuppressedEvicted > 0 {
+		attributes = append(attributes, slog.Uint64("suppressed_logs_evicted", admission.SuppressedEvicted))
 	}
 	level := slog.LevelInfo
 	if observation.Result == Result(ResultFailed) || observation.Result == Result(ResultTimeout) {
@@ -262,6 +297,87 @@ func (l *Logger) log(
 		slog.Int64("duration_ms", duration.Milliseconds()),
 	}
 	l.next.LogAttrs(context.Background(), level, "alarmd event", append(fixed, attrs...)...)
+}
+
+// maxLoggedErrorBytes bounds the sanitized error text in one log line.
+const maxLoggedErrorBytes = 512
+
+// SanitizeErrorText prepares an error message for a structured log line.
+// Internal alarmd errors are static strings or carry plan identities, which
+// are acceptable log coordinates. Anything shaped like a URL is replaced with
+// "<url>" so endpoints, credentials and query strings never reach the log, and
+// the result is truncated to maxLoggedErrorBytes on a rune boundary.
+func SanitizeErrorText(text string) string {
+	text = redactURLs(text)
+	if len(text) <= maxLoggedErrorBytes {
+		return text
+	}
+	cut := maxLoggedErrorBytes
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + "..."
+}
+
+func redactURLs(text string) string {
+	const marker = "://"
+	var builder strings.Builder
+	rest := text
+	for {
+		index := strings.Index(rest, marker)
+		if index < 0 {
+			builder.WriteString(rest)
+			return builder.String()
+		}
+		schemeStart := index
+		for schemeStart > 0 && isURLSchemeByte(rest[schemeStart-1]) {
+			schemeStart--
+		}
+		if schemeStart == index || !isASCIILetter(rest[schemeStart]) {
+			// A bare "://" or a scheme that does not start with a letter is not
+			// a URL; keep scanning after it.
+			builder.WriteString(rest[:index+len(marker)])
+			rest = rest[index+len(marker):]
+			continue
+		}
+		end := index + len(marker)
+		for end < len(rest) && !isURLTerminatorByte(rest[end]) {
+			end++
+		}
+		// Sentence punctuation directly after a URL belongs to the message.
+		for end > index+len(marker) && isURLTrailingPunctuation(rest[end-1]) {
+			end--
+		}
+		builder.WriteString(rest[:schemeStart])
+		builder.WriteString("<url>")
+		rest = rest[end:]
+	}
+}
+
+func isASCIILetter(char byte) bool {
+	return char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z'
+}
+
+func isURLSchemeByte(char byte) bool {
+	return isASCIILetter(char) || char >= '0' && char <= '9' || char == '+' || char == '-' || char == '.'
+}
+
+func isURLTrailingPunctuation(char byte) bool {
+	switch char {
+	case ':', '.', ',', ';':
+		return true
+	default:
+		return false
+	}
+}
+
+func isURLTerminatorByte(char byte) bool {
+	switch char {
+	case ' ', '\t', '\n', '\r', '"', '\'', '<', '>', ')', ']', '}', ',', ';':
+		return true
+	default:
+		return false
+	}
 }
 
 func appendObservationCounts(attributes []slog.Attr, counts Counts) []slog.Attr {

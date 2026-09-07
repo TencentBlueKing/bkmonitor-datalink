@@ -150,7 +150,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	if begin.Status != execution.ProgressCommitted {
 		reason := begin.ReasonCode
 		if reason == "" {
-			reason = execution.ReasonCode(contract.ReasonProviderUnavailable)
+			reason = execution.ReasonCode(contract.ReasonProgressBeginRejected)
 		}
 		return activationRetry(reason), nil
 	}
@@ -198,7 +198,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		}
 	})
 	queryResult, queryReason := provisionalResult(stream.evaluated)
-	coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation, started, queryResult, queryReason, nil)
+	coordinator.observeQueryCompleted(ctx, request.Operation, started, queryResult, queryReason, completion)
 	if len(stream.evaluated.Plans) == 0 {
 		return execution.SlotExecutionResult{Result: queryResult, ReasonCode: queryReason}, nil
 	}
@@ -245,7 +245,7 @@ func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(
 	activationRequest := execution.PlanActivationRequest{Contract: request.Contract, Plans: plans}
 	guardFacts, err := coordinator.loadActivations(ctx, activationRequest)
 	if err != nil {
-		return activationRetry(execution.ReasonCode(contract.ReasonProviderUnavailable)), nil
+		return activationRetry(execution.ReasonCode(contract.ReasonActivationReadFailed)), nil
 	}
 
 	var result execution.SlotExecutionResult
@@ -262,7 +262,7 @@ func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(
 		}
 		progressFacts, err := coordinator.loadActivations(sequenceCtx, activationRequest)
 		if err != nil {
-			result = activationRetry(execution.ReasonCode(contract.ReasonProviderUnavailable))
+			result = activationRetry(execution.ReasonCode(contract.ReasonActivationReadFailed))
 			return nil
 		}
 		if !guardFacts.SameSelections(progressFacts) {
@@ -447,7 +447,7 @@ func (coordinator *SlotExecutionCoordinator) convergeNormalActivation(
 			}
 			progressFacts, err := coordinator.loadActivations(sequenceCtx, protection.activationRequest)
 			if err != nil {
-				result = activationRetry(execution.ReasonCode(contract.ReasonProviderUnavailable))
+				result = activationRetry(execution.ReasonCode(contract.ReasonActivationReadFailed))
 				return nil
 			}
 			if !protection.currentFacts.SameSelections(progressFacts) {
@@ -709,7 +709,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	activationRequest := duePlanActivationRequest(request.Contract, header.DuePlans)
 	guardActivations, err := coordinator.loadActivations(ctx, activationRequest)
 	if err != nil {
-		return activationRetry(execution.ReasonCode(contract.ReasonProviderUnavailable)), nil
+		return activationRetry(execution.ReasonCode(contract.ReasonActivationReadFailed)), nil
 	}
 	changedPlans, changedActivations := changedDuePlanActivations(header.DuePlans, guardActivations)
 	forced := unsatisfiedForcedWarmingActivations(guardActivations, loadedGaps, changedPlans)
@@ -875,7 +875,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	}
 	progressActivations, err := coordinator.loadActivations(ctx, activationRequest)
 	if err != nil {
-		return activationRetry(execution.ReasonCode(contract.ReasonProviderUnavailable)), nil
+		return activationRetry(execution.ReasonCode(contract.ReasonActivationReadFailed)), nil
 	}
 	if !guardActivations.SameSelections(progressActivations) {
 		return execution.SlotExecutionResult{}, &activationProtectionRequiredError{

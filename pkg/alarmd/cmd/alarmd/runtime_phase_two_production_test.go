@@ -574,7 +574,7 @@ func TestProductionFrozenExecutionUsesRequestFactsWhenSnapshotDisappearsAfterFre
 
 	finalization, err := resolver.ResolveFinalization(context.Background(), request)
 	if err != nil || finalization.Mode != execution.FinalizationSnapshotRetry ||
-		finalization.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) {
+		finalization.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotRetryPending) {
 		t.Fatalf("ResolveFinalization(snapshot unavailable) = (%+v, %v)", finalization, err)
 	}
 	request.ReplayExpired = true
@@ -654,7 +654,7 @@ func TestProductionFrozenExecutionSeparatesTransportRetryFromPersistedCorruption
 	catalog.readErr = errors.New("redis timeout")
 	finalization, err := resolver.ResolveFinalization(context.Background(), request)
 	if err != nil || finalization.Mode != execution.FinalizationSnapshotRetry ||
-		finalization.ReasonCode != execution.ReasonCode(contract.ReasonProviderUnavailable) {
+		finalization.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotRetryPending) {
 		t.Fatalf("ResolveFinalization(transport) = (%+v, %v)", finalization, err)
 	}
 	resolver.now = func() time.Time { return time.UnixMilli(request.RecoveryUntilUnixMilli) }
@@ -2138,7 +2138,7 @@ func TestObservedProductionSlotSourcePreservesRetryCauseBeforeRunnerReduction(t 
 	}
 	if len(observations) != 2 || observations[1].Stage != observability.StageSlotSourceCompleted || observations[0].Stage != observability.StageScheduleDue ||
 		observations[0].Result != observability.ResultRetrying ||
-		observations[0].ReasonCode != observability.ReasonCode(contract.ReasonProviderUnavailable) ||
+		observations[0].ReasonCode != observability.ReasonCode(contract.ReasonSlotSourceRetry) ||
 		observations[0].Trace.QueryGroupKey != "query-group-1" || observations[0].Err != wantErr {
 		t.Fatalf("source retry observations=%+v, want one cause-preserving retry", observations)
 	}

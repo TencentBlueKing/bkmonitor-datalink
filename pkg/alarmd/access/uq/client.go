@@ -402,7 +402,7 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 	var status *responseStatus
 	var isPartial *bool
 	var resultTableIDs []string
-	var totalSeries, totalRecords uint64
+	var totalSeries, totalRecords, nullIdentityFields uint64
 	receivedAt := client.now().Unix()
 	for decoder.More() {
 		if err := ctx.Err(); err != nil {
@@ -442,10 +442,11 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 					return execution.ProviderCompletion{}, ErrTotalRecordsExceeded
 				}
 				totalRecords += uint64(len(series.Values))
-				batch, err := normalizeSeries(attempt.Spec, ref, series, receivedAt)
+				batch, nullFields, err := normalizeSeries(attempt.Spec, ref, series, receivedAt)
 				if err != nil {
 					return execution.ProviderCompletion{}, err
 				}
+				nullIdentityFields += nullFields
 				batch.Delivery.Bytes = uint64(len(raw))
 				if batch.Dataset.Len() == 0 {
 					continue
@@ -491,21 +492,27 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 		}
 		return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: unexpected trailing token %v", token)
 	}
-	if status != nil && status.Code != "" && status.Code != queryTSPartial {
-		return execution.ProviderCompletion{}, &backendStatusError{code: status.Code}
-	}
 	dataState := execution.DataStateEmpty
 	if delivery.Records > 0 {
 		dataState = execution.DataStateData
 	}
+	stats := execution.ProviderStats{Series: delivery.Series, Records: delivery.Records, NullIdentityFields: nullIdentityFields,
+		DecodeMillis: uint64(client.now().Sub(decodeStarted).Milliseconds())}
+	if status != nil && status.Code != "" && status.Code != queryTSPartial {
+		// A non-partial status code is a deterministic answer for this table and
+		// field (for example SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS). Completing it as
+		// UNAVAILABLE lets the Slot finish with a Plan gap instead of failing and
+		// re-querying UQ on every attempt until the Slot ages out. UQ writes the
+		// series array before status, so series decoded before the status token
+		// have already reached the sink; the completion keeps their DataState and
+		// Delivery only so that delivery conservation holds. The consumer never
+		// receives them: every binding of an UNAVAILABLE completion is UNKNOWN.
+		return client.responseContractUnavailable(attempt, execution.ResponseStatusRouteDetail(status.Code),
+			dataState, delivery, resultTableIDs, stats), nil
+	}
 	if isPartial == nil {
-		completion := client.unavailableCompletion(attempt, execution.ReasonCode(contract.ReasonQueryUnavailable), execution.ResponseRouteDetail(execution.ResponseFailureIsPartialMissing))
-		completion.DataState = dataState
-		completion.Delivery = delivery
-		completion.RouteFacts.ResultTableIDs = append([]string(nil), resultTableIDs...)
-		completion.Stats = execution.ProviderStats{Series: delivery.Series, Records: delivery.Records,
-			DecodeMillis: uint64(client.now().Sub(decodeStarted).Milliseconds())}
-		return completion, nil
+		return client.responseContractUnavailable(attempt, execution.ResponseRouteDetail(execution.ResponseFailureIsPartialMissing),
+			dataState, delivery, resultTableIDs, stats), nil
 	}
 	completeness := execution.CompletenessFull
 	if *isPartial || status != nil && status.Code == queryTSPartial {
@@ -515,12 +522,48 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 		Completeness: completeness, DataState: dataState, Delivery: delivery,
 		RouteFacts: execution.ProviderRouteFacts{ProviderRouteRef: attempt.Spec.PlanFacts.ProviderRouteRef,
 			ResultTableIDs: append([]string(nil), resultTableIDs...), Attempts: []execution.RouteAttemptFact{{AttemptNo: attempt.AttemptNo, Endpoint: client.endpoint, Result: execution.RouteAttemptSucceeded}}},
-		Stats: execution.ProviderStats{Series: delivery.Series, Records: delivery.Records, DecodeMillis: uint64(client.now().Sub(decodeStarted).Milliseconds())}}, nil
+		Stats: stats}, nil
 }
 
-func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderResultRef, source responseSeries, receivedAt int64) (execution.ProviderSeriesBatch, error) {
+// responseContractUnavailable completes a decoded 200 response that violated
+// the wire contract (missing is_partial) or reported a deterministic backend
+// status as UNAVAILABLE with a bounded detail. DataState and Delivery describe
+// series already streamed to the sink so the completion conserves them.
+func (client *Client) responseContractUnavailable(
+	attempt execution.QueryAttempt,
+	detail string,
+	dataState execution.DataState,
+	delivery execution.SeriesDelivery,
+	resultTableIDs []string,
+	stats execution.ProviderStats,
+) execution.ProviderCompletion {
+	completion := client.unavailableCompletion(attempt, execution.ReasonCode(contract.ReasonQueryUnavailable), detail)
+	completion.DataState = dataState
+	completion.Delivery = delivery
+	completion.RouteFacts.ResultTableIDs = append([]string(nil), resultTableIDs...)
+	completion.Stats = stats
+	return completion
+}
+
+// nullDimension is the JSON value bound to a declared identity dimension that
+// the provider series does not carry.
+var nullDimension = json.RawMessage("null")
+
+// normalizeSeries converts one UQ series into an immutable canonical batch. It
+// also returns how many declared identity fields were absent from the series
+// group keys and were bound to null.
+//
+// Python (alarm_backends/service/access/data/records.py, dimension extraction
+// in both the module-level and the record-level helper) does
+// dimensions[field] = raw_data.get(field): an absent dimension becomes None,
+// the record continues and the dimensions md5 includes that None. Mirroring
+// it here means a series that lacks the field and a series that carries an
+// explicit null for it have the same identity digest, exactly as in Python
+// where None is the value in both cases. Series that carry the field keep
+// their previous identity unchanged.
+func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderResultRef, source responseSeries, receivedAt int64) (execution.ProviderSeriesBatch, uint64, error) {
 	if len(source.Columns) == 0 || len(source.Columns) != len(source.Types) || len(source.GroupKeys) != len(source.GroupValues) {
-		return execution.ProviderSeriesBatch{}, errors.New("alarmd access uq: invalid series schema")
+		return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: invalid series schema")
 	}
 	dimensions := make(map[string]json.RawMessage, len(source.GroupKeys))
 	for index, key := range source.GroupKeys {
@@ -528,11 +571,14 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 		encoded, _ := json.Marshal(source.GroupValues[index])
 		dimensions[key] = encoded
 	}
+	var nullIdentityFields uint64
 	identityFields := make([]contract.DimensionFieldV2, 0, len(spec.PlanFacts.Normalization.DatasetContract.IdentityFields))
 	for _, name := range spec.PlanFacts.Normalization.DatasetContract.IdentityFields {
 		value, ok := dimensions[name]
 		if !ok {
-			return execution.ProviderSeriesBatch{}, &identityFieldMissingError{field: name}
+			value = nullDimension
+			dimensions[name] = value
+			nullIdentityFields++
 		}
 		identityFields = append(identityFields, contract.DimensionFieldV2{Name: name, Value: value})
 	}
@@ -546,24 +592,24 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 	}
 	dimensionDigest, err := contract.DeriveDimensionIdentityDigestV2(spec.PlanFacts.TenantID, spec.PlanFacts.BusinessID, identityFields)
 	if err != nil {
-		return execution.ProviderSeriesBatch{}, err
+		return execution.ProviderSeriesBatch{}, 0, err
 	}
 	records := make([]contract.CanonicalRecordV2, 0, len(source.Values))
 	lastTime := int64(-1)
 	for _, row := range source.Values {
 		if len(row) != len(source.Columns) {
-			return execution.ProviderSeriesBatch{}, errors.New("alarmd access uq: row width differs from columns")
+			return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: row width differs from columns")
 		}
 		timestamp, value, err := rowFacts(source.Columns, row, spec.PlanFacts.QueryList)
 		if err != nil {
-			return execution.ProviderSeriesBatch{}, err
+			return execution.ProviderSeriesBatch{}, 0, err
 		}
 		sourceTime, err := spec.PlanFacts.Normalization.NormalizeSourceTime(timestamp)
 		if err != nil {
-			return execution.ProviderSeriesBatch{}, err
+			return execution.ProviderSeriesBatch{}, 0, err
 		}
 		if sourceTime <= lastTime {
-			return execution.ProviderSeriesBatch{}, errors.New("alarmd access uq: source order contract violation")
+			return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: source order contract violation")
 		}
 		lastTime = sourceTime
 		if sourceTime < spec.AcceptedRange.Start || sourceTime >= spec.AcceptedRange.End {
@@ -571,7 +617,7 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 		}
 		recordID, err := contract.DeriveRecordIDV2(dimensionDigest, sourceTime)
 		if err != nil {
-			return execution.ProviderSeriesBatch{}, err
+			return execution.ProviderSeriesBatch{}, 0, err
 		}
 		records = append(records, contract.CanonicalRecordV2{RecordID: recordID, SourceTime: sourceTime,
 			BusinessID:        spec.PlanFacts.BusinessID,
@@ -582,11 +628,11 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 	dataset := execution.NewDataset(records)
 	digest, err := contract.DeriveCanonicalDigestV2("alarmd-provider-series-delivery-v1", records)
 	if err != nil {
-		return execution.ProviderSeriesBatch{}, err
+		return execution.ProviderSeriesBatch{}, 0, err
 	}
 	return execution.ProviderSeriesBatch{PhysicalQuery: spec.Digest, CompletionRef: ref, Dataset: dataset,
 		Delivery: execution.SeriesDelivery{PhysicalQuery: spec.Digest, QueryRevision: spec.PlanFacts.QueryRevision,
-			Series: 1, Records: uint64(len(records)), Digest: digest}}, nil
+			Series: 1, Records: uint64(len(records)), Digest: digest}}, nullIdentityFields, nil
 }
 
 func rowFacts(columns []string, row []json.RawMessage, queries []execution.QueryClause) (int64, json.RawMessage, error) {

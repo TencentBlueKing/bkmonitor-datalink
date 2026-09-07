@@ -81,6 +81,149 @@ func TestValidateNamedInputCompletionNarrowsOnlyReadinessInvalidConsumer(t *test
 	}
 }
 
+// A consumer (or series) that received no streamed series from a DATA query is
+// bound to the EMPTY share of that completion; an UNAVAILABLE completion that
+// still conserves series streamed before the failure is bound as UNKNOWN. No
+// other DataState narrowing is accepted.
+func TestValidateNamedInputCompletionAcceptsEmptyShareAndUnavailableProjection(t *testing.T) {
+	delivery := execution.SeriesDelivery{PhysicalQuery: "query-1", QueryRevision: "revision-1", Series: 1, Records: 1, Digest: strings.Repeat("a", 64)}
+	evidence := &execution.PartialEvidence{Kind: execution.PartialEvidenceOmissionStable, Version: 1,
+		EvidenceDigest: strings.Repeat("d", 64), OmissionOnly: true, ReturnedRecordsStable: true}
+	empty := execution.NewDataset(nil)
+	emptyView, err := execution.NewDatasetView(empty, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields, series := namedInputIdentity(t, "host-a")
+	populated := namedInputDataset(fields, series, 1_788_000_000-1)
+	populatedView, err := execution.NewDatasetView(populated, []uint32{0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion := func(completeness execution.Completeness, state execution.DataState, evidence *execution.PartialEvidence) execution.PhysicalQueryCompletion {
+		result := execution.PhysicalQueryCompletion{Ref: "provider-1", PhysicalQuery: "query-1", QueryRevision: "revision-1",
+			Completeness: completeness, DataState: state, PartialEvidence: evidence}
+		if state == execution.DataStateData {
+			result.Delivery = delivery
+		}
+		return result
+	}
+	binding := func(completeness execution.Completeness, state execution.DataState, dataset *execution.Dataset, view *execution.DatasetView, evidence *execution.PartialEvidence) execution.NamedInputBinding {
+		result := execution.NamedInputBinding{ProviderResult: "provider-1", Completeness: completeness, DataState: state,
+			Dataset: dataset, View: view, Disposition: execution.AccessAvailable, ImpactScope: execution.ImpactPlan, PartialEvidence: evidence,
+			Provenance: execution.InputProvenance{PhysicalQuery: "query-1", AttemptNo: 1}}
+		switch completeness {
+		case execution.CompletenessPartial:
+			result.Disposition, result.ReasonCode = execution.AccessDegraded, execution.ReasonCode(contract.ReasonQueryPartial)
+		case execution.CompletenessUnavailable:
+			result.Disposition, result.ReasonCode = execution.AccessUnavailable, execution.ReasonCode(contract.ReasonQueryUnavailable)
+		}
+		return result
+	}
+	tests := []struct {
+		name       string
+		completion execution.PhysicalQueryCompletion
+		binding    execution.NamedInputBinding
+		accepted   bool
+	}{
+		{name: "FULL EMPTY share of FULL DATA", completion: completion(execution.CompletenessFull, execution.DataStateData, nil),
+			binding: binding(execution.CompletenessFull, execution.DataStateEmpty, empty, emptyView, nil), accepted: true},
+		{name: "PARTIAL EMPTY share of PARTIAL DATA with matching evidence", completion: completion(execution.CompletenessPartial, execution.DataStateData, evidence),
+			binding: binding(execution.CompletenessPartial, execution.DataStateEmpty, empty, emptyView, evidence), accepted: true},
+		{name: "PARTIAL EMPTY share with different evidence", completion: completion(execution.CompletenessPartial, execution.DataStateData, evidence),
+			binding: binding(execution.CompletenessPartial, execution.DataStateEmpty, empty, emptyView, nil)},
+		{name: "EMPTY share whose view carries records", completion: completion(execution.CompletenessFull, execution.DataStateData, nil),
+			binding: binding(execution.CompletenessFull, execution.DataStateEmpty, populated, populatedView, nil)},
+		{name: "EMPTY share without a dataset", completion: completion(execution.CompletenessFull, execution.DataStateData, nil),
+			binding: binding(execution.CompletenessFull, execution.DataStateEmpty, nil, nil, nil)},
+		{name: "EMPTY share with a different completeness", completion: completion(execution.CompletenessFull, execution.DataStateData, nil),
+			binding: binding(execution.CompletenessPartial, execution.DataStateEmpty, empty, emptyView, nil)},
+		{name: "DATA binding over an EMPTY completion", completion: completion(execution.CompletenessFull, execution.DataStateEmpty, nil),
+			binding: binding(execution.CompletenessFull, execution.DataStateData, populated, populatedView, nil)},
+		{name: "UNKNOWN projection of UNAVAILABLE DATA", completion: completion(execution.CompletenessUnavailable, execution.DataStateData, nil),
+			binding: binding(execution.CompletenessUnavailable, execution.DataStateUnknown, nil, nil, nil), accepted: true},
+		{name: "UNKNOWN projection of UNAVAILABLE EMPTY", completion: completion(execution.CompletenessUnavailable, execution.DataStateEmpty, nil),
+			binding: binding(execution.CompletenessUnavailable, execution.DataStateUnknown, nil, nil, nil), accepted: true},
+		{name: "UNKNOWN projection of a FULL DATA completion", completion: completion(execution.CompletenessFull, execution.DataStateData, nil),
+			binding: binding(execution.CompletenessUnavailable, execution.DataStateUnknown, nil, nil, nil)},
+		{name: "UNAVAILABLE projection that kept a dataset", completion: completion(execution.CompletenessUnavailable, execution.DataStateData, nil),
+			binding: binding(execution.CompletenessUnavailable, execution.DataStateUnknown, empty, emptyView, nil)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := execution.ValidateNamedInputCompletion(test.binding, test.completion)
+			if test.accepted && err != nil {
+				t.Fatalf("ValidateNamedInputCompletion() error = %v, want accepted projection", err)
+			}
+			if !test.accepted && err == nil {
+				t.Fatal("ValidateNamedInputCompletion() accepted a binding that differs from its completion")
+			}
+		})
+	}
+}
+
+// Completion-only Levels may reference a DATA dependency query whose series
+// were not bound to them, and a streamed series may fall back to the EMPTY
+// share of a DATA dependency query that lacks that series.
+func TestNamedInputBuilderAcceptsEmptyShareOfDataDependencyQuery(t *testing.T) {
+	plan, requirements := compiledG4Requirements(t, strategy.DetectorKindOsRestart)
+	header, consumer, series, streamed, completions := namedInputFixture(t, plan, requirements)
+	builder, err := execution.PrepareSeriesEvaluationInputBuilder(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty := execution.NewDataset(nil)
+	emptyView, err := execution.NewDatasetView(empty, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shares := make([]execution.NamedInputBinding, 0, len(streamed))
+	for index, binding := range streamed {
+		share := binding
+		share.Dataset, share.View = empty, emptyView
+		share.DataState = execution.DataStateEmpty
+		share.ImpactScope = execution.ImpactPlan
+		shares = append(shares, share)
+		if binding.Role == execution.InputRolePrimary {
+			// The PRIMARY query returned no series at all.
+			completions[index].DataState = execution.DataStateEmpty
+			completions[index].Delivery = execution.SeriesDelivery{}
+		}
+	}
+	if err := builder.ValidateCompletionOnly(consumer, shares, completions); err != nil {
+		t.Fatalf("ValidateCompletionOnly() rejected the EMPTY share of a DATA dependency query: %v", err)
+	}
+	mixed := make([]execution.NamedInputBinding, 0, len(streamed))
+	for index, binding := range streamed {
+		if binding.Role == execution.InputRolePrimary {
+			completions[index].DataState = execution.DataStateData
+			completions[index].Delivery = execution.SeriesDelivery{PhysicalQuery: completions[index].PhysicalQuery,
+				QueryRevision: completions[index].QueryRevision, Series: 1, Records: 1, Digest: strings.Repeat("a", 64)}
+			mixed = append(mixed, binding)
+			continue
+		}
+		mixed = append(mixed, shares[index])
+	}
+	request, err := builder.Build(consumer, series, mixed, completions)
+	if err != nil {
+		t.Fatalf("Build() rejected a streamed PRIMARY series with the EMPTY share of its DATA dependency: %v", err)
+	}
+	if len(request.Inputs) != 2 || request.Inputs[0].DataState != execution.DataStateData || request.Inputs[1].DataState != execution.DataStateEmpty {
+		t.Fatalf("request inputs = %+v", request.Inputs)
+	}
+	// A DATA-state completion-only binding is still rejected: records reach a
+	// consumer only through streamed series.
+	invalid := append([]execution.NamedInputBinding(nil), shares...)
+	for index := range invalid {
+		if invalid[index].Role != execution.InputRolePrimary {
+			invalid[index].DataState = execution.DataStateData
+		}
+	}
+	if err := builder.ValidateCompletionOnly(consumer, invalid, completions); err == nil {
+		t.Fatal("ValidateCompletionOnly() accepted a DATA binding without records")
+	}
+}
+
 func TestBuildSeriesEvaluationInputRequestFailsClosedAtConsumerSeriesScope(t *testing.T) {
 	plan, requirements := compiledG4Requirements(t, strategy.DetectorKindSimpleRingRatio)
 	header, consumer, series, bindings, completions := namedInputFixture(t, plan, requirements)

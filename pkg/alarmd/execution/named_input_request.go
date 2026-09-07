@@ -418,8 +418,19 @@ func validateSeriesBindingAvailability(binding NamedInputBinding) error {
 }
 
 // ValidateNamedInputCompletion verifies that a consumer binding belongs to its
-// physical completion. The readiness-invalid Plan-local disposition is the
-// sole case allowed to narrow a healthy shared physical result.
+// physical completion. Exactly three consumer-local projections may differ
+// from the shared physical result:
+//
+//   - the readiness-invalid Plan-local disposition narrows a healthy result;
+//   - an EMPTY binding with an empty view is the share of a DATA completion
+//     whose delivered series were not bound to this consumer (or series). Access
+//     emits it as the completion binding of every DATA query; the worker uses
+//     it only where no streamed binding exists for the (consumer, series,
+//     requirement) key, so it can never hide delivered records;
+//   - an UNAVAILABLE binding without a dataset is the only projection of an
+//     UNAVAILABLE completion, which may still carry the DataState and Delivery
+//     of series streamed before the provider failed so that delivery
+//     conservation holds.
 func ValidateNamedInputCompletion(binding NamedInputBinding, completion PhysicalQueryCompletion) error {
 	if completion.Ref == "" || completion.Ref != binding.ProviderResult ||
 		completion.PhysicalQuery != binding.Provenance.PhysicalQuery {
@@ -427,7 +438,8 @@ func ValidateNamedInputCompletion(binding NamedInputBinding, completion Physical
 	}
 	if completion.Completeness != binding.Completeness || completion.DataState != binding.DataState ||
 		!reflect.DeepEqual(completion.PartialEvidence, binding.PartialEvidence) {
-		if !readinessBudgetInvalidBinding(binding) {
+		if !readinessBudgetInvalidBinding(binding) && !emptyShareOfDataCompletion(binding, completion) &&
+			!unavailableProjection(binding, completion) {
 			return errors.New("named input differs from its physical query completion")
 		}
 	}
@@ -449,6 +461,29 @@ func readinessBudgetInvalidBinding(binding NamedInputBinding) bool {
 		binding.Disposition == AccessUnavailable &&
 		binding.ReasonCode == ReasonCode(contract.ReasonReadinessBudgetInvalid) &&
 		binding.ImpactScope == ImpactPlan
+}
+
+// emptyShareOfDataCompletion reports whether binding is the EMPTY consumer
+// share of a FULL or PARTIAL completion that delivered series. Completeness and
+// PARTIAL evidence must still match; only DataState narrows, and only with an
+// empty dataset and view, so the binding cannot present records that were not
+// streamed and validated for this consumer.
+func emptyShareOfDataCompletion(binding NamedInputBinding, completion PhysicalQueryCompletion) bool {
+	return completion.DataState == DataStateData && binding.DataState == DataStateEmpty &&
+		completion.Completeness == binding.Completeness &&
+		(completion.Completeness == CompletenessFull || completion.Completeness == CompletenessPartial) &&
+		binding.Dataset != nil && binding.Dataset.Len() == 0 && binding.View != nil && binding.View.Len() == 0 &&
+		reflect.DeepEqual(completion.PartialEvidence, binding.PartialEvidence)
+}
+
+// unavailableProjection reports whether binding is the UNKNOWN, dataset-free
+// consumer projection of an UNAVAILABLE completion. The completion itself may
+// carry DATA or EMPTY plus the delivery of series streamed before the failure;
+// the consumer never trusts that partial stream.
+func unavailableProjection(binding NamedInputBinding, completion PhysicalQueryCompletion) bool {
+	return completion.Completeness == CompletenessUnavailable && binding.Completeness == CompletenessUnavailable &&
+		binding.DataState == DataStateUnknown && binding.Dataset == nil && binding.View == nil &&
+		binding.PartialEvidence == nil
 }
 
 func cloneNamedInputBinding(source NamedInputBinding) NamedInputBinding {

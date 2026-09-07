@@ -495,7 +495,14 @@ func productionPhaseTwoPrefix(prefix, component string) string {
 }
 
 func phaseTwoUQLimits(cfg config.Config) accessuq.Limits {
+	// One UQ response body is capped independently of the Coordinator retained
+	// budget: raising that budget to gigabytes must not allow a multi-gigabyte
+	// single response. Series, record and per-series byte limits are unchanged.
+	const maximumBodyCap = int64(512 << 20)
 	maximumBody := int64(cfg.PhaseTwo.Coordinator.MaxRetainedBytes)
+	if maximumBody > maximumBodyCap {
+		maximumBody = maximumBodyCap
+	}
 	maximumSeries := maximumBody
 	if defaults := accessuq.DefaultLimits(); defaults.MaxSeriesBytes < maximumSeries {
 		maximumSeries = defaults.MaxSeriesBytes

@@ -54,28 +54,31 @@ func TestSourceStreamsFullQueryAndConservesCompletion(t *testing.T) {
 
 func TestSourceProjectsPartialAndUnavailableCompletions(t *testing.T) {
 	tests := []struct {
-		name         string
-		provider     *fakeProvider
-		completeness execution.Completeness
-		dataState    execution.DataState
-		disposition  execution.AccessDisposition
-		reason       execution.ReasonCode
-		batches      int
-		bindings     int
+		name             string
+		provider         *fakeProvider
+		completeness     execution.Completeness
+		dataState        execution.DataState
+		bindingDataState execution.DataState
+		disposition      execution.AccessDisposition
+		reason           execution.ReasonCode
+		batches          int
+		bindings         int
 	}{
 		{
+			// The streamed series carry the data; the completion binding is the
+			// EMPTY share of the PARTIAL completion for consumers without series.
 			name: "partial data", provider: &fakeProvider{completeness: execution.CompletenessPartial},
-			completeness: execution.CompletenessPartial, dataState: execution.DataStateData,
-			batches: 1,
+			completeness: execution.CompletenessPartial, dataState: execution.DataStateData, bindingDataState: execution.DataStateEmpty,
+			disposition: execution.AccessDegraded, reason: execution.ReasonCode(contract.ReasonQueryPartial), batches: 1, bindings: 1,
 		},
 		{
 			name: "partial empty", provider: &fakeProvider{completeness: execution.CompletenessPartial, empty: true},
-			completeness: execution.CompletenessPartial, dataState: execution.DataStateEmpty,
+			completeness: execution.CompletenessPartial, dataState: execution.DataStateEmpty, bindingDataState: execution.DataStateEmpty,
 			disposition: execution.AccessDegraded, reason: execution.ReasonCode(contract.ReasonQueryPartial), bindings: 1,
 		},
 		{
 			name: "unavailable", provider: &fakeProvider{completeness: execution.CompletenessUnavailable, empty: true, reason: execution.ReasonCode(contract.ReasonQueryTimeout)},
-			completeness: execution.CompletenessUnavailable, dataState: execution.DataStateUnknown,
+			completeness: execution.CompletenessUnavailable, dataState: execution.DataStateUnknown, bindingDataState: execution.DataStateUnknown,
 			disposition: execution.AccessUnavailable, reason: execution.ReasonCode(contract.ReasonQueryTimeout), bindings: 1,
 		},
 	}
@@ -102,12 +105,58 @@ func TestSourceProjectsPartialAndUnavailableCompletions(t *testing.T) {
 			}
 			if test.bindings == 1 {
 				binding := completion.CompletionBindings[0]
-				if binding.Completeness != test.completeness || binding.DataState != test.dataState ||
+				if binding.Completeness != test.completeness || binding.DataState != test.bindingDataState ||
 					binding.Disposition != test.disposition || binding.ReasonCode != test.reason {
 					t.Fatalf("binding=%+v", binding)
 				}
+				if err := execution.ValidateNamedInputCompletion(binding, completion.PhysicalQueries[0]); err != nil {
+					t.Fatalf("completion binding does not belong to its physical completion: %v", err)
+				}
 			}
 		})
+	}
+}
+
+// A query that delivered series still completes every valid requirement with
+// an EMPTY-share binding; a Plan whose PRIMARY query returned no series is
+// completion-only at the worker and needs one binding per frozen requirement.
+func TestSourceEmitsEmptyShareCompletionBindingForDataQueries(t *testing.T) {
+	contractRef, frozen := frozenExecution(t)
+	source, err := NewSource(staticFrozenPlan{plan: frozen}, &fakeProvider{}, &recordingQueryPermits{}, Config{MinReadyDelay: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.now = func() time.Time { return time.UnixMilli(2_000_000_000_000) }
+	source.wait = func(context.Context, time.Duration) error { return nil }
+	consumer := &recordingConsumer{}
+	completion, err := source.Execute(context.Background(), execution.QueryExecutionRequest{
+		Contract: contractRef, Operation: execution.OperationNormal, AttemptNo: 1,
+	}, consumer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(consumer.batches) != 1 || len(completion.PhysicalQueries) != 1 || completion.PhysicalQueries[0].DataState != execution.DataStateData ||
+		len(completion.CompletionBindings) != 1 {
+		t.Fatalf("completion=%+v batches=%d, want one DATA query with one completion binding", completion, len(consumer.batches))
+	}
+	binding := completion.CompletionBindings[0]
+	physical := completion.PhysicalQueries[0]
+	if binding.Consumer != frozen.Requirements[0].Consumers[0].Consumer || binding.RequirementID != frozen.Requirements[0].RequirementID ||
+		binding.ProviderResult != physical.Ref || binding.Provenance.PhysicalQuery != physical.PhysicalQuery ||
+		binding.Completeness != execution.CompletenessFull || binding.DataState != execution.DataStateEmpty ||
+		binding.Disposition != execution.AccessAvailable || binding.ReasonCode != "" || binding.ImpactScope != execution.ImpactPlan ||
+		binding.Dataset == nil || binding.Dataset.Len() != 0 || binding.View == nil || binding.View.Len() != 0 || !binding.View.Uses(binding.Dataset) {
+		t.Fatalf("completion binding=%+v, want FULL EMPTY share with an empty immutable view", binding)
+	}
+	if err := execution.ValidateNamedInputCompletion(binding, physical); err != nil {
+		t.Fatalf("EMPTY share rejected against DATA completion: %v", err)
+	}
+	if err := completion.Validate(consumer.header, []execution.SeriesDelivery{consumer.batches[0].Delivery}); err != nil {
+		t.Fatalf("completion conservation: %v", err)
+	}
+	streamed := consumer.batches[0].Inputs[0]
+	if streamed.DataState != execution.DataStateData || streamed.ProviderResult != binding.ProviderResult {
+		t.Fatalf("streamed binding=%+v must keep DATA and share the completion ref", streamed)
 	}
 }
 
@@ -267,7 +316,9 @@ func TestSourcePreservesCompletedQueryAndCompletesCurrentAndRemainingQueriesWhen
 	}
 	consumer := &recordingConsumer{}
 	completion, err := source.Execute(context.Background(), request, consumer)
-	assertBudgetExhaustedCompletion(t, completion, err, consumer, request, 3, 2)
+	// Three bindings: the completed DATA query's EMPTY share plus two budget
+	// exhausted requirements.
+	assertBudgetExhaustedCompletion(t, completion, err, consumer, request, 3, 3)
 	if len(provider.attempts) != 1 || len(consumer.batches) != 1 || permits.releases != 1 {
 		t.Fatalf("provider/batch/release counts=%d/%d/%d, want completed first query only",
 			len(provider.attempts), len(consumer.batches), permits.releases)
@@ -309,6 +360,16 @@ func assertBudgetExhaustedCompletion(
 		t.Fatalf("budget completion does not conserve frozen queries: %v", err)
 	}
 	for _, binding := range completion.CompletionBindings {
+		if binding.Completeness == execution.CompletenessFull {
+			// A query completed before the budget expired keeps the EMPTY share
+			// binding of its delivered completion.
+			if binding.DataState != execution.DataStateEmpty || binding.Disposition != execution.AccessAvailable ||
+				binding.Dataset == nil || binding.Dataset.Len() != 0 || binding.View == nil || binding.View.Len() != 0 ||
+				binding.Provenance.AttemptNo != request.AttemptNo {
+				t.Fatalf("completed query binding=%+v", binding)
+			}
+			continue
+		}
 		if binding.Completeness != execution.CompletenessUnavailable || binding.DataState != execution.DataStateUnknown ||
 			binding.Disposition != execution.AccessUnavailable ||
 			binding.ReasonCode != execution.ReasonCode(contract.ReasonExecutionBudgetExhausted) ||

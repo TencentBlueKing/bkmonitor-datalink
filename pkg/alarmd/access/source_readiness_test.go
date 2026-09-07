@@ -104,10 +104,14 @@ func TestSourceReadinessBudgetInvalidIsPlanLocalForSubThirtySecondPlans(t *testi
 			if got := consumer.batches[0].Inputs[0].Consumer.Plan; got == shortPlan {
 				t.Fatalf("invalid short Plan received streamed input: %+v", got)
 			}
-			if len(completion.PhysicalQueries) != 2 || len(completion.CompletionBindings) != 1 || !completion.AllRequiredCompleted {
+			// The healthy DATA query completes its consumer with an EMPTY-share
+			// binding; the short Plan receives its readiness-invalid disposition.
+			if len(completion.PhysicalQueries) != 2 || len(completion.CompletionBindings) != 2 || !completion.AllRequiredCompleted {
 				t.Fatalf("completion=%+v, want one healthy query plus one Plan-local unavailable query", completion)
 			}
-			binding := completion.CompletionBindings[0]
+			byPlan := completionBindingsByPlan(t, completion)
+			assertEmptyShareBinding(t, byPlan[frozen.DuePlans[0].Identity], completion.PhysicalQueries)
+			binding := byPlan[shortPlan]
 			if binding.Consumer.Plan != shortPlan || binding.ReasonCode != execution.ReasonCode(contract.ReasonReadinessBudgetInvalid) ||
 				binding.Disposition != execution.AccessUnavailable || binding.ImpactScope != execution.ImpactPlan ||
 				binding.Completeness != execution.CompletenessUnavailable || binding.DataState != execution.DataStateUnknown {
@@ -162,10 +166,12 @@ func TestSourceReadinessBudgetInvalidDoesNotRejectSharedPhysicalQuery(t *testing
 		t.Fatalf("provider=%d permits=%d batches=%+v, want one shared query delivered only to healthy consumer",
 			len(provider.attempts), len(permits.attempts), consumer.batches)
 	}
-	if len(completion.PhysicalQueries) != 1 || len(completion.CompletionBindings) != 1 || !completion.AllRequiredCompleted {
-		t.Fatalf("completion=%+v, want shared physical completion plus one Plan-local disposition", completion)
+	if len(completion.PhysicalQueries) != 1 || len(completion.CompletionBindings) != 2 || !completion.AllRequiredCompleted {
+		t.Fatalf("completion=%+v, want shared physical completion plus one Plan-local disposition and one healthy EMPTY share", completion)
 	}
-	binding := completion.CompletionBindings[0]
+	byPlan := completionBindingsByPlan(t, completion)
+	assertEmptyShareBinding(t, byPlan[healthy.Identity], completion.PhysicalQueries)
+	binding := byPlan[shortPlan]
 	if binding.Consumer.Plan != shortPlan || binding.Provenance.PhysicalQuery != completion.PhysicalQueries[0].PhysicalQuery ||
 		binding.Disposition != execution.AccessUnavailable || binding.ReasonCode != execution.ReasonCode(contract.ReasonReadinessBudgetInvalid) ||
 		binding.ImpactScope != execution.ImpactPlan || binding.Completeness != execution.CompletenessUnavailable ||
@@ -315,4 +321,41 @@ func mixedReadinessExecution(
 	frozen.Requirements = append(frozen.Requirements, shortRequirement)
 	contractRef = bindFrozenDueDigest(t, contractRef, frozen)
 	return contractRef, frozen, shortPlan
+}
+
+func completionBindingsByPlan(t *testing.T, completion execution.QueryExecutionCompletion) map[execution.PlanIdentity]execution.NamedInputBinding {
+	t.Helper()
+	byPlan := make(map[execution.PlanIdentity]execution.NamedInputBinding, len(completion.CompletionBindings))
+	for _, binding := range completion.CompletionBindings {
+		if _, duplicate := byPlan[binding.Consumer.Plan]; duplicate {
+			t.Fatalf("Plan %s received more than one completion binding: %+v", binding.Consumer.Plan.StrategyID, completion.CompletionBindings)
+		}
+		byPlan[binding.Consumer.Plan] = binding
+	}
+	return byPlan
+}
+
+// assertEmptyShareBinding checks the completion binding a healthy consumer of a
+// DATA query receives: the FULL EMPTY share of the physical completion with an
+// empty immutable view, accepted by ValidateNamedInputCompletion.
+func assertEmptyShareBinding(t *testing.T, binding execution.NamedInputBinding, physical []execution.PhysicalQueryCompletion) {
+	t.Helper()
+	if binding.Completeness != execution.CompletenessFull || binding.DataState != execution.DataStateEmpty ||
+		binding.Disposition != execution.AccessAvailable || binding.ReasonCode != "" || binding.ImpactScope != execution.ImpactPlan ||
+		binding.Dataset == nil || binding.Dataset.Len() != 0 || binding.View == nil || binding.View.Len() != 0 {
+		t.Fatalf("healthy consumer binding=%+v, want FULL EMPTY share of the delivered query", binding)
+	}
+	for _, completion := range physical {
+		if completion.PhysicalQuery != binding.Provenance.PhysicalQuery {
+			continue
+		}
+		if completion.DataState != execution.DataStateData {
+			t.Fatalf("healthy physical completion=%+v, want DATA", completion)
+		}
+		if err := execution.ValidateNamedInputCompletion(binding, completion); err != nil {
+			t.Fatalf("EMPTY share rejected against its DATA completion: %v", err)
+		}
+		return
+	}
+	t.Fatalf("binding %+v does not reference a physical completion in %+v", binding, physical)
 }

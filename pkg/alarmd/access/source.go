@@ -296,9 +296,15 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 			RouteFacts: providerCompletion.RouteFacts, PartialEvidence: providerCompletion.PartialEvidence,
 			Stats: providerCompletion.Stats,
 		})
-		if providerCompletion.DataState != execution.DataStateData {
-			completion.CompletionBindings = append(completion.CompletionBindings, completionBindings(query, providerCompletion, request.AttemptNo)...)
-		}
+		// Every valid requirement receives a completion binding, also when the
+		// query delivered series. A Plan whose PRIMARY query returned no series
+		// is completion-only at the worker and requires one binding per frozen
+		// requirement of every Level; a dependency query that returned DATA for
+		// other Plans or series would otherwise leave that Plan without a
+		// binding and fail the Slot deterministically on every attempt. The
+		// worker prefers a streamed binding for each (consumer, series,
+		// requirement) key and falls back to this one only where none exists.
+		completion.CompletionBindings = append(completion.CompletionBindings, completionBindings(query, providerCompletion, request.AttemptNo)...)
 		completion.CompletionBindings = append(completion.CompletionBindings,
 			readinessInvalidBindings(query, providerCompletion.Ref, request.AttemptNo)...)
 	}
@@ -743,11 +749,22 @@ func dataBindings(query PlannedQuery, batch execution.ProviderSeriesBatch, attem
 	return bindings, nil
 }
 
+// completionBindings projects one physical completion onto every valid
+// consumer requirement of the query. The binding never carries records: series
+// reach consumers only through streamed batches. For a FULL or PARTIAL query
+// that delivered series the binding is therefore the EMPTY share of that
+// completion (the consumer or series received nothing from it); for an
+// UNAVAILABLE query it is UNKNOWN regardless of any series streamed before the
+// provider failed. execution.ValidateNamedInputCompletion accepts exactly
+// these two projections.
 func completionBindings(query PlannedQuery, completion execution.ProviderCompletion, attemptNo uint32) []execution.NamedInputBinding {
 	bindings := make([]execution.NamedInputBinding, 0)
 	var dataset *execution.Dataset
 	var view *execution.DatasetView
 	dataState := completion.DataState
+	if dataState == execution.DataStateData {
+		dataState = execution.DataStateEmpty
+	}
 	disposition := execution.AccessAvailable
 	var reason execution.ReasonCode
 	switch completion.Completeness {

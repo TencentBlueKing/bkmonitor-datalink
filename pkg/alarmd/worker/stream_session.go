@@ -1435,15 +1435,27 @@ func evaluationRetainedSize(state execution.StatePreflightResult, result executi
 	return retainedObjectBytes(state) + retainedObjectBytes(result), nil
 }
 
-// planCompletedFullEmpty reports whether every binding of the Plan is the FULL
-// EMPTY share of an available completion. It is fed the Plan's no-series
-// bindings, so for a completion-only Plan a DATA binding means the completion
-// itself claims delivered series that no PRIMARY series of the Plan consumed,
-// which is not a valid no-series result.
+// planCompletedFullEmpty reports whether every PRIMARY binding of the Plan is
+// the FULL EMPTY share of an available completion and no binding of the Plan
+// claims delivered records. It is fed the Plan's no-series bindings, so for a
+// completion-only Plan a DATA binding means the completion itself claims
+// delivered series that no PRIMARY series of the Plan consumed, which is not a
+// valid no-series result. A PARTIAL or UNAVAILABLE ALGORITHM_DEPENDENCY binding
+// does not change the judgement: without a PRIMARY series there is no record
+// the dependency could have fed, exactly as the Python detect stage never
+// reads history for a record it never received. Rejecting it would fail the
+// Slot deterministically on every attempt although the PRIMARY completion is
+// trustworthy and FULL EMPTY.
 func planCompletedFullEmpty(bindings []execution.NamedInputBinding, plan execution.PlanIdentity) bool {
 	found := false
 	for _, binding := range bindings {
 		if binding.Consumer.Plan != plan {
+			continue
+		}
+		if binding.DataState == execution.DataStateData {
+			return false
+		}
+		if binding.Role != execution.InputRolePrimary {
 			continue
 		}
 		found = true

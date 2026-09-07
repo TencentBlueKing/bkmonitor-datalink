@@ -7,7 +7,6 @@ package progress
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -79,8 +78,14 @@ func TestBeginSlotRejectsDifferentProjectionAndHonorsFenceOnIdempotentRetry(t *t
 	}
 	fake.status = ownership.FencedCASApplied
 	request.Projection.DuePlanTargets.Plans[0].StrategyID = "changed"
-	if _, err := store.BeginSlot(context.Background(), request); err == nil {
-		t.Fatal("BeginSlot(different projection) unexpectedly succeeded")
+	// The latest fenced attempt owns the unfinished Slot: its projection
+	// replaces the persisted one instead of being rejected.
+	if result, err := store.BeginSlot(context.Background(), request); err != nil || result.Status != execution.ProgressCommitted {
+		t.Fatalf("BeginSlot(different projection) = (%+v, %v), want the superseding commit", result, err)
+	}
+	loaded, err := store.LoadProgress(context.Background(), request.Identity)
+	if err != nil || loaded.Progress == nil || loaded.Progress.UnfinishedSlot == nil || !loaded.Progress.UnfinishedSlot.Equal(request.Projection) {
+		t.Fatalf("LoadProgress(after superseding projection) = (%+v, %v)", loaded, err)
 	}
 }
 
@@ -359,41 +364,109 @@ func TestBeginSlotSupersedesUnfinishedSlotOnNewerSegmentAtEarlierTime(t *testing
 	}
 }
 
-// Only a strictly newer Segment supersedes: an equal or older Segment start
-// with a different projection stays the deterministic persisted-fact error,
-// and the equal projection remains the idempotent re-begin.
-func TestBeginSlotKeepsDeterministicErrorForEqualOrOlderSegment(t *testing.T) {
+// The latest fenced attempt owns an unfinished Slot: a projection for the same
+// Slot on the same Segment replaces the persisted one and the differing fields
+// are observed. A view through an older Segment conflicts without a write, and
+// the equal projection stays the idempotent re-begin without an observation.
+func TestBeginSlotSupersedesDifferingProjectionOnSameSegment(t *testing.T) {
 	identity := execution.ProgressIdentity{QueryGroup: "q"}
 	fence := execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"}
-	persisted := progressProjectionAt(120)
-	current := execution.ScheduleProgress{
-		Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull,
-		UnfinishedSlot: &persisted,
+	for _, test := range []struct {
+		name       string
+		change     func(*execution.UnfinishedSlotProjection)
+		wantFields string
+	}{
+		{name: "different deadline", change: func(p *execution.UnfinishedSlotProjection) { p.EarliestQueryDeadlineUnixMilli += 5_000 }, wantFields: "deadline"},
+		{name: "different keep until", change: func(p *execution.UnfinishedSlotProjection) { p.KeepUntilUnixMilli += 90_000 }, wantFields: "keep_until"},
+		{name: "pruned targets", change: func(p *execution.UnfinishedSlotProjection) { p.DuePlanTargets.Plans = p.DuePlanTargets.Plans[:1] }, wantFields: "due_plan_targets"},
+		{name: "different contract", change: func(p *execution.UnfinishedSlotProjection) { p.Contract.SnapshotRevision = "s2" }, wantFields: "contract"},
+		{name: "several fields", change: func(p *execution.UnfinishedSlotProjection) {
+			p.Contract.QueryRevision = "query2"
+			p.EarliestQueryDeadlineUnixMilli += 1_000
+			p.KeepUntilUnixMilli += 1_000
+		}, wantFields: "contract,deadline,keep_until"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			persisted := twoPlanProjectionAt(120)
+			current := execution.ScheduleProgress{
+				Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull,
+				UnfinishedSlot: &persisted,
+			}
+			fake := &controlFake{value: mustEncode(t, current)}
+			var observations []observability.Observation
+			store := mustObservedStore(t, fake, mappedSlotResolver{60: 120, 120: 180}, observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+				observations = append(observations, observation)
+			}))
+			superseding := twoPlanProjectionAt(120)
+			test.change(&superseding)
+			priorUnfinished := -1
+			ctx := execution.WithSlotCoverageCapture(context.Background(), &execution.SlotCoverageCapture{
+				BeginCommitted: func(prior bool) {
+					priorUnfinished = 0
+					if prior {
+						priorUnfinished = 1
+					}
+				},
+			})
+			result, err := store.BeginSlot(ctx, execution.ProgressBeginRequest{Identity: identity, OwnerFence: fence, Projection: superseding})
+			if err != nil || result.Status != execution.ProgressCommitted || priorUnfinished != 1 {
+				t.Fatalf("BeginSlot(superseding same Segment) = (%+v, %v) prior=%d, want committed over the prior projection", result, err, priorUnfinished)
+			}
+			loaded, err := store.LoadProgress(context.Background(), identity)
+			if err != nil || loaded.Progress == nil || loaded.Progress.NextSlot != 120 || loaded.Progress.LastFullSlot != 60 ||
+				loaded.Progress.CurrentOrRecentGap != nil || loaded.Progress.UnfinishedSlot == nil || !loaded.Progress.UnfinishedSlot.Equal(superseding) {
+				t.Fatalf("LoadProgress(after supersede) = (%+v, %v)", loaded.Progress, err)
+			}
+			if len(observations) != 1 {
+				t.Fatalf("observations = %+v, want exactly one superseded-projection observation", observations)
+			}
+			observation := observations[0]
+			wantErr := "progress: unfinished Slot projection superseded by the latest fenced attempt; differing fields: " + test.wantFields
+			if observation.Component != observability.ComponentProgress || observation.Stage != observability.StageProgressCommitted ||
+				observation.Result != observability.ResultDegraded || observation.ReasonCode != observability.ReasonCode(contract.ReasonConfigDrift) ||
+				observation.Trace.QueryGroupKey != "q" || observation.Trace.EvaluationTime != 120 ||
+				observation.Trace.ScheduleSegmentStart != int64(superseding.Contract.ScheduleSegmentStart) ||
+				observation.Err == nil || observation.Err.Error() != wantErr {
+				t.Fatalf("superseded-projection observation = %+v (err=%v), want %q", observation, observation.Err, wantErr)
+			}
+
+			// The same Slot seen through an older Segment is not the latest view.
+			raw := append([]byte(nil), fake.value...)
+			older := superseding
+			older.Contract.ScheduleSegmentStart = superseding.Contract.ScheduleSegmentStart - 30
+			result, err = store.BeginSlot(context.Background(), execution.ProgressBeginRequest{Identity: identity, OwnerFence: fence, Projection: older})
+			if err != nil || result.Status != execution.ProgressConflict || string(fake.value) != string(raw) || len(observations) != 1 {
+				t.Fatalf("BeginSlot(older Segment view) = (%+v, %v) changed=%t observations=%d, want conflict without a write", result, err, string(fake.value) != string(raw), len(observations))
+			}
+
+			// The equal projection is the idempotent re-begin.
+			result, err = store.BeginSlot(context.Background(), execution.ProgressBeginRequest{Identity: identity, OwnerFence: fence, Projection: superseding})
+			if err != nil || result.Status != execution.ProgressCommitted || string(fake.value) != string(raw) || len(observations) != 1 {
+				t.Fatalf("BeginSlot(equal projection) = (%+v, %v) changed=%t observations=%d, want idempotent commit", result, err, string(fake.value) != string(raw), len(observations))
+			}
+		})
 	}
-	raw := mustEncode(t, current)
-	fake := &controlFake{value: append([]byte(nil), raw...)}
-	store := mustStoreWithSlots(t, fake, mappedSlotResolver{60: 120, 120: 180})
-	for _, segmentStart := range []execution.EvaluationTime{persisted.Contract.ScheduleSegmentStart, persisted.Contract.ScheduleSegmentStart - 30} {
-		differing := progressProjectionAt(120)
-		differing.Contract.ScheduleSegmentStart = segmentStart
-		differing.Contract.SnapshotRevision = "s2"
-		_, err := store.BeginSlot(context.Background(), execution.ProgressBeginRequest{Identity: identity, OwnerFence: fence, Projection: differing})
-		var deterministic *DeterministicInvalidError
-		if !errors.As(err, &deterministic) || err.Error() != "progress: deterministic-invalid persisted value: unfinished Slot projection differs from persisted facts" {
-			t.Fatalf("BeginSlot(segment start %d) error = %v, want the deterministic persisted-fact error", segmentStart, err)
-		}
-		if string(fake.value) != string(raw) {
-			t.Fatalf("BeginSlot(segment start %d) changed persisted Progress", segmentStart)
-		}
+}
+
+// twoPlanProjectionAt is a projection whose due Plan targets can lose one Plan
+// while keeping the frozen digest, as a pruned re-freeze would.
+func twoPlanProjectionAt(evaluationTime execution.EvaluationTime) execution.UnfinishedSlotProjection {
+	projection := progressProjectionAt(evaluationTime)
+	projection.DuePlanTargets.Plans = append(projection.DuePlanTargets.Plans,
+		execution.PlanIdentity{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy-2"})
+	return projection
+}
+
+func mustObservedStore(t *testing.T, control ControlStore, slots ContinuousSlotResolver, observer observability.Observer) *Store {
+	t.Helper()
+	store, err := NewStore(StoreOptions{
+		Prefix: "alarmd", Control: control, Slots: slots, Observer: observer,
+		Now: func() time.Time { return time.Unix(1, 0) },
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	result, err := store.BeginSlot(context.Background(), execution.ProgressBeginRequest{Identity: identity, OwnerFence: fence, Projection: persisted})
-	if err != nil || result.Status != execution.ProgressCommitted {
-		t.Fatalf("BeginSlot(equal projection) = (%+v, %v), want idempotent commit", result, err)
-	}
-	loaded, err := store.LoadProgress(context.Background(), identity)
-	if err != nil || loaded.Progress == nil || !reflect.DeepEqual(*loaded.Progress, current) {
-		t.Fatalf("LoadProgress(after idempotent re-begin) = (%+v, %v), want unchanged %+v", loaded.Progress, err, current)
-	}
+	return store
 }
 
 // newerSegmentProjectionAt is the projection a Worker freezes for the same

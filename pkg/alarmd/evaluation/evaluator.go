@@ -103,7 +103,7 @@ type recordResult struct {
 
 type recordDetector func() ([]detect.LevelFact, []detect.ProjectedValue, error)
 
-func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, warmingConvergence map[uint32]bool, run recordDetector) (recordResult, error) {
+func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, guardConvergence map[uint32]bool, run recordDetector) (recordResult, error) {
 	series := execution.SeriesIdentityDigest(record.DimensionIdentity().Digest)
 	identity := execution.StateKeyIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration, SeriesIdentityDigest: series}
 	if view.Identity != identity {
@@ -156,8 +156,13 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 			if guarded && current.GapReasonCode != "" {
 				durableGuardReasons[l.Definition().LevelID] = current.GapReasonCode
 			}
-			if current.HistoryCompleteness == execution.HistoryGapped ||
-				(current.HistoryCompleteness == execution.HistoryWarming && !warmingConvergence[l.Definition().LevelID]) {
+			// A WARMING or GAPPED Level keeps forcing its completeness onto the
+			// trigger until the loaded history already forms the required full
+			// window at the last processed record; from then on the live window
+			// decides, so the guard converges on the first FULL record. Before
+			// this also covered GAPPED, a Plan whose gap episode was cleared
+			// after RequiredFullSlots == 1 data Slot stayed GAPPED for ever.
+			if guarded && !guardConvergence[l.Definition().LevelID] {
 				completeness = string(current.HistoryCompleteness)
 			}
 		}
@@ -309,7 +314,7 @@ func (e *Evaluator) evaluateSeries(
 	if !ok {
 		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: runtime state missing")
 	}
-	warming, err := warmingConvergenceAllowed(view, levels)
+	converged, err := guardConvergenceAllowed(view, levels)
 	if err != nil {
 		return execution.PlanEvaluationResult{}, err
 	}
@@ -319,7 +324,7 @@ func (e *Evaluator) evaluateSeries(
 	var events []contract.TriggerEventV1
 	var affected []execution.RecordAnchor
 	for _, record := range primaryRecords {
-		one, runErr := e.evaluateRecordWith(ctx, legacy, due, record, view, warming, func() ([]detect.LevelFact, []detect.ProjectedValue, error) {
+		one, runErr := e.evaluateRecordWith(ctx, legacy, due, record, view, converged, func() ([]detect.LevelFact, []detect.ProjectedValue, error) {
 			facts, projected, _, detectErr := e.detect.EvaluatePreparedSeriesRecord(ctx, prepared, ordered, record)
 			return facts, projected, detectErr
 		})
@@ -422,7 +427,11 @@ func sameRecords(left, right []execution.RecordView) bool {
 	return true
 }
 
-func warmingConvergenceAllowed(view execution.RuntimeStateView, levels []strategy.CompiledLevel) (map[uint32]bool, error) {
+// guardConvergenceAllowed reports, per Level, whether the loaded history
+// already forms the required full window at the last processed record, so a
+// WARMING or GAPPED Level guard may converge on the next FULL record. A Level
+// whose live window still lacks points stays guarded.
+func guardConvergenceAllowed(view execution.RuntimeStateView, levels []strategy.CompiledLevel) (map[uint32]bool, error) {
 	allowed := make(map[uint32]bool, len(levels))
 	requirements := make([]state.LevelRequirement, len(levels))
 	for i, level := range levels {
@@ -439,7 +448,8 @@ func warmingConvergenceAllowed(view execution.RuntimeStateView, levels []strateg
 	}
 	for _, level := range levels {
 		current, found := levelState(view, level.Definition().LevelID)
-		if !found || current.HistoryCompleteness != execution.HistoryWarming || current.LastProcessedEventTime <= 0 {
+		if !found || current.LastProcessedEventTime <= 0 ||
+			(current.HistoryCompleteness != execution.HistoryWarming && current.HistoryCompleteness != execution.HistoryGapped) {
 			continue
 		}
 		history, found := window.History(level.Definition().LevelID)

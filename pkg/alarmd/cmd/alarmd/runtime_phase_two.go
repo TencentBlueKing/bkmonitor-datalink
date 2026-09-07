@@ -37,6 +37,32 @@ var errPhaseTwoWorkerDraining = errors.New("phase-two Go Access worker is draini
 
 var errPhaseTwoWorkerStopped = errors.New("phase-two Go Access worker stopped before application shutdown")
 
+// phaseTwoControlDependencyReason is the fixed low-cardinality readiness
+// reason reported while the control plane or the Ownership Store cannot be
+// reached. Both are Redis-backed shared dependencies: the Worker stays alive,
+// keeps already-owned Query Groups running and retries on the next tick.
+var phaseTwoControlDependencyReason = observability.ReasonCode(contract.ReasonRedisUnavailable)
+
+// phaseTwoInvariantError marks a programming or shared-runtime invariant
+// violation inside the control loop. It is the only reconcile error class
+// that may stop Run. Every other refresh, reconcile or Assignment error is a
+// transient dependency failure by default: it degrades readiness with
+// phaseTwoControlDependencyReason and is retried on the next tick.
+type phaseTwoInvariantError struct{ err error }
+
+func newPhaseTwoInvariantError(message string) error {
+	return &phaseTwoInvariantError{err: errors.New(message)}
+}
+
+func (err *phaseTwoInvariantError) Error() string { return err.err.Error() }
+
+func (err *phaseTwoInvariantError) Unwrap() error { return err.err }
+
+func isPhaseTwoInvariantError(err error) bool {
+	var invariant *phaseTwoInvariantError
+	return errors.As(err, &invariant)
+}
+
 type phaseTwoApplicationDependencies struct {
 	configureCPU func() (string, error)
 	run          func(context.Context, config.Config, *metric.Recorder, *observability.Logger) error
@@ -294,6 +320,11 @@ type phaseTwoWorkerBundle struct {
 	inflightWG            sync.WaitGroup
 	shutdownOnce          sync.Once
 	shutdownErr           error
+	// dependencyDegraded is set while a control or Ownership Store call fails
+	// transiently. dependencyFailureSeq counts those failures so a reconcile
+	// pass only clears the flag when no new failure happened during the pass.
+	dependencyDegraded   bool
+	dependencyFailureSeq uint64
 }
 
 type phaseTwoScheduledRunner struct {
@@ -1093,10 +1124,10 @@ func (bundle *phaseTwoWorkerBundle) applyAssignment(
 	desired := make(map[execution.QueryGroupIdentity]struct{}, len(assigned))
 	for _, queryGroup := range assigned {
 		if queryGroup == "" {
-			return errors.New("phase-two Assignment contains empty Query Group")
+			return newPhaseTwoInvariantError("phase-two Assignment contains empty Query Group")
 		}
 		if _, duplicate := desired[queryGroup]; duplicate {
-			return errors.New("phase-two Assignment contains duplicate Query Group")
+			return newPhaseTwoInvariantError("phase-two Assignment contains duplicate Query Group")
 		}
 		desired[queryGroup] = struct{}{}
 	}
@@ -1124,10 +1155,18 @@ func (bundle *phaseTwoWorkerBundle) applyAssignment(
 	}
 	bundle.mu.Unlock()
 
+	// Every error below is scoped to one Query Group. Store I/O failures mark
+	// the Worker degraded and are retried on the next reconcile; siblings and
+	// the Worker continue. Only invariant violations and cancellation return.
 	for queryGroup, lifecycle := range removed {
 		if err := bundle.stopQueryGroup(ctx, queryGroup, lifecycle); err != nil {
 			bundle.observeOwnership(ctx, observability.StageAssignmentLost, observability.ResultFailed, queryGroup, err)
-			return err
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			// The lifecycle is already detached; the lease expires by TTL.
+			bundle.markControlDependencyDegraded()
+			continue
 		}
 		bundle.observeOwnership(ctx, observability.StageAssignmentLost, observability.ResultSuccess, queryGroup, nil)
 	}
@@ -1142,18 +1181,96 @@ func (bundle *phaseTwoWorkerBundle) applyAssignment(
 				errors.Is(err, ownership.ErrStaleFence) {
 				continue
 			}
-			return fmt.Errorf("phase-two open Query Group %s: %w", queryGroup, err)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if isPhaseTwoInvariantError(err) {
+				return fmt.Errorf("phase-two open Query Group %s: %w", queryGroup, err)
+			}
+			bundle.markControlDependencyDegraded()
+			continue
 		}
 		if runner == nil {
-			return fmt.Errorf("phase-two open Query Group %s returned no runner", queryGroup)
+			return newPhaseTwoInvariantError(fmt.Sprintf("phase-two open Query Group %s returned no runner", queryGroup))
 		}
 		if !bundle.startQueryGroup(ctx, queryGroup, runner) {
 			if err := runner.Release(ctx); err != nil {
-				return fmt.Errorf("phase-two release unopened Query Group %s: %w", queryGroup, err)
+				bundle.observeOwnership(ctx, observability.StageAssignmentLost, observability.ResultFailed, queryGroup, err)
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				bundle.markControlDependencyDegraded()
 			}
 			continue
 		}
 	}
+	return nil
+}
+
+// markControlDependencyDegraded records one transient control or Ownership
+// Store failure. The Worker stays Ready-degraded (or NotReady when the
+// Assignment is incomplete) with a fixed readiness reason until a full
+// refresh or reconcile pass completes without a new failure.
+func (bundle *phaseTwoWorkerBundle) markControlDependencyDegraded() {
+	bundle.mu.Lock()
+	if bundle.draining || bundle.closed {
+		bundle.mu.Unlock()
+		return
+	}
+	bundle.dependencyDegraded = true
+	bundle.dependencyFailureSeq++
+	bundle.mu.Unlock()
+	bundle.updateReadiness()
+}
+
+func (bundle *phaseTwoWorkerBundle) controlDependencyFailureSeq() uint64 {
+	bundle.mu.RLock()
+	defer bundle.mu.RUnlock()
+	return bundle.dependencyFailureSeq
+}
+
+// clearControlDependencyDegraded ends the degraded episode after a reconcile
+// pass that started at sinceSeq completed without another dependency failure.
+func (bundle *phaseTwoWorkerBundle) clearControlDependencyDegraded(ctx context.Context, sinceSeq uint64) {
+	bundle.mu.Lock()
+	if !bundle.dependencyDegraded || bundle.dependencyFailureSeq != sinceSeq {
+		bundle.mu.Unlock()
+		return
+	}
+	bundle.dependencyDegraded = false
+	bundle.lastControlRecoveryAt = bundle.dependencies.Now()
+	bundle.mu.Unlock()
+	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
+		Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotRefreshed,
+		Result: observability.Result(observability.ResultRecovered), Direction: observability.DirectionInternal,
+		ReasonCode: phaseTwoControlDependencyReason,
+	})
+}
+
+// scopeControlError classifies one refresh or reconcile error. Invariant
+// violations and cancellation of the Run context propagate so Run stops.
+// Everything else is a dependency failure: it is logged once with a fixed
+// reason, marks the Worker degraded and is retried on the next tick.
+func (bundle *phaseTwoWorkerBundle) scopeControlError(
+	ctx context.Context,
+	component observability.Component,
+	stage observability.Stage,
+	err error,
+) error {
+	if err == nil {
+		return nil
+	}
+	if isPhaseTwoInvariantError(err) || errors.Is(err, errPhaseTwoWorkerDraining) {
+		return err
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
+		Component: component, Stage: stage, Result: observability.ResultFailed,
+		Direction: observability.DirectionInternal, ReasonCode: phaseTwoControlDependencyReason, Err: err,
+	})
+	bundle.markControlDependencyDegraded()
 	return nil
 }
 
@@ -1285,6 +1402,7 @@ func (bundle *phaseTwoWorkerBundle) updateReadiness() {
 	}
 	controlDegraded := bundle.controlDegraded
 	controlReason := bundle.controlReason
+	dependencyDegraded := bundle.dependencyDegraded
 	lastRecoveryAt := bundle.lastControlRecoveryAt
 	bundle.mu.RUnlock()
 	state := observability.HealthReady
@@ -1292,9 +1410,14 @@ func (bundle *phaseTwoWorkerBundle) updateReadiness() {
 	if !assignmentReady {
 		state = observability.HealthNotReady
 		reasons = []observability.ReasonCode{observability.ReasonInternalUnknown}
-	} else if controlDegraded {
+	} else if controlDegraded || dependencyDegraded {
 		state = observability.HealthDegraded
-		reasons = []observability.ReasonCode{controlReason}
+		if controlDegraded {
+			reasons = append(reasons, controlReason)
+		}
+	}
+	if dependencyDegraded {
+		reasons = append(reasons, phaseTwoControlDependencyReason)
 	}
 	bundle.dependencies.Health.Update(phaseTwoReadiness{
 		State: state, Reasons: reasons, SnapshotReady: true, AssignmentReady: assignmentReady,
@@ -1302,13 +1425,18 @@ func (bundle *phaseTwoWorkerBundle) updateReadiness() {
 	})
 }
 
+// refreshAndReconcile runs one control tick. Dependency failures never stop
+// the Worker: they are scoped by scopeControlError, keep already-owned Query
+// Groups running and are retried on the next tick. Only invariant violations
+// and cancellation are returned to Run.
 func (bundle *phaseTwoWorkerBundle) refreshAndReconcile(ctx context.Context, refresh bool) error {
+	failureSeq := bundle.controlDependencyFailureSeq()
 	var queryGroups []execution.QueryGroupIdentity
 	var err error
 	if refresh {
 		leader, acquireErr := bundle.tryAcquireControlLeader(ctx)
 		if acquireErr != nil {
-			return acquireErr
+			return bundle.scopeControlError(ctx, observability.ComponentControlPlane, observability.StageSnapshotUnavailable, acquireErr)
 		}
 		if leader {
 			var result phaseTwoControlRefreshResult
@@ -1332,8 +1460,7 @@ func (bundle *phaseTwoWorkerBundle) refreshAndReconcile(ctx context.Context, ref
 	}
 	if err != nil {
 		if !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
-			bundle.observe(ctx, observability.ComponentControlPlane, observability.StageSnapshotUnavailable, observability.ResultFailed, err)
-			return err
+			return bundle.scopeControlError(ctx, observability.ComponentControlPlane, observability.StageSnapshotUnavailable, err)
 		}
 		bundle.mu.RLock()
 		queryGroups = append([]execution.QueryGroupIdentity(nil), bundle.queryGroups...)
@@ -1354,18 +1481,19 @@ func (bundle *phaseTwoWorkerBundle) refreshAndReconcile(ctx context.Context, ref
 	if leader {
 		if err := bundle.dependencies.Ownership.PublishAssignments(ctx, queryGroups, bundle.dependencies.Now()); err != nil {
 			if !errors.Is(err, ownership.ErrStaleFence) {
-				return err
+				return bundle.scopeControlError(ctx, observability.ComponentOwnership, observability.StageAssignmentAcquired, err)
 			}
 			bundle.markControlFollower(err)
 		}
 	}
 	assigned, err := bundle.dependencies.Ownership.AssignedQueryGroups(ctx, queryGroups)
 	if err != nil {
-		return err
+		return bundle.scopeControlError(ctx, observability.ComponentOwnership, observability.StageAssignmentAcquired, err)
 	}
 	if err := bundle.applyAssignment(ctx, assigned); err != nil {
 		return err
 	}
+	bundle.clearControlDependencyDegraded(ctx, failureSeq)
 	bundle.updateReadiness()
 	return nil
 }
@@ -1381,13 +1509,13 @@ func (bundle *phaseTwoWorkerBundle) applyControlRefresh(
 	result phaseTwoControlRefreshResult,
 ) error {
 	if result.Status != phaseTwoControlHealthy && result.Status != phaseTwoControlDegradedLastGood {
-		return errors.New("phase-two Control refresh returned an invalid health fact")
+		return newPhaseTwoInvariantError("phase-two Control refresh returned an invalid health fact")
 	}
 	if result.Status == phaseTwoControlDegradedLastGood &&
 		(result.SourceKind != observability.SourceKindLegacyStrategy &&
 			result.SourceKind != observability.SourceKindCompiledSnapshot ||
 			result.ReasonCode == "" || result.Cause == nil) {
-		return errors.New("phase-two degraded Control refresh returned an incomplete health fact")
+		return newPhaseTwoInvariantError("phase-two degraded Control refresh returned an incomplete health fact")
 	}
 	var transitionResult observability.Result
 	var transitionSource observability.SourceKind

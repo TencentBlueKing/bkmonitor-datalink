@@ -2284,6 +2284,27 @@ type fakePhaseTwoOwnership struct {
 	controlLeader  int
 	published      int
 	closeCalls     int
+	// failSite injects failErr into the next failRemaining calls of one store
+	// method ("publish", "assigned" or "open"); a negative count never recovers.
+	failSite      string
+	failErr       error
+	failRemaining int
+}
+
+func (owner *fakePhaseTwoOwnership) injectFailure(site string, err error, count int) {
+	owner.mu.Lock()
+	defer owner.mu.Unlock()
+	owner.failSite, owner.failErr, owner.failRemaining = site, err, count
+}
+
+func (owner *fakePhaseTwoOwnership) consumeFailureLocked(site string) error {
+	if owner.failSite != site || owner.failRemaining == 0 || owner.failErr == nil {
+		return nil
+	}
+	if owner.failRemaining > 0 {
+		owner.failRemaining--
+	}
+	return owner.failErr
 }
 
 type signalingPhaseTwoOwnership struct {
@@ -2332,6 +2353,9 @@ func (owner *fakePhaseTwoOwnership) PublishAssignments(
 ) error {
 	owner.mu.Lock()
 	defer owner.mu.Unlock()
+	if err := owner.consumeFailureLocked("publish"); err != nil {
+		return err
+	}
 	owner.published++
 	return nil
 }
@@ -2342,6 +2366,9 @@ func (owner *fakePhaseTwoOwnership) AssignedQueryGroups(
 ) ([]execution.QueryGroupIdentity, error) {
 	owner.mu.Lock()
 	defer owner.mu.Unlock()
+	if err := owner.consumeFailureLocked("assigned"); err != nil {
+		return nil, err
+	}
 	return append([]execution.QueryGroupIdentity(nil), owner.assigned...), nil
 }
 
@@ -2359,6 +2386,9 @@ func (owner *fakePhaseTwoOwnership) OpenQueryGroup(
 	owner.mu.Lock()
 	defer owner.mu.Unlock()
 	if err := owner.openErrors[queryGroup]; err != nil {
+		return nil, err
+	}
+	if err := owner.consumeFailureLocked("open"); err != nil {
 		return nil, err
 	}
 	if owner.runners != nil {

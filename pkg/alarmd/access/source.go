@@ -58,8 +58,18 @@ type QueryPermit interface {
 	Release()
 }
 
-type QueryPermitAcquirer interface {
+type PhysicalQueryPermitAcquirer interface {
 	AcquireQueryPermit(context.Context, execution.SlotIdentity, execution.Operation, time.Time) (QueryPermit, error)
+}
+
+type RecoveryChannels interface {
+	PhysicalQueryPermitAcquirer
+	Release()
+}
+
+type QueryPermitAcquirer interface {
+	PhysicalQueryPermitAcquirer
+	AcquireRecoveryChannels(context.Context, execution.SlotIdentity, execution.Operation, time.Time, int, func()) (RecoveryChannels, error)
 }
 
 type Config struct {
@@ -123,10 +133,55 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		}
 		return completeBudgetExhaustedQueries(execution.QueryExecutionCompletion{}, prepared.Queries, request.AttemptNo), nil
 	}
-	if request.Operation == execution.OperationNormal {
-		readyAt := sharedPendingReadiness(prepared.Queries, source.now())
-		if !readyAt.IsZero() {
-			return execution.QueryExecutionCompletion{}, &ReadinessDeferredError{readyAt: readyAt}
+	if readyAt := sharedPendingReadiness(prepared.Queries, source.now()); !readyAt.IsZero() {
+		return execution.QueryExecutionCompletion{}, &ReadinessDeferredError{readyAt: readyAt}
+	}
+	var permits PhysicalQueryPermitAcquirer = source.permits
+	if request.Operation != execution.OperationNormal {
+		maximum := len(prepared.Queries)
+		// Drop per-execution preparation before waiting for recovery capacity.
+		// The production acquirer also clears the outer RunOne content scope.
+		cleared := false
+		channels, acquireErr := source.permits.AcquireRecoveryChannels(ctx, request.Contract.Slot, request.Operation, recoveryDeadline, maximum, func() {
+			frozen = FrozenPlan{}
+			prepared = PreparedExecution{}
+			cleared = true
+		})
+		if acquireErr != nil {
+			if errors.Is(acquireErr, context.DeadlineExceeded) && ctx.Err() == nil {
+				frozen, err = source.plans.ResolveFrozenPlan(ctx, request.Contract)
+				if err != nil {
+					return execution.QueryExecutionCompletion{}, err
+				}
+				prepared, err = prepare(request.Contract, frozen, source.config.MinReadyDelay, true)
+				if err != nil {
+					return execution.QueryExecutionCompletion{}, err
+				}
+				if err = consumer.Begin(ctx, prepared.Header); err != nil {
+					return execution.QueryExecutionCompletion{}, err
+				}
+				return completeBudgetExhaustedQueries(execution.QueryExecutionCompletion{}, prepared.Queries, request.AttemptNo), nil
+			}
+			return execution.QueryExecutionCompletion{}, fmt.Errorf("alarmd access: acquire recovery channels: %w", acquireErr)
+		}
+		defer channels.Release()
+		permits = channels
+		if cleared {
+			frozen, err = source.plans.ResolveFrozenPlan(ctx, request.Contract)
+			if err != nil {
+				return execution.QueryExecutionCompletion{}, err
+			}
+			prepared, err = prepare(request.Contract, frozen, source.config.MinReadyDelay, true)
+			if err != nil {
+				return execution.QueryExecutionCompletion{}, err
+			}
+		}
+		// The original deadline includes both preparations and the R wait.
+		if !recoveryDeadline.After(source.now()) {
+			if err := consumer.Begin(ctx, prepared.Header); err != nil {
+				return execution.QueryExecutionCompletion{}, err
+			}
+			return completeBudgetExhaustedQueries(execution.QueryExecutionCompletion{}, prepared.Queries, request.AttemptNo), nil
 		}
 	}
 	if err := consumer.Begin(ctx, prepared.Header); err != nil {
@@ -169,7 +224,7 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		if !recoveryDeadline.IsZero() {
 			queryDeadline = recoveryDeadline
 		}
-		permit, err := source.permits.AcquireQueryPermit(queryCtx, request.Contract.Slot, request.Operation, queryDeadline)
+		permit, err := permits.AcquireQueryPermit(queryCtx, request.Contract.Slot, request.Operation, queryDeadline)
 		if err != nil {
 			if request.Operation != execution.OperationNormal && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 				results[queryIndex].budgetExhausted = true
@@ -404,6 +459,7 @@ func (source *Source) executeWithPermit(
 	permit QueryPermit,
 ) (execution.ProviderCompletion, error) {
 	defer permit.Release()
+	observability.EmitTargetFlow(ctx, "runner_decision", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "query_running"})
 	execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
 		if c.QueryCalled != nil {
 			c.QueryCalled(attempt)

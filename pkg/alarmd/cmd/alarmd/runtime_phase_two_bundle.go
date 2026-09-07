@@ -354,6 +354,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	repository.ConfigureSnapshotMemory(worker.PreparationByteAdmission(coordinator), worker.PreparationObjectBytes)
 	registration, err := phaseTwoWorkerRegistration(cfg, ownership.WorkerStarting, external.Now())
 	if err != nil {
 		return nil, err
@@ -387,6 +388,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		Config: cfg, Health: health, Control: control, Ownership: productionOwnership,
 		Recorder: recorder, Observer: observer, TargetFlow: targetFlow, Now: external.Now,
 		CloseResources: func(shutdownCtx context.Context) error {
+			repository.ReleaseSnapshotCache()
 			eventsClosed = true
 			if finalEmitter != nil && finalEmitter.publisher != nil {
 				finalEmitter.shutdown(shutdownCtx)

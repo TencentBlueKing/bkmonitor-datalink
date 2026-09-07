@@ -52,7 +52,7 @@ func TestDefaultPhaseTwoRuntimeHasBoundedLifecycleBudgets(t *testing.T) {
 		cfg.Coordinator.MaxEvents == 0 || cfg.Coordinator.MaxGapMutations == 0 {
 		t.Fatalf("phase-two Coordinator budgets = %+v, want positive values", cfg.Coordinator)
 	}
-	if cfg.Scheduler.ActiveExecutionLimit <= 0 || cfg.Scheduler.ProcessQueryPermits <= cfg.Scheduler.RecoveryQueryPermits ||
+	if cfg.Scheduler.ActiveExecutionLimit != 0 || cfg.Scheduler.ProcessQueryPermits <= cfg.Scheduler.RecoveryQueryPermits ||
 		cfg.Scheduler.RecoveryQueryPermits <= 0 || cfg.Scheduler.ReadyQueueCapacity <= 0 ||
 		cfg.Scheduler.RecoveryQueueCapacity <= 0 || cfg.Scheduler.MaxQueuedItemsPerQG <= 0 ||
 		cfg.Scheduler.MaxReplaySlots == 0 || cfg.Scheduler.MaxReplayAge.Duration() <= 0 ||
@@ -86,7 +86,7 @@ func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
 	}
 
 	for name, mutate := range map[string]func(*Config){
-		"active execution limit": func(cfg *Config) { cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 0 },
+		"active execution limit": func(cfg *Config) { cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = -1 },
 		"worker identity":        func(cfg *Config) { cfg.PhaseTwo.Worker.ID = "" },
 		"deployment profile":     func(cfg *Config) { cfg.PhaseTwo.Worker.DeploymentProfile = "" },
 		"strategy cache":         func(cfg *Config) { cfg.PhaseTwo.Control.StrategyCachePrefix = "" },

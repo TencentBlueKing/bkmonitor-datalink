@@ -575,7 +575,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("short_period_slot_completion_lag_seconds"):     24,
 		fqName("run_one_return_total"):                         13,
 		fqName("expired_range_total"):                          4,
-		fqName("expired_slots_finalized_total"):                1,
+		fqName("expired_slots_finalized_total"):                2,
 		fqName("execute_return_total"):                         6,
 		fqName("progress_completed_total"):                     7,
 		fqName("run_one_attempted_total"):                      1,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -15,6 +16,8 @@ func TestExpiredRangeGatherSeparatesOperationsAndLogicalSlots(t *testing.T) {
 	}
 	observe("committed", 17)
 	observe("committed", 0) // Already committed response cannot add the range twice.
+	r.Observe(context.Background(), observability.Observation{Component: observability.ComponentScheduler, Stage: observability.StageExpiredRangeReturned,
+		ExpiredRange: &observability.ExpiredRangeFacts{Result: "committed", ReasonCode: contract.ReasonGapSkipped, CommittedSlots: 7}})
 	for _, result := range []string{"retrying", "blocked", "error"} {
 		observe(result, 999)
 	}
@@ -26,7 +29,7 @@ func TestExpiredRangeGatherSeparatesOperationsAndLogicalSlots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]float64{"committed": 2, "retrying": 1, "blocked": 1, "error": 1}
+	want := map[string]float64{"committed": 3, "retrying": 1, "blocked": 1, "error": 1}
 	operations, slots := 0, 0
 	for _, family := range families {
 		switch family.GetName() {
@@ -45,7 +48,11 @@ func TestExpiredRangeGatherSeparatesOperationsAndLogicalSlots(t *testing.T) {
 		case "bkmonitor_alarmd_expired_slots_finalized_total":
 			for _, series := range family.Metric {
 				slots++
-				if len(series.Label) != 1 || series.Label[0].GetName() != "reason" || series.Label[0].GetValue() != "recovery_expired" || series.GetCounter().GetValue() != 17 {
+				if len(series.Label) != 1 || series.Label[0].GetName() != "reason" {
+					t.Fatalf("logical slots=%v", series)
+				}
+				expected, ok := map[string]float64{"recovery_expired": 17, "replay_distance_expired": 7}[series.Label[0].GetValue()]
+				if !ok || series.GetCounter().GetValue() != expected {
 					t.Fatalf("logical slots=%v", series)
 				}
 			}
@@ -53,7 +60,7 @@ func TestExpiredRangeGatherSeparatesOperationsAndLogicalSlots(t *testing.T) {
 			t.Fatal("range fabricated ordinary successful completion")
 		}
 	}
-	if operations != 4 || slots != 1 {
-		t.Fatalf("new series=%d+%d, want 4+1", operations, slots)
+	if operations != 4 || slots != 2 {
+		t.Fatalf("new series=%d+%d, want 4+2", operations, slots)
 	}
 }

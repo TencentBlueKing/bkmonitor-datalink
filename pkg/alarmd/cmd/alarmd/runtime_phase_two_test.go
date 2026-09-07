@@ -433,6 +433,7 @@ func TestPhaseTwoWorkerBundleRunsOwnedQueryGroupsConcurrentlyOncePerTick(t *test
 
 func TestPhaseTwoWorkerBundleBoundsRunnerFanoutIndependentlyOfQueryPermits(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 2 // Explicit emergency guard under test.
 	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 1
 	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 0
 	cfg.PhaseTwo.Scheduler.RecoveryQueueCapacity = 100
@@ -498,6 +499,7 @@ func TestPhaseTwoWorkerBundleBoundsRunnerFanoutIndependentlyOfQueryPermits(t *te
 
 func TestPhaseTwoWorkerBundleRunsRetiredBacklogWhenCapacityIsReleased(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 2 // Explicit emergency guard under test.
 	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
 
 	started := make(chan execution.QueryGroupIdentity, 4)
@@ -1059,6 +1061,7 @@ func TestPhaseTwoWorkerBundleDispatcherDoesNotHoldQueryRecoveryAllowanceAcrossRu
 
 func TestPhaseTwoWorkerBundleSchedulerCancellationStopsAdmissionAndDrainsInflight(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 2 // Explicit emergency guard under test.
 	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
 
 	started := make(chan struct{}, 2)

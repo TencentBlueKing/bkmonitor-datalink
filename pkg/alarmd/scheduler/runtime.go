@@ -114,21 +114,22 @@ type ExecutionAdmission func(execution.Operation) (release func(), admitted bool
 // FlightCoordinator is one process-wide gate keyed by Query Group. It keeps
 // query execution single-flight without introducing a Redis business lock.
 type FlightCoordinator struct {
-	mu               sync.Mutex
-	active           map[execution.QueryGroupIdentity]struct{}
-	recoveryEnabled  bool
-	limits           RecoveryLimits
-	now              func() time.Time
-	normalWaiters    []*queryPermitWaiter
-	recoveryWaiters  []*queryPermitWaiter
-	lastNormalQG     execution.QueryGroupIdentity
-	lastRecoveryQG   execution.QueryGroupIdentity
-	queryInflight    int
-	recoveryInflight int
-	nextRecovery     bool
-	permitSequence   uint64
-	observer         observability.Observer
-	inflightByOp     map[execution.Operation]int
+	mu                     sync.Mutex
+	active                 map[execution.QueryGroupIdentity]struct{}
+	recoveryEnabled        bool
+	limits                 RecoveryLimits
+	now                    func() time.Time
+	normalWaiters          []*queryPermitWaiter
+	recoveryWaiters        []*queryPermitWaiter
+	recoveryChannelWaiters []*recoveryChannelWaiter
+	lastNormalQG           execution.QueryGroupIdentity
+	lastRecoveryQG         execution.QueryGroupIdentity
+	queryInflight          int
+	recoveryInflight       int
+	nextRecovery           bool
+	permitSequence         uint64
+	observer               observability.Observer
+	inflightByOp           map[execution.Operation]int
 }
 
 func NewFlightCoordinator() *FlightCoordinator {
@@ -372,7 +373,7 @@ func (runner *Runner) runOneTracked(
 	}
 	decision = "execute"
 	result, err := runner.executor.Execute(ctx, request)
-	if err != nil && operation == execution.OperationNormal {
+	if err != nil {
 		var deferred interface{ ReadinessReadyAt() time.Time }
 		if errors.As(err, &deferred) {
 			decision = "query_readiness_deferred"

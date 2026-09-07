@@ -16,7 +16,7 @@ func normalizeCapacityRejection(observation Observation) *CapacityRejectionFacts
 	}
 	f := *observation.CapacityRejection
 	switch f.Phase {
-	case "normal_input", "normal_gap", "normal_output", "query_free":
+	case "normal_input", "normal_gap", "normal_output", "query_free", "snapshot_prepare":
 	default:
 		f.Phase = "other"
 	}

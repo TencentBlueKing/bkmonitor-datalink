@@ -2226,7 +2226,9 @@ func TestProductionSnapshotScopeUsesOnePayloadPerRun(t *testing.T) {
 			if entry.ID <= lastID {
 				continue
 			}
-			if len(entry.Args) > 1 && entry.Args[0] == "mget" && entry.Args[1] == snapshotKey {
+			// Count the actual body read, including GET inside bounded-read Lua;
+			// the outer EVAL and STRLEN are not additional payload deliveries.
+			if len(entry.Args) > 1 && (strings.EqualFold(entry.Args[0], "mget") || strings.EqualFold(entry.Args[0], "get")) && entry.Args[1] == snapshotKey {
 				payloadReads++
 			}
 		}

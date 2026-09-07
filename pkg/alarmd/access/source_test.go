@@ -371,10 +371,16 @@ func TestSourceFinalizedRequiredWaitsForFrozenReadinessAndProbeUsesSameQuery(t *
 	request := execution.QueryExecutionRequest{Contract: contractRef, Operation: execution.OperationProbe, AttemptNo: 2}
 	consumer := &recordingConsumer{}
 	completion, err := source.Execute(context.Background(), request, consumer)
+	readyAt, deferred := ReadinessDeferredAt(err)
+	if !deferred || len(provider.attempts) != 0 || len(permits.attempts) != 0 {
+		t.Fatalf("future-ready recovery must defer before permits: %v", err)
+	}
+	clock = readyAt
+	completion, err = source.Execute(context.Background(), request, consumer)
 	if err != nil {
 		t.Fatalf("Execute(FINALIZED_REQUIRED probe) error=%v", err)
 	}
-	if waited != time.Second || len(provider.attempts) != 1 || len(permits.attempts) != 1 ||
+	if waited != 0 || len(provider.attempts) != 1 || len(permits.attempts) != 1 ||
 		provider.attempts[0].Operation != execution.OperationProbe ||
 		provider.attempts[0].Spec.Digest != consumer.header.RequiredPhysicalQueries[0].Digest ||
 		len(completion.PhysicalQueries) != 1 {
@@ -723,4 +729,19 @@ func compilePlanForStrategy(t *testing.T, strategyID string) *strategy.CompiledP
 		t.Fatalf("compile terminal=%+v", result.PlanTerminal())
 	}
 	return compiled
+}
+
+// Unit providers have no shared R pool; production channel ordering is covered
+// with FlightCoordinator in integration tests.
+type testRecoveryChannels struct{ PhysicalQueryPermitAcquirer }
+
+func (testRecoveryChannels) Release() {}
+func (p *recordingQueryPermits) AcquireRecoveryChannels(context.Context, execution.SlotIdentity, execution.Operation, time.Time, int, func()) (RecoveryChannels, error) {
+	return testRecoveryChannels{p}, nil
+}
+func (p *failAfterOneQueryPermits) AcquireRecoveryChannels(context.Context, execution.SlotIdentity, execution.Operation, time.Time, int, func()) (RecoveryChannels, error) {
+	return testRecoveryChannels{p}, nil
+}
+func (p deadlineCheckingQueryPermits) AcquireRecoveryChannels(context.Context, execution.SlotIdentity, execution.Operation, time.Time, int, func()) (RecoveryChannels, error) {
+	return testRecoveryChannels{p}, nil
 }

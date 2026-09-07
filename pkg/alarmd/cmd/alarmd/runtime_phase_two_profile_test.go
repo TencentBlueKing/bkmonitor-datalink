@@ -51,7 +51,7 @@ func TestPhaseTwoRetainedBudgetProfileUsesResolvedDefaultAndOverride(t *testing.
 	if base.Capacity.RetainedBytes != 96<<20 || base.Capacity.UQBodyBytes != 96<<20 {
 		t.Fatalf("resolved default capacity = %+v", base.Capacity)
 	}
-	if base.Capacity.ActiveExecutions != 2 || base.Capacity.QueryPermits != 2 || base.Capacity.RecoveryQueryPermits != 1 {
+	if base.Capacity.ActiveExecutions != 0 || base.Capacity.QueryPermits != 2 || base.Capacity.RecoveryQueryPermits != 1 {
 		t.Fatalf("concurrency changed: %+v", base.Capacity)
 	}
 	cfg.PhaseTwo.Coordinator.MaxRetainedBytes = 64 << 20

@@ -1,6 +1,7 @@
 package metric
 
 import (
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -44,7 +45,12 @@ func (m workflowMetrics) observe(o observability.Observation) {
 			case "committed", "retrying", "blocked", "error":
 				m.ranges.WithLabelValues(f.Result).Inc()
 				if f.Result == "committed" && f.CommittedSlots > 0 {
-					m.expiredSlots.WithLabelValues("recovery_expired").Add(float64(f.CommittedSlots))
+					switch f.ReasonCode {
+					case "", contract.ReasonSnapshotUnavailable: // Original age-only producer had no ReasonCode.
+						m.expiredSlots.WithLabelValues("recovery_expired").Add(float64(f.CommittedSlots))
+					case contract.ReasonGapSkipped:
+						m.expiredSlots.WithLabelValues("replay_distance_expired").Add(float64(f.CommittedSlots))
+					}
 				}
 			}
 		}

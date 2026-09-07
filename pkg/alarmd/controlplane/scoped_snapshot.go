@@ -18,6 +18,7 @@ type scopedSnapshotPayload struct {
 	queryGroup execution.QueryGroupIdentity
 	payload    string
 	epoch      uint64
+	allocation *snapshotAllocation
 }
 
 type snapshotReadScope struct {
@@ -34,7 +35,7 @@ func WithSnapshotReadScope(ctx context.Context) (context.Context, func()) {
 		scope.mu.Lock()
 		defer scope.mu.Unlock()
 		scope.closed = true
-		scope.entry = scopedSnapshotPayload{}
+		scope.clearLocked()
 	}
 }
 
@@ -46,53 +47,68 @@ func snapshotScope(ctx context.Context) *snapshotReadScope {
 func clearSnapshotScope(ctx context.Context) {
 	if scope := snapshotScope(ctx); scope != nil {
 		scope.mu.Lock()
-		scope.entry = scopedSnapshotPayload{}
+		scope.clearLocked()
 		scope.mu.Unlock()
 	}
 }
 
 // Called only after payload, QG and applicable publication checks all succeed.
-func (repository *RedisCatalogRepository) retainScopedSnapshot(ctx context.Context, revision execution.SnapshotRevision, group execution.QueryGroupIdentity, payload string, epoch uint64) {
+func (repository *RedisCatalogRepository) retainScopedSnapshot(ctx context.Context, revision execution.SnapshotRevision, group execution.QueryGroupIdentity, payload string, epoch uint64, allocation *snapshotAllocation) {
 	if scope := snapshotScope(ctx); scope != nil {
 		scope.mu.Lock()
 		defer scope.mu.Unlock()
 		if !scope.closed && ctx.Err() == nil {
-			scope.entry = scopedSnapshotPayload{repository, revision, group, payload, epoch}
+			scope.clearLocked()
+			allocation.retain()
+			scope.entry = scopedSnapshotPayload{repository, revision, group, payload, epoch, allocation}
 		}
 	}
 }
 
-func (repository *RedisCatalogRepository) loadScopedSnapshotPayload(ctx context.Context, revision execution.SnapshotRevision, group execution.QueryGroupIdentity) (string, uint64, error) {
+func (repository *RedisCatalogRepository) loadScopedSnapshotPayload(ctx context.Context, revision execution.SnapshotRevision, group execution.QueryGroupIdentity) (string, uint64, *snapshotAllocation, error) {
 	if err := ctx.Err(); err != nil {
 		clearSnapshotScope(ctx)
-		return "", 0, err
+		return "", 0, nil, err
 	}
 	var entry scopedSnapshotPayload
 	if scope := snapshotScope(ctx); scope != nil {
 		scope.mu.Lock()
 		if !scope.closed {
 			entry = scope.entry
+			entry.allocation.retain()
 		}
 		scope.mu.Unlock()
 	}
+	defer entry.allocation.release()
 	if entry.repository == repository && entry.revision == revision && entry.queryGroup == group {
 		text, err := repository.client.Get(ctx, repository.epochForRevisionKey(revision)).Result()
 		if err != nil {
 			clearSnapshotScope(ctx)
 			if errors.Is(err, redis.Nil) {
-				return "", 0, ErrSnapshotUnavailable
+				return "", 0, nil, ErrSnapshotUnavailable
 			}
-			return "", 0, activationDependencyIO(err)
+			return "", 0, nil, activationDependencyIO(err)
 		}
 		epoch, err := strconv.ParseUint(text, 10, 64)
 		if err != nil || epoch == 0 {
 			clearSnapshotScope(ctx)
-			return "", 0, &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
+			return "", 0, nil, &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
 		}
 		if epoch == entry.epoch {
-			return entry.payload, epoch, nil
+			entry.allocation.retain()
+			return entry.payload, epoch, entry.allocation, nil
 		}
 	}
 	clearSnapshotScope(ctx)
-	return repository.loadSnapshotPayload(ctx, revision)
+	return repository.loadAdmittedSnapshotPayload(ctx, revision)
+}
+
+// ClearSnapshotReadScope discards only call-local content before a compact
+// recovery admission wait. Publication and ownership checks remain live.
+func ClearSnapshotReadScope(ctx context.Context) { clearSnapshotScope(ctx) }
+
+func (scope *snapshotReadScope) clearLocked() {
+	allocation := scope.entry.allocation
+	scope.entry = scopedSnapshotPayload{}
+	allocation.release()
 }

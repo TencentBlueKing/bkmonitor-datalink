@@ -267,7 +267,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	}
 	progressStore, err := progress.NewStore(progress.StoreOptions{
 		Prefix: productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "schedule"), Control: ownershipStore,
-		Slots: catalog, Now: external.Now,
+		Slots: catalog, Now: external.Now, Observer: observer,
 	})
 	if err != nil {
 		return nil, err

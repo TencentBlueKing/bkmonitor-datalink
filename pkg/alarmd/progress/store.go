@@ -16,6 +16,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
@@ -48,6 +49,9 @@ type StoreOptions struct {
 	Control ControlStore
 	Slots   ContinuousSlotResolver
 	Now     func() time.Time
+	// Observer is optional. It receives observation-only facts about Progress
+	// decisions that replace a persisted value, such as a superseded projection.
+	Observer observability.Observer
 }
 
 type Store struct{ options StoreOptions }
@@ -160,24 +164,31 @@ func (store *Store) BeginSlot(ctx context.Context, request execution.ProgressBeg
 			return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
 		}
 		if current.UnfinishedSlot != nil {
-			if request.Projection.Contract.ScheduleSegmentStart > current.UnfinishedSlot.Contract.ScheduleSegmentStart {
-				// A later Schedule Segment now owns the unfinished Slot's time, so
-				// the persisted contract can never be re-frozen: the newer Segment
-				// supersedes it. The same EvaluationTime simply replaces the
-				// projection; another one abandons the old Slot first.
-				if current.NextSlot != request.Projection.Contract.Slot.EvaluationTime {
-					conflict, abandonErr := store.abandonUnfinishedSlot(ctx, &current, request.Projection.Contract.Slot.EvaluationTime)
-					if abandonErr != nil {
-						return execution.ProgressBeginResult{}, abandonErr
-					}
-					if conflict {
-						return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
-					}
+			persisted := *current.UnfinishedSlot
+			requested := request.Projection.Contract.Slot.EvaluationTime
+			newerSegment := request.Projection.Contract.ScheduleSegmentStart > persisted.Contract.ScheduleSegmentStart
+			switch {
+			case current.NextSlot == requested && request.Projection.Contract.ScheduleSegmentStart >= persisted.Contract.ScheduleSegmentStart:
+				// The latest fenced attempt owns an unfinished Slot: nothing has been
+				// committed for it, so its projection replaces the persisted one,
+				// whether the Segment is the same or a later one now owns the time.
+				if !persisted.Equal(request.Projection) {
+					store.observeSupersededProjection(ctx, request.Identity.QueryGroup, persisted, request.Projection)
 				}
-			} else if current.NextSlot != request.Projection.Contract.Slot.EvaluationTime {
+			case current.NextSlot != requested && newerSegment:
+				// A later Segment owns the unfinished Slot's time and moves the
+				// cursor: the persisted contract can never be re-frozen.
+				conflict, abandonErr := store.abandonUnfinishedSlot(ctx, &current, requested)
+				if abandonErr != nil {
+					return execution.ProgressBeginResult{}, abandonErr
+				}
+				if conflict {
+					return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
+				}
+			default:
+				// Another Slot on the same or an older Segment, or the same Slot
+				// seen through an older Segment, is not the latest view.
 				return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
-			} else if !current.UnfinishedSlot.Equal(request.Projection) {
-				return execution.ProgressBeginResult{}, &DeterministicInvalidError{Err: fmt.Errorf("unfinished Slot projection differs from persisted facts")}
 			}
 		} else if current.NextSlot != request.Projection.Contract.Slot.EvaluationTime {
 			// A cutover can leave the persisted cursor on the old Schedule grid.
@@ -358,6 +369,46 @@ func foldRecentGap(
 		Kind: request.Completion.Kind, ReasonCode: request.Completion.ReasonCode,
 		FirstSlot: request.ExpectedNextSlot, LastSlot: request.ExpectedNextSlot, Count: 1,
 	}
+}
+
+// observeSupersededProjection reports which projection fields the latest
+// fenced attempt changed for the same unfinished Slot. It is observation-only:
+// the persisted value is replaced regardless, and the field names tell an
+// operator whether the contract, the deadline or keep-until derivation, or the
+// due Plan targets differed between the two attempts.
+func (store *Store) observeSupersededProjection(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	persisted execution.UnfinishedSlotProjection,
+	request execution.UnfinishedSlotProjection,
+) {
+	if store.options.Observer == nil {
+		return
+	}
+	var fields []string
+	if persisted.Contract != request.Contract {
+		fields = append(fields, "contract")
+	}
+	if persisted.EarliestQueryDeadlineUnixMilli != request.EarliestQueryDeadlineUnixMilli {
+		fields = append(fields, "deadline")
+	}
+	if persisted.KeepUntilUnixMilli != request.KeepUntilUnixMilli {
+		fields = append(fields, "keep_until")
+	}
+	if !persisted.DuePlanTargets.Equal(request.DuePlanTargets) {
+		fields = append(fields, "due_plan_targets")
+	}
+	defer func() { _ = recover() }()
+	store.options.Observer.Observe(ctx, observability.Observation{
+		Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
+		Result: observability.ResultDegraded, ReasonCode: observability.ReasonCode(contract.ReasonConfigDrift),
+		Direction: observability.DirectionInternal,
+		Trace: observability.TraceFields{
+			QueryGroupKey: string(queryGroup), EvaluationTime: int64(request.Contract.Slot.EvaluationTime),
+			ScheduleSegmentStart: int64(request.Contract.ScheduleSegmentStart), SnapshotRevision: string(request.Contract.SnapshotRevision),
+		},
+		Err: fmt.Errorf("progress: unfinished Slot projection superseded by the latest fenced attempt; differing fields: %s", strings.Join(fields, ",")),
+	})
 }
 
 // abandonUnfinishedSlot drops the superseded unfinished Slot and moves the

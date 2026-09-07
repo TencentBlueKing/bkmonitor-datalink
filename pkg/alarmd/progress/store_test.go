@@ -7,6 +7,7 @@ package progress
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -171,6 +172,169 @@ func TestBeginSlotDoesNotReplaceExistingUnfinishedProjectionWithTimelineSuccesso
 	if string(fake.value) != string(raw) {
 		t.Fatal("successor BeginSlot replaced an existing unfinished projection")
 	}
+}
+
+// A later Schedule Segment that owns the unfinished Slot's time supersedes the
+// persisted projection: the same EvaluationTime is simply re-projected.
+func TestBeginSlotSupersedesUnfinishedSlotOnNewerSegmentAtSameTime(t *testing.T) {
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	fence := execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"}
+	persisted := progressProjectionAt(120)
+	current := execution.ScheduleProgress{
+		Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull,
+		UnfinishedSlot: &persisted,
+	}
+	fake := &controlFake{value: mustEncode(t, current)}
+	store := mustStoreWithSlots(t, fake, mappedSlotResolver{60: 120, 120: 180})
+	superseding := newerSegmentProjectionAt(120)
+
+	priorUnfinished := -1
+	ctx := execution.WithSlotCoverageCapture(context.Background(), &execution.SlotCoverageCapture{
+		BeginCommitted: func(prior bool) {
+			priorUnfinished = 0
+			if prior {
+				priorUnfinished = 1
+			}
+		},
+	})
+	result, err := store.BeginSlot(ctx, execution.ProgressBeginRequest{Identity: identity, OwnerFence: fence, Projection: superseding})
+	if err != nil || result.Status != execution.ProgressCommitted {
+		t.Fatalf("BeginSlot(superseding same Slot) = (%+v, %v), want committed", result, err)
+	}
+	if priorUnfinished != 1 {
+		t.Fatalf("BeginCommitted prior unfinished = %d, want the replaced projection reported as prior", priorUnfinished)
+	}
+	loaded, err := store.LoadProgress(context.Background(), identity)
+	if err != nil || loaded.Progress == nil || loaded.Progress.NextSlot != 120 || loaded.Progress.LastFullSlot != 60 ||
+		loaded.Progress.LastCompletionKind != execution.CompletionFull || loaded.Progress.CurrentOrRecentGap != nil ||
+		loaded.Progress.UnfinishedSlot == nil || !loaded.Progress.UnfinishedSlot.Equal(superseding) {
+		t.Fatalf("LoadProgress(after supersede) = (%+v, %v)", loaded, err)
+	}
+}
+
+// A later Segment that moves the cursor abandons the unfinished Slot as one
+// GAP_SKIPPED Slot and accepts only the successor proven from the folded facts.
+func TestBeginSlotSupersedesUnfinishedSlotOnNewerSegmentAtLaterTime(t *testing.T) {
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	fence := execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"}
+	gapSkipped := execution.ReasonCode(contract.ReasonGapSkipped)
+	for _, test := range []struct {
+		name      string
+		current   execution.ScheduleProgress
+		requested execution.EvaluationTime
+		wantGap   execution.ProgressGapSummary
+		conflict  bool
+	}{
+		{
+			name:      "completed facts before the fold",
+			current:   execution.ScheduleProgress{Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull},
+			requested: 180,
+			wantGap:   execution.ProgressGapSummary{Kind: execution.CompletionGapSkipped, ReasonCode: gapSkipped, FirstSlot: 120, LastSlot: 120, Count: 1},
+		},
+		{
+			name:      "no completed facts before the fold",
+			current:   execution.ScheduleProgress{Identity: identity, NextSlot: 120},
+			requested: 180,
+			wantGap:   execution.ProgressGapSummary{Kind: execution.CompletionGapSkipped, ReasonCode: gapSkipped, FirstSlot: 120, LastSlot: 120, Count: 1},
+		},
+		{
+			name: "adjacent skipped gap extended",
+			current: execution.ScheduleProgress{Identity: identity, NextSlot: 120, LastCompletionKind: execution.CompletionGapSkipped,
+				CurrentOrRecentGap: &execution.ProgressGapSummary{Kind: execution.CompletionGapSkipped, ReasonCode: gapSkipped, FirstSlot: 60, LastSlot: 90, Count: 2}},
+			requested: 180,
+			wantGap:   execution.ProgressGapSummary{Kind: execution.CompletionGapSkipped, ReasonCode: gapSkipped, FirstSlot: 60, LastSlot: 120, Count: 3},
+		},
+		{
+			name:      "requested Slot is not the proven successor",
+			current:   execution.ScheduleProgress{Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull},
+			requested: 150,
+			conflict:  true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			persisted := progressProjectionAt(120)
+			current := test.current
+			current.UnfinishedSlot = &persisted
+			raw := mustEncode(t, current)
+			fake := &controlFake{value: append([]byte(nil), raw...)}
+			store := mustStoreWithSlots(t, fake, mappedSlotResolver{60: 120, 90: 120, 120: 180})
+			superseding := newerSegmentProjectionAt(test.requested)
+			priorUnfinished := -1
+			ctx := execution.WithSlotCoverageCapture(context.Background(), &execution.SlotCoverageCapture{
+				BeginCommitted: func(prior bool) {
+					priorUnfinished = 0
+					if prior {
+						priorUnfinished = 1
+					}
+				},
+			})
+			result, err := store.BeginSlot(ctx, execution.ProgressBeginRequest{Identity: identity, OwnerFence: fence, Projection: superseding})
+			if test.conflict {
+				if err != nil || result.Status != execution.ProgressConflict || string(fake.value) != string(raw) {
+					t.Fatalf("BeginSlot(unproven successor) = (%+v, %v) changed=%t, want conflict without a write", result, err, string(fake.value) != string(raw))
+				}
+				return
+			}
+			if err != nil || result.Status != execution.ProgressCommitted || priorUnfinished != 0 {
+				t.Fatalf("BeginSlot(superseding later Slot) = (%+v, %v) prior=%d, want committed as a fresh Slot", result, err, priorUnfinished)
+			}
+			loaded, err := store.LoadProgress(context.Background(), identity)
+			if err != nil || loaded.Progress == nil || loaded.Progress.NextSlot != test.requested ||
+				loaded.Progress.LastFullSlot != test.current.LastFullSlot ||
+				loaded.Progress.LastCompletionKind != execution.CompletionGapSkipped ||
+				loaded.Progress.CurrentOrRecentGap == nil || *loaded.Progress.CurrentOrRecentGap != test.wantGap ||
+				loaded.Progress.UnfinishedSlot == nil || !loaded.Progress.UnfinishedSlot.Equal(superseding) {
+				t.Fatalf("LoadProgress(after abandon) = (%+v, gap=%+v, %v), want NextSlot=%d gap=%+v", loaded.Progress, loaded.Progress.CurrentOrRecentGap, err, test.requested, test.wantGap)
+			}
+		})
+	}
+}
+
+// Only a strictly newer Segment supersedes: an equal or older Segment start
+// with a different projection stays the deterministic persisted-fact error,
+// and the equal projection remains the idempotent re-begin.
+func TestBeginSlotKeepsDeterministicErrorForEqualOrOlderSegment(t *testing.T) {
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	fence := execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"}
+	persisted := progressProjectionAt(120)
+	current := execution.ScheduleProgress{
+		Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull,
+		UnfinishedSlot: &persisted,
+	}
+	raw := mustEncode(t, current)
+	fake := &controlFake{value: append([]byte(nil), raw...)}
+	store := mustStoreWithSlots(t, fake, mappedSlotResolver{60: 120, 120: 180})
+	for _, segmentStart := range []execution.EvaluationTime{persisted.Contract.ScheduleSegmentStart, persisted.Contract.ScheduleSegmentStart - 30} {
+		differing := progressProjectionAt(120)
+		differing.Contract.ScheduleSegmentStart = segmentStart
+		differing.Contract.SnapshotRevision = "s2"
+		_, err := store.BeginSlot(context.Background(), execution.ProgressBeginRequest{Identity: identity, OwnerFence: fence, Projection: differing})
+		var deterministic *DeterministicInvalidError
+		if !errors.As(err, &deterministic) || err.Error() != "progress: deterministic-invalid persisted value: unfinished Slot projection differs from persisted facts" {
+			t.Fatalf("BeginSlot(segment start %d) error = %v, want the deterministic persisted-fact error", segmentStart, err)
+		}
+		if string(fake.value) != string(raw) {
+			t.Fatalf("BeginSlot(segment start %d) changed persisted Progress", segmentStart)
+		}
+	}
+	result, err := store.BeginSlot(context.Background(), execution.ProgressBeginRequest{Identity: identity, OwnerFence: fence, Projection: persisted})
+	if err != nil || result.Status != execution.ProgressCommitted {
+		t.Fatalf("BeginSlot(equal projection) = (%+v, %v), want idempotent commit", result, err)
+	}
+	loaded, err := store.LoadProgress(context.Background(), identity)
+	if err != nil || loaded.Progress == nil || !reflect.DeepEqual(*loaded.Progress, current) {
+		t.Fatalf("LoadProgress(after idempotent re-begin) = (%+v, %v), want unchanged %+v", loaded.Progress, err, current)
+	}
+}
+
+// newerSegmentProjectionAt is the projection a Worker freezes for the same
+// Query Group after a cutover: a later Segment under a new publication.
+func newerSegmentProjectionAt(evaluationTime execution.EvaluationTime) execution.UnfinishedSlotProjection {
+	projection := progressProjectionAt(evaluationTime)
+	projection.Contract.ScheduleSegmentStart = 119
+	projection.Contract.SnapshotRevision = "s2"
+	projection.Contract.QueryRevision = "query2"
+	return projection
 }
 
 func TestCommitProgressUsesExplicitNextSlotAndFence(t *testing.T) {

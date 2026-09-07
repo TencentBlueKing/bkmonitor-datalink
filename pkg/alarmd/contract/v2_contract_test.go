@@ -1052,6 +1052,13 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 	if !ok || blockedExactSet.Class != ReasonClassDeterministic || blockedExactSet.Domains != ReasonDomainObservation {
 		t.Fatalf("Blocked exact-set reason definition = (%#v, %t)", blockedExactSet, ok)
 	}
+	// A deterministic BeginSlot failure is named by its own observation-only
+	// reason so it is never confused with an exact-set or transport condition.
+	beginFailed, ok := LookupReasonV2(ReasonProgressBeginFailed)
+	if !ok || beginFailed.Class != ReasonClassDeterministic || beginFailed.Domains != ReasonDomainObservation ||
+		ReasonAllowedForV2(ReasonProgressBeginFailed, ReasonDomainReceipt) || ReasonAllowedForV2(ReasonProgressBeginFailed, ReasonDomainQueryResult) {
+		t.Fatalf("Progress begin failed reason definition = (%#v, %t)", beginFailed, ok)
+	}
 	// PROVIDER_UNAVAILABLE used to stand in for every retryable control
 	// condition; these split it by cause. They are observation-only: they
 	// appear on non-committed Retrying results and are never persisted or

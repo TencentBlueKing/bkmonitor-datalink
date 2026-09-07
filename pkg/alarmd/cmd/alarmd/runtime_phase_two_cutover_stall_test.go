@@ -21,6 +21,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
@@ -47,9 +48,10 @@ import (
 //	           new Segment [base+59, ...) owns base+60
 //	base+61    every later tick selects base+60 on the new Segment
 //
-// Expected: the Worker finalizes base+60 and the cursor moves on.
-// Observed: BeginSlot returns a deterministic error for the same Slot forever
-// and the Coordinator maps it to BLOCKED_EXACT_SET_UNAVAILABLE.
+// The newer Segment supersedes the persisted projection: BeginSlot commits,
+// the Worker finalizes base+60 on the new Segment and the cursor moves on.
+// Before the fix BeginSlot returned a deterministic error for the same Slot
+// forever and the Coordinator mapped it to BLOCKED_EXACT_SET_UNAVAILABLE.
 func TestProductionPhaseTwoCutoverStallsUnfinishedSlotOnNewSegment(t *testing.T) {
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
@@ -268,14 +270,24 @@ func TestProductionPhaseTwoCutoverStallsUnfinishedSlotOnNewSegment(t *testing.T)
 	freshOutcome := fresh.run(t, ctx, production, session, queryGroup, inFlight, oldProjection, now)
 	if cachedOutcome != freshOutcome {
 		t.Errorf("outcome differs between cached and cold control reads:\n cached=%+v\n cold=%+v", cachedOutcome, freshOutcome)
-	} else {
-		t.Logf("outcome is identical with cached and cold control reads: %+v", cachedOutcome)
+	}
+	if cachedOutcome.beginErr != "" || cachedOutcome.beginStatus != execution.ProgressCommitted ||
+		cachedOutcome.sourceSlot != firstNewSlot || cachedOutcome.sourceSegmentStart != boundary || !cachedOutcome.sourceNewPublication ||
+		cachedOutcome.storeNextAfter != firstNewSlot || cachedOutcome.newFinalization != execution.FinalizationQueryRequired {
+		t.Fatalf("probe after the cutover = %+v, want the Slot %d re-frozen on Segment %d, BeginSlot committed and QUERY_REQUIRED", cachedOutcome, firstNewSlot, boundary)
+	}
+	superseded := loadPhaseTwoProgress(t, ctx, production, queryGroup)
+	if superseded.NextSlot != firstNewSlot || superseded.LastFullSlot != execution.EvaluationTime(base) || superseded.CurrentOrRecentGap != nil ||
+		superseded.UnfinishedSlot == nil || superseded.UnfinishedSlot.Contract.ScheduleSegmentStart != boundary ||
+		superseded.UnfinishedSlot.Contract.SnapshotRevision != openSchedule.Segment.Publication.SnapshotRevision {
+		t.Fatalf("Progress after the superseding BeginSlot = %+v, want the unfinished Slot re-projected on Segment %d", superseded, boundary)
 	}
 
-	// Step 6: the real Runner path. Every tick returns the same retrying
-	// result for the same Slot and Progress never moves.
-	ticks := 0
-	for tick := 1; tick <= 4; tick++ {
+	// Step 6: the real Runner path finalizes the Slot on the new Segment.
+	observationsMu.Lock()
+	completionsBeforeRunner := len(slotCompletions)
+	observationsMu.Unlock()
+	for tick := 1; tick <= 4 && !result.Completed; tick++ {
 		nextAt := runner.NextReadyAt()
 		at := now().Add(time.Second)
 		if nextAt.After(at) {
@@ -286,58 +298,32 @@ func TestProductionPhaseTwoCutoverStallsUnfinishedSlotOnNewSegment(t *testing.T)
 		if err != nil {
 			t.Fatalf("tick %d RunOne error = %v", tick, err)
 		}
-		if !attempted {
-			continue
-		}
-		ticks++
 		t.Logf("tick %d at %d: attempted=%t completed=%t result=%s reason=%s", tick, at.Unix(), attempted, result.Completed, result.Result, result.ReasonCode)
-		if result.Completed {
-			break
+		if attempted && !result.Completed {
+			t.Fatalf("tick %d returned %s %s for Slot %d, want the Slot completed on the new Segment", tick, result.Result, result.ReasonCode, firstNewSlot)
 		}
 	}
-	afterTicks := loadPhaseTwoProgress(t, ctx, production, queryGroup)
-	if ticks == 0 {
-		t.Fatal("the Runner never attempted the Slot after the cutover")
+	if !result.Completed || result.CompletionKind != execution.CompletionFull {
+		t.Fatalf("Runner result after the cutover = %+v, want a FULL completion of Slot %d", result, firstNewSlot)
 	}
-
-	// Step 7: past the replay age the Slot is still not finalized.
-	limits := production.dependencies.RecoveryLimits
-	clock.Store(int64(firstNewSlot)*1000 + limits.MaxReplayAge.Milliseconds() + time.Minute.Milliseconds())
-	if nextAt := runner.NextReadyAt(); nextAt.After(now()) {
-		clock.Store(nextAt.UnixMilli() + 1)
+	if uqCalls.Load() != uqCallsBeforeCutover+1 {
+		t.Fatalf("UQ calls after the cutover = %d, want exactly one query for Slot %d", uqCalls.Load()-uqCallsBeforeCutover, firstNewSlot)
 	}
-	expiredResult, expiredAttempted, err := runner.RunOne(ctx)
-	if err != nil {
-		t.Fatalf("post replay-age RunOne error = %v", err)
+	advanced := loadPhaseTwoProgress(t, ctx, production, queryGroup)
+	if advanced.NextSlot != firstNewSlot+60 || advanced.LastFullSlot != firstNewSlot || advanced.UnfinishedSlot != nil || advanced.CurrentOrRecentGap != nil {
+		t.Fatalf("Progress after the Runner = %+v, want LastFullSlot=%d NextSlot=%d without an unfinished Slot", advanced, firstNewSlot, firstNewSlot+60)
 	}
-	expired := loadPhaseTwoProgress(t, ctx, production, queryGroup)
-	t.Logf("post replay-age tick: attempted=%t completed=%t result=%s reason=%s; Progress NextSlot=%d LastFullSlot=%d unfinished=%t",
-		expiredAttempted, expiredResult.Completed, expiredResult.Result, expiredResult.ReasonCode, expired.NextSlot, expired.LastFullSlot, expired.UnfinishedSlot != nil)
 
 	observationsMu.Lock()
-	completions := append([]observability.Observation(nil), slotCompletions...)
+	completions := append([]observability.Observation(nil), slotCompletions[completionsBeforeRunner:]...)
 	observationsMu.Unlock()
 	for _, observation := range completions {
-		if observation.Trace.EvaluationTime != int64(firstNewSlot) {
-			continue
-		}
 		t.Logf("slot_completed observation: result=%s reason=%s evaluation_time=%d segment_start=%d err=%v",
 			observation.Result, observation.ReasonCode, observation.Trace.EvaluationTime, observation.Trace.ScheduleSegmentStart, observation.Err)
-	}
-
-	// Expected behaviour after the cutover.
-	if cachedOutcome.beginErr != "" {
-		t.Errorf("BeginSlot for the Slot chosen after the cutover returned an error instead of moving the cursor onto the new Segment: %s", cachedOutcome.beginErr)
-	}
-	if result.ReasonCode == execution.ReasonBlockedExactSetUnavailable {
-		t.Errorf("Runner mapped the BeginSlot failure to %s, want a distinct reason that names the Progress cause", result.ReasonCode)
-	}
-	if afterTicks.NextSlot <= firstNewSlot || expired.NextSlot <= firstNewSlot {
-		t.Errorf("Progress cursor never left the first Slot of the new Segment: after ticks NextSlot=%d, after replay age NextSlot=%d, want > %d",
-			afterTicks.NextSlot, expired.NextSlot, firstNewSlot)
-	}
-	if uqCalls.Load() != uqCallsBeforeCutover {
-		t.Logf("UQ calls after the cutover = %d", uqCalls.Load()-uqCallsBeforeCutover)
+		if observation.Result == observability.ResultRetrying || observation.ReasonCode == observability.ReasonCode(contract.ReasonBlockedExactSetUnavailable) ||
+			observation.ReasonCode == observability.ReasonCode(contract.ReasonProgressBeginFailed) || observation.ReasonCode == observability.ReasonCode(contract.ReasonProgressBeginRejected) {
+			t.Errorf("slot_completed after the cutover = result %s reason %s, want no retrying result", observation.Result, observation.ReasonCode)
+		}
 	}
 }
 

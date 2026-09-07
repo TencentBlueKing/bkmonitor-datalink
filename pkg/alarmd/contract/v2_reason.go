@@ -99,6 +99,7 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonRedisUnavailable:           {ReasonRedisUnavailable, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonProviderUnavailable:        {ReasonProviderUnavailable, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonProgressBeginRejected:      {ReasonProgressBeginRejected, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonProgressBeginFailed:        {ReasonProgressBeginFailed, ReasonClassDeterministic, ReasonDomainObservation},
 	ReasonActivationReadFailed:       {ReasonActivationReadFailed, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonSnapshotRetryPending:       {ReasonSnapshotRetryPending, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonSlotSourceRetry:            {ReasonSlotSourceRetry, ReasonClassRetryable, ReasonDomainObservation},

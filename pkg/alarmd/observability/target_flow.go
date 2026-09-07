@@ -54,19 +54,29 @@ type TargetFlowFacts struct {
 	FailureCategory       string `json:"failure_category,omitempty"`
 	FailureCode           string `json:"failure_code,omitempty"`
 	ExecutionOutcomeKnown bool   `json:"execution_outcome_known"`
-	Decision              string `json:"decision,omitempty"`
-	BusinessID            string `json:"business_id,omitempty"`
-	TenantID              string `json:"tenant_id,omitempty"`
-	NextSlot              int64  `json:"next_slot,omitempty"`
-	LastFullSlot          int64  `json:"last_full_slot,omitempty"`
-	QueuedAtMS            int64  `json:"queued_at_ms,omitempty"`
-	QueueWaitNS           int64  `json:"queue_wait_ns,omitempty"`
-	Evaluations           uint64 `json:"evaluations_observed"`
-	ReadyAtMS             int64  `json:"ready_at_ms,omitempty"`
-	Completion            string `json:"completion,omitempty"`
-	Attempted             bool   `json:"attempted"`
-	Completed             bool   `json:"completed"`
-	PlansTruncated        bool   `json:"plans_truncated,omitempty"`
+	// Capacity facts of a resource_hard rejection: the budget kind, the phase
+	// of the failed reservation and the counts the Coordinator logged. A
+	// per-Slot cap rejection (phase slot_output) has no shared usage; its
+	// own_used is the total the Slot would have reached.
+	CapacityBudget     string  `json:"capacity_budget,omitempty"`
+	CapacityPhase      string  `json:"capacity_phase,omitempty"`
+	CapacityOwnUsed    *uint64 `json:"capacity_own_used,omitempty"`
+	CapacitySharedUsed uint64  `json:"capacity_shared_used,omitempty"`
+	CapacityRequested  uint64  `json:"capacity_requested,omitempty"`
+	CapacityLimit      uint64  `json:"capacity_limit,omitempty"`
+	Decision           string  `json:"decision,omitempty"`
+	BusinessID         string  `json:"business_id,omitempty"`
+	TenantID           string  `json:"tenant_id,omitempty"`
+	NextSlot           int64   `json:"next_slot,omitempty"`
+	LastFullSlot       int64   `json:"last_full_slot,omitempty"`
+	QueuedAtMS         int64   `json:"queued_at_ms,omitempty"`
+	QueueWaitNS        int64   `json:"queue_wait_ns,omitempty"`
+	Evaluations        uint64  `json:"evaluations_observed"`
+	ReadyAtMS          int64   `json:"ready_at_ms,omitempty"`
+	Completion         string  `json:"completion,omitempty"`
+	Attempted          bool    `json:"attempted"`
+	Completed          bool    `json:"completed"`
+	PlansTruncated     bool    `json:"plans_truncated,omitempty"`
 }
 type targetFlowRecord struct {
 	SlotIdentityKnown bool            `json:"slot_identity_known"`
@@ -220,6 +230,13 @@ func (f *TargetFlow) Observe(ctx context.Context, o Observation) {
 	}
 	switch o.Stage {
 	case StageAssignmentAcquired, StageAssignmentLost, StageTakeoverStarted, StageTakeoverCompleted, StageScheduleDue, StageSlotStarted, StageSlotCompleted, StageQueryCompleted, StageProgressCommitted, StageRunnerCompleted, StageSlotSourceCompleted:
+	case StageResourceHard:
+		// Only a capacity rejection names the Query Group it stopped; process
+		// level resource stops carry no Slot coordinates and stay in the
+		// runtime log.
+		if NormalizeObservation(o).CapacityRejection == nil {
+			return
+		}
 	default:
 		return
 	}
@@ -229,6 +246,10 @@ func (f *TargetFlow) Observe(ctx context.Context, o Observation) {
 	}
 	o = NormalizeObservation(o)
 	facts := TargetFlowFacts{}
+	if r := o.CapacityRejection; r != nil {
+		facts.CapacityBudget, facts.CapacityPhase = string(o.CapacityBudget), r.Phase
+		facts.CapacityOwnUsed, facts.CapacitySharedUsed, facts.CapacityRequested, facts.CapacityLimit = r.OwnUsed, r.SharedUsed, r.Requested, r.Limit
+	}
 	if ValidExecuteOutcome(o.ExecuteOutcome) {
 		facts.Decision = o.ExecuteOutcome
 	}
@@ -255,7 +276,7 @@ func (f *TargetFlow) emit(stage, result, reason string, t TraceFields, facts Tar
 		return
 	}
 	// Reject oversize identity fields rather than serializing arbitrary caller payloads.
-	for _, s := range []string{stage, result, reason, t.QueryGroupKey, t.StrategyID, t.SnapshotRevision, t.QueryRevision, t.ScheduleRevision, t.OwnerID, facts.Decision, facts.BusinessID, facts.TenantID, facts.Completion, facts.FailureStage, facts.FailureCategory, facts.FailureCode} {
+	for _, s := range []string{stage, result, reason, t.QueryGroupKey, t.StrategyID, t.SnapshotRevision, t.QueryRevision, t.ScheduleRevision, t.OwnerID, facts.Decision, facts.BusinessID, facts.TenantID, facts.Completion, facts.FailureStage, facts.FailureCategory, facts.FailureCode, facts.CapacityBudget, facts.CapacityPhase} {
 		if len(s) > 128 {
 			f.drop()
 			return

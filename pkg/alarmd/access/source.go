@@ -465,7 +465,15 @@ func (source *Source) executeWithPermit(
 			c.QueryCalled(attempt)
 		}
 	})
-	return source.provider.Execute(ctx, attempt, adapter)
+	completion, err := source.provider.Execute(ctx, attempt, adapter)
+	if err == nil && completion.Stats.NullIdentityFields > 0 {
+		// Bounded diagnostics marker: at least one declared identity dimension
+		// was absent from a delivered series and was bound to null (the Python
+		// None equivalent). The count stays on completion.Stats; no evaluation
+		// or completeness semantics change.
+		observability.EmitTargetFlow(ctx, "runner_decision", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "identity_field_null"})
+	}
+	return completion, err
 }
 
 func trustedProviderCompletion(digest execution.PhysicalQueryDigest, completion execution.ProviderCompletion) bool {

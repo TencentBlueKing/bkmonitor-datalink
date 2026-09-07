@@ -180,6 +180,11 @@ const (
 	RouteDetailKindResponse   = "response"
 
 	ResponseFailureIsPartialMissing = "is_partial_missing"
+	// ResponseFailureStatusPrefix precedes the lower-cased UQ status code of a
+	// 200 response whose status field reports a deterministic backend failure
+	// (for example "response=status_space_table_id_field_is_not_exists").
+	ResponseFailureStatusPrefix = "status_"
+	ResponseFailureStatusOther  = "other"
 
 	TransportFailureTimeout           = "timeout"
 	TransportFailureConnectionRefused = "connection_refused"
@@ -219,6 +224,37 @@ func ResponseRouteDetail(class string) string {
 	default:
 		return RouteDetailKindResponse + "=other"
 	}
+}
+
+// ResponseStatusRouteDetail encodes a 200 response whose status.code names a
+// deterministic backend failure. UQ status codes are a bounded enum, so a code
+// matching the failure code grammar (^[A-Z][A-Z0-9_]{0,63}$) is kept, lower
+// cased, after the "status_" prefix; anything else (free text, URLs, message
+// bodies) collapses to "status_other" so the detail never carries request or
+// response content. The result fits the query failure detail grammar.
+func ResponseStatusRouteDetail(code string) string {
+	if !boundedStatusCode(code) {
+		return RouteDetailKindResponse + "=" + ResponseFailureStatusPrefix + ResponseFailureStatusOther
+	}
+	return RouteDetailKindResponse + "=" + ResponseFailureStatusPrefix + strings.ToLower(code)
+}
+
+const maxStatusCodeLength = 64
+
+func boundedStatusCode(code string) bool {
+	if code == "" || len(code) > maxStatusCodeLength {
+		return false
+	}
+	for index := 0; index < len(code); index++ {
+		char := code[index]
+		switch {
+		case char >= 'A' && char <= 'Z':
+		case index > 0 && (char >= '0' && char <= '9' || char == '_'):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // RouteDetailKind returns the detail kind prefix ("http_status", "transport"
@@ -263,12 +299,19 @@ type InputQualityFact struct {
 	SeriesIdentity SeriesIdentityDigest
 }
 
+// ProviderStats are log-only physical query facts. They are never digested or
+// compared, so adding a counter does not change any conservation proof.
 type ProviderStats struct {
 	Series       uint64
 	Records      uint64
 	Bytes        uint64
 	QueryMillis  uint64
 	DecodeMillis uint64
+	// NullIdentityFields counts (series, identity field) pairs whose declared
+	// identity dimension was absent from the provider series and was bound to
+	// JSON null, as Python binds an absent dimension to None. It is a bounded
+	// diagnostics marker ("identity_field_null"); it has no evaluation impact.
+	NullIdentityFields uint64
 }
 
 // PartialEvidence is a physical Provider fact. It does not itself authorize a

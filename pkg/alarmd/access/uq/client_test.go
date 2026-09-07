@@ -154,13 +154,21 @@ func TestClientRejectsInvalidCanonicalBoolean(t *testing.T) {
 	}
 }
 
-func TestClientRejectsQueryStatus(t *testing.T) {
+func TestClientCompletesDeterministicQueryStatusAsUnavailable(t *testing.T) {
 	for _, partial := range []bool{false, true} {
 		t.Run(strconv.FormatBool(partial), func(t *testing.T) {
-			body := fmt.Sprintf(`{"series":[],"status":{"code":"QUERY_ERROR","message":"bad query"},"is_partial":%t}`, partial)
+			body := fmt.Sprintf(`{"series":[],"status":{"code":"QUERY_ERROR","message":"bad query"},"is_partial":%t,"result_table_id":["system.cpu"]}`, partial)
 			client := fixtureClient(t, http.StatusOK, body, DefaultLimits())
-			if _, err := client.Execute(context.Background(), validAttempt(t), &collectingSink{}); err == nil || !strings.Contains(err.Error(), "QUERY_ERROR") {
-				t.Fatalf("error=%v", err)
+			completion, err := client.Execute(context.Background(), validAttempt(t), &collectingSink{})
+			if err != nil || completion.Completeness != execution.CompletenessUnavailable || completion.DataState != execution.DataStateEmpty ||
+				len(completion.RouteFacts.Attempts) != 1 || completion.RouteFacts.Attempts[0].Result != execution.RouteAttemptFailed ||
+				completion.RouteFacts.Attempts[0].ReasonCode != execution.ReasonCode(contract.ReasonQueryUnavailable) ||
+				completion.RouteFacts.Attempts[0].Detail != "response=status_query_error" ||
+				len(completion.RouteFacts.ResultTableIDs) != 1 || completion.RouteFacts.ResultTableIDs[0] != "system.cpu" {
+				t.Fatalf("completion=%+v error=%v, want UNAVAILABLE with bounded status detail", completion, err)
+			}
+			if strings.Contains(fmt.Sprintf("%+v", completion), "bad query") {
+				t.Fatalf("status message leaked into completion: %+v", completion)
 			}
 		})
 	}

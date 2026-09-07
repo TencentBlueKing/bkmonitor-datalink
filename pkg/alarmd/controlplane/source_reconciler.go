@@ -91,7 +91,13 @@ func (reconciler *SourceReconciler) Refresh(
 	if err != nil {
 		return SourceRefreshResult{}, err
 	}
-	catalog, err := BuildCatalog(ctx, BuildRequest{Strategies: cycle.strategies, Planner: planner, LastGood: current})
+	var previousDispositions []ObjectDisposition
+	if audit != nil {
+		previousDispositions = audit.Dispositions
+	}
+	catalog, err := BuildCatalog(ctx, BuildRequest{
+		Strategies: cycle.strategies, Planner: planner, LastGood: current, PreviousDispositions: previousDispositions,
+	})
 	if err != nil {
 		return SourceRefreshResult{}, err
 	}

@@ -113,8 +113,23 @@ type RedisCatalogRepository struct {
 	controlReads               controlReadCounters
 	legacyMigrationMaxScanKeys int
 	legacyMigrationTimeout     time.Duration
+	drainingRetireAfter        time.Duration
 	observer                   observability.Observer
 	snapshotAdmission          SnapshotMemoryAdmission
+}
+
+// ConfigureDrainingTermination bounds how long a retired Query Group may stay
+// in the persisted Draining projection without draining. The bound is derived
+// from the scheduler replay age: once every Slot before the retirement
+// boundary is older than the replay window nothing can execute it anymore, so
+// the Draining fact carries no execution meaning and is pruned on the next
+// publication activation. Zero disables pruning by age.
+func (repository *RedisCatalogRepository) ConfigureDrainingTermination(maxReplayAge time.Duration) error {
+	if repository == nil || maxReplayAge < 0 {
+		return errors.New("alarmd controlplane: invalid draining termination replay age")
+	}
+	repository.drainingRetireAfter = DrainingTerminationWindow(maxReplayAge)
+	return nil
 }
 
 // ConfigureSnapshotMemory is called before starting repository users.

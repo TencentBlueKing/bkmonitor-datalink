@@ -346,6 +346,13 @@ type productionPhaseTwoControlDependencies struct {
 	RefreshInterval time.Duration
 	Wait            func(context.Context, time.Duration) error
 	Close           func() error
+	// Now and MaxReplayAge bound how long an undrained draining Query Group
+	// stays in the active set. Past the termination window derived from
+	// MaxReplayAge nothing can execute its retired Slots, so it is retired
+	// from the active set instead of being source-blocked on every tick.
+	// Nil Now means the wall clock; zero MaxReplayAge never retires by age.
+	Now          func() time.Time
+	MaxReplayAge time.Duration
 }
 
 type productionPhaseTwoControl struct {
@@ -360,11 +367,14 @@ func newProductionPhaseTwoControl(
 	if dependencies.Source == nil || dependencies.Planner == nil || dependencies.Reconciler == nil ||
 		dependencies.Activator == nil || dependencies.Repository == nil || dependencies.Schedules == nil ||
 		dependencies.Progress == nil || dependencies.RefreshInterval <= 0 ||
-		dependencies.Wait == nil {
+		dependencies.Wait == nil || dependencies.MaxReplayAge < 0 {
 		return nil, errors.New("phase-two production Control dependencies are incomplete")
 	}
 	if dependencies.Observer == nil {
 		dependencies.Observer = observability.NopObserver{}
+	}
+	if dependencies.Now == nil {
+		dependencies.Now = time.Now
 	}
 	return &productionPhaseTwoControl{dependencies: dependencies}, nil
 }
@@ -729,6 +739,22 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 		active[queryGroup] = struct{}{}
 	}
 	drainingFacts := &observability.DrainingQGFacts{Total: len(state.Draining)}
+	now := execution.EvaluationTime(runtime.dependencies.Now().Unix())
+	terminationWindow := controlplane.DrainingTerminationWindow(runtime.dependencies.MaxReplayAge)
+	addSample := func(draining controlplane.DrainingQueryGroup, load execution.ProgressLoadResult, disposition string) {
+		if len(drainingFacts.Samples) >= observability.MaxDrainingQGLogSamples {
+			drainingFacts.Truncated = true
+			return
+		}
+		nextSlot := int64(0)
+		if load.Progress != nil {
+			nextSlot = int64(load.Progress.NextSlot)
+		}
+		drainingFacts.Samples = append(drainingFacts.Samples, observability.DrainingQGSample{
+			QueryGroupKey: string(draining.QueryGroup), RetiredBoundary: int64(draining.RetiredBoundary),
+			NextSlot: nextSlot, ProgressStatus: string(load.Status), Disposition: disposition,
+		})
+	}
 	for _, draining := range state.Draining {
 		if _, current := active[draining.QueryGroup]; current {
 			drainingFacts.Isolated++
@@ -821,22 +847,21 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 				continue
 			}
 		}
-		if !drained {
-			active[draining.QueryGroup] = struct{}{}
-			drainingFacts.Undrained++
-			if len(drainingFacts.Samples) < observability.MaxDrainingQGLogSamples {
-				nextSlot := int64(0)
-				if load.Progress != nil {
-					nextSlot = int64(load.Progress.NextSlot)
-				}
-				drainingFacts.Samples = append(drainingFacts.Samples, observability.DrainingQGSample{
-					QueryGroupKey: string(draining.QueryGroup), RetiredBoundary: int64(draining.RetiredBoundary),
-					NextSlot: nextSlot, ProgressStatus: string(load.Status),
-				})
-			} else {
-				drainingFacts.Truncated = true
-			}
+		if drained {
+			continue
 		}
+		// An undrained Query Group stays active only while it can still
+		// execute. Past the termination window every retired Slot is older
+		// than the replay age, so keeping it active would only source-block
+		// the Query Group on every tick without ever advancing Progress.
+		if controlplane.DrainingQueryGroupTerminated(draining, now, terminationWindow) {
+			drainingFacts.Retired++
+			addSample(draining, load, observability.DrainingQGSampleRetired)
+			continue
+		}
+		active[draining.QueryGroup] = struct{}{}
+		drainingFacts.Undrained++
+		addSample(draining, load, "")
 	}
 	runtime.dependencies.Observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentControlPlane, Stage: observability.StageDrainingQGReconciled,

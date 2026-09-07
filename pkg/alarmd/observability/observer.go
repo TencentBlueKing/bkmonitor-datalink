@@ -286,17 +286,27 @@ const (
 	MaxActivationFailureQGLogSamples = 8
 )
 
+// DrainingQGSampleRetired marks a sample whose Query Group left the active set
+// because it is past the draining termination window without draining.
+// Undrained samples carry no marker so their log shape is unchanged.
+const DrainingQGSampleRetired = "RETIRED"
+
 type DrainingQGSample struct {
 	QueryGroupKey   string `json:"query_group_key"`
 	RetiredBoundary int64  `json:"retired_boundary"`
 	NextSlot        int64  `json:"next_slot"`
 	ProgressStatus  string `json:"progress_status"`
+	Disposition     string `json:"disposition,omitempty"`
 }
 
+// DrainingQGFacts carries bounded counts of one draining reconciliation.
+// Retired counts undrained Query Groups past the termination window; they are
+// no longer active and are not counted as Undrained.
 type DrainingQGFacts struct {
 	Total     int                `json:"total"`
 	Undrained int                `json:"undrained"`
 	Isolated  int                `json:"isolated"`
+	Retired   int                `json:"retired"`
 	Samples   []DrainingQGSample `json:"samples,omitempty"`
 	Truncated bool               `json:"truncated"`
 }
@@ -707,7 +717,7 @@ func normalizeDrainingQGFacts(facts *DrainingQGFacts) *DrainingQGFacts {
 		return nil
 	}
 	normalized := *facts
-	for _, count := range []*int{&normalized.Total, &normalized.Undrained, &normalized.Isolated} {
+	for _, count := range []*int{&normalized.Total, &normalized.Undrained, &normalized.Isolated, &normalized.Retired} {
 		if *count < 0 {
 			*count = 0
 		}
@@ -727,6 +737,9 @@ func normalizeDrainingQGFacts(facts *DrainingQGFacts) *DrainingQGFacts {
 		}
 		if sample.ProgressStatus != "FOUND" && sample.ProgressStatus != "MISSING" {
 			sample.ProgressStatus = "UNKNOWN"
+		}
+		if sample.Disposition != DrainingQGSampleRetired {
+			sample.Disposition = ""
 		}
 	}
 	return &normalized

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -385,6 +387,110 @@ func TestBuildCatalogRejectsMultipleItemsWithoutSilentlySelectingFirst(t *testin
 	if disposition.Scope != "PLAN" || disposition.Disposition != controlplane.DispositionUnsupported || disposition.Reason != "UNSUPPORTED_MULTI_ITEM_STRATEGY" {
 		t.Fatalf("multiple Item disposition=%#v", disposition)
 	}
+}
+
+func TestBuildCatalogAbsentSourceGetsOneGraceCycleBeforeRemoval(t *testing.T) {
+	payload, err := os.ReadFile("testdata/two_threshold_strategies.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var documents []json.RawMessage
+	if err := json.Unmarshal(payload, &documents); err != nil {
+		t.Fatal(err)
+	}
+	identity := controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}
+	both := []controlplane.SourceStrategy{
+		{SourceID: "1001", Document: documents[0], Identity: identity},
+		{SourceID: "1002", Document: documents[1], Identity: identity},
+	}
+	onlyFirst := both[:1]
+	previous, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
+		Strategies: both, Planner: &recordingPlanner{facts: queryFacts(t)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastGood := &controlplane.PublishedSnapshot{
+		Publication: controlplane.SnapshotPublicationRef{SnapshotRevision: previous.SnapshotRevision, PublicationEpoch: 1},
+		QueryGroups: previous.QueryGroups,
+	}
+	pendingRemoval := controlplane.ObjectDisposition{SourceID: "1002", Scope: "STRATEGY",
+		Disposition: controlplane.DispositionPendingRemoval, Reason: "REMOVED_FROM_ACTIVE_SET"}
+	removed := controlplane.ObjectDisposition{SourceID: "1002", Scope: "STRATEGY",
+		Disposition: controlplane.DispositionRemoved, Reason: "ABSENT_FROM_ACTIVE_SET"}
+	sourceIncomplete := controlplane.ObjectDisposition{SourceID: "1002", Scope: "STRATEGY",
+		Disposition: controlplane.DispositionSourceIncomplete, Reason: "SOURCE_READ_INCOMPLETE"}
+	for _, test := range []struct {
+		name         string
+		strategies   []controlplane.SourceStrategy
+		previous     []controlplane.ObjectDisposition
+		wantPlans    []string
+		wantStrategy *controlplane.ObjectDisposition
+	}{
+		{
+			name: "absent once is retained with PENDING_REMOVAL", strategies: onlyFirst,
+			previous: previous.Dispositions, wantPlans: []string{"1001", "1002"}, wantStrategy: &pendingRemoval,
+		},
+		{
+			name: "absent without any audit history is retained with PENDING_REMOVAL", strategies: onlyFirst,
+			previous: nil, wantPlans: []string{"1001", "1002"}, wantStrategy: &pendingRemoval,
+		},
+		{
+			name: "absent twice leaves the Catalog with REMOVED", strategies: onlyFirst,
+			previous:  append(append([]controlplane.ObjectDisposition(nil), previous.Dispositions...), pendingRemoval),
+			wantPlans: []string{"1001"}, wantStrategy: &removed,
+		},
+		{
+			name: "present again after PENDING_REMOVAL is accepted without a removal fact", strategies: both,
+			previous:  append(append([]controlplane.ObjectDisposition(nil), previous.Dispositions...), pendingRemoval),
+			wantPlans: []string{"1001", "1002"},
+		},
+		{
+			name:       "SOURCE_INCOMPLETE still retains even after PENDING_REMOVAL",
+			strategies: []controlplane.SourceStrategy{both[0], {SourceID: "1002", Identity: identity, SourceDisposition: &sourceIncomplete}},
+			previous:   append(append([]controlplane.ObjectDisposition(nil), previous.Dispositions...), pendingRemoval),
+			wantPlans:  []string{"1001", "1002"}, wantStrategy: &sourceIncomplete,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
+				Strategies: test.strategies, Planner: &recordingPlanner{facts: queryFacts(t)},
+				LastGood: lastGood, PreviousDispositions: test.previous,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := catalogStrategyIDs(catalog); !reflect.DeepEqual(got, test.wantPlans) {
+				t.Fatalf("catalog plans=%v, want %v", got, test.wantPlans)
+			}
+			var strategyDispositions []controlplane.ObjectDisposition
+			for _, disposition := range catalog.Dispositions {
+				if disposition.Scope == "STRATEGY" {
+					strategyDispositions = append(strategyDispositions, disposition)
+				}
+			}
+			if test.wantStrategy == nil {
+				if len(strategyDispositions) != 0 {
+					t.Fatalf("strategy dispositions=%#v, want none", strategyDispositions)
+				}
+				return
+			}
+			if len(strategyDispositions) != 1 || strategyDispositions[0] != *test.wantStrategy {
+				t.Fatalf("strategy dispositions=%#v, want %#v", strategyDispositions, *test.wantStrategy)
+			}
+		})
+	}
+}
+
+func catalogStrategyIDs(catalog controlplane.Catalog) []string {
+	ids := make([]string, 0)
+	for _, group := range catalog.QueryGroups {
+		for _, plan := range group.Plans {
+			ids = append(ids, plan.Identity.StrategyID)
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 type recordingPlanner struct {

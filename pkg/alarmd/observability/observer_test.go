@@ -225,21 +225,23 @@ func TestNormalizeObservationBoundsDrainingQueryGroupFacts(t *testing.T) {
 	for index := range samples {
 		samples[index] = DrainingQGSample{
 			QueryGroupKey: "query-group", RetiredBoundary: 90, NextSlot: 60,
-			ProgressStatus: "INVALID",
+			ProgressStatus: "INVALID", Disposition: "INVALID",
 		}
 	}
+	samples[1].Disposition = DrainingQGSampleRetired
 	got := NormalizeObservation(Observation{
 		Component: ComponentControlPlane, Stage: StageDrainingQGReconciled, Result: ResultSuccess,
-		DrainingQG: &DrainingQGFacts{Total: -1, Undrained: -1, Isolated: -1, Samples: samples},
+		DrainingQG: &DrainingQGFacts{Total: -1, Undrained: -1, Isolated: -1, Retired: -1, Samples: samples},
 	})
-	if got.DrainingQG.Total != 0 || got.DrainingQG.Undrained != 0 || got.DrainingQG.Isolated != 0 {
+	if got.DrainingQG.Total != 0 || got.DrainingQG.Undrained != 0 || got.DrainingQG.Isolated != 0 || got.DrainingQG.Retired != 0 {
 		t.Fatalf("negative draining facts were not bounded: %#v", got.DrainingQG)
 	}
 	if len(got.DrainingQG.Samples) != MaxDrainingQGLogSamples || !got.DrainingQG.Truncated {
 		t.Fatalf("draining samples were not bounded: %#v", got.DrainingQG)
 	}
-	if got.DrainingQG.Samples[0].ProgressStatus != "UNKNOWN" {
-		t.Fatalf("progress status was not normalized: %#v", got.DrainingQG.Samples[0])
+	if got.DrainingQG.Samples[0].ProgressStatus != "UNKNOWN" || got.DrainingQG.Samples[0].Disposition != "" ||
+		got.DrainingQG.Samples[1].Disposition != DrainingQGSampleRetired {
+		t.Fatalf("sample facts were not normalized: %#v", got.DrainingQG.Samples[:2])
 	}
 }
 
@@ -323,9 +325,12 @@ func TestDrainingQueryGroupLogCarriesBoundedDiagnosticFacts(t *testing.T) {
 	}
 	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
 		Component: ComponentControlPlane, Stage: StageDrainingQGReconciled, Result: ResultSuccess,
-		DrainingQG: &DrainingQGFacts{Total: 2, Undrained: 1, Isolated: 1,
-			Samples: []DrainingQGSample{{QueryGroupKey: "query-group-old", RetiredBoundary: 90,
-				NextSlot: 60, ProgressStatus: "FOUND"}}},
+		DrainingQG: &DrainingQGFacts{Total: 3, Undrained: 1, Isolated: 1, Retired: 1,
+			Samples: []DrainingQGSample{
+				{QueryGroupKey: "query-group-old", RetiredBoundary: 90, NextSlot: 60, ProgressStatus: "FOUND"},
+				{QueryGroupKey: "query-group-retired", RetiredBoundary: 30, NextSlot: 10, ProgressStatus: "FOUND",
+					Disposition: DrainingQGSampleRetired},
+			}},
 	})
 	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
 		Component: ComponentControlPlane, Stage: StageDrainingQGReconciled, Result: ResultSuccess,
@@ -334,8 +339,9 @@ func TestDrainingQueryGroupLogCarriesBoundedDiagnosticFacts(t *testing.T) {
 				NextSlot: 90, ProgressStatus: "FOUND"}}},
 	})
 	for _, want := range []string{
-		`"draining_total":2`, `"draining_undrained":1`, `"draining_isolated":1`,
-		`"draining_samples":[{"query_group_key":"query-group-old","retired_boundary":90,"next_slot":60,"progress_status":"FOUND"}]`,
+		`"draining_total":3`, `"draining_undrained":1`, `"draining_isolated":1`, `"draining_retired":1`,
+		`"draining_samples":[{"query_group_key":"query-group-old","retired_boundary":90,"next_slot":60,"progress_status":"FOUND"},` +
+			`{"query_group_key":"query-group-retired","retired_boundary":30,"next_slot":10,"progress_status":"FOUND","disposition":"RETIRED"}]`,
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("draining log %s does not contain %s", output.String(), want)

@@ -52,6 +52,11 @@ type BuildRequest struct {
 	Strategies []SourceStrategy
 	Planner    PrimaryQueryCompiler
 	LastGood   *PublishedSnapshot
+	// PreviousDispositions is the published source audit of LastGood. It is the
+	// only memory of the removal grace cycle: a strategy absent from the
+	// observed set is retained once with PENDING_REMOVAL and dropped when the
+	// previous audit already carries that fact. Nil means no grace history.
+	PreviousDispositions []ObjectDisposition
 }
 
 type FrozenPlan struct {
@@ -81,6 +86,7 @@ const (
 	DispositionConfigRejected       Disposition = "CONFIG_REJECTED"
 	DispositionStaleConfig          Disposition = "STALE_CONFIG"
 	DispositionPendingRemoval       Disposition = "PENDING_REMOVAL"
+	DispositionRemoved              Disposition = "REMOVED"
 	DispositionUnsupported          Disposition = "UNSUPPORTED_PHASE2_CAPABILITY"
 	DispositionCompatibilityIgnored Disposition = "COMPATIBILITY_IGNORED"
 )
@@ -192,8 +198,18 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 		catalog.Dispositions = append(catalog.Dispositions, candidate.dispositions...)
 		catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionAccepted})
 	}
+	// Reaching this point means the upstream strategy id list was read
+	// completely; per-source incompleteness is already expressed above through
+	// SourceDisposition. A LastGood strategy absent from the observed set gets
+	// exactly one published grace cycle before its Plan leaves the Catalog.
+	pendingRemoval := indexPendingRemoval(request.PreviousDispositions)
 	for sourceID := range lastGood {
 		if _, found := observed[sourceID]; found {
+			continue
+		}
+		if _, graced := pendingRemoval[sourceID]; graced {
+			catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: sourceID, Scope: "STRATEGY",
+				Disposition: DispositionRemoved, Reason: "ABSENT_FROM_ACTIVE_SET"})
 			continue
 		}
 		retained, err := retainLastGood(sourceID)
@@ -248,6 +264,16 @@ func indexLastGoodPlans(snapshot *PublishedSnapshot) map[string]lastGoodPlan {
 	for _, group := range snapshot.QueryGroups {
 		for _, plan := range group.Plans {
 			result[plan.Identity.StrategyID] = lastGoodPlan{facts: group.QueryPlan, plan: plan}
+		}
+	}
+	return result
+}
+
+func indexPendingRemoval(dispositions []ObjectDisposition) map[string]struct{} {
+	result := make(map[string]struct{})
+	for _, disposition := range dispositions {
+		if disposition.Scope == "STRATEGY" && disposition.Disposition == DispositionPendingRemoval && disposition.SourceID != "" {
+			result[disposition.SourceID] = struct{}{}
 		}
 	}
 	return result

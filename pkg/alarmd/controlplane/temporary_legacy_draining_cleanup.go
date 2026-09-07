@@ -307,7 +307,9 @@ func (cleanup *TemporaryLegacyDrainingCleanup) prepare(
 		}
 		reactivating[draining.QueryGroup] = struct{}{}
 	}
-	nextDraining, err := expectedDrainingProjection(activation.Draining, oldGroups, candidateGroups, reactivating, request.CutoverBoundary)
+	// The one-shot cleanup only removes its approved targets; it never prunes
+	// other Draining entries by age or Progress.
+	nextDraining, err := expectedDrainingProjection(activation.Draining, oldGroups, candidateGroups, reactivating, request.CutoverBoundary, nil)
 	if err != nil {
 		return temporaryLegacyDrainingPrepared{}, err
 	}

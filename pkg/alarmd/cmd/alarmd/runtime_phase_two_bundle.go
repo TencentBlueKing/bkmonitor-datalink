@@ -216,6 +216,9 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err := repository.ConfigureLegacyMigration(cfg.PhaseTwo.Control.LegacyMigrationMaxScanKeys, cfg.PhaseTwo.Control.LegacyMigrationTimeout.Duration()); err != nil {
 		return nil, err
 	}
+	if err := repository.ConfigureDrainingTermination(cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration()); err != nil {
+		return nil, err
+	}
 	repository.ConfigureObserver(observer)
 	if cfg.PhaseTwo.Control.CatalogTTL.Duration() < phaseTwoSnapshotMinimumRetention(cfg, 0) {
 		return nil, scheduler.ErrSnapshotRetentionInsufficient
@@ -280,6 +283,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		Repository: repository, Schedules: catalog, Progress: progressStore,
 		Observer:        observer,
 		RefreshInterval: cfg.PhaseTwo.Control.RefreshInterval.Duration(), Wait: waitProductionControl,
+		Now: external.Now, MaxReplayAge: cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration(),
 		Close: func() error {
 			controlClosed = true
 			return controlClient.Close()

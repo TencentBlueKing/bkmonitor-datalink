@@ -1041,6 +1041,7 @@ type recordingPorts struct {
 	trace                           *[]string
 	ready                           bool
 	failStage                       string
+	beginErr                        error
 	admissionCalls                  int
 	contractDrift                   bool
 	alreadyApplied                  bool
@@ -1588,6 +1589,9 @@ func (ports *recordingPorts) CommitProgress(_ context.Context, request execution
 }
 
 func (ports *recordingPorts) BeginSlot(_ context.Context, _ execution.ProgressBeginRequest) (execution.ProgressBeginResult, error) {
+	if ports.beginErr != nil {
+		return execution.ProgressBeginResult{}, ports.beginErr
+	}
 	return execution.ProgressBeginResult{Status: execution.ProgressCommitted}, nil
 }
 

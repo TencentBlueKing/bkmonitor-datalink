@@ -160,10 +160,23 @@ func (store *Store) BeginSlot(ctx context.Context, request execution.ProgressBeg
 			return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
 		}
 		if current.UnfinishedSlot != nil {
-			if current.NextSlot != request.Projection.Contract.Slot.EvaluationTime {
+			if request.Projection.Contract.ScheduleSegmentStart > current.UnfinishedSlot.Contract.ScheduleSegmentStart {
+				// A later Schedule Segment now owns the unfinished Slot's time, so
+				// the persisted contract can never be re-frozen: the newer Segment
+				// supersedes it. The same EvaluationTime simply replaces the
+				// projection; another one abandons the old Slot first.
+				if current.NextSlot != request.Projection.Contract.Slot.EvaluationTime {
+					conflict, abandonErr := store.abandonUnfinishedSlot(ctx, &current, request.Projection.Contract.Slot.EvaluationTime)
+					if abandonErr != nil {
+						return execution.ProgressBeginResult{}, abandonErr
+					}
+					if conflict {
+						return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
+					}
+				}
+			} else if current.NextSlot != request.Projection.Contract.Slot.EvaluationTime {
 				return execution.ProgressBeginResult{Status: execution.ProgressConflict}, nil
-			}
-			if !current.UnfinishedSlot.Equal(request.Projection) {
+			} else if !current.UnfinishedSlot.Equal(request.Projection) {
 				return execution.ProgressBeginResult{}, &DeterministicInvalidError{Err: fmt.Errorf("unfinished Slot projection differs from persisted facts")}
 			}
 		} else if current.NextSlot != request.Projection.Contract.Slot.EvaluationTime {
@@ -345,6 +358,37 @@ func foldRecentGap(
 		Kind: request.Completion.Kind, ReasonCode: request.Completion.ReasonCode,
 		FirstSlot: request.ExpectedNextSlot, LastSlot: request.ExpectedNextSlot, Count: 1,
 	}
+}
+
+// abandonUnfinishedSlot drops the superseded unfinished Slot and moves the
+// cursor to the successor the completed facts prove. A later requested Slot
+// means the abandoned Slot was skipped, so it is first recorded in the recent
+// gap summary exactly as a GAP_SKIPPED completion would be; an earlier one
+// means the new grid still reaches that time, so nothing is recorded. A
+// requested Slot that is not the proven successor conflicts and nothing is
+// written.
+func (store *Store) abandonUnfinishedSlot(
+	ctx context.Context,
+	current *execution.ScheduleProgress,
+	requested execution.EvaluationTime,
+) (bool, error) {
+	abandoned := current.NextSlot
+	current.UnfinishedSlot = nil
+	if requested > abandoned {
+		skipped := execution.ProgressCommitRequest{ExpectedNextSlot: abandoned, Completion: execution.SlotCompletion{
+			Kind: execution.CompletionGapSkipped, ReasonCode: execution.ReasonCode(contract.ReasonGapSkipped)}}
+		current.CurrentOrRecentGap = foldRecentGap(*current, skipped)
+		current.LastCompletionKind = execution.CompletionGapSkipped
+	}
+	next, err := store.resolveCurrentNextSlot(ctx, *current)
+	if err != nil {
+		return false, err
+	}
+	if next != requested {
+		return true, nil
+	}
+	current.NextSlot = next
+	return false, nil
 }
 
 func (store *Store) resolveCurrentNextSlot(

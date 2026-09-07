@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"sync"
 	"time"
@@ -137,12 +138,13 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	if request.ExpiredRange != nil {
 		return coordinator.executeExpiredRange(ctx, request)
 	}
+	beginStarted := time.Now()
 	begin, err := coordinator.ports.Progress.BeginSlot(ctx, execution.ProgressBeginRequest{
 		Identity:   execution.ProgressIdentity{QueryGroup: request.Contract.Slot.QueryGroup},
 		OwnerFence: request.OwnerFence, Projection: request.UnfinishedProjection(),
 	})
 	if err != nil {
-		return activationRetry(execution.ReasonBlockedExactSetUnavailable), nil
+		return coordinator.progressBeginFailure(ctx, request, beginStarted, err), nil
 	}
 	if err := begin.Validate(); err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid Progress BeginSlot result: %w", err)
@@ -322,6 +324,29 @@ func duePlanActivationRequest(
 	}
 	sort.Slice(plans, func(left, right int) bool { return lessPlanIdentity(plans[left], plans[right]) })
 	return execution.PlanActivationRequest{Contract: contractRef, Plans: plans}
+}
+
+// progressBeginFailure observes a BeginSlot error with its text under the Slot
+// coordinates already attached to ctx and keeps the Slot retrying. A
+// deterministic cause (persisted-fact, validation or identity error) is
+// reported as PROGRESS_BEGIN_FAILED; a transport or context failure keeps the
+// retryable PROGRESS_BEGIN_REJECTED. Both reasons are observation-only.
+func (coordinator *SlotExecutionCoordinator) progressBeginFailure(
+	ctx context.Context,
+	request execution.SlotExecutionRequest,
+	started time.Time,
+	err error,
+) execution.SlotExecutionResult {
+	reason := execution.ReasonCode(contract.ReasonProgressBeginFailed)
+	var deterministic interface{ DeterministicControlFact() }
+	var transport net.Error
+	if !errors.As(err, &deterministic) &&
+		(errors.As(err, &transport) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		reason = execution.ReasonCode(contract.ReasonProgressBeginRejected)
+	}
+	coordinator.observe(ctx, observability.ComponentProgress, observability.StageProgressCommitted,
+		request.Operation, started, "", observability.ReasonCode(reason), err)
+	return activationRetry(reason)
 }
 
 func activationRetry(reason execution.ReasonCode) execution.SlotExecutionResult {

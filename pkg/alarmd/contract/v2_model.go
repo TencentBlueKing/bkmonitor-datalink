@@ -78,6 +78,7 @@ const (
 	ReasonRedisUnavailable                 = "REDIS_UNAVAILABLE"
 	ReasonProviderUnavailable              = "PROVIDER_UNAVAILABLE"
 	ReasonProgressBeginRejected            = "PROGRESS_BEGIN_REJECTED"
+	ReasonProgressBeginFailed              = "PROGRESS_BEGIN_FAILED"
 	ReasonActivationReadFailed             = "ACTIVATION_READ_FAILED"
 	ReasonSnapshotRetryPending             = "SNAPSHOT_RETRY_PENDING"
 	ReasonSlotSourceRetry                  = "SLOT_SOURCE_RETRY"

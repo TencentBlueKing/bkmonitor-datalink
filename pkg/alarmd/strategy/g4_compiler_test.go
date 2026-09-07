@@ -98,6 +98,69 @@ func TestG4DefaultRegistryCompilesThreeIndependentAlgorithmKinds(t *testing.T) {
 	}
 }
 
+// The ProcPort fold policy is derived from the compiled configuration and is
+// never persisted or digested. The fingerprints, state compatibility, config
+// digest and algorithm plan id of a ProcPort plan compiled by the fixed test
+// fixtures are pinned to the values recorded before the policy existed, so a
+// change that started to digest the policy (and would flip state generations
+// in production) fails here. Other algorithm kinds declare no policy.
+func TestG4ProcPortDeclaresSeriesFoldPolicyWithoutChangingFingerprints(t *testing.T) {
+	projection := AlgorithmInputProjection{
+		ValueFields:     []string{"value"},
+		DimensionFields: []string{"bind_ip", "listen", "nonlisten", "not_accurate_listen", "protocol"},
+		IdentityFields:  []string{"bk_target_cloud_id", "bk_target_ip", "display_name"},
+	}
+	compiled := mustCompileG4Request(t, newTestCompiler(t),
+		g4CompileRequest(t, DetectorKindProcPort, map[string]any{}, projection, g4PrimaryRequirements(t, projection)))
+	level := compiled.Levels()[0]
+	algorithm := level.Algorithms()[0]
+	const (
+		wantDetect         = "9218eb1b3507104a392a86d45a0314e6ac21a964ce39a420832412ba8f0b72ce"
+		wantTrigger        = "5177aa852128e953a9ed687682e39d2d7cdb99d892678da8bd52df3416f202f1"
+		wantStateHash      = "28a9629ea70d94d8fdd638245ee2716ba8c5a4733e76b5b9f9c59bb83c8ba9eb"
+		wantAlgorithmState = "30a7dc0134d5035922831e1b21dd043aa702fd39466e098a072dc34f696620e7"
+		wantConfigDigest   = "fb4176edfb5c4e8b3fc317904a61ba93fab57f132a9132225d68e1055890a06f"
+		wantPlanID         = "f80484f463a5f2948e71bb9ef6e83c84687befe58d787db348be49d833510362"
+	)
+	if level.Fingerprints().Detect != wantDetect || level.Fingerprints().Trigger != wantTrigger ||
+		compiled.StateCompatibilityHash() != wantStateHash || algorithm.StateCompatibilityFingerprint() != wantAlgorithmState ||
+		algorithm.NormalizedConfigDigest() != wantConfigDigest || algorithm.AlgorithmPlanID() != wantPlanID {
+		t.Fatalf("ProcPort fingerprints changed: detect=%s trigger=%s state=%s algorithm=%s config=%s plan=%s",
+			level.Fingerprints().Detect, level.Fingerprints().Trigger, compiled.StateCompatibilityHash(),
+			algorithm.StateCompatibilityFingerprint(), algorithm.NormalizedConfigDigest(), algorithm.AlgorithmPlanID())
+	}
+	policy, declared := algorithm.SeriesFoldPolicy()
+	want := SeriesFoldPolicy{
+		Values: map[string]SeriesFoldRule{"value": SeriesFoldMin},
+		Dimensions: map[string]SeriesFoldRule{
+			"bind_ip": SeriesFoldDistinctValues, "listen": SeriesFoldUnionSet, "nonlisten": SeriesFoldUnionSet,
+			"not_accurate_listen": SeriesFoldUnionSet, "protocol": SeriesFoldDistinctValues,
+		},
+	}
+	if !declared || !reflect.DeepEqual(policy, want) {
+		t.Fatalf("ProcPort fold policy = %+v declared=%v, want %+v", policy, declared, want)
+	}
+	others := []struct {
+		kind       string
+		config     map[string]any
+		dependency string
+	}{
+		{kind: DetectorKindSimpleRingRatio, config: map[string]any{"floor": 50, "ceil": nil}, dependency: "previous"},
+		{kind: DetectorKindOsRestart, config: map[string]any{}, dependency: "uptime_history"},
+	}
+	for _, other := range others {
+		compiled := mustCompileG4Request(t, newTestCompiler(t), g4CompileRequest(t, other.kind, other.config,
+			AlgorithmInputProjection{ValueFields: []string{"value"}, IdentityFields: []string{"host"}}, g4Requirements(t, other.dependency)))
+		levels := compiled.Levels()
+		if len(levels) != 1 || len(levels[0].Algorithms()) != 1 {
+			t.Fatalf("%s compiled %d levels", other.kind, len(levels))
+		}
+		if _, declared := levels[0].Algorithms()[0].SeriesFoldPolicy(); declared {
+			t.Fatalf("%s declared a fold policy", other.kind)
+		}
+	}
+}
+
 func TestG4DefaultRegistryDoesNotRegisterPingDetector(t *testing.T) {
 	if _, ok := NewDefaultAlgorithmCompilerRegistry().lookup("PingUnreachable", 1); ok {
 		t.Fatal("PingUnreachable source type was registered as an independent detector")

@@ -236,12 +236,22 @@ type recordingEvaluator struct {
 	inner    execution.Evaluator
 	requests []execution.EvaluationRequest
 	results  []execution.EvaluationResult
+	// fail replaces every evaluation with this error; mutate alters a
+	// successful result before the worker validates it.
+	fail   error
+	mutate func(*execution.EvaluationResult)
 }
 
 func (e *recordingEvaluator) Evaluate(ctx context.Context, request execution.EvaluationRequest) (execution.EvaluationResult, error) {
 	e.requests = append(e.requests, request)
+	if e.fail != nil {
+		return execution.EvaluationResult{}, e.fail
+	}
 	result, err := e.inner.Evaluate(ctx, request)
 	if err == nil {
+		if e.mutate != nil {
+			e.mutate(&result)
+		}
 		e.results = append(e.results, result)
 	}
 	return result, err
@@ -388,12 +398,22 @@ func workerG4CompiledPlan(t *testing.T, kind string) (*strategy.CompiledPlan, []
 	projection := strategy.AlgorithmInputProjection{
 		ValueFields: []string{"value"}, DimensionFields: []string{"host"}, IdentityFields: []string{"host"},
 	}
+	if kind == strategy.DetectorKindProcPort {
+		// The ProcPort compiler pins the frozen projection: the five dynamic
+		// port dimensions are data, the identity is the process itself.
+		projection = strategy.AlgorithmInputProjection{
+			ValueFields:     []string{"value"},
+			DimensionFields: []string{"bind_ip", "listen", "nonlisten", "not_accurate_listen", "protocol"},
+			IdentityFields:  []string{"bk_target_cloud_id", "bk_target_ip", "display_name"},
+		}
+	}
 	requirements := []strategy.AlgorithmInputRequirement{
 		workerAlgorithmRequirement(t, "primary", strategy.AlgorithmInputPrimary, -60, 0, nil,
 			strategy.AlgorithmReadinessEager, projection),
 	}
 	config := map[string]any{}
 	switch kind {
+	case strategy.DetectorKindProcPort:
 	case strategy.DetectorKindSimpleRingRatio:
 		requirements = append(requirements, workerAlgorithmRequirement(t, "previous", strategy.AlgorithmInputDependency,
 			-120, -60, []strategy.AlgorithmNamedInputPoint{{Name: "previous", OffsetSeconds: 60}},
@@ -426,7 +446,7 @@ func workerG4CompiledPlan(t *testing.T, kind string) (*strategy.CompiledPlan, []
 	}
 	ref := contract.StrategyRefV2{TenantID: "tenant", StrategyID: "7", Revision: "strategy-v1"}
 	inputProjection := contract.InputProjectionV2{
-		ValueFields: []string{"value"}, DimensionFields: []string{"host"}, BusinessIdentityField: "bk_biz_id",
+		ValueFields: []string{"value"}, DimensionFields: append([]string(nil), projection.DimensionFields...), BusinessIdentityField: "bk_biz_id",
 		MultiValueAlignment: "SINGLE_VALUE", DataUnit: "percent", MissingValuePolicy: contract.MissingValuePolicyRequired,
 	}
 	plan := contract.EvaluationPlanV2{PlanID: "7", StrategyRef: ref, InputProjection: inputProjection,
@@ -444,7 +464,7 @@ func workerG4CompiledPlan(t *testing.T, kind string) (*strategy.CompiledPlan, []
 			}}}}
 	result, err := compiler.Compile(context.Background(), strategy.CompileRequest{Plan: plan,
 		DatasetContract: contract.DatasetContractV2{SchemaDigest: strings.Repeat("1", 64),
-			NormalizationDigest: strings.Repeat("2", 64), IdentityFields: []string{"host"},
+			NormalizationDigest: strings.Repeat("2", 64), IdentityFields: append([]string(nil), projection.IdentityFields...),
 			SourceTimeField: "time", ReceivedTimeField: "received_time"},
 		StateSemantics: strategy.StateSemantics{StateSchemaVersion: "window-state-v1", CodecSemanticsVersion: "window-codec-v1",
 			IdentitySchemaDigest: strings.Repeat("3", 64), SourceTimeSemanticsVersion: "source-time-v1",

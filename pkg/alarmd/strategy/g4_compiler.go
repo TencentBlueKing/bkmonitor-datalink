@@ -111,6 +111,55 @@ func (osRestartAlgorithmCompiler) Compile(_ context.Context, compileContext Algo
 	), nil
 }
 
+// procPortListenField and procPortProtocolField are the frozen ProcPort
+// dimensions the compiled configuration does not name because no predicate
+// reads them; the fold table still has to cover them.
+const (
+	procPortListenField   = "listen"
+	procPortProtocolField = "protocol"
+)
+
+// SeriesFoldPolicy is the ProcPort fold table. The query groups by the five
+// dynamic port dimensions while the series identity is the process
+// (bk_target_cloud_id, bk_target_ip, display_name), so one process reaches the
+// worker as several provider rows per source time. Python evaluates every row
+// and any anomalous row raises the anomaly for the process
+// (alarm_backends/service/detect/strategy/proc_port.py, expr_op "or") while it
+// drops the dynamic dimensions from the anomaly identity
+// (alarm_backends/service/access/data/records.py, clean_dimension_fields). The
+// folded record is therefore anomalous under the Go ProcPort predicate if and
+// only if at least one row is, and it carries the values that make it so:
+//
+//	value (proc_exists)   MIN              0 in any row: the process is absent
+//	nonlisten             UNION_SET        every port no row listens on
+//	not_accurate_listen   UNION_SET        every listen entry that mismatched
+//	listen                UNION_SET        every listening port (informational)
+//	bind_ip               DISTINCT_VALUES  all bind addresses in row order
+//	protocol              DISTINCT_VALUES  all protocols in row order
+//
+// Set fields keep the provider encoding, a bracketed comma separated list in
+// a JSON string; "[]" and "null" are the empty set and the union is written
+// as "[a,b]". Python renders the bind_ip of the row whose listen entries
+// mismatched; when several rows mismatch the folded record lists every bind
+// address, which is the known rendering deviation.
+func (config ProcPortConfig) SeriesFoldPolicy(projection AlgorithmInputProjection) SeriesFoldPolicy {
+	policy := SeriesFoldPolicy{
+		Values:     map[string]SeriesFoldRule{config.ValueField: SeriesFoldMin},
+		Dimensions: make(map[string]SeriesFoldRule, len(projection.DimensionFields)),
+	}
+	for _, field := range projection.DimensionFields {
+		switch field {
+		case config.NonListenField, config.NotAccurateListenField, procPortListenField:
+			policy.Dimensions[field] = SeriesFoldUnionSet
+		case config.BindIPField, procPortProtocolField:
+			policy.Dimensions[field] = SeriesFoldDistinctValues
+		default:
+			policy.Dimensions[field] = SeriesFoldDistinctValues
+		}
+	}
+	return policy
+}
+
 type procPortAlgorithmCompiler struct{}
 
 func (procPortAlgorithmCompiler) Capability() AlgorithmCapability {

@@ -710,11 +710,19 @@ func TestEvaluationRejectsUnknownWhenLoadedSeriesWarmingIsNotCompleted(t *testin
 			},
 		},
 		{
-			name: "loaded gapped",
-			mutate: func(_ *execution.EvaluationResult, request *execution.EvaluationRequest) {
+			// A loaded GAPPED Level converges like WARMING only with an exclusive
+			// final FULL mutation; a mutation that stays GAPPED keeps the guard.
+			name: "loaded gapped with a gapped final mutation",
+			mutate: func(result *execution.EvaluationResult, request *execution.EvaluationRequest) {
 				request.State.Items[0].Status = execution.StateFoundGapped
 				request.State.Items[0].Levels[0].HistoryCompleteness = execution.HistoryGapped
 				request.State.Items[0].Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonHistoryGapped)
+				mutation := result.Plans[0].StateResults[0].Mutation
+				mutation.Levels = append([]execution.RuntimeLevelStateMutation(nil), mutation.Levels...)
+				mutation.Levels[0].HistoryCompleteness = execution.HistoryGapped
+				mutation.Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonHistoryGapped)
+				mutation.MutationDigest = ""
+				result.Plans[0].StateResults[0].Mutation = mustStateMutation(mutation)
 			},
 		},
 		{
@@ -748,6 +756,31 @@ func TestEvaluationRejectsUnknownWhenLoadedSeriesWarmingIsNotCompleted(t *testin
 	}
 }
 
+// A loaded GAPPED Level converges exactly as a loaded WARMING Level does: with
+// an exclusive final FULL mutation the business outcome is accepted, and an
+// UNKNOWN outcome may keep its local reason. Before, GAPPED could never leave
+// the guard, so a Plan whose gap episode cleared after one data Slot stayed
+// COMPLETED_WITH_UNAVAILABLE for ever.
+func TestEvaluationAcceptsLoadedGappedWithExclusiveFinalFullProof(t *testing.T) {
+	loadGapped := func(request *execution.EvaluationRequest) {
+		request.State.Items[0].Status = execution.StateFoundGapped
+		request.State.Items[0].Levels[0].HistoryCompleteness = execution.HistoryGapped
+		request.State.Items[0].Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonGapSkipped)
+	}
+	for _, kind := range []execution.LevelOutcomeKind{execution.LevelOutcomeNormal, execution.LevelOutcomeRecovery} {
+		result, request := loadedSeriesWarmingCompletion(t, kind)
+		loadGapped(&request)
+		if err := result.Validate(request); err != nil {
+			t.Fatalf("loaded GAPPED with an exclusive final FULL proof rejected %s: %v", kind, err)
+		}
+	}
+	result, request := loadedSeriesWarmingInactiveCompletion(t)
+	loadGapped(&request)
+	if err := result.Validate(request); err != nil {
+		t.Fatalf("loaded GAPPED with an exclusive final FULL proof rejected the local UNKNOWN reason: %v", err)
+	}
+}
+
 func TestEvaluationRejectsLoadedSeriesWarmingWithoutExclusiveFinalFullProof(t *testing.T) {
 	t.Run("no final mutation", func(t *testing.T) {
 		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeNormal)
@@ -770,13 +803,19 @@ func TestEvaluationRejectsLoadedSeriesWarmingWithoutExclusiveFinalFullProof(t *t
 		}
 	})
 
-	t.Run("loaded gapped", func(t *testing.T) {
+	t.Run("loaded gapped with a gapped final mutation", func(t *testing.T) {
 		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeNormal)
 		request.State.Items[0].Status = execution.StateFoundGapped
 		request.State.Items[0].Levels[0].HistoryCompleteness = execution.HistoryGapped
 		request.State.Items[0].Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonHistoryGapped)
+		mutation := result.Plans[0].StateResults[0].Mutation
+		mutation.Levels = append([]execution.RuntimeLevelStateMutation(nil), mutation.Levels...)
+		mutation.Levels[0].HistoryCompleteness = execution.HistoryGapped
+		mutation.Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonHistoryGapped)
+		mutation.MutationDigest = ""
+		result.Plans[0].StateResults[0].Mutation = mustStateMutation(mutation)
 		if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "active Runtime State or Plan gap guard") {
-			t.Fatalf("loaded GAPPED must continue to reject NORMAL at the guard, got %v", err)
+			t.Fatalf("loaded GAPPED without an exclusive final FULL proof must reject NORMAL at the guard, got %v", err)
 		}
 	})
 

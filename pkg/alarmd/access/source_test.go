@@ -293,6 +293,60 @@ func TestSourceCompletesInvalidOrPermitConsumedRecoveryBudgetAsUnavailable(t *te
 	})
 }
 
+// A normal-operation permit wait that ended at the frozen query deadline
+// (consumer deadline minus the downstream reserve) surfaced as a plain context
+// error. The access query_completed line carried the text but its facts
+// collapsed to other/OTHER, and the target-flow line, which never carries
+// text, could not name the cause. The deadline must be classified as an
+// admission failure while a caller cancellation stays unclassified.
+func TestSourceNamesPermitDeadlineAsAdmissionFailure(t *testing.T) {
+	contractRef, frozen := frozenExecution(t)
+	execute := func(t *testing.T, ctx context.Context, before func()) error {
+		t.Helper()
+		source, err := NewSource(staticFrozenPlan{plan: frozen}, &fakeProvider{}, deadlineExceededQueryPermits{before: before},
+			Config{MinReadyDelay: time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.now = func() time.Time { return time.UnixMilli(2_000_000_000_000) }
+		source.wait = func(context.Context, time.Duration) error { return nil }
+		request := execution.QueryExecutionRequest{Contract: contractRef, Operation: execution.OperationNormal, AttemptNo: 1}
+		_, err = source.Execute(ctx, request, &recordingConsumer{})
+		return err
+	}
+
+	err := execute(t, context.Background(), func() {})
+	var diagnostic interface{ QueryFailure() (string, string) }
+	if err == nil || !errors.As(err, &diagnostic) || !errors.Is(err, context.DeadlineExceeded) ||
+		!strings.Contains(err.Error(), "alarmd access: acquire physical query permit: context deadline exceeded") {
+		t.Fatalf("permit deadline error=%v, want classified admission failure with the historical text", err)
+	}
+	if category, code := diagnostic.QueryFailure(); category != "admission" || code != "QUERY_PERMIT_DEADLINE" {
+		t.Fatalf("permit deadline classified as %s/%s, want admission/QUERY_PERMIT_DEADLINE", category, code)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	err = execute(t, ctx, cancel)
+	if err == nil || errors.As(err, &diagnostic) {
+		t.Fatalf("caller cancellation error=%v, want an unclassified error", err)
+	}
+}
+
+type deadlineExceededQueryPermits struct{ before func() }
+
+func (permits deadlineExceededQueryPermits) AcquireQueryPermit(
+	context.Context, execution.SlotIdentity, execution.Operation, time.Time,
+) (QueryPermit, error) {
+	permits.before()
+	return nil, context.DeadlineExceeded
+}
+
+func (deadlineExceededQueryPermits) AcquireRecoveryChannels(
+	context.Context, execution.SlotIdentity, execution.Operation, time.Time, int, func(),
+) (RecoveryChannels, error) {
+	return nil, errors.New("recovery channels are not used by this test")
+}
+
 func TestSourcePreservesCompletedQueryAndCompletesCurrentAndRemainingQueriesWhenRecoveryPermitBudgetExpires(t *testing.T) {
 	contractRef, frozen := frozenExecution(t)
 	for index, offset := range []int64{-120, -180} {

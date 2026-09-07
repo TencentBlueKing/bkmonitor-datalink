@@ -8,7 +8,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -207,21 +206,15 @@ func TestProductionPhaseTwoCutoverStalledGroupRecoversPastReplayAge(t *testing.T
 			t.Logf("completions by kind/reason: %v; total completions %d; RequiredFullSlots=%d; current data Slots %d; first current FULL at attempt %d (0 = none); UQ calls during recovery %d",
 				histogram, len(completions), requiredFullSlots, currentDataSlots, firstCurrentFull, fixture.uqCalls.Load()-uqCallsBefore)
 
-			// Step: a FULL completion for a current Slot. Progress recovers
-			// entirely above; the completion kind stays COMPLETED_WITH_UNAVAILABLE
-			// for a Plan with RequiredFullSlots == 1 because the clearing data Slot
-			// persists the level history as GAPPED under the still-gapped guard
-			// (evaluation/evaluator.go buildMutation) and later Slots re-force
-			// GAPPED from that state without a convergence path (evaluator.go
-			// evaluateRecordWith; only WARMING converges). That defect is outside
-			// the cutover fix; set ALARMD_REQUIRE_CURRENT_FULL=1 to fail on it.
+			// Step: a FULL completion for a current Slot. The clearing data Slot
+			// persists the level history as GAPPED under the still-gapped guard;
+			// on the next Slot the loaded history already forms the required full
+			// window, so the GAPPED Level converges to FULL exactly as WARMING does
+			// (evaluation/evaluator.go guardConvergenceAllowed) and the Slot
+			// completes FULL instead of COMPLETED_WITH_UNAVAILABLE for ever.
 			if firstCurrentFull == 0 {
-				message := fmt.Sprintf("no FULL completion for a current Slot after %d current data Slots (RequiredFullSlots=%d): last completion %s/%s at Slot %d",
+				t.Fatalf("no FULL completion for a current Slot after %d current data Slots (RequiredFullSlots=%d): last completion %s/%s at Slot %d",
 					currentDataSlots, requiredFullSlots, final.kind, final.reason, final.slot)
-				if os.Getenv("ALARMD_REQUIRE_CURRENT_FULL") == "1" {
-					t.Fatal(message)
-				}
-				t.Skip(message)
 			}
 		})
 	}

@@ -82,6 +82,103 @@ func TestEvaluateSeriesKeepsMissingHistoryLocalAndDoesNotAdvanceState(t *testing
 	}
 }
 
+// A series whose loaded Level guard is still active (WARMING or GAPPED with a
+// durable reason) and whose ring-ratio dependency point is missing produced an
+// UNKNOWN outcome with the local HISTORY_GAPPED reason. The result contract
+// requires every UNKNOWN outcome under an active guard to preserve the guard
+// reason, so validation rejected the evaluation and the Slot failed with
+// "UNKNOWN Level outcome does not preserve its active guard reason". The same
+// happened when the loaded history was already FULL and the new record opened
+// a hole. The evaluator must keep the durable guard reason for every UNKNOWN
+// outcome while the guard stays active, whatever made the outcome UNKNOWN.
+func TestEvaluateSeriesPreservesActiveStateGuardReasonForEveryUnknownOutcome(t *testing.T) {
+	projection := strategy.AlgorithmInputProjection{ValueFields: []string{"value"}, IdentityFields: []string{"host"}}
+	config := func() map[string]any { return map[string]any{"floor": 20, "ceil": nil} }
+	single := compiledG4Plan(t, strategy.DetectorKindSimpleRingRatio, config(), projection)
+	double := compiledG4PlanWithTrigger(t, strategy.DetectorKindSimpleRingRatio, config(), projection, 2, 2)
+	guard := execution.ReasonCode(contract.ReasonSnapshotUnavailable)
+	normal := func(plan *strategy.CompiledPlan, id string, sourceTime int64) execution.StateHistoryPoint {
+		return execution.StateHistoryPoint{RecordID: strings.Repeat(id, 64), SourceTime: sourceTime,
+			Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactNormal}}}
+	}
+	tests := []struct {
+		name         string
+		plan         *strategy.CompiledPlan
+		status       execution.StateLoadStatus
+		completeness execution.HistoryCompleteness
+		history      []execution.StateHistoryPoint
+		primary      contract.CanonicalRecordV2
+		previous     []contract.CanonicalRecordV2
+		advances     bool
+	}{
+		{
+			// The evaluated production shape: the loaded Level is WARMING under
+			// a durable reason and the ring-ratio previous point is missing.
+			name: "warming guard and missing dependency point", plan: single,
+			status: execution.StateFoundWarming, completeness: execution.HistoryWarming, primary: g4Record(99, `80`, nil),
+		},
+		{
+			name: "gapped guard and missing dependency point", plan: single,
+			status: execution.StateFoundGapped, completeness: execution.HistoryGapped, primary: g4Record(99, `80`, nil),
+		},
+		{
+			// The loaded history already lets WARMING converge, so the evaluator
+			// stops treating the guard as active while the durable state and the
+			// result contract still carry it.
+			name: "converged warming guard and missing dependency point", plan: single,
+			status: execution.StateFoundWarming, completeness: execution.HistoryWarming,
+			history: []execution.StateHistoryPoint{normal(single, "d", 39)}, primary: g4Record(99, `80`, nil),
+		},
+		{
+			// Converged WARMING and a hole before the new record: the trigger sees
+			// an incomplete window and the State advances still guarded, under the
+			// same reason.
+			name: "converged warming guard and a hole before the new record", plan: double,
+			status: execution.StateFoundWarming, completeness: execution.HistoryWarming,
+			history:  []execution.StateHistoryPoint{normal(double, "d", 180), normal(double, "e", 240)},
+			primary:  g4Record(360, `80`, nil),
+			previous: []contract.CanonicalRecordV2{g4Record(300, `100`, nil)},
+			advances: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := requestFixtureForPlan(t, test.plan, []contract.CanonicalRecordV2{test.primary}, test.history)
+			request.State.Items[0].Status = test.status
+			request.State.Items[0].Levels[0].HistoryCompleteness = test.completeness
+			request.State.Items[0].Levels[0].GapReasonCode = guard
+			if len(test.history) != 0 {
+				request.State.Items[0].Levels[0].LastProcessedEventTime = test.history[len(test.history)-1].SourceTime
+			}
+			inputs := map[string][]contract.CanonicalRecordV2{"primary": {test.primary}, "previous": test.previous}
+			request.Inputs = []execution.SeriesEvaluationInputRequest{g4Input(t, request, inputs)}
+
+			result, err := newEvaluator(t).Evaluate(context.Background(), request)
+			if err != nil {
+				t.Fatalf("Evaluate() error = %v", err)
+			}
+			evaluated := result.Plans[0]
+			if len(evaluated.LevelOutcomes) != 1 || evaluated.LevelOutcomes[0].Outcome != execution.LevelOutcomeUnknown ||
+				evaluated.LevelOutcomes[0].ReasonCode != guard {
+				t.Fatalf("UNKNOWN outcome did not preserve the active guard reason: %+v", evaluated.LevelOutcomes)
+			}
+			if !test.advances {
+				if len(evaluated.StateResults) != 0 {
+					t.Fatalf("missing dependency point advanced State: %+v", evaluated.StateResults)
+				}
+			} else if len(evaluated.StateResults) != 1 || len(evaluated.StateResults[0].Mutation.Levels) != 1 ||
+				(evaluated.StateResults[0].Mutation.Levels[0].HistoryCompleteness != execution.HistoryWarming &&
+					evaluated.StateResults[0].Mutation.Levels[0].HistoryCompleteness != execution.HistoryGapped) ||
+				evaluated.StateResults[0].Mutation.Levels[0].GapReasonCode != guard {
+				t.Fatalf("State mutation did not preserve the active guard: %+v", evaluated.StateResults)
+			}
+			if err := result.Validate(request); err != nil {
+				t.Fatalf("evaluation under an active guard did not validate: %v", err)
+			}
+		})
+	}
+}
+
 func TestEvaluateSeriesSupportsThresholdPrimaryOnlyAndProcPortDimensions(t *testing.T) {
 	thresholdRequest := requestFixture(t, json.RawMessage(`80`), nil)
 	thresholdInput := primaryOnlyInput(thresholdRequest, g4Record(99, `80`, nil))
@@ -185,6 +282,11 @@ func g4Input(t *testing.T, request execution.EvaluationRequest, records map[stri
 
 func compiledG4Plan(t *testing.T, kind string, config map[string]any, projection strategy.AlgorithmInputProjection) *strategy.CompiledPlan {
 	t.Helper()
+	return compiledG4PlanWithTrigger(t, kind, config, projection, 1, 1)
+}
+
+func compiledG4PlanWithTrigger(t *testing.T, kind string, config map[string]any, projection strategy.AlgorithmInputProjection, windowSize, requiredAnomalies uint32) *strategy.CompiledPlan {
+	t.Helper()
 	requirements := []strategy.AlgorithmInputRequirement{g4Requirement(t, "primary", strategy.AlgorithmInputPrimary, -60, 0, nil, projection)}
 	if kind == strategy.DetectorKindSimpleRingRatio {
 		requirements = append(requirements, g4Requirement(t, "previous", strategy.AlgorithmInputDependency, -120, -60,
@@ -207,8 +309,9 @@ func compiledG4Plan(t *testing.T, kind string, config map[string]any, projection
 	inputProjection := contract.InputProjectionV2{ValueFields: projection.ValueFields, DimensionFields: projection.DimensionFields,
 		BusinessIdentityField: "bk_biz_id", MultiValueAlignment: "SINGLE_VALUE", DataUnit: "none", MissingValuePolicy: contract.MissingValuePolicyRequired}
 	level := contract.LevelIRV2{Definition: contract.LevelDefinitionV2{LevelID: 5, Priority: 1}, Connector: contract.LevelConnectorAND,
-		DetectPlan:   contract.DetectPlanV2{Algorithms: []contract.AlgorithmIRV2{{Type: kind, Version: 1, Config: payload}}},
-		TriggerPlan:  contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: json.RawMessage(`{"window_size":1,"required_anomalies":1,"step_seconds":60}`)},
+		DetectPlan: contract.DetectPlanV2{Algorithms: []contract.AlgorithmIRV2{{Type: kind, Version: 1, Config: payload}}},
+		TriggerPlan: contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: json.RawMessage(fmt.Sprintf(
+			`{"window_size":%d,"required_anomalies":%d,"step_seconds":60}`, windowSize, requiredAnomalies))},
 		RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)}}
 	plan := contract.EvaluationPlanV2{PlanID: "7", StrategyRef: ref, InputProjection: inputProjection,
 		StrategyIR: contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2}, StrategyRef: ref,

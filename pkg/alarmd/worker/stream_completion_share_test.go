@@ -60,6 +60,80 @@ func TestSlotExecutionCoordinatorCompletesFullEmptyWhenPrimaryIsEmptyAndDependen
 	}
 }
 
+// The remaining OsRestart production edge: PRIMARY FULL EMPTY (no host reported
+// uptime in the window) while the history query was UNAVAILABLE or PARTIAL.
+// The no-series judgement reads the PRIMARY completion; a dependency that had
+// no PRIMARY record to feed must not turn the trustworthy FULL EMPTY
+// completion into a NO_SERIES_PLAN_RESULT_INVALID contract failure, which
+// would fail the Slot on every attempt and make it appear in the failure log.
+func TestSlotExecutionCoordinatorCompletesFullEmptyWhenPrimaryIsEmptyAndDependencyIsNotFull(t *testing.T) {
+	tests := []struct {
+		name       string
+		completion execution.PhysicalQueryCompletion
+	}{
+		{
+			name: "unavailable dependency",
+			completion: execution.PhysicalQueryCompletion{
+				Ref: "unavailable-history", Completeness: execution.CompletenessUnavailable, DataState: execution.DataStateUnknown,
+				RouteFacts: execution.ProviderRouteFacts{Attempts: []execution.RouteAttemptFact{{
+					AttemptNo: 1, Endpoint: "uq", Result: execution.RouteAttemptFailed,
+					ReasonCode: execution.ReasonCode(contract.ReasonQueryTimeout),
+				}}},
+			},
+		},
+		{
+			name: "partial dependency",
+			completion: execution.PhysicalQueryCompletion{
+				Ref: "partial-history", Completeness: execution.CompletenessPartial, DataState: execution.DataStateEmpty,
+				PartialEvidence: &execution.PartialEvidence{
+					Kind: execution.PartialEvidenceOmissionStable, Version: 1, EvidenceDigest: strings.Repeat("d", 64),
+					OmissionOnly: true, ReturnedRecordsStable: true,
+				},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			header, _ := workerG4StreamFixture(t, strategy.DetectorKindOsRestart)
+			primary, history := shareFixtureQueries(t, header)
+			dependency := test.completion
+			dependency.PhysicalQuery, dependency.QueryRevision = history.query.Digest, history.query.QueryRevision
+			completion := execution.QueryExecutionCompletion{AllRequiredCompleted: true, PhysicalQueries: []execution.PhysicalQueryCompletion{
+				{Ref: "empty-primary", PhysicalQuery: primary.query.Digest, QueryRevision: primary.query.QueryRevision,
+					Completeness: execution.CompletenessFull, DataState: execution.DataStateEmpty},
+				dependency,
+			}}
+			completion.CompletionBindings = accessShapedCompletionBindings(t, header, completion.PhysicalQueries)
+
+			observations := make([]observability.Observation, 0)
+			observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+				observations = append(observations, observability.NormalizeObservation(observation))
+			})
+			ports, evaluator, coordinator := workerG4CoordinatorWithObserver(t, observer)
+			ports.executeOverride = streamExecution(header, nil, completion)
+
+			result, err := coordinator.Execute(context.Background(), workerSlotRequest(header.Contract))
+			if err != nil || !result.Completed || result.Result != observability.ResultSuccess {
+				t.Fatalf("Execute() result=%+v error=%v, want FULL EMPTY completion without error", result, err)
+			}
+			if len(evaluator.results) != 0 || ports.eventCount != 0 || ports.stateApplyCalls != 0 || ports.stateLoadCalls != 0 || len(ports.gapMutations) != 0 {
+				t.Fatalf("no-series Plan produced business effects: evaluations=%d events=%d state_apply=%d state_load=%d gaps=%d",
+					len(evaluator.results), ports.eventCount, ports.stateApplyCalls, ports.stateLoadCalls, len(ports.gapMutations))
+			}
+			progress := ports.lastProgress
+			if progress.Completion.Kind != execution.CompletionFullEmpty || progress.Completion.Primary == nil ||
+				progress.Completion.Primary.Completeness != execution.CompletenessFull || progress.Completion.Primary.DataState != execution.DataStateEmpty {
+				t.Fatalf("Progress=%+v, want FULL_EMPTY_COMPLETED", progress)
+			}
+			for _, observation := range observations {
+				if observation.Stage == observability.StageQueryCompleted && observation.Result == observability.ResultFailed {
+					t.Fatalf("query_completed reported a failure: %+v", observation)
+				}
+			}
+		})
+	}
+}
+
 // The PRIMARY query failed while the history query delivered DATA. The Plan
 // has no PRIMARY series either, but the no-series judgement reads the PRIMARY
 // completion of the exact set: an UNAVAILABLE PRIMARY opens the Plan gap and

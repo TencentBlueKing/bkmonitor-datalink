@@ -133,6 +133,29 @@ type ProcPortConfig struct {
 	BindIPField            string `json:"bind_ip_field"`
 }
 
+// SeriesFoldRule folds one projected field when several provider rows share
+// one series identity and one source time.
+type SeriesFoldRule string
+
+const (
+	// SeriesFoldMin keeps the numerically smallest value.
+	SeriesFoldMin SeriesFoldRule = "MIN"
+	// SeriesFoldUnionSet unions set-valued dimensions encoded as a bracketed
+	// list inside a JSON string ("[80, 443]"); "[]" and "null" are the empty set.
+	SeriesFoldUnionSet SeriesFoldRule = "UNION_SET"
+	// SeriesFoldDistinctValues keeps every distinct value in row order: the
+	// scalar itself when the rows agree, otherwise a JSON array of the values.
+	SeriesFoldDistinctValues SeriesFoldRule = "DISTINCT_VALUES"
+)
+
+// SeriesFoldPolicy declares, per projected value field and dimension field,
+// how provider rows of one series identity and source time fold into one
+// record. Fields outside the policy must agree between the rows.
+type SeriesFoldPolicy struct {
+	Values     map[string]SeriesFoldRule
+	Dimensions map[string]SeriesFoldRule
+}
+
 type AlgorithmSourceProvenance struct {
 	SourceAlgorithmFamily string `json:"source_algorithm_family"`
 	SourceMappingVersion  string `json:"source_mapping_version"`
@@ -198,6 +221,19 @@ func (plan CompiledAlgorithmPlan) ProcPortConfig() (ProcPortConfig, bool) {
 		return ProcPortConfig{}, false
 	}
 	return *plan.config.ProcPort, true
+}
+
+// SeriesFoldPolicy returns the fold policy the compiled algorithm declares for
+// provider rows that are finer than its series identity. The policy is
+// derived from the compiled configuration on demand and is never persisted or
+// digested, so fingerprints, state compatibility and plan identity are
+// unchanged. Only ProcPort declares one (ProcPortConfig.SeriesFoldPolicy); a
+// plan without a policy keeps the one-batch-per-series contract.
+func (plan CompiledAlgorithmPlan) SeriesFoldPolicy() (SeriesFoldPolicy, bool) {
+	if plan.config.ProcPort == nil {
+		return SeriesFoldPolicy{}, false
+	}
+	return plan.config.ProcPort.SeriesFoldPolicy(plan.inputProjection), true
 }
 func (plan CompiledAlgorithmPlan) SourceProvenance() (AlgorithmSourceProvenance, bool) {
 	if plan.config.SourceProvenance == nil {

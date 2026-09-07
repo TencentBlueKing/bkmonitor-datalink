@@ -18,15 +18,21 @@ const (
 )
 
 type verifiedSnapshotCacheEntry struct {
-	revision    execution.SnapshotRevision
-	payload     string
+	revision execution.SnapshotRevision
+	payload  string
+	// epoch is the publication epoch read together with the body at the last
+	// complete verified read. A revision-keyed reuse requires the live epoch
+	// key and body length to still match it.
+	epoch       uint64
 	queryGroups map[execution.QueryGroupIdentity]json.RawMessage
 	allocation  *snapshotAllocation
 }
 
-// verifiedSnapshotCache only reuses immutable content after the bytes read by
-// the current Redis request exactly match a previously verified Snapshot. It
-// does not cache Redis availability or publication/activation authority.
+// verifiedSnapshotCache reuses immutable content that a complete read has
+// verified against its revision. A complete read fills or byte-compares an
+// entry; the per-Slot path reuses an entry by revision after small live reads
+// of the publication epoch and body length. It does not cache Redis
+// availability or publication/activation authority.
 type verifiedSnapshotCache struct {
 	mu          sync.Mutex
 	maxEntries  int
@@ -45,9 +51,10 @@ func (cache *verifiedSnapshotCache) loadSnapshot(
 	ctx context.Context,
 	revision execution.SnapshotRevision,
 	payload string,
+	epoch uint64,
 	allocation ...*snapshotAllocation,
 ) (PublishedSnapshot, error) {
-	entry, content, err := cache.load(ctx, revision, payload, allocation...)
+	entry, content, err := cache.load(ctx, revision, payload, epoch, allocation...)
 	defer entry.allocation.release()
 	if err != nil {
 		return PublishedSnapshot{}, err
@@ -75,9 +82,10 @@ func (cache *verifiedSnapshotCache) loadQueryGroup(
 	ctx context.Context,
 	revision execution.SnapshotRevision,
 	payload string,
+	epoch uint64,
 	identity execution.QueryGroupIdentity,
 ) (QueryGroup, error) {
-	entry, _, err := cache.load(ctx, revision, payload)
+	entry, _, err := cache.load(ctx, revision, payload, epoch)
 	defer entry.allocation.release()
 	if err != nil {
 		return QueryGroup{}, err
@@ -100,12 +108,33 @@ func decodeCachedQueryGroup(
 	return group, nil
 }
 
+// lookupRevision returns the verified entry for revision, if any, with one
+// additional reference retained for the caller. It performs no Redis read; the
+// caller must validate the live epoch and body length before reuse.
+func (cache *verifiedSnapshotCache) lookupRevision(revision execution.SnapshotRevision) (verifiedSnapshotCacheEntry, bool) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	for index := range cache.entries {
+		if cache.entries[index].revision != revision {
+			continue
+		}
+		entry := cache.entries[index]
+		cache.touch(index)
+		entry.allocation.retain()
+		return entry, true
+	}
+	return verifiedSnapshotCacheEntry{}, false
+}
+
 // load returns a verified immutable entry. content is non-nil only when this
 // call performed the first complete decode and canonical revision validation.
+// epoch is the publication epoch read live with payload and is recorded on the
+// entry so the revision-keyed reuse can compare against it.
 func (cache *verifiedSnapshotCache) load(
 	ctx context.Context,
 	revision execution.SnapshotRevision,
 	payload string,
+	epoch uint64,
 	allocations ...*snapshotAllocation,
 ) (verifiedSnapshotCacheEntry, *snapshotPayloadContent, error) {
 	if err := ctx.Err(); err != nil {
@@ -120,6 +149,7 @@ func (cache *verifiedSnapshotCache) load(
 		if cache.entries[index].revision != revision || cache.entries[index].payload != payload {
 			continue
 		}
+		cache.entries[index].epoch = epoch
 		entry := cache.entries[index]
 		cache.touch(index)
 		entry.allocation.retain()
@@ -150,6 +180,7 @@ func (cache *verifiedSnapshotCache) load(
 	entry := verifiedSnapshotCacheEntry{
 		revision:    revision,
 		payload:     payload,
+		epoch:       epoch,
 		queryGroups: make(map[execution.QueryGroupIdentity]json.RawMessage, len(content.QueryGroups)),
 		allocation:  allocation,
 	}

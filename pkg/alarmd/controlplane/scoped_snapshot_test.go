@@ -11,9 +11,9 @@ import (
 
 type scopeRedis struct {
 	redis.Cmdable
-	values      map[string]string
-	gets, mgets int
-	getError    error
+	values               map[string]string
+	gets, mgets, strlens int
+	getError             error
 }
 
 func (c *scopeRedis) Get(ctx context.Context, k string) *redis.StringCmd {
@@ -26,6 +26,13 @@ func (c *scopeRedis) Get(ctx context.Context, k string) *redis.StringCmd {
 		return redis.NewStringResult("", redis.Nil)
 	}
 	return redis.NewStringResult(v, ctx.Err())
+}
+func (c *scopeRedis) StrLen(ctx context.Context, k string) *redis.IntCmd {
+	c.strlens++
+	if c.getError != nil {
+		return redis.NewIntResult(0, c.getError)
+	}
+	return redis.NewIntResult(int64(len(c.values[k])), ctx.Err())
 }
 func (c *scopeRedis) HGet(ctx context.Context, k, field string) *redis.StringCmd {
 	return redis.NewStringResult("", redis.Nil)

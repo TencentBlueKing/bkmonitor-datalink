@@ -513,7 +513,18 @@ func TestRedisCatalogRuntimeReplaysPreG4HistoricalSegmentAfterG4StateGenerationU
 	selected := plans[0].(map[string]any)["fact"].(map[string]any)["Selected"].(map[string]any)
 	selected["StateGeneration"] = strings.Repeat("f", 64)
 	writeJSONObject(t, ctx, client, scheduleKey, timeline)
-	if _, err := runtime.FreezeSlotContract(ctx, historicalRequest); err == nil {
+	// Direct key writes bypass the activation header that every persisted
+	// timeline write advances, so read through a repository that has not yet
+	// observed this header. It validates the persisted bytes it reads.
+	coldRepository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:g4-generation-upgrade", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coldRuntime, err := controlplane.NewRedisCatalogRuntime(coldRepository, compiler, stateSemantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coldRuntime.FreezeSlotContract(ctx, historicalRequest); err == nil {
 		t.Fatal("closed historical Segment accepted an arbitrary state generation")
 	}
 }

@@ -36,7 +36,7 @@ func TestSnapshotWarmReadDoesNotCopyCompletePayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := repository.snapshotCache.load(ctx, revision, first); err != nil {
+	if _, _, err := repository.snapshotCache.load(ctx, revision, first, 1); err != nil {
 		t.Fatal(err)
 	}
 	// The next Redis result has equal bytes on independent backing storage.
@@ -50,7 +50,7 @@ func TestSnapshotWarmReadDoesNotCopyCompletePayload(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := repository.snapshotCache.load(ctx, revision, loaded); err != nil {
+		if _, _, err := repository.snapshotCache.load(ctx, revision, loaded, 1); err != nil {
 			t.Fatal(err)
 		}
 	}

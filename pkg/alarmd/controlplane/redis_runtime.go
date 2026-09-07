@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-redis/redis/v8"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -1071,6 +1069,9 @@ func activationRecordsForPersistedSchedule(records []PlanActivationRecord, sched
 	return records, nil
 }
 
+// loadScheduleTimeline reads the small activation header live and serves the
+// timeline bytes cached under that header when present. Callers that already
+// hold the header for the same authorization use loadScheduleTimelineAt.
 func (repository *RedisCatalogRepository) loadScheduleTimeline(
 	ctx context.Context,
 	queryGroup execution.QueryGroupIdentity,
@@ -1078,28 +1079,29 @@ func (repository *RedisCatalogRepository) loadScheduleTimeline(
 	if repository == nil || repository.client == nil || queryGroup == "" {
 		return persistedScheduleTimeline{}, nil, errors.New("alarmd controlplane: Query Group schedule is required")
 	}
-	payload, err := repository.client.Get(ctx, repository.scheduleTimelineKey(queryGroup)).Bytes()
-	if errors.Is(err, redis.Nil) {
-		return persistedScheduleTimeline{}, nil, ErrScheduleUnavailable
-	}
+	version, err := repository.readControlVersion(ctx)
 	if err != nil {
-		return persistedScheduleTimeline{}, nil, activationDependencyIO(err)
+		return persistedScheduleTimeline{}, nil, err
 	}
+	return repository.loadScheduleTimelineAt(ctx, queryGroup, version)
+}
+
+func decodeScheduleTimeline(queryGroup execution.QueryGroupIdentity, payload []byte) (persistedScheduleTimeline, error) {
 	var timeline persistedScheduleTimeline
 	if err := json.Unmarshal(payload, &timeline); err != nil {
-		return persistedScheduleTimeline{}, nil, &DeterministicScheduleError{
+		return persistedScheduleTimeline{}, &DeterministicScheduleError{
 			Err: fmt.Errorf("decode Schedule timeline: %w", err),
 		}
 	}
 	if timeline.QueryGroup != queryGroup {
-		return persistedScheduleTimeline{}, nil, &DeterministicScheduleError{
+		return persistedScheduleTimeline{}, &DeterministicScheduleError{
 			Err: errors.New("persisted Schedule timeline identity mismatch"),
 		}
 	}
 	if err := validateScheduleTimeline(timeline); err != nil {
-		return persistedScheduleTimeline{}, nil, &DeterministicScheduleError{Err: err}
+		return persistedScheduleTimeline{}, &DeterministicScheduleError{Err: err}
 	}
-	return timeline, payload, nil
+	return timeline, nil
 }
 
 func (repository *RedisCatalogRepository) scheduleTimelineKey(queryGroup execution.QueryGroupIdentity) string {

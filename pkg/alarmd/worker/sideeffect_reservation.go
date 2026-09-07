@@ -86,9 +86,15 @@ func (stream *streamedExecution) mergeProvisional(ctx context.Context, next exec
 	}
 	delta := addedEffectCounts(stream.evaluated, next)
 	count := effectCounts{stream.effects.states + delta.states, stream.effects.events + delta.events, stream.effects.gaps + delta.gaps}
-	if err := checkEffectCounts(count, stream.coordinator.budget); err != nil {
+	// The Slot's own output is checked against the per-Slot caps before the
+	// shared reservation: a Slot above them can never be applied by this
+	// process, so that rejection is deterministic and carries the Slot's own
+	// facts instead of the shared usage.
+	slotBudget := stream.coordinator.slotBudget()
+	if err := checkEffectCounts(count, slotBudget); err != nil {
 		var exceeded *provisionalBudgetExceededError
 		if errors.As(err, &exceeded) {
+			err = stream.slotBudgetRejection(exceeded.budget, count, delta, slotBudget)
 			stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, exceeded.budget, err)
 		}
 		return err

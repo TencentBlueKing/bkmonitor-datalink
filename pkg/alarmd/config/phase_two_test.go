@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 )
 
@@ -95,6 +97,26 @@ func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
 		t.Fatalf("complete phase-two production configuration rejected: %v", err)
 	}
 
+	// State and Gap mutation budgets above one Store call are legal up to
+	// StateApplyMaxChunks calls: the worker applies them in chunks.
+	for name, mutations := range map[string]uint64{
+		"product default": valid.PhaseTwo.Coordinator.MaxStateMutations,
+		"eight chunks":    65536,
+		"chunked maximum": uint64(valid.Limits.Store.MaxKeysPerBatch) * execution.StateApplyMaxChunks,
+	} {
+		chunked := valid
+		chunked.PhaseTwo.Coordinator.MaxStateMutations = mutations
+		chunked.PhaseTwo.Coordinator.MaxGapMutations = mutations
+		if err := chunked.Validate(); err != nil {
+			t.Fatalf("%s mutation budget %d rejected: %v", name, mutations, err)
+		}
+	}
+	if valid.PhaseTwo.Coordinator.MaxStateMutations != 65536 || valid.PhaseTwo.Coordinator.MaxGapMutations != 65536 ||
+		valid.PhaseTwo.Coordinator.MaxEvents != 8192 || valid.Limits.Store.MaxKeysPerBatch != 8192 {
+		t.Fatalf("product default budgets = %+v store=%d, want 65536 state/gap, 8192 events and store items",
+			valid.PhaseTwo.Coordinator, valid.Limits.Store.MaxKeysPerBatch)
+	}
+
 	for name, mutate := range map[string]func(*Config){
 		"active execution limit": func(cfg *Config) { cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = -1 },
 		"worker identity":        func(cfg *Config) { cfg.PhaseTwo.Worker.ID = "" },
@@ -133,11 +155,11 @@ func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
 		"retry delay": func(cfg *Config) {
 			cfg.PhaseTwo.Scheduler.RetryMaxDelay = cfg.PhaseTwo.Scheduler.RetryMinDelay - 1
 		},
-		"state mutation store budget": func(cfg *Config) {
-			cfg.PhaseTwo.Coordinator.MaxStateMutations = uint64(cfg.Limits.Store.MaxKeysPerBatch) + 1
+		"state mutation chunked store budget": func(cfg *Config) {
+			cfg.PhaseTwo.Coordinator.MaxStateMutations = uint64(cfg.Limits.Store.MaxKeysPerBatch)*execution.StateApplyMaxChunks + 1
 		},
-		"gap mutation store budget": func(cfg *Config) {
-			cfg.PhaseTwo.Coordinator.MaxGapMutations = uint64(cfg.Limits.Store.MaxKeysPerBatch) + 1
+		"gap mutation chunked store budget": func(cfg *Config) {
+			cfg.PhaseTwo.Coordinator.MaxGapMutations = uint64(cfg.Limits.Store.MaxKeysPerBatch)*execution.StateApplyMaxChunks + 1
 		},
 		"provider retained overflow": func(cfg *Config) {
 			cfg.PhaseTwo.Coordinator.MaxRetainedBytes = ^uint64(0)

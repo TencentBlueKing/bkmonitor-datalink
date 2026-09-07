@@ -22,6 +22,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/coordinator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
@@ -339,9 +340,13 @@ func (c Config) validateGoAccessRuntime() error {
 		return err
 	}
 	budget := c.PhaseTwo.Coordinator
-	if budget.MaxStateMutations > uint64(c.Limits.Store.MaxKeysPerBatch) ||
-		budget.MaxGapMutations > uint64(c.Limits.Store.MaxKeysPerBatch) {
-		return errors.New("phase_two mutation budgets exceed the shared state store call budget")
+	// One Slot's State or Gap mutations are applied in successive Store calls
+	// of at most max_keys_per_batch items, up to StateApplyMaxChunks calls.
+	// A process budget above that product could admit a Slot no apply can
+	// ever carry, so it is rejected here rather than at runtime.
+	chunkedApplyBudget := uint64(c.Limits.Store.MaxKeysPerBatch) * execution.StateApplyMaxChunks
+	if budget.MaxStateMutations > chunkedApplyBudget || budget.MaxGapMutations > chunkedApplyBudget {
+		return errors.New("phase_two mutation budgets exceed the chunked state store apply budget")
 	}
 	if budget.MaxRetainedBytes > math.MaxInt64 ||
 		budget.MaxSeries > math.MaxUint64/c.Limits.Detect.MaxRecordsPerSeries {

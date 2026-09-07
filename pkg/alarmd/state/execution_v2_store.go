@@ -120,6 +120,8 @@ func (store *ExecutionStore) AdmitRuntime(_ context.Context, request execution.S
 		encoded, err := encodeRuntime(mutation, mutation.ExpectedBlobRevision+1)
 		if err != nil || len(encoded) > store.options.MaxValueBytes {
 			item.Status, item.ReasonCode = execution.StateAdmissionDeterministicInvalid, execution.ReasonCode(contract.ReasonStateBudgetExceeded)
+		} else {
+			item.EncodedBytes = len(encoded)
 		}
 		result.Items[index] = item
 	}

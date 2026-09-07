@@ -100,7 +100,45 @@ func (repository *RedisCatalogRepository) loadScopedSnapshotPayload(ctx context.
 		}
 	}
 	clearSnapshotScope(ctx)
+	if payload, epoch, allocation, ok := repository.loadRevisionCachedSnapshotPayload(ctx, revision); ok {
+		return payload, epoch, allocation, nil
+	}
 	return repository.loadAdmittedSnapshotPayload(ctx, revision)
+}
+
+// loadRevisionCachedSnapshotPayload reuses a Snapshot body that a complete read
+// already verified for this revision, after two small live reads: the
+// publication epoch of the revision and the persisted body length. Both must
+// equal what the verified read observed. Any other outcome, including a
+// missing key or a Redis error, returns false so the complete read path runs
+// and keeps every error classification exactly as before.
+func (repository *RedisCatalogRepository) loadRevisionCachedSnapshotPayload(ctx context.Context, revision execution.SnapshotRevision) (string, uint64, *snapshotAllocation, bool) {
+	counters := &repository.controlReads.snapshot
+	entry, ok := repository.snapshotCache.lookupRevision(revision)
+	if !ok {
+		counters.misses.Add(1)
+		return "", 0, nil, false
+	}
+	text, err := repository.client.Get(ctx, repository.epochForRevisionKey(revision)).Result()
+	if err != nil {
+		entry.allocation.release()
+		counters.refreshes.Add(1)
+		return "", 0, nil, false
+	}
+	epoch, err := strconv.ParseUint(text, 10, 64)
+	if err != nil || epoch == 0 || epoch != entry.epoch {
+		entry.allocation.release()
+		counters.refreshes.Add(1)
+		return "", 0, nil, false
+	}
+	size, err := repository.client.StrLen(ctx, repository.snapshotKey(revision)).Result()
+	if err != nil || size != int64(len(entry.payload)) {
+		entry.allocation.release()
+		counters.refreshes.Add(1)
+		return "", 0, nil, false
+	}
+	counters.hits.Add(1)
+	return entry.payload, epoch, entry.allocation, true
 }
 
 // ClearSnapshotReadScope discards only call-local content before a compact

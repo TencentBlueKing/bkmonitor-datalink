@@ -2117,7 +2117,11 @@ func startPhaseTwoRedis(t *testing.T) (string, *redis.Client) {
 	return "", nil
 }
 
-func TestProductionSnapshotScopeUsesOnePayloadPerRun(t *testing.T) {
+// The Snapshot body is transferred once per revision by a complete verified
+// read; every later RunOne validates it with small epoch and length probes.
+// Activation and Schedule timeline bodies are transferred once per activation
+// header; every authorization still probes the live header.
+func TestProductionRunOneReadsControlBodiesOncePerRevisionAndVersion(t *testing.T) {
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
 	installTwoPhaseTwoStrategies(t, ctx, redisClient)
@@ -2191,7 +2195,58 @@ func TestProductionSnapshotScopeUsesOnePayloadPerRun(t *testing.T) {
 		queryGroupsByStrategy[schedule.Plans[0].Identity.StrategyID] = queryGroup
 		snapshotRevision = schedule.Segment.Publication.SnapshotRevision
 	}
-	snapshotKey := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog") + ":snapshot:" + string(snapshotRevision)
+	catalogPrefix := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog")
+	snapshotKey := catalogPrefix + ":snapshot:" + string(snapshotRevision)
+	epochKey := catalogPrefix + ":snapshot_epoch:" + string(snapshotRevision)
+	activationKey := catalogPrefix + ":activation"
+	headerKey := catalogPrefix + ":activation_header"
+	timelinePrefix := catalogPrefix + ":schedule_timeline:"
+	repository, ok := bundle.dependencies.Control.(*productionPhaseTwoControl).dependencies.Repository.(*controlplane.RedisCatalogRepository)
+	if !ok {
+		t.Fatal("production control repository is not the Redis catalog repository")
+	}
+	// Count actual body deliveries, including GET inside bounded-read Lua; the
+	// outer EVAL and STRLEN are not additional payload deliveries.
+	countCommands := func(entries []redis.SlowLog, lastID int64, key string, prefixMatch bool, commands ...string) int {
+		count := 0
+		for _, entry := range entries {
+			if entry.ID <= lastID || len(entry.Args) < 2 {
+				continue
+			}
+			matched := entry.Args[1] == key
+			if prefixMatch {
+				matched = strings.HasPrefix(entry.Args[1], key)
+			}
+			if !matched {
+				continue
+			}
+			for _, command := range commands {
+				if strings.EqualFold(entry.Args[0], command) {
+					count++
+					break
+				}
+			}
+		}
+		return count
+	}
+	startEntries, err := redisClient.SlowLogGet(ctx, 2048).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	startBodyReads := countCommands(startEntries, -1, snapshotKey, false, "get", "mget")
+	snapshotBytes, err := redisClient.StrLen(ctx, snapshotKey).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	activationBytes, err := redisClient.StrLen(ctx, activationKey).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	headerBytes, err := redisClient.StrLen(ctx, headerKey).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	statsBefore := repository.ControlReadCacheStats()
 	clock.Store((base + 1) * 1000)
 	for _, strategyID := range []string{"1002", "1001"} {
 		before, err := redisClient.SlowLogGet(ctx, 1).Result()
@@ -2220,26 +2275,60 @@ func TestProductionSnapshotScopeUsesOnePayloadPerRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		payloadReads := 0
-		snapshotKey := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog") + ":snapshot:" + string(snapshotRevision)
-		for _, entry := range entries {
-			if entry.ID <= lastID {
-				continue
-			}
-			// Count the actual body read, including GET inside bounded-read Lua;
-			// the outer EVAL and STRLEN are not additional payload deliveries.
-			if len(entry.Args) > 1 && (strings.EqualFold(entry.Args[0], "mget") || strings.EqualFold(entry.Args[0], "get")) && entry.Args[1] == snapshotKey {
-				payloadReads++
-			}
+		bodyReads := countCommands(entries, lastID, snapshotKey, false, "get", "mget")
+		// The slowlog truncates arguments beyond 128 bytes; the epoch key with
+		// its revision digest exceeds that, so match it by prefix.
+		epochProbes := countCommands(entries, lastID, epochKey[:len(catalogPrefix)+len(":snapshot_epoch:")], true, "get")
+		lengthProbes := countCommands(entries, lastID, snapshotKey, false, "strlen")
+		activationBodyReads := countCommands(entries, lastID, activationKey, false, "get")
+		headerProbes := countCommands(entries, lastID, headerKey, false, "get")
+		timelineBodyReads := countCommands(entries, lastID, timelinePrefix, true, "get")
+		if bodyReads != 0 || epochProbes < 1 || lengthProbes < 1 {
+			t.Fatalf("RunOne(%s) Snapshot body reads=%d epoch probes=%d length probes=%d, want 0 body reads validated by probes (Start read the body %d times)",
+				strategyID, bodyReads, epochProbes, lengthProbes, startBodyReads)
 		}
-		if payloadReads != 1 {
-			t.Fatalf("actual RunOne full-payload reads=%d want1", payloadReads)
+		// Guard and Progress re-read the activation before acting; each re-read
+		// probes the live header and transfers no activation body.
+		if activationBodyReads != 0 || headerProbes < 2 {
+			t.Fatalf("RunOne(%s) activation body reads=%d header probes=%d, want 0 body reads and at least two probes", strategyID, activationBodyReads, headerProbes)
 		}
+		if timelineBodyReads > 1 {
+			t.Fatalf("RunOne(%s) timeline body reads=%d, want at most the first touch of this Query Group", strategyID, timelineBodyReads)
+		}
+		timelineBytes, err := redisClient.StrLen(ctx, timelinePrefix+string(queryGroupsByStrategy[strategyID])).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("RunOne(%s): body sizes snapshot=%d activation=%d timeline=%d bytes; transferred bodies snapshot=%d activation=%d timeline=%d; probes: %d header x %d bytes, %d epoch, %d length (each probe replaces one activation or timeline body read)",
+			strategyID, snapshotBytes, activationBytes, timelineBytes, bodyReads, activationBodyReads, timelineBodyReads,
+			headerProbes, headerBytes, epochProbes, lengthProbes)
+	}
+	statsAfter := repository.ControlReadCacheStats()
+	if statsAfter.Snapshot.Hits-statsBefore.Snapshot.Hits < 2 || statsAfter.Activation.Hits-statsBefore.Activation.Hits < 4 ||
+		statsAfter.Snapshot.Misses != statsBefore.Snapshot.Misses || statsAfter.Activation.Refreshes != statsBefore.Activation.Refreshes {
+		t.Fatalf("cache stats before=%+v after=%+v, want only hits during two RunOnes", statsBefore, statsAfter)
 	}
 	beforeDeferredCalls := uqCalls.Load()
+	beforeDeferred, err := redisClient.SlowLogGet(ctx, 1).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferredLastID := int64(-1)
+	if len(beforeDeferred) > 0 {
+		deferredLastID = beforeDeferred[0].ID
+	}
 	deferredResult, deferredAttempted, err := bundle.runners[queryGroupsByStrategy["1002"]].runner.RunOne(ctx)
 	if err != nil || !deferredAttempted || deferredResult.Completed || uqCalls.Load() != beforeDeferredCalls {
 		t.Fatalf("expected readiness deferral before Query: %+v %v calls=%d", deferredResult, err, uqCalls.Load())
+	}
+	deferredEntries, err := redisClient.SlowLogGet(ctx, 2048).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reads := countCommands(deferredEntries, deferredLastID, snapshotKey, false, "get", "mget") +
+		countCommands(deferredEntries, deferredLastID, activationKey, false, "get") +
+		countCommands(deferredEntries, deferredLastID, timelinePrefix, true, "get"); reads != 0 {
+		t.Fatalf("second RunOne of the same Query Group transferred %d control bodies, want 0", reads)
 	}
 	if err := redisClient.Del(ctx, snapshotKey).Err(); err != nil {
 		t.Fatal(err)

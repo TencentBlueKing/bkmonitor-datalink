@@ -109,6 +109,8 @@ type RedisCatalogRepository struct {
 	ttl                        time.Duration
 	snapshotCache              *verifiedSnapshotCache
 	activationCache            parsedActivationCache
+	controlCache               *controlReadCache
+	controlReads               controlReadCounters
 	legacyMigrationMaxScanKeys int
 	legacyMigrationTimeout     time.Duration
 	observer                   observability.Observer
@@ -138,7 +140,8 @@ func NewRedisCatalogRepository(client redis.Cmdable, prefix string, ttl time.Dur
 		return nil, errors.New("alarmd controlplane: invalid Redis catalog repository")
 	}
 	return &RedisCatalogRepository{client: client, prefix: prefix, ttl: ttl,
-		snapshotCache: newVerifiedSnapshotCache(verifiedSnapshotCacheMaxEntries, verifiedSnapshotCacheMaxBytes)}, nil
+		snapshotCache: newVerifiedSnapshotCache(verifiedSnapshotCacheMaxEntries, verifiedSnapshotCacheMaxBytes),
+		controlCache:  newControlReadCache(controlTimelineCacheMaxEntries, controlTimelineCacheMaxBytes)}, nil
 }
 
 func (repository *RedisCatalogRepository) ConfigureLegacyMigration(maxScanKeys int, timeout time.Duration) error {
@@ -476,7 +479,7 @@ func (repository *RedisCatalogRepository) LoadSnapshot(ctx context.Context, revi
 	if err != nil {
 		return PublishedSnapshot{}, err
 	}
-	snapshot, err := repository.snapshotCache.loadSnapshot(ctx, revision, payload, allocation)
+	snapshot, err := repository.snapshotCache.loadSnapshot(ctx, revision, payload, epoch, allocation)
 	if err != nil {
 		return PublishedSnapshot{}, err
 	}
@@ -601,7 +604,7 @@ func (repository *RedisCatalogRepository) LoadQueryGroup(ctx context.Context, re
 		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
-	entry, _, err := repository.snapshotCache.load(ctx, revision, payload, allocation)
+	entry, _, err := repository.snapshotCache.load(ctx, revision, payload, epoch, allocation)
 	defer entry.allocation.release()
 	if err != nil {
 		clearSnapshotScope(ctx)
@@ -630,7 +633,7 @@ func (repository *RedisCatalogRepository) loadPublishedQueryGroup(
 		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
-	entry, _, err := repository.snapshotCache.load(ctx, publication.SnapshotRevision, payload, allocation)
+	entry, _, err := repository.snapshotCache.load(ctx, publication.SnapshotRevision, payload, epoch, allocation)
 	defer entry.allocation.release()
 	if err != nil {
 		clearSnapshotScope(ctx)
@@ -705,32 +708,40 @@ func (repository *RedisCatalogRepository) LoadActivation(ctx context.Context) (A
 	return entry.cloneState(), nil
 }
 
+// loadParsedActivation still performs a live read per authorization: the small
+// activation header and the activation length. The activation body itself is
+// read only when the cache holds nothing for the observed header.
 func (repository *RedisCatalogRepository) loadParsedActivation(ctx context.Context) (*parsedActivation, error) {
 	if repository == nil || repository.client == nil {
 		return nil, errors.New("alarmd controlplane: Redis catalog repository is required")
 	}
-	// Each authorization still obtains its own live payload before cache lookup.
-	payload, err := repository.client.Get(ctx, repository.activationKey()).Result()
-	if errors.Is(err, redis.Nil) {
-		repository.activationCache.clear()
-		return nil, ErrActivationUnavailable
-	}
+	version, err := repository.readControlVersion(ctx)
 	if err != nil {
-		repository.activationCache.clear()
-		return nil, activationDependencyIO(err)
+		repository.clearActivationCaches()
+		return nil, err
 	}
-	return repository.activationCache.load(payload)
+	return repository.loadParsedActivationAt(ctx, version)
 }
 
 func (repository *RedisCatalogRepository) LoadActivations(ctx context.Context, request execution.PlanActivationRequest) (execution.PlanActivationResult, error) {
 	if err := request.Contract.Validate(); err != nil || len(request.Plans) == 0 {
 		return execution.PlanActivationResult{}, errors.New("alarmd controlplane: invalid activation request")
 	}
-	entry, err := repository.loadParsedActivation(ctx)
+	if repository == nil || repository.client == nil {
+		return execution.PlanActivationResult{}, errors.New("alarmd controlplane: Redis catalog repository is required")
+	}
+	// One header probe covers both the activation and the Schedule timeline of
+	// this authorization; both were persisted under that same header.
+	version, err := repository.readControlVersion(ctx)
+	if err != nil {
+		repository.clearActivationCaches()
+		return execution.PlanActivationResult{}, err
+	}
+	entry, err := repository.loadParsedActivationAt(ctx, version)
 	if err != nil {
 		return execution.PlanActivationResult{}, err
 	}
-	historical, err := repository.validateClosedHistoricalContract(ctx, request.Contract, entry.state.Current)
+	historical, err := repository.validateClosedHistoricalContract(ctx, request.Contract, entry.state.Current, version)
 	if err != nil {
 		return execution.PlanActivationResult{}, err
 	}
@@ -752,8 +763,9 @@ func (repository *RedisCatalogRepository) validateClosedHistoricalContract(
 	ctx context.Context,
 	contractRef execution.FrozenExecutionContractRef,
 	current SnapshotPublicationRef,
+	version controlVersion,
 ) (bool, error) {
-	timeline, _, err := repository.loadScheduleTimeline(ctx, contractRef.Slot.QueryGroup)
+	timeline, _, err := repository.loadScheduleTimelineAt(ctx, contractRef.Slot.QueryGroup, version)
 	if err != nil {
 		return false, err
 	}

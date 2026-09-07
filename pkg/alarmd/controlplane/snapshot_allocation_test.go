@@ -29,20 +29,20 @@ func TestWarmSnapshotDecodeReservationsReleaseOnDenialAndSuccess(t *testing.T) {
 			repo := &RedisCatalogRepository{snapshotCache: newVerifiedSnapshotCache(1, 64<<20)}
 			repo.ConfigureSnapshotMemory(admit, worker.PreparationObjectBytes)
 			defer repo.ReleaseSnapshotCache()
-			first, err := repo.snapshotCache.loadSnapshot(ctx, revision, string(raw))
+			first, err := repo.snapshotCache.loadSnapshot(ctx, revision, string(raw), 1)
 			if err != nil {
 				t.Fatal(err)
 			}
 			steady := used
 			calls, rejection = 0, denyAt
-			if _, err := repo.snapshotCache.loadSnapshot(ctx, revision, string(raw)); !errors.Is(err, denied) {
+			if _, err := repo.snapshotCache.loadSnapshot(ctx, revision, string(raw), 1); !errors.Is(err, denied) {
 				t.Fatalf("denial at reservation %d: %v", denyAt, err)
 			}
 			if used != steady {
 				t.Fatalf("failed decode retained %d bytes, want %d", used, steady)
 			}
 			calls, rejection = 0, 0
-			next, err := repo.snapshotCache.loadSnapshot(ctx, revision, string(raw))
+			next, err := repo.snapshotCache.loadSnapshot(ctx, revision, string(raw), 1)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -72,7 +72,7 @@ func TestSnapshotCacheAndScopeShareOneAllocationUntilLastReference(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry, _, err := repo.snapshotCache.load(ctx, revision, string(raw), read)
+	entry, _, err := repo.snapshotCache.load(ctx, revision, string(raw), 1, read)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestSnapshotCacheAndScopeShareOneAllocationUntilLastReference(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := repo.snapshotCache.load(ctx, revision, string(raw), secondRead)
+	second, _, err := repo.snapshotCache.load(ctx, revision, string(raw), 1, secondRead)
 	if err != nil {
 		t.Fatal(err)
 	}

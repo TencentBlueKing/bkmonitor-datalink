@@ -13,24 +13,24 @@ import (
 func TestVerifiedSnapshotCacheReturnsIsolatedContent(t *testing.T) {
 	revision, payload := neutralSnapshotPayload(t, "qg-a")
 	cache := newVerifiedSnapshotCache(2, 1<<20)
-	first, err := cache.loadSnapshot(context.Background(), revision, payload)
+	first, err := cache.loadSnapshot(context.Background(), revision, payload, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	first.QueryGroups[0].Identity = "mutated"
-	second, err := cache.loadSnapshot(context.Background(), revision, payload)
+	second, err := cache.loadSnapshot(context.Background(), revision, payload, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := second.QueryGroups[0].Identity; got != "qg-a" {
 		t.Fatalf("cached Snapshot was polluted through caller result: %q", got)
 	}
-	group, err := cache.loadQueryGroup(context.Background(), revision, payload, "qg-a")
+	group, err := cache.loadQueryGroup(context.Background(), revision, payload, 1, "qg-a")
 	if err != nil {
 		t.Fatal(err)
 	}
 	group.Identity = "mutated-again"
-	group, err = cache.loadQueryGroup(context.Background(), revision, payload, "qg-a")
+	group, err = cache.loadQueryGroup(context.Background(), revision, payload, 1, "qg-a")
 	if err != nil || group.Identity != "qg-a" {
 		t.Fatalf("cached Query Group=(%q,%v), want isolated qg-a", group.Identity, err)
 	}
@@ -42,14 +42,14 @@ func TestVerifiedSnapshotCacheReturnsIsolatedContent(t *testing.T) {
 func TestVerifiedSnapshotCacheRevalidatesChangedPayload(t *testing.T) {
 	revision, payload := neutralSnapshotPayload(t, "qg-a")
 	cache := newVerifiedSnapshotCache(2, 1<<20)
-	if _, err := cache.loadSnapshot(context.Background(), revision, payload); err != nil {
+	if _, err := cache.loadSnapshot(context.Background(), revision, payload, 1); err != nil {
 		t.Fatal(err)
 	}
 	_, changed := neutralSnapshotPayload(t, "qg-b")
 	if len(changed) != len(payload) {
 		t.Fatal("changed-content counterexample must preserve payload length")
 	}
-	if _, err := cache.loadSnapshot(context.Background(), revision, changed); err == nil {
+	if _, err := cache.loadSnapshot(context.Background(), revision, changed, 1); err == nil {
 		t.Fatal("same revision with changed content was accepted from cache")
 	} else {
 		var corrupt *PersistedSnapshotCorruptError
@@ -57,10 +57,10 @@ func TestVerifiedSnapshotCacheRevalidatesChangedPayload(t *testing.T) {
 			t.Fatalf("changed payload error=%T %v, want persisted corruption", err, err)
 		}
 	}
-	if _, err := cache.loadSnapshot(context.Background(), revision, `{"schema_version":`); err == nil {
+	if _, err := cache.loadSnapshot(context.Background(), revision, `{"schema_version":`, 1); err == nil {
 		t.Fatal("malformed payload was accepted from cache")
 	}
-	loaded, err := cache.loadSnapshot(context.Background(), revision, payload)
+	loaded, err := cache.loadSnapshot(context.Background(), revision, payload, 1)
 	if err != nil || loaded.QueryGroups[0].Identity != "qg-a" {
 		t.Fatalf("original verified payload no longer loads: %#v, %v", loaded, err)
 	}
@@ -75,7 +75,7 @@ func TestVerifiedSnapshotCacheIsBoundedAndIsolatesCorruptSibling(t *testing.T) {
 		revision execution.SnapshotRevision
 		payload  string
 	}{{revisionA, payloadA}, {revisionB, payloadB}, {revisionA, payloadA}, {revisionC, payloadC}} {
-		if _, err := cache.loadSnapshot(context.Background(), item.revision, item.payload); err != nil {
+		if _, err := cache.loadSnapshot(context.Background(), item.revision, item.payload, 1); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -85,10 +85,10 @@ func TestVerifiedSnapshotCacheIsBoundedAndIsolatesCorruptSibling(t *testing.T) {
 	if cache.contains(revisionB) || !cache.contains(revisionA) {
 		t.Fatal("A-B-A access did not evict the least recently used Snapshot B")
 	}
-	if _, err := cache.loadSnapshot(context.Background(), revisionA, `not-json`); err == nil {
+	if _, err := cache.loadSnapshot(context.Background(), revisionA, `not-json`, 1); err == nil {
 		t.Fatal("corrupt sibling was accepted")
 	}
-	group, err := cache.loadQueryGroup(context.Background(), revisionC, payloadC, "qg-c")
+	group, err := cache.loadQueryGroup(context.Background(), revisionC, payloadC, 1, "qg-c")
 	if err != nil || group.Identity != "qg-c" {
 		t.Fatalf("healthy sibling=(%q,%v)", group.Identity, err)
 	}
@@ -97,16 +97,16 @@ func TestVerifiedSnapshotCacheIsBoundedAndIsolatesCorruptSibling(t *testing.T) {
 func TestVerifiedSnapshotCacheHonorsByteBound(t *testing.T) {
 	revisionA, payloadA := neutralSnapshotPayload(t, "qg-a")
 	probe := newVerifiedSnapshotCache(1, 1<<20)
-	if _, err := probe.loadSnapshot(context.Background(), revisionA, payloadA); err != nil {
+	if _, err := probe.loadSnapshot(context.Background(), revisionA, payloadA, 1); err != nil {
 		t.Fatal(err)
 	}
 	entryBytes := probe.bytes
 	cache := newVerifiedSnapshotCache(8, entryBytes)
-	if _, err := cache.loadSnapshot(context.Background(), revisionA, payloadA); err != nil {
+	if _, err := cache.loadSnapshot(context.Background(), revisionA, payloadA, 1); err != nil {
 		t.Fatal(err)
 	}
 	revisionB, payloadB := neutralSnapshotPayload(t, "qg-b")
-	if _, err := cache.loadSnapshot(context.Background(), revisionB, payloadB); err != nil {
+	if _, err := cache.loadSnapshot(context.Background(), revisionB, payloadB, 1); err != nil {
 		t.Fatal(err)
 	}
 	if len(cache.entries) != 1 || cache.bytes > entryBytes || cache.contains(revisionA) {
@@ -118,7 +118,7 @@ func TestVerifiedSnapshotCacheEvictionReleasesBackingReferences(t *testing.T) {
 	cache := newVerifiedSnapshotCache(1, 1<<20)
 	for _, identity := range []execution.QueryGroupIdentity{"qg-a", "qg-b"} {
 		revision, payload := neutralSnapshotPayload(t, identity)
-		if _, err := cache.loadSnapshot(context.Background(), revision, payload); err != nil {
+		if _, err := cache.loadSnapshot(context.Background(), revision, payload, 1); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -135,7 +135,7 @@ func TestVerifiedSnapshotCacheHonorsCancellationAndConcurrentIsolation(t *testin
 	cache := newVerifiedSnapshotCache(2, 1<<20)
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := cache.loadSnapshot(cancelled, revision, payload); !errors.Is(err, context.Canceled) {
+	if _, err := cache.loadSnapshot(cancelled, revision, payload, 1); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled load error=%v, want context.Canceled", err)
 	}
 	if got := len(cache.entries); got != 0 {
@@ -148,7 +148,7 @@ func TestVerifiedSnapshotCacheHonorsCancellationAndConcurrentIsolation(t *testin
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			loaded, err := cache.loadSnapshot(context.Background(), revision, payload)
+			loaded, err := cache.loadSnapshot(context.Background(), revision, payload, 1)
 			if err == nil {
 				loaded.QueryGroups[0].Identity = "caller-local"
 			}
@@ -162,7 +162,7 @@ func TestVerifiedSnapshotCacheHonorsCancellationAndConcurrentIsolation(t *testin
 			t.Fatal(err)
 		}
 	}
-	group, err := cache.loadQueryGroup(context.Background(), revision, payload, "qg-a")
+	group, err := cache.loadQueryGroup(context.Background(), revision, payload, 1, "qg-a")
 	if err != nil || group.Identity != "qg-a" {
 		t.Fatalf("concurrent callers polluted cache: %q, %v", group.Identity, err)
 	}

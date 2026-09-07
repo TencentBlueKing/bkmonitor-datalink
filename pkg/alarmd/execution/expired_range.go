@@ -28,9 +28,15 @@ type ExpiredRangeProjectionV1 struct {
 	ReplayAgeMillis    int64
 	JudgedAtMillis     int64
 	Digest             string
+	// Nil preserves the original V1 wire and digest domain exactly.
+	EligibilityV2 *ExpiredRangeEligibilityV2 `json:",omitempty"`
 }
 
 func (p ExpiredRangeProjectionV1) Clone() ExpiredRangeProjectionV1 {
+	if p.EligibilityV2 != nil {
+		copy := *p.EligibilityV2
+		p.EligibilityV2 = &copy
+	}
 	p.Schedule.Plans = append([]FrozenPlanSchedule(nil), p.Schedule.Plans...)
 	if p.Schedule.Segment.End != nil {
 		end := *p.Schedule.Segment.End
@@ -51,7 +57,7 @@ func (p ExpiredRangeProjectionV1) Validate() error {
 	}
 	got := p.Digest
 	p.Digest = ""
-	want, err := contract.DeriveCanonicalDigestV2("alarmd-expired-range-projection-v1", p)
+	want, err := contract.DeriveCanonicalDigestV2(p.digestDomain(), p)
 	if err != nil {
 		return err
 	}
@@ -67,7 +73,7 @@ func SealExpiredRange(p ExpiredRangeProjectionV1) (ExpiredRangeProjectionV1, err
 	if err := p.validateFacts(); err != nil {
 		return ExpiredRangeProjectionV1{}, err
 	}
-	digest, err := contract.DeriveCanonicalDigestV2("alarmd-expired-range-projection-v1", p)
+	digest, err := contract.DeriveCanonicalDigestV2(p.digestDomain(), p)
 	p.Digest = digest
 	if err == nil {
 		raw, encodeErr := json.Marshal(p)
@@ -142,8 +148,11 @@ func (p ExpiredRangeProjectionV1) validateFacts() error {
 			}
 		}
 		if deadline != projection.EarliestQueryDeadlineUnixMilli || deadline > math.MaxInt64-p.ReplayAgeMillis ||
-			deadline+p.ReplayAgeMillis > p.JudgedAtMillis || projection.KeepUntilUnixMilli <= deadline+p.ReplayAgeMillis {
+			projection.KeepUntilUnixMilli <= deadline+p.ReplayAgeMillis {
 			return bad()
+		}
+		if err := p.validateEligibility(projection); err != nil {
+			return err
 		}
 	}
 	// Within this Segment no legal Slot may be skipped. At a boundary the

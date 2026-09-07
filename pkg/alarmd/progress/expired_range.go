@@ -26,6 +26,7 @@ func (store *Store) changeRange(ctx context.Context, request execution.ExpiredRa
 		return execution.ExpiredRangeResult{}, err
 	}
 	p := request.Projection
+	kind, reason := p.CompletionKind(), p.CompletionReason()
 	identity := execution.ProgressIdentity{QueryGroup: p.First.Contract.Slot.QueryGroup}
 	name, err := store.namespace(identity)
 	if err != nil {
@@ -64,8 +65,8 @@ func (store *Store) changeRange(ctx context.Context, request execution.ExpiredRa
 	if next != p.Next {
 		return execution.ExpiredRangeResult{Status: execution.ProgressConflict}, nil
 	}
-	if prior := current.CurrentOrRecentGap; prior != nil && current.LastCompletionKind == execution.CompletionSnapshotUnavailable &&
-		prior.Kind == execution.CompletionSnapshotUnavailable && prior.ReasonCode == execution.ReasonCode(contract.ReasonSnapshotUnavailable) && prior.Count > math.MaxUint32-p.Count {
+	if prior := current.CurrentOrRecentGap; prior != nil && current.LastCompletionKind == kind &&
+		prior.Kind == kind && prior.ReasonCode == reason && prior.Count > math.MaxUint32-p.Count {
 		continuous, readErr := store.options.Slots.NextSlotAfter(ctx, identity.QueryGroup, prior.LastSlot)
 		if readErr != nil {
 			return execution.ExpiredRangeResult{}, readErr
@@ -75,8 +76,8 @@ func (store *Store) changeRange(ctx context.Context, request execution.ExpiredRa
 		}
 	}
 	if commit {
-		gap := &execution.ProgressGapSummary{Kind: execution.CompletionSnapshotUnavailable,
-			ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
+		gap := &execution.ProgressGapSummary{Kind: kind,
+			ReasonCode: reason,
 			FirstSlot:  p.First.Contract.Slot.EvaluationTime, LastSlot: p.Last.Contract.Slot.EvaluationTime, Count: p.Count}
 		prior := current.CurrentOrRecentGap
 		if current.LastCompletionKind == gap.Kind && prior != nil && prior.Kind == gap.Kind && prior.ReasonCode == gap.ReasonCode {

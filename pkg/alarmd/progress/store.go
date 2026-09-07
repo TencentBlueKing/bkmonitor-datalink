@@ -21,6 +21,7 @@ import (
 
 const schemaV2 = "alarmd-schedule-progress-v2"
 const schemaRangeV1 = "alarmd-schedule-progress-expired-range-v1"
+const schemaRangeV2 = "alarmd-schedule-progress-expired-range-v2"
 
 type ControlStore interface {
 	ReadControl(context.Context, execution.QueryGroupIdentity, string) ([]byte, bool, error)
@@ -381,6 +382,9 @@ func encode(progress execution.ScheduleProgress) ([]byte, error) {
 	schema := schemaV2
 	if progress.UnfinishedRange != nil {
 		schema = schemaRangeV1
+		if progress.UnfinishedRange.EligibilityV2 != nil {
+			schema = schemaRangeV2
+		}
 	}
 	raw, err := json.Marshal(envelope{Schema: schema, Progress: progress})
 	if err == nil && progress.UnfinishedRange != nil && len(raw) > execution.MaxExpiredRangeProjectionBytes {
@@ -399,7 +403,7 @@ func decode(raw []byte) (execution.ScheduleProgress, error) {
 		if err := json.Unmarshal(raw, &header); err != nil {
 			return execution.ScheduleProgress{}, err
 		}
-		if header.Schema == schemaRangeV1 {
+		if header.Schema == schemaRangeV1 || header.Schema == schemaRangeV2 {
 			return execution.ScheduleProgress{}, execution.ErrExpiredRangeProofTooLarge
 		}
 	}
@@ -407,13 +411,31 @@ func decode(raw []byte) (execution.ScheduleProgress, error) {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return execution.ScheduleProgress{}, err
 	}
-	if value.Schema != schemaV2 && value.Schema != schemaRangeV1 {
+	if value.Schema != schemaV2 && value.Schema != schemaRangeV1 && value.Schema != schemaRangeV2 {
 		return execution.ScheduleProgress{}, fmt.Errorf("unsupported schema %q", value.Schema)
 	}
-	if (value.Schema == schemaRangeV1) != (value.Progress.UnfinishedRange != nil) {
+	if (value.Schema == schemaRangeV1 || value.Schema == schemaRangeV2) != (value.Progress.UnfinishedRange != nil) {
 		return execution.ScheduleProgress{}, fmt.Errorf("progress schema does not match pending representation")
 	}
+	if value.Progress.UnfinishedRange != nil && (value.Schema == schemaRangeV2) != (value.Progress.UnfinishedRange.EligibilityV2 != nil) {
+		return execution.ScheduleProgress{}, fmt.Errorf("progress range schema does not match proof version")
+	}
 	if value.Schema == schemaRangeV1 {
+		// V1's accepted fields also remain unchanged: explicit null must not
+		// smuggle a V2 discriminator under the legacy schema.
+		var fields struct {
+			Progress struct{ UnfinishedRange map[string]json.RawMessage }
+		}
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return execution.ScheduleProgress{}, err
+		}
+		for name := range fields.Progress.UnfinishedRange {
+			if strings.EqualFold(name, "EligibilityV2") {
+				return execution.ScheduleProgress{}, fmt.Errorf("V2 eligibility in V1 range")
+			}
+		}
+	}
+	if value.Schema == schemaRangeV1 || value.Schema == schemaRangeV2 {
 		if len(raw) > execution.MaxExpiredRangeProjectionBytes {
 			return execution.ScheduleProgress{}, execution.ErrExpiredRangeProofTooLarge
 		}

@@ -540,7 +540,7 @@ func (source *ProductionSlotSource) classifyRecovery(
 		return execution.OperationNormal, SlotRecoveryFacts{Disposition: ReplayLive}, nil
 	}
 	age := at.Sub(time.UnixMilli(deadline))
-	if age > source.recovery.MaxReplayAge {
+	if age >= source.recovery.MaxReplayAge {
 		return execution.OperationNormal, SlotRecoveryFacts{
 			Disposition: ReplayExpired,
 			Distance:    1,

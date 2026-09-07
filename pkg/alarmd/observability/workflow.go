@@ -8,6 +8,7 @@ const (
 )
 
 type ExpiredRangeFacts struct {
+	ReasonCode     ReasonCode
 	Result         string
 	CommittedSlots uint32
 }

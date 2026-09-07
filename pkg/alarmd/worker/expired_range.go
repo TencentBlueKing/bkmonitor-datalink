@@ -26,7 +26,7 @@ func (coordinator *SlotExecutionCoordinator) executeExpiredRange(ctx context.Con
 		}
 		func() {
 			defer func() { _ = recover() }()
-			coordinator.ports.Observer.Observe(ctx, observability.Observation{Component: observability.ComponentScheduler, Stage: observability.StageExpiredRangeReturned, Result: observability.ResultSuccess, ExpiredRange: &observability.ExpiredRangeFacts{Result: outcome, CommittedSlots: committed}})
+			coordinator.ports.Observer.Observe(ctx, observability.Observation{Component: observability.ComponentScheduler, Stage: observability.StageExpiredRangeReturned, Result: observability.ResultSuccess, ExpiredRange: &observability.ExpiredRangeFacts{Result: outcome, CommittedSlots: committed, ReasonCode: observability.ReasonCode(request.ExpiredRange.CompletionReason())}})
 		}()
 		p := request.ExpiredRange
 		observability.EmitTargetFlow(ctx, "expired_range_returned", observability.TraceFields{}, observability.TargetFlowFacts{Decision: outcome, RangeFirst: int64(p.First.Contract.Slot.EvaluationTime), RangeLast: int64(p.Last.Contract.Slot.EvaluationTime), RangeCount: p.Count, RangeDigest: p.Digest, NextSlot: int64(p.Next), Completed: result.Completed})
@@ -52,13 +52,17 @@ func (coordinator *SlotExecutionCoordinator) executeExpiredRange(ctx context.Con
 		return activationRetry(reason), nil
 	}
 	if begin.AlreadyCommitted {
-		return expiredRangeCompleted(), nil
+		return expiredRangeCompletedFor(request), nil
 	}
 	// The durable proof, not a new Snapshot read or a larger current floor,
 	// selects the original tail. Dynamic activation/admission remain in the
 	// existing query-free finalizer and are re-read before Guard and Progress.
+	mode := execution.FinalizationSnapshotUnavailable
+	if request.ExpiredRange.CompletionKind() == execution.CompletionGapSkipped {
+		mode = execution.FinalizationGapSkipped
+	}
 	finalization := execution.QueryFreeFinalization{Contract: request.Contract,
-		Mode: execution.FinalizationSnapshotUnavailable, ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
+		Mode: mode, ReasonCode: request.ExpiredRange.CompletionReason(),
 		Targets: request.DuePlanTargets.Clone()}
 	if err := finalization.Validate(request); err != nil {
 		return execution.SlotExecutionResult{}, err
@@ -67,8 +71,8 @@ func (coordinator *SlotExecutionCoordinator) executeExpiredRange(ctx context.Con
 }
 
 func (coordinator *SlotExecutionCoordinator) commitExpiredRange(ctx context.Context, request execution.SlotExecutionRequest, completion execution.SlotCompletion) (execution.SlotExecutionResult, error) {
-	if completion.Kind != execution.CompletionSnapshotUnavailable || completion.Contract != request.Contract {
-		return execution.SlotExecutionResult{}, errors.New("alarmd worker: range may only finalize SNAPSHOT_UNAVAILABLE")
+	if completion.Kind != request.ExpiredRange.CompletionKind() || completion.ReasonCode != request.ExpiredRange.CompletionReason() || completion.Contract != request.Contract {
+		return execution.SlotExecutionResult{}, errors.New("alarmd worker: range completion differs from proof")
 	}
 	store, ok := coordinator.ports.Progress.(execution.ExpiredRangeStore)
 	if !ok {
@@ -86,10 +90,10 @@ func (coordinator *SlotExecutionCoordinator) commitExpiredRange(ctx context.Cont
 			*count = request.ExpiredRange.Count
 		}
 	}
-	return expiredRangeCompleted(), nil
+	return expiredRangeCompletedFor(request), nil
 }
 
-func expiredRangeCompleted() execution.SlotExecutionResult {
-	return execution.SlotExecutionResult{Completed: true, CompletionKind: execution.CompletionSnapshotUnavailable,
-		Result: observability.ResultDegraded, ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable)}
+func expiredRangeCompletedFor(request execution.SlotExecutionRequest) execution.SlotExecutionResult {
+	return execution.SlotExecutionResult{Completed: true, CompletionKind: request.ExpiredRange.CompletionKind(),
+		Result: observability.ResultDegraded, ReasonCode: request.ExpiredRange.CompletionReason()}
 }

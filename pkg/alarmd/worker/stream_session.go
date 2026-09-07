@@ -24,19 +24,23 @@ type streamedExecution struct {
 	prepared    preparedNamedInputIndex
 	streamed    map[streamedInputKey]execution.NamedInputBinding
 	planSeries  map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]struct{}
-	bindings    []execution.NamedInputBinding
-	stateItems  []execution.StatePreflightItem
-	gapItems    []execution.PlanGapLoadItem
-	state       execution.StatePreflightResult
-	gaps        execution.GapLoadResult
-	effective   map[execution.ConsumerRef]strategy.EffectiveTimeFact
-	evaluated   execution.EvaluationResult
-	delivered   []execution.SeriesDelivery
-	series      uint64
-	retained    uint64
-	effects     effectCounts
-	gapFacts    uint64
-	began       bool
+	// completionOnly holds, per Plan without streamed PRIMARY series, the exact
+	// set validated by validateCompletionOnlyExactSet: one completion binding
+	// per frozen (consumer, requirement). It decides the no-series result.
+	completionOnly map[execution.PlanIdentity][]execution.NamedInputBinding
+	bindings       []execution.NamedInputBinding
+	stateItems     []execution.StatePreflightItem
+	gapItems       []execution.PlanGapLoadItem
+	state          execution.StatePreflightResult
+	gaps           execution.GapLoadResult
+	effective      map[execution.ConsumerRef]strategy.EffectiveTimeFact
+	evaluated      execution.EvaluationResult
+	delivered      []execution.SeriesDelivery
+	series         uint64
+	retained       uint64
+	effects        effectCounts
+	gapFacts       uint64
+	began          bool
 }
 
 type streamedInputKey struct {
@@ -77,6 +81,7 @@ func (stream *streamedExecution) Begin(ctx context.Context, header execution.Int
 	stream.prepared = prepared
 	stream.streamed = make(map[streamedInputKey]execution.NamedInputBinding)
 	stream.planSeries = make(map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]struct{})
+	stream.completionOnly = make(map[execution.PlanIdentity][]execution.NamedInputBinding)
 	effective, err := prepareAlwaysEffectiveTimeFacts(ctx, header)
 	if err != nil {
 		return fmt.Errorf("alarmd worker: prepare EffectiveTime facts: %w", err)
@@ -160,7 +165,7 @@ func (stream *streamedExecution) releaseProvisional() {
 	// Drop the owning references before advertising reusable capacity.
 	stream.header = execution.InternalExecutionHeader{}
 	stream.prepared = preparedNamedInputIndex{}
-	stream.streamed, stream.planSeries, stream.effective = nil, nil, nil
+	stream.streamed, stream.planSeries, stream.completionOnly, stream.effective = nil, nil, nil, nil
 	stream.bindings, stream.stateItems, stream.gapItems, stream.delivered = nil, nil, nil, nil
 	stream.state, stream.gaps = execution.StatePreflightResult{}, execution.GapLoadResult{}
 	stream.evaluated = execution.EvaluationResult{}
@@ -601,6 +606,11 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 	return nil
 }
 
+// validateCompletionOnlyExactSet validates every Level of a Plan without
+// streamed PRIMARY series against its frozen requirements and keeps the
+// validated exact set as the Plan's completion-only bindings. Only that set
+// decides the Plan's no-series result; streamed dependency bindings that no
+// PRIMARY series of the Plan consumed are not part of it.
 func (stream *streamedExecution) validateCompletionOnlyExactSet(
 	due execution.DuePlan,
 	completionBindings map[struct {
@@ -609,6 +619,7 @@ func (stream *streamedExecution) validateCompletionOnlyExactSet(
 	}]execution.NamedInputBinding,
 	completions []execution.PhysicalQueryCompletion,
 ) error {
+	exact := make([]execution.NamedInputBinding, 0)
 	for _, consumer := range stream.prepared.consumersByPlan[due.Identity] {
 		bindings := make([]execution.NamedInputBinding, 0, len(stream.prepared.requirementsByConsumer[consumer]))
 		for _, requirement := range stream.prepared.requirementsByConsumer[consumer] {
@@ -628,7 +639,11 @@ func (stream *streamedExecution) validateCompletionOnlyExactSet(
 				fmt.Errorf("alarmd worker: Plan %s Level %d completion-only exact set: %w",
 					due.Identity.StrategyID, consumer.LevelID, err))
 		}
+		for _, binding := range bindings {
+			exact = append(exact, compactNamedInputBinding(binding))
+		}
 	}
+	stream.completionOnly[due.Identity] = exact
 	return nil
 }
 
@@ -705,8 +720,13 @@ func (stream *streamedExecution) observeCompletionOnlyProbe(ctx context.Context)
 	}
 }
 
+// noSeriesPlanResult decides a Plan that produced no evaluated series. The
+// judgement reads only the bindings noSeriesBindings returns: the PRIMARY
+// completion of every consumer must be FULL for the Plan to complete FULL
+// EMPTY; a PARTIAL or UNAVAILABLE PRIMARY completion opens the Plan gap with
+// the completion reasons of that same set.
 func (stream *streamedExecution) noSeriesPlanResult(due execution.DuePlan) (execution.EvaluationResult, error) {
-	bindings := planBindings(stream.bindings, due.Identity)
+	bindings := stream.noSeriesBindings(due)
 	primary, found := firstNonFullPrimary(bindings)
 	if !found {
 		if !planCompletedFullEmpty(bindings, due.Identity) {
@@ -728,6 +748,21 @@ func (stream *streamedExecution) noSeriesPlanResult(due execution.DuePlan) (exec
 		ReasonCode: primary.ReasonCode,
 		Plans: []execution.PlanEvaluationResult{{Plan: due.Identity, Disposition: disposition,
 			ReasonCode: primary.ReasonCode, GuardBeforeEvents: []execution.PlanGapMutation{mutation}}}}, nil
+}
+
+// noSeriesBindings returns the bindings that decide a Plan's no-series result.
+// A completion-only Plan (no streamed PRIMARY series) is judged by its
+// completion-only exact set: exactly one completion binding per frozen
+// (consumer, requirement), the set validateCompletionOnlyExactSet accepted.
+// Streamed ALGORITHM_DEPENDENCY bindings that no PRIMARY series of this Plan
+// consumed are left out: a dependency query that delivered series for hosts
+// absent from the PRIMARY result is not evidence that the Plan had input. A
+// Plan that did stream PRIMARY series keeps every binding it received.
+func (stream *streamedExecution) noSeriesBindings(due execution.DuePlan) []execution.NamedInputBinding {
+	if exact, found := stream.completionOnly[due.Identity]; found {
+		return exact
+	}
+	return planBindings(stream.bindings, due.Identity)
 }
 
 func planBindings(bindings []execution.NamedInputBinding, plan execution.PlanIdentity) []execution.NamedInputBinding {
@@ -1400,6 +1435,11 @@ func evaluationRetainedSize(state execution.StatePreflightResult, result executi
 	return retainedObjectBytes(state) + retainedObjectBytes(result), nil
 }
 
+// planCompletedFullEmpty reports whether every binding of the Plan is the FULL
+// EMPTY share of an available completion. It is fed the Plan's no-series
+// bindings, so for a completion-only Plan a DATA binding means the completion
+// itself claims delivered series that no PRIMARY series of the Plan consumed,
+// which is not a valid no-series result.
 func planCompletedFullEmpty(bindings []execution.NamedInputBinding, plan execution.PlanIdentity) bool {
 	found := false
 	for _, binding := range bindings {

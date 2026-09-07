@@ -32,14 +32,6 @@ import (
 // client and the worker end to end and proves the Slot completes as
 // FULL_EMPTY_COMPLETED with LastFullSlot advanced and without any query failure.
 func TestProductionPhaseTwoG4OsRestartEmptyPrimaryWithHistoryDataCompletesFullEmpty(t *testing.T) {
-	// Access now emits the history completion binding, so the Slot no longer
-	// fails with COMPLETION_ONLY_REQUIREMENT_MISSING. It still fails with
-	// NO_SERIES_PLAN_RESULT_INVALID: worker streamedExecution.noSeriesPlanResult
-	// derives the no-series result from every binding of the Plan, and
-	// planCompletedFullEmpty rejects the streamed ALGORITHM_DEPENDENCY DATA
-	// bindings of the history query that no PRIMARY series consumed. Enable this
-	// test once the worker derives that result from the completion-only exact set.
-	t.Skip("requires worker change: noSeriesPlanResult/planCompletedFullEmpty must ignore streamed ALGORITHM_DEPENDENCY DATA bindings of a Plan without PRIMARY series")
 	t.Parallel()
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()

@@ -22,7 +22,6 @@ import (
 // a completion binding for the history requirement too; the Slot must complete
 // as FULL_EMPTY_COMPLETED without evaluation or side effects.
 func TestSlotExecutionCoordinatorCompletesFullEmptyWhenPrimaryIsEmptyAndDependencyDeliveredData(t *testing.T) {
-	skipUntilNoSeriesPlanResultIgnoresStreamedDependencySeries(t)
 	header, batches := workerG4StreamFixture(t, strategy.DetectorKindOsRestart)
 	primary, history := shareFixtureQueries(t, header)
 	historyBatch := batches[history.index]
@@ -58,6 +57,54 @@ func TestSlotExecutionCoordinatorCompletesFullEmptyWhenPrimaryIsEmptyAndDependen
 		if observation.Stage == observability.StageQueryCompleted && (observation.Result == observability.ResultFailed || observation.QueryFailure != nil) {
 			t.Fatalf("query_completed reported a failure: %+v", observation)
 		}
+	}
+}
+
+// The PRIMARY query failed while the history query delivered DATA. The Plan
+// has no PRIMARY series either, but the no-series judgement reads the PRIMARY
+// completion of the exact set: an UNAVAILABLE PRIMARY opens the Plan gap and
+// the Slot completes as COMPLETED_WITH_UNAVAILABLE, never as
+// FULL_EMPTY_COMPLETED, and the streamed history series stay unevaluated.
+func TestSlotExecutionCoordinatorDoesNotCompleteFullEmptyWhenPrimaryIsUnavailableAndDependencyDeliveredData(t *testing.T) {
+	header, batches := workerG4StreamFixture(t, strategy.DetectorKindOsRestart)
+	primary, history := shareFixtureQueries(t, header)
+	historyBatch := batches[history.index]
+	reason := execution.ReasonCode(contract.ReasonQueryUnavailable)
+	completion := execution.QueryExecutionCompletion{AllRequiredCompleted: true, PhysicalQueries: []execution.PhysicalQueryCompletion{
+		{Ref: "unavailable-primary", PhysicalQuery: primary.query.Digest, QueryRevision: primary.query.QueryRevision,
+			Completeness: execution.CompletenessUnavailable, DataState: execution.DataStateUnknown,
+			RouteFacts: execution.ProviderRouteFacts{Attempts: []execution.RouteAttemptFact{{
+				AttemptNo: 1, Endpoint: "uq", Result: execution.RouteAttemptFailed, ReasonCode: reason,
+			}}}},
+		{Ref: historyBatch.CompletionRef, PhysicalQuery: history.query.Digest, QueryRevision: history.query.QueryRevision,
+			Completeness: execution.CompletenessFull, DataState: execution.DataStateData, Delivery: historyBatch.Delivery},
+	}}
+	completion.CompletionBindings = accessShapedCompletionBindings(t, header, completion.PhysicalQueries)
+
+	ports, evaluator, coordinator := workerG4Coordinator(t)
+	ports.gapMissing = true
+	ports.executeOverride = streamExecution(header, []execution.SeriesExecutionBatch{historyBatch}, completion)
+
+	result, err := coordinator.Execute(context.Background(), workerSlotRequest(header.Contract))
+	if err != nil || !result.Completed || result.Result != observability.ResultDegraded || result.ReasonCode != reason {
+		t.Fatalf("Execute() result=%+v error=%v, want degraded QUERY_UNAVAILABLE completion", result, err)
+	}
+	if len(evaluator.requests) != 0 || ports.eventCount != 0 || ports.stateApplyCalls != 0 || ports.stateLoadCalls != 0 {
+		t.Fatalf("UNAVAILABLE PRIMARY produced business effects: evaluations=%d events=%d state_apply=%d state_load=%d",
+			len(evaluator.requests), ports.eventCount, ports.stateApplyCalls, ports.stateLoadCalls)
+	}
+	if len(ports.gapMutations) != 1 || len(ports.gapMutations[0].Scopes) != 1 ||
+		ports.gapMutations[0].Scopes[0].ReasonCode != reason || ports.gapMutations[0].Scopes[0].Scope.LevelID != 5 {
+		t.Fatalf("gap mutations=%+v, want one Level 5 QUERY_UNAVAILABLE gap", ports.gapMutations)
+	}
+	progress := ports.lastProgress
+	if progress.Completion.Kind == execution.CompletionFullEmpty {
+		t.Fatalf("Progress=%+v, UNAVAILABLE PRIMARY with DATA history completed as FULL_EMPTY_COMPLETED", progress)
+	}
+	if progress.Completion.Kind != execution.CompletionUnavailable || progress.Completion.Primary == nil ||
+		progress.Completion.Primary.Completeness != execution.CompletenessUnavailable ||
+		progress.Completion.Primary.DataState != execution.DataStateUnknown || progress.Completion.ReasonCode != reason {
+		t.Fatalf("Progress=%+v, want COMPLETED_WITH_UNAVAILABLE", progress)
 	}
 }
 
@@ -155,19 +202,6 @@ func TestSlotExecutionCoordinatorCompletesUnavailableAfterPartialStreamWithBacke
 		facts.Code != contract.ReasonQueryUnavailable || facts.Detail != "response=status_space_table_id_field_is_not_exists" {
 		t.Fatalf("query_completed failure facts=%+v, want source_backend QUERY_UNAVAILABLE with the UQ status detail", facts)
 	}
-}
-
-// skipUntilNoSeriesPlanResultIgnoresStreamedDependencySeries documents the
-// worker change still required for a completion-only Plan whose dependency
-// query delivered series: streamedExecution.noSeriesPlanResult derives the
-// no-series result from every binding of the Plan, and planCompletedFullEmpty
-// therefore rejects the streamed ALGORITHM_DEPENDENCY DATA bindings that no
-// PRIMARY series consumed (NO_SERIES_PLAN_RESULT_INVALID). The no-series result
-// must be derived from the completion-only exact set validated by
-// validateCompletionOnlyExactSet, ignoring streamed dependency series.
-func skipUntilNoSeriesPlanResultIgnoresStreamedDependencySeries(t *testing.T) {
-	t.Helper()
-	t.Skip("requires worker change: noSeriesPlanResult/planCompletedFullEmpty must ignore streamed ALGORITHM_DEPENDENCY DATA bindings of a Plan without PRIMARY series")
 }
 
 type shareFixtureQuery struct {

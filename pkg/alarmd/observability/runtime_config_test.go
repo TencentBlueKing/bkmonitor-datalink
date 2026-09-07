@@ -17,7 +17,7 @@ func TestRuntimeConfigEvidenceUsesExistingConfigLoadedLog(t *testing.T) {
 	facts := &RuntimeConfigFacts{Profile: "standard-conservative-v1", CPUSource: "cpu_quota", GOMAXPROCS: 8, Digest: "digest"}
 	observation := NormalizeObservation(Observation{Component: ComponentRuntime, Stage: StageConfigLoaded, Result: ResultSuccess, RuntimeConfig: facts})
 	facts.GOMAXPROCS = 64
-	New(ComponentRuntime, &output).logObservation(context.Background(), observation)
+	New(ComponentRuntime, &output).logObservation(context.Background(), observation, LogAdmission{Allowed: true})
 	var event struct {
 		RuntimeConfig RuntimeConfigFacts `json:"runtime_config"`
 	}

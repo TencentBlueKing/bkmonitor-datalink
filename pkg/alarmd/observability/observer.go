@@ -485,7 +485,7 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.QueryPermit = normalizeQueryPermitFacts(observation.QueryPermit)
 	observation.QueryTiming = normalizeTimingFacts(observation)
 	observation.ShortPeriodCompletion = normalizeShortPeriodCompletion(observation)
-	observation.QueryFailure = normalizeQueryFailure(observation.Component, observation.Stage, observation.Err, observation.QueryFailure)
+	observation.QueryFailure = normalizeQueryFailure(observation.Component, observation.Stage, observation.QueryFailure)
 	if observation.RuntimeConfig != nil {
 		if observation.Component != ComponentRuntime || observation.Stage != StageConfigLoaded {
 			observation.RuntimeConfig = nil

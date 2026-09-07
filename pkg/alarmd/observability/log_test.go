@@ -186,7 +186,7 @@ func TestLoggingObserverWritesBoundedActivationFailureReappearedSamples(t *testi
 				"query-group-05", "query-group-06", "query-group-07", "query-group-08", "query-group-09",
 			},
 		},
-		Err: errors.New("must-not-be-observed"),
+		Err: errors.New("activation read failed"),
 	})
 
 	var event map[string]any
@@ -212,8 +212,8 @@ func TestLoggingObserverWritesBoundedActivationFailureReappearedSamples(t *testi
 		event["reappeared_query_group_samples_truncated"] != true {
 		t.Fatalf("reappeared samples were not bounded: %#v", event)
 	}
-	if event["error"] != nil || event["error_message"] != nil {
-		t.Fatalf("raw error leaked into activation failure log: %#v", event)
+	if event["error"] != "activation read failed" || event["error_message"] != nil {
+		t.Fatalf("sanitized error text missing from activation failure log: %#v", event)
 	}
 	for _, field := range []string{"query_group_key", "strategy_id", "record_id"} {
 		if event[field] != nil {

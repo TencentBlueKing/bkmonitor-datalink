@@ -25,7 +25,7 @@ func TestCapacityRejectionLogWhitelistAndUnknownOwnUsage(t *testing.T) {
 		limiter, _ := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 10})
 		policy, _ := NewBoundedLogPolicy(limiter)
 		NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
-			Component: ComponentResource, Stage: StageResourceHard, Result: ResultPaused, Err: errors.New("secret raw error"),
+			Component: ComponentResource, Stage: StageResourceHard, Result: ResultPaused, Err: errors.New("reserve https://user:secret@example.test/query: rejected"),
 			CapacityBudget: CapacityBudgetRetainedBytes, CapacityRejection: &CapacityRejectionFacts{Phase: test.phase, OwnUsed: test.own, SharedUsed: 60, Requested: 50, Limit: 100},
 		})
 		if strings.Contains(output.String(), "secret") || strings.Contains(output.String(), "https://") {
@@ -37,6 +37,9 @@ func TestCapacityRejectionLogWhitelistAndUnknownOwnUsage(t *testing.T) {
 		}
 		if row["capacity_phase"] != test.wantPhase {
 			t.Fatal(row)
+		}
+		if row["error"] != "reserve <url>: rejected" {
+			t.Fatalf("sanitized error text=%#v", row["error"])
 		}
 		own, present := row["capacity_own_used"]
 		if present != (test.own != nil) || (present && own != float64(0)) {

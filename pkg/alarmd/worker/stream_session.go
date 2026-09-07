@@ -92,7 +92,7 @@ func (stream *streamedExecution) Begin(ctx context.Context, header execution.Int
 
 func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execution.SeriesExecutionBatch) error {
 	if !stream.began {
-		return errors.New("alarmd worker: QueryExecutionSource delivered series before Begin")
+		return namedInputError(codeSeriesBeforeBegin, "alarmd worker: QueryExecutionSource delivered series before Begin")
 	}
 	series, err := stream.validateSeriesBatch(batch)
 	if err != nil {
@@ -110,7 +110,7 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 	for _, binding := range batch.Inputs {
 		key := streamedInputKey{consumer: binding.Consumer, series: series, requirement: binding.RequirementID}
 		if _, duplicate := stream.streamed[key]; duplicate {
-			return errors.New("alarmd worker: duplicate streamed named input")
+			return namedInputError(codeStreamedNamedInputDuplicate, "alarmd worker: duplicate streamed named input")
 		}
 		stream.streamed[key] = binding
 		if binding.Role == execution.InputRolePrimary {
@@ -261,14 +261,14 @@ func (stream *streamedExecution) validateSeriesBatch(batch execution.SeriesExecu
 		batch.Dataset.Len() == 0 || len(batch.Inputs) == 0 || batch.Delivery.PhysicalQuery != batch.PhysicalQuery ||
 		batch.Delivery.QueryRevision != batch.QueryRevision || batch.Delivery.Series != 1 ||
 		batch.Delivery.Records != uint64(batch.Dataset.Len()) || batch.Delivery.Digest == "" {
-		return "", errors.New("incomplete batch or frozen query mismatch")
+		return "", namedInputError(codeSeriesBatchInvalid, "incomplete batch or frozen query mismatch")
 	}
 	var series execution.SeriesIdentityDigest
 	for index := 0; index < batch.Dataset.Len(); index++ {
 		record, ok := batch.Dataset.Record(index)
 		candidate := execution.SeriesIdentityDigest(record.DimensionIdentity().Digest)
 		if !ok || candidate == "" || (series != "" && candidate != series) {
-			return "", errors.New("batch does not contain exactly one stable series")
+			return "", namedInputError(codeSeriesBatchNotSingleSeries, "batch does not contain exactly one stable series")
 		}
 		series = candidate
 	}
@@ -283,10 +283,10 @@ func (stream *streamedExecution) validateSeriesBatch(batch execution.SeriesExecu
 		}{consumer: binding.Consumer, requirement: binding.RequirementID}
 		requirement, known := stream.prepared.requirementByKey[key]
 		if !known {
-			return "", errors.New("binding is outside the frozen consumer requirement set")
+			return "", namedInputError(codeSeriesBindingOutsideRequirements, "binding is outside the frozen consumer requirement set")
 		}
 		if _, duplicate := seen[key]; duplicate {
-			return "", errors.New("batch repeats a frozen consumer requirement")
+			return "", namedInputError(codeSeriesBindingDuplicate, "batch repeats a frozen consumer requirement")
 		}
 		seen[key] = struct{}{}
 		if binding.Dataset != batch.Dataset || binding.View == nil || !binding.View.Uses(batch.Dataset) ||
@@ -296,13 +296,13 @@ func (stream *streamedExecution) validateSeriesBatch(batch execution.SeriesExecu
 			binding.Provenance.AttemptNo == 0 || execution.LogicalQueryRef(query.QueryRevision) != requirement.LogicalQueryRef ||
 			binding.Completeness != execution.CompletenessFull || binding.DataState != execution.DataStateData ||
 			binding.Disposition != execution.AccessAvailable {
-			return "", errors.New("binding differs from frozen DataRequirement or physical query")
+			return "", namedInputError(codeSeriesBindingMismatch, "binding differs from frozen DataRequirement or physical query")
 		}
 		for recordIndex := 0; recordIndex < binding.View.Len(); recordIndex++ {
 			record, ok := binding.View.Record(recordIndex)
 			if !ok || execution.SeriesIdentityDigest(record.DimensionIdentity().Digest) != series ||
 				record.SourceTime() < binding.QueryWindow.Start || record.SourceTime() >= binding.QueryWindow.End {
-				return "", errors.New("binding contains a record outside its series or frozen query window")
+				return "", namedInputError(codeSeriesRecordOutsideWindow, "binding contains a record outside its series or frozen query window")
 			}
 		}
 	}
@@ -425,10 +425,10 @@ func appendUniqueGapMutations(current, next []execution.PlanGapMutation) []execu
 
 func (stream *streamedExecution) complete(ctx context.Context, completion execution.QueryExecutionCompletion) error {
 	if !stream.began {
-		return errors.New("alarmd worker: QueryExecutionSource returned completion before Begin")
+		return completionContractError(codeCompletionBeforeBegin, "alarmd worker: QueryExecutionSource returned completion before Begin")
 	}
 	if err := completion.Validate(stream.header, stream.delivered); err != nil {
-		return err
+		return wrapCompletionContractError(codeCompletionInvalid, err)
 	}
 	physical := make(map[execution.PhysicalQueryDigest]execution.PhysicalQueryCompletion, len(completion.PhysicalQueries))
 	for _, item := range completion.PhysicalQueries {
@@ -450,29 +450,29 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 			binding.DatasetName != requirement.DatasetName || binding.Role != requirement.Role ||
 			binding.QueryWindow != requirement.AbsoluteWindow(stream.header.Contract.Slot.EvaluationTime) ||
 			binding.Provenance.AttemptNo == 0 {
-			return errors.New("alarmd worker: completion binding differs from frozen requirement or physical completion")
+			return completionContractError(codeCompletionBindingMismatch, "alarmd worker: completion binding differs from frozen requirement or physical completion")
 		}
 		if err := execution.ValidateNamedInputCompletion(binding, item); err != nil {
-			return errors.New("alarmd worker: completion binding differs from frozen requirement or physical completion")
+			return completionContractError(codeCompletionBindingPhysicalMismatch, "alarmd worker: completion binding differs from frozen requirement or physical completion")
 		}
 		if _, duplicate := completionBindings[key]; duplicate {
-			return errors.New("alarmd worker: duplicate completion binding")
+			return completionContractError(codeDuplicateCompletionBinding, "alarmd worker: duplicate completion binding")
 		}
 		completionBindings[key] = binding
 	}
 	for key, binding := range stream.streamed {
 		item, ok := physical[binding.Provenance.PhysicalQuery]
 		if !ok || item.Ref != binding.ProviderResult {
-			return errors.New("alarmd worker: streamed binding differs from physical completion")
+			return completionContractError(codeStreamedBindingMismatch, "alarmd worker: streamed binding differs from physical completion")
 		}
 		switch item.Completeness {
 		case execution.CompletenessFull:
 			if binding.Completeness != execution.CompletenessFull {
-				return errors.New("alarmd worker: streamed binding differs from FULL physical completion")
+				return completionContractError(codeStreamedBindingFullMismatch, "alarmd worker: streamed binding differs from FULL physical completion")
 			}
 		case execution.CompletenessPartial:
 			if binding.Completeness != execution.CompletenessFull {
-				return errors.New("alarmd worker: streamed binding differs from PARTIAL physical completion")
+				return completionContractError(codeStreamedBindingPartialMismatch, "alarmd worker: streamed binding differs from PARTIAL physical completion")
 			}
 			binding.Completeness = execution.CompletenessPartial
 			binding.Disposition = execution.AccessDegraded
@@ -486,7 +486,7 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 			binding.ReasonCode = physicalFailureReason(item.RouteFacts)
 			binding.PartialEvidence = nil
 		default:
-			return errors.New("alarmd worker: invalid physical completion completeness")
+			return completionContractError(codeInvalidCompleteness, "alarmd worker: invalid physical completion completeness")
 		}
 		stream.streamed[key] = binding
 	}
@@ -560,7 +560,7 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 		}
 	}
 	if len(stream.evaluated.Plans) != len(stream.header.DuePlans) {
-		return errors.New("alarmd worker: trustworthy completion did not produce every due Plan result")
+		return completionContractError(codeDuePlanResultMissing, "alarmd worker: trustworthy completion did not produce every due Plan result")
 	}
 	return nil
 }
@@ -581,14 +581,16 @@ func (stream *streamedExecution) validateCompletionOnlyExactSet(
 				requirement execution.RequirementID
 			}{consumer: consumer, requirement: requirement.RequirementID}
 			if _, found := completionBindings[key]; !found {
-				return fmt.Errorf("alarmd worker: completion-only Plan %s Level %d is missing frozen requirement %s",
-					due.Identity.StrategyID, consumer.LevelID, requirement.RequirementID)
+				return namedInputError(codeCompletionOnlyRequirementMissing,
+					fmt.Sprintf("alarmd worker: completion-only Plan %s Level %d is missing frozen requirement %s",
+						due.Identity.StrategyID, consumer.LevelID, requirement.RequirementID))
 			}
 			bindings = append(bindings, completionBindings[key])
 		}
 		if err := stream.prepared.inputBuilder.ValidateCompletionOnly(consumer, bindings, completions); err != nil {
-			return fmt.Errorf("alarmd worker: Plan %s Level %d completion-only exact set: %w",
-				due.Identity.StrategyID, consumer.LevelID, err)
+			return wrapNamedInputError(codeCompletionOnlyExactSetInvalid,
+				fmt.Errorf("alarmd worker: Plan %s Level %d completion-only exact set: %w",
+					due.Identity.StrategyID, consumer.LevelID, err))
 		}
 	}
 	return nil
@@ -672,7 +674,7 @@ func (stream *streamedExecution) noSeriesPlanResult(due execution.DuePlan) (exec
 	primary, found := firstNonFullPrimary(bindings)
 	if !found {
 		if !planCompletedFullEmpty(bindings, due.Identity) {
-			return execution.EvaluationResult{}, errors.New("alarmd worker: trustworthy completion produced no series or FULL EMPTY Plan")
+			return execution.EvaluationResult{}, completionContractError(codeNoSeriesPlanResultInvalid, "alarmd worker: trustworthy completion produced no series or FULL EMPTY Plan")
 		}
 		return execution.EvaluationResult{Contract: stream.header.Contract, Result: observability.ResultSuccess,
 			ReasonCode: observability.ReasonNone,
@@ -750,8 +752,9 @@ func (stream *streamedExecution) seriesInputs(
 		}
 		input, err := stream.prepared.inputBuilder.Build(consumer, series, bindings, completions)
 		if err != nil {
-			return nil, fmt.Errorf("alarmd worker: Plan %s Level %d named-input exact set: %w",
-				due.Identity.StrategyID, consumer.LevelID, err)
+			return nil, wrapNamedInputError(codeNamedInputExactSetInvalid,
+				fmt.Errorf("alarmd worker: Plan %s Level %d named-input exact set: %w",
+					due.Identity.StrategyID, consumer.LevelID, err))
 		}
 		inputs = append(inputs, input)
 	}
@@ -785,7 +788,7 @@ func (stream *streamedExecution) completedBinding(
 	}
 	completed, found := physical[query.Digest]
 	if !found {
-		return execution.NamedInputBinding{}, errors.New("authoritative physical completion is missing")
+		return execution.NamedInputBinding{}, namedInputError(codePhysicalCompletionMissing, "authoritative physical completion is missing")
 	}
 	binding := execution.NamedInputBinding{
 		Consumer: consumer, RequirementID: requirement.RequirementID, DatasetName: requirement.DatasetName,
@@ -811,7 +814,7 @@ func (stream *streamedExecution) completedBinding(
 		binding.Disposition = execution.AccessUnavailable
 		binding.ReasonCode = physicalFailureReason(completed.RouteFacts)
 	default:
-		return execution.NamedInputBinding{}, errors.New("invalid physical completion completeness")
+		return execution.NamedInputBinding{}, namedInputError(codePhysicalCompletenessInvalid, "invalid physical completion completeness")
 	}
 	return binding, nil
 }
@@ -843,12 +846,12 @@ func (stream *streamedExecution) queryForRequirement(
 			continue
 		}
 		if found {
-			return execution.PlannedPhysicalQueryRef{}, errors.New("frozen requirement physical query is ambiguous")
+			return execution.PlannedPhysicalQueryRef{}, namedInputError(codeRequirementQueryAmbiguous, "frozen requirement physical query is ambiguous")
 		}
 		selected, found = query, true
 	}
 	if !found {
-		return execution.PlannedPhysicalQueryRef{}, errors.New("frozen requirement physical query is missing")
+		return execution.PlannedPhysicalQueryRef{}, namedInputError(codeRequirementQueryMissing, "frozen requirement physical query is missing")
 	}
 	return selected, nil
 }

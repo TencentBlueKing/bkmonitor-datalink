@@ -376,7 +376,7 @@ func TestObservationLoggerUsesBoundedEnvelope(t *testing.T) {
 		Trace: TraceFields{
 			MessageID: "message-1", StrategyID: "42", TerminalScope: "LEVEL", TerminalFieldPath: "level.trigger_plan",
 		},
-		Err: errors.New("do not log raw error content"),
+		Err: errors.New("static error text"),
 	})
 
 	var event map[string]any
@@ -403,8 +403,8 @@ func TestObservationLoggerUsesBoundedEnvelope(t *testing.T) {
 			t.Fatalf("event[%q] = %#v, want %#v; event=%#v", field, event[field], want, event)
 		}
 	}
-	if _, exists := event["error"]; exists {
-		t.Fatalf("raw error was logged: %#v", event)
+	if event["error"] != "static error text" {
+		t.Fatalf("sanitized error text was not logged: %#v", event)
 	}
 	if event["error_type"] == nil {
 		t.Fatalf("error type is missing: %#v", event)

@@ -12,6 +12,8 @@ package execution
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
@@ -160,11 +162,74 @@ const (
 	RouteAttemptFailed    RouteAttemptResult = "FAILED"
 )
 
+// RouteAttemptFact records one provider attempt. Detail is a bounded,
+// machine-readable failure detail ("http_status=503" or
+// "transport=connection_refused"); it never carries response bodies, URLs or
+// free error text, and it does not change completeness semantics.
 type RouteAttemptFact struct {
 	AttemptNo  uint32
 	Endpoint   string
 	Result     RouteAttemptResult
 	ReasonCode ReasonCode
+	Detail     string
+}
+
+const (
+	RouteDetailKindHTTPStatus = "http_status"
+	RouteDetailKindTransport  = "transport"
+	RouteDetailKindResponse   = "response"
+
+	ResponseFailureIsPartialMissing = "is_partial_missing"
+
+	TransportFailureTimeout           = "timeout"
+	TransportFailureConnectionRefused = "connection_refused"
+	TransportFailureConnectionReset   = "connection_reset"
+	TransportFailureDNS               = "dns"
+	TransportFailureTLS               = "tls"
+	TransportFailureEOF               = "eof"
+	TransportFailureOther             = "other"
+)
+
+// HTTPStatusRouteDetail encodes a non-success HTTP status as attempt detail.
+func HTTPStatusRouteDetail(status int) string {
+	if status <= 0 || status > 999 {
+		return RouteDetailKindHTTPStatus + "=other"
+	}
+	return RouteDetailKindHTTPStatus + "=" + strconv.Itoa(status)
+}
+
+// TransportRouteDetail encodes a classified transport failure as attempt detail.
+// Unknown classes collapse to "other" so the value stays a bounded enum.
+func TransportRouteDetail(class string) string {
+	switch class {
+	case TransportFailureTimeout, TransportFailureConnectionRefused, TransportFailureConnectionReset,
+		TransportFailureDNS, TransportFailureTLS, TransportFailureEOF:
+		return RouteDetailKindTransport + "=" + class
+	default:
+		return RouteDetailKindTransport + "=" + TransportFailureOther
+	}
+}
+
+// ResponseRouteDetail encodes a 200 response that violated the wire contract
+// (for example a missing is_partial flag) as attempt detail.
+func ResponseRouteDetail(class string) string {
+	switch class {
+	case ResponseFailureIsPartialMissing:
+		return RouteDetailKindResponse + "=" + class
+	default:
+		return RouteDetailKindResponse + "=other"
+	}
+}
+
+// RouteDetailKind returns the detail kind prefix ("http_status", "transport"
+// or "response") or "" when the detail is empty or not one of the known shapes.
+func RouteDetailKind(detail string) string {
+	for _, kind := range []string{RouteDetailKindHTTPStatus, RouteDetailKindTransport, RouteDetailKindResponse} {
+		if strings.HasPrefix(detail, kind+"=") {
+			return kind
+		}
+	}
+	return ""
 }
 
 type ProviderRouteFacts struct {

@@ -2,35 +2,102 @@ package observability
 
 // QueryFailureFacts is log-only: no raw error, query, URL or dimension values.
 // Stage names the actual Coordinator boundary, not an inferred root cause.
-type QueryFailureFacts struct{ Stage, Category, Code string }
+// Code is a stable machine code drawn from a bounded grammar (UQ status codes,
+// worker contract codes, capacity budgets); anything outside the grammar
+// collapses to OTHER. Detail is an optional bounded provider detail such as
+// "http_status=503" or "transport=connection_refused".
+type QueryFailureFacts struct{ Stage, Category, Code, Detail string }
 
-func normalizeQueryFailure(component Component, stage Stage, err error, input *QueryFailureFacts) *QueryFailureFacts {
-	if component != ComponentAccess || stage != StageQueryCompleted || err == nil || input == nil {
+const (
+	QueryFailureStageExecute        = "execute"
+	QueryFailureStageStreamComplete = "stream_complete"
+	QueryFailureStageProvider       = "provider"
+	QueryFailureStageOther          = "other"
+
+	QueryFailureCategorySourceBackend      = "source_backend"
+	QueryFailureCategorySeriesIdentity     = "series_identity"
+	QueryFailureCategoryBudget             = "budget"
+	QueryFailureCategoryCompletionContract = "completion_contract"
+	QueryFailureCategoryNamedInput         = "named_input"
+	QueryFailureCategoryProviderTransport  = "provider_transport"
+	QueryFailureCategoryOther              = "other"
+
+	QueryFailureCodeOther = "OTHER"
+
+	maxQueryFailureCodeLength   = 64
+	maxQueryFailureDetailLength = 96
+)
+
+// ValidQueryFailureCode reports whether code matches ^[A-Z][A-Z0-9_]{0,63}$.
+// The grammar keeps codes to bounded enums (UQ status codes, contract codes)
+// and rejects URLs, messages and other free text.
+func ValidQueryFailureCode(code string) bool {
+	if code == "" || len(code) > maxQueryFailureCodeLength {
+		return false
+	}
+	for index := 0; index < len(code); index++ {
+		char := code[index]
+		switch {
+		case char >= 'A' && char <= 'Z':
+		case index > 0 && (char >= '0' && char <= '9' || char == '_'):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// NormalizeQueryFailureCode returns code when it matches the grammar and OTHER
+// otherwise.
+func NormalizeQueryFailureCode(code string) string {
+	if ValidQueryFailureCode(code) {
+		return code
+	}
+	return QueryFailureCodeOther
+}
+
+func validQueryFailureDetail(detail string) bool {
+	if detail == "" || len(detail) > maxQueryFailureDetailLength {
+		return false
+	}
+	for index := 0; index < len(detail); index++ {
+		char := detail[index]
+		switch {
+		case char >= 'a' && char <= 'z', char >= '0' && char <= '9':
+		case char == '_', char == '=', char == '.', char == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeQueryFailure(component Component, stage Stage, input *QueryFailureFacts) *QueryFailureFacts {
+	if component != ComponentAccess || stage != StageQueryCompleted || input == nil {
 		return nil
 	}
 	f := *input
 	switch f.Stage {
-	case "execute", "stream_complete":
+	case QueryFailureStageExecute, QueryFailureStageStreamComplete, QueryFailureStageProvider:
 	default:
-		f.Stage = "other"
+		f.Stage = QueryFailureStageOther
 	}
 	switch f.Category {
-	case "source_backend":
-		if f.Code != "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS" {
-			f.Code = "OTHER"
+	case QueryFailureCategoryBudget:
+		if budget := NormalizeCapacityBudget(CapacityBudget(f.Code)); budget != "" && budget != CapacityBudgetOther {
+			f.Code = string(budget)
+		} else {
+			f.Code = NormalizeQueryFailureCode(f.Code)
 		}
-	case "series_identity":
-		if f.Code != "IDENTITY_FIELD_MISSING" {
-			f.Code = "OTHER"
-		}
-	case "budget":
-		f.Code = string(NormalizeCapacityBudget(CapacityBudget(f.Code)))
-		if f.Code == "" {
-			f.Code = "other"
-		}
+	case QueryFailureCategorySourceBackend, QueryFailureCategorySeriesIdentity, QueryFailureCategoryCompletionContract,
+		QueryFailureCategoryNamedInput, QueryFailureCategoryProviderTransport:
+		f.Code = NormalizeQueryFailureCode(f.Code)
 	default:
-		f.Category = "other"
-		f.Code = "OTHER"
+		f.Category = QueryFailureCategoryOther
+		f.Code = QueryFailureCodeOther
+	}
+	if !validQueryFailureDetail(f.Detail) {
+		f.Detail = ""
 	}
 	return &f
 }

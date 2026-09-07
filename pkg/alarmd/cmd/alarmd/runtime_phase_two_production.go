@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
@@ -1428,4 +1429,34 @@ func (channels productionRecoveryChannels) Release() { channels.channels.Release
 func (channels productionRecoveryChannels) AcquireQueryPermit(ctx context.Context, slot execution.SlotIdentity, operation execution.Operation, deadline time.Time) (access.QueryPermit, error) {
 	controlplane.ClearSnapshotReadScope(ctx)
 	return channels.channels.AcquireQueryPermit(ctx, slot, operation, deadline)
+}
+
+// Phase-two diagnostic log budget: one line per minute per (reason or stage,
+// Query Group) bucket, with at most phaseTwoDiagnosticLogMaxScopes live scope
+// buckets. Suppressed lines are counted and reported on the next admitted line
+// of the same bucket.
+const (
+	phaseTwoDiagnosticLogWindow    = time.Minute
+	phaseTwoDiagnosticLogMaxEvents = 1
+	phaseTwoDiagnosticLogMaxScopes = 4096
+)
+
+// newPhaseTwoRuntimeObserver mirrors newPhaseOneRuntimeObserver but uses the
+// scoped limiter so one noisy Query Group cannot hide every other Query
+// Group's diagnostics behind a per-reason budget.
+func newPhaseTwoRuntimeObserver(recorder *metric.Recorder, logger *observability.Logger) (observability.Observer, error) {
+	if recorder == nil || logger == nil {
+		return nil, errors.New("alarmd runtime: recorder and logger are required")
+	}
+	limiter, err := observability.NewScopedLogLimiter(observability.ScopedLogLimiterConfig{
+		Window: phaseTwoDiagnosticLogWindow, MaxEvents: phaseTwoDiagnosticLogMaxEvents, MaxScopes: phaseTwoDiagnosticLogMaxScopes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	policy, err := observability.NewScopedBoundedLogPolicy(limiter)
+	if err != nil {
+		return nil, err
+	}
+	return observability.Multi(recorder, observability.NewLoggingObserver(logger, policy)), nil
 }

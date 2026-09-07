@@ -4,16 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
 func TestQueryFailureDiagnosticsPreserveDecodeFailure(t *testing.T) {
 	for _, tc := range []struct{ name, payload, category, code string }{
 		{"backend", `{"series":[],"status":{"code":"SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"},"is_partial":false}`, "source_backend", "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"},
+		{"backend_new_bounded_code", `{"series":[],"status":{"code":"QUERY_TS_STORAGE_TIMEOUT"},"is_partial":false}`, "source_backend", "QUERY_TS_STORAGE_TIMEOUT"},
 		{"backend_unknown", `{"series":[],"status":{"code":"https://user:secret@example.test/?token=secret"},"is_partial":false}`, "source_backend", "OTHER"},
+		{"backend_lowercase", `{"series":[],"status":{"code":"table missing"},"is_partial":false}`, "source_backend", "OTHER"},
 		{"identity", `{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":[],"group_values":[],"values":[[1700123456789,1]]}],"is_partial":false}`, "series_identity", "IDENTITY_FIELD_MISSING"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -47,6 +50,47 @@ func TestQueryFailureAfterHealthyPrefixAndSinkError(t *testing.T) {
 	var diagnostic interface{ QueryFailure() (string, string) }
 	if !errors.Is(err, original) || errors.As(err, &diagnostic) {
 		t.Fatalf("sink error reclassified: %v", err)
+	}
+}
+
+func TestResponseLimitErrorsKeepTextAndExposeBudgetCodes(t *testing.T) {
+	for err, code := range map[error]string{
+		ErrResponseBytesExceeded: "RESPONSE_BYTES_EXCEEDED",
+		ErrSeriesBytesExceeded:   "SERIES_BYTES_EXCEEDED",
+		ErrTotalSeriesExceeded:   "TOTAL_SERIES_EXCEEDED",
+		ErrTotalRecordsExceeded:  "TOTAL_RECORDS_EXCEEDED",
+	} {
+		if err.Error() != "alarmd access uq: "+code {
+			t.Fatalf("sentinel text changed: %q", err.Error())
+		}
+		wrapped := fmt.Errorf("alarmd worker: query: %w", err)
+		if !errors.Is(wrapped, err) {
+			t.Fatalf("errors.Is lost for %s", code)
+		}
+		var diagnostic interface{ QueryFailure() (string, string) }
+		if !errors.As(wrapped, &diagnostic) {
+			t.Fatalf("no diagnostic for %s", code)
+		}
+		if category, got := diagnostic.QueryFailure(); category != "budget" || got != code {
+			t.Fatalf("diagnostic for %s = (%s,%s)", code, category, got)
+		}
+	}
+}
+
+func TestBoundedFailureCodeGrammar(t *testing.T) {
+	for code, want := range map[string]string{
+		"SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS": "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS",
+		"QUERY_TS_PARTIAL":                   "QUERY_TS_PARTIAL",
+		"A1":                                 "A1",
+		"":                                   "OTHER",
+		"1A":                                 "OTHER",
+		"lower":                              "OTHER",
+		"HAS-DASH":                           "OTHER",
+		strings.Repeat("A", 65):              "OTHER",
+	} {
+		if got := boundedFailureCode(code); got != want {
+			t.Fatalf("boundedFailureCode(%q) = %q, want %q", code, got, want)
+		}
 	}
 }
 

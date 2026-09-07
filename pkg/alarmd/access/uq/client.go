@@ -3,13 +3,17 @@ package uq
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -24,10 +28,10 @@ const (
 )
 
 var (
-	ErrResponseBytesExceeded = errors.New("alarmd access uq: RESPONSE_BYTES_EXCEEDED")
-	ErrSeriesBytesExceeded   = errors.New("alarmd access uq: SERIES_BYTES_EXCEEDED")
-	ErrTotalSeriesExceeded   = errors.New("alarmd access uq: TOTAL_SERIES_EXCEEDED")
-	ErrTotalRecordsExceeded  = errors.New("alarmd access uq: TOTAL_RECORDS_EXCEEDED")
+	ErrResponseBytesExceeded error = &responseLimitError{code: "RESPONSE_BYTES_EXCEEDED"}
+	ErrSeriesBytesExceeded   error = &responseLimitError{code: "SERIES_BYTES_EXCEEDED"}
+	ErrTotalSeriesExceeded   error = &responseLimitError{code: "TOTAL_SERIES_EXCEEDED"}
+	ErrTotalRecordsExceeded  error = &responseLimitError{code: "TOTAL_RECORDS_EXCEEDED"}
 )
 
 type Limits struct {
@@ -110,14 +114,18 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			reason = execution.ReasonCode(contract.ReasonQueryTimeout)
 		}
-		completion := client.unavailableCompletion(attempt, reason)
+		completion := client.unavailableCompletion(attempt, reason, execution.TransportRouteDetail(classifyTransportFailure(err)))
 		completion.Stats.QueryMillis = uint64(client.now().Sub(started).Milliseconds())
 		return completion, nil
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		// The body is drained and discarded on purpose: UQ error bodies can echo
+		// the request (table ids, conditions, dimension values) and must not be
+		// parsed for business state or copied into logs. The status code alone
+		// is the bounded diagnostic detail.
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		completion := client.unavailableCompletion(attempt, execution.ReasonCode(contract.ReasonQueryUnavailable))
+		completion := client.unavailableCompletion(attempt, execution.ReasonCode(contract.ReasonQueryUnavailable), execution.HTTPStatusRouteDetail(response.StatusCode))
 		completion.Stats.QueryMillis = uint64(client.now().Sub(started).Milliseconds())
 		return completion, nil
 	}
@@ -131,7 +139,7 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 	return completion, nil
 }
 
-func (client *Client) unavailableCompletion(attempt execution.QueryAttempt, reason execution.ReasonCode) execution.ProviderCompletion {
+func (client *Client) unavailableCompletion(attempt execution.QueryAttempt, reason execution.ReasonCode, detail string) execution.ProviderCompletion {
 	return execution.ProviderCompletion{
 		Ref:           providerResultRef(attempt),
 		PhysicalQuery: attempt.Spec.Digest,
@@ -141,10 +149,58 @@ func (client *Client) unavailableCompletion(attempt execution.QueryAttempt, reas
 			ProviderRouteRef: attempt.Spec.PlanFacts.ProviderRouteRef,
 			Attempts: []execution.RouteAttemptFact{{
 				AttemptNo: attempt.AttemptNo, Endpoint: client.endpoint,
-				Result: execution.RouteAttemptFailed, ReasonCode: reason,
+				Result: execution.RouteAttemptFailed, ReasonCode: reason, Detail: detail,
 			}},
 		},
 	}
+}
+
+// classifyTransportFailure maps an http.Client.Do error onto the bounded
+// transport failure enum. It inspects error types only and never copies the
+// error text, which may embed the endpoint URL.
+func classifyTransportFailure(err error) string {
+	if err == nil {
+		return execution.TransportFailureOther
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return execution.TransportFailureTimeout
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return execution.TransportFailureDNS
+	}
+	if isTLSFailure(err) {
+		return execution.TransportFailureTLS
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return execution.TransportFailureConnectionRefused
+	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+		return execution.TransportFailureConnectionReset
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return execution.TransportFailureEOF
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return execution.TransportFailureTimeout
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "dial" {
+		return execution.TransportFailureConnectionRefused
+	}
+	return execution.TransportFailureOther
+}
+
+func isTLSFailure(err error) bool {
+	var recordHeader tls.RecordHeaderError
+	var alert tls.AlertError
+	var certificate *tls.CertificateVerificationError
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var certificateInvalid x509.CertificateInvalidError
+	return errors.As(err, &recordHeader) || errors.As(err, &alert) || errors.As(err, &certificate) ||
+		errors.As(err, &unknownAuthority) || errors.As(err, &hostname) || errors.As(err, &certificateInvalid)
 }
 
 func providerResultRef(attempt execution.QueryAttempt) execution.ProviderResultRef {
@@ -443,7 +499,7 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 		dataState = execution.DataStateData
 	}
 	if isPartial == nil {
-		completion := client.unavailableCompletion(attempt, execution.ReasonCode(contract.ReasonQueryUnavailable))
+		completion := client.unavailableCompletion(attempt, execution.ReasonCode(contract.ReasonQueryUnavailable), execution.ResponseRouteDetail(execution.ResponseFailureIsPartialMissing))
 		completion.DataState = dataState
 		completion.Delivery = delivery
 		completion.RouteFacts.ResultTableIDs = append([]string(nil), resultTableIDs...)

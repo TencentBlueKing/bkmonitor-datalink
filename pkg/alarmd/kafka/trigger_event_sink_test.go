@@ -92,6 +92,7 @@ func testTriggerEventSinkPublishesSnapshotProtocol(t *testing.T, kind string) {
 		DetectPlanFingerprint: legacy.DetectPlanFingerprint, TriggerStateFingerprint: legacy.TriggerStateFingerprint,
 		ExecutionID: legacy.Trace.ExecutionID, MaxEvidenceBytes: 64 << 10,
 		StrategyRef: &contract.StrategySnapshotRef{TenantID: "default", BusinessID: 2, StrategyID: 1001, Revision: 7},
+		DedupeMD5:   "0260bae09d2ae3f75683bd06a76e9479",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +117,7 @@ func testTriggerEventSinkPublishesSnapshotProtocol(t *testing.T, kind string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.EventKind != kind || decoded.Schema.Minor != 1 || decoded.StrategyRef == nil || *decoded.StrategyRef != *event.StrategyRef {
+	if decoded.EventKind != kind || decoded.Schema.Minor != 2 || decoded.DedupeMD5 != event.DedupeMD5 || decoded.StrategyRef == nil || *decoded.StrategyRef != *event.StrategyRef {
 		t.Fatalf("Kafka payload lost snapshot reference: %s", payload)
 	}
 	firstPayload := append([]byte(nil), payload...)

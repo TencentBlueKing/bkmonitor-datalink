@@ -86,6 +86,7 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 		}
 		fingerprints := request.Plan.Fingerprints()
 		var snapshotRef *contract.StrategySnapshotRef
+		var dedupeMD5 string
 		ref := request.Plan.StrategyRef()
 		if ref.SnapshotRevision > 0 {
 			strategyID, strategyErr := strconv.ParseInt(ref.StrategyID, 10, 64)
@@ -94,9 +95,17 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 				return EvaluationResultV2{}, invariantV2("build strategy snapshot reference", 0, errors.New("invalid frozen strategy identity"))
 			}
 			snapshotRef = &contract.StrategySnapshotRef{TenantID: ref.TenantID, BusinessID: businessID, StrategyID: strategyID, Revision: ref.SnapshotRevision}
+			if identity := request.Plan.OutputIdentity(); identity != nil {
+				var err error
+				dedupeMD5, err = contract.MonitorDedupeMD5(ref.StrategyID, request.BusinessID, request.RecordRef.Dimensions, *identity)
+				if err != nil {
+					return EvaluationResultV2{}, invariantV2("build monitor dedupe identity", 0, err)
+				}
+			}
 		}
 		event, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{
 			StrategyRef: snapshotRef,
+			DedupeMD5:   dedupeMD5,
 			EventKind:   result.RecordResult, TenantID: request.TenantID, BusinessID: request.BusinessID,
 			PlanRef: request.Plan.PlanRef(), RecordRef: request.RecordRef, Observed: request.Observed,
 			LevelResults: levelResults, EvaluationTime: request.EvaluationTime,

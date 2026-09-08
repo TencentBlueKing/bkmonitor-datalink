@@ -136,6 +136,9 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 		datasetDigest:       datasetDigest,
 	}
 	terminals := make([]Terminal, 0)
+	if request.Plan.OutputIdentity != nil {
+		compiled.outputIdentity = &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, request.Plan.OutputIdentity.DimensionFields...)}
+	}
 	var triggerComputeCost uint64
 	for _, rawLevel := range request.Plan.StrategyIR.Levels {
 		level, normalizers, terminal, err := c.compileLevel(
@@ -182,6 +185,9 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 
 func (c *PlanCompiler) validatePlan(request CompileRequest) *Terminal {
 	plan := request.Plan
+	if plan.OutputIdentity != nil && plan.OutputIdentity.DimensionFields == nil {
+		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "output_identity.dimension_fields"}
+	}
 	strategy := plan.StrategyIR
 	if plan.PlanID == "" || plan.PlanID != plan.StrategyRef.StrategyID || plan.StrategyRef != strategy.StrategyRef || plan.StrategyRef.SnapshotRevision < 0 ||
 		plan.InputProjection.BusinessIdentityField == "" || !equalProjection(plan.InputProjection, strategy.InputProjection) ||

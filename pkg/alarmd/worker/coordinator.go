@@ -891,6 +891,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 				}
 			}
 		}
+		coordinator.observeGapScheduleRestart(ctx, request.Operation, loadedGaps, planResult.GuardAfterState)
 		if err := coordinator.applyGap(ctx, request.Operation, request.Contract, planResult.GuardAfterState); err != nil {
 			return execution.SlotExecutionResult{}, err
 		}
@@ -1055,6 +1056,31 @@ func (coordinator *SlotExecutionCoordinator) admitPlan(
 		return fmt.Errorf("alarmd worker: side-effect admission: %w", err)
 	}
 	return nil
+}
+
+// observeGapScheduleRestart names the recovery of a Plan gap marker that was
+// left behind by a Plan schedule change: the loaded marker still carries the
+// schedule revision it was written under, this Slot warms or clears it under
+// the current one, and the store restarts the warmup count of every scope
+// whose revision moved. It is observation only: the Slot result, the gap
+// mutation and Progress are unchanged, and an operator reading the Query
+// Group's flow can tell this restart from an ordinary warmup Slot.
+func (coordinator *SlotExecutionCoordinator) observeGapScheduleRestart(
+	ctx context.Context,
+	operation execution.Operation,
+	loaded execution.GapLoadResult,
+	mutations []execution.PlanGapMutation,
+) {
+	for _, mutation := range mutations {
+		marker, found := loaded.Find(mutation.Identity)
+		if !found || marker.Status != execution.GapFound ||
+			marker.LastScheduleRevision == "" || marker.LastScheduleRevision == mutation.ScheduleRevision {
+			continue
+		}
+		coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageGapGuardCommitted,
+			operation, time.Now(), observability.ResultResumed, observability.ReasonNone,
+			observability.Counts{Keys: int64(len(mutation.Scopes))}, nil)
+	}
 }
 
 func (coordinator *SlotExecutionCoordinator) applyGap(

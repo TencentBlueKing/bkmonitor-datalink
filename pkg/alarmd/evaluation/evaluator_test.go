@@ -547,3 +547,154 @@ func compiledWindowWithUptime(t *testing.T, windowSize, requiredAnomalies uint32
 }
 
 var _ = observability.ReasonNone
+
+// planGapMarkerFixture returns a request whose Plan carries one persisted gap
+// marker with the given scope, reason and warmup counters, written under
+// lastRevision. The record itself is FULL data, so the Slot advances State.
+func planGapMarkerFixture(
+	t *testing.T,
+	scope execution.GapScope,
+	reason string,
+	required, observed uint32,
+	lastRevision execution.PlanScheduleRevision,
+) execution.EvaluationRequest {
+	t.Helper()
+	request := requestFixture(t, json.RawMessage(`10`), nil)
+	due := request.Header.DuePlans[0]
+	version, err := execution.BuildApplyVersion(request.Header.Contract, due.StateApplyEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lastRevision == "" {
+		lastRevision = due.ScheduleRevision
+	}
+	status := execution.GapStatusGapped
+	if observed > 0 {
+		status = execution.GapStatusWarming
+	}
+	request.Gaps.Items[0] = execution.GapGuardSnapshot{
+		Identity:                execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration},
+		MarkerRevision:          4,
+		PersistedApplyVersion:   version,
+		PersistedMutationDigest: "gap-digest",
+		Status:                  execution.GapFound,
+		LastScheduleRevision:    lastRevision,
+		Scopes: []execution.GapScopeState{{
+			Scope:             scope,
+			Status:            status,
+			ReasonCode:        execution.ReasonCode(reason),
+			RequiredFullSlots: required,
+			ObservedFullSlots: observed,
+		}},
+	}
+	return request
+}
+
+// A Plan gap marker recovers on a data Slot whatever opened it: the reason a
+// marker carries names why the guard exists, it is not a licence to keep the
+// guard. Every Level under the marker still reports that reason while the
+// guard is active, and the durable Level state keeps it too.
+func TestEvaluatorRecoversPlanGapUnderEveryReasonAndScope(t *testing.T) {
+	for _, reason := range []string{
+		contract.ReasonGapSkipped, contract.ReasonSnapshotUnavailable, contract.ReasonExecutionBudgetExhausted,
+	} {
+		for _, scope := range []struct {
+			name  string
+			scope execution.GapScope
+		}{
+			{name: "plan_wide", scope: execution.GapScope{}},
+			{name: "level", scope: execution.GapScope{LevelID: 5, HasLevel: true}},
+		} {
+			t.Run(reason+"/"+scope.name, func(t *testing.T) {
+				request := planGapMarkerFixture(t, scope.scope, reason, 1, 0, "")
+				result, err := newEvaluator(t).Evaluate(context.Background(), request)
+				if err != nil {
+					t.Fatalf("Evaluate() error = %v", err)
+				}
+				plan := result.Plans[0]
+				if len(plan.LevelOutcomes) != 1 || plan.LevelOutcomes[0].Outcome != execution.LevelOutcomeUnknown ||
+					plan.LevelOutcomes[0].ReasonCode != execution.ReasonCode(reason) {
+					t.Fatalf("Level outcome under the active guard = %+v, want UNKNOWN carrying %s", plan.LevelOutcomes, reason)
+				}
+				if len(plan.StateResults) != 1 || len(plan.StateResults[0].Mutation.Levels) != 1 ||
+					plan.StateResults[0].Mutation.Levels[0].GapReasonCode != execution.ReasonCode(reason) {
+					t.Fatalf("durable Level state lost the guard reason: %+v", plan.StateResults)
+				}
+				if len(plan.GuardAfterState) != 1 || len(plan.GuardAfterState[0].Scopes) != 1 ||
+					plan.GuardAfterState[0].Scopes[0].Kind != execution.GapClear ||
+					plan.GuardAfterState[0].Scopes[0].Scope != scope.scope {
+					t.Fatalf("marker with reason %s did not clear on its required FULL Slot: %+v", reason, plan.GuardAfterState)
+				}
+				if err := result.Validate(request); err != nil {
+					t.Fatalf("Validate() = %v", err)
+				}
+			})
+		}
+	}
+}
+
+// A marker left behind by a Plan schedule change must not block for ever. The
+// store restarts the warmup count of every scope whose schedule revision moved,
+// so the evaluator counts this Slot as the first FULL Slot under the current
+// revision and writes the mutation under that revision. Before this the marker
+// was neither warmed nor cleared and every Level under it stayed UNKNOWN with
+// the marker's reason for as long as the marker lived.
+func TestEvaluatorRestartsPlanGapWarmupUnderANewScheduleRevision(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		revision   execution.PlanScheduleRevision
+		required   uint32
+		observed   uint32
+		wantKind   execution.GapMutationKind
+		wantReason string
+	}{
+		{name: "stale_revision_single_slot_clears", revision: "superseded-plan-schedule", required: 1, wantKind: execution.GapClear},
+		{
+			name: "stale_revision_restarts_warmup", revision: "superseded-plan-schedule", required: 3, observed: 2,
+			wantKind: execution.GapWarmup, wantReason: contract.ReasonExecutionBudgetExhausted,
+		},
+		{name: "current_revision_keeps_its_count", required: 3, observed: 2, wantKind: execution.GapClear},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := planGapMarkerFixture(t, execution.GapScope{}, contract.ReasonExecutionBudgetExhausted,
+				test.required, test.observed, test.revision)
+			due := request.Header.DuePlans[0]
+			result, err := newEvaluator(t).Evaluate(context.Background(), request)
+			if err != nil {
+				t.Fatalf("Evaluate() error = %v", err)
+			}
+			plan := result.Plans[0]
+			if len(plan.GuardAfterState) != 1 || len(plan.GuardAfterState[0].Scopes) != 1 {
+				t.Fatalf("the data Slot produced no post-state gap mutation: %+v", plan.GuardAfterState)
+			}
+			mutation := plan.GuardAfterState[0]
+			if mutation.ScheduleRevision != due.ScheduleRevision {
+				t.Fatalf("gap mutation schedule revision = %s, want the current %s", mutation.ScheduleRevision, due.ScheduleRevision)
+			}
+			if mutation.Scopes[0].Kind != test.wantKind ||
+				mutation.Scopes[0].ReasonCode != execution.ReasonCode(test.wantReason) {
+				t.Fatalf("gap mutation = %+v, want %s carrying %q", mutation.Scopes[0], test.wantKind, test.wantReason)
+			}
+			if err := result.Validate(request); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+		})
+	}
+}
+
+// The guard stays honest: without a durable State mutation nothing was
+// observed, so a stale marker is not cleared either.
+func TestEvaluatorKeepsPlanGapWithoutDurableState(t *testing.T) {
+	for _, revision := range []execution.PlanScheduleRevision{"", "superseded-plan-schedule"} {
+		request := planGapMarkerFixture(t, execution.GapScope{}, contract.ReasonGapSkipped, 1, 0, revision)
+		request.State.Items[0].Status = execution.StateRetryableIO
+		request.State.Items[0].ReasonCode = execution.ReasonCode(contract.ReasonStateWriteRetryable)
+		result, err := newEvaluator(t).Evaluate(context.Background(), request)
+		if err != nil {
+			t.Fatalf("revision %q Evaluate() error = %v", revision, err)
+		}
+		if len(result.Plans[0].StateResults) != 0 || len(result.Plans[0].GuardAfterState) != 0 {
+			t.Fatalf("revision %q cleared a gap without durable state: %+v", revision, result.Plans[0])
+		}
+	}
+}

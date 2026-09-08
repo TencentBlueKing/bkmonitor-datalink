@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
@@ -30,7 +31,19 @@ var (
 	schemaVersion = "none"
 )
 
+// Contention is the one dimension the profiles cannot answer with the defaults:
+// mutex and block sampling are off unless the process turns them on. Both rates
+// are deliberately coarse — one in a hundred contention events, and one blocking
+// event per millisecond of blocking — so the samples identify which lock is
+// contended without the sampling itself distorting the measurement.
+const (
+	mutexProfileFraction = 100
+	blockProfileRateNS   = 1_000_000
+)
+
 func main() {
+	runtime.SetMutexProfileFraction(mutexProfileFraction)
+	runtime.SetBlockProfileRate(blockProfileRateNS)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()

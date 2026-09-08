@@ -220,6 +220,16 @@ func openProductionPhaseTwoBundleWithDependencies(
 		return nil, err
 	}
 	repository.ConfigureObserver(observer)
+	// The cache counters decide how much a decoded-timeline cache would save,
+	// and nothing consumed them before.
+	recorder.SetControlCacheSource(func() []metric.ControlCacheCounts {
+		stats := repository.ControlReadCacheStats()
+		return []metric.ControlCacheCounts{
+			{Object: "snapshot", Hits: stats.Snapshot.Hits, Misses: stats.Snapshot.Misses, Refreshes: stats.Snapshot.Refreshes},
+			{Object: "activation", Hits: stats.Activation.Hits, Misses: stats.Activation.Misses, Refreshes: stats.Activation.Refreshes},
+			{Object: "timeline", Hits: stats.Timeline.Hits, Misses: stats.Timeline.Misses, Refreshes: stats.Timeline.Refreshes},
+		}
+	})
 	if cfg.PhaseTwo.Control.CatalogTTL.Duration() < phaseTwoSnapshotMinimumRetention(cfg, 0) {
 		return nil, scheduler.ErrSnapshotRetentionInsufficient
 	}

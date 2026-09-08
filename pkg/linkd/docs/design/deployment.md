@@ -158,6 +158,9 @@ AlertLog 当作零丢失审计账本。
   PEL、lag 和内存状态，并在单轮预算内分批追赶、只裁剪全部 Group 已确认的前缀。API 和 Leader Election
   尚未实现，因此只能部署单副本；
 - `linkd storage prepare` 是历史回放前预创建 Elasticsearch 时间桶的一次性管理命令，不是常驻进程。
+- `pkg/linkd/Dockerfile` 可在模块目录独立构建镜像，运行时基础镜像为 `tencentos/tencentos4-minimal`。
+  同一二进制通过 command 选择 `all-in-one`、`cleaner`、`lifecycle` 或 `control-plane`。镜像不包含可用
+  配置，启动常驻进程必须挂载配置文件。容器终止宽限期建议至少 60 秒。
 
 因此，本文确认的是目标部署边界，不表示三进程模式已经具备完整生产交付能力。控制面实现、健康与
 就绪探针、部署清单、容量基线和高可用验证完成后，再在使用指南中补充可执行的生产部署步骤。

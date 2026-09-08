@@ -5,6 +5,7 @@
 项目当前处于早期开发阶段，尚未形成可用于生产环境的完整部署方案，也不承诺未发布内部配置和存储结构的向后兼容。现阶段已经实现的本地进程配置、校验和启动方式见：
 
 - [部署模式与进程拓扑](../design/deployment.md)（已确认方向与当前实现边界）；
+- [项目 README 的容器镜像](../../README.md#容器镜像)：在 `pkg/linkd` 独立构建 `tencentos/tencentos4-minimal` 运行时镜像；
 - [配置与启动](configuration.md)；
 - [Standard Event 模拟器](event-generator.md)；
 - [使用 PM2 托管本地 Linkd 拓扑](pm2.md)；

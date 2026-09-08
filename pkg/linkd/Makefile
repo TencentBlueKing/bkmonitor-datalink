@@ -4,6 +4,12 @@ GO ?= go
 GOFMT ?= gofmt
 GOLANGCI_LINT ?= golangci-lint
 DEVTOOLS_DIR ?= devtools
+IMAGE ?= linkd
+IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+VERSION ?= $(IMAGE_TAG)
+GO_IMAGE ?= golang:1.26.7
+GOPROXY ?= direct
+CONTAINER ?= $(shell command -v docker >/dev/null 2>&1 && echo docker || echo container)
 
 GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './vendor/*' \
@@ -11,7 +17,7 @@ GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './devtools/dist/*' \
 	-not -path './devtools/dist-server/*' | LC_ALL=C sort)
 
-.PHONY: fmt fmt-check test race vet lint devtools-check devtools-e2e check
+.PHONY: fmt fmt-check test race vet lint devtools-check devtools-e2e check image
 
 fmt:
 	$(GOFMT) -w $(GO_FILES)
@@ -56,3 +62,11 @@ check:
 	$(MAKE) race
 	$(MAKE) lint
 	$(MAKE) devtools-check
+
+image:
+	$(CONTAINER) build \
+		--build-arg GO_IMAGE=$(GO_IMAGE) \
+		--build-arg GOPROXY=$(GOPROXY) \
+		--build-arg VERSION=$(VERSION) \
+		-t $(IMAGE):$(IMAGE_TAG) \
+		.

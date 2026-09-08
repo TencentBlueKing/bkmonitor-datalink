@@ -1,0 +1,22 @@
+.git
+.gitignore
+.golangci.yml
+AGENTS.md
+README.md
+*.md
+bin/
+dist/
+devtools/
+docs/
+tests/
+configs/*.local.yaml
+# 本地环境文件、私钥和密钥库不得进入 builder 上下文或缓存。
+**/.env*
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/*.jks
+**/*.keystore
+ecosystem.config.cjs
+**/*_test.go

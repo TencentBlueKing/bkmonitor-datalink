@@ -98,3 +98,29 @@ make check
 
 `cleaner`、`lifecycle` 和 `all-in-one` 都传播 Context 取消并执行有界排空。真实 MySQL、Elasticsearch、
 Redis 和 Kafka 集成验证由 `tests/e2e/allinone` 提供，需显式配置对应环境变量。
+
+## 容器镜像
+
+`pkg/linkd` 可独立构建镜像，不依赖仓库根目录预编译。运行时基础镜像为
+`tencentos/tencentos4-minimal`。
+
+```bash
+make image IMAGE_TAG=dev VERSION=$(git rev-parse --short HEAD)
+# 或
+docker build -t linkd:dev --build-arg VERSION=$(git rev-parse --short HEAD) .
+```
+
+以上示例统一构建 `linkd:dev`，二进制版本使用当前 Git 短哈希。不指定 `IMAGE_TAG` 时，
+`make image` 默认以当前 Git 短哈希作为镜像标签，运行时应使用对应标签。
+
+默认启动 `run all-in-one`。镜像不包含可用配置，必须把配置文件挂载到
+`/data/linkd/configs/linkd.yaml`，或用 `--config` 指定其他路径：
+
+```bash
+docker run --rm -v /path/to/linkd.yaml:/data/linkd/configs/linkd.yaml linkd:dev
+docker run --rm -v /path/to/linkd.yaml:/data/linkd/configs/linkd.yaml linkd:dev \
+  run cleaner --config /data/linkd/configs/linkd.yaml
+docker run --rm linkd:dev version
+```
+
+容器终止宽限期建议至少 60 秒。当前镜像只提供与本地进程相同的启动入口，不表示生产部署方案已完成。

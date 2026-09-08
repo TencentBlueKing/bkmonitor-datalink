@@ -101,6 +101,10 @@ func testTriggerEventSinkPublishesSnapshotProtocol(t *testing.T, kind string) {
 	sends := 0
 	producer := &fakeSyncProducer{send: func(message *sarama.ProducerMessage) (int32, int64, error) {
 		sends++
+		key, keyErr := message.Key.Encode()
+		if keyErr != nil || string(key) != event.DedupeMD5 || len(key) != 32 {
+			t.Fatalf("single-message key=%q error=%v", key, keyErr)
+		}
 		var err error
 		payload, err = message.Value.Encode()
 		return 0, 1, err
@@ -161,6 +165,7 @@ type batchAwareSyncProducer struct {
 	batchCalls  int
 	singleCalls int
 	batchSize   int
+	messages    []*sarama.ProducerMessage
 }
 
 func (producer *batchAwareSyncProducer) SendMessage(*sarama.ProducerMessage) (int32, int64, error) {
@@ -171,6 +176,7 @@ func (producer *batchAwareSyncProducer) SendMessage(*sarama.ProducerMessage) (in
 func (producer *batchAwareSyncProducer) SendMessages(messages []*sarama.ProducerMessage) error {
 	producer.batchCalls++
 	producer.batchSize = len(messages)
+	producer.messages = messages
 	return nil
 }
 

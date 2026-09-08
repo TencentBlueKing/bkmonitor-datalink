@@ -100,6 +100,11 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 			Key:   nil,
 			Value: sarama.ByteEncoder(payload),
 		}
+		if events[index].DedupeMD5 != "" {
+			// Keep a series on the same hash partition using the protocol's
+			// lowercase hex text, not the decoded 16-byte digest.
+			messages[index].Key = sarama.StringEncoder(events[index].DedupeMD5)
+		}
 	}
 	if err := sink.core.writeMessages(ctx, messages); err != nil {
 		publishErr := fmt.Errorf("kafka trigger event sink: publish batch: %w", err)

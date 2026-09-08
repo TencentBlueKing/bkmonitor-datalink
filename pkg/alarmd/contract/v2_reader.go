@@ -362,8 +362,6 @@ type evaluationPlanWirePartsV2 struct {
 	StrategyRef         StrategyRefV2          `json:"strategy_ref"`
 	InputProjection     InputProjectionV2      `json:"input_projection"`
 	SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
-	OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
-	LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
 	StrategyIR          json.RawMessage        `json:"strategy_ir"`
 	TerminalReasonCode  string                 `json:"terminal_reason_code,omitempty"`
 }
@@ -435,7 +433,7 @@ func decodeEvaluationPlanBestEffortV2(raw json.RawMessage) EvaluationPlanV2 {
 	}
 	plan := EvaluationPlanV2{
 		PlanID: wire.PlanID, StrategyRef: wire.StrategyRef, InputProjection: wire.InputProjection,
-		SourceCompatibility: wire.SourceCompatibility, OutputIdentity: wire.OutputIdentity, LegacyOutput: wire.LegacyOutput, TerminalReasonCode: wire.TerminalReasonCode,
+		SourceCompatibility: wire.SourceCompatibility, TerminalReasonCode: wire.TerminalReasonCode,
 	}
 	if wire.TerminalReasonCode != "" {
 		return plan
@@ -679,7 +677,7 @@ func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) 
 	object, err := validatePrevalidatedJSONObjectFieldsV2(
 		raw, path,
 		[]string{"plan_id", "strategy_ref", "input_projection", "strategy_ir"},
-		[]string{"source_compatibility", "output_identity", "legacy_output"}, allowUnknown,
+		[]string{"source_compatibility"}, allowUnknown,
 	)
 	if err != nil {
 		return framing(ReasonMalformedJSON, path, err.Error())
@@ -693,27 +691,6 @@ func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) 
 	if source, ok := object["source_compatibility"]; ok {
 		if _, err := validatePrevalidatedJSONObjectFieldsV2(source, path+".source_compatibility", []string{"item_id"}, nil, allowUnknown); err != nil {
 			return framing(ReasonMalformedJSON, path+".source_compatibility", err.Error())
-		}
-	}
-	if identity, ok := object["output_identity"]; ok {
-		if _, err := validatePrevalidatedJSONObjectFieldsV2(identity, path+".output_identity", []string{"dimension_fields"}, nil, false); err != nil {
-			return err
-		}
-		var typed MonitorOutputIdentity
-		if err := json.Unmarshal(identity, &typed); err != nil || typed.DimensionFields == nil {
-			return invalid(path+".output_identity.dimension_fields", "must be a string array")
-		}
-	}
-	if legacy, ok := object["legacy_output"]; ok {
-		if _, err := validatePrevalidatedJSONObjectFieldsV2(legacy, path+".legacy_output", []string{"strategy", "dimension_fields", "item_id"}, nil, false); err != nil {
-			return err
-		}
-		var typed LegacyOutputContext
-		if err := json.Unmarshal(legacy, &typed); err != nil {
-			return err
-		}
-		if err := typed.Validate(); err != nil {
-			return err
 		}
 	}
 	var typed evaluationPlanWirePartsV2

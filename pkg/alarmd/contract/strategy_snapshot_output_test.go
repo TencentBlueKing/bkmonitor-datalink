@@ -100,40 +100,6 @@ func testTriggerEventSnapshotReference(t *testing.T, kind string) {
 	if event.StrategyRef.Revision != 7 {
 		t.Fatal("event retains mutable input reference")
 	}
-	input.StrategyRef.Revision = 7
-	input.DedupeMD5 = "0260bae09d2ae3f75683bd06a76e9479"
-	withDedupe, err := BuildTriggerEventV1(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if withDedupe.Schema.Minor != 2 || withDedupe.EventID != event.EventID || withDedupe.EventSemanticDigest != event.EventSemanticDigest {
-		t.Fatal("dedupe output changed point identity")
-	}
-	withDedupeBytes, err := EncodeTriggerEventV1(withDedupe)
-	if err != nil {
-		t.Fatal(err)
-	}
-	roundtrip, err := DecodeTriggerEventV1(withDedupeBytes)
-	if err != nil || roundtrip.DedupeMD5 != input.DedupeMD5 {
-		t.Fatalf("dedupe roundtrip = %+v, %v", roundtrip, err)
-	}
-	input.DedupeMD5 = "d7cd01b6bca54d4e2e7794f1cb418072"
-	changedDedupe, err := BuildTriggerEventV1(input)
-	if err != nil || changedDedupe.EventID != event.EventID || changedDedupe.EventSemanticDigest != event.EventSemanticDigest {
-		t.Fatalf("dedupe value affected point identity: %v", err)
-	}
-	withDedupe.DedupeMD5 = "not-md5"
-	invalidBytes, err := json.Marshal(withDedupe)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DecodeTriggerEventV1(invalidBytes); err == nil {
-		t.Fatal("reader accepted malformed dedupe")
-	}
-	withDedupe.DedupeMD5 = ""
-	if err := ValidateTriggerEventV1(withDedupe); err == nil {
-		t.Fatal("1.2 accepted missing dedupe")
-	}
 	input.StrategyRef.BusinessID = 3
 	if _, err := BuildTriggerEventV1(input); err == nil {
 		t.Fatal("accepted mismatched business")

@@ -301,8 +301,6 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_worker_query_inflight":                        "variableLabels: {kind}",
 		"bkmonitor_alarmd_worker_query_admission_total":                 "variableLabels: {operation,result}",
 		"bkmonitor_alarmd_control_cache_total":                          "variableLabels: {object,result}",
-		"bkmonitor_alarmd_legacy_pod_cache_total":                       "variableLabels: {result}",
-		"bkmonitor_alarmd_redis_operation_total":                        "variableLabels: {}",
 		"bkmonitor_alarmd_redis_pool_size":                              "variableLabels: {client}",
 		"bkmonitor_alarmd_redis_pool_connections":                       "variableLabels: {client,state}",
 		"bkmonitor_alarmd_redis_pool_waits_total":                       "variableLabels: {client,result}",
@@ -586,13 +584,10 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("worker_ready_queue"):              len(phaseTwoReadyQueueKinds),
 		fqName("worker_query_inflight"):           len(phaseTwoQueryInflightKinds),
 		fqName("worker_query_admission_total"):    len(phaseTwoQueryInflightKinds) * len(phaseTwoQueryAdmissionResults),
-		// Four cached objects: version, snapshot, activation, timeline.
-		fqName("control_cache_total"):    12,
-		fqName("legacy_pod_cache_total"): 3,
+		// three cached objects (snapshot, activation, timeline) x hit/miss/refresh
+		fqName("control_cache_total"): 9,
 		// Two clients at most: the control plane connection and, when it resolves
 		// to a different endpoint, the runtime connection.
-		// One unlabelled series; connection acquisitions minus it is the retries.
-		fqName("redis_operation_total"):                        1,
 		fqName("redis_pool_size"):                              2,
 		fqName("redis_pool_connections"):                       6,
 		fqName("redis_pool_waits_total"):                       6,

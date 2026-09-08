@@ -40,7 +40,6 @@ type phaseTwoMetrics struct {
 	algorithmEvaluations         *prometheus.CounterVec
 	redisCalls                   redisCallMetrics
 	controlCache                 *controlCacheCollector
-	legacyPodCache               *prometheus.CounterVec
 	redisPool                    *redisPoolCollector
 	algorithmInputs              *prometheus.CounterVec
 }
@@ -129,7 +128,6 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	}
 	metrics.redisCalls = newRedisCallMetrics()
 	metrics.controlCache = newControlCacheCollector()
-	metrics.legacyPodCache = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_pod_cache_total", Help: "Existing Python Pod cache reads by bounded result."}, []string{"result"})
 	metrics.redisPool = newRedisPoolCollector()
 	metrics.shortPeriod = newShortPeriodMetrics()
 	metrics.slotTiming = newSlotTimingMetrics()
@@ -165,7 +163,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 		m.undrainedDrainingQueryGroups,
 		m.algorithmEvaluations, m.algorithmInputs,
-	}...), append(m.redisCalls.collectors(), m.controlCache, m.redisPool, m.legacyPodCache)...)
+	}...), append(m.redisCalls.collectors(), m.controlCache, m.redisPool)...)
 }
 
 func (m phaseTwoMetrics) observe(observation observability.Observation) {

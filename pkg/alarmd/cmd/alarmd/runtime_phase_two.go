@@ -287,21 +287,15 @@ type phaseTwoQueryGroupRuntime interface {
 }
 
 type phaseTwoWorkerBundleDependencies struct {
-	Config     config.Config
-	Health     *phaseTwoApplicationHealth
-	Control    phaseTwoControlRuntime
-	Ownership  phaseTwoOwnershipRuntime
-	Recorder   *metric.Recorder
-	Observer   observability.Observer
-	TargetFlow *observability.TargetFlow
-	// ProbeControlRedis issues one zero-payload round trip. Every other command
-	// carries server work or a payload, so their latency cannot be separated
-	// into transport cost and work; this one has neither and therefore measures
-	// the floor directly. It is recorded by the same command hook, so it needs
-	// no metric of its own. A nil probe disables the measurement.
-	ProbeControlRedis func(context.Context) error
-	CloseResources    func(context.Context) error
-	Now               func() time.Time
+	Config         config.Config
+	Health         *phaseTwoApplicationHealth
+	Control        phaseTwoControlRuntime
+	Ownership      phaseTwoOwnershipRuntime
+	Recorder       *metric.Recorder
+	Observer       observability.Observer
+	TargetFlow     *observability.TargetFlow
+	CloseResources func(context.Context) error
+	Now            func() time.Time
 }
 
 type phaseTwoWorkerBundle struct {
@@ -471,16 +465,6 @@ func (bundle *phaseTwoWorkerBundle) Start(ctx context.Context) error {
 	return nil
 }
 
-// probeControlRedis measures the round trip floor on the reconcile cadence. A
-// failure is left to the paths that actually depend on Redis: this call exists
-// to be timed, and failing it here would report the same outage twice.
-func (bundle *phaseTwoWorkerBundle) probeControlRedis(ctx context.Context) {
-	if bundle == nil || bundle.dependencies.ProbeControlRedis == nil || ctx.Err() != nil {
-		return
-	}
-	_ = bundle.dependencies.ProbeControlRedis(ctx)
-}
-
 func (bundle *phaseTwoWorkerBundle) Run(ctx context.Context) error {
 	if err := bundle.Start(ctx); err != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), bundle.dependencies.Config.ShutdownTimeout.Duration())
@@ -526,7 +510,6 @@ func (bundle *phaseTwoWorkerBundle) Run(ctx context.Context) error {
 		case <-refreshTicker.C:
 			runErr = bundle.refreshAndReconcile(ctx, true)
 		case <-reconcileTicker.C:
-			bundle.probeControlRedis(ctx)
 			runErr = bundle.refreshAndReconcile(ctx, false)
 		case schedulerErr := <-schedulerDone:
 			schedulerRunning = false

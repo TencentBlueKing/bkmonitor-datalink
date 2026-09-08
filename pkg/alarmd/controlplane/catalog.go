@@ -391,9 +391,6 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 		candidate.dispositions = append(candidate.dispositions, dispositions...)
 		return candidate, err
 	}
-	if plan.StrategyRef.SnapshotRevision == 0 {
-		plan.LegacyOutput = &contract.LegacyOutputContext{Strategy: append(json.RawMessage(nil), source.Document...), DimensionFields: append([]string{}, facts.Normalization.DatasetContract.IdentityFields...), ItemID: strconv.FormatInt(item.ID, 10)}
-	}
 	revision, err := contract.DeriveCanonicalDigestV2("alarmd-plan-semantics-v1", plan)
 	if err != nil {
 		return sourceCandidate{}, err
@@ -535,13 +532,6 @@ func decodeLegacyStrategy(document json.RawMessage) (legacyStrategy, error) {
 		var revision int64
 		if err := json.Unmarshal(value.SnapshotRevision, &revision); err != nil || revision <= 0 {
 			return value, errors.New("alarmd controlplane: strategy_revision must be a positive int64 JSON number")
-		}
-	} else {
-		var snapshot struct {
-			UpdateTime int64 `json:"update_time"`
-		}
-		if err := json.Unmarshal(document, &snapshot); err != nil || snapshot.UpdateTime <= 0 {
-			return value, errors.New("alarmd controlplane: legacy output requires a positive integer update_time")
 		}
 	}
 	return value, nil
@@ -697,9 +687,6 @@ func compilePlan(
 	semantics := contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries, QueryWindow: uint32(interval), AggregationInterval: uint32(interval), EvaluationInterval: uint32(interval), LatenessTolerance: uint32(interval * 2)}
 	ir := contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2, Minor: 0}, RequiredFeatures: []string{}, StrategyRef: ref, ExecutionSemantics: semantics, InputProjection: projection, Levels: levels}
 	plan := contract.EvaluationPlanV2{PlanID: strategyID, StrategyRef: ref, InputProjection: projection, SourceCompatibility: &contract.SourceCompatibilityV2{ItemID: strconv.FormatInt(item.ID, 10)}, StrategyIR: ir}
-	if ref.SnapshotRevision > 0 {
-		plan.OutputIdentity = &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, dataset.IdentityFields...)}
-	}
 	scheduleSpec := execution.ScheduleSpec{EvaluationIntervalSeconds: interval, Alignment: 0, Timezone: "UTC"}
 	if interval == 10 || interval == 15 {
 		scheduleSpec.CompletionDeadlineOffsetSeconds = 30

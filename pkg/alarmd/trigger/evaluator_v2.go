@@ -86,7 +86,6 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 		}
 		fingerprints := request.Plan.Fingerprints()
 		var snapshotRef *contract.StrategySnapshotRef
-		var dedupeMD5 string
 		ref := request.Plan.StrategyRef()
 		if ref.SnapshotRevision > 0 {
 			strategyID, strategyErr := strconv.ParseInt(ref.StrategyID, 10, 64)
@@ -95,17 +94,9 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 				return EvaluationResultV2{}, invariantV2("build strategy snapshot reference", 0, errors.New("invalid frozen strategy identity"))
 			}
 			snapshotRef = &contract.StrategySnapshotRef{TenantID: ref.TenantID, BusinessID: businessID, StrategyID: strategyID, Revision: ref.SnapshotRevision}
-			if identity := request.Plan.OutputIdentity(); identity != nil {
-				var err error
-				dedupeMD5, err = contract.MonitorDedupeMD5(ref.StrategyID, request.BusinessID, request.RecordRef.Dimensions, *identity)
-				if err != nil {
-					return EvaluationResultV2{}, invariantV2("build monitor dedupe identity", 0, err)
-				}
-			}
 		}
 		event, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{
 			StrategyRef: snapshotRef,
-			DedupeMD5:   dedupeMD5,
 			EventKind:   result.RecordResult, TenantID: request.TenantID, BusinessID: request.BusinessID,
 			PlanRef: request.Plan.PlanRef(), RecordRef: request.RecordRef, Observed: request.Observed,
 			LevelResults: levelResults, EvaluationTime: request.EvaluationTime,
@@ -116,30 +107,6 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 			return EvaluationResultV2{}, invariantV2("build TriggerEvent", 0, err)
 		}
 		result.TriggerEvent = event
-		if legacy := request.Plan.LegacyOutput(); legacy != nil && event.StrategyRef == nil {
-			var timestamps []int64
-			for _, outcome := range event.LevelResults {
-				if outcome.LevelID != event.PrimaryLevelID {
-					continue
-				}
-				for _, history := range request.Histories {
-					if history.LevelID != event.PrimaryLevelID {
-						continue
-					}
-					iterator, ok := history.View.(interface {
-						ForEachAnomaly(int64, int64, func(int64) bool)
-					})
-					if !ok {
-						return EvaluationResultV2{}, invariantV2("legacy anomaly history", event.PrimaryLevelID, errors.New("history cannot expose actual anomaly timestamps"))
-					}
-					iterator.ForEachAnomaly(outcome.DecisionWindow.Trigger.WindowStart, request.RecordRef.SourceTime, func(ts int64) bool { timestamps = append(timestamps, ts); return true })
-				}
-				if len(timestamps) != int(outcome.DecisionWindow.Trigger.ObservedAnomalies) {
-					return EvaluationResultV2{}, invariantV2("legacy anomaly history", event.PrimaryLevelID, errors.New("actual anomaly timestamps disagree with trigger evidence"))
-				}
-			}
-			event.LegacyOutput = &contract.LegacyEventContext{Configuration: legacy, AnomalyTimestamps: append([]int64{}, timestamps...)}
-		}
 		result.Counts.Events = 1
 	}
 	return result, nil

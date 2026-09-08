@@ -54,16 +54,15 @@ type KafkaOutputConfig struct {
 }
 
 type KafkaConfig struct {
-	LegacyAdapter       LegacyAdapterConfig `yaml:"legacy_adapter"`
-	Brokers             []string            `yaml:"brokers"`
-	InputTopic          string              `yaml:"input_topic"`
-	TriggerEvent        KafkaOutputConfig   `yaml:"trigger_event"`
-	MessageReceipt      KafkaOutputConfig   `yaml:"message_receipt"`
-	AllowedOutputTopics []string            `yaml:"allowed_output_topics"`
-	GroupID             string              `yaml:"group_id"`
-	ClientID            string              `yaml:"client_id"`
-	BrokerVersion       string              `yaml:"broker_version"`
-	InitialOffset       string              `yaml:"initial_offset"`
+	Brokers             []string          `yaml:"brokers"`
+	InputTopic          string            `yaml:"input_topic"`
+	TriggerEvent        KafkaOutputConfig `yaml:"trigger_event"`
+	MessageReceipt      KafkaOutputConfig `yaml:"message_receipt"`
+	AllowedOutputTopics []string          `yaml:"allowed_output_topics"`
+	GroupID             string            `yaml:"group_id"`
+	ClientID            string            `yaml:"client_id"`
+	BrokerVersion       string            `yaml:"broker_version"`
+	InitialOffset       string            `yaml:"initial_offset"`
 }
 
 func (c KafkaConfig) ConsumerCoordinates() enginekafka.Config {

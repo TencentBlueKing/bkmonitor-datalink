@@ -1287,11 +1287,6 @@ func (source observedProductionSlotSource) Next(
 	queryGroup execution.QueryGroupIdentity,
 ) (scheduler.FrozenSlot, bool, error) {
 	defer startSlotTiming(ctx, source.observer, observability.StageSlotSourceCompleted, time.Now)()
-	// One Slot decision reads the activation header several times over. Scoping
-	// it to this call reads it live once and reuses it, so a publication is
-	// still observed on the next call while every read inside this one observes
-	// the same control version.
-	ctx = controlplane.WithControlVersionScope(ctx)
 	slot, due, err := source.next.Next(ctx, queryGroup)
 	var retry *scheduler.SourceRetryError
 	var blocked *scheduler.SourceBlockedError

@@ -672,27 +672,6 @@ func TestCompilerCacheFreezesSnapshotRevisionWithoutChangingState(t *testing.T) 
 	}
 }
 
-func TestCompilerFreezesOutputIdentityOutsideStateSemantics(t *testing.T) {
-	compiler := newTestCompiler(t)
-	plan := validPlan()
-	base := mustCompilePlan(t, compiler, plan)
-	plan.OutputIdentity = &contract.MonitorOutputIdentity{DimensionFields: []string{"host"}}
-	first := mustCompilePlan(t, compiler, plan)
-	plan.OutputIdentity.DimensionFields[0] = "port"
-	second := mustCompilePlan(t, compiler, plan)
-	if first.OutputIdentity().DimensionFields[0] != "host" || second.OutputIdentity().DimensionFields[0] != "port" {
-		t.Fatal("output identity cache mixed or mutable")
-	}
-	copy := first.OutputIdentity()
-	copy.DimensionFields[0] = "changed"
-	if first.OutputIdentity().DimensionFields[0] != "host" {
-		t.Fatal("output identity exposed mutable plan")
-	}
-	if base.StateCompatibilityHash() != first.StateCompatibilityHash() || first.StateCompatibilityHash() != second.StateCompatibilityHash() || base.Fingerprints() != second.Fingerprints() {
-		t.Fatal("output identity changed state/algorithm semantics")
-	}
-}
-
 func TestCompilerCompilesM0GoldenEnvelope(t *testing.T) {
 	payload, err := os.ReadFile("../contract/testdata/go-v2/execution_envelope_v2.json")
 	if err != nil {

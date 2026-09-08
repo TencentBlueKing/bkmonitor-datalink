@@ -11,11 +11,9 @@ package contract
 
 import (
 	"bytes"
-	"encoding/hex"
 	"encoding/json"
 	"sort"
 	"strconv"
-	"strings"
 	"unicode/utf8"
 )
 
@@ -61,16 +59,12 @@ func BuildTriggerEventV1(input TriggerEventBuildInputV1) (*TriggerEventV1, error
 		TenantID: input.TenantID, BusinessID: input.BusinessID, PlanRef: input.PlanRef, RecordRef: input.RecordRef,
 		Observed: input.Observed, LevelResults: results, EvaluationTime: input.EvaluationTime,
 		DetectPlanFingerprint: input.DetectPlanFingerprint, TriggerStateFingerprint: input.TriggerStateFingerprint,
-		Trace:     TriggerEventTraceV1{ExecutionID: input.ExecutionID},
-		DedupeMD5: input.DedupeMD5,
+		Trace: TriggerEventTraceV1{ExecutionID: input.ExecutionID},
 	}
 	if input.StrategyRef != nil {
 		ref := *input.StrategyRef
 		event.StrategyRef = &ref
 		event.Schema.Minor = 1
-		if event.DedupeMD5 != "" {
-			event.Schema.Minor = 2
-		}
 	}
 	if err := ValidateTriggerEventV1(event); err != nil {
 		return nil, err
@@ -139,18 +133,11 @@ func ValidateTriggerEventV1(event *TriggerEventV1) error {
 	if event == nil {
 		return invalid("trigger_event", "must be non-null")
 	}
-	if event.Schema.Name != TriggerEventSchemaV1 || event.Schema.Major != 1 || event.Schema.Minor < 0 || event.Schema.Minor > 2 || event.RequiredFeatures == nil || len(event.RequiredFeatures) != 0 {
+	if event.Schema.Name != TriggerEventSchemaV1 || event.Schema.Major != 1 || (event.Schema.Minor != 0 && event.Schema.Minor != 1) || event.RequiredFeatures == nil || len(event.RequiredFeatures) != 0 {
 		return invalid("trigger_event.schema", "unsupported header")
 	}
-	if (event.Schema.Minor >= 1) != (event.StrategyRef != nil) {
-		return invalid("trigger_event.strategy_ref", "required by schema 1.1 and 1.2")
-	}
-	if event.Schema.Minor == 2 {
-		if _, err := hex.DecodeString(event.DedupeMD5); err != nil || len(event.DedupeMD5) != 32 || strings.ToLower(event.DedupeMD5) != event.DedupeMD5 {
-			return invalid("trigger_event.dedupe_md5", "must be 32 lowercase hexadecimal characters")
-		}
-	} else if event.DedupeMD5 != "" {
-		return invalid("trigger_event.dedupe_md5", "only supported in schema 1.2")
+	if (event.Schema.Minor == 1) != (event.StrategyRef != nil) {
+		return invalid("trigger_event.strategy_ref", "required exclusively by schema 1.1")
 	}
 	if ref := event.StrategyRef; ref != nil {
 		if ref.TenantID != event.TenantID || ref.BusinessID == 0 || strconv.FormatInt(ref.BusinessID, 10) != event.BusinessID ||
@@ -241,17 +228,14 @@ func DecodeTriggerEventV1WithLimits(payload []byte, limits TriggerEventReaderLim
 	if err := json.Unmarshal(payload, &header); err != nil {
 		return nil, err
 	}
-	if header.Schema.Minor >= 1 {
+	if header.Schema.Minor == 1 {
 		required = append(required, "strategy_ref")
-	}
-	if header.Schema.Minor == 2 {
-		required = append(required, "dedupe_md5")
 	}
 	object, err := validateOutputHeaderV1(payload, "trigger_event", TriggerEventSchemaV1, required)
 	if err != nil {
 		return nil, err
 	}
-	if header.Schema.Minor >= 1 {
+	if header.Schema.Minor == 1 {
 		if _, err := validateJSONObjectFields(object["strategy_ref"], "trigger_event.strategy_ref", []string{"bk_tenant_id", "strategy_bk_biz_id", "strategy_id", "strategy_revision"}, nil, false); err != nil {
 			return nil, err
 		}

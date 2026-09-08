@@ -22,7 +22,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
@@ -211,27 +210,12 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 				})}
 			}
 
-			var displayConfig map[string]any
-			if err := json.Unmarshal(document, &displayConfig); err != nil {
-				t.Fatal(err)
-			}
-			displayConfig["name"] = "controlled threshold"
-			displayConfig["scenario"] = "os"
-			for _, rawItem := range displayConfig["items"].([]any) {
-				item := rawItem.(map[string]any)
-				if item["name"] == nil {
-					item["name"] = "usage"
-				}
-			}
-			document, _ = json.Marshal(displayConfig)
 			for key, value := range map[string]string{"alarm-config.strategy_ids": "[5101]", "alarm-config.strategy_5101": string(document)} {
 				if err = client.Set(ctx, key, value, 0).Err(); err != nil {
 					t.Fatal(err)
 				}
 			}
-			events := &legacyConvertingTestSink{recordingPhaseTwoEventSink: &recordingPhaseTwoEventSink{}}
-			cfg.Kafka.LegacyAdapter = config.LegacyAdapterConfig{Topic: "alarmd_python-test", SnapshotPrefix: "test", ServiceNodes: map[string]config.RedisConnectionConfig{"service": cfg.StrategySourceRedis()}, ServiceRoutes: []legacyoutput.ServiceRoute{{UpperBound: 1000000, NodeID: "service"}}}
-			cfg.Kafka.AllowedOutputTopics = append(cfg.Kafka.AllowedOutputTopics, cfg.Kafka.LegacyAdapter.Topic)
+			events := &recordingPhaseTwoEventSink{}
 			publisher := &recordingFinalPublisher{panicOnEnqueue: publisherPanics}
 			var observations []observability.Observation
 			var mu sync.Mutex
@@ -317,17 +301,6 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 			if native[0].EvaluationTime != base || native[0].EventKind != contract.TriggerEventAbnormal || (!queryV3 && (native[0].EventID == native[1].EventID || native[1].EvaluationTime != base+60 || native[1].EventKind != contract.TriggerEventRecovery)) {
 				t.Fatalf("two distinct Slot results required: %+v", native)
 			}
-			for _, event := range native {
-				if event.LegacyOutput == nil || event.LegacyOutput.Configuration == nil {
-					t.Fatal("catalog legacy context did not reach production Trigger")
-				}
-				if event.EventKind == contract.TriggerEventAbnormal && (len(event.LegacyOutput.AnomalyTimestamps) != 1 || event.LegacyOutput.AnomalyTimestamps[0] != event.RecordRef.SourceTime) {
-					t.Fatal("actual primary anomaly timestamp lost")
-				}
-				if event.EventKind == contract.TriggerEventRecovery && len(event.LegacyOutput.AnomalyTimestamps) != 0 {
-					t.Fatal("recovery invented anomaly timestamps")
-				}
-			}
 			production := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
 			progress := loadPhaseTwoProgress(t, ctx, production, bundle.queryGroups[0])
 			if progress.LastFullSlot != execution.EvaluationTime(base+60) || progress.NextSlot != execution.EvaluationTime(base+120) {
@@ -388,29 +361,6 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 			}
 		})
 	}
-}
-
-type legacyConvertingTestSink struct {
-	*recordingPhaseTwoEventSink
-	converter enginekafka.LegacyEventConverter
-}
-
-func (s *legacyConvertingTestSink) ConfigureLegacyOutput(converter enginekafka.LegacyEventConverter, _ string, _ int) error {
-	s.converter = converter
-	return nil
-}
-func (s *legacyConvertingTestSink) WriteBatch(ctx context.Context, events []contract.TriggerEventV1) error {
-	if s.converter == nil {
-		return fmt.Errorf("bundle did not configure legacy converter")
-	}
-	converted, err := s.converter.ConvertBatch(ctx, events)
-	if err != nil {
-		return err
-	}
-	if len(converted) != len(events) {
-		return fmt.Errorf("converter lost events")
-	}
-	return s.recordingPhaseTwoEventSink.WriteBatch(ctx, events)
 }
 
 type failedShadowNativeSink struct {

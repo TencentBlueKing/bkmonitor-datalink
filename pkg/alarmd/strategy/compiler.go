@@ -126,8 +126,7 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 		return CompileResult{}, fmt.Errorf("strategy: derive dataset contract digest: %w", err)
 	}
 	compiled := &CompiledPlan{
-		legacyOutput: contract.FreezeLegacyOutput(request.Plan.LegacyOutput),
-		strategyRef:  request.Plan.StrategyRef,
+		strategyRef: request.Plan.StrategyRef,
 		planRef: contract.RuntimePlanRefV1{
 			StrategyID: request.Plan.StrategyRef.StrategyID, StrategyRevision: request.Plan.StrategyRef.Revision,
 		},
@@ -137,9 +136,6 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 		datasetDigest:       datasetDigest,
 	}
 	terminals := make([]Terminal, 0)
-	if request.Plan.OutputIdentity != nil {
-		compiled.outputIdentity = &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, request.Plan.OutputIdentity.DimensionFields...)}
-	}
 	var triggerComputeCost uint64
 	for _, rawLevel := range request.Plan.StrategyIR.Levels {
 		level, normalizers, terminal, err := c.compileLevel(
@@ -186,15 +182,6 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 
 func (c *PlanCompiler) validatePlan(request CompileRequest) *Terminal {
 	plan := request.Plan
-	if err := plan.LegacyOutput.Validate(); err != nil {
-		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "legacy_output"}
-	}
-	if plan.LegacyOutput != nil && plan.StrategyRef.SnapshotRevision > 0 {
-		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "legacy_output"}
-	}
-	if plan.OutputIdentity != nil && plan.OutputIdentity.DimensionFields == nil {
-		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "output_identity.dimension_fields"}
-	}
 	strategy := plan.StrategyIR
 	if plan.PlanID == "" || plan.PlanID != plan.StrategyRef.StrategyID || plan.StrategyRef != strategy.StrategyRef || plan.StrategyRef.SnapshotRevision < 0 ||
 		plan.InputProjection.BusinessIdentityField == "" || !equalProjection(plan.InputProjection, strategy.InputProjection) ||
@@ -657,9 +644,6 @@ func compileResourceEstimate(plan *CompiledPlan) error {
 		return fmt.Errorf("strategy: estimate compiled Plan bytes: %w", err)
 	}
 	aggregate.CompiledBytes = len(encoded)
-	if plan.legacyOutput != nil {
-		aggregate.CompiledBytes += plan.legacyOutput.SizeBytes()
-	}
 	plan.resourceEstimate = aggregate
 	return nil
 }

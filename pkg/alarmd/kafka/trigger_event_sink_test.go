@@ -92,7 +92,6 @@ func testTriggerEventSinkPublishesSnapshotProtocol(t *testing.T, kind string) {
 		DetectPlanFingerprint: legacy.DetectPlanFingerprint, TriggerStateFingerprint: legacy.TriggerStateFingerprint,
 		ExecutionID: legacy.Trace.ExecutionID, MaxEvidenceBytes: 64 << 10,
 		StrategyRef: &contract.StrategySnapshotRef{TenantID: "default", BusinessID: 2, StrategyID: 1001, Revision: 7},
-		DedupeMD5:   "0260bae09d2ae3f75683bd06a76e9479",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -101,10 +100,6 @@ func testTriggerEventSinkPublishesSnapshotProtocol(t *testing.T, kind string) {
 	sends := 0
 	producer := &fakeSyncProducer{send: func(message *sarama.ProducerMessage) (int32, int64, error) {
 		sends++
-		key, keyErr := message.Key.Encode()
-		if keyErr != nil || string(key) != event.DedupeMD5 || len(key) != 32 {
-			t.Fatalf("single-message key=%q error=%v", key, keyErr)
-		}
 		var err error
 		payload, err = message.Value.Encode()
 		return 0, 1, err
@@ -121,7 +116,7 @@ func testTriggerEventSinkPublishesSnapshotProtocol(t *testing.T, kind string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.EventKind != kind || decoded.Schema.Minor != 2 || decoded.DedupeMD5 != event.DedupeMD5 || decoded.StrategyRef == nil || *decoded.StrategyRef != *event.StrategyRef {
+	if decoded.EventKind != kind || decoded.Schema.Minor != 1 || decoded.StrategyRef == nil || *decoded.StrategyRef != *event.StrategyRef {
 		t.Fatalf("Kafka payload lost snapshot reference: %s", payload)
 	}
 	firstPayload := append([]byte(nil), payload...)
@@ -165,19 +160,16 @@ type batchAwareSyncProducer struct {
 	batchCalls  int
 	singleCalls int
 	batchSize   int
-	messages    []*sarama.ProducerMessage
 }
 
-func (producer *batchAwareSyncProducer) SendMessage(message *sarama.ProducerMessage) (int32, int64, error) {
+func (producer *batchAwareSyncProducer) SendMessage(*sarama.ProducerMessage) (int32, int64, error) {
 	producer.singleCalls++
-	producer.messages = append(producer.messages, message)
 	return 0, 0, nil
 }
 
 func (producer *batchAwareSyncProducer) SendMessages(messages []*sarama.ProducerMessage) error {
 	producer.batchCalls++
 	producer.batchSize = len(messages)
-	producer.messages = messages
 	return nil
 }
 
@@ -276,16 +268,6 @@ func TestTriggerEventSinkDoesNotMarkLocalLifecycleFailureRetryable(t *testing.T)
 }
 
 func triggerEventGolden(t testing.TB) contract.TriggerEventV1 {
-	t.Helper()
-	legacy := legacyTriggerEventGolden(t)
-	event, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{EventKind: legacy.EventKind, TenantID: legacy.TenantID, BusinessID: legacy.BusinessID, PlanRef: legacy.PlanRef, RecordRef: legacy.RecordRef, Observed: legacy.Observed, LevelResults: legacy.LevelResults, EvaluationTime: legacy.EvaluationTime, DetectPlanFingerprint: legacy.DetectPlanFingerprint, TriggerStateFingerprint: legacy.TriggerStateFingerprint, ExecutionID: legacy.Trace.ExecutionID, MaxEvidenceBytes: 64 << 10, StrategyRef: &contract.StrategySnapshotRef{TenantID: legacy.TenantID, BusinessID: 2, StrategyID: 1001, Revision: 7}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return *event
-}
-
-func legacyTriggerEventGolden(t testing.TB) contract.TriggerEventV1 {
 	t.Helper()
 	payload, err := os.ReadFile("../contract/testdata/go-v2/trigger_event_v1.json")
 	if err != nil {

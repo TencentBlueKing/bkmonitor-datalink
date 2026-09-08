@@ -335,22 +335,21 @@ func TestMembershipPlanAndScheduleRevisionsAreIndependent(t *testing.T) {
 	}
 }
 
-func TestLegacyZeroUpdateTimeUsesContentRevision(t *testing.T) {
+func TestLegacyZeroUpdateTimeRejectsUnaddressableSnapshot(t *testing.T) {
 	identity := controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}
-	build := func(t *testing.T, threshold int) contract.StrategyRefV2 {
+	build := func(t *testing.T, threshold int) {
 		t.Helper()
 		document := json.RawMessage(fmt.Sprintf(`{"id":11,"bk_biz_id":2,"update_time":0,"items":[{"id":1,"query_md5":"q","expression":"a","unit":"percent","query_configs":[{"agg_interval":60}],"algorithms":[{"level":1,"type":"Threshold","config":[{"method":"gt","threshold":%d}]}]}],"detects":[{"level":1,"trigger_config":{"count":1,"check_window":1}}]}`, threshold))
 		catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{Strategies: []controlplane.SourceStrategy{{SourceID: "11", Document: document, Identity: identity}}, Planner: &recordingPlanner{facts: queryFacts(t)}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return catalog.QueryGroups[0].Plans[0].Plan.StrategyRef
+		if len(catalog.QueryGroups) != 0 || len(catalog.Dispositions) == 0 {
+			t.Fatal("legacy update_time zero was accepted")
+		}
 	}
-	first := build(t, 80)
-	second := build(t, 81)
-	if first.Revision == "" || first.Revision == "0" || first.Revision == second.Revision {
-		t.Fatalf("content revisions were not derived independently: first=%q second=%q", first.Revision, second.Revision)
-	}
+	build(t, 80)
+	build(t, 81)
 }
 
 func TestCatalogPassesItemExpressionFunctionsToPrimaryQueryCompiler(t *testing.T) {

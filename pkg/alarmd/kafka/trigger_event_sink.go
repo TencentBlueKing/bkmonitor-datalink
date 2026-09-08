@@ -11,8 +11,11 @@ package kafka
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Shopify/sarama"
 
@@ -22,10 +25,22 @@ import (
 // TriggerEventSink is the critical Kafka output for Trigger events.
 // A successful WriteBatch means every event received a synchronous broker ACK.
 type TriggerEventSink struct {
-	core *DecisionSink
+	core            *DecisionSink
+	legacyConverter LegacyEventConverter
+	legacyTopic     string
+	maxLegacyBytes  int
 }
 
-// triggerEventDependencyError marks only an attempted broker write whose ACK
+// ConfigureLegacyOutput is called once during assembly, before any writes.
+func (sink *TriggerEventSink) ConfigureLegacyOutput(converter LegacyEventConverter, topic string, maxBytes int) error {
+	if converter == nil || !strings.HasPrefix(topic, "alarmd_") || maxBytes <= 0 {
+		return errors.New("invalid legacy output configuration")
+	}
+	sink.legacyConverter, sink.legacyTopic, sink.maxLegacyBytes = converter, topic, maxBytes
+	return nil
+}
+
+// triggerEventDependencyError marks a conversion dependency or broker write whose ACK
 // failed or is unknown. Encoding and local lifecycle errors remain ordinary.
 type triggerEventDependencyError struct {
 	err error
@@ -90,6 +105,7 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 		return err
 	}
 	messages := make([]*sarama.ProducerMessage, len(events))
+	groups := make(map[string][]int)
 	for index := range events {
 		payload, err := contract.EncodeTriggerEventV1(&events[index])
 		if err != nil {
@@ -99,6 +115,48 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 			Topic: sink.core.outputTopic,
 			Key:   nil,
 			Value: sarama.ByteEncoder(payload),
+		}
+		if events[index].DedupeMD5 != "" {
+			// Keep a series on the same hash partition using the protocol's
+			// lowercase hex text, not the decoded 16-byte digest.
+			messages[index].Key = sarama.StringEncoder(events[index].DedupeMD5)
+		}
+		// An event without a frozen strategy reference belongs to the legacy
+		// protocol, but only where that protocol is configured. Routing it there
+		// unconditionally makes the converter mandatory in exactly the
+		// deployments that publish no strategy revision and therefore never
+		// configured one: every event emission then fails while Slots that emit
+		// nothing keep completing. The native branch does not require the
+		// compatibility configuration; where the configuration exists, a missing
+		// context is still an error rather than a silent native-only fallback.
+		if events[index].StrategyRef == nil && sink.legacyConverter != nil {
+			if events[index].LegacyOutput == nil || events[index].LegacyOutput.Configuration == nil {
+				return errors.New("legacy event has no frozen compatibility context")
+			}
+			key := events[index].TenantID + "\x00" + events[index].BusinessID
+			groups[key] = append(groups[key], index)
+		}
+	}
+	for _, indices := range groups {
+		batch := make([]contract.TriggerEventV1, len(indices))
+		for i, index := range indices {
+			batch[i] = events[index]
+		}
+		converted, err := sink.legacyConverter.ConvertBatch(ctx, batch)
+		if err != nil {
+			return &triggerEventDependencyError{err: fmt.Errorf("legacy conversion failed: %w", err)}
+		}
+		if len(converted) != len(batch) {
+			return &triggerEventDependencyError{err: errors.New("legacy conversion result count mismatch")}
+		}
+		for i, item := range converted {
+			if item.EventID != batch[i].EventID || len(item.Payload) == 0 || len(item.Payload) > sink.maxLegacyBytes || !json.Valid(item.Payload) || len(item.DedupeMD5) != 32 || strings.ToLower(item.DedupeMD5) != item.DedupeMD5 {
+				return &triggerEventDependencyError{err: errors.New("legacy conversion returned invalid event identity/payload")}
+			}
+			if _, err := hex.DecodeString(item.DedupeMD5); err != nil {
+				return &triggerEventDependencyError{err: err}
+			}
+			messages[indices[i]] = &sarama.ProducerMessage{Topic: sink.legacyTopic, Key: sarama.StringEncoder(item.DedupeMD5), Value: sarama.ByteEncoder(item.Payload)}
 		}
 	}
 	if err := sink.core.writeMessages(ctx, messages); err != nil {

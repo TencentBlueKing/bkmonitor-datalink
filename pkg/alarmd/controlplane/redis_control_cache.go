@@ -160,6 +160,7 @@ type ControlReadCacheStats struct {
 	Snapshot   ControlReadCacheObjectStats
 	Activation ControlReadCacheObjectStats
 	Timeline   ControlReadCacheObjectStats
+	Version    ControlReadCacheObjectStats
 }
 
 type controlReadObjectCounters struct {
@@ -178,6 +179,7 @@ type controlReadCounters struct {
 	snapshot   controlReadObjectCounters
 	activation controlReadObjectCounters
 	timeline   controlReadObjectCounters
+	version    controlReadObjectCounters
 }
 
 func (repository *RedisCatalogRepository) ControlReadCacheStats() ControlReadCacheStats {
@@ -188,13 +190,15 @@ func (repository *RedisCatalogRepository) ControlReadCacheStats() ControlReadCac
 		Snapshot:   repository.controlReads.snapshot.snapshot(),
 		Activation: repository.controlReads.activation.snapshot(),
 		Timeline:   repository.controlReads.timeline.snapshot(),
+		Version:    repository.controlReads.version.snapshot(),
 	}
 }
 
-// readControlVersion performs the one small live read that every activation
+// fetchControlVersion performs the one small live read that every activation
 // and timeline read starts with. An absent header leaves caching disabled for
-// that read; the caller then follows the uncached path.
-func (repository *RedisCatalogRepository) readControlVersion(ctx context.Context) (controlVersion, error) {
+// that read; the caller then follows the uncached path. Callers go through
+// readControlVersion, which reuses the value inside one operation.
+func (repository *RedisCatalogRepository) fetchControlVersion(ctx context.Context) (controlVersion, error) {
 	header, err := repository.client.Get(ctx, repository.activationHeaderKey()).Result()
 	if errors.Is(err, redis.Nil) {
 		return controlVersion{}, nil

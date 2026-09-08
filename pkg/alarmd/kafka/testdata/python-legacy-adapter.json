@@ -1,0 +1,96 @@
+{
+  "kind": "constructed-real-python-adapter",
+  "python_time": 200,
+  "params": {
+    "bk_tenant_id": "default",
+    "bk_biz_id": 2,
+    "strategies": {
+      "s": {
+        "id": 1,
+        "bk_biz_id": 2,
+        "update_time": 100,
+        "name": "example",
+        "scenario": "os",
+        "items": [
+          {
+            "id": 3,
+            "name": "load",
+            "query_configs": [
+              {
+                "metric_id": "system.load",
+                "data_type_label": "time_series",
+                "data_source_label": "bk_monitor",
+                "agg_dimension": [
+                  "bk_target_ip",
+                  "bk_target_cloud_id"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "events": [
+      {
+        "event_id": "go-id",
+        "strategy_key": "s",
+        "event_kind": "ABNORMAL",
+        "primary_level_id": 1,
+        "item_id": 3,
+        "source_time": 180,
+        "anomaly_timestamps": [
+          120,
+          180
+        ],
+        "dimensions": {
+          "bk_target_ip": "192.0.2.1",
+          "bk_target_cloud_id": 0
+        },
+        "dimension_fields": [
+          "bk_target_ip",
+          "bk_target_cloud_id"
+        ],
+        "values": {
+          "load": 5
+        },
+        "value": 5
+      },
+      {
+        "event_id": "recovery-id",
+        "strategy_key": "s",
+        "event_kind": "RECOVERY",
+        "primary_level_id": 1,
+        "item_id": 3,
+        "source_time": 180,
+        "anomaly_timestamps": [],
+        "dimensions": {
+          "bk_target_ip": "192.0.2.1",
+          "bk_target_cloud_id": 0
+        },
+        "dimension_fields": [
+          "bk_target_ip",
+          "bk_target_cloud_id"
+        ],
+        "values": {
+          "load": 5
+        },
+        "value": 0
+      }
+    ]
+  },
+  "response": {
+    "topic": "alarmd_monitor_event_cluster",
+    "events": [
+      {
+        "event_id": "go-id",
+        "payload_json": "{\"event_id\": \"cbe6244f0ea18f8f9dd9818d69b13618.180.1.3.1\", \"plugin_id\": \"bkmonitor\", \"strategy_id\": 1, \"alert_name\": \"example\", \"description\": \"alarmd ABNORMAL: example / load, level=1, value=5\", \"severity\": 1, \"tags\": [], \"target_type\": \"HOST\", \"target\": \"192.0.2.1|0\", \"status\": \"ABNORMAL\", \"metric\": [\"system.load\", \"load\"], \"category\": \"os\", \"data_type\": \"time_series\", \"dedupe_keys\": [], \"time\": 180, \"anomaly_time\": 120, \"bk_ingest_time\": 200, \"bk_clean_time\": 200, \"bk_biz_id\": 2, \"bk_tenant_id\": \"default\", \"extra_info\": {\"additional_dimensions\": {}, \"origin_alarm\": {\"trigger_time\": 200, \"data\": {\"record_id\": \"cbe6244f0ea18f8f9dd9818d69b13618.180\", \"time\": 180, \"dimensions\": {\"bk_target_ip\": \"192.0.2.1\", \"bk_target_cloud_id\": 0}, \"dimension_fields\": [\"bk_target_ip\", \"bk_target_cloud_id\"], \"value\": 5, \"values\": {\"load\": 5}}, \"trigger\": {\"level\": \"1\", \"anomaly_ids\": [\"cbe6244f0ea18f8f9dd9818d69b13618.120.1.3.1\", \"cbe6244f0ea18f8f9dd9818d69b13618.180.1.3.1\"]}, \"anomaly\": {\"1\": {\"anomaly_id\": \"cbe6244f0ea18f8f9dd9818d69b13618.180.1.3.1\", \"anomaly_message\": \"alarmd ABNORMAL: example / load, level=1, value=5\"}}, \"dimension_translation\": {}, \"strategy_snapshot_key\": \"cache.strategy.snapshot.1.100\", \"alarmd_event_id\": \"go-id\"}}, \"dedupe_md5\": \"28fb5c533c0f3d5539f44a7e68e0323f\"}",
+        "dedupe_md5": "28fb5c533c0f3d5539f44a7e68e0323f"
+      },
+      {
+        "event_id": "recovery-id",
+        "payload_json": "{\"event_id\": \"cbe6244f0ea18f8f9dd9818d69b13618.180.1.3.1\", \"plugin_id\": \"bkmonitor\", \"strategy_id\": 1, \"alert_name\": \"example\", \"description\": \"alarmd RECOVERY: example / load, level=1, value=0\", \"severity\": 1, \"tags\": [], \"target_type\": \"HOST\", \"target\": \"192.0.2.1|0\", \"status\": \"RECOVERED\", \"metric\": [\"system.load\", \"load\"], \"category\": \"os\", \"data_type\": \"time_series\", \"dedupe_keys\": [], \"time\": 180, \"anomaly_time\": 180, \"bk_ingest_time\": 200, \"bk_clean_time\": 200, \"bk_biz_id\": 2, \"bk_tenant_id\": \"default\", \"extra_info\": {\"additional_dimensions\": {}, \"origin_alarm\": {\"trigger_time\": 200, \"data\": {\"record_id\": \"cbe6244f0ea18f8f9dd9818d69b13618.180\", \"time\": 180, \"dimensions\": {\"bk_target_ip\": \"192.0.2.1\", \"bk_target_cloud_id\": 0}, \"dimension_fields\": [\"bk_target_ip\", \"bk_target_cloud_id\"], \"value\": 0, \"values\": {\"load\": 5}}, \"trigger\": {\"level\": \"1\", \"anomaly_ids\": []}, \"anomaly\": {\"1\": {\"anomaly_id\": \"cbe6244f0ea18f8f9dd9818d69b13618.180.1.3.1\", \"anomaly_message\": \"alarmd RECOVERY: example / load, level=1, value=0\"}}, \"dimension_translation\": {}, \"strategy_snapshot_key\": \"cache.strategy.snapshot.1.100\", \"alarmd_event_id\": \"recovery-id\"}}, \"dedupe_md5\": \"28fb5c533c0f3d5539f44a7e68e0323f\"}",
+        "dedupe_md5": "28fb5c533c0f3d5539f44a7e68e0323f"
+      }
+    ]
+  }
+}

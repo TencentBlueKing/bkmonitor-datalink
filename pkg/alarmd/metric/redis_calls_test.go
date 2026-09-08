@@ -81,3 +81,31 @@ func TestRedisCallHookBoundsCommandNamesAndRecordsFailures(t *testing.T) {
 		t.Fatalf("real error must count as a failure, got %v", got)
 	}
 }
+
+// Retries leave no trace of their own: the hook times the whole retry loop and
+// only the final outcome reaches the failure counter. Counting operations makes
+// them derivable, because the pool counts one acquisition per attempt.
+func TestRedisOperationCounterCountsCallsNotCommands(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	hook := recorder.RedisHook()
+	ctx := context.Background()
+	single, err := hook.BeforeProcess(ctx, redis.NewStringCmd(ctx, "get", "k"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := hook.AfterProcess(single, redis.NewStringCmd(ctx, "get", "k")); err != nil {
+		t.Fatal(err)
+	}
+	batch := []redis.Cmder{redis.NewStatusCmd(ctx, "set", "a", "1"), redis.NewStatusCmd(ctx, "set", "b", "2")}
+	batched, err := hook.BeforeProcessPipeline(ctx, batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := hook.AfterProcessPipeline(batched, batch); err != nil {
+		t.Fatal(err)
+	}
+	operations := testutil.ToFloat64(hook.metrics.operations)
+	if operations != 2 {
+		t.Fatalf("operations = %v, want 2 (one call plus one batch, not three commands)", operations)
+	}
+}

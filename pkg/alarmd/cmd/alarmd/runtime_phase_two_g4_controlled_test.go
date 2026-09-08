@@ -322,9 +322,12 @@ func runControlledG4Golden(
 			if err != nil {
 				t.Fatal(err)
 			}
-			if decoded.Schema.Minor != 1 || decoded.StrategyRef == nil || decoded.StrategyRef.Revision != snapshotRevision[0] ||
+			if decoded.Schema.Minor != 2 || decoded.StrategyRef == nil || decoded.StrategyRef.Revision != snapshotRevision[0] ||
 				decoded.StrategyRef.StrategyID != strategyID || decoded.StrategyRef.BusinessID != controlledG4SyntheticBusinessID || decoded.StrategyRef.TenantID != event.TenantID {
 				t.Fatalf("source cache to Kafka payload lost frozen reference: %s", payload)
+			}
+			if decoded.DedupeMD5 == "" || (index > 0 && decoded.DedupeMD5 != written[0].DedupeMD5) {
+				t.Fatalf("abnormal/recovery lost stable series identity: %s", payload)
 			}
 		}
 		projection, err := shadow.ProjectTriggerEventV1(shadow.ChainGo, event)

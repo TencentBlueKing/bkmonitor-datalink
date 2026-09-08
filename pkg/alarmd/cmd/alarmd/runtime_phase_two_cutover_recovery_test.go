@@ -27,8 +27,21 @@ import (
 // FULL completion for a current Slot within a bounded number of Runner
 // attempts. No administrative cleanup is involved.
 func TestProductionPhaseTwoCutoverStalledGroupRecoversPastReplayAge(t *testing.T) {
-	for _, expiredRange := range []bool{false, true} {
-		t.Run(fmt.Sprintf("expired_range_enabled=%t", expiredRange), func(t *testing.T) {
+	for _, variant := range []struct {
+		expiredRange  bool
+		triggerWindow int
+	}{
+		{expiredRange: false, triggerWindow: 1},
+		{expiredRange: true, triggerWindow: 1},
+		// A trigger window of two points needs two data Slots to warm the gap
+		// guard and two consecutive history points before a Level is FULL.
+		{expiredRange: true, triggerWindow: 2},
+	} {
+		expiredRange := variant.expiredRange
+		t.Run(fmt.Sprintf("expired_range_enabled=%t/trigger_window=%d", expiredRange, variant.triggerWindow), func(t *testing.T) {
+			previousWindow := cutoverStallTriggerWindow
+			cutoverStallTriggerWindow = variant.triggerWindow
+			t.Cleanup(func() { cutoverStallTriggerWindow = previousWindow })
 			fixture := newCutoverStalledFixture(t, func(cfg *config.Config) {
 				cfg.PhaseTwo.Scheduler.ExpiredRangeEnabled = expiredRange
 			})

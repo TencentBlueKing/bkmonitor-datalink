@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -71,8 +72,15 @@ type cutoverStallFixture struct {
 	now              func() time.Time
 	uqCalls          *atomic.Int64
 	uqCallsAtCutover int64
-	observationsMu   sync.Mutex
-	observations     []observability.Observation
+	// uqHosts selects the series the UQ stub returns for a query ending at
+	// the given Unix second; nil serves one constant series.
+	uqHosts func(end int64) []string
+	// uqPartial marks the UQ answer for a query ending at the given Unix
+	// second as partial, so the PRIMARY input is genuinely incomplete; nil
+	// answers every query FULL.
+	uqPartial      func(end int64) bool
+	observationsMu sync.Mutex
+	observations   []observability.Observation
 }
 
 func (fixture *cutoverStallFixture) observed() []observability.Observation {
@@ -122,8 +130,20 @@ func startCutoverFixture(t *testing.T, configure func(*config.Config)) *cutoverS
 		if end > 1_000_000_000_000 {
 			end /= 1000
 		}
-		_, _ = writer.Write([]byte(`{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["host"],"group_values":["127.0.0.1"],"values":[[` +
-			strconv.FormatInt((end-1)*1000, 10) + `,5]]}],"status":null,"trace_id":"cutover-stall","is_partial":false,"result_table_id":["system.cpu"]}`))
+		hosts := []string{"127.0.0.1"}
+		if fixture.uqHosts != nil {
+			hosts = fixture.uqHosts(end)
+		}
+		series := make([]string, 0, len(hosts))
+		for _, host := range hosts {
+			series = append(series, `{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["host"],"group_values":["`+host+`"],"values":[[`+
+				strconv.FormatInt((end-1)*1000, 10)+`,5]]}`)
+		}
+		partial := "false"
+		if fixture.uqPartial != nil && fixture.uqPartial(end) {
+			partial = "true"
+		}
+		_, _ = writer.Write([]byte(`{"series":[` + strings.Join(series, ",") + `],"status":null,"trace_id":"cutover-stall","is_partial":` + partial + `,"result_table_id":["system.cpu"]}`))
 	}))
 	t.Cleanup(uqServer.Close)
 
@@ -514,6 +534,10 @@ func (probe cutoverStallProbe) run(
 	return outcome
 }
 
+// cutoverStallTriggerWindow is the trigger check window of the fixture
+// strategies; RequiredDetectHistoryPoints follows it (window + recovery - 1).
+var cutoverStallTriggerWindow = 1
+
 func installCutoverStallStrategies(t *testing.T, ctx context.Context, redisClient *redis.Client, secondTable string, updateTime int64) {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/g1_full_threshold_strategy.json")
@@ -527,6 +551,9 @@ func installCutoverStallStrategies(t *testing.T, ctx context.Context, redisClien
 	first["update_time"] = updateTime
 	firstItem := first["items"].([]any)[0].(map[string]any)
 	firstItem["query_configs"].([]any)[0].(map[string]any)["agg_interval"] = 60
+	for _, detect := range first["detects"].([]any) {
+		detect.(map[string]any)["trigger_config"].(map[string]any)["check_window"] = cutoverStallTriggerWindow
+	}
 	firstEncoded, err := json.Marshal(first)
 	if err != nil {
 		t.Fatal(err)

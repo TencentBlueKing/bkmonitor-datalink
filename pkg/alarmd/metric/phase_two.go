@@ -38,6 +38,7 @@ type phaseTwoMetrics struct {
 	legacyMigrationTime          *prometheus.HistogramVec
 	undrainedDrainingQueryGroups prometheus.Gauge
 	algorithmEvaluations         *prometheus.CounterVec
+	redisCalls                   redisCallMetrics
 	algorithmInputs              *prometheus.CounterVec
 }
 
@@ -123,6 +124,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			Help: "Process-wide physical query permit admission outcomes by fixed operation and result.",
 		}, []string{"operation", "result"}),
 	}
+	metrics.redisCalls = newRedisCallMetrics()
 	metrics.shortPeriod = newShortPeriodMetrics()
 	metrics.slotTiming = newSlotTimingMetrics()
 	metrics.workflow = newWorkflowMetrics()
@@ -146,7 +148,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 }
 
 func (m phaseTwoMetrics) collectors() []prometheus.Collector {
-	return append(m.workflow.collectors(), []prometheus.Collector{
+	return append(append(m.workflow.collectors(), []prometheus.Collector{
 		m.shortPeriod.completed, m.shortPeriod.duration, m.shortPeriod.lag,
 		m.slotTiming,
 		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations, m.sourceRefreshes,
@@ -157,7 +159,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 		m.undrainedDrainingQueryGroups,
 		m.algorithmEvaluations, m.algorithmInputs,
-	}...)
+	}...), m.redisCalls.collectors()...)
 }
 
 func (m phaseTwoMetrics) observe(observation observability.Observation) {

@@ -3,6 +3,10 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -109,6 +113,7 @@ func (coordinator *SlotExecutionCoordinator) observeQueryCompleted(
 	result observability.Result,
 	reason execution.ReasonCode,
 	completion execution.QueryExecutionCompletion,
+	evaluated execution.EvaluationResult,
 ) {
 	if result == "" {
 		result = observability.ResultSuccess
@@ -116,11 +121,15 @@ func (coordinator *SlotExecutionCoordinator) observeQueryCompleted(
 	if reason == "" {
 		reason = observability.ReasonNone
 	}
+	facts := providerFailureFacts(completion)
+	if facts == nil {
+		facts = unexplainedOutcomeFacts(result, reason, evaluated)
+	}
 	observation := observability.Observation{
 		Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted, Result: result,
 		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
 		ReasonCode: reason, Duration: time.Since(started),
-		QueryFailure: providerFailureFacts(completion),
+		QueryFailure: facts,
 	}
 	defer func() { _ = recover() }()
 	coordinator.ports.Observer.Observe(ctx, observation)
@@ -155,4 +164,52 @@ func providerFailureFacts(completion execution.QueryExecutionCompletion) *observ
 		return facts
 	}
 	return nil
+}
+
+// unexplainedOutcomeFacts names a non-successful evaluation outcome that
+// carries no reason of its own. Without it the line normalises to
+// internal_unknown with no error text, which is how several Query Groups
+// retried for hours with nothing to root-cause them by. It reports the Plan
+// disposition and the Level outcome mix, both already bounded enumerations,
+// and stays nil for healthy or already-explained outcomes.
+func unexplainedOutcomeFacts(
+	result observability.Result, reason execution.ReasonCode, evaluated execution.EvaluationResult,
+) *observability.QueryFailureFacts {
+	if result == observability.ResultSuccess || result == "" {
+		return nil
+	}
+	if reason != "" && reason != observability.ReasonNone {
+		return nil
+	}
+	dispositions := make([]string, 0, len(evaluated.Plans))
+	outcomes := map[execution.LevelOutcomeKind]int{}
+	seen := map[execution.PlanDisposition]struct{}{}
+	for _, plan := range evaluated.Plans {
+		if _, ok := seen[plan.Disposition]; !ok {
+			seen[plan.Disposition] = struct{}{}
+			dispositions = append(dispositions, string(plan.Disposition))
+		}
+		for _, outcome := range plan.LevelOutcomes {
+			outcomes[outcome.Outcome]++
+		}
+	}
+	sort.Strings(dispositions)
+	kinds := make([]string, 0, len(outcomes))
+	for kind, count := range outcomes {
+		kinds = append(kinds, fmt.Sprintf("%s:%d", kind, count))
+	}
+	sort.Strings(kinds)
+	detail := "plans=" + strconv.Itoa(len(evaluated.Plans))
+	if len(dispositions) > 0 {
+		detail += " dispositions=" + strings.Join(dispositions, ",")
+	}
+	if len(kinds) > 0 {
+		detail += " levels=" + strings.Join(kinds, ",")
+	}
+	return &observability.QueryFailureFacts{
+		Stage:    observability.QueryFailureStageOther,
+		Category: observability.QueryFailureCategoryEvaluation,
+		Code:     "UNEXPLAINED_OUTCOME",
+		Detail:   detail,
+	}
 }

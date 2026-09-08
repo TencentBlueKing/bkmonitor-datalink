@@ -11,10 +11,23 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 )
 
 func openProductionRedis(ctx context.Context, connection config.RedisConnectionConfig) (redis.UniversalClient, error) {
+	return openProductionRedisWithHook(ctx, connection, nil)
+}
+
+// openProductionRedisWithHook attaches the command recorder before the first
+// command so the per-command counts cover the whole process lifetime, Ping
+// included. A nil hook keeps the client uninstrumented.
+func openProductionRedisWithHook(
+	ctx context.Context, connection config.RedisConnectionConfig, hook *metric.RedisCallHook,
+) (redis.UniversalClient, error) {
 	client := redis.NewUniversalClient(productionRedisOptions(connection))
+	if hook != nil {
+		client.AddHook(hook)
+	}
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
 		return nil, err

@@ -206,7 +206,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		}
 	})
 	queryResult, queryReason := provisionalResult(stream.evaluated)
-	coordinator.observeQueryCompleted(ctx, request.Operation, started, queryResult, queryReason, completion)
+	coordinator.observeQueryCompleted(ctx, request.Operation, started, queryResult, queryReason, completion, stream.evaluated)
 	if len(stream.evaluated.Plans) == 0 {
 		return execution.SlotExecutionResult{Result: queryResult, ReasonCode: queryReason}, nil
 	}

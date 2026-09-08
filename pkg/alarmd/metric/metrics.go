@@ -11,6 +11,7 @@ package metric
 
 import (
 	"math"
+	"regexp"
 	"sync"
 	"time"
 
@@ -186,7 +187,15 @@ func NewRecorder(build BuildInfo) *Recorder {
 	phaseTwo := newPhaseTwoMetrics()
 
 	collectorsToRegister := []prometheus.Collector{
-		collectors.NewGoCollector(),
+		// The legacy Go collector exports memstats but no CPU split, so the
+		// share of CPU spent in GC versus user code is not observable. alarmd
+		// is allocation driven (hundreds of MB/s), which makes that split the
+		// first question of any CPU work; add the bounded rule rather than
+		// MetricsAll so the series count stays predictable.
+		collectors.NewGoCollector(collectors.WithGoCollectorRuntimeMetrics(
+			collectors.GoRuntimeMetricsRule{Matcher: regexp.MustCompile(`^/cpu/classes/`)},
+			collectors.GoRuntimeMetricsRule{Matcher: regexp.MustCompile(`^/sched/latencies:seconds$`)},
+		)),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		buildInfo,
 		processDuration,

@@ -250,6 +250,11 @@ func TestCustomMetricFamilySeriesDevelopmentLimits(t *testing.T) {
 		"bkmonitor_alarmd_worker_ready_queue":           2,
 		"bkmonitor_alarmd_worker_query_inflight":        4,
 		"bkmonitor_alarmd_worker_query_admission_total": 20,
+		// Redis command names are the bounded redisCommandNames set plus
+		// "other", each with pipelined true/false.
+		"bkmonitor_alarmd_redis_command_total":            (len(redisCommandNames) + 1) * 2,
+		"bkmonitor_alarmd_redis_command_failure_total":    (len(redisCommandNames) + 1) * 2,
+		"bkmonitor_alarmd_redis_command_duration_seconds": (len(redisCommandNames) + 1) * 2 * (12 + 1 + 2),
 	} {
 		if got := bounds[family]; got != want {
 			t.Errorf("query permit metric family %s theoretical maximum = %d, want %d", family, got, want)
@@ -295,6 +300,9 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_worker_ready_queue":                           "variableLabels: {kind}",
 		"bkmonitor_alarmd_worker_query_inflight":                        "variableLabels: {kind}",
 		"bkmonitor_alarmd_worker_query_admission_total":                 "variableLabels: {operation,result}",
+		"bkmonitor_alarmd_redis_command_total":                          "variableLabels: {command,pipelined}",
+		"bkmonitor_alarmd_redis_command_failure_total":                  "variableLabels: {command,pipelined}",
+		"bkmonitor_alarmd_redis_command_duration_seconds":               "variableLabels: {command,pipelined}",
 		"bkmonitor_alarmd_short_period_slot_completions_total":          "variableLabels: {cohort,operation,completion_kind}",
 		"bkmonitor_alarmd_short_period_slot_execution_duration_seconds": "variableLabels: {cohort}",
 		"bkmonitor_alarmd_short_period_slot_completion_lag_seconds":     "variableLabels: {cohort}",
@@ -513,6 +521,8 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	histogramSeries := func(labelCombinations, explicitBuckets int) int {
 		return labelCombinations * (explicitBuckets + 1 + 2) // explicit buckets, +Inf, sum and count
 	}
+	// Bounded command names plus "other", each with pipelined true and false.
+	redisCommandSeries := (len(redisCommandNames) + 1) * 2
 	metricReasonSeries := func(component observability.Component, result observability.Result) int {
 		count := len(observability.AllReasons(component))
 		if result != observability.ResultStarted && result != observability.ResultSuccess &&
@@ -570,6 +580,9 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("worker_ready_queue"):                           len(phaseTwoReadyQueueKinds),
 		fqName("worker_query_inflight"):                        len(phaseTwoQueryInflightKinds),
 		fqName("worker_query_admission_total"):                 len(phaseTwoQueryInflightKinds) * len(phaseTwoQueryAdmissionResults),
+		fqName("redis_command_total"):                          redisCommandSeries,
+		fqName("redis_command_failure_total"):                  redisCommandSeries,
+		fqName("redis_command_duration_seconds"):               histogramSeries(redisCommandSeries, 12),
 		fqName("short_period_slot_completions_total"):          56,
 		fqName("short_period_slot_execution_duration_seconds"): 24,
 		fqName("short_period_slot_completion_lag_seconds"):     24,

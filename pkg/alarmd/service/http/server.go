@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"sync/atomic"
 	"time"
 
@@ -71,6 +72,15 @@ func newServer(recorder *metric.Recorder, source lifecycle.Source) *Server {
 	mux.HandleFunc("/healthz", server.health)
 	mux.HandleFunc("/readyz", server.readiness)
 	mux.Handle("/metrics", promhttp.HandlerFor(recorder.Gatherer(), promhttp.HandlerOpts{}))
+	// Allocation and CPU attribution has no in-process answer today: the
+	// runtime metrics say the process is allocation driven but not where the
+	// allocations come from. pprof lives on the same internal port as
+	// /metrics and stays inert until something requests a profile.
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	server.handler = mux
 	return server
 }

@@ -172,7 +172,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 
 	sourceConnection := cfg.StrategySourceRedis()
 	runtimeConnection := cfg.ResolvedRuntimeRedis()
-	controlClient, err := openProductionRedis(ctx, sourceConnection)
+	controlClient, err := openProductionRedisWithHook(ctx, sourceConnection, recorder.RedisHook())
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +185,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	runtimeClient := controlClient
 	runtimeClientIsSource := reflect.DeepEqual(runtimeConnection, sourceConnection)
 	if !runtimeClientIsSource {
-		runtimeClient, err = openProductionRedis(ctx, runtimeConnection)
+		runtimeClient, err = openProductionRedisWithHook(ctx, runtimeConnection, recorder.RedisHook())
 		if err != nil {
 			return nil, err
 		}

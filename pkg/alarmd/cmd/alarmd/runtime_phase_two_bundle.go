@@ -237,6 +237,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	recorder.SetControlCacheSource(func() []metric.ControlCacheCounts {
 		stats := repository.ControlReadCacheStats()
 		return []metric.ControlCacheCounts{
+			{Object: "version", Hits: stats.Version.Hits, Misses: stats.Version.Misses, Refreshes: stats.Version.Refreshes},
 			{Object: "snapshot", Hits: stats.Snapshot.Hits, Misses: stats.Snapshot.Misses, Refreshes: stats.Snapshot.Refreshes},
 			{Object: "activation", Hits: stats.Activation.Hits, Misses: stats.Activation.Misses, Refreshes: stats.Activation.Refreshes},
 			{Object: "timeline", Hits: stats.Timeline.Hits, Misses: stats.Timeline.Misses, Refreshes: stats.Timeline.Refreshes},
@@ -508,6 +509,9 @@ func openProductionPhaseTwoBundleWithDependencies(
 	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
 		Config: cfg, Health: health, Control: control, Ownership: productionOwnership,
 		Recorder: recorder, Observer: observer, TargetFlow: targetFlow, Now: external.Now,
+		ProbeControlRedis: func(probeCtx context.Context) error {
+			return controlClient.Ping(probeCtx).Err()
+		},
 		CloseResources: func(shutdownCtx context.Context) error {
 			repository.ReleaseSnapshotCache()
 			eventsClosed = true

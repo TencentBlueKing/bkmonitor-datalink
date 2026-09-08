@@ -216,6 +216,7 @@ type EvaluationPlanV2 struct {
 	StrategyRef         StrategyRefV2          `json:"strategy_ref"`
 	InputProjection     InputProjectionV2      `json:"input_projection"`
 	SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
+	OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
 	StrategyIR          StrategyIRV2           `json:"strategy_ir"`
 	TerminalReasonCode  string                 `json:"terminal_reason_code,omitempty"`
 }
@@ -235,8 +236,9 @@ func (plan EvaluationPlanV2) MarshalJSON() ([]byte, error) {
 		StrategyRef         StrategyRefV2          `json:"strategy_ref"`
 		InputProjection     InputProjectionV2      `json:"input_projection"`
 		SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
+		OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
 		StrategyIR          StrategyIRV2           `json:"strategy_ir"`
-	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.StrategyIR})
+	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.StrategyIR})
 }
 
 type PlanSetV2 struct {
@@ -450,6 +452,7 @@ type TriggerEventV1 struct {
 	BusinessID              string               `json:"business_id"`
 	PlanRef                 RuntimePlanRefV1     `json:"plan_ref"`
 	StrategyRef             *StrategySnapshotRef `json:"strategy_ref,omitempty"`
+	DedupeMD5               string               `json:"dedupe_md5,omitempty"`
 	RecordRef               TriggerRecordRefV1   `json:"record_ref"`
 	Observed                TriggerObservedV1    `json:"observed"`
 	LevelResults            []LevelResultV1      `json:"level_results"`
@@ -465,6 +468,7 @@ type TriggerEventBuildInputV1 struct {
 	BusinessID              string
 	PlanRef                 RuntimePlanRefV1
 	StrategyRef             *StrategySnapshotRef
+	DedupeMD5               string
 	RecordRef               TriggerRecordRefV1
 	Observed                TriggerObservedV1
 	LevelResults            []LevelResultV1

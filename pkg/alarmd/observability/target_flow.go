@@ -17,6 +17,12 @@ const TargetFlowMaxBytes = 4 << 20
 const targetFlowMaxRecordBytes = 4096
 const targetFlowMarkerReserve = 1024
 
+// Keep one quarter of the diagnostic budget for completion facts. At the
+// supported 10-second minimum cadence, 32 selected QGs produce 192 Slots per
+// minute; the standard five-record completion chain fits inside this reserve.
+const targetFlowCriticalReserveRecords = 1024
+const targetFlowCriticalReserveBytes = 1 << 20
+
 type TargetFlowConfig struct {
 	QueryGroups []string `yaml:"query_groups"`
 }
@@ -109,11 +115,12 @@ type TargetFlow struct {
 	now             func() time.Time
 	mu              sync.Mutex
 	start           time.Time
-	records, bytes  int
-	dropped         uint64
-	marked          bool
 	queueSeen       map[string]uint8 // Only selected QGs; three fixed rejection reasons per window.
 	queueSuppressed uint64
+	records, bytes  int
+	dropped         uint64
+	windowDropped   uint64
+	nextDropMarker  uint64
 }
 
 func NewTargetFlow(logger *Logger, c TargetFlowConfig) (*TargetFlow, error) {
@@ -289,45 +296,82 @@ func (f *TargetFlow) emit(stage, result, reason string, t TraceFields, facts Tar
 		f.start = now
 		f.records = 0
 		f.bytes = 0
-		f.marked = false
+		f.windowDropped = 0
+		f.nextDropMarker = 1
 		for qg := range f.queueSeen {
 			delete(f.queueSeen, qg)
 		}
 	}
-	if stage == "queue_skipped" {
-		var bit uint8
-		switch facts.Decision {
-		case "normal_queue_full":
-			bit = 1
-		case "delayed_queue_full":
-			bit = 2
-		case "delayed_queue_evicted":
-			bit = 4
-		}
-		if bit != 0 {
-			if f.queueSeen[t.QueryGroupKey]&bit != 0 {
-				f.queueSuppressed++
-				return
-			}
-			f.queueSeen[t.QueryGroupKey] |= bit
-		}
+	if stage == "queue_skipped" && f.suppressQueueLocked(t.QueryGroupKey, facts.Decision) {
+		return
 	}
-	if f.records >= TargetFlowMaxRecords-1 || f.bytes >= TargetFlowMaxBytes-targetFlowMarkerReserve {
-		f.dropLocked(now)
+	critical := targetFlowCritical(stage, facts)
+	if !critical && f.records >= TargetFlowMaxRecords-1-targetFlowCriticalReserveRecords {
+		f.dropLocked(now, "critical_record_reserve")
+		return
+	}
+	if !critical && f.bytes >= TargetFlowMaxBytes-targetFlowMarkerReserve-targetFlowCriticalReserveBytes {
+		f.dropLocked(now, "critical_byte_reserve")
+		return
+	}
+	if f.records >= TargetFlowMaxRecords-1 {
+		f.dropLocked(now, "record_limit")
+		return
+	}
+	if f.bytes >= TargetFlowMaxBytes-targetFlowMarkerReserve {
+		f.dropLocked(now, "byte_limit")
 		return
 	}
 	record := targetFlowRecord{SlotIdentityKnown: t.EvaluationTime > 0 && t.QueryRevision != "" && t.SnapshotRevision != "" && t.ScheduleRevision != "", Diagnostic: true, Component: "runtime", Time: now.UnixMilli(), Stage: stage, Result: result, Reason: reason, QueryGroup: t.QueryGroupKey, Strategy: t.StrategyID, Snapshot: t.SnapshotRevision, QueryRevision: t.QueryRevision, ScheduleRevision: t.ScheduleRevision, SegmentStart: t.ScheduleSegmentStart, Slot: t.EvaluationTime, Owner: t.OwnerID, OwnerEpoch: t.OwnerEpoch, DurationNS: int64(d), Facts: facts, Dropped: f.dropped, RecordLimit: TargetFlowMaxRecords, ByteLimit: TargetFlowMaxBytes}
 	record.QueueSuppressed = f.queueSuppressed
 	wire, _ := json.Marshal(record)
 	wire = append(wire, '\n')
-	if len(wire) > targetFlowMaxRecordBytes || f.records >= TargetFlowMaxRecords-1 || f.bytes+len(wire) > TargetFlowMaxBytes-targetFlowMarkerReserve {
-		f.dropLocked(now)
+	if len(wire) > targetFlowMaxRecordBytes {
+		f.dropLocked(now, "record_oversize")
+		return
+	}
+	if !critical && f.records >= TargetFlowMaxRecords-1-targetFlowCriticalReserveRecords {
+		f.dropLocked(now, "critical_record_reserve")
+		return
+	}
+	if !critical && f.bytes+len(wire) > TargetFlowMaxBytes-targetFlowMarkerReserve-targetFlowCriticalReserveBytes {
+		f.dropLocked(now, "critical_byte_reserve")
+		return
+	}
+	if f.records >= TargetFlowMaxRecords-1 {
+		f.dropLocked(now, "record_limit")
+		return
+	}
+	if f.bytes+len(wire) > TargetFlowMaxBytes-targetFlowMarkerReserve {
+		f.dropLocked(now, "byte_limit")
 		return
 	}
 	f.records++
 	f.bytes += len(wire)
 	_, _ = f.logger.writer.Write(wire)
 }
+
+func (f *TargetFlow) suppressQueueLocked(queryGroup, decision string) bool {
+	var bit uint8
+	switch decision {
+	case "normal_queue_full":
+		bit = 1
+	case "delayed_queue_full":
+		bit = 2
+	case "delayed_queue_evicted":
+		bit = 4
+	}
+	if bit == 0 {
+		return false
+	}
+	if f.queueSeen[queryGroup]&bit != 0 {
+		f.queueSuppressed++
+		return true
+	}
+	f.queueSeen[queryGroup] |= bit
+	return false
+}
+
 func (f *TargetFlow) drop() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -336,32 +380,55 @@ func (f *TargetFlow) drop() {
 		f.start = now
 		f.records = 0
 		f.bytes = 0
-		f.marked = false
+		f.windowDropped = 0
+		f.nextDropMarker = 1
 		for qg := range f.queueSeen {
 			delete(f.queueSeen, qg)
 		}
 	}
-	f.dropLocked(now)
+	f.dropLocked(now, "identity_oversize")
 }
-func (f *TargetFlow) dropLocked(now time.Time) {
+func (f *TargetFlow) dropLocked(now time.Time, reason string) {
 	f.dropped++
-	if f.marked {
+	f.windowDropped++
+	if f.nextDropMarker == 0 {
+		f.nextDropMarker = 1
+	}
+	if f.windowDropped < f.nextDropMarker {
 		return
 	}
-	f.marked = true
+	if f.nextDropMarker <= ^uint64(0)/2 {
+		f.nextDropMarker *= 2
+	}
 	marker, _ := json.Marshal(struct {
-		Time            int64  `json:"time_unix_ms"`
-		Stage           string `json:"stage"`
-		Dropped         uint64 `json:"dropped_total"`
-		QueueSuppressed uint64 `json:"queue_suppressed_total,omitempty"`
-		RecordLimit     int    `json:"record_limit"`
-		ByteLimit       int    `json:"byte_limit"`
-	}{now.UnixMilli(), "target_flow_dropped", f.dropped, f.queueSuppressed, TargetFlowMaxRecords, TargetFlowMaxBytes})
+		Time                int64  `json:"time_unix_ms"`
+		Stage               string `json:"stage"`
+		DropReason          string `json:"drop_reason"`
+		Dropped             uint64 `json:"dropped_total"`
+		WindowDropped       uint64 `json:"window_dropped"`
+		QueueSuppressed     uint64 `json:"queue_suppressed_total,omitempty"`
+		SelectedQueryGroups int    `json:"selected_query_groups"`
+		WrittenRecords      int    `json:"written_records"`
+		WrittenBytes        int    `json:"written_bytes"`
+		RecordLimit         int    `json:"record_limit"`
+		ByteLimit           int    `json:"byte_limit"`
+	}{now.UnixMilli(), "target_flow_dropped", reason, f.dropped, f.windowDropped, f.queueSuppressed, len(f.groups), f.records, f.bytes, TargetFlowMaxRecords, TargetFlowMaxBytes})
 	marker = append(marker, '\n')
 	if f.records < TargetFlowMaxRecords && f.bytes+len(marker) <= TargetFlowMaxBytes {
 		f.records++
 		f.bytes += len(marker)
 		_, _ = f.logger.writer.Write(marker)
+	}
+}
+
+func targetFlowCritical(stage string, facts TargetFlowFacts) bool {
+	switch stage {
+	case string(StageQueryCompleted), string(StageProgressCommitted), string(StageSlotCompleted), string(StageRunnerCompleted), string(StageSlotSourceCompleted), string(StageResourceHard), "execution_outcome", "runner_return", "expired_range_returned":
+		return true
+	case "runner_decision":
+		return facts.ExecutionOutcomeKnown || facts.Completed
+	default:
+		return false
 	}
 }
 

@@ -165,6 +165,58 @@ func TestTargetFlowGlobalRecordAndByteBoundsIncludingDrop(t *testing.T) {
 		t.Fatal("byte bound not exercised")
 	}
 }
+
+func TestTargetFlowReservesBudgetForCriticalCompletionStages(t *testing.T) {
+	f, b := newTestFlow(t)
+	for i := 0; i < TargetFlowMaxRecords*2; i++ {
+		f.emit("slot_selection", "success", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
+	}
+	if f.windowDropped == 0 {
+		t.Fatal("non-critical flow did not reach its reserve boundary")
+	}
+	droppedBeforeCritical := f.dropped
+	for i := 0; i < 960; i++ {
+		f.emit("progress_committed", "success", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{Completed: true}, 0)
+	}
+	output := b.String()
+	if got := strings.Count(output, `"stage":"progress_committed"`); got != 960 {
+		t.Fatalf("critical completion records after non-critical saturation = %d, want 960", got)
+	}
+	if f.dropped != droppedBeforeCritical {
+		t.Fatalf("critical completion records consumed their reserve: drops %d -> %d", droppedBeforeCritical, f.dropped)
+	}
+	if f.records > TargetFlowMaxRecords || f.bytes > TargetFlowMaxBytes {
+		t.Fatalf("critical reserve escaped hard bounds: records=%d bytes=%d", f.records, f.bytes)
+	}
+}
+
+func TestTargetFlowDropMarkerExplainsWindowAndReserve(t *testing.T) {
+	f, b := newTestFlow(t)
+	for i := 0; i < TargetFlowMaxRecords; i++ {
+		f.emit("slot_selection", "success", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
+	}
+	lines := bytes.Split(bytes.TrimSpace(b.Bytes()), []byte("\n"))
+	var marker map[string]any
+	for _, line := range lines {
+		var record map[string]any
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatal(err)
+		}
+		if record["stage"] == "target_flow_dropped" {
+			marker = record
+		}
+	}
+	if marker == nil {
+		t.Fatal("drop marker missing")
+	}
+	if marker["drop_reason"] != "critical_record_reserve" || marker["selected_query_groups"] != float64(1) {
+		t.Fatalf("drop marker does not identify the reserve boundary: %+v", marker)
+	}
+	if marker["window_dropped"].(float64) < 1 || marker["written_records"].(float64) < 1 || marker["written_bytes"].(float64) < 1 {
+		t.Fatalf("drop marker is missing window facts: %+v", marker)
+	}
+}
+
 func TestTargetFlowDisabledValidationAndOversize(t *testing.T) {
 	f, e := NewTargetFlow(nil, TargetFlowConfig{})
 	if e != nil || f != nil {

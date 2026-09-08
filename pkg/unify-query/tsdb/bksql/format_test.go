@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -937,4 +938,61 @@ func TestFormatDataToQueryResult_ValueParsing(t *testing.T) {
 			assert.Equal(t, c.expected, actual)
 		})
 	}
+}
+
+func TestFormatDataToQueryResultDynamicLabelsIncreaseSeriesRowsRatio(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	start := time.Unix(1776758700, 0)
+	end := start.Add(5 * time.Minute)
+
+	format := func(dynamic bool) *prompb.QueryResult {
+		t.Helper()
+		query := &metadata.Query{
+			DataSource:  "bkdata",
+			StorageType: metadata.BkSqlStorageType,
+			TableID:     "2_cdn_flow",
+			DB:          "2_cdn_flow",
+			Field:       "metric_value2",
+		}
+		factory := bksql.NewQueryFactory(ctx, query).WithRangeTime(start, end)
+		_, err := factory.SQL()
+		require.NoError(t, err)
+
+		rows := make([]map[string]any, 0, 5)
+		for i := 0; i < 5; i++ {
+			labelValue := "stable"
+			if dynamic {
+				labelValue = fmt.Sprintf("minute-%d", i)
+			}
+			rows = append(rows, map[string]any{
+				"_timestamp_": start.Add(time.Duration(i) * time.Minute).UnixMilli(),
+				"_value_":     float64(i),
+				"data_time":   labelValue,
+			})
+		}
+		result, err := factory.FormatDataToQueryResult(ctx, rows)
+		require.NoError(t, err)
+		return result
+	}
+
+	stable := format(false)
+	dynamic := format(true)
+	require.Len(t, stable.Timeseries, 1)
+	require.Len(t, dynamic.Timeseries, 5)
+
+	countPointsAndLabelBytes := func(result *prompb.QueryResult) (int, int) {
+		var points, labelBytes int
+		for _, series := range result.Timeseries {
+			points += len(series.Samples)
+			for _, label := range series.Labels {
+				labelBytes += len(label.Name) + len(label.Value)
+			}
+		}
+		return points, labelBytes
+	}
+	stablePoints, stableLabelBytes := countPointsAndLabelBytes(stable)
+	dynamicPoints, dynamicLabelBytes := countPointsAndLabelBytes(dynamic)
+	require.Equal(t, 5, stablePoints)
+	require.Equal(t, 5, dynamicPoints)
+	require.Greater(t, dynamicLabelBytes, stableLabelBytes)
 }

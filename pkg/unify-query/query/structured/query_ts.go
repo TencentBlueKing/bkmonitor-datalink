@@ -266,8 +266,12 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		return nil, err
 	}
 
+	astBranchCount := queryASTBranchCount(q.MetricMerge, len(q.QueryList))
 	queryReference := make(metadata.QueryReference)
 	for _, query := range q.QueryList {
+		if query.ASTBranchCount == 0 {
+			query.ASTBranchCount = astBranchCount
+		}
 		// 兼容 SaaS 命名（bk_data / bk_log_search / bk_apm）-> 内部命名（bkdata / bklog / bkapm）
 		query.DataSource = normalizeDataSource(query.DataSource)
 
@@ -344,6 +348,24 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 
 	metadata.SetQueryReference(ctx, queryReference)
 	return queryReference, nil
+}
+
+func queryASTBranchCount(expression string, fallback int) int {
+	expr, err := parser.ParseExpr(expression)
+	if err != nil {
+		return fallback
+	}
+	count := 0
+	parser.Inspect(expr, func(node parser.Node, _ []parser.Node) error {
+		if _, ok := node.(*parser.VectorSelector); ok {
+			count++
+		}
+		return nil
+	})
+	if count == 0 {
+		return fallback
+	}
+	return count
 }
 
 func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClusterMetric, error) {
@@ -625,6 +647,8 @@ type Query struct {
 	TableIDConditions AllConditions `json:"table_id_conditions,omitempty"`
 	// KeepColumns 保留字段
 	KeepColumns KeepColumns `json:"keep_columns,omitempty" swaggerignore:"true"`
+	// ASTBranchCount records the selector branch count for observation only.
+	ASTBranchCount int `json:"-" swaggerignore:"true"`
 
 	// AlignInfluxdbResult 保留字段，无需配置，是否对齐influxdb的结果,该判断基于promql和influxdb查询原理的差异
 	AlignInfluxdbResult bool `json:"-"`
@@ -946,6 +970,26 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			).Error(ctx, nil)
 		}
 
+		costProfile := metadata.QueryCostProfile{
+			SelectAllCandidate: len(aggregates) == 0 && len(q.KeepColumns) == 0 && q.SQL == "",
+			ASTBranchCount:     q.ASTBranchCount,
+			SQLPushdown:        q.IsDomSampled,
+		}
+		if costProfile.ASTBranchCount == 0 {
+			costProfile.ASTBranchCount = 1
+		}
+		costProfile.RangeFunction, costProfile.Window, costProfile.Step = q.queryCostRangeProfile()
+		costProfile.StepLessThanWindow = costProfile.Window > 0 &&
+			costProfile.Step > 0 &&
+			costProfile.Step < costProfile.Window
+		span.Set("query-cost.select-all-candidate", costProfile.SelectAllCandidate)
+		span.Set("query-cost.range-function", costProfile.RangeFunction)
+		span.Set("query-cost.step-less-than-window", costProfile.StepLessThanWindow)
+		span.Set("query-cost.ast-branches", costProfile.ASTBranchCount)
+		span.Set("query-cost.sql-pushdown", costProfile.SQLPushdown)
+		span.Set("query-cost.window", costProfile.Window)
+		span.Set("query-cost.step", costProfile.Step)
+
 		query := &metadata.Query{
 			StorageType:   metadata.BkSqlStorageType,
 			TableID:       string(tableID),
@@ -955,6 +999,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			Field:         q.FieldName,
 			Aggregates:    aggregates,
 			AllConditions: allConditions.MetaDataAllConditions(),
+			CostProfile:   costProfile,
 		}
 
 		query.SQL = q.SQL
@@ -1188,6 +1233,81 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	span.Set("query_metric_length", len(queryMetric.QueryList))
 
 	return queryMetric, nil
+}
+
+func (q *Query) queryCostRangeProfile() (hasRangeFunction bool, window, step time.Duration) {
+	topLevelStep := queryCostDuration(q.Step)
+	if topLevelStep <= 0 {
+		topLevelStep = promql.GetDefaultStep()
+	}
+	step = topLevelStep
+
+	type rangeCandidate struct {
+		function   string
+		window     Window
+		isSubQuery bool
+		step       string
+	}
+	candidates := make([]rangeCandidate, 0, len(q.AggregateMethodList)+1)
+	candidates = append(candidates, rangeCandidate{
+		function:   q.TimeAggregation.Function,
+		window:     q.TimeAggregation.Window,
+		isSubQuery: q.TimeAggregation.IsSubQuery,
+		step:       q.TimeAggregation.Step,
+	})
+	for _, aggregate := range q.AggregateMethodList {
+		candidates = append(candidates, rangeCandidate{
+			function:   aggregate.Method,
+			window:     aggregate.Window,
+			isSubQuery: aggregate.IsSubQuery,
+			step:       aggregate.Step,
+		})
+	}
+
+	bestDensity := float64(-1)
+	enclosingStep := topLevelStep
+	// Range candidates are stored from inner to outer. Walk them backwards so
+	// an enclosing subquery step is applied to every range function inside it.
+	for i := len(candidates) - 1; i >= 0; i-- {
+		candidate := candidates[i]
+		if candidate.function == "" || candidate.window == "" {
+			continue
+		}
+		hasRangeFunction = true
+		parsedWindow := queryCostDuration(string(candidate.window))
+		if parsedWindow <= 0 {
+			continue
+		}
+		candidateStep := enclosingStep
+		if candidate.isSubQuery {
+			if candidate.step == "" || candidate.step == "0s" {
+				candidateStep = promql.GetDefaultStep()
+			} else {
+				candidateStep = queryCostDuration(candidate.step)
+			}
+		}
+		if candidateStep <= 0 {
+			continue
+		}
+		density := float64(parsedWindow) / float64(candidateStep)
+		if density > bestDensity {
+			bestDensity = density
+			window = parsedWindow
+			step = candidateStep
+		}
+		if candidate.isSubQuery {
+			enclosingStep = candidateStep
+		}
+	}
+	return hasRangeFunction, window, step
+}
+
+func queryCostDuration(value string) time.Duration {
+	duration, err := model.ParseDuration(value)
+	if err != nil {
+		return 0
+	}
+	return time.Duration(duration)
 }
 
 func (q *Query) BuildMetadataQuery(

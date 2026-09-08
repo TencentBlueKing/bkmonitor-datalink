@@ -136,6 +136,36 @@ func TestExecuteNamedOutputsLegacyFirstResponseInRequestOrder(t *testing.T) {
 	require.Equal(t, "ROUTE_PARTIAL", metadata.GetStatus(ctx).Code, "output status must not overwrite the request status")
 }
 
+func TestExecuteNamedOutputsReturnsResourceBudgetErrorInsteadOfPartialCancellation(t *testing.T) {
+	metadata.InitMetadata()
+	baseCtx := metadata.InitHashID(context.Background())
+	ctx, cancel := context.WithCancel(baseCtx)
+	budget := metadata.NewResourceBudget(metadata.ResourceBudgetLimits{MaxSeries: 1}, cancel)
+	ctx = metadata.WithResourceBudget(ctx, budget)
+	query := &structured.QueryTs{
+		ResponseContract: structured.NamedOutputsV1,
+		OutputList: []structured.QueryOutput{
+			{ReferenceName: "A", Expression: "A"},
+		},
+	}
+
+	_, err := executeNamedOutputsWith(
+		ctx,
+		query,
+		defaultNamedOutputSettings(),
+		nil,
+		"trace",
+		func(context.Context, structured.QueryOutput) (any, bool, error) {
+			return nil, false, budget.Reserve(2, 0, 0)
+		},
+	)
+
+	var limitErr *metadata.ResourceBudgetError
+	require.ErrorAs(t, err, &limitErr)
+	require.Equal(t, metadata.ResourceSeries, limitErr.Resource)
+	require.NotErrorIs(t, err, context.Canceled)
+}
+
 func TestNamedResultFiltersInvalidRangeAndInstantPoints(t *testing.T) {
 	matrix := promPromql.Matrix{{
 		Metric: labels.FromStrings("service", "api"),

@@ -124,7 +124,10 @@ func (i *Instance) sqlQuery(ctx context.Context, req QuerySyncRequest) (*QuerySy
 	defer cancel()
 
 	// 发起异步查询
-	res := i.client.QuerySync(ctx, req, span)
+	res, queryErr := i.client.QuerySync(ctx, req, span)
+	if queryErr != nil {
+		return nil, queryErr
+	}
 	if res == nil {
 		return nil, nil
 	}
@@ -567,8 +570,27 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 		).Error(ctx, err)
 		return storage.ErrSeriesSet(err)
 	}
+	if err = reserveQueryResultEvalCapacity(ctx, len(qr.Timeseries)); err != nil {
+		err = metadata.NewMessage(
+			metadata.MsgQueryBKSQL,
+			"查询资源预算不足",
+		).Error(ctx, err)
+		return storage.ErrSeriesSet(err)
+	}
 
 	return remote.FromQueryResult(true, qr)
+}
+
+func reserveQueryResultEvalCapacity(ctx context.Context, series int) error {
+	budget := metadata.GetResourceBudget(ctx)
+	if budget == nil {
+		return nil
+	}
+	return budget.ReserveEvalCapacity(
+		int64(series),
+		budget.EvaluationSteps(),
+		metadata.PromQLPointBytes,
+	)
 }
 
 func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error) {

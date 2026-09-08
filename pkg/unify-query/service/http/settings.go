@@ -25,15 +25,20 @@ const (
 	SlowQueryThresholdConfigPath  = "http.slow_query_threshold"
 	DefaultQueryListLimitPath     = "http.default_query_list_limit"
 
-	QueryMaxRoutingConfigPath              = "http.query.max_routing"
-	QueryContentTypeConfigPath             = "http.query.content_type"
-	QueryContentEncodingConfigPath         = "http.query.content_encoding"
-	NamedOutputsMaxOutputsConfigPath       = "http.query.named_outputs.max_outputs"
-	NamedOutputsTimeoutConfigPath          = "http.query.named_outputs.timeout"
-	NamedOutputsMaxSeriesConfigPath        = "http.query.named_outputs.max_series"
-	NamedOutputsMaxPointsConfigPath        = "http.query.named_outputs.max_points"
-	NamedOutputsMaxCacheBytesConfigPath    = "http.query.named_outputs.max_cache_bytes"
-	NamedOutputsMaxResponseBytesConfigPath = "http.query.named_outputs.max_response_bytes"
+	QueryMaxRoutingConfigPath                   = "http.query.max_routing"
+	QueryContentTypeConfigPath                  = "http.query.content_type"
+	QueryContentEncodingConfigPath              = "http.query.content_encoding"
+	NamedOutputsMaxOutputsConfigPath            = "http.query.named_outputs.max_outputs"
+	NamedOutputsTimeoutConfigPath               = "http.query.named_outputs.timeout"
+	NamedOutputsMaxSeriesConfigPath             = "http.query.named_outputs.max_series"
+	NamedOutputsMaxPointsConfigPath             = "http.query.named_outputs.max_points"
+	NamedOutputsMaxCacheBytesConfigPath         = "http.query.named_outputs.max_cache_bytes"
+	NamedOutputsMaxResponseBytesConfigPath      = "http.query.named_outputs.max_response_bytes"
+	QueryResourceMaxSeriesConfigPath            = "http.query.resource.max_series"
+	QueryResourceMaxPointsConfigPath            = "http.query.resource.max_points"
+	QueryResourceMaxBytesConfigPath             = "http.query.resource.max_bytes"
+	QueryResourceMaxResponseBytesConfigPath     = "http.query.resource.max_response_bytes"
+	QueryResourceMaxEvalCapacityBytesConfigPath = "http.query.resource.max_eval_capacity_bytes"
 
 	// 服务配置
 	EnablePrometheusConfigPath = "http.prometheus.enable"
@@ -135,7 +140,28 @@ var (
 
 	queryRawESBatchSettingsSnapshot atomic.Pointer[queryRawESBatchSettings]
 	namedOutputSettingsSnapshot     atomic.Pointer[namedOutputSettings]
+	queryResourceSettingsSnapshot   atomic.Pointer[queryResourceSettings]
 )
+
+type queryResourceSettings struct {
+	MaxSeries            int64
+	MaxPoints            int64
+	MaxBytes             int64
+	MaxResponseBytes     int64
+	MaxEvalCapacityBytes int64
+}
+
+func defaultQueryResourceSettings() *queryResourceSettings {
+	return &queryResourceSettings{}
+}
+
+func getQueryResourceSettings() queryResourceSettings {
+	settings := queryResourceSettingsSnapshot.Load()
+	if settings == nil {
+		settings = defaultQueryResourceSettings()
+	}
+	return *settings
+}
 
 func defaultQueryRawESBatchSettings() *queryRawESBatchSettings {
 	return &queryRawESBatchSettings{

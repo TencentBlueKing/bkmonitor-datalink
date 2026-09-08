@@ -398,3 +398,22 @@ func TestSelectorCacheStopsMaterializingAtCapacityOrCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.LessOrEqual(t, cancellationCalls.Load(), int32(2), "cancellation must stop materialization")
 }
+
+func TestSelectorCacheAddsOnlyCopyBytesToSharedResourceBudget(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	budget := metadata.NewResourceBudget(metadata.ResourceBudgetLimits{MaxBytes: 1024 * 1024}, nil)
+	require.NoError(t, budget.Reserve(1, 2, 100))
+	ctx = metadata.WithResourceBudget(ctx, budget)
+	cache := NewSelectorCache(SelectorCacheLimits{MaxSeries: 10, MaxPoints: 10, MaxBytes: 1024 * 1024})
+
+	_, err := consumeFloatSeriesSet(cache.GetOrLoad(ctx, "copy", func(context.Context) storage.SeriesSet {
+		return generatedFloatSeriesSet(3, 2)
+	}))
+
+	require.NoError(t, err)
+	snapshot := budget.Snapshot()
+	require.Equal(t, int64(1), snapshot.Usage.Series)
+	require.Equal(t, int64(2), snapshot.Usage.Points)
+	require.Greater(t, snapshot.Usage.Bytes, int64(100))
+}

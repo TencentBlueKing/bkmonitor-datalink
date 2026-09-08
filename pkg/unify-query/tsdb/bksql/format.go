@@ -286,6 +286,9 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 	// 先获取维度的 key 保证顺序一致
 	var keys []string
 	for _, d := range list {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		// 优先获取时间和值
 		var (
 			vt int64
@@ -371,6 +374,15 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 		// 同一个 series 进行合并分组
 		key := buf.String()
 		if _, ok := tsMap[key]; !ok {
+			var labelBytes int64
+			for _, label := range lbl {
+				labelBytes += int64(len(label.Name) + len(label.Value))
+			}
+			if budget := metadata.GetResourceBudget(ctx); budget != nil {
+				if err := budget.Reserve(1, 0, labelBytes); err != nil {
+					return nil, err
+				}
+			}
 			tsMap[key] = &prompb.TimeSeries{
 				Labels:  lbl,
 				Samples: make([]prompb.Sample, 0),
@@ -385,6 +397,11 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 
 			tsTimeMap[key][vt] = vv
 		} else {
+			if budget := metadata.GetResourceBudget(ctx); budget != nil {
+				if err := budget.Reserve(0, 1, metadata.PromQLPointBytes); err != nil {
+					return nil, err
+				}
+			}
 			tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
 				Value:     vv,
 				Timestamp: vt,
@@ -410,6 +427,14 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 
 		for key, ts := range tsMap {
 			for i := start; end.Sub(i) > 0; i = i.Add(f.timeAggregate.Window) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				if budget := metadata.GetResourceBudget(ctx); budget != nil {
+					if err := budget.Reserve(0, 1, metadata.PromQLPointBytes); err != nil {
+						return nil, err
+					}
+				}
 				sample := prompb.Sample{
 					Timestamp: i.UnixMilli(),
 					Value:     0,

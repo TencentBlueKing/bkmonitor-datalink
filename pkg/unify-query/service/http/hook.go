@@ -34,6 +34,10 @@ var warnNamedOutputConfig = func(path string) {
 	log.Warnf(context.Background(), "invalid named outputs config, using safe default: field=%s", path)
 }
 
+var warnQueryResourceConfig = func(path string) {
+	log.Warnf(context.Background(), "invalid query resource config, disabling limit: field=%s", path)
+}
+
 // setDefaultConfig
 func setDefaultConfig() {
 	viper.SetDefault(IPAddressConfigPath, "127.0.0.1")
@@ -100,6 +104,13 @@ func setDefaultConfig() {
 	viper.SetDefault(NamedOutputsMaxPointsConfigPath, 1000000)
 	viper.SetDefault(NamedOutputsMaxCacheBytesConfigPath, 64*1024*1024)
 	viper.SetDefault(NamedOutputsMaxResponseBytesConfigPath, 16*1024*1024)
+	// Generic query budgets are opt-in so the binary can be rolled out before
+	// environment-specific Test/Gray limits are approved.
+	viper.SetDefault(QueryResourceMaxSeriesConfigPath, 0)
+	viper.SetDefault(QueryResourceMaxPointsConfigPath, 0)
+	viper.SetDefault(QueryResourceMaxBytesConfigPath, 0)
+	viper.SetDefault(QueryResourceMaxResponseBytesConfigPath, 0)
+	viper.SetDefault(QueryResourceMaxEvalCapacityBytesConfigPath, 0)
 
 	viper.SetDefault(ClusterMetricQueryPrefixConfigPath, "bkmonitor")
 	viper.SetDefault(ClusterMetricQueryTimeoutConfigPath, "30s")
@@ -214,6 +225,29 @@ func loadNamedOutputSettings() {
 	namedOutputSettingsSnapshot.Store(&settings)
 }
 
+func loadQueryResourceSettings() {
+	settings := defaultQueryResourceSettings()
+	values := []struct {
+		path   string
+		target *int64
+	}{
+		{path: QueryResourceMaxSeriesConfigPath, target: &settings.MaxSeries},
+		{path: QueryResourceMaxPointsConfigPath, target: &settings.MaxPoints},
+		{path: QueryResourceMaxBytesConfigPath, target: &settings.MaxBytes},
+		{path: QueryResourceMaxResponseBytesConfigPath, target: &settings.MaxResponseBytes},
+		{path: QueryResourceMaxEvalCapacityBytesConfigPath, target: &settings.MaxEvalCapacityBytes},
+	}
+	for _, value := range values {
+		configured := viper.GetInt64(value.path)
+		if configured < 0 {
+			warnQueryResourceConfig(value.path)
+			continue
+		}
+		*value.target = configured
+	}
+	queryResourceSettingsSnapshot.Store(settings)
+}
+
 // LoadConfig
 func LoadConfig() {
 	TestV = viper.GetBool(AlignInfluxdbResultConfigPath)
@@ -244,6 +278,7 @@ func LoadConfig() {
 
 	loadQueryRawESBatchSettings()
 	loadNamedOutputSettings()
+	loadQueryResourceSettings()
 }
 
 // init
@@ -251,6 +286,7 @@ func init() {
 	queryRawESBatchSettingsSnapshot.Store(defaultQueryRawESBatchSettings())
 	settings := defaultNamedOutputSettings()
 	namedOutputSettingsSnapshot.Store(&settings)
+	queryResourceSettingsSnapshot.Store(defaultQueryResourceSettings())
 
 	if err := eventbus.EventBus.Subscribe(eventbus.EventSignalConfigPreParse, setDefaultConfig); err != nil {
 		fmt.Printf(

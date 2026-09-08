@@ -11,6 +11,7 @@ package bksql
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -72,17 +73,35 @@ func (c *Client) curlGet(ctx context.Context, method string, req QuerySyncReques
 	}
 
 	startAnaylize := time.Now()
+	var maxResponseBytes int64
+	if budget := metadata.GetResourceBudget(ctx); budget != nil {
+		maxResponseBytes = budget.MaxResponseBytes()
+	}
 	size, err := c.curl.Request(
 		ctx, method,
 		curl.Options{
-			UrlPath: c.url,
-			Body:    body,
-			Headers: metadata.Headers(ctx, c.headers),
+			UrlPath:          c.url,
+			Body:             body,
+			Headers:          metadata.Headers(ctx, c.headers),
+			MaxResponseBytes: maxResponseBytes,
 		},
 		res,
 	)
 	if err != nil {
+		var responseLimit *curl.ResponseBodyLimitError
+		if errors.As(err, &responseLimit) {
+			if budget := metadata.GetResourceBudget(ctx); budget != nil {
+				if limitErr := budget.Reject(metadata.ResourceResponseBytes, int64(size)); limitErr != nil {
+					return limitErr
+				}
+			}
+		}
 		return err
+	}
+	if budget := metadata.GetResourceBudget(ctx); budget != nil {
+		if err = budget.ReserveResponseBytes(int64(size)); err != nil {
+			return err
+		}
 	}
 
 	metric.TsDBRequestBytes(ctx, size, metadata.BkSqlStorageType)
@@ -101,26 +120,18 @@ func (c *Client) curlGet(ctx context.Context, method string, req QuerySyncReques
 	return nil
 }
 
-func (c *Client) QuerySync(ctx context.Context, req QuerySyncRequest, span *trace.Span) *Result {
+func (c *Client) QuerySync(ctx context.Context, req QuerySyncRequest, span *trace.Span) (*Result, error) {
 	data := &QuerySyncResultData{}
 	res := c.response(data)
 
 	err := c.curlGet(ctx, curl.Post, req, res, span)
 	if err != nil {
-		return c.failed(ctx, err)
+		return nil, err
 	}
 
-	return res
+	return res, nil
 }
 
 func (c *Client) response(data any) *Result {
 	return &Result{Data: data}
-}
-
-func (c *Client) failed(ctx context.Context, err error) *Result {
-	return &Result{
-		Result:  false,
-		Message: err.Error(),
-		Code:    StatusFailed,
-	}
 }

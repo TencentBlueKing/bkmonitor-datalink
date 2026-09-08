@@ -142,7 +142,9 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 		err error
 	)
 
-	ctx, span := trace.NewSpan(q.ctx, "prometheus-querier-select-fn")
+	selectCtx, cancel := context.WithCancel(q.ctx)
+	defer cancel()
+	ctx, span := trace.NewSpan(selectCtx, "prometheus-querier-select-fn")
 	defer span.End(&err)
 
 	qp := metadata.GetQueryParams(ctx)
@@ -173,14 +175,26 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 	p, _ := ants.NewPool(q.maxRouting)
 	defer p.Release()
 
+	var fatalError error
+
 	// 统一收敛子路由错误，最终用于 partial status 或全失败报错。
+	// 资源预算错误会取消同 selector 的其它路由，并在函数尾部强制整请求失败。
 	recordQueryError := func(queryErr error) {
 		if queryErr == nil {
 			return
 		}
+		shouldCancel := false
 		lock.Lock()
 		errorMessage.WriteString(fmt.Sprintf("query error: %s ", queryErr.Error()))
+		if isFatalQueryResourceError(queryErr) && fatalError == nil {
+			fatalError = queryErr
+			shouldCancel = true
+		}
 		lock.Unlock()
+		if shouldCancel {
+			cancel()
+			metadata.CancelResourceBudget(ctx)
+		}
 	}
 
 	for i, query := range queryList {
@@ -189,6 +203,10 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			defer func() {
 				wg.Done()
 			}()
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				recordQueryError(ctxErr)
+				return
+			}
 
 			span.Set(fmt.Sprintf("query_%d_instance_type", i), query.instance.InstanceType())
 			span.Set(fmt.Sprintf("query_%d_qry_source", i), query.qry.SourceType)
@@ -213,7 +231,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				return
 			}
 
-			// 逐路查询：失败只记录，不立即中断其他路由；成功路由进入 merge 阶段。
+			// 普通逐路失败只记录；资源预算失败会由 recordQueryError 立即取消其它路由。
 			currentSet := query.instance.QuerySeriesSet(ctx, query.qry, strategy.queryStart, strategy.queryEnd)
 			if currentSet == nil {
 				recordQueryError(fmt.Errorf("query series set is nil"))
@@ -257,6 +275,13 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 	close(setCh)
 	<-recvDone
 
+	if fatalError != nil {
+		return storage.ErrSeriesSet(metadata.NewMessage(
+			metadata.MsgQueryTs,
+			"查询资源超限",
+		).Error(ctx, fatalError))
+	}
+
 	// 多路并发后的兜底语义：
 	// 1) 至少一路成功：返回成功数据，并通过 status 标记部分失败；
 	// 2) 全部失败：保持历史行为，整体返回错误。
@@ -279,6 +304,14 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 	}
 
 	return set
+}
+
+func isFatalQueryResourceError(err error) bool {
+	if metadata.IsResourceBudgetError(err) {
+		return true
+	}
+	var selectorLimit *SelectorCacheLimitError
+	return errors.As(err, &selectorLimit)
 }
 
 func (q *Querier) Select(_ bool, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {

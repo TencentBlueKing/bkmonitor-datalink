@@ -32,6 +32,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/promql_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
+	uqLog "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	uqMetric "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
@@ -695,6 +696,84 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	return total, list, resultTableOptions, routeInfo, session.Done(), err
 }
 
+func beginQueryResourceBudget(ctx context.Context) (context.Context, context.CancelFunc, *metadata.ResourceBudget) {
+	ctx, cancel := context.WithCancel(ctx)
+	settings := getQueryResourceSettings()
+	limits := metadata.ResourceBudgetLimits{
+		MaxSeries:            settings.MaxSeries,
+		MaxPoints:            settings.MaxPoints,
+		MaxBytes:             settings.MaxBytes,
+		MaxResponseBytes:     settings.MaxResponseBytes,
+		MaxEvalCapacityBytes: settings.MaxEvalCapacityBytes,
+	}
+	if !limits.Enabled() {
+		return ctx, cancel, nil
+	}
+	budget := metadata.NewResourceBudget(limits, cancel)
+	return metadata.WithResourceBudget(ctx, budget), cancel, budget
+}
+
+func finishQueryResourceBudget(ctx context.Context, span *trace.Span, budget *metadata.ResourceBudget) {
+	if budget == nil {
+		return
+	}
+	snapshot := budget.Close()
+	usage := snapshot.Usage
+	span.Set("resource.series", usage.Series)
+	span.Set("resource.points", usage.Points)
+	span.Set("resource.bytes", usage.Bytes)
+	span.Set("resource.response_bytes", usage.ResponseBytes)
+	span.Set("resource.eval_capacity_bytes", usage.EvalCapacityBytes)
+	span.Set("resource.eval_series", usage.EvalSeries)
+	span.Set("resource.eval_steps", usage.MaxEvalSteps)
+	uqMetric.QueryResourceBudgetUsageObserve(ctx, uqMetric.QueryResourceSeries, usage.Series)
+	uqMetric.QueryResourceBudgetUsageObserve(ctx, uqMetric.QueryResourcePoints, usage.Points)
+	uqMetric.QueryResourceBudgetUsageObserve(ctx, uqMetric.QueryResourceBytes, usage.Bytes)
+	uqMetric.QueryResourceBudgetUsageObserve(ctx, uqMetric.QueryResourceResponseBytes, usage.ResponseBytes)
+	uqMetric.QueryResourceBudgetUsageObserve(ctx, uqMetric.QueryResourceEvalCapacityBytes, usage.EvalCapacityBytes)
+	uqMetric.QueryResourceBudgetUsageObserve(ctx, uqMetric.QueryResourceEvalSteps, usage.MaxEvalSteps)
+	if snapshot.Rejected == nil {
+		return
+	}
+	span.Set("resource.rejected", snapshot.Rejected.Resource)
+	span.Set("resource.limit", snapshot.Rejected.Limit)
+	span.Set("resource.attempted", snapshot.Rejected.Attempted)
+	uqMetric.QueryResourceBudgetRejectInc(ctx, snapshot.Rejected.Resource)
+	uqLog.Warnf(
+		ctx,
+		"query resource budget rejected: resource=%s attempted=%d limit=%d cancelled=%t",
+		snapshot.Rejected.Resource,
+		snapshot.Rejected.Attempted,
+		snapshot.Rejected.Limit,
+		snapshot.Cancelled,
+	)
+}
+
+func setQueryEvaluationSteps(
+	budget *metadata.ResourceBudget,
+	start, end time.Time,
+	step time.Duration,
+	instant bool,
+) {
+	if budget == nil {
+		return
+	}
+	steps := int64(1)
+	if !instant && step > 0 && !end.Before(start) {
+		steps = int64(end.Sub(start)/step) + 1
+	}
+	budget.SetEvaluationSteps(steps)
+}
+
+func queryResourceBudgetError(budget *metadata.ResourceBudget, fallback error) error {
+	if budget != nil {
+		if rejection := budget.RejectionError(); rejection != nil {
+			return rejection
+		}
+	}
+	return fallback
+}
+
 func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.QueryTs) (*PromData, error) {
 	var (
 		res       any
@@ -703,8 +782,11 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		isPartial bool
 	)
 
+	ctx, cancel, resourceBudget := beginQueryResourceBudget(ctx)
+	defer cancel()
 	ctx, span := trace.NewSpan(ctx, "query-reference-with-prom-engine")
 	defer func() {
+		finishQueryResourceBudget(ctx, span, resourceBudget)
 		resp.TraceID = span.TraceID()
 		resp.Status = metadata.GetStatus(ctx)
 		span.End(&err)
@@ -767,6 +849,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	} else {
 		startTime = qb.Start
 	}
+	setQueryEvaluationSteps(resourceBudget, startTime, qb.End, qb.Step, queryTs.Instant)
 
 	if queryTs.Instant {
 		res, err = instance.DirectQuery(ctx, queryTs.MetricMerge, startTime)
@@ -774,7 +857,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		res, isPartial, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, qb.End, qb.Step)
 	}
 	if err != nil {
-		return nil, err
+		return nil, queryResourceBudgetError(resourceBudget, err)
 	}
 
 	tables := promql.NewTables()
@@ -966,8 +1049,11 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 		isPartial bool
 	)
 
+	ctx, cancel, resourceBudget := beginQueryResourceBudget(ctx)
+	defer cancel()
 	ctx, span := trace.NewSpan(ctx, "query-ts")
 	defer func() {
+		finishQueryResourceBudget(ctx, span, resourceBudget)
 		resp.TraceID = span.TraceID()
 		resp.Status = metadata.GetStatus(ctx)
 		span.End(&err)
@@ -984,6 +1070,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 
 	qb := metadata.GetQueryParams(ctx)
 	span.Set("query-params", qb)
+	setQueryEvaluationSteps(resourceBudget, qb.AlignStart, qb.End, qb.Step, query.Instant)
 
 	if query.Instant {
 		res, err = instance.DirectQuery(ctx, stmt, qb.End)
@@ -991,7 +1078,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 		res, isPartial, err = instance.DirectQueryRange(ctx, stmt, qb.AlignStart, qb.End, qb.Step)
 	}
 	if err != nil {
-		return nil, err
+		return nil, queryResourceBudgetError(resourceBudget, err)
 	}
 
 	span.Set("stmt", stmt)
@@ -1055,6 +1142,8 @@ func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*Nam
 	requestCtx, cancel := context.WithTimeout(ctx, settings.Timeout)
 	defer cancel()
 	ctx = requestCtx
+	ctx, resourceCancel, resourceBudget := beginQueryResourceBudget(ctx)
+	defer resourceCancel()
 	uqMetric.NamedOutputsRequestInc(ctx, uqMetric.NamedOutputsRequestReceived)
 	requestMetricResult := uqMetric.NamedOutputsRequestError
 	defer func() {
@@ -1069,7 +1158,10 @@ func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*Nam
 
 	var err error
 	ctx, span := trace.NewSpan(ctx, "query-ts-named-outputs")
-	defer span.End(&err)
+	defer func() {
+		finishQueryResourceBudget(ctx, span, resourceBudget)
+		span.End(&err)
+	}()
 
 	queryRef, lookBackDelta, err := queryTsToReference(ctx, queryTs)
 	if err != nil {
@@ -1080,6 +1172,7 @@ func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*Nam
 	}
 	routeInfo := queryRef.CollectRouteInfo()
 	queryParams := metadata.GetQueryParams(ctx)
+	setQueryEvaluationSteps(resourceBudget, queryParams.AlignStart, queryParams.End, queryParams.Step, queryTs.Instant)
 
 	var instance tsdb.Instance
 	var selectorCache *prometheus.SelectorCache
@@ -1131,12 +1224,20 @@ func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*Nam
 				}
 				if queryTs.Instant {
 					if statusAware, ok := instance.(tsdb.InstantQueryWithPartial); ok {
-						return statusAware.DirectQueryWithPartial(executeCtx, stmt, queryParams.End)
+						result, partial, queryErr := statusAware.DirectQueryWithPartial(executeCtx, stmt, queryParams.End)
+						return result, partial, queryResourceBudgetError(resourceBudget, queryErr)
 					}
 					result, queryErr := instance.DirectQuery(executeCtx, stmt, queryParams.End)
-					return result, false, queryErr
+					return result, false, queryResourceBudgetError(resourceBudget, queryErr)
 				}
-				return instance.DirectQueryRange(executeCtx, stmt, queryParams.AlignStart, queryParams.End, queryParams.Step)
+				result, partial, queryErr := instance.DirectQueryRange(
+					executeCtx,
+					stmt,
+					queryParams.AlignStart,
+					queryParams.End,
+					queryParams.Step,
+				)
+				return result, partial, queryResourceBudgetError(resourceBudget, queryErr)
 			},
 		)
 	}
@@ -1145,10 +1246,13 @@ func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*Nam
 	if executeErr != nil {
 		var outputLimit *namedOutputLimitError
 		var selectorLimit *prometheus.SelectorCacheLimitError
+		var resourceLimit *metadata.ResourceBudgetError
 		switch {
 		case errors.Is(executeErr, context.DeadlineExceeded), errors.Is(executeErr, context.Canceled):
 			uqMetric.NamedOutputsRejectInc(ctx, uqMetric.NamedOutputsRejectDeadline)
-		case errors.As(executeErr, &outputLimit), errors.As(executeErr, &selectorLimit):
+		case errors.As(executeErr, &outputLimit),
+			errors.As(executeErr, &selectorLimit),
+			errors.As(executeErr, &resourceLimit):
 			uqMetric.NamedOutputsRejectInc(ctx, uqMetric.NamedOutputsRejectCapacity)
 		}
 		err = executeErr

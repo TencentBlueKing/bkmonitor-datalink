@@ -99,7 +99,16 @@ func (c *SelectorCache) GetOrLoad(
 		statusBefore := cloneSelectorStatus(metadata.GetStatus(selectorCtx))
 		usage := selectorCacheUsage{}
 		entry.data, entry.err = materializeSelectorSet(selectorCtx, load(selectorCtx), func(series, points int, bytes int64) error {
-			return c.reserveIncremental(&usage, series, points, bytes)
+			if err := c.reserveIncremental(&usage, series, points, bytes); err != nil {
+				return err
+			}
+			if budget := metadata.GetResourceBudget(selectorCtx); budget != nil {
+				// QueryFactory already accounts logical series and points. The
+				// selector cache is an additional in-memory copy, so only add
+				// its estimated bytes to the shared request budget.
+				return budget.Reserve(0, 0, bytes)
+			}
+			return nil
 		})
 		entry.state = SelectorCacheSuccess
 		if entry.err != nil {

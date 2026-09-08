@@ -11,6 +11,7 @@ package prometheus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -42,6 +43,52 @@ var _ storage.Queryable = (*queryable)(nil)
 
 func (q *queryable) Querier(ctx context.Context, mint, maxt int64) (storage.Querier, error) {
 	return &querier{}, nil
+}
+
+type errorQueryable struct {
+	err error
+}
+
+func (q *errorQueryable) Querier(context.Context, int64, int64) (storage.Querier, error) {
+	return &errorQuerier{err: q.err}, nil
+}
+
+type errorQuerier struct {
+	err error
+}
+
+func (q *errorQuerier) LabelValues(string, ...*labels.Matcher) ([]string, storage.Warnings, error) {
+	return nil, nil, nil
+}
+
+func (q *errorQuerier) LabelNames(...*labels.Matcher) ([]string, storage.Warnings, error) {
+	return nil, nil, nil
+}
+
+func (q *errorQuerier) Close() error { return nil }
+
+func (q *errorQuerier) Select(bool, *storage.SelectHints, ...*labels.Matcher) storage.SeriesSet {
+	return storage.ErrSeriesSet(q.err)
+}
+
+func TestDirectQueryReturnsStorageError(t *testing.T) {
+	source := errors.New("resource budget rejected")
+	engine := promql.NewEngine(promql.EngineOpts{
+		Reg:           prometheus.NewRegistry(),
+		MaxSamples:    1000,
+		Timeout:       time.Second,
+		LookbackDelta: 5 * time.Minute,
+	})
+	instance := NewInstance(
+		context.Background(),
+		engine,
+		&errorQueryable{err: source},
+		5*time.Minute,
+		1,
+	)
+
+	_, err := instance.DirectQuery(context.Background(), defaultMetric, time.Now())
+	assert.ErrorIs(t, err, source)
 }
 
 func TestMergeBucketDuration(t *testing.T) {

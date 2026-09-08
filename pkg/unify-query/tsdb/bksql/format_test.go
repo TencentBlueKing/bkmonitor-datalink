@@ -568,6 +568,62 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 	})
 }
 
+func TestFormatDataToQueryResultAccountsDynamicLabelsAsDistinctSeries(t *testing.T) {
+	metadata.InitMetadata()
+	baseCtx := metadata.InitHashID(context.Background())
+	ctx, cancel := context.WithCancel(baseCtx)
+	budget := metadata.NewResourceBudget(metadata.ResourceBudgetLimits{
+		MaxSeries: 2,
+		MaxPoints: 10,
+		MaxBytes:  1024,
+	}, cancel)
+	ctx = metadata.WithResourceBudget(ctx, budget)
+	factory := bksql.NewQueryFactory(ctx, &metadata.Query{Field: "metric_value2"}).
+		WithRangeTime(time.Unix(0, 0), time.Unix(180, 0))
+
+	rows := []map[string]any{
+		{sql_expr.TimeStamp: int64(0), sql_expr.Value: 1.0, "url": "example", "data_time": "00:00"},
+		{sql_expr.TimeStamp: int64(60000), sql_expr.Value: 2.0, "url": "example", "data_time": "00:01"},
+		{sql_expr.TimeStamp: int64(120000), sql_expr.Value: 3.0, "url": "example", "data_time": "00:02"},
+	}
+	_, err := factory.FormatDataToQueryResult(ctx, rows)
+
+	var limitErr *metadata.ResourceBudgetError
+	require.ErrorAs(t, err, &limitErr)
+	require.Equal(t, metadata.ResourceSeries, limitErr.Resource)
+	require.Equal(t, int64(3), limitErr.Attempted)
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+	require.Equal(t, int64(2), budget.Snapshot().Usage.Series)
+}
+
+func TestFormatDataToQueryResultAccountsStableLabelsAndPoints(t *testing.T) {
+	metadata.InitMetadata()
+	baseCtx := metadata.InitHashID(context.Background())
+	budget := metadata.NewResourceBudget(metadata.ResourceBudgetLimits{
+		MaxSeries: 10,
+		MaxPoints: 10,
+		MaxBytes:  1024,
+	}, nil)
+	ctx := metadata.WithResourceBudget(baseCtx, budget)
+	factory := bksql.NewQueryFactory(ctx, &metadata.Query{Field: "metric_value2"}).
+		WithRangeTime(time.Unix(0, 0), time.Unix(180, 0))
+
+	rows := []map[string]any{
+		{sql_expr.TimeStamp: int64(0), sql_expr.Value: 1.0, "url": "example"},
+		{sql_expr.TimeStamp: int64(60000), sql_expr.Value: 2.0, "url": "example"},
+		{sql_expr.TimeStamp: int64(120000), sql_expr.Value: 3.0, "url": "example"},
+	}
+	result, err := factory.FormatDataToQueryResult(ctx, rows)
+
+	require.NoError(t, err)
+	require.Len(t, result.Timeseries, 1)
+	require.Len(t, result.Timeseries[0].Samples, 3)
+	snapshot := budget.Snapshot()
+	require.Equal(t, int64(1), snapshot.Usage.Series)
+	require.Equal(t, int64(3), snapshot.Usage.Points)
+	require.Greater(t, snapshot.Usage.Bytes, int64(3*metadata.PromQLPointBytes))
+}
+
 func TestWindowWithTimezone(t *testing.T) {
 	mock.Init()
 

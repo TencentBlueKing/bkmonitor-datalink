@@ -440,15 +440,16 @@ func executeNamedOutputsWith(
 		outputCtx := metadata.WithStatusScope(ctx, index)
 		result, isPartial, executeErr := execute(outputCtx, output)
 		if executeErr != nil {
+			var selectorLimit *uqPrometheus.SelectorCacheLimitError
+			var resourceLimit *metadata.ResourceBudgetError
+			if errors.As(executeErr, &selectorLimit) || errors.As(executeErr, &resourceLimit) {
+				recordNamedOutputState(ctx, OutputStateError)
+				return nil, executeErr
+			}
 			if err := ctx.Err(); err != nil {
 				markNamedOutputsRemainingError(ctx, response, executionOrder, position, err)
 				deadlineConverged = true
 				break
-			}
-			var selectorLimit *uqPrometheus.SelectorCacheLimitError
-			if errors.As(executeErr, &selectorLimit) {
-				recordNamedOutputState(ctx, OutputStateError)
-				return nil, executeErr
 			}
 			response.Outputs[index].Status = &metadata.Status{Code: "ERROR", Message: executeErr.Error()}
 			response.Outputs[index].IsPartial = true

@@ -101,6 +101,12 @@ func (i *Instance) DirectQueryRange(
 	if err != nil {
 		return nil, false, err
 	}
+	closeQuery := true
+	defer func() {
+		if closeQuery {
+			query.Close()
+		}
+	}()
 	result := query.Exec(ctx)
 	if result.Err != nil {
 		return nil, false, result.Err
@@ -115,6 +121,9 @@ func (i *Instance) DirectQueryRange(
 		return nil, false, err
 	}
 
+	// The returned matrix owns point slices until the HTTP layer has copied
+	// them. Successful query closing is handled in the engine lifecycle follow-up.
+	closeQuery = false
 	return matrix, false, nil
 }
 
@@ -139,9 +148,15 @@ func (i *Instance) DirectQuery(
 	if err != nil {
 		return nil, err
 	}
+	closeQuery := true
+	defer func() {
+		if closeQuery {
+			query.Close()
+		}
+	}()
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		return nil, err
+		return nil, result.Err
 	}
 	for _, err = range result.Warnings {
 		return nil, err
@@ -152,6 +167,7 @@ func (i *Instance) DirectQuery(
 		return nil, err
 	}
 
+	closeQuery = false
 	return vector, nil
 }
 

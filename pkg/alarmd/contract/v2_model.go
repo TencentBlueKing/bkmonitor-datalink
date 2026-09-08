@@ -217,6 +217,7 @@ type EvaluationPlanV2 struct {
 	InputProjection     InputProjectionV2      `json:"input_projection"`
 	SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
 	OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
+	LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
 	StrategyIR          StrategyIRV2           `json:"strategy_ir"`
 	TerminalReasonCode  string                 `json:"terminal_reason_code,omitempty"`
 }
@@ -237,8 +238,9 @@ func (plan EvaluationPlanV2) MarshalJSON() ([]byte, error) {
 		InputProjection     InputProjectionV2      `json:"input_projection"`
 		SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
 		OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
+		LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
 		StrategyIR          StrategyIRV2           `json:"strategy_ir"`
-	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.StrategyIR})
+	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.LegacyOutput, plan.StrategyIR})
 }
 
 type PlanSetV2 struct {
@@ -442,6 +444,7 @@ type StrategySnapshotRef struct {
 }
 
 type TriggerEventV1 struct {
+	LegacyOutput            *LegacyEventContext  `json:"-"`
 	Schema                  Schema               `json:"schema"`
 	RequiredFeatures        []string             `json:"required_features"`
 	EventID                 string               `json:"event_id"`

@@ -486,6 +486,7 @@ type CompiledPlan struct {
 	planRef             contract.RuntimePlanRefV1
 	strategyRef         contract.StrategyRefV2
 	outputIdentity      *contract.MonitorOutputIdentity
+	legacyOutput        *contract.FrozenLegacyOutput
 	projection          contract.InputProjectionV2
 	evaluationSemantics contract.ExecutionSemanticsV2
 	levels              []CompiledLevel
@@ -507,6 +508,13 @@ func (p *CompiledPlan) OutputIdentity() *contract.MonitorOutputIdentity {
 		return nil
 	}
 	return &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, p.outputIdentity.DimensionFields...)}
+}
+
+func (p *CompiledPlan) LegacyOutput() *contract.FrozenLegacyOutput {
+	if p == nil {
+		return nil
+	}
+	return p.legacyOutput
 }
 
 func (p *CompiledPlan) PlanRef() contract.RuntimePlanRefV1 {

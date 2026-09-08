@@ -391,6 +391,9 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 		candidate.dispositions = append(candidate.dispositions, dispositions...)
 		return candidate, err
 	}
+	if plan.StrategyRef.SnapshotRevision == 0 {
+		plan.LegacyOutput = &contract.LegacyOutputContext{Strategy: append(json.RawMessage(nil), source.Document...), DimensionFields: append([]string{}, facts.Normalization.DatasetContract.IdentityFields...), ItemID: strconv.FormatInt(item.ID, 10)}
+	}
 	revision, err := contract.DeriveCanonicalDigestV2("alarmd-plan-semantics-v1", plan)
 	if err != nil {
 		return sourceCandidate{}, err
@@ -532,6 +535,13 @@ func decodeLegacyStrategy(document json.RawMessage) (legacyStrategy, error) {
 		var revision int64
 		if err := json.Unmarshal(value.SnapshotRevision, &revision); err != nil || revision <= 0 {
 			return value, errors.New("alarmd controlplane: strategy_revision must be a positive int64 JSON number")
+		}
+	} else {
+		var snapshot struct {
+			UpdateTime int64 `json:"update_time"`
+		}
+		if err := json.Unmarshal(document, &snapshot); err != nil || snapshot.UpdateTime <= 0 {
+			return value, errors.New("alarmd controlplane: legacy output requires a positive integer update_time")
 		}
 	}
 	return value, nil

@@ -126,7 +126,8 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 		return CompileResult{}, fmt.Errorf("strategy: derive dataset contract digest: %w", err)
 	}
 	compiled := &CompiledPlan{
-		strategyRef: request.Plan.StrategyRef,
+		legacyOutput: contract.FreezeLegacyOutput(request.Plan.LegacyOutput),
+		strategyRef:  request.Plan.StrategyRef,
 		planRef: contract.RuntimePlanRefV1{
 			StrategyID: request.Plan.StrategyRef.StrategyID, StrategyRevision: request.Plan.StrategyRef.Revision,
 		},
@@ -185,6 +186,12 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 
 func (c *PlanCompiler) validatePlan(request CompileRequest) *Terminal {
 	plan := request.Plan
+	if err := plan.LegacyOutput.Validate(); err != nil {
+		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "legacy_output"}
+	}
+	if plan.LegacyOutput != nil && plan.StrategyRef.SnapshotRevision > 0 {
+		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "legacy_output"}
+	}
 	if plan.OutputIdentity != nil && plan.OutputIdentity.DimensionFields == nil {
 		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "output_identity.dimension_fields"}
 	}
@@ -650,6 +657,9 @@ func compileResourceEstimate(plan *CompiledPlan) error {
 		return fmt.Errorf("strategy: estimate compiled Plan bytes: %w", err)
 	}
 	aggregate.CompiledBytes = len(encoded)
+	if plan.legacyOutput != nil {
+		aggregate.CompiledBytes += plan.legacyOutput.SizeBytes()
+	}
 	plan.resourceEstimate = aggregate
 	return nil
 }

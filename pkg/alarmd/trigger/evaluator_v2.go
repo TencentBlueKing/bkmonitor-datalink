@@ -116,6 +116,30 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 			return EvaluationResultV2{}, invariantV2("build TriggerEvent", 0, err)
 		}
 		result.TriggerEvent = event
+		if legacy := request.Plan.LegacyOutput(); legacy != nil && event.StrategyRef == nil {
+			var timestamps []int64
+			for _, outcome := range event.LevelResults {
+				if outcome.LevelID != event.PrimaryLevelID {
+					continue
+				}
+				for _, history := range request.Histories {
+					if history.LevelID != event.PrimaryLevelID {
+						continue
+					}
+					iterator, ok := history.View.(interface {
+						ForEachAnomaly(int64, int64, func(int64) bool)
+					})
+					if !ok {
+						return EvaluationResultV2{}, invariantV2("legacy anomaly history", event.PrimaryLevelID, errors.New("history cannot expose actual anomaly timestamps"))
+					}
+					iterator.ForEachAnomaly(outcome.DecisionWindow.Trigger.WindowStart, request.RecordRef.SourceTime, func(ts int64) bool { timestamps = append(timestamps, ts); return true })
+				}
+				if len(timestamps) != int(outcome.DecisionWindow.Trigger.ObservedAnomalies) {
+					return EvaluationResultV2{}, invariantV2("legacy anomaly history", event.PrimaryLevelID, errors.New("actual anomaly timestamps disagree with trigger evidence"))
+				}
+			}
+			event.LegacyOutput = &contract.LegacyEventContext{Configuration: legacy, AnomalyTimestamps: append([]int64{}, timestamps...)}
+		}
 		result.Counts.Events = 1
 	}
 	return result, nil

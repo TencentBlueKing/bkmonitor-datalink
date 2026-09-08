@@ -366,6 +366,30 @@ func openProductionPhaseTwoBundleWithDependencies(
 			resultErr = errors.Join(resultErr, events.Close())
 		}
 	}()
+	if cfg.Kafka.LegacyAdapter.URL != "" {
+		allowed := false
+		for _, topic := range cfg.Kafka.AllowedOutputTopics {
+			if topic == cfg.Kafka.LegacyAdapter.Topic {
+				allowed = true
+			}
+		}
+		if !allowed {
+			return nil, errors.New("legacy output topic must be explicitly allowlisted")
+		}
+		converter, err := enginekafka.NewLegacyHTTPConverter(cfg.Kafka.LegacyAdapter, external.HTTPClient, cfg.Kafka.TriggerEvent.MaxMessageBytes)
+		if err != nil {
+			return nil, err
+		}
+		configured, ok := events.(interface {
+			ConfigureLegacyOutput(enginekafka.LegacyEventConverter, string, int) error
+		})
+		if !ok {
+			return nil, errors.New("event sink does not support legacy output adapter")
+		}
+		if err := configured.ConfigureLegacyOutput(converter, cfg.Kafka.LegacyAdapter.Topic, cfg.Kafka.TriggerEvent.MaxMessageBytes); err != nil {
+			return nil, err
+		}
+	}
 	var evaluatorPort execution.Evaluator = evaluator
 	var eventsPort execution.EventSink = events
 	if finalEmitter != nil {

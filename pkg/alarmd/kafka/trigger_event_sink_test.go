@@ -168,8 +168,9 @@ type batchAwareSyncProducer struct {
 	messages    []*sarama.ProducerMessage
 }
 
-func (producer *batchAwareSyncProducer) SendMessage(*sarama.ProducerMessage) (int32, int64, error) {
+func (producer *batchAwareSyncProducer) SendMessage(message *sarama.ProducerMessage) (int32, int64, error) {
 	producer.singleCalls++
+	producer.messages = append(producer.messages, message)
 	return 0, 0, nil
 }
 
@@ -275,6 +276,16 @@ func TestTriggerEventSinkDoesNotMarkLocalLifecycleFailureRetryable(t *testing.T)
 }
 
 func triggerEventGolden(t testing.TB) contract.TriggerEventV1 {
+	t.Helper()
+	legacy := legacyTriggerEventGolden(t)
+	event, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{EventKind: legacy.EventKind, TenantID: legacy.TenantID, BusinessID: legacy.BusinessID, PlanRef: legacy.PlanRef, RecordRef: legacy.RecordRef, Observed: legacy.Observed, LevelResults: legacy.LevelResults, EvaluationTime: legacy.EvaluationTime, DetectPlanFingerprint: legacy.DetectPlanFingerprint, TriggerStateFingerprint: legacy.TriggerStateFingerprint, ExecutionID: legacy.Trace.ExecutionID, MaxEvidenceBytes: 64 << 10, StrategyRef: &contract.StrategySnapshotRef{TenantID: legacy.TenantID, BusinessID: 2, StrategyID: 1001, Revision: 7}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return *event
+}
+
+func legacyTriggerEventGolden(t testing.TB) contract.TriggerEventV1 {
 	t.Helper()
 	payload, err := os.ReadFile("../contract/testdata/go-v2/trigger_event_v1.json")
 	if err != nil {

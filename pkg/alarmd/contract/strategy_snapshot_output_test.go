@@ -1,12 +1,19 @@
 package contract
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"testing"
 )
 
 func TestTriggerEventSnapshotReference(t *testing.T) {
+	for _, kind := range []string{TriggerEventAbnormal, TriggerEventRecovery} {
+		t.Run(kind, func(t *testing.T) { testTriggerEventSnapshotReference(t, kind) })
+	}
+}
+
+func testTriggerEventSnapshotReference(t *testing.T, kind string) {
 	payload, err := os.ReadFile("testdata/go-v2/trigger_event_v1.json")
 	if err != nil {
 		t.Fatal(err)
@@ -14,6 +21,18 @@ func TestTriggerEventSnapshotReference(t *testing.T) {
 	legacy, err := DecodeTriggerEventV1(payload)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if kind == TriggerEventRecovery {
+		legacy.EventKind = kind
+		for i := range legacy.LevelResults {
+			level := &legacy.LevelResults[i]
+			level.Result = LevelResultRecovery
+			level.DetectEvidence.DetectionResult = "NORMAL"
+			level.DetectEvidence.NormalizedValue = json.RawMessage(`0`)
+			level.DecisionWindow.Trigger.ObservedAnomalies = 0
+			level.DecisionWindow.Recovery.ObservedConsecutiveMisses = level.DecisionWindow.Recovery.RequiredConsecutiveWindows
+		}
+		legacy.Observed.Values["value"] = json.RawMessage(`0`)
 	}
 	input := TriggerEventBuildInputV1{
 		EventKind: legacy.EventKind, TenantID: legacy.TenantID, BusinessID: legacy.BusinessID,
@@ -38,7 +57,7 @@ func TestTriggerEventSnapshotReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *decoded.StrategyRef != *input.StrategyRef {
+	if decoded.EventKind != kind || decoded.StrategyRef == nil || *decoded.StrategyRef != *input.StrategyRef {
 		t.Fatalf("reference lost: %#v", decoded.StrategyRef)
 	}
 	var wire map[string]json.RawMessage
@@ -48,9 +67,27 @@ func TestTriggerEventSnapshotReference(t *testing.T) {
 	if string(wire["strategy_ref"]) != `{"bk_tenant_id":"default","strategy_bk_biz_id":2,"strategy_id":1001,"strategy_revision":7}` {
 		t.Fatalf("reference wire = %s", wire["strategy_ref"])
 	}
+	retry, err := BuildTriggerEventV1(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryBytes, err := EncodeTriggerEventV1(retry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.EventID != event.EventID || !bytes.Equal(encoded, retryBytes) {
+		t.Fatal("same frozen input changed on retry")
+	}
 	decoded.StrategyRef.Revision++
 	if err := ValidateTriggerEventV1(decoded); err == nil {
 		t.Fatal("accepted altered snapshot reference")
+	}
+	tampered, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeTriggerEventV1(tampered); err == nil {
+		t.Fatal("reader accepted altered snapshot reference")
 	}
 	input.StrategyRef.Revision++
 	next, err := BuildTriggerEventV1(input)

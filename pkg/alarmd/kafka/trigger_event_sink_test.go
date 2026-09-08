@@ -12,6 +12,7 @@ package kafka
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -65,7 +66,25 @@ func TestTriggerEventSinkPublishesOfficialWireWithEmptyKeyAfterBrokerACK(t *test
 }
 
 func TestTriggerEventSinkPublishesSnapshotProtocol(t *testing.T) {
+	for _, kind := range []string{contract.TriggerEventAbnormal, contract.TriggerEventRecovery} {
+		t.Run(kind, func(t *testing.T) { testTriggerEventSinkPublishesSnapshotProtocol(t, kind) })
+	}
+}
+
+func testTriggerEventSinkPublishesSnapshotProtocol(t *testing.T, kind string) {
 	legacy := triggerEventGolden(t)
+	if kind == contract.TriggerEventRecovery {
+		legacy.EventKind = kind
+		for i := range legacy.LevelResults {
+			level := &legacy.LevelResults[i]
+			level.Result = contract.LevelResultRecovery
+			level.DetectEvidence.DetectionResult = "NORMAL"
+			level.DetectEvidence.NormalizedValue = json.RawMessage(`0`)
+			level.DecisionWindow.Trigger.ObservedAnomalies = 0
+			level.DecisionWindow.Recovery.ObservedConsecutiveMisses = level.DecisionWindow.Recovery.RequiredConsecutiveWindows
+		}
+		legacy.Observed.Values["value"] = json.RawMessage(`0`)
+	}
 	event, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{
 		EventKind: legacy.EventKind, TenantID: legacy.TenantID, BusinessID: legacy.BusinessID,
 		PlanRef: legacy.PlanRef, RecordRef: legacy.RecordRef, Observed: legacy.Observed,
@@ -78,7 +97,9 @@ func TestTriggerEventSinkPublishesSnapshotProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	var payload []byte
+	sends := 0
 	producer := &fakeSyncProducer{send: func(message *sarama.ProducerMessage) (int32, int64, error) {
+		sends++
 		var err error
 		payload, err = message.Value.Encode()
 		return 0, 1, err
@@ -95,8 +116,22 @@ func TestTriggerEventSinkPublishesSnapshotProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Schema.Minor != 1 || decoded.StrategyRef == nil || *decoded.StrategyRef != *event.StrategyRef {
+	if decoded.EventKind != kind || decoded.Schema.Minor != 1 || decoded.StrategyRef == nil || *decoded.StrategyRef != *event.StrategyRef {
 		t.Fatalf("Kafka payload lost snapshot reference: %s", payload)
+	}
+	firstPayload := append([]byte(nil), payload...)
+	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{*event}); err != nil {
+		t.Fatal(err)
+	}
+	if sends != 2 || !bytes.Equal(payload, firstPayload) {
+		t.Fatal("retry changed Kafka payload")
+	}
+	event.StrategyRef.Revision++
+	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{*event}); err == nil {
+		t.Fatal("sink accepted tampered snapshot reference")
+	}
+	if sends != 2 {
+		t.Fatal("sink published tampered snapshot reference")
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
@@ -210,47 +211,27 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 				})}
 			}
 
+			var displayConfig map[string]any
+			if err := json.Unmarshal(document, &displayConfig); err != nil {
+				t.Fatal(err)
+			}
+			displayConfig["name"] = "controlled threshold"
+			displayConfig["scenario"] = "os"
+			for _, rawItem := range displayConfig["items"].([]any) {
+				item := rawItem.(map[string]any)
+				if item["name"] == nil {
+					item["name"] = "usage"
+				}
+			}
+			document, _ = json.Marshal(displayConfig)
 			for key, value := range map[string]string{"alarm-config.strategy_ids": "[5101]", "alarm-config.strategy_5101": string(document)} {
 				if err = client.Set(ctx, key, value, 0).Err(); err != nil {
 					t.Fatal(err)
 				}
 			}
 			events := &legacyConvertingTestSink{recordingPhaseTwoEventSink: &recordingPhaseTwoEventSink{}}
-			t.Setenv("ALARMD_TEST_BUNDLE_ADAPTER_TOKEN", "fixture-token")
-			cfg.Kafka.LegacyAdapter = enginekafka.LegacyAdapterConfig{URL: "http://adapter.invalid/api/v4/kernel_rpc/call/", TokenEnv: "ALARMD_TEST_BUNDLE_ADAPTER_TOKEN", Timeout: time.Second, Topic: "alarmd_python-test"}
+			cfg.Kafka.LegacyAdapter = config.LegacyAdapterConfig{Topic: "alarmd_python-test", SnapshotPrefix: "test", ServiceNodes: map[string]config.RedisConnectionConfig{"service": cfg.StrategySourceRedis()}, ServiceRoutes: []legacyoutput.ServiceRoute{{UpperBound: 1000000, NodeID: "service"}}}
 			cfg.Kafka.AllowedOutputTopics = append(cfg.Kafka.AllowedOutputTopics, cfg.Kafka.LegacyAdapter.Topic)
-			uqTransport := clientUQ.Transport
-			clientUQ.Transport = controlledRoundTripper(func(req *http.Request) (*http.Response, error) {
-				if req.URL.Host != "adapter.invalid" {
-					return uqTransport.RoundTrip(req)
-				}
-				var envelope struct {
-					Params struct {
-						Strategies map[string]json.RawMessage `json:"strategies"`
-						Events     []struct {
-							EventID    string  `json:"event_id"`
-							SourceTime int64   `json:"source_time"`
-							Kind       string  `json:"event_kind"`
-							Anomalies  []int64 `json:"anomaly_timestamps"`
-						} `json:"events"`
-					} `json:"params"`
-				}
-				if err := json.NewDecoder(req.Body).Decode(&envelope); err != nil {
-					return nil, err
-				}
-				if len(envelope.Params.Strategies) == 0 {
-					return nil, fmt.Errorf("missing frozen source strategy")
-				}
-				var converted []enginekafka.LegacyConvertedEvent
-				for _, event := range envelope.Params.Events {
-					if event.Kind == contract.TriggerEventAbnormal && (len(event.Anomalies) != 1 || event.Anomalies[0] != event.SourceTime) {
-						return nil, fmt.Errorf("RPC lost actual anomaly point")
-					}
-					converted = append(converted, enginekafka.LegacyConvertedEvent{EventID: event.EventID, PayloadJSON: `{"status":"ok"}`, DedupeMD5: "0260bae09d2ae3f75683bd06a76e9479"})
-				}
-				body, _ := json.Marshal(map[string]any{"result": true, "data": map[string]any{"result": map[string]any{"topic": cfg.Kafka.LegacyAdapter.Topic, "events": converted}}})
-				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header), Request: req}, nil
-			})
 			publisher := &recordingFinalPublisher{panicOnEnqueue: publisherPanics}
 			var observations []observability.Observation
 			var mu sync.Mutex

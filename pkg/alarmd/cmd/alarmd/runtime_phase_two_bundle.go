@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/evaluation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -366,7 +368,20 @@ func openProductionPhaseTwoBundleWithDependencies(
 			resultErr = errors.Join(resultErr, events.Close())
 		}
 	}()
-	if cfg.Kafka.LegacyAdapter.URL != "" {
+	var legacyClients []redis.UniversalClient
+	closeLegacyClients := func() error {
+		var errs []error
+		for _, client := range legacyClients {
+			errs = append(errs, client.Close())
+		}
+		return errors.Join(errs...)
+	}
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, closeLegacyClients())
+		}
+	}()
+	if cfg.Kafka.LegacyAdapter.Topic != "" {
 		allowed := false
 		for _, topic := range cfg.Kafka.AllowedOutputTopics {
 			if topic == cfg.Kafka.LegacyAdapter.Topic {
@@ -376,9 +391,34 @@ func openProductionPhaseTwoBundleWithDependencies(
 		if !allowed {
 			return nil, errors.New("legacy output topic must be explicitly allowlisted")
 		}
-		converter, err := enginekafka.NewLegacyHTTPConverter(cfg.Kafka.LegacyAdapter, external.HTTPClient, cfg.Kafka.TriggerEvent.MaxMessageBytes)
-		if err != nil {
+		if cfg.Kafka.LegacyAdapter.SnapshotPrefix == "" {
+			return nil, errors.New("legacy snapshot prefix required")
+		}
+		store := legacyoutput.RedisSnapshotStore{Nodes: map[string]redis.Cmdable{}, Routes: cfg.Kafka.LegacyAdapter.ServiceRoutes}
+		for id, connection := range cfg.Kafka.LegacyAdapter.ServiceNodes {
+			client, err := openProductionRedisWithHook(ctx, connection, recorder.RedisHook())
+			if err != nil {
+				return nil, err
+			}
+			legacyClients = append(legacyClients, client)
+			store.Nodes[id] = client
+		}
+		if err := store.Validate(); err != nil {
 			return nil, err
+		}
+		converter := &legacyoutput.Converter{Store: store, SnapshotPrefix: cfg.Kafka.LegacyAdapter.SnapshotPrefix, Now: external.Now, PluginID: cfg.Kafka.LegacyAdapter.PluginID}
+		if podConfig := cfg.Kafka.LegacyAdapter.PodCache; podConfig != nil {
+			// Enrichment is optional: do not require a successful cache Ping to start.
+			podClient := redis.NewUniversalClient(productionRedisOptions(podConfig.Connection))
+			podClient.AddHook(recorder.RedisHook())
+			legacyClients = append(legacyClients, podClient)
+			resolver, err := legacyoutput.NewDjangoPodResolver(podClient, legacyoutput.PodCacheConfig{KeyPrefix: podConfig.KeyPrefix, Version: podConfig.Version, Observe: recorder.RecordLegacyPodCache, OnFallback: func(reason string) {
+				observer.Observe(context.Background(), observability.Observation{Component: observability.ComponentRuntime, Stage: observability.StageLegacyPodCache, Result: observability.ResultDegraded, Err: fmt.Errorf("legacy Pod cache fallback: %s", reason)})
+			}})
+			if err != nil {
+				return nil, err
+			}
+			converter.Pods = resolver
 		}
 		configured, ok := events.(interface {
 			ConfigureLegacyOutput(enginekafka.LegacyEventConverter, string, int) error
@@ -475,9 +515,9 @@ func openProductionPhaseTwoBundleWithDependencies(
 				finalEmitter.shutdown(shutdownCtx)
 			}
 			if runtimeClientIsSource {
-				return events.Shutdown(shutdownCtx)
+				return errors.Join(events.Shutdown(shutdownCtx), closeLegacyClients())
 			}
-			return errors.Join(events.Shutdown(shutdownCtx), runtimeClient.Close())
+			return errors.Join(events.Shutdown(shutdownCtx), runtimeClient.Close(), closeLegacyClients())
 		},
 	})
 	if err != nil {

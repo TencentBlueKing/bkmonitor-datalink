@@ -7,8 +7,8 @@ import (
 	"fmt"
 )
 
-// LegacyOutputContext is internal frozen configuration for the synchronous
-// Python adapter. It is never part of the native TriggerEvent wire.
+// LegacyOutputContext is internal frozen configuration for the local Python
+// protocol adapter. It is never part of the native TriggerEvent wire.
 type LegacyOutputContext struct {
 	Strategy        json.RawMessage `json:"strategy"`
 	DimensionFields []string        `json:"dimension_fields"`

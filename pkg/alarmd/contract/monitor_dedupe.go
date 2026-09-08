@@ -18,7 +18,8 @@ type MonitorOutputIdentity struct {
 // MonitorDedupeMD5 projects MonitorEventAdapter.extract_target and Event's
 // default dedupe fields. Native identities support scalar/null dimensions;
 // structured Python tags must be cleaned on the Python capture side first.
-func MonitorDedupeMD5(strategyID, businessID string, dimensions map[string]json.RawMessage, identity MonitorOutputIdentity) (string, error) {
+// ProjectMonitorTarget returns the shared Python-compatible base target and remaining dimensions.
+func ProjectMonitorTarget(dimensions map[string]json.RawMessage, identity MonitorOutputIdentity) (string, json.RawMessage, map[string]json.RawMessage, error) {
 	agg := make(map[string]bool, len(identity.DimensionFields))
 	for _, field := range identity.DimensionFields {
 		agg[field] = true
@@ -30,18 +31,18 @@ func MonitorDedupeMD5(strategyID, businessID string, dimensions map[string]json.
 		}
 		name := strings.TrimPrefix(key, "tags.")
 		if _, exists := data[name]; exists {
-			return "", fmt.Errorf("monitor dedupe: ambiguous dimension alias %q", name)
+			return "", nil, nil, fmt.Errorf("monitor dedupe: ambiguous dimension alias %q", name)
 		}
 		_, err := monitorScalar(raw)
 		if err != nil {
-			return "", fmt.Errorf("monitor dedupe dimension %s: %w", key, err)
+			return "", nil, nil, fmt.Errorf("monitor dedupe dimension %s: %w", key, err)
 		}
 		data[name] = raw
 	}
 	for key := range data {
 		if strings.HasPrefix(key, "tags.") {
 			if _, exists := data[strings.TrimPrefix(key, "tags.")]; exists {
-				return "", fmt.Errorf("monitor dedupe: ambiguous repeated tags prefix %q", key)
+				return "", nil, nil, fmt.Errorf("monitor dedupe: ambiguous repeated tags prefix %q", key)
 			}
 		}
 	}
@@ -87,6 +88,15 @@ func MonitorDedupeMD5(strategyID, businessID string, dimensions map[string]json.
 			targetType, target = "TOPO", encodeString(stringValue(obj)+"|"+stringValue(instance))
 		}
 	}
+	return targetType, target, data, nil
+}
+
+func MonitorDedupeMD5(strategyID, businessID string, dimensions map[string]json.RawMessage, identity MonitorOutputIdentity) (string, error) {
+	targetType, target, data, err := ProjectMonitorTarget(dimensions, identity)
+	if err != nil {
+		return "", err
+	}
+	encodeString := func(value string) json.RawMessage { raw, _ := json.Marshal(value); return raw }
 	// K8s/APM target values are reset to empty/None by cal_dedupe_md5.
 	strategy, err := strconv.ParseInt(strategyID, 10, 64)
 	if err != nil || strategy <= 0 {

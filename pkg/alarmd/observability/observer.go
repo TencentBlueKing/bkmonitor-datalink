@@ -57,6 +57,7 @@ const (
 	ComponentOther          = "_other"
 
 	StageConfigLoaded         = "config_loaded"
+	StageLegacyPodCache       = "legacy_pod_cache"
 	StageSnapshotRefreshed    = "snapshot_refreshed"
 	StageSnapshotUnavailable  = "snapshot_unavailable"
 	StageActivationFailed     = "activation_failed"
@@ -1041,6 +1042,7 @@ var metricComponentStages = []ComponentStage{
 }
 
 var phaseTwoComponentStages = []ComponentStage{
+	{ComponentRuntime, StageLegacyPodCache},
 	{ComponentCoverage, StageFinalEvidenceQueued},
 	{ComponentCoverage, StageFinalEvidenceACKed},
 	{ComponentCoverage, StageFinalEvidenceDropped},

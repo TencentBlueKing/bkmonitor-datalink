@@ -52,9 +52,9 @@ func TestWorkflowDispatcherOccupancyUsesActualQueues(t *testing.T) {
 	d.delayed = append(d.delayed, phaseTwoQueuedRunner{scheduled: second})
 	d.observeOccupancy(context.Background())
 	d.markDispatched(first, false, true)
-	d.changeExecuting(context.Background(), 1)
+	d.changeExecuting(1)
 	d.observeOccupancy(context.Background())
-	d.changeExecuting(context.Background(), -1)
+	d.changeExecuting(-1)
 	d.handleResult(context.Background(), phaseTwoScheduledResult{scheduled: first}, false)
 	d.observeOccupancy(context.Background())
 	want := []observability.DispatcherFacts{{Active: 0, Ready: 1, Delayed: 1, QueuesKnown: true}, {Active: 1, Ready: 0, Delayed: 1, QueuesKnown: true}, {Active: 0, Ready: 0, Delayed: 1, QueuesKnown: true}}

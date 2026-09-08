@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
@@ -351,10 +352,12 @@ type phaseTwoRunnerGeneration struct {
 }
 
 type phaseTwoRunnerDispatcher struct {
-	occupancyMu sync.Mutex
-	executing   int
-	bundle      *phaseTwoWorkerBundle
-	fanout      int
+	// executing counts Runner invocations between dispatch and return. Worker
+	// goroutines only add to it; the dispatcher loop is the sole publisher, so
+	// no worker ever waits on the observer to record its own return.
+	executing atomic.Int64
+	bundle    *phaseTwoWorkerBundle
+	fanout    int
 
 	jobs    chan phaseTwoScheduledRunner
 	results chan phaseTwoScheduledResult
@@ -604,7 +607,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) start(ctx context.Context) {
 }
 
 func (dispatcher *phaseTwoRunnerDispatcher) executeScheduled(ctx context.Context, scheduled phaseTwoScheduledRunner) {
-	dispatcher.changeExecuting(ctx, 1)
+	dispatcher.changeExecuting(1)
 	result := phaseTwoScheduledResult{scheduled: scheduled}
 	runCtx := dispatcher.bundle.dependencies.TargetFlow.Context(ctx, string(scheduled.queryGroup))
 	if observability.TargetFlowEnabled(runCtx) {
@@ -612,7 +615,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) executeScheduled(ctx context.Context
 		observability.EmitTargetFlow(runCtx, "runner_dispatch", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "execution_slot_acquired", QueuedAtMS: scheduled.queuedAt.UnixMilli(), QueueWaitNS: time.Since(scheduled.queuedAt).Nanoseconds()})
 	}
 	func() {
-		defer dispatcher.changeExecuting(ctx, -1)
+		defer dispatcher.changeExecuting(-1)
 		if ctx.Err() == nil && dispatcher.bundle.isCurrentScheduledRunner(scheduled) {
 			func() {
 				defer startSlotTiming(runCtx, dispatcher.bundle.dependencies.Observer, observability.StageRunnerCompleted, time.Now)()
@@ -1759,26 +1762,24 @@ func diagnosticTimeMS(t time.Time) int64 {
 	return t.UnixMilli()
 }
 
-// The dispatcher loop is the sole writer; publish after handling the previous event.
+// The dispatcher loop is the sole publisher, so a delayed observer can never
+// roll the reported occupancy backward and no observer call is on a Runner's
+// own return path. It publishes after handling the previous event and again
+// before every select, so the snapshot is never older than one loop iteration.
 func (dispatcher *phaseTwoRunnerDispatcher) observeOccupancy(ctx context.Context) {
-	dispatcher.occupancyMu.Lock()
-	defer dispatcher.occupancyMu.Unlock()
 	observeRuntime(ctx, dispatcher.bundle.dependencies.Observer, observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageDispatcherSnapshot,
 		Result: observability.ResultSuccess, Dispatcher: &observability.DispatcherFacts{
-			Active: dispatcher.executing, Ready: len(dispatcher.normal), Delayed: len(dispatcher.delayed), QueuesKnown: true,
+			Active: int(dispatcher.executing.Load()), Ready: len(dispatcher.normal),
+			Delayed: len(dispatcher.delayed), QueuesKnown: true,
 		},
 	})
 }
 
-// Publish under the observation lock so a delayed observer cannot roll F backward.
-// This is independent of the dispatcher's pending-result membership map.
-func (dispatcher *phaseTwoRunnerDispatcher) changeExecuting(ctx context.Context, delta int) {
-	dispatcher.occupancyMu.Lock()
-	defer dispatcher.occupancyMu.Unlock()
-	dispatcher.executing += delta
-	observeRuntime(ctx, dispatcher.bundle.dependencies.Observer, observability.Observation{
-		Component: observability.ComponentScheduler, Stage: observability.StageDispatcherSnapshot,
-		Result: observability.ResultSuccess, Dispatcher: &observability.DispatcherFacts{Active: dispatcher.executing},
-	})
+// changeExecuting records that one Runner invocation started or returned. It
+// must stay free of the observer: a Runner that has to publish its own return
+// before releasing its occupancy would report that publication wait as
+// occupancy, and would serialise every Runner behind one observer call.
+func (dispatcher *phaseTwoRunnerDispatcher) changeExecuting(delta int) {
+	dispatcher.executing.Add(int64(delta))
 }

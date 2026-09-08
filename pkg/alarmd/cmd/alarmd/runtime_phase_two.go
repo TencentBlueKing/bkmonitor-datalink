@@ -152,6 +152,9 @@ func runPhaseTwoApplicationWithDependencies(
 			return err
 		}
 	}
+	// Resolve the pool before the profile is derived so the startup facts carry
+	// the concrete size rather than the zero that means "derive".
+	cfg = cfg.WithResolvedRedisPoolSize()
 	profile, err := phaseTwoRuntimeProfile(cfg, cpuSource, runtime.GOMAXPROCS(0))
 	if err != nil {
 		return fmt.Errorf("derive phase-two runtime profile: %w", err)

@@ -22,6 +22,7 @@ type RuntimeCapacityFacts struct {
 	ConfiguredActiveExecutions int    `json:"configured_active_executions"`
 	QueryPermits               int    `json:"query_permits"`
 	RecoveryQueryPermits       int    `json:"recovery_query_permits"`
+	RedisPoolSize              int    `json:"redis_pool_size"`
 	ReadyQueue                 int    `json:"ready_queue"`
 	RecoveryQueue              int    `json:"recovery_queue"`
 	QueuedPerQG                int    `json:"queued_per_qg"`

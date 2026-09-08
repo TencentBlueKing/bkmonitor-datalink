@@ -195,6 +195,16 @@ func openProductionPhaseTwoBundleWithDependencies(
 			}
 		}()
 	}
+	// Report both pools by their role. When the runtime connection resolves to
+	// the source connection there is a single client, and reporting it twice
+	// would double count the same connections.
+	recorder.SetRedisPoolSource(func() []metric.RedisPoolCounts {
+		counts := []metric.RedisPoolCounts{redisPoolCounts("source", sourceConnection.PoolSize, controlClient)}
+		if !runtimeClientIsSource {
+			counts = append(counts, redisPoolCounts("runtime", runtimeConnection.PoolSize, runtimeClient))
+		}
+		return counts
+	})
 	strategySource, err := newStrategySource(controlClient, cfg.PhaseTwo.Control.StrategyCachePrefix)
 	if err != nil {
 		return nil, err

@@ -47,7 +47,8 @@ func productionRedisOptions(connection config.RedisConnectionConfig) *redis.Univ
 		Username: connection.Username, Password: connection.Password,
 		SentinelUsername: connection.SentinelUsername, SentinelPassword: connection.SentinelPassword,
 		DB: connection.DB, DialTimeout: connection.DialTimeout.Duration(), ReadTimeout: connection.ReadTimeout.Duration(),
-		WriteTimeout: connection.WriteTimeout.Duration(), PoolSize: connection.PoolSize,
+		WriteTimeout: connection.WriteTimeout.Duration(),
+		PoolSize:     connection.EffectivePoolSize(0),
 	}
 }
 
@@ -56,4 +57,25 @@ func productionRedisAddress(connection config.RedisConnectionConfig) string {
 		return "sentinel:" + connection.MasterName
 	}
 	return connection.Address
+}
+
+// redisPoolCounts reads the live pool statistics for one client. The size is
+// the resolved configuration value rather than a statistic, so a saturated pool
+// can be read straight off the ratio instead of being inferred from latency.
+func redisPoolCounts(client string, size int, redisClient redis.UniversalClient) metric.RedisPoolCounts {
+	counts := metric.RedisPoolCounts{Client: client, Size: size}
+	if redisClient == nil {
+		return counts
+	}
+	stats := redisClient.PoolStats()
+	if stats == nil {
+		return counts
+	}
+	counts.TotalConns = stats.TotalConns
+	counts.IdleConns = stats.IdleConns
+	counts.StaleConns = stats.StaleConns
+	counts.Hits = stats.Hits
+	counts.Misses = stats.Misses
+	counts.Timeouts = stats.Timeouts
+	return counts
 }

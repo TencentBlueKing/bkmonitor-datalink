@@ -152,7 +152,7 @@ func Default() Config {
 		Redis: RedisConfig{
 			RedisConnectionConfig: RedisConnectionConfig{Mode: RedisModeStandalone,
 				DialTimeout: Duration(3 * time.Second), ReadTimeout: Duration(3 * time.Second),
-				WriteTimeout: Duration(3 * time.Second), PoolSize: 16},
+				WriteTimeout: Duration(3 * time.Second), PoolSize: 0},
 			MinTTL: Duration(time.Minute), MaxTTL: Duration(30 * 24 * time.Hour), RestartMargin: Duration(10 * time.Minute),
 		},
 		Limits: defaultLimits(),
@@ -170,11 +170,38 @@ func Default() Config {
 	}
 }
 
+// AdmittedQueryConcurrency is the number of queries the scheduler may have in
+// flight at once. It is the floor the Redis pool has to clear, because each of
+// those queries holds its permit across the Redis round-trips it makes.
+func (c Config) AdmittedQueryConcurrency() int {
+	s := c.PhaseTwo.Scheduler
+	return s.ProcessQueryPermits + s.RecoveryQueryPermits
+}
+
+// WithResolvedRedisPoolSize returns a copy whose Redis pool sizes are concrete
+// positive numbers, so the resolved value can be reported as a startup fact
+// rather than staying implicit in the client.
+func (c Config) WithResolvedRedisPoolSize() Config {
+	admitted := c.AdmittedQueryConcurrency()
+	c.Redis.PoolSize = c.Redis.Connection().EffectivePoolSize(admitted)
+	if c.PhaseTwo.RuntimeRedis != nil {
+		runtimeRedis := c.PhaseTwo.RuntimeRedis.clone()
+		runtimeRedis.PoolSize = runtimeRedis.EffectivePoolSize(admitted)
+		c.PhaseTwo.RuntimeRedis = &runtimeRedis
+	}
+	return c
+}
+
 func (c Config) RedisBackendOptions() state.RedisBackendOptions {
 	return state.RedisBackendOptions{
 		Address: c.Redis.Address, Username: c.Redis.Username, Password: c.Redis.Password, DB: c.Redis.DB,
 		DialTimeout: c.Redis.DialTimeout.Duration(), ReadTimeout: c.Redis.ReadTimeout.Duration(),
-		WriteTimeout: c.Redis.WriteTimeout.Duration(), PoolSize: c.Redis.PoolSize,
+		WriteTimeout: c.Redis.WriteTimeout.Duration(),
+		// Resolve here as well as in the runtime path: WithResolvedRedisPoolSize
+		// carries the authoritative value into the startup facts, but options can
+		// also be built by paths that never ran it, and a zero must never reach a
+		// client.
+		PoolSize: c.Redis.Connection().EffectivePoolSize(c.AdmittedQueryConcurrency()),
 	}
 }
 

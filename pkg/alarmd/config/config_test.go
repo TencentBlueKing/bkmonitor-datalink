@@ -419,7 +419,7 @@ func TestValidateRejectsInvalidRedisAndRuntimeBudgets(t *testing.T) {
 	tests := map[string]func(*Config){
 		"missing Redis address": func(cfg *Config) { cfg.Redis.Address = "" },
 		"negative Redis DB":     func(cfg *Config) { cfg.Redis.DB = -1 },
-		"zero Redis pool":       func(cfg *Config) { cfg.Redis.PoolSize = 0 },
+		"negative Redis pool":   func(cfg *Config) { cfg.Redis.PoolSize = -1 },
 		"blank state prefix":    func(cfg *Config) { cfg.Redis.StatePrefix = " " },
 		"reversed state TTL":    func(cfg *Config) { cfg.Redis.MaxTTL = cfg.Redis.MinTTL - 1 },
 		"negative restart margin": func(cfg *Config) {
@@ -633,4 +633,71 @@ limits:
   store:
     max_written_bytes: 68157440
 `
+}
+
+// Zero no longer means "unset and invalid": it means the pool follows the query
+// permits it has to serve. The cases below pin that, plus the minimum that
+// keeps a small deployment at the size it had before the pool was derived.
+func TestDeriveRedisPoolSizeCoversAdmittedConcurrency(t *testing.T) {
+	tests := []struct {
+		name     string
+		admitted int
+		want     int
+	}{
+		{"the default permits stay at the historical minimum", 3, 16},
+		{"a production permit set lifts the pool above the minimum", 40, 48},
+		{"no permits still yields a usable pool", 0, 16},
+		{"the pool tracks permits once they exceed the minimum", 128, 136},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := DeriveRedisPoolSize(test.admitted); got != test.want {
+				t.Fatalf("DeriveRedisPoolSize(%d) = %d, want %d", test.admitted, got, test.want)
+			}
+		})
+	}
+}
+
+func TestEffectivePoolSizeKeepsExplicitOverride(t *testing.T) {
+	connection := RedisConnectionConfig{PoolSize: 3}
+	if got := connection.EffectivePoolSize(40); got != 3 {
+		t.Fatalf("explicit pool_size was not honoured: got %d", got)
+	}
+	connection.PoolSize = 0
+	if got := connection.EffectivePoolSize(40); got != 48 {
+		t.Fatalf("zero pool_size did not derive: got %d", got)
+	}
+}
+
+// The pool must never be the narrower gate. This is the invariant the whole
+// derivation exists to hold, so it is asserted directly rather than inferred
+// from the arithmetic above.
+func TestDerivedRedisPoolNeverNarrowerThanAdmittedConcurrency(t *testing.T) {
+	for admitted := 0; admitted <= 256; admitted++ {
+		if got := DeriveRedisPoolSize(admitted); got <= admitted {
+			t.Fatalf("pool %d does not exceed admitted concurrency %d", got, admitted)
+		}
+	}
+}
+
+func TestWithResolvedRedisPoolSizeResolvesEveryConnection(t *testing.T) {
+	cfg := Default()
+	cfg.Input.Mode = InputModeGoAccess
+	runtimeRedis := cfg.Redis.Connection()
+	cfg.PhaseTwo.RuntimeRedis = &runtimeRedis
+	admitted := cfg.AdmittedQueryConcurrency()
+	if admitted <= 0 {
+		t.Fatalf("default admitted query concurrency is not positive: %d", admitted)
+	}
+	resolved := cfg.WithResolvedRedisPoolSize()
+	want := DeriveRedisPoolSize(admitted)
+	if resolved.Redis.PoolSize != want {
+		t.Fatalf("source pool size = %d, want %d", resolved.Redis.PoolSize, want)
+	}
+	if resolved.PhaseTwo.RuntimeRedis == nil || resolved.PhaseTwo.RuntimeRedis.PoolSize != want {
+		t.Fatalf("runtime pool size was not resolved: %+v", resolved.PhaseTwo.RuntimeRedis)
+	}
+	if cfg.Redis.PoolSize != 0 || cfg.PhaseTwo.RuntimeRedis.PoolSize != 0 {
+		t.Fatal("WithResolvedRedisPoolSize mutated its receiver")
+	}
 }

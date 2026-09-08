@@ -36,6 +36,41 @@ type RedisConnectionConfig struct {
 	PoolSize         int      `yaml:"pool_size"`
 }
 
+// A fixed connection pool is the smallest concurrency gate this process has.
+// Every scheduler probe and every admitted query round-trips through it, so a
+// pool below the concurrency the scheduler is licensed to run converts command
+// latency into queueing latency with no gate reporting that it did: the client
+// still returns, only later.
+//
+// The pool therefore follows the permits it has to serve rather than the CPU
+// quota directly. Permits are already the resource-derived quantity, so keying
+// the pool to them keeps one derivation instead of two, and it means the pool
+// grows only when the demand on it grows. Zero means "derive"; an explicit
+// positive pool_size still wins so an operator can pin it.
+const (
+	redisPoolMinimum = 16
+	redisPoolSpare   = 8
+)
+
+// DeriveRedisPoolSize sizes the pool to cover the admitted query concurrency
+// plus room for the scheduler probes that run alongside those queries, never
+// dropping below the minimum a small deployment needs.
+func DeriveRedisPoolSize(admittedConcurrency int) int {
+	size := redisPoolMinimum
+	if covered := admittedConcurrency + redisPoolSpare; covered > size {
+		size = covered
+	}
+	return size
+}
+
+// EffectivePoolSize resolves the value actually handed to the client.
+func (c RedisConnectionConfig) EffectivePoolSize(admittedConcurrency int) int {
+	if c.PoolSize > 0 {
+		return c.PoolSize
+	}
+	return DeriveRedisPoolSize(admittedConcurrency)
+}
+
 func (c RedisConnectionConfig) clone() RedisConnectionConfig {
 	c.SentinelAddress = append([]string(nil), c.SentinelAddress...)
 	return c
@@ -46,7 +81,7 @@ func (c RedisConnectionConfig) validate(field string) error {
 		return fmt.Errorf("%s mode must be standalone or sentinel", field)
 	}
 	if c.DB < 0 || c.DialTimeout.Duration() <= 0 || c.ReadTimeout.Duration() <= 0 ||
-		c.WriteTimeout.Duration() <= 0 || c.PoolSize <= 0 {
+		c.WriteTimeout.Duration() <= 0 || c.PoolSize < 0 {
 		return fmt.Errorf("%s db, timeouts and pool_size are invalid", field)
 	}
 	if c.Username != "" && strings.TrimSpace(c.Username) != c.Username {

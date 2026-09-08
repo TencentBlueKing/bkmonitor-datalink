@@ -49,7 +49,10 @@ func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (obs
 		Profile: "standard-conservative-v1", Source: "product_default", CPUSource: cpuSource, GOMAXPROCS: procs,
 		Capacity: phaseTwoRuntimeCapacity(cfg),
 	}
-	if facts.Capacity != phaseTwoRuntimeCapacity(config.Default()) {
+	// Compare against a default that went through the same pool derivation, or
+	// every deployment would report itself as an override purely because the
+	// resolved pool size replaced the zero that means "derive".
+	if facts.Capacity != phaseTwoRuntimeCapacity(config.Default().WithResolvedRedisPoolSize()) {
 		facts.Source = "configuration_override"
 	}
 	// Digest the exact logged safe values, with the digest field still empty.
@@ -66,7 +69,8 @@ func phaseTwoRuntimeCapacity(cfg config.Config) observability.RuntimeCapacityFac
 		ExpiredRangeEnabled: s.ExpiredRangeEnabled,
 		ActiveExecutions:    min(s.ActiveExecutionLimit, s.ReadyQueueCapacity), ConfiguredActiveExecutions: s.ActiveExecutionLimit,
 		QueryPermits: s.ProcessQueryPermits, RecoveryQueryPermits: s.RecoveryQueryPermits,
-		ReadyQueue: s.ReadyQueueCapacity, RecoveryQueue: s.RecoveryQueueCapacity, QueuedPerQG: s.MaxQueuedItemsPerQG,
+		RedisPoolSize: cfg.Redis.PoolSize,
+		ReadyQueue:    s.ReadyQueueCapacity, RecoveryQueue: s.RecoveryQueueCapacity, QueuedPerQG: s.MaxQueuedItemsPerQG,
 		TickNS: int64(s.TickInterval), ReplaySlots: s.MaxReplaySlots, ReplayAgeNS: int64(s.MaxReplayAge),
 		RetryMinNS: int64(s.RetryMinDelay), RetryMaxNS: int64(s.RetryMaxDelay),
 		SequencerReservations: c.MaxSequencerReservations, Series: c.MaxSeries, RetainedBytes: c.MaxRetainedBytes,

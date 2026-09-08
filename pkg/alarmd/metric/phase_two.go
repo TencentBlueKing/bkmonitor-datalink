@@ -40,6 +40,7 @@ type phaseTwoMetrics struct {
 	algorithmEvaluations         *prometheus.CounterVec
 	redisCalls                   redisCallMetrics
 	controlCache                 *controlCacheCollector
+	redisPool                    *redisPoolCollector
 	algorithmInputs              *prometheus.CounterVec
 }
 
@@ -127,6 +128,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	}
 	metrics.redisCalls = newRedisCallMetrics()
 	metrics.controlCache = newControlCacheCollector()
+	metrics.redisPool = newRedisPoolCollector()
 	metrics.shortPeriod = newShortPeriodMetrics()
 	metrics.slotTiming = newSlotTimingMetrics()
 	metrics.workflow = newWorkflowMetrics()
@@ -161,7 +163,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 		m.undrainedDrainingQueryGroups,
 		m.algorithmEvaluations, m.algorithmInputs,
-	}...), append(m.redisCalls.collectors(), m.controlCache)...)
+	}...), append(m.redisCalls.collectors(), m.controlCache, m.redisPool)...)
 }
 
 func (m phaseTwoMetrics) observe(observation observability.Observation) {

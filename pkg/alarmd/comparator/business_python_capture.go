@@ -22,6 +22,56 @@ type pythonCaptureRecord struct {
 	Reference      json.RawMessage `json:"reference,omitempty"`
 }
 
+// ComparePythonDedupeCapture compares a native output fingerprint with a Python
+// Event oracle captured alongside the original broker message. The oracle must
+// be produced by Python Event cleaning/cal_dedupe_md5, not by Go projection.
+// This narrow check does not establish business range completeness or a PASS.
+func ComparePythonDedupeCapture(line []byte, goDedupeMD5 string, maxBytes int) error {
+	if maxBytes <= 0 || len(line) == 0 || len(line) > maxBytes {
+		return errors.New("Python dedupe capture size")
+	}
+	if _, err := contract.CanonicalJSONV2(json.RawMessage(line)); err != nil {
+		return err
+	}
+	var row struct {
+		RawBase64 string `json:"raw_base64"`
+		RawSHA256 string `json:"raw_sha256"`
+		Identity  *struct {
+			Keys   []string          `json:"dedupe_keys"`
+			Values []json.RawMessage `json:"dedupe_values"`
+			MD5    string            `json:"dedupe_md5"`
+		} `json:"dedupe_identity"`
+	}
+	if err := json.Unmarshal(line, &row); err != nil {
+		return err
+	}
+	if row.Identity == nil || row.Identity.Keys == nil || row.Identity.Values == nil || len(row.Identity.Keys) != len(row.Identity.Values) {
+		return errors.New("Python dedupe oracle missing or incomplete")
+	}
+	raw, err := base64.StdEncoding.Strict().DecodeString(row.RawBase64)
+	if err != nil || len(raw) == 0 {
+		return errors.New("Python dedupe raw base64")
+	}
+	hash := sha256.Sum256(raw)
+	if hex.EncodeToString(hash[:]) != row.RawSHA256 {
+		return errors.New("Python dedupe raw digest")
+	}
+	if _, err := contract.CanonicalJSONV2(json.RawMessage(raw)); err != nil {
+		return err
+	}
+	expected, err := contract.PythonDedupeMD5(row.Identity.Values)
+	if err != nil {
+		return err
+	}
+	if expected != row.Identity.MD5 {
+		return errors.New("Python dedupe value hash mismatch")
+	}
+	if goDedupeMD5 != row.Identity.MD5 {
+		return errors.New("Python and Go stable series identity differ")
+	}
+	return nil
+}
+
 // ObservePythonCapture consumes capture_to_stream's actual JSONL without
 // rewriting its raw message, offset, projection or classification.
 func (r *BusinessRun) ObservePythonCapture(now time.Time, line []byte) error {

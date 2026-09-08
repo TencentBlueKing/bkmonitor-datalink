@@ -37,11 +37,24 @@ type redisCallMetrics struct {
 	calls    *prometheus.CounterVec
 	duration *prometheus.HistogramVec
 	failures *prometheus.CounterVec
+	// The client retries a failed attempt up to three times with an eight
+	// millisecond floor on the backoff, and the whole retry loop sits inside the
+	// call this hook times. Retries therefore inflate the recorded duration
+	// while leaving no trace of their own: only the final outcome reaches
+	// failures. Counting operations makes them visible, because the connection
+	// pool counts one acquisition per attempt, so attempts minus operations is
+	// the number of retries.
+	operations prometheus.Counter
 }
 
 func newRedisCallMetrics() redisCallMetrics {
 	labels := []string{"command", "pipelined"}
+	operations := prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "redis_operation_total",
+		Help: "Redis operations issued, counting one per call or pipeline batch rather than per command.",
+	})
 	return redisCallMetrics{
+		operations: operations,
 		calls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "redis_command_total",
 			Help: "Redis commands issued by this process by bounded command name and pipelining.",
@@ -59,7 +72,7 @@ func newRedisCallMetrics() redisCallMetrics {
 }
 
 func (m redisCallMetrics) collectors() []prometheus.Collector {
-	return []prometheus.Collector{m.calls, m.duration, m.failures}
+	return []prometheus.Collector{m.calls, m.duration, m.failures, m.operations}
 }
 
 func boundedRedisCommand(name string) string {
@@ -93,6 +106,7 @@ func (h *RedisCallHook) BeforeProcess(ctx context.Context, _ redis.Cmder) (conte
 	if h == nil {
 		return ctx, nil
 	}
+	h.metrics.operations.Inc()
 	return context.WithValue(ctx, redisCallStartKey{}, h.now()), nil
 }
 
@@ -108,6 +122,7 @@ func (h *RedisCallHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmd
 	if h == nil {
 		return ctx, nil
 	}
+	h.metrics.operations.Inc()
 	return context.WithValue(ctx, redisCallStartKey{}, h.now()), nil
 }
 

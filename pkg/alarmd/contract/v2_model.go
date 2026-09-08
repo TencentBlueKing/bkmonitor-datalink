@@ -118,6 +118,9 @@ type StrategyRefV2 struct {
 	TenantID   string `json:"tenant_id"`
 	StrategyID string `json:"strategy_id"`
 	Revision   string `json:"revision"`
+	// SnapshotRevision is the authoritative immutable snapshot version. Zero
+	// means the legacy source did not publish one; Revision is execution-only.
+	SnapshotRevision int64 `json:"snapshot_revision,omitempty"`
 }
 
 type QueryGroupV2 struct {
@@ -428,23 +431,32 @@ type TriggerEventTraceV1 struct {
 	ExecutionID string `json:"execution_id"`
 }
 
+// StrategySnapshotRef is the complete downstream immutable strategy identity.
+type StrategySnapshotRef struct {
+	TenantID   string `json:"bk_tenant_id"`
+	BusinessID int64  `json:"strategy_bk_biz_id"`
+	StrategyID int64  `json:"strategy_id"`
+	Revision   int64  `json:"strategy_revision"`
+}
+
 type TriggerEventV1 struct {
-	Schema                  Schema              `json:"schema"`
-	RequiredFeatures        []string            `json:"required_features"`
-	EventID                 string              `json:"event_id"`
-	EventSemanticDigest     string              `json:"event_semantic_digest"`
-	EventKind               string              `json:"event_kind"`
-	PrimaryLevelID          uint32              `json:"primary_level_id"`
-	TenantID                string              `json:"tenant_id"`
-	BusinessID              string              `json:"business_id"`
-	PlanRef                 RuntimePlanRefV1    `json:"plan_ref"`
-	RecordRef               TriggerRecordRefV1  `json:"record_ref"`
-	Observed                TriggerObservedV1   `json:"observed"`
-	LevelResults            []LevelResultV1     `json:"level_results"`
-	EvaluationTime          int64               `json:"evaluation_time"`
-	DetectPlanFingerprint   string              `json:"detect_plan_fingerprint"`
-	TriggerStateFingerprint string              `json:"trigger_state_fingerprint"`
-	Trace                   TriggerEventTraceV1 `json:"trace"`
+	Schema                  Schema               `json:"schema"`
+	RequiredFeatures        []string             `json:"required_features"`
+	EventID                 string               `json:"event_id"`
+	EventSemanticDigest     string               `json:"event_semantic_digest"`
+	EventKind               string               `json:"event_kind"`
+	PrimaryLevelID          uint32               `json:"primary_level_id"`
+	TenantID                string               `json:"tenant_id"`
+	BusinessID              string               `json:"business_id"`
+	PlanRef                 RuntimePlanRefV1     `json:"plan_ref"`
+	StrategyRef             *StrategySnapshotRef `json:"strategy_ref,omitempty"`
+	RecordRef               TriggerRecordRefV1   `json:"record_ref"`
+	Observed                TriggerObservedV1    `json:"observed"`
+	LevelResults            []LevelResultV1      `json:"level_results"`
+	EvaluationTime          int64                `json:"evaluation_time"`
+	DetectPlanFingerprint   string               `json:"detect_plan_fingerprint"`
+	TriggerStateFingerprint string               `json:"trigger_state_fingerprint"`
+	Trace                   TriggerEventTraceV1  `json:"trace"`
 }
 
 type TriggerEventBuildInputV1 struct {
@@ -452,6 +464,7 @@ type TriggerEventBuildInputV1 struct {
 	TenantID                string
 	BusinessID              string
 	PlanRef                 RuntimePlanRefV1
+	StrategyRef             *StrategySnapshotRef
 	RecordRef               TriggerRecordRefV1
 	Observed                TriggerObservedV1
 	LevelResults            []LevelResultV1

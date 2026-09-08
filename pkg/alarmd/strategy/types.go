@@ -484,6 +484,7 @@ func (l CompiledLevel) ResourceEstimate() ResourceEstimate { return l.resourceEs
 
 type CompiledPlan struct {
 	planRef             contract.RuntimePlanRefV1
+	strategyRef         contract.StrategyRefV2
 	projection          contract.InputProjectionV2
 	evaluationSemantics contract.ExecutionSemanticsV2
 	levels              []CompiledLevel
@@ -491,6 +492,13 @@ type CompiledPlan struct {
 	fingerprints        PlanFingerprints
 	resourceEstimate    ResourceEstimate
 	datasetDigest       string
+}
+
+func (p *CompiledPlan) StrategyRef() contract.StrategyRefV2 {
+	if p == nil {
+		return contract.StrategyRefV2{}
+	}
+	return p.strategyRef
 }
 
 func (p *CompiledPlan) PlanRef() contract.RuntimePlanRefV1 {

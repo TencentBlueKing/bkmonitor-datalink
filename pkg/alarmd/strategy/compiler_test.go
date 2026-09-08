@@ -649,6 +649,29 @@ func TestCompilerFingerprintIgnoresRevisionPriorityAndLevelCode(t *testing.T) {
 	}
 }
 
+func TestCompilerCacheFreezesSnapshotRevisionWithoutChangingState(t *testing.T) {
+	compiler := newTestCompiler(t)
+	plan := validPlan()
+	plan.StrategyRef.SnapshotRevision = 7
+	plan.StrategyIR.StrategyRef = plan.StrategyRef
+	first := mustCompilePlan(t, compiler, plan)
+	plan.StrategyRef.SnapshotRevision = 8
+	plan.StrategyIR.StrategyRef = plan.StrategyRef
+	second := mustCompilePlan(t, compiler, plan)
+	if first.StrategyRef().SnapshotRevision != 7 || second.StrategyRef().SnapshotRevision != 8 {
+		t.Fatal("compiler cache mixed snapshot revisions")
+	}
+	if first.StateCompatibilityHash() != second.StateCompatibilityHash() || first.Fingerprints() != second.Fingerprints() {
+		t.Fatal("snapshot revision changed runtime semantics")
+	}
+	plan.StrategyRef.SnapshotRevision = 7
+	plan.StrategyIR.StrategyRef = plan.StrategyRef
+	again := mustCompilePlan(t, compiler, plan)
+	if again.StrategyRef().SnapshotRevision != 7 {
+		t.Fatal("cache hit lost snapshot revision")
+	}
+}
+
 func TestCompilerCompilesM0GoldenEnvelope(t *testing.T) {
 	payload, err := os.ReadFile("../contract/testdata/go-v2/execution_envelope_v2.json")
 	if err != nil {

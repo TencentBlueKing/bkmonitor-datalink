@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -84,8 +85,19 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 			return EvaluationResultV2{}, invariantV2("admit event Level results", 0, errors.New("compiled result exceeds admitted limit"))
 		}
 		fingerprints := request.Plan.Fingerprints()
+		var snapshotRef *contract.StrategySnapshotRef
+		ref := request.Plan.StrategyRef()
+		if ref.SnapshotRevision > 0 {
+			strategyID, strategyErr := strconv.ParseInt(ref.StrategyID, 10, 64)
+			businessID, businessErr := strconv.ParseInt(request.BusinessID, 10, 64)
+			if strategyErr != nil || businessErr != nil || ref.TenantID != request.TenantID {
+				return EvaluationResultV2{}, invariantV2("build strategy snapshot reference", 0, errors.New("invalid frozen strategy identity"))
+			}
+			snapshotRef = &contract.StrategySnapshotRef{TenantID: ref.TenantID, BusinessID: businessID, StrategyID: strategyID, Revision: ref.SnapshotRevision}
+		}
 		event, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{
-			EventKind: result.RecordResult, TenantID: request.TenantID, BusinessID: request.BusinessID,
+			StrategyRef: snapshotRef,
+			EventKind:   result.RecordResult, TenantID: request.TenantID, BusinessID: request.BusinessID,
 			PlanRef: request.Plan.PlanRef(), RecordRef: request.RecordRef, Observed: request.Observed,
 			LevelResults: levelResults, EvaluationTime: request.EvaluationTime,
 			DetectPlanFingerprint: fingerprints.Detect, TriggerStateFingerprint: fingerprints.Trigger,

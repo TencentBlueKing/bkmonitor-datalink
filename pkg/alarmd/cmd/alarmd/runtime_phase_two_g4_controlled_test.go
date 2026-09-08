@@ -212,6 +212,12 @@ type controlledAlgorithmInput struct {
 	dependency observability.AlgorithmDependencyPoint
 }
 
+func TestProductionPhaseTwoSnapshotReferenceOutput(t *testing.T) {
+	runControlledG4Golden(t, 4101, strategy.DetectorKindSimpleRingRatio, "usage", "system.cpu", []string{"host"},
+		map[string]any{"floor": 50, "ceil": nil}, observability.AlgorithmFamilySimpleRingRatio, observability.AlgorithmDetectorKindSimpleRingRatio,
+		[]controlledAlgorithmInput{{observability.AlgorithmInputNamePrimary, observability.AlgorithmDependencyPointCurrent}, {observability.AlgorithmInputNameHistory, observability.AlgorithmDependencyPointPrevious}}, 7)
+}
+
 func runControlledG4Golden(
 	t *testing.T,
 	strategyID int64,
@@ -221,11 +227,24 @@ func runControlledG4Golden(
 	family observability.AlgorithmFamily,
 	detector observability.AlgorithmDetectorKind,
 	wantInputs []controlledAlgorithmInput,
+	snapshotRevision ...int64,
 ) {
 	t.Helper()
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
 	document := controlledG4StrategyDocument(t, strategyID, kind, metricName, table, dimensions, algorithmConfig)
+	if len(snapshotRevision) > 0 {
+		var source map[string]json.RawMessage
+		if err := json.Unmarshal(document, &source); err != nil {
+			t.Fatal(err)
+		}
+		source["strategy_revision"] = json.RawMessage(strconv.FormatInt(snapshotRevision[0], 10))
+		var err error
+		document, err = json.Marshal(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := redisClient.Set(ctx, "alarm-config.strategy_ids", fmt.Sprintf("[%d]", strategyID), 0).Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -294,6 +313,20 @@ func runControlledG4Golden(
 	}
 	var episode shadow.Episode
 	for index, event := range written {
+		if len(snapshotRevision) > 0 {
+			payload, err := contract.EncodeTriggerEventV1(&event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := contract.DecodeTriggerEventV1(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decoded.Schema.Minor != 1 || decoded.StrategyRef == nil || decoded.StrategyRef.Revision != snapshotRevision[0] ||
+				decoded.StrategyRef.StrategyID != strategyID || decoded.StrategyRef.BusinessID != controlledG4SyntheticBusinessID || decoded.StrategyRef.TenantID != event.TenantID {
+				t.Fatalf("source cache to Kafka payload lost frozen reference: %s", payload)
+			}
+		}
 		projection, err := shadow.ProjectTriggerEventV1(shadow.ChainGo, event)
 		if err != nil {
 			t.Fatalf("ProjectTriggerEventV1(event %d): %v", index, err)

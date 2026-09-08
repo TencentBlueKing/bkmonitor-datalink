@@ -40,8 +40,8 @@ func BuildTriggerEventV1(input TriggerEventBuildInputV1) (*TriggerEventV1, error
 	if input.EventKind != computedKind {
 		return nil, invalid("trigger_event.event_kind", "does not match successful active Level results")
 	}
-	semanticDigest, err := DeriveEventSemanticDigestV1(
-		input.EventKind, results, input.DetectPlanFingerprint, input.TriggerStateFingerprint,
+	semanticDigest, err := deriveEventSemanticDigestWithSnapshot(
+		input.EventKind, results, input.DetectPlanFingerprint, input.TriggerStateFingerprint, input.StrategyRef,
 	)
 	if err != nil {
 		return nil, err
@@ -60,6 +60,11 @@ func BuildTriggerEventV1(input TriggerEventBuildInputV1) (*TriggerEventV1, error
 		Observed: input.Observed, LevelResults: results, EvaluationTime: input.EvaluationTime,
 		DetectPlanFingerprint: input.DetectPlanFingerprint, TriggerStateFingerprint: input.TriggerStateFingerprint,
 		Trace: TriggerEventTraceV1{ExecutionID: input.ExecutionID},
+	}
+	if input.StrategyRef != nil {
+		ref := *input.StrategyRef
+		event.StrategyRef = &ref
+		event.Schema.Minor = 1
 	}
 	if err := ValidateTriggerEventV1(event); err != nil {
 		return nil, err
@@ -113,12 +118,32 @@ func DeriveTriggerEventIDV1(tenantID, businessID, strategyID, stateCompatibility
 	)
 }
 
+func deriveEventSemanticDigestWithSnapshot(eventKind string, results []LevelResultV1, detect, trigger string, ref *StrategySnapshotRef) (string, error) {
+	legacyDigest, err := DeriveEventSemanticDigestV1(eventKind, results, detect, trigger)
+	if err != nil || ref == nil {
+		return legacyDigest, err
+	}
+	return digestCanonicalV2("trigger_event.event_semantic_digest", "event-semantic-digest-v1.1", struct {
+		ResultDigest string              `json:"result_digest"`
+		StrategyRef  StrategySnapshotRef `json:"strategy_ref"`
+	}{legacyDigest, *ref})
+}
+
 func ValidateTriggerEventV1(event *TriggerEventV1) error {
 	if event == nil {
 		return invalid("trigger_event", "must be non-null")
 	}
-	if event.Schema.Name != TriggerEventSchemaV1 || event.Schema.Major != 1 || event.Schema.Minor != 0 || event.RequiredFeatures == nil || len(event.RequiredFeatures) != 0 {
+	if event.Schema.Name != TriggerEventSchemaV1 || event.Schema.Major != 1 || (event.Schema.Minor != 0 && event.Schema.Minor != 1) || event.RequiredFeatures == nil || len(event.RequiredFeatures) != 0 {
 		return invalid("trigger_event.schema", "unsupported header")
+	}
+	if (event.Schema.Minor == 1) != (event.StrategyRef != nil) {
+		return invalid("trigger_event.strategy_ref", "required exclusively by schema 1.1")
+	}
+	if ref := event.StrategyRef; ref != nil {
+		if ref.TenantID != event.TenantID || ref.BusinessID == 0 || strconv.FormatInt(ref.BusinessID, 10) != event.BusinessID ||
+			ref.StrategyID <= 0 || strconv.FormatInt(ref.StrategyID, 10) != event.PlanRef.StrategyID || ref.Revision <= 0 {
+			return invalid("trigger_event.strategy_ref", "must match event identity and contain a positive immutable revision")
+		}
 	}
 	if event.TenantID == "" || !utf8.ValidString(event.TenantID) || !canonicalSignedDecimalPattern.MatchString(event.BusinessID) ||
 		!canonicalDecimalPattern.MatchString(event.PlanRef.StrategyID) || event.PlanRef.StrategyRevision == "" || !utf8.ValidString(event.PlanRef.StrategyRevision) ||
@@ -146,8 +171,8 @@ func ValidateTriggerEventV1(event *TriggerEventV1) error {
 	if kind != event.EventKind || primary != event.PrimaryLevelID {
 		return invalid("trigger_event", "event kind or primary Level does not match Level results")
 	}
-	expectedSemanticDigest, err := DeriveEventSemanticDigestV1(
-		event.EventKind, event.LevelResults, event.DetectPlanFingerprint, event.TriggerStateFingerprint,
+	expectedSemanticDigest, err := deriveEventSemanticDigestWithSnapshot(
+		event.EventKind, event.LevelResults, event.DetectPlanFingerprint, event.TriggerStateFingerprint, event.StrategyRef,
 	)
 	if err != nil {
 		return err
@@ -195,9 +220,25 @@ func DecodeTriggerEventV1WithLimits(payload []byte, limits TriggerEventReaderLim
 		"business_id", "plan_ref", "record_ref", "observed", "level_results", "evaluation_time", "detect_plan_fingerprint",
 		"trigger_state_fingerprint", "trace",
 	}
+	// Inspect only the schema before selecting the strict field set. Other
+	// output contracts remain 1.0; a snapshot reference is mandatory in 1.1.
+	var header struct {
+		Schema Schema `json:"schema"`
+	}
+	if err := json.Unmarshal(payload, &header); err != nil {
+		return nil, err
+	}
+	if header.Schema.Minor == 1 {
+		required = append(required, "strategy_ref")
+	}
 	object, err := validateOutputHeaderV1(payload, "trigger_event", TriggerEventSchemaV1, required)
 	if err != nil {
 		return nil, err
+	}
+	if header.Schema.Minor == 1 {
+		if _, err := validateJSONObjectFields(object["strategy_ref"], "trigger_event.strategy_ref", []string{"bk_tenant_id", "strategy_bk_biz_id", "strategy_id", "strategy_revision"}, nil, false); err != nil {
+			return nil, err
+		}
 	}
 	if len(bytes.TrimSpace(object["level_results"])) > limits.MaxEvidenceBytes {
 		return nil, invalid("trigger_event.level_results", "encoded evidence exceeds Reader limit")

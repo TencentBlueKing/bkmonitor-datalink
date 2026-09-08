@@ -126,6 +126,7 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 		return CompileResult{}, fmt.Errorf("strategy: derive dataset contract digest: %w", err)
 	}
 	compiled := &CompiledPlan{
+		strategyRef: request.Plan.StrategyRef,
 		planRef: contract.RuntimePlanRefV1{
 			StrategyID: request.Plan.StrategyRef.StrategyID, StrategyRevision: request.Plan.StrategyRef.Revision,
 		},
@@ -182,7 +183,7 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 func (c *PlanCompiler) validatePlan(request CompileRequest) *Terminal {
 	plan := request.Plan
 	strategy := plan.StrategyIR
-	if plan.PlanID == "" || plan.PlanID != plan.StrategyRef.StrategyID || plan.StrategyRef != strategy.StrategyRef ||
+	if plan.PlanID == "" || plan.PlanID != plan.StrategyRef.StrategyID || plan.StrategyRef != strategy.StrategyRef || plan.StrategyRef.SnapshotRevision < 0 ||
 		plan.InputProjection.BusinessIdentityField == "" || !equalProjection(plan.InputProjection, strategy.InputProjection) ||
 		strategy.Schema.Name != contract.StrategyIRSchemaV2 || strategy.Schema.Major != 2 || strategy.Schema.Minor < 0 ||
 		len(strategy.Levels) == 0 {

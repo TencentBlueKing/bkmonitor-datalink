@@ -64,6 +64,42 @@ func TestTriggerEventSinkPublishesOfficialWireWithEmptyKeyAfterBrokerACK(t *test
 	}
 }
 
+func TestTriggerEventSinkPublishesSnapshotProtocol(t *testing.T) {
+	legacy := triggerEventGolden(t)
+	event, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{
+		EventKind: legacy.EventKind, TenantID: legacy.TenantID, BusinessID: legacy.BusinessID,
+		PlanRef: legacy.PlanRef, RecordRef: legacy.RecordRef, Observed: legacy.Observed,
+		LevelResults: legacy.LevelResults, EvaluationTime: legacy.EvaluationTime,
+		DetectPlanFingerprint: legacy.DetectPlanFingerprint, TriggerStateFingerprint: legacy.TriggerStateFingerprint,
+		ExecutionID: legacy.Trace.ExecutionID, MaxEvidenceBytes: 64 << 10,
+		StrategyRef: &contract.StrategySnapshotRef{TenantID: "default", BusinessID: 2, StrategyID: 1001, Revision: 7},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload []byte
+	producer := &fakeSyncProducer{send: func(message *sarama.ProducerMessage) (int32, int64, error) {
+		var err error
+		payload, err = message.Value.Encode()
+		return 0, 1, err
+	}}
+	sink, err := newTriggerEventSink("alarmd-native-results", producer, &fakeCloser{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sink.Close()
+	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{*event}); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := contract.DecodeTriggerEventV1(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Schema.Minor != 1 || decoded.StrategyRef == nil || *decoded.StrategyRef != *event.StrategyRef {
+		t.Fatalf("Kafka payload lost snapshot reference: %s", payload)
+	}
+}
+
 func TestTriggerEventSinkPublishesMultiEventBatchWithOneProducerBatchACK(t *testing.T) {
 	t.Parallel()
 

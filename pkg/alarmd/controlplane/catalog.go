@@ -481,6 +481,7 @@ type legacyStrategy struct {
 	ID               int64           `json:"id"`
 	BusinessID       int64           `json:"bk_biz_id"`
 	UpdateTime       json.Number     `json:"update_time"`
+	SnapshotRevision json.RawMessage `json:"strategy_revision,omitempty"`
 	Priority         json.RawMessage `json:"priority"`
 	PriorityGroupKey string          `json:"priority_group_key"`
 	Items            []legacyItem    `json:"items"`
@@ -527,6 +528,12 @@ func decodeLegacyStrategy(document json.RawMessage) (legacyStrategy, error) {
 	if value.ID <= 0 || value.BusinessID == 0 || len(value.Items) == 0 {
 		return value, errors.New("alarmd controlplane: incomplete legacy strategy")
 	}
+	if len(value.SnapshotRevision) != 0 {
+		var revision int64
+		if err := json.Unmarshal(value.SnapshotRevision, &revision); err != nil || revision <= 0 {
+			return value, errors.New("alarmd controlplane: strategy_revision must be a positive int64 JSON number")
+		}
+	}
 	return value, nil
 }
 
@@ -571,6 +578,11 @@ func compilePlan(
 		}
 	}
 	ref := contract.StrategyRefV2{TenantID: identity.TenantID, StrategyID: strategyID, Revision: revision}
+	if len(source.SnapshotRevision) != 0 {
+		if err := json.Unmarshal(source.SnapshotRevision, &ref.SnapshotRevision); err != nil || ref.SnapshotRevision <= 0 {
+			return contract.EvaluationPlanV2{}, execution.ScheduleSpec{}, "", nil, errors.New("alarmd controlplane: invalid strategy_revision")
+		}
+	}
 	dimensionFields := append([]string(nil), dataset.IdentityFields...)
 	if itemHasAlgorithm(item, strategy.DetectorKindProcPort) {
 		dimensionFields = []string{"bind_ip", "listen", "nonlisten", "not_accurate_listen", "protocol"}

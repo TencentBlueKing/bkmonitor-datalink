@@ -67,13 +67,27 @@ func planGapRecoveryMutation(
 	}
 	identity := execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}
 	gap, found := request.Gaps.Find(identity)
-	if !found || gap.Status != execution.GapFound || gap.LastScheduleRevision != due.ScheduleRevision {
+	if !found || gap.Status != execution.GapFound {
 		return nil, nil
 	}
+	// A marker written under an older Plan schedule revision still recovers,
+	// it only restarts its warmup: the store discards the warmup count of
+	// every scope whose schedule revision changed (state applyGapScopes), so
+	// this Slot is the first observed FULL Slot under the current revision and
+	// the count starts at zero here too. Before this the marker was neither
+	// warmed nor cleared once the schedule revision moved, and because no
+	// writer refreshes the revision while the data is FULL, every Level under
+	// the marker stayed UNKNOWN with the marker's reason for as long as the
+	// marker lived - whatever that reason was.
+	restarted := gap.LastScheduleRevision != due.ScheduleRevision
 	scopes := make([]execution.GapScopeMutation, len(gap.Scopes))
 	for index, current := range gap.Scopes {
+		observed := current.ObservedFullSlots
+		if restarted {
+			observed = 0
+		}
 		scopes[index] = execution.GapScopeMutation{Scope: current.Scope, Kind: execution.GapClear}
-		if current.ObservedFullSlots+1 < current.RequiredFullSlots {
+		if observed+1 < current.RequiredFullSlots {
 			scopes[index].Kind = execution.GapWarmup
 			scopes[index].ReasonCode = current.ReasonCode
 			scopes[index].RequiredFullSlots = current.RequiredFullSlots

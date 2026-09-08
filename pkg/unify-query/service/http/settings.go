@@ -12,6 +12,8 @@ package http
 import (
 	"sync/atomic"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
@@ -39,6 +41,8 @@ const (
 	QueryResourceMaxBytesConfigPath             = "http.query.resource.max_bytes"
 	QueryResourceMaxResponseBytesConfigPath     = "http.query.resource.max_response_bytes"
 	QueryResourceMaxEvalCapacityBytesConfigPath = "http.query.resource.max_eval_capacity_bytes"
+	QueryResourceEnabledConfigPath              = "http.query.resource.enabled"
+	QueryResourceProcessCapacityBytesConfigPath = "http.query.resource.process_capacity_bytes"
 
 	// 服务配置
 	EnablePrometheusConfigPath = "http.prometheus.enable"
@@ -103,6 +107,13 @@ const (
 	DefaultQueryRawESBatchMaxMembers               = 16
 	DefaultQueryRawESBatchMaxBodyBytes             = 1048576
 	DefaultQueryRawESBatchMaxConcurrentSearches    = 4
+
+	DefaultQueryResourceMaxSeries            int64 = 20_000
+	DefaultQueryResourceMaxPoints            int64 = 2_000_000
+	DefaultQueryResourceMaxBytes             int64 = 256 * 1024 * 1024
+	DefaultQueryResourceMaxResponseBytes     int64 = 64 * 1024 * 1024
+	DefaultQueryResourceMaxEvalCapacityBytes int64 = 1024 * 1024 * 1024
+	DefaultQueryResourceProcessCapacityBytes int64 = 2 * 1024 * 1024 * 1024
 )
 
 type queryRawESBatchSettings struct {
@@ -141,18 +152,29 @@ var (
 	queryRawESBatchSettingsSnapshot atomic.Pointer[queryRawESBatchSettings]
 	namedOutputSettingsSnapshot     atomic.Pointer[namedOutputSettings]
 	queryResourceSettingsSnapshot   atomic.Pointer[queryResourceSettings]
+	queryProcessBudgetSnapshot      atomic.Pointer[metadata.ProcessResourceBudget]
 )
 
 type queryResourceSettings struct {
+	Enabled              bool
 	MaxSeries            int64
 	MaxPoints            int64
 	MaxBytes             int64
 	MaxResponseBytes     int64
 	MaxEvalCapacityBytes int64
+	ProcessCapacityBytes int64
 }
 
 func defaultQueryResourceSettings() *queryResourceSettings {
-	return &queryResourceSettings{}
+	return &queryResourceSettings{
+		Enabled:              false,
+		MaxSeries:            DefaultQueryResourceMaxSeries,
+		MaxPoints:            DefaultQueryResourceMaxPoints,
+		MaxBytes:             DefaultQueryResourceMaxBytes,
+		MaxResponseBytes:     DefaultQueryResourceMaxResponseBytes,
+		MaxEvalCapacityBytes: DefaultQueryResourceMaxEvalCapacityBytes,
+		ProcessCapacityBytes: DefaultQueryResourceProcessCapacityBytes,
+	}
 }
 
 func getQueryResourceSettings() queryResourceSettings {

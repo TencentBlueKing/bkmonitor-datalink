@@ -12,10 +12,14 @@ package metadata
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"unsafe"
 
+	"github.com/prometheus/prometheus/promql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,6 +47,10 @@ func TestResourceBudgetSharesAccountingAcrossGoroutines(t *testing.T) {
 	require.Equal(t, int64(20), snapshot.Usage.Points)
 	require.Equal(t, int64(30), snapshot.Usage.Bytes)
 	require.Nil(t, snapshot.Rejected)
+}
+
+func TestPromQLPointSizeMatchesCapacityModel(t *testing.T) {
+	require.Equal(t, uintptr(PromQLPointBytes), unsafe.Sizeof(promql.Point{}))
 }
 
 func TestResourceBudgetRejectsWithoutCommittingFailedIncrementAndCancels(t *testing.T) {
@@ -93,4 +101,97 @@ func TestResourceBudgetErrorSurvivesWrapping(t *testing.T) {
 	source := &ResourceBudgetError{Resource: ResourceSeries, Limit: 2, Attempted: 3}
 	wrapped := errors.Join(errors.New("query failed"), source)
 	require.True(t, IsResourceBudgetError(wrapped))
+}
+
+func TestResourceBudgetRejectsReservationsAfterCancellation(t *testing.T) {
+	budget := NewResourceBudget(ResourceBudgetLimits{MaxBytes: 100}, nil)
+	budget.Cancel()
+
+	require.ErrorIs(t, budget.Reserve(0, 0, 1), context.Canceled)
+	require.ErrorIs(t, budget.ReserveResponseBytes(1), context.Canceled)
+	require.ErrorIs(t, budget.ReserveEvalCapacity(1, 1, PromQLPointBytes), context.Canceled)
+	require.Equal(t, ResourceBudgetUsage{}, budget.Snapshot().Usage)
+}
+
+func TestProcessResourceBudgetRejectsConcurrentRequestAndReleasesOnClose(t *testing.T) {
+	process := NewProcessResourceBudget(100)
+	first := NewResourceBudgetWithProcess(ResourceBudgetLimits{MaxBytes: 100}, nil, process)
+	secondCtx, secondCancel := context.WithCancel(context.Background())
+	second := NewResourceBudgetWithProcess(ResourceBudgetLimits{MaxBytes: 100}, secondCancel, process)
+
+	require.NoError(t, first.Reserve(0, 0, 60))
+	err := second.Reserve(0, 0, 50)
+	var limitErr *ResourceBudgetError
+	require.ErrorAs(t, err, &limitErr)
+	require.Equal(t, ResourceProcessCapacityBytes, limitErr.Resource)
+	require.Equal(t, int64(100), limitErr.Limit)
+	require.Equal(t, int64(110), limitErr.Attempted)
+	require.ErrorIs(t, secondCtx.Err(), context.Canceled)
+	require.Equal(t, int64(60), process.Snapshot().Used)
+
+	first.Close()
+	require.Zero(t, process.Snapshot().Used)
+}
+
+func TestProcessResourceBudgetBoundsOneTwoAndFourConcurrentRequests(t *testing.T) {
+	for _, concurrency := range []int{1, 2, 4} {
+		t.Run(fmt.Sprintf("concurrency-%d", concurrency), func(t *testing.T) {
+			process := NewProcessResourceBudget(100)
+			start := make(chan struct{})
+			var accepted atomic.Int64
+			var wg sync.WaitGroup
+			budgets := make([]*ResourceBudget, 0, concurrency)
+			for i := 0; i < concurrency; i++ {
+				budget := NewResourceBudgetWithProcess(
+					ResourceBudgetLimits{MaxBytes: 100},
+					nil,
+					process,
+				)
+				budgets = append(budgets, budget)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					if budget.Reserve(0, 0, 60) == nil {
+						accepted.Add(1)
+					}
+				}()
+			}
+			close(start)
+			wg.Wait()
+
+			require.Equal(t, int64(1), accepted.Load())
+			require.LessOrEqual(t, process.Snapshot().Used, int64(100))
+			for _, budget := range budgets {
+				budget.Close()
+			}
+			require.Zero(t, process.Snapshot().Used)
+		})
+	}
+}
+
+func TestEvaluationReservationUsesPerReferencePlanAndReleases(t *testing.T) {
+	process := NewProcessResourceBudget(10_000)
+	budget := NewResourceBudgetWithProcess(ResourceBudgetLimits{
+		MaxEvalCapacityBytes: 10_000,
+	}, nil, process)
+	require.NoError(t, budget.BeginEvaluation(map[string]int64{"a": 10, "b": 20}))
+	require.NoError(t, budget.ReserveReferenceEvalCapacity("a", 2, PromQLPointBytes))
+	require.NoError(t, budget.ReserveReferenceEvalCapacity("b", 1, PromQLPointBytes))
+	require.Equal(t, int64(960), budget.Snapshot().Usage.EvalCapacityBytes)
+	require.Equal(t, int64(960), process.Snapshot().Used)
+
+	budget.EndEvaluation()
+	snapshot := budget.Snapshot()
+	require.Zero(t, snapshot.Usage.EvalCapacityBytes)
+	require.Equal(t, int64(960), snapshot.Usage.PeakEvalCapacityBytes)
+	require.Zero(t, process.Snapshot().Used)
+
+	// A subsequent named output can hit the selector cache and therefore does
+	// not load series again. The previously observed cardinality is still
+	// admitted before the engine starts.
+	require.NoError(t, budget.BeginEvaluation(map[string]int64{"a": 5}))
+	require.Equal(t, int64(240), budget.Snapshot().Usage.EvalCapacityBytes)
+	budget.EndEvaluation()
+	require.Zero(t, process.Snapshot().Used)
 }

@@ -85,7 +85,7 @@ func TestClient_QuerySync(t *testing.T) {
 		},
 	})
 
-	res, err := MockClient().QuerySync(
+	res := MockClient().QuerySync(
 		ctx,
 		bksql.QuerySyncRequest{
 			SQL: fmt.Sprintf(
@@ -96,8 +96,6 @@ func TestClient_QuerySync(t *testing.T) {
 		},
 		nil,
 	)
-	require.NoError(t, err)
-
 	assert.Equal(t, bksql.StatusOK, res.Code)
 	d, ok := res.Data.(*bksql.QuerySyncResultData)
 	require.True(t, ok)
@@ -129,7 +127,7 @@ func TestClient_QuerySyncWithClusterNameSerializesProperties(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	cc := &captureCurl{}
 
-	res, err := (&bksql.Client{}).WithUrl(mock.BkBaseUrl).WithCurl(cc).QuerySync(
+	res := (&bksql.Client{}).WithUrl(mock.BkBaseUrl).WithCurl(cc).QuerySync(
 		ctx,
 		bksql.QuerySyncRequest{
 			SQL:         "SELECT * FROM `bkbase_table`.doris",
@@ -138,7 +136,6 @@ func TestClient_QuerySyncWithClusterNameSerializesProperties(t *testing.T) {
 		nil,
 	)
 
-	require.NoError(t, err)
 	require.Equal(t, bksql.StatusOK, res.Code)
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(cc.body, &body))
@@ -163,7 +160,7 @@ func TestClient_QuerySyncPreservesResourceLimitError(t *testing.T) {
 	budget := metadata.NewResourceBudget(metadata.ResourceBudgetLimits{MaxResponseBytes: 64}, cancel)
 	ctx = metadata.WithResourceBudget(ctx, budget)
 
-	_, err := (&bksql.Client{}).WithUrl("http://bksql.example").WithCurl(&responseLimitCurl{}).QuerySync(
+	_, err := (&bksql.Client{}).WithUrl("http://bksql.example").WithCurl(&responseLimitCurl{}).QuerySyncWithError(
 		ctx,
 		bksql.QuerySyncRequest{SQL: "SELECT value FROM table"},
 		nil,

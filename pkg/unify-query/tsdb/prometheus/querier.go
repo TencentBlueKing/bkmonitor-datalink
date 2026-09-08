@@ -152,6 +152,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 	span.Set("max-routing", q.maxRouting)
 
 	referenceName, queryList := q.getQueryList(matchers)
+	ctx = metadata.WithResourceReference(ctx, referenceName)
 	span.Set("reference_name", referenceName)
 	mergeFunc := queryList.mergeFuncName(hints)
 	bucketDuration := queryList.mergeBucketDuration(mergeFunc, qp.Step)

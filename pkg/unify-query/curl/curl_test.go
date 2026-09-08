@@ -11,12 +11,15 @@ package curl
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 func TestHttpCurlMaxResponseBytes(t *testing.T) {
@@ -54,4 +57,65 @@ func TestHttpCurlMaxResponseBytes(t *testing.T) {
 		assert.Equal(t, int(limit+1), size)
 		assert.Nil(t, response)
 	})
+}
+
+func TestHttpCurlReservesSharedResponseBudgetBeforeRead(t *testing.T) {
+	body := []byte(`{"value":"0123456789"}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	budget := metadata.NewResourceBudget(metadata.ResourceBudgetLimits{
+		MaxResponseBytes: int64(len(body)),
+	}, cancel)
+	ctx = metadata.WithResourceBudget(ctx, budget)
+
+	var first map[string]any
+	size, err := (&HttpCurl{}).Request(ctx, Get, Options{
+		UrlPath:          server.URL,
+		MaxResponseBytes: int64(len(body)),
+	}, &first)
+	require.NoError(t, err)
+	require.Equal(t, len(body), size)
+
+	var second map[string]any
+	size, err = (&HttpCurl{}).Request(ctx, Get, Options{
+		UrlPath:          server.URL,
+		MaxResponseBytes: int64(len(body)),
+	}, &second)
+	var limitErr *metadata.ResourceBudgetError
+	require.ErrorAs(t, err, &limitErr)
+	require.Equal(t, metadata.ResourceResponseBytes, limitErr.Resource)
+	require.Zero(t, size)
+	require.Nil(t, second)
+}
+
+func TestHttpCurlStreamsUnknownLengthResponsesAgainstSharedBudget(t *testing.T) {
+	body := []byte(`{"value":"0123456789"}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.(http.Flusher).Flush()
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+
+	budget := metadata.NewResourceBudget(metadata.ResourceBudgetLimits{
+		MaxResponseBytes: int64(2 * len(body)),
+	}, nil)
+	ctx := metadata.WithResourceBudget(context.Background(), budget)
+	client := &HttpCurl{}
+
+	for i := 0; i < 2; i++ {
+		var response map[string]any
+		size, err := client.Request(ctx, Get, Options{
+			UrlPath:          server.URL,
+			MaxResponseBytes: int64(2 * len(body)),
+		}, &response)
+		require.NoError(t, err)
+		require.Equal(t, len(body), size)
+	}
+	require.Equal(t, int64(2*len(body)), budget.Snapshot().Usage.ResponseBytes)
 }

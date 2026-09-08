@@ -469,14 +469,24 @@ func executeNamedOutputsWith(
 			continue
 		}
 
-		data, _, outputPoints, invalidPoints, convertErr := namedResultToPromDataWithBudget(
-			outputCtx,
-			result,
-			query.ResultColumns,
-			metadata.GetFieldFormat(outputCtx).DecodeFunc(),
-			query.OrderBy,
-			budget,
-		)
+		var releaseResult func()
+		if owned, ok := result.(*ownedNamedQueryResult); ok {
+			result = owned.value
+			releaseResult = owned.release
+		}
+		data, _, outputPoints, invalidPoints, convertErr := func() (*PromData, int, int, int, error) {
+			if releaseResult != nil {
+				defer releaseResult()
+			}
+			return namedResultToPromDataWithBudget(
+				outputCtx,
+				result,
+				query.ResultColumns,
+				metadata.GetFieldFormat(outputCtx).DecodeFunc(),
+				query.OrderBy,
+				budget,
+			)
+		}()
 		if convertErr != nil {
 			if err := ctx.Err(); err != nil {
 				markNamedOutputsRemainingError(ctx, response, executionOrder, position, err)

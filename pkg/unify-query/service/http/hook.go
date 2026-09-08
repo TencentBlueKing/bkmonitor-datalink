@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 var warnQueryRawESBatchConfig = func(field, reason string) {
@@ -35,7 +36,7 @@ var warnNamedOutputConfig = func(path string) {
 }
 
 var warnQueryResourceConfig = func(path string) {
-	log.Warnf(context.Background(), "invalid query resource config, disabling limit: field=%s", path)
+	log.Warnf(context.Background(), "invalid query resource config, using safe default: field=%s", path)
 }
 
 // setDefaultConfig
@@ -104,13 +105,15 @@ func setDefaultConfig() {
 	viper.SetDefault(NamedOutputsMaxPointsConfigPath, 1000000)
 	viper.SetDefault(NamedOutputsMaxCacheBytesConfigPath, 64*1024*1024)
 	viper.SetDefault(NamedOutputsMaxResponseBytesConfigPath, 16*1024*1024)
-	// Generic query budgets are opt-in so the binary can be rolled out before
-	// environment-specific Test/Gray limits are approved.
-	viper.SetDefault(QueryResourceMaxSeriesConfigPath, 0)
-	viper.SetDefault(QueryResourceMaxPointsConfigPath, 0)
-	viper.SetDefault(QueryResourceMaxBytesConfigPath, 0)
-	viper.SetDefault(QueryResourceMaxResponseBytesConfigPath, 0)
-	viper.SetDefault(QueryResourceMaxEvalCapacityBytesConfigPath, 0)
+	// Query budgets use an explicit rollout switch. Once enabled, zero,
+	// negative or malformed limits fall back to bounded defaults.
+	viper.SetDefault(QueryResourceEnabledConfigPath, false)
+	viper.SetDefault(QueryResourceMaxSeriesConfigPath, DefaultQueryResourceMaxSeries)
+	viper.SetDefault(QueryResourceMaxPointsConfigPath, DefaultQueryResourceMaxPoints)
+	viper.SetDefault(QueryResourceMaxBytesConfigPath, DefaultQueryResourceMaxBytes)
+	viper.SetDefault(QueryResourceMaxResponseBytesConfigPath, DefaultQueryResourceMaxResponseBytes)
+	viper.SetDefault(QueryResourceMaxEvalCapacityBytesConfigPath, DefaultQueryResourceMaxEvalCapacityBytes)
+	viper.SetDefault(QueryResourceProcessCapacityBytesConfigPath, DefaultQueryResourceProcessCapacityBytes)
 
 	viper.SetDefault(ClusterMetricQueryPrefixConfigPath, "bkmonitor")
 	viper.SetDefault(ClusterMetricQueryTimeoutConfigPath, "30s")
@@ -227,25 +230,41 @@ func loadNamedOutputSettings() {
 
 func loadQueryResourceSettings() {
 	settings := defaultQueryResourceSettings()
+	settings.Enabled = viper.GetBool(QueryResourceEnabledConfigPath)
 	values := []struct {
-		path   string
-		target *int64
+		path        string
+		target      *int64
+		safeDefault int64
 	}{
-		{path: QueryResourceMaxSeriesConfigPath, target: &settings.MaxSeries},
-		{path: QueryResourceMaxPointsConfigPath, target: &settings.MaxPoints},
-		{path: QueryResourceMaxBytesConfigPath, target: &settings.MaxBytes},
-		{path: QueryResourceMaxResponseBytesConfigPath, target: &settings.MaxResponseBytes},
-		{path: QueryResourceMaxEvalCapacityBytesConfigPath, target: &settings.MaxEvalCapacityBytes},
+		{path: QueryResourceMaxSeriesConfigPath, target: &settings.MaxSeries, safeDefault: DefaultQueryResourceMaxSeries},
+		{path: QueryResourceMaxPointsConfigPath, target: &settings.MaxPoints, safeDefault: DefaultQueryResourceMaxPoints},
+		{path: QueryResourceMaxBytesConfigPath, target: &settings.MaxBytes, safeDefault: DefaultQueryResourceMaxBytes},
+		{path: QueryResourceMaxResponseBytesConfigPath, target: &settings.MaxResponseBytes, safeDefault: DefaultQueryResourceMaxResponseBytes},
+		{path: QueryResourceMaxEvalCapacityBytesConfigPath, target: &settings.MaxEvalCapacityBytes, safeDefault: DefaultQueryResourceMaxEvalCapacityBytes},
+		{path: QueryResourceProcessCapacityBytesConfigPath, target: &settings.ProcessCapacityBytes, safeDefault: DefaultQueryResourceProcessCapacityBytes},
 	}
 	for _, value := range values {
 		configured := viper.GetInt64(value.path)
-		if configured < 0 {
+		if configured <= 0 {
 			warnQueryResourceConfig(value.path)
+			*value.target = value.safeDefault
 			continue
 		}
 		*value.target = configured
 	}
-	queryResourceSettingsSnapshot.Store(settings)
+	if settings.Enabled {
+		processBudget := queryProcessBudgetSnapshot.Load()
+		if processBudget == nil {
+			processBudget = metadata.NewProcessResourceBudget(settings.ProcessCapacityBytes)
+			queryProcessBudgetSnapshot.Store(processBudget)
+		} else {
+			processBudget.SetCapacity(settings.ProcessCapacityBytes)
+		}
+		queryResourceSettingsSnapshot.Store(settings)
+	} else {
+		queryResourceSettingsSnapshot.Store(settings)
+		queryProcessBudgetSnapshot.Store(nil)
+	}
 }
 
 // LoadConfig

@@ -124,7 +124,7 @@ func (i *Instance) sqlQuery(ctx context.Context, req QuerySyncRequest) (*QuerySy
 	defer cancel()
 
 	// 发起异步查询
-	res, queryErr := i.client.QuerySync(ctx, req, span)
+	res, queryErr := i.client.QuerySyncWithError(ctx, req, span)
 	if queryErr != nil {
 		return nil, queryErr
 	}
@@ -469,6 +469,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	data, err := i.sqlQuery(ctx, newQuerySyncRequest(sql, query))
 	if err != nil {
+		if metadata.IsResourceBudgetError(err) {
+			return size, total, option, err
+		}
 		err = fmt.Errorf("sql [%s] query err: %s", sql, err.Error())
 		return size, total, option, err
 	}
@@ -544,6 +547,9 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 
 	data, err := i.sqlQuery(ctx, newQuerySyncRequest(sql, query))
 	if err != nil {
+		if metadata.IsResourceBudgetError(err) {
+			return storage.ErrSeriesSet(err)
+		}
 		err = metadata.NewMessage(
 			metadata.MsgQueryBKSQL,
 			"%s 查询失败",
@@ -586,9 +592,9 @@ func reserveQueryResultEvalCapacity(ctx context.Context, series int) error {
 	if budget == nil {
 		return nil
 	}
-	return budget.ReserveEvalCapacity(
+	return budget.ReserveReferenceEvalCapacity(
+		metadata.GetResourceReference(ctx),
 		int64(series),
-		budget.EvaluationSteps(),
 		metadata.PromQLPointBytes,
 	)
 }

@@ -18,11 +18,12 @@ import (
 )
 
 const (
-	ResourceSeries            = "series"
-	ResourcePoints            = "points"
-	ResourceBytes             = "bytes"
-	ResourceResponseBytes     = "response_bytes"
-	ResourceEvalCapacityBytes = "eval_capacity_bytes"
+	ResourceSeries               = "series"
+	ResourcePoints               = "points"
+	ResourceBytes                = "bytes"
+	ResourceResponseBytes        = "response_bytes"
+	ResourceEvalCapacityBytes    = "eval_capacity_bytes"
+	ResourceProcessCapacityBytes = "process_capacity_bytes"
 
 	// PromQLPointBytes is the base size of prometheus/promql.Point on the
 	// supported 64-bit runtime (timestamp, float value and histogram pointer).
@@ -47,13 +48,16 @@ func (l ResourceBudgetLimits) Enabled() bool {
 }
 
 type ResourceBudgetUsage struct {
-	Series            int64
-	Points            int64
-	Bytes             int64
-	ResponseBytes     int64
-	EvalCapacityBytes int64
-	EvalSeries        int64
-	MaxEvalSteps      int64
+	Series                   int64
+	Points                   int64
+	Bytes                    int64
+	ResponseBytes            int64
+	EvalCapacityBytes        int64
+	PeakEvalCapacityBytes    int64
+	EvalSeries               int64
+	MaxEvalSteps             int64
+	ProcessCapacityBytes     int64
+	PeakProcessCapacityBytes int64
 }
 
 type ResourceBudgetSnapshot struct {
@@ -79,6 +83,7 @@ func IsResourceBudgetError(err error) bool {
 }
 
 type resourceBudgetContextKey struct{}
+type resourceReferenceContextKey struct{}
 
 type ResourceBudget struct {
 	mu        sync.Mutex
@@ -88,12 +93,29 @@ type ResourceBudget struct {
 	cancelled bool
 	closed    bool
 	cancel    context.CancelFunc
+
+	process         *ProcessResourceBudget
+	processReserved int64
+
+	evaluationSteps          map[string]int64
+	evaluationLoadedSeries   map[string]int64
+	evaluationReservedSeries map[string]int64
+	observedSeries           map[string]int64
 }
 
 func NewResourceBudget(limits ResourceBudgetLimits, cancel context.CancelFunc) *ResourceBudget {
+	return NewResourceBudgetWithProcess(limits, cancel, nil)
+}
+
+func NewResourceBudgetWithProcess(
+	limits ResourceBudgetLimits,
+	cancel context.CancelFunc,
+	process *ProcessResourceBudget,
+) *ResourceBudget {
 	return &ResourceBudget{
-		limits: limits,
-		cancel: cancel,
+		limits:  limits,
+		cancel:  cancel,
+		process: process,
 	}
 }
 
@@ -116,6 +138,18 @@ func CancelResourceBudget(ctx context.Context) {
 	if budget := GetResourceBudget(ctx); budget != nil {
 		budget.Cancel()
 	}
+}
+
+func WithResourceReference(ctx context.Context, reference string) context.Context {
+	return context.WithValue(ctx, resourceReferenceContextKey{}, reference)
+}
+
+func GetResourceReference(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	reference, _ := ctx.Value(resourceReferenceContextKey{}).(string)
+	return reference
 }
 
 func (b *ResourceBudget) Cancel() {
@@ -149,7 +183,7 @@ func (b *ResourceBudget) Reserve(series, points, bytes int64) error {
 	}
 
 	b.mu.Lock()
-	if b.closed {
+	if b.closed || b.cancelled {
 		b.mu.Unlock()
 		return context.Canceled
 	}
@@ -163,6 +197,9 @@ func (b *ResourceBudget) Reserve(series, points, bytes int64) error {
 		return b.rejectAndUnlock(err)
 	}
 	if err := b.limitErrorLocked(ResourceBytes, b.limits.MaxBytes, nextBytes); err != nil {
+		return b.rejectAndUnlock(err)
+	}
+	if err := b.reserveProcessLocked(bytes); err != nil {
 		return b.rejectAndUnlock(err)
 	}
 	b.usage.Series = nextSeries
@@ -181,7 +218,7 @@ func (b *ResourceBudget) ReserveResponseBytes(bytes int64) error {
 	}
 
 	b.mu.Lock()
-	if b.closed {
+	if b.closed || b.cancelled {
 		b.mu.Unlock()
 		return context.Canceled
 	}
@@ -189,9 +226,73 @@ func (b *ResourceBudget) ReserveResponseBytes(bytes int64) error {
 	if err := b.limitErrorLocked(ResourceResponseBytes, b.limits.MaxResponseBytes, next); err != nil {
 		return b.rejectAndUnlock(err)
 	}
+	if err := b.reserveProcessLocked(bytes); err != nil {
+		return b.rejectAndUnlock(err)
+	}
 	b.usage.ResponseBytes = next
 	b.mu.Unlock()
 	return nil
+}
+
+// ReserveResponseBytesUpTo atomically reserves a non-zero prefix of the
+// requested bytes. Streaming readers use it so concurrent unknown-length
+// responses share one request/process limit without each claiming the full
+// per-request allowance.
+func (b *ResourceBudget) ReserveResponseBytesUpTo(bytes int64) (int64, error) {
+	if b == nil || bytes == 0 {
+		return bytes, nil
+	}
+	if bytes < 0 {
+		return 0, fmt.Errorf("query response byte reservation cannot be negative")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed || b.cancelled {
+		return 0, context.Canceled
+	}
+	if limit := b.limits.MaxResponseBytes; limit > 0 {
+		available := limit - b.usage.ResponseBytes
+		if available <= 0 {
+			return 0, &ResourceBudgetError{
+				Resource:  ResourceResponseBytes,
+				Limit:     limit,
+				Attempted: saturatingAdd(b.usage.ResponseBytes, bytes),
+			}
+		}
+		if bytes > available {
+			bytes = available
+		}
+	}
+	if b.process != nil {
+		reserved, err := b.process.TryReserveUpTo(bytes)
+		if err != nil {
+			return 0, err
+		}
+		bytes = reserved
+		b.processReserved = saturatingAdd(b.processReserved, bytes)
+		b.usage.ProcessCapacityBytes = b.processReserved
+		if b.processReserved > b.usage.PeakProcessCapacityBytes {
+			b.usage.PeakProcessCapacityBytes = b.processReserved
+		}
+	}
+	b.usage.ResponseBytes = saturatingAdd(b.usage.ResponseBytes, bytes)
+	return bytes, nil
+}
+
+func (b *ResourceBudget) ReleaseResponseBytes(bytes int64) {
+	if b == nil || bytes <= 0 {
+		return
+	}
+	b.mu.Lock()
+	if bytes > b.usage.ResponseBytes {
+		bytes = b.usage.ResponseBytes
+	}
+	b.usage.ResponseBytes -= bytes
+	process := b.releaseProcessLocked(bytes)
+	b.mu.Unlock()
+	if process > 0 {
+		b.process.Release(process)
+	}
 }
 
 func (b *ResourceBudget) ReserveEvalCapacity(series, steps, pointBytes int64) error {
@@ -201,7 +302,7 @@ func (b *ResourceBudget) ReserveEvalCapacity(series, steps, pointBytes int64) er
 	capacity := saturatingMultiply(saturatingMultiply(series, steps), pointBytes)
 
 	b.mu.Lock()
-	if b.closed {
+	if b.closed || b.cancelled {
 		b.mu.Unlock()
 		return context.Canceled
 	}
@@ -209,7 +310,13 @@ func (b *ResourceBudget) ReserveEvalCapacity(series, steps, pointBytes int64) er
 	if err := b.limitErrorLocked(ResourceEvalCapacityBytes, b.limits.MaxEvalCapacityBytes, next); err != nil {
 		return b.rejectAndUnlock(err)
 	}
+	if err := b.reserveProcessLocked(capacity); err != nil {
+		return b.rejectAndUnlock(err)
+	}
 	b.usage.EvalCapacityBytes = next
+	if next > b.usage.PeakEvalCapacityBytes {
+		b.usage.PeakEvalCapacityBytes = next
+	}
 	b.usage.EvalSeries = saturatingAdd(b.usage.EvalSeries, series)
 	if steps > b.usage.MaxEvalSteps {
 		b.usage.MaxEvalSteps = steps
@@ -218,28 +325,150 @@ func (b *ResourceBudget) ReserveEvalCapacity(series, steps, pointBytes int64) er
 	return nil
 }
 
-func (b *ResourceBudget) SetEvaluationSteps(steps int64) {
-	if b == nil || steps <= 0 {
-		return
+// BeginEvaluation installs the AST-derived per-reference evaluation step
+// totals for one PromQL execution. Selector loads reserve against this plan.
+func (b *ResourceBudget) BeginEvaluation(stepsByReference map[string]int64) error {
+	if b == nil {
+		return nil
 	}
 	b.mu.Lock()
-	if b.closed {
+	if b.closed || b.cancelled {
 		b.mu.Unlock()
-		return
+		return context.Canceled
 	}
-	if steps > b.usage.MaxEvalSteps {
-		b.usage.MaxEvalSteps = steps
+	if b.usage.EvalCapacityBytes != 0 {
+		return b.rejectAndUnlock(&ResourceBudgetError{
+			Resource:  ResourceEvalCapacityBytes,
+			Limit:     b.limits.MaxEvalCapacityBytes,
+			Attempted: math.MaxInt64,
+		})
 	}
+	b.evaluationSteps = make(map[string]int64, len(stepsByReference))
+	b.evaluationLoadedSeries = make(map[string]int64, len(stepsByReference))
+	b.evaluationReservedSeries = make(map[string]int64, len(stepsByReference))
+	for reference, steps := range stepsByReference {
+		if steps <= 0 {
+			continue
+		}
+		b.evaluationSteps[reference] = steps
+		if steps > b.usage.MaxEvalSteps {
+			b.usage.MaxEvalSteps = steps
+		}
+	}
+	var (
+		knownCapacity int64
+		knownSeries   int64
+	)
+	for reference, series := range b.observedSeries {
+		steps := b.evaluationSteps[reference]
+		if steps <= 0 {
+			steps = b.evaluationSteps[""]
+		}
+		if series <= 0 || steps <= 0 {
+			continue
+		}
+		knownCapacity = saturatingAdd(
+			knownCapacity,
+			saturatingMultiply(saturatingMultiply(series, steps), PromQLPointBytes),
+		)
+		knownSeries = saturatingAdd(knownSeries, series)
+		b.evaluationReservedSeries[reference] = series
+	}
+	next := saturatingAdd(b.usage.EvalCapacityBytes, knownCapacity)
+	if err := b.limitErrorLocked(ResourceEvalCapacityBytes, b.limits.MaxEvalCapacityBytes, next); err != nil {
+		return b.rejectAndUnlock(err)
+	}
+	if err := b.reserveProcessLocked(knownCapacity); err != nil {
+		return b.rejectAndUnlock(err)
+	}
+	b.usage.EvalCapacityBytes = next
+	if next > b.usage.PeakEvalCapacityBytes {
+		b.usage.PeakEvalCapacityBytes = next
+	}
+	b.usage.EvalSeries = saturatingAdd(b.usage.EvalSeries, knownSeries)
 	b.mu.Unlock()
+	return nil
 }
 
-func (b *ResourceBudget) EvaluationSteps() int64 {
+func (b *ResourceBudget) EvaluationSteps(reference string) int64 {
 	if b == nil {
 		return 0
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.usage.MaxEvalSteps
+	if steps := b.evaluationSteps[reference]; steps > 0 {
+		return steps
+	}
+	return b.evaluationSteps[""]
+}
+
+func (b *ResourceBudget) ReserveReferenceEvalCapacity(reference string, series, pointBytes int64) error {
+	if b == nil || series <= 0 || pointBytes <= 0 {
+		return nil
+	}
+	b.mu.Lock()
+	if b.closed || b.cancelled {
+		b.mu.Unlock()
+		return context.Canceled
+	}
+	steps := b.evaluationSteps[reference]
+	if steps <= 0 {
+		steps = b.evaluationSteps[""]
+	}
+	if steps <= 0 {
+		b.mu.Unlock()
+		return nil
+	}
+	loaded := saturatingAdd(b.evaluationLoadedSeries[reference], series)
+	b.evaluationLoadedSeries[reference] = loaded
+	if b.observedSeries == nil {
+		b.observedSeries = make(map[string]int64)
+	}
+	if loaded > b.observedSeries[reference] {
+		b.observedSeries[reference] = loaded
+	}
+	alreadyReserved := b.evaluationReservedSeries[reference]
+	if loaded <= alreadyReserved {
+		b.mu.Unlock()
+		return nil
+	}
+	additionalSeries := loaded - alreadyReserved
+	capacity := saturatingMultiply(saturatingMultiply(additionalSeries, steps), pointBytes)
+	next := saturatingAdd(b.usage.EvalCapacityBytes, capacity)
+	if err := b.limitErrorLocked(ResourceEvalCapacityBytes, b.limits.MaxEvalCapacityBytes, next); err != nil {
+		return b.rejectAndUnlock(err)
+	}
+	if err := b.reserveProcessLocked(capacity); err != nil {
+		return b.rejectAndUnlock(err)
+	}
+	b.usage.EvalCapacityBytes = next
+	if next > b.usage.PeakEvalCapacityBytes {
+		b.usage.PeakEvalCapacityBytes = next
+	}
+	b.usage.EvalSeries = saturatingAdd(b.usage.EvalSeries, additionalSeries)
+	if steps > b.usage.MaxEvalSteps {
+		b.usage.MaxEvalSteps = steps
+	}
+	b.evaluationReservedSeries[reference] = loaded
+	b.mu.Unlock()
+	return nil
+}
+
+func (b *ResourceBudget) EndEvaluation() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	capacity := b.usage.EvalCapacityBytes
+	b.usage.EvalCapacityBytes = 0
+	b.evaluationSteps = nil
+	b.evaluationLoadedSeries = nil
+	b.evaluationReservedSeries = nil
+	process := b.releaseProcessLocked(capacity)
+	b.mu.Unlock()
+	if process > 0 {
+		b.process.Release(process)
+	}
 }
 
 func (b *ResourceBudget) Reject(resource string, attempted int64) error {
@@ -247,7 +476,7 @@ func (b *ResourceBudget) Reject(resource string, attempted int64) error {
 		return nil
 	}
 	b.mu.Lock()
-	if b.closed {
+	if b.closed || b.cancelled {
 		b.mu.Unlock()
 		return context.Canceled
 	}
@@ -304,10 +533,19 @@ func (b *ResourceBudget) Close() ResourceBudgetSnapshot {
 		return ResourceBudgetSnapshot{}
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	snapshot := b.snapshotLocked()
+	processReserved := b.processReserved
 	b.usage = ResourceBudgetUsage{}
+	b.processReserved = 0
+	b.evaluationSteps = nil
+	b.evaluationLoadedSeries = nil
+	b.evaluationReservedSeries = nil
+	b.observedSeries = nil
 	b.closed = true
+	b.mu.Unlock()
+	if processReserved > 0 {
+		b.process.Release(processReserved)
+	}
 	return snapshot
 }
 
@@ -348,6 +586,11 @@ func (b *ResourceBudget) limitLocked(resource string) int64 {
 		return b.limits.MaxResponseBytes
 	case ResourceEvalCapacityBytes:
 		return b.limits.MaxEvalCapacityBytes
+	case ResourceProcessCapacityBytes:
+		if b.process != nil {
+			return b.process.Capacity()
+		}
+		return 0
 	default:
 		return 0
 	}
@@ -367,6 +610,33 @@ func (b *ResourceBudget) rejectAndUnlock(err *ResourceBudgetError) error {
 		cancel()
 	}
 	return err
+}
+
+func (b *ResourceBudget) reserveProcessLocked(bytes int64) *ResourceBudgetError {
+	if bytes <= 0 || b.process == nil {
+		return nil
+	}
+	if err := b.process.TryReserve(bytes); err != nil {
+		return err
+	}
+	b.processReserved = saturatingAdd(b.processReserved, bytes)
+	b.usage.ProcessCapacityBytes = b.processReserved
+	if b.processReserved > b.usage.PeakProcessCapacityBytes {
+		b.usage.PeakProcessCapacityBytes = b.processReserved
+	}
+	return nil
+}
+
+func (b *ResourceBudget) releaseProcessLocked(bytes int64) int64 {
+	if bytes <= 0 || b.process == nil {
+		return 0
+	}
+	if bytes > b.processReserved {
+		bytes = b.processReserved
+	}
+	b.processReserved -= bytes
+	b.usage.ProcessCapacityBytes = b.processReserved
+	return bytes
 }
 
 func saturatingAdd(a, b int64) int64 {

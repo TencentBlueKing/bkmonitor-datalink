@@ -26,7 +26,7 @@ func TestReserveQueryResultEvalCapacityUsesActualSeriesAndEvaluationSteps(t *tes
 	budget := metadata.NewResourceBudget(metadata.ResourceBudgetLimits{
 		MaxEvalCapacityBytes: 3 * 10 * metadata.PromQLPointBytes,
 	}, cancel)
-	budget.SetEvaluationSteps(10)
+	require.NoError(t, budget.BeginEvaluation(map[string]int64{"": 10}))
 	ctx = metadata.WithResourceBudget(ctx, budget)
 
 	require.NoError(t, reserveQueryResultEvalCapacity(ctx, 3))
@@ -52,7 +52,7 @@ func TestSparseSeriesCapacityModelUsesRangeStepsWithoutAllocatingPointSlices(t *
 		t.Run(testCase.name, func(t *testing.T) {
 			steps := testCase.days*24*60 + 1
 			budget := metadata.NewResourceBudget(metadata.ResourceBudgetLimits{}, nil)
-			budget.SetEvaluationSteps(steps)
+			require.NoError(t, budget.BeginEvaluation(map[string]int64{"": steps}))
 			ctx := metadata.WithResourceBudget(context.Background(), budget)
 
 			require.NoError(t, reserveQueryResultEvalCapacity(ctx, int(testCase.series)))
@@ -65,7 +65,7 @@ func TestSparseSeriesCapacityModelUsesRangeStepsWithoutAllocatingPointSlices(t *
 
 func BenchmarkFormatSparseSeries(b *testing.B) {
 	metadata.InitMetadata()
-	for _, seriesCount := range []int{1000, 10000} {
+	for _, seriesCount := range []int{1000, 10000, 92000} {
 		for _, dynamicLabels := range []bool{false, true} {
 			name := fmt.Sprintf("series=%d/dynamic_labels=%t", seriesCount, dynamicLabels)
 			rows := sparseSeriesRows(seriesCount, dynamicLabels)

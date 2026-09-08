@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	encodingJson "encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -74,6 +75,54 @@ func (e *ResponseBodyLimitError) TruncationReason() string {
 // HttpCurl http 请求方法
 type HttpCurl struct {
 	decoder func(ctx context.Context, reader io.Reader, res any) (int, error)
+}
+
+type responseBudgetReader struct {
+	reader   io.Reader
+	budget   *metadata.ResourceBudget
+	reserved int64
+}
+
+func (r *responseBudgetReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return r.reader.Read(p)
+	}
+	// Keep unknown-length responses streaming. Each chunk is admitted before
+	// it enters the decoder while avoiding a full per-route reservation.
+	const maxReservationChunk = 32 * 1024
+	if len(p) > maxReservationChunk {
+		p = p[:maxReservationChunk]
+	}
+	requested := int64(len(p))
+	reservation, reserveErr := r.budget.ReserveResponseBytesUpTo(requested)
+	if reserveErr != nil && !metadata.IsResourceBudgetError(reserveErr) {
+		return 0, reserveErr
+	}
+	if reservation == 0 {
+		// JSON readers commonly issue one final read at the exact boundary.
+		// Probe a single byte before turning the tentative limit into a fatal
+		// request rejection.
+		var probe [1]byte
+		n, readErr := io.ReadFull(r.reader, probe[:])
+		if n == 0 && (readErr == io.EOF || readErr == io.ErrUnexpectedEOF) {
+			return 0, io.EOF
+		}
+		if n == 0 && readErr != nil {
+			return 0, readErr
+		}
+		var limitErr *metadata.ResourceBudgetError
+		if errors.As(reserveErr, &limitErr) {
+			return 0, r.budget.Reject(limitErr.Resource, limitErr.Attempted)
+		}
+		return 0, reserveErr
+	}
+	p = p[:reservation]
+	n, err := r.reader.Read(p)
+	if unused := reservation - int64(n); unused > 0 {
+		r.budget.ReleaseResponseBytes(unused)
+	}
+	r.reserved += int64(n)
+	return n, err
 }
 
 func (c *HttpCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reader, res any) (int, error)) {
@@ -147,26 +196,93 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		).Error(ctx, err)
 	}
 
+	bodyLimit := opt.MaxResponseBytes
+	resourceBudget := metadata.GetResourceBudget(ctx)
+	var reservedResponseBytes int64
+	var streamingBudgetReader *responseBudgetReader
+	keepResponseReservation := false
+	if resourceBudget != nil && bodyLimit > 0 {
+		if resp.ContentLength > bodyLimit {
+			return size, resourceBudget.Reject(metadata.ResourceResponseBytes, resp.ContentLength)
+		}
+		if resp.ContentLength > 0 {
+			reservedResponseBytes = resp.ContentLength
+			if err = resourceBudget.ReserveResponseBytes(reservedResponseBytes); err != nil {
+				return size, err
+			}
+			// With a known response size, reserve the request and process
+			// capacity before the first body byte is read.
+			bodyLimit = reservedResponseBytes
+		} else {
+			streamingBudgetReader = &responseBudgetReader{
+				reader: resp.Body,
+				budget: resourceBudget,
+			}
+		}
+		defer func() {
+			if !keepResponseReservation {
+				resourceBudget.ReleaseResponseBytes(reservedResponseBytes)
+				if streamingBudgetReader != nil {
+					resourceBudget.ReleaseResponseBytes(streamingBudgetReader.reserved)
+				}
+			}
+		}()
+	}
+
+	finishResponseReservation := func() error {
+		if resourceBudget == nil {
+			return nil
+		}
+		if streamingBudgetReader != nil {
+			keepResponseReservation = true
+			return nil
+		}
+		if reservedResponseBytes == 0 {
+			return nil
+		}
+		if int64(size) > reservedResponseBytes {
+			return resourceBudget.Reject(metadata.ResourceResponseBytes, int64(size))
+		}
+		if unused := reservedResponseBytes - int64(size); unused > 0 {
+			resourceBudget.ReleaseResponseBytes(unused)
+			reservedResponseBytes = int64(size)
+		}
+		keepResponseReservation = true
+		return nil
+	}
+
 	if c.decoder != nil {
 		decodeStarted := time.Now()
 		reader := io.Reader(resp.Body)
-		if opt.MaxResponseBytes > 0 {
+		if streamingBudgetReader != nil {
+			reader = streamingBudgetReader
+		}
+		if bodyLimit > 0 {
 			// 额外读取一个字节，用于区分“恰好达到上限”和“实际已经超限”。
-			reader = io.LimitReader(resp.Body, opt.MaxResponseBytes+1)
+			reader = io.LimitReader(reader, bodyLimit+1)
 		}
 		size, err = c.decoder(ctx, reader, res)
 		span.Set("response-body-decode-duration", time.Since(decodeStarted))
 		span.Set("response-body-bytes", size)
-		if opt.MaxResponseBytes > 0 && int64(size) > opt.MaxResponseBytes {
-			return size, &ResponseBodyLimitError{Limit: opt.MaxResponseBytes}
+		if bodyLimit > 0 && int64(size) > bodyLimit {
+			if resourceBudget != nil {
+				return size, resourceBudget.Reject(metadata.ResourceResponseBytes, int64(size))
+			}
+			return size, &ResponseBodyLimitError{Limit: bodyLimit}
 		}
-		return size, err
+		if err != nil {
+			return size, err
+		}
+		return size, finishResponseReservation()
 	} else {
 		bodyReadStarted := time.Now()
 		reader := io.Reader(resp.Body)
-		if opt.MaxResponseBytes > 0 {
+		if streamingBudgetReader != nil {
+			reader = streamingBudgetReader
+		}
+		if bodyLimit > 0 {
 			// 额外读取一个字节，用于区分“恰好达到上限”和“实际已经超限”。
-			reader = io.LimitReader(resp.Body, opt.MaxResponseBytes+1)
+			reader = io.LimitReader(reader, bodyLimit+1)
 		}
 		_, err = io.Copy(buf, reader)
 		span.Set("response-body-read-duration", time.Since(bodyReadStarted))
@@ -175,8 +291,11 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		}
 		size = buf.Len()
 		span.Set("response-body-bytes", size)
-		if opt.MaxResponseBytes > 0 && int64(size) > opt.MaxResponseBytes {
-			return size, &ResponseBodyLimitError{Limit: opt.MaxResponseBytes}
+		if bodyLimit > 0 && int64(size) > bodyLimit {
+			if resourceBudget != nil {
+				return size, resourceBudget.Reject(metadata.ResourceResponseBytes, int64(size))
+			}
+			return size, &ResponseBodyLimitError{Limit: bodyLimit}
 		}
 
 		// 使用标准库的 json.Decoder，因为需要 UseNumber() 功能
@@ -186,6 +305,9 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		decoder.UseNumber()
 		err = decoder.Decode(&res)
 		span.Set("json-decode-duration", time.Since(decodeStarted))
-		return size, err
+		if err != nil {
+			return size, err
+		}
+		return size, finishResponseReservation()
 	}
 }

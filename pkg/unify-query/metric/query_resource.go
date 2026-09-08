@@ -19,12 +19,13 @@ import (
 )
 
 const (
-	QueryResourceSeries            = "series"
-	QueryResourcePoints            = "points"
-	QueryResourceBytes             = "bytes"
-	QueryResourceResponseBytes     = "response_bytes"
-	QueryResourceEvalCapacityBytes = "eval_capacity_bytes"
-	QueryResourceEvalSteps         = "eval_steps"
+	QueryResourceSeries               = "series"
+	QueryResourcePoints               = "points"
+	QueryResourceBytes                = "bytes"
+	QueryResourceResponseBytes        = "response_bytes"
+	QueryResourceEvalCapacityBytes    = "eval_capacity_bytes"
+	QueryResourceEvalSteps            = "eval_steps"
+	QueryResourceProcessCapacityBytes = "process_capacity_bytes"
 )
 
 var (
@@ -70,7 +71,8 @@ func isQueryResource(resource string) bool {
 		QueryResourceBytes,
 		QueryResourceResponseBytes,
 		QueryResourceEvalCapacityBytes,
-		QueryResourceEvalSteps:
+		QueryResourceEvalSteps,
+		QueryResourceProcessCapacityBytes:
 		return true
 	default:
 		return false

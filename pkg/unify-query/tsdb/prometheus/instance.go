@@ -83,6 +83,14 @@ func (i *Instance) DirectQueryRange(
 	ctx context.Context, stmt string,
 	start, end time.Time, step time.Duration,
 ) (promql.Matrix, bool, error) {
+	matrix, partial, _, err := i.DirectQueryRangeWithClose(ctx, stmt, start, end, step)
+	return matrix, partial, err
+}
+
+func (i *Instance) DirectQueryRangeWithClose(
+	ctx context.Context, stmt string,
+	start, end time.Time, step time.Duration,
+) (promql.Matrix, bool, func(), error) {
 	var err error
 
 	ctx, span := trace.NewSpan(ctx, "prometheus-query-range")
@@ -99,7 +107,7 @@ func (i *Instance) DirectQueryRange(
 
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
 	closeQuery := true
 	defer func() {
@@ -109,22 +117,23 @@ func (i *Instance) DirectQueryRange(
 	}()
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		return nil, false, result.Err
+		return nil, false, nil, result.Err
 	}
 
 	for _, err = range result.Warnings {
-		return nil, false, err
+		return nil, false, nil, err
 	}
 
 	matrix, err := result.Matrix()
 	if err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
 
-	// The returned matrix owns point slices until the HTTP layer has copied
-	// them. Successful query closing is handled in the engine lifecycle follow-up.
 	closeQuery = false
-	return matrix, false, nil
+	var closeOnce sync.Once
+	return matrix, false, func() {
+		closeOnce.Do(query.Close)
+	}, nil
 }
 
 // Query instant 查询
@@ -132,6 +141,14 @@ func (i *Instance) DirectQuery(
 	ctx context.Context, qs string,
 	end time.Time,
 ) (promql.Vector, error) {
+	vector, _, _, err := i.DirectQueryWithClose(ctx, qs, end)
+	return vector, err
+}
+
+func (i *Instance) DirectQueryWithClose(
+	ctx context.Context, qs string,
+	end time.Time,
+) (promql.Vector, bool, func(), error) {
 	var err error
 
 	ctx, span := trace.NewSpan(ctx, "prometheus-query-range")
@@ -146,7 +163,7 @@ func (i *Instance) DirectQuery(
 
 	query, err := i.engine.NewInstantQuery(i.queryStorage, opt, qs, end)
 	if err != nil {
-		return nil, err
+		return nil, false, nil, err
 	}
 	closeQuery := true
 	defer func() {
@@ -156,19 +173,22 @@ func (i *Instance) DirectQuery(
 	}()
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		return nil, result.Err
+		return nil, false, nil, result.Err
 	}
 	for _, err = range result.Warnings {
-		return nil, err
+		return nil, false, nil, err
 	}
 
 	vector, err := result.Vector()
 	if err != nil {
-		return nil, err
+		return nil, false, nil, err
 	}
 
 	closeQuery = false
-	return vector, nil
+	var closeOnce sync.Once
+	return vector, false, func() {
+		closeOnce.Do(query.Close)
+	}, nil
 }
 
 func (i *Instance) DirectQueryWithPartial(

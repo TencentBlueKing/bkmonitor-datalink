@@ -23,29 +23,43 @@ func TestQueryResourceSettingsDefaultDisabledAndReloadSafe(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 	t.Cleanup(func() { queryResourceSettingsSnapshot.Store(defaultQueryResourceSettings()) })
+	t.Cleanup(func() { queryProcessBudgetSnapshot.Store(nil) })
 	setDefaultConfig()
 	loadQueryResourceSettings()
-	require.Equal(t, queryResourceSettings{}, getQueryResourceSettings())
+	require.Equal(t, *defaultQueryResourceSettings(), getQueryResourceSettings())
+	require.Nil(t, queryProcessBudgetSnapshot.Load())
 
+	viper.Set(QueryResourceEnabledConfigPath, true)
 	viper.Set(QueryResourceMaxSeriesConfigPath, 100)
 	viper.Set(QueryResourceMaxPointsConfigPath, 200)
 	viper.Set(QueryResourceMaxBytesConfigPath, 300)
 	viper.Set(QueryResourceMaxResponseBytesConfigPath, 400)
 	viper.Set(QueryResourceMaxEvalCapacityBytesConfigPath, 500)
+	viper.Set(QueryResourceProcessCapacityBytesConfigPath, 600)
 	loadQueryResourceSettings()
 	require.Equal(t, queryResourceSettings{
+		Enabled:              true,
 		MaxSeries:            100,
 		MaxPoints:            200,
 		MaxBytes:             300,
 		MaxResponseBytes:     400,
 		MaxEvalCapacityBytes: 500,
+		ProcessCapacityBytes: 600,
 	}, getQueryResourceSettings())
+	processBudget := queryProcessBudgetSnapshot.Load()
+	require.Equal(t, int64(600), processBudget.Capacity())
+
+	viper.Set(QueryResourceProcessCapacityBytesConfigPath, 700)
+	loadQueryResourceSettings()
+	require.Same(t, processBudget, queryProcessBudgetSnapshot.Load())
+	require.Equal(t, int64(700), processBudget.Capacity())
 }
 
 func TestQueryResourceSettingsRejectNegativeValues(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 	t.Cleanup(func() { queryResourceSettingsSnapshot.Store(defaultQueryResourceSettings()) })
+	t.Cleanup(func() { queryProcessBudgetSnapshot.Store(nil) })
 	originalWarn := warnQueryResourceConfig
 	warnings := make(map[string]int)
 	warnQueryResourceConfig = func(path string) { warnings[path]++ }
@@ -54,7 +68,7 @@ func TestQueryResourceSettingsRejectNegativeValues(t *testing.T) {
 
 	viper.Set(QueryResourceMaxSeriesConfigPath, -1)
 	loadQueryResourceSettings()
-	require.Zero(t, getQueryResourceSettings().MaxSeries)
+	require.Equal(t, DefaultQueryResourceMaxSeries, getQueryResourceSettings().MaxSeries)
 	require.Equal(t, 1, warnings[QueryResourceMaxSeriesConfigPath])
 }
 

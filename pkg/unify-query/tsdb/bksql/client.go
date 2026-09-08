@@ -98,12 +98,6 @@ func (c *Client) curlGet(ctx context.Context, method string, req QuerySyncReques
 		}
 		return err
 	}
-	if budget := metadata.GetResourceBudget(ctx); budget != nil {
-		if err = budget.ReserveResponseBytes(int64(size)); err != nil {
-			return err
-		}
-	}
-
 	metric.TsDBRequestBytes(ctx, size, metadata.BkSqlStorageType)
 
 	queryCost := time.Since(startAnaylize)
@@ -120,7 +114,18 @@ func (c *Client) curlGet(ctx context.Context, method string, req QuerySyncReques
 	return nil
 }
 
-func (c *Client) QuerySync(ctx context.Context, req QuerySyncRequest, span *trace.Span) (*Result, error) {
+// QuerySync preserves the historical public API. Internal query execution
+// uses QuerySyncWithError so typed resource failures are not flattened into a
+// response message.
+func (c *Client) QuerySync(ctx context.Context, req QuerySyncRequest, span *trace.Span) *Result {
+	res, err := c.QuerySyncWithError(ctx, req, span)
+	if err != nil {
+		return c.failed(err)
+	}
+	return res
+}
+
+func (c *Client) QuerySyncWithError(ctx context.Context, req QuerySyncRequest, span *trace.Span) (*Result, error) {
 	data := &QuerySyncResultData{}
 	res := c.response(data)
 
@@ -134,4 +139,12 @@ func (c *Client) QuerySync(ctx context.Context, req QuerySyncRequest, span *trac
 
 func (c *Client) response(data any) *Result {
 	return &Result{Data: data}
+}
+
+func (c *Client) failed(err error) *Result {
+	return &Result{
+		Result:  false,
+		Message: err.Error(),
+		Code:    StatusFailed,
+	}
 }

@@ -160,16 +160,22 @@ func TestUnreadableSnapshotsReportZeroCoverageNotZeroAnomalies(t *testing.T) {
 // the same moment it stops being fresh, so the stale branch never fires and a
 // stuck-but-alive replica is reported as gone. The two mean different things to
 // whoever is on call.
-func TestFreshnessMustBeShorterThanRetention(t *testing.T) {
+func TestFreshnessIsClampedBelowRetentionRatherThanRejected(t *testing.T) {
 	store := mustStore(t, newFakeRedis(), time.Minute, 10)
-	if _, err := NewService(stubExpectations{}, stubRegistry{}, store, time.Minute, nil); err == nil {
-		t.Fatal("freshness equal to retention was accepted; the stale branch would be unreachable")
+	// Rejecting would let a diagnostics setting stop the process whose facts it
+	// describes: a longer reconcile interval is ordinary tuning, not an error.
+	for _, freshness := range []time.Duration{time.Minute, 2 * time.Minute} {
+		service, err := NewService(stubExpectations{}, stubRegistry{}, store, freshness, nil)
+		if err != nil {
+			t.Fatalf("freshness %v was rejected instead of clamped: %v", freshness, err)
+		}
+		if service.freshness >= store.TTL() {
+			t.Fatalf("clamped freshness = %v, want shorter than retention %v", service.freshness, store.TTL())
+		}
 	}
-	if _, err := NewService(stubExpectations{}, stubRegistry{}, store, 2*time.Minute, nil); err == nil {
-		t.Fatal("freshness longer than retention was accepted")
-	}
-	if _, err := NewService(stubExpectations{}, stubRegistry{}, store, 30*time.Second, nil); err != nil {
-		t.Fatalf("freshness shorter than retention was rejected: %v", err)
+	service, err := NewService(stubExpectations{}, stubRegistry{}, store, 30*time.Second, nil)
+	if err != nil || service.freshness != 30*time.Second {
+		t.Fatalf("usable freshness was altered: %v %v", service.freshness, err)
 	}
 }
 

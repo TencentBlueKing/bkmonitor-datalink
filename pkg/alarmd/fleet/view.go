@@ -53,6 +53,13 @@ const (
 	// GapOwnershipShortfall means the covered objects do not add up to the
 	// expected set even though every snapshot looked fresh.
 	GapOwnershipShortfall GapKind = "OWNERSHIP_SHORTFALL"
+	// GapCoverageInconsistent means more objects were reported as covered than
+	// the expected set contains, so the two sides disagree and neither can be
+	// trusted as the denominator.
+	GapCoverageInconsistent GapKind = "COVERAGE_INCONSISTENT"
+	// GapNoReplicas means nothing was expected to publish. A deployment with no
+	// ready replica is not a healthy deployment with nothing to do.
+	GapNoReplicas GapKind = "NO_REPLICAS"
 )
 
 // SinceSource records where an anomaly's start time came from, because the two
@@ -141,6 +148,12 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		byReplica[snapshot.Replica] = snapshot
 	}
 
+	// No replica means no evidence. Reporting healthy here would turn the whole
+	// deployment being gone into the quietest possible answer.
+	if len(expectedReplicas) == 0 {
+		view.Gaps = append(view.Gaps, Gap{Kind: GapNoReplicas})
+	}
+
 	for _, replica := range expectedReplicas {
 		snapshot, published := byReplica[replica]
 		if !published {
@@ -164,8 +177,14 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	} else {
 		expected := expectation.QueryGroups
 		view.Expected = &expected
-		if shortfall := expected - view.Covered; shortfall > 0 {
-			view.Unknown = shortfall
+		switch {
+		case view.Covered > expected:
+			// Counting is not set arithmetic: more covered than expected means
+			// the two sides disagree about which objects exist, and a shortfall
+			// could still be hiding inside that difference.
+			view.Gaps = append(view.Gaps, Gap{Kind: GapCoverageInconsistent})
+		case expected > view.Covered:
+			view.Unknown = expected - view.Covered
 			view.Gaps = append(view.Gaps, Gap{Kind: GapOwnershipShortfall})
 		}
 	}

@@ -66,9 +66,13 @@ func NewService(
 	if freshness <= 0 {
 		freshness = DefaultTTL / 4
 	}
+	// Clamped, not rejected. A freshness budget that outgrows retention is a
+	// diagnostics setting, and refusing to build the service would let it stop
+	// the process whose facts it exists to describe -- which is the one thing
+	// this whole path is not allowed to do.
 	if retention, ok := snapshots.(interface{ TTL() time.Duration }); ok {
 		if budget := retention.TTL(); budget > 0 && freshness >= budget {
-			return nil, errors.New("alarmd fleet: snapshot freshness must be shorter than retention, or a stuck replica is never reported as stale")
+			freshness = budget / 2
 		}
 	}
 	if now == nil {

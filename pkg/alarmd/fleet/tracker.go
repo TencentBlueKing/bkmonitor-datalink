@@ -32,6 +32,11 @@ const (
 // periods in the deployed population range from ten seconds to ten minutes. A
 // fixed duration would call a slow group broken while it is merely slow, and
 // would let a fast group fail dozens of times before saying anything.
+//
+// A round here is an attempt that produced an outcome, not a period. A blocked
+// object spends most ticks in backoff, which produces no outcome and advances
+// nothing, so two blocked rounds can span far more wall-clock time than two
+// periods. That delays the report; it does not make it wrong.
 const (
 	// DefaultDegradedRounds is how many consecutive degraded completions make a
 	// query group worth reporting.
@@ -40,6 +45,10 @@ const (
 	// worth reporting. Blocked rounds produce nothing at all, so the bar is
 	// lower than for degraded ones.
 	DefaultBlockedRounds = 2
+	// maxStrategiesPerQueryGroup bounds how many strategies one object records.
+	// Query groups are keyed by query semantics, so several strategies can share
+	// one; the bound keeps a pathological group from growing without limit.
+	maxStrategiesPerQueryGroup = 32
 	// DefaultTrackedQueryGroups bounds the per-replica table. A replica in the
 	// deployed shadow owns a few hundred query groups; the bound is generous
 	// enough that reaching it means something changed, not that the deployment
@@ -141,23 +150,40 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 	// merging the fields the context carries. Reading only the observation
 	// would leave this tracker blind on exactly the paths that matter, and the
 	// resulting anomaly list would be permanently empty.
+	//
+	// The fields are merged one at a time rather than swapped wholesale. The
+	// observation that names the strategy does not name the query group, and
+	// the context that names the query group does not name the strategy;
+	// replacing one with the other loses whichever half it did not come from.
 	trace := observation.Trace
-	if trace.QueryGroupKey == "" {
-		trace = observability.TraceFieldsFromContext(ctx)
+	if trace.QueryGroupKey == "" || trace.StrategyID == "" {
+		fromContext := observability.TraceFieldsFromContext(ctx)
+		if trace.QueryGroupKey == "" {
+			trace.QueryGroupKey = fromContext.QueryGroupKey
+		}
+		if trace.StrategyID == "" {
+			trace.StrategyID = fromContext.StrategyID
+			trace.BusinessID = fromContext.BusinessID
+		}
 	}
 	queryGroup := trace.QueryGroupKey
 	if queryGroup == "" {
 		return
 	}
-	completion := observation.ProgressCompletionKind
-	runOutcome := observation.RunOutcome
-	executeOutcome := observation.ExecuteOutcome
-	if completion == "" && runOutcome == "" && executeOutcome == "" {
-		return
-	}
 
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
+
+	completion := observation.ProgressCompletionKind
+	runOutcome := observation.RunOutcome
+	executeOutcome := observation.ExecuteOutcome
+	// Which strategies an object serves is a fact about the object, learned
+	// from whichever observation happens to mention both. The observations that
+	// carry an outcome never carry a strategy, so requiring an outcome here
+	// would leave every anomaly without the one field an operator can act on.
+	if trace.StrategyID == "" && completion == "" && runOutcome == "" && executeOutcome == "" {
+		return
+	}
 
 	state := tracker.groups[queryGroup]
 	if state == nil {
@@ -169,7 +195,7 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 	}
 	at := tracker.now()
 	state.lastSeenAt = at
-	if trace.StrategyID != "" {
+	if trace.StrategyID != "" && len(state.strategies) < maxStrategiesPerQueryGroup {
 		state.strategies[StrategyRef{StrategyID: trace.StrategyID, BusinessID: trace.BusinessID}] = struct{}{}
 	}
 

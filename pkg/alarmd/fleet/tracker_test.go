@@ -79,6 +79,52 @@ func TestExecutionsThatNeverFinishAreReported(t *testing.T) {
 	}
 }
 
+// The observations that carry an outcome never carry a strategy, and the one
+// that carries a strategy carries no outcome. Requiring both on the same
+// observation leaves every anomaly without the field an operator can act on.
+func TestStrategyAssociationComesFromObservationsWithoutAnOutcome(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	ctx := observability.ContextWithTraceFields(context.Background(), observability.TraceFields{QueryGroupKey: "qg-1"})
+	// Evaluation names the strategy but reports no outcome.
+	tracker.Observe(ctx, observability.Observation{
+		Trace: observability.TraceFields{StrategyID: "8930", BusinessID: "2"},
+	})
+	// The rounds that follow report an outcome and name no strategy.
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(ctx, observability.Observation{ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE"})
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 {
+		t.Fatalf("anomalies = %+v, want one", anomalies)
+	}
+	if len(anomalies[0].Strategies) != 1 || anomalies[0].Strategies[0].StrategyID != "8930" ||
+		anomalies[0].Strategies[0].BusinessID != "2" {
+		t.Fatalf("strategies = %+v, want the strategy learned from the evaluation observation", anomalies[0].Strategies)
+	}
+}
+
+// Merging one field at a time matters: the observation names the strategy and
+// the context names the object, so swapping one for the other loses a half.
+func TestTraceFieldsAreMergedNotReplaced(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	ctx := observability.ContextWithTraceFields(context.Background(), observability.TraceFields{QueryGroupKey: "qg-1"})
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(ctx, observability.Observation{
+			ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE",
+			Trace:                  observability.TraceFields{StrategyID: "8930", BusinessID: "2"},
+		})
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 || anomalies[0].QueryGroup != "qg-1" {
+		t.Fatalf("anomalies = %+v, want the object named by the context", anomalies)
+	}
+	if len(anomalies[0].Strategies) != 1 {
+		t.Fatalf("strategies = %+v, want the strategy named by the observation kept", anomalies[0].Strategies)
+	}
+}
+
 func TestHealthyCompletionsKeepAQueryGroupOffTheList(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)

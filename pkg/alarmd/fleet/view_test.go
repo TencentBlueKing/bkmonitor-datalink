@@ -90,6 +90,25 @@ func TestLosingAReplicaDoesNotLookLikeRecovery(t *testing.T) {
 	}
 }
 
+// A deployment with no ready replica has produced no evidence at all. Calling
+// that healthy turns "everything is gone" into the quietest possible answer.
+func TestNoReplicasIsUnknownNotAnIdleDeployment(t *testing.T) {
+	view := Aggregate(Expectation{QueryGroups: 0, Known: true}, nil, nil, now, freshness)
+	if view.Health != HealthUnknown || !hasGap(view, GapNoReplicas) {
+		t.Fatalf("health = %s gaps = %+v, want unknown with no replicas", view.Health, view.Gaps)
+	}
+}
+
+// Counting is not set arithmetic. More covered than expected means the two
+// sides disagree about which objects exist, and a shortfall could still be
+// hiding inside that difference.
+func TestMoreCoveredThanExpectedIsUnknown(t *testing.T) {
+	view := Aggregate(Expectation{QueryGroups: 900, Known: true}, healthySnapshots(), replicas(), now, freshness)
+	if view.Health != HealthUnknown || !hasGap(view, GapCoverageInconsistent) {
+		t.Fatalf("health = %s gaps = %+v, want unknown when coverage exceeds the denominator", view.Health, view.Gaps)
+	}
+}
+
 func TestStaleSnapshotIsUnknownRatherThanTrusted(t *testing.T) {
 	snapshots := healthySnapshots()
 	snapshots[0].TakenAt = now.Add(-2 * time.Minute)

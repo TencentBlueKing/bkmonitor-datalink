@@ -108,6 +108,7 @@ type queryGroupState struct {
 	// like.
 	determined    bool
 	lastCompleted string
+	lastFailure   *FailureRef
 }
 
 // Tracker turns the observation stream into the anomaly list a replica
@@ -187,7 +188,11 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 	// from whichever observation happens to mention both. The observations that
 	// carry an outcome never carry a strategy, so requiring an outcome here
 	// would leave every anomaly without the one field an operator can act on.
-	if trace.StrategyID == "" && completion == "" && runOutcome == "" && executeOutcome == "" {
+	// A query failure carries no outcome of its own -- the round it belongs to
+	// reports that separately -- but it is the only place the pipeline says why
+	// the round went wrong, so it is let through to be remembered.
+	failure := observation.QueryFailure
+	if trace.StrategyID == "" && completion == "" && runOutcome == "" && executeOutcome == "" && failure == nil {
 		return
 	}
 
@@ -200,6 +205,12 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		tracker.groups[queryGroup] = state
 	}
 	at := tracker.now()
+	if failure != nil {
+		// Remembered, not counted: this is context for an anomaly the outcome
+		// paths decide on. Treating a failure as conclusive on its own would
+		// make a retried transient look like a determined verdict.
+		state.lastFailure = &FailureRef{Stage: failure.Stage, Category: failure.Category, Code: failure.Code}
+	}
 	if trace.StrategyID != "" && len(state.strategies) < maxStrategiesPerQueryGroup {
 		state.strategies[StrategyRef{StrategyID: trace.StrategyID, BusinessID: trace.BusinessID}] = struct{}{}
 	}
@@ -270,6 +281,7 @@ func (tracker *Tracker) Anomalies() []Anomaly {
 			Since:      state.runStartedAt,
 			SinceFrom:  SinceSnapshotContinuity,
 			Replica:    tracker.replica,
+			Failure:    state.lastFailure,
 		}
 		for strategy := range state.strategies {
 			anomaly.Strategies = append(anomaly.Strategies, strategy)

@@ -84,6 +84,18 @@ type StrategyRef struct {
 	BusinessID string `json:"business_id"`
 }
 
+// FailureRef is why the object's last failing round failed, as the bounded
+// classification the pipeline already emits.
+//
+// The completion kind says a round ended with something unavailable; it does not
+// say what. Without this, a page can list a hundred objects sharing one reason
+// code and still leave the reader with no idea what to look at.
+type FailureRef struct {
+	Stage    string `json:"stage"`
+	Category string `json:"category"`
+	Code     string `json:"code,omitempty"`
+}
+
 // Anomaly is one object that is not making progress as expected.
 type Anomaly struct {
 	QueryGroup string        `json:"query_group"`
@@ -92,6 +104,7 @@ type Anomaly struct {
 	Since      time.Time     `json:"since"`
 	SinceFrom  SinceSource   `json:"since_from"`
 	Replica    string        `json:"replica"`
+	Failure    *FailureRef   `json:"failure,omitempty"`
 	Strategies []StrategyRef `json:"strategies,omitempty"`
 }
 

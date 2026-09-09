@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -41,8 +42,78 @@ type listResponse struct {
 	View
 	// Replica echoes the filter, so a caller cannot mistake a filtered response
 	// for a deployment-wide one. The coverage numbers stay deployment-wide.
-	Replica string `json:"replica,omitempty"`
-	Page    Page   `json:"page"`
+	Replica  string `json:"replica,omitempty"`
+	Strategy string `json:"strategy,omitempty"`
+	Business string `json:"business,omitempty"`
+	// Applied says a filter narrowed this response. An empty table means
+	// something different when it was filtered, and the caller cannot tell the
+	// two apart from the rows alone.
+	Applied bool    `json:"filtered"`
+	Summary Summary `json:"summary"`
+	Page    Page    `json:"page"`
+}
+
+// Count is one value and how many anomalies carry it.
+type Count struct {
+	Value string `json:"value"`
+	Count int    `json:"count"`
+}
+
+// Summary groups the anomalies this request is about.
+//
+// It exists because the list alone cannot answer the question a long list
+// immediately raises: is this one problem repeated, or many separate ones. The
+// counts are exact over the whole list rather than over the returned page --
+// the service holds every anomaly before paging, so no extra read is needed and
+// no partial evidence is presented as a whole. What the list itself cannot
+// cover is still reported the same way: a truncated snapshot shows up in the
+// gaps and in anomalies_total, and these counts inherit that limit.
+type Summary struct {
+	ByKind   []Count `json:"by_kind"`
+	ByReason []Count `json:"by_reason"`
+	// ByFailure is usually the most informative of the three. A completion kind
+	// is shared by everything that ended badly, so counting it answers "how
+	// many" and not "how many of what"; the failure classification separates one
+	// broken dependency from a scattering of unrelated problems.
+	ByFailure []Count `json:"by_failure"`
+	ByReplica []Count `json:"by_replica"`
+}
+
+func summarize(anomalies []Anomaly) Summary {
+	kinds := map[string]int{}
+	reasons := map[string]int{}
+	failures := map[string]int{}
+	replicas := map[string]int{}
+	for _, anomaly := range anomalies {
+		kinds[anomaly.Kind]++
+		if anomaly.ReasonCode != "" {
+			reasons[anomaly.ReasonCode]++
+		}
+		if anomaly.Failure != nil && anomaly.Failure.Category != "" {
+			failures[anomaly.Failure.Category]++
+		}
+		replicas[anomaly.Replica]++
+	}
+	return Summary{
+		ByKind: rank(kinds), ByReason: rank(reasons),
+		ByFailure: rank(failures), ByReplica: rank(replicas),
+	}
+}
+
+// rank orders by count and then by value, so equal counts do not reorder
+// between two reads of an unchanged deployment.
+func rank(counts map[string]int) []Count {
+	ranked := make([]Count, 0, len(counts))
+	for value, count := range counts {
+		ranked = append(ranked, Count{Value: value, Count: count})
+	}
+	sort.Slice(ranked, func(left, right int) bool {
+		if ranked[left].Count == ranked[right].Count {
+			return ranked[left].Value < ranked[right].Value
+		}
+		return ranked[left].Count > ranked[right].Count
+	})
+	return ranked
 }
 
 type detailResponse struct {
@@ -118,10 +189,31 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 		}
 		view.Anomalies = filterByReplica(view.Anomalies, replica)
 	}
+	// Strategy and business are not refused when nothing matches, unlike an
+	// unknown replica: the deployment's replicas are a short knowable list, while
+	// a strategy that simply has no anomalies right now is the ordinary answer to
+	// a reasonable question. The response says a filter was applied so an empty
+	// table is not read as "nothing is wrong anywhere".
+	strategy := request.URL.Query().Get("strategy")
+	if strategy != "" {
+		view.Anomalies = filterByStrategy(view.Anomalies, strategy)
+	}
+	business := request.URL.Query().Get("business")
+	if business != "" {
+		view.Anomalies = filterByBusiness(view.Anomalies, business)
+	}
 	total := len(view.Anomalies)
+	// Counted over the whole list this request is about, before it is cut into a
+	// page. A reader's first question is whether a long list is one problem or
+	// many, and counting only the visible page would answer it with whatever
+	// happened to be on screen.
+	summary := summarize(view.Anomalies)
 	view.Anomalies = pageOf(view.Anomalies, offset, limit)
 	writeJSON(response, http.StatusOK, listResponse{
-		View: view, Replica: replica, Page: Page{Offset: offset, Limit: limit, Total: total},
+		Summary: summary,
+		View:    view, Replica: replica, Strategy: strategy, Business: business,
+		Applied: replica != "" || strategy != "" || business != "",
+		Page:    Page{Offset: offset, Limit: limit, Total: total},
 	})
 }
 
@@ -251,6 +343,30 @@ func knownReplica(view View, replica string) bool {
 		}
 	}
 	return false
+}
+
+// filterByStrategy keeps objects serving the given strategy. One object can
+// serve several, so a match on any of them keeps it.
+func filterByStrategy(anomalies []Anomaly, strategyID string) []Anomaly {
+	return filterByStrategyField(anomalies, func(s StrategyRef) bool { return s.StrategyID == strategyID })
+}
+
+// filterByBusiness keeps objects serving any strategy of the given business.
+func filterByBusiness(anomalies []Anomaly, businessID string) []Anomaly {
+	return filterByStrategyField(anomalies, func(s StrategyRef) bool { return s.BusinessID == businessID })
+}
+
+func filterByStrategyField(anomalies []Anomaly, match func(StrategyRef) bool) []Anomaly {
+	filtered := make([]Anomaly, 0, len(anomalies))
+	for _, anomaly := range anomalies {
+		for _, strategy := range anomaly.Strategies {
+			if match(strategy) {
+				filtered = append(filtered, anomaly)
+				break
+			}
+		}
+	}
+	return filtered
 }
 
 func filterByReplica(anomalies []Anomaly, replica string) []Anomaly {

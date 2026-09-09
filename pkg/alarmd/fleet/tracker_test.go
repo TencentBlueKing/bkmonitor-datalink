@@ -335,3 +335,54 @@ func TestAnomaliesAreSortedSoTruncationKeepsTheOldest(t *testing.T) {
 		}
 	}
 }
+
+// The completion kind says a round ended with something unavailable; it never
+// says what. A hundred objects sharing one reason code leave the reader with
+// nothing to look at unless the classification the pipeline already emits is
+// carried along with them.
+func TestAnomaliesCarryWhyTheRoundFailed(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	ctx := observability.ContextWithTraceFields(context.Background(),
+		observability.TraceFields{QueryGroupKey: "qg-why"})
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(ctx, observability.Observation{
+			Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
+			Result: observability.ResultFailed,
+			QueryFailure: &observability.QueryFailureFacts{
+				Stage: "provider", Category: "provider_transport", Code: "upstream_timeout",
+			},
+		})
+		tracker.Observe(ctx, observability.Observation{ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE"})
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 || anomalies[0].Failure == nil {
+		t.Fatalf("anomalies = %+v, want one carrying why it failed", anomalies)
+	}
+	if got := anomalies[0].Failure.Category; got != "provider_transport" {
+		t.Fatalf("failure category = %q, want the classification the pipeline emitted", got)
+	}
+}
+
+// A failure is context, not a verdict. Counting it as conclusive would let a
+// transient that the pipeline retried and recovered from mark the object as
+// determined, and a retried round is exactly what "not yet known" means.
+func TestAQueryFailureAloneDoesNotDetermineOrReportTheObject(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	ctx := observability.ContextWithTraceFields(context.Background(),
+		observability.TraceFields{QueryGroupKey: "qg-transient"})
+	for round := 0; round < 10; round++ {
+		tracker.Observe(ctx, observability.Observation{
+			Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
+			Result:       observability.ResultFailed,
+			QueryFailure: &observability.QueryFailureFacts{Stage: "execute", Category: "source_backend"},
+		})
+	}
+	if got := tracker.Determined(); got != 0 {
+		t.Fatalf("determined = %d, want the object to stay unaccounted for", got)
+	}
+	if anomalies := tracker.Anomalies(); len(anomalies) != 0 {
+		t.Fatalf("anomalies = %+v, want none from failures alone", anomalies)
+	}
+}

@@ -214,3 +214,100 @@ func TestTruncatedListsStillReportTheRealAnomalyCount(t *testing.T) {
 		t.Fatalf("page total = %v, want what the response can page over", page["total"])
 	}
 }
+
+// The counts describe the whole list this request is about, not the page that
+// happened to be returned. Summarising the page would answer "is this one
+// problem or many" with whatever fits on screen, which is the opposite of what
+// the question is for.
+func TestSummaryCountsTheWholeListRatherThanThePage(t *testing.T) {
+	handler := handlerWith(t, snapshotsWithAnomalies(120), Expectation{QueryGroups: 949, Known: true}, replicas())
+	status, body := get(t, handler, "/api/objects?limit=5")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	anomalies, _ := body["anomalies"].([]any)
+	if len(anomalies) != 5 {
+		t.Fatalf("page = %d rows, want the 5 that were asked for", len(anomalies))
+	}
+	summary, _ := body["summary"].(map[string]any)
+	byKind, _ := summary["by_kind"].([]any)
+	if len(byKind) != 1 {
+		t.Fatalf("by_kind = %+v, want one kind", byKind)
+	}
+	if got := byKind[0].(map[string]any)["count"].(float64); got != 120 {
+		t.Fatalf("kind count = %v, want all 120 rather than the 5 on the page", got)
+	}
+}
+
+// A filtered request is about the filtered list, so its counts must be too.
+func TestSummaryFollowsTheReplicaFilter(t *testing.T) {
+	handler := handlerWith(t, snapshotsWithAnomalies(4), Expectation{QueryGroups: 949, Known: true}, replicas())
+	_, body := get(t, handler, "/api/objects?replica=pod-a")
+	summary, _ := body["summary"].(map[string]any)
+	if byReplica, _ := summary["by_replica"].([]any); len(byReplica) != 0 {
+		t.Fatalf("by_replica = %+v, want nothing: pod-a reported no anomalies", byReplica)
+	}
+}
+
+func strategyAnomaly(queryGroup, strategyID, businessID string) Anomaly {
+	item := anomaly(queryGroup)
+	item.Strategies = []StrategyRef{{StrategyID: strategyID, BusinessID: businessID}}
+	return item
+}
+
+func handlerWithStrategies(t *testing.T) http.Handler {
+	t.Helper()
+	snapshots := healthySnapshots()
+	snapshots[1].Anomalies = []Anomaly{
+		strategyAnomaly("qg-a", "2864", "7"),
+		strategyAnomaly("qg-b", "8904", "47"),
+		strategyAnomaly("qg-c", "1449", "7"),
+	}
+	snapshots[1].TotalAnomalies = 3
+	return handlerWith(t, snapshots, Expectation{QueryGroups: 949, Known: true}, replicas())
+}
+
+func TestObjectsCanBeNarrowedByStrategyAndBusiness(t *testing.T) {
+	handler := handlerWithStrategies(t)
+	for target, want := range map[string]int{
+		"/api/objects?strategy=2864": 1,
+		"/api/objects?business=7":    2,
+		"/api/objects":               3,
+	} {
+		_, body := get(t, handler, target)
+		anomalies, _ := body["anomalies"].([]any)
+		if len(anomalies) != want {
+			t.Fatalf("%s returned %d objects, want %d", target, len(anomalies), want)
+		}
+	}
+}
+
+// Filtering happens before the counts are taken, so a narrowed response is
+// summarised as the narrowed thing it is.
+func TestSummaryFollowsTheStrategyFilter(t *testing.T) {
+	handler := handlerWithStrategies(t)
+	_, body := get(t, handler, "/api/objects?business=7")
+	summary, _ := body["summary"].(map[string]any)
+	byKind, _ := summary["by_kind"].([]any)
+	if len(byKind) != 1 || byKind[0].(map[string]any)["count"].(float64) != 2 {
+		t.Fatalf("by_kind = %+v, want the two objects of business 7", byKind)
+	}
+}
+
+// A strategy with no anomalies is the ordinary answer to a reasonable question,
+// unlike an unknown replica, so it is answered rather than refused. The response
+// has to say a filter was applied, or an empty table reads as "nothing is wrong
+// anywhere".
+func TestAFilterThatMatchesNothingIsAnsweredAndMarked(t *testing.T) {
+	handler := handlerWithStrategies(t)
+	status, body := get(t, handler, "/api/objects?strategy=999999")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want the empty answer rather than a refusal", status)
+	}
+	if anomalies, _ := body["anomalies"].([]any); len(anomalies) != 0 {
+		t.Fatalf("anomalies = %+v, want none", anomalies)
+	}
+	if body["filtered"] != true || body["strategy"] != "999999" {
+		t.Fatalf("body = %+v, want the applied filter echoed", body)
+	}
+}

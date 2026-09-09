@@ -17,6 +17,10 @@ type LegacyAdapterConfig struct {
 	PodCache       *LegacyPodCacheConfig `yaml:"pod_cache"`
 }
 
+// defaultDjangoCacheVersion is Django's own default cache version, which the
+// platform does not override; it becomes part of every key in that cache.
+const defaultDjangoCacheVersion = 1
+
 type LegacyPodCacheConfig struct {
 	Connection RedisConnectionConfig `yaml:"connection"`
 	KeyPrefix  string                `yaml:"key_prefix"`

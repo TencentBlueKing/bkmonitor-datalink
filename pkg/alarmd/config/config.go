@@ -316,6 +316,30 @@ func (c *Config) resolvePhaseTwoRuntimeRedis() {
 // operational setting instead of two; mode and address stay explicit because
 // they decide the destination and a wrong guess there writes a snapshot nobody
 // reads.
+// resolveCompatibilityPodCache fills in the Django cache coordinates the
+// deployment does not choose. Workload enrichment reads the same cache Python
+// reads, whose keys carry Django's cache version; the platform leaves that at
+// Django's default, so the version is the product's to know rather than one
+// more line for a values file to get wrong.
+func (c *Config) resolveCompatibilityPodCache() {
+	if c == nil || c.Kafka.LegacyAdapter.PodCache == nil {
+		return
+	}
+	cache := c.Kafka.LegacyAdapter.PodCache
+	if cache.Version <= 0 {
+		cache.Version = defaultDjangoCacheVersion
+	}
+	if cache.Connection.DialTimeout == 0 {
+		cache.Connection.DialTimeout = c.Redis.DialTimeout
+	}
+	if cache.Connection.ReadTimeout == 0 {
+		cache.Connection.ReadTimeout = c.Redis.ReadTimeout
+	}
+	if cache.Connection.WriteTimeout == 0 {
+		cache.Connection.WriteTimeout = c.Redis.WriteTimeout
+	}
+}
+
 func (c *Config) resolveCompatibilityServiceTimeouts() {
 	if c == nil {
 		return
@@ -369,6 +393,7 @@ func Load(path string) (Config, error) {
 	if path == "" {
 		cfg.resolvePhaseTwoRuntimeRedis()
 		cfg.resolveCompatibilityServiceTimeouts()
+		cfg.resolveCompatibilityPodCache()
 		return cfg, cfg.Validate()
 	}
 
@@ -393,6 +418,7 @@ func Load(path string) (Config, error) {
 
 	cfg.resolvePhaseTwoRuntimeRedis()
 	cfg.resolveCompatibilityServiceTimeouts()
+	cfg.resolveCompatibilityPodCache()
 	cfg.resolvePhaseTwoWorkerIDFromEnvironment()
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err

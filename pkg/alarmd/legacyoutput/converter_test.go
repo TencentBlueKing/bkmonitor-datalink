@@ -101,6 +101,13 @@ func TestLocalConverterMatchesPythonAdapter(t *testing.T) {
 		json.Unmarshal([]byte(fixture.Response.Events[i].Payload), &expected)
 		// UQ's canonical primary field is named value; retain it in original values.
 		expected["extra_info"].(map[string]any)["origin_alarm"].(map[string]any)["data"].(map[string]any)["values"].(map[string]any)["value"] = expected["extra_info"].(map[string]any)["origin_alarm"].(map[string]any)["data"].(map[string]any)["value"]
+		// The oracle was captured after Event.clean(), which computes and adds
+		// dedupe_md5. The producer pushes the adapter's output as it is, so the
+		// field is not on the wire - 200 events sampled from the live topic
+		// carry none. Emitting it would hand the downstream fingerprint to this
+		// converter, because the reader takes the payload's value when present
+		// and only computes its own when it is absent.
+		delete(expected, "dedupe_md5")
 		if !reflect.DeepEqual(actual, expected) {
 			t.Fatalf("local Python protocol differs:\ngot %s\nwant %s", event.Payload, fixture.Response.Events[i].Payload)
 		}

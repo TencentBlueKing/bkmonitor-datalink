@@ -166,11 +166,14 @@ func testLocalLegacyConverterRoutesFinalKafkaBatch(t *testing.T, kind string) {
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			t.Fatal(err)
 		}
-		status := "ABNORMAL"
-		if kind == contract.TriggerEventRecovery {
-			status = "RECOVERED"
+		// The partition key stays the dedupe digest so a series keeps one
+		// partition, but the payload no longer carries it: Python's producer
+		// does not put it on the wire, and a reader that finds one uses it
+		// instead of computing its own.
+		if _, carried := payload["dedupe_md5"]; carried {
+			t.Fatal("compatibility payload carries a field Python never sends")
 		}
-		if message.Topic != "alarmd_0bkmonitor_backend_event" || payload["status"] != status || payload["plugin_id"] != "bkmonitor" || string(key) != payload["dedupe_md5"] {
+		if message.Topic != "alarmd_0bkmonitor_backend_event" || payload["status"] != "ABNORMAL" || payload["plugin_id"] != "bkmonitor" || len(key) != 32 {
 			t.Fatal("Python payload/topic/key mismatch")
 		}
 	}

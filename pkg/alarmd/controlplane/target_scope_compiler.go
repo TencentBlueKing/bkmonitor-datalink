@@ -210,3 +210,17 @@ func numberText(value json.Number) string {
 	}
 	return text
 }
+
+// targetScopeDispositionReason maps a compilation failure onto the bounded
+// reason the catalog publishes. The reason has to name the target, because the
+// alternative reading - "this strategy is fine, it just failed once" - is what
+// would keep the previous, unfiltered Plan alive.
+func targetScopeDispositionReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	if strings.Contains(err.Error(), "TARGET_SCOPE_UNRESOLVABLE") {
+		return "UNSUPPORTED_TARGET_SCOPE_UNRESOLVABLE"
+	}
+	return "UNSUPPORTED_TARGET_SCOPE"
+}

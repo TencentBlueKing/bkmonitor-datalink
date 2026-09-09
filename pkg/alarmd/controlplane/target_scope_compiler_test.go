@@ -145,3 +145,29 @@ func TestTheCatalogDecoderReadsTheItemTarget(t *testing.T) {
 		t.Fatalf("decoded items = %+v", strategy.Items)
 	}
 }
+
+// A rejected target has to be reported as an unsupported capability, not as a
+// rejected configuration. The catalog retains the last good Plan for a rejected
+// configuration, and that Plan predates the target filter - so the wrong
+// disposition would leave the strategy alerting outside its target with nothing
+// to show for it.
+func TestARejectedTargetIsReportedAsUnsupported(t *testing.T) {
+	for _, err := range []error{
+		errorWithText("TARGET_SCOPE_UNSUPPORTED: service_topo_node target is not resolved yet"),
+		errorWithText("TARGET_SCOPE_UNRESOLVABLE: strategy states a monitoring target that reduces to no condition"),
+	} {
+		reason := targetScopeDispositionReason(err)
+		if !strings.HasPrefix(reason, "UNSUPPORTED_TARGET_SCOPE") {
+			t.Fatalf("%v produced reason %q", err, reason)
+		}
+		if shouldRetainLastGood([]ObjectDisposition{{Disposition: DispositionUnsupported, Reason: reason}}) {
+			t.Fatalf("a plan rejected for %q would retain its previous unfiltered plan", reason)
+		}
+	}
+}
+
+type textError string
+
+func (e textError) Error() string { return string(e) }
+
+func errorWithText(text string) error { return textError(text) }

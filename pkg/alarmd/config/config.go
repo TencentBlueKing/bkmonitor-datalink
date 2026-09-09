@@ -78,9 +78,13 @@ type KafkaConfig struct {
 	MessageReceipt      KafkaOutputConfig   `yaml:"message_receipt"`
 	AllowedOutputTopics []string            `yaml:"allowed_output_topics"`
 	GroupID             string              `yaml:"group_id"`
-	ClientID            string              `yaml:"client_id"`
-	BrokerVersion       string              `yaml:"broker_version"`
-	InitialOffset       string              `yaml:"initial_offset"`
+	// ClientID and BrokerVersion identify this producer to the broker and fix
+	// the protocol it speaks. Neither is something a deployment knows better
+	// than the product: the identity is the product's name and the version is
+	// the oldest protocol every supported broker understands.
+	ClientID      string `yaml:"-"`
+	BrokerVersion string `yaml:"-"`
+	InitialOffset string `yaml:"initial_offset"`
 }
 
 func (c KafkaConfig) ConsumerCoordinates() enginekafka.Config {
@@ -173,6 +177,7 @@ func Default() Config {
 			DiagnosticsListen: "127.0.0.1:6060",
 		},
 		Kafka: KafkaConfig{
+			ClientID: "alarmd", BrokerVersion: "0.10.2.0",
 			TriggerEvent:        KafkaOutputConfig{Topic: "alarmd_event", MaxMessageBytes: defaultOutputMaxMessageBytes},
 			LegacyAdapter:       LegacyAdapterConfig{Topic: "alarmd_0bkmonitor_backend_event"},
 			AllowedOutputTopics: []string{"alarmd_event", "alarmd_0bkmonitor_backend_event"},

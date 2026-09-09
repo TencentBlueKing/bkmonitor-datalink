@@ -121,6 +121,7 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 			RegistrationTTL: Duration(60 * time.Second), RegistrationRenewInterval: Duration(10 * time.Second),
 		},
 		Control: PhaseTwoControlConfig{
+			ProviderRoute:   "unify-query-primary",
 			RefreshInterval: Duration(30 * time.Second), ReconcileInterval: Duration(5 * time.Second),
 			CatalogTTL: Duration(24 * time.Hour), LegacyMigrationMaxScanKeys: 50000,
 			LegacyMigrationTimeout: Duration(30 * time.Second),

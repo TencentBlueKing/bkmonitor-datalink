@@ -42,33 +42,55 @@ type RedisConnectionConfig struct {
 // latency into queueing latency with no gate reporting that it did: the client
 // still returns, only later.
 //
-// The pool therefore follows the permits it has to serve rather than the CPU
-// quota directly. Permits are already the resource-derived quantity, so keying
-// the pool to them keeps one derivation instead of two, and it means the pool
-// grows only when the demand on it grows. Zero means "derive"; an explicit
-// positive pool_size still wins so an operator can pin it.
+// Keying the pool to the query permits was wrong, and a block profile from a
+// running Worker says how wrong: goroutines spent 354 of 4,192 recorded hours
+// parked in the pool's waitTurn, about thirty-two goroutines queued at any
+// moment against a pool of forty-eight. The permits never covered that demand
+// because the goroutines doing the queueing hold no permit. The heaviest
+// caller is the Slot source, not the query: reading the activation header, the
+// schedule timeline, the retirement boundary and the ownership fence all
+// happen before a Slot is even eligible to query, and the scheduler runs those
+// for every ready runner at once. With the active execution limit left
+// unlimited on purpose, nothing else bounds that fan-out, so the pool became
+// the process's real execution gate while reporting a pool that looked idle:
+// waiting on the pool's semaphore increments neither the miss nor the timeout
+// counter.
+//
+// So the pool follows the container's CPU budget, which is the one quantity
+// known at startup that scales with how much work the Worker is expected to
+// carry, and which automaxprocs already derives from the cgroup. Redis work is
+// network-bound, so useful concurrency per CPU is far above one; the factor
+// below leaves several times the measured steady-state demand. Zero means
+// "derive"; an explicit positive pool_size still wins so an operator can pin
+// it, and a deployment that wants the pool to stop being a gate can raise it
+// without a release.
 const (
-	redisPoolMinimum = 16
-	redisPoolSpare   = 8
+	redisPoolMinimum       = 64
+	redisPoolPerCPU        = 16
+	redisPoolDerivedCeling = 512
 )
 
-// DeriveRedisPoolSize sizes the pool to cover the admitted query concurrency
-// plus room for the scheduler probes that run alongside those queries, never
-// dropping below the minimum a small deployment needs.
-func DeriveRedisPoolSize(admittedConcurrency int) int {
+// DeriveRedisPoolSize sizes the pool from the CPU budget the container was
+// given, never below the floor a small deployment needs and never above a
+// ceiling that keeps one Worker's connection count reasonable for a shared
+// Redis.
+func DeriveRedisPoolSize(cpuBudget int) int {
 	size := redisPoolMinimum
-	if covered := admittedConcurrency + redisPoolSpare; covered > size {
+	if covered := cpuBudget * redisPoolPerCPU; covered > size {
 		size = covered
+	}
+	if size > redisPoolDerivedCeling {
+		size = redisPoolDerivedCeling
 	}
 	return size
 }
 
 // EffectivePoolSize resolves the value actually handed to the client.
-func (c RedisConnectionConfig) EffectivePoolSize(admittedConcurrency int) int {
+func (c RedisConnectionConfig) EffectivePoolSize(cpuBudget int) int {
 	if c.PoolSize > 0 {
 		return c.PoolSize
 	}
-	return DeriveRedisPoolSize(admittedConcurrency)
+	return DeriveRedisPoolSize(cpuBudget)
 }
 
 func (c RedisConnectionConfig) clone() RedisConnectionConfig {

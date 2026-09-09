@@ -10,14 +10,17 @@
 package config
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
 
@@ -95,7 +98,17 @@ kafka:
   brokers: [127.0.0.1:9092]
   trigger_event:
     topic: alarmd-trigger-event
-  allowed_output_topics: [alarmd-trigger-event]
+  allowed_output_topics: [alarmd-trigger-event, alarmd_0bkmonitor_backend_event]
+  legacy_adapter:
+    topic: alarmd_0bkmonitor_backend_event
+    snapshot_prefix: alarmd-test
+    service_nodes:
+      default:
+        mode: standalone
+        address: redis.test:6379
+    service_routes:
+      - upper_bound: 9223372036854775807
+        node_id: default
   client_id: alarmd
   broker_version: 2.6.0
 redis:
@@ -532,12 +545,34 @@ func validConfigObject() Config {
 	return cfg
 }
 
+// withCompatibilityServiceRedis gives a configuration the service Redis the
+// built-in Python-compatible protocol needs. Every deployment needs it, because
+// a strategy without a frozen revision selects that protocol and its snapshot
+// is written before the event is published.
+func withCompatibilityServiceRedis(cfg *Config, address string) {
+	cfg.Kafka.LegacyAdapter.SnapshotPrefix = "alarmd-test"
+	// Load resolves the timeouts from the runtime Redis; a configuration built
+	// in Go and validated directly has to state them.
+	cfg.Kafka.LegacyAdapter.ServiceNodes = map[string]RedisConnectionConfig{
+		"default": {
+			Mode: RedisModeStandalone, Address: address,
+			DialTimeout:  cfg.Redis.DialTimeout,
+			ReadTimeout:  cfg.Redis.ReadTimeout,
+			WriteTimeout: cfg.Redis.WriteTimeout,
+		},
+	}
+	cfg.Kafka.LegacyAdapter.ServiceRoutes = []legacyoutput.ServiceRoute{
+		{UpperBound: math.MaxInt64, NodeID: "default"},
+	}
+}
+
 func validGoAccessConfigObject() Config {
 	cfg := Default()
 	accessBKData := false
 	cfg.Kafka.Brokers = []string{"127.0.0.1:9092"}
 	cfg.Kafka.TriggerEvent.Topic = "alarmd-trigger-event"
-	cfg.Kafka.AllowedOutputTopics = []string{"alarmd-trigger-event"}
+	cfg.Kafka.AllowedOutputTopics = []string{"alarmd-trigger-event", cfg.Kafka.LegacyAdapter.Topic}
+	withCompatibilityServiceRedis(&cfg, "redis.test:6379")
 	cfg.Kafka.ClientID = "alarmd"
 	cfg.Kafka.BrokerVersion = "2.6.0"
 	cfg.Redis.Address = "redis.test:6379"
@@ -590,6 +625,17 @@ kafka:
   allowed_output_topics:
     - alarmd-trigger-event
     - alarmd-message-receipt
+    - alarmd_0bkmonitor_backend_event
+  legacy_adapter:
+    topic: alarmd_0bkmonitor_backend_event
+    snapshot_prefix: alarmd-test
+    service_nodes:
+      default:
+        mode: standalone
+        address: redis.test:6379
+    service_routes:
+      - upper_bound: 9223372036854775807
+        node_id: default
   client_id: alarmd
   broker_version: 2.6.0
 redis:
@@ -635,24 +681,27 @@ limits:
 `
 }
 
-// Zero no longer means "unset and invalid": it means the pool follows the query
-// permits it has to serve. The cases below pin that, plus the minimum that
-// keeps a small deployment at the size it had before the pool was derived.
-func TestDeriveRedisPoolSizeCoversAdmittedConcurrency(t *testing.T) {
+// Zero no longer means "unset and invalid": it means the pool follows the CPU
+// budget the container was given. The cases below pin the floor a one-core
+// deployment keeps, the production sizes, and the ceiling that stops one Worker
+// from opening an unreasonable number of connections to a shared Redis.
+func TestDeriveRedisPoolSizeFollowsCPUBudget(t *testing.T) {
 	tests := []struct {
-		name     string
-		admitted int
-		want     int
+		name      string
+		cpuBudget int
+		want      int
 	}{
-		{"the default permits stay at the historical minimum", 3, 16},
-		{"a production permit set lifts the pool above the minimum", 40, 48},
-		{"no permits still yields a usable pool", 0, 16},
-		{"the pool tracks permits once they exceed the minimum", 128, 136},
+		{"a single core keeps the floor", 1, 64},
+		{"the floor still covers four cores", 4, 64},
+		{"the production budget scales past the floor", 8, 128},
+		{"a larger budget keeps scaling", 16, 256},
+		{"the ceiling bounds the connection count", 64, 512},
+		{"an unreported budget still yields a usable pool", 0, 64},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := DeriveRedisPoolSize(test.admitted); got != test.want {
-				t.Fatalf("DeriveRedisPoolSize(%d) = %d, want %d", test.admitted, got, test.want)
+			if got := DeriveRedisPoolSize(test.cpuBudget); got != test.want {
+				t.Fatalf("DeriveRedisPoolSize(%d) = %d, want %d", test.cpuBudget, got, test.want)
 			}
 		})
 	}
@@ -660,22 +709,26 @@ func TestDeriveRedisPoolSizeCoversAdmittedConcurrency(t *testing.T) {
 
 func TestEffectivePoolSizeKeepsExplicitOverride(t *testing.T) {
 	connection := RedisConnectionConfig{PoolSize: 3}
-	if got := connection.EffectivePoolSize(40); got != 3 {
+	if got := connection.EffectivePoolSize(8); got != 3 {
 		t.Fatalf("explicit pool_size was not honoured: got %d", got)
 	}
 	connection.PoolSize = 0
-	if got := connection.EffectivePoolSize(40); got != 48 {
+	if got := connection.EffectivePoolSize(8); got != 128 {
 		t.Fatalf("zero pool_size did not derive: got %d", got)
 	}
 }
 
-// The pool must never be the narrower gate. This is the invariant the whole
-// derivation exists to hold, so it is asserted directly rather than inferred
-// from the arithmetic above.
-func TestDerivedRedisPoolNeverNarrowerThanAdmittedConcurrency(t *testing.T) {
-	for admitted := 0; admitted <= 256; admitted++ {
-		if got := DeriveRedisPoolSize(admitted); got <= admitted {
-			t.Fatalf("pool %d does not exceed admitted concurrency %d", got, admitted)
+// The pool exists so that queueing for a connection never becomes the process's
+// execution gate. The Slot source reads the control plane for every ready
+// runner without holding a query permit, so covering the permits is necessary
+// but nowhere near sufficient; the derived pool must clear them with room left
+// for that fan-out at every budget a container can be given.
+func TestDerivedRedisPoolClearsAdmittedConcurrencyWithRoom(t *testing.T) {
+	cfg := Default()
+	admitted := cfg.AdmittedQueryConcurrency()
+	for cpuBudget := 0; cpuBudget <= 64; cpuBudget++ {
+		if got := DeriveRedisPoolSize(cpuBudget); got <= admitted {
+			t.Fatalf("pool %d at %d CPU does not exceed admitted concurrency %d", got, cpuBudget, admitted)
 		}
 	}
 }
@@ -685,12 +738,8 @@ func TestWithResolvedRedisPoolSizeResolvesEveryConnection(t *testing.T) {
 	cfg.Input.Mode = InputModeGoAccess
 	runtimeRedis := cfg.Redis.Connection()
 	cfg.PhaseTwo.RuntimeRedis = &runtimeRedis
-	admitted := cfg.AdmittedQueryConcurrency()
-	if admitted <= 0 {
-		t.Fatalf("default admitted query concurrency is not positive: %d", admitted)
-	}
 	resolved := cfg.WithResolvedRedisPoolSize()
-	want := DeriveRedisPoolSize(admitted)
+	want := DeriveRedisPoolSize(runtime.GOMAXPROCS(0))
 	if resolved.Redis.PoolSize != want {
 		t.Fatalf("source pool size = %d, want %d", resolved.Redis.PoolSize, want)
 	}

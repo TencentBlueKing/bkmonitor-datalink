@@ -230,8 +230,9 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 				}
 			}
 			events := &legacyConvertingTestSink{recordingPhaseTwoEventSink: &recordingPhaseTwoEventSink{}}
-			// Omit the topic: conversion must be assembled without an enable field.
-			cfg.Kafka.LegacyAdapter = config.LegacyAdapterConfig{SnapshotPrefix: "test", ServiceNodes: map[string]config.RedisConnectionConfig{"service": cfg.StrategySourceRedis()}, ServiceRoutes: []legacyoutput.ServiceRoute{{UpperBound: 1000000, NodeID: "service"}}}
+			// The topic names where the protocol publishes; it is not an enable
+			// field, and conversion is assembled whether or not it is set here.
+			cfg.Kafka.LegacyAdapter = config.LegacyAdapterConfig{Topic: cfg.Kafka.LegacyAdapter.Topic, SnapshotPrefix: "test", ServiceNodes: map[string]config.RedisConnectionConfig{"service": cfg.StrategySourceRedis()}, ServiceRoutes: []legacyoutput.ServiceRoute{{UpperBound: 1000000, NodeID: "service"}}}
 			publisher := &recordingFinalPublisher{panicOnEnqueue: publisherPanics}
 			var observations []observability.Observation
 			var mu sync.Mutex

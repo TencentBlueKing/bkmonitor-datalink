@@ -2675,6 +2675,7 @@ func withCompatibilityOutput(cfg *config.Config, address string) {
 	connection.Address = address
 	cfg.Kafka.LegacyAdapter.ServiceNodes = map[string]config.RedisConnectionConfig{"service-0": connection}
 	cfg.Kafka.LegacyAdapter.ServiceRoutes = []legacyoutput.ServiceRoute{{UpperBound: math.MaxInt64, NodeID: "service-0"}}
+	_ = topic
 }
 
 func validGoAccessRuntimeConfig() config.Config {
@@ -2683,6 +2684,20 @@ func validGoAccessRuntimeConfig() config.Config {
 	cfg.Kafka.Brokers = []string{"127.0.0.1:9092"}
 	cfg.Kafka.TriggerEvent.Topic = "alarmd-trigger-event"
 	cfg.Kafka.AllowedOutputTopics = []string{"alarmd-trigger-event", "alarmd_0bkmonitor_backend_event"}
+	// Every deployment carries the compatibility output: a strategy without a
+	// frozen revision selects that protocol, and its snapshot is written before
+	// the event is published. Tests that open a bundle point the service Redis
+	// at the instance they already run, through withCompatibilityOutput.
+	cfg.Kafka.LegacyAdapter.SnapshotPrefix = "alarmd-compatibility-test"
+	cfg.Kafka.LegacyAdapter.ServiceNodes = map[string]config.RedisConnectionConfig{
+		"service-0": {
+			Mode: config.RedisModeStandalone, Address: "127.0.0.1:6379",
+			DialTimeout:  cfg.Redis.DialTimeout,
+			ReadTimeout:  cfg.Redis.ReadTimeout,
+			WriteTimeout: cfg.Redis.WriteTimeout,
+		},
+	}
+	cfg.Kafka.LegacyAdapter.ServiceRoutes = []legacyoutput.ServiceRoute{{UpperBound: math.MaxInt64, NodeID: "service-0"}}
 	cfg.Kafka.ClientID = "alarmd"
 	cfg.Kafka.BrokerVersion = "2.6.0"
 	cfg.Redis.Address = "127.0.0.1:6379"

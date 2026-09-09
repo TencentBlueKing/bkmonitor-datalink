@@ -249,7 +249,17 @@ kafka:
   brokers: [127.0.0.1:9092]
   trigger_event:
     topic: alarmd-trigger-event
-  allowed_output_topics: [alarmd-trigger-event]
+  allowed_output_topics: [alarmd-trigger-event, alarmd_0bkmonitor_backend_event]
+  legacy_adapter:
+    topic: alarmd_0bkmonitor_backend_event
+    snapshot_prefix: alarmd-test
+    service_nodes:
+      default:
+        mode: standalone
+        address: redis.test:6379
+    service_routes:
+      - upper_bound: 9223372036854775807
+        node_id: default
   client_id: alarmd
   broker_version: 2.6.0
 redis:

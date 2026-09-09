@@ -23,11 +23,57 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-// openBuiltInOutputDeploymentBundle opens the production bundle the way a
-// deployment does, with everything except the Kafka output settings held at the
-// values the running environment uses.
-func openBuiltInOutputDeploymentBundle(t *testing.T, kafka config.KafkaConfig) error {
-	t.Helper()
+// The built-in Python protocol is selected by strategy data, so its topic is a
+// topic this process can publish to. A deployment that narrowed the allowlist to
+// what it publishes today has not permitted it, and the allowlist is what says
+// so. The failure has to name the topic, because the operator reading the
+// message never wrote that name anywhere.
+func TestBuiltInPythonOutputTopicRejectedByAllowlistNamesTheTopic(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.Kafka.AllowedOutputTopics = []string{cfg.Kafka.TriggerEvent.Topic}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("a deployment that allowlists no compatibility topic must not validate")
+	}
+	if !strings.Contains(err.Error(), cfg.Kafka.LegacyAdapter.Topic) {
+		t.Fatalf("failure does not name the rejected topic: %v", err)
+	}
+	if !strings.Contains(err.Error(), "allowed_output_topics") {
+		t.Fatalf("failure does not name the setting the operator must change: %v", err)
+	}
+}
+
+// Allowlisting the topic is not enough to publish the protocol: every converted
+// event writes a snapshot to the service Redis first. Accepting a deployment
+// without those coordinates is what produced the release that failed every
+// event for twenty-five minutes while Slots kept completing, so the missing
+// dependency has to be refused before the process runs, not at the first write.
+// Validating it here also means --check-config covers it; the preflight used to
+// stop at decoding, and both incidents landed in that blind spot.
+func TestBuiltInPythonOutputWithoutServiceRedisIsRejected(t *testing.T) {
+	for name, breakIt := range map[string]func(*config.Config){
+		"no service routes":   func(cfg *config.Config) { cfg.Kafka.LegacyAdapter.ServiceRoutes = nil },
+		"no snapshot prefix":  func(cfg *config.Config) { cfg.Kafka.LegacyAdapter.SnapshotPrefix = "" },
+		"route names no node": func(cfg *config.Config) { cfg.Kafka.LegacyAdapter.ServiceNodes = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := validGoAccessRuntimeConfig()
+			breakIt(&cfg)
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatal("an incomplete compatibility output must not reach the first event to be discovered")
+			}
+			if !strings.Contains(err.Error(), "legacy_adapter") {
+				t.Fatalf("failure does not name the missing configuration section: %v", err)
+			}
+		})
+	}
+}
+
+// Configuration alone cannot prove the service Redis answers. The bundle opens
+// it before any Slot runs, so an unreachable node stops the process at startup
+// rather than at the first converted event.
+func TestBuiltInPythonOutputUnreachableServiceRedisStopsStartup(t *testing.T) {
 	sourceAddress, sourceClient := startPhaseTwoRedis(t)
 	runtimeAddress, _ := startPhaseTwoRedis(t)
 	ctx := context.Background()
@@ -47,19 +93,23 @@ func openBuiltInOutputDeploymentBundle(t *testing.T, kafka config.KafkaConfig) e
 	defer uqServer.Close()
 
 	cfg := validGoAccessRuntimeConfig()
-	cfg.Kafka.Brokers = kafka.Brokers
-	cfg.Kafka.ClientID = kafka.ClientID
-	cfg.Kafka.BrokerVersion = kafka.BrokerVersion
-	cfg.Kafka.TriggerEvent = kafka.TriggerEvent
-	cfg.Kafka.AllowedOutputTopics = kafka.AllowedOutputTopics
-	cfg.Kafka.LegacyAdapter = kafka.LegacyAdapter
 	cfg.Redis.Address = sourceAddress
+	withCompatibilityOutput(&cfg, sourceAddress)
 	cfg.Redis.StatePrefix = "alarmd:phase-two:builtin-output:v1"
 	runtimeRedis := cfg.Redis.Connection()
 	runtimeRedis.Address = runtimeAddress
 	cfg.PhaseTwo.RuntimeRedis = &runtimeRedis
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
+	// A port nothing listens on: the configuration is complete and only the
+	// dependency is absent.
+	unreachable := cfg.Kafka.LegacyAdapter.ServiceNodes["service-0"]
+	unreachable.Address = "127.0.0.1:1"
+	unreachable.DialTimeout = config.Duration(200 * time.Millisecond)
+	cfg.Kafka.LegacyAdapter.ServiceNodes = map[string]config.RedisConnectionConfig{"service-0": unreachable}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("the configuration itself must stay valid: %v", err)
+	}
 
 	bundle, err := openProductionPhaseTwoBundleWithDependencies(
 		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime),
@@ -77,57 +127,7 @@ func openBuiltInOutputDeploymentBundle(t *testing.T, kafka config.KafkaConfig) e
 	if bundle != nil {
 		t.Cleanup(func() { _ = bundle.Shutdown(context.Background()) })
 	}
-	return err
-}
-
-// deployedKafkaConfig is the shape a Shadow deployment publishes with: one
-// native topic, that same single entry as the allowlist, and no legacy_adapter
-// section at all. Narrowing the allowlist to what it publishes is what an
-// operator is supposed to do, so this shape has to keep working.
-func deployedKafkaConfig() config.KafkaConfig {
-	const shadowTopic = "alarmd_shadow_trigger_event"
-	kafka := config.KafkaConfig{
-		Brokers:             []string{"127.0.0.1:9092"},
-		ClientID:            "alarmd-shadow-writer",
-		BrokerVersion:       "0.10.2.0",
-		AllowedOutputTopics: []string{shadowTopic},
-	}
-	kafka.TriggerEvent.Topic = shadowTopic
-	kafka.TriggerEvent.MaxMessageBytes = 524288
-	return kafka
-}
-
-// The built-in Python protocol is selected by strategy data, so its topic is a
-// topic this process can publish to. A deployment that never listed that topic
-// has not permitted the publish, and the allowlist is what says so. The failure
-// must name the topic and say the process supplied it, because the operator
-// reading the message never wrote that name anywhere.
-func TestBuiltInPythonOutputTopicRejectedByDeploymentAllowlistNamesTheTopic(t *testing.T) {
-	err := openBuiltInOutputDeploymentBundle(t, deployedKafkaConfig())
 	if err == nil {
-		t.Fatal("a deployment that allowlists no compatibility topic must not start")
-	}
-	if !strings.Contains(err.Error(), "alarmd_0bkmonitor_backend_event") {
-		t.Fatalf("failure does not name the rejected topic: %v", err)
-	}
-	if !strings.Contains(err.Error(), "allowed_output_topics") {
-		t.Fatalf("failure does not name the setting the operator must change: %v", err)
-	}
-}
-
-// Allowlisting the topic is not enough to publish the protocol: every event
-// carries a snapshot that goes to the Python service Redis first. Accepting the
-// start without those coordinates is what produced the release that failed
-// every event for twenty-five minutes while Slots kept completing, so the
-// missing dependency has to stop the process instead of each write.
-func TestBuiltInPythonOutputWithoutServiceRedisFailsAtStartup(t *testing.T) {
-	kafka := deployedKafkaConfig()
-	kafka.AllowedOutputTopics = append(kafka.AllowedOutputTopics, "alarmd_0bkmonitor_backend_event")
-	err := openBuiltInOutputDeploymentBundle(t, kafka)
-	if err == nil {
-		t.Fatal("a deployment with no legacy service Redis must not reach the first event to discover it")
-	}
-	if !strings.Contains(err.Error(), "legacy_adapter") {
-		t.Fatalf("failure does not name the missing configuration section: %v", err)
+		t.Fatal("an unreachable compatibility service Redis must stop startup")
 	}
 }

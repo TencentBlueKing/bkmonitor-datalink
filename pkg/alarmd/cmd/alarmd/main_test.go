@@ -267,6 +267,17 @@ kafka:
   allowed_output_topics:
     - alarmd-shadow-trigger-event-v1
     - alarmd-shadow-message-receipt-v1
+    - alarmd_0bkmonitor_backend_event
+  legacy_adapter:
+    topic: alarmd_0bkmonitor_backend_event
+    snapshot_prefix: alarmd-compatibility-test
+    service_nodes:
+      service-0:
+        mode: standalone
+        address: 127.0.0.1:6379
+    service_routes:
+      - upper_bound: 9223372036854775807
+        node_id: service-0
   client_id: alarmd
   broker_version: 2.6.0
 redis:
@@ -287,6 +298,17 @@ kafka:
     max_message_bytes: 524288
   allowed_output_topics:
     - alarmd-shadow-trigger-event-v2
+    - alarmd_0bkmonitor_backend_event
+  legacy_adapter:
+    topic: alarmd_0bkmonitor_backend_event
+    snapshot_prefix: alarmd-compatibility-test
+    service_nodes:
+      service-0:
+        mode: standalone
+        address: 127.0.0.1:6379
+    service_routes:
+      - upper_bound: 9223372036854775807
+        node_id: service-0
   client_id: alarmd
   broker_version: 2.6.0
 redis:

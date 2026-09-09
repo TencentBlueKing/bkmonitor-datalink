@@ -131,3 +131,6 @@ Kubernetes 部署见 [Helm 指南](docs/guides/helm.md)：Chart 仅支持三角�
 Linkd Console 使用独立镜像，在当前目录执行 `make console-image IMAGE_TAG=dev` 构建
 `linkd-console:dev`；也可执行 `docker build -t linkd-console:dev console`。
 配置挂载和启动方式见 [Console README](console/README.md#容器镜像)。
+
+GitHub Actions 支持手动选择构建 Linkd、Console 或两个镜像并推送到 GHCR；没有自动触发事件。
+参数、权限和版本标签约定见 [手动构建与发布镜像](docs/guides/image-release.md)。

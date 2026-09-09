@@ -6,6 +6,7 @@
 
 - [部署模式与进程拓扑](../design/deployment.md)（已确认方向与当前实现边界）；
 - [项目 README 的容器镜像](../../README.md#容器镜像)：在 `pkg/linkd` 独立构建 `tencentos/tencentos4-minimal` 运行时镜像；
+- [手动构建与发布镜像](image-release.md)：GitHub Actions 手动构建 Linkd / Console、GHCR 权限与版本标签；
 - [配置与启动](configuration.md)；
 - [Helm 部署与 worker 分组](helm.md)：三角色部署、独立配置 Secret、可选 Console 与认证入口；
 - [Standard Event 模拟器](event-generator.md)；

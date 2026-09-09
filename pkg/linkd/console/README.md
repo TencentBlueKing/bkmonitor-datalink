@@ -37,6 +37,8 @@ Kafka TLS 相对文件路径按 Linkd 配置文件所在目录解析。浏览器
 
 ## 容器镜像
 
+GitHub Actions 的手动打包入口、GHCR 地址和版本约定见 [手动构建与发布镜像](../docs/guides/image-release.md)。
+
 在 Linkd 模块根目录构建：
 
 ```bash

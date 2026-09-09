@@ -1054,7 +1054,7 @@ func phaseTwoWorkerRegistration(
 	}
 	registration := ownership.WorkerRegistration{
 		WorkerID: cfg.PhaseTwo.Worker.ID, AssignmentReadiness: readiness,
-		DependencyStatus: ownership.DependencyHealthy, DeploymentProfile: cfg.PhaseTwo.Worker.DeploymentProfile,
+		DependencyStatus: ownership.DependencyHealthy, DeploymentProfile: cfg.DeploymentProfile(),
 		CapabilitiesDigest: capabilitiesDigest,
 		ExpiresAt:          at.Add(cfg.PhaseTwo.Worker.RegistrationTTL.Duration()),
 	}

@@ -20,7 +20,6 @@ const PhaseTwoWorkerIDEnvironment = "ALARMD_PHASE_TWO_WORKER_ID"
 
 type PhaseTwoWorkerConfig struct {
 	ID                        string   `yaml:"id"`
-	DeploymentProfile         string   `yaml:"deployment_profile"`
 	RegistrationTTL           Duration `yaml:"registration_ttl"`
 	RegistrationRenewInterval Duration `yaml:"registration_renew_interval"`
 }
@@ -164,8 +163,8 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 	if err := c.TargetFlow.Validate(); err != nil {
 		return err
 	}
-	if !canonicalText(c.Worker.ID) || !canonicalText(c.Worker.DeploymentProfile) {
-		return errors.New("phase_two worker identity and deployment_profile must be canonical text")
+	if !canonicalText(c.Worker.ID) {
+		return errors.New("phase_two worker identity must be canonical text")
 	}
 	if !ttlExceedsRenew(c.Worker.RegistrationTTL, c.Worker.RegistrationRenewInterval) {
 		return errors.New("phase_two worker registration_ttl must exceed registration_renew_interval")

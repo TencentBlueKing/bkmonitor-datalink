@@ -121,6 +121,10 @@ func runWithRuntimeModeDependencies(
 		return 1
 	}
 	if *checkConfig {
+		if err := printResolvedRuntimeFacts(cfg, stdout); err != nil {
+			fmt.Fprintf(stderr, "report resolved configuration: %v\n", err)
+			return 1
+		}
 		return 0
 	}
 	if *temporaryCleanupRequest != "" {

@@ -174,6 +174,15 @@ func Default() Config {
 	}
 }
 
+// DeploymentProfile is the Worker's Ownership compatibility identity: Workers
+// registered under different profiles never take over one another's Query
+// Groups. The shape that decides it is the run mode, so it is derived from
+// Mode rather than configured beside it - two independent fields could be set
+// to disagreeing values, and nothing in the process would notice.
+func (c Config) DeploymentProfile() string {
+	return c.Mode
+}
+
 // AdmittedQueryConcurrency is the number of queries the scheduler may have in
 // flight at once. It bounds the query stage only; it is not the bound on Redis
 // concurrency, because the Slot source reads the control plane before a Slot

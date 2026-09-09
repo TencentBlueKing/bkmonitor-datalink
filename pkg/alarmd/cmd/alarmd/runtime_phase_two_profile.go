@@ -6,7 +6,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"runtime"
 	"strings"
 
 	"go.uber.org/automaxprocs/maxprocs"
@@ -42,6 +45,34 @@ func configurePhaseTwoCPUWith(set func(func(string, ...interface{})) error) (str
 		return "", fmt.Errorf("configure phase-two CPU quota: %w", err)
 	}
 	return source, nil
+}
+
+// printResolvedRuntimeFacts writes the same startup facts the running process
+// logs as config_loaded. Without it --check-config could only answer "valid",
+// and an operator with no way to see which values a deployment would actually
+// run had one defence left: restate every setting in values, defaults
+// included. That is how a deployment came to carry fifteen runtime
+// settings that were byte-identical copies of the product defaults, with
+// nothing to tell them apart from the settings that decide something.
+//
+// The facts are credential-free by construction, and cpu_source names where
+// GOMAXPROCS came from, so a table printed outside the Pod says so itself
+// rather than passing the host's core count off as the container's.
+func printResolvedRuntimeFacts(cfg config.Config, stdout io.Writer) error {
+	if cfg.Input.Mode != config.InputModeGoAccess {
+		return nil
+	}
+	cpuSource, err := configurePhaseTwoCPU()
+	if err != nil {
+		return err
+	}
+	facts, err := phaseTwoRuntimeProfile(cfg.WithResolvedRedisPoolSize(), cpuSource, runtime.GOMAXPROCS(0))
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(facts)
 }
 
 func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (observability.RuntimeConfigFacts, error) {

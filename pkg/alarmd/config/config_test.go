@@ -114,7 +114,6 @@ redis:
 phase_two:
   worker:
     id: alarmd-worker-0
-    deployment_profile: shadow
   control:
     strategy_cache_prefix: alarm-config
     provider_route: unify-query-primary
@@ -567,7 +566,6 @@ func validGoAccessConfigObject() Config {
 	cfg.Redis.Address = "redis.test:6379"
 	cfg.Redis.StatePrefix = "alarmd-phase-two"
 	cfg.PhaseTwo.Worker.ID = "alarmd-worker-0"
-	cfg.PhaseTwo.Worker.DeploymentProfile = "shadow"
 	cfg.PhaseTwo.Control.StrategyCachePrefix = "alarm-config"
 	cfg.PhaseTwo.Control.ProviderRoute = "unify-query-primary"
 	cfg.PhaseTwo.Control.Timezone = "Asia/Shanghai"

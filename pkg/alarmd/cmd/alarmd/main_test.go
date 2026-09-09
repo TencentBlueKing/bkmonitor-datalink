@@ -309,7 +309,6 @@ redis:
 phase_two:
   worker:
     id: alarmd-worker-0
-    deployment_profile: shadow
   control:
     strategy_cache_prefix: alarm-config
     provider_route: unify-query-primary

@@ -16,6 +16,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -194,22 +195,31 @@ func Default() Config {
 }
 
 // AdmittedQueryConcurrency is the number of queries the scheduler may have in
-// flight at once. It is the floor the Redis pool has to clear, because each of
-// those queries holds its permit across the Redis round-trips it makes.
+// flight at once. It bounds the query stage only; it is not the bound on Redis
+// concurrency, because the Slot source reads the control plane before a Slot
+// becomes eligible to query and holds no permit while doing so.
 func (c Config) AdmittedQueryConcurrency() int {
 	s := c.PhaseTwo.Scheduler
 	return s.ProcessQueryPermits + s.RecoveryQueryPermits
+}
+
+// redisPoolCPUBudget is the CPU budget the pool derives from. automaxprocs has
+// already resolved GOMAXPROCS from the container's cgroup quota by the time the
+// configuration is read, so this reports what the container was actually given
+// rather than the host's core count.
+func redisPoolCPUBudget() int {
+	return runtime.GOMAXPROCS(0)
 }
 
 // WithResolvedRedisPoolSize returns a copy whose Redis pool sizes are concrete
 // positive numbers, so the resolved value can be reported as a startup fact
 // rather than staying implicit in the client.
 func (c Config) WithResolvedRedisPoolSize() Config {
-	admitted := c.AdmittedQueryConcurrency()
-	c.Redis.PoolSize = c.Redis.Connection().EffectivePoolSize(admitted)
+	cpuBudget := redisPoolCPUBudget()
+	c.Redis.PoolSize = c.Redis.Connection().EffectivePoolSize(cpuBudget)
 	if c.PhaseTwo.RuntimeRedis != nil {
 		runtimeRedis := c.PhaseTwo.RuntimeRedis.clone()
-		runtimeRedis.PoolSize = runtimeRedis.EffectivePoolSize(admitted)
+		runtimeRedis.PoolSize = runtimeRedis.EffectivePoolSize(cpuBudget)
 		c.PhaseTwo.RuntimeRedis = &runtimeRedis
 	}
 	return c
@@ -251,6 +261,32 @@ func (c *Config) resolvePhaseTwoRuntimeRedis() {
 	c.PhaseTwo.RuntimeRedis = &resolved
 }
 
+// resolveCompatibilityServiceTimeouts lets a compatibility service node inherit
+// the runtime Redis timeouts when it does not state its own. Timeouts say how
+// long to wait, not where to write, so inheriting them keeps one operational
+// setting instead of two; mode and address stay explicit because they decide
+// the destination and a wrong guess there writes a snapshot nobody reads.
+func (c *Config) resolveCompatibilityServiceTimeouts() {
+	if c == nil || len(c.Kafka.LegacyAdapter.ServiceNodes) == 0 {
+		return
+	}
+	runtimeRedis := c.Redis.Connection()
+	resolved := make(map[string]RedisConnectionConfig, len(c.Kafka.LegacyAdapter.ServiceNodes))
+	for id, connection := range c.Kafka.LegacyAdapter.ServiceNodes {
+		if connection.DialTimeout == 0 {
+			connection.DialTimeout = runtimeRedis.DialTimeout
+		}
+		if connection.ReadTimeout == 0 {
+			connection.ReadTimeout = runtimeRedis.ReadTimeout
+		}
+		if connection.WriteTimeout == 0 {
+			connection.WriteTimeout = runtimeRedis.WriteTimeout
+		}
+		resolved[id] = connection
+	}
+	c.Kafka.LegacyAdapter.ServiceNodes = resolved
+}
+
 func (c Config) StateStoreOptions(codec *state.Codec, router state.StorageRouter, observer state.Observer) state.StoreOptions {
 	return state.StoreOptions{
 		Prefix: c.Redis.StatePrefix, Codec: codec, Router: router, Limits: c.StoreLimits(),
@@ -286,6 +322,7 @@ func Load(path string) (Config, error) {
 	cfg := Default()
 	if path == "" {
 		cfg.resolvePhaseTwoRuntimeRedis()
+		cfg.resolveCompatibilityServiceTimeouts()
 		return cfg, cfg.Validate()
 	}
 
@@ -309,6 +346,7 @@ func Load(path string) (Config, error) {
 	}
 
 	cfg.resolvePhaseTwoRuntimeRedis()
+	cfg.resolveCompatibilityServiceTimeouts()
 	cfg.resolvePhaseTwoWorkerIDFromEnvironment()
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -429,6 +467,9 @@ func (c Config) validateGoAccessRuntime() error {
 	}
 	if err := validatePhaseTwoKafkaOutput(c.Kafka); err != nil {
 		return fmt.Errorf("trigger event configuration: %w", err)
+	}
+	if err := c.Kafka.validateCompatibilityOutput(); err != nil {
+		return fmt.Errorf("compatibility output configuration: %w", err)
 	}
 	if err := c.validateSharedRuntime(); err != nil {
 		return err

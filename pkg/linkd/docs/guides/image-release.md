@@ -106,7 +106,9 @@ Artifact 保留期受仓库或组织策略限制，见 [GitHub Artifacts 文档]
 在组织仓库运行时，Chart 上传后还会通过 Artifact Metadata API 登记到组织的
 `https://github.com/orgs/<owner>/artifacts` 页面，名称为 `linkd-chart`。登记包含 Chart 版本、
 `.tgz` 文件本身的 SHA256、所属仓库与本次 Artifact 下载链接，并回读确认记录存在。
-Helm job 单独申请 `artifact-metadata: write` 权限；个人 fork 跳过组织级登记。
+登记前通过 GitHub 官方 `actions/attest` 生成构建来源证明，关联同一个 `.tgz`、源码提交与 Workflow。
+Helm job 单独申请 `artifact-metadata: write`、`id-token: write` 和 `attestations: write` 权限；
+个人 fork 跳过来源证明和组织级登记。API 回读成功只确认存储记录存在，页面展示仍需单独验证。
 
 Linked artifacts 只存储关联信息，文件仍遵循 Actions 的 30 天保留期；登记不会延长文件寿命，
 本流程也不会在文件过期后自动更新记录状态。接口说明见

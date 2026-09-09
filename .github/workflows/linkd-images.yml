@@ -169,6 +169,8 @@ jobs:
     permissions:
       contents: read
       artifact-metadata: write
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout selected commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -222,6 +224,12 @@ jobs:
           path: dist/linkd-chart/
           if-no-files-found: error
           retention-days: 30
+
+      - name: Attest chart provenance
+        if: ${{ github.event.repository.owner.type == 'Organization' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: dist/linkd-chart/linkd-*.tgz
 
       - name: Register chart in linked artifacts
         if: ${{ github.event.repository.owner.type == 'Organization' }}

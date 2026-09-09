@@ -18,11 +18,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-// An operator deciding what to write in values needs to see what the process
-// would run, and the settings that need seeing most are the ones no file
-// mentions. --check-config used to answer only "valid", so the safe move was
-// to restate every setting including the defaults, which is how a
-// deployment ended up carrying fifteen byte-identical copies of them.
+// A release preflight has to be able to state what the build about to ship
+// will run under, and the settings that matter most are the ones no file
+// mentions because the process decides them. --check-config used to answer
+// only "valid", which left a configuration change unreviewable until a Pod
+// either came up or did not.
 func TestCheckConfigReportsSettingsTheFileNeverMentions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "alarmd.yaml")
 	contents := validGoAccessApplicationYAML()

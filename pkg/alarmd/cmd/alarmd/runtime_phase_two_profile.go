@@ -48,12 +48,14 @@ func configurePhaseTwoCPUWith(set func(func(string, ...interface{})) error) (str
 }
 
 // printResolvedRuntimeFacts writes the same startup facts the running process
-// logs as config_loaded. Without it --check-config could only answer "valid",
-// and an operator with no way to see which values a deployment would actually
-// run had one defence left: restate every setting in values, defaults
-// included. That is how a deployment came to carry fifteen runtime
-// settings that were byte-identical copies of the product defaults, with
-// nothing to tell them apart from the settings that decide something.
+// logs as config_loaded, so a release preflight can state what the build about
+// to ship will actually run under and how that differs from the build it
+// replaces. Answering only "valid" made a configuration change unreviewable
+// before it reached a Pod, which is where both capacity incidents were found.
+//
+// These are internal runtime facts, not an operating interface: a setting an
+// operator has to read here is a setting that should not have been theirs to
+// write. The report exists for preflight and for forensics after an incident.
 //
 // The facts are credential-free by construction, and cpu_source names where
 // GOMAXPROCS came from, so a table printed outside the Pod says so itself

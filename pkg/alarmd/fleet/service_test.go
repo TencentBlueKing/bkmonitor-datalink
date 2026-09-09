@@ -156,6 +156,23 @@ func TestUnreadableSnapshotsReportZeroCoverageNotZeroAnomalies(t *testing.T) {
 	}
 }
 
+// If the freshness budget reaches the retention budget, a snapshot expires at
+// the same moment it stops being fresh, so the stale branch never fires and a
+// stuck-but-alive replica is reported as gone. The two mean different things to
+// whoever is on call.
+func TestFreshnessMustBeShorterThanRetention(t *testing.T) {
+	store := mustStore(t, newFakeRedis(), time.Minute, 10)
+	if _, err := NewService(stubExpectations{}, stubRegistry{}, store, time.Minute, nil); err == nil {
+		t.Fatal("freshness equal to retention was accepted; the stale branch would be unreachable")
+	}
+	if _, err := NewService(stubExpectations{}, stubRegistry{}, store, 2*time.Minute, nil); err == nil {
+		t.Fatal("freshness longer than retention was accepted")
+	}
+	if _, err := NewService(stubExpectations{}, stubRegistry{}, store, 30*time.Second, nil); err != nil {
+		t.Fatalf("freshness shorter than retention was rejected: %v", err)
+	}
+}
+
 func TestNewServiceRequiresEverySource(t *testing.T) {
 	if _, err := NewService(nil, stubRegistry{}, stubSnapshots{}, time.Minute, nil); err == nil {
 		t.Fatal("service was built without an expectation source")

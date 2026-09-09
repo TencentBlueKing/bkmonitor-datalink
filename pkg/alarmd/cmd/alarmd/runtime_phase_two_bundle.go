@@ -539,15 +539,22 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	fleetStore, err := fleet.NewRedisStore(controlClient, cfg.Redis.StatePrefix, 0, 0)
+	// Same client and prefix convention as the catalog and ownership stores:
+	// these snapshots are phase-two runtime state, not a separate channel.
+	fleetStore, err := fleet.NewRedisStore(runtimeClient, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "fleet"), 0, 0)
 	if err != nil {
 		return nil, err
 	}
+	// Freshness has to be shorter than the snapshot TTL, or a replica that
+	// stops publishing goes straight from fresh to absent and the stale branch
+	// never fires. The two say different things: stale means alive but stuck,
+	// absent means gone, and an operator acts differently on each.
+	fleetFreshness := 6 * cfg.PhaseTwo.Control.ReconcileInterval.Duration()
 	fleetService, err := fleet.NewService(
 		controlPlaneExpectation{repository: repository},
 		registryReplicas{store: ownershipStore},
 		fleetStore,
-		0,
+		fleetFreshness,
 		external.Now,
 	)
 	if err != nil {

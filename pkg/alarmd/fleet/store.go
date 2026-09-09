@@ -65,6 +65,11 @@ func NewRedisStore(client redis.Cmdable, prefix string, ttl time.Duration, maxAn
 	return &RedisStore{client: client, prefix: prefix, ttl: ttl, maxAnomalies: maxAnomalies}, nil
 }
 
+// TTL reports how long a published snapshot stays readable. Callers use it to
+// keep their freshness budget shorter, so a replica that stops publishing is
+// seen as stale before it is seen as absent.
+func (store *RedisStore) TTL() time.Duration { return store.ttl }
+
 func (store *RedisStore) snapshotKey(replica string) string {
 	digest := sha256.Sum256([]byte(replica))
 	return store.prefix + ":fleet-snapshot:" + hex.EncodeToString(digest[:])

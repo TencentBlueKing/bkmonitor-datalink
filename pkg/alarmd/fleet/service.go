@@ -50,7 +50,9 @@ type Service struct {
 }
 
 // NewService wires the three sources. freshness is how old a snapshot may be
-// before it stops counting as coverage.
+// before it stops counting as coverage, and must be shorter than the store's
+// retention: equal budgets make the stale branch unreachable, because a
+// snapshot would expire at the same moment it stopped being fresh.
 func NewService(
 	expectations ExpectationSource,
 	registry ReplicaRegistry,
@@ -62,7 +64,12 @@ func NewService(
 		return nil, errors.New("alarmd fleet: service requires expectations, a registry and snapshots")
 	}
 	if freshness <= 0 {
-		freshness = DefaultTTL
+		freshness = DefaultTTL / 4
+	}
+	if retention, ok := snapshots.(interface{ TTL() time.Duration }); ok {
+		if budget := retention.TTL(); budget > 0 && freshness >= budget {
+			return nil, errors.New("alarmd fleet: snapshot freshness must be shorter than retention, or a stuck replica is never reported as stale")
+		}
 	}
 	if now == nil {
 		now = time.Now

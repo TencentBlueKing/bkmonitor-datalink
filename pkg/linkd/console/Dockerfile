@@ -10,7 +10,8 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --registry="${NPM_REGISTRY}"
 COPY . .
-RUN NODE_OPTIONS="${NODE_BUILD_OPTIONS}" pnpm build && npm_config_registry="${NPM_REGISTRY}" pnpm prune --prod
+# prune 不接受 --registry；通过 pnpm 的配置参数传入，保持依赖裁剪使用相同的源。
+RUN NODE_OPTIONS="${NODE_BUILD_OPTIONS}" pnpm build && pnpm prune --prod --config.registry="${NPM_REGISTRY}"
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
 RUN VERSION="${VERSION}" GIT_COMMIT="${GIT_COMMIT}" node -e 'require("node:fs").writeFileSync("build-info.json", JSON.stringify({version: process.env.VERSION, git_commit: process.env.GIT_COMMIT}))'

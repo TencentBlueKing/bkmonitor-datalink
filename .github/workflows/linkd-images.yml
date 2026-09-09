@@ -70,7 +70,7 @@ jobs:
     if: ${{ inputs.component != 'helm' }}
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
@@ -112,6 +112,12 @@ jobs:
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
+      # Console 的依赖安装和构建在目标架构执行；版本查询也需要运行 ARM 镜像。
+      - name: Set up QEMU for ARM64
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
@@ -127,7 +133,7 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: ${{ matrix.component == 'linkd' && 'pkg/linkd' || 'pkg/linkd/console' }}
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.image.outputs.tags }}
           build-args: |
@@ -148,13 +154,16 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          actual=$(docker run --rm --network none "$IMAGE@$DIGEST" version)
           expected=$(printf 'version: %s\ngit_commit: %s' "$VERSION" "$GITHUB_SHA")
-          if [[ "$actual" != "$expected" ]]; then
-            echo '::error::镜像内的版本号或 Git commit 与本次构建不一致'
-            exit 1
-          fi
-          printf '%s\n' "$actual"
+          for platform in linux/amd64 linux/arm64; do
+            # 每次按平台拉取同一 index digest，避免只验证 runner 的原生架构。
+            actual=$(docker run --rm --pull always --platform "$platform" --network none "$IMAGE@$DIGEST" version)
+            if [[ "$actual" != "$expected" ]]; then
+              echo "::error::$platform 镜像内的版本号或 Git commit 与本次构建不一致"
+              exit 1
+            fi
+            printf '%s\n%s\n' "$platform" "$actual"
+          done
 
       - name: Summarize published image
         shell: bash
@@ -170,7 +179,7 @@ jobs:
             printf -- '- 构建标签：`%s:%s`\n' "$IMAGE" "$BUILD_TAG"
             printf -- '- 固定产物：`%s@%s`\n' "$IMAGE" "$DIGEST"
             printf -- '- 源码提交：`%s`\n' "$GITHUB_SHA"
-            printf -- '- 平台：`linux/amd64`\n'
+            printf -- '- 平台：`linux/amd64`、`linux/arm64`（同一标签和多架构 index digest）\n'
           } >> "$GITHUB_STEP_SUMMARY"
 
   package-chart:

@@ -1,7 +1,9 @@
 # 手动构建与发布镜像和 Chart
 
 仓库根目录的 [Linkd images workflow](../../../../.github/workflows/linkd-images.yml) 复用
-Linkd 和 Console 的 Dockerfile，构建 `linux/amd64` 镜像并推送到 GitHub Container Registry（GHCR）。
+Linkd 和 Console 的 Dockerfile，默认同时构建 `linux/amd64` 和 `linux/arm64` 镜像并推送到 GitHub Container Registry（GHCR）。
+每个组件的两个架构共用同一个标签，拉取时按运行节点架构选择镜像，无需设置架构专用 tag。
+Workflow 在 amd64 runner 上配置 QEMU，支持 ARM 构建及版本查询；双架构构建超时为 90 分钟。
 它只声明 `workflow_dispatch`，提交代码、创建 PR、推送 Git tag 或发布 Release 都不会自动触发。
 镜像构建与 Helm 打包通过 `component` 互斥选择，不会在同一次运行中同时执行。
 
@@ -43,7 +45,7 @@ ghcr.io/<owner>/<repository>/linkd:<tag>
 ghcr.io/<owner>/<repository>/linkd-console:<tag>
 ```
 
-每个成功的构建都会在 Actions Summary 中输出镜像标签、digest 和源码 SHA。
+每个成功的构建都会在 Actions Summary 中输出镜像标签、多架构 index digest、平台和源码 SHA。
 选择 `all` 时两个组件独立执行；一个失败不会撤销另一个已推送的镜像。成套部署前应确认两个 job 均成功，
 并记录各自 digest。流程只构建和推送镜像，不执行 `make check`，发布前应在待发布提交上完成质量门禁。
 
@@ -78,7 +80,8 @@ git_commit: <full-git-sha>
 
 Console 提供受 Basic Auth 保护的 `GET /local-api/version`，返回 `version` 和 `git_commit`。
 这与 `/local-api/capabilities` 中的接口 schema version 是不同字段。每次镜像构建结束后，Workflow
-使用产物 digest 拉起无网络版本查询，校验镜像内版本及 commit 与本次构建一致。
+使用产物 index digest 分别以 `--platform linux/amd64` 和 `--platform linux/arm64` 拉起无网络版本查询，
+校验两个架构的镜像内版本及 commit 均与本次构建一致。
 未注入构建信息的开发产物显示 `dev` / `unknown`；已发布镜像不会因 Workflow 修改而变化。
 
 Helm 的 `image.tag` / `console.image.tag` 使用同一交付标签；需要精确回滚时分别填写

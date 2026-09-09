@@ -171,8 +171,8 @@ func defaultApplicationDependencies(eventLogger *observability.Logger) applicati
 	return applicationDependencies{
 		logger:     eventLogger,
 		openBundle: openApplicationBundle,
-		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource) (httpRuntime, error) {
-			return httpservice.NewWithHealth(recorder, source)
+		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource, diagnosticsAddress string) (httpRuntime, error) {
+			return httpservice.NewWithHealth(recorder, source, httpservice.WithDiagnosticsAddress(diagnosticsAddress))
 		},
 	}
 }

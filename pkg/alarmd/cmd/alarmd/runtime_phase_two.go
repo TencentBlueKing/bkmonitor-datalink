@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime"
 	"sort"
 	"sync"
@@ -74,7 +75,7 @@ type phaseTwoApplicationDependencies struct {
 		*observability.Logger,
 		*phaseTwoApplicationHealth,
 	) (*phaseTwoWorkerBundle, error)
-	newHTTP func(*metric.Recorder, observability.HealthSource) (httpRuntime, error)
+	newHTTP func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error)
 }
 
 type runtimeModeDependencies struct {
@@ -87,8 +88,8 @@ func defaultPhaseTwoApplicationDependencies() phaseTwoApplicationDependencies {
 	return phaseTwoApplicationDependencies{
 		configureCPU: configurePhaseTwoCPU,
 		run:          runPhaseTwoApplication, openBundle: openProductionPhaseTwoBundle,
-		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource) (httpRuntime, error) {
-			return defaultApplicationDependencies(nil).newHTTP(recorder, source)
+		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource, diagnosticsAddress string) (httpRuntime, error) {
+			return defaultApplicationDependencies(nil).newHTTP(recorder, source, diagnosticsAddress)
 		},
 	}
 }
@@ -162,8 +163,12 @@ func runPhaseTwoApplicationWithDependencies(
 	if logger == nil {
 		logger = observability.Discard(observability.ComponentRuntime)
 	}
-	logger.Info(observability.StageStartup, observability.ResultStarted, 0, 0)
-	server, err := dependencies.newHTTP(recorder, application)
+	// Report the diagnostics surface at startup. An unset address serves no
+	// pprof, and losing it without a single line would be the same silent
+	// capability loss the split exists to prevent.
+	logger.Info(observability.StageStartup, observability.ResultStarted, 0, 0,
+		slog.String("diagnostics_listen", cfg.HTTP.DiagnosticsFact()))
+	server, err := dependencies.newHTTP(recorder, application, cfg.HTTP.DiagnosticsListen)
 	if err != nil {
 		return err
 	}

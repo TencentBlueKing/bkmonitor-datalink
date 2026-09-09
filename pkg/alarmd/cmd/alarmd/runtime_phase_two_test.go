@@ -121,7 +121,7 @@ func TestRunPhaseTwoApplicationUsesWorkerBundleInsteadOfFixedFailure(t *testing.
 		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger, *phaseTwoApplicationHealth) (*phaseTwoWorkerBundle, error) {
 			return bundle, nil
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
 				<-ctx.Done()
 				return nil
@@ -161,7 +161,7 @@ func TestRunPhaseTwoApplicationBoundsHTTPShutdownWhenBundleOpenFails(t *testing.
 		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger, *phaseTwoApplicationHealth) (*phaseTwoWorkerBundle, error) {
 			return nil, want
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(context.Context, string, time.Duration) error {
 				<-httpRelease
 				return nil
@@ -214,7 +214,7 @@ func TestRunPhaseTwoApplicationCancelsWorkerAndMarksFatalWhenHTTPStopsEarly(t *t
 				Observer: observer, Now: time.Now,
 			})
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(context.Context, string, time.Duration) error {
 				waitSignal(t, runner.leaseStarted, "query-group lease maintenance")
 				return want
@@ -280,7 +280,7 @@ func TestRunPhaseTwoApplicationKeepsRunningAfterQueryGroupFailure(t *testing.T) 
 				Observer: observer, Now: time.Now,
 			})
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
 				<-ctx.Done()
 				close(httpCanceled)

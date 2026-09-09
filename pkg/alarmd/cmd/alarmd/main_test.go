@@ -142,7 +142,7 @@ func TestRunExplicitCompatibilityUsesPhaseOneRuntime(t *testing.T) {
 				cfg.Redis.StatePrefix == "alarmd-shadow"
 			return nil, want
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
 				<-ctx.Done()
 				return nil

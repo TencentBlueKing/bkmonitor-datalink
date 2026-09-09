@@ -26,7 +26,7 @@ func TestMigrateCommand(t *testing.T) {
 		t.Run(map[bool]string{false: "success", true: "failure"}[wantFailure], func(t *testing.T) {
 			sentinel := errors.New("initialization failed")
 			called := false
-			root := NewRootCommand("test", Dependencies{MigrationRunner: func(ctx context.Context, _ config.Config) error {
+			root := NewRootCommand("test", "test-commit", Dependencies{MigrationRunner: func(ctx context.Context, _ config.Config) error {
 				called = true
 				deadline, exists := ctx.Deadline()
 				if !exists || time.Until(deadline) > 4*time.Minute {
@@ -61,7 +61,7 @@ func TestMigrateCommandRejectsInvalidInput(t *testing.T) {
 		{"--timeout", "0s"}, {"--timeout", "31m"}, {"unexpected"},
 		{"--config", "/missing/linkd.yaml"},
 	} {
-		root := NewRootCommand("test", Dependencies{MigrationRunner: func(context.Context, config.Config) error {
+		root := NewRootCommand("test", "test-commit", Dependencies{MigrationRunner: func(context.Context, config.Config) error {
 			t.Fatal("invalid input reached initializer")
 			return nil
 		}})
@@ -74,7 +74,7 @@ func TestMigrateCommandRejectsInvalidInput(t *testing.T) {
 
 func TestMigrateCommandPropagatesTimeout(t *testing.T) {
 	t.Parallel()
-	root := NewRootCommand("test", Dependencies{MigrationRunner: func(ctx context.Context, _ config.Config) error {
+	root := NewRootCommand("test", "test-commit", Dependencies{MigrationRunner: func(ctx context.Context, _ config.Config) error {
 		<-ctx.Done()
 		return ctx.Err()
 	}})

@@ -20,14 +20,17 @@ import (
 	"linkd/internal/cli"
 )
 
-var version = "dev"
+var (
+	version   = "dev"
+	gitCommit = "unknown"
+)
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	// 所有常驻角色都使用正式默认进程装配，并各自初始化 telemetry；嵌入和测试可通过 Dependencies 替换。
-	command := cli.NewRootCommand(version, cli.Dependencies{})
+	command := cli.NewRootCommand(version, gitCommit, cli.Dependencies{})
 	if err := command.ExecuteContext(ctx); err != nil {
 		_, _ = fmt.Fprintln(command.ErrOrStderr(), err)
 		os.Exit(1)

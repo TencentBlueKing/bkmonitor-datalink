@@ -85,6 +85,7 @@ describe("Basic Auth boundary", () => {
           "/assets/example.js",
           "/config",
           "/local-api/capabilities",
+          "/local-api/version",
           "/local-api/unknown",
         ]) {
           const response = await app.inject({
@@ -112,7 +113,11 @@ describe("Basic Auth boundary", () => {
   it("authenticates local API without exposing either credential", async () => {
     const app = await createApp(config);
     try {
-      for (const url of ["/local-api/capabilities", "/local-api/config"]) {
+      for (const url of [
+        "/local-api/capabilities",
+        "/local-api/config",
+        "/local-api/version",
+      ]) {
         const response = await app.inject({ url, headers: { authorization } });
         expect(response.statusCode).toBe(200);
         expect(response.body).not.toContain(credentials.password);

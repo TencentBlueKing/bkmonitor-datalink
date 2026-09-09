@@ -8,8 +8,15 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY . .
 RUN NODE_OPTIONS="${NODE_BUILD_OPTIONS}" pnpm build && pnpm prune --prod
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+RUN VERSION="${VERSION}" GIT_COMMIT="${GIT_COMMIT}" node -e 'require("node:fs").writeFileSync("build-info.json", JSON.stringify({version: process.env.VERSION, git_commit: process.env.GIT_COMMIT}))'
 
 FROM ${NODE_IMAGE}
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+LABEL org.opencontainers.image.version="${VERSION}" \
+    org.opencontainers.image.revision="${GIT_COMMIT}"
 ENV NODE_ENV=production \
     LINKD_CONFIG=/app/configs/linkd.yaml \
     LINKD_CONSOLE_MODE=server \
@@ -21,6 +28,8 @@ COPY --from=builder --chown=node:node /app/package.json ./
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/dist-server ./dist-server
+COPY --from=builder --chown=node:node /app/build-info.json ./build-info.json
 USER node
 EXPOSE 4399
-CMD ["node", "dist-server/server/index.js"]
+ENTRYPOINT ["node", "dist-server/server/index.js"]
+CMD []

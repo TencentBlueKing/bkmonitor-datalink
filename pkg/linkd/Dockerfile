@@ -15,6 +15,7 @@ FROM ${GO_IMAGE} AS builder
 
 ARG GOPROXY=direct
 ARG VERSION=dev
+ARG GIT_COMMIT=unknown
 
 WORKDIR /src
 
@@ -26,11 +27,15 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/linkd ./cmd/linkd
+RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT}" -o /out/linkd ./cmd/linkd
 
 FROM tencentos/tencentos4-minimal
 
-LABEL maintainer="Tencent BlueKing"
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+LABEL maintainer="Tencent BlueKing" \
+    org.opencontainers.image.version="${VERSION}" \
+    org.opencontainers.image.revision="${GIT_COMMIT}"
 
 RUN mkdir -p /data/linkd/configs \
     && groupadd -r -g 65532 linkd \

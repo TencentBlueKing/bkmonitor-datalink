@@ -7,6 +7,7 @@ CONSOLE_DIR ?= console
 IMAGE ?= linkd
 IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 VERSION ?= $(IMAGE_TAG)
+GIT_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 GO_IMAGE ?= golang:1.26.7
 GOPROXY ?= direct
 CONTAINER ?= $(shell command -v docker >/dev/null 2>&1 && echo docker || echo container)
@@ -78,11 +79,14 @@ image:
 		--build-arg GO_IMAGE=$(GO_IMAGE) \
 		--build-arg GOPROXY=$(GOPROXY) \
 		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		-t $(IMAGE):$(IMAGE_TAG) \
 		.
 
 console-image:
 	$(CONTAINER) build $(CONSOLE_BUILD_FLAGS) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg NODE_IMAGE=$(NODE_IMAGE) \
 		--build-arg NODE_BUILD_OPTIONS="$(NODE_BUILD_OPTIONS)" \
 		-t $(CONSOLE_IMAGE):$(IMAGE_TAG) \

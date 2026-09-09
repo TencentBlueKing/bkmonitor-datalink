@@ -24,6 +24,16 @@ const config = {
 } satisfies ConsoleConfig;
 
 describe("local API", () => {
+  it("exposes Console build metadata separately from capabilities schema version", async () => {
+    const app = await createApp(config);
+    const response = await app.inject({
+      method: "GET",
+      url: "/local-api/version",
+    });
+    await app.close();
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ version: "dev", git_commit: "unknown" });
+  });
   it("returns capabilities without credentials", async () => {
     const app = await createApp(config);
     const response = await app.inject({

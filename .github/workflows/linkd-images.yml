@@ -17,17 +17,13 @@ on:
         description: 可选版本标签（如 v0.1.0-rc.1）；留空仅发布唯一构建标签
         type: string
         default: ""
-      chart_version:
-        description: 仅 helm 使用；留空沿用 Chart.yaml 的 version（SemVer）
-        type: string
-        default: ""
 
 permissions:
   contents: read
 
-# 同一版本串行发布，避免并发覆盖；正在发布的任务不会被后续运行取消。
+# 同一镜像版本串行发布；Helm Release 串行创建，避免并发发布同一个 Chart 版本。
 concurrency:
-  group: linkd-images-${{ inputs.version || github.run_id }}
+  group: linkd-images-${{ inputs.component == 'helm' && 'helm-release' || inputs.version || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -136,12 +132,29 @@ jobs:
           tags: ${{ steps.image.outputs.tags }}
           build-args: |
             VERSION=${{ needs.prepare.outputs.version }}
+            GIT_COMMIT=${{ github.sha }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+      - name: Verify published image build metadata
+        shell: bash
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image-prefix }}/${{ matrix.component }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          actual=$(docker run --rm --network none "$IMAGE@$DIGEST" version)
+          expected=$(printf 'version: %s\ngit_commit: %s' "$VERSION" "$GITHUB_SHA")
+          if [[ "$actual" != "$expected" ]]; then
+            echo '::error::镜像内的版本号或 Git commit 与本次构建不一致'
+            exit 1
+          fi
+          printf '%s\n' "$actual"
 
       - name: Summarize published image
         shell: bash
@@ -167,7 +180,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: read
+      contents: write
       artifact-metadata: write
       id-token: write
       attestations: write
@@ -193,8 +206,6 @@ jobs:
 
       - name: Validate and package chart
         shell: bash
-        env:
-          CHART_VERSION: ${{ inputs.chart_version }}
         run: |
           set -euo pipefail
           chart=pkg/linkd/deploy/helm/linkd
@@ -206,13 +217,9 @@ jobs:
           )
           helm lint --strict "$chart" "${values[@]}"
           helm template linkd "$chart" "${values[@]}" > "$RUNNER_TEMP/linkd-rendered.yaml"
-          package_args=()
-          if [[ -n "$CHART_VERSION" ]]; then
-            package_args+=(--version "$CHART_VERSION")
-          fi
           mkdir -p dist/linkd-chart
           # 只打包所选提交的 Chart；不改写其 appVersion 或镜像默认值。
-          helm package "$chart" --destination dist/linkd-chart "${package_args[@]}"
+          helm package "$chart" --destination dist/linkd-chart
           cd dist/linkd-chart
           sha256sum ./*.tgz > SHA256SUMS
 
@@ -231,12 +238,68 @@ jobs:
         with:
           subject-path: dist/linkd-chart/linkd-*.tgz
 
-      - name: Register chart in linked artifacts
-        if: ${{ github.event.repository.owner.type == 'Organization' }}
+      - name: Publish chart release
+        id: release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+          packages=(dist/linkd-chart/linkd-*.tgz)
+          if [[ ${#packages[@]} -ne 1 || ! -f "${packages[0]}" ]]; then
+            echo '::error::发布 Release 时必须恰好存在一个 Chart 包'
+            exit 1
+          fi
+          package="${packages[0]}"
+          filename="${package##*/}"
+          chart_version="${filename#linkd-}"
+          chart_version="${chart_version%.tgz}"
+          tag="helm/linkd/v${chart_version#v}"
+          {
+            printf 'Linkd Helm Chart `%s`。仅发布 Chart，没有构建或替换镜像。\n\n' "$chart_version"
+            printf -- '- 源码提交：[%s](%s/%s/commit/%s)\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+            printf -- '- 构建记录：[GitHub Actions](%s/%s/actions/runs/%s)\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            printf -- '- 临时备份：[Actions Artifact](%s)，保留 30 天。\n\n' "$ARTIFACT_URL"
+            printf '附件包含 `%s` 和 `SHA256SUMS`。下载后执行 `sha256sum -c SHA256SUMS` 校验。\n\n' "$filename"
+            printf '安装时提供环境 values 与认证 Secret；默认镜像以 Chart 中的 `values.yaml` 为准。\n'
+          } > "$RUNNER_TEMP/linkd-chart-release-notes.md"
+          prerelease=false
+          if [[ "$chart_version" == *-* ]]; then
+            prerelease=true
+          fi
+          # 同一 Chart 版本更新附件和本次构建记录；已有 Git tag 不移动。
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$tag" "$package" dist/linkd-chart/SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "$package" dist/linkd-chart/SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Linkd Helm Chart $chart_version" \
+              --notes-file "$RUNNER_TEMP/linkd-chart-release-notes.md" \
+              --draft --latest=false --prerelease="$prerelease"
+          fi
+          verify_dir="$RUNNER_TEMP/linkd-release-verify"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$filename" --pattern SHA256SUMS --dir "$verify_dir"
+          (cd "$verify_dir" && sha256sum -c SHA256SUMS)
+          cmp "$package" "$verify_dir/$filename"
+          cmp dist/linkd-chart/SHA256SUMS "$verify_dir/SHA256SUMS"
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
+            --title "Linkd Helm Chart $chart_version" \
+            --notes-file "$RUNNER_TEMP/linkd-chart-release-notes.md" \
+            --draft=false --latest=false --prerelease="$prerelease"
+          url=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json url --jq .url)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Register chart in linked artifacts
+        if: ${{ github.event.repository.owner.type == 'Organization' }}
+        # 组织级目录展示尚未确认，不阻塞已经验证并发布的 Release 下载入口。
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_URL: ${{ steps.release.outputs.url }}
         run: |
           set -euo pipefail
           packages=(dist/linkd-chart/linkd-*.tgz)
@@ -279,11 +342,13 @@ jobs:
         shell: bash
         env:
           ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+          RELEASE_URL: ${{ steps.release.outputs.url }}
         run: |
           {
             printf '### Helm Chart\n\n'
+            printf '[下载正式 Release 附件](%s)\n\n' "$RELEASE_URL"
             printf '[下载 Chart 和校验和](%s)\n\n' "$ARTIFACT_URL"
             printf -- '- 源码提交：`%s`\n' "$GITHUB_SHA"
-            printf -- '- 保留时间：30 天\n'
+            printf -- '- Actions Artifact 保留时间：30 天\n'
             printf -- '- 本次仅打包 Chart，没有构建或推送镜像。\n'
           } >> "$GITHUB_STEP_SUMMARY"

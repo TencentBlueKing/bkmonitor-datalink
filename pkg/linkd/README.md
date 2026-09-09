@@ -112,6 +112,9 @@ docker build -t linkd:dev --build-arg VERSION=$(git rev-parse --short HEAD) .
 
 以上示例统一构建 `linkd:dev`，二进制版本使用当前 Git 短哈希。不指定 `IMAGE_TAG` 时，
 `make image` 默认以当前 Git 短哈希作为镜像标签，运行时应使用对应标签。
+`make image` 和 `make console-image` 都自动传入完整 `GIT_COMMIT`，并将 VERSION 与 commit 写入产物。
+直接使用 Docker 构建时，需同时传入 `--build-arg VERSION=<version>` 和 `--build-arg GIT_COMMIT=<full-sha>`。
+两个镜像都支持追加 `version` 查询版本号及 commit；未注入的构建信息显示 dev / unknown。
 
 默认启动 `run all-in-one`。镜像不包含可用配置，必须把配置文件挂载到
 `/data/linkd/configs/linkd.yaml`，或用 `--config` 指定其他路径：

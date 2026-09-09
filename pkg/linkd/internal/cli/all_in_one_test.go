@@ -48,7 +48,7 @@ func TestAllInOneCommandStartsAndGracefullyStopsServices(t *testing.T) {
 		return ctx.Err()
 	})
 	stdout := &bytes.Buffer{}
-	command := NewRootCommand("test-version", Dependencies{
+	command := NewRootCommand("test-version", "test-commit", Dependencies{
 		CleanerFlowFactory: cleanerFactory,
 		LifecycleRunner:    lifecycleRunner,
 		ControlPlaneRunner: func(ctx context.Context, _ config.Config, _ *slog.Logger, _ *telemetry.Runtime) error {

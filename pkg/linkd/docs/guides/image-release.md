@@ -27,7 +27,6 @@ GHCR 权限见 [GitHub 镜像发布说明](https://docs.github.com/en/actions/tu
 | --- | --- | --- |
 | `component` | `all` | `all` 只构建两个镜像；`linkd` / `linkd-console` 只构建对应镜像；`helm` 只打包 Chart |
 | `version` | 空 | 可选 Docker tag，例如 `v0.1.0-rc.1`；最长 128 字符，只允许字母、数字、下划线、点和连字符，首字符不能为点或连字符 |
-| `chart_version` | 空 | 仅 `helm` 使用；覆盖 Chart 包版本，必须是 SemVer；留空使用 Chart.yaml 的 version |
 
 也可在仓库目录通过 GitHub CLI 手动选择分支或 Git tag：
 
@@ -62,27 +61,53 @@ Linkd 当前处于早期开发阶段，建议 Linkd 与 Console 使用同一套�
 不要复用已交付版本。构建标签区分重跑，但 registry 没有由此获得不可变策略，严格固定产物应使用 digest。
 同一源码重建时基础镜像或外部依赖可能变化，不能把相同 Git SHA 当成镜像字节一致的保证。
 
-Linkd 二进制的 `linkd version` 使用 `version`，留空时使用构建标签；两个镜像均记录 OCI version、
-revision 和 source 标签。Console 的 `package.json` 版本不参与镜像版本推导。
+两个镜像均记录 OCI version、revision（完整 Git SHA）和 source 标签，Workflow 将同一个 SHA
+通过 `GIT_COMMIT` 构建参数写入镜像内部。两个镜像的 `version` 命令同时显示版本号和 commit；
+查询不需要配置文件或连接中间件。Console 的 package.json 版本不参与镜像版本推导，构建信息保存在
+镜像内 `build-info.json`，不使用运行时环境变量覆盖。
+
+```bash
+docker run --rm ghcr.io/tencentblueking/bkmonitor-datalink/linkd:<tag> version
+docker run --rm ghcr.io/tencentblueking/bkmonitor-datalink/linkd-console:<tag> version
+```
+
+```text
+version: <version-or-build-tag>
+git_commit: <full-git-sha>
+```
+
+Console 提供受 Basic Auth 保护的 `GET /local-api/version`，返回 `version` 和 `git_commit`。
+这与 `/local-api/capabilities` 中的接口 schema version 是不同字段。每次镜像构建结束后，Workflow
+使用产物 digest 拉起无网络版本查询，校验镜像内版本及 commit 与本次构建一致。
+未注入构建信息的开发产物显示 `dev` / `unknown`；已发布镜像不会因 Workflow 修改而变化。
 
 Helm 的 `image.tag` / `console.image.tag` 使用同一交付标签；需要精确回滚时分别填写
 `image.digest` / `console.image.digest`。镜像仓库与拉取配置见 [Helm 部署](helm.md)。
 
 ## Helm Chart 打包
 
-选择 `component=helm`，本次运行只执行 Chart 校验、渲染、打包和 Artifact 上传，镜像构建 job 跳过。
+选择 `component=helm`，本次运行只执行 Chart 校验、渲染、打包和发布，镜像构建 job 跳过。
 反过来，选择 `all`、`linkd` 或 `linkd-console` 时，Chart job 跳过。
 
 ```bash
 gh workflow run linkd-images.yml --ref feat/linkd-dev \
-  -f component=helm -f chart_version=0.1.0
+  -f component=helm
 ```
 
 流程固定使用 Helm 3.17.3，先用仓库的外部服务、worker 分组、Console 和 ServiceMonitor 示例执行
 `helm lint --strict` 和 `helm template`，随后打包 Chart 源目录。示例仅用于校验，不写入包内默认 values，
 也不会把渲染出来的 Secret 上传到 Artifacts。验证不连接 Kubernetes 或真实中间件。
 
-Actions Summary 提供下载链接，Artifact 名称为 `linkd-chart-<run-id>.<attempt>`，保留 30 天，包含：
+Actions Summary 提供 Release 和 Artifact 两个下载入口。Release 的 tag 为 `helm/linkd/v<chart-version>`，
+例如 `helm/linkd/v0.1.0`；版本直接读取 `Chart.yaml`，没有单独版本输入。
+首次创建的 Git tag 指向首次发布提交，标题为 `Linkd Helm Chart 0.1.0`。
+不存在时先创建草稿，上传后回下载校验，确认内容一致才发布；已存在时自动更新两个同名附件与构建说明。
+已有 Git tag 不移动，Release 说明中的源码提交和构建链接记录本次包的实际来源。
+更新已发布附件不是原子操作，失败时可能已部分更新，可重新触发相同版本修复；首次失败保留草稿供排查。
+不会将 Chart 设为整个仓库的 Latest Release，包含预发布标识的 Chart 版本会标记为 prerelease。
+
+正式包通过 Release 附件长期下载，不受 Actions Artifact 保留期限制；删除 Release 或附件仍会使入口失效。
+Artifact 名称为 `linkd-chart-<run-id>.<attempt>`，作为保留 30 天的备份。两种入口均包含：
 
 ```text
 linkd-0.1.0.tgz
@@ -90,7 +115,7 @@ SHA256SUMS
 ```
 
 Chart 包默认沿用仓库的 `version: 0.1.0`、`appVersion: "0.1.0"` 和两个 GHCR `0.1.0` 镜像。
-`chart_version` 只改变包版本，`version` 只用于镜像构建；两者都不会自动修改 Chart 的默认镜像。
+`version` 只用于镜像构建，不会自动修改 Chart 的版本或默认镜像。
 发布下一版镜像后，需要显式更新 `values.yaml` 和 `Chart.yaml`，再单独触发 Helm 打包。
 
 下载后仍需提供环境配置与已有认证 Secret：
@@ -105,11 +130,12 @@ Artifact 保留期受仓库或组织策略限制，见 [GitHub Artifacts 文档]
 
 在组织仓库运行时，Chart 上传后还会通过 Artifact Metadata API 登记到组织的
 `https://github.com/orgs/<owner>/artifacts` 页面，名称为 `linkd-chart`。登记包含 Chart 版本、
-`.tgz` 文件本身的 SHA256、所属仓库与本次 Artifact 下载链接，并回读确认记录存在。
+`.tgz` 文件本身的 SHA256、所属仓库与本次 Release 链接，并回读确认记录存在。
 登记前通过 GitHub 官方 `actions/attest` 生成构建来源证明，关联同一个 `.tgz`、源码提交与 Workflow。
-Helm job 单独申请 `artifact-metadata: write`、`id-token: write` 和 `attestations: write` 权限；
+Helm job 单独申请发布 Release 所需的 `contents: write`，以及 `artifact-metadata: write`、
+`id-token: write` 和 `attestations: write` 权限；
 个人 fork 跳过来源证明和组织级登记。API 回读成功只确认存储记录存在，页面展示仍需单独验证。
 
-Linked artifacts 只存储关联信息，文件仍遵循 Actions 的 30 天保留期；登记不会延长文件寿命，
-本流程也不会在文件过期后自动更新记录状态。接口说明见
+Linked artifacts 只存储关联信息，当前其组织列表展示仍未确认，因此登记失败不阻塞 Release 发布，
+正式下载入口以 Release 为准。本流程不会在文件删除后自动更新记录状态。接口说明见
 [GitHub Linked artifacts 文档](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/upload-linked-artifacts)。

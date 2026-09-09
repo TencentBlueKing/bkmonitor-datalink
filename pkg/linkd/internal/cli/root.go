@@ -32,6 +32,7 @@ type commandOptions struct {
 	logLevel             string
 	logFormat            string
 	version              string
+	gitCommit            string
 	cleanerFactory       cleaner.FlowFactory
 	cleanerRunner        CleanerRunner
 	cleanerValidate      ProcessValidator
@@ -84,8 +85,8 @@ type Dependencies struct {
 	MigrationRunner MigrationRunner
 }
 
-// NewRootCommand 构造 Linkd 根命令。version 为空时按 dev 展示。
-func NewRootCommand(version string, dependencies Dependencies) *cobra.Command {
+// NewRootCommand 构造 Linkd 根命令。缺少构建版本或提交时分别展示 dev、unknown。
+func NewRootCommand(version, gitCommit string, dependencies Dependencies) *cobra.Command {
 	if version == "" {
 		version = "dev"
 	}
@@ -110,8 +111,12 @@ func NewRootCommand(version string, dependencies Dependencies) *cobra.Command {
 		}
 		controlPlaneValidate = controlplaneprocess.ValidateConfig
 	}
+	if gitCommit == "" {
+		gitCommit = "unknown"
+	}
 	options := &commandOptions{
 		version:              version,
+		gitCommit:            gitCommit,
 		cleanerFactory:       dependencies.CleanerFlowFactory,
 		cleanerRunner:        cleanerRunner,
 		cleanerValidate:      cleanerValidate,
@@ -214,7 +219,7 @@ func newVersionCommand(options *commandOptions) *cobra.Command {
 		Short: "打印 Linkd 版本",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), options.version)
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "version: %s\ngit_commit: %s\n", options.version, options.gitCommit)
 			return err
 		},
 	}

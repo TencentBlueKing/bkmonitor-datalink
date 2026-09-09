@@ -25,6 +25,7 @@ import { PrometheusConnector } from "./prometheus.js";
 import { parseSearchQuery } from "./query.js";
 import { RedisConnector } from "./redis.js";
 import { registerBasicAuth, validateServerAccess } from "./auth.js";
+import { readBuildInfo } from "./version.js";
 
 const detailQuerySchema = z.object({
   bk_tenant_id: z.string().min(1).max(1024),
@@ -69,6 +70,7 @@ export async function createApp(
     bodyLimit: 1024 * 1024,
   });
   registerBasicAuth(app, access);
+  app.get("/local-api/version", () => readBuildInfo());
   const mysqlConnector = config.mysql ? new MysqlConnector(config) : undefined;
   const elasticsearchConnector = config.elasticsearch
     ? new ElasticsearchConnector(config)

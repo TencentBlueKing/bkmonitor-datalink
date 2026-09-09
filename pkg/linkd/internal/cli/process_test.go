@@ -75,7 +75,7 @@ func TestStandaloneProcessCommandsStartRoleMetrics(t *testing.T) {
 			})
 			dependencies := Dependencies{}
 			test.set(&dependencies, runner)
-			command := NewRootCommand("test-version", dependencies)
+			command := NewRootCommand("test-version", "test-commit", dependencies)
 			command.SetOut(&bytes.Buffer{})
 			command.SetErr(&bytes.Buffer{})
 			command.SetArgs([]string{"run", test.command, "--config", path})

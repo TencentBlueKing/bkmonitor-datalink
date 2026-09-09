@@ -48,6 +48,15 @@ docker build -t linkd-console:dev console
 ```
 
 `CONSOLE_IMAGE` 指定镜像仓库，`IMAGE_TAG` 默认使用 Git 短哈希；`NODE_IMAGE` 指定 Node 基础镜像。
+`VERSION` 默认等于 IMAGE_TAG，`GIT_COMMIT` 默认取完整 Git SHA，两者写入镜像构建信息和 OCI 标签。
+
+```bash
+docker run --rm linkd-console:<tag> version
+# 或 --version；无需配置连接或 Basic Auth 即可查询版本。
+```
+
+输出 `version` 和 `git_commit`。运行中的 Console 也可通过受认证保护的 `/local-api/version` 查询。
+直接从源码启动且没有构建信息文件时显示 dev / unknown。
 构建器默认内存参数为 `CONSOLE_BUILD_FLAGS="--memory 4G"`，可按本地构建器调整；
 `NODE_BUILD_OPTIONS` 默认限制构建阶段 V8 heap 为 3 GiB，不影响运行镜像。
 Dockerfile 分阶段编译网页与 Node 服务，运行镜像仅保留生产依赖和构建产物，以 `node` 用户启动。

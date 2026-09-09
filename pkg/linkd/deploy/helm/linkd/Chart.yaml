@@ -2,5 +2,5 @@ apiVersion: v2
 name: linkd
 description: Linkd 三角色部署与可选 Console、Event Generator
 type: application
-version: 0.1.2
-appVersion: "0.1.1"
+version: 0.1.3
+appVersion: "0.1.3"

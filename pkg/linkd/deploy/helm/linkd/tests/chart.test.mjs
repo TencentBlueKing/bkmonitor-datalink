@@ -190,9 +190,9 @@ test("default GHCR release images reach all roles, Console and migration", () =>
   const prefix = "ghcr.io/tencentblueking/bkmonitor-datalink/";
   for (const role of ["control-plane", "cleaner", "lifecycle", "console"]) {
     const name = role === "console" ? "linkd-console" : "linkd";
-    assert.equal(byComponent(docs, role).spec.template.spec.containers[0].image, prefix + name + ":0.1.1");
+    assert.equal(byComponent(docs, role).spec.template.spec.containers[0].image, prefix + name + ":0.1.3");
   }
-  assert.equal(docs.find(d => d.kind === "Job").spec.template.spec.containers[0].image, prefix + "linkd:0.1.1");
+  assert.equal(docs.find(d => d.kind === "Job").spec.template.spec.containers[0].image, prefix + "linkd:0.1.3");
 });
 test("explicit image registry, tag and digest override release defaults", () => {
   const digest = "sha256:" + "b".repeat(64);

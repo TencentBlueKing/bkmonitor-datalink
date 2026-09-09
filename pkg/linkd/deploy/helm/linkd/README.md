@@ -3,8 +3,8 @@
 默认部署 Control Plane 和按 `clusters` 分组的 Cleaner/Lifecycle，不支持 all-in-one。
 Console、Event Generator、Ingress 和 ServiceMonitor 可选，所有中间件外置。
 
-Chart 版本为 `0.1.2`。Linkd 与 Console 的默认镜像分别为 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.1`
-和 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd-console:0.1.1`；可选模拟器使用独立的 `linkd-eventgen:0.1.1`。
+Chart 版本为 `0.1.3`。Linkd 与 Console 的默认镜像分别为 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.3`
+和 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd-console:0.1.3`；可选模拟器使用独立的 `linkd-eventgen:0.1.1`。
 镜像仓库与版本均可通过 values 覆盖。
 手动打包与 GitHub Actions Artifacts 下载见[发布指南](../../../docs/guides/image-release.md#helm-chart-打包)。
 

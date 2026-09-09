@@ -134,6 +134,22 @@ func testLocalLegacyConverterRoutesFinalKafkaBatch(t *testing.T, kind string) {
 	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{event, triggerEventGolden(t), event}); err != nil {
 		t.Fatal(err)
 	}
+	if kind == contract.TriggerEventRecovery {
+		// Python's producer builds every message from the anomaly list, so the
+		// protocol has no recovery event. The two compatibility-routed events
+		// therefore produce no message and no snapshot, and only the native
+		// event in the middle is published.
+		// One message left, so the producer takes its single-send path rather
+		// than the batch one; what matters is that nothing was converted and
+		// no snapshot was written.
+		if saved != 0 || len(producer.messages) != 1 {
+			t.Fatalf("recovery reached the compatibility topic: saved=%d messages=%d", saved, len(producer.messages))
+		}
+		if producer.messages[0].Topic != "native" {
+			t.Fatalf("surviving message went to %q", producer.messages[0].Topic)
+		}
+		return
+	}
 	if saved != 1 || producer.batchCalls != 1 || len(producer.messages) != 3 {
 		t.Fatal("batch snapshot/ACK boundary lost")
 	}

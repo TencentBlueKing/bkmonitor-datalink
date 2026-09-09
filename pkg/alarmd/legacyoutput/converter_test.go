@@ -72,6 +72,22 @@ func TestLocalConverterMatchesPythonAdapter(t *testing.T) {
 	}
 	store := &snapshotRecorder{}
 	converter := Converter{Store: store, Now: func() time.Time { return time.Unix(fixture.PythonTime, 0) }}
+	// The oracle was captured by calling Python's adapter directly, which will
+	// stamp any status it is handed. Python's trigger never hands it one: it
+	// builds every event from the anomaly list. So the recovery row records
+	// what the adapter would do, not what the protocol carries, and the
+	// converter refuses it rather than reproducing it.
+	anomalies := make([]contract.TriggerEventV1, 0, len(events))
+	for _, event := range events {
+		if event.EventKind != contract.TriggerEventAbnormal {
+			if _, err := converter.ConvertBatch(context.Background(), []contract.TriggerEventV1{event}); err == nil {
+				t.Fatalf("converter accepted a %q event", event.EventKind)
+			}
+			continue
+		}
+		anomalies = append(anomalies, event)
+	}
+	events = anomalies
 	got, err := converter.ConvertBatch(context.Background(), events)
 	if err != nil {
 		t.Fatal(err)

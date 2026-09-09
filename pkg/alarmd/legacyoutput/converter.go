@@ -156,11 +156,14 @@ func convertEvent(ctx context.Context, event contract.TriggerEventV1, frozen pre
 	if itemName == "" || event.PrimaryLevelID < 1 || event.PrimaryLevelID > 3 {
 		return Event{}, fmt.Errorf("invalid legacy item/severity")
 	}
-	if event.EventKind != contract.TriggerEventAbnormal && event.EventKind != contract.TriggerEventRecovery {
-		return Event{}, fmt.Errorf("invalid legacy event kind")
+	// The Python protocol represents anomaly points only. Anything else
+	// reaching the converter is a routing mistake, and a loud one is better
+	// than a topic filled with events Python would never have produced.
+	if event.EventKind != contract.TriggerEventAbnormal {
+		return Event{}, fmt.Errorf("legacy protocol carries anomaly points only, got %q", event.EventKind)
 	}
 	times := event.LegacyOutput.AnomalyTimestamps
-	if event.EventKind == contract.TriggerEventAbnormal && len(times) == 0 {
+	if len(times) == 0 {
 		return Event{}, fmt.Errorf("ABNORMAL needs actual anomaly timestamps")
 	}
 	for i, ts := range times {
@@ -222,14 +225,8 @@ func convertEvent(ctx context.Context, event contract.TriggerEventV1, frozen pre
 	if additional == nil {
 		additional = map[string]json.RawMessage{}
 	}
-	status, anomalyTime := contract.TriggerEventAbnormal, event.RecordRef.SourceTime
-	if len(times) > 0 {
-		anomalyTime = times[0]
-	}
-	if event.EventKind == contract.TriggerEventRecovery {
-		status = "RECOVERED"
-		anomalyTime = event.RecordRef.SourceTime
-	}
+	// Python's adapter stamps ABNORMAL on every event it produces.
+	status, anomalyTime := contract.TriggerEventAbnormal, times[0]
 	name := s.Name
 	if _, ok := projection.Dimensions["__NO_DATA_DIMENSION__"]; ok {
 		name = "[无数据] " + name

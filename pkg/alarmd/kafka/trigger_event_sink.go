@@ -128,6 +128,20 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 			if events[index].LegacyOutput == nil || events[index].LegacyOutput.Configuration == nil {
 				return errors.New("legacy event has no frozen compatibility context")
 			}
+			// The Python protocol carries anomaly points and nothing else: its
+			// producer builds every message from the anomaly list and stamps
+			// ABNORMAL, and recovery is decided downstream from the absence of
+			// anomalies. alarmd's own Recovery is a steady-state result, so
+			// every healthy series produces one every cycle - converting those
+			// put a hundred times Python's volume on the topic. A Recovery
+			// event has no representation in this protocol, so it produces no
+			// message here and no snapshot; the native protocol still carries
+			// it, because the choice of protocol is the revision's, not the
+			// event kind's.
+			if events[index].EventKind != contract.TriggerEventAbnormal {
+				messages[index] = nil
+				continue
+			}
 			key := events[index].TenantID + "\x00" + events[index].BusinessID
 			groups[key] = append(groups[key], index)
 		}
@@ -153,6 +167,16 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 			}
 			messages[indices[i]] = &sarama.ProducerMessage{Topic: sink.legacyTopic, Key: sarama.StringEncoder(item.DedupeMD5), Value: sarama.ByteEncoder(item.Payload)}
 		}
+	}
+	published := messages[:0]
+	for _, message := range messages {
+		if message != nil {
+			published = append(published, message)
+		}
+	}
+	messages = published
+	if len(messages) == 0 {
+		return nil
 	}
 	if err := sink.core.writeMessages(ctx, messages); err != nil {
 		publishErr := fmt.Errorf("kafka trigger event sink: publish batch: %w", err)

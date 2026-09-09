@@ -25,7 +25,7 @@ const config = {
 
 describe("local API", () => {
   it("mounts all API routes under the configured path and keeps authentication", async () => {
-    const prefix = "/kingeye-web-saas--kingeye-web--saas/linkd";
+    const prefix = "/apps/linkd";
     const app = await createApp({
       ...config,
       server: {

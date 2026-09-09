@@ -7,7 +7,7 @@ import { expect, it } from "vitest";
 import { registerWeb } from "./web.js";
 import { registerBasicAuth } from "./auth.js";
 
-it.each(["", "/kingeye-web-saas--kingeye-web--saas/linkd"])(
+it.each(["", "/apps/linkd"])(
   "serves authenticated pages and assets under %s",
   async (basePath) => {
     const directory = await mkdtemp(join(tmpdir(), "linkd-web-"));

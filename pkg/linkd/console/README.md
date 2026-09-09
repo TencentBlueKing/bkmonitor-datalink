@@ -171,7 +171,7 @@ GET /local-api/{events|alerts|alert-logs}/:id
 
 容器构建和 Kubernetes 安装见 [Helm 指南](../docs/guides/helm.md)。服务部署新增环境变量：
 
-- `LINKD_CONSOLE_BASE_PATH`：默认 `/`；例如 `/kingeye-web-saas--kingeye-web--saas/linkd`。路径段支持字母、数字、下划线、连字符，最长 256 字符，子路径不以 `/` 结尾。生产镜像运行时生效，Ingress 保留完整路径转发，页面和 API 共用该前缀。Vite 本地开发仍使用根路径。
+- `LINKD_CONSOLE_BASE_PATH`：默认 `/`；例如 `/apps/linkd`。路径段支持字母、数字、下划线、连字符，最长 256 字符，子路径不以 `/` 结尾。生产镜像运行时生效，Ingress 保留完整路径转发，页面和 API 共用该前缀。Vite 本地开发仍使用根路径。
 - `LINKD_CONSOLE_MODE`：`local`（默认）或 `server`；server 模式要求 Basic Auth。
 - `LINKD_CONSOLE_BASIC_AUTH_ENABLED`：`true` / `false`，默认 false。
 - `LINKD_CONSOLE_BASIC_AUTH_USERNAME`、`LINKD_CONSOLE_BASIC_AUTH_PASSWORD`：启用时均必填，用户名不能包含冒号。
@@ -182,7 +182,7 @@ GET /local-api/{events|alerts|alert-logs}/:id
 ```bash
 pnpm build
 pnpm exec playwright test --config playwright.auth.config.ts
-LINKD_CONSOLE_AUTH_TEST_BASE_PATH=/kingeye-web-saas--kingeye-web--saas/linkd pnpm exec playwright test --config playwright.auth.config.ts
+LINKD_CONSOLE_AUTH_TEST_BASE_PATH=/apps/linkd pnpm exec playwright test --config playwright.auth.config.ts
 ```
 
 ```bash

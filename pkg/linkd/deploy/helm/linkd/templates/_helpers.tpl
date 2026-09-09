@@ -64,6 +64,8 @@ linkd/worker-group: {{ .workload.group | quote }}
 {{- $config := deepCopy $root.Values.configuration -}}
 {{- if $w.group }}{{ $config = mergeOverwrite $config (deepCopy ($w.cluster.configuration | default dict)) }}{{ end -}}
 {{- $config = mergeOverwrite $config (deepCopy ($w.settings.configuration | default dict)) -}}
+{{/* Chart 固定部署 Lifecycle；缺省时保留空对象，让配置加载器填充运行默认值。 */}}
+{{- if not (hasKey $config "lifecycle") }}{{ $_ := set $config "lifecycle" dict }}{{ end -}}
 {{- $dispatch := $config.dispatch | default dict -}}
 {{- $_ := set $dispatch "deployment" (include "linkd.deployment" $root) -}}
 {{- $_ := set $dispatch "listen" "0.0.0.0:8090" -}}

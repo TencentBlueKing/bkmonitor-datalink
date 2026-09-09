@@ -16,7 +16,7 @@ it("keeps root API URLs unchanged without a base element", () => {
 });
 
 it("prefixes API calls and navigation independently of the current deep URL", async () => {
-  const prefix = "/kingeye-web-saas--kingeye-web--saas/linkd";
+  const prefix = "/apps/linkd";
   const base = document.createElement("base");
   base.href = `${prefix}/`;
   document.head.append(base);

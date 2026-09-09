@@ -54,8 +54,8 @@ test("default three roles, stable selectors and valid runtime configs", () => {
   validateConfigs(docs);
 });
 test("Console HTTP subpath config reaches both Ingress and application", () => {
-  const basePath = "/kingeye-web-saas--kingeye-web--saas/linkd";
-  const consoleValues = {enabled: true, basePath, basicAuth: {existingSecret: "linkd-console-auth"}, ingress: {enabled: true, ingressClassName: "nginx", hostname: "apps.test-bkee5.canwaysoft.com", tls: []}};
+  const basePath = "/apps/linkd";
+  const consoleValues = {enabled: true, basePath, basicAuth: {existingSecret: "linkd-console-auth"}, ingress: {enabled: true, ingressClassName: "nginx", hostname: "apps.example.com", tls: []}};
   const docs = render({...base, console: consoleValues});
   const ingress = docs.find(d => d.kind === "Ingress");
   assert.equal(ingress.spec.rules[0].http.paths[0].path, basePath);
@@ -69,14 +69,26 @@ test("Console HTTP subpath config reaches both Ingress and application", () => {
     assert.match(result.stderr, /basePath/);
   }
 });
+test("storage-only values include required lifecycle config and preserve explicit settings", () => {
+  const minimal = {auth: base.auth, configuration: {storage: base.configuration.storage}};
+  const docs = render(minimal);
+  for (const deploy of deployments(docs)) {
+    assert.deepEqual(parse(configFor(docs, deploy)).lifecycle, {});
+  }
+  validateConfigs(docs);
+  const explicit = render({...minimal, configuration: {...minimal.configuration, lifecycle: {concurrency: 16}}});
+  for (const deploy of deployments(explicit)) {
+    assert.equal(parse(configFor(explicit, deploy)).lifecycle.concurrency, 16);
+  }
+});
 test("default GHCR release images reach all roles, Console and migration", () => {
   const docs = render({...base, console: {enabled: true, basicAuth: {existingSecret: "linkd-console-auth"}}});
   const prefix = "ghcr.io/tencentblueking/bkmonitor-datalink/";
   for (const role of ["control-plane", "cleaner", "lifecycle", "console"]) {
     const name = role === "console" ? "linkd-console" : "linkd";
-    assert.equal(byComponent(docs, role).spec.template.spec.containers[0].image, prefix + name + ":0.1.0");
+    assert.equal(byComponent(docs, role).spec.template.spec.containers[0].image, prefix + name + ":0.1.1");
   }
-  assert.equal(docs.find(d => d.kind === "Job").spec.template.spec.containers[0].image, prefix + "linkd:0.1.0");
+  assert.equal(docs.find(d => d.kind === "Job").spec.template.spec.containers[0].image, prefix + "linkd:0.1.1");
 });
 test("explicit image registry, tag and digest override release defaults", () => {
   const digest = "sha256:" + "b".repeat(64);

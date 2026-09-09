@@ -6,7 +6,7 @@ describe("Console base path", () => {
     expect(normalizeBasePath(value)).toBe("");
   });
   it("preserves a nested deployment path", () => {
-    const value = "/kingeye-web-saas--kingeye-web--saas/linkd";
+    const value = "/apps/linkd";
     expect(normalizeBasePath(value)).toBe(value);
   });
   it.each([

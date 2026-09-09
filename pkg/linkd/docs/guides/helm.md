@@ -6,12 +6,16 @@ Chart 位于 [deploy/helm/linkd](../../deploy/helm/linkd/README.md)。使用 Hel
 
 ## 构建镜像与准备配置
 
-Chart 默认使用 GHCR 的两个 `0.1.0` 镜像：
+Chart 默认使用 GHCR 的两个 `0.1.1` 镜像：
 
 ```text
-ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.0
-ghcr.io/tencentblueking/bkmonitor-datalink/linkd-console:0.1.0
+ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.1
+ghcr.io/tencentblueking/bkmonitor-datalink/linkd-console:0.1.1
 ```
+
+Chart 生成的配置在缺省时自动包含 `lifecycle: {}`，使用程序默认值；可用
+`configuration.lifecycle.concurrency` 显式调整并发数。使用 `existingSecret` 时，
+Chart 不修改 Secret 内容，需自行在配置文件中提供 `lifecycle` 段。
 
 需要自建镜像时，在 Linkd 模块根目录构建，再推送到集群可拉取的仓库：
 
@@ -179,15 +183,15 @@ Ingress 使用 `console.basePath`（默认 `/`）和 Prefix 匹配，只暴露 C
 ```yaml
 console:
   enabled: true
-  basePath: /kingeye-web-saas--kingeye-web--saas/linkd
+  basePath: /apps/linkd
   ingress:
     enabled: true
     ingressClassName: nginx
-    hostname: apps.test-bkee5.canwaysoft.com
+    hostname: apps.example.com
     tls: []
 ```
 
-访问 `http://apps.test-bkee5.canwaysoft.com/kingeye-web-saas--kingeye-web--saas/linkd/`。
+访问 `http://apps.example.com/apps/linkd/`。
 同一镜像可通过运行时配置切换根路径和子路径，无需为每个路径重新构建。
 可叠加使用 [HTTP 子路径示例](../../deploy/helm/linkd/examples/console-subpath.yaml)。
 TLS Secret、DNS 和 Controller 由部署方准备，HTTPS 和跳转策略按所用 Controller 配置。

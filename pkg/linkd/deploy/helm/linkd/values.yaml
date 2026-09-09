@@ -1,0 +1,204 @@
+## @section 全局参数
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+commonLabels: {}
+commonAnnotations: {}
+
+## @section Linkd 镜像，安装时必须指定 tag 或 digest
+image:
+  registry: ""
+  repository: linkd
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+## @section 静态配置与认证
+## deployment 留空时使用 namespace-release，所有组共用此调度作用域。
+dispatch:
+  deployment: ""
+auth:
+  existingSecret: ""
+  apiTokenKey: api-token
+  workerTokenKey: worker-token
+## 完整 Linkd YAML 对象。请按示例配置外部存储；凭据也可放到已有 Secret。
+configuration: {}
+
+## @section 通用 Pod 参数
+serviceAccount:
+  create: true
+  name: ""
+podLabels: {}
+podAnnotations: {}
+podSecurityContext:
+  fsGroup: 65532
+  fsGroupChangePolicy: OnRootMismatch
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  seccompProfile:
+    type: RuntimeDefault
+terminationGracePeriodSeconds: 60
+nodeSelector: {}
+affinity: {}
+tolerations: []
+topologySpreadConstraints: []
+extraEnvVars: []
+extraVolumes: []
+extraVolumeMounts: []
+
+## @section Control Plane：单活动实例，不支持修改更新策略
+controlPlane:
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 512Mi}
+  configuration: {}
+  existingSecret: ""
+  secretKey: linkd.yaml
+  startupProbe: {}
+  readinessProbe: {}
+  livenessProbe: {}
+service:
+  port: 8090
+  annotations: {}
+
+## @section 创建/更新时的一次性初始化，复用 Control Plane 的完整配置。
+## watch=true：pre-install/pre-upgrade Hook，失败阻止发布；false：普通 Job，与服务并行。
+migrate:
+  enabled: true
+  watch: true
+  timeoutSeconds: 240
+  activeDeadlineSeconds: 300
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}
+
+## @section Worker 默认值，各组可覆盖同名角色参数
+workerDefaults:
+  cleaner:
+    replicas: 2
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: "1", memory: 512Mi}
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+    configuration: {}
+    startupProbe: {}
+    readinessProbe: {}
+    livenessProbe: {}
+  lifecycle:
+    replicas: 2
+    resources:
+      requests: {cpu: 100m, memory: 512Mi}
+      limits: {cpu: "2", memory: 1Gi}
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+    configuration: {}
+    startupProbe: {}
+    readinessProbe: {}
+    livenessProbe: {}
+
+## @section Worker 组。labels 是 Linkd worker.labels，不是 Kubernetes 标签。
+## 每组生成独立 Secret，两个 key 分别为 cleaner.yaml / lifecycle.yaml。
+## existingSecret 可跨组相同，secretKeys 可为每组选择不同配置文件。
+clusters:
+  default:
+    labels: {}
+    configuration: {}
+    existingSecret: ""
+    secretKeys:
+      cleaner: cleaner.yaml
+      lifecycle: lifecycle.yaml
+    cleaner: {}
+    lifecycle: {}
+
+## @section 指标。已有配置 Secret 必须配置 exporter 和 0.0.0.0:9464 监听。
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+    ## ServiceMonitor 对象所在 namespace；采集目标始终限制在 Linkd release 的 namespace。
+    namespace: ""
+    ## 必须匹配 Prometheus 的 serviceMonitorSelector，例如 release: kube-prometheus-stack。
+    labels: {}
+    annotations: {}
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: false
+    ## 默认把角色、worker 组标签附加到指标；Kubernetes 标签名由 Operator 转为 Prometheus 标签名。
+    targetLabels: [app.kubernetes.io/component, linkd/worker-group]
+    podTargetLabels: []
+    relabelings: []
+    metricRelabelings: []
+    ## 0 表示不在 ServiceMonitor 层设置数量上限，仍受 Prometheus 全局限制。
+    sampleLimit: 0
+    targetLimit: 0
+
+## @section Console：仅 server 模式，必须提供 Basic Auth Secret
+console:
+  enabled: false
+  image:
+    registry: ""
+    repository: linkd-console
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}
+  configuration: {}
+  existingSecret: ""
+  secretKey: linkd.yaml
+  prometheusUrl: ""
+  basicAuth:
+    existingSecret: ""
+    usernameKey: username
+    passwordKey: password
+  service:
+    port: 80
+    annotations: {}
+  containerSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
+  podSecurityContext:
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+  startupProbe:
+    tcpSocket: {port: http}
+    periodSeconds: 5
+    failureThreshold: 30
+  readinessProbe:
+    tcpSocket: {port: http}
+    periodSeconds: 10
+  livenessProbe:
+    tcpSocket: {port: http}
+    periodSeconds: 10
+    failureThreshold: 3
+  ingress:
+    enabled: false
+    ingressClassName: ""
+    hostname: ""
+    annotations: {}
+    tls: []

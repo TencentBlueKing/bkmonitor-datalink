@@ -37,7 +37,7 @@ linkd run all-in-one
   ├─ Cleaner
   ├─ Lifecycle
   └─ Control Plane
-      ├─ API                 （规划）
+      ├─ EventSource API
       ├─ Leader Election     （规划）
       └─ Manager
 ```
@@ -105,8 +105,8 @@ Lifecycle 可按待处理 fingerprint 数量水平扩展。同一 fingerprint �
 布尔状态假定旧 Leader 已经停止写入。失去 Leader 身份时应立即取消 Manager 任务，但不应因此把仍可
 提供 API 的 follower 判定为不健康。
 
-Leader Election 完成前，`linkd run control-plane` 只能部署单副本，当前由它运行 Elasticsearch 管理任务。
-该限制不能靠部署多个没有选举能力的副本绕过，否则会失去单例维护任务的所有权保证。
+当前 `linkd run control-plane` 只能部署单副本，同时运行来源 API、调度与管理任务。
+Redis 单活动中心保护不等于支持多副本 follower 服务与高可用选举；不能通过增加副本绕过该限制。
 
 控制面副本数、API 请求量和管理任务并发分别设定上限。API 的水平扩展不应制造多个活动任务所有者；
 耗时管理任务也不应长期占用 API 请求 goroutine。
@@ -155,15 +155,18 @@ AlertLog 当作零丢失审计账本。
 - `linkd run cleaner` 和 `linkd run lifecycle` 已提供独立进程入口；
 - `linkd run control-plane` 已提供控制面进程入口和多任务监督边界，当前可装配两个周期性 Elasticsearch
   对账任务、一个连续批量归档任务和 `redis-stream-manager`；后者采集 Signal Stream、Consumer Group、
-  PEL、lag 和内存状态，并在单轮预算内分批追赶、只裁剪全部 Group 已确认的前缀。API 和 Leader Election
-  尚未实现，因此只能部署单副本；
+  PEL、lag 和内存状态，并在单轮预算内分批追赶、只裁剪全部 Group 已确认的前缀。来源 API 和调度已实现，
+  具备 Redis 单活动中心保护；多副本控制面高可用尚未实现，因此只能部署单副本；
 - `linkd storage prepare` 是历史回放前预创建 Elasticsearch 时间桶的一次性管理命令，不是常驻进程。
+- `linkd storage migrate` 执行控制面基础配置检查与幂等存储初始化，不启动 API/调度或重建协调历史；
+  Helm 默认在创建/更新前通过 Hook 等待它完成，也可选择普通异步 Job。
 - `pkg/linkd/Dockerfile` 可在模块目录独立构建镜像，运行时基础镜像为 `tencentos/tencentos4-minimal`。
   同一二进制通过 command 选择 `all-in-one`、`cleaner`、`lifecycle` 或 `control-plane`。镜像不包含可用
   配置，启动常驻进程必须挂载配置文件。容器终止宽限期建议至少 60 秒。
 
-因此，本文确认的是目标部署边界，不表示三进程模式已经具备完整生产交付能力。控制面实现、健康与
-就绪探针、部署清单、容量基线和高可用验证完成后，再在使用指南中补充可执行的生产部署步骤。
+三角色 Helm Chart 及按 worker 组独立配置标签、副本、资源和 Secret 的操作见
+[Helm 部署指南](../guides/helm.md)。Chart 不提供 all-in-one 拓扑；上述本地进程入口继续存在。
+部署模板不代表专用健康探针、容量基线或控制面高可用已经验证，生产链路仍需单独联调。
 
 ## 动态来源调度的当前部署约束
 

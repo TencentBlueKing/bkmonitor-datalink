@@ -9,6 +9,6 @@
 
 // Package lifecycleprocess 负责装配并运行 lifecycle 独立进程。
 //
-// 该包持有 MySQL、Redis Streams、fingerprint Redis lease 和 Kafka FinalHook
+// 该包持有 MySQL、Redis Streams、fingerprint Redis lease 和来源具名 FinalHook 列表
 // 的进程级资源；Alert 状态规则仍由 lifecycle.Processor 负责。
 package lifecycleprocess

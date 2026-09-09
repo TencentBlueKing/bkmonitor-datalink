@@ -193,7 +193,7 @@ func TestEnricherCreationResults(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := memory.New()
 			processor, err := NewProcessor(repo, NoopRecentAlertCache{}, DeterministicAlertIDGenerator{}, stubEnricher{fn: tt.enrich},
-				NoopFinalHook{}, testSeverity{}, fixedClock{time.Date(2026, 9, 1, 0, 10, 0, 0, time.UTC)}, discardLogger{})
+				[]NamedFinalHook{{Name: "noop", Hook: NoopFinalHook{}}}, testSeverity{}, fixedClock{time.Date(2026, 9, 1, 0, 10, 0, 0, time.UTC)}, discardLogger{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -223,7 +223,7 @@ func TestEnrichObserverSeesFinalDegradedResult(t *testing.T) {
 	processor, err := NewProcessor(
 		repo, NoopRecentAlertCache{}, DeterministicAlertIDGenerator{},
 		stubEnricher{fn: func(EnrichInput) (EnrichResult, error) { panic("broken") }},
-		NoopFinalHook{}, testSeverity{}, fixedClock{time.Date(2026, 9, 1, 0, 10, 0, 0, time.UTC)}, discardLogger{},
+		[]NamedFinalHook{{Name: "noop", Hook: NoopFinalHook{}}}, testSeverity{}, fixedClock{time.Date(2026, 9, 1, 0, 10, 0, 0, time.UTC)}, discardLogger{},
 		WithEnrichObserver(observer),
 	)
 	if err != nil {
@@ -680,7 +680,7 @@ func newTestProcessorWithCache(
 	hook FinalHook,
 ) *Processor {
 	t.Helper()
-	processor, err := NewProcessor(repo, cache, DeterministicAlertIDGenerator{}, testNoopEnricher{}, hook, testSeverity{}, fixedClock{time.Date(2026, 9, 1, 0, 10, 0, 0, time.UTC)}, discardLogger{})
+	processor, err := NewProcessor(repo, cache, DeterministicAlertIDGenerator{}, testNoopEnricher{}, []NamedFinalHook{{Name: "test", Hook: hook}}, testSeverity{}, fixedClock{time.Date(2026, 9, 1, 0, 10, 0, 0, time.UTC)}, discardLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}

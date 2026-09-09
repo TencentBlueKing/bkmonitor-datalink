@@ -218,3 +218,34 @@ func TestPublicationPreservesEnrichAcrossReleases(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicationPreservesHookParametersAndIsolation(t *testing.T) {
+	ctx := context.Background()
+	service := New(newDocs(), config.SeverityConfig{})
+	spec := sample()
+	spec.Hooks = []config.HookConfig{{Name: "active", Type: config.HookTypeActiveAlertByStrategy, Config: config.HookParameters{Redis: &config.RedisConfig{Address: "redis:6379", Password: "private"}, KeyPrefix: "first"}}}
+	record, err := service.Apply(ctx, spec, 0, false, "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Hooks[0].Config.KeyPrefix = "second"
+	if _, err := service.Apply(ctx, spec, record.Revision, false, "provider"); err != nil {
+		t.Fatal(err)
+	}
+	for version, want := range map[int64]string{1: "first", 2: "second"} {
+		release, err := service.GetRelease(ctx, spec.EventSourceID, version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(release.Spec.Hooks) != 1 || release.Spec.Hooks[0].Config.KeyPrefix != want || *release.Spec.Hooks[0].Config.TimeoutMilliseconds != 1000 || release.Spec.Hooks[0].Config.Redis.Password != "private" {
+			t.Fatal("release lost hook configuration")
+		}
+	}
+	if record.Redacted().Spec.Hooks[0].Config.Redis.Password == "private" {
+		t.Fatal("management record leaked hook password")
+	}
+	spec.Hooks[0].Type = "unknown"
+	if _, err := service.Apply(ctx, spec, 2, false, "api"); err == nil {
+		t.Fatal("published unknown hook")
+	}
+}

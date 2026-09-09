@@ -40,6 +40,7 @@ type EventSource struct {
 	FingerprintFields []string                 `yaml:"fingerprint_fields,omitempty" json:"fingerprint_fields,omitempty"`
 	SeverityMapping   map[string]string        `yaml:"severity_mapping,omitempty" json:"severity_mapping,omitempty"`
 	DefaultSeverity   string                   `yaml:"default_severity,omitempty" json:"default_severity,omitempty"`
+	Hooks             []HookConfig             `yaml:"hooks,omitempty" json:"hooks,omitempty"`
 	Enrich            EnrichConfig             `yaml:"enrich,omitempty" json:"enrich,omitempty"`
 	Storage           EventSourceStorageConfig `yaml:"storage" json:"storage"`
 }
@@ -99,6 +100,9 @@ func (s EventSource) WithDefaults() EventSource {
 	if s.FingerprintMode == FingerprintModeField && s.FingerprintField == "" && len(s.FingerprintFields) == 0 {
 		s.FingerprintField = "source_alert_id"
 	}
+	for i := range s.Hooks {
+		s.Hooks[i] = s.Hooks[i].WithDefaults()
+	}
 	s.Storage.Kafka.Security = s.Storage.Kafka.Security.WithDefaults()
 	if s.Storage.Kafka.FetchMaxWaitMilliseconds == 0 {
 		s.Storage.Kafka.FetchMaxWaitMilliseconds = 100
@@ -110,11 +114,18 @@ func (s EventSource) WithDefaults() EventSource {
 func (s EventSource) Redacted() EventSource {
 	redacted := s.clone()
 	redacted.Storage.Kafka.Security = redacted.Storage.Kafka.Security.Redacted()
+	for i := range redacted.Hooks {
+		redacted.Hooks[i] = redacted.Hooks[i].Redacted()
+	}
 	return redacted
 }
 
 func (s EventSource) clone() EventSource {
 	cloned := s
+	cloned.Hooks = make([]HookConfig, len(s.Hooks))
+	for i := range s.Hooks {
+		cloned.Hooks[i] = s.Hooks[i].clone()
+	}
 	cloned.Scheduling = s.Scheduling.Clone()
 	if s.Cleaner.Runtime != nil {
 		runtimeConfig := *s.Cleaner.Runtime
@@ -199,6 +210,9 @@ func (s EventSource) validate(severity SeverityConfig) error {
 	}
 	if s.DefaultSeverity != "" && !severity.Has(s.DefaultSeverity) {
 		return fmt.Errorf("default_severity references unknown severity %q", s.DefaultSeverity)
+	}
+	if err := ValidateHooks(s.Hooks); err != nil {
+		return err
 	}
 	seenProcessors := make(map[string]int, len(s.Enrich.Processors))
 	for index, processor := range s.Enrich.Processors {

@@ -1,13 +1,13 @@
 # Build outputs
 /bin/
 /dist/
-/devtools/dist/
-/devtools/dist-server/
-/devtools/node_modules/
-/devtools/coverage/
-/devtools/playwright-report/
-/devtools/test-results/
-/devtools/devtools.config.yaml
+/console/dist/
+/console/dist-server/
+/console/node_modules/
+/console/coverage/
+/console/playwright-report/
+/console/test-results/
+/console/console.config.yaml
 /.pnpm-store/
 *.test
 *.out

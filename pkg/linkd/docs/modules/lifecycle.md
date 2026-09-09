@@ -140,9 +140,33 @@ Enricher 输入只包含已完成基础构造和 Normalize 的 Alert 深拷贝�
 当前 `strategy → resource → display → metric → source` 的 BASE_COLLECT 样例使用固定 mock DataSource
 贯通。真实平台历史、鲸眼配置和资源数据源仍待接入与集成验证。
 
-FinalHook 在 Alert 真实变化后执行，当前实现是 Kafka Alert V1 快照。hook error、panic 或非法结果会
-写一条 failed push AlertLog；只要失败流水写入成功，就不回滚已经完成的 Alert 状态。输出契约见
-[Kafka Alert V1](../reference/contracts/alert-output.md)。
+FinalHook 在 Alert 真实变化后按当前任务 Release 的 `EventSource.hooks` 顺序执行。
+每个实例接收独立快照，各自产生成功或失败 push AlertLog，实例名参与流水幂等身份和指标。
+单个插件 error、独立超时、panic 或非法结果不阻止后续插件；父上下文取消则停止处理。
+流水仍与本次状态操作一起提交；失败流水写入成功不回滚已经完成的 Alert 状态。
+空列表不输出，同类型允许多个实例；每个来源至多 16 个实例，名称必须唯一。
+
+插件客户端归来源任务所有，发布切换排空旧任务后关闭旧客户端，部分装配失败释放已创建客户端。
+Kafka 插件保持 [Kafka Alert V1](../reference/contracts/alert-output.md) 协议及 message ID 不变。
+配置方法见[来源 hooks](../guides/configuration.md#eventsource-hooks)。
+
+`active-alert-by-strategy` 独立配置 Redis，执行规则如下：
+
+| Alert 快照 | 操作 |
+| --- | --- |
+| `active` | `SADD <prefix>:<bk_tenant_id>:<strategy_id> <fingerprint>` |
+| `recovered`、`closed` | `SREM <prefix>:<bk_tenant_id>:<strategy_id> <fingerprint>` |
+| 缺失或空字符串 `labels.strategy_id` | 跳过，无 push 流水 |
+| 布尔或非法 `strategy_id` | hook 失败，不写 Redis |
+
+策略标签只读取 `strategy_id`，不回退 `bk_strategy_id`；字符串原样使用，数字转为稳定十进制文本。
+集合不设 TTL；租户强制隔离，来源隔离由前缀负责。同前缀、同租户、同策略、同 fingerprint
+共用一个成员，关闭任一告警都会删除，没有引用计数。升级时先执行旧告警的所有关闭 hook，
+再执行新告警的所有创建 hook。
+
+独立超时使用 `timeout_milliseconds`，默认 1000ms，遵从父上下文更早的截止时间。
+普通 Redis 错误只记录失败，不补偿、不自动重建或回填，也不保护乱序旧快照。
+任务使用当前发布版本，不按 Alert 创建版本寻找旧 hook。修改 Redis 目标或前缀不迁移、清理旧集合。
 
 ## 3. Signal 处理流程
 

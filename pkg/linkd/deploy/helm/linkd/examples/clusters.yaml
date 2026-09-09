@@ -1,0 +1,31 @@
+# 与 external-services.yaml 叠加，每组生成独立 Secret。
+clusters:
+  default:
+    labels:
+      pool: default
+    cleaner:
+      replicas: 2
+      resources:
+        requests: {cpu: 200m, memory: 256Mi}
+        limits: {cpu: "1", memory: 512Mi}
+    lifecycle:
+      replicas: 2
+      resources:
+        requests: {cpu: 500m, memory: 512Mi}
+        limits: {cpu: "2", memory: 1Gi}
+  alarmd:
+    labels:
+      pool: alarmd
+    configuration:
+      worker:
+        require_explicit_selector: true
+    cleaner:
+      replicas: 1
+      resources:
+        requests: {cpu: 500m, memory: 512Mi}
+        limits: {cpu: "2", memory: 1Gi}
+    lifecycle:
+      replicas: 1
+      resources:
+        requests: {cpu: "1", memory: 1Gi}
+        limits: {cpu: "4", memory: 2Gi}

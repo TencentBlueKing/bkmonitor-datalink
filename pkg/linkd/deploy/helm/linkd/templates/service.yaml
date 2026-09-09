@@ -1,0 +1,42 @@
+{{- range $w := (include "linkd.workloads" . | fromYaml).items }}
+{{- $ctx := dict "root" $ "workload" $w }}
+{{- if or (eq $w.component "control-plane") (eq $w.component "console") }}
+{{- $s := ternary $.Values.console.service $.Values.service (eq $w.component "console") }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $w.name }}
+  labels:
+    {{- omit (include "linkd.labels" $ctx | fromYaml) "linkd/metrics" | toYaml | nindent 4 }}
+  {{- with $s.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "linkd.selector" $ctx | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $s.port }}
+      targetPort: http
+{{- end }}
+{{- if and $.Values.metrics.enabled (ne $w.component "console") }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $w.name }}-metrics
+  labels:
+    {{- mergeOverwrite (include "linkd.labels" $ctx | fromYaml) (dict "linkd/metrics" "true") | toYaml | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "linkd.selector" $ctx | nindent 4 }}
+  ports:
+    - name: metrics
+      port: 9464
+      targetPort: metrics
+{{- end }}
+{{- end }}

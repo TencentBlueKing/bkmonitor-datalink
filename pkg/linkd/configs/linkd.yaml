@@ -85,16 +85,6 @@ lifecycle:
     renew_interval_seconds: 20
     retry_delay_milliseconds: 500
     release_timeout_seconds: 3
-  output:
-    kafka:
-      brokers:
-        - 127.0.0.1:9092
-      topic: linkd-alerts
-      client_id: linkd-lifecycle
-      max_message_bytes: 1048576
-      security:
-        protocol: plaintext
-
 control_plane:
   elasticsearch:
     schema_and_active_reconcile_interval_seconds: 3600

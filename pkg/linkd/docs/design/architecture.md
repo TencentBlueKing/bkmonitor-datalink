@@ -16,7 +16,7 @@ MQ RawEventMessage
      -> accepted: 创建或推进 Alert，并回写 related_alert_id
      -> suppressed: Alert 不变，写确定性抑制流水并关联 related_alert_id
      -> orphaned: 不创建 Alert
-  -> FinalHook 输出 Kafka Alert V1 快照
+  -> EventSource.hooks（Kafka Alert V1 / Redis 活跃策略索引）
 ```
 
 ## 模块边界
@@ -30,7 +30,7 @@ MQ RawEventMessage
   不增加独立常驻 command。
 - `internal/lifecycle` 只按 `(bk_tenant_id, event_source_id, fingerprint)` 关联 active Alert，执行等级比较、状态流转、同步 Enricher、CAS 重试和部分成功恢复。
 - `internal/lifecycle/kafkahook` 根据 Alert change/cause 输出 V1 完整快照，不要求每次变更都存在 Event。
-- `devtools` 通过正式 API 管理 EventSource；其他资源查询保持只读。
+- `console` 通过正式 API 管理 EventSource；其他资源查询保持只读。
 
 ## 身份与租户
 
@@ -65,7 +65,7 @@ Mailbox 数据安全依赖 Redis 自身持久化和复制。并发、批次、�
 ## 当前实现边界
 
 当前已实现领域对象、配置、`standard` Cleaner、内存/MySQL/Elasticsearch Repository、Redis
-Mailbox、生命周期、同步 Enricher、内部 `CloseAlert`、Kafka V1 FinalHook、rawgen、DevTools 和双
+Mailbox、生命周期、同步 Enricher、内部 `CloseAlert`、Kafka V1 FinalHook、rawgen、Console 和双
 Repository E2E 测试入口。真实外部服务 E2E 需要显式启用；HTTP/CLI/Kafka 直接关闭入口和声明式
 Cleaner 脚本引擎不在当前范围。
 

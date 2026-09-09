@@ -103,7 +103,7 @@ type Processor struct {
 	idGenerator    AlertIDGenerator
 	enricher       AlertEnricher
 	enrichObserver EnrichObserver
-	finalHook      FinalHook
+	finalHooks     []NamedFinalHook
 	severity       SeverityTable
 	clock          Clock
 	logger         Logger
@@ -114,7 +114,7 @@ func NewProcessor(
 	recentAlerts RecentAlertCache,
 	idGenerator AlertIDGenerator,
 	enricher AlertEnricher,
-	finalHook FinalHook,
+	finalHooks []NamedFinalHook,
 	severity SeverityTable,
 	clock Clock,
 	logger Logger,
@@ -122,15 +122,22 @@ func NewProcessor(
 ) (*Processor, error) {
 	for name, dependency := range map[string]any{
 		"repository": repository, "recent_alert_cache": recentAlerts, "id_generator": idGenerator, "enricher": enricher,
-		"final_hook": finalHook, "severity": severity, "clock": clock, "logger": logger,
+		"severity": severity, "clock": clock, "logger": logger,
 	} {
 		if dependency == nil {
 			return nil, fmt.Errorf("lifecycle %s must not be nil", name)
 		}
 	}
+	seen := make(map[string]bool, len(finalHooks))
+	for _, hook := range finalHooks {
+		if hook.Name == "" || seen[hook.Name] || hook.Hook == nil {
+			return nil, fmt.Errorf("final hooks require unique names and non-nil implementations")
+		}
+		seen[hook.Name] = true
+	}
 	processor := &Processor{
 		repository: repository, recentAlerts: recentAlerts, idGenerator: idGenerator, enricher: enricher,
-		enrichObserver: noopEnrichObserver{}, finalHook: finalHook, severity: severity, clock: clock, logger: logger,
+		enrichObserver: noopEnrichObserver{}, finalHooks: append([]NamedFinalHook(nil), finalHooks...), severity: severity, clock: clock, logger: logger,
 	}
 	for _, option := range options {
 		if option != nil {

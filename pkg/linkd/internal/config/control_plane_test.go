@@ -20,11 +20,7 @@ func TestLoadControlPlaneRedisStreamDefaults(t *testing.T) {
 	path := writeConfig(t, `storage:
   redis:
     address: redis.example.com:6379
-lifecycle:
-  output:
-    kafka:
-      brokers: [kafka.example.com:9092]
-      topic: linkd-alerts
+lifecycle: {}
 control_plane:
   redis_stream: {}
 `)

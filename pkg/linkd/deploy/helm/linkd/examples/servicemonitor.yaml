@@ -1,0 +1,19 @@
+# 与 external-services.yaml / clusters.yaml 叠加。
+# Prometheus Operator CRD 与 Prometheus 实例由部署方预先安装。
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    # 替换为实际 Prometheus spec.serviceMonitorSelector 要求的标签。
+    labels:
+      release: kube-prometheus-stack
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: false
+    targetLabels:
+      - app.kubernetes.io/component
+      - linkd/worker-group
+    relabelings:
+      - sourceLabels: [__meta_kubernetes_pod_node_name]
+        targetLabel: node
+    metricRelabelings: []

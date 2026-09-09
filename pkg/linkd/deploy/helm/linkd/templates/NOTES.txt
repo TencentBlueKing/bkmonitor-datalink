@@ -1,0 +1,27 @@
+Linkd 已生成三角色部署资源，每个 clusters 项对应独立的 Cleaner/Lifecycle Deployment。
+控制面 {{ include "linkd.fullname" . }}-control-plane 只运行一个副本。
+调度作用域：{{ include "linkd.deployment" . }}
+
+首次安装后显式导入 EventSource，并通过 scheduling.*.selector 选择 worker.labels。
+clusters 组名本身不会自动成为调度条件；需要隔离的组请设置 labels，并使用 require_explicit_selector。
+配置 Secret 更新后执行对应 Deployment 的 rollout restart。
+控制面重启可能等待旧 Redis 授权过期；不要自动执行 scheduling init。
+
+{{ if .Values.migrate.enabled -}}
+{{ if .Values.migrate.watch -}}
+初始化已配置为 pre-install/pre-upgrade Hook：Helm 等待 Job 成功后才继续发布。
+{{ else -}}
+初始化 Job：{{ include "linkd.migrateName" . }}。普通 Job 与服务并行，Helm 返回不代表初始化成功。
+kubectl -n {{ .Release.Namespace }} wait --for=condition=complete job/{{ include "linkd.migrateName" . }} --timeout={{ .Values.migrate.activeDeadlineSeconds }}s
+kubectl -n {{ .Release.Namespace }} logs job/{{ include "linkd.migrateName" . }}
+{{ end -}}
+{{ end -}}
+
+{{ if .Values.console.enabled -}}
+Console 使用 Basic Auth，凭据引用 {{ .Values.console.basicAuth.existingSecret }}。
+{{ if .Values.console.ingress.enabled -}}
+Console 域名：{{ .Values.console.ingress.hostname }}；部署方须配置 DNS、Ingress Controller 和 HTTPS。
+{{ else -}}
+kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "linkd.fullname" . }}-console 8080:{{ .Values.console.service.port }}
+{{ end -}}
+{{ end -}}

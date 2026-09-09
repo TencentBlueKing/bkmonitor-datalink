@@ -13,7 +13,8 @@ EventSource 是由控制面管理并持久化发布的来源配置。Record/Rele
 - 用哪些稳定 Event 字段生成 fingerprint；
 - 如何把来源 severity 映射为 Linkd Severity；
 - 从哪个 MQ subscription 接收消息；
-- 该来源 Cleaner Flow 的局部运行预算。
+- 该来源 Cleaner Flow 的局部运行预算；
+- Alert 变更后按顺序执行的具名输出插件与各自参数。
 
 EventSource 不负责 Alert 状态裁决、Event/Alert 持久化实现或 Lifecycle lease。
 
@@ -31,6 +32,7 @@ EventSource 不负责 Alert 状态裁决、Event/Alert 持久化实现或 Lifecy
 | `fingerprint_fields` | fields 模式 1–32 项                      | 多字段按路径排序后计算 SHA-256                  |
 | `severity_mapping`   | 来源值 → 已定义 Severity name            | 来源等级映射                                    |
 | `default_severity`   | 已定义 Severity name                     | 来源值无法映射为标准 name 时的兜底              |
+| `hooks` | 可选有序列表，最多 16 项，name 唯一 | 来源发布中的输出插件；空列表不输出，详见 [Lifecycle](lifecycle.md#23-enricher-与-finalhook) |
 | `enrich.processors`  | 有序且 type 不重复                       | 创建新 Alert 时执行的丰富处理链                 |
 | `storage.type`       | 当前必须为 `kafka`                       | 当前字段名表示输入 MQ 类型                      |
 | `storage.kafka`      | brokers/topic/consumer_group/security    | Kafka subscription 与认证配置                   |

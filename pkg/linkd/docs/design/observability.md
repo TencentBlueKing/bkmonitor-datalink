@@ -41,14 +41,14 @@ ES 处理和本机调度，不能直接当作 ES 服务端 took。诊断阶段�
 `deadline`（首项期限）、`ready`（零等待模式下只合并已就绪项）。
 读侧复用写侧的触发逻辑，默认派生最长 10ms 的短窗口；达到数量或字节阈值仍立即发送。
 编码后的字节限制可能再切片，取消也可能使整组无需发送。
-DevTools 单独展示同批写请求的服务端/客户端计时，并分别展示读写阶段均值、触发速率与 `rate(duration_seconds_sum)` 推导的平均执行占用；
+Console 单独展示同批写请求的服务端/客户端计时，并分别展示读写阶段均值、触发速率与 `rate(duration_seconds_sum)` 推导的平均执行占用；
 平均占用不是峰值，不能单凭低均值排除短时槽位拥堵。
 
-耗时桶覆盖 0.5ms～30s，使用固定 `linkd_metric_schema=2` 标记；DevTools 使用该口径。
+耗时桶覆盖 0.5ms～30s，使用固定 `linkd_metric_schema=2` 标记；Console 使用该口径。
 均值按 sum/count 计算；分位数按合并后的 histogram 计算，不能相加实例 P99。
 保留原 Repository 逻辑操作指标，用于与物理 Bulk 的执行/排队成本对照。
 
-DevTools 的批次次数及写操作总量使用所选时间范围的 `increase` 估算，并在范围结束时取值；
+Console 的批次次数及写操作总量使用所选时间范围的 `increase` 估算，并在范围结束时取值；
 速率、均值、分位数使用独立的滚动计算窗口。成功表示收到成功逐项结果，不表示搜索已刷新可见；
 失败/未知不表示写入必定未生效。未接入与无样本不当作零，空闲窗口中的均值和分位数不填零。
 只读配置展示与实例运行遥测区分，不能仅凭 YAML 推导值认定所有实例已应用该配置。
@@ -75,7 +75,7 @@ RawEventMessage MQ
   -> Redis Mailbox + lifecycle signal
   -> lifecycle attempt
   -> Alert / AlertLog
-  -> FinalHook Kafka Alert V1
+  -> EventSource.hooks（Kafka Alert V1 / Redis 活跃策略索引）
 ```
 
 消息生产与消费、Redis Mailbox Signal 之间使用独立 root span 与 Span Link；同进程同步子操作使用 child span。Broker 重投产生新的处理 trace，并通过稳定 `record_id/event_id/alert_id/cause_id` 关联。
@@ -112,7 +112,7 @@ block、mutex 和 execution trace，不能用单张 CPU 火焰图代替因果分
 
 `linkd.store.operations` 对所有 Repository 调用统一计数，`not_found` 作为查询结果保留，便于分析查询命中率。
 Lifecycle 的 `find_active` 和 `find_terminal_by_event` 会把 `store.ErrNotFound` 作为正常控制流处理；它不会
-因此成为处理失败。DevTools 的“存储异常速率”排除 `succeeded` 和 `not_found`，其余冲突、非法请求和
+因此成为处理失败。Console 的“存储异常速率”排除 `succeeded` 和 `not_found`，其余冲突、非法请求和
 底层失败仍按结果分类展示。
 
 消费 Observer 在创建时缓存固定 stage、transport、EventSource、outcome 组合的不可变 AttributeSet，
@@ -128,7 +128,7 @@ Go/process 指标，以及三个 Elasticsearch 管理任务和 Redis Stream 管�
 fingerprint、Mailbox ID、topic、group、错误全文和 payload 禁止进入指标属性。
 
 `linkd.pipeline.attempt.duration` 和 `linkd.store.operation.duration` 保留 0.75～2.5 秒区间的加密固定
-分桶，用于对比移除 Elasticsearch Event/Alert 数据路径 `refresh=wait_for` 前后的尾延迟。DevTools 同时展示由 `_sum / _count`
+分桶，用于对比移除 Elasticsearch Event/Alert 数据路径 `refresh=wait_for` 前后的尾延迟。Console 同时展示由 `_sum / _count`
 计算的平均耗时和 P95/P99；平均值不受 histogram 桶内插值影响，分位数仍是所选时间窗内的近似值。
 Cleaner 页面使用 `linkd.pipeline.attempt.duration` 展示整体平均耗时、P95 和 P99，并使用
 `linkd.cleaner.step.duration` 展示已埋点步骤的平均耗时、P95 和 P99。`receive` 当前没有独立步骤耗时，
@@ -138,7 +138,7 @@ Cleaner 页面使用 `linkd.pipeline.attempt.duration` 展示整体平均耗时�
 维度分别展示，缺失阶段保持未知，不补成零。Cleaner 和 Lifecycle 页面分别按 `clean` 与 `lifecycle`
 过滤并展示本阶段吞吐、P99、平均耗时和在途消息，不使用另一阶段的数据补值。
 
-Kafka assignment/offset/lag、Signal Group `lag + pending` 和 Mailbox List 扫描是 DevTools 直接读取的
+Kafka assignment/offset/lag、Signal Group `lag + pending` 和 Mailbox List 扫描是 Console 直接读取的
 当前快照。Cleaner 的 `linkd.cleaner.backpressure.*` 则最多每 3 秒按请求路径采样一次目标 Group；查询失败
 和未知 lag 会记录为 fail-open，Group 缺失记录为暂停。启用
 `control_plane.redis_stream` 后，控制面周期采集 Redis Stream 的 `XLEN`、`MEMORY USAGE`、Group、Consumer、
@@ -146,7 +146,7 @@ PEL、最大 lag、最老条目/Pending 年龄和软上限超量，并通过自�
 Group 名称，避免配置值形成高基数标签；未启用任务时不生成虚假零值。
 
 `linkd.lifecycle.recent_alert_cache.operations` 使用固定 `linkd.operation` 和 `linkd.outcome` 记录 current、
-ended、terminal 和 repair 操作。DevTools 展示操作速率与读取命中率；指标不携带租户、AlertID、EventID、
+ended、terminal 和 repair 操作。Console 展示操作速率与读取命中率；指标不携带租户、AlertID、EventID、
 fingerprint、MailboxID 或缓存 key。
 
 Enrich 使用 `linkd_enrich_attempts_total`、`linkd_enrich_attempt_duration_seconds`、

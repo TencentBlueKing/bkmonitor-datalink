@@ -1,0 +1,15 @@
+node_modules
+dist
+dist-server
+test-results
+playwright-report
+coverage
+.git
+**/.env*
+**/*.local.*
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/*.jks
+**/*.keystore

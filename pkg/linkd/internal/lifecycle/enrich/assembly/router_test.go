@@ -65,7 +65,7 @@ func TestBaseCollectRawEventRunsLifecycleEnrichment(t *testing.T) {
 	}
 	processor, err := lifecycle.NewProcessor(
 		repository, lifecycle.NoopRecentAlertCache{}, lifecycle.DeterministicAlertIDGenerator{}, router,
-		lifecycle.NoopFinalHook{}, config.DefaultSeverityConfig(), fixedClock{now: time.Date(2026, 9, 1, 0, 0, 3, 0, time.UTC)}, discardLogger{},
+		nil, config.DefaultSeverityConfig(), fixedClock{now: time.Date(2026, 9, 1, 0, 0, 3, 0, time.UTC)}, discardLogger{},
 	)
 	if err != nil {
 		t.Fatal(err)

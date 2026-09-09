@@ -44,17 +44,18 @@ lifecycle:
     renew_interval_seconds: 5
     retry_delay_milliseconds: 100
     release_timeout_seconds: 3
-  output:
-    kafka:
-      brokers: [{{KAFKA_BROKER}}]
-      topic: {{OUTPUT_TOPIC}}
-      client_id: {{OUTPUT_CLIENT_ID}}
-      max_message_bytes: 1048576
-      security:
-        protocol: plaintext
-
 event_sources:
   - event_source_id: {{EVENT_SOURCE_ID}}
+    hooks:
+      - name: alert-kafka
+        type: kafka
+        config:
+          brokers: [{{KAFKA_BROKER}}]
+          topic: {{OUTPUT_TOPIC}}
+          client_id: {{OUTPUT_CLIENT_ID}}
+          max_message_bytes: 1048576
+          security:
+            protocol: plaintext
     enabled: true
     cleaner:
       type: standard

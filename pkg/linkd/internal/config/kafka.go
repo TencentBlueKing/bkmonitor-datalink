@@ -21,13 +21,18 @@ func (c *Config) resolveKafkaTLSPaths(baseDir string) error {
 		}
 		c.EventSources[index].Storage.Kafka.Security = resolved
 	}
-	if c.Lifecycle == nil || c.Lifecycle.Output.Kafka == nil {
-		return nil
+	for i := range c.EventSources {
+		for j := range c.EventSources[i].Hooks {
+			hook := &c.EventSources[i].Hooks[j]
+			if hook.Type != HookTypeKafka {
+				continue
+			}
+			resolved, err := hook.Config.Security.ResolvePaths(baseDir)
+			if err != nil {
+				return fmt.Errorf("event_sources[%d].hooks[%d].config.security: %w", i, j, err)
+			}
+			hook.Config.Security = resolved
+		}
 	}
-	resolved, err := c.Lifecycle.Output.Kafka.Security.ResolvePaths(baseDir)
-	if err != nil {
-		return fmt.Errorf("lifecycle.output.kafka.security.%w", err)
-	}
-	c.Lifecycle.Output.Kafka.Security = resolved
 	return nil
 }

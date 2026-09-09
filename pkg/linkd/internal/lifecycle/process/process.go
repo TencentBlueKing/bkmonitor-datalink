@@ -21,7 +21,6 @@ import (
 	"linkd/internal/consume"
 	"linkd/internal/consume/redisstream"
 	"linkd/internal/lifecycle"
-	"linkd/internal/lifecycle/kafkahook"
 	"linkd/internal/lifecycle/mailbox"
 	"linkd/internal/lifecycle/recentalert"
 	"linkd/internal/lifecycle/scheduler"
@@ -122,12 +121,6 @@ func Run(
 		recentAlertCacheEnabled = true
 		recentAlertCacheTTL = cacheConfig.TTL()
 	}
-	hook, err := kafkahook.New(lifecycleConfig.KafkaHookConfig())
-	if err != nil {
-		return fmt.Errorf("initialize lifecycle kafka hook: %w", err)
-	}
-	defer hook.Close()
-	observedHook := telemetryRuntime.ObserveFinalHook(hook)
 
 	enrichRuntime, err := openEnrichRuntime(startupCtx, lifecycleConfig, telemetryRuntime)
 	if err != nil {
@@ -144,12 +137,21 @@ func Run(
 		if err != nil {
 			return fmt.Errorf("initialize lifecycle source enricher: %w", err)
 		}
+		hooks, closeHooks, err := openHooks(source.Hooks, telemetryRuntime)
+		if err != nil {
+			return fmt.Errorf("initialize source hooks: %w", err)
+		}
+		defer func() {
+			if err := closeHooks(); err != nil {
+				logger.WarnContext(taskCtx, "source hook cleanup failed", "event_source_id", source.EventSourceID)
+			}
+		}()
 		processor, err := lifecycle.NewProcessor(
 			observedRepository,
 			recentAlerts,
 			lifecycle.DeterministicAlertIDGenerator{},
 			enricher,
-			observedHook,
+			hooks,
 			cfg.Severity,
 			lifecycle.SystemClock{},
 			logger,

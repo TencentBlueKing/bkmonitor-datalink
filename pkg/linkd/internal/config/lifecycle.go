@@ -16,8 +16,6 @@ import (
 
 	"linkd/internal/consume"
 	"linkd/internal/consume/redisstream"
-	"linkd/internal/kafkaclient"
-	"linkd/internal/lifecycle/kafkahook"
 	"linkd/internal/lifecycle/mailbox"
 	"linkd/internal/lifecycle/scheduler"
 )
@@ -47,7 +45,6 @@ const (
 	defaultLockRenewIntervalSeconds        = 20
 	defaultLockRetryDelayMilliseconds      = 500
 	defaultLockReleaseTimeoutSeconds       = 3
-	defaultKafkaMaxMessageBytes            = 1 << 20
 	maxLifecycleBatchBytes                 = 64 << 20
 	maxLifecycleInflightBytes              = 256 << 20
 )
@@ -64,7 +61,6 @@ type LifecycleConfig struct {
 	Signal                  LifecycleSignalConfig         `yaml:"signal"`
 	Mailbox                 LifecycleMailboxConfig        `yaml:"mailbox"`
 	Lock                    LifecycleLockConfig           `yaml:"lock"`
-	Output                  LifecycleOutputConfig         `yaml:"output"`
 }
 
 // LifecycleDataSources 定义 lifecycle enrich 使用的外部数据库连接。
@@ -113,20 +109,6 @@ type LifecycleLockConfig struct {
 	RenewIntervalSeconds   int    `yaml:"renew_interval_seconds"`
 	RetryDelayMilliseconds int    `yaml:"retry_delay_milliseconds"`
 	ReleaseTimeoutSeconds  int    `yaml:"release_timeout_seconds"`
-}
-
-// LifecycleOutputConfig 描述 lifecycle 最终 Hook；当前只支持 Kafka。
-type LifecycleOutputConfig struct {
-	Kafka *LifecycleKafkaConfig `yaml:"kafka,omitempty"`
-}
-
-// LifecycleKafkaConfig 描述 Kafka FinalHook 的 producer 和 topic。
-type LifecycleKafkaConfig struct {
-	Brokers         []string                   `yaml:"brokers"`
-	Topic           string                     `yaml:"topic"`
-	ClientID        string                     `yaml:"client_id,omitempty"`
-	MaxMessageBytes int                        `yaml:"max_message_bytes"`
-	Security        kafkaclient.SecurityConfig `yaml:"security"`
 }
 
 // WithDefaults 返回补齐 lifecycle 默认值且不共享嵌套数据的副本。
@@ -239,15 +221,7 @@ func (c LifecycleConfig) WithDefaults() LifecycleConfig {
 	if c.Lock.ReleaseTimeoutSeconds == 0 {
 		c.Lock.ReleaseTimeoutSeconds = defaultLockReleaseTimeoutSeconds
 	}
-	if c.Output.Kafka != nil {
-		kafka := *c.Output.Kafka
-		kafka.Brokers = append([]string(nil), c.Output.Kafka.Brokers...)
-		if kafka.MaxMessageBytes == 0 {
-			kafka.MaxMessageBytes = defaultKafkaMaxMessageBytes
-		}
-		kafka.Security = kafka.Security.WithDefaults()
-		c.Output.Kafka = &kafka
-	}
+
 	return c
 }
 
@@ -318,16 +292,11 @@ func (c LifecycleConfig) Validate() error {
 	if err := c.SchedulerConfig().Validate(); err != nil {
 		return fmt.Errorf("lifecycle.lock: %w", err)
 	}
-	if c.Output.Kafka == nil {
-		return fmt.Errorf("lifecycle.output.kafka is required")
-	}
-	if err := c.KafkaHookConfig().Validate(); err != nil {
-		return fmt.Errorf("lifecycle.output.kafka: %w", err)
-	}
+
 	return c.RuntimeConfig().Validate()
 }
 
-// Redacted 返回隐藏数据源与 Kafka 凭据的深拷贝。
+// Redacted 返回隐藏数据源凭据的深拷贝。
 func (c LifecycleConfig) Redacted() LifecycleConfig {
 	redacted := c.WithDefaults()
 	if redacted.DataSources.OneModel != nil {
@@ -346,9 +315,7 @@ func (c LifecycleConfig) Redacted() LifecycleConfig {
 	if redacted.DataSources.CWStrategy != nil && redacted.DataSources.CWStrategy.Password != "" {
 		redacted.DataSources.CWStrategy.Password = redactedSecret
 	}
-	if redacted.Output.Kafka != nil {
-		redacted.Output.Kafka.Security = redacted.Output.Kafka.Security.Redacted()
-	}
+
 	return redacted
 }
 
@@ -409,22 +376,6 @@ func (c LifecycleConfig) MailboxConfig() mailbox.Config {
 	return mailbox.Config{
 		KeyPrefix: c.Mailbox.KeyPrefix, SignalStream: c.Signal.Stream,
 		MaxPendingPerMailbox: c.Mailbox.MaxPending,
-	}
-}
-
-// KafkaHookConfig 构造同步 Kafka FinalHook 配置。
-func (c LifecycleConfig) KafkaHookConfig() kafkahook.Config {
-	c = c.WithDefaults()
-	if c.Output.Kafka == nil {
-		return kafkahook.Config{}
-	}
-	kafka := c.Output.Kafka
-	return kafkahook.Config{
-		Brokers:         append([]string(nil), kafka.Brokers...),
-		Topic:           kafka.Topic,
-		ClientID:        kafka.ClientID,
-		MaxMessageBytes: kafka.MaxMessageBytes,
-		Security:        kafka.Security.Clone(),
 	}
 }
 

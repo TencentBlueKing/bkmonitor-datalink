@@ -412,7 +412,7 @@ EventSource ID 来自启动时已校验配置或 StoredEvent。其他动态输�
 - OTel provider 关闭时 Runtime 使用 no-op provider，业务调用路径保持一致；
 - Observer interface 不接收完整 Alert、Event、DataSource query、payload 或 error 文本。
 
-## 8. DevTools 展示
+## 8. Console 展示
 
 Lifecycle 页面包含独立 Enrich 区域，展示：
 
@@ -425,7 +425,7 @@ Lifecycle 页面包含独立 Enrich 区域，展示：
 7. payload 平均、P95、P99；
 8. Enrich 与 Lifecycle 平均耗时比例。
 
-查询沿用 DevTools 的时间范围、计算窗口、instance selector、EventSource selector和空样本语义。Enrich 与 Lifecycle 平均耗时比例只用于判断阶段占用，Lifecycle attempt 还包含存储、裁决和 FinalHook 等工作。
+查询沿用 Console 的时间范围、计算窗口、instance selector、EventSource selector和空样本语义。Enrich 与 Lifecycle 平均耗时比例只用于判断阶段占用，Lifecycle attempt 还包含存储、裁决和 FinalHook 等工作。
 
 ## 9. 关键不变量
 
@@ -454,5 +454,5 @@ Lifecycle 页面包含独立 Enrich 区域，展示：
 | DataSource OTel adapter | `internal/telemetry/enrich_datasource.go` |
 | instruments 和 histogram views | `internal/telemetry/metrics.go` |
 | 生产装配 | `internal/lifecycle/process/enrich.go`、`process.go` |
-| DevTools PromQL | `devtools/src/server/prometheus.ts` |
-| DevTools 页面 | `devtools/src/web/pages/LifecyclePage.tsx` |
+| Console PromQL | `console/src/server/prometheus.ts` |
+| Console 页面 | `console/src/web/pages/LifecyclePage.tsx` |

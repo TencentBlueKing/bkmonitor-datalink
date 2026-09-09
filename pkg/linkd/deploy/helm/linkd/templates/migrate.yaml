@@ -1,0 +1,135 @@
+{{- if .Values.migrate.enabled }}
+{{- $cp := index (include "linkd.workloads" . | fromYaml).items 0 }}
+{{- $ctx := dict "root" . "workload" $cp }}
+{{- $s := mergeOverwrite (deepCopy .Values.controlPlane) (deepCopy .Values.migrate) }}
+{{- $name := include "linkd.migrateName" . }}
+{{- $secret := ternary $cp.secret (printf "%s-config" $name) $cp.external }}
+{{- $serviceAccount := .Values.serviceAccount.name | default (ternary (include "linkd.fullname" .) "default" .Values.serviceAccount.create) }}
+{{- if and .Values.migrate.watch .Values.serviceAccount.create }}
+{{- $serviceAccount = printf "%s-sa" $name }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $serviceAccount }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+automountServiceAccountToken: false
+{{- end }}
+{{- if not $cp.external }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secret }}
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    app.kubernetes.io/component: migrate
+  {{- if .Values.migrate.watch }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  {{- end }}
+type: Opaque
+data:
+  {{ $cp.key }}: {{ include "linkd.configuration" $ctx | b64enc | quote }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    app.kubernetes.io/component: migrate
+  {{- if .Values.migrate.watch }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  {{- end }}
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrate.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.migrate.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- $labels := mergeOverwrite (deepCopy .Values.commonLabels) .Values.podLabels ($s.podLabels | default dict) (dict "app.kubernetes.io/instance" .Release.Name "app.kubernetes.io/component" "migrate") }}
+        {{- toYaml $labels | nindent 8 }}
+      {{- with mergeOverwrite (deepCopy .Values.podAnnotations) ($s.podAnnotations | default dict) }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ $serviceAccount }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ $s.terminationGracePeriodSeconds | default .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml ($s.podSecurityContext | default .Values.podSecurityContext) | nindent 8 }}
+      {{- with concat .Values.global.imagePullSecrets .Values.image.pullSecrets | uniq }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- range $field := list "nodeSelector" "affinity" "tolerations" "topologySpreadConstraints" }}
+      {{- with index $s $field | default (index $.Values $field) }}
+      {{ $field }}:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "linkd.image" (dict "root" . "image" .Values.image) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - storage
+            - migrate
+            - --config
+            - /data/linkd/configs/linkd.yaml
+            - --timeout
+            - {{ printf "%vs" .Values.migrate.timeoutSeconds | quote }}
+          resources:
+            {{- toYaml $s.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml ($s.containerSecurityContext | default .Values.containerSecurityContext) | nindent 12 }}
+          env:
+            - name: LINKD_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.existingSecret }}
+                  key: {{ .Values.auth.apiTokenKey }}
+            - name: LINKD_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.existingSecret }}
+                  key: {{ .Values.auth.workerTokenKey }}
+            - name: LINKD_CONTROL_PLANE_URL
+              value: {{ printf "http://%s-control-plane:%v" (include "linkd.fullname" .) .Values.service.port | quote }}
+            {{- with concat .Values.extraEnvVars ($s.extraEnvVars | default list) }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: configuration
+              mountPath: /data/linkd/configs
+              readOnly: true
+            {{- with concat .Values.extraVolumeMounts ($s.extraVolumeMounts | default list) }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: configuration
+          secret:
+            secretName: {{ $secret }}
+            defaultMode: 0440
+            items:
+              - key: {{ $cp.key }}
+                path: linkd.yaml
+        {{- with concat .Values.extraVolumes ($s.extraVolumes | default list) }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+{{- end }}

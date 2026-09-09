@@ -87,6 +87,7 @@ func (o *lifecycleSchedulerObserver) MailboxDrained(
 }
 
 type observedFinalHook struct {
+	name    string
 	next    lifecycle.FinalHook
 	metrics *instruments
 }
@@ -96,7 +97,11 @@ func (r *Runtime) ObserveFinalHook(next lifecycle.FinalHook) lifecycle.FinalHook
 	if r == nil || r.metrics == nil || next == nil {
 		return next
 	}
-	return &observedFinalHook{next: next, metrics: r.metrics}
+	observed := &observedFinalHook{next: next, metrics: r.metrics}
+	if named, ok := next.(lifecycle.NamedFinalHook); ok {
+		observed.name = named.Name
+	}
+	return observed
 }
 
 func (h *observedFinalHook) Execute(
@@ -113,6 +118,9 @@ func (h *observedFinalHook) Execute(
 			outcome = "skipped"
 		}
 		hookName := result.Name
+		if hookName == "" {
+			hookName = h.name
+		}
 		if hookName == "" {
 			hookName = "unknown"
 		}

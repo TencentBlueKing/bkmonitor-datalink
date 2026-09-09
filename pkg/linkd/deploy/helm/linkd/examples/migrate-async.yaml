@@ -1,0 +1,8 @@
+# 与外部服务或已有 Secret 示例叠加。此模式不阻止服务在初始化完成前启动。
+migrate:
+  enabled: true
+  watch: false
+  timeoutSeconds: 240
+  activeDeadlineSeconds: 300
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400

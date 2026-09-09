@@ -7,9 +7,10 @@
 - [部署模式与进程拓扑](../design/deployment.md)（已确认方向与当前实现边界）；
 - [项目 README 的容器镜像](../../README.md#容器镜像)：在 `pkg/linkd` 独立构建 `tencentos/tencentos4-minimal` 运行时镜像；
 - [配置与启动](configuration.md)；
+- [Helm 部署与 worker 分组](helm.md)：三角色部署、独立配置 Secret、可选 Console 与认证入口；
 - [Standard Event 模拟器](event-generator.md)；
 - [使用 PM2 托管本地 Linkd 拓扑](pm2.md)；
-- [Linkd DevTools 运维调试工具](devtools.md)；
+- [Linkd Console 运维调试工具](console.md)；
 - [主机推送告警 Enrich 示例](host-alert-enrich-example.md)；
 - [核心任务调度验证流程](task-scheduling-validation.md)。
 

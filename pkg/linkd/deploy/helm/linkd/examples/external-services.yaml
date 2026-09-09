@@ -1,0 +1,20 @@
+# 仅示例：更换为实际镜像和外部服务地址。认证 Secret 需预先创建。
+image:
+  tag: example
+auth:
+  existingSecret: linkd-auth
+configuration:
+  logging:
+    level: info
+    format: json
+  storage:
+    repository: elasticsearch
+    elasticsearch:
+      addresses: [http://elasticsearch:9200]
+      index_prefix: linkd
+    redis:
+      address: redis:6379
+  lifecycle:
+    concurrency: 32
+  control_plane:
+    redis_stream: {}

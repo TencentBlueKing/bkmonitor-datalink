@@ -91,13 +91,8 @@ func TestValidateConfigAcceptsRedisStreamManagerWithoutElasticsearch(t *testing.
 	t.Parallel()
 
 	cfg := config.Config{
-		Storage: &config.StorageConfig{Redis: &config.RedisConfig{Address: "redis.example.com:6379"}},
-		Lifecycle: &config.LifecycleConfig{Output: config.LifecycleOutputConfig{
-			Kafka: &config.LifecycleKafkaConfig{
-				Brokers: []string{"kafka.example.com:9092"},
-				Topic:   "linkd-alerts",
-			},
-		}},
+		Storage:   &config.StorageConfig{Redis: &config.RedisConfig{Address: "redis.example.com:6379"}},
+		Lifecycle: &config.LifecycleConfig{},
 		ControlPlane: &config.ControlPlaneConfig{
 			RedisStream: &config.RedisStreamManagerConfig{},
 		},

@@ -274,13 +274,13 @@ func (p *Processor) createAlert(ctx context.Context, stored store.StoredEvent) (
 		return ProcessResult{}, err
 	}
 	cause := sourceEventCause(stored.Event)
-	hookLog, err := p.runFinalHook(ctx, cause, created.Alert, OutcomeAlertCreated)
+	hookLog, err := p.runFinalHooks(ctx, cause, created.Alert, OutcomeAlertCreated)
 	if err != nil {
 		return ProcessResult{}, err
 	}
 	logs := []domain.AlertLog{operationLog}
 	if hookLog != nil {
-		logs = append(logs, *hookLog)
+		logs = append(logs, hookLog...)
 	}
 	if err := p.appendAlertLogs(ctx, logs); err != nil {
 		return ProcessResult{}, err
@@ -304,12 +304,12 @@ func (p *Processor) updateAlert(ctx context.Context, stored store.StoredEvent, a
 	if err := p.recentAlerts.PutCurrent(ctx, updated); err != nil {
 		return ProcessResult{}, fmt.Errorf("cache updated alert %q: %w", active.Alert.AlertID, err)
 	}
-	hookLog, err := p.runFinalHook(ctx, sourceEventCause(stored.Event), updated.Alert, OutcomeAlertUpdated)
+	hookLog, err := p.runFinalHooks(ctx, sourceEventCause(stored.Event), updated.Alert, OutcomeAlertUpdated)
 	if err != nil {
 		return ProcessResult{}, err
 	}
 	if hookLog != nil {
-		if err := p.appendAlertLogs(ctx, []domain.AlertLog{*hookLog}); err != nil {
+		if err := p.appendAlertLogs(ctx, hookLog); err != nil {
 			return ProcessResult{}, err
 		}
 	}
@@ -337,13 +337,13 @@ func (p *Processor) terminateAlert(ctx context.Context, stored store.StoredEvent
 	if err != nil {
 		return ProcessResult{}, err
 	}
-	hookLog, err := p.runFinalHook(ctx, sourceEventCause(stored.Event), updated.Alert, outcome)
+	hookLog, err := p.runFinalHooks(ctx, sourceEventCause(stored.Event), updated.Alert, outcome)
 	if err != nil {
 		return ProcessResult{}, err
 	}
 	logs := []domain.AlertLog{operationLog}
 	if hookLog != nil {
-		logs = append(logs, *hookLog)
+		logs = append(logs, hookLog...)
 	}
 	if err := p.appendAlertLogs(ctx, logs); err != nil {
 		return ProcessResult{}, err
@@ -419,21 +419,21 @@ func (p *Processor) finishRotation(ctx context.Context, stored store.StoredEvent
 	if err != nil {
 		return ProcessResult{}, err
 	}
-	closedHookLog, err := p.runFinalHook(ctx, sourceEventCause(event), closed.Alert, OutcomeAlertClosed)
+	closedHookLog, err := p.runFinalHooks(ctx, sourceEventCause(event), closed.Alert, OutcomeAlertClosed)
 	if err != nil {
 		return ProcessResult{}, err
 	}
-	createdHookLog, err := p.runFinalHook(ctx, sourceEventCause(event), created.Alert, OutcomeAlertCreated)
+	createdHookLog, err := p.runFinalHooks(ctx, sourceEventCause(event), created.Alert, OutcomeAlertCreated)
 	if err != nil {
 		return ProcessResult{}, err
 	}
 	logs := []domain.AlertLog{closedLog}
 	if closedHookLog != nil {
-		logs = append(logs, *closedHookLog)
+		logs = append(logs, closedHookLog...)
 	}
 	logs = append(logs, createdLog)
 	if createdHookLog != nil {
-		logs = append(logs, *createdHookLog)
+		logs = append(logs, createdHookLog...)
 	}
 	if err := p.appendAlertLogs(ctx, logs); err != nil {
 		return ProcessResult{}, err
@@ -446,12 +446,12 @@ func (p *Processor) resumeActiveEvent(ctx context.Context, stored store.StoredEv
 		return ProcessResult{}, fmt.Errorf("resume active alert latest event mismatch")
 	}
 	if active.Alert.TriggerEventID != stored.Event.EventID {
-		hookLog, err := p.runFinalHook(ctx, sourceEventCause(stored.Event), active.Alert, OutcomeAlertUpdated)
+		hookLog, err := p.runFinalHooks(ctx, sourceEventCause(stored.Event), active.Alert, OutcomeAlertUpdated)
 		if err != nil {
 			return ProcessResult{}, err
 		}
 		if hookLog != nil {
-			if err := p.appendAlertLogs(ctx, []domain.AlertLog{*hookLog}); err != nil {
+			if err := p.appendAlertLogs(ctx, hookLog); err != nil {
 				return ProcessResult{}, err
 			}
 		}
@@ -468,13 +468,13 @@ func (p *Processor) resumeActiveEvent(ctx context.Context, stored store.StoredEv
 	if err != nil {
 		return ProcessResult{}, err
 	}
-	hookLog, err := p.runFinalHook(ctx, sourceEventCause(stored.Event), active.Alert, OutcomeAlertCreated)
+	hookLog, err := p.runFinalHooks(ctx, sourceEventCause(stored.Event), active.Alert, OutcomeAlertCreated)
 	if err != nil {
 		return ProcessResult{}, err
 	}
 	logs := []domain.AlertLog{operationLog}
 	if hookLog != nil {
-		logs = append(logs, *hookLog)
+		logs = append(logs, hookLog...)
 	}
 	if err := p.appendAlertLogs(ctx, logs); err != nil {
 		return ProcessResult{}, err
@@ -505,13 +505,13 @@ func (p *Processor) resumeEndedEvent(ctx context.Context, stored store.StoredEve
 	if err != nil {
 		return ProcessResult{}, err
 	}
-	hookLog, err := p.runFinalHook(ctx, sourceEventCause(event), ended.Alert, outcome)
+	hookLog, err := p.runFinalHooks(ctx, sourceEventCause(event), ended.Alert, outcome)
 	if err != nil {
 		return ProcessResult{}, err
 	}
 	logs := []domain.AlertLog{operationLog}
 	if hookLog != nil {
-		logs = append(logs, *hookLog)
+		logs = append(logs, hookLog...)
 	}
 	if err := p.appendAlertLogs(ctx, logs); err != nil {
 		return ProcessResult{}, err
@@ -595,7 +595,7 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 			if err != nil {
 				return CloseAlertResult{}, err
 			}
-			hookLog, err := p.runFinalHook(
+			hookLog, err := p.runFinalHooks(
 				ctx,
 				AlertChangeCause{Type: causeType, ID: command.OperationID},
 				stored.Alert,
@@ -606,7 +606,7 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 			}
 			logs := []domain.AlertLog{operationLog}
 			if hookLog != nil {
-				logs = append(logs, *hookLog)
+				logs = append(logs, hookLog...)
 			}
 			if err := p.appendAlertLogs(ctx, logs); err != nil {
 				return CloseAlertResult{}, err
@@ -634,7 +634,7 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 		if err != nil {
 			return CloseAlertResult{}, err
 		}
-		hookLog, err := p.runFinalHook(
+		hookLog, err := p.runFinalHooks(
 			ctx,
 			AlertChangeCause{Type: causeType, ID: command.OperationID},
 			updated.Alert,
@@ -645,7 +645,7 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 		}
 		logs := []domain.AlertLog{operationLog}
 		if hookLog != nil {
-			logs = append(logs, *hookLog)
+			logs = append(logs, hookLog...)
 		}
 		if err := p.appendAlertLogs(ctx, logs); err != nil {
 			return CloseAlertResult{}, err

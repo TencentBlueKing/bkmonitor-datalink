@@ -49,7 +49,7 @@ MQ delivery
 cmd/linkd/            Linkd 服务进程入口
 cmd/linkd-eventgen/   Standard Event 模拟器入口
 configs/     示例配置
-devtools/    本机只读运维调试工具
+console/     运行观测与来源管理控制台
 internal/    领域、Cleaner、生命周期、存储和运行时实现
 docs/        设计、配置、协议、调研和审查记录
 tests/       数据生成和 all-in-one E2E
@@ -67,7 +67,7 @@ tests/       数据生成和 all-in-one E2E
 EventSource 通过控制面 API/自定义 provider 管理，显式 `linkd event-source import --file <yaml>` 导入；常驻进程不自动加载文件中的来源。
 Cleaner/Lifecycle 按来源和标签分配多副本，数量默认 all，支持 0 和 enabled 总开关；Cleaner 自动受 Kafka partition 数限制。
 Event/Alert 保存实际使用的 event_source_version，来源级 Stream 支持多个 Lifecycle consumer。
-启动前设置不同的 LINKD_API_TOKEN / LINKD_WORKER_TOKEN；DevTools 的 Event Sources 页面通过正式 API 修改配置。
+启动前设置不同的 LINKD_API_TOKEN / LINKD_WORKER_TOKEN；Console 的 Event Sources 页面通过正式 API 修改配置。
 
 实现和边界见[来源管理](docs/design/event-source-dynamic-configuration.md)与[调度协议](docs/design/task-scheduling-protocol.md)。
 
@@ -124,3 +124,10 @@ docker run --rm linkd:dev version
 ```
 
 容器终止宽限期建议至少 60 秒。当前镜像只提供与本地进程相同的启动入口，不表示生产部署方案已完成。
+
+Kubernetes 部署见 [Helm 指南](docs/guides/helm.md)：Chart 仅支持三角色独立部署，
+可按 worker 组配置标签、副本、资源与 Secret，另外提供可选 Console、Ingress 和 Basic Auth。
+
+Linkd Console 使用独立镜像，在当前目录执行 `make console-image IMAGE_TAG=dev` 构建
+`linkd-console:dev`；也可执行 `docker build -t linkd-console:dev console`。
+配置挂载和启动方式见 [Console README](console/README.md#容器镜像)。

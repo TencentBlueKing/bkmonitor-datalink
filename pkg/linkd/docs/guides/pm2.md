@@ -66,7 +66,7 @@ cleaner/lifecycle；Schema 与 Active 资源对账、时间桶维护和终态 Al
 `linkd-all-in-one`，避免它与独立角色同时消费。先启动控制面，确认索引、alias 和时间桶
 就绪后，再启动 Cleaner 与 Lifecycle。
 
-三份配置的业务字段必须一致，只区分 Prometheus 监听端口；生成器和 DevTools 使用
+三份配置的业务字段必须一致，只区分 Prometheus 监听端口；生成器和 Console 使用
 Lifecycle 对应的共同业务配置。下面是本地测试使用的映射，不是新的默认端口分配规则：
 
 | 角色 | 配置文件 | metrics 地址 |

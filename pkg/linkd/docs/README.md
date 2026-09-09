@@ -18,6 +18,8 @@ Linkd 项目仍处于早期开发阶段，本文档只描述当前代码、测�
 11. [核心存储契约](design/core-storage-contract.md)：Repository、CAS 和物理资源。
 12. [外部协议](reference/contracts/README.md)：`standard` 输入和 Kafka Alert V1 输出。
 
+Kubernetes 部署入口：[Helm 部署与 worker 分组](guides/helm.md)。
+
 ## 当前文档与归档
 
 EventSource 管理与部分全局配置动态化独立演进：

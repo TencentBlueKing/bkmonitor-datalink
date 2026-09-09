@@ -60,6 +60,19 @@ type FinalHook interface {
 	Execute(ctx context.Context, input FinalHookInput) (FinalHookResult, error)
 }
 
+// NamedFinalHook 将发布中的实例身份绑定到单插件实现。
+// Name 与列表顺序无关，供日志幂等身份和指标使用。
+type NamedFinalHook struct {
+	Name string
+	Hook FinalHook
+}
+
+// Execute 固定正常及错误返回结果中的实例名；panic 的身份由调度方保留。
+func (h NamedFinalHook) Execute(ctx context.Context, input FinalHookInput) (result FinalHookResult, err error) {
+	defer func() { result.Name = h.Name }()
+	return h.Hook.Execute(ctx, input)
+}
+
 type NoopFinalHook struct{}
 
 func (NoopFinalHook) Execute(ctx context.Context, _ FinalHookInput) (FinalHookResult, error) {
@@ -69,13 +82,36 @@ func (NoopFinalHook) Execute(ctx context.Context, _ FinalHookInput) (FinalHookRe
 	return FinalHookResult{Skipped: true}, nil
 }
 
+// runFinalHooks 顺序执行来源插件；普通失败生成各自流水后继续，父上下文取消则停止。
+// 每个实例拿到独立快照，避免插件修改动态字段影响后续插件和已持久化的 Alert。
+func (p *Processor) runFinalHooks(ctx context.Context, cause AlertChangeCause, alert domain.Alert, outcome ProcessOutcome) ([]domain.AlertLog, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	logs := make([]domain.AlertLog, 0, len(p.finalHooks))
+	for _, hook := range p.finalHooks {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		log, err := p.runFinalHook(ctx, hook, cause, alert, outcome)
+		if err != nil {
+			return nil, err
+		}
+		if log != nil {
+			logs = append(logs, *log)
+		}
+	}
+	return logs, nil
+}
+
 func (p *Processor) runFinalHook(
 	ctx context.Context,
+	hook NamedFinalHook,
 	cause AlertChangeCause,
 	alert domain.Alert,
 	outcome ProcessOutcome,
 ) (*domain.AlertLog, error) {
-	result, hookFailure := p.callFinalHook(ctx, FinalHookInput{Cause: cause, Alert: alert.Clone(), Outcome: outcome})
+	result, hookFailure := p.callFinalHook(ctx, hook, FinalHookInput{Cause: cause, Alert: alert.Clone(), Outcome: outcome})
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -88,7 +124,7 @@ func (p *Processor) runFinalHook(
 		}
 	}
 	if hookFailure != "" && result.validate() != nil {
-		result = FinalHookResult{Name: "invalid", Transport: "unknown", Destination: "unknown", MessageID: hookInvocationID(cause, alert, outcome)}
+		result = FinalHookResult{Name: hook.Name, Transport: "unknown", Destination: "unknown", MessageID: hookInvocationID(cause, alert, outcome)}
 	}
 	reasonCode := HookReasonSucceeded
 	if hookFailure != "" {
@@ -105,7 +141,7 @@ func (p *Processor) runFinalHook(
 	return &log, nil
 }
 
-func (p *Processor) callFinalHook(ctx context.Context, input FinalHookInput) (result FinalHookResult, failureReason string) {
+func (p *Processor) callFinalHook(ctx context.Context, hook NamedFinalHook, input FinalHookInput) (result FinalHookResult, failureReason string) {
 	defer func() {
 		if recover() != nil {
 			result = FinalHookResult{}
@@ -113,7 +149,7 @@ func (p *Processor) callFinalHook(ctx context.Context, input FinalHookInput) (re
 		}
 	}()
 	var err error
-	result, err = p.finalHook.Execute(ctx, input)
+	result, err = hook.Execute(ctx, input)
 	if err != nil {
 		return result, "hook_error"
 	}

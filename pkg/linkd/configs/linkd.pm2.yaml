@@ -91,16 +91,6 @@ lifecycle:
     renew_interval_seconds: 20
     retry_delay_milliseconds: 500
     release_timeout_seconds: 3
-  output:
-    kafka:
-      brokers:
-        - 127.0.0.1:9092
-      topic: linkd-pm2-alerts
-      client_id: linkd-pm2-lifecycle
-      max_message_bytes: 1048576
-      security:
-        protocol: plaintext
-
 control_plane:
   elasticsearch:
     schema_and_active_reconcile_interval_seconds: 3600
@@ -117,6 +107,17 @@ control_plane:
 
 event_sources:
   - event_source_id: standard-infra
+    hooks:
+      - name: alert-kafka
+        type: kafka
+        config:
+          brokers:
+            - 127.0.0.1:9092
+          topic: linkd-pm2-alerts
+          client_id: linkd-pm2-lifecycle
+          max_message_bytes: 1048576
+          security:
+            protocol: plaintext
     related_tenant_id: tenant-infra
     enabled: true
     cleaner:
@@ -143,6 +144,17 @@ event_sources:
           protocol: plaintext
 
   - event_source_id: standard-service
+    hooks:
+      - name: alert-kafka
+        type: kafka
+        config:
+          brokers:
+            - 127.0.0.1:9092
+          topic: linkd-pm2-alerts
+          client_id: linkd-pm2-lifecycle
+          max_message_bytes: 1048576
+          security:
+            protocol: plaintext
     related_tenant_id: tenant-service
     enabled: true
     cleaner:

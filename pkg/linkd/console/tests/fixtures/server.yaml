@@ -1,0 +1,9 @@
+# 认证浏览器测试不连接实际基础设施。
+storage:
+  repository: mysql
+  mysql:
+    address: 127.0.0.1:1
+    database: test
+    username: test
+    password: ""
+event_sources: []

@@ -1,0 +1,153 @@
+{{- range $w := (include "linkd.workloads" . | fromYaml).items }}
+{{- $ctx := dict "root" $ "workload" $w }}
+{{- $s := $w.settings }}
+{{- $console := eq $w.component "console" }}
+{{- $image := ternary $.Values.console.image $.Values.image $console }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $w.name }}
+  labels:
+    {{- include "linkd.labels" $ctx | nindent 4 }}
+  {{- with $.Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ $s.replicas }}
+  {{- if eq $w.component "control-plane" }}
+  strategy:
+    type: Recreate
+  {{- else }}
+  strategy:
+    {{- toYaml ($s.updateStrategy | default (dict "type" "RollingUpdate")) | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "linkd.selector" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- mergeOverwrite (deepCopy $.Values.podLabels) ($s.podLabels | default dict) (include "linkd.labels" $ctx | fromYaml) | toYaml | nindent 8 }}
+      annotations:
+        {{- $annotations := mergeOverwrite (deepCopy $.Values.podAnnotations) ($s.podAnnotations | default dict) }}
+        {{- if not $w.external }}{{ $_ := set $annotations "checksum/config" (include "linkd.configuration" $ctx | sha256sum) }}{{ end }}
+        {{- toYaml $annotations | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $.Values.serviceAccount.name | default (ternary (include "linkd.fullname" $) "default" $.Values.serviceAccount.create) }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ $s.terminationGracePeriodSeconds | default $.Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml ($s.podSecurityContext | default $.Values.podSecurityContext) | nindent 8 }}
+      {{- $pullSecrets := concat $.Values.global.imagePullSecrets $image.pullSecrets | uniq }}
+      {{- with $pullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- range $field := list "nodeSelector" "affinity" "tolerations" "topologySpreadConstraints" }}
+      {{- $value := index $s $field | default (index $.Values $field) }}
+      {{- with $value }}
+      {{ $field }}:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      containers:
+        - name: {{ $w.component }}
+          image: {{ include "linkd.image" (dict "root" $ "image" $image) | quote }}
+          imagePullPolicy: {{ $image.pullPolicy }}
+          {{- if not $console }}
+          args: ["run", {{ $w.component | quote }}, "--config", "/data/linkd/configs/linkd.yaml"]
+          {{- end }}
+          securityContext:
+            {{- toYaml ($s.containerSecurityContext | default $.Values.containerSecurityContext) | nindent 12 }}
+          resources:
+            {{- toYaml $s.resources | nindent 12 }}
+          {{- if or $console $.Values.metrics.enabled (eq $w.component "control-plane") }}
+          ports:
+            {{- if or $console (eq $w.component "control-plane") }}
+            - name: http
+              containerPort: {{ ternary 4399 8090 $console }}
+            {{- end }}
+            {{- if and $.Values.metrics.enabled (not $console) }}
+            - name: metrics
+              containerPort: 9464
+            {{- end }}
+          {{- end }}
+          env:
+            - name: LINKD_CONTROL_PLANE_URL
+              value: {{ printf "http://%s-control-plane:%v" (include "linkd.fullname" $) $.Values.service.port | quote }}
+            {{- if or $console (eq $w.component "control-plane") }}
+            - name: LINKD_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.auth.existingSecret }}
+                  key: {{ $.Values.auth.apiTokenKey }}
+            {{- end }}
+            {{- if not $console }}
+            - name: LINKD_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.auth.existingSecret }}
+                  key: {{ $.Values.auth.workerTokenKey }}
+            {{- end }}
+            {{- if $w.group }}
+            - name: LINKD_WORKER_LABELS
+              value: {{ $w.labels | toJson | quote }}
+            {{- end }}
+            {{- if $console }}
+            - name: LINKD_CONFIG
+              value: /data/linkd/configs/linkd.yaml
+            - name: LINKD_CONSOLE_MODE
+              value: server
+            - name: LINKD_CONSOLE_HOST
+              value: "0.0.0.0"
+            - name: LINKD_CONSOLE_PORT
+              value: "4399"
+            - name: LINKD_CONSOLE_BASIC_AUTH_ENABLED
+              value: "true"
+            - name: LINKD_CONSOLE_BASIC_AUTH_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.console.basicAuth.existingSecret }}
+                  key: {{ $.Values.console.basicAuth.usernameKey }}
+            - name: LINKD_CONSOLE_BASIC_AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.console.basicAuth.existingSecret }}
+                  key: {{ $.Values.console.basicAuth.passwordKey }}
+            {{- with $.Values.console.prometheusUrl }}
+            - name: LINKD_CONSOLE_PROMETHEUS_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with concat $.Values.extraEnvVars ($s.extraEnvVars | default list) }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- range $probe := list "startupProbe" "readinessProbe" "livenessProbe" }}
+          {{- with index $s $probe }}
+          {{ $probe }}:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- end }}
+          volumeMounts:
+            - name: configuration
+              mountPath: /data/linkd/configs
+              readOnly: true
+            {{- with concat $.Values.extraVolumeMounts ($s.extraVolumeMounts | default list) }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: configuration
+          secret:
+            secretName: {{ $w.secret }}
+            defaultMode: 0440
+            items:
+              - key: {{ $w.key }}
+                path: linkd.yaml
+        {{- with concat $.Values.extraVolumes ($s.extraVolumes | default list) }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+{{- end }}

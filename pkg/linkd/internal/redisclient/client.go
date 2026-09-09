@@ -20,11 +20,13 @@ import (
 
 // Options 描述 Redis 数据节点认证和可选的 Sentinel master 发现配置。
 type Options struct {
-	Address  string
-	Username string
-	Password string
-	Database int
-	Sentinel *SentinelOptions
+	// ContextTimeoutEnabled 使 socket deadline 服从调用方截止时间；仅毫秒级输出插件启用。
+	ContextTimeoutEnabled bool
+	Address               string
+	Username              string
+	Password              string
+	Database              int
+	Sentinel              *SentinelOptions
 }
 
 // SentinelOptions 描述 Sentinel seed、master 名称和 Sentinel 自身认证。
@@ -74,10 +76,11 @@ func New(options Options) (*redis.Client, error) {
 	}
 	if options.Sentinel == nil {
 		return redis.NewClient(&redis.Options{
-			Addr:     options.Address,
-			Username: options.Username,
-			Password: options.Password,
-			DB:       options.Database,
+			ContextTimeoutEnabled: options.ContextTimeoutEnabled,
+			Addr:                  options.Address,
+			Username:              options.Username,
+			Password:              options.Password,
+			DB:                    options.Database,
 		}), nil
 	}
 	return redis.NewFailoverClient(newFailoverOptions(options)), nil
@@ -85,13 +88,14 @@ func New(options Options) (*redis.Client, error) {
 
 func newFailoverOptions(options Options) *redis.FailoverOptions {
 	return &redis.FailoverOptions{
-		MasterName:       options.Sentinel.MasterName,
-		SentinelAddrs:    append([]string(nil), options.Sentinel.Addresses...),
-		SentinelUsername: options.Sentinel.Username,
-		SentinelPassword: options.Sentinel.Password,
-		Username:         options.Username,
-		Password:         options.Password,
-		DB:               options.Database,
+		ContextTimeoutEnabled: options.ContextTimeoutEnabled,
+		MasterName:            options.Sentinel.MasterName,
+		SentinelAddrs:         append([]string(nil), options.Sentinel.Addresses...),
+		SentinelUsername:      options.Sentinel.Username,
+		SentinelPassword:      options.Sentinel.Password,
+		Username:              options.Username,
+		Password:              options.Password,
+		DB:                    options.Database,
 	}
 }
 

@@ -1,6 +1,6 @@
 # Kafka Alert V1 输出契约
 
-FinalHook 在 Alert 发生真实变更后发送一个完整 V1 快照：
+`EventSource.hooks` 中 `type: kafka` 的每个实例在 Alert 发生真实变更后发送一个完整 V1 快照：
 
 ```json
 {

@@ -2,6 +2,9 @@
 
 权威字段与状态矩阵见 [`define.md`](../design/define.md)。
 
+Linkd Console 是独立构建的运行与管理控制台，代码位于 `console/`；通过正式控制面 API 管理 EventSource，
+对实体存储与基础设施执行只读查询。它不参与消息消费、确认或生命周期处理。
+
 | 术语            | 定义                                                                                              |
 | --------------- | ------------------------------------------------------------------------------------------------- |
 | RawEventMessage | MQ 无关的接入信封，保存稳定 record ID、租户、来源、接收时间和原始 payload                         |
@@ -88,3 +91,8 @@
 | StoppedConfirmed | 中心原子确认旧任务已停止，允许后续分配 |
 | ForcedStopped | 授权到期及安全余量后完成必要隔离的强切决议，不伪造为 worker 的停止报告 |
 | FastRestart | 满足模块停止契约后快速完成停止、确认和新分配，不跳过互斥交接 |
+
+## 来源输出插件
+
+- **具名 hook**：`EventSource.hooks` 中按顺序执行的插件实例，`name` 是该来源内唯一的稳定实例身份，`type` 是内置注册名，`config` 是该插件的参数。当前内置 `kafka` 与 `active-alert-by-strategy`。
+- **活跃告警策略索引**：由 `active-alert-by-strategy` 将 Alert 当前状态投影到 Redis set，按租户和 `labels.strategy_id` 分组，成员为 fingerprint。它是尽力更新的输出索引，不是 Alert 权威状态。

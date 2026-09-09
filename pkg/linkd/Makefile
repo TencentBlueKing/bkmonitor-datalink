@@ -3,25 +3,29 @@ SHELL := /bin/sh
 GO ?= go
 GOFMT ?= gofmt
 GOLANGCI_LINT ?= golangci-lint
-DEVTOOLS_DIR ?= devtools
+CONSOLE_DIR ?= console
 IMAGE ?= linkd
 IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 VERSION ?= $(IMAGE_TAG)
 GO_IMAGE ?= golang:1.26.7
 GOPROXY ?= direct
 CONTAINER ?= $(shell command -v docker >/dev/null 2>&1 && echo docker || echo container)
+CONSOLE_IMAGE ?= linkd-console
+NODE_IMAGE ?= node:24-bookworm-slim
+NODE_BUILD_OPTIONS ?= --max-old-space-size=3072
+CONSOLE_BUILD_FLAGS ?= --memory 4G
 
 GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './vendor/*' \
-	-not -path './devtools/node_modules/*' \
-	-not -path './devtools/dist/*' \
-	-not -path './devtools/dist-server/*' | LC_ALL=C sort)
+	-not -path './console/node_modules/*' \
+	-not -path './console/dist/*' \
+	-not -path './console/dist-server/*' | LC_ALL=C sort)
 
-.PHONY: fmt fmt-check test race vet lint devtools-check devtools-e2e check image
+.PHONY: fmt fmt-check test race vet lint console-check console-e2e helm-check check image console-image
 
 fmt:
 	$(GOFMT) -w $(GO_FILES)
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/prettier --write .
+	cd $(CONSOLE_DIR) && ./node_modules/.bin/prettier --write .
 
 fmt-check:
 	@unformatted="$$( $(GOFMT) -l $(GO_FILES) )"; \
@@ -30,7 +34,7 @@ fmt-check:
 		echo "$$unformatted"; \
 		exit 1; \
 	fi
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/prettier --check .
+	cd $(CONSOLE_DIR) && ./node_modules/.bin/prettier --check .
 
 test:
 	$(GO) test ./...
@@ -44,16 +48,21 @@ vet:
 lint:
 	$(GOLANGCI_LINT) run ./...
 
-devtools-check:
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/eslint . --max-warnings 0
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/tsc -p tsconfig.web.json --noEmit
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/tsc -p tsconfig.server.json --noEmit
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/vitest run
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/vite build
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/tsc -p tsconfig.server.json
+console-check:
+	cd $(CONSOLE_DIR) && ./node_modules/.bin/eslint . --max-warnings 0
+	cd $(CONSOLE_DIR) && ./node_modules/.bin/tsc -p tsconfig.web.json --noEmit
+	cd $(CONSOLE_DIR) && ./node_modules/.bin/tsc -p tsconfig.server.json --noEmit
+	cd $(CONSOLE_DIR) && ./node_modules/.bin/vitest run
+	cd $(CONSOLE_DIR) && ./node_modules/.bin/vite build
+	cd $(CONSOLE_DIR) && ./node_modules/.bin/tsc -p tsconfig.server.build.json
 
-devtools-e2e:
-	cd $(DEVTOOLS_DIR) && ./node_modules/.bin/playwright test
+console-e2e:
+	cd $(CONSOLE_DIR) && ./node_modules/.bin/playwright test
+
+helm-check:
+	helm lint --strict deploy/helm/linkd -f deploy/helm/linkd/examples/external-services.yaml -f deploy/helm/linkd/examples/clusters.yaml -f deploy/helm/linkd/examples/console-ingress.yaml -f deploy/helm/linkd/examples/servicemonitor.yaml
+	helm lint --strict deploy/helm/linkd -f deploy/helm/linkd/examples/existing-secrets.yaml
+	node --test deploy/helm/linkd/tests/chart.test.mjs
 
 check:
 	$(MAKE) fmt-check
@@ -61,7 +70,8 @@ check:
 	$(MAKE) vet
 	$(MAKE) race
 	$(MAKE) lint
-	$(MAKE) devtools-check
+	$(MAKE) console-check
+	$(MAKE) helm-check
 
 image:
 	$(CONTAINER) build \
@@ -70,3 +80,10 @@ image:
 		--build-arg VERSION=$(VERSION) \
 		-t $(IMAGE):$(IMAGE_TAG) \
 		.
+
+console-image:
+	$(CONTAINER) build $(CONSOLE_BUILD_FLAGS) \
+		--build-arg NODE_IMAGE=$(NODE_IMAGE) \
+		--build-arg NODE_BUILD_OPTIONS="$(NODE_BUILD_OPTIONS)" \
+		-t $(CONSOLE_IMAGE):$(IMAGE_TAG) \
+		$(CONSOLE_DIR)

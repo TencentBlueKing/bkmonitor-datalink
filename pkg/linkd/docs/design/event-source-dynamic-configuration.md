@@ -68,7 +68,7 @@ Stream 管理器按来源清单有界遍历，只裁剪已确认前缀。
 - `GET /api/v1/runtime`：worker、任务、调度目标、分片探测及来源队列路由。
 - `linkd event-source import --file <yaml>`：通过 API 增加/更新文件中的 event_sources，不删除遗漏项。
 
-常驻进程不自动加载 YAML 来源。YAML 保留静态连接、认证、预算和可显式导入的来源清单；优先用 API/DevTools 修改来源。
+常驻进程不自动加载 YAML 来源。YAML 保留静态连接、认证、预算和可显式导入的来源清单；优先用 API/Console 修改来源。
 API 保存成功返回 202，不代表所有 Flow 已切换；查看目标与实际任务状态判断应用结果。
 配置 token 与 worker token 必须不同，worker 仅能读取分配给当前会话的 Release。管理编辑省略 security 时保留旧凭据，不提交脱敏占位值。
 

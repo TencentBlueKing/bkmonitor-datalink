@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.server.json",
+  "compilerOptions": { "types": ["node"], "sourceMap": false },
+  "exclude": ["src/**/*.test.ts"]
+}

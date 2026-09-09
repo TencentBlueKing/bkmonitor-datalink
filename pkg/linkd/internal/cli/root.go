@@ -39,6 +39,7 @@ type commandOptions struct {
 	lifecycleValidate    ProcessValidator
 	controlPlaneRunner   ControlPlaneRunner
 	controlPlaneValidate ProcessValidator
+	migrationRunner      MigrationRunner
 }
 
 // ProcessRunner 是常驻进程职责共享的装配签名。每个进程都接收独立的 telemetry runtime，
@@ -63,6 +64,9 @@ type LifecycleRunner = ProcessRunner
 // 管理任务；后续管理任务、API 和 Leader Election 仍沿用该进程边界。
 type ControlPlaneRunner = ProcessRunner
 
+// MigrationRunner 执行有界的一次性初始化，返回前必须释放所有已获取的资源。
+type MigrationRunner func(context.Context, config.Config) error
+
 // Dependencies 汇总各职责启动命令需要的进程装配依赖。
 // 已完成职责可在 nil 时使用正式默认实现；尚未完成职责必须在接管数据前明确失败。
 type Dependencies struct {
@@ -76,6 +80,8 @@ type Dependencies struct {
 	LifecycleRunner LifecycleRunner
 	// ControlPlaneRunner 可在嵌入或测试场景替换控制面进程；nil 使用正式任务装配。
 	ControlPlaneRunner ControlPlaneRunner
+	// MigrationRunner 替换一次性初始化；nil 使用正式控制面初始化逻辑。
+	MigrationRunner MigrationRunner
 }
 
 // NewRootCommand 构造 Linkd 根命令。version 为空时按 dev 展示。
@@ -113,6 +119,10 @@ func NewRootCommand(version string, dependencies Dependencies) *cobra.Command {
 		lifecycleValidate:    lifecycleValidate,
 		controlPlaneRunner:   controlPlaneRunner,
 		controlPlaneValidate: controlPlaneValidate,
+		migrationRunner:      dependencies.MigrationRunner,
+	}
+	if options.migrationRunner == nil {
+		options.migrationRunner = controlplaneprocess.Migrate
 	}
 	if dependencies.CleanerFlowFactory != nil {
 		options.cleanerValidate = func(cfg config.Config) error {

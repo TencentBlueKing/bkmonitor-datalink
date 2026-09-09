@@ -124,10 +124,6 @@ storage:
     address: redis.example.com:6379
     database: 0
 lifecycle:
-  output:
-    kafka:
-      brokers: [kafka.example.com:9092]
-      topic: linkd-alerts
 event_sources:
   - event_source_id: source-a
     enabled: true

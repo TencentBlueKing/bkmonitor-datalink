@@ -24,7 +24,7 @@ func newStorageCommand(options *commandOptions) *cobra.Command {
 		Use:   "storage",
 		Short: "执行 Linkd 存储管理操作",
 	}
-	command.AddCommand(newStoragePrepareCommand(options))
+	command.AddCommand(newStoragePrepareCommand(options), newStorageMigrateCommand(options))
 	return command
 }
 

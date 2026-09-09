@@ -349,17 +349,6 @@ func TestLoadLifecycleWithDefaults(t *testing.T) {
 
 	path := writeConfig(t, `lifecycle:
   concurrency: 4
-  output:
-    kafka:
-      brokers: [kafka.example.com:9092]
-      topic: linkd-alerts
-      client_id: linkd-lifecycle
-      security:
-        protocol: sasl_ssl
-        sasl:
-          mechanism: scram_sha_256
-          username: linkd
-          password: lifecycle-secret
 `)
 
 	cfg, err := load(path, Overrides{}, mapLookup(nil))
@@ -386,7 +375,7 @@ func TestLoadLifecycleWithDefaults(t *testing.T) {
 	}
 	runtimeConfig := lifecycle.RuntimeConfig()
 	if runtimeConfig.WorkerCount != 4 || runtimeConfig.MaxInflightMessages != 64 ||
-		runtimeConfig.MaxRetryMessages != 4 || lifecycle.Output.Kafka.Security.SASL.Password != "lifecycle-secret" {
+		runtimeConfig.MaxRetryMessages != 4 {
 		t.Fatalf("load() lifecycle runtime = %#v", lifecycle)
 	}
 }
@@ -443,11 +432,7 @@ func TestLoadRejectsInvalidLifecycle(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			content := `lifecycle:
-` + test.override + `  output:
-    kafka:
-      brokers: [kafka.example.com:9092]
-      topic: linkd-alerts
-`
+` + test.override
 			path := writeConfig(t, content)
 			_, err := load(path, Overrides{}, mapLookup(nil))
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
@@ -1018,36 +1003,6 @@ func TestMarshalRedactedStorageSecrets(t *testing.T) {
 	}
 }
 
-func TestMarshalRedactedLifecycleKafkaPassword(t *testing.T) {
-	t.Parallel()
-
-	lifecycle := validLifecycleConfigForTest()
-	lifecycle.Output.Kafka.Security = kafkaclient.SecurityConfig{
-		Protocol: "sasl_ssl",
-		SASL: &kafkaclient.SASLConfig{
-			Mechanism: "plain",
-			Username:  "linkd",
-			Password:  "lifecycle-secret",
-		},
-	}
-	cfg := Config{
-		Logging:      logging.DefaultConfig(),
-		Lifecycle:    &lifecycle,
-		EventSources: []EventSource{},
-	}
-	data, err := MarshalRedacted(cfg)
-	if err != nil {
-		t.Fatalf("MarshalRedacted() error = %v", err)
-	}
-	if strings.Contains(string(data), "lifecycle-secret") ||
-		!strings.Contains(string(data), "password: '******'") {
-		t.Fatalf("MarshalRedacted() = %s", data)
-	}
-	if cfg.Lifecycle.Output.Kafka.Security.SASL.Password != "lifecycle-secret" {
-		t.Fatal("MarshalRedacted() changed original lifecycle password")
-	}
-}
-
 func TestLoadResolvesAndValidatesKafkaTLSFiles(t *testing.T) {
 	t.Parallel()
 
@@ -1062,16 +1017,18 @@ func TestLoadResolvesAndValidatesKafkaTLSFiles(t *testing.T) {
 	}
 	configPath := filepath.Join(directory, "linkd.yaml")
 	content := `lifecycle:
-  output:
-    kafka:
-      brokers: [kafka.example.com:9093]
-      topic: alerts
-      security:
-        protocol: ssl
-        tls:
-          ca_file: ./certs/ca.pem
 event_sources:
   - event_source_id: source-a
+    hooks:
+      - name: alerts
+        type: kafka
+        config:
+          brokers: [kafka.example.com:9093]
+          topic: alerts
+          security:
+            protocol: ssl
+            tls:
+              ca_file: ./certs/ca.pem
     enabled: true
     storage:
       type: kafka
@@ -1096,7 +1053,7 @@ event_sources:
 	if gotPath != caPath {
 		t.Fatalf("load() ca_file = %q, want %q", gotPath, caPath)
 	}
-	if lifecyclePath := cfg.Lifecycle.Output.Kafka.Security.TLS.CAFile; lifecyclePath != caPath {
+	if lifecyclePath := cfg.EventSources[0].Hooks[0].Config.Security.TLS.CAFile; lifecyclePath != caPath {
 		t.Fatalf("load() lifecycle ca_file = %q, want %q", lifecyclePath, caPath)
 	}
 	printed, err := MarshalRedacted(cfg)
@@ -1137,54 +1094,6 @@ func TestLoadRejectsUnknownKafkaTLSField(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "field ca_path not found") {
 		t.Fatalf("load() error = %v, want unknown TLS field", err)
 	}
-}
-
-func TestMarshalRedactedKafkaInlinePrivateKey(t *testing.T) {
-	t.Parallel()
-
-	cfg := Config{
-		Logging: logging.DefaultConfig(),
-		Lifecycle: &LifecycleConfig{Output: LifecycleOutputConfig{Kafka: &LifecycleKafkaConfig{
-			Brokers: []string{"kafka:9093"},
-			Topic:   "alerts",
-			Security: kafkaclient.SecurityConfig{
-				Protocol: kafkaclient.SecurityProtocolSSL,
-				TLS: &kafkaclient.TLSConfig{
-					CAPEM:         "public-ca",
-					ClientCertPEM: "public-client-certificate",
-					ClientKeyPEM:  "private-client-key",
-				},
-			},
-		}}},
-		EventSources: []EventSource{},
-	}
-	data, err := MarshalRedacted(cfg)
-	if err != nil {
-		t.Fatalf("MarshalRedacted() error = %v", err)
-	}
-	output := string(data)
-	if strings.Contains(output, "private-client-key") || !strings.Contains(output, "client_key_pem: '******'") {
-		t.Fatalf("MarshalRedacted() leaked private key: %s", output)
-	}
-	for _, publicValue := range []string{"public-ca", "public-client-certificate"} {
-		if !strings.Contains(output, publicValue) {
-			t.Fatalf("MarshalRedacted() hid %q: %s", publicValue, output)
-		}
-	}
-	if cfg.Lifecycle.Output.Kafka.Security.TLS.ClientKeyPEM != "private-client-key" {
-		t.Fatal("MarshalRedacted() changed original private key")
-	}
-}
-
-func validLifecycleConfigForTest() LifecycleConfig {
-	return LifecycleConfig{
-		Output: LifecycleOutputConfig{
-			Kafka: &LifecycleKafkaConfig{
-				Brokers: []string{"kafka.example.com:9092"},
-				Topic:   "linkd-alerts",
-			},
-		},
-	}.WithDefaults()
 }
 
 func newTestCAPEM(t *testing.T) []byte {

@@ -91,7 +91,7 @@ Repository 单文档/单请求硬上限保护。排队及执行中的调用总�
 
 旧的 `max_operations`、`wait_milliseconds`、`max_concurrent_batches` YAML 键已删除，
 严格解析会拒绝它们；应移除这些键，只配置 `lifecycle.concurrency`。
-`read_wait_milliseconds` 同样是派生字段，不接受 YAML 手动配置；DevTools 生效配置展示上述四项值。
+`read_wait_milliseconds` 同样是派生字段，不接受 YAML 手动配置；Console 生效配置展示上述四项值。
 当前不是热更新：调整并发后需重启。
 调用取消不会取消其他调用已经发送的批次；该调用不继续 ACK，按可能部分成功重试。
 关闭时取消未完成批次并等待 worker 退出后关闭连接池。设 `enabled: false` 可做同并发对照。
@@ -108,7 +108,7 @@ chmod 600 ./configs/linkd.local.yaml
 go run ./cmd/linkd config validate --config ./configs/linkd.local.yaml
 ```
 
-`configs/*.local.yaml` 和 `.env*` 已被 Git 忽略。普通命令使用 `--config` 选择本地文件；PM2 和 DevTools
+`configs/*.local.yaml` 和 `.env*` 已被 Git 忽略。普通命令使用 `--config` 选择本地文件；PM2 和 Console
 也可以通过 `LINKD_CONFIG` 使用同一份 YAML。当前 Linkd 进程不提供逐项环境变量或 secret-file 覆盖，
 生产部署必须把配置文件作为受权限保护的 Secret 挂载，且不得提交包含凭据的副本。
 
@@ -408,12 +408,20 @@ linkd storage prepare --config /etc/linkd/linkd.yaml \
 4. 清理或更换 Redis Mailbox/Signal 中引用旧 EventID 的状态；
 5. 先启动 `linkd run control-plane`，确认 schema、Active 索引、当前及相邻桶和 alias 对账成功；
 6. 再启动 cleaner/lifecycle；使用 all-in-one 时首次对账会在接管消息前同步完成；
-7. 检查 DevTools Elasticsearch 拓扑后恢复上游流量。
+7. 检查 Console Elasticsearch 拓扑后恢复上游流量。
 
 删除操作不可恢复。本仓库不提供旧 schema 的 reindex、双读或双写逻辑，也不会在启动时替操作者执行
 删除。本轮不自动执行 retention；达到 `max_buckets_per_entity` 时 Bucket Manager 会失败并要求人工处理。
 
 ## 动态 EventSource 与调度
+
+部署前可使用 `linkd storage migrate --config <path> --timeout 4m` 检查控制面配置并执行一次性
+基础存储初始化。该命令有写入副作用，不等同于只读的 `config validate`；不会自动导入来源或
+重建调度历史。Helm Job 的执行、等待与清理规则见 [Helm 部署指南](helm.md#初始化-job-与等待方式)。
+
+Helm 中每个 worker 组可以通过 `LINKD_WORKER_LABELS` 注入 JSON 字符串映射，完整替换 YAML 的
+`worker.labels`；变量未设置时保留 YAML 标签，`{}` 清空标签。输入限制为 16384 字节，继续遵守
+最多 32 个标签、键最多 128 字节、值最多 256 字节的校验。详见 [Helm 部署指南](helm.md)。
 
 来源运行配置以 ES/MySQL 中的 Record/Release 为准。文件中的 `event_sources` 只供显式导入和本地模拟器使用，常驻进程不会自动导入。
 
@@ -447,3 +455,42 @@ linkd event-source import --config configs/linkd.local.yaml --file configs/linkd
 不要手工在前缀中加入 Release 或 worker ID。背压、Mailbox、lease 和 Stream 诊断均使用同一派生规则。
 
 详细 API 见[动态来源设计](../design/event-source-dynamic-configuration.md)，恢复与容器关闭预算见[调度协议](../design/task-scheduling-protocol.md)。
+
+## EventSource hooks
+
+输出配置属于每个 EventSource，随 Record/Release 发布。旧 `lifecycle.output` 已移除，加载时拒绝；
+将原 Kafka 参数放到需要输出的每个来源的 `hooks[].config` 中，再按现有导入/API/provider 发布流程生效。
+空列表或省略 `hooks` 不执行输出。以下内容位于单个 EventSource 下，可自由删减或增加具名实例：
+
+```yaml
+hooks:
+  - name: alert-kafka
+    type: kafka
+    config:
+      brokers: [127.0.0.1:9092]
+      topic: linkd-alerts
+      client_id: linkd-alert-output
+      max_message_bytes: 1048576
+      security:
+        protocol: plaintext
+  - name: active-by-strategy
+    type: active-alert-by-strategy
+    config:
+      redis:
+        mode: standalone
+        address: 127.0.0.1:6379
+        database: 0
+      key_prefix: linkd:active-alert-by-strategy
+      timeout_milliseconds: 1000
+```
+
+实例名在来源内唯一，由 1～64 个字母、数字、下划线或连字符组成，首字符为字母或数字。
+每个来源至多 16 个 hook，未知类型和错误参数在发布前拒绝。
+Redis 连接参数独立于 `storage.redis`，同样支持 Sentinel 及两侧认证；密码在管理展示中脱敏。
+`key_prefix` 必填，不自动添加来源 ID；`timeout_milliseconds` 为正整数毫秒，默认 1000，
+可使用 100、500 等值，禁止零、负值、null、Duration 溢出及旧秒级字段。
+运行时输出 Redis 不可达不阻止来源装配，每次实际调用按超时记录失败。
+
+集合成员和失败边界以 [Lifecycle 插件行为](../modules/lifecycle.md#23-enricher-与-finalhook) 为准。
+Console Kafka 页面按来源和实例展示输出目标；动态管理接口中的连接凭据已脱敏，因此该模式只展示
+目标声明，不使用脱敏凭据探测输出集群 metadata，也不将其标记为已验证可用。

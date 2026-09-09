@@ -65,10 +65,6 @@ func TestLifecycleCommandDelegatesToRunner(t *testing.T) {
 
 	path := writeCLIConfig(t, `lifecycle:
   concurrency: 3
-  output:
-    kafka:
-      brokers: [kafka.example.com:9092]
-      topic: linkd-alerts
 `)
 	var calls atomic.Int32
 	runner := LifecycleRunner(func(

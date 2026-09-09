@@ -68,7 +68,7 @@ Release、错误文本和凭据不得进入调度指标标签。排查具体实�
 
 ## 5. 补充验证与边界
 
-执行 `make fmt`、`make check`、DevTools E2E，以及显式 Redis 协议集成测试。
+执行 `make fmt`、`make check`、Console E2E，以及显式 Redis 协议集成测试。
 首次元数据失败、topic 身份变化/异常减少、迟到续租、协调状态丢失、定向 Pending 接管由已有单元或
 Redis 集成测试补充，不伪装成上述真实多进程演练已覆盖。冻结 VM、无限期外部 I/O、不停机自动 HA、
 真实 Enrich 外部依赖、持续高吞吐压力不在本轮验收范围。

@@ -86,7 +86,7 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 	panicRecovered := false
 	func() {
 		defer func() { panicRecovered = recover() != nil }()
-		_, _ = runtime.ObserveFinalHook(panickingFinalHook{}).Execute(ctx, lifecycle.FinalHookInput{
+		_, _ = runtime.ObserveFinalHook(lifecycle.NamedFinalHook{Name: "panic-instance", Hook: panickingFinalHook{}}).Execute(ctx, lifecycle.FinalHookInput{
 			Alert: domain.Alert{EventSourceID: "source-a"},
 		})
 	}()
@@ -144,6 +144,7 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 		"linkd_cleaner_backpressure_paused_ratio",
 		"linkd_cleaner_backpressure_transitions_total",
 		"linkd_final_hook_operations_total",
+		`linkd_hook_name="panic-instance"`,
 		"linkd_enrich_attempts_total",
 		"linkd_enrich_attempt_duration_seconds_bucket",
 		"linkd_enrich_inflight",

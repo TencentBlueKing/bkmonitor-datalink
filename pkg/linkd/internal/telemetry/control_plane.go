@@ -81,7 +81,7 @@ func (r *Runtime) ObserveElasticsearchArchiveBatch(ctx context.Context, scanned,
 	}
 	scannedValue, archivedValue, failedValue := int64(scanned), int64(archived), int64(failed)
 	// 连续归档在清空积压后会立即执行一次空扫描；空结果不应覆盖最近一次真实工作批次，
-	// 否则 DevTools 在任务空闲时只能看到 0，无法判断上一批的处理效果。
+	// 否则 Console 在任务空闲时只能看到 0，无法判断上一批的处理效果。
 	if scannedValue == 0 {
 		return
 	}

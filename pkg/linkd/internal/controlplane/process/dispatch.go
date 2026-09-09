@@ -30,11 +30,8 @@ import (
 
 func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, metrics *telemetry.Runtime, providers ...eventsource.Provider) error {
 	d := cfg.Dispatch.WithDefaults()
-	if d.APIToken == "" || d.WorkerToken == "" || d.APIToken == d.WorkerToken {
-		return fmt.Errorf("dispatch requires distinct api_token and worker_token")
-	}
-	if cfg.Storage == nil || cfg.Storage.Redis == nil {
-		return fmt.Errorf("dispatch requires source storage and Redis")
+	if err := validateDispatchConfig(cfg); err != nil {
+		return err
 	}
 	startup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()

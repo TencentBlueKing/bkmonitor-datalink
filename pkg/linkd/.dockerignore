@@ -6,7 +6,7 @@ README.md
 *.md
 bin/
 dist/
-devtools/
+console/
 docs/
 tests/
 configs/*.local.yaml

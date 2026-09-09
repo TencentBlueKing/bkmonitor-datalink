@@ -142,14 +142,7 @@ func TestNewConsumerName(t *testing.T) {
 }
 
 func validLifecycleConfig() *config.LifecycleConfig {
-	value := config.LifecycleConfig{
-		Output: config.LifecycleOutputConfig{
-			Kafka: &config.LifecycleKafkaConfig{
-				Brokers: []string{"kafka.example.com:9092"},
-				Topic:   "alerts",
-			},
-		},
-	}.WithDefaults()
+	value := config.LifecycleConfig{}.WithDefaults()
 	return &value
 }
 

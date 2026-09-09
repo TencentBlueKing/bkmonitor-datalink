@@ -106,21 +106,21 @@ type BasicAuthConfig struct {
 
 // RedisConfig 描述 Redis 数据节点认证、逻辑数据库和连接发现模式。
 type RedisConfig struct {
-	Mode     string               `yaml:"mode,omitempty"`
-	Address  string               `yaml:"address,omitempty"`
-	Username string               `yaml:"username,omitempty"`
-	Password string               `yaml:"password,omitempty"`
-	Database int                  `yaml:"database"`
-	Sentinel *RedisSentinelConfig `yaml:"sentinel,omitempty"`
+	Mode     string               `yaml:"mode,omitempty" json:"mode,omitempty"`
+	Address  string               `yaml:"address,omitempty" json:"address,omitempty"`
+	Username string               `yaml:"username,omitempty" json:"username,omitempty"`
+	Password string               `yaml:"password,omitempty" json:"password,omitempty"`
+	Database int                  `yaml:"database" json:"database"`
+	Sentinel *RedisSentinelConfig `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
 }
 
 // RedisSentinelConfig 描述 Sentinel seed、master 名称和 Sentinel 自身认证。
 // Redis 数据节点认证仍由 RedisConfig.Username 和 RedisConfig.Password 提供。
 type RedisSentinelConfig struct {
-	MasterName string   `yaml:"master_name"`
-	Addresses  []string `yaml:"addresses"`
-	Username   string   `yaml:"username,omitempty"`
-	Password   string   `yaml:"password,omitempty"`
+	MasterName string   `yaml:"master_name" json:"master_name"`
+	Addresses  []string `yaml:"addresses" json:"addresses"`
+	Username   string   `yaml:"username,omitempty" json:"username,omitempty"`
+	Password   string   `yaml:"password,omitempty" json:"password,omitempty"`
 }
 
 // WithDefaults 返回补齐非敏感默认值且不共享嵌套配置的副本。

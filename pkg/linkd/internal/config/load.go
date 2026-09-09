@@ -51,6 +51,7 @@ type fileEventSource struct {
 	FingerprintFields []string           `yaml:"fingerprint_fields"`
 	SeverityMapping   map[string]string  `yaml:"severity_mapping"`
 	DefaultSeverity   string             `yaml:"default_severity"`
+	Hooks             []HookConfig       `yaml:"hooks"`
 	Enrich            EnrichConfig       `yaml:"enrich"`
 	Storage           *fileStorageConfig `yaml:"storage"`
 }
@@ -145,6 +146,9 @@ func load(path string, overrides Overrides, lookupEnv func(string) (string, bool
 		return Config{}, fmt.Errorf("validate config %q: %w", path, err)
 	}
 	applyEnvironment(&cfg, lookupEnv)
+	if err := applyWorkerLabels(&cfg, lookupEnv); err != nil {
+		return Config{}, err
+	}
 	applyOverrides(&cfg, overrides)
 
 	if err := cfg.Validate(); err != nil {
@@ -175,6 +179,7 @@ func decodeEventSources(decoded []fileEventSource) ([]EventSource, error) {
 			cleaner = *source.Cleaner
 		}
 		sources[index] = EventSource{
+			Hooks:             source.Hooks,
 			EventSourceID:     source.EventSourceID,
 			Scheduling:        source.Scheduling,
 			RelatedTenantID:   source.RelatedTenantID,

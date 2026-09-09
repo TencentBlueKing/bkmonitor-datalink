@@ -102,3 +102,12 @@ helm upgrade --install linkd ./linkd-0.1.0.tgz \
 ```
 
 Artifact 保留期受仓库或组织策略限制，见 [GitHub Artifacts 文档](https://docs.github.com/en/actions/tutorials/store-and-share-data)。
+
+在组织仓库运行时，Chart 上传后还会通过 Artifact Metadata API 登记到组织的
+`https://github.com/orgs/<owner>/artifacts` 页面，名称为 `linkd-chart`。登记包含 Chart 版本、
+`.tgz` 文件本身的 SHA256、所属仓库与本次 Artifact 下载链接，并回读确认记录存在。
+Helm job 单独申请 `artifact-metadata: write` 权限；个人 fork 跳过组织级登记。
+
+Linked artifacts 只存储关联信息，文件仍遵循 Actions 的 30 天保留期；登记不会延长文件寿命，
+本流程也不会在文件过期后自动更新记录状态。接口说明见
+[GitHub Linked artifacts 文档](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/upload-linked-artifacts)。

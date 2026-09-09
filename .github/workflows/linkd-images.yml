@@ -166,6 +166,9 @@ jobs:
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      artifact-metadata: write
     steps:
       - name: Checkout selected commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -219,6 +222,50 @@ jobs:
           path: dist/linkd-chart/
           if-no-files-found: error
           retention-days: 30
+
+      - name: Register chart in linked artifacts
+        if: ${{ github.event.repository.owner.type == 'Organization' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+          packages=(dist/linkd-chart/linkd-*.tgz)
+          if [[ ${#packages[@]} -ne 1 || ! -f "${packages[0]}" ]]; then
+            echo '::error::登记 Linked artifacts 时必须恰好存在一个 Chart 包'
+            exit 1
+          fi
+          package="${packages[0]}"
+          filename="${package##*/}"
+          chart_version="${filename#linkd-}"
+          chart_version="${chart_version%.tgz}"
+          # 使用 .tgz 本身的 digest，而非 upload-artifact 外层归档的 digest。
+          digest="sha256:$(sha256sum "$package" | cut -d ' ' -f 1)"
+          jq -n \
+            --arg version "$chart_version" \
+            --arg digest "$digest" \
+            --arg url "$ARTIFACT_URL" \
+            --arg filename "$filename" \
+            --arg registry "$GITHUB_SERVER_URL" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg github_repository "${GITHUB_REPOSITORY#*/}" \
+            '{name: "linkd-chart", version: $version, digest: $digest,
+              artifact_url: $url, path: $filename, registry_url: $registry,
+              repository: $repository, github_repository: $github_repository,
+              status: "active"}' > "$RUNNER_TEMP/linkd-chart-storage-record.json"
+          gh api --method POST \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "orgs/$GITHUB_REPOSITORY_OWNER/artifacts/metadata/storage-record" \
+            --input "$RUNNER_TEMP/linkd-chart-storage-record.json"
+          gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "orgs/$GITHUB_REPOSITORY_OWNER/artifacts/$digest/metadata/storage-records" \
+            > "$RUNNER_TEMP/linkd-chart-storage-records.json"
+          jq -e --arg url "$ARTIFACT_URL" \
+            '.storage_records | any(.artifact_url == $url)' \
+            "$RUNNER_TEMP/linkd-chart-storage-records.json"
+          printf '[组织级 Linked artifacts](%s/orgs/%s/artifacts)\n\n' \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY_OWNER" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summarize chart artifact
         shell: bash

@@ -139,9 +139,13 @@ type Config struct {
 	ShutdownTimeout  Duration               `yaml:"shutdown_timeout"`
 }
 
+// Default is the product configuration for the container this process was
+// given. The capacity budgets are part of it rather than of any file: a
+// deployment states the CPU and memory it wants and the budgets follow, so
+// there is no combination of them for anyone to get wrong.
 func Default() Config {
 	runner := coordinator.DefaultConcurrentRunnerLimits()
-	return Config{
+	cfg := Config{
 		Mode:  ModeShadow,
 		Input: DefaultPhaseTwoInput(),
 		HTTP: HTTPConfig{
@@ -172,6 +176,26 @@ func Default() Config {
 		PhaseTwo:        defaultPhaseTwoRuntime(),
 		ShutdownTimeout: Duration(10 * time.Second),
 	}
+	return cfg.withDerivedCapacity(DetectCapacityInputs())
+}
+
+// withDerivedCapacity sizes admission, queueing and the Coordinator budgets
+// from one container's CPU and memory.
+func (c Config) withDerivedCapacity(inputs CapacityInputs) Config {
+	derived := DeriveScheduler(inputs)
+	c.PhaseTwo.Scheduler.ProcessQueryPermits = derived.ProcessQueryPermits
+	c.PhaseTwo.Scheduler.RecoveryQueryPermits = derived.RecoveryQueryPermits
+	c.PhaseTwo.Scheduler.ReadyQueueCapacity = derived.ReadyQueueCapacity
+	c.PhaseTwo.Scheduler.RecoveryQueueCapacity = derived.RecoveryQueueCapacity
+	c.PhaseTwo.Coordinator = DeriveCoordinator(inputs, c.chunkedStateApplyBudget())
+	return c
+}
+
+// chunkedStateApplyBudget is the most one Slot's State or Gap mutations can
+// carry: StateApplyMaxChunks successive Store calls of max_keys_per_batch
+// items each.
+func (c Config) chunkedStateApplyBudget() uint64 {
+	return uint64(c.Limits.Store.MaxKeysPerBatch) * execution.StateApplyMaxChunks
 }
 
 // DeploymentProfile is the Worker's Ownership compatibility identity: Workers
@@ -421,7 +445,7 @@ func (c Config) validateGoAccessRuntime() error {
 	// of at most max_keys_per_batch items, up to StateApplyMaxChunks calls.
 	// A process budget above that product could admit a Slot no apply can
 	// ever carry, so it is rejected here rather than at runtime.
-	chunkedApplyBudget := uint64(c.Limits.Store.MaxKeysPerBatch) * execution.StateApplyMaxChunks
+	chunkedApplyBudget := c.chunkedStateApplyBudget()
 	if budget.MaxStateMutations > chunkedApplyBudget || budget.MaxGapMutations > chunkedApplyBudget {
 		return errors.New("phase_two mutation budgets exceed the chunked state store apply budget")
 	}

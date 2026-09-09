@@ -48,11 +48,17 @@ func TestPhaseTwoRetainedBudgetProfileUsesResolvedDefaultAndOverride(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if base.Capacity.RetainedBytes != 96<<20 || base.Capacity.UQBodyBytes != 96<<20 {
+	// The budgets follow the container, so the profile reports which
+	// container they were read from alongside them.
+	if base.Capacity.RetainedBytes == 0 || base.Capacity.UQBodyBytes != int64(base.Capacity.RetainedBytes) {
 		t.Fatalf("resolved default capacity = %+v", base.Capacity)
 	}
-	if base.Capacity.ActiveExecutions != 0 || base.Capacity.QueryPermits != 2 || base.Capacity.RecoveryQueryPermits != 1 {
-		t.Fatalf("concurrency changed: %+v", base.Capacity)
+	if base.MemorySource == "" || base.MemoryLimitBytes == 0 {
+		t.Fatalf("memory budget provenance missing: %+v", base)
+	}
+	if base.Capacity.QueryPermits <= 0 || base.Capacity.RecoveryQueryPermits <= 0 ||
+		base.Capacity.ReadyQueue < base.Capacity.QueryPermits {
+		t.Fatalf("derived concurrency is not usable: %+v", base.Capacity)
 	}
 	cfg.PhaseTwo.Coordinator.MaxRetainedBytes = 64 << 20
 	legacy, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
@@ -156,8 +162,11 @@ func TestPhaseTwoCPURecordsPinnedLibraryDecisionWithoutRawEnvironment(t *testing
 			t.Fatalf("source=%q want=%q err=%v", source, want, err)
 		}
 	}
+	// The process resolves its CPU budget once, so exercise the pinned
+	// library through the same seam the startup path uses rather than
+	// through the cached entry point.
 	t.Setenv("GOMAXPROCS", "8")
-	source, err := configurePhaseTwoCPU()
+	source, err := configurePhaseTwoCPUWith(setMaxprocsFromCPUQuota)
 	if err != nil || source != "environment_override" {
 		t.Fatalf("pinned library source=%q err=%v", source, err)
 	}

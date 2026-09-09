@@ -19,20 +19,20 @@ import (
 const PhaseTwoWorkerIDEnvironment = "ALARMD_PHASE_TWO_WORKER_ID"
 
 type PhaseTwoWorkerConfig struct {
-	ID                        string   `yaml:"id"`
-	RegistrationTTL           Duration `yaml:"registration_ttl"`
-	RegistrationRenewInterval Duration `yaml:"registration_renew_interval"`
+	ID                        string `yaml:"id"`
+	RegistrationTTL           Duration
+	RegistrationRenewInterval Duration
 }
 
 type PhaseTwoControlConfig struct {
-	StrategyCachePrefix        string                           `yaml:"strategy_cache_prefix"`
-	ProviderRoute              string                           `yaml:"provider_route"`
-	Timezone                   string                           `yaml:"timezone"`
-	RefreshInterval            Duration                         `yaml:"refresh_interval"`
-	ReconcileInterval          Duration                         `yaml:"reconcile_interval"`
-	CatalogTTL                 Duration                         `yaml:"catalog_ttl"`
-	LegacyMigrationMaxScanKeys int                              `yaml:"legacy_migration_max_scan_keys"`
-	LegacyMigrationTimeout     Duration                         `yaml:"legacy_migration_timeout"`
+	StrategyCachePrefix        string `yaml:"strategy_cache_prefix"`
+	ProviderRoute              string `yaml:"provider_route"`
+	Timezone                   string `yaml:"timezone"`
+	RefreshInterval            Duration
+	ReconcileInterval          Duration
+	CatalogTTL                 Duration
+	LegacyMigrationMaxScanKeys int
+	LegacyMigrationTimeout     Duration
 	LegacyQueryRuntime         PhaseTwoLegacyQueryRuntimeConfig `yaml:"legacy_query_runtime"`
 }
 
@@ -49,10 +49,10 @@ type PhaseTwoLegacyQueryRuntimeConfig struct {
 }
 
 type PhaseTwoOwnershipConfig struct {
-	ControlLeaderTTL           Duration `yaml:"control_leader_ttl"`
-	ControlLeaderRenewInterval Duration `yaml:"control_leader_renew_interval"`
-	LeaseTTL                   Duration `yaml:"lease_ttl"`
-	LeaseRenewInterval         Duration `yaml:"lease_renew_interval"`
+	ControlLeaderTTL           Duration
+	ControlLeaderRenewInterval Duration
+	LeaseTTL                   Duration
+	LeaseRenewInterval         Duration
 }
 
 type PhaseTwoSchedulerConfig struct {
@@ -61,17 +61,18 @@ type PhaseTwoSchedulerConfig struct {
 	// ActiveExecutionLimit is zero (unlimited) by default; positive values
 	// are an emergency complete-Runner guard, not normal Query admission.
 	// It is part of the product capacity profile, not an environment tuning knob.
-	ActiveExecutionLimit  int      `yaml:"active_execution_limit"`
-	TickInterval          Duration `yaml:"tick_interval"`
-	ProcessQueryPermits   int      `yaml:"process_query_permits"`
-	RecoveryQueryPermits  int      `yaml:"recovery_query_permits"`
-	ReadyQueueCapacity    int      `yaml:"ready_queue_capacity"`
-	RecoveryQueueCapacity int      `yaml:"recovery_queue_capacity"`
-	MaxQueuedItemsPerQG   int      `yaml:"max_queued_items_per_qg"`
-	MaxReplaySlots        uint32   `yaml:"max_replay_slots"`
-	MaxReplayAge          Duration `yaml:"max_replay_age"`
-	RetryMinDelay         Duration `yaml:"retry_min_delay"`
-	RetryMaxDelay         Duration `yaml:"retry_max_delay"`
+	ActiveExecutionLimit int
+	TickInterval         Duration
+	// Admission and queue depth are derived from the container's CPU budget.
+	ProcessQueryPermits   int
+	RecoveryQueryPermits  int
+	ReadyQueueCapacity    int
+	RecoveryQueueCapacity int
+	MaxQueuedItemsPerQG   int
+	MaxReplaySlots        uint32
+	MaxReplayAge          Duration
+	RetryMinDelay         Duration
+	RetryMaxDelay         Duration
 }
 
 func (config PhaseTwoSchedulerConfig) RecoveryLimits() scheduler.RecoveryLimits {
@@ -85,19 +86,19 @@ func (config PhaseTwoSchedulerConfig) RecoveryLimits() scheduler.RecoveryLimits 
 }
 
 type PhaseTwoAccessConfig struct {
-	UQEndpoint                 string   `yaml:"uq_endpoint"`
-	QuerySource                string   `yaml:"query_source"`
-	MinReadyDelay              Duration `yaml:"min_ready_delay"`
-	DownstreamExecutionReserve Duration `yaml:"downstream_execution_reserve"`
+	UQEndpoint                 string `yaml:"uq_endpoint"`
+	QuerySource                string `yaml:"query_source"`
+	MinReadyDelay              Duration
+	DownstreamExecutionReserve Duration
 }
 
 type PhaseTwoCoordinatorConfig struct {
-	MaxSequencerReservations int    `yaml:"max_sequencer_reservations"`
-	MaxSeries                uint64 `yaml:"max_series"`
-	MaxRetainedBytes         uint64 `yaml:"max_retained_bytes"`
-	MaxStateMutations        uint64 `yaml:"max_state_mutations"`
-	MaxEvents                uint64 `yaml:"max_events"`
-	MaxGapMutations          uint64 `yaml:"max_gap_mutations"`
+	MaxSequencerReservations int
+	MaxSeries                uint64
+	MaxRetainedBytes         uint64
+	MaxStateMutations        uint64
+	MaxEvents                uint64
+	MaxGapMutations          uint64
 }
 
 type PhaseTwoRuntimeConfig struct {
@@ -106,10 +107,10 @@ type PhaseTwoRuntimeConfig struct {
 	ShadowManifestPath string                    `yaml:"shadow_manifest_path,omitempty"`
 	Worker             PhaseTwoWorkerConfig      `yaml:"worker"`
 	Control            PhaseTwoControlConfig     `yaml:"control"`
-	Ownership          PhaseTwoOwnershipConfig   `yaml:"ownership"`
+	Ownership          PhaseTwoOwnershipConfig   `yaml:"-"`
 	Scheduler          PhaseTwoSchedulerConfig   `yaml:"scheduler"`
 	Access             PhaseTwoAccessConfig      `yaml:"access"`
-	Coordinator        PhaseTwoCoordinatorConfig `yaml:"coordinator"`
+	Coordinator        PhaseTwoCoordinatorConfig `yaml:"-"`
 	RuntimeRedis       *RedisConnectionConfig    `yaml:"runtime_redis,omitempty"`
 }
 
@@ -130,22 +131,18 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 			ControlLeaderTTL: Duration(30 * time.Second), ControlLeaderRenewInterval: Duration(10 * time.Second),
 			LeaseTTL: Duration(30 * time.Second), LeaseRenewInterval: Duration(10 * time.Second),
 		},
+		// Admission, queue depth and the Coordinator budgets are absent here on
+		// purpose: they are sized from the container by Default, which is the
+		// only place that knows the chunked Store apply budget they are held
+		// against.
 		Scheduler: PhaseTwoSchedulerConfig{
 			ActiveExecutionLimit: 0,
-			TickInterval:         Duration(time.Second), ProcessQueryPermits: 2, RecoveryQueryPermits: 1,
-			ReadyQueueCapacity: 256, RecoveryQueueCapacity: 64,
-			MaxQueuedItemsPerQG: 16, MaxReplaySlots: 3, MaxReplayAge: Duration(10 * time.Minute),
+			TickInterval:         Duration(time.Second),
+			MaxQueuedItemsPerQG:  16, MaxReplaySlots: 3, MaxReplayAge: Duration(10 * time.Minute),
 			RetryMinDelay: Duration(time.Second), RetryMaxDelay: Duration(30 * time.Second),
 		},
 		Access: PhaseTwoAccessConfig{
 			MinReadyDelay: Duration(30 * time.Second), DownstreamExecutionReserve: Duration(5 * time.Second),
-		},
-		Coordinator: PhaseTwoCoordinatorConfig{
-			MaxSequencerReservations: 8192, MaxSeries: 100_000, MaxRetainedBytes: 96 << 20,
-			// State and Gap mutations above one Store call (8192 items) are
-			// applied in chunks, so the process budgets may exceed it up to
-			// StateApplyMaxChunks calls; events have no Store call bound.
-			MaxStateMutations: 65536, MaxEvents: 8192, MaxGapMutations: 65536,
 		},
 	}
 }

@@ -1,0 +1,147 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License.
+
+package config
+
+import (
+	"os"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+// MemoryLimitEnvironment carries the container's memory limit. The deployment
+// injects it from the Pod's own resource limits, because a preflight that runs
+// outside the Pod cannot read the cgroup the Pod will get and would otherwise
+// derive a table the Pod never uses.
+const MemoryLimitEnvironment = "ALARMD_MEMORY_LIMIT_BYTES"
+
+// Capacity is not an operating interface. A deployment supplies the container
+// it wants - CPU and memory - and every budget the process needs to size from
+// that follows: query permits, queue depth, series, retained bytes, mutation
+// and event budgets. Writing them into a values file made an operator
+// responsible for numbers that constrain one another, and one combination that
+// no Pod could run was published exactly that way.
+//
+// These constants are anchored to what production runs today on 8 CPU and
+// 8 GiB, so deriving them replaces the written numbers with the same numbers.
+// What they do not yet carry is measured scaling to other container shapes;
+// that calibration changes the formulas below and no interface.
+const (
+	retainedMemoryDivisor    = 4
+	bytesPerSeries           = 4 << 10
+	bytesPerMutation         = 32 << 10
+	queryPermitsPerCPU       = 4
+	recoveryPermitDivisor    = 4
+	queueDepthPerQueryPermit = 32
+
+	// Only local runs and unit tests reach this: a container states its limit
+	// through the environment, and a host cgroup states it in the files below.
+	fallbackMemoryLimitBytes = 2 << 30
+)
+
+// CapacityInputs is what the container gives the process. Both values travel
+// into the startup facts so a derived budget can always be traced back to the
+// container it came from, including when the source was a fallback.
+type CapacityInputs struct {
+	CPUBudget        int
+	MemoryLimitBytes uint64
+	MemorySource     string
+}
+
+var (
+	memoryLimitOnce   sync.Once
+	memoryLimitBytes  uint64
+	memoryLimitSource string
+)
+
+// DetectCapacityInputs reads the container's budgets. GOMAXPROCS is already
+// the container's CPU quota by the time configuration is read, provided the
+// CPU quota was resolved first.
+func DetectCapacityInputs() CapacityInputs {
+	memoryLimitOnce.Do(func() {
+		memoryLimitBytes, memoryLimitSource = detectMemoryLimit()
+	})
+	return CapacityInputs{
+		CPUBudget:        runtime.GOMAXPROCS(0),
+		MemoryLimitBytes: memoryLimitBytes,
+		MemorySource:     memoryLimitSource,
+	}
+}
+
+func detectMemoryLimit() (uint64, string) {
+	if raw, ok := os.LookupEnv(MemoryLimitEnvironment); ok {
+		if limit, err := strconv.ParseUint(strings.TrimSpace(raw), 10, 64); err == nil && limit > 0 {
+			return limit, "pod_limit"
+		}
+	}
+	// A cgroup states "no limit" in its own way in each version: v2 writes the
+	// word, v1 writes a number so large it cannot be a real limit.
+	if raw, err := os.ReadFile("/sys/fs/cgroup/memory.max"); err == nil {
+		text := strings.TrimSpace(string(raw))
+		if text != "max" {
+			if limit, err := strconv.ParseUint(text, 10, 64); err == nil && limit > 0 {
+				return limit, "cgroup_v2"
+			}
+		}
+	}
+	if raw, err := os.ReadFile("/sys/fs/cgroup/memory/memory.limit_in_bytes"); err == nil {
+		if limit, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64); err == nil &&
+			limit > 0 && limit < 1<<62 {
+			return limit, "cgroup_v1"
+		}
+	}
+	return fallbackMemoryLimitBytes, "fallback_default"
+}
+
+// DerivedScheduler is the query admission and queueing shape for one container.
+type DerivedScheduler struct {
+	ProcessQueryPermits   int
+	RecoveryQueryPermits  int
+	ReadyQueueCapacity    int
+	RecoveryQueueCapacity int
+}
+
+// DeriveScheduler sizes admission from the CPU budget. Queries spend most of
+// their time waiting on the downstream, so the permit count is a multiple of
+// the budget rather than equal to it; the queues only hold references, so they
+// are sized to keep a full permit set fed rather than to bound memory.
+func DeriveScheduler(inputs CapacityInputs) DerivedScheduler {
+	cpu := max(inputs.CPUBudget, 1)
+	permits := cpu * queryPermitsPerCPU
+	queue := permits * queueDepthPerQueryPermit
+	return DerivedScheduler{
+		ProcessQueryPermits:   permits,
+		RecoveryQueryPermits:  max(permits/recoveryPermitDivisor, 1),
+		ReadyQueueCapacity:    queue,
+		RecoveryQueueCapacity: queue,
+	}
+}
+
+// DeriveCoordinator sizes the process budgets from the memory limit. Retained
+// bytes take a quarter of it, leaving the rest for the Go heap's own overhead,
+// non-retained allocation and collection headroom; the remaining budgets are
+// that retained figure divided by what one series or one mutation costs.
+//
+// The mutation, event and reservation budgets are additionally held at what a
+// chunked Store apply can carry. A process budget above that product would
+// admit a Slot no apply could ever complete, which is the cross-check a
+// hand-written combination once failed.
+func DeriveCoordinator(inputs CapacityInputs, chunkedApplyBudget uint64) PhaseTwoCoordinatorConfig {
+	retained := max(inputs.MemoryLimitBytes/retainedMemoryDivisor, uint64(bytesPerMutation))
+	mutations := max(retained/bytesPerMutation, 1)
+	if chunkedApplyBudget > 0 && mutations > chunkedApplyBudget {
+		mutations = chunkedApplyBudget
+	}
+	return PhaseTwoCoordinatorConfig{
+		MaxRetainedBytes:         retained,
+		MaxSeries:                max(retained/bytesPerSeries, 1),
+		MaxStateMutations:        mutations,
+		MaxGapMutations:          mutations,
+		MaxEvents:                mutations,
+		MaxSequencerReservations: int(mutations),
+	}
+}

@@ -11,11 +11,11 @@ Console 和多个独立 Event Generator 实例按需启用。
 
 ## 构建镜像与准备配置
 
-Chart 默认使用 GHCR 的两个 `0.1.1` 镜像：
+Chart 默认使用 GHCR 的两个 `0.1.4` 镜像：
 
 ```text
-ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.1
-ghcr.io/tencentblueking/bkmonitor-datalink/linkd-console:0.1.1
+ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.4
+ghcr.io/tencentblueking/bkmonitor-datalink/linkd-console:0.1.4
 ```
 
 Chart 生成的配置在缺省时自动包含 `lifecycle: {}`，使用程序默认值；可用

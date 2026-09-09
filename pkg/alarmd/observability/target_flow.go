@@ -23,16 +23,16 @@ const targetFlowMarkerReserve = 1024
 const targetFlowCriticalReserveRecords = 1024
 const targetFlowCriticalReserveBytes = 1 << 20
 
-type TargetFlowConfig struct {
-	QueryGroups []string `yaml:"query_groups"`
-}
-
-func (c TargetFlowConfig) Validate() error {
-	if len(c.QueryGroups) > TargetFlowMaxGroups {
+// validateSelection bounds what may be observed at once. The limit is the
+// diagnostic budget: the per-minute record and byte budgets are shared across
+// everything selected, so the more objects are observed the less of each one's
+// lifecycle fits.
+func validateSelection(queryGroups []string) error {
+	if len(queryGroups) > TargetFlowMaxGroups {
 		return errors.New("target flow: too many query groups")
 	}
-	seen := make(map[string]bool, len(c.QueryGroups))
-	for _, q := range c.QueryGroups {
+	seen := make(map[string]bool, len(queryGroups))
+	for _, q := range queryGroups {
 		b, e := hex.DecodeString(q)
 		if e != nil || len(b) != 32 || seen[q] {
 			return errors.New("target flow: query groups must be unique SHA256 identities")
@@ -129,38 +129,19 @@ type TargetFlow struct {
 	nextDropMarker  uint64
 }
 
-func NewTargetFlow(logger *Logger, c TargetFlowConfig) (*TargetFlow, error) {
-	if err := c.Validate(); err != nil {
-		return nil, err
-	}
-	if len(c.QueryGroups) == 0 {
-		return nil, nil
-	}
-	if logger == nil || logger.writer == nil {
-		return nil, errors.New("target flow: logger required")
-	}
-	flow := newTargetFlow(logger)
-	flow.selectGroups(c.QueryGroups)
-	return flow, nil
-}
-
-// NewEmptyTargetFlow builds a flow that selects nothing yet.
+// NewTargetFlow builds a flow that observes nothing until a window is opened.
 //
-// NewTargetFlow returns nil when configuration selects no query group, which is
-// correct for a purely static selection but leaves nothing for a window opened
-// at runtime to attach to. A deployment that can be asked to observe an object
-// later needs the object to exist now, selecting nothing.
-func NewEmptyTargetFlow(logger *Logger) (*TargetFlow, error) {
+// There is no selection to pass in. What gets observed is decided while the
+// process runs, by windows that expire on their own; a selection fixed at
+// startup could only be changed by a release, and a choice made during one
+// investigation then outlives it with nobody able to say what it was for.
+func NewTargetFlow(logger *Logger) (*TargetFlow, error) {
 	if logger == nil || logger.writer == nil {
 		return nil, errors.New("target flow: logger required")
 	}
-	return newTargetFlow(logger), nil
-}
-
-func newTargetFlow(logger *Logger) *TargetFlow {
 	flow := &TargetFlow{logger: logger, now: time.Now, queueSeen: make(map[string]uint8, TargetFlowMaxGroups)}
 	flow.selectGroups(nil)
-	return flow
+	return flow, nil
 }
 
 func (f *TargetFlow) selectGroups(queryGroups []string) {
@@ -182,7 +163,7 @@ func (f *TargetFlow) Select(queryGroups []string) error {
 	if f == nil {
 		return errors.New("target flow: no flow to select on")
 	}
-	if err := (TargetFlowConfig{QueryGroups: queryGroups}).Validate(); err != nil {
+	if err := validateSelection(queryGroups); err != nil {
 		return err
 	}
 	f.selectGroups(queryGroups)

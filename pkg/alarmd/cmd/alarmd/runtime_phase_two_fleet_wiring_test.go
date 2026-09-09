@@ -120,7 +120,7 @@ func TestProductionBundleReportsFleetSnapshotPublishOutcome(t *testing.T) {
 // producing: the write lands, nothing observes it, and the operator waits for
 // output that cannot come.
 func TestOpeningAWindowChangesWhatTheReplicaObserves(t *testing.T) {
-	flow, err := observability.NewEmptyTargetFlow(observability.New(observability.ComponentRuntime, io.Discard))
+	flow, err := observability.NewTargetFlow(observability.New(observability.ComponentRuntime, io.Discard))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,38 +159,49 @@ func TestOpeningAWindowChangesWhatTheReplicaObserves(t *testing.T) {
 	}
 }
 
-// The configured selection keeps its place at the front of the budget, so a
-// window that does not fit is refused visibly rather than applied silently.
-func TestWindowsThatDoNotFitTheBudgetAreReported(t *testing.T) {
-	flow, err := observability.NewEmptyTargetFlow(observability.New(observability.ComponentRuntime, io.Discard))
+// Opening a window checks the budget, but two windows opened at the same moment
+// each see the count before the other's write, so more can be open than the
+// diagnostics can carry. Selecting past the budget would be rejected outright
+// and leave the replica observing nothing at all, so the excess is trimmed --
+// and the trim is reported, because someone is waiting on the window that was
+// dropped.
+func TestWindowsBeyondTheBudgetAreTrimmedAndReported(t *testing.T) {
+	flow, err := observability.NewTargetFlow(observability.New(observability.ComponentRuntime, io.Discard))
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := fleet.NewWindowStore(windowRedis(t), "alarmd-window-budget")
+	client := windowRedis(t)
+	const prefix = "alarmd-window-budget"
+	store, err := fleet.NewWindowStore(client, prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
 	at := time.Now()
-	fixed := make([]string, 0, observability.TargetFlowMaxGroups)
-	for index := 0; index < observability.TargetFlowMaxGroups; index++ {
-		fixed = append(fixed, fmt.Sprintf("%064x", index))
+	// Written straight to the control plane, which is what the race produces:
+	// the store's own cap cannot be exceeded through its API.
+	deadline := float64(at.Add(time.Minute).UnixMilli())
+	members := make([]*redis.Z, 0, observability.TargetFlowMaxGroups+1)
+	for index := 0; index <= observability.TargetFlowMaxGroups; index++ {
+		members = append(members, &redis.Z{Score: deadline, Member: fmt.Sprintf("%064x", index)})
 	}
-	watched := strings.Repeat("b", 64)
-	if _, err := store.Open(context.Background(), []string{watched}, "operator", time.Minute, at); err != nil {
+	if err := client.ZAdd(context.Background(), prefix+":observation-window", members...).Err(); err != nil {
 		t.Fatal(err)
 	}
-	var dropped int
+
+	var applied, dropped int
 	var reported error
 	applier := observationWindowApplier{
-		store: store, flow: flow, fixed: fixed, now: func() time.Time { return at },
-		observe: func(_, _, nowDropped int, err error) { dropped, reported = nowDropped, err },
+		store: store, flow: flow, now: func() time.Time { return at },
+		observe: func(nowApplied, _, nowDropped int, err error) {
+			applied, dropped, reported = nowApplied, nowDropped, err
+		},
 	}
 	applier.applyOnce(context.Background())
-	if flow.Selected(watched) {
-		t.Fatal("a window was applied past the diagnostic budget")
+	if applied != observability.TargetFlowMaxGroups {
+		t.Fatalf("applied = %d, want the budget filled rather than the selection refused", applied)
 	}
 	if dropped != 1 {
-		t.Fatalf("dropped = %d, want the window that did not fit counted", dropped)
+		t.Fatalf("dropped = %d, want the one that did not fit counted", dropped)
 	}
 	if reported != nil {
 		t.Fatalf("observed error = %v, want the shortfall reported as a count rather than a failure", reported)

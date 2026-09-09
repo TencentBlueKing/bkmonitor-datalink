@@ -758,8 +758,11 @@ func testProductionFullTargetFlow(t *testing.T, diagnostic bool) {
 		t.Fatalf("phase-two production Start() error = %v", err)
 	}
 	if diagnostic {
-		f, e := observability.NewTargetFlow(observability.New("runtime", &flowOutput), observability.TargetFlowConfig{QueryGroups: []string{string(bundle.queryGroups[0])}})
+		f, e := observability.NewTargetFlow(observability.New("runtime", &flowOutput))
 		if e != nil {
+			t.Fatal(e)
+		}
+		if e := f.Select([]string{string(bundle.queryGroups[0])}); e != nil {
 			t.Fatal(e)
 		}
 		flow.Store(f)

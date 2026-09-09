@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // Limits on what an observation window may ask for.
@@ -29,10 +31,11 @@ import (
 const (
 	// MaxWindowTTL bounds how long one window stays open.
 	MaxWindowTTL = 30 * time.Minute
-	// MaxOpenWindows bounds how many objects may be observed at once through
-	// windows. The remainder of the diagnostic budget stays with the selection
-	// that configuration makes, so opening windows cannot quietly displace it.
-	MaxOpenWindows = 24
+	// MaxOpenWindows bounds how many objects may be observed at once. Windows
+	// are now the only way anything is selected, so the whole diagnostic budget
+	// is theirs: the per-minute record and byte budgets are shared across
+	// everything observed, and that sharing is what the limit is protecting.
+	MaxOpenWindows = observability.TargetFlowMaxGroups
 )
 
 // Window is one object being observed, and who asked for it.

@@ -69,16 +69,15 @@ func (source registryReplicas) ReadyReplicas(ctx context.Context, at time.Time) 
 // observationWindowApplier turns the windows other people opened into what this
 // replica actually records.
 //
-// The configured selection keeps its place at the front of the budget: it is a
-// deliberate long-term choice, and a window opened for twenty minutes should not
-// silently displace it. Windows take what is left. When they do not all fit, the
-// shortfall is reported rather than dropped quietly -- someone opened a window
-// and is waiting for output, and no output plus no explanation is the worst
-// answer this can give.
+// The cap is applied again here even though opening a window already checks it,
+// because two windows opened at the same moment each see the count before the
+// other's write. Selecting past the budget would be rejected outright and leave
+// the replica observing nothing, so the excess is trimmed and reported instead:
+// someone opened a window and is waiting for output, and no output plus no
+// explanation is the worst answer this can give.
 type observationWindowApplier struct {
 	store   *fleet.WindowStore
 	flow    *observability.TargetFlow
-	fixed   []string
 	now     func() time.Time
 	observe func(applied, requested, dropped int, err error)
 }
@@ -94,7 +93,7 @@ func (applier observationWindowApplier) applyOnce(ctx context.Context) {
 	requested := fleet.QueryGroups(windows)
 	selection := make([]string, 0, observability.TargetFlowMaxGroups)
 	seen := make(map[string]struct{}, observability.TargetFlowMaxGroups)
-	for _, queryGroup := range append(append([]string{}, applier.fixed...), requested...) {
+	for _, queryGroup := range requested {
 		if _, duplicate := seen[queryGroup]; duplicate {
 			continue
 		}

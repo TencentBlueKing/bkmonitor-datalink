@@ -157,17 +157,9 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// untouched: diagnostics must not change what the pipeline reports.
 	fleetTracker := fleet.NewTracker(baseObserver, cfg.PhaseTwo.Worker.ID, external.Now)
 	var observer observability.Observer = fleetTracker
-	targetFlow, err := observability.NewTargetFlow(logger, cfg.PhaseTwo.TargetFlow)
+	targetFlow, err := observability.NewTargetFlow(logger)
 	if err != nil {
 		return nil, err
-	}
-	if targetFlow == nil {
-		// Configuration selected nothing, which used to mean there was nothing
-		// to record with. A window opened at runtime needs somewhere to land,
-		// so the flow exists either way and simply observes nothing until asked.
-		if targetFlow, err = observability.NewEmptyTargetFlow(logger); err != nil {
-			return nil, err
-		}
 	}
 	observer = observability.Multi(observer, external.AdditionalObserver, targetFlow)
 	observer = phaseTwoRuntimeObserver(observer)
@@ -597,8 +589,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		FleetAPI:     fleetAPI,
 		PublishFleet: func(ctx context.Context) { publisher.publishOnce(ctx) },
 		ApplyObservationWindows: observationWindowApplier{
-			store: windowStore, flow: targetFlow,
-			fixed: cfg.PhaseTwo.TargetFlow.QueryGroups, now: external.Now,
+			store: windowStore, flow: targetFlow, now: external.Now,
 			observe: observationWindowObserver(observer),
 		}.applyOnce,
 		ProbeControlRedis: func(probeCtx context.Context) error {

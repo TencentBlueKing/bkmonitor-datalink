@@ -1,0 +1,14 @@
+# 与 external-services.yaml 叠加；模拟器直接连接 Kafka，不需要 linkd.yaml 或配置 Secret。
+eventgen:
+  enabled: true
+  instances:
+    demo:
+      eventSourceId: demo-source
+      tenantId: tenant-a
+      kafka:
+        brokers: [kafka.example.com:9092]
+        topic: linkd-demo
+      newAlertsPerMinute: 60
+      cycleDuration: 1s
+      duplicatePercent: 0
+      cycles: 0

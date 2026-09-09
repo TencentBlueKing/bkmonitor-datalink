@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 	linkdconfig "linkd/internal/config"
 	"linkd/internal/eventgen"
+	"linkd/internal/kafkaclient"
 	"linkd/internal/logging"
 )
 
@@ -46,6 +47,8 @@ type dependencies struct {
 
 type commandOptions struct {
 	configPath         string
+	kafkaBrokers       []string
+	kafkaTopic         string
 	eventSourceID      string
 	tenantID           string
 	newAlertsPerMinute int
@@ -101,6 +104,8 @@ func newRootCommand(buildVersion, commit string, deps dependencies) *cobra.Comma
 	}
 	flags := command.Flags()
 	flags.StringVar(&options.configPath, "config", defaultConfigPath, "Linkd YAML 配置文件路径")
+	flags.StringSliceVar(&options.kafkaBrokers, "kafka-brokers", nil, "直接推送的 Kafka brokers，逗号分隔；与 --kafka-topic 配套使用")
+	flags.StringVar(&options.kafkaTopic, "kafka-topic", "", "直接推送的 Kafka topic；直连模式不读取配置文件")
 	flags.StringVar(&options.eventSourceID, "event-source-id", "", "必填的 EventSource event_source_id")
 	flags.StringVar(&options.tenantID, "tenant-id", "", "消息租户；来源未固定 related_tenant_id 时必填")
 	flags.IntVar(
@@ -140,10 +145,10 @@ func newRootCommand(buildVersion, commit string, deps dependencies) *cobra.Comma
 }
 
 func run(ctx context.Context, command *cobra.Command, options commandOptions, deps dependencies) error {
-	if deps.loadConfig == nil || deps.newPublisher == nil || deps.newRunID == nil || deps.resolveSeed == nil {
+	if deps.newPublisher == nil || deps.newRunID == nil || deps.resolveSeed == nil {
 		return fmt.Errorf("event generator dependencies are incomplete")
 	}
-	cfg, err := deps.loadConfig(options.configPath)
+	cfg, err := generatorConfig(command, options, deps)
 	if err != nil {
 		return err
 	}
@@ -205,4 +210,40 @@ func run(ctx context.Context, command *cobra.Command, options commandOptions, de
 	}
 	logger.InfoContext(ctx, "event generator stopped", "run_id", runID)
 	return nil
+}
+
+func generatorConfig(command *cobra.Command, options commandOptions, deps dependencies) (linkdconfig.Config, error) {
+	direct := command.Flags().Changed("kafka-brokers") || command.Flags().Changed("kafka-topic")
+	if !direct {
+		if deps.loadConfig == nil {
+			return linkdconfig.Config{}, fmt.Errorf("event generator config loader is required")
+		}
+		return deps.loadConfig(options.configPath)
+	}
+	if command.Flags().Changed("config") {
+		return linkdconfig.Config{}, fmt.Errorf("--config cannot be combined with direct Kafka options")
+	}
+	if len(options.kafkaBrokers) == 0 || len(options.kafkaBrokers) > 32 || options.kafkaTopic == "" {
+		return linkdconfig.Config{}, fmt.Errorf("direct Kafka mode requires 1 to 32 --kafka-brokers and --kafka-topic")
+	}
+	brokers, err := kafkaclient.NormalizeBrokers(options.kafkaBrokers)
+	if err != nil {
+		return linkdconfig.Config{}, fmt.Errorf("direct Kafka brokers: %w", err)
+	}
+	cfg := linkdconfig.Default()
+	// 直连只创建模拟器自身的 standard 来源，不读取或修改控制面配置。
+	// ConsumerGroup 仅满足来源结构校验；producer 不会加入任何消费组。
+	cfg.EventSources = []linkdconfig.EventSource{{
+		EventSourceID: options.eventSourceID, Enabled: true,
+		Cleaner:         linkdconfig.CleanerConfig{Type: linkdconfig.CleanerTypeStandard},
+		FingerprintMode: linkdconfig.FingerprintModeField, FingerprintField: "source_alert_id",
+		Storage: linkdconfig.EventSourceStorageConfig{
+			Type:  linkdconfig.StorageTypeKafka,
+			Kafka: linkdconfig.KafkaStorageConfig{Brokers: brokers, Topic: options.kafkaTopic, ConsumerGroup: "linkd-eventgen"},
+		},
+	}}
+	if err := linkdconfig.ValidateEventSources(cfg.EventSources, cfg.Severity); err != nil {
+		return linkdconfig.Config{}, fmt.Errorf("direct Kafka source: %w", err)
+	}
+	return cfg, nil
 }

@@ -1,10 +1,29 @@
 # Standard Event 模拟器
 
-`linkd-eventgen` 是独立的开发和压测辅助进程。它读取 Linkd YAML 中已有的 EventSource，按周期构造
+`linkd-eventgen` 是独立的开发和压测辅助进程。它可以直接连接 Kafka，也可以读取 Linkd YAML 中已有的 EventSource，按周期构造
 `standard` payload，并把消息写入该来源的 Kafka topic。模拟器不直接写 Event、Alert 或 AlertLog，
 也不会修改 YAML schema。
 
 ## 1. 启动
+
+### 直接配置 Kafka
+
+从镜像 `0.1.1` 起，可以不提供 `linkd.yaml`，直接指定 brokers 和 topic：
+
+```bash
+linkd-eventgen \
+  --kafka-brokers kafka.example.com:9092,kafka2.example.com:9092 \
+  --kafka-topic linkd-demo \
+  --event-source-id demo-source --tenant-id tenant-a \
+  --new-alerts-per-minute 60 --cycle-duration 1s --duplicate-percent 0
+```
+
+这表示每秒新增 1 条告警，恢复消息另计。直连模式必须同时提供 brokers、topic、来源 ID 和租户，
+固定使用 standard 清洗与 `source_alert_id` fingerprint；下游来源应保持相同定义。producer 不消费消息，因此无需配置 consumer group。
+直连模式使用无认证的 plaintext Kafka。需要 TLS、SASL、自定义 fingerprint 或 severity mapping 时，使用下面的配置文件模式。
+显式 `--config` 与直连参数互斥，避免两份配置产生不明确的优先级。
+
+### 配置文件模式
 
 所选 EventSource 必须满足以下条件：
 
@@ -35,18 +54,18 @@ Kafka 同步发送调用结束并关闭 producer。
 
 ### 容器镜像
 
-模拟器镜像独立版本化，首次版本为 `0.1.0`，不跟随 Linkd / Console 的版本变化。
+模拟器镜像独立版本化，当前版本为 `0.1.1`（首次为 `0.1.0`），不跟随 Linkd / Console 的版本变化。
 GitHub workflow 的默认 `all` 不构建它；需显式选择 `component=linkd-eventgen` 并填写
 `eventgen_version`。发布操作见 [手动构建与发布](image-release.md)。
 
 本地构建通过独立 Makefile 目标执行，版本参数也与 `VERSION` / `IMAGE_TAG` 分开：
 
 ```bash
-make eventgen-image EVENTGEN_VERSION=0.1.0
-docker run --rm linkd-eventgen:0.1.0 version
+make eventgen-image EVENTGEN_VERSION=0.1.1
+docker run --rm linkd-eventgen:0.1.1 version
 docker run --rm \
   -v /absolute/path/linkd.yaml:/data/linkd/configs/linkd.yaml:ro \
-  linkd-eventgen:0.1.0 \
+  linkd-eventgen:0.1.1 \
   --event-source-id demo-source --tenant-id tenant-a --cycles 2
 ```
 
@@ -58,6 +77,8 @@ docker run --rm \
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
+| `--kafka-brokers` | 无 | 直连 brokers，逗号分隔，最多 32 个 |
+| `--kafka-topic` | 无 | 直连目标 topic，与 brokers 配套使用 |
 | `--config` | `./configs/linkd.yaml` | Linkd YAML 配置路径 |
 | `--event-source-id` | 无 | 必填的 EventSource ID |
 | `--tenant-id` | 无 | 来源未固定租户时必填 |

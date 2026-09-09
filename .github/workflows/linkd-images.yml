@@ -21,7 +21,7 @@ on:
       eventgen_version:
         description: 仅用于 linkd-eventgen 的独立版本；留空仅发布唯一构建标签
         type: string
-        default: "0.1.0"
+        default: "0.1.1"
 
 permissions:
   contents: read

@@ -1658,7 +1658,8 @@
               "eventSourceId": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 128
+                "maxLength": 32,
+                "pattern": "^[A-Za-z0-9_-]+$"
               },
               "tenantId": {
                 "type": "string",
@@ -1673,6 +1674,40 @@
                 "type": "string",
                 "minLength": 1,
                 "pattern": "^[A-Za-z0-9._-]+$"
+              },
+              "kafka": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "brokers",
+                  "topic"
+                ],
+                "properties": {
+                  "brokers": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "minLength": 3,
+                      "maxLength": 512,
+                      "pattern": "^[^,\\s]+:[0-9]+$"
+                    }
+                  },
+                  "topic": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 249,
+                    "pattern": "^[A-Za-z0-9._-]+$",
+                    "not": {
+                      "enum": [
+                        ".",
+                        ".."
+                      ]
+                    }
+                  }
+                }
               }
             }
           }

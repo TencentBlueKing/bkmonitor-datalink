@@ -13,7 +13,11 @@
 {{- $ctx := dict "root" $ "workload" $workload }}
 {{- $name := printf "%s-eventgen-%s" (include "linkd.fullname" $) $instance }}
 {{- $finite := gt (int $s.cycles) 0 }}
-{{- $secret := required (printf "eventgen.instances.%s 必须提供 existingSecret 或 eventgen.existingSecret" $instance) ($s.existingSecret | default $.Values.eventgen.existingSecret) }}
+{{- $direct := hasKey $s "kafka" }}
+{{- if and $direct (hasKey $input "existingSecret") }}{{ fail (printf "eventgen.instances.%s.kafka 与 existingSecret 互斥" $instance) }}{{ end }}
+{{- if and $direct (not $s.tenantId) }}{{ fail (printf "eventgen.instances.%s 直连 Kafka 时必须配置 tenantId" $instance) }}{{ end }}
+{{- $secret := "" }}
+{{- if not $direct }}{{ $secret = required (printf "eventgen.instances.%s 必须提供 kafka 或 existingSecret" $instance) ($s.existingSecret | default $.Values.eventgen.existingSecret) }}{{ end }}
 {{- $key := $s.secretKey | default $.Values.eventgen.secretKey }}
 ---
 apiVersion: {{ ternary "batch/v1" "apps/v1" $finite }}
@@ -77,8 +81,15 @@ spec:
           image: {{ include "linkd.image" (dict "root" $ "image" $.Values.eventgen.image) | quote }}
           imagePullPolicy: {{ $.Values.eventgen.image.pullPolicy }}
           args:
+            {{- if $direct }}
+            - --kafka-brokers
+            - {{ join "," $s.kafka.brokers | quote }}
+            - --kafka-topic
+            - {{ $s.kafka.topic | quote }}
+            {{- else }}
             - --config
             - /data/linkd/configs/linkd.yaml
+            {{- end }}
             - --event-source-id
             - {{ $s.eventSourceId | quote }}
             {{- with $s.tenantId }}
@@ -101,10 +112,13 @@ spec:
             {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
           resources:
             {{- toYaml $s.resources | nindent 12 }}
+          {{- if not $direct }}
           volumeMounts:
             - name: configuration
               mountPath: /data/linkd/configs
               readOnly: true
+          {{- end }}
+      {{- if not $direct }}
       volumes:
         - name: configuration
           secret:
@@ -113,6 +127,7 @@ spec:
             items:
               - key: {{ $key }}
                 path: linkd.yaml
+      {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

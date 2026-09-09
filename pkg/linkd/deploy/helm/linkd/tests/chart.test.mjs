@@ -57,6 +57,34 @@ test("eventgen stays disabled by default and when instances are preconfigured", 
   const docs = render({...base, eventgen: {instances: {demo: {eventSourceId: "demo-source"}}}});
   assert.equal(docs.filter(d => d.metadata.labels?.["app.kubernetes.io/component"] === "eventgen").length, 0);
 });
+test("direct Kafka eventgen passes addresses and topic without mounting a config Secret", () => {
+  const docs = render({...base, eventgen: {enabled: true, existingSecret: "only-for-file-mode", instances: {
+    direct: {eventSourceId: "test", tenantId: "system", kafka: {brokers: ["kafka.example.com:9092", "kafka2.example.com:9092"], topic: "test_linkd"}, newAlertsPerMinute: 60, cycleDuration: "1s"},
+  }}});
+  const pod = byComponent(docs, "eventgen").spec.template.spec;
+  const container = pod.containers[0];
+  const args = Object.fromEntries(Array.from({length: container.args.length / 2}, (_, i) => [container.args[i * 2], container.args[i * 2 + 1]]));
+  assert.equal(args["--kafka-brokers"], "kafka.example.com:9092,kafka2.example.com:9092");
+  assert.equal(args["--kafka-topic"], "test_linkd");
+  assert.equal(args["--tenant-id"], "system");
+  assert.equal(args["--new-alerts-per-minute"], "60");
+  assert.equal(args["--cycle-duration"], "1s");
+  assert.equal(args["--config"], undefined);
+  assert.equal(container.volumeMounts, undefined);
+  assert.equal(pod.volumes, undefined);
+});
+test("direct Kafka eventgen rejects incomplete or conflicting connection options", () => {
+  const instance = {eventSourceId: "test", tenantId: "system", kafka: {brokers: ["kafka:9092"], topic: "test_linkd"}};
+  for (const invalid of [
+    {...instance, tenantId: ""}, {...instance, existingSecret: "conflict"},
+    {...instance, kafka: {brokers: []}}, {...instance, kafka: {topic: "test"}},
+    {...instance, kafka: {brokers: ["kafka:9092"], topic: ".."}},
+  ]) {
+    const result = spawnSync("helm", ["template", "test", chart, "-f", "-"], {input: stringify({...base, eventgen: {enabled: true, instances: {demo: invalid}}}), encoding: "utf8"});
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /eventgen/);
+  }
+});
 test("eventgen instances use independent selectors, parameters and Secret keys", () => {
   const docs = render({...base, eventgen: {enabled: true, existingSecret: "common-sources", defaults: {newAlertsPerMinute: 30}, instances: {
     first: {eventSourceId: "source-a", tenantId: "tenant-a", duplicatePercent: 0},
@@ -70,7 +98,7 @@ test("eventgen instances use independent selectors, parameters and Secret keys",
     const pod = generator.spec.template.spec;
     const container = pod.containers[0];
     const args = Object.fromEntries(Array.from({length: container.args.length / 2}, (_, i) => [container.args[i * 2], container.args[i * 2 + 1]]));
-    assert.equal(container.image, "ghcr.io/tencentblueking/bkmonitor-datalink/linkd-eventgen:0.1.0");
+    assert.equal(container.image, "ghcr.io/tencentblueking/bkmonitor-datalink/linkd-eventgen:0.1.1");
     assert.equal(generator.spec.replicas, 1);
     assert.equal(generator.spec.strategy.type, "Recreate");
     assert.equal(generator.spec.selector.matchLabels["linkd/eventgen-instance"], instance);

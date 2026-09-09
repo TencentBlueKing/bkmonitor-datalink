@@ -16,7 +16,7 @@ NODE_IMAGE ?= node:24-bookworm-slim
 NODE_BUILD_OPTIONS ?= --max-old-space-size=3072
 CONSOLE_BUILD_FLAGS ?= --memory 4G
 EVENTGEN_IMAGE ?= linkd-eventgen
-EVENTGEN_VERSION ?= 0.1.0
+EVENTGEN_VERSION ?= 0.1.1
 
 GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './vendor/*' \

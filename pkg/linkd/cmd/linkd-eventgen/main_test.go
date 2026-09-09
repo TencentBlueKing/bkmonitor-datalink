@@ -114,6 +114,69 @@ func TestCommandRunsFiniteGenerator(t *testing.T) {
 	}
 }
 
+func TestCommandDirectKafkaDoesNotLoadConfig(t *testing.T) {
+	t.Parallel()
+	publisher := &fakeManagedPublisher{}
+	deps := testDependencies(publisher)
+	deps.loadConfig = nil
+	deps.newPublisher = func(source linkdconfig.EventSource) (managedPublisher, error) {
+		if source.EventSourceID != "test" || source.Storage.Kafka.Topic != "test_linkd" ||
+			strings.Join(source.Storage.Kafka.Brokers, ",") != "kafka.example.com:9092,kafka2.example.com:9092" {
+			t.Fatalf("unexpected direct source: %#v", source)
+		}
+		return publisher, nil
+	}
+	command := newRootCommand("0.1.1", "test-commit", deps)
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{
+		"--kafka-brokers", "KAFKA.EXAMPLE.COM:9092,kafka2.example.com:9092",
+		"--kafka-topic", "test_linkd", "--event-source-id", "test", "--tenant-id", "system",
+		"--new-alerts-per-minute", "60", "--cycle-duration", "1s", "--cycles", "1",
+	})
+	if err := command.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(publisher.records) != 1 || publisher.records[0].Headers["bk_tenant_id"] != "system" || !publisher.closed {
+		t.Fatalf("direct publication = %#v, closed=%v", publisher.records, publisher.closed)
+	}
+}
+
+func TestCommandRejectsInvalidDirectKafkaBeforeCreatingPublisher(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"brokers missing", []string{"--kafka-topic", "test"}},
+		{"topic missing", []string{"--kafka-brokers", "kafka:9092"}},
+		{"empty brokers", []string{"--kafka-brokers", "", "--kafka-topic", "test"}},
+		{"invalid broker", []string{"--kafka-brokers", "kafka:65536", "--kafka-topic", "test"}},
+		{"duplicate brokers", []string{"--kafka-brokers", "kafka:9092,KAFKA:9092", "--kafka-topic", "test"}},
+		{"invalid topic", []string{"--kafka-brokers", "kafka:9092", "--kafka-topic", "bad/topic"}},
+		{"config conflict", []string{"--kafka-brokers", "kafka:9092", "--kafka-topic", "test", "--config", "missing.yaml"}},
+		{"tenant missing", []string{"--kafka-brokers", "kafka:9092", "--kafka-topic", "test", "--tenant-id", ""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			deps := testDependencies(&fakeManagedPublisher{})
+			deps.loadConfig = func(string) (linkdconfig.Config, error) {
+				t.Fatal("direct mode loaded config")
+				return linkdconfig.Config{}, nil
+			}
+			deps.newPublisher = func(linkdconfig.EventSource) (managedPublisher, error) {
+				t.Fatal("invalid direct configuration created publisher")
+				return nil, nil
+			}
+			command := newRootCommand("0.1.1", "test-commit", deps)
+			command.SetArgs(append([]string{"--event-source-id", "test", "--tenant-id", "system"}, tc.args...))
+			if err := command.ExecuteContext(context.Background()); err == nil {
+				t.Fatal("invalid direct configuration was accepted")
+			}
+		})
+	}
+}
+
 func TestCommandValidatesRequiredSelection(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

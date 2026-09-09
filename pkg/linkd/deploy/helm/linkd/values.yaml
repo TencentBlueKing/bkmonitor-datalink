@@ -61,11 +61,11 @@ eventgen:
   image:
     registry: ghcr.io
     repository: tencentblueking/bkmonitor-datalink/linkd-eventgen
-    tag: "0.1.0"
+    tag: "0.1.1"
     digest: ""
     pullPolicy: IfNotPresent
     pullSecrets: []
-  ## 独立 Linkd YAML，必须包含待推送的 event_sources；不复用清空来源后的 worker 配置。
+  ## 可选配置文件模式；直连模式在 instances.<name>.kafka 中设置 brokers 和 topic，不需要 Secret。
   existingSecret: ""
   secretKey: linkd.yaml
   ttlSecondsAfterFinished: 86400

@@ -30,7 +30,7 @@ GHCR 权限见 [GitHub 镜像发布说明](https://docs.github.com/en/actions/tu
 | --- | --- | --- |
 | `component` | `all` | `all` 只构建 Linkd 和 Console；`linkd` / `linkd-console` / `linkd-eventgen` 只构建所选镜像；`helm` 只打包 Chart |
 | `version` | 空 | 仅用于 Linkd / Console 的 Docker tag，例如 `v0.1.1-rc.1`；留空只发布唯一构建标签 |
-| `eventgen_version` | `0.1.0` | 仅用于 `linkd-eventgen` 的独立 Docker tag；留空只发布唯一构建标签，不继承 `version` |
+| `eventgen_version` | `0.1.1` | 仅用于 `linkd-eventgen` 的独立 Docker tag；留空只发布唯一构建标签，不继承 `version` |
 
 两个版本字段都只允许合法 Docker tag：最长 128 字符，仅含字母、数字、下划线、点和连字符，首字符不能为点或连字符。
 
@@ -54,11 +54,11 @@ ghcr.io/<owner>/<repository>/linkd-eventgen:<eventgen-tag>
 选择 `all` 时两个组件独立执行；一个失败不会撤销另一个已推送的镜像。成套部署前应确认两个 job 均成功，
 并记录各自 digest。流程只构建和推送镜像，不执行 `make check`，发布前应在待发布提交上完成质量门禁。
 
-独立构建模拟器的首个 `0.1.0` 版本：
+独立构建模拟器的 `0.1.1` 版本：
 
 ```bash
 gh workflow run linkd-images.yml --repo TencentBlueKing/bkmonitor-datalink \
-  --ref feat/linkd-dev -f component=linkd-eventgen -f eventgen_version=0.1.0
+  --ref feat/linkd-dev -f component=linkd-eventgen -f eventgen_version=0.1.1
 ```
 
 模拟器使用 `Dockerfile.eventgen`，同样生成双架构镜像、记录 OCI 标签，并运行 `version` 校验完整 Git SHA。

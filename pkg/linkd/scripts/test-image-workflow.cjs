@@ -35,7 +35,7 @@ test("workflow remains manual and default all excludes eventgen", () => {
   assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"]);
   assert.equal(inputs.component.default, "all");
   assert.ok(inputs.component.options.includes("linkd-eventgen"));
-  assert.equal(inputs.eventgen_version.default, "0.1.0");
+  assert.equal(inputs.eventgen_version.default, "0.1.1");
   const result = execute(metadata.run, {COMPONENT: inputs.component.default, VERSION: "0.1.1", EVENTGEN_VERSION: "0.1.0"});
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.values.matrix).component, ["linkd", "linkd-console"]);

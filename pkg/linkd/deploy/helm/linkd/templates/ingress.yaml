@@ -19,7 +19,7 @@ spec:
     - host: {{ .Values.console.ingress.hostname | quote }}
       http:
         paths:
-          - path: /
+          - path: {{ .Values.console.basePath | quote }}
             pathType: Prefix
             backend:
               service:

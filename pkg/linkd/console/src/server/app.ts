@@ -1,8 +1,5 @@
 import { sourceRuntime } from "./source-runtime.js";
 import { registerSourceRoutes } from "./sources.js";
-import { fileURLToPath } from "node:url";
-
-import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -26,6 +23,8 @@ import { parseSearchQuery } from "./query.js";
 import { RedisConnector } from "./redis.js";
 import { registerBasicAuth, validateServerAccess } from "./auth.js";
 import { readBuildInfo } from "./version.js";
+import { normalizeBasePath } from "../shared/base-path.js";
+import { registerWeb } from "./web.js";
 
 const detailQuerySchema = z.object({
   bk_tenant_id: z.string().min(1).max(1024),
@@ -70,6 +69,19 @@ export async function createApp(
     bodyLimit: 1024 * 1024,
   });
   registerBasicAuth(app, access);
+  const basePath = normalizeBasePath(config.server.basePath);
+  await app.register(
+    async (routes) => registerConsoleRoutes(routes, config, basePath),
+    { prefix: basePath },
+  );
+  return app;
+}
+
+async function registerConsoleRoutes(
+  app: FastifyInstance,
+  config: ConsoleConfig,
+  basePath: string,
+): Promise<void> {
   app.get("/local-api/version", () => readBuildInfo());
   const mysqlConnector = config.mysql ? new MysqlConnector(config) : undefined;
   const elasticsearchConnector = config.elasticsearch
@@ -323,24 +335,8 @@ export async function createApp(
   });
 
   if (process.env.NODE_ENV === "production") {
-    await app.register(fastifyStatic, {
-      root: fileURLToPath(new URL("../../dist", import.meta.url)),
-      wildcard: false,
-    });
-    app.setNotFoundHandler((request, reply) => {
-      if (request.raw.url?.startsWith("/local-api/")) {
-        return reply.status(404).send({
-          error: {
-            code: "not_found",
-            message: "接口不存在",
-            requestId: request.id,
-          },
-        });
-      }
-      return reply.sendFile("index.html");
-    });
+    await registerWeb(app, basePath);
   }
-  return app;
 }
 
 function combinedStatus(

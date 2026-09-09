@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 
 import { parse } from "yaml";
 import { z } from "zod";
+import { normalizeBasePath } from "../shared/base-path.js";
 import {
   loadServerAccess,
   validateServerAccess,
@@ -465,7 +466,12 @@ export interface EventSourceConfig {
 export interface ConsoleConfig {
   dispatch?: { url: string; apiToken: string; deployment: string };
   configPath?: string;
-  server: { host: string; port: number; access?: ServerAccess };
+  server: {
+    host: string;
+    port: number;
+    basePath?: string;
+    access?: ServerAccess;
+  };
   query: {
     defaultRangeSeconds: number;
     maxRangeSeconds: number;
@@ -639,6 +645,7 @@ export async function loadConfig(
     server: {
       host: process.env.LINKD_CONSOLE_HOST ?? "127.0.0.1",
       port: envInteger("LINKD_CONSOLE_PORT", 4399, 1, 65535),
+      basePath: normalizeBasePath(process.env.LINKD_CONSOLE_BASE_PATH),
       access: loadServerAccess(),
     },
     query,

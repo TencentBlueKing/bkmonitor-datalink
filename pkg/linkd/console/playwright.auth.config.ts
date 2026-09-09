@@ -3,6 +3,7 @@ import { defineConfig } from "@playwright/test";
 const port = Number(process.env.LINKD_CONSOLE_AUTH_TEST_PORT ?? 14399);
 if (!Number.isInteger(port) || port < 1 || port > 65535)
   throw new Error("invalid auth test port");
+const basePath = process.env.LINKD_CONSOLE_AUTH_TEST_BASE_PATH ?? "/";
 const baseURL = `http://127.0.0.1:${port}`;
 export default defineConfig({
   testDir: "./tests/auth",
@@ -16,6 +17,7 @@ export default defineConfig({
       NODE_ENV: "production",
       LINKD_CONFIG: "tests/fixtures/server.yaml",
       LINKD_CONSOLE_MODE: "server",
+      LINKD_CONSOLE_BASE_PATH: basePath,
       LINKD_CONSOLE_HOST: "127.0.0.1",
       LINKD_CONSOLE_PORT: String(port),
       LINKD_CONSOLE_BASIC_AUTH_ENABLED: "true",

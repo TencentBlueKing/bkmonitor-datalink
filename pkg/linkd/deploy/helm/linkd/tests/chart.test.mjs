@@ -53,6 +53,22 @@ test("default three roles, stable selectors and valid runtime configs", () => {
   }
   validateConfigs(docs);
 });
+test("Console HTTP subpath config reaches both Ingress and application", () => {
+  const basePath = "/kingeye-web-saas--kingeye-web--saas/linkd";
+  const consoleValues = {enabled: true, basePath, basicAuth: {existingSecret: "linkd-console-auth"}, ingress: {enabled: true, ingressClassName: "nginx", hostname: "apps.test-bkee5.canwaysoft.com", tls: []}};
+  const docs = render({...base, console: consoleValues});
+  const ingress = docs.find(d => d.kind === "Ingress");
+  assert.equal(ingress.spec.rules[0].http.paths[0].path, basePath);
+  assert.equal(ingress.spec.rules[0].http.paths[0].pathType, "Prefix");
+  assert.equal(ingress.spec.tls, undefined);
+  const env = byComponent(docs, "console").spec.template.spec.containers[0].env;
+  assert.equal(env.find(e => e.name === "LINKD_CONSOLE_BASE_PATH").value, basePath);
+  for (const invalid of ["", "linkd", "//host", "/a/", "/a/../b", "/a%2Fb", "/a?b", "/" + "a".repeat(256)]) {
+    const result = spawnSync("helm", ["template", "test", chart, "-f", "-"], {input: stringify({...base, console: {...consoleValues, basePath: invalid}}), encoding: "utf8"});
+    assert.notEqual(result.status, 0, invalid);
+    assert.match(result.stderr, /basePath/);
+  }
+});
 test("default GHCR release images reach all roles, Console and migration", () => {
   const docs = render({...base, console: {enabled: true, basicAuth: {existingSecret: "linkd-console-auth"}}});
   const prefix = "ghcr.io/tencentblueking/bkmonitor-datalink/";

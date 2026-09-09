@@ -150,6 +150,9 @@ metrics:
 ## @section Console：仅 server 模式，必须提供 Basic Auth Secret
 console:
   enabled: false
+  ## 根路径为 /；子路径须由字母、数字、下划线、连字符组成，且不以 / 结尾。
+  ## Ingress 保留完整路径转发，不配置 rewrite-target。
+  basePath: /
   image:
     registry: ghcr.io
     repository: tencentblueking/bkmonitor-datalink/linkd-console

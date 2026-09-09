@@ -1,3 +1,4 @@
+import { consoleURL } from "../base-path";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { z } from "zod";
@@ -80,7 +81,7 @@ const runtimeSchema = z.object({
     .nullable(),
 });
 async function call(path: string, method = "GET", body?: unknown) {
-  const response = await fetch(path, {
+  const response = await fetch(consoleURL(path), {
     method,
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),

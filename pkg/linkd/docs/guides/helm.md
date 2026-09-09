@@ -170,7 +170,26 @@ console:
         secretName: linkd-console-tls
 ```
 
-Ingress 固定使用根路径 `/` 和 Prefix 匹配，不支持子路径部署；它只暴露 Console。
+Ingress 使用 `console.basePath`（默认 `/`）和 Prefix 匹配，只暴露 Console。
+子路径同时配置到 Console 服务端，页面资源、浏览器路由和 API 自动使用同一前缀；Ingress 必须保留完整路径，不配置 rewrite-target。
+路径段仅支持字母、数字、下划线、连字符，总长度不超过 256；除根路径外不能以 `/` 结尾。
+
+同域名下使用 HTTP 子路径的示例（与其他 values 合并）：
+
+```yaml
+console:
+  enabled: true
+  basePath: /kingeye-web-saas--kingeye-web--saas/linkd
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hostname: apps.test-bkee5.canwaysoft.com
+    tls: []
+```
+
+访问 `http://apps.test-bkee5.canwaysoft.com/kingeye-web-saas--kingeye-web--saas/linkd/`。
+同一镜像可通过运行时配置切换根路径和子路径，无需为每个路径重新构建。
+可叠加使用 [HTTP 子路径示例](../../deploy/helm/linkd/examples/console-subpath.yaml)。
 TLS Secret、DNS 和 Controller 由部署方准备，HTTPS 和跳转策略按所用 Controller 配置。
 Basic Auth 不提供传输加密，远程访问应使用 HTTPS。
 

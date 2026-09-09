@@ -1,3 +1,4 @@
+import { consoleURL } from "../base-path";
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -63,7 +64,7 @@ export function RedisPage() {
   const sourceList = useQuery({
     queryKey: ["redis-source-list"],
     queryFn: async () => {
-      const r = await fetch("/local-api/event-sources");
+      const r = await fetch(consoleURL("/local-api/event-sources"));
       if (!r.ok) return [];
       const value: unknown = await r.json();
       return Array.isArray(value)

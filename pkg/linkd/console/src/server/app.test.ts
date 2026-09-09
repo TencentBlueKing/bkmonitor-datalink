@@ -24,6 +24,51 @@ const config = {
 } satisfies ConsoleConfig;
 
 describe("local API", () => {
+  it("mounts all API routes under the configured path and keeps authentication", async () => {
+    const prefix = "/kingeye-web-saas--kingeye-web--saas/linkd";
+    const app = await createApp({
+      ...config,
+      server: {
+        ...config.server,
+        basePath: prefix,
+        access: {
+          mode: "server",
+          basicAuth: { username: "admin", password: "test-password" },
+        },
+      },
+    });
+    const headers = {
+      authorization: `Basic ${Buffer.from("admin:test-password").toString("base64")}`,
+    };
+    try {
+      for (const route of [
+        "/local-api/version",
+        "/local-api/capabilities",
+        "/local-api/config",
+      ]) {
+        expect((await app.inject(prefix + route)).statusCode).toBe(401);
+        expect(
+          (await app.inject({ url: prefix + route, headers })).statusCode,
+        ).toBe(200);
+        expect((await app.inject({ url: route, headers })).statusCode).toBe(
+          404,
+        );
+      }
+      // 正式来源管理路由也必须经过前缀和认证，不能落到 SPA fallback。
+      const source = await app.inject({
+        url: prefix + "/local-api/event-sources",
+        headers,
+      });
+      expect(source.statusCode).not.toBe(404);
+      expect(source.headers["content-type"]).toContain("application/json");
+      expect(
+        (await app.inject({ url: prefix + "-other/local-api/config", headers }))
+          .statusCode,
+      ).toBe(404);
+    } finally {
+      await app.close();
+    }
+  });
   it("exposes Console build metadata separately from capabilities schema version", async () => {
     const app = await createApp(config);
     const response = await app.inject({

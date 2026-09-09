@@ -1,3 +1,4 @@
+import { consoleURL } from "./base-path";
 import {
   capabilitySchema,
   controlPlaneRuntimeSchema,
@@ -200,7 +201,7 @@ export async function getEntity(
 }
 
 async function request(url: string): Promise<unknown> {
-  const response = await fetch(url, {
+  const response = await fetch(consoleURL(url), {
     headers: { accept: "application/json" },
   });
   const data = (await response.json()) as unknown;

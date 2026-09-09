@@ -106,6 +106,8 @@ spec:
               value: "0.0.0.0"
             - name: LINKD_CONSOLE_PORT
               value: "4399"
+            - name: LINKD_CONSOLE_BASE_PATH
+              value: {{ $.Values.console.basePath | quote }}
             - name: LINKD_CONSOLE_BASIC_AUTH_ENABLED
               value: "true"
             - name: LINKD_CONSOLE_BASIC_AUTH_USERNAME

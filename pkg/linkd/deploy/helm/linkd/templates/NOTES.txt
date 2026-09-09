@@ -20,7 +20,7 @@ kubectl -n {{ .Release.Namespace }} logs job/{{ include "linkd.migrateName" . }}
 {{ if .Values.console.enabled -}}
 Console 使用 Basic Auth，凭据引用 {{ .Values.console.basicAuth.existingSecret }}。
 {{ if .Values.console.ingress.enabled -}}
-Console 域名：{{ .Values.console.ingress.hostname }}；部署方须配置 DNS、Ingress Controller 和 HTTPS。
+Console 地址：{{ if .Values.console.ingress.tls }}https{{ else }}http{{ end }}://{{ .Values.console.ingress.hostname }}{{ .Values.console.basePath }}；部署方须配置 DNS 和 Ingress Controller，保留完整路径转发。
 {{ else -}}
 kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "linkd.fullname" . }}-console 8080:{{ .Values.console.service.port }}
 {{ end -}}

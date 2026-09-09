@@ -1,0 +1,11 @@
+# 与 external-services.yaml 叠加；认证 Secret 需预先创建，Ingress 保留完整路径。
+console:
+  enabled: true
+  basePath: /kingeye-web-saas--kingeye-web--saas/linkd
+  basicAuth:
+    existingSecret: linkd-console-auth
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hostname: apps.test-bkee5.canwaysoft.com
+    tls: []

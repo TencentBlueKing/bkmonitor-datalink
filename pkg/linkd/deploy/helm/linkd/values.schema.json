@@ -989,6 +989,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "basePath": {
+          "type": "string",
+          "maxLength": 256,
+          "pattern": "^(/|(/[A-Za-z0-9_-]+)+)$"
+        },
         "replicas": {
           "type": "integer",
           "minimum": 1

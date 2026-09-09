@@ -240,7 +240,15 @@ func (runner *Runner) runOne(ctx context.Context, admission ExecutionAdmission) 
 		}
 		func() {
 			defer func() { _ = recover() }()
-			runner.flights.observer.Observe(ctx, observability.Observation{Component: observability.ComponentScheduler, Stage: observability.StageRunnerReturned, Result: observability.ResultTerminal, RunOutcome: outcome, Attempted: attempted})
+			runner.flights.observer.Observe(ctx, observability.Observation{
+				Component: observability.ComponentScheduler, Stage: observability.StageRunnerReturned,
+				Result: observability.ResultTerminal, RunOutcome: outcome, Attempted: attempted,
+				// Carry the object this round belongs to. Observers that only
+				// merge context fields would otherwise see an anonymous round:
+				// the scheduler path only injects the key into the context for
+				// query groups selected for target flow.
+				Trace: observability.TraceFields{QueryGroupKey: string(runner.queryGroup)},
+			})
 		}()
 	}()
 	result, attempted, err = runner.runOneTracked(ctx, admission, &outcome)

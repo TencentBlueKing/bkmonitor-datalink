@@ -40,6 +40,45 @@ func newTracker(t *testing.T, at *clock) *Tracker {
 	return NewTracker(nil, "pod-a", at.Now)
 }
 
+// The emitters on both hot paths build their observation without a trace and
+// rely on observers merging what the context carries. A tracker that reads only
+// the observation sees an anonymous round every time, and the published anomaly
+// list is then permanently empty while every unit test still passes.
+func TestQueryGroupIsTakenFromTheContextWhenTheObservationOmitsIt(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	ctx := observability.ContextWithTraceFields(context.Background(), observability.TraceFields{
+		QueryGroupKey: "qg-from-context", StrategyID: "8930", BusinessID: "2",
+	})
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(ctx, observability.Observation{ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE"})
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 || anomalies[0].QueryGroup != "qg-from-context" {
+		t.Fatalf("anomalies = %+v, want the object named only by the context", anomalies)
+	}
+	if len(anomalies[0].Strategies) != 1 || anomalies[0].Strategies[0].BusinessID != "2" {
+		t.Fatalf("strategies = %+v, want the context's strategy and business", anomalies[0].Strategies)
+	}
+}
+
+// A query group whose every execution fails commits no progress and is never
+// blocked, so without this it stays invisible while failing continuously.
+func TestExecutionsThatNeverFinishAreReported(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), observability.Observation{
+			ExecuteOutcome: "error",
+			Trace:          observability.TraceFields{QueryGroupKey: "qg-failing"},
+		})
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 || anomalies[0].Kind != KindDegradedRun || anomalies[0].ReasonCode != "error" {
+		t.Fatalf("anomalies = %+v, want the continuously failing execution reported", anomalies)
+	}
+}
+
 func TestHealthyCompletionsKeepAQueryGroupOffTheList(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)

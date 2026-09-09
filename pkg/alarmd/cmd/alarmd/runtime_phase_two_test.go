@@ -2819,15 +2819,24 @@ func TestPhaseTwoWorkerBundleRegistrationRenewalStopsOnInvariantError(t *testing
 	if len(snapshot.Reasons) != 1 || snapshot.Reasons[0] != observability.ReasonInternalUnknown {
 		t.Fatalf("health reasons after invariant registration error = %+v, want internal_unknown", snapshot)
 	}
+	// Health flips before the observation is recorded, so waiting on health and
+	// then reading the list races the emitter. Wait for the thing this test
+	// actually asserts.
 	unsafeObserved := false
-	for _, observation := range observations() {
-		if observation.Component == observability.ComponentOwnership && observation.Stage == observability.StageAssignmentLost &&
-			observation.Result == observability.ResultFailed && isPhaseTwoInvariantError(observation.Err) {
-			unsafeObserved = true
+	deadline := time.Now().Add(2 * time.Second)
+	for !unsafeObserved && time.Now().Before(deadline) {
+		for _, observation := range observations() {
+			if observation.Component == observability.ComponentOwnership && observation.Stage == observability.StageAssignmentLost &&
+				observation.Result == observability.ResultFailed && isPhaseTwoInvariantError(observation.Err) {
+				unsafeObserved = true
+			}
+			if observation.Component == observability.ComponentOwnership && observation.Stage == observability.StageLeaseRenewed &&
+				observation.Result == observability.ResultFailed {
+				t.Fatalf("invariant registration error was reported as retryable: %+v", observation)
+			}
 		}
-		if observation.Component == observability.ComponentOwnership && observation.Stage == observability.StageLeaseRenewed &&
-			observation.Result == observability.ResultFailed {
-			t.Fatalf("invariant registration error was reported as retryable: %+v", observation)
+		if !unsafeObserved {
+			time.Sleep(time.Millisecond)
 		}
 	}
 	if !unsafeObserved {

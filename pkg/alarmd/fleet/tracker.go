@@ -55,10 +55,28 @@ func healthyCompletion(kind string) bool {
 	return kind == "FULL_COMPLETED" || kind == "FULL_EMPTY_COMPLETED"
 }
 
-// blockedOutcome reports whether a round never reached execution.
+// blockedOutcome reports whether a round produced nothing at all.
+//
+// ownership_rejected is deliberately absent: a replica never runs a query group
+// it does not hold, so that outcome appears once when a lease is lost and the
+// runner is torn down immediately after, and can never occur twice in a row.
+// Listing it would be a branch that cannot fire.
 func blockedOutcome(outcome string) bool {
 	switch outcome {
-	case "source_blocked", "source_error", "ownership_rejected":
+	case "source_blocked", "source_error", "source_retry", "panic", "other_error":
+		return true
+	default:
+		return false
+	}
+}
+
+// failedExecution reports whether a round reached execution and did not finish.
+// Without this, a query group whose every execution fails is invisible: it
+// reports execute_returned, which is not blocked, and commits no progress, so
+// it never produces a completion kind either.
+func failedExecution(outcome string) bool {
+	switch outcome {
+	case "error", "retrying", "incomplete":
 		return true
 	default:
 		return false
@@ -119,13 +137,22 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 	if tracker.next != nil {
 		defer tracker.next.Observe(ctx, observation)
 	}
-	queryGroup := observation.Trace.QueryGroupKey
+	// The emitters do not all populate the trace: several rely on observers
+	// merging the fields the context carries. Reading only the observation
+	// would leave this tracker blind on exactly the paths that matter, and the
+	// resulting anomaly list would be permanently empty.
+	trace := observation.Trace
+	if trace.QueryGroupKey == "" {
+		trace = observability.TraceFieldsFromContext(ctx)
+	}
+	queryGroup := trace.QueryGroupKey
 	if queryGroup == "" {
 		return
 	}
 	completion := observation.ProgressCompletionKind
 	runOutcome := observation.RunOutcome
-	if completion == "" && runOutcome == "" {
+	executeOutcome := observation.ExecuteOutcome
+	if completion == "" && runOutcome == "" && executeOutcome == "" {
 		return
 	}
 
@@ -142,11 +169,8 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 	}
 	at := tracker.now()
 	state.lastSeenAt = at
-	if observation.Trace.StrategyID != "" {
-		state.strategies[StrategyRef{
-			StrategyID: observation.Trace.StrategyID,
-			BusinessID: observation.Trace.BusinessID,
-		}] = struct{}{}
+	if trace.StrategyID != "" {
+		state.strategies[StrategyRef{StrategyID: trace.StrategyID, BusinessID: trace.BusinessID}] = struct{}{}
 	}
 
 	switch {
@@ -163,6 +187,10 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		state.blockedRuns++
 		state.currentKind = KindBlockedRun
 		state.reasonCode = runOutcome
+	case failedExecution(executeOutcome):
+		state.degradedRuns++
+		state.currentKind = KindDegradedRun
+		state.reasonCode = executeOutcome
 	default:
 		// Rounds that neither completed nor were blocked -- not due, deferred,
 		// still running -- say nothing about whether the group is healthy, so

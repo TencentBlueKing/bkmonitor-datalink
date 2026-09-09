@@ -194,6 +194,15 @@ func Default() Config {
 	}
 }
 
+// DeploymentProfile is the Worker's Ownership compatibility identity: Workers
+// registered under different profiles never take over one another's Query
+// Groups. The shape that decides it is the run mode, so it is derived from
+// Mode rather than configured beside it - two independent fields could be set
+// to disagreeing values, and nothing in the process would notice.
+func (c Config) DeploymentProfile() string {
+	return c.Mode
+}
+
 // AdmittedQueryConcurrency is the number of queries the scheduler may have in
 // flight at once. It bounds the query stage only; it is not the bound on Redis
 // concurrency, because the Slot source reads the control plane before a Slot
@@ -261,30 +270,27 @@ func (c *Config) resolvePhaseTwoRuntimeRedis() {
 	c.PhaseTwo.RuntimeRedis = &resolved
 }
 
-// resolveCompatibilityServiceTimeouts lets a compatibility service node inherit
-// the runtime Redis timeouts when it does not state its own. Timeouts say how
-// long to wait, not where to write, so inheriting them keeps one operational
-// setting instead of two; mode and address stay explicit because they decide
-// the destination and a wrong guess there writes a snapshot nobody reads.
+// resolveCompatibilityServiceTimeouts lets the compatibility service Redis
+// inherit the runtime Redis timeouts when it does not state its own. Timeouts
+// say how long to wait, not where to write, so inheriting them keeps one
+// operational setting instead of two; mode and address stay explicit because
+// they decide the destination and a wrong guess there writes a snapshot nobody
+// reads.
 func (c *Config) resolveCompatibilityServiceTimeouts() {
-	if c == nil || len(c.Kafka.LegacyAdapter.ServiceNodes) == 0 {
+	if c == nil {
 		return
 	}
 	runtimeRedis := c.Redis.Connection()
-	resolved := make(map[string]RedisConnectionConfig, len(c.Kafka.LegacyAdapter.ServiceNodes))
-	for id, connection := range c.Kafka.LegacyAdapter.ServiceNodes {
-		if connection.DialTimeout == 0 {
-			connection.DialTimeout = runtimeRedis.DialTimeout
-		}
-		if connection.ReadTimeout == 0 {
-			connection.ReadTimeout = runtimeRedis.ReadTimeout
-		}
-		if connection.WriteTimeout == 0 {
-			connection.WriteTimeout = runtimeRedis.WriteTimeout
-		}
-		resolved[id] = connection
+	service := &c.Kafka.LegacyAdapter.ServiceRedis
+	if service.DialTimeout == 0 {
+		service.DialTimeout = runtimeRedis.DialTimeout
 	}
-	c.Kafka.LegacyAdapter.ServiceNodes = resolved
+	if service.ReadTimeout == 0 {
+		service.ReadTimeout = runtimeRedis.ReadTimeout
+	}
+	if service.WriteTimeout == 0 {
+		service.WriteTimeout = runtimeRedis.WriteTimeout
+	}
 }
 
 func (c Config) StateStoreOptions(codec *state.Codec, router state.StorageRouter, observer state.Observer) state.StoreOptions {

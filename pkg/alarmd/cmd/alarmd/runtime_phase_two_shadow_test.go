@@ -22,7 +22,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
@@ -232,7 +231,7 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 			events := &legacyConvertingTestSink{recordingPhaseTwoEventSink: &recordingPhaseTwoEventSink{}}
 			// The topic names where the protocol publishes; it is not an enable
 			// field, and conversion is assembled whether or not it is set here.
-			cfg.Kafka.LegacyAdapter = config.LegacyAdapterConfig{Topic: cfg.Kafka.LegacyAdapter.Topic, SnapshotPrefix: "test", ServiceNodes: map[string]config.RedisConnectionConfig{"service": cfg.StrategySourceRedis()}, ServiceRoutes: []legacyoutput.ServiceRoute{{UpperBound: 1000000, NodeID: "service"}}}
+			cfg.Kafka.LegacyAdapter = config.LegacyAdapterConfig{Topic: cfg.Kafka.LegacyAdapter.Topic, SnapshotPrefix: "test", ServiceRedis: cfg.StrategySourceRedis()}
 			publisher := &recordingFinalPublisher{panicOnEnqueue: publisherPanics}
 			var observations []observability.Observation
 			var mu sync.Mutex

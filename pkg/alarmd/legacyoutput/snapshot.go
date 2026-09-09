@@ -2,63 +2,46 @@ package legacyoutput
 
 import (
 	"context"
-	"fmt"
-	"github.com/go-redis/redis/v8"
-	"sort"
+	"errors"
 	"time"
+
+	"github.com/go-redis/redis/v8"
 )
 
-// ServiceRoute follows Python CacheRouter: the first upper bound strictly
-// greater than the strategy ID owns that strategy.
-type ServiceRoute struct {
-	UpperBound int64  `yaml:"upper_bound"`
-	NodeID     string `yaml:"node_id"`
-}
+// RedisSnapshotStore writes every strategy snapshot to one Redis: the routing
+// table's default node.
+//
+// Python shards this cache by strategy ID, so a writer normally has to land on
+// the node the reader will consult. The reader here is the alert builder, and
+// it consults the default node unconditionally: it passes the snapshot key it
+// read out of the Kafka event, a plain string with no strategy ID attached, and
+// the router answers that with the default node. Reproducing the shard map
+// would therefore put snapshots on nodes nothing reads.
 type RedisSnapshotStore struct {
-	Nodes  map[string]redis.Cmdable
-	Routes []ServiceRoute
+	Client redis.Cmdable
 }
 
-func (s RedisSnapshotStore) Validate() error {
-	if len(s.Routes) == 0 {
-		return fmt.Errorf("legacy service routes required")
-	}
-	var previous int64
-	for _, route := range s.Routes {
-		if route.UpperBound <= previous || s.Nodes[route.NodeID] == nil {
-			return fmt.Errorf("invalid or unsorted legacy service route")
-		}
-		previous = route.UpperBound
-	}
-	return nil
-}
 func (s RedisSnapshotStore) SaveBatch(ctx context.Context, snapshots []Snapshot) error {
-	if err := s.Validate(); err != nil {
-		return err
+	if s.Client == nil {
+		return errors.New("legacy snapshot store has no Redis client")
 	}
-	groups := map[string][]Snapshot{}
 	for _, snapshot := range snapshots {
-		i := sort.Search(len(s.Routes), func(i int) bool { return s.Routes[i].UpperBound > snapshot.StrategyID })
-		if snapshot.StrategyID <= 0 || i == len(s.Routes) {
-			return fmt.Errorf("no legacy service route for strategy %d", snapshot.StrategyID)
-		}
-		id := s.Routes[i].NodeID
-		groups[id] = append(groups[id], snapshot)
-	}
-	for id, batch := range groups {
-		client := s.Nodes[id]
-		if client == nil {
-			return fmt.Errorf("missing legacy service node")
-		}
-		_, err := client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
-			for _, snapshot := range batch {
-				pipe.Set(ctx, snapshot.Key, []byte(snapshot.Value), time.Hour)
-			}
-			return nil
-		})
-		if err != nil {
-			return err
+		if snapshot.StrategyID <= 0 {
+			return errors.New("legacy snapshot has no strategy identity")
 		}
 	}
-	return nil
+	if len(snapshots) == 0 {
+		return nil
+	}
+	_, err := s.Client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, snapshot := range snapshots {
+			// One hour matches Python's own STRATEGY_SNAPSHOT_KEY TTL. The key
+			// carries the strategy's update time, so writing it again either
+			// refreshes an identical value or restores the exact version this
+			// event refers to.
+			pipe.Set(ctx, snapshot.Key, []byte(snapshot.Value), time.Hour)
+		}
+		return nil
+	})
+	return err
 }

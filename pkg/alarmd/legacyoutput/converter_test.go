@@ -94,21 +94,31 @@ func TestLocalConverterMatchesPythonAdapter(t *testing.T) {
 	}
 }
 
-func TestServiceSnapshotRoutesStrictUpperBoundAndTTL(t *testing.T) {
-	a := startSnapshotRedis(t)
-	b := startSnapshotRedis(t)
-	store := RedisSnapshotStore{Nodes: map[string]redis.Cmdable{"a": a, "b": b}, Routes: []ServiceRoute{{10, "a"}, {20, "b"}}}
-	if err := store.Validate(); err != nil {
+// Every snapshot goes to the one Redis the alert builder reads, and it keeps
+// Python's one-hour TTL so an alarmd write is indistinguishable from Python's.
+func TestServiceSnapshotWritesEveryStrategyWithPythonTTL(t *testing.T) {
+	client := startSnapshotRedis(t)
+	store := RedisSnapshotStore{Client: client}
+	ctx := context.Background()
+	if err := store.SaveBatch(ctx, []Snapshot{
+		{9, "prefix.cache.strategy.snapshot.9.1", json.RawMessage(`{"id":9}`)},
+		{1048577, "prefix.cache.strategy.snapshot.1048577.1", json.RawMessage(`{"id":1048577}`)},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveBatch(context.Background(), []Snapshot{{9, "prefix.cache.strategy.snapshot.9.1", json.RawMessage(`{"id":9}`)}, {10, "prefix.cache.strategy.snapshot.10.1", json.RawMessage(`{"id":10}`)}}); err != nil {
-		t.Fatal(err)
+	for _, key := range []string{"prefix.cache.strategy.snapshot.9.1", "prefix.cache.strategy.snapshot.1048577.1"} {
+		if client.Exists(ctx, key).Val() != 1 {
+			t.Fatalf("%s was not written", key)
+		}
+		if client.TTL(ctx, key).Val() < 3599*time.Second {
+			t.Fatalf("%s does not carry Python's one-hour TTL", key)
+		}
 	}
-	if a.Exists(context.Background(), "prefix.cache.strategy.snapshot.9.1").Val() != 1 || b.Exists(context.Background(), "prefix.cache.strategy.snapshot.10.1").Val() != 1 || a.TTL(context.Background(), "prefix.cache.strategy.snapshot.9.1").Val() < 3599*time.Second {
-		t.Fatal("Python route/TTL mismatch")
+	if err := store.SaveBatch(ctx, []Snapshot{{0, "bad", json.RawMessage(`{}`)}}); err == nil {
+		t.Fatal("a snapshot without a strategy identity was accepted")
 	}
-	if err := store.SaveBatch(context.Background(), []Snapshot{{20, "bad", json.RawMessage(`{}`)}}); err == nil {
-		t.Fatal("out-of-range strategy fell back")
+	if err := (RedisSnapshotStore{}).SaveBatch(ctx, []Snapshot{{1, "k", json.RawMessage(`{}`)}}); err == nil {
+		t.Fatal("a store with no client accepted a write")
 	}
 }
 

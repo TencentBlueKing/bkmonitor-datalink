@@ -6,7 +6,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"runtime"
 	"strings"
 
 	"go.uber.org/automaxprocs/maxprocs"
@@ -42,6 +45,36 @@ func configurePhaseTwoCPUWith(set func(func(string, ...interface{})) error) (str
 		return "", fmt.Errorf("configure phase-two CPU quota: %w", err)
 	}
 	return source, nil
+}
+
+// printResolvedRuntimeFacts writes the same startup facts the running process
+// logs as config_loaded, so a release preflight can state what the build about
+// to ship will actually run under and how that differs from the build it
+// replaces. Answering only "valid" made a configuration change unreviewable
+// before it reached a Pod, which is where both capacity incidents were found.
+//
+// These are internal runtime facts, not an operating interface: a setting an
+// operator has to read here is a setting that should not have been theirs to
+// write. The report exists for preflight and for forensics after an incident.
+//
+// The facts are credential-free by construction, and cpu_source names where
+// GOMAXPROCS came from, so a table printed outside the Pod says so itself
+// rather than passing the host's core count off as the container's.
+func printResolvedRuntimeFacts(cfg config.Config, stdout io.Writer) error {
+	if cfg.Input.Mode != config.InputModeGoAccess {
+		return nil
+	}
+	cpuSource, err := configurePhaseTwoCPU()
+	if err != nil {
+		return err
+	}
+	facts, err := phaseTwoRuntimeProfile(cfg.WithResolvedRedisPoolSize(), cpuSource, runtime.GOMAXPROCS(0))
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(facts)
 }
 
 func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (observability.RuntimeConfigFacts, error) {

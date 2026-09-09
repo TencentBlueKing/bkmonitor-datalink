@@ -13,7 +13,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,7 +26,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -569,7 +567,13 @@ func TestPhaseTwoWorkerBundleRunsRetiredBacklogWhenCapacityIsReleased(t *testing
 
 func TestPhaseTwoWorkerBundleRetriesReadyQueryGroupBeforeFullSweepCompletes(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
-	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
+	// The complete-Runner gate is what bounds how many Runners execute at
+	// once; query permits bound the query stage inside a Runner, and these
+	// Runners never reach it. Leaving the gate at its default of zero means
+	// unlimited, so a bound asserted against the permits would only ever hold
+	// by timing - it read as a guarantee and was one loaded gate run away
+	// from reporting a fanout of four against two permits.
+	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 2
 	cfg.PhaseTwo.Scheduler.RetryMinDelay = config.Duration(5 * time.Millisecond)
 	cfg.PhaseTwo.Scheduler.RetryMaxDelay = config.Duration(5 * time.Millisecond)
 
@@ -688,8 +692,8 @@ func TestPhaseTwoWorkerBundleRetriesReadyQueryGroupBeforeFullSweepCompletes(t *t
 
 	concurrencyMu.Lock()
 	defer concurrencyMu.Unlock()
-	if maxActive > cfg.PhaseTwo.Scheduler.ProcessQueryPermits {
-		t.Fatalf("runner fanout = %d, want <= %d", maxActive, cfg.PhaseTwo.Scheduler.ProcessQueryPermits)
+	if maxActive > cfg.PhaseTwo.Scheduler.ActiveExecutionLimit {
+		t.Fatalf("runner fanout = %d, want <= %d", maxActive, cfg.PhaseTwo.Scheduler.ActiveExecutionLimit)
 	}
 	if maxActiveByQueryGroup["query-group-a-retrying"] > 1 {
 		t.Fatalf("retrying Query Group concurrency = %d, want single-flight", maxActiveByQueryGroup["query-group-a-retrying"])
@@ -2673,9 +2677,7 @@ func withCompatibilityOutput(cfg *config.Config, address string) {
 	cfg.Kafka.LegacyAdapter.SnapshotPrefix = "alarmd-compatibility-test"
 	connection := cfg.Redis.Connection()
 	connection.Address = address
-	cfg.Kafka.LegacyAdapter.ServiceNodes = map[string]config.RedisConnectionConfig{"service-0": connection}
-	cfg.Kafka.LegacyAdapter.ServiceRoutes = []legacyoutput.ServiceRoute{{UpperBound: math.MaxInt64, NodeID: "service-0"}}
-	_ = topic
+	cfg.Kafka.LegacyAdapter.ServiceRedis = connection
 }
 
 func validGoAccessRuntimeConfig() config.Config {
@@ -2689,21 +2691,17 @@ func validGoAccessRuntimeConfig() config.Config {
 	// the event is published. Tests that open a bundle point the service Redis
 	// at the instance they already run, through withCompatibilityOutput.
 	cfg.Kafka.LegacyAdapter.SnapshotPrefix = "alarmd-compatibility-test"
-	cfg.Kafka.LegacyAdapter.ServiceNodes = map[string]config.RedisConnectionConfig{
-		"service-0": {
-			Mode: config.RedisModeStandalone, Address: "127.0.0.1:6379",
-			DialTimeout:  cfg.Redis.DialTimeout,
-			ReadTimeout:  cfg.Redis.ReadTimeout,
-			WriteTimeout: cfg.Redis.WriteTimeout,
-		},
+	cfg.Kafka.LegacyAdapter.ServiceRedis = config.RedisConnectionConfig{
+		Mode: config.RedisModeStandalone, Address: "127.0.0.1:6379",
+		DialTimeout:  cfg.Redis.DialTimeout,
+		ReadTimeout:  cfg.Redis.ReadTimeout,
+		WriteTimeout: cfg.Redis.WriteTimeout,
 	}
-	cfg.Kafka.LegacyAdapter.ServiceRoutes = []legacyoutput.ServiceRoute{{UpperBound: math.MaxInt64, NodeID: "service-0"}}
 	cfg.Kafka.ClientID = "alarmd"
 	cfg.Kafka.BrokerVersion = "2.6.0"
 	cfg.Redis.Address = "127.0.0.1:6379"
 	cfg.Redis.StatePrefix = "alarmd-phase-two"
 	cfg.PhaseTwo.Worker.ID = "alarmd-worker-0"
-	cfg.PhaseTwo.Worker.DeploymentProfile = "shadow"
 	cfg.PhaseTwo.Control.StrategyCachePrefix = "alarm-config"
 	cfg.PhaseTwo.Control.ProviderRoute = "unify-query-primary"
 	cfg.PhaseTwo.Control.Timezone = "Asia/Shanghai"

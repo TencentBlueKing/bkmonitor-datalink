@@ -78,7 +78,6 @@ func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
 	valid := validGoAccessConfigObject()
 	accessBKData := false
 	valid.PhaseTwo.Worker.ID = "alarmd-worker-0"
-	valid.PhaseTwo.Worker.DeploymentProfile = "shadow"
 	valid.PhaseTwo.Control.StrategyCachePrefix = "alarm-config"
 	valid.PhaseTwo.Access.UQEndpoint = "http://unify-query.service"
 	valid.PhaseTwo.Access.QuerySource = "alarmd"
@@ -120,7 +119,6 @@ func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
 	for name, mutate := range map[string]func(*Config){
 		"active execution limit": func(cfg *Config) { cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = -1 },
 		"worker identity":        func(cfg *Config) { cfg.PhaseTwo.Worker.ID = "" },
-		"deployment profile":     func(cfg *Config) { cfg.PhaseTwo.Worker.DeploymentProfile = "" },
 		"strategy cache":         func(cfg *Config) { cfg.PhaseTwo.Control.StrategyCachePrefix = "" },
 		"UQ endpoint":            func(cfg *Config) { cfg.PhaseTwo.Access.UQEndpoint = "" },
 		"query source":           func(cfg *Config) { cfg.PhaseTwo.Access.QuerySource = "" },
@@ -253,13 +251,9 @@ kafka:
   legacy_adapter:
     topic: alarmd_0bkmonitor_backend_event
     snapshot_prefix: alarmd-test
-    service_nodes:
-      default:
-        mode: standalone
-        address: redis.test:6379
-    service_routes:
-      - upper_bound: 9223372036854775807
-        node_id: default
+    service_redis:
+      mode: standalone
+      address: redis.test:6379
   client_id: alarmd
   broker_version: 2.6.0
 redis:
@@ -268,7 +262,6 @@ redis:
 phase_two:
   worker:
     id: %s
-    deployment_profile: shadow
   control:
     strategy_cache_prefix: alarm-config
     provider_route: unify-query-primary

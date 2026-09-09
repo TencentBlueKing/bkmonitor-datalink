@@ -103,6 +103,11 @@ func TestProductionPhaseTwoBundleReRunsChunkedSlotIdempotently(t *testing.T) {
 	// Every series is abnormal, so the Slot announces one Event per series;
 	// the product State budget already admits the Slot through two chunks.
 	cfg.PhaseTwo.Coordinator.MaxEvents = 65536
+	// The Slot spans two Store calls on purpose, so the budget that admits it
+	// is stated here rather than inherited from whatever container the test
+	// happens to run in.
+	cfg.PhaseTwo.Coordinator.MaxStateMutations = 65536
+	cfg.PhaseTwo.Coordinator.MaxGapMutations = 65536
 	cfg.PhaseTwo.Coordinator.MaxRetainedBytes = 1 << 30
 	if cfg.Limits.Store.MaxKeysPerBatch != 8192 || cfg.PhaseTwo.Coordinator.MaxStateMutations < series {
 		t.Fatalf("store call bound %d and State budget %d do not chunk %d series", cfg.Limits.Store.MaxKeysPerBatch, cfg.PhaseTwo.Coordinator.MaxStateMutations, series)

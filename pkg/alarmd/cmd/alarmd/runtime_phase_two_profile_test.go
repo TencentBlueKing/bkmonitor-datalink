@@ -50,7 +50,10 @@ func TestPhaseTwoRetainedBudgetProfileUsesResolvedDefaultAndOverride(t *testing.
 	}
 	// The budgets follow the container, so the profile reports which
 	// container they were read from alongside them.
-	if base.Capacity.RetainedBytes == 0 || base.Capacity.UQBodyBytes != int64(base.Capacity.RetainedBytes) {
+	// The UQ body follows the retained budget but has its own ceiling, so it
+	// is bounded by it rather than equal to it.
+	if base.Capacity.RetainedBytes == 0 || base.Capacity.UQBodyBytes <= 0 ||
+		base.Capacity.UQBodyBytes > int64(base.Capacity.RetainedBytes) {
 		t.Fatalf("resolved default capacity = %+v", base.Capacity)
 	}
 	if base.MemorySource == "" || base.MemoryLimitBytes == 0 {

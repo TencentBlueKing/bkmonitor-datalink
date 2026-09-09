@@ -155,10 +155,11 @@ type Config struct {
 	ShutdownTimeout  Duration               `yaml:"shutdown_timeout"`
 }
 
-// Default is the product configuration for the container this process was
-// given. The capacity budgets are part of it rather than of any file: a
-// deployment states the CPU and memory it wants and the budgets follow, so
-// there is no combination of them for anyone to get wrong.
+// Default is the product configuration, and it is the same on every machine:
+// the capacity budgets describe ReferenceContainer, not whatever the process
+// happens to be running on. Load is where they follow the real container.
+// Reading the machine here would make a build agent's core count part of the
+// product default and every test's expectations a property of its host.
 func Default() Config {
 	runner := coordinator.DefaultConcurrentRunnerLimits()
 	cfg := Config{
@@ -196,7 +197,7 @@ func Default() Config {
 		PhaseTwo:        defaultPhaseTwoRuntime(),
 		ShutdownTimeout: Duration(10 * time.Second),
 	}
-	return cfg.withDerivedCapacity(DetectCapacityInputs())
+	return cfg.withDerivedCapacity(ReferenceContainer())
 }
 
 // withDerivedCapacity sizes admission, queueing and the Coordinator budgets
@@ -207,8 +208,16 @@ func (c Config) withDerivedCapacity(inputs CapacityInputs) Config {
 	c.PhaseTwo.Scheduler.RecoveryQueryPermits = derived.RecoveryQueryPermits
 	c.PhaseTwo.Scheduler.ReadyQueueCapacity = derived.ReadyQueueCapacity
 	c.PhaseTwo.Scheduler.RecoveryQueueCapacity = derived.RecoveryQueueCapacity
-	c.PhaseTwo.Coordinator = DeriveCoordinator(inputs, c.chunkedStateApplyBudget())
+	c.PhaseTwo.Coordinator = DeriveCoordinator(
+		inputs, uint64(c.Limits.Store.MaxKeysPerBatch), c.chunkedStateApplyBudget(),
+	)
 	return c
+}
+
+// WithContainerCapacity sizes the budgets for the container this process was
+// given. Load applies it; Default deliberately does not.
+func (c Config) WithContainerCapacity() Config {
+	return c.withDerivedCapacity(DetectCapacityInputs())
 }
 
 // chunkedStateApplyBudget is the most one Slot's State or Gap mutations can
@@ -266,8 +275,10 @@ func (c Config) RedisBackendOptions() state.RedisBackendOptions {
 		// Resolve here as well as in the runtime path: WithResolvedRedisPoolSize
 		// carries the authoritative value into the startup facts, but options can
 		// also be built by paths that never ran it, and a zero must never reach a
-		// client.
-		PoolSize: c.Redis.Connection().EffectivePoolSize(c.AdmittedQueryConcurrency()),
+		// client. Both paths derive from the CPU budget so they cannot disagree;
+		// passing the admitted concurrency here used to produce a different pool
+		// than the one the process reported.
+		PoolSize: c.Redis.Connection().EffectivePoolSize(redisPoolCPUBudget()),
 	}
 }
 
@@ -349,7 +360,7 @@ func (c Config) EvaluationRunnerLimits() coordinator.ConcurrentRunnerLimits {
 }
 
 func Load(path string) (Config, error) {
-	cfg := Default()
+	cfg := Default().WithContainerCapacity()
 	if path == "" {
 		cfg.resolvePhaseTwoRuntimeRedis()
 		cfg.resolveCompatibilityServiceTimeouts()

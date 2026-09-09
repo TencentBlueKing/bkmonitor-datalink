@@ -52,6 +52,14 @@ type CapacityInputs struct {
 	MemorySource     string
 }
 
+// ReferenceContainer is the container the product defaults describe. Default
+// has to be the same configuration on every machine - a build agent's core
+// count is not a product decision - so it derives from this fixed shape, and
+// only Load derives from the container the process was actually given.
+func ReferenceContainer() CapacityInputs {
+	return CapacityInputs{CPUBudget: 2, MemoryLimitBytes: 2 << 30, MemorySource: "product_reference"}
+}
+
 var (
 	memoryLimitOnce   sync.Once
 	memoryLimitBytes  uint64
@@ -121,6 +129,11 @@ func DeriveScheduler(inputs CapacityInputs) DerivedScheduler {
 	}
 }
 
+// AdmittedConcurrency is how many queries this container may have in flight.
+func (d DerivedScheduler) AdmittedConcurrency() int {
+	return d.ProcessQueryPermits + d.RecoveryQueryPermits
+}
+
 // DeriveCoordinator sizes the process budgets from the memory limit. Retained
 // bytes take a quarter of it, leaving the rest for the Go heap's own overhead,
 // non-retained allocation and collection headroom; the remaining budgets are
@@ -130,9 +143,13 @@ func DeriveScheduler(inputs CapacityInputs) DerivedScheduler {
 // chunked Store apply can carry. A process budget above that product would
 // admit a Slot no apply could ever complete, which is the cross-check a
 // hand-written combination once failed.
-func DeriveCoordinator(inputs CapacityInputs, chunkedApplyBudget uint64) PhaseTwoCoordinatorConfig {
+// The budget is additionally floored at one Store call. A process that cannot
+// hold a single batch's worth of mutations cannot complete the smallest Slot
+// the chunked apply is built around, so a very small container runs with less
+// headroom rather than with a budget no apply can use.
+func DeriveCoordinator(inputs CapacityInputs, storeItemsPerBatch, chunkedApplyBudget uint64) PhaseTwoCoordinatorConfig {
 	retained := max(inputs.MemoryLimitBytes/retainedMemoryDivisor, uint64(bytesPerMutation))
-	mutations := max(retained/bytesPerMutation, 1)
+	mutations := max(retained/bytesPerMutation, storeItemsPerBatch, 1)
 	if chunkedApplyBudget > 0 && mutations > chunkedApplyBudget {
 		mutations = chunkedApplyBudget
 	}

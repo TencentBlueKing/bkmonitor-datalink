@@ -52,9 +52,9 @@ func TestBuiltInPythonOutputTopicRejectedByAllowlistNamesTheTopic(t *testing.T) 
 // stop at decoding, and both incidents landed in that blind spot.
 func TestBuiltInPythonOutputWithoutServiceRedisIsRejected(t *testing.T) {
 	for name, breakIt := range map[string]func(*config.Config){
-		"no service routes":   func(cfg *config.Config) { cfg.Kafka.LegacyAdapter.ServiceRoutes = nil },
-		"no snapshot prefix":  func(cfg *config.Config) { cfg.Kafka.LegacyAdapter.SnapshotPrefix = "" },
-		"route names no node": func(cfg *config.Config) { cfg.Kafka.LegacyAdapter.ServiceNodes = nil },
+		"no service Redis":   func(cfg *config.Config) { cfg.Kafka.LegacyAdapter.ServiceRedis = config.RedisConnectionConfig{} },
+		"no snapshot prefix": func(cfg *config.Config) { cfg.Kafka.LegacyAdapter.SnapshotPrefix = "" },
+		"no service address": func(cfg *config.Config) { cfg.Kafka.LegacyAdapter.ServiceRedis.Address = "" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := validGoAccessRuntimeConfig()
@@ -103,10 +103,8 @@ func TestBuiltInPythonOutputUnreachableServiceRedisStopsStartup(t *testing.T) {
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
 	// A port nothing listens on: the configuration is complete and only the
 	// dependency is absent.
-	unreachable := cfg.Kafka.LegacyAdapter.ServiceNodes["service-0"]
-	unreachable.Address = "127.0.0.1:1"
-	unreachable.DialTimeout = config.Duration(200 * time.Millisecond)
-	cfg.Kafka.LegacyAdapter.ServiceNodes = map[string]config.RedisConnectionConfig{"service-0": unreachable}
+	cfg.Kafka.LegacyAdapter.ServiceRedis.Address = "127.0.0.1:1"
+	cfg.Kafka.LegacyAdapter.ServiceRedis.DialTimeout = config.Duration(200 * time.Millisecond)
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("the configuration itself must stay valid: %v", err)
 	}

@@ -13,7 +13,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,7 +26,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -2673,9 +2671,7 @@ func withCompatibilityOutput(cfg *config.Config, address string) {
 	cfg.Kafka.LegacyAdapter.SnapshotPrefix = "alarmd-compatibility-test"
 	connection := cfg.Redis.Connection()
 	connection.Address = address
-	cfg.Kafka.LegacyAdapter.ServiceNodes = map[string]config.RedisConnectionConfig{"service-0": connection}
-	cfg.Kafka.LegacyAdapter.ServiceRoutes = []legacyoutput.ServiceRoute{{UpperBound: math.MaxInt64, NodeID: "service-0"}}
-	_ = topic
+	cfg.Kafka.LegacyAdapter.ServiceRedis = connection
 }
 
 func validGoAccessRuntimeConfig() config.Config {
@@ -2689,15 +2685,12 @@ func validGoAccessRuntimeConfig() config.Config {
 	// the event is published. Tests that open a bundle point the service Redis
 	// at the instance they already run, through withCompatibilityOutput.
 	cfg.Kafka.LegacyAdapter.SnapshotPrefix = "alarmd-compatibility-test"
-	cfg.Kafka.LegacyAdapter.ServiceNodes = map[string]config.RedisConnectionConfig{
-		"service-0": {
-			Mode: config.RedisModeStandalone, Address: "127.0.0.1:6379",
-			DialTimeout:  cfg.Redis.DialTimeout,
-			ReadTimeout:  cfg.Redis.ReadTimeout,
-			WriteTimeout: cfg.Redis.WriteTimeout,
-		},
+	cfg.Kafka.LegacyAdapter.ServiceRedis = config.RedisConnectionConfig{
+		Mode: config.RedisModeStandalone, Address: "127.0.0.1:6379",
+		DialTimeout:  cfg.Redis.DialTimeout,
+		ReadTimeout:  cfg.Redis.ReadTimeout,
+		WriteTimeout: cfg.Redis.WriteTimeout,
 	}
-	cfg.Kafka.LegacyAdapter.ServiceRoutes = []legacyoutput.ServiceRoute{{UpperBound: math.MaxInt64, NodeID: "service-0"}}
 	cfg.Kafka.ClientID = "alarmd"
 	cfg.Kafka.BrokerVersion = "2.6.0"
 	cfg.Redis.Address = "127.0.0.1:6379"

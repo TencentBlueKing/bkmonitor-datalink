@@ -253,13 +253,9 @@ kafka:
   legacy_adapter:
     topic: alarmd_0bkmonitor_backend_event
     snapshot_prefix: alarmd-test
-    service_nodes:
-      default:
-        mode: standalone
-        address: redis.test:6379
-    service_routes:
-      - upper_bound: 9223372036854775807
-        node_id: default
+    service_redis:
+      mode: standalone
+      address: redis.test:6379
   client_id: alarmd
   broker_version: 2.6.0
 redis:

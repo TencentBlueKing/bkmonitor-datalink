@@ -10,7 +10,6 @@
 package config
 
 import (
-	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,7 +19,6 @@ import (
 	"time"
 
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
 
@@ -102,13 +100,9 @@ kafka:
   legacy_adapter:
     topic: alarmd_0bkmonitor_backend_event
     snapshot_prefix: alarmd-test
-    service_nodes:
-      default:
-        mode: standalone
-        address: redis.test:6379
-    service_routes:
-      - upper_bound: 9223372036854775807
-        node_id: default
+    service_redis:
+      mode: standalone
+      address: redis.test:6379
   client_id: alarmd
   broker_version: 2.6.0
 redis:
@@ -553,16 +547,11 @@ func withCompatibilityServiceRedis(cfg *Config, address string) {
 	cfg.Kafka.LegacyAdapter.SnapshotPrefix = "alarmd-test"
 	// Load resolves the timeouts from the runtime Redis; a configuration built
 	// in Go and validated directly has to state them.
-	cfg.Kafka.LegacyAdapter.ServiceNodes = map[string]RedisConnectionConfig{
-		"default": {
-			Mode: RedisModeStandalone, Address: address,
-			DialTimeout:  cfg.Redis.DialTimeout,
-			ReadTimeout:  cfg.Redis.ReadTimeout,
-			WriteTimeout: cfg.Redis.WriteTimeout,
-		},
-	}
-	cfg.Kafka.LegacyAdapter.ServiceRoutes = []legacyoutput.ServiceRoute{
-		{UpperBound: math.MaxInt64, NodeID: "default"},
+	cfg.Kafka.LegacyAdapter.ServiceRedis = RedisConnectionConfig{
+		Mode: RedisModeStandalone, Address: address,
+		DialTimeout:  cfg.Redis.DialTimeout,
+		ReadTimeout:  cfg.Redis.ReadTimeout,
+		WriteTimeout: cfg.Redis.WriteTimeout,
 	}
 }
 
@@ -629,13 +618,9 @@ kafka:
   legacy_adapter:
     topic: alarmd_0bkmonitor_backend_event
     snapshot_prefix: alarmd-test
-    service_nodes:
-      default:
-        mode: standalone
-        address: redis.test:6379
-    service_routes:
-      - upper_bound: 9223372036854775807
-        node_id: default
+    service_redis:
+      mode: standalone
+      address: redis.test:6379
   client_id: alarmd
   broker_version: 2.6.0
 redis:

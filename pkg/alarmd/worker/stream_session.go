@@ -1179,7 +1179,7 @@ func (stream *streamedExecution) observeEvaluationCompleted(
 		Result: evaluated.Result, Operation: observability.Operation(stream.request.Operation),
 		Direction: observability.DirectionInternal, ReasonCode: evaluated.ReasonCode,
 		Duration: time.Since(started), Counts: observability.Counts{Records: evaluationRecordCount(inputs)},
-		Trace:                observability.TraceFields{StrategyID: due.Identity.StrategyID, DimensionIdentityDigest: string(series)},
+		Trace:                observability.TraceFields{StrategyID: due.Identity.StrategyID, BusinessID: due.Identity.BusinessID, DimensionIdentityDigest: string(series)},
 		AlgorithmEvaluations: evaluations, AlgorithmInputs: namedInputs,
 	}
 	stream.coordinator.ports.Observer.Observe(ctx, observation)
@@ -1195,7 +1195,7 @@ func (stream *streamedExecution) observeCompletionOnlyPlan(
 		Component: observability.ComponentEvaluation, Stage: observability.StageEvaluationCompleted,
 		Result: evaluated.Result, Operation: observability.Operation(stream.request.Operation),
 		Direction: observability.DirectionInternal, ReasonCode: evaluated.ReasonCode,
-		Trace:           observability.TraceFields{StrategyID: due.Identity.StrategyID},
+		Trace:           observability.TraceFields{StrategyID: due.Identity.StrategyID, BusinessID: due.Identity.BusinessID},
 		AlgorithmInputs: stream.completionOnlyAlgorithmInputFacts(due),
 	}
 	stream.coordinator.ports.Observer.Observe(ctx, observation)

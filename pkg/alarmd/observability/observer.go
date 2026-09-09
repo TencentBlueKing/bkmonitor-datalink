@@ -384,6 +384,7 @@ type TraceFields struct {
 	OwnerEpoch              uint64
 	EvaluationTime          int64
 	StrategyID              string
+	BusinessID              string
 	LevelID                 string
 	TerminalScope           string
 	TerminalFieldPath       string

@@ -408,7 +408,7 @@ func appendTraceFields(attributes []slog.Attr, trace TraceFields) []slog.Attr {
 		value string
 	}{
 		{"trace_id", trace.TraceID}, {"execution_id", trace.ExecutionID}, {"message_id", trace.MessageID},
-		{"query_group_key", trace.QueryGroupKey}, {"strategy_id", trace.StrategyID},
+		{"query_group_key", trace.QueryGroupKey}, {"strategy_id", trace.StrategyID}, {"business_id", trace.BusinessID},
 		{"snapshot_revision", trace.SnapshotRevision}, {"query_revision", trace.QueryRevision},
 		{"schedule_revision", trace.ScheduleRevision}, {"due_plan_set_digest", trace.DuePlanSetDigest},
 		{"owner_id", trace.OwnerID},

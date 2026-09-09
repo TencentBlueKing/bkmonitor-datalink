@@ -64,6 +64,9 @@ func mergeTraceFields(primary, fallback TraceFields) TraceFields {
 	if primary.StrategyID == "" {
 		primary.StrategyID = fallback.StrategyID
 	}
+	if primary.BusinessID == "" {
+		primary.BusinessID = fallback.BusinessID
+	}
 	if primary.LevelID == "" {
 		primary.LevelID = fallback.LevelID
 	}

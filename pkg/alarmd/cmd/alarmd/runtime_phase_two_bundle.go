@@ -545,7 +545,12 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	fleetAPI, err := fleet.NewHandler(fleetService, windowStore, external.Now)
+	// The stall budget is the scheduler's own replay age rather than a page
+	// constant: past it the deployment has already promised to terminate a Slot
+	// that cannot complete, so an object still failing beyond it is one nothing
+	// will resolve on its own.
+	fleetAPI, err := fleet.NewHandler(fleetService, windowStore, external.Now,
+		cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration())
 	if err != nil {
 		return nil, err
 	}

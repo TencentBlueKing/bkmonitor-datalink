@@ -58,6 +58,10 @@ input{font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:4p
 .empty{color:var(--muted);padding:10px 0;font-size:12px}
 .filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
 .applied{color:var(--warn);font-size:11px}
+.stuck{display:inline-block;margin-left:6px;padding:0 5px;border-radius:3px;font-size:10px;
+  background:rgba(192,57,43,.14);color:var(--bad);border:1px solid rgba(192,57,43,.35)}
+tr.stuckrow td{background:rgba(192,57,43,.05)}
+.sgroup.stuckg b{color:var(--bad)}
 .summary{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:10px}
 .sgroup{font-size:11px;color:var(--muted)}
 .sgroup b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
@@ -100,6 +104,7 @@ input{font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:4p
   <section class="panel">
     <h2>异常对象</h2>
     <p class="basis">按已持续时长排序，最久的在最前；因此第一页就是坏得最久的一批。时间口径：持续时长按每条自身的起算点，见“起算来源”列。</p>
+    <p class="basis" id="stallNote" hidden></p>
     <div class="filters">
       <input id="fReplica" list="replicaList" placeholder="副本" size="10">
       <datalist id="replicaList"></datalist>
@@ -326,7 +331,18 @@ function loadObjects() {
         fcell.title = ['阶段 ' + f.stage, '分类 ' + f.category, f.code ? '代码 ' + f.code : '']
           .filter(Boolean).join('\n');
       }
-      cell(duration(a.since));
+      // A long duration alone does not say whether the object is recovering
+      // slowly or has stopped entirely; this chip is the only thing on the row
+      // that separates the two.
+      var held = cell(duration(a.since));
+      if (a.stalled) {
+        var chip = document.createElement('span');
+        chip.className = 'stuck';
+        chip.textContent = '自锁';
+        chip.title = '这一轮从来没有结束过，且已经超过本部署终结一个跑不完 Slot 的时限。它不会自己恢复。';
+        held.appendChild(chip);
+        tr.className = 'stuckrow';
+      }
       cell(SINCE_SOURCE[a.since_from] || a.since_from || '—');
       // The full pod name is the same on every row of a single replica's run and
       // is the widest column in the table. Only the part that distinguishes one
@@ -352,6 +368,7 @@ function loadObjects() {
       tb.appendChild(tr);
     });
     renderSummary(d.summary, total);
+    renderStallNote(d.stall_after_seconds, d.summary && d.summary.stalled);
     var list = document.getElementById('replicaList');
     list.textContent = '';
     (d.replicas || []).forEach(function (r) {
@@ -380,10 +397,38 @@ function loadObjects() {
 // list can be read as "one problem repeated" or "many separate ones" without
 // paging through it. Anything the list itself could not cover is still reported
 // as a gap and in anomalies_total.
+// The stall budget comes from the deployment, not from this page, so the
+// explanation states the number the deployment actually runs with. Without a
+// budget there is nothing to claim and the line stays hidden rather than
+// falling back to one someone chose here.
+function renderStallNote(budgetSeconds, stalled) {
+  var note = document.getElementById('stallNote');
+  if (!budgetSeconds) {
+    note.hidden = true;
+    return;
+  }
+  var budget = budgetSeconds >= 60
+    ? Math.round(budgetSeconds / 60) + ' 分钟' : budgetSeconds + ' 秒';
+  note.textContent = '标记为“自锁”的是：轮次一直没有结束，且已经超过本部署终结一个跑不完 Slot 的时限（'
+    + budget + '）。这类对象不会自己恢复，需要有人介入。降级完成的不算——那一轮结束了，游标也前进了。'
+    + (stalled ? '当前 ' + stalled + ' 个。' : '当前没有。');
+  note.hidden = false;
+}
+
 function renderSummary(summary, total) {
   var host = document.getElementById('summary');
   host.textContent = '';
   if (!summary || !total) return;
+  // Put first: it is the only count in this row that will not resolve on its own.
+  if (summary.stalled) {
+    var stuck = document.createElement('div');
+    stuck.className = 'sgroup stuckg';
+    stuck.appendChild(document.createTextNode('自锁：'));
+    var count = document.createElement('b');
+    count.textContent = summary.stalled;
+    stuck.appendChild(count);
+    host.appendChild(stuck);
+  }
   [['种类', summary.by_kind], ['原因', summary.by_reason],
    ['失败在哪', summary.by_failure], ['副本', summary.by_replica]]
     .forEach(function (pair) {

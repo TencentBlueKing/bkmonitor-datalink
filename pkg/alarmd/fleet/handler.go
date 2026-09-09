@@ -50,7 +50,12 @@ type listResponse struct {
 	// two apart from the rows alone.
 	Applied bool    `json:"filtered"`
 	Summary Summary `json:"summary"`
-	Page    Page    `json:"page"`
+	// StallAfterSeconds is the budget an object's rounds have to finish in before
+	// the list calls it stalled. It is reported rather than assumed by the reader
+	// so the flag can be checked against the deployment that produced it instead
+	// of against a number someone remembers.
+	StallAfterSeconds int  `json:"stall_after_seconds,omitempty"`
+	Page              Page `json:"page"`
 }
 
 // Count is one value and how many anomalies carry it.
@@ -77,6 +82,11 @@ type Summary struct {
 	// broken dependency from a scattering of unrelated problems.
 	ByFailure []Count `json:"by_failure"`
 	ByReplica []Count `json:"by_replica"`
+	// Stalled counts the objects that are stuck rather than merely degraded. The
+	// other three say how badly the last round went; this one says the rounds
+	// stopped ending, which is the only one of the four that cannot resolve on
+	// its own.
+	Stalled int `json:"stalled"`
 }
 
 func summarize(anomalies []Anomaly) Summary {
@@ -84,7 +94,11 @@ func summarize(anomalies []Anomaly) Summary {
 	reasons := map[string]int{}
 	failures := map[string]int{}
 	replicas := map[string]int{}
+	stalled := 0
 	for _, anomaly := range anomalies {
+		if anomaly.Stalled {
+			stalled++
+		}
 		kinds[anomaly.Kind]++
 		if anomaly.ReasonCode != "" {
 			reasons[anomaly.ReasonCode]++
@@ -97,6 +111,28 @@ func summarize(anomalies []Anomaly) Summary {
 	return Summary{
 		ByKind: rank(kinds), ByReason: rank(reasons),
 		ByFailure: rank(failures), ByReplica: rank(replicas),
+		Stalled: stalled,
+	}
+}
+
+// markStalled flags the objects whose rounds have not finished for longer than
+// stallAfter, the deployment's own budget for terminating a Slot that cannot
+// complete. Past that budget the object is not progressing slowly, it is not
+// progressing at all, and nothing left in the deployment will end the round for
+// it.
+//
+// Blocked rounds are excluded on purpose: they say a round never started, which
+// an ordinary lease handover produces, and counting them would put a permanent
+// label on a transient event. A zero budget turns the flag off rather than
+// marking everything, so a deployment that has not wired one shows no flag
+// instead of a wrong one.
+func markStalled(anomalies []Anomaly, at time.Time, stallAfter time.Duration) {
+	if stallAfter <= 0 {
+		return
+	}
+	for index := range anomalies {
+		anomalies[index].Stalled = failedExecution(anomalies[index].ReasonCode) &&
+			at.Sub(anomalies[index].Since) > stallAfter
 	}
 }
 
@@ -135,7 +171,11 @@ type detailResponse struct {
 // choice made during one investigation outlives it and can only be changed by a
 // release. A nil store leaves the route unmounted, so a deployment that has not
 // wired one is missing the route rather than serving one that cannot work.
-func NewHandler(service *Service, windows *WindowStore, now func() time.Time) (http.Handler, error) {
+// stallAfter is how long an object's rounds may keep failing to finish before
+// the API calls it stalled; it comes from the deployment's own replay budget so
+// the flag means "past the point this deployment promised to end the round",
+// not a number chosen here. Zero disables the flag.
+func NewHandler(service *Service, windows *WindowStore, now func() time.Time, stallAfter time.Duration) (http.Handler, error) {
 	if service == nil {
 		return nil, errors.New("alarmd fleet: handler requires a service")
 	}
@@ -144,10 +184,10 @@ func NewHandler(service *Service, windows *WindowStore, now func() time.Time) (h
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/objects", func(response http.ResponseWriter, request *http.Request) {
-		listObjects(response, request, service)
+		listObjects(response, request, service, now, stallAfter)
 	})
 	mux.HandleFunc("/api/objects/", func(response http.ResponseWriter, request *http.Request) {
-		objectDetail(response, request, service)
+		objectDetail(response, request, service, now, stallAfter)
 	})
 	if windows != nil {
 		mux.HandleFunc("/api/windows", func(response http.ResponseWriter, request *http.Request) {
@@ -168,13 +208,17 @@ func NewHandler(service *Service, windows *WindowStore, now func() time.Time) (h
 	return mux, nil
 }
 
-func listObjects(response http.ResponseWriter, request *http.Request, service *Service) {
+func listObjects(response http.ResponseWriter, request *http.Request, service *Service,
+	now func() time.Time, stallAfter time.Duration) {
 	offset, limit, err := paging(request)
 	if err != nil {
 		writeJSON(response, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	view := service.View(request.Context())
+	// Marked before filtering so a filtered response reports the same flag for the
+	// same object as an unfiltered one.
+	markStalled(view.Anomalies, now(), stallAfter)
 	replica := request.URL.Query().Get("replica")
 	if replica != "" {
 		// A name that belongs to no replica has to be refused rather than
@@ -212,18 +256,21 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	writeJSON(response, http.StatusOK, listResponse{
 		Summary: summary,
 		View:    view, Replica: replica, Strategy: strategy, Business: business,
-		Applied: replica != "" || strategy != "" || business != "",
-		Page:    Page{Offset: offset, Limit: limit, Total: total},
+		Applied:           replica != "" || strategy != "" || business != "",
+		StallAfterSeconds: int(stallAfter / time.Second),
+		Page:              Page{Offset: offset, Limit: limit, Total: total},
 	})
 }
 
-func objectDetail(response http.ResponseWriter, request *http.Request, service *Service) {
+func objectDetail(response http.ResponseWriter, request *http.Request, service *Service,
+	now func() time.Time, stallAfter time.Duration) {
 	queryGroup := strings.TrimPrefix(request.URL.Path, "/api/objects/")
 	if queryGroup == "" {
 		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "query group is required"})
 		return
 	}
 	view := service.View(request.Context())
+	markStalled(view.Anomalies, now(), stallAfter)
 	body := detailResponse{
 		Health:     view.Health,
 		Gaps:       view.Gaps,

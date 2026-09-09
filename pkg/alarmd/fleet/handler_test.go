@@ -22,7 +22,7 @@ import (
 func handlerWith(t *testing.T, snapshots []Snapshot, expectation Expectation, replicaList []string) http.Handler {
 	t.Helper()
 	service := mustService(t, stubExpectations{expectation: expectation}, stubRegistry{replicas: replicaList}, stubSnapshots{snapshots: snapshots})
-	handler, err := NewHandler(service, nil, func() time.Time { return now })
+	handler, err := NewHandler(service, nil, func() time.Time { return now }, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestDetailSaysWhetherNotFoundCanBeTrusted(t *testing.T) {
 		stubRegistry{replicas: replicas()},
 		stubSnapshots{snapshots: snapshotsWithAnomalies(3)},
 	)
-	incompleteHandler, err := NewHandler(service, nil, func() time.Time { return now })
+	incompleteHandler, err := NewHandler(service, nil, func() time.Time { return now }, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestHealthEndpointCarriesTheCoverageArithmetic(t *testing.T) {
 		stubRegistry{replicas: replicas()},
 		stubSnapshots{snapshots: healthySnapshots()[:1]},
 	)
-	handler, err := NewHandler(service, nil, func() time.Time { return now })
+	handler, err := NewHandler(service, nil, func() time.Time { return now }, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestHealthEndpointCarriesTheCoverageArithmetic(t *testing.T) {
 }
 
 func TestNewHandlerRequiresAService(t *testing.T) {
-	if _, err := NewHandler(nil, nil, nil); err == nil {
+	if _, err := NewHandler(nil, nil, nil, 0); err == nil {
 		t.Fatal("handler was built without a service")
 	}
 }
@@ -309,5 +309,86 @@ func TestAFilterThatMatchesNothingIsAnsweredAndMarked(t *testing.T) {
 	}
 	if body["filtered"] != true || body["strategy"] != "999999" {
 		t.Fatalf("body = %+v, want the applied filter echoed", body)
+	}
+}
+
+func handlerWithStallBudget(t *testing.T, snapshots []Snapshot, budget time.Duration) http.Handler {
+	t.Helper()
+	service := mustService(t, stubExpectations{expectation: Expectation{QueryGroups: 949, Known: true}},
+		stubRegistry{replicas: replicas()}, stubSnapshots{snapshots: snapshots})
+	handler, err := NewHandler(service, nil, func() time.Time { return now }, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handler
+}
+
+func agedAnomaly(queryGroup, reason string, age time.Duration) Anomaly {
+	item := anomaly(queryGroup)
+	item.Kind = "DEGRADED_RUN"
+	item.ReasonCode = reason
+	item.Since = now.Add(-age)
+	return item
+}
+
+// A degraded round still ends and moves the cursor; a round that never ends
+// leaves the object replaying the same evaluation forever. Both show the same
+// kind and a long duration, so without this flag the list cannot separate the
+// object that is recovering slowly from the one that has stopped entirely.
+func TestListFlagsObjectsWhoseRoundsStoppedFinishing(t *testing.T) {
+	budget := 10 * time.Minute
+	snapshots := healthySnapshots()
+	snapshots[1].Anomalies = []Anomaly{
+		agedAnomaly("stuck", "error", 2*time.Hour),
+		agedAnomaly("failing-briefly", "error", 2*time.Minute),
+		agedAnomaly("degraded-for-hours", "COMPLETED_WITH_UNAVAILABLE", 2*time.Hour),
+	}
+	snapshots[1].TotalAnomalies = len(snapshots[1].Anomalies)
+
+	status, body := get(t, handlerWithStallBudget(t, snapshots, budget), "/api/objects")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	stalled := map[string]bool{}
+	for _, raw := range body["anomalies"].([]any) {
+		item := raw.(map[string]any)
+		flag, _ := item["stalled"].(bool)
+		stalled[item["query_group"].(string)] = flag
+	}
+	if !stalled["stuck"] {
+		t.Fatal("an object failing to finish for two hours past a ten minute budget is not flagged")
+	}
+	if stalled["failing-briefly"] {
+		t.Fatal("an object inside the budget is flagged, which makes every transient failure look permanent")
+	}
+	if stalled["degraded-for-hours"] {
+		t.Fatal("a completed degraded round is flagged; that Slot ended and the cursor moved")
+	}
+	summary := body["summary"].(map[string]any)
+	if summary["stalled"].(float64) != 1 {
+		t.Fatalf("summary stalled = %v, want 1", summary["stalled"])
+	}
+	if body["stall_after_seconds"].(float64) != budget.Seconds() {
+		t.Fatalf("stall_after_seconds = %v, want %v", body["stall_after_seconds"], budget.Seconds())
+	}
+}
+
+// A deployment that wired no budget has no basis for the claim, and a flag
+// asserted without one would label every long-running failure as unrecoverable.
+func TestListWithoutAStallBudgetFlagsNothing(t *testing.T) {
+	snapshots := healthySnapshots()
+	snapshots[1].Anomalies = []Anomaly{agedAnomaly("stuck", "error", 30*24*time.Hour)}
+	snapshots[1].TotalAnomalies = 1
+
+	_, body := get(t, handlerWithStallBudget(t, snapshots, 0), "/api/objects")
+	item := body["anomalies"].([]any)[0].(map[string]any)
+	if flag, ok := item["stalled"].(bool); ok && flag {
+		t.Fatal("stalled is asserted without a budget to assert it against")
+	}
+	if _, present := body["stall_after_seconds"]; present {
+		t.Fatal("a zero budget is reported as if it were one")
+	}
+	if body["summary"].(map[string]any)["stalled"].(float64) != 0 {
+		t.Fatal("summary counts a stall that was never established")
 	}
 }

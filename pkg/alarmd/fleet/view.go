@@ -105,6 +105,17 @@ type Anomaly struct {
 	SinceFrom  SinceSource   `json:"since_from"`
 	Replica    string        `json:"replica"`
 	Failure    *FailureRef   `json:"failure,omitempty"`
+	// Stalled says the rounds have been failing to finish for longer than the
+	// deployment's own budget for terminating an unfinishable Slot. The
+	// distinction it draws is the one that decides whether anyone has to act: a
+	// degraded round still ends and moves the cursor, while a round that never
+	// ends leaves the object replaying the same evaluation forever. Both look
+	// identical in a list that only shows how the last round went.
+	//
+	// Derived when the view is served rather than stored, so it is only as old as
+	// the uninterrupted run of snapshots behind Since: it under-reports after a
+	// restart rather than over-reports.
+	Stalled    bool          `json:"stalled,omitempty"`
 	Strategies []StrategyRef `json:"strategies,omitempty"`
 }
 

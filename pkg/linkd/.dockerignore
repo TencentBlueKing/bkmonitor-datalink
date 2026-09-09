@@ -20,3 +20,5 @@ configs/*.local.yaml
 **/*.keystore
 ecosystem.config.cjs
 **/*_test.go
+
+.release/

@@ -22,7 +22,7 @@ GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './console/dist/*' \
 	-not -path './console/dist-server/*' | LC_ALL=C sort)
 
-.PHONY: fmt fmt-check test race vet lint console-check console-e2e helm-check check image console-image
+.PHONY: fmt fmt-check test race vet lint console-check console-e2e helm-check release-check check image console-image
 
 fmt:
 	$(GOFMT) -w $(GO_FILES)
@@ -65,6 +65,10 @@ helm-check:
 	helm lint --strict deploy/helm/linkd -f deploy/helm/linkd/examples/existing-secrets.yaml
 	node --test deploy/helm/linkd/tests/chart.test.mjs
 
+release-check:
+	python3 scripts/test_ci_release.py
+	NODE_PATH="$(CURDIR)/$(CONSOLE_DIR)/node_modules" node --test scripts/test-prepare-release-chart.cjs
+
 check:
 	$(MAKE) fmt-check
 	$(MAKE) test
@@ -73,6 +77,7 @@ check:
 	$(MAKE) lint
 	$(MAKE) console-check
 	$(MAKE) helm-check
+	$(MAKE) release-check
 
 image:
 	$(CONTAINER) build \

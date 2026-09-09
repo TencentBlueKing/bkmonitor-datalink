@@ -2,12 +2,15 @@
 ARG NODE_IMAGE=node:24-bookworm-slim
 FROM ${NODE_IMAGE} AS builder
 ARG NODE_BUILD_OPTIONS=--max-old-space-size=3072
+ARG NPM_REGISTRY=https://registry.npmjs.org
+# Corepack 自身获取 pnpm 与 pnpm 获取项目依赖分别配置，避免只替换其中一个入口。
+ENV COREPACK_NPM_REGISTRY=${NPM_REGISTRY}
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --registry="${NPM_REGISTRY}"
 COPY . .
-RUN NODE_OPTIONS="${NODE_BUILD_OPTIONS}" pnpm build && pnpm prune --prod
+RUN NODE_OPTIONS="${NODE_BUILD_OPTIONS}" pnpm build && pnpm prune --prod --registry="${NPM_REGISTRY}"
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
 RUN VERSION="${VERSION}" GIT_COMMIT="${GIT_COMMIT}" node -e 'require("node:fs").writeFileSync("build-info.json", JSON.stringify({version: process.env.VERSION, git_commit: process.env.GIT_COMMIT}))'

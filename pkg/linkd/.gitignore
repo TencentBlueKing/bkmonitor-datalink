@@ -1,4 +1,5 @@
 # Build outputs
+/.release/
 /bin/
 /dist/
 /console/dist/

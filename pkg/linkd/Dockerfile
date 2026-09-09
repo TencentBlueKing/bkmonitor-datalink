@@ -11,15 +11,19 @@
 # 或 docker build --build-arg VERSION=<version> -t linkd:<tag> .
 
 ARG GO_IMAGE=golang:1.26.7
-FROM ${GO_IMAGE} AS builder
+ARG RUNTIME_IMAGE=tencentos/tencentos4-minimal
+FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS builder
 
 ARG GOPROXY=direct
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /src
 
 ENV CGO_ENABLED=0 \
+    GOTOOLCHAIN=local \
     GOPROXY=${GOPROXY}
 
 COPY go.mod go.sum ./
@@ -27,9 +31,9 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT}" -o /out/linkd ./cmd/linkd
+RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT}" -o /out/linkd ./cmd/linkd
 
-FROM tencentos/tencentos4-minimal
+FROM ${RUNTIME_IMAGE}
 
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown

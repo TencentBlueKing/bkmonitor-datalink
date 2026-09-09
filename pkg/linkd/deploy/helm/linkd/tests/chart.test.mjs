@@ -53,6 +53,27 @@ test("default three roles, stable selectors and valid runtime configs", () => {
   }
   validateConfigs(docs);
 });
+test("default GHCR release images reach all roles, Console and migration", () => {
+  const docs = render({...base, console: {enabled: true, basicAuth: {existingSecret: "linkd-console-auth"}}});
+  const prefix = "ghcr.io/tencentblueking/bkmonitor-datalink/";
+  for (const role of ["control-plane", "cleaner", "lifecycle", "console"]) {
+    const name = role === "console" ? "linkd-console" : "linkd";
+    assert.equal(byComponent(docs, role).spec.template.spec.containers[0].image, prefix + name + ":0.1.0");
+  }
+  assert.equal(docs.find(d => d.kind === "Job").spec.template.spec.containers[0].image, prefix + "linkd:0.1.0");
+});
+test("explicit image registry, tag and digest override release defaults", () => {
+  const digest = "sha256:" + "b".repeat(64);
+  const docs = render({...base, global: {imageRegistry: "mirror.example.com"},
+    image: {registry: "ignored.example.com", repository: "custom/linkd", tag: "custom", digest},
+    console: {enabled: true, image: {repository: "custom/console", tag: "console-test"}, basicAuth: {existingSecret: "linkd-console-auth"}}});
+  assert.equal(byComponent(docs, "cleaner").spec.template.spec.containers[0].image, "mirror.example.com/custom/linkd@" + digest);
+  assert.equal(byComponent(docs, "console").spec.template.spec.containers[0].image, "mirror.example.com/custom/console:console-test");
+  const result = spawnSync("helm", ["template", "test", chart, "-f", "-"], {
+    input: stringify({...base, image: {tag: "", digest: ""}}), encoding: "utf8"});
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /image.tag 或 image.digest 必须配置/);
+});
 test("worker groups isolate labels, replicas, resources and config Secrets", () => {
   const groups = parse(readFileSync(join(chart, "examples/clusters.yaml"), "utf8"));
   // Worker labels accept domain keys that are not legal Kubernetes label names.

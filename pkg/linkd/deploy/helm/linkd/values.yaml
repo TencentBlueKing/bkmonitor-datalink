@@ -7,11 +7,11 @@ fullnameOverride: ""
 commonLabels: {}
 commonAnnotations: {}
 
-## @section Linkd 镜像，安装时必须指定 tag 或 digest
+## @section Linkd 镜像，默认使用 GHCR 正式版本，可通过 tag 或 digest 覆盖
 image:
-  registry: ""
-  repository: linkd
-  tag: ""
+  registry: ghcr.io
+  repository: tencentblueking/bkmonitor-datalink/linkd
+  tag: "0.1.0"
   digest: ""
   pullPolicy: IfNotPresent
   pullSecrets: []
@@ -151,9 +151,9 @@ metrics:
 console:
   enabled: false
   image:
-    registry: ""
-    repository: linkd-console
-    tag: ""
+    registry: ghcr.io
+    repository: tencentblueking/bkmonitor-datalink/linkd-console
+    tag: "0.1.0"
     digest: ""
     pullPolicy: IfNotPresent
     pullSecrets: []

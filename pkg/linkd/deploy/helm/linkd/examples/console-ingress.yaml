@@ -1,8 +1,6 @@
 # 与 external-services.yaml 叠加；域名、IngressClass 和证书 Secret 按环境替换。
 console:
   enabled: true
-  image:
-    tag: example
   basicAuth:
     existingSecret: linkd-console-auth
   prometheusUrl: http://prometheus:9090

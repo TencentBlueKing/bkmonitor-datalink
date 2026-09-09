@@ -3,6 +3,10 @@
 仅部署 Control Plane 和按 `clusters` 分组的 Cleaner/Lifecycle，不支持 all-in-one。
 Console、Ingress 和 ServiceMonitor 可选，所有中间件外置。
 
+Linkd 与 Console 的默认镜像分别为 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.0`
+和 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd-console:0.1.0`，可通过 values 覆盖。
+手动打包与 GitHub Actions Artifacts 下载见[发布指南](../../../docs/guides/image-release.md#helm-chart-打包)。
+
 完整操作说明见 [Helm 部署指南](../../../docs/guides/helm.md)。
 参数说明见 [values.yaml](values.yaml)，示例见：
 

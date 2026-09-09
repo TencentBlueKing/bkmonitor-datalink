@@ -1,6 +1,4 @@
-# 仅示例：更换为实际镜像和外部服务地址。认证 Secret 需预先创建。
-image:
-  tag: example
+# 仅示例：使用 Chart 默认 GHCR 镜像，替换外部服务地址。认证 Secret 需预先创建。
 auth:
   existingSecret: linkd-auth
 configuration:

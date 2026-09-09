@@ -6,7 +6,14 @@ Chart 位于 [deploy/helm/linkd](../../deploy/helm/linkd/README.md)。使用 Hel
 
 ## 构建镜像与准备配置
 
-在 Linkd 模块根目录构建并推送到集群可拉取的仓库：
+Chart 默认使用 GHCR 的两个 `0.1.0` 镜像：
+
+```text
+ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.0
+ghcr.io/tencentblueking/bkmonitor-datalink/linkd-console:0.1.0
+```
+
+需要自建镜像时，在 Linkd 模块根目录构建，再推送到集群可拉取的仓库：
 
 ```bash
 make image IMAGE=registry.example.com/linkd IMAGE_TAG=<tag>
@@ -17,8 +24,10 @@ make console-image CONSOLE_IMAGE=registry.example.com/linkd-console IMAGE_TAG=<t
 Console 也可直接执行 `docker build -t linkd-console:<tag> console`；构建上下文必须是 `console`。
 构建器建议至少 4 GiB 内存，TypeScript 构建默认最多使用 3 GiB V8 heap，可用构建参数
 `NODE_BUILD_OPTIONS` 调整；该参数不进入运行镜像。
-Chart 不提供已发布镜像，`image.tag` 或 `image.digest` 必填；Console 启用时也需指定其镜像。
+可通过 `image` 和 `console.image` 覆盖默认 registry、repository、tag 或 digest。
+如果显式清空 tag，必须提供 digest；使用私有镜像时配置 imagePullSecrets。
 显式 digest 优先于 tag，`global.imageRegistry` 优先于各镜像 registry。
+GitHub Actions 支持单独打包 Chart 并下载 `.tgz`，见[手动构建与发布](image-release.md#helm-chart-打包)。
 
 复制 [外部服务示例](../../deploy/helm/linkd/examples/external-services.yaml) 为本地私有 values，
 填写镜像和实际外部服务地址；来源与 Kafka 输出规则通过正式来源 API 配置。
@@ -147,10 +156,6 @@ kubectl -n linkd create secret generic linkd-console-auth \
 ```yaml
 console:
   enabled: true
-  image:
-    registry: registry.example.com
-    repository: linkd-console
-    tag: "<tag>"
   basicAuth:
     existingSecret: linkd-console-auth
     usernameKey: username

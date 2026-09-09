@@ -1,8 +1,9 @@
-# 手动构建与发布镜像
+# 手动构建与发布镜像和 Chart
 
 仓库根目录的 [Linkd images workflow](../../../../.github/workflows/linkd-images.yml) 复用
 Linkd 和 Console 的 Dockerfile，构建 `linux/amd64` 镜像并推送到 GitHub Container Registry（GHCR）。
 它只声明 `workflow_dispatch`，提交代码、创建 PR、推送 Git tag 或发布 Release 都不会自动触发。
+镜像构建与 Helm 打包通过 `component` 互斥选择，不会在同一次运行中同时执行。
 
 ## 首次准备
 
@@ -19,12 +20,14 @@ GHCR 权限见 [GitHub 镜像发布说明](https://docs.github.com/en/actions/tu
 
 ## 手动执行
 
-打开 GitHub 仓库 **Actions → Linkd images → Run workflow**，选择待构建的分支，再填写：
+打开 GitHub 仓库 **Actions → Linkd images → Run workflow**，选择包含源码或 Chart 的分支（当前为 `feat/linkd-dev`），再填写：
+默认分支只登记 Workflow 时不能直接构建；缺少 Dockerfile 或 Chart.yaml 会提前报错。
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
-| `component` | `all` | 同时构建两个镜像；也可选 `linkd` 或 `linkd-console` |
+| `component` | `all` | `all` 只构建两个镜像；`linkd` / `linkd-console` 只构建对应镜像；`helm` 只打包 Chart |
 | `version` | 空 | 可选 Docker tag，例如 `v0.1.0-rc.1`；最长 128 字符，只允许字母、数字、下划线、点和连字符，首字符不能为点或连字符 |
+| `chart_version` | 空 | 仅 `helm` 使用；覆盖 Chart 包版本，必须是 SemVer；留空使用 Chart.yaml 的 version |
 
 也可在仓库目录通过 GitHub CLI 手动选择分支或 Git tag：
 
@@ -64,3 +67,38 @@ revision 和 source 标签。Console 的 `package.json` 版本不参与镜像版
 
 Helm 的 `image.tag` / `console.image.tag` 使用同一交付标签；需要精确回滚时分别填写
 `image.digest` / `console.image.digest`。镜像仓库与拉取配置见 [Helm 部署](helm.md)。
+
+## Helm Chart 打包
+
+选择 `component=helm`，本次运行只执行 Chart 校验、渲染、打包和 Artifact 上传，镜像构建 job 跳过。
+反过来，选择 `all`、`linkd` 或 `linkd-console` 时，Chart job 跳过。
+
+```bash
+gh workflow run linkd-images.yml --ref feat/linkd-dev \
+  -f component=helm -f chart_version=0.1.0
+```
+
+流程固定使用 Helm 3.17.3，先用仓库的外部服务、worker 分组、Console 和 ServiceMonitor 示例执行
+`helm lint --strict` 和 `helm template`，随后打包 Chart 源目录。示例仅用于校验，不写入包内默认 values，
+也不会把渲染出来的 Secret 上传到 Artifacts。验证不连接 Kubernetes 或真实中间件。
+
+Actions Summary 提供下载链接，Artifact 名称为 `linkd-chart-<run-id>.<attempt>`，保留 30 天，包含：
+
+```text
+linkd-0.1.0.tgz
+SHA256SUMS
+```
+
+Chart 包默认沿用仓库的 `version: 0.1.0`、`appVersion: "0.1.0"` 和两个 GHCR `0.1.0` 镜像。
+`chart_version` 只改变包版本，`version` 只用于镜像构建；两者都不会自动修改 Chart 的默认镜像。
+发布下一版镜像后，需要显式更新 `values.yaml` 和 `Chart.yaml`，再单独触发 Helm 打包。
+
+下载后仍需提供环境配置与已有认证 Secret：
+
+```bash
+sha256sum -c SHA256SUMS
+helm upgrade --install linkd ./linkd-0.1.0.tgz \
+  --namespace linkd --create-namespace -f /secure/linkd-values.yaml
+```
+
+Artifact 保留期受仓库或组织策略限制，见 [GitHub Artifacts 文档](https://docs.github.com/en/actions/tutorials/store-and-share-data)。

@@ -61,12 +61,16 @@ Stream 管理器按来源清单有界遍历，只裁剪已确认前缀。
 ## 接口与启动
 
 - `GET /api/v1/event-sources?after=&limit=100`：有界来源列表。
-- `GET /api/v1/event-sources/{id}`：编辑记录与发布指针，凭据脱敏。
+- `GET /api/v1/event-sources/{id}`：编辑记录与发布指针，默认凭据脱敏。
 - `PUT /api/v1/event-sources/{id}`：`{"expected_revision":0,"spec":{...}}`，0 创建，后续带当前 revision。
 - `DELETE /api/v1/event-sources/{id}`：`{"expected_revision":...}`，发布停用 tombstone，不清理业务数据。
 - `GET /api/v1/event-sources/{id}/releases/{version}`：脱敏历史配置。
 - `GET /api/v1/runtime`：worker、任务、调度目标、分片探测及来源队列路由。
 - `linkd event-source import --file <yaml>`：通过 API 增加/更新文件中的 event_sources，不删除遗漏项。
+
+来源列表和单条读取支持管理端显式传入 `include_secrets=true` 获取完整配置；默认读取仍脱敏，
+历史 Release 读取接口保持脱敏。用途及 Console 服务端凭据边界见
+[动态来源的 Kafka 查询](../guides/console.md#动态来源的-kafka-查询)。
 
 常驻进程不自动加载 YAML 来源。YAML 保留静态连接、认证、预算和可显式导入的来源清单；优先用 API/Console 修改来源。
 API 保存成功返回 202，不代表所有 Flow 已切换；查看目标与实际任务状态判断应用结果。

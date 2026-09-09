@@ -2,8 +2,8 @@
 
 Console 是仓库内独立构建的运维控制台。默认本地模式仅监听回环地址；服务模式要求 Basic Auth，
 部署方式见 [Helm 指南](helm.md)。基础设施与实体查询保持只读，来源配置通过正式控制面 API 修改。
-它直接读取 Linkd YAML，使用 Node 连接层查询
-Prometheus、Kafka、Redis 和权威 Repository；Linkd 进程不增加数据查询 API。
+它读取 Linkd YAML 与控制面的动态来源配置，使用 Node 连接层查询
+Prometheus、Kafka、Redis 和权威 Repository；Linkd 进程不增加中间件诊断查询 API。
 
 ES 支持范围和部署注意事项见 [Elasticsearch 版本兼容](elasticsearch-compatibility.md)。
 
@@ -39,6 +39,25 @@ Control Plane 页面不展示 ES 集群、分片或索引容量，而是按当�
 任务在逻辑上独立，但与它们共享进程监督和退出故障域。Archiver backlog 来自固定 Active alias 的只读
 `_count`；页面同时展示连续归档的空闲/重试间隔、批量上限、Worker 数及最近扫描、成功和失败数量，历史执行和
 归档/裁剪速率来自 Prometheus。
+
+## 动态来源的 Kafka 查询
+
+配置 `dispatch.url` 和 `dispatch.api_token` 后，Console 服务端通过控制面来源列表接口读取完整配置，
+再用 Kafka Admin 查询输入 topic 和各个 Kafka hook 的输出 topic。Leader、replicas/ISR 来自 topic metadata，
+High/Low 来自 topic offset 查询，Committed 来自 consumer group 的已提交位点；Lag 使用整数精度计算
+`max(High - Committed, 0)`。Owner 来自 Kafka consumer group 的实际成员分配，不再用调度器分区数拼接健康快照。
+没有已提交位点时保持“未知”，不会补成 0；查询失败显示不可用，不回退为 `AVAILABLE`。
+
+控制面的 `GET /api/v1/event-sources` 和 `GET /api/v1/event-sources/{id}` 默认脱敏；显式添加
+`include_secrets=true` 可返回含认证材料的完整记录，响应设置 `Cache-Control: no-store`。
+两种读取均需要管理 `api_token`，worker token 不能访问。此参数只由 Console 服务端使用，
+浏览器侧来源管理代理不转发该参数，运行状态响应也只包含查询结果和脱敏配置摘要。
+
+Console 必须能够访问 Kafka bootstrap 地址及 broker 的 advertised 地址，并拥有 topic/group 的查询权限。
+使用 SASL/TLS 时沿用完整来源配置；如果 TLS 材料使用文件路径，需把对应文件挂载到 Console 可读取的同一路径，
+或使用内联 PEM。仅更新 Console 而未更新支持完整配置读取的控制面，无法获取受保护 Kafka 的真实凭据。
+同一 Console 的并发刷新共享本轮查询，每轮最多四个 Admin 连接；请求使用配置的查询超时并关闭自动重试。
+本次查询只使用 Admin 读取接口，不消费消息或提交 offset。
 
 ## 指标边界
 

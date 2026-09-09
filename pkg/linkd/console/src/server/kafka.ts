@@ -1,4 +1,4 @@
-import { sourceRuntime } from "./source-runtime.js";
+import { loadRuntimeSources } from "./source-runtime.js";
 import { readFile } from "node:fs/promises";
 
 import {
@@ -16,6 +16,7 @@ import type {
   KafkaPartition,
   KafkaResource,
 } from "../shared/contracts.js";
+import { redactedConfig } from "./config.js";
 import type {
   ConsoleConfig,
   EventSourceConfig,
@@ -26,24 +27,49 @@ import type {
 export class KafkaConnector {
   constructor(private readonly config: ConsoleConfig) {}
 
+  private pending?: Promise<{
+    kafka: KafkaInfrastructure;
+    eventSources: ReturnType<typeof redactedConfig>["eventSources"];
+  }>;
+
   async inspect(): Promise<KafkaInfrastructure> {
-    if (this.config.dispatch?.apiToken) {
-      const dynamic = await sourceRuntime(this.config);
-      return dynamic.kafka;
-    }
-    const resources = await Promise.all([
-      ...(this.config.eventSources ?? []).map((source) =>
-        this.inspectInput(source),
-      ),
-      ...(this.config.eventSources ?? []).flatMap((source) =>
-        (source.kafkaHooks ?? []).map((hook) =>
+    return (await this.inspectRuntime()).kafka;
+  }
+
+  // 同时打开多个页面时共享本轮查询；完成后释放快照，不长期缓存来源凭据。
+  inspectRuntime() {
+    this.pending ??= this.queryRuntime().finally(() => {
+      this.pending = undefined;
+    });
+    return this.pending;
+  }
+
+  private async queryRuntime() {
+    const sources = this.config.dispatch?.apiToken
+      ? await loadRuntimeSources(this.config)
+      : (this.config.eventSources ?? []);
+    const queries = sources.flatMap((source) => [
+      () => this.inspectInput(source),
+      ...(source.kafkaHooks ?? []).map(
+        (hook) => () =>
           this.inspectOutput(hook.connection, source.eventSourceId, hook.name),
-        ),
       ),
     ]);
+    // 每次刷新最多四个 Admin 连接；每项结果独立，不让一个来源失败遮住其余来源。
+    const resources: KafkaResource[] = new Array(queries.length);
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(4, queries.length) }, async () => {
+        while (next < queries.length) {
+          const index = next++;
+          resources[index] = await queries[index]();
+        }
+      }),
+    );
     return {
-      status: kafkaInspectionStatus(resources),
-      resources,
+      kafka: { status: kafkaInspectionStatus(resources), resources },
+      eventSources: redactedConfig({ ...this.config, eventSources: sources })
+        .eventSources,
     };
   }
 
@@ -176,7 +202,10 @@ export class KafkaConnector {
         issues: analysis.issues,
       };
     } catch (error) {
-      return { ...base, message: safeMessage(error) };
+      return {
+        ...base,
+        message: safeMessage(error, Boolean(this.config.dispatch?.apiToken)),
+      };
     } finally {
       await admin?.disconnect().catch(() => undefined);
     }
@@ -233,10 +262,23 @@ export function analyzeKafkaResource(
         partition: partition.partition,
       });
     }
-    if (partition.isr.length < partition.replicas.length) {
+    if (
+      partition.replicas.length === 0 ||
+      partition.isr.length < partition.replicas.length
+    ) {
       issues.push({
         code: "isr_incomplete",
         message: `Partition ${partition.partition} 的 ISR 不完整（${partition.isr.length}/${partition.replicas.length}）。`,
+        partition: partition.partition,
+      });
+    }
+    if (
+      partition.highOffset === undefined ||
+      partition.lowOffset === undefined
+    ) {
+      issues.push({
+        code: "offsets_missing",
+        message: `Partition ${partition.partition} 缺少可用的起始或末尾 offset。`,
         partition: partition.partition,
       });
     }
@@ -298,7 +340,9 @@ async function kafkaClientConfig(
     clientId: `linkd-console-${connection.clientId ?? "admin"}`,
     brokers: connection.brokers,
     connectionTimeout: timeout,
+    authenticationTimeout: timeout,
     requestTimeout: timeout,
+    retry: { retries: 0 },
     logLevel: logLevel.NOTHING,
   };
   if (sslEnabled) {
@@ -361,6 +405,16 @@ function knownOffset(value: string | undefined): string | undefined {
   return value && value !== "-1" ? value : undefined;
 }
 
-function safeMessage(error: unknown): string {
+function safeMessage(error: unknown, privateConfig = false): string {
+  if (privateConfig) {
+    // Kafka 错误可能回显 SASL 服务端文本或证书路径；仅透出预定义错误类别。
+    const type =
+      error && typeof error === "object" && "type" in error
+        ? String(error.type)
+        : "";
+    if (/AUTHORIZATION_FAILED|AUTHENTICATION_FAILED/.test(type))
+      return "Kafka 查询失败：认证或权限不足";
+    return "Kafka 查询失败：请检查 Console 到 broker 的网络、认证、TLS 配置和查询超时";
+  }
   return error instanceof Error ? error.message : "Kafka query failed";
 }

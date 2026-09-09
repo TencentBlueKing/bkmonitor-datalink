@@ -202,6 +202,7 @@ export const kafkaIssueSchema = z.object({
     "group_unknown",
     "owner_missing",
     "committed_missing",
+    "offsets_missing",
   ]),
   message: z.string(),
   partition: z.number().int().nonnegative().optional(),

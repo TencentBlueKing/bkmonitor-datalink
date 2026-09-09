@@ -663,27 +663,11 @@ export async function loadConfig(
     telemetry: {
       listenAddress: decoded.telemetry?.metrics.prometheus.listen_address,
     },
-    eventSources: decoded.event_sources.map((source) => ({
-      eventSourceId: source.event_source_id,
-      enabled: source.enabled,
-      cleanerType: source.cleaner.type,
-      kafkaHooks: source.hooks
-        .filter((h) => h.type === "kafka")
-        .map((h) => ({
-          name: h.name,
-          connection: normalizeKafka(h.config, configDir),
-        })),
-      runtime: withCleanerDefaults({
-        ...cleanerDefaults,
-        ...(source.cleaner.runtime ?? {}),
-      }),
-      kafka: {
-        ...normalizeKafka(source.storage.kafka, configDir),
-        consumerGroup: source.storage.kafka.consumer_group,
-        fetchMaxWaitMilliseconds:
-          source.storage.kafka.fetch_max_wait_milliseconds,
-      },
-    })),
+    eventSources: normalizeEventSources(
+      decoded.event_sources,
+      configDir,
+      cleanerDefaults,
+    ),
   };
   validateServerAccess(
     config.server.host,
@@ -849,6 +833,33 @@ function cliConfigPath(): string | undefined {
   return typeof parsed.values.config === "string"
     ? parsed.values.config
     : undefined;
+}
+
+// 完整来源配置只在服务端归一化；展示时必须经过 redactedConfig。
+export function normalizeEventSources(
+  value: unknown,
+  configDir: string,
+  defaults: Partial<CleanerRuntime> = {},
+): EventSourceConfig[] {
+  const sources = linkdConfigSchema.shape.event_sources.parse(value);
+  return sources.map((source) => ({
+    eventSourceId: source.event_source_id,
+    enabled: source.enabled,
+    cleanerType: source.cleaner.type,
+    kafkaHooks: source.hooks
+      .filter((h) => h.type === "kafka")
+      .map((h) => ({
+        name: h.name,
+        connection: normalizeKafka(h.config, configDir),
+      })),
+    runtime: withCleanerDefaults({ ...defaults, ...source.cleaner.runtime }),
+    kafka: {
+      ...normalizeKafka(source.storage.kafka, configDir),
+      consumerGroup: source.storage.kafka.consumer_group,
+      fetchMaxWaitMilliseconds:
+        source.storage.kafka.fetch_max_wait_milliseconds,
+    },
+  }));
 }
 
 function normalizeKafka(

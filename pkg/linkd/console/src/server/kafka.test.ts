@@ -63,6 +63,22 @@ describe("Kafka infrastructure snapshot", () => {
     expect(result.issues).toContainEqual(expect.objectContaining({ code }));
   });
 
+  it("marks absent broker offsets and replica metadata as incomplete", () => {
+    const result = analyzeKafkaResource("input", group("Stable"), [
+      partition({
+        lowOffset: undefined,
+        highOffset: undefined,
+        replicas: [],
+        isr: [],
+      }),
+    ]);
+    expect(result.status).toBe("partial");
+    expect(result.issues.map((issue) => issue.code)).toEqual([
+      "isr_incomplete",
+      "offsets_missing",
+    ]);
+  });
+
   it("reports missing leaders and incomplete ISR as partition issues", () => {
     const result = analyzeKafkaResource("output", undefined, [
       partition({ leader: null, replicas: [1, 2], isr: [1] }),

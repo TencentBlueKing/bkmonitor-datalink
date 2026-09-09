@@ -503,7 +503,9 @@ function PartitionTable({ resource }: { resource?: KafkaResource }) {
                   </td>
                   <td>{partition.leader ?? "—"}</td>
                   <td>
-                    {partition.isr.length}/{partition.replicas.length}
+                    {partition.replicas.length > 0
+                      ? `${partition.isr.length}/${partition.replicas.length}`
+                      : "未知"}
                   </td>
                   <td className="mono">
                     {partition.committedOffset ?? "未知"}

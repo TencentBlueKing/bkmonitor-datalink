@@ -91,7 +91,25 @@ func decode(r *http.Request, v any) error {
 	return nil
 }
 
+// includeSecrets 仅允许已通过管理 token 鉴权的显式读取；默认接口继续脱敏。
+func includeSecrets(w http.ResponseWriter, r *http.Request) (bool, error) {
+	raw := r.URL.Query().Get("include_secrets")
+	if raw == "" || raw == "false" {
+		return false, nil
+	}
+	if raw != "true" {
+		return false, fmt.Errorf("invalid include_secrets")
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	return true, nil
+}
+
 func (a *API) list(w http.ResponseWriter, r *http.Request) {
+	full, err := includeSecrets(w, r)
+	if err != nil {
+		failure(w, err)
+		return
+	}
 	limit := 100
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		var e error
@@ -106,19 +124,29 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) {
 		failure(w, e)
 		return
 	}
-	for i := range rs {
-		rs[i] = rs[i].Redacted()
+	if !full {
+		for i := range rs {
+			rs[i] = rs[i].Redacted()
+		}
 	}
 	output(w, rs)
 }
 
 func (a *API) get(w http.ResponseWriter, r *http.Request) {
+	full, err := includeSecrets(w, r)
+	if err != nil {
+		failure(w, err)
+		return
+	}
 	v, e := a.Sources.Get(r.Context(), r.PathValue("id"))
 	if e != nil {
 		failure(w, e)
 		return
 	}
-	output(w, v.Redacted())
+	if !full {
+		v = v.Redacted()
+	}
+	output(w, v)
 }
 
 // Mutation 省略 security 时保持原凭据，显式提交则整体替换认证材料。

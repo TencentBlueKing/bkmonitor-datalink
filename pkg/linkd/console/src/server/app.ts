@@ -1,4 +1,3 @@
-import { sourceRuntime } from "./source-runtime.js";
 import { registerSourceRoutes } from "./sources.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -151,19 +150,17 @@ async function registerConsoleRoutes(
     prometheusConnector.processes(),
   );
   app.get("/local-api/runtime/cleaner", async () => {
-    const [processes, metrics, kafka] = await Promise.all([
+    const [processes, metrics, runtime] = await Promise.all([
       prometheusConnector.processes(),
       prometheusConnector.cleanerSnapshot(),
-      kafkaConnector.inspect(),
+      kafkaConnector.inspectRuntime(),
     ]);
     return {
-      status: combinedStatus(processes, metrics, kafka),
-      eventSources: config.dispatch?.apiToken
-        ? (await sourceRuntime(config)).eventSources
-        : redactedConfig(config).eventSources,
+      status: combinedStatus(processes, metrics, runtime.kafka),
+      eventSources: runtime.eventSources,
       processes,
       metrics,
-      kafka,
+      kafka: runtime.kafka,
     };
   });
   app.get("/local-api/runtime/lifecycle", async (request) => {

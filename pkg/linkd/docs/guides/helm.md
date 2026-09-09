@@ -5,6 +5,10 @@ Chart 位于 [deploy/helm/linkd](../../deploy/helm/linkd/README.md)。使用 Hel
 Console 和多个独立 Event Generator 实例按需启用。
 没有 all-in-one 参数。Redis、Elasticsearch/MySQL、Kafka、Prometheus 和 Ingress Controller 由部署方管理。
 
+外部 Elasticsearch 最低要求 **7.10**；Redis 建议使用 **7.2 系列**，支持单节点或 Sentinel，
+不支持原生 Redis Cluster。Redis 命令下限与已验证版本有区别，部署前请查阅
+[中间件版本要求](configuration.md#中间件版本要求)。
+
 ## 构建镜像与准备配置
 
 Chart 默认使用 GHCR 的两个 `0.1.1` 镜像：

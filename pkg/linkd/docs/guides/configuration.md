@@ -326,6 +326,42 @@ Prometheus exporter 后，每个进程分别暴露 `/metrics`；部署在独立 
 网络时则需要使用不同配置文件设置不冲突的 `listen_address`。Redis Stream 管理指标由执行任务的
 `control-plane` 或 `all-in-one` endpoint 暴露，指标名、单位和告警含义见[可观测性设计](../design/observability.md)。
 
+## 中间件版本要求
+
+### Redis
+
+部署建议使用 Redis 7.2 系列。当前没有覆盖所有版本的兼容测试矩阵；命令层面的最低要求为
+Redis 6.2，但这不代表 Redis 6.2 已完整支持。以下结论核对于 2026-09-09：
+
+| Redis 版本 | 当前支持与验证边界 |
+| --- | --- |
+| 低于 6.2 | 不满足当前 Stream 命令要求，不支持部署。 |
+| 6.2 | 具备所需的 Stream 命令，但缺少部分监控字段，未完成完整链路验证，不建议部署。 |
+| 7.0 | 从当前代码及命令要求判断具备所需功能，尚无该版本的专项验证记录。 |
+| 7.2.16 | 已有真实业务链路及多进程任务调度验证记录；7.2 系列作为当前部署建议基线。 |
+| 8.0.0 | 已有 Redis 协议集成测试记录，覆盖范围不等同于完整业务链路验证。 |
+| 其他版本 | 未逐一验证，不因版本号更高而自动承诺兼容。 |
+
+版本下限来自 [XAUTOCLAIM](https://redis.io/docs/latest/commands/xautoclaim/) 和
+[XTRIM 的 MINID/LIMIT 选项](https://redis.io/docs/latest/commands/xtrim/)，两者均从 Redis 6.2 开始提供。
+消费积压 `lag` 与累计入流 `entries-added` 等监控字段从 Redis 7.0 才提供，见
+[XINFO GROUPS](https://redis.io/docs/latest/commands/xinfo-groups/) 和
+[XINFO STREAM](https://redis.io/docs/latest/commands/xinfo-stream/)。在 Redis 6.2 上，当前客户端与指标处理
+可能把缺失字段显示为 `0`，不能据此判断没有积压。
+
+已验证版本及具体场景见 [2026-09-07 核心任务调度验证记录](../reviews/2026-09-07-task-scheduling-validation.md)。
+这些记录对应当时的代码与测试范围，不代表当前所有功能已在每个版本上重新验证。
+
+连接形态支持直连单节点和 Sentinel 主从高可用；当前不支持原生 Redis Cluster 分片集群。
+Sentinel 模式仍连接 master 进行读写，不能替代数据节点的持久化、复制和备份。
+
+### Elasticsearch
+
+**Elasticsearch 最低部署版本为 7.10，低于 7.10 不在支持范围内。** 此下限是部署要求，
+不表示所有 7.10 及以上版本都已通过兼容性验证，也不构成对后续大版本的自动兼容承诺。
+已有 [核心任务调度验证记录](../reviews/2026-09-07-task-scheduling-validation.md) 使用 Elasticsearch 7.17.7；
+该记录不能替代 Elasticsearch 7.10 或其他版本的专项验证。
+
 ## Elasticsearch schema 重建
 
 `storage.elasticsearch.number_of_shards` 可选，范围 1～1024，仅设置新建索引的主分片数；

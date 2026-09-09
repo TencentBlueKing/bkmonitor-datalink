@@ -3,6 +3,9 @@
 默认部署 Control Plane 和按 `clusters` 分组的 Cleaner/Lifecycle，不支持 all-in-one。
 Console、Event Generator、Ingress 和 ServiceMonitor 可选，所有中间件外置。
 
+外部 Elasticsearch 最低要求 **7.10**；Redis 建议使用 **7.2 系列**（单节点或 Sentinel）。
+完整版本边界与实测范围见 [中间件版本要求](../../../docs/guides/configuration.md#中间件版本要求)。
+
 Chart 版本为 `0.1.3`。Linkd 与 Console 的默认镜像分别为 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.3`
 和 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd-console:0.1.3`；可选模拟器使用独立的 `linkd-eventgen:0.1.1`。
 镜像仓库与版本均可通过 values 覆盖。

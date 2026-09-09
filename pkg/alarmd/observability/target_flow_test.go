@@ -45,7 +45,9 @@ func TestTargetFlowQueueNoisePreservesExecutionBudget(t *testing.T) {
 func TestTargetFlowQueueThrottleScopesAndWindow(t *testing.T) {
 	f, _ := newTestFlow(t)
 	brother := strings.Repeat("b", 64)
-	f.groups[brother] = struct{}{}
+	if err := f.Select([]string{flowQG, brother}); err != nil {
+		t.Fatal(err)
+	}
 	for _, qg := range []string{flowQG, brother} {
 		for _, reason := range []string{"normal_queue_full", "delayed_queue_full", "delayed_queue_evicted"} {
 			for i := 0; i < 2; i++ {
@@ -77,7 +79,7 @@ func TestTargetFlowQueueThrottleScopesAndWindow(t *testing.T) {
 }
 
 func BenchmarkTargetFlowRepeatedQueueRejection(b *testing.B) {
-	f, _ := NewTargetFlow(New("runtime", io.Discard), TargetFlowConfig{QueryGroups: []string{flowQG}})
+	f, _ := newSelectedFlow(io.Discard)
 	f.now = func() time.Time { return time.Unix(100, 0) }
 	f.Record("queue_skipped", flowQG, TargetFlowFacts{Decision: "normal_queue_full"})
 	b.ReportAllocs()
@@ -90,7 +92,7 @@ func BenchmarkTargetFlowRepeatedQueueRejection(b *testing.B) {
 func newTestFlow(t *testing.T) (*TargetFlow, *bytes.Buffer) {
 	t.Helper()
 	b := new(bytes.Buffer)
-	f, e := NewTargetFlow(New("runtime", b), TargetFlowConfig{QueryGroups: []string{flowQG}})
+	f, e := newSelectedFlow(b)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -218,17 +220,26 @@ func TestTargetFlowDropMarkerExplainsWindowAndReserve(t *testing.T) {
 }
 
 func TestTargetFlowDisabledValidationAndOversize(t *testing.T) {
-	f, e := NewTargetFlow(nil, TargetFlowConfig{})
-	if e != nil || f != nil {
-		t.Fatal("disabled requires logger")
+	if _, e := NewTargetFlow(nil); e == nil {
+		t.Fatal("a flow was built without anywhere to write")
 	}
+	var f *TargetFlow
 	ctx := context.Background()
 	if f.Context(ctx, flowQG) != ctx {
 		t.Fatal("disabled context allocation")
 	}
+	unselected, e := NewTargetFlow(New("runtime", io.Discard))
+	if e != nil {
+		t.Fatal(e)
+	}
+	// A flow that has not been asked to observe anything records nothing, which
+	// is the state every replica starts in now that windows decide the selection.
+	if unselected.Context(ctx, flowQG) != ctx {
+		t.Fatal("an unselected object allocated a context")
+	}
 	for _, qs := range [][]string{{"bad"}, {flowQG, flowQG}, make([]string, 33)} {
-		if (TargetFlowConfig{QueryGroups: qs}).Validate() == nil {
-			t.Fatal("invalid config accepted")
+		if unselected.Select(qs) == nil {
+			t.Fatal("invalid selection accepted")
 		}
 	}
 	f, b := newTestFlow(t)
@@ -245,14 +256,14 @@ type flowPanicWriter struct{}
 
 func (flowPanicWriter) Write([]byte) (int, error) { panic("writer") }
 func TestTargetFlowWriterPanicIsolation(t *testing.T) {
-	f, e := NewTargetFlow(New("runtime", flowPanicWriter{}), TargetFlowConfig{QueryGroups: []string{flowQG}})
+	f, e := newSelectedFlow(flowPanicWriter{})
 	if e != nil {
 		t.Fatal(e)
 	}
 	f.emit("slot_selection", "success", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
 }
 func BenchmarkTargetFlowBrother(b *testing.B) {
-	f, _ := NewTargetFlow(New("runtime", io.Discard), TargetFlowConfig{QueryGroups: []string{flowQG}})
+	f, _ := newSelectedFlow(io.Discard)
 	o := Observation{Stage: StageQueryCompleted, Trace: TraceFields{QueryGroupKey: "brother"}}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -260,7 +271,7 @@ func BenchmarkTargetFlowBrother(b *testing.B) {
 	}
 }
 func BenchmarkTargetFlowSelected(b *testing.B) {
-	f, _ := NewTargetFlow(New("runtime", io.Discard), TargetFlowConfig{QueryGroups: []string{flowQG}})
+	f, _ := newSelectedFlow(io.Discard)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		if i%1000 == 0 {
@@ -282,7 +293,7 @@ func BenchmarkTargetFlowMixedBrother(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			var f *TargetFlow
 			if enabled {
-				f, _ = NewTargetFlow(New("runtime", io.Discard), TargetFlowConfig{QueryGroups: []string{flowQG}})
+				f, _ = newSelectedFlow(io.Discard)
 			}
 			o := Observation{Stage: StageQueryCompleted, Trace: TraceFields{QueryGroupKey: "brother"}}
 			b.ReportAllocs()
@@ -300,4 +311,18 @@ func BenchmarkTargetFlowMixedBrother(b *testing.B) {
 			}
 		})
 	}
+}
+
+// newSelectedFlow builds a flow already observing the fixture object. Selecting
+// is a separate act from constructing now: a window decides what is observed,
+// and construction happens long before anyone opens one.
+func newSelectedFlow(writer io.Writer) (*TargetFlow, error) {
+	flow, err := NewTargetFlow(New("runtime", writer))
+	if err != nil {
+		return nil, err
+	}
+	if err := flow.Select([]string{flowQG}); err != nil {
+		return nil, err
+	}
+	return flow, nil
 }

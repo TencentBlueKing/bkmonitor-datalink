@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/evaluation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
@@ -147,11 +148,16 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// Phase two limits repeated diagnostics per (reason, Query Group) bucket
 	// and reports suppressed counts; the phase-one per-reason budget hid every
 	// other Query Group's coordinates once one object became noisy.
-	observer, err := newPhaseTwoRuntimeObserver(recorder, logger)
+	baseObserver, err := newPhaseTwoRuntimeObserver(recorder, logger)
 	if err != nil {
 		return nil, err
 	}
-	targetFlow, err := observability.NewTargetFlow(logger, cfg.PhaseTwo.TargetFlow)
+	// The tracker reads the stream the replica already emits, so building the
+	// anomaly list costs no reads of its own. It forwards every observation
+	// untouched: diagnostics must not change what the pipeline reports.
+	fleetTracker := fleet.NewTracker(baseObserver, cfg.PhaseTwo.Worker.ID, external.Now)
+	var observer observability.Observer = fleetTracker
+	targetFlow, err := observability.NewTargetFlow(logger)
 	if err != nil {
 		return nil, err
 	}
@@ -500,9 +506,59 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	// Retention is derived from the publish cadence rather than fixed, because
+	// the cadence is configurable and the relationship between the two is what
+	// makes the states meaningful. A constant retention against a configurable
+	// cadence has a breaking point: past a reconcile interval of about a minute
+	// every snapshot would expire before its replica published the next one, and
+	// the whole view would sit at UNKNOWN forever with no validation error to say
+	// why. Deriving it means the same three states hold at any cadence.
+	fleetRetention := 4 * cfg.PhaseTwo.Control.ReconcileInterval.Duration()
+	if fleetRetention < fleet.DefaultTTL {
+		fleetRetention = fleet.DefaultTTL
+	}
+	// Same client and prefix convention as the catalog and ownership stores:
+	// these snapshots are phase-two runtime state, not a separate channel.
+	fleetStore, err := fleet.NewRedisStore(runtimeClient, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "fleet"), fleetRetention, 0)
+	if err != nil {
+		return nil, err
+	}
+	// Freshness has to be shorter than the snapshot TTL, or a replica that
+	// stops publishing goes straight from fresh to absent and the stale branch
+	// never fires. The two say different things: stale means alive but stuck,
+	// absent means gone, and an operator acts differently on each.
+	fleetFreshness := 6 * cfg.PhaseTwo.Control.ReconcileInterval.Duration()
+	fleetService, err := fleet.NewService(
+		controlPlaneExpectation{repository: repository},
+		registryReplicas{store: ownershipStore},
+		fleetStore,
+		fleetFreshness,
+		external.Now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	// Windows live under the same phase-two prefix as the rest of the runtime
+	// objects, and every replica reads them on the reconcile tick it already
+	// runs, so opening one needs neither a restart nor a release.
+	windowStore, err := fleet.NewWindowStore(runtimeClient, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "fleet"))
+	if err != nil {
+		return nil, err
+	}
+	fleetAPI, err := fleet.NewHandler(fleetService, windowStore, external.Now)
+	if err != nil {
+		return nil, err
+	}
+	var publisher fleetPublisher
 	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
 		Config: cfg, Health: health, Control: control, Ownership: productionOwnership,
 		Recorder: recorder, Observer: observer, TargetFlow: targetFlow, Now: external.Now,
+		FleetAPI:     fleetAPI,
+		PublishFleet: func(ctx context.Context) { publisher.publishOnce(ctx) },
+		ApplyObservationWindows: observationWindowApplier{
+			store: windowStore, flow: targetFlow, now: external.Now,
+			observe: observationWindowObserver(observer),
+		}.applyOnce,
 		ProbeControlRedis: func(probeCtx context.Context) error {
 			return controlClient.Ping(probeCtx).Err()
 		},
@@ -521,7 +577,81 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	// Bound after the bundle exists: the snapshot reports what this replica
+	// currently owns, which only the bundle knows.
+	publisher = fleetPublisher{
+		tracker: fleetTracker, store: fleetStore, replica: cfg.PhaseTwo.Worker.ID,
+		owned: bundle.ownedQueryGroups, now: external.Now,
+		observe: publishOutcomeObserver(observer),
+	}
 	return bundle, nil
+}
+
+// publishOutcomeObserver reports whether this replica is still contributing to
+// the aggregated view.
+//
+// A replica whose publish keeps failing disappears from that view, and the
+// aggregate can then say only that a replica is missing. Missing and failing to
+// publish call for different actions, and nothing else in the process can tell
+// them apart, because the evidence that would distinguish them is precisely the
+// write that failed.
+//
+// Only transitions are reported, matching the registration renewal: a Redis
+// outage lasting an hour is one fact, not one per reconcile tick. The observer
+// runs on the single publishing goroutine, so the transition flag needs no lock.
+// observationWindowObserver reports what this replica actually observes.
+//
+// Only changes are reported, because the applier runs on every reconcile tick
+// and a steady selection is one fact, not one per tick. A shortfall repeats,
+// though: while windows are being dropped for want of budget, every tick says
+// so, because the person waiting on that window has no other way to find out.
+func observationWindowObserver(observer observability.Observer) func(int, int, int, error) {
+	applied, requested, failing := -1, -1, false
+	return func(nowApplied, nowRequested, dropped int, err error) {
+		switch {
+		case err != nil:
+			failing = true
+			observeRuntime(context.Background(), observer, observability.Observation{
+				Component: observability.ComponentRuntime, Stage: observability.StageObservationWindow,
+				Result: observability.ResultFailed, Direction: observability.DirectionInternal, Err: err,
+			})
+		case dropped > 0:
+			failing = false
+			applied, requested = nowApplied, nowRequested
+			observeRuntime(context.Background(), observer, observability.Observation{
+				Component: observability.ComponentRuntime, Stage: observability.StageObservationWindow,
+				Result: observability.ResultDegraded, Direction: observability.DirectionInternal,
+				Err: fmt.Errorf("observation windows exceed the diagnostic budget: %d of %d requested objects are not observed", dropped, nowRequested),
+			})
+		case failing || nowApplied != applied || nowRequested != requested:
+			failing = false
+			applied, requested = nowApplied, nowRequested
+			observeRuntime(context.Background(), observer, observability.Observation{
+				Component: observability.ComponentRuntime, Stage: observability.StageObservationWindow,
+				Result: observability.Result(observability.ResultSuccess), Direction: observability.DirectionInternal,
+			})
+		}
+	}
+}
+
+func publishOutcomeObserver(observer observability.Observer) func(error) {
+	failing := false
+	return func(err error) {
+		switch {
+		case err != nil:
+			failing = true
+			observeRuntime(context.Background(), observer, observability.Observation{
+				Component: observability.ComponentRuntime, Stage: observability.StageFleetSnapshotPublish,
+				Result: observability.ResultFailed, Direction: observability.DirectionInternal, Err: err,
+			})
+		case failing:
+			failing = false
+			observeRuntime(context.Background(), observer, observability.Observation{
+				Component: observability.ComponentRuntime, Stage: observability.StageFleetSnapshotPublish,
+				Result: observability.ResultResumed, Direction: observability.DirectionInternal,
+			})
+		}
+	}
 }
 
 func phaseTwoPostRecoveryTerminalDelay(cfg config.Config) time.Duration {

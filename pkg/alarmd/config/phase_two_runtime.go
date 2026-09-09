@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
@@ -102,7 +101,6 @@ type PhaseTwoCoordinatorConfig struct {
 }
 
 type PhaseTwoRuntimeConfig struct {
-	TargetFlow observability.TargetFlowConfig `yaml:"target_flow,omitempty"`
 	// Empty disables final Shadow evidence; the file is the frozen Epoch manifest.
 	ShadowManifestPath string                    `yaml:"shadow_manifest_path,omitempty"`
 	Worker             PhaseTwoWorkerConfig      `yaml:"worker"`
@@ -157,9 +155,9 @@ func (c *Config) resolvePhaseTwoWorkerIDFromEnvironment() {
 }
 
 func (c PhaseTwoRuntimeConfig) validate() error {
-	if err := c.TargetFlow.Validate(); err != nil {
-		return err
-	}
+	// Neither half of the old check survives: the deployment profile is derived
+	// from the run mode rather than configured, and the target flow selection is
+	// no longer configuration at all.
 	if !canonicalText(c.Worker.ID) {
 		return errors.New("phase_two worker identity must be canonical text")
 	}

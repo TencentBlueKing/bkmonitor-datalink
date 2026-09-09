@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -66,7 +67,7 @@ func TestRunApplicationParentCancellationDrainsBundleAndHTTP(t *testing.T) {
 		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
 			return bundle, nil
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
 				close(httpStarted)
 				<-ctx.Done()
@@ -100,7 +101,7 @@ func TestRunApplicationUnexpectedHTTPStopIsFatal(t *testing.T) {
 		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
 			return bundle, nil
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(context.Context, string, time.Duration) error { return nil }}, nil
 		},
 	}
@@ -120,7 +121,7 @@ func TestRunApplicationHTTPInitializationFailureDoesNotOpenBundle(t *testing.T) 
 			opened = true
 			return nil, errors.New("must not open")
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return nil, want
 		},
 	}
@@ -166,7 +167,7 @@ func TestRunApplicationFatalStartsOneShutdownDeadline(t *testing.T) {
 		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
 			return bundle, nil
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
 				close(httpStarted)
 				<-ctx.Done()
@@ -220,7 +221,7 @@ func TestRunApplicationLogsFatalWithoutErrorBody(t *testing.T) {
 		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
 			return bundle, nil
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
 				close(httpStarted)
 				<-ctx.Done()
@@ -287,7 +288,7 @@ func TestRunApplicationShutdownDeadlineStillAttemptsOutputsAndRedis(t *testing.T
 		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
 			return bundle, nil
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
 				<-ctx.Done()
 				return nil
@@ -379,8 +380,11 @@ func (service *fakeServiceRuntime) LifecycleSnapshot() lifecycle.Snapshot {
 
 type fakeHTTPRuntime struct {
 	run func(context.Context, string, time.Duration) error
+	api http.Handler
 }
 
 func (runtime *fakeHTTPRuntime) Run(ctx context.Context, address string, timeout time.Duration) error {
 	return runtime.run(ctx, address, timeout)
 }
+
+func (runtime *fakeHTTPRuntime) SetAPI(handler http.Handler) { runtime.api = handler }

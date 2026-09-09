@@ -13,6 +13,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"runtime"
 	"sort"
 	"sync"
@@ -74,7 +76,7 @@ type phaseTwoApplicationDependencies struct {
 		*observability.Logger,
 		*phaseTwoApplicationHealth,
 	) (*phaseTwoWorkerBundle, error)
-	newHTTP func(*metric.Recorder, observability.HealthSource) (httpRuntime, error)
+	newHTTP func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error)
 }
 
 type runtimeModeDependencies struct {
@@ -87,8 +89,8 @@ func defaultPhaseTwoApplicationDependencies() phaseTwoApplicationDependencies {
 	return phaseTwoApplicationDependencies{
 		configureCPU: configurePhaseTwoCPU,
 		run:          runPhaseTwoApplication, openBundle: openProductionPhaseTwoBundle,
-		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource) (httpRuntime, error) {
-			return defaultApplicationDependencies(nil).newHTTP(recorder, source)
+		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource, diagnosticsAddress string) (httpRuntime, error) {
+			return defaultApplicationDependencies(nil).newHTTP(recorder, source, diagnosticsAddress)
 		},
 	}
 }
@@ -162,8 +164,12 @@ func runPhaseTwoApplicationWithDependencies(
 	if logger == nil {
 		logger = observability.Discard(observability.ComponentRuntime)
 	}
-	logger.Info(observability.StageStartup, observability.ResultStarted, 0, 0)
-	server, err := dependencies.newHTTP(recorder, application)
+	// Report the diagnostics surface at startup. An unset address serves no
+	// pprof, and losing it without a single line would be the same silent
+	// capability loss the split exists to prevent.
+	logger.Info(observability.StageStartup, observability.ResultStarted, 0, 0,
+		slog.String("diagnostics_listen", cfg.HTTP.DiagnosticsFact()))
+	server, err := dependencies.newHTTP(recorder, application, cfg.HTTP.DiagnosticsListen)
 	if err != nil {
 		return err
 	}
@@ -177,6 +183,11 @@ func runPhaseTwoApplicationWithDependencies(
 		runtimeContext = context.WithValue(runtimeContext, phaseTwoShadowProfileKey{}, profile)
 	}
 	bundle, err := dependencies.openBundle(runtimeContext, cfg, recorder, logger, application.health)
+	if err == nil && bundle != nil && bundle.dependencies.FleetAPI != nil {
+		// The listener starts before this runtime does, so the API answers
+		// "not ready" until here rather than pretending to have no data.
+		server.SetAPI(bundle.dependencies.FleetAPI)
+	}
 	if err != nil {
 		cancelRuntime()
 		cancelHTTP()
@@ -294,6 +305,15 @@ type phaseTwoWorkerBundleDependencies struct {
 	Recorder   *metric.Recorder
 	Observer   observability.Observer
 	TargetFlow *observability.TargetFlow
+	// FleetAPI serves the object facts once this runtime is open, and
+	// PublishFleet writes this replica's contribution to them.
+	FleetAPI     http.Handler
+	PublishFleet func(context.Context)
+	// ApplyObservationWindows makes the windows opened through that API take
+	// effect on this replica. It runs on the reconcile tick rather than on a
+	// timer of its own, so opening a window is bounded by a cadence the
+	// deployment already reasons about.
+	ApplyObservationWindows func(context.Context)
 	// ProbeControlRedis issues one zero-payload round trip. Every other command
 	// carries server work or a payload, so their latency cannot be separated
 	// into transport cost and work; this one has neither and therefore measures
@@ -527,6 +547,12 @@ func (bundle *phaseTwoWorkerBundle) Run(ctx context.Context) error {
 			runErr = bundle.refreshAndReconcile(ctx, true)
 		case <-reconcileTicker.C:
 			bundle.probeControlRedis(ctx)
+			// Applied before the reconcile rather than after it: a failure here
+			// must not decide whether the pipeline reconciles, and the applier
+			// swallows its own errors for the same reason.
+			if bundle.dependencies.ApplyObservationWindows != nil {
+				bundle.dependencies.ApplyObservationWindows(ctx)
+			}
 			runErr = bundle.refreshAndReconcile(ctx, false)
 		case schedulerErr := <-schedulerDone:
 			schedulerRunning = false
@@ -1067,6 +1093,32 @@ func phaseTwoWorkerRegistration(
 func (bundle *phaseTwoWorkerBundle) startMaintenance() {
 	bundle.maintenanceWG.Add(1)
 	go bundle.maintainRegistration()
+	if bundle.dependencies.PublishFleet != nil {
+		bundle.maintenanceWG.Add(1)
+		go bundle.publishFleetSnapshots()
+	}
+}
+
+// publishFleetSnapshots republishes this replica's object facts on the reconcile
+// cadence. A publish failure is left to the next tick: the snapshot is
+// diagnostics, and diagnostics must not be able to stop the pipeline whose
+// facts they describe.
+func (bundle *phaseTwoWorkerBundle) publishFleetSnapshots() {
+	defer bundle.maintenanceWG.Done()
+	interval := bundle.dependencies.Config.PhaseTwo.Control.ReconcileInterval.Duration()
+	if interval <= 0 {
+		interval = time.Second * 5
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-bundle.maintenanceCtx.Done():
+			return
+		case <-ticker.C:
+			bundle.dependencies.PublishFleet(bundle.maintenanceCtx)
+		}
+	}
 }
 
 func (bundle *phaseTwoWorkerBundle) tryAcquireControlLeader(ctx context.Context) (bool, error) {
@@ -1430,6 +1482,19 @@ func (bundle *phaseTwoWorkerBundle) detachQueryGroup(
 	delete(bundle.runners, queryGroup)
 	bundle.setOwnedQueryGroupsLocked()
 	return true
+}
+
+// ownedQueryGroups reports what this replica currently holds. The published
+// snapshot needs it to make coverage arithmetic possible: an anomaly list alone
+// cannot distinguish "nothing wrong here" from "nothing seen here".
+func (bundle *phaseTwoWorkerBundle) ownedQueryGroups() []execution.QueryGroupIdentity {
+	bundle.mu.RLock()
+	defer bundle.mu.RUnlock()
+	owned := make([]execution.QueryGroupIdentity, 0, len(bundle.runners))
+	for queryGroup := range bundle.runners {
+		owned = append(owned, queryGroup)
+	}
+	return owned
 }
 
 func (bundle *phaseTwoWorkerBundle) setOwnedQueryGroupsLocked() {

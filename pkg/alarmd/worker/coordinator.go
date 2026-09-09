@@ -1110,7 +1110,7 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 	if len(events) == 0 {
 		return nil
 	}
-	ctx = observability.ContextWithTraceFields(ctx, observability.TraceFields{StrategyID: events[0].PlanRef.StrategyID})
+	ctx = observability.ContextWithTraceFields(ctx, observability.TraceFields{StrategyID: events[0].PlanRef.StrategyID, BusinessID: events[0].BusinessID})
 	started := time.Now()
 	err := coordinator.ports.Events.WriteBatch(ctx, events)
 	execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {

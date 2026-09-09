@@ -46,7 +46,23 @@ func (d Duration) Duration() time.Duration {
 }
 
 type HTTPConfig struct {
+	// Listen carries health, metrics and the observability API. It is the only
+	// surface a host platform may route to.
 	Listen string `yaml:"listen"`
+	// DiagnosticsListen carries pprof on its own listener, defaulting to
+	// loopback so routing the query surface cannot expose it. An empty value
+	// serves no diagnostics at all; pprof is never folded back into Listen.
+	DiagnosticsListen string `yaml:"diagnostics_listen"`
+}
+
+// DiagnosticsFact renders the diagnostics surface for startup logging. Every
+// runtime reports it through this one helper so the three of them cannot drift
+// into disagreeing about what an unset address means.
+func (c HTTPConfig) DiagnosticsFact() string {
+	if c.DiagnosticsListen == "" {
+		return "disabled"
+	}
+	return c.DiagnosticsListen
 }
 
 type KafkaOutputConfig struct {
@@ -150,6 +166,10 @@ func Default() Config {
 		Input: DefaultPhaseTwoInput(),
 		HTTP: HTTPConfig{
 			Listen: "127.0.0.1:8080",
+			// 6060 rather than 8081: the comparator's query surface already
+			// defaults to 8081, and two binaries started locally with defaults
+			// would now fail to start instead of merely sharing a mux.
+			DiagnosticsListen: "127.0.0.1:6060",
 		},
 		Kafka: KafkaConfig{
 			TriggerEvent:        KafkaOutputConfig{Topic: "alarmd_event", MaxMessageBytes: defaultOutputMaxMessageBytes},
@@ -392,21 +412,74 @@ func (c Config) Validate() error {
 	}
 }
 
+func validateListenAddress(field, address string) error {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("%s %q: %w", field, address, err)
+	}
+	if host == "" {
+		return fmt.Errorf("%s %q has empty host", field, address)
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber <= 0 || portNumber > 65535 {
+		return fmt.Errorf("%s %q has invalid port", field, address)
+	}
+	return nil
+}
+
+// listenAddressesCollide reports whether two listen addresses would contend for
+// the same socket. Comparing the strings is not enough: the deployed query
+// surface binds a wildcard, so a diagnostics address on the same port with any
+// host still fails to bind. Catching it here turns a CrashLoop into a config
+// error. Host names beyond localhost are left to the bind, which fails loudly.
+func listenAddressesCollide(left, right string) bool {
+	leftHost, leftPort, err := net.SplitHostPort(left)
+	if err != nil {
+		return false
+	}
+	rightHost, rightPort, err := net.SplitHostPort(right)
+	if err != nil {
+		return false
+	}
+	if leftPort != rightPort {
+		return false
+	}
+	return isWildcardHost(leftHost) || isWildcardHost(rightHost) ||
+		normalizeListenHost(leftHost) == normalizeListenHost(rightHost)
+}
+
+func isWildcardHost(host string) bool {
+	return host == "" || host == "0.0.0.0" || host == "::"
+}
+
+func normalizeListenHost(host string) string {
+	if host == "localhost" {
+		return "127.0.0.1"
+	}
+	return host
+}
+
 func (c Config) validateCommon() error {
 	if c.Mode != ModeShadow {
 		return fmt.Errorf("mode %q is not allowed before production ownership is implemented", c.Mode)
 	}
 
-	host, port, err := net.SplitHostPort(c.HTTP.Listen)
-	if err != nil {
-		return fmt.Errorf("http listen %q: %w", c.HTTP.Listen, err)
+	if err := validateListenAddress("http listen", c.HTTP.Listen); err != nil {
+		return err
 	}
-	if host == "" {
-		return fmt.Errorf("http listen %q has empty host", c.HTTP.Listen)
-	}
-	portNumber, err := strconv.Atoi(port)
-	if err != nil || portNumber <= 0 || portNumber > 65535 {
-		return fmt.Errorf("http listen %q has invalid port", c.HTTP.Listen)
+	// An empty diagnostics address serves no pprof, which is a supported
+	// choice; a set one must be a real address and must not collide with the
+	// query surface, or the split it exists to create would not happen.
+	if c.HTTP.DiagnosticsListen != "" {
+		if err := validateListenAddress("http diagnostics_listen", c.HTTP.DiagnosticsListen); err != nil {
+			return err
+		}
+		if listenAddressesCollide(c.HTTP.Listen, c.HTTP.DiagnosticsListen) {
+			return fmt.Errorf(
+				"http diagnostics_listen %q must differ from http listen %q",
+				c.HTTP.DiagnosticsListen, c.HTTP.Listen,
+			)
+		}
 	}
 
 	if c.ShutdownTimeout.Duration() <= 0 {

@@ -97,3 +97,14 @@ func TestOneModelClientReturnsMissing(t *testing.T) {
 		t.Fatalf("FindInstance() found=%v error=%v", found, err)
 	}
 }
+
+func TestOneModelRejectsPartialSearch(t *testing.T) {
+	for _, body := range []string{`{"timed_out":true,"hits":{"hits":[]}}`, `{"_shards":{"failed":1},"hits":{"hits":[]}}`} {
+		response := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}
+		_, found, err := parseFindInstanceResponse(response, "tenant-a", "host")
+		_ = response.Body.Close()
+		if found || err == nil {
+			t.Fatalf("found=%t error=%v", found, err)
+		}
+	}
+}

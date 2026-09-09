@@ -480,3 +480,154 @@ function jsonResponse(value: unknown, status = 200): Response {
     headers: { "content-type": "application/json" },
   });
 }
+
+describe("Elasticsearch 7.10 compatible explorer", () => {
+  it.each(["events", "alerts", "alert-logs"] as const)(
+    "paginates %s with nanosecond timestamps and cross-index identities",
+    async (entity) => {
+      const idField =
+        entity === "events"
+          ? "event_id"
+          : entity === "alerts"
+            ? "alert_id"
+            : "log_id";
+      const timeField =
+        entity === "events"
+          ? "received_at"
+          : entity === "alerts"
+            ? "update_at"
+            : "created_time";
+      const requests: Record<string, unknown>[] = [];
+      const closed: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+            const url = new URL(String(input));
+            if (url.pathname.startsWith("/_resolve/index/"))
+              return jsonResponse({
+                indices: [{ name: "bucket-a" }, { name: "bucket-b" }],
+              });
+            if (url.pathname.endsWith("/_pit") && init?.method === "POST")
+              return jsonResponse({ id: "pit-first" });
+            if (url.pathname === "/_pit") {
+              closed.push(JSON.parse(String(init?.body)).id);
+              return jsonResponse({ succeeded: true });
+            }
+            const body = JSON.parse(String(init?.body));
+            requests.push(body);
+            expect(body.sort).toEqual([
+              { [timeField]: "desc" },
+              { bk_tenant_id: "asc" },
+              { [idField]: "asc" },
+              { _index: "asc" },
+            ]);
+            const makeHit = (id: string, index: string) => ({
+              _index: index,
+              _source: {
+                bk_tenant_id: "system",
+                [idField]: id,
+                [timeField]: "2026-09-09T14:55:47.121000001Z",
+              },
+              sort: ["RAW_NANOS", "system", id, index],
+            });
+            const hits =
+              requests.length === 1
+                ? [
+                    makeHit("a", "bucket-a"),
+                    makeHit("b", "bucket-b"),
+                    makeHit("c", "bucket-b"),
+                  ]
+                : [makeHit("b", "bucket-b")];
+            return new Response(
+              JSON.stringify({
+                pit_id: "pit-updated",
+                _shards: { failed: 0 },
+                timed_out: false,
+                hits: { hits },
+              }).replaceAll('"RAW_NANOS"', "1788965747121000001"),
+              { headers: { "content-type": "application/json" } },
+            );
+          },
+        ),
+      );
+      const connector = new ElasticsearchConnector(config);
+      const first = await connector.search(entity, { limit: 1 });
+      expect(first.items.map((item) => item.id)).toEqual(["a"]);
+      expect(first.nextCursor).toBeDefined();
+      const second = await connector.search(entity, {
+        limit: 1,
+        cursor: first.nextCursor,
+      });
+      expect(second.items.map((item) => item.id)).toEqual(["b"]);
+      expect(second.nextCursor).toBeUndefined();
+      expect(requests[1].search_after).toEqual([
+        "2026-09-09T14:55:47.121000001Z",
+        "system",
+        "a",
+        "bucket-a",
+      ]);
+      expect((requests[1].pit as { id: string }).id).toBe("pit-updated");
+      expect(closed).toEqual(["pit-updated"]);
+    },
+  );
+
+  it.each([
+    { timed_out: false, _shards: { failed: 1 } },
+    { timed_out: true, _shards: { failed: 0 } },
+  ])(
+    "rejects HTTP 200 incomplete results %j and closes the PIT",
+    async (failure) => {
+      const closed: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+            const url = new URL(String(input));
+            if (url.pathname.startsWith("/_resolve/index/"))
+              return jsonResponse({ indices: [{ name: "events" }] });
+            if (url.pathname.endsWith("/_pit") && init?.method === "POST")
+              return jsonResponse({ id: "pit-failed" });
+            if (url.pathname === "/_pit") {
+              closed.push(JSON.parse(String(init?.body)).id);
+              return jsonResponse({ succeeded: true });
+            }
+            return jsonResponse({
+              ...failure,
+              hits: { total: { value: 0 }, hits: [] },
+            });
+          },
+        ),
+      );
+      const connector = new ElasticsearchConnector(config);
+      await expect(connector.search("events", { limit: 50 })).rejects.toThrow(
+        "incomplete response",
+      );
+      await expect(connector.stats("events", { limit: 50 })).rejects.toThrow(
+        "incomplete response",
+      );
+      await expect(connector.detail("events", "system", "a")).rejects.toThrow(
+        "incomplete response",
+      );
+      expect(closed).toEqual(["pit-failed"]);
+    },
+  );
+
+  it("uses index tie-breaking for details without PIT", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        if (String(input).includes("/_resolve/"))
+          return jsonResponse({ indices: [{ name: "events" }] });
+        expect(JSON.parse(String(init?.body)).sort).toEqual([
+          { received_at: "desc" },
+          { _index: "asc" },
+        ]);
+        return jsonResponse({ hits: { hits: [] } });
+      }),
+    );
+    await expect(
+      new ElasticsearchConnector(config).detail("events", "system", "missing"),
+    ).resolves.toBeUndefined();
+  });
+});

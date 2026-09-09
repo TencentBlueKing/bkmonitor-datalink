@@ -162,7 +162,8 @@ export class ElasticsearchConnector {
   async search(entity: EntityKind, params: SearchParams): Promise<EntityPage> {
     const targets = this.targets[entity];
     await this.validateTargets(targets);
-    const queryIdentity = { ...params, cursor: undefined };
+    // 排序协议改变后拒绝旧游标，避免把 _shard_doc 数值当成索引名继续翻页。
+    const queryIdentity = { ...params, cursor: undefined, sortVersion: 2 };
     let pitId: string;
     let searchAfter: Array<string | number> | undefined;
     if (params.cursor) {
@@ -175,59 +176,66 @@ export class ElasticsearchConnector {
       pitId = await this.openPIT(targets);
     }
 
-    const fields = entityFields(entity);
-    const filters = buildFilters(entity, params, fields);
-    const body: Record<string, unknown> = {
-      size: entity === "alerts" ? (params.limit + 1) * 2 : params.limit + 1,
-      track_total_hits: false,
-      query: { bool: { filter: filters } },
-      pit: { id: pitId, keep_alive: "1m" },
-      sort: [
-        { [fields.time]: "desc" },
-        { bk_tenant_id: "asc" },
-        { [fields.id]: "asc" },
-        { _shard_doc: "asc" },
-      ],
-      timeout: `${this.timeoutMilliseconds}ms`,
-    };
-    if (searchAfter) body.search_after = searchAfter;
-    const response = await this.request<SearchResponse>("/_search", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    const rawHits = response.hits.hits;
-    const groups =
-      entity === "alerts"
-        ? groupAlertHits(rawHits)
-        : rawHits.map((hit) => ({ hit, cursorSort: hit.sort }));
-    const visibleGroups = groups.slice(0, params.limit);
-    const visible = visibleGroups.map((group) => group.hit);
-    const items = visible.map((hit) => hitToItem(entity, hit));
-    let nextCursor: string | undefined;
-    if (groups.length > params.limit && visible.length > 0) {
-      const last = visibleGroups.at(-1)!;
-      nextCursor = encodeCursor({
-        version: 1,
-        kind: "elasticsearch",
-        entity,
-        queryHash: queryHash(queryIdentity),
-        values: last.cursorSort,
-        pitId: response.pit_id ?? pitId,
-        from: params.from,
-        to: params.to,
+    try {
+      const fields = entityFields(entity);
+      const filters = buildFilters(entity, params, fields);
+      const body: Record<string, unknown> = {
+        size: entity === "alerts" ? (params.limit + 1) * 2 : params.limit + 1,
+        track_total_hits: false,
+        query: { bool: { filter: filters } },
+        pit: { id: pitId, keep_alive: "1m" },
+        // 每个物理索引内 (租户, 实体 ID) 唯一；_index 区分时间桶及归档过渡副本，
+        // 在 ES 7.10 的 PIT 中也能形成全序，不依赖 7.12 才引入的 _shard_doc。
+        sort: [
+          { [fields.time]: "desc" },
+          { bk_tenant_id: "asc" },
+          { [fields.id]: "asc" },
+          { _index: "asc" },
+        ],
+        timeout: `${this.timeoutMilliseconds}ms`,
+      };
+      if (searchAfter) body.search_after = searchAfter;
+      const response = await this.request<SearchResponse>("/_search", {
+        method: "POST",
+        body: JSON.stringify(body),
       });
-    } else {
-      await this.closePIT(response.pit_id ?? pitId);
+      const rawHits = response.hits.hits;
+      const groups =
+        entity === "alerts"
+          ? groupAlertHits(rawHits)
+          : rawHits.map((hit) => ({ hit, cursorSort: hit.sort }));
+      const visibleGroups = groups.slice(0, params.limit);
+      const visible = visibleGroups.map((group) => group.hit);
+      const items = visible.map((hit) => hitToItem(entity, hit));
+      let nextCursor: string | undefined;
+      if (groups.length > params.limit && visible.length > 0) {
+        const last = visibleGroups.at(-1)!;
+        nextCursor = encodeCursor({
+          version: 1,
+          kind: "elasticsearch",
+          entity,
+          queryHash: queryHash(queryIdentity),
+          values: last.cursorSort,
+          pitId: response.pit_id ?? pitId,
+          from: params.from,
+          to: params.to,
+        });
+      } else {
+        await this.closePIT(response.pit_id ?? pitId);
+      }
+      return {
+        items,
+        nextCursor,
+        source: "elasticsearch",
+        warnings:
+          entity === "alerts" && groups.length < rawHits.length
+            ? ["检测到归档过渡副本，已优先展示 AlertHistory。"]
+            : [],
+      };
+    } catch (error) {
+      await this.closePIT(pitId);
+      throw error;
     }
-    return {
-      items,
-      nextCursor,
-      source: "elasticsearch",
-      warnings:
-        entity === "alerts" && groups.length < rawHits.length
-          ? ["检测到归档过渡副本，已优先展示 AlertHistory。"]
-          : [],
-    };
   }
 
   async detail(
@@ -249,7 +257,7 @@ export class ElasticsearchConnector {
           ],
         },
       },
-      sort: [{ [fields.time]: "desc" }, { _shard_doc: "asc" }],
+      sort: [{ [fields.time]: "desc" }, { _index: "asc" }],
       timeout: `${this.timeoutMilliseconds}ms`,
     };
     const response = await this.request<SearchResponse>(
@@ -639,7 +647,16 @@ export class ElasticsearchConnector {
       throw new Error(
         `Elasticsearch request failed with status ${response.status}`,
       );
-    return (await response.json()) as T;
+    const data = parseElasticsearchResponse(await response.text());
+    // ES 可以以 HTTP 200 返回部分分片失败；不得将不完整结果展示为无数据，
+    // 也不得基于它生成游标，否则失败分片中的记录会被永久跳过。
+    if (data.timed_out === true || (data._shards?.failed ?? 0) > 0) {
+      if (pathname.includes("/_pit?") && data.id) await this.closePIT(data.id);
+      throw new Error(
+        `Elasticsearch incomplete response: timed_out=${data.timed_out === true}, failed_shards=${data._shards?.failed ?? 0}`,
+      );
+    }
+    return data as T;
   }
 
   private async optionalRequest<T>(pathname: string): Promise<T | undefined> {
@@ -857,4 +874,50 @@ function authHeaders(auth: {
       authorization: `Basic ${Buffer.from(`${auth.username}:${auth.password ?? ""}`).toString("base64")}`,
     };
   return {};
+}
+
+// ES 7.10 的 date_nanos 排序返回超出 JS 安全整数范围的纳秒数，且不支持 sort.format。
+// 使用 Node 24 的 JSON source 保留首个时间排序值，转换为 ES 可解析的纳秒 ISO 字符串；
+// 仅修改 hits 的游标字段，业务 payload 中的数值保持原有 JSON 行为。
+function parseElasticsearchResponse(text: string): {
+  id?: string;
+  timed_out?: boolean;
+  _shards?: { failed?: number };
+  hits?: { hits?: SearchHit[] };
+} {
+  const times = new WeakMap<object, string>();
+  const data = JSON.parse(
+    text,
+    function (
+      this: unknown,
+      key: string,
+      value: unknown,
+      context?: { source?: string },
+    ) {
+      if (
+        Array.isArray(this) &&
+        key === "0" &&
+        typeof value === "number" &&
+        !Number.isSafeInteger(value) &&
+        context?.source &&
+        /^\d+$/.test(context.source)
+      ) {
+        times.set(this, context.source);
+      }
+      return value;
+    },
+  );
+  for (const hit of data.hits?.hits ?? []) {
+    const raw = times.get(hit.sort);
+    if (!raw) continue;
+    const nanos = BigInt(raw);
+    const seconds = nanos / 1_000_000_000n;
+    hit.sort[0] = new Date(Number(seconds * 1000n))
+      .toISOString()
+      .replace(
+        /\.\d{3}Z$/,
+        `.${String(nanos % 1_000_000_000n).padStart(9, "0")}Z`,
+      );
+  }
+  return data;
 }

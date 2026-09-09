@@ -16,6 +16,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [2026-09-09-elasticsearch-version-compatibility.md](2026-09-09-elasticsearch-version-compatibility.md) | ES 7.10+/8/9 API 差异、列表空结果根因及真实协议矩阵 |
 | [benchmarks/README.md](benchmarks/README.md) | 带明确源码、平台、配置和负载模型的性能压测记录 |
 | [2026-09-06-lifecycle-throughput-optimization-summary.md](2026-09-06-lifecycle-throughput-optimization-summary.md) | Alert 归档、Stream、Cleaner、Lifecycle 合批与最终吞吐配置的阶段性优化汇总 |
 | [2026-09-06-lifecycle-execution-flow.md](2026-09-06-lifecycle-execution-flow.md) | Lifecycle 处理顺序、并发控制、中转队列及一致性边界审查 |

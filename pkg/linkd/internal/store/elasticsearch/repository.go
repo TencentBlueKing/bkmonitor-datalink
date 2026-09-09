@@ -202,6 +202,9 @@ func (r *Repository) performContent(
 	if err := decoder.Decode(result); err != nil {
 		return fmt.Errorf("decode elasticsearch response: %w", err)
 	}
+	if checked, ok := result.(interface{ checkComplete() error }); ok {
+		return checked.checkComplete()
+	}
 	return nil
 }
 

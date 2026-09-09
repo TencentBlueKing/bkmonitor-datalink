@@ -40,6 +40,7 @@ func (response getResponse) hit() searchHit {
 
 type multiSearchResponse struct {
 	Responses []struct {
+		searchCompleteness
 		Status int             `json:"status"`
 		Error  json.RawMessage `json:"error"`
 		Hits   struct {
@@ -49,6 +50,7 @@ type multiSearchResponse struct {
 }
 
 type pointInTimeResponse struct {
+	searchCompleteness
 	ID string `json:"id"`
 }
 
@@ -88,6 +90,16 @@ func (r *Repository) searchWithPIT(
 	if response.PITID != "" {
 		pitID = response.PITID
 	}
+	// ES 7.12+ 在 PIT 查询中隐式追加 _shard_doc；显式排序已用实体身份和
+	// _index 形成全序，游标只保留显式项，使 7.10 与新版使用同一协议。
+	if sorts, ok := body["sort"].([]any); ok {
+		for i := range response.Hits.Hits {
+			hit := &response.Hits.Hits[i]
+			if len(hit.Sort) == len(sorts)+1 {
+				hit.Sort = hit.Sort[:len(sorts)]
+			}
+		}
+	}
 	return response, pitID, nil
 }
 
@@ -105,6 +117,12 @@ func (r *Repository) openPIT(ctx context.Context, targets []string) (string, err
 		nil,
 		&response,
 	); err != nil {
+		// 部分失败响应仍可能分配了 PIT，拒绝结果时也要释放成功分片上的上下文。
+		if response.ID != "" {
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			_ = r.closePIT(cleanup, response.ID)
+			cancel()
+		}
 		return "", fmt.Errorf("open elasticsearch point in time: %w", err)
 	}
 	if response.ID == "" {
@@ -171,7 +189,26 @@ func (r *Repository) multiSearch(
 		if len(item.Error) != 0 && string(item.Error) != "null" {
 			return nil, decodeResponseError(item.Status, []byte(`{"error":`+string(item.Error)+`}`))
 		}
+		if err := item.checkComplete(); err != nil {
+			return nil, fmt.Errorf("elasticsearch multi-search item %d: %w", index, err)
+		}
 		results[index] = item.Hits.Hits
 	}
 	return results, nil
+}
+
+// searchCompleteness 阻止 HTTP 200 的超时或部分失败被当成完整查询结果。
+// 扫描恢复和幂等查询若接受部分结果，可能漏处理事件或误判对象不存在。
+type searchCompleteness struct {
+	TimedOut bool `json:"timed_out"`
+	Shards   struct {
+		Failed int `json:"failed"`
+	} `json:"_shards"`
+}
+
+func (s searchCompleteness) checkComplete() error {
+	if s.TimedOut || s.Shards.Failed > 0 {
+		return fmt.Errorf("elasticsearch incomplete search: timed_out=%t failed_shards=%d", s.TimedOut, s.Shards.Failed)
+	}
+	return nil
 }

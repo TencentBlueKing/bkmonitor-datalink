@@ -259,11 +259,10 @@ func (r *Repository) ListAlertLogs(
 		},
 		"sort": []any{
 			map[string]any{"created_time": map[string]any{
-				"order":  "asc",
-				"format": "strict_date_optional_time_nanos",
+				"order": "asc",
 			}},
 			map[string]any{"log_id": map[string]any{"order": "asc"}},
-			map[string]any{"_shard_doc": map[string]any{"order": "asc"}},
+			map[string]any{"_index": map[string]any{"order": "asc"}},
 		},
 	}
 	if normalizedPage.Cursor != "" {

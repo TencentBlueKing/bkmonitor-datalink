@@ -879,3 +879,34 @@ func testAlertLog(logID string) domain.AlertLog {
 		Params: domain.JSONObject{}, CreatedTime: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
 	}
 }
+
+func TestSearchRejectsPartialSuccessAcrossAPIs(t *testing.T) {
+	for _, failure := range []string{`"timed_out":true`, `"_shards":{"failed":1}`} {
+		for _, api := range []string{"search", "pit", "msearch"} {
+			t.Run(api+failure, func(t *testing.T) {
+				repository, err := New(transportFunc(func(request *http.Request) (*http.Response, error) {
+					body := `{` + failure + `,"hits":{"hits":[]}}`
+					if api == "msearch" {
+						body = `{"responses":[` + body + `]}`
+					}
+					return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
+				}), mustStaticRouter(t), DefaultConfig())
+				if err != nil {
+					t.Fatal(err)
+				}
+				switch api {
+				case "search":
+					var result searchResponse
+					err = repository.performJSON(t.Context(), http.MethodPost, "/_search", nil, nil, &result)
+				case "pit":
+					_, err = repository.openPIT(t.Context(), []string{"linkd-test-events"})
+				case "msearch":
+					_, err = repository.multiSearch(t.Context(), []map[string]any{{}}, []map[string]any{{}})
+				}
+				if err == nil || !strings.Contains(err.Error(), "incomplete search") {
+					t.Fatalf("error=%v", err)
+				}
+			})
+		}
+	}
+}

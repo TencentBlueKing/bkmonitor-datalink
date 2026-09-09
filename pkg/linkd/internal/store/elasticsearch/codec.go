@@ -46,6 +46,7 @@ type searchHit struct {
 }
 
 type searchResponse struct {
+	searchCompleteness
 	PITID string `json:"pit_id"`
 	Hits  struct {
 		Hits []searchHit `json:"hits"`

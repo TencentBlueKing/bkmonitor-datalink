@@ -9,6 +9,7 @@
 - [自建构建机发布](ci-release.md)：原生 amd64 / arm64 镜像构建、Chart 上传和任务清理；
 - [手动构建与发布镜像](image-release.md)：GitHub Actions 手动构建 Linkd / Console、GHCR 权限与版本标签；
 - [配置与启动](configuration.md)；
+- [Elasticsearch 版本兼容](elasticsearch-compatibility.md)：Linkd 与 Console 的 ES 7.10+/8/9 范围及验证；
 - [Helm 部署与 worker 分组](helm.md)：三角色部署、独立配置 Secret、可选 Console 与认证入口；
 - [Standard Event 模拟器](event-generator.md)；
 - [使用 PM2 托管本地 Linkd 拓扑](pm2.md)；

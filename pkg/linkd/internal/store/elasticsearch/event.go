@@ -456,9 +456,9 @@ func (r *Repository) ListEventsByAlert(
 			}}},
 		}}},
 		"sort": []any{
-			map[string]any{"received_at": map[string]any{"order": "asc", "format": "strict_date_optional_time_nanos"}},
+			map[string]any{"received_at": map[string]any{"order": "asc"}},
 			map[string]any{"event_id": map[string]any{"order": "asc"}},
-			map[string]any{"_shard_doc": map[string]any{"order": "asc"}},
+			map[string]any{"_index": map[string]any{"order": "asc"}},
 		},
 	}
 	if page.Cursor != "" {
@@ -572,11 +572,10 @@ func (r *Repository) ScanUnprocessedEvents(
 		},
 		"sort": []any{
 			map[string]any{"received_at": map[string]any{
-				"order":  "asc",
-				"format": "strict_date_optional_time_nanos",
+				"order": "asc",
 			}},
 			map[string]any{"event_id": map[string]any{"order": "asc"}},
-			map[string]any{"_shard_doc": map[string]any{"order": "asc"}},
+			map[string]any{"_index": map[string]any{"order": "asc"}},
 		},
 	}
 	if normalizedPage.Cursor != "" {
@@ -691,11 +690,11 @@ func (r *Repository) ScanAllUnprocessedEvents(
 		}}},
 		"sort": []any{
 			map[string]any{"received_at": map[string]any{
-				"order": "asc", "format": "strict_date_optional_time_nanos",
+				"order": "asc",
 			}},
 			map[string]any{"bk_tenant_id": map[string]any{"order": "asc"}},
 			map[string]any{"event_id": map[string]any{"order": "asc"}},
-			map[string]any{"_shard_doc": map[string]any{"order": "asc"}},
+			map[string]any{"_index": map[string]any{"order": "asc"}},
 		},
 	}
 	if normalizedPage.Cursor != "" {

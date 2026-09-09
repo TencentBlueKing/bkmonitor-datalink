@@ -138,6 +138,10 @@ func parseFindInstanceResponse(
 		return enrich.Instance{}, false, fmt.Errorf("elasticsearch status %d", response.StatusCode)
 	}
 	var result struct {
+		TimedOut bool `json:"timed_out"`
+		Shards   struct {
+			Failed int `json:"failed"`
+		} `json:"_shards"`
 		Hits struct {
 			Hits []struct {
 				Source map[string]any `json:"_source"`
@@ -148,6 +152,10 @@ func parseFindInstanceResponse(
 	decoder.UseNumber()
 	if err := decoder.Decode(&result); err != nil {
 		return enrich.Instance{}, false, fmt.Errorf("%w: decode response: %w", enrich.ErrInvalidDataSourceResponse, err)
+	}
+	// HTTP 200 的部分失败不等价于实例不存在，必须交给调用方重试。
+	if result.TimedOut || result.Shards.Failed > 0 {
+		return enrich.Instance{}, false, fmt.Errorf("%w: incomplete search timed_out=%t failed_shards=%d", enrich.ErrInvalidDataSourceResponse, result.TimedOut, result.Shards.Failed)
 	}
 	if len(result.Hits.Hits) == 0 {
 		return enrich.Instance{}, false, nil

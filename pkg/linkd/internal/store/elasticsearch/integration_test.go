@@ -449,3 +449,91 @@ func TestElasticsearchArchiveDrainsMoreThanOneDefaultBatch(t *testing.T) {
 		}
 	}
 }
+
+// TestElasticsearchScanPagination 验证真实版本的 PIT、隐式排序尾项和纳秒游标往返。
+func TestElasticsearchScanPagination(t *testing.T) {
+	endpoint := os.Getenv(elasticsearchIntegrationURLEnv)
+	if endpoint == "" {
+		t.Skip("set LINKD_TEST_ELASTICSEARCH_URL to run pagination contract")
+	}
+	baseURL, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := endpointTransport{baseURL: baseURL, client: &http.Client{Timeout: 15 * time.Second}, apiKey: os.Getenv("LINKD_TEST_ELASTICSEARCH_API_KEY")}
+	prefix := "linkd-pagination-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	router, err := NewStaticRouter(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := New(transport, router, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := router.SchemaConfig()
+	if err := r.EnsureSchema(t.Context(), schema); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		for _, spec := range schema.Templates() {
+			_ = r.performJSON(cleanup, http.MethodDelete, "/"+spec.Name, nil, nil, nil)
+			_ = r.performJSON(cleanup, http.MethodDelete, "/_index_template/"+spec.Name, nil, nil, nil)
+		}
+	}()
+	for _, spec := range schema.Templates() {
+		if err := r.EnsureIndex(t.Context(), spec.Name, spec.Entity); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 4; i++ {
+		tenant := "system"
+		if i == 3 {
+			tenant = "other"
+		}
+		event := storetest.Event(tenant, "event-"+strconv.Itoa(i), "fp", "warning")
+		event.ReceivedAt = event.ReceivedAt.Add(time.Duration(i+1) * time.Nanosecond)
+		if _, err := r.CreateEvent(t.Context(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.performJSON(t.Context(), http.MethodPost, "/"+prefix+"-events/_refresh", nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	before := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	for _, all := range []bool{false, true} {
+		page := store.PageRequest{Limit: 1}
+		var ids []string
+		for n := 0; n < 6; n++ {
+			var result store.EventPage
+			if all {
+				result, err = r.ScanAllUnprocessedEvents(t.Context(), before, page)
+			} else {
+				result, err = r.ScanUnprocessedEvents(t.Context(), "system", before, page)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, item := range result.Events {
+				ids = append(ids, item.Event.EventID)
+			}
+			page.Cursor = result.NextCursor
+			if page.Cursor == "" {
+				break
+			}
+		}
+		want := 3
+		if all {
+			want = 4
+		}
+		if page.Cursor != "" || len(ids) != want {
+			t.Fatalf("all=%t ids=%v cursor remains=%t", all, ids, page.Cursor != "")
+		}
+		for i, id := range ids {
+			if id != "event-"+strconv.Itoa(i) {
+				t.Fatalf("unexpected order: %v", ids)
+			}
+		}
+	}
+}

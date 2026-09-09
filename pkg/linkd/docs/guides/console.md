@@ -5,6 +5,8 @@ Console 是仓库内独立构建的运维控制台。默认本地模式仅监听
 它直接读取 Linkd YAML，使用 Node 连接层查询
 Prometheus、Kafka、Redis 和权威 Repository；Linkd 进程不增加数据查询 API。
 
+ES 支持范围和部署注意事项见 [Elasticsearch 版本兼容](elasticsearch-compatibility.md)。
+
 完整启动参数、环境变量、接口与安全边界见 [Console README](../../console/README.md)。
 
 ## 感知模型

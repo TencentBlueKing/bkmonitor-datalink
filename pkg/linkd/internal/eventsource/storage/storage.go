@@ -266,6 +266,10 @@ func (s *Store) List(ctx context.Context, kind, after string, limit int) ([]json
 		return nil, fmt.Errorf("list source: HTTP %d", code)
 	}
 	var r struct {
+		TimedOut bool `json:"timed_out"`
+		Shards   struct {
+			Failed int `json:"failed"`
+		} `json:"_shards"`
 		Hits struct {
 			Hits []struct {
 				Source struct {
@@ -276,6 +280,10 @@ func (s *Store) List(ctx context.Context, kind, after string, limit int) ([]json
 	}
 	if e = json.Unmarshal(b, &r); e != nil {
 		return nil, e
+	}
+	// 部分结果不能参与来源对账，否则会将已有来源误判为消失。
+	if r.TimedOut || r.Shards.Failed > 0 {
+		return nil, fmt.Errorf("list source: incomplete search timed_out=%t failed_shards=%d", r.TimedOut, r.Shards.Failed)
 	}
 	result := make([]json.RawMessage, 0, len(r.Hits.Hits))
 	for _, h := range r.Hits.Hits {

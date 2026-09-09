@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,6 +54,9 @@ type serviceRuntime interface {
 
 type httpRuntime interface {
 	Run(context.Context, string, time.Duration) error
+	// SetAPI installs the observability API once the runtime that produces the
+	// object facts is open. The listener starts before that runtime does.
+	SetAPI(http.Handler)
 }
 
 type redisRuntime interface {

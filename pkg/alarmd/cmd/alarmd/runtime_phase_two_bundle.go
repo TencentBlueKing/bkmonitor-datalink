@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/evaluation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
@@ -147,10 +148,15 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// Phase two limits repeated diagnostics per (reason, Query Group) bucket
 	// and reports suppressed counts; the phase-one per-reason budget hid every
 	// other Query Group's coordinates once one object became noisy.
-	observer, err := newPhaseTwoRuntimeObserver(recorder, logger)
+	baseObserver, err := newPhaseTwoRuntimeObserver(recorder, logger)
 	if err != nil {
 		return nil, err
 	}
+	// The tracker reads the stream the replica already emits, so building the
+	// anomaly list costs no reads of its own. It forwards every observation
+	// untouched: diagnostics must not change what the pipeline reports.
+	fleetTracker := fleet.NewTracker(baseObserver, cfg.PhaseTwo.Worker.ID, external.Now)
+	var observer observability.Observer = fleetTracker
 	targetFlow, err := observability.NewTargetFlow(logger, cfg.PhaseTwo.TargetFlow)
 	if err != nil {
 		return nil, err
@@ -533,9 +539,30 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	fleetStore, err := fleet.NewRedisStore(controlClient, cfg.Redis.StatePrefix, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	fleetService, err := fleet.NewService(
+		controlPlaneExpectation{repository: repository},
+		registryReplicas{store: ownershipStore},
+		fleetStore,
+		0,
+		external.Now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	fleetAPI, err := fleet.NewHandler(fleetService)
+	if err != nil {
+		return nil, err
+	}
+	var publisher fleetPublisher
 	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
 		Config: cfg, Health: health, Control: control, Ownership: productionOwnership,
 		Recorder: recorder, Observer: observer, TargetFlow: targetFlow, Now: external.Now,
+		FleetAPI:     fleetAPI,
+		PublishFleet: func(ctx context.Context) { publisher.publishOnce(ctx) },
 		ProbeControlRedis: func(probeCtx context.Context) error {
 			return controlClient.Ping(probeCtx).Err()
 		},
@@ -553,6 +580,12 @@ func openProductionPhaseTwoBundleWithDependencies(
 	})
 	if err != nil {
 		return nil, err
+	}
+	// Bound after the bundle exists: the snapshot reports what this replica
+	// currently owns, which only the bundle knows.
+	publisher = fleetPublisher{
+		tracker: fleetTracker, store: fleetStore, replica: cfg.PhaseTwo.Worker.ID,
+		owned: bundle.ownedQueryGroups, now: external.Now,
 	}
 	return bundle, nil
 }

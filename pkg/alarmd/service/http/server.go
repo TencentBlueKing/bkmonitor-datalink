@@ -39,6 +39,7 @@ import (
 // has to be updated, or it gets a 404.
 type Server struct {
 	handler            http.Handler
+	apiHandler         atomic.Pointer[http.Handler]
 	diagnosticsHandler http.Handler
 	diagnosticsAddress string
 	ready              atomic.Bool
@@ -55,6 +56,25 @@ type Option func(*Server)
 // query surface.
 func WithDiagnosticsAddress(address string) Option {
 	return func(server *Server) { server.diagnosticsAddress = address }
+}
+
+// SetAPI installs the observability API served under /api/ on the query
+// surface. The route exists from startup and answers 503 until this is called,
+// because the runtime that produces the object facts opens after the listener
+// does. Answering "not ready yet" is the honest response; answering 404 would
+// be indistinguishable from a deployment that has no API at all.
+func (s *Server) SetAPI(handler http.Handler) {
+	s.apiHandler.Store(&handler)
+}
+
+func (s *Server) serveAPI(response http.ResponseWriter, request *http.Request) {
+	if handler := s.apiHandler.Load(); handler != nil && *handler != nil {
+		(*handler).ServeHTTP(response, request)
+		return
+	}
+	response.Header().Set("Content-Type", "application/json")
+	response.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(response).Encode(map[string]string{"error": "observability API is not ready yet"})
 }
 
 func New(recorder *metric.Recorder, options ...Option) *Server {
@@ -95,6 +115,7 @@ func newServer(recorder *metric.Recorder, source lifecycle.Source, options ...Op
 	mux.HandleFunc("/healthz", server.health)
 	mux.HandleFunc("/readyz", server.readiness)
 	mux.Handle("/metrics", promhttp.HandlerFor(recorder.Gatherer(), promhttp.HandlerOpts{}))
+	mux.HandleFunc("/api/", server.serveAPI)
 	server.handler = mux
 
 	// Allocation and CPU attribution has no in-process answer today: the

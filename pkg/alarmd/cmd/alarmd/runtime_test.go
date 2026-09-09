@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -379,8 +380,11 @@ func (service *fakeServiceRuntime) LifecycleSnapshot() lifecycle.Snapshot {
 
 type fakeHTTPRuntime struct {
 	run func(context.Context, string, time.Duration) error
+	api http.Handler
 }
 
 func (runtime *fakeHTTPRuntime) Run(ctx context.Context, address string, timeout time.Duration) error {
 	return runtime.run(ctx, address, timeout)
 }
+
+func (runtime *fakeHTTPRuntime) SetAPI(handler http.Handler) { runtime.api = handler }

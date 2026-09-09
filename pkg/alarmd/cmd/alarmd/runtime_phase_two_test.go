@@ -2656,7 +2656,7 @@ func validGoAccessRuntimeConfig() config.Config {
 	accessBKData := false
 	cfg.Kafka.Brokers = []string{"127.0.0.1:9092"}
 	cfg.Kafka.TriggerEvent.Topic = "alarmd-trigger-event"
-	cfg.Kafka.AllowedOutputTopics = []string{"alarmd-trigger-event"}
+	cfg.Kafka.AllowedOutputTopics = []string{"alarmd-trigger-event", "alarmd_0bkmonitor_backend_event"}
 	cfg.Kafka.ClientID = "alarmd"
 	cfg.Kafka.BrokerVersion = "2.6.0"
 	cfg.Redis.Address = "127.0.0.1:6379"

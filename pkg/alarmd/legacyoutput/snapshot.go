@@ -33,6 +33,9 @@ func (s RedisSnapshotStore) Validate() error {
 	return nil
 }
 func (s RedisSnapshotStore) SaveBatch(ctx context.Context, snapshots []Snapshot) error {
+	if err := s.Validate(); err != nil {
+		return err
+	}
 	groups := map[string][]Snapshot{}
 	for _, snapshot := range snapshots {
 		i := sort.Search(len(s.Routes), func(i int) bool { return s.Routes[i].UpperBound > snapshot.StrategyID })

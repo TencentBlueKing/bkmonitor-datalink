@@ -108,11 +108,8 @@ func TestTriggerEventBatchUsesStableDedupePartitionKey(t *testing.T) {
 	}
 }
 
-// A deployment that publishes no strategy revision produces only events without
-// a strategy reference. Requiring the compatibility adapter for those made the
-// converter mandatory exactly where it was never configured, and every event
-// emission failed while Slots that emit nothing kept completing.
-func TestTriggerEventBatchEmitsNativelyWithoutLegacyConverter(t *testing.T) {
+// Missing frozen context is not permission to change the output protocol.
+func TestTriggerEventBatchWithoutRevisionNeverFallsBackToNative(t *testing.T) {
 	event := legacyTriggerEventGolden(t)
 	if event.StrategyRef != nil {
 		t.Fatal("this case requires an event without a frozen strategy reference")
@@ -123,7 +120,10 @@ func TestTriggerEventBatchEmitsNativelyWithoutLegacyConverter(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sink.Close()
-	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{event}); err != nil {
-		t.Fatalf("native emission must not depend on the legacy adapter: %v", err)
+	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{event}); err == nil {
+		t.Fatal("missing legacy context must fail instead of publishing native output")
+	}
+	if producer.batchCalls != 0 || producer.singleCalls != 0 {
+		t.Fatal("invalid legacy event reached Kafka")
 	}
 }

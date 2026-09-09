@@ -22,11 +22,7 @@ func (f legacyConverterFunc) ConvertBatch(ctx context.Context, events []contract
 }
 
 func TestLegacyConversionFailureNeverPublishesOrFallsBack(t *testing.T) {
-	// The invariant is about a configured legacy output: with one, an event that
-	// cannot be converted must not be published natively instead. Without one the
-	// deployment has no legacy protocol at all, and requiring the adapter there
-	// took every event emission to failure, so that case is asserted separately
-	// in TestTriggerEventBatchEmitsNativelyWithoutLegacyConverter.
+	// Revision selects the protocol; conversion failure never changes it.
 	producer := &batchAwareSyncProducer{}
 	sink, _ := newTriggerEventSink("native", producer, &fakeCloser{})
 	defer sink.Close()
@@ -77,9 +73,45 @@ func (f snapshotStoreFunc) SaveBatch(ctx context.Context, s []legacyoutput.Snaps
 	return f(ctx, s)
 }
 
+func TestBuiltInPythonOutputMissingStoreNeverPublishesNative(t *testing.T) {
+	producer := &batchAwareSyncProducer{}
+	sink, err := newTriggerEventSink("alarmd_event", producer, &fakeCloser{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sink.Close()
+	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{legacyEventForTest(t)}); err == nil {
+		t.Fatal("missing snapshot dependency accepted")
+	}
+	if producer.batchCalls != 0 || producer.singleCalls != 0 {
+		t.Fatal("missing snapshot dependency caused a native publish")
+	}
+	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{triggerEventGolden(t)}); err != nil {
+		t.Fatalf("native revision must not require service Redis: %v", err)
+	}
+}
+
 func TestLocalLegacyConverterRoutesFinalKafkaBatch(t *testing.T) {
+	for _, kind := range []string{contract.TriggerEventAbnormal, contract.TriggerEventRecovery} {
+		t.Run(kind, func(t *testing.T) { testLocalLegacyConverterRoutesFinalKafkaBatch(t, kind) })
+	}
+}
+
+func testLocalLegacyConverterRoutesFinalKafkaBatch(t *testing.T, kind string) {
 	event := legacyEventForTest(t)
 	event.LevelResults[1].LevelID = 2
+	if kind == contract.TriggerEventRecovery {
+		event.EventKind = kind
+		event.LegacyOutput.AnomalyTimestamps = nil
+		for i := range event.LevelResults {
+			level := &event.LevelResults[i]
+			level.Result = contract.LevelResultRecovery
+			level.DetectEvidence.DetectionResult = "NORMAL"
+			level.DetectEvidence.NormalizedValue = json.RawMessage(`0`)
+			level.DecisionWindow.Trigger.ObservedAnomalies = 0
+			level.DecisionWindow.Recovery.ObservedConsecutiveMisses = level.DecisionWindow.Recovery.RequiredConsecutiveWindows
+		}
+	}
 	rebuilt, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{EventKind: event.EventKind, TenantID: event.TenantID, BusinessID: event.BusinessID, PlanRef: event.PlanRef, RecordRef: event.RecordRef, Observed: event.Observed, LevelResults: event.LevelResults, EvaluationTime: event.EvaluationTime, DetectPlanFingerprint: event.DetectPlanFingerprint, TriggerStateFingerprint: event.TriggerStateFingerprint, ExecutionID: event.Trace.ExecutionID, MaxEvidenceBytes: 64 << 10})
 	if err != nil {
 		t.Fatal(err)
@@ -88,11 +120,17 @@ func TestLocalLegacyConverterRoutesFinalKafkaBatch(t *testing.T) {
 	event = *rebuilt
 	event.LegacyOutput.Configuration = contract.FreezeLegacyOutput(&contract.LegacyOutputContext{Strategy: json.RawMessage(`{"id":1001,"bk_biz_id":2,"update_time":1,"name":"frozen","scenario":"os","items":[{"id":11,"name":"load","query_configs":[{"metric_id":"system.load","data_type_label":"time_series"}]}]}`), DimensionFields: []string{"host"}, ItemID: "11"})
 	saved := 0
-	converter := &legacyoutput.Converter{SnapshotPrefix: "prefix", Store: snapshotStoreFunc(func(_ context.Context, snapshots []legacyoutput.Snapshot) error { saved += len(snapshots); return nil })}
 	producer := &batchAwareSyncProducer{}
 	sink, _ := newTriggerEventSink("native", producer, &fakeCloser{})
 	defer sink.Close()
-	sink.ConfigureLegacyOutput(converter, "alarmd_python-events", 1<<20)
+	// Use the built-in converter without calling ConfigureLegacyOutput. Only
+	// supply the environment's snapshot store, never an enable flag or topic.
+	converter, ok := sink.legacyConverter.(*legacyoutput.Converter)
+	if !ok {
+		t.Fatal("Go protocol converter is not built in")
+	}
+	converter.SnapshotPrefix = "prefix"
+	converter.Store = snapshotStoreFunc(func(_ context.Context, snapshots []legacyoutput.Snapshot) error { saved += len(snapshots); return nil })
 	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{event, triggerEventGolden(t), event}); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +150,11 @@ func TestLocalLegacyConverterRoutesFinalKafkaBatch(t *testing.T) {
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			t.Fatal(err)
 		}
-		if message.Topic != "alarmd_python-events" || payload["plugin_id"] != "bkmonitor" || string(key) != payload["dedupe_md5"] {
+		status := "ABNORMAL"
+		if kind == contract.TriggerEventRecovery {
+			status = "RECOVERED"
+		}
+		if message.Topic != "alarmd_0bkmonitor_backend_event" || payload["status"] != status || payload["plugin_id"] != "bkmonitor" || string(key) != payload["dedupe_md5"] {
 			t.Fatal("Python payload/topic/key mismatch")
 		}
 	}

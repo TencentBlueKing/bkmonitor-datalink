@@ -147,8 +147,10 @@ func Default() Config {
 			Listen: "127.0.0.1:8080",
 		},
 		Kafka: KafkaConfig{
-			TriggerEvent:   KafkaOutputConfig{MaxMessageBytes: defaultOutputMaxMessageBytes},
-			MessageReceipt: KafkaOutputConfig{MaxMessageBytes: defaultOutputMaxMessageBytes},
+			TriggerEvent:        KafkaOutputConfig{Topic: "alarmd_event", MaxMessageBytes: defaultOutputMaxMessageBytes},
+			LegacyAdapter:       LegacyAdapterConfig{Topic: "alarmd_0bkmonitor_backend_event"},
+			AllowedOutputTopics: []string{"alarmd_event", "alarmd_0bkmonitor_backend_event"},
+			MessageReceipt:      KafkaOutputConfig{MaxMessageBytes: defaultOutputMaxMessageBytes},
 		},
 		Redis: RedisConfig{
 			RedisConnectionConfig: RedisConnectionConfig{Mode: RedisModeStandalone,

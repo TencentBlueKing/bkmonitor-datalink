@@ -43,6 +43,7 @@ type productionStrategySourceFactory func(
 
 type productionPhaseTwoEventSink interface {
 	execution.EventSink
+	ConfigureLegacyOutput(enginekafka.LegacyEventConverter, string, int) error
 	Shutdown(context.Context) error
 	Close() error
 }
@@ -382,7 +383,12 @@ func openProductionPhaseTwoBundleWithDependencies(
 			resultErr = errors.Join(resultErr, closeLegacyClients())
 		}
 	}()
-	if cfg.Kafka.LegacyAdapter.Topic != "" {
+	{
+		// Conversion is built in; these settings provide environment coordinates,
+		// never an enable switch. Native events do not access the snapshot store.
+		if cfg.Kafka.LegacyAdapter.Topic == "" {
+			cfg.Kafka.LegacyAdapter.Topic = "alarmd_0bkmonitor_backend_event"
+		}
 		allowed := false
 		for _, topic := range cfg.Kafka.AllowedOutputTopics {
 			if topic == cfg.Kafka.LegacyAdapter.Topic {
@@ -391,9 +397,6 @@ func openProductionPhaseTwoBundleWithDependencies(
 		}
 		if !allowed {
 			return nil, errors.New("legacy output topic must be explicitly allowlisted")
-		}
-		if cfg.Kafka.LegacyAdapter.SnapshotPrefix == "" {
-			return nil, errors.New("legacy snapshot prefix required")
 		}
 		store := legacyoutput.RedisSnapshotStore{Nodes: map[string]redis.Cmdable{}, Routes: cfg.Kafka.LegacyAdapter.ServiceRoutes}
 		for id, connection := range cfg.Kafka.LegacyAdapter.ServiceNodes {
@@ -404,8 +407,12 @@ func openProductionPhaseTwoBundleWithDependencies(
 			legacyClients = append(legacyClients, client)
 			store.Nodes[id] = client
 		}
-		if err := store.Validate(); err != nil {
-			return nil, err
+		// Validate supplied routes now; an environment containing only native
+		// revisions does not need service Redis. Missing routes fail conversion.
+		if len(store.Routes) > 0 || len(store.Nodes) > 0 {
+			if err := store.Validate(); err != nil {
+				return nil, err
+			}
 		}
 		converter := &legacyoutput.Converter{Store: store, SnapshotPrefix: cfg.Kafka.LegacyAdapter.SnapshotPrefix, Now: external.Now, PluginID: cfg.Kafka.LegacyAdapter.PluginID}
 		if podConfig := cfg.Kafka.LegacyAdapter.PodCache; podConfig != nil {
@@ -421,13 +428,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 			}
 			converter.Pods = resolver
 		}
-		configured, ok := events.(interface {
-			ConfigureLegacyOutput(enginekafka.LegacyEventConverter, string, int) error
-		})
-		if !ok {
-			return nil, errors.New("event sink does not support legacy output adapter")
-		}
-		if err := configured.ConfigureLegacyOutput(converter, cfg.Kafka.LegacyAdapter.Topic, cfg.Kafka.TriggerEvent.MaxMessageBytes); err != nil {
+		if err := events.ConfigureLegacyOutput(converter, cfg.Kafka.LegacyAdapter.Topic, cfg.Kafka.TriggerEvent.MaxMessageBytes); err != nil {
 			return nil, err
 		}
 	}

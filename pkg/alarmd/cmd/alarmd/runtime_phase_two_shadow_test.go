@@ -230,8 +230,8 @@ func testPhaseTwoShadowActualThresholdACKAndIsolation(t *testing.T, business boo
 				}
 			}
 			events := &legacyConvertingTestSink{recordingPhaseTwoEventSink: &recordingPhaseTwoEventSink{}}
-			cfg.Kafka.LegacyAdapter = config.LegacyAdapterConfig{Topic: "alarmd_python-test", SnapshotPrefix: "test", ServiceNodes: map[string]config.RedisConnectionConfig{"service": cfg.StrategySourceRedis()}, ServiceRoutes: []legacyoutput.ServiceRoute{{UpperBound: 1000000, NodeID: "service"}}}
-			cfg.Kafka.AllowedOutputTopics = append(cfg.Kafka.AllowedOutputTopics, cfg.Kafka.LegacyAdapter.Topic)
+			// Omit the topic: conversion must be assembled without an enable field.
+			cfg.Kafka.LegacyAdapter = config.LegacyAdapterConfig{SnapshotPrefix: "test", ServiceNodes: map[string]config.RedisConnectionConfig{"service": cfg.StrategySourceRedis()}, ServiceRoutes: []legacyoutput.ServiceRoute{{UpperBound: 1000000, NodeID: "service"}}}
 			publisher := &recordingFinalPublisher{panicOnEnqueue: publisherPanics}
 			var observations []observability.Observation
 			var mu sync.Mutex
@@ -395,7 +395,10 @@ type legacyConvertingTestSink struct {
 	converter enginekafka.LegacyEventConverter
 }
 
-func (s *legacyConvertingTestSink) ConfigureLegacyOutput(converter enginekafka.LegacyEventConverter, _ string, _ int) error {
+func (s *legacyConvertingTestSink) ConfigureLegacyOutput(converter enginekafka.LegacyEventConverter, topic string, _ int) error {
+	if topic != "alarmd_0bkmonitor_backend_event" {
+		return fmt.Errorf("unexpected Python output topic: %s", topic)
+	}
 	s.converter = converter
 	return nil
 }

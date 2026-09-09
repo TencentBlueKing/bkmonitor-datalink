@@ -20,6 +20,7 @@ import (
 	"github.com/Shopify/sarama"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
 )
 
 // TriggerEventSink is the critical Kafka output for Trigger events.
@@ -91,7 +92,7 @@ func newTriggerEventSink(
 	if err != nil {
 		return nil, err
 	}
-	return &TriggerEventSink{core: core}, nil
+	return &TriggerEventSink{core: core, legacyConverter: &legacyoutput.Converter{}, legacyTopic: "alarmd_0bkmonitor_backend_event", maxLegacyBytes: 524288}, nil
 }
 
 func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.TriggerEventV1) error {
@@ -121,15 +122,9 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 			// lowercase hex text, not the decoded 16-byte digest.
 			messages[index].Key = sarama.StringEncoder(events[index].DedupeMD5)
 		}
-		// An event without a frozen strategy reference belongs to the legacy
-		// protocol, but only where that protocol is configured. Routing it there
-		// unconditionally makes the converter mandatory in exactly the
-		// deployments that publish no strategy revision and therefore never
-		// configured one: every event emission then fails while Slots that emit
-		// nothing keep completing. The native branch does not require the
-		// compatibility configuration; where the configuration exists, a missing
-		// context is still an error rather than a silent native-only fallback.
-		if events[index].StrategyRef == nil && sink.legacyConverter != nil {
+		// The frozen revision alone selects the wire protocol. Missing Python
+		// snapshot dependencies must never change that choice to native output.
+		if events[index].StrategyRef == nil {
 			if events[index].LegacyOutput == nil || events[index].LegacyOutput.Configuration == nil {
 				return errors.New("legacy event has no frozen compatibility context")
 			}

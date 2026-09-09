@@ -45,7 +45,9 @@ func TestTargetFlowQueueNoisePreservesExecutionBudget(t *testing.T) {
 func TestTargetFlowQueueThrottleScopesAndWindow(t *testing.T) {
 	f, _ := newTestFlow(t)
 	brother := strings.Repeat("b", 64)
-	f.groups[brother] = struct{}{}
+	if err := f.Select([]string{flowQG, brother}); err != nil {
+		t.Fatal(err)
+	}
 	for _, qg := range []string{flowQG, brother} {
 		for _, reason := range []string{"normal_queue_full", "delayed_queue_full", "delayed_queue_evicted"} {
 			for i := 0; i < 2; i++ {

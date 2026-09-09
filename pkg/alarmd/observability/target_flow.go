@@ -108,10 +108,16 @@ type targetFlowRecord struct {
 	RecordLimit       int             `json:"record_limit"`
 	ByteLimit         int             `json:"byte_limit"`
 }
+
+// targetFlowSelection is the set of query groups whose lifecycle is recorded.
+// It is swapped whole rather than mutated, because Selected is read on the
+// dispatch path for every round and must not take a lock there.
+type targetFlowSelection map[string]struct{}
+
 type TargetFlow struct {
 	sequence        atomic.Uint64
 	logger          *Logger
-	groups          map[string]struct{}
+	groups          atomic.Pointer[targetFlowSelection]
 	now             func() time.Time
 	mu              sync.Mutex
 	start           time.Time
@@ -133,18 +139,79 @@ func NewTargetFlow(logger *Logger, c TargetFlowConfig) (*TargetFlow, error) {
 	if logger == nil || logger.writer == nil {
 		return nil, errors.New("target flow: logger required")
 	}
-	groups := make(map[string]struct{}, len(c.QueryGroups))
-	for _, q := range c.QueryGroups {
-		groups[q] = struct{}{}
-	}
-	return &TargetFlow{logger: logger, groups: groups, now: time.Now, queueSeen: make(map[string]uint8, len(groups))}, nil
+	flow := newTargetFlow(logger)
+	flow.selectGroups(c.QueryGroups)
+	return flow, nil
 }
+
+// NewEmptyTargetFlow builds a flow that selects nothing yet.
+//
+// NewTargetFlow returns nil when configuration selects no query group, which is
+// correct for a purely static selection but leaves nothing for a window opened
+// at runtime to attach to. A deployment that can be asked to observe an object
+// later needs the object to exist now, selecting nothing.
+func NewEmptyTargetFlow(logger *Logger) (*TargetFlow, error) {
+	if logger == nil || logger.writer == nil {
+		return nil, errors.New("target flow: logger required")
+	}
+	return newTargetFlow(logger), nil
+}
+
+func newTargetFlow(logger *Logger) *TargetFlow {
+	flow := &TargetFlow{logger: logger, now: time.Now, queueSeen: make(map[string]uint8, TargetFlowMaxGroups)}
+	flow.selectGroups(nil)
+	return flow
+}
+
+func (f *TargetFlow) selectGroups(queryGroups []string) {
+	selection := make(targetFlowSelection, len(queryGroups))
+	for _, queryGroup := range queryGroups {
+		selection[queryGroup] = struct{}{}
+	}
+	f.groups.Store(&selection)
+}
+
+// Select replaces the observed set. It is how a window opened at runtime takes
+// effect: replicas read the window on their reconcile tick and call this, so a
+// window needs no restart to start and no release to stop.
+//
+// The whole set is replaced rather than added to, because the set is the answer
+// to "what is being observed right now" and a merge would make a closed window
+// depend on every replica having seen the close.
+func (f *TargetFlow) Select(queryGroups []string) error {
+	if f == nil {
+		return errors.New("target flow: no flow to select on")
+	}
+	if err := (TargetFlowConfig{QueryGroups: queryGroups}).Validate(); err != nil {
+		return err
+	}
+	f.selectGroups(queryGroups)
+	return nil
+}
+
 func (f *TargetFlow) Selected(q string) bool {
 	if f == nil {
 		return false
 	}
-	_, ok := f.groups[q]
+	selection := f.groups.Load()
+	if selection == nil {
+		return false
+	}
+	_, ok := (*selection)[q]
 	return ok
+}
+
+// SelectionSize reports how many query groups are observed, so the budget the
+// selection shares can be reported alongside what it was spent on.
+func (f *TargetFlow) SelectionSize() int {
+	if f == nil {
+		return 0
+	}
+	selection := f.groups.Load()
+	if selection == nil {
+		return 0
+	}
+	return len(*selection)
 }
 
 type targetFlowContextKey struct{}
@@ -202,13 +269,21 @@ func EmitTargetFlow(ctx context.Context, stage string, trace TraceFields, facts 
 	}
 	v.flow.emit(stage, "", "", trace, facts, 0)
 }
+
+// Observe records the facts a selected round accumulates.
+//
+// The counter branches below check that this flow is the one that created the
+// context they are about to add to. Without that check any flow reachable from
+// the observer chain adds to any round's counters, and two flows in one process
+// double every count -- which is now possible, because a deployment that selects
+// nothing still has a flow standing by for a window to be opened on it.
 func (f *TargetFlow) Observe(ctx context.Context, o Observation) {
 	if f == nil {
 		return
 	}
 	if o.Stage == StageStatePreflight || o.Stage == StageStateApplied {
 		if ctx != nil {
-			if v, ok := ctx.Value(targetFlowContextKey{}).(*targetFlowContext); ok && (o.Trace.QueryGroupKey == "" || o.Trace.QueryGroupKey == v.queryGroup) {
+			if v, ok := ctx.Value(targetFlowContextKey{}).(*targetFlowContext); ok && v.flow == f && (o.Trace.QueryGroupKey == "" || o.Trace.QueryGroupKey == v.queryGroup) {
 				calls, keys, ns := &v.preflightCalls, &v.preflightKeys, &v.preflightNS
 				if o.Stage == StageStateApplied {
 					calls, keys, ns = &v.applyCalls, &v.applyKeys, &v.applyNS
@@ -226,7 +301,7 @@ func (f *TargetFlow) Observe(ctx context.Context, o Observation) {
 	}
 	if o.Stage == StageEvaluationCompleted {
 		if ctx != nil {
-			if v, ok := ctx.Value(targetFlowContextKey{}).(*targetFlowContext); ok && (o.Trace.QueryGroupKey == "" || o.Trace.QueryGroupKey == v.queryGroup) {
+			if v, ok := ctx.Value(targetFlowContextKey{}).(*targetFlowContext); ok && v.flow == f && (o.Trace.QueryGroupKey == "" || o.Trace.QueryGroupKey == v.queryGroup) {
 				v.evaluations.Add(1)
 				if o.Duration > 0 {
 					v.evaluationNS.Add(int64(o.Duration))
@@ -412,7 +487,7 @@ func (f *TargetFlow) dropLocked(now time.Time, reason string) {
 		WrittenBytes        int    `json:"written_bytes"`
 		RecordLimit         int    `json:"record_limit"`
 		ByteLimit           int    `json:"byte_limit"`
-	}{now.UnixMilli(), "target_flow_dropped", reason, f.dropped, f.windowDropped, f.queueSuppressed, len(f.groups), f.records, f.bytes, TargetFlowMaxRecords, TargetFlowMaxBytes})
+	}{now.UnixMilli(), "target_flow_dropped", reason, f.dropped, f.windowDropped, f.queueSuppressed, f.SelectionSize(), f.records, f.bytes, TargetFlowMaxRecords, TargetFlowMaxBytes})
 	marker = append(marker, '\n')
 	if f.records < TargetFlowMaxRecords && f.bytes+len(marker) <= TargetFlowMaxBytes {
 		f.records++

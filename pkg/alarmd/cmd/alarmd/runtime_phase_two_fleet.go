@@ -17,6 +17,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
@@ -63,6 +64,61 @@ func (source registryReplicas) ReadyReplicas(ctx context.Context, at time.Time) 
 		replicas = append(replicas, worker.WorkerID)
 	}
 	return replicas, nil
+}
+
+// observationWindowApplier turns the windows other people opened into what this
+// replica actually records.
+//
+// The configured selection keeps its place at the front of the budget: it is a
+// deliberate long-term choice, and a window opened for twenty minutes should not
+// silently displace it. Windows take what is left. When they do not all fit, the
+// shortfall is reported rather than dropped quietly -- someone opened a window
+// and is waiting for output, and no output plus no explanation is the worst
+// answer this can give.
+type observationWindowApplier struct {
+	store   *fleet.WindowStore
+	flow    *observability.TargetFlow
+	fixed   []string
+	now     func() time.Time
+	observe func(applied, requested, dropped int, err error)
+}
+
+func (applier observationWindowApplier) applyOnce(ctx context.Context) {
+	windows, err := applier.store.Load(ctx, applier.now())
+	if err != nil {
+		if applier.observe != nil {
+			applier.observe(0, 0, 0, err)
+		}
+		return
+	}
+	requested := fleet.QueryGroups(windows)
+	selection := make([]string, 0, observability.TargetFlowMaxGroups)
+	seen := make(map[string]struct{}, observability.TargetFlowMaxGroups)
+	for _, queryGroup := range append(append([]string{}, applier.fixed...), requested...) {
+		if _, duplicate := seen[queryGroup]; duplicate {
+			continue
+		}
+		if len(selection) >= observability.TargetFlowMaxGroups {
+			break
+		}
+		seen[queryGroup] = struct{}{}
+		selection = append(selection, queryGroup)
+	}
+	dropped := 0
+	for _, queryGroup := range requested {
+		if _, kept := seen[queryGroup]; !kept {
+			dropped++
+		}
+	}
+	if err := applier.flow.Select(selection); err != nil {
+		if applier.observe != nil {
+			applier.observe(0, len(requested), dropped, err)
+		}
+		return
+	}
+	if applier.observe != nil {
+		applier.observe(len(selection), len(requested), dropped, nil)
+	}
 }
 
 // fleetPublisher writes this replica's snapshot when the bundle's maintenance

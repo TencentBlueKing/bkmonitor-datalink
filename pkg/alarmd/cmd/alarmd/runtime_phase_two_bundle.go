@@ -161,6 +161,14 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	if targetFlow == nil {
+		// Configuration selected nothing, which used to mean there was nothing
+		// to record with. A window opened at runtime needs somewhere to land,
+		// so the flow exists either way and simply observes nothing until asked.
+		if targetFlow, err = observability.NewEmptyTargetFlow(logger); err != nil {
+			return nil, err
+		}
+	}
 	observer = observability.Multi(observer, external.AdditionalObserver, targetFlow)
 	observer = phaseTwoRuntimeObserver(observer)
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), cfg.CompilerLimits())
@@ -571,7 +579,14 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	fleetAPI, err := fleet.NewHandler(fleetService)
+	// Windows live under the same phase-two prefix as the rest of the runtime
+	// objects, and every replica reads them on the reconcile tick it already
+	// runs, so opening one needs neither a restart nor a release.
+	windowStore, err := fleet.NewWindowStore(runtimeClient, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "fleet"))
+	if err != nil {
+		return nil, err
+	}
+	fleetAPI, err := fleet.NewHandler(fleetService, windowStore, external.Now)
 	if err != nil {
 		return nil, err
 	}
@@ -581,6 +596,11 @@ func openProductionPhaseTwoBundleWithDependencies(
 		Recorder: recorder, Observer: observer, TargetFlow: targetFlow, Now: external.Now,
 		FleetAPI:     fleetAPI,
 		PublishFleet: func(ctx context.Context) { publisher.publishOnce(ctx) },
+		ApplyObservationWindows: observationWindowApplier{
+			store: windowStore, flow: targetFlow,
+			fixed: cfg.PhaseTwo.TargetFlow.QueryGroups, now: external.Now,
+			observe: observationWindowObserver(observer),
+		}.applyOnce,
 		ProbeControlRedis: func(probeCtx context.Context) error {
 			return controlClient.Ping(probeCtx).Err()
 		},
@@ -621,6 +641,41 @@ func openProductionPhaseTwoBundleWithDependencies(
 // Only transitions are reported, matching the registration renewal: a Redis
 // outage lasting an hour is one fact, not one per reconcile tick. The observer
 // runs on the single publishing goroutine, so the transition flag needs no lock.
+// observationWindowObserver reports what this replica actually observes.
+//
+// Only changes are reported, because the applier runs on every reconcile tick
+// and a steady selection is one fact, not one per tick. A shortfall repeats,
+// though: while windows are being dropped for want of budget, every tick says
+// so, because the person waiting on that window has no other way to find out.
+func observationWindowObserver(observer observability.Observer) func(int, int, int, error) {
+	applied, requested, failing := -1, -1, false
+	return func(nowApplied, nowRequested, dropped int, err error) {
+		switch {
+		case err != nil:
+			failing = true
+			observeRuntime(context.Background(), observer, observability.Observation{
+				Component: observability.ComponentRuntime, Stage: observability.StageObservationWindow,
+				Result: observability.ResultFailed, Direction: observability.DirectionInternal, Err: err,
+			})
+		case dropped > 0:
+			failing = false
+			applied, requested = nowApplied, nowRequested
+			observeRuntime(context.Background(), observer, observability.Observation{
+				Component: observability.ComponentRuntime, Stage: observability.StageObservationWindow,
+				Result: observability.ResultDegraded, Direction: observability.DirectionInternal,
+				Err: fmt.Errorf("observation windows exceed the diagnostic budget: %d of %d requested objects are not observed", dropped, nowRequested),
+			})
+		case failing || nowApplied != applied || nowRequested != requested:
+			failing = false
+			applied, requested = nowApplied, nowRequested
+			observeRuntime(context.Background(), observer, observability.Observation{
+				Component: observability.ComponentRuntime, Stage: observability.StageObservationWindow,
+				Result: observability.Result(observability.ResultSuccess), Direction: observability.DirectionInternal,
+			})
+		}
+	}
+}
+
 func publishOutcomeObserver(observer observability.Observer) func(error) {
 	failing := false
 	return func(err error) {

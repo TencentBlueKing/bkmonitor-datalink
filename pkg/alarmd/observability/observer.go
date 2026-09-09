@@ -78,6 +78,7 @@ const (
 	StageQueryAdmission       = "query_admission"
 	StageRestartRecovered     = "restart_recovered"
 	StageFleetSnapshotPublish = "fleet_snapshot_publish"
+	StageObservationWindow    = "observation_window"
 	StageKafkaAssigned        = "kafka_assigned"
 	StageExecutionReceived    = "execution_received"
 	StageOffsetGap            = "offset_gap"
@@ -1029,6 +1030,10 @@ var metricComponentStages = []ComponentStage{
 	// missing, never why, and the log channel needs collection configured per
 	// environment before it can answer anything.
 	{ComponentRuntime, StageFleetSnapshotPublish},
+	// Same reason: an operator who opened a window and sees no output needs to
+	// learn from metrics whether it was applied, and log collection is
+	// configured per environment while metrics are always there.
+	{ComponentRuntime, StageObservationWindow},
 	{ComponentConsumer, StageKafkaAssigned}, {ComponentConsumer, StageExecutionReceived},
 	{ComponentConsumer, StageOffsetGap}, {ComponentConsumer, StageOffsetMarked},
 	{ComponentAdapter, StageMessageDecoded}, {ComponentAdapter, StageRecordBatchReady},

@@ -309,6 +309,11 @@ type phaseTwoWorkerBundleDependencies struct {
 	// PublishFleet writes this replica's contribution to them.
 	FleetAPI     http.Handler
 	PublishFleet func(context.Context)
+	// ApplyObservationWindows makes the windows opened through that API take
+	// effect on this replica. It runs on the reconcile tick rather than on a
+	// timer of its own, so opening a window is bounded by a cadence the
+	// deployment already reasons about.
+	ApplyObservationWindows func(context.Context)
 	// ProbeControlRedis issues one zero-payload round trip. Every other command
 	// carries server work or a payload, so their latency cannot be separated
 	// into transport cost and work; this one has neither and therefore measures
@@ -542,6 +547,12 @@ func (bundle *phaseTwoWorkerBundle) Run(ctx context.Context) error {
 			runErr = bundle.refreshAndReconcile(ctx, true)
 		case <-reconcileTicker.C:
 			bundle.probeControlRedis(ctx)
+			// Applied before the reconcile rather than after it: a failure here
+			// must not decide whether the pipeline reconciles, and the applier
+			// swallows its own errors for the same reason.
+			if bundle.dependencies.ApplyObservationWindows != nil {
+				bundle.dependencies.ApplyObservationWindows(ctx)
+			}
 			runErr = bundle.refreshAndReconcile(ctx, false)
 		case schedulerErr := <-schedulerDone:
 			schedulerRunning = false

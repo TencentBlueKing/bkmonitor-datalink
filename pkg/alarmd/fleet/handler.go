@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Paging is mandatory rather than optional. An endpoint that returns everything
@@ -53,12 +54,22 @@ type detailResponse struct {
 	QueryGroup string   `json:"query_group"`
 }
 
-// NewHandler mounts the read-only object API. The routes are deliberately few:
-// a list, one object, and the health judgment. Anything beyond that needs a
-// decision, not just a handler.
-func NewHandler(service *Service) (http.Handler, error) {
+// NewHandler mounts the object API. The routes are deliberately few: a list,
+// one object, the health judgment, and the observation windows. Anything beyond
+// that needs a decision, not just a handler.
+//
+// Windows are the one place this API writes. The write is scoped to diagnostics
+// -- it selects what gets recorded, never what gets evaluated -- and it is what
+// keeps the choice of observed objects out of deployment configuration, where a
+// choice made during one investigation outlives it and can only be changed by a
+// release. A nil store leaves the route unmounted, so a deployment that has not
+// wired one is missing the route rather than serving one that cannot work.
+func NewHandler(service *Service, windows *WindowStore, now func() time.Time) (http.Handler, error) {
 	if service == nil {
 		return nil, errors.New("alarmd fleet: handler requires a service")
+	}
+	if now == nil {
+		now = time.Now
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/objects", func(response http.ResponseWriter, request *http.Request) {
@@ -67,6 +78,11 @@ func NewHandler(service *Service) (http.Handler, error) {
 	mux.HandleFunc("/api/objects/", func(response http.ResponseWriter, request *http.Request) {
 		objectDetail(response, request, service)
 	})
+	if windows != nil {
+		mux.HandleFunc("/api/windows", func(response http.ResponseWriter, request *http.Request) {
+			observationWindows(response, request, windows, now)
+		})
+	}
 	mux.HandleFunc("/api/health", func(response http.ResponseWriter, request *http.Request) {
 		view := service.View(request.Context())
 		writeJSON(response, http.StatusOK, map[string]any{
@@ -168,6 +184,55 @@ func pageOf(anomalies []Anomaly, offset, limit int) []Anomaly {
 		end = len(anomalies)
 	}
 	return anomalies[offset:end]
+}
+
+// windowRequest opens or closes windows. Close is a separate verb rather than a
+// zero TTL, because "observe this for no time" is not a thing anyone means.
+type windowRequest struct {
+	QueryGroups []string `json:"query_groups"`
+	OpenedBy    string   `json:"opened_by"`
+	TTLSeconds  int      `json:"ttl_seconds"`
+	Close       bool     `json:"close"`
+}
+
+func observationWindows(response http.ResponseWriter, request *http.Request, windows *WindowStore, now func() time.Time) {
+	switch request.Method {
+	case http.MethodGet:
+		open, err := windows.Load(request.Context(), now())
+		if err != nil {
+			writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "window store unavailable"})
+			return
+		}
+		writeJSON(response, http.StatusOK, map[string]any{"windows": open, "max_open": MaxOpenWindows, "max_ttl_seconds": int(MaxWindowTTL.Seconds())})
+	case http.MethodPost:
+		var body windowRequest
+		if err := json.NewDecoder(http.MaxBytesReader(response, request.Body, 64<<10)).Decode(&body); err != nil {
+			writeJSON(response, http.StatusBadRequest, map[string]string{"error": "body must be a window request"})
+			return
+		}
+		at := now()
+		var (
+			open []Window
+			err  error
+		)
+		if body.Close {
+			open, err = windows.Close(request.Context(), body.QueryGroups, at)
+		} else {
+			open, err = windows.Open(request.Context(), body.QueryGroups, body.OpenedBy,
+				time.Duration(body.TTLSeconds)*time.Second, at)
+		}
+		if err != nil {
+			// The rejections here are all about what the caller asked for --
+			// an unknown identity, too many objects, too long a window -- so
+			// the reason is the caller's to see. A store failure surfaces as
+			// the same message, which is the one case worth improving later.
+			writeJSON(response, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(response, http.StatusOK, map[string]any{"windows": open, "max_open": MaxOpenWindows, "max_ttl_seconds": int(MaxWindowTTL.Seconds())})
+	default:
+		writeJSON(response, http.StatusMethodNotAllowed, map[string]string{"error": "GET to read windows, POST to open or close one"})
+	}
 }
 
 // knownReplica reports whether the deployment contains a replica by this name.

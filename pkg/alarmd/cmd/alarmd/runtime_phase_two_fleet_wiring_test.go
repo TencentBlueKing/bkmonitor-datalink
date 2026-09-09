@@ -11,7 +11,10 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +22,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -110,6 +114,89 @@ func TestProductionBundleReportsFleetSnapshotPublishOutcome(t *testing.T) {
 	}
 }
 
+// A window is only worth anything if opening it changes what the replica
+// actually records. Asserting that the row reached Redis would pass with the
+// applier disconnected, which is the shape of the defect this package keeps
+// producing: the write lands, nothing observes it, and the operator waits for
+// output that cannot come.
+func TestOpeningAWindowChangesWhatTheReplicaObserves(t *testing.T) {
+	flow, err := observability.NewEmptyTargetFlow(observability.New(observability.ComponentRuntime, io.Discard))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := fleet.NewWindowStore(windowRedis(t), "alarmd-window-wiring")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now()
+	watched := strings.Repeat("a", 64)
+	var dropped, applied int
+	applier := observationWindowApplier{
+		store: store, flow: flow, now: func() time.Time { return at },
+		observe: func(nowApplied, _, nowDropped int, _ error) { applied, dropped = nowApplied, nowDropped },
+	}
+
+	if flow.Selected(watched) {
+		t.Fatal("the object is observed before any window was opened")
+	}
+	if _, err := store.Open(context.Background(), []string{watched}, "operator", time.Minute, at); err != nil {
+		t.Fatal(err)
+	}
+	applier.applyOnce(context.Background())
+	if !flow.Selected(watched) {
+		t.Fatal("the object is still not observed after a window was opened")
+	}
+	if applied != 1 || dropped != 0 {
+		t.Fatalf("applied = %d dropped = %d, want the single window applied", applied, dropped)
+	}
+
+	// And it stops on its own, which is what separates a window from the static
+	// selection it replaces.
+	at = at.Add(2 * time.Minute)
+	applier.applyOnce(context.Background())
+	if flow.Selected(watched) {
+		t.Fatal("the object is still observed after its window expired")
+	}
+}
+
+// The configured selection keeps its place at the front of the budget, so a
+// window that does not fit is refused visibly rather than applied silently.
+func TestWindowsThatDoNotFitTheBudgetAreReported(t *testing.T) {
+	flow, err := observability.NewEmptyTargetFlow(observability.New(observability.ComponentRuntime, io.Discard))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := fleet.NewWindowStore(windowRedis(t), "alarmd-window-budget")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now()
+	fixed := make([]string, 0, observability.TargetFlowMaxGroups)
+	for index := 0; index < observability.TargetFlowMaxGroups; index++ {
+		fixed = append(fixed, fmt.Sprintf("%064x", index))
+	}
+	watched := strings.Repeat("b", 64)
+	if _, err := store.Open(context.Background(), []string{watched}, "operator", time.Minute, at); err != nil {
+		t.Fatal(err)
+	}
+	var dropped int
+	var reported error
+	applier := observationWindowApplier{
+		store: store, flow: flow, fixed: fixed, now: func() time.Time { return at },
+		observe: func(_, _, nowDropped int, err error) { dropped, reported = nowDropped, err },
+	}
+	applier.applyOnce(context.Background())
+	if flow.Selected(watched) {
+		t.Fatal("a window was applied past the diagnostic budget")
+	}
+	if dropped != 1 {
+		t.Fatalf("dropped = %d, want the window that did not fit counted", dropped)
+	}
+	if reported != nil {
+		t.Fatalf("observed error = %v, want the shortfall reported as a count rather than a failure", reported)
+	}
+}
+
 func assertFleetPublishResult(t *testing.T, mu *sync.Mutex, observations *[]observability.Observation, want observability.Result) {
 	t.Helper()
 	reported := fleetPublishObservations(mu, observations)
@@ -162,4 +249,12 @@ func fleetPublishObservations(mu *sync.Mutex, observations *[]observability.Obse
 		}
 	}
 	return reported
+}
+
+// windowRedis gives the window store a real Redis, so the sorted-set and hash
+// semantics the store depends on are the ones it will meet in production.
+func windowRedis(t *testing.T) *redis.Client {
+	t.Helper()
+	_, client := startPhaseTwoRedis(t)
+	return client
 }

@@ -97,6 +97,7 @@ func TestUnlimitedRunnerRecoveryWaitDoesNotBlockNormal(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
 	cfg.Redis.StatePrefix = "alarmd-g3b-shared-query-permits"
+	withCompatibilityOutput(&cfg, address)
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
 	cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(time.Millisecond)

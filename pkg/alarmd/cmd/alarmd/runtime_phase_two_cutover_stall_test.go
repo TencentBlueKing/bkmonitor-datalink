@@ -150,6 +150,7 @@ func startCutoverFixture(t *testing.T, configure func(*config.Config)) *cutoverS
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
 	cfg.Redis.StatePrefix = "alarmd-cutover-stall"
+	withCompatibilityOutput(&cfg, address)
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
 	cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(500 * time.Millisecond)

@@ -386,7 +386,18 @@ func openProductionPhaseTwoBundleWithDependencies(
 	{
 		// Conversion is built in; these settings provide environment coordinates,
 		// never an enable switch. Native events do not access the snapshot store.
-		if cfg.Kafka.LegacyAdapter.Topic == "" {
+		//
+		// The protocol is chosen per event from the strategy's frozen revision,
+		// which this process does not control and which can stop being present
+		// between two refreshes. So the compatibility protocol is always
+		// reachable, and everything it needs belongs to startup: a topic this
+		// deployment permits, and the service Redis every converted event writes
+		// its snapshot to. Discovering either at the first event is what turned
+		// a release into twenty-five minutes of failed emissions while Slots
+		// kept completing, and control-plane state written in those minutes then
+		// made the rollback worse than the defect.
+		defaulted := cfg.Kafka.LegacyAdapter.Topic == ""
+		if defaulted {
 			cfg.Kafka.LegacyAdapter.Topic = "alarmd_0bkmonitor_backend_event"
 		}
 		allowed := false
@@ -396,7 +407,15 @@ func openProductionPhaseTwoBundleWithDependencies(
 			}
 		}
 		if !allowed {
-			return nil, errors.New("legacy output topic must be explicitly allowlisted")
+			origin := "kafka.legacy_adapter.topic"
+			if defaulted {
+				origin = "the built-in default, because kafka.legacy_adapter.topic is unset"
+			}
+			return nil, fmt.Errorf(
+				"kafka output topic %q comes from %s and is not in kafka.allowed_output_topics %v: "+
+					"every strategy without a frozen revision publishes the Python-compatible protocol to that topic",
+				cfg.Kafka.LegacyAdapter.Topic, origin, cfg.Kafka.AllowedOutputTopics,
+			)
 		}
 		store := legacyoutput.RedisSnapshotStore{Nodes: map[string]redis.Cmdable{}, Routes: cfg.Kafka.LegacyAdapter.ServiceRoutes}
 		for id, connection := range cfg.Kafka.LegacyAdapter.ServiceNodes {
@@ -407,12 +426,19 @@ func openProductionPhaseTwoBundleWithDependencies(
 			legacyClients = append(legacyClients, client)
 			store.Nodes[id] = client
 		}
-		// Validate supplied routes now; an environment containing only native
-		// revisions does not need service Redis. Missing routes fail conversion.
-		if len(store.Routes) > 0 || len(store.Nodes) > 0 {
-			if err := store.Validate(); err != nil {
-				return nil, err
-			}
+		if err := store.Validate(); err != nil {
+			return nil, fmt.Errorf(
+				"kafka.legacy_adapter service Redis is incomplete (%w): "+
+					"set kafka.legacy_adapter.service_nodes and service_routes, "+
+					"because every event whose strategy carries no frozen revision writes a snapshot there before it is published",
+				err,
+			)
+		}
+		if cfg.Kafka.LegacyAdapter.SnapshotPrefix == "" {
+			return nil, errors.New(
+				"kafka.legacy_adapter.snapshot_prefix is required: " +
+					"it names the keys every Python-compatible event writes to the service Redis",
+			)
 		}
 		converter := &legacyoutput.Converter{Store: store, SnapshotPrefix: cfg.Kafka.LegacyAdapter.SnapshotPrefix, Now: external.Now, PluginID: cfg.Kafka.LegacyAdapter.PluginID}
 		if podConfig := cfg.Kafka.LegacyAdapter.PodCache; podConfig != nil {

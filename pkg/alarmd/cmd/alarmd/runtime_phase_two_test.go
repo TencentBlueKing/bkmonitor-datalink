@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -2649,6 +2651,30 @@ func schedulerFailureObservations(observations []observability.Observation) []ob
 		}
 	}
 	return failures
+}
+
+// withCompatibilityOutput supplies the coordinates every deployment needs for
+// the built-in Python-compatible protocol: a strategy without a frozen revision
+// selects that protocol, and its snapshot reaches the service Redis before the
+// event is published. Tests point the service Redis at the instance they
+// already run, because the snapshot destination is never what is under test.
+func withCompatibilityOutput(cfg *config.Config, address string) {
+	const topic = "alarmd_0bkmonitor_backend_event"
+	present := false
+	for _, allowed := range cfg.Kafka.AllowedOutputTopics {
+		if allowed == topic {
+			present = true
+		}
+	}
+	if !present {
+		cfg.Kafka.AllowedOutputTopics = append(cfg.Kafka.AllowedOutputTopics, topic)
+	}
+	cfg.Kafka.LegacyAdapter.Topic = topic
+	cfg.Kafka.LegacyAdapter.SnapshotPrefix = "alarmd-compatibility-test"
+	connection := cfg.Redis.Connection()
+	connection.Address = address
+	cfg.Kafka.LegacyAdapter.ServiceNodes = map[string]config.RedisConnectionConfig{"service-0": connection}
+	cfg.Kafka.LegacyAdapter.ServiceRoutes = []legacyoutput.ServiceRoute{{UpperBound: math.MaxInt64, NodeID: "service-0"}}
 }
 
 func validGoAccessRuntimeConfig() config.Config {

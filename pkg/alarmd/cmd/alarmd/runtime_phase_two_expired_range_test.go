@@ -215,6 +215,7 @@ func newExpiredRangeProductionBundle(t *testing.T, response http.HandlerFunc, ob
 	t.Cleanup(server.Close)
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
+	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd-expired-range-integration"
 	cfg.PhaseTwo.Scheduler.ExpiredRangeEnabled = true
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)

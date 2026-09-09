@@ -382,6 +382,7 @@ func controlledG4RuntimeConfig(address, endpoint, prefix string) config.Config {
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
 	cfg.Redis.StatePrefix = prefix
+	withCompatibilityOutput(&cfg, address)
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = endpoint
 	cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(time.Millisecond)

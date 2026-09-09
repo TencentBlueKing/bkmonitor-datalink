@@ -80,6 +80,7 @@ func TestProductionPhaseTwoBundleUsesCanonicalSourceAndRuntimeRedisOverride(t *t
 	defer uqServer.Close()
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = sourceAddress
+	withCompatibilityOutput(&cfg, sourceAddress)
 	cfg.Redis.StatePrefix = "alarmd:phase-two:g1:v1"
 	runtimeRedis := cfg.Redis.Connection()
 	runtimeRedis.Address = runtimeAddress
@@ -142,6 +143,7 @@ func TestProductionPhaseTwoBundleStartsIdleWithEmptyCatalogThenActivatesQueryGro
 	defer uqServer.Close()
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
+	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd:phase-two:empty-catalog"
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
@@ -236,6 +238,7 @@ func TestProductionPhaseTwoBundleRebuildsExpiredSnapshotReferencedByPersistentAc
 	defer uqServer.Close()
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
+	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd:phase-two:expired-snapshot"
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
@@ -505,6 +508,7 @@ func testProductionPhaseTwoStrandedLatest(
 	defer uqServer.Close()
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
+	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd:phase-two:stranded-latest"
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
@@ -708,6 +712,7 @@ func testProductionFullTargetFlow(t *testing.T, diagnostic bool) {
 
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
+	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd-g1-full"
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
@@ -913,6 +918,7 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingEventACKIsRetr
 
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
+	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd-g3b-qg-isolation"
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
@@ -1058,6 +1064,7 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingInitialFreezeL
 
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
+	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd-g3b-snapshot-qg-isolation"
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
@@ -1189,6 +1196,7 @@ func TestProductionPhaseTwoBundleDrainsExpiredRetiredBacklogWithoutProjection(t 
 
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
+	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd-g4-retired-backlog-projection"
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
@@ -1352,6 +1360,7 @@ func TestProductionPhaseTwoBundleSharesOneProcessRecoveryPermitBudgetAcrossOwned
 
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
+	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd-g3b-shared-query-permits"
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
@@ -1462,6 +1471,7 @@ func TestProductionPhaseTwoBundleCommitsBudgetExhaustedRecoveryCompletionWithout
 
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
+	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd-g3b-budget-completion"
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
@@ -1598,6 +1608,7 @@ func TestProductionPhaseTwoBundleLetsNormalUseRemainingProcessPermitDuringRecove
 
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
+	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd-g3b-normal-recovery-isolation"
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
@@ -1739,6 +1750,7 @@ func TestProductionPhaseTwoBundleCompletesIncompleteAccessWithoutStoppingHealthy
 
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
+	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd-g3b-access-recovery"
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
@@ -2147,6 +2159,7 @@ func TestProductionRunOneReadsControlBodiesOncePerRevisionAndVersion(t *testing.
 
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
+	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd-g3b-snapshot-qg-isolation"
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL

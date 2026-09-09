@@ -88,6 +88,7 @@ func TestProductionPhaseTwoBundleReRunsChunkedSlotIdempotently(t *testing.T) {
 
 	cfg := validGoAccessRuntimeConfig()
 	cfg.Redis.Address = address
+	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd-c2-chunked"
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL

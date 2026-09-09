@@ -11,6 +11,7 @@ package fleet
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -93,14 +94,19 @@ func failedExecution(outcome string) bool {
 }
 
 type queryGroupState struct {
-	strategies    map[StrategyRef]struct{}
-	runStartedAt  time.Time
-	lastSeenAt    time.Time
-	reasonCode    string
-	degradedRuns  int
-	blockedRuns   int
-	currentKind   string
-	inAnomalyRun  bool
+	strategies   map[StrategyRef]struct{}
+	runStartedAt time.Time
+	reasonCode   string
+	degradedRuns int
+	blockedRuns  int
+	currentKind  string
+	inAnomalyRun bool
+	// determined records that at least one round said something conclusive
+	// about this object. Until it does, the replica cannot report the object as
+	// healthy: an empty anomaly list is what a freshly restarted tracker looks
+	// like, and it is also what an object that never reports anything looks
+	// like.
+	determined    bool
 	lastCompleted string
 }
 
@@ -194,13 +200,13 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		tracker.groups[queryGroup] = state
 	}
 	at := tracker.now()
-	state.lastSeenAt = at
 	if trace.StrategyID != "" && len(state.strategies) < maxStrategiesPerQueryGroup {
 		state.strategies[StrategyRef{StrategyID: trace.StrategyID, BusinessID: trace.BusinessID}] = struct{}{}
 	}
 
 	switch {
 	case completion != "":
+		state.determined = true
 		state.lastCompleted = completion
 		if healthyCompletion(completion) {
 			tracker.resetRun(state)
@@ -210,17 +216,23 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		state.currentKind = KindDegradedRun
 		state.reasonCode = completion
 	case blockedOutcome(runOutcome):
+		state.determined = true
 		state.blockedRuns++
 		state.currentKind = KindBlockedRun
 		state.reasonCode = runOutcome
 	case failedExecution(executeOutcome):
+		state.determined = true
 		state.degradedRuns++
 		state.currentKind = KindDegradedRun
 		state.reasonCode = executeOutcome
 	default:
 		// Rounds that neither completed nor were blocked -- not due, deferred,
-		// still running -- say nothing about whether the group is healthy, so
-		// they neither start nor clear a run.
+		// still running, cancelled -- say nothing about whether the group is
+		// healthy, so they neither start nor clear a run, and they leave the
+		// object undetermined. "cancelled" in particular covers both an ordinary
+		// shutdown and a short-period object that keeps blowing its completion
+		// deadline; the second must not be reported as healthy just because this
+		// classifier cannot tell it from the first.
 		return
 	}
 	if !state.inAnomalyRun {
@@ -265,7 +277,38 @@ func (tracker *Tracker) Anomalies() []Anomaly {
 		sortStrategies(anomaly.Strategies)
 		anomalies = append(anomalies, anomaly)
 	}
+	// Sorted here rather than only in the aggregate, because the publisher cuts
+	// this list at the cap before anyone aggregates it. Ranging over a Go map is
+	// randomised, so cutting an unsorted list would keep an arbitrary subset and
+	// keep a different one on every tick -- the longest-running object, the one
+	// worth reporting, would appear and disappear while nothing changed.
+	sort.Slice(anomalies, func(left, right int) bool {
+		if anomalies[left].Since.Equal(anomalies[right].Since) {
+			return anomalies[left].QueryGroup < anomalies[right].QueryGroup
+		}
+		return anomalies[left].Since.Before(anomalies[right].Since)
+	})
 	return anomalies
+}
+
+// Determined reports how many tracked objects have said something conclusive
+// about themselves at least once.
+//
+// The publisher compares it against what the replica owns, so that objects the
+// tracker cannot speak for are counted as unknown rather than silently included
+// in a healthy answer. That covers three otherwise invisible cases with one
+// number: a tracker emptied by a restart, an object whose rounds are all
+// inconclusive, and an object dropped because the table hit its bound.
+func (tracker *Tracker) Determined() int {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	determined := 0
+	for _, state := range tracker.groups {
+		if state.determined {
+			determined++
+		}
+	}
+	return determined
 }
 
 // Forget drops query groups this replica no longer owns, so a handover does not

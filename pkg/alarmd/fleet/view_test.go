@@ -20,10 +20,14 @@ const freshness = time.Minute
 
 func replicas() []string { return []string{"pod-a", "pod-b"} }
 
+// A healthy replica has observed every object it owns. Owning without having
+// observed is a separate state with its own test below, and conflating the two
+// here would let the whole suite pass while the aggregate treated silence as
+// health.
 func healthySnapshots() []Snapshot {
 	return []Snapshot{
-		{Replica: "pod-a", TakenAt: now.Add(-10 * time.Second), Owned: 500},
-		{Replica: "pod-b", TakenAt: now.Add(-10 * time.Second), Owned: 449},
+		{Replica: "pod-a", TakenAt: now.Add(-10 * time.Second), Owned: 500, Determined: 500},
+		{Replica: "pod-b", TakenAt: now.Add(-10 * time.Second), Owned: 449, Determined: 449},
 	}
 }
 
@@ -146,10 +150,56 @@ func TestUnreadableDenominatorIsUnknownNotAnEmptyDeployment(t *testing.T) {
 
 func TestCoverageShortfallWithFreshSnapshotsIsStillUnknown(t *testing.T) {
 	snapshots := healthySnapshots()
-	snapshots[1].Owned = 400
+	snapshots[1].Owned, snapshots[1].Determined = 400, 400
 	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, replicas(), now, freshness)
 	if view.Health != HealthUnknown || view.Unknown != 49 {
 		t.Fatalf("health = %s unknown = %d, want unknown with 49 unaccounted objects", view.Health, view.Unknown)
+	}
+}
+
+// The failure a restart produces: the tracker is empty, so every object it owns
+// is reported with no anomaly against it. An empty anomaly list from a replica
+// that has observed nothing looks exactly like one from a replica where nothing
+// is wrong, and calling that HEALTHY turns every rolling deploy into a window
+// where the deployment cannot be reported as broken.
+func TestOwnedButUnobservedObjectsAreNotHealthy(t *testing.T) {
+	restarted := healthySnapshots()
+	restarted[0].Determined = 0
+	restarted[1].Determined = 0
+	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, restarted, replicas(), now, freshness)
+	if view.Health != HealthUnknown || !hasGap(view, GapUndetermined) {
+		t.Fatalf("health = %s gaps = %+v, want unknown while nothing has been observed", view.Health, view.Gaps)
+	}
+	if view.Unknown != 949 {
+		t.Fatalf("unknown = %d, want every owned object counted as unknown", view.Unknown)
+	}
+	if view.Covered != 949 {
+		t.Fatalf("covered = %d, want ownership coverage to stay complete", view.Covered)
+	}
+}
+
+// Partial knowledge is partial: the objects a replica can speak for do not
+// vouch for the ones it cannot.
+func TestPartiallyObservedOwnershipCountsOnlyTheUnobservedAsUnknown(t *testing.T) {
+	snapshots := healthySnapshots()
+	snapshots[1].Determined = 400
+	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, replicas(), now, freshness)
+	if view.Health != HealthUnknown || view.Unknown != 49 {
+		t.Fatalf("health = %s unknown = %d, want the 49 unobserved objects", view.Health, view.Unknown)
+	}
+	if view.Determined != 900 {
+		t.Fatalf("determined = %d, want 900", view.Determined)
+	}
+}
+
+// A replica cannot report more objects observed than it owns; if it does, the
+// two numbers came from different moments and neither can carry the verdict.
+func TestMoreDeterminedThanOwnedIsUnknown(t *testing.T) {
+	snapshots := healthySnapshots()
+	snapshots[0].Determined = 600
+	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, replicas(), now, freshness)
+	if view.Health != HealthUnknown || !hasGap(view, GapCoverageInconsistent) {
+		t.Fatalf("health = %s gaps = %+v, want unknown when more is observed than owned", view.Health, view.Gaps)
 	}
 }
 

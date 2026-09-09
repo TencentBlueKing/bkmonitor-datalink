@@ -170,3 +170,48 @@ func get(t *testing.T, url string) int {
 	defer response.Body.Close()
 	return response.StatusCode
 }
+
+// The two listeners share one shutdown budget. Draining them one after the
+// other lets a single in-flight profile spend the whole budget and hand the
+// query listener a context that has already expired, so an ordinary rollout
+// that happens to catch a running profile force-closes in-flight scrapes and
+// exits non-zero on every replica.
+//
+// Asserted as an order, not as a duration: while the diagnostics drain is still
+// waiting on a running profile, the query listener must already have stopped
+// accepting. Drained one after the other it would still be open.
+func TestQueryListenerDrainsWhileTheDiagnosticsDrainIsStillWaiting(t *testing.T) {
+	queryAddress := reserveAddress(t)
+	diagnosticsAddress := reserveAddress(t)
+	server := New(metric.NewRecorder(metric.BuildInfo{}), WithDiagnosticsAddress(diagnosticsAddress))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runErrors := make(chan error, 1)
+	go func() { runErrors <- server.Run(ctx, queryAddress, 10*time.Second) }()
+	waitForStatus(t, "http://"+queryAddress+"/healthz", http.StatusOK)
+
+	profileDone := make(chan struct{})
+	go func() {
+		defer close(profileDone)
+		// A real profile, so the diagnostics drain waits on the same thing it
+		// waits on in production.
+		response, err := http.Get("http://" + diagnosticsAddress + "/debug/pprof/profile?seconds=2") //nolint:noctx // probe
+		if err == nil {
+			response.Body.Close()
+		}
+	}()
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+	time.Sleep(700 * time.Millisecond)
+
+	response, err := http.Get("http://" + queryAddress + "/healthz") //nolint:noctx // probe
+	if err == nil {
+		response.Body.Close()
+		t.Fatal("the query listener was still accepting while the diagnostics drain waited on a profile")
+	}
+
+	<-profileDone
+	if err := <-runErrors; err != nil {
+		t.Fatalf("run: %v", err)
+	}
+}

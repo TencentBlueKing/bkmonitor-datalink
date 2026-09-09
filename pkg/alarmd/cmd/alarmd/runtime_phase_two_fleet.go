@@ -65,32 +65,19 @@ func (source registryReplicas) ReadyReplicas(ctx context.Context, at time.Time) 
 	return replicas, nil
 }
 
-// fleetPublisher writes this replica's snapshot on a timer.
+// fleetPublisher writes this replica's snapshot when the bundle's maintenance
+// loop asks it to. The cadence lives with that loop rather than here, so there
+// is one timer for the job instead of two that can drift apart.
 type fleetPublisher struct {
-	tracker  *fleet.Tracker
-	store    *fleet.RedisStore
-	replica  string
-	interval time.Duration
-	owned    func() []execution.QueryGroupIdentity
-	now      func() time.Time
-	observe  func(error)
-}
-
-// run publishes until the context ends. A publish failure is observed and
-// retried on the next tick rather than propagated: the snapshot is diagnostics,
-// and diagnostics must not be able to stop the pipeline that produces the
-// facts they describe.
-func (publisher fleetPublisher) run(ctx context.Context) {
-	ticker := time.NewTicker(publisher.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			publisher.publishOnce(ctx)
-		}
-	}
+	tracker *fleet.Tracker
+	store   *fleet.RedisStore
+	replica string
+	owned   func() []execution.QueryGroupIdentity
+	now     func() time.Time
+	// observe reports each publish outcome. A failure is retried on the next
+	// tick rather than propagated: the snapshot is diagnostics, and diagnostics
+	// must not be able to stop the pipeline whose facts they describe.
+	observe func(error)
 }
 
 func (publisher fleetPublisher) publishOnce(ctx context.Context) {
@@ -106,13 +93,21 @@ func (publisher fleetPublisher) publishOnce(ctx context.Context) {
 
 	anomalies := publisher.tracker.Anomalies()
 	snapshot := fleet.Snapshot{
-		Replica:        publisher.replica,
-		TakenAt:        publisher.now(),
-		Owned:          len(owned),
+		Replica: publisher.replica,
+		TakenAt: publisher.now(),
+		Owned:   len(owned),
+		// Read after Forget, so it counts only objects this replica still owns.
+		// The difference between the two is what the replica owns but cannot
+		// speak for, which the aggregate counts as unknown rather than healthy.
+		Determined:     publisher.tracker.Determined(),
 		Anomalies:      anomalies,
 		TotalAnomalies: len(anomalies),
 	}
-	if err := publisher.store.Publish(ctx, snapshot); err != nil && publisher.observe != nil {
+	// The outcome is reported either way, including success. Reporting only
+	// failures would leave the observer unable to tell recovery from silence,
+	// and silence is exactly what a broken publisher produces.
+	err := publisher.store.Publish(ctx, snapshot)
+	if publisher.observe != nil {
 		publisher.observe(err)
 	}
 }

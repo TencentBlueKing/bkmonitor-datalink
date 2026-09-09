@@ -12,6 +12,7 @@ package fleet
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 )
 
@@ -47,6 +48,20 @@ type Service struct {
 	snapshots    SnapshotReader
 	freshness    time.Duration
 	now          func() time.Time
+
+	// The denominator and the replica list are read from the control plane on
+	// the same Redis the pipeline depends on, and reading the active object set
+	// decodes the whole set. This surface is meant to be embedded in a page, so
+	// its cost would otherwise scale with how many people are looking at it.
+	// The mutex is held across the refresh on purpose: concurrent viewers then
+	// collapse into one read instead of racing to issue their own.
+	sourceMu    sync.Mutex
+	sourcesAt   time.Time
+	sourcesFor  time.Duration
+	replicas    []string
+	replicasErr error
+	expectation Expectation
+	expectErr   error
 }
 
 // NewService wires the three sources. freshness is how old a snapshot may be
@@ -78,7 +93,33 @@ func NewService(
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{expectations: expectations, registry: registry, snapshots: snapshots, freshness: freshness, now: now}, nil
+	// Half the freshness budget: long enough that a page refreshing every second
+	// costs one control-plane read per publish cycle rather than one per view,
+	// short enough that a replica cannot go stale without the next view seeing
+	// it, since staleness is judged against the same budget.
+	return &Service{
+		expectations: expectations, registry: registry, snapshots: snapshots,
+		freshness: freshness, sourcesFor: freshness / 2, now: now,
+	}, nil
+}
+
+// sources returns the denominator and the replica list, reading them at most
+// once per cache window. Failures are cached too: a control plane that is down
+// stays down for the window, and retrying it per request would add load to a
+// dependency that is already failing.
+func (service *Service) sources(ctx context.Context, at time.Time) ([]string, error, Expectation, error) {
+	service.sourceMu.Lock()
+	defer service.sourceMu.Unlock()
+	if !service.sourcesAt.IsZero() && at.Sub(service.sourcesAt) < service.sourcesFor {
+		return service.replicas, service.replicasErr, service.expectation, service.expectErr
+	}
+	service.replicas, service.replicasErr = service.registry.ReadyReplicas(ctx, at)
+	service.expectation, service.expectErr = service.expectations.Expectation(ctx)
+	if service.expectErr != nil {
+		service.expectation = Expectation{}
+	}
+	service.sourcesAt = at
+	return service.replicas, service.replicasErr, service.expectation, service.expectErr
 }
 
 // View assembles the current answer.
@@ -90,22 +131,14 @@ func NewService(
 func (service *Service) View(ctx context.Context) View {
 	at := service.now()
 
-	replicas, err := service.registry.ReadyReplicas(ctx, at)
-	if err != nil {
+	replicas, replicasErr, expectation, expectationErr := service.sources(ctx, at)
+	if replicasErr != nil {
 		return View{
 			Health:    HealthUnknown,
-			Gaps:      []Gap{{Kind: GapRegistryUnavailable, Detail: err.Error()}},
+			Gaps:      []Gap{{Kind: GapRegistryUnavailable, Detail: gapDetail(replicasErr)}},
 			Anomalies: []Anomaly{},
 			Replicas:  []string{},
 		}
-	}
-
-	expectation := Expectation{}
-	expectationErr := ""
-	if resolved, err := service.expectations.Expectation(ctx); err != nil {
-		expectationErr = err.Error()
-	} else {
-		expectation = resolved
 	}
 
 	snapshots, err := service.snapshots.Load(ctx, replicas)
@@ -117,12 +150,31 @@ func (service *Service) View(ctx context.Context) View {
 	}
 
 	view := Aggregate(expectation, snapshots, replicas, at, service.freshness)
-	if expectationErr != "" {
+	if expectationErr != nil {
 		for index := range view.Gaps {
 			if view.Gaps[index].Kind == GapDenominatorUnavailable {
-				view.Gaps[index].Detail = expectationErr
+				view.Gaps[index].Detail = gapDetail(expectationErr)
 			}
 		}
 	}
 	return view
+}
+
+// gapDetail classifies a dependency failure instead of quoting it.
+//
+// This body is served on the listener a host platform may route to, so anything
+// it carries is readable by whoever can reach that port. A raw error from a
+// Redis client names the endpoint it failed to reach, which says more about the
+// deployment's internals than a caller asking whether alarmd is healthy needs to
+// know. The full text stays where it was already going: this process's logs and
+// the failure metrics of the store that produced it.
+func gapDetail(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return "timed out"
+	default:
+		return "unavailable"
+	}
 }

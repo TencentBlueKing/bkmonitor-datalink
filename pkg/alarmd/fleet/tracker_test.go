@@ -268,3 +268,70 @@ func TestTableIsBoundedAndTheBoundIsObservable(t *testing.T) {
 		t.Fatalf("tracked = %d, want the table bounded at 2", tracker.Tracked())
 	}
 }
+
+// "cancelled" is what a Slot reports both on an ordinary shutdown and when a
+// short-period object keeps blowing its completion deadline. The classifier
+// cannot tell those apart, so it must not treat either as evidence of health:
+// an object whose every round is cancelled has said nothing about itself.
+func TestObjectsWhoseRoundsAreAllInconclusiveStayUndetermined(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for round := 0; round < 10; round++ {
+		tracker.Observe(context.Background(), observability.Observation{
+			ExecuteOutcome: "cancelled",
+			Trace:          observability.TraceFields{QueryGroupKey: "qg-deadline"},
+		})
+	}
+	if got := tracker.Determined(); got != 0 {
+		t.Fatalf("determined = %d, want the object to stay unaccounted for", got)
+	}
+	if anomalies := tracker.Anomalies(); len(anomalies) != 0 {
+		t.Fatalf("anomalies = %+v, want none: nothing conclusive was observed", anomalies)
+	}
+}
+
+func TestAConclusiveRoundDeterminesTheObject(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	tracker.Observe(context.Background(), completion("qg-healthy", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), runOutcome("qg-blocked", "source_blocked"))
+	if got := tracker.Determined(); got != 2 {
+		t.Fatalf("determined = %d, want both objects accounted for", got)
+	}
+	// Forget is what keeps the count comparable with what the replica owns.
+	tracker.Forget(map[string]struct{}{"qg-healthy": {}})
+	if got := tracker.Determined(); got != 1 {
+		t.Fatalf("determined after handover = %d, want only the retained object", got)
+	}
+}
+
+// The publisher cuts this list at the cap, so the order it is built in decides
+// which objects survive. Ranging over a Go map is randomised: without sorting
+// here, every tick would keep a different arbitrary subset and the object that
+// has been broken longest would flicker in and out of the page.
+func TestAnomaliesAreSortedSoTruncationKeepsTheOldest(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	// Named so that alphabetical order is the reverse of age: a sort by key, or
+	// no sort at all, cannot pass by accident.
+	started := []string{"qg-c", "qg-b", "qg-a"}
+	for index, queryGroup := range started {
+		at.at = now.Add(time.Duration(index) * time.Hour)
+		tracker.Observe(context.Background(), runOutcome(queryGroup, "source_blocked"))
+	}
+	at.at = now.Add(10 * time.Hour)
+	for round := 0; round < DefaultBlockedRounds; round++ {
+		for _, queryGroup := range started {
+			tracker.Observe(context.Background(), runOutcome(queryGroup, "source_blocked"))
+		}
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != len(started) {
+		t.Fatalf("anomalies = %+v, want one per object", anomalies)
+	}
+	for index, queryGroup := range started {
+		if anomalies[index].QueryGroup != queryGroup {
+			t.Fatalf("anomaly order = %+v, want longest-running first: %v", anomalies, started)
+		}
+	}
+}

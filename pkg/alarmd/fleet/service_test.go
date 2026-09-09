@@ -12,6 +12,7 @@ package fleet
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -41,6 +42,46 @@ type stubSnapshots struct {
 
 func (stub stubSnapshots) Load(context.Context, []string) ([]Snapshot, error) {
 	return stub.snapshots, stub.err
+}
+
+type countingExpectations struct {
+	expectation Expectation
+	calls       int
+}
+
+func (stub *countingExpectations) Expectation(context.Context) (Expectation, error) {
+	stub.calls++
+	return stub.expectation, nil
+}
+
+// Reading the denominator decodes the whole active object set from the same
+// Redis the pipeline depends on. This surface is meant to be embedded in a
+// page, so without a window its cost would scale with how many people are
+// looking at it, and a dashboard refreshing every second would put that read on
+// the hot path once a second forever.
+func TestRepeatedViewsReadTheControlPlaneOncePerWindow(t *testing.T) {
+	expectations := &countingExpectations{expectation: Expectation{QueryGroups: 949, Known: true}}
+	at := now
+	service, err := NewService(expectations, stubRegistry{replicas: replicas()},
+		stubSnapshots{snapshots: healthySnapshots()}, time.Minute, func() time.Time { return at })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for request := 0; request < 20; request++ {
+		if health := service.View(context.Background()).Health; health != HealthHealthy {
+			t.Fatalf("health = %s on request %d", health, request)
+		}
+	}
+	if expectations.calls != 1 {
+		t.Fatalf("control plane reads = %d, want one for the whole window", expectations.calls)
+	}
+	// Past the window the answer must be re-read, or a replica could leave the
+	// deployment without any later view noticing.
+	at = now.Add(time.Minute)
+	service.View(context.Background())
+	if expectations.calls != 2 {
+		t.Fatalf("control plane reads = %d, want a refresh once the window passed", expectations.calls)
+	}
 }
 
 func mustService(t *testing.T, expectations ExpectationSource, registry ReplicaRegistry, snapshots SnapshotReader) *Service {
@@ -122,17 +163,23 @@ func TestDependencyFailuresBecomeGapsRatherThanErrors(t *testing.T) {
 
 // The denominator failure has to carry why, or an operator sees "unknown" with
 // no way to tell a missing control plane from an empty one.
-func TestUnreadableDenominatorCarriesItsCause(t *testing.T) {
+// The gap says the denominator could not be read; it does not quote the error
+// that says so. This body is served on the listener a host platform may route
+// to, and a Redis client's error names the endpoint it failed to reach.
+func TestUnreadableDenominatorClassifiesItsCauseWithoutQuotingIt(t *testing.T) {
 	service := mustService(t,
-		stubExpectations{err: errors.New("active set digest missing")},
+		stubExpectations{err: errors.New("dial tcp 10.0.0.1:6379: connect: connection refused")},
 		stubRegistry{replicas: replicas()},
 		stubSnapshots{snapshots: healthySnapshots()},
 	)
 	view := service.View(context.Background())
 	for _, gap := range view.Gaps {
 		if gap.Kind == GapDenominatorUnavailable {
-			if gap.Detail != "active set digest missing" {
-				t.Fatalf("detail = %q, want the underlying cause", gap.Detail)
+			if gap.Detail != "unavailable" {
+				t.Fatalf("detail = %q, want a classification rather than the raw error", gap.Detail)
+			}
+			if strings.Contains(gap.Detail, "10.0.0.1") {
+				t.Fatalf("detail = %q, leaks the dependency address", gap.Detail)
 			}
 			return
 		}

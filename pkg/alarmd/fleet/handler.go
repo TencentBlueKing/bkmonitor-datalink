@@ -26,7 +26,10 @@ const (
 	MaxPageSize = 500
 )
 
-// Page describes the slice of anomalies in a response.
+// Page describes the slice of anomalies in a response. Total is how many the
+// response could page over, which is not how many exist: when a replica
+// truncated its list, the real count is the view's anomalies_total and the gap
+// that says so.
 type Page struct {
 	Offset int `json:"offset"`
 	Limit  int `json:"limit"`
@@ -35,7 +38,10 @@ type Page struct {
 
 type listResponse struct {
 	View
-	Page Page `json:"page"`
+	// Replica echoes the filter, so a caller cannot mistake a filtered response
+	// for a deployment-wide one. The coverage numbers stay deployment-wide.
+	Replica string `json:"replica,omitempty"`
+	Page    Page   `json:"page"`
 }
 
 type detailResponse struct {
@@ -64,11 +70,12 @@ func NewHandler(service *Service) (http.Handler, error) {
 	mux.HandleFunc("/api/health", func(response http.ResponseWriter, request *http.Request) {
 		view := service.View(request.Context())
 		writeJSON(response, http.StatusOK, map[string]any{
-			"health":   view.Health,
-			"expected": view.Expected,
-			"covered":  view.Covered,
-			"unknown":  view.Unknown,
-			"gaps":     view.Gaps,
+			"health":     view.Health,
+			"expected":   view.Expected,
+			"covered":    view.Covered,
+			"determined": view.Determined,
+			"unknown":    view.Unknown,
+			"gaps":       view.Gaps,
 		})
 	})
 	return mux, nil
@@ -81,12 +88,25 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 		return
 	}
 	view := service.View(request.Context())
-	if replica := request.URL.Query().Get("replica"); replica != "" {
+	replica := request.URL.Query().Get("replica")
+	if replica != "" {
+		// A name that belongs to no replica has to be refused rather than
+		// answered. The coverage arithmetic stays deployment-scoped on purpose,
+		// so filtering by a typo would otherwise return an empty anomaly list
+		// beside a full-coverage HEALTHY verdict -- a green tile for a replica
+		// that does not exist.
+		if !knownReplica(view, replica) {
+			writeJSON(response, http.StatusBadRequest,
+				map[string]string{"error": "no replica named " + replica + " is part of this deployment"})
+			return
+		}
 		view.Anomalies = filterByReplica(view.Anomalies, replica)
 	}
 	total := len(view.Anomalies)
 	view.Anomalies = pageOf(view.Anomalies, offset, limit)
-	writeJSON(response, http.StatusOK, listResponse{View: view, Page: Page{Offset: offset, Limit: limit, Total: total}})
+	writeJSON(response, http.StatusOK, listResponse{
+		View: view, Replica: replica, Page: Page{Offset: offset, Limit: limit, Total: total},
+	})
 }
 
 func objectDetail(response http.ResponseWriter, request *http.Request, service *Service) {
@@ -148,6 +168,24 @@ func pageOf(anomalies []Anomaly, offset, limit int) []Anomaly {
 		end = len(anomalies)
 	}
 	return anomalies[offset:end]
+}
+
+// knownReplica reports whether the deployment contains a replica by this name.
+// A replica that published nothing is still part of the deployment: it is named
+// by the gap that says so, and asking about it is a legitimate question with the
+// answer "it reported nothing".
+func knownReplica(view View, replica string) bool {
+	for _, contributor := range view.Replicas {
+		if contributor == replica {
+			return true
+		}
+	}
+	for _, gap := range view.Gaps {
+		if gap.Replica == replica {
+			return true
+		}
+	}
+	return false
 }
 
 func filterByReplica(anomalies []Anomaly, replica string) []Anomaly {

@@ -236,7 +236,7 @@ func TestCustomMetricFamilySeriesDevelopmentLimits(t *testing.T) {
 	for family, want := range map[string]int{
 		"bkmonitor_alarmd_process_duration_seconds":     126,
 		"bkmonitor_alarmd_pipeline_latency_seconds":     84,
-		"bkmonitor_alarmd_observation_duration_seconds": 2970,
+		"bkmonitor_alarmd_observation_duration_seconds": 3060,
 	} {
 		if got := bounds[family]; got != want {
 			t.Errorf("histogram family %s theoretical maximum = %d, want buckets/+Inf/sum/count total %d", family, got, want)

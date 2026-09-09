@@ -539,9 +539,20 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	// Retention is derived from the publish cadence rather than fixed, because
+	// the cadence is configurable and the relationship between the two is what
+	// makes the states meaningful. A constant retention against a configurable
+	// cadence has a breaking point: past a reconcile interval of about a minute
+	// every snapshot would expire before its replica published the next one, and
+	// the whole view would sit at UNKNOWN forever with no validation error to say
+	// why. Deriving it means the same three states hold at any cadence.
+	fleetRetention := 4 * cfg.PhaseTwo.Control.ReconcileInterval.Duration()
+	if fleetRetention < fleet.DefaultTTL {
+		fleetRetention = fleet.DefaultTTL
+	}
 	// Same client and prefix convention as the catalog and ownership stores:
 	// these snapshots are phase-two runtime state, not a separate channel.
-	fleetStore, err := fleet.NewRedisStore(runtimeClient, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "fleet"), 0, 0)
+	fleetStore, err := fleet.NewRedisStore(runtimeClient, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "fleet"), fleetRetention, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -593,8 +604,41 @@ func openProductionPhaseTwoBundleWithDependencies(
 	publisher = fleetPublisher{
 		tracker: fleetTracker, store: fleetStore, replica: cfg.PhaseTwo.Worker.ID,
 		owned: bundle.ownedQueryGroups, now: external.Now,
+		observe: publishOutcomeObserver(observer),
 	}
 	return bundle, nil
+}
+
+// publishOutcomeObserver reports whether this replica is still contributing to
+// the aggregated view.
+//
+// A replica whose publish keeps failing disappears from that view, and the
+// aggregate can then say only that a replica is missing. Missing and failing to
+// publish call for different actions, and nothing else in the process can tell
+// them apart, because the evidence that would distinguish them is precisely the
+// write that failed.
+//
+// Only transitions are reported, matching the registration renewal: a Redis
+// outage lasting an hour is one fact, not one per reconcile tick. The observer
+// runs on the single publishing goroutine, so the transition flag needs no lock.
+func publishOutcomeObserver(observer observability.Observer) func(error) {
+	failing := false
+	return func(err error) {
+		switch {
+		case err != nil:
+			failing = true
+			observeRuntime(context.Background(), observer, observability.Observation{
+				Component: observability.ComponentRuntime, Stage: observability.StageFleetSnapshotPublish,
+				Result: observability.ResultFailed, Direction: observability.DirectionInternal, Err: err,
+			})
+		case failing:
+			failing = false
+			observeRuntime(context.Background(), observer, observability.Observation{
+				Component: observability.ComponentRuntime, Stage: observability.StageFleetSnapshotPublish,
+				Result: observability.ResultResumed, Direction: observability.DirectionInternal,
+			})
+		}
+	}
 }
 
 func phaseTwoPostRecoveryTerminalDelay(cfg config.Config) time.Duration {

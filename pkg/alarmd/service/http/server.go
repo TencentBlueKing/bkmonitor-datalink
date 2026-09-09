@@ -202,8 +202,20 @@ func (s *Server) Run(ctx context.Context, address string, shutdownTimeout time.D
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
-		stopDiagnostics(shutdownCtx)
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		// Drained concurrently, not one after the other. They share the deadline,
+		// so draining the diagnostics listener first would let one in-flight
+		// profile spend the whole budget and hand the query listener a context
+		// that has already expired -- turning an ordinary rollout that happened
+		// to catch a running profile into a forced close of in-flight scrapes
+		// and a non-zero exit on every replica.
+		diagnosticsStopped := make(chan struct{})
+		go func() {
+			defer close(diagnosticsStopped)
+			stopDiagnostics(shutdownCtx)
+		}()
+		shutdownErr := httpServer.Shutdown(shutdownCtx)
+		<-diagnosticsStopped
+		if err := shutdownErr; err != nil {
 			closeErr := httpServer.Close()
 			<-serveErrors
 			if closeErr != nil {

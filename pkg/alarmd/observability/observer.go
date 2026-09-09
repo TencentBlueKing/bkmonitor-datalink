@@ -77,6 +77,7 @@ const (
 	StageSlotSourceCompleted  = "slot_source_completed"
 	StageQueryAdmission       = "query_admission"
 	StageRestartRecovered     = "restart_recovered"
+	StageFleetSnapshotPublish = "fleet_snapshot_publish"
 	StageKafkaAssigned        = "kafka_assigned"
 	StageExecutionReceived    = "execution_received"
 	StageOffsetGap            = "offset_gap"
@@ -1022,6 +1023,12 @@ var metricComponentStages = []ComponentStage{
 	{ComponentRuntime, StageStartup}, {ComponentRuntime, StageConfigLoaded},
 	{ComponentRuntime, StageShutdown}, {ComponentRuntime, StageFatal},
 	{ComponentRuntime, StageRestartRecovered},
+	// Registered on the generic catalog rather than the phase-two one because
+	// this has to be answerable from metrics alone: when the snapshot channel
+	// itself is broken, the aggregated view can only report that a replica is
+	// missing, never why, and the log channel needs collection configured per
+	// environment before it can answer anything.
+	{ComponentRuntime, StageFleetSnapshotPublish},
 	{ComponentConsumer, StageKafkaAssigned}, {ComponentConsumer, StageExecutionReceived},
 	{ComponentConsumer, StageOffsetGap}, {ComponentConsumer, StageOffsetMarked},
 	{ComponentAdapter, StageMessageDecoded}, {ComponentAdapter, StageRecordBatchReady},

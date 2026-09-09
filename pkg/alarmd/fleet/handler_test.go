@@ -169,3 +169,48 @@ func TestNewHandlerRequiresAService(t *testing.T) {
 		t.Fatal("handler was built without a service")
 	}
 }
+
+// The coverage numbers stay deployment-wide even when the anomaly list is
+// filtered, so a name belonging to no replica would otherwise answer with an
+// empty list beside a full-coverage HEALTHY verdict: a green tile for something
+// that does not exist. A typo has to be refused, not answered.
+func TestFilteringByAReplicaThatDoesNotExistIsRefused(t *testing.T) {
+	handler := handlerWith(t, healthySnapshots(), Expectation{QueryGroups: 949, Known: true}, replicas())
+	status, body := get(t, handler, "/api/objects?replica=pod-typo")
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d body = %+v, want the unknown replica refused", status, body)
+	}
+}
+
+// A replica that published nothing is still part of the deployment, and asking
+// about it is a legitimate question whose answer is "it reported nothing".
+func TestFilteringByAReplicaThatPublishedNothingIsAnswered(t *testing.T) {
+	handler := handlerWith(t, healthySnapshots()[:1], Expectation{QueryGroups: 949, Known: true}, replicas())
+	status, body := get(t, handler, "/api/objects?replica=pod-b")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want the missing replica to be a valid subject", status)
+	}
+	if body["replica"] != "pod-b" {
+		t.Fatalf("replica = %v, want the filter echoed so the response cannot be read as deployment-wide", body["replica"])
+	}
+}
+
+// The number that sizes an incident is how many anomalies exist, not how many
+// survived truncation. Reporting the retained count as the total understates it
+// by exactly the amount that made it worth reporting.
+func TestTruncatedListsStillReportTheRealAnomalyCount(t *testing.T) {
+	snapshots := snapshotsWithAnomalies(40)
+	snapshots[1].TotalAnomalies = 900
+	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 949, Known: true}, replicas())
+	status, body := get(t, handler, "/api/objects")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	if body["anomalies_total"].(float64) != 900 {
+		t.Fatalf("anomalies_total = %v, want the count the replicas actually had", body["anomalies_total"])
+	}
+	page := body["page"].(map[string]any)
+	if page["total"].(float64) != 40 {
+		t.Fatalf("page total = %v, want what the response can page over", page["total"])
+	}
+}

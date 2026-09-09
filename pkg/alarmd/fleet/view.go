@@ -60,6 +60,9 @@ const (
 	// GapNoReplicas means nothing was expected to publish. A deployment with no
 	// ready replica is not a healthy deployment with nothing to do.
 	GapNoReplicas GapKind = "NO_REPLICAS"
+	// GapUndetermined means a replica owns objects it cannot yet speak for, so
+	// their absence from the anomaly list is not evidence that they are well.
+	GapUndetermined GapKind = "UNDETERMINED"
 )
 
 // SinceSource records where an anomaly's start time came from, because the two
@@ -95,10 +98,16 @@ type Anomaly struct {
 // Snapshot is one replica's contribution. Owned is the number of objects the
 // replica holds, which is what makes the coverage arithmetic possible: the
 // anomaly list alone cannot distinguish "nothing wrong" from "nothing seen".
+//
+// Determined completes that arithmetic. Owning an object is not the same as
+// being able to speak for it: a replica that just restarted owns everything and
+// knows nothing, and an empty anomaly list from it is indistinguishable from a
+// healthy one unless the two counts are reported separately.
 type Snapshot struct {
 	Replica        string    `json:"replica"`
 	TakenAt        time.Time `json:"taken_at"`
 	Owned          int       `json:"owned"`
+	Determined     int       `json:"determined"`
 	Anomalies      []Anomaly `json:"anomalies"`
 	TotalAnomalies int       `json:"total_anomalies"`
 }
@@ -124,13 +133,22 @@ type Expectation struct {
 
 // View is the aggregated answer returned to callers.
 type View struct {
-	Health    Health    `json:"health"`
-	Expected  *int      `json:"expected"`
-	Covered   int       `json:"covered"`
-	Unknown   int       `json:"unknown"`
-	Gaps      []Gap     `json:"gaps,omitempty"`
-	Anomalies []Anomaly `json:"anomalies"`
-	Replicas  []string  `json:"replicas"`
+	Health   Health `json:"health"`
+	Expected *int   `json:"expected"`
+	Covered  int    `json:"covered"`
+	// Determined is the subset of Covered whose owning replica has actually
+	// observed a conclusive round. Covered minus Determined is counted into
+	// Unknown, not into health.
+	Determined int   `json:"determined"`
+	Unknown    int   `json:"unknown"`
+	Gaps       []Gap `json:"gaps,omitempty"`
+	// AnomaliesTotal is how many anomalies the replicas actually had, which is
+	// larger than the returned list whenever a snapshot was truncated. Reporting
+	// the returned length as the total would understate an incident by exactly
+	// the amount that made it worth reporting.
+	AnomaliesTotal int       `json:"anomalies_total"`
+	Anomalies      []Anomaly `json:"anomalies"`
+	Replicas       []string  `json:"replicas"`
 }
 
 // Aggregate folds the published snapshots into one view.
@@ -166,10 +184,25 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		}
 		view.Replicas = append(view.Replicas, replica)
 		view.Covered += snapshot.Owned
+		view.Determined += snapshot.Determined
+		view.AnomaliesTotal += snapshot.TotalAnomalies
 		view.Anomalies = append(view.Anomalies, snapshot.Anomalies...)
 		if snapshot.Truncated() {
 			view.Gaps = append(view.Gaps, Gap{Kind: GapListTruncated, Replica: replica})
 		}
+	}
+
+	// Owning an object is not knowing about it. A replica that has just restarted
+	// owns everything and has observed nothing, so its empty anomaly list is not
+	// evidence of health -- and neither is the list of an object whose every
+	// round is inconclusive, nor of one the tracker dropped at its bound.
+	switch {
+	case view.Determined > view.Covered:
+		view.Gaps = append(view.Gaps, Gap{Kind: GapCoverageInconsistent,
+			Detail: "more objects reported as determined than owned"})
+	case view.Covered > view.Determined:
+		view.Unknown += view.Covered - view.Determined
+		view.Gaps = append(view.Gaps, Gap{Kind: GapUndetermined})
 	}
 
 	if !expectation.Known {
@@ -184,7 +217,10 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			// could still be hiding inside that difference.
 			view.Gaps = append(view.Gaps, Gap{Kind: GapCoverageInconsistent})
 		case expected > view.Covered:
-			view.Unknown = expected - view.Covered
+			// Added rather than assigned: objects nobody owns and objects owned
+			// by a replica that cannot speak for them are both unknown, and they
+			// are different objects.
+			view.Unknown += expected - view.Covered
 			view.Gaps = append(view.Gaps, Gap{Kind: GapOwnershipShortfall})
 		}
 	}

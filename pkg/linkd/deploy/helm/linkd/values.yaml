@@ -55,6 +55,37 @@ extraEnvVars: []
 extraVolumes: []
 extraVolumeMounts: []
 
+## @section 可选模拟器：默认不部署；每个实例独立选择来源、租户及推送参数。
+eventgen:
+  enabled: false
+  image:
+    registry: ghcr.io
+    repository: tencentblueking/bkmonitor-datalink/linkd-eventgen
+    tag: "0.1.0"
+    digest: ""
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  ## 独立 Linkd YAML，必须包含待推送的 event_sources；不复用清空来源后的 worker 配置。
+  existingSecret: ""
+  secretKey: linkd.yaml
+  ttlSecondsAfterFinished: 86400
+  defaults:
+    newAlertsPerMinute: 20
+    cycleDuration: 30s
+    meanLifetimeCycles: 4
+    duplicatePercent: 0
+    maxActiveAlerts: 100000
+    seed: 0
+    ## 0 为持续 Deployment；正数为有限 Job，升级会创建新一轮任务。
+    cycles: 0
+    scenarios: ""
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: "1", memory: 512Mi}
+  ## 最多 32 个实例；名称使用小写字母、数字、连字符，最长 20 字符。
+  ## 每个实例必填 eventSourceId，可覆盖 defaults、existingSecret、secretKey 和 nodeSelector 等调度配置。
+  instances: {}
+
 ## @section Control Plane：单活动实例，不支持修改更新策略
 controlPlane:
   replicas: 1

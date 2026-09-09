@@ -25,3 +25,8 @@ Console 地址：{{ if .Values.console.ingress.tls }}https{{ else }}http{{ end }
 kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "linkd.fullname" . }}-console 8080:{{ .Values.console.service.port }}
 {{ end -}}
 {{ end -}}
+
+{{ if .Values.eventgen.enabled -}}
+Event Generator 已启用：cycles=0 持续推送，正数为有限 Job；Helm 升级会创建新一轮有限任务。
+请确认配置 Secret 中的来源与控制面登记的 Kafka topic 一致。
+{{ end -}}

@@ -1,7 +1,8 @@
 # Helm 部署
 
 Chart 位于 [deploy/helm/linkd](../../deploy/helm/linkd/README.md)。使用 Helm 3，
-只部署一个 Control Plane 和多个 worker 组；每组各有一个 Cleaner、Lifecycle Deployment。
+默认部署一个 Control Plane 和多个 worker 组；每组各有一个 Cleaner、Lifecycle Deployment。
+Console 和多个独立 Event Generator 实例按需启用。
 没有 all-in-one 参数。Redis、Elasticsearch/MySQL、Kafka、Prometheus 和 Ingress Controller 由部署方管理。
 
 ## 构建镜像与准备配置
@@ -208,6 +209,56 @@ Console 以 server 模式监听 `0.0.0.0:4399`，该模式强制 Basic Auth。
 Console 可配置自己的 configuration / existingSecret、资源、调度参数和 extraEnvVars，
 通过既有只读凭据环境变量覆盖数据库或 Prometheus 连接凭据。其配置 Secret 需包含有效的存储配置，
 不需要 worker token。
+
+## 可选 Event Generator
+
+Chart `0.1.2` 增加 `eventgen`，默认 `enabled: false`，镜像独立使用 `linkd-eventgen:0.1.0`。
+启用后，每个 `instances` 项独立运行，最多 32 项；名称最长 20 字符，只支持小写字母、数字、连字符。
+
+模拟器从独立 Secret 中读取包含 `event_sources` 的 Linkd YAML；不能复用 Chart 为 worker 生成的配置，因为其中的静态来源会被清空。
+根据 [来源配置示例](../../deploy/helm/linkd/examples/eventgen-config.yaml) 调整 Kafka 地址、topic 和认证，再创建 Secret：
+
+```bash
+kubectl -n linkd create secret generic linkd-eventgen-config \
+  --from-file=linkd.yaml=/absolute/path/eventgen-config.yaml
+```
+
+将下面配置与原有 values 合并：
+
+```yaml
+eventgen:
+  enabled: true
+  existingSecret: linkd-eventgen-config
+  defaults:
+    cycleDuration: 30s
+    maxActiveAlerts: 10000
+  instances:
+    infra:
+      eventSourceId: demo-infra
+      tenantId: tenant-a
+      newAlertsPerMinute: 20
+      duplicatePercent: 20
+    service:
+      eventSourceId: demo-service
+      tenantId: tenant-b
+      newAlertsPerMinute: 60
+      cycleDuration: 15s
+      cycles: 10
+```
+
+`defaults` 中的速率、周期、平均寿命、重复比例、场景、随机种子、活动池上限、周期数、资源和调度参数可逐实例覆盖。
+`cycleDuration` 使用整数加 `ms`、`s` 或 `m`，范围为 `10ms..10m`；其他参数约束见 [模拟器参数](event-generator.md#2-参数)。
+每个实例还可覆盖 `existingSecret` / `secretKey`，或设置 `enabled: false` 单独关闭。
+`tenantId` 仅在来源配置已固定 `related_tenant_id` 时可省略。
+
+`cycles: 0` 使用单副本、Recreate 策略的 Deployment，按给定速率持续推送；正数使用带 revision 后缀的 Job，
+正常完成后停止，失败不自动重试，默认完成 24 小时后清理。每次 Helm 升级会创建新一轮有限任务。
+配置 Secret 变更不会自动重启持续实例，需对相应 Deployment 执行 `rollout restart`。
+
+实例只挂载模拟器配置，不接收控制面 API token，也不创建 Service 或 ServiceMonitor。
+`eventgen.image` 可独立覆盖 `registry`、`repository`、`tag`、`digest` 和 `pullSecrets`；`global.imageRegistry` 仍具有最高优先级。
+来源配置须与控制面实际登记的来源保持一致，Chart 不自动注册或启用 EventSource。
+完整叠加配置见 [多实例示例](../../deploy/helm/linkd/examples/eventgen.yaml)。
 
 ## ServiceMonitor 指标采集
 

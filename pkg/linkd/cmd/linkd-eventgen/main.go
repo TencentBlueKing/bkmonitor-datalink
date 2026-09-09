@@ -26,6 +26,12 @@ import (
 
 const defaultConfigPath = "./configs/linkd.yaml"
 
+// 镜像构建通过 ldflags 注入独立版本和对应源码提交。
+var (
+	version   = "dev"
+	gitCommit = "unknown"
+)
+
 type managedPublisher interface {
 	eventgen.Publisher
 	Close()
@@ -55,7 +61,7 @@ type commandOptions struct {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	command := newRootCommand(defaultDependencies())
+	command := newRootCommand(version, gitCommit, defaultDependencies())
 	if err := command.ExecuteContext(ctx); err != nil {
 		_, _ = fmt.Fprintln(command.ErrOrStderr(), err)
 		os.Exit(1)
@@ -75,7 +81,13 @@ func defaultDependencies() dependencies {
 	}
 }
 
-func newRootCommand(deps dependencies) *cobra.Command {
+func newRootCommand(buildVersion, commit string, deps dependencies) *cobra.Command {
+	if buildVersion == "" {
+		buildVersion = "dev"
+	}
+	if commit == "" {
+		commit = "unknown"
+	}
 	options := commandOptions{}
 	command := &cobra.Command{
 		Use:           "linkd-eventgen",
@@ -114,6 +126,16 @@ func newRootCommand(deps dependencies) *cobra.Command {
 		"进程内活动告警硬上限",
 	)
 	flags.IntVar(&options.cycles, "cycles", 0, "运行周期数；0 表示持续运行")
+	command.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "显示模拟器版本和 Git commit",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			// 版本查询不加载配置、不创建 producer，也不向 Kafka 发送消息。
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "version: %s\ngit_commit: %s\n", buildVersion, commit)
+			return err
+		},
+	})
 	return command
 }
 

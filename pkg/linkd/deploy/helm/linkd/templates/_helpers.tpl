@@ -30,6 +30,9 @@ app.kubernetes.io/component: {{ .workload.component | quote }}
 {{- if .workload.group }}
 linkd/worker-group: {{ .workload.group | quote }}
 {{- end }}
+{{- if .workload.eventgenInstance }}
+linkd/eventgen-instance: {{ .workload.eventgenInstance | quote }}
+{{- end }}
 {{- end -}}
 
 {{- define "linkd.labels" -}}

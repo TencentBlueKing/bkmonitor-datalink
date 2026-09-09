@@ -12,6 +12,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -33,11 +35,54 @@ func (p *fakeManagedPublisher) Publish(_ context.Context, records []eventgen.Rec
 
 func (p *fakeManagedPublisher) Close() { p.closed = true }
 
+func TestCommandVersionDoesNotRequireRuntimeDependencies(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, version, commit, want string
+	}{
+		{"release", "0.1.0", "abcdef0123456789", "version: 0.1.0\ngit_commit: abcdef0123456789\n"},
+		{"development", "", "", "version: dev\ngit_commit: unknown\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			command := newRootCommand(tc.version, tc.commit, dependencies{})
+			var output bytes.Buffer
+			command.SetOut(&output)
+			command.SetArgs([]string{"version"})
+			if err := command.ExecuteContext(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if output.String() != tc.want {
+				t.Fatalf("version output = %q, want %q", output.String(), tc.want)
+			}
+		})
+	}
+}
+
+func TestCommandVersionRejectsArgumentsAndPropagatesWriteErrors(t *testing.T) {
+	t.Parallel()
+	command := newRootCommand("0.1.0", "test-commit", dependencies{})
+	command.SetArgs([]string{"version", "extra"})
+	if err := command.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("version accepted an unexpected argument")
+	}
+	command = newRootCommand("0.1.0", "test-commit", dependencies{})
+	command.SetOut(failingVersionWriter{})
+	command.SetArgs([]string{"version"})
+	if err := command.ExecuteContext(context.Background()); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("version write error = %v, want closed pipe", err)
+	}
+}
+
+type failingVersionWriter struct{}
+
+func (failingVersionWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
 func TestCommandRunsFiniteGenerator(t *testing.T) {
 	t.Parallel()
 	publisher := &fakeManagedPublisher{}
 	deps := testDependencies(publisher)
-	command := newRootCommand(deps)
+	command := newRootCommand("test-version", "test-commit", deps)
 	var stdout, stderr bytes.Buffer
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)
@@ -87,7 +132,7 @@ func TestCommandValidatesRequiredSelection(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			command := newRootCommand(testDependencies(&fakeManagedPublisher{}))
+			command := newRootCommand("test-version", "test-commit", testDependencies(&fakeManagedPublisher{}))
 			command.SetArgs(test.args)
 			err := command.ExecuteContext(context.Background())
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
@@ -99,7 +144,7 @@ func TestCommandValidatesRequiredSelection(t *testing.T) {
 
 func TestCommandDefaults(t *testing.T) {
 	t.Parallel()
-	command := newRootCommand(testDependencies(&fakeManagedPublisher{}))
+	command := newRootCommand("test-version", "test-commit", testDependencies(&fakeManagedPublisher{}))
 	for name, want := range map[string]string{
 		"config":                "./configs/linkd.yaml",
 		"new-alerts-per-minute": "20",

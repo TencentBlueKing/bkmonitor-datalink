@@ -1389,6 +1389,295 @@
           "maximum": 604800
         }
       }
+    },
+    "eventgen": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "registry": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            },
+            "pullSecrets": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "registry",
+            "repository",
+            "tag",
+            "digest",
+            "pullPolicy",
+            "pullSecrets"
+          ]
+        },
+        "existingSecret": {
+          "type": "string",
+          "maxLength": 253
+        },
+        "secretKey": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "ttlSecondsAfterFinished": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 604800
+        },
+        "defaults": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "newAlertsPerMinute": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "cycleDuration": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ms|s|m)$",
+              "maxLength": 16
+            },
+            "meanLifetimeCycles": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "duplicatePercent": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "maxActiveAlerts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "seed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cycles": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "scenarios": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "resources": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "requests": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  }
+                },
+                "limits": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  }
+                }
+              }
+            },
+            "nodeSelector": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "affinity": {
+              "type": "object"
+            },
+            "tolerations": {
+              "type": "array"
+            },
+            "topologySpreadConstraints": {
+              "type": "array"
+            },
+            "podLabels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "podAnnotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "instances": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": {
+            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+            "maxLength": 20
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "eventSourceId"
+            ],
+            "properties": {
+              "newAlertsPerMinute": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              },
+              "cycleDuration": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]*(ms|s|m)$",
+                "maxLength": 16
+              },
+              "meanLifetimeCycles": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              },
+              "duplicatePercent": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "maxActiveAlerts": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              },
+              "seed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "cycles": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000
+              },
+              "scenarios": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "resources": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "requests": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "number"
+                      ]
+                    }
+                  },
+                  "limits": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "number"
+                      ]
+                    }
+                  }
+                }
+              },
+              "nodeSelector": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "affinity": {
+                "type": "object"
+              },
+              "tolerations": {
+                "type": "array"
+              },
+              "topologySpreadConstraints": {
+                "type": "array"
+              },
+              "podLabels": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "podAnnotations": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "eventSourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "tenantId": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "existingSecret": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253
+              },
+              "secretKey": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9._-]+$"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

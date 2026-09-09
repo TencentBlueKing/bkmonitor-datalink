@@ -5,25 +5,30 @@ on:
   workflow_dispatch:
     inputs:
       component:
-        description: 构建目标（all 仅构建两个镜像，helm 仅打包 Chart）
+        description: 构建目标（all 仅含 Linkd 和 Console；eventgen、helm 单独选择）
         type: choice
         options:
           - all
           - linkd
           - linkd-console
+          - linkd-eventgen
           - helm
         default: all
       version:
-        description: 可选版本标签（如 v0.1.0-rc.1）；留空仅发布唯一构建标签
+        description: Linkd / Console 可选版本标签；留空仅发布唯一构建标签
         type: string
         default: ""
+      eventgen_version:
+        description: 仅用于 linkd-eventgen 的独立版本；留空仅发布唯一构建标签
+        type: string
+        default: "0.1.0"
 
 permissions:
   contents: read
 
 # 同一镜像版本串行发布；Helm Release 串行创建，避免并发发布同一个 Chart 版本。
 concurrency:
-  group: linkd-images-${{ inputs.component == 'helm' && 'helm-release' || inputs.version || github.run_id }}
+  group: linkd-images-${{ inputs.component == 'helm' && 'helm-release' || inputs.component == 'linkd-eventgen' && format('eventgen-{0}', inputs.eventgen_version || github.run_id) || inputs.version || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -36,26 +41,28 @@ jobs:
       build-tag: ${{ steps.metadata.outputs.build-tag }}
       version: ${{ steps.metadata.outputs.version }}
     steps:
-      - name: Validate inputs and prepare shared version
+      - name: Validate inputs and prepare selected version
         id: metadata
         shell: bash
         env:
           COMPONENT: ${{ inputs.component }}
           VERSION: ${{ inputs.version }}
+          EVENTGEN_VERSION: ${{ inputs.eventgen_version }}
         run: |
           set -euo pipefail
-          # 输入通过环境变量传入，避免把人工输入插入 shell 源码。
-          if [[ -n "$VERSION" && ! "$VERSION" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
-            echo '::error::version 必须是合法的 Docker tag（最长 128 字符）'
-            exit 1
-          fi
           case "$COMPONENT" in
             all) components='["linkd","linkd-console"]' ;;
             linkd) components='["linkd"]' ;;
             linkd-console) components='["linkd-console"]' ;;
+            linkd-eventgen) components='["linkd-eventgen"]'; VERSION="$EVENTGEN_VERSION" ;;
             helm) components='[]' ;;
             *) echo '::error::未知的 component'; exit 1 ;;
           esac
+          # 只校验所选组件的版本；两个版本输入互不覆盖，通过环境变量避免 shell 注入。
+          if [[ -n "$VERSION" && ! "$VERSION" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo '::error::所选版本必须是合法的 Docker tag（最长 128 字符）'
+            exit 1
+          fi
           # 重跑可能拉取不同的基础镜像；run attempt 区分同一提交的不同构建。
           build_tag="sha-${GITHUB_SHA:0:12}-${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
           {
@@ -85,14 +92,28 @@ jobs:
           persist-credentials: false
 
       - name: Check build context
+        id: context
         shell: bash
         env:
-          CONTEXT: ${{ matrix.component == 'linkd' && 'pkg/linkd' || 'pkg/linkd/console' }}
+          COMPONENT: ${{ matrix.component }}
         run: |
-          if [[ ! -f "$CONTEXT/Dockerfile" ]]; then
+          set -euo pipefail
+          context=pkg/linkd
+          dockerfile=Dockerfile
+          case "$COMPONENT" in
+            linkd-console) context=pkg/linkd/console ;;
+            linkd-eventgen) dockerfile=Dockerfile.eventgen ;;
+            linkd) ;;
+            *) echo '::error::未知的镜像组件'; exit 1 ;;
+          esac
+          if [[ ! -f "$context/$dockerfile" ]]; then
             echo '::error::所选分支缺少 Dockerfile，请选择包含 Linkd 源码的分支（如 feat/linkd-dev）'
             exit 1
           fi
+          {
+            echo "path=$context"
+            echo "dockerfile=$context/$dockerfile"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Prepare image tags
         id: image
@@ -132,7 +153,8 @@ jobs:
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
-          context: ${{ matrix.component == 'linkd' && 'pkg/linkd' || 'pkg/linkd/console' }}
+          context: ${{ steps.context.outputs.path }}
+          file: ${{ steps.context.outputs.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.image.outputs.tags }}

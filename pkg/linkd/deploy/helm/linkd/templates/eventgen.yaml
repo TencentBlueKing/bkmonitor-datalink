@@ -1,0 +1,118 @@
+{{- if .Values.eventgen.enabled }}
+{{- if not .Values.eventgen.instances }}{{ fail "eventgen.enabled=true 时必须配置 eventgen.instances" }}{{ end }}
+{{- range $instance, $input := .Values.eventgen.instances }}
+{{- if or (not (hasKey $input "enabled")) $input.enabled }}
+{{- $s := mergeOverwrite (deepCopy $.Values.eventgen.defaults) (deepCopy $input) }}
+{{- $duration := toString $s.cycleDuration }}
+{{- $amount := regexFind "^[0-9]+" $duration | int64 }}
+{{- $unit := regexFind "(ms|s|m)$" $duration }}
+{{- $minimum := ternary 10 1 (eq $unit "ms") | int64 }}
+{{- $maximum := index (dict "ms" 600000 "s" 600 "m" 10) $unit | int64 }}
+{{- if or (lt $amount $minimum) (gt $amount $maximum) }}{{ fail (printf "eventgen.instances.%s.cycleDuration 必须介于 10ms 和 10m" $instance) }}{{ end }}
+{{- $workload := dict "component" "eventgen" "eventgenInstance" $instance }}
+{{- $ctx := dict "root" $ "workload" $workload }}
+{{- $name := printf "%s-eventgen-%s" (include "linkd.fullname" $) $instance }}
+{{- $finite := gt (int $s.cycles) 0 }}
+{{- $secret := required (printf "eventgen.instances.%s 必须提供 existingSecret 或 eventgen.existingSecret" $instance) ($s.existingSecret | default $.Values.eventgen.existingSecret) }}
+{{- $key := $s.secretKey | default $.Values.eventgen.secretKey }}
+---
+apiVersion: {{ ternary "batch/v1" "apps/v1" $finite }}
+kind: {{ ternary "Job" "Deployment" $finite }}
+metadata:
+  {{- if $finite }}
+  name: {{ printf "%s-%s" $name (toString $.Release.Revision | sha256sum | trunc 8) }}
+  {{- else }}
+  name: {{ $name }}
+  {{- end }}
+  labels:
+    {{- include "linkd.labels" $ctx | nindent 4 }}
+  {{- with $.Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if $finite }}
+  # 发布部分消息后失败也不自动重跑；新 Helm revision 才创建新任务。
+  backoffLimit: 0
+  parallelism: 1
+  completions: 1
+  ttlSecondsAfterFinished: {{ $.Values.eventgen.ttlSecondsAfterFinished }}
+  {{- else }}
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "linkd.selector" $ctx | nindent 6 }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- mergeOverwrite (deepCopy $.Values.podLabels) ($s.podLabels | default dict) (include "linkd.labels" $ctx | fromYaml) | toYaml | nindent 8 }}
+      {{- with mergeOverwrite (deepCopy $.Values.podAnnotations) ($s.podAnnotations | default dict) }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ $.Values.serviceAccount.name | default (ternary (include "linkd.fullname" $) "default" $.Values.serviceAccount.create) }}
+      automountServiceAccountToken: false
+      restartPolicy: {{ ternary "Never" "Always" $finite }}
+      terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      {{- with concat $.Values.global.imagePullSecrets $.Values.eventgen.image.pullSecrets | uniq }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- range $field := list "nodeSelector" "affinity" "tolerations" "topologySpreadConstraints" }}
+      {{- with index $s $field | default (index $.Values $field) }}
+      {{ $field }}:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      containers:
+        - name: eventgen
+          image: {{ include "linkd.image" (dict "root" $ "image" $.Values.eventgen.image) | quote }}
+          imagePullPolicy: {{ $.Values.eventgen.image.pullPolicy }}
+          args:
+            - --config
+            - /data/linkd/configs/linkd.yaml
+            - --event-source-id
+            - {{ $s.eventSourceId | quote }}
+            {{- with $s.tenantId }}
+            - --tenant-id
+            - {{ . | quote }}
+            {{- end }}
+            {{- range $key, $flag := dict "newAlertsPerMinute" "new-alerts-per-minute" "cycleDuration" "cycle-duration" "meanLifetimeCycles" "mean-lifetime-cycles" "duplicatePercent" "duplicate-percent" "maxActiveAlerts" "max-active-alerts" "seed" "seed" "cycles" "cycles" }}
+            - {{ printf "--%s" $flag | quote }}
+            {{- if eq $key "cycleDuration" }}
+            - {{ index $s $key | quote }}
+            {{- else }}
+            - {{ printf "%d" (index $s $key | int64) | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with $s.scenarios }}
+            - --scenarios
+            - {{ . | quote }}
+            {{- end }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml $s.resources | nindent 12 }}
+          volumeMounts:
+            - name: configuration
+              mountPath: /data/linkd/configs
+              readOnly: true
+      volumes:
+        - name: configuration
+          secret:
+            secretName: {{ $secret }}
+            defaultMode: 0440
+            items:
+              - key: {{ $key }}
+                path: linkd.yaml
+{{- end }}
+{{- end }}
+{{- end }}

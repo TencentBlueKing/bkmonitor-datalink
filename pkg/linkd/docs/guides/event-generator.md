@@ -33,6 +33,27 @@ go run ./cmd/linkd-eventgen \
 第一个周期在进程启动后立即执行。收到 `SIGINT` 或 `SIGTERM` 后，模拟器停止创建新周期，等待当前
 Kafka 同步发送调用结束并关闭 producer。
 
+### 容器镜像
+
+模拟器镜像独立版本化，首次版本为 `0.1.0`，不跟随 Linkd / Console 的版本变化。
+GitHub workflow 的默认 `all` 不构建它；需显式选择 `component=linkd-eventgen` 并填写
+`eventgen_version`。发布操作见 [手动构建与发布](image-release.md)。
+
+本地构建通过独立 Makefile 目标执行，版本参数也与 `VERSION` / `IMAGE_TAG` 分开：
+
+```bash
+make eventgen-image EVENTGEN_VERSION=0.1.0
+docker run --rm linkd-eventgen:0.1.0 version
+docker run --rm \
+  -v /absolute/path/linkd.yaml:/data/linkd/configs/linkd.yaml:ro \
+  linkd-eventgen:0.1.0 \
+  --event-source-id demo-source --tenant-id tenant-a --cycles 2
+```
+
+镜像默认以 UID/GID `65532` 运行，挂载配置需允许该用户读取；配置中的 Kafka 地址须能从容器访问。
+无参数启动只显示帮助；`version` 无需配置或 Kafka，输出镜像版本与完整 Git commit。
+未注入构建信息时显示 `dev` / `unknown`。本地命令使用 Docker；Apple Container 可将 `docker run` 换成 `container run`。
+
 ## 2. 参数
 
 | 参数 | 默认值 | 说明 |

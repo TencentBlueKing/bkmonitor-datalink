@@ -15,6 +15,8 @@ CONSOLE_IMAGE ?= linkd-console
 NODE_IMAGE ?= node:24-bookworm-slim
 NODE_BUILD_OPTIONS ?= --max-old-space-size=3072
 CONSOLE_BUILD_FLAGS ?= --memory 4G
+EVENTGEN_IMAGE ?= linkd-eventgen
+EVENTGEN_VERSION ?= 0.1.0
 
 GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './vendor/*' \
@@ -22,7 +24,7 @@ GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './console/dist/*' \
 	-not -path './console/dist-server/*' | LC_ALL=C sort)
 
-.PHONY: fmt fmt-check test race vet lint console-check console-e2e helm-check release-check check image console-image
+.PHONY: fmt fmt-check test race vet lint console-check console-e2e helm-check release-check check image console-image eventgen-image
 
 fmt:
 	$(GOFMT) -w $(GO_FILES)
@@ -68,6 +70,7 @@ helm-check:
 release-check:
 	python3 scripts/test_ci_release.py
 	NODE_PATH="$(CURDIR)/$(CONSOLE_DIR)/node_modules" node --test scripts/test-prepare-release-chart.cjs
+	NODE_PATH="$(CURDIR)/$(CONSOLE_DIR)/node_modules" node --test scripts/test-image-workflow.cjs
 
 check:
 	$(MAKE) fmt-check
@@ -96,3 +99,13 @@ console-image:
 		--build-arg NODE_BUILD_OPTIONS="$(NODE_BUILD_OPTIONS)" \
 		-t $(CONSOLE_IMAGE):$(IMAGE_TAG) \
 		$(CONSOLE_DIR)
+
+eventgen-image:
+	$(CONTAINER) build \
+		--file Dockerfile.eventgen \
+		--build-arg GO_IMAGE=$(GO_IMAGE) \
+		--build-arg GOPROXY=$(GOPROXY) \
+		--build-arg VERSION=$(EVENTGEN_VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		-t $(EVENTGEN_IMAGE):$(EVENTGEN_VERSION) \
+		.

@@ -1,0 +1,30 @@
+# 模拟器独立配置文件，不是 Helm values；来源与控制面实际登记的 Kafka topic 保持一致。
+event_sources:
+  - event_source_id: demo-infra
+    enabled: true
+    cleaner:
+      type: standard
+    fingerprint_mode: field
+    fingerprint_field: source_alert_id
+    storage:
+      type: kafka
+      kafka:
+        brokers: [kafka:9092]
+        topic: linkd-demo-infra
+        consumer_group: linkd-cleaner-demo-infra
+        security:
+          protocol: plaintext
+  - event_source_id: demo-service
+    enabled: true
+    cleaner:
+      type: standard
+    fingerprint_mode: field
+    fingerprint_field: source_alert_id
+    storage:
+      type: kafka
+      kafka:
+        brokers: [kafka:9092]
+        topic: linkd-demo-service
+        consumer_group: linkd-cleaner-demo-service
+        security:
+          protocol: plaintext

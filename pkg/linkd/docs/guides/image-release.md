@@ -1,7 +1,8 @@
 # 手动构建与发布镜像和 Chart
 
 仓库根目录的 [Linkd images workflow](../../../../.github/workflows/linkd-images.yml) 复用
-Linkd 和 Console 的 Dockerfile，默认同时构建 `linux/amd64` 和 `linux/arm64` 镜像并推送到 GitHub Container Registry（GHCR）。
+各组件的 Dockerfile，默认构建 Linkd 和 Console 的 `linux/amd64`、`linux/arm64` 镜像并推送到 GitHub Container Registry（GHCR）。
+`linkd-eventgen` 是独立版本的可选镜像，只有显式选择该组件才构建，不包含在 `all` 中。
 每个组件的两个架构共用同一个标签，拉取时按运行节点架构选择镜像，无需设置架构专用 tag。
 Workflow 在 amd64 runner 上配置 QEMU，支持 ARM 构建及版本查询；双架构构建超时为 90 分钟。
 它只声明 `workflow_dispatch`，提交代码、创建 PR、推送 Git tag 或发布 Release 都不会自动触发。
@@ -27,8 +28,11 @@ GHCR 权限见 [GitHub 镜像发布说明](https://docs.github.com/en/actions/tu
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
-| `component` | `all` | `all` 只构建两个镜像；`linkd` / `linkd-console` 只构建对应镜像；`helm` 只打包 Chart |
-| `version` | 空 | 可选 Docker tag，例如 `v0.1.0-rc.1`；最长 128 字符，只允许字母、数字、下划线、点和连字符，首字符不能为点或连字符 |
+| `component` | `all` | `all` 只构建 Linkd 和 Console；`linkd` / `linkd-console` / `linkd-eventgen` 只构建所选镜像；`helm` 只打包 Chart |
+| `version` | 空 | 仅用于 Linkd / Console 的 Docker tag，例如 `v0.1.1-rc.1`；留空只发布唯一构建标签 |
+| `eventgen_version` | `0.1.0` | 仅用于 `linkd-eventgen` 的独立 Docker tag；留空只发布唯一构建标签，不继承 `version` |
+
+两个版本字段都只允许合法 Docker tag：最长 128 字符，仅含字母、数字、下划线、点和连字符，首字符不能为点或连字符。
 
 也可在仓库目录通过 GitHub CLI 手动选择分支或 Git tag：
 
@@ -43,11 +47,23 @@ gh workflow run linkd-images.yml --ref <branch-or-tag> \
 ```text
 ghcr.io/<owner>/<repository>/linkd:<tag>
 ghcr.io/<owner>/<repository>/linkd-console:<tag>
+ghcr.io/<owner>/<repository>/linkd-eventgen:<eventgen-tag>
 ```
 
 每个成功的构建都会在 Actions Summary 中输出镜像标签、多架构 index digest、平台和源码 SHA。
 选择 `all` 时两个组件独立执行；一个失败不会撤销另一个已推送的镜像。成套部署前应确认两个 job 均成功，
 并记录各自 digest。流程只构建和推送镜像，不执行 `make check`，发布前应在待发布提交上完成质量门禁。
+
+独立构建模拟器的首个 `0.1.0` 版本：
+
+```bash
+gh workflow run linkd-images.yml --repo TencentBlueKing/bkmonitor-datalink \
+  --ref feat/linkd-dev -f component=linkd-eventgen -f eventgen_version=0.1.0
+```
+
+模拟器使用 `Dockerfile.eventgen`，同样生成双架构镜像、记录 OCI 标签，并运行 `version` 校验完整 Git SHA。
+此选择不构建 Linkd、Console 或 Chart；Helm 的模拟器默认关闭，可显式配置多个实例。
+用法见 [Standard Event 模拟器](event-generator.md) 和 [Helm 可选 Event Generator](helm.md#可选-event-generator)。
 
 ## 版本建议
 
@@ -90,7 +106,7 @@ Helm 的 `image.tag` / `console.image.tag` 使用同一交付标签；需要精�
 ## Helm Chart 打包
 
 选择 `component=helm`，本次运行只执行 Chart 校验、渲染、打包和发布，镜像构建 job 跳过。
-反过来，选择 `all`、`linkd` 或 `linkd-console` 时，Chart job 跳过。
+反过来，选择任一镜像构建目标时，Chart job 跳过。
 
 ```bash
 gh workflow run linkd-images.yml --ref feat/linkd-dev \
@@ -102,8 +118,8 @@ gh workflow run linkd-images.yml --ref feat/linkd-dev \
 也不会把渲染出来的 Secret 上传到 Artifacts。验证不连接 Kubernetes 或真实中间件。
 
 Actions Summary 提供 Release 和 Artifact 两个下载入口。Release 的 tag 为 `helm/linkd/v<chart-version>`，
-例如 `helm/linkd/v0.1.1`；版本直接读取 `Chart.yaml`，没有单独版本输入。
-首次创建的 Git tag 指向首次发布提交，标题为 `Linkd Helm Chart 0.1.1`。
+例如 `helm/linkd/v0.1.2`；版本直接读取 `Chart.yaml`，没有单独版本输入。
+首次创建的 Git tag 指向首次发布提交，标题为 `Linkd Helm Chart 0.1.2`。
 不存在时先创建草稿，上传后回下载校验，确认内容一致才发布；已存在时自动更新两个同名附件与构建说明。
 已有 Git tag 不移动，Release 说明中的源码提交和构建链接记录本次包的实际来源。
 更新已发布附件不是原子操作，失败时可能已部分更新，可重新触发相同版本修复；首次失败保留草稿供排查。
@@ -113,11 +129,11 @@ Actions Summary 提供 Release 和 Artifact 两个下载入口。Release 的 tag
 Artifact 名称为 `linkd-chart-<run-id>.<attempt>`，作为保留 30 天的备份。两种入口均包含：
 
 ```text
-linkd-0.1.1.tgz
+linkd-0.1.2.tgz
 SHA256SUMS
 ```
 
-Chart 包默认沿用仓库的 `version: 0.1.1`、`appVersion: "0.1.1"` 和两个 GHCR `0.1.1` 镜像。
+Chart 包默认沿用仓库的 `version: 0.1.2`、`appVersion: "0.1.1"` 和两个 GHCR `0.1.1` 镜像。
 `version` 只用于镜像构建，不会自动修改 Chart 的版本或默认镜像。
 发布下一版镜像后，需要显式更新 `values.yaml` 和 `Chart.yaml`，再单独触发 Helm 打包。
 
@@ -125,7 +141,7 @@ Chart 包默认沿用仓库的 `version: 0.1.1`、`appVersion: "0.1.1"` 和两�
 
 ```bash
 sha256sum -c SHA256SUMS
-helm upgrade --install linkd ./linkd-0.1.1.tgz \
+helm upgrade --install linkd ./linkd-0.1.2.tgz \
   --namespace linkd --create-namespace -f /secure/linkd-values.yaml
 ```
 

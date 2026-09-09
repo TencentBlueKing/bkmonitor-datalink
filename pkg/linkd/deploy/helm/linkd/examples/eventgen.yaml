@@ -1,0 +1,22 @@
+# 与 external-services.yaml 叠加；先从 eventgen-config.yaml 创建 linkd-eventgen-config Secret。
+eventgen:
+  enabled: true
+  existingSecret: linkd-eventgen-config
+  defaults:
+    cycleDuration: 30s
+    maxActiveAlerts: 10000
+  instances:
+    infra:
+      eventSourceId: demo-infra
+      tenantId: tenant-a
+      newAlertsPerMinute: 20
+      duplicatePercent: 20
+      scenarios: cpu_high,disk_full
+    service:
+      eventSourceId: demo-service
+      tenantId: tenant-b
+      newAlertsPerMinute: 60
+      cycleDuration: 15s
+      # 有限任务运行 10 个周期后结束，Job 不自动重试。
+      cycles: 10
+      seed: 42

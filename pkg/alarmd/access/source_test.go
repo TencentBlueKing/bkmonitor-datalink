@@ -577,7 +577,7 @@ func TestDataBindingsShareFullImmutableViewAcrossConsumers(t *testing.T) {
 	requirement.Consumers[1].Consumer.LevelID = 1
 	dataset := execution.NewDataset([]contract.CanonicalRecordV2{{RecordID: "record", SourceTime: 1, BusinessID: "2"}})
 	query := PlannedQuery{Requirements: []execution.DataRequirement{requirement}}
-	bindings, err := dataBindings(query, execution.ProviderSeriesBatch{Dataset: dataset, CompletionRef: "result"}, 1)
+	bindings, err := dataBindings(query, execution.ProviderSeriesBatch{Dataset: dataset, CompletionRef: "result"}, 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

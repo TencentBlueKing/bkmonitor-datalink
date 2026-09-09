@@ -43,6 +43,10 @@ type phaseTwoMetrics struct {
 	legacyPodCache               *prometheus.CounterVec
 	redisPool                    *redisPoolCollector
 	algorithmInputs              *prometheus.CounterVec
+	seriesAdmission              *prometheus.CounterVec
+	cmdbIndexHosts               prometheus.Gauge
+	cmdbIndexAge                 *prometheus.GaugeVec
+	cmdbIndexDegraded            *prometheus.GaugeVec
 }
 
 var activeQGSetDurationBuckets = []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 30}
@@ -150,6 +154,22 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "algorithm_input_total",
 		Help: "Named algorithm input completion by fixed source family, input, dependency point and result.",
 	}, []string{"algorithm_family", "input_name", "dependency_point", "result"})
+	metrics.seriesAdmission = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "series_admission_total",
+		Help: "Access-path admission decisions by filter, outcome and bounded reason.",
+	}, []string{"filter", "result", "reason"})
+	metrics.cmdbIndexHosts = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "cmdb_host_index_hosts",
+		Help: "Hosts in the in-memory CMDB index the target filter decides on.",
+	})
+	metrics.cmdbIndexAge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "cmdb_host_index_age_seconds",
+		Help: "Age of the CMDB index alarmd holds, and of the platform refresh it was built from.",
+	}, []string{"kind"})
+	metrics.cmdbIndexDegraded = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "cmdb_host_index_degraded",
+		Help: "Whether the CMDB index is unusable for filtering, by bounded reason.",
+	}, []string{"reason"})
 	return metrics
 }
 
@@ -165,7 +185,8 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 		m.undrainedDrainingQueryGroups,
 		m.algorithmEvaluations, m.algorithmInputs,
-	}...), append(m.redisCalls.collectors(), m.controlCache, m.redisPool, m.legacyPodCache)...)
+	}...), append(m.redisCalls.collectors(), m.controlCache, m.redisPool, m.legacyPodCache,
+		m.seriesAdmission, m.cmdbIndexHosts, m.cmdbIndexAge, m.cmdbIndexDegraded)...)
 }
 
 func (m phaseTwoMetrics) observe(observation observability.Observation) {

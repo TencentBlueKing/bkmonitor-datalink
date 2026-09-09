@@ -76,6 +76,13 @@ type Config struct {
 	MinReadyDelay time.Duration
 	Now           func() time.Time // Defaults to time.Now.
 	Observer      observability.Observer
+	// Admission decides whether a series falls inside a plan's monitoring
+	// target. A nil value evaluates every series for every plan it feeds,
+	// which is what alarmd did before the target filter existed; it stays
+	// possible only so tests can state that they mean it.
+	Admission SeriesAdmission
+	// ObserveAdmission counts decisions. Optional.
+	ObserveAdmission AdmissionObserver
 }
 
 type Source struct {
@@ -187,6 +194,10 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	if err := consumer.Begin(ctx, prepared.Header); err != nil {
 		return execution.QueryExecutionCompletion{}, err
 	}
+	// The monitoring targets of this execution's plans are indexed once, not
+	// per series: one query commonly delivers thousands of series and every
+	// one of them would otherwise repeat the same lookup.
+	scopes := buildPlanScopes(prepared.Header.DuePlans)
 	// Only one permit acquisition per Source is pending at a time. Queries
 	// already admitted run independently; all attempts join before returning.
 	queryCtx, cancel := context.WithCancel(ctx)
@@ -254,7 +265,8 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		running.Add(1)
 		go func(index int, query PlannedQuery, attempt execution.QueryAttempt, permit QueryPermit) {
 			defer running.Done()
-			adapter := &seriesAdapter{consumer: consumer, query: query, attemptNo: attempt.AttemptNo}
+			adapter := &seriesAdapter{consumer: consumer, query: query, attemptNo: attempt.AttemptNo,
+				admission: source.config.Admission, observe: source.config.ObserveAdmission, scopes: scopes}
 			completion, err := source.executeWithPermit(queryCtx, attempt, adapter, permit)
 			if err != nil {
 				err = fmt.Errorf("alarmd access: execute physical query: %w", err)
@@ -727,22 +739,76 @@ type seriesAdapter struct {
 	consumer  execution.QueryExecutionConsumer
 	query     PlannedQuery
 	attemptNo uint32
+	admission SeriesAdmission
+	observe   AdmissionObserver
+	scopes    planScopes
 }
 
 func (adapter *seriesAdapter) ConsumeProviderSeries(ctx context.Context, batch execution.ProviderSeriesBatch) error {
 	if batch.PhysicalQuery != adapter.query.Spec.Digest || batch.CompletionRef == "" || batch.Dataset == nil || batch.Dataset.Len() == 0 {
 		return errors.New("alarmd access: provider delivered an invalid series")
 	}
-	bindings, err := dataBindings(adapter.query, batch, adapter.attemptNo)
+	admitted := adapter.admittedPlans(batch)
+	bindings, err := dataBindings(adapter.query, batch, adapter.attemptNo, admitted)
 	if err != nil {
 		return err
+	}
+	if len(bindings) == 0 {
+		// Every plan this series could feed excludes it. Passing an empty
+		// batch on would be rejected as incomplete, and there is nothing to
+		// evaluate: the series simply does not belong to any of them.
+		return nil
 	}
 	return adapter.consumer.ConsumeSeries(ctx, execution.SeriesExecutionBatch{PhysicalQuery: batch.PhysicalQuery,
 		QueryRevision: adapter.query.Spec.PlanFacts.QueryRevision, CompletionRef: batch.CompletionRef,
 		Dataset: batch.Dataset, Inputs: bindings, Delivery: batch.Delivery})
 }
 
-func dataBindings(query PlannedQuery, batch execution.ProviderSeriesBatch, attemptNo uint32) ([]execution.NamedInputBinding, error) {
+// admittedPlans enriches the series once and then decides for each plan it
+// could feed. A nil result means no filtering is installed and every plan is
+// admitted.
+func (adapter *seriesAdapter) admittedPlans(batch execution.ProviderSeriesBatch) map[execution.PlanIdentity]bool {
+	if adapter.admission == nil {
+		return nil
+	}
+	facts := adapter.admission.Enrich(seriesDimensions(batch.Dataset))
+	decisions := make(map[execution.PlanIdentity]bool)
+	for _, requirement := range adapter.query.Requirements {
+		for _, consumer := range requirement.Consumers {
+			identity := consumer.Consumer.Plan
+			if _, decided := decisions[identity]; decided {
+				continue
+			}
+			plan, known := adapter.scopes[identity]
+			if !known {
+				// A plan whose scope was not indexed must not be filtered on a
+				// guess. It is admitted and the gap is visible in the counter.
+				decisions[identity] = true
+				if adapter.observe != nil {
+					adapter.observe("target_scope", "admitted", "plan_not_indexed")
+				}
+				continue
+			}
+			admit, filter, reason := adapter.admission.Admit(plan, &facts)
+			decisions[identity] = admit
+			if adapter.observe != nil {
+				if admit {
+					adapter.observe("target_scope", "admitted", "in_scope")
+				} else {
+					adapter.observe(filter, "rejected", reason)
+				}
+			}
+		}
+	}
+	return decisions
+}
+
+func dataBindings(
+	query PlannedQuery,
+	batch execution.ProviderSeriesBatch,
+	attemptNo uint32,
+	admitted map[execution.PlanIdentity]bool,
+) ([]execution.NamedInputBinding, error) {
 	ordinals := make([]uint32, batch.Dataset.Len())
 	for index := range ordinals {
 		ordinals[index] = uint32(index)
@@ -754,6 +820,12 @@ func dataBindings(query PlannedQuery, batch execution.ProviderSeriesBatch, attem
 	bindings := make([]execution.NamedInputBinding, 0)
 	for _, requirement := range query.Requirements {
 		for _, consumer := range requirement.Consumers {
+			if admitted != nil && !admitted[consumer.Consumer.Plan] {
+				// The series is outside this strategy's monitoring target, so
+				// it never becomes one of its inputs - and therefore never
+				// reaches its State, evaluation or events.
+				continue
+			}
 			bindings = append(bindings, execution.NamedInputBinding{Consumer: consumer.Consumer,
 				RequirementID: requirement.RequirementID, DatasetName: requirement.DatasetName, Role: requirement.Role,
 				ProviderResult: batch.CompletionRef, QueryWindow: query.Spec.LogicalWindow,

@@ -498,6 +498,10 @@ type legacyItem struct {
 	QueryConfigs []json.RawMessage `json:"query_configs"`
 	Algorithms   []legacyAlgorithm `json:"algorithms"`
 	Unit         string            `json:"unit"`
+	// Target is the strategy's monitoring scope. It was silently ignored here
+	// until 2026-09-09, which is how alarmd came to alert on hosts outside
+	// every scoped strategy's target while Python filtered them out.
+	Target [][]legacyTargetCondition `json:"target"`
 }
 type legacyAlgorithm struct {
 	Level      uint32          `json:"level"`
@@ -697,6 +701,14 @@ func compilePlan(
 	semantics := contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries, QueryWindow: uint32(interval), AggregationInterval: uint32(interval), EvaluationInterval: uint32(interval), LatenessTolerance: uint32(interval * 2)}
 	ir := contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2, Minor: 0}, RequiredFeatures: []string{}, StrategyRef: ref, ExecutionSemantics: semantics, InputProjection: projection, Levels: levels}
 	plan := contract.EvaluationPlanV2{PlanID: strategyID, StrategyRef: ref, InputProjection: projection, SourceCompatibility: &contract.SourceCompatibilityV2{ItemID: strconv.FormatInt(item.ID, 10)}, StrategyIR: ir}
+	// The monitoring target is frozen with the plan. A target this compiler
+	// cannot reduce rejects the plan, so the strategy stays on Python instead
+	// of running here without its scope.
+	scope, err := compileTargetScope(item.Target)
+	if err != nil {
+		return contract.EvaluationPlanV2{}, execution.ScheduleSpec{}, "", dispositions, err
+	}
+	plan.TargetScope = scope
 	if ref.SnapshotRevision > 0 {
 		plan.OutputIdentity = &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, dataset.IdentityFields...)}
 	}

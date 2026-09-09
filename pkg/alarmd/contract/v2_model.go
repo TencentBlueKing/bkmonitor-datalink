@@ -218,8 +218,13 @@ type EvaluationPlanV2 struct {
 	SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
 	OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
 	LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
-	StrategyIR          StrategyIRV2           `json:"strategy_ir"`
-	TerminalReasonCode  string                 `json:"terminal_reason_code,omitempty"`
+	// TargetScope is the strategy's monitoring target, frozen. Absent means
+	// the strategy names no target and every series is in scope; it never
+	// means "a scope existed and was dropped" - compilation rejects the Plan
+	// in that case rather than publish one that alerts outside its target.
+	TargetScope        *TargetScopeV2 `json:"target_scope,omitempty"`
+	StrategyIR         StrategyIRV2   `json:"strategy_ir"`
+	TerminalReasonCode string         `json:"terminal_reason_code,omitempty"`
 }
 
 // MarshalJSON keeps the 2.0 wire union flat: a producer emits either the
@@ -239,8 +244,9 @@ func (plan EvaluationPlanV2) MarshalJSON() ([]byte, error) {
 		SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
 		OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
 		LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
+		TargetScope         *TargetScopeV2         `json:"target_scope,omitempty"`
 		StrategyIR          StrategyIRV2           `json:"strategy_ir"`
-	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.LegacyOutput, plan.StrategyIR})
+	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.LegacyOutput, plan.TargetScope, plan.StrategyIR})
 }
 
 type PlanSetV2 struct {

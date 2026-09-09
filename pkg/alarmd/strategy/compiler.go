@@ -135,6 +135,7 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 		evaluationSemantics: request.Plan.StrategyIR.ExecutionSemantics,
 		normalizers:         make(map[string]NumericNormalizerSpec),
 		datasetDigest:       datasetDigest,
+		targetScope:         request.Plan.TargetScope,
 	}
 	terminals := make([]Terminal, 0)
 	if request.Plan.OutputIdentity != nil {

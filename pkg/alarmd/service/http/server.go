@@ -23,6 +23,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet/ui"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -116,6 +117,12 @@ func newServer(recorder *metric.Recorder, source lifecycle.Source, options ...Op
 	mux.HandleFunc("/readyz", server.readiness)
 	mux.Handle("/metrics", promhttp.HandlerFor(recorder.Gatherer(), promhttp.HandlerOpts{}))
 	mux.HandleFunc("/api/", server.serveAPI)
+	// The page is static and carries no runtime dependency, so it is mounted
+	// unconditionally: when the runtime is not open yet the page still loads and
+	// says which channel cannot answer, which is the degradation it was designed
+	// for. "/" is the least specific pattern, so it cannot shadow the routes
+	// above.
+	mux.Handle("/", ui.Handler())
 	server.handler = mux
 
 	// Allocation and CPU attribution has no in-process answer today: the

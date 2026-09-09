@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,6 +38,33 @@ func TestQuerySurfaceNeverServesPprof(t *testing.T) {
 	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("query surface /metrics = %d, want 200", response.Code)
+	}
+}
+
+// The page is mounted on the least specific pattern there is. If it ever
+// shadowed the routes above it, /metrics would start returning HTML and the
+// scrape would fail on a page nobody thought was on the critical path.
+func TestThePageDoesNotShadowTheQuerySurfaceRoutes(t *testing.T) {
+	server := New(metric.NewRecorder(metric.BuildInfo{}), WithDiagnosticsAddress("127.0.0.1:0"))
+	for target, want := range map[string]string{
+		"/metrics": "# HELP",
+		"/healthz": "",
+		"/":        "alarmd 对象与判定",
+	} {
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, target, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s = %d, want 200", target, response.Code)
+		}
+		if want != "" && !strings.Contains(response.Body.String(), want) {
+			t.Fatalf("%s served the wrong handler: %.60s", target, response.Body.String())
+		}
+	}
+	// The API route still answers as the API, not as the page.
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("/api/health = %d, want the API's not-ready answer rather than the page", response.Code)
 	}
 }
 

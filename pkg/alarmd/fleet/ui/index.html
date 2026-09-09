@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>alarmd 对象与判定</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --line:#e3e6ea; --text:#1f2329; --muted:#6b7785;
+  --ok:#1f9d55; --warn:#c2811a; --unknown:#6b7785; --bad:#c0392b; --accent:#3a6ea5;
+}
+@media (prefers-color-scheme:dark){
+  :root{ --bg:#16181c; --panel:#1e2126; --line:#2d323a; --text:#e6e8ea; --muted:#98a2ae; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{padding:16px;max-width:1280px;margin:0 auto}
+h1{font-size:15px;margin:0 0 2px}
+.sub{color:var(--muted);font-size:12px;margin-bottom:14px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;margin-bottom:14px}
+.panel h2{font-size:13px;margin:0 0 2px}
+.basis{color:var(--muted);font-size:11px;margin:0 0 10px}
+.verdict{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.badge{font-size:15px;font-weight:600;padding:2px 10px;border-radius:4px;color:#fff}
+.b-HEALTHY{background:var(--ok)} .b-DEGRADED{background:var(--warn)}
+.b-UNKNOWN{background:var(--unknown)} .b-ERROR{background:var(--bad)}
+.verdict .why{color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.cell{border:1px solid var(--line);border-radius:5px;padding:8px 10px}
+.cell .k{color:var(--muted);font-size:11px}
+.cell .v{font-size:19px;font-variant-numeric:tabular-nums}
+.cell.hl .v{color:var(--warn)}
+.gaps{margin:10px 0 0;padding:0;list-style:none}
+.gaps li{border-left:3px solid var(--warn);padding:4px 8px;margin-top:6px;background:rgba(194,129,26,.08);font-size:12px}
+.gaps .kind{font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;white-space:nowrap}
+td.mono,code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
+.qg{cursor:help}
+.tag{display:inline-block;border:1px solid var(--line);border-radius:3px;padding:0 5px;margin:1px 3px 1px 0;font-size:11px}
+.pager{display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--muted);font-size:12px}
+button{font:inherit;padding:4px 10px;border:1px solid var(--line);background:var(--panel);
+  color:var(--text);border-radius:4px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--accent)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+input{font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:4px;
+  background:var(--bg);color:var(--text)}
+.form{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.form input.qgin{flex:1;min-width:260px;font-family:ui-monospace,Menlo,monospace;font-size:11px}
+.err{border-left:3px solid var(--bad);background:rgba(192,57,43,.08);padding:8px 10px;
+  font-size:12px;margin-top:10px;white-space:pre-wrap}
+.empty{color:var(--muted);padding:10px 0;font-size:12px}
+.note{color:var(--muted);font-size:11px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>alarmd 对象与判定</h1>
+  <div class="sub">
+    对象清单与判定不经时序库，直接读控制面与各副本快照。
+    <span id="stamp"></span>
+  </div>
+
+  <section class="panel">
+    <h2>部署判定</h2>
+    <p class="basis">时间口径：本次请求时刻的聚合快照，非时间窗聚合。</p>
+    <div class="verdict">
+      <span id="health" class="badge b-UNKNOWN">…</span>
+      <span id="why" class="why"></span>
+    </div>
+    <div class="grid">
+      <div class="cell"><div class="k">应有 (expected)</div><div class="v" id="expected">–</div></div>
+      <div class="cell"><div class="k">已覆盖 (covered)</div><div class="v" id="covered">–</div></div>
+      <div class="cell"><div class="k">已知状态 (determined)</div><div class="v" id="determined">–</div></div>
+      <div class="cell hl"><div class="k">未知 (unknown)</div><div class="v" id="unknown">–</div></div>
+    </div>
+    <ul class="gaps" id="gaps"></ul>
+    <div class="err" id="healthErr" hidden></div>
+    <p class="note">
+      covered 是“归属覆盖”，determined 是“持有副本真正观察到过结论”。两者之差计入 unknown：
+      滚动发布后 tracker 为空，副本持有对象却还说不出它们的状态，此时判定为 UNKNOWN 而非健康。
+    </p>
+  </section>
+
+  <section class="panel">
+    <h2>异常对象</h2>
+    <p class="basis">时间口径：持续时长按每条自身的起算点，见“起算来源”列。</p>
+    <div id="objErr" class="err" hidden></div>
+    <table>
+      <thead><tr>
+        <th>对象</th><th>种类</th><th>最近原因</th><th>已持续</th>
+        <th>起算来源</th><th>副本</th><th>关联策略</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="objEmpty" hidden>当前没有异常对象。</div>
+    <div class="pager">
+      <button id="prev" disabled>上一页</button>
+      <button id="next" disabled>下一页</button>
+      <span id="pageInfo"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>观察窗口</h2>
+    <p class="basis">
+      时间口径：窗口按自身到期时刻失效，最长 <span id="maxTtl">–</span> 分钟；
+      同时最多 <span id="maxOpen">–</span> 个对象。
+    </p>
+    <div id="winErr" class="err" hidden></div>
+    <table>
+      <thead><tr><th>对象</th><th>开启人</th><th>开启于</th><th>到期</th><th>操作</th></tr></thead>
+      <tbody id="winRows"></tbody>
+    </table>
+    <div class="empty" id="winEmpty" hidden>当前没有开启的观察窗口。</div>
+    <div class="form">
+      <input class="qgin" id="qg" placeholder="对象标识（64 位十六进制），可从上表复制" spellcheck="false">
+      <input id="by" placeholder="开启人" size="12">
+      <input id="ttl" type="number" min="1" value="15" size="4"> <span class="basis" style="margin:0">分钟</span>
+      <button class="primary" id="open">开启观察</button>
+    </div>
+    <p class="note">
+      开窗只改变“记录什么”，不改变“执行什么”。它消耗共享诊断预算并自动过期；
+      装不下时会被截断并按次上报，不会静默生效。
+    </p>
+  </section>
+</div>
+
+<script>
+// Everything is fetched relative to wherever this page is mounted, so a host
+// can proxy it under any prefix without the page being rebuilt. Resolving
+// against a base that always ends in "/" keeps "/alarmd" and "/alarmd/"
+// equivalent; without it the first form would escape one path segment upwards.
+var BASE = (function () {
+  var p = location.pathname;
+  return p.charAt(p.length - 1) === '/' ? p : p + '/';
+})();
+
+var LIMIT = 20;
+var offset = 0;
+var total = 0;
+
+function api(path, init) {
+  return fetch(BASE + 'api/' + path, init).then(function (r) {
+    return r.text().then(function (text) {
+      var body = null;
+      try { body = text ? JSON.parse(text) : null; } catch (e) { /* keep raw */ }
+      if (!r.ok) {
+        var reason = (body && body.error) || text || ('HTTP ' + r.status);
+        throw new Error(reason);
+      }
+      return body;
+    });
+  });
+}
+
+function show(id, on) { document.getElementById(id).hidden = !on; }
+function text(id, v) { document.getElementById(id).textContent = v; }
+
+function fail(errId, err) {
+  var el = document.getElementById(errId);
+  // Never a blank panel and never a zero: say which channel could not answer.
+  el.textContent = '这一块读不到：' + err.message;
+  el.hidden = false;
+}
+
+function duration(sinceIso) {
+  var ms = Date.now() - new Date(sinceIso).getTime();
+  if (!isFinite(ms) || ms < 0) return '—';
+  var m = Math.floor(ms / 60000);
+  if (m < 60) return m + ' 分钟';
+  var h = Math.floor(m / 60);
+  if (h < 48) return h + ' 小时 ' + (m % 60) + ' 分';
+  return Math.floor(h / 24) + ' 天 ' + (h % 24) + ' 小时';
+}
+
+var SINCE_SOURCE = {
+  BUSINESS_STATE: '业务状态（跨重启保留）',
+  SNAPSHOT_CONTINUITY: '快照连续观察（重启重置）'
+};
+
+function loadHealth() {
+  return api('health').then(function (d) {
+    show('healthErr', false);
+    var h = d.health || 'UNKNOWN';
+    var badge = document.getElementById('health');
+    badge.textContent = h;
+    badge.className = 'badge b-' + h;
+    text('expected', d.expected === null || d.expected === undefined ? '未知' : d.expected);
+    text('covered', d.covered);
+    text('determined', d.determined);
+    text('unknown', d.unknown);
+    var gaps = d.gaps || [];
+    text('why', gaps.length
+      ? '视图不完整，判定不能读成健康'
+      : (h === 'DEGRADED' ? '视图完整，存在异常对象' : '视图完整，无异常对象'));
+    var ul = document.getElementById('gaps');
+    ul.textContent = '';
+    gaps.forEach(function (g) {
+      var li = document.createElement('li');
+      var k = document.createElement('span');
+      k.className = 'kind';
+      k.textContent = g.kind;
+      li.appendChild(k);
+      if (g.replica) li.appendChild(document.createTextNode('　副本 ' + g.replica));
+      if (g.detail) li.appendChild(document.createTextNode('　' + g.detail));
+      ul.appendChild(li);
+    });
+  }).catch(function (e) { fail('healthErr', e); });
+}
+
+function loadObjects() {
+  return api('objects?offset=' + offset + '&limit=' + LIMIT).then(function (d) {
+    show('objErr', false);
+    var rows = d.anomalies || [];
+    total = (d.page && d.page.total) || 0;
+    var tb = document.getElementById('rows');
+    tb.textContent = '';
+    rows.forEach(function (a) {
+      var tr = document.createElement('tr');
+      function cell(t, cls) {
+        var td = document.createElement('td');
+        if (cls) td.className = cls;
+        td.textContent = t;
+        tr.appendChild(td);
+        return td;
+      }
+      var qg = cell(a.query_group.slice(0, 12) + '…', 'mono qg');
+      qg.title = a.query_group + '（点击复制）';
+      qg.addEventListener('click', function () {
+        document.getElementById('qg').value = a.query_group;
+      });
+      cell(a.kind === 'BLOCKED_RUN' ? '被阻塞' : '降级');
+      cell(a.reason_code || '—');
+      cell(duration(a.since));
+      cell(SINCE_SOURCE[a.since_from] || a.since_from || '—');
+      cell(a.replica, 'mono');
+      var td = document.createElement('td');
+      (a.strategies || []).forEach(function (s) {
+        var span = document.createElement('span');
+        span.className = 'tag';
+        span.textContent = s.business_id ? (s.strategy_id + ' / 业务 ' + s.business_id) : s.strategy_id;
+        td.appendChild(span);
+      });
+      if (!(a.strategies || []).length) td.textContent = '未观察到';
+      tr.appendChild(td);
+      tb.appendChild(tr);
+    });
+    show('objEmpty', rows.length === 0 && total === 0);
+    var shown = rows.length ? (offset + 1) + '–' + (offset + rows.length) : '0';
+    var real = d.anomalies_total;
+    text('pageInfo', shown + ' / 本页可翻 ' + total +
+      (real !== undefined && real !== total ? '（副本实际共 ' + real + '，列表被截断）' : ''));
+    document.getElementById('prev').disabled = offset <= 0;
+    document.getElementById('next').disabled = offset + LIMIT >= total;
+  }).catch(function (e) { fail('objErr', e); });
+}
+
+function loadWindows() {
+  return api('windows').then(function (d) {
+    show('winErr', false);
+    text('maxTtl', Math.round((d.max_ttl_seconds || 0) / 60));
+    text('maxOpen', d.max_open);
+    var ws = d.windows || [];
+    var tb = document.getElementById('winRows');
+    tb.textContent = '';
+    ws.forEach(function (w) {
+      var tr = document.createElement('tr');
+      function cell(t, cls) {
+        var td = document.createElement('td');
+        if (cls) td.className = cls;
+        td.textContent = t;
+        tr.appendChild(td);
+      }
+      cell(w.query_group.slice(0, 12) + '…', 'mono');
+      cell(w.opened_by || '未记录');
+      cell(w.opened_at ? new Date(w.opened_at).toLocaleString() : '—');
+      cell(w.expires_at ? new Date(w.expires_at).toLocaleString() : '—');
+      var td = document.createElement('td');
+      var b = document.createElement('button');
+      b.textContent = '结束';
+      b.addEventListener('click', function () { closeWindow(w.query_group, b); });
+      td.appendChild(b);
+      tr.appendChild(td);
+      tb.appendChild(tr);
+    });
+    show('winEmpty', ws.length === 0);
+  }).catch(function (e) { fail('winErr', e); });
+}
+
+function postWindow(body, button) {
+  button.disabled = true;
+  return api('windows', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function () {
+    show('winErr', false);
+    return loadWindows();
+  }).catch(function (e) {
+    fail('winErr', e);
+  }).then(function () {
+    button.disabled = false;
+  });
+}
+
+function closeWindow(queryGroup, button) {
+  return postWindow({ query_groups: [queryGroup], close: true }, button);
+}
+
+document.getElementById('open').addEventListener('click', function () {
+  var b = this;
+  postWindow({
+    query_groups: [document.getElementById('qg').value.trim()],
+    opened_by: document.getElementById('by').value.trim(),
+    ttl_seconds: Math.round(Number(document.getElementById('ttl').value) * 60)
+  }, b);
+});
+
+document.getElementById('prev').addEventListener('click', function () {
+  offset = Math.max(0, offset - LIMIT);
+  loadObjects();
+});
+document.getElementById('next').addEventListener('click', function () {
+  offset = offset + LIMIT;
+  loadObjects();
+});
+
+function refresh() {
+  text('stamp', '读取于 ' + new Date().toLocaleTimeString());
+  loadHealth();
+  loadObjects();
+  loadWindows();
+}
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

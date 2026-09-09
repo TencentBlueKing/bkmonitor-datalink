@@ -155,9 +155,15 @@ jobs:
         run: |
           set -euo pipefail
           expected=$(printf 'version: %s\ngit_commit: %s' "$VERSION" "$GITHUB_SHA")
+          manifest=$(docker buildx imagetools inspect "$IMAGE@$DIGEST" --raw)
           for platform in linux/amd64 linux/arm64; do
-            # 每次按平台拉取同一 index digest，避免只验证 runner 的原生架构。
-            actual=$(docker run --rm --pull always --platform "$platform" --network none "$IMAGE@$DIGEST" version)
+            # classic image store 不能以同一 index digest 同时存储两个架构；
+            # 从固定索引解析各自的子 manifest，既避免覆盖冲突，又保持产物可追溯。
+            platform_digest=$(jq -er --arg arch "${platform#linux/}" '
+              [.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch)]
+              | if length == 1 then .[0].digest else error("平台 manifest 缺失或重复") end
+            ' <<< "$manifest")
+            actual=$(docker run --rm --pull always --platform "$platform" --network none "$IMAGE@$platform_digest" version)
             if [[ "$actual" != "$expected" ]]; then
               echo "::error::$platform 镜像内的版本号或 Git commit 与本次构建不一致"
               exit 1

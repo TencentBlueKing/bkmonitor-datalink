@@ -343,10 +343,28 @@ func openProductionPhaseTwoBundleWithDependencies(
 		finalEmitter = &phaseTwoFinalEmitter{manifest: *manifest, observer: observer, maxEvents: cfg.PhaseTwo.Coordinator.MaxEvents}
 		frozenSource = phaseTwoShadowResolver{next: frozen}
 	}
+	// A series is evaluated for a strategy only inside that strategy's
+	// monitoring target. The facts it is decided on come from the platform's
+	// CMDB host cache, on the database this client already uses.
+	seriesAdmission, cmdbIndex, err := buildSeriesAdmission(ctx, cfg, runtimeClient, recorder)
+	if err != nil {
+		return nil, err
+	}
+	// The index outlives the constructor's context and is stopped with the
+	// rest of the Bundle's resources.
+	cmdbIndexCtx, stopCMDBIndex := context.WithCancel(context.Background())
+	defer func() {
+		if resultErr != nil {
+			stopCMDBIndex()
+		}
+	}()
+	go maintainCMDBIndex(cmdbIndexCtx, cmdbIndex, recorder)
 	querySource, err := access.NewSource(frozenSource, queryClient, productionQueryPermitAcquirer{flights: flights}, access.Config{
-		MinReadyDelay: cfg.PhaseTwo.Access.MinReadyDelay.Duration(),
-		Now:           external.Now,
-		Observer:      observer,
+		MinReadyDelay:    cfg.PhaseTwo.Access.MinReadyDelay.Duration(),
+		Now:              external.Now,
+		Observer:         observer,
+		Admission:        seriesAdmission,
+		ObserveAdmission: recorder.RecordSeriesAdmission,
 	})
 	if err != nil {
 		return nil, err
@@ -563,6 +581,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 			return controlClient.Ping(probeCtx).Err()
 		},
 		CloseResources: func(shutdownCtx context.Context) error {
+			stopCMDBIndex()
 			repository.ReleaseSnapshotCache()
 			eventsClosed = true
 			if finalEmitter != nil && finalEmitter.publisher != nil {

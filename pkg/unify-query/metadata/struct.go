@@ -208,6 +208,7 @@ type Query struct {
 	Size   int      `json:"size,omitempty"`
 
 	Scroll            string             `json:"scroll,omitempty"`
+	IsSearchAfter     bool               `json:"is_search_after,omitempty"`
 	ResultTableOption *ResultTableOption `json:"result_table_option,omitempty"`
 
 	Orders      Orders    `json:"orders,omitempty"`

@@ -557,6 +557,43 @@ func TestQueryToMetricStorageClusterRecordStorageType(t *testing.T) {
 	assert.Equal(t, md.ElasticsearchStorageType, storageTypes["1"])
 }
 
+func TestQueryTsSearchAfterIsNotPropagatedToMetric(t *testing.T) {
+	mock.Init()
+	ctx := md.InitHashID(context.Background())
+
+	queryTs := &QueryTs{
+		Start:         "1741056443",
+		End:           "1741060043",
+		Step:          "1m",
+		IsSearchAfter: true,
+		QueryList: []*Query{
+			{
+				DataSource:    BkLog,
+				TableID:       "result_table.es",
+				FieldName:     "dtEventTimeStamp",
+				ReferenceName: "a",
+			},
+		},
+		TsDBMap: map[string]TsDBs{
+			"a": {
+				&uqQuery.TsDBV2{
+					TableID:     "result_table.es",
+					DataLabel:   "log_index_set_test",
+					StorageID:   "1",
+					StorageType: md.ElasticsearchStorageType,
+					DB:          "es_index",
+					Measurement: "__default__",
+				},
+			},
+		},
+	}
+	queryReference, err := queryTs.ToQueryReference(ctx)
+	require.NoError(t, err)
+	require.Len(t, queryReference["a"], 1)
+	require.Len(t, queryReference["a"][0].QueryList, 1)
+	assert.False(t, queryReference["a"][0].QueryList[0].IsSearchAfter)
+}
+
 func TestQueryToMetricStorageClusterRecordStorageTypeFromResultTableDetail(t *testing.T) {
 	mock.Init()
 	ctx := md.InitHashID(context.Background())

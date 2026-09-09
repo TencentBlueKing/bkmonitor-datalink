@@ -11,8 +11,11 @@ package sql_expr
 
 import (
 	"context"
+	encodingJson "encoding/json"
 	"fmt"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +32,8 @@ const (
 	Doris = "doris"
 
 	ShardKey = "__shard_key__"
+	// SearchAfterTieBreaker 是 Doris 日志表的稳定行标识，用于保证 keyset pagination 不会在排序值相同时漏行。
+	SearchAfterTieBreaker = "__unique_key__"
 
 	SelectIndex = "_index"
 
@@ -389,6 +394,247 @@ func (d *DorisSQLExpr) orderFieldTransform(field string) string {
 
 func (d *DorisSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {
 	return fmt.Sprintf("`%s` >= %d AND `%s` <= %d", timeField, start.UnixMilli(), timeField, end.UnixMilli())
+}
+
+type searchAfterField struct {
+	expr    string
+	literal string
+	asc     bool
+	isNull  bool
+}
+
+func (d *DorisSQLExpr) ParserSearchAfter(orders metadata.Orders, values []any) (string, error) {
+	if len(values) == 0 {
+		return "", nil
+	}
+
+	fields, err := d.parseSearchAfterFields(orders, values)
+	if err != nil {
+		return "", err
+	}
+
+	conditions := make([]string, 0, len(fields))
+	for idx, field := range fields {
+		parts := make([]string, 0, idx+1)
+		for previous := 0; previous < idx; previous++ {
+			parts = append(parts, fields[previous].equalCondition())
+		}
+
+		strictCondition, compound := field.afterCondition()
+		if strictCondition == "" {
+			continue
+		}
+		if compound && len(parts) > 0 {
+			strictCondition = fmt.Sprintf("(%s)", strictCondition)
+		}
+		parts = append(parts, strictCondition)
+		conditions = append(conditions, fmt.Sprintf("(%s)", strings.Join(parts, " AND ")))
+	}
+	if len(conditions) == 0 {
+		return "FALSE", nil
+	}
+
+	return fmt.Sprintf("(%s)", strings.Join(conditions, " OR ")), nil
+}
+
+func (f searchAfterField) equalCondition() string {
+	if f.isNull {
+		return fmt.Sprintf("%s IS NULL", f.expr)
+	}
+	return fmt.Sprintf("%s = %s", f.expr, f.literal)
+}
+
+func (f searchAfterField) afterCondition() (condition string, compound bool) {
+	if f.isNull {
+		if f.asc {
+			return fmt.Sprintf("%s IS NOT NULL", f.expr), false
+		}
+		return "", false
+	}
+
+	op := ">"
+	if !f.asc {
+		op = "<"
+		return fmt.Sprintf("%s %s %s OR %s IS NULL", f.expr, op, f.literal, f.expr), true
+	}
+	return fmt.Sprintf("%s %s %s", f.expr, op, f.literal), false
+}
+
+func (d *DorisSQLExpr) ParserSearchAfterFields(orders metadata.Orders) ([]string, error) {
+	fields, err := d.parseSearchAfterFields(orders, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	expressions := make([]string, 0, len(fields))
+	for _, field := range fields {
+		expressions = append(expressions, field.expr)
+	}
+	return expressions, nil
+}
+
+func (d *DorisSQLExpr) parseSearchAfterFields(orders metadata.Orders, values []any) ([]searchAfterField, error) {
+	if len(orders) == 0 {
+		return nil, fmt.Errorf("search_after requires order fields")
+	}
+	if values != nil && len(orders) != len(values) {
+		return nil, fmt.Errorf("search_after values count %d does not match order fields count %d", len(values), len(orders))
+	}
+
+	fields := make([]searchAfterField, 0, len(orders))
+	fieldSet := set.New[string]()
+
+	for idx, order := range orders {
+		fieldName := order.Name
+		switch fieldName {
+		case FieldTime:
+			fieldName = d.timeField
+		case FieldValue:
+			fieldName = d.valueField
+		}
+		if fieldName == "" {
+			return nil, fmt.Errorf("search_after order field %s is empty", order.Name)
+		}
+
+		originField := fieldName
+		if alias, ok := d.fieldAlias[originField]; ok {
+			originField = alias
+		}
+		fieldOption, existed := d.getField(originField)
+		if !existed || fieldOption.FieldType == "" {
+			return nil, fmt.Errorf("search_after order field %s does not exist", order.Name)
+		}
+
+		fieldExpr, _ := d.dimTransform(fieldName)
+		if fieldExpr == "" || fieldExpr == metadata.Null {
+			return nil, fmt.Errorf("search_after order field %s cannot be transformed", order.Name)
+		}
+		if fieldSet.Existed(fieldExpr) {
+			return nil, fmt.Errorf("search_after contains duplicate order field %s", order.Name)
+		}
+		fieldSet.Add(fieldExpr)
+
+		field := searchAfterField{expr: fieldExpr, asc: order.Ast}
+		if values != nil {
+			if values[idx] == nil {
+				field.isNull = true
+			} else {
+				literal, err := d.searchAfterLiteral(values[idx], fieldOption.FieldType)
+				if err != nil {
+					return nil, fmt.Errorf("invalid search_after value for field %s: %w", order.Name, err)
+				}
+				field.literal = literal
+			}
+		}
+		fields = append(fields, field)
+	}
+
+	return fields, nil
+}
+
+func (d *DorisSQLExpr) searchAfterLiteral(value any, fieldType string) (string, error) {
+	if value == nil {
+		return "", fmt.Errorf("null value is unsupported")
+	}
+
+	fieldType = strings.ToUpper(fieldType)
+	if strings.HasPrefix(fieldType, "ARRAY<") || strings.HasSuffix(fieldType, " ARRAY") {
+		return "", fmt.Errorf("array field type %s is unsupported", fieldType)
+	}
+
+	if isDorisNumericType(fieldType) {
+		var number string
+		switch value := value.(type) {
+		case encodingJson.Number:
+			number = value.String()
+		case int:
+			number = strconv.FormatInt(int64(value), 10)
+		case int8:
+			number = strconv.FormatInt(int64(value), 10)
+		case int16:
+			number = strconv.FormatInt(int64(value), 10)
+		case int32:
+			number = strconv.FormatInt(int64(value), 10)
+		case int64:
+			number = strconv.FormatInt(value, 10)
+		case uint:
+			number = strconv.FormatUint(uint64(value), 10)
+		case uint8:
+			number = strconv.FormatUint(uint64(value), 10)
+		case uint16:
+			number = strconv.FormatUint(uint64(value), 10)
+		case uint32:
+			number = strconv.FormatUint(uint64(value), 10)
+		case uint64:
+			number = strconv.FormatUint(value, 10)
+		case float32:
+			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+				return "", fmt.Errorf("non-finite number is unsupported")
+			}
+			number = strconv.FormatFloat(float64(value), 'g', -1, 32)
+		case float64:
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return "", fmt.Errorf("non-finite number is unsupported")
+			}
+			number = strconv.FormatFloat(value, 'g', -1, 64)
+		case string:
+			number = value
+		default:
+			return "", fmt.Errorf("value type %T is incompatible with numeric field type %s", value, fieldType)
+		}
+		if !regexp.MustCompile(`^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$`).MatchString(number) {
+			return "", fmt.Errorf("value %q is not a valid number", number)
+		}
+		return number, nil
+	}
+
+	if fieldType == DorisTypeBoolean {
+		switch value := value.(type) {
+		case bool:
+			return strings.ToUpper(strconv.FormatBool(value)), nil
+		case string:
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return "", fmt.Errorf("value %q is not a valid boolean", value)
+			}
+			return strings.ToUpper(strconv.FormatBool(parsed)), nil
+		default:
+			return "", fmt.Errorf("value type %T is incompatible with boolean field", value)
+		}
+	}
+
+	if isDorisStringType(fieldType) || isDorisDateType(fieldType) {
+		valueString, ok := value.(string)
+		if !ok {
+			return "", fmt.Errorf("value type %T is incompatible with field type %s", value, fieldType)
+		}
+		return fmt.Sprintf("'%s'", d.valueTransform(valueString)), nil
+	}
+
+	return "", fmt.Errorf("field type %s is unsupported", fieldType)
+}
+
+func isDorisNumericType(fieldType string) bool {
+	for _, prefix := range []string{
+		DorisTypeTinyInt, DorisTypeSmallInt, DorisTypeInt, DorisTypeBigInt, DorisTypeLargeInt,
+		DorisTypeFloat, DorisTypeDouble, DorisTypeDecimalV3, DorisTypeDecimal,
+	} {
+		if fieldType == prefix || strings.HasPrefix(fieldType, prefix+"(") {
+			return true
+		}
+	}
+	return false
+}
+
+func isDorisStringType(fieldType string) bool {
+	return fieldType == DorisTypeString || fieldType == DorisTypeText ||
+		strings.HasPrefix(fieldType, "VARCHAR(") || strings.HasPrefix(fieldType, "CHAR(")
+}
+
+func isDorisDateType(fieldType string) bool {
+	return fieldType == DorisTypeDate || fieldType == "DATEV2" ||
+		fieldType == DorisTypeDatetime || fieldType == "DATETIMEV2" || fieldType == DorisTypeTimestamp ||
+		strings.HasPrefix(fieldType, DorisTypeDatetime+"(") || strings.HasPrefix(fieldType, "DATETIMEV2(")
 }
 
 func (d *DorisSQLExpr) ParserAllConditions(allConditions metadata.AllConditions) (string, error) {

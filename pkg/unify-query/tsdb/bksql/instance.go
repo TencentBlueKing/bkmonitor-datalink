@@ -475,11 +475,23 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 
 	if data.ResultSchema != nil {
-		option.ResultSchema = data.ResultSchema
+		option.ResultSchema = queryFactory.FilterResultSchema(data.ResultSchema)
 	}
 
 	span.Set("data-total-records", data.TotalRecords)
 	span.Set("data-list-size", len(data.List))
+
+	size = int64(len(data.List))
+	total = int64(data.TotalRecords)
+	if query.IsSearchAfter {
+		option.SearchAfter = nil
+		if size > 0 {
+			option.SearchAfter, err = queryFactory.SearchAfterValues(data.List[len(data.List)-1])
+			if err != nil {
+				return size, total, option, err
+			}
+		}
+	}
 
 	for _, list := range data.List {
 		newData := queryFactory.ReloadListData(list, false)
@@ -487,12 +499,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		newData[metadata.KeyIndex] = query.DB
 		// 注入原始数据需要的字段
 		query.DataReload(newData)
-
 		dataCh <- newData
 	}
-
-	size = int64(len(data.List))
-	total = int64(data.TotalRecords)
 
 	return size, total, option, err
 }

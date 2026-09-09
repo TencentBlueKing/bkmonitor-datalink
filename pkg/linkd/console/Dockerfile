@@ -10,7 +10,7 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --registry="${NPM_REGISTRY}"
 COPY . .
-RUN NODE_OPTIONS="${NODE_BUILD_OPTIONS}" pnpm build && pnpm prune --prod --registry="${NPM_REGISTRY}"
+RUN NODE_OPTIONS="${NODE_BUILD_OPTIONS}" pnpm build && npm_config_registry="${NPM_REGISTRY}" pnpm prune --prod
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
 RUN VERSION="${VERSION}" GIT_COMMIT="${GIT_COMMIT}" node -e 'require("node:fs").writeFileSync("build-info.json", JSON.stringify({version: process.env.VERSION, git_commit: process.env.GIT_COMMIT}))'

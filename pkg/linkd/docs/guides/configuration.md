@@ -528,5 +528,6 @@ Redis 连接参数独立于 `storage.redis`，同样支持 Sentinel 及两侧认
 运行时输出 Redis 不可达不阻止来源装配，每次实际调用按超时记录失败。
 
 集合成员和失败边界以 [Lifecycle 插件行为](../modules/lifecycle.md#23-enricher-与-finalhook) 为准。
+接入示例、Redis 查询和排障见 [Redis 策略活跃告警 hook](active-alert-by-strategy.md)。
 Console Kafka 页面按来源和实例展示输出目标；动态管理接口中的连接凭据已脱敏，因此该模式只展示
 目标声明，不使用脱敏凭据探测输出集群 metadata，也不将其标记为已验证可用。

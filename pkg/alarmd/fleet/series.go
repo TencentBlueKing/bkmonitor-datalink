@@ -57,7 +57,11 @@ type SeriesDefinition struct {
 var seriesCatalog = []SeriesDefinition{
 	{
 		Key: "expected", Label: "应有对象",
-		PromQL: `max(bkmonitor_alarmd_active_qg_set_query_groups)`,
+		// Reads the judgment's own exported number rather than the control plane
+		// gauge it is derived from. The two are close but not the same read, and
+		// a page that shows one figure beside the other contradicts itself the
+		// moment they differ by a reporting cycle.
+		PromQL: `max(bkmonitor_alarmd_fleet_objects{state="expected"})`,
 		Help:   "控制面认为应该被执行的对象总数。它变动说明策略在增删，不是故障。",
 	},
 	{

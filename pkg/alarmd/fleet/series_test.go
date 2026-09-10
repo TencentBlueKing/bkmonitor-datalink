@@ -57,7 +57,7 @@ func seriesByKey(t *testing.T, body map[string]any) map[string]map[string]any {
 // where it came from, so the expression travels with the curve.
 func TestSeriesCarryTheExpressionThatProducedThem(t *testing.T) {
 	provider := &stubRange{byExpression: map[string]SeriesRange{
-		`max(bkmonitor_alarmd_active_qg_set_query_groups)`: {
+		`max(bkmonitor_alarmd_fleet_objects{state="expected"})`: {
 			Points: []SeriesPoint{{AtUnixMilli: 1789006260000, Value: 931}},
 		},
 	}}
@@ -67,7 +67,7 @@ func TestSeriesCarryTheExpressionThatProducedThem(t *testing.T) {
 	}
 	byKey := seriesByKey(t, body)
 	expected := byKey["expected"]
-	if expected["promql"] != `max(bkmonitor_alarmd_active_qg_set_query_groups)` {
+	if expected["promql"] != `max(bkmonitor_alarmd_fleet_objects{state="expected"})` {
 		t.Fatalf("expression not carried: %v", expected["promql"])
 	}
 	if len(expected["points"].([]any)) != 1 {
@@ -84,7 +84,7 @@ func TestOneBrokenCurveDoesNotTakeTheOthersDown(t *testing.T) {
 	provider := &stubRange{
 		errFor: `sum(bkmonitor_alarmd_fleet_anomalies)`,
 		byExpression: map[string]SeriesRange{
-			`max(bkmonitor_alarmd_active_qg_set_query_groups)`: {
+			`max(bkmonitor_alarmd_fleet_objects{state="expected"})`: {
 				Points: []SeriesPoint{{AtUnixMilli: 1789006260000, Value: 931}},
 			},
 		},

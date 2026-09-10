@@ -54,8 +54,14 @@ type listResponse struct {
 	// the list calls it stalled. It is reported rather than assumed by the reader
 	// so the flag can be checked against the deployment that produced it instead
 	// of against a number someone remembers.
-	StallAfterSeconds int  `json:"stall_after_seconds,omitempty"`
-	Page              Page `json:"page"`
+	StallAfterSeconds int `json:"stall_after_seconds,omitempty"`
+	// StalledTotal counts stalled objects across the whole deployment, whatever
+	// the filter. The filtered count belongs in Summary with everything else,
+	// but this one number must survive a filter: it is the objects that will not
+	// recover on their own, and a filter that hides them reads as "nothing to
+	// do here".
+	StalledTotal int  `json:"stalled_total"`
+	Page         Page `json:"page"`
 }
 
 // Count is one value and how many anomalies carry it.
@@ -232,8 +238,15 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	}
 	view := service.View(request.Context())
 	// Marked before filtering so a filtered response reports the same flag for the
-	// same object as an unfiltered one.
+	// same object as an unfiltered one, and counted here so the deployment-wide
+	// total survives whatever filter follows.
 	MarkStalled(view.Anomalies, now(), stallAfter)
+	stalledTotal := 0
+	for _, anomaly := range view.Anomalies {
+		if anomaly.Stalled {
+			stalledTotal++
+		}
+	}
 	replica := request.URL.Query().Get("replica")
 	if replica != "" {
 		// A name that belongs to no replica has to be refused rather than
@@ -273,6 +286,7 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 		View:    view, Replica: replica, Strategy: strategy, Business: business,
 		Applied:           replica != "" || strategy != "" || business != "",
 		StallAfterSeconds: int(stallAfter / time.Second),
+		StalledTotal:      stalledTotal,
 		Page:              Page{Offset: offset, Limit: limit, Total: total},
 	})
 }

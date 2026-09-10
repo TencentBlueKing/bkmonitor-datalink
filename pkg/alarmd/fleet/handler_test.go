@@ -392,3 +392,37 @@ func TestListWithoutAStallBudgetFlagsNothing(t *testing.T) {
 		t.Fatal("summary counts a stall that was never established")
 	}
 }
+
+// A filter narrows the table; it must not narrow the one number that says
+// somebody has to intervene. Stalled objects do not recover on their own, so a
+// filtered view reporting zero of them reads as "nothing to do here" while four
+// of them sit outside the filter.
+func TestTheStalledTotalSurvivesAFilter(t *testing.T) {
+	budget := 10 * time.Minute
+	snapshots := healthySnapshots()
+	stuck := agedAnomaly("stuck", "error", 2*time.Hour)
+	stuck.Strategies = []StrategyRef{{StrategyID: "8568", BusinessID: "7"}}
+	other := agedAnomaly("also-stuck", "error", 2*time.Hour)
+	other.Strategies = []StrategyRef{{StrategyID: "2849", BusinessID: "7"}}
+	snapshots[1].Anomalies = []Anomaly{stuck, other}
+	snapshots[1].TotalAnomalies = 2
+	handler := handlerWithStallBudget(t, snapshots, budget)
+
+	_, body := get(t, handler, "/api/objects")
+	if body["stalled_total"].(float64) != 2 {
+		t.Fatalf("unfiltered stalled_total = %v, want 2", body["stalled_total"])
+	}
+
+	_, body = get(t, handler, "/api/objects?strategy=8568")
+	if body["page"].(map[string]any)["total"].(float64) != 1 {
+		t.Fatalf("the filter did not narrow the table: %v", body["page"])
+	}
+	// The filtered count belongs in the summary with everything else...
+	if body["summary"].(map[string]any)["stalled"].(float64) != 1 {
+		t.Fatalf("summary stalled = %v, want the filtered count", body["summary"])
+	}
+	// ...and the deployment-wide one has to stay reachable beside it.
+	if body["stalled_total"].(float64) != 2 {
+		t.Fatalf("filtered stalled_total = %v, want the deployment total 2", body["stalled_total"])
+	}
+}

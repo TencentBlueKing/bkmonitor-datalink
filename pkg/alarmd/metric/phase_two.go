@@ -26,8 +26,6 @@ type phaseTwoMetrics struct {
 	activationFailures           *prometheus.CounterVec
 	ownedQueryGroups             *prometheus.GaugeVec
 	ownershipTransitions         *prometheus.CounterVec
-	readyQueue                   *prometheus.GaugeVec
-	queryInflight                *prometheus.GaugeVec
 	queryAdmission               *prometheus.CounterVec
 	activeQGSetCount             prometheus.Gauge
 	activeQGSetBytes             prometheus.Gauge
@@ -119,14 +117,6 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "ownership_transition_total",
 			Help: "Ownership lifecycle transitions by bounded transition, result and reason class.",
 		}, []string{"transition", "result", "reason_class"}),
-		readyQueue: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "worker_ready_queue",
-			Help: "Process-wide ready query queue depth by fixed normal or recovery queue kind.",
-		}, []string{"kind"}),
-		queryInflight: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "worker_query_inflight",
-			Help: "Process-wide in-flight physical queries by fixed operation kind.",
-		}, []string{"kind"}),
 		queryAdmission: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "worker_query_admission_total",
 			Help: "Process-wide physical query permit admission outcomes by fixed operation and result.",
@@ -187,7 +177,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.slotTiming,
 		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations, m.sourceRefreshes,
 		m.activationFailures,
-		m.ownedQueryGroups, m.ownershipTransitions, m.readyQueue, m.queryInflight,
+		m.ownedQueryGroups, m.ownershipTransitions,
 		m.queryAdmission,
 		m.activeQGSetCount, m.activeQGSetBytes, m.activeQGSetEncode, m.activeQGSetRedis,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
@@ -285,12 +275,11 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 
 func (m phaseTwoMetrics) observeQueryPermit(observation observability.Observation) {
 	facts := observation.QueryPermit
-	m.readyQueue.WithLabelValues("normal").Set(float64(facts.NormalWaiting))
-	m.readyQueue.WithLabelValues("recovery").Set(float64(facts.RecoveryWaiting))
-	m.queryInflight.WithLabelValues("normal").Set(float64(facts.NormalInflight))
-	m.queryInflight.WithLabelValues("retry").Set(float64(facts.RetryInflight))
-	m.queryInflight.WithLabelValues("replay").Set(float64(facts.ReplayInflight))
-	m.queryInflight.WithLabelValues("probe").Set(float64(facts.ProbeInflight))
+	// Occupancy is no longer published from here. These are permit events, and
+	// publishing a level only when it is about to change reports the boundary
+	// rather than the interval -- in production the resulting gauge never rose
+	// above one while thousands of permits were granted per minute. The permit
+	// collector reads the same counters at scrape time instead.
 	if facts.Admission && isPhaseTwoQueryOperation(observation.Operation) &&
 		isPhaseTwoQueryAdmissionResult(observation.Result) {
 		m.queryAdmission.WithLabelValues(string(observation.Operation), string(observation.Result)).Inc()

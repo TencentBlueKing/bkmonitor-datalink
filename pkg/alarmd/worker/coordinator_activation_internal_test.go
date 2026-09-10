@@ -24,8 +24,10 @@ func TestFinalizePreparedPreservesStableSiblingReceiptsDuringForceWarmingActivat
 	changedPlan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "changed"}
 	stablePlan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "stable"}
 	duePlans := []execution.DuePlan{
-		{Identity: changedPlan, StateGeneration: "old-changed", StateApplyEpoch: 1, ScheduleRevision: "old-changed-schedule"},
-		{Identity: stablePlan, StateGeneration: "stable-generation", StateApplyEpoch: 1, ScheduleRevision: "stable-schedule"},
+		{Identity: changedPlan, CompiledPlan: internalCompiledPlan(t, "changed", 1, 60),
+			StateGeneration: "old-changed", StateApplyEpoch: 1, ScheduleRevision: "old-changed-schedule"},
+		{Identity: stablePlan, CompiledPlan: internalCompiledPlan(t, "stable", 1, 60),
+			StateGeneration: "stable-generation", StateApplyEpoch: 1, ScheduleRevision: "stable-schedule"},
 	}
 	applyVersion, err := execution.BuildApplyVersion(contractRef, 1)
 	if err != nil {

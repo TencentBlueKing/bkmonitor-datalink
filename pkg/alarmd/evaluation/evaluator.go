@@ -5,7 +5,6 @@ import (
 	"errors"
 	"reflect"
 	"sort"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
@@ -127,9 +126,9 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		return e.constrainedRecord(request, due, record, view)
 	}
 	levels := due.CompiledPlan.Levels()
-	reqs := make([]state.LevelRequirement, len(levels))
-	for i, l := range levels {
-		reqs[i] = state.LevelRequirement{LevelID: l.Definition().LevelID, DetectFingerprint: l.Fingerprints().Detect, RequiredPoints: l.RequiredDetectHistoryPoints(), RetentionPoints: l.StateRequirement().RetentionPoints, EvaluationInterval: time.Duration(l.Trigger().StepSeconds) * time.Second}
+	reqs, err := planLevelRequirements(due.CompiledPlan)
+	if err != nil {
+		return recordResult{}, err
 	}
 	window, err := state.NewWindow(reqs)
 	if err != nil {
@@ -328,7 +327,7 @@ func (e *Evaluator) evaluateSeries(
 	if !ok {
 		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: runtime state missing")
 	}
-	converged, err := guardConvergenceAllowed(view, levels)
+	converged, err := guardConvergenceAllowed(view, due.CompiledPlan)
 	if err != nil {
 		return execution.PlanEvaluationResult{}, err
 	}
@@ -440,15 +439,43 @@ func sameRecords(left, right []execution.RecordView) bool {
 	return true
 }
 
+// planLevelRequirements is the only place phase two builds the window
+// requirements of a Plan. The retention facts come from the one derivation the
+// store also writes its TTL from, so a window can never prune to a horizon the
+// stored key is allowed to expire inside: building them here a second time,
+// with a different interval or lateness tolerance, is exactly what would invert
+// that ordering.
+func planLevelRequirements(plan *strategy.CompiledPlan) ([]state.LevelRequirement, error) {
+	retention, err := execution.DeriveStateRetentionRequirement(plan)
+	if err != nil {
+		return nil, err
+	}
+	levels := plan.Levels()
+	if len(retention) != len(levels) {
+		return nil, errors.New("alarmd evaluation: Plan retention is not aligned with its Levels")
+	}
+	requirements := make([]state.LevelRequirement, len(levels))
+	for index, level := range levels {
+		if retention[index].LevelID != level.Definition().LevelID {
+			return nil, errors.New("alarmd evaluation: Plan retention is not aligned with its Levels")
+		}
+		requirements[index] = state.NewLevelRequirement(
+			retention[index], level.Fingerprints().Detect, level.RequiredDetectHistoryPoints(),
+		)
+	}
+	return requirements, nil
+}
+
 // guardConvergenceAllowed reports, per Level, whether the loaded history
 // already forms the required full window at the last processed record, so a
 // WARMING or GAPPED Level guard may converge on the next FULL record. A Level
 // whose live window still lacks points stays guarded.
-func guardConvergenceAllowed(view execution.RuntimeStateView, levels []strategy.CompiledLevel) (map[uint32]bool, error) {
+func guardConvergenceAllowed(view execution.RuntimeStateView, plan *strategy.CompiledPlan) (map[uint32]bool, error) {
+	levels := plan.Levels()
 	allowed := make(map[uint32]bool, len(levels))
-	requirements := make([]state.LevelRequirement, len(levels))
-	for i, level := range levels {
-		requirements[i] = state.LevelRequirement{LevelID: level.Definition().LevelID, DetectFingerprint: level.Fingerprints().Detect, RequiredPoints: level.RequiredDetectHistoryPoints(), RetentionPoints: level.StateRequirement().RetentionPoints, EvaluationInterval: time.Duration(level.Trigger().StepSeconds) * time.Second}
+	requirements, err := planLevelRequirements(plan)
+	if err != nil {
+		return nil, err
 	}
 	window, err := state.NewWindow(requirements)
 	if err != nil {

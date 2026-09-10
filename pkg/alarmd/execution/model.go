@@ -1951,9 +1951,14 @@ func (result GapGuardApplyResult) Validate() error {
 	return nil
 }
 
+// StateApplyRequest carries the mutations of exactly one Plan. Retention is
+// that Plan's frozen per-Level retention need, from which the store derives the
+// write TTL; it is required, so a caller that cannot state what its keys must
+// outlive is rejected instead of silently writing at the configured ceiling.
 type StateApplyRequest struct {
-	Contract FrozenExecutionContractRef
-	Items    []StateMutation
+	Contract  FrozenExecutionContractRef
+	Retention []StateRetentionRequirement
+	Items     []StateMutation
 }
 
 type StateAdmissionStatus string

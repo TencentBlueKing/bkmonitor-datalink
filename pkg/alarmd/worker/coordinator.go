@@ -850,7 +850,13 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			if err := coordinator.admit(ctx, request, due); err != nil {
 				return execution.SlotExecutionResult{}, err
 			}
-			rejected, encodedBytes, err := coordinator.admitState(ctx, request.Operation, request.Contract, mutations)
+			// The retention need travels with the Plan's mutations so the store
+			// sizes their TTL against the Plan frozen with this Slot.
+			retention, err := execution.DeriveStateRetentionRequirement(due.CompiledPlan)
+			if err != nil {
+				return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: %w", err)
+			}
+			rejected, encodedBytes, err := coordinator.admitState(ctx, request.Operation, request.Contract, retention, mutations)
 			if err != nil {
 				return execution.SlotExecutionResult{}, err
 			}
@@ -882,7 +888,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 				continue
 			}
 			if len(accepted) > 0 {
-				rejectedApply, err := coordinator.applyState(ctx, request.Operation, request.Contract, request.OwnerFence, accepted, acceptedBytes)
+				rejectedApply, err := coordinator.applyState(ctx, request.Operation, request.Contract, request.OwnerFence, retention, accepted, acceptedBytes)
 				if err != nil {
 					return execution.SlotExecutionResult{}, err
 				}
@@ -1154,6 +1160,7 @@ func (coordinator *SlotExecutionCoordinator) admitState(
 	ctx context.Context,
 	operation execution.Operation,
 	contractRef execution.FrozenExecutionContractRef,
+	retention []execution.StateRetentionRequirement,
 	mutations []execution.StateMutation,
 ) (map[execution.StateKeyIdentity]execution.ReasonCode, []int64, error) {
 	started := time.Now()
@@ -1163,7 +1170,9 @@ func (coordinator *SlotExecutionCoordinator) admitState(
 	err := forEachChunk(ctx, len(mutations), coordinator.applyChunkItems(coordinator.budget.MaxStateMutations), func(chunk applyChunk) error {
 		chunkItems := mutations[chunk.start:chunk.end]
 		chunkStarted := time.Now()
-		result, err := coordinator.ports.State.AdmitRuntime(ctx, execution.StateApplyRequest{Contract: contractRef, Items: chunkItems})
+		result, err := coordinator.ports.State.AdmitRuntime(ctx, execution.StateApplyRequest{
+			Contract: contractRef, Retention: retention, Items: chunkItems,
+		})
 		var reason execution.ReasonCode
 		var chunkBytes int64
 		rejected := 0
@@ -1227,6 +1236,7 @@ func (coordinator *SlotExecutionCoordinator) applyState(
 	operation execution.Operation,
 	contractRef execution.FrozenExecutionContractRef,
 	fence execution.OwnerFence,
+	retention []execution.StateRetentionRequirement,
 	mutations []execution.StateMutation,
 	encodedBytes []int64,
 ) (map[execution.StateKeyIdentity]execution.ReasonCode, error) {
@@ -1237,7 +1247,7 @@ func (coordinator *SlotExecutionCoordinator) applyState(
 	var totals applyTotals
 	err := forEachChunk(ctx, len(mutations), coordinator.applyChunkItems(coordinator.budget.MaxStateMutations), func(chunk applyChunk) error {
 		chunkItems := mutations[chunk.start:chunk.end]
-		applyRequest := execution.StateApplyRequest{Contract: contractRef, Items: chunkItems}
+		applyRequest := execution.StateApplyRequest{Contract: contractRef, Retention: retention, Items: chunkItems}
 		chunkStarted := time.Now()
 		var result execution.StateApplyResult
 		var err error

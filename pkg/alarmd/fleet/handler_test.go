@@ -473,3 +473,64 @@ func TestHealthResponseOmitsCapacityWhenNobodyReportedAny(t *testing.T) {
 			present, value)
 	}
 }
+
+// A category groups conditions that call for opposite responses: two objects
+// both classified "evaluation" can be a dependency that broke and a result that
+// failed validation, and the category alone cannot tell an operator which. The
+// code can, and it is already on every anomaly -- it just was not counted
+// anywhere, so answering "which of these was it" meant tallying the list by
+// hand. That matters most for a fault that heals itself, because the codes
+// disappear with the anomalies that carried them.
+func TestSummaryCountsFailureCodesAndNotJustCategories(t *testing.T) {
+	snapshots := healthySnapshots()
+	for _, shape := range []struct{ queryGroup, category, code string }{
+		{"qg-a", "evaluation", "EVALUATION_FAILED"},
+		{"qg-b", "evaluation", "EVALUATION_FAILED"},
+		{"qg-c", "evaluation", "EVALUATION_RESULT_INVALID"},
+		{"qg-d", "source_backend", "QUERY_UNAVAILABLE"},
+	} {
+		item := anomaly(shape.queryGroup)
+		item.Failure = &FailureRef{Stage: "stream_complete", Category: shape.category, Code: shape.code}
+		snapshots[1].Anomalies = append(snapshots[1].Anomalies, item)
+	}
+	snapshots[1].TotalAnomalies = 4
+
+	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 949, Known: true}, replicas())
+	_, body := get(t, handler, "/api/objects")
+	summary, _ := body["summary"].(map[string]any)
+
+	counts := map[string]float64{}
+	byCode, _ := summary["by_failure_code"].([]any)
+	for _, entry := range byCode {
+		row, _ := entry.(map[string]any)
+		counts[row["value"].(string)] = row["count"].(float64)
+	}
+	if counts["EVALUATION_FAILED"] != 2 || counts["EVALUATION_RESULT_INVALID"] != 1 {
+		t.Fatalf("by_failure_code = %+v, want the two evaluation codes separated 2 to 1", counts)
+	}
+	if counts["QUERY_UNAVAILABLE"] != 1 {
+		t.Fatalf("by_failure_code lost a code outside the largest category: %+v", counts)
+	}
+	// The category counts must be unchanged: the code is an extra level, not a
+	// replacement, and a reader comparing the two needs both to still add up.
+	byCategory, _ := summary["by_failure"].([]any)
+	total := 0.0
+	for _, entry := range byCategory {
+		total += entry.(map[string]any)["count"].(float64)
+	}
+	if total != 4 {
+		t.Fatalf("by_failure now totals %v, want the same 4 anomalies it always did", total)
+	}
+}
+
+// The field always travels, so a reader can tell "no anomaly carried a code"
+// from "this build does not report codes". An absent key reads as the second
+// and would send someone to check the deployment's version instead of its data.
+func TestSummaryReportsAnEmptyFailureCodeListRatherThanOmittingIt(t *testing.T) {
+	handler := handlerWith(t, healthySnapshots(), Expectation{QueryGroups: 949, Known: true}, replicas())
+	_, body := get(t, handler, "/api/objects")
+	summary, _ := body["summary"].(map[string]any)
+	if _, present := summary["by_failure_code"]; !present {
+		t.Fatal("by_failure_code is absent, which reads as a build that cannot report codes")
+	}
+}

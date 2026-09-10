@@ -87,7 +87,20 @@ type Summary struct {
 	// many" and not "how many of what"; the failure classification separates one
 	// broken dependency from a scattering of unrelated problems.
 	ByFailure []Count `json:"by_failure"`
-	ByReplica []Count `json:"by_replica"`
+	// ByFailureCode is the same classification one level down, and it is the
+	// level the answer usually lives at: a category such as "evaluation" groups
+	// conditions that call for opposite responses, and telling them apart from
+	// the list means counting the codes by hand. It exists here, rather than
+	// only in each anomaly's detail, because the code survives no longer than
+	// the anomaly does -- once the population decays the question "which of
+	// these was it" can no longer be answered at all, and that is exactly when
+	// a self-healing fault is being investigated after the fact.
+	//
+	// It is not a metric label: the code set is open and would break the
+	// cardinality bound in 07 section 9. Here it is bounded by the anomalies
+	// actually present.
+	ByFailureCode []Count `json:"by_failure_code"`
+	ByReplica     []Count `json:"by_replica"`
 	// Stalled counts the objects that are stuck rather than merely degraded. The
 	// other three say how badly the last round went; this one says the rounds
 	// stopped ending, which is the only one of the four that cannot resolve on
@@ -99,6 +112,7 @@ func summarize(anomalies []Anomaly) Summary {
 	kinds := map[string]int{}
 	reasons := map[string]int{}
 	failures := map[string]int{}
+	codes := map[string]int{}
 	replicas := map[string]int{}
 	stalled := 0
 	for _, anomaly := range anomalies {
@@ -112,12 +126,15 @@ func summarize(anomalies []Anomaly) Summary {
 		if anomaly.Failure != nil && anomaly.Failure.Category != "" {
 			failures[anomaly.Failure.Category]++
 		}
+		if anomaly.Failure != nil && anomaly.Failure.Code != "" {
+			codes[anomaly.Failure.Code]++
+		}
 		replicas[anomaly.Replica]++
 	}
 	return Summary{
 		ByKind: rank(kinds), ByReason: rank(reasons),
-		ByFailure: rank(failures), ByReplica: rank(replicas),
-		Stalled: stalled,
+		ByFailure: rank(failures), ByFailureCode: rank(codes),
+		ByReplica: rank(replicas), Stalled: stalled,
 	}
 }
 

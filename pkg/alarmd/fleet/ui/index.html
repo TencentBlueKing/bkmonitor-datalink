@@ -510,8 +510,14 @@ function renderSummary(summary, total) {
     stuck.appendChild(count);
     host.appendChild(stuck);
   }
+  // The code goes beside the category rather than instead of it. A category
+  // groups conditions that call for opposite responses -- two objects both
+  // "evaluation" can be a broken dependency and a bad result -- and the code is
+  // the level that separates them. Reading it off the list one row at a time is
+  // what this row removes.
   [['种类', summary.by_kind], ['原因', summary.by_reason],
-   ['失败在哪', summary.by_failure], ['副本', summary.by_replica]]
+   ['失败在哪', summary.by_failure], ['具体是哪种', summary.by_failure_code],
+   ['副本', summary.by_replica]]
     .forEach(function (pair) {
       var counts = pair[1] || [];
       if (!counts.length) return;

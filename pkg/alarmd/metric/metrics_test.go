@@ -412,6 +412,9 @@ func bindBudgetHealthAndResources(t *testing.T, recorder *Recorder) {
 	if err := recorder.BindResources(resources); err != nil {
 		t.Fatalf("BindResources() error = %v", err)
 	}
+	if err := recorder.BindCapacityLoad(func() CapacityLoad { return fullCapacityLoad() }); err != nil {
+		t.Fatalf("BindCapacityLoad() error = %v", err)
+	}
 	if err := recorder.BindQueryPermits(func() QueryPermitOccupancy {
 		return QueryPermitOccupancy{
 			Inflight: map[string]int{"normal": 1}, Waiting: map[string]int{"normal": 1},
@@ -604,20 +607,25 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("message_receipt_business_total"): len(receiptBusinessFields),
 		fqName("message_receipt_delivery_total"): 3,
 
-		fqName("worker_work_total"):                 len(phaseTwoWorkKinds),
-		fqName("worker_busy_seconds_total"):         len(phaseTwoBusyStages),
-		fqName("last_progress_timestamp_seconds"):   len(phaseTwoProgressKinds),
-		fqName("capacity_transition_total"):         len(phaseTwoBudgets) * len(phaseTwoCapacityResults),
-		fqName("source_observation_total"):          len(observability.AllSourceKinds()) * len(phaseTwoSourceResults) * len(observability.AllReasons(observability.ComponentControlPlane)),
-		fqName("source_refresh_total"):              len(observability.AllSourceRefreshStatuses()),
-		fqName("activation_failure_total"):          len(observability.AllActivationFailureStages()) * len(observability.AllActivationFailureClasses()),
-		fqName("worker_owned_query_groups"):         1,
-		fqName("ownership_transition_total"):        len(phaseTwoOwnershipTransitions) * metricReasonSets(observability.ComponentOwnership),
-		fqName("worker_query_permits_held"):         len(phaseTwoQueryInflightKinds),
-		fqName("worker_query_permit_seconds_total"): len(phaseTwoQueryInflightKinds),
-		fqName("worker_query_permits_waiting"):      len(phaseTwoReadyQueueKinds),
-		fqName("worker_query_permit_budget"):        len(phaseTwoReadyQueueKinds),
-		fqName("worker_query_admission_total"):      len(phaseTwoQueryInflightKinds) * len(phaseTwoQueryAdmissionResults),
+		fqName("worker_work_total"):                     len(phaseTwoWorkKinds),
+		fqName("worker_busy_seconds_total"):             len(phaseTwoBusyStages),
+		fqName("last_progress_timestamp_seconds"):       len(phaseTwoProgressKinds),
+		fqName("capacity_transition_total"):             len(phaseTwoBudgets) * len(phaseTwoCapacityResults),
+		fqName("source_observation_total"):              len(observability.AllSourceKinds()) * len(phaseTwoSourceResults) * len(observability.AllReasons(observability.ComponentControlPlane)),
+		fqName("source_refresh_total"):                  len(observability.AllSourceRefreshStatuses()),
+		fqName("activation_failure_total"):              len(observability.AllActivationFailureStages()) * len(observability.AllActivationFailureClasses()),
+		fqName("worker_owned_query_groups"):             1,
+		fqName("ownership_transition_total"):            len(phaseTwoOwnershipTransitions) * metricReasonSets(observability.ComponentOwnership),
+		fqName("capacity_budget"):                       len(phaseTwoBudgets) - 1,
+		fqName("container_memory_limit_bytes"):          len(capacitySources) + 1,
+		fqName("container_cpu_cores"):                   len(capacitySources) + 1,
+		fqName("container_memory_used_bytes"):           1,
+		fqName("container_cpu_throttled_seconds_total"): 1,
+		fqName("worker_query_permits_held"):             len(phaseTwoQueryInflightKinds),
+		fqName("worker_query_permit_seconds_total"):     len(phaseTwoQueryInflightKinds),
+		fqName("worker_query_permits_waiting"):          len(phaseTwoReadyQueueKinds),
+		fqName("worker_query_permit_budget"):            len(phaseTwoReadyQueueKinds),
+		fqName("worker_query_admission_total"):          len(phaseTwoQueryInflightKinds) * len(phaseTwoQueryAdmissionResults),
 		// Four cached objects: version, snapshot, activation, timeline.
 		fqName("control_cache_total"):    12,
 		fqName("legacy_pod_cache_total"): 3,

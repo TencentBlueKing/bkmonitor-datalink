@@ -304,6 +304,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_legacy_pod_cache_total":                       "variableLabels: {result}",
 		"bkmonitor_alarmd_series_admission_total":                       "variableLabels: {filter,result,reason}",
 		"bkmonitor_alarmd_cmdb_host_index_hosts":                        "variableLabels: {}",
+		"bkmonitor_alarmd_host_disable_monitor_states":                  "variableLabels: {}",
 		"bkmonitor_alarmd_cmdb_host_index_age_seconds":                  "variableLabels: {kind}",
 		"bkmonitor_alarmd_cmdb_host_index_degraded":                     "variableLabels: {reason}",
 		"bkmonitor_alarmd_redis_operation_total":                        "variableLabels: {}",
@@ -606,6 +607,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		// Filters and reasons are closed vocabularies in the recorder.
 		fqName("series_admission_total"):      len(admissionFilters) * len(admissionResults) * len(admissionReasons),
 		fqName("cmdb_host_index_hosts"):       1,
+		fqName("host_disable_monitor_states"): 1,
 		fqName("cmdb_host_index_age_seconds"): 2,
 		fqName("cmdb_host_index_degraded"):    len(cmdbIndexReasons),
 		// Two clients at most: the control plane connection and, when it resolves

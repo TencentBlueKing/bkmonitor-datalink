@@ -27,6 +27,18 @@ import (
 // TopoNodes is a set, not a value. A host belongs to every node on every
 // topology link it has, so a host in three modules carries three chains of
 // business, set and module, and a target naming any one of them includes it.
+// HostNaming is what a series' own dimensions said about its host.
+type HostNaming struct {
+	// NamedID is true when a bk_host_id dimension is present, whatever value.
+	NamedID bool
+	// NamedAddress is true when an address dimension is present.
+	NamedAddress bool
+	// NamedCloud is true when a cloud dimension is present.
+	NamedCloud bool
+	// Usable is true when an identity could actually be built from them.
+	Usable bool
+}
+
 type Facts struct {
 	// HostKeys are the identities a host record can be matched by: "ip|cloud"
 	// and the bare host id. Both are kept because a strategy target may name
@@ -44,6 +56,17 @@ type Facts struct {
 	HostState string
 	// HostBusinessID is the business the resolved host belongs to.
 	HostBusinessID string
+	// HostNaming records what the series said about its host, rather than what
+	// could be made of it. The host status filter needs the difference: Python
+	// keeps a record that names no host at all, drops one that names a host it
+	// cannot use, and looks a host up only when the record gives an id, or an
+	// address together with its cloud.
+	HostNaming HostNaming
+	// HostFactsUnavailable says the CMDB facts could not be consulted at all,
+	// as opposed to being consulted and finding nothing. A filter that drops
+	// unresolved hosts must not do so while the index is missing: that would
+	// turn a cache outage into fleet-wide silence.
+	HostFactsUnavailable bool
 }
 
 // AddHostKey records an identity the record can be matched by. Fullers in

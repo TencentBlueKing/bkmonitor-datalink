@@ -13,9 +13,13 @@ var admissionResults = map[string]struct{}{"admitted": {}, "rejected": {}}
 
 // The reason vocabulary is closed on purpose: it is a metric label, and a
 // free-form reason turns one series into as many as there are strings.
-var admissionFilters = map[string]struct{}{"target_scope": {}, "none": {}}
+var admissionFilters = map[string]struct{}{"target_scope": {}, "host_status": {}, "none": {}}
 var admissionReasons = map[string]struct{}{
 	"in_scope": {}, "out_of_scope": {}, "scope_empty": {}, "plan_not_indexed": {}, "none": {},
+	// Host status: the reasons matter separately because they call for
+	// different actions - a disabled host is the filter working, an unknown
+	// host is a CMDB gap, and unavailable facts mean it is not filtering.
+	"monitoring_disabled": {}, "host_unknown": {}, "host_identity_invalid": {}, "host_facts_unavailable": {},
 }
 
 // RecordSeriesAdmission counts one admission decision.
@@ -70,4 +74,13 @@ func (r *Recorder) SetCMDBHostIndex(hosts int, ageSeconds float64, sourceAgeSeco
 	}
 	r.phaseTwo.cmdbIndexDegraded.Reset()
 	r.phaseTwo.cmdbIndexDegraded.WithLabelValues(reason).Set(value)
+}
+
+// SetHostDisableMonitorStates publishes how many host states the access path
+// treats as not monitored. Zero means the filter is not installed.
+func (r *Recorder) SetHostDisableMonitorStates(states int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.hostDisableMonitorStates.Set(float64(states))
 }

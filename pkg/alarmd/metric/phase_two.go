@@ -45,6 +45,7 @@ type phaseTwoMetrics struct {
 	algorithmInputs              *prometheus.CounterVec
 	seriesAdmission              *prometheus.CounterVec
 	cmdbIndexHosts               prometheus.Gauge
+	hostDisableMonitorStates     prometheus.Gauge
 	cmdbIndexAge                 *prometheus.GaugeVec
 	cmdbIndexDegraded            *prometheus.GaugeVec
 }
@@ -162,6 +163,13 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "cmdb_host_index_hosts",
 		Help: "Hosts in the in-memory CMDB index the target filter decides on.",
 	})
+	// The list is a transcription of a platform setting an operator can change
+	// without alarmd noticing. Publishing how many states it is filtering on
+	// makes that drift a one-query check instead of a shadow reconcile.
+	metrics.hostDisableMonitorStates = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "host_disable_monitor_states",
+		Help: "Host states the access path treats as not monitored; zero means the filter is not installed.",
+	})
 	metrics.cmdbIndexAge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "cmdb_host_index_age_seconds",
 		Help: "Age of the CMDB index alarmd holds, and of the platform refresh it was built from.",
@@ -186,7 +194,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.undrainedDrainingQueryGroups,
 		m.algorithmEvaluations, m.algorithmInputs,
 	}...), append(m.redisCalls.collectors(), m.controlCache, m.redisPool, m.legacyPodCache,
-		m.seriesAdmission, m.cmdbIndexHosts, m.cmdbIndexAge, m.cmdbIndexDegraded)...)
+		m.seriesAdmission, m.cmdbIndexHosts, m.hostDisableMonitorStates, m.cmdbIndexAge, m.cmdbIndexDegraded)...)
 }
 
 func (m phaseTwoMetrics) observe(observation observability.Observation) {

@@ -30,11 +30,18 @@ func NewHostTopologyFuller(store *Store) *HostTopologyFuller {
 func (*HostTopologyFuller) Name() string { return "cmdb_host_topology" }
 
 func (fuller *HostTopologyFuller) Fill(_ map[string]json.RawMessage, facts *admission.Facts) {
-	if fuller == nil || fuller.store == nil || len(facts.HostKeys) == 0 {
+	if fuller == nil || fuller.store == nil {
+		facts.HostFactsUnavailable = true
 		return
 	}
 	index := fuller.store.Current()
 	if index == nil {
+		// Never loaded. A filter that acts on "CMDB does not know this host"
+		// has to be able to tell that apart from "CMDB was not asked".
+		facts.HostFactsUnavailable = true
+		return
+	}
+	if len(facts.HostKeys) == 0 {
 		return
 	}
 	// A series names one host, but it may name it by more than one identity

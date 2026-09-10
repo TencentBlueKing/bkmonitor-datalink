@@ -73,9 +73,11 @@ func buildSeriesAdmission(
 	}
 	publishCMDBIndexHealth(recorder, store)
 
+	filters := seriesAdmissionFilters(cfg)
+	recorder.SetHostDisableMonitorStates(hostDisableMonitorStateCount(filters))
 	chain := admission.NewChain(
 		[]admission.Fuller{admission.IdentityFuller{}, cmdbcache.NewHostTopologyFuller(store)},
-		[]admission.Filter{admission.TargetScopeFilter{}},
+		filters,
 	)
 	return chain, store, nil
 }
@@ -106,4 +108,35 @@ func publishCMDBIndexHealth(recorder *metric.Recorder, store *cmdbcache.Store) {
 	recorder.SetCMDBHostIndex(
 		health.Hosts, health.Age.Seconds(), health.SourceAge.Seconds(), health.Degraded, health.DegradedReason,
 	)
+}
+
+// seriesAdmissionFilters is the access-path filter chain a configuration asks
+// for, in Python's order: the monitoring target decides whether the series
+// belongs to the strategy at all, then the host's operational state decides
+// whether it may alert.
+//
+// The host status filter is installed only when the deployment states the
+// platform's disabled states. It is deliberately not defaulted to the value
+// shipped in Python's settings: that value is a global config an operator can
+// change, this environment's differs from the default, and a filter running on
+// a wrong list changes which alerts are produced with nothing to show for it.
+func seriesAdmissionFilters(cfg config.Config) []admission.Filter {
+	filters := []admission.Filter{admission.TargetScopeFilter{}}
+	if hostStatus, installed := admission.NewHostStatusFilter(cfg.PhaseTwo.Access.HostDisableMonitorStates); installed {
+		filters = append(filters, hostStatus)
+	}
+	return filters
+}
+
+// hostDisableMonitorStateCount reports what the host status filter is actually
+// deciding on, or zero when it is not installed. It reads the built filter
+// rather than the configuration so the published number cannot disagree with
+// the one in force.
+func hostDisableMonitorStateCount(filters []admission.Filter) int {
+	for _, filter := range filters {
+		if hostStatus, ok := filter.(*admission.HostStatusFilter); ok {
+			return len(hostStatus.States())
+		}
+	}
+	return 0
 }

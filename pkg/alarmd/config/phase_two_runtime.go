@@ -85,8 +85,24 @@ func (config PhaseTwoSchedulerConfig) RecoveryLimits() scheduler.RecoveryLimits 
 }
 
 type PhaseTwoAccessConfig struct {
-	UQEndpoint                 string `yaml:"uq_endpoint"`
-	QuerySource                string `yaml:"query_source"`
+	UQEndpoint  string `yaml:"uq_endpoint"`
+	QuerySource string `yaml:"query_source"`
+	// HostDisableMonitorStates mirrors the platform's HOST_DISABLE_MONITOR_STATES
+	// global config: a host whose CMDB bk_state contains any of these is not
+	// monitored, and Python's access chain drops its records before they can
+	// alert.
+	//
+	// It is stated here rather than derived because the program cannot derive
+	// it: it is an operator-editable platform setting living in the platform's
+	// own database, and this environment's value is not the shipped default.
+	// Absent means the filter is not installed, which is the behaviour alarmd
+	// had before it existed; it never falls back to the default, because a
+	// wrong list silently changes which alerts are produced.
+	//
+	// This is a transcription with a stated exit: once the control plane syncs
+	// platform settings periodically, the value comes from there and this key
+	// is removed.
+	HostDisableMonitorStates   []string `yaml:"host_disable_monitor_states"`
 	MinReadyDelay              Duration
 	DownstreamExecutionReserve Duration
 }

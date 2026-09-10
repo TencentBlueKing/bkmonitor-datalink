@@ -22,11 +22,25 @@ func (IdentityFuller) Name() string { return "identity" }
 func (IdentityFuller) Fill(dimensions map[string]json.RawMessage, facts *Facts) {
 	address := dimensionText(dimensions, "bk_target_ip")
 	cloud := dimensionText(dimensions, "bk_target_cloud_id")
+	_, addressNamed := dimensions["bk_target_ip"]
+	_, cloudNamed := dimensions["bk_target_cloud_id"]
 	if address == "" {
 		address = dimensionText(dimensions, "ip")
 	}
+	if !addressNamed {
+		_, addressNamed = dimensions["ip"]
+	}
 	if cloud == "" {
 		cloud = dimensionText(dimensions, "bk_cloud_id")
+	}
+	if !cloudNamed {
+		_, cloudNamed = dimensions["bk_cloud_id"]
+	}
+	hostIDText := dimensionText(dimensions, "bk_host_id")
+	_, hostIDNamed := dimensions["bk_host_id"]
+	facts.HostNaming = HostNaming{
+		NamedID: hostIDNamed, NamedAddress: addressNamed, NamedCloud: cloudNamed,
+		Usable: address != "" || hostIDText != "",
 	}
 	if address != "" {
 		if cloud == "" {
@@ -36,8 +50,8 @@ func (IdentityFuller) Fill(dimensions map[string]json.RawMessage, facts *Facts) 
 		}
 		facts.AddHostKey(address + "|" + cloud)
 	}
-	if hostID := dimensionText(dimensions, "bk_host_id"); hostID != "" {
-		facts.AddHostKey(hostID)
+	if hostIDText != "" {
+		facts.AddHostKey(hostIDText)
 	}
 
 	serviceInstance := dimensionText(dimensions, "bk_target_service_instance_id")

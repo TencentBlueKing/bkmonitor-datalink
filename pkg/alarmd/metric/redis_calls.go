@@ -23,6 +23,20 @@ import (
 //
 // Cardinality is bounded by redisCommandNames: anything outside it collapses
 // to "other", the same discipline the rest of the phase-two metrics follow.
+//
+// The client dimension answers a question the totals cannot: this process opens
+// several Redis clients for different jobs, and "the command rate went up" is
+// unactionable until it says which of them. It is what lets the diagnostics
+// traffic be told apart from the control plane traffic the pools were sized
+// for, which is the whole premise of keeping those clients separate.
+// redisClientNames is closed for the same reason the command list is: a client
+// name is chosen in wiring code, and a typo there would otherwise mint a new
+// series nobody notices. The values match the pool metrics so command load and
+// connection load join on the same label.
+var redisClientNames = map[string]struct{}{
+	"source": {}, "runtime": {}, "legacy_output": {}, "legacy_pod_cache": {}, "diagnostics": {},
+}
+
 var redisCommandNames = map[string]struct{}{
 	"get": {}, "mget": {}, "set": {}, "setex": {}, "psetex": {}, "del": {}, "exists": {},
 	"eval": {}, "evalsha": {}, "script": {},
@@ -44,15 +58,15 @@ type redisCallMetrics struct {
 	// failures. Counting operations makes them visible, because the connection
 	// pool counts one acquisition per attempt, so attempts minus operations is
 	// the number of retries.
-	operations prometheus.Counter
+	operations *prometheus.CounterVec
 }
 
 func newRedisCallMetrics() redisCallMetrics {
-	labels := []string{"command", "pipelined"}
-	operations := prometheus.NewCounter(prometheus.CounterOpts{
+	labels := []string{"client", "command", "pipelined"}
+	operations := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "redis_operation_total",
 		Help: "Redis operations issued, counting one per call or pipeline batch rather than per command.",
-	})
+	}, []string{"client"})
 	return redisCallMetrics{
 		operations: operations,
 		calls: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -83,21 +97,29 @@ func boundedRedisCommand(name string) string {
 	return "other"
 }
 
+func boundedRedisClient(name string) string {
+	if _, ok := redisClientNames[name]; ok {
+		return name
+	}
+	return "other"
+}
+
 // RedisCallHook records every command the runtime client issues. It is the
 // only place that sees pipelined members individually, which matters because
 // the shared Redis master is billed per command, not per round trip.
 type RedisCallHook struct {
 	metrics redisCallMetrics
+	client  string
 	now     func() time.Time
 }
 
-// RedisHook returns the recorder's Redis instrumentation. A nil recorder
-// yields nil so callers can wire it unconditionally.
-func (r *Recorder) RedisHook() *RedisCallHook {
+// RedisHook returns the recorder's Redis instrumentation for one named client.
+// A nil recorder yields nil so callers can wire it unconditionally.
+func (r *Recorder) RedisHook(client string) *RedisCallHook {
 	if r == nil {
 		return nil
 	}
-	return &RedisCallHook{metrics: r.phaseTwo.redisCalls, now: time.Now}
+	return &RedisCallHook{metrics: r.phaseTwo.redisCalls, client: boundedRedisClient(client), now: time.Now}
 }
 
 type redisCallStartKey struct{}
@@ -106,7 +128,7 @@ func (h *RedisCallHook) BeforeProcess(ctx context.Context, _ redis.Cmder) (conte
 	if h == nil {
 		return ctx, nil
 	}
-	h.metrics.operations.Inc()
+	h.metrics.operations.WithLabelValues(h.client).Inc()
 	return context.WithValue(ctx, redisCallStartKey{}, h.now()), nil
 }
 
@@ -122,7 +144,7 @@ func (h *RedisCallHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmd
 	if h == nil {
 		return ctx, nil
 	}
-	h.metrics.operations.Inc()
+	h.metrics.operations.WithLabelValues(h.client).Inc()
 	return context.WithValue(ctx, redisCallStartKey{}, h.now()), nil
 }
 
@@ -136,9 +158,9 @@ func (h *RedisCallHook) AfterProcessPipeline(ctx context.Context, cmds []redis.C
 	}
 	for index, cmd := range cmds {
 		name := boundedRedisCommand(cmd.Name())
-		h.metrics.calls.WithLabelValues(name, "true").Inc()
+		h.metrics.calls.WithLabelValues(h.client, name, "true").Inc()
 		if err := cmd.Err(); err != nil && err != redis.Nil {
-			h.metrics.failures.WithLabelValues(name, "true").Inc()
+			h.metrics.failures.WithLabelValues(h.client, name, "true").Inc()
 		}
 		if index == 0 {
 			h.observeDuration(ctx, name, "true")
@@ -148,9 +170,9 @@ func (h *RedisCallHook) AfterProcessPipeline(ctx context.Context, cmds []redis.C
 }
 
 func (h *RedisCallHook) record(ctx context.Context, name, pipelined string, err error) {
-	h.metrics.calls.WithLabelValues(name, pipelined).Inc()
+	h.metrics.calls.WithLabelValues(h.client, name, pipelined).Inc()
 	if err != nil && err != redis.Nil {
-		h.metrics.failures.WithLabelValues(name, pipelined).Inc()
+		h.metrics.failures.WithLabelValues(h.client, name, pipelined).Inc()
 	}
 	h.observeDuration(ctx, name, pipelined)
 }
@@ -160,5 +182,5 @@ func (h *RedisCallHook) observeDuration(ctx context.Context, name, pipelined str
 	if !ok {
 		return
 	}
-	h.metrics.duration.WithLabelValues(name, pipelined).Observe(h.now().Sub(started).Seconds())
+	h.metrics.duration.WithLabelValues(h.client, name, pipelined).Observe(h.now().Sub(started).Seconds())
 }

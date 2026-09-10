@@ -181,7 +181,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 
 	sourceConnection := cfg.StrategySourceRedis()
 	runtimeConnection := cfg.ResolvedRuntimeRedis()
-	controlClient, err := openProductionRedisWithHook(ctx, sourceConnection, recorder.RedisHook())
+	controlClient, err := openProductionRedisWithHook(ctx, sourceConnection, recorder.RedisHook("source"))
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +194,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	runtimeClient := controlClient
 	runtimeClientIsSource := reflect.DeepEqual(runtimeConnection, sourceConnection)
 	if !runtimeClientIsSource {
-		runtimeClient, err = openProductionRedisWithHook(ctx, runtimeConnection, recorder.RedisHook())
+		runtimeClient, err = openProductionRedisWithHook(ctx, runtimeConnection, recorder.RedisHook("runtime"))
 		if err != nil {
 			return nil, err
 		}
@@ -403,7 +403,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		// into twenty-five minutes of failed emissions while Slots kept
 		// completing, and control-plane state written in those minutes then made
 		// the rollback worse than the defect.
-		serviceRedis, err := openProductionRedisWithHook(ctx, cfg.Kafka.LegacyAdapter.ServiceRedis, recorder.RedisHook())
+		serviceRedis, err := openProductionRedisWithHook(ctx, cfg.Kafka.LegacyAdapter.ServiceRedis, recorder.RedisHook("legacy_output"))
 		if err != nil {
 			return nil, fmt.Errorf("open kafka.legacy_adapter.service_redis: %w", err)
 		}
@@ -417,7 +417,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		if podConfig := cfg.Kafka.LegacyAdapter.PodCache; podConfig != nil {
 			// Enrichment is optional: do not require a successful cache Ping to start.
 			podClient := redis.NewUniversalClient(productionRedisOptions(podConfig.Connection))
-			podClient.AddHook(recorder.RedisHook())
+			podClient.AddHook(recorder.RedisHook("legacy_pod_cache"))
 			legacyClients = append(legacyClients, podClient)
 			resolver, err := legacyoutput.NewDjangoPodResolver(podClient, legacyoutput.PodCacheConfig{KeyPrefix: podConfig.KeyPrefix, Version: podConfig.Version, Observe: recorder.RecordLegacyPodCache, OnFallback: func(reason string) {
 				observer.Observe(context.Background(), observability.Observation{Component: observability.ComponentRuntime, Stage: observability.StageLegacyPodCache, Result: observability.ResultDegraded, Err: fmt.Errorf("legacy Pod cache fallback: %s", reason)})

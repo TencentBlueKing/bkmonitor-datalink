@@ -251,10 +251,15 @@ func TestCustomMetricFamilySeriesDevelopmentLimits(t *testing.T) {
 		"bkmonitor_alarmd_worker_query_inflight":        4,
 		"bkmonitor_alarmd_worker_query_admission_total": 20,
 		// Redis command names are the bounded redisCommandNames set plus
-		// "other", each with pipelined true/false.
-		"bkmonitor_alarmd_redis_command_total":            (len(redisCommandNames) + 1) * 2,
-		"bkmonitor_alarmd_redis_command_failure_total":    (len(redisCommandNames) + 1) * 2,
-		"bkmonitor_alarmd_redis_command_duration_seconds": (len(redisCommandNames) + 1) * 2 * (12 + 1 + 2),
+		// "other", each with pipelined true/false, for each named client plus
+		// "other". The client dimension multiplies this family, which is the
+		// price of being able to say which client the load belongs to; both
+		// sets are closed, so the product stays a number rather than a risk.
+		"bkmonitor_alarmd_redis_command_total": (len(redisCommandNames) + 1) * 2 * (len(redisClientNames) + 1),
+		"bkmonitor_alarmd_redis_command_failure_total": (len(redisCommandNames) + 1) * 2 *
+			(len(redisClientNames) + 1),
+		"bkmonitor_alarmd_redis_command_duration_seconds": (len(redisCommandNames) + 1) * 2 *
+			(len(redisClientNames) + 1) * (12 + 1 + 2),
 	} {
 		if got := bounds[family]; got != want {
 			t.Errorf("query permit metric family %s theoretical maximum = %d, want %d", family, got, want)
@@ -302,13 +307,13 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_worker_query_admission_total":                 "variableLabels: {operation,result}",
 		"bkmonitor_alarmd_control_cache_total":                          "variableLabels: {object,result}",
 		"bkmonitor_alarmd_legacy_pod_cache_total":                       "variableLabels: {result}",
-		"bkmonitor_alarmd_redis_operation_total":                        "variableLabels: {}",
+		"bkmonitor_alarmd_redis_operation_total":                        "variableLabels: {client}",
 		"bkmonitor_alarmd_redis_pool_size":                              "variableLabels: {client}",
 		"bkmonitor_alarmd_redis_pool_connections":                       "variableLabels: {client,state}",
 		"bkmonitor_alarmd_redis_pool_waits_total":                       "variableLabels: {client,result}",
-		"bkmonitor_alarmd_redis_command_total":                          "variableLabels: {command,pipelined}",
-		"bkmonitor_alarmd_redis_command_failure_total":                  "variableLabels: {command,pipelined}",
-		"bkmonitor_alarmd_redis_command_duration_seconds":               "variableLabels: {command,pipelined}",
+		"bkmonitor_alarmd_redis_command_total":                          "variableLabels: {client,command,pipelined}",
+		"bkmonitor_alarmd_redis_command_failure_total":                  "variableLabels: {client,command,pipelined}",
+		"bkmonitor_alarmd_redis_command_duration_seconds":               "variableLabels: {client,command,pipelined}",
 		"bkmonitor_alarmd_short_period_slot_completions_total":          "variableLabels: {cohort,operation,completion_kind}",
 		"bkmonitor_alarmd_short_period_slot_execution_duration_seconds": "variableLabels: {cohort}",
 		"bkmonitor_alarmd_short_period_slot_completion_lag_seconds":     "variableLabels: {cohort}",
@@ -527,8 +532,10 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	histogramSeries := func(labelCombinations, explicitBuckets int) int {
 		return labelCombinations * (explicitBuckets + 1 + 2) // explicit buckets, +Inf, sum and count
 	}
-	// Bounded command names plus "other", each with pipelined true and false.
-	redisCommandSeries := (len(redisCommandNames) + 1) * 2
+	// Bounded command names plus "other", each with pipelined true and false,
+	// for every named client plus "other". Both sets are closed, so the product
+	// is a number rather than a risk.
+	redisCommandSeries := (len(redisCommandNames) + 1) * 2 * (len(redisClientNames) + 1)
 	metricReasonSeries := func(component observability.Component, result observability.Result) int {
 		count := len(observability.AllReasons(component))
 		if result != observability.ResultStarted && result != observability.ResultSuccess &&
@@ -592,7 +599,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		// Two clients at most: the control plane connection and, when it resolves
 		// to a different endpoint, the runtime connection.
 		// One unlabelled series; connection acquisitions minus it is the retries.
-		fqName("redis_operation_total"):                        1,
+		fqName("redis_operation_total"):                        len(redisClientNames) + 1,
 		fqName("redis_pool_size"):                              2,
 		fqName("redis_pool_connections"):                       6,
 		fqName("redis_pool_waits_total"):                       6,

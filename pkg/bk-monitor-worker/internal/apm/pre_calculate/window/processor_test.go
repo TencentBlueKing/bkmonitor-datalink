@@ -298,8 +298,26 @@ func NewMockMetaCenter(t *testing.T, dataId string) *core.MetadataCenter {
 		Mapping: &sync.Map{},
 		Consul:  metadataTestStore{value: mockConsulData(dataId)},
 	}
-
-	_ = centerInstance.AddDataId(dataId)
+	centerInstance.AddDataIdAndInfo(dataId, dataId, core.DataIdInfo{
+		BaseInfo: core.BaseInfo{
+			BkBizId:   "2",
+			BkBizName: "BlueKing",
+			AppId:     "1",
+			AppName:   "testApp",
+		},
+		TraceKafka: core.TraceKafkaConfig{
+			Host:  "127.0.0.1",
+			Topic: "topic",
+		},
+		TraceEs: core.TraceEsConfig{
+			IndexName: "testIndexName",
+			Host:      "127.0.0.1:9200",
+		},
+		SaveEs: core.TraceEsConfig{
+			IndexName: "testIndexName",
+			Host:      "127.0.0.1:9200",
+		},
+	})
 	return centerInstance
 }
 

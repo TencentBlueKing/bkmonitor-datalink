@@ -82,6 +82,12 @@ type scheduleTimelineUpdate struct {
 	next     persistedScheduleTimeline
 }
 
+// Every Schedule timeline written here carries the same Catalog TTL as the
+// Snapshot occurrence and the Active Set written next to it in ARGV[5]. No
+// Slot can execute without its Snapshot, so a timeline that outlives the
+// Snapshot it describes serves nobody; the Control Leader renews the
+// timelines the current Activation still references on the same tick that
+// renews the Snapshot, and every other timeline expires with its publication.
 const compareAndSetInitialSchedulesScript = `
 local header = redis.call('GET', KEYS[1])
 if ARGV[1] == '' then
@@ -97,7 +103,7 @@ redis.call('PEXPIRE', KEYS[3], ARGV[5])
 redis.call('SET', KEYS[1], ARGV[2])
 redis.call('SET', KEYS[2], ARGV[3])
 for index = 4, #KEYS do
-  redis.call('SET', KEYS[index], ARGV[index + 2])
+  redis.call('SET', KEYS[index], ARGV[index + 2], 'PX', ARGV[5])
 end
 return 1
 `
@@ -121,7 +127,7 @@ redis.call('SET', KEYS[1], ARGV[2])
 redis.call('SET', KEYS[2], ARGV[3])
 for index = 4, #KEYS do
   local next_index = 2 * index - 1
-  redis.call('SET', KEYS[index], ARGV[next_index])
+  redis.call('SET', KEYS[index], ARGV[next_index], 'PX', ARGV[5])
 end
 return 1
 `

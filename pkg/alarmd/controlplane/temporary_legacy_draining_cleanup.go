@@ -682,6 +682,9 @@ func (repository *RedisCatalogRepository) readOptionalRaw(ctx context.Context, k
 	return payload, false, nil
 }
 
+// The Schedule timelines written at the end carry the same Catalog TTL as the
+// Snapshot occurrence and the Active Set written above them, so this command
+// cannot reintroduce a timeline that no longer expires with its publication.
 const temporaryLegacyDrainingCleanupScript = `
 if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
 if redis.call('GET', KEYS[2]) ~= ARGV[2] then return 0 end
@@ -723,7 +726,7 @@ redis.call('SET', KEYS[2], ARGV[15])
 for index = 1, update_count do
   local key_index = 8 + index
   local next_index = 15 + (2 * index)
-  redis.call('SET', KEYS[key_index], ARGV[next_index])
+  redis.call('SET', KEYS[key_index], ARGV[next_index], 'PX', ARGV[12])
 end
 return 1
 `

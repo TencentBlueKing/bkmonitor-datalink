@@ -1470,6 +1470,69 @@ func TestRedisCatalogRepositoryRenewsOnlyActivationGuardedCurrentObjects(t *test
 	}
 }
 
+// TestScheduleTimelineWritesCarryTheCatalogTTL pins the write half of the
+// Schedule timeline lifecycle. The initial activation and the publication
+// cutover persist timelines with the same Catalog TTL as the Snapshot
+// occurrence written next to them, so no write can leave behind an object that
+// outlives every fact referencing it.
+func TestScheduleTimelineWritesCarryTheCatalogTTL(t *testing.T) {
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	prefix := "alarmd:control:timeline-ttl-write"
+	const catalogTTL = time.Hour
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, catalogTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ConfigureDrainingTermination(10 * time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	progress := &activationProgressReader{byGroup: map[execution.QueryGroupIdentity]execution.ProgressLoadResult{}}
+	compiler, semantics := runtimePlanCompiler(t)
+	at := time.Unix(60, 0)
+	reconciler, err := controlplane.NewScheduleActivationReconcilerWithProgress(
+		repository, compiler, semantics, progress, func() time.Time { return at },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publish := func(tableID string) (controlplane.SnapshotPublicationRef, execution.QueryGroupIdentity) {
+		t.Helper()
+		catalog := catalogWithQueryTable(t, tableID)
+		snapshot, _, publishErr := repository.PublishCatalog(ctx, catalog)
+		if publishErr != nil {
+			t.Fatal(publishErr)
+		}
+		return snapshot.Publication, catalog.QueryGroups[0].Identity
+	}
+	requireBoundedTTL := func(queryGroup execution.QueryGroupIdentity, stage string) {
+		t.Helper()
+		key := prefix + ":schedule_timeline:" + string(queryGroup)
+		ttl, ttlErr := client.PTTL(ctx, key).Result()
+		if ttlErr != nil || ttl <= 0 || ttl > catalogTTL {
+			t.Fatalf("%s timeline %s TTL=(%s,%v), want a positive TTL of at most %s", stage, key, ttl, ttlErr, catalogTTL)
+		}
+	}
+
+	firstPublication, first := publish("system.cpu")
+	if _, err := reconciler.Ensure(ctx, firstPublication); err != nil {
+		t.Fatal(err)
+	}
+	requireBoundedTTL(first, "initial activation")
+
+	at = time.Unix(90, 0)
+	secondPublication, second := publish("system.mem")
+	state, err := reconciler.Ensure(ctx, secondPublication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Draining) != 1 || state.Draining[0].QueryGroup != first {
+		t.Fatalf("draining=%+v, want the retired Query Group %s", state.Draining, first)
+	}
+	requireBoundedTTL(second, "cutover opened")
+	requireBoundedTTL(first, "cutover retired")
+}
+
 // TestRenewCurrentActivationObjectsRenewsOnlyReferencedScheduleTimelines pins
 // the read half. Timelines are written only at activation transitions, so a
 // TTL alone would expire the timeline of a Query Group that keeps running

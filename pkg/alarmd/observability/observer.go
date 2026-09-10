@@ -225,8 +225,20 @@ const (
 	SourceRefreshUnchanged SourceRefreshStatus = "UNCHANGED"
 	SourceRefreshConflict  SourceRefreshStatus = "PUBLICATION_CONFLICT"
 
-	ReasonNone                  ReasonCode = "none"
-	ReasonInternalUnknown       ReasonCode = "internal_unknown"
+	ReasonNone ReasonCode = "none"
+	// ReasonInternalUnknown is chosen by a site that has looked at the failure
+	// and has nothing finer to say about it.
+	ReasonInternalUnknown ReasonCode = "internal_unknown"
+	// ReasonNotReported is not chosen by anyone: it is what a failing
+	// observation gets when its emitting site reported no reason at all.
+	//
+	// The two used to be the same value, and they are opposite kinds of fact. A
+	// site that says "unknown" has done its job; a site that says nothing is a
+	// defect at that site, and the set of such sites is finite - which makes
+	// this the value a gate can be written against. Filling in mappings one at
+	// a time never ends; "nobody reported one" is a state that can reach zero
+	// and be asserted to stay there.
+	ReasonNotReported           ReasonCode = "reason_not_reported"
 	ReasonCPU                   ReasonCode = "resource_cpu"
 	ReasonRSS                   ReasonCode = "resource_rss"
 	ReasonHeap                  ReasonCode = "resource_heap"
@@ -899,7 +911,7 @@ func NormalizeReason(reason ReasonCode, result Result) ReasonCode {
 		if resultAllowsNone(result) {
 			return ReasonNone
 		}
-		return ReasonInternalUnknown
+		return ReasonNotReported
 	}
 	if _, ok := commonReasonSet[reason]; ok {
 		return reason
@@ -1109,21 +1121,31 @@ var allOperations = append(append([]Operation(nil), metricOperations...), phaseT
 
 var allDirections = []Direction{DirectionInput, DirectionOutput, DirectionInternal, DirectionOther}
 
-var allCommonReasons = []ReasonCode{
-	ReasonNone, ReasonInternalUnknown,
+// unclassifiedReasons are the reasons that carry no classification of their
+// own: the absence of one, a site that says it does not know, and a site that
+// did not say. They are listed once and shared, so adding one cannot silently
+// change what counts as a resource reason.
+var unclassifiedReasons = []ReasonCode{ReasonNone, ReasonInternalUnknown, ReasonNotReported}
+var contractClassReasons = []ReasonCode{
 	ReasonContractDeterministic, ReasonContractRetryable, ReasonContractCoverage,
-	ReasonOther,
 }
-var allResourceReasons = []ReasonCode{
-	ReasonNone, ReasonInternalUnknown, ReasonCPU, ReasonRSS, ReasonHeap, ReasonGC,
+var resourceOnlyReasons = []ReasonCode{
+	ReasonCPU, ReasonRSS, ReasonHeap, ReasonGC,
 	ReasonWorkerQueue, ReasonInflight, ReasonConsumerLag, ReasonStateBytes,
-	ReasonContractDeterministic, ReasonContractRetryable, ReasonContractCoverage,
-	ReasonOther,
 }
-var allLogReasons = []ReasonCode{
-	ReasonNone, ReasonInternalUnknown, ReasonCPU, ReasonRSS, ReasonHeap, ReasonGC,
-	ReasonWorkerQueue, ReasonInflight, ReasonConsumerLag, ReasonStateBytes, ReasonOther,
+
+func joinReasons(groups ...[]ReasonCode) []ReasonCode {
+	joined := []ReasonCode(nil)
+	for _, group := range groups {
+		joined = append(joined, group...)
+	}
+	return joined
 }
+
+var allCommonReasons = joinReasons(unclassifiedReasons, contractClassReasons, []ReasonCode{ReasonOther})
+var allResourceReasons = joinReasons(
+	unclassifiedReasons, resourceOnlyReasons, contractClassReasons, []ReasonCode{ReasonOther})
+var allLogReasons = joinReasons(unclassifiedReasons, resourceOnlyReasons, []ReasonCode{ReasonOther})
 
 var componentStageSet = makeComponentStageSet(allComponentStages)
 var metricComponentStageSet = makeComponentStageSet(metricComponentStages)
@@ -1131,8 +1153,8 @@ var resultSet = makeResultSet(allResults)
 var operationSet = makeOperationSet(allOperations)
 var metricOperationSet = makeOperationSet(metricOperations)
 var directionSet = makeDirectionSet(allDirections)
-var commonReasonSet = makeReasonSet(allCommonReasons[:2])
-var resourceReasonSet = makeReasonSet(allLogReasons[2 : len(allLogReasons)-1])
+var commonReasonSet = makeReasonSet(unclassifiedReasons)
+var resourceReasonSet = makeReasonSet(resourceOnlyReasons)
 var contractObservationReasons, contractObservationReasonSet, contractObservationMetricReasonByCode = loadContractObservationReasons()
 
 func makeComponentStageSet(values []ComponentStage) map[ComponentStage]struct{} {

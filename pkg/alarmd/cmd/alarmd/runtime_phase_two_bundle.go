@@ -258,7 +258,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	recorder.SetControlCacheSource(func() []metric.ControlCacheCounts {
 		stats := repository.ControlReadCacheStats()
 		occupancy := stats.TimelineOccupancy
-		return []metric.ControlCacheCounts{
+		counts := []metric.ControlCacheCounts{
 			{Object: "version", Hits: stats.Version.Hits, Misses: stats.Version.Misses, Refreshes: stats.Version.Refreshes},
 			{Object: "snapshot", Hits: stats.Snapshot.Hits, Misses: stats.Snapshot.Misses, Refreshes: stats.Snapshot.Refreshes},
 			{Object: "activation", Hits: stats.Activation.Hits, Misses: stats.Activation.Misses, Refreshes: stats.Activation.Refreshes},
@@ -269,6 +269,26 @@ func openProductionPhaseTwoBundleWithDependencies(
 					BytesLimit: float64(occupancy.MaxBytes),
 				}},
 		}
+		// The key segment memos are caches too, and they report through the same
+		// metric rather than a new one. Their interesting outcome is the clear:
+		// the memo drops everything on reaching its bound because its design
+		// assumes the populations stay inside it, so a clear is that assumption
+		// failing rather than a cache being warmed. The two domains differ in how
+		// safe that assumption is - a tenant population is bounded by
+		// configuration, a state generation advances with every publish - so they
+		// are reported apart.
+		//
+		// Occupancy is deliberately not reported for them. Their bound is in
+		// entries rather than bytes, and an entry count that resets to zero on
+		// every clear says more about when the page was scraped than about the
+		// memo. The clear counter does not have that problem.
+		for _, memo := range state.KeySegmentMemoCounts() {
+			counts = append(counts, metric.ControlCacheCounts{
+				Object: memo.Domain,
+				Hits:   memo.Hits, Misses: memo.Misses, Clears: memo.Clears,
+			})
+		}
+		return counts
 	})
 	if cfg.PhaseTwo.Control.CatalogTTL.Duration() < phaseTwoSnapshotMinimumRetention(cfg, 0) {
 		return nil, scheduler.ErrSnapshotRetentionInsufficient

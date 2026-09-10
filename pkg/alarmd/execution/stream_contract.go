@@ -210,7 +210,18 @@ func DeriveStreamingCompletionKind(
 	bindings []NamedInputBinding,
 	result EvaluationResult,
 ) (CompletionKind, error) {
-	return DeriveCompletionKind(InternalExecution{
+	kind, _, err := DeriveStreamingCompletion(header, bindings, result)
+	return kind, err
+}
+
+// DeriveStreamingCompletion reports the kind together with why the Slot was
+// unavailable, from the one traversal that decides the kind.
+func DeriveStreamingCompletion(
+	header InternalExecutionHeader,
+	bindings []NamedInputBinding,
+	result EvaluationResult,
+) (CompletionKind, UnavailableCause, error) {
+	return DeriveCompletion(InternalExecution{
 		Contract: header.Contract, DuePlans: header.DuePlans, Requirements: header.Requirements, Inputs: bindings,
 	}, result)
 }

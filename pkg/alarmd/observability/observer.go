@@ -405,37 +405,42 @@ type Observation struct {
 	Attempted              bool
 	ExecuteOutcome         string
 	ProgressCompletionKind string
-	Dispatcher             *DispatcherFacts
-	PermitWait             *PermitWaitFacts
-	ExpiredRange           *ExpiredRangeFacts
-	Component              Component
-	Stage                  Stage
-	Result                 Result
-	Operation              Operation
-	Direction              Direction
-	ReasonCode             ReasonCode
-	Duration               time.Duration
-	Counts                 Counts
-	Trace                  TraceFields
-	Err                    error
-	CapacityBudget         CapacityBudget
-	CapacityRejection      *CapacityRejectionFacts
-	SourceKind             SourceKind
-	QueryPermit            *QueryPermitFacts
-	RuntimeConfig          *RuntimeConfigFacts
-	QueryFailure           *QueryFailureFacts
-	QueryTiming            *QueryTimingFacts
-	ShortPeriodCompletion  *ShortPeriodCompletionFacts
-	StateApplyChunk        *StateApplyChunkFacts
-	ActiveQGSet            *ActiveQGSetFacts
-	LegacyMigration        *LegacyQGMigrationFacts
-	DrainingQG             *DrainingQGFacts
-	SourceRefresh          *SourceRefreshFacts
-	ActivationFailure      *ActivationFailureFacts
-	AlgorithmEvaluations   []AlgorithmEvaluationFact
-	AlgorithmInputs        []AlgorithmInputFact
-	normalized             bool
-	stageReasonBucket      bool
+	// ProgressCompletionCause says which of the several conditions that all
+	// complete a Slot as UNAVAILABLE actually happened. The kind alone cannot
+	// tell "the data has not landed yet", which clears itself, from "a Plan
+	// could not be decided", which does not.
+	ProgressCompletionCause string
+	Dispatcher              *DispatcherFacts
+	PermitWait              *PermitWaitFacts
+	ExpiredRange            *ExpiredRangeFacts
+	Component               Component
+	Stage                   Stage
+	Result                  Result
+	Operation               Operation
+	Direction               Direction
+	ReasonCode              ReasonCode
+	Duration                time.Duration
+	Counts                  Counts
+	Trace                   TraceFields
+	Err                     error
+	CapacityBudget          CapacityBudget
+	CapacityRejection       *CapacityRejectionFacts
+	SourceKind              SourceKind
+	QueryPermit             *QueryPermitFacts
+	RuntimeConfig           *RuntimeConfigFacts
+	QueryFailure            *QueryFailureFacts
+	QueryTiming             *QueryTimingFacts
+	ShortPeriodCompletion   *ShortPeriodCompletionFacts
+	StateApplyChunk         *StateApplyChunkFacts
+	ActiveQGSet             *ActiveQGSetFacts
+	LegacyMigration         *LegacyQGMigrationFacts
+	DrainingQG              *DrainingQGFacts
+	SourceRefresh           *SourceRefreshFacts
+	ActivationFailure       *ActivationFailureFacts
+	AlgorithmEvaluations    []AlgorithmEvaluationFact
+	AlgorithmInputs         []AlgorithmInputFact
+	normalized              bool
+	stageReasonBucket       bool
 }
 
 type Observer interface {

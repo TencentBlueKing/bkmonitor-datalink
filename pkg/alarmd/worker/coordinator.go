@@ -295,7 +295,7 @@ func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(
 		result, err = coordinator.commitProgress(sequenceCtx, request, execution.SlotCompletion{
 			Contract: request.Contract, Kind: completionKind,
 			Result: observability.ResultDegraded, ReasonCode: finalization.ReasonCode,
-		})
+		}, "")
 		return err
 	})
 	if err != nil {
@@ -495,7 +495,7 @@ func (coordinator *SlotExecutionCoordinator) convergeNormalActivation(
 			if err := coordinator.admitActivatedPlans(sequenceCtx, request, progressFacts); err != nil {
 				return err
 			}
-			result, err = coordinator.commitProgress(sequenceCtx, request, protection.completion)
+			result, err = coordinator.commitProgress(sequenceCtx, request, protection.completion, "")
 			return err
 		},
 	)
@@ -915,15 +915,22 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive PRIMARY input fact: %w", err)
 	}
 	completion := execution.SlotCompletion{Contract: request.Contract, Primary: &primary}
+	completionCause := ""
 	if len(changedPlans) > 0 {
 		completion.Kind = execution.CompletionPartialGap
 		completion.Result = observability.ResultDegraded
 		completion.ReasonCode = execution.ReasonCode(contract.ReasonConfigDrift)
 	} else {
-		completion.Kind, err = execution.DeriveStreamingCompletionKind(header, bindings, evaluated)
+		var cause execution.UnavailableCause
+		completion.Kind, cause, err = execution.DeriveStreamingCompletion(header, bindings, evaluated)
 		if err != nil {
 			return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive completion: %w", err)
 		}
+		// Observation only. It is deliberately not put on completion.ReasonCode,
+		// which is persisted and decides how consecutive gaps fold into a
+		// Progress gap summary; changing that is a separate decision about a
+		// durable structure.
+		completionCause = string(cause)
 		completion.Result = evaluated.Result
 		completion.ReasonCode = evaluated.ReasonCode
 	}
@@ -959,7 +966,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		return execution.SlotExecutionResult{}, err
 	}
 
-	return coordinator.commitProgress(ctx, request, completion)
+	return coordinator.commitProgress(ctx, request, completion, completionCause)
 }
 
 func unsatisfiedForcedWarmingActivations(
@@ -987,10 +994,16 @@ func unsatisfiedForcedWarmingActivations(
 	return result
 }
 
+// completionCause is observation only: it says which of the conditions that
+// share the UNAVAILABLE completion kind actually happened. It is a separate
+// parameter rather than a field on the completion because the completion is
+// persisted and its reason decides how consecutive gaps fold in a Progress gap
+// summary.
 func (coordinator *SlotExecutionCoordinator) commitProgress(
 	ctx context.Context,
 	request execution.SlotExecutionRequest,
 	completion execution.SlotCompletion,
+	completionCause string,
 ) (execution.SlotExecutionResult, error) {
 	if request.ExpiredRange != nil {
 		return coordinator.commitExpiredRange(ctx, request, completion)
@@ -1028,7 +1041,8 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 			c.ProgressCommitted(progressRequest, progress)
 		}
 	})
-	coordinator.observeCommittedProgress(ctx, request.Operation, started, observationResult, observationReason, string(completion.Kind))
+	coordinator.observeCommittedProgress(ctx, request.Operation, started, observationResult, observationReason,
+		string(completion.Kind), completionCause)
 	return execution.SlotExecutionResult{Completed: true, CompletionKind: completion.Kind, Result: completion.Result, ReasonCode: completion.ReasonCode}, nil
 }
 
@@ -1548,7 +1562,7 @@ func indexStatePreflight(result execution.StatePreflightResult) map[execution.St
 }
 
 // Called only after this invocation received and validated ProgressCommitted.
-func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx context.Context, operation execution.Operation, started time.Time, result observability.Result, reason observability.ReasonCode, kind string) {
+func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx context.Context, operation execution.Operation, started time.Time, result observability.Result, reason observability.ReasonCode, kind, cause string) {
 	if reason == "" {
 		reason = observability.ReasonNone
 	}
@@ -1557,5 +1571,6 @@ func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx contex
 		Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
 		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
 		Result: result, ReasonCode: reason, Duration: time.Since(started), ProgressCompletionKind: kind,
+		ProgressCompletionCause: cause,
 	})
 }

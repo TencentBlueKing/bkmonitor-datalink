@@ -2109,16 +2109,74 @@ func derivePrimaryInputFact(input InternalExecution, plan *PlanIdentity) (Primar
 	return fact, nil
 }
 
+// UnavailableCause names which of the several conditions that all complete a
+// Slot as UNAVAILABLE actually occurred.
+//
+// The completion kind folds four different things into one word, and they call
+// for opposite responses: data that has not landed in storage yet resolves
+// itself, while a Plan that could not be decided does not. Operators reading a
+// list of hundreds of "degraded" objects could not tell which was which, so the
+// list was not actionable and taught them to ignore it.
+//
+// This is carried as observation only. Putting it on the persisted completion
+// would change how consecutive gaps fold into a Progress gap summary, which is
+// a durable structure and a separate decision.
+type UnavailableCause string
+
+const (
+	// CauseDataNotReady is a readiness gap: the data for this evaluation has
+	// not arrived in storage yet. It resolves without anyone doing anything,
+	// and it is the majority of what the page currently shows as degraded.
+	CauseDataNotReady UnavailableCause = "DATA_NOT_READY"
+	// CausePlanUnavailable is a Plan that could not be decided at all.
+	CausePlanUnavailable UnavailableCause = "PLAN_UNAVAILABLE"
+	// CausePrimaryInputUnavailable is the query for the primary input coming
+	// back with nothing usable.
+	CausePrimaryInputUnavailable UnavailableCause = "PRIMARY_INPUT_UNAVAILABLE"
+	// CauseLevelOutcomeUnknown is a Level whose outcome could not be determined
+	// even though its Plan was.
+	CauseLevelOutcomeUnknown UnavailableCause = "LEVEL_OUTCOME_UNKNOWN"
+)
+
+// DeriveCompletionKind reports the completion kind alone, which is what the
+// contract and every persisted structure use.
 func DeriveCompletionKind(input InternalExecution, result EvaluationResult) (CompletionKind, error) {
+	kind, _, err := deriveCompletion(input, result)
+	return kind, err
+}
+
+// DeriveCompletion reports the kind together with why it was unavailable.
+//
+// The two come from one traversal on purpose: derived separately they would be
+// two functions that must agree about the same Slot, and the first time they
+// disagreed the page would explain a completion that did not happen.
+func DeriveCompletion(input InternalExecution, result EvaluationResult) (CompletionKind, UnavailableCause, error) {
+	return deriveCompletion(input, result)
+}
+
+func deriveCompletion(input InternalExecution, result EvaluationResult) (CompletionKind, UnavailableCause, error) {
 	if len(result.Plans) == 0 {
-		return "", errors.New("alarmd execution: no Plan results to complete")
+		return "", "", errors.New("alarmd execution: no Plan results to complete")
 	}
 	primary, err := DerivePrimaryInputFact(input)
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+	// A Slot can hit several of these at once. The cause reported is the most
+	// actionable one rather than the first or the commonest: a readiness gap
+	// beside a Plan that could not be decided is a Slot someone should look at,
+	// and reporting the gap would say the opposite.
+	cause := UnavailableCause("")
+	note := func(candidate UnavailableCause) {
+		if causeRank(candidate) > causeRank(cause) {
+			cause = candidate
+		}
 	}
 	hasPartial := primary.Completeness == CompletenessPartial
 	hasUnavailable := primary.Completeness == CompletenessUnavailable
+	if hasUnavailable {
+		note(CausePrimaryInputUnavailable)
+	}
 	allFullEmpty := primary.Completeness == CompletenessFull && primary.DataState == DataStateEmpty
 	hasTerminal := false
 	for _, plan := range result.Plans {
@@ -2127,10 +2185,12 @@ func DeriveCompletionKind(input InternalExecution, result EvaluationResult) (Com
 			hasTerminal = true
 		case PlanUnavailable:
 			hasUnavailable = true
+			note(CausePlanUnavailable)
 		case PlanReadinessGap:
 			hasUnavailable = true
+			note(CauseDataNotReady)
 		case PlanRetryPending:
-			return "", errors.New("alarmd execution: retry-pending Plan cannot derive a completed Slot")
+			return "", "", errors.New("alarmd execution: retry-pending Plan cannot derive a completed Slot")
 		case PlanDecided, PlanDecidedDegraded:
 			if plan.Disposition == PlanDecidedDegraded {
 				hasPartial = true
@@ -2141,23 +2201,44 @@ func DeriveCompletionKind(input InternalExecution, result EvaluationResult) (Com
 					hasTerminal = true
 				case LevelOutcomeUnknown:
 					hasUnavailable = true
+					note(CauseLevelOutcomeUnknown)
 				}
 			}
 		default:
-			return "", errors.New("alarmd execution: invalid Plan disposition for completion")
+			return "", "", errors.New("alarmd execution: invalid Plan disposition for completion")
 		}
 	}
 	switch {
 	case hasTerminal:
-		return CompletionTerminal, nil
+		return CompletionTerminal, "", nil
 	case hasUnavailable:
-		return CompletionUnavailable, nil
+		return CompletionUnavailable, cause, nil
 	case hasPartial:
-		return CompletionPartialGap, nil
+		return CompletionPartialGap, "", nil
 	case allFullEmpty:
-		return CompletionFullEmpty, nil
+		return CompletionFullEmpty, "", nil
 	default:
-		return CompletionFull, nil
+		return CompletionFull, "", nil
+	}
+}
+
+// causeRank orders the causes by how much a human can do about them. A higher
+// rank wins when a Slot hits several at once.
+//
+// DATA_NOT_READY is lowest because nothing needs doing: it clears when the data
+// lands. Everything above it is something that did not work.
+func causeRank(cause UnavailableCause) int {
+	switch cause {
+	case CausePlanUnavailable:
+		return 4
+	case CausePrimaryInputUnavailable:
+		return 3
+	case CauseLevelOutcomeUnknown:
+		return 2
+	case CauseDataNotReady:
+		return 1
+	default:
+		return 0
 	}
 }
 

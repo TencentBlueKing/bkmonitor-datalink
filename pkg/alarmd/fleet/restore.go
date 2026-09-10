@@ -74,6 +74,10 @@ func (tracker *Tracker) Restore(queryGroup string, restored RestoredState, at ti
 		// Over-reporting one object for one round is the cheaper mistake.
 		state.currentKind = KindDegradedRun
 		state.reasonCode = restored.LastCompletion
+		// The cause is not persisted -- it is observation only -- so a restored
+		// object explains itself with the completion kind alone until it
+		// completes a round in this process. Leaving it blank is the honest
+		// answer; guessing one would attribute a cause nobody recorded.
 		state.degradedRuns = tracker.degradedRounds
 		state.inAnomalyRun = true
 		// The run started before this process did and the real start point did

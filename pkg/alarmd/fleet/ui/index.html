@@ -140,7 +140,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
     <div class="summary" id="summary"></div>
     <table>
       <thead><tr>
-        <th>对象</th><th>种类</th><th>最近原因</th><th>失败在哪</th><th>已持续</th>
+        <th>对象</th><th>种类</th><th>最近原因</th><th>是什么情况</th><th>失败在哪</th><th>已持续</th>
         <th>起算来源</th><th>副本</th><th>关联策略</th>
       </tr></thead>
       <tbody id="rows"></tbody>
@@ -363,6 +363,10 @@ function loadObjects() {
       });
       cell(a.kind === 'BLOCKED_RUN' ? '被阻塞' : '降级');
       cell(a.reason_code || '—');
+      // The completion kind alone folds four conditions together, and they call
+      // for opposite responses. Without this column the list reads as hundreds
+      // of equally urgent objects, which is the same as reading as none.
+      cell(causeText(a.cause));
       // The completion kind says a round ended badly; this says what went wrong.
       // Both are shown because they answer different questions.
       var f = a.failure;
@@ -591,6 +595,20 @@ function loadRecords(queryGroup) {
     document.getElementById('recBody').textContent = '';
     fail('recErr', e);
   });
+}
+
+// The wording says what to do, not what the enum is called: the reader is
+// deciding whether to act, and "DATA_NOT_READY" does not tell them.
+var CAUSE_TEXT = {
+  DATA_NOT_READY: '数据还没入库，会自愈',
+  PLAN_UNAVAILABLE: '策略判不出来，要看',
+  PRIMARY_INPUT_UNAVAILABLE: '查询没拿到可用数据，要看',
+  LEVEL_OUTCOME_UNKNOWN: '级别结论未知，要看'
+};
+
+function causeText(cause) {
+  if (!cause) return '—';
+  return CAUSE_TEXT[cause] || cause;
 }
 
 function loadWindows() {

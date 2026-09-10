@@ -108,7 +108,10 @@ type queryGroupState struct {
 	// like.
 	determined    bool
 	lastCompleted string
-	lastFailure   *FailureRef
+	// cause separates the conditions that share one completion kind, so the
+	// object list can say which entries anyone can act on.
+	cause       string
+	lastFailure *FailureRef
 }
 
 // Tracker turns the observation stream into the anomaly list a replica
@@ -226,6 +229,7 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		state.degradedRuns++
 		state.currentKind = KindDegradedRun
 		state.reasonCode = completion
+		state.cause = observation.ProgressCompletionCause
 	case blockedOutcome(runOutcome):
 		state.determined = true
 		state.blockedRuns++
@@ -253,6 +257,9 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 }
 
 func (tracker *Tracker) resetRun(state *queryGroupState) {
+	// The cause described the run that just ended. Leaving it would let a
+	// recovered object still explain itself with the last thing that went wrong.
+	state.cause = ""
 	state.degradedRuns = 0
 	state.blockedRuns = 0
 	state.inAnomalyRun = false
@@ -277,11 +284,11 @@ func (tracker *Tracker) Anomalies() []Anomaly {
 		anomaly := Anomaly{
 			QueryGroup: queryGroup,
 			Kind:       state.currentKind,
-			ReasonCode: state.reasonCode,
-			Since:      state.runStartedAt,
-			SinceFrom:  SinceSnapshotContinuity,
-			Replica:    tracker.replica,
-			Failure:    state.lastFailure,
+			ReasonCode: state.reasonCode, Cause: state.cause,
+			Since:     state.runStartedAt,
+			SinceFrom: SinceSnapshotContinuity,
+			Replica:   tracker.replica,
+			Failure:   state.lastFailure,
 		}
 		for strategy := range state.strategies {
 			anomaly.Strategies = append(anomaly.Strategies, strategy)

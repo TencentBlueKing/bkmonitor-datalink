@@ -386,3 +386,34 @@ func TestAQueryFailureAloneDoesNotDetermineOrReportTheObject(t *testing.T) {
 		t.Fatalf("anomalies = %+v, want none from failures alone", anomalies)
 	}
 }
+
+// The completion kind folds four conditions into one word and they call for
+// opposite responses. The tracker has to carry which one it was, or the object
+// list can only say "degraded" about every one of them.
+func TestAnomalyCarriesWhichConditionCausedTheUnavailableCompletion(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		observation := completion("qg-waiting", "COMPLETED_WITH_UNAVAILABLE", "8930")
+		observation.ProgressCompletionCause = "DATA_NOT_READY"
+		tracker.Observe(context.Background(), observation)
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 || anomalies[0].Cause != "DATA_NOT_READY" {
+		t.Fatalf("anomalies = %+v, want the cause carried through", anomalies)
+	}
+
+	// A recovered object must not keep explaining itself with the run that
+	// ended: the cause described that run, not this one.
+	tracker.Observe(context.Background(), completion("qg-waiting", "FULL_COMPLETED", "8930"))
+	if got := tracker.Anomalies(); len(got) != 0 {
+		t.Fatalf("recovered object still reported: %+v", got)
+	}
+	observation := completion("qg-waiting", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), observation)
+	}
+	if got := tracker.Anomalies(); len(got) != 1 || got[0].Cause != "" {
+		t.Fatalf("a new run inherited the previous run's cause: %+v", got)
+	}
+}

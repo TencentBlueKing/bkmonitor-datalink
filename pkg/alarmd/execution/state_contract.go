@@ -262,11 +262,20 @@ func BuildStateMutation(mutation StateMutation) (StateMutation, error) {
 		return StateMutation{}, errors.New("alarmd execution: State mutation builder owns the digest")
 	}
 	mutation = normalizeStateMutation(mutation)
-	digest, err := deriveStateMutationDigest(mutation)
+	if err := validateStateMutationContent(mutation); err != nil {
+		return StateMutation{}, err
+	}
+	payload := stateMutationDigestPayloadOf(mutation)
+	key, keyed := stateMutationContentKey(payload)
+	digest, err := deriveStateMutationDigest(payload)
 	if err != nil {
 		return StateMutation{}, err
 	}
 	mutation.MutationDigest = digest
+	mutation.sealedDigest = nil
+	if keyed {
+		mutation.sealedDigest = &sealedStateMutationDigest{contentKey: key, digest: digest}
+	}
 	return mutation, nil
 }
 
@@ -284,6 +293,7 @@ func BuildProvisionalStateMutation(mutation StateMutation) (StateMutation, error
 	if err := validateStateMutationContent(mutation); err != nil {
 		return StateMutation{}, err
 	}
+	mutation.sealedDigest = nil
 	return mutation, nil
 }
 
@@ -294,7 +304,15 @@ func (mutation StateMutation) ValidateDigest() error {
 	if !stateMutationIsCanonical(mutation) {
 		return errors.New("alarmd execution: State mutation collections are not canonically ordered")
 	}
-	expected, err := deriveStateMutationDigest(mutation)
+	if err := validateStateMutationContent(mutation); err != nil {
+		return err
+	}
+	payload := stateMutationDigestPayloadOf(mutation)
+	key, keyed := stateMutationContentKey(payload)
+	if mutation.sealedDigest.answers(mutation.MutationDigest, key, keyed) {
+		return nil
+	}
+	expected, err := deriveStateMutationDigest(payload)
 	if err != nil {
 		return err
 	}
@@ -349,27 +367,10 @@ func validateStateMutationContent(mutation StateMutation) error {
 	return validateStateGuardMutation(mutation.SeriesGuard)
 }
 
-func deriveStateMutationDigest(mutation StateMutation) (MutationDigest, error) {
-	if err := validateStateMutationContent(mutation); err != nil {
-		return "", err
-	}
-	payload := stateMutationDigestPayload{
-		Identity: mutation.Identity, ApplyVersion: mutation.ApplyVersion,
-		AffectedRecords: mutation.AffectedRecords, SeriesGuard: mutation.SeriesGuard,
-		Levels: mutation.Levels, Points: mutation.Points,
-	}
-	key, keyed := stateMutationDigestKey(payload)
-	if keyed {
-		if digest, found := stateMutationDigestMemo.load(key); found {
-			return digest, nil
-		}
-	}
+func deriveStateMutationDigest(payload stateMutationDigestPayload) (MutationDigest, error) {
 	digest, err := contract.DeriveCanonicalDigestV2("alarmd-runtime-state-mutation-v1", payload)
 	if err != nil {
 		return "", fmt.Errorf("alarmd execution: derive State mutation digest: %w", err)
-	}
-	if keyed {
-		stateMutationDigestMemo.store(key, MutationDigest(digest))
 	}
 	return MutationDigest(digest), nil
 }

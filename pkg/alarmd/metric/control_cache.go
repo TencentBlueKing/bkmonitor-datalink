@@ -24,6 +24,11 @@ type ControlCacheCounts struct {
 	Misses    uint64
 	Refreshes uint64
 	Evictions uint64
+	// Clears is an all-or-nothing drop, which is a different fact from an
+	// eviction: an evicting cache is working inside its budget, while a clearing
+	// one has been told its population would stay inside a bound and found that
+	// it did not.
+	Clears uint64
 	// Occupancy is set only for a cached object whose size is bounded by a
 	// budget derived from the container. Absent for the rest, because a
 	// ceiling reported as zero would read as a cache that can hold nothing.
@@ -60,7 +65,9 @@ func newControlCacheCollector() *controlCacheCollector {
 			prometheus.BuildFQName(metricNamespace, metricSubsystem, "control_cache_total"),
 			"Control plane read cache outcomes by cached object and result. An evict is an entry "+
 				"dropped to stay inside the byte budget; evictions rising while refreshes stay at zero "+
-				"means the budget cannot hold the working set, not that the control plane changed.",
+				"means the budget cannot hold the working set, not that the control plane changed. A clear "+
+				"is the whole cache dropped at once, which only the key segment memos do: any clear at all "+
+				"means a population outgrew a bound its own design assumes it stays inside.",
 			[]string{"object", "result"}, nil,
 		),
 		entries: descriptor("control_cache_entries",
@@ -110,6 +117,7 @@ func (c *controlCacheCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Misses), counts.Object, "miss")
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Refreshes), counts.Object, "refresh")
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Evictions), counts.Object, "evict")
+		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Clears), counts.Object, "clear")
 		if counts.Occupancy == nil {
 			continue
 		}

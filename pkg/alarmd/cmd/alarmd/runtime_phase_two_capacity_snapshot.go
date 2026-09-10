@@ -88,3 +88,22 @@ func capacitySnapshotSource(
 // what it uses without the snapshot source depending on the startup evidence
 // type, which exists for a different purpose.
 type observabilityCapacity = observability.RuntimeCapacityFacts
+
+// phaseTwoDiagnosticsConnection reuses the runtime connection but never its
+// client or pool.
+//
+// The design allows diagnostics to share the instance and requires them not to
+// share connections: the control plane pool is sized from the query permit
+// count, and a diagnostic burst taking from it would slow the pipeline these
+// records exist to explain. Four connections is enough for a bounded,
+// fire-and-forget writer and one page read at a time.
+func phaseTwoDiagnosticsConnection(connection config.RedisConnectionConfig) config.RedisConnectionConfig {
+	diagnostics := connection
+	diagnostics.PoolSize = phaseTwoDiagnosticsPoolSize
+	return diagnostics
+}
+
+// phaseTwoDiagnosticsPoolSize is deliberately small and deliberately not
+// configurable: it exists to keep diagnostics from competing with the pipeline,
+// and a knob that lets it grow would remove the only guarantee it provides.
+const phaseTwoDiagnosticsPoolSize = 4

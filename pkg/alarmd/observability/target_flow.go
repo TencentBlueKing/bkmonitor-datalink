@@ -127,6 +127,28 @@ type TargetFlow struct {
 	dropped         uint64
 	windowDropped   uint64
 	nextDropMarker  uint64
+	// sink receives the same record the log line carries, so a window's output
+	// can be read back where the window was opened. It is stored atomically and
+	// called outside the lock: this is a diagnostic path, and a slow or broken
+	// sink must not be able to hold up the pipeline whose facts it describes.
+	sink atomic.Pointer[func(queryGroup string, record []byte)]
+}
+
+// SetSink installs where a selected object's records go besides the log.
+//
+// Writing only to the log means the window's output leaves through a different
+// door than the one it was opened at: whoever opened it has to know to go and
+// search a log index, with no link and no hint. A sink the page can read back
+// closes that loop. Nil removes it.
+func (f *TargetFlow) SetSink(sink func(queryGroup string, record []byte)) {
+	if f == nil {
+		return
+	}
+	if sink == nil {
+		f.sink.Store(nil)
+		return
+	}
+	f.sink.Store(&sink)
 }
 
 // NewTargetFlow builds a flow that observes nothing until a window is opened.
@@ -405,6 +427,15 @@ func (f *TargetFlow) emit(stage, result, reason string, t TraceFields, facts Tar
 	f.records++
 	f.bytes += len(wire)
 	_, _ = f.logger.writer.Write(wire)
+	if sink := f.sink.Load(); sink != nil {
+		// The record is already serialized and is not touched again, so the
+		// sink may keep it. A panic in a diagnostic sink must not escape into
+		// the caller's execution path.
+		func() {
+			defer func() { _ = recover() }()
+			(*sink)(t.QueryGroupKey, wire)
+		}()
+	}
 }
 
 func (f *TargetFlow) suppressQueueLocked(queryGroup, decision string) bool {

@@ -59,3 +59,26 @@ func TestEveryPanelContainerIsWrittenBySomeScript(t *testing.T) {
 		}
 	}
 }
+
+// A control the page draws but never wires is the same failure as a renderer
+// nobody calls, seen from the other side: the operator clicks it and the page
+// does nothing, with every test green. The capacity panel was the renderer
+// half of this; this is the control half.
+func TestEveryIdentifiedButtonIsWired(t *testing.T) {
+	body := string(page)
+	button := regexp.MustCompile(`<button[^>]*\bid="([A-Za-z0-9_]+)"`)
+	matches := button.FindAllStringSubmatch(body, -1)
+	if len(matches) == 0 {
+		t.Fatal("no identified buttons found; the check would pass vacuously")
+	}
+	for _, match := range matches {
+		id := match[1]
+		// The page wires every identified button the same way, so that exact
+		// form is what is required. A button wired some other way fails this
+		// and gets looked at, which is the right outcome: a check that accepts
+		// any shape accepts a button with no handler at all.
+		if !strings.Contains(body, `getElementById('`+id+`').addEventListener`) {
+			t.Errorf("button %q is drawn but nothing listens to it: clicking it does nothing", id)
+		}
+	}
+}

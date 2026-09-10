@@ -35,6 +35,25 @@ h1{font-size:15px;margin:0 0 2px}
 .cell.hl .v{color:var(--warn)}
 .rec{max-height:340px;overflow:auto;background:var(--bg2,#0d1117);border:1px solid var(--line);
   border-radius:5px;padding:8px 10px;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
+.run{border:1px solid var(--line);border-radius:5px;margin-top:8px}
+.run>.rhead{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;padding:7px 10px;
+  background:rgba(58,110,165,.06);border-radius:4px 4px 0 0}
+.run>.rhead .no{font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.run>.rhead .rv{flex:1;min-width:220px}
+.run>.rhead .when,.run>.rhead .took{color:var(--muted);font-size:11px;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.run.bad>.rhead{background:rgba(192,57,43,.09)}
+.run.bad>.rhead .rv{color:var(--bad)}
+.run.wait>.rhead{background:rgba(107,119,133,.09)}
+.run .note{padding:5px 10px;border-top:1px solid var(--line);font-size:11px;color:var(--warn)}
+.steps{margin:0;padding:0;list-style:none}
+.steps li{display:flex;gap:10px;padding:5px 10px;border-top:1px solid var(--line);
+  align-items:baseline;flex-wrap:wrap}
+.steps li.sbad{background:rgba(192,57,43,.05)}
+.steps .st{min-width:150px;font-size:12px}
+.steps .de{flex:1;min-width:200px;color:var(--muted);font-size:11px}
+.steps .ns{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.facts{padding:5px 10px;border-top:1px solid var(--line)}
 .gaps{margin:10px 0 0;padding:0;list-style:none}
 .gaps li{border-left:3px solid var(--warn);padding:4px 8px;margin-top:6px;background:rgba(194,129,26,.08);font-size:12px}
 .gaps .kind{font-weight:600}
@@ -180,7 +199,13 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
     <div id="recWrap" hidden>
       <p class="basis" id="recBasis"></p>
       <div id="recErr" class="err" hidden></div>
-      <pre id="recBody" class="rec"></pre>
+      <div id="recDrop" class="err" hidden></div>
+      <div id="recRuns"></div>
+      <div class="form" id="recTools" hidden>
+        <button id="recRaw">看原文</button>
+        <span class="basis" style="margin:0">原文是排查报告要附的东西；上面的结构是给读的人看的。</span>
+      </div>
+      <pre id="recBody" class="rec" hidden></pre>
     </div>
     <div class="form">
       <input class="qgin" id="qg" placeholder="对象标识（64 位十六进制），可从上表复制" spellcheck="false">
@@ -570,13 +595,289 @@ function bytes(n) {
   return (i ? n.toFixed(1) : String(n)) + ' ' + u[i];
 }
 
+// The identifiers below are the code's own, and they are shown beside a plain
+// reading rather than replaced by one. Whoever is deciding what to do needs the
+// plain words; whoever is filing a bug needs the identifier. An unknown value
+// falls through as itself, so a stage added later shows up rather than
+// disappearing into a default.
+var STAGE_TEXT = {
+  runner_queued: '排队等执行位',
+  queue_skipped: '这轮没排上队',
+  runner_decision: '决定这轮做什么',
+  runner_dispatch: '派去执行',
+  runner_return: '执行返回',
+  runner_completed: '这轮结束',
+  execution_outcome: '本轮执行结果',
+  slot_completed: '时间点结束',
+  slot_selection: '选定要算的时间点',
+  plan_schedule_binding: '策略与周期绑定',
+  expired_range_returned: '跳过已过期的时间段',
+  stream_complete: '查询结果收齐',
+  provider: '向查询服务取数'
+};
+var DECISION_TEXT = {
+  queued: '已排上队',
+  normal_queue_full: '正常队列满了，这轮没排上',
+  delayed_queue_full: '重试队列满了，这轮没排上',
+  delayed_queue_evicted: '被更该先跑的挤掉',
+  execution_slot_acquired: '拿到执行位',
+  query_running: '查询进行中',
+  returned: '执行结束返回',
+  query_readiness_deferred: '数据还没到，按设计等下一轮',
+  identity_field_null: '目标身份字段是空的',
+  unknown: '未归类'
+};
+var RESULT_TEXT = {
+  terminal: '终止', retrying: '会重试', success: '成功', ok: '成功',
+  degraded: '降级', skipped: '跳过'
+};
+var REASON_TEXT = {
+  internal_unknown: '没有归类的原因',
+  query_not_ready: '数据还没入库，正常等待',
+  snapshot_continuity: '快照连续性'
+};
+
+// Some decisions say why, and the rest only say where the run had got to.
+// Treating "returned" as a reason would answer "why did this end without a
+// reason" with "because it returned", which is not an answer.
+var CAUSAL_DECISIONS = {
+  query_readiness_deferred: true, normal_queue_full: true, delayed_queue_full: true,
+  delayed_queue_evicted: true, identity_field_null: true
+};
+
+function say(dict, value) {
+  if (!value) return '';
+  return dict[value] || value;
+}
+
+function nanos(ns) {
+  if (!ns) return '';
+  if (ns < 1e6) return Math.round(ns / 1e3) + ' µs';
+  if (ns < 1e9) return Math.round(ns / 1e6) + ' ms';
+  return (ns / 1e9).toFixed(2) + ' s';
+}
+
+// Records arrive newest first because that is the right order for runs. Inside
+// one run the order that reads is the order it happened, and the timestamps are
+// no help -- a whole run is usually emitted inside one millisecond -- so
+// arrival order is what gets reversed, not the clock.
+function groupRuns(records) {
+  var runs = [], byKey = {};
+  records.slice().reverse().forEach(function (record) {
+    var facts = record.facts || {};
+    // Records made before a run exists -- queue decisions, for one -- still
+    // matter, so they group under their stage instead of being dropped.
+    var key = facts.run_id ? 'run:' + facts.run_id : 'norun:' + (record.stage || '?');
+    var run = byKey[key];
+    if (!run) {
+      run = byKey[key] = {id: facts.run_id || 0, at: record.time_unix_ms || 0, steps: []};
+      runs.push(run);
+    }
+    run.steps.push(record);
+  });
+  return runs.reverse();
+}
+
+// One line saying what happened in this run, chosen so the most actionable
+// thing wins. A run that failed and also waited is a run someone should look
+// at, and leading with the wait would say the opposite.
+function runVerdict(run) {
+  var failure = null, skipped = null, deferred = null, ended = null, decided = '';
+  run.steps.forEach(function (record) {
+    var facts = record.facts || {};
+    if (facts.failure_code && !failure) failure = facts;
+    if (facts.decision === 'normal_queue_full' || facts.decision === 'delayed_queue_full' ||
+        facts.decision === 'delayed_queue_evicted') skipped = facts;
+    if (facts.decision === 'query_readiness_deferred') deferred = facts;
+    if (facts.decision && facts.decision !== 'unknown') decided = facts.decision;
+    if (record.result === 'terminal' || record.result === 'retrying') ended = record;
+  });
+  if (failure) {
+    return {tone: 'bad', text: '失败在「' + say(STAGE_TEXT, failure.failure_stage) + '」：' +
+      failure.failure_code + '（' + failure.failure_category + '）'};
+  }
+  if (skipped) return {tone: 'wait', text: say(DECISION_TEXT, skipped.decision)};
+  if (deferred) return {tone: 'wait', text: '数据还没到，按设计等下一轮——不用处理'};
+  if (ended && ended.reason_code) {
+    return {tone: ended.result === 'terminal' ? 'bad' : '',
+      text: say(RESULT_TEXT, ended.result) + '：' + say(REASON_TEXT, ended.reason_code)};
+  }
+  if (ended) return {tone: '', text: say(RESULT_TEXT, ended.result)};
+  return {tone: '', text: decided ? say(DECISION_TEXT, decided) : '还在进行'};
+}
+
+// Which time point this run was computing, and which replica ran it. Both are
+// per run rather than per step, and both are what someone cross-checking
+// against logs or another tool needs first.
+function runCoordinates(run) {
+  var slot = 0, owner = '';
+  run.steps.forEach(function (record) {
+    if (record.evaluation_time) slot = record.evaluation_time;
+    if (record.owner_id) owner = record.owner_id;
+  });
+  var parts = [];
+  if (slot) parts.push('算的是 ' + new Date(slot * 1000).toLocaleTimeString() + ' 这个点');
+  if (owner) parts.push('在 ' + shortReplica(owner));
+  return parts.join(' · ');
+}
+
+// A run whose steps knew why but whose ending did not is worth pointing at.
+// The reason exists one step earlier and is gone by the time the run completes,
+// so the completion says "unknown" about something that was not unknown -- and
+// an unclassified ending is indistinguishable from a real fault in every count
+// that groups by reason.
+function runReasonLost(run) {
+  var known = '', lost = false;
+  run.steps.forEach(function (record) {
+    var facts = record.facts || {};
+    if (CAUSAL_DECISIONS[facts.decision]) known = facts.decision;
+    if (record.reason_code === 'internal_unknown') lost = true;
+  });
+  if (!lost || !known) return '';
+  return '这轮的原因本来是知道的（' + say(DECISION_TEXT, known) + '），到结束时记成了 internal_unknown。' +
+    '按原因分组的统计会把它算进「没有归类的原因」，跟真正查不出原因的混在一起。';
+}
+
+// Only facts that carry information. The record always ships the full set, and
+// most of them are zero on most runs: showing the zeros costs the reader the
+// whole screen and tells them nothing.
+var FACT_LABELS = [
+  ['evaluations_observed', '评估序列', ''],
+  ['range_count', '时间段', ''],
+  ['state_preflight_calls_observed', '状态预读', ' 次'],
+  ['state_preflight_keys_observed', '预读键', ''],
+  ['state_apply_calls_observed', '状态写入', ' 次'],
+  ['state_apply_keys_observed', '写入键', ''],
+  ['capacity_requested', '预算申请', ''],
+  ['capacity_limit', '预算上限', '']
+];
+var FACT_NANOS = [
+  ['evaluation_ns_observed', '评估耗时'],
+  ['state_preflight_ns_observed', '状态预读耗时'],
+  ['state_apply_ns_observed', '状态写入耗时'],
+  ['queue_wait_ns', '排队等了']
+];
+
+function runFacts(run) {
+  var totals = {};
+  run.steps.forEach(function (record) {
+    var facts = record.facts || {};
+    Object.keys(facts).forEach(function (name) {
+      if (typeof facts[name] === 'number') totals[name] = Math.max(totals[name] || 0, facts[name]);
+    });
+  });
+  var tags = [];
+  FACT_LABELS.forEach(function (pair) {
+    if (totals[pair[0]]) tags.push(pair[1] + ' ' + totals[pair[0]] + pair[2]);
+  });
+  FACT_NANOS.forEach(function (pair) {
+    if (totals[pair[0]]) tags.push(pair[1] + ' ' + nanos(totals[pair[0]]));
+  });
+  return tags;
+}
+
+function renderRuns(host, runs) {
+  host.textContent = '';
+  runs.forEach(function (run) {
+    var verdict = runVerdict(run);
+    var box = document.createElement('div');
+    box.className = 'run' + (verdict.tone ? ' ' + verdict.tone : '');
+
+    var head = document.createElement('div');
+    head.className = 'rhead';
+    function part(cls, content) {
+      var span = document.createElement('span');
+      span.className = cls;
+      span.textContent = content;
+      head.appendChild(span);
+    }
+    part('no', run.id ? '第 ' + run.id + ' 轮' : '轮次之外');
+    part('rv', verdict.text);
+    part('when', run.at ? new Date(run.at).toLocaleTimeString() : '');
+    var took = 0;
+    run.steps.forEach(function (record) { took = Math.max(took, record.duration_ns || 0); });
+    if (took) part('took', nanos(took));
+    box.appendChild(head);
+
+    var where = runCoordinates(run);
+    if (where) {
+      var coords = document.createElement('div');
+      coords.className = 'facts';
+      var label = document.createElement('span');
+      label.className = 'tag';
+      label.textContent = where;
+      coords.appendChild(label);
+      box.appendChild(coords);
+    }
+
+    var lost = runReasonLost(run);
+    if (lost) {
+      var note = document.createElement('div');
+      note.className = 'note';
+      note.textContent = lost;
+      box.appendChild(note);
+    }
+
+    var list = document.createElement('ol');
+    list.className = 'steps';
+    run.steps.forEach(function (record) {
+      var facts = record.facts || {};
+      var item = document.createElement('li');
+      if (facts.failure_code || record.result === 'terminal') item.className = 'sbad';
+      var stage = document.createElement('span');
+      stage.className = 'st';
+      stage.textContent = say(STAGE_TEXT, record.stage);
+      // The identifier stays reachable without spending a column on it.
+      stage.title = record.stage;
+      item.appendChild(stage);
+      var detail = document.createElement('span');
+      detail.className = 'de';
+      var parts = [];
+      if (facts.decision) parts.push(say(DECISION_TEXT, facts.decision));
+      if (record.result) parts.push(say(RESULT_TEXT, record.result));
+      if (record.reason_code) parts.push(say(REASON_TEXT, record.reason_code));
+      if (facts.failure_code) parts.push(facts.failure_code);
+      // A step that carries no decision and no result still happened, and a
+      // blank row reads as missing data rather than as a step with nothing to
+      // report. Say the one thing it did establish.
+      if (!parts.length && record.slot_identity_known) parts.push('时间点身份已确定');
+      detail.textContent = parts.join(' · ');
+      item.appendChild(detail);
+      var timing = document.createElement('span');
+      timing.className = 'ns';
+      timing.textContent = nanos(record.duration_ns);
+      item.appendChild(timing);
+      list.appendChild(item);
+    });
+    box.appendChild(list);
+
+    var tags = runFacts(run);
+    if (tags.length) {
+      var facts = document.createElement('div');
+      facts.className = 'facts';
+      tags.forEach(function (label) {
+        var tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.textContent = label;
+        facts.appendChild(tag);
+      });
+      box.appendChild(facts);
+    }
+    host.appendChild(box);
+  });
+}
+
 // An observation window's output is readable where the window was opened. It
 // starts the moment the window opens, so this is not a wait-for-the-end report.
 function loadRecords(queryGroup) {
   show('recWrap', true);
   show('recErr', false);
+  show('recDrop', false);
+  show('recTools', false);
+  show('recBody', false);
   text('recBasis', '对象 ' + queryGroup.slice(0, 12) + '… 的记录，最新在前。');
-  document.getElementById('recBody').textContent = '读取中…';
+  var runsHost = document.getElementById('recRuns');
+  runsHost.textContent = '读取中…';
   // Read through the object rather than an endpoint of its own: the API is
   // capped at five capabilities, and "what did my window record for this
   // object" is part of looking at the object.
@@ -584,27 +885,42 @@ function loadRecords(queryGroup) {
     var rs = d.records || [];
     var h = d.diagnostics || {};
     if (d.records_error) {
-      document.getElementById('recBody').textContent = d.records_error;
+      runsHost.textContent = d.records_error;
       return;
     }
     if (!rs.length) {
       // An empty list and an unrecorded window look the same and call for
       // opposite next steps, so the store's own counters are shown instead of
       // a bare "no data".
-      document.getElementById('recBody').textContent =
+      runsHost.textContent =
         h.dropped || h.failed
           ? '这个窗口没有可读记录，但诊断通道丢过 ' + (h.dropped || 0) + ' 条、写失败 ' + (h.failed || 0) +
             ' 条——“没发生”和“没记下来”不是一回事。'
           : '窗口开启后这个对象还没有产生记录。它按轮次产生，慢周期对象要等下一轮。';
       return;
     }
+    // A dropped record makes this an incomplete sample, and a reader who does
+    // not know that will read "the run stopped here" off a gap the channel
+    // made. It goes above the runs rather than beside them.
+    var dropped = 0;
+    rs.forEach(function (r) { dropped = Math.max(dropped, (r && r.dropped_total) || 0); });
+    if (dropped || h.dropped || h.failed) {
+      text('recDrop', '这份记录不完整：诊断通道丢了 ' + (dropped || h.dropped || 0) + ' 条' +
+        (h.failed ? '、写失败 ' + h.failed + ' 条' : '') +
+        '。下面缺的一步可能是没发生，也可能是没记下来——不要当作完整证据。');
+      show('recDrop', true);
+    }
+    var runs = groupRuns(rs);
+    renderRuns(runsHost, runs);
+    show('recTools', true);
     document.getElementById('recBody').textContent = rs.map(function (r) {
       return JSON.stringify(r);
     }).join('\n');
-    text('recBasis', '对象 ' + queryGroup.slice(0, 12) + '… 共 ' + rs.length + ' 条，最新在前；保留 ' +
-      Math.round((d.retention || 0) / 60) + ' 分钟，窗口结束后仍可看一段时间。');
+    text('recBasis', '对象 ' + queryGroup.slice(0, 12) + '… 共 ' + rs.length + ' 条，归成 ' + runs.length +
+      ' 轮，最新在前；保留 ' + Math.round((d.retention || 0) / 60) +
+      ' 分钟，窗口结束后仍可看一段时间。每轮里按发生顺序排。');
   }).catch(function (e) {
-    document.getElementById('recBody').textContent = '';
+    runsHost.textContent = '';
     fail('recErr', e);
   });
 }
@@ -697,6 +1013,16 @@ function applyFilters() {
   offset = 0;
   loadObjects();
 }
+
+// The raw records stay one click away rather than being the default. They are
+// what a bug report attaches; they are not what someone reads to find out where
+// an object is stuck.
+document.getElementById('recRaw').addEventListener('click', function () {
+  var body = document.getElementById('recBody');
+  var showing = body.hidden;
+  show('recBody', showing);
+  this.textContent = showing ? '收起原文' : '看原文';
+});
 
 document.getElementById('apply').addEventListener('click', applyFilters);
 document.getElementById('clear').addEventListener('click', function () {

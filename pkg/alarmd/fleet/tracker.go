@@ -335,6 +335,16 @@ func (tracker *Tracker) Forget(owned map[string]struct{}) {
 	}
 }
 
+// HasObserved reports whether a round in this process has already said
+// something about the object, so a restore does not overwrite live evidence
+// with a persisted cursor.
+func (tracker *Tracker) HasObserved(queryGroup string) bool {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	_, seen := tracker.groups[queryGroup]
+	return seen
+}
+
 // Tracked reports how many query groups the table holds, so the bound is
 // observable rather than a number in a comment.
 func (tracker *Tracker) Tracked() int {

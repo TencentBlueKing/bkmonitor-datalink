@@ -625,6 +625,14 @@ func openProductionPhaseTwoBundleWithDependencies(
 		tracker: fleetTracker, store: fleetStore, replica: cfg.PhaseTwo.Worker.ID,
 		owned: bundle.ownedQueryGroups, now: external.Now,
 		observe: publishOutcomeObserver(observer),
+		// What survived the restart is read back rather than re-learned. The
+		// staleness bound is the deployment's own replay age: past it a Slot
+		// that cannot complete has already been promised an end, so a Progress
+		// cursor older than that describes an object that stopped rather than
+		// one between rounds.
+		restore:       progressRestoreSource(progressStore),
+		staleAfter:    stallAfter,
+		restoreBudget: fleetRestoreBudgetPerPublish,
 	}
 	return bundle, nil
 }

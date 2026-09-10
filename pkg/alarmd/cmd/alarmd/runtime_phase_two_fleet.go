@@ -136,10 +136,62 @@ type fleetPublisher struct {
 	// tick rather than propagated: the snapshot is diagnostics, and diagnostics
 	// must not be able to stop the pipeline whose facts they describe.
 	observe func(error)
+	// restore reads an owned object's persisted Progress so a replica that has
+	// just started can speak for it without waiting to watch a fresh round.
+	// Nil disables it, and the replica then reports every object as unknown
+	// until each completes one -- the behaviour a restart used to force.
+	restore func(context.Context, execution.QueryGroupIdentity) (fleet.RestoredState, bool)
+	// staleAfter is how far behind an object's Progress cursor may be before
+	// its persisted completion stops being evidence about now.
+	staleAfter time.Duration
+	// restoreBudget bounds how many objects one publish may restore. Reading
+	// every owned object at once would turn every restart into a burst against
+	// the control plane at exactly the moment the process is least settled;
+	// spreading it over the publish ticks costs a few more seconds of unknown
+	// and no burst at all.
+	restoreBudget int
+	// restored names objects already considered, so an object whose Progress
+	// says nothing is not re-read on every tick forever.
+	restored map[execution.QueryGroupIdentity]struct{}
 }
 
-func (publisher fleetPublisher) publishOnce(ctx context.Context) {
+// restoreOwned seeds objects this replica owns but has not yet watched.
+//
+// It runs before the snapshot is built, so the first publish after a restart
+// already carries what the control plane knew, instead of reporting the whole
+// deployment as unknown until the slowest object comes round again.
+func (publisher *fleetPublisher) restoreOwned(ctx context.Context, owned []execution.QueryGroupIdentity, at time.Time) {
+	if publisher.restore == nil || publisher.restoreBudget <= 0 {
+		return
+	}
+	if publisher.restored == nil {
+		publisher.restored = make(map[execution.QueryGroupIdentity]struct{}, len(owned))
+	}
+	spent := 0
+	for _, queryGroup := range owned {
+		if spent >= publisher.restoreBudget {
+			return
+		}
+		if _, considered := publisher.restored[queryGroup]; considered {
+			continue
+		}
+		if publisher.tracker.Tracked() > 0 && publisher.tracker.HasObserved(string(queryGroup)) {
+			publisher.restored[queryGroup] = struct{}{}
+			continue
+		}
+		spent++
+		publisher.restored[queryGroup] = struct{}{}
+		state, ok := publisher.restore(ctx, queryGroup)
+		if !ok {
+			continue
+		}
+		publisher.tracker.Restore(string(queryGroup), state, at, publisher.staleAfter)
+	}
+}
+
+func (publisher *fleetPublisher) publishOnce(ctx context.Context) {
 	owned := publisher.owned()
+	publisher.restoreOwned(ctx, owned, publisher.now())
 	retained := make(map[string]struct{}, len(owned))
 	for _, queryGroup := range owned {
 		retained[string(queryGroup)] = struct{}{}

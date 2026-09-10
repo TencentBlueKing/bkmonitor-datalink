@@ -126,7 +126,7 @@ func (client *Client) Range(ctx context.Context, request RangeRequest) (RangeRes
 	httpRequest.Header.Set(headerQuerySource, client.querySource)
 	httpRequest.Header.Set(headerSpace, request.SpaceUID)
 
-	response, err := client.httpClient.Do(httpRequest)
+	response, err := client.doRangeRequest(ctx, httpRequest, encoded)
 	if err != nil {
 		return RangeResult{}, fmt.Errorf("alarmd access uq: range request: %w", err)
 	}
@@ -176,4 +176,94 @@ func columnIndexes(columns []string) (int, int) {
 		}
 	}
 	return timeColumn, valueColumn
+}
+
+// rangeRetryDeadline bounds one attempt.
+//
+// The page's own request carries no deadline -- a reader is waiting and the
+// handler lets them wait -- so without this a retry could double an already
+// unbounded wait. It is a ceiling on hanging, not a tuning knob.
+const rangeRetryDeadline = 20 * time.Second
+
+// doRangeRequest sends the query and retries once when the connection failed
+// before any response began.
+//
+// A pooled keep-alive connection can be closed by the peer between the moment
+// it is picked and the moment it is written to, and nothing in the client can
+// see that: connections are picked most-recently-used, with no probe, and the
+// peer's close is only noticed asynchronously. Go retries such a failure by
+// itself for requests it considers replayable, and a POST is not one, so the
+// caller receives a bare EOF instead. Observed in production: unify-query
+// leaves IdleTimeout unset, which makes Go fall back to its 3s ReadTimeout for
+// idle connections, while this client holds them for 90s.
+//
+// Retrying is safe here because a range query is a read. It is deliberately at
+// this layer rather than around the group of curves above it: retrying there
+// would re-run every curve to recover one.
+func (client *Client) doRangeRequest(
+	ctx context.Context, request *http.Request, body []byte,
+) (*http.Response, error) {
+	attempt := func(request *http.Request) (*http.Response, error) {
+		attemptCtx, cancel := context.WithTimeout(ctx, rangeRetryDeadline)
+		// The deadline must outlive the call, so it is cancelled when the body
+		// is closed rather than here.
+		response, err := client.httpClient.Do(request.WithContext(attemptCtx))
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		response.Body = cancelOnClose{ReadCloser: response.Body, cancel: cancel}
+		return response, nil
+	}
+	response, err := attempt(request)
+	if err == nil {
+		return response, nil
+	}
+	// A caller that has given up is not waiting for a second try, and a
+	// deadline that has already passed will not be met by repeating the work.
+	if ctx.Err() != nil {
+		return nil, err
+	}
+	client.rangeRetries.Add(1)
+	// The original request's body has been consumed, so the retry gets its own
+	// reader over the same bytes.
+	retry, buildErr := http.NewRequestWithContext(ctx, request.Method, request.URL.String(), bytes.NewReader(body))
+	if buildErr != nil {
+		return nil, err
+	}
+	retry.Header = request.Header.Clone()
+	response, retryErr := attempt(retry)
+	if retryErr != nil {
+		// The first error is the one reported: it describes the condition that
+		// started this, and the second is usually the same thing said again.
+		return nil, err
+	}
+	return response, nil
+}
+
+// RangeRetries is how often a range query had to be sent a second time because
+// the connection failed before a response began.
+//
+// It is not zero on a healthy deployment -- a pooled connection closed by the
+// peer is normal -- but a rate that climbs says the client and the server
+// disagree about how long an idle connection lives, which is a configuration
+// mismatch rather than a load problem.
+func (client *Client) RangeRetries() uint64 {
+	if client == nil {
+		return 0
+	}
+	return client.rangeRetries.Load()
+}
+
+// cancelOnClose releases an attempt's deadline when the caller is done with the
+// body, so the context outlives the call that created it without leaking.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (body cancelOnClose) Close() error {
+	err := body.ReadCloser.Close()
+	body.cancel()
+	return err
 }

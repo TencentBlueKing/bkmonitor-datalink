@@ -50,6 +50,8 @@ type RelationMultiResourceRequest struct {
 		TargetType     Resource `json:"target_type,omitempty"`
 		TargetInfoShow bool     `json:"target_info_show,omitempty"`
 
+		// MaxHops controls v1beta3 traversal depth; nil uses the server default.
+		MaxHops       *int       `json:"max_hops,omitempty"`
 		PathResource  []Resource `json:"path_resource,omitempty"`
 		LookBackDelta string     `json:"look_back_delta,omitempty"`
 	} `json:"query_list"`
@@ -93,6 +95,8 @@ type RelationMultiResourceRangeRequest struct {
 		TargetType     Resource `json:"target_type,omitempty"`
 		TargetInfoShow bool     `json:"target_info_show,omitempty"`
 
+		// MaxHops controls v1beta3 traversal depth; nil uses the server default.
+		MaxHops       *int       `json:"max_hops,omitempty"`
 		PathResource  []Resource `json:"path_resource,omitempty"`
 		LookBackDelta string     `json:"look_back_delta,omitempty"`
 	} `json:"query_list"`

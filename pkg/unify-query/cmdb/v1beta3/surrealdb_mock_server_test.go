@@ -215,7 +215,6 @@ func tablePathSplitBKBaseResponsesBySurrealQL(
 	}
 
 	req.Normalize()
-	adjustMaxHopsForUnconstrainedPath(&req, provider)
 	pf := NewPathFinder(
 		WithAllowedCategories(req.AllowedRelationTypes...),
 		WithDynamicDirection(req.DynamicRelationDirection),

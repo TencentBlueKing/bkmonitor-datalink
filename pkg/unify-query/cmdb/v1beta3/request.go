@@ -9,7 +9,11 @@
 
 package v1beta3
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
+import (
+	"fmt"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
+)
 
 // QueryRequest 关联查询请求
 type QueryRequest struct {
@@ -22,7 +26,7 @@ type QueryRequest struct {
 	TargetTypeExplicit       bool               `json:"-"`                                    // target_type 是否由调用方显式传入
 	TargetInfoShow           bool               `json:"target_info_show,omitempty"`           // 是否展示目标资源扩展信息
 	PathResource             []ResourceType     `json:"path_resource,omitempty"`              // 路径约束资源类型
-	MaxHops                  int                `json:"max_hops,omitempty"`                   // 最大跳数（默认2，范围1-5）
+	MaxHops                  int                `json:"max_hops,omitempty"`                   // 请求最大跳数；未传使用 max_hops 配置，不能超过服务端 max_allowed_hops
 	AllowedRelationTypes     []RelationCategory `json:"allowed_relation_types,omitempty"`     // 允许的关系类别
 	DynamicRelationDirection TraversalDirection `json:"dynamic_relation_direction,omitempty"` // 动态关系方向（默认both）
 	LookBackDelta            int64              `json:"look_back_delta,omitempty"`            // 回溯时间窗口（毫秒，默认86400000）
@@ -34,11 +38,8 @@ type QueryRequest struct {
 
 // Normalize 规范化请求参数，填充默认值
 func (r *QueryRequest) Normalize() {
-	if r.MaxHops <= 0 {
+	if r.MaxHops == 0 {
 		r.MaxHops = DefaultMaxHops
-	}
-	if r.MaxHops > MaxAllowedHops {
-		r.MaxHops = MaxAllowedHops
 	}
 	if r.Limit <= 0 && !r.DisableRootLimit {
 		r.Limit = DefaultLimit
@@ -96,4 +97,12 @@ func (r *QueryRequest) IsRelationCategoryAllowed(category RelationCategory) bool
 		}
 	}
 	return false
+}
+
+// validateMaxHops rejects an invalid budget instead of silently changing query depth.
+func validateMaxHops(hops int) error {
+	if hops < 1 || hops > MaxAllowedHops {
+		return fmt.Errorf("max_hops must be between 1 and max_allowed_hops (%d), got %d", MaxAllowedHops, hops)
+	}
+	return nil
 }

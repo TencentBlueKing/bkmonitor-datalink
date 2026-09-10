@@ -755,7 +755,6 @@ func tableSingleTableResponsesBySurrealQL(
 	t.Helper()
 
 	req.Normalize()
-	adjustMaxHopsForUnconstrainedPath(&req, provider)
 	pFinder := NewPathFinder(
 		WithAllowedCategories(req.AllowedRelationTypes...),
 		WithDynamicDirection(req.DynamicRelationDirection),

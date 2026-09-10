@@ -1190,6 +1190,7 @@ type RedisCatalogRuntime struct {
 	compiler          RuntimePlanCompiler
 	stateSemantics    strategy.StateSemantics
 	downstreamReserve time.Duration
+	compiledPlans     *slotCompiledPlans
 }
 
 func NewRedisCatalogRuntime(
@@ -1205,7 +1206,8 @@ func NewRedisCatalogRuntime(
 		return nil, errors.New("alarmd controlplane: invalid Redis Catalog runtime")
 	}
 	return &RedisCatalogRuntime{repository: repository, compiler: compiler,
-		stateSemantics: stateSemantics, downstreamReserve: downstreamReserve}, nil
+		stateSemantics: stateSemantics, downstreamReserve: downstreamReserve,
+		compiledPlans: newSlotCompiledPlans()}, nil
 }
 
 func (runtime *RedisCatalogRuntime) ReadInitialFrozenSchedule(
@@ -1372,8 +1374,10 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize,
 				errors.New("alarmd controlplane: due Plan is absent from frozen Catalog or activation"))
 		}
-		compiledResult, err := runtime.compiler.Compile(ctx, strategy.CompileRequest{Plan: plan.Plan,
-			DatasetContract: group.QueryPlan.Normalization.DatasetContract, StateSemantics: runtime.stateSemantics})
+		compiledResult, err := runtime.compiledPlans.compile(ctx, runtime.compiler,
+			slotCompiledPlanKey{planRevision: plan.PlanRevision, queryRevision: group.QueryPlan.QueryRevision},
+			strategy.CompileRequest{Plan: plan.Plan,
+				DatasetContract: group.QueryPlan.Normalization.DatasetContract, StateSemantics: runtime.stateSemantics})
 		if err != nil {
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)
 		}

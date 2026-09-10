@@ -48,13 +48,7 @@ func capacitySnapshotSource(
 		MemorySource:     inputs.MemorySource,
 		GOMAXPROCS:       runtime.GOMAXPROCS(0),
 	}
-	budgets := map[string]uint64{
-		"series":          facts.Capacity.Series,
-		"retained_bytes":  facts.Capacity.RetainedBytes,
-		"state_mutations": facts.Capacity.StateMutations,
-		"events":          facts.Capacity.Events,
-		"gap_mutations":   facts.Capacity.GapMutations,
-	}
+	budgets := snapshotBudgets(facts.Capacity)
 	return func() *fleet.Capacity {
 		occupancy := flights.QueryPermitOccupancy()
 		held := 0
@@ -114,3 +108,16 @@ func phaseTwoDiagnosticsConnection(connection config.RedisConnectionConfig) conf
 // configurable: it exists to keep diagnostics from competing with the pipeline,
 // and a knob that lets it grow would remove the only guarantee it provides.
 const phaseTwoDiagnosticsPoolSize = 4
+
+// snapshotBudgets is the page's copy of the same ceilings. It is separate from
+// the metric's on purpose -- one travels in the snapshot, the other is scraped
+// -- and being separate is exactly why the two key sets need pinning.
+func snapshotBudgets(capacity observabilityCapacity) map[string]uint64 {
+	return map[string]uint64{
+		string(observability.CapacityBudgetSeries):         capacity.Series,
+		string(observability.CapacityBudgetRetainedBytes):  capacity.RetainedBytes,
+		string(observability.CapacityBudgetStateMutations): capacity.StateMutations,
+		string(observability.CapacityBudgetEvents):         capacity.Events,
+		string(observability.CapacityBudgetGapMutations):   capacity.GapMutations,
+	}
+}

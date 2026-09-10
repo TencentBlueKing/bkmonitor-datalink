@@ -25,13 +25,7 @@ func capacityLoadSource(facts observability.RuntimeConfigFacts) metric.CapacityL
 	// The keys are the budget label values capacity_transition_total reports
 	// rejections under. They have to match exactly -- a ceiling that cannot be
 	// joined to its rejections answers nothing.
-	budgets := map[string]float64{
-		"series":          float64(facts.Capacity.Series),
-		"retained_bytes":  float64(facts.Capacity.RetainedBytes),
-		"state_mutations": float64(facts.Capacity.StateMutations),
-		"events":          float64(facts.Capacity.Events),
-		"gap_mutations":   float64(facts.Capacity.GapMutations),
-	}
+	budgets := loadSourceBudgets(facts)
 	return func() metric.CapacityLoad {
 		usage := config.ReadContainerUsage()
 		return metric.CapacityLoad{
@@ -45,5 +39,18 @@ func capacityLoadSource(facts observability.RuntimeConfigFacts) metric.CapacityL
 			ThrottledSeconds: usage.ThrottledSeconds,
 			ThrottledKnown:   usage.ThrottledKnown,
 		}
+	}
+}
+
+// loadSourceBudgets is the metric's copy of the per-Slot ceilings, keyed the way
+// rejections are labelled. It is a function of its own so the key set can be
+// pinned against observability.CapacityBudgets rather than trusted to match.
+func loadSourceBudgets(facts observability.RuntimeConfigFacts) map[string]float64 {
+	return map[string]float64{
+		string(observability.CapacityBudgetSeries):         float64(facts.Capacity.Series),
+		string(observability.CapacityBudgetRetainedBytes):  float64(facts.Capacity.RetainedBytes),
+		string(observability.CapacityBudgetStateMutations): float64(facts.Capacity.StateMutations),
+		string(observability.CapacityBudgetEvents):         float64(facts.Capacity.Events),
+		string(observability.CapacityBudgetGapMutations):   float64(facts.Capacity.GapMutations),
 	}
 }

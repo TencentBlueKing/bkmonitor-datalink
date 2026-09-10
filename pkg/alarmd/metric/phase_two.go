@@ -60,7 +60,18 @@ var phaseTwoWorkKinds = []string{
 var phaseTwoProgressKinds = []string{
 	"query_completed", "evaluation_completed", "event_acked", "state_applied", "progress_committed",
 }
-var phaseTwoBudgets = []string{"series", "retained_bytes", "state_mutations", "events", "gap_mutations", "other"}
+
+// phaseTwoBudgets is derived from the one list rather than repeating it. A
+// budget added there but not here would be a rejection label the metric refuses
+// to publish, which reads as "that budget never rejected anything".
+var phaseTwoBudgets = func() []string {
+	budgets := observability.CapacityBudgets()
+	names := make([]string, 0, len(budgets)+1)
+	for _, budget := range budgets {
+		names = append(names, string(budget))
+	}
+	return append(names, string(observability.CapacityBudgetOther))
+}()
 var phaseTwoCapacityResults = []string{"admitted", "rejected", "other"}
 var phaseTwoSourceResults = []string{"degraded", "recovered"}
 var phaseTwoReadyQueueKinds = []string{"normal", "recovery"}

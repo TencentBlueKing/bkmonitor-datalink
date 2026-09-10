@@ -863,6 +863,23 @@ func AllSourceKinds() []SourceKind {
 	return []SourceKind{SourceKindLegacyStrategy, SourceKindCompiledSnapshot}
 }
 
+// CapacityBudgets are the budgets a rejection can be labelled with, and so the
+// budgets whose ceilings have to be published: a rejection counted under a
+// budget whose ceiling nobody reports cannot be read against anything.
+//
+// This is the one list. The label value, the ceiling the metric publishes and
+// the ceiling the page publishes were each written out by hand in a different
+// package, joined only by three string literals agreeing -- the same shape as a
+// cohort set declared three times, where one member can go missing from all
+// three at once and nothing notices. CapacityBudgetOther is excluded: it is
+// where an unrecognised budget lands, not a budget with a ceiling of its own.
+func CapacityBudgets() []CapacityBudget {
+	return []CapacityBudget{
+		CapacityBudgetSeries, CapacityBudgetRetainedBytes, CapacityBudgetStateMutations,
+		CapacityBudgetEvents, CapacityBudgetGapMutations,
+	}
+}
+
 func NormalizeCapacityBudget(budget CapacityBudget) CapacityBudget {
 	switch budget {
 	case "":

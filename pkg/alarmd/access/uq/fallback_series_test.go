@@ -137,3 +137,62 @@ func TestHealthyResponseCarriesNoStatusDetail(t *testing.T) {
 		t.Fatalf("healthy attempt detail=%q, want empty", detail)
 	}
 }
+
+// Both outcomes are recorded as data, not left to be recovered from the detail
+// string. Counting only the allowed one would make "this code started
+// appearing" and "this code started being allowed" the same number, and those
+// are the two things that change together the moment a code is first allowed.
+func TestBothStatusOutcomesAreRecordedAsFacts(t *testing.T) {
+	series := `{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],` +
+		`"group_keys":["bk_target_ip"],"group_values":["127.0.0.1"],"values":[[1700123456789,100]]}`
+	for _, one := range []struct {
+		name        string
+		payload     string
+		wantCode    string
+		wantAllowed bool
+	}{
+		{
+			name:     "allowed",
+			payload:  `{"series":[` + series + `],"status":{"code":"SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"},"is_partial":false}`,
+			wantCode: "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS", wantAllowed: true,
+		},
+		{
+			name:     "same code without a series",
+			payload:  `{"series":[],"status":{"code":"SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"},"is_partial":false}`,
+			wantCode: "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS", wantAllowed: false,
+		},
+		{
+			name:     "unhealthy query with a series",
+			payload:  `{"series":[` + series + `],"status":{"code":"QUERY_TS_STORAGE_TIMEOUT"},"is_partial":false}`,
+			wantCode: "QUERY_TS_STORAGE_TIMEOUT", wantAllowed: false,
+		},
+	} {
+		t.Run(one.name, func(t *testing.T) {
+			client := &Client{limits: DefaultLimits(), now: time.Now}
+			completion, _ := client.decode(context.Background(), strings.NewReader(one.payload), validAttempt(t), &collectingSink{})
+			fact := completion.RouteFacts.Status
+			if fact == nil {
+				t.Fatalf("completion=%+v, want the status recorded as a fact", completion.RouteFacts)
+			}
+			if fact.Code != one.wantCode || fact.Allowed != one.wantAllowed {
+				t.Fatalf("status fact=%+v, want code %q allowed=%v", fact, one.wantCode, one.wantAllowed)
+			}
+		})
+	}
+}
+
+// A response with no status records no fact. Without this the counter built on
+// it would have a bucket for every healthy query.
+func TestHealthyResponseRecordsNoStatusFact(t *testing.T) {
+	series := `{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],` +
+		`"group_keys":["bk_target_ip"],"group_values":["127.0.0.1"],"values":[[1700123456789,1]]}`
+	client := &Client{limits: DefaultLimits(), now: time.Now}
+	completion, err := client.decode(context.Background(),
+		strings.NewReader(`{"series":[`+series+`],"is_partial":false}`), validAttempt(t), &collectingSink{})
+	if err != nil {
+		t.Fatalf("decode() error: %v", err)
+	}
+	if completion.RouteFacts.Status != nil {
+		t.Fatalf("status fact=%+v, want none for a healthy response", completion.RouteFacts.Status)
+	}
+}

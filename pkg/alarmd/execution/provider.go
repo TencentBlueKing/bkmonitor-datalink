@@ -272,6 +272,28 @@ type ProviderRouteFacts struct {
 	ProviderRouteRef ProviderRouteRef
 	ResultTableIDs   []string
 	Attempts         []RouteAttemptFact
+	// Status is the backend status the response carried, when it carried one.
+	//
+	// It is a field rather than something recoverable from an attempt's detail
+	// string on purpose. The detail is assembled for a human to read, so a
+	// counter built by parsing it would be pinned to that assembly: change the
+	// prefix or the case and the counter silently reads zero, with nothing to
+	// say it stopped working. The decision about the status is made in the
+	// provider; this carries that decision as data to whoever reports it.
+	Status *ProviderStatusFact
+}
+
+// ProviderStatusFact is a backend status code and what the provider did with
+// it. Allowed means the response was read for its series anyway, which is only
+// true for codes that describe the data rather than the health of the query.
+//
+// Both outcomes are recorded, not just the allowed one: with only the allowed
+// count, "this code started appearing" and "this code started being allowed"
+// are the same number, and those are exactly the two things that change at the
+// same moment when such a code is first allowed.
+type ProviderStatusFact struct {
+	Code    string
+	Allowed bool
 }
 
 // ProviderQualityFact is a physical query fact. It deliberately has no

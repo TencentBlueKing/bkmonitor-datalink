@@ -549,6 +549,7 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 	stats := execution.ProviderStats{Series: delivery.Series, Records: delivery.Records, NullIdentityFields: nullIdentityFields,
 		DecodeMillis: uint64(client.now().Sub(decodeStarted).Milliseconds())}
 	passthroughDetail := ""
+	var passthroughStatus *execution.ProviderStatusFact
 	if status != nil && status.Code != "" && status.Code != queryTSPartial {
 		if !usableDespiteStatus(status.Code, delivery) {
 			// A non-partial status code is a deterministic answer for this table
@@ -559,8 +560,10 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 			// sink; the completion keeps their DataState and Delivery only so
 			// that delivery conservation holds. The consumer never receives them:
 			// every binding of an UNAVAILABLE completion is UNKNOWN.
-			return client.responseContractUnavailable(attempt, execution.ResponseStatusRouteDetail(status.Code),
-				dataState, delivery, resultTableIDs, stats), nil
+			unavailable := client.responseContractUnavailable(attempt, execution.ResponseStatusRouteDetail(status.Code),
+				dataState, delivery, resultTableIDs, stats)
+			unavailable.RouteFacts.Status = &execution.ProviderStatusFact{Code: status.Code}
+			return unavailable, nil
 		}
 		// The code is kept on the succeeded attempt because this is now the only
 		// place it exists. Before, a code always produced an UNAVAILABLE
@@ -573,6 +576,7 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 		// this whole defect was found because 34 hours of nothing was
 		// conspicuous.
 		passthroughDetail = execution.ResponseStatusRouteDetail(status.Code)
+		passthroughStatus = &execution.ProviderStatusFact{Code: status.Code, Allowed: true}
 	}
 	if isPartial == nil {
 		return client.responseContractUnavailable(attempt, execution.ResponseRouteDetail(execution.ResponseFailureIsPartialMissing),
@@ -585,7 +589,8 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 	return execution.ProviderCompletion{Ref: ref, PhysicalQuery: attempt.Spec.Digest,
 		Completeness: completeness, DataState: dataState, Delivery: delivery,
 		RouteFacts: execution.ProviderRouteFacts{ProviderRouteRef: attempt.Spec.PlanFacts.ProviderRouteRef,
-			ResultTableIDs: append([]string(nil), resultTableIDs...), Attempts: []execution.RouteAttemptFact{{AttemptNo: attempt.AttemptNo,
+			ResultTableIDs: append([]string(nil), resultTableIDs...), Status: passthroughStatus,
+			Attempts: []execution.RouteAttemptFact{{AttemptNo: attempt.AttemptNo,
 				Endpoint: client.endpoint, Result: execution.RouteAttemptSucceeded, Detail: passthroughDetail}}},
 		Stats: stats}, nil
 }

@@ -106,6 +106,16 @@ type Summary struct {
 	// stopped ending, which is the only one of the four that cannot resolve on
 	// its own.
 	Stalled int `json:"stalled"`
+	// Partial says a replica truncated its published list, so these counts are
+	// over a sample rather than over everything. They still answer "which of
+	// these is it"; they no longer give a distribution, and the difference
+	// matters because the reader who most needs the distribution is the one
+	// looking at the deployment bad enough to have truncated.
+	//
+	// It is stated here rather than left to be inferred. The evidence was
+	// already in the response -- anomalies_total against the list length -- and
+	// an inference nobody makes is not a warning.
+	Partial bool `json:"partial"`
 }
 
 func summarize(anomalies []Anomaly) Summary {
@@ -271,6 +281,12 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	// same object as an unfiltered one, and counted here so the deployment-wide
 	// total survives whatever filter follows.
 	MarkStalled(view.Anomalies, now(), stallAfter)
+	// A replica publishes at most DefaultMaxAnomalies of its own, so on a bad
+	// enough deployment the list this summary counts is already a sample. The
+	// counts stay useful for "which of these is it", and stop being usable as a
+	// distribution -- and nothing in the summary said so, leaving that to a
+	// reader who thought to compare two other fields.
+	summaryPartial := view.AnomaliesTotal > len(view.Anomalies)
 	stalledTotal := 0
 	for _, anomaly := range view.Anomalies {
 		if anomaly.Stalled {
@@ -310,6 +326,7 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	// many, and counting only the visible page would answer it with whatever
 	// happened to be on screen.
 	summary := summarize(view.Anomalies)
+	summary.Partial = summaryPartial
 	view.Anomalies = pageOf(view.Anomalies, offset, limit)
 	writeJSON(response, http.StatusOK, listResponse{
 		Summary: summary,

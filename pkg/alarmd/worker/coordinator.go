@@ -75,6 +75,11 @@ type activationProtectionRequiredError struct {
 	currentFacts      execution.PlanActivationResult
 	activations       execution.PlanActivationResult
 	completion        execution.SlotCompletion
+	// completionCause travels with the completion because the converge path
+	// commits that completion rather than deriving its own. Without it the
+	// whole path reported the completion and dropped the one field that says
+	// which of the conditions folded into UNAVAILABLE actually happened.
+	completionCause execution.UnavailableCause
 }
 
 func (*activationProtectionRequiredError) Error() string {
@@ -495,7 +500,8 @@ func (coordinator *SlotExecutionCoordinator) convergeNormalActivation(
 			if err := coordinator.admitActivatedPlans(sequenceCtx, request, progressFacts); err != nil {
 				return err
 			}
-			result, err = coordinator.commitProgress(sequenceCtx, request, protection.completion, "")
+			result, err = coordinator.commitProgress(
+				sequenceCtx, request, protection.completion, string(protection.completionCause))
 			return err
 		},
 	)
@@ -921,20 +927,18 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive PRIMARY input fact: %w", err)
 	}
 	completion := execution.SlotCompletion{Contract: request.Contract, Primary: &primary}
-	completionCause := ""
+	// Observation only. The cause is deliberately not put on
+	// completion.ReasonCode, which is persisted and decides how consecutive gaps
+	// fold into a Progress gap summary; changing that is a separate decision
+	// about a durable structure.
+	var cause execution.UnavailableCause
 	if len(changedPlans) > 0 {
-		completion = configDriftCompletion(request.Contract, &primary)
+		completion, cause = configDriftCompletion(request.Contract, &primary)
 	} else {
-		var cause execution.UnavailableCause
 		completion.Kind, cause, err = execution.DeriveStreamingCompletion(header, bindings, evaluated)
 		if err != nil {
 			return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive completion: %w", err)
 		}
-		// Observation only. It is deliberately not put on completion.ReasonCode,
-		// which is persisted and decides how consecutive gaps fold into a
-		// Progress gap summary; changing that is a separate decision about a
-		// durable structure.
-		completionCause = string(cause)
 		completion.Result = evaluated.Result
 		completion.ReasonCode = evaluated.ReasonCode
 	}
@@ -942,6 +946,11 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		completion.Kind = execution.CompletionTerminal
 		completion.Result = observability.ResultTerminal
 		completion.ReasonCode = stateAdmissionTerminalReason
+		// A terminal Slot is no longer an unavailable one, so whatever the
+		// traversal was about to say is now about a completion that did not
+		// happen. deriveCompletion reports no cause for TERMINAL for the same
+		// reason; the override has to follow it or the two disagree here.
+		cause = ""
 	}
 	if len(changedPlans) > 0 {
 		return execution.SlotExecutionResult{}, &activationProtectionRequiredError{
@@ -949,6 +958,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			currentFacts:      guardActivations,
 			activations:       changedActivations,
 			completion:        completion,
+			completionCause:   cause,
 		}
 	}
 	progressActivations, err := coordinator.loadActivations(ctx, activationRequest)
@@ -956,18 +966,20 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		return activationRetry(execution.ReasonCode(contract.ReasonActivationReadFailed)), nil
 	}
 	if !guardActivations.SameSelections(progressActivations) {
+		driftCompletion, driftCause := configDriftCompletion(request.Contract, &primary)
 		return execution.SlotExecutionResult{}, &activationProtectionRequiredError{
 			activationRequest: activationRequest,
 			currentFacts:      progressActivations,
 			activations:       changedSelectedActivations(guardActivations, progressActivations),
-			completion:        configDriftCompletion(request.Contract, &primary),
+			completion:        driftCompletion,
+			completionCause:   driftCause,
 		}
 	}
 	if err := coordinator.admitDuePlans(ctx, request, header.DuePlans); err != nil {
 		return execution.SlotExecutionResult{}, err
 	}
 
-	return coordinator.commitProgress(ctx, request, completion, completionCause)
+	return coordinator.commitProgress(ctx, request, completion, string(cause))
 }
 
 func unsatisfiedForcedWarmingActivations(
@@ -1598,13 +1610,23 @@ func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx contex
 // branch and the activation-selection race, the second an inline literal that
 // a fix to the first does not reach. Two places that must agree about an
 // invariant will eventually stop agreeing.
-func configDriftCompletion(contractRef execution.FrozenExecutionContractRef, primary *execution.PrimaryInputFact) execution.SlotCompletion {
+// The cause is returned beside the kind rather than derived by the caller for
+// the reason DeriveCompletion gives: two functions that must agree about the
+// same Slot will eventually disagree, and then the page explains a completion
+// that did not happen. Here the two answers come from the one fact this
+// constructor already reads.
+func configDriftCompletion(
+	contractRef execution.FrozenExecutionContractRef,
+	primary *execution.PrimaryInputFact,
+) (execution.SlotCompletion, execution.UnavailableCause) {
 	kind := execution.CompletionPartialGap
+	cause := execution.UnavailableCause("")
 	if primary != nil && primary.Completeness == execution.CompletenessUnavailable {
 		kind = execution.CompletionUnavailable
+		cause = execution.CausePrimaryInputUnavailable
 	}
 	return execution.SlotCompletion{
 		Contract: contractRef, Kind: kind, Primary: primary,
 		Result: observability.ResultDegraded, ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift),
-	}
+	}, cause
 }

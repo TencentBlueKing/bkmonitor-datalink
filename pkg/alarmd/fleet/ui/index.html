@@ -510,6 +510,15 @@ function renderSummary(summary, total) {
     stuck.appendChild(count);
     host.appendChild(stuck);
   }
+  // A truncated list still answers "which of these is it" and no longer gives a
+  // distribution. Saying so beside the counts is the point: the reader who most
+  // needs the distribution is looking at the deployment bad enough to truncate.
+  if (summary.partial) {
+    var warn = document.createElement('div');
+    warn.className = 'sgroup stuckg';
+    warn.appendChild(document.createTextNode('下面的计数只覆盖了部分对象（副本发布的清单被截断）——可以看有哪几种，不能当占比读。'));
+    host.appendChild(warn);
+  }
   // The code goes beside the category rather than instead of it. A category
   // groups conditions that call for opposite responses -- two objects both
   // "evaluation" can be a broken dependency and a bad result -- and the code is

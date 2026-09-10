@@ -534,3 +534,36 @@ func TestSummaryReportsAnEmptyFailureCodeListRatherThanOmittingIt(t *testing.T) 
 		t.Fatal("by_failure_code is absent, which reads as a build that cannot report codes")
 	}
 }
+
+// A replica publishes at most DefaultMaxAnomalies of its own anomalies, so a
+// bad enough deployment summarises a sample. The counts still answer "which of
+// these is it" and no longer give a distribution -- and the reader who most
+// needs the distribution is looking at exactly the deployment that truncated.
+// The evidence was already in the response and required comparing two other
+// fields to notice, which is an inference nobody makes.
+func TestSummarySaysWhenItCountedATruncatedList(t *testing.T) {
+	snapshots := healthySnapshots()
+	for index := 0; index < 3; index++ {
+		snapshots[1].Anomalies = append(snapshots[1].Anomalies, anomaly(fmt.Sprintf("qg-%d", index)))
+	}
+	// The replica held back more than it published, which is what truncation is.
+	snapshots[1].TotalAnomalies = 250
+
+	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 949, Known: true}, replicas())
+	_, body := get(t, handler, "/api/objects")
+	summary, _ := body["summary"].(map[string]any)
+	if partial, _ := summary["partial"].(bool); !partial {
+		t.Fatalf("summary counted 3 of 250 anomalies without saying so: %+v", summary)
+	}
+}
+
+// On a deployment that published everything the flag must stay off, or it
+// becomes a warning that is always on and therefore never read.
+func TestSummaryIsNotMarkedPartialWhenNothingWasTruncated(t *testing.T) {
+	handler := handlerWith(t, snapshotsWithAnomalies(4), Expectation{QueryGroups: 949, Known: true}, replicas())
+	_, body := get(t, handler, "/api/objects?limit=2")
+	summary, _ := body["summary"].(map[string]any)
+	if partial, _ := summary["partial"].(bool); partial {
+		t.Fatal("paging a complete list was reported as a truncated sample")
+	}
+}

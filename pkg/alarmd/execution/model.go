@@ -1185,6 +1185,10 @@ type StateMutation struct {
 	SeriesGuard          *StateGuardFact
 	Levels               []RuntimeLevelStateMutation
 	Points               []StateHistoryPoint
+	// sealedDigest is written by BuildStateMutation and read by ValidateDigest.
+	// It is unexported so that no encoder and no caller outside this package can
+	// reach it, and it never takes part in the digest.
+	sealedDigest *sealedStateMutationDigest
 }
 
 type StatePreflightDisposition string

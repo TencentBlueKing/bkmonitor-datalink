@@ -2129,7 +2129,15 @@ func startPhaseTwoRedis(t *testing.T) (string, *redis.Client) {
 			_ = command.Wait()
 		}
 	})
-	deadline := time.Now().Add(3 * time.Second)
+	// The wait is generous on purpose. Three seconds encoded an assumption about
+	// machine load rather than about redis: under `go test ./...` dozens of
+	// packages start their own server at the same moment, and a window that is
+	// ample on an idle machine is not on a loaded one - which turned a whole-tree
+	// "all green" into a function of load rather than of the code. A healthy
+	// server answers Ping in milliseconds, so a longer budget costs the normal
+	// path nothing; it only matters when the server genuinely cannot start, and
+	// that case is meant to be read from the server's own output.
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if client.Ping(context.Background()).Err() == nil {
 			return address, client

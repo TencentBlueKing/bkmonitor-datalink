@@ -452,8 +452,19 @@ func TestReasonNormalizationConsumesM0ObservationCatalog(t *testing.T) {
 	if got := NormalizeReason(ReasonContractDeterministic, ResultTerminal); got != ReasonOther {
 		t.Fatalf("metric-only contract class leaked into logs: got %q, want %q", got, ReasonOther)
 	}
-	if got := NormalizeReason(ReasonNone, ResultFailed); got != ReasonInternalUnknown {
-		t.Fatalf("failed reason none = %q, want %q", got, ReasonInternalUnknown)
+	// A failing observation whose site reported no reason is not the same fact
+	// as a site that looked and had nothing finer to say. Collapsing them meant
+	// half the volume under one label was a defect at a known, finite set of
+	// sites and the other half was legitimate, and no query could tell them
+	// apart - so neither could be acted on.
+	if got := NormalizeReason(ReasonNone, ResultFailed); got != ReasonNotReported {
+		t.Fatalf("failed reason none = %q, want %q", got, ReasonNotReported)
+	}
+	if got := NormalizeReason(ReasonInternalUnknown, ResultFailed); got != ReasonInternalUnknown {
+		t.Fatalf("a site that says it does not know = %q, want it kept as %q", got, ReasonInternalUnknown)
+	}
+	if got := NormalizeMetricReason(ComponentAdapter, ReasonNone, ResultFailed); got != ReasonNotReported {
+		t.Fatalf("metric reason for an unreported failure = %q, want %q", got, ReasonNotReported)
 	}
 	if got := NormalizeReason(ReasonNone, ResultSuccess); got != ReasonNone {
 		t.Fatalf("successful reason none = %q, want %q", got, ReasonNone)

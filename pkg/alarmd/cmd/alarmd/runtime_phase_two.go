@@ -410,19 +410,20 @@ type phaseTwoRunnerDispatcher struct {
 	oneShot        bool
 	oneShotTargets map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle
 
-	// A pass of the dispatcher loop advances at most one Slot but used to walk
-	// every owned Query Group looking for work to queue. Within one generation
-	// a Runner is queued at most once, so these record what the last walk saw
-	// and let the next pass skip a walk that cannot find anything new.
-	filled           bool
-	filledGeneration uint64
-	filledRunners    uint64
-	filledReleased   uint64
-	filledQueueFull  bool
-	// released counts Runners that have left the active set. A count, not a
-	// size: one Runner leaving while another is dispatched leaves the size
-	// unchanged, and the Runner that left may now be queueable again.
-	released uint64
+	// A pass of the dispatcher loop advances at most one Slot, and it used to
+	// walk every owned Query Group on every pass. Within one generation a
+	// Runner may be queued at most once, so the walk is carried across passes
+	// instead: each Runner is considered once per generation, and a pass that
+	// finds the walk finished does no work at all.
+	walkGeneration uint64
+	walkRunners    uint64
+	walkIndex      int
+	walked         int
+	// prunedRunners names the owned set the queues were last cleaned against.
+	// A lifecycle only stops being current when that set changes, so cleaning
+	// again for an unchanged set walks every queued entry and every remembered
+	// generation to decide nothing.
+	prunedRunners uint64
 }
 
 func newPhaseTwoWorkerBundle(dependencies phaseTwoWorkerBundleDependencies) (*phaseTwoWorkerBundle, error) {
@@ -725,8 +726,9 @@ func (dispatcher *phaseTwoRunnerDispatcher) run(ctx context.Context, wake <-chan
 		default:
 		}
 
-		dispatcher.dropStaleQueued()
-		dispatcher.fillQueues()
+		runners, revision := dispatcher.bundle.snapshotScheduledRunners()
+		dispatcher.dropStaleQueued(revision)
+		dispatcher.fillQueues(runners, revision)
 		now := dispatcher.bundle.schedulerNow()
 		dispatcher.sortDelayed()
 		dispatcher.observeOccupancy(ctx)
@@ -790,35 +792,41 @@ func (dispatcher *phaseTwoRunnerDispatcher) beginGeneration() {
 	}
 }
 
-func (dispatcher *phaseTwoRunnerDispatcher) fillQueues() {
+func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoScheduledRunner, revision uint64) {
 	if dispatcher.generation == 0 {
 		return
 	}
-	runners, revision := dispatcher.bundle.snapshotScheduledRunners()
 	if len(runners) == 0 {
 		return
 	}
-	// A walk that reached every Runner without meeting a full queue queued
-	// everything this generation allows, so until the generation advances, the
-	// owned set changes or a Runner leaves the active set, another walk can
-	// only reject the same Runners again. A full queue keeps the walk: the
-	// delayed queue replaces a later entry with an earlier one.
-	if dispatcher.filled && dispatcher.filledGeneration == dispatcher.generation &&
-		dispatcher.filledRunners == revision && !dispatcher.filledQueueFull &&
-		dispatcher.filledReleased == dispatcher.released {
-		return
+	// A new generation, or a changed owned set, starts a walk from the rotation
+	// cursor. The walk then carries across passes, so a Query Group is looked
+	// at once per generation rather than once per pass.
+	if dispatcher.walkGeneration != dispatcher.generation || dispatcher.walkRunners != revision {
+		dispatcher.walkGeneration, dispatcher.walkRunners = dispatcher.generation, revision
+		dispatcher.walkIndex = sort.Search(len(runners), func(index int) bool {
+			return runners[index].queryGroup > dispatcher.cursor
+		})
+		dispatcher.walked = 0
 	}
-	queueFull := false
-	start := sort.Search(len(runners), func(index int) bool {
-		return runners[index].queryGroup > dispatcher.cursor
-	})
-	for offset := 0; offset < len(runners); offset++ {
-		scheduled := runners[(start+offset)%len(runners)]
+	// advance moves the walk past the Query Group it just looked at. A Query
+	// Group turned away because a queue is full does not advance: it keeps its
+	// place and the next pass offers it again, once a dispatch has made room.
+	// Consuming its turn instead would leave it waiting for the next
+	// generation, and in a one-shot run it would never be offered at all.
+	advance := func() {
+		dispatcher.walkIndex++
+		dispatcher.walked++
+	}
+	for dispatcher.walked < len(runners) {
+		scheduled := runners[dispatcher.walkIndex%len(runners)]
 		if dispatcher.active[scheduled.queryGroup] != nil || dispatcher.queued[scheduled.queryGroup] != nil {
+			advance()
 			continue
 		}
 		last := dispatcher.lastQueued[scheduled.queryGroup]
 		if last.lifecycle == scheduled.lifecycle && last.generation == dispatcher.generation {
+			advance()
 			continue
 		}
 		if dispatcher.bundle.dependencies.TargetFlow.Selected(string(scheduled.queryGroup)) {
@@ -828,17 +836,19 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues() {
 		queued := phaseTwoQueuedRunner{scheduled: scheduled, readyAt: readyAt}
 		if readyAt.IsZero() {
 			if len(dispatcher.normal) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.ReadyQueueCapacity {
-				queueFull = true
 				dispatcher.bundle.dependencies.TargetFlow.Record("queue_skipped", string(scheduled.queryGroup), observability.TargetFlowFacts{Decision: "normal_queue_full"})
-				continue
+				return
 			}
 			dispatcher.normal = append(dispatcher.normal, queued)
 		} else {
 			if len(dispatcher.delayed) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.RecoveryQueueCapacity {
-				queueFull = true
 				latest := dispatcher.latestDelayedIndex()
 				if latest < 0 || !delayedBefore(queued, dispatcher.delayed[latest]) {
+					// Not better than the Query Group it would displace, so it
+					// does not belong in the queue at all. That is a decision,
+					// not a lack of room, and the walk moves on.
 					dispatcher.bundle.dependencies.TargetFlow.Record("queue_skipped", string(scheduled.queryGroup), observability.TargetFlowFacts{Decision: "delayed_queue_full", ReadyAtMS: diagnosticTimeMS(readyAt)})
+					advance()
 					continue
 				}
 				evicted := dispatcher.delayed[latest].scheduled
@@ -860,9 +870,8 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues() {
 			lifecycle: scheduled.lifecycle, generation: dispatcher.generation,
 		}
 		dispatcher.cursor = scheduled.queryGroup
+		advance()
 	}
-	dispatcher.filled, dispatcher.filledGeneration, dispatcher.filledRunners = true, dispatcher.generation, revision
-	dispatcher.filledReleased, dispatcher.filledQueueFull = dispatcher.released, queueFull
 }
 
 func (dispatcher *phaseTwoRunnerDispatcher) markDispatched(
@@ -891,7 +900,6 @@ func (dispatcher *phaseTwoRunnerDispatcher) handleResult(
 	scheduled := result.scheduled
 	if dispatcher.active[scheduled.queryGroup] == scheduled.lifecycle {
 		delete(dispatcher.active, scheduled.queryGroup)
-		dispatcher.released++
 	}
 	if dispatcher.oneShotTargets[scheduled.queryGroup] == scheduled.lifecycle {
 		delete(dispatcher.oneShotTargets, scheduled.queryGroup)
@@ -930,8 +938,27 @@ func (dispatcher *phaseTwoRunnerDispatcher) handleResult(
 		scheduled.queuedAt = time.Now()
 	}
 	readyAt := scheduled.lifecycle.runner.NextReadyAt()
-	if readyAt.IsZero() || len(dispatcher.delayed) >=
-		dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.RecoveryQueueCapacity {
+	if readyAt.IsZero() {
+		// A Runner that was active when the generation's walk passed it was
+		// skipped without being offered a place, and the walk does not come
+		// back. It is offered one here instead, on the same terms the walk
+		// would have used: not if it already ran this generation, and not if
+		// the queue is full.
+		last := dispatcher.lastQueued[scheduled.queryGroup]
+		if last.lifecycle == scheduled.lifecycle && last.generation == dispatcher.generation {
+			return
+		}
+		if len(dispatcher.normal) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.ReadyQueueCapacity {
+			return
+		}
+		dispatcher.normal = append(dispatcher.normal, phaseTwoQueuedRunner{scheduled: scheduled})
+		dispatcher.queued[scheduled.queryGroup] = scheduled.lifecycle
+		dispatcher.lastQueued[scheduled.queryGroup] = phaseTwoRunnerGeneration{
+			lifecycle: scheduled.lifecycle, generation: dispatcher.generation,
+		}
+		return
+	}
+	if len(dispatcher.delayed) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.RecoveryQueueCapacity {
 		return
 	}
 	dispatcher.delayed = append(dispatcher.delayed, phaseTwoQueuedRunner{scheduled: scheduled, readyAt: readyAt})
@@ -961,7 +988,11 @@ func delayedBefore(left, right phaseTwoQueuedRunner) bool {
 	return left.readyAt.Before(right.readyAt)
 }
 
-func (dispatcher *phaseTwoRunnerDispatcher) dropStaleQueued() {
+func (dispatcher *phaseTwoRunnerDispatcher) dropStaleQueued(revision uint64) {
+	if dispatcher.prunedRunners == revision {
+		return
+	}
+	dispatcher.prunedRunners = revision
 	drop := func(queue []phaseTwoQueuedRunner) []phaseTwoQueuedRunner {
 		kept := queue[:0]
 		for _, queued := range queue {

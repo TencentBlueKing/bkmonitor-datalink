@@ -945,14 +945,16 @@ func TestPhaseTwoRunnerDispatcherPrunesRemovedGenerationState(t *testing.T) {
 	}
 	dispatcher := newPhaseTwoRunnerDispatcher(bundle, false)
 	dispatcher.generation = 1
-	dispatcher.fillQueues()
+	runners, revision := bundle.snapshotScheduledRunners()
+	dispatcher.fillQueues(runners, revision)
 	if len(dispatcher.lastQueued) != 1 || len(dispatcher.queued) != 1 {
 		t.Fatalf("dispatcher generation state = %d/%d, want 1/1", len(dispatcher.lastQueued), len(dispatcher.queued))
 	}
 	bundle.mu.Lock()
-	delete(bundle.runners, queryGroup)
+	bundle.removeRunnerLocked(queryGroup)
 	bundle.mu.Unlock()
-	dispatcher.dropStaleQueued()
+	_, revision = bundle.snapshotScheduledRunners()
+	dispatcher.dropStaleQueued(revision)
 	if len(dispatcher.lastQueued) != 0 || len(dispatcher.queued) != 0 || len(dispatcher.normal) != 0 {
 		t.Fatalf("removed lifecycle remained in dispatcher: generation=%d queued=%d normal=%d",
 			len(dispatcher.lastQueued), len(dispatcher.queued), len(dispatcher.normal))

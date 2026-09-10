@@ -550,7 +550,8 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// that cannot complete, so an object still failing beyond it is one nothing
 	// will resolve on its own.
 	stallAfter := cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration()
-	fleetAPI, err := fleet.NewHandler(fleetService, windowStore, external.Now, stallAfter)
+	fleetAPI, err := fleet.NewHandler(fleetService, windowStore, external.Now, stallAfter,
+		fleetRangeProvider(queryClient, cfg.PhaseTwo.Access.SelfMetricsSpaceUID))
 	if err != nil {
 		return nil, err
 	}

@@ -84,8 +84,17 @@ func (config PhaseTwoSchedulerConfig) RecoveryLimits() scheduler.RecoveryLimits 
 }
 
 type PhaseTwoAccessConfig struct {
-	UQEndpoint                 string   `yaml:"uq_endpoint"`
-	QuerySource                string   `yaml:"query_source"`
+	UQEndpoint  string `yaml:"uq_endpoint"`
+	QuerySource string `yaml:"query_source"`
+	// SelfMetricsSpaceUID is where this deployment's own metrics can be read
+	// back from. alarmd cannot derive it: which space its scraped metrics land
+	// in is decided outside the process, by whoever wired the collection.
+	//
+	// It is optional and buys exactly one thing -- the trend curves on the
+	// object page. Leaving it empty costs the curves and nothing else, so a new
+	// environment still gets the judgment and the object list with no
+	// configuration at all.
+	SelfMetricsSpaceUID        string   `yaml:"self_metrics_space_uid"`
 	MinReadyDelay              Duration `yaml:"min_ready_delay"`
 	DownstreamExecutionReserve Duration `yaml:"downstream_execution_reserve"`
 }

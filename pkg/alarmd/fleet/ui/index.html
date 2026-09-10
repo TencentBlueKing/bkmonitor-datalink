@@ -62,6 +62,18 @@ input{font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:4p
   background:rgba(192,57,43,.14);color:var(--bad);border:1px solid rgba(192,57,43,.35)}
 tr.stuckrow td{background:rgba(192,57,43,.05)}
 .sgroup.stuckg b{color:var(--bad)}
+.trend{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.tcard{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--panel)}
+.tcard h3{margin:0 0 2px;font-size:12px;font-weight:600}
+.tcard .now{font-size:20px;font-variant-numeric:tabular-nums;line-height:1.2}
+.tcard .range{color:var(--muted);font-size:11px}
+.tcard .help{color:var(--muted);font-size:11px;margin-top:6px}
+.tcard .none{color:var(--warn);font-size:11px;margin-top:6px;word-break:break-all}
+.tcard svg{display:block;width:100%;height:52px;margin-top:6px}
+.tcard svg path{fill:none;stroke:var(--accent);stroke-width:1.5}
+.tcard svg .zero{stroke:var(--line);stroke-width:1;stroke-dasharray:3 3}
+.wpick{display:flex;gap:6px;align-items:center;margin-bottom:10px}
+.wpick button.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .summary{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:10px}
 .sgroup{font-size:11px;color:var(--muted)}
 .sgroup b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
@@ -99,6 +111,14 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <br><b>未知怎么来</b>：未知 = 应有 − 已知状态。它同时包含“没有副本认领”和“认领了但还说不出结论”两种。
       只要未知不为零，判定就停在 UNKNOWN——<b>不知道不等于健康</b>。
     </p>
+  </section>
+
+  <section class="panel" id="trendPanel" hidden>
+    <h2>趋势</h2>
+    <p class="basis" id="trendBasis">曲线读的是 alarmd 自己的指标，表达式写死在服务端，和判定用的是同一批数字。</p>
+    <div class="wpick" id="wpick"></div>
+    <div id="trendErr" class="err" hidden></div>
+    <div class="trend" id="trend"></div>
   </section>
 
   <section class="panel">
@@ -551,11 +571,139 @@ document.getElementById('next').addEventListener('click', function () {
   loadObjects();
 });
 
+var trendWindow = '1h';
+// The curves are drawn here rather than by a chart library: four sparklines do
+// not justify shipping one, and the Rust version's 1MB chart bundle is on this
+// design's list of things not to repeat.
+function sparkline(points) {
+  var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 100 40');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  if (points.length < 2) return svg;
+  var values = points.map(function (p) { return p.value; });
+  var lo = Math.min.apply(null, values);
+  var hi = Math.max.apply(null, values);
+  // A flat line drawn against its own min and max becomes noise. Anchor the
+  // scale at zero so "steady at 931" and "steady at 0" do not look the same.
+  if (hi === lo) { lo = Math.min(0, lo); hi = hi === lo ? lo + 1 : hi; }
+  else { lo = Math.min(0, lo); }
+  var t0 = points[0].at;
+  var span = points[points.length - 1].at - t0 || 1;
+  var d = points.map(function (p, i) {
+    var x = ((p.at - t0) / span) * 100;
+    var y = 40 - ((p.value - lo) / (hi - lo)) * 38 - 1;
+    return (i ? 'L' : 'M') + x.toFixed(2) + ' ' + y.toFixed(2);
+  }).join(' ');
+  if (lo < 0 || (lo === 0 && hi > 0)) {
+    var zero = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    zero.setAttribute('class', 'zero');
+    zero.setAttribute('x1', '0'); zero.setAttribute('x2', '100');
+    var zy = (40 - ((0 - lo) / (hi - lo)) * 38 - 1).toFixed(2);
+    zero.setAttribute('y1', zy); zero.setAttribute('y2', zy);
+    svg.appendChild(zero);
+  }
+  var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', d);
+  svg.appendChild(path);
+  return svg;
+}
+
+function trendCard(item) {
+  var card = document.createElement('div');
+  card.className = 'tcard';
+  var title = document.createElement('h3');
+  title.textContent = item.label;
+  // The expression is the fact source. A number whose origin cannot be checked
+  // is worth less than no number.
+  title.title = item.promql;
+  card.appendChild(title);
+
+  var points = item.points || [];
+  if (item.unavailable) {
+    var none = document.createElement('div');
+    none.className = 'none';
+    // A refused curve and an empty one mean different things: the first says
+    // nobody is looking, the second says nothing happened.
+    none.textContent = '取不到：' + item.unavailable + (item.detail ? '（' + item.detail + '）' : '');
+    card.appendChild(none);
+  } else if (!points.length) {
+    var empty = document.createElement('div');
+    empty.className = 'range';
+    empty.textContent = '这段窗口内没有数据点';
+    card.appendChild(empty);
+  } else {
+    var values = points.map(function (p) { return p.value; });
+    var now = document.createElement('div');
+    now.className = 'now';
+    now.textContent = fmtNumber(values[values.length - 1]);
+    card.appendChild(now);
+    var range = document.createElement('div');
+    range.className = 'range';
+    range.textContent = '最低 ' + fmtNumber(Math.min.apply(null, values)) +
+      ' · 最高 ' + fmtNumber(Math.max.apply(null, values)) + ' · ' + points.length + ' 点';
+    card.appendChild(range);
+    card.appendChild(sparkline(points));
+    if (item.partial) {
+      var partial = document.createElement('div');
+      partial.className = 'none';
+      partial.textContent = '上游报告结果不完整，这条曲线可能缺段';
+      card.appendChild(partial);
+    }
+  }
+  var help = document.createElement('div');
+  help.className = 'help';
+  help.textContent = item.help || '';
+  card.appendChild(help);
+  return card;
+}
+
+function fmtNumber(value) {
+  if (!isFinite(value)) return '—';
+  if (Math.abs(value) >= 100 || value === Math.round(value)) return String(Math.round(value));
+  return value.toFixed(2);
+}
+
+function loadTrend() {
+  return api('series?window=' + encodeURIComponent(trendWindow)).then(function (d) {
+    show('trendPanel', true);
+    show('trendErr', false);
+    var pick = document.getElementById('wpick');
+    pick.textContent = '';
+    (d.window_choices || []).forEach(function (key) {
+      var button = document.createElement('button');
+      button.textContent = key;
+      if (key === d.window) button.className = 'on';
+      button.addEventListener('click', function () { trendWindow = key; loadTrend(); });
+      pick.appendChild(button);
+    });
+    var span = document.createElement('span');
+    span.className = 'range';
+    span.textContent = '窗口 ' + new Date(d.start).toLocaleTimeString() +
+      ' – ' + new Date(d.end).toLocaleTimeString() + '，每点 ' + d.step_seconds + ' 秒';
+    pick.appendChild(span);
+
+    var host = document.getElementById('trend');
+    host.textContent = '';
+    (d.series || []).forEach(function (item) { host.appendChild(trendCard(item)); });
+  }).catch(function (e) {
+    // A deployment that was never told where its own metrics live has no curves
+    // to show. That is a missing route, not a broken page, so the section stays
+    // out of the way instead of showing an error nobody can act on.
+    if (String(e).indexOf('404') >= 0) {
+      show('trendPanel', false);
+      return;
+    }
+    show('trendPanel', true);
+    fail('trendErr', e);
+  });
+}
+
 function refresh() {
   text('stamp', '读取于 ' + new Date().toLocaleTimeString());
   loadHealth();
   loadObjects();
   loadWindows();
+  loadTrend();
 }
 refresh();
 setInterval(refresh, 30000);

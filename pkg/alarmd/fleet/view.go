@@ -98,13 +98,13 @@ type FailureRef struct {
 
 // Anomaly is one object that is not making progress as expected.
 type Anomaly struct {
-	QueryGroup string        `json:"query_group"`
-	Kind       string        `json:"kind"`
-	ReasonCode string        `json:"reason_code,omitempty"`
-	Since      time.Time     `json:"since"`
-	SinceFrom  SinceSource   `json:"since_from"`
-	Replica    string        `json:"replica"`
-	Failure    *FailureRef   `json:"failure,omitempty"`
+	QueryGroup string      `json:"query_group"`
+	Kind       string      `json:"kind"`
+	ReasonCode string      `json:"reason_code,omitempty"`
+	Since      time.Time   `json:"since"`
+	SinceFrom  SinceSource `json:"since_from"`
+	Replica    string      `json:"replica"`
+	Failure    *FailureRef `json:"failure,omitempty"`
 	// Stalled says the rounds have been failing to finish for longer than the
 	// deployment's own budget for terminating an unfinishable Slot. The
 	// distinction it draws is the one that decides whether anyone has to act: a

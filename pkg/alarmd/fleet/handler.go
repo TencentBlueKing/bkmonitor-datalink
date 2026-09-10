@@ -175,7 +175,17 @@ type detailResponse struct {
 // the API calls it stalled; it comes from the deployment's own replay budget so
 // the flag means "past the point this deployment promised to end the round",
 // not a number chosen here. Zero disables the flag.
-func NewHandler(service *Service, windows *WindowStore, now func() time.Time, stallAfter time.Duration) (http.Handler, error) {
+// series is optional: a deployment that has not been told where its own metrics
+// live cannot draw curves, and that must cost it the curves only -- the
+// judgment and the object list are computed from the control plane and stay
+// available either way.
+func NewHandler(
+	service *Service,
+	windows *WindowStore,
+	now func() time.Time,
+	stallAfter time.Duration,
+	series RangeProvider,
+) (http.Handler, error) {
 	if service == nil {
 		return nil, errors.New("alarmd fleet: handler requires a service")
 	}
@@ -192,6 +202,11 @@ func NewHandler(service *Service, windows *WindowStore, now func() time.Time, st
 	if windows != nil {
 		mux.HandleFunc("/api/windows", func(response http.ResponseWriter, request *http.Request) {
 			observationWindows(response, request, windows, now)
+		})
+	}
+	if series != nil {
+		mux.HandleFunc("/api/series", func(response http.ResponseWriter, request *http.Request) {
+			seriesRange(response, request, series, now)
 		})
 	}
 	mux.HandleFunc("/api/health", func(response http.ResponseWriter, request *http.Request) {
@@ -430,4 +445,36 @@ func writeJSON(response http.ResponseWriter, status int, body any) {
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)
 	_ = json.NewEncoder(response).Encode(body)
+}
+
+func seriesRange(
+	response http.ResponseWriter,
+	request *http.Request,
+	provider RangeProvider,
+	now func() time.Time,
+) {
+	// The window is chosen from a fixed list rather than sent as a duration: a
+	// page that can name its own range can also name one nobody budgeted for.
+	requested := request.URL.Query().Get("window")
+	window, ok := lookupSeriesWindow(requested)
+	if !ok {
+		writeJSON(response, http.StatusBadRequest,
+			map[string]string{"error": "unknown window " + requested})
+		return
+	}
+	at := now()
+	writeJSON(response, http.StatusOK, seriesResponse{
+		Window: window.Key, WindowChoice: seriesWindowKeys(),
+		StartUnixMs: at.Add(-window.Duration).UnixMilli(), EndUnixMs: at.UnixMilli(),
+		StepSeconds: int(window.Step / time.Second),
+		Series:      collectSeries(request.Context(), provider, window, at),
+	})
+}
+
+func seriesWindowKeys() []string {
+	keys := make([]string, 0, len(seriesWindows))
+	for _, window := range seriesWindows {
+		keys = append(keys, window.Key)
+	}
+	return keys
 }

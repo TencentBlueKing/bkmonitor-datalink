@@ -12,8 +12,10 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
+	accessuq "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access/uq"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
@@ -239,4 +241,49 @@ func fleetVerdictOf(view fleet.View, at time.Time) metric.FleetVerdict {
 		verdict.Gaps = append(verdict.Gaps, metric.FleetCount{Value: string(kind), Count: gaps[kind]})
 	}
 	return verdict
+}
+
+// selfMetricsRangeProvider adapts the query client the evaluation path already
+// uses to the narrow shape the page needs.
+//
+// The scope is the one thing alarmd cannot work out for itself: which space its
+// scraped metrics land in is decided outside the process. Without it the
+// provider answers HTTP 200 with an empty series and SPACE_IS_NOT_EXISTS, so an
+// unset scope has to refuse locally rather than travel and come back looking
+// like a quiet system.
+type selfMetricsRangeProvider struct {
+	client   *accessuq.Client
+	spaceUID string
+}
+
+func (provider selfMetricsRangeProvider) Range(
+	ctx context.Context,
+	promQL string,
+	start, end time.Time,
+	step time.Duration,
+) (fleet.SeriesRange, error) {
+	result, err := provider.client.Range(ctx, accessuq.RangeRequest{
+		PromQL: promQL, SpaceUID: provider.spaceUID,
+		Start: start, End: end, Step: step,
+	})
+	if err != nil {
+		return fleet.SeriesRange{}, err
+	}
+	points := make([]fleet.SeriesPoint, 0, len(result.Points))
+	for _, point := range result.Points {
+		points = append(points, fleet.SeriesPoint{AtUnixMilli: point.AtUnixMilli, Value: point.Value})
+	}
+	return fleet.SeriesRange{
+		Points: points, Code: result.Code, Message: result.Message, Partial: result.Partial,
+	}, nil
+}
+
+// fleetRangeProvider returns nil when no scope is configured, which leaves the
+// series route unmounted. A missing route is an honest answer; a mounted route
+// that always returns nothing is not.
+func fleetRangeProvider(client *accessuq.Client, spaceUID string) fleet.RangeProvider {
+	if client == nil || strings.TrimSpace(spaceUID) == "" {
+		return nil
+	}
+	return selfMetricsRangeProvider{client: client, spaceUID: strings.TrimSpace(spaceUID)}
 }

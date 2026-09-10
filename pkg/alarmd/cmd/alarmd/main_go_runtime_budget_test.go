@@ -79,8 +79,17 @@ func TestCheckConfigReportsTheDerivedCollectorBudget(t *testing.T) {
 			t.Fatalf("soft limit %v leaves no reserve inside the %v container", limit, container)
 		}
 	}
-	if number("active_executions") <= number("query_permits") {
-		t.Fatalf("active executions reported as %v against %v query permits, want room above the gate they feed",
-			number("active_executions"), number("query_permits"))
+	// Both halves of the execution limit are reported, and neither is named for
+	// a setting: nothing outside the process can reach either one.
+	if _, present := capacity["configured_active_executions"]; present {
+		t.Fatal("the preflight table still names an execution limit after a setting nobody can set")
+	}
+	if number("effective_active_executions") <= number("query_permits") {
+		t.Fatalf("effective executions reported as %v against %v query permits, want room above the gate they feed",
+			number("effective_active_executions"), number("query_permits"))
+	}
+	if number("derived_active_executions") < number("effective_active_executions") {
+		t.Fatalf("derived executions %v are below the effective %v, which only the ready-queue clamp can move, and only downwards",
+			number("derived_active_executions"), number("effective_active_executions"))
 	}
 }

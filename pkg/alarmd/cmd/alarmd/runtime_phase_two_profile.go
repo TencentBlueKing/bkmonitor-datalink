@@ -153,9 +153,10 @@ func phaseTwoRuntimeCapacity(cfg config.Config, inputs config.CapacityInputs) ob
 	timelineCache := config.DeriveControlTimelineCache(inputs)
 	goRuntime := config.DeriveGoRuntime(inputs)
 	return observability.RuntimeCapacityFacts{
-		ExpiredRangeEnabled: s.ExpiredRangeEnabled,
-		ActiveExecutions:    min(s.ActiveExecutionLimit, s.ReadyQueueCapacity), ConfiguredActiveExecutions: s.ActiveExecutionLimit,
-		QueryPermits: s.ProcessQueryPermits, RecoveryQueryPermits: s.RecoveryQueryPermits,
+		ExpiredRangeEnabled:       s.ExpiredRangeEnabled,
+		DerivedActiveExecutions:   s.ActiveExecutionLimit,
+		EffectiveActiveExecutions: min(s.ActiveExecutionLimit, s.ReadyQueueCapacity),
+		QueryPermits:              s.ProcessQueryPermits, RecoveryQueryPermits: s.RecoveryQueryPermits,
 		RedisPoolSize: cfg.Redis.PoolSize,
 		ReadyQueue:    s.ReadyQueueCapacity, RecoveryQueue: s.RecoveryQueueCapacity, QueuedPerQG: s.MaxQueuedItemsPerQG,
 		TickNS: int64(s.TickInterval), ReplaySlots: s.MaxReplaySlots, ReplayAgeNS: int64(s.MaxReplayAge),

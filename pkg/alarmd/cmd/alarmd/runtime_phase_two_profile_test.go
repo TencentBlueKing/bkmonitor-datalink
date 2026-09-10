@@ -27,8 +27,13 @@ func TestPhaseTwoRuntimeProfileUsesEffectiveCapacityAndExcludesSecrets(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want.Capacity.ActiveExecutions != 3 {
-		t.Fatalf("effective F = %d", want.Capacity.ActiveExecutions)
+	// The clamp is the one case where the two execution-limit fields differ,
+	// and both halves have to survive it: the table has to say what the process
+	// runs with and still say what it derived, or a clamp that really took
+	// effect is invisible to whoever reads this during an incident.
+	if want.Capacity.EffectiveActiveExecutions != 3 || want.Capacity.DerivedActiveExecutions != 17 {
+		t.Fatalf("clamped executions reported as derived %d / effective %d, want 17 / 3",
+			want.Capacity.DerivedActiveExecutions, want.Capacity.EffectiveActiveExecutions)
 	}
 	cfg.Redis.Password = "DO_NOT_LOG_PASSWORD"
 	cfg.PhaseTwo.Access.UQEndpoint = "DO_NOT_LOG_ENDPOINT"

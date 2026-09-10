@@ -26,7 +26,52 @@ const (
 	headerTenant      = "X-Bk-Tenant-Id"
 	headerSpace       = "X-Bk-Scope-Space-Uid"
 	queryTSPartial    = "QUERY_TS_PARTIAL"
+	// spaceTableIDFieldIsNotExists is UQ saying the table or field the query
+	// names cannot be routed. It is a statement about the data, not about
+	// whether the query ran.
+	spaceTableIDFieldIsNotExists = "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"
 )
+
+// dataExistenceStatusCodes are the status codes that describe the data rather
+// than the health of the query, and only for those may series that arrived
+// alongside the code still be used.
+//
+// The distinction matters because UQ answers an expression, not a table. An
+// expression with a fallback - `(1 - (a + b) / c) * 100 or vector(100)`, which
+// is how a success-rate strategy says "no failures means 100%" - resolves to a
+// series even when none of its sub-queries route anywhere, and UQ reports both:
+// the constant series, and the code saying the tables were not found. Both are
+// true. Treating the code as the whole answer threw away a series the strategy
+// was defined to produce, and two strategies went ~34 hours without a single
+// evaluation while Python evaluated them normally every cycle.
+//
+// The list is deliberately one entry. Everything not on it stays UNAVAILABLE,
+// which is the direction that fails visibly, and a new code has to be reviewed
+// in rather than default in:
+//
+//   - SPACE_IS_NOT_EXISTS is also an existence statement, but for a whole
+//     space, and it is raised when the space router has no entry - which a
+//     router that failed to load also produces. Wrong here silences every
+//     strategy in the space.
+//   - EXCEEDS_MAXIMUM_LIMIT / EXCEEDS_MAXIMUM_SLIMIT mean data exists and was
+//     cut short. That is the opposite of empty.
+//   - STORAGE_TIMEOUT / STORAGE_ERROR / QUERY_RAW_ERROR are the query failing.
+//   - SPACE_TABLE_ID_FIELD_MISSING_FALLBACK is annotated in UQ as metadata
+//     possibly being stale, so it is transient by construction. It is also
+//     only ever logged, never set as a status, so it cannot reach here at all -
+//     but it is the one that would look most like a member of this list.
+//   - TABLE_ID_PROXY_IS_NOT_EXISTS is declared in UQ and never assigned.
+//
+// What puts the one entry on the list is not the source reading: it is a replay
+// of the two strategies' own compiled queries against the deployed UQ, which
+// answered with exactly this code beside a usable fallback series. The source
+// reading (pkg/unify-query/metadata/const.go and the assignment sites in
+// query/structured/space.go, at bkmonitor-datalink master rather than the
+// deployed tag) supports only the exclusions above, where being wrong means
+// keeping today's behaviour.
+var dataExistenceStatusCodes = map[string]struct{}{
+	spaceTableIDFieldIsNotExists: {},
+}
 
 var (
 	ErrResponseBytesExceeded error = &responseLimitError{code: "RESPONSE_BYTES_EXCEEDED"}
@@ -503,17 +548,31 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 	}
 	stats := execution.ProviderStats{Series: delivery.Series, Records: delivery.Records, NullIdentityFields: nullIdentityFields,
 		DecodeMillis: uint64(client.now().Sub(decodeStarted).Milliseconds())}
+	passthroughDetail := ""
 	if status != nil && status.Code != "" && status.Code != queryTSPartial {
-		// A non-partial status code is a deterministic answer for this table and
-		// field (for example SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS). Completing it as
-		// UNAVAILABLE lets the Slot finish with a Plan gap instead of failing and
-		// re-querying UQ on every attempt until the Slot ages out. UQ writes the
-		// series array before status, so series decoded before the status token
-		// have already reached the sink; the completion keeps their DataState and
-		// Delivery only so that delivery conservation holds. The consumer never
-		// receives them: every binding of an UNAVAILABLE completion is UNKNOWN.
-		return client.responseContractUnavailable(attempt, execution.ResponseStatusRouteDetail(status.Code),
-			dataState, delivery, resultTableIDs, stats), nil
+		if !usableDespiteStatus(status.Code, delivery) {
+			// A non-partial status code is a deterministic answer for this table
+			// and field. Completing it as UNAVAILABLE lets the Slot finish with a
+			// Plan gap instead of failing and re-querying UQ on every attempt
+			// until the Slot ages out. UQ writes the series array before status,
+			// so series decoded before the status token have already reached the
+			// sink; the completion keeps their DataState and Delivery only so
+			// that delivery conservation holds. The consumer never receives them:
+			// every binding of an UNAVAILABLE completion is UNKNOWN.
+			return client.responseContractUnavailable(attempt, execution.ResponseStatusRouteDetail(status.Code),
+				dataState, delivery, resultTableIDs, stats), nil
+		}
+		// The code is kept on the succeeded attempt because this is now the only
+		// place it exists. Before, a code always produced an UNAVAILABLE
+		// completion, so it was visible by making the Slot fail loudly; letting
+		// the series through removes that, and nothing in alarmd counts UQ status
+		// codes. Dropping it here would turn the failure this fixes into a silent
+		// one: a result table that is genuinely renamed would route nowhere, the
+		// fallback would answer 100, and the strategy would report itself healthy
+		// forever with nothing to look at. A loud wrong answer is discoverable -
+		// this whole defect was found because 34 hours of nothing was
+		// conspicuous.
+		passthroughDetail = execution.ResponseStatusRouteDetail(status.Code)
 	}
 	if isPartial == nil {
 		return client.responseContractUnavailable(attempt, execution.ResponseRouteDetail(execution.ResponseFailureIsPartialMissing),
@@ -526,8 +585,40 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 	return execution.ProviderCompletion{Ref: ref, PhysicalQuery: attempt.Spec.Digest,
 		Completeness: completeness, DataState: dataState, Delivery: delivery,
 		RouteFacts: execution.ProviderRouteFacts{ProviderRouteRef: attempt.Spec.PlanFacts.ProviderRouteRef,
-			ResultTableIDs: append([]string(nil), resultTableIDs...), Attempts: []execution.RouteAttemptFact{{AttemptNo: attempt.AttemptNo, Endpoint: client.endpoint, Result: execution.RouteAttemptSucceeded}}},
+			ResultTableIDs: append([]string(nil), resultTableIDs...), Attempts: []execution.RouteAttemptFact{{AttemptNo: attempt.AttemptNo,
+				Endpoint: client.endpoint, Result: execution.RouteAttemptSucceeded, Detail: passthroughDetail}}},
 		Stats: stats}, nil
+}
+
+// usableDespiteStatus reports whether a response carrying code should still be
+// read for the series it delivered.
+//
+// Both halves are required. Without a delivered series there is nothing to
+// keep and the answer really is "this does not exist", which UNAVAILABLE
+// already states correctly - so a query that returned nothing behaves exactly
+// as before. Without the code check, "some sub-queries failed but one
+// succeeded" would be read the same way as "the expression answered by
+// itself", and those need opposite handling.
+//
+// What keeps those two apart is an ordering in UQ, not the codes being
+// mutually exclusive: SetStatus holds one slot and the last writer wins
+// (metadata/status.go), the routing statuses are written while the query is
+// being built, and the multi-route partial status is written after the fan-out
+// finishes (tsdb/prometheus/querier.go - it even keeps the earlier message and
+// replaces only the code). So a response that really did lose a route reports
+// QUERY_TS_PARTIAL as its final code and never reaches this list, while an
+// existence code surviving as the final code means no route reported a partial
+// failure and the series came from the expression itself.
+//
+// is_partial is a second, independent guard: it comes back from the storage
+// instance rather than from the status slot, and a true value still completes
+// the query as PARTIAL further down whatever the code says.
+func usableDespiteStatus(code string, delivery execution.SeriesDelivery) bool {
+	if delivery.Series == 0 {
+		return false
+	}
+	_, known := dataExistenceStatusCodes[code]
+	return known
 }
 
 // responseContractUnavailable completes a decoded 200 response that violated

@@ -615,6 +615,38 @@ function sparkline(points) {
   return svg;
 }
 
+function sharedUnavailable(series) {
+  if (series.length < 2) return null;
+  var first = series[0];
+  if (!first.unavailable) return null;
+  for (var i = 1; i < series.length; i++) {
+    if (series[i].unavailable !== first.unavailable) return null;
+  }
+  return first.unavailable;
+}
+
+function sharedUnavailableCard(code, series) {
+  var card = document.createElement('div');
+  card.className = 'tcard';
+  card.style.gridColumn = '1 / -1';
+  var title = document.createElement('h3');
+  title.textContent = '这 ' + series.length + ' 条曲线都取不到：' + code;
+  card.appendChild(title);
+  var why = document.createElement('div');
+  why.className = 'none';
+  // 原因相同时，逐条的 detail 只差指标名；把它们并列出来比抄四遍完整文案有用。
+  why.textContent = series.map(function (item) {
+    return item.label + '（' + item.promql + '）';
+  }).join('；');
+  card.appendChild(why);
+  var help = document.createElement('div');
+  help.className = 'help';
+  help.textContent = '判定与对象清单不受影响——它们读的是控制面，和这里的时序库无关。'
+    + '常见成因：这些指标所在的版本还没发布，或者本部署的指标 scope 没配对。';
+  card.appendChild(help);
+  return card;
+}
+
 function trendCard(item) {
   var card = document.createElement('div');
   card.className = 'tcard';
@@ -695,7 +727,16 @@ function loadTrend() {
 
     var host = document.getElementById('trend');
     host.textContent = '';
-    (d.series || []).forEach(function (item) { host.appendChild(trendCard(item)); });
+    var series = d.series || [];
+    // 全都因为同一个原因取不到时，把同一段上游文案抄四遍不增加任何信息，只是让
+    // 整段变成噪音。原因相同才合并；只要有一条不同就照旧逐条显示，合并会盖掉
+    // 那条不一样的。
+    var shared = sharedUnavailable(series);
+    if (shared) {
+      host.appendChild(sharedUnavailableCard(shared, series));
+      return;
+    }
+    series.forEach(function (item) { host.appendChild(trendCard(item)); });
   }).catch(function (e) {
     // A deployment that was never told where its own metrics live has no curves
     // to show. That is a missing route, not a broken page, so the section stays

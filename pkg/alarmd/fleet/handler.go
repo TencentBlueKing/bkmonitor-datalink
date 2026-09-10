@@ -233,6 +233,11 @@ func NewHandler(
 			"determined": view.Determined,
 			"unknown":    view.Unknown,
 			"gaps":       view.Gaps,
+			// Capacity rides on the verdict rather than getting an endpoint of
+			// its own: the two are answers from one read, and splitting them
+			// would let a page show a verdict from one moment beside occupancy
+			// from another.
+			"capacity": view.Capacity,
 		})
 	})
 	return mux, nil

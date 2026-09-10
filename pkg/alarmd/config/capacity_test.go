@@ -126,7 +126,7 @@ func TestControlTimelineCacheBudgetHoldsAnOwnedWorkingSet(t *testing.T) {
 		productionTimelineBytes = 146816
 		// The decoded object, charged the way controlplane charges a cache
 		// entry. The persisted bytes are not held.
-		productionEntryBytes = productionTimelineBytes * 9 / 8
+		productionEntryBytes = productionTimelineBytes * 3 / 2
 		productionOwned      = 931
 		replacedConstant     = 32 << 20
 	)

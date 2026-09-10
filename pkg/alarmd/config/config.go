@@ -563,7 +563,22 @@ func (c Config) validateGoAccessRuntime() error {
 	// max_replay_age would let the shortest-retention Plans lose that proof
 	// inside the replay window, silently and only for them.
 	if c.Redis.RestartMargin.Duration() < c.PhaseTwo.Scheduler.MaxReplayAge.Duration() {
-		return errors.New("redis restart_margin must cover phase_two scheduler max_replay_age")
+		// The only reader of this message is whoever is holding the deployment
+		// that will not start, and the two halves are not symmetric: the margin
+		// is theirs to set - how long a restart takes is a property of their
+		// cluster - while max_replay_age is a fixed property of the replay
+		// algorithm that a values file cannot set. Naming both values and
+		// saying which half moves is the difference between a message that can
+		// be acted on and one that invites editing the half that is not
+		// editable.
+		return fmt.Errorf(
+			"redis.restart_margin (%s) must cover phase_two.scheduler.max_replay_age (%s): "+
+				"max_replay_age is a fixed replay window that a values file cannot set, "+
+				"so raise restart_margin to at least %s",
+			c.Redis.RestartMargin.Duration(),
+			c.PhaseTwo.Scheduler.MaxReplayAge.Duration(),
+			c.PhaseTwo.Scheduler.MaxReplayAge.Duration(),
+		)
 	}
 	budget := c.PhaseTwo.Coordinator
 	// One Slot's State or Gap mutations are applied in successive Store calls

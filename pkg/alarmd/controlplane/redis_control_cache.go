@@ -36,20 +36,49 @@ const (
 // anyone the guarantee that a stored copy still matches its decoded object.
 //
 // The decoded object was expected to dwarf its JSON; measured against
-// production-shaped timelines it does not. A 146,708 byte payload carrying 183
-// Plans decodes to about 141,000 bytes of retained heap - 0.96 of the payload -
-// and the ratio runs 0.36 at one Plan, 1.04 at twenty, 0.96 at that production
-// shape and 0.89 at six hundred (TestParsedScheduleTimelineHeapFootprint
-// prints all four). The JSON repeats a field name for every value; the decoded
-// object repeats a struct field and the string bytes. So an entry is charged
-// 9/8 of the payload it was decoded from: 9/8 bounds every measured shape, and
-// over-charging costs budget while under-charging would put the process over
-// its own bound. The payload length is known at the one moment it is needed,
-// immediately after decoding, which is why nothing has to keep the bytes to
-// size what came out of them.
+// production-shaped timelines it does not. The JSON repeats a field name for
+// every value, while the decoded object repeats a struct field and the string
+// bytes, so the two land within the same order of magnitude and an entry can
+// be charged a multiple of the payload it was decoded from.
+//
+// The multiple is not one flat number, because the cost has a sawtooth in it.
+// json.Unmarshal grows the two Plans slices by doubling and rounds each growth
+// to an allocator size class, so how much spare capacity a decoded timeline
+// retains depends on where its Plan count lands between two steps - and the
+// two slices, having different element sizes, step at different counts. The
+// result is a ratio that varies with shape far more than with size, in sharp
+// teeth rather than a trend. Sweeping every Plan count from 4 to 250 under
+// -race:
+//
+//	14 Plans   0.98      18 Plans   1.24      28 Plans   1.00
+//	 9 Plans   1.20      19 Plans   1.21     160 Plans   1.18
+//
+// Without -race every reading is about 0.08 lower, peaking at 1.09.
+//
+// So an entry is charged 3/2 of its payload: comfortably above the tallest
+// tooth measured in either mode, because the teeth are narrow enough that
+// sampling forty shapes does not prove where the tallest one is, and because
+// the growth behaviour being sampled belongs to the standard library rather
+// than to this package. Over-charging costs budget - at the production shape
+// the charge is 215 KiB against 143 KiB held, and the byte budget still holds
+// more than twice the Query Groups a Worker owns - while under-charging would
+// put the process over a bound it believes it is under.
+//
+// An earlier 9/8 came from a single sample of one shape and sat below several
+// teeth. It was not an upper bound at all, and neither was the 5/4 that
+// looked sufficient before the sweep went past the shapes an evenly spaced one
+// visits.
+//
+// The race detector's readings bind here even though no production binary
+// carries it: an accounting constant that fails its own measurement in one
+// build mode is not a bound.
+//
+// The payload length is known at the one moment it is needed, immediately
+// after decoding, which is why nothing has to keep the bytes to size what came
+// out of them.
 const (
-	parsedTimelineBytesNumerator   = 9
-	parsedTimelineBytesDenominator = 8
+	parsedTimelineBytesNumerator   = 3
+	parsedTimelineBytesDenominator = 2
 	// The list element, the map entry and the cachedTimeline header. Noise
 	// against a real timeline, and the reason the entry bound cannot be reached
 	// before the byte bound.

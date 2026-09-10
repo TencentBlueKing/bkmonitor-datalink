@@ -125,10 +125,10 @@ func TestCanonicalJSONStringFastPathKeepsRejections(t *testing.T) {
 	}
 }
 
-// TestCanonicalClosedTypeCacheAgreesWithWalk proves the remembered verdict is
-// the verdict the walk reaches, including for the types that must stay off the
-// fast path.
-func TestCanonicalClosedTypeCacheAgreesWithWalk(t *testing.T) {
+// TestCanonicalClosedTypeVerdicts pins which values take the fast path and
+// which keep the strict walk, including the ones that must never be treated as
+// a closed string.
+func TestCanonicalClosedTypeVerdicts(t *testing.T) {
 	type nested struct {
 		Name   string            `json:"name"`
 		Values []int64           `json:"values"`
@@ -137,20 +137,17 @@ func TestCanonicalClosedTypeCacheAgreesWithWalk(t *testing.T) {
 		Bytes  []byte            `json:"bytes"`
 		Inner  *canonicalTestStr `json:"inner"`
 	}
-	samples := []any{
-		"plain", canonicalTestString("named"), json.RawMessage(`{"a":1}`), []byte(`{"a":1}`),
-		json.Number("1"), int64(7), 1.5, true, nested{}, &nested{}, []string{"a"}, [2]int{1, 2},
-		map[string]string{"a": "b"}, struct{ A string }{"a"},
-	}
-	for _, sample := range samples {
-		sampleType := reflect.TypeOf(sample)
-		want := canonicalClosedType(sampleType, nil)
-		if got := canonicalClosedTypeCached(sampleType); got != want {
-			t.Fatalf("cached verdict for %v is %v, walk says %v", sampleType, got, want)
-		}
-		// A second read must come from the cache and still agree.
-		if got := canonicalClosedTypeCached(sampleType); got != want {
-			t.Fatalf("remembered verdict for %v is %v, walk says %v", sampleType, got, want)
+	for _, sample := range []struct {
+		value  any
+		closed bool
+	}{
+		{"plain", true}, {canonicalTestString("named"), true}, {int64(7), true}, {1.5, true}, {true, true},
+		{[]string{"a"}, true}, {[2]int{1, 2}, true}, {struct{ A string }{"a"}, true},
+		{json.RawMessage(`{"a":1}`), false}, {[]byte(`{"a":1}`), false}, {json.Number("1"), false},
+		{nested{}, false}, {&nested{}, false}, {map[string]string{"a": "b"}, false},
+	} {
+		if got := canonicalClosedType(reflect.TypeOf(sample.value), nil); got != sample.closed {
+			t.Fatalf("closed verdict for %T is %v, want %v", sample.value, got, sample.closed)
 		}
 	}
 }

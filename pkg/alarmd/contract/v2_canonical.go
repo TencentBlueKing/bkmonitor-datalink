@@ -21,7 +21,6 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
-	"sync"
 	"unicode/utf8"
 )
 
@@ -51,7 +50,7 @@ func CanonicalJSONV2(value any) ([]byte, error) {
 		return nil, err
 	}
 	valueType := reflect.TypeOf(value)
-	closed := canonicalClosedTypeCached(valueType)
+	closed := canonicalClosedType(valueType, nil)
 	// Only the standard encoder over a closed type can establish unique keys.
 	// Raw fragments, interfaces and custom marshalers retain the strict walk.
 	if !closed {
@@ -132,30 +131,10 @@ var (
 	byteSliceType     = reflect.TypeOf([]byte(nil))
 	jsonMarshalerType = reflect.TypeOf((*json.Marshaler)(nil)).Elem()
 	textMarshalerType = reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
-
-	// canonicalClosedTypes remembers the whole-type verdict. Whether a type is
-	// closed is a property of the type, which cannot change while the process
-	// runs, and the walk that decides it visits every field of every nested
-	// struct. Only the verdict for a complete type is kept: a verdict reached
-	// part way through a walk depends on the types already on that path.
-	canonicalClosedTypes sync.Map
 )
 
-func canonicalClosedTypeCached(t reflect.Type) bool {
-	if t == nil {
-		return false
-	}
-	if cached, found := canonicalClosedTypes.Load(t); found {
-		return cached.(bool)
-	}
-	closed := canonicalClosedType(t, nil)
-	canonicalClosedTypes.Store(t, closed)
-	return closed
-}
-
 // Recursive types conservatively use the existing strict path. This check is
-// local to one call and inspects no mutable values; canonicalClosedTypeCached
-// keeps the verdict for a complete type.
+// local to one call; it neither caches types nor inspects mutable values.
 func canonicalClosedType(t reflect.Type, path map[reflect.Type]bool) bool {
 	if t == nil || t == jsonNumberType || t == jsonRawType || t == byteSliceType {
 		return false

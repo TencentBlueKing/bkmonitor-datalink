@@ -695,8 +695,8 @@ func TestQueryLivenessGraphUsesInjectedSchemaProvider(t *testing.T) {
 			Direction:    "outbound",
 		},
 	}}}, paths)
-	assert.Contains(t, executor.sql, "entity_data: { custom_id: custom_id }")
-	assert.Contains(t, executor.sql, "entity_data: { target_id: out.target_id }")
+	assert.Contains(t, executor.sql, "entity_data: { custom_id: source_id.custom_id }")
+	assert.Contains(t, executor.sql, "entity_data: { target_id: target_id.target_id }")
 }
 
 func TestQueryLivenessGraphPropagatesSchemaProviderFailures(t *testing.T) {
@@ -782,7 +782,7 @@ func TestQueryLivenessGraphProjectsTargetInfoFields(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Contains(t, executor.sql, "entity_data: { target_id: out.target_id, version: out.version }")
+	assert.Contains(t, executor.sql, "entity_data: { target_id: target_id.target_id, version: target_id.version }")
 }
 
 func TestSurrealQueryBuilderProjectsRootInfoFieldsForImplicitTarget(t *testing.T) {
@@ -1005,8 +1005,8 @@ func TestQueryLivenessGraphUsesSpaceUIDSchemaNamespace(t *testing.T) {
 		},
 	}}}, paths)
 	assert.Contains(t, executor.sql, "FROM biz_pod_node")
-	assert.Contains(t, executor.sql, "entity_data: { biz_pod: biz_pod }")
-	assert.Contains(t, executor.sql, "entity_data: { global_node: out.global_node }")
+	assert.Contains(t, executor.sql, "entity_data: { biz_pod: source_id.biz_pod }")
+	assert.Contains(t, executor.sql, "entity_data: { global_node: target_id.global_node }")
 	assert.NotContains(t, executor.sql, "global_pod_node")
 }
 
@@ -1107,7 +1107,8 @@ func TestQueryLivenessGraphRaisesMaxHopsWhenDefaultCannotReachTarget(t *testing.
 	})
 
 	require.NoError(t, err)
-	assert.Contains(t, executor.sql, "hop3")
+	assert.Contains(t, executor.sql, "FROM node_with_pod\n")
+	assert.NotContains(t, executor.sql, "$parent")
 	assert.Equal(t, []resourcePath{{Steps: []resourcePathStep{
 		{ResourceType: "node"},
 		{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
@@ -1153,55 +1154,12 @@ func TestSurrealQueryBuilderUsesScalarLivenessFilters(t *testing.T) {
 		Limit:         10,
 	}).Build()
 
-	assert.Contains(t, sql, "SELECT * FROM node_liveness_record WHERE reference_id = $parent.id")
-	assert.Contains(t, sql, "SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id")
-	assert.Contains(t, sql, "LET $end = 600;")
+	assert.NotContains(t, sql, "_liveness_record")
+	assert.Contains(t, sql, "FROM node_with_pod WHERE source_id = $parent.id")
+	assert.NotContains(t, sql, "LET $end =")
 	assert.Contains(t, sql, "LET $end_ms = 600000;")
-	assert.Contains(t, sql, "[0] != NONE")
+	assert.Contains(t, sql, "active_period_end_ms >= $start_ms")
 	assert.NotContains(t, sql, "(SELECT count() FROM only")
-}
-
-func TestSurrealQueryBuilderRootRecordIDContract(t *testing.T) {
-	previous := RootRecordIDEnabled
-	RootRecordIDEnabled = true
-	t.Cleanup(func() { RootRecordIDEnabled = previous })
-	provider := newTableSchemaProvider(
-		map[ResourceType]tableResourceDefinition{
-			ResourceTypeNode: {primaryKeys: []string{"bcs_cluster_id", "node"}},
-		},
-		nil,
-	)
-
-	t.Run("uses schema primary-key order and keeps non-primary filters", func(t *testing.T) {
-		req := &QueryRequest{
-			Timestamp:        600000,
-			LookBackDelta:    600000,
-			SourceType:       ResourceTypeNode,
-			SourceInfo:       map[string]string{"node": `node⟩\1`, "bcs_cluster_id": "BCS-K8S-00001"},
-			SourceExpandInfo: map[string]string{"region": "east"},
-			Limit:            10,
-		}
-		builder := NewSurrealQueryBuilderWithSchemaProvider(req, provider)
-
-		assert.Equal(t, `node:⟨bcs_cluster_id=BCS-K8S-00001,node=node\⟩\\1⟩`, builder.buildRootSource())
-		assert.Equal(t,
-			"WHERE region = 'east'\n  AND (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE",
-			builder.buildWhereClause(),
-		)
-		assert.Contains(t, builder.Build(), "FROM node:⟨bcs_cluster_id=BCS-K8S-00001,node=node\\⟩\\\\1⟩\n")
-	})
-
-	t.Run("falls back to table scan when a primary key is missing", func(t *testing.T) {
-		req := &QueryRequest{
-			Timestamp:  600000,
-			SourceType: ResourceTypeNode,
-			SourceInfo: map[string]string{"node": "node-1"},
-		}
-		builder := NewSurrealQueryBuilderWithSchemaProvider(req, provider)
-
-		assert.Equal(t, "node", builder.buildRootSource())
-		assert.Contains(t, builder.buildWhereClause(), "node = 'node-1'")
-	})
 }
 
 func TestSurrealQueryBuilderCanOmitLivenessProjection(t *testing.T) {
@@ -1218,24 +1176,19 @@ func TestSurrealQueryBuilderCanOmitLivenessProjection(t *testing.T) {
 	rangeSQL := NewSurrealQueryBuilder(cloneQueryRequest(req)).Build()
 	assert.Contains(t, rangeSQL, ResponseFieldLiveness+":")
 	assert.Contains(t, rangeSQL, ResponseFieldRelationLiveness+":")
-	assert.Contains(t, rangeSQL, "node_liveness_record WHERE reference_id = $parent.id")
-	assert.Contains(t, rangeSQL, "node_with_pod_liveness_record WHERE relation_id = $parent.id")
+	assert.NotContains(t, rangeSQL, "_liveness_record")
+	assert.Contains(t, rangeSQL, "relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }]")
 
 	instantSQL := NewSurrealQueryBuilder(cloneQueryRequest(req)).WithoutLivenessProjection().Build()
 	assert.NotContains(t, instantSQL, ResponseFieldLiveness+":")
 	assert.NotContains(t, instantSQL, ResponseFieldRelationLiveness+":")
-	assert.Contains(t, instantSQL, "node_liveness_record WHERE reference_id = $parent.id")
-	assert.Contains(t, instantSQL, "node_with_pod_liveness_record WHERE relation_id = $parent.id")
+	assert.NotContains(t, instantSQL, "_liveness_record")
+	assert.Contains(t, instantSQL, "active_period_start_ms <= $end_ms")
+	assert.Contains(t, instantSQL, "active_period_end_ms >= $start_ms")
 }
 
-func TestSurrealQueryBuilderFlatOneHopActiveEdgeServingContract(t *testing.T) {
-	previousFlat := FlatOneHopActiveEdgeServingRelations
-	previousServing := ActiveEdgeServingRelations
-	FlatOneHopActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
-	ActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
+func TestSurrealQueryBuilderFlatOneHopSingleTableContract(t *testing.T) {
 	t.Cleanup(func() {
-		FlatOneHopActiveEdgeServingRelations = previousFlat
-		ActiveEdgeServingRelations = previousServing
 	})
 
 	request := &QueryRequest{
@@ -1261,84 +1214,31 @@ func TestSurrealQueryBuilderFlatOneHopActiveEdgeServingContract(t *testing.T) {
 	instantBuilder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
 	configureBuilderForGraphQueryMode(instantBuilder, graphQueryModeInstant)
 	instantSQL := instantBuilder.Build()
-	assert.Equal(t, "active_edge_serving_flat_one_hop", instantBuilder.routeName())
-	assert.Contains(t, instantSQL, "FROM node_with_pod_active_edge_view\nWHERE source_data.bcs_cluster_id = 'BCS-K8S-00001'\n  AND source_data.node = 'node-1'")
+	assert.Equal(t, "single_table_flat_one_hop", instantBuilder.routeName())
+	assert.Contains(t, instantSQL, "SELECT VALUE id FROM node WHERE bcs_cluster_id = 'BCS-K8S-00001' AND node = 'node-1'")
+	assert.Contains(t, instantSQL, "FROM node_with_pod\nWHERE source_id IN $source_ids")
+	assert.NotContains(t, instantSQL, "_active_edge_view")
 	assert.NotContains(t, instantSQL, "LET $flat_root_id")
 	assert.NotContains(t, instantSQL, "FROM node\nWHERE")
 	assert.NotContains(t, instantSQL, "source_id = $")
-	assert.Contains(t, instantSQL, "entity_data: source_data")
-	assert.Contains(t, instantSQL, "entity_data: target_data")
+	assert.Contains(t, instantSQL, "entity_data: { bcs_cluster_id: source_id.bcs_cluster_id, node: source_id.node }")
+	assert.Contains(t, instantSQL, "entity_data: { bcs_cluster_id: target_id.bcs_cluster_id, namespace: target_id.namespace, pod: target_id.pod }")
 	assert.NotContains(t, instantSQL, "relation_liveness:")
 	assert.NotContains(t, instantSQL, "hop2")
 
 	rangeBuilder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
 	configureBuilderForGraphQueryMode(rangeBuilder, graphQueryModeRange)
 	rangeSQL := rangeBuilder.Build()
-	assert.Equal(t, "active_edge_serving_flat_one_hop", rangeBuilder.routeName())
-	assert.Contains(t, rangeSQL, "FROM node_with_pod_active_edge_view\nWHERE source_data.bcs_cluster_id = 'BCS-K8S-00001'\n  AND source_data.node = 'node-1'")
+	assert.Equal(t, "single_table_flat_one_hop", rangeBuilder.routeName())
+	assert.Contains(t, rangeSQL, "SELECT VALUE id FROM node WHERE bcs_cluster_id = 'BCS-K8S-00001' AND node = 'node-1'")
+	assert.Contains(t, rangeSQL, "FROM node_with_pod\nWHERE source_id IN $source_ids")
 	assert.Contains(t, rangeSQL, "relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }]")
 	assert.Contains(t, rangeSQL, "active_period_start_ms <= active_period_end_ms")
 	assert.NotContains(t, rangeSQL, "FROM node\nWHERE")
 }
 
-func TestSurrealQueryBuilderFlatOneHopActiveEdgeServingFallsBack(t *testing.T) {
-	previousFlat := FlatOneHopActiveEdgeServingRelations
-	previousServing := ActiveEdgeServingRelations
-	FlatOneHopActiveEdgeServingRelations = nil
-	ActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
+func TestSurrealQueryBuilderFlatOneHopSingleTableReverseContract(t *testing.T) {
 	t.Cleanup(func() {
-		FlatOneHopActiveEdgeServingRelations = previousFlat
-		ActiveEdgeServingRelations = previousServing
-	})
-
-	request := &QueryRequest{
-		Timestamp:          600000,
-		LookBackDelta:      600000,
-		SourceType:         ResourceTypeNode,
-		SourceInfo:         map[string]string{"bcs_cluster_id": "BCS-K8S-00001", "node": "node-1"},
-		TargetType:         ResourceTypePod,
-		TargetTypeExplicit: true,
-		PathResource:       []ResourceType{ResourceTypeNode, ResourceTypePod},
-		MaxHops:            1,
-	}
-	path := resourcePath{Steps: []resourcePathStep{
-		{ResourceType: string(ResourceTypeNode)},
-		{
-			ResourceType: string(ResourceTypePod),
-			RelationType: string(RelationNodeWithPod),
-			Category:     string(RelationCategoryStatic),
-			Direction:    string(DirectionOutbound),
-		},
-	}}
-
-	instantBuilder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
-	configureBuilderForGraphQueryMode(instantBuilder, graphQueryModeInstant)
-	instantSQL := instantBuilder.Build()
-	assert.Equal(t, "active_edge_serving", instantBuilder.routeName())
-	assert.Contains(t, instantSQL, "FROM node\nWHERE")
-	assert.Contains(t, instantSQL, "source_id = $parent.id")
-
-	FlatOneHopActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
-	request.SourceExpandInfo = map[string]string{"region": "sh"}
-	expandedBuilder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
-	configureBuilderForGraphQueryMode(expandedBuilder, graphQueryModeInstant)
-	assert.Equal(t, "active_edge_serving", expandedBuilder.routeName())
-	assert.Contains(t, expandedBuilder.Build(), "region = 'sh'")
-
-	rangeBuilder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
-	configureBuilderForGraphQueryMode(rangeBuilder, graphQueryModeRange)
-	assert.Equal(t, "active_edge_serving", rangeBuilder.routeName())
-	assert.Contains(t, rangeBuilder.Build(), "FROM node_with_pod_active_edge_view")
-}
-
-func TestSurrealQueryBuilderFlatOneHopActiveEdgeServingReverseContract(t *testing.T) {
-	previousFlat := FlatOneHopActiveEdgeServingRelations
-	previousServing := ActiveEdgeServingRelations
-	FlatOneHopActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
-	ActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
-	t.Cleanup(func() {
-		FlatOneHopActiveEdgeServingRelations = previousFlat
-		ActiveEdgeServingRelations = previousServing
 	})
 
 	request := &QueryRequest{
@@ -1364,32 +1264,28 @@ func TestSurrealQueryBuilderFlatOneHopActiveEdgeServingReverseContract(t *testin
 	builder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
 	configureBuilderForGraphQueryMode(builder, graphQueryModeInstant)
 	sql := builder.Build()
-	assert.Equal(t, "active_edge_serving_flat_one_hop", builder.routeName())
-	assert.Contains(t, sql, "FROM node_with_pod_active_edge_view\nWHERE target_data.bcs_cluster_id = 'BCS-K8S-00001'\n  AND target_data.namespace = 'default'\n  AND target_data.pod = 'nginx-1'")
+	assert.Equal(t, "single_table_flat_one_hop", builder.routeName())
+	assert.Contains(t, sql, "SELECT VALUE id FROM pod WHERE bcs_cluster_id = 'BCS-K8S-00001' AND namespace = 'default' AND pod = 'nginx-1'")
+	assert.Contains(t, sql, "FROM node_with_pod\nWHERE target_id IN $source_ids")
 	assert.Contains(t, sql, "entity_id: <string>target_id")
-	assert.Contains(t, sql, "entity_data: target_data")
+	assert.Contains(t, sql, "entity_data: { bcs_cluster_id: target_id.bcs_cluster_id, namespace: target_id.namespace, pod: target_id.pod }")
 	assert.Contains(t, sql, "entity_id: <string>source_id")
-	assert.Contains(t, sql, "entity_data: source_data")
+	assert.Contains(t, sql, "entity_data: { bcs_cluster_id: source_id.bcs_cluster_id, node: source_id.node }")
 
 	rangeBuilder := NewSurrealQueryBuilderForPath(request, GetSchemaProvider(), path)
 	configureBuilderForGraphQueryMode(rangeBuilder, graphQueryModeRange)
 	rangeSQL := rangeBuilder.Build()
-	assert.Equal(t, "active_edge_serving_flat_one_hop", rangeBuilder.routeName())
-	assert.Contains(t, rangeSQL, "FROM node_with_pod_active_edge_view\nWHERE target_data.bcs_cluster_id = 'BCS-K8S-00001'\n  AND target_data.namespace = 'default'\n  AND target_data.pod = 'nginx-1'")
+	assert.Equal(t, "single_table_flat_one_hop", rangeBuilder.routeName())
+	assert.Contains(t, rangeSQL, "SELECT VALUE id FROM pod WHERE bcs_cluster_id = 'BCS-K8S-00001' AND namespace = 'default' AND pod = 'nginx-1'")
+	assert.Contains(t, rangeSQL, "FROM node_with_pod\nWHERE target_id IN $source_ids")
 	assert.Contains(t, rangeSQL, "relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }]")
 	assert.NotContains(t, rangeSQL, "FROM pod\nWHERE")
 }
 
-func TestFlatOneHopActiveEdgeServingRejectsFanoutAboveLimit(t *testing.T) {
-	previousFlat := FlatOneHopActiveEdgeServingRelations
-	previousServing := ActiveEdgeServingRelations
+func TestFlatOneHopSingleTableRejectsFanoutAboveLimit(t *testing.T) {
 	previousMaxEdges := MaxEdgesPerHop
-	FlatOneHopActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
-	ActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
 	MaxEdgesPerHop = 1
 	t.Cleanup(func() {
-		FlatOneHopActiveEdgeServingRelations = previousFlat
-		ActiveEdgeServingRelations = previousServing
 		MaxEdgesPerHop = previousMaxEdges
 	})
 
@@ -1431,7 +1327,7 @@ func TestFlatOneHopActiveEdgeServingRejectsFanoutAboveLimit(t *testing.T) {
 	assert.Equal(t, "max_edges_per_hop", limitErr.TruncationReason())
 }
 
-func TestSurrealQueryBuilderUsesSecondEntityAndMillisecondRelationWindows(t *testing.T) {
+func TestSurrealQueryBuilderUsesMillisecondRelationWindows(t *testing.T) {
 	sql := NewSurrealQueryBuilder(&QueryRequest{
 		Timestamp:     1782984106000,
 		LookBackDelta: 604800000,
@@ -1443,12 +1339,13 @@ func TestSurrealQueryBuilderUsesSecondEntityAndMillisecondRelationWindows(t *tes
 		Limit:         100,
 	}).Build()
 
-	assert.Contains(t, sql, "LET $start = 1782379306;")
-	assert.Contains(t, sql, "LET $end = 1782984106;")
+	assert.NotContains(t, sql, "LET $start =")
+	assert.NotContains(t, sql, "LET $end =")
 	assert.Contains(t, sql, "LET $start_ms = 1782379306000;")
 	assert.Contains(t, sql, "LET $end_ms = 1782984106000;")
-	assert.Contains(t, sql, "SELECT * FROM module_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end")
-	assert.Contains(t, sql, "SELECT * FROM module_with_set_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end")
+	assert.NotContains(t, sql, "_liveness_record")
+	assert.Contains(t, sql, "active_period_start_ms <= $end_ms")
+	assert.Contains(t, sql, "active_period_end_ms >= $start_ms")
 }
 
 func TestSurrealQueryBuilderFiltersInvertedRelationLivenessPeriods(t *testing.T) {
@@ -1463,7 +1360,8 @@ func TestSurrealQueryBuilderFiltersInvertedRelationLivenessPeriods(t *testing.T)
 		Limit:         100,
 	}).Build()
 
-	assert.Contains(t, sql, "SELECT * FROM module_with_set_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1")
+	assert.Contains(t, sql, "active_period_start_ms <= active_period_end_ms")
+	assert.Contains(t, sql, "FROM module_with_set WHERE source_id = $parent.id")
 }
 
 func TestSurrealParserNormalizesSecondEntityPeriodsForRangeTargetList(t *testing.T) {
@@ -2176,7 +2074,7 @@ func TestQueryResourceMatcherAppliesSourceExpandInfo(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Contains(t, executor.sql, "env_name = 'production'")
-	assert.Contains(t, executor.sql, "relation_id = $parent.id")
+	assert.Contains(t, executor.sql, "active_period_end_ms >= $start_ms")
 	assert.NotContains(t, executor.sql, "system_liveness_record WHERE reference_id = $parent.")
 	assert.NotContains(t, executor.sql, "host_liveness_record WHERE reference_id = $parent.")
 	assert.NotContains(t, executor.sql, ResponseFieldLiveness+":")
@@ -2372,10 +2270,10 @@ func TestSurrealQueryBuilderEscapesSchemaDerivedTableNames(t *testing.T) {
 	}, provider).Build()
 
 	assert.Contains(t, sql, "FROM ⟨custom-resource⟩")
-	assert.Contains(t, sql, "⟨custom-resource_liveness_record⟩")
+	assert.NotContains(t, sql, "_liveness_record")
 	assert.Contains(t, sql, "⟨custom-relation⟩:")
 	assert.Contains(t, sql, "FROM ⟨custom-relation⟩")
-	assert.Contains(t, sql, "⟨custom-relation_liveness_record⟩")
+	assert.Contains(t, sql, "active_period_start_ms <= active_period_end_ms")
 }
 
 func TestQueryLivenessGraphRejectsInvalidTypedPrimaryKey(t *testing.T) {
@@ -3220,16 +3118,7 @@ func TestQueryLivenessGraphFlattensBusinessSevenTwoHopEventPath(t *testing.T) {
 		setID     = "15"
 	)
 
-	previousServingRelations := ActiveEdgeServingRelations
-	previousFlatOneHopRelations := FlatOneHopActiveEdgeServingRelations
-	previousFlatMultiHopRelations := FlatMultiHopActiveEdgeServingRelations
-	ActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
-	FlatOneHopActiveEdgeServingRelations = nil
-	FlatMultiHopActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
 	t.Cleanup(func() {
-		ActiveEdgeServingRelations = previousServingRelations
-		FlatOneHopActiveEdgeServingRelations = previousFlatOneHopRelations
-		FlatMultiHopActiveEdgeServingRelations = previousFlatMultiHopRelations
 	})
 
 	provider := businessSevenTwoHopSchemaProvider()
@@ -3265,12 +3154,12 @@ func TestQueryLivenessGraphFlattensBusinessSevenTwoHopEventPath(t *testing.T) {
 		t.Run(string(mode), func(t *testing.T) {
 			executor := &recordingGraphQueryExecutor{responseForSQL: func(sql string) graphQueryResponse {
 				switch {
-				case strings.Contains(sql, "FROM host_with_module_active_edge_view"):
+				case strings.Contains(sql, "FROM host_with_module\n"):
 					return graphQueryResponse{graphs: []*LivenessGraph{
 						cloneLivenessGraphForTest(firstHop, 0, 0),
 						cloneLivenessGraphForTest(firstHop, 0, 0),
 					}}
-				case strings.Contains(sql, "FROM module_with_set_active_edge_view"):
+				case strings.Contains(sql, "FROM module_with_set\n"):
 					return graphQueryResponse{graphs: []*LivenessGraph{
 						cloneLivenessGraphForTest(secondHop, 0, 0),
 						cloneLivenessGraphForTest(secondHopEarlierPeriod, 0, 0),
@@ -3300,8 +3189,8 @@ func TestQueryLivenessGraphFlattensBusinessSevenTwoHopEventPath(t *testing.T) {
 			}
 
 			require.Len(t, executor.sqls, 2)
-			assert.Contains(t, executor.sqls[0], "source_data.bk_host_id = '"+hostID+"'")
-			assert.Contains(t, executor.sqls[1], "source_data.bk_module_id = '"+moduleID+"'")
+			assert.Contains(t, executor.sqls[0], "SELECT VALUE id FROM host WHERE bk_host_id = '"+hostID+"'")
+			assert.Contains(t, executor.sqls[1], "SELECT VALUE id FROM module WHERE bk_module_id = '"+moduleID+"'")
 			for _, sql := range executor.sqls {
 				assert.NotContains(t, sql, "$parent")
 				assert.Contains(t, sql, "active_period_start_ms <= active_period_end_ms")
@@ -3344,13 +3233,7 @@ func TestLivenessGraphMergesDuplicateEdgePeriods(t *testing.T) {
 func TestQueryLivenessGraphFlatMultiHopUsesCompositeMetadataPrimaryKeys(t *testing.T) {
 	const timestamp = int64(1786731939847)
 
-	previousServingRelations := ActiveEdgeServingRelations
-	previousFlatMultiHopRelations := FlatMultiHopActiveEdgeServingRelations
-	ActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
-	FlatMultiHopActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
 	t.Cleanup(func() {
-		ActiveEdgeServingRelations = previousServingRelations
-		FlatMultiHopActiveEdgeServingRelations = previousFlatMultiHopRelations
 	})
 
 	provider := newTableSchemaProvider(
@@ -3388,9 +3271,9 @@ func TestQueryLivenessGraphFlatMultiHopUsesCompositeMetadataPrimaryKeys(t *testi
 	)
 	executor := &recordingGraphQueryExecutor{responseForSQL: func(sql string) graphQueryResponse {
 		switch {
-		case strings.Contains(sql, "FROM host_with_module_active_edge_view"):
+		case strings.Contains(sql, "FROM host_with_module\n"):
 			return graphQueryResponse{graphs: []*LivenessGraph{cloneLivenessGraphForTest(firstHop, 0, 0)}}
-		case strings.Contains(sql, "FROM module_with_set_active_edge_view"):
+		case strings.Contains(sql, "FROM module_with_set\n"):
 			return graphQueryResponse{graphs: []*LivenessGraph{cloneLivenessGraphForTest(secondHop, 0, 0)}}
 		default:
 			return graphQueryResponse{err: errors.New("unexpected SurrealQL")}
@@ -3406,22 +3289,16 @@ func TestQueryLivenessGraphFlatMultiHopUsesCompositeMetadataPrimaryKeys(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, cmdb.Matchers{{"bk_biz_id": "7", "bk_set_id": "15"}}, matchers)
 	require.Len(t, executor.sqls, 2)
-	assert.Contains(t, executor.sqls[0], "source_data.bk_biz_id = '7'")
-	assert.Contains(t, executor.sqls[0], "source_data.bk_host_id = '185667'")
-	assert.Contains(t, executor.sqls[1], "source_data.bk_biz_id = '7'")
-	assert.Contains(t, executor.sqls[1], "source_data.bk_module_id = '73'")
+	assert.Contains(t, executor.sqls[0], "bk_biz_id = '7'")
+	assert.Contains(t, executor.sqls[0], "bk_host_id = '185667'")
+	assert.Contains(t, executor.sqls[1], "bk_biz_id = '7'")
+	assert.Contains(t, executor.sqls[1], "bk_module_id = '73'")
 }
 
 func TestQueryLivenessGraphRunsFlatMultiHopParentsInParallel(t *testing.T) {
 	const timestamp = int64(1786731939847)
 
-	previousServingRelations := ActiveEdgeServingRelations
-	previousFlatMultiHopRelations := FlatMultiHopActiveEdgeServingRelations
-	ActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
-	FlatMultiHopActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
 	t.Cleanup(func() {
-		ActiveEdgeServingRelations = previousServingRelations
-		FlatMultiHopActiveEdgeServingRelations = previousFlatMultiHopRelations
 	})
 
 	firstHop := businessSevenSingleHopGraph(
@@ -3458,12 +3335,12 @@ func TestQueryLivenessGraphRunsFlatMultiHopParentsInParallel(t *testing.T) {
 
 	executor := &recordingGraphQueryExecutor{responseForSQL: func(sql string) graphQueryResponse {
 		switch {
-		case strings.Contains(sql, "FROM host_with_module_active_edge_view"):
+		case strings.Contains(sql, "FROM host_with_module\n"):
 			return graphQueryResponse{graphs: []*LivenessGraph{cloneLivenessGraphForTest(firstHop, 0, 0)}}
-		case strings.Contains(sql, "FROM module_with_set_active_edge_view"):
+		case strings.Contains(sql, "FROM module_with_set\n"):
 			started <- sql
 			<-release
-			if strings.Contains(sql, "source_data.bk_module_id = '13293'") {
+			if strings.Contains(sql, "bk_module_id = '13293'") {
 				return graphQueryResponse{graphs: []*LivenessGraph{businessSevenSingleHopGraph(
 					ResourceTypeModule, "module:`13293`", map[string]string{"bk_module_id": "13293"},
 					RelationModuleWithSet, "module_with_set:`13293_3469`", ResourceTypeSet, "set:`3469`",
@@ -3509,14 +3386,8 @@ func TestQueryLivenessGraphRunsFlatMultiHopParentsInParallel(t *testing.T) {
 	assert.ElementsMatch(t, cmdb.Matchers{{"bk_set_id": "15"}, {"bk_set_id": "3469"}}, result.matchers)
 }
 
-func TestQueryLivenessGraphFallsBackWhenMultiHopRelationIsNotFlatReady(t *testing.T) {
-	previousServingRelations := ActiveEdgeServingRelations
-	previousFlatMultiHopRelations := FlatMultiHopActiveEdgeServingRelations
-	ActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
-	FlatMultiHopActiveEdgeServingRelations = []string{string(RelationHostWithModule)}
+func TestQueryLivenessGraphUsesSingleTableWithoutServingConfiguration(t *testing.T) {
 	t.Cleanup(func() {
-		ActiveEdgeServingRelations = previousServingRelations
-		FlatMultiHopActiveEdgeServingRelations = previousFlatMultiHopRelations
 	})
 
 	executor := &recordingGraphQueryExecutor{}
@@ -3527,21 +3398,16 @@ func TestQueryLivenessGraphFallsBackWhenMultiHopRelationIsNotFlatReady(t *testin
 	_, _, _, err = model.QueryLivenessGraph(context.Background(), businessSevenTwoHopRequest(1786731939847, "185667"))
 	require.NoError(t, err)
 	require.Len(t, executor.sqls, 1)
-	assert.Contains(t, executor.sqls[0], "FROM host_with_module_active_edge_view")
-	assert.Contains(t, executor.sqls[0], "FROM module_with_set_active_edge_view")
-	assert.Contains(t, executor.sqls[0], "$parent.target_id")
+	assert.Contains(t, executor.sqls[0], "FROM host_with_module\n")
+	assert.NotContains(t, executor.sqls[0], "FROM module_with_set")
+	assert.NotContains(t, executor.sqls[0], "$parent")
+	assert.NotContains(t, executor.sqls[0], "_active_edge_view")
 }
 
 func TestQueryLivenessGraphRejectsFlatMultiHopFanoutAboveLimit(t *testing.T) {
-	previousServingRelations := ActiveEdgeServingRelations
-	previousFlatMultiHopRelations := FlatMultiHopActiveEdgeServingRelations
 	previousMaxEdgesPerHop := MaxEdgesPerHop
-	ActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
-	FlatMultiHopActiveEdgeServingRelations = []string{string(RelationHostWithModule), string(RelationModuleWithSet)}
 	MaxEdgesPerHop = 1
 	t.Cleanup(func() {
-		ActiveEdgeServingRelations = previousServingRelations
-		FlatMultiHopActiveEdgeServingRelations = previousFlatMultiHopRelations
 		MaxEdgesPerHop = previousMaxEdgesPerHop
 	})
 
@@ -3745,11 +3611,13 @@ func assertTrimmedPathSQLs(t *testing.T, sqls []string) {
 			assert.NotContains(t, sql, "system_to_container")
 			assert.NotContains(t, sql, "system_to_statefulset")
 		case strings.Contains(sql, "system_to_container"):
-			assert.Contains(t, sql, "container_to_pod")
+			assert.NotContains(t, sql, "container_to_pod")
+			assert.NotContains(t, sql, "$parent")
 			assert.NotContains(t, sql, "system_to_pod")
 			assert.NotContains(t, sql, "system_to_statefulset")
 		case strings.Contains(sql, "system_to_statefulset"):
-			assert.Contains(t, sql, "statefulset_to_pod")
+			assert.NotContains(t, sql, "statefulset_to_pod")
+			assert.NotContains(t, sql, "$parent")
 			assert.NotContains(t, sql, "system_to_pod")
 			assert.NotContains(t, sql, "system_to_container")
 		default:

@@ -474,7 +474,6 @@ func (m *Model) queryLivenessGraph(
 	span.Set("max-edges-per-hop", effectiveMaxEdgesPerHop())
 	span.Set("max-targets", effectiveMaxTargets())
 	span.Set("max-response-bytes", effectiveMaxResponseBytes())
-	span.Set("root-record-id-enabled", RootRecordIDEnabled)
 	if mode == graphQueryModeRange {
 		span.Set("range-start", rangeStart)
 		span.Set("range-end", rangeEnd)
@@ -792,13 +791,13 @@ func (m *Model) executeOneGraphQueryPath(
 	builder := NewSurrealQueryBuilderForPath(req, provider, path)
 	configureBuilderForGraphQueryMode(builder, mode)
 	route := builder.routeName()
-	usesFlatMultiHop := usesFlatMultiHopActiveEdgeServingPath(req, provider, path, mode)
+	usesFlatMultiHop := usesFlatMultiHopRelationPath(req, provider, path, mode)
 	if usesFlatMultiHop {
-		route = "active_edge_serving_flat_multi_hop"
+		route = "single_table_flat_multi_hop"
 	}
 	span.Set("query-route", route)
 	span.Set("path-hop-count", builder.pathHopCount)
-	span.Set("active-edge-serving-hop-count", builder.servingHopCount)
+	span.Set("relation-table-hop-count", builder.pathHopCount)
 	metric.CMDBRelationRouteInc(ctx, route, string(mode), "started")
 	queryStarted := time.Now()
 	defer func() {
@@ -836,7 +835,7 @@ func (m *Model) executeOneGraphQueryPath(
 		spanErr = runErr
 		return pathQueryResult{idx: idx, path: path, err: runErr}
 	}
-	if builder.usesFlatOneHopActiveEdgeServingQuery() && len(graphs) > effectiveMaxEdgesPerHop() {
+	if builder.usesFlatOneHopRelationQuery() && len(graphs) > effectiveMaxEdgesPerHop() {
 		spanErr = &ResultLimitError{
 			Reason: "max_edges_per_hop",
 			Count:  len(graphs),
@@ -870,38 +869,25 @@ type flatServingHopResult struct {
 	graphs []*LivenessGraph
 }
 
-// usesFlatMultiHopActiveEdgeServingPath 要求整条路径的每一跳都完成 Event 主键投影与索引验证。
-// 任意一跳不满足时，完整回退到原有嵌套查询，避免将未建索引的 relation 误路由到分层模式。
-func usesFlatMultiHopActiveEdgeServingPath(
+// usesFlatMultiHopRelationPath splits a path when each frontier can be identified
+// by its metadata keys. Partial-key legacy requests use the single-table nested query.
+func usesFlatMultiHopRelationPath(
 	req *QueryRequest,
 	provider SchemaProvider,
 	path resourcePath,
 	mode graphQueryMode,
 ) bool {
-	if req == nil || provider == nil || len(path.Steps) <= 2 || len(req.SourceExpandInfo) > 0 {
+	if req == nil || provider == nil || len(path.Steps) <= 2 {
 		return false
 	}
 	if mode != graphQueryModeInstant && mode != graphQueryModeRange {
 		return false
 	}
-
-	servingRelations := make(map[RelationType]struct{}, len(ActiveEdgeServingRelations))
-	for _, relationType := range ActiveEdgeServingRelations {
-		servingRelations[RelationType(relationType)] = struct{}{}
-	}
-	flatRelations := make(map[RelationType]struct{}, len(FlatMultiHopActiveEdgeServingRelations))
-	for _, relationType := range FlatMultiHopActiveEdgeServingRelations {
-		flatRelations[RelationType(relationType)] = struct{}{}
+	if _, ok := flatServingPrimaryKeyMap(provider, req.SchemaNamespace(), req.SourceType, req.SourceInfo); !ok {
+		return false
 	}
 
 	for hop := 1; hop < len(path.Steps); hop++ {
-		relationType := RelationType(path.Steps[hop].RelationType)
-		if _, ok := servingRelations[relationType]; !ok {
-			return false
-		}
-		if _, ok := flatRelations[relationType]; !ok {
-			return false
-		}
 		currentType := ResourceType(path.Steps[hop-1].ResourceType)
 		nextType := ResourceType(path.Steps[hop].ResourceType)
 		if len(provider.GetResourcePrimaryKeys(req.SchemaNamespace(), currentType)) == 0 ||
@@ -912,8 +898,8 @@ func usesFlatMultiHopActiveEdgeServingPath(
 	return true
 }
 
-// executeFlatMultiHopServingPath 将多跳图路径拆成按 hop 推进的单跳 Event 查询。同一 hop 的父节点
-// 可以并发执行，但每个查询使用业务主键字面量，因此 SDB 不需要通过 $parent 相关子查询连接关系表。
+// executeFlatMultiHopServingPath queries one relation table per hop. Parent
+// nodes in the same frontier can be queried concurrently without recursive SQL.
 func (m *Model) executeFlatMultiHopServingPath(
 	ctx context.Context,
 	req *QueryRequest,
@@ -1063,7 +1049,7 @@ func (m *Model) executeFlatServingHopQuery(
 ) (graphs []*LivenessGraph, err error) {
 	ctx, span := trace.NewSpan(ctx, "cmdb-v2-query-graph-flat-hop")
 	defer endV1Beta3TraceSpan(span, &err)
-	span.Set("query-route", "active_edge_serving_flat_multi_hop")
+	span.Set("query-route", "single_table_flat_multi_hop")
 	span.Set("flat-hop", hop)
 	span.Set("source-resource-type", string(source.resourceType))
 	span.Set("source-resource-id", source.resourceID)
@@ -1072,17 +1058,19 @@ func (m *Model) executeFlatServingHopQuery(
 	hopRequest := cloneQueryRequest(req)
 	hopRequest.SourceType = source.resourceType
 	hopRequest.SourceInfo = source.sourceInfo
-	hopRequest.SourceExpandInfo = nil
+	if hop > 1 {
+		hopRequest.SourceExpandInfo = nil
+	}
 	hopRequest.TargetType = ResourceType(path.Steps[1].ResourceType)
 	hopRequest.TargetTypeExplicit = true
 	hopRequest.PathResource = nil
 	hopRequest.MaxHops = 1
 
 	buildStarted := time.Now()
-	sql, ok := buildFlatServingQueryForPath(hopRequest, provider, path, mode)
+	sql, ok := buildFlatRelationQueryForPath(hopRequest, provider, path, mode)
 	span.Set("surrealql-build-duration", time.Since(buildStarted))
 	if !ok {
-		return nil, fmt.Errorf("cannot build flat serving query for hop %d from %q", hop, source.resourceType)
+		return nil, fmt.Errorf("cannot build single-table query for hop %d from %q", hop, source.resourceType)
 	}
 	span.Set("surrealql-bytes", len(sql))
 
@@ -1219,7 +1207,6 @@ func configureBuilderForGraphQueryMode(builder *SurrealQueryBuilder, mode graphQ
 	if builder == nil {
 		return
 	}
-	builder.queryMode = mode
 	if mode == graphQueryModeInstant {
 		builder.WithoutLivenessProjection()
 	}
@@ -1979,8 +1966,8 @@ func isAnyTargetPathActiveInWindow(paths []*targetPathInfo, windowStart, windowE
 }
 
 func isTargetPathActiveInWindow(path *targetPathInfo, windowStart, windowEnd int64) bool {
-	// 图路径的时间桶与 SurrealQL/active edge view 一样只看 relation liveness；
-	// 只有零跳 resource-info 结果没有边时才回退到 resource liveness。
+	// Graph paths use the intervals stored on relation rows. Resource-only
+	// responses have no edges and use their resource periods when provided.
 	periodGroups := path.EdgePeriods
 	if len(periodGroups) == 0 {
 		periodGroups = path.NodePeriods

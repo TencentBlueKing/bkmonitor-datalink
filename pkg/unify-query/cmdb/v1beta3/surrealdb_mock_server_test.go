@@ -175,9 +175,13 @@ func tablePathSplitQuerySyncRequestSummaries(t *testing.T, requests []tableQuery
 			summary.ContainsRelations = []string{string(RelationNodeWithPod)}
 			summary.NotContainsRelations = []string{string(RelationNodeWithSystem), string(RelationSystemToPod)}
 		case strings.Contains(dsl, string(RelationNodeWithSystem)):
-			summary.Path = []string{"node", "system", "pod"}
-			summary.ContainsRelations = []string{string(RelationNodeWithSystem), string(RelationSystemToPod)}
-			summary.NotContainsRelations = []string{string(RelationNodeWithPod)}
+			summary.Path = []string{"node", "system"}
+			summary.ContainsRelations = []string{string(RelationNodeWithSystem)}
+			summary.NotContainsRelations = []string{string(RelationNodeWithPod), string(RelationSystemToPod)}
+		case strings.Contains(dsl, string(RelationSystemToPod)):
+			summary.Path = []string{"system", "pod"}
+			summary.ContainsRelations = []string{string(RelationSystemToPod)}
+			summary.NotContainsRelations = []string{string(RelationNodeWithPod), string(RelationNodeWithSystem)}
 		default:
 			t.Fatalf("unexpected split DSL without known path relation: %s", dsl)
 		}
@@ -227,6 +231,33 @@ func tablePathSplitBKBaseResponsesBySurrealQL(
 		pathKey := strings.Join(resourceTypesToPath(resourcePathTypes(path)), "/")
 		responseJSON, ok := responsesByPath[pathKey]
 		require.True(t, ok, "missing mock response for path %s", pathKey)
+		if len(path.Steps) == 3 {
+			var response BKBaseResponse
+			require.NoError(t, json.Unmarshal([]byte(responseJSON), &response))
+			row := response.Data.List[0]["result"].(map[string]any)
+			firstEdge := row["hop1"].(map[string]any)[string(RelationNodeWithSystem)].([]any)[0].(map[string]any)
+			middle := firstEdge["target"].(map[string]any)
+			secondHop := middle["hop2"]
+			delete(middle, "hop2")
+			firstResponse, err := json.Marshal(response)
+			require.NoError(t, err)
+			firstPath := resourcePath{Steps: path.Steps[:2]}
+			firstSQL, ok := buildFlatRelationQueryForPath(&req, provider, firstPath, mode)
+			require.True(t, ok)
+			result[surrealQL(tableMockUseNSDBStatement+firstSQL)] = string(firstResponse)
+			secondRequest := cloneQueryRequest(&req)
+			secondRequest.SourceType = ResourceTypeSystem
+			secondRequest.SourceInfo = map[string]string{"system": "system-1"}
+			secondRequest.TargetType = ResourceTypePod
+			secondPath := resourcePath{Steps: path.Steps[1:]}
+			secondSQL, ok := buildFlatRelationQueryForPath(secondRequest, provider, secondPath, mode)
+			require.True(t, ok)
+			response.Data.List = []map[string]any{{"result": map[string]any{"root": middle, "hop1": secondHop}}}
+			secondResponse, err := json.Marshal(response)
+			require.NoError(t, err)
+			result[surrealQL(tableMockUseNSDBStatement+secondSQL)] = string(secondResponse)
+			continue
+		}
 
 		builder := NewSurrealQueryBuilderForPath(&req, provider, path)
 		configureBuilderForGraphQueryMode(builder, mode)

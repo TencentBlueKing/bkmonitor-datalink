@@ -12,7 +12,6 @@ package v1beta3
 import (
 	"encoding/json"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -42,11 +41,7 @@ func getNodeStaticTestCase() E2ETestCase {
 			LookBackDelta:        600000,
 			Limit:                10,
 		},
-		ExpectedSQL: `LET $timestamp = 600000;
-LET $look_back_delta = 600000;
-LET $start = 0;
-LET $end = 600;
-LET $start_ms = 0;
+		ExpectedSQL: `LET $start_ms = 0;
 LET $end_ms = 600000;
 
 SELECT {
@@ -55,59 +50,24 @@ SELECT {
         entity_id: <string>id,
         entity_data: { bcs_cluster_id: bcs_cluster_id, node: node },
         created_at: created_at,
-        updated_at: updated_at,
-        liveness: (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
+        updated_at: updated_at
     },
 
     hop1: {
-        node_with_system: (SELECT VALUE {
-            hop: 1,
-            relation_type: 'node_with_system',
-            relation_category: 'static',
-            relation_id: <string>id,
-            relation_liveness: (SELECT * FROM node_with_system_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms AND period_start <= period_end),
-            target: {
-                entity_type: 'system',
-                entity_id: <string>out,
-                entity_data: { bk_target_ip: out.bk_target_ip },
-                liveness: (SELECT * FROM system_liveness_record WHERE reference_id = $parent.out AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
-            }
-        } FROM node_with_system WHERE in = $parent.id
-          AND (SELECT * FROM node_with_system_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE),
-        node_with_pod: (SELECT VALUE {
-            hop: 1,
-            relation_type: 'node_with_pod',
-            relation_category: 'static',
-            relation_id: <string>id,
-            relation_liveness: (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms AND period_start <= period_end),
-            target: {
-                entity_type: 'pod',
-                entity_id: <string>out,
-                entity_data: { bcs_cluster_id: out.bcs_cluster_id, namespace: out.namespace, pod: out.pod },
-                liveness: (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
-            }
-        } FROM node_with_pod WHERE in = $parent.id
-          AND (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE),
-        datasource_with_node: (SELECT VALUE {
-            hop: 1,
-            relation_type: 'datasource_with_node',
-            relation_category: 'static',
-            relation_id: <string>id,
-            relation_liveness: (SELECT * FROM datasource_with_node_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms AND period_start <= period_end),
-            target: {
-                entity_type: 'datasource',
-                entity_id: <string>in,
-                entity_data: { bk_data_id: in.bk_data_id },
-                liveness: (SELECT * FROM datasource_liveness_record WHERE reference_id = $parent.in AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
-            }
-        } FROM datasource_with_node WHERE out = $parent.id
-          AND (SELECT * FROM datasource_with_node_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE)
+node_with_system: (SELECT VALUE { hop: 1, relation_type: 'node_with_system', relation_category: 'static', relation_id: <string>type::record('node_with_system', relation_id), relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }], target: { entity_type: 'system', entity_id: <string>target_id, entity_data: { bk_target_ip: target_id.bk_target_ip } } } FROM node_with_system WHERE source_id = $parent.id
+ AND active_period_start_ms <= active_period_end_ms
+ AND active_period_start_ms <= $end_ms AND active_period_end_ms >= $start_ms LIMIT 1001),
+node_with_pod: (SELECT VALUE { hop: 1, relation_type: 'node_with_pod', relation_category: 'static', relation_id: <string>type::record('node_with_pod', relation_id), relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }], target: { entity_type: 'pod', entity_id: <string>target_id, entity_data: { bcs_cluster_id: target_id.bcs_cluster_id, namespace: target_id.namespace, pod: target_id.pod } } } FROM node_with_pod WHERE source_id = $parent.id
+ AND active_period_start_ms <= active_period_end_ms
+ AND active_period_start_ms <= $end_ms AND active_period_end_ms >= $start_ms LIMIT 1001),
+datasource_with_node: (SELECT VALUE { hop: 1, relation_type: 'datasource_with_node', relation_category: 'static', relation_id: <string>type::record('datasource_with_node', relation_id), relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }], target: { entity_type: 'datasource', entity_id: <string>source_id, entity_data: { bk_data_id: source_id.bk_data_id } } } FROM datasource_with_node WHERE target_id = $parent.id
+ AND active_period_start_ms <= active_period_end_ms
+ AND active_period_start_ms <= $end_ms AND active_period_end_ms >= $start_ms LIMIT 1001)
     }
 } AS result
 FROM node
 WHERE bcs_cluster_id = 'BCS-K8S-00001'
   AND node = 'node-1'
-  AND (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
 LIMIT 10;`,
 		MockResponse: []map[string]any{
 			{
@@ -255,11 +215,7 @@ func getSystemDynamicOutboundTestCase() E2ETestCase {
 			LookBackDelta:            600000,
 			Limit:                    10,
 		},
-		ExpectedSQL: `LET $timestamp = 600000;
-LET $look_back_delta = 600000;
-LET $start = 0;
-LET $end = 600;
-LET $start_ms = 0;
+		ExpectedSQL: `LET $start_ms = 0;
 LET $end_ms = 600000;
 
 SELECT {
@@ -268,46 +224,20 @@ SELECT {
         entity_id: <string>id,
         entity_data: { bk_target_ip: bk_target_ip },
         created_at: created_at,
-        updated_at: updated_at,
-        liveness: (SELECT * FROM system_liveness_record WHERE reference_id = $parent.id AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
+        updated_at: updated_at
     },
 
     hop1: {
-        system_to_pod_outbound: (SELECT VALUE {
-            hop: 1,
-            relation_type: 'system_to_pod',
-            relation_category: 'dynamic',
-            direction: 'outbound',
-            relation_id: <string>id,
-            relation_liveness: (SELECT * FROM system_to_pod_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms AND period_start <= period_end),
-            target: {
-                entity_type: 'pod',
-                entity_id: <string>out,
-                entity_data: { bcs_cluster_id: out.bcs_cluster_id, namespace: out.namespace, pod: out.pod },
-                liveness: (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
-            }
-        } FROM system_to_pod WHERE in = $parent.id
-          AND (SELECT * FROM system_to_pod_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE),
-        system_to_system_outbound: (SELECT VALUE {
-            hop: 1,
-            relation_type: 'system_to_system',
-            relation_category: 'dynamic',
-            direction: 'outbound',
-            relation_id: <string>id,
-            relation_liveness: (SELECT * FROM system_to_system_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms AND period_start <= period_end),
-            target: {
-                entity_type: 'system',
-                entity_id: <string>out,
-                entity_data: { bk_target_ip: out.bk_target_ip },
-                liveness: (SELECT * FROM system_liveness_record WHERE reference_id = $parent.out AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
-            }
-        } FROM system_to_system WHERE in = $parent.id
-          AND (SELECT * FROM system_to_system_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE)
+system_to_pod_outbound: (SELECT VALUE { hop: 1, relation_type: 'system_to_pod', relation_category: 'dynamic', relation_id: <string>type::record('system_to_pod', relation_id), direction: 'outbound', relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }], target: { entity_type: 'pod', entity_id: <string>target_id, entity_data: { bcs_cluster_id: target_id.bcs_cluster_id, namespace: target_id.namespace, pod: target_id.pod } } } FROM system_to_pod WHERE source_id = $parent.id
+ AND active_period_start_ms <= active_period_end_ms
+ AND active_period_start_ms <= $end_ms AND active_period_end_ms >= $start_ms LIMIT 1001),
+system_to_system_outbound: (SELECT VALUE { hop: 1, relation_type: 'system_to_system', relation_category: 'dynamic', relation_id: <string>type::record('system_to_system', relation_id), direction: 'outbound', relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }], target: { entity_type: 'system', entity_id: <string>target_id, entity_data: { bk_target_ip: target_id.bk_target_ip } } } FROM system_to_system WHERE source_id = $parent.id
+ AND active_period_start_ms <= active_period_end_ms
+ AND active_period_start_ms <= $end_ms AND active_period_end_ms >= $start_ms LIMIT 1001)
     }
 } AS result
 FROM system
 WHERE bk_target_ip = '192.168.1.1'
-  AND (SELECT * FROM system_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
 LIMIT 10;`,
 		MockResponse: []map[string]any{
 			{
@@ -414,11 +344,7 @@ func getEmptyResponseTestCase() E2ETestCase {
 			LookBackDelta:        600000,
 			Limit:                10,
 		},
-		ExpectedSQL: `LET $timestamp = 600000;
-LET $look_back_delta = 600000;
-LET $start = 0;
-LET $end = 600;
-LET $start_ms = 0;
+		ExpectedSQL: `LET $start_ms = 0;
 LET $end_ms = 600000;
 
 SELECT {
@@ -427,59 +353,24 @@ SELECT {
         entity_id: <string>id,
         entity_data: { bcs_cluster_id: bcs_cluster_id, node: node },
         created_at: created_at,
-        updated_at: updated_at,
-        liveness: (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
+        updated_at: updated_at
     },
 
     hop1: {
-        node_with_system: (SELECT VALUE {
-            hop: 1,
-            relation_type: 'node_with_system',
-            relation_category: 'static',
-            relation_id: <string>id,
-            relation_liveness: (SELECT * FROM node_with_system_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms AND period_start <= period_end),
-            target: {
-                entity_type: 'system',
-                entity_id: <string>out,
-                entity_data: { bk_target_ip: out.bk_target_ip },
-                liveness: (SELECT * FROM system_liveness_record WHERE reference_id = $parent.out AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
-            }
-        } FROM node_with_system WHERE in = $parent.id
-          AND (SELECT * FROM node_with_system_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE),
-        node_with_pod: (SELECT VALUE {
-            hop: 1,
-            relation_type: 'node_with_pod',
-            relation_category: 'static',
-            relation_id: <string>id,
-            relation_liveness: (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms AND period_start <= period_end),
-            target: {
-                entity_type: 'pod',
-                entity_id: <string>out,
-                entity_data: { bcs_cluster_id: out.bcs_cluster_id, namespace: out.namespace, pod: out.pod },
-                liveness: (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
-            }
-        } FROM node_with_pod WHERE in = $parent.id
-          AND (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE),
-        datasource_with_node: (SELECT VALUE {
-            hop: 1,
-            relation_type: 'datasource_with_node',
-            relation_category: 'static',
-            relation_id: <string>id,
-            relation_liveness: (SELECT * FROM datasource_with_node_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms AND period_start <= period_end),
-            target: {
-                entity_type: 'datasource',
-                entity_id: <string>in,
-                entity_data: { bk_data_id: in.bk_data_id },
-                liveness: (SELECT * FROM datasource_liveness_record WHERE reference_id = $parent.in AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
-            }
-        } FROM datasource_with_node WHERE out = $parent.id
-          AND (SELECT * FROM datasource_with_node_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE)
+node_with_system: (SELECT VALUE { hop: 1, relation_type: 'node_with_system', relation_category: 'static', relation_id: <string>type::record('node_with_system', relation_id), relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }], target: { entity_type: 'system', entity_id: <string>target_id, entity_data: { bk_target_ip: target_id.bk_target_ip } } } FROM node_with_system WHERE source_id = $parent.id
+ AND active_period_start_ms <= active_period_end_ms
+ AND active_period_start_ms <= $end_ms AND active_period_end_ms >= $start_ms LIMIT 1001),
+node_with_pod: (SELECT VALUE { hop: 1, relation_type: 'node_with_pod', relation_category: 'static', relation_id: <string>type::record('node_with_pod', relation_id), relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }], target: { entity_type: 'pod', entity_id: <string>target_id, entity_data: { bcs_cluster_id: target_id.bcs_cluster_id, namespace: target_id.namespace, pod: target_id.pod } } } FROM node_with_pod WHERE source_id = $parent.id
+ AND active_period_start_ms <= active_period_end_ms
+ AND active_period_start_ms <= $end_ms AND active_period_end_ms >= $start_ms LIMIT 1001),
+datasource_with_node: (SELECT VALUE { hop: 1, relation_type: 'datasource_with_node', relation_category: 'static', relation_id: <string>type::record('datasource_with_node', relation_id), relation_liveness: [{ period_start: active_period_start_ms, period_end: active_period_end_ms }], target: { entity_type: 'datasource', entity_id: <string>source_id, entity_data: { bk_data_id: source_id.bk_data_id } } } FROM datasource_with_node WHERE target_id = $parent.id
+ AND active_period_start_ms <= active_period_end_ms
+ AND active_period_start_ms <= $end_ms AND active_period_end_ms >= $start_ms LIMIT 1001)
     }
 } AS result
 FROM node
 WHERE bcs_cluster_id = 'BCS-K8S-00001'
   AND node = 'non-existent'
-  AND (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
 LIMIT 10;`,
 		MockResponse: []map[string]any{
 			{
@@ -837,7 +728,7 @@ func TestGraphE2E(t *testing.T) {
 
 			// Step 2: 验证 SQL（如果 ExpectedSQL 非空）
 			if tc.ExpectedSQL != "" {
-				assert.Equal(t, tc.ExpectedSQL, stripTargetLivenessFilterSQL(actualSQL), "Generated SQL mismatch")
+				assert.Equal(t, tc.ExpectedSQL, actualSQL, "Generated SQL mismatch")
 			} else {
 				t.Logf("Generated SQL (length=%d):\n%s", len(actualSQL), actualSQL)
 			}
@@ -857,42 +748,6 @@ func TestGraphE2E(t *testing.T) {
 			}
 		})
 	}
-}
-
-func stripTargetLivenessFilterSQL(sql string) string {
-	lines := strings.Split(sql, "\n")
-	// 旧用例只比较目标存活过滤逻辑；先移除新增的边数量保护，使 SQL 仍可按原口径归一化比较。
-	withoutEdgeLimits := lines[:0]
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "LIMIT 1001)") {
-			if len(withoutEdgeLimits) > 0 {
-				withoutEdgeLimits[len(withoutEdgeLimits)-1] += strings.TrimPrefix(trimmed, "LIMIT 1001")
-			}
-			continue
-		}
-		withoutEdgeLimits = append(withoutEdgeLimits, line)
-	}
-
-	filtered := withoutEdgeLimits[:0]
-	for _, line := range withoutEdgeLimits {
-		if strings.Contains(line, "AND (SELECT * FROM") &&
-			strings.Contains(line, " WHERE reference_id = $parent.") &&
-			(strings.Contains(line, "$parent.out ") || strings.Contains(line, "$parent.in ")) {
-			if len(filtered) > 0 {
-				trimmed := strings.TrimSpace(line)
-				switch {
-				case strings.HasSuffix(trimmed, "),"):
-					filtered[len(filtered)-1] += "),"
-				case strings.HasSuffix(trimmed, ")"):
-					filtered[len(filtered)-1] += ")"
-				}
-			}
-			continue
-		}
-		filtered = append(filtered, line)
-	}
-	return strings.Join(filtered, "\n")
 }
 
 // assertLivenessGraphEqual 比较两个 LivenessGraph，忽略 Adjacency 中的顺序差异

@@ -200,3 +200,40 @@ func routeRedisLookupForTest(values map[string]string, requests *[]string) bindi
 func routeRedisLookupKey(key, field string) string {
 	return fmt.Sprintf("%s#%s", key, field)
 }
+
+func TestBindingResolverPreservesRedisFailure(t *testing.T) {
+	for _, failedKey := range []string{DefaultSpaceToResultTableRedisKey, DefaultResultTableDetailRedisKey} {
+		t.Run(failedKey, func(t *testing.T) {
+			failure := fmt.Errorf("redis unavailable")
+			resolver := &BindingResolver{redisLookup: func(_ context.Context, key, field string) (string, error) {
+				if key == failedKey {
+					return "", failure
+				}
+				return `{"graph":{}}`, nil
+			}}
+			_, err := resolver.Resolve(contextWithTenantForBindingResolverTest("default"), "bkcc__7")
+			require.ErrorIs(t, err, failure)
+		})
+	}
+}
+
+func TestBindingResolverRecoversAfterRouteProvisioning(t *testing.T) {
+	for _, biz := range []string{"2", "7", "10"} {
+		t.Run(biz, func(t *testing.T) {
+			ctx := contextWithTenantForBindingResolverTest("default")
+			space := "bkcc__" + biz
+			values := map[string]string{}
+			resolver := &BindingResolver{redisLookup: routeRedisLookupForTest(values, nil)}
+			_, err := resolver.Resolve(ctx, space)
+			require.ErrorContains(t, err, "no usable SurrealDB result table route")
+			values[routeRedisLookupKey(DefaultSpaceToResultTableRedisKey, space+"|default")] = `{"graph":{}}`
+			values[routeRedisLookupKey(DefaultResultTableDetailRedisKey, "graph|default")] = fmt.Sprintf(`{"storage_type":"victoria_metrics","storage_id":6,"surrealdb":{"storage_type":"surrealdb","storage_id":7,"namespace":"mapleleaf_2","database":"2_bkm_%s_bkcc_built_in_time_series_graph"}}`, biz)
+			info, err := resolver.Resolve(ctx, space)
+			require.NoError(t, err)
+			require.Equal(t, "2_bkm_"+biz+"_bkcc_built_in_time_series_graph", info.Database)
+			require.Equal(t, "7", info.StorageID)
+			_, err = resolver.Resolve(contextWithTenantForBindingResolverTest("system"), space)
+			require.ErrorContains(t, err, "no usable SurrealDB result table route")
+		})
+	}
+}

@@ -272,11 +272,14 @@ func (r *BindingResolver) fetchFromRedis(ctx context.Context, tenantID, spaceUID
 func (r *BindingResolver) fetchFromResultTableRoute(ctx context.Context, tenantID, spaceUID, bizID string, lookup bindingRedisLookup) (*BindingInfo, error) {
 	fields := routeRedisFields(tenantID, spaceUID)
 	spaceValue, err := lookup(ctx, DefaultSpaceToResultTableRedisKey, fields[0])
-	if errors.Is(err, goRedis.Nil) || spaceValue == "" {
+	if errors.Is(err, goRedis.Nil) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get space_to_result_table route from redis failed: %w", err)
+	}
+	if spaceValue == "" {
+		return nil, nil
 	}
 	var tableRoutes map[string]any
 	if err := json.Unmarshal([]byte(spaceValue), &tableRoutes); err != nil {
@@ -290,11 +293,14 @@ func (r *BindingResolver) fetchFromResultTableRoute(ctx context.Context, tenantI
 
 	for _, tableID := range tableIDs {
 		value, err := lookup(ctx, DefaultResultTableDetailRedisKey, routeRedisFields(tenantID, tableID)[0])
-		if errors.Is(err, goRedis.Nil) || value == "" {
+		if errors.Is(err, goRedis.Nil) {
 			continue
 		}
 		if err != nil {
 			return nil, fmt.Errorf("get result_table_detail route from redis failed: table_id=%s: %w", tableID, err)
+		}
+		if value == "" {
+			continue
 		}
 		var detail map[string]any
 		if err := json.Unmarshal([]byte(value), &detail); err != nil {

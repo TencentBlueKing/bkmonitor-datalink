@@ -165,6 +165,13 @@ type detailResponse struct {
 	Gaps       []Gap    `json:"gaps,omitempty"`
 	Complete   bool     `json:"view_complete"`
 	QueryGroup string   `json:"query_group"`
+	// Records is what an observation window captured for this object, present
+	// only when the caller asked for it. Its health travels with it so an empty
+	// list can be read correctly: "nothing happened" and "nothing was recorded"
+	// look identical and call for opposite next steps.
+	Records      []json.RawMessage `json:"records,omitempty"`
+	Diagnostics  *DiagnosticHealth `json:"diagnostics,omitempty"`
+	RecordsError string            `json:"records_error,omitempty"`
 }
 
 // NewHandler mounts the object API. The routes are deliberately few: a list,
@@ -204,7 +211,7 @@ func NewHandler(
 		listObjects(response, request, service, now, stallAfter)
 	})
 	mux.HandleFunc("/api/objects/", func(response http.ResponseWriter, request *http.Request) {
-		objectDetail(response, request, service, now, stallAfter)
+		objectDetail(response, request, service, now, stallAfter, diagnostics)
 	})
 	if windows != nil {
 		mux.HandleFunc("/api/windows", func(response http.ResponseWriter, request *http.Request) {
@@ -214,14 +221,6 @@ func NewHandler(
 	if series != nil {
 		mux.HandleFunc("/api/series", func(response http.ResponseWriter, request *http.Request) {
 			seriesRange(response, request, series, now)
-		})
-	}
-	// Without a store the route is not mounted at all, so the page is told the
-	// output cannot be read back here rather than being handed an endpoint that
-	// always answers "nothing", which reads the same as "nothing happened".
-	if diagnostics != nil {
-		mux.HandleFunc("/api/diagnostics", func(response http.ResponseWriter, request *http.Request) {
-			diagnosticRecords(response, request, diagnostics)
 		})
 	}
 	mux.HandleFunc("/api/health", func(response http.ResponseWriter, request *http.Request) {
@@ -305,16 +304,27 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	})
 }
 
+// objectDetail answers for one object, optionally including what an observation
+// window recorded for it.
+//
+// The records ride here rather than on an endpoint of their own because the API
+// is capped at five capabilities: the cap exists so this page cannot grow into a
+// service that needs maintaining, and "read what my window produced" is part of
+// looking at one object, not a sixth thing. They are opt-in so a reader who did
+// not ask does not pay for them, and they outlive the window that produced them
+// -- an investigation does not end when the window expires.
 func objectDetail(response http.ResponseWriter, request *http.Request, service *Service,
-	now func() time.Time, stallAfter time.Duration) {
+	now func() time.Time, stallAfter time.Duration, diagnostics *DiagnosticStore) {
 	queryGroup := strings.TrimPrefix(request.URL.Path, "/api/objects/")
 	if queryGroup == "" {
 		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "query group is required"})
 		return
 	}
+	records, health, recordErr := objectRecords(request, queryGroup, diagnostics)
 	view := service.View(request.Context())
 	MarkStalled(view.Anomalies, now(), stallAfter)
 	body := detailResponse{
+		Records: records, Diagnostics: health, RecordsError: recordErr,
 		Health:     view.Health,
 		Gaps:       view.Gaps,
 		Complete:   view.Health != HealthUnknown,
@@ -507,45 +517,33 @@ func seriesWindowKeys() []string {
 	return keys
 }
 
-// diagnosticRecords returns what an observation window recorded for one object.
+// objectRecords reads what a window recorded, when the caller asked for it.
 //
-// It exists so a window's output comes back where the window was opened. Before
-// it, opening a window changed what was written to the container log and
-// nothing more: whoever opened it had to know to go and search a log index, and
-// the page said nothing about that.
-func diagnosticRecords(response http.ResponseWriter, request *http.Request, store *DiagnosticStore) {
-	queryGroup := request.URL.Query().Get("query_group")
-	if queryGroup == "" {
-		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "query_group is required"})
-		return
+// A failure here is reported beside the object rather than replacing it: the
+// object's own state comes from the control plane and stays answerable whether
+// or not the diagnostic store is reachable.
+func objectRecords(request *http.Request, queryGroup string, store *DiagnosticStore) (
+	[]json.RawMessage, *DiagnosticHealth, string,
+) {
+	raw := request.URL.Query().Get("records")
+	if raw == "" {
+		return nil, nil, ""
 	}
-	limit := 0
-	if raw := request.URL.Query().Get("limit"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed <= 0 {
-			writeJSON(response, http.StatusBadRequest, map[string]string{"error": "limit must be a positive integer"})
-			return
-		}
-		limit = parsed
+	if store == nil {
+		// Saying so beats an empty list: "not wired here" and "nothing was
+		// recorded" call for different next steps.
+		return nil, nil, "diagnostic records are not wired in this deployment"
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit <= 0 {
+		return nil, nil, "records must be a positive integer"
 	}
 	records, err := store.Load(request.Context(), queryGroup, limit)
+	health := store.Health()
 	if err != nil {
-		// The reason is classified rather than passed through: a dependency
-		// error carries the store's address, and anyone who can reach this port
-		// would then learn it.
-		writeJSON(response, http.StatusServiceUnavailable, map[string]any{
-			"error":  "diagnostic records are unavailable",
-			"health": store.Health(),
-		})
-		return
+		// Classified rather than passed through: the dependency error carries
+		// the store's address, and anyone who can reach this port would learn it.
+		return nil, &health, "diagnostic records are unavailable"
 	}
-	writeJSON(response, http.StatusOK, map[string]any{
-		"query_group": queryGroup,
-		"records":     records,
-		// Health travels with the records so an empty list can be read
-		// correctly: nothing recorded and nothing retained look identical
-		// otherwise, and they call for opposite next steps.
-		"health":    store.Health(),
-		"retention": int(DiagnosticRetention / time.Second),
-	})
+	return records, &health, ""
 }

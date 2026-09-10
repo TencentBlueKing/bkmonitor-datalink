@@ -572,9 +572,16 @@ function loadRecords(queryGroup) {
   show('recErr', false);
   text('recBasis', '对象 ' + queryGroup.slice(0, 12) + '… 的记录，最新在前。');
   document.getElementById('recBody').textContent = '读取中…';
-  return api('diagnostics?query_group=' + encodeURIComponent(queryGroup)).then(function (d) {
+  // Read through the object rather than an endpoint of its own: the API is
+  // capped at five capabilities, and "what did my window record for this
+  // object" is part of looking at the object.
+  return api('objects/' + encodeURIComponent(queryGroup) + '?records=200').then(function (d) {
     var rs = d.records || [];
-    var h = d.health || {};
+    var h = d.diagnostics || {};
+    if (d.records_error) {
+      document.getElementById('recBody').textContent = d.records_error;
+      return;
+    }
     if (!rs.length) {
       // An empty list and an unrecorded window look the same and call for
       // opposite next steps, so the store's own counters are shown instead of

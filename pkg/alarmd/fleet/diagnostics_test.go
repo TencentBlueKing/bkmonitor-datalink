@@ -11,7 +11,11 @@ package fleet
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-redis/redis/v8"
 )
@@ -112,4 +116,69 @@ func (fake *fakeDiagnosticRedis) LRange(ctx context.Context, key string, start, 
 	command := redis.NewStringSliceCmd(ctx)
 	command.SetVal(fake.lists[key])
 	return command
+}
+
+// The API is capped at five capabilities so this page cannot grow into a
+// service that needs maintaining. Reading what a window recorded is part of
+// looking at one object, so it rides on the object rather than opening a sixth
+// route -- and it stays opt-in, so a reader who did not ask does not pay for it.
+func TestObjectDetailCarriesWindowRecordsOnlyWhenAsked(t *testing.T) {
+	client := &fakeDiagnosticRedis{lists: map[string][]string{
+		"alarmd:test:diag:v1:qg-a": {`{"stage":"runner_decision"}`},
+	}}
+	store, err := NewDiagnosticStore(client, "alarmd:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := diagnosticsTestHandler(t, store)
+
+	plain := requestJSON(t, handler, "/api/objects/qg-a")
+	if _, present := plain["records"]; present {
+		t.Fatalf("records were returned to a caller that did not ask: %v", plain)
+	}
+	asked := requestJSON(t, handler, "/api/objects/qg-a?records=50")
+	records, ok := asked["records"].([]any)
+	if !ok || len(records) != 1 {
+		t.Fatalf("records = %v, want the object's own", asked["records"])
+	}
+	// The store's counters travel with the records so an empty list can be told
+	// apart from an unrecorded one.
+	if _, present := asked["diagnostics"]; !present {
+		t.Fatalf("diagnostic health did not travel with the records: %v", asked)
+	}
+}
+
+// A deployment with no store must say so rather than answer with an empty list,
+// which reads as "nothing happened" and is a different next step.
+func TestObjectDetailSaysWhenRecordsAreNotWired(t *testing.T) {
+	handler := diagnosticsTestHandler(t, nil)
+	body := requestJSON(t, handler, "/api/objects/qg-a?records=50")
+	if body["records_error"] == nil {
+		t.Fatalf("an unwired store answered as if it had no records: %v", body)
+	}
+}
+
+func diagnosticsTestHandler(t *testing.T, store *DiagnosticStore) http.Handler {
+	t.Helper()
+	snapshots := healthySnapshots()
+	snapshots[1].Anomalies = append(snapshots[1].Anomalies, anomaly("qg-a"))
+	snapshots[1].TotalAnomalies = 1
+	service := mustService(t, stubExpectations{expectation: Expectation{QueryGroups: 2, Known: true}},
+		stubRegistry{replicas: []string{"pod-a", "pod-b"}}, stubSnapshots{snapshots: snapshots})
+	handler, err := NewHandler(service, nil, func() time.Time { return now }, 0, nil, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handler
+}
+
+func requestJSON(t *testing.T, handler http.Handler, target string) map[string]any {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+	var body map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode %s: %v (%s)", target, err, recorder.Body.String())
+	}
+	return body
 }

@@ -111,8 +111,10 @@ type Recorder struct {
 	lifecycleBound  bool
 	healthMu        sync.Mutex
 	healthBound     bool
-	fleetMu         sync.Mutex
-	fleetBound      bool
+	fleetMu          sync.Mutex
+	fleetBound       bool
+	queryPermitMu    sync.Mutex
+	queryPermitBound bool
 	resourceMu      sync.Mutex
 	resourceBound   bool
 	processDuration *prometheus.HistogramVec

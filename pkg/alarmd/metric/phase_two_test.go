@@ -297,17 +297,15 @@ func TestPhaseTwoQueryPermitMetricsUseOnlyFixedQueueOperationAndAdmissionLabels(
 			RetryInflight: 1, ReplayInflight: 2, ProbeInflight: 1, RecoveryInflight: 4,
 		},
 	})
+	// Only the admission counter is published from a permit event now. The
+	// queue depth and inflight levels moved to the permit collector, which reads
+	// them when the metric is scraped: a level published only at the moments it
+	// changes reports the boundary rather than the interval.
 	checks := []struct {
 		name string
 		got  float64
 		want float64
 	}{
-		{"normal queue", testutil.ToFloat64(recorder.phaseTwo.readyQueue.WithLabelValues("normal")), 2},
-		{"recovery queue", testutil.ToFloat64(recorder.phaseTwo.readyQueue.WithLabelValues("recovery")), 3},
-		{"normal inflight", testutil.ToFloat64(recorder.phaseTwo.queryInflight.WithLabelValues("normal")), 4},
-		{"retry inflight", testutil.ToFloat64(recorder.phaseTwo.queryInflight.WithLabelValues("retry")), 1},
-		{"replay inflight", testutil.ToFloat64(recorder.phaseTwo.queryInflight.WithLabelValues("replay")), 2},
-		{"probe inflight", testutil.ToFloat64(recorder.phaseTwo.queryInflight.WithLabelValues("probe")), 1},
 		{"admission", testutil.ToFloat64(recorder.phaseTwo.queryAdmission.WithLabelValues("replay", "started")), 1},
 	}
 	for _, check := range checks {

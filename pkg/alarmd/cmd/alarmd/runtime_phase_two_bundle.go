@@ -584,6 +584,12 @@ func openProductionPhaseTwoBundleWithDependencies(
 	)); err != nil {
 		return nil, err
 	}
+	// How full the query permit budget is, read when the metric is scraped
+	// rather than pushed when a permit changes hands. It is bound here because
+	// this is where the coordinator that owns the budget is available.
+	if err := recorder.BindQueryPermits(queryPermitOccupancySource(flights)); err != nil {
+		return nil, err
+	}
 	var publisher fleetPublisher
 	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
 		Config: cfg, Health: health, Control: control, Ownership: productionOwnership,

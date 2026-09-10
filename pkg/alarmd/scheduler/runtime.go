@@ -131,6 +131,24 @@ type FlightCoordinator struct {
 	permitSequence         uint64
 	observer               observability.Observer
 	inflightByOp           map[execution.Operation]int
+	// permitSecondsByOp accumulates how long permits were actually held.
+	//
+	// The inflight counts above are an instantaneous reading, and an
+	// instantaneous reading cannot answer "how full was the budget over the last
+	// five minutes" -- the question the budget is sized against. Occupancy
+	// integrated over time can, and being a counter it survives being sampled at
+	// an arbitrary moment, which a gauge does not.
+	permitSecondsByOp map[execution.Operation]float64
+	// heldPermits is what is occupied right now, with the moment it was granted.
+	// It exists so occupancy can include permits that have not been released
+	// yet; without it a permit that never comes back contributes nothing, which
+	// is the opposite of what should happen.
+	heldPermits map[uint64]heldPermit
+}
+
+type heldPermit struct {
+	operation execution.Operation
+	since     time.Time
 }
 
 func NewFlightCoordinator() *FlightCoordinator {
@@ -147,7 +165,69 @@ func NewFlightCoordinatorWithRecovery(
 	}
 	return &FlightCoordinator{active: make(map[execution.QueryGroupIdentity]struct{}), recoveryEnabled: true,
 		limits: limits, now: now, nextRecovery: true, observer: observability.Multi(observers...),
-		inflightByOp: make(map[execution.Operation]int)}, nil
+		inflightByOp:      make(map[execution.Operation]int),
+		permitSecondsByOp: make(map[execution.Operation]float64),
+		heldPermits:       make(map[uint64]heldPermit)}, nil
+}
+
+// QueryPermitOccupancy is how much of the query permit budget is in use.
+//
+// It is read at scrape time rather than pushed on permit events. A pushed
+// gauge reports whatever the last event left behind, so between two events it
+// says nothing about now -- and permit events are exactly the moments when the
+// count is about to change, which biases the reading toward the boundary.
+type QueryPermitOccupancy struct {
+	// Inflight is how many permits are held right now, per operation.
+	Inflight map[execution.Operation]int
+	// Waiting is how many callers are queued for one, by queue.
+	Waiting map[string]int
+	// HeldSeconds is cumulative permit-hold time per operation. Its rate over a
+	// window is the mean number of permits occupied in that window, which is
+	// the number to compare against the configured budget.
+	HeldSeconds map[execution.Operation]float64
+	// Budget is the configured ceiling, so a reader does not have to find the
+	// deployment's configuration to know what the occupancy is out of.
+	Budget         int
+	RecoveryBudget int
+}
+
+// QueryPermitOccupancySource reports live occupancy.
+type QueryPermitOccupancySource func() QueryPermitOccupancy
+
+// QueryPermitOccupancy reports the current occupancy of the permit budget.
+func (coordinator *FlightCoordinator) QueryPermitOccupancy() QueryPermitOccupancy {
+	occupancy := QueryPermitOccupancy{
+		Inflight: make(map[execution.Operation]int, 4), Waiting: make(map[string]int, 2),
+		HeldSeconds: make(map[execution.Operation]float64, 4),
+	}
+	if coordinator == nil {
+		return occupancy
+	}
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	for operation, count := range coordinator.inflightByOp {
+		occupancy.Inflight[operation] = count
+	}
+	for operation, seconds := range coordinator.permitSecondsByOp {
+		occupancy.HeldSeconds[operation] = seconds
+	}
+	// Permits still held have not been added to the total yet, so a query that
+	// ran for the whole window would otherwise contribute nothing to it -- and a
+	// permanently stuck permit, the one most worth seeing, would contribute
+	// nothing forever. Counting the elapsed part keeps the total continuous:
+	// when the permit is finally released its full duration moves from here into
+	// the accumulator, and nothing is double counted.
+	at := coordinator.now()
+	for _, held := range coordinator.heldPermits {
+		if elapsed := at.Sub(held.since); elapsed > 0 {
+			occupancy.HeldSeconds[held.operation] += elapsed.Seconds()
+		}
+	}
+	occupancy.Waiting["normal"] = len(coordinator.normalWaiters)
+	occupancy.Waiting["recovery"] = len(coordinator.recoveryWaiters) + len(coordinator.recoveryChannelWaiters)
+	occupancy.Budget = coordinator.limits.ProcessQueryPermits
+	occupancy.RecoveryBudget = coordinator.limits.RecoveryQueryPermits
+	return occupancy
 }
 
 func (coordinator *FlightCoordinator) tryAcquire(queryGroup execution.QueryGroupIdentity) (func(), bool) {

@@ -247,9 +247,11 @@ func TestCustomMetricFamilySeriesDevelopmentLimits(t *testing.T) {
 		t.Errorf("health last-progress stage maximum = %d, want complete legal stage catalog %d", got, want)
 	}
 	for family, want := range map[string]int{
-		"bkmonitor_alarmd_worker_ready_queue":           2,
-		"bkmonitor_alarmd_worker_query_inflight":        4,
-		"bkmonitor_alarmd_worker_query_admission_total": 20,
+		"bkmonitor_alarmd_worker_query_permits_held":         4,
+		"bkmonitor_alarmd_worker_query_permits_waiting":      2,
+		"bkmonitor_alarmd_worker_query_permit_seconds_total": 4,
+		"bkmonitor_alarmd_worker_query_permit_budget":        2,
+		"bkmonitor_alarmd_worker_query_admission_total":      20,
 		// Redis command names are the bounded redisCommandNames set plus
 		// "other", each with pipelined true/false, for each named client plus
 		// "other". The client dimension multiplies this family, which is the
@@ -302,8 +304,6 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_source_observation_total":                     "variableLabels: {source_kind,result,reason_class}",
 		"bkmonitor_alarmd_source_refresh_total":                         "variableLabels: {status}",
 		"bkmonitor_alarmd_activation_failure_total":                     "variableLabels: {activation_failure_stage,activation_failure_class}",
-		"bkmonitor_alarmd_worker_ready_queue":                           "variableLabels: {kind}",
-		"bkmonitor_alarmd_worker_query_inflight":                        "variableLabels: {kind}",
 		"bkmonitor_alarmd_worker_query_admission_total":                 "variableLabels: {operation,result}",
 		"bkmonitor_alarmd_control_cache_total":                          "variableLabels: {object,result}",
 		"bkmonitor_alarmd_legacy_pod_cache_total":                       "variableLabels: {result}",
@@ -411,6 +411,14 @@ func bindBudgetHealthAndResources(t *testing.T, recorder *Recorder) {
 	resources.Observe(observability.ResourceSnapshot{})
 	if err := recorder.BindResources(resources); err != nil {
 		t.Fatalf("BindResources() error = %v", err)
+	}
+	if err := recorder.BindQueryPermits(func() QueryPermitOccupancy {
+		return QueryPermitOccupancy{
+			Inflight: map[string]int{"normal": 1}, Waiting: map[string]int{"normal": 1},
+			HeldSeconds: map[string]float64{"normal": 1}, Budget: 1, RecoveryBudget: 1,
+		}
+	}); err != nil {
+		t.Fatalf("BindQueryPermits() error = %v", err)
 	}
 }
 
@@ -596,18 +604,20 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("message_receipt_business_total"): len(receiptBusinessFields),
 		fqName("message_receipt_delivery_total"): 3,
 
-		fqName("worker_work_total"):               len(phaseTwoWorkKinds),
-		fqName("worker_busy_seconds_total"):       len(phaseTwoBusyStages),
-		fqName("last_progress_timestamp_seconds"): len(phaseTwoProgressKinds),
-		fqName("capacity_transition_total"):       len(phaseTwoBudgets) * len(phaseTwoCapacityResults),
-		fqName("source_observation_total"):        len(observability.AllSourceKinds()) * len(phaseTwoSourceResults) * len(observability.AllReasons(observability.ComponentControlPlane)),
-		fqName("source_refresh_total"):            len(observability.AllSourceRefreshStatuses()),
-		fqName("activation_failure_total"):        len(observability.AllActivationFailureStages()) * len(observability.AllActivationFailureClasses()),
-		fqName("worker_owned_query_groups"):       1,
-		fqName("ownership_transition_total"):      len(phaseTwoOwnershipTransitions) * metricReasonSets(observability.ComponentOwnership),
-		fqName("worker_ready_queue"):              len(phaseTwoReadyQueueKinds),
-		fqName("worker_query_inflight"):           len(phaseTwoQueryInflightKinds),
-		fqName("worker_query_admission_total"):    len(phaseTwoQueryInflightKinds) * len(phaseTwoQueryAdmissionResults),
+		fqName("worker_work_total"):                 len(phaseTwoWorkKinds),
+		fqName("worker_busy_seconds_total"):         len(phaseTwoBusyStages),
+		fqName("last_progress_timestamp_seconds"):   len(phaseTwoProgressKinds),
+		fqName("capacity_transition_total"):         len(phaseTwoBudgets) * len(phaseTwoCapacityResults),
+		fqName("source_observation_total"):          len(observability.AllSourceKinds()) * len(phaseTwoSourceResults) * len(observability.AllReasons(observability.ComponentControlPlane)),
+		fqName("source_refresh_total"):              len(observability.AllSourceRefreshStatuses()),
+		fqName("activation_failure_total"):          len(observability.AllActivationFailureStages()) * len(observability.AllActivationFailureClasses()),
+		fqName("worker_owned_query_groups"):         1,
+		fqName("ownership_transition_total"):        len(phaseTwoOwnershipTransitions) * metricReasonSets(observability.ComponentOwnership),
+		fqName("worker_query_permits_held"):         len(phaseTwoQueryInflightKinds),
+		fqName("worker_query_permit_seconds_total"): len(phaseTwoQueryInflightKinds),
+		fqName("worker_query_permits_waiting"):      len(phaseTwoReadyQueueKinds),
+		fqName("worker_query_permit_budget"):        len(phaseTwoReadyQueueKinds),
+		fqName("worker_query_admission_total"):      len(phaseTwoQueryInflightKinds) * len(phaseTwoQueryAdmissionResults),
 		// Four cached objects: version, snapshot, activation, timeline.
 		fqName("control_cache_total"):    12,
 		fqName("legacy_pod_cache_total"): 3,

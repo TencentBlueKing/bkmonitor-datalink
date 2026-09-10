@@ -210,6 +210,7 @@ type QueryPermit struct {
 	coordinator    *FlightCoordinator
 	recovery       *execution.RecoveryPermit
 	operation      execution.Operation
+	id             uint64
 	once           sync.Once
 	releaseChannel func()
 }
@@ -227,7 +228,7 @@ func (permit *QueryPermit) Release() {
 		return
 	}
 	permit.once.Do(func() {
-		permit.coordinator.releaseQueryPermit(permit.operation)
+		permit.coordinator.releaseQueryPermit(permit.operation, permit.id)
 		if permit.releaseChannel != nil {
 			permit.releaseChannel()
 		}
@@ -352,7 +353,7 @@ func (coordinator *FlightCoordinator) queryPermitSnapshotLocked() queryPermitSna
 		ProbeInflight:  coordinator.inflightByOp[execution.OperationProbe]}
 }
 
-func (coordinator *FlightCoordinator) releaseQueryPermit(operation execution.Operation) {
+func (coordinator *FlightCoordinator) releaseQueryPermit(operation execution.Operation, permitID uint64) {
 	coordinator.mu.Lock()
 	if coordinator.queryInflight > 0 {
 		coordinator.queryInflight--
@@ -360,6 +361,12 @@ func (coordinator *FlightCoordinator) releaseQueryPermit(operation execution.Ope
 
 	if coordinator.inflightByOp[operation] > 0 {
 		coordinator.inflightByOp[operation]--
+	}
+	if held, ok := coordinator.heldPermits[permitID]; ok {
+		delete(coordinator.heldPermits, permitID)
+		if elapsed := coordinator.now().Sub(held.since); elapsed > 0 && coordinator.permitSecondsByOp != nil {
+			coordinator.permitSecondsByOp[held.operation] += elapsed.Seconds()
+		}
 	}
 	coordinator.dispatchQueryPermitsLocked()
 	snapshot := coordinator.queryPermitSnapshotLocked()
@@ -389,8 +396,11 @@ func (coordinator *FlightCoordinator) dispatchQueryPermitsLocked() {
 		}
 		coordinator.queryInflight++
 		coordinator.permitSequence++
-		permit := &QueryPermit{coordinator: coordinator, operation: waiter.operation}
+		permit := &QueryPermit{coordinator: coordinator, operation: waiter.operation, id: coordinator.permitSequence}
 		coordinator.inflightByOp[waiter.operation]++
+		if coordinator.heldPermits != nil {
+			coordinator.heldPermits[permit.id] = heldPermit{operation: waiter.operation, since: coordinator.now()}
+		}
 		if useRecovery {
 			permit.recovery = &execution.RecoveryPermit{PermitID: fmt.Sprintf("query-recovery-%d", coordinator.permitSequence),
 				Slot: waiter.slot, Operation: waiter.operation, ExpiresAtUnixMilli: waiter.deadline.UnixMilli()}

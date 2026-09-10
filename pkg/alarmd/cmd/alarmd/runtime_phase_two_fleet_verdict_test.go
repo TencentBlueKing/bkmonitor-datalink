@@ -90,3 +90,65 @@ func TestFleetVerdictKeepsAnUnreadableDenominatorAbsent(t *testing.T) {
 		t.Fatalf("the reason the denominator is missing was not exported: %+v", verdict.Gaps)
 	}
 }
+
+// A label set that grows whenever someone upstream adds a classification is a
+// cardinality budget nobody owns. Unknown values land in a visible bucket, so a
+// new classification shows up as a growing OTHER instead of a silently widening
+// metric -- while the JSON API keeps reporting the real value, because a
+// response has no budget.
+func TestFleetVerdictClosesTheLabelSet(t *testing.T) {
+	at := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	verdict := fleetVerdictOf(fleet.View{
+		Health: fleet.HealthDegraded,
+		Anomalies: []fleet.Anomaly{
+			{QueryGroup: "a", Kind: "A_KIND_FROM_THE_FUTURE", Since: at.Add(-time.Minute)},
+			{QueryGroup: "b", Kind: fleet.KindDegradedRun, Since: at.Add(-time.Minute),
+				Failure: &fleet.FailureRef{Category: "a_category_from_the_future"}},
+			{QueryGroup: "c", Kind: fleet.KindDegradedRun, Since: at.Add(-time.Minute),
+				Failure: &fleet.FailureRef{Category: "source_backend"}},
+		},
+		Gaps: []fleet.Gap{{Kind: fleet.GapKind("A_GAP_FROM_THE_FUTURE")}, {Kind: fleet.GapUndetermined}},
+	}, at)
+
+	if countOf(verdict.Anomalies, fleet.LabelOther).Count != 1 {
+		t.Fatalf("an unknown kind escaped the closed label set: %+v", verdict.Anomalies)
+	}
+	if countOf(verdict.Anomalies, fleet.KindDegradedRun).Count != 2 {
+		t.Fatalf("known kinds = %+v", verdict.Anomalies)
+	}
+	if countOf(verdict.Gaps, fleet.LabelOther).Count != 1 ||
+		countOf(verdict.Gaps, string(fleet.GapUndetermined)).Count != 1 {
+		t.Fatalf("gaps = %+v", verdict.Gaps)
+	}
+	if countOf(verdict.Failures, "other").Count != 1 ||
+		countOf(verdict.Failures, "source_backend").Count != 1 {
+		t.Fatalf("failures = %+v", verdict.Failures)
+	}
+}
+
+// The anomaly count says how many objects are unwell; it cannot say what broke.
+// Objects that failed before reaching a classification stay out of the failure
+// counts rather than being invented into a bucket, so the two totals differ by
+// exactly the objects nobody can speak for yet.
+func TestFleetVerdictLeavesUnclassifiedFailuresOut(t *testing.T) {
+	at := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	verdict := fleetVerdictOf(fleet.View{
+		Health: fleet.HealthDegraded,
+		Anomalies: []fleet.Anomaly{
+			{QueryGroup: "a", Kind: fleet.KindDegradedRun, Since: at.Add(-time.Minute)},
+			{QueryGroup: "b", Kind: fleet.KindDegradedRun, Since: at.Add(-time.Minute),
+				Failure: &fleet.FailureRef{Category: "budget"}},
+		},
+	}, at)
+
+	if countOf(verdict.Anomalies, fleet.KindDegradedRun).Count != 2 {
+		t.Fatalf("anomalies = %+v", verdict.Anomalies)
+	}
+	total := 0
+	for _, count := range verdict.Failures {
+		total += count.Count
+	}
+	if total != 1 {
+		t.Fatalf("failure total = %d, want only the classified one", total)
+	}
+}

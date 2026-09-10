@@ -205,42 +205,67 @@ func fleetVerdictOf(view fleet.View, at time.Time) metric.FleetVerdict {
 		Health: string(view.Health), Expected: view.Expected,
 		Covered: view.Covered, Determined: view.Determined, Unknown: view.Unknown,
 	}
-	// Counted by bounded kind, never by object: a per-object series would put the
+	// Counted by closed label, never by object: a per-object series would put the
 	// Query Group identity into a label and break the cardinality budget that
-	// every other family here respects.
-	kinds := make(map[string]*metric.FleetCount)
-	order := make([]string, 0, 2)
+	// every other family here respects. The JSON API keeps reporting the real
+	// value -- a response has no budget and the reader deserves the true one.
+	kinds := newCountIndex()
+	failures := newCountIndex()
 	for _, anomaly := range view.Anomalies {
 		if anomaly.Stalled {
 			verdict.Stalled++
 		}
-		count, seen := kinds[anomaly.Kind]
-		if !seen {
-			count = &metric.FleetCount{Value: anomaly.Kind}
-			kinds[anomaly.Kind] = count
-			order = append(order, anomaly.Kind)
-		}
-		count.Count++
-		if age := at.Sub(anomaly.Since).Seconds(); age > count.OldestAgeSeconds {
-			count.OldestAgeSeconds = age
+		kinds.add(fleet.MetricKind(anomaly.Kind), at.Sub(anomaly.Since).Seconds())
+		// Objects whose last round failed before it could be classified are
+		// absent here rather than bucketed as "other": inventing a category for
+		// them would report a cause nobody established.
+		if anomaly.Failure != nil && anomaly.Failure.Category != "" {
+			failures.add(fleet.MetricFailureCategory(anomaly.Failure.Category), 0)
 		}
 	}
-	for _, kind := range order {
-		verdict.Anomalies = append(verdict.Anomalies, *kinds[kind])
-	}
+	verdict.Anomalies = kinds.counts()
+	verdict.Failures = failures.counts()
 
-	gaps := make(map[fleet.GapKind]int, len(view.Gaps))
-	gapOrder := make([]fleet.GapKind, 0, len(view.Gaps))
+	gaps := newCountIndex()
 	for _, gap := range view.Gaps {
-		if _, seen := gaps[gap.Kind]; !seen {
-			gapOrder = append(gapOrder, gap.Kind)
-		}
-		gaps[gap.Kind]++
+		gaps.add(fleet.MetricGapKind(gap.Kind), 0)
 	}
-	for _, kind := range gapOrder {
-		verdict.Gaps = append(verdict.Gaps, metric.FleetCount{Value: string(kind), Count: gaps[kind]})
-	}
+	verdict.Gaps = gaps.counts()
 	return verdict
+}
+
+// countIndex keeps first-seen order so two scrapes of an unchanged deployment
+// export the same series in the same order.
+type countIndex struct {
+	byValue map[string]*metric.FleetCount
+	order   []string
+}
+
+func newCountIndex() *countIndex {
+	return &countIndex{byValue: map[string]*metric.FleetCount{}}
+}
+
+func (index *countIndex) add(value string, ageSeconds float64) {
+	count, seen := index.byValue[value]
+	if !seen {
+		count = &metric.FleetCount{Value: value}
+		index.byValue[value] = count
+		index.order = append(index.order, value)
+	}
+	count.Count++
+	// The oldest member is what says how bad it is; the newest would hide the
+	// object that has been broken since this morning.
+	if ageSeconds > count.OldestAgeSeconds {
+		count.OldestAgeSeconds = ageSeconds
+	}
+}
+
+func (index *countIndex) counts() []metric.FleetCount {
+	counts := make([]metric.FleetCount, 0, len(index.order))
+	for _, value := range index.order {
+		counts = append(counts, *index.byValue[value])
+	}
+	return counts
 }
 
 // selfMetricsRangeProvider adapts the query client the evaluation path already

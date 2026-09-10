@@ -46,6 +46,11 @@ type FleetVerdict struct {
 	Stalled   int
 	Anomalies []FleetCount
 	Gaps      []FleetCount
+	// Failures says what broke, which the anomaly count cannot. A hundred
+	// objects sharing one completion kind is one number; whether they share one
+	// broken dependency or scattered unrelated causes is the question that
+	// decides who gets called.
+	Failures []FleetCount
 }
 
 // FleetVerdictSource returns the current judgment. Reading it costs one control
@@ -61,6 +66,7 @@ type fleetCollector struct {
 	anomalyAge *prometheus.Desc
 	stalled    *prometheus.Desc
 	gaps       *prometheus.Desc
+	failures   *prometheus.Desc
 }
 
 func newFleetCollector(source FleetVerdictSource) *fleetCollector {
@@ -73,20 +79,38 @@ func newFleetCollector(source FleetVerdictSource) *fleetCollector {
 			"Deployment-wide judgment as alarmd itself decides it; alert on this rather than recomputing it.",
 			[]string{"health_state"}),
 		objects: descriptor("fleet_objects",
-			"Objects by coverage state. Covered minus determined is counted into unknown, and unknown is never healthy.",
+			"Objects by coverage state. Covered minus determined is counted into unknown. "+
+				"A non-zero unknown does NOT mean something is broken -- a replica that just restarted owns "+
+				"objects it cannot yet speak for -- it means the question cannot be answered, which is why "+
+				"unknown is never folded into healthy. The expected state is absent when the denominator "+
+				"could not be read; it is never reported as zero.",
 			[]string{"state"}),
 		anomalies: descriptor("fleet_anomalies",
-			"Objects currently anomalous, by bounded kind.",
+			"Objects currently anomalous, by closed kind; unknown kinds are counted as OTHER. "+
+				"This counts objects, not rounds: one object failing every round for an hour stays 1. "+
+				"It does NOT say anything is unrecoverable -- see fleet_stalled_objects for that.",
 			[]string{"kind"}),
 		anomalyAge: descriptor("fleet_anomaly_oldest_age_seconds",
 			"How long the longest-running anomaly of each kind has lasted, from its own start point.",
 			[]string{"kind"}),
 		stalled: descriptor("fleet_stalled_objects",
-			"Objects whose rounds stopped finishing for longer than the deployment's own budget for terminating a Slot that cannot complete.",
+			"Objects whose rounds stopped finishing for longer than the deployment's own budget for "+
+				"terminating a Slot that cannot complete. Unlike the other counts here this one does not "+
+				"resolve on its own. It is derived from how long the anomaly has been observed, so it "+
+				"under-reports after a restart rather than over-reporting: zero is weaker evidence than "+
+				"non-zero.",
 			nil),
 		gaps: descriptor("fleet_gaps",
-			"Reasons the view is incomplete, by bounded kind. Any of these means the judgment is UNKNOWN rather than green.",
+			"Reasons the view is incomplete, by closed kind; unknown kinds are counted as OTHER. "+
+				"Any of these means the judgment is UNKNOWN rather than green. A gap is not itself a "+
+				"failure of the pipeline: it says this answer cannot be trusted, not that objects are broken.",
 			[]string{"kind"}),
+		failures: descriptor("fleet_failures",
+			"Anomalous objects by what broke, using the classification the pipeline already publishes; "+
+				"unknown categories are counted as other. Objects whose last round failed before reaching a "+
+				"classification are absent here, so this total can be lower than fleet_anomalies -- the "+
+				"difference is objects nobody can yet say anything about, not objects that are fine.",
+			[]string{"category"}),
 	}
 }
 
@@ -97,6 +121,7 @@ func (c *fleetCollector) Describe(descriptions chan<- *prometheus.Desc) {
 	descriptions <- c.anomalyAge
 	descriptions <- c.stalled
 	descriptions <- c.gaps
+	descriptions <- c.failures
 }
 
 func (c *fleetCollector) Collect(metrics chan<- prometheus.Metric) {
@@ -128,6 +153,12 @@ func (c *fleetCollector) Collect(metrics chan<- prometheus.Metric) {
 			continue
 		}
 		metrics <- prometheus.MustNewConstMetric(c.gaps, prometheus.GaugeValue, float64(count.Count), count.Value)
+	}
+	for _, count := range verdict.Failures {
+		if count.Value == "" {
+			continue
+		}
+		metrics <- prometheus.MustNewConstMetric(c.failures, prometheus.GaugeValue, float64(count.Count), count.Value)
 	}
 }
 

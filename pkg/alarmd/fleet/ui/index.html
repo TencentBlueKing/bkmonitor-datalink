@@ -115,7 +115,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
 
   <section class="panel" id="trendPanel" hidden>
     <h2>趋势</h2>
-    <p class="basis" id="trendBasis">曲线读的是 alarmd 自己的指标，表达式写死在服务端，和判定用的是同一批数字。</p>
+    <p class="basis" id="trendBasis">曲线读的是 alarmd 自己的指标，表达式写死在服务端，和判定用的是同一批数字。<b>但它和上面的判定不是同一种读</b>：判定是此刻直读控制面，曲线是经采集、降采样的历史，最右端总比判定旧一个采集周期以上。<b>卡片上的数是最后一个采样点，不是当前值；最低/最高是所选窗口内的，不是历史极值。</b></p>
     <div class="wpick" id="wpick"></div>
     <div id="trendErr" class="err" hidden></div>
     <div class="trend" id="trend"></div>
@@ -639,8 +639,12 @@ function trendCard(item) {
     card.appendChild(now);
     var range = document.createElement('div');
     range.className = 'range';
-    range.textContent = '最低 ' + fmtNumber(Math.min.apply(null, values)) +
+    range.textContent = '窗口内最低 ' + fmtNumber(Math.min.apply(null, values)) +
       ' · 最高 ' + fmtNumber(Math.max.apply(null, values)) + ' · ' + points.length + ' 点';
+    // 最后一个采样点不是当前值：采集周期加入库延迟摆在中间，贴近 now 的点还
+    // 可能因为尚未入库而显示成零。
+    now.title = '最后一个采样点，时刻 ' + new Date(points[points.length - 1].at).toLocaleTimeString() +
+      '；不是当前值';
     card.appendChild(range);
     card.appendChild(sparkline(points));
     if (item.partial) {

@@ -10,6 +10,7 @@
 package fleet
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -224,4 +225,30 @@ func hasGap(view View, kind GapKind) bool {
 		}
 	}
 	return false
+}
+
+// This gap on its own holds the verdict at UNKNOWN, so naming only the
+// condition hands a reader "do not trust this" with nothing to act on. Twelve
+// objects left over from a catalogue that shrank and a deployment owning
+// hundreds it should not are the same string and opposite problems.
+//
+// Observed on BKOP after the active set went 949 -> 931: the page reported
+// UNKNOWN with unknown=0 and one gap that said only its own name.
+func TestCoverageInconsistentGapSaysBothNumbers(t *testing.T) {
+	view := Aggregate(Expectation{QueryGroups: 931, Known: true}, healthySnapshots(), replicas(), now, freshness)
+
+	var detail string
+	for _, gap := range view.Gaps {
+		if gap.Kind == GapCoverageInconsistent {
+			detail = gap.Detail
+		}
+	}
+	if detail == "" {
+		t.Fatalf("the gap holding the verdict at UNKNOWN explained nothing: %+v", view.Gaps)
+	}
+	for _, want := range []string{"949", "931", "18"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("detail %q does not carry %q; a reader cannot size the disagreement", detail, want)
+		}
+	}
 }

@@ -17,6 +17,7 @@
 package fleet
 
 import (
+	"fmt"
 	"sort"
 	"time"
 )
@@ -254,7 +255,17 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			// Counting is not set arithmetic: more covered than expected means
 			// the two sides disagree about which objects exist, and a shortfall
 			// could still be hiding inside that difference.
-			view.Gaps = append(view.Gaps, Gap{Kind: GapCoverageInconsistent})
+			//
+			// It says both numbers because this gap alone holds the verdict at
+			// UNKNOWN. Naming only the condition leaves a reader with "do not
+			// trust this" and nothing to act on -- they cannot tell twelve
+			// objects left over from a catalogue that shrank from a deployment
+			// owning hundreds it should not, and those call for opposite
+			// responses. The sibling branch above already explains itself; this
+			// one did not, which is the whole difference.
+			view.Gaps = append(view.Gaps, Gap{Kind: GapCoverageInconsistent,
+				Detail: fmt.Sprintf("%d objects owned against %d expected: %d more than the control plane lists",
+					view.Covered, expected, view.Covered-expected)})
 		case expected > view.Covered:
 			// Added rather than assigned: objects nobody owns and objects owned
 			// by a replica that cannot speak for them are both unknown, and they

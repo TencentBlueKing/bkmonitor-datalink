@@ -50,7 +50,7 @@ cleaner.RawEventMessage{
       "alert_id": "source-alert-1",
       "title": "CPU usage is high",
       "content": "Host 10.0.0.1 CPU usage reached 92.5%",
-      "severity": "2",
+      "severity": "warning",
       "action": "triggered",
       "action_reason": "",
       "dimensions": {
@@ -102,7 +102,7 @@ cleaner.RawEventMessage{
   "alert_id": "source-alert-1", // hash值，按 alert_id 分 partition 推送 kafka
   "title": "CPU usage is high",
   "content": "Host 10.0.0.1 CPU usage reached 92.5%",
-  "severity": "2", // alarmd 主告警等级 ID 的十进制字符串
+  "severity": "warning", // alarmd 告警等级标识符
   "action": "triggered",
   "action_reason": "",
   "dimensions": {
@@ -134,13 +134,8 @@ cleaner.RawEventMessage{
 
 ### 2.3 告警等级
 
-alarmd 的原始触发结果使用整数 `primary_level_id` 表示主告警等级。转换为本 Kafka 契约时，
-`severity` 使用该等级 ID 的十进制字符串，例如级别 `2` 写为 `"2"`。`level_code` 是可选的等级代码，
-其内容允许使用业务名称，因此不作为本字段的取值来源。
-
-Linkd 通过 EventSource `severity_mapping` 将来源值映射为内部等级：`"1" → critical`、
-`"2" → warning`、`"3" → info`。因此本例 Kafka Value 的 `severity="2"` 在 Event 和 Alert 中保存为
-`warning`。
+`severity` 使用 alarmd 输出的等级标识符，例如 `critical`、`warning`、`info`。Linkd 将该标识符
+直接解析为同名内部等级，因此本例 Kafka Value 和 Event、Alert 均保存 `warning`。
 
 ### 2.4 补充维度
 
@@ -183,9 +178,7 @@ event_sources:
     fingerprint_field: source_alert_id
 
     severity_mapping:
-      "1": critical
-      "2": warning
-      "3": info
+      warning: warning
     default_severity: warning
 
     enrich:

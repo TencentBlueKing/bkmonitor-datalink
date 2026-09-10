@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -356,13 +357,17 @@ type phaseTwoWorkerBundle struct {
 	controlSourceKind     observability.SourceKind
 	controlReason         observability.ReasonCode
 	lastControlRecoveryAt time.Time
-	maintenanceCtx        context.Context
-	cancelMaintain        context.CancelFunc
-	cancelControl         context.CancelFunc
-	maintenanceWG         sync.WaitGroup
-	inflightWG            sync.WaitGroup
-	shutdownOnce          sync.Once
-	shutdownErr           error
+	// rotation is the dispatcher's own view of whether it is still getting
+	// round everything it owns, published once per rotation rather than read
+	// out of the walk.
+	rotation       atomic.Pointer[fleet.Rotation]
+	maintenanceCtx context.Context
+	cancelMaintain context.CancelFunc
+	cancelControl  context.CancelFunc
+	maintenanceWG  sync.WaitGroup
+	inflightWG     sync.WaitGroup
+	shutdownOnce   sync.Once
+	shutdownErr    error
 	// dependencyDegraded is set while a control or Ownership Store call fails
 	// transiently. dependencyFailureSeq counts those failures so a reconcile
 	// pass only clears the flag when no new failure happened during the pass.
@@ -426,11 +431,45 @@ type phaseTwoRunnerDispatcher struct {
 	walkRunners    uint64
 	walkIndex      int
 	walked         int
+	// rotation records how the walk over the owned set is going. One generation
+	// is one rotation: the walk considers every owned Query Group exactly once
+	// before it finishes, so "did everything get a turn, and how long did that
+	// take" is answerable here and nowhere else. Without it the page can say an
+	// object is degraded but not whether an object is simply never reached.
+	rotation phaseTwoRotationFacts
 	// prunedRunners names the owned set the queues were last cleaned against.
 	// A lifecycle only stops being current when that set changes, so cleaning
 	// again for an unchanged set walks every queued entry and every remembered
 	// generation to decide nothing.
 	prunedRunners uint64
+}
+
+// phaseTwoRotationFacts is what one Worker can say about its own rotation.
+//
+// The counts are cumulative so a rate can be taken over any window; the last
+// duration is an instant because a rotation either finished or it did not, and
+// averaging a finished one with an unfinished one would describe neither.
+type phaseTwoRotationFacts struct {
+	startedAt time.Time
+	// completed counts rotations that reached every owned Query Group. A
+	// rotation that is cut short by a full ready queue does not count: it left
+	// part of the owned set unoffered, which is the condition worth seeing.
+	completed uint64
+	// truncated counts rotations that stopped before reaching everyone.
+	truncated uint64
+	// offered, queued and deferred count Query Groups, not rotations. Their
+	// difference says whether objects are being passed over rather than merely
+	// running late.
+	offered  uint64
+	queued   uint64
+	deferred uint64
+	// lastSeconds is how long the most recent completed rotation took. It is
+	// the number an alert on "the deployment stopped covering its objects"
+	// needs, and until now nothing measured it.
+	lastSeconds float64
+	// generation is the rotation the counts above belong to, so a reader can
+	// tell a stalled walk from a slow one.
+	generation uint64
 }
 
 func newPhaseTwoWorkerBundle(dependencies phaseTwoWorkerBundleDependencies) (*phaseTwoWorkerBundle, error) {
@@ -814,7 +853,16 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 		dispatcher.walkIndex = sort.Search(len(runners), func(index int) bool {
 			return runners[index].queryGroup > dispatcher.cursor
 		})
+		if dispatcher.walked > 0 && dispatcher.walked < len(runners) {
+			// The previous rotation is being replaced before it reached
+			// everyone. That is not the same as finishing, and counting it as
+			// one would hide a deployment that never completes a pass.
+			dispatcher.rotation.truncated++
+			dispatcher.publishRotation()
+		}
 		dispatcher.walked = 0
+		dispatcher.rotation.startedAt = time.Now()
+		dispatcher.rotation.generation = dispatcher.generation
 	}
 	// advance moves the walk past the Query Group it just looked at. A Query
 	// Group turned away because a queue is full does not advance: it keeps its
@@ -824,6 +872,15 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 	advance := func() {
 		dispatcher.walkIndex++
 		dispatcher.walked++
+		dispatcher.rotation.offered++
+		if dispatcher.walked == len(runners) {
+			// Everyone in the owned set has now been considered once. This is
+			// the only point at which a full rotation is known to have happened,
+			// so it is where its duration comes from.
+			dispatcher.rotation.completed++
+			dispatcher.rotation.lastSeconds = time.Since(dispatcher.rotation.startedAt).Seconds()
+			dispatcher.publishRotation()
+		}
 	}
 	for dispatcher.walked < len(runners) {
 		scheduled := runners[dispatcher.walkIndex%len(runners)]
@@ -852,6 +909,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 				// Group is deferred, not dropped: one dispatch frees one place,
 				// and the walk resumes from here within the same generation.
 				dispatcher.bundle.dependencies.TargetFlow.Record("queue_skipped", string(scheduled.queryGroup), observability.TargetFlowFacts{Decision: "normal_queue_full"})
+				dispatcher.rotation.deferred++
 				return
 			}
 			dispatcher.normal = append(dispatcher.normal, queued)
@@ -863,6 +921,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 					// does not belong in the queue at all. That is a decision,
 					// not a lack of room, and the walk moves on.
 					dispatcher.bundle.dependencies.TargetFlow.Record("queue_skipped", string(scheduled.queryGroup), observability.TargetFlowFacts{Decision: "delayed_queue_full", ReadyAtMS: diagnosticTimeMS(readyAt)})
+					dispatcher.rotation.deferred++
 					advance()
 					continue
 				}
@@ -885,8 +944,33 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 			lifecycle: scheduled.lifecycle, generation: dispatcher.generation,
 		}
 		dispatcher.cursor = scheduled.queryGroup
+		dispatcher.rotation.queued++
 		advance()
 	}
+}
+
+// rotationFacts is the last rotation snapshot the dispatcher published.
+//
+// The dispatcher publishes rather than the reader reaching in: the walk is the
+// hot loop, and a reader taking its lock would slow the thing it is measuring.
+// Nil means no rotation has finished yet, which is a real answer on a replica
+// that has just started.
+func (bundle *phaseTwoWorkerBundle) rotationFacts() *fleet.Rotation {
+	if bundle == nil {
+		return nil
+	}
+	return bundle.rotation.Load()
+}
+
+// publishRotation copies the counts out for readers. It runs at most once per
+// rotation, so it is nowhere near the per-object path.
+func (dispatcher *phaseTwoRunnerDispatcher) publishRotation() {
+	facts := dispatcher.rotation
+	dispatcher.bundle.rotation.Store(&fleet.Rotation{
+		Completed: facts.completed, Truncated: facts.truncated,
+		Offered: facts.offered, Queued: facts.queued, Deferred: facts.deferred,
+		LastSeconds: facts.lastSeconds,
+	})
 }
 
 func (dispatcher *phaseTwoRunnerDispatcher) markDispatched(

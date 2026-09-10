@@ -28,6 +28,7 @@ func capacitySnapshotSource(
 	flights *scheduler.FlightCoordinator,
 	cfg config.Config,
 	rejections *fleet.RejectionTally,
+	rotation func() *fleet.Rotation,
 ) func() *fleet.Capacity {
 	// The same derivation the startup profile and check-config print, so the
 	// page cannot report a ceiling the process is not actually running with.
@@ -76,6 +77,9 @@ func capacitySnapshotSource(
 			MemoryLimit: facts.MemoryLimitBytes, MemorySource: facts.MemorySource,
 			CPUCores: facts.GOMAXPROCS,
 			Budgets:  budgets, Rejections: rejections.Counts(),
+		}
+		if rotation != nil {
+			capacity.Rotation = rotation()
 		}
 		if usage.MemoryKnown {
 			capacity.MemoryUsed = usage.MemoryBytes

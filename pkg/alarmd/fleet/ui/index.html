@@ -117,7 +117,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
 
   <section class="panel" id="trendPanel" hidden>
     <h2>趋势</h2>
-    <p class="basis" id="trendBasis">曲线读的是 alarmd 自己的指标，表达式写死在服务端，和判定用的是同一批数字。<b>但它和上面的判定不是同一种读</b>：判定是此刻直读控制面，曲线是经采集、降采样的历史，最右端总比判定旧一个采集周期以上。<b>卡片上的数是最后一个采样点，不是当前值；最低/最高是所选窗口内的，不是历史极值。</b></p>
+    <p class="basis">曲线读的是 alarmd 自己的指标，表达式写死在服务端，和判定用的是同一批数字。<b>但它和上面的判定不是同一种读</b>：判定是此刻直读控制面，曲线是经采集、降采样的历史，最右端总比判定旧一个采集周期以上。<b>卡片上的数是最后一个采样点，不是当前值；最低/最高是所选窗口内的，不是历史极值。</b></p>
     <div class="wpick" id="wpick"></div>
     <div id="trendErr" class="err" hidden></div>
     <div class="trend" id="trend"></div>
@@ -337,7 +337,12 @@ function loadHealth() {
       if (tail) li.appendChild(document.createTextNode('　' + tail));
       ul.appendChild(li);
     });
-  }).catch(function (e) { fail('healthErr', e); });
+    // Capacity rides on the same response as the verdict, so it is rendered
+    // from the same read rather than fetched separately: two reads would let
+    // the page show a verdict from one moment beside occupancy from another.
+    show('capErr', false);
+    renderCapacity(d.capacity);
+  }).catch(function (e) { fail('healthErr', e); fail('capErr', e); });
 }
 
 function loadObjects() {

@@ -694,7 +694,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		// that cannot complete has already been promised an end, so a Progress
 		// cursor older than that describes an object that stopped rather than
 		// one between rounds.
-		capacity:      capacitySnapshotSource(flights, cfg, rejectionTally),
+		capacity:      capacitySnapshotSource(flights, cfg, rejectionTally, bundle.rotationFacts),
 		restore:       progressRestoreSource(progressStore),
 		staleAfter:    stallAfter,
 		restoreBudget: fleetRestoreBudgetPerPublish,

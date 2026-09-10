@@ -50,6 +50,35 @@ type Capacity struct {
 	// started. Zero across the board is the useful common case: it says no
 	// budget is the thing holding this deployment back.
 	Rejections map[string]uint64 `json:"rejections,omitempty"`
+	// Rotation says whether this replica is still getting round every object it
+	// owns, and how long that takes. An object list can say an object is
+	// degraded; only this says an object is never reached.
+	Rotation *Rotation `json:"rotation,omitempty"`
+}
+
+// Rotation is one pass of the dispatcher over everything a replica owns.
+//
+// One generation is one rotation: the walk considers every owned object exactly
+// once before it finishes. So "did everything get a turn" has an answer, and
+// "how long does a full turn take" is the number an alert on coverage needs --
+// the one §11 asked for and nothing measured.
+type Rotation struct {
+	// Completed counts rotations that reached every owned object. Truncated
+	// counts those cut short, usually by a full ready queue. A deployment whose
+	// truncated count climbs while completed does not is one that has stopped
+	// covering its objects, which no per-object signal reports.
+	Completed uint64 `json:"completed"`
+	Truncated uint64 `json:"truncated"`
+	// Offered, Queued and Deferred count objects rather than rotations. Offered
+	// minus queued is what was passed over; a deferral is not a failure, but a
+	// deferral that repeats every rotation is an object nothing will reach.
+	Offered  uint64 `json:"offered"`
+	Queued   uint64 `json:"queued"`
+	Deferred uint64 `json:"deferred"`
+	// LastSeconds is how long the most recent completed rotation took. It is an
+	// instant, not an average: a rotation either finished or it did not, and
+	// averaging the two would describe neither.
+	LastSeconds float64 `json:"last_seconds"`
 }
 
 // CapacityView is the deployment's capacity as the page receives it.
@@ -72,6 +101,10 @@ type CapacityView struct {
 	CPUCores         int               `json:"cpu_cores,omitempty"`
 	Budgets          map[string]uint64 `json:"budgets,omitempty"`
 	Rejections       map[string]uint64 `json:"rejections,omitempty"`
+	// Rotation is summed across replicas for the counts and reported as the
+	// slowest for the duration: a deployment covers its objects only as fast as
+	// its slowest replica gets round its own share.
+	Rotation *Rotation `json:"rotation,omitempty"`
 	// Disagreement names ceilings the replicas do not agree on. Two replicas
 	// running different limits is a real condition -- a half-finished rollout --
 	// and averaging it would hide exactly the thing worth seeing.
@@ -121,6 +154,19 @@ func aggregateCapacity(view *View, snapshots []Snapshot) {
 		}
 		for budget, count := range facts.Rejections {
 			capacity.Rejections[budget] += count
+		}
+		if facts.Rotation != nil {
+			if capacity.Rotation == nil {
+				capacity.Rotation = &Rotation{}
+			}
+			capacity.Rotation.Completed += facts.Rotation.Completed
+			capacity.Rotation.Truncated += facts.Rotation.Truncated
+			capacity.Rotation.Offered += facts.Rotation.Offered
+			capacity.Rotation.Queued += facts.Rotation.Queued
+			capacity.Rotation.Deferred += facts.Rotation.Deferred
+			if facts.Rotation.LastSeconds > capacity.Rotation.LastSeconds {
+				capacity.Rotation.LastSeconds = facts.Rotation.LastSeconds
+			}
 		}
 	}
 	if capacity.Replicas == 0 {

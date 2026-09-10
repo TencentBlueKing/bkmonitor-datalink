@@ -134,6 +134,10 @@ type Snapshot struct {
 	Determined     int       `json:"determined"`
 	Anomalies      []Anomaly `json:"anomalies"`
 	TotalAnomalies int       `json:"total_anomalies"`
+	// Capacity is how close this replica is to its own limits. Absent on a
+	// replica that does not report it, which is why the aggregate counts the
+	// replicas it actually heard from rather than assuming every one answered.
+	Capacity *Capacity `json:"capacity,omitempty"`
 }
 
 // Truncated reports whether the replica had more anomalies than it published.
@@ -170,9 +174,13 @@ type View struct {
 	// larger than the returned list whenever a snapshot was truncated. Reporting
 	// the returned length as the total would understate an incident by exactly
 	// the amount that made it worth reporting.
-	AnomaliesTotal int       `json:"anomalies_total"`
-	Anomalies      []Anomaly `json:"anomalies"`
-	Replicas       []string  `json:"replicas"`
+	AnomaliesTotal int `json:"anomalies_total"`
+	// Capacity answers "how close is this deployment to its limits" from the
+	// same read that produced the verdict, so the two cannot disagree and the
+	// answer does not wait on collection.
+	Capacity  *CapacityView `json:"capacity,omitempty"`
+	Anomalies []Anomaly     `json:"anomalies"`
+	Replicas  []string      `json:"replicas"`
 }
 
 // Aggregate folds the published snapshots into one view.
@@ -215,6 +223,8 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			view.Gaps = append(view.Gaps, Gap{Kind: GapListTruncated, Replica: replica})
 		}
 	}
+
+	aggregateCapacity(&view, snapshots)
 
 	// Owning an object is not knowing about it. A replica that has just restarted
 	// owns everything and has observed nothing, so its empty anomaly list is not

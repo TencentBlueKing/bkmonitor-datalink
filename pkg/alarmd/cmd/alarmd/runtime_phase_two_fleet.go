@@ -150,6 +150,10 @@ type fleetPublisher struct {
 	// spreading it over the publish ticks costs a few more seconds of unknown
 	// and no burst at all.
 	restoreBudget int
+	// capacity reports this replica's own limits and how much of them is in
+	// use, so the page can answer "how close are we" from the same read that
+	// produced the verdict instead of waiting on collection.
+	capacity func() *fleet.Capacity
 	// restored names objects already considered, so an object whose Progress
 	// says nothing is not re-read on every tick forever.
 	restored map[execution.QueryGroupIdentity]struct{}
@@ -212,6 +216,9 @@ func (publisher *fleetPublisher) publishOnce(ctx context.Context) {
 		Determined:     publisher.tracker.Determined(),
 		Anomalies:      anomalies,
 		TotalAnomalies: len(anomalies),
+	}
+	if publisher.capacity != nil {
+		snapshot.Capacity = publisher.capacity()
 	}
 	// The outcome is reported either way, including success. Reporting only
 	// failures would leave the observer unable to tell recovery from silence,

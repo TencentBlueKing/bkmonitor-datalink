@@ -161,7 +161,11 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	observer = observability.Multi(observer, external.AdditionalObserver, targetFlow)
+	// Counted here rather than read back from the metric: the page answers from
+	// the replica's snapshot, so "no budget refused anything" must be sayable
+	// without collection having run.
+	rejectionTally := fleet.NewRejectionTally()
+	observer = observability.Multi(observer, external.AdditionalObserver, targetFlow, rejectionTally)
 	observer = phaseTwoRuntimeObserver(observer)
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), cfg.CompilerLimits())
 	if err != nil {
@@ -630,6 +634,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		// that cannot complete has already been promised an end, so a Progress
 		// cursor older than that describes an object that stopped rather than
 		// one between rounds.
+		capacity:      capacitySnapshotSource(flights, cfg, rejectionTally),
 		restore:       progressRestoreSource(progressStore),
 		staleAfter:    stallAfter,
 		restoreBudget: fleetRestoreBudgetPerPublish,

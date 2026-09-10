@@ -41,7 +41,7 @@ const (
 
 	controlTimelineCacheMemoryDivisor = 16
 	// The smallest Schedule timeline that can exist - one Segment carrying one
-	// Plan - is charged over 1.7 KiB, so no real entry is smaller than this.
+	// Plan - is charged over 2 KiB, so no real entry is smaller than this.
 	controlTimelineCacheMinEntryBytes = 1 << 10
 
 	// Only local runs and unit tests reach this: a container states its limit
@@ -161,15 +161,16 @@ type DerivedControlTimelineCache struct {
 // 230 of the 931 Query Groups that Worker owned.
 //
 // An entry holds the decoded object alone - the persisted bytes are read live
-// by the three publication paths that need them and kept by nobody - which
-// measures at 9/8 of the payload, about 161 KiB at that shape. One sixteenth
-// of the container makes the owned set fit several times over: 512 MiB on
-// 8 GiB holds about 3,250 such timelines against the 931 owned, and 153 MiB is
-// what those 931 actually occupy. The ceiling is deliberately well above the
-// residency, because it is a ceiling: the cache only ever grows to the working
-// set, and a bound that tracks the container leaves room for a Worker that
-// takes on more Query Groups without conceding more than a sixteenth of the
-// process to a read cache.
+// by the three publication paths that need them and kept by nobody - and is
+// charged 3/2 of its payload, about 215 KiB at that shape, which is above
+// every ratio measured across shapes and build modes rather than near the
+// typical one. One sixteenth of the container makes the owned set fit twice
+// over: 512 MiB on 8 GiB holds about 2,400 such timelines against the 931
+// owned, which occupy 205 MiB of charge for 146 MiB of actual heap. The
+// ceiling is deliberately well above the residency, because it is a ceiling:
+// the cache only ever grows to the working set, and a bound that tracks the
+// container leaves room for a Worker that takes on more Query Groups without
+// conceding more than a sixteenth of the process to a read cache.
 //
 // The entry bound is derived from the same budget so the two can never
 // disagree: it is how many entries the byte budget could hold if every

@@ -91,16 +91,27 @@ func productionShapedTimelinePayload(t testing.TB, queryGroup execution.QueryGro
 	return payload
 }
 
-// retainedHeapPerCopy measures what one decoded timeline keeps alive, by
-// holding a batch of them across a collection. It is the only way to size the
-// cache honestly: the object is charged to the heap, not to the payload.
-func retainedHeapPerCopy(t testing.TB, queryGroup execution.QueryGroupIdentity, payload []byte, copies int) float64 {
+// A batch is held across the collection so the per-copy figure is retained
+// heap rather than allocation.
+//
+// Both readings are taken after two collections, and that - not the batch size
+// - is what makes the figure repeatable. One collection can leave the next
+// sweep's work outstanding, and the difference lands in HeapAlloc as if it
+// were retained; the first version of this measurement took a single sample
+// after a single GC and read the same shape up to a fifth apart between runs,
+// which is how a charge got fitted to a number that was not the real one.
+// With two collections the readings hold to a tenth of a percent whether the
+// batch is 24 copies or 96.
+const heapFootprintCopies = 32
+
+func retainedHeapPerCopy(t testing.TB, queryGroup execution.QueryGroupIdentity, payload []byte) float64 {
 	t.Helper()
+	runtime.GC()
 	runtime.GC()
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
-	retained := make([]persistedScheduleTimeline, 0, copies)
-	for index := 0; index < copies; index++ {
+	retained := make([]persistedScheduleTimeline, 0, heapFootprintCopies)
+	for index := 0; index < heapFootprintCopies; index++ {
 		decoded, err := decodeScheduleTimeline(queryGroup, payload)
 		if err != nil {
 			t.Fatal(err)
@@ -108,28 +119,56 @@ func retainedHeapPerCopy(t testing.TB, queryGroup execution.QueryGroupIdentity, 
 		retained = append(retained, decoded)
 	}
 	runtime.GC()
+	runtime.GC()
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
 	runtime.KeepAlive(retained)
-	return float64(after.HeapAlloc-before.HeapAlloc) / float64(copies)
+	return float64(after.HeapAlloc-before.HeapAlloc) / float64(heapFootprintCopies)
 }
+
+// worstRetainedHeapPerCopy repeats the measurement and keeps the largest. A
+// budget ceiling is set from the worst case, not the average: an average that
+// fits is a cache that overruns its bound half the time.
+func worstRetainedHeapPerCopy(t testing.TB, queryGroup execution.QueryGroupIdentity, payload []byte) float64 {
+	t.Helper()
+	worst := 0.0
+	for round := 0; round < 3; round++ {
+		if measured := retainedHeapPerCopy(t, queryGroup, payload); measured > worst {
+			worst = measured
+		}
+	}
+	return worst
+}
+
+// heapFootprintShapes are the Plan counts the charge is checked against. They
+// are deliberately not evenly spaced. json.Unmarshal grows the two Plans
+// slices by doubling and rounds each growth to an allocator size class, so
+// what a decoded timeline retains has a sawtooth in it, and the teeth are
+// sharp: 18 Plans costs 1.24 payloads while 14 costs 0.98 and 28 costs 1.00.
+// An evenly spaced sweep walks straight past them - 9, 18 and 19 are the
+// sharpest found by sweeping every count from 4 to 250, and none of them
+// appear in a sweep of 1, 20, 40, 80, 183, 600.
+var heapFootprintShapes = []int{1, 9, 14, 18, 19, 20, 80, productionShapedTimelinePlans, 300}
 
 // TestParsedScheduleTimelineHeapFootprint is the measurement the cache budget
 // is derived from. The decoded object was expected to dwarf its JSON; it does
 // not, because the JSON repeats a field name per value while the object
-// repeats a struct field and the string bytes.
+// repeats a struct field and the string bytes. What it does do is vary with
+// shape far more than with size, which is why the charge has to clear the
+// tallest tooth rather than the typical one.
 //
-// Recorded on this fixture: 183 Plans, 146,708 byte payload, about 141,000
-// bytes of retained heap - 0.96 payloads. The ratio runs 0.36 at one Plan,
-// 1.04 at twenty and 0.89 at six hundred, which is what the 9/8 in
-// cachedTimelineBytes bounds.
+// Measured worst ratios without the race detector: 0.98 at one Plan, about
+// 1.09 from twenty to eighty, 1.01 at the production shape of 183 Plans and
+// 146,700 payload bytes, 0.93 at six hundred. Under -race every reading rises
+// by roughly 0.08 and the teeth reach 1.24, at 18 Plans. The charge covers
+// both, which is what makes it a bound rather than a fit.
 func TestParsedScheduleTimelineHeapFootprint(t *testing.T) {
-	for _, plans := range []int{1, 20, productionShapedTimelinePlans, 600} {
+	for _, plans := range heapFootprintShapes {
 		queryGroup := execution.QueryGroupIdentity(fmt.Sprintf("qg-footprint-%d", plans))
 		payload := productionShapedTimelinePayload(t, queryGroup, plans)
-		measured := retainedHeapPerCopy(t, queryGroup, payload, 64)
+		measured := worstRetainedHeapPerCopy(t, queryGroup, payload)
 		charged := float64(cachedTimelineBytes(len(payload)))
-		t.Logf("plans=%d payload=%d parsed_heap=%.0f ratio=%.3f charged=%.0f",
+		t.Logf("plans=%d payload=%d worst_parsed_heap=%.0f ratio=%.3f charged=%.0f",
 			plans, len(payload), measured, measured/float64(len(payload)), charged)
 		// An entry is charged the decoded object it holds. Charging less than
 		// it holds is the failure that matters: the process would sit above a
@@ -139,7 +178,7 @@ func TestParsedScheduleTimelineHeapFootprint(t *testing.T) {
 		}
 		// Charging far more wastes budget instead of overrunning it, so this
 		// only has to hold where the budget is actually spent.
-		if plans == productionShapedTimelinePlans && charged > 1.5*measured {
+		if plans == productionShapedTimelinePlans && charged > 2*measured {
 			t.Fatalf("production shape charges %.0f bytes for %.0f bytes held", charged, measured)
 		}
 	}
@@ -256,8 +295,8 @@ func TestScheduleTimelineForUpdateReadsLiveAndLeavesTheCacheIntact(t *testing.T)
 // the version header never moved, so every one of the 41% of lookups that
 // missed had been evicted by that bound.
 //
-// The 300 timelines below are 43 MiB of payload - past the replaced constant,
-// inside the reference container's derived share.
+// The 300 timelines below are 43 MiB of payload and 66 MiB of charge - past
+// the replaced constant, inside the reference container's derived share.
 func TestControlTimelineCacheHoldsTheOwnedWorkingSet(t *testing.T) {
 	if testing.Short() {
 		t.Skip("allocates the working set of one Worker")

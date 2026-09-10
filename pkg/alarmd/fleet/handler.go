@@ -115,7 +115,7 @@ func summarize(anomalies []Anomaly) Summary {
 	}
 }
 
-// markStalled flags the objects whose rounds have not finished for longer than
+// MarkStalled flags the objects whose rounds have not finished for longer than
 // stallAfter, the deployment's own budget for terminating a Slot that cannot
 // complete. Past that budget the object is not progressing slowly, it is not
 // progressing at all, and nothing left in the deployment will end the round for
@@ -126,7 +126,7 @@ func summarize(anomalies []Anomaly) Summary {
 // label on a transient event. A zero budget turns the flag off rather than
 // marking everything, so a deployment that has not wired one shows no flag
 // instead of a wrong one.
-func markStalled(anomalies []Anomaly, at time.Time, stallAfter time.Duration) {
+func MarkStalled(anomalies []Anomaly, at time.Time, stallAfter time.Duration) {
 	if stallAfter <= 0 {
 		return
 	}
@@ -218,7 +218,7 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	view := service.View(request.Context())
 	// Marked before filtering so a filtered response reports the same flag for the
 	// same object as an unfiltered one.
-	markStalled(view.Anomalies, now(), stallAfter)
+	MarkStalled(view.Anomalies, now(), stallAfter)
 	replica := request.URL.Query().Get("replica")
 	if replica != "" {
 		// A name that belongs to no replica has to be refused rather than
@@ -270,7 +270,7 @@ func objectDetail(response http.ResponseWriter, request *http.Request, service *
 		return
 	}
 	view := service.View(request.Context())
-	markStalled(view.Anomalies, now(), stallAfter)
+	MarkStalled(view.Anomalies, now(), stallAfter)
 	body := detailResponse{
 		Health:     view.Health,
 		Gaps:       view.Gaps,

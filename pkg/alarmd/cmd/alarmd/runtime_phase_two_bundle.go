@@ -549,9 +549,20 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// constant: past it the deployment has already promised to terminate a Slot
 	// that cannot complete, so an object still failing beyond it is one nothing
 	// will resolve on its own.
-	fleetAPI, err := fleet.NewHandler(fleetService, windowStore, external.Now,
-		cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration())
+	stallAfter := cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration()
+	fleetAPI, err := fleet.NewHandler(fleetService, windowStore, external.Now, stallAfter)
 	if err != nil {
+		return nil, err
+	}
+	// The same judgment the page shows, exported so the host writes alert rules
+	// against it instead of reimplementing the arithmetic. The deadline is a
+	// ceiling on hanging, not a tuning knob: the read is one control plane fetch
+	// over a snapshot set the size of the replica count, so it finishes in
+	// milliseconds or something is wrong -- and a scrape that blocks takes every
+	// other metric down with it.
+	if err := recorder.BindFleet(fleetVerdictSource(
+		fleetService, external.Now, stallAfter, fleetVerdictScrapeCeiling,
+	)); err != nil {
 		return nil, err
 	}
 	var publisher fleetPublisher

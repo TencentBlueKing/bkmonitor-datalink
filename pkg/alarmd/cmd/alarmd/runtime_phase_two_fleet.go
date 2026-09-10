@@ -17,6 +17,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
@@ -165,4 +166,77 @@ func (publisher fleetPublisher) publishOnce(ctx context.Context) {
 	if publisher.observe != nil {
 		publisher.observe(err)
 	}
+}
+
+// fleetVerdictScrapeCeiling bounds how long a scrape may wait on the control
+// plane. It is a ceiling on hanging rather than a tuning knob, so it stays a
+// constant instead of becoming another thing to configure.
+const fleetVerdictScrapeCeiling = 5 * time.Second
+
+// fleetVerdictSource exports the same judgment the object page shows.
+//
+// Two readers of one deployment must not disagree about whether anything is
+// wrong. The page reads this judgment over HTTP and the host's alert rules read
+// it as a metric; computing it twice would let them drift, and the drift shows
+// up as "the page says fine, the alert is firing" at the worst possible moment.
+//
+// Cost is one control plane read per scrape -- the same read the object API
+// already performs, against a snapshot set the size of the replica count.
+func fleetVerdictSource(
+	service *fleet.Service,
+	now func() time.Time,
+	stallAfter time.Duration,
+	timeout time.Duration,
+) metric.FleetVerdictSource {
+	return func() metric.FleetVerdict {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		at := now()
+		view := service.View(ctx)
+		fleet.MarkStalled(view.Anomalies, at, stallAfter)
+		return fleetVerdictOf(view, at)
+	}
+}
+
+func fleetVerdictOf(view fleet.View, at time.Time) metric.FleetVerdict {
+	verdict := metric.FleetVerdict{
+		Health: string(view.Health), Expected: view.Expected,
+		Covered: view.Covered, Determined: view.Determined, Unknown: view.Unknown,
+	}
+	// Counted by bounded kind, never by object: a per-object series would put the
+	// Query Group identity into a label and break the cardinality budget that
+	// every other family here respects.
+	kinds := make(map[string]*metric.FleetCount)
+	order := make([]string, 0, 2)
+	for _, anomaly := range view.Anomalies {
+		if anomaly.Stalled {
+			verdict.Stalled++
+		}
+		count, seen := kinds[anomaly.Kind]
+		if !seen {
+			count = &metric.FleetCount{Value: anomaly.Kind}
+			kinds[anomaly.Kind] = count
+			order = append(order, anomaly.Kind)
+		}
+		count.Count++
+		if age := at.Sub(anomaly.Since).Seconds(); age > count.OldestAgeSeconds {
+			count.OldestAgeSeconds = age
+		}
+	}
+	for _, kind := range order {
+		verdict.Anomalies = append(verdict.Anomalies, *kinds[kind])
+	}
+
+	gaps := make(map[fleet.GapKind]int, len(view.Gaps))
+	gapOrder := make([]fleet.GapKind, 0, len(view.Gaps))
+	for _, gap := range view.Gaps {
+		if _, seen := gaps[gap.Kind]; !seen {
+			gapOrder = append(gapOrder, gap.Kind)
+		}
+		gaps[gap.Kind]++
+	}
+	for _, kind := range gapOrder {
+		verdict.Gaps = append(verdict.Gaps, metric.FleetCount{Value: string(kind), Count: gaps[kind]})
+	}
+	return verdict
 }

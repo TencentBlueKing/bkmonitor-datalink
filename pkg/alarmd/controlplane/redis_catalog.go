@@ -156,7 +156,8 @@ func NewRedisCatalogRepository(client redis.Cmdable, prefix string, ttl time.Dur
 	}
 	return &RedisCatalogRepository{client: client, prefix: prefix, ttl: ttl,
 		snapshotCache: newVerifiedSnapshotCache(verifiedSnapshotCacheMaxEntries, verifiedSnapshotCacheMaxBytes),
-		controlCache:  newControlReadCache(controlTimelineCacheMaxEntries, controlTimelineCacheMaxBytes)}, nil
+		controlCache: newControlReadCache(
+			controlTimelineCacheDefaultMaxEntries, controlTimelineCacheDefaultMaxBytes)}, nil
 }
 
 func (repository *RedisCatalogRepository) ConfigureLegacyMigration(maxScanKeys int, timeout time.Duration) error {
@@ -780,7 +781,7 @@ func (repository *RedisCatalogRepository) validateClosedHistoricalContract(
 	current SnapshotPublicationRef,
 	version controlVersion,
 ) (bool, error) {
-	timeline, _, err := repository.loadScheduleTimelineAt(ctx, contractRef.Slot.QueryGroup, version)
+	timeline, err := repository.loadScheduleTimelineAt(ctx, contractRef.Slot.QueryGroup, version)
 	if err != nil {
 		return false, err
 	}

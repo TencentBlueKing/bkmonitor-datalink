@@ -494,7 +494,7 @@ func (cleanup *TemporaryLegacyDrainingCleanup) buildScheduleUpdates(
 	targetPlans := make([]TemporaryLegacyDrainingTargetPlan, 0, len(targets))
 	progressFacts := make([]TemporaryLegacyDrainingProgressFact, 0, len(targets))
 	for queryGroup, oldGroup := range oldGroups {
-		timeline, raw, err := cleanup.repository.loadScheduleTimeline(ctx, queryGroup)
+		timeline, raw, err := cleanup.repository.loadScheduleTimelineForUpdate(ctx, queryGroup)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -547,7 +547,7 @@ func (cleanup *TemporaryLegacyDrainingCleanup) buildScheduleUpdates(
 		var timeline persistedScheduleTimeline
 		var raw []byte
 		if _, reactivated := reactivating[queryGroup]; reactivated {
-			timeline, raw, err = cleanup.repository.loadScheduleTimeline(ctx, queryGroup)
+			timeline, raw, err = cleanup.repository.loadScheduleTimelineForUpdate(ctx, queryGroup)
 			if err != nil {
 				return nil, nil, nil, nil, err
 			}

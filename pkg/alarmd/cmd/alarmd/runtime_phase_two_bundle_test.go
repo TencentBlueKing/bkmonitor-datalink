@@ -9,6 +9,11 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 )
 
 func TestDefaultPhaseTwoProductionHTTPClientUsesBoundedConnectionPool(t *testing.T) {
@@ -50,3 +55,25 @@ func TestDefaultPhaseTwoProductionHTTPClientUsesBoundedConnectionPool(t *testing
 		t.Fatalf("response header timeout = %s, want none because the attempt deadline governs", transport.ResponseHeaderTimeout)
 	}
 }
+
+// A repository that is never told its container still caches, at the product
+// reference container's share. That fallback is a second copy of the same
+// number in another package, so it is pinned here rather than left to a
+// comment: this test is the only thing keeping the two from drifting.
+func TestControlTimelineCacheDefaultMatchesReferenceContainer(t *testing.T) {
+	repository, err := controlplane.NewRedisCatalogRepository(
+		&unusedCatalogRedis{}, "alarmd:control:default-budget", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	occupancy := repository.ControlReadCacheStats().TimelineOccupancy
+	reference := config.DeriveControlTimelineCache(config.ReferenceContainer())
+	if occupancy.MaxBytes != reference.MaxBytes || occupancy.MaxEntries != reference.MaxEntries {
+		t.Fatalf("unconfigured repository budget = %d bytes / %d entries, reference container derives %d / %d",
+			occupancy.MaxBytes, occupancy.MaxEntries, reference.MaxBytes, reference.MaxEntries)
+	}
+}
+
+// unusedCatalogRedis satisfies the constructor without a server: the budget is
+// installed before any command is issued.
+type unusedCatalogRedis struct{ redis.Cmdable }

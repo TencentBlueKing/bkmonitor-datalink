@@ -239,7 +239,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	updates := make([]scheduleTimelineUpdate, 0, len(oldGroups)+len(newGroups))
 	coverage := make([]persistedScheduleTimeline, 0, len(newGroups))
 	for queryGroup, oldGroup := range oldGroups {
-		timeline, raw, err := repository.loadScheduleTimeline(ctx, queryGroup)
+		timeline, raw, err := repository.loadScheduleTimelineForUpdate(ctx, queryGroup)
 		if err != nil {
 			return err
 		}
@@ -302,7 +302,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		var timeline persistedScheduleTimeline
 		var raw []byte
 		if _, reactivated := reactivating[queryGroup]; reactivated {
-			timeline, raw, err = repository.loadScheduleTimeline(ctx, queryGroup)
+			timeline, raw, err = repository.loadScheduleTimelineForUpdate(ctx, queryGroup)
 			if err != nil {
 				return err
 			}
@@ -436,7 +436,7 @@ func (repository *RedisCatalogRepository) CompareAndSetScheduleCutover(
 		for _, plan := range newSchedule.Plans {
 			affectedPlans[plan.Identity] = struct{}{}
 		}
-		timeline, raw, err := repository.loadScheduleTimeline(ctx, fact.OldSegment.QueryGroup)
+		timeline, raw, err := repository.loadScheduleTimelineForUpdate(ctx, fact.OldSegment.QueryGroup)
 		if err != nil {
 			return err
 		}
@@ -788,7 +788,7 @@ func (repository *RedisCatalogRepository) loadActivatedGroupsFromOpenSchedules(
 	}
 	sort.Slice(identities, func(i, j int) bool { return identities[i] < identities[j] })
 	for _, identity := range identities {
-		timeline, _, loadErr := repository.loadScheduleTimeline(ctx, identity)
+		timeline, loadErr := repository.loadScheduleTimeline(ctx, identity)
 		if errors.Is(loadErr, ErrScheduleUnavailable) {
 			continue
 		}
@@ -877,7 +877,7 @@ func (repository *RedisCatalogRepository) loadActivatedGroupsFromScheduleScan(ct
 		}
 		for _, key := range keys {
 			identity := execution.QueryGroupIdentity(strings.TrimPrefix(key, repository.prefix+":schedule_timeline:"))
-			timeline, _, loadErr := repository.loadScheduleTimeline(migrationCtx, identity)
+			timeline, loadErr := repository.loadScheduleTimeline(migrationCtx, identity)
 			if loadErr != nil {
 				return nil, loadErr
 			}
@@ -1042,7 +1042,7 @@ func (repository *RedisCatalogRepository) queryGroupDrained(
 	retiredBoundary execution.EvaluationTime,
 	progress ScheduleActivationProgressReader,
 ) (bool, error) {
-	timeline, _, err := repository.loadScheduleTimeline(ctx, queryGroup)
+	timeline, err := repository.loadScheduleTimeline(ctx, queryGroup)
 	if err != nil {
 		return false, err
 	}
@@ -1141,20 +1141,48 @@ func activationRecordsForPersistedSchedule(records []PlanActivationRecord, sched
 }
 
 // loadScheduleTimeline reads the small activation header live and serves the
-// timeline bytes cached under that header when present. Callers that already
+// decoded timeline cached under that header when present. Callers that already
 // hold the header for the same authorization use loadScheduleTimelineAt.
+//
+// The timeline is shared with every other reader under this header. Readers
+// only read it; a caller that intends to write uses
+// loadScheduleTimelineForUpdate instead.
 func (repository *RedisCatalogRepository) loadScheduleTimeline(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+) (persistedScheduleTimeline, error) {
+	if repository == nil || repository.client == nil || queryGroup == "" {
+		return persistedScheduleTimeline{}, errors.New("alarmd controlplane: Query Group schedule is required")
+	}
+	version, err := repository.readControlVersion(ctx)
+	if err != nil {
+		return persistedScheduleTimeline{}, err
+	}
+	return repository.loadScheduleTimelineAt(ctx, queryGroup, version)
+}
+
+// loadScheduleTimelineForUpdate is the loader for the compare-and-set paths,
+// which close the open Segment in place, append the next one, and then hand
+// the bytes they read back as the value the write must find unchanged.
+//
+// It deliberately does not consult the cache. The persisted bytes are the
+// expectation a publication is fenced on, and reading them live is the shape
+// that operation should have anyway: their freshness then rests on the read
+// itself rather than on the version header standing in for it. A publication
+// is rare enough that the extra round trip does not register, and keeping the
+// cache out of it means the cache never has to hold bytes, nor promise that
+// bytes it holds still match the object decoded from them.
+//
+// Reading live also means the returned timeline is private, so the in-place
+// Segment writes that follow cannot reach a shared object.
+func (repository *RedisCatalogRepository) loadScheduleTimelineForUpdate(
 	ctx context.Context,
 	queryGroup execution.QueryGroupIdentity,
 ) (persistedScheduleTimeline, []byte, error) {
 	if repository == nil || repository.client == nil || queryGroup == "" {
 		return persistedScheduleTimeline{}, nil, errors.New("alarmd controlplane: Query Group schedule is required")
 	}
-	version, err := repository.readControlVersion(ctx)
-	if err != nil {
-		return persistedScheduleTimeline{}, nil, err
-	}
-	return repository.loadScheduleTimelineAt(ctx, queryGroup, version)
+	return repository.readScheduleTimeline(ctx, queryGroup)
 }
 
 func decodeScheduleTimeline(queryGroup execution.QueryGroupIdentity, payload []byte) (persistedScheduleTimeline, error) {
@@ -1212,7 +1240,7 @@ func (runtime *RedisCatalogRuntime) ReadInitialFrozenSchedule(
 	ctx context.Context,
 	queryGroup execution.QueryGroupIdentity,
 ) (execution.FrozenQueryGroupSchedule, error) {
-	timeline, _, err := runtime.repository.loadScheduleTimeline(ctx, queryGroup)
+	timeline, err := runtime.repository.loadScheduleTimeline(ctx, queryGroup)
 	if err != nil {
 		return execution.FrozenQueryGroupSchedule{}, err
 	}
@@ -1243,6 +1271,13 @@ func (runtime *RedisCatalogRuntime) ReadSuccessorFrozenSchedule(
 	return segment.Schedule, nil
 }
 
+// ReadScheduleRetirement answers one question - has this Query Group been
+// retired, and when - and to answer it loads the whole timeline. In a
+// production profile the Slot source spent 23.3% of the process here, which
+// before the decoded timelines were cached meant deserializing every Segment
+// and recomputing a canonical digest over every Plan to read one nullable
+// field. Serving the question from a cached object is what makes that cost
+// the map lookup it should always have been.
 func (runtime *RedisCatalogRuntime) ReadScheduleRetirement(
 	ctx context.Context,
 	queryGroup execution.QueryGroupIdentity,
@@ -1250,7 +1285,7 @@ func (runtime *RedisCatalogRuntime) ReadScheduleRetirement(
 	if runtime == nil || runtime.repository == nil || queryGroup == "" {
 		return 0, false, errors.New("alarmd controlplane: valid Query Group retirement read is required")
 	}
-	timeline, _, err := runtime.repository.loadScheduleTimeline(ctx, queryGroup)
+	timeline, err := runtime.repository.loadScheduleTimeline(ctx, queryGroup)
 	if err != nil {
 		return 0, false, err
 	}
@@ -1311,7 +1346,7 @@ func (runtime *RedisCatalogRuntime) readPersistedSuccessor(
 	if runtime == nil || runtime.repository == nil || queryGroup == "" || segmentEnd <= 0 {
 		return persistedScheduleSegment{}, errors.New("alarmd controlplane: valid Schedule successor read is required")
 	}
-	timeline, _, err := runtime.repository.loadScheduleTimeline(ctx, queryGroup)
+	timeline, err := runtime.repository.loadScheduleTimeline(ctx, queryGroup)
 	if err != nil {
 		return persistedScheduleSegment{}, err
 	}
@@ -1636,7 +1671,7 @@ func (runtime *RedisCatalogRuntime) readPersistedSegment(
 	if runtime == nil || runtime.repository == nil || evaluationTime <= 0 {
 		return persistedScheduleSegment{}, errors.New("alarmd controlplane: valid Catalog runtime and EvaluationTime are required")
 	}
-	timeline, _, err := runtime.repository.loadScheduleTimeline(ctx, queryGroup)
+	timeline, err := runtime.repository.loadScheduleTimeline(ctx, queryGroup)
 	if err != nil {
 		return persistedScheduleSegment{}, err
 	}

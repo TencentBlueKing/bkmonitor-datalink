@@ -101,7 +101,7 @@ func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (obs
 	facts := observability.RuntimeConfigFacts{
 		Profile: "standard-conservative-v1", Source: "container_derived", CPUSource: cpuSource, GOMAXPROCS: procs,
 		MemorySource: inputs.MemorySource, MemoryLimitBytes: inputs.MemoryLimitBytes,
-		Capacity: phaseTwoRuntimeCapacity(cfg),
+		Capacity: phaseTwoRuntimeCapacity(cfg, inputs),
 	}
 	// Digest the exact logged safe values, with the digest field still empty.
 	digest, err := contract.DeriveCanonicalDigestV2("alarmd-runtime-config-v2", facts)
@@ -109,10 +109,16 @@ func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (obs
 	return facts, err
 }
 
-func phaseTwoRuntimeCapacity(cfg config.Config) observability.RuntimeCapacityFacts {
+// phaseTwoRuntimeCapacity takes the container inputs as well as the
+// configuration because not every derived budget lands in a configuration
+// field. The control timeline cache is installed straight into the repository
+// at assembly, so the table has to derive it here from the same container the
+// assembly will.
+func phaseTwoRuntimeCapacity(cfg config.Config, inputs config.CapacityInputs) observability.RuntimeCapacityFacts {
 	s := cfg.PhaseTwo.Scheduler
 	c := cfg.PhaseTwo.Coordinator
 	uq := phaseTwoUQLimits(cfg)
+	timelineCache := config.DeriveControlTimelineCache(inputs)
 	return observability.RuntimeCapacityFacts{
 		ExpiredRangeEnabled: s.ExpiredRangeEnabled,
 		ActiveExecutions:    min(s.ActiveExecutionLimit, s.ReadyQueueCapacity), ConfiguredActiveExecutions: s.ActiveExecutionLimit,
@@ -127,7 +133,9 @@ func phaseTwoRuntimeCapacity(cfg config.Config) observability.RuntimeCapacityFac
 		SlotGapMutations:   execution.SlotMutationCap(uint64(cfg.Limits.Store.MaxKeysPerBatch), c.MaxGapMutations),
 		StateApplyChunks:   execution.StateApplyMaxChunks,
 		StoreMaxValueBytes: cfg.Limits.Codec.MaxEncodedBytes, StoreMaxItems: cfg.Limits.Store.MaxKeysPerBatch,
-		EvaluatorMaxPlans: cfg.Limits.Detect.MaxPlans, EvaluatorMaxRecords: cfg.Limits.Detect.MaxRecordsPerSeries,
+		ControlTimelineCacheBytes:   timelineCache.MaxBytes,
+		ControlTimelineCacheEntries: timelineCache.MaxEntries,
+		EvaluatorMaxPlans:           cfg.Limits.Detect.MaxPlans, EvaluatorMaxRecords: cfg.Limits.Detect.MaxRecordsPerSeries,
 		EvaluatorMaxLevels: uint64(cfg.Limits.Compiler.MaxLevelsPerPlan), EvidenceBytes: cfg.TriggerLimits().MaxEvidenceBytesPerEvent,
 		OutputMessageBytes: cfg.Kafka.TriggerEvent.MaxMessageBytes,
 		UQBodyBytes:        uq.MaxBodyBytes, UQSeriesBytes: uq.MaxSeriesBytes, UQSeries: uq.MaxSeries, UQRecords: uq.MaxRecords,

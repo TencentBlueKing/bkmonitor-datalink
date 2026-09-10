@@ -115,3 +115,41 @@ func TestDefaultDescribesTheReferenceContainerNotTheHost(t *testing.T) {
 		t.Fatal("the reference container derives an empty retained budget")
 	}
 }
+
+// The Schedule timeline cache replaced a written 32 MiB with a share of the
+// container. The share only means anything if it holds the Query Groups one
+// Worker owns, so the check is stated in those terms: production measured
+// 146,816 bytes per timeline and 931 owned Query Groups on an 8 CPU, 8 GiB
+// container, and the replaced constant held about a quarter of them.
+func TestControlTimelineCacheBudgetHoldsAnOwnedWorkingSet(t *testing.T) {
+	const (
+		productionTimelineBytes = 146816
+		// The decoded object, charged the way controlplane charges a cache
+		// entry. The persisted bytes are not held.
+		productionEntryBytes = productionTimelineBytes * 9 / 8
+		productionOwned      = 931
+		replacedConstant     = 32 << 20
+	)
+	if replacedConstant/productionEntryBytes >= productionOwned {
+		t.Fatal("the replaced constant already held the owned working set; the evidence for this change is wrong")
+	}
+	production := DeriveControlTimelineCache(CapacityInputs{CPUBudget: 8, MemoryLimitBytes: 8 << 30})
+	if held := production.MaxBytes / productionEntryBytes; held < productionOwned {
+		t.Fatalf("8 GiB container holds %d timelines, below the %d Query Groups one Worker owns", held, productionOwned)
+	}
+	for _, inputs := range containerShapes() {
+		derived := DeriveControlTimelineCache(inputs)
+		if derived.MaxBytes <= 0 || derived.MaxEntries <= 0 {
+			t.Fatalf("%d MiB container derived %+v", inputs.MemoryLimitBytes>>20, derived)
+		}
+		if uint64(derived.MaxBytes) >= inputs.MemoryLimitBytes {
+			t.Fatalf("%d MiB container gave the cache %d bytes", inputs.MemoryLimitBytes>>20, derived.MaxBytes)
+		}
+		// The entry bound comes from the same budget, so it can never be the
+		// one that binds first for a timeline worth caching.
+		if derived.MaxEntries*controlTimelineCacheMinEntryBytes < derived.MaxBytes {
+			t.Fatalf("%d MiB container: entry bound %d is tighter than its byte bound %d",
+				inputs.MemoryLimitBytes>>20, derived.MaxEntries, derived.MaxBytes)
+		}
+	}
+}

@@ -6,6 +6,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -172,5 +173,39 @@ func TestPhaseTwoCPURecordsPinnedLibraryDecisionWithoutRawEnvironment(t *testing
 	source, err := configurePhaseTwoCPUWith(setMaxprocsFromCPUQuota)
 	if err != nil || source != "environment_override" {
 		t.Fatalf("pinned library source=%q err=%v", source, err)
+	}
+}
+
+// The control timeline cache budget is derived, not written, so a release
+// preflight has to be able to read it off --check-config the way it reads
+// every other derived budget. The running process publishes its occupancy,
+// but that answers a different question and only once a Pod exists.
+func TestResolvedRuntimeFactsCarryTheDerivedTimelineCacheBudget(t *testing.T) {
+	cfg := config.Default()
+	cfg.Input.Mode = config.InputModeGoAccess
+	facts, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived := config.DeriveControlTimelineCache(config.DetectCapacityInputs())
+	if facts.Capacity.ControlTimelineCacheBytes != derived.MaxBytes ||
+		facts.Capacity.ControlTimelineCacheEntries != derived.MaxEntries {
+		t.Fatalf("startup table reports %d bytes / %d entries, this container derives %d / %d",
+			facts.Capacity.ControlTimelineCacheBytes, facts.Capacity.ControlTimelineCacheEntries,
+			derived.MaxBytes, derived.MaxEntries)
+	}
+	// The budget travels with the memory limit it came from, so a table
+	// printed outside a Pod says which container it describes.
+	if facts.MemoryLimitBytes == 0 || facts.MemorySource == "" || derived.MaxBytes == 0 {
+		t.Fatalf("budget has no container provenance: %+v", facts)
+	}
+	var printed bytes.Buffer
+	if err := printResolvedRuntimeFacts(cfg, &printed); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"control_timeline_cache_bytes", "control_timeline_cache_entries"} {
+		if !strings.Contains(printed.String(), field) {
+			t.Fatalf("--check-config table has no %s:\n%s", field, printed.String())
+		}
 	}
 }

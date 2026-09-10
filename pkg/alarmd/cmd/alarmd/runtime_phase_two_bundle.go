@@ -161,7 +161,11 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	observer = observability.Multi(observer, external.AdditionalObserver, targetFlow)
+	// Counted here rather than read back from the metric: the page answers from
+	// the replica's snapshot, so "no budget refused anything" must be sayable
+	// without collection having run.
+	rejectionTally := fleet.NewRejectionTally()
+	observer = observability.Multi(observer, external.AdditionalObserver, targetFlow, rejectionTally)
 	observer = phaseTwoRuntimeObserver(observer)
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), cfg.CompilerLimits())
 	if err != nil {
@@ -416,6 +420,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		}
 	}()
 	var legacyClients []redis.UniversalClient
+	stopDiagnosticWriter := func() {}
 	closeLegacyClients := func() error {
 		var errs []error
 		for _, client := range legacyClients {
@@ -589,8 +594,45 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// that cannot complete, so an object still failing beyond it is one nothing
 	// will resolve on its own.
 	stallAfter := cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration()
+	// An observation window's output comes back where the window was opened.
+	// Its client and pool are separate from the control plane's even though the
+	// connection is the same: a diagnostic burst must not consume connections
+	// the pipeline sized for query permits, and the small pool below is what
+	// keeps that true.
+	diagnosticsClient, err := openProductionRedisWithHook(ctx,
+		phaseTwoDiagnosticsConnection(runtimeConnection), recorder.RedisHook("diagnostics"))
+	if err != nil {
+		// Reaching the store is not a startup requirement: losing it costs the
+		// window read-back and nothing else, and refusing to start would let a
+		// diagnostic dependency stop the pipeline it only describes.
+		observer.Observe(ctx, observability.Observation{
+			Component: observability.ComponentRuntime, Stage: observability.StageStartup,
+			Result: observability.ResultDegraded, Err: fmt.Errorf("open diagnostics redis: %w", err),
+		})
+		diagnosticsClient = nil
+	}
+	var diagnostics *fleet.DiagnosticStore
+	if diagnosticsClient != nil {
+		legacyClients = append(legacyClients, diagnosticsClient)
+		diagnostics, err = fleet.NewDiagnosticStore(diagnosticsClient,
+			productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "fleet"))
+		if err != nil {
+			return nil, err
+		}
+		// The writer outlives the constructor's context and is stopped with the
+		// rest of the Bundle's resources.
+		diagnosticsCtx, stopDiagnostics := context.WithCancel(context.Background())
+		defer func() {
+			if resultErr != nil {
+				stopDiagnostics()
+			}
+		}()
+		stopDiagnosticWriter = stopDiagnostics
+		go diagnostics.Run(diagnosticsCtx)
+		targetFlow.SetSink(diagnostics.Record)
+	}
 	fleetAPI, err := fleet.NewHandler(fleetService, windowStore, external.Now, stallAfter,
-		fleetRangeProvider(queryClient, cfg.PhaseTwo.Access.SelfMetricsSpaceUID))
+		fleetRangeProvider(queryClient, cfg.PhaseTwo.Access.SelfMetricsSpaceUID), diagnostics)
 	if err != nil {
 		return nil, err
 	}
@@ -625,6 +667,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 			return controlClient.Ping(probeCtx).Err()
 		},
 		CloseResources: func(shutdownCtx context.Context) error {
+			stopDiagnosticWriter()
 			stopCMDBIndex()
 			repository.ReleaseSnapshotCache()
 			eventsClosed = true
@@ -651,6 +694,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		// that cannot complete has already been promised an end, so a Progress
 		// cursor older than that describes an object that stopped rather than
 		// one between rounds.
+		capacity:      capacitySnapshotSource(flights, cfg, rejectionTally),
 		restore:       progressRestoreSource(progressStore),
 		staleAfter:    stallAfter,
 		restoreBudget: fleetRestoreBudgetPerPublish,

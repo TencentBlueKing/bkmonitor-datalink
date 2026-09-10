@@ -22,7 +22,7 @@ import (
 func handlerWith(t *testing.T, snapshots []Snapshot, expectation Expectation, replicaList []string) http.Handler {
 	t.Helper()
 	service := mustService(t, stubExpectations{expectation: expectation}, stubRegistry{replicas: replicaList}, stubSnapshots{snapshots: snapshots})
-	handler, err := NewHandler(service, nil, func() time.Time { return now }, 0, nil)
+	handler, err := NewHandler(service, nil, func() time.Time { return now }, 0, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestDetailSaysWhetherNotFoundCanBeTrusted(t *testing.T) {
 		stubRegistry{replicas: replicas()},
 		stubSnapshots{snapshots: snapshotsWithAnomalies(3)},
 	)
-	incompleteHandler, err := NewHandler(service, nil, func() time.Time { return now }, 0, nil)
+	incompleteHandler, err := NewHandler(service, nil, func() time.Time { return now }, 0, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestHealthEndpointCarriesTheCoverageArithmetic(t *testing.T) {
 		stubRegistry{replicas: replicas()},
 		stubSnapshots{snapshots: healthySnapshots()[:1]},
 	)
-	handler, err := NewHandler(service, nil, func() time.Time { return now }, 0, nil)
+	handler, err := NewHandler(service, nil, func() time.Time { return now }, 0, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestHealthEndpointCarriesTheCoverageArithmetic(t *testing.T) {
 }
 
 func TestNewHandlerRequiresAService(t *testing.T) {
-	if _, err := NewHandler(nil, nil, nil, 0, nil); err == nil {
+	if _, err := NewHandler(nil, nil, nil, 0, nil, nil); err == nil {
 		t.Fatal("handler was built without a service")
 	}
 }
@@ -316,7 +316,7 @@ func handlerWithStallBudget(t *testing.T, snapshots []Snapshot, budget time.Dura
 	t.Helper()
 	service := mustService(t, stubExpectations{expectation: Expectation{QueryGroups: 949, Known: true}},
 		stubRegistry{replicas: replicas()}, stubSnapshots{snapshots: snapshots})
-	handler, err := NewHandler(service, nil, func() time.Time { return now }, budget, nil)
+	handler, err := NewHandler(service, nil, func() time.Time { return now }, budget, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

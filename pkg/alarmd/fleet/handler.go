@@ -191,6 +191,7 @@ func NewHandler(
 	now func() time.Time,
 	stallAfter time.Duration,
 	series RangeProvider,
+	diagnostics *DiagnosticStore,
 ) (http.Handler, error) {
 	if service == nil {
 		return nil, errors.New("alarmd fleet: handler requires a service")
@@ -215,6 +216,14 @@ func NewHandler(
 			seriesRange(response, request, series, now)
 		})
 	}
+	// Without a store the route is not mounted at all, so the page is told the
+	// output cannot be read back here rather than being handed an endpoint that
+	// always answers "nothing", which reads the same as "nothing happened".
+	if diagnostics != nil {
+		mux.HandleFunc("/api/diagnostics", func(response http.ResponseWriter, request *http.Request) {
+			diagnosticRecords(response, request, diagnostics)
+		})
+	}
 	mux.HandleFunc("/api/health", func(response http.ResponseWriter, request *http.Request) {
 		view := service.View(request.Context())
 		writeJSON(response, http.StatusOK, map[string]any{
@@ -224,6 +233,11 @@ func NewHandler(
 			"determined": view.Determined,
 			"unknown":    view.Unknown,
 			"gaps":       view.Gaps,
+			// Capacity rides on the verdict rather than getting an endpoint of
+			// its own: the two are answers from one read, and splitting them
+			// would let a page show a verdict from one moment beside occupancy
+			// from another.
+			"capacity": view.Capacity,
 		})
 	})
 	return mux, nil
@@ -491,4 +505,47 @@ func seriesWindowKeys() []string {
 		keys = append(keys, window.Key)
 	}
 	return keys
+}
+
+// diagnosticRecords returns what an observation window recorded for one object.
+//
+// It exists so a window's output comes back where the window was opened. Before
+// it, opening a window changed what was written to the container log and
+// nothing more: whoever opened it had to know to go and search a log index, and
+// the page said nothing about that.
+func diagnosticRecords(response http.ResponseWriter, request *http.Request, store *DiagnosticStore) {
+	queryGroup := request.URL.Query().Get("query_group")
+	if queryGroup == "" {
+		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "query_group is required"})
+		return
+	}
+	limit := 0
+	if raw := request.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			writeJSON(response, http.StatusBadRequest, map[string]string{"error": "limit must be a positive integer"})
+			return
+		}
+		limit = parsed
+	}
+	records, err := store.Load(request.Context(), queryGroup, limit)
+	if err != nil {
+		// The reason is classified rather than passed through: a dependency
+		// error carries the store's address, and anyone who can reach this port
+		// would then learn it.
+		writeJSON(response, http.StatusServiceUnavailable, map[string]any{
+			"error":  "diagnostic records are unavailable",
+			"health": store.Health(),
+		})
+		return
+	}
+	writeJSON(response, http.StatusOK, map[string]any{
+		"query_group": queryGroup,
+		"records":     records,
+		// Health travels with the records so an empty list can be read
+		// correctly: nothing recorded and nothing retained look identical
+		// otherwise, and they call for opposite next steps.
+		"health":    store.Health(),
+		"retention": int(DiagnosticRetention / time.Second),
+	})
 }

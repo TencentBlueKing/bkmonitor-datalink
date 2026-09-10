@@ -237,7 +237,7 @@ func windowHandler(t *testing.T) http.Handler {
 	t.Helper()
 	service := mustService(t, stubExpectations{expectation: Expectation{QueryGroups: 949, Known: true}},
 		stubRegistry{replicas: replicas()}, stubSnapshots{snapshots: healthySnapshots()})
-	handler, err := NewHandler(service, windowStore(t), func() time.Time { return now }, 0, nil)
+	handler, err := NewHandler(service, windowStore(t), func() time.Time { return now }, 0, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -33,6 +33,8 @@ h1{font-size:15px;margin:0 0 2px}
 .cell .k{color:var(--muted);font-size:11px}
 .cell .v{font-size:19px;font-variant-numeric:tabular-nums}
 .cell.hl .v{color:var(--warn)}
+.rec{max-height:340px;overflow:auto;background:var(--bg2,#0d1117);border:1px solid var(--line);
+  border-radius:5px;padding:8px 10px;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
 .gaps{margin:10px 0 0;padding:0;list-style:none}
 .gaps li{border-left:3px solid var(--warn);padding:4px 8px;margin-top:6px;background:rgba(194,129,26,.08);font-size:12px}
 .gaps .kind{font-weight:600}
@@ -152,6 +154,18 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
   </section>
 
   <section class="panel">
+    <h2>容量</h2>
+    <p class="basis">
+      时间口径：与上面的判定同一次读取，来自各副本快照，不经时序库。
+      占用是各副本相加，上限是每副本一份、不相加。
+    </p>
+    <div id="capErr" class="err" hidden></div>
+    <div class="empty" id="capEmpty" hidden>本次读取没有副本上报容量。</div>
+    <div class="grid" id="capCards"></div>
+    <p class="note" id="capNote"></p>
+  </section>
+
+  <section class="panel">
     <h2>观察窗口</h2>
     <p class="basis">
       时间口径：窗口按自身到期时刻失效，最长 <span id="maxTtl">–</span> 分钟；
@@ -163,6 +177,11 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <tbody id="winRows"></tbody>
     </table>
     <div class="empty" id="winEmpty" hidden>当前没有开启的观察窗口。</div>
+    <div id="recWrap" hidden>
+      <p class="basis" id="recBasis"></p>
+      <div id="recErr" class="err" hidden></div>
+      <pre id="recBody" class="rec"></pre>
+    </div>
     <div class="form">
       <input class="qgin" id="qg" placeholder="对象标识（64 位十六进制），可从上表复制" spellcheck="false">
       <input id="by" placeholder="开启人" size="12">
@@ -170,7 +189,8 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <button class="primary" id="open">开启观察</button>
     </div>
     <p class="note">
-      开窗只改变“记录什么”，不改变“执行什么”。它消耗共享诊断预算并自动过期；
+      开窗只改变“记录什么”，不改变“执行什么”。<b>开窗那一刻起就在记录，不必等到期</b>——
+      点“查看记录”即可看到已经产生的内容。它消耗共享诊断预算并自动过期；
       装不下时会被截断并按次上报，不会静默生效。
     </p>
   </section>
@@ -485,6 +505,94 @@ function renderSummary(summary, total) {
     });
 }
 
+// Capacity comes from the same read as the verdict, so the page never has to
+// ask the time series database what this deployment's limits are -- and the two
+// cannot disagree.
+function renderCapacity(cap) {
+  var box = document.getElementById('capCards');
+  box.textContent = '';
+  if (!cap || !cap.replicas) { show('capEmpty', true); text('capNote', ''); return; }
+  show('capEmpty', false);
+  function cell(k, v, hint, warn) {
+    var d = document.createElement('div');
+    d.className = 'cell' + (warn ? ' hl' : '');
+    var kk = document.createElement('div'); kk.className = 'k'; kk.textContent = k;
+    var vv = document.createElement('div'); vv.className = 'v'; vv.textContent = v;
+    d.appendChild(kk); d.appendChild(vv);
+    if (hint) { var h = document.createElement('div'); h.className = 'k'; h.textContent = hint; d.appendChild(h); }
+    box.appendChild(d);
+  }
+  var permitCeiling = cap.permit_budget * cap.replicas;
+  cell('查询许可（此刻）', cap.permits_held + ' / ' + permitCeiling,
+    cap.replicas + ' 个副本各 ' + cap.permit_budget + '；这是瞬时值，不是占用率');
+  cell('排队等许可', String(cap.waiting),
+    '非零说明此刻许可就是瓶颈；为零不代表有余量', cap.waiting > 0);
+  if (cap.memory_limit) {
+    cell('内存', bytes(cap.memory_used) + ' / ' + bytes(cap.memory_limit * cap.replicas),
+      '上限来源 ' + (cap.memory_source || '未知') + '；这是 cgroup 用量，不是 Go 堆');
+  }
+  if (cap.cpu_cores) {
+    cell('CPU', cap.cpu_cores + ' 核 × ' + cap.replicas,
+      cap.throttled_seconds ? ('累计被限流 ' + Math.round(cap.throttled_seconds) + ' 秒') : '未观察到限流');
+  }
+  var rejected = 0, worst = '';
+  Object.keys(cap.rejections || {}).forEach(function (b) {
+    rejected += cap.rejections[b];
+    if (!worst || cap.rejections[b] > cap.rejections[worst]) worst = b;
+  });
+  cell('预算被拒', rejected ? (rejected + ' 次') : '0 次',
+    rejected ? ('最多的是 ' + worst) : '没有任何体量预算拦下过东西', rejected > 0);
+
+  var note = '体量预算是每个 Slot 的上限而不是池子，所以不给占用率——正确读法是“最大的 Slot 逼近到几成”。';
+  var ceilings = Object.keys(cap.budgets || {}).sort().map(function (b) {
+    return b + ' ' + cap.budgets[b];
+  }).join(' · ');
+  if (ceilings) note += ' 当前上限：' + ceilings + '。';
+  if (cap.disagreement && cap.disagreement.length) {
+    note += ' 注意：副本之间对 ' + cap.disagreement.join('、') + ' 的上限不一致，通常意味着发布只滚了一半。';
+  }
+  text('capNote', note);
+}
+
+function bytes(n) {
+  if (!n) return '0';
+  var u = ['B', 'KiB', 'MiB', 'GiB', 'TiB'], i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i ? n.toFixed(1) : String(n)) + ' ' + u[i];
+}
+
+// An observation window's output is readable where the window was opened. It
+// starts the moment the window opens, so this is not a wait-for-the-end report.
+function loadRecords(queryGroup) {
+  show('recWrap', true);
+  show('recErr', false);
+  text('recBasis', '对象 ' + queryGroup.slice(0, 12) + '… 的记录，最新在前。');
+  document.getElementById('recBody').textContent = '读取中…';
+  return api('diagnostics?query_group=' + encodeURIComponent(queryGroup)).then(function (d) {
+    var rs = d.records || [];
+    var h = d.health || {};
+    if (!rs.length) {
+      // An empty list and an unrecorded window look the same and call for
+      // opposite next steps, so the store's own counters are shown instead of
+      // a bare "no data".
+      document.getElementById('recBody').textContent =
+        h.dropped || h.failed
+          ? '这个窗口没有可读记录，但诊断通道丢过 ' + (h.dropped || 0) + ' 条、写失败 ' + (h.failed || 0) +
+            ' 条——“没发生”和“没记下来”不是一回事。'
+          : '窗口开启后这个对象还没有产生记录。它按轮次产生，慢周期对象要等下一轮。';
+      return;
+    }
+    document.getElementById('recBody').textContent = rs.map(function (r) {
+      return JSON.stringify(r);
+    }).join('\n');
+    text('recBasis', '对象 ' + queryGroup.slice(0, 12) + '… 共 ' + rs.length + ' 条，最新在前；保留 ' +
+      Math.round((d.retention || 0) / 60) + ' 分钟，窗口结束后仍可看一段时间。');
+  }).catch(function (e) {
+    document.getElementById('recBody').textContent = '';
+    fail('recErr', e);
+  });
+}
+
 function loadWindows() {
   return api('windows').then(function (d) {
     show('winErr', false);
@@ -506,6 +614,10 @@ function loadWindows() {
       cell(w.opened_at ? new Date(w.opened_at).toLocaleString() : '—');
       cell(w.expires_at ? new Date(w.expires_at).toLocaleString() : '—');
       var td = document.createElement('td');
+      var r = document.createElement('button');
+      r.textContent = '查看记录';
+      r.addEventListener('click', function () { loadRecords(w.query_group); });
+      td.appendChild(r);
       var b = document.createElement('button');
       b.textContent = '结束';
       b.addEventListener('click', function () { closeWindow(w.query_group, b); });

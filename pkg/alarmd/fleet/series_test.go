@@ -36,7 +36,7 @@ func seriesHandler(t *testing.T, provider RangeProvider) http.Handler {
 	t.Helper()
 	service := mustService(t, stubExpectations{expectation: Expectation{QueryGroups: 949, Known: true}},
 		stubRegistry{replicas: replicas()}, stubSnapshots{snapshots: healthySnapshots()})
-	handler, err := NewHandler(service, nil, func() time.Time { return now }, 0, provider)
+	handler, err := NewHandler(service, nil, func() time.Time { return now }, 0, provider, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

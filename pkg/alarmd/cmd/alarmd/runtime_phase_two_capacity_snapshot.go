@@ -31,8 +31,11 @@ func capacitySnapshotSource(
 ) func() *fleet.Capacity {
 	// The same derivation the startup profile and check-config print, so the
 	// page cannot report a ceiling the process is not actually running with.
-	derived := phaseTwoRuntimeCapacity(cfg)
+	// The container the budgets are derived from is read once and used for both
+	// the derivation and the provenance reported next to it, so the page cannot
+	// show a ceiling derived from one container beside the shape of another.
 	inputs := config.DetectCapacityInputs()
+	derived := phaseTwoRuntimeCapacity(cfg, inputs)
 	facts := struct {
 		Capacity         observabilityCapacity
 		MemoryLimitBytes uint64

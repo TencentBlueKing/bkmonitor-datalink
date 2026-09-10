@@ -46,18 +46,26 @@ type RuntimeCapacityFacts struct {
 	// SlotStateMutations and SlotGapMutations are the derived per-Slot caps:
 	// the smaller of the process budget and what StateApplyChunks Store calls
 	// of StoreMaxItems can carry. A Slot above its cap completes UNAVAILABLE.
-	SlotStateMutations  uint64 `json:"slot_state_mutations"`
-	SlotGapMutations    uint64 `json:"slot_gap_mutations"`
-	StateApplyChunks    int    `json:"state_apply_chunks"`
-	StoreMaxValueBytes  int    `json:"store_max_value_bytes"`
-	StoreMaxItems       int    `json:"store_max_items"`
-	EvaluatorMaxPlans   uint64 `json:"evaluator_max_plans"`
-	EvaluatorMaxRecords uint64 `json:"evaluator_max_records"`
-	EvaluatorMaxLevels  uint64 `json:"evaluator_max_levels"`
-	EvidenceBytes       int    `json:"evidence_bytes"`
-	OutputMessageBytes  int    `json:"output_message_bytes"`
-	UQBodyBytes         int64  `json:"uq_body_bytes"`
-	UQSeriesBytes       int64  `json:"uq_series_bytes"`
-	UQSeries            uint64 `json:"uq_series"`
-	UQRecords           uint64 `json:"uq_records"`
+	SlotStateMutations uint64 `json:"slot_state_mutations"`
+	SlotGapMutations   uint64 `json:"slot_gap_mutations"`
+	StateApplyChunks   int    `json:"state_apply_chunks"`
+	StoreMaxValueBytes int    `json:"store_max_value_bytes"`
+	StoreMaxItems      int    `json:"store_max_items"`
+	// ControlTimelineCacheBytes and ControlTimelineCacheEntries bound the
+	// control plane's decoded Schedule timeline cache. They are derived from
+	// the same memory limit as the budgets above, so they belong in the same
+	// table: a preflight has to be able to state what this container's cache
+	// will hold before the Pod exists, which the running process's occupancy
+	// metrics cannot answer.
+	ControlTimelineCacheBytes   int    `json:"control_timeline_cache_bytes"`
+	ControlTimelineCacheEntries int    `json:"control_timeline_cache_entries"`
+	EvaluatorMaxPlans           uint64 `json:"evaluator_max_plans"`
+	EvaluatorMaxRecords         uint64 `json:"evaluator_max_records"`
+	EvaluatorMaxLevels          uint64 `json:"evaluator_max_levels"`
+	EvidenceBytes               int    `json:"evidence_bytes"`
+	OutputMessageBytes          int    `json:"output_message_bytes"`
+	UQBodyBytes                 int64  `json:"uq_body_bytes"`
+	UQSeriesBytes               int64  `json:"uq_series_bytes"`
+	UQSeries                    uint64 `json:"uq_series"`
+	UQRecords                   uint64 `json:"uq_records"`
 }

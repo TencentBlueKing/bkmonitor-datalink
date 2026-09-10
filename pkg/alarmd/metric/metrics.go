@@ -113,8 +113,10 @@ type Recorder struct {
 	healthBound     bool
 	fleetMu          sync.Mutex
 	fleetBound       bool
-	queryPermitMu    sync.Mutex
-	queryPermitBound bool
+	queryPermitMu     sync.Mutex
+	queryPermitBound  bool
+	capacityLoadMu    sync.Mutex
+	capacityLoadBound bool
 	resourceMu      sync.Mutex
 	resourceBound   bool
 	processDuration *prometheus.HistogramVec

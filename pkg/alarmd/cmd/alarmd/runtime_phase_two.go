@@ -161,6 +161,13 @@ func runPhaseTwoApplicationWithDependencies(
 	if err != nil {
 		return fmt.Errorf("derive phase-two runtime profile: %w", err)
 	}
+	// The same profile, published as metrics rather than only printed once at
+	// startup. Every per-Slot budget is derived from the container's memory
+	// limit, and until now a rejection could be observed without any way to see
+	// the ceiling it hit short of getting into the Pod.
+	if err := recorder.BindCapacityLoad(capacityLoadSource(profile)); err != nil {
+		return fmt.Errorf("bind capacity load metrics: %w", err)
+	}
 	if logger == nil {
 		logger = observability.Discard(observability.ComponentRuntime)
 	}

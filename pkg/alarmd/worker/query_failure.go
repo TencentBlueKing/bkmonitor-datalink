@@ -142,10 +142,36 @@ func (coordinator *SlotExecutionCoordinator) observeQueryCompleted(
 		Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted, Result: result,
 		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
 		ReasonCode: reason, Duration: time.Since(started),
-		QueryFailure: facts,
+		QueryFailure: facts, QueryStatus: providerStatusFacts(completion),
 	}
 	defer func() { _ = recover() }()
 	coordinator.ports.Observer.Observe(ctx, observation)
+}
+
+// providerStatusFacts projects every physical query that carried a backend
+// status code, not the first one.
+//
+// providerFailureFacts beside it takes only the first, and that is right for
+// what it feeds: a log line explaining one failure. This feeds a counter, and
+// the difference matters - a log missing an entry is an entry missing, a
+// counter missing an entry is a wrong number. One completion holds one physical
+// query per Plan, so a Query Group with several Plans reports several, and
+// reporting only the first would undercount by however many Plans share the
+// group.
+func providerStatusFacts(completion execution.QueryExecutionCompletion) []observability.QueryStatusFacts {
+	var facts []observability.QueryStatusFacts
+	for _, item := range completion.PhysicalQueries {
+		status := item.RouteFacts.Status
+		if status == nil {
+			continue
+		}
+		outcome := observability.QueryStatusOutcomeUnavailable
+		if status.Allowed {
+			outcome = observability.QueryStatusOutcomeAllowed
+		}
+		facts = append(facts, observability.QueryStatusFacts{Code: status.Code, Outcome: outcome})
+	}
+	return facts
 }
 
 // providerFailureFacts projects the first UNAVAILABLE physical completion onto

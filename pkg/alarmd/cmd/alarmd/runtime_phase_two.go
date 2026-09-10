@@ -328,11 +328,17 @@ type phaseTwoWorkerBundle struct {
 	runtimeConfig *observability.RuntimeConfigFacts
 	dependencies  phaseTwoWorkerBundleDependencies
 
-	registrationMu        sync.Mutex
-	mu                    sync.RWMutex
-	queryGroups           []execution.QueryGroupIdentity
-	assigned              map[execution.QueryGroupIdentity]struct{}
-	runners               map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle
+	registrationMu sync.Mutex
+	mu             sync.RWMutex
+	queryGroups    []execution.QueryGroupIdentity
+	assigned       map[execution.QueryGroupIdentity]struct{}
+	runners        map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle
+	// scheduledRunners is the owned Runner set in Query Group order, rebuilt
+	// only after that set changes. The dispatcher reads it on every pass of its
+	// loop, and a pass advances at most one Slot. runnersRevision names the set
+	// itself, so the dispatcher can tell that it has already walked this one.
+	scheduledRunners      []phaseTwoScheduledRunner
+	runnersRevision       uint64
 	started               bool
 	draining              bool
 	closed                bool
@@ -403,6 +409,20 @@ type phaseTwoRunnerDispatcher struct {
 	preferDelayed  bool
 	oneShot        bool
 	oneShotTargets map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle
+
+	// A pass of the dispatcher loop advances at most one Slot but used to walk
+	// every owned Query Group looking for work to queue. Within one generation
+	// a Runner is queued at most once, so these record what the last walk saw
+	// and let the next pass skip a walk that cannot find anything new.
+	filled           bool
+	filledGeneration uint64
+	filledRunners    uint64
+	filledReleased   uint64
+	filledQueueFull  bool
+	// released counts Runners that have left the active set. A count, not a
+	// size: one Runner leaving while another is dispatched leaves the size
+	// unchanged, and the Runner that left may now be queueable again.
+	released uint64
 }
 
 func newPhaseTwoWorkerBundle(dependencies phaseTwoWorkerBundleDependencies) (*phaseTwoWorkerBundle, error) {
@@ -763,7 +783,8 @@ func (dispatcher *phaseTwoRunnerDispatcher) beginGeneration() {
 	dispatcher.generation++
 	if dispatcher.oneShot && dispatcher.generation == 1 {
 		dispatcher.oneShotTargets = make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle)
-		for _, scheduled := range dispatcher.bundle.snapshotScheduledRunners() {
+		runners, _ := dispatcher.bundle.snapshotScheduledRunners()
+		for _, scheduled := range runners {
 			dispatcher.oneShotTargets[scheduled.queryGroup] = scheduled.lifecycle
 		}
 	}
@@ -773,10 +794,21 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues() {
 	if dispatcher.generation == 0 {
 		return
 	}
-	runners := dispatcher.bundle.snapshotScheduledRunners()
+	runners, revision := dispatcher.bundle.snapshotScheduledRunners()
 	if len(runners) == 0 {
 		return
 	}
+	// A walk that reached every Runner without meeting a full queue queued
+	// everything this generation allows, so until the generation advances, the
+	// owned set changes or a Runner leaves the active set, another walk can
+	// only reject the same Runners again. A full queue keeps the walk: the
+	// delayed queue replaces a later entry with an earlier one.
+	if dispatcher.filled && dispatcher.filledGeneration == dispatcher.generation &&
+		dispatcher.filledRunners == revision && !dispatcher.filledQueueFull &&
+		dispatcher.filledReleased == dispatcher.released {
+		return
+	}
+	queueFull := false
 	start := sort.Search(len(runners), func(index int) bool {
 		return runners[index].queryGroup > dispatcher.cursor
 	})
@@ -796,12 +828,14 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues() {
 		queued := phaseTwoQueuedRunner{scheduled: scheduled, readyAt: readyAt}
 		if readyAt.IsZero() {
 			if len(dispatcher.normal) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.ReadyQueueCapacity {
+				queueFull = true
 				dispatcher.bundle.dependencies.TargetFlow.Record("queue_skipped", string(scheduled.queryGroup), observability.TargetFlowFacts{Decision: "normal_queue_full"})
 				continue
 			}
 			dispatcher.normal = append(dispatcher.normal, queued)
 		} else {
 			if len(dispatcher.delayed) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.RecoveryQueueCapacity {
+				queueFull = true
 				latest := dispatcher.latestDelayedIndex()
 				if latest < 0 || !delayedBefore(queued, dispatcher.delayed[latest]) {
 					dispatcher.bundle.dependencies.TargetFlow.Record("queue_skipped", string(scheduled.queryGroup), observability.TargetFlowFacts{Decision: "delayed_queue_full", ReadyAtMS: diagnosticTimeMS(readyAt)})
@@ -827,6 +861,8 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues() {
 		}
 		dispatcher.cursor = scheduled.queryGroup
 	}
+	dispatcher.filled, dispatcher.filledGeneration, dispatcher.filledRunners = true, dispatcher.generation, revision
+	dispatcher.filledReleased, dispatcher.filledQueueFull = dispatcher.released, queueFull
 }
 
 func (dispatcher *phaseTwoRunnerDispatcher) markDispatched(
@@ -855,6 +891,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) handleResult(
 	scheduled := result.scheduled
 	if dispatcher.active[scheduled.queryGroup] == scheduled.lifecycle {
 		delete(dispatcher.active, scheduled.queryGroup)
+		dispatcher.released++
 	}
 	if dispatcher.oneShotTargets[scheduled.queryGroup] == scheduled.lifecycle {
 		delete(dispatcher.oneShotTargets, scheduled.queryGroup)
@@ -953,9 +990,23 @@ func (dispatcher *phaseTwoRunnerDispatcher) dropStaleQueued() {
 	}
 }
 
-func (bundle *phaseTwoWorkerBundle) snapshotScheduledRunners() []phaseTwoScheduledRunner {
+// snapshotScheduledRunners returns the owned Runners in Query Group order. The
+// slice is shared and must not be written through: callers copy the entry they
+// take. Building it costs a sort of every owned Query Group, and the dispatcher
+// asks for it on every pass of a loop that advances at most one Slot, so it is
+// rebuilt only after the owned set changes.
+func (bundle *phaseTwoWorkerBundle) snapshotScheduledRunners() ([]phaseTwoScheduledRunner, uint64) {
 	bundle.mu.RLock()
-	defer bundle.mu.RUnlock()
+	ordered, revision := bundle.scheduledRunners, bundle.runnersRevision
+	bundle.mu.RUnlock()
+	if ordered != nil {
+		return ordered, revision
+	}
+	bundle.mu.Lock()
+	defer bundle.mu.Unlock()
+	if bundle.scheduledRunners != nil {
+		return bundle.scheduledRunners, bundle.runnersRevision
+	}
 	runners := make([]phaseTwoScheduledRunner, 0, len(bundle.runners))
 	for queryGroup, lifecycle := range bundle.runners {
 		runners = append(runners, phaseTwoScheduledRunner{queryGroup: queryGroup, lifecycle: lifecycle})
@@ -963,7 +1014,8 @@ func (bundle *phaseTwoWorkerBundle) snapshotScheduledRunners() []phaseTwoSchedul
 	sort.Slice(runners, func(left, right int) bool {
 		return runners[left].queryGroup < runners[right].queryGroup
 	})
-	return runners
+	bundle.scheduledRunners = runners
+	return runners, bundle.runnersRevision
 }
 
 func (bundle *phaseTwoWorkerBundle) isCurrentScheduledRunner(scheduled phaseTwoScheduledRunner) bool {
@@ -1002,7 +1054,7 @@ func (bundle *phaseTwoWorkerBundle) Shutdown(ctx context.Context) error {
 		runners := make([]*phaseTwoQueryGroupLifecycle, 0, len(bundle.runners))
 		queryGroups := make([]execution.QueryGroupIdentity, 0, len(bundle.runners))
 		for queryGroup, lifecycle := range bundle.runners {
-			delete(bundle.runners, queryGroup)
+			bundle.removeRunnerLocked(queryGroup)
 			lifecycle.cancel()
 			runners = append(runners, lifecycle)
 			queryGroups = append(queryGroups, queryGroup)
@@ -1244,7 +1296,7 @@ func (bundle *phaseTwoWorkerBundle) applyAssignment(
 		if _, keep := desired[queryGroup]; keep {
 			continue
 		}
-		delete(bundle.runners, queryGroup)
+		bundle.removeRunnerLocked(queryGroup)
 		removed[queryGroup] = lifecycle
 	}
 	bundle.setOwnedQueryGroupsLocked()
@@ -1395,8 +1447,7 @@ func (bundle *phaseTwoWorkerBundle) startQueryGroup(
 	}
 	leaseCtx, cancel := context.WithCancel(bundle.maintenanceCtx)
 	lifecycle := &phaseTwoQueryGroupLifecycle{runner: runner, cancel: cancel, done: make(chan struct{})}
-	bundle.runners[queryGroup] = lifecycle
-	bundle.setOwnedQueryGroupsLocked()
+	bundle.setRunnerLocked(queryGroup, lifecycle)
 	bundle.maintenanceWG.Add(1)
 	bundle.mu.Unlock()
 	bundle.observeOwnership(ctx, observability.StageTakeoverCompleted, observability.ResultSuccess, queryGroup, nil)
@@ -1479,8 +1530,7 @@ func (bundle *phaseTwoWorkerBundle) detachQueryGroup(
 	if bundle.runners[queryGroup] != lifecycle {
 		return false
 	}
-	delete(bundle.runners, queryGroup)
-	bundle.setOwnedQueryGroupsLocked()
+	bundle.removeRunnerLocked(queryGroup)
 	return true
 }
 
@@ -1497,7 +1547,28 @@ func (bundle *phaseTwoWorkerBundle) ownedQueryGroups() []execution.QueryGroupIde
 	return owned
 }
 
+// setRunnerLocked and removeRunnerLocked are the only ways the owned Runner
+// set changes. Both keep what is derived from that set - the owned count and
+// the dispatcher's ordered view - in step with it, which is why no caller
+// writes the map itself.
+func (bundle *phaseTwoWorkerBundle) setRunnerLocked(
+	queryGroup execution.QueryGroupIdentity,
+	lifecycle *phaseTwoQueryGroupLifecycle,
+) {
+	bundle.runners[queryGroup] = lifecycle
+	bundle.setOwnedQueryGroupsLocked()
+}
+
+func (bundle *phaseTwoWorkerBundle) removeRunnerLocked(queryGroup execution.QueryGroupIdentity) {
+	delete(bundle.runners, queryGroup)
+	bundle.setOwnedQueryGroupsLocked()
+}
+
+// setOwnedQueryGroupsLocked follows every change to the owned Runner set, so
+// it is also where the dispatcher's ordered view of that set is dropped.
 func (bundle *phaseTwoWorkerBundle) setOwnedQueryGroupsLocked() {
+	bundle.scheduledRunners = nil
+	bundle.runnersRevision++
 	if bundle.dependencies.Recorder != nil {
 		bundle.dependencies.Recorder.SetOwnedQueryGroups(len(bundle.runners))
 	}

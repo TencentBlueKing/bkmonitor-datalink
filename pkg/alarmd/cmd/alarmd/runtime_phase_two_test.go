@@ -1011,7 +1011,7 @@ func TestPhaseTwoWorkerBundleDispatcherDoesNotHoldQueryRecoveryAllowanceAcrossRu
 				return time.Time{}
 			}
 		}
-		bundle.runners[queryGroup] = &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
+		bundle.setRunnerLocked(queryGroup, &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
 			operation:   operation,
 			nextReadyAt: nextReadyAt,
 			run: func(context.Context) (execution.SlotExecutionResult, bool, error) {
@@ -1020,9 +1020,9 @@ func TestPhaseTwoWorkerBundleDispatcherDoesNotHoldQueryRecoveryAllowanceAcrossRu
 				recoveryRan <- struct{}{}
 				return execution.SlotExecutionResult{}, false, nil
 			},
-		}}
+		}})
 	}
-	bundle.runners["query-group-c-source-retry-normal"] = &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
+	bundle.setRunnerLocked("query-group-c-source-retry-normal", &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
 		operation: execution.OperationNormal,
 		nextReadyAt: func() time.Time {
 			if normalDelayed.Load() {
@@ -1035,7 +1035,7 @@ func TestPhaseTwoWorkerBundleDispatcherDoesNotHoldQueryRecoveryAllowanceAcrossRu
 			normalStartOnce.Do(func() { close(normalStarted) })
 			return execution.SlotExecutionResult{}, false, nil
 		},
-	}}
+	}})
 	bundle.mu.Unlock()
 	wake <- struct{}{}
 	waitSignal(t, normalStarted, "actual Normal operation after delayed source retry")
@@ -1150,7 +1150,7 @@ func TestPhaseTwoWorkerBundleDispatcherDropsReplacedLifecycleBeforeDispatch(t *t
 	go func() { done <- bundle.runScheduledOnce(context.Background()) }()
 	waitSignal(t, blockingStarted, "blocking Query Group")
 	bundle.mu.Lock()
-	bundle.runners["query-group-z-replaced"] = newLifecycle
+	bundle.setRunnerLocked("query-group-z-replaced", newLifecycle)
 	bundle.mu.Unlock()
 	close(blockingRelease)
 	if err := <-done; err != nil {
@@ -1161,7 +1161,7 @@ func TestPhaseTwoWorkerBundleDispatcherDropsReplacedLifecycleBeforeDispatch(t *t
 	}
 	newCallsBeforeNextTick := newCalls.Load()
 	bundle.mu.Lock()
-	delete(bundle.runners, "query-group-a-blocking")
+	bundle.removeRunnerLocked("query-group-a-blocking")
 	bundle.mu.Unlock()
 	if err := bundle.runScheduledOnce(context.Background()); err != nil {
 		t.Fatalf("runScheduledOnce(current replacement) error = %v", err)

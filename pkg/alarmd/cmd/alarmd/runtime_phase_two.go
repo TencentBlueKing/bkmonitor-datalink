@@ -954,23 +954,21 @@ func (dispatcher *phaseTwoRunnerDispatcher) handleResult(
 	}
 	readyAt := scheduled.lifecycle.runner.NextReadyAt()
 	if readyAt.IsZero() {
-		// A Runner that was active when the generation's walk passed it was
-		// skipped without being offered a place, and the walk does not come
-		// back. It is offered one here instead, on the same terms the walk
-		// would have used: not if it already ran this generation, and not if
-		// the queue is full.
-		last := dispatcher.lastQueued[scheduled.queryGroup]
-		if last.lifecycle == scheduled.lifecycle && last.generation == dispatcher.generation {
-			return
-		}
-		if len(dispatcher.normal) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.ReadyQueueCapacity {
-			return
-		}
-		dispatcher.normal = append(dispatcher.normal, phaseTwoQueuedRunner{scheduled: scheduled})
-		dispatcher.queued[scheduled.queryGroup] = scheduled.lifecycle
-		dispatcher.lastQueued[scheduled.queryGroup] = phaseTwoRunnerGeneration{
-			lifecycle: scheduled.lifecycle, generation: dispatcher.generation,
-		}
+		// A Runner that returns is not queued here. The walk is what hands out
+		// places in the ready queue, and a Runner that just returned is always
+		// the first one able to ask for one: it asks before the walk resumes,
+		// and before every Query Group the walk has not reached. Granting it
+		// there gives the queue to whichever Query Groups finish fastest and
+		// starves the tail of the rotation.
+		//
+		// Nothing is lost by waiting. A Runner the walk passed over as active
+		// spent that generation's turn without being offered a place, and the
+		// next generation's walk offers it again when its turn comes round;
+		// waiting for your next turn is what a rotation means. A one-shot run
+		// has only the one generation, but there the walk visits each Query
+		// Group exactly once and a Query Group can only be active after the
+		// walk has already queued it, so it is never passed over as active in
+		// the first place.
 		return
 	}
 	if len(dispatcher.delayed) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.RecoveryQueueCapacity {

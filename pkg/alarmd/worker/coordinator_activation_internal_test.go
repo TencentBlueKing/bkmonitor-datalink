@@ -24,8 +24,10 @@ func TestFinalizePreparedPreservesStableSiblingReceiptsDuringForceWarmingActivat
 	changedPlan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "changed"}
 	stablePlan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "stable"}
 	duePlans := []execution.DuePlan{
-		{Identity: changedPlan, StateGeneration: "old-changed", StateApplyEpoch: 1, ScheduleRevision: "old-changed-schedule"},
-		{Identity: stablePlan, StateGeneration: "stable-generation", StateApplyEpoch: 1, ScheduleRevision: "stable-schedule"},
+		{Identity: changedPlan, CompiledPlan: internalCompiledPlan(t, "changed", 1, 60),
+			StateGeneration: "old-changed", StateApplyEpoch: 1, ScheduleRevision: "old-changed-schedule"},
+		{Identity: stablePlan, CompiledPlan: internalCompiledPlan(t, "stable", 1, 60),
+			StateGeneration: "stable-generation", StateApplyEpoch: 1, ScheduleRevision: "stable-schedule"},
 	}
 	applyVersion, err := execution.BuildApplyVersion(contractRef, 1)
 	if err != nil {
@@ -92,6 +94,9 @@ type activationSiblingPorts struct {
 	stateApplied    []execution.StateKeyIdentity
 	guards          []execution.PlanGapMutation
 	progressCommits int
+	// Retention as it reached the store, per admission and per apply call.
+	admittedRetention [][]execution.StateRetentionRequirement
+	appliedRetention  [][]execution.StateRetentionRequirement
 }
 
 func (*activationSiblingPorts) Sequence(ctx context.Context, _ execution.SequencingScope, run func(context.Context) error) error {
@@ -158,7 +163,8 @@ func (*activationSiblingPorts) LoadRuntime(context.Context, execution.StatePrefl
 	return execution.StatePreflightResult{}, nil
 }
 
-func (*activationSiblingPorts) AdmitRuntime(_ context.Context, request execution.StateApplyRequest) (execution.StateAdmissionResult, error) {
+func (ports *activationSiblingPorts) AdmitRuntime(_ context.Context, request execution.StateApplyRequest) (execution.StateAdmissionResult, error) {
+	ports.admittedRetention = append(ports.admittedRetention, request.Retention)
 	items := make([]execution.StateAdmissionItemResult, len(request.Items))
 	for index, item := range request.Items {
 		items[index] = execution.StateAdmissionItemResult{Identity: item.Identity, Status: execution.StateAdmissionAccepted}
@@ -167,6 +173,7 @@ func (*activationSiblingPorts) AdmitRuntime(_ context.Context, request execution
 }
 
 func (ports *activationSiblingPorts) ApplyRuntime(_ context.Context, request execution.StateApplyRequest) (execution.StateApplyResult, error) {
+	ports.appliedRetention = append(ports.appliedRetention, request.Retention)
 	items := make([]execution.StateApplyItemResult, len(request.Items))
 	for index, item := range request.Items {
 		ports.stateApplied = append(ports.stateApplied, item.Identity)

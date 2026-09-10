@@ -120,8 +120,10 @@ func newPlanIsolationFixture(t *testing.T, eventErr error) *planIsolationFixture
 	failedPlan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "failed"}
 	healthyPlan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "healthy"}
 	duePlans := []execution.DuePlan{
-		{Identity: failedPlan, StateGeneration: "failed-generation", StateApplyEpoch: 1, ScheduleRevision: "failed-schedule"},
-		{Identity: healthyPlan, StateGeneration: "healthy-generation", StateApplyEpoch: 1, ScheduleRevision: "healthy-schedule"},
+		{Identity: failedPlan, CompiledPlan: internalCompiledPlan(t, "failed", 1, 60),
+			StateGeneration: "failed-generation", StateApplyEpoch: 1, ScheduleRevision: "failed-schedule"},
+		{Identity: healthyPlan, CompiledPlan: internalCompiledPlan(t, "healthy", 1, 60),
+			StateGeneration: "healthy-generation", StateApplyEpoch: 1, ScheduleRevision: "healthy-schedule"},
 	}
 	applyVersion, err := execution.BuildApplyVersion(contractRef, 1)
 	if err != nil {

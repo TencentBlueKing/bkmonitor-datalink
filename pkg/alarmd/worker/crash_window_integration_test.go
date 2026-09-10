@@ -382,7 +382,7 @@ func openG3AStateStore(t *testing.T, address, prefix string) (*state.ExecutionSt
 		t.Fatalf("create state router: %v", err)
 	}
 	store, err := state.NewExecutionStore(state.ExecutionStoreOptions{
-		Prefix: prefix, Router: router, MaxValueBytes: 1 << 20, MaxItemsPerCall: 16, RuntimeTTL: time.Minute,
+		Prefix: prefix, Router: router, MaxValueBytes: 1 << 20, MaxItemsPerCall: 16, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute,
 	})
 	if err != nil {
 		_ = backend.Close()

@@ -30,7 +30,12 @@ type ExecutionStoreOptions struct {
 	Router          StorageRouter
 	MaxValueBytes   int
 	MaxItemsPerCall int
-	RuntimeTTL      time.Duration
+	// MinTTL, MaxTTL and RestartMargin bound the write TTL the store derives
+	// per apply request from that request's Plan retention. MaxTTL is the
+	// ceiling a derived TTL may not exceed, not the value keys are written at.
+	MinTTL        time.Duration
+	MaxTTL        time.Duration
+	RestartMargin time.Duration
 	// FenceKeys locates the ownership lease that fenced Runtime State writes
 	// verify inside storage. It is optional: without it ApplyRuntimeFenced
 	// applies unfenced and the admission-time fence check stands alone.
@@ -66,10 +71,38 @@ type gapEnvelope struct {
 
 func NewExecutionStore(options ExecutionStoreOptions) (*ExecutionStore, error) {
 	if options.Prefix == "" || options.Router == nil || options.MaxValueBytes <= 0 ||
-		options.MaxItemsPerCall <= 0 || options.RuntimeTTL <= 0 {
+		options.MaxItemsPerCall <= 0 || options.MinTTL <= 0 || options.MaxTTL < options.MinTTL ||
+		options.RestartMargin < 0 {
 		return nil, fmt.Errorf("state: invalid execution store options")
 	}
 	return &ExecutionStore{options: options, witnesses: newRuntimeWitnessCache()}, nil
+}
+
+// runtimeTTL derives how long the keys of one apply request have to survive
+// from that request's Plan retention. StateTTL owns the formula so the two
+// stores cannot drift; the execution store only supplies the deployment bounds.
+func (store *ExecutionStore) runtimeTTL(retention []execution.StateRetentionRequirement) (time.Duration, error) {
+	requirements := make([]LevelRequirement, len(retention))
+	for index, level := range retention {
+		// The window facts are left empty: StateTTL reads only the retention,
+		// and it must read exactly the retention the window was built from.
+		requirements[index] = NewLevelRequirement(level, "", 0)
+	}
+	return StateTTL(requirements, store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL)
+}
+
+// rejectRuntimeBudget reports a retention need no configured TTL can satisfy.
+// It is a deterministic budget rejection per item, like an oversize blob, so
+// the Slot records which Plan was refused and why instead of failing the whole
+// batch with an opaque error.
+func rejectRuntimeBudget(items []execution.StateMutation) []execution.StateApplyItemResult {
+	results := make([]execution.StateApplyItemResult, len(items))
+	for index, mutation := range items {
+		results[index] = execution.StateApplyItemResult{Identity: mutation.Identity,
+			Status:     execution.StateApplyDeterministicInvalid,
+			ReasonCode: execution.ReasonCode(contract.ReasonStateBudgetExceeded)}
+	}
+	return results
 }
 
 // LoadRuntime reads the requested keys in bounded MGET batches, grouping
@@ -108,6 +141,18 @@ func (store *ExecutionStore) LoadRuntime(ctx context.Context, request execution.
 func (store *ExecutionStore) AdmitRuntime(_ context.Context, request execution.StateApplyRequest) (execution.StateAdmissionResult, error) {
 	if err := request.Contract.Validate(); err != nil || len(request.Items) == 0 || len(request.Items) > store.options.MaxItemsPerCall {
 		return execution.StateAdmissionResult{}, fmt.Errorf("state: invalid runtime admission request")
+	}
+	if _, err := store.runtimeTTL(request.Retention); err != nil {
+		if !errors.Is(err, ErrStateBudget) {
+			return execution.StateAdmissionResult{}, fmt.Errorf("state: invalid runtime admission request: %w", err)
+		}
+		result := execution.StateAdmissionResult{Items: make([]execution.StateAdmissionItemResult, len(request.Items))}
+		for index, mutation := range request.Items {
+			result.Items[index] = execution.StateAdmissionItemResult{Identity: mutation.Identity,
+				Status:     execution.StateAdmissionDeterministicInvalid,
+				ReasonCode: execution.ReasonCode(contract.ReasonStateBudgetExceeded)}
+		}
+		return result, result.Validate()
 	}
 	result := execution.StateAdmissionResult{Items: make([]execution.StateAdmissionItemResult, len(request.Items))}
 	for index, mutation := range request.Items {

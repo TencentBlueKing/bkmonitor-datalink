@@ -386,3 +386,27 @@ func TestPhaseOneAssetPoliciesFreezeReuseCompatibilityAndExit(t *testing.T) {
 		t.Fatal("PhaseOneAssetPolicies() exposed mutable package state")
 	}
 }
+
+// TestRestartMarginCoversTheReplayWindow guards the one config pair the derived
+// Runtime State TTL depends on. A replayed Slot recognises its own earlier
+// write and reports it as already applied rather than emitting the same events
+// again, which needs the key it wrote to still be there. The shortest TTL any
+// Plan can derive is the restart margin plus one evaluation interval, so a
+// margin under max_replay_age would let the shortest-retention Plans lose that
+// proof inside the replay window while every other Plan kept it.
+func TestRestartMarginCoversTheReplayWindow(t *testing.T) {
+	cfg := completePhaseTwoProductionConfig(validGoAccessConfigObject())
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("the default configuration does not validate: %v", err)
+	}
+	if cfg.Redis.RestartMargin.Duration() < cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration() {
+		t.Fatalf("default restart_margin %s does not cover max_replay_age %s",
+			cfg.Redis.RestartMargin.Duration(), cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration())
+	}
+	narrowed := completePhaseTwoProductionConfig(validGoAccessConfigObject())
+	narrowed.Redis.RestartMargin = Duration(narrowed.PhaseTwo.Scheduler.MaxReplayAge.Duration() - time.Second)
+	err := narrowed.Validate()
+	if err == nil || !strings.Contains(err.Error(), "restart_margin") {
+		t.Fatalf("a restart margin narrower than the replay window was accepted: %v", err)
+	}
+}

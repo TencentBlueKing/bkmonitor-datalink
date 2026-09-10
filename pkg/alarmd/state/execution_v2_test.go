@@ -35,7 +35,7 @@ func (backend *casMemoryBackend) MGet(_ context.Context, keys []string) ([][]byt
 func TestIncrementalGapLoadStopsBeforeNextReadOnRejectionAndCancel(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
 	router, _ := NewFixedRouter("target", backend)
-	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, RuntimeTTL: time.Hour})
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	loader, ok := any(store).(interface {
 		LoadGapsInto(context.Context, execution.GapLoadRequest, func(execution.GapGuardSnapshot) error) error
 	})
@@ -130,7 +130,7 @@ func TestPlanGapIdentityHasNoSeriesOrLevel(t *testing.T) {
 func TestApplyGapRejectsInvalidIdentityWithoutCallingStorage(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
 	router, _ := NewFixedRouter("monitor-01", backend)
-	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, RuntimeTTL: time.Hour})
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	identity := execution.PlanGapIdentity{Plan: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9:1"}, StateGeneration: "generation"}
 	mutation, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{Identity: identity, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1", Scopes: []execution.GapScopeMutation{{Kind: execution.GapOpen, ReasonCode: execution.ReasonCode(contract.ReasonHistoryGapped), RequiredFullSlots: 2}}})
 	if err != nil {
@@ -148,7 +148,7 @@ func TestApplyGapRejectsInvalidIdentityWithoutCallingStorage(t *testing.T) {
 func TestExecutionStoreDoesNotResetCorruptRuntimeState(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
 	router, _ := NewFixedRouter("monitor-01", backend)
-	store, err := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, RuntimeTTL: time.Hour})
+	store, err := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestExecutionStoreDoesNotResetCorruptRuntimeState(t *testing.T) {
 	if buildErr != nil {
 		t.Fatal(buildErr)
 	}
-	applied, applyErr := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Items: []execution.StateMutation{mutation}})
+	applied, applyErr := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: []execution.StateMutation{mutation}})
 	if applyErr != nil || applied.Items[0].Status != execution.StateApplyDeterministicInvalid {
 		t.Fatalf("ApplyRuntime(corrupt) = (%+v, %v)", applied, applyErr)
 	}
@@ -211,7 +211,7 @@ func TestGapWarmupCountsFullSlotsMonotonicallyAndResetsOnScheduleChange(t *testi
 func TestExecutionStoreExactCASAndReplay(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
 	router, _ := NewFixedRouter("monitor-01", backend)
-	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, RuntimeTTL: time.Hour})
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	mutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: stateIdentityV2(), ApplyVersion: applyVersion(),
 		AffectedRecords: []execution.RecordAnchor{{RecordID: "r1", SourceTime: 60}},
 		Levels:          []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}},
@@ -220,7 +220,7 @@ func TestExecutionStoreExactCASAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := execution.StateApplyRequest{Contract: frozenRef(), Items: []execution.StateMutation{mutation}}
+	request := execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: []execution.StateMutation{mutation}}
 	first, err := store.ApplyRuntime(context.Background(), request)
 	if err != nil || first.Items[0].Status != execution.StateApplied {
 		t.Fatalf("first ApplyRuntime() = (%+v, %v)", first, err)
@@ -239,13 +239,13 @@ func TestExecutionStoreAdmissionAndCASBudgetStatuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := execution.StateApplyRequest{Contract: frozenRef(), Items: []execution.StateMutation{mutation}}
-	small, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 1, MaxItemsPerCall: 4, RuntimeTTL: time.Hour})
+	request := execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: []execution.StateMutation{mutation}}
+	small, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 1, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	admission, err := small.AdmitRuntime(context.Background(), request)
 	if err != nil || admission.Items[0].Status != execution.StateAdmissionDeterministicInvalid || admission.Items[0].ReasonCode != execution.ReasonCode(contract.ReasonStateBudgetExceeded) {
 		t.Fatalf("AdmitRuntime() = (%+v, %v)", admission, err)
 	}
-	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, RuntimeTTL: time.Hour})
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	applied, err := store.ApplyRuntime(context.Background(), request)
 	if err != nil || applied.Items[0].Status != execution.StateApplyCASConflict {
 		t.Fatalf("ApplyRuntime(conflict) = (%+v, %v)", applied, err)
@@ -268,7 +268,7 @@ func TestRuntimeOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
 	goodKey, _ := RuntimeStateKeyV2("alarmd", goodIdentity)
 	badKey, _ := RuntimeStateKeyV2("alarmd", badIdentity)
 	backend.values[goodKey], backend.values[badKey] = goodRaw, []byte(strings.Repeat("x", limit+1))
-	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: limit, MaxItemsPerCall: 4, RuntimeTTL: time.Hour})
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: limit, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	loaded, err := store.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: []execution.StatePreflightItem{{Identity: goodIdentity, ApplyVersion: applyVersion()}, {Identity: badIdentity, ApplyVersion: applyVersion()}}})
 	if err != nil || loaded.Items[0].Status != execution.StateFoundReady || loaded.Items[1].Status != execution.StateDeterministicInvalid {
 		t.Fatalf("LoadRuntime(mixed) = (%+v, %v)", loaded, err)
@@ -280,7 +280,7 @@ func TestRuntimeOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := append([]byte(nil), backend.values[badKey]...)
-	applied, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Items: []execution.StateMutation{badMutation}})
+	applied, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: []execution.StateMutation{badMutation}})
 	if err != nil || applied.Items[0].Status != execution.StateApplyDeterministicInvalid || string(backend.values[badKey]) != string(original) {
 		t.Fatalf("ApplyRuntime(oversize) = (%+v, %v)", applied, err)
 	}
@@ -289,7 +289,7 @@ func TestRuntimeOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
 func TestExecutionStorePlanGapRoundTripAndTombstone(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
 	router, _ := NewFixedRouter("monitor-01", backend)
-	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, RuntimeTTL: time.Hour})
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	identity := execution.PlanGapIdentity{Plan: stateIdentityV2().Plan, StateGeneration: "generation"}
 	opened, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{Identity: identity, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1",
 		Scopes: []execution.GapScopeMutation{{Scope: execution.GapScope{LevelID: 1, HasLevel: true}, Kind: execution.GapOpen,
@@ -363,7 +363,7 @@ func TestGapOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
 	goodKey, _ := PlanGapKeyV2("alarmd", good)
 	badKey, _ := PlanGapKeyV2("alarmd", bad)
 	backend.values[goodKey], backend.values[badKey] = goodRaw, []byte(strings.Repeat("x", limit+1))
-	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: limit, MaxItemsPerCall: 4, RuntimeTTL: time.Hour})
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: limit, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	loaded, err := store.LoadGaps(context.Background(), execution.GapLoadRequest{Contract: frozenRef(), Items: []execution.PlanGapLoadItem{{Identity: good, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1"}, {Identity: bad, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1"}}})
 	if err != nil || loaded.Items[0].Status != execution.GapFound || loaded.Items[1].Status != execution.GapTerminal {
 		t.Fatalf("LoadGaps(mixed) = (%+v, %v)", loaded, err)
@@ -383,6 +383,13 @@ func TestGapOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
 
 func frozenRef() execution.FrozenExecutionContractRef {
 	return execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{QueryGroup: "q", EvaluationTime: 60}, SnapshotRevision: "snapshot", QueryRevision: "query", ScheduleRevision: "schedule", ScheduleSegmentStart: 60, DuePlanSetDigest: "plans"}
+}
+
+// testRetention is the Plan retention the apply requests in these tests carry:
+// one Level keeping five one-minute points, so the derived TTL is five minutes
+// plus the store's restart margin.
+func testRetention() []execution.StateRetentionRequirement {
+	return []execution.StateRetentionRequirement{{LevelID: 1, RetentionPoints: 5, EvaluationInterval: time.Minute}}
 }
 func applyVersion() execution.ApplyVersion {
 	return execution.ApplyVersion{StateApplyEpoch: 1, EvaluationTime: 60, SlotDigest: "slot"}

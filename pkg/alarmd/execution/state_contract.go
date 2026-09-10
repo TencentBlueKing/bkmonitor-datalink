@@ -98,6 +98,61 @@ type RuntimeLevelStateMutation struct {
 	LastProcessedEventTime  int64
 }
 
+// StateRetentionRequirement is one Level's retention need. It is the single
+// source of the three facts two separate calculations both depend on: the
+// retention horizon a state window prunes to, and the TTL a state write is
+// stored with. Those two are only safely ordered while they read the same
+// values, so nothing may rebuild these facts from somewhere else.
+//
+// It is storage policy input only: it never enters the mutation digest and
+// never reinterprets typed state, which is why it travels beside the mutations
+// in an apply request rather than inside them.
+type StateRetentionRequirement struct {
+	LevelID            uint32
+	RetentionPoints    uint32
+	EvaluationInterval time.Duration
+	LatenessTolerance  time.Duration
+}
+
+// DeriveStateRetentionRequirement projects the retention need of every Level of
+// a compiled Plan. Callers pass the Plan frozen with the Slot, which is the
+// Plan the evaluation applied; resolving it again from the live catalog could
+// size a TTL against a retention the stored window was never built with.
+//
+// This is the only producer of these values. The window prunes to
+// (RetentionPoints-1)*EvaluationInterval + LatenessTolerance and the write TTL
+// is RetentionPoints*EvaluationInterval + LatenessTolerance + restart margin,
+// so the TTL outlives the horizon by an evaluation interval plus that margin -
+// but only because both read this one requirement. Two independent
+// constructions could disagree on any field and invert that ordering, which
+// would expire keys while their window still had to keep points.
+//
+// EvaluationInterval is the Level's own trigger step, the interval its window
+// is measured in; the compiler requires that step to equal the Plan's
+// evaluation interval. LatenessTolerance is zero because phase two builds its
+// state windows without lateness widening: raising it widens which late points
+// a window still accepts, so it has to change here, for both calculations at
+// once, and never on one side alone.
+func DeriveStateRetentionRequirement(plan *strategy.CompiledPlan) ([]StateRetentionRequirement, error) {
+	if plan == nil {
+		return nil, errors.New("alarmd execution: compiled Plan is required to derive State retention")
+	}
+	levels := plan.Levels()
+	if len(levels) == 0 {
+		return nil, errors.New("alarmd execution: Plan has no Level to derive State retention from")
+	}
+	requirements := make([]StateRetentionRequirement, len(levels))
+	for index, level := range levels {
+		requirements[index] = StateRetentionRequirement{
+			LevelID:            level.Definition().LevelID,
+			RetentionPoints:    level.StateRequirement().RetentionPoints,
+			EvaluationInterval: time.Duration(level.Trigger().StepSeconds) * time.Second,
+			LatenessTolerance:  0,
+		}
+	}
+	return requirements, nil
+}
+
 // RuntimeLevelContractRef is the sole source for persisted Level compatibility
 // and warmup identities. Evaluators and codecs must not invent these strings.
 type RuntimeLevelContractRef struct {

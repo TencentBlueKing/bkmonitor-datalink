@@ -555,6 +555,16 @@ func (c Config) validateGoAccessRuntime() error {
 	if err := validateRuntimePrefixIsolation(c.Redis.StatePrefix, c.PhaseTwo.Control.StrategyCachePrefix); err != nil {
 		return err
 	}
+	// A replayed Slot recognises its own earlier write and reports it as
+	// already applied instead of emitting the same events twice. That only
+	// works while the key it wrote still exists. Runtime State TTLs are derived
+	// from Plan retention plus the restart margin, so the shortest one any Plan
+	// can produce is the margin plus one evaluation interval: a margin below
+	// max_replay_age would let the shortest-retention Plans lose that proof
+	// inside the replay window, silently and only for them.
+	if c.Redis.RestartMargin.Duration() < c.PhaseTwo.Scheduler.MaxReplayAge.Duration() {
+		return errors.New("redis restart_margin must cover phase_two scheduler max_replay_age")
+	}
 	budget := c.PhaseTwo.Coordinator
 	// One Slot's State or Gap mutations are applied in successive Store calls
 	// of at most max_keys_per_batch items, up to StateApplyMaxChunks calls.

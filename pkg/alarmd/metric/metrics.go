@@ -106,25 +106,25 @@ type BuildInfo struct {
 }
 
 type Recorder struct {
-	registry        *prometheus.Registry
-	lifecycleMu     sync.Mutex
-	lifecycleBound  bool
-	healthMu        sync.Mutex
-	healthBound     bool
+	registry         *prometheus.Registry
+	lifecycleMu      sync.Mutex
+	lifecycleBound   bool
+	healthMu         sync.Mutex
+	healthBound      bool
 	fleetMu          sync.Mutex
 	fleetBound       bool
 	queryPermitMu    sync.Mutex
 	queryPermitBound bool
-	resourceMu      sync.Mutex
-	resourceBound   bool
-	processDuration *prometheus.HistogramVec
-	processTotal    *prometheus.CounterVec
-	recordsTotal    *prometheus.CounterVec
-	pipelineLatency *prometheus.HistogramVec
-	shadowCompare   *prometheus.CounterVec
-	observations    observationMetrics
-	receipts        receiptMetrics
-	phaseTwo        phaseTwoMetrics
+	resourceMu       sync.Mutex
+	resourceBound    bool
+	processDuration  *prometheus.HistogramVec
+	processTotal     *prometheus.CounterVec
+	recordsTotal     *prometheus.CounterVec
+	pipelineLatency  *prometheus.HistogramVec
+	shadowCompare    *prometheus.CounterVec
+	observations     observationMetrics
+	receipts         receiptMetrics
+	phaseTwo         phaseTwoMetrics
 }
 
 func NewRecorder(build BuildInfo) *Recorder {

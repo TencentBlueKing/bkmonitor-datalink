@@ -1,12 +1,14 @@
 package execution
 
 import (
+	"fmt"
+	"runtime"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
-func memoTestMutation(points int) StateMutation {
+func sealTestMutation(points int) StateMutation {
 	history := make([]StateHistoryPoint, 0, points)
 	for index := 0; index < points; index++ {
 		history = append(history, StateHistoryPoint{
@@ -40,9 +42,9 @@ func memoTestMutation(points int) StateMutation {
 // The expected value is stated twice on purpose: once as a literal, which
 // catches a change in the canonical encoder, and once by digesting the wire
 // shape written out in full here, which catches a change in the payload type
-// the production path now shares with its memo key.
+// the production path now shares with its content key.
 func TestStateMutationDigestIsStable(t *testing.T) {
-	mutation := normalizeStateMutation(memoTestMutation(3))
+	mutation := normalizeStateMutation(sealTestMutation(3))
 	independent, err := contract.DeriveCanonicalDigestV2("alarmd-runtime-state-mutation-v1", struct {
 		Identity        StateKeyIdentity            `json:"identity"`
 		ApplyVersion    ApplyVersion                `json:"apply_version"`
@@ -54,7 +56,7 @@ func TestStateMutationDigestIsStable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("derive from the declared wire shape: %v", err)
 	}
-	built, err := BuildStateMutation(memoTestMutation(3))
+	built, err := BuildStateMutation(sealTestMutation(3))
 	if err != nil {
 		t.Fatalf("build mutation: %v", err)
 	}
@@ -67,15 +69,15 @@ func TestStateMutationDigestIsStable(t *testing.T) {
 	}
 }
 
-// TestStateMutationDigestMemoServesOnlyItsOwnContent proves the memo never
+// TestStateMutationDigestSealServesOnlyItsOwnContent proves the seal never
 // answers for content it did not digest: one changed history point must yield
-// a different digest, not the remembered one.
-func TestStateMutationDigestMemoServesOnlyItsOwnContent(t *testing.T) {
-	first, err := BuildStateMutation(memoTestMutation(3))
+// a different digest, not the sealed one.
+func TestStateMutationDigestSealServesOnlyItsOwnContent(t *testing.T) {
+	first, err := BuildStateMutation(sealTestMutation(3))
 	if err != nil {
 		t.Fatalf("build first mutation: %v", err)
 	}
-	repeat, err := BuildStateMutation(memoTestMutation(3))
+	repeat, err := BuildStateMutation(sealTestMutation(3))
 	if err != nil {
 		t.Fatalf("build repeat mutation: %v", err)
 	}
@@ -83,18 +85,18 @@ func TestStateMutationDigestMemoServesOnlyItsOwnContent(t *testing.T) {
 		t.Fatalf("identical content produced different digests: %s and %s", first.MutationDigest, repeat.MutationDigest)
 	}
 	if err := first.ValidateDigest(); err != nil {
-		t.Fatalf("validate remembered digest: %v", err)
+		t.Fatalf("validate sealed digest: %v", err)
 	}
-	changed := memoTestMutation(3)
+	changed := sealTestMutation(3)
 	changed.Points[1].Levels[0].Result = LevelFactResult("ANOMALOUS")
 	rebuilt, err := BuildStateMutation(changed)
 	if err != nil {
 		t.Fatalf("build changed mutation: %v", err)
 	}
 	if rebuilt.MutationDigest == first.MutationDigest {
-		t.Fatal("changed content was served the remembered digest")
+		t.Fatal("changed content was served the sealed digest")
 	}
-	// The remembered digest must also not validate against the changed content.
+	// The sealed digest must also not validate against the changed content.
 	forged := changed
 	forged.MutationDigest = first.MutationDigest
 	if err := forged.ValidateDigest(); err == nil {
@@ -102,10 +104,72 @@ func TestStateMutationDigestMemoServesOnlyItsOwnContent(t *testing.T) {
 	}
 }
 
+// TestSealedStateMutationIsStillCheckedAgainstItsContent pins that the seal
+// answers for content, not for provenance. A built mutation whose history is
+// edited in place through a copy keeps both its digest field and its seal, so
+// only re-reading the content can catch it.
+func TestSealedStateMutationIsStillCheckedAgainstItsContent(t *testing.T) {
+	built, err := BuildStateMutation(sealTestMutation(3))
+	if err != nil {
+		t.Fatalf("build mutation: %v", err)
+	}
+	if err := built.ValidateDigest(); err != nil {
+		t.Fatalf("validate sealed digest: %v", err)
+	}
+	copied := built
+	copied.Points[1].Levels[0].Result = LevelFactResult("ANOMALOUS")
+	if err := built.ValidateDigest(); err == nil {
+		t.Fatal("a sealed mutation validated after its history was edited in place")
+	}
+	if err := copied.ValidateDigest(); err == nil {
+		t.Fatal("a copy of a sealed mutation validated after its history was edited in place")
+	}
+}
+
+// TestValidateDigestDoesNotRederiveAfterAWholeSlot pins that a mutation still
+// answers its own digest check once the rest of the Slot has been built.
+//
+// A series is asked for its digest once while it is still on the stack and
+// twice more after the whole Slot has been evaluated, at store admission and at
+// store apply. A check that only survives the first two spends the canonical
+// encoder twice per mutation at Slot scale, which is where the cost is: one
+// derivation of this payload allocates over three hundred objects, and encoding
+// it once for the content key allocates two.
+//
+// Eight thousand series is one worker Slot at production scale. The bound is
+// deliberately far above what a content-key encode costs and far below one
+// canonical derivation, so it reports the mechanism, not a few objects of drift.
+func TestValidateDigestDoesNotRederiveAfterAWholeSlot(t *testing.T) {
+	const series = 8192
+	built := make([]StateMutation, series)
+	for index := range built {
+		mutation := sealTestMutation(3)
+		mutation.Identity.SeriesIdentityDigest = SeriesIdentityDigest(fmt.Sprintf("%032x", index))
+		one, err := BuildStateMutation(mutation)
+		if err != nil {
+			t.Fatalf("build series %d: %v", index, err)
+		}
+		built[index] = one
+	}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for index := range built {
+		if err := built[index].ValidateDigest(); err != nil {
+			t.Fatalf("validate series %d: %v", index, err)
+		}
+	}
+	runtime.ReadMemStats(&after)
+	perValidate := float64(after.Mallocs-before.Mallocs) / float64(series)
+	if perValidate > 64 {
+		t.Fatalf("validating one mutation of a built Slot allocated %.0f objects; the canonical encoder ran again", perValidate)
+	}
+}
+
 // TestProvisionalStateMutationCarriesNoDigest pins that the per-record builder
 // leaves the digest to the mutation that survives the series.
 func TestProvisionalStateMutationCarriesNoDigest(t *testing.T) {
-	provisional, err := BuildProvisionalStateMutation(memoTestMutation(3))
+	provisional, err := BuildProvisionalStateMutation(sealTestMutation(3))
 	if err != nil {
 		t.Fatalf("build provisional mutation: %v", err)
 	}

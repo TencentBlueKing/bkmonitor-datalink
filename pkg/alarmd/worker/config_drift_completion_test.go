@@ -30,16 +30,26 @@ func TestConfigDriftCompletionDoesNotHideAnUnavailablePrimary(t *testing.T) {
 		name         string
 		completeness execution.Completeness
 		want         execution.CompletionKind
+		wantCause    execution.UnavailableCause
 	}{
-		{name: "unavailable primary", completeness: execution.CompletenessUnavailable, want: execution.CompletionUnavailable},
+		{
+			name: "unavailable primary", completeness: execution.CompletenessUnavailable,
+			want: execution.CompletionUnavailable, wantCause: execution.CausePrimaryInputUnavailable,
+		},
 		{name: "full primary", completeness: execution.CompletenessFull, want: execution.CompletionPartialGap},
 		{name: "partial primary", completeness: execution.CompletenessPartial, want: execution.CompletionPartialGap},
 	} {
 		t.Run(one.name, func(t *testing.T) {
 			primary := execution.PrimaryInputFact{Completeness: one.completeness}
-			got := configDriftCompletion(execution.FrozenExecutionContractRef{}, &primary)
+			got, cause := configDriftCompletion(execution.FrozenExecutionContractRef{}, &primary)
 			if got.Kind != one.want {
 				t.Errorf("completion kind = %q, want %q", got.Kind, one.want)
+			}
+			// An UNAVAILABLE that cannot say which of the four conditions it
+			// was is the shape operators already learned to ignore, so the
+			// constructor answers both from the same fact.
+			if cause != one.wantCause {
+				t.Errorf("unavailable cause = %q, want %q", cause, one.wantCause)
 			}
 			// Drift stays the reason and the result stays degraded whichever
 			// kind it is: only the claim about the data moves.

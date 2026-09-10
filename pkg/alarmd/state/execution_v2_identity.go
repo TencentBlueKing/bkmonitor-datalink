@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -79,10 +80,33 @@ var (
 // and starting over is better than growing without limit. An underivable
 // digest is not remembered and is returned as it was, so the caller slices it
 // and fails exactly where it did before.
+//
+// Reaching the bound is therefore not a cache-efficiency event, it is that
+// assumption failing - and nothing counted it, so it could fail once or ten
+// thousand times and look identical from outside. The assumption is also not
+// equally safe for both domains it serves: a tenant population is bounded by
+// configuration, while a state generation advances with every publish and is
+// bounded by nothing. The counters below exist so that whether the bound is
+// actually reached stops being a matter of opinion.
 type keySegmentMemo struct {
 	domain  string
 	mu      sync.RWMutex
 	digests map[string]string
+	// Counted with atomics rather than under the mutex: the hit path is taken
+	// once per series per Slot and holds only a read lock, and turning that into
+	// a write lock to move a counter would make the measurement the cost.
+	hits   atomic.Uint64
+	misses atomic.Uint64
+	clears atomic.Uint64
+}
+
+// KeySegmentMemoCount is one memo domain's occupancy and outcomes.
+type KeySegmentMemoCount struct {
+	Domain  string
+	Hits    uint64
+	Misses  uint64
+	Clears  uint64
+	Entries int
 }
 
 const keySegmentMemoEntries = 4096
@@ -91,20 +115,40 @@ func newKeySegmentMemo(domain string) *keySegmentMemo {
 	return &keySegmentMemo{domain: domain, digests: make(map[string]string)}
 }
 
+// KeySegmentMemoCounts reports both memo domains. The clear count is the one
+// that matters: it is the number of times the population outgrew the bound its
+// own design assumes it stays inside.
+func KeySegmentMemoCounts() []KeySegmentMemoCount {
+	return []KeySegmentMemoCount{tenantKeySegments.counts(), generationKeySegments.counts()}
+}
+
+func (memo *keySegmentMemo) counts() KeySegmentMemoCount {
+	memo.mu.RLock()
+	entries := len(memo.digests)
+	memo.mu.RUnlock()
+	return KeySegmentMemoCount{
+		Domain: memo.domain, Hits: memo.hits.Load(), Misses: memo.misses.Load(),
+		Clears: memo.clears.Load(), Entries: entries,
+	}
+}
+
 func (memo *keySegmentMemo) digest(value string) string {
 	memo.mu.RLock()
 	digest, found := memo.digests[value]
 	memo.mu.RUnlock()
 	if found {
+		memo.hits.Add(1)
 		return digest
 	}
 	digest, err := contract.DeriveCanonicalDigestV2(memo.domain, value)
 	if err != nil {
 		return digest
 	}
+	memo.misses.Add(1)
 	memo.mu.Lock()
 	if len(memo.digests) >= keySegmentMemoEntries {
 		memo.digests = make(map[string]string)
+		memo.clears.Add(1)
 	}
 	memo.digests[value] = digest
 	memo.mu.Unlock()

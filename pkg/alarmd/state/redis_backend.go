@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -40,6 +41,22 @@ type redisClient interface {
 	Ping(context.Context) *redis.StatusCmd
 	Eval(context.Context, string, []string, ...interface{}) *redis.Cmd
 	Close() error
+}
+
+// compareAndSetByDigestSHA addresses the batched script by its SHA-1, so one
+// pipeline carries the new values and not the script text once per write. The
+// script is about a kilobyte and a batch holds hundreds of writes, which the
+// server would otherwise read and hash again for every one of them.
+var compareAndSetByDigestSHA = func() string {
+	sum := sha1.Sum([]byte(compareAndSetByDigestScript))
+	return hex.EncodeToString(sum[:])
+}()
+
+// noScriptReply reports the one reply that means the script body has to be
+// sent again: the server does not have it cached. It is matched strictly,
+// because a write retried on any other error could be applied twice.
+func noScriptReply(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "NOSCRIPT")
 }
 
 const compareAndSetScript = `
@@ -305,7 +322,57 @@ func (backend *RedisBackend) CompareAndSetManyByDigest(
 			return nil, fmt.Errorf("state: invalid Redis fenced write %d", index)
 		}
 	}
+	cmds, err := backend.evalFencedWrites(ctx, guard, writes, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(cmds) != len(writes) {
+		return nil, fmt.Errorf("state: Redis pipeline returned %d replies for %d writes", len(cmds), len(writes))
+	}
+	outcomes := make([]FencedWriteOutcome, len(writes))
+	var uncached []int
+	for index, cmd := range cmds {
+		if noScriptReply(cmd.Err()) {
+			// The server never ran this one, so sending it again cannot apply
+			// it twice.
+			uncached = append(uncached, index)
+			continue
+		}
+		outcomes[index] = decodeFencedWriteReply(cmd)
+	}
+	if len(uncached) == 0 {
+		return outcomes, nil
+	}
+	retried := make([]FencedWrite, len(uncached))
+	for position, index := range uncached {
+		retried[position] = writes[index]
+	}
+	replies, err := backend.evalFencedWrites(ctx, guard, retried, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(replies) != len(retried) {
+		return nil, fmt.Errorf("state: Redis pipeline returned %d replies for %d writes", len(replies), len(retried))
+	}
+	for position, index := range uncached {
+		outcomes[index] = decodeFencedWriteReply(replies[position])
+	}
+	return outcomes, nil
+}
+
+// evalFencedWrites sends one pipeline of compare-and-set calls, addressing the
+// script by SHA-1 or carrying its text.
+func (backend *RedisBackend) evalFencedWrites(
+	ctx context.Context, guard *FenceGuard, writes []FencedWrite, byDigest bool,
+) ([]redis.Cmder, error) {
 	cmds, err := backend.client.Pipelined(ctx, func(pipeline redis.Pipeliner) error {
+		if byDigest {
+			// Caching the script in the same round trip that uses it puts the
+			// text on the wire once per batch instead of once per write, and
+			// costs no extra round trip on a server that has never seen it.
+			// Pipelined commands run in order, so the calls below find it.
+			pipeline.ScriptLoad(ctx, compareAndSetByDigestScript)
+		}
 		for _, write := range writes {
 			keys := []string{write.Key}
 			args := []interface{}{boolArg(write.ExpectedMissing), write.ExpectedDigest, write.Value, write.TTL.Milliseconds()}
@@ -314,6 +381,10 @@ func (backend *RedisBackend) CompareAndSetManyByDigest(
 				args = append(args, boolArg(guard.Keys.RequireAssignment), guard.OwnerID,
 					strconv.FormatUint(guard.OwnerEpoch, 10), guard.LeaseToken, guard.NowMillis)
 			}
+			if byDigest {
+				pipeline.EvalSha(ctx, compareAndSetByDigestSHA, keys, args...)
+				continue
+			}
 			pipeline.Eval(ctx, compareAndSetByDigestScript, keys, args...)
 		}
 		return nil
@@ -321,14 +392,11 @@ func (backend *RedisBackend) CompareAndSetManyByDigest(
 	if err != nil && !isRedisReplyError(err) {
 		return nil, err
 	}
-	if len(cmds) != len(writes) {
-		return nil, fmt.Errorf("state: Redis pipeline returned %d replies for %d writes", len(cmds), len(writes))
+	if byDigest && len(cmds) > 0 {
+		// Drop the reply of the caching command that is not one of the writes.
+		cmds = cmds[1:]
 	}
-	outcomes := make([]FencedWriteOutcome, len(writes))
-	for index, cmd := range cmds {
-		outcomes[index] = decodeFencedWriteReply(cmd)
-	}
-	return outcomes, nil
+	return cmds, nil
 }
 
 func decodeFencedWriteReply(cmd redis.Cmder) FencedWriteOutcome {

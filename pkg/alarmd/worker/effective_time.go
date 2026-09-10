@@ -86,14 +86,21 @@ func bindAlwaysEffectiveTimeFacts(
 	stateItems []execution.StatePreflightItem,
 	prepared map[execution.ConsumerRef]strategy.EffectiveTimeFact,
 ) (execution.InternalExecutionHeader, error) {
-	plans := make(map[execution.PlanIdentity]execution.DuePlan, len(header.DuePlans))
-	for _, due := range header.DuePlans {
-		plans[due.Identity] = due
+	// Scanned rather than indexed: this binds one series at a time, so a map of
+	// every due Plan would be built and thrown away once per series, while the
+	// due Plans of one Query Group are few and already in hand.
+	findDuePlan := func(identity execution.PlanIdentity) (execution.DuePlan, bool) {
+		for _, due := range header.DuePlans {
+			if due.Identity == identity {
+				return due, true
+			}
+		}
+		return execution.DuePlan{}, false
 	}
 	targets := make([]alwaysEffectiveTimeTarget, 0)
 	seen := make(map[alwaysEffectiveTimeTarget]struct{})
 	for _, item := range stateItems {
-		due, ok := plans[item.Identity.Plan]
+		due, ok := findDuePlan(item.Identity.Plan)
 		if !ok || due.CompiledPlan == nil {
 			return execution.InternalExecutionHeader{}, errors.New("alarmd worker: EffectiveTime target references an unknown Plan")
 		}

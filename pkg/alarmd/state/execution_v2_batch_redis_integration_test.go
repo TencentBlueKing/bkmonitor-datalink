@@ -103,7 +103,7 @@ func (fixture *redisBatchFixture) store(t *testing.T, prefix string, fenced bool
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := ExecutionStoreOptions{Prefix: prefix, Router: router, MaxValueBytes: 1 << 20, MaxItemsPerCall: 8192, RuntimeTTL: time.Hour}
+	options := ExecutionStoreOptions{Prefix: prefix, Router: router, MaxValueBytes: 1 << 20, MaxItemsPerCall: 8192, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute}
 	if fenced {
 		options.FenceKeys = fixture.owners
 	}
@@ -147,7 +147,7 @@ func TestRedisFencedBatchApplyStoresSequentialBytesWithinBoundedRoundTrips(t *te
 	// compares exact bytes per key, exactly as before this change.
 	sequential := fixture.store(t, "sequential", false)
 	fixture.client.reset()
-	sequentialResult, err := sequential.ApplyRuntime(ctx, execution.StateApplyRequest{Contract: frozenRef(), Items: mutations})
+	sequentialResult, err := sequential.ApplyRuntime(ctx, execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations})
 	if err != nil {
 		t.Fatalf("sequential ApplyRuntime() error = %v", err)
 	}
@@ -168,7 +168,7 @@ func TestRedisFencedBatchApplyStoresSequentialBytesWithinBoundedRoundTrips(t *te
 		}
 	}
 	fixture.client.reset()
-	batchedResult, err := batched.ApplyRuntimeFenced(ctx, execution.StateApplyRequest{Contract: frozenRef(), Items: mutations}, fixture.applyFence(fixture.leased.Add(time.Second)))
+	batchedResult, err := batched.ApplyRuntimeFenced(ctx, execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}, fixture.applyFence(fixture.leased.Add(time.Second)))
 	if err != nil {
 		t.Fatalf("ApplyRuntimeFenced() error = %v", err)
 	}
@@ -209,7 +209,7 @@ func TestRedisFencedBatchApplyStoresSequentialBytesWithinBoundedRoundTrips(t *te
 		}
 	}
 	fixture.client.reset()
-	replay, err := batched.ApplyRuntimeFenced(ctx, execution.StateApplyRequest{Contract: frozenRef(), Items: mutations}, fixture.applyFence(fixture.leased.Add(time.Second)))
+	replay, err := batched.ApplyRuntimeFenced(ctx, execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}, fixture.applyFence(fixture.leased.Add(time.Second)))
 	if err != nil {
 		t.Fatalf("replay ApplyRuntimeFenced() error = %v", err)
 	}
@@ -224,7 +224,7 @@ func TestRedisFencedBatchApplyRejectsStaleOwnerLikeCheckFence(t *testing.T) {
 	ctx := context.Background()
 	store := fixture.store(t, "fenced", true)
 	mutations := seriesMutations(t, 3, applyVersion(), 0)
-	request := execution.StateApplyRequest{Contract: frozenRef(), Items: mutations}
+	request := execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}
 	valid := fixture.leased.Add(time.Second)
 
 	wrongToken := fixture.fence
@@ -283,7 +283,7 @@ func TestRedisFencedBatchApplyDetectsValueChangedAfterPreflight(t *testing.T) {
 	if err := fixture.client.Set(ctx, key, other, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	result, err := store.ApplyRuntimeFenced(ctx, execution.StateApplyRequest{Contract: frozenRef(), Items: mutations}, fixture.applyFence(fixture.leased.Add(time.Second)))
+	result, err := store.ApplyRuntimeFenced(ctx, execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}, fixture.applyFence(fixture.leased.Add(time.Second)))
 	if err != nil {
 		t.Fatalf("ApplyRuntimeFenced() error = %v", err)
 	}
@@ -351,7 +351,7 @@ func TestRedisRuntimeStateHotModelRoundTrips(t *testing.T) {
 	// A second store instance has no witnesses, which reproduces the old
 	// re-read-then-EVAL apply exactly.
 	oldApply := fixture.store(t, "sequential", false)
-	result, err := oldApply.ApplyRuntime(ctx, execution.StateApplyRequest{Contract: frozenRef(), Items: mutations})
+	result, err := oldApply.ApplyRuntime(ctx, execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestRedisRuntimeStateHotModelRoundTrips(t *testing.T) {
 	fixture.client.reset()
 	started = time.Now()
 	loadInStreamBatches(t, batched, items)
-	result, err = batched.ApplyRuntimeFenced(ctx, execution.StateApplyRequest{Contract: frozenRef(), Items: mutations}, fixture.applyFence(fixture.leased.Add(time.Second)))
+	result, err = batched.ApplyRuntimeFenced(ctx, execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}, fixture.applyFence(fixture.leased.Add(time.Second)))
 	if err != nil {
 		t.Fatal(err)
 	}

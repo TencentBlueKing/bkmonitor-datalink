@@ -149,7 +149,7 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 			}
 			backend := &capacityBackend{raw: raw}
 			router, _ := state.NewFixedRouter("capacity", backend)
-			store, _ := state.NewExecutionStore(state.ExecutionStoreOptions{Prefix: "capacity", Router: router, MaxValueBytes: cfg.Limits.Codec.MaxEncodedBytes, MaxItemsPerCall: cfg.Limits.Store.MaxKeysPerBatch, RuntimeTTL: time.Hour})
+			store, _ := state.NewExecutionStore(state.ExecutionStoreOptions{Prefix: "capacity", Router: router, MaxValueBytes: cfg.Limits.Codec.MaxEncodedBytes, MaxItemsPerCall: cfg.Limits.Store.MaxKeysPerBatch, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 			loaded, err := store.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: req.Header.Contract, Items: []execution.StatePreflightItem{{Identity: req.State.Items[0].Identity, ApplyVersion: version}}})
 			if err != nil || len(loaded.Items) != 1 || loaded.Items[0].Status != execution.StateFoundReady {
 				t.Fatalf("legal state: %v %+v", err, loaded)
@@ -257,7 +257,11 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 				if err = result.Validate(one); err != nil {
 					t.Fatal(err)
 				}
-				admission, err := store.AdmitRuntime(context.Background(), execution.StateApplyRequest{Contract: one.Header.Contract, Items: []execution.StateMutation{result.Plans[0].StateResults[0].Mutation}})
+				retention, retentionErr := execution.DeriveStateRetentionRequirement(one.Header.DuePlans[0].CompiledPlan)
+				if retentionErr != nil {
+					t.Fatal(retentionErr)
+				}
+				admission, err := store.AdmitRuntime(context.Background(), execution.StateApplyRequest{Contract: one.Header.Contract, Retention: retention, Items: []execution.StateMutation{result.Plans[0].StateResults[0].Mutation}})
 				if err != nil || admission.Items[0].Status != execution.StateAdmissionAccepted {
 					t.Fatalf("not admitted: %v %+v", err, admission)
 				}

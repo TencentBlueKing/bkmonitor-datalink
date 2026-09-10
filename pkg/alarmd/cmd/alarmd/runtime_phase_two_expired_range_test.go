@@ -179,7 +179,7 @@ func testExpiredRangeSharesF2WithHealthyFull(t *testing.T, distance bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := state.NewExecutionStore(state.ExecutionStoreOptions{Prefix: f.cfg.Redis.StatePrefix, Router: router, MaxValueBytes: f.cfg.Limits.Codec.MaxEncodedBytes, MaxItemsPerCall: f.cfg.Limits.Store.MaxKeysPerBatch, RuntimeTTL: f.cfg.Redis.MaxTTL.Duration()})
+	store, err := state.NewExecutionStore(state.ExecutionStoreOptions{Prefix: f.cfg.Redis.StatePrefix, Router: router, MaxValueBytes: f.cfg.Limits.Codec.MaxEncodedBytes, MaxItemsPerCall: f.cfg.Limits.Store.MaxKeysPerBatch, MinTTL: f.cfg.Redis.MinTTL.Duration(), MaxTTL: f.cfg.Redis.MaxTTL.Duration(), RestartMargin: f.cfg.Redis.RestartMargin.Duration()})
 	if err != nil {
 		t.Fatal(err)
 	}

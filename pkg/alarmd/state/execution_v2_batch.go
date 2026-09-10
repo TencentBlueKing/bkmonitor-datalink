@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -303,6 +304,17 @@ func (store *ExecutionStore) applyRuntime(
 	if err := request.Contract.Validate(); err != nil || len(request.Items) == 0 || len(request.Items) > store.options.MaxItemsPerCall {
 		return execution.StateApplyResult{}, fmt.Errorf("state: invalid runtime apply request")
 	}
+	// One TTL for the request: every key it writes belongs to the same Plan and
+	// so has the same retention need. Admission derives it the same way, so a
+	// request that was admitted cannot be refused here.
+	ttl, err := store.runtimeTTL(request.Retention)
+	if err != nil {
+		if !errors.Is(err, ErrStateBudget) {
+			return execution.StateApplyResult{}, fmt.Errorf("state: invalid runtime apply request: %w", err)
+		}
+		refused := execution.StateApplyResult{Items: rejectRuntimeBudget(request.Items)}
+		return refused, refused.Validate()
+	}
 	result := execution.StateApplyResult{Items: make([]execution.StateApplyItemResult, len(request.Items))}
 	keys := make([]string, len(request.Items))
 	keyErrors := make([]error, len(request.Items))
@@ -347,7 +359,7 @@ func (store *ExecutionStore) applyRuntime(
 				result.Items[index] = item
 				continue
 			}
-			result.Items[index] = store.applyRuntimeSequential(ctx, request.Contract, mutation, keys[index], casBackend)
+			result.Items[index] = store.applyRuntimeSequential(ctx, request.Contract, mutation, keys[index], ttl, casBackend)
 			continue
 		}
 		if status, proceed := classifyWitnessedMutation(witness, mutation); !proceed {
@@ -362,7 +374,7 @@ func (store *ExecutionStore) applyRuntime(
 			continue
 		}
 		write := FencedWrite{Key: keys[index], ExpectedMissing: witness.missing, ExpectedDigest: witness.digest,
-			Value: encoded, TTL: store.options.RuntimeTTL}
+			Value: encoded, TTL: ttl}
 		if err := pipeline.add(ctx, batchBackend, target.Name, index, write); err != nil {
 			return execution.StateApplyResult{}, err
 		}
@@ -378,7 +390,7 @@ func (store *ExecutionStore) applyRuntime(
 // serves callers without a preflight witness and requests with repeated keys.
 func (store *ExecutionStore) applyRuntimeSequential(
 	ctx context.Context, contractRef execution.FrozenExecutionContractRef, mutation execution.StateMutation,
-	key string, backend CompareAndSetBackend,
+	key string, ttl time.Duration, backend CompareAndSetBackend,
 ) execution.StateApplyItemResult {
 	item := execution.StateApplyItemResult{Identity: mutation.Identity}
 	values, err := backend.MGet(ctx, []string{key})
@@ -421,7 +433,7 @@ func (store *ExecutionStore) applyRuntimeSequential(
 		item.Status, item.ReasonCode = execution.StateApplyDeterministicInvalid, execution.ReasonCode(contract.ReasonStateBudgetExceeded)
 		return item
 	}
-	applied, err := backend.CompareAndSet(ctx, key, raw, raw == nil, encoded, store.options.RuntimeTTL)
+	applied, err := backend.CompareAndSet(ctx, key, raw, raw == nil, encoded, ttl)
 	if err != nil {
 		item.Status, item.ReasonCode = execution.StateApplyRetryable, execution.ReasonCode(contract.ReasonStateWriteRetryable)
 	} else if !applied {

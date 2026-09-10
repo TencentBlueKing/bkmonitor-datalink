@@ -287,7 +287,12 @@ func openProductionPhaseTwoBundleWithDependencies(
 	}
 	executionStore, err := state.NewExecutionStore(state.ExecutionStoreOptions{
 		Prefix: cfg.Redis.StatePrefix, Router: storageRouter, MaxValueBytes: cfg.Limits.Codec.MaxEncodedBytes,
-		MaxItemsPerCall: cfg.Limits.Store.MaxKeysPerBatch, RuntimeTTL: cfg.Redis.MaxTTL.Duration(),
+		MaxItemsPerCall: cfg.Limits.Store.MaxKeysPerBatch,
+		// The store derives each write TTL from the Plan retention the request
+		// carries; these only bound it, exactly as they do for the phase-one
+		// store built in config.StoreOptions.
+		MinTTL: cfg.Redis.MinTTL.Duration(), MaxTTL: cfg.Redis.MaxTTL.Duration(),
+		RestartMargin: cfg.Redis.RestartMargin.Duration(),
 		// Runtime State writes verify the owner lease inside Redis; without the
 		// resolver the store would fall back to unfenced batched writes.
 		FenceKeys: ownershipStore,

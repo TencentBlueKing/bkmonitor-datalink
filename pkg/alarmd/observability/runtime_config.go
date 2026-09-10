@@ -57,15 +57,24 @@ type RuntimeCapacityFacts struct {
 	// table: a preflight has to be able to state what this container's cache
 	// will hold before the Pod exists, which the running process's occupancy
 	// metrics cannot answer.
-	ControlTimelineCacheBytes   int    `json:"control_timeline_cache_bytes"`
-	ControlTimelineCacheEntries int    `json:"control_timeline_cache_entries"`
-	EvaluatorMaxPlans           uint64 `json:"evaluator_max_plans"`
-	EvaluatorMaxRecords         uint64 `json:"evaluator_max_records"`
-	EvaluatorMaxLevels          uint64 `json:"evaluator_max_levels"`
-	EvidenceBytes               int    `json:"evidence_bytes"`
-	OutputMessageBytes          int    `json:"output_message_bytes"`
-	UQBodyBytes                 int64  `json:"uq_body_bytes"`
-	UQSeriesBytes               int64  `json:"uq_series_bytes"`
-	UQSeries                    uint64 `json:"uq_series"`
-	UQRecords                   uint64 `json:"uq_records"`
+	ControlTimelineCacheBytes   int `json:"control_timeline_cache_bytes"`
+	ControlTimelineCacheEntries int `json:"control_timeline_cache_entries"`
+	// GoMemoryLimitBytes and GoGCPercent are the collector's budget, derived
+	// from the same memory limit as the ceilings above. They belong in this
+	// table for the reason the rest of it exists: they are what the process
+	// runs under, no file can state them, and before they were derived the
+	// container's memory limit and the collector's behaviour had nothing to do
+	// with one another. Zero means no container stated a limit, so the process
+	// left the Go defaults alone rather than enforcing a guess.
+	GoMemoryLimitBytes  int64  `json:"go_memory_limit_bytes"`
+	GoGCPercent         int    `json:"go_gc_percent"`
+	EvaluatorMaxPlans   uint64 `json:"evaluator_max_plans"`
+	EvaluatorMaxRecords uint64 `json:"evaluator_max_records"`
+	EvaluatorMaxLevels  uint64 `json:"evaluator_max_levels"`
+	EvidenceBytes       int    `json:"evidence_bytes"`
+	OutputMessageBytes  int    `json:"output_message_bytes"`
+	UQBodyBytes         int64  `json:"uq_body_bytes"`
+	UQSeriesBytes       int64  `json:"uq_series_bytes"`
+	UQSeries            uint64 `json:"uq_series"`
+	UQRecords           uint64 `json:"uq_records"`
 }

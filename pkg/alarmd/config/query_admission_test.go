@@ -20,8 +20,25 @@ func TestExecutionGuardIsNotAnEnvironmentKnob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.PhaseTwo.Scheduler.ActiveExecutionLimit != Default().PhaseTwo.Scheduler.ActiveExecutionLimit {
-		t.Fatalf("resolved execution guard = %d, want the product value %d",
-			cfg.PhaseTwo.Scheduler.ActiveExecutionLimit, Default().PhaseTwo.Scheduler.ActiveExecutionLimit)
+	// The comparison is against the container this process was given, not
+	// against Default. ReferenceContainer exists so that Default is the same
+	// answer on every machine - a build agent's core count is not a product
+	// decision - but Load is deliberately the other thing: its whole contract
+	// is to size from the container the process actually got, which is why the
+	// permits and queues beside this value already differ between the two. The
+	// guard only ever matched Default because it used to be a constant zero on
+	// both paths, and that is the property this change removes.
+	container := DeriveScheduler(DetectCapacityInputs())
+	if cfg.PhaseTwo.Scheduler.ActiveExecutionLimit != container.ActiveExecutions {
+		t.Fatalf("resolved execution guard = %d, want the value derived from this container, %d",
+			cfg.PhaseTwo.Scheduler.ActiveExecutionLimit, container.ActiveExecutions)
+	}
+	// Machine-independent half: whatever container this ran on, the resolved
+	// guard and the resolved permits have to have come from the same
+	// derivation. A file that reached either one alone would break this.
+	if cfg.PhaseTwo.Scheduler.ActiveExecutionLimit !=
+		cfg.PhaseTwo.Scheduler.ProcessQueryPermits*activeExecutionsPerQueryPermit {
+		t.Fatalf("resolved guard %d and resolved permits %d did not come from one derivation",
+			cfg.PhaseTwo.Scheduler.ActiveExecutionLimit, cfg.PhaseTwo.Scheduler.ProcessQueryPermits)
 	}
 }

@@ -23,7 +23,13 @@ import (
 	"time"
 )
 
-func TestUnlimitedRunnerRecoveryWaitDoesNotBlockNormal(t *testing.T) {
+// A recovery Query Group waiting on a recovery permit must not hold up the
+// normal one. The test used to arrange that by removing the dispatcher bound
+// entirely, which is no longer a configuration that exists; it now pins the
+// smallest bound the property needs instead, which is also the stronger
+// statement - the guarantee is that three owned Query Groups can be in flight
+// together, not that an unbounded number can.
+func TestBoundedRunnerRecoveryWaitDoesNotBlockNormal(t *testing.T) {
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
 	installTwoPhaseTwoStrategies(t, ctx, redisClient)
@@ -102,7 +108,9 @@ func TestUnlimitedRunnerRecoveryWaitDoesNotBlockNormal(t *testing.T) {
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
 	cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.DownstreamExecutionReserve = config.Duration(time.Millisecond)
-	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 0
+	// Three: one slot per owned Query Group, so the normal one is never queued
+	// behind the two recoveries rather than merely served after them.
+	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 3
 	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 2
 	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 1
 	cfg.PhaseTwo.Worker.RegistrationTTL = config.Duration(10 * time.Minute)

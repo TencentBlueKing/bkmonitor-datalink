@@ -594,8 +594,15 @@ function renderCapacity(cap) {
     cell('轮转覆盖', rot.completed + ' 圈走完',
       rot.truncated ? ('被打断 ' + rot.truncated + ' 次；打断在涨而走完不动 = 已经不再覆盖全部对象')
         : '每圈都把自己拥有的对象走了一遍', rot.truncated > 0);
-    cell('转一圈', rot.last_seconds ? rot.last_seconds.toFixed(1) + ' 秒' : '—',
-      '最慢副本转完自己那份的时间；判对象是否轮得过来，拿它跟对象周期比');
+    // Deliberately not called "how long an object waits". A generation starts
+    // on every scheduler wake, so a walk that finds everything already queued
+    // finishes inside one pass and this reads in microseconds -- it is the cost
+    // of the walk, not the interval between an object's turns. Labelling it the
+    // other way put "0.0 秒" next to "compare it against the object period",
+    // which reads as "everything is instant" no matter how far behind the
+    // deployment is.
+    cell('走一遍耗时', rot.last_seconds ? (rot.last_seconds * 1000).toFixed(1) + ' 毫秒' : '—',
+      '调度器扫完自己那份对象要多久，衡量调度开销；**不是**对象隔多久被处理一次');
     if (rot.deferred) {
       cell('被挡回', rot.deferred + ' 次',
         '同一个对象每被满队列挡回一次记一次——反复挡回才是问题，偶尔挡回只是跑得晚', true);

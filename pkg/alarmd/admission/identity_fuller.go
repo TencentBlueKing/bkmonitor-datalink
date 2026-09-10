@@ -39,7 +39,7 @@ func (IdentityFuller) Fill(dimensions map[string]json.RawMessage, facts *Facts) 
 	_, hostIDNamed := dimensions["bk_host_id"]
 	facts.HostNaming = HostNaming{
 		NamedID: hostIDNamed, NamedAddress: addressNamed, NamedCloud: cloudNamed,
-		Usable: targetAddress != "" || hostIDText != "",
+		Usable: targetAddress != "" || hostIDText != "", IDKey: hostIDText,
 	}
 
 	address := targetAddress

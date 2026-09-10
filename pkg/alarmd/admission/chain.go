@@ -37,6 +37,12 @@ type HostNaming struct {
 	NamedCloud bool
 	// Usable is true when an identity could actually be built from them.
 	Usable bool
+	// IDKey is the host id the record supplied, as an index key. It is kept
+	// because Python looks a host up by its id whenever the record carries
+	// one and never falls back to the address, so the attributes a filter
+	// acts on have to come from that host and not from whichever identity
+	// happened to resolve first.
+	IDKey string
 }
 
 type Facts struct {

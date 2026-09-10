@@ -51,17 +51,28 @@ func (fuller *HostTopologyFuller) Fill(_ map[string]json.RawMessage, facts *admi
 	// Resolution below teaches the record identities it did not arrive with,
 	// so the keys to look up are taken before the fuller starts adding any.
 	lookups := append([]string(nil), facts.HostKeys...)
+	// The attributes a filter acts on come from the host Python would have
+	// looked up: by host id whenever the record carried one, by address only
+	// otherwise - Python never falls back from an id to an address. Taking
+	// whichever identity resolved first instead would, for a record whose id
+	// and address name different hosts, read the state of the wrong one, and
+	// in one direction that drops a series Python keeps.
+	attributed := false
+	if key := facts.HostNaming.IDKey; key != "" {
+		if host, found := index.Lookup(key); found {
+			facts.HostState, facts.HostBusinessID = host.State, host.BusinessID
+			attributed = true
+		}
+	}
 	for _, key := range lookups {
 		host, found := index.Lookup(key)
 		if !found {
 			continue
 		}
 		facts.HostResolved = true
-		if facts.HostState == "" {
-			facts.HostState = host.State
-		}
-		if facts.HostBusinessID == "" {
-			facts.HostBusinessID = host.BusinessID
+		if !attributed {
+			facts.HostState, facts.HostBusinessID = host.State, host.BusinessID
+			attributed = true
 		}
 		nodes = append(nodes, host.TopoNodes...)
 		// Resolving by one identity teaches the record its other identity, so

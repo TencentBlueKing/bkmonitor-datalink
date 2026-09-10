@@ -142,11 +142,11 @@ func buildSeriesInternalExecution(header InternalExecutionHeader, batch SeriesEx
 		}
 		for index := 0; index < binding.View.Len(); index++ {
 			record, ok := binding.View.Record(index)
-			if !ok || record.DimensionIdentity().Digest == "" {
+			if !ok || record.DimensionIdentityDigest() == "" {
 				return InternalExecution{}, errors.New("alarmd execution: series batch lacks stable series identity")
 			}
 			series[StateKeyIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration,
-				SeriesIdentityDigest: SeriesIdentityDigest(record.DimensionIdentity().Digest)}] = struct{}{}
+				SeriesIdentityDigest: SeriesIdentityDigest(record.DimensionIdentityDigest())}] = struct{}{}
 		}
 		for _, fact := range binding.QualityFacts {
 			if fact.ImpactScope == ImpactSeries {

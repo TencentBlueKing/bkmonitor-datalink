@@ -229,3 +229,75 @@ func TestReaderRequiresAPlatformPrefix(t *testing.T) {
 		t.Errorf("refreshed key = %s", key)
 	}
 }
+
+// Two hosts that a single record names at once: its address belongs to a host
+// the platform marks as not monitored, its host id to one that is monitored.
+// Python looks a host up by its id whenever the record carries one and never
+// falls back to the address, so the state a filter acts on is the id's.
+const disabledByAddressHost = `{"bk_host_id":700001,"bk_host_innerip":"10.0.0.7","bk_cloud_id":0,"bk_biz_id":999,
+"bk_state":"备用机","display_name":"spare","topo_link":{
+ "module|85":[{"bk_obj_id":"module","bk_inst_id":85},{"bk_obj_id":"biz","bk_inst_id":999}]}}`
+
+const monitoredByIDHost = `{"bk_host_id":700002,"bk_host_innerip":"10.0.0.8","bk_cloud_id":0,"bk_biz_id":999,
+"bk_state":"运营中[需告警]","display_name":"live","topo_link":{
+ "module|91":[{"bk_obj_id":"module","bk_inst_id":91},{"bk_obj_id":"biz","bk_inst_id":999}]}}`
+
+// Taking whichever identity resolved first would read the spare host's state
+// and drop a series Python keeps. The address is still resolved - the target
+// scope matches on either identity - only the attributes follow Python.
+func TestHostAttributesFollowTheIdentityPythonWouldLookUp(t *testing.T) {
+	builder := newIndexBuilder(time.Unix(1700000000, 0).UTC())
+	builder.addFields([]string{"10.0.0.7|0", disabledByAddressHost, "700001", disabledByAddressHost,
+		"10.0.0.8|0", monitoredByIDHost, "700002", monitoredByIDHost})
+	store := &Store{index: builder.index, now: time.Now, maxAge: time.Hour, interval: time.Minute}
+
+	chain := admission.NewChain(
+		[]admission.Fuller{admission.IdentityFuller{}, NewHostTopologyFuller(store)},
+		[]admission.Filter{admission.TargetScopeFilter{}},
+	)
+	facts := chain.Enrich(map[string]json.RawMessage{
+		"bk_target_ip":       json.RawMessage(`"10.0.0.7"`),
+		"bk_target_cloud_id": json.RawMessage(`0`),
+		"bk_host_id":         json.RawMessage(`700002`),
+	})
+	if !facts.HostResolved {
+		t.Fatalf("facts = %+v", facts)
+	}
+	if facts.HostState != "运营中[需告警]" {
+		t.Fatalf("host state = %q, want the state of the host the id names", facts.HostState)
+	}
+	// Both identities still resolve, because a monitoring target may name
+	// either one.
+	address, id := false, false
+	for _, key := range facts.HostKeys {
+		if key == "10.0.0.7|0" {
+			address = true
+		}
+		if key == "700002" {
+			id = true
+		}
+	}
+	if !address || !id {
+		t.Fatalf("host keys = %v, want both identities kept for target matching", facts.HostKeys)
+	}
+}
+
+// Without a host id the address is what Python looks up, so its state is the
+// one that counts.
+func TestHostAttributesComeFromTheAddressWhenNoIDIsNamed(t *testing.T) {
+	builder := newIndexBuilder(time.Unix(1700000000, 0).UTC())
+	builder.addFields([]string{"10.0.0.7|0", disabledByAddressHost, "700001", disabledByAddressHost})
+	store := &Store{index: builder.index, now: time.Now, maxAge: time.Hour, interval: time.Minute}
+
+	chain := admission.NewChain(
+		[]admission.Fuller{admission.IdentityFuller{}, NewHostTopologyFuller(store)},
+		[]admission.Filter{admission.TargetScopeFilter{}},
+	)
+	facts := chain.Enrich(map[string]json.RawMessage{
+		"bk_target_ip":       json.RawMessage(`"10.0.0.7"`),
+		"bk_target_cloud_id": json.RawMessage(`0`),
+	})
+	if facts.HostState != "备用机" {
+		t.Fatalf("host state = %q, want the address's host", facts.HostState)
+	}
+}

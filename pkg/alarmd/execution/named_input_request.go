@@ -359,7 +359,7 @@ func validateSeriesNamedInputBinding(
 	if binding.View != nil {
 		for index := 0; index < binding.View.Len(); index++ {
 			record, ok := binding.View.Record(index)
-			if !ok || SeriesIdentityDigest(record.DimensionIdentity().Digest) != series {
+			if !ok || SeriesIdentityDigest(record.DimensionIdentityDigest()) != series {
 				return errors.New("named-input record belongs to a different series")
 			}
 			if record.SourceTime() < binding.QueryWindow.Start || record.SourceTime() >= binding.QueryWindow.End {

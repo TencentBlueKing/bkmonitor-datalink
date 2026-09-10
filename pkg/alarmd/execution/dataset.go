@@ -136,6 +136,17 @@ func (view RecordView) DimensionIdentity() contract.DimensionIdentityV2 {
 	return identity
 }
 
+// DimensionIdentityDigest returns the series digest alone. Callers that only
+// compare series copy nothing: DimensionIdentity has to clone the field slice
+// and every raw value in it to stay immutable, and a Slot compares series once
+// per record per consuming Plan.
+func (view RecordView) DimensionIdentityDigest() string {
+	if view.record == nil {
+		return ""
+	}
+	return view.record.DimensionIdentity.Digest
+}
+
 func (view RecordView) Values() map[string]json.RawMessage {
 	if view.record == nil {
 		return nil

@@ -215,6 +215,23 @@ func BuildStateMutation(mutation StateMutation) (StateMutation, error) {
 	return mutation, nil
 }
 
+// BuildProvisionalStateMutation normalizes and validates a mutation that is
+// still being carried inside one series evaluation. It deliberately leaves the
+// digest empty: a series with R records builds R mutations but keeps only the
+// last one, so digesting each of them spends the canonical encoder R-1 times
+// on a value that is discarded. The surviving mutation is digested once by
+// BuildStateMutation, which is also what puts it under the digest contract.
+func BuildProvisionalStateMutation(mutation StateMutation) (StateMutation, error) {
+	if mutation.MutationDigest != "" {
+		return StateMutation{}, errors.New("alarmd execution: State mutation builder owns the digest")
+	}
+	mutation = normalizeStateMutation(mutation)
+	if err := validateStateMutationContent(mutation); err != nil {
+		return StateMutation{}, err
+	}
+	return mutation, nil
+}
+
 func (mutation StateMutation) ValidateDigest() error {
 	if mutation.MutationDigest == "" {
 		return errors.New("alarmd execution: State mutation digest is required")
@@ -232,60 +249,72 @@ func (mutation StateMutation) ValidateDigest() error {
 	return nil
 }
 
-func deriveStateMutationDigest(mutation StateMutation) (MutationDigest, error) {
+// validateStateMutationContent checks exactly the facts the digest is derived
+// over, so a provisional mutation is held to the same shape as a digested one.
+func validateStateMutationContent(mutation StateMutation) error {
 	if err := mutation.Identity.Plan.Validate(); err != nil {
-		return "", err
+		return err
 	}
 	if mutation.Identity.StateGeneration == "" || mutation.Identity.SeriesIdentityDigest == "" {
-		return "", errors.New("alarmd execution: incomplete State mutation identity")
+		return errors.New("alarmd execution: incomplete State mutation identity")
 	}
 	if err := mutation.ApplyVersion.Validate(); err != nil {
-		return "", err
+		return err
 	}
 	if len(mutation.AffectedRecords) == 0 || len(mutation.Levels) == 0 {
-		return "", errors.New("alarmd execution: State mutation requires record anchors and Level state")
+		return errors.New("alarmd execution: State mutation requires record anchors and Level state")
 	}
 	anchors := mutation.AffectedRecords
 	for index, anchor := range anchors {
 		if err := anchor.Validate(); err != nil {
-			return "", err
+			return err
 		}
 		if index > 0 && anchor == anchors[index-1] {
-			return "", errors.New("alarmd execution: duplicate State mutation record anchor")
+			return errors.New("alarmd execution: duplicate State mutation record anchor")
 		}
 	}
 	levels := mutation.Levels
 	seenLevels := make(map[uint32]struct{}, len(levels))
 	for _, level := range levels {
 		if _, duplicate := seenLevels[level.LevelID]; duplicate {
-			return "", errors.New("alarmd execution: duplicate State mutation Level")
+			return errors.New("alarmd execution: duplicate State mutation Level")
 		}
 		seenLevels[level.LevelID] = struct{}{}
 		if err := validateRuntimeLevelMutation(level); err != nil {
-			return "", err
+			return err
 		}
 	}
-	points := mutation.Points
 	levelIDs := make(map[uint32]struct{}, len(levels))
 	for _, level := range levels {
 		levelIDs[level.LevelID] = struct{}{}
 	}
-	if err := validateStateHistory(points, levelIDs); err != nil {
+	if err := validateStateHistory(mutation.Points, levelIDs); err != nil {
+		return err
+	}
+	return validateStateGuardMutation(mutation.SeriesGuard)
+}
+
+func deriveStateMutationDigest(mutation StateMutation) (MutationDigest, error) {
+	if err := validateStateMutationContent(mutation); err != nil {
 		return "", err
 	}
-	if err := validateStateGuardMutation(mutation.SeriesGuard); err != nil {
-		return "", err
+	payload := stateMutationDigestPayload{
+		Identity: mutation.Identity, ApplyVersion: mutation.ApplyVersion,
+		AffectedRecords: mutation.AffectedRecords, SeriesGuard: mutation.SeriesGuard,
+		Levels: mutation.Levels, Points: mutation.Points,
 	}
-	digest, err := contract.DeriveCanonicalDigestV2("alarmd-runtime-state-mutation-v1", struct {
-		Identity        StateKeyIdentity            `json:"identity"`
-		ApplyVersion    ApplyVersion                `json:"apply_version"`
-		AffectedRecords []RecordAnchor              `json:"affected_records"`
-		SeriesGuard     *StateGuardFact             `json:"series_guard,omitempty"`
-		Levels          []RuntimeLevelStateMutation `json:"levels"`
-		Points          []StateHistoryPoint         `json:"points"`
-	}{mutation.Identity, mutation.ApplyVersion, anchors, mutation.SeriesGuard, levels, points})
+	key, keyed := stateMutationDigestKey(payload)
+	if keyed {
+		if digest, found := stateMutationDigestMemo.load(key); found {
+			return digest, nil
+		}
+	}
+	digest, err := contract.DeriveCanonicalDigestV2("alarmd-runtime-state-mutation-v1", payload)
 	if err != nil {
 		return "", fmt.Errorf("alarmd execution: derive State mutation digest: %w", err)
+	}
+	if keyed {
+		stateMutationDigestMemo.store(key, MutationDigest(digest))
 	}
 	return MutationDigest(digest), nil
 }

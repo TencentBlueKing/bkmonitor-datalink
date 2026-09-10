@@ -203,3 +203,48 @@ func TestFillQueuesDefersTheWalkWhileTheReadyQueueIsFull(t *testing.T) {
 		t.Fatalf("the walk finished after %d of %d Query Groups", dispatcher.walked, len(runners))
 	}
 }
+
+// TestReturningRunnerDoesNotTakeThePlaceTheWalkHasNotReached pins the rule that
+// decides who gets a freed place in the ready queue while a generation's walk is
+// still in progress.
+//
+// A Runner whose turn was consumed while it was active is owed another one, and
+// it is the first to be able to ask for it: it asks the moment it returns, which
+// is before the walk resumes. Granting it there hands the queue to whichever
+// Query Groups finish fastest, and the ones the walk has not reached yet never
+// see a free place. A rotation already owes it nothing extra - the next
+// generation's walk reaches it again in turn - so the freed place belongs to the
+// Query Group the walk stopped at.
+func TestReturningRunnerDoesNotTakeThePlaceTheWalkHasNotReached(t *testing.T) {
+	dispatcher := walkDispatcher(2, 4, map[execution.QueryGroupIdentity]time.Time{
+		"query-group-a": {},
+		"query-group-b": {},
+		"query-group-c": {},
+		"query-group-d": {},
+	})
+	runners, revision := dispatcher.bundle.snapshotScheduledRunners()
+
+	dispatcher.fillQueues(runners, revision)
+	if got := queuedNames(dispatcher.normal); len(got) != 2 || got[0] != "query-group-a" || got[1] != "query-group-b" {
+		t.Fatalf("ready queue holds %v, want query-group-a and query-group-b", got)
+	}
+
+	// The first Query Group is dispatched, so one place is free, and a scheduler
+	// tick opens the next generation while it is still running.
+	first := dispatcher.normal[0].scheduled
+	dispatcher.markDispatched(first, false, false)
+	dispatcher.beginGeneration()
+
+	// It now returns. Its turn in the previous generation was spent, so it is
+	// owed one, but the walk has not offered query-group-c a place yet.
+	dispatcher.handleResult(context.Background(), phaseTwoScheduledResult{scheduled: first, attempted: true}, true)
+	if got := queuedNames(dispatcher.normal); len(got) != 1 || got[0] != "query-group-b" {
+		t.Fatalf("ready queue holds %v after the Runner returned, want query-group-b alone", got)
+	}
+
+	// The walk resumes and the free place goes to the Query Group it stopped at.
+	dispatcher.fillQueues(runners, revision)
+	if got := queuedNames(dispatcher.normal); len(got) != 2 || got[0] != "query-group-b" || got[1] != "query-group-c" {
+		t.Fatalf("ready queue holds %v, want query-group-b then query-group-c", got)
+	}
+}

@@ -204,3 +204,51 @@ func TestAnEmptyTargetAddressIsInvalidEvenWithTheAlternativeSpelling(t *testing.
 		t.Fatalf("decision = %+v, want the record rejected as invalid host data", decision)
 	}
 }
+
+// Production case that the shadow reconcile caught: a collector config whose
+// cloud id placeholder was never rendered ships the literal template text as
+// bk_target_cloud_id. Python coerces it with safe_int, so it looks the host up
+// in the direct area and finds it; taking the text at face value builds a key
+// no host can have, reads as "CMDB does not know this host", and drops every
+// series of that strategy - 8484 went from 134 matched points to zero.
+func TestAnUnrenderedCloudPlaceholderResolvesToTheDirectArea(t *testing.T) {
+	facts := factsFor(map[string]json.RawMessage{
+		"bk_target_ip":       raw(`"192.0.2.10"`),
+		"bk_target_cloud_id": raw(`"{{ cmdb_instance.host.bk_cloud_id[0].id }}"`),
+	}, nil)
+	found := false
+	for _, key := range facts.HostKeys {
+		if key == "192.0.2.10|0" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("host keys = %v, want the address in the direct area", facts.HostKeys)
+	}
+}
+
+// The same coercion Python's safe_int does, including the float path.
+func TestCloudIdentityIsCoercedTheWayThePlatformDoes(t *testing.T) {
+	for _, test := range []struct{ cloud, want string }{
+		{`3`, "192.0.2.10|3"},
+		{`"3"`, "192.0.2.10|3"},
+		{`3.0`, "192.0.2.10|3"},
+		{`"3.9"`, "192.0.2.10|3"},
+		{`"not a number"`, "192.0.2.10|0"},
+		{`""`, "192.0.2.10|0"},
+	} {
+		facts := factsFor(map[string]json.RawMessage{
+			"bk_target_ip":       raw(`"192.0.2.10"`),
+			"bk_target_cloud_id": raw(test.cloud),
+		}, nil)
+		found := false
+		for _, key := range facts.HostKeys {
+			if key == test.want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("cloud %s produced keys %v, want %q", test.cloud, facts.HostKeys, test.want)
+		}
+	}
+}

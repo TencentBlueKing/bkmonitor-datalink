@@ -5,7 +5,12 @@
 
 package admission
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"math"
+	"strconv"
+	"strings"
+)
 
 // IdentityFuller reads the identities a series carries in its own dimensions.
 // It touches no external store, so it always runs and always produces the same
@@ -45,6 +50,13 @@ func (IdentityFuller) Fill(dimensions map[string]json.RawMessage, facts *Facts) 
 	if cloud == "" {
 		cloud = dimensionText(dimensions, "bk_cloud_id")
 	}
+	// Python coerces the cloud id with safe_int, so anything that is not a
+	// number becomes the direct area. Production really produces such values:
+	// a collector config whose cloud id placeholder was never rendered ships
+	// the literal template text as the dimension, and taking it at face value
+	// builds a key no host can have - which reads as "CMDB does not know this
+	// host" and drops series Python keeps.
+	cloud = safeIntText(cloud, "0")
 	if address != "" {
 		if cloud == "" {
 			// Python defaults an absent cloud to the direct area, and the
@@ -62,4 +74,22 @@ func (IdentityFuller) Fill(dimensions map[string]json.RawMessage, facts *Facts) 
 		serviceInstance = dimensionText(dimensions, "service_instance_id")
 	}
 	facts.AddServiceInstanceKey(serviceInstance)
+}
+
+// safeIntText mirrors bkmonitor.utils.common_utils.safe_int: an integer, else
+// an integer parsed through a float, else the fallback. It exists because the
+// identities in a series are whatever the platform emitted, and the platform
+// does not guarantee they are numbers.
+func safeIntText(text string, fallback string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return fallback
+	}
+	if value, err := strconv.ParseInt(text, 10, 64); err == nil {
+		return strconv.FormatInt(value, 10)
+	}
+	if value, err := strconv.ParseFloat(text, 64); err == nil && !math.IsInf(value, 0) && !math.IsNaN(value) {
+		return strconv.FormatInt(int64(value), 10)
+	}
+	return fallback
 }

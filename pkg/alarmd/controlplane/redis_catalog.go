@@ -186,7 +186,8 @@ return 1
 `
 
 // RenewCurrentActivationObjects renews only the complete Snapshot occurrence
-// and Active Set named by the same Activation header. A concurrent cutover
+// and Active Set named by the same Activation header, together with the
+// Schedule timelines that Activation still references. A concurrent cutover
 // cannot renew stale facts.
 func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx context.Context) error {
 	started := time.Now()
@@ -239,6 +240,12 @@ func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx cont
 	}
 	switch result {
 	case 1:
+		// The Schedule timelines of the renewed Active Set and of the Draining
+		// projection are renewed only after the guarded CAS proved that the
+		// state read above is still the current one.
+		if err := repository.renewScheduleTimelines(ctx, groups, state.Draining); err != nil {
+			return err
+		}
 		metricResult = "success"
 		queryGroups, objectBytes = len(groups), len(activePayload)
 		return nil

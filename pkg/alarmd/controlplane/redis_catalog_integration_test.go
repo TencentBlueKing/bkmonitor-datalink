@@ -1470,6 +1470,116 @@ func TestRedisCatalogRepositoryRenewsOnlyActivationGuardedCurrentObjects(t *test
 	}
 }
 
+// TestRenewCurrentActivationObjectsRenewsOnlyReferencedScheduleTimelines pins
+// the read half. Timelines are written only at activation transitions, so a
+// TTL alone would expire the timeline of a Query Group that keeps running
+// while nothing is republished. The Active Set and the Draining projection are
+// exactly the Query Groups a Worker can still schedule, so the Control Leader
+// renews their timelines on the same tick that renews the Snapshot, and a
+// Query Group that left both stops being renewed.
+func TestRenewCurrentActivationObjectsRenewsOnlyReferencedScheduleTimelines(t *testing.T) {
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	prefix := "alarmd:control:timeline-ttl-renew"
+	const catalogTTL = time.Hour
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, catalogTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ConfigureDrainingTermination(10 * time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	progress := &activationProgressReader{byGroup: map[execution.QueryGroupIdentity]execution.ProgressLoadResult{}}
+	compiler, semantics := runtimePlanCompiler(t)
+	at := time.Unix(60, 0)
+	reconciler, err := controlplane.NewScheduleActivationReconcilerWithProgress(
+		repository, compiler, semantics, progress, func() time.Time { return at },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publish := func(tableID string) (controlplane.SnapshotPublicationRef, execution.QueryGroupIdentity) {
+		t.Helper()
+		catalog := catalogWithQueryTable(t, tableID)
+		snapshot, _, publishErr := repository.PublishCatalog(ctx, catalog)
+		if publishErr != nil {
+			t.Fatal(publishErr)
+		}
+		return snapshot.Publication, catalog.QueryGroups[0].Identity
+	}
+	timelineKey := func(queryGroup execution.QueryGroupIdentity) string {
+		return prefix + ":schedule_timeline:" + string(queryGroup)
+	}
+	expireSoon := func(queryGroups ...execution.QueryGroupIdentity) {
+		t.Helper()
+		for _, queryGroup := range queryGroups {
+			if err := client.PExpire(ctx, timelineKey(queryGroup), 2*time.Second).Err(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	requireRenewed := func(queryGroup execution.QueryGroupIdentity, role string) {
+		t.Helper()
+		ttl, ttlErr := client.PTTL(ctx, timelineKey(queryGroup)).Result()
+		if ttlErr != nil || ttl < 30*time.Minute {
+			t.Fatalf("%s timeline %s TTL=(%s,%v), want renewed", role, queryGroup, ttl, ttlErr)
+		}
+	}
+	requireNotRenewed := func(queryGroup execution.QueryGroupIdentity, role string) {
+		t.Helper()
+		ttl, ttlErr := client.PTTL(ctx, timelineKey(queryGroup)).Result()
+		if ttlErr != nil || ttl <= 0 || ttl > 2*time.Second {
+			t.Fatalf("%s timeline %s TTL=(%s,%v), want left to expire", role, queryGroup, ttl, ttlErr)
+		}
+	}
+
+	firstPublication, first := publish("system.cpu")
+	if _, err := reconciler.Ensure(ctx, firstPublication); err != nil {
+		t.Fatal(err)
+	}
+	at = time.Unix(90, 0)
+	secondPublication, second := publish("system.mem")
+	if _, err := reconciler.Ensure(ctx, secondPublication); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing is published from here on. The renewal runs on the Control
+	// Leader's own timer, so a live timeline stays resident in an environment
+	// that has not published for hours, which a write-time TTL alone could not
+	// do. The retired Query Group is still draining, so it is renewed too.
+	for round := 0; round < 2; round++ {
+		expireSoon(first, second)
+		if err := repository.RenewCurrentActivationObjects(ctx); err != nil {
+			t.Fatal(err)
+		}
+		requireRenewed(second, "active without a publication")
+		requireRenewed(first, "draining without a publication")
+	}
+
+	// Once the drained entry leaves the Draining projection nothing references
+	// its timeline any more.
+	progress.byGroup[first] = execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+		Identity: execution.ProgressIdentity{QueryGroup: first}, NextSlot: 90, LastFullSlot: 60,
+		LastCompletionKind: execution.CompletionFull,
+	}}
+	at = time.Unix(180, 0)
+	thirdPublication, third := publish("system.disk")
+	state, err := reconciler.Ensure(ctx, thirdPublication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Draining) != 1 || state.Draining[0].QueryGroup != second {
+		t.Fatalf("draining=%+v, want only the newly retired Query Group %s", state.Draining, second)
+	}
+	expireSoon(first, second, third)
+	if err := repository.RenewCurrentActivationObjects(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requireRenewed(third, "active")
+	requireRenewed(second, "draining")
+	requireNotRenewed(first, "retired and pruned")
+}
+
 func TestRedisCatalogRepositoryRenewCurrentObjectsFailsAtomicallyOnInvalidMappings(t *testing.T) {
 	for _, test := range []struct {
 		name         string

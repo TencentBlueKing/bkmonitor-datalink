@@ -19,6 +19,7 @@ package fleet
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -198,6 +199,7 @@ type View struct {
 // coverage of nothing.
 func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas []string, now time.Time, freshness time.Duration) View {
 	view := View{Health: HealthHealthy, Anomalies: []Anomaly{}, Replicas: []string{}}
+	ownedByReplica := make([]string, 0, len(expectedReplicas))
 
 	byReplica := make(map[string]Snapshot, len(snapshots))
 	for _, snapshot := range snapshots {
@@ -221,6 +223,7 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			continue
 		}
 		view.Replicas = append(view.Replicas, replica)
+		ownedByReplica = append(ownedByReplica, fmt.Sprintf("%s %d", shortReplicaName(replica), snapshot.Owned))
 		view.Covered += snapshot.Owned
 		view.Determined += snapshot.Determined
 		view.AnomaliesTotal += snapshot.TotalAnomalies
@@ -263,9 +266,16 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			// owning hundreds it should not, and those call for opposite
 			// responses. The sibling branch above already explains itself; this
 			// one did not, which is the whole difference.
+			// The per-replica split travels with the totals because Covered is
+			// a sum, and a sum cannot tell two replicas owning distinct shares
+			// from two replicas both holding the same objects through a
+			// rendezvous change. Those are different problems -- one is stale
+			// ownership to clean up, the other is this view double counting --
+			// and stating only the difference asserts the first.
 			view.Gaps = append(view.Gaps, Gap{Kind: GapCoverageInconsistent,
-				Detail: fmt.Sprintf("%d objects owned against %d expected: %d more than the control plane lists",
-					view.Covered, expected, view.Covered-expected)})
+				Detail: fmt.Sprintf("%d owned (%s) against %d expected, %d more; Covered is a sum, so replicas "+
+					"holding the same object during a rendezvous change look the same as objects left over",
+					view.Covered, strings.Join(ownedByReplica, ", "), expected, view.Covered-expected)})
 		case expected > view.Covered:
 			// Added rather than assigned: objects nobody owns and objects owned
 			// by a replica that cannot speak for them are both unknown, and they
@@ -294,4 +304,14 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		view.Health = HealthHealthy
 	}
 	return view
+}
+
+// shortReplicaName keeps the part of a Pod name that differs between replicas.
+// The full name repeats the deployment on every entry, which pushes the numbers
+// this detail exists for off the end of whatever is reading it.
+func shortReplicaName(replica string) string {
+	if index := strings.LastIndex(replica, "-"); index >= 0 && index+1 < len(replica) {
+		return replica[index+1:]
+	}
+	return replica
 }

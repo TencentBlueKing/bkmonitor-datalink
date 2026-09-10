@@ -251,4 +251,16 @@ func TestCoverageInconsistentGapSaysBothNumbers(t *testing.T) {
 			t.Fatalf("detail %q does not carry %q; a reader cannot size the disagreement", detail, want)
 		}
 	}
+	// Covered is a sum across replicas, so the difference alone cannot separate
+	// stale ownership from this view counting the same object twice while a
+	// rendezvous change is in flight. Stating only the difference asserts the
+	// first, so the split has to travel with it.
+	for _, pair := range []string{"a 500", "b 449"} {
+		if !strings.Contains(detail, pair) {
+			t.Fatalf("detail %q does not carry %q; a reader cannot tell which side is over", detail, pair)
+		}
+	}
+	if !strings.Contains(detail, "sum") {
+		t.Fatalf("detail %q does not say Covered is a sum, so the difference reads as objects left over", detail)
+	}
 }

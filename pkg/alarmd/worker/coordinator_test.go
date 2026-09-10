@@ -112,6 +112,13 @@ func TestSlotExecutionCoordinatorObservesReadinessDeferralWithoutFailureOrSideEf
 		observation.Err != nil {
 		t.Fatalf("readiness observation=%+v, want retrying without failure", observation)
 	}
+	// The reason has to name the condition. An empty one normalizes to
+	// internal_unknown on a non-success result, and a deferral is neither
+	// internal nor unknown - it is the contract saying "not yet".
+	want := observability.ReasonCode(contract.ReasonQueryNotReady)
+	if reason := observability.NormalizeReason(observation.ReasonCode, observation.Result); reason != want {
+		t.Fatalf("readiness reason=%q (normalized %q), want %q", observation.ReasonCode, reason, want)
+	}
 }
 
 type coordinatorReadinessDeferredError struct{ readyAt time.Time }

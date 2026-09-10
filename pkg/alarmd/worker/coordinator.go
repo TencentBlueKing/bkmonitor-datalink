@@ -184,8 +184,14 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	completion, err := coordinator.ports.Query.Execute(ctx, queryRequest, stream)
 	if err != nil {
 		if isReadinessDeferred(err) {
+			// A readiness deferral is the normal pacing of a Slot whose data is
+			// not in yet, and it is the single highest-volume line alarmd emits.
+			// It has to say so: an empty reason on a non-success result
+			// normalizes to internal_unknown (observability.NormalizeReason),
+			// which made every deferral read as an unclassified internal error -
+			// in the logs and in the stage counter's reason label alike.
 			coordinator.observe(ctx, observability.ComponentAccess, observability.StageQueryCompleted, request.Operation,
-				started, observability.ResultRetrying, observability.ReasonNone, nil)
+				started, observability.ResultRetrying, observability.ReasonCode(contract.ReasonQueryNotReady), nil)
 		} else {
 			coordinator.observeQueryFailure(ctx, request.Operation, started, "execute", err)
 		}

@@ -83,6 +83,9 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonReadinessBudgetInvalid: {
 		ReasonReadinessBudgetInvalid, ReasonClassCoverage, reasonQueryDomainsV2,
 	},
+	// Observation only: a deferral never reaches a receipt or a query result,
+	// it just says the Slot will come back when its window is in.
+	ReasonQueryNotReady: {ReasonQueryNotReady, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonExecutionBudgetExhausted: {
 		ReasonExecutionBudgetExhausted, ReasonClassCoverage, ReasonDomainQueryResult | ReasonDomainObservation,
 	},

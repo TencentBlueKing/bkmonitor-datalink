@@ -569,6 +569,24 @@ function renderCapacity(cap) {
     cell('CPU', cap.cpu_cores + ' 核 × ' + cap.replicas,
       cap.throttled_seconds ? ('累计被限流 ' + Math.round(cap.throttled_seconds) + ' 秒') : '未观察到限流');
   }
+  // Round coverage answers the one question the object list structurally
+  // cannot: an object nobody reached has no round to report on, so it appears
+  // nowhere in that list, healthy or otherwise.
+  var rot = cap.rotation;
+  if (!rot) {
+    cell('轮转覆盖', '还没转完一轮', '副本刚起来时是正常的；一直是这样就说明一圈都走不完');
+  } else {
+    cell('轮转覆盖', rot.completed + ' 圈走完',
+      rot.truncated ? ('被打断 ' + rot.truncated + ' 次；打断在涨而走完不动 = 已经不再覆盖全部对象')
+        : '每圈都把自己拥有的对象走了一遍', rot.truncated > 0);
+    cell('转一圈', rot.last_seconds ? rot.last_seconds.toFixed(1) + ' 秒' : '—',
+      '最慢副本转完自己那份的时间；判对象是否轮得过来，拿它跟对象周期比');
+    if (rot.deferred) {
+      cell('被挡回', rot.deferred + ' 次',
+        '同一个对象每被满队列挡回一次记一次——反复挡回才是问题，偶尔挡回只是跑得晚', true);
+    }
+  }
+
   var rejected = 0, worst = '';
   Object.keys(cap.rejections || {}).forEach(function (b) {
     rejected += cap.rejections[b];

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -58,6 +59,9 @@ type Client struct {
 	querySource string
 	limits      Limits
 	now         func() time.Time
+	// rangeRetries counts connections that failed before a response began and
+	// had to be re-dialed. See doRangeRequest.
+	rangeRetries atomic.Uint64
 }
 
 func NewClient(endpoint, querySource string, httpClient *http.Client) (*Client, error) {
@@ -71,7 +75,8 @@ func NewClientWithLimits(endpoint, querySource string, httpClient *http.Client, 
 	if err := limits.validate(); err != nil {
 		return nil, err
 	}
-	return &Client{endpoint: strings.TrimRight(endpoint, "/"), querySource: querySource, httpClient: httpClient, limits: limits, now: time.Now}, nil
+	return &Client{endpoint: strings.TrimRight(endpoint, "/"), querySource: querySource,
+		httpClient: httpClient, limits: limits, now: time.Now}, nil
 }
 
 func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttempt, sink execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {

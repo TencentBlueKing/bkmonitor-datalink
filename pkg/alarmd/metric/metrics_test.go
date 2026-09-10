@@ -306,6 +306,9 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_activation_failure_total":                     "variableLabels: {activation_failure_stage,activation_failure_class}",
 		"bkmonitor_alarmd_worker_query_admission_total":                 "variableLabels: {operation,result}",
 		"bkmonitor_alarmd_control_cache_total":                          "variableLabels: {object,result}",
+		"bkmonitor_alarmd_control_cache_entries":                        "variableLabels: {object}",
+		"bkmonitor_alarmd_control_cache_bytes":                          "variableLabels: {object}",
+		"bkmonitor_alarmd_control_cache_bytes_limit":                    "variableLabels: {object}",
 		"bkmonitor_alarmd_legacy_pod_cache_total":                       "variableLabels: {result}",
 		"bkmonitor_alarmd_series_admission_total":                       "variableLabels: {filter,result,reason}",
 		"bkmonitor_alarmd_cmdb_host_index_hosts":                        "variableLabels: {}",
@@ -626,9 +629,14 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("worker_query_permits_waiting"):          len(phaseTwoReadyQueueKinds),
 		fqName("worker_query_permit_budget"):            len(phaseTwoReadyQueueKinds),
 		fqName("worker_query_admission_total"):          len(phaseTwoQueryInflightKinds) * len(phaseTwoQueryAdmissionResults),
-		// Four cached objects: version, snapshot, activation, timeline.
-		fqName("control_cache_total"):    12,
-		fqName("legacy_pod_cache_total"): 3,
+		// Four cached objects: version, snapshot, activation, timeline; four
+		// outcomes each. Only an object bounded by a derived budget reports
+		// occupancy, which today is the timeline alone.
+		fqName("control_cache_total"):       16,
+		fqName("control_cache_entries"):     4,
+		fqName("control_cache_bytes"):       4,
+		fqName("control_cache_bytes_limit"): 4,
+		fqName("legacy_pod_cache_total"):    3,
 		// Filters and reasons are closed vocabularies in the recorder.
 		fqName("series_admission_total"):      len(admissionFilters) * len(admissionResults) * len(admissionReasons),
 		fqName("cmdb_host_index_hosts"):       1,

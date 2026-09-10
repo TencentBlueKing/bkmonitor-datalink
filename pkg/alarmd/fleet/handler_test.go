@@ -426,3 +426,50 @@ func TestTheStalledTotalSurvivesAFilter(t *testing.T) {
 		t.Fatalf("filtered stalled_total = %v, want the deployment total 2", body["stalled_total"])
 	}
 }
+
+// The capacity panel shipped blank because the page never called its renderer.
+// The static page guard catches that half; this catches the other one -- a
+// panel can also render empty because the response it reads never carried the
+// data. Both halves have to be closed, or the next blank section is only found
+// by looking at production.
+func TestHealthResponseCarriesCapacityWhenReplicasReportIt(t *testing.T) {
+	snapshots := healthySnapshots()
+	for index := range snapshots {
+		snapshots[index].Capacity = &Capacity{
+			PermitsHeld: 3, PermitBudget: 32, PermitSeconds: 120, Waiting: 0,
+			MemoryUsed: 1 << 20, MemoryLimit: 8 << 30, MemorySource: "pod_limit", CPUCores: 8,
+			Budgets: map[string]uint64{"state_mutations": 65536},
+		}
+	}
+	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 2, Known: true}, []string{"pod-a", "pod-b"})
+
+	body := requestJSON(t, handler, "/api/health")
+	capacity, ok := body["capacity"].(map[string]any)
+	if !ok {
+		t.Fatalf("health response carried no capacity, so the panel reading it renders empty: %v", body)
+	}
+	// The numbers the panel actually shows. A capacity block present but empty
+	// would still leave a heading over nothing.
+	for _, field := range []string{"replicas", "permits_held", "permit_budget", "memory_limit_bytes"} {
+		if capacity[field] == nil {
+			t.Fatalf("capacity is missing %q, which the panel renders: %v", field, capacity)
+		}
+	}
+	if capacity["permit_budget"].(float64) != 32 {
+		t.Fatalf("a per-replica ceiling was summed: %v", capacity["permit_budget"])
+	}
+}
+
+// A deployment whose replicas report no capacity must say so rather than
+// omitting the block, because the page tells those apart and an operator
+// reading "no replica reported capacity" is being told something true.
+func TestHealthResponseOmitsCapacityWhenNobodyReportedAny(t *testing.T) {
+	handler := handlerWith(t, healthySnapshots(), Expectation{QueryGroups: 2, Known: true}, []string{"pod-a", "pod-b"})
+	body := requestJSON(t, handler, "/api/health")
+	// Present and null, not absent: the field always travels so a reader can
+	// tell "no replica reported capacity" from "this build has no such field".
+	if value, present := body["capacity"]; !present || value != nil {
+		t.Fatalf("capacity should be an explicit null when nobody reported any, got present=%v value=%v",
+			present, value)
+	}
+}

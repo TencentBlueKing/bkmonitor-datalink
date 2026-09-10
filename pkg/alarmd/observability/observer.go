@@ -429,6 +429,7 @@ type Observation struct {
 	QueryPermit             *QueryPermitFacts
 	RuntimeConfig           *RuntimeConfigFacts
 	QueryFailure            *QueryFailureFacts
+	QueryStatus             *QueryStatusFacts
 	QueryTiming             *QueryTimingFacts
 	ShortPeriodCompletion   *ShortPeriodCompletionFacts
 	StateApplyChunk         *StateApplyChunkFacts
@@ -507,6 +508,7 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.ShortPeriodCompletion = normalizeShortPeriodCompletion(observation)
 	observation.StateApplyChunk = normalizeStateApplyChunk(observation)
 	observation.QueryFailure = normalizeQueryFailure(observation.Component, observation.Stage, observation.QueryFailure)
+	observation.QueryStatus = normalizeQueryStatus(observation.Component, observation.Stage, observation.QueryStatus)
 	if observation.RuntimeConfig != nil {
 		if observation.Component != ComponentRuntime || observation.Stage != StageConfigLoaded {
 			observation.RuntimeConfig = nil

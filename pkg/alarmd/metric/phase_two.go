@@ -16,6 +16,7 @@ import (
 type phaseTwoMetrics struct {
 	workflow                     workflowMetrics
 	shortPeriod                  shortPeriodMetrics
+	queryStatus                  queryStatusMetrics
 	slotTiming                   *prometheus.HistogramVec
 	work                         *prometheus.CounterVec
 	busy                         *prometheus.CounterVec
@@ -127,6 +128,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.legacyPodCache = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_pod_cache_total", Help: "Existing Python Pod cache reads by bounded result."}, []string{"result"})
 	metrics.redisPool = newRedisPoolCollector()
 	metrics.shortPeriod = newShortPeriodMetrics()
+	metrics.queryStatus = newQueryStatusMetrics()
 	metrics.slotTiming = newSlotTimingMetrics()
 	metrics.workflow = newWorkflowMetrics()
 	metrics.activeQGSetCount = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_query_groups", Help: "Query groups in the current immutable Active Set."})
@@ -174,6 +176,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 	return append(append(m.workflow.collectors(), []prometheus.Collector{
 		m.shortPeriod.completed, m.shortPeriod.duration, m.shortPeriod.lag,
+		m.queryStatus.responses,
 		m.slotTiming,
 		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations, m.sourceRefreshes,
 		m.activationFailures,
@@ -190,6 +193,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 func (m phaseTwoMetrics) observe(observation observability.Observation) {
 	m.workflow.observe(observation)
 	m.shortPeriod.observe(observation)
+	m.queryStatus.observe(observation)
 	m.observeSlotTiming(observation)
 	if facts := observation.SourceRefresh; facts != nil {
 		m.sourceRefreshes.WithLabelValues(string(facts.Status)).Inc()

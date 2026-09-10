@@ -22,7 +22,7 @@ func statusObservation(code, outcome string) observability.Observation {
 	return observability.Observation{
 		Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
 		Operation: observability.OperationNormal, Result: observability.ResultSuccess,
-		QueryStatus: &observability.QueryStatusFacts{Code: code, Outcome: outcome},
+		QueryStatus: []observability.QueryStatusFacts{{Code: code, Outcome: outcome}},
 	}
 }
 
@@ -115,5 +115,56 @@ func TestQueryStatusOnlyCountsTheAccessQueryCompletion(t *testing.T) {
 	if got := testutil.ToFloat64(recorder.phaseTwo.queryStatus.responses.WithLabelValues(
 		observability.QueryStatusSpaceTableIDNotExists, observability.QueryStatusOutcomeAllowed)); got != 0 {
 		t.Fatalf("a stage that does not read UQ responses was counted: %v", got)
+	}
+}
+
+// A query group with several Plans completes one query_completed carrying
+// several physical queries, each able to report its own status. Counting the
+// first would report a number that is simply wrong -- tolerable for a log
+// field, which loses a line, not for a counter, which is then read as a rate.
+func TestQueryStatusCountsEveryPhysicalQueryNotJustTheFirst(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
+		Result: observability.ResultSuccess,
+		QueryStatus: []observability.QueryStatusFacts{
+			{Code: observability.QueryStatusSpaceTableIDNotExists, Outcome: observability.QueryStatusOutcomeAllowed},
+			{Code: observability.QueryStatusSpaceTableIDNotExists, Outcome: observability.QueryStatusOutcomeAllowed},
+			{Code: observability.QueryStatusStorageTimeout, Outcome: observability.QueryStatusOutcomeUnavailable},
+		},
+	})
+
+	if got := testutil.ToFloat64(recorder.phaseTwo.queryStatus.responses.WithLabelValues(
+		observability.QueryStatusSpaceTableIDNotExists, observability.QueryStatusOutcomeAllowed)); got != 2 {
+		t.Fatalf("allowed = %v, want both physical queries counted", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.queryStatus.responses.WithLabelValues(
+		observability.QueryStatusStorageTimeout, observability.QueryStatusOutcomeUnavailable)); got != 1 {
+		t.Fatalf("unavailable = %v, want the third physical query counted", got)
+	}
+}
+
+// The entries that carried no code are skipped without dropping the ones that
+// did. A completion mixing "answered normally" with "answered with a code" is
+// the ordinary case, and losing the coded one there would hide exactly what
+// this counts.
+func TestQueryStatusKeepsCodedEntriesBesideUncodedOnes(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
+		Result: observability.ResultSuccess,
+		QueryStatus: []observability.QueryStatusFacts{
+			{Code: "", Outcome: observability.QueryStatusOutcomeAllowed},
+			{Code: observability.QueryStatusSpaceTableIDNotExists, Outcome: observability.QueryStatusOutcomeAllowed},
+		},
+	})
+
+	if got := testutil.ToFloat64(recorder.phaseTwo.queryStatus.responses.WithLabelValues(
+		observability.QueryStatusSpaceTableIDNotExists, observability.QueryStatusOutcomeAllowed)); got != 1 {
+		t.Fatalf("the coded entry was lost beside an uncoded one: %v", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.queryStatus.responses.WithLabelValues(
+		observability.QueryStatusOther, observability.QueryStatusOutcomeAllowed)); got != 0 {
+		t.Fatalf("an entry with no code was counted as OTHER: %v", got)
 	}
 }

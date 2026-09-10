@@ -441,7 +441,7 @@ type Observation struct {
 	QueryPermit             *QueryPermitFacts
 	RuntimeConfig           *RuntimeConfigFacts
 	QueryFailure            *QueryFailureFacts
-	QueryStatus             *QueryStatusFacts
+	QueryStatus             []QueryStatusFacts
 	QueryTiming             *QueryTimingFacts
 	ShortPeriodCompletion   *ShortPeriodCompletionFacts
 	StateApplyChunk         *StateApplyChunkFacts

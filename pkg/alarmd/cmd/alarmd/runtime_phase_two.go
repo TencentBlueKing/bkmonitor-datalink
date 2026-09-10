@@ -155,6 +155,11 @@ func runPhaseTwoApplicationWithDependencies(
 			return err
 		}
 	}
+	// The collector's budget comes from the same container as every other
+	// budget, and is installed here rather than at configuration load because
+	// --check-config reports the derived pair without being the process that
+	// has to run under it.
+	applyPhaseTwoGoRuntime(config.DeriveGoRuntime(config.DetectCapacityInputs()), runtimeGoBudgetSetters())
 	// Resolve the pool before the profile is derived so the startup facts carry
 	// the concrete size rather than the zero that means "derive".
 	cfg = cfg.WithResolvedRedisPoolSize()
@@ -175,8 +180,15 @@ func runPhaseTwoApplicationWithDependencies(
 	// Report the diagnostics surface at startup. An unset address serves no
 	// pprof, and losing it without a single line would be the same silent
 	// capability loss the split exists to prevent.
+	//
+	// The collector budget rides on the same line. Nothing outside the process
+	// can set it, so this and the facts table are the only two places anyone
+	// reading a running Pod can find out what the collector was told.
 	logger.Info(observability.StageStartup, observability.ResultStarted, 0, 0,
-		slog.String("diagnostics_listen", cfg.HTTP.DiagnosticsFact()))
+		slog.String("diagnostics_listen", cfg.HTTP.DiagnosticsFact()),
+		slog.Int64("go_memory_limit_bytes", profile.Capacity.GoMemoryLimitBytes),
+		slog.Int("go_gc_percent", profile.Capacity.GoGCPercent),
+		slog.String("memory_source", profile.MemorySource))
 	server, err := dependencies.newHTTP(recorder, application, cfg.HTTP.DiagnosticsListen)
 	if err != nil {
 		return err
@@ -680,8 +692,11 @@ func newPhaseTwoRunnerDispatcher(
 	oneShot bool,
 ) *phaseTwoRunnerDispatcher {
 	schedulerConfig := bundle.dependencies.Config.PhaseTwo.Scheduler
-	fanout := schedulerConfig.ActiveExecutionLimit
-	if schedulerConfig.ReadyQueueCapacity < fanout {
+	// The limit is derived from the container and validated positive, so the
+	// floor of one is reached only by a Config assembled field by field in a
+	// test. There is no unlimited fanout to fall back to.
+	fanout := max(schedulerConfig.ActiveExecutionLimit, 1)
+	if schedulerConfig.ReadyQueueCapacity > 0 && schedulerConfig.ReadyQueueCapacity < fanout {
 		fanout = schedulerConfig.ReadyQueueCapacity
 	}
 	return &phaseTwoRunnerDispatcher{
@@ -695,26 +710,17 @@ func newPhaseTwoRunnerDispatcher(
 }
 
 func (dispatcher *phaseTwoRunnerDispatcher) start(ctx context.Context) {
-	// Zero removes the complete-Runner gate. The dispatcher active map still
-	// admits each owned QG once; this loop never spawns repeated waiters per tick.
-	workers := dispatcher.fanout
-	if workers == 0 {
-		workers = 1
-	}
-	for range workers {
+	// One goroutine per slot, each running its Query Group to completion. The
+	// alternative this replaces spawned a goroutine per dispatch instead, which
+	// made the fanout whatever the loop could reach; the dispatcher active map
+	// still admits each owned Query Group once, so the bound here is on how
+	// many distinct Query Groups may be in flight, not on repeated waiters.
+	for range dispatcher.fanout {
 		dispatcher.workers.Add(1)
 		go func() {
 			defer dispatcher.workers.Done()
 			for scheduled := range dispatcher.jobs {
-				if dispatcher.fanout == 0 {
-					dispatcher.workers.Add(1)
-					go func(scheduled phaseTwoScheduledRunner) {
-						defer dispatcher.workers.Done()
-						dispatcher.executeScheduled(ctx, scheduled)
-					}(scheduled)
-				} else {
-					dispatcher.executeScheduled(ctx, scheduled)
-				}
+				dispatcher.executeScheduled(ctx, scheduled)
 			}
 		}()
 	}

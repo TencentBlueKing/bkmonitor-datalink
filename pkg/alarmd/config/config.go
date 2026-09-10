@@ -209,6 +209,7 @@ func Default() Config {
 // from one container's CPU and memory.
 func (c Config) withDerivedCapacity(inputs CapacityInputs) Config {
 	derived := DeriveScheduler(inputs)
+	c.PhaseTwo.Scheduler.ActiveExecutionLimit = derived.ActiveExecutions
 	c.PhaseTwo.Scheduler.ProcessQueryPermits = derived.ProcessQueryPermits
 	c.PhaseTwo.Scheduler.RecoveryQueryPermits = derived.RecoveryQueryPermits
 	c.PhaseTwo.Scheduler.ReadyQueueCapacity = derived.ReadyQueueCapacity

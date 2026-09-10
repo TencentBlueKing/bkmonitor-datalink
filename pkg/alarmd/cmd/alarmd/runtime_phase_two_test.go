@@ -569,10 +569,10 @@ func TestPhaseTwoWorkerBundleRetriesReadyQueryGroupBeforeFullSweepCompletes(t *t
 	cfg := validGoAccessRuntimeConfig()
 	// The complete-Runner gate is what bounds how many Runners execute at
 	// once; query permits bound the query stage inside a Runner, and these
-	// Runners never reach it. Leaving the gate at its default of zero means
-	// unlimited, so a bound asserted against the permits would only ever hold
-	// by timing - it read as a guarantee and was one loaded gate run away
-	// from reporting a fanout of four against two permits.
+	// Runners never reach it, so a bound asserted against the permits would
+	// only ever hold by timing. Two is set here rather than derived because
+	// this test is about fairness under a tight gate, and the derived gate is
+	// wide enough that nothing would ever queue.
 	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 2
 	cfg.PhaseTwo.Scheduler.RetryMinDelay = config.Duration(5 * time.Millisecond)
 	cfg.PhaseTwo.Scheduler.RetryMaxDelay = config.Duration(5 * time.Millisecond)

@@ -57,9 +57,10 @@ type PhaseTwoOwnershipConfig struct {
 type PhaseTwoSchedulerConfig struct {
 	// Disabling creation never disables recovery of an existing pending range.
 	ExpiredRangeEnabled bool `yaml:"expired_range_enabled"`
-	// ActiveExecutionLimit is zero (unlimited) by default; positive values
-	// are an emergency complete-Runner guard, not normal Query admission.
-	// It is part of the product capacity profile, not an environment tuning knob.
+	// ActiveExecutionLimit bounds outstanding Runner invocations. It is derived
+	// from the container's CPU budget alongside the permits below, and there is
+	// no unlimited setting: zero was one until production showed it produced
+	// parked executions rather than query throughput.
 	ActiveExecutionLimit int
 	TickInterval         Duration
 	// Admission and queue depth are derived from the container's CPU budget.
@@ -160,9 +161,8 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 		// only place that knows the chunked Store apply budget they are held
 		// against.
 		Scheduler: PhaseTwoSchedulerConfig{
-			ActiveExecutionLimit: 0,
-			TickInterval:         Duration(time.Second),
-			MaxQueuedItemsPerQG:  16, MaxReplaySlots: 3, MaxReplayAge: Duration(10 * time.Minute),
+			TickInterval:        Duration(time.Second),
+			MaxQueuedItemsPerQG: 16, MaxReplaySlots: 3, MaxReplayAge: Duration(10 * time.Minute),
 			RetryMinDelay: Duration(time.Second), RetryMaxDelay: Duration(30 * time.Second),
 		},
 		Access: PhaseTwoAccessConfig{
@@ -212,7 +212,10 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 		!ttlExceedsRenew(c.Ownership.LeaseTTL, c.Ownership.LeaseRenewInterval) {
 		return errors.New("phase_two ownership TTL must exceed its renew interval")
 	}
-	if c.Scheduler.ActiveExecutionLimit < 0 || c.Scheduler.TickInterval.Duration() <= 0 || c.Scheduler.RecoveryLimits().Validate() != nil {
+	// Zero is rejected rather than read as unlimited. An unbounded dispatcher
+	// is not a configuration a Pod can be asked to run, so there is no value
+	// here that turns the bound off.
+	if c.Scheduler.ActiveExecutionLimit <= 0 || c.Scheduler.TickInterval.Duration() <= 0 || c.Scheduler.RecoveryLimits().Validate() != nil {
 		return errors.New("phase_two scheduler cadence and recovery limits are invalid")
 	}
 	endpoint, err := url.Parse(c.Access.UQEndpoint)

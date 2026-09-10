@@ -22,27 +22,37 @@ type RuntimeConfigFacts struct {
 }
 
 type RuntimeCapacityFacts struct {
-	ExpiredRangeEnabled        bool   `json:"expired_range_enabled"`
-	ActiveExecutions           int    `json:"active_executions"`
-	ConfiguredActiveExecutions int    `json:"configured_active_executions"`
-	QueryPermits               int    `json:"query_permits"`
-	RecoveryQueryPermits       int    `json:"recovery_query_permits"`
-	RedisPoolSize              int    `json:"redis_pool_size"`
-	ReadyQueue                 int    `json:"ready_queue"`
-	RecoveryQueue              int    `json:"recovery_queue"`
-	QueuedPerQG                int    `json:"queued_per_qg"`
-	TickNS                     int64  `json:"tick_ns"`
-	ReplaySlots                uint32 `json:"replay_slots"`
-	ReplayAgeNS                int64  `json:"replay_age_ns"`
-	RetryMinNS                 int64  `json:"retry_min_ns"`
-	RetryMaxNS                 int64  `json:"retry_max_ns"`
-	SequencerReservations      int    `json:"sequencer_reservations"`
-	Series                     uint64 `json:"series"`
-	RetainedBytes              uint64 `json:"retained_bytes"`
-	StateMutations             uint64 `json:"state_mutations"`
-	Events                     uint64 `json:"events"`
-	GapMutations               uint64 `json:"gap_mutations"`
-	GapFacts                   uint64 `json:"gap_facts"`
+	ExpiredRangeEnabled bool `json:"expired_range_enabled"`
+	// The two execution-limit fields are the derivation and what the dispatcher
+	// actually runs with, and they differ only when the ready queue clamps the
+	// derived value down. Both are here so that a clamp which really did take
+	// effect is visible during an incident rather than inferred.
+	//
+	// Neither is "configured", and the earlier name that said so was worse than
+	// imprecise: this table is a release preflight and an incident record, so a
+	// field named for a setting sends whoever is reading it to look for a
+	// configuration that does not exist, at the moment they can least afford it.
+	// Nothing outside the process can set either value.
+	DerivedActiveExecutions   int    `json:"derived_active_executions"`
+	EffectiveActiveExecutions int    `json:"effective_active_executions"`
+	QueryPermits              int    `json:"query_permits"`
+	RecoveryQueryPermits      int    `json:"recovery_query_permits"`
+	RedisPoolSize             int    `json:"redis_pool_size"`
+	ReadyQueue                int    `json:"ready_queue"`
+	RecoveryQueue             int    `json:"recovery_queue"`
+	QueuedPerQG               int    `json:"queued_per_qg"`
+	TickNS                    int64  `json:"tick_ns"`
+	ReplaySlots               uint32 `json:"replay_slots"`
+	ReplayAgeNS               int64  `json:"replay_age_ns"`
+	RetryMinNS                int64  `json:"retry_min_ns"`
+	RetryMaxNS                int64  `json:"retry_max_ns"`
+	SequencerReservations     int    `json:"sequencer_reservations"`
+	Series                    uint64 `json:"series"`
+	RetainedBytes             uint64 `json:"retained_bytes"`
+	StateMutations            uint64 `json:"state_mutations"`
+	Events                    uint64 `json:"events"`
+	GapMutations              uint64 `json:"gap_mutations"`
+	GapFacts                  uint64 `json:"gap_facts"`
 	// SlotStateMutations and SlotGapMutations are the derived per-Slot caps:
 	// the smaller of the process budget and what StateApplyChunks Store calls
 	// of StoreMaxItems can carry. A Slot above its cap completes UNAVAILABLE.
@@ -57,15 +67,24 @@ type RuntimeCapacityFacts struct {
 	// table: a preflight has to be able to state what this container's cache
 	// will hold before the Pod exists, which the running process's occupancy
 	// metrics cannot answer.
-	ControlTimelineCacheBytes   int    `json:"control_timeline_cache_bytes"`
-	ControlTimelineCacheEntries int    `json:"control_timeline_cache_entries"`
-	EvaluatorMaxPlans           uint64 `json:"evaluator_max_plans"`
-	EvaluatorMaxRecords         uint64 `json:"evaluator_max_records"`
-	EvaluatorMaxLevels          uint64 `json:"evaluator_max_levels"`
-	EvidenceBytes               int    `json:"evidence_bytes"`
-	OutputMessageBytes          int    `json:"output_message_bytes"`
-	UQBodyBytes                 int64  `json:"uq_body_bytes"`
-	UQSeriesBytes               int64  `json:"uq_series_bytes"`
-	UQSeries                    uint64 `json:"uq_series"`
-	UQRecords                   uint64 `json:"uq_records"`
+	ControlTimelineCacheBytes   int `json:"control_timeline_cache_bytes"`
+	ControlTimelineCacheEntries int `json:"control_timeline_cache_entries"`
+	// GoMemoryLimitBytes and GoGCPercent are the collector's budget, derived
+	// from the same memory limit as the ceilings above. They belong in this
+	// table for the reason the rest of it exists: they are what the process
+	// runs under, no file can state them, and before they were derived the
+	// container's memory limit and the collector's behaviour had nothing to do
+	// with one another. Zero means no container stated a limit, so the process
+	// left the Go defaults alone rather than enforcing a guess.
+	GoMemoryLimitBytes  int64  `json:"go_memory_limit_bytes"`
+	GoGCPercent         int    `json:"go_gc_percent"`
+	EvaluatorMaxPlans   uint64 `json:"evaluator_max_plans"`
+	EvaluatorMaxRecords uint64 `json:"evaluator_max_records"`
+	EvaluatorMaxLevels  uint64 `json:"evaluator_max_levels"`
+	EvidenceBytes       int    `json:"evidence_bytes"`
+	OutputMessageBytes  int    `json:"output_message_bytes"`
+	UQBodyBytes         int64  `json:"uq_body_bytes"`
+	UQSeriesBytes       int64  `json:"uq_series_bytes"`
+	UQSeries            uint64 `json:"uq_series"`
+	UQRecords           uint64 `json:"uq_records"`
 }

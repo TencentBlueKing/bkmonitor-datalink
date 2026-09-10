@@ -46,7 +46,7 @@ func TestCheckConfigReportsSettingsTheFileNeverMentions(t *testing.T) {
 	for name, check := range map[string]struct{ got, want any }{
 		"tick_interval":      {facts.Capacity.TickNS, int64(container.PhaseTwo.Scheduler.TickInterval)},
 		"replay slots":       {facts.Capacity.ReplaySlots, container.PhaseTwo.Scheduler.MaxReplaySlots},
-		"active executions":  {facts.Capacity.ConfiguredActiveExecutions, container.PhaseTwo.Scheduler.ActiveExecutionLimit},
+		"active executions":  {facts.Capacity.DerivedActiveExecutions, container.PhaseTwo.Scheduler.ActiveExecutionLimit},
 		"ready_queue":        {facts.Capacity.ReadyQueue, container.PhaseTwo.Scheduler.ReadyQueueCapacity},
 		"state_mutations":    {facts.Capacity.StateMutations, container.PhaseTwo.Coordinator.MaxStateMutations},
 		"query permits":      {facts.Capacity.QueryPermits, container.PhaseTwo.Scheduler.ProcessQueryPermits},

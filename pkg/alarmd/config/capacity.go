@@ -20,6 +20,12 @@ import (
 // derive a table the Pod never uses.
 const MemoryLimitEnvironment = "ALARMD_MEMORY_LIMIT_BYTES"
 
+// memorySourceFallback names the one memory source that is not a container's
+// own statement. Budgets sized against it describe a guess, so the settings
+// that make the runtime enforce a number - rather than merely reject work
+// above one - refuse to act on it.
+const memorySourceFallback = "fallback_default"
+
 // Capacity is not an operating interface. A deployment supplies the container
 // it wants - CPU and memory - and every budget the process needs to size from
 // that follows: query permits, queue depth, series, retained bytes, mutation
@@ -38,6 +44,14 @@ const (
 	queryPermitsPerCPU       = 4
 	recoveryPermitDivisor    = 4
 	queueDepthPerQueryPermit = 32
+
+	activeExecutionsPerQueryPermit = 4
+
+	// The Go runtime's own budgets are derived from the same container limit.
+	// The soft memory limit takes half of it; the collector target crosses over
+	// to that limit once the live heap reaches an eighth of it.
+	goMemoryLimitDivisor = 2
+	goGCLiveHeapDivisor  = 8
 
 	controlTimelineCacheMemoryDivisor = 16
 	// The smallest Schedule timeline that can exist - one Segment carrying one
@@ -108,11 +122,12 @@ func detectMemoryLimit() (uint64, string) {
 			return limit, "cgroup_v1"
 		}
 	}
-	return fallbackMemoryLimitBytes, "fallback_default"
+	return fallbackMemoryLimitBytes, memorySourceFallback
 }
 
 // DerivedScheduler is the query admission and queueing shape for one container.
 type DerivedScheduler struct {
+	ActiveExecutions      int
 	ProcessQueryPermits   int
 	RecoveryQueryPermits  int
 	ReadyQueueCapacity    int
@@ -123,15 +138,111 @@ type DerivedScheduler struct {
 // their time waiting on the downstream, so the permit count is a multiple of
 // the budget rather than equal to it; the queues only hold references, so they
 // are sized to keep a full permit set fed rather than to bound memory.
+//
+// ActiveExecutions bounds how many Runner invocations the dispatcher may have
+// outstanding at once. It was previously unbounded, and production showed what
+// that buys: a Worker owning 461 Query Groups peaked at 452 outstanding
+// invocations, of which the query permits below could admit 32. The other 420
+// were fully prepared executions - decoded Schedule, plan set, request
+// structures - parked on the permit semaphore. Over a minute those queries
+// held permits for 181 seconds and waited for them for 380 seconds, so the
+// unbounded fanout was not producing query throughput. It was producing a
+// heap that swung between 170 MiB and 1.58 GiB, and 278 objects deep on a
+// 32-wide gate.
+//
+// The bound has to leave the batch able to finish inside its window. A Slot
+// becomes runnable at its evaluation time plus the ready delay and must
+// complete by its completion deadline, which leaves 30 seconds. Measured over
+// that window, one Worker's batch is 1,207 execute-seconds, of which 368 come
+// from the executions that run longer than 15 seconds. Those do not belong in
+// the batch arithmetic: at 11.8 per minute and about 39 seconds each they hold
+// roughly 7.6 slots continuously, so they are resident occupancy the batch
+// never gets back. The remaining 839 execute-seconds have to fit N slots
+// alongside them, and list scheduling bounds the makespan by the work divided
+// over the slots plus the longest job still in the batch:
+//
+//	839 / (N - 7.6) <= 30 - 15  =>  N >= 63.5
+//
+// Charging the whole 1,207 against the same 15-second longest job instead
+// gives N >= 80.5, which is a cross-check rather than the derivation: it
+// double-counts the resident tail. Neither figure can be read off the actual
+// longest execution, because that is 60 seconds and already exceeds the whole
+// 30-second window - a completion-deadline fault that predates any bound here
+// and that no admission limit can repair.
+//
+// Four per query permit puts this container at 128, comfortably above the 64
+// the measurement demands and 3.2 times the permit budget it has to keep fed,
+// while cutting the parked pile-up from a measured 452 to 128. It also stays
+// far below ReadyQueueCapacity, which is 32 per permit, so the queue is never
+// the binding side of the pair.
 func DeriveScheduler(inputs CapacityInputs) DerivedScheduler {
 	cpu := max(inputs.CPUBudget, 1)
 	permits := cpu * queryPermitsPerCPU
 	queue := permits * queueDepthPerQueryPermit
 	return DerivedScheduler{
+		ActiveExecutions:      min(permits*activeExecutionsPerQueryPermit, queue),
 		ProcessQueryPermits:   permits,
 		RecoveryQueryPermits:  max(permits/recoveryPermitDivisor, 1),
 		ReadyQueueCapacity:    queue,
 		RecoveryQueueCapacity: queue,
+	}
+}
+
+// DerivedGoRuntime is the collector's budget for one container.
+type DerivedGoRuntime struct {
+	MemoryLimitBytes int64
+	GCPercent        int
+	// Applied is false when no container stated a memory limit. A limit
+	// invented from the fallback would make the collector enforce a guess
+	// about a machine nobody measured, so the process keeps the Go defaults
+	// and says so rather than sizing itself against a number it made up.
+	Applied bool
+}
+
+// DeriveGoRuntime sizes the collector from the container's memory limit, for
+// the same reason every other budget here is derived: a deployment states the
+// container it wants, and what the process does inside it follows.
+//
+// Nothing set either of these before, and production ran on the Go defaults:
+// next_gc sat at exactly twice the live heap on both replicas, so a collection
+// ran every 0.65 seconds and the collector took 17.7% of the process while the
+// container's 8 GiB was 87% unused. That is the whole finding - the memory was
+// bought and never spent.
+//
+// The two settings are not interchangeable and both have to move. A soft
+// memory limit alone changes nothing measurable, because a target at twice a
+// 430 MiB live heap fires long before any limit worth setting. A collector
+// target alone has no absolute ceiling. So the limit is the byte budget and
+// derives from the container; the target is a ratio and therefore does not.
+//
+// Half the container is what the limit can be without becoming the next
+// problem. It has to clear the largest ceiling the process already derives
+// from the same number - retained bytes take a quarter - and it has to leave
+// enough underneath that the runtime's own collector CPU limiter can overshoot
+// into the remainder rather than the kernel reclaiming the process. Half
+// leaves both: twice the retained ceiling above, and half the container below.
+// It also keeps the steady heap under the memory request a deployment of this
+// shape asks for, which turning the collector off entirely would not - and a
+// process permanently above its request is the first one evicted when its node
+// comes under pressure.
+//
+// The target crosses over to that limit once the live heap reaches an eighth
+// of the container. Below that the ratio governs and the heap tracks what the
+// process actually holds; above it the byte budget governs. Both crossover
+// terms are fractions of the same limit, so the ratio between them - 300 - is
+// the same on every container, which is correct for a ratio.
+func DeriveGoRuntime(inputs CapacityInputs) DerivedGoRuntime {
+	if inputs.MemorySource == "" || inputs.MemorySource == memorySourceFallback {
+		return DerivedGoRuntime{}
+	}
+	limit := inputs.MemoryLimitBytes / goMemoryLimitDivisor
+	if limit > uint64(math.MaxInt64) {
+		limit = uint64(math.MaxInt64)
+	}
+	return DerivedGoRuntime{
+		MemoryLimitBytes: int64(max(limit, 1)),
+		GCPercent:        (goGCLiveHeapDivisor/goMemoryLimitDivisor - 1) * 100,
+		Applied:          true,
 	}
 }
 

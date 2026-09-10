@@ -39,7 +39,9 @@ func (r occupancyRunner) Release(context.Context) error { return nil }
 
 func occupancyDispatcher(observer observability.Observer) (*phaseTwoRunnerDispatcher, phaseTwoScheduledRunner) {
 	cfg := config.Config{}
-	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 0
+	// One owned Query Group and one slot: occupancy is what is under test here,
+	// not fanout.
+	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 1
 	cfg.PhaseTwo.Scheduler.ReadyQueueCapacity = 8
 	cfg.PhaseTwo.Scheduler.RecoveryQueueCapacity = 8
 	cfg.PhaseTwo.Scheduler.TickInterval = config.Duration(time.Second)

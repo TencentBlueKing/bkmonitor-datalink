@@ -355,7 +355,6 @@ func (e *Evaluator) evaluateSeries(
 	}
 	if final != nil {
 		mutation := final.Mutation
-		mutation.MutationDigest = ""
 		mutation.AffectedRecords = affected
 		mutation, err = execution.BuildStateMutation(mutation)
 		if err != nil {
@@ -650,5 +649,7 @@ func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, r
 	if err != nil {
 		return execution.StateMutation{}, err
 	}
-	return execution.BuildStateMutation(execution.StateMutation{Identity: view.Identity, ExpectedBlobRevision: view.BlobRevision, ApplyVersion: version, AffectedRecords: []execution.RecordAnchor{{RecordID: record.RecordID(), SourceTime: record.SourceTime()}}, Levels: levels, Points: points})
+	// Provisional: only the mutation that survives the series is digested, by
+	// evaluateSeries, once its full affected-record set is known.
+	return execution.BuildProvisionalStateMutation(execution.StateMutation{Identity: view.Identity, ExpectedBlobRevision: view.BlobRevision, ApplyVersion: version, AffectedRecords: []execution.RecordAnchor{{RecordID: record.RecordID(), SourceTime: record.SourceTime()}}, Levels: levels, Points: points})
 }

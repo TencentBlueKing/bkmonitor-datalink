@@ -496,11 +496,17 @@ func shortPeriodCohort(schedule execution.FrozenQueryGroupSchedule, slot executi
 			minimum = plan.Spec.EvaluationIntervalSeconds
 		}
 	}
+	// 30 belongs here for the same reason 10 and 15 do: its completion deadline
+	// is thirty seconds. It reaches that by the offset defaulting to the
+	// interval, which makes its deadline exactly one interval wide - less
+	// headroom than either of the others, not more.
 	switch minimum {
 	case 10:
 		return "10s"
 	case 15:
 		return "15s"
+	case 30:
+		return "30s"
 	default:
 		return ""
 	}

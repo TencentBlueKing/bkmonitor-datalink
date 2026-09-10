@@ -13,6 +13,30 @@ type QueryTimingFacts struct {
 	RecoveryBudgetMilli          int64 `json:"recovery_budget_milli,omitempty"`
 }
 
+// ShortPeriodCohorts are the evaluation intervals whose completion deadline is
+// thirty seconds, which is what the cohort is actually about - a Slot that has
+// to be finished within half a minute of the time it evaluates.
+//
+// 10 and 15 get there by carrying an explicit thirty-second offset, so their
+// deadline is two to three intervals wide. 30 gets there by the offset
+// defaulting to the interval, so its deadline is exactly one interval wide:
+// the tightest of the three, and the one that was left out. Being left out was
+// not a missing label - the producer, this normalizer and the runtime each
+// wrote the pair "10s"/"15s" separately, so the set lived in three places and
+// the archive of executions over thirty seconds could not be attributed. The
+// set is declared once here for that reason.
+var ShortPeriodCohorts = []string{"10s", "15s", "30s"}
+
+// IsShortPeriodCohort reports whether cohort is one of them.
+func IsShortPeriodCohort(cohort string) bool {
+	for _, known := range ShortPeriodCohorts {
+		if cohort == known {
+			return true
+		}
+	}
+	return false
+}
+
 // ShortPeriodCompletionFacts exists only after an acknowledged Progress commit.
 type ShortPeriodCompletionFacts struct {
 	Cohort         string  `json:"cohort"`
@@ -35,7 +59,7 @@ func normalizeTimingFacts(o Observation) *QueryTimingFacts {
 func normalizeShortPeriodCompletion(o Observation) *ShortPeriodCompletionFacts {
 	f := o.ShortPeriodCompletion
 	if f == nil || o.Component != ComponentScheduler || o.Stage != StageSlotCompleted ||
-		(f.Cohort != "10s" && f.Cohort != "15s") || f.LagSeconds < 0 || math.IsNaN(f.LagSeconds) || math.IsInf(f.LagSeconds, 0) || o.Err != nil {
+		!IsShortPeriodCohort(f.Cohort) || f.LagSeconds < 0 || math.IsNaN(f.LagSeconds) || math.IsInf(f.LagSeconds, 0) || o.Err != nil {
 		return nil
 	}
 	switch f.CompletionKind {

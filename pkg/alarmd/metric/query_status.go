@@ -38,9 +38,10 @@ func (m queryStatusMetrics) observe(o observability.Observation) {
 	// Normalized here as well as at the source, so using the metric directly
 	// cannot invent a label value the closed set does not contain.
 	o = observability.NormalizeObservation(o)
-	facts := o.QueryStatus
-	if facts == nil {
-		return
+	// One increment per physical query, not per observation: a query group
+	// with several Plans reports several codes in one completion, and
+	// counting the first would report a number that is simply wrong.
+	for _, facts := range o.QueryStatus {
+		m.responses.WithLabelValues(facts.Code, facts.Outcome).Inc()
 	}
-	m.responses.WithLabelValues(facts.Code, facts.Outcome).Inc()
 }

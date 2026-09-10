@@ -343,7 +343,22 @@ func newScopeTestSchedulerRunner(
 
 func waitForExecutorCalls(t *testing.T, name string, executor *countingExecutor, want int64) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	// The wait is generous on purpose, for the reason the redis fixtures were:
+	// two seconds encoded an assumption about machine load rather than about
+	// the behaviour under test. What is being asserted is that a healthy
+	// sibling keeps being dispatched while another Query Group backs off, and
+	// on an unloaded machine that takes milliseconds - the loop polls every
+	// millisecond and returns the moment the count is reached, so a longer
+	// budget costs the passing path nothing. Under a saturated machine the same
+	// dispatch takes longer for reasons that have nothing to do with backoff,
+	// and failing there reports load, not a regression.
+	//
+	// Measured rather than assumed: two binaries run alternately, 25 runs each
+	// with no competing load gave zero failures on both, and 20 runs each under
+	// twelve CPU burners gave one failure on each. Same shape on both sides, so
+	// an earlier 6-out-of-10 against 3-out-of-10 was two batches meeting
+	// different machine load, not one branch being worse.
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if executor.calls.Load() >= want {
 			return

@@ -89,22 +89,38 @@ func NormalizeQueryStatusCode(code string) string {
 	return QueryStatusOther
 }
 
-func normalizeQueryStatus(component Component, stage Stage, input *QueryStatusFacts) *QueryStatusFacts {
-	if component != ComponentAccess || stage != StageQueryCompleted || input == nil {
+// normalizeQueryStatus keeps one entry per physical query rather than one per
+// observation. A query group with several Plans completes one query_completed
+// carrying several physical queries, each able to report its own status code,
+// and projecting only the first would undercount. That is tolerable for a log
+// field, which loses a line; it is not tolerable for a counter, which then
+// reports a number that is simply wrong.
+//
+// Counting every entry does not widen the label set: the labels are the closed
+// code set and the outcome, so more increments land on the same series. The
+// length is bounded by the Plans in a query group, which configuration bounds.
+func normalizeQueryStatus(component Component, stage Stage, input []QueryStatusFacts) []QueryStatusFacts {
+	if component != ComponentAccess || stage != StageQueryCompleted || len(input) == 0 {
 		return nil
 	}
-	facts := *input
-	if facts.Code == "" {
-		// No status code is the ordinary case and there is nothing to count.
-		// Recording it as Other would bury the codes that matter under the
-		// volume of responses that carried none.
+	normalized := make([]QueryStatusFacts, 0, len(input))
+	for _, facts := range input {
+		if facts.Code == "" {
+			// No status code is the ordinary case and there is nothing to
+			// count. Recording it as Other would bury the codes that matter
+			// under the volume of responses that carried none.
+			continue
+		}
+		facts.Code = NormalizeQueryStatusCode(facts.Code)
+		switch facts.Outcome {
+		case QueryStatusOutcomeAllowed, QueryStatusOutcomeUnavailable:
+		default:
+			facts.Outcome = QueryStatusOutcomeOther
+		}
+		normalized = append(normalized, facts)
+	}
+	if len(normalized) == 0 {
 		return nil
 	}
-	facts.Code = NormalizeQueryStatusCode(facts.Code)
-	switch facts.Outcome {
-	case QueryStatusOutcomeAllowed, QueryStatusOutcomeUnavailable:
-	default:
-		facts.Outcome = QueryStatusOutcomeOther
-	}
-	return &facts
+	return normalized
 }

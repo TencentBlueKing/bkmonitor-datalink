@@ -82,7 +82,20 @@ func wrapNamedInputError(code string, err error) error {
 // The evaluation and result contract errors are plain errors; without the
 // bounded code the rate-limited query_completed line and the target-flow
 // facts collapsed to other/OTHER and did not say that evaluation failed.
+//
+// The code passed in says which of the two wrap sites threw, not why, so every
+// cause reaching one site collapsed into one value: a whole restart window of
+// failures read as EVALUATION_FAILED whatever had actually gone wrong, and the
+// cause survived only in the free-text message, which is rate limited. An
+// error that names its own cause keeps that name here; the category stays with
+// the stage, because where it failed is what the wrap site knows.
 func wrapEvaluationError(code string, err error) error {
+	var declared interface{ QueryFailure() (string, string) }
+	if errors.As(err, &declared) {
+		if _, inner := declared.QueryFailure(); inner != "" {
+			code = inner
+		}
+	}
 	return &queryContractError{category: observability.QueryFailureCategoryEvaluation, code: code, err: err}
 }
 

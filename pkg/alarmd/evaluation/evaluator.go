@@ -709,7 +709,8 @@ func appendHistoryPoint(history []execution.StateHistoryPoint, point execution.S
 	position := sort.Search(len(history), func(index int) bool { return history[index].SourceTime >= point.SourceTime })
 	if position < len(history) && history[position].SourceTime == point.SourceTime {
 		if history[position].RecordID != point.RecordID {
-			return nil, fmt.Errorf("alarmd evaluation: record identity conflict at source time %d", point.SourceTime)
+			return nil, &namedEvaluationError{code: "STATE_RECORD_IDENTITY_CONFLICT",
+				err: fmt.Errorf("alarmd evaluation: record identity conflict at source time %d", point.SourceTime)}
 		}
 		merged := append([]execution.StateHistoryPoint(nil), history...)
 		levels, err := mergeLevelFacts(merged[position].Levels, point.Levels)
@@ -744,8 +745,26 @@ func mergeLevelFacts(stored, fresh []execution.StateLevelFact) ([]execution.Stat
 			continue
 		}
 		if merged[index].Result != fact.Result || merged[index].DetectFingerprint != fact.DetectFingerprint {
-			return nil, fmt.Errorf("alarmd evaluation: Level %d disagrees with the stored fact for the same record", fact.LevelID)
+			return nil, &namedEvaluationError{code: "STATE_LEVEL_FACT_DISAGREEMENT",
+				err: fmt.Errorf("alarmd evaluation: Level %d disagrees with the stored fact for the same record", fact.LevelID)}
 		}
 	}
 	return merged, nil
 }
+
+// namedEvaluationError carries the cause's own bounded name out of the
+// evaluation. Without it the name of the failure is decided by which wrap site
+// the error reached, so everything thrown from one site aggregates into one
+// value and the cause is left in the free-text message - the only field that
+// says why, and the only one that is rate limited.
+//
+// The category is deliberately absent: where the failure happened is what the
+// wrapping stage knows, and it stays that stage's answer.
+type namedEvaluationError struct {
+	code string
+	err  error
+}
+
+func (e *namedEvaluationError) Error() string                  { return e.err.Error() }
+func (e *namedEvaluationError) Unwrap() error                  { return e.err }
+func (e *namedEvaluationError) QueryFailure() (string, string) { return "", e.code }

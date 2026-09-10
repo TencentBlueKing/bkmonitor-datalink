@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -63,9 +64,56 @@ func validatePlanIdentity(prefix string, plan execution.PlanIdentity, generation
 	return nil
 }
 
+// A Runtime State key is derived once per series on every Slot, but two of the
+// three digests inside it are process-wide near-constants: one per tenant and
+// one per compiled state generation. Remembering those leaves only the series
+// digest, which is genuinely per key, to be derived.
+var (
+	tenantKeySegments     = newKeySegmentMemo("alarmd-runtime-tenant-v2")
+	generationKeySegments = newKeySegmentMemo("alarmd-state-generation-v2")
+)
+
+// keySegmentMemo remembers the digest of a low cardinality identity string. It
+// clears rather than evicts: the populations it holds are bounded by
+// configuration, so reaching the bound means that assumption no longer holds
+// and starting over is better than growing without limit. An underivable
+// digest is not remembered and is returned as it was, so the caller slices it
+// and fails exactly where it did before.
+type keySegmentMemo struct {
+	domain  string
+	mu      sync.RWMutex
+	digests map[string]string
+}
+
+const keySegmentMemoEntries = 4096
+
+func newKeySegmentMemo(domain string) *keySegmentMemo {
+	return &keySegmentMemo{domain: domain, digests: make(map[string]string)}
+}
+
+func (memo *keySegmentMemo) digest(value string) string {
+	memo.mu.RLock()
+	digest, found := memo.digests[value]
+	memo.mu.RUnlock()
+	if found {
+		return digest
+	}
+	digest, err := contract.DeriveCanonicalDigestV2(memo.domain, value)
+	if err != nil {
+		return digest
+	}
+	memo.mu.Lock()
+	if len(memo.digests) >= keySegmentMemoEntries {
+		memo.digests = make(map[string]string)
+	}
+	memo.digests[value] = digest
+	memo.mu.Unlock()
+	return digest
+}
+
 func executionKey(prefix, kind string, plan execution.PlanIdentity, generation execution.StateGeneration, suffix string) string {
-	tenant, _ := contract.DeriveCanonicalDigestV2("alarmd-runtime-tenant-v2", plan.TenantID)
-	generationDigest, _ := contract.DeriveCanonicalDigestV2("alarmd-state-generation-v2", generation)
+	tenant := tenantKeySegments.digest(plan.TenantID)
+	generationDigest := generationKeySegments.digest(string(generation))
 	parts := []string{prefix, kind, "v2", tenant[:32], plan.BusinessID, plan.StrategyID, generationDigest[:32]}
 	if suffix != "" {
 		parts = append(parts, suffix[:32])

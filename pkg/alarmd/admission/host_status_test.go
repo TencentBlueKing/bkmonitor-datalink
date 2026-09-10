@@ -167,3 +167,40 @@ func TestTheChainNamesTheHostStatusFilter(t *testing.T) {
 		t.Fatalf("filter names = %v", names)
 	}
 }
+
+// The target scope accepts ip / bk_cloud_id as alternative spellings, and the
+// host status filter must not inherit that. Python branches on bk_target_ip
+// and bk_host_id only, so a record spelled the other way is not host data to
+// it - and looking such a record up would drop a series Python keeps whenever
+// the address happens to belong to a disabled host. That is a missed alert.
+func TestTheAlternativeAddressSpellingIsNotHostNamingForThisFilter(t *testing.T) {
+	filter := hostStatusFilter(t, "备用机")
+	facts := factsFor(map[string]json.RawMessage{
+		"ip":          raw(`"192.0.2.10"`),
+		"bk_cloud_id": raw(`0`),
+	}, func(f *Facts) {
+		f.HostResolved = true
+		f.HostState = "备用机"
+	})
+	if decision := filter.Admit(PlanContext{}, facts); !decision.Admit {
+		t.Fatalf("decision = %+v, want the record admitted: Python does not treat it as host data", decision)
+	}
+	// The target scope still resolves it, so the two readings really are separate.
+	if len(facts.HostKeys) == 0 {
+		t.Fatal("the target scope lost the alternative spelling it relies on")
+	}
+}
+
+// An empty bk_target_ip is invalid host data even when the alternative
+// spelling carries an address, because Python checks bk_target_ip itself.
+func TestAnEmptyTargetAddressIsInvalidEvenWithTheAlternativeSpelling(t *testing.T) {
+	filter := hostStatusFilter(t, "备用机")
+	facts := factsFor(map[string]json.RawMessage{
+		"bk_target_ip": raw(`""`),
+		"ip":           raw(`"192.0.2.10"`),
+	}, nil)
+	decision := filter.Admit(PlanContext{}, facts)
+	if decision.Admit || decision.Reason != "host_identity_invalid" {
+		t.Fatalf("decision = %+v, want the record rejected as invalid host data", decision)
+	}
+}

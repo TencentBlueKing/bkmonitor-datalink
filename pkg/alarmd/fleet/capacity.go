@@ -69,9 +69,11 @@ type Rotation struct {
 	// covering its objects, which no per-object signal reports.
 	Completed uint64 `json:"completed"`
 	Truncated uint64 `json:"truncated"`
-	// Offered, Queued and Deferred count objects rather than rotations. Offered
-	// minus queued is what was passed over; a deferral is not a failure, but a
-	// deferral that repeats every rotation is an object nothing will reach.
+	// Offered and Queued count objects: how many the walk reached, and how many
+	// of those got a place. Deferred counts turn-aways instead, and the same
+	// object turned away on ten passes counts ten times -- that repetition is
+	// the signal, because a deferral is not a failure but a deferral that keeps
+	// happening is an object nothing will reach.
 	Offered  uint64 `json:"offered"`
 	Queued   uint64 `json:"queued"`
 	Deferred uint64 `json:"deferred"`

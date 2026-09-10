@@ -111,3 +111,47 @@ func TestCapacityCountsOnlyReplicasThatReported(t *testing.T) {
 		t.Fatalf("capacity counted a replica that did not report: %+v", view.Capacity)
 	}
 }
+
+// A rotation's counts are per replica and the work is split between them, so
+// the counts add up. The duration does not: a deployment covers its objects
+// only as fast as its slowest replica gets round its own share, and averaging
+// would report a coverage time no replica achieves.
+func TestRotationAddsUpCountsAndKeepsTheSlowestDuration(t *testing.T) {
+	at := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	view := Aggregate(Expectation{QueryGroups: 20, Known: true}, []Snapshot{
+		capacitySnapshot("pod-a", at, &Capacity{Rotation: &Rotation{
+			Completed: 12, Truncated: 1, Offered: 600, Queued: 590, Deferred: 10, LastSeconds: 2.5,
+		}}),
+		capacitySnapshot("pod-b", at, &Capacity{Rotation: &Rotation{
+			Completed: 9, Truncated: 3, Offered: 450, Queued: 430, Deferred: 20, LastSeconds: 7.25,
+		}}),
+	}, []string{"pod-a", "pod-b"}, at, time.Minute)
+
+	rotation := view.Capacity.Rotation
+	if rotation == nil {
+		t.Fatal("rotation was not reported")
+	}
+	if rotation.Completed != 21 || rotation.Truncated != 4 {
+		t.Fatalf("completed=%d truncated=%d, want 21 and 4", rotation.Completed, rotation.Truncated)
+	}
+	if rotation.Offered != 1050 || rotation.Queued != 1020 || rotation.Deferred != 30 {
+		t.Fatalf("object counts did not add up: %+v", rotation)
+	}
+	if rotation.LastSeconds != 7.25 {
+		t.Fatalf("last_seconds = %v, want the slowest replica's 7.25", rotation.LastSeconds)
+	}
+}
+
+// A replica that has not finished a rotation reports none, and that must not
+// read as a rotation of zero: "just started" and "stuck" are opposite
+// conditions and a zero would show them the same way.
+func TestRotationIsAbsentWhenNoReplicaHasFinishedOne(t *testing.T) {
+	at := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	view := Aggregate(Expectation{QueryGroups: 20, Known: true}, []Snapshot{
+		capacitySnapshot("pod-a", at, &Capacity{PermitsHeld: 3, PermitBudget: 32}),
+	}, []string{"pod-a"}, at, time.Minute)
+
+	if view.Capacity.Rotation != nil {
+		t.Fatalf("a deployment with no finished rotation reported %+v", view.Capacity.Rotation)
+	}
+}

@@ -457,9 +457,10 @@ type phaseTwoRotationFacts struct {
 	completed uint64
 	// truncated counts rotations that stopped before reaching everyone.
 	truncated uint64
-	// offered, queued and deferred count Query Groups, not rotations. Their
-	// difference says whether objects are being passed over rather than merely
-	// running late.
+	// offered and queued count Query Groups: how many the walk reached, and how
+	// many of those got a place. deferred counts turn-aways, so one Query Group
+	// stuck behind a full queue adds one per pass -- the repetition is what
+	// distinguishes an object running late from one nothing will reach.
 	offered  uint64
 	queued   uint64
 	deferred uint64
@@ -845,6 +846,20 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 	if len(runners) == 0 {
 		return
 	}
+	// A rotation publishes when it ends, and a walk held up by a full queue
+	// never ends -- which is the one condition this measurement exists to
+	// surface. Without this, a stuck deployment keeps showing the last finished
+	// rotation's numbers and reads as healthy for as long as it stays stuck. A
+	// pass that turned anyone away therefore publishes on its way out, so
+	// "deferred climbing while completed stays flat" is readable while it is
+	// happening. It is once per pass rather than per deferral: the pass is the
+	// dispatcher loop's own unit, and the walk itself must stay clean.
+	deferredAtEntry := dispatcher.rotation.deferred
+	defer func() {
+		if dispatcher.rotation.deferred != deferredAtEntry {
+			dispatcher.publishRotation()
+		}
+	}()
 	// A new generation, or a changed owned set, starts a walk from the rotation
 	// cursor. The walk then carries across passes, so a Query Group is looked
 	// at once per generation rather than once per pass.

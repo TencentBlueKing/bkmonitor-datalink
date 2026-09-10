@@ -238,6 +238,13 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err := repository.ConfigureDrainingTermination(cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration()); err != nil {
 		return nil, err
 	}
+	// The timeline cache budget is derived here rather than inside the
+	// repository: the derivation belongs to the container, and the control
+	// plane package does not depend on configuration.
+	timelineCache := config.DeriveControlTimelineCache(config.DetectCapacityInputs())
+	if err := repository.ConfigureControlTimelineCache(timelineCache.MaxEntries, timelineCache.MaxBytes); err != nil {
+		return nil, err
+	}
 	repository.ConfigureObserver(observer)
 	// The cache counters decide how much a decoded-timeline cache would save,
 	// and nothing consumed them before.

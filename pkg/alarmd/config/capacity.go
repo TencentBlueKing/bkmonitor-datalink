@@ -6,6 +6,7 @@
 package config
 
 import (
+	"math"
 	"os"
 	"runtime"
 	"strconv"
@@ -37,6 +38,11 @@ const (
 	queryPermitsPerCPU       = 4
 	recoveryPermitDivisor    = 4
 	queueDepthPerQueryPermit = 32
+
+	controlTimelineCacheMemoryDivisor = 16
+	// The smallest Schedule timeline that can exist - one Segment carrying one
+	// Plan - is charged over 1.7 KiB, so no real entry is smaller than this.
+	controlTimelineCacheMinEntryBytes = 1 << 10
 
 	// Only local runs and unit tests reach this: a container states its limit
 	// through the environment, and a host cgroup states it in the files below.
@@ -132,6 +138,53 @@ func DeriveScheduler(inputs CapacityInputs) DerivedScheduler {
 // AdmittedConcurrency is how many queries this container may have in flight.
 func (d DerivedScheduler) AdmittedConcurrency() int {
 	return d.ProcessQueryPermits + d.RecoveryQueryPermits
+}
+
+// DerivedControlTimelineCache bounds the control plane's Schedule timeline
+// cache for one container.
+type DerivedControlTimelineCache struct {
+	MaxEntries int
+	MaxBytes   int
+}
+
+// DeriveControlTimelineCache sizes the Schedule timeline cache from the memory
+// limit. The cache holds one timeline per Query Group the Worker owns, and a
+// hit is the difference between reusing a decoded Schedule and decoding plus
+// re-validating it: a production profile spent 58% of the process on the
+// second and 0.26% on the Redis read the cache was actually saving.
+//
+// The number this replaces was a written 32 MiB, the same constant on every
+// container. Production shows what that bought: over an hour the cache
+// reported no refreshes at all - the version header never moved - and still
+// missed 41% of lookups, so every one of those misses was a timeline the byte
+// bound had evicted. At the observed 143 KiB per timeline the bound held about
+// 230 of the 931 Query Groups that Worker owned.
+//
+// An entry holds the decoded object alone - the persisted bytes are read live
+// by the three publication paths that need them and kept by nobody - which
+// measures at 9/8 of the payload, about 161 KiB at that shape. One sixteenth
+// of the container makes the owned set fit several times over: 512 MiB on
+// 8 GiB holds about 3,250 such timelines against the 931 owned, and 153 MiB is
+// what those 931 actually occupy. The ceiling is deliberately well above the
+// residency, because it is a ceiling: the cache only ever grows to the working
+// set, and a bound that tracks the container leaves room for a Worker that
+// takes on more Query Groups without conceding more than a sixteenth of the
+// process to a read cache.
+//
+// The entry bound is derived from the same budget so the two can never
+// disagree: it is how many entries the byte budget could hold if every
+// timeline were the smallest one that can exist. The byte bound is what binds
+// in practice, which is exactly what the replaced pair of constants got wrong -
+// its 4096 entries were never reached.
+func DeriveControlTimelineCache(inputs CapacityInputs) DerivedControlTimelineCache {
+	budget := max(inputs.MemoryLimitBytes/controlTimelineCacheMemoryDivisor, controlTimelineCacheMinEntryBytes)
+	if budget > uint64(math.MaxInt) {
+		budget = uint64(math.MaxInt)
+	}
+	return DerivedControlTimelineCache{
+		MaxEntries: max(int(budget/controlTimelineCacheMinEntryBytes), 1),
+		MaxBytes:   int(budget),
+	}
 }
 
 // DeriveCoordinator sizes the process budgets from the memory limit. Retained

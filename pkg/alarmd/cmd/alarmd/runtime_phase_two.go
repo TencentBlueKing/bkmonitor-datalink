@@ -426,6 +426,16 @@ type phaseTwoRunnerDispatcher struct {
 	walkRunners    uint64
 	walkIndex      int
 	walked         int
+	walkTotal      int
+	// owedWalk holds the Runners that returned while this generation's walk was
+	// still in progress. They were passed over as active, so the walk consumed
+	// their turn without offering them a place, and they are owed one. Paying it
+	// immediately would take a place from a Query Group the walk has not reached
+	// yet, which is how the tail of the rotation starves: the ready queue is the
+	// resource the walk is rationing, and a Runner that just finished is always
+	// first in line for it. The debt is paid after the walk has offered every
+	// Query Group this generation, so it costs the rotation nothing.
+	owedWalk []phaseTwoScheduledRunner
 	// prunedRunners names the owned set the queues were last cleaned against.
 	// A lifecycle only stops being current when that set changes, so cleaning
 	// again for an unchanged set walks every queued entry and every remembered
@@ -814,7 +824,11 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 		dispatcher.walkIndex = sort.Search(len(runners), func(index int) bool {
 			return runners[index].queryGroup > dispatcher.cursor
 		})
-		dispatcher.walked = 0
+		dispatcher.walked, dispatcher.walkTotal = 0, len(runners)
+		// A fresh walk offers every Query Group again, so nothing is owed from
+		// the walk that was replaced. A one-shot run never reaches here twice,
+		// which is exactly where the debt has to survive to be paid at all.
+		dispatcher.owedWalk = nil
 	}
 	// advance moves the walk past the Query Group it just looked at. A Query
 	// Group turned away because a queue is full does not advance: it keeps its
@@ -887,6 +901,55 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 		dispatcher.cursor = scheduled.queryGroup
 		advance()
 	}
+	// The loop only falls out here once the walk has offered every Query Group
+	// this generation. A queue that filled up returns instead, and the debt
+	// waits for the pass that finds room.
+	dispatcher.payOwedWalk()
+}
+
+// walkFinished reports whether this generation's walk has already offered every
+// owned Query Group a place. Only then can a returning Runner take one without
+// taking it from a Query Group the walk has not reached.
+func (dispatcher *phaseTwoRunnerDispatcher) walkFinished() bool {
+	return dispatcher.walkGeneration == dispatcher.generation && dispatcher.walked >= dispatcher.walkTotal
+}
+
+// payOwedWalk offers a place to the Runners that returned mid-walk. Each is
+// re-checked against the same conditions the walk applies, because the debt was
+// recorded before this pass and the Query Group may have been dispatched,
+// queued or replaced since. An entry with no room left is kept for a later pass
+// rather than dropped; that is what makes it a debt and not a chance.
+func (dispatcher *phaseTwoRunnerDispatcher) payOwedWalk() {
+	if len(dispatcher.owedWalk) == 0 {
+		return
+	}
+	capacity := dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.ReadyQueueCapacity
+	kept := dispatcher.owedWalk[:0]
+	for _, scheduled := range dispatcher.owedWalk {
+		if len(dispatcher.normal) >= capacity {
+			kept = append(kept, scheduled)
+			continue
+		}
+		if dispatcher.active[scheduled.queryGroup] != nil || dispatcher.queued[scheduled.queryGroup] != nil {
+			continue
+		}
+		last := dispatcher.lastQueued[scheduled.queryGroup]
+		if last.lifecycle == scheduled.lifecycle && last.generation == dispatcher.generation {
+			continue
+		}
+		if !dispatcher.bundle.isCurrentScheduledRunner(scheduled) {
+			continue
+		}
+		if !scheduled.lifecycle.runner.NextReadyAt().IsZero() {
+			continue
+		}
+		dispatcher.normal = append(dispatcher.normal, phaseTwoQueuedRunner{scheduled: scheduled})
+		dispatcher.queued[scheduled.queryGroup] = scheduled.lifecycle
+		dispatcher.lastQueued[scheduled.queryGroup] = phaseTwoRunnerGeneration{
+			lifecycle: scheduled.lifecycle, generation: dispatcher.generation,
+		}
+	}
+	dispatcher.owedWalk = kept
 }
 
 func (dispatcher *phaseTwoRunnerDispatcher) markDispatched(
@@ -956,11 +1019,28 @@ func (dispatcher *phaseTwoRunnerDispatcher) handleResult(
 	if readyAt.IsZero() {
 		// A Runner that was active when the generation's walk passed it was
 		// skipped without being offered a place, and the walk does not come
-		// back. It is offered one here instead, on the same terms the walk
-		// would have used: not if it already ran this generation, and not if
-		// the queue is full.
+		// back. It is owed one, on the same terms the walk would have used: not
+		// if it already ran this generation, and not if the queue is full.
 		last := dispatcher.lastQueued[scheduled.queryGroup]
 		if last.lifecycle == scheduled.lifecycle && last.generation == dispatcher.generation {
+			return
+		}
+		if !dispatcher.oneShot {
+			// A rotation repays this by itself: the next generation's walk
+			// offers this Query Group again when its turn comes round, and
+			// waiting for your next turn is what a rotation means. Queueing it
+			// here would put it ahead of every Query Group the walk has not
+			// reached yet, and a Runner that just returned is always the first
+			// one able to ask, so the Query Groups that finish fastest would
+			// hold the ready queue and the tail of the rotation would starve.
+			return
+		}
+		if !dispatcher.walkFinished() {
+			// A one-shot run has no next generation, so the turn the walk
+			// consumed while this Runner was active is the only one it gets and
+			// the debt has to be paid. It still may not be paid ahead of the
+			// walk: it waits until every Query Group has been offered a place.
+			dispatcher.owedWalk = append(dispatcher.owedWalk, scheduled)
 			return
 		}
 		if len(dispatcher.normal) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.ReadyQueueCapacity {

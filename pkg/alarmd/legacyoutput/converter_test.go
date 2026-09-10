@@ -72,6 +72,22 @@ func TestLocalConverterMatchesPythonAdapter(t *testing.T) {
 	}
 	store := &snapshotRecorder{}
 	converter := Converter{Store: store, Now: func() time.Time { return time.Unix(fixture.PythonTime, 0) }}
+	// The oracle was captured by calling Python's adapter directly, which will
+	// stamp any status it is handed. Python's trigger never hands it one: it
+	// builds every event from the anomaly list. So the recovery row records
+	// what the adapter would do, not what the protocol carries, and the
+	// converter refuses it rather than reproducing it.
+	anomalies := make([]contract.TriggerEventV1, 0, len(events))
+	for _, event := range events {
+		if event.EventKind != contract.TriggerEventAbnormal {
+			if _, err := converter.ConvertBatch(context.Background(), []contract.TriggerEventV1{event}); err == nil {
+				t.Fatalf("converter accepted a %q event", event.EventKind)
+			}
+			continue
+		}
+		anomalies = append(anomalies, event)
+	}
+	events = anomalies
 	got, err := converter.ConvertBatch(context.Background(), events)
 	if err != nil {
 		t.Fatal(err)
@@ -85,6 +101,13 @@ func TestLocalConverterMatchesPythonAdapter(t *testing.T) {
 		json.Unmarshal([]byte(fixture.Response.Events[i].Payload), &expected)
 		// UQ's canonical primary field is named value; retain it in original values.
 		expected["extra_info"].(map[string]any)["origin_alarm"].(map[string]any)["data"].(map[string]any)["values"].(map[string]any)["value"] = expected["extra_info"].(map[string]any)["origin_alarm"].(map[string]any)["data"].(map[string]any)["value"]
+		// The oracle was captured after Event.clean(), which computes and adds
+		// dedupe_md5. The producer pushes the adapter's output as it is, so the
+		// field is not on the wire - 200 events sampled from the live topic
+		// carry none. Emitting it would hand the downstream fingerprint to this
+		// converter, because the reader takes the payload's value when present
+		// and only computes its own when it is absent.
+		delete(expected, "dedupe_md5")
 		if !reflect.DeepEqual(actual, expected) {
 			t.Fatalf("local Python protocol differs:\ngot %s\nwant %s", event.Payload, fixture.Response.Events[i].Payload)
 		}

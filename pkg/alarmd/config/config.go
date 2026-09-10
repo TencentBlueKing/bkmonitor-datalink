@@ -78,9 +78,13 @@ type KafkaConfig struct {
 	MessageReceipt      KafkaOutputConfig   `yaml:"message_receipt"`
 	AllowedOutputTopics []string            `yaml:"allowed_output_topics"`
 	GroupID             string              `yaml:"group_id"`
-	ClientID            string              `yaml:"client_id"`
-	BrokerVersion       string              `yaml:"broker_version"`
-	InitialOffset       string              `yaml:"initial_offset"`
+	// ClientID and BrokerVersion identify this producer to the broker and fix
+	// the protocol it speaks. Neither is something a deployment knows better
+	// than the product: the identity is the product's name and the version is
+	// the oldest protocol every supported broker understands.
+	ClientID      string `yaml:"-"`
+	BrokerVersion string `yaml:"-"`
+	InitialOffset string `yaml:"initial_offset"`
 }
 
 func (c KafkaConfig) ConsumerCoordinates() enginekafka.Config {
@@ -155,9 +159,14 @@ type Config struct {
 	ShutdownTimeout  Duration               `yaml:"shutdown_timeout"`
 }
 
+// Default is the product configuration, and it is the same on every machine:
+// the capacity budgets describe ReferenceContainer, not whatever the process
+// happens to be running on. Load is where they follow the real container.
+// Reading the machine here would make a build agent's core count part of the
+// product default and every test's expectations a property of its host.
 func Default() Config {
 	runner := coordinator.DefaultConcurrentRunnerLimits()
-	return Config{
+	cfg := Config{
 		Mode:  ModeShadow,
 		Input: DefaultPhaseTwoInput(),
 		HTTP: HTTPConfig{
@@ -168,6 +177,7 @@ func Default() Config {
 			DiagnosticsListen: "127.0.0.1:6060",
 		},
 		Kafka: KafkaConfig{
+			ClientID: "alarmd", BrokerVersion: "0.10.2.0",
 			TriggerEvent:        KafkaOutputConfig{Topic: "alarmd_event", MaxMessageBytes: defaultOutputMaxMessageBytes},
 			LegacyAdapter:       LegacyAdapterConfig{Topic: "alarmd_0bkmonitor_backend_event"},
 			AllowedOutputTopics: []string{"alarmd_event", "alarmd_0bkmonitor_backend_event"},
@@ -192,6 +202,34 @@ func Default() Config {
 		PhaseTwo:        defaultPhaseTwoRuntime(),
 		ShutdownTimeout: Duration(10 * time.Second),
 	}
+	return cfg.withDerivedCapacity(ReferenceContainer())
+}
+
+// withDerivedCapacity sizes admission, queueing and the Coordinator budgets
+// from one container's CPU and memory.
+func (c Config) withDerivedCapacity(inputs CapacityInputs) Config {
+	derived := DeriveScheduler(inputs)
+	c.PhaseTwo.Scheduler.ProcessQueryPermits = derived.ProcessQueryPermits
+	c.PhaseTwo.Scheduler.RecoveryQueryPermits = derived.RecoveryQueryPermits
+	c.PhaseTwo.Scheduler.ReadyQueueCapacity = derived.ReadyQueueCapacity
+	c.PhaseTwo.Scheduler.RecoveryQueueCapacity = derived.RecoveryQueueCapacity
+	c.PhaseTwo.Coordinator = DeriveCoordinator(
+		inputs, uint64(c.Limits.Store.MaxKeysPerBatch), c.chunkedStateApplyBudget(),
+	)
+	return c
+}
+
+// WithContainerCapacity sizes the budgets for the container this process was
+// given. Load applies it; Default deliberately does not.
+func (c Config) WithContainerCapacity() Config {
+	return c.withDerivedCapacity(DetectCapacityInputs())
+}
+
+// chunkedStateApplyBudget is the most one Slot's State or Gap mutations can
+// carry: StateApplyMaxChunks successive Store calls of max_keys_per_batch
+// items each.
+func (c Config) chunkedStateApplyBudget() uint64 {
+	return uint64(c.Limits.Store.MaxKeysPerBatch) * execution.StateApplyMaxChunks
 }
 
 // DeploymentProfile is the Worker's Ownership compatibility identity: Workers
@@ -242,8 +280,10 @@ func (c Config) RedisBackendOptions() state.RedisBackendOptions {
 		// Resolve here as well as in the runtime path: WithResolvedRedisPoolSize
 		// carries the authoritative value into the startup facts, but options can
 		// also be built by paths that never ran it, and a zero must never reach a
-		// client.
-		PoolSize: c.Redis.Connection().EffectivePoolSize(c.AdmittedQueryConcurrency()),
+		// client. Both paths derive from the CPU budget so they cannot disagree;
+		// passing the admitted concurrency here used to produce a different pool
+		// than the one the process reported.
+		PoolSize: c.Redis.Connection().EffectivePoolSize(redisPoolCPUBudget()),
 	}
 }
 
@@ -276,6 +316,30 @@ func (c *Config) resolvePhaseTwoRuntimeRedis() {
 // operational setting instead of two; mode and address stay explicit because
 // they decide the destination and a wrong guess there writes a snapshot nobody
 // reads.
+// resolveCompatibilityPodCache fills in the Django cache coordinates the
+// deployment does not choose. Workload enrichment reads the same cache Python
+// reads, whose keys carry Django's cache version; the platform leaves that at
+// Django's default, so the version is the product's to know rather than one
+// more line for a values file to get wrong.
+func (c *Config) resolveCompatibilityPodCache() {
+	if c == nil || c.Kafka.LegacyAdapter.PodCache == nil {
+		return
+	}
+	cache := c.Kafka.LegacyAdapter.PodCache
+	if cache.Version <= 0 {
+		cache.Version = defaultDjangoCacheVersion
+	}
+	if cache.Connection.DialTimeout == 0 {
+		cache.Connection.DialTimeout = c.Redis.DialTimeout
+	}
+	if cache.Connection.ReadTimeout == 0 {
+		cache.Connection.ReadTimeout = c.Redis.ReadTimeout
+	}
+	if cache.Connection.WriteTimeout == 0 {
+		cache.Connection.WriteTimeout = c.Redis.WriteTimeout
+	}
+}
+
 func (c *Config) resolveCompatibilityServiceTimeouts() {
 	if c == nil {
 		return
@@ -325,10 +389,11 @@ func (c Config) EvaluationRunnerLimits() coordinator.ConcurrentRunnerLimits {
 }
 
 func Load(path string) (Config, error) {
-	cfg := Default()
+	cfg := Default().WithContainerCapacity()
 	if path == "" {
 		cfg.resolvePhaseTwoRuntimeRedis()
 		cfg.resolveCompatibilityServiceTimeouts()
+		cfg.resolveCompatibilityPodCache()
 		return cfg, cfg.Validate()
 	}
 
@@ -353,6 +418,7 @@ func Load(path string) (Config, error) {
 
 	cfg.resolvePhaseTwoRuntimeRedis()
 	cfg.resolveCompatibilityServiceTimeouts()
+	cfg.resolveCompatibilityPodCache()
 	cfg.resolvePhaseTwoWorkerIDFromEnvironment()
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -494,7 +560,7 @@ func (c Config) validateGoAccessRuntime() error {
 	// of at most max_keys_per_batch items, up to StateApplyMaxChunks calls.
 	// A process budget above that product could admit a Slot no apply can
 	// ever carry, so it is rejected here rather than at runtime.
-	chunkedApplyBudget := uint64(c.Limits.Store.MaxKeysPerBatch) * execution.StateApplyMaxChunks
+	chunkedApplyBudget := c.chunkedStateApplyBudget()
 	if budget.MaxStateMutations > chunkedApplyBudget || budget.MaxGapMutations > chunkedApplyBudget {
 		return errors.New("phase_two mutation budgets exceed the chunked state store apply budget")
 	}

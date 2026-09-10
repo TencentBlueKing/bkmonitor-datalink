@@ -39,22 +39,28 @@ func TestCheckConfigReportsSettingsTheFileNeverMentions(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &facts); err != nil {
 		t.Fatalf("resolved facts are not machine readable: %v (%q)", err, stdout.String())
 	}
-	defaults := config.Default()
+	// Product constants come from the product; capacity comes from the
+	// container this process was given. Both are settings the file never
+	// mentions, which is the whole point of reporting them.
+	container := config.Default().WithContainerCapacity()
 	for name, check := range map[string]struct{ got, want any }{
-		"tick_interval":      {facts.Capacity.TickNS, int64(defaults.PhaseTwo.Scheduler.TickInterval)},
-		"ready_queue":        {facts.Capacity.ReadyQueue, defaults.PhaseTwo.Scheduler.ReadyQueueCapacity},
-		"state_mutations":    {facts.Capacity.StateMutations, defaults.PhaseTwo.Coordinator.MaxStateMutations},
-		"query permits":      {facts.Capacity.QueryPermits, defaults.PhaseTwo.Scheduler.ProcessQueryPermits},
-		"active executions":  {facts.Capacity.ConfiguredActiveExecutions, defaults.PhaseTwo.Scheduler.ActiveExecutionLimit},
-		"replay slots":       {facts.Capacity.ReplaySlots, defaults.PhaseTwo.Scheduler.MaxReplaySlots},
-		"sequencer bookings": {facts.Capacity.SequencerReservations, defaults.PhaseTwo.Coordinator.MaxSequencerReservations},
+		"tick_interval":      {facts.Capacity.TickNS, int64(container.PhaseTwo.Scheduler.TickInterval)},
+		"replay slots":       {facts.Capacity.ReplaySlots, container.PhaseTwo.Scheduler.MaxReplaySlots},
+		"active executions":  {facts.Capacity.ConfiguredActiveExecutions, container.PhaseTwo.Scheduler.ActiveExecutionLimit},
+		"ready_queue":        {facts.Capacity.ReadyQueue, container.PhaseTwo.Scheduler.ReadyQueueCapacity},
+		"state_mutations":    {facts.Capacity.StateMutations, container.PhaseTwo.Coordinator.MaxStateMutations},
+		"query permits":      {facts.Capacity.QueryPermits, container.PhaseTwo.Scheduler.ProcessQueryPermits},
+		"sequencer bookings": {facts.Capacity.SequencerReservations, container.PhaseTwo.Coordinator.MaxSequencerReservations},
 	} {
 		if check.got != check.want {
-			t.Errorf("%s reported as %v, want the product default %v", name, check.got, check.want)
+			t.Errorf("%s reported as %v, want %v", name, check.got, check.want)
 		}
 		if strings.Contains(contents, "tick_interval") {
 			t.Fatal("the fixture states these settings, so the report proves nothing")
 		}
+	}
+	if facts.Source != "container_derived" {
+		t.Errorf("capacity provenance reported as %q", facts.Source)
 	}
 	// Derived values matter more than copied ones, because no file states
 	// them at all: the per-Slot cap is the smaller of the process budget and

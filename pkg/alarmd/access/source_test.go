@@ -577,7 +577,7 @@ func TestDataBindingsShareFullImmutableViewAcrossConsumers(t *testing.T) {
 	requirement.Consumers[1].Consumer.LevelID = 1
 	dataset := execution.NewDataset([]contract.CanonicalRecordV2{{RecordID: "record", SourceTime: 1, BusinessID: "2"}})
 	query := PlannedQuery{Requirements: []execution.DataRequirement{requirement}}
-	bindings, err := dataBindings(query, execution.ProviderSeriesBatch{Dataset: dataset, CompletionRef: "result"}, 1)
+	bindings, err := dataBindings(query, execution.ProviderSeriesBatch{Dataset: dataset, CompletionRef: "result"}, 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -808,7 +808,7 @@ func compilePlan(t *testing.T) *strategy.CompiledPlan {
 	return compilePlanForStrategy(t, "1001")
 }
 
-func compilePlanForStrategy(t *testing.T, strategyID string) *strategy.CompiledPlan {
+func compilePlanForStrategy(t *testing.T, strategyID string, scope ...*contract.TargetScopeV2) *strategy.CompiledPlan {
 	t.Helper()
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 4,
 		MaxAlgorithmsPerLevel: 4, MaxGroupsPerAlgorithm: 4, MaxConditionsPerAlgorithm: 8, MaxASTNodesPerLevel: 32,
@@ -834,6 +834,9 @@ func compilePlanForStrategy(t *testing.T, strategyID string) *strategy.CompiledP
 			StrategyRef: ref, InputProjection: projection,
 			ExecutionSemantics: contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries, QueryWindow: 60, AggregationInterval: 60, EvaluationInterval: 60},
 			Levels:             []contract.LevelIRV2{level}}}
+	if len(scope) == 1 {
+		plan.TargetScope = scope[0]
+	}
 	result, err := compiler.Compile(context.Background(), strategy.CompileRequest{Plan: plan, DatasetContract: contract.DatasetContractV2{SchemaDigest: strings.Repeat("a", 64), NormalizationDigest: strings.Repeat("b", 64), IdentityFields: []string{"host"}, SourceTimeField: "_time", ReceivedTimeField: "_received_time"},
 		StateSemantics: strategy.StateSemantics{StateSchemaVersion: "v1", CodecSemanticsVersion: "v1", IdentitySchemaDigest: strings.Repeat("c", 64), SourceTimeSemanticsVersion: "seconds-v1", HistoryCellSemanticsVersion: "v1"}})
 	if err != nil {

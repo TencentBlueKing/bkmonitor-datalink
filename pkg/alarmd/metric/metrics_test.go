@@ -307,6 +307,11 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_worker_query_admission_total":                 "variableLabels: {operation,result}",
 		"bkmonitor_alarmd_control_cache_total":                          "variableLabels: {object,result}",
 		"bkmonitor_alarmd_legacy_pod_cache_total":                       "variableLabels: {result}",
+		"bkmonitor_alarmd_series_admission_total":                       "variableLabels: {filter,result,reason}",
+		"bkmonitor_alarmd_cmdb_host_index_hosts":                        "variableLabels: {}",
+		"bkmonitor_alarmd_host_disable_monitor_states":                  "variableLabels: {}",
+		"bkmonitor_alarmd_cmdb_host_index_age_seconds":                  "variableLabels: {kind}",
+		"bkmonitor_alarmd_cmdb_host_index_degraded":                     "variableLabels: {reason}",
 		"bkmonitor_alarmd_redis_operation_total":                        "variableLabels: {client}",
 		"bkmonitor_alarmd_redis_pool_size":                              "variableLabels: {client}",
 		"bkmonitor_alarmd_redis_pool_connections":                       "variableLabels: {client,state}",
@@ -448,6 +453,16 @@ func equalFloats(left, right []float64) bool {
 }
 
 func populateAllCustomLabelCombinations(recorder *Recorder) {
+	for filter := range admissionFilters {
+		for result := range admissionResults {
+			for reason := range admissionReasons {
+				recorder.RecordSeriesAdmission(filter, result, reason)
+			}
+		}
+	}
+	for reason := range cmdbIndexReasons {
+		recorder.SetCMDBHostIndex(1, 1, 1, reason != "none", reason)
+	}
 	for _, stage := range allStages {
 		for _, mode := range allModes {
 			for _, status := range allStatuses {
@@ -596,6 +611,12 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		// Four cached objects: version, snapshot, activation, timeline.
 		fqName("control_cache_total"):    12,
 		fqName("legacy_pod_cache_total"): 3,
+		// Filters and reasons are closed vocabularies in the recorder.
+		fqName("series_admission_total"):      len(admissionFilters) * len(admissionResults) * len(admissionReasons),
+		fqName("cmdb_host_index_hosts"):       1,
+		fqName("host_disable_monitor_states"): 1,
+		fqName("cmdb_host_index_age_seconds"): 2,
+		fqName("cmdb_host_index_degraded"):    len(cmdbIndexReasons),
 		// Two clients at most: the control plane connection and, when it resolves
 		// to a different endpoint, the runtime connection.
 		// One unlabelled series; connection acquisitions minus it is the retries.

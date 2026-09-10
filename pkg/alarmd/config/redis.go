@@ -82,6 +82,14 @@ func DeriveRedisPoolSize(cpuBudget int) int {
 	if size > redisPoolDerivedCeling {
 		size = redisPoolDerivedCeling
 	}
+	// The pool must never become the process's execution gate, so the ceiling
+	// yields to the query admission derived from the same CPU budget. Covering
+	// the permits is only the floor: the Slot source reads the control plane
+	// for every ready runner while holding no permit, and that fan-out is what
+	// the block profile found queueing.
+	if admitted := DeriveScheduler(CapacityInputs{CPUBudget: cpuBudget}).AdmittedConcurrency(); size <= admitted {
+		size = admitted + redisPoolMinimum
+	}
 	return size
 }
 

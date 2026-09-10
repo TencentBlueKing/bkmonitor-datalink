@@ -115,6 +115,16 @@ func runWithRuntimeModeDependencies(
 		return 0
 	}
 
+	// Resolve the CPU quota before the configuration is read: the capacity
+	// budgets are derived from the container's CPU budget, and reading them
+	// off an unadjusted GOMAXPROCS would size the process for the host.
+	if dependencies.phaseTwo.configureCPU != nil {
+		if _, err := dependencies.phaseTwo.configureCPU(); err != nil {
+			fmt.Fprintf(stderr, "configure CPU budget: %v\n", err)
+			return 1
+		}
+	}
+
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "load configuration: %v\n", err)

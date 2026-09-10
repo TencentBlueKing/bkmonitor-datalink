@@ -134,6 +134,22 @@ func testLocalLegacyConverterRoutesFinalKafkaBatch(t *testing.T, kind string) {
 	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{event, triggerEventGolden(t), event}); err != nil {
 		t.Fatal(err)
 	}
+	if kind == contract.TriggerEventRecovery {
+		// Python's producer builds every message from the anomaly list, so the
+		// protocol has no recovery event. The two compatibility-routed events
+		// therefore produce no message and no snapshot, and only the native
+		// event in the middle is published.
+		// One message left, so the producer takes its single-send path rather
+		// than the batch one; what matters is that nothing was converted and
+		// no snapshot was written.
+		if saved != 0 || len(producer.messages) != 1 {
+			t.Fatalf("recovery reached the compatibility topic: saved=%d messages=%d", saved, len(producer.messages))
+		}
+		if producer.messages[0].Topic != "native" {
+			t.Fatalf("surviving message went to %q", producer.messages[0].Topic)
+		}
+		return
+	}
 	if saved != 1 || producer.batchCalls != 1 || len(producer.messages) != 3 {
 		t.Fatal("batch snapshot/ACK boundary lost")
 	}
@@ -150,11 +166,14 @@ func testLocalLegacyConverterRoutesFinalKafkaBatch(t *testing.T, kind string) {
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			t.Fatal(err)
 		}
-		status := "ABNORMAL"
-		if kind == contract.TriggerEventRecovery {
-			status = "RECOVERED"
+		// The partition key stays the dedupe digest so a series keeps one
+		// partition, but the payload no longer carries it: Python's producer
+		// does not put it on the wire, and a reader that finds one uses it
+		// instead of computing its own.
+		if _, carried := payload["dedupe_md5"]; carried {
+			t.Fatal("compatibility payload carries a field Python never sends")
 		}
-		if message.Topic != "alarmd_0bkmonitor_backend_event" || payload["status"] != status || payload["plugin_id"] != "bkmonitor" || string(key) != payload["dedupe_md5"] {
+		if message.Topic != "alarmd_0bkmonitor_backend_event" || payload["status"] != "ABNORMAL" || payload["plugin_id"] != "bkmonitor" || len(key) != 32 {
 			t.Fatal("Python payload/topic/key mismatch")
 		}
 	}

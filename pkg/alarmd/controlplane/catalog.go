@@ -348,6 +348,19 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 	if item.ID <= 0 || item.QueryMD5 == "" || item.Expression == "" || len(item.QueryConfigs) == 0 || len(item.Algorithms) == 0 {
 		return candidate, errors.New("INCOMPLETE_SERIES_THRESHOLD_ITEM")
 	}
+	// The monitoring target is resolved before anything else is compiled, and
+	// a target this compiler cannot honour is reported as an unsupported
+	// capability rather than a rejected configuration. The difference decides
+	// the outcome: a rejected configuration retains the last good Plan, and
+	// that Plan predates the target filter, so the strategy would go on
+	// alerting outside its target with nothing to show for it.
+	targetScope, err := compileTargetScope(item.Target)
+	if err != nil {
+		return sourceCandidate{dispositions: []ObjectDisposition{{
+			SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionUnsupported,
+			Reason: targetScopeDispositionReason(err),
+		}}}, err
+	}
 	primaryExpression, identityFields := primaryQueryContract(item)
 	functions := append([]json.RawMessage(nil), item.Functions...)
 	if itemHasAlgorithm(item, strategy.DetectorKindOsRestart) {
@@ -385,7 +398,7 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 		compiledInputs.osRestartHistory = &history
 	}
 	plan, scheduleSpec, schedule, dispositions, err := compilePlan(
-		legacy, item, source.Identity, facts.Normalization.DatasetContract, source.SourceID, &compiledInputs,
+		legacy, item, source.Identity, facts.Normalization.DatasetContract, source.SourceID, &compiledInputs, targetScope,
 	)
 	if err != nil {
 		candidate.dispositions = append(candidate.dispositions, dispositions...)
@@ -498,6 +511,10 @@ type legacyItem struct {
 	QueryConfigs []json.RawMessage `json:"query_configs"`
 	Algorithms   []legacyAlgorithm `json:"algorithms"`
 	Unit         string            `json:"unit"`
+	// Target is the strategy's monitoring scope. It was silently ignored here
+	// until 2026-09-09, which is how alarmd came to alert on hosts outside
+	// every scoped strategy's target while Python filtered them out.
+	Target [][]legacyTargetCondition `json:"target"`
 }
 type legacyAlgorithm struct {
 	Level      uint32          `json:"level"`
@@ -562,6 +579,7 @@ func compilePlan(
 	dataset contract.DatasetContractV2,
 	sourceID string,
 	inputs *compiledPlanInputs,
+	targetScope *contract.TargetScopeV2,
 ) (contract.EvaluationPlanV2, execution.ScheduleSpec, execution.PlanScheduleRevision, []ObjectDisposition, error) {
 	if hasJSONValue(source.Priority) || source.PriorityGroupKey != "" {
 		return contract.EvaluationPlanV2{}, execution.ScheduleSpec{}, "", nil, errors.New("alarmd controlplane: G1 does not support priority semantics")
@@ -697,6 +715,7 @@ func compilePlan(
 	semantics := contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries, QueryWindow: uint32(interval), AggregationInterval: uint32(interval), EvaluationInterval: uint32(interval), LatenessTolerance: uint32(interval * 2)}
 	ir := contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2, Minor: 0}, RequiredFeatures: []string{}, StrategyRef: ref, ExecutionSemantics: semantics, InputProjection: projection, Levels: levels}
 	plan := contract.EvaluationPlanV2{PlanID: strategyID, StrategyRef: ref, InputProjection: projection, SourceCompatibility: &contract.SourceCompatibilityV2{ItemID: strconv.FormatInt(item.ID, 10)}, StrategyIR: ir}
+	plan.TargetScope = targetScope
 	if ref.SnapshotRevision > 0 {
 		plan.OutputIdentity = &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, dataset.IdentityFields...)}
 	}

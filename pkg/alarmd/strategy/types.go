@@ -494,6 +494,17 @@ type CompiledPlan struct {
 	fingerprints        PlanFingerprints
 	resourceEstimate    ResourceEstimate
 	datasetDigest       string
+	targetScope         *contract.TargetScopeV2
+}
+
+// TargetScope is the strategy's monitoring target, frozen with the Plan. Nil
+// means the strategy names no target; it never means one was dropped, because
+// a target the catalog cannot reduce rejects the Plan instead.
+func (p *CompiledPlan) TargetScope() *contract.TargetScopeV2 {
+	if p == nil {
+		return nil
+	}
+	return p.targetScope
 }
 
 func (p *CompiledPlan) StrategyRef() contract.StrategyRefV2 {

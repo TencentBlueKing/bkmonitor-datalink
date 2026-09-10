@@ -67,30 +67,35 @@ const (
 	ReasonQueryTimeout                     = "QUERY_TIMEOUT"
 	ReasonQueryUnavailable                 = "QUERY_UNAVAILABLE"
 	ReasonReadinessBudgetInvalid           = "READINESS_BUDGET_INVALID"
-	ReasonExecutionBudgetExhausted         = "EXECUTION_BUDGET_EXHAUSTED"
-	ReasonSnapshotUnavailable              = "SNAPSHOT_UNAVAILABLE"
-	ReasonGapSkipped                       = "GAP_SKIPPED"
-	ReasonEffectiveTimeInactive            = "EFFECTIVE_TIME_INACTIVE"
-	ReasonEffectiveTimeUnknown             = "EFFECTIVE_TIME_UNKNOWN"
-	ReasonHistoryWarming                   = "HISTORY_WARMING"
-	ReasonHistoryGapped                    = "HISTORY_GAPPED"
-	ReasonKafkaUnavailable                 = "KAFKA_UNAVAILABLE"
-	ReasonRedisUnavailable                 = "REDIS_UNAVAILABLE"
-	ReasonProviderUnavailable              = "PROVIDER_UNAVAILABLE"
-	ReasonProgressBeginRejected            = "PROGRESS_BEGIN_REJECTED"
-	ReasonProgressBeginFailed              = "PROGRESS_BEGIN_FAILED"
-	ReasonActivationReadFailed             = "ACTIVATION_READ_FAILED"
-	ReasonSnapshotRetryPending             = "SNAPSHOT_RETRY_PENDING"
-	ReasonSlotSourceRetry                  = "SLOT_SOURCE_RETRY"
-	ReasonBlockedExactSetUnavailable       = "BLOCKED_EXACT_SET_UNAVAILABLE"
-	ReasonResourceHardStop                 = "RESOURCE_HARD_STOP"
-	ReasonSlotBudgetExceeded               = "SLOT_BUDGET_EXCEEDED"
-	ReasonOutputACKUnknown                 = "OUTPUT_ACK_UNKNOWN"
-	ReasonStateWriteRetryable              = "STATE_WRITE_RETRYABLE"
-	ReasonStateCorrupt                     = "STATE_CORRUPT"
-	ReasonStateSchemaUnsupported           = "STATE_SCHEMA_UNSUPPORTED"
-	ReasonStateBudgetExceeded              = "STATE_BUDGET_EXCEEDED"
-	ReasonAuditDrop                        = "AUDIT_DROP"
+	// ReasonQueryNotReady names a Slot deferred because the window it would
+	// query is not in yet. It is the normal pacing of every Slot, and the
+	// highest-volume observation alarmd makes, so it needs its own name:
+	// without one it normalizes to internal_unknown and reads as a fault.
+	ReasonQueryNotReady              = "QUERY_NOT_READY"
+	ReasonExecutionBudgetExhausted   = "EXECUTION_BUDGET_EXHAUSTED"
+	ReasonSnapshotUnavailable        = "SNAPSHOT_UNAVAILABLE"
+	ReasonGapSkipped                 = "GAP_SKIPPED"
+	ReasonEffectiveTimeInactive      = "EFFECTIVE_TIME_INACTIVE"
+	ReasonEffectiveTimeUnknown       = "EFFECTIVE_TIME_UNKNOWN"
+	ReasonHistoryWarming             = "HISTORY_WARMING"
+	ReasonHistoryGapped              = "HISTORY_GAPPED"
+	ReasonKafkaUnavailable           = "KAFKA_UNAVAILABLE"
+	ReasonRedisUnavailable           = "REDIS_UNAVAILABLE"
+	ReasonProviderUnavailable        = "PROVIDER_UNAVAILABLE"
+	ReasonProgressBeginRejected      = "PROGRESS_BEGIN_REJECTED"
+	ReasonProgressBeginFailed        = "PROGRESS_BEGIN_FAILED"
+	ReasonActivationReadFailed       = "ACTIVATION_READ_FAILED"
+	ReasonSnapshotRetryPending       = "SNAPSHOT_RETRY_PENDING"
+	ReasonSlotSourceRetry            = "SLOT_SOURCE_RETRY"
+	ReasonBlockedExactSetUnavailable = "BLOCKED_EXACT_SET_UNAVAILABLE"
+	ReasonResourceHardStop           = "RESOURCE_HARD_STOP"
+	ReasonSlotBudgetExceeded         = "SLOT_BUDGET_EXCEEDED"
+	ReasonOutputACKUnknown           = "OUTPUT_ACK_UNKNOWN"
+	ReasonStateWriteRetryable        = "STATE_WRITE_RETRYABLE"
+	ReasonStateCorrupt               = "STATE_CORRUPT"
+	ReasonStateSchemaUnsupported     = "STATE_SCHEMA_UNSUPPORTED"
+	ReasonStateBudgetExceeded        = "STATE_BUDGET_EXCEEDED"
+	ReasonAuditDrop                  = "AUDIT_DROP"
 
 	CompatibilityModeLegacyGroupOfOne = "LEGACY_GROUP_OF_ONE"
 
@@ -218,8 +223,13 @@ type EvaluationPlanV2 struct {
 	SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
 	OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
 	LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
-	StrategyIR          StrategyIRV2           `json:"strategy_ir"`
-	TerminalReasonCode  string                 `json:"terminal_reason_code,omitempty"`
+	// TargetScope is the strategy's monitoring target, frozen. Absent means
+	// the strategy names no target and every series is in scope; it never
+	// means "a scope existed and was dropped" - compilation rejects the Plan
+	// in that case rather than publish one that alerts outside its target.
+	TargetScope        *TargetScopeV2 `json:"target_scope,omitempty"`
+	StrategyIR         StrategyIRV2   `json:"strategy_ir"`
+	TerminalReasonCode string         `json:"terminal_reason_code,omitempty"`
 }
 
 // MarshalJSON keeps the 2.0 wire union flat: a producer emits either the
@@ -239,8 +249,9 @@ func (plan EvaluationPlanV2) MarshalJSON() ([]byte, error) {
 		SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
 		OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
 		LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
+		TargetScope         *TargetScopeV2         `json:"target_scope,omitempty"`
 		StrategyIR          StrategyIRV2           `json:"strategy_ir"`
-	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.LegacyOutput, plan.StrategyIR})
+	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.LegacyOutput, plan.TargetScope, plan.StrategyIR})
 }
 
 type PlanSetV2 struct {

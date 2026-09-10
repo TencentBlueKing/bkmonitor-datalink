@@ -274,8 +274,6 @@ kafka:
     service_redis:
       mode: standalone
       address: 127.0.0.1:6379
-  client_id: alarmd
-  broker_version: 2.6.0
 redis:
   address: 127.0.0.1:6379
 `
@@ -301,8 +299,6 @@ kafka:
     service_redis:
       mode: standalone
       address: 127.0.0.1:6379
-  client_id: alarmd
-  broker_version: 2.6.0
 redis:
   address: 127.0.0.1:6379
   state_prefix: alarmd-phase-two
@@ -311,7 +307,6 @@ phase_two:
     id: alarmd-worker-0
   control:
     strategy_cache_prefix: alarm-config
-    provider_route: unify-query-primary
     timezone: Asia/Shanghai
     legacy_query_runtime:
       access_bk_data: false

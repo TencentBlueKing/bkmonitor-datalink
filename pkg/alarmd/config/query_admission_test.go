@@ -2,27 +2,26 @@ package config
 
 import "testing"
 
-func TestExecutionGuardStrictConfigPreservesZeroAndPositive(t *testing.T) {
-	for _, tc := range []struct {
-		text string
-		want int
-	}{{"", 0}, {"0", 0}, {"2", 2}, {"17", 17}} {
-		text := validGoAccessRuntimeConfigYAML("admission-worker")
-		if tc.text != "" {
-			text += "  scheduler:\n    active_execution_limit: " + tc.text + "\n"
-		}
-		cfg, err := Load(writeConfig(t, text))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cfg.PhaseTwo.Scheduler.ActiveExecutionLimit != tc.want {
-			t.Fatalf("value=%s resolved=%d want=%d", tc.text, cfg.PhaseTwo.Scheduler.ActiveExecutionLimit, tc.want)
+// The complete-Runner guard is part of the product capacity profile, not an
+// environment knob: it interacts with the permit count and the queue depth,
+// all three of which the process derives from the same container. A file that
+// states it is refused rather than obeyed, and the value the process runs
+// under stays the one it derived.
+func TestExecutionGuardIsNotAnEnvironmentKnob(t *testing.T) {
+	for _, written := range []string{"0", "2", "17", "-1", "true", `"unlimited"`} {
+		text := validGoAccessRuntimeConfigYAML("admission-worker") +
+			"  scheduler:\n    active_execution_limit: " + written + "\n"
+		if _, err := Load(writeConfig(t, text)); err == nil {
+			t.Fatalf("written execution guard %s accepted", written)
 		}
 	}
-	for _, value := range []string{"-1", "true", "[]", `"unlimited"`} {
-		text := validGoAccessRuntimeConfigYAML("admission-worker") + "  scheduler:\n    active_execution_limit: " + value + "\n"
-		if _, err := Load(writeConfig(t, text)); err == nil {
-			t.Fatalf("invalid guard %s accepted", value)
-		}
+
+	cfg, err := Load(writeConfig(t, validGoAccessRuntimeConfigYAML("admission-worker")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PhaseTwo.Scheduler.ActiveExecutionLimit != Default().PhaseTwo.Scheduler.ActiveExecutionLimit {
+		t.Fatalf("resolved execution guard = %d, want the product value %d",
+			cfg.PhaseTwo.Scheduler.ActiveExecutionLimit, Default().PhaseTwo.Scheduler.ActiveExecutionLimit)
 	}
 }

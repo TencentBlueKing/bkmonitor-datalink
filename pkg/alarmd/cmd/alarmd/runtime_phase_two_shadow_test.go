@@ -406,12 +406,22 @@ func (s *legacyConvertingTestSink) WriteBatch(ctx context.Context, events []cont
 	if s.converter == nil {
 		return fmt.Errorf("bundle did not configure legacy converter")
 	}
-	converted, err := s.converter.ConvertBatch(ctx, events)
-	if err != nil {
-		return err
+	// Mirror the real sink's routing: the Python protocol carries anomaly
+	// points only, so anything else never reaches the converter.
+	anomalies := make([]contract.TriggerEventV1, 0, len(events))
+	for _, event := range events {
+		if event.EventKind == contract.TriggerEventAbnormal {
+			anomalies = append(anomalies, event)
+		}
 	}
-	if len(converted) != len(events) {
-		return fmt.Errorf("converter lost events")
+	if len(anomalies) > 0 {
+		converted, err := s.converter.ConvertBatch(ctx, anomalies)
+		if err != nil {
+			return err
+		}
+		if len(converted) != len(anomalies) {
+			return fmt.Errorf("converter lost events")
+		}
 	}
 	return s.recordingPhaseTwoEventSink.WriteBatch(ctx, events)
 }

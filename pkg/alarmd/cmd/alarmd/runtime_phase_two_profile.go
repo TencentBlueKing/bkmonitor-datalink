@@ -11,6 +11,7 @@ import (
 	"io"
 	"runtime"
 	"strings"
+	"sync"
 
 	"go.uber.org/automaxprocs/maxprocs"
 
@@ -20,11 +21,26 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
+var (
+	cpuBudgetOnce   sync.Once
+	cpuBudgetSource string
+	cpuBudgetErr    error
+)
+
+// configurePhaseTwoCPU resolves GOMAXPROCS from the container's CPU quota. It
+// runs before the configuration is read, because the capacity budgets are
+// derived from that budget, and it caches its result so the startup facts
+// report the same source the derivation used.
 func configurePhaseTwoCPU() (string, error) {
-	return configurePhaseTwoCPUWith(func(log func(string, ...interface{})) error {
-		_, err := maxprocs.Set(maxprocs.Logger(log))
-		return err
+	cpuBudgetOnce.Do(func() {
+		cpuBudgetSource, cpuBudgetErr = configurePhaseTwoCPUWith(setMaxprocsFromCPUQuota)
 	})
+	return cpuBudgetSource, cpuBudgetErr
+}
+
+func setMaxprocsFromCPUQuota(log func(string, ...interface{})) error {
+	_, err := maxprocs.Set(maxprocs.Logger(log))
+	return err
 }
 
 // Match the pinned library's diagnostic formats without retaining raw values
@@ -78,18 +94,17 @@ func printResolvedRuntimeFacts(cfg config.Config, stdout io.Writer) error {
 }
 
 func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (observability.RuntimeConfigFacts, error) {
+	inputs := config.DetectCapacityInputs()
+	// There is no longer an override to report: no file can state a capacity
+	// budget, so every budget below came from the container named by
+	// cpu_source and memory_source.
 	facts := observability.RuntimeConfigFacts{
-		Profile: "standard-conservative-v1", Source: "product_default", CPUSource: cpuSource, GOMAXPROCS: procs,
+		Profile: "standard-conservative-v1", Source: "container_derived", CPUSource: cpuSource, GOMAXPROCS: procs,
+		MemorySource: inputs.MemorySource, MemoryLimitBytes: inputs.MemoryLimitBytes,
 		Capacity: phaseTwoRuntimeCapacity(cfg),
 	}
-	// Compare against a default that went through the same pool derivation, or
-	// every deployment would report itself as an override purely because the
-	// resolved pool size replaced the zero that means "derive".
-	if facts.Capacity != phaseTwoRuntimeCapacity(config.Default().WithResolvedRedisPoolSize()) {
-		facts.Source = "configuration_override"
-	}
 	// Digest the exact logged safe values, with the digest field still empty.
-	digest, err := contract.DeriveCanonicalDigestV2("alarmd-runtime-config-v1", facts)
+	digest, err := contract.DeriveCanonicalDigestV2("alarmd-runtime-config-v2", facts)
 	facts.Digest = digest
 	return facts, err
 }

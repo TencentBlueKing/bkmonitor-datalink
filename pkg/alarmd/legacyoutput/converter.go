@@ -156,11 +156,14 @@ func convertEvent(ctx context.Context, event contract.TriggerEventV1, frozen pre
 	if itemName == "" || event.PrimaryLevelID < 1 || event.PrimaryLevelID > 3 {
 		return Event{}, fmt.Errorf("invalid legacy item/severity")
 	}
-	if event.EventKind != contract.TriggerEventAbnormal && event.EventKind != contract.TriggerEventRecovery {
-		return Event{}, fmt.Errorf("invalid legacy event kind")
+	// The Python protocol represents anomaly points only. Anything else
+	// reaching the converter is a routing mistake, and a loud one is better
+	// than a topic filled with events Python would never have produced.
+	if event.EventKind != contract.TriggerEventAbnormal {
+		return Event{}, fmt.Errorf("legacy protocol carries anomaly points only, got %q", event.EventKind)
 	}
 	times := event.LegacyOutput.AnomalyTimestamps
-	if event.EventKind == contract.TriggerEventAbnormal && len(times) == 0 {
+	if len(times) == 0 {
 		return Event{}, fmt.Errorf("ABNORMAL needs actual anomaly timestamps")
 	}
 	for i, ts := range times {
@@ -222,14 +225,8 @@ func convertEvent(ctx context.Context, event contract.TriggerEventV1, frozen pre
 	if additional == nil {
 		additional = map[string]json.RawMessage{}
 	}
-	status, anomalyTime := contract.TriggerEventAbnormal, event.RecordRef.SourceTime
-	if len(times) > 0 {
-		anomalyTime = times[0]
-	}
-	if event.EventKind == contract.TriggerEventRecovery {
-		status = "RECOVERED"
-		anomalyTime = event.RecordRef.SourceTime
-	}
+	// Python's adapter stamps ABNORMAL on every event it produces.
+	status, anomalyTime := contract.TriggerEventAbnormal, times[0]
 	name := s.Name
 	if _, ok := projection.Dimensions["__NO_DATA_DIMENSION__"]; ok {
 		name = "[无数据] " + name
@@ -240,7 +237,7 @@ func convertEvent(ctx context.Context, event contract.TriggerEventV1, frozen pre
 	}
 	data := map[string]any{"record_id": md5 + "." + strconv.FormatInt(event.RecordRef.SourceTime, 10), "time": event.RecordRef.SourceTime, "dimensions": event.RecordRef.Dimensions, "dimension_fields": metadata.DimensionFields(), "value": value, "values": event.Observed.Values}
 	payload := map[string]any{
-		"event_id": anomalyID(event.RecordRef.SourceTime), "plugin_id": pluginID, "strategy_id": s.ID, "alert_name": name, "description": description, "severity": event.PrimaryLevelID, "tags": tags, "target_type": projection.Type, "target": projection.Target, "status": status, "metric": frozen.metrics, "category": s.Scenario, "data_type": s.Items[0].Queries[0].DataType, "dedupe_keys": dedupeKeys, "time": event.RecordRef.SourceTime, "anomaly_time": anomalyTime, "bk_ingest_time": now, "bk_clean_time": now, "bk_biz_id": s.BusinessID, "bk_tenant_id": event.TenantID, "dedupe_md5": dedupe,
+		"event_id": anomalyID(event.RecordRef.SourceTime), "plugin_id": pluginID, "strategy_id": s.ID, "alert_name": name, "description": description, "severity": event.PrimaryLevelID, "tags": tags, "target_type": projection.Type, "target": projection.Target, "status": status, "metric": frozen.metrics, "category": s.Scenario, "data_type": s.Items[0].Queries[0].DataType, "dedupe_keys": dedupeKeys, "time": event.RecordRef.SourceTime, "anomaly_time": anomalyTime, "bk_ingest_time": now, "bk_clean_time": now, "bk_biz_id": s.BusinessID, "bk_tenant_id": event.TenantID,
 		"extra_info": map[string]any{"additional_dimensions": additional, "origin_alarm": map[string]any{"trigger_time": now, "data": data, "trigger": map[string]any{"level": level, "anomaly_ids": anomalyIDs}, "anomaly": map[string]any{level: map[string]any{"anomaly_id": anomalyID(event.RecordRef.SourceTime), "anomaly_message": description}}, "dimension_translation": map[string]any{}, "strategy_snapshot_key": frozen.snapshot, "alarmd_event_id": event.EventID}},
 	}
 	raw, err := json.Marshal(payload)

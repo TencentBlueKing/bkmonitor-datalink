@@ -103,8 +103,6 @@ kafka:
     service_redis:
       mode: standalone
       address: redis.test:6379
-  client_id: alarmd
-  broker_version: 2.6.0
 redis:
   mode: sentinel
   sentinel_address: [sentinel-a:26379, sentinel-b:26379]
@@ -116,7 +114,6 @@ phase_two:
     id: alarmd-worker-0
   control:
     strategy_cache_prefix: alarm-config
-    provider_route: unify-query-primary
     timezone: Asia/Shanghai
     legacy_query_runtime:
       access_bk_data: false
@@ -619,8 +616,6 @@ kafka:
     service_redis:
       mode: standalone
       address: redis.test:6379
-  client_id: alarmd
-  broker_version: 2.6.0
 redis:
   address: redis.test:6379
   username: alarmd

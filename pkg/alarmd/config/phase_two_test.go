@@ -74,23 +74,29 @@ func TestDefaultPhaseTwoRuntimeHasBoundedLifecycleBudgets(t *testing.T) {
 	}
 }
 
-func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
-	valid := validGoAccessConfigObject()
+// completePhaseTwoProductionConfig fills in the coordinates only a deployment
+// knows, leaving everything the process decides at its derived value.
+func completePhaseTwoProductionConfig(cfg Config) Config {
 	accessBKData := false
-	valid.PhaseTwo.Worker.ID = "alarmd-worker-0"
-	valid.PhaseTwo.Control.StrategyCachePrefix = "alarm-config"
-	valid.PhaseTwo.Access.UQEndpoint = "http://unify-query.service"
-	valid.PhaseTwo.Access.QuerySource = "alarmd"
-	valid.PhaseTwo.Control.ProviderRoute = "unify-query-primary"
-	valid.PhaseTwo.Control.Timezone = "Asia/Shanghai"
-	valid.PhaseTwo.Control.LegacyQueryRuntime.AccessBKData = &accessBKData
-	valid.PhaseTwo.Control.LegacyQueryRuntime.BKDataCMDBLevelTables = []string{}
-	valid.PhaseTwo.Control.LegacyQueryRuntime.SystemDiskFilter = PhaseTwoRuntimeFilterConfig{
+	cfg.PhaseTwo.Worker.ID = "alarmd-worker-0"
+	cfg.PhaseTwo.Control.StrategyCachePrefix = "alarm-config"
+	cfg.PhaseTwo.Access.UQEndpoint = "http://unify-query.service"
+	cfg.PhaseTwo.Access.QuerySource = "alarmd"
+	cfg.PhaseTwo.Control.ProviderRoute = "unify-query-primary"
+	cfg.PhaseTwo.Control.Timezone = "Asia/Shanghai"
+	cfg.PhaseTwo.Control.LegacyQueryRuntime.AccessBKData = &accessBKData
+	cfg.PhaseTwo.Control.LegacyQueryRuntime.BKDataCMDBLevelTables = []string{}
+	cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemDiskFilter = PhaseTwoRuntimeFilterConfig{
 		FieldName: "device_type", Values: []string{},
 	}
-	valid.PhaseTwo.Control.LegacyQueryRuntime.SystemNetworkFilter = PhaseTwoRuntimeFilterConfig{
+	cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemNetworkFilter = PhaseTwoRuntimeFilterConfig{
 		FieldName: "device_name", Values: []string{},
 	}
+	return cfg
+}
+
+func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
+	valid := completePhaseTwoProductionConfig(validGoAccessConfigObject())
 
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("complete phase-two production configuration rejected: %v", err)
@@ -110,10 +116,14 @@ func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
 			t.Fatalf("%s mutation budget %d rejected: %v", name, mutations, err)
 		}
 	}
-	if valid.PhaseTwo.Coordinator.MaxStateMutations != 65536 || valid.PhaseTwo.Coordinator.MaxGapMutations != 65536 ||
-		valid.PhaseTwo.Coordinator.MaxEvents != 8192 || valid.Limits.Store.MaxKeysPerBatch != 8192 {
-		t.Fatalf("product default budgets = %+v store=%d, want 65536 state/gap, 8192 events and store items",
-			valid.PhaseTwo.Coordinator, valid.Limits.Store.MaxKeysPerBatch)
+	// The budgets are derived from the container rather than written, so what
+	// matters is that no container can derive a combination the Store cannot
+	// apply - the failure a hand-written combination once published.
+	budgets := valid.PhaseTwo.Coordinator
+	chunkedApplyBudget := uint64(valid.Limits.Store.MaxKeysPerBatch) * execution.StateApplyMaxChunks
+	if budgets.MaxStateMutations != budgets.MaxGapMutations || budgets.MaxStateMutations > chunkedApplyBudget ||
+		budgets.MaxSeries == 0 || budgets.MaxRetainedBytes == 0 || budgets.MaxSequencerReservations <= 0 {
+		t.Fatalf("derived budgets = %+v, chunked apply budget = %d", budgets, chunkedApplyBudget)
 	}
 
 	for name, mutate := range map[string]func(*Config){
@@ -187,24 +197,57 @@ func TestLoadPhaseTwoWorkerIdentityUsesDeploymentEnvironmentBeforeYAML(t *testin
 	}
 }
 
-func TestLoadPhaseTwoRetainedBudgetDefaultAndExplicitOverride(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		override string
-		want     uint64
-	}{
-		{name: "product default", want: 96 << 20},
-		{name: "explicit legacy budget", override: "  coordinator:\n    max_retained_bytes: 67108864\n", want: 64 << 20},
+// Capacity is not something a deployment writes. A file that states a budget
+// is refused rather than obeyed, because obeying it is how a deployment came
+// to hold a set of numbers that constrained each other into a Pod that could
+// not start.
+func TestLoadRefusesWrittenCapacityBudgets(t *testing.T) {
+	for name, written := range map[string]string{
+		"retained bytes":  "  coordinator:\n    max_retained_bytes: 67108864\n",
+		"series":          "  coordinator:\n    max_series: 100000\n",
+		"query permits":   "  scheduler:\n    process_query_permits: 32\n",
+		"ready queue":     "  scheduler:\n    ready_queue_capacity: 1024\n",
+		"execution limit": "  scheduler:\n    active_execution_limit: 4\n",
+		"lease TTL":       "  ownership:\n    lease_ttl: 30s\n",
+		"tick interval":   "  scheduler:\n    tick_interval: 1s\n",
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			cfg, err := Load(writeConfig(t, validGoAccessRuntimeConfigYAML("worker")+test.override))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if cfg.PhaseTwo.Coordinator.MaxRetainedBytes != test.want {
-				t.Fatalf("resolved retained bytes = %d, want %d", cfg.PhaseTwo.Coordinator.MaxRetainedBytes, test.want)
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(writeConfig(t, validGoAccessRuntimeConfigYAML("worker")+written)); err == nil {
+				t.Fatal("a written capacity budget must be refused, not obeyed")
 			}
 		})
+	}
+}
+
+// The budgets follow the container's memory. Doubling it doubles what the
+// process will hold, without anything being written anywhere.
+func TestCapacityBudgetsFollowTheContainerMemoryLimit(t *testing.T) {
+	small := Default().withDerivedCapacity(CapacityInputs{CPUBudget: 4, MemoryLimitBytes: 4 << 30})
+	large := Default().withDerivedCapacity(CapacityInputs{CPUBudget: 8, MemoryLimitBytes: 8 << 30})
+
+	if large.PhaseTwo.Coordinator.MaxRetainedBytes != 2*small.PhaseTwo.Coordinator.MaxRetainedBytes {
+		t.Fatalf("retained bytes %d and %d do not follow the memory limit",
+			small.PhaseTwo.Coordinator.MaxRetainedBytes, large.PhaseTwo.Coordinator.MaxRetainedBytes)
+	}
+	if large.PhaseTwo.Scheduler.ProcessQueryPermits != 2*small.PhaseTwo.Scheduler.ProcessQueryPermits {
+		t.Fatalf("query permits %d and %d do not follow the CPU budget",
+			small.PhaseTwo.Scheduler.ProcessQueryPermits, large.PhaseTwo.Scheduler.ProcessQueryPermits)
+	}
+	// A container large enough to derive more mutations than a chunked Store
+	// apply can carry is held at what the apply can carry, so the cross-check
+	// in Validate can no longer be reached by any container size.
+	huge := Default().withDerivedCapacity(CapacityInputs{CPUBudget: 64, MemoryLimitBytes: 512 << 30})
+	if huge.PhaseTwo.Coordinator.MaxStateMutations != huge.chunkedStateApplyBudget() {
+		t.Fatalf("mutation budget %d is not held at the chunked apply budget %d",
+			huge.PhaseTwo.Coordinator.MaxStateMutations, huge.chunkedStateApplyBudget())
+	}
+	for name, cfg := range map[string]Config{"small": small, "large": large, "huge": huge} {
+		complete := validGoAccessConfigObject()
+		complete.PhaseTwo.Scheduler = cfg.PhaseTwo.Scheduler
+		complete.PhaseTwo.Coordinator = cfg.PhaseTwo.Coordinator
+		if err := completePhaseTwoProductionConfig(complete).Validate(); err != nil {
+			t.Fatalf("%s container derives an invalid configuration: %v", name, err)
+		}
 	}
 }
 
@@ -254,8 +297,6 @@ kafka:
     service_redis:
       mode: standalone
       address: redis.test:6379
-  client_id: alarmd
-  broker_version: 2.6.0
 redis:
   address: redis.test:6379
   state_prefix: alarmd:phase-two:g2:v1
@@ -264,7 +305,6 @@ phase_two:
     id: %s
   control:
     strategy_cache_prefix: alarm-config
-    provider_route: unify-query-primary
     timezone: Asia/Shanghai
     legacy_query_runtime:
       access_bk_data: false

@@ -923,9 +923,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	completion := execution.SlotCompletion{Contract: request.Contract, Primary: &primary}
 	completionCause := ""
 	if len(changedPlans) > 0 {
-		completion.Kind = execution.CompletionPartialGap
-		completion.Result = observability.ResultDegraded
-		completion.ReasonCode = execution.ReasonCode(contract.ReasonConfigDrift)
+		completion = configDriftCompletion(request.Contract, &primary)
 	} else {
 		var cause execution.UnavailableCause
 		completion.Kind, cause, err = execution.DeriveStreamingCompletion(header, bindings, evaluated)
@@ -962,10 +960,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			activationRequest: activationRequest,
 			currentFacts:      progressActivations,
 			activations:       changedSelectedActivations(guardActivations, progressActivations),
-			completion: execution.SlotCompletion{
-				Contract: request.Contract, Kind: execution.CompletionPartialGap, Primary: &primary,
-				Result: observability.ResultDegraded, ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift),
-			},
+			completion:        configDriftCompletion(request.Contract, &primary),
 		}
 	}
 	if err := coordinator.admitDuePlans(ctx, request, header.DuePlans); err != nil {
@@ -1583,4 +1578,33 @@ func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx contex
 		Result: result, ReasonCode: reason, Duration: time.Since(started), ProgressCompletionKind: kind,
 		ProgressCompletionCause: cause,
 	})
+}
+
+// configDriftCompletion builds the completion of a Slot whose activations moved
+// under it, and keeps it honest about its PRIMARY.
+//
+// Drift is reported as a partial gap, which is the right shape when the query
+// itself answered. It is not when the PRIMARY was unavailable: PARTIAL says
+// "some of it arrived", and the completion contract exists precisely to stop
+// that from hiding "none of it did". The contract does catch the pair - but at
+// progress commit, so the Slot is never recorded and runs again the next
+// minute, indefinitely. The pair has to not be produced rather than be
+// rejected after the fact.
+//
+// Both kinds carry the same result and the same reason class, so drift stays
+// the reason either way; only the claim about the data changes.
+//
+// There is one constructor because there were two producers: the Plan drift
+// branch and the activation-selection race, the second an inline literal that
+// a fix to the first does not reach. Two places that must agree about an
+// invariant will eventually stop agreeing.
+func configDriftCompletion(contractRef execution.FrozenExecutionContractRef, primary *execution.PrimaryInputFact) execution.SlotCompletion {
+	kind := execution.CompletionPartialGap
+	if primary != nil && primary.Completeness == execution.CompletenessUnavailable {
+		kind = execution.CompletionUnavailable
+	}
+	return execution.SlotCompletion{
+		Contract: contractRef, Kind: kind, Primary: primary,
+		Result: observability.ResultDegraded, ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift),
+	}
 }

@@ -3,6 +3,7 @@ package evaluation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sort"
 
@@ -662,7 +663,11 @@ func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, r
 			lf = append(lf, execution.StateLevelFact{LevelID: f.Definition.LevelID, DetectFingerprint: f.DetectFingerprint, Result: execution.LevelFactResult(f.Result)})
 		}
 	}
-	points := append(append([]execution.StateHistoryPoint(nil), view.History...), execution.StateHistoryPoint{RecordID: record.RecordID(), SourceTime: record.SourceTime(), Levels: lf})
+	points, err := appendHistoryPoint(view.History, execution.StateHistoryPoint{
+		RecordID: record.RecordID(), SourceTime: record.SourceTime(), Levels: lf})
+	if err != nil {
+		return execution.StateMutation{}, err
+	}
 	var retain uint32
 	for _, l := range due.CompiledPlan.Levels() {
 		if l.StateRequirement().RetentionPoints > retain {
@@ -672,11 +677,94 @@ func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, r
 	if uint32(len(points)) > retain {
 		points = points[len(points)-int(retain):]
 	}
-	version, err := execution.BuildApplyVersion(request.Header.Contract, due.StateApplyEpoch)
-	if err != nil {
-		return execution.StateMutation{}, err
+	version, versionErr := execution.BuildApplyVersion(request.Header.Contract, due.StateApplyEpoch)
+	if versionErr != nil {
+		return execution.StateMutation{}, versionErr
 	}
 	// Provisional: only the mutation that survives the series is digested, by
 	// evaluateSeries, once its full affected-record set is known.
 	return execution.BuildProvisionalStateMutation(execution.StateMutation{Identity: view.Identity, ExpectedBlobRevision: view.BlobRevision, ApplyVersion: version, AffectedRecords: []execution.RecordAnchor{{RecordID: record.RecordID(), SourceTime: record.SourceTime()}}, Levels: levels, Points: points})
 }
+
+// appendHistoryPoint places a freshly evaluated point into the loaded history
+// instead of appending it unconditionally.
+//
+// The history is validated as strictly increasing by (SourceTime, RecordID),
+// equality included, so an unconditional append turns any re-evaluation of a
+// record the history already holds into a rejected state mutation - the process
+// reports its own write as invalid. That is what a restart produces: a Slot
+// evaluates a record and writes the state, the process stops before the Slot is
+// recorded as finished, and the record is evaluated once more on the way back.
+// The observed error was "state history points must be uniquely ordered", every
+// occurrence inside a restart window, clearing on its own once the window
+// passed.
+//
+// The rule is the one state/window.go already applies to the live window: a
+// point that shares a SourceTime with a stored point is the same point, so the
+// Level facts merge and no second point appears. Two different records claiming
+// one SourceTime are a record identity conflict, which is named rather than
+// left to surface as a broken invariant. Anything else keeps its position by
+// SourceTime, so a record that arrives out of order lands where it belongs.
+func appendHistoryPoint(history []execution.StateHistoryPoint, point execution.StateHistoryPoint) ([]execution.StateHistoryPoint, error) {
+	position := sort.Search(len(history), func(index int) bool { return history[index].SourceTime >= point.SourceTime })
+	if position < len(history) && history[position].SourceTime == point.SourceTime {
+		if history[position].RecordID != point.RecordID {
+			return nil, &namedEvaluationError{code: "STATE_RECORD_IDENTITY_CONFLICT",
+				err: fmt.Errorf("alarmd evaluation: record identity conflict at source time %d", point.SourceTime)}
+		}
+		merged := append([]execution.StateHistoryPoint(nil), history...)
+		levels, err := mergeLevelFacts(merged[position].Levels, point.Levels)
+		if err != nil {
+			return nil, err
+		}
+		merged[position].Levels = levels
+		return merged, nil
+	}
+	placed := make([]execution.StateHistoryPoint, 0, len(history)+1)
+	placed = append(placed, history[:position]...)
+	placed = append(placed, point)
+	return append(placed, history[position:]...), nil
+}
+
+// mergeLevelFacts keeps one fact per Level. A Level the stored point already
+// carries must agree with the fresh evaluation of the same record: the same
+// record under the same Level cannot be both anomalous and not, and silently
+// preferring either side would make the state depend on how many times the
+// record happened to be evaluated.
+func mergeLevelFacts(stored, fresh []execution.StateLevelFact) ([]execution.StateLevelFact, error) {
+	merged := append([]execution.StateLevelFact(nil), stored...)
+	byLevel := make(map[uint32]int, len(merged))
+	for index, fact := range merged {
+		byLevel[fact.LevelID] = index
+	}
+	for _, fact := range fresh {
+		index, known := byLevel[fact.LevelID]
+		if !known {
+			byLevel[fact.LevelID] = len(merged)
+			merged = append(merged, fact)
+			continue
+		}
+		if merged[index].Result != fact.Result || merged[index].DetectFingerprint != fact.DetectFingerprint {
+			return nil, &namedEvaluationError{code: "STATE_LEVEL_FACT_DISAGREEMENT",
+				err: fmt.Errorf("alarmd evaluation: Level %d disagrees with the stored fact for the same record", fact.LevelID)}
+		}
+	}
+	return merged, nil
+}
+
+// namedEvaluationError carries the cause's own bounded name out of the
+// evaluation. Without it the name of the failure is decided by which wrap site
+// the error reached, so everything thrown from one site aggregates into one
+// value and the cause is left in the free-text message - the only field that
+// says why, and the only one that is rate limited.
+//
+// The category is deliberately absent: where the failure happened is what the
+// wrapping stage knows, and it stays that stage's answer.
+type namedEvaluationError struct {
+	code string
+	err  error
+}
+
+func (e *namedEvaluationError) Error() string                  { return e.err.Error() }
+func (e *namedEvaluationError) Unwrap() error                  { return e.err }
+func (e *namedEvaluationError) QueryFailure() (string, string) { return "", e.code }

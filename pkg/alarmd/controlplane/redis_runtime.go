@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-redis/redis/v8"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -80,6 +82,12 @@ type scheduleTimelineUpdate struct {
 	next     persistedScheduleTimeline
 }
 
+// Every Schedule timeline written here carries the same Catalog TTL as the
+// Snapshot occurrence and the Active Set written next to it in ARGV[5]. No
+// Slot can execute without its Snapshot, so a timeline that outlives the
+// Snapshot it describes serves nobody; the Control Leader renews the
+// timelines the current Activation still references on the same tick that
+// renews the Snapshot, and every other timeline expires with its publication.
 const compareAndSetInitialSchedulesScript = `
 local header = redis.call('GET', KEYS[1])
 if ARGV[1] == '' then
@@ -95,7 +103,7 @@ redis.call('PEXPIRE', KEYS[3], ARGV[5])
 redis.call('SET', KEYS[1], ARGV[2])
 redis.call('SET', KEYS[2], ARGV[3])
 for index = 4, #KEYS do
-  redis.call('SET', KEYS[index], ARGV[index + 2])
+  redis.call('SET', KEYS[index], ARGV[index + 2], 'PX', ARGV[5])
 end
 return 1
 `
@@ -119,7 +127,7 @@ redis.call('SET', KEYS[1], ARGV[2])
 redis.call('SET', KEYS[2], ARGV[3])
 for index = 4, #KEYS do
   local next_index = 2 * index - 1
-  redis.call('SET', KEYS[index], ARGV[next_index])
+  redis.call('SET', KEYS[index], ARGV[next_index], 'PX', ARGV[5])
 end
 return 1
 `
@@ -1205,6 +1213,63 @@ func decodeScheduleTimeline(queryGroup execution.QueryGroupIdentity, payload []b
 
 func (repository *RedisCatalogRepository) scheduleTimelineKey(queryGroup execution.QueryGroupIdentity) string {
 	return repository.prefix + ":schedule_timeline:" + string(queryGroup)
+}
+
+// scheduleTimelineRenewBatch bounds one renewal round trip. The renewal walks
+// the Query Groups the current Activation references, never the keyspace, so
+// this only caps how many replies one pipeline buffers at once.
+const scheduleTimelineRenewBatch = 512
+
+// renewScheduleTimelines extends the Schedule timelines the current Activation
+// still references. The active Query Group set and the Draining projection are
+// exactly the Query Groups a Worker can still schedule, and every Slot they can
+// still execute also needs the Snapshot that the same renewal keeps alive, so
+// both objects carry one Catalog TTL and the timeline is never the weaker half.
+// A Query Group that leaves both sets stops being renewed and its timeline
+// expires with the publication it belonged to. PEXPIRE never creates a key, so
+// a timeline retired by a concurrent cutover is at worst kept one more TTL.
+func (repository *RedisCatalogRepository) renewScheduleTimelines(
+	ctx context.Context,
+	active []execution.QueryGroupIdentity,
+	draining []DrainingQueryGroup,
+) error {
+	if repository == nil || repository.client == nil {
+		return errors.New("alarmd controlplane: Redis catalog repository is required")
+	}
+	referenced := make(map[execution.QueryGroupIdentity]struct{}, len(active)+len(draining))
+	keys := make([]string, 0, len(active)+len(draining))
+	appendKey := func(queryGroup execution.QueryGroupIdentity) {
+		if queryGroup == "" {
+			return
+		}
+		if _, duplicate := referenced[queryGroup]; duplicate {
+			return
+		}
+		referenced[queryGroup] = struct{}{}
+		keys = append(keys, repository.scheduleTimelineKey(queryGroup))
+	}
+	for _, queryGroup := range active {
+		appendKey(queryGroup)
+	}
+	for _, entry := range draining {
+		appendKey(entry.QueryGroup)
+	}
+	for start := 0; start < len(keys); start += scheduleTimelineRenewBatch {
+		end := start + scheduleTimelineRenewBatch
+		if end > len(keys) {
+			end = len(keys)
+		}
+		batch := keys[start:end]
+		if _, err := repository.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+			for _, key := range batch {
+				pipe.PExpire(ctx, key, repository.ttl)
+			}
+			return nil
+		}); err != nil {
+			return activationDependencyIO(fmt.Errorf("renew Schedule timelines: %w", err))
+		}
+	}
+	return nil
 }
 
 type RuntimePlanCompiler interface {

@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
 func scheduledRunnerBundle() *phaseTwoWorkerBundle {
@@ -91,5 +95,111 @@ func TestSnapshotScheduledRunnersIsSharedAndOrdered(t *testing.T) {
 	}
 	if got := scheduledRunnerNames(first); got[0] != "a" || got[1] != "b" || got[2] != "c" {
 		t.Fatalf("ordered view is %v, want a, b, c", got)
+	}
+}
+
+// walkRunner reports a fixed next-ready time and is never invoked: these tests
+// drive the queue-filling walk on its own.
+type walkRunner struct{ readyAt time.Time }
+
+func (walkRunner) RunOne(context.Context) (execution.SlotExecutionResult, bool, error) {
+	return execution.SlotExecutionResult{}, false, nil
+}
+
+func (walkRunner) RunOneAdmitted(
+	context.Context,
+	scheduler.ExecutionAdmission,
+) (execution.SlotExecutionResult, bool, bool, error) {
+	return execution.SlotExecutionResult{}, false, false, nil
+}
+
+func (runner walkRunner) NextReadyAt() time.Time { return runner.readyAt }
+
+func (walkRunner) MaintainLease(context.Context, time.Duration, time.Duration) error { return nil }
+
+func (walkRunner) Release(context.Context) error { return nil }
+
+func walkDispatcher(
+	readyCapacity, recoveryCapacity int,
+	owned map[execution.QueryGroupIdentity]time.Time,
+) *phaseTwoRunnerDispatcher {
+	var cfg config.Config
+	cfg.PhaseTwo.Scheduler.ReadyQueueCapacity = readyCapacity
+	cfg.PhaseTwo.Scheduler.RecoveryQueueCapacity = recoveryCapacity
+	bundle := &phaseTwoWorkerBundle{
+		dependencies: phaseTwoWorkerBundleDependencies{Config: cfg, Now: time.Now},
+		runners:      make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
+		assigned:     make(map[execution.QueryGroupIdentity]struct{}),
+	}
+	bundle.mu.Lock()
+	for queryGroup, readyAt := range owned {
+		bundle.setRunnerLocked(queryGroup, &phaseTwoQueryGroupLifecycle{runner: walkRunner{readyAt: readyAt}})
+		bundle.assigned[queryGroup] = struct{}{}
+	}
+	bundle.mu.Unlock()
+	dispatcher := newPhaseTwoRunnerDispatcher(bundle, false)
+	dispatcher.generation = 1
+	return dispatcher
+}
+
+func queuedNames(queue []phaseTwoQueuedRunner) []execution.QueryGroupIdentity {
+	names := make([]execution.QueryGroupIdentity, 0, len(queue))
+	for _, queued := range queue {
+		names = append(names, queued.scheduled.queryGroup)
+	}
+	return names
+}
+
+// TestFillQueuesDefersTheWalkWhileTheReadyQueueIsFull pins the trade-off the
+// cross-pass walk makes, because it is the one the walk's own design forces and
+// it is invisible until the ready queue actually fills.
+//
+// A Query Group that finds the ready queue full keeps its place instead of
+// spending its turn, so the walk stops there. The cost is that everything
+// behind it waits behind it, including a Query Group that would have gone to
+// the recovery queue, which has room. The bound is that the wait is one
+// dispatch, not one generation: freeing a single place lets the turned-away
+// Query Group in and the walk carries on to the one behind it, in the same
+// generation.
+func TestFillQueuesDefersTheWalkWhileTheReadyQueueIsFull(t *testing.T) {
+	dispatcher := walkDispatcher(1, 4, map[execution.QueryGroupIdentity]time.Time{
+		"query-group-a": {},
+		"query-group-b": {},
+		"query-group-c": time.Now().Add(time.Hour),
+	})
+	runners, revision := dispatcher.bundle.snapshotScheduledRunners()
+
+	dispatcher.fillQueues(runners, revision)
+	if got := queuedNames(dispatcher.normal); len(got) != 1 || got[0] != "query-group-a" {
+		t.Fatalf("ready queue holds %v, want query-group-a alone", got)
+	}
+	if got := queuedNames(dispatcher.delayed); len(got) != 0 {
+		t.Fatalf("recovery queue holds %v, want nothing: the walk stopped at the full ready queue", got)
+	}
+
+	// The walk stopped at the Query Group it could not place, so a further pass
+	// that frees nothing places nothing and reconsiders nothing.
+	dispatcher.fillQueues(runners, revision)
+	if len(dispatcher.normal) != 1 || len(dispatcher.delayed) != 0 {
+		t.Fatalf("a pass with no room queued ready=%v recovery=%v",
+			queuedNames(dispatcher.normal), queuedNames(dispatcher.delayed))
+	}
+
+	// One dispatch frees one place. The Query Group turned away takes it in the
+	// same generation - it never spent its turn - and the walk then reaches the
+	// Query Group behind it, which the recovery queue takes.
+	dispatcher.markDispatched(dispatcher.normal[0].scheduled, false, false)
+	dispatcher.fillQueues(runners, revision)
+	if got := queuedNames(dispatcher.normal); len(got) != 1 || got[0] != "query-group-b" {
+		t.Fatalf("ready queue holds %v, want query-group-b alone", got)
+	}
+	if got := queuedNames(dispatcher.delayed); len(got) != 1 || got[0] != "query-group-c" {
+		t.Fatalf("recovery queue holds %v, want query-group-c", got)
+	}
+	if dispatcher.generation != 1 {
+		t.Fatalf("the walk needed generation %d to finish, want 1", dispatcher.generation)
+	}
+	if dispatcher.walked != len(runners) {
+		t.Fatalf("the walk finished after %d of %d Query Groups", dispatcher.walked, len(runners))
 	}
 }

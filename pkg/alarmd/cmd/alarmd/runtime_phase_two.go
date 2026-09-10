@@ -836,6 +836,14 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 		queued := phaseTwoQueuedRunner{scheduled: scheduled, readyAt: readyAt}
 		if readyAt.IsZero() {
 			if len(dispatcher.normal) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.ReadyQueueCapacity {
+				// The walk stops here rather than scanning past this Query Group
+				// for one the recovery queue could still take. Scanning past it
+				// would read the whole owned set again on every pass for as long
+				// as the ready queue stays full, which is the per-pass sweep this
+				// walk exists to remove, and the queue stays full at exactly the
+				// load where that sweep costs the most. What is behind this Query
+				// Group is deferred, not dropped: one dispatch frees one place,
+				// and the walk resumes from here within the same generation.
 				dispatcher.bundle.dependencies.TargetFlow.Record("queue_skipped", string(scheduled.queryGroup), observability.TargetFlowFacts{Decision: "normal_queue_full"})
 				return
 			}

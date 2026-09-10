@@ -118,7 +118,7 @@ type recordResult struct {
 type recordDetector func() ([]detect.LevelFact, []detect.ProjectedValue, error)
 
 func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, guardConvergence map[uint32]bool, run recordDetector) (recordResult, error) {
-	series := execution.SeriesIdentityDigest(record.DimensionIdentity().Digest)
+	series := execution.SeriesIdentityDigest(record.DimensionIdentityDigest())
 	identity := execution.StateKeyIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration, SeriesIdentityDigest: series}
 	if view.Identity != identity {
 		return recordResult{}, errors.New("alarmd evaluation: runtime state identity mismatch")
@@ -402,7 +402,7 @@ func commonPrimaryRecords(inputs []execution.SeriesEvaluationInputRequest, maxRe
 		records := make([]execution.RecordView, primary.Len())
 		for index := range records {
 			record, ok := primary.Record(index)
-			if !ok || execution.SeriesIdentityDigest(record.DimensionIdentity().Digest) != input.SeriesIdentity {
+			if !ok || execution.SeriesIdentityDigest(record.DimensionIdentityDigest()) != input.SeriesIdentity {
 				return nil, errors.New("alarmd evaluation: PRIMARY record differs from named-input series")
 			}
 			records[index] = record

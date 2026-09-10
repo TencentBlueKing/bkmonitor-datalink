@@ -669,7 +669,7 @@ func selectedPrimaryStateIdentities(
 				record, _ := binding.View.Record(index)
 				identity := StateKeyIdentity{
 					Plan: binding.Consumer.Plan, StateGeneration: due.StateGeneration,
-					SeriesIdentityDigest: SeriesIdentityDigest(record.DimensionIdentity().Digest),
+					SeriesIdentityDigest: SeriesIdentityDigest(record.DimensionIdentityDigest()),
 				}
 				if identity.SeriesIdentityDigest == "" {
 					return nil, errors.New("alarmd execution: selected PRIMARY record lacks series identity")
@@ -1653,7 +1653,7 @@ func selectedPrimaryContainsAnchor(
 		for index := 0; index < binding.View.Len(); index++ {
 			record, ok := binding.View.Record(index)
 			if ok && record.RecordID() == anchor.RecordID && record.SourceTime() == anchor.SourceTime &&
-				record.DimensionIdentity().Digest == string(series) {
+				record.DimensionIdentityDigest() == string(series) {
 				return true
 			}
 		}

@@ -178,7 +178,7 @@ func (evaluator *Evaluator) EvaluatePreparedSeriesRecord(
 		return nil, nil, 0, errors.New("alarmd detect: prepared plan, evaluator and primary record are required")
 	}
 	byLevel := make(map[uint32]execution.SeriesEvaluationInputRequest, len(inputs))
-	series := execution.SeriesIdentityDigest(record.DimensionIdentity().Digest)
+	series := execution.SeriesIdentityDigest(record.DimensionIdentityDigest())
 	for _, input := range inputs {
 		if input.Consumer.Plan.StrategyID != prepared.bound.execution.Plan.PlanRef().StrategyID ||
 			!input.Consumer.HasLevel || input.SeriesIdentity != series {

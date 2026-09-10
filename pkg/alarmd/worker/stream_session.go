@@ -315,7 +315,7 @@ func (stream *streamedExecution) validateSeriesBatch(batch execution.SeriesExecu
 	var series execution.SeriesIdentityDigest
 	for index := 0; index < batch.Dataset.Len(); index++ {
 		record, ok := batch.Dataset.Record(index)
-		candidate := execution.SeriesIdentityDigest(record.DimensionIdentity().Digest)
+		candidate := execution.SeriesIdentityDigest(record.DimensionIdentityDigest())
 		if !ok || candidate == "" || (series != "" && candidate != series) {
 			return "", namedInputError(codeSeriesBatchNotSingleSeries, "batch does not contain exactly one stable series")
 		}
@@ -347,10 +347,14 @@ func (stream *streamedExecution) validateSeriesBatch(batch execution.SeriesExecu
 			binding.Disposition != execution.AccessAvailable {
 			return "", namedInputError(codeSeriesBindingMismatch, "binding differs from frozen DataRequirement or physical query")
 		}
+		// The series of every record was established once above, over the
+		// Dataset this binding was just required to be a view of, so only the
+		// window is still open per binding. Re-reading the series here cost one
+		// identity read per record per consuming Plan, and a Query Group exists
+		// precisely so that many Plans consume one delivery.
 		for recordIndex := 0; recordIndex < binding.View.Len(); recordIndex++ {
 			record, ok := binding.View.Record(recordIndex)
-			if !ok || execution.SeriesIdentityDigest(record.DimensionIdentity().Digest) != series ||
-				record.SourceTime() < binding.QueryWindow.Start || record.SourceTime() >= binding.QueryWindow.End {
+			if !ok || record.SourceTime() < binding.QueryWindow.Start || record.SourceTime() >= binding.QueryWindow.End {
 				return "", namedInputError(codeSeriesRecordOutsideWindow, "binding contains a record outside its series or frozen query window")
 			}
 		}
@@ -1496,7 +1500,7 @@ func algorithmInputResult(
 	}
 	for index := 0; index < binding.View.Len(); index++ {
 		record, ok := binding.View.Record(index)
-		if ok && execution.SeriesIdentityDigest(record.DimensionIdentity().Digest) == series && record.SourceTime() == sourceTime {
+		if ok && execution.SeriesIdentityDigest(record.DimensionIdentityDigest()) == series && record.SourceTime() == sourceTime {
 			return observability.AlgorithmInputResultAvailable, observability.ReasonNone
 		}
 	}

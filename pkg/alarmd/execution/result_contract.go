@@ -80,7 +80,7 @@ func expectedLevelOutcomeIdentities(input InternalExecution, plan DuePlan) (map[
 				if !ok {
 					return nil, errors.New("alarmd execution: selected PRIMARY record is missing")
 				}
-				add(SeriesIdentityDigest(record.DimensionIdentity().Digest), RecordAnchor{
+				add(SeriesIdentityDigest(record.DimensionIdentityDigest()), RecordAnchor{
 					RecordID: record.RecordID(), SourceTime: record.SourceTime(),
 				})
 			}

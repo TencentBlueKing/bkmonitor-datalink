@@ -27,6 +27,17 @@ type QueryTimingFacts struct {
 // set is declared once here for that reason.
 var ShortPeriodCohorts = []string{"10s", "15s", "30s"}
 
+// ShortPeriodCompletionOffsetSeconds is the deadline that defines the cohort.
+const ShortPeriodCompletionOffsetSeconds = 30
+
+// IsShortPeriodInterval reports whether an evaluation interval reaches that
+// deadline. It is the numeric half of the same set: sites that decide by
+// interval and sites that decide by cohort label have to agree about which
+// Slots are short, and when they were written out separately they did not.
+func IsShortPeriodInterval(interval int64) bool {
+	return interval == 10 || interval == 15 || interval == 30
+}
+
 // IsShortPeriodCohort reports whether cohort is one of them.
 func IsShortPeriodCohort(cohort string) bool {
 	for _, known := range ShortPeriodCohorts {
@@ -47,7 +58,7 @@ type ShortPeriodCompletionFacts struct {
 func normalizeTimingFacts(o Observation) *QueryTimingFacts {
 	f := o.QueryTiming
 	if f == nil || o.Component != ComponentAccess || o.Stage != StageQueryBudgetResolved ||
-		(f.IntervalSeconds != 10 && f.IntervalSeconds != 15) || f.CompletionOffsetSeconds <= 0 ||
+		!IsShortPeriodInterval(f.IntervalSeconds) || f.CompletionOffsetSeconds != ShortPeriodCompletionOffsetSeconds ||
 		f.ReadyAtUnixMilli <= 0 || f.FrozenQueryDeadlineUnixMilli <= 0 || f.CompletionDeadlineUnixMilli <= f.FrozenQueryDeadlineUnixMilli ||
 		f.QueryDeadlineUnixMilli <= 0 || f.RecoveryBudgetMilli < 0 {
 		return nil

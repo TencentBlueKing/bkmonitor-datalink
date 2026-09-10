@@ -23,7 +23,17 @@ func (source *Source) observeQueryTiming(ctx context.Context, request execution.
 			for _, requirement := range requirements {
 				for _, consumer := range requirement.Consumers {
 					spec := schedules[consumer.Consumer.Plan]
-					if spec.EvaluationIntervalSeconds != 10 && spec.EvaluationIntervalSeconds != 15 {
+					// Gated on the completion deadline being thirty seconds, which is
+					// what the short-period cohort means, rather than on the two
+					// interval values that happen to reach it by carrying an
+					// explicit offset. Written as the interval pair, this site and
+					// the cohort label disagreed about which Slots are short: an
+					// interval of 30 reaches a thirty-second deadline by the offset
+					// defaulting to the interval, so it would have appeared in the
+					// cohort lag and duration histograms while emitting no query
+					// budget fact at all - present on one side of a cross-check and
+					// absent on the other.
+					if spec.CompletionOffsetSeconds() != observability.ShortPeriodCompletionOffsetSeconds {
 						continue
 					}
 					ready, err := frozenConsumerReadyAt(request.Contract, requirement, requirement.AbsoluteWindow(request.Contract.Slot.EvaluationTime), spec, source.config.MinReadyDelay, request.Operation != execution.OperationNormal)

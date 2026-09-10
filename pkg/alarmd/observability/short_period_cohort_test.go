@@ -40,3 +40,31 @@ func TestShortPeriodCohortsAndTheirCheckAgree(t *testing.T) {
 		}
 	}
 }
+
+// The sites that decide by interval and the sites that decide by cohort label
+// must agree about which Slots are short. They did not: adding 30 to the cohort
+// put it in the lag and duration histograms while the query budget telemetry,
+// gated separately on the interval pair, emitted nothing for it - present on
+// one side of a cross-check and absent on the other. Both now decide by the
+// deadline.
+func TestQueryBudgetFactsCoverTheSameSetAsTheCohort(t *testing.T) {
+	facts := func(interval int64) *QueryTimingFacts {
+		return &QueryTimingFacts{
+			IntervalSeconds: interval, CompletionOffsetSeconds: ShortPeriodCompletionOffsetSeconds,
+			ReadyAtUnixMilli: 1_700_000_010_000, FrozenQueryDeadlineUnixMilli: 1_700_000_020_000,
+			CompletionDeadlineUnixMilli: 1_700_000_030_000, QueryDeadlineUnixMilli: 1_700_000_020_000,
+		}
+	}
+	for _, interval := range []int64{10, 15, 30} {
+		observation := Observation{Component: ComponentAccess, Stage: StageQueryBudgetResolved, QueryTiming: facts(interval)}
+		if normalizeTimingFacts(observation) == nil {
+			t.Errorf("interval %ds is in the cohort but reports no query budget", interval)
+		}
+	}
+	for _, interval := range []int64{60, 300} {
+		observation := Observation{Component: ComponentAccess, Stage: StageQueryBudgetResolved, QueryTiming: facts(interval)}
+		if normalizeTimingFacts(observation) != nil {
+			t.Errorf("interval %ds is not in the cohort but reports a query budget", interval)
+		}
+	}
+}

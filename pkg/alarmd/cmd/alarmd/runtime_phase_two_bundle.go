@@ -242,16 +242,32 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err := repository.ConfigureDrainingTermination(cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration()); err != nil {
 		return nil, err
 	}
+	// The timeline cache budget is derived here rather than inside the
+	// repository: the derivation belongs to the container, and the control
+	// plane package does not depend on configuration.
+	timelineCache := config.DeriveControlTimelineCache(config.DetectCapacityInputs())
+	if err := repository.ConfigureControlTimelineCache(timelineCache.MaxEntries, timelineCache.MaxBytes); err != nil {
+		return nil, err
+	}
 	repository.ConfigureObserver(observer)
-	// The cache counters decide how much a decoded-timeline cache would save,
-	// and nothing consumed them before.
+	// The cache counters are what said a decoded-timeline cache was worth
+	// building, and nothing consumed them before. The timeline occupancy joins
+	// them so the derived budget can be read against the working set it was
+	// sized for: entries against the Query Groups this Worker owns, evictions
+	// against a version header that is not moving.
 	recorder.SetControlCacheSource(func() []metric.ControlCacheCounts {
 		stats := repository.ControlReadCacheStats()
+		occupancy := stats.TimelineOccupancy
 		return []metric.ControlCacheCounts{
 			{Object: "version", Hits: stats.Version.Hits, Misses: stats.Version.Misses, Refreshes: stats.Version.Refreshes},
 			{Object: "snapshot", Hits: stats.Snapshot.Hits, Misses: stats.Snapshot.Misses, Refreshes: stats.Snapshot.Refreshes},
 			{Object: "activation", Hits: stats.Activation.Hits, Misses: stats.Activation.Misses, Refreshes: stats.Activation.Refreshes},
-			{Object: "timeline", Hits: stats.Timeline.Hits, Misses: stats.Timeline.Misses, Refreshes: stats.Timeline.Refreshes},
+			{Object: "timeline", Hits: stats.Timeline.Hits, Misses: stats.Timeline.Misses,
+				Refreshes: stats.Timeline.Refreshes, Evictions: occupancy.Evictions,
+				Occupancy: &metric.ControlCacheOccupancy{
+					Entries: float64(occupancy.Entries), Bytes: float64(occupancy.Bytes),
+					BytesLimit: float64(occupancy.MaxBytes),
+				}},
 		}
 	})
 	if cfg.PhaseTwo.Control.CatalogTTL.Duration() < phaseTwoSnapshotMinimumRetention(cfg, 0) {
@@ -291,7 +307,12 @@ func openProductionPhaseTwoBundleWithDependencies(
 	}
 	executionStore, err := state.NewExecutionStore(state.ExecutionStoreOptions{
 		Prefix: cfg.Redis.StatePrefix, Router: storageRouter, MaxValueBytes: cfg.Limits.Codec.MaxEncodedBytes,
-		MaxItemsPerCall: cfg.Limits.Store.MaxKeysPerBatch, RuntimeTTL: cfg.Redis.MaxTTL.Duration(),
+		MaxItemsPerCall: cfg.Limits.Store.MaxKeysPerBatch,
+		// The store derives each write TTL from the Plan retention the request
+		// carries; these only bound it, exactly as they do for the phase-one
+		// store built in config.StoreOptions.
+		MinTTL: cfg.Redis.MinTTL.Duration(), MaxTTL: cfg.Redis.MaxTTL.Duration(),
+		RestartMargin: cfg.Redis.RestartMargin.Duration(),
 		// Runtime State writes verify the owner lease inside Redis; without the
 		// resolver the store would fall back to unfenced batched writes.
 		FenceKeys: ownershipStore,

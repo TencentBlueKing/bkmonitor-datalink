@@ -182,6 +182,11 @@ func TestTemporaryLegacyDrainingCleanupDryRunAndApplyOneAtomicTransition(t *test
 		if err != nil || !reflect.DeepEqual(got, progressBefore[progressReader.facts[target.QueryGroup].RedisKey]) {
 			t.Fatalf("Progress %s changed: got=%x err=%v", target.QueryGroup, got, err)
 		}
+		timelineKey := prefix + ":schedule_timeline:" + string(target.QueryGroup)
+		ttl, ttlErr := client.PTTL(ctx, timelineKey).Result()
+		if ttlErr != nil || ttl <= 0 || ttl > time.Hour {
+			t.Fatalf("timeline %s TTL=(%s,%v), want the Catalog TTL the Snapshot carries", timelineKey, ttl, ttlErr)
+		}
 	}
 }
 

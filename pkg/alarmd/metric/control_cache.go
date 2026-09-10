@@ -23,21 +23,56 @@ type ControlCacheCounts struct {
 	Hits      uint64
 	Misses    uint64
 	Refreshes uint64
+	Evictions uint64
+	// Occupancy is set only for a cached object whose size is bounded by a
+	// budget derived from the container. Absent for the rest, because a
+	// ceiling reported as zero would read as a cache that can hold nothing.
+	Occupancy *ControlCacheOccupancy
+}
+
+// ControlCacheOccupancy is what one cached object holds against what it is
+// allowed to hold. The budget is derived from the container's memory limit, so
+// it is a formula, and a formula that cannot be read against the workload it
+// was sized for cannot be corrected: the constant these replaced spent months
+// evicting the working set with nothing to show it.
+type ControlCacheOccupancy struct {
+	Entries    float64
+	Bytes      float64
+	BytesLimit float64
 }
 
 type controlCacheCollector struct {
-	mu     sync.Mutex
-	source func() []ControlCacheCounts
-	desc   *prometheus.Desc
+	mu         sync.Mutex
+	source     func() []ControlCacheCounts
+	desc       *prometheus.Desc
+	entries    *prometheus.Desc
+	bytes      *prometheus.Desc
+	bytesLimit *prometheus.Desc
 }
 
 func newControlCacheCollector() *controlCacheCollector {
+	descriptor := func(name, help string) *prometheus.Desc {
+		return prometheus.NewDesc(
+			prometheus.BuildFQName(metricNamespace, metricSubsystem, name), help, []string{"object"}, nil)
+	}
 	return &controlCacheCollector{
 		desc: prometheus.NewDesc(
 			prometheus.BuildFQName(metricNamespace, metricSubsystem, "control_cache_total"),
-			"Control plane read cache outcomes by cached object and result.",
+			"Control plane read cache outcomes by cached object and result. An evict is an entry "+
+				"dropped to stay inside the byte budget; evictions rising while refreshes stay at zero "+
+				"means the budget cannot hold the working set, not that the control plane changed.",
 			[]string{"object", "result"}, nil,
 		),
+		entries: descriptor("control_cache_entries",
+			"Objects currently cached. For timelines, read it against worker_owned_query_groups: the "+
+				"cache is meant to hold one per Query Group this Worker owns."),
+		bytes: descriptor("control_cache_bytes",
+			"Heap charged to the cached objects. Timelines are charged the decoded object they hold, "+
+				"which measures at 9/8 of the payload it was decoded from."),
+		bytesLimit: descriptor("control_cache_bytes_limit",
+			"The derived ceiling for the same, a share of the container's memory limit. It is a "+
+				"ceiling and not a target: occupancy well below it is the cache holding a working set "+
+				"smaller than the container allows for."),
 	}
 }
 
@@ -55,6 +90,9 @@ func (r *Recorder) SetControlCacheSource(source func() []ControlCacheCounts) {
 
 func (c *controlCacheCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.desc
+	ch <- c.entries
+	ch <- c.bytes
+	ch <- c.bytesLimit
 }
 
 func (c *controlCacheCollector) Collect(ch chan<- prometheus.Metric) {
@@ -71,5 +109,12 @@ func (c *controlCacheCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Hits), counts.Object, "hit")
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Misses), counts.Object, "miss")
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Refreshes), counts.Object, "refresh")
+		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Evictions), counts.Object, "evict")
+		if counts.Occupancy == nil {
+			continue
+		}
+		ch <- prometheus.MustNewConstMetric(c.entries, prometheus.GaugeValue, counts.Occupancy.Entries, counts.Object)
+		ch <- prometheus.MustNewConstMetric(c.bytes, prometheus.GaugeValue, counts.Occupancy.Bytes, counts.Object)
+		ch <- prometheus.MustNewConstMetric(c.bytesLimit, prometheus.GaugeValue, counts.Occupancy.BytesLimit, counts.Object)
 	}
 }

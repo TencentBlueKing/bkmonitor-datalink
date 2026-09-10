@@ -38,7 +38,7 @@ func TestCapacityProfileLegalGap(t *testing.T) {
 	key, _ := PlanGapKeyV2("capacity", identity)
 	backend.values[key] = raw
 	router, _ := NewFixedRouter("capacity", backend)
-	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "capacity", Router: router, MaxValueBytes: maxValue, MaxItemsPerCall: 8192, RuntimeTTL: time.Hour})
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "capacity", Router: router, MaxValueBytes: maxValue, MaxItemsPerCall: 8192, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	req := execution.GapLoadRequest{Contract: frozenRef(), Items: []execution.PlanGapLoadItem{{Identity: identity, ApplyVersion: applyVersion(), ScheduleRevision: "schedule"}}}
 	runtime.GC()
 	var before, after, live runtime.MemStats

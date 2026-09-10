@@ -240,7 +240,7 @@ func (reconciler *ScheduleActivationReconciler) upgradeLegacyActivation(
 	identities := make([]execution.QueryGroupIdentity, 0, len(groups))
 	covered := make(map[execution.PlanIdentity]struct{}, len(previous.Plans))
 	for identity := range groups {
-		timeline, _, loadErr := reconciler.repository.loadScheduleTimeline(ctx, identity)
+		timeline, loadErr := reconciler.repository.loadScheduleTimeline(ctx, identity)
 		if loadErr != nil {
 			return ActivationState{}, loadErr
 		}

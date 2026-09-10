@@ -143,7 +143,7 @@ func newBatchStore(t *testing.T, backend Backend, resolver FenceKeyResolver) *Ex
 		t.Fatal(err)
 	}
 	store, err := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 1 << 20,
-		MaxItemsPerCall: 8192, RuntimeTTL: time.Hour, FenceKeys: resolver})
+		MaxItemsPerCall: 8192, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute, FenceKeys: resolver})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestApplyRuntimePipelinesWitnessedItemsAndStoresSequentialBytes(t *testing.
 	sequential := &casMemoryBackend{values: make(map[string][]byte)}
 	sequentialStore := newBatchStore(t, sequential, nil)
 	mutations := seriesMutations(t, 1000, applyVersion(), 0)
-	request := execution.StateApplyRequest{Contract: frozenRef(), Items: mutations}
+	request := execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}
 
 	if _, err := batchedStore.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: preflightItems(mutations)}); err != nil {
 		t.Fatalf("LoadRuntime() error = %v", err)
@@ -295,7 +295,7 @@ func TestApplyRuntimeWithoutWitnessKeepsSequentialPath(t *testing.T) {
 	backend := newPipelineMemoryBackend()
 	store := newBatchStore(t, backend, fixedFenceKeys{testFenceKeys()})
 	mutations := seriesMutations(t, 5, applyVersion(), 0)
-	result, err := store.ApplyRuntimeFenced(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Items: mutations}, testApplyFence())
+	result, err := store.ApplyRuntimeFenced(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}, testApplyFence())
 	if err != nil {
 		t.Fatalf("ApplyRuntimeFenced() error = %v", err)
 	}
@@ -338,7 +338,7 @@ func TestApplyRuntimeClassifiesValueChangedBetweenPreflightAndApply(t *testing.T
 		snapshot[key] = string(value)
 	}
 
-	result, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(),
+	result, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(),
 		Items: []execution.StateMutation{missingThenWritten, movedRevision, movedBytes, vanished}})
 	if err != nil {
 		t.Fatalf("ApplyRuntime() error = %v", err)
@@ -376,7 +376,7 @@ func TestApplyRuntimeRepeatedKeyFallsBackToSequentialPath(t *testing.T) {
 		Items: preflightItems([]execution.StateMutation{first, sibling})}); err != nil {
 		t.Fatalf("LoadRuntime() error = %v", err)
 	}
-	result, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(),
+	result, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(),
 		Items: []execution.StateMutation{first, sibling, second}})
 	if err != nil {
 		t.Fatalf("ApplyRuntime() error = %v", err)
@@ -403,7 +403,7 @@ func TestApplyRuntimeFencedSurfacesStaleOwnerWithoutWrites(t *testing.T) {
 	if _, err := store.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: preflightItems(mutations)}); err != nil {
 		t.Fatalf("LoadRuntime() error = %v", err)
 	}
-	result, err := store.ApplyRuntimeFenced(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Items: mutations}, testApplyFence())
+	result, err := store.ApplyRuntimeFenced(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}, testApplyFence())
 	if !errors.Is(err, ownership.ErrStaleFence) || len(result.Items) != 0 {
 		t.Fatalf("ApplyRuntimeFenced(stale) = (%+v, %v), want ErrStaleFence", result, err)
 	}
@@ -413,7 +413,7 @@ func TestApplyRuntimeFencedSurfacesStaleOwnerWithoutWrites(t *testing.T) {
 
 	invalid := testApplyFence()
 	invalid.Fence.LeaseToken = ""
-	if _, err := store.ApplyRuntimeFenced(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Items: mutations}, invalid); err == nil {
+	if _, err := store.ApplyRuntimeFenced(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}, invalid); err == nil {
 		t.Fatal("invalid fence was accepted")
 	}
 
@@ -423,7 +423,7 @@ func TestApplyRuntimeFencedSurfacesStaleOwnerWithoutWrites(t *testing.T) {
 	if _, err := unfenced.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: preflightItems(mutations)}); err != nil {
 		t.Fatal(err)
 	}
-	applied, err := unfenced.ApplyRuntimeFenced(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Items: mutations}, testApplyFence())
+	applied, err := unfenced.ApplyRuntimeFenced(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}, testApplyFence())
 	if err != nil {
 		t.Fatalf("unfenced ApplyRuntimeFenced() error = %v", err)
 	}
@@ -441,7 +441,7 @@ func TestApplyRuntimePipelineFailureMarksWholeBatchRetryable(t *testing.T) {
 	if _, err := store.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: preflightItems(mutations)}); err != nil {
 		t.Fatalf("LoadRuntime() error = %v", err)
 	}
-	result, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Items: mutations})
+	result, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations})
 	if err != nil {
 		t.Fatalf("ApplyRuntime() error = %v", err)
 	}
@@ -467,7 +467,7 @@ func TestApplyRuntimeCutsPipelineBatchesByBytes(t *testing.T) {
 	if _, err := store.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: preflightItems(mutations)}); err != nil {
 		t.Fatalf("LoadRuntime() error = %v", err)
 	}
-	result, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Items: mutations})
+	result, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations})
 	if err != nil {
 		t.Fatalf("ApplyRuntime() error = %v", err)
 	}

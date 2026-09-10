@@ -822,7 +822,7 @@ func testProductionFullTargetFlow(t *testing.T, diagnostic bool) {
 	}
 	stateStore, err := state.NewExecutionStore(state.ExecutionStoreOptions{
 		Prefix: cfg.Redis.StatePrefix, Router: router, MaxValueBytes: cfg.Limits.Codec.MaxEncodedBytes,
-		MaxItemsPerCall: cfg.Limits.Store.MaxKeysPerBatch, RuntimeTTL: cfg.Redis.MaxTTL.Duration(),
+		MaxItemsPerCall: cfg.Limits.Store.MaxKeysPerBatch, MinTTL: cfg.Redis.MinTTL.Duration(), MaxTTL: cfg.Redis.MaxTTL.Duration(), RestartMargin: cfg.Redis.RestartMargin.Duration(),
 	})
 	if err != nil {
 		t.Fatal(err)

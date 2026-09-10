@@ -800,6 +800,15 @@ func TestPhaseTwoWorkerBundleNormalQueueRotatesPastFastPrefixAcrossTicks(t *test
 	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 1
 	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 0
 	cfg.PhaseTwo.Scheduler.ReadyQueueCapacity = 2
+	// One execution at a time, so what this test reads is the order Query Groups
+	// were dispatched in. Left unlimited, every dispatch gets its own goroutine,
+	// all ten block sending their identity at once, and the runtime picks among
+	// them: a tail Query Group dispatched on the first generation can still go
+	// unobserved, and the test reports starvation at a few runs in a hundred
+	// whatever the dispatcher does. What that draw used to detect by accident -
+	// a returning Runner taking a place the walk had not reached - is pinned
+	// directly in TestReturningRunnerDoesNotTakeThePlaceTheWalkHasNotReached.
+	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 1
 
 	started := make(chan execution.QueryGroupIdentity)
 	release := make(chan struct{})

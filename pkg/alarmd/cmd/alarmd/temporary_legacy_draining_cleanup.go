@@ -106,6 +106,10 @@ func runTemporaryLegacyDrainingCleanup(
 	if err != nil {
 		return err
 	}
+	timelineCache := config.DeriveControlTimelineCache(config.DetectCapacityInputs())
+	if err := repository.ConfigureControlTimelineCache(timelineCache.MaxEntries, timelineCache.MaxBytes); err != nil {
+		return err
+	}
 	catalog, err := controlplane.NewRedisCatalogRuntime(
 		repository,
 		compiler,

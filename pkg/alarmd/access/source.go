@@ -272,6 +272,8 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 				err = fmt.Errorf("alarmd access: execute physical query: %w", err)
 			} else if !trustedProviderCompletion(query.Spec.Digest, completion) {
 				err = errors.New("alarmd access: G1 provider returned an untrusted completion")
+			} else {
+				completion = adapter.reconcileCompletion(completion)
 			}
 			results[index].completion = completion
 			if err != nil {
@@ -742,6 +744,17 @@ type seriesAdapter struct {
 	admission SeriesAdmission
 	observe   AdmissionObserver
 	scopes    planScopes
+
+	// forwarded accumulates the delivery proofs of the batches that actually
+	// reached the consumer, and withheld counts the ones the monitoring target
+	// excluded. The provider counts every series it decoded, so the moment one
+	// is withheld its completion stops describing what was delivered.
+	//
+	// One adapter serves exactly one physical query and the sink is called in
+	// order - the delivery digest is a chain, so out-of-order delivery is
+	// undefined for the worker too - which is why this needs no lock.
+	forwarded execution.SeriesDelivery
+	withheld  uint64
 }
 
 func (adapter *seriesAdapter) ConsumeProviderSeries(ctx context.Context, batch execution.ProviderSeriesBatch) error {
@@ -757,11 +770,47 @@ func (adapter *seriesAdapter) ConsumeProviderSeries(ctx context.Context, batch e
 		// Every plan this series could feed excludes it. Passing an empty
 		// batch on would be rejected as incomplete, and there is nothing to
 		// evaluate: the series simply does not belong to any of them.
+		adapter.withheld++
 		return nil
 	}
-	return adapter.consumer.ConsumeSeries(ctx, execution.SeriesExecutionBatch{PhysicalQuery: batch.PhysicalQuery,
+	if err := adapter.consumer.ConsumeSeries(ctx, execution.SeriesExecutionBatch{PhysicalQuery: batch.PhysicalQuery,
 		QueryRevision: adapter.query.Spec.PlanFacts.QueryRevision, CompletionRef: batch.CompletionRef,
-		Dataset: batch.Dataset, Inputs: bindings, Delivery: batch.Delivery})
+		Dataset: batch.Dataset, Inputs: bindings, Delivery: batch.Delivery}); err != nil {
+		return err
+	}
+	// Fold the same proof the worker folds, in the same order, so the two
+	// accumulations stay identical down to the chained digest.
+	forwarded, err := execution.AccumulateSeriesDelivery(adapter.forwarded, batch.Delivery)
+	if err != nil {
+		return err
+	}
+	adapter.forwarded = forwarded
+	return nil
+}
+
+// reconcileCompletion restates a provider completion in terms of what the
+// access layer forwarded.
+//
+// The worker validates a completion against the series it actually received
+// (execution.QueryExecutionCompletion.Validate), so a completion that still
+// counts a withheld series fails the whole Slot at stream_complete - not just
+// the plan that excluded the series, but every plan sharing the query group,
+// including the ones whose series were admitted. Filtering therefore has to
+// subtract from the completion in the same layer that does the filtering.
+func (adapter *seriesAdapter) reconcileCompletion(completion execution.ProviderCompletion) execution.ProviderCompletion {
+	if adapter.withheld == 0 || completion.DataState != execution.DataStateData {
+		return completion
+	}
+	if adapter.forwarded.PhysicalQuery == "" {
+		// Nothing survived the target: the query is empty for every plan it
+		// feeds, exactly as it would be had the series never been returned.
+		// Completeness stays the provider's own fact.
+		completion.DataState = execution.DataStateEmpty
+		completion.Delivery = execution.SeriesDelivery{}
+		return completion
+	}
+	completion.Delivery = adapter.forwarded
+	return completion
 }
 
 // admittedPlans enriches the series once and then decides for each plan it

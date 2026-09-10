@@ -64,7 +64,7 @@ func TestASeriesOutsideEveryTargetIsNotDelivered(t *testing.T) {
 	var decisions []string
 	adapter := &seriesAdapter{
 		consumer:  consumer,
-		query:     PlannedQuery{Requirements: []execution.DataRequirement{requirement}},
+		query:     plannedQueryForTest(requirement),
 		attemptNo: 1,
 		admission: scopedChain(),
 		observe:   func(filter, result, reason string) { decisions = append(decisions, filter+"/"+result+"/"+reason) },
@@ -74,7 +74,8 @@ func TestASeriesOutsideEveryTargetIsNotDelivered(t *testing.T) {
 	dataset := hostSeries(t, "10.9.9.9")
 	err := adapter.ConsumeProviderSeries(context.Background(), execution.ProviderSeriesBatch{
 		PhysicalQuery: adapter.query.Spec.Digest, CompletionRef: "result", Dataset: dataset,
-		Delivery: execution.SeriesDelivery{PhysicalQuery: adapter.query.Spec.Digest, Series: 1, Records: 1, Digest: "digest"},
+		Delivery: execution.SeriesDelivery{PhysicalQuery: adapter.query.Spec.Digest,
+			QueryRevision: adapter.query.Spec.PlanFacts.QueryRevision, Series: 1, Records: 1, Digest: "digest"},
 	})
 	if err != nil {
 		t.Fatalf("consume: %v", err)
@@ -96,7 +97,7 @@ func TestASeriesInsideTheTargetIsDeliveredUnchanged(t *testing.T) {
 	consumer := &admissionConsumer{}
 	adapter := &seriesAdapter{
 		consumer:  consumer,
-		query:     PlannedQuery{Requirements: []execution.DataRequirement{requirement}},
+		query:     plannedQueryForTest(requirement),
 		attemptNo: 1,
 		admission: scopedChain(),
 		scopes:    planScopes{plan: {StrategyID: plan.StrategyID, TargetScope: hostScope("10.0.0.1|0")}},
@@ -105,7 +106,8 @@ func TestASeriesInsideTheTargetIsDeliveredUnchanged(t *testing.T) {
 	dataset := hostSeries(t, "10.0.0.1")
 	err := adapter.ConsumeProviderSeries(context.Background(), execution.ProviderSeriesBatch{
 		PhysicalQuery: adapter.query.Spec.Digest, CompletionRef: "result", Dataset: dataset,
-		Delivery: execution.SeriesDelivery{PhysicalQuery: adapter.query.Spec.Digest, Series: 1, Records: 1, Digest: "digest"},
+		Delivery: execution.SeriesDelivery{PhysicalQuery: adapter.query.Spec.Digest,
+			QueryRevision: adapter.query.Spec.PlanFacts.QueryRevision, Series: 1, Records: 1, Digest: "digest"},
 	})
 	if err != nil {
 		t.Fatalf("consume: %v", err)
@@ -129,7 +131,7 @@ func TestOneSeriesIsAdmittedPerPlanNotPerQuery(t *testing.T) {
 	consumer := &admissionConsumer{}
 	adapter := &seriesAdapter{
 		consumer:  consumer,
-		query:     PlannedQuery{Requirements: []execution.DataRequirement{requirement}},
+		query:     plannedQueryForTest(requirement),
 		attemptNo: 1,
 		admission: scopedChain(),
 		scopes: planScopes{
@@ -140,7 +142,8 @@ func TestOneSeriesIsAdmittedPerPlanNotPerQuery(t *testing.T) {
 
 	err := adapter.ConsumeProviderSeries(context.Background(), execution.ProviderSeriesBatch{
 		PhysicalQuery: adapter.query.Spec.Digest, CompletionRef: "result", Dataset: hostSeries(t, "10.0.0.1"),
-		Delivery: execution.SeriesDelivery{PhysicalQuery: adapter.query.Spec.Digest, Series: 1, Records: 1, Digest: "digest"},
+		Delivery: execution.SeriesDelivery{PhysicalQuery: adapter.query.Spec.Digest,
+			QueryRevision: adapter.query.Spec.PlanFacts.QueryRevision, Series: 1, Records: 1, Digest: "digest"},
 	})
 	if err != nil {
 		t.Fatalf("consume: %v", err)
@@ -166,12 +169,13 @@ func TestNoAdmissionGateDeliversEverySeries(t *testing.T) {
 	consumer := &admissionConsumer{}
 	adapter := &seriesAdapter{
 		consumer:  consumer,
-		query:     PlannedQuery{Requirements: []execution.DataRequirement{requirement}},
+		query:     plannedQueryForTest(requirement),
 		attemptNo: 1,
 	}
 	err := adapter.ConsumeProviderSeries(context.Background(), execution.ProviderSeriesBatch{
 		PhysicalQuery: adapter.query.Spec.Digest, CompletionRef: "result", Dataset: hostSeries(t, "10.9.9.9"),
-		Delivery: execution.SeriesDelivery{PhysicalQuery: adapter.query.Spec.Digest, Series: 1, Records: 1, Digest: "digest"},
+		Delivery: execution.SeriesDelivery{PhysicalQuery: adapter.query.Spec.Digest,
+			QueryRevision: adapter.query.Spec.PlanFacts.QueryRevision, Series: 1, Records: 1, Digest: "digest"},
 	})
 	if err != nil {
 		t.Fatalf("consume: %v", err)
@@ -193,5 +197,16 @@ func TestPlanScopesComeFromTheCompiledPlan(t *testing.T) {
 		if plan.StrategyID != identity.StrategyID || plan.BusinessID != identity.BusinessID {
 			t.Fatalf("plan context %+v does not describe %+v", plan, identity)
 		}
+	}
+}
+
+// plannedQueryForTest is the smallest planned query the adapter accepts: a
+// frozen query always names its revision, and the delivery proofs the adapter
+// folds carry it too.
+func plannedQueryForTest(requirement execution.DataRequirement) PlannedQuery {
+	return PlannedQuery{
+		Spec: execution.PhysicalQuerySpec{Digest: "physical-1",
+			PlanFacts: execution.QueryPlanFacts{QueryRevision: "revision-1"}},
+		Requirements: []execution.DataRequirement{requirement},
 	}
 }

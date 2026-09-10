@@ -116,6 +116,12 @@ docker build -t linkd:dev --build-arg VERSION=$(git rev-parse --short HEAD) .
 直接使用 Docker 构建时，需同时传入 `--build-arg VERSION=<version>` 和 `--build-arg GIT_COMMIT=<full-sha>`。
 两个镜像都支持追加 `version` 查询版本号及 commit；未注入的构建信息显示 dev / unknown。
 
+构建缓存：两个 Go 镜像的依赖下载层不依赖版本、commit 或目标架构；依赖文件和基础镜像等
+输入不变且缓存可用时，`go mod download` 应显示 `CACHED`。Go 编译使用 BuildKit cache mount，
+同一 builder 可复用编译缓存；GitHub Actions 的 `type=gha` 默认只恢复镜像层，不恢复 cache mount，
+因此临时 runner 上的 Go 增量编译缓存仍需额外配置。Console 将生产依赖裁剪与源码编译分开缓存，
+仅修改版本信息不会重新安装依赖或编译前端。构建日志会列出缓存命中的步骤，不能仅凭步骤名称判断重新执行。
+
 默认启动 `run all-in-one`。镜像不包含可用配置，必须把配置文件挂载到
 `/data/linkd/configs/linkd.yaml`，或用 `--config` 指定其他路径：
 

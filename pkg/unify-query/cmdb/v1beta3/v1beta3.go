@@ -40,7 +40,7 @@ const defaultPathQueryMaxRouting = 4
 // 因此必须跨请求共享额度，避免 BKBase 压力随 query_list 数量成倍放大。
 var pathQuerySemaphore = make(chan struct{}, defaultPathQueryMaxRouting)
 
-func GetModel(ctx context.Context) (cmdb.CMDB, error) {
+func GetModel(ctx context.Context) (*Model, error) {
 	modelMutex.Lock()
 	defer modelMutex.Unlock()
 	if defaultModel == nil {
@@ -143,6 +143,20 @@ func (m *Model) QueryResourceMatcher(
 	expandShow bool,
 	pathResource []cmdb.Resource,
 ) (resSource cmdb.Resource, resIndexMatcher cmdb.Matcher, resPaths []string, resTarget cmdb.Resource, resMatchers cmdb.Matchers, err error) {
+	return m.QueryResourceMatcherWithMaxHops(ctx, lookBackDelta, spaceUid, ts, target, source, indexMatcher, expandMatcher, expandShow, pathResource, nil)
+}
+
+// QueryResourceMatcherWithMaxHops accepts an explicit v1beta3 hop budget; nil uses the configured default.
+func (m *Model) QueryResourceMatcherWithMaxHops(
+	ctx context.Context,
+	lookBackDelta, spaceUid string,
+	ts string,
+	target, source cmdb.Resource,
+	indexMatcher, expandMatcher cmdb.Matcher,
+	expandShow bool,
+	pathResource []cmdb.Resource,
+	maxHops *int,
+) (resSource cmdb.Resource, resIndexMatcher cmdb.Matcher, resPaths []string, resTarget cmdb.Resource, resMatchers cmdb.Matchers, err error) {
 	ctx, span := trace.NewSpan(ctx, "cmdb-query-resource-matcher")
 	defer endV1Beta3TraceSpan(span, &err)
 
@@ -176,15 +190,22 @@ func (m *Model) QueryResourceMatcher(
 		TargetTypeExplicit:  target != "",
 		TargetInfoShow:      expandShow,
 		PathResource:        toResourceTypes(pathResource),
-		MaxHops:             computeMaxHops(source, target, pathResource),
+		MaxHops:             DefaultMaxHops,
 		LookBackDelta:       lbd,
 		LookBackDeltaSet:    lookBackDelta != "",
 		LegacyCompatibility: true,
 		DisableRootLimit:    true,
 	}
+	if maxHops != nil {
+		req.MaxHops = *maxHops
+	}
+	if err = validateMaxHops(req.MaxHops); err != nil {
+		return "", nil, nil, "", nil, err
+	}
 	req.Normalize()
 
-	if relationType, ok := m.vmPreferredRelation(req); ok {
+	// The VM adapter cannot enforce an explicit hop budget.
+	if relationType, ok := m.vmPreferredRelation(req); ok && maxHops == nil {
 		span.Set("preferred-route", "vm")
 		span.Set("preferred-relation", relationType)
 		metric.CMDBRelationRouteInc(ctx, "vm", string(graphQueryModeInstant), "started")
@@ -222,6 +243,21 @@ func (m *Model) QueryResourceMatcherRange(
 	indexMatcher, expandMatcher cmdb.Matcher,
 	expandShow bool,
 	pathResource []cmdb.Resource,
+) (resSource cmdb.Resource, resIndexMatcher cmdb.Matcher, resPaths []string, resTarget cmdb.Resource, result []cmdb.MatchersWithTimestamp, err error) {
+	return m.QueryResourceMatcherRangeWithMaxHops(ctx, lookBackDelta, spaceUid, step, startTs, endTs, target, source, indexMatcher, expandMatcher, expandShow, pathResource, nil)
+}
+
+// QueryResourceMatcherRangeWithMaxHops applies the same hop budget to every range bucket.
+func (m *Model) QueryResourceMatcherRangeWithMaxHops(
+	ctx context.Context,
+	lookBackDelta, spaceUid string,
+	step string,
+	startTs, endTs string,
+	target, source cmdb.Resource,
+	indexMatcher, expandMatcher cmdb.Matcher,
+	expandShow bool,
+	pathResource []cmdb.Resource,
+	maxHops *int,
 ) (resSource cmdb.Resource, resIndexMatcher cmdb.Matcher, resPaths []string, resTarget cmdb.Resource, result []cmdb.MatchersWithTimestamp, err error) {
 	ctx, span := trace.NewSpan(ctx, "cmdb-query-resource-matcher-range")
 	defer endV1Beta3TraceSpan(span, &err)
@@ -283,15 +319,22 @@ func (m *Model) QueryResourceMatcherRange(
 		TargetTypeExplicit:  target != "",
 		TargetInfoShow:      expandShow,
 		PathResource:        toResourceTypes(pathResource),
-		MaxHops:             computeMaxHops(source, target, pathResource),
+		MaxHops:             DefaultMaxHops,
 		LookBackDelta:       rangeQueryLookBackDelta(lbd, start, end, stepMs, lookBackDelta != ""),
 		LookBackDeltaSet:    lookBackDelta != "",
 		LegacyCompatibility: true,
 		DisableRootLimit:    true,
 	}
+	if maxHops != nil {
+		req.MaxHops = *maxHops
+	}
+	if err = validateMaxHops(req.MaxHops); err != nil {
+		return "", nil, nil, "", nil, err
+	}
 	req.Normalize()
 
-	if relationType, ok := m.vmPreferredRelation(req); ok {
+	// The VM adapter cannot enforce an explicit hop budget.
+	if relationType, ok := m.vmPreferredRelation(req); ok && maxHops == nil {
 		span.Set("preferred-route", "vm")
 		span.Set("preferred-relation", relationType)
 		metric.CMDBRelationRouteInc(ctx, "vm", string(graphQueryModeRange), "started")
@@ -474,7 +517,6 @@ func (m *Model) queryLivenessGraph(
 	span.Set("max-edges-per-hop", effectiveMaxEdgesPerHop())
 	span.Set("max-targets", effectiveMaxTargets())
 	span.Set("max-response-bytes", effectiveMaxResponseBytes())
-	span.Set("root-record-id-enabled", RootRecordIDEnabled)
 	if mode == graphQueryModeRange {
 		span.Set("range-start", rangeStart)
 		span.Set("range-end", rangeEnd)
@@ -497,6 +539,9 @@ func (m *Model) queryLivenessGraph(
 		sourceTypeInferred = true
 	}
 	req.Normalize()
+	if err := validateMaxHops(req.MaxHops); err != nil {
+		return nil, nil, nil, err
+	}
 	span.Set("source-type-inferred", sourceTypeInferred)
 	span.Set("source-type", string(req.SourceType))
 	span.Set("target-type", string(req.TargetType))
@@ -509,22 +554,12 @@ func (m *Model) queryLivenessGraph(
 		span.Set("source-info-fields-before-compat-filter", originalSourceFieldCount)
 		span.Set("source-info-fields-after-compat-filter", len(req.SourceInfo))
 	}
-	// 同类型查询有两种不同语义，必须在路径发现前归一化：
-	// 1. target_type 未显式传入时，这是旧接口的信息展示路径，只查 source 自身；
-	// 2. target_type 显式等于 source_type 时，这是自关联查询，只允许一跳直连自关联。
+	// 只有未指定目标的信息查询不展开关系；显式目标按 max_hops 搜索，类型相同也不例外。
 	implicitSelfTarget := !req.TargetTypeExplicit && req.SourceType == req.TargetType
 	if implicitSelfTarget {
-		// 信息展示路径不应展开任何 relation hop；否则会把同类型自关联结果混入
-		// “source 自身信息”的响应。
 		req.MaxHops = 0
 		req.PathResource = nil
-	} else if isExplicitDirectSelfTarget(req) {
-		// 显式同类型 target 要求查询真实自关联边。空资源占位符是 PathFinder
-		// 的“只走直连”约束，避免在 source -> ... -> source 的多跳环路里取数。
-		req.MaxHops = 1
-		req.PathResource = []ResourceType{""}
 	}
-	adjustMaxHopsForUnconstrainedPath(req, provider)
 
 	if err := validateQueryResources(req, provider); err != nil {
 		span.Set("failure-stage", "resource-validation")
@@ -792,13 +827,13 @@ func (m *Model) executeOneGraphQueryPath(
 	builder := NewSurrealQueryBuilderForPath(req, provider, path)
 	configureBuilderForGraphQueryMode(builder, mode)
 	route := builder.routeName()
-	usesFlatMultiHop := usesFlatMultiHopActiveEdgeServingPath(req, provider, path, mode)
+	usesFlatMultiHop := usesFlatMultiHopRelationPath(req, provider, path, mode)
 	if usesFlatMultiHop {
-		route = "active_edge_serving_flat_multi_hop"
+		route = "single_table_flat_multi_hop"
 	}
 	span.Set("query-route", route)
 	span.Set("path-hop-count", builder.pathHopCount)
-	span.Set("active-edge-serving-hop-count", builder.servingHopCount)
+	span.Set("relation-table-hop-count", builder.pathHopCount)
 	metric.CMDBRelationRouteInc(ctx, route, string(mode), "started")
 	queryStarted := time.Now()
 	defer func() {
@@ -836,7 +871,7 @@ func (m *Model) executeOneGraphQueryPath(
 		spanErr = runErr
 		return pathQueryResult{idx: idx, path: path, err: runErr}
 	}
-	if builder.usesFlatOneHopActiveEdgeServingQuery() && len(graphs) > effectiveMaxEdgesPerHop() {
+	if builder.usesFlatOneHopRelationQuery() && len(graphs) > effectiveMaxEdgesPerHop() {
 		spanErr = &ResultLimitError{
 			Reason: "max_edges_per_hop",
 			Count:  len(graphs),
@@ -851,6 +886,18 @@ func (m *Model) executeOneGraphQueryPath(
 		spanErr = traversalErr
 		return pathQueryResult{idx: idx, path: path, err: traversalErr}
 	}
+	// Bound extraction too: merged relation rows can otherwise form a longer walk
+	// than the SQL path that produced them. Copy wrappers to avoid mutating executor data.
+	boundedGraphs := make([]*LivenessGraph, len(graphs))
+	hops := len(path.Steps) - 1
+	for i, graph := range graphs {
+		if graph != nil {
+			bounded := *graph
+			bounded.maxTargetHops = &hops
+			boundedGraphs[i] = &bounded
+		}
+	}
+	graphs = boundedGraphs
 	graphCount, nodeCount, edgeCount := livenessGraphStats(graphs)
 	span.Set("path-result", "success")
 	span.Set("graph-count", graphCount)
@@ -870,38 +917,25 @@ type flatServingHopResult struct {
 	graphs []*LivenessGraph
 }
 
-// usesFlatMultiHopActiveEdgeServingPath 要求整条路径的每一跳都完成 Event 主键投影与索引验证。
-// 任意一跳不满足时，完整回退到原有嵌套查询，避免将未建索引的 relation 误路由到分层模式。
-func usesFlatMultiHopActiveEdgeServingPath(
+// usesFlatMultiHopRelationPath splits a path when each frontier can be identified
+// by its metadata keys. Partial-key legacy requests use the single-table nested query.
+func usesFlatMultiHopRelationPath(
 	req *QueryRequest,
 	provider SchemaProvider,
 	path resourcePath,
 	mode graphQueryMode,
 ) bool {
-	if req == nil || provider == nil || len(path.Steps) <= 2 || len(req.SourceExpandInfo) > 0 {
+	if req == nil || provider == nil || len(path.Steps) <= 2 {
 		return false
 	}
 	if mode != graphQueryModeInstant && mode != graphQueryModeRange {
 		return false
 	}
-
-	servingRelations := make(map[RelationType]struct{}, len(ActiveEdgeServingRelations))
-	for _, relationType := range ActiveEdgeServingRelations {
-		servingRelations[RelationType(relationType)] = struct{}{}
-	}
-	flatRelations := make(map[RelationType]struct{}, len(FlatMultiHopActiveEdgeServingRelations))
-	for _, relationType := range FlatMultiHopActiveEdgeServingRelations {
-		flatRelations[RelationType(relationType)] = struct{}{}
+	if _, ok := flatServingPrimaryKeyMap(provider, req.SchemaNamespace(), req.SourceType, req.SourceInfo); !ok {
+		return false
 	}
 
 	for hop := 1; hop < len(path.Steps); hop++ {
-		relationType := RelationType(path.Steps[hop].RelationType)
-		if _, ok := servingRelations[relationType]; !ok {
-			return false
-		}
-		if _, ok := flatRelations[relationType]; !ok {
-			return false
-		}
 		currentType := ResourceType(path.Steps[hop-1].ResourceType)
 		nextType := ResourceType(path.Steps[hop].ResourceType)
 		if len(provider.GetResourcePrimaryKeys(req.SchemaNamespace(), currentType)) == 0 ||
@@ -912,8 +946,8 @@ func usesFlatMultiHopActiveEdgeServingPath(
 	return true
 }
 
-// executeFlatMultiHopServingPath 将多跳图路径拆成按 hop 推进的单跳 Event 查询。同一 hop 的父节点
-// 可以并发执行，但每个查询使用业务主键字面量，因此 SDB 不需要通过 $parent 相关子查询连接关系表。
+// executeFlatMultiHopServingPath queries one relation table per hop. Parent
+// nodes in the same frontier can be queried concurrently without recursive SQL.
 func (m *Model) executeFlatMultiHopServingPath(
 	ctx context.Context,
 	req *QueryRequest,
@@ -1063,7 +1097,7 @@ func (m *Model) executeFlatServingHopQuery(
 ) (graphs []*LivenessGraph, err error) {
 	ctx, span := trace.NewSpan(ctx, "cmdb-v2-query-graph-flat-hop")
 	defer endV1Beta3TraceSpan(span, &err)
-	span.Set("query-route", "active_edge_serving_flat_multi_hop")
+	span.Set("query-route", "single_table_flat_multi_hop")
 	span.Set("flat-hop", hop)
 	span.Set("source-resource-type", string(source.resourceType))
 	span.Set("source-resource-id", source.resourceID)
@@ -1072,17 +1106,19 @@ func (m *Model) executeFlatServingHopQuery(
 	hopRequest := cloneQueryRequest(req)
 	hopRequest.SourceType = source.resourceType
 	hopRequest.SourceInfo = source.sourceInfo
-	hopRequest.SourceExpandInfo = nil
+	if hop > 1 {
+		hopRequest.SourceExpandInfo = nil
+	}
 	hopRequest.TargetType = ResourceType(path.Steps[1].ResourceType)
 	hopRequest.TargetTypeExplicit = true
 	hopRequest.PathResource = nil
 	hopRequest.MaxHops = 1
 
 	buildStarted := time.Now()
-	sql, ok := buildFlatServingQueryForPath(hopRequest, provider, path, mode)
+	sql, ok := buildFlatRelationQueryForPath(hopRequest, provider, path, mode)
 	span.Set("surrealql-build-duration", time.Since(buildStarted))
 	if !ok {
-		return nil, fmt.Errorf("cannot build flat serving query for hop %d from %q", hop, source.resourceType)
+		return nil, fmt.Errorf("cannot build single-table query for hop %d from %q", hop, source.resourceType)
 	}
 	span.Set("surrealql-bytes", len(sql))
 
@@ -1219,7 +1255,6 @@ func configureBuilderForGraphQueryMode(builder *SurrealQueryBuilder, mode graphQ
 	if builder == nil {
 		return
 	}
-	builder.queryMode = mode
 	if mode == graphQueryModeInstant {
 		builder.WithoutLivenessProjection()
 	}
@@ -1466,48 +1501,8 @@ func shouldIncludeRootTarget(req *QueryRequest) bool {
 	return !req.TargetTypeExplicit || req.SourceType != req.TargetType
 }
 
-func isExplicitDirectSelfTarget(req *QueryRequest) bool {
-	return req != nil && req.TargetTypeExplicit && req.SourceType == req.TargetType && len(req.PathResource) == 0
-}
-
 func targetExtractionPathResource(req *QueryRequest) []ResourceType {
-	if isExplicitDirectSelfTarget(req) {
-		return []ResourceType{""}
-	}
 	return req.PathResource
-}
-
-func adjustMaxHopsForUnconstrainedPath(req *QueryRequest, provider SchemaProvider) {
-	if req == nil ||
-		provider == nil ||
-		len(req.PathResource) > 0 ||
-		req.SourceType == "" ||
-		req.TargetType == "" ||
-		req.SourceType == req.TargetType ||
-		req.MaxHops >= MaxAllowedHops {
-		return
-	}
-
-	maxFinder := NewPathFinder(
-		WithAllowedCategories(req.AllowedRelationTypes...),
-		WithDynamicDirection(req.DynamicRelationDirection),
-		WithMaxHops(MaxAllowedHops),
-		WithSchemaProvider(provider),
-		WithNamespace(req.SchemaNamespace()),
-	)
-	paths, err := maxFinder.FindAllPaths(req.SourceType, req.TargetType, nil)
-	if err != nil {
-		return
-	}
-
-	for _, path := range paths {
-		if hops := len(path.Steps) - 1; hops > req.MaxHops {
-			req.MaxHops = hops
-		}
-	}
-	if req.MaxHops > MaxAllowedHops {
-		req.MaxHops = MaxAllowedHops
-	}
 }
 
 type sourceTypeCandidate struct {
@@ -1748,26 +1743,6 @@ func matcherToMap(m cmdb.Matcher) map[string]string {
 	return result
 }
 
-func computeMaxHops(source, target cmdb.Resource, pathResource []cmdb.Resource) int {
-	if len(pathResource) == 0 {
-		return DefaultMaxHops
-	}
-	pathConstraint, directOnly := normalizePathResource(FromCMDBResource(source), FromCMDBResource(target), toResourceTypes(pathResource))
-	if directOnly {
-		return 1
-	}
-	if len(pathConstraint) == 0 {
-		return DefaultMaxHops
-	}
-	// path_resource 可能只给出部分中间资源。除了约束本身，还要给 source/target 两侧各留出默认 schema
-	// 的连接空间；否则 host->system->pod->replicaset->deployment 这类合法路径会因为预算太浅被剪掉。
-	maxHops := DefaultMaxHops + len(pathConstraint) + 1
-	if maxHops > MaxAllowedHops {
-		return MaxAllowedHops
-	}
-	return maxHops
-}
-
 func extractMatchersFromGraphsWithOptions(
 	graphs []*LivenessGraph,
 	targetType ResourceType,
@@ -1979,8 +1954,8 @@ func isAnyTargetPathActiveInWindow(paths []*targetPathInfo, windowStart, windowE
 }
 
 func isTargetPathActiveInWindow(path *targetPathInfo, windowStart, windowEnd int64) bool {
-	// 图路径的时间桶与 SurrealQL/active edge view 一样只看 relation liveness；
-	// 只有零跳 resource-info 结果没有边时才回退到 resource liveness。
+	// Graph paths use the intervals stored on relation rows. Resource-only
+	// responses have no edges and use their resource periods when provided.
 	periodGroups := path.EdgePeriods
 	if len(periodGroups) == 0 {
 		periodGroups = path.NodePeriods

@@ -231,7 +231,22 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			}
 
 			assert.NoError(t, err)
-			assert.Equal(t, tc.Expected, paths)
+			// First-arrival paths remain unchanged. Additional paths may continue through
+			// a target of the same type, but must remain within the requested budget.
+			var firstArrival []resourcePath
+			for _, path := range paths {
+				assert.LessOrEqual(t, len(path.Steps)-1, tc.MaxHops)
+				repeatedTarget := false
+				for _, step := range path.Steps[1 : len(path.Steps)-1] {
+					if step.ResourceType == string(tc.Target) {
+						repeatedTarget = true
+					}
+				}
+				if !repeatedTarget {
+					firstArrival = append(firstArrival, path)
+				}
+			}
+			assert.Equal(t, tc.Expected, firstArrival)
 		})
 	}
 }

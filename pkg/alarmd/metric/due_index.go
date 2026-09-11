@@ -33,6 +33,7 @@ type dueIndexMetrics struct {
 	recomputes    *prometheus.CounterVec
 	versionChecks *prometheus.CounterVec
 	horizon       prometheus.Histogram
+	skipped       *prometheus.CounterVec
 }
 
 // The horizon is how far ahead a bound sits. The buckets are the evaluation
@@ -73,6 +74,12 @@ var dueIndexTriggers = []string{
 // be told apart from "nothing ever checked".
 var dueIndexVersionResults = []string{"unchanged", "changed", "unknown"}
 
+// The two reasons a dispatch is skipped look identical from the queue and mean
+// opposite things: not_due is an object that is healthy and early, backoff is
+// an object waiting out a failure or a readiness deferral of its own. Counting
+// them together would hide a deployment where the second was climbing.
+var dispatchSkipReasons = []string{"not_due", "backoff"}
+
 func newDueIndexMetrics() dueIndexMetrics {
 	metrics := dueIndexMetrics{
 		entries: prometheus.NewGauge(prometheus.GaugeOpts{
@@ -94,6 +101,10 @@ func newDueIndexMetrics() dueIndexMetrics {
 			Help: "Activation header comparisons the due index made, by outcome; " +
 				"unchanged growing is what says the fail-open path is wired at all.",
 		}, []string{"result"}),
+		skipped: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "dispatch_skipped_total",
+			Help: "Dispatches the due index held back, by why the Query Group was not worth dispatching.",
+		}, []string{"reason"}),
 		horizon: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "due_index_horizon_seconds",
 			Help:    "How far ahead of now a newly written due index bound sits.",
@@ -111,11 +122,16 @@ func newDueIndexMetrics() dueIndexMetrics {
 	for _, result := range dueIndexVersionResults {
 		metrics.versionChecks.WithLabelValues(result)
 	}
+	for _, reason := range dispatchSkipReasons {
+		metrics.skipped.WithLabelValues(reason)
+	}
 	return metrics
 }
 
 func (m dueIndexMetrics) collectors() []prometheus.Collector {
-	return []prometheus.Collector{m.entries, m.predictions, m.recomputes, m.versionChecks, m.horizon}
+	return []prometheus.Collector{
+		m.entries, m.predictions, m.recomputes, m.versionChecks, m.horizon, m.skipped,
+	}
 }
 
 // SetDueIndexEntries publishes how many bounds the index holds.
@@ -190,4 +206,17 @@ func (r *Recorder) ObserveDueIndexHorizon(seconds float64) {
 		seconds = 0
 	}
 	r.phaseTwo.dueIndex.horizon.Observe(seconds)
+}
+
+// RecordDispatchSkipped counts one dispatch the index held back.
+func (r *Recorder) RecordDispatchSkipped(reason string) {
+	if r == nil {
+		return
+	}
+	for _, known := range dispatchSkipReasons {
+		if reason == known {
+			r.phaseTwo.dueIndex.skipped.WithLabelValues(reason).Inc()
+			return
+		}
+	}
 }

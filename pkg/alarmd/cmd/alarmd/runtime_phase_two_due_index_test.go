@@ -9,6 +9,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
@@ -104,22 +105,19 @@ func dispatchOrder(queue []phaseTwoQueuedRunner) []execution.QueryGroupIdentity 
 	return queuedNames(queue)
 }
 
-// TestDueIndexShadowLeavesDispatchUnchanged is the proof that this commit
-// changes nothing about who runs and when.
+// TestDueIndexSuppressesParkedQueryGroups is the test that had to fail before
+// this change and pass after it.
 //
-// The index is not consulted by any dispatch decision yet, and "not consulted"
-// is hard to demonstrate by absence. So it is demonstrated by contradiction
-// instead: one dispatcher is given an index that says every Query Group is an
-// hour away from being due, the other is given an index that was never written
-// to, and the two are driven through the same walk over the same owned set. If
-// any dispatch decision read the index, the two runs would diverge - the
-// suppressing one would queue nothing. They must agree on the ready queue, the
-// recovery queue, the order within each, and the rotation counts.
+// Before suppression, an index saying every Query Group is an hour away
+// changed nothing: the walk offered all of them a place regardless, which is
+// what made the previous commit deployable on its own. Now the same index has
+// to hold all of them back - out of the ready queue and out of the recovery
+// queue both - while the walk still gets round the whole owned set and hands
+// the rotation cursor on.
 //
-// When dispatch suppression lands, this test is what stops compiling as a
-// no-change claim: the seeded run is then supposed to queue nothing, and the
-// assertion has to be rewritten rather than quietly continuing to pass.
-func TestDueIndexShadowLeavesDispatchUnchanged(t *testing.T) {
+// The unsuppressed run is kept alongside as the control. Without it, "queued
+// nothing" would also be satisfied by a walk that is broken outright.
+func TestDueIndexSuppressesParkedQueryGroups(t *testing.T) {
 	owned := map[execution.QueryGroupIdentity]walkRunner{
 		"query-group-a": {},
 		"query-group-b": {},
@@ -128,45 +126,162 @@ func TestDueIndexShadowLeavesDispatchUnchanged(t *testing.T) {
 	}
 	clock := &dueIndexClock{at: time.Unix(1_000, 0)}
 
-	empty := dueIndexDispatcher(clock, metric.NewRecorder(metric.BuildInfo{}), 2, 4, owned)
+	empty := dueIndexDispatcher(clock, metric.NewRecorder(metric.BuildInfo{}), 8, 8, owned)
 	emptyRunners, emptyRevision := empty.bundle.snapshotScheduledRunners()
 	empty.fillQueues(emptyRunners, emptyRevision)
+	if len(empty.normal)+len(empty.delayed) != len(owned) {
+		t.Fatalf("the control run queued ready=%v recovery=%v, want the whole owned set",
+			dispatchOrder(empty.normal), dispatchOrder(empty.delayed))
+	}
 
-	seeded := dueIndexDispatcher(clock, metric.NewRecorder(metric.BuildInfo{}), 2, 4, owned)
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	seeded := dueIndexDispatcher(clock, recorder, 8, 8, owned)
 	seedDueIndex(seeded, scheduler.RunnerDueBound{
 		NotDueUntilUnix: clock.at.Unix() + 3_600, IntervalSeconds: 60,
 	}, clock.at)
-	if entries := seeded.dueIndex.Len(); entries != len(owned) {
-		t.Fatalf("seeded index holds %d bounds, want %d", entries, len(owned))
-	}
 	seededRunners, seededRevision := seeded.bundle.snapshotScheduledRunners()
 	seeded.fillQueues(seededRunners, seededRevision)
 
-	if got, want := dispatchOrder(seeded.normal), dispatchOrder(empty.normal); !equalQueryGroups(got, want) {
-		t.Fatalf("a fully suppressing index changed the ready queue to %v, want %v", got, want)
+	// One parked object per generation is dispatched anyway so the prediction
+	// keeps being checked; everything else is held back. That one is the subject
+	// of TestDueIndexAuditKeepsTheFalsifierReachable.
+	if len(seeded.normal) != 1 || len(seeded.delayed) != 0 {
+		t.Fatalf("parked Query Groups were queued ready=%v recovery=%v, want the audit round alone",
+			dispatchOrder(seeded.normal), dispatchOrder(seeded.delayed))
 	}
-	if got, want := dispatchOrder(seeded.delayed), dispatchOrder(empty.delayed); !equalQueryGroups(got, want) {
-		t.Fatalf("a fully suppressing index changed the recovery queue to %v, want %v", got, want)
+	if seeded.walked != len(owned) {
+		t.Fatalf("the walk stopped after %d of %d Query Groups; skipping has to consume a turn "+
+			"or the walk never reaches what is behind the first parked object",
+			seeded.walked, len(owned))
 	}
-	// startedAt is a wall-clock reading and differs between the two runs by
-	// construction; the counts are what say the walk made the same decisions.
-	if seeded.rotation.offered != empty.rotation.offered ||
-		seeded.rotation.queued != empty.rotation.queued ||
-		seeded.rotation.deferred != empty.rotation.deferred ||
-		seeded.rotation.completed != empty.rotation.completed ||
-		seeded.rotation.truncated != empty.rotation.truncated ||
-		seeded.walked != empty.walked || seeded.cursor != empty.cursor {
-		t.Fatalf("a fully suppressing index changed the rotation to %+v walked=%d cursor=%s, want %+v walked=%d cursor=%s",
-			seeded.rotation, seeded.walked, seeded.cursor, empty.rotation, empty.walked, empty.cursor)
+	if seeded.rotation.offered != empty.rotation.offered {
+		t.Fatalf("the walk offered %d turns while suppressing and %d while not",
+			seeded.rotation.offered, empty.rotation.offered)
 	}
-	if len(seeded.normal) == 0 {
-		t.Fatal("the unsuppressed run queued nothing, so agreeing with it proves nothing")
+	if got := counterValue(t, recorder, "bkmonitor_alarmd_dispatch_skipped_total",
+		map[string]string{"reason": "not_due"}); got != float64(len(owned)-1) {
+		t.Fatalf("dispatch_skipped_total{not_due} = %v, want %d", got, len(owned)-1)
 	}
-	// Every Query Group was predicted not due, which is the state the comparison
-	// has to be able to see for the falsifier below to mean anything.
-	for _, queued := range seeded.normal {
-		if queued.scheduled.predictedDue {
-			t.Fatalf("%s was predicted due against a bound an hour away", queued.scheduled.queryGroup)
+}
+
+// TestDueIndexAuditKeepsTheFalsifierReachable is the counterpart to suppression
+// and the reason the audit round exists.
+//
+// Once dispatch is suppressed on the index's word, a Query Group predicted not
+// due is never run, never reports what it actually found, and so can never
+// produce the one series that proves the index wrong. The counter would sit at
+// zero because the combination had become impossible to reach - which reads
+// exactly like the index being right.
+//
+// Here every Query Group carries a bound that is a lie: the bound says an hour
+// away, the Runner says it found a due Slot. Suppression holds them all back.
+// The audit round has to find it anyway, and within a bounded number of
+// generations it has to find every one of them, or the falsifier is only
+// watching whichever name sorts first.
+func TestDueIndexAuditKeepsTheFalsifierReachable(t *testing.T) {
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	clock := &dueIndexClock{at: time.Unix(1_000, 0)}
+	dueRunner := walkRunner{bound: scheduler.RunnerDueBound{
+		Verdict: scheduler.DueVerdictDue, Executed: true, IntervalSeconds: 60,
+	}}
+	owned := map[execution.QueryGroupIdentity]walkRunner{
+		"query-group-a": dueRunner, "query-group-b": dueRunner,
+		"query-group-c": dueRunner, "query-group-d": dueRunner,
+	}
+	dispatcher := dueIndexDispatcher(clock, recorder, 8, 8, owned)
+	audited := make(map[execution.QueryGroupIdentity]int)
+
+	// Two full passes plus one generation, and every object has to be reached in
+	// both of them. One pass is not enough to hold the rotation to anything: a
+	// cursor that walks to the last name and stops there also reaches every
+	// object exactly once, and then audits nothing for the rest of the process's
+	// life. The second pass is the assertion that it comes round.
+	const passes = 2
+	for range passes*len(owned) + 1 {
+		// Re-park everything: a round that reported due clears its own bound, and
+		// this test is about objects whose bound stays wrong.
+		seedDueIndex(dispatcher, scheduler.RunnerDueBound{
+			NotDueUntilUnix: clock.at.Unix() + 3_600, IntervalSeconds: 60,
+		}, clock.at)
+		dispatcher.beginGeneration()
+		runners, revision := dispatcher.bundle.snapshotScheduledRunners()
+		dispatcher.fillQueues(runners, revision)
+		for _, queued := range dispatcher.normal {
+			if queued.scheduled.predictedDue {
+				t.Fatalf("%s was dispatched as due against an hour-long bound",
+					queued.scheduled.queryGroup)
+			}
+			audited[queued.scheduled.queryGroup]++
+		}
+		drainQueues(t, dispatcher)
+	}
+
+	if len(audited) != len(owned) {
+		t.Fatalf("the audit reached %v of %d owned Query Groups; a rotation that does not come "+
+			"round leaves most of the owned set unchecked", len(audited), len(owned))
+	}
+	for queryGroup := range owned {
+		if audited[queryGroup] < passes {
+			t.Fatalf("the audit reached %s %d times in %d passes; the rotation stops at the end "+
+				"of the owned set instead of starting again, so the falsifier goes quiet after "+
+				"one lap", queryGroup, audited[queryGroup], passes)
+		}
+	}
+	if want := float64(passes * len(owned)); counterValue(t, recorder,
+		"bkmonitor_alarmd_due_index_prediction_total",
+		map[string]string{"prediction": "not_due", "actual": "due"}) < want {
+		t.Fatalf("prediction=not_due actual=due counted less than %v: with dispatch "+
+			"suppressed this series is the only thing that can still contradict the index, and a "+
+			"zero it cannot reach is indistinguishable from a zero it has earned", want)
+	}
+}
+
+// TestDueIndexSuppressionSeparatesBackoffFromIdle pins the second skip reason.
+//
+// An object waiting out a failure and an object that is simply early are both
+// held back, and from the queue they are indistinguishable. They are not the
+// same thing: backoff climbing is a deployment in trouble, not_due climbing is
+// the index doing its job. A single count would average one into the other.
+func TestDueIndexSuppressionSeparatesBackoffFromIdle(t *testing.T) {
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	clock := &dueIndexClock{at: time.Unix(1_000, 0)}
+	// Two idle, because one of them is dispatched each generation as an audit
+	// and a single one would leave nothing to count. Both backoffs stay put: a
+	// backoff is not a claim about the schedule, so auditing one would prove
+	// nothing and would hold a recovery-queue place while it waited.
+	dispatcher := dueIndexDispatcher(clock, recorder, 8, 8, map[execution.QueryGroupIdentity]walkRunner{
+		"query-group-idle-1":    {},
+		"query-group-idle-2":    {},
+		"query-group-backoff-1": {readyAt: time.Unix(1_300, 0)},
+		"query-group-backoff-2": {readyAt: time.Unix(1_300, 0)},
+	})
+	for _, queryGroup := range []execution.QueryGroupIdentity{"query-group-idle-1", "query-group-idle-2"} {
+		dispatcher.dueIndex.Record(queryGroup, dispatcher.bundle.runners[queryGroup],
+			dispatcher.dueIndex.versionEpoch,
+			scheduler.RunnerDueBound{NotDueUntilUnix: 1_060, IntervalSeconds: 60}, clock.at)
+	}
+	for _, queryGroup := range []execution.QueryGroupIdentity{"query-group-backoff-1", "query-group-backoff-2"} {
+		dispatcher.dueIndex.Record(queryGroup, dispatcher.bundle.runners[queryGroup],
+			dispatcher.dueIndex.versionEpoch,
+			scheduler.RunnerDueBound{NotDueUntilUnix: 1_300, Deferred: true, IntervalSeconds: 60}, clock.at)
+	}
+
+	runners, revision := dispatcher.bundle.snapshotScheduledRunners()
+	dispatcher.fillQueues(runners, revision)
+	if len(dispatcher.delayed) != 0 {
+		t.Fatalf("a Query Group waiting out a backoff was queued for recovery: %v",
+			dispatchOrder(dispatcher.delayed))
+	}
+	if len(dispatcher.normal) != 1 {
+		t.Fatalf("queued ready=%v, want the audit round alone", dispatchOrder(dispatcher.normal))
+	}
+	for _, want := range []struct {
+		reason string
+		count  float64
+	}{{"not_due", 1}, {"backoff", 2}} {
+		if got := counterValue(t, recorder, "bkmonitor_alarmd_dispatch_skipped_total",
+			map[string]string{"reason": want.reason}); got != want.count {
+			t.Errorf("dispatch_skipped_total{%s} = %v, want %v", want.reason, got, want.count)
 		}
 	}
 }
@@ -220,18 +335,27 @@ func TestDueIndexPredictionCounterReachesEveryOutcome(t *testing.T) {
 	dispatcher.fillQueues(runners, revision)
 	drainQueues(t, dispatcher)
 
-	// Round two: both now carry a bound. The idle one is correctly predicted not
-	// due and is still not due, which fills {not_due,not_due}. The due one
-	// carries a bound this test forces to be wrong - a full minute later than the
-	// Slot it is about to resolve - which is the misprediction the falsifier
-	// exists to catch.
-	dispatcher.dueIndex.Record("query-group-due", dispatcher.bundle.runners["query-group-due"],
-		dispatcher.dueIndex.versionEpoch,
-		scheduler.RunnerDueBound{NotDueUntilUnix: clock.at.Unix() + 60, IntervalSeconds: 60}, clock.at)
-	dispatcher.beginGeneration()
-	runners, revision = dispatcher.bundle.snapshotScheduledRunners()
-	dispatcher.fillQueues(runners, revision)
-	drainQueues(t, dispatcher)
+	// Now both carry a bound, and both bounds are parked. The idle one is
+	// correctly parked and is still not due, which fills {not_due,not_due}. The
+	// due one carries a bound this test forces to be wrong - a full minute later
+	// than the Slot it is about to resolve - which is the misprediction the
+	// falsifier exists to catch.
+	//
+	// Both reach a round through the audit, one per generation, so the loop runs
+	// for as many generations as there are objects plus one for the rotation to
+	// come back round.
+	for range len(owned) + 1 {
+		dispatcher.dueIndex.Record("query-group-due", dispatcher.bundle.runners["query-group-due"],
+			dispatcher.dueIndex.versionEpoch,
+			scheduler.RunnerDueBound{NotDueUntilUnix: clock.at.Unix() + 60, IntervalSeconds: 60}, clock.at)
+		dispatcher.dueIndex.Record("query-group-idle", dispatcher.bundle.runners["query-group-idle"],
+			dispatcher.dueIndex.versionEpoch,
+			scheduler.RunnerDueBound{NotDueUntilUnix: clock.at.Unix() + 60, IntervalSeconds: 60}, clock.at)
+		dispatcher.beginGeneration()
+		runners, revision = dispatcher.bundle.snapshotScheduledRunners()
+		dispatcher.fillQueues(runners, revision)
+		drainQueues(t, dispatcher)
+	}
 
 	const name = "bkmonitor_alarmd_due_index_prediction_total"
 	for _, want := range []struct {
@@ -293,7 +417,7 @@ func TestDueIndexFailsOpenWhenTheHeaderCannotBeRead(t *testing.T) {
 	dispatcher.beginGeneration()
 	dispatcher.dueIndex.Record("query-group-a", lifecycle, dispatcher.dueIndex.versionEpoch, seedBound, clock.at)
 	dispatcher.beginGeneration()
-	if due, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); due {
+	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); due {
 		t.Fatal("a stable header dropped a bound that is still ten minutes away")
 	}
 	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_version_check_total",
@@ -305,7 +429,7 @@ func TestDueIndexFailsOpenWhenTheHeaderCannotBeRead(t *testing.T) {
 	// A header that cannot be read drops it.
 	dispatcher.controlVersion.Store(&phaseTwoControlVersionSample{known: false})
 	dispatcher.beginGeneration()
-	if due, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
+	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
 		t.Fatal("an unreadable header left the Query Group parked on a bound it cannot vouch for")
 	}
 	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_recomputed_total",
@@ -347,10 +471,10 @@ func TestDueIndexPublicationDropsScheduleBoundsAndKeepsBackoff(t *testing.T) {
 	dispatcher.controlVersion.Store(&phaseTwoControlVersionSample{tag: "publication-2", known: true})
 	dispatcher.beginGeneration()
 
-	if due, _ := dispatcher.dueIndex.Predict("query-group-scheduled", scheduled, clock.at); !due {
+	if due, _, _ := dispatcher.dueIndex.Predict("query-group-scheduled", scheduled, clock.at); !due {
 		t.Fatal("a publication left a schedule bound standing, so a Slot it brought forward would wait")
 	}
-	if due, _ := dispatcher.dueIndex.Predict("query-group-backoff", backoff, clock.at); due {
+	if due, _, _ := dispatcher.dueIndex.Predict("query-group-backoff", backoff, clock.at); due {
 		t.Fatal("a publication cancelled a Runner's own backoff, which it says nothing about")
 	}
 	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_recomputed_total",
@@ -381,7 +505,7 @@ func TestDueIndexDropsBoundsWrittenUnderASupersededPublication(t *testing.T) {
 	dispatcher.controlVersion.Store(&phaseTwoControlVersionSample{tag: "publication-1", known: true})
 	dispatcher.beginGeneration()
 	lifecycle := dispatcher.bundle.runners["query-group-a"]
-	_, epoch := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at)
+	_, _, epoch := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at)
 
 	// The publication lands while the round is still out.
 	dispatcher.controlVersion.Store(&phaseTwoControlVersionSample{tag: "publication-2", known: true})
@@ -389,7 +513,7 @@ func TestDueIndexDropsBoundsWrittenUnderASupersededPublication(t *testing.T) {
 
 	dispatcher.dueIndex.Record("query-group-a", lifecycle, epoch,
 		scheduler.RunnerDueBound{NotDueUntilUnix: clock.at.Unix() + 300, IntervalSeconds: 60}, clock.at)
-	if due, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
+	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
 		t.Fatal("a bound read under a superseded publication was accepted")
 	}
 }
@@ -419,7 +543,7 @@ func TestDueIndexDropsEntriesForAReplacedLifecycle(t *testing.T) {
 	if dispatcher.dueIndex.Len() != 0 {
 		t.Fatal("the bound written for the previous lifecycle survived the takeover")
 	}
-	if due, _ := dispatcher.dueIndex.Predict("query-group-a", replacement, clock.at); !due {
+	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", replacement, clock.at); !due {
 		t.Fatal("a Query Group with no bound of its own was not treated as due")
 	}
 	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_recomputed_total",
@@ -448,11 +572,11 @@ func TestDueIndexBoundsTheRetiredRecheck(t *testing.T) {
 	dispatcher.dueIndex.Record("query-group-a", lifecycle, dispatcher.dueIndex.versionEpoch,
 		scheduler.RunnerDueBound{Retired: true, Verdict: scheduler.DueVerdictNotDue}, clock.at)
 
-	if due, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle,
+	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle,
 		clock.at.Add(time.Duration(dueIndexRetiredRecheckSeconds-1)*time.Second)); due {
 		t.Fatal("a retired Query Group was rechecked before its recheck was due")
 	}
-	if due, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle,
+	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle,
 		clock.at.Add(time.Duration(dueIndexRetiredRecheckSeconds)*time.Second)); !due {
 		t.Fatalf("a retired Query Group was not rechecked after %d seconds, so a revoked "+
 			"retirement would never resume", dueIndexRetiredRecheckSeconds)
@@ -488,7 +612,7 @@ func TestDueIndexNeverHoldsBackBacklog(t *testing.T) {
 	dispatcher.dueIndex.Record("query-group-a", lifecycle, dispatcher.dueIndex.versionEpoch,
 		scheduler.RunnerDueBound{Verdict: scheduler.DueVerdictDue, Executed: true, IntervalSeconds: 60}, clock.at)
 
-	if due, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
+	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
 		t.Fatal("a Query Group that just executed a backlog Slot was parked")
 	}
 }
@@ -510,7 +634,7 @@ func TestDueIndexMaturedDeferralJoinsTheRecoveryQueue(t *testing.T) {
 	dispatcher.dueIndex.Record("query-group-a", lifecycle, dispatcher.dueIndex.versionEpoch,
 		scheduler.RunnerDueBound{NotDueUntilUnix: 990, Deferred: true, IntervalSeconds: 60}, clock.at)
 
-	if due, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
+	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
 		t.Fatal("a deferral whose instant has passed was still treated as parked")
 	}
 	runners, revision := dispatcher.bundle.snapshotScheduledRunners()
@@ -580,7 +704,7 @@ func TestDueIndexClearingLosesNothingButWork(t *testing.T) {
 		t.Fatal("clearing left bounds behind")
 	}
 	for queryGroup, lifecycle := range dispatcher.bundle.runners {
-		if due, _ := dispatcher.dueIndex.Predict(queryGroup, lifecycle, clock.at); !due {
+		if due, _, _ := dispatcher.dueIndex.Predict(queryGroup, lifecycle, clock.at); !due {
 			t.Fatalf("%s was still parked after the index was cleared", queryGroup)
 		}
 	}
@@ -749,5 +873,111 @@ func TestDueIndexReplacesTheEntryOfAPreviousOwnerWholesale(t *testing.T) {
 	wakes, total := dispatcher.dueIndex.OverdueWakes(time.Unix(1_060, 0), 4)
 	if total != 1 || len(wakes) != 1 || !wakes[0].WakeAt.Equal(time.Unix(1_060, 0)) {
 		t.Fatalf("overdue wakes = %+v total=%d, want the new owner's bound alone", wakes, total)
+	}
+}
+
+// TestSuppressionFactsTravelInTheReplicaSnapshot covers the path the page
+// actually reads.
+//
+// The metric of the same name is kept for a direct scrape during acceptance,
+// but the page reaches a time series only through unify-query, and unify-query
+// can answer "absent" for a series that exists. Here that failure points the
+// wrong way: an absent series would read as "dispatch suppression is not
+// running", which is the one conclusion that must never be reached by accident.
+// So the replica states it, and this is the assertion that it does.
+//
+// Zero has to be publishable, because zero is the healthy answer at a quiet
+// moment. The field being there is what says suppression is running; the
+// numbers inside it say how much it did.
+func TestSuppressionFactsTravelInTheReplicaSnapshot(t *testing.T) {
+	clock := &dueIndexClock{at: time.Unix(1_000, 0)}
+	dispatcher := dueIndexDispatcher(clock, metric.NewRecorder(metric.BuildInfo{}), 8, 8,
+		map[execution.QueryGroupIdentity]walkRunner{
+			"query-group-a": {}, "query-group-b": {},
+			"query-group-c": {readyAt: time.Unix(1_300, 0)},
+		})
+
+	// Nothing held back yet, and the facts are already there and already zero.
+	before := dispatcher.bundle.dispatchSuppressionFacts()
+	if before == nil {
+		t.Fatal("a build that suppresses dispatch published no suppression facts")
+	}
+	if before.Parked != 0 || before.Skipped["not_due"] != 0 || before.Skipped["backoff"] != 0 {
+		t.Fatalf("suppression facts before any skip = %+v, want zeroes", before)
+	}
+	for _, reason := range []string{"not_due", "backoff"} {
+		if _, ok := before.Skipped[reason]; !ok {
+			t.Fatalf("suppression facts omit %s, so a reader cannot tell a reason that never "+
+				"happened from one nothing counts", reason)
+		}
+	}
+
+	for _, queryGroup := range []execution.QueryGroupIdentity{"query-group-a", "query-group-b"} {
+		dispatcher.dueIndex.Record(queryGroup, dispatcher.bundle.runners[queryGroup],
+			dispatcher.dueIndex.versionEpoch,
+			scheduler.RunnerDueBound{NotDueUntilUnix: 1_060, IntervalSeconds: 60}, clock.at)
+	}
+	dispatcher.dueIndex.Record("query-group-c", dispatcher.bundle.runners["query-group-c"],
+		dispatcher.dueIndex.versionEpoch,
+		scheduler.RunnerDueBound{NotDueUntilUnix: 1_300, Deferred: true, IntervalSeconds: 60}, clock.at)
+
+	runners, revision := dispatcher.bundle.snapshotScheduledRunners()
+	dispatcher.fillQueues(runners, revision)
+
+	after := dispatcher.bundle.dispatchSuppressionFacts()
+	// One of the two idle objects is taken by the audit round; the other and the
+	// backoff are held back.
+	if after.Skipped["not_due"] != 1 || after.Skipped["backoff"] != 1 {
+		t.Fatalf("suppression facts after the walk = %+v, want one skip of each reason", after)
+	}
+	if after.Parked != 3 {
+		t.Fatalf("parked = %d, want the three objects whose bound is still ahead; parked is an "+
+			"instant and counts what is held back now, not what was skipped", after.Parked)
+	}
+
+	// The instant follows the clock: once every bound has passed, nothing is
+	// parked any more while the cumulative counts stay where they were.
+	later := dispatcher.bundle.ensureDueIndex().SuppressionFacts(time.Unix(2_000, 0))
+	if later.Parked != 0 {
+		t.Fatalf("parked = %d once every bound had passed, want 0", later.Parked)
+	}
+	if later.Skipped["not_due"] != 1 || later.Skipped["backoff"] != 1 {
+		t.Fatalf("cumulative skips moved with the clock: %+v", later)
+	}
+}
+
+// TestFleetPublisherCarriesSuppressionFacts pins that the publisher really puts
+// them in the snapshot. Everything above is about producing the facts; if the
+// publisher dropped them, the page would read a suppressing build as one that
+// does not suppress and nothing else in the process would say otherwise.
+func TestFleetPublisherCarriesSuppressionFacts(t *testing.T) {
+	clock := &dueIndexClock{at: time.Unix(1_000, 0)}
+	dispatcher := dueIndexDispatcher(clock, metric.NewRecorder(metric.BuildInfo{}), 8, 8,
+		map[execution.QueryGroupIdentity]walkRunner{"query-group-a": {}})
+	bundle := dispatcher.bundle
+
+	publisher := fleetPublisher{
+		tracker:  fleet.NewTracker(nil, "replica-1", clock.now),
+		replica:  "replica-1",
+		owned:    func() []execution.QueryGroupIdentity { return nil },
+		now:      clock.now,
+		dispatch: bundle.dispatchSuppressionFacts,
+	}
+	snapshot := publisher.snapshot(context.Background())
+
+	if snapshot.Dispatch == nil {
+		t.Fatal("the published snapshot carried no suppression facts, so the page cannot tell " +
+			"this build from one that does not suppress dispatch at all")
+	}
+	if snapshot.Dispatch.Skipped["not_due"] != 0 || snapshot.Dispatch.Parked != 0 {
+		t.Fatalf("published suppression facts = %+v, want zeroes", snapshot.Dispatch)
+	}
+
+	// A publisher with no source at all is the shape a build that does not
+	// suppress would have, and it must publish nothing rather than zeroes.
+	bare := publisher
+	bare.dispatch = nil
+	if bare.snapshot(context.Background()).Dispatch != nil {
+		t.Fatal("a publisher with no suppression source still published suppression facts")
 	}
 }

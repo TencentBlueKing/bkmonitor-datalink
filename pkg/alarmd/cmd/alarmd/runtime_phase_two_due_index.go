@@ -85,6 +85,12 @@ type phaseTwoDueIndex struct {
 	recorder *metric.Recorder
 	entries  map[execution.QueryGroupIdentity]*phaseTwoDueEntry
 	pending  dueEntryHeap
+	// skips is the count this replica states about itself in its own snapshot,
+	// alongside the metric of the same name. The page reads the snapshot rather
+	// than the series because the only path it has to a series can answer
+	// "absent" for a series that exists, and here that failure would read as
+	// "suppression is not running".
+	skips *fleet.DispatchSkipTally
 	// versionTag is the activation header the bounds are anchored to.
 	// versionEpoch counts the times that anchor moved, and it is what a round in
 	// flight is stamped with: a publication that lands while a round is running
@@ -114,7 +120,55 @@ func newPhaseTwoDueIndex(recorder *metric.Recorder) *phaseTwoDueIndex {
 	return &phaseTwoDueIndex{
 		recorder: recorder,
 		entries:  make(map[execution.QueryGroupIdentity]*phaseTwoDueEntry),
+		skips:    fleet.NewDispatchSkipTally(),
 	}
+}
+
+// RecordSkip counts one dispatch this index held back, in both places at once:
+// the metric a direct scrape reads during acceptance, and the tally the replica
+// states in its own snapshot.
+//
+// It is called from the line that makes the decision rather than reconstructed
+// afterwards. A count assembled later is a bit somebody has to remember to set
+// on every path that grows into the decision, and the paths that forget it are
+// exactly the ones nobody thought about.
+func (index *phaseTwoDueIndex) RecordSkip(recorder *metric.Recorder, deferred bool) {
+	reason := "not_due"
+	if deferred {
+		reason = "backoff"
+	}
+	recorder.RecordDispatchSkipped(reason)
+	if index == nil {
+		return
+	}
+	if deferred {
+		index.skips.SkippedOnBackoff()
+		return
+	}
+	index.skips.SkippedNotDue()
+}
+
+// SuppressionFacts is what this replica states about dispatch suppression.
+//
+// It never returns nil. The presence of the field is the answer to "is
+// suppression running in this build", so a source that could decline to fill it
+// in would be putting that answer back into doubt.
+func (index *phaseTwoDueIndex) SuppressionFacts(now time.Time) *fleet.DispatchSuppression {
+	facts := &fleet.DispatchSuppression{}
+	if index == nil {
+		facts.Skipped = (*fleet.DispatchSkipTally)(nil).Counts()
+		return facts
+	}
+	facts.Skipped = index.skips.Counts()
+	index.mu.Lock()
+	defer index.mu.Unlock()
+	nowUnix := now.Unix()
+	for _, entry := range index.pending {
+		if entry.dueAtUnix > nowUnix {
+			facts.Parked++
+		}
+	}
+	return facts
 }
 
 // Len reports how many bounds are held.
@@ -141,8 +195,8 @@ func (index *phaseTwoDueIndex) Clear() {
 	index.pending = nil
 }
 
-// Predict answers whether this Query Group can be worth dispatching now, and
-// returns the version epoch the round is to be stamped with.
+// Predict answers whether this Query Group is worth dispatching now, why not
+// when it is not, and the version epoch the round is to be stamped with.
 //
 // No entry, or an entry belonging to a lifecycle this is not, means due: a
 // Query Group this replica has just taken over has never been evaluated here,
@@ -151,17 +205,17 @@ func (index *phaseTwoDueIndex) Predict(
 	queryGroup execution.QueryGroupIdentity,
 	lifecycle *phaseTwoQueryGroupLifecycle,
 	now time.Time,
-) (bool, uint64) {
+) (due bool, deferred bool, epoch uint64) {
 	if index == nil {
-		return true, 0
+		return true, false, 0
 	}
 	index.mu.Lock()
 	defer index.mu.Unlock()
 	entry, ok := index.entries[queryGroup]
 	if !ok || entry.lifecycle != lifecycle {
-		return true, index.versionEpoch
+		return true, false, index.versionEpoch
 	}
-	return entry.dueAtUnix <= now.Unix(), index.versionEpoch
+	return entry.dueAtUnix <= now.Unix(), entry.deferred, index.versionEpoch
 }
 
 // Record rewrites the bound for one Query Group from the round that has just

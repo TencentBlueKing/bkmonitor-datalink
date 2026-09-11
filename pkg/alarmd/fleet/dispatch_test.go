@@ -95,3 +95,42 @@ func TestSuppressionAddsUpAndSurvivesAHalfRolledDeployment(t *testing.T) {
 		t.Fatalf("suppression = %+v, want the reporting replica's figures kept", view.Dispatch)
 	}
 }
+
+// TestDispatchSkipTallyReportsBothReasonsIncludingZero pins that the closed
+// vocabulary is always complete. A reason that has not happened yet is a real
+// answer - nothing was held back for it - and dropping it would put the reader
+// back to guessing whether it was measured.
+//
+// Whether the key is on the wire at all is guarded above, beside the
+// declaration, because the declaration ships first and the guard has to ship
+// with the thing it guards. What is left here is the half only the writer can
+// state: the aggregate adds up the keys it receives and must not invent a zero
+// for a reason nobody reported, so "both reasons, always" has to be true where
+// the counts are produced or it is true nowhere.
+func TestDispatchSkipTallyReportsBothReasonsIncludingZero(t *testing.T) {
+	tally := NewDispatchSkipTally()
+	counts := tally.Counts()
+	if len(counts) != len(DispatchSkipReasons) {
+		t.Fatalf("a fresh tally reports %v, want every reason at zero", counts)
+	}
+	for _, reason := range DispatchSkipReasons {
+		if _, ok := counts[reason]; !ok {
+			t.Fatalf("a fresh tally omits %s", reason)
+		}
+	}
+
+	tally.SkippedNotDue()
+	tally.SkippedNotDue()
+	tally.SkippedOnBackoff()
+	counts = tally.Counts()
+	if counts["not_due"] != 2 || counts["backoff"] != 1 {
+		t.Fatalf("tally reports %v, want not_due=2 backoff=1", counts)
+	}
+
+	// A nil tally still answers with the whole vocabulary, so a caller that has
+	// no tally reports zeroes rather than an absence that would read as
+	// "suppression is not running".
+	if counts := (*DispatchSkipTally)(nil).Counts(); len(counts) != len(DispatchSkipReasons) {
+		t.Fatalf("a nil tally reports %v, want every reason at zero", counts)
+	}
+}

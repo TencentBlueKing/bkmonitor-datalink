@@ -35,6 +35,20 @@ const (
 	maxQueryFailureDetailLength = 96
 )
 
+// QueryFailureStages and QueryFailureCategories are the closed vocabularies a
+// normalized failure's Stage and Category come from; a metric keyed on them
+// has a bounded series count.
+var (
+	QueryFailureStages = []string{
+		QueryFailureStageExecute, QueryFailureStageStreamComplete, QueryFailureStageProvider, QueryFailureStageOther,
+	}
+	QueryFailureCategories = []string{
+		QueryFailureCategorySourceBackend, QueryFailureCategorySeriesIdentity, QueryFailureCategoryBudget,
+		QueryFailureCategoryCompletionContract, QueryFailureCategoryNamedInput, QueryFailureCategoryProviderTransport,
+		QueryFailureCategoryAdmission, QueryFailureCategoryEvaluation, QueryFailureCategoryOther,
+	}
+)
+
 // ValidQueryFailureCode reports whether code matches ^[A-Z][A-Z0-9_]{0,63}$.
 // The grammar keeps codes to bounded enums (UQ status codes, contract codes)
 // and rejects URLs, messages and other free text.

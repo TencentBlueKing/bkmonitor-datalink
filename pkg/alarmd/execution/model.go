@@ -1774,6 +1774,33 @@ func validateLoadedFactDisposition(
 	return nil
 }
 
+// StateContractMismatchError reports loaded Runtime State whose Level contract,
+// history fingerprint or series guard is not the compiled Plan's. Every input
+// of those contracts is folded into the state compatibility hash, so a Plan
+// whose contracts moved runs under a new state generation and never loads
+// this state; reaching this error means the state under the generation was
+// written by a Plan the generation does not describe. It carries its own
+// failure code so that the fleet view and the log name it apart from other
+// evaluation failures: the Slot does not complete, it retries with backoff,
+// and this code is the only trace the Query Group leaves.
+type StateContractMismatchError struct {
+	What string
+}
+
+func (err *StateContractMismatchError) Error() string {
+	return "alarmd execution: loaded Runtime State " + err.What + " differs from the compiled Plan"
+}
+
+// QueryFailure names the failure for the query failure facts: the category
+// is left to the stage that wraps it, the code is this error's own.
+func (err *StateContractMismatchError) QueryFailure() (string, string) {
+	return "", QueryFailureCodeStateContractMismatch
+}
+
+// QueryFailureCodeStateContractMismatch is the failure code a
+// StateContractMismatchError reports.
+const QueryFailureCodeStateContractMismatch = "STATE_LEVEL_CONTRACT_MISMATCH"
+
 func validateLoadedStateContracts(plan DuePlan, states StatePreflightResult, levelContracts *runtimeLevelContracts) error {
 	for _, state := range states.Items {
 		if state.Identity.Plan != plan.Identity ||
@@ -1784,21 +1811,21 @@ func validateLoadedStateContracts(plan DuePlan, states StatePreflightResult, lev
 			ref, found := levelContracts.find(level.LevelID)
 			if !found || level.LevelStateCompatibility != ref.LevelStateCompatibility ||
 				level.WarmupRequirementRef != ref.WarmupRequirementRef {
-				return errors.New("alarmd execution: loaded Runtime State Level contract differs from the compiled Plan")
+				return &StateContractMismatchError{What: "Level contract"}
 			}
 		}
 		for _, point := range state.History {
 			for _, fact := range point.Levels {
 				ref, found := levelContracts.find(fact.LevelID)
 				if !found || fact.DetectFingerprint != ref.DetectFingerprint {
-					return errors.New("alarmd execution: loaded Runtime State history differs from the compiled Plan")
+					return &StateContractMismatchError{What: "history"}
 				}
 			}
 		}
 		if state.SeriesGuard != nil {
 			seriesWarmup, err := levelContracts.seriesWarmup()
 			if err != nil || state.SeriesGuard.WarmupRequirementRef != seriesWarmup {
-				return errors.New("alarmd execution: loaded Runtime State series guard differs from the compiled Plan")
+				return &StateContractMismatchError{What: "series guard"}
 			}
 		}
 	}

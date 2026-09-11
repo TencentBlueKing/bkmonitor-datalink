@@ -52,6 +52,14 @@ type productionPhaseTwoEventSink interface {
 }
 
 type phaseTwoProductionExternalDependencies struct {
+	// Now is the clock the bundle schedules and freezes by. It is not the
+	// clock every deadline is measured by: access/uq Client.Execute and
+	// worker/completion_deadline.go turn a Slot's deadline, derived from this
+	// clock, into context.WithDeadline, and Go measures that against the real
+	// clock. In production the two agree. A test that injects a clock must
+	// only ever set it ahead of the real clock: a Slot whose deadline lies in
+	// the real past has its query context expire on entry, and the failure
+	// reads as a query timeout rather than as the clock skew it is.
 	Now                func() time.Time
 	HTTPClient         *http.Client
 	OpenEvents         func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error)

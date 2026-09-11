@@ -597,6 +597,19 @@ func (h pointHistory) CountAnomalies(fromTime, untilTime int64) uint32 {
 	return count
 }
 
+func (h pointHistory) FirstAnomaly(fromTime, untilTime int64) (int64, bool) {
+	first, found := int64(0), false
+	for timestamp, anomalous := range h.points {
+		if !anomalous || timestamp < fromTime || timestamp > untilTime {
+			continue
+		}
+		if !found || timestamp < first {
+			first, found = timestamp, true
+		}
+	}
+	return first, found
+}
+
 func requestV2(t *testing.T, plan *strategy.CompiledPlan, source int64, facts []DetectionFact, histories []LevelHistory, effective []LevelEffectiveTimeFact) EvaluationRequestV2 {
 	t.Helper()
 	recordID, err := contract.DeriveRecordIDV2(strings.Repeat("c", 64), source)
@@ -731,4 +744,45 @@ func mustJSONV2(value any) json.RawMessage {
 		panic(err)
 	}
 	return payload
+}
+
+// A downstream that owns an alert's lifetime opens it from a point in time, and
+// the window's own edges are not that point: a window whose anomalies started
+// in the middle of it must not report its start. The earliest anomaly inside
+// the window is what the decision was made from, so that is what travels.
+func TestTheWindowReportsWhenItsAnomaliesStarted(t *testing.T) {
+	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 9, 3, 2, 2, nil)})
+	const source = int64(300)
+	request := requestV2(t, plan, source, []DetectionFact{factV2(plan.Levels()[0], DetectionAnomalous)}, []LevelHistory{{
+		LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{120: false, 180: false, 240: true, 300: true}},
+	}}, activeFactsV2(t, plan, source))
+	result, err := EvaluateV2(request)
+	if err != nil {
+		t.Fatalf("EvaluateV2() error = %v", err)
+	}
+	window := result.LevelOutcomes[0].DecisionWindow.Trigger
+	if window.AnomalyBeginTime != 240 {
+		t.Fatalf("anomaly begin time = %d, want the earliest anomaly 240 (window starts at %d)",
+			window.AnomalyBeginTime, window.WindowStart)
+	}
+	if window.AnomalyBeginTime == window.WindowStart {
+		t.Fatal("the window's own start must not be reported as when its anomalies began")
+	}
+}
+
+// A window that saw no anomaly reports no beginning, rather than a zero that
+// reads as the epoch.
+func TestAWindowWithNoAnomalyReportsNoBeginning(t *testing.T) {
+	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 9, 3, 2, 2, nil)})
+	const source = int64(300)
+	request := requestV2(t, plan, source, []DetectionFact{factV2(plan.Levels()[0], DetectionNormal)}, []LevelHistory{{
+		LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{120: false, 180: false, 240: false, 300: false}},
+	}}, activeFactsV2(t, plan, source))
+	result, err := EvaluateV2(request)
+	if err != nil {
+		t.Fatalf("EvaluateV2() error = %v", err)
+	}
+	if got := result.LevelOutcomes[0].DecisionWindow.Trigger.AnomalyBeginTime; got != 0 {
+		t.Fatalf("anomaly begin time = %d, want none", got)
+	}
 }

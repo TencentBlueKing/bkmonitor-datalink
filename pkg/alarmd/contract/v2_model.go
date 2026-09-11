@@ -403,6 +403,18 @@ type TriggerWindowEvidenceV1 struct {
 	WindowSize        uint32 `json:"window_size"`
 	RequiredAnomalies uint32 `json:"required_anomalies"`
 	ObservedAnomalies uint32 `json:"observed_anomalies"`
+	// AnomalyBeginTime is the source time of the earliest anomalous point in
+	// this window, or zero when the window holds none.
+	//
+	// The window otherwise reports only how many anomalies it saw, and the
+	// timestamps themselves are deliberately reduced to a digest - they are
+	// evidence of a decision, not a fact a consumer needs. This one is the
+	// exception: a downstream that owns an alert's lifetime needs a point in
+	// time to open it from, and the window's own edges are not that point. It
+	// is the earliest anomaly in this window, not the first of an ongoing
+	// anomalous stretch; keeping the latter would mean keeping state about
+	// stretches, which is the downstream's job and not this one's.
+	AnomalyBeginTime int64 `json:"anomaly_begin_time,omitempty"`
 }
 
 type RecoveryWindowEvidenceV1 struct {

@@ -282,6 +282,7 @@ func evaluateLevelV2(
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("calculate Trigger window", definition.LevelID, errors.New("window time overflow"))
 	}
 	observedAnomalies := history.CountAnomalies(triggerStart, request.Record.SourceTime)
+	anomalyBeginTime, _ := history.FirstAnomaly(triggerStart, request.Record.SourceTime)
 	if observedAnomalies > triggerPlan.WindowSize {
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("count Trigger anomalies", definition.LevelID, errors.New("anomaly count exceeds window positions"))
 	}
@@ -324,6 +325,7 @@ func evaluateLevelV2(
 		Trigger: contract.TriggerWindowEvidenceV1{
 			WindowStart: triggerStart, WindowEnd: request.Record.SourceTime, WindowSize: triggerPlan.WindowSize,
 			RequiredAnomalies: triggerPlan.RequiredAnomalies, ObservedAnomalies: observedAnomalies,
+			AnomalyBeginTime: anomalyBeginTime,
 		},
 		Recovery: contract.RecoveryWindowEvidenceV1{
 			Enabled: recoveryPlan.Enabled, RequiredConsecutiveWindows: recoveryPlan.ConsecutiveWindows,

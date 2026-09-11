@@ -921,3 +921,48 @@ func cloneLevels(levels []contract.LevelIRV2) []contract.LevelIRV2 {
 	}
 	return cloned
 }
+
+// TestStateCompatibilityFollowsEveryLevelContractInput: every input that
+// reaches a persisted Level contract - the detect fingerprint, the trigger
+// fingerprint and the state requirement the warmup ref closes over - moves
+// the state compatibility hash. A Plan whose hash stays while one of them
+// moves is activated without WARMING under the same state generation, its
+// loaded state then fails the Level contract check, and the Query Group
+// stops evaluating with nothing but an evaluation failure to show for it.
+// The edits here are the common ones: a trigger window, a recovery window,
+// a level connector.
+func TestStateCompatibilityFollowsEveryLevelContractInput(t *testing.T) {
+	compiler := newTestCompiler(t)
+	base := validPlan()
+	base.StrategyIR.Levels[0].TriggerPlan.Config = json.RawMessage(`{"window_size":5,"required_anomalies":3,"step_seconds":60}`)
+	base.StrategyIR.Levels[0].RecoveryPlan.Config = json.RawMessage(`{"enabled":true,"consecutive_windows":4}`)
+	first := mustCompilePlan(t, compiler, base)
+	edits := []struct {
+		name string
+		edit func(plan *contract.EvaluationPlanV2)
+	}{
+		{name: "trigger window", edit: func(plan *contract.EvaluationPlanV2) {
+			plan.StrategyIR.Levels[0].TriggerPlan.Config = json.RawMessage(`{"window_size":6,"required_anomalies":3,"step_seconds":60}`)
+		}},
+		{name: "required anomalies", edit: func(plan *contract.EvaluationPlanV2) {
+			plan.StrategyIR.Levels[0].TriggerPlan.Config = json.RawMessage(`{"window_size":5,"required_anomalies":2,"step_seconds":60}`)
+		}},
+		{name: "recovery window", edit: func(plan *contract.EvaluationPlanV2) {
+			plan.StrategyIR.Levels[0].RecoveryPlan.Config = json.RawMessage(`{"enabled":true,"consecutive_windows":5}`)
+		}},
+		{name: "recovery disabled", edit: func(plan *contract.EvaluationPlanV2) {
+			plan.StrategyIR.Levels[0].RecoveryPlan.Config = json.RawMessage(`{"enabled":false,"consecutive_windows":4}`)
+		}},
+	}
+	for _, edit := range edits {
+		t.Run(edit.name, func(t *testing.T) {
+			changed := base
+			changed.StrategyIR.Levels = cloneLevels(base.StrategyIR.Levels)
+			edit.edit(&changed)
+			second := mustCompilePlan(t, compiler, changed)
+			if first.StateCompatibilityHash() == second.StateCompatibilityHash() {
+				t.Fatalf("%s edit left the state compatibility hash unchanged while the Level contract moved", edit.name)
+			}
+		})
+	}
+}

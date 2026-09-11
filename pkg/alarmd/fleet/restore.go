@@ -36,7 +36,7 @@ type RestoredState struct {
 // Restore seeds one object from what survived the restart. It reports whether
 // the object could be spoken for.
 //
-// An object the tracker has already observed is left alone: a round completed
+// An object the tracker has already determined is left alone: a round completed
 // in this process is better evidence than a persisted cursor, and overwriting
 // it would move the object backwards.
 //
@@ -59,10 +59,16 @@ func (tracker *Tracker) Restore(queryGroup string, restored RestoredState, at ti
 	}
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
-	if _, seen := tracker.groups[queryGroup]; seen {
+	state := tracker.groups[queryGroup]
+	if state != nil && state.determined {
 		return false
 	}
-	state := &queryGroupState{strategies: map[StrategyRef]struct{}{}}
+	if state == nil {
+		if len(tracker.groups) >= tracker.maxTracked {
+			return false
+		}
+		state = &queryGroupState{strategies: map[StrategyRef]struct{}{}}
+	}
 	state.determined = true
 	state.lastCompleted = restored.LastCompletion
 	if !healthyCompletion(restored.LastCompletion) {

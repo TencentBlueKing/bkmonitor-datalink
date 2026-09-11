@@ -19,6 +19,44 @@ import (
 
 const restoreStaleAfter = 10 * time.Minute
 
+func TestRestoreAfterInconclusiveObservation(t *testing.T) {
+	at := time.Now()
+	for _, outcome := range []string{"source_not_due", "deferred", "cancelled"} {
+		t.Run(outcome, func(t *testing.T) {
+			tracker := NewTracker(nil, "pod-a", func() time.Time { return at })
+			tracker.Observe(context.Background(), observability.Observation{
+				RunOutcome: outcome,
+				Trace:      observability.TraceFields{QueryGroupKey: "qg", StrategyID: "strategy"},
+			})
+			if tracker.HasConclusion("qg") {
+				t.Fatal("inconclusive observation became a conclusion")
+			}
+			if !tracker.Restore("qg", RestoredState{LastCompletion: "FULL_COMPLETED", NextSlot: at}, at, restoreStaleAfter) {
+				t.Fatal("inconclusive observation blocked valid history")
+			}
+			if tracker.Determined() != 1 || len(tracker.StrategiesFor("qg")) != 1 {
+				t.Fatal("restore lost conclusion or strategy metadata")
+			}
+		})
+	}
+}
+
+func TestRestorePreservesLiveFailureAndCapacity(t *testing.T) {
+	at := time.Now()
+	tracker := NewTracker(nil, "pod-a", func() time.Time { return at })
+	tracker.maxTracked = 1
+	tracker.Observe(context.Background(), observability.Observation{
+		RunOutcome: "source_error", Trace: observability.TraceFields{QueryGroupKey: "qg"},
+	})
+	history := RestoredState{LastCompletion: "FULL_COMPLETED", NextSlot: at}
+	if tracker.Restore("qg", history, at, restoreStaleAfter) {
+		t.Fatal("history replaced current failure")
+	}
+	if tracker.Restore("another", history, at, restoreStaleAfter) || tracker.Tracked() != 1 {
+		t.Fatal("restore exceeded tracker capacity")
+	}
+}
+
 // A restart -- including a configuration reload, which changes no code -- used
 // to leave the replica unable to speak for anything it owned until every object
 // completed a fresh round, so the whole deployment reported UNKNOWN for as long
@@ -105,7 +143,7 @@ func TestRestoreLeavesAnObservedObjectAlone(t *testing.T) {
 	}, at, restoreStaleAfter) {
 		t.Fatal("a restore overwrote what this process had already observed")
 	}
-	if !tracker.HasObserved("qg-live") {
-		t.Fatal("HasObserved did not report an object this process watched")
+	if !tracker.HasConclusion("qg-live") {
+		t.Fatal("HasConclusion did not report an object this process determined")
 	}
 }

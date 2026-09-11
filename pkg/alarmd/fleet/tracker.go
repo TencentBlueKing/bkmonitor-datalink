@@ -374,14 +374,13 @@ func (tracker *Tracker) Forget(owned map[string]struct{}) {
 	}
 }
 
-// HasObserved reports whether a round in this process has already said
-// something about the object, so a restore does not overwrite live evidence
-// with a persisted cursor.
-func (tracker *Tracker) HasObserved(queryGroup string) bool {
+// HasConclusion reports whether the object already has conclusive evidence.
+// Merely seeing a not-due round or strategy metadata must not prevent restore.
+func (tracker *Tracker) HasConclusion(queryGroup string) bool {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
-	_, seen := tracker.groups[queryGroup]
-	return seen
+	state := tracker.groups[queryGroup]
+	return state != nil && state.determined
 }
 
 // StrategiesFor names the strategies this process has seen behind an object.

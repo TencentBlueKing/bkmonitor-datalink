@@ -23,24 +23,24 @@ import (
 // before it can say anything.
 //
 // It reads the same Progress the scheduler reads, one object at a time and only
-// for objects this replica owns and has not yet observed. The publisher bounds
+// for objects this replica owns and has not yet determined. The publisher bounds
 // how many it asks for per tick.
-func progressRestoreSource(store *progress.Store) func(context.Context, execution.QueryGroupIdentity) (fleet.RestoredState, bool) {
+func progressRestoreSource(store *progress.Store) func(context.Context, execution.QueryGroupIdentity) (fleet.RestoredState, error) {
 	if store == nil {
 		return nil
 	}
-	return func(ctx context.Context, queryGroup execution.QueryGroupIdentity) (fleet.RestoredState, bool) {
+	return func(ctx context.Context, queryGroup execution.QueryGroupIdentity) (fleet.RestoredState, error) {
 		result, err := store.LoadProgress(ctx, execution.ProgressIdentity{QueryGroup: queryGroup})
-		if err != nil || result.Progress == nil {
-			// A failed read leaves the object unknown, which is the same answer
-			// the replica would have given without this at all. Diagnostics must
-			// not turn a control plane hiccup into a worse verdict than silence.
-			return fleet.RestoredState{}, false
+		if err != nil {
+			return fleet.RestoredState{}, err
+		}
+		if result.Progress == nil {
+			return fleet.RestoredState{}, nil
 		}
 		return fleet.RestoredState{
 			LastCompletion: string(result.Progress.LastCompletionKind),
 			NextSlot:       time.Unix(int64(result.Progress.NextSlot), 0),
-		}, true
+		}, nil
 	}
 }
 
@@ -52,3 +52,7 @@ func progressRestoreSource(store *progress.Store) func(context.Context, executio
 // covered in well under a minute, against the many minutes of unknown a restart
 // otherwise costs.
 const fleetRestoreBudgetPerPublish = 128
+
+// A failed read may be retried on later publishes, within the shared read budget.
+// Stop after three attempts per ownership tenure rather than polling forever.
+const fleetRestoreMaxAttempts = 3

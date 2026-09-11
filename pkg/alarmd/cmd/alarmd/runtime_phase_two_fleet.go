@@ -140,7 +140,7 @@ type fleetPublisher struct {
 	// just started can speak for it without waiting to watch a fresh round.
 	// Nil disables it, and the replica then reports every object as unknown
 	// until each completes one -- the behaviour a restart used to force.
-	restore func(context.Context, execution.QueryGroupIdentity) (fleet.RestoredState, bool)
+	restore func(context.Context, execution.QueryGroupIdentity) (fleet.RestoredState, error)
 	// staleAfter is how far behind an object's Progress cursor may be before
 	// its persisted completion stops being evidence about now.
 	staleAfter time.Duration
@@ -172,9 +172,9 @@ type fleetPublisher struct {
 	// count above readable: without it, zero overdue on a shadow build and zero
 	// overdue on a healthy one are the same reading.
 	dispatch func() *fleet.DispatchSuppression
-	// restored names objects already considered, so an object whose Progress
-	// says nothing is not re-read on every tick forever.
-	restored map[execution.QueryGroupIdentity]struct{}
+	// restoreAttempts is scoped to current ownership. The maximum also marks
+	// successful reads (including missing/stale history) as finished.
+	restoreAttempts map[execution.QueryGroupIdentity]int
 }
 
 // fleetOverdueWakeCeiling bounds how many parked objects one publish carries.
@@ -209,7 +209,7 @@ func publisherOverdue(
 	return anomalies, &facts
 }
 
-// restoreOwned seeds objects this replica owns but has not yet watched.
+// restoreOwned seeds owned objects without conclusive evidence.
 //
 // It runs before the snapshot is built, so the first publish after a restart
 // already carries what the control plane knew, instead of reporting the whole
@@ -218,27 +218,28 @@ func (publisher *fleetPublisher) restoreOwned(ctx context.Context, owned []execu
 	if publisher.restore == nil || publisher.restoreBudget <= 0 {
 		return
 	}
-	if publisher.restored == nil {
-		publisher.restored = make(map[execution.QueryGroupIdentity]struct{}, len(owned))
+	if publisher.restoreAttempts == nil {
+		publisher.restoreAttempts = make(map[execution.QueryGroupIdentity]int, len(owned))
 	}
 	spent := 0
 	for _, queryGroup := range owned {
 		if spent >= publisher.restoreBudget {
 			return
 		}
-		if _, considered := publisher.restored[queryGroup]; considered {
+		if publisher.restoreAttempts[queryGroup] >= fleetRestoreMaxAttempts {
 			continue
 		}
-		if publisher.tracker.Tracked() > 0 && publisher.tracker.HasObserved(string(queryGroup)) {
-			publisher.restored[queryGroup] = struct{}{}
+		if publisher.tracker.HasConclusion(string(queryGroup)) {
+			publisher.restoreAttempts[queryGroup] = fleetRestoreMaxAttempts
 			continue
 		}
 		spent++
-		publisher.restored[queryGroup] = struct{}{}
-		state, ok := publisher.restore(ctx, queryGroup)
-		if !ok {
+		publisher.restoreAttempts[queryGroup]++
+		state, err := publisher.restore(ctx, queryGroup)
+		if err != nil {
 			continue
 		}
+		publisher.restoreAttempts[queryGroup] = fleetRestoreMaxAttempts
 		publisher.tracker.Restore(string(queryGroup), state, at, publisher.staleAfter)
 	}
 }
@@ -264,7 +265,6 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	// instant from the one the snapshot is stamped with would have the page
 	// reading two clocks as one.
 	at := publisher.now()
-	publisher.restoreOwned(ctx, owned, at)
 	retained := make(map[string]struct{}, len(owned))
 	for _, queryGroup := range owned {
 		retained[string(queryGroup)] = struct{}{}
@@ -272,6 +272,15 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	// Objects this replica no longer owns are dropped before the list is built,
 	// so a handover cannot leave their last known state to be republished for
 	// as long as the process lives.
+	publisher.tracker.Forget(retained)
+	for queryGroup := range publisher.restoreAttempts {
+		if _, kept := retained[string(queryGroup)]; !kept {
+			delete(publisher.restoreAttempts, queryGroup)
+		}
+	}
+	publisher.restoreOwned(ctx, owned, at)
+	// A retiring runner can still report while restore performs its reads.
+	// Keep those observations outside this ownership snapshot as well.
 	publisher.tracker.Forget(retained)
 
 	anomalies := publisher.tracker.Anomalies()

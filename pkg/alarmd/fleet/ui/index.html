@@ -181,7 +181,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
     <h2>容量</h2>
     <p class="basis">
       时间口径：与上面的判定同一次读取，来自各副本快照，不经时序库。
-      占用是各副本相加，上限是每副本一份、不相加。
+      占用和上限都是各副本相加，两边同一个口径才能比。每个上限后面都写了每副本多少、几个副本。
       运维只设了两个数——容器的 CPU limit 和内存 limit；下面所有许可、队列、体量预算都是程序按这两个数算出来的，不是可以单独调的旋钮。
       这里只报测到的数，不替你判断够不够。
     </p>
@@ -378,11 +378,21 @@ function loadHealth() {
       } else {
         // A truncated count is a floor, and writing it as a plain number would
         // state the sample as the total.
-        text('overdue', (overdue.truncated ? '≥ ' : '') + overdue.total);
-        text('overdueHint', overdue.total
-          ? '唤醒时刻已过、没有轮次回来；最久的 ' + Math.round(overdue.oldest_seconds || 0) +
-            ' 秒。可能没被派发，也可能派出去没回来'
-          : '每个对象都在按自己的周期被处理（当前有 ' + (d.dispatch.parked || 0) + ' 个对象被拦下等待）');
+        var parked = '当前有 ' + (d.dispatch.parked || 0) + ' 个对象被到期索引拦下，没到点、本来就不该跑';
+        if (overdue.truncated) {
+          // "≥ 0" is every number, so it tells nobody anything, and the old
+          // wording then branched on the count alone and reassured off it --
+          // handing the most confident sentence on the cell to the one reading
+          // that counted least.
+          text('overdue', '看不全');
+          text('overdueHint', '异常列表被截断，这里数不出漏掉了几个——不是 0，是不知道。' + parked);
+        } else {
+          text('overdue', String(overdue.total));
+          text('overdueHint', overdue.total
+            ? '唤醒时刻已过、没有轮次回来；最久的 ' + Math.round(overdue.oldest_seconds || 0) +
+              ' 秒。可能没被派发，也可能派出去没回来'
+            : '每个对象都在按自己的周期被处理。' + parked);
+        }
       }
     }
     var gaps = d.gaps || [];
@@ -687,7 +697,11 @@ function renderCapacity(cap, gaps) {
   // and the cell simply never appeared -- with the numbers present in every
   // response the whole time.
   if (cap.memory_limit_bytes) {
-    var memHint = '上限来源 ' + (cap.memory_source || '未知') + '；cgroup 用量，不是 Go 堆';
+    // The ceiling beside it is every replica's limit added up, so it has to say
+    // so: without the per-replica figure, 16 GiB on a two-replica deployment
+    // reads as 16 GiB per container.
+    var memHint = cap.replicas + ' 个副本各 ' + bytes(cap.memory_limit_bytes) +
+      '；上限来源 ' + (cap.memory_source || '未知') + '；cgroup 用量，不是 Go 堆';
     if (cap.memory_oom_kills) {
       memHint = '被杀过 ' + cap.memory_oom_kills + ' 次；' + memHint;
     } else if (cap.memory_limit_hits) {
@@ -789,17 +803,23 @@ function renderCapacity(cap, gaps) {
   // Written for someone who has not read this codebase: "许可" is the code's
   // word and stays in the hint for whoever files a bug, but the card says what
   // it is -- how many queries run at once, and how many may.
+  // The queue is an instant and so is permits_held, so the number beside the
+  // queue has to be the instant too. Leading with the 30-second average put two
+  // different clocks in one sentence: "2.2 of 64 running" next to "10 queued"
+  // reads as a contradiction, when both can be true -- the average spans half a
+  // minute during which the budget may well have been full.
   var ceilingText = permitCeiling + ' 个（' + cap.replicas + ' 副本各 ' + cap.permit_budget + '）';
-  var running = held ? '最近 ' + Math.round(held.elapsed) + ' 秒平均跑着 ' + held.rate.toFixed(1) + ' 个'
-                     : '平均值要两次读取才算得出，约 30 秒后出现；此刻在跑 ' + cap.permits_held + ' 个';
+  var average = held
+    ? '最近 ' + Math.round(held.elapsed) + ' 秒平均跑着 ' + held.rate.toFixed(1) + ' 个（均值会把短暂跑满抹平）。'
+    : '平均值要两次读取才算得出，约 30 秒后出现。';
   cell('同时在跑的查询',
-    held ? held.rate.toFixed(1) + ' / ' + permitCeiling : '等下一次读取',
-    '最多能同时跑 ' + ceilingText + '，' + running + '。' +
+    cap.permits_held + ' / ' + permitCeiling,
+    '此刻在跑 ' + cap.permits_held + ' 个，最多能同时跑 ' + ceilingText + '。' +
       (cap.waiting > 0
-        ? '此刻还有 ' + cap.waiting + ' 个在排队等位子——位子不够用了，这里就是瓶颈。'
-        : '没有查询在排队，来一个放一个，这里不卡；但用得少不等于整体有余量，活可能卡在别处。') +
-      '（代码里叫查询许可，按 CPU limit 派生）',
-    cap.waiting > 0 || (held && held.rate > permitCeiling * 0.8));
+        ? '此刻另有 ' + cap.waiting + ' 个在排队等位子。'
+        : '此刻没有查询在排队。') +
+      average + '（代码里叫查询许可，按 CPU limit 派生）',
+    cap.waiting > 0);
   // Only shown when it says something is wrong.
   //
   // "2069 圈走完" is a counter that climbs on a healthy deployment forever: it

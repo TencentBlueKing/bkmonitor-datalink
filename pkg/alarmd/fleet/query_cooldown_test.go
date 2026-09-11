@@ -26,7 +26,14 @@ func TestQueryCooldownPreservesFailureUntilRealRecovery(t *testing.T) {
 			observe(observability.Observation{QueryCooldown: facts})
 			facts.Failures = 999 // The observer must own its copy.
 			at = at.Add(2 * time.Minute)
-			rows := tracker.Anomalies()
+			// A pooled object is in the demoted column, not the anomaly one: its
+			// backend is what stopped answering, and counting it as this
+			// deployment's anomaly makes a wider backend outage read as alarmd
+			// getting worse.
+			if listed := tracker.Anomalies(); len(listed) != 0 {
+				t.Fatalf("a pooled object was reported as this deployment's anomaly: %+v", listed)
+			}
+			rows := tracker.Demoted()
 			if len(rows) != 1 || rows[0].QueryCooldown.Failures != 1 || rows[0].Kind != KindDegradedRun {
 				t.Fatalf("expired cooldown lost: %+v", rows)
 			}

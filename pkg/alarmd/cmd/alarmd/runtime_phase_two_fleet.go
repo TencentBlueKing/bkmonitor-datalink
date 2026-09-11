@@ -302,6 +302,16 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 		TotalAnomalies: len(anomalies),
 		Overdue:        overdue,
 	}
+	// The pool travels beside the anomalies rather than inside them. An object
+	// whose backend keeps answering unavailable is not this deployment failing,
+	// and counting it as one made every backend outage read as alarmd getting
+	// worse -- so the bigger the outage, the worse the verdict, which is the
+	// wrong direction for the number people escalate on.
+	demoted := publisher.tracker.Demoted()
+	snapshot.Demoted = demoted
+	snapshot.TotalDemoted = len(demoted)
+	snapshot.DemotionEntries, snapshot.DemotionExtensions, snapshot.DemotionExits,
+		snapshot.LastDemotionExit = publisher.tracker.DemotionFlow()
 	if publisher.capacity != nil {
 		snapshot.Capacity = publisher.capacity()
 	}

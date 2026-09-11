@@ -366,7 +366,7 @@ function loadHealth() {
     // from the same read rather than fetched separately: two reads would let
     // the page show a verdict from one moment beside occupancy from another.
     show('capErr', false);
-    renderCapacity(d.capacity);
+    renderCapacity(d.capacity, gaps);
   }).catch(function (e) { fail('healthErr', e); fail('capErr', e); });
 }
 
@@ -557,10 +557,23 @@ function renderSummary(summary, total) {
 // Capacity comes from the same read as the verdict, so the page never has to
 // ask the time series database what this deployment's limits are -- and the two
 // cannot disagree.
-function renderCapacity(cap) {
+function renderCapacity(cap, gaps) {
   var box = document.getElementById('capCards');
   box.textContent = '';
-  if (!cap || !cap.replicas) { show('capEmpty', true); text('capNote', ''); return; }
+  if (!cap || !cap.replicas) {
+    // Capacity is built from the snapshots the verdict accepted, so it goes
+    // empty when every snapshot was refused -- and why it was refused is the
+    // difference between "these processes never published" and "these processes
+    // stopped publishing". The evidence is already in the gaps beside it.
+    var stale = false;
+    (gaps || []).forEach(function (g) { if (g.kind === 'SNAPSHOT_STALE') stale = true; });
+    text('capEmpty', stale
+      ? '副本的上报都太旧了，这里不显示旧的占用——它描述的是上报那一刻，不是此刻。见上方“证据不全”里的 SNAPSHOT_STALE。'
+      : '本次读取没有副本上报容量。');
+    show('capEmpty', true);
+    text('capNote', '');
+    return;
+  }
   show('capEmpty', false);
   function cell(k, v, hint, warn) {
     var d = document.createElement('div');

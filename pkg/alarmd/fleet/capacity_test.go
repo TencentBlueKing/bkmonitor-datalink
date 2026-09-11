@@ -112,6 +112,51 @@ func TestCapacityCountsOnlyReplicasThatReported(t *testing.T) {
 	}
 }
 
+// A snapshot too old to be counted towards coverage is too old to be counted
+// towards occupancy. The two are the same read and the page presents capacity as
+// the present, so a stale one puts the memory and permits of some earlier moment
+// under a heading that says "此刻".
+//
+// The case that matters is the one where every snapshot is stale: coverage then
+// reports no live replica and the verdict is UNKNOWN, and the capacity panel was
+// still filling itself in from the snapshots the verdict had just refused. That
+// is the worst possible pairing -- the page saying it cannot hear from anyone,
+// next to numbers that look like it can.
+func TestCapacityRefusesTheSnapshotsTheVerdictRefused(t *testing.T) {
+	at := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	view := Aggregate(Expectation{QueryGroups: 20, Known: true}, []Snapshot{
+		capacitySnapshot("pod-a", at.Add(-10*time.Minute), &Capacity{
+			PermitsHeld: 5, PermitBudget: 32, MemoryUsed: 700 << 20, MemoryLimit: 8 << 30,
+		}),
+	}, []string{"pod-a"}, at, time.Minute)
+
+	if view.Health != HealthUnknown {
+		t.Fatalf("health = %q, want UNKNOWN from a stale snapshot", view.Health)
+	}
+	if len(view.Replicas) != 0 {
+		t.Fatalf("replicas = %v, want none counted", view.Replicas)
+	}
+	if view.Capacity != nil {
+		t.Fatalf("capacity was reported from a snapshot the verdict refused: %+v", view.Capacity)
+	}
+}
+
+// A replica that has left the deployment keeps its published snapshot until the
+// key expires. Coverage already ignores it -- it is not in the expected set --
+// and occupancy has to ignore it for the same reason, or a scale-down reads as
+// unchanged load right up until the key times out.
+func TestCapacityIgnoresAReplicaNoLongerInTheDeployment(t *testing.T) {
+	at := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	view := Aggregate(Expectation{QueryGroups: 20, Known: true}, []Snapshot{
+		capacitySnapshot("pod-a", at, &Capacity{PermitsHeld: 5, PermitBudget: 32}),
+		capacitySnapshot("pod-retired", at, &Capacity{PermitsHeld: 9, PermitBudget: 32}),
+	}, []string{"pod-a"}, at, time.Minute)
+
+	if view.Capacity.Replicas != 1 || view.Capacity.PermitsHeld != 5 {
+		t.Fatalf("capacity counted a departed replica: %+v", view.Capacity)
+	}
+}
+
 // A rotation's counts are per replica and the work is split between them, so
 // the counts add up. The duration does not: a deployment covers its objects
 // only as fast as its slowest replica gets round its own share, and averaging

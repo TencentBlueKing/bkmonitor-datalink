@@ -200,6 +200,12 @@ type View struct {
 func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas []string, now time.Time, freshness time.Duration) View {
 	view := View{Health: HealthHealthy, Anomalies: []Anomaly{}, Replicas: []string{}}
 	ownedByReplica := make([]string, 0, len(expectedReplicas))
+	// The snapshots this view is willing to speak for. Every other number below
+	// is built from these and not from the argument, because the argument
+	// contains snapshots that were rejected: one too old to describe the
+	// deployment now, and one from a replica that is no longer part of it and
+	// whose key has simply not expired yet.
+	counted := make([]Snapshot, 0, len(expectedReplicas))
 
 	byReplica := make(map[string]Snapshot, len(snapshots))
 	for _, snapshot := range snapshots {
@@ -223,6 +229,7 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			continue
 		}
 		view.Replicas = append(view.Replicas, replica)
+		counted = append(counted, snapshot)
 		ownedByReplica = append(ownedByReplica, fmt.Sprintf("%s %d", shortReplicaName(replica), snapshot.Owned))
 		view.Covered += snapshot.Owned
 		view.Determined += snapshot.Determined
@@ -233,7 +240,14 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		}
 	}
 
-	aggregateCapacity(&view, snapshots)
+	// Built from the same snapshots as the verdict, for the same reason the
+	// verdict refuses them: a stale snapshot's occupancy is what the process was
+	// doing when it last published, and the page presents capacity as "right
+	// now". Reading the whole argument here meant a deployment whose replicas had
+	// all gone quiet showed UNKNOWN with no live replica beside memory and permit
+	// figures from before it went quiet -- the one moment those numbers are read
+	// hardest, and the one moment they are not about the present.
+	aggregateCapacity(&view, counted)
 
 	// Owning an object is not knowing about it. A replica that has just restarted
 	// owns everything and has observed nothing, so its empty anomaly list is not

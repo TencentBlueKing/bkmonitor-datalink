@@ -108,8 +108,15 @@ type Anomaly struct {
 	Cause     string      `json:"cause,omitempty"`
 	Since     time.Time   `json:"since"`
 	SinceFrom SinceSource `json:"since_from"`
-	Replica   string      `json:"replica"`
-	Failure   *FailureRef `json:"failure,omitempty"`
+	// FailingSince is when the current unbroken sequence of rounds that
+	// reached execution and did not finish began; zero while the last
+	// conclusive round ended, however it ended. It is not Since: an object
+	// can have been degraded for hours and failing to finish for a minute,
+	// and Stalled is judged against this clock, not that one, precisely so a
+	// long degraded history cannot turn one retrying round into a stall.
+	FailingSince time.Time   `json:"failing_since,omitzero"`
+	Replica      string      `json:"replica"`
+	Failure      *FailureRef `json:"failure,omitempty"`
 	// Stalled says the rounds have been failing to finish for longer than the
 	// deployment's own budget for terminating an unfinishable Slot. The
 	// distinction it draws is the one that decides whether anyone has to act: a
@@ -118,8 +125,8 @@ type Anomaly struct {
 	// identical in a list that only shows how the last round went.
 	//
 	// Derived when the view is served rather than stored, so it is only as old as
-	// the uninterrupted run of snapshots behind Since: it under-reports after a
-	// restart rather than over-reports.
+	// the uninterrupted run of snapshots behind FailingSince: it under-reports
+	// after a restart rather than over-reports.
 	Stalled    bool          `json:"stalled,omitempty"`
 	Strategies []StrategyRef `json:"strategies,omitempty"`
 }

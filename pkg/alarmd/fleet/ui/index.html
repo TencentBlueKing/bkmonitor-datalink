@@ -576,8 +576,12 @@ function renderCapacity(cap) {
     cap.replicas + ' 个副本各 ' + cap.permit_budget + '；这是瞬时值，不是占用率');
   cell('排队等许可', String(cap.waiting),
     '非零说明此刻许可就是瓶颈；为零不代表有余量', cap.waiting > 0);
-  if (cap.memory_limit) {
-    cell('内存', bytes(cap.memory_used) + ' / ' + bytes(cap.memory_limit * cap.replicas),
+  // The field names carry the _bytes suffix the API actually uses. Dropping
+  // that suffix read undefined, the guard in front of this cell was then false,
+  // and the cell simply never appeared -- with the numbers present in every
+  // response the whole time.
+  if (cap.memory_limit_bytes) {
+    cell('内存', bytes(cap.memory_used_bytes) + ' / ' + bytes(cap.memory_limit_bytes * cap.replicas),
       '上限来源 ' + (cap.memory_source || '未知') + '；这是 cgroup 用量，不是 Go 堆');
   }
   if (cap.cpu_cores) {

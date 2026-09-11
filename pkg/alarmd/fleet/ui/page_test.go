@@ -10,6 +10,9 @@
 package ui
 
 import (
+	"reflect"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"regexp"
 	"strings"
 	"testing"
@@ -79,6 +82,41 @@ func TestEveryIdentifiedButtonIsWired(t *testing.T) {
 		// any shape accepts a button with no handler at all.
 		if !strings.Contains(body, `getElementById('`+id+`').addEventListener`) {
 			t.Errorf("button %q is drawn but nothing listens to it: clicking it does nothing", id)
+		}
+	}
+}
+
+// Every field the page reads off the capacity object has to be a field the API
+// actually sends. A name that does not match reads as undefined, the guard in
+// front of its cell is then false, and the cell never appears -- with the
+// numbers present in every response the whole time. That is how the memory cell
+// was missing: the JSON carries memory_used_bytes and the page asked for
+// memory_used.
+//
+// Nothing else catches it. The renderer is called, the container is written,
+// build and vet are clean, and the only symptom is a cell that is not there,
+// which looks exactly like a deployment that has no such data.
+func TestEveryCapacityFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	sent := map[string]bool{}
+	view := reflect.TypeOf(fleet.CapacityView{})
+	for index := 0; index < view.NumField(); index++ {
+		tag := view.Field(index).Tag.Get("json")
+		if name, _, _ := strings.Cut(tag, ","); name != "" && name != "-" {
+			sent[name] = true
+		}
+	}
+	if len(sent) == 0 {
+		t.Fatal("no JSON fields found on CapacityView; the check would pass vacuously")
+	}
+
+	read := regexp.MustCompile(`\bcap\.([a-z0-9_]+)`)
+	matches := read.FindAllStringSubmatch(string(page), -1)
+	if len(matches) == 0 {
+		t.Fatal("the page reads no capacity fields; the check would pass vacuously")
+	}
+	for _, match := range matches {
+		if !sent[match[1]] {
+			t.Errorf("the page reads cap.%s, which the API does not send: that cell renders nothing", match[1])
 		}
 	}
 }

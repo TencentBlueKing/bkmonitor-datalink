@@ -11,7 +11,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -606,13 +605,23 @@ func TestSlotExecutionCoordinatorReturnsRetryWhenActivationKeepsChanging(t *test
 		activePlanResult("state-v3", 3),
 	})
 	fixture.ports.cycleActivations = true
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	result, err := fixture.coordinator.Execute(ctx, slotRequest(execution.OperationReplay))
+	// No deadline. An earlier version ran this under a hundred millisecond
+	// context, which read as a safety net and acted as a second, competing
+	// verdict: the ports answer from memory, so on an unloaded machine the run
+	// finished in under a millisecond, and on a loaded one the deadline landed
+	// first and the call returned "context deadline exceeded" from the gap
+	// preflight instead of the drift retry being asserted. Nothing needs the
+	// deadline - the coordinator reads activations exactly twice and returns on
+	// the difference, which is what the call count below pins - so a budget
+	// could only ever decide the outcome for reasons outside the subject.
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
 	if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
 		result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
+	// Two reads and no Progress commit is what makes the retry a decision
+	// rather than a timeout: the coordinator saw the activation change between
+	// the guard read and the progress read, and stopped there.
 	if fixture.ports.activationCalls != 2 || fixture.ports.progressCalls != 0 {
 		t.Fatalf("activation calls=%d progress calls=%d", fixture.ports.activationCalls, fixture.ports.progressCalls)
 	}

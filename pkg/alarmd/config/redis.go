@@ -106,6 +106,17 @@ func (c RedisConnectionConfig) clone() RedisConnectionConfig {
 	return c
 }
 
+// Destination renders where this connection points, and nothing else. It feeds
+// the startup evidence surface, which is credential-free by contract, so the
+// password and the sentinel password are deliberately absent - a master name
+// and a sentinel address are coordinates, not secrets.
+func (c RedisConnectionConfig) Destination() string {
+	if c.Mode == RedisModeSentinel {
+		return fmt.Sprintf("sentinel %s [%s]/%d", c.MasterName, strings.Join(c.SentinelAddress, ","), c.DB)
+	}
+	return fmt.Sprintf("standalone %s/%d", c.Address, c.DB)
+}
+
 func (c RedisConnectionConfig) validate(field string) error {
 	if c.Mode != RedisModeStandalone && c.Mode != RedisModeSentinel {
 		return fmt.Errorf("%s mode must be standalone or sentinel", field)

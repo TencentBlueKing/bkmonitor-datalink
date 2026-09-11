@@ -837,3 +837,30 @@ phase_two:
     query_source: alarmd
 `
 }
+
+// The startup evidence surface answers "which instance did this replica read
+// from", which is the question an incident asks once a location can be
+// inherited. It is credential-free by contract, and the check is here rather
+// than in review because the fields it renders sit next to two passwords.
+func TestTheResolvedDestinationNamesCoordinatesAndNoCredentials(t *testing.T) {
+	sentinel := RedisConnectionConfig{
+		Mode: RedisModeSentinel, MasterName: "monitor", SentinelAddress: []string{"a:26379", "b:26379"},
+		Password: "connection-password", SentinelPassword: "sentinel-password", DB: 8,
+	}
+	if got := sentinel.Destination(); got != "sentinel monitor [a:26379,b:26379]/8" {
+		t.Fatalf("destination = %q", got)
+	}
+	standalone := RedisConnectionConfig{
+		Mode: RedisModeStandalone, Address: "cache:6379", Password: "connection-password", DB: 10,
+	}
+	if got := standalone.Destination(); got != "standalone cache:6379/10" {
+		t.Fatalf("destination = %q", got)
+	}
+	for _, connection := range []RedisConnectionConfig{sentinel, standalone} {
+		for _, credential := range []string{"connection-password", "sentinel-password"} {
+			if strings.Contains(connection.Destination(), credential) {
+				t.Fatalf("destination %q carries a credential", connection.Destination())
+			}
+		}
+	}
+}

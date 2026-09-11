@@ -18,7 +18,22 @@ type RuntimeConfigFacts struct {
 	MemorySource     string               `json:"memory_source"`
 	MemoryLimitBytes uint64               `json:"memory_limit_bytes"`
 	Capacity         RuntimeCapacityFacts `json:"capacity"`
-	Digest           string               `json:"runtime_config_digest"`
+	// Storage says where each class of read and write goes. It is the question
+	// an incident actually asks - which instance did this replica read
+	// strategies from - and once a location may be inherited, the configuration
+	// file no longer answers it. Addresses and databases only: this surface is
+	// credential-free by contract.
+	Storage RuntimeStorageFacts `json:"storage"`
+	Digest  string              `json:"runtime_config_digest"`
+}
+
+type RuntimeStorageFacts struct {
+	// OwnStore is alarmd's own runtime state: catalog, ownership, state,
+	// fleet, progress. The other three are the platform's own locations.
+	OwnStore      string `json:"own_store"`
+	StrategyCache string `json:"strategy_cache"`
+	CMDBCache     string `json:"cmdb_cache"`
+	LegacyService string `json:"legacy_service"`
 }
 
 type RuntimeCapacityFacts struct {

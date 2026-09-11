@@ -134,6 +134,12 @@ func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (obs
 		Profile: "standard-conservative-v1", Source: "container_derived", CPUSource: cpuSource, GOMAXPROCS: procs,
 		MemorySource: inputs.MemorySource, MemoryLimitBytes: inputs.MemoryLimitBytes,
 		Capacity: phaseTwoRuntimeCapacity(cfg, inputs),
+		Storage: observability.RuntimeStorageFacts{
+			OwnStore:      cfg.Redis.Connection().Destination(),
+			StrategyCache: cfg.StrategySourceRedis().Destination(),
+			CMDBCache:     cfg.CMDBCacheRedis().Destination(),
+			LegacyService: cfg.Kafka.LegacyAdapter.ServiceRedis.Destination(),
+		},
 	}
 	// Digest the exact logged safe values, with the digest field still empty.
 	digest, err := contract.DeriveCanonicalDigestV2("alarmd-runtime-config-v2", facts)

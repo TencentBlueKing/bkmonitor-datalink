@@ -750,14 +750,18 @@ function renderCapacity(cap, gaps) {
     //
     // The cumulative total is gone. It counts from process start, which moves
     // on every restart and answers no question anyone opening this page has.
-    var perSeries = (rate.series && rate.points && rate.series.rate > 0)
-      ? (rate.points.rate / rate.series.rate) : null;
+    // Points per series is deliberately not shown. It looks like a per-round
+    // fact -- "each evaluation fetches N points" -- and is not one: it is a mean
+    // over a mixture. A plain threshold pulls one point for its own period,
+    // while an algorithm that needs history pulls a window many times longer on
+    // a single series, so a small minority of those drags the mean well above
+    // what any ordinary round does. The mean hides exactly the part that
+    // matters, which is that a few requirements cost tens of times the rest.
     cell('Access 拉取',
       rate.series ? rate.series.rate.toFixed(0) + ' 条时序/秒' : '等下一次读取',
       rate.series
         ? (rate.points
-            ? '其中共 ' + rate.points.rate.toFixed(0) + ' 个数据点/秒' +
-              (perSeries ? '，平均每条时序 ' + perSeries.toFixed(1) + ' 个点' : '')
+            ? '这些时序里一共 ' + rate.points.rate.toFixed(0) + ' 个数据点/秒。两个不同的量：一个是拉了多少条曲线，一个是曲线里一共多少个点'
             : '数据点速率要两次读取才算得出')
         : '全部副本相加，两次读取才算得出，约 30 秒后出现');
   }
@@ -774,19 +778,28 @@ function renderCapacity(cap, gaps) {
   // that a page load lands on an arbitrary moment is this page's problem to
   // solve, not the reader's to know about. The instant stays in the hint, where
   // it answers the one question it can: is anything running right this second.
-  cell('查询许可（按 CPU 派生）',
+  // One card, because neither number answers anything alone.
+  //
+  // "8.5 of 64" is how much is being used, not how much is left, and a reader
+  // cannot tell from it whether the limit is in the way: low is not slack, and
+  // high is not trouble until callers start waiting. The queue is the half that
+  // settles it, and it sat in a separate cell where nobody had reason to read
+  // the two together.
+  //
+  // Written for someone who has not read this codebase: "许可" is the code's
+  // word and stays in the hint for whoever files a bug, but the card says what
+  // it is -- how many queries run at once, and how many may.
+  var ceilingText = permitCeiling + ' 个（' + cap.replicas + ' 副本各 ' + cap.permit_budget + '）';
+  var running = held ? '最近 ' + Math.round(held.elapsed) + ' 秒平均跑着 ' + held.rate.toFixed(1) + ' 个'
+                     : '平均值要两次读取才算得出，约 30 秒后出现；此刻在跑 ' + cap.permits_held + ' 个';
+  cell('同时在跑的查询',
     held ? held.rate.toFixed(1) + ' / ' + permitCeiling : '等下一次读取',
-    // Says which direction means what, because occupancy alone does not: a low
-    // number is not slack and a high one is not trouble. It only becomes a
-    // constraint when it reaches the ceiling and callers start queueing, which
-    // is the cell next door.
-    (held ? '最近 ' + Math.round(held.elapsed) + ' 秒的平均占用；此刻 ' + cap.permits_held +
-            '，' + cap.replicas + ' 个副本各 ' + cap.permit_budget
-          : '平均占用要两次读取才算得出，约 30 秒后出现；此刻 ' + cap.permits_held) +
-      '。高低本身不是好坏：低只说明并发不是当前的约束，高只有在逼近上限且右边排队非零时才说明许可卡住了',
-    held && held.rate > permitCeiling * 0.8);
-  cell('排队等许可', String(cap.waiting),
-    '非零说明此刻许可就是瓶颈；为零不代表有余量', cap.waiting > 0);
+    '最多能同时跑 ' + ceilingText + '，' + running + '。' +
+      (cap.waiting > 0
+        ? '此刻还有 ' + cap.waiting + ' 个在排队等位子——位子不够用了，这里就是瓶颈。'
+        : '没有查询在排队，来一个放一个，这里不卡；但用得少不等于整体有余量，活可能卡在别处。') +
+      '（代码里叫查询许可，按 CPU limit 派生）',
+    cap.waiting > 0 || (held && held.rate > permitCeiling * 0.8));
   // Only shown when it says something is wrong.
   //
   // "2069 圈走完" is a counter that climbs on a healthy deployment forever: it

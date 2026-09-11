@@ -18,7 +18,17 @@ type MonitorOutputIdentity struct {
 // MonitorDedupeMD5 projects MonitorEventAdapter.extract_target and Event's
 // default dedupe fields. Native identities support scalar/null dimensions;
 // structured Python tags must be cleaned on the Python capture side first.
-// ProjectMonitorTarget returns the shared Python-compatible base target and remaining dimensions.
+// ProjectMonitorTarget returns the shared Python-compatible base target and
+// remaining dimensions.
+//
+// It stops after the topology branch on purpose. Python's extract_target
+// continues into container and APM objects, but cal_dedupe_md5 then blanks the
+// type and the target again for exactly those - deliberately, to keep alert
+// fingerprints continuous across the release that added them. Stopping here
+// reaches the same result without a second rule that could be forgotten: the
+// function the fingerprint is built from cannot see the later branches.
+// ProjectMonitorSubject is the full chain, for callers that want the object
+// rather than the identity.
 func ProjectMonitorTarget(dimensions map[string]json.RawMessage, identity MonitorOutputIdentity) (string, json.RawMessage, map[string]json.RawMessage, error) {
 	agg := make(map[string]bool, len(identity.DimensionFields))
 	for _, field := range identity.DimensionFields {

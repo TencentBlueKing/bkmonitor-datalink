@@ -110,6 +110,7 @@ type RedisCatalogRepository struct {
 	snapshotCache              *verifiedSnapshotCache
 	snapshotFlights            snapshotReadFlights
 	activationCache            parsedActivationCache
+	objectCatalog              objectCatalogState
 	controlCache               *controlReadCache
 	controlReads               controlReadCounters
 	legacyMigrationMaxScanKeys int
@@ -249,6 +250,7 @@ func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx cont
 		if err := repository.renewScheduleTimelines(ctx, groups, state.Draining); err != nil {
 			return err
 		}
+		repository.renewObjectCatalog(ctx, state.Current.SnapshotRevision)
 		metricResult = "success"
 		queryGroups, objectBytes = len(groups), len(activePayload)
 		return nil
@@ -366,6 +368,7 @@ func (repository *RedisCatalogRepository) restoreCatalogPublicationIfActivationC
 	} else if latestErr != nil {
 		return PublishedSnapshot{}, latestErr
 	}
+	repository.ensureObjectCatalog(ctx, catalog)
 	changed, err := repository.client.Eval(ctx, restoreSnapshotPublicationScript, []string{
 		repository.activationHeaderKey(), repository.latestPublicationKey(),
 		repository.snapshotKey(catalog.SnapshotRevision), repository.epochForRevisionKey(catalog.SnapshotRevision),
@@ -433,6 +436,10 @@ func (repository *RedisCatalogRepository) PublishCatalogIfCurrent(
 	if expected != (SnapshotPublicationRef{}) {
 		expectedValue = publicationValue(expected)
 	}
+	// The objects and the manifest are written next to the whole Snapshot
+	// while execution still reads the latter; they are content-addressed,
+	// so writing them before the publication decides is harmless either way.
+	repository.ensureObjectCatalog(ctx, catalog)
 	result, err := repository.client.Eval(ctx, publishSnapshotScript, []string{
 		repository.epochCounterKey(), repository.epochForRevisionKey(catalog.SnapshotRevision),
 		repository.snapshotKey(catalog.SnapshotRevision), repository.latestPublicationKey(), repository.publicationKeyPrefix(),

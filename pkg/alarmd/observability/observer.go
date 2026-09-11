@@ -62,6 +62,7 @@ const (
 	StageSnapshotUnavailable  = "snapshot_unavailable"
 	StageActivationFailed     = "activation_failed"
 	StageActiveQGSet          = "active_qg_set"
+	StageObjectCatalog        = "object_catalog"
 	StageScheduleCutover      = "schedule_cutover"
 	StageLegacyQGMigration    = "legacy_active_qg_migration"
 	StageDrainingQGReconciled = "draining_query_groups"
@@ -308,6 +309,23 @@ type ScheduleCutoverFacts struct {
 	Duration         time.Duration
 }
 
+// ObjectCatalogFacts describe one write or renewal of the content-addressed
+// Query Group objects, output contexts and the manifest that names them for
+// one publication. Written counts objects the operation created, Present
+// counts objects it found already stored under their digest and left alone,
+// Missing counts referenced objects a renewal could not find.
+type ObjectCatalogFacts struct {
+	Operation     string
+	Result        string
+	QueryGroups   int
+	Written       int
+	Present       int
+	Missing       int
+	ManifestBytes int
+	ObjectBytes   int
+	Duration      time.Duration
+}
+
 type LegacyQGMigrationFacts struct {
 	Result      string
 	ReasonClass string
@@ -467,6 +485,7 @@ type Observation struct {
 	StateApplyChunk         *StateApplyChunkFacts
 	ActiveQGSet             *ActiveQGSetFacts
 	ScheduleCutover         *ScheduleCutoverFacts
+	ObjectCatalog           *ObjectCatalogFacts
 	LegacyMigration         *LegacyQGMigrationFacts
 	DrainingQG              *DrainingQGFacts
 	SourceRefresh           *SourceRefreshFacts
@@ -553,6 +572,7 @@ func NormalizeObservation(observation Observation) Observation {
 	}
 	observation.ActiveQGSet = normalizeActiveQGSetFacts(observation.ActiveQGSet)
 	observation.ScheduleCutover = normalizeScheduleCutoverFacts(observation.ScheduleCutover)
+	observation.ObjectCatalog = normalizeObjectCatalogFacts(observation.ObjectCatalog)
 	observation.LegacyMigration = normalizeLegacyQGMigrationFacts(observation.LegacyMigration)
 	observation.DrainingQG = normalizeDrainingQGFacts(observation.DrainingQG)
 	observation.SourceRefresh = normalizeSourceRefreshFacts(observation.Component, observation.Stage, observation.SourceRefresh)
@@ -823,6 +843,30 @@ func normalizeScheduleCutoverFacts(facts *ScheduleCutoverFacts) *ScheduleCutover
 		}
 	}
 	normalized.PrunesSkipped = skipped
+	if normalized.Duration < 0 {
+		normalized.Duration = 0
+	}
+	return &normalized
+}
+
+func normalizeObjectCatalogFacts(facts *ObjectCatalogFacts) *ObjectCatalogFacts {
+	if facts == nil {
+		return nil
+	}
+	normalized := *facts
+	switch normalized.Operation {
+	case "write", "renew":
+	default:
+		normalized.Operation = ""
+	}
+	if normalized.Result != "success" && normalized.Result != "failure" {
+		normalized.Result = "failure"
+	}
+	for _, count := range []*int{&normalized.QueryGroups, &normalized.Written, &normalized.Present, &normalized.Missing, &normalized.ManifestBytes, &normalized.ObjectBytes} {
+		if *count < 0 {
+			*count = 0
+		}
+	}
 	if normalized.Duration < 0 {
 		normalized.Duration = 0
 	}

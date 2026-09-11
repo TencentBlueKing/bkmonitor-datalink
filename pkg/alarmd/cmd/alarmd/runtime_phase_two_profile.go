@@ -139,6 +139,10 @@ func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (obs
 			StrategyCache: cfg.StrategySourceRedis().Destination(),
 			CMDBCache:     cfg.CMDBCacheRedis().Destination(),
 			LegacyService: cfg.Kafka.LegacyAdapter.ServiceRedis.Destination(),
+
+			PlatformKeyPrefix:   cfg.PlatformKeyPrefix(),
+			StrategyCachePrefix: cfg.PhaseTwo.Control.StrategyCachePrefix,
+			OwnStorePrefix:      cfg.Redis.StatePrefix,
 		},
 	}
 	// Digest the exact logged safe values, with the digest field still empty.

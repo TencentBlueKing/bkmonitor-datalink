@@ -323,6 +323,21 @@ func (c Config) StrategySourceRedis() RedisConnectionConfig {
 	return c.Redis.Connection()
 }
 
+// PlatformKeyPrefix is the platform's own key prefix - the root every cache it
+// writes hangs off. Both the host cache this process reads and the strategy
+// snapshot the compatibility output writes are keyed under it.
+//
+// It is stated once, under the compatibility adapter, because that is where the
+// platform's key space was first needed. The field is misnamed for this second
+// use and the name is worth moving, but not by stating the same value twice:
+// two keys for one platform fact drift, and the failure of a drifted prefix is
+// a read that returns nothing rather than an error. This accessor exists so the
+// read sites say which fact they want instead of reaching into a neighbouring
+// feature's configuration.
+func (c Config) PlatformKeyPrefix() string {
+	return c.Kafka.LegacyAdapter.SnapshotPrefix
+}
+
 // CMDBCacheRedis is where the platform's host cache is read from.
 func (c Config) CMDBCacheRedis() RedisConnectionConfig {
 	if c.PlatformCache.CMDB != nil {

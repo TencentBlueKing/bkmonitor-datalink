@@ -34,6 +34,12 @@ type RuntimeStorageFacts struct {
 	StrategyCache string `json:"strategy_cache"`
 	CMDBCache     string `json:"cmdb_cache"`
 	LegacyService string `json:"legacy_service"`
+	// The prefixes matter alongside the addresses: the right instance read
+	// with the wrong prefix returns nothing, and looks exactly like the right
+	// prefix read on the wrong instance.
+	PlatformKeyPrefix   string `json:"platform_key_prefix"`
+	StrategyCachePrefix string `json:"strategy_cache_prefix"`
+	OwnStorePrefix      string `json:"own_store_prefix"`
 }
 
 type RuntimeCapacityFacts struct {

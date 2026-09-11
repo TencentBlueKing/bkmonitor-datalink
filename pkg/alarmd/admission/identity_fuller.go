@@ -51,19 +51,20 @@ func (IdentityFuller) Fill(dimensions map[string]json.RawMessage, facts *Facts) 
 	if cloud == "" {
 		cloud = dimensionText(dimensions, "bk_cloud_id")
 	}
-	// Python coerces the cloud id with safe_int, so anything that is not a
-	// number becomes the direct area. Production really produces such values:
-	// a collector config whose cloud id placeholder was never rendered ships
-	// the literal template text as the dimension, and taking it at face value
-	// builds a key no host can have - which reads as "CMDB does not know this
-	// host" and drops series Python keeps.
-	cloud = safeIntText(cloud, "0")
 	if address != "" {
 		if cloud == "" {
 			// Python defaults an absent cloud to the direct area, and the
 			// CMDB cache keys hosts the same way.
 			cloud = "0"
 		}
+		// Deliberately not coerced. Three places in Python build a key from
+		// this dimension and only one of them coerces it: the host status
+		// filter does (safe_int), while the topology enrichment and the target
+		// match both take the value as it stands. This key feeds the other two,
+		// so coercing it here would resolve topology Python never resolves and
+		// match targets Python never matches - extra alerts rather than missing
+		// ones, which is why it went unnoticed. The coerced spelling lives on
+		// HostNaming.AddressKey, where the filter that wants it reads it.
 		facts.AddHostKey(address + "|" + cloud)
 	}
 	if hostIDText != "" {

@@ -807,3 +807,21 @@ func TestTheRemovedRuntimeRedisKeyIsRefusedRatherThanIgnored(t *testing.T) {
 		t.Fatalf("Load() error = %v, want the removed key named", err)
 	}
 }
+
+// The platform's key prefix is one fact with one home. The read sites ask for
+// it by name rather than reaching into the compatibility adapter's
+// configuration, and the accessor is the single place that knows where it is
+// currently stated - which is what makes moving the field later a one-line
+// change rather than a hunt.
+func TestThePlatformKeyPrefixIsOneFactWithOneSpelling(t *testing.T) {
+	cfg := validGoAccessConfigObject()
+	if got := cfg.PlatformKeyPrefix(); got != cfg.Kafka.LegacyAdapter.SnapshotPrefix || got == "" {
+		t.Fatalf("platform key prefix = %q, want the stated platform prefix", got)
+	}
+	// A valid configuration cannot leave it empty: an empty prefix reads the
+	// wrong key space, and that returns nothing rather than failing.
+	cfg.Kafka.LegacyAdapter.SnapshotPrefix = ""
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "snapshot_prefix") {
+		t.Fatalf("Validate() error = %v, want the missing platform prefix rejected", err)
+	}
+}

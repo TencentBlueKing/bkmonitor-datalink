@@ -1744,17 +1744,8 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 				errors.New("alarmd controlplane: frozen Plan cannot be compiled for G1 FULL execution"))
 		}
 		compiledGeneration := execution.StateGeneration(compiled.StateCompatibilityHash())
-		if plan.StateGeneration != "" && plan.StateGeneration != compiledGeneration {
-			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize,
-				errors.New("alarmd controlplane: frozen Plan state generation differs from compiled Plan"))
-		}
-		generationCompatible, err := runtime.stateGenerationCompatibleWithSegment(plan, record, segment, compiledGeneration)
-		if err != nil {
+		if err := runtime.checkFrozenPlanGeneration(ctx, plan, record, segment, compiledGeneration); err != nil {
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)
-		}
-		if !generationCompatible {
-			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize,
-				errors.New("alarmd controlplane: Plan activation state generation differs from compiled Plan"))
 		}
 		deadline, err := completionDeadline(request.EvaluationTime, plan.ScheduleSpec)
 		if err != nil {
@@ -1789,17 +1780,70 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 	return fact, nil
 }
 
-func (runtime *RedisCatalogRuntime) stateGenerationCompatibleWithSegment(
+// checkFrozenPlanGeneration decides whether a due Plan may be frozen under the
+// state generation its activation record names. That generation is the one the
+// Slot executes under: the Coordinator keys the Plan's state by it and compares
+// it with the live activation to decide when the Plan re-warms. Three
+// generations are in play, and only two of them are persisted facts:
+//
+//   - recorded: named by the activation record the Control Leader published
+//     with the Segment;
+//   - stored: carried by the Plan inside the Query Group object the Segment
+//     names by digest, computed by the Leader that wrote the object from that
+//     same Plan;
+//   - compiled: what this process derives by compiling that same Plan.
+//
+// stored and recorded were published together and have to agree. A record
+// that names a generation its own object does not carry is refused: the Slot
+// would mutate state keyed by one generation with a Plan of another, which is
+// what the generation exists to prevent.
+//
+// compiled is not a check on content. The Plan it is derived from is the
+// stored Plan, whose bytes the object read already hashed against the digest
+// the Segment names, so the content this process compiles is the content the
+// Leader published, by construction. A compiled generation that differs from
+// the stored one can therefore mean one thing only: this process derives the
+// hash by another formula (or state semantics) than the Leader that wrote the
+// object. That is the ordinary state of a rolling release for the minutes
+// until the new Leader republishes, and a version mismatch if it persists. It
+// is reported on state_generation_skew_total{kind="formula"} and tolerated.
+// Enforcing it, as this did until the release that moved the formula to
+// strategy-state-input-closure-v2, blocked every Slot of every Query Group
+// from the first Worker restart until the objects written under the old
+// formula expired a day later: the Progress cursor cannot pass a Slot that
+// will not freeze, and the Leader's own cutover only opens Segments ahead of
+// it. The Sep 4 move to the G4 formula had the same shape and was answered
+// with the pre-G4 tolerance below, which fits that one migration only; this
+// rule holds for any formula because it compares no generation to a formula.
+//
+// A Plan stored without a generation predates the field, so its record is the
+// only persisted generation and nothing published with it can vouch for it.
+// Such a record is accepted for a closed Segment when it names the generation
+// the pre-G4 formula derives, which is the only generation such a Segment can
+// legitimately carry; an open Segment must be cut by the Leader first.
+func (runtime *RedisCatalogRuntime) checkFrozenPlanGeneration(
+	ctx context.Context,
 	plan FrozenPlan,
 	record PlanActivationRecord,
 	segment persistedScheduleSegment,
 	compiled execution.StateGeneration,
-) (bool, error) {
-	if compiled == record.Fact.Selected.StateGeneration {
-		return true, nil
+) error {
+	recorded := record.Fact.Selected.StateGeneration
+	if plan.StateGeneration != "" {
+		if plan.StateGeneration != recorded {
+			runtime.observeStateGenerationSkew(ctx, "record")
+			return errors.New("alarmd controlplane: Plan activation state generation differs from the frozen Plan")
+		}
+		if compiled != plan.StateGeneration {
+			runtime.observeStateGenerationSkew(ctx, "formula")
+		}
+		return nil
 	}
-	if plan.StateGeneration != "" || segment.Schedule.Segment.End == nil {
-		return false, nil
+	if compiled == recorded {
+		return nil
+	}
+	if segment.Schedule.Segment.End == nil {
+		return errors.New("alarmd controlplane: open Segment stores a Plan without a state generation")
 	}
 	executionSemantics := plan.Plan.StrategyIR.ExecutionSemantics
 	legacy, err := contract.DeriveStateCompatibilityHashV1(contract.StateCompatibilityInputV1{
@@ -1810,9 +1854,19 @@ func (runtime *RedisCatalogRuntime) stateGenerationCompatibleWithSegment(
 		HistoryCellSemanticsVersion: runtime.stateSemantics.HistoryCellSemanticsVersion,
 	})
 	if err != nil {
-		return false, err
+		return err
 	}
-	return execution.StateGeneration(legacy) == record.Fact.Selected.StateGeneration, nil
+	if execution.StateGeneration(legacy) != recorded {
+		return errors.New("alarmd controlplane: closed Segment stores a Plan without a state generation and its activation names neither the compiled nor the pre-G4 one")
+	}
+	return nil
+}
+
+func (runtime *RedisCatalogRuntime) observeStateGenerationSkew(ctx context.Context, kind string) {
+	runtime.repository.observe(ctx, observability.Observation{
+		Component: observability.ComponentControlPlane, Stage: observability.StageFrozenPlanGeneration,
+		Result: observability.ResultSuccess, StateGenerationSkew: &observability.StateGenerationSkewFacts{Kind: kind},
+	})
 }
 
 func (runtime *RedisCatalogRuntime) slotRequirements(

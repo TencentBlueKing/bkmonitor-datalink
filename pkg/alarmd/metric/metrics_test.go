@@ -369,6 +369,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_object_catalog_redis_duration_seconds":        "variableLabels: {operation,result}",
 		"bkmonitor_alarmd_object_catalog_manifest_bytes":                "variableLabels: {}",
 		"bkmonitor_alarmd_object_read_total":                            "variableLabels: {kind,result}",
+		"bkmonitor_alarmd_state_generation_skew_total":                  "variableLabels: {kind}",
 		"bkmonitor_alarmd_legacy_active_qg_migration_total":             "variableLabels: {result,reason_class}",
 		"bkmonitor_alarmd_legacy_active_qg_migration_scan_keys":         "variableLabels: {}",
 		"bkmonitor_alarmd_legacy_active_qg_migration_duration_seconds":  "variableLabels: {result}",
@@ -739,6 +740,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("object_catalog_manifest_bytes"):         1,
 		// Kinds and results are closed vocabularies plus "other" for each.
 		fqName("object_read_total"):                           (len(observability.ObjectReadKinds) + 1) * (len(observability.ObjectReadResults) + 1),
+		fqName("state_generation_skew_total"):                 len(observability.StateGenerationSkewKinds) + 1,
 		fqName("legacy_active_qg_migration_total"):            3 * 11,
 		fqName("legacy_active_qg_migration_scan_keys"):        histogramSeries(1, len(legacyMigrationScanBuckets)),
 		fqName("legacy_active_qg_migration_duration_seconds"): histogramSeries(3, len(activeQGSetDurationBuckets)),

@@ -64,6 +64,7 @@ const (
 	StageActiveQGSet          = "active_qg_set"
 	StageObjectCatalog        = "object_catalog"
 	StageObjectRead           = "object_read"
+	StageFrozenPlanGeneration = "frozen_plan_generation"
 	StageScheduleCutover      = "schedule_cutover"
 	StageLegacyQGMigration    = "legacy_active_qg_migration"
 	StageDrainingQGReconciled = "draining_query_groups"
@@ -356,6 +357,20 @@ var (
 	ObjectReadResults = []string{"hit", "miss", "share", "missing", "invalid", "object", "legacy_segment", "segment_without_ref", "object_missing", "object_invalid", "object_mismatch"}
 )
 
+// StateGenerationSkewFacts report a due Plan whose state generation, as the
+// activation record names it, disagrees with a generation derived elsewhere:
+// "formula" when this process compiles the same Plan to another generation
+// than the Control Leader that published it (tolerated: the record's
+// generation governs the Slot), "record" when the record names a generation
+// the Query Group object published with it does not carry (refused).
+type StateGenerationSkewFacts struct {
+	Kind string
+}
+
+// StateGenerationSkewKinds is the closed vocabulary of
+// StateGenerationSkewFacts; a value outside it is reported as "other".
+var StateGenerationSkewKinds = []string{"formula", "record"}
+
 type LegacyQGMigrationFacts struct {
 	Result      string
 	ReasonClass string
@@ -538,6 +553,7 @@ type Observation struct {
 	ScheduleCutover         *ScheduleCutoverFacts
 	ObjectCatalog           *ObjectCatalogFacts
 	ObjectRead              *ObjectReadFacts
+	StateGenerationSkew     *StateGenerationSkewFacts
 	LegacyMigration         *LegacyQGMigrationFacts
 	DrainingQG              *DrainingQGFacts
 	SourceRefresh           *SourceRefreshFacts
@@ -627,6 +643,7 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.ScheduleCutover = normalizeScheduleCutoverFacts(observation.ScheduleCutover)
 	observation.ObjectCatalog = normalizeObjectCatalogFacts(observation.ObjectCatalog)
 	observation.ObjectRead = normalizeObjectReadFacts(observation.ObjectRead)
+	observation.StateGenerationSkew = normalizeStateGenerationSkewFacts(observation.StateGenerationSkew)
 	observation.LegacyMigration = normalizeLegacyQGMigrationFacts(observation.LegacyMigration)
 	observation.DrainingQG = normalizeDrainingQGFacts(observation.DrainingQG)
 	observation.SourceRefresh = normalizeSourceRefreshFacts(observation.Component, observation.Stage, observation.SourceRefresh)
@@ -916,6 +933,19 @@ func normalizeObjectReadFacts(facts *ObjectReadFacts) *ObjectReadFacts {
 	for _, result := range ObjectReadResults {
 		if facts.Result == result {
 			normalized.Result = result
+		}
+	}
+	return &normalized
+}
+
+func normalizeStateGenerationSkewFacts(facts *StateGenerationSkewFacts) *StateGenerationSkewFacts {
+	if facts == nil {
+		return nil
+	}
+	normalized := StateGenerationSkewFacts{Kind: "other"}
+	for _, kind := range StateGenerationSkewKinds {
+		if facts.Kind == kind {
+			normalized.Kind = kind
 		}
 	}
 	return &normalized

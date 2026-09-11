@@ -122,8 +122,9 @@ func TestDispatchSkipTallyReportsBothReasonsIncludingZero(t *testing.T) {
 	tally.SkippedNotDue()
 	tally.SkippedNotDue()
 	tally.SkippedOnBackoff()
+	tally.SkippedQueryCooldown()
 	counts = tally.Counts()
-	if counts["not_due"] != 2 || counts["backoff"] != 1 {
+	if counts["not_due"] != 2 || counts["backoff"] != 1 || counts["query_cooldown"] != 1 {
 		t.Fatalf("tally reports %v, want not_due=2 backoff=1", counts)
 	}
 

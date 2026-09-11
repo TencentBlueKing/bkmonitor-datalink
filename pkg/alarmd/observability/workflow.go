@@ -21,7 +21,7 @@ type PermitWaitFacts struct{ Recovery bool }
 
 func ValidRunOutcome(value string) bool {
 	switch value {
-	case "single_flight_busy", "ownership_rejected", "source_backoff", "source_retry", "source_blocked", "source_not_due", "source_error", "operation_not_ready", "admission_denied", "execute_returned", "cancelled", "panic", "other_error":
+	case "query_cooldown", "single_flight_busy", "ownership_rejected", "source_backoff", "source_retry", "source_blocked", "source_not_due", "source_error", "operation_not_ready", "admission_denied", "execute_returned", "cancelled", "panic", "other_error":
 		return true
 	}
 	return false

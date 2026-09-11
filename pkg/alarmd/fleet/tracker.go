@@ -23,7 +23,8 @@ const (
 	// KindDegradedRun is a query group whose recent rounds all finished in a
 	// degraded state: it is running, but not producing the result it exists to
 	// produce.
-	KindDegradedRun = "DEGRADED_RUN"
+	KindDegradedRun   = "DEGRADED_RUN"
+	KindQueryCooldown = "QUERY_COOLDOWN"
 	// KindBlockedRun is a query group whose recent rounds never reached
 	// execution at all.
 	KindBlockedRun = "BLOCKED_RUN"
@@ -105,8 +106,11 @@ func failedExecution(outcome string) bool {
 }
 
 type queryGroupState struct {
-	strategies   map[StrategyRef]struct{}
-	runStartedAt time.Time
+	queryCooldown *observability.QueryCooldownFacts
+	// Once cooldown exposes a failure, keep that evidence visible until a real healthy completion.
+	cooldownExposed bool
+	strategies      map[StrategyRef]struct{}
+	runStartedAt    time.Time
 	// failingSince is when the current unbroken sequence of rounds that
 	// reached execution and did not finish began. It is kept apart from
 	// runStartedAt on purpose: that clock starts at the first degraded round
@@ -218,7 +222,7 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 	// reports that separately -- but it is the only place the pipeline says why
 	// the round went wrong, so it is let through to be remembered.
 	failure := observation.QueryFailure
-	if trace.StrategyID == "" && completion == "" && runOutcome == "" && executeOutcome == "" && failure == nil {
+	if trace.StrategyID == "" && completion == "" && runOutcome == "" && executeOutcome == "" && failure == nil && observation.QueryCooldown == nil {
 		return
 	}
 
@@ -231,6 +235,16 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		tracker.groups[queryGroup] = state
 	}
 	at := tracker.now()
+	if facts := observation.QueryCooldown; facts != nil {
+		switch facts.Event {
+		case "entered", "extended":
+			copy := *facts
+			state.queryCooldown = &copy
+			state.cooldownExposed = true
+		case "recovered", "config_changed", "disabled":
+			state.queryCooldown = nil
+		}
+	}
 	if failure != nil {
 		// Remembered, not counted: this is context for an anomaly the outcome
 		// paths decide on. Treating a failure as conclusive on its own would
@@ -289,6 +303,7 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 func (tracker *Tracker) resetRun(state *queryGroupState) {
 	// The cause described the run that just ended. Leaving it would let a
 	// recovered object still explain itself with the last thing that went wrong.
+	state.cooldownExposed = false
 	state.cause = ""
 	state.degradedRuns = 0
 	state.blockedRuns = 0
@@ -309,18 +324,25 @@ func (tracker *Tracker) Anomalies() []Anomaly {
 	for queryGroup, state := range tracker.groups {
 		over := (state.currentKind == KindDegradedRun && state.degradedRuns >= tracker.degradedRounds) ||
 			(state.currentKind == KindBlockedRun && state.blockedRuns >= tracker.blockedRounds)
-		if !over {
+		if !over && state.queryCooldown == nil && !(state.cooldownExposed && state.inAnomalyRun) {
 			continue
 		}
 		anomaly := Anomaly{
-			QueryGroup: queryGroup,
-			Kind:       state.currentKind,
-			ReasonCode: state.reasonCode, Cause: state.cause,
+			QueryGroup:    queryGroup,
+			QueryCooldown: state.queryCooldown,
+			Kind:          state.currentKind,
+			ReasonCode:    state.reasonCode, Cause: state.cause,
 			Since:        state.runStartedAt,
 			SinceFrom:    SinceSnapshotContinuity,
 			FailingSince: state.failingSince,
 			Replica:      tracker.replica,
 			Failure:      state.lastFailure,
+		}
+		if anomaly.Kind == "" && state.queryCooldown != nil {
+			anomaly.Kind = KindQueryCooldown
+			if anomaly.Since.IsZero() {
+				anomaly.Since = state.queryCooldown.LastQueryAt
+			}
 		}
 		for strategy := range state.strategies {
 			anomaly.Strategies = append(anomaly.Strategies, strategy)

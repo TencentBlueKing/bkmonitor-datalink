@@ -27,6 +27,7 @@ func TestSlotExecutionCoordinatorCompletesFullEmptyWithoutBusinessSideEffects(t 
 	if err != nil || !result.Completed || result.Result != observability.ResultSuccess {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
+	assertQueryAvailability(t, result, execution.QueryAvailabilityAvailable)
 	assertFullEmptyProgress(t, fixture, request, len(plans))
 }
 
@@ -46,6 +47,7 @@ func TestSlotExecutionCoordinatorCompletesFullEmptySharedQueryForEveryPlan(t *te
 	if err != nil || !result.Completed || result.Result != observability.ResultSuccess {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
+	assertQueryAvailability(t, result, execution.QueryAvailabilityAvailable)
 	assertFullEmptyProgress(t, fixture, request, len(plans))
 }
 
@@ -160,6 +162,7 @@ func TestSlotExecutionCoordinatorCompletesUnavailableAfterPlanGap(t *testing.T) 
 	if err != nil || !result.Completed || result.Result != observability.ResultDegraded || result.ReasonCode != reason {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
+	assertQueryAvailability(t, result, execution.QueryAvailabilityUnknown)
 	assertCompletionGapBeforeProgress(t, fixture, execution.CompletenessUnavailable, execution.CompletionUnavailable, reason, len(plans))
 }
 
@@ -194,6 +197,7 @@ func TestSlotExecutionCoordinatorIsolatesReadinessInvalidConsumerOnSharedPhysica
 	if err != nil || !result.Completed || result.Result != observability.ResultDegraded || result.ReasonCode != reason {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
+	assertQueryAvailability(t, result, execution.QueryAvailabilityAvailable)
 	assertCompletionGapBeforeProgress(t, fixture, execution.CompletenessUnavailable, execution.CompletionUnavailable, reason, 1)
 	if len(fixture.ports.gapMutations) != 1 || fixture.ports.gapMutations[0].Identity.Plan != invalidPlan.Identity {
 		t.Fatalf("gap mutations=%+v, want only readiness-invalid Plan", fixture.ports.gapMutations)

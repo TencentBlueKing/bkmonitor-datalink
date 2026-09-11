@@ -226,7 +226,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	err = coordinator.ports.Sequencer.Sequence(ctx, sequencingScope(stream.header, stream.stateItems, stream.gapItems), func(sequenceCtx context.Context) error {
 		var executeErr error
 		result, executeErr = coordinator.finalizePreparedWithGaps(
-			sequenceCtx, request, stream.header, stream.bindings, stream.state, stream.gaps, stream.evaluated,
+			sequenceCtx, request, stream.header, stream.bindings, stream.state, stream.gaps, stream.evaluated, stream.queryEvidence.availability(),
 		)
 		return executeErr
 	})
@@ -762,7 +762,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePrepared(
 	evaluated execution.EvaluationResult,
 ) (execution.SlotExecutionResult, error) {
 	return coordinator.finalizePreparedWithGaps(
-		ctx, request, header, bindings, loadedState, execution.GapLoadResult{}, evaluated,
+		ctx, request, header, bindings, loadedState, execution.GapLoadResult{}, evaluated, execution.QueryAvailabilityUnknown,
 	)
 }
 
@@ -774,6 +774,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	loadedState execution.StatePreflightResult,
 	loadedGaps execution.GapLoadResult,
 	evaluated execution.EvaluationResult,
+	queryAvailability execution.QueryAvailability,
 ) (execution.SlotExecutionResult, error) {
 	var err error
 	activationRequest := duePlanActivationRequest(request.Contract, header.DuePlans)
@@ -979,7 +980,11 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		return execution.SlotExecutionResult{}, err
 	}
 
-	return coordinator.commitProgress(ctx, request, completion, string(cause))
+	result, err := coordinator.commitProgress(ctx, request, completion, string(cause))
+	if err == nil && result.Completed {
+		result.QueryAvailability = queryAvailability
+	}
+	return result, err
 }
 
 func unsatisfiedForcedWarmingActivations(

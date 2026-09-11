@@ -342,6 +342,7 @@ type Runner struct {
 	sourceFailures uint32
 	sourceNextAt   time.Time
 	dueBound       RunnerDueBound
+	queryCooldown  queryCooldownState
 }
 
 // DueVerdict is what one round was able to say about whether its Query Group
@@ -379,6 +380,9 @@ type RunnerDueBound struct {
 	// only make a schedule bound arrive earlier, never a backoff one, and a
 	// matured backoff belongs in the recovery queue, not the ready queue.
 	Deferred bool
+	// QueryCooldown suppresses queries, but must be revalidated on publication.
+	// Unlike Deferred it must not enter the execution-retry delayed queue.
+	QueryCooldown bool
 	// Retired says the Query Group has no successor Slot at all. A revocation
 	// can bring it back, so the caller bounds how long it waits.
 	Retired bool
@@ -425,6 +429,10 @@ func (runner *Runner) recordDueBound(decision string, facts SlotDueFacts) {
 	case "query_readiness_deferred":
 		bound.Verdict, bound.Executed, bound.Deferred = DueVerdictDue, true, true
 		bound.NotDueUntilUnix = runnerBoundSecond(runner.NextReadyAt())
+	case "query_cooldown":
+		bound.Verdict = DueVerdictDue
+		bound.QueryCooldown = true
+		bound.NotDueUntilUnix = runnerBoundSecond(runner.queryCooldown.wakeAt)
 	case "execute", "execution_returned", "operation_not_ready", "admission_denied":
 		bound.Verdict, bound.Executed = DueVerdictDue, true
 		// A completed Slot leaves no backoff and therefore no bound: the cursor
@@ -632,6 +640,14 @@ func (runner *Runner) runOneTracked(
 	if err := slot.Validate(runner.queryGroup); err != nil {
 		return execution.SlotExecutionResult{}, false, err
 	}
+	// The authoritative Slot supplies the maintenance deadline and configuration.
+	// Do not hide this gate in NextReadyAt: publication must be able to recheck it,
+	// and expired finalization must remain runnable without a query.
+	if runner.deferUnavailableQuery(ctx, slot) {
+		decision = "query_cooldown"
+		diagnosticReadyAt = runner.queryCooldown.wakeAt.UnixMilli()
+		return execution.SlotExecutionResult{}, false, nil
+	}
 	operation, ready := runner.operationFor(slot, runner.now())
 	if !ready {
 		decision = "operation_not_ready"
@@ -687,6 +703,7 @@ func (runner *Runner) runOneTracked(
 	}
 	if err == nil {
 		runner.recordResult(slot, result, runner.now())
+		runner.recordQueryAvailability(ctx, slot, result, sourceFacts.IntervalSeconds)
 	}
 	decision = "execution_returned"
 	return result, true, err

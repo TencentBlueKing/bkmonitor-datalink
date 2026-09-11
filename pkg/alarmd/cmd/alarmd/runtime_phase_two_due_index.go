@@ -112,8 +112,9 @@ type phaseTwoDueEntry struct {
 	// bounds are swept. And a matured backoff is recovery work: it belongs in
 	// the delayed queue that alternates with the ready queue, not in the ready
 	// queue, or backing off would become a way to jump the recovery rotation.
-	deferred bool
-	position int
+	deferred      bool
+	queryCooldown bool
+	position      int
 }
 
 func newPhaseTwoDueIndex(recorder *metric.Recorder) *phaseTwoDueIndex {
@@ -132,7 +133,18 @@ func newPhaseTwoDueIndex(recorder *metric.Recorder) *phaseTwoDueIndex {
 // afterwards. A count assembled later is a bit somebody has to remember to set
 // on every path that grows into the decision, and the paths that forget it are
 // exactly the ones nobody thought about.
-func (index *phaseTwoDueIndex) RecordSkip(recorder *metric.Recorder, deferred bool) {
+func (index *phaseTwoDueIndex) RecordSkip(recorder *metric.Recorder, deferred bool, queryGroup execution.QueryGroupIdentity) {
+	if index != nil && !deferred {
+		index.mu.Lock()
+		entry := index.entries[queryGroup]
+		cooldown := entry != nil && entry.queryCooldown
+		index.mu.Unlock()
+		if cooldown {
+			recorder.RecordDispatchSkipped("query_cooldown")
+			index.skips.SkippedQueryCooldown()
+			return
+		}
+	}
 	reason := "not_due"
 	if deferred {
 		reason = "backoff"
@@ -274,11 +286,12 @@ func (index *phaseTwoDueIndex) Record(
 	if ok {
 		existing.dueAtUnix, existing.intervalSeconds = dueAt, interval
 		existing.deferred = bound.Deferred
+		existing.queryCooldown = bound.QueryCooldown
 		heap.Fix(&index.pending, existing.position)
 	} else {
 		entry := &phaseTwoDueEntry{
 			queryGroup: queryGroup, lifecycle: lifecycle, dueAtUnix: dueAt,
-			intervalSeconds: interval, deferred: bound.Deferred,
+			intervalSeconds: interval, deferred: bound.Deferred, queryCooldown: bound.QueryCooldown,
 		}
 		index.entries[queryGroup] = entry
 		heap.Push(&index.pending, entry)

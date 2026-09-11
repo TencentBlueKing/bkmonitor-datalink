@@ -1092,7 +1092,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 			// decision was made about it, which is what a turn is; not advancing
 			// would stop the walk on the first parked object and never reach the
 			// ones behind it.
-			dispatcher.dueIndex.RecordSkip(dispatcher.bundle.dependencies.Recorder, parkedOnBackoff)
+			dispatcher.dueIndex.RecordSkip(dispatcher.bundle.dependencies.Recorder, parkedOnBackoff, scheduled.queryGroup)
 			advance()
 			continue
 		}

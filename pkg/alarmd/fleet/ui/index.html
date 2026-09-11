@@ -457,6 +457,15 @@ function loadObjects() {
         fcell.title = ['阶段 ' + f.stage, '分类 ' + f.category, f.code ? '代码 ' + f.code : '']
           .filter(Boolean).join('\n');
       }
+      if (a.query_cooldown) {
+        var cooldown = document.createElement('div');
+        cooldown.textContent = new Date(a.query_cooldown.until).getTime() <= Date.now()
+          ? '查询冷却：已到允许查询时间，等待真实查询恢复'
+          : '查询冷却至 ' + new Date(a.query_cooldown.until).toLocaleString();
+        cooldown.title = '最近真实查询：' + new Date(a.query_cooldown.last_query_at).toLocaleString()
+          + '；连续失败：' + (a.query_cooldown.failures >= 32 ? '至少 ' : '') + a.query_cooldown.failures;
+        fcell.appendChild(cooldown);
+      }
       // A long duration alone does not say whether the object is recovering
       // slowly or has stopped entirely; this chip is the only thing on the row
       // that separates the two. The row's duration is how long the object has
@@ -641,6 +650,7 @@ function betweenReads(key, value, at) {
 // An unknown kind shows its own name: being told a word you do not recognise
 // is a far better outcome than being told the wrong familiar one.
 var KIND_TEXT = {
+  QUERY_COOLDOWN: '外部查询冷却',
   DEGRADED_RUN: '降级',
   BLOCKED_RUN: '被阻塞',
   OVERDUE_WAKE: '没被调度'

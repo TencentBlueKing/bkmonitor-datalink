@@ -168,6 +168,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		slog.String("direction", string(observation.Direction)),
 		slog.Int64("duration_ms", observation.Duration.Milliseconds()),
 	}
+	if f := observation.QueryCooldown; f != nil {
+		attributes = append(attributes, slog.Any("query_cooldown", f))
+	}
 	if f := observation.QueryTiming; f != nil {
 		attributes = append(attributes, slog.Any("query_timing", f))
 	}

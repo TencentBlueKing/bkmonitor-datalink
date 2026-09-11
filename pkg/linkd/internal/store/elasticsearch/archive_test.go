@@ -382,7 +382,7 @@ func archiveStoredAlert(t *testing.T, stableID string, createAt time.Time) store
 }
 
 func succeededEnrich() domain.JSONObject {
-	return domain.JSONObject{"status": json.RawMessage(`"succeeded"`), "processors": json.RawMessage(`[]`)}
+	return domain.JSONObject{"processors": json.RawMessage(`[]`)}
 }
 
 func jsonResponse(t *testing.T, value any) *http.Response {

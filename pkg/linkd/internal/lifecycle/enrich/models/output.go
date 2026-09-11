@@ -22,7 +22,8 @@ type DimensionDisplay struct {
 
 // StrategyValues 定义 strategy Processor 的完整输出字段。
 type StrategyValues struct {
-	BKStrategyID      int64  `json:"bk_strategy_id"`
+	StrategyID        int64  `json:"strategy_id"`
+	StrategyVersion   int64  `json:"strategy_version"`
 	MonitorTemplateID int64  `json:"monitor_template_id"`
 	StrategyConfigID  string `json:"strategy_config_id"`
 	StrategyName      string `json:"strategy_name"`

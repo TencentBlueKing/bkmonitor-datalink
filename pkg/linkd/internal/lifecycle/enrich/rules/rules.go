@@ -28,11 +28,10 @@ const (
 )
 
 const (
-	DependencyKingeyeStrategy         = "kingeye_strategy"
-	DependencyPlatformStrategyHistory = "platform_strategy_history"
-	DependencyMetricLibrary           = "metric_library"
-	DependencyOneModel                = "onemodel"
-	DependencyAlarmSource             = "alarm_source"
+	DependencyKingeyeStrategy = "kingeye_strategy"
+	DependencyMetricLibrary   = "metric_library"
+	DependencyOneModel        = "onemodel"
+	DependencyAlarmSource     = "alarm_source"
 )
 
 const (

@@ -32,7 +32,8 @@ func (Display) Match(context.Context, *enrich.Scope) (bool, error) { return true
 
 // Process 生成告警展示字段。
 func (Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
-	ids, diagnostics := enrich.ValidateRequiredIDs(scope.Alert())
+	alert := scope.Alert()
+	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
 	if len(diagnostics) != 0 {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
 	}
@@ -43,17 +44,28 @@ func (Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Process
 	if err != nil || !found {
 		return failedDependency(rules.DependencyKingeyeStrategy), nil
 	}
-	alert := scope.Alert()
-	snapshot, err := displayStrategySnapshot(ctx, scope, ids)
-	if err != nil {
-		return failedDependency(rules.DependencyPlatformStrategyHistory), nil
+	projection, err := strategy.StrategyItemProjection()
+	if err != nil || projection.BKBizID != ids.BizID {
+		return failedDependency(rules.DependencyKingeyeStrategy), nil
 	}
 	objectName := cleanDisplayObject(alert, strategy, scope.Context().Resource.Values)
-	itemName, err := displayItem(ctx, scope, strategy, snapshot)
+	itemName, err := displayItem(ctx, scope, strategy, projection)
 	if err != nil {
 		return failedDependency(rules.DependencyMetricLibrary), nil
 	}
-	dimensions, err := buildDisplayDimensions(ctx, scope, strategy, snapshot, alert.Dimensions)
+	additional, err := additionalDimensions(alert.ExtraData)
+	if err != nil {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: []enrich.Diagnostic{{
+			Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"},
+		}}}, nil
+	}
+	alertDimensions, err := combinedDimensions(alert)
+	if err != nil {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: []enrich.Diagnostic{{
+			Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"},
+		}}}, nil
+	}
+	dimensions, err := buildDisplayDimensions(ctx, scope, strategy, projection, alertDimensions, additional)
 	if err != nil {
 		return failedDependency(rules.DependencyMetricLibrary), nil
 	}
@@ -63,7 +75,8 @@ func (Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Process
 		dimensions,
 		classification,
 		scope.Context().Resource.Values,
-		snapshot.Items[0].QueryConfigs[0].ResultTableID,
+		projection.QueryConfigs[0].ResultTableID,
+		additional,
 	)
 	values := models.DisplayValues{
 		Title: title, Content: alert.Content, Object: objectName,
@@ -163,41 +176,24 @@ func displayResourceName(resource models.ResourceValues) string {
 	return ""
 }
 
-func displayStrategySnapshot(
-	ctx context.Context,
-	scope *enrich.Scope,
-	ids enrich.RequiredIDs,
-) (models.BkStrategySnapshot, error) {
-	history, found, err := scope.BKStrategyHistory(ctx, ids.StrategyID, ids.HistoryID)
-	if err != nil || !found {
-		return models.BkStrategySnapshot{}, fmt.Errorf("load platform strategy history")
-	}
-	snapshot, err := history.Snapshot()
-	if err != nil || snapshot.BKBizID != ids.BizID || len(snapshot.Items) == 0 || len(snapshot.Items[0].QueryConfigs) == 0 {
-		return models.BkStrategySnapshot{}, fmt.Errorf("decode platform strategy history")
-	}
-	return snapshot, nil
-}
-
 func displayItem(
 	ctx context.Context,
 	scope *enrich.Scope,
 	strategy models.CWStrategy,
-	snapshot models.BkStrategySnapshot,
+	projection models.StrategyItemProjection,
 ) (string, error) {
-	item := snapshot.Items[0]
-	return cleanItem(ctx, scope, strategy, item, item.QueryConfigs[0])
+	return cleanItem(ctx, scope, strategy, projection, projection.QueryConfigs[0])
 }
 
 func buildDisplayDimensions(
 	ctx context.Context,
 	scope *enrich.Scope,
 	strategy models.CWStrategy,
-	snapshot models.BkStrategySnapshot,
+	projection models.StrategyItemProjection,
 	dimensions domain.DimensionMap,
+	additional domain.DimensionMap,
 ) ([]models.DimensionDisplay, error) {
-	item := snapshot.Items[0]
-	query := item.QueryConfigs[0]
+	query := projection.QueryConfigs[0]
 	objectModelCode := ""
 	if strategy.ObjectModelCode != nil {
 		objectModelCode = *strategy.ObjectModelCode
@@ -251,7 +247,42 @@ func buildDisplayDimensions(
 		}
 		appendDimension(key, name)
 	}
+	result = appendAdditionalDisplayDimensions(result, additional, nameByKey, resource)
 	return result, nil
+}
+
+func appendAdditionalDisplayDimensions(
+	entries []models.DimensionDisplay,
+	additional domain.DimensionMap,
+	nameByKey map[string]string,
+	resource models.ResourceValues,
+) []models.DimensionDisplay {
+	seen := make(map[string]struct{}, len(entries)+len(additional))
+	for _, entry := range entries {
+		if entry.RealKey != nil {
+			seen[*entry.RealKey] = struct{}{}
+		}
+	}
+	keys := make([]string, 0, len(additional))
+	for key := range additional {
+		if _, exists := seen[key]; !exists {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value := additional[key]
+		realKey := key
+		realValue := value
+		name := nameByKey[key]
+		if name == "" {
+			name = key
+		}
+		entries = append(entries, models.DimensionDisplay{
+			Name: name, Value: displayDimensionValue(key, value, resource), RealKey: &realKey, RealValue: &realValue,
+		})
+	}
+	return entries
 }
 
 func displayDimensionValue(
@@ -281,6 +312,7 @@ func buildDimensionText(
 	classification rules.DisplayClassification,
 	resource models.ResourceValues,
 	resultTableID string,
+	additional domain.DimensionMap,
 ) string {
 	copied := append([]models.DimensionDisplay(nil), entries...)
 	sort.SliceStable(copied, func(i, j int) bool { return copied[i].Name < copied[j].Name })
@@ -288,6 +320,12 @@ func buildDimensionText(
 	for _, entry := range copied {
 		if entry.Name == rules.FieldBKBizID || excludeAPMDimension(entry, resultTableID) {
 			continue
+		}
+		if entry.RealKey != nil {
+			if _, exists := additional[*entry.RealKey]; exists {
+				parts = append(parts, fmt.Sprintf("%s(%v)", entry.Name, rules.ScalarValue(entry.Value)))
+				continue
+			}
 		}
 		parts = appendDimensionText(parts, entry, resource)
 	}

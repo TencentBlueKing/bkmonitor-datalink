@@ -33,8 +33,6 @@ type Event struct {
 	Severity           string       `json:"severity"`
 	Action             EventAction  `json:"action"`
 	ActionReason       string       `json:"action_reason"`
-	ConditionKey       string       `json:"condition_key"`
-	ConditionName      string       `json:"condition_name"`
 	Dimensions         DimensionMap `json:"dimensions"`
 	SubjectSystem      string       `json:"subject_system"`
 	SubjectType        string       `json:"subject_type"`
@@ -125,8 +123,6 @@ func (e Event) validate(validateJSON bool) error {
 		{"title", e.Title, 256},
 		{"content", e.Content, 1 << 20},
 		{"action_reason", e.ActionReason, 256},
-		{"condition_key", e.ConditionKey, 256},
-		{"condition_name", e.ConditionName, 256},
 		{"subject_system", e.SubjectSystem, 32},
 		{"subject_type", e.SubjectType, 128},
 		{"subject_id", e.SubjectID, 256},

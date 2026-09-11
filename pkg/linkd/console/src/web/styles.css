@@ -21,6 +21,21 @@
   --red: #ff718f;
 }
 
+:root[data-theme="light"] {
+  color-scheme: light;
+  color: #263648;
+  background: #f4f7fa;
+  --bg: #f4f7fa;
+  --panel: #ffffff;
+  --panel-2: #eef3f7;
+  --line: #ccd7e2;
+  --muted: #60758a;
+  --green: #087b5c;
+  --blue: #1769aa;
+  --amber: #9a6500;
+  --red: #b42343;
+}
+
 .help-label {
   display: inline-flex;
   align-items: center;
@@ -298,6 +313,7 @@ a {
   padding: 6px 9px;
   letter-spacing: 0.12em;
 }
+.theme-button,
 .timezone-button,
 .range-controls button,
 .pagination button {
@@ -308,6 +324,7 @@ a {
   font-size: 11px;
   cursor: pointer;
 }
+.theme-button:hover,
 .timezone-button:hover,
 .range-controls button:hover,
 .pagination button:hover:not(:disabled) {
@@ -3846,6 +3863,257 @@ td:last-child {
 .control-plane-charts {
   margin-top: 14px;
 }
+
+:root[data-theme="light"] body {
+  background:
+    radial-gradient(circle at 75% -20%, #dbe8f3 0, transparent 38%), var(--bg);
+}
+:root[data-theme="light"] .sidebar {
+  border-color: #cbd6e0;
+  background: rgba(248, 250, 252, 0.97);
+}
+:root[data-theme="light"] .brand,
+:root[data-theme="light"] .sidebar-footer,
+:root[data-theme="light"] .topbar {
+  border-color: #cbd6e0;
+}
+:root[data-theme="light"] .brand-mark {
+  border-color: #63aa94;
+  background: #e4f4ee;
+  box-shadow: 0 0 22px rgba(8, 123, 92, 0.08);
+}
+:root[data-theme="light"] .brand small,
+:root[data-theme="light"] .environment-label,
+:root[data-theme="light"] .nav-group-title,
+:root[data-theme="light"] .sidebar-footer {
+  color: #65798c;
+}
+:root[data-theme="light"] .sidebar nav a {
+  color: #4f6478;
+}
+:root[data-theme="light"] .sidebar nav a:hover {
+  color: #1f3448;
+  background: #edf2f6;
+}
+:root[data-theme="light"] .sidebar nav a.active {
+  color: #075f49;
+  border-color: #a7d3c5;
+  background: linear-gradient(90deg, #dff2eb, #f4faf7);
+}
+:root[data-theme="light"] .nav-glyph {
+  border-color: #b8c7d4;
+  color: #536b80;
+}
+:root[data-theme="light"] .topbar {
+  background: rgba(244, 247, 250, 0.9);
+}
+:root[data-theme="light"] .readonly-pill {
+  border-color: #9ccbbb;
+  background: #e4f3ed;
+}
+:root[data-theme="light"] .theme-button,
+:root[data-theme="light"] .timezone-button,
+:root[data-theme="light"] .range-controls button,
+:root[data-theme="light"] .pagination button,
+:root[data-theme="light"] button:not(.primary-button) {
+  border-color: #b8c6d3;
+  background-color: #ffffff;
+  color: #40576b;
+}
+:root[data-theme="light"] .page-heading h1,
+:root[data-theme="light"] h1,
+:root[data-theme="light"] h2,
+:root[data-theme="light"] h3,
+:root[data-theme="light"] strong {
+  color: #203548;
+}
+:root[data-theme="light"] .runtime-flow-panel,
+:root[data-theme="light"] .lifecycle-state-card,
+:root[data-theme="light"] .runtime-config-panel,
+:root[data-theme="light"] .source-runtime-card,
+:root[data-theme="light"] .stage-metric-panel,
+:root[data-theme="light"] .panel,
+:root[data-theme="light"] .table-panel,
+:root[data-theme="light"] .filter-panel,
+:root[data-theme="light"] .batch-diagnostics,
+:root[data-theme="light"] .pipeline-strip,
+:root[data-theme="light"] .storage-stat,
+:root[data-theme="light"] .es-topology-panel,
+:root[data-theme="light"] .es-storage-panel,
+:root[data-theme="light"] .redis-tab-heading,
+:root[data-theme="light"] .redis-key-value,
+:root[data-theme="light"] .redis-data-section,
+:root[data-theme="light"] .redis-detail-panel,
+:root[data-theme="light"] .control-plane-dependencies,
+:root[data-theme="light"] .control-plane-task-card,
+:root[data-theme="light"] .control-plane-summary-card {
+  border-color: var(--line);
+  background: var(--panel);
+}
+:root[data-theme="light"] .batch-config-summary > span {
+  background: #e8eef3;
+  color: #40576b;
+}
+:root[data-theme="light"] .stat-card {
+  background: linear-gradient(145deg, #ffffff, #edf3f7);
+}
+:root[data-theme="light"] .runtime-node,
+:root[data-theme="light"] .pipeline-node,
+:root[data-theme="light"] .redis-fact,
+:root[data-theme="light"] .control-plane-task-fact,
+:root[data-theme="light"] .control-plane-task-note,
+:root[data-theme="light"] .control-plane-workload {
+  border-color: #c4d1dc;
+  background: #f1f5f8;
+}
+:root[data-theme="light"] th,
+:root[data-theme="light"] .redis-table th {
+  border-color: #cbd6df;
+  background: #e8eef3;
+  color: #526a7e;
+}
+:root[data-theme="light"] td {
+  border-color: #dbe3ea;
+  color: #3d5367;
+}
+:root[data-theme="light"] tr:hover td {
+  background: #edf4f7;
+}
+:root[data-theme="light"] input,
+:root[data-theme="light"] select,
+:root[data-theme="light"] textarea,
+:root[data-theme="light"] .json-viewer pre {
+  border-color: #bdcad5;
+  background: #ffffff;
+  color: #2e465a;
+}
+:root[data-theme="light"] .warning-banner {
+  border-color: #d6b56c;
+  background: #fff7e4;
+  color: #805b0a;
+}
+:root[data-theme="light"] .error-banner,
+:root[data-theme="light"] .page-error-state,
+:root[data-theme="light"] .storage-error-state {
+  border-color: #dfa9b5;
+  background: #fff0f3;
+  color: #9d2340;
+}
+:root[data-theme="light"] .help-tip-content {
+  border-color: #a9beb4;
+  background: #ffffff;
+  color: #334b5d;
+  box-shadow: 0 10px 28px rgba(38, 54, 72, 0.2);
+}
+
+:root[data-theme="light"] .help-tip-trigger,
+:root[data-theme="light"] .range-controls,
+:root[data-theme="light"] .source-label,
+:root[data-theme="light"] .json-viewer-toolbar,
+:root[data-theme="light"] .lifecycle-runtime-panel,
+:root[data-theme="light"] .lifecycle-groups-panel,
+:root[data-theme="light"] .cleaner-queue-panel,
+:root[data-theme="light"] .kafka-cluster-panel,
+:root[data-theme="light"] .kafka-detail-panel,
+:root[data-theme="light"] .kafka-metrics-panel,
+:root[data-theme="light"] .kafka-topic-navigator,
+:root[data-theme="light"] .kafka-filter-bar,
+:root[data-theme="light"] .kafka-assignment-section,
+:root[data-theme="light"] .kafka-partition-section,
+:root[data-theme="light"] .es-target-card,
+:root[data-theme="light"] .es-storage-filters,
+:root[data-theme="light"] .es-storage-pagination,
+:root[data-theme="light"] .es-alias-list > div,
+:root[data-theme="light"] .es-drawer-configured,
+:root[data-theme="light"] .es-target-detail-list,
+:root[data-theme="light"] .redis-stream-background,
+:root[data-theme="light"] .redis-inline-filters,
+:root[data-theme="light"] .redis-detail-summary > span {
+  border-color: #c4d1dc;
+  background: #f1f5f8;
+}
+:root[data-theme="light"] .lifecycle-runtime-panel > header > a,
+:root[data-theme="light"] .cleaner-queue-actions > a,
+:root[data-theme="light"] .lifecycle-node-snapshot > div,
+:root[data-theme="light"] .kafka-cluster-panel details,
+:root[data-theme="light"] .es-target-config code,
+:root[data-theme="light"] .es-alias-list code,
+:root[data-theme="light"] .es-target-detail-list code {
+  border-color: #bdcbd7;
+  background: #e7eef4;
+  color: #345a78;
+}
+:root[data-theme="light"] .source-runtime-card.selected,
+:root[data-theme="light"] .runtime-node:hover,
+:root[data-theme="light"] .runtime-node:focus-visible,
+:root[data-theme="light"] .range-controls button.selected,
+:root[data-theme="light"] .kafka-topic-tabs button[aria-selected="true"],
+:root[data-theme="light"] .kafka-topic-card[aria-current="true"],
+:root[data-theme="light"] .redis-purpose-tabs button[aria-selected="true"],
+:root[data-theme="light"] .redis-table tr.selected td {
+  border-color: #9ccbbb;
+  background: #e3f3ed;
+  color: #075f49;
+}
+:root[data-theme="light"] .pipeline-node > span,
+:root[data-theme="light"] .control-plane-chain-step > div,
+:root[data-theme="light"] .control-plane-redis-node {
+  border-color: #c4d1dc;
+  background: #e8eef3;
+  color: #536b80;
+}
+:root[data-theme="light"] .pipeline-node > span.connected,
+:root[data-theme="light"] .es-entity-node {
+  border-color: #9ccbbb;
+  background: #dff2eb;
+  color: #075f49;
+}
+:root[data-theme="light"] .status-badge {
+  border-color: #bcc9d4;
+  background: #edf2f6;
+  color: #52677a;
+}
+:root[data-theme="light"] .status-badge.success {
+  border-color: #9ccbbb;
+  background: #e3f3ed;
+  color: #087b5c;
+}
+:root[data-theme="light"] .status-badge.warning,
+:root[data-theme="light"] .kafka-issue-list,
+:root[data-theme="light"] .redis-risk-note,
+:root[data-theme="light"] .kafka-contract-note {
+  border-color: #dbc17e;
+  background: #fff7e3;
+  color: #805b0a;
+}
+:root[data-theme="light"] .status-badge.danger {
+  border-color: #dfa9b5;
+  background: #fff0f3;
+  color: #9d2340;
+}
+:root[data-theme="light"] .es-doc-bar {
+  background: #d9e2ea;
+}
+:root[data-theme="light"] .skeleton {
+  background: linear-gradient(100deg, #e8eef3 30%, #f8fafc 50%, #e8eef3 70%);
+  background-size: 200% 100%;
+}
+:root[data-theme="light"] .detail-drawer > header {
+  background: rgba(255, 255, 255, 0.96);
+}
+:root[data-theme="light"] .lifecycle-config-dialog {
+  background: #ffffff;
+}
+
+:root[data-theme="light"] .drawer-backdrop,
+:root[data-theme="light"] .es-drawer-backdrop {
+  background: rgba(43, 57, 70, 0.34);
+}
+:root[data-theme="light"] .detail-drawer,
+:root[data-theme="light"] .es-target-drawer {
+  background: #ffffff;
+}
+
 .control-plane-config-dialog {
   width: min(820px, calc(100vw - 48px));
 }

@@ -75,35 +75,24 @@ func NewCWStrategyClient(config CWStrategyClientConfig) (*CWStrategyClient, erro
 }
 
 // GetByBKStrategyID 按 status.bk_strategy_id 读取全租户唯一的鲸眼声明式策略。
-func (c *CWStrategyClient) GetByBKStrategyID(ctx context.Context, bkStrategyID int64) (models.CWStrategy, bool, error) {
+func (c *CWStrategyClient) GetByBKStrategyID(ctx context.Context, tenantID string, bkStrategyID int64) (models.CWStrategy, bool, error) {
 	if ctx == nil {
 		return models.CWStrategy{}, false, fmt.Errorf("get cw strategy by bk strategy ID: context must not be nil")
 	}
-	if bkStrategyID <= 0 {
-		return models.CWStrategy{}, false, fmt.Errorf("get cw strategy by bk strategy ID: ID must be positive")
+	if tenantID == "" || bkStrategyID <= 0 {
+		return models.CWStrategy{}, false, fmt.Errorf("get cw strategy by bk strategy ID: tenant ID and positive strategy ID are required")
 	}
 	return c.take(
 		c.db.WithContext(ctx).
+			Where("bk_tenant_id = ?", tenantID).
 			Where(datatypes.JSONQuery("status").Equals(bkStrategyID, "bk_strategy_id")),
+		tenantID,
+		bkStrategyID,
 		"query cw strategy by bk strategy ID",
 	)
 }
 
-// GetByMonitorTemplateID 按 monitor_template_id 读取鲸眼声明式策略。
-func (c *CWStrategyClient) GetByMonitorTemplateID(ctx context.Context, monitorTemplateID int64) (models.CWStrategy, bool, error) {
-	if ctx == nil {
-		return models.CWStrategy{}, false, fmt.Errorf("get cw strategy by monitor template ID: context must not be nil")
-	}
-	if monitorTemplateID <= 0 {
-		return models.CWStrategy{}, false, fmt.Errorf("get cw strategy by monitor template ID: ID must be positive")
-	}
-	return c.take(
-		c.db.WithContext(ctx).Where("monitor_template_id = ?", monitorTemplateID),
-		"query cw strategy by monitor template ID",
-	)
-}
-
-func (c *CWStrategyClient) take(query *gorm.DB, operation string) (models.CWStrategy, bool, error) {
+func (c *CWStrategyClient) take(query *gorm.DB, tenantID string, strategyID int64, operation string) (models.CWStrategy, bool, error) {
 	var row cwStrategyRow
 	err := query.
 		Table("core_v1alpha1_strategy").
@@ -117,9 +106,15 @@ func (c *CWStrategyClient) take(query *gorm.DB, operation string) (models.CWStra
 	if err != nil {
 		return models.CWStrategy{}, false, fmt.Errorf("%s: %w", operation, err)
 	}
+	if tenantID != "" && (row.BKTenantID == nil || *row.BKTenantID != tenantID) {
+		return models.CWStrategy{}, false, fmt.Errorf("%w: core_v1alpha1_strategy tenant identity does not match query", enrich.ErrInvalidDataSourceResponse)
+	}
 	result, err := cwStrategyFromRow(row)
 	if err != nil {
 		return models.CWStrategy{}, false, fmt.Errorf("%w: %w", enrich.ErrInvalidDataSourceResponse, err)
+	}
+	if strategyID > 0 && result.Status.BKStrategyID != strategyID {
+		return models.CWStrategy{}, false, fmt.Errorf("%w: core_v1alpha1_strategy strategy identity does not match query", enrich.ErrInvalidDataSourceResponse)
 	}
 	return result, true, nil
 }

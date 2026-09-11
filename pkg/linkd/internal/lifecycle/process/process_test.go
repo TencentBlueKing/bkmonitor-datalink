@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"linkd/internal/config"
 	"linkd/internal/lifecycle"
@@ -22,47 +23,69 @@ import (
 	"linkd/internal/telemetry"
 )
 
-func TestReleaseRequiresAlarmSourceDataSource(t *testing.T) {
+func TestOneModelTransportRejectsExcessiveConnectionBudget(t *testing.T) {
 	t.Parallel()
-
-	cfg := config.Config{
-		Lifecycle: validLifecycleConfig(),
-		Storage: &config.StorageConfig{
-			Repository: config.RepositoryTypeMySQL,
-			MySQL:      validMySQLConfig(),
-			Redis:      validRedisConfig(),
-		},
-		EventSources: []config.EventSource{{
-			EventSourceID: "built_in_bk",
-			Enrich:        config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "source"}}},
-		}},
-	}
-	if err := validateEnricherConfig(cfg.EventSources, *cfg.Lifecycle); err == nil || !strings.Contains(err.Error(), "lifecycle.datasources.alarm_source") {
-		t.Fatalf("ValidateConfig() error=%v", err)
+	dataSource := &config.EnrichElasticsearchDataSource{Addresses: []string{"http://127.0.0.1:9200"}}
+	if _, err := newOneModelTransport(dataSource, 1025, time.Second); err == nil {
+		t.Fatal("newOneModelTransport() accepted an excessive connection budget")
 	}
 }
 
-func TestReleaseRequiresEnrichDataSources(t *testing.T) {
+func TestOneModelTransportUsesConnectionBudget(t *testing.T) {
 	t.Parallel()
+	dataSource := &config.EnrichElasticsearchDataSource{Addresses: []string{"http://127.0.0.1:9200"}}
+	transport, err := newOneModelTransport(dataSource, 36, 30*time.Second)
+	if err != nil {
+		t.Fatalf("newOneModelTransport() error = %v", err)
+	}
+	transport.Close()
+}
 
-	cfg := config.Config{
-		Lifecycle: validLifecycleConfig(),
-		Storage: &config.StorageConfig{
-			Repository: config.RepositoryTypeMySQL,
-			MySQL:      validMySQLConfig(),
-			Redis:      validRedisConfig(),
+func TestReleaseRequiresMySQLDataSource(t *testing.T) {
+	t.Parallel()
+	source := config.EventSource{
+		EventSourceID: "built_in_bk",
+		Enrich:        config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "source"}}},
+	}
+	if err := validateEnricherConfig(source); err == nil || !strings.Contains(err.Error(), "enrich.datasources.mysql") {
+		t.Fatalf("validateEnricherConfig() error=%v", err)
+	}
+	source.Enrich.DataSources = &config.EnrichDataSources{MySQL: validEnrichMySQLDataSource()}
+	if err := validateEnricherConfig(source); err != nil {
+		t.Fatalf("complete source dependencies: %v", err)
+	}
+}
+
+func TestDisplayRequiresMySQLDataSource(t *testing.T) {
+	t.Parallel()
+	source := config.EventSource{
+		EventSourceID: "built_in_bk",
+		Enrich:        config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "display"}}},
+	}
+	if err := validateEnricherConfig(source); err == nil || !strings.Contains(err.Error(), "enrich.datasources.mysql") {
+		t.Fatalf("mysql requirement error=%v", err)
+	}
+	source.Enrich.DataSources = &config.EnrichDataSources{MySQL: validEnrichMySQLDataSource()}
+	if err := validateEnricherConfig(source); err != nil {
+		t.Fatalf("complete display dependencies: %v", err)
+	}
+}
+
+func TestResourceRequiresMySQLAndElasticsearch(t *testing.T) {
+	t.Parallel()
+	source := config.EventSource{
+		EventSourceID: "built_in_bk",
+		Enrich: config.EnrichConfig{
+			Processors:  []config.EnrichProcessorConfig{{Type: "resource"}},
+			DataSources: &config.EnrichDataSources{},
 		},
-		EventSources: []config.EventSource{{
-			EventSourceID: "built_in_bk",
-			Enrich:        config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "resource"}}},
-		}},
 	}
-	if err := validateEnricherConfig(cfg.EventSources, *cfg.Lifecycle); err == nil || !strings.Contains(err.Error(), "lifecycle.datasources.cw_strategy") {
-		t.Fatalf("ValidateConfig() error=%v", err)
+	if err := validateEnricherConfig(source); err == nil || !strings.Contains(err.Error(), "enrich.datasources.mysql") {
+		t.Fatalf("validateEnricherConfig() error=%v", err)
 	}
-	cfg.Lifecycle.DataSources.CWStrategy = validMySQLConfig()
-	if err := validateEnricherConfig(cfg.EventSources, *cfg.Lifecycle); err == nil || !strings.Contains(err.Error(), "lifecycle.datasources.onemodel") {
-		t.Fatalf("ValidateConfig() error=%v", err)
+	source.Enrich.DataSources.MySQL = validEnrichMySQLDataSource()
+	if err := validateEnricherConfig(source); err == nil || !strings.Contains(err.Error(), "enrich.datasources.elasticsearch") {
+		t.Fatalf("validateEnricherConfig() error=%v", err)
 	}
 }
 
@@ -148,6 +171,12 @@ func validLifecycleConfig() *config.LifecycleConfig {
 
 func validMySQLConfig() *config.MySQLConfig {
 	return &config.MySQLConfig{
+		Address: "mysql.example.com:3306", Database: "linkd", Username: "linkd",
+	}
+}
+
+func validEnrichMySQLDataSource() *config.EnrichMySQLDataSource {
+	return &config.EnrichMySQLDataSource{
 		Address:  "mysql.example.com:3306",
 		Database: "linkd",
 		Username: "linkd",
@@ -160,28 +189,30 @@ func validRedisConfig() *config.RedisConfig {
 
 func TestReleaseEnrichRoutesAreIndependent(t *testing.T) {
 	t.Parallel()
-	runtime := &enrichRuntime{}
-	cfg := *validLifecycleConfig()
 	source := config.EventSource{EventSourceID: "dynamic-source", Version: 1}
-	first, err := runtime.router(source, cfg, nil)
+	firstRuntime, err := openEnrichRuntime(context.Background(), source, 8, time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = firstRuntime.Close() }()
+	first, err := firstRuntime.router(source, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	source.Version = 2
 	source.Enrich.Processors = []config.EnrichProcessorConfig{{Type: "source"}}
-	if _, err := runtime.router(source, cfg, nil); err == nil {
+	if err := validateEnricherConfig(source); err == nil {
 		t.Fatal("missing data source accepted")
 	}
-	cfg.DataSources.AlarmSource = validMySQLConfig()
-	second, err := runtime.router(source, cfg, nil)
-	if err != nil {
+	source.Enrich.DataSources = &config.EnrichDataSources{MySQL: validEnrichMySQLDataSource()}
+	if err := validateEnricherConfig(source); err != nil {
 		t.Fatal(err)
 	}
 	source.Enrich.Processors[0].Type = "unknown"
-	if _, err := runtime.router(source, cfg, nil); err == nil {
+	if err := validateEnricherConfig(source); err == nil {
 		t.Fatal("unknown processor accepted")
 	}
-	if first.(*assembly.Router).EnrichChainKind(source.EventSourceID) != lifecycle.EnrichChainNoop || second.(*assembly.Router).EnrichChainKind(source.EventSourceID) != lifecycle.EnrichChainConfigured {
+	if first.(*assembly.Router).EnrichChainKind(source.EventSourceID) != lifecycle.EnrichChainNoop {
 		t.Fatal("new release changed an existing route")
 	}
 }

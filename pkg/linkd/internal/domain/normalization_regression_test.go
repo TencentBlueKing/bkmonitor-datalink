@@ -37,7 +37,6 @@ func TestNormalizationPreservesJSONValidationAndOwnership(t *testing.T) {
 			alert := validAlert()
 			alert.ExtraData = input
 			alert.Enrich = domain.JSONObject{
-				"status":     json.RawMessage(`"succeeded"`),
 				"processors": json.RawMessage(`[{"test":{"status":"succeeded","value":{"value":` + tc.raw + `}}}]`),
 			}
 			log := domain.AlertLog{LogID: "log", BKTenantID: "tenant", AlertID: "alert", OperatorKind: domain.OperatorKindSystem, OperationKind: domain.OperationKindTrigger, Params: input, CreatedTime: time.Now()}

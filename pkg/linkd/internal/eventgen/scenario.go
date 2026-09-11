@@ -110,7 +110,6 @@ type alertTemplate struct {
 	Scenario      Scenario
 	AlertID       string
 	Title         string
-	ConditionName string
 	Severity      string
 	Dimensions    map[string]any
 	Subject       standardSubject
@@ -146,7 +145,7 @@ func buildAlertTemplate(
 
 	switch scenario {
 	case ScenarioCPUHigh:
-		template.Title, template.ConditionName = "主机 CPU 使用率过高", "CPU 使用率"
+		template.Title = "主机 CPU 使用率过高"
 		template.Subject.System, template.Subject.Type, template.Subject.Name = "cmdb", "host", "host-"+ip
 		// Uint64N 的结果严格小于 32，可安全转换为 int。
 		//nolint:gosec // G115: 取值上界保证转换安全。
@@ -154,7 +153,7 @@ func buildAlertTemplate(
 		dimensions["ip"], dimensions["cpu_core"] = ip, cpuCore
 		template.TriggerExtra, template.ResolvedExtra = metricPair("cpu_usage", 90+fraction(random, 9), 50+fraction(random, 20), 85, "percent")
 	case ScenarioMemoryHigh:
-		template.Title, template.ConditionName = "主机内存使用率过高", "内存使用率"
+		template.Title = "主机内存使用率过高"
 		template.Subject.System, template.Subject.Type, template.Subject.Name = "cmdb", "host", "host-"+ip
 		// Uint64N 的结果严格小于 8，可安全转换为 int。
 		//nolint:gosec // G115: 取值上界保证转换安全。
@@ -162,26 +161,26 @@ func buildAlertTemplate(
 		dimensions["ip"], dimensions["memory_total_gb"] = ip, 16*(1+memoryClass)
 		template.TriggerExtra, template.ResolvedExtra = metricPair("memory_usage", 90+fraction(random, 8), 55+fraction(random, 20), 85, "percent")
 	case ScenarioDiskFull:
-		template.Title, template.ConditionName = "磁盘空间即将写满", "磁盘使用率"
+		template.Title = "磁盘空间即将写满"
 		device, mount := diskIdentity(sequence)
 		template.Subject.System, template.Subject.Type, template.Subject.Name = "cmdb", "disk", ip+":"+mount
 		dimensions["ip"], dimensions["device"], dimensions["mount_point"], dimensions["filesystem"] = ip, device, mount, "xfs"
 		template.TriggerExtra, template.ResolvedExtra = metricPair("disk_usage", 96+fraction(random, 3), 60+fraction(random, 20), 95, "percent")
 	case ScenarioDiskReadOnly:
-		template.Title, template.ConditionName = "磁盘文件系统只读", "文件系统写入状态"
+		template.Title = "磁盘文件系统只读"
 		device, mount := diskIdentity(sequence)
 		template.Subject.System, template.Subject.Type, template.Subject.Name = "cmdb", "disk", ip+":"+mount
 		dimensions["ip"], dimensions["device"], dimensions["mount_point"], dimensions["filesystem"] = ip, device, mount, "ext4"
 		template.TriggerExtra = stateExtra("filesystem_read_only", true, "read_only")
 		template.ResolvedExtra = stateExtra("filesystem_read_only", false, "read_write")
 	case ScenarioDiskIOLatencyHigh:
-		template.Title, template.ConditionName = "磁盘 IO 延迟过高", "磁盘写入延迟"
+		template.Title = "磁盘 IO 延迟过高"
 		device, mount := diskIdentity(sequence)
 		template.Subject.System, template.Subject.Type, template.Subject.Name = "cmdb", "disk", ip+":"+device
 		dimensions["ip"], dimensions["device"], dimensions["mount_point"] = ip, device, mount
 		template.TriggerExtra, template.ResolvedExtra = metricPair("disk_write_latency", 80+fraction(random, 120), 5+fraction(random, 20), 50, "ms")
 	case ScenarioOOMKilled:
-		template.Title, template.ConditionName = "容器发生 OOM", "OOM Kill"
+		template.Title = "容器发生 OOM"
 		namespace := "namespace-" + strconv.Itoa(1+int(sequence%12))
 		pod := fmt.Sprintf("worker-%06d", sequence%1_000_000)
 		template.Subject.System, template.Subject.Type, template.Subject.Name = "kubernetes", "container", namespace+"/"+pod
@@ -189,27 +188,27 @@ func buildAlertTemplate(
 		template.TriggerExtra = stateExtra("oom_killed", true, "killed")
 		template.ResolvedExtra = stateExtra("oom_killed", false, "running")
 	case ScenarioProcessDown:
-		template.Title, template.ConditionName = "关键进程退出", "进程存活状态"
+		template.Title = "关键进程退出"
 		process := []string{"nginx", "mysqld", "redis-server", "linkd"}[sequence%4]
 		template.Subject.System, template.Subject.Type, template.Subject.Name = "cmdb", "process", ip+":"+process
 		dimensions["ip"], dimensions["process_name"], dimensions["service_name"] = ip, process, process
 		template.TriggerExtra = stateExtra("process_up", 0, "down")
 		template.ResolvedExtra = stateExtra("process_up", 1, "up")
 	case ScenarioHostUnreachable:
-		template.Title, template.ConditionName = "主机不可达", "主机连通性"
+		template.Title = "主机不可达"
 		zone := "zone-" + strconv.Itoa(1+int(sequence%6))
 		template.Subject.System, template.Subject.Type, template.Subject.Name = "cmdb", "host", "host-"+ip
 		dimensions["ip"], dimensions["zone"] = ip, zone
 		template.TriggerExtra, template.ResolvedExtra = metricPair("ping_packet_loss", 100, 0, 80, "percent")
 	case ScenarioNetworkPacketLossHigh:
-		template.Title, template.ConditionName = "网络丢包率过高", "网络丢包率"
+		template.Title = "网络丢包率过高"
 		peer := patternedIP(sequence + 1_000_000)
 		iface := "eth" + strconv.Itoa(int(sequence%4))
 		template.Subject.System, template.Subject.Type, template.Subject.Name = "cmdb", "network_interface", ip+":"+iface
 		dimensions["ip"], dimensions["peer_ip"], dimensions["interface"] = ip, peer, iface
 		template.TriggerExtra, template.ResolvedExtra = metricPair("packet_loss", 15+fraction(random, 45), fraction(random, 2), 10, "percent")
 	case ScenarioServiceUnavailable:
-		template.Title, template.ConditionName = "服务实例不可用", "服务可用性"
+		template.Title = "服务实例不可用"
 		service := []string{"api", "gateway", "scheduler", "worker"}[sequence%4]
 		port := 8000 + int(sequence%1000)
 		template.Subject.System, template.Subject.Type, template.Subject.Name = "service", "service_instance", service+"@"+ip
@@ -217,27 +216,27 @@ func buildAlertTemplate(
 		template.TriggerExtra = stateExtra("service_up", 0, "unavailable")
 		template.ResolvedExtra = stateExtra("service_up", 1, "available")
 	case ScenarioHTTPErrorRateHigh:
-		template.Title, template.ConditionName = "HTTP 错误率过高", "HTTP 5xx 错误率"
+		template.Title = "HTTP 错误率过高"
 		service := []string{"api", "gateway", "console"}[sequence%3]
 		route := []string{"/api/v1/events", "/api/v1/alerts", "/healthz"}[sequence%3]
 		template.Subject.System, template.Subject.Type, template.Subject.Name = "service", "http_route", service+route
 		dimensions["service"], dimensions["route"], dimensions["method"], dimensions["status_class"] = service, route, "GET", "5xx"
 		template.TriggerExtra, template.ResolvedExtra = metricPair("http_error_rate", 10+fraction(random, 25), fraction(random, 2), 5, "percent")
 	case ScenarioDatabaseConnectionsHigh:
-		template.Title, template.ConditionName = "数据库连接数过高", "数据库连接使用率"
+		template.Title = "数据库连接数过高"
 		engine := []string{"mysql", "postgresql"}[sequence%2]
 		instance := fmt.Sprintf("%s-%06d", engine, sequence%1_000_000)
 		template.Subject.System, template.Subject.Type, template.Subject.Name = "database", "database_instance", instance
 		dimensions["db_instance"], dimensions["engine"], dimensions["region"] = instance, engine, region(sequence)
 		template.TriggerExtra, template.ResolvedExtra = metricPair("connection_usage", 92+fraction(random, 7), 45+fraction(random, 25), 85, "percent")
 	case ScenarioOnlineUsersZero:
-		template.Title, template.ConditionName = "在线人数掉零", "在线用户数"
+		template.Title = "在线人数掉零"
 		app := []string{"portal", "console", "mobile"}[sequence%3]
 		template.Subject.System, template.Subject.Type, template.Subject.Name = "application", "application", app+"@"+region(sequence)
 		dimensions["app"], dimensions["region"], dimensions["channel"] = app, region(sequence), "realtime"
 		template.TriggerExtra, template.ResolvedExtra = metricPair("online_users", 0, 10+float64(random.Uint64N(5000)), 1, "count")
 	case ScenarioQueueBacklogHigh:
-		template.Title, template.ConditionName = "消息队列积压过高", "消费积压"
+		template.Title = "消息队列积压过高"
 		queue := fmt.Sprintf("events-%02d", sequence%32)
 		group := fmt.Sprintf("consumer-%02d", sequence%16)
 		template.Subject.System, template.Subject.Type, template.Subject.Name = "message_queue", "consumer_group", queue+":"+group

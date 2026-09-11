@@ -38,11 +38,10 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | source（丰富分组） | 丰富结果中的来源补充信息，保存 Alert.EventSourceID 对应的 source_id、从 alarm_collect_alarmsource 查询的 source_name，以及承载来源事件标识的 meta_info；不替代 Linkd 的 EventSourceID |
 | meta_info（丰富字段） | 迁移后承载 Event.SourceEventID 中的来源事件标识，保存到 enrich.source.meta_info；旧实现使用内部转换对象 ID，本次已确认调整其取值来源 |
 | metric（丰富分组） | 丰富结果中的指标补充信息，包含监控项展示名称、按原分类解释的指标名称、单位及本次告警观测数据的查询参数；指标名称不统一定义为指标 ID，多个丰富分类共用该分组 |
-| 监控平台策略 | 监控平台管理和执行的策略；本次输入中的 bk_strategy_id 与 bk_strategy_history_id 指向它；鲸眼 StrategyConfig 使用独立的 UID 与配置语义 |
-| 鲸眼策略配置 | 鲸眼侧与监控平台策略关联的配置；读取时先查 StrategyConfig，0 条时再查 CloudStrategyConfig，各自多匹配沿用底层结果第一条；监控平台历史记录 ID 不参与其版本选择 |
-| 监控平台策略历史引用 | Event.Labels 中 bk_strategy_id 与 bk_strategy_history_id 组成的引用；两者均为正整数且必须同时存在；前者标识平台策略，后者对应 alarm_strategy_history.id，也不用于选择鲸眼 StrategyConfig 的历史版本；引用在租户和平台作用域内解释 |
-| 监控平台策略快照 | 由 bk_strategy_history_id 对应历史记录 id、bk_strategy_id 对应 strategy_id 联合定位，并校验 content.bk_biz_id 与来源业务一致后取得的 alarm_strategy_history.content；与关联鲸眼 StrategyConfig 分别持有 |
-| 指标查询参数 | 丰富结果中用于查询本次告警对应观测数据的参数；由明确来源的策略字段与 Event.Dimensions 构造，保留必要过滤条件和聚合语义；两份策略的读取条件与各字段取值来源分别定义，不承诺复刻完整下发配置 |
+| 来源策略身份 | Event.Labels 中 `strategy_id` 与 `strategy_version`；前者关联鲸眼声明式策略，后者记录来源声明的策略版本并原样进入 enrich.strategy，不用于运行时回查蓝鲸策略表 |
+| 鲸眼策略配置 | 鲸眼侧与监控平台策略关联的声明式配置；Linkd 按 `bk_tenant_id + status.bk_strategy_id` 查询并复核身份，分类、展示和指标查询配置统一读取其 `spec` |
+| 鲸眼声明式策略查询投影 | `core_v1alpha1_strategy.spec.strategy_item` 中的聚合、表达式和 `query_configs`；供 Strategy、Display 与 Metric 在单次 Enrich 内共享，替代运行时读取 `alarm_strategy_v2` 和 `alarm_strategy_history` |
+| 指标查询参数 | 丰富结果中用于查询本次告警对应观测数据的参数；当前由鲸眼声明式策略 `spec.strategy_item.query_configs` 与 Event.Dimensions 构造，不回查蓝鲸策略当前表或历史表 |
 | 维度条件文本（where_condition） | 按旧过滤和拼接规则从工作维度生成的条件文本，保存到 enrich.metric.where_condition；生成过程不修改 Event 的来源维度 |
 | 首次异常点时间（anomaly_begin_time） | 上游提供的本次告警对应首次异常点时间，从 Event.ExtraData.anomaly_begin_time 读取；仅接受字符串并原样保存到 enrich.metric.anomaly_begin_time，空字符串也保留，缺失时省略 |
 | 来源业务 | Event.Labels.bk_biz_id 表示的业务上下文；`built_in_bk` 来源要求该标签为数字 Scalar 正整数，替代旧回调 F05–F07 的业务输入，用于对应的来源业务和查询消费位置 |

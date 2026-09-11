@@ -22,10 +22,33 @@ func TestStandardCleanerMapsKnownFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if draft.Action != "triggered" || draft.Title != "CPU high" ||
+	if draft.Action != "triggered" || draft.Title != "CPU high" || draft.BKTenantID != "tenant-1" ||
 		draft.SourceEventID != "source-event-1" || draft.SourceAlertID != "source-alert-1" ||
 		draft.SubjectSystem != "cmdb" || draft.SubjectType != "host" || draft.SubjectID != "1" {
 		t.Fatalf("draft=%#v", draft)
+	}
+}
+
+func TestStandardCleanerAdditionalDimensions(t *testing.T) {
+	t.Parallel()
+	cleaner := StandardCleaner{}
+	valid := RawEventMessage{Payload: []byte(`{"action":"triggered","dimensions":{"host":"host-1"},"extra_data":{"additional_dimensions":{"bk_host_id":101}}}`)}
+	draft, err := cleaner.Clean(context.Background(), valid)
+	if err != nil {
+		t.Fatalf("valid additional dimensions: %v", err)
+	}
+	if string(draft.ExtraData["additional_dimensions"]) != `{"bk_host_id":101}` {
+		t.Fatalf("additional dimensions=%s", draft.ExtraData["additional_dimensions"])
+	}
+	for name, payload := range map[string]string{
+		"nested value":  `{"action":"triggered","dimensions":{},"extra_data":{"additional_dimensions":{"host":{"id":1}}}}`,
+		"duplicate key": `{"action":"triggered","dimensions":{"host":"host-1"},"extra_data":{"additional_dimensions":{"host":"host-2"}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := cleaner.Clean(context.Background(), RawEventMessage{Payload: []byte(payload)}); err == nil {
+				t.Fatal("invalid additional dimensions accepted")
+			}
+		})
 	}
 }
 
@@ -54,5 +77,5 @@ func TestStandardCleanerJSONValidationAndUnknownFields(t *testing.T) {
 }
 
 func validPayload() []byte {
-	return []byte(`{"event_id":"source-event-1","alert_id":"source-alert-1","title":"CPU high","content":"usage high","severity":"P2","action":"triggered","condition_key":"cpu","dimensions":{"host":"host-1"},"subject":{"system":"cmdb","type":"host","id":"1","name":"host-1"},"occurred_at":"2026-09-01T00:00:00Z","produced_at":"2026-09-01T00:00:01Z","labels":{"team":"ops"},"extra_data":{}}`)
+	return []byte(`{"bk_tenant_id":"tenant-1","event_id":"source-event-1","alert_id":"source-alert-1","title":"CPU high","content":"usage high","severity":"P2","action":"triggered","dimensions":{"host":"host-1"},"subject":{"system":"cmdb","type":"host","id":"1","name":"host-1"},"occurred_at":"2026-09-01T00:00:00Z","produced_at":"2026-09-01T00:00:01Z","labels":{"team":"ops"},"extra_data":{}}`)
 }

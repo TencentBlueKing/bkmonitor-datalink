@@ -52,8 +52,7 @@ type ProcessorEntry map[string]ProcessorEnvelope
 
 // Payload 是 Alert.enrich 的固定顶层协议。
 type Payload struct {
-	Status     domain.EnrichStatus `json:"status"`
-	Processors []ProcessorEntry    `json:"processors"`
+	Processors []ProcessorEntry `json:"processors"`
 }
 
 // JSONObject 校验 Payload 并转换为领域 JSON object。
@@ -74,9 +73,6 @@ func (p Payload) JSONObject() (domain.JSONObject, error) {
 
 // Validate 校验状态、单 key entry 和 JSON value。
 func (p Payload) Validate() error {
-	if !processorStatusValid(p.Status) {
-		return fmt.Errorf("enrich payload status is invalid: %q", p.Status)
-	}
 	if p.Processors == nil {
 		return fmt.Errorf("enrich payload processors must be an array")
 	}
@@ -103,9 +99,6 @@ func (p Payload) Validate() error {
 				}
 			}
 		}
-	}
-	if got := aggregateEntries(p.Processors); got != p.Status {
-		return fmt.Errorf("enrich payload status %q does not match aggregate %q", p.Status, got)
 	}
 	return nil
 }

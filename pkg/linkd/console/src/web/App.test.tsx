@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -56,6 +56,15 @@ describe("App", () => {
         </MemoryRouter>
       </QueryClientProvider>,
     );
+    const themeButton = screen.getByRole("button", {
+      name: "切换为浅色模式",
+    });
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    act(() => themeButton.click());
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+    expect(
+      screen.getByRole("button", { name: "切换为深色模式" }),
+    ).toHaveTextContent("深色");
     expect(screen.getByText("READ ONLY")).toBeInTheDocument();
     expect(
       await screen.findByRole("heading", { name: "处理状态" }),

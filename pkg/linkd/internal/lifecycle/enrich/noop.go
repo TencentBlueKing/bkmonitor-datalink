@@ -24,10 +24,10 @@ func (NoopEnricher) Enrich(ctx context.Context, _ lifecycle.EnrichInput) (lifecy
 	if err := ctx.Err(); err != nil {
 		return lifecycle.EnrichResult{}, err
 	}
-	payload := Payload{Status: domain.EnrichStatusSucceeded, Processors: []ProcessorEntry{}}
+	payload := Payload{Processors: []ProcessorEntry{}}
 	data, err := payload.JSONObject()
 	if err != nil {
 		return lifecycle.EnrichResult{}, err
 	}
-	return lifecycle.EnrichResult{Status: payload.Status, Data: data}, nil
+	return lifecycle.EnrichResult{Status: domain.EnrichStatusSucceeded, Data: data}, nil
 }

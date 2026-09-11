@@ -58,7 +58,9 @@ func TestResolveSourceAndTenant(t *testing.T) {
 		{
 			name: "non unique fingerprint", source: func() linkdconfig.EventSource {
 				source := base
-				source.FingerprintField = "condition_key"
+				source.FingerprintMode = linkdconfig.FingerprintModeFields
+				source.FingerprintField = ""
+				source.FingerprintFields = []string{"subject_system", "dimensions.ip"}
 				return source
 			}(),
 			sourceID: base.EventSourceID, tenantID: "tenant-a", wantError: "fingerprint must include",
@@ -68,7 +70,7 @@ func TestResolveSourceAndTenant(t *testing.T) {
 				source := base
 				source.FingerprintMode = linkdconfig.FingerprintModeFields
 				source.FingerprintField = ""
-				source.FingerprintFields = []string{"condition_key", "dimensions.generator_id"}
+				source.FingerprintFields = []string{"subject_id", "dimensions.generator_id"}
 				return source
 			}(),
 			sourceID: base.EventSourceID, tenantID: "tenant-a", wantTenant: "tenant-a",

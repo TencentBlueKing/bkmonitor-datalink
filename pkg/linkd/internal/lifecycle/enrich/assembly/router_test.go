@@ -44,9 +44,21 @@ func TestBaseCollectRawEventRunsLifecycleEnrichment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event.EventSourceID != source.EventSourceID || event.SourceEventID != "source-event-1" ||
-		event.SourceAlertID != "source-alert-1" || event.SubjectName != "host-101" {
+	if event.BKTenantID != datasources.SampleTenantID || event.EventSourceID != source.EventSourceID ||
+		event.SourceEventID != "source-event-1" || event.SourceAlertID != "source-alert-1" ||
+		event.SubjectName != "host-101" ||
+		!event.OccurredAt.Equal(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)) ||
+		!event.ProducedAt.Equal(time.Date(2026, 9, 1, 0, 0, 1, 0, time.UTC)) ||
+		!event.ReceivedAt.Equal(time.Date(2026, 9, 1, 0, 0, 2, 0, time.UTC)) {
 		t.Fatalf("event=%#v", event)
+	}
+	strategyID, strategyIDOK := event.Labels["strategy_id"].NumberValue()
+	strategyVersion, strategyVersionOK := event.Labels["strategy_version"].NumberValue()
+	bizID, bizIDOK := event.Labels["bk_biz_id"].NumberValue()
+	if !strategyIDOK || strategyID != 123 || !strategyVersionOK || strategyVersion != 1 || !bizIDOK || bizID != 2 ||
+		string(event.ExtraData["additional_dimensions"]) != `{"bk_host_id":101}` ||
+		string(event.ExtraData["anomaly_begin_time"]) != `"2026-09-01T00:00:00Z"` {
+		t.Fatalf("event labels=%#v extra_data=%#v", event.Labels, event.ExtraData)
 	}
 
 	dataSources := (&datasources.Mock{}).Sources()
@@ -79,6 +91,10 @@ func TestBaseCollectRawEventRunsLifecycleEnrichment(t *testing.T) {
 		t.Fatal(err)
 	}
 	alert := storedAlert.Alert
+	if !alert.LastOccurredAt.Equal(event.OccurredAt) || !alert.BeginAt.Equal(event.OccurredAt) ||
+		!alert.CreateAt.Equal(event.CreateAt) || string(alert.ExtraData["additional_dimensions"]) != `{"bk_host_id":101}` {
+		t.Fatalf("alert did not inherit opening event facts: alert=%#v event=%#v", alert, event)
+	}
 	if processed.Outcome != lifecycle.OutcomeAlertCreated || alert.EnrichStatus != domain.EnrichStatusSucceeded {
 		t.Fatalf("processed=%#v alert=%#v", processed, alert)
 	}
@@ -127,7 +143,8 @@ func TestRouterRunsConfiguredBaseCollectSlice(t *testing.T) {
 		}
 	}
 	strategy := payload.Processors[0]["strategy"].Value
-	if string(strategy["bk_strategy_id"]) != "123" || string(strategy["strategy_config_id"]) != `"strategyconfig1"` ||
+	if string(strategy["strategy_id"]) != "123" || string(strategy["strategy_version"]) != "1" ||
+		string(strategy["strategy_config_id"]) != `"strategyconfig1"` ||
 		!strings.Contains(string(strategy["strategy_name"]), "CPU") {
 		t.Fatalf("strategy=%#v", strategy)
 	}
@@ -190,7 +207,7 @@ func TestRouterInvalidInputFailsBeforeDataSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	alert := baseCollectAlert("built_in_bk")
-	delete(alert.Labels, "bk_strategy_id")
+	delete(alert.Labels, "strategy_id")
 	result, err := router.Enrich(context.Background(), lifecycle.EnrichInput{Alert: alert})
 	if err != nil {
 		t.Fatal(err)
@@ -208,7 +225,7 @@ func baseCollectEventSource() config.EventSource {
 		Cleaner:         config.CleanerConfig{Type: config.CleanerTypeStandard},
 		FingerprintMode: config.FingerprintModeField, FingerprintField: "source_alert_id",
 		DefaultSeverity: "warning",
-		Enrich: config.EnrichConfig{Processors: []config.EnrichProcessorConfig{
+		Enrich: config.EnrichConfig{DataSources: testEnrichDataSources(), Processors: []config.EnrichProcessorConfig{
 			{Type: "strategy"}, {Type: "resource"}, {Type: "display"}, {Type: "metric"}, {Type: "source"},
 		}},
 		Storage: config.EventSourceStorageConfig{Type: config.StorageTypeKafka, Kafka: config.KafkaStorageConfig{
@@ -218,24 +235,32 @@ func baseCollectEventSource() config.EventSource {
 	}.WithDefaults()
 }
 
+func testEnrichDataSources() *config.EnrichDataSources {
+	return &config.EnrichDataSources{
+		MySQL:         &config.EnrichMySQLDataSource{Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader"},
+		Elasticsearch: &config.EnrichElasticsearchDataSource{Addresses: []string{"http://onemodel.example.com:9200"}, IndexPrefix: "bk_monitor_base_"},
+	}
+}
+
 func baseCollectRawPayload() []byte {
 	return []byte(`{
+		"bk_tenant_id":"tenant-1",
 		"event_id":"source-event-1","alert_id":"source-alert-1",
 		"title":"CPU usage is high","content":"Host 10.0.0.1 CPU usage reached 92.5%",
 		"severity":"warning","action":"triggered","action_reason":"",
-		"condition_key":"cpu_usage","condition_name":"CPU 使用率",
 		"dimensions":{"bk_inst_id":101,"bk_target_ip":"10.0.0.1","bk_target_cloud_id":0},
 		"subject":{"system":"cmdb","type":"host","id":"101","name":"host-101"},
 		"occurred_at":"2026-09-01T00:00:00Z","produced_at":"2026-09-01T00:00:01Z",
-		"labels":{"bk_strategy_id":123,"bk_strategy_history_id":70001,"bk_biz_id":2},
-		"extra_data":{"anomaly_begin_time":"2026-09-01T00:00:00Z"}
+		"labels":{"strategy_id":123,"strategy_version":1,"bk_biz_id":2},
+		"extra_data":{"anomaly_begin_time":"2026-09-01T00:00:00Z","additional_dimensions":{"bk_host_id":101}}
 	}`)
 }
 
 func assertBaseCollectEnrichment(t *testing.T, payload enrich.Payload) {
 	t.Helper()
 	strategy := payload.Processors[0]["strategy"].Value
-	if string(strategy["bk_strategy_id"]) != "123" || string(strategy["strategy_config_id"]) != `"strategyconfig1"` {
+	if string(strategy["strategy_id"]) != "123" || string(strategy["strategy_version"]) != "1" ||
+		string(strategy["strategy_config_id"]) != `"strategyconfig1"` {
 		t.Fatalf("strategy=%#v", strategy)
 	}
 	resource := payload.Processors[1]["resource"].Value
@@ -244,14 +269,30 @@ func assertBaseCollectEnrichment(t *testing.T, payload enrich.Payload) {
 		t.Fatalf("resource=%#v", resource)
 	}
 	display := payload.Processors[2]["display"].Value
-	if string(display["title"]) != `"CPU 使用率过高"` || string(display["object"]) != `"host-101"` {
+	if string(display["title"]) != `"CPU 使用率过高"` || string(display["object"]) != `"host-101"` ||
+		string(display["dimension_text"]) != `"bk_host_id(101)"` {
 		t.Fatalf("display=%#v", display)
+	}
+	var dimensions []models.DimensionDisplay
+	if err := json.Unmarshal(display["dimensions"], &dimensions); err != nil {
+		t.Fatal(err)
+	}
+	if len(dimensions) != 1 || dimensions[0].Name != "bk_host_id" || dimensions[0].RealKey == nil ||
+		*dimensions[0].RealKey != "bk_host_id" || dimensions[0].RealValue == nil {
+		t.Fatalf("display dimensions=%#v", dimensions)
 	}
 	metric := payload.Processors[3]["metric"].Value
 	if string(metric["display_name"]) != `"CPU 使用率"` || string(metric["metric_name"]) != `"usage"` ||
 		string(metric["unit"]) != `"percent"` || string(metric["result_table_id"]) != `"system.cpu"` ||
+		string(metric["where_condition"]) != `"bk_inst_id='101' and bk_target_cloud_id='0' and bk_target_ip='10.0.0.1'"` ||
 		string(metric["anomaly_begin_time"]) != `"2026-09-01T00:00:00Z"` {
 		t.Fatalf("metric=%#v", metric)
+	}
+	var queryParams struct {
+		BKBizID int64 `json:"bk_biz_id"`
+	}
+	if err := json.Unmarshal(metric["metric_query_params"], &queryParams); err != nil || queryParams.BKBizID != 2 {
+		t.Fatalf("metric query params=%s error=%v", metric["metric_query_params"], err)
 	}
 	source := payload.Processors[4]["source"].Value
 	if string(source["source_id"]) != `"built_in_bk"` || string(source["source_name"]) != `"鲸眼监控"` ||
@@ -272,29 +313,16 @@ type baseCollectCWStrategy struct{}
 
 func (baseCollectCWStrategy) GetByBKStrategyID(
 	ctx context.Context,
+	tenantID string,
 	strategyID int64,
 ) (models.CWStrategy, bool, error) {
-	strategy, found, err := (&datasources.MockCWStrategyClient{}).GetByBKStrategyID(ctx, strategyID)
+	strategy, found, err := (&datasources.MockCWStrategyClient{}).GetByBKStrategyID(ctx, tenantID, strategyID)
 	if err != nil || !found {
 		return strategy, found, err
 	}
-	strategy.Spec.StrategyItem = &models.CWStrategyItem{
-		AggregateMethod: "avg", AggregatePeriod: json.RawMessage(`60`), Functions: json.RawMessage(`[]`),
-	}
-	return strategy, true, nil
-}
-
-func (baseCollectCWStrategy) GetByMonitorTemplateID(
-	ctx context.Context,
-	monitorTemplateID int64,
-) (models.CWStrategy, bool, error) {
-	strategy, found, err := (&datasources.MockCWStrategyClient{}).GetByMonitorTemplateID(ctx, monitorTemplateID)
-	if err != nil || !found {
-		return strategy, found, err
-	}
-	strategy.Spec.StrategyItem = &models.CWStrategyItem{
-		AggregateMethod: "avg", AggregatePeriod: json.RawMessage(`60`), Functions: json.RawMessage(`[]`),
-	}
+	strategy.Spec.StrategyItem.AggregateMethod = "avg"
+	strategy.Spec.StrategyItem.AggregatePeriod = json.RawMessage(`60`)
+	strategy.Spec.StrategyItem.Functions = json.RawMessage(`[]`)
 	return strategy, true, nil
 }
 
@@ -413,19 +441,7 @@ func (sampleOneModel) FindInstance(
 
 type panicSources struct{}
 
-func (panicSources) GetStrategyHistory(context.Context, int64, int64) (models.BkStrategyHistory, bool, error) {
-	panic("data source called")
-}
-
-func (panicSources) GetStrategy(context.Context, int64) (models.BkStrategy, bool, error) {
-	panic("data source called")
-}
-
-func (panicSources) GetByBKStrategyID(context.Context, int64) (models.CWStrategy, bool, error) {
-	panic("data source called")
-}
-
-func (panicSources) GetByMonitorTemplateID(context.Context, int64) (models.CWStrategy, bool, error) {
+func (panicSources) GetByBKStrategyID(context.Context, string, int64) (models.CWStrategy, bool, error) {
 	panic("data source called")
 }
 
@@ -442,21 +458,21 @@ func (panicSources) FindInstance(context.Context, string, enrich.InstanceQuery) 
 }
 
 func (p panicSources) Sources() enrich.Sources {
-	return enrich.Sources{BKStrategy: p, CWStrategy: p, Metric: p, OneModel: p, AlarmSource: p}
+	return enrich.Sources{CWStrategy: p, Metric: p, OneModel: p, AlarmSource: p}
 }
 
 func baseCollectAlert(source string) domain.Alert {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	hostID, _ := domain.NewNumberScalar(101)
 	strategyID, _ := domain.NewNumberScalar(float64(datasources.SampleStrategyID))
-	historyID, _ := domain.NewNumberScalar(float64(datasources.SampleHistoryID))
+	strategyVersion, _ := domain.NewNumberScalar(float64(datasources.SampleStrategyVersion))
 	bizID, _ := domain.NewNumberScalar(float64(datasources.SampleBizID))
 	return domain.Alert{
 		EventSourceVersion: 1,
 		AlertID:            "alert-1", BKTenantID: datasources.SampleTenantID, EventSourceID: source, Fingerprint: "fp",
 		Title: "CPU high", Content: "CPU usage is high", Severity: "warning", SubjectName: "host-101",
 		SourceEventID: "source-event-1", Dimensions: domain.DimensionMap{"bk_inst_id": hostID},
-		Labels:    domain.DimensionMap{"bk_strategy_id": strategyID, "bk_strategy_history_id": historyID, "bk_biz_id": bizID},
+		Labels:    domain.DimensionMap{"strategy_id": strategyID, "strategy_version": strategyVersion, "bk_biz_id": bizID},
 		ExtraData: domain.JSONObject{"sample": json.RawMessage(`true`)}, Status: domain.AlertStatusActive,
 		LatestEventID: "event-1", TriggerEventID: "event-1", LastOccurredAt: now, UpdateAt: now, BeginAt: now, CreateAt: now,
 		EnrichStatus: domain.EnrichStatusPending, Enrich: domain.JSONObject{},

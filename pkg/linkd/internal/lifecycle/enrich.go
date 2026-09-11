@@ -117,7 +117,6 @@ func enrichMetricOutcome(failureReason string) string {
 
 func failedEnrichResult() EnrichResult {
 	return EnrichResult{Status: domain.EnrichStatusFailed, Data: domain.JSONObject{
-		"status":     json.RawMessage(`"failed"`),
 		"processors": json.RawMessage(`[{"enricher":{"status":"failed","value":{},"diagnostics":[{"code":"dependency_invalid","dependency":"enricher"}]}}]`),
 	}}
 }

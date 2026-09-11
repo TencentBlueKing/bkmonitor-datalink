@@ -190,9 +190,7 @@ func decodeEventSources(decoded []fileEventSource) ([]EventSource, error) {
 			FingerprintFields: append([]string(nil), source.FingerprintFields...),
 			SeverityMapping:   source.SeverityMapping,
 			DefaultSeverity:   source.DefaultSeverity,
-			Enrich: EnrichConfig{
-				Processors: append([]EnrichProcessorConfig(nil), source.Enrich.Processors...),
-			},
+			Enrich:            source.Enrich.clone(),
 			Storage: EventSourceStorageConfig{
 				Type:  source.Storage.Type,
 				Kafka: *source.Storage.Kafka,

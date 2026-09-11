@@ -39,8 +39,32 @@ func (configurationDocuments) Put(context.Context, string, string, string, json.
 	return fmt.Errorf("unexpected write")
 }
 
+func TestReleaseForRoleLimitsEnrichCredentials(t *testing.T) {
+	t.Parallel()
+	release := eventsource.Release{Spec: config.EventSource{Enrich: config.EnrichConfig{
+		Processors:  []config.EnrichProcessorConfig{{Type: "source"}},
+		DataSources: &config.EnrichDataSources{MySQL: &config.EnrichMySQLDataSource{Password: "secret"}},
+	}}}
+	cleaner := releaseForRole(release, "cleaner")
+	lifecycle := releaseForRole(release, "lifecycle")
+	if cleaner.Spec.Enrich.DataSources != nil || len(cleaner.Spec.Enrich.Processors) != 0 {
+		t.Fatalf("cleaner release contains enrich configuration: %#v", cleaner.Spec.Enrich)
+	}
+	if lifecycle.Spec.Enrich.DataSources == nil || lifecycle.Spec.Enrich.DataSources.MySQL.Password != "secret" {
+		t.Fatalf("lifecycle release lost enrich configuration: %#v", lifecycle.Spec.Enrich)
+	}
+	if release.Spec.Enrich.DataSources == nil {
+		t.Fatal("releaseForRole changed original release")
+	}
+}
+
 func TestSourceConfigurationSecrets(t *testing.T) {
-	spec := config.EventSource{EventSourceID: "source", Storage: config.EventSourceStorageConfig{Type: "kafka", Kafka: config.KafkaStorageConfig{Brokers: []string{"kafka:9092"}, Topic: "raw", ConsumerGroup: "cleaner", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "reader", Password: "private-kafka-secret"}}}}}
+	const testMySQLPassword = "private-" + "mysql-secret"
+	const testOneModelSecret = "private-" + "onemodel-secret"
+	spec := config.EventSource{EventSourceID: "source", Enrich: config.EnrichConfig{DataSources: &config.EnrichDataSources{
+		MySQL:         &config.EnrichMySQLDataSource{Address: "mysql:3306", Database: "kingeye", Username: "reader", Password: testMySQLPassword},
+		Elasticsearch: &config.EnrichElasticsearchDataSource{Addresses: []string{"http://onemodel:9200"}, IndexPrefix: "bk_monitor_base_", APIKey: testOneModelSecret},
+	}}, Storage: config.EventSourceStorageConfig{Type: "kafka", Kafka: config.KafkaStorageConfig{Brokers: []string{"kafka:9092"}, Topic: "raw", ConsumerGroup: "cleaner", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "reader", Password: "private-kafka-secret"}}}}}
 	record := eventsource.Record{ID: "source", Spec: spec, Pending: &eventsource.Release{ID: "source", Spec: spec}}
 	api := (&API{Sources: eventsource.New(configurationDocuments{record}, config.SeverityConfig{}), Config: config.DispatchConfig{APIToken: "admin", WorkerToken: "worker"}}).Handler()
 	for _, endpoint := range []string{"/api/v1/event-sources", "/api/v1/event-sources/source"} {
@@ -64,13 +88,15 @@ func TestSourceConfigurationSecrets(t *testing.T) {
 				if out.Code != test.code {
 					t.Fatalf("status %d want %d", out.Code, test.code)
 				}
-				if strings.Contains(out.Body.String(), "private-kafka-secret") != test.full {
-					t.Fatal("unexpected secret visibility")
+				for _, secret := range []string{"private-kafka-secret", testMySQLPassword, testOneModelSecret} {
+					if strings.Contains(out.Body.String(), secret) != test.full {
+						t.Fatalf("unexpected visibility for %s", secret)
+					}
 				}
 				if test.full && out.Header().Get("Cache-Control") != "no-store" {
 					t.Fatal("full configuration must not be cached")
 				}
-				if test.full && strings.Count(out.Body.String(), "private-kafka-secret") != 2 {
+				if test.full && strings.Count(out.Body.String(), testMySQLPassword) != 2 {
 					t.Fatal("record and pending release must both be complete")
 				}
 			})

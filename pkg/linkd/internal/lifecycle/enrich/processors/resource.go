@@ -11,6 +11,7 @@ package processors
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"linkd/internal/domain"
@@ -46,7 +47,17 @@ func (Resource) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proces
 	if strategyErr != nil || !strategyFound || strategy.ObjectModelCode == nil || *strategy.ObjectModelCode == "" {
 		return failedDependency(rules.DependencyKingeyeStrategy), nil
 	}
-	query, queryDiagnostics := resourceInstanceQuery(*strategy.ObjectModelCode, alert.Dimensions)
+	dimensions, err := combinedDimensions(alert)
+	if err != nil {
+		value, encodeErr := resourceContextValue(scope, models.ResourceValues{})
+		if encodeErr != nil {
+			return enrich.ProcessorResult{}, encodeErr
+		}
+		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: value, Diagnostics: []enrich.Diagnostic{{
+			Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"},
+		}}}, nil
+	}
+	query, queryDiagnostics := resourceInstanceQuery(*strategy.ObjectModelCode, dimensions)
 	if len(queryDiagnostics) != 0 && len(query.Filters) == 0 {
 		value, err := resourceContextValue(scope, models.ResourceValues{})
 		if err != nil {
@@ -78,6 +89,36 @@ func (Resource) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proces
 		status = domain.EnrichStatusPartial
 	}
 	return enrich.ProcessorResult{Status: status, Value: value, Diagnostics: queryDiagnostics}, nil
+}
+
+func additionalDimensions(extraData domain.JSONObject) (domain.DimensionMap, error) {
+	raw, exists := extraData["additional_dimensions"]
+	if !exists {
+		return domain.DimensionMap{}, nil
+	}
+	var additional domain.DimensionMap
+	if err := json.Unmarshal(raw, &additional); err != nil {
+		return nil, err
+	}
+	if err := additional.Validate(); err != nil {
+		return nil, err
+	}
+	return additional, nil
+}
+
+func combinedDimensions(alert domain.Alert) (domain.DimensionMap, error) {
+	combined := alert.Dimensions.Clone()
+	additional, err := additionalDimensions(alert.ExtraData)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range additional {
+		if _, exists := combined[key]; exists {
+			return nil, fmt.Errorf("duplicate dimension key %q", key)
+		}
+		combined[key] = value
+	}
+	return combined, nil
 }
 
 func resourceInstanceQuery(modelCode string, dimensions domain.DimensionMap) (enrich.InstanceQuery, []enrich.Diagnostic) {

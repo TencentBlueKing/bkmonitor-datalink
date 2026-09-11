@@ -48,17 +48,6 @@ storage:
     database: 0
 
 lifecycle:
-  datasources:
-    alarm_source:
-      address: 127.0.0.1:3306
-      database: kingeye
-      username: root
-      password: ""
-    # resource Processor 从 OneModel 的 Elasticsearch 读后端查询统一实例。
-    onemodel:
-      addresses:
-        - http://127.0.0.1:9200
-      index_prefix: bk_monitor_base_
   concurrency: 32
   elasticsearch_write_batch:
     enabled: true
@@ -167,7 +156,7 @@ event_sources:
     enrich:
       processors: []
     fingerprint_fields:
-      - condition_key
+      - source_alert_id
       - dimensions.generator_id
     storage:
       type: kafka

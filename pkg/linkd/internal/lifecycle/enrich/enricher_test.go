@@ -53,7 +53,7 @@ func TestChainOrderIsolationAndFailureContinuation(t *testing.T) {
 	original := alert.Clone()
 	first := &testProcessor{name: "first", fn: func(_ context.Context, scope *Scope) (ProcessorResult, error) {
 		copy := scope.Alert()
-		copy.Labels["bk_strategy_id"] = domain.NewBoolScalar(false)
+		copy.Labels["strategy_id"] = domain.NewBoolScalar(false)
 		copy.Dimensions["host"] = domain.NewStringScalar("changed")
 		copy.ExtraData["nested"] = json.RawMessage(`{"changed":true}`)
 		return ProcessorResult{Status: domain.EnrichStatusSucceeded, Value: domain.JSONObject{}}, nil
@@ -158,10 +158,10 @@ func TestValidateRequiredIDs(t *testing.T) {
 	t.Parallel()
 	alert := testAlert()
 	ids, diagnostics := ValidateRequiredIDs(alert)
-	if len(diagnostics) != 0 || ids != (RequiredIDs{StrategyID: 123, HistoryID: 70001, BizID: 2}) {
+	if len(diagnostics) != 0 || ids != (RequiredIDs{StrategyID: 123, StrategyVersion: 1, BizID: 2}) {
 		t.Fatalf("valid IDs=%#v diagnostics=%#v", ids, diagnostics)
 	}
-	delete(alert.Labels, labelStrategyHistoryID)
+	delete(alert.Labels, labelStrategyVersion)
 	alert.Labels[labelBizID] = domain.NewStringScalar("2")
 	_, diagnostics = ValidateRequiredIDs(alert)
 	if len(diagnostics) != 2 || diagnostics[0].Code != DiagnosticCodeMissingField || diagnostics[1].Code != DiagnosticCodeInvalidField {
@@ -175,7 +175,7 @@ func TestNoopPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload, err := DecodePayload(result.Data)
-	if err != nil || payload.Status != domain.EnrichStatusSucceeded || len(payload.Processors) != 0 {
+	if err != nil || len(payload.Processors) != 0 || len(result.Data) != 1 {
 		t.Fatalf("payload=%#v error=%v", payload, err)
 	}
 }
@@ -198,13 +198,13 @@ func (p *testProcessor) Process(ctx context.Context, scope *Scope) (ProcessorRes
 func testAlert() domain.Alert {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	strategyID, _ := domain.NewNumberScalar(123)
-	historyID, _ := domain.NewNumberScalar(70001)
+	strategyVersion, _ := domain.NewNumberScalar(1)
 	bizID, _ := domain.NewNumberScalar(2)
 	return domain.Alert{
 		EventSourceVersion: 1,
 		AlertID:            "alert-1", BKTenantID: "tenant-1", EventSourceID: "built_in_bk", Fingerprint: "fp",
 		Title: "CPU high", Content: "usage is high", Severity: "warning", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")},
-		Labels:    domain.DimensionMap{labelStrategyID: strategyID, labelStrategyHistoryID: historyID, labelBizID: bizID},
+		Labels:    domain.DimensionMap{labelStrategyID: strategyID, labelStrategyVersion: strategyVersion, labelBizID: bizID},
 		ExtraData: domain.JSONObject{"nested": json.RawMessage(`{"value":1}`)}, Status: domain.AlertStatusActive,
 		LatestEventID: "event-1", TriggerEventID: "event-1", SourceEventID: "source-event-1",
 		LastOccurredAt: now, UpdateAt: now, BeginAt: now, CreateAt: now,

@@ -65,8 +65,6 @@ func fingerprintValue(event domain.Event, path string) (fingerprintPart, error) 
 	switch path {
 	case "source_alert_id":
 		part.Value = event.SourceAlertID
-	case "condition_key":
-		part.Value = event.ConditionKey
 	case "subject_system":
 		part.Value = event.SubjectSystem
 	case "subject_type":

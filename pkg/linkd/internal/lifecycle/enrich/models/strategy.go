@@ -12,56 +12,16 @@ package models
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"linkd/internal/domain"
 )
 
-// BkStrategyHistory 对应 alarm_strategy_history 中的一条蓝鲸监控策略历史记录。
-// Content 保留完整快照；Snapshot 只提供当前丰富流程需要的类型化读取视图。
-type BkStrategyHistory struct {
-	ID         int64
-	StrategyID int64
-	Content    domain.JSONObject
-}
-
-// Snapshot 将完整平台策略快照解码为当前丰富流程使用的类型化视图。
-func (h BkStrategyHistory) Snapshot() (BkStrategySnapshot, error) {
-	data, err := json.Marshal(h.Content)
-	if err != nil {
-		return BkStrategySnapshot{}, fmt.Errorf("marshal bk strategy history content: %w", err)
-	}
-	var snapshot BkStrategySnapshot
-	if err := json.Unmarshal(data, &snapshot); err != nil {
-		return BkStrategySnapshot{}, fmt.Errorf("decode bk strategy history content: %w", err)
-	}
-	return snapshot, nil
-}
-
-// BkStrategySnapshot 是 alarm_strategy_history.content 的类型化读取视图。
-type BkStrategySnapshot struct {
-	ID        int64            `json:"id"`
-	BKBizID   int64            `json:"bk_biz_id"`
-	Name      string           `json:"name"`
-	Source    string           `json:"source"`
-	Scenario  string           `json:"scenario"`
-	Type      string           `json:"type"`
-	IsEnabled bool             `json:"is_enabled"`
-	IsInvalid bool             `json:"is_invalid"`
-	Items     []BkStrategyItem `json:"items"`
-}
-
-// BkStrategyItem 是蓝鲸监控策略快照中的单个监控项。
-type BkStrategyItem struct {
-	ID           int64                   `json:"id"`
-	Name         string                  `json:"name"`
-	Expression   string                  `json:"expression"`
-	Functions    json.RawMessage         `json:"functions"`
-	QueryConfigs []BkStrategyQueryConfig `json:"query_configs"`
-}
-
-// BkStrategyQueryConfig 是蓝鲸监控策略监控项中的单条查询配置。
-type BkStrategyQueryConfig struct {
+// StrategyQueryConfig 是鲸眼声明式策略中单条 query_config 的类型化读取视图。
+// Raw 保留完整配置，供 metric_query_params 在不回查蓝鲸策略历史的情况下透传扩展字段。
+type StrategyQueryConfig struct {
 	ID              int64             `json:"id"`
 	CustomEventName string            `json:"custom_event_name"`
 	AlertName       string            `json:"alert_name"`
@@ -75,6 +35,8 @@ type BkStrategyQueryConfig struct {
 	Unit            string            `json:"unit"`
 	Alias           string            `json:"alias"`
 	MetricID        string            `json:"metric_id"`
+	MetricSource    string            `json:"metric_source"`
+	SourceConfig    domain.JSONObject `json:"source_config"`
 	AggregateMethod string            `json:"agg_method"`
 	AggregatePeriod int64             `json:"agg_interval"`
 	MetricField     string            `json:"metric_field"`
@@ -87,8 +49,8 @@ type BkStrategyQueryConfig struct {
 }
 
 // UnmarshalJSON 同时保留完整 query_config，并填充当前丰富流程需要的类型化字段。
-func (q *BkStrategyQueryConfig) UnmarshalJSON(data []byte) error {
-	type queryConfig BkStrategyQueryConfig
+func (q *StrategyQueryConfig) UnmarshalJSON(data []byte) error {
+	type queryConfig StrategyQueryConfig
 	var typed queryConfig
 	if err := json.Unmarshal(data, &typed); err != nil {
 		return err
@@ -97,32 +59,9 @@ func (q *BkStrategyQueryConfig) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	*q = BkStrategyQueryConfig(typed)
+	*q = StrategyQueryConfig(typed)
 	q.Raw = raw
 	return nil
-}
-
-// BkStrategy 对应 alarm_strategy_v2 中的蓝鲸监控当前策略记录。
-type BkStrategy struct {
-	ID               int64
-	Name             string
-	BKBizID          int64
-	Source           string
-	Scenario         string
-	Type             string
-	IsEnabled        bool
-	IsInvalid        bool
-	InvalidType      string
-	CreateUser       string
-	CreateTime       time.Time
-	UpdateUser       string
-	UpdateTime       time.Time
-	App              *string
-	Path             *string
-	Hash             *string
-	Snippet          *string
-	Priority         *int64
-	PriorityGroupKey *string
 }
 
 // CWStrategyKind 是鲸眼声明式策略资源的 kind。
@@ -158,6 +97,115 @@ type CWStrategy struct {
 	ConfigID                 *string
 	ObjectModelCode          *string
 	BKObjectInstID           *string
+}
+
+// StrategyItemProjection 返回 Enrich 使用的声明式策略查询投影。
+// 当前 KAC 的分类、展示和指标清洗均复用同一份 StrategyConfig；Linkd 同样以
+// spec.strategy_item 为唯一策略内容来源，不再回查蓝鲸策略当前表或历史表。
+func (s CWStrategy) StrategyItemProjection() (StrategyItemProjection, error) {
+	if s.BKBizID == nil || *s.BKBizID <= 0 {
+		return StrategyItemProjection{}, fmt.Errorf("kingeye strategy must contain a positive bk_biz_id")
+	}
+	if s.Spec.StrategyItem == nil || len(s.Spec.StrategyItem.QueryConfigs) == 0 {
+		return StrategyItemProjection{}, fmt.Errorf("kingeye strategy must contain strategy_item.query_configs")
+	}
+	queries := make([]StrategyQueryConfig, len(s.Spec.StrategyItem.QueryConfigs))
+	copy(queries, s.Spec.StrategyItem.QueryConfigs)
+	for index := range queries {
+		query := &queries[index]
+		if query.ResultTableID == "" {
+			query.ResultTableID = s.Spec.TableID
+		}
+		if query.MetricField == "" {
+			query.MetricField = s.Spec.FieldName
+		}
+		if query.AggregateMethod == "" {
+			query.AggregateMethod = s.Spec.StrategyItem.AggregateMethod
+		}
+		if query.AggregatePeriod == 0 {
+			query.AggregatePeriod = aggregatePeriodSeconds(s.Spec.StrategyItem.AggregatePeriod)
+		}
+		if query.AggregateBy == nil {
+			query.AggregateBy = append([]string(nil), s.Spec.StrategyItem.AggregateBy...)
+		}
+		if len(query.AggregateFilter) == 0 {
+			query.AggregateFilter = marshalStrategyConditions(s.Spec.StrategyItem.AggregateFilter)
+		}
+		if len(query.Functions) == 0 {
+			query.Functions = append(json.RawMessage(nil), s.Spec.StrategyItem.Functions...)
+		}
+		if query.DataSourceLabel == "" {
+			query.DataSourceLabel = inferDataSourceLabel(s, *query)
+		}
+		if query.DataTypeLabel == "" {
+			query.DataTypeLabel = inferDataTypeLabel(s)
+		}
+	}
+	item := s.Spec.StrategyItem
+	name := s.Spec.ItemName
+	if name == "" {
+		name = s.Spec.Name
+	}
+	return StrategyItemProjection{
+		BKBizID: *s.BKBizID, Name: name, Expression: item.Expression,
+		Functions:    append(json.RawMessage(nil), item.Functions...),
+		QueryConfigs: queries,
+	}, nil
+}
+
+func aggregatePeriodSeconds(raw json.RawMessage) int64 {
+	var seconds int64
+	if json.Unmarshal(raw, &seconds) == nil {
+		return seconds
+	}
+	var text string
+	if json.Unmarshal(raw, &text) != nil {
+		return 0
+	}
+	if strings.HasSuffix(text, "s") {
+		seconds, _ = strconv.ParseInt(strings.TrimSuffix(text, "s"), 10, 64)
+	}
+	return seconds
+}
+
+func marshalStrategyConditions(values []domain.JSONObject) json.RawMessage {
+	if values == nil {
+		return json.RawMessage(`[]`)
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return json.RawMessage(`[]`)
+	}
+	return encoded
+}
+
+func inferDataSourceLabel(strategy CWStrategy, query StrategyQueryConfig) string {
+	switch {
+	case strategy.Spec.MetricSource == CWMetricSourceKLC:
+		return "bk_log_search"
+	case query.MetricSource == "kapm" || query.MetricSource == "krum":
+		return "custom"
+	default:
+		return "bk_monitor"
+	}
+}
+
+func inferDataTypeLabel(strategy CWStrategy) string {
+	switch strategy.Spec.MonitorItemType {
+	case CWMonitorItemTypeLog, CWMonitorItemTypeLogKeyword:
+		return "log"
+	default:
+		return "time_series"
+	}
+}
+
+// StrategyItemProjection 是 Processor 共享的最小策略内容视图。
+type StrategyItemProjection struct {
+	BKBizID      int64
+	Name         string
+	Expression   string
+	Functions    json.RawMessage
+	QueryConfigs []StrategyQueryConfig
 }
 
 // CWStrategyFieldTag 是 Kingeye BaseStrategySpec.field_tag。
@@ -213,18 +261,18 @@ type CWStrategySpec struct {
 
 // CWStrategyItem 对齐 Kingeye StrategyItemSpec。
 type CWStrategyItem struct {
-	TriggerConfig   domain.JSONObject   `json:"trigger_config"`
-	NoDataConfig    domain.JSONObject   `json:"no_data_config"`
-	RecoveryConfig  domain.JSONObject   `json:"recovery_config"`
-	AggregateMethod string              `json:"agg_method"`
-	AggregatePeriod json.RawMessage     `json:"agg_interval"`
-	AggregateFilter []domain.JSONObject `json:"agg_condition"`
-	AggregateBy     []string            `json:"agg_dimension"`
-	Functions       json.RawMessage     `json:"functions"`
-	QueryConfigs    []domain.JSONObject `json:"query_configs"`
-	Connector       string              `json:"connector"`
-	Expression      string              `json:"expression"`
-	AlarmLevel      *int64              `json:"alarm_level"`
+	TriggerConfig   domain.JSONObject     `json:"trigger_config"`
+	NoDataConfig    domain.JSONObject     `json:"no_data_config"`
+	RecoveryConfig  domain.JSONObject     `json:"recovery_config"`
+	AggregateMethod string                `json:"agg_method"`
+	AggregatePeriod json.RawMessage       `json:"agg_interval"`
+	AggregateFilter []domain.JSONObject   `json:"agg_condition"`
+	AggregateBy     []string              `json:"agg_dimension"`
+	Functions       json.RawMessage       `json:"functions"`
+	QueryConfigs    []StrategyQueryConfig `json:"query_configs"`
+	Connector       string                `json:"connector"`
+	Expression      string                `json:"expression"`
+	AlarmLevel      *int64                `json:"alarm_level"`
 }
 
 // CWStrategyDetectAlgorithm 对齐 Kingeye StrategyDetectAlgorithmSpec。

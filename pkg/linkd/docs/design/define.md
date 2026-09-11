@@ -115,9 +115,9 @@ Alert 是一次异常的当前生命周期快照。它从 opening Event 创建�
 可以由来源关闭、用户/系统直接关闭或等级升级产生。
 
 `enrich_status` 允许 `pending/succeeded/partial/failed`，正常创建流程产生 succeeded、partial
-或 failed。`enrich` 固定包含 `status` 与 `processors` 两个顶层 key，status 必须与 enrich_status
-一致；processors 按 EventSource 配置顺序保存，每项是以 Processor 名称为唯一 key 的结果信封。
-Noop 使用 `{"status":"succeeded","processors":[]}`。pending 仅用于丰富前的内部构造状态，此时
+或 failed。`enrich` 固定只包含 `processors` 顶层 key；processors 按 EventSource 配置顺序保存，
+每项是以 Processor 名称为唯一 key 的结果信封。领域校验根据 Processor 状态聚合并要求结果与
+`enrich_status` 一致。Noop 使用 `{"processors":[]}`。pending 仅用于丰富前的内部构造状态，此时
 enrich 为空对象。
 
 ### 5.2 不变量

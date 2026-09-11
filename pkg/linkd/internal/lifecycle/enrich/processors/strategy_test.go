@@ -43,13 +43,13 @@ func TestBuildStrategyURLInstance(t *testing.T) {
 	t.Parallel()
 	isDefault := false
 	modelCode := "cw-Host"
-	hostID, _ := domain.NewNumberScalar(101)
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	alert := domain.Alert{
 		EventSourceVersion: 1,
 		AlertID:            "alert-1", BKTenantID: "tenant-a", EventSourceID: "built_in_bk", Fingerprint: "fp",
 		Title: "CPU", Severity: "warning", Status: domain.AlertStatusActive,
-		Dimensions: domain.DimensionMap{"bk_inst_id": hostID}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{},
+		Dimensions: domain.DimensionMap{"bk_inst_id": mustNumberScalar(t, 101)}, Labels: domain.DimensionMap{},
+		ExtraData:     domain.JSONObject{"additional_dimensions": []byte(`{"ignored":true}`)},
 		LatestEventID: "event-1", TriggerEventID: "event-1", SourceEventID: "source-event-1",
 		LastOccurredAt: now, UpdateAt: now, BeginAt: now, CreateAt: now,
 		EnrichStatus: domain.EnrichStatusPending, Enrich: domain.JSONObject{},
@@ -72,6 +72,15 @@ func TestBuildStrategyURLInstance(t *testing.T) {
 			t.Fatalf("buildStrategyURL()=%q missing %q", got, expected)
 		}
 	}
+}
+
+func mustNumberScalar(t *testing.T, value float64) domain.Scalar {
+	t.Helper()
+	scalar, err := domain.NewNumberScalar(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return scalar
 }
 
 type strategyURLInstanceReader struct{}

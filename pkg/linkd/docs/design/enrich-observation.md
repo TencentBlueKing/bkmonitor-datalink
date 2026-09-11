@@ -169,10 +169,9 @@ internal/telemetry/enrich_datasource.go
 func (r *Runtime) ObserveEnrichSources(sources enrich.Sources) enrich.Sources
 ```
 
-它在保持 Reader interface 和返回值不变的前提下包装五类 DataSource：
+它在保持 Reader interface 和返回值不变的前提下包装四类 DataSource：
 
 ```text
-BKStrategyReader
 CWStrategyReader
 MetricReader
 AlarmSourceReader
@@ -188,7 +187,7 @@ Processor
 → GORM / HTTP Client
 ```
 
-装饰器位于 Scope 缓存之后。BK Strategy History、当前 BK Strategy、CW Strategy、AlarmSource 和 OneModel 的请求级缓存命中不会重复记录外部调用；MetricLibrary 每次真实查询都会记录。
+装饰器位于 Scope 缓存之后。CW Strategy、AlarmSource 和 OneModel 的请求级缓存命中不会重复记录外部调用；MetricLibrary 每次真实查询都会记录。
 
 #### DataSource outcome
 
@@ -216,7 +215,7 @@ HTTP 状态异常、响应超限、SQL 错误和连接错误归类为 `failed`�
 
 | datasource | operation |
 | --- | --- |
-| `bk_strategy` | `get_strategy_history` |
+| `cw_strategy` | `get_by_bk_strategy_id` |
 | `bk_strategy` | `get_strategy` |
 | `cw_strategy` | `get_by_bk_strategy_id` |
 | `cw_strategy` | `get_by_monitor_template_id` |
@@ -362,7 +361,6 @@ Telemetry adapter 对枚举执行白名单归一化：
 
 ```text
 kingeye_strategy
-platform_strategy_history
 metric_library
 onemodel
 alarm_source

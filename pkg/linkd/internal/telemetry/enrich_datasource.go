@@ -22,7 +22,6 @@ import (
 )
 
 const (
-	enrichDataSourceBKStrategy    = "bk_strategy"
 	enrichDataSourceCWStrategy    = "cw_strategy"
 	enrichDataSourceMetricLibrary = "metric_library"
 	enrichDataSourceAlarmSource   = "alarm_source"
@@ -33,9 +32,6 @@ const (
 func (r *Runtime) ObserveEnrichSources(sources enrich.Sources) enrich.Sources {
 	if r == nil || r.metrics == nil {
 		return sources
-	}
-	if sources.BKStrategy != nil {
-		sources.BKStrategy = &observedBKStrategyReader{next: sources.BKStrategy, metrics: r.metrics}
 	}
 	if sources.CWStrategy != nil {
 		sources.CWStrategy = &observedCWStrategyReader{next: sources.CWStrategy, metrics: r.metrics}
@@ -79,41 +75,15 @@ func enrichDataSourceOutcome(found bool, err error) string {
 	}
 }
 
-type observedBKStrategyReader struct {
-	next    enrich.BKStrategyReader
-	metrics *instruments
-}
-
-func (r *observedBKStrategyReader) GetStrategyHistory(ctx context.Context, strategyID, historyID int64) (models.BkStrategyHistory, bool, error) {
-	startedAt := time.Now()
-	value, found, err := r.next.GetStrategyHistory(ctx, strategyID, historyID)
-	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceBKStrategy, "get_strategy_history", startedAt, found, err)
-	return value, found, err
-}
-
-func (r *observedBKStrategyReader) GetStrategy(ctx context.Context, strategyID int64) (models.BkStrategy, bool, error) {
-	startedAt := time.Now()
-	value, found, err := r.next.GetStrategy(ctx, strategyID)
-	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceBKStrategy, "get_strategy", startedAt, found, err)
-	return value, found, err
-}
-
 type observedCWStrategyReader struct {
 	next    enrich.CWStrategyReader
 	metrics *instruments
 }
 
-func (r *observedCWStrategyReader) GetByBKStrategyID(ctx context.Context, strategyID int64) (models.CWStrategy, bool, error) {
+func (r *observedCWStrategyReader) GetByBKStrategyID(ctx context.Context, tenantID string, strategyID int64) (models.CWStrategy, bool, error) {
 	startedAt := time.Now()
-	value, found, err := r.next.GetByBKStrategyID(ctx, strategyID)
+	value, found, err := r.next.GetByBKStrategyID(ctx, tenantID, strategyID)
 	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceCWStrategy, "get_by_bk_strategy_id", startedAt, found, err)
-	return value, found, err
-}
-
-func (r *observedCWStrategyReader) GetByMonitorTemplateID(ctx context.Context, templateID int64) (models.CWStrategy, bool, error) {
-	startedAt := time.Now()
-	value, found, err := r.next.GetByMonitorTemplateID(ctx, templateID)
-	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceCWStrategy, "get_by_monitor_template_id", startedAt, found, err)
 	return value, found, err
 }
 

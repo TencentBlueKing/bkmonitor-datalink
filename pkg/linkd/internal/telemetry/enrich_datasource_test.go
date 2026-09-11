@@ -26,16 +26,12 @@ func TestObserveEnrichSourcesPreservesResults(t *testing.T) {
 	}
 	wantErr := errors.New("reader failed")
 	sources := runtime.ObserveEnrichSources(enrich.Sources{
-		BKStrategy:  testBKStrategyReader{err: wantErr},
-		CWStrategy:  testCWStrategyReader{},
+		CWStrategy:  testCWStrategyReader{err: wantErr},
 		Metric:      testMetricReader{},
 		AlarmSource: testAlarmSourceReader{},
 		OneModel:    testOneModelReader{},
 	})
-	if _, found, err := sources.BKStrategy.GetStrategyHistory(context.Background(), 1, 2); found || !errors.Is(err, wantErr) {
-		t.Fatalf("history found=%t err=%v", found, err)
-	}
-	if _, found, err := sources.CWStrategy.GetByBKStrategyID(context.Background(), 1); !found || err != nil {
+	if _, found, err := sources.CWStrategy.GetByBKStrategyID(context.Background(), "tenant", 1); found || !errors.Is(err, wantErr) {
 		t.Fatalf("cw strategy found=%t err=%v", found, err)
 	}
 	if _, found, err := sources.Metric.FindMetricLibrary(context.Background(), models.MetricLibraryQuery{}); found || err != nil {
@@ -69,22 +65,10 @@ func TestEnrichDataSourceOutcome(t *testing.T) {
 	}
 }
 
-type testBKStrategyReader struct{ err error }
+type testCWStrategyReader struct{ err error }
 
-func (r testBKStrategyReader) GetStrategyHistory(context.Context, int64, int64) (models.BkStrategyHistory, bool, error) {
-	return models.BkStrategyHistory{}, false, r.err
-}
-func (r testBKStrategyReader) GetStrategy(context.Context, int64) (models.BkStrategy, bool, error) {
-	return models.BkStrategy{}, false, r.err
-}
-
-type testCWStrategyReader struct{}
-
-func (testCWStrategyReader) GetByBKStrategyID(context.Context, int64) (models.CWStrategy, bool, error) {
-	return models.CWStrategy{}, true, nil
-}
-func (testCWStrategyReader) GetByMonitorTemplateID(context.Context, int64) (models.CWStrategy, bool, error) {
-	return models.CWStrategy{}, false, nil
+func (r testCWStrategyReader) GetByBKStrategyID(context.Context, string, int64) (models.CWStrategy, bool, error) {
+	return models.CWStrategy{}, false, r.err
 }
 
 type testMetricReader struct{}

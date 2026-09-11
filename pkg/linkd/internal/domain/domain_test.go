@@ -134,7 +134,6 @@ func TestEventValidation(t *testing.T) {
 		{name: "action required", mutate: func(e *domain.Event) { e.Action = "" }},
 		{name: "action enum", mutate: func(e *domain.Event) { e.Action = "updated" }},
 		{name: "action reason length", mutate: func(e *domain.Event) { e.ActionReason = strings.Repeat("r", 257) }},
-		{name: "condition length", mutate: func(e *domain.Event) { e.ConditionKey = strings.Repeat("c", 257) }},
 		{name: "subject system length", mutate: func(e *domain.Event) { e.SubjectSystem = strings.Repeat("s", 33) }},
 		{name: "subject type length", mutate: func(e *domain.Event) { e.SubjectType = strings.Repeat("s", 129) }},
 		{name: "subject id length", mutate: func(e *domain.Event) { e.SubjectID = strings.Repeat("s", 257) }},
@@ -244,11 +243,11 @@ func TestEventAndAlertCloneDynamicFields(t *testing.T) {
 
 func validEvent() domain.Event {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	return domain.Event{EventSourceVersion: 1, BKTenantID: "tenant-1", EventSourceID: "source-a", EventID: "event-1", Fingerprint: "fingerprint-1", Title: "CPU high", Severity: "warning", Action: domain.EventActionTriggered, ConditionKey: "cpu", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-event-1", SourceAlertID: "source-alert-1", SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
+	return domain.Event{EventSourceVersion: 1, BKTenantID: "tenant-1", EventSourceID: "source-a", EventID: "event-1", Fingerprint: "fingerprint-1", Title: "CPU high", Severity: "warning", Action: domain.EventActionTriggered, Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-event-1", SourceAlertID: "source-alert-1", SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
 }
 
 func validAlert() domain.Alert {
 	event := validEvent()
 	now := event.CreateAt.Add(time.Second)
-	return domain.Alert{EventSourceVersion: 1, AlertID: "alert-1", BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint, Title: event.Title, Severity: event.Severity, ConditionKey: event.ConditionKey, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: event.EventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: event.EventID, BeginAt: event.OccurredAt, CreateAt: now, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"status": json.RawMessage(`"succeeded"`), "processors": json.RawMessage(`[]`)}}
+	return domain.Alert{EventSourceVersion: 1, AlertID: "alert-1", BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint, Title: event.Title, Severity: event.Severity, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: event.EventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: event.EventID, BeginAt: event.OccurredAt, CreateAt: now, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"processors": json.RawMessage(`[]`)}}
 }

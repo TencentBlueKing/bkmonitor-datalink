@@ -165,8 +165,11 @@ func (a *API) put(w http.ResponseWriter, r *http.Request) {
 		failure(w, fmt.Errorf("source id mismatch"))
 		return
 	}
-	if old, e := a.Sources.Get(r.Context(), m.Spec.EventSourceID); e == nil && m.Spec.Storage.Kafka.Security.Protocol == "" && m.Spec.Storage.Kafka.Security.SASL == nil {
-		m.Spec.Storage.Kafka.Security = old.Spec.Storage.Kafka.Security
+	if old, e := a.Sources.Get(r.Context(), m.Spec.EventSourceID); e == nil {
+		if m.Spec.Storage.Kafka.Security.Protocol == "" && m.Spec.Storage.Kafka.Security.SASL == nil {
+			m.Spec.Storage.Kafka.Security = old.Spec.Storage.Kafka.Security
+		}
+		m.Spec.Enrich = m.Spec.Enrich.WithPreservedSecrets(old.Spec.Enrich)
 	}
 	record, e := a.Sources.Apply(r.Context(), m.Spec, m.Expected, false, "api")
 	if e != nil {
@@ -247,6 +250,13 @@ func (a *API) beat(w http.ResponseWriter, r *http.Request) {
 	output(w, tasks)
 }
 
+func releaseForRole(release eventsource.Release, role string) eventsource.Release {
+	if role != "lifecycle" {
+		release.Spec.Enrich = config.EnrichConfig{}
+	}
+	return release
+}
+
 func (a *API) workerRelease(w http.ResponseWriter, r *http.Request) {
 	state, e := a.Controller.Snapshot(r.Context())
 	if e != nil {
@@ -261,6 +271,9 @@ func (a *API) workerRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel, e := a.Sources.GetRelease(r.Context(), t.Source, t.Version)
+	if e == nil {
+		rel = releaseForRole(rel, t.Role)
+	}
 	if e != nil {
 		failure(w, e)
 		return

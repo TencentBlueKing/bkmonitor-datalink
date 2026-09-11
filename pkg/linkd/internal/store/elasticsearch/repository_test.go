@@ -42,7 +42,6 @@ func TestDocumentCodecs(t *testing.T) {
 	event := storetest.Event("tenant-1", "event-1", "fp", "warning")
 	event.Content = "CPU has remained above threshold"
 	event.ActionReason = "threshold_exceeded"
-	event.ConditionName = "CPU usage"
 	event.SubjectSystem = "cmdb"
 	event.SubjectType = "host"
 	event.SubjectID = "host-1"
@@ -104,13 +103,11 @@ func TestDocumentCodecs(t *testing.T) {
 
 	alert := storetest.Alert("tenant-1", "alert-1", "event-1", "fp", "warning")
 	alert.Content = event.Content
-	alert.ConditionName = event.ConditionName
 	alert.SubjectSystem = event.SubjectSystem
 	alert.SubjectType = event.SubjectType
 	alert.SubjectID = event.SubjectID
 	alert.SubjectName = event.SubjectName
 	alert.Enrich = domain.JSONObject{
-		"status":     json.RawMessage(`"succeeded"`),
 		"processors": json.RawMessage(`[{"test":{"status":"succeeded","value":{"owner":"ops"}}}]`),
 	}
 	data, err = encodeAlertDocument(alert)
@@ -186,14 +183,14 @@ func TestMappings(t *testing.T) {
 	assertMappingFields(t, alerts, reflect.TypeFor[domain.Alert]())
 	assertMappingFields(t, logs, reflect.TypeFor[domain.AlertLog]())
 
-	assertPropertyTypes(t, events, "keyword", "bk_tenant_id", "event_source_id", "related_alert_id", "event_id", "fingerprint", "title", "content", "severity", "action", "action_reason", "condition_key", "condition_name", "subject_system", "subject_type", "subject_id", "subject_name", "source_event_id", "source_alert_id")
+	assertPropertyTypes(t, events, "keyword", "bk_tenant_id", "event_source_id", "related_alert_id", "event_id", "fingerprint", "title", "content", "severity", "action", "action_reason", "subject_system", "subject_type", "subject_id", "subject_name", "source_event_id", "source_alert_id")
 	assertPropertyTypes(t, events, "date_nanos", "occurred_at", "produced_at", "received_at", "create_at")
 	assertPropertyTypes(t, events, "flattened", "dimensions", "labels")
 	assertPropertyTypes(t, events, "object", "source_raw_data", "extra_data", "processing")
 	assertPropertyTypes(t, processing, "keyword", "state", "outcome", "reason_code")
 	assertPropertyTypes(t, processing, "date_nanos", "processed_at")
 
-	assertPropertyTypes(t, alerts, "keyword", "alert_id", "bk_tenant_id", "event_source_id", "fingerprint", "title", "content", "severity", "condition_key", "condition_name", "subject_system", "subject_type", "subject_id", "subject_name", "source_event_id", "source_alert_id", "status", "latest_event_id", "trigger_event_id", "end_type", "end_reason", "enrich_status")
+	assertPropertyTypes(t, alerts, "keyword", "alert_id", "bk_tenant_id", "event_source_id", "fingerprint", "title", "content", "severity", "subject_system", "subject_type", "subject_id", "subject_name", "source_event_id", "source_alert_id", "status", "latest_event_id", "trigger_event_id", "end_type", "end_reason", "enrich_status")
 	assertPropertyTypes(t, alerts, "date_nanos", "last_occurred_at", "update_at", "begin_at", "create_at", "end_at")
 	assertPropertyTypes(t, alerts, "flattened", "dimensions", "labels")
 	assertPropertyTypes(t, alerts, "object", "extra_data", "enrich")
@@ -212,7 +209,7 @@ func TestMappings(t *testing.T) {
 			t.Fatalf("opaque property=%#v", property)
 		}
 	}
-	for _, field := range []string{"title", "content", "action_reason", "condition_name", "subject_name"} {
+	for _, field := range []string{"title", "content", "action_reason", "subject_name"} {
 		property := events[field].(map[string]any)
 		if property["type"] != "keyword" || property["index"] != false || property["doc_values"] != false {
 			t.Fatalf("stored-only event field %q=%#v", field, property)

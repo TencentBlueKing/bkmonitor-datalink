@@ -27,8 +27,6 @@ type Alert struct {
 	Title              string       `json:"title"`
 	Content            string       `json:"content"`
 	Severity           string       `json:"severity"`
-	ConditionKey       string       `json:"condition_key"`
-	ConditionName      string       `json:"condition_name"`
 	Dimensions         DimensionMap `json:"dimensions"`
 	SubjectSystem      string       `json:"subject_system"`
 	SubjectType        string       `json:"subject_type"`
@@ -129,8 +127,6 @@ func (a Alert) validate(validateJSON bool) error {
 	}{
 		{"content", a.Content, 1 << 20},
 		{"title", a.Title, 256},
-		{"condition_key", a.ConditionKey, 256},
-		{"condition_name", a.ConditionName, 256},
 		{"subject_system", a.SubjectSystem, 32},
 		{"subject_type", a.SubjectType, 128},
 		{"subject_id", a.SubjectID, 256},
@@ -194,7 +190,7 @@ func (a Alert) validate(validateJSON bool) error {
 	return nil
 }
 
-// ValidateEnrichPayload 校验 Alert.enrich 固定结构及其与 enrich_status 的一致性。
+// ValidateEnrichPayload 校验 Alert.enrich 固定结构及 Processor 聚合状态与 enrich_status 的一致性。
 func ValidateEnrichPayload(status EnrichStatus, object JSONObject) error {
 	if status == EnrichStatusPending {
 		if len(object) != 0 {
@@ -202,20 +198,12 @@ func ValidateEnrichPayload(status EnrichStatus, object JSONObject) error {
 		}
 		return nil
 	}
-	if len(object) != 2 {
-		return fmt.Errorf("alert enrich must contain status and processors")
+	if len(object) != 1 {
+		return fmt.Errorf("alert enrich must contain only processors")
 	}
-	statusRaw, statusExists := object["status"]
 	processorsRaw, processorsExists := object["processors"]
-	if !statusExists || !processorsExists {
-		return fmt.Errorf("alert enrich must contain status and processors")
-	}
-	var payloadStatus EnrichStatus
-	if err := json.Unmarshal(statusRaw, &payloadStatus); err != nil {
-		return fmt.Errorf("alert enrich status: %w", err)
-	}
-	if payloadStatus != status {
-		return fmt.Errorf("alert enrich status %q does not match enrich_status %q", payloadStatus, status)
+	if !processorsExists {
+		return fmt.Errorf("alert enrich must contain processors")
 	}
 	var processors []map[string]struct {
 		Status      EnrichStatus `json:"status"`
@@ -265,8 +253,8 @@ func ValidateEnrichPayload(status EnrichStatus, object JSONObject) error {
 	case failed == applicable:
 		aggregate = EnrichStatusFailed
 	}
-	if payloadStatus != aggregate {
-		return fmt.Errorf("alert enrich status %q does not match processor aggregate %q", payloadStatus, aggregate)
+	if status != aggregate {
+		return fmt.Errorf("alert enrich_status %q does not match processor aggregate %q", status, aggregate)
 	}
 	return nil
 }

@@ -45,9 +45,182 @@ type EventSource struct {
 	Storage           EventSourceStorageConfig `yaml:"storage" json:"storage"`
 }
 
-// EnrichConfig 定义该来源创建新 Alert 时按顺序执行的丰富处理链。
+// EnrichConfig 定义该来源创建新 Alert 时按顺序执行的丰富处理链及其数据源。
 type EnrichConfig struct {
-	Processors []EnrichProcessorConfig `yaml:"processors,omitempty" json:"processors,omitempty"`
+	Processors  []EnrichProcessorConfig `yaml:"processors,omitempty" json:"processors,omitempty"`
+	DataSources *EnrichDataSources      `yaml:"datasources,omitempty" json:"datasources,omitempty"`
+}
+
+// EnrichDataSources 定义该来源的丰富处理器可复用的物理数据源连接。
+type EnrichDataSources struct {
+	MySQL         *EnrichMySQLDataSource         `yaml:"mysql,omitempty" json:"mysql,omitempty"`
+	Elasticsearch *EnrichElasticsearchDataSource `yaml:"elasticsearch,omitempty" json:"elasticsearch,omitempty"`
+}
+
+// EnrichMySQLDataSource 定义 Enrich 使用的 MySQL 只读连接。
+type EnrichMySQLDataSource struct {
+	Address  string `yaml:"address" json:"address"`
+	Database string `yaml:"database" json:"database"`
+	Username string `yaml:"username" json:"username"`
+	Password string `yaml:"password" json:"password"`
+}
+
+// EnrichElasticsearchDataSource 定义 Enrich 使用的 Elasticsearch 只读连接。
+type EnrichElasticsearchDataSource struct {
+	Addresses   []string               `yaml:"addresses" json:"addresses"`
+	IndexPrefix string                 `yaml:"index_prefix" json:"index_prefix"`
+	APIKey      string                 `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	BasicAuth   *EnrichBasicAuthSource `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`
+}
+
+// EnrichBasicAuthSource 定义 Enrich Elasticsearch 的 Basic Auth 凭据。
+type EnrichBasicAuthSource struct {
+	Username string `yaml:"username" json:"username"`
+	Password string `yaml:"password" json:"password"`
+}
+
+func (c EnrichConfig) clone() EnrichConfig {
+	cloned := c
+	cloned.Processors = append([]EnrichProcessorConfig(nil), c.Processors...)
+	if c.DataSources != nil {
+		dataSources := c.DataSources.clone()
+		cloned.DataSources = &dataSources
+	}
+	return cloned
+}
+
+func (c EnrichDataSources) clone() EnrichDataSources {
+	cloned := c
+	if c.MySQL != nil {
+		value := *c.MySQL
+		cloned.MySQL = &value
+	}
+	if c.Elasticsearch != nil {
+		value := *c.Elasticsearch
+		value.Addresses = append([]string(nil), c.Elasticsearch.Addresses...)
+		if c.Elasticsearch.BasicAuth != nil {
+			basicAuth := *c.Elasticsearch.BasicAuth
+			value.BasicAuth = &basicAuth
+		}
+		cloned.Elasticsearch = &value
+	}
+	return cloned
+}
+
+// WithPreservedSecrets 用已有配置补齐管理接口中省略或脱敏的数据源凭据。
+func (c EnrichConfig) WithPreservedSecrets(previous EnrichConfig) EnrichConfig {
+	merged := c.clone()
+	if merged.DataSources == nil && previous.DataSources != nil {
+		dataSources := previous.DataSources.clone()
+		merged.DataSources = &dataSources
+	}
+	if merged.DataSources == nil || previous.DataSources == nil {
+		return merged
+	}
+	if merged.DataSources.MySQL != nil && previous.DataSources.MySQL != nil &&
+		(merged.DataSources.MySQL.Password == "" || merged.DataSources.MySQL.Password == redactedSecret) {
+		merged.DataSources.MySQL.Password = previous.DataSources.MySQL.Password
+	}
+	currentElasticsearch, oldElasticsearch := merged.DataSources.Elasticsearch, previous.DataSources.Elasticsearch
+	if currentElasticsearch != nil && oldElasticsearch != nil {
+		if currentElasticsearch.APIKey == "" || currentElasticsearch.APIKey == redactedSecret {
+			currentElasticsearch.APIKey = oldElasticsearch.APIKey
+		}
+		if currentElasticsearch.BasicAuth != nil && oldElasticsearch.BasicAuth != nil &&
+			(currentElasticsearch.BasicAuth.Password == "" || currentElasticsearch.BasicAuth.Password == redactedSecret) {
+			currentElasticsearch.BasicAuth.Password = oldElasticsearch.BasicAuth.Password
+		}
+	}
+	return merged
+}
+
+func (c EnrichDataSources) redacted() EnrichDataSources {
+	redacted := c.clone()
+	if redacted.MySQL != nil && redacted.MySQL.Password != "" {
+		redacted.MySQL.Password = redactedSecret
+	}
+	if redacted.Elasticsearch != nil {
+		if redacted.Elasticsearch.APIKey != "" {
+			redacted.Elasticsearch.APIKey = redactedSecret
+		}
+		if redacted.Elasticsearch.BasicAuth != nil && redacted.Elasticsearch.BasicAuth.Password != "" {
+			redacted.Elasticsearch.BasicAuth.Password = redactedSecret
+		}
+	}
+	return redacted
+}
+
+func (c EnrichMySQLDataSource) validate() error {
+	return MySQLConfig(c).Validate()
+}
+
+func (c EnrichElasticsearchDataSource) validate() error {
+	var basicAuth *BasicAuthConfig
+	if c.BasicAuth != nil {
+		basicAuth = &BasicAuthConfig{Username: c.BasicAuth.Username, Password: c.BasicAuth.Password}
+	}
+	return (ElasticsearchConfig{
+		Addresses: c.Addresses, IndexPrefix: c.IndexPrefix,
+		APIKey: c.APIKey, BasicAuth: basicAuth,
+	}).Validate()
+}
+
+func (c EnrichConfig) validate() error {
+	seenProcessors := make(map[string]int, len(c.Processors))
+	for index, processor := range c.Processors {
+		if strings.TrimSpace(processor.Type) == "" {
+			return fmt.Errorf("enrich.processors[%d].type is required", index)
+		}
+		if previous, exists := seenProcessors[processor.Type]; exists {
+			return fmt.Errorf("enrich.processors[%d].type duplicates enrich.processors[%d]: %q", index, previous, processor.Type)
+		}
+		seenProcessors[processor.Type] = index
+	}
+	_, err := c.SelectDataSources()
+	if err != nil {
+		return err
+	}
+	if c.DataSources != nil && c.DataSources.MySQL != nil {
+		if err := c.DataSources.MySQL.validate(); err != nil {
+			return fmt.Errorf("enrich.datasources.mysql: %w", err)
+		}
+	}
+	if c.DataSources != nil && c.DataSources.Elasticsearch != nil {
+		if err := c.DataSources.Elasticsearch.validate(); err != nil {
+			return fmt.Errorf("enrich.datasources.elasticsearch: %w", err)
+		}
+	}
+	return nil
+}
+
+// SelectDataSources 按 Processor Chain 返回实际需要绑定的物理连接。
+// 全部 Processor 共享一个 MySQL 连接池；Strategy 和 Resource 额外共享 Elasticsearch Transport。
+func (c EnrichConfig) SelectDataSources() (EnrichDataSources, error) {
+	configured := EnrichDataSources{}
+	if c.DataSources != nil {
+		configured = *c.DataSources
+	}
+	selected := EnrichDataSources{}
+	for _, processor := range c.Processors {
+		switch processor.Type {
+		case "strategy", "resource":
+			if configured.MySQL == nil {
+				return EnrichDataSources{}, fmt.Errorf("enrich.datasources.mysql is required by configured enrich processors")
+			}
+			if configured.Elasticsearch == nil {
+				return EnrichDataSources{}, fmt.Errorf("enrich.datasources.elasticsearch is required by configured enrich processors")
+			}
+			selected.MySQL, selected.Elasticsearch = configured.MySQL, configured.Elasticsearch
+		case "display", "metric", "source":
+			if configured.MySQL == nil {
+				return EnrichDataSources{}, fmt.Errorf("enrich.datasources.mysql is required by configured enrich processors")
+			}
+			selected.MySQL = configured.MySQL
+		default:
+			return EnrichDataSources{}, fmt.Errorf("enrich processor type is not registered: %q", processor.Type)
+		}
+	}
+	return selected, nil
 }
 
 // EnrichProcessorConfig 通过稳定注册名选择丰富处理器。
@@ -117,6 +290,10 @@ func (s EventSource) Redacted() EventSource {
 	for i := range redacted.Hooks {
 		redacted.Hooks[i] = redacted.Hooks[i].Redacted()
 	}
+	if redacted.Enrich.DataSources != nil {
+		dataSources := redacted.Enrich.DataSources.redacted()
+		redacted.Enrich.DataSources = &dataSources
+	}
 	return redacted
 }
 
@@ -132,7 +309,7 @@ func (s EventSource) clone() EventSource {
 		cloned.Cleaner.Runtime = &runtimeConfig
 	}
 	cloned.FingerprintFields = append([]string(nil), s.FingerprintFields...)
-	cloned.Enrich.Processors = append([]EnrichProcessorConfig(nil), s.Enrich.Processors...)
+	cloned.Enrich = s.Enrich.clone()
 	cloned.Storage.Kafka.Brokers = append([]string(nil), s.Storage.Kafka.Brokers...)
 	cloned.Storage.Kafka.Security = s.Storage.Kafka.Security.Clone()
 	if len(s.SeverityMapping) == 0 {
@@ -214,15 +391,8 @@ func (s EventSource) validate(severity SeverityConfig) error {
 	if err := ValidateHooks(s.Hooks); err != nil {
 		return err
 	}
-	seenProcessors := make(map[string]int, len(s.Enrich.Processors))
-	for index, processor := range s.Enrich.Processors {
-		if strings.TrimSpace(processor.Type) == "" {
-			return fmt.Errorf("enrich.processors[%d].type is required", index)
-		}
-		if previous, exists := seenProcessors[processor.Type]; exists {
-			return fmt.Errorf("enrich.processors[%d].type duplicates enrich.processors[%d]: %q", index, previous, processor.Type)
-		}
-		seenProcessors[processor.Type] = index
+	if err := s.Enrich.validate(); err != nil {
+		return err
 	}
 	if s.Storage.Type != StorageTypeKafka {
 		return fmt.Errorf("storage.type must be %q: %q", StorageTypeKafka, s.Storage.Type)
@@ -266,7 +436,7 @@ func validateFingerprintPath(path string) error {
 		return nil
 	}
 	for _, allowed := range []string{
-		"source_alert_id", "condition_key", "subject_system", "subject_type", "subject_id",
+		"source_alert_id", "subject_system", "subject_type", "subject_id",
 	} {
 		if path == allowed {
 			return nil

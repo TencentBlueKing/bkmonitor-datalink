@@ -62,6 +62,7 @@ func TestEventSourceDefaultsAndValidation(t *testing.T) {
 		t.Fatalf("legacy cleaner type error = %v", err)
 	}
 	source.Enrich.Processors = []EnrichProcessorConfig{{Type: "strategy"}, {Type: "display"}}
+	source.Enrich.DataSources = validEnrichDataSources()
 	if err := ValidateEventSources([]EventSource{source}, SeverityConfig{}); err != nil {
 		t.Fatalf("ValidateEventSources() enrich error = %v", err)
 	}
@@ -81,7 +82,7 @@ func TestEventSourceFingerprintAndSeverity(t *testing.T) {
 	t.Parallel()
 	source := validEventSource()
 	source.FingerprintMode = FingerprintModeFields
-	source.FingerprintFields = []string{"condition_key", "dimensions.host"}
+	source.FingerprintFields = []string{"subject_id", "dimensions.host"}
 	source.SeverityMapping = map[string]string{"P1": "critical"}
 	source.DefaultSeverity = "info"
 	if err := ValidateEventSources([]EventSource{source}, SeverityConfig{}); err != nil {
@@ -122,13 +123,62 @@ func TestEventSourceCloneAndRedaction(t *testing.T) {
 	source.SeverityMapping = map[string]string{"P1": "critical"}
 	source.Storage.Kafka.Security.SASL = &kafkaclient.SASLConfig{Mechanism: "plain", Username: "user", Password: "secret"}
 	source.Enrich.Processors = []EnrichProcessorConfig{{Type: "strategy"}}
+	source.Enrich.DataSources = validEnrichDataSources()
+	source.Enrich.DataSources.Elasticsearch.APIKey = "api-secret"
 	redacted := source.Redacted()
 	redacted.Enrich.Processors[0].Type = "display"
-	redacted.FingerprintFields[0] = "condition_key"
+	redacted.Enrich.DataSources.MySQL.Database = "changed"
+	redacted.FingerprintFields[0] = "subject_id"
 	redacted.SeverityMapping["P1"] = "info"
 	redacted.Storage.Kafka.Brokers[0] = "changed"
-	if reflect.DeepEqual(source, redacted) || source.Enrich.Processors[0].Type != "strategy" || source.FingerprintFields[0] != "source_alert_id" || source.SeverityMapping["P1"] != "critical" {
+	if reflect.DeepEqual(source, redacted) || source.Enrich.Processors[0].Type != "strategy" || source.Enrich.DataSources.MySQL.Database != "kingeye" || source.FingerprintFields[0] != "source_alert_id" || source.SeverityMapping["P1"] != "critical" {
 		t.Fatalf("Redacted changed original: %#v", source)
+	}
+	if redacted.Enrich.DataSources.MySQL.Password != redactedSecret || redacted.Enrich.DataSources.Elasticsearch.APIKey != redactedSecret {
+		t.Fatalf("Redacted leaked enrich credentials: %#v", redacted.Enrich.DataSources)
+	}
+}
+
+func TestEnrichSelectsOnlyProcessorDependencies(t *testing.T) {
+	t.Parallel()
+	enrich := EnrichConfig{
+		Processors:  []EnrichProcessorConfig{{Type: "source"}},
+		DataSources: validEnrichDataSources(),
+	}
+	selected, err := enrich.SelectDataSources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.MySQL == nil || selected.Elasticsearch != nil {
+		t.Fatalf("SelectDataSources()=%#v", selected)
+	}
+}
+
+func TestEnrichPreservesOmittedSecrets(t *testing.T) {
+	t.Parallel()
+	previous := EnrichConfig{DataSources: validEnrichDataSources()}
+	previous.DataSources.Elasticsearch.APIKey = "api-secret"
+	omitted := (EnrichConfig{}).WithPreservedSecrets(previous)
+	if omitted.DataSources == nil || omitted.DataSources.Elasticsearch.APIKey != "api-secret" {
+		t.Fatalf("omitted datasources were not preserved: %#v", omitted.DataSources)
+	}
+	current := previous.clone()
+	current.DataSources.MySQL.Password = redactedSecret
+	current.DataSources.Elasticsearch.APIKey = redactedSecret
+	merged := current.WithPreservedSecrets(previous)
+	if merged.DataSources.MySQL.Password != "secret" || merged.DataSources.Elasticsearch.APIKey != "api-secret" {
+		t.Fatalf("WithPreservedSecrets()=%#v", merged.DataSources)
+	}
+	merged.DataSources.MySQL.Password = "changed"
+	if previous.DataSources.MySQL.Password != "secret" {
+		t.Fatal("WithPreservedSecrets shares datasource pointers")
+	}
+}
+
+func validEnrichDataSources() *EnrichDataSources {
+	return &EnrichDataSources{
+		MySQL:         &EnrichMySQLDataSource{Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader", Password: "secret"},
+		Elasticsearch: &EnrichElasticsearchDataSource{Addresses: []string{"http://onemodel.example.com:9200"}, IndexPrefix: "bk_monitor_base_"},
 	}
 }
 

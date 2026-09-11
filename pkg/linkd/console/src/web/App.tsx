@@ -1,6 +1,13 @@
 import { EventSourcesPage } from "./pages/EventSourcesPage";
 import { useQuery } from "@tanstack/react-query";
-import { Component, lazy, type ReactNode, Suspense, useState } from "react";
+import {
+  Component,
+  lazy,
+  type ReactNode,
+  Suspense,
+  useEffect,
+  useState,
+} from "react";
 import {
   NavLink,
   Navigate,
@@ -109,6 +116,13 @@ const navigationGroups: Array<{
 ];
 
 export function App() {
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", theme === "dark" ? "#090d13" : "#f4f7fa");
+  }, [theme]);
   const routeLocation = useLocation();
   const [timeMode, setTimeMode] = useState<TimeMode>("local");
   const [pageQueryFailed, setPageQueryFailed] = useState(false);
@@ -184,6 +198,20 @@ export function App() {
                     ? "CONFIGURATION API"
                     : "READ ONLY"}
                 </span>
+                <button
+                  className="theme-button"
+                  type="button"
+                  aria-label={
+                    theme === "dark" ? "切换为浅色模式" : "切换为深色模式"
+                  }
+                  onClick={() =>
+                    setTheme((current) =>
+                      current === "dark" ? "light" : "dark",
+                    )
+                  }
+                >
+                  {theme === "dark" ? "浅色" : "深色"}
+                </button>
                 <button
                   className="timezone-button"
                   type="button"

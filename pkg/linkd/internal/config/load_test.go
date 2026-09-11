@@ -160,6 +160,15 @@ func TestLoadEventSources(t *testing.T) {
     severity_mapping:
       P1: critical
     enrich:
+      datasources:
+        mysql:
+          address: mysql.example.com:3306
+          database: kingeye
+          username: reader
+          password: secret
+        elasticsearch:
+          addresses: [http://onemodel.example.com:9200]
+          index_prefix: bk_monitor_base_
       processors:
         - type: strategy
         - type: resource
@@ -190,6 +199,9 @@ func TestLoadEventSources(t *testing.T) {
 	}
 	if cfg.EventSources[1].Storage.Kafka.Security.Protocol != kafkaclient.SecurityProtocolPlaintext {
 		t.Fatalf("load() default protocol = %q", cfg.EventSources[1].Storage.Kafka.Security.Protocol)
+	}
+	if cfg.EventSources[1].Enrich.DataSources == nil || cfg.EventSources[1].Enrich.DataSources.MySQL == nil || cfg.EventSources[1].Enrich.DataSources.MySQL.Password != "secret" || cfg.EventSources[1].Enrich.DataSources.Elasticsearch == nil {
+		t.Fatalf("load() enrich datasources = %#v", cfg.EventSources[1].Enrich.DataSources)
 	}
 	if got := cfg.EventSources[1].Enrich.Processors; !reflect.DeepEqual(got, []EnrichProcessorConfig{{Type: "strategy"}, {Type: "resource"}, {Type: "display"}, {Type: "metric"}, {Type: "source"}}) {
 		t.Fatalf("load() enrich processors = %#v", got)

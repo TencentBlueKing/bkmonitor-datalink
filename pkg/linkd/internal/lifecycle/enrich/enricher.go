@@ -95,12 +95,13 @@ func (c *Chain) Enrich(ctx context.Context, input lifecycle.EnrichInput) (lifecy
 			Status: result.Status, Value: result.Value, Diagnostics: cloneDiagnostics(result.Diagnostics),
 		}})
 	}
-	payload := Payload{Status: aggregateStatus(results), Processors: entries}
+	status := aggregateStatus(results)
+	payload := Payload{Processors: entries}
 	data, err := payload.JSONObject()
 	if err != nil {
 		return lifecycle.EnrichResult{}, err
 	}
-	return lifecycle.EnrichResult{Status: payload.Status, Data: data}, nil
+	return lifecycle.EnrichResult{Status: status, Data: data}, nil
 }
 
 func runProcessor(ctx context.Context, processor Processor, scope *Scope) (result ProcessorResult, outcome string) {

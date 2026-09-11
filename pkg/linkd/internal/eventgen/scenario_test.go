@@ -45,7 +45,7 @@ func TestScenarioTemplates(t *testing.T) {
 				t.Fatal(err)
 			}
 			if template.AlertID == "" || template.Subject.ID != template.AlertID || template.Title == "" ||
-				template.ConditionName == "" || template.Severity == "" {
+				template.Severity == "" {
 				t.Fatalf("incomplete template: %#v", template)
 			}
 			if template.Dimensions["generator_id"] != template.AlertID {

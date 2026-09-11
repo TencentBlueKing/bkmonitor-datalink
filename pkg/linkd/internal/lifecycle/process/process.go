@@ -122,18 +122,22 @@ func Run(
 		recentAlertCacheTTL = cacheConfig.TTL()
 	}
 
-	enrichRuntime, err := openEnrichRuntime(startupCtx, lifecycleConfig, telemetryRuntime)
-	if err != nil {
-		return fmt.Errorf("initialize lifecycle enricher: %w", err)
-	}
-	defer func() {
-		if closeErr := enrichRuntime.Close(); closeErr != nil {
-			runErr = errors.Join(runErr, closeErr)
+	return taskdispatch.Serve(ctx, cfg, "lifecycle", func(taskCtx context.Context, task taskdispatch.Task, source config.EventSource) (taskErr error) {
+		openCtx, cancelOpen := context.WithTimeout(taskCtx, startupTimeout)
+		enrichRuntime, err := openEnrichRuntime(
+			openCtx, source, lifecycleConfig.Concurrency+4,
+			time.Duration(lifecycleConfig.ProcessTimeoutSeconds)*time.Second, telemetryRuntime,
+		)
+		cancelOpen()
+		if err != nil {
+			return fmt.Errorf("initialize lifecycle source enrich datasources: %w", err)
 		}
-	}()
-
-	return taskdispatch.Serve(ctx, cfg, "lifecycle", func(taskCtx context.Context, task taskdispatch.Task, source config.EventSource) error {
-		enricher, err := enrichRuntime.router(source, lifecycleConfig, telemetryRuntime)
+		defer func() {
+			if closeErr := enrichRuntime.Close(); closeErr != nil {
+				taskErr = errors.Join(taskErr, closeErr)
+			}
+		}()
+		enricher, err := enrichRuntime.router(source, telemetryRuntime)
 		if err != nil {
 			return fmt.Errorf("initialize lifecycle source enricher: %w", err)
 		}

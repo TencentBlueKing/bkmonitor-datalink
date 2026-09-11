@@ -72,6 +72,24 @@ func TestPartitionCapAndExpansion(t *testing.T) {
 	}
 }
 
+func TestEnrichChangeRestartsSourceTasks(t *testing.T) {
+	s, release, now := fixture()
+	Reconcile(&s, []eventsource.Release{release}, now)
+	release.Version = 2
+	release.Spec.Enrich = config.EnrichConfig{
+		Processors: []config.EnrichProcessorConfig{{Type: "source"}},
+		DataSources: &config.EnrichDataSources{MySQL: &config.EnrichMySQLDataSource{
+			Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader",
+		}},
+	}
+	Reconcile(&s, []eventsource.Release{release}, now)
+	for _, task := range s.Tasks {
+		if task.Phase != "stopping" {
+			t.Fatalf("enrich change did not atomically restart %s", task.Role)
+		}
+	}
+}
+
 func TestProbeFailureDoesNotExpandOrClear(t *testing.T) {
 	s, r, now := fixture()
 	Reconcile(&s, []eventsource.Release{r}, now)

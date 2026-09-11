@@ -39,23 +39,15 @@ type Instance struct {
 
 // Sources 聚合 Enrichment 使用的窄只读数据源。
 type Sources struct {
-	BKStrategy  BKStrategyReader
 	CWStrategy  CWStrategyReader
 	Metric      MetricReader
 	OneModel    OneModelReader
 	AlarmSource AlarmSourceReader
 }
 
-// BKStrategyReader 读取全租户唯一 ID 标识的蓝鲸监控策略与指定历史快照。
-type BKStrategyReader interface {
-	GetStrategyHistory(ctx context.Context, strategyID, historyID int64) (models.BkStrategyHistory, bool, error)
-	GetStrategy(ctx context.Context, strategyID int64) (models.BkStrategy, bool, error)
-}
-
 // CWStrategyReader 按全租户唯一的关联 ID 读取鲸眼声明式策略。
 type CWStrategyReader interface {
-	GetByBKStrategyID(ctx context.Context, bkStrategyID int64) (models.CWStrategy, bool, error)
-	GetByMonitorTemplateID(ctx context.Context, monitorTemplateID int64) (models.CWStrategy, bool, error)
+	GetByBKStrategyID(ctx context.Context, tenantID string, bkStrategyID int64) (models.CWStrategy, bool, error)
 }
 
 // MetricReader 只读取 Kingeye MonitorMetricLibrary；MonitorMetric 表已经废弃。
@@ -73,20 +65,8 @@ type OneModelReader interface {
 	FindInstance(ctx context.Context, tenantID string, query InstanceQuery) (Instance, bool, error)
 }
 
-type platformResult struct {
-	value models.BkStrategyHistory
-	found bool
-	err   error
-}
-
 type strategyResult struct {
 	value models.CWStrategy
-	found bool
-	err   error
-}
-
-type bkStrategyResult struct {
-	value models.BkStrategy
 	found bool
 	err   error
 }
@@ -109,16 +89,12 @@ type Scope struct {
 	sources       Sources
 	enrichContext *EnrichContext
 
-	platformOnce        sync.Once
-	platform            platformResult
-	currentStrategyOnce sync.Once
-	currentStrategy     bkStrategyResult
-	strategyOnce        sync.Once
-	strategy            strategyResult
-	alarmSourceOnce     sync.Once
-	alarmSource         alarmSourceResult
-	instanceOnce        sync.Once
-	instance            instanceResult
+	strategyOnce    sync.Once
+	strategy        strategyResult
+	alarmSourceOnce sync.Once
+	alarmSource     alarmSourceResult
+	instanceOnce    sync.Once
+	instance        instanceResult
 }
 
 // NewScope 从已规范化 Alert 创建隔离的调用上下文。
@@ -143,30 +119,6 @@ func (s *Scope) Alert() domain.Alert {
 	return s.alert.Clone()
 }
 
-// BKStrategyHistory 惰性读取并复用本次调用的蓝鲸监控策略历史结果。
-func (s *Scope) BKStrategyHistory(ctx context.Context, strategyID, historyID int64) (models.BkStrategyHistory, bool, error) {
-	s.platformOnce.Do(func() {
-		if s.sources.BKStrategy == nil {
-			s.platform.err = fmt.Errorf("bk strategy history reader is unavailable")
-			return
-		}
-		s.platform.value, s.platform.found, s.platform.err = s.sources.BKStrategy.GetStrategyHistory(ctx, strategyID, historyID)
-	})
-	return s.platform.value, s.platform.found, s.platform.err
-}
-
-// BKStrategy 惰性读取并复用本次调用的蓝鲸监控当前策略。
-func (s *Scope) BKStrategy(ctx context.Context, strategyID int64) (models.BkStrategy, bool, error) {
-	s.currentStrategyOnce.Do(func() {
-		if s.sources.BKStrategy == nil {
-			s.currentStrategy.err = fmt.Errorf("bk strategy reader is unavailable")
-			return
-		}
-		s.currentStrategy.value, s.currentStrategy.found, s.currentStrategy.err = s.sources.BKStrategy.GetStrategy(ctx, strategyID)
-	})
-	return s.currentStrategy.value, s.currentStrategy.found, s.currentStrategy.err
-}
-
 // CWStrategyByBKStrategyID 惰性读取并复用按平台策略 ID 关联的鲸眼声明式策略。
 func (s *Scope) CWStrategyByBKStrategyID(ctx context.Context, strategyID int64) (models.CWStrategy, bool, error) {
 	s.strategyOnce.Do(func() {
@@ -174,7 +126,7 @@ func (s *Scope) CWStrategyByBKStrategyID(ctx context.Context, strategyID int64) 
 			s.strategy.err = fmt.Errorf("strategy config reader is unavailable")
 			return
 		}
-		s.strategy.value, s.strategy.found, s.strategy.err = s.sources.CWStrategy.GetByBKStrategyID(ctx, strategyID)
+		s.strategy.value, s.strategy.found, s.strategy.err = s.sources.CWStrategy.GetByBKStrategyID(ctx, s.alert.BKTenantID, strategyID)
 	})
 	return s.strategy.value, s.strategy.found, s.strategy.err
 }

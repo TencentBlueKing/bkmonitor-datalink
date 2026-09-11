@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"linkd/internal/domain"
@@ -32,7 +33,7 @@ func (Metric) Name() string { return rules.MetricProcessor }
 // Match 判断当前告警是否适用 Metric。
 func (Metric) Match(context.Context, *enrich.Scope) (bool, error) { return true, nil }
 
-// Process 查询平台历史并生成指标信息。
+// Process 使用鲸眼声明式策略查询投影生成指标信息。
 func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
 	alert := scope.Alert()
 	values := models.MetricValues{}
@@ -67,28 +68,20 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 	if strategyErr != nil || !strategyFound {
 		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyKingeyeStrategy)
 	}
-	history, found, err := scope.BKStrategyHistory(ctx, ids.StrategyID, ids.HistoryID)
-	if ctx.Err() != nil {
-		return enrich.ProcessorResult{}, ctx.Err()
+	projection, err := strategy.StrategyItemProjection()
+	if err != nil || projection.BKBizID != ids.BizID {
+		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyKingeyeStrategy)
 	}
-	if err != nil || !found {
-		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyPlatformStrategyHistory)
-	}
-	snapshot, err := history.Snapshot()
-	if err != nil || snapshot.BKBizID != ids.BizID || len(snapshot.Items) == 0 || len(snapshot.Items[0].QueryConfigs) == 0 {
-		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyPlatformStrategyHistory)
-	}
-	item := snapshot.Items[0]
-	query := item.QueryConfigs[0]
-	metricName := cleanMetricName(strategy, snapshot, item, query)
+	query := projection.QueryConfigs[0]
+	metricName := cleanMetricName(strategy, projection, query)
 	unit, err := cleanUnit(ctx, scope, strategy, query)
 	if err != nil {
 		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyMetricLibrary)
 	}
 	aggregateFunc := cleanAggregateFunc(strategy)
 	timeInterval := cleanTimeInterval(strategy)
-	metricQueryParams := buildMetricQueryParams(snapshot, strategy, scope.Alert().Dimensions, ids.BizID)
-	displayName, err := cleanItem(ctx, scope, strategy, item, query)
+	metricQueryParams := buildMetricQueryParams(projection, strategy, scope.Alert().Dimensions, ids.BizID)
+	displayName, err := cleanItem(ctx, scope, strategy, projection, query)
 	if err != nil {
 		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyMetricLibrary)
 	}
@@ -155,21 +148,20 @@ type metricQueryCondition struct {
 }
 
 func buildMetricQueryParams(
-	snapshot models.BkStrategySnapshot,
+	projection models.StrategyItemProjection,
 	strategy models.CWStrategy,
 	dimensions domain.DimensionMap,
 	bizID int64,
 ) metricQueryParams {
-	item := snapshot.Items[0]
 	params := metricQueryParams{
-		Expression: item.Expression, Functions: rawJSONValue(item.Functions, []any{}),
-		QueryConfigs: make([]metricQueryConfig, 0, len(item.QueryConfigs)),
+		Expression: projection.Expression, Functions: rawJSONValue(projection.Functions, []any{}),
+		QueryConfigs: make([]metricQueryConfig, 0, len(projection.QueryConfigs)),
 		Function:     metricQueryParamFunctions{TimeCompare: []string{}}, BKBizID: bizID,
 	}
 	if strategy.Kind != models.CWStrategyKindCloud && strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric {
 		params.FieldTag = strategy.Spec.FieldTag
 	}
-	for _, query := range item.QueryConfigs {
+	for _, query := range projection.QueryConfigs {
 		selectedDimensions := selectQueryDimensions(query, dimensions)
 		translated := translateMetricQuery(query, selectedDimensions)
 		params.QueryConfigs = append(params.QueryConfigs, metricQueryConfig{
@@ -191,7 +183,7 @@ type translatedMetricQuery struct {
 	filterDict map[string]any
 }
 
-func translateMetricQuery(query models.BkStrategyQueryConfig, dimensions map[string]any) translatedMetricQuery {
+func translateMetricQuery(query models.StrategyQueryConfig, dimensions map[string]any) translatedMetricQuery {
 	translated := translatedMetricQuery{field: query.MetricField, table: query.ResultTableID, filterDict: map[string]any{}}
 	switch {
 	case query.DataSourceLabel == rules.DataSourceBKFTA:
@@ -218,7 +210,7 @@ func translateMetricQuery(query models.BkStrategyQueryConfig, dimensions map[str
 	return translated
 }
 
-func selectQueryDimensions(query models.BkStrategyQueryConfig, dimensions domain.DimensionMap) map[string]any {
+func selectQueryDimensions(query models.StrategyQueryConfig, dimensions domain.DimensionMap) map[string]any {
 	available := make(map[string]any, len(dimensions)+2)
 	for key, value := range dimensions {
 		if key == rules.FieldBKHostID {
@@ -321,6 +313,19 @@ func metricDependencyFailure(
 	}, nil
 }
 
+func aggregatePeriodSeconds(raw json.RawMessage) int64 {
+	var seconds int64
+	if json.Unmarshal(raw, &seconds) == nil {
+		return seconds
+	}
+	var text string
+	if json.Unmarshal(raw, &text) != nil || !strings.HasSuffix(text, "s") {
+		return 0
+	}
+	seconds, _ = strconv.ParseInt(strings.TrimSuffix(text, "s"), 10, 64)
+	return seconds
+}
+
 func parseAnomalyBeginTime(extraData domain.JSONObject) (string, bool, bool) {
 	raw, exists := extraData[rules.FieldAnomalyBeginTime]
 	if !exists {
@@ -361,14 +366,17 @@ func cleanTimeInterval(strategy models.CWStrategy) any {
 	if strategy.Spec.StrategyItem == nil {
 		return rules.DefaultTimeInterval
 	}
-	return strategy.Spec.StrategyItem.AggregatePeriod
+	if seconds := aggregatePeriodSeconds(strategy.Spec.StrategyItem.AggregatePeriod); seconds > 0 {
+		return seconds
+	}
+	return rules.DefaultTimeInterval
 }
 
 func cleanUnit(
 	ctx context.Context,
 	scope *enrich.Scope,
 	strategy models.CWStrategy,
-	query models.BkStrategyQueryConfig,
+	query models.StrategyQueryConfig,
 ) (string, error) {
 	if strategy.Spec.StrategyItem == nil || strategy.Spec.MonitorItemType == models.CWMonitorItemTypeLogKeyword {
 		// 日志关键字
@@ -410,9 +418,8 @@ func cleanUnit(
 
 func cleanMetricName(
 	strategy models.CWStrategy,
-	snapshot models.BkStrategySnapshot,
-	item models.BkStrategyItem,
-	query models.BkStrategyQueryConfig,
+	projection models.StrategyItemProjection,
+	query models.StrategyQueryConfig,
 ) string {
 	if strategy.Spec.MonitorItemType == models.CWMonitorItemTypeLog ||
 		strategy.Spec.MonitorItemType == models.CWMonitorItemTypeLogKeyword {
@@ -429,8 +436,8 @@ func cleanMetricName(
 		// 衍生指标
 		return strategy.Spec.FieldName
 	}
-	if len(snapshot.Items) > 1 || strategy.Spec.StrategyItem == nil ||
-		hasFunctions(strategy.Spec.StrategyItem.Functions) || hasFunctions(item.Functions) {
+	if len(projection.QueryConfigs) > 1 || strategy.Spec.StrategyItem == nil ||
+		hasFunctions(strategy.Spec.StrategyItem.Functions) || hasFunctions(projection.Functions) {
 		return ""
 	}
 	// 普通单指标
@@ -459,8 +466,8 @@ func cleanItem(
 	ctx context.Context,
 	scope *enrich.Scope,
 	strategy models.CWStrategy,
-	item models.BkStrategyItem,
-	query models.BkStrategyQueryConfig,
+	projection models.StrategyItemProjection,
+	query models.StrategyQueryConfig,
 ) (string, error) {
 	if strategy.Spec.AliasName != "" {
 		// 别名优先
@@ -477,7 +484,7 @@ func cleanItem(
 	}
 	if tableID == rules.SystemEventTableID {
 		// 系统事件
-		return item.Name, nil
+		return projection.Name, nil
 	}
 	metadata, found, err := scope.MetricLibrary(ctx, models.MetricLibraryQuery{
 		TableID: tableID, FieldName: query.MetricField, ObjectModelCode: *strategy.ObjectModelCode,

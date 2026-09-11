@@ -32,16 +32,16 @@ type RawEventMessage struct {
 }
 
 // EventDraft 是来源 Cleaner 从 payload 中提取的来源事实。
-// 租户、来源、Event ID、fingerprint、标准 severity、接收时间和原始 payload
-// 由 EventFactory 统一生成或保存，具体 Cleaner 不得覆盖。
+// 来源、Event ID、fingerprint、标准 severity、接收时间和原始 payload
+// 由 EventFactory 统一生成或保存。BKTenantID 由 Standard payload 提供，
+// EventSource.related_tenant_id 可在 EventFactory 中覆盖它。
 type EventDraft struct {
+	BKTenantID     string
 	Title          string
 	Content        string
 	SourceSeverity string
 	Action         domain.EventAction
 	ActionReason   string
-	ConditionKey   string
-	ConditionName  string
 	Dimensions     domain.DimensionMap
 	SubjectSystem  string
 	SubjectType    string
@@ -68,21 +68,20 @@ type standardSubject struct {
 }
 
 type standardPayload struct {
-	EventID       string              `json:"event_id"`
-	AlertID       string              `json:"alert_id"`
-	Title         string              `json:"title"`
-	Content       string              `json:"content"`
-	Severity      string              `json:"severity"`
-	Action        domain.EventAction  `json:"action"`
-	ActionReason  string              `json:"action_reason"`
-	ConditionKey  string              `json:"condition_key"`
-	ConditionName string              `json:"condition_name"`
-	Dimensions    domain.DimensionMap `json:"dimensions"`
-	Subject       standardSubject     `json:"subject"`
-	OccurredAt    time.Time           `json:"occurred_at"`
-	ProducedAt    time.Time           `json:"produced_at"`
-	Labels        domain.DimensionMap `json:"labels"`
-	ExtraData     domain.JSONObject   `json:"extra_data"`
+	BKTenantID   string              `json:"bk_tenant_id"`
+	EventID      string              `json:"event_id"`
+	AlertID      string              `json:"alert_id"`
+	Title        string              `json:"title"`
+	Content      string              `json:"content"`
+	Severity     string              `json:"severity"`
+	Action       domain.EventAction  `json:"action"`
+	ActionReason string              `json:"action_reason"`
+	Dimensions   domain.DimensionMap `json:"dimensions"`
+	Subject      standardSubject     `json:"subject"`
+	OccurredAt   time.Time           `json:"occurred_at"`
+	ProducedAt   time.Time           `json:"produced_at"`
+	Labels       domain.DimensionMap `json:"labels"`
+	ExtraData    domain.JSONObject   `json:"extra_data"`
 }
 
 // StandardCleaner 解析 Linkd 标准事件 payload，并把来源字段投影为 EventDraft。
@@ -113,16 +112,42 @@ func (StandardCleaner) Clean(ctx context.Context, message RawEventMessage) (Even
 	if err := payload.Labels.Validate(); err != nil {
 		return EventDraft{}, fmt.Errorf("standard labels: %w", err)
 	}
+	if err := validateAdditionalDimensions(payload.Dimensions, payload.ExtraData); err != nil {
+		return EventDraft{}, err
+	}
 	return EventDraft{
-		Title: payload.Title, Content: payload.Content,
+		BKTenantID: payload.BKTenantID,
+		Title:      payload.Title, Content: payload.Content,
 		SourceSeverity: payload.Severity, Action: payload.Action, ActionReason: payload.ActionReason,
-		ConditionKey: payload.ConditionKey, ConditionName: payload.ConditionName,
 		Dimensions: payload.Dimensions.Clone(), SubjectSystem: payload.Subject.System,
 		SubjectType: payload.Subject.Type, SubjectID: payload.Subject.ID, SubjectName: payload.Subject.Name,
 		OccurredAt: payload.OccurredAt, ProducedAt: payload.ProducedAt,
 		SourceEventID: payload.EventID, SourceAlertID: payload.AlertID,
 		Labels: payload.Labels.Clone(), ExtraData: payload.ExtraData.Clone(),
 	}, nil
+}
+
+func validateAdditionalDimensions(dimensions domain.DimensionMap, extraData domain.JSONObject) error {
+	raw, exists := extraData["additional_dimensions"]
+	if !exists {
+		return nil
+	}
+	if err := validateJSONObject(raw); err != nil {
+		return fmt.Errorf("standard extra_data.additional_dimensions: %w", err)
+	}
+	var additional domain.DimensionMap
+	if err := json.Unmarshal(raw, &additional); err != nil {
+		return fmt.Errorf("standard extra_data.additional_dimensions: %w", err)
+	}
+	if err := additional.Validate(); err != nil {
+		return fmt.Errorf("standard extra_data.additional_dimensions: %w", err)
+	}
+	for key := range additional {
+		if _, exists := dimensions[key]; exists {
+			return fmt.Errorf("standard dimensions and extra_data.additional_dimensions duplicate key %q", key)
+		}
+	}
+	return nil
 }
 
 func validateJSONObject(data []byte) error {

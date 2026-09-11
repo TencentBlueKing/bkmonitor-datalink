@@ -133,9 +133,9 @@ Enricher 输入只包含已完成基础构造和 Normalize 的 Alert 深拷贝�
 返回值追加丰富信息。Lifecycle 按 EventSource 路由有序链，单 Processor error/panic 会形成 failed
 信封并继续执行，父 Context 取消会立即停止。
 
-`Alert.enrich` 固定包含 `status` 与 `processors` 两个顶层 key；每个 processors 元素是以稳定处理器名
-为唯一 key 的 envelope，包含 status、value 和可选 diagnostics。`Alert.enrich_status` 与 payload status
-由同一次聚合产生，并在领域校验中保持一致。
+`Alert.enrich` 固定只包含 `processors` 顶层 key；每个 processors 元素是以稳定处理器名
+为唯一 key 的 envelope，包含 status、value 和可选 diagnostics。`Alert.enrich_status` 是总状态的
+唯一持久化字段，领域校验根据 Processor 状态重新聚合并要求一致。
 
 当前 `strategy → resource → display → metric → source` 的 BASE_COLLECT 样例使用固定 mock DataSource
 贯通。真实平台历史、鲸眼配置和资源数据源仍待接入与集成验证。

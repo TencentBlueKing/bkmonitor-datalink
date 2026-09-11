@@ -34,11 +34,18 @@ EventSource 不负责 Alert 状态裁决、Event/Alert 持久化实现或 Lifecy
 | `default_severity`   | 已定义 Severity name                     | 来源值无法映射为标准 name 时的兜底              |
 | `hooks` | 可选有序列表，最多 16 项，name 唯一 | 来源发布中的输出插件；空列表不输出，详见 [Lifecycle](lifecycle.md#23-enricher-与-finalhook) |
 | `enrich.processors`  | 有序且 type 不重复                       | 创建新 Alert 时执行的丰富处理链                 |
+| `enrich.datasources` | 由 Processor 依赖决定                    | 随来源 Release 发布的共享 MySQL 与 Elasticsearch 物理连接 |
 | `storage.type`       | 当前必须为 `kafka`                       | 当前字段名表示输入 MQ 类型                      |
 | `storage.kafka`      | brokers/topic/consumer_group/security    | Kafka subscription 与认证配置                   |
 
 当前文件配置要求每条 EventSource 都提供 storage，包括 disabled 来源。相同标准化 brokers、topic 和
 consumer_group 的 subscription 不允许在两个 EventSource 中重复，避免同一消费责任被重复装配。
+
+`enrich.datasources` 以物理连接为复用边界：`mysql` 由策略、告警源和指标 Reader 共用同一连接池，
+`elasticsearch` 由 OneModel 等索引 Reader 共用同一 Transport。它们与 Processor Chain 使用同一发布版本。
+来源发布会校验依赖完整性，Lifecycle worker 只为当前 Chain 选择并建立连接，来源任务退出时关闭连接。
+配置变化进入执行摘要并触发对应来源任务换代。管理接口默认对 MySQL 密码、Elasticsearch API Key 和
+Basic Auth 密码脱敏。
 
 完整 YAML 示例和 Cleaner 默认预算见[配置指南](../guides/configuration.md)。
 

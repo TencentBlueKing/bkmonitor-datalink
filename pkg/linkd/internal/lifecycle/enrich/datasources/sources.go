@@ -35,122 +35,61 @@ type MySQLConfig struct {
 	Password string
 }
 
-// Config 定义需要组装的真实策略数据源。
-// nil 配置表示本进程的 Processor Chain 不需要该数据源。
+// Config 定义 Enrich 范围内可复用的物理数据源连接。
 type Config struct {
-	BKStrategy  *MySQLConfig
-	CWStrategy  *MySQLConfig
-	AlarmSource *MySQLConfig
-	Metric      *MySQLConfig
+	MySQL *MySQLConfig
 }
 
 // Runtime 持有已完成连接检查的策略数据源及其连接池。
 type Runtime struct {
 	sources   enrich.Sources
-	databases []*sql.DB
+	database  *sql.DB
 	closeOnce sync.Once
 	closeErr  error
 }
 
-// Open 按需创建策略和告警源 Client，并为每个 Client 使用独立配置和连接池。
-// Runtime 不会迁移 schema，只检查连接并组装只读 Client。
+// Open 创建一个 MySQL 连接池，并让各逻辑 Reader 共享该连接。
+// Runtime 不迁移 schema，只检查连接并组装只读 Client。
 func Open(ctx context.Context, config Config, maxConnections int) (_ *Runtime, err error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("open enrich datasources: context must not be nil")
 	}
-	if config.BKStrategy == nil && config.CWStrategy == nil && config.AlarmSource == nil && config.Metric == nil {
-		return nil, fmt.Errorf("open enrich datasources: at least one mysql datasource is required")
+	if config.MySQL == nil {
+		return nil, fmt.Errorf("open enrich datasources: mysql datasource is required")
 	}
 	if maxConnections < 1 {
 		return nil, fmt.Errorf("open enrich datasources: max connections must be positive")
 	}
-	runtime := &Runtime{databases: make([]*sql.DB, 0, 4)}
+	database, sqlDatabase, err := openMySQL(ctx, *config.MySQL, maxConnections)
+	if err != nil {
+		return nil, fmt.Errorf("open enrich mysql datasource: %w", err)
+	}
+	runtime := &Runtime{database: sqlDatabase}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, runtime.Close())
 		}
 	}()
-	if err = runtime.openBKStrategy(ctx, config.BKStrategy, maxConnections); err != nil {
-		return nil, err
-	}
-	if err = runtime.openCWStrategy(ctx, config.CWStrategy, maxConnections); err != nil {
-		return nil, err
-	}
-	if err = runtime.openAlarmSource(ctx, config.AlarmSource, maxConnections); err != nil {
-		return nil, err
-	}
-	if err = runtime.openMetric(ctx, config.Metric, maxConnections); err != nil {
+	runtime.sources, err = newMySQLSources(database)
+	if err != nil {
 		return nil, err
 	}
 	return runtime, nil
 }
 
-func (r *Runtime) openBKStrategy(ctx context.Context, config *MySQLConfig, maxConnections int) error {
-	if config == nil {
-		return nil
+func newMySQLSources(database *gorm.DB) (enrich.Sources, error) {
+	var sources enrich.Sources
+	var err error
+	if sources.CWStrategy, err = NewCWStrategyClient(CWStrategyClientConfig{DB: database}); err != nil {
+		return enrich.Sources{}, fmt.Errorf("initialize cw strategy datasource: %w", err)
 	}
-	database, sqlDatabase, err := openMySQL(ctx, *config, maxConnections)
-	if err != nil {
-		return fmt.Errorf("open bk strategy datasource: %w", err)
+	if sources.AlarmSource, err = NewAlarmSourceClient(AlarmSourceClientConfig{DB: database}); err != nil {
+		return enrich.Sources{}, fmt.Errorf("initialize alarm source datasource: %w", err)
 	}
-	r.databases = append(r.databases, sqlDatabase)
-	client, err := NewBKStrategyClient(BKStrategyClientConfig{DB: database})
-	if err != nil {
-		return fmt.Errorf("initialize bk strategy datasource: %w", err)
+	if sources.Metric, err = NewMetricClient(MetricClientConfig{DB: database}); err != nil {
+		return enrich.Sources{}, fmt.Errorf("initialize metric datasource: %w", err)
 	}
-	r.sources.BKStrategy = client
-	return nil
-}
-
-func (r *Runtime) openCWStrategy(ctx context.Context, config *MySQLConfig, maxConnections int) error {
-	if config == nil {
-		return nil
-	}
-	database, sqlDatabase, err := openMySQL(ctx, *config, maxConnections)
-	if err != nil {
-		return fmt.Errorf("open cw strategy datasource: %w", err)
-	}
-	r.databases = append(r.databases, sqlDatabase)
-	client, err := NewCWStrategyClient(CWStrategyClientConfig{DB: database})
-	if err != nil {
-		return fmt.Errorf("initialize cw strategy datasource: %w", err)
-	}
-	r.sources.CWStrategy = client
-	return nil
-}
-
-func (r *Runtime) openAlarmSource(ctx context.Context, config *MySQLConfig, maxConnections int) error {
-	if config == nil {
-		return nil
-	}
-	database, sqlDatabase, err := openMySQL(ctx, *config, maxConnections)
-	if err != nil {
-		return fmt.Errorf("open alarm source datasource: %w", err)
-	}
-	r.databases = append(r.databases, sqlDatabase)
-	client, err := NewAlarmSourceClient(AlarmSourceClientConfig{DB: database})
-	if err != nil {
-		return fmt.Errorf("initialize alarm source datasource: %w", err)
-	}
-	r.sources.AlarmSource = client
-	return nil
-}
-
-func (r *Runtime) openMetric(ctx context.Context, config *MySQLConfig, maxConnections int) error {
-	if config == nil {
-		return nil
-	}
-	database, sqlDatabase, err := openMySQL(ctx, *config, maxConnections)
-	if err != nil {
-		return fmt.Errorf("open metric datasource: %w", err)
-	}
-	r.databases = append(r.databases, sqlDatabase)
-	client, err := NewMetricClient(MetricClientConfig{DB: database})
-	if err != nil {
-		return fmt.Errorf("initialize metric datasource: %w", err)
-	}
-	r.sources.Metric = client
-	return nil
+	return sources, nil
 }
 
 // Sources 返回已组装的真实策略数据源。
@@ -167,9 +106,9 @@ func (r *Runtime) Close() error {
 		return nil
 	}
 	r.closeOnce.Do(func() {
-		for _, database := range r.databases {
-			if err := database.Close(); err != nil {
-				r.closeErr = errors.Join(r.closeErr, fmt.Errorf("close enrich mysql: %w", err))
+		if r.database != nil {
+			if err := r.database.Close(); err != nil {
+				r.closeErr = fmt.Errorf("close enrich mysql: %w", err)
 			}
 		}
 	})

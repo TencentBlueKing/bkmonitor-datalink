@@ -60,7 +60,7 @@ func TestEventFactoryProtectsSystemFieldsAndUsesResolvers(t *testing.T) {
 		Payload: []byte(`{"title":"payload title","fingerprint":"payload-fingerprint","bk_tenant_id":"payload-tenant","unknown":{"nested":true}}`),
 	}
 	draft := EventDraft{
-		Title: "draft title", SourceSeverity: "P0", Action: domain.EventActionTriggered,
+		BKTenantID: "tenant-1", Title: "draft title", SourceSeverity: "P0", Action: domain.EventActionTriggered,
 		SubjectID: "host-1", Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{},
 	}
@@ -82,6 +82,23 @@ func TestEventFactoryProtectsSystemFieldsAndUsesResolvers(t *testing.T) {
 	}
 	if !event.OccurredAt.Equal(receivedAt) || !event.ProducedAt.Equal(receivedAt) || !event.CreateAt.Equal(receivedAt) {
 		t.Fatalf("event fallback times=%#v", event)
+	}
+}
+
+func TestEventFactoryRejectsTenantMismatch(t *testing.T) {
+	t.Parallel()
+	factory, err := NewEventFactory(testSource(), config.SeverityConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = factory.Build(RawEventMessage{
+		RecordID: "record-1", BKTenantID: "envelope-tenant", ReceivedAt: time.Now(), Payload: []byte(`{}`),
+	}, EventDraft{
+		BKTenantID: "payload-tenant", SourceSeverity: "warning", Action: domain.EventActionTriggered,
+		Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{},
+	})
+	if err == nil {
+		t.Fatal("tenant mismatch accepted")
 	}
 }
 

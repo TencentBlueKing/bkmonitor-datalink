@@ -20,6 +20,32 @@ import (
 	"linkd/internal/domain"
 )
 
+func TestMapperUsesPayloadTenant(t *testing.T) {
+	t.Parallel()
+	mapper, err := NewMapper(testSource(), config.SeverityConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(validPayload(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["bk_tenant_id"] = "payload-tenant"
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := mapper.MapMessage(context.Background(), consume.Message{
+		ID: "record", Body: body, EnqueuedAt: time.Date(2026, 9, 1, 0, 0, 2, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.BKTenantID != "payload-tenant" {
+		t.Fatalf("tenant=%q", event.BKTenantID)
+	}
+}
+
 func TestMapperBuildsStableEvent(t *testing.T) {
 	t.Parallel()
 	source := testSource()

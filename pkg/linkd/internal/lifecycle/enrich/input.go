@@ -16,16 +16,16 @@ import (
 )
 
 const (
-	labelStrategyID        = "bk_strategy_id"
-	labelStrategyHistoryID = "bk_strategy_history_id"
-	labelBizID             = "bk_biz_id"
+	labelStrategyID      = "strategy_id"
+	labelStrategyVersion = "strategy_version"
+	labelBizID           = "bk_biz_id"
 )
 
 // RequiredIDs 是内置监控丰富入口校验后的稳定查询身份。
 type RequiredIDs struct {
-	StrategyID int64
-	HistoryID  int64
-	BizID      int64
+	StrategyID      int64
+	StrategyVersion int64
+	BizID           int64
 }
 
 // ValidateRequiredIDs 在外部查询前校验 BASE_COLLECT 必需的三个正整数标签。
@@ -35,11 +35,11 @@ func ValidateRequiredIDs(alert domain.Alert) (RequiredIDs, []Diagnostic) {
 		dest *int64
 	}{
 		{name: labelStrategyID},
-		{name: labelStrategyHistoryID},
+		{name: labelStrategyVersion},
 		{name: labelBizID},
 	}
 	ids := RequiredIDs{}
-	fields[0].dest, fields[1].dest, fields[2].dest = &ids.StrategyID, &ids.HistoryID, &ids.BizID
+	fields[0].dest, fields[1].dest, fields[2].dest = &ids.StrategyID, &ids.StrategyVersion, &ids.BizID
 	missing := make([]string, 0, len(fields))
 	invalid := make([]string, 0, len(fields))
 	for _, field := range fields {

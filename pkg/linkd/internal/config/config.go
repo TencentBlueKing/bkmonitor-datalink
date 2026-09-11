@@ -127,7 +127,7 @@ func (c Config) Redacted() Config {
 		redacted.Storage = &storage
 	}
 	if c.Lifecycle != nil {
-		lifecycle := c.Lifecycle.Redacted()
+		lifecycle := c.Lifecycle.WithDefaults()
 		redacted.Lifecycle = &lifecycle
 	}
 	if c.ControlPlane != nil {

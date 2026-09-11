@@ -10,11 +10,47 @@
 package processors
 
 import (
+	"encoding/json"
 	"testing"
 
 	"linkd/internal/domain"
+	"linkd/internal/lifecycle/enrich/models"
 	"linkd/internal/lifecycle/enrich/rules"
 )
+
+func TestAppendAdditionalDisplayDimensions(t *testing.T) {
+	t.Parallel()
+	value, _ := domain.NewNumberScalar(101)
+	entries := appendAdditionalDisplayDimensions(nil, domain.DimensionMap{"bk_host_id": value}, nil, models.ResourceValues{})
+	entries = appendAdditionalDisplayDimensions(entries, domain.DimensionMap{"bk_host_id": value}, nil, models.ResourceValues{})
+	if len(entries) != 1 {
+		t.Fatalf("duplicate entries=%#v", entries)
+	}
+	text := buildDimensionText(entries, rules.DisplayBase, models.ResourceValues{}, "system.cpu", domain.DimensionMap{"bk_host_id": value})
+	if text != "bk_host_id(101)" {
+		t.Fatalf("dimension text=%q", text)
+	}
+}
+
+func TestCombinedDimensions(t *testing.T) {
+	t.Parallel()
+	host, _ := domain.NewNumberScalar(101)
+	alert := domain.Alert{
+		Dimensions: domain.DimensionMap{"bk_target_ip": domain.NewStringScalar("10.0.0.1")},
+		ExtraData:  domain.JSONObject{"additional_dimensions": json.RawMessage(`{"bk_host_id":101}`)},
+	}
+	combined, err := combinedDimensions(alert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if combined["bk_host_id"] != host || len(combined) != 2 {
+		t.Fatalf("combined=%#v", combined)
+	}
+	alert.ExtraData["additional_dimensions"] = json.RawMessage(`{"bk_target_ip":"other"}`)
+	if _, err := combinedDimensions(alert); err == nil {
+		t.Fatal("duplicate additional dimension accepted")
+	}
+}
 
 func TestResourceInstanceQueryUsesHostIDPriority(t *testing.T) {
 	t.Parallel()

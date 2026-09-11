@@ -67,8 +67,7 @@ internal/lifecycle/
     │   └── source/
     └── datasources/
         ├── doc.go
-        ├── platformstrategy/         # alarm_strategy_history 只读适配
-        ├── kingeyestrategy/          # StrategyConfig / CloudStrategyConfig
+        ├── kingeyestrategy/          # StrategyConfig / CloudStrategyConfig，含查询投影
         ├── cmdb/
         ├── meta/
         ├── metric/
@@ -268,7 +267,6 @@ enrich:
 
 ```json
 {
-  "status": "succeeded",
   "processors": []
 }
 ```
@@ -289,11 +287,10 @@ Processor 链属于 EventSource。数据库、Redis、Elasticsearch 和远端服
 
 ### 6.1 顶层结构
 
-`Alert.enrich` 固定为只有两个顶层 key 的 map：
+`Alert.enrich` 固定为只有 `processors` 一个顶层 key 的 map：
 
 ```json
 {
-  "status": "partial",
   "processors": [
     {
       "strategy": {
@@ -332,8 +329,7 @@ Processor 链属于 EventSource。数据库、Redis、Elasticsearch 和远端服
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `status` | string | Processor 列表聚合状态 |
-| `processors` | array | 顺序与 EventSource 配置一致 |
+| `processors` | array | 顺序与 EventSource 配置一致；总状态只保存在 `Alert.EnrichStatus` |
 
 每个 `processors[]` 元素必须是只有一个 key 的 map；该结构在 Go 中定义为具名 map 类型，统一负责校验和 JSON 编码：
 
@@ -347,8 +343,7 @@ type ProcessorEnvelope struct {
 }
 
 type Payload struct {
-    Status     domain.EnrichStatus `json:"status"`
-    Processors []ProcessorEntry    `json:"processors"`
+    Processors []ProcessorEntry `json:"processors"`
 }
 ```
 
@@ -362,7 +357,8 @@ type Payload struct {
 
 字段值不能直接平铺到 `Alert.enrich` 顶层。不同 Processor 的 Value 可以存在相同字段名，因为 Processor 名称提供命名空间。
 
-顶层 `status` 作为 `Alert.EnrichStatus` 在 enrich payload 中的自描述镜像。写入时只允许由同一次聚合计算同时产生两者，读取校验要求一致。
+总状态只写入 `Alert.EnrichStatus`。领域校验根据 `processors` 的状态重新聚合，并要求聚合结果与
+`Alert.EnrichStatus` 一致。
 
 ### 6.2 总状态算法
 
@@ -403,7 +399,8 @@ func aggregateStatus(results []ProcessorResult) domain.EnrichStatus {
 }
 ```
 
-`Alert.EnrichStatus` 保留为现有顶层索引字段，并必须等于 payload 的 `status`。实现通过 `Payload` 解码后校验，禁止直接按 `Alert.Enrich["status"]` 比较原始 JSON 字节。Repository 和 Kafka 输出继续保留 `enrich_status`。
+`Alert.EnrichStatus` 是总状态的唯一持久化字段。Repository 和 Kafka 输出继续保留 `enrich_status`；
+`Alert.enrich` 只保存各 Processor 的 envelope。
 
 ### 6.3 Processor 状态
 
@@ -411,7 +408,9 @@ func aggregateStatus(results []ProcessorResult) domain.EnrichStatus {
 - `partial`：该 Processor 已保留部分有效字段，同时存在输入或依赖问题。
 - `failed`：该 Processor 无法完成自身核心职责；Value 通常为空，诊断保留。
 
-查询成功且 0 条时，沿用旧规则输出空对象、空字符串、空列表或省略字段；该情况本身不新增 partial。平台策略历史和鲸眼配置缺失继续遵循已经确认的 partial 特例。
+查询成功且 0 条时，沿用旧规则输出空对象、空字符串、空列表或省略字段；该情况本身不新增 partial。
+鲸眼策略缺失、租户/业务身份不匹配或 `spec.strategy_item.query_configs` 非法时，依赖该策略的 Processor
+返回 `dependency_invalid=kingeye_strategy`。
 
 ### 6.4 诊断结构
 
@@ -442,8 +441,8 @@ type Diagnostic struct {
 | --- | --- | --- |
 | 租户作用域 | `Alert.BKTenantID` | 外部连接选择与查询隔离 |
 | 来源路由 | `Alert.EventSourceID` | 选择 EventSource Processor Chain |
-| 平台策略 ID | `Alert.Labels.bk_strategy_id` | 数字 Scalar 正整数 |
-| 平台策略历史 ID | `Alert.Labels.bk_strategy_history_id` | 数字 Scalar 正整数 |
+| 策略 ID | `Alert.Labels.strategy_id` | 数字 Scalar 正整数；按租户关联鲸眼声明式策略 |
+| 来源策略版本 | `Alert.Labels.strategy_version` | 数字 Scalar 正整数；保留用于追溯，不参与策略内容查询 |
 | 来源业务 ID | `Alert.Labels.bk_biz_id` | 数字 Scalar 正整数 |
 | 告警内容 | `Alert.Content` | display 文案输入 |
 | 告警等级 | `Alert.Severity` | 内容文案算法等级匹配 |
@@ -454,13 +453,12 @@ type Diagnostic struct {
 | 触发事件标识 | `Alert.TriggerEventID` | 丰富降级日志的 event_id，不替代来源事件标识或告警 ID |
 | 告警开始时间 | `Alert.BeginAt` | 对应创建告警的 Event.OccurredAt；只在旧规则确实需要发生时间时读取 |
 
-策略 Processor 和依赖 Scope 先读取平台历史，再读取鲸眼配置：
+策略 Processor 和依赖 Scope 只读取鲸眼声明式配置：
 
-1. 用 `bk_strategy_history_id + bk_strategy_id` 联合定位 `alarm_strategy_history`。
-2. 校验历史 `content.bk_biz_id == Alert.Labels.bk_biz_id`。
-3. 按租户连接查询 StrategyConfig；明确 0 条时查询 CloudStrategyConfig。
-4. 多匹配沿用底层第一条。
-5. StrategyConfig 查询故障直接 partial，不进入 CloudStrategyConfig 类型回退。
+1. 用 `Alert.BKTenantID + labels.strategy_id` 查询 `core_v1alpha1_strategy`，底层匹配 `status.bk_strategy_id`。
+2. 返回后复核租户、策略 ID 与 `labels.bk_biz_id`。
+3. 分类、展示和指标配置统一读取 `spec` 与 `spec.strategy_item.query_configs`。
+4. `strategy_version` 仅作为来源版本身份写入输出，不回查 `alarm_strategy_v2` 或 `alarm_strategy_history`。
 
 所有租户选择使用 `Alert.BKTenantID`。平台库、鲸眼存储和 Redis 由装配层按该值选择连接；业务 ID 不承担租户推导。Lifecycle 负责从创建事件构造完整 Alert，并通过生命周期测试验证继承字段及 `TriggerEventID`、`BeginAt` 的映射；Enricher 不再接收两份输入，也不承担 Event/Alert 一致性校验。
 
@@ -619,7 +617,7 @@ type PlatformStrategyHistoryReader interface {
 
 Resource Processor 的实例定位统一调用 `datasources.OneModelClient.FindInstance`，直接读取 OneModel 的 Elasticsearch 后端。Client 按 `cw_object_model_code` 路由 CMDB、K8s、APM 与云实例索引，强制叠加 `bk_tenant_id` 和模型过滤，查询及响应均使用 OneModel ES 文档的扁平字段；返回第一条实例文档后由 Resource Processor 组装 resource Value。
 
-连接配置位于 `lifecycle.datasources.onemodel`：`addresses` 与认证字段定义独立 ES 连接，`index_prefix` 定义 Kingeye CMDB 实例索引前缀，例如 `bk_monitor_base_` 对应 `bk_monitor_base_cmdb_instance`。K8s/APM/云模型继续使用 OneModel 的固定路由目标。该配置与 `storage.elasticsearch` 分别表达实例数据源和 Linkd Repository，部署可按实际集群填写相同或不同连接。
+连接配置位于 `event_sources[].enrich.datasources.elasticsearch`：`addresses` 与认证字段定义 Enrich 范围共享的 ES Transport，`index_prefix` 定义 Kingeye CMDB 实例索引前缀，例如 `bk_monitor_base_` 对应 `bk_monitor_base_cmdb_instance`。K8s/APM/云模型继续使用 OneModel 的固定路由目标。MySQL Reader 同样复用 `event_sources[].enrich.datasources.mysql` 的单一连接池。两类配置与 `storage` 分别表达 Enrich 外部读取和 Linkd Repository，部署可按实际集群填写相同或不同连接。数据源随来源 Release 发布，Lifecycle 任务按 Processor Chain 选择并绑定 Reader。
 
 - 平台历史：按租户配置选择数据库连接；SQL 使用历史 ID 与策略 ID；解析 content 后校验业务 ID。
 - 告警源：使用 GORM 按 `Alert.BKTenantID + Alert.EventSourceID` 查询 Kingeye `alarm_collect_alarmsource` 的 `name`；0 条与故障分别处理。
@@ -653,7 +651,7 @@ Lifecycle 构造并 Normalize 待创建 Alert
       → 返回单 Processor status/value/diagnostics
       → 编排器封装为单 key map 并追加列表
   → 根据完整列表计算总状态
-  → 编码 {status, processors}
+  → 聚合 Alert.EnrichStatus 并编码 {processors}
   → 校验 JSON 与 Alert.EnrichStatus 一致
   → Lifecycle 写回 Alert.EnrichStatus / Alert.Enrich
   → Repository 创建 Alert
@@ -688,7 +686,7 @@ Processor 失败不短路处理链。Processor 返回 error 或发生 panic 时�
 | `enrichNewAlert(ctx, event, alert)` 克隆 Event 并从 Event 读取降级日志身份 | 收窄为 `enrichNewAlert(ctx, alert)`，仅克隆 Alert；日志身份从 normalized Alert 的 `BKTenantID`、`TriggerEventID`、`AlertID` 读取 |
 | `NoopEnricher` 位于 lifecycle 包 | 移到 `internal/lifecycle/enrich` |
 | Lifecycle 进程固定注入 Noop | 按 EventSource 配置构造路由 Enricher |
-| `Alert.Enrich` 可接受任意 object | 固定编码为 `{status, processors}` |
+| `Alert.Enrich` 可接受任意 object | 固定编码为 `{processors}` |
 | `Alert.EnrichStatus` 单独设置 | 与 `Alert.Enrich.status` 同源计算并校验一致 |
 | 诊断使用全局 groups | 诊断归属 Processor，删除 groups |
 | 迁移计划按 `enrich.strategy/resource/...` 描述 | 对应字段进入同名 Processor 的 `value` |
@@ -818,7 +816,7 @@ strategy → resource → display → metric → source
 - 同级更新、恢复和关闭保留原丰富结果。
 - CAS 冲突重试可重复执行。
 - Processor 全失败时 Alert 仍可创建。
-- Repository 与 FinalHook 得到完整 `{status, processors}`。
+- Repository 与 FinalHook 得到 `enrich_status` 及完整 `{processors}`。
 
 并发、Redis、ES 或共享状态相关实现完成后执行对应 race test，最终运行 `make check`。
 
@@ -830,7 +828,7 @@ strategy → resource → display → metric → source
 - EventSource 能配置有序 Processor 链。
 - Enricher 使用仅含 Alert 字段的 `lifecycle.EnrichInput`，保持 `Enrich(ctx, input EnrichInput)` 方法；Alert 按只读深拷贝处理，调用保护不再接收或克隆 Event。
 - Scope 的业务输入只持有 Alert 深拷贝，不保存 Event 或整个 EnrichInput；后续路由、查询条件和字段加工全部从 Alert 对应字段读取，不依赖或回退读取 Event。
-- `Alert.enrich` 严格输出两个顶层 key：`status` 和 `processors`。
+- `Alert.enrich` 严格只输出 `processors` 顶层 key；总状态只写入 `Alert.enrich_status`。
 - 每个 Processor 结果为单 key map，包含 status、value 和可选 diagnostics。
 - 总状态算法通过完整组合测试。
 - 外部读取实现集中在 `enrich/datasources`。

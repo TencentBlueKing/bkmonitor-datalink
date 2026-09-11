@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 
@@ -189,11 +190,17 @@ func TestPublicationPreservesEnrichAcrossReleases(t *testing.T) {
 	service := New(newDocs(), config.SeverityConfig{})
 	spec := sample()
 	spec.Enrich.Processors = []config.EnrichProcessorConfig{{Type: "source"}}
+	spec.Enrich.DataSources = &config.EnrichDataSources{MySQL: &config.EnrichMySQLDataSource{
+		Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader", Password: "secret",
+	}}
 	record, err := service.Apply(ctx, spec, 0, false, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec.Enrich.Processors[0].Type = "metric"
+	spec.Enrich.DataSources = &config.EnrichDataSources{MySQL: &config.EnrichMySQLDataSource{
+		Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader",
+	}}
 	if _, err := service.Apply(ctx, spec, record.Revision, false, "test"); err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +220,14 @@ func TestPublicationPreservesEnrichAcrossReleases(t *testing.T) {
 		if err := json.Unmarshal(encoded, &body); err != nil {
 			t.Fatal(err)
 		}
-		if string(body["enrich"]) != fmt.Sprintf(`{"processors":[{"type":%q}]}`, want) {
+		if release.Spec.Enrich.DataSources == nil {
+			t.Fatalf("release %d lost enrich datasources", version)
+		}
+		enrichJSON := string(body["enrich"])
+		if strings.Contains(enrichJSON, `"Address"`) || !strings.Contains(enrichJSON, `"address"`) {
+			t.Fatalf("invalid datasource JSON schema: %s", body["enrich"])
+		}
+		if !strings.Contains(enrichJSON, fmt.Sprintf(`"processors":[{"type":%q}]`, want)) {
 			t.Fatalf("invalid API enrich schema: %s", body["enrich"])
 		}
 	}

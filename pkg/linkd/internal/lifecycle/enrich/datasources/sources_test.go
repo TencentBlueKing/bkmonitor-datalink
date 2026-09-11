@@ -9,21 +9,23 @@
 
 package datasources
 
-import "linkd/internal/lifecycle/enrich"
+import (
+	"testing"
 
-const (
-	SampleTenantID              = "tenant-1"
-	SampleStrategyID      int64 = 123
-	SampleStrategyVersion int64 = 1
-	SampleBizID           int64 = 2
+	"gorm.io/gorm"
 )
 
-// Mock 提供人工构造、按租户和查询身份严格匹配的 BASE_COLLECT 固定依赖数据。
-type Mock struct{}
-
-// Sources 返回共享相同固定样例的窄读取接口集合。
-func (*Mock) Sources() enrich.Sources {
-	return enrich.Sources{
-		CWStrategy: &MockCWStrategyClient{},
+func TestMySQLReadersShareOneDatabase(t *testing.T) {
+	t.Parallel()
+	database := &gorm.DB{}
+	sources, err := newMySQLSources(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwStrategy := sources.CWStrategy.(*CWStrategyClient)
+	alarmSource := sources.AlarmSource.(*AlarmSourceClient)
+	metric := sources.Metric.(*MetricClient)
+	if cwStrategy.db != database || alarmSource.db != database || metric.db != database {
+		t.Fatal("mysql readers do not share the enrich database")
 	}
 }

@@ -37,20 +37,12 @@ func (Strategy) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proces
 	if len(diagnostics) != 0 {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
 	}
-	history, historyFound, historyErr := scope.BKStrategyHistory(ctx, ids.StrategyID, ids.HistoryID)
 	strategy, strategyFound, strategyErr := scope.CWStrategyByBKStrategyID(ctx, ids.StrategyID)
 	if err := ctx.Err(); err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	var snapshot models.BkStrategySnapshot
-	if historyFound && historyErr == nil {
-		snapshot, historyErr = history.Snapshot()
-		if historyErr != nil {
-			historyFound = false
-		}
-	}
-	diagnostics = strategyDependencyDiagnostics(historyFound, historyErr, strategyFound, strategyErr)
-	values := models.StrategyValues{BKStrategyID: ids.StrategyID}
+	diagnostics = strategyDependencyDiagnostics(strategyFound, strategyErr)
+	values := models.StrategyValues{StrategyID: ids.StrategyID, StrategyVersion: ids.StrategyVersion}
 	if strategyFound && strategyErr == nil {
 		if strategy.MonitorTemplateID != nil {
 			values.MonitorTemplateID = *strategy.MonitorTemplateID
@@ -76,20 +68,17 @@ func (Strategy) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proces
 		return enrich.ProcessorResult{}, err
 	}
 	status := domain.EnrichStatusSucceeded
-	if len(diagnostics) != 0 || (historyFound && snapshot.BKBizID != ids.BizID) {
+	if len(diagnostics) != 0 || strategyFound && strategy.BKBizID != nil && *strategy.BKBizID != ids.BizID {
 		status = domain.EnrichStatusPartial
-		if historyFound && snapshot.BKBizID != ids.BizID {
-			diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyPlatformStrategyHistory, Fields: []string{"labels.bk_biz_id"}})
+		if strategyFound && strategy.BKBizID != nil && *strategy.BKBizID != ids.BizID {
+			diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyKingeyeStrategy, Fields: []string{"labels.bk_biz_id"}})
 		}
 	}
 	return enrich.ProcessorResult{Status: status, Value: value, Diagnostics: diagnostics}, nil
 }
 
-func strategyDependencyDiagnostics(historyFound bool, historyErr error, strategyFound bool, strategyErr error) []enrich.Diagnostic {
-	diagnostics := make([]enrich.Diagnostic, 0, 2)
-	if historyErr != nil || !historyFound {
-		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyPlatformStrategyHistory})
-	}
+func strategyDependencyDiagnostics(strategyFound bool, strategyErr error) []enrich.Diagnostic {
+	diagnostics := make([]enrich.Diagnostic, 0, 1)
 	if strategyErr != nil || !strategyFound {
 		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyKingeyeStrategy})
 	}

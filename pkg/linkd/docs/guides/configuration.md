@@ -150,6 +150,15 @@ event_sources:
       P2: warning
     default_severity: warning
     enrich:
+      datasources:
+        mysql:
+          address: kingeye-mysql.example.com:3306
+          database: kingeye
+          username: reader
+          password: ""
+        elasticsearch:
+          addresses: [http://onemodel.example.com:9200]
+          index_prefix: bk_monitor_base_
       processors:
         - { type: strategy }
         - { type: resource }
@@ -166,14 +175,16 @@ event_sources:
 ```
 
 `event_sources[].enrich.processors` 是新 Alert 创建前的有序丰富链。当前注册名为
-`strategy/resource/display/metric/source`；空列表输出 `{"status":"succeeded","processors":[]}`。
-重复类型和空 type 在来源配置校验时拒绝；未知处理器或缺少所需数据源配置会使对应
-Lifecycle 任务启动失败。路由按任务固定的 Release 创建，来源发布后通过停止确认与重新调度生效，
-不从启动 YAML 装配路由。停用来源按调度协议停止任务，积压保留。
+`strategy/resource/display/metric/source`；空列表输出 `{"processors":[]}`。
+重复类型、空 type、未知处理器或缺少 Processor 所需的数据源会在来源发布时被拒绝。路由按任务
+固定的 Release 创建，来源发布后通过停止确认与重新调度生效。停用来源按调度协议停止任务，积压保留。
 
-丰富数据源使用 `lifecycle.datasources` 中静态配置的 MySQL 与 OneModel Elasticsearch 连接。
-进程启动时打开已配置的数据源并供各来源任务共享，新增来源可以直接使用这些连接；修改数据源
-连接配置需要重启进程。真实依赖的联调结果需单独验证，普通单元测试使用 mock 不代表生产链路已验证。
+丰富数据源由 `event_sources[].enrich.datasources` 随来源 Release 发布。`mysql` 表示 Enrich 范围内
+共享的数据库连接，策略、告警源和指标等 Reader 在同一连接池上查询各自的表；`elasticsearch` 表示
+共享的索引连接，OneModel Reader 在同一 Transport 上查询不同索引。Lifecycle 启动来源任务时只为当前
+Processor Chain 选择所需的物理连接，任务停止时关闭连接；数据源配置变化会产生新 Release 并重启该来源
+任务。管理接口默认隐藏 MySQL 密码、Elasticsearch API Key 和 Basic Auth 密码；授权 worker 获取完整
+Release。真实依赖的联调结果需单独验证，普通单元测试使用 mock 不代表生产链路已验证。
 
 顶层 `cleaner` 是每条 EventSource Flow 的默认预算；`event_sources[].cleaner.runtime` 只覆盖非零
 字段。每条 Flow 内共享清洗 worker pool，但 Event 持久化、Mailbox 入队和原消息确认始终按 lane 独立推进，
@@ -314,9 +325,24 @@ linkd run control-plane --config /etc/linkd/linkd.yaml
 linkd run all-in-one --config /etc/linkd/linkd.yaml
 ```
 
-`lifecycle.datasources.alarm_source` 配置 Kingeye MySQL 连接，source Processor 使用 GORM 按 `bk_tenant_id + EventSourceID` 查询 `alarm_collect_alarmsource.name`。
+`event_sources[].enrich.datasources` 按 Processor 的实际依赖选择物理连接：
 
-`lifecycle.datasources.onemodel` 配置 Resource Processor 使用的 OneModel Elasticsearch 读连接。`index_prefix` 使用 Kingeye ES 前缀；例如 `bk_monitor_base_` 会查询 `bk_monitor_base_cmdb_instance`，K8s、APM 和云模型由 OneModel Client 路由到对应固定实例索引。该连接独立于 `storage.elasticsearch`，两段配置可以指向同一集群。
+| Processor | 必需连接 | 逻辑 Reader |
+| --- | --- | --- |
+| `strategy` | `mysql`、`elasticsearch` | CW Strategy、OneModel |
+| `resource` | `mysql`、`elasticsearch` | CW Strategy、OneModel |
+| `display` | `mysql` | CW Strategy、MetricLibrary |
+| `metric` | `mysql` | CW Strategy、MetricLibrary |
+| `source` | `mysql` | AlarmSource |
+
+`mysql` 使用 `address/database/username/password`。各 Reader 共享同一个连接池，并在所配置数据库中
+查询各自的表；AlarmSource 按 `bk_tenant_id + EventSourceID` 查询
+`alarm_collect_alarmsource.name`。
+
+`event_sources[].enrich.datasources.elasticsearch` 配置 Strategy/Resource Processor 使用的 OneModel
+Elasticsearch 读连接。`index_prefix` 使用 Kingeye ES 前缀；例如 `bk_monitor_base_` 会查询
+`bk_monitor_base_cmdb_instance`，K8s、APM 和云模型由 OneModel Client 路由到对应固定实例索引。
+该连接独立于 `storage.elasticsearch`，两段配置可以指向同一集群。
 
 `config print` 会隐藏 MySQL、Redis、Elasticsearch 和 Kafka 认证信息。进程运行期间 EventSource 和
 Severity 配置冻结；修改配置需要重启进程。

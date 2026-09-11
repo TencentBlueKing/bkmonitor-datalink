@@ -99,9 +99,16 @@ func (f *EventFactory) Build(message RawEventMessage, draft EventDraft) (domain.
 	if message.ReceivedAt.IsZero() {
 		return domain.Event{}, fmt.Errorf("raw event received_at is required")
 	}
-	tenantID := message.BKTenantID
+	tenantID := draft.BKTenantID
 	if f.source.RelatedTenantID != "" {
 		tenantID = f.source.RelatedTenantID
+	} else {
+		if message.BKTenantID != "" && draft.BKTenantID != "" && message.BKTenantID != draft.BKTenantID {
+			return domain.Event{}, fmt.Errorf("event tenant mismatch: payload=%q envelope=%q", draft.BKTenantID, message.BKTenantID)
+		}
+		if tenantID == "" {
+			tenantID = message.BKTenantID
+		}
 	}
 	if tenantID == "" {
 		return domain.Event{}, fmt.Errorf("event tenant is required")
@@ -140,7 +147,6 @@ func (f *EventFactory) Build(message RawEventMessage, draft EventDraft) (domain.
 		EventID: eventID,
 		Title:   draft.Title, Content: draft.Content, Severity: severity,
 		Action: draft.Action, ActionReason: draft.ActionReason,
-		ConditionKey: draft.ConditionKey, ConditionName: draft.ConditionName,
 		Dimensions: draft.Dimensions.Clone(), SubjectSystem: draft.SubjectSystem,
 		SubjectType: draft.SubjectType, SubjectID: draft.SubjectID, SubjectName: draft.SubjectName,
 		OccurredAt: occurredAt, ProducedAt: producedAt, ReceivedAt: receivedAt, CreateAt: receivedAt,

@@ -322,6 +322,15 @@ type View struct {
 	// what number is too many. A pool where this keeps climbing is one whose way
 	// out has stopped working, and that is the failure demotion can cause and
 	// occupancy cannot show.
+	//
+	// No alert threshold is set on any of this, and that is a decision rather
+	// than an omission. Drawing the line needs a deployment's own numbers, and
+	// the four published here are what it needs: entries and exits give the
+	// balance, extensions separate a pool being retried from one nobody is
+	// touching, and this one says how many are already overdue for that retry.
+	// Anyone can draw the line from two reads of these; nobody can draw a
+	// defensible one today, and a number invented now would be obeyed later as
+	// though it had been measured.
 	DemotedDue int      `json:"demoted_due"`
 	Replicas   []string `json:"replicas"`
 }
@@ -392,8 +401,20 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	if view.Healthy < 0 {
 		// The three columns claim more objects than the replicas said they can
 		// speak for. Something is being counted twice, so no column can be
-		// trusted -- including the healthy one, which would otherwise absorb the
-		// error silently as a smaller number.
+		// trusted -- including the healthy one.
+		//
+		// The difference goes to UNKNOWN and nowhere else, and this looks like
+		// needless caution until you ask where else it could go. Letting the
+		// healthy column absorb it just makes that number smaller, and a smaller
+		// healthy count is the one reading nobody investigates: it looks like
+		// the deployment having a bad day, which is exactly what a page full of
+		// anomalies has already told them. A double count that lands there is
+		// never found. Every other column is looked at by someone who wants it
+		// explained, so an error that lands in one of those surfaces on its own.
+		//
+		// So this is not "be conservative when unsure". It is: the arithmetic
+		// broke, and the only honest place to put a broken number is the column
+		// that means "do not trust this view".
 		view.Gaps = append(view.Gaps, Gap{Kind: GapCoverageInconsistent,
 			Detail: fmt.Sprintf("%d anomalies and %d demoted against %d determined; the columns claim more "+
 				"objects than the replicas can speak for, so none of them adds up",

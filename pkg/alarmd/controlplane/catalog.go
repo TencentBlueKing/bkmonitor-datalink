@@ -51,7 +51,11 @@ type AlgorithmDependencyQueryCompiler interface {
 type BuildRequest struct {
 	Strategies []SourceStrategy
 	Planner    PrimaryQueryCompiler
-	LastGood   *PublishedSnapshot
+	// OutputProtocol is the deployment's wire format choice, frozen into every
+	// Plan this build produces. Empty means the revision decides, which is what
+	// the process did before the choice existed.
+	OutputProtocol string
+	LastGood       *PublishedSnapshot
 	// PreviousDispositions is the published source audit of LastGood. It is the
 	// only memory of the removal grace cycle: a strategy absent from the
 	// observed set is retained once with PENDING_REMOVAL and dropped when the
@@ -169,7 +173,7 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 			catalog.Dispositions = append(catalog.Dispositions, disposition)
 			continue
 		}
-		candidate, err := buildCandidate(ctx, request.Planner, source)
+		candidate, err := buildCandidate(ctx, request.Planner, source, request.OutputProtocol)
 		if err != nil {
 			if len(candidate.dispositions) > 0 {
 				catalog.Dispositions = append(catalog.Dispositions, candidate.dispositions...)
@@ -323,7 +327,7 @@ type sourceCandidate struct {
 	dispositions []ObjectDisposition
 }
 
-func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source SourceStrategy) (sourceCandidate, error) {
+func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source SourceStrategy, outputProtocol string) (sourceCandidate, error) {
 	candidate := sourceCandidate{}
 	if err := source.Identity.validate(); err != nil {
 		return sourceCandidate{}, err
@@ -404,7 +408,26 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 		candidate.dispositions = append(candidate.dispositions, dispositions...)
 		return candidate, err
 	}
-	if plan.StrategyRef.SnapshotRevision == 0 {
+	// The protocol is decided here, once, and frozen with the Plan: a Slot that
+	// is retried must not change wire format between attempts.
+	//
+	// A compatibility context is attached whenever the Plan will publish that
+	// protocol - which under a forced legacy choice includes strategies that do
+	// have a revision, because the context is what the conversion reads. Under a
+	// forced native choice a strategy without a revision is refused instead:
+	// the alert it would open is identified by a fingerprint derived from that
+	// revision, so there is nothing to send it as, and sending it the other way
+	// is the silent fallback the choice exists to prevent.
+	format, honoured := resolveWireFormat(outputProtocol, plan.StrategyRef.SnapshotRevision)
+	if !honoured {
+		candidate.dispositions = append(candidate.dispositions, ObjectDisposition{
+			SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionConfigRejected,
+			Reason: "OUTPUT_PROTOCOL_REQUIRES_STRATEGY_REVISION",
+		})
+		return candidate, errors.New("OUTPUT_PROTOCOL_REQUIRES_STRATEGY_REVISION")
+	}
+	plan.WireFormat = format
+	if format == contract.WireFormatPythonCompatible {
 		plan.LegacyOutput = &contract.LegacyOutputContext{Strategy: append(json.RawMessage(nil), source.Document...), DimensionFields: append([]string{}, facts.Normalization.DatasetContract.IdentityFields...), ItemID: strconv.FormatInt(item.ID, 10)}
 	}
 	revision, err := contract.DeriveCanonicalDigestV2("alarmd-plan-semantics-v1", plan)

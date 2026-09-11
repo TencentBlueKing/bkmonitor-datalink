@@ -487,6 +487,7 @@ type CompiledPlan struct {
 	strategyRef         contract.StrategyRefV2
 	outputIdentity      *contract.MonitorOutputIdentity
 	subjectFacts        *contract.MonitorSubjectFacts
+	wireFormat          string
 	legacyOutput        *contract.FrozenLegacyOutput
 	projection          contract.InputProjectionV2
 	evaluationSemantics contract.ExecutionSemanticsV2
@@ -520,6 +521,14 @@ func (p *CompiledPlan) OutputIdentity() *contract.MonitorOutputIdentity {
 		return nil
 	}
 	return &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, p.outputIdentity.DimensionFields...)}
+}
+
+// WireFormat returns the format this Plan's events are published as.
+func (p *CompiledPlan) WireFormat() string {
+	if p == nil {
+		return ""
+	}
+	return p.wireFormat
 }
 
 // SubjectFacts returns the frozen strategy facts the subject projection reads.

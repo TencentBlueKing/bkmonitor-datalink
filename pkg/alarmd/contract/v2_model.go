@@ -231,10 +231,27 @@ type EvaluationPlanV2 struct {
 	// the strategy names no target and every series is in scope; it never
 	// means "a scope existed and was dropped" - compilation rejects the Plan
 	// in that case rather than publish one that alerts outside its target.
-	TargetScope        *TargetScopeV2 `json:"target_scope,omitempty"`
-	StrategyIR         StrategyIRV2   `json:"strategy_ir"`
-	TerminalReasonCode string         `json:"terminal_reason_code,omitempty"`
+	TargetScope *TargetScopeV2 `json:"target_scope,omitempty"`
+	StrategyIR  StrategyIRV2   `json:"strategy_ir"`
+	// WireFormat is the format this Plan's events are published as, decided
+	// when the Plan was built and frozen with it so a retried Slot cannot
+	// change format between attempts. Empty means the pre-choice behaviour:
+	// the frozen revision decides.
+	WireFormat         string `json:"wire_format,omitempty"`
+	TerminalReasonCode string `json:"terminal_reason_code,omitempty"`
 }
+
+// The formats an event can be published as. They name bytes on a topic, not a
+// deployment's intent - the configuration's three words resolve into these.
+const (
+	// WireFormatPythonCompatible is the event the Python alert builder reads.
+	WireFormatPythonCompatible = "python_compatible"
+	// WireFormatTriggerEvent is alarmd's own decision event.
+	WireFormatTriggerEvent = "trigger_event_v1"
+	// WireFormatStandardRawEvent is the standard raw event the alert pipeline
+	// consumes.
+	WireFormatStandardRawEvent = "standard_raw_event"
+)
 
 // MarshalJSON keeps the 2.0 wire union flat: a producer emits either the
 // executable Plan body or the bounded terminal Plan identity, never both.
@@ -256,7 +273,8 @@ func (plan EvaluationPlanV2) MarshalJSON() ([]byte, error) {
 		LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
 		TargetScope         *TargetScopeV2         `json:"target_scope,omitempty"`
 		StrategyIR          StrategyIRV2           `json:"strategy_ir"`
-	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.SubjectFacts, plan.LegacyOutput, plan.TargetScope, plan.StrategyIR})
+		WireFormat          string                 `json:"wire_format,omitempty"`
+	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.SubjectFacts, plan.LegacyOutput, plan.TargetScope, plan.StrategyIR, plan.WireFormat})
 }
 
 type PlanSetV2 struct {
@@ -472,7 +490,16 @@ type StrategySnapshotRef struct {
 }
 
 type TriggerEventV1 struct {
-	LegacyOutput            *LegacyEventContext  `json:"-"`
+	LegacyOutput *LegacyEventContext `json:"-"`
+	// Subject is the object this event is about, projected where the Plan was
+	// still in hand. The projection needs the strategy's aggregation dimensions
+	// and its frozen facts, and a Kafka sink has neither, so it cannot be left
+	// to the place that writes the message.
+	Subject *MonitorSubjectContext `json:"-"`
+	// WireFormat is the format this event is published as, taken from the Plan
+	// it was evaluated for. It travels beside the event rather than inside it:
+	// a consumer reads one format and never has to be told which.
+	WireFormat              string               `json:"-"`
 	Schema                  Schema               `json:"schema"`
 	RequiredFeatures        []string             `json:"required_features"`
 	EventID                 string               `json:"event_id"`

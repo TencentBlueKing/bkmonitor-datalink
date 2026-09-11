@@ -16,20 +16,28 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Shopify/sarama"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 )
+
+// StandardEventConverter writes a decision as the standard raw event.
+type StandardEventConverter interface {
+	Convert(*contract.TriggerEventV1) (linkdoutput.Event, error)
+}
 
 // TriggerEventSink is the critical Kafka output for Trigger events.
 // A successful WriteBatch means every event received a synchronous broker ACK.
 type TriggerEventSink struct {
-	core            *DecisionSink
-	legacyConverter LegacyEventConverter
-	legacyTopic     string
-	maxLegacyBytes  int
+	core              *DecisionSink
+	legacyConverter   LegacyEventConverter
+	standardConverter StandardEventConverter
+	legacyTopic       string
+	maxLegacyBytes    int
 }
 
 // ConfigureLegacyOutput is called once during assembly, before any writes.
@@ -92,7 +100,14 @@ func newTriggerEventSink(
 	if err != nil {
 		return nil, err
 	}
-	return &TriggerEventSink{core: core, legacyConverter: &legacyoutput.Converter{}, legacyTopic: "alarmd_0bkmonitor_backend_event", maxLegacyBytes: 524288}, nil
+	standard, err := linkdoutput.NewConverter(time.Now)
+	if err != nil {
+		return nil, err
+	}
+	return &TriggerEventSink{
+		core: core, legacyConverter: &legacyoutput.Converter{}, standardConverter: standard,
+		legacyTopic: "alarmd_0bkmonitor_backend_event", maxLegacyBytes: 524288,
+	}, nil
 }
 
 func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.TriggerEventV1) error {
@@ -122,9 +137,21 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 			// lowercase hex text, not the decoded 16-byte digest.
 			messages[index].Key = sarama.StringEncoder(events[index].DedupeMD5)
 		}
-		// The frozen revision alone selects the wire protocol. Missing Python
-		// snapshot dependencies must never change that choice to native output.
-		if events[index].StrategyRef == nil {
+		if events[index].WireFormat == contract.WireFormatStandardRawEvent {
+			converted, convertErr := sink.standardConverter.Convert(&events[index])
+			if convertErr != nil {
+				return &triggerEventDependencyError{err: convertErr}
+			}
+			messages[index].Value = sarama.ByteEncoder(converted.Payload)
+			messages[index].Key = sarama.StringEncoder(converted.AlertID)
+			continue
+		}
+		// The Plan's frozen format selects the protocol, and for a Plan built
+		// before the choice existed that is still the frozen revision: a
+		// compatibility context is attached only where the compatibility
+		// protocol is what the Plan publishes. Missing Python snapshot
+		// dependencies must never change that choice to native output.
+		if events[index].LegacyOutput != nil || events[index].StrategyRef == nil {
 			if events[index].LegacyOutput == nil || events[index].LegacyOutput.Configuration == nil {
 				return errors.New("legacy event has no frozen compatibility context")
 			}

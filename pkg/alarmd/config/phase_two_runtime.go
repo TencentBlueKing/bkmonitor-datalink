@@ -7,6 +7,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -126,11 +127,42 @@ type PhaseTwoCoordinatorConfig struct {
 	MaxGapMutations          uint64
 }
 
+// Output protocols. A strategy's protocol is decided when its Plan is built and
+// frozen with it, so a Slot that is retried cannot change wire format between
+// attempts.
+const (
+	// OutputProtocolAuto keeps the split the frozen revision already decides:
+	// a strategy with a revision publishes the native event, one without it
+	// publishes the Python-compatible event. It is the default because it is
+	// what the process already did.
+	OutputProtocolAuto = "auto"
+	// OutputProtocolLegacy publishes every strategy through the
+	// Python-compatible protocol, including strategies that have a revision.
+	OutputProtocolLegacy = "legacy"
+	// OutputProtocolNative publishes the standard raw event the alert pipeline
+	// consumes. A strategy with no frozen revision has no alert identity there,
+	// so it is refused activation rather than quietly sent the other way.
+	OutputProtocolNative = "native"
+)
+
+type PhaseTwoOutputConfig struct {
+	// Protocol is the deployment's choice of wire format. Empty means auto.
+	Protocol string `yaml:"protocol,omitempty"`
+}
+
+func (c PhaseTwoOutputConfig) protocol() string {
+	if c.Protocol == "" {
+		return OutputProtocolAuto
+	}
+	return c.Protocol
+}
+
 type PhaseTwoRuntimeConfig struct {
 	// Empty disables final Shadow evidence; the file is the frozen Epoch manifest.
 	ShadowManifestPath string                    `yaml:"shadow_manifest_path,omitempty"`
 	Worker             PhaseTwoWorkerConfig      `yaml:"worker"`
 	Control            PhaseTwoControlConfig     `yaml:"control"`
+	Output             PhaseTwoOutputConfig      `yaml:"output"`
 	Ownership          PhaseTwoOwnershipConfig   `yaml:"-"`
 	Scheduler          PhaseTwoSchedulerConfig   `yaml:"scheduler"`
 	Access             PhaseTwoAccessConfig      `yaml:"access"`
@@ -185,6 +217,14 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 	// no longer configuration at all.
 	if !canonicalText(c.Worker.ID) {
 		return errors.New("phase_two worker identity must be canonical text")
+	}
+	switch c.Output.protocol() {
+	case OutputProtocolAuto, OutputProtocolLegacy, OutputProtocolNative:
+	default:
+		return fmt.Errorf(
+			"phase_two.output.protocol %q must be one of %s, %s, %s",
+			c.Output.Protocol, OutputProtocolAuto, OutputProtocolLegacy, OutputProtocolNative,
+		)
 	}
 	if !ttlExceedsRenew(c.Worker.RegistrationTTL, c.Worker.RegistrationRenewInterval) {
 		return errors.New("phase_two worker registration_ttl must exceed registration_renew_interval")

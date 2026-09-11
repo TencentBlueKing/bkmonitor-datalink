@@ -368,13 +368,25 @@ function loadHealth() {
     var overdue = d.overdue;
     show('overdueCell', !!overdue);
     if (overdue) {
-      // A truncated count is a floor, and writing it as a plain number would
-      // state the sample as the total.
-      text('overdue', (overdue.truncated ? '≥ ' : '') + overdue.total);
-      text('overdueHint', overdue.total
-        ? '唤醒时刻已过、没有轮次回来；最久的 ' + Math.round(overdue.oldest_seconds || 0) +
-          ' 秒。可能没被派发，也可能派出去没回来'
-        : '每个对象都在按自己的周期被处理');
+      // Three states, not two. While the due index runs in shadow it decides
+      // nothing, so no object is ever held back, so this count cannot be
+      // anything but zero -- and printing "0，每个对象都在按自己的周期被处理"
+      // off that build is a reassurance nothing earned. What tells them apart
+      // is whether the deployment reports suppression at all: the code that
+      // reports it is the code that parks objects, so a build that parks
+      // nothing cannot produce the field.
+      if (!d.dispatch) {
+        text('overdue', '未启用');
+        text('overdueHint', '到期索引在影子模式，还不会拦下任何对象——所以这里结构上只可能是 0，不代表“没有对象漏掉”');
+      } else {
+        // A truncated count is a floor, and writing it as a plain number would
+        // state the sample as the total.
+        text('overdue', (overdue.truncated ? '≥ ' : '') + overdue.total);
+        text('overdueHint', overdue.total
+          ? '唤醒时刻已过、没有轮次回来；最久的 ' + Math.round(overdue.oldest_seconds || 0) +
+            ' 秒。可能没被派发，也可能派出去没回来'
+          : '每个对象都在按自己的周期被处理（当前有 ' + (d.dispatch.parked || 0) + ' 个对象被拦下等待）');
+      }
     }
     var gaps = d.gaps || [];
     text('why', gaps.length

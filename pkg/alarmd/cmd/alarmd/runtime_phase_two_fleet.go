@@ -154,9 +154,50 @@ type fleetPublisher struct {
 	// use, so the page can answer "how close are we" from the same read that
 	// produced the verdict instead of waiting on collection.
 	capacity func() *fleet.Capacity
+	// overdue is the scheduler's due index, asked which owned objects are past
+	// a wake time nothing corrected. Nil on a deployment with no index, and the
+	// snapshot then carries no overdue facts at all -- which is a different
+	// answer from "none are overdue" and has to stay one.
+	overdue fleet.OverdueWakeSource
+	// strategies names the strategies behind a Query Group, so an overdue
+	// object arrives in the list identified the way every other anomaly is. A
+	// row nobody can trace back to a strategy is a row nobody can act on.
+	strategies func(string) []fleet.StrategyRef
 	// restored names objects already considered, so an object whose Progress
 	// says nothing is not re-read on every tick forever.
 	restored map[execution.QueryGroupIdentity]struct{}
+}
+
+// fleetOverdueWakeCeiling bounds how many parked objects one publish carries.
+//
+// A snapshot is diagnostics and has to stay a bounded write: after a fail-open
+// tick every owned object is briefly past its wake time, and publishing all of
+// them would turn the worst moment for the deployment into the largest write
+// this replica makes. The true count travels alongside, so the page reports how
+// many there are even when it can only name some of them.
+const fleetOverdueWakeCeiling = 50
+
+// publisherOverdue asks the due index which owned objects are past a wake time
+// nothing corrected, and turns them into list entries.
+//
+// It is a function rather than a few lines inside publishOnce because that
+// method writes to Redis, and the one decision worth pinning here -- that a
+// deployment with no index reports absence rather than zero -- would then only
+// be reachable through a store. Absence and zero are the two answers this whole
+// signal exists to keep apart, so the distinction has to be testable without
+// standing up anything.
+func publisherOverdue(
+	source fleet.OverdueWakeSource,
+	at time.Time,
+	replica string,
+	strategies func(string) []fleet.StrategyRef,
+) ([]fleet.Anomaly, *fleet.OverdueFacts) {
+	if source == nil {
+		return nil, nil
+	}
+	wakes, total := source.OverdueWakes(at, fleetOverdueWakeCeiling)
+	anomalies, facts := fleet.OverdueAnomalies(wakes, total, at, replica, strategies)
+	return anomalies, &facts
 }
 
 // restoreOwned seeds objects this replica owns but has not yet watched.
@@ -195,7 +236,11 @@ func (publisher *fleetPublisher) restoreOwned(ctx context.Context, owned []execu
 
 func (publisher *fleetPublisher) publishOnce(ctx context.Context) {
 	owned := publisher.owned()
-	publisher.restoreOwned(ctx, owned, publisher.now())
+	// One moment for the whole publish. Judging what is overdue at a different
+	// instant from the one the snapshot is stamped with would have the page
+	// reading two clocks as one.
+	at := publisher.now()
+	publisher.restoreOwned(ctx, owned, at)
 	retained := make(map[string]struct{}, len(owned))
 	for _, queryGroup := range owned {
 		retained[string(queryGroup)] = struct{}{}
@@ -206,9 +251,15 @@ func (publisher *fleetPublisher) publishOnce(ctx context.Context) {
 	publisher.tracker.Forget(retained)
 
 	anomalies := publisher.tracker.Anomalies()
+	// Overdue objects are appended to the same list rather than reported beside
+	// it. They are anomalies about the same objects, and a reader looking at
+	// "what is wrong right now" should not have to know that one kind of wrong
+	// arrives through a different door.
+	parked, overdue := publisherOverdue(publisher.overdue, at, publisher.replica, publisher.strategies)
+	anomalies = append(anomalies, parked...)
 	snapshot := fleet.Snapshot{
 		Replica: publisher.replica,
-		TakenAt: publisher.now(),
+		TakenAt: at,
 		Owned:   len(owned),
 		// Read after Forget, so it counts only objects this replica still owns.
 		// The difference between the two is what the replica owns but cannot
@@ -216,6 +267,7 @@ func (publisher *fleetPublisher) publishOnce(ctx context.Context) {
 		Determined:     publisher.tracker.Determined(),
 		Anomalies:      anomalies,
 		TotalAnomalies: len(anomalies),
+		Overdue:        overdue,
 	}
 	if publisher.capacity != nil {
 		snapshot.Capacity = publisher.capacity()

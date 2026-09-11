@@ -363,6 +363,28 @@ func (tracker *Tracker) HasObserved(queryGroup string) bool {
 	return seen
 }
 
+// StrategiesFor names the strategies this process has seen behind an object.
+//
+// It exists for anomalies that do not come from a round -- an overdue object
+// produced no trace this table could learn from, and without this it would
+// reach the list as a bare hash while every neighbouring row carries a strategy
+// somebody recognises. Empty is the honest answer for an object this replica
+// has never evaluated, which is exactly the object most likely to be overdue.
+func (tracker *Tracker) StrategiesFor(queryGroup string) []StrategyRef {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	state, seen := tracker.groups[queryGroup]
+	if !seen {
+		return nil
+	}
+	strategies := make([]StrategyRef, 0, len(state.strategies))
+	for strategy := range state.strategies {
+		strategies = append(strategies, strategy)
+	}
+	sortStrategies(strategies)
+	return strategies
+}
+
 // Tracked reports how many query groups the table holds, so the bound is
 // observable rather than a number in a comment.
 func (tracker *Tracker) Tracked() int {

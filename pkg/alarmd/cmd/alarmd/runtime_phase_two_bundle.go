@@ -749,7 +749,12 @@ func openProductionPhaseTwoBundleWithDependencies(
 		// that cannot complete has already been promised an end, so a Progress
 		// cursor older than that describes an object that stopped rather than
 		// one between rounds.
-		capacity:      capacitySnapshotSource(flights, cfg, rejectionTally, bundle.rotationFacts, seriesPullTally),
+		capacity: capacitySnapshotSource(flights, cfg, rejectionTally, bundle.rotationFacts, seriesPullTally),
+		// The due index is the only thing that knows an object was passed over
+		// rather than evaluated. It lives on the bundle precisely so a reader
+		// outside the dispatch loop can ask it.
+		overdue:       bundle.ensureDueIndex(),
+		strategies:    fleetTracker.StrategiesFor,
 		restore:       progressRestoreSource(progressStore),
 		staleAfter:    stallAfter,
 		restoreBudget: fleetRestoreBudgetPerPublish,

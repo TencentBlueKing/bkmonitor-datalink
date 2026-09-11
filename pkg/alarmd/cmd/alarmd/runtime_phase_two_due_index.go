@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
@@ -36,11 +37,13 @@ const dueIndexRetiredRecheckSeconds = 60
 // A fixed threshold is blind to cadence - sixty seconds late is nothing to an
 // hourly Plan and six missed evaluations to a ten-second one - so the interval
 // travels with the wake and the reader scales the judgement by it.
-type OverdueWake struct {
-	QueryGroup      string
-	WakeAt          time.Time
-	IntervalSeconds int64
-}
+//
+// An alias rather than a second declaration of the same three fields. The
+// reader this was written for is fleet.OverdueWakeSource, and two structurally
+// identical types kept in step by hand is the shape that drifts: a field added
+// on one side compiles fine and silently stops travelling. Aliased, the index
+// satisfies that interface directly and the compiler keeps them identical.
+type OverdueWake = fleet.OverdueWake
 
 // phaseTwoDueIndex holds, per owned Query Group, the second before which asking
 // the Slot source cannot produce work.

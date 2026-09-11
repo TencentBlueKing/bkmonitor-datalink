@@ -149,6 +149,10 @@ type Snapshot struct {
 	// Absent means the replica has nothing holding wake times, which is a
 	// different answer from "nothing is overdue" and must not be shown as one.
 	Overdue *OverdueFacts `json:"overdue,omitempty"`
+	// Suppression is present only on a build whose dispatcher actually holds
+	// objects back. Absent, the overdue count above is structurally zero and
+	// must not be read as "nothing is overdue".
+	Dispatch *DispatchSuppression `json:"dispatch,omitempty"`
 }
 
 // Truncated reports whether the replica had more anomalies than it published.
@@ -194,9 +198,12 @@ type View struct {
 	// objects themselves are in the anomaly list; this survives that list being
 	// paged or truncated, because "how many objects are not being evaluated" is
 	// the one number that must not depend on how much of the list fitted.
-	Overdue   *OverdueFacts `json:"overdue,omitempty"`
-	Anomalies []Anomaly     `json:"anomalies"`
-	Replicas  []string      `json:"replicas"`
+	Overdue *OverdueFacts `json:"overdue,omitempty"`
+	// Suppression says whether anything in this deployment can be parked at
+	// all. See DispatchSuppression: its absence, not its value, is the answer.
+	Dispatch  *DispatchSuppression `json:"dispatch,omitempty"`
+	Anomalies []Anomaly            `json:"anomalies"`
+	Replicas  []string             `json:"replicas"`
 }
 
 // Aggregate folds the published snapshots into one view.
@@ -260,6 +267,7 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	// Same snapshots, same reason: a stale replica's idea of what it has not
 	// picked up describes a moment that has passed.
 	aggregateOverdue(&view, counted)
+	aggregateDispatchSuppression(&view, counted)
 
 	// Owning an object is not knowing about it. A replica that has just restarted
 	// owns everything and has observed nothing, so its empty anomaly list is not

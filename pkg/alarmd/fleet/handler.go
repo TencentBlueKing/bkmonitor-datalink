@@ -274,7 +274,11 @@ func NewHandler(
 			// objects are not being evaluated" must not depend on how much of the
 			// list fitted.
 			"overdue": view.Overdue,
-			"gaps":    view.Gaps,
+			// Whether anything can be parked at all. Without it the zero above
+			// is unreadable: a build that suppresses nothing reports the same
+			// zero as one where every object is being reached on time.
+			"dispatch": view.Dispatch,
+			"gaps":     view.Gaps,
 			// Capacity rides on the verdict rather than getting an endpoint of
 			// its own: the two are answers from one read, and splitting them
 			// would let a page show a verdict from one moment beside occupancy

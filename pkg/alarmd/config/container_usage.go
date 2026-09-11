@@ -33,6 +33,10 @@ type ContainerUsage struct {
 	// being held back.
 	ThrottledSeconds float64
 	ThrottledKnown   bool
+	// CPUSeconds is cumulative CPU time consumed. Two reads give cores in use,
+	// which is what the core count on the panel has to be read against.
+	CPUSeconds      float64
+	CPUSecondsKnown bool
 	// MemoryLimitHits counts the times the container was actually held at its
 	// memory limit: an allocation that had to reclaim rather than be served.
 	//
@@ -68,6 +72,9 @@ func ReadContainerUsage() ContainerUsage {
 	}
 	if seconds, ok := readThrottledSeconds(); ok {
 		usage.ThrottledSeconds, usage.ThrottledKnown = seconds, true
+	}
+	if seconds, ok := readCPUSeconds(); ok {
+		usage.CPUSeconds, usage.CPUSecondsKnown = seconds, true
 	}
 	readMemoryLimitEvents(&usage)
 	return usage
@@ -111,6 +118,36 @@ func parseMemoryEvents(raw string, usage *ContainerUsage) {
 			usage.MemoryOOMKills, usage.MemoryOOMKillsKnown = count, true
 		}
 	}
+}
+
+// readCPUSeconds reads cumulative CPU time the container has consumed.
+//
+// Throttling says whether the quota was hit; this says how much of it is being
+// used. A panel showing "8 cores" with nothing beside it says the same thing to
+// a container using half a core and one using seven, and only the second is
+// near anything. Two reads of this over the wall time between them give cores
+// in use, which is the number the limit is there to be compared against.
+//
+// v2 keeps it in the same cpu.stat that carries the throttling; v1 keeps it in
+// cpuacct, in nanoseconds.
+func readCPUSeconds() (float64, bool) {
+	if raw, err := os.ReadFile("/sys/fs/cgroup/cpu.stat"); err == nil {
+		for _, line := range strings.Split(string(raw), "\n") {
+			name, value, found := strings.Cut(strings.TrimSpace(line), " ")
+			if !found || name != "usage_usec" {
+				continue
+			}
+			if micros, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64); err == nil {
+				return float64(micros) / 1e6, true
+			}
+		}
+	}
+	if raw, err := os.ReadFile("/sys/fs/cgroup/cpuacct/cpuacct.usage"); err == nil {
+		if nanos, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64); err == nil {
+			return float64(nanos) / 1e9, true
+		}
+	}
+	return 0, false
 }
 
 // readThrottledSeconds reads CFS throttling from either cgroup version. v2

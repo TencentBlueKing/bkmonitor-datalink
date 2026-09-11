@@ -183,11 +183,8 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       时间口径：与上面的判定同一次读取，来自各副本快照，不经时序库。
       占用是各副本相加，上限是每副本一份、不相加。
       运维只设了两个数——容器的 CPU limit 和内存 limit；下面所有许可、队列、体量预算都是程序按这两个数算出来的，不是可以单独调的旋钮。
+      这里只报测到的数，不替你判断够不够。
     </p>
-    <div class="verdict" id="capVerdict" hidden>
-      <span id="capBadge" class="badge b-UNKNOWN">…</span>
-      <span id="capWhy" class="why"></span>
-    </div>
     <div id="capErr" class="err" hidden></div>
     <div class="empty" id="capEmpty" hidden>本次读取没有副本上报容量。</div>
     <div class="grid" id="capCards"></div>
@@ -640,97 +637,6 @@ var KIND_TEXT = {
 };
 function kindText(kind) { return KIND_TEXT[kind] || kind || '—'; }
 
-// limitState reads a cumulative "times the limit was reached" counter.
-//
-// Zero is the strong answer and the common one: the container has never
-// reached this limit since it started. Non-zero needs the rate to say whether
-// it is happening now or happened earlier, and before the second read there is
-// no honest way to tell those apart -- so it says so instead of picking one.
-function limitState(cumulative, rate) {
-  if (!cumulative) return 'never';
-  if (!rate) return 'unknown_now';
-  return rate.rate > 0 ? 'now' : 'past';
-}
-
-// capacityVerdict answers "要不要扩容" rather than handing over the raw
-// material for someone else to answer it.
-//
-// It needs no threshold, and that is the point. The operator sets exactly two
-// numbers -- the container's CPU limit and its memory limit -- and everything
-// else here is this program's arithmetic on those two. So the question is not
-// "is 30 out of 64 permits a lot", which nobody reading this page can answer;
-// it is "did the container reach the limits it was given", which the container
-// reports about itself. A derived budget that refused work is the same kind of
-// fact one level up: this resource shape cannot hold the current load.
-function capacityVerdict(cap, rate) {
-  var now = [], past = [], pending = false;
-  if (cap.memory_oom_kills) {
-    now.push('内存被杀过 ' + cap.memory_oom_kills + ' 次');
-  }
-  var memory = limitState(cap.memory_limit_hits, rate.memoryHits);
-  if (memory === 'now') now.push('正在撞内存上限');
-  if (memory === 'past' || memory === 'unknown_now') {
-    past.push('撞过 ' + count(cap.memory_limit_hits) + ' 次内存上限');
-    if (memory === 'unknown_now') pending = true;
-  }
-
-  var cpu = limitState(cap.throttled_seconds, rate.throttled);
-  if (cpu === 'now') now.push('正在被 CPU 限流');
-  if (cpu === 'past' || cpu === 'unknown_now') {
-    past.push('被 CPU 限流过');
-    if (cpu === 'unknown_now') pending = true;
-  }
-
-  var rejected = 0;
-  Object.keys(cap.rejections || {}).forEach(function (b) { rejected += cap.rejections[b]; });
-  if (rejected) now.push('体量预算拦下过 ' + rejected + ' 次');
-
-  // A counter that was never read reports zero, and zero is what the whole
-  // verdict rests on. Without this the panel would be at its most confident --
-  // "没撞过上限，够用" -- precisely when it measured nothing at all, which is
-  // the one wrong answer worth going out of the way to prevent.
-  var blind = [];
-  if (!cap.memory_limit_known) blind.push('内存有没有撞上限');
-  if (!cap.throttled_known) blind.push('CPU 有没有被限流');
-
-  var badge = document.getElementById('capBadge');
-  var why = document.getElementById('capWhy');
-  show('capVerdict', true);
-  // The only two things anyone can actually change: the limits the operator
-  // set, or how many objects these replicas have to work through. Saying so is
-  // the difference between a panel that reports a problem and one that says
-  // what to do about it -- none of the derived ceilings is adjustable, and a
-  // reader who goes looking for the knob will not find one.
-  var whatToDo = '能改的只有运维给的 CPU / 内存 limit（或副本数），或者减少这批副本要算的对象——中间那些许可、队列、体量预算都是按 limit 算出来的，调不了。';
-  if (now.length) {
-    badge.className = 'badge b-ERROR';
-    badge.textContent = '资源不够';
-    why.textContent = now.join('；') + '。' + whatToDo;
-    return;
-  }
-  if (past.length) {
-    badge.className = 'badge b-DEGRADED';
-    // Two different claims, so two different words. "曾经不够" says it is over;
-    // when only one read has happened nobody can say that yet, and the earlier
-    // wording asserted "此刻没有" in the same breath as "要再读一次才确定".
-    badge.textContent = pending ? '撞过上限' : '曾经不够';
-    why.textContent = pending
-      ? past.join('；') + '，此刻还撞不撞要等下一次读取，约 30 秒后。' + whatToDo
-      : past.join('；') + '，但此刻没有。' + whatToDo;
-    return;
-  }
-  if (blind.length) {
-    badge.className = 'badge b-UNKNOWN';
-    badge.textContent = '测不到';
-    why.textContent = '这批副本没报上来' + blind.join('、') +
-      '——多半是 cgroup 文件在这个环境里读不到。缺了这个就没法判断资源够不够，别把它读成“够用”。';
-    return;
-  }
-  badge.className = 'badge b-HEALTHY';
-  badge.textContent = '够用';
-  why.textContent = '没撞过内存上限、没被 CPU 限流、没有任何体量预算拦下过东西——按运维给的这套资源，当前负载装得下。';
-}
-
 function renderCapacity(cap, gaps) {
   var box = document.getElementById('capCards');
   box.textContent = '';
@@ -745,7 +651,6 @@ function renderCapacity(cap, gaps) {
       ? '副本的上报都太旧了，这里不显示旧的占用——它描述的是上报那一刻，不是此刻。见上方“证据不全”里的 SNAPSHOT_STALE。'
       : '本次读取没有副本上报容量。');
     show('capEmpty', true);
-    show('capVerdict', false);
     text('capNote', '');
     return;
   }
@@ -768,11 +673,11 @@ function renderCapacity(cap, gaps) {
   var rate = {
     permits: betweenReads('permit_seconds', cap.permit_seconds, at),
     throttled: betweenReads('throttled_seconds', cap.throttled_seconds || 0, at),
+    cpu: betweenReads('cpu_seconds', cap.cpu_seconds || 0, at),
     memoryHits: betweenReads('memory_limit_hits', cap.memory_limit_hits || 0, at),
     series: cap.pulled ? betweenReads('pulled_series', cap.pulled.series, at) : null,
     points: cap.pulled ? betweenReads('pulled_records', cap.pulled.records, at) : null
   };
-  capacityVerdict(cap, rate);
 
   // The two limits the operator actually set come first, because every ceiling
   // after them is arithmetic on these two.
@@ -809,30 +714,51 @@ function renderCapacity(cap, gaps) {
       : (cap.cpu_source === 'environment_override' ? '来自 GOMAXPROCS 环境变量，不是容器 limit'
         : (cap.cpu_source ? '没读到容器 limit（' + cap.cpu_source + '），按宿主机核数算的，下面的上限都偏大'
           : '来源未知'));
-    cell('CPU', cap.cpu_cores + ' 核 × ' + cap.replicas,
-      cpuFrom + '；' + (throttled
-        // cgroup counts throttling as wall time the container was held back,
-        // and this figure is the sum over replicas -- so the share of time one
-        // replica spends throttled is the rate divided by how many reported.
-        ? (throttled.rate > 0
-            ? '最近 ' + Math.round(throttled.elapsed) + ' 秒里，每个副本平均有 ' +
-              (throttled.rate / cap.replicas * 100).toFixed(0) + '% 的时间被限流'
-            : '最近 ' + Math.round(throttled.elapsed) + ' 秒没被限流')
-        : (cap.throttled_seconds
-            ? '启动至今累计被限流 ' + Math.round(cap.throttled_seconds) + ' 秒；此刻还限不限要等下一次读取'
-            : '启动至今没被限流')),
-      (throttled && throttled.rate > 0) ||
-        (cap.cpu_source !== 'cpu_quota' && cap.cpu_source !== 'cpu_quota_minimum'));
+    // Cores in use against cores allowed. "8 核 × 2" alone said the same thing
+    // to a deployment using half a core and one using seven, and the core count
+    // is the number every ceiling below is derived from -- so it is the one
+    // figure here that most needed a measured load beside it.
+    var ceiling = cap.cpu_cores * cap.replicas;
+    var used = rate.cpu;
+    // cgroup counts throttling as wall time held back, summed over replicas, so
+    // one replica's share is the rate divided by how many reported.
+    var throttledShare = throttled ? throttled.rate / cap.replicas * 100 : null;
+    cell('CPU',
+      used ? used.rate.toFixed(2) + ' / ' + ceiling + ' 核' : ceiling + ' 核（' + cap.cpu_cores + ' × ' + cap.replicas + '）',
+      (used
+        ? '最近 ' + Math.round(used.elapsed) + ' 秒的平均用量，' + cap.replicas + ' 个副本各 ' + cap.cpu_cores + ' 核'
+        : '用量要两次读取才算得出，约 30 秒后出现') +
+      '；' + cpuFrom + '；' +
+      (throttledShare !== null
+        // One decimal, not zero: rounding a real but small share to "0%" beside
+        // a number that says throttling is happening reads as a contradiction.
+        ? (throttledShare > 0 ? '被限流 ' + throttledShare.toFixed(1) + '% 的时间' : '没被限流')
+        : (cap.throttled_seconds ? '启动至今累计被限流 ' + Math.round(cap.throttled_seconds) + ' 秒'
+                                 : '启动至今没被限流')),
+      cap.cpu_source !== 'cpu_quota' && cap.cpu_source !== 'cpu_quota_minimum');
   }
   // The load the ceilings have to be read against. Printing "series 524288"
   // with nothing beside it says the same thing to a deployment pulling two
   // hundred series a second and one pulling two hundred thousand -- a limit
   // without a measured load is not a capacity statement.
   if (cap.pulled) {
-    cell('Access 拉取', rate.series ? rate.series.rate.toFixed(0) + ' 条/秒' : '等下一次读取',
+    // Two different units, which the old wording ran together: 条 counted time
+    // series and 个点 counted the datapoints inside them, so "4293 条/秒" beside
+    // "8506 个点" read as two numbers for one thing that disagreed. They are one
+    // number each for two things, and their ratio -- points per series -- is the
+    // useful one, because it says how many points a series carries per pull.
+    //
+    // The cumulative total is gone. It counts from process start, which moves
+    // on every restart and answers no question anyone opening this page has.
+    var perSeries = (rate.series && rate.points && rate.series.rate > 0)
+      ? (rate.points.rate / rate.series.rate) : null;
+    cell('Access 拉取',
+      rate.series ? rate.series.rate.toFixed(0) + ' 条时序/秒' : '等下一次读取',
       rate.series
-        ? (rate.points ? '每秒 ' + rate.points.rate.toFixed(0) + ' 个点；累计 ' + count(cap.pulled.series) + ' 条'
-                       : '累计 ' + count(cap.pulled.series) + ' 条')
+        ? (rate.points
+            ? '其中共 ' + rate.points.rate.toFixed(0) + ' 个数据点/秒' +
+              (perSeries ? '，平均每条时序 ' + perSeries.toFixed(1) + ' 个点' : '')
+            : '数据点速率要两次读取才算得出')
         : '全部副本相加，两次读取才算得出，约 30 秒后出现');
   }
   // Derived from the two above. The instant answers "is anything running right
@@ -856,29 +782,26 @@ function renderCapacity(cap, gaps) {
     held && held.rate > permitCeiling * 0.8);
   cell('排队等许可', String(cap.waiting),
     '非零说明此刻许可就是瓶颈；为零不代表有余量', cap.waiting > 0);
-  // Round coverage answers the one question the object list structurally
-  // cannot: an object nobody reached has no round to report on, so it appears
-  // nowhere in that list, healthy or otherwise.
+  // Only shown when it says something is wrong.
+  //
+  // "2069 圈走完" is a counter that climbs on a healthy deployment forever: it
+  // reports that the walk is running, which nobody opened this page to ask, and
+  // it cannot be acted on at any value. What can be acted on is a walk that
+  // stops finishing, or objects turned away over and over -- and those now have
+  // a better answer beside them in 没被调度, which names the objects rather than
+  // counting the passes.
+  //
+  // The walk's own duration is gone with it. It measures dispatcher overhead in
+  // milliseconds, which belongs to whoever is profiling the scheduler, not to
+  // whoever is deciding whether to wake someone up.
   var rot = cap.rotation;
-  if (!rot) {
-    cell('轮转覆盖', '还没转完一轮', '副本刚起来时是正常的；一直是这样就说明一圈都走不完');
-  } else {
-    cell('轮转覆盖', rot.completed + ' 圈走完',
-      rot.truncated ? ('被打断 ' + rot.truncated + ' 次；打断在涨而走完不动 = 已经不再覆盖全部对象')
-        : '每圈都把自己拥有的对象走了一遍', rot.truncated > 0);
-    // Deliberately not called "how long an object waits". A generation starts
-    // on every scheduler wake, so a walk that finds everything already queued
-    // finishes inside one pass and this reads in microseconds -- it is the cost
-    // of the walk, not the interval between an object's turns. Labelling it the
-    // other way put "0.0 秒" next to "compare it against the object period",
-    // which reads as "everything is instant" no matter how far behind the
-    // deployment is.
-    cell('走一遍耗时', rot.last_seconds ? (rot.last_seconds * 1000).toFixed(1) + ' 毫秒' : '—',
-      '调度器扫完自己那份对象要多久，衡量调度开销；**不是**对象隔多久被处理一次');
-    if (rot.deferred) {
-      cell('被挡回', rot.deferred + ' 次',
-        '同一个对象每被满队列挡回一次记一次——反复挡回才是问题，偶尔挡回只是跑得晚', true);
-    }
+  if (rot && rot.truncated) {
+    cell('轮转被打断', rot.truncated + ' 次',
+      '走完 ' + rot.completed + ' 圈；打断在涨而走完不动 = 已经不再覆盖全部对象', true);
+  }
+  if (rot && rot.deferred) {
+    cell('被挡回', rot.deferred + ' 次',
+      '同一个对象每被满队列挡回一次记一次——反复挡回才是问题，偶尔挡回只是跑得晚', true);
   }
 
   var rejected = 0, worst = '';

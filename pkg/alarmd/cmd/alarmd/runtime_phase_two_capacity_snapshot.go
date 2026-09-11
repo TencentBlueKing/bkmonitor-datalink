@@ -90,6 +90,9 @@ func capacitySnapshotSource(
 		if usage.ThrottledKnown {
 			capacity.ThrottledSeconds = usage.ThrottledSeconds
 		}
+		if usage.CPUSecondsKnown {
+			capacity.CPUSeconds = usage.CPUSeconds
+		}
 		// Whether the counter was readable travels with it. A zero that was
 		// measured says this container never reached its memory limit, which is
 		// the answer the page is built on; a zero that stands in for an

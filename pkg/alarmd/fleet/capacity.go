@@ -58,7 +58,12 @@ type Capacity struct {
 	// sitting at its CPU quota and an idle one being held back are identical in
 	// any busy-time measure, and only this tells them apart.
 	ThrottledSeconds float64 `json:"throttled_seconds,omitempty"`
-	CPUCores         int     `json:"cpu_cores,omitempty"`
+	// CPUSeconds is cumulative CPU time this replica consumed. Two reads of it
+	// give cores in use, which is the only thing that makes the core count
+	// below readable: a limit with no measured load beside it says the same to
+	// a container using half a core and one using seven.
+	CPUSeconds float64 `json:"cpu_seconds,omitempty"`
+	CPUCores   int     `json:"cpu_cores,omitempty"`
 	// CPUSource says where the core count came from, the way MemorySource does
 	// for memory -- and it matters more, because every ceiling below is derived
 	// from it. A process that failed to read the container's quota sizes itself
@@ -132,6 +137,7 @@ type CapacityView struct {
 	MemoryLimitKnown bool              `json:"memory_limit_known,omitempty"`
 	ThrottledKnown   bool              `json:"throttled_known,omitempty"`
 	ThrottledSeconds float64           `json:"throttled_seconds,omitempty"`
+	CPUSeconds       float64           `json:"cpu_seconds,omitempty"`
 	CPUCores         int               `json:"cpu_cores,omitempty"`
 	CPUSource        string            `json:"cpu_source,omitempty"`
 	Budgets          map[string]uint64 `json:"budgets,omitempty"`
@@ -163,6 +169,7 @@ func aggregateCapacity(view *View, snapshots []Snapshot) {
 		capacity.Waiting += facts.Waiting
 		capacity.MemoryUsed += facts.MemoryUsed
 		capacity.ThrottledSeconds += facts.ThrottledSeconds
+		capacity.CPUSeconds += facts.CPUSeconds
 		// Summed, like the throttling: reaching the limit is something each
 		// container does on its own, and a deployment where one replica keeps
 		// hitting it is a deployment hitting it. Averaging would divide one

@@ -99,3 +99,24 @@ func TestReplicasResolvingTheirCoresDifferentlyAreNamedEvenWhenTheCountsAgree(t 
 		}
 	}
 }
+
+// A core count with no measured usage beside it says the same thing to a
+// deployment using half a core and one using seven -- and that count is what
+// every ceiling on the panel is derived from, so it is the figure that most
+// needed a load beside it. Summed across replicas, like the other occupancy.
+func TestCPUTimeAddsUpSoTheCoreCountCanBeReadAgainstIt(t *testing.T) {
+	at := time.Date(2026, 9, 11, 18, 0, 0, 0, time.UTC)
+	view := Aggregate(Expectation{QueryGroups: 20, Known: true}, []Snapshot{
+		capacitySnapshot("pod-a", at, &Capacity{CPUSeconds: 120.5, CPUCores: 8}),
+		capacitySnapshot("pod-b", at, &Capacity{CPUSeconds: 80.25, CPUCores: 8}),
+	}, []string{"pod-a", "pod-b"}, at, time.Minute)
+
+	if view.Capacity.CPUSeconds != 200.75 {
+		t.Fatalf("cpu seconds = %v, want the replicas' usage added up", view.Capacity.CPUSeconds)
+	}
+	// The ceiling is per replica and must not be summed here; the page does that
+	// multiplication itself and would double it otherwise.
+	if view.Capacity.CPUCores != 8 {
+		t.Fatalf("cpu cores = %d, want the per-replica ceiling reported once", view.Capacity.CPUCores)
+	}
+}

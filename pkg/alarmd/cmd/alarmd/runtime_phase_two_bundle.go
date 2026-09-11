@@ -275,13 +275,17 @@ func openProductionPhaseTwoBundleWithDependencies(
 		return nil, err
 	}
 	// The cutover prunes a closed Schedule Segment only when the scheduler's
-	// own arithmetic says no Slot in it is read anymore, so the repository
-	// receives the same three durations the scheduler is built with below.
-	if err := repository.ConfigureSegmentRetention(execution.SlotRetention{
+	// own arithmetic says no Slot in it is read anymore. The three durations
+	// that arithmetic takes are resolved once here and handed to both sides
+	// from the same values, so a change to how one side takes them cannot
+	// leave the other on the old reading.
+	recoveryLimits := cfg.PhaseTwo.Scheduler.RecoveryLimits()
+	retention := execution.SlotRetention{
 		QueryReserve:  cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration(),
-		MaxReplayAge:  cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration(),
+		MaxReplayAge:  recoveryLimits.MaxReplayAge,
 		TerminalDelay: phaseTwoPostRecoveryTerminalDelay(cfg),
-	}); err != nil {
+	}
+	if err := repository.ConfigureSegmentRetention(retention); err != nil {
 		return nil, err
 	}
 	// The timeline cache budget is derived here rather than inside the
@@ -423,7 +427,6 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	recoveryLimits := cfg.PhaseTwo.Scheduler.RecoveryLimits()
 	flights, err := scheduler.NewFlightCoordinatorWithRecovery(recoveryLimits, external.Now, observer)
 	if err != nil {
 		return nil, err
@@ -616,8 +619,8 @@ func openProductionPhaseTwoBundleWithDependencies(
 		Store:               ownershipStore, WorkerID: cfg.PhaseTwo.Worker.ID, Catalog: catalog, Progress: progressStore,
 		Executor: executor, Now: external.Now, ControlLeaderTTL: cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration(),
 		Observer: observer, Reconcile: assignmentReconciler, Flights: flights, RecoveryLimits: recoveryLimits,
-		PostRecoveryTerminalDelay: phaseTwoPostRecoveryTerminalDelay(cfg),
-		QueryDeadlineReserve:      cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration(),
+		PostRecoveryTerminalDelay: retention.TerminalDelay,
+		QueryDeadlineReserve:      retention.QueryReserve,
 		SnapshotRetention:         cfg.PhaseTwo.Control.CatalogTTL.Duration(),
 		PublicationDelayAllowance: phaseTwoPublicationDelayAllowance(cfg),
 	})

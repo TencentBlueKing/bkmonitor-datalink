@@ -111,6 +111,72 @@ func TestRotationCountsAReplacedWalkAsTruncatedNotCompleted(t *testing.T) {
 	}
 }
 
+// The owned set changes for ordinary reasons -- a strategy is added, a
+// rebalance moves objects here -- and each change restarts the walk. Whether the
+// walk being replaced had finished is a question about the set it was walking,
+// so asking it against the replacement gets the answer wrong every time the set
+// grows, and "truncated climbing while completed stays flat" is exactly the
+// reading that says a deployment has stopped covering its objects.
+func TestRotationJudgesTheReplacedWalkAgainstItsOwnOwnedSet(t *testing.T) {
+	dispatcher := walkDispatcher(8, 8, map[execution.QueryGroupIdentity]time.Time{
+		"query-group-a": {},
+		"query-group-b": {},
+		"query-group-c": {},
+	})
+	runners, revision := dispatcher.bundle.snapshotScheduledRunners()
+	dispatcher.fillQueues(runners, revision)
+	if facts := dispatcher.bundle.rotationFacts(); facts.Completed != 1 {
+		t.Fatalf("completed=%d, want the first rotation to finish before the set changes", facts.Completed)
+	}
+
+	// A fourth object arrives. The rotation that just finished reached all three
+	// objects it owned, which is a finished rotation whatever happens next.
+	dispatcher.bundle.mu.Lock()
+	dispatcher.bundle.setRunnerLocked("query-group-d", &phaseTwoQueryGroupLifecycle{runner: walkRunner{}})
+	dispatcher.bundle.assigned["query-group-d"] = struct{}{}
+	dispatcher.bundle.mu.Unlock()
+	grown, grownRevision := dispatcher.bundle.snapshotScheduledRunners()
+	dispatcher.fillQueues(grown, grownRevision)
+
+	facts := dispatcher.bundle.rotationFacts()
+	if facts.Truncated != 0 {
+		t.Fatalf("truncated=%d, want none: the finished rotation covered all three objects it owned",
+			facts.Truncated)
+	}
+}
+
+// The same comparison fails the other way round, and that direction is worse: a
+// walk that stopped part way through twenty objects is reported as fine as soon
+// as the set shrinks below where it stopped. A deployment that is not covering
+// its objects then reads as one that is.
+func TestRotationStillCountsATruncatedWalkWhenTheOwnedSetShrinks(t *testing.T) {
+	dispatcher := walkDispatcher(1, 0, map[execution.QueryGroupIdentity]time.Time{
+		"query-group-a": {},
+		"query-group-b": {},
+		"query-group-c": {},
+	})
+	runners, revision := dispatcher.bundle.snapshotScheduledRunners()
+	// One place in the ready queue, so the walk places one object and stops.
+	dispatcher.fillQueues(runners, revision)
+	if facts := dispatcher.bundle.rotationFacts(); facts.Completed != 0 {
+		t.Fatalf("completed=%d, want the walk to have stopped part way", facts.Completed)
+	}
+
+	dispatcher.bundle.mu.Lock()
+	for _, queryGroup := range []execution.QueryGroupIdentity{"query-group-b", "query-group-c"} {
+		dispatcher.bundle.removeRunnerLocked(queryGroup)
+		delete(dispatcher.bundle.assigned, queryGroup)
+	}
+	dispatcher.bundle.mu.Unlock()
+	shrunk, shrunkRevision := dispatcher.bundle.snapshotScheduledRunners()
+	dispatcher.fillQueues(shrunk, shrunkRevision)
+
+	facts := dispatcher.bundle.rotationFacts()
+	if facts.Truncated != 1 {
+		t.Fatalf("truncated=%d, want the unfinished walk counted once", facts.Truncated)
+	}
+}
+
 // Nothing has rotated yet on a replica that has just started, and that is a
 // real answer rather than a zero. Publishing zeroes would let a reader take
 // "completed 0" from a starting replica and from a stuck one to mean the same

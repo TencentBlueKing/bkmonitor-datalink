@@ -431,6 +431,12 @@ type phaseTwoRunnerDispatcher struct {
 	walkRunners    uint64
 	walkIndex      int
 	walked         int
+	// walkSize is how many Query Groups the walk in progress has to reach. It is
+	// kept because the owned set changes underneath the walk, and "did the last
+	// rotation finish" has to be asked against the set that rotation was walking
+	// -- asking it against the new set calls a finished rotation truncated every
+	// time the set grows, which is every rebalance and every added strategy.
+	walkSize int
 	// rotation records how the walk over the owned set is going. One generation
 	// is one rotation: the walk considers every owned Query Group exactly once
 	// before it finishes, so "did everything get a turn, and how long did that
@@ -868,14 +874,22 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 		dispatcher.walkIndex = sort.Search(len(runners), func(index int) bool {
 			return runners[index].queryGroup > dispatcher.cursor
 		})
-		if dispatcher.walked > 0 && dispatcher.walked < len(runners) {
+		if dispatcher.walked > 0 && dispatcher.walked < dispatcher.walkSize {
 			// The previous rotation is being replaced before it reached
 			// everyone. That is not the same as finishing, and counting it as
 			// one would hide a deployment that never completes a pass.
+			//
+			// Measured against the set that rotation was walking, not the one
+			// replacing it. Against the new set, a rotation that reached all ten
+			// of its objects counts as truncated the moment an eleventh arrives,
+			// and a rotation that stopped at five of twenty counts as complete
+			// the moment the set shrinks to four -- wrong in both directions, on
+			// the ordinary event of the owned set changing.
 			dispatcher.rotation.truncated++
 			dispatcher.publishRotation()
 		}
 		dispatcher.walked = 0
+		dispatcher.walkSize = len(runners)
 		dispatcher.rotation.startedAt = time.Now()
 		dispatcher.rotation.generation = dispatcher.generation
 	}

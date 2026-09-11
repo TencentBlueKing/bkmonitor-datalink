@@ -70,8 +70,13 @@ const (
 	GapUndetermined GapKind = "UNDETERMINED"
 )
 
-// SinceSource records where an anomaly's start time came from, because the two
-// sources do not survive the same events.
+// SinceSource records where an anomaly's start time came from, because the
+// sources do not survive the same events and do not mean the same thing.
+//
+// A restored object is the reason this has to be carried per anomaly rather
+// than stamped on the whole list: an object this process watched go wrong has a
+// start time, and an object restored from a persisted cursor has a bound. Both
+// render as a timestamp, and nothing else in the row tells them apart.
 type SinceSource string
 
 const (
@@ -81,6 +86,28 @@ const (
 	// SinceSnapshotContinuity is only as old as the uninterrupted run of
 	// snapshots that observed it, and resets when that run breaks.
 	SinceSnapshotContinuity SinceSource = "SNAPSHOT_CONTINUITY"
+	// SinceRestoredLastFull is the last round the object is known to have
+	// completed in full, read back after a restart. It is not when the object
+	// started going wrong: that moment is not persisted anywhere. It is the
+	// latest moment the object is known to have been fine, so the duration
+	// beside it is an upper bound on how long this has been going on.
+	SinceRestoredLastFull SinceSource = "RESTORED_LAST_FULL"
+	// SinceRestoredAtRestart is this process taking over an object whose
+	// persisted state records no full completion to anchor against. The clock
+	// starts at the handover, so the duration is a lower bound -- possibly a
+	// far lower one -- rather than a measurement.
+	SinceRestoredAtRestart SinceSource = "RESTORED_AT_RESTART"
+	// SinceRefusedFuture marks a row whose start time was later than the moment
+	// it was read. Nothing can have started after now, so the timestamp was
+	// refused and the clock reset to the read.
+	//
+	// This should never appear. It exists because the previous way of getting it
+	// wrong was silent: a future timestamp renders as a negative age, and the
+	// list is ordered oldest-first, so it sorted to the end -- where a truncated
+	// list drops it first. The rule meant to keep the worst objects visible
+	// pushed the mis-stamped ones out of view instead. A row that says it was
+	// refused is a bug report; a row that quietly sorts last is not.
+	SinceRefusedFuture SinceSource = "REFUSED_FUTURE"
 )
 
 // StrategyRef ties an object back to something an operator recognises.

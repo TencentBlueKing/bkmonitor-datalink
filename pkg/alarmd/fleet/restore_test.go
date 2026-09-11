@@ -88,6 +88,7 @@ func TestRestoreDoesNotTurnAFailingObjectGreen(t *testing.T) {
 
 	if !tracker.Restore("qg-bad", RestoredState{
 		LastCompletion: "COMPLETED_WITH_UNAVAILABLE", NextSlot: at.Add(-time.Minute),
+		LastFullSlot: at.Add(-90 * time.Minute),
 	}, at, restoreStaleAfter) {
 		t.Fatal("an unhealthy persisted completion did not restore")
 	}
@@ -101,7 +102,14 @@ func TestRestoreDoesNotTurnAFailingObjectGreen(t *testing.T) {
 	// The run started before this process did. Anchoring it at "now" would
 	// restart every object's clock on every release and make a failure that has
 	// lasted for hours look like it just began.
-	if !anomalies[0].Since.Equal(at.Add(-time.Minute)) {
+	//
+	// The anchor is the last round known to have completed in full, not the
+	// cursor's next slot. This assertion named NextSlot until a live deployment
+	// showed what that means for a cursor that is not behind: the next slot is
+	// in the future, so three objects reported a start time 38 minutes after the
+	// read. It happened to be in the past here only because this fixture's
+	// cursor is a minute behind.
+	if !anomalies[0].Since.Equal(at.Add(-90 * time.Minute)) {
 		t.Fatalf("restored anomaly age was re-anchored to the restart: %v", anomalies[0].Since)
 	}
 }

@@ -30,7 +30,22 @@ type RestoredState struct {
 	// NextSlot is when the object's next round is due. It is the freshness
 	// test: a Progress cursor left far behind says the object stopped, so its
 	// last completion describes history rather than now.
+	//
+	// It is only that. NextSlot is the round that has not happened yet, so on a
+	// healthy cursor it is in the future -- by a whole period for a long-period
+	// object. Anything that reads as "when this started" must not come from
+	// here.
 	NextSlot time.Time
+	// LastFullSlot is the most recent round the object completed in full. It is
+	// the only persisted time that bounds how long the object has been wrong:
+	// it has not been fully fine since then. It is not the start of the current
+	// run -- that moment is never written down -- so what it anchors is an
+	// upper bound on the duration, reported as such.
+	//
+	// Zero means the persisted state records no full completion at all, which
+	// is not the same as "it completed fully at the epoch" and must not be
+	// turned into a timestamp.
+	LastFullSlot time.Time
 }
 
 // Restore seeds one object from what survived the restart. It reports whether
@@ -87,13 +102,30 @@ func (tracker *Tracker) Restore(queryGroup string, restored RestoredState, at ti
 		state.degradedRuns = tracker.degradedRounds
 		state.inAnomalyRun = true
 		// The run started before this process did and the real start point did
-		// not survive, so the age is anchored where the evidence is: the round
-		// that recorded the failure. Anchoring at "now" would restart every
-		// object's clock on every release and make a long-running failure look
-		// new each time.
-		state.runStartedAt = restored.NextSlot
-		if state.runStartedAt.IsZero() {
+		// not survive. The age is anchored at the last round the object is known
+		// to have completed in full: it has not been fully fine since then, so
+		// the duration that follows is an upper bound rather than an invention.
+		// Anchoring at "now" instead would restart every object's clock on every
+		// release and make a long-running failure look new each time.
+		//
+		// It is emphatically not anchored at NextSlot. That is the round that
+		// has not run yet, so on a healthy cursor it is in the future -- which
+		// produced a negative age on the page, and, because the list is ordered
+		// oldest-first, sorted the object to the end where a truncated list drops
+		// it first. An object whose clock is wrong in that direction is pushed
+		// out of view by the very rule meant to keep the worst ones in it.
+		state.runStartedAt = restored.LastFullSlot
+		state.sinceFrom = SinceRestoredLastFull
+		if state.runStartedAt.IsZero() || !state.runStartedAt.Before(at) {
+			// Either nothing was ever completed in full, or the persisted slot
+			// is not in the past -- a cursor from a clock this process cannot
+			// reconcile. Both mean the same thing here: there is no usable
+			// anchor, so the clock starts at the handover and says so. The
+			// duration is then a lower bound, which is the honest direction to
+			// be wrong in: it under-reports rather than claiming an age nobody
+			// recorded.
 			state.runStartedAt = at
+			state.sinceFrom = SinceRestoredAtRestart
 		}
 		// failingSince stays zero. Progress records completions, never the
 		// executions that did not finish, so nothing that survived the

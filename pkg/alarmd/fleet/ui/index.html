@@ -343,9 +343,15 @@ var FAILURE_CATEGORY = {
   evaluation: '评估失败'
 };
 
+// What the timestamp in the previous column actually is. Three of these are not
+// a start time at all, and the column renders identically either way, so the
+// wording is the only thing carrying the difference.
 var SINCE_SOURCE = {
   BUSINESS_STATE: '业务状态（跨重启保留）',
-  SNAPSHOT_CONTINUITY: '快照连续观察（重启重置）'
+  SNAPSHOT_CONTINUITY: '本进程看着它开始出问题的时刻',
+  RESTORED_LAST_FULL: '上次完整跑完的时刻；真正变坏的时刻没保留，所以实际没这么久',
+  RESTORED_AT_RESTART: '本进程接手的时刻；之前有多久没人知道，只会比这更久',
+  REFUSED_FUTURE: '记录的时刻比现在还晚，已拒绝——这是缺陷，请上报'
 };
 
 function loadHealth() {

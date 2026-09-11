@@ -34,6 +34,21 @@ const (
 // That is worse than showing the raw name, so the page is checked against this.
 var AnomalyKinds = []string{KindDegradedRun, KindBlockedRun, KindOverdueWake, KindQueryCooldown}
 
+// SinceSources is the closed set of start-time provenances this build produces.
+//
+// It exists for the same reason AnomalyKinds does, and it is the list that was
+// missing when the field had only one value: the page maps the value to wording,
+// and an unmapped value falls back to printing the raw name beside a timestamp
+// whose meaning that name was supposed to explain. Three of these are not a
+// start time at all, so the fallback is not a cosmetic loss.
+var SinceSources = []SinceSource{
+	SinceBusinessState,
+	SinceSnapshotContinuity,
+	SinceRestoredLastFull,
+	SinceRestoredAtRestart,
+	SinceRefusedFuture,
+}
+
 // MetricKind maps an anomaly kind onto the closed label set.
 func MetricKind(kind string) string {
 	for _, known := range AnomalyKinds {

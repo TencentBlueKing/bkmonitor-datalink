@@ -111,6 +111,11 @@ type queryGroupState struct {
 	cooldownExposed bool
 	strategies      map[StrategyRef]struct{}
 	runStartedAt    time.Time
+	// sinceFrom says what runStartedAt actually is. A run this process watched
+	// begin has a start time; a run restored from a persisted cursor has only a
+	// bound, and the two are indistinguishable once they are both a timestamp
+	// in the same column.
+	sinceFrom SinceSource
 	// failingSince is when the current unbroken sequence of rounds that
 	// reached execution and did not finish began. It is kept apart from
 	// runStartedAt on purpose: that clock starts at the first degraded round
@@ -297,6 +302,10 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 	if !state.inAnomalyRun {
 		state.inAnomalyRun = true
 		state.runStartedAt = at
+		// This process watched the run begin, so the timestamp is a start time
+		// rather than a bound. A restored object overwrites neither, because
+		// Restore leaves a determined object alone.
+		state.sinceFrom = SinceSnapshotContinuity
 	}
 }
 
@@ -311,6 +320,7 @@ func (tracker *Tracker) resetRun(state *queryGroupState) {
 	state.currentKind = ""
 	state.reasonCode = ""
 	state.runStartedAt = time.Time{}
+	state.sinceFrom = ""
 	state.failingSince = time.Time{}
 }
 
@@ -333,7 +343,7 @@ func (tracker *Tracker) Anomalies() []Anomaly {
 			Kind:          state.currentKind,
 			ReasonCode:    state.reasonCode, Cause: state.cause,
 			Since:        state.runStartedAt,
-			SinceFrom:    SinceSnapshotContinuity,
+			SinceFrom:    state.sinceFrom,
 			FailingSince: state.failingSince,
 			Replica:      tracker.replica,
 			Failure:      state.lastFailure,
@@ -342,7 +352,18 @@ func (tracker *Tracker) Anomalies() []Anomaly {
 			anomaly.Kind = KindQueryCooldown
 			if anomaly.Since.IsZero() {
 				anomaly.Since = state.queryCooldown.LastQueryAt
+				anomaly.SinceFrom = SinceSnapshotContinuity
 			}
+		}
+		// Nothing can have started later than the moment it is being read, so a
+		// start time in the future is a defect in whatever produced it, not a
+		// long-running object. Refusing it here rather than letting the sort
+		// absorb it is deliberate: ordered oldest-first, a future timestamp
+		// sorts last, which is where a shortened list stops showing rows -- the
+		// mis-stamped object disappears exactly when the list gets interesting.
+		if now := tracker.now(); anomaly.Since.After(now) {
+			anomaly.Since = now
+			anomaly.SinceFrom = SinceRefusedFuture
 		}
 		for strategy := range state.strategies {
 			anomaly.Strategies = append(anomaly.Strategies, strategy)

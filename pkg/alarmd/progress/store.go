@@ -29,6 +29,14 @@ type ControlStore interface {
 	FencedCompareAndSet(context.Context, ownership.FencedCASRequest) (ownership.FencedCASStatus, error)
 }
 
+// ControlBatchStore is the optional batched form of ControlStore. A control
+// store that offers it lets LoadProgressBatch read many Query Groups in a few
+// round trips; one that does not is read one Query Group at a time.
+type ControlBatchStore interface {
+	ControlStore
+	ReadControlBatch(context.Context, []execution.QueryGroupIdentity, string) ([]ownership.ControlRead, error)
+}
+
 type TemporaryLegacyDrainingCASStore interface {
 	ControlStore
 	ReadControlForTemporaryLegacyDrainingCAS(context.Context, execution.QueryGroupIdentity, string) (ownership.TemporaryLegacyDrainingCASRead, error)
@@ -86,6 +94,52 @@ func (store *Store) LoadProgress(ctx context.Context, identity execution.Progres
 	if err != nil {
 		return execution.ProgressLoadResult{}, err
 	}
+	return store.decodeLoaded(identity, raw, missing)
+}
+
+// LoadProgressBatch loads the Progress of many Query Groups. Every entry of
+// the result is filled: a per-identity error is returned in place, so one
+// unreadable or invalid Progress does not hide the others. A transport
+// failure of a whole batch is reported on every identity of that batch.
+func (store *Store) LoadProgressBatch(ctx context.Context, identities []execution.ProgressIdentity) ([]execution.ProgressLoadResult, []error) {
+	results := make([]execution.ProgressLoadResult, len(identities))
+	errs := make([]error, len(identities))
+	batched, ok := store.options.Control.(ControlBatchStore)
+	if !ok {
+		for index, identity := range identities {
+			results[index], errs[index] = store.LoadProgress(ctx, identity)
+		}
+		return results, errs
+	}
+	queryGroups := make([]execution.QueryGroupIdentity, 0, len(identities))
+	positions := make([]int, 0, len(identities))
+	for index, identity := range identities {
+		if _, err := store.namespace(identity); err != nil {
+			errs[index] = err
+			continue
+		}
+		queryGroups = append(queryGroups, identity.QueryGroup)
+		positions = append(positions, index)
+	}
+	if len(queryGroups) == 0 {
+		return results, errs
+	}
+	reads, err := batched.ReadControlBatch(ctx, queryGroups, store.options.Prefix+":progress")
+	if err != nil {
+		for index := range identities {
+			if errs[index] == nil {
+				errs[index] = err
+			}
+		}
+		return results, errs
+	}
+	for offset, index := range positions {
+		results[index], errs[index] = store.decodeLoaded(identities[index], reads[offset].Raw, reads[offset].Missing)
+	}
+	return results, errs
+}
+
+func (store *Store) decodeLoaded(identity execution.ProgressIdentity, raw []byte, missing bool) (execution.ProgressLoadResult, error) {
 	if missing {
 		return execution.ProgressLoadResult{Status: execution.ProgressMissing}, nil
 	}

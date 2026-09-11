@@ -33,6 +33,12 @@ type phaseTwoMetrics struct {
 	activeQGSetBytes             prometheus.Gauge
 	activeQGSetEncode            *prometheus.HistogramVec
 	activeQGSetRedis             *prometheus.HistogramVec
+	scheduleCutoverPayload       prometheus.Gauge
+	scheduleCutoverTimelineMax   prometheus.Gauge
+	scheduleTimelineBytes        prometheus.Histogram
+	scheduleSegmentsPruned       prometheus.Counter
+	schedulePruneSkipped         *prometheus.CounterVec
+	scheduleCutoverDuration      *prometheus.HistogramVec
 	legacyMigration              *prometheus.CounterVec
 	legacyMigrationScan          prometheus.Histogram
 	legacyMigrationTime          *prometheus.HistogramVec
@@ -53,6 +59,10 @@ type phaseTwoMetrics struct {
 }
 
 var activeQGSetDurationBuckets = []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 30}
+
+// Timeline sizes from one Segment (about a kilobyte) up past the sizes that
+// made a publication cutover exceed the Redis write timeout.
+var scheduleTimelineBytesBuckets = []float64{1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216}
 var legacyMigrationScanBuckets = []float64{1, 10, 100, 500, 1000, 5000, 10000, 25000, 50000}
 
 var phaseTwoBusyStages = []string{"query", "evaluation", "event", "state", "progress", "other"}
@@ -151,6 +161,15 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.activeQGSetBytes = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_object_bytes", Help: "Encoded bytes in the current immutable Active Set."})
 	metrics.activeQGSetEncode = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_encode_duration_seconds", Help: "Active Set canonical encoding duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
 	metrics.activeQGSetRedis = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_redis_duration_seconds", Help: "Active Set Redis operation duration.", Buckets: activeQGSetDurationBuckets}, []string{"operation", "result"})
+	metrics.scheduleCutoverPayload = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "schedule_cutover_payload_bytes", Help: "Bytes the Control Leader sent in the last publication cutover compare-and-set call."})
+	metrics.scheduleCutoverTimelineMax = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "schedule_timeline_bytes_max", Help: "Largest Schedule timeline written by the last publication cutover. Rising across cutovers means some timeline is never pruned."})
+	metrics.scheduleTimelineBytes = prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "schedule_timeline_bytes", Help: "Schedule timeline sizes as written by publication cutovers.", Buckets: scheduleTimelineBytesBuckets})
+	metrics.scheduleSegmentsPruned = prometheus.NewCounter(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "schedule_segments_pruned_total", Help: "Closed Schedule Segments dropped by publication cutovers because no Slot in them is read anymore."})
+	metrics.schedulePruneSkipped = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "schedule_prune_skipped_total", Help: "Schedule timelines a cutover left unpruned, by reason."}, []string{"reason"})
+	metrics.scheduleCutoverDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "schedule_cutover_duration_seconds", Help: "Publication cutover compare-and-set duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
+	for _, reason := range observability.SchedulePruneSkipReasons {
+		metrics.schedulePruneSkipped.WithLabelValues(reason)
+	}
 	metrics.legacyMigration = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_total", Help: "One-time legacy Active QG migration outcomes."}, []string{"result", "reason_class"})
 	metrics.legacyMigrationScan = prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_scan_keys", Help: "Redis keys scanned by one-time legacy Active QG migration.", Buckets: legacyMigrationScanBuckets})
 	metrics.legacyMigrationTime = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_duration_seconds", Help: "One-time legacy Active QG migration duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
@@ -209,6 +228,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.ownedQueryGroups, m.ownershipTransitions,
 		m.queryAdmission,
 		m.activeQGSetCount, m.activeQGSetBytes, m.activeQGSetEncode, m.activeQGSetRedis,
+		m.scheduleCutoverPayload, m.scheduleCutoverTimelineMax, m.scheduleTimelineBytes, m.scheduleSegmentsPruned, m.schedulePruneSkipped, m.scheduleCutoverDuration,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 		m.undrainedDrainingQueryGroups,
 		m.algorithmEvaluations, m.algorithmInputs,
@@ -241,6 +261,20 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 				m.activeQGSetCount.Set(float64(facts.QueryGroups))
 				m.activeQGSetBytes.Set(float64(facts.ObjectBytes))
 			}
+		}
+	}
+	if facts := observation.ScheduleCutover; facts != nil {
+		m.scheduleCutoverDuration.WithLabelValues(facts.Result).Observe(facts.Duration.Seconds())
+		m.scheduleSegmentsPruned.Add(float64(facts.SegmentsPruned))
+		for reason, count := range facts.PrunesSkipped {
+			m.schedulePruneSkipped.WithLabelValues(reason).Add(float64(count))
+		}
+		for _, size := range facts.TimelineBytes {
+			m.scheduleTimelineBytes.Observe(float64(size))
+		}
+		if facts.Result == "success" {
+			m.scheduleCutoverPayload.Set(float64(facts.PayloadBytes))
+			m.scheduleCutoverTimelineMax.Set(float64(facts.MaxTimelineBytes))
 		}
 	}
 	if facts := observation.LegacyMigration; facts != nil {

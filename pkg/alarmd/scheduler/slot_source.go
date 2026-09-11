@@ -470,29 +470,20 @@ func (source *ProductionSlotSource) Next(
 	return slot, true, SlotDueFacts{IntervalSeconds: dueInterval}, nil
 }
 
+// scheduleQueryDeadline and recoveryBoundaries are the scheduler's half of
+// one shared decision: the Control Leader prunes a closed Schedule Segment
+// only when the same functions say no Slot in it is read anymore, so the
+// arithmetic lives in execution and is called from both sides rather than
+// written twice.
 func (source *ProductionSlotSource) scheduleQueryDeadline(schedule execution.FrozenQueryGroupSchedule, slot execution.EvaluationTime) (int64, error) {
-	if source.queryReserve <= 0 {
+	deadline, err := execution.SlotQueryDeadlineUnixMilli(schedule, slot, source.queryReserve)
+	switch {
+	case errors.Is(err, execution.ErrSlotRetentionInvalid):
 		return 0, ErrRecoveryLimitsInvalid
-	}
-	deadline := int64(0)
-	for _, plan := range schedule.Plans {
-		if !plan.Spec.IsAligned(slot) {
-			continue
-		}
-		completion, valid := plan.Spec.CompletionDeadlineUnixMilli(slot)
-		if !valid {
-			return 0, ErrSlotContractDrift
-		}
-		candidate := completion - source.queryReserve.Milliseconds()
-		if candidate <= int64(slot)*1000 {
-			return 0, ErrSlotContractDrift
-		}
-		if deadline == 0 || candidate < deadline {
-			deadline = candidate
-		}
-	}
-	if deadline == 0 {
+	case errors.Is(err, execution.ErrSlotDeadlineDrift):
 		return 0, ErrSlotContractDrift
+	case err != nil:
+		return 0, err
 	}
 	return deadline, nil
 }
@@ -641,12 +632,11 @@ func (source *ProductionSlotSource) snapshotUnavailableSlot(
 }
 
 func (source *ProductionSlotSource) recoveryBoundaries(deadline int64) (int64, int64, error) {
-	if source.recovery == nil || source.terminalDelay <= 0 {
+	if source.recovery == nil {
 		return 0, 0, ErrRecoveryLimitsInvalid
 	}
-	recoveryUntil := time.UnixMilli(deadline).Add(source.recovery.MaxReplayAge).UnixMilli()
-	keepUntil := time.UnixMilli(recoveryUntil).Add(source.terminalDelay).UnixMilli()
-	if recoveryUntil <= deadline || keepUntil <= recoveryUntil {
+	recoveryUntil, keepUntil, err := execution.SlotRecoveryBoundaries(deadline, source.recovery.MaxReplayAge, source.terminalDelay)
+	if err != nil {
 		return 0, 0, ErrRecoveryLimitsInvalid
 	}
 	return recoveryUntil, keepUntil, nil

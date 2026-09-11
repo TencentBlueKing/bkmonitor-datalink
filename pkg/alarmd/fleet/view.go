@@ -182,6 +182,10 @@ type Snapshot struct {
 	// Suppression is present only on a build whose dispatcher actually holds
 	// objects back. Absent, the overdue count above is structurally zero and
 	// must not be read as "nothing is overdue".
+	//
+	// Pointer and omitempty are both load-bearing, and the guard for that is
+	// TestSnapshotOmitsDispatchOnAReplicaThatDoesNotSuppress rather than a note
+	// here: it asserts on the encoded form, which is where the page reads this.
 	Dispatch *DispatchSuppression `json:"dispatch,omitempty"`
 }
 

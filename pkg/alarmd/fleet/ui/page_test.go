@@ -128,6 +128,17 @@ func TestThePageHasWordingForEveryAnomalyKind(t *testing.T) {
 	}
 }
 
+// The verdict route was the one response this check could not cover, because it
+// answered with a map and a map has no fields to reflect over. That is where it
+// went wrong: four columns were added to the view and to the page in one change,
+// the map in between was not, and the four new cells rendered "undefined" on a
+// live deployment for as long as it took someone to read the JSON by hand.
+//
+// It answers with a type now, so this is the same check as the other two.
+func TestEveryVerdictFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	assertFieldsExist(t, "deployment", reflect.TypeOf(fleet.HealthResponse{}))
+}
+
 // assertFieldsExist checks every `<object>.<field>` the page reads against the
 // JSON the Go type actually sends.
 func assertFieldsExist(t *testing.T, object string, response reflect.Type) {

@@ -69,6 +69,55 @@ type listResponse struct {
 	Page         Page `json:"page"`
 }
 
+// HealthResponse is what the verdict route answers with.
+//
+// It is a type rather than the map it used to be, and exported for the same
+// reason DetailResponse is: the page's own test reflects over it and fails on
+// any field the page reads that this does not send. As a map there was nothing
+// to reflect over, so the verdict route was the one response the check could not
+// cover -- and that is where it went wrong. Four columns were added to the View
+// and to the page in one change; the map in between was not touched, so the page
+// asked for fields nobody sent. A missing field is not an error in JavaScript,
+// and the four new cells rendered "undefined" on a live deployment.
+//
+// The lists themselves stay out. This route answers "how is the deployment",
+// which has to stay small enough to poll; the objects route carries the rows.
+type HealthResponse struct {
+	Health     Health `json:"health"`
+	Expected   *int   `json:"expected"`
+	Covered    int    `json:"covered"`
+	Determined int    `json:"determined"`
+	Unknown    int    `json:"unknown"`
+	// Healthy, AnomaliesTotal, DemotedTotal and Unknown partition the expected
+	// set. The page prints their sum against Expected, so all four have to come
+	// from this one read: computed from two reads they could disagree for
+	// reasons that have nothing to do with the deployment.
+	Healthy        int `json:"healthy"`
+	AnomaliesTotal int `json:"anomalies_total"`
+	DemotedTotal   int `json:"demoted_total"`
+	// DemotedDue and the three flow counts are the check on demotion, which is
+	// the one mechanism here that makes a deployment look better by removing
+	// objects from the denominator.
+	DemotedDue         int       `json:"demoted_due"`
+	DemotionEntries    int       `json:"demotion_entries"`
+	DemotionExtensions int       `json:"demotion_extensions"`
+	DemotionExits      int       `json:"demotion_exits"`
+	LastDemotionExit   time.Time `json:"last_demotion_exit,omitempty"`
+	// Overdue rides here rather than only in the list because the list can be
+	// paged or truncated, and "how many objects are not being evaluated" must
+	// not depend on how much of the list fitted.
+	Overdue *OverdueFacts `json:"overdue"`
+	// Dispatch says whether anything can be parked at all. Without it the zero
+	// above is unreadable: a build that suppresses nothing reports the same zero
+	// as one where every object is being reached on time.
+	Dispatch *DispatchSuppression `json:"dispatch"`
+	Gaps     []Gap                `json:"gaps"`
+	// Capacity rides on the verdict rather than getting an endpoint of its own:
+	// the two are answers from one read, and splitting them would let a page
+	// show a verdict from one moment beside occupancy from another.
+	Capacity *CapacityView `json:"capacity"`
+}
+
 // Count is one value and how many anomalies carry it.
 type Count struct {
 	Value string `json:"value"`
@@ -277,27 +326,15 @@ func NewHandler(
 	}
 	mux.HandleFunc("/api/health", func(response http.ResponseWriter, request *http.Request) {
 		view := service.View(request.Context())
-		writeJSON(response, http.StatusOK, map[string]any{
-			"health":     view.Health,
-			"expected":   view.Expected,
-			"covered":    view.Covered,
-			"determined": view.Determined,
-			"unknown":    view.Unknown,
-			// Objects nothing came back for. It rides here rather than only in
-			// the list because the list can be paged or truncated, and "how many
-			// objects are not being evaluated" must not depend on how much of the
-			// list fitted.
-			"overdue": view.Overdue,
-			// Whether anything can be parked at all. Without it the zero above
-			// is unreadable: a build that suppresses nothing reports the same
-			// zero as one where every object is being reached on time.
-			"dispatch": view.Dispatch,
-			"gaps":     view.Gaps,
-			// Capacity rides on the verdict rather than getting an endpoint of
-			// its own: the two are answers from one read, and splitting them
-			// would let a page show a verdict from one moment beside occupancy
-			// from another.
-			"capacity": view.Capacity,
+		writeJSON(response, http.StatusOK, HealthResponse{
+			Health: view.Health, Expected: view.Expected, Covered: view.Covered,
+			Determined: view.Determined, Unknown: view.Unknown, Healthy: view.Healthy,
+			AnomaliesTotal: view.AnomaliesTotal, DemotedTotal: view.DemotedTotal,
+			DemotedDue: view.DemotedDue, DemotionEntries: view.DemotionEntries,
+			DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
+			LastDemotionExit: view.LastDemotionExit,
+			Overdue:          view.Overdue, Dispatch: view.Dispatch,
+			Gaps: view.Gaps, Capacity: view.Capacity,
 		})
 	})
 	return mux, nil

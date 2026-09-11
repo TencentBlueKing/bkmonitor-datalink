@@ -284,12 +284,25 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	publisher.tracker.Forget(retained)
 
 	anomalies := publisher.tracker.Anomalies()
+	demoted := publisher.tracker.Demoted()
 	// Overdue objects are appended to the same list rather than reported beside
 	// it. They are anomalies about the same objects, and a reader looking at
 	// "what is wrong right now" should not have to know that one kind of wrong
 	// arrives through a different door.
+	//
+	// Appended once per object, though. An object the tracker already reports
+	// can also be past a wake time -- during a re-warm most of them are -- and
+	// adding a second row for it made the list longer than the set of objects it
+	// was about. Nothing noticed while the length was only ever displayed; the
+	// moment the columns were required to add up against what the replica can
+	// speak for, a deployment reported 964 anomalies over 943 objects and held
+	// itself at UNKNOWN. The row is the redundant one: the tracker's row for the
+	// same object already says it is not progressing and carries why, while
+	// "its wake time passed" is the same fact seen from the scheduler's side.
+	// The count of overdue objects is unaffected -- it travels in its own facts,
+	// which is why that number does not depend on this list at all.
 	parked, overdue := publisherOverdue(publisher.overdue, at, publisher.replica, publisher.strategies)
-	anomalies = append(anomalies, parked...)
+	anomalies = append(anomalies, onlyUnlisted(parked, anomalies, demoted)...)
 	snapshot := fleet.Snapshot{
 		Replica: publisher.replica,
 		TakenAt: at,
@@ -307,7 +320,6 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	// and counting it as one made every backend outage read as alarmd getting
 	// worse -- so the bigger the outage, the worse the verdict, which is the
 	// wrong direction for the number people escalate on.
-	demoted := publisher.tracker.Demoted()
 	snapshot.Demoted = demoted
 	snapshot.TotalDemoted = len(demoted)
 	snapshot.DemotionEntries, snapshot.DemotionExtensions, snapshot.DemotionExits,
@@ -319,6 +331,32 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 		snapshot.Dispatch = publisher.dispatch()
 	}
 	return snapshot
+}
+
+// onlyUnlisted keeps the anomalies whose object no column already carries.
+//
+// It is by object, not by row: the columns are required to partition the objects
+// a replica can speak for, so one object contributing two rows breaks the
+// arithmetic that makes "the rest is real problems" a statement rather than a
+// hope.
+func onlyUnlisted(candidates []fleet.Anomaly, listed ...[]fleet.Anomaly) []fleet.Anomaly {
+	already := make(map[string]struct{})
+	for _, column := range listed {
+		for _, anomaly := range column {
+			already[anomaly.QueryGroup] = struct{}{}
+		}
+	}
+	kept := make([]fleet.Anomaly, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, duplicate := already[candidate.QueryGroup]; duplicate {
+			continue
+		}
+		// Guards against the candidates repeating an object among themselves as
+		// well, so the result is a set whichever list the duplicate came from.
+		already[candidate.QueryGroup] = struct{}{}
+		kept = append(kept, candidate)
+	}
+	return kept
 }
 
 // fleetVerdictScrapeCeiling bounds how long a scrape may wait on the control

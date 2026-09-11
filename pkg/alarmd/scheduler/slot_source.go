@@ -670,7 +670,7 @@ func (source *ProductionSlotSource) classifyRecovery(
 		return "", SlotRecoveryFacts{}, ErrSlotContractDrift
 	}
 	if at.UnixMilli() < deadline {
-		return execution.OperationNormal, SlotRecoveryFacts{Disposition: ReplayLive}, nil
+		return execution.OperationNormal, SlotRecoveryFacts{Disposition: ReplayLive, RecheckAtUnixMilli: deadline}, nil
 	}
 	age := at.Sub(time.UnixMilli(deadline))
 	if age >= source.recovery.MaxReplayAge {
@@ -680,11 +680,11 @@ func (source *ProductionSlotSource) classifyRecovery(
 			Age:         age,
 		}, nil
 	}
-	distance, err := source.replayDistance(ctx, evaluationTime, at)
+	distance, recheckAt, err := source.replayDistance(ctx, evaluationTime, at)
 	if err != nil {
 		return "", SlotRecoveryFacts{}, err
 	}
-	facts := SlotRecoveryFacts{Disposition: ReplayEligible, Distance: distance, Age: age}
+	facts := SlotRecoveryFacts{Disposition: ReplayEligible, Distance: distance, Age: age, RecheckAtUnixMilli: recheckAt}
 	if distance > source.recovery.MaxReplaySlots {
 		facts.Disposition = ReplayExpired
 		return execution.OperationNormal, facts, nil
@@ -725,31 +725,31 @@ func (source *ProductionSlotSource) replayDistance(
 	ctx context.Context,
 	first execution.EvaluationTime,
 	at time.Time,
-) (uint32, error) {
+) (uint32, int64, error) {
 	retiredAt, retired, err := source.catalog.ReadScheduleRetirement(ctx, source.queryGroup)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	distance := uint32(1)
 	cursor := first
 	for distance <= source.recovery.MaxReplaySlots {
 		next, err := source.catalog.NextSlotAfter(ctx, source.queryGroup, cursor)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		if next <= cursor {
-			return 0, ErrScheduleFactsInvalid
+			return 0, 0, ErrScheduleFactsInvalid
 		}
 		if retired && next == retiredAt {
-			return distance, nil
+			return distance, 0, nil
 		}
 		if int64(next) > at.Unix() {
-			return distance, nil
+			return distance, int64(next) * 1000, nil
 		}
 		distance++
 		cursor = next
 	}
-	return distance, nil
+	return distance, 0, nil
 }
 
 func (source *ProductionSlotSource) isRetiredBoundary(

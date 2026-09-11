@@ -28,15 +28,18 @@ var (
 // RecoveryLimits are process-wide fixed bounds. They deliberately do not
 // contain QG-specific weights or adaptive controls.
 type RecoveryLimits struct {
-	ProcessQueryPermits   int
-	RecoveryQueryPermits  int
-	ReadyQueueCapacity    int
-	RecoveryQueueCapacity int
-	MaxQueuedItemsPerQG   int
-	MaxReplaySlots        uint32
-	MaxReplayAge          time.Duration
-	RetryMinDelay         time.Duration
-	RetryMaxDelay         time.Duration
+	// QueryUnavailableCooldown enables QG-local suppression after repeated
+	// committed, wholly unavailable primary queries. Product defaults enable it.
+	QueryUnavailableCooldown bool
+	ProcessQueryPermits      int
+	RecoveryQueryPermits     int
+	ReadyQueueCapacity       int
+	RecoveryQueueCapacity    int
+	MaxQueuedItemsPerQG      int
+	MaxReplaySlots           uint32
+	MaxReplayAge             time.Duration
+	RetryMinDelay            time.Duration
+	RetryMaxDelay            time.Duration
 }
 
 func (limits RecoveryLimits) Validate() error {
@@ -61,9 +64,12 @@ const (
 )
 
 type SlotRecoveryFacts struct {
-	Disposition ReplayDisposition
-	Distance    uint32
-	Age         time.Duration
+	// RecheckAtUnixMilli is the next time these recovery facts can change.
+	// It is derived from reads the source already made, not a guessed interval.
+	RecheckAtUnixMilli int64
+	Disposition        ReplayDisposition
+	Distance           uint32
+	Age                time.Duration
 }
 
 func (facts SlotRecoveryFacts) validate(operation execution.Operation) error {

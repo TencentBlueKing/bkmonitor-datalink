@@ -2578,7 +2578,21 @@ func requireReasonClass(reason ReasonCode, expected contract.ReasonClassV2) erro
 	return nil
 }
 
+// QueryAvailability is non-persistent evidence from a validated query execution.
+// The zero value means that this result cannot establish query health.
+type QueryAvailability uint8
+
+const (
+	QueryAvailabilityUnknown QueryAvailability = iota
+	QueryAvailabilityAvailable
+	// Every PRIMARY query was unavailable due to source_backend, with no
+	// usable primary stream. Local admission/unknown failures are not included.
+	QueryAvailabilityUnavailable
+)
+
 type SlotExecutionResult struct {
+	// Set only after successful Progress commit for the unchanged configuration.
+	QueryAvailability QueryAvailability
 	// Set only after a successful Progress commit, not inferred from Result.
 	CompletionKind CompletionKind
 	Completed      bool

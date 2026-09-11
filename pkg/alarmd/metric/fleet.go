@@ -34,6 +34,8 @@ type FleetCount struct {
 // and drifting from the page one release later.
 type FleetVerdict struct {
 	Health string
+	// QueryCooldown counts visible objects retaining a query cooldown policy; nil means not measured.
+	QueryCooldown *int
 	// Expected is nil when the denominator could not be read. It is left out
 	// of the export rather than sent as zero: zero expected objects is a real
 	// state that means something else entirely.
@@ -58,7 +60,8 @@ type FleetVerdict struct {
 type FleetVerdictSource func() FleetVerdict
 
 type fleetCollector struct {
-	source FleetVerdictSource
+	source        FleetVerdictSource
+	queryCooldown *prometheus.Desc
 
 	health     *prometheus.Desc
 	objects    *prometheus.Desc
@@ -74,7 +77,8 @@ func newFleetCollector(source FleetVerdictSource) *fleetCollector {
 		return prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, name), help, labels, nil)
 	}
 	return &fleetCollector{
-		source: source,
+		source:        source,
+		queryCooldown: descriptor("fleet_query_cooldown_objects", "Visible objects isolated by external source_backend query cooldown, including expired permits awaiting a real query. Lower bound when the anomaly list is truncated or fleet coverage is incomplete.", nil),
 		health: descriptor("fleet_health",
 			"Deployment-wide judgment as alarmd itself decides it; alert on this rather than recomputing it.",
 			[]string{"health_state"}),
@@ -118,6 +122,7 @@ func newFleetCollector(source FleetVerdictSource) *fleetCollector {
 }
 
 func (c *fleetCollector) Describe(descriptions chan<- *prometheus.Desc) {
+	descriptions <- c.queryCooldown
 	descriptions <- c.health
 	descriptions <- c.objects
 	descriptions <- c.anomalies
@@ -133,6 +138,9 @@ func (c *fleetCollector) Collect(metrics chan<- prometheus.Metric) {
 		// A scrape that could not reach a judgment must not publish one. Emitting
 		// a default here would export "healthy" for a deployment nobody asked.
 		return
+	}
+	if verdict.QueryCooldown != nil {
+		metrics <- prometheus.MustNewConstMetric(c.queryCooldown, prometheus.GaugeValue, float64(*verdict.QueryCooldown))
 	}
 	metrics <- prometheus.MustNewConstMetric(c.health, prometheus.GaugeValue, 1, verdict.Health)
 	if verdict.Expected != nil {

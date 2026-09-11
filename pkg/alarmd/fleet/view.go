@@ -22,6 +22,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // Health is the answer to "does someone need to look at this".
@@ -101,9 +103,10 @@ type FailureRef struct {
 
 // Anomaly is one object that is not making progress as expected.
 type Anomaly struct {
-	QueryGroup string `json:"query_group"`
-	Kind       string `json:"kind"`
-	ReasonCode string `json:"reason_code,omitempty"`
+	QueryCooldown *observability.QueryCooldownFacts `json:"query_cooldown,omitempty"`
+	QueryGroup    string                            `json:"query_group"`
+	Kind          string                            `json:"kind"`
+	ReasonCode    string                            `json:"reason_code,omitempty"`
 	// Cause separates the conditions that share one completion kind. Without it
 	// a page can list hundreds of objects as degraded and give the reader no
 	// way to tell which ones anyone can do something about, which is the same

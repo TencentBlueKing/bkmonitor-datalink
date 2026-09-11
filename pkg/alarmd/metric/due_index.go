@@ -78,7 +78,7 @@ var dueIndexVersionResults = []string{"unchanged", "changed", "unknown"}
 // opposite things: not_due is an object that is healthy and early, backoff is
 // an object waiting out a failure or a readiness deferral of its own. Counting
 // them together would hide a deployment where the second was climbing.
-var dispatchSkipReasons = []string{"not_due", "backoff"}
+var dispatchSkipReasons = []string{"not_due", "backoff", "query_cooldown"}
 
 func newDueIndexMetrics() dueIndexMetrics {
 	metrics := dueIndexMetrics{

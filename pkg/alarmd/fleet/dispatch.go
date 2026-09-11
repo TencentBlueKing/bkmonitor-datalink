@@ -35,7 +35,7 @@ import "sync/atomic"
 // "suppression is not live", the reassuring one.
 type DispatchSuppression struct {
 	// Skipped counts dispatches held back since the process started, keyed by
-	// the reason the dispatcher recorded (not_due, backoff).
+	// the reason the dispatcher recorded (not_due, backoff, query_cooldown).
 	Skipped map[string]uint64 `json:"skipped"`
 	// Parked is how many objects are being held back as of this snapshot. It is
 	// an instant, unlike Skipped: "how many are waiting right now" and "how many
@@ -69,11 +69,11 @@ func aggregateDispatchSuppression(view *View, snapshots []Snapshot) {
 
 // DispatchSkipReasons is the closed vocabulary of why a dispatch was not made.
 //
-// Both are always reported, including at zero. A reason that has not happened
+// All are always reported, including at zero. A reason that has not happened
 // yet is a real answer - nothing has been held back for it - and leaving it out
 // would make "never happened" and "not measured" the same reading, which is the
 // confusion this whole field exists to remove.
-var DispatchSkipReasons = []string{"not_due", "backoff"}
+var DispatchSkipReasons = []string{"not_due", "backoff", "query_cooldown"}
 
 // DispatchSkipTally counts the dispatches the due index held back.
 //
@@ -82,13 +82,14 @@ var DispatchSkipReasons = []string{"not_due", "backoff"}
 // page answers from the replica's own snapshot, so it must not need collection
 // to have happened first.
 //
-// Atomics rather than a guarded map because the vocabulary is closed at two and
+// Atomics rather than a guarded map because the vocabulary is closed at three and
 // the increment happens inside the dispatcher's walk over everything the
 // replica owns. A map write there would put a lock on the path whose cost this
 // whole change exists to remove.
 type DispatchSkipTally struct {
-	notDue  atomic.Uint64
-	backoff atomic.Uint64
+	notDue        atomic.Uint64
+	backoff       atomic.Uint64
+	queryCooldown atomic.Uint64
 }
 
 func NewDispatchSkipTally() *DispatchSkipTally {
@@ -113,7 +114,14 @@ func (tally *DispatchSkipTally) SkippedOnBackoff() {
 	tally.backoff.Add(1)
 }
 
-// Counts returns both reasons, including the ones still at zero.
+// SkippedQueryCooldown counts a dispatch suppressed by the query failure policy.
+func (tally *DispatchSkipTally) SkippedQueryCooldown() {
+	if tally != nil {
+		tally.queryCooldown.Add(1)
+	}
+}
+
+// Counts returns all reasons, including the ones still at zero.
 func (tally *DispatchSkipTally) Counts() map[string]uint64 {
 	counts := make(map[string]uint64, len(DispatchSkipReasons))
 	for _, reason := range DispatchSkipReasons {
@@ -124,5 +132,6 @@ func (tally *DispatchSkipTally) Counts() map[string]uint64 {
 	}
 	counts["not_due"] = tally.notDue.Load()
 	counts["backoff"] = tally.backoff.Load()
+	counts["query_cooldown"] = tally.queryCooldown.Load()
 	return counts
 }

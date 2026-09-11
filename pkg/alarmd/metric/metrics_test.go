@@ -335,6 +335,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_redis_command_failure_total":                  "variableLabels: {client,command,pipelined}",
 		"bkmonitor_alarmd_redis_command_duration_seconds":               "variableLabels: {client,command,pipelined}",
 		"bkmonitor_alarmd_short_period_slot_completions_total":          "variableLabels: {cohort,operation,completion_kind}",
+		"bkmonitor_alarmd_query_cooldown_events_total":                  "variableLabels: {event}",
 		"bkmonitor_alarmd_access_response_status_total":                 "variableLabels: {code,outcome}",
 		"bkmonitor_alarmd_slot_readiness_slack_seconds":                 "variableLabels: {}",
 		"bkmonitor_alarmd_slot_readiness_boundary_total":                "variableLabels: {boundary}",
@@ -697,6 +698,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("short_period_slot_completions_total"): 56,
 		// 11 codes UQ declares plus OTHER, times allowed/unavailable/other.
 		fqName("access_response_status_total"): 36,
+		fqName("query_cooldown_events_total"):  6,
 		// Unlabelled, so one histogram: eleven buckets plus +Inf, sum and count.
 		fqName("slot_readiness_slack_seconds"): histogramSeries(1, len(slotReadinessSlackBuckets)),
 		// unified, mixed, none, OTHER.

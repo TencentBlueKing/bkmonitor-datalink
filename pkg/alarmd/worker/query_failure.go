@@ -185,7 +185,7 @@ func providerFailureFacts(completion execution.QueryExecutionCompletion) *observ
 		}
 		facts := &observability.QueryFailureFacts{
 			Stage:    observability.QueryFailureStageProvider,
-			Category: observability.QueryFailureCategoryProviderTransport,
+			Category: physicalFailureCategory(item.RouteFacts),
 			Code:     string(physicalFailureReason(item.RouteFacts)),
 		}
 		for index := len(item.RouteFacts.Attempts) - 1; index >= 0; index-- {
@@ -194,15 +194,29 @@ func providerFailureFacts(completion execution.QueryExecutionCompletion) *observ
 				continue
 			}
 			facts.Detail = attempt.Detail
-			switch execution.RouteDetailKind(attempt.Detail) {
-			case execution.RouteDetailKindHTTPStatus, execution.RouteDetailKindResponse:
-				facts.Category = observability.QueryFailureCategorySourceBackend
-			}
 			break
 		}
 		return facts
 	}
 	return nil
+}
+
+// physicalFailureCategory shares the existing log classification with query
+// availability evidence. Admission/readiness and unknown failures have no
+// backend response detail, so they cannot trigger backend cooldown.
+func physicalFailureCategory(routes execution.ProviderRouteFacts) string {
+	for index := len(routes.Attempts) - 1; index >= 0; index-- {
+		attempt := routes.Attempts[index]
+		if attempt.Result != execution.RouteAttemptFailed && attempt.ReasonCode == "" {
+			continue
+		}
+		switch execution.RouteDetailKind(attempt.Detail) {
+		case execution.RouteDetailKindHTTPStatus, execution.RouteDetailKindResponse:
+			return observability.QueryFailureCategorySourceBackend
+		}
+		break
+	}
+	return observability.QueryFailureCategoryProviderTransport
 }
 
 // unexplainedOutcomeFacts names a non-successful evaluation outcome that

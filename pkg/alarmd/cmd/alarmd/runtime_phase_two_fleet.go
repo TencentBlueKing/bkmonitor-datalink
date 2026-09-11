@@ -352,7 +352,11 @@ func fleetVerdictOf(view fleet.View, at time.Time) metric.FleetVerdict {
 	// value -- a response has no budget and the reader deserves the true one.
 	kinds := newCountIndex()
 	failures := newCountIndex()
+	cooldown := 0
 	for _, anomaly := range view.Anomalies {
+		if anomaly.QueryCooldown != nil {
+			cooldown++
+		}
 		if anomaly.Stalled {
 			verdict.Stalled++
 		}
@@ -365,6 +369,9 @@ func fleetVerdictOf(view fleet.View, at time.Time) metric.FleetVerdict {
 		}
 	}
 	verdict.Anomalies = kinds.counts()
+	if view.Covered > 0 {
+		verdict.QueryCooldown = &cooldown
+	}
 	verdict.Failures = failures.counts()
 
 	gaps := newCountIndex()

@@ -65,20 +65,22 @@ type PhaseTwoSchedulerConfig struct {
 	ActiveExecutionLimit int
 	TickInterval         Duration
 	// Admission and queue depth are derived from the container's CPU budget.
-	ProcessQueryPermits   int
-	RecoveryQueryPermits  int
-	ReadyQueueCapacity    int
-	RecoveryQueueCapacity int
-	MaxQueuedItemsPerQG   int
-	MaxReplaySlots        uint32
-	MaxReplayAge          Duration
-	RetryMinDelay         Duration
-	RetryMaxDelay         Duration
+	ProcessQueryPermits      int
+	RecoveryQueryPermits     int
+	ReadyQueueCapacity       int
+	RecoveryQueueCapacity    int
+	MaxQueuedItemsPerQG      int
+	MaxReplaySlots           uint32
+	MaxReplayAge             Duration
+	RetryMinDelay            Duration
+	RetryMaxDelay            Duration
+	QueryUnavailableCooldown bool `yaml:"query_unavailable_cooldown"`
 }
 
 func (config PhaseTwoSchedulerConfig) RecoveryLimits() scheduler.RecoveryLimits {
 	return scheduler.RecoveryLimits{
-		ProcessQueryPermits: config.ProcessQueryPermits, RecoveryQueryPermits: config.RecoveryQueryPermits,
+		QueryUnavailableCooldown: config.QueryUnavailableCooldown,
+		ProcessQueryPermits:      config.ProcessQueryPermits, RecoveryQueryPermits: config.RecoveryQueryPermits,
 		ReadyQueueCapacity: config.ReadyQueueCapacity, RecoveryQueueCapacity: config.RecoveryQueueCapacity,
 		MaxQueuedItemsPerQG: config.MaxQueuedItemsPerQG,
 		MaxReplaySlots:      config.MaxReplaySlots, MaxReplayAge: config.MaxReplayAge.Duration(),
@@ -195,6 +197,7 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 			TickInterval:        Duration(time.Second),
 			MaxQueuedItemsPerQG: 16, MaxReplaySlots: 3, MaxReplayAge: Duration(10 * time.Minute),
 			RetryMinDelay: Duration(time.Second), RetryMaxDelay: Duration(30 * time.Second),
+			QueryUnavailableCooldown: true,
 		},
 		Access: PhaseTwoAccessConfig{
 			MinReadyDelay: Duration(30 * time.Second), DownstreamExecutionReserve: Duration(5 * time.Second),

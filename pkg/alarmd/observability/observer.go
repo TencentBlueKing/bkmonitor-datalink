@@ -486,6 +486,7 @@ type TraceFields struct {
 }
 
 type Observation struct {
+	QueryCooldown          *QueryCooldownFacts
 	RunOutcome             string
 	Attempted              bool
 	ExecuteOutcome         string
@@ -592,6 +593,7 @@ func NormalizeObservation(observation Observation) Observation {
 	}
 	observation.CapacityBudget = NormalizeCapacityBudget(observation.CapacityBudget)
 	observation.CapacityRejection = normalizeCapacityRejection(observation)
+	observation.QueryCooldown = normalizeQueryCooldownFacts(observation.QueryCooldown)
 	observation.QueryPermit = normalizeQueryPermitFacts(observation.QueryPermit)
 	observation.QueryTiming = normalizeTimingFacts(observation)
 	observation.ShortPeriodCompletion = normalizeShortPeriodCompletion(observation)
@@ -1263,7 +1265,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentOwnership, StageLeaseRenewed}, {ComponentOwnership, StageFenceChecked},
 	{ComponentScheduler, StageScheduleDue}, {ComponentScheduler, StageSlotStarted},
 	{ComponentScheduler, StageSlotCompleted}, {ComponentScheduler, StageQueryAdmission},
-	{ComponentScheduler, StageRunnerReturned}, {ComponentScheduler, StageDispatcherSnapshot}, {ComponentScheduler, StageQueryPermitWait},
+	{ComponentScheduler, StageQueryCooldown}, {ComponentScheduler, StageRunnerReturned}, {ComponentScheduler, StageDispatcherSnapshot}, {ComponentScheduler, StageQueryPermitWait},
 	{ComponentScheduler, StageExpiredRangeReturned},
 	{ComponentScheduler, StageRunnerCompleted}, {ComponentScheduler, StageSlotSourceCompleted},
 	{ComponentAccess, StageQueryCompleted},

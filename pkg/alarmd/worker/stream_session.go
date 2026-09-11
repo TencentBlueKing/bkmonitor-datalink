@@ -18,12 +18,13 @@ import (
 // ConsumeSeries only validate and retain immutable query facts. State/Gap
 // reads and evaluation start after the authoritative completion is validated.
 type streamedExecution struct {
-	coordinator *SlotExecutionCoordinator
-	request     execution.SlotExecutionRequest
-	header      execution.InternalExecutionHeader
-	prepared    preparedNamedInputIndex
-	streamed    map[streamedInputKey]execution.NamedInputBinding
-	planSeries  map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]struct{}
+	queryEvidence queryAvailabilityEvidence
+	coordinator   *SlotExecutionCoordinator
+	request       execution.SlotExecutionRequest
+	header        execution.InternalExecutionHeader
+	prepared      preparedNamedInputIndex
+	streamed      map[streamedInputKey]execution.NamedInputBinding
+	planSeries    map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]struct{}
 	// completionOnly holds, per Plan without streamed PRIMARY series, the exact
 	// set validated by validateCompletionOnlyExactSet: one completion binding
 	// per frozen (consumer, requirement). It decides the no-series result.
@@ -487,9 +488,9 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 	if err := completion.Validate(stream.header, stream.delivered); err != nil {
 		return wrapCompletionContractError(codeCompletionInvalid, err)
 	}
-	physical := make(map[execution.PhysicalQueryDigest]execution.PhysicalQueryCompletion, len(completion.PhysicalQueries))
+	physical := make(map[execution.PhysicalQueryDigest]classifiedPhysicalCompletion, len(completion.PhysicalQueries))
 	for _, item := range completion.PhysicalQueries {
-		physical[item.PhysicalQuery] = item
+		physical[item.PhysicalQuery] = classifiedPhysicalCompletion{PhysicalQueryCompletion: item, sourceBackend: physicalFailureCategory(item.RouteFacts) == observability.QueryFailureCategorySourceBackend}
 	}
 	completionBindings := make(map[struct {
 		consumer    execution.ConsumerRef
@@ -509,12 +510,13 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 			binding.Provenance.AttemptNo == 0 {
 			return completionContractError(codeCompletionBindingMismatch, "alarmd worker: completion binding differs from frozen requirement or physical completion")
 		}
-		if err := execution.ValidateNamedInputCompletion(binding, item); err != nil {
+		if err := execution.ValidateNamedInputCompletion(binding, item.PhysicalQueryCompletion); err != nil {
 			return completionContractError(codeCompletionBindingPhysicalMismatch, "alarmd worker: completion binding differs from frozen requirement or physical completion")
 		}
 		if _, duplicate := completionBindings[key]; duplicate {
 			return completionContractError(codeDuplicateCompletionBinding, "alarmd worker: duplicate completion binding")
 		}
+		stream.queryEvidence.observe(binding, item.PhysicalQueryCompletion, false, item.sourceBackend)
 		completionBindings[key] = binding
 	}
 	for key, binding := range stream.streamed {
@@ -522,6 +524,7 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 		if !ok || item.Ref != binding.ProviderResult {
 			return completionContractError(codeStreamedBindingMismatch, "alarmd worker: streamed binding differs from physical completion")
 		}
+		stream.queryEvidence.observe(binding, item.PhysicalQueryCompletion, true, item.sourceBackend)
 		switch item.Completeness {
 		case execution.CompletenessFull:
 			if binding.Completeness != execution.CompletenessFull {
@@ -874,7 +877,7 @@ func planIdentityLess(left, right execution.PlanIdentity) bool {
 func (stream *streamedExecution) seriesInputs(
 	due execution.DuePlan,
 	series execution.SeriesIdentityDigest,
-	physical map[execution.PhysicalQueryDigest]execution.PhysicalQueryCompletion,
+	physical map[execution.PhysicalQueryDigest]classifiedPhysicalCompletion,
 	completionBindings map[struct {
 		consumer    execution.ConsumerRef
 		requirement execution.RequirementID
@@ -908,7 +911,7 @@ func (stream *streamedExecution) completedBinding(
 	consumer execution.ConsumerRef,
 	series execution.SeriesIdentityDigest,
 	requirement execution.DataRequirement,
-	physical map[execution.PhysicalQueryDigest]execution.PhysicalQueryCompletion,
+	physical map[execution.PhysicalQueryDigest]classifiedPhysicalCompletion,
 	completionBindings map[struct {
 		consumer    execution.ConsumerRef
 		requirement execution.RequirementID
@@ -1661,4 +1664,9 @@ func physicalFailureReason(facts execution.ProviderRouteFacts) execution.ReasonC
 
 func provisionalResult(result execution.EvaluationResult) (observability.Result, execution.ReasonCode) {
 	return result.Result, result.ReasonCode
+}
+
+type classifiedPhysicalCompletion struct {
+	execution.PhysicalQueryCompletion
+	sourceBackend bool
 }

@@ -376,7 +376,9 @@ func (repository *RedisCatalogRepository) restoreCatalogPublicationIfActivationC
 	} else if latestErr != nil {
 		return PublishedSnapshot{}, latestErr
 	}
-	repository.ensureObjectCatalog(ctx, catalog)
+	if err := repository.ensureObjectCatalog(ctx, catalog); err != nil {
+		return PublishedSnapshot{}, err
+	}
 	changed, err := repository.client.Eval(ctx, restoreSnapshotPublicationScript, []string{
 		repository.activationHeaderKey(), repository.latestPublicationKey(),
 		repository.snapshotKey(catalog.SnapshotRevision), repository.epochForRevisionKey(catalog.SnapshotRevision),
@@ -444,10 +446,13 @@ func (repository *RedisCatalogRepository) PublishCatalogIfCurrent(
 	if expected != (SnapshotPublicationRef{}) {
 		expectedValue = publicationValue(expected)
 	}
-	// The objects and the manifest are written next to the whole Snapshot
-	// while execution still reads the latter; they are content-addressed,
-	// so writing them before the publication decides is harmless either way.
-	repository.ensureObjectCatalog(ctx, catalog)
+	// The objects and the manifest are written before the publication
+	// decides: they are content-addressed, so a publication that then loses
+	// its compare-and-set leaves nothing wrong behind, and a publication that
+	// wins never names content that is not stored.
+	if err := repository.ensureObjectCatalog(ctx, catalog); err != nil {
+		return PublishedSnapshot{}, false, err
+	}
 	result, err := repository.client.Eval(ctx, publishSnapshotScript, []string{
 		repository.epochCounterKey(), repository.epochForRevisionKey(catalog.SnapshotRevision),
 		repository.snapshotKey(catalog.SnapshotRevision), repository.latestPublicationKey(), repository.publicationKeyPrefix(),

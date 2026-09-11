@@ -412,8 +412,11 @@ func (objectWriteRefusingHook) BeforeProcessPipeline(ctx context.Context, cmds [
 
 func (objectWriteRefusingHook) AfterProcessPipeline(context.Context, []redis.Cmder) error { return nil }
 
+// refuseObjectWrite refuses every write of an execution object. SetNX with
+// an expiry is sent as SET ... NX, so both command names are covered.
 func refuseObjectWrite(cmd redis.Cmder) error {
-	if strings.ToLower(cmd.Name()) != "setnx" || len(cmd.Args()) < 2 {
+	name := strings.ToLower(cmd.Name())
+	if (name != "setnx" && name != "set") || len(cmd.Args()) < 2 {
 		return nil
 	}
 	if key, ok := cmd.Args()[1].(string); ok && strings.Contains(key, ":qgobj:") {

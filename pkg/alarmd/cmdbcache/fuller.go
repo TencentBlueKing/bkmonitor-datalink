@@ -45,34 +45,38 @@ func (fuller *HostTopologyFuller) Fill(_ map[string]json.RawMessage, facts *admi
 		return
 	}
 	// A series names one host, but it may name it by more than one identity
-	// (address and host id). Any of them resolving is enough; the node set is
-	// the union so a host in several modules carries all of its chains.
+	// (address and host id), and the two are not guaranteed to agree. The node
+	// set is the union of everything that resolves, so a host in several
+	// modules carries all of its chains.
 	nodes := make([]string, 0, 8)
 	// Resolution below teaches the record identities it did not arrive with,
 	// so the keys to look up are taken before the fuller starts adding any.
 	lookups := append([]string(nil), facts.HostKeys...)
-	// The attributes a filter acts on come from the host Python would have
-	// looked up: by host id whenever the record carried one, by address only
-	// otherwise - Python never falls back from an id to an address. Taking
-	// whichever identity resolved first instead would, for a record whose id
-	// and address name different hosts, read the state of the wrong one, and
-	// in one direction that drops a series Python keeps.
-	attributed := false
-	if key := facts.HostNaming.IDKey; key != "" {
+	// Two different questions are answered below, and only one of them is
+	// about a single host.
+	//
+	// Whether CMDB knows this host, and what state it is in, is that one: the
+	// host Python would have looked up, by id whenever the record carried one
+	// and by address only otherwise. Python never falls back from an unknown
+	// id to the address, so an id CMDB does not know is a host CMDB does not
+	// know. Resolving the address instead would answer "known" out of a
+	// different host's entry, and keep a series Python drops.
+	if key, looked := facts.HostNaming.LookupKey(); looked {
 		if host, found := index.Lookup(key); found {
+			facts.HostResolved = true
 			facts.HostState, facts.HostBusinessID = host.State, host.BusinessID
-			attributed = true
 		}
 	}
+	// Which topology the record sits in, and which identities a target may
+	// name it by, is the other question, and there every identity counts: a
+	// monitoring target matches on either one. That is TargetCondition's own
+	// rule rather than the host status filter's, so the union below is not
+	// narrowed to the identity the attributes came from - including when that
+	// identity resolved to nothing.
 	for _, key := range lookups {
 		host, found := index.Lookup(key)
 		if !found {
 			continue
-		}
-		facts.HostResolved = true
-		if !attributed {
-			facts.HostState, facts.HostBusinessID = host.State, host.BusinessID
-			attributed = true
 		}
 		nodes = append(nodes, host.TopoNodes...)
 		// Resolving by one identity teaches the record its other identity, so

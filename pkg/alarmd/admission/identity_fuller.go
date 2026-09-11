@@ -40,6 +40,7 @@ func (IdentityFuller) Fill(dimensions map[string]json.RawMessage, facts *Facts) 
 	facts.HostNaming = HostNaming{
 		NamedID: hostIDNamed, NamedAddress: addressNamed, NamedCloud: cloudNamed,
 		Usable: targetAddress != "" || hostIDText != "", IDKey: hostIDText,
+		AddressKey: lookupAddressKey(targetAddress, dimensionText(dimensions, "bk_target_cloud_id")),
 	}
 
 	address := targetAddress
@@ -74,6 +75,19 @@ func (IdentityFuller) Fill(dimensions map[string]json.RawMessage, facts *Facts) 
 		serviceInstance = dimensionText(dimensions, "service_instance_id")
 	}
 	facts.AddServiceInstanceKey(serviceInstance)
+}
+
+// lookupAddressKey builds the key Python's address lookup uses: the target
+// address with its target cloud coerced by safe_int. The ip / bk_cloud_id
+// spellings are deliberately not read here even though the target-scope key
+// below falls back to them - Python never looks a host up by those, and a
+// lookup key that differs from Python's decides the host status filter on a
+// host Python never consulted.
+func lookupAddressKey(address string, cloud string) string {
+	if address == "" {
+		return ""
+	}
+	return address + "|" + safeIntText(cloud, "0")
 }
 
 // safeIntText mirrors bkmonitor.utils.common_utils.safe_int: an integer, else

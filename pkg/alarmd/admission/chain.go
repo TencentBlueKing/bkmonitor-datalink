@@ -37,12 +37,39 @@ type HostNaming struct {
 	NamedCloud bool
 	// Usable is true when an identity could actually be built from them.
 	Usable bool
-	// IDKey is the host id the record supplied, as an index key. It is kept
-	// because Python looks a host up by its id whenever the record carries
-	// one and never falls back to the address, so the attributes a filter
-	// acts on have to come from that host and not from whichever identity
-	// happened to resolve first.
+	// IDKey is the host id the record supplied, as an index key, and is empty
+	// when it supplied none. Python branches on the dimension's value rather
+	// than its presence, so a bk_host_id that is there but empty names no id.
 	IDKey string
+	// AddressKey is the "ip|cloud" key Python's address lookup builds, from
+	// bk_target_ip and bk_target_cloud_id. It is kept apart from the keys in
+	// Facts.HostKeys because those also carry the ip / bk_cloud_id spellings,
+	// which build target-scope keys but which Python never looks a host up by.
+	AddressKey string
+}
+
+// LookupKey returns the identity Python would look this host up by, and
+// whether it would look at all.
+//
+// The precedence is Python's, and it is not a preference between two answers
+// to the same question: an id is used whenever the record carries one, and an
+// id CMDB does not know is a host CMDB does not know. Falling back to the
+// address there answers a question about one host out of another host's entry,
+// and keeps a series Python drops as unknown. The address is used only when
+// its cloud came with it, because Python would rather leave the record alone
+// than guess an area.
+//
+// The filter that branches on whether the host was looked up and the fuller
+// that performs the lookup both read this one method, so the two cannot drift
+// into disagreeing about which host the record is even about.
+func (naming HostNaming) LookupKey() (string, bool) {
+	if naming.IDKey != "" {
+		return naming.IDKey, true
+	}
+	if naming.NamedAddress && naming.NamedCloud && naming.AddressKey != "" {
+		return naming.AddressKey, true
+	}
+	return "", false
 }
 
 type Facts struct {
@@ -54,9 +81,10 @@ type Facts struct {
 	ServiceInstanceKeys []string
 	// TopoNodes are the "obj|inst" nodes the series belongs to.
 	TopoNodes []string
-	// HostResolved records whether a host identity was found in CMDB. A series
-	// whose host is unknown is not the same as one with no host dimensions,
-	// and filters need to tell them apart.
+	// HostResolved records whether the host the record names was found in CMDB
+	// - the one HostNaming.LookupKey picks, not any identity that happens to
+	// resolve. A series whose host is unknown is not the same as one with no
+	// host dimensions, and filters need to tell them apart.
 	HostResolved bool
 	// HostState is the CMDB operational state, for the filter that acts on it.
 	HostState string

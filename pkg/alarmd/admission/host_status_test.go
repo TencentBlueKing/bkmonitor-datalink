@@ -252,3 +252,47 @@ func TestCloudIdentityIsCoercedTheWayThePlatformDoes(t *testing.T) {
 		}
 	}
 }
+
+// Python branches on bk_host_id's value rather than on the dimension being
+// present, so an empty one names no id and the record follows the address
+// branch - where, with no cloud alongside the address, Python looks nothing up
+// and keeps the record. Reading presence instead would send it down the id
+// branch and drop it as an unknown host. That is a missed alert.
+func TestAnEmptyHostIDLeavesTheRecordOnTheAddressBranch(t *testing.T) {
+	filter := hostStatusFilter(t, "备用机")
+	facts := factsFor(map[string]json.RawMessage{
+		"bk_host_id":   raw(`""`),
+		"bk_target_ip": raw(`"192.0.2.10"`),
+	}, nil)
+	if decision := filter.Admit(PlanContext{}, facts); !decision.Admit {
+		t.Fatalf("decision = %+v, want the record admitted: Python looks nothing up", decision)
+	}
+}
+
+// The lookup the filter branches on is the lookup the enrichment performs, and
+// it is built from bk_target_ip and bk_target_cloud_id only. The ip /
+// bk_cloud_id spellings build target-scope keys, which Python never looks a
+// host up by; a lookup key taken from those would decide this filter on a host
+// Python never consulted.
+func TestTheLookupKeyIsThePlatformsOwnSpellingsOnly(t *testing.T) {
+	facts := factsFor(map[string]json.RawMessage{
+		"bk_target_ip":       raw(`"192.0.2.10"`),
+		"bk_target_cloud_id": raw(`""`),
+		"bk_cloud_id":        raw(`5`),
+	}, nil)
+	key, looked := facts.HostNaming.LookupKey()
+	if !looked || key != "192.0.2.10|0" {
+		t.Fatalf("lookup key = %q/%v, want the target cloud coerced to the direct area", key, looked)
+	}
+	// The alternative spelling still builds a target-scope key, so the two
+	// readings really are separate.
+	found := false
+	for _, candidate := range facts.HostKeys {
+		if candidate == "192.0.2.10|5" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("host keys = %v, want the alternative spelling kept for target matching", facts.HostKeys)
+	}
+}

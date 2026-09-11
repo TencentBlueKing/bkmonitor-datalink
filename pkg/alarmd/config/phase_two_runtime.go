@@ -197,6 +197,7 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 			TickInterval:        Duration(time.Second),
 			MaxQueuedItemsPerQG: 16, MaxReplaySlots: 3, MaxReplayAge: Duration(10 * time.Minute),
 			RetryMinDelay: Duration(time.Second), RetryMaxDelay: Duration(30 * time.Second),
+			QueryUnavailableCooldown: true,
 		},
 		Access: PhaseTwoAccessConfig{
 			MinReadyDelay: Duration(30 * time.Second), DownstreamExecutionReserve: Duration(5 * time.Second),

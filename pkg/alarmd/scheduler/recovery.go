@@ -29,7 +29,7 @@ var (
 // contain QG-specific weights or adaptive controls.
 type RecoveryLimits struct {
 	// QueryUnavailableCooldown enables QG-local suppression after repeated
-	// committed, wholly unavailable primary queries. It is opt-in.
+	// committed, wholly unavailable primary queries. Product defaults enable it.
 	QueryUnavailableCooldown bool
 	ProcessQueryPermits      int
 	RecoveryQueryPermits     int

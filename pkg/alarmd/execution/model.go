@@ -27,6 +27,14 @@ type QueryRevision string
 type ScheduleRevision string
 type PlanScheduleRevision string
 type StateGeneration string
+
+// ObjectDigest names one Query Group execution object by its content, and
+// OutputContextDigest names one Plan's output context the same way. A change
+// to a Query Group is a transition of its ObjectDigest and nothing else; an
+// edit that only moves the OutputContextDigest changes how events are
+// rendered, not what is evaluated.
+type ObjectDigest string
+type OutputContextDigest string
 type StateApplyEpoch uint64
 type EvaluationTime int64
 type DuePlanSetDigest string

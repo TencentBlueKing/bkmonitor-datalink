@@ -118,3 +118,53 @@ func assertScheduleFields(t *testing.T, contractType reflect.Type, want []string
 func schedulePlan(strategyID string) execution.PlanIdentity {
 	return execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: strategyID}
 }
+
+// TestOutputContextRefsResolveByEvaluationTime: the context a Slot renders
+// with is decided by its evaluation time alone. A Slot before the first
+// revision keeps the base refs whenever it is resolved; a Slot at or after
+// a revision's Since gets that revision; a later revision wins over an
+// earlier one; and revisions must advance past the Segment start in order.
+func TestOutputContextRefsResolveByEvaluationTime(t *testing.T) {
+	end := execution.EvaluationTime(1000)
+	plan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "a"}
+	base := []execution.OutputContextRef{{Plan: plan, Digest: "ctx-1"}}
+	second := []execution.OutputContextRef{{Plan: plan, Digest: "ctx-2"}}
+	third := []execution.OutputContextRef{{Plan: plan, Digest: "ctx-3"}}
+	segment := execution.ScheduleSegmentFact{
+		Publication: execution.SnapshotPublicationRef{SnapshotRevision: "rev", PublicationEpoch: 1},
+		QueryGroup:  "qg", QueryRevision: "q", ScheduleRevision: "s", Start: 100, End: &end,
+		ObjectDigest: "obj", OutputContextRefs: base,
+		OutputContextRevisions: []execution.OutputContextRevision{{Since: 300, Refs: second}, {Since: 600, Refs: third}},
+	}
+	if err := segment.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for at, want := range map[execution.EvaluationTime]execution.OutputContextDigest{100: "ctx-1", 299: "ctx-1", 300: "ctx-2", 599: "ctx-2", 600: "ctx-3", 999: "ctx-3"} {
+		resolved := segment.At(at)
+		if got := resolved.OutputContextRefFor(plan); got != want {
+			t.Fatalf("at %d resolved %s, want %s", at, got, want)
+		}
+		if resolved.OutputContextRevisions != nil || resolved.ObjectDigest != "obj" || resolved.Start != 100 {
+			t.Fatalf("At must only replace the refs: %+v", resolved)
+		}
+	}
+	if !execution.SameOutputContextRefs(base, []execution.OutputContextRef{{Plan: plan, Digest: "ctx-1"}}) ||
+		execution.SameOutputContextRefs(base, second) || execution.SameOutputContextRefs(base, nil) {
+		t.Fatal("SameOutputContextRefs must compare by Plan and digest")
+	}
+	unordered := segment
+	unordered.OutputContextRevisions = []execution.OutputContextRevision{{Since: 600, Refs: third}, {Since: 300, Refs: second}}
+	if err := unordered.Validate(); err == nil {
+		t.Fatal("revisions out of order must be refused")
+	}
+	atStart := segment
+	atStart.OutputContextRevisions = []execution.OutputContextRevision{{Since: 100, Refs: second}}
+	if err := atStart.Validate(); err == nil {
+		t.Fatal("a revision at the Segment start must be refused: the base refs already cover it")
+	}
+	empty := segment
+	empty.OutputContextRevisions = []execution.OutputContextRevision{{Since: 300}}
+	if err := empty.Validate(); err == nil {
+		t.Fatal("a revision without refs must be refused")
+	}
+}

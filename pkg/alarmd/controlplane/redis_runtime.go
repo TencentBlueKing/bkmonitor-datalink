@@ -1596,7 +1596,7 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 	}
 	publication := SnapshotPublicationRef{SnapshotRevision: schedule.Segment.Publication.SnapshotRevision,
 		PublicationEpoch: uint64(schedule.Segment.Publication.PublicationEpoch)}
-	group, err := runtime.repository.LoadSegmentQueryGroup(ctx, schedule.Segment, func(ctx context.Context) (QueryGroup, error) {
+	group, err := runtime.repository.LoadSegmentQueryGroup(ctx, schedule.Segment, request.EvaluationTime, func(ctx context.Context) (QueryGroup, error) {
 		return runtime.repository.loadPublishedQueryGroup(ctx, publication, request.QueryGroup)
 	})
 	if err != nil {

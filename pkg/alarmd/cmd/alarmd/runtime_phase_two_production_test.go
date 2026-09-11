@@ -1828,6 +1828,7 @@ func (repository *fakeProductionCatalogRepository) LoadSnapshot(
 func (repository *fakeProductionCatalogRepository) LoadSegmentQueryGroup(
 	ctx context.Context,
 	_ execution.ScheduleSegmentFact,
+	_ execution.EvaluationTime,
 	fallback func(context.Context) (controlplane.QueryGroup, error),
 ) (controlplane.QueryGroup, error) {
 	return fallback(ctx)

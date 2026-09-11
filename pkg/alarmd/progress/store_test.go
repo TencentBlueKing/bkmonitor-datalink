@@ -7,6 +7,7 @@ package progress
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -1169,4 +1170,68 @@ func mustEncode(t *testing.T, value execution.ScheduleProgress) []byte {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+// batchControlFake is a control store that offers the batched read and
+// answers per Query Group from a map, so a test can check that
+// LoadProgressBatch keeps every entry in its own place: found, missing and
+// invalid values side by side, in one call.
+type batchControlFake struct {
+	controlFake
+	values map[execution.QueryGroupIdentity][]byte
+	calls  int
+}
+
+func (fake *batchControlFake) ReadControlBatch(_ context.Context, groups []execution.QueryGroupIdentity, _ string) ([]ownership.ControlRead, error) {
+	fake.calls++
+	reads := make([]ownership.ControlRead, len(groups))
+	for index, group := range groups {
+		value, ok := fake.values[group]
+		if !ok {
+			reads[index] = ownership.ControlRead{Missing: true}
+			continue
+		}
+		reads[index] = ownership.ControlRead{Raw: append([]byte(nil), value...)}
+	}
+	return reads, nil
+}
+
+func TestLoadProgressBatchKeepsEveryEntryInPlace(t *testing.T) {
+	found := execution.ProgressIdentity{QueryGroup: "found"}
+	persisted := execution.ScheduleProgress{Identity: found, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull}
+	other := execution.ProgressIdentity{QueryGroup: "other"}
+	fake := &batchControlFake{values: map[execution.QueryGroupIdentity][]byte{
+		"found":   mustEncode(t, persisted),
+		"invalid": []byte("not progress"),
+		"other":   mustEncode(t, execution.ScheduleProgress{Identity: found, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull}),
+	}}
+	store := mustStore(t, fake)
+	identities := []execution.ProgressIdentity{found, {QueryGroup: "missing"}, {QueryGroup: "invalid"}, other, {}}
+	results, errs := store.LoadProgressBatch(context.Background(), identities)
+	if fake.calls != 1 || len(results) != len(identities) || len(errs) != len(identities) {
+		t.Fatalf("calls=%d results=%d errs=%d", fake.calls, len(results), len(errs))
+	}
+	if errs[0] != nil || results[0].Status != execution.ProgressFound || results[0].Progress == nil || *results[0].Progress != persisted {
+		t.Fatalf("found entry=(%+v, %v)", results[0], errs[0])
+	}
+	if errs[1] != nil || results[1].Status != execution.ProgressMissing {
+		t.Fatalf("missing entry=(%+v, %v)", results[1], errs[1])
+	}
+	var deterministic interface{ DeterministicControlFact() }
+	if !errors.As(errs[2], &deterministic) {
+		t.Fatalf("invalid entry must be a deterministic control fact: %v", errs[2])
+	}
+	if !errors.As(errs[3], &deterministic) {
+		t.Fatalf("an entry persisted under another identity must be refused: %v", errs[3])
+	}
+	if errs[4] == nil {
+		t.Fatal("an incomplete identity must be refused without reaching the store")
+	}
+	// Without the batched control store the same call reads one at a time
+	// and answers the same.
+	plain := &controlFake{value: mustEncode(t, persisted)}
+	single, singleErrs := mustStore(t, plain).LoadProgressBatch(context.Background(), []execution.ProgressIdentity{found})
+	if singleErrs[0] != nil || single[0].Status != execution.ProgressFound || *single[0].Progress != persisted {
+		t.Fatalf("fallback entry=(%+v, %v)", single[0], singleErrs[0])
+	}
 }

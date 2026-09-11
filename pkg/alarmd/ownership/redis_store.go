@@ -480,6 +480,60 @@ func (store *RedisStore) ReadControl(
 	return append([]byte(nil), value...), false, nil
 }
 
+// ControlRead is one entry of a batched control read.
+type ControlRead struct {
+	Raw     []byte
+	Missing bool
+}
+
+const controlReadBatch = 512
+
+// ReadControlBatch reads one control namespace for many Query Groups in
+// pipelined batches: the same bytes ReadControl returns, one round trip per
+// batch instead of one per Query Group. Keys carry per-Query-Group hash
+// tags, so the reads are pipelined rather than sent as one MGET, which a
+// cluster would refuse across slots.
+func (store *RedisStore) ReadControlBatch(
+	ctx context.Context,
+	queryGroups []execution.QueryGroupIdentity,
+	namespace string,
+) ([]ControlRead, error) {
+	if store == nil || store.client == nil || namespace == "" || strings.ContainsAny(namespace, "{} \t\r\n") {
+		return nil, errors.New("alarmd ownership: invalid control read")
+	}
+	reads := make([]ControlRead, len(queryGroups))
+	for start := 0; start < len(queryGroups); start += controlReadBatch {
+		end := start + controlReadBatch
+		if end > len(queryGroups) {
+			end = len(queryGroups)
+		}
+		replies := make([]*redis.StringCmd, end-start)
+		if _, err := store.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+			for offset, queryGroup := range queryGroups[start:end] {
+				if queryGroup == "" {
+					return errors.New("alarmd ownership: invalid control read")
+				}
+				replies[offset] = pipe.Get(ctx, store.controlKey(queryGroup, namespace))
+			}
+			return nil
+		}); err != nil && !errors.Is(err, redis.Nil) {
+			return nil, err
+		}
+		for offset, reply := range replies {
+			value, err := reply.Bytes()
+			switch {
+			case errors.Is(err, redis.Nil):
+				reads[start+offset] = ControlRead{Missing: true}
+			case err != nil:
+				return nil, err
+			default:
+				reads[start+offset] = ControlRead{Raw: append([]byte(nil), value...)}
+			}
+		}
+	}
+	return reads, nil
+}
+
 func (store *RedisStore) ReadControlForTemporaryLegacyDrainingCAS(
 	ctx context.Context,
 	queryGroup execution.QueryGroupIdentity,

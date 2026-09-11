@@ -241,6 +241,22 @@ type EvaluationPlanV2 struct {
 	TerminalReasonCode string `json:"terminal_reason_code,omitempty"`
 }
 
+// PublishesCompatibleProtocol reports whether this Plan's events go out as the
+// Python-compatible event.
+//
+// It is one function because three places need the answer - the compiler, which
+// requires the conversion context to be present exactly where it is used; the
+// evaluator, which attaches it; and the sink, which reads it - and they were a
+// repeated condition on the frozen revision until a deployment could force the
+// choice. A Plan with no stated format predates the choice, where the revision
+// was the whole rule.
+func (plan EvaluationPlanV2) PublishesCompatibleProtocol() bool {
+	if plan.WireFormat != "" {
+		return plan.WireFormat == WireFormatPythonCompatible
+	}
+	return plan.StrategyRef.SnapshotRevision == 0
+}
+
 // The formats an event can be published as. They name bytes on a topic, not a
 // deployment's intent - the configuration's three words resolve into these.
 const (

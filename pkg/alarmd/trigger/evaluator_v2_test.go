@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -597,6 +598,24 @@ func (h pointHistory) CountAnomalies(fromTime, untilTime int64) uint32 {
 	return count
 }
 
+// ForEachAnomaly walks in ascending source time, as the real one does: the
+// compatibility converter checks the timestamps it collects against the count
+// the window reported, and a map's own order would make that check flap.
+func (h pointHistory) ForEachAnomaly(fromTime, untilTime int64, visit func(int64) bool) {
+	times := make([]int64, 0, len(h.points))
+	for timestamp, anomalous := range h.points {
+		if anomalous && timestamp >= fromTime && timestamp <= untilTime {
+			times = append(times, timestamp)
+		}
+	}
+	sort.Slice(times, func(left, right int) bool { return times[left] < times[right] })
+	for _, timestamp := range times {
+		if !visit(timestamp) {
+			return
+		}
+	}
+}
+
 func (h pointHistory) FirstAnomaly(fromTime, untilTime int64) (int64, bool) {
 	first, found := int64(0), false
 	for timestamp, anomalous := range h.points {
@@ -675,6 +694,10 @@ func effectiveFactsV2(t *testing.T, plan *strategy.CompiledPlan, evaluationTime 
 }
 
 func compilePlanV2(t testing.TB, levels []contract.LevelIRV2) *strategy.CompiledPlan {
+	return compilePlanV2WithOutput(t, levels, nil)
+}
+
+func compilePlanV2WithOutput(t testing.TB, levels []contract.LevelIRV2, shape func(*contract.EvaluationPlanV2)) *strategy.CompiledPlan {
 	t.Helper()
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{
 		MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16,
@@ -695,6 +718,9 @@ func compilePlanV2(t testing.TB, levels []contract.LevelIRV2) *strategy.Compiled
 			ExecutionSemantics: contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries, QueryWindow: 300, AggregationInterval: 60, EvaluationInterval: 60, LatenessTolerance: 120},
 			InputProjection:    projection, Levels: levels,
 		},
+	}
+	if shape != nil {
+		shape(&plan)
 	}
 	result, err := compiler.Compile(context.Background(), strategy.CompileRequest{
 		Plan:            plan,
@@ -784,5 +810,44 @@ func TestAWindowWithNoAnomalyReportsNoBeginning(t *testing.T) {
 	}
 	if got := result.LevelOutcomes[0].DecisionWindow.Trigger.AnomalyBeginTime; got != 0 {
 		t.Fatalf("anomaly begin time = %d, want none", got)
+	}
+}
+
+// A deployment that forces the compatibility protocol makes strategies that do
+// have a frozen revision publish it too, and the conversion reads a context
+// only the Plan can supply. Attaching that context on the revision instead of
+// on the format leaves exactly those events unconvertible, and the failure
+// arrives at the sink, per event, rather than at configuration time.
+func TestAPlanThatPublishesTheCompatibleProtocolCarriesItsContext(t *testing.T) {
+	plan := compilePlanV2WithOutput(t, []contract.LevelIRV2{levelV2(5, 9, 3, 2, 2, nil)},
+		func(p *contract.EvaluationPlanV2) {
+			p.WireFormat = contract.WireFormatPythonCompatible
+			p.StrategyRef.SnapshotRevision = 7
+			p.StrategyIR.StrategyRef.SnapshotRevision = 7
+			p.OutputIdentity = &contract.MonitorOutputIdentity{DimensionFields: []string{"host"}}
+			p.LegacyOutput = &contract.LegacyOutputContext{
+				Strategy:        json.RawMessage(`{"id":1001,"bk_biz_id":2,"update_time":1756684800}`),
+				DimensionFields: []string{"host"}, ItemID: "1",
+			}
+		})
+	if plan.LegacyOutput() == nil {
+		t.Fatal("the fixture did not produce a Plan carrying a compatibility context")
+	}
+	const source = int64(300)
+	request := requestV2(t, plan, source, []DetectionFact{factV2(plan.Levels()[0], DetectionAnomalous)}, []LevelHistory{{
+		LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{180: true, 240: true, 300: true}},
+	}}, activeFactsV2(t, plan, source))
+	result, err := EvaluateV2(request)
+	if err != nil {
+		t.Fatalf("EvaluateV2() error = %v", err)
+	}
+	if result.TriggerEvent == nil {
+		t.Fatal("expected an event")
+	}
+	if result.TriggerEvent.StrategyRef == nil {
+		t.Fatal("the fixture was meant to carry a frozen revision")
+	}
+	if result.TriggerEvent.LegacyOutput == nil {
+		t.Fatal("a Plan publishing the compatibility protocol produced an event with no context to convert")
 	}
 }

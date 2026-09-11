@@ -116,7 +116,13 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 			return EvaluationResultV2{}, invariantV2("build TriggerEvent", 0, err)
 		}
 		result.TriggerEvent = event
-		if legacy := request.Plan.LegacyOutput(); legacy != nil && event.StrategyRef == nil {
+		// The compatibility context is attached whenever the Plan publishes that
+		// protocol. Before the format was stated, the only Plans that did were
+		// the ones with no frozen revision, so the two conditions were the same
+		// one; a forced compatibility choice makes them different, and reading
+		// the revision here would leave those Plans without the context their
+		// conversion needs.
+		if legacy := request.Plan.LegacyOutput(); legacy != nil && request.Plan.PublishesCompatibleProtocol() {
 			var timestamps []int64
 			for _, outcome := range event.LevelResults {
 				if outcome.LevelID != event.PrimaryLevelID {

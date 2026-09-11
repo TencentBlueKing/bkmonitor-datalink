@@ -225,6 +225,18 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		if facts.PublicationEpoch > 0 {
 			attributes = append(attributes, slog.Uint64("publication_epoch", facts.PublicationEpoch))
 		}
+		// Named apart from snapshot_revision on purpose: a round that published
+		// nothing still knows what the fleet is executing, and writing that under
+		// the published name is what makes a normal lag read as a stall.
+		if facts.ActivatedRevision != "" {
+			attributes = append(attributes, slog.String("activated_snapshot_revision", facts.ActivatedRevision))
+		}
+		if facts.ActivatedEpoch > 0 {
+			attributes = append(attributes, slog.Uint64("activated_publication_epoch", facts.ActivatedEpoch))
+		}
+		if facts.ActiveQueryGroupsKnown {
+			attributes = append(attributes, slog.Int("active_query_groups", facts.ActiveQueryGroups))
+		}
 		if facts.CountsKnown {
 			attributes = append(attributes,
 				slog.Int("old_query_groups", facts.OldQueryGroups),

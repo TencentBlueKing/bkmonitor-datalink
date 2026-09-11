@@ -1167,9 +1167,13 @@ func TestProductionPhaseTwoControlKeepsCurrentActivationWhileCandidateIsPending(
 		t.Fatalf("pending legacy refresh Snapshot reads=%d, want only the two execution reads", repository.snapshotLoads)
 	}
 	pending := sourceRefreshObservations(observations, observability.SourceRefreshPending)
+	// A pending round reports the size of the active set. It used to report a
+	// change as well, differenced from the activation state against itself, which
+	// could only ever come out as added=0/retired=0 and was read as a measurement.
 	if len(pending) != 2 || pending[0].SourceRefresh.ObservationID != "observation-next" ||
 		pending[1].SourceRefresh.ObservationID != "observation-next-changed" ||
-		!pending[0].SourceRefresh.CountsKnown || !pending[1].SourceRefresh.CountsKnown {
+		!pending[0].SourceRefresh.ActiveQueryGroupsKnown || !pending[1].SourceRefresh.ActiveQueryGroupsKnown ||
+		pending[0].SourceRefresh.CountsKnown || pending[1].SourceRefresh.CountsKnown {
 		t.Fatalf("pending source refresh observations=%#v", pending)
 	}
 	renewal := observationsWithoutDrainingFacts(observations)

@@ -483,10 +483,20 @@ func (runtime *productionPhaseTwoControl) refresh(
 		if err != nil {
 			return phaseTwoControlRefreshResult{}, false, err
 		}
-		sourceRefresh.SnapshotRevision = string(state.Current.SnapshotRevision)
-		sourceRefresh.PublicationEpoch = state.Current.PublicationEpoch
-		currentCount := sourceRefreshCurrentCount(state, queryGroups)
-		runtime.enrichSourceRefreshCounts(ctx, sourceRefresh, state, nil, state, currentCount)
+		// This round published nothing, so it has no publication to name. What it
+		// does know is which publication the fleet is executing, and that goes
+		// under its own name: filling snapshot_revision here made a lagging
+		// activation indistinguishable from a stalled publication in the log.
+		sourceRefresh.ActivatedRevision = string(state.Current.SnapshotRevision)
+		sourceRefresh.ActivatedEpoch = state.Current.PublicationEpoch
+		// The size is reported; the change is not. Differencing the activation
+		// state against itself -- which is all this round has -- can only yield
+		// added=0, retired=0 and old==new, which reads as a measured finding and
+		// is arithmetic.
+		if currentCount := sourceRefreshCurrentCount(state, queryGroups); currentCount != nil {
+			sourceRefresh.ActiveQueryGroups = *currentCount
+			sourceRefresh.ActiveQueryGroupsKnown = true
+		}
 		renewErr := runtime.dependencies.Repository.RenewCurrentActivationObjects(ctx)
 		renewed = true
 		runtime.observeCurrentObjectRenewal(ctx, renewErr)

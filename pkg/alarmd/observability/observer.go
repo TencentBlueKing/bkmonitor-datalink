@@ -347,16 +347,36 @@ type DrainingQGFacts struct {
 
 // SourceRefreshFacts carries one bounded source refresh outcome. Snapshot
 // identity is diagnostic log context only; Prometheus consumes Status alone.
+// SourceRefreshFacts carries what one refresh round settled. Two different
+// objects are described here and they must never share a field: SnapshotRevision
+// is the publication this round produced, and ActivatedRevision is the
+// publication the fleet is executing, which is older whenever a round ends
+// without publishing. A round that publishes nothing has no publication to name,
+// so it fills the activated pair and leaves the published pair empty.
+//
+// The distinction is load-bearing rather than cosmetic. These reach the log under
+// one stage, so a reader who cannot tell the two apart from the record will read
+// a lagging activation as a stalled publication -- and the lag is normal while
+// the stall is not.
 type SourceRefreshFacts struct {
-	Status             SourceRefreshStatus
-	ObservationID      string
-	SnapshotRevision   string
-	PublicationEpoch   uint64
-	CountsKnown        bool
-	OldQueryGroups     int
-	NewQueryGroups     int
-	AddedQueryGroups   int
-	RetiredQueryGroups int
+	Status            SourceRefreshStatus
+	ObservationID     string
+	SnapshotRevision  string
+	PublicationEpoch  uint64
+	ActivatedRevision string
+	ActivatedEpoch    uint64
+	// ActiveQueryGroups is a size, not a change. The counts below are a change,
+	// and the two are kept apart because a round that publishes nothing has no
+	// previous set to difference against: reporting a difference there can only
+	// restate the current set against itself and produce zeroes that look
+	// measured.
+	ActiveQueryGroups      int
+	ActiveQueryGroupsKnown bool
+	CountsKnown            bool
+	OldQueryGroups         int
+	NewQueryGroups         int
+	AddedQueryGroups       int
+	RetiredQueryGroups     int
 }
 
 // ActivationFailureFacts carries fixed classification, bounded counts and a

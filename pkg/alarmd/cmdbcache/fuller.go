@@ -41,6 +41,18 @@ func (fuller *HostTopologyFuller) Fill(_ map[string]json.RawMessage, facts *admi
 		facts.HostFactsUnavailable = true
 		return
 	}
+	if index.Hosts() == 0 {
+		// A host cache with nothing in it is not a fleet with no hosts. It is
+		// the signature of a cache that was never written, or of a connection
+		// pointed somewhere nothing writes it. Deciding on it would put every
+		// topology-targeted strategy out of scope and drop every host-named
+		// series at once - and silently, because each individual decision
+		// looks like an ordinary "this host is unknown". The facts are
+		// reported unavailable instead, which is the state the filters already
+		// know how to hold: keep the alerts, leave the gap in the counter.
+		facts.HostFactsUnavailable = true
+		return
+	}
 	if len(facts.HostKeys) == 0 {
 		return
 	}

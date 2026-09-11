@@ -354,3 +354,44 @@ func TestAnUnknownHostIDIsNotRescuedByTheAddress(t *testing.T) {
 		t.Fatalf("host keys = %v, want the address kept for target matching", facts.HostKeys)
 	}
 }
+
+// The failure a wrong CMDB coordinate produces: the cache reads fine and is
+// empty. Every individual decision then looks ordinary - this host is unknown,
+// this record has no topology - while together they silence every scoped
+// strategy at once. An empty cache is reported as facts unavailable so the
+// filters keep the alerts instead.
+func TestAnEmptyHostCacheIsNotAFleetWithNoHosts(t *testing.T) {
+	// Built now, so the emptiness is what degrades it rather than its age.
+	builder := newIndexBuilder(time.Now())
+	store := &Store{index: builder.index, now: time.Now, maxAge: time.Hour, interval: time.Minute}
+
+	statusFilter, installed := admission.NewHostStatusFilter([]string{"备用机"})
+	if !installed {
+		t.Fatal("NewHostStatusFilter declined to install")
+	}
+	chain := admission.NewChain(
+		[]admission.Fuller{admission.IdentityFuller{}, NewHostTopologyFuller(store)},
+		[]admission.Filter{admission.TargetScopeFilter{}, statusFilter},
+	)
+	facts := chain.Enrich(map[string]json.RawMessage{
+		"bk_target_ip":       json.RawMessage(`"10.0.0.7"`),
+		"bk_target_cloud_id": json.RawMessage(`0`),
+	})
+	if !facts.HostFactsUnavailable {
+		t.Fatalf("facts = %+v, want an empty cache reported as unavailable facts", facts)
+	}
+	// A topology target is exactly what an empty cache would silence.
+	scope := &admission.TargetScope{Groups: []admission.TargetScopeGroup{{
+		Conditions: []admission.TargetScopeCondition{{
+			Field: admission.TargetScopeTopoNode, Method: admission.TargetScopeInclude,
+			Keys: map[string]struct{}{"module|85": {}},
+		}},
+	}}}
+	admitted, name, reason := chain.Admit(admission.PlanContext{TargetScope: scope}, &facts)
+	if !admitted || reason != "host_facts_unavailable" {
+		t.Fatalf("decision = %v/%s/%s, want the record kept and the gap named", admitted, name, reason)
+	}
+	if health := store.Health(); !health.Degraded || health.DegradedReason != "index_empty" {
+		t.Fatalf("health = %+v, want the empty cache reported as degraded", health)
+	}
+}

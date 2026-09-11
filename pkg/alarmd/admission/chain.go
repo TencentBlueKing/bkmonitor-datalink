@@ -210,13 +210,22 @@ func (chain *Chain) Admit(plan PlanContext, facts *Facts) (bool, string, string)
 	if chain == nil {
 		return true, "", ""
 	}
+	// An admitted decision may still carry a reason, and that is the one worth
+	// reporting: it says the filter did not actually decide. Dropping it here
+	// is how "the gap is visible in the counter" quietly stops being true -
+	// the counter would only ever see an ordinary admission, which is exactly
+	// what a filter that has given up looks like from the outside.
+	admittedFilter, admittedReason := "", ""
 	for _, filter := range chain.filters {
 		decision := filter.Admit(plan, facts)
 		if !decision.Admit {
 			return false, filter.Name(), decision.Reason
 		}
+		if decision.Reason != "" && admittedReason == "" {
+			admittedFilter, admittedReason = filter.Name(), decision.Reason
+		}
 	}
-	return true, "", ""
+	return true, admittedFilter, admittedReason
 }
 
 // FilterNames reports the chain's composition, for the resolved-configuration

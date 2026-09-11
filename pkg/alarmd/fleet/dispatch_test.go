@@ -10,9 +10,56 @@
 package fleet
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
+
+// The two tests below assert what a replica puts on the wire, not what
+// Aggregate leaves in a Go pointer.
+//
+// The distinction was not obvious and was measured rather than reasoned: drop
+// the `omitempty` from Snapshot.Dispatch and both aggregation tests stay green
+// while every non-suppressing replica starts publishing `"dispatch":null`. The
+// page survives that by luck -- it asks `if (!d.dispatch)`, and null is falsy --
+// but the contract this whole field exists to state is "the key is absent", and
+// a reader that checks for the key, or any other language reading this JSON,
+// gets the opposite answer. A guard that passes on the shape the contract
+// forbids is not guarding the contract.
+//
+// The declaration ships before the code that writes it, so the guard belongs
+// here beside the declaration rather than with the writer.
+func TestAReplicaThatSuppressesNothingPutsNoDispatchKeyOnTheWire(t *testing.T) {
+	at := time.Date(2026, 9, 11, 17, 0, 0, 0, time.UTC)
+
+	encoded, err := json.Marshal(Snapshot{Replica: "pod-a", TakenAt: at, Owned: 1, Determined: 1})
+	if err != nil {
+		t.Fatalf("encode the snapshot: %v", err)
+	}
+	if strings.Contains(string(encoded), `"dispatch"`) {
+		t.Fatalf("a replica that suppresses nothing published a dispatch key: %s", encoded)
+	}
+}
+
+// The other half: a replica that does suppress publishes the key even with
+// nothing skipped yet. Without this the fix above could be "never publish it"
+// and still pass, and a page would read a suppressing deployment as a shadow
+// one -- the exact reassurance this field exists to withhold.
+func TestAReplicaThatSuppressesPutsTheKeyOnTheWireEvenAtZero(t *testing.T) {
+	at := time.Date(2026, 9, 11, 17, 0, 0, 0, time.UTC)
+
+	encoded, err := json.Marshal(Snapshot{
+		Replica: "pod-a", TakenAt: at, Owned: 1, Determined: 1,
+		Dispatch: &DispatchSuppression{Skipped: map[string]uint64{}},
+	})
+	if err != nil {
+		t.Fatalf("encode the snapshot: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"dispatch"`) {
+		t.Fatalf("a suppressing replica published no dispatch key: %s", encoded)
+	}
+}
 
 // The whole point of the type. A build that suppresses nothing cannot produce
 // this field, so its absence is what tells the page that the overdue count

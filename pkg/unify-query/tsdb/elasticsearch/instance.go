@@ -188,8 +188,24 @@ func (i *Instance) checkQuery(query *metadata.Query) error {
 	return nil
 }
 
+type esIndexMetadata struct {
+	settings        map[string]map[string]any
+	mappings        map[string]map[string]any
+	physicalIndexes []string
+	directQuerySafe map[string]bool
+}
+
 func resolveIndexMetadata(ctx context.Context, span *trace.Span, cli *elastic.Client, aliases ...string) (map[string]map[string]any, map[string]map[string]any, []string, error) {
+	snapshot, err := resolveIndexMetadataSnapshot(ctx, span, cli, aliases...)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return snapshot.settings, snapshot.mappings, snapshot.physicalIndexes, nil
+}
+
+func resolveIndexMetadataSnapshot(ctx context.Context, span *trace.Span, cli *elastic.Client, aliases ...string) (*esIndexMetadata, error) {
 	settings := make(map[string]map[string]any)
+	directQuerySafe := make(map[string]bool)
 	mappings := make(map[string]map[string]any)
 
 	span.Set("get-indexes", aliases)
@@ -210,7 +226,7 @@ func resolveIndexMetadata(ctx context.Context, span *trace.Span, cli *elastic.Cl
 		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
 		if err != nil {
 			span.Set("get-mapping-error", truncateString(err.Error(), esIndexMetadataErrorMaxLength))
-			return nil, nil, nil, metadata.NewMessage(
+			return nil, metadata.NewMessage(
 				metadata.MsgQueryES,
 				"索引查询异常: %+v",
 				aliases,
@@ -226,6 +242,7 @@ func resolveIndexMetadata(ctx context.Context, span *trace.Span, cli *elastic.Cl
 		for index, indice := range indices {
 			settings[index] = indice.Settings
 			mappings[index] = indice.Mappings
+			directQuerySafe[index] = collapseDirectQuerySafe(index, indice.Aliases, aliases)
 		}
 	}
 
@@ -235,7 +252,7 @@ func resolveIndexMetadata(ctx context.Context, span *trace.Span, cli *elastic.Cl
 	}
 	sort.Strings(physicalIndexes)
 
-	return settings, mappings, physicalIndexes, nil
+	return &esIndexMetadata{settings: settings, mappings: mappings, physicalIndexes: physicalIndexes, directQuerySafe: directQuerySafe}, nil
 }
 
 // fieldMap 获取es索引的字段映射
@@ -249,7 +266,7 @@ func (i *Instance) fieldMapWithPhysicalIndexes(ctx context.Context, fieldAlias m
 	return fields, indexes, err
 }
 
-func (i *Instance) fieldMapWithIndexFields(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (metadata.FieldsMap, []string, map[string]map[string]bool, error) {
+func (i *Instance) fieldMapWithIndexFields(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (metadata.FieldsMap, []string, *collapseIndexMetadata, error) {
 	if len(aliases) == 0 {
 		return nil, nil, nil, fmt.Errorf("query indexes is empty")
 	}
@@ -269,15 +286,16 @@ func (i *Instance) fieldMapWithIndexFields(ctx context.Context, fieldAlias metad
 	}
 	defer cli.Stop()
 
-	settings, mappings, physicalIndexes, err := resolveIndexMetadata(ctx, span, cli, aliases...)
+	snapshot, err := resolveIndexMetadataSnapshot(ctx, span, cli, aliases...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	settings, mappings, physicalIndexes := snapshot.settings, snapshot.mappings, snapshot.physicalIndexes
 	span.Set("mapping-length", len(mappings))
 	span.Set("physical-index-length", len(physicalIndexes))
 
 	iof := NewIndexOptionFormat(fieldAlias)
-	indexFields := make(map[string]map[string]bool, len(mappings))
+	indexFields := &collapseIndexMetadata{fields: make(map[string]map[string]bool, len(mappings)), directQuerySafe: snapshot.directQuerySafe}
 
 	// 忽略 mapping 为空的情况的报错
 	if len(mappings) == 0 {
@@ -297,7 +315,7 @@ func (i *Instance) fieldMapWithIndexFields(ctx context.Context, fieldAlias metad
 		index := indexes[idx]
 		if in, ok := mappings[index]; ok && in != nil {
 			iof.Parse(settings[index], in)
-			indexFields[index] = mappingFieldNames(in)
+			indexFields.fields[index] = mappingFieldNames(in)
 		}
 	}
 

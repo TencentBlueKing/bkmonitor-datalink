@@ -11,11 +11,75 @@ package elasticsearch
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
 	elastic "github.com/olivere/elastic/v7"
 )
+
+type collapseIndexMetadata struct {
+	fields          map[string]map[string]bool
+	directQuerySafe map[string]bool
+}
+
+func cloneCollapseIndexMetadata(source *collapseIndexMetadata) *collapseIndexMetadata {
+	if source == nil {
+		return nil
+	}
+	cloned := &collapseIndexMetadata{fields: cloneIndexFields(source.fields), directQuerySafe: make(map[string]bool, len(source.directQuerySafe))}
+	for index, safe := range source.directQuerySafe {
+		cloned.directQuerySafe[index] = safe
+	}
+	return cloned
+}
+
+// Only convert aliases after proving that direct access cannot bypass an alias
+// filter or search routing. Mapping-only responses cannot establish that proof.
+func collapseDirectQuerySafe(index string, aliases map[string]any, targets []string) bool {
+	matchedAlias := false
+	for _, target := range targets {
+		if strings.HasPrefix(target, "-") || strings.HasPrefix(target, "<") {
+			return false
+		}
+	}
+	for _, target := range targets {
+		if collapseTargetMatches(target, index) {
+			return true
+		}
+	}
+	for alias, value := range aliases {
+		matched := false
+		for _, target := range targets {
+			if collapseTargetMatches(target, alias) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		options, ok := value.(map[string]any)
+		if !ok {
+			return false
+		}
+		for _, key := range []string{"filter", "routing", "search_routing"} {
+			if value, exists := options[key]; exists && value != nil && value != "" {
+				return false
+			}
+		}
+		matchedAlias = true
+	}
+	return matchedAlias
+}
+
+func collapseTargetMatches(pattern, name string) bool {
+	expression := regexp.QuoteMeta(pattern)
+	expression = strings.ReplaceAll(expression, `\*`, ".*")
+	expression = strings.ReplaceAll(expression, `\?`, ".")
+	matched, _ := regexp.MatchString("^"+expression+"$", name)
+	return matched
+}
 
 // mappingFieldNames retains per-index existence, including ES field aliases and
 // multi-fields which the merged display field map need not expose.
@@ -76,7 +140,7 @@ func cloneIndexFields(source map[string]map[string]bool) map[string]map[string]b
 	return result
 }
 
-func filterCollapseIndexes(qo *queryOption, indexFields map[string]map[string]bool, field string, source *elastic.SearchSource) error {
+func filterCollapseIndexes(qo *queryOption, indexFields *collapseIndexMetadata, field string, source *elastic.SearchSource) error {
 	if field == "" {
 		return nil
 	}
@@ -89,7 +153,7 @@ func filterCollapseIndexes(qo *queryOption, indexFields map[string]map[string]bo
 	}
 	missing := make([]string, 0)
 	for _, index := range qo.physicalIndexes {
-		if !indexFields[index][field] {
+		if !indexFields.fields[index][field] {
 			missing = append(missing, index)
 		}
 	}
@@ -102,37 +166,27 @@ func filterCollapseIndexes(qo *queryOption, indexFields map[string]map[string]bo
 	if len(missing) == 0 {
 		return nil
 	}
-	missingSet := make(map[string]bool, len(missing))
-	known := make(map[string]bool, len(qo.physicalIndexes))
-	for _, index := range missing {
-		missingSet[index] = true
-	}
+	// Use only the mapped concrete snapshot. Alias exclusion expressions are
+	// not sufficient: the deployed backend can still resolve excluded shards.
+	targets := make([]string, 0, len(qo.physicalIndexes)-len(missing))
 	for _, index := range qo.physicalIndexes {
-		known[index] = true
-	}
-	targets := make([]string, 0, len(qo.indexes)+len(missing))
-	wildcard := false
-	for _, target := range qo.indexes {
-		switch {
-		case strings.ContainsAny(target, "*?"):
-			targets = append(targets, target)
-			wildcard = true
-		case known[target]:
-			if !missingSet[target] {
-				targets = append(targets, target)
+		if !indexFields.fields[index][field] {
+			continue
+		}
+		safe := indexFields.directQuerySafe[index]
+		// Explicit index targets are also safe when only GetMapping is available.
+		for _, target := range qo.indexes {
+			if target == index {
+				safe = true
 			}
-		default:
-			// Exact aliases expand after index exclusions and reintroduce missing
-			// indices. Replacing them with physical indices bypasses filter/routing.
-			return fmt.Errorf("cannot safely exclude unmapped collapse indices from exact alias %q", target)
 		}
-	}
-	if wildcard {
-		sort.Strings(missing)
-		for _, index := range missing {
-			targets = append(targets, "-"+index)
+		if !safe {
+			return fmt.Errorf("cannot safely select concrete collapse indices: alias scope is restricted or unknown for %q", index)
 		}
+		targets = append(targets, index)
 	}
+	sort.Strings(targets)
 	qo.indexes = targets
+	qo.physicalIndexes = append([]string(nil), targets...)
 	return nil
 }

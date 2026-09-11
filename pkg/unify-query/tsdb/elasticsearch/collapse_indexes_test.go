@@ -32,10 +32,11 @@ func TestFilterCollapseIndexes(t *testing.T) {
 		field                   string
 		empty, fail             bool
 	}{
-		{name: "wildcard aliases preserve scope", targets: []string{"logs*"}, physical: []string{"bad", "good"}, fields: map[string]map[string]bool{"good": {"session": true}}, field: "session", want: []string{"logs*", "-bad"}},
+		{name: "wildcard aliases preserve scope", targets: []string{"logs*"}, physical: []string{"bad", "good"}, fields: map[string]map[string]bool{"good": {"session": true}}, field: "session", want: []string{"good"}},
+		{name: "unrestricted exact alias", targets: []string{"logs"}, physical: []string{"bad", "good"}, fields: map[string]map[string]bool{"good": {"session": true}}, field: "session", want: []string{"good"}},
 		{name: "physical indices", targets: []string{"bad", "good"}, physical: []string{"bad", "good"}, fields: map[string]map[string]bool{"good": {"session": true}}, field: "session", want: []string{"good"}},
 		{name: "all mapped exact alias unchanged", targets: []string{"logs"}, physical: []string{"good"}, fields: map[string]map[string]bool{"good": {"session": true}}, field: "session", want: []string{"logs"}},
-		{name: "mixed exact alias fails closed", targets: []string{"logs"}, physical: []string{"bad", "good"}, fields: map[string]map[string]bool{"good": {"session": true}}, field: "session", fail: true},
+		{name: "mixed exact alias with unknown scope fails closed", targets: []string{"logs"}, physical: []string{"bad", "good"}, fields: map[string]map[string]bool{"good": {"session": true}}, field: "session", fail: true},
 		{name: "all missing retains scope with match none", targets: []string{"logs*"}, physical: []string{"bad"}, fields: map[string]map[string]bool{"bad": {}}, field: "session", want: []string{"logs*"}, empty: true},
 		{name: "no physical indices", targets: []string{"logs*"}, fields: map[string]map[string]bool{}, field: "session", want: []string{"logs*"}, empty: true},
 		{name: "unknown metadata fails closed", targets: []string{"logs*"}, physical: []string{"good"}, field: "session", fail: true},
@@ -44,7 +45,11 @@ func TestFilterCollapseIndexes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			qo := &queryOption{indexes: tt.targets, physicalIndexes: tt.physical}
 			source := elastic.NewSearchSource().Query(elastic.NewMatchAllQuery()).Sort("timestamp", false).Collapse(elastic.NewCollapseBuilder("session"))
-			err := filterCollapseIndexes(qo, tt.fields, tt.field, source)
+			var snapshot *collapseIndexMetadata
+			if tt.fields != nil {
+				snapshot = &collapseIndexMetadata{fields: tt.fields, directQuerySafe: map[string]bool{"good": !tt.fail}}
+			}
+			err := filterCollapseIndexes(qo, snapshot, tt.field, source)
 			if tt.fail {
 				require.Error(t, err)
 				return
@@ -80,7 +85,7 @@ func TestPrepareRawQueryFiltersCollapseIndexes(t *testing.T) {
 	calls := 0
 	httpmock.RegisterResponder(http.MethodGet, mock.EsUrl+"/collapse_%2A", func(*http.Request) (*http.Response, error) {
 		calls++
-		return httpmock.NewStringResponse(200, `{"bad":{"mappings":{"properties":{"end_time":{"type":"long"}}}},"good":{"mappings":{"properties":{"end_time":{"type":"long"},"attributes":{"properties":{"gen_ai.session.id":{"type":"keyword"}}}}}}}`), nil
+		return httpmock.NewStringResponse(200, `{"bad":{"mappings":{"properties":{"end_time":{"type":"long"}}}},"good":{"aliases":{"collapse_good":{}},"mappings":{"properties":{"end_time":{"type":"long"},"attributes":{"properties":{"gen_ai.session.id":{"type":"keyword"}}}}}}}`), nil
 	})
 	inst, err := NewInstance(ctx, &InstanceOption{Connect: Connect{Address: mock.EsUrl}, Timeout: time.Second})
 	require.NoError(t, err)
@@ -91,15 +96,50 @@ func TestPrepareRawQueryFiltersCollapseIndexes(t *testing.T) {
 	prepared, err := inst.PrepareRawQuery(ctx, q, start, end, fields)
 	require.NoError(t, err)
 	require.Equal(t, 1, calls)
-	require.Equal(t, []string{"collapse_*", "-bad"}, prepared.queryOption.indexes)
+	require.Equal(t, []string{"good"}, prepared.queryOption.indexes)
 	require.Contains(t, prepared.body, `"collapse":{"field":"attributes.gen_ai.session.id"}`)
 	require.Equal(t, []string{"collapse_*"}, fields.indexes)
 	require.Equal(t, "session", q.Collapse.Field)
 	encoded, err := encodeRawBatchMember(RawBatchMember{Prepared: prepared})
 	require.NoError(t, err)
-	require.Contains(t, encoded, `"index":["collapse_*","-bad"]`)
-	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/collapse_%2A%2C-bad/_search", httpmock.NewStringResponder(200, `{"took":1,"_shards":{"total":1,"successful":1,"failed":0},"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`))
+	require.Contains(t, encoded, `"index":["good"]`)
+	httpmock.RegisterResponder(http.MethodPost, mock.EsUrl+"/good/_search", httpmock.NewStringResponder(200, `{"took":1,"_shards":{"total":1,"successful":1,"failed":0},"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`))
 	_, _, _, err = inst.QueryPreparedRawData(ctx, prepared, make(chan map[string]any, 1))
 	require.NoError(t, err)
 	require.Equal(t, 1, calls)
+}
+
+func TestCollapseDirectQuerySafe(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		targets []string
+		aliases map[string]any
+		want    bool
+	}{
+		{name: "unfiltered wildcard alias", targets: []string{"logs*"}, aliases: map[string]any{"logs_today": map[string]any{}}, want: true},
+		{name: "unfiltered exact alias", targets: []string{"logs_today"}, aliases: map[string]any{"logs_today": map[string]any{}}, want: true},
+		{name: "filtered wildcard alias", targets: []string{"logs*"}, aliases: map[string]any{"logs_today": map[string]any{"filter": map[string]any{"term": map[string]any{"tenant": "a"}}}}},
+		{name: "search routing", targets: []string{"logs*"}, aliases: map[string]any{"logs_today": map[string]any{"search_routing": "1"}}},
+		{name: "routing shorthand", targets: []string{"logs*"}, aliases: map[string]any{"logs_today": map[string]any{"routing": "1"}}},
+		{name: "index routing only", targets: []string{"logs*"}, aliases: map[string]any{"logs_today": map[string]any{"index_routing": "1"}}, want: true},
+		{name: "unrelated filtered alias", targets: []string{"logs*"}, aliases: map[string]any{"logs_today": map[string]any{}, "other": map[string]any{"filter": map[string]any{}}}, want: true},
+		{name: "metadata missing", targets: []string{"logs*"}},
+		{name: "explicit physical index", targets: []string{"v2_good"}, want: true},
+		{name: "physical pattern", targets: []string{"v2_*"}, want: true},
+		{name: "negative expression fails closed", targets: []string{"v2_*", "-other"}},
+		{name: "no regex expansion", targets: []string{"logs[ab]"}, aliases: map[string]any{"logsa": map[string]any{}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, collapseDirectQuerySafe("v2_good", tt.aliases, tt.targets))
+		})
+	}
+}
+
+func TestCloneCollapseIndexMetadata(t *testing.T) {
+	original := &collapseIndexMetadata{fields: map[string]map[string]bool{"good": {"session": true}}, directQuerySafe: map[string]bool{"good": true}}
+	cloned := cloneCollapseIndexMetadata(original)
+	cloned.fields["good"]["session"] = false
+	cloned.directQuerySafe["good"] = false
+	require.True(t, original.fields["good"]["session"])
+	require.True(t, original.directQuerySafe["good"])
 }

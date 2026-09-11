@@ -31,7 +31,7 @@ type PreparedFieldMetadata struct {
 	indexes         []string
 	physicalIndexes []string
 	fieldMap        metadata.FieldsMap
-	indexFields     map[string]map[string]bool
+	indexFields     *collapseIndexMetadata
 	connectionKey   RawBatchConnectionKey
 	reuseIdentity   [sha256.Size]byte
 	complete        bool
@@ -277,7 +277,7 @@ func clonePreparedFieldMetadata(source *PreparedFieldMetadata) *PreparedFieldMet
 		indexes:         append([]string(nil), source.indexes...),
 		physicalIndexes: append([]string(nil), source.physicalIndexes...),
 		fieldMap:        cloneFieldsMap(source.fieldMap),
-		indexFields:     cloneIndexFields(source.indexFields),
+		indexFields:     cloneCollapseIndexMetadata(source.indexFields),
 		connectionKey:   source.connectionKey,
 		reuseIdentity:   source.reuseIdentity,
 		complete:        source.complete,

@@ -274,6 +274,16 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err := repository.ConfigureDrainingTermination(cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration()); err != nil {
 		return nil, err
 	}
+	// The cutover prunes a closed Schedule Segment only when the scheduler's
+	// own arithmetic says no Slot in it is read anymore, so the repository
+	// receives the same three durations the scheduler is built with below.
+	if err := repository.ConfigureSegmentRetention(execution.SlotRetention{
+		QueryReserve:  cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration(),
+		MaxReplayAge:  cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration(),
+		TerminalDelay: phaseTwoPostRecoveryTerminalDelay(cfg),
+	}); err != nil {
+		return nil, err
+	}
 	// The timeline cache budget is derived here rather than inside the
 	// repository: the derivation belongs to the container, and the control
 	// plane package does not depend on configuration.

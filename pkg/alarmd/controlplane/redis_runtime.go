@@ -108,6 +108,12 @@ end
 return 1
 `
 
+// Each timeline is fenced on the SHA-1 of the bytes the caller read, not on
+// the bytes themselves: the call already carries every rewritten timeline
+// once, and carrying the old bytes as well doubled a payload that had grown
+// past what the write timeout allows. An empty expectation still means the
+// key must be absent, and an existing key with empty content is present
+// (an empty Lua string is true), so the two cases stay apart.
 const compareAndSetCutoverSchedulesScript = `
 local header = redis.call('GET', KEYS[1])
 if not header or header ~= ARGV[1] then return 0 end
@@ -118,7 +124,7 @@ for index = 4, #KEYS do
   local expected = ARGV[expected_index]
   if expected == '' then
     if current then return 0 end
-  elseif not current or current ~= expected then
+  elseif not current or redis.sha1hex(current) ~= expected then
     return 0
   end
 end
@@ -167,7 +173,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	next ActivationState,
 	boundary execution.EvaluationTime,
 	progress ScheduleActivationProgressReader,
-) error {
+) (err error) {
 	if repository == nil || repository.client == nil || boundary <= 0 {
 		return errors.New("alarmd controlplane: publication schedule activation is required")
 	}
@@ -244,6 +250,9 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		return errors.New("alarmd controlplane: publication activation has an invalid draining projection")
 	}
 
+	now := time.Unix(int64(boundary), 0)
+	cutover := newCutoverFacts()
+	defer func() { repository.observeCutover(ctx, cutover, err) }()
 	updates := make([]scheduleTimelineUpdate, 0, len(oldGroups)+len(newGroups))
 	coverage := make([]persistedScheduleTimeline, 0, len(newGroups))
 	for queryGroup, oldGroup := range oldGroups {
@@ -290,6 +299,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 			retiredAt := boundary
 			timeline.RetiredAt = &retiredAt
 		}
+		cutover.prune(repository.pruneClosedSegments(ctx, &timeline, now, progress))
 		if err := validateScheduleTimeline(timeline); err != nil {
 			return err
 		}
@@ -323,6 +333,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 			timeline.Segments = append(timeline.Segments, persistedScheduleSegment{
 				Schedule: opened, Plans: records, ReactivatedAfter: &retiredAt,
 			})
+			cutover.prune(repository.pruneClosedSegments(ctx, &timeline, now, progress))
 		} else {
 			timeline = persistedScheduleTimeline{SchemaVersion: scheduleTimelineSchemaVersion,
 				RecordRevision: 1, QueryGroup: queryGroup,
@@ -344,7 +355,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 			return err
 		}
 	}
-	return repository.persistCutoverActivation(ctx, expected, next, updates)
+	return repository.persistCutoverActivation(ctx, expected, next, updates, cutover)
 }
 
 // CompareAndSetInitialScheduleActivation establishes zero or more first
@@ -472,7 +483,7 @@ func (repository *RedisCatalogRepository) CompareAndSetScheduleCutover(
 	if err := validateUnchangedActivationRecords(previous, next, affectedPlans); err != nil {
 		return err
 	}
-	return repository.persistCutoverActivation(ctx, expected, next, updates)
+	return repository.persistCutoverActivation(ctx, expected, next, updates, nil)
 }
 
 func validateInitialActivationCoverage(state ActivationState, timelines []persistedScheduleTimeline) error {
@@ -629,6 +640,7 @@ func (repository *RedisCatalogRepository) persistCutoverActivation(
 	expected ActivationExpectation,
 	next ActivationState,
 	updates []scheduleTimelineUpdate,
+	cutover *cutoverFacts,
 ) error {
 	active := make(map[execution.QueryGroupIdentity]struct{})
 	previous, loadErr := repository.LoadActivation(ctx)
@@ -678,14 +690,20 @@ func (repository *RedisCatalogRepository) persistCutoverActivation(
 	sort.Slice(updates, func(i, j int) bool { return updates[i].next.QueryGroup < updates[j].next.QueryGroup })
 	keys := []string{repository.activationHeaderKey(), repository.activationKey(), repository.activeQGSetKey(ref.Digest)}
 	args := []interface{}{expectedHeader, nextHeader, activationPayload, activePayload, repository.ttl.Milliseconds()}
+	payloadBytes := len(expectedHeader) + len(nextHeader) + len(activationPayload) + len(activePayload)
+	timelineBytes := make([]int, 0, len(updates))
 	for _, update := range updates {
 		payload, err := json.Marshal(update.next)
 		if err != nil {
 			return err
 		}
 		keys = append(keys, repository.scheduleTimelineKey(update.next.QueryGroup))
-		args = append(args, update.expected, payload)
+		fence := timelineFence(update.expected)
+		args = append(args, fence, payload)
+		payloadBytes += len(fence) + len(payload)
+		timelineBytes = append(timelineBytes, len(payload))
 	}
+	cutover.persisted(payloadBytes, timelineBytes)
 	changed, err := repository.client.Eval(ctx, compareAndSetCutoverSchedulesScript, keys, args...).Int()
 	if err != nil {
 		return activationDependencyIO(fmt.Errorf("persist schedule cutover: %w", err))

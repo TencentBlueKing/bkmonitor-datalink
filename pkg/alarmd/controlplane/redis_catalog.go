@@ -115,6 +115,7 @@ type RedisCatalogRepository struct {
 	legacyMigrationMaxScanKeys int
 	legacyMigrationTimeout     time.Duration
 	drainingRetireAfter        time.Duration
+	segmentRetention           execution.SlotRetention
 	observer                   observability.Observer
 	snapshotAdmission          SnapshotMemoryAdmission
 }

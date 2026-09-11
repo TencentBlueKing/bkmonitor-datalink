@@ -62,6 +62,7 @@ const (
 	StageSnapshotUnavailable  = "snapshot_unavailable"
 	StageActivationFailed     = "activation_failed"
 	StageActiveQGSet          = "active_qg_set"
+	StageScheduleCutover      = "schedule_cutover"
 	StageLegacyQGMigration    = "legacy_active_qg_migration"
 	StageDrainingQGReconciled = "draining_query_groups"
 	StageAssignmentAcquired   = "assignment_acquired"
@@ -290,6 +291,23 @@ type ActiveQGSetFacts struct {
 	Duration    time.Duration
 }
 
+// ScheduleCutoverFacts describe one publication cutover as the Control
+// Leader wrote it: how many Schedule timelines it rewrote, the bytes it sent
+// in the one compare-and-set call, the largest single timeline among them,
+// and what the pruning of dead Segments did. PrunesSkipped counts timelines
+// that were left unpruned because their Progress could not be read, by
+// reason; those timelines keep growing until a later cutover reads it.
+type ScheduleCutoverFacts struct {
+	Result           string
+	Timelines        int
+	PayloadBytes     int
+	MaxTimelineBytes int
+	TimelineBytes    []int
+	SegmentsPruned   int
+	PrunesSkipped    map[string]int
+	Duration         time.Duration
+}
+
 type LegacyQGMigrationFacts struct {
 	Result      string
 	ReasonClass string
@@ -448,6 +466,7 @@ type Observation struct {
 	ShortPeriodCompletion   *ShortPeriodCompletionFacts
 	StateApplyChunk         *StateApplyChunkFacts
 	ActiveQGSet             *ActiveQGSetFacts
+	ScheduleCutover         *ScheduleCutoverFacts
 	LegacyMigration         *LegacyQGMigrationFacts
 	DrainingQG              *DrainingQGFacts
 	SourceRefresh           *SourceRefreshFacts
@@ -533,6 +552,7 @@ func NormalizeObservation(observation Observation) Observation {
 		}
 	}
 	observation.ActiveQGSet = normalizeActiveQGSetFacts(observation.ActiveQGSet)
+	observation.ScheduleCutover = normalizeScheduleCutoverFacts(observation.ScheduleCutover)
 	observation.LegacyMigration = normalizeLegacyQGMigrationFacts(observation.LegacyMigration)
 	observation.DrainingQG = normalizeDrainingQGFacts(observation.DrainingQG)
 	observation.SourceRefresh = normalizeSourceRefreshFacts(observation.Component, observation.Stage, observation.SourceRefresh)
@@ -769,6 +789,42 @@ func normalizeDrainingQGFacts(facts *DrainingQGFacts) *DrainingQGFacts {
 		if sample.Disposition != DrainingQGSampleRetired {
 			sample.Disposition = ""
 		}
+	}
+	return &normalized
+}
+
+// SchedulePruneSkipReasons is the closed vocabulary of ScheduleCutoverFacts.PrunesSkipped.
+var SchedulePruneSkipReasons = []string{"progress_unavailable", "progress_missing"}
+
+func normalizeScheduleCutoverFacts(facts *ScheduleCutoverFacts) *ScheduleCutoverFacts {
+	if facts == nil {
+		return nil
+	}
+	normalized := *facts
+	if normalized.Result != "success" && normalized.Result != "failure" {
+		normalized.Result = "failure"
+	}
+	for _, count := range []*int{&normalized.Timelines, &normalized.PayloadBytes, &normalized.MaxTimelineBytes, &normalized.SegmentsPruned} {
+		if *count < 0 {
+			*count = 0
+		}
+	}
+	sizes := make([]int, 0, len(normalized.TimelineBytes))
+	for _, size := range normalized.TimelineBytes {
+		if size >= 0 {
+			sizes = append(sizes, size)
+		}
+	}
+	normalized.TimelineBytes = sizes
+	skipped := make(map[string]int, len(SchedulePruneSkipReasons))
+	for _, reason := range SchedulePruneSkipReasons {
+		if count := normalized.PrunesSkipped[reason]; count > 0 {
+			skipped[reason] = count
+		}
+	}
+	normalized.PrunesSkipped = skipped
+	if normalized.Duration < 0 {
+		normalized.Duration = 0
 	}
 	return &normalized
 }

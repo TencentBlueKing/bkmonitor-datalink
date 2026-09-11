@@ -353,106 +353,284 @@ func newScopeTestSchedulerRunner(
 	return runner
 }
 
-func waitForExecutorCalls(t *testing.T, name string, executor *countingExecutor, want int64) {
-	t.Helper()
-	// The wait is generous on purpose, for the reason the redis fixtures were:
-	// two seconds encoded an assumption about machine load rather than about
-	// the behaviour under test. What is being asserted is that a healthy
-	// sibling keeps being dispatched while another Query Group backs off, and
-	// on an unloaded machine that takes milliseconds - the loop polls every
-	// millisecond and returns the moment the count is reached, so a longer
-	// budget costs the passing path nothing. Under a saturated machine the same
-	// dispatch takes longer for reasons that have nothing to do with backoff,
-	// and failing there reports load, not a regression.
-	//
-	// Measured rather than assumed: two binaries run alternately, 25 runs each
-	// with no competing load gave zero failures on both, and 20 runs each under
-	// twelve CPU burners gave one failure on each. Same shape on both sides, so
-	// an earlier 6-out-of-10 against 3-out-of-10 was two batches meeting
-	// different machine load, not one branch being worse.
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if executor.calls.Load() >= want {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s executor calls >= %d; got %d", name, want, executor.calls.Load())
+// scopeTestWakeCadence is how often each arm's wake is refreshed. A saturating
+// pump would hide the very thing the rate comparison is for: with wakes always
+// pending, a generation the healthy Query Group loses costs no measurable time,
+// so a dispatcher that spent seven generations in eight on a parked sibling
+// would still read as full speed. A cadence makes a generation cost something.
+const scopeTestWakeCadence = 200 * time.Microsecond
+
+// scopeTestComparisonWindow is how long both arms are watched side by side.
+// Both dispatchers run through it at once in this process, so whatever the
+// machine is doing during the window it does to both.
+const scopeTestComparisonWindow = 200 * time.Millisecond
+
+// scopeTestBackoffArm is one dispatcher under test, with the Query Groups it
+// owns and the wake channel that drives it.
+type scopeTestBackoffArm struct {
+	name    string
+	bundle  *phaseTwoWorkerBundle
+	wake    chan struct{}
+	done    chan error
+	cancel  context.CancelFunc
+	healthy *countingExecutor
+	failing *countingExecutor
+	// generations counts the wakes this arm's dispatcher actually consumed.
+	generations atomic.Int64
+	stopped     bool
 }
 
-func TestPhaseTwoWorkerBundleExecutionErrorBackoffKeepsHealthySiblingOnTickRate(t *testing.T) {
-	cfg := validGoAccessRuntimeConfig()
-	limits := cfg.PhaseTwo.Scheduler.RecoveryLimits()
-	var clockMu sync.Mutex
-	current := time.Unix(1_700_000_000, 0)
-	now := func() time.Time {
-		clockMu.Lock()
-		defer clockMu.Unlock()
-		return current
-	}
-	advance := func(delta time.Duration) {
-		clockMu.Lock()
-		current = current.Add(delta)
-		clockMu.Unlock()
-	}
-	flights, err := scheduler.NewFlightCoordinatorWithRecovery(limits, now)
+// newScopeTestBackoffArm opens a dispatcher over a healthy Query Group and,
+// when withFailingSibling is set, a second one whose executions always fail.
+//
+// Both arms are built from the same Config and the same clock so that the only
+// difference between them is the sibling. That is what makes a comparison of
+// the two readable as a statement about the sibling.
+func newScopeTestBackoffArm(
+	t *testing.T,
+	name string,
+	cfg config.Config,
+	now func() time.Time,
+	withFailingSibling bool,
+) *scopeTestBackoffArm {
+	t.Helper()
+	// One FlightCoordinator per arm. The two arms own Query Groups of the same
+	// name, and a shared coordinator would let one arm's single-flight state
+	// decide the other's - which is the one thing a comparison between them
+	// must not depend on.
+	flights, err := scheduler.NewFlightCoordinatorWithRecovery(cfg.PhaseTwo.Scheduler.RecoveryLimits(), now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	failing := &countingExecutor{err: errors.New("commit progress: redis timeout")}
-	healthy := &countingExecutor{}
-	bundle := &phaseTwoWorkerBundle{
+	arm := &scopeTestBackoffArm{name: name, healthy: &countingExecutor{}}
+	runners := map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle{
+		"query-group-healthy": {runner: &schedulerRunnerQueryGroup{
+			runner: newScopeTestSchedulerRunner(t, "query-group-healthy", flights, now, arm.healthy),
+		}},
+	}
+	if withFailingSibling {
+		arm.failing = &countingExecutor{err: errors.New("commit progress: redis timeout")}
+		runners["query-group-failing"] = &phaseTwoQueryGroupLifecycle{runner: &schedulerRunnerQueryGroup{
+			runner: newScopeTestSchedulerRunner(t, "query-group-failing", flights, now, arm.failing),
+		}}
+	}
+	arm.bundle = &phaseTwoWorkerBundle{
 		dependencies: phaseTwoWorkerBundleDependencies{Config: cfg, Now: now},
-		runners: map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle{
-			"query-group-failing": {runner: &schedulerRunnerQueryGroup{
-				runner: newScopeTestSchedulerRunner(t, "query-group-failing", flights, now, failing),
-			}},
-			"query-group-healthy": {runner: &schedulerRunnerQueryGroup{
-				runner: newScopeTestSchedulerRunner(t, "query-group-healthy", flights, now, healthy),
-			}},
-		},
+		runners:      runners,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	wake := make(chan struct{}, 1)
-	done := make(chan error, 1)
-	go func() { done <- bundle.runScheduler(ctx, wake, false) }()
+	arm.cancel = cancel
+	arm.wake = make(chan struct{}, 1)
+	arm.done = make(chan error, 1)
+	go func() { arm.done <- arm.bundle.runScheduler(ctx, arm.wake, false) }()
+	// The wake is refreshed on a cadence, which is what the deployment's
+	// scheduler ticker does: one pending wake, replaced on an interval. The
+	// cadence is short because nothing here is waiting on real work, and it is
+	// the same in every arm, so it cancels out of any comparison between them.
+	// It is not there to give anything time to settle.
+	//
+	// The version of this test that did count them asserted one healthy
+	// execution per wake, and that is not a property the dispatcher has. The
+	// executor's counter is incremented inside the Runner, while the round it
+	// belongs to only ends once the dispatcher has taken the result back off
+	// its results channel and dropped the Query Group from its active set. A
+	// wake that lands in between opens a generation whose walk finds that Query
+	// Group still active, spends its turn on it without queueing it and without
+	// recording a skip, and the generation is gone. The next wake only came
+	// after the count moved, so the test then waited for a count that nothing
+	// would ever move again - a permanent stall that the deadline reported as
+	// slowness. Driving the wake the way the deployment does removes the
+	// assumption instead of widening the deadline that hid it.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case arm.wake <- struct{}{}:
+				// A blocking send returns exactly when the dispatcher takes the
+				// wake, so this counts generations rather than attempts.
+				arm.generations.Add(1)
+			}
+			time.Sleep(scopeTestWakeCadence)
+		}
+	}()
+	t.Cleanup(arm.stop)
+	return arm
+}
 
-	// Within the first backoff window the failing Query Group executes once
-	// while its healthy sibling completes on every tick.
-	const ticks = 8
-	for tick := int64(1); tick <= ticks; tick++ {
-		wake <- struct{}{}
-		waitForExecutorCalls(t, "healthy", healthy, tick)
+func (arm *scopeTestBackoffArm) stop() {
+	if arm.stopped {
+		return
 	}
-	if got := failing.calls.Load(); got != 1 {
-		t.Fatalf("failing Query Group executed %d times over %d ticks inside its backoff, want 1", got, ticks)
+	arm.stopped = true
+	arm.cancel()
+	<-arm.done
+}
+
+// awaitRounds waits until the named executor has completed want executions.
+//
+// The budget is a deadline on a machine, not on the behaviour: every assertion
+// that depends on this call is made against a clock the test owns, so a Query
+// Group that is being held back is held back for good and no budget lets it
+// through. Reaching the deadline therefore means the rounds are not coming.
+func (arm *scopeTestBackoffArm) awaitRounds(
+	t *testing.T,
+	which string,
+	executor *countingExecutor,
+	want int64,
+) bool {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if executor.calls.Load() >= want {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Errorf("%s arm: %s Query Group reached %d executions in 30s, want %d",
+		arm.name, which, executor.calls.Load(), want)
+	return false
+}
+
+func scopeTestBackoffClock() (func() time.Time, func(time.Duration)) {
+	var mu sync.Mutex
+	current := time.Unix(1_700_000_000, 0)
+	now := func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return current
+	}
+	advance := func(delta time.Duration) {
+		mu.Lock()
+		current = current.Add(delta)
+		mu.Unlock()
+	}
+	return now, advance
+}
+
+// TestPhaseTwoWorkerBundleExecutionErrorBacksOffForAsLongAsItsDelayHolds pins
+// the backoff itself: a Query Group whose execution failed does not run again
+// until its delay has expired, however often the dispatcher is woken in the
+// meantime.
+//
+// The clock is the test's, and it does not move while the rounds are counted.
+// That is what makes the assertion absolute rather than a race: no number of
+// wakes can reach the failing Query Group's next instant, so a second execution
+// inside the window is a backoff that was not applied, never a slow machine.
+func TestPhaseTwoWorkerBundleExecutionErrorBacksOffForAsLongAsItsDelayHolds(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	limits := cfg.PhaseTwo.Scheduler.RecoveryLimits()
+	now, advance := scopeTestBackoffClock()
+	const rounds = 8
+	arm := newScopeTestBackoffArm(t, "failing sibling", cfg, now, true)
+
+	if !arm.awaitRounds(t, "healthy", arm.healthy, rounds) {
+		t.FailNow()
+	}
+	if got := arm.failing.calls.Load(); got != 1 {
+		t.Fatalf("failing Query Group executed %d times while its backoff held, want 1", got)
 	}
 
-	// The expired backoff releases exactly one more attempt, whose failure
-	// schedules a longer delay that the following ticks must respect.
+	// The expired backoff releases exactly one more attempt, and that attempt's
+	// failure schedules a longer delay that the rounds after it must respect.
 	advance(limits.RetryMinDelay)
-	wake <- struct{}{}
-	waitForExecutorCalls(t, "healthy", healthy, ticks+1)
-	waitForExecutorCalls(t, "failing", failing, 2)
-	for tick := int64(ticks + 2); tick <= 2*ticks; tick++ {
-		wake <- struct{}{}
-		waitForExecutorCalls(t, "healthy", healthy, tick)
+	if !arm.awaitRounds(t, "failing", arm.failing, 2) {
+		t.FailNow()
 	}
-	if got := failing.calls.Load(); got != 2 {
+	if !arm.awaitRounds(t, "healthy", arm.healthy, 2*rounds) {
+		t.FailNow()
+	}
+	if got := arm.failing.calls.Load(); got != 2 {
 		t.Fatalf("failing Query Group executed %d times after one backoff expiry, want 2", got)
 	}
-	if got := healthy.calls.Load(); got != 2*ticks {
-		t.Fatalf("healthy Query Group executed %d times over %d ticks, want one per tick", got, 2*ticks)
-	}
 
-	cancel()
+	arm.cancel()
+	arm.stopped = true
 	select {
-	case err := <-done:
+	case err := <-arm.done:
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("runScheduler(cancel) error = %v, want context canceled", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("dispatcher did not stop after cancellation")
 	}
+}
+
+// TestPhaseTwoWorkerBundleBackoffSiblingDoesNotCostHealthyQueryGroupItsRounds
+// pins the other half: the Query Group that is backing off must not cost its
+// healthy sibling anything.
+//
+// It is asserted as a comparison rather than as an absolute count. Counting the
+// healthy Query Group's rounds on its own cannot tell "the sibling costs it
+// nothing" from "the driver only produced that many rounds", so the same driver
+// is run twice - once over a bundle that owns the healthy Query Group alone,
+// once over one that also owns a permanently failing sibling - and the two
+// counts are compared. The clock never moves, so the failing sibling can never
+// become due again: every round the second arm is short of the first is a round
+// the sibling took, and no amount of waiting returns it.
+func TestPhaseTwoWorkerBundleBackoffSiblingDoesNotCostHealthyQueryGroupItsRounds(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	now, _ := scopeTestBackoffClock()
+	const rounds = 16
+	alone := newScopeTestBackoffArm(t, "healthy alone", cfg, now, false)
+	beside := newScopeTestBackoffArm(t, "beside a failing sibling", cfg, now, true)
+
+	aloneReached := alone.awaitRounds(t, "healthy", alone.healthy, rounds)
+	besideReached := beside.awaitRounds(t, "healthy", beside.healthy, rounds)
+	if !aloneReached || !besideReached {
+		t.Fatalf("healthy rounds: alone=%d beside a failing sibling=%d, want %d in both arms",
+			alone.healthy.calls.Load(), beside.healthy.calls.Load(), rounds)
+	}
+	if got := beside.failing.calls.Load(); got != 1 {
+		t.Fatalf("failing sibling executed %d times while its backoff held, want 1; "+
+			"the comparison only means anything while the sibling stays parked", got)
+	}
+	// A parked Query Group holds its place in the recovery queue for as long as
+	// its delay lasts. Nothing may be turned away for want of a queue place
+	// because of it: a deferral here is the walk being unable to seat a Query
+	// Group it reached, which is exactly how a parked sibling would start
+	// costing its healthy neighbour its turns.
+	if facts := beside.bundle.rotationFacts(); facts != nil && facts.Deferred != 0 {
+		t.Fatalf("rotation deferred %d Query Groups beside a parked sibling, want 0; rotation=%+v",
+			facts.Deferred, facts)
+	}
+
+	// Reaching the same round count says the sibling cannot stop the healthy
+	// Query Group. It does not yet say the sibling costs it nothing, because a
+	// Query Group that is merely slowed still arrives. So the two arms are also
+	// compared on rate, over one window, with both dispatchers running at the
+	// same time in this process: whatever the machine is doing during that
+	// window it is doing to both arms, so the comparison is between the two
+	// bundles rather than between two moments. Only the ratio is asserted, and
+	// loosely - the arm with the sibling walks one more Query Group per
+	// generation, so it is expected to be somewhat slower, and the bound is
+	// there to catch a sibling that costs a multiple of that, not to pin a
+	// throughput number.
+	aloneBefore, besideBefore := alone.healthy.calls.Load(), beside.healthy.calls.Load()
+	aloneGenerationsBefore, besideGenerationsBefore := alone.generations.Load(), beside.generations.Load()
+	time.Sleep(scopeTestComparisonWindow)
+	aloneRounds := alone.healthy.calls.Load() - aloneBefore
+	besideRounds := beside.healthy.calls.Load() - besideBefore
+	aloneGenerations := alone.generations.Load() - aloneGenerationsBefore
+	besideGenerations := beside.generations.Load() - besideGenerationsBefore
+	if aloneRounds == 0 || aloneGenerations == 0 || besideGenerations == 0 {
+		t.Fatalf("comparison window produced nothing to compare: alone=%d/%d beside=%d/%d rounds/generations",
+			aloneRounds, aloneGenerations, besideRounds, besideGenerations)
+	}
+	// Rounds per generation, not rounds per second: the wake cadence is the
+	// same in both arms, but comparing the ratios keeps the statement about the
+	// dispatcher even if one arm is woken fewer times than the other.
+	// A quarter of the turns is the bound. Measured rather than guessed: with
+	// the sibling parked the two arms come out within a percent of each other,
+	// run after run, and injecting a dispatcher that skips the healthy Query
+	// Group on one generation in two reads as exactly half. The bound sits far
+	// enough above the noise to be quiet and far enough below half to catch the
+	// mildest version of the regression it is here for.
+	if 4*besideRounds*aloneGenerations < 3*aloneRounds*besideGenerations {
+		t.Fatalf("over one shared window the healthy Query Group completed %d rounds in %d generations beside "+
+			"a failing sibling, against %d in %d alone; a sibling parked on backoff may not cost it its turns",
+			besideRounds, besideGenerations, aloneRounds, aloneGenerations)
+	}
+	t.Logf("shared window: alone=%d rounds/%d generations, beside a failing sibling=%d/%d",
+		aloneRounds, aloneGenerations, besideRounds, besideGenerations)
 }

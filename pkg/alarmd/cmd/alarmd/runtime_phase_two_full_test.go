@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -622,8 +623,36 @@ func testProductionPhaseTwoStrandedLatest(
 	}
 	result, refreshErr := firstControl.Refresh(ctx)
 	if wantRecovery {
-		if refreshErr != nil || result.Status != phaseTwoControlHealthy || len(result.QueryGroups) != 1 {
+		// The active set is the activated Query Group plus whichever retired
+		// predecessor has not finished draining yet, and which of those two a
+		// given run sees is a question about Progress, not about recovery.
+		// Asserting a count of one asserted the second thing while naming the
+		// first: a run where the predecessor still had an unexecuted retired
+		// Slot reported two Query Groups and failed, at a rate that depended on
+		// where the run fell against the Slot grid. What recovery has to
+		// deliver is that the activated Query Group is live and that nothing
+		// else has crept in, so that is what is checked - by name, which also
+		// says which Query Group the extra entry is when there is one.
+		activated, predecessor := latestSnapshot.QueryGroups[0].Identity, oldSnapshot.QueryGroups[0].Identity
+		if revertToOld {
+			activated, predecessor = predecessor, activated
+		}
+		if refreshErr != nil || result.Status != phaseTwoControlHealthy {
 			t.Fatalf("recovered Refresh()=(%+v,%v), want healthy latest activation", result, refreshErr)
+		}
+		activeSet := make(map[execution.QueryGroupIdentity]struct{}, len(result.QueryGroups))
+		for _, queryGroup := range result.QueryGroups {
+			activeSet[queryGroup] = struct{}{}
+		}
+		if _, live := activeSet[activated]; !live {
+			t.Fatalf("recovered Refresh() active Query Groups=%v, want the activated %q among them",
+				result.QueryGroups, activated)
+		}
+		delete(activeSet, activated)
+		delete(activeSet, predecessor)
+		if len(activeSet) != 0 {
+			t.Fatalf("recovered Refresh() active Query Groups=%v, want only the activated %q and at most "+
+				"the draining predecessor %q", result.QueryGroups, activated, predecessor)
 		}
 	} else if refreshErr != nil || result.Status != phaseTwoControlDegradedLastGood ||
 		!errors.Is(result.Cause, controlplane.ErrSnapshotUnavailable) {
@@ -690,8 +719,7 @@ func testProductionFullTargetFlow(t *testing.T, diagnostic bool) {
 		t.Fatal(err)
 	}
 
-	base := time.Now().Unix()
-	base -= base % 300
+	base := phaseTwoQueryableSlotBoundary()
 	var clock atomic.Int64
 	clock.Store(base)
 	now := func() time.Time { return time.Unix(clock.Load(), 0) }
@@ -910,8 +938,7 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingEventACKIsRetr
 		t.Fatal(err)
 	}
 
-	base := time.Now().Unix()
-	base -= base % 300
+	base := phaseTwoQueryableSlotBoundary()
 	var clock atomic.Int64
 	clock.Store(base)
 	now := func() time.Time { return time.Unix(clock.Load(), 0) }
@@ -2124,26 +2151,67 @@ func assertObservedOrder(t *testing.T, got, want []observability.Stage) {
 	}
 }
 
+// startPhaseTwoRedis starts a redis-server for this test and hands back a
+// client that has been checked to be talking to that server and no other.
+//
+// The port is picked by asking the kernel for a free one and closing the
+// socket, so between that close and redis-server's bind anything else on the
+// machine may take the port: another package's fixture under `go test ./...`,
+// or a second checkout running the same suite. When that happens redis-server
+// exits with "Address already in use" while Ping on the port keeps succeeding,
+// answered by whoever does hold it - and the fixture used to hand that foreign
+// server back without a word. The test then ran against a Redis another test
+// was also writing to, under the key prefixes this suite fixes per test and
+// which therefore collide exactly. Asking the server which directory it was
+// started in turns that into a retry on a fresh port, and into a named failure
+// if it keeps happening, instead of into a result somewhere else in the test.
 func startPhaseTwoRedis(t *testing.T) (string, *redis.Client) {
 	t.Helper()
 	executable, err := exec.LookPath("redis-server")
 	if err != nil {
 		t.Skip("redis-server is not installed")
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	var refusals []string
+	for attempt := 0; attempt < 5; attempt++ {
+		address, client, refused := startOwnPhaseTwoRedis(t, executable, "")
+		if refused == "" {
+			return address, client
+		}
+		refusals = append(refusals, refused)
 	}
-	address := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
+	t.Fatalf("redis-server never came up on a port of its own: %v", refusals)
+	return "", nil
+}
+
+// startOwnPhaseTwoRedis makes one attempt. It returns an empty refusal when the
+// server on the port is the one it just started.
+func startOwnPhaseTwoRedis(t *testing.T, executable string, port string) (string, *redis.Client, string) {
+	t.Helper()
+	if port == "" {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, chosen, err := net.SplitHostPort(listener.Addr().String()); err == nil {
+			port = chosen
+		} else {
+			t.Fatal(err)
+		}
+		if err := listener.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
-	_, port, err := net.SplitHostPort(address)
+	address := net.JoinHostPort("127.0.0.1", port)
+	// The directory is this attempt's name for its own server. t.TempDir() is a
+	// fresh directory per call, and redis reports it back resolved, so it tells
+	// one server on this port apart from any other.
+	directory := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(directory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	command := exec.Command(executable, "--bind", "127.0.0.1", "--port", port,
-		"--save", "", "--appendonly", "no", "--dir", t.TempDir(), "--daemonize", "no", "--loglevel", "warning")
+		"--save", "", "--appendonly", "no", "--dir", directory, "--daemonize", "no", "--loglevel", "warning")
 	var output bytes.Buffer
 	command.Stdout, command.Stderr = &output, &output
 	if err := command.Start(); err != nil {
@@ -2152,13 +2220,13 @@ func startPhaseTwoRedis(t *testing.T) (string, *redis.Client) {
 	client := redis.NewClient(&redis.Options{
 		Addr: address, DialTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second,
 	})
-	t.Cleanup(func() {
+	stop := func() {
 		_ = client.Close()
 		if command.ProcessState == nil || !command.ProcessState.Exited() {
 			_ = command.Process.Kill()
-			_ = command.Wait()
 		}
-	})
+		_ = command.Wait()
+	}
 	// The wait is generous on purpose. Three seconds encoded an assumption about
 	// machine load rather than about redis: under `go test ./...` dozens of
 	// packages start their own server at the same moment, and a window that is
@@ -2170,12 +2238,28 @@ func startPhaseTwoRedis(t *testing.T) (string, *redis.Client) {
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if client.Ping(context.Background()).Err() == nil {
-			return address, client
+			if serving := phaseTwoRedisDirectory(client); serving != resolved {
+				stop()
+				return "", nil, fmt.Sprintf("port %s is served from %q, not this attempt's %q", port, serving, resolved)
+			}
+			t.Cleanup(stop)
+			return address, client, ""
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("redis-server did not become ready: %s", output.String())
-	return "", nil
+	stop()
+	return "", nil, fmt.Sprintf("port %s never answered: %s", port, output.String())
+}
+
+// phaseTwoRedisDirectory reports the directory the server on this client was
+// started in, or "" when it cannot be read.
+func phaseTwoRedisDirectory(client *redis.Client) string {
+	values, err := client.ConfigGet(context.Background(), "dir").Result()
+	if err != nil || len(values) != 2 {
+		return ""
+	}
+	directory, _ := values[1].(string)
+	return directory
 }
 
 // The Snapshot body is transferred once per revision by a complete verified
@@ -2414,4 +2498,59 @@ func TestProductionRunOneReadsControlBodiesOncePerRevisionAndVersion(t *testing.
 	if err != nil || reentry.Completed || reentry.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotRetryPending) || uqCalls.Load() != beforeDeferredCalls {
 		t.Fatalf("deferred reentry result=%+v error=%v clock=%v", reentry, err, now())
 	}
+}
+
+// TestPhaseTwoRedisFixtureRefusesAServerItDidNotStart pins the check that the
+// fixture hands back its own server.
+//
+// It is written as a forced collision because the real one cannot be scheduled:
+// the fixture asks the kernel for a free port and closes the socket, and
+// whether anything grabs that port in the gap depends on what else is running
+// on the machine. Forcing the port reproduces the same end state - redis-server
+// cannot bind, exits, and Ping on the port is answered by the process that does
+// hold it - which is the state in which the fixture used to hand the foreign
+// server to the test.
+func TestPhaseTwoRedisFixtureRefusesAServerItDidNotStart(t *testing.T) {
+	executable, err := exec.LookPath("redis-server")
+	if err != nil {
+		t.Skip("redis-server is not installed")
+	}
+	occupiedAddress, occupied := startPhaseTwoRedis(t)
+	_, port, err := net.SplitHostPort(occupiedAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := occupied.Set(context.Background(), "phase-two-fixture-marker", "occupant", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	address, client, refused := startOwnPhaseTwoRedis(t, executable, port)
+	if refused == "" {
+		marker, markerErr := client.Get(context.Background(), "phase-two-fixture-marker").Result()
+		t.Fatalf("fixture accepted a server it did not start at %s: marker=%q error=%v", address, marker, markerErr)
+	}
+	if !strings.Contains(refused, port) {
+		t.Fatalf("refusal %q does not name the port it was refused on", refused)
+	}
+}
+
+// phaseTwoQueryableSlotBoundary picks the Slot boundary these production tests
+// freeze their clock at.
+//
+// It is the next boundary, not the one just passed, and the difference is not
+// cosmetic. The frozen Slot's query deadline is derived from the clock the test
+// injects, and the UQ client turns that deadline into a context deadline -
+// which the runtime measures against the real clock, not the injected one. A
+// base taken from the boundary just passed therefore stays usable only while
+// real time is still inside that period: a run that starts in the last second
+// of one issues no query at all, because the deadline it computes is already in
+// the real past. That is one second in three hundred, which is how a suite that
+// starts its run wherever it happens to start fails a few runs in a hundred.
+//
+// Anchoring to the next boundary puts every clock-derived deadline a full
+// period into the real future, so where in a period the run starts stops
+// mattering. Nothing else about the Slot changes: it is still a boundary, and
+// the test still advances the injected clock past it to make the Slot due.
+func phaseTwoQueryableSlotBoundary() int64 {
+	seconds := time.Now().Unix()
+	return seconds + (300 - seconds%300)
 }

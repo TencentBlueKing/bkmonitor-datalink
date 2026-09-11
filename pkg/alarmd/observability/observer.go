@@ -428,6 +428,10 @@ type SourceRefreshFacts struct {
 	PublicationEpoch  uint64
 	ActivatedRevision string
 	ActivatedEpoch    uint64
+	// ActivationCaughtUp marks a round that published nothing but moved the
+	// activation to the publication an earlier round had published and not
+	// activated. The counts below then describe that move.
+	ActivationCaughtUp bool
 	// ActiveQueryGroups is a size, not a change. The counts below are a change,
 	// and the two are kept apart because a round that publishes nothing has no
 	// previous set to difference against: reporting a difference there can only

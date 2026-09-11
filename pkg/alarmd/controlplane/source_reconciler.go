@@ -28,6 +28,12 @@ type SourceRefreshResult struct {
 	Status      SourceRefreshStatus
 	Observation string
 	Publication SnapshotPublicationRef
+	// Latest is the publication the repository holds as latest when a round
+	// publishes nothing, so that a caller can still tell whether the fleet
+	// executes it. A confirmed publication whose activation never happened
+	// (the process stopped in between) stays latest through any number of
+	// pending rounds, and only the activation step can bring the fleet to it.
+	Latest SnapshotPublicationRef
 }
 
 type persistedSourceCandidate struct {
@@ -170,7 +176,11 @@ func (reconciler *SourceReconciler) Refresh(
 		ConfirmationKey: confirmationKey, ObservationID: catalog.ObservationID, SnapshotRevision: string(catalog.SnapshotRevision)}); err != nil {
 		return SourceRefreshResult{}, err
 	}
-	return SourceRefreshResult{Status: SourceRefreshPendingConfirmation, Observation: catalog.ObservationID}, nil
+	pendingResult := SourceRefreshResult{Status: SourceRefreshPendingConfirmation, Observation: catalog.ObservationID}
+	if current != nil {
+		pendingResult.Latest = current.Publication
+	}
+	return pendingResult, nil
 }
 
 func (reconciler *SourceReconciler) publish(

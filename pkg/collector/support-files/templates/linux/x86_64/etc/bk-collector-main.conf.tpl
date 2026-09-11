@@ -315,6 +315,20 @@ bk-collector:
         qps: 2000
         burst: 4000
 
+    # TrafficLimiter: 按 Token 和服务限制 OTLP 逻辑字节流量
+    - name: "traffic_limiter/gcra"
+      config:
+        bytes_per_second: 0
+        burst_bytes: 0
+{%- if extra_vars is defined and extra_vars.traffic_limiter_redis_addrs is defined and extra_vars.traffic_limiter_redis_addrs %}
+        redis:
+          mode: {{ extra_vars.traffic_limiter_redis_mode | default('standalone', true) | tojson }}
+          db: {{ extra_vars.traffic_limiter_redis_db | default(0, true) }}
+          key: {{ extra_vars.traffic_limiter_redis_key | default('bkcollector.traffic_limiter', true) | tojson }}
+          addrs: {{ extra_vars.traffic_limiter_redis_addrs | tojson }}
+          password: {{ extra_vars.traffic_limiter_redis_password | default('', true) | tojson }}
+{%- endif %}
+
     # TracesDeriver: 指标派生处理器
     - name: "traces_deriver/delta"
     - name: "traces_deriver/delta_duration"
@@ -331,6 +345,7 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
+        - "traffic_limiter/gcra"
         - "sampler/drop_traces"
         - "method_filter/drop_span"
         - "field_normalizer/otel_mapping"
@@ -356,6 +371,7 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
+        - "traffic_limiter/gcra"
         - "resource_filter/metrics"
         - "metrics_filter/relabel"
 
@@ -368,6 +384,7 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
+        - "traffic_limiter/gcra"
         - "resource_filter/logs"
         - "attribute_filter/logs"
 

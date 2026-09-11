@@ -241,6 +241,21 @@
             qps: 2000
             burst: 4000
 
+        # TrafficLimiter: 按 Token 和服务限制 OTLP 逻辑字节流量
+        - name: "traffic_limiter/gcra"
+          config:
+            bytes_per_second: 0
+            burst_bytes: 0
+            {{- $redis := (.Values.trafficLimiter | default dict).redis | default dict }}
+            {{- if $redis.addrs }}
+            redis:
+              mode: {{ $redis.mode | default "standalone" }}
+              db: {{ $redis.db | default 0 }}
+              key: {{ $redis.key | default "bkcollector.traffic_limiter" }}
+              addrs:{{ toYaml $redis.addrs | nindent 16 }}
+              password: {{ $redis.password | default "" | quote }}
+            {{- end }}
+
         # TracesDeriver: 指标派生处理器
         - name: "traces_deriver/delta"
         - name: "traces_deriver/delta_duration"
@@ -257,6 +272,7 @@
           processors:
             - "token_checker/aes256"
             - "rate_limiter/token_bucket"
+            - "traffic_limiter/gcra"
             - "sampler/drop_traces"
             - "method_filter/drop_span"
             - "field_normalizer/otel_mapping"
@@ -283,6 +299,7 @@
           processors:
             - "token_checker/aes256"
             - "rate_limiter/token_bucket"
+            - "traffic_limiter/gcra"
             - "resource_filter/metrics"
             - "metrics_filter/relabel"
 
@@ -295,6 +312,7 @@
           processors:
             - "token_checker/aes256"
             - "rate_limiter/token_bucket"
+            - "traffic_limiter/gcra"
             - "resource_filter/logs"
             - "attribute_filter/logs"
 

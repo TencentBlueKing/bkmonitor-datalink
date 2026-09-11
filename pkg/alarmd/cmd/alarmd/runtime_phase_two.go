@@ -726,13 +726,36 @@ func (dispatcher *phaseTwoRunnerDispatcher) start(ctx context.Context) {
 	}
 }
 
+// dispatchQueueFacts reports how long a round waited for an execution slot.
+//
+// The queued-at stamp is only taken for objects that were already being
+// observed when they were queued, so an object that entered the queue before
+// its window was opened carries the zero time. Measuring from that overflows
+// the duration and saturates, which is how a window opened on a busy object
+// reported a wait of 9223372036 seconds -- a number nothing marks as wrong, and
+// that no reader can tell from a real one without recognising MaxInt64.
+//
+// Both fields are left out instead. There is no wait to report for a round that
+// was already queued before anyone was watching, and saying nothing is the
+// honest form of that; both are omitempty, so the record simply has no wait.
+func dispatchQueueFacts(queuedAt, at time.Time) observability.TargetFlowFacts {
+	facts := observability.TargetFlowFacts{Decision: "execution_slot_acquired"}
+	if queuedAt.IsZero() || at.Before(queuedAt) {
+		return facts
+	}
+	facts.QueuedAtMS = queuedAt.UnixMilli()
+	facts.QueueWaitNS = at.Sub(queuedAt).Nanoseconds()
+	return facts
+}
+
 func (dispatcher *phaseTwoRunnerDispatcher) executeScheduled(ctx context.Context, scheduled phaseTwoScheduledRunner) {
 	dispatcher.changeExecuting(1)
 	result := phaseTwoScheduledResult{scheduled: scheduled}
 	runCtx := dispatcher.bundle.dependencies.TargetFlow.Context(ctx, string(scheduled.queryGroup))
 	if observability.TargetFlowEnabled(runCtx) {
 		runCtx = observability.ContextWithTraceFields(runCtx, observability.TraceFields{QueryGroupKey: string(scheduled.queryGroup)})
-		observability.EmitTargetFlow(runCtx, "runner_dispatch", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "execution_slot_acquired", QueuedAtMS: scheduled.queuedAt.UnixMilli(), QueueWaitNS: time.Since(scheduled.queuedAt).Nanoseconds()})
+		observability.EmitTargetFlow(runCtx, "runner_dispatch", observability.TraceFields{},
+			dispatchQueueFacts(scheduled.queuedAt, time.Now()))
 	}
 	func() {
 		defer dispatcher.changeExecuting(-1)

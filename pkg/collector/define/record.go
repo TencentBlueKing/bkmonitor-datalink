@@ -32,6 +32,7 @@ const (
 	ContentTypeText     = "text/plain; charset=utf-8"
 
 	SourceFta         = "fta"
+	SourceAegisV2     = "aegisv2"
 	SourceJaeger      = "jaeger"
 	SourcePyroscope   = "pyroscope"
 	SourceOtlp        = "otlp"

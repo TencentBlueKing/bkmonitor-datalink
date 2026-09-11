@@ -768,10 +768,21 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		startTime = qb.Start
 	}
 
+	queryEnd := qb.End
 	if queryTs.Instant {
-		res, err = instance.DirectQuery(ctx, queryTs.MetricMerge, startTime)
-	} else {
-		res, isPartial, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, qb.End, qb.Step)
+		queryEnd = startTime
+	}
+	res, isPartial, releaseResult, err := executeQueryWithClose(
+		ctx,
+		instance,
+		queryTs.MetricMerge,
+		startTime,
+		queryEnd,
+		qb.Step,
+		queryTs.Instant,
+	)
+	if releaseResult != nil {
+		defer releaseResult()
 	}
 	if err != nil {
 		return nil, err
@@ -985,10 +996,17 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	qb := metadata.GetQueryParams(ctx)
 	span.Set("query-params", qb)
 
-	if query.Instant {
-		res, err = instance.DirectQuery(ctx, stmt, qb.End)
-	} else {
-		res, isPartial, err = instance.DirectQueryRange(ctx, stmt, qb.AlignStart, qb.End, qb.Step)
+	res, isPartial, releaseResult, err := executeQueryWithClose(
+		ctx,
+		instance,
+		stmt,
+		qb.AlignStart,
+		qb.End,
+		qb.Step,
+		query.Instant,
+	)
+	if releaseResult != nil {
+		defer releaseResult()
 	}
 	if err != nil {
 		return nil, err
@@ -1129,14 +1147,19 @@ func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*Nam
 				if executionMode == uqMetric.NamedOutputsModeDirect {
 					directCalls++
 				}
-				if queryTs.Instant {
-					if statusAware, ok := instance.(tsdb.InstantQueryWithPartial); ok {
-						return statusAware.DirectQueryWithPartial(executeCtx, stmt, queryParams.End)
-					}
-					result, queryErr := instance.DirectQuery(executeCtx, stmt, queryParams.End)
-					return result, false, queryErr
+				result, partial, releaseResult, queryErr := executeQueryWithClose(
+					executeCtx,
+					instance,
+					stmt,
+					queryParams.AlignStart,
+					queryParams.End,
+					queryParams.Step,
+					queryTs.Instant,
+				)
+				if queryErr != nil {
+					return nil, partial, queryErr
 				}
-				return instance.DirectQueryRange(executeCtx, stmt, queryParams.AlignStart, queryParams.End, queryParams.Step)
+				return &ownedQueryResult{value: result, release: releaseResult}, partial, nil
 			},
 		)
 	}

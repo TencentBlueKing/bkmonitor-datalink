@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
@@ -266,8 +267,13 @@ func (f *QueryFactory) FilterResultSchema(schema []map[string]any) []map[string]
 	return filtered
 }
 
-func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[string]any) (*prompb.QueryResult, error) {
-	res := &prompb.QueryResult{}
+func (f *QueryFactory) FormatDataToQueryResult(
+	ctx context.Context, list []map[string]any,
+) (res *prompb.QueryResult, err error) {
+	ctx, span := trace.NewSpan(ctx, "bksql-format-query-result")
+	defer span.End(&err)
+
+	res = &prompb.QueryResult{}
 
 	if len(list) == 0 {
 		return res, nil
@@ -426,6 +432,44 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 			res.Timeseries = append(res.Timeseries, ts)
 		}
 	}
+
+	var points, labelBytes int
+	for _, ts := range res.Timeseries {
+		points += len(ts.Samples)
+		for _, label := range ts.Labels {
+			labelBytes += len(label.Name) + len(label.Value)
+		}
+	}
+	profile := f.query.CostProfile
+	span.Set("query-cost.rows", len(list))
+	span.Set("query-cost.series", len(res.Timeseries))
+	span.Set("query-cost.points", points)
+	span.Set("query-cost.label-bytes", labelBytes)
+	if len(list) > 0 {
+		span.Set("query-cost.series-rows-ratio", float64(len(res.Timeseries))/float64(len(list)))
+	}
+	if len(res.Timeseries) > 0 {
+		span.Set("query-cost.points-per-series", float64(points)/float64(len(res.Timeseries)))
+	}
+	span.Set("query-cost.select-all", profile.SelectAllCandidate)
+	span.Set("query-cost.range-function", profile.RangeFunction)
+	span.Set("query-cost.step-less-than-window", profile.StepLessThanWindow)
+	span.Set("query-cost.ast-branches", profile.ASTBranchCount)
+	span.Set("query-cost.sql-pushdown", profile.SQLPushdown)
+	metric.QueryCostProfileObserve(
+		ctx,
+		profile.SelectAllCandidate,
+		profile.RangeFunction,
+		profile.StepLessThanWindow,
+		profile.SQLPushdown,
+		profile.ASTBranchCount,
+		len(list),
+		len(res.Timeseries),
+		points,
+		labelBytes,
+		profile.Window,
+		profile.Step,
+	)
 
 	return res, nil
 }

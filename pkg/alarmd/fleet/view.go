@@ -137,6 +137,19 @@ type FailureRef struct {
 	Stage    string `json:"stage"`
 	Category string `json:"category"`
 	Code     string `json:"code,omitempty"`
+	// Detail is the one field that says what the backend actually did. The code
+	// answers "the query did not come back"; this answers "it returned 503" or
+	// "the connection was refused", and those are different people's problems.
+	//
+	// It was dropped on the way here, which only showed once a column existed
+	// whose whole claim is "these are not our fault": the page could report
+	// fifty-six objects sharing one code and still not name a symptom anyone
+	// could act on, which restates the column's own name.
+	//
+	// Safe to carry because the emitter already bounds it: at most 96 bytes of
+	// [a-z0-9_=.-], so URLs, messages and response bodies are refused upstream
+	// rather than trimmed here.
+	Detail string `json:"detail,omitempty"`
 }
 
 // Anomaly is one object that is not making progress as expected.

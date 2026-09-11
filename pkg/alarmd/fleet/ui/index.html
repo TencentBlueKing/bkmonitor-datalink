@@ -654,6 +654,11 @@ var STAGE_TEXT = {
   execution_outcome: '本轮执行结果',
   slot_completed: '时间点结束',
   slot_selection: '选定要算的时间点',
+  slot_source_completed: '取到这一轮要算什么',
+  schedule_due: '到点了',
+  slot_started: '开始算这个时间点',
+  query_completed: '查询结束',
+  progress_committed: '进度已落库',
   plan_schedule_binding: '策略与周期绑定',
   expired_range_returned: '跳过已过期的时间段',
   stream_complete: '查询结果收齐',
@@ -669,11 +674,20 @@ var DECISION_TEXT = {
   returned: '执行结束返回',
   query_readiness_deferred: '数据还没到，按设计等下一轮',
   identity_field_null: '目标身份字段是空的',
-  unknown: '未归类'
+  unknown: '未归类',
+  source_not_due: '还没到点，跳过这轮',
+  future_slot: '要算的时间点还在未来',
+  selected: '选定了时间点',
+  started: '开始执行',
+  completed: '执行完成',
+  readiness_deferred: '数据还没到，等下一轮',
+  execution_returned: '执行已返回',
+  waiting_P: '在等执行位',
+  P_acquired: '拿到执行位'
 };
 var RESULT_TEXT = {
   terminal: '终止', retrying: '会重试', success: '成功', ok: '成功',
-  degraded: '降级', skipped: '跳过'
+  degraded: '降级', skipped: '跳过', started: '开始', retrying: '会重试'
 };
 var REASON_TEXT = {
   internal_unknown: '没有归类的原因',
@@ -689,9 +703,19 @@ var CAUSAL_DECISIONS = {
   delayed_queue_evicted: true, identity_field_null: true
 };
 
+// Two values mean "this site reported no reason" rather than naming one.
+// Printing them puts a word that looks like a cause on a step that had none --
+// and reason_not_reported appeared four times in a single normal run.
+var NO_REASON = {none: true, reason_not_reported: true, internal_unknown: false};
+
 function say(dict, value) {
   if (!value) return '';
   return dict[value] || value;
+}
+
+function reasonText(code) {
+  if (!code || NO_REASON[code]) return '';
+  return say(REASON_TEXT, code);
 }
 
 function nanos(ns) {
@@ -726,13 +750,14 @@ function groupRuns(records) {
 // thing wins. A run that failed and also waited is a run someone should look
 // at, and leading with the wait would say the opposite.
 function runVerdict(run) {
-  var failure = null, skipped = null, deferred = null, ended = null, decided = '';
+  var failure = null, skipped = null, deferred = null, notDue = false, ended = null, decided = '';
   run.steps.forEach(function (record) {
     var facts = record.facts || {};
     if (facts.failure_code && !failure) failure = facts;
     if (facts.decision === 'normal_queue_full' || facts.decision === 'delayed_queue_full' ||
         facts.decision === 'delayed_queue_evicted') skipped = facts;
-    if (facts.decision === 'query_readiness_deferred') deferred = facts;
+    if (facts.decision === 'query_readiness_deferred' || facts.decision === 'readiness_deferred') deferred = facts;
+    if (facts.decision === 'source_not_due' || facts.decision === 'future_slot') notDue = true;
     if (facts.decision && facts.decision !== 'unknown') decided = facts.decision;
     if (record.result === 'terminal' || record.result === 'retrying') ended = record;
   });
@@ -742,12 +767,24 @@ function runVerdict(run) {
   }
   if (skipped) return {tone: 'wait', text: say(DECISION_TEXT, skipped.decision)};
   if (deferred) return {tone: 'wait', text: '数据还没到，按设计等下一轮——不用处理'};
-  if (ended && ended.reason_code) {
+  // A poll that found the next Slot is not due yet is the dispatcher working
+  // normally, and it is most of what a window records. It was reading as
+  // "终止" in red because the timing record on runner_completed reports
+  // terminal unconditionally, with no reason -- so the loudest row in a normal
+  // round was a failure that never happened.
+  if (notDue) return {tone: '', text: '还没到点，这轮不做事——正常轮询'};
+  var reason = ended ? reasonText(ended.reason_code) : '';
+  if (ended && reason) {
     return {tone: ended.result === 'terminal' ? 'bad' : '',
-      text: say(RESULT_TEXT, ended.result) + '：' + say(REASON_TEXT, ended.reason_code)};
+      text: say(RESULT_TEXT, ended.result) + '：' + reason};
   }
-  if (ended) return {tone: '', text: say(RESULT_TEXT, ended.result)};
-  return {tone: '', text: decided ? say(DECISION_TEXT, decided) : '还在进行'};
+  // Ended with no reason given. That is not a verdict: it says the site did not
+  // report one, not that something went wrong. Whatever the run actually
+  // decided is the better answer, and calling it a failure on the strength of a
+  // bare "terminal" is how a normal round gets painted red.
+  if (decided) return {tone: '', text: say(DECISION_TEXT, decided)};
+  if (ended) return {tone: '', text: say(RESULT_TEXT, ended.result) + '（未说明原因）'};
+  return {tone: '', text: '还在进行'};
 }
 
 // Which time point this run was computing, and which replica ran it. Both are
@@ -867,7 +904,12 @@ function renderRuns(host, runs) {
     run.steps.forEach(function (record) {
       var facts = record.facts || {};
       var item = document.createElement('li');
-      if (facts.failure_code || record.result === 'terminal') item.className = 'sbad';
+      // A bare terminal with no reason is not evidence of anything -- the
+      // timing record on this path reports it unconditionally. Marking those
+      // rows red put two red lines in a round where nothing happened.
+      if (facts.failure_code || (record.result === 'terminal' && reasonText(record.reason_code))) {
+        item.className = 'sbad';
+      }
       var stage = document.createElement('span');
       stage.className = 'st';
       stage.textContent = say(STAGE_TEXT, record.stage);
@@ -879,7 +921,10 @@ function renderRuns(host, runs) {
       var parts = [];
       if (facts.decision) parts.push(say(DECISION_TEXT, facts.decision));
       if (record.result) parts.push(say(RESULT_TEXT, record.result));
-      if (record.reason_code) parts.push(say(REASON_TEXT, record.reason_code));
+      var reason = reasonText(record.reason_code);
+      // The failure code and the reason are often the same string; printing
+      // both put "QUERY_TIMEOUT · QUERY_TIMEOUT" on the row.
+      if (reason && reason !== facts.failure_code) parts.push(reason);
       if (facts.failure_code) parts.push(facts.failure_code);
       // A step that carries no decision and no result still happened, and a
       // blank row reads as missing data rather than as a step with nothing to

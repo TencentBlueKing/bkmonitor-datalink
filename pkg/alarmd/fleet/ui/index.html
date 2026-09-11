@@ -676,8 +676,13 @@ function renderSummary(summary, total) {
   // "evaluation" can be a broken dependency and a bad result -- and the code is
   // the level that separates them. Reading it off the list one row at a time is
   // what this row removes.
+  // The symptom goes last because it is read last and first: last in the row,
+  // and the first thing anyone can act on. "56 objects, all unavailable" names
+  // the column again; "40 of them got 503, 16 had the connection refused" names
+  // two problems for two people.
   [['种类', summary.by_kind], ['原因', summary.by_reason],
    ['失败在哪', summary.by_failure], ['具体是哪种', summary.by_failure_code],
+   ['后端症状', summary.by_failure_detail],
    ['副本', summary.by_replica]]
     .forEach(function (pair) {
       var counts = pair[1] || [];

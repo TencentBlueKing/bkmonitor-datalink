@@ -154,7 +154,12 @@ type Summary struct {
 	// cardinality bound in 07 section 9. Here it is bounded by the anomalies
 	// actually present.
 	ByFailureCode []Count `json:"by_failure_code"`
-	ByReplica     []Count `json:"by_replica"`
+	// ByFailureDetail is the level the answer usually stops at. A column of
+	// objects sharing one code says how many; the symptom says what, and a
+	// population that splits into "the backend returned 503" and "the connection
+	// was refused" is two problems for two people rather than one number.
+	ByFailureDetail []Count `json:"by_failure_detail"`
+	ByReplica       []Count `json:"by_replica"`
 	// Stalled counts the objects that are stuck rather than merely degraded. The
 	// other three say how badly the last round went; this one says the rounds
 	// stopped ending, which is the only one of the four that cannot resolve on
@@ -177,6 +182,7 @@ func summarize(anomalies []Anomaly) Summary {
 	reasons := map[string]int{}
 	failures := map[string]int{}
 	codes := map[string]int{}
+	details := map[string]int{}
 	replicas := map[string]int{}
 	stalled := 0
 	for _, anomaly := range anomalies {
@@ -193,11 +199,14 @@ func summarize(anomalies []Anomaly) Summary {
 		if anomaly.Failure != nil && anomaly.Failure.Code != "" {
 			codes[anomaly.Failure.Code]++
 		}
+		if anomaly.Failure != nil && anomaly.Failure.Detail != "" {
+			details[anomaly.Failure.Detail]++
+		}
 		replicas[anomaly.Replica]++
 	}
 	return Summary{
 		ByKind: rank(kinds), ByReason: rank(reasons),
-		ByFailure: rank(failures), ByFailureCode: rank(codes),
+		ByFailure: rank(failures), ByFailureCode: rank(codes), ByFailureDetail: rank(details),
 		ByReplica: rank(replicas), Stalled: stalled,
 	}
 }

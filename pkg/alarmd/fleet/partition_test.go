@@ -152,6 +152,56 @@ func TestTheViewCanShowThatObjectsDoLeaveThePool(t *testing.T) {
 	}
 }
 
+// The pool's whole claim is "these are not this deployment's fault", which is a
+// claim a reader has to be able to check. A column of objects sharing one
+// failure code restates the column's own name; the symptom is what separates
+// one broken backend from several.
+func TestTheSymptomSurvivesAllTheWayToTheSummary(t *testing.T) {
+	at := time.Date(2026, 9, 11, 15, 30, 0, 0, time.UTC)
+	tracker := NewTracker(nil, "replica-a", func() time.Time { return at })
+	observe := func(queryGroup, detail string) {
+		tracker.Observe(context.Background(), observability.Observation{
+			Trace: observability.TraceFields{QueryGroupKey: queryGroup},
+			QueryFailure: &observability.QueryFailureFacts{
+				Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: detail,
+			},
+		})
+		for round := 0; round < DefaultDegradedRounds; round++ {
+			tracker.Observe(context.Background(), observability.Observation{
+				Trace:                  observability.TraceFields{QueryGroupKey: queryGroup},
+				ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE",
+			})
+		}
+	}
+	observe("qg-a", "http_status=503")
+	observe("qg-b", "http_status=503")
+	observe("qg-c", "transport=connection_refused")
+
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 3 {
+		t.Fatalf("anomalies = %d, want 3", len(anomalies))
+	}
+	for _, anomaly := range anomalies {
+		if anomaly.Failure == nil || anomaly.Failure.Detail == "" {
+			t.Fatalf("%s carries no symptom: %+v", anomaly.QueryGroup, anomaly.Failure)
+		}
+	}
+	summary := summarize(anomalies)
+	got := map[string]int{}
+	for _, count := range summary.ByFailureDetail {
+		got[count.Value] = count.Count
+	}
+	if got["http_status=503"] != 2 || got["transport=connection_refused"] != 1 {
+		t.Errorf("symptom counts = %v, want two 503s and one refused connection", got)
+	}
+	// One code across all three, which is exactly why the code alone cannot
+	// answer "what is wrong with these".
+	if len(summary.ByFailureCode) != 1 {
+		t.Errorf("failure codes = %+v, want the single code the symptom has to split",
+			summary.ByFailureCode)
+	}
+}
+
 // Pooled objects whose own cooldown window has already elapsed are due to be
 // retried and have not been. The count is derived from each object's own
 // deadline, so it can be reported without anyone first deciding what number is

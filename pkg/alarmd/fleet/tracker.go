@@ -289,7 +289,8 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		// Remembered, not counted: this is context for an anomaly the outcome
 		// paths decide on. Treating a failure as conclusive on its own would
 		// make a retried transient look like a determined verdict.
-		state.lastFailure = &FailureRef{Stage: failure.Stage, Category: failure.Category, Code: failure.Code}
+		state.lastFailure = &FailureRef{Stage: failure.Stage, Category: failure.Category,
+			Code: failure.Code, Detail: failure.Detail}
 	}
 	if trace.StrategyID != "" && len(state.strategies) < maxStrategiesPerQueryGroup {
 		state.strategies[StrategyRef{StrategyID: trace.StrategyID, BusinessID: trace.BusinessID}] = struct{}{}

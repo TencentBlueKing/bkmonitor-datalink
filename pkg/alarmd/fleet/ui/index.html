@@ -776,9 +776,14 @@ function renderCapacity(cap, gaps) {
   // it answers the one question it can: is anything running right this second.
   cell('查询许可（按 CPU 派生）',
     held ? held.rate.toFixed(1) + ' / ' + permitCeiling : '等下一次读取',
-    held ? '最近 ' + Math.round(held.elapsed) + ' 秒的平均占用；此刻 ' + cap.permits_held +
-           '，' + cap.replicas + ' 个副本各 ' + cap.permit_budget
-         : '平均占用要两次读取才算得出，约 30 秒后出现；此刻 ' + cap.permits_held,
+    // Says which direction means what, because occupancy alone does not: a low
+    // number is not slack and a high one is not trouble. It only becomes a
+    // constraint when it reaches the ceiling and callers start queueing, which
+    // is the cell next door.
+    (held ? '最近 ' + Math.round(held.elapsed) + ' 秒的平均占用；此刻 ' + cap.permits_held +
+            '，' + cap.replicas + ' 个副本各 ' + cap.permit_budget
+          : '平均占用要两次读取才算得出，约 30 秒后出现；此刻 ' + cap.permits_held) +
+      '。高低本身不是好坏：低只说明并发不是当前的约束，高只有在逼近上限且右边排队非零时才说明许可卡住了',
     held && held.rate > permitCeiling * 0.8);
   cell('排队等许可', String(cap.waiting),
     '非零说明此刻许可就是瓶颈；为零不代表有余量', cap.waiting > 0);

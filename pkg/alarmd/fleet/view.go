@@ -17,6 +17,7 @@
 package fleet
 
 import (
+	"encoding/json"
 	"sort"
 	"time"
 )
@@ -114,7 +115,12 @@ type Anomaly struct {
 	// can have been degraded for hours and failing to finish for a minute,
 	// and Stalled is judged against this clock, not that one, precisely so a
 	// long degraded history cannot turn one retrying round into a stall.
-	FailingSince time.Time   `json:"failing_since,omitzero"`
+	//
+	// A zero value is left off the wire by MarshalJSON below rather than by an
+	// omitzero tag: the release pipeline builds with Go 1.23, whose encoder
+	// does not know that option and would print a zero time on every object
+	// whose rounds are ending normally.
+	FailingSince time.Time   `json:"failing_since"`
 	Replica      string      `json:"replica"`
 	Failure      *FailureRef `json:"failure,omitempty"`
 	// Stalled says the rounds have been failing to finish for longer than the
@@ -129,6 +135,23 @@ type Anomaly struct {
 	// after a restart rather than over-reports.
 	Stalled    bool          `json:"stalled,omitempty"`
 	Strategies []StrategyRef `json:"strategies,omitempty"`
+}
+
+// MarshalJSON leaves failing_since off the wire while it is zero. The outer
+// field shadows the embedded one of the same name, so a nil pointer is
+// omitted and a set one carries the time; nothing else about the encoding
+// changes, and decoding needs no counterpart because a missing field decodes
+// to the zero time.
+func (anomaly Anomaly) MarshalJSON() ([]byte, error) {
+	type wire Anomaly
+	encoded := struct {
+		wire
+		FailingSince *time.Time `json:"failing_since,omitempty"`
+	}{wire: wire(anomaly)}
+	if !anomaly.FailingSince.IsZero() {
+		encoded.FailingSince = &anomaly.FailingSince
+	}
+	return json.Marshal(encoded)
 }
 
 // Snapshot is one replica's contribution. Owned is the number of objects the

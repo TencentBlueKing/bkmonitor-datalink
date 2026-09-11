@@ -12,6 +12,7 @@ package fleet
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,9 +134,26 @@ func TestAnomaliesCarryWhenTheirRoundsStoppedFinishing(t *testing.T) {
 	if !decoded.FailingSince.Equal(anomaly.FailingSince) {
 		t.Fatalf("failing since after the wire = %v, want %v", decoded.FailingSince, anomaly.FailingSince)
 	}
+	if !strings.Contains(string(encoded), `"failing_since":"`) {
+		t.Fatalf("wire = %s, want failing_since carried while the rounds are not finishing", encoded)
+	}
 	tracker.Observe(ctx, completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "8930"))
-	if got := tracker.Anomalies()[0].FailingSince; !got.IsZero() {
-		t.Fatalf("failing since = %v after a round ended, want none", got)
+	ended := tracker.Anomalies()[0]
+	if !ended.FailingSince.IsZero() {
+		t.Fatalf("failing since = %v after a round ended, want none", ended.FailingSince)
+	}
+	// The zero clock must not reach the wire as a zero time: the release
+	// pipeline's Go does not honour omitzero, so the omission is done by hand
+	// and has to be proven here rather than assumed from the tag.
+	encoded, err = json.Marshal(ended)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "failing_since") {
+		t.Fatalf("wire = %s, want no failing_since once a round ended", encoded)
+	}
+	if !strings.Contains(string(encoded), `"since":"`) || !strings.Contains(string(encoded), `"replica":"`) {
+		t.Fatalf("wire = %s, want the other fields untouched by the custom encoding", encoded)
 	}
 }
 

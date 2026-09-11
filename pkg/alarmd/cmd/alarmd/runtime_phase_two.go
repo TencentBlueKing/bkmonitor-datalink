@@ -491,6 +491,11 @@ type phaseTwoRunnerDispatcher struct {
 	// take" is answerable here and nowhere else. Without it the page can say an
 	// object is degraded but not whether an object is simply never reached.
 	rotation phaseTwoRotationFacts
+	// auditCursor and auditGeneration carry the audit round described on
+	// claimAuditDispatch: one parked Query Group per generation is dispatched
+	// anyway, rotating by name so every object is checked in turn.
+	auditCursor     execution.QueryGroupIdentity
+	auditGeneration uint64
 	// prunedRunners names the owned set the queues were last cleaned against.
 	// A lifecycle only stops being current when that set changes, so cleaning
 	// again for an unchanged set walks every queued entry and every remembered
@@ -959,6 +964,13 @@ func (dispatcher *phaseTwoRunnerDispatcher) run(ctx context.Context, wake <-chan
 }
 
 func (dispatcher *phaseTwoRunnerDispatcher) beginGeneration() {
+	if dispatcher.auditGeneration != dispatcher.generation {
+		// The generation that is ending found no parked Query Group after the
+		// cursor, so the rotation has reached the end of the owned set and starts
+		// again. Without this the audit would stop at the last name and never
+		// come back round.
+		dispatcher.auditCursor = ""
+	}
 	dispatcher.generation++
 	// One header comparison for the whole replica, once per tick. It is here
 	// rather than per Query Group because the header is global: a publication
@@ -1065,8 +1077,25 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 		// taken here is the prediction that suppressing dispatch would act on,
 		// and the comparison against what the round actually finds is a
 		// comparison of the real decision rather than a re-derivation of it.
-		scheduled.predictedDue, scheduled.dueEpoch =
+		var parkedOnBackoff bool
+		scheduled.predictedDue, parkedOnBackoff, scheduled.dueEpoch =
 			dispatcher.dueIndex.Predict(scheduled.queryGroup, scheduled.lifecycle, now)
+		if !scheduled.predictedDue && (parkedOnBackoff || !dispatcher.claimAuditDispatch(scheduled.queryGroup)) {
+			// Neither queue. A parked Query Group in the ready queue would be
+			// dispatched to be told what the bound already said, and one in the
+			// recovery queue would be worse: that queue is sized for recovery and
+			// alternates with the ready queue, so parking the idle majority there
+			// would have them competing with actual recovery for its places and
+			// re-sorting them on every pass of the loop.
+			//
+			// The walk still advances. The Query Group was considered and a
+			// decision was made about it, which is what a turn is; not advancing
+			// would stop the walk on the first parked object and never reach the
+			// ones behind it.
+			dispatcher.dueIndex.RecordSkip(dispatcher.bundle.dependencies.Recorder, parkedOnBackoff)
+			advance()
+			continue
+		}
 		if dispatcher.bundle.dependencies.TargetFlow.Selected(string(scheduled.queryGroup)) {
 			scheduled.queuedAt = time.Now()
 		}
@@ -1121,6 +1150,39 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 		dispatcher.rotation.queued++
 		advance()
 	}
+}
+
+// claimAuditDispatch decides whether this parked Query Group is dispatched
+// anyway, to keep checking the prediction that is now being acted on.
+//
+// Suppressing dispatch on the index's word would otherwise retire the one
+// counter that can prove the index wrong. A Query Group predicted not due is
+// never run, so it never reports what it actually found, so the violation
+// series can no longer be produced at all - and it would read as a permanent
+// zero, which is exactly what success looks like. The falsifier would go silent
+// at the moment it started to matter.
+//
+// So one parked Query Group per generation is dispatched regardless, rotating
+// by name so the whole owned set is checked in turn. It is one extra round per
+// generation against the hundreds the index removes, and it is the only thing
+// that keeps "predicted not due, actually due" a reading rather than an
+// assumption.
+//
+// Only objects parked on a schedule bound are audited. The claim being
+// falsified is about the schedule - that no publication can pull a Slot in
+// front of the bound - and a Runner's own backoff is not a claim about the
+// schedule at all, so auditing one would prove nothing. It would also cost
+// something real: an audited backoff joins the recovery queue and holds a place
+// there until its instant arrives, and over a long backoff that is one place
+// per generation taken from the queue recovery actually needs.
+func (dispatcher *phaseTwoRunnerDispatcher) claimAuditDispatch(
+	queryGroup execution.QueryGroupIdentity,
+) bool {
+	if dispatcher.auditGeneration == dispatcher.generation || queryGroup <= dispatcher.auditCursor {
+		return false
+	}
+	dispatcher.auditGeneration, dispatcher.auditCursor = dispatcher.generation, queryGroup
+	return true
 }
 
 // rotationFacts is the last rotation snapshot the dispatcher published.
@@ -1366,6 +1428,18 @@ func (bundle *phaseTwoWorkerBundle) ensureDueIndex() *phaseTwoDueIndex {
 		bundle.dueIndex = newPhaseTwoDueIndex(bundle.dependencies.Recorder)
 	}
 	return bundle.dueIndex
+}
+
+// dispatchSuppressionFacts is what this replica states about the due index in
+// its own snapshot. The index is built if it does not exist yet, so the field
+// is present from the very first publish rather than appearing once a
+// dispatcher has run: a field that arrives late would read as a build that does
+// not suppress at all for as long as it was missing.
+func (bundle *phaseTwoWorkerBundle) dispatchSuppressionFacts() *fleet.DispatchSuppression {
+	if bundle == nil {
+		return nil
+	}
+	return bundle.ensureDueIndex().SuppressionFacts(bundle.schedulerNow())
 }
 
 func (bundle *phaseTwoWorkerBundle) isCurrentScheduledRunner(scheduled phaseTwoScheduledRunner) bool {

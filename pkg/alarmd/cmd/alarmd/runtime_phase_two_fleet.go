@@ -163,6 +163,15 @@ type fleetPublisher struct {
 	// object arrives in the list identified the way every other anomaly is. A
 	// row nobody can trace back to a strategy is a row nobody can act on.
 	strategies func(string) []fleet.StrategyRef
+	// dispatch reports what the due index held back. It is read from the
+	// replica rather than from a time series because the page's only path to a
+	// series can answer "absent" for a series that exists, and the conclusion
+	// that failure would produce here is "suppression is not running".
+	//
+	// Nil on a build that suppresses nothing, which is what makes the overdue
+	// count above readable: without it, zero overdue on a shadow build and zero
+	// overdue on a healthy one are the same reading.
+	dispatch func() *fleet.DispatchSuppression
 	// restored names objects already considered, so an object whose Progress
 	// says nothing is not re-read on every tick forever.
 	restored map[execution.QueryGroupIdentity]struct{}
@@ -235,6 +244,21 @@ func (publisher *fleetPublisher) restoreOwned(ctx context.Context, owned []execu
 }
 
 func (publisher *fleetPublisher) publishOnce(ctx context.Context) {
+	snapshot := publisher.snapshot(ctx)
+	// The outcome is reported either way, including success. Reporting only
+	// failures would leave the observer unable to tell recovery from silence,
+	// and silence is exactly what a broken publisher produces.
+	err := publisher.store.Publish(ctx, snapshot)
+	if publisher.observe != nil {
+		publisher.observe(err)
+	}
+}
+
+// snapshot is what this replica has to say about itself right now. It is built
+// separately from being published so the two can fail independently: what the
+// replica states and whether the statement reached the store are different
+// questions, and a reader of either should not have to disentangle them.
+func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	owned := publisher.owned()
 	// One moment for the whole publish. Judging what is overdue at a different
 	// instant from the one the snapshot is stamped with would have the page
@@ -272,13 +296,10 @@ func (publisher *fleetPublisher) publishOnce(ctx context.Context) {
 	if publisher.capacity != nil {
 		snapshot.Capacity = publisher.capacity()
 	}
-	// The outcome is reported either way, including success. Reporting only
-	// failures would leave the observer unable to tell recovery from silence,
-	// and silence is exactly what a broken publisher produces.
-	err := publisher.store.Publish(ctx, snapshot)
-	if publisher.observe != nil {
-		publisher.observe(err)
+	if publisher.dispatch != nil {
+		snapshot.Dispatch = publisher.dispatch()
 	}
+	return snapshot
 }
 
 // fleetVerdictScrapeCeiling bounds how long a scrape may wait on the control

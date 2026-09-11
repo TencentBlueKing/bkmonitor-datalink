@@ -9,6 +9,8 @@
 
 package fleet
 
+import "sync/atomic"
+
 // DispatchSuppression is what the dispatcher held back because the due index
 // said an object was not due yet.
 //
@@ -63,4 +65,64 @@ func aggregateDispatchSuppression(view *View, snapshots []Snapshot) {
 		}
 	}
 	view.Dispatch = suppression
+}
+
+// DispatchSkipReasons is the closed vocabulary of why a dispatch was not made.
+//
+// Both are always reported, including at zero. A reason that has not happened
+// yet is a real answer - nothing has been held back for it - and leaving it out
+// would make "never happened" and "not measured" the same reading, which is the
+// confusion this whole field exists to remove.
+var DispatchSkipReasons = []string{"not_due", "backoff"}
+
+// DispatchSkipTally counts the dispatches the due index held back.
+//
+// The same counts exist as a metric, and this is deliberately a second small
+// tally rather than a read of it, for the same reason RejectionTally is: the
+// page answers from the replica's own snapshot, so it must not need collection
+// to have happened first.
+//
+// Atomics rather than a guarded map because the vocabulary is closed at two and
+// the increment happens inside the dispatcher's walk over everything the
+// replica owns. A map write there would put a lock on the path whose cost this
+// whole change exists to remove.
+type DispatchSkipTally struct {
+	notDue  atomic.Uint64
+	backoff atomic.Uint64
+}
+
+func NewDispatchSkipTally() *DispatchSkipTally {
+	return &DispatchSkipTally{}
+}
+
+// SkippedNotDue counts one object passed over because its next Slot is still
+// ahead.
+func (tally *DispatchSkipTally) SkippedNotDue() {
+	if tally == nil {
+		return
+	}
+	tally.notDue.Add(1)
+}
+
+// SkippedOnBackoff counts one object passed over because it is waiting out a
+// backoff of its own.
+func (tally *DispatchSkipTally) SkippedOnBackoff() {
+	if tally == nil {
+		return
+	}
+	tally.backoff.Add(1)
+}
+
+// Counts returns both reasons, including the ones still at zero.
+func (tally *DispatchSkipTally) Counts() map[string]uint64 {
+	counts := make(map[string]uint64, len(DispatchSkipReasons))
+	for _, reason := range DispatchSkipReasons {
+		counts[reason] = 0
+	}
+	if tally == nil {
+		return counts
+	}
+	counts["not_due"] = tally.notDue.Load()
+	counts["backoff"] = tally.backoff.Load()
+	return counts
 }

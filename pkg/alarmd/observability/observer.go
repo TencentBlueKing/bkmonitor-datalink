@@ -308,7 +308,21 @@ type ScheduleCutoverFacts struct {
 	SegmentsPruned   int
 	PrunesSkipped    map[string]int
 	Duration         time.Duration
+	// QueryGroups counts what the cutover did with each Query Group, by
+	// ScheduleCutoverDecisions; TimelinesRead is how many timelines it read
+	// to decide, which is the population until a process has verified the
+	// open Segments once and the changed set after; RevisionsFolded is how
+	// many superseded output context revisions it folded away;
+	// ContentSource names where the previous population came from.
+	QueryGroups     map[string]int
+	TimelinesRead   int
+	RevisionsFolded int
+	ContentSource   string
 }
+
+// ScheduleCutoverDecisions is the closed vocabulary of what a publication
+// cutover does with one Query Group.
+var ScheduleCutoverDecisions = []string{"kept", "revised", "cut", "legacy_cut", "retired", "added"}
 
 // ObjectCatalogFacts describe one write or renewal of the content-addressed
 // Query Group objects, output contexts and the manifest that names them for

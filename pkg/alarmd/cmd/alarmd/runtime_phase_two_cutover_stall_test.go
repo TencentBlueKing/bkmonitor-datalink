@@ -262,13 +262,15 @@ func (fixture *cutoverStallFixture) stallInFlightAcrossCutover(ctx context.Conte
 	fixture.uqCallsAtCutover = fixture.uqCalls.Load()
 
 	// Step 3: a publication that changes the query revision of the sibling
-	// strategy cuts over every remaining Query Group. The reconciler's
+	// strategy cuts over the sibling; this Query Group's Segment is made to cut
+	// too by stripping the content it names (stripSegmentContent). The reconciler's
 	// boundary is one second before the Slot begun in step 2: in production the
 	// reconciler reads its clock before compiling and persists afterwards, so
 	// the boundary precedes a Slot the Worker already began. The first refresh
 	// publishes the candidate, the second confirms and activates it; the
 	// activation boundary is the clock of the second one.
 	installCutoverStallStrategies(t, ctx, redisClient, "system.disk", 1725000600)
+	stripSegmentContent(t, ctx, redisClient, productionPhaseTwoPrefix(fixture.cfg.Redis.StatePrefix, "catalog"), fixture.queryGroup)
 	fixture.boundary = fixture.firstNewSlot - 1
 	fixture.clock.Store(int64(fixture.boundary) * 1000)
 	if err := bundle.refreshAndReconcile(ctx, true); err != nil {
@@ -538,6 +540,55 @@ func (probe cutoverStallProbe) run(
 // cutoverStallTriggerWindow is the trigger check window of the fixture
 // strategies; RequiredDetectHistoryPoints follows it (window + recovery - 1).
 var cutoverStallTriggerWindow = 1
+
+// installCutoverStallStrategies stores the two strategies of the cutover
+// fixtures. The second installation changes the sibling's query and the
+// first strategy's update_time only; see stripSegmentContent for how the
+// fixtures make the first strategy's Segment cut regardless.
+// stripSegmentContent rewrites a Query Group's open Segment so that it names
+// no execution content, the shape of a Segment written before Segments named
+// their content. A cutover cuts such a Segment once whatever the content did,
+// with the Plan records a cut assigns: a new state apply epoch under the same
+// state generation, no forced WARMING. That is the one way to cut a Segment
+// whose Plans' state stays readable: every edit of the execution content
+// itself either moves the Query Group identity (a query edit), forces WARMING
+// (a threshold edit) or makes the loaded state unreadable (a trigger, recovery
+// or connector edit), and the fixtures here are about a Slot in flight across
+// a cut, not about any of those.
+func stripSegmentContent(t *testing.T, ctx context.Context, redisClient *redis.Client, catalogPrefix string, queryGroup execution.QueryGroupIdentity) {
+	t.Helper()
+	key := catalogPrefix + ":schedule_timeline:" + string(queryGroup)
+	raw, err := redisClient.Get(ctx, key).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var timeline map[string]any
+	if err := json.Unmarshal(raw, &timeline); err != nil {
+		t.Fatal(err)
+	}
+	segments := timeline["segments"].([]any)
+	segment := segments[len(segments)-1].(map[string]any)["schedule"].(map[string]any)["Segment"].(map[string]any)
+	if _, named := segment["ObjectDigest"]; !named {
+		t.Fatalf("the open Segment names no content to strip: %+v", segment)
+	}
+	delete(segment, "ObjectDigest")
+	delete(segment, "OutputContextRefs")
+	delete(segment, "OutputContextRevisions")
+	stripped, err := json.Marshal(timeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ttl, err := redisClient.PTTL(ctx, key).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	if err := redisClient.Set(ctx, key, stripped, ttl).Err(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func installCutoverStallStrategies(t *testing.T, ctx context.Context, redisClient *redis.Client, secondTable string, updateTime int64) {
 	t.Helper()

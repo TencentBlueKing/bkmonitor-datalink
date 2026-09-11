@@ -125,28 +125,14 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		return ActivationState{}, err
 	}
 	failureStage, failureClass = ActivationFailureStageCurrentRecovery, ActivationFailureClassProjectionConflict
-	oldSnapshot, err := reconciler.repository.LoadPublishedSnapshot(ctx, previous.Current)
-	var oldGroups map[execution.QueryGroupIdentity]QueryGroup
-	if errors.Is(err, ErrSnapshotUnavailable) {
-		if previous.SchemaVersion == activationSchemaVersion {
-			identities, loadErr := reconciler.repository.LoadActiveQueryGroupSet(ctx, previous.ActiveQGSetRef)
-			if loadErr != nil {
-				return ActivationState{}, loadErr
-			}
-			candidates := make(map[execution.QueryGroupIdentity]QueryGroup, len(identities))
-			for _, identity := range identities {
-				candidates[identity] = QueryGroup{Identity: identity}
-			}
-			oldGroups, err = reconciler.repository.loadActivatedGroupsFromOpenSchedules(ctx, previous, candidates)
-		} else {
-			oldGroups, err = reconciler.repository.loadActivatedGroupsFromScheduleScan(ctx, previous)
-		}
-	} else if err == nil {
-		oldGroups, err = queryGroupMap(oldSnapshot.QueryGroups)
-	}
+	// The population the current activation runs comes from its manifest
+	// when one is stored: the reconciler needs the identities, not the
+	// content, and the manifest is a fraction of the Snapshot's size.
+	previousContent, err := reconciler.repository.loadActivatedContent(ctx, previous)
 	if err != nil {
 		return ActivationState{}, err
 	}
+	oldGroups := previousContent.groups
 	failureStage, failureClass = ActivationFailureStageReactivation, ActivationFailureClassDependencyIO
 	failureCounts = activationReconciliationCounts(previous.Draining, newGroups)
 	reactivating, err := reconciler.reactivatingQueryGroups(ctx, previous.Draining, newGroups, boundary)
@@ -258,7 +244,7 @@ func (reconciler *ScheduleActivationReconciler) upgradeLegacyActivation(
 			return ActivationState{}, ErrSnapshotUnavailable
 		}
 		open := timeline.Segments[len(timeline.Segments)-1]
-		if open.Schedule.Segment.End != nil || open.Schedule.Segment.Publication.SnapshotRevision != previous.Current.SnapshotRevision || uint64(open.Schedule.Segment.Publication.PublicationEpoch) != previous.Current.PublicationEpoch {
+		if open.Schedule.Segment.End != nil {
 			return ActivationState{}, ErrSnapshotUnavailable
 		}
 		if err := validateOpenSegmentActivation(previous, open); err != nil {

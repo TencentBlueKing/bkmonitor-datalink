@@ -45,6 +45,7 @@ func TestProductionPhaseTwoQueryGroupBehindUnretainedSegmentRecovers(t *testing.
 			// cuts over. The initial Segment closes with nine never-run Slots
 			// behind the cursor, which still points at its second grid point.
 			installCutoverStallStrategies(t, ctx, fixture.redisClient, "system.disk", 1725000600)
+			stripSegmentContent(t, ctx, fixture.redisClient, productionPhaseTwoPrefix(fixture.cfg.Redis.StatePrefix, "catalog"), queryGroup)
 			boundary := execution.EvaluationTime(base + 599)
 			fixture.clock.Store(int64(boundary) * 1000)
 			for attempt := 0; attempt < 2; attempt++ {
@@ -74,16 +75,19 @@ func TestProductionPhaseTwoQueryGroupBehindUnretainedSegmentRecovers(t *testing.
 			if err != nil || len(keys) == 0 {
 				t.Fatalf("Snapshot objects of the initial publication = %v error=%v, want at least one key", keys, err)
 			}
-			if closed.Segment.ObjectDigest == "" || len(closed.Segment.OutputContextRefs) == 0 {
-				t.Fatalf("the closed Segment names no catalog object: %+v", closed.Segment)
+			// The cut stripped the content the Segment named (stripSegmentContent),
+			// so the digests are taken from the Segment as it was first read.
+			named := fixture.initialSchedule.Segment
+			if named.ObjectDigest == "" || len(named.OutputContextRefs) == 0 {
+				t.Fatalf("the initial Segment names no catalog object: %+v", named)
 			}
-			keys = append(keys, "*:qgobj:"+string(closed.Segment.ObjectDigest))
-			objectKeys, err := fixture.redisClient.Keys(ctx, "*:qgobj:"+string(closed.Segment.ObjectDigest)).Result()
+			keys = append(keys, "*:qgobj:"+string(named.ObjectDigest))
+			objectKeys, err := fixture.redisClient.Keys(ctx, "*:qgobj:"+string(named.ObjectDigest)).Result()
 			if err != nil || len(objectKeys) != 1 {
 				t.Fatalf("catalog object of the initial publication = %v error=%v, want exactly one key", objectKeys, err)
 			}
 			keys = append(keys[:len(keys)-1], objectKeys...)
-			for _, ref := range closed.Segment.OutputContextRefs {
+			for _, ref := range named.OutputContextRefs {
 				contextKeys, err := fixture.redisClient.Keys(ctx, "*:outctx:"+string(ref.Digest)).Result()
 				if err != nil || len(contextKeys) != 1 {
 					t.Fatalf("output context of the initial publication = %v error=%v, want exactly one key", contextKeys, err)

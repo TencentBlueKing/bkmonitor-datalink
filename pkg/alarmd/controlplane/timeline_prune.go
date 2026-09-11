@@ -213,15 +213,26 @@ func timelineFence(expected []byte) string {
 // per-Query-Group cutover, which has no Progress reader and prunes nothing,
 // can share the persistence path.
 type cutoverFacts struct {
-	started       time.Time
-	pruned        int
-	skipped       map[string]int
-	payloadBytes  int
-	timelineBytes []int
+	started         time.Time
+	pruned          int
+	skipped         map[string]int
+	payloadBytes    int
+	timelineBytes   []int
+	decisions       map[string]int
+	read            int
+	revisionsFolded int
+	contentSource   string
 }
 
 func newCutoverFacts() *cutoverFacts {
-	return &cutoverFacts{started: time.Now(), skipped: make(map[string]int)}
+	return &cutoverFacts{started: time.Now(), skipped: make(map[string]int), decisions: make(map[string]int)}
+}
+
+func (facts *cutoverFacts) decided(decision contentCutoverDecision) {
+	if facts == nil {
+		return
+	}
+	facts.decisions[string(decision)]++
 }
 
 func (facts *cutoverFacts) prune(dropped int, skipped string) {
@@ -261,6 +272,8 @@ func (repository *RedisCatalogRepository) observeCutover(ctx context.Context, fa
 			Result: result, Timelines: len(facts.timelineBytes), PayloadBytes: facts.payloadBytes,
 			MaxTimelineBytes: largest, TimelineBytes: facts.timelineBytes, SegmentsPruned: facts.pruned,
 			PrunesSkipped: facts.skipped, Duration: time.Since(facts.started),
+			QueryGroups: facts.decisions, TimelinesRead: facts.read, RevisionsFolded: facts.revisionsFolded,
+			ContentSource: facts.contentSource,
 		},
 	})
 }

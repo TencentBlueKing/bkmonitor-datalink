@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -100,6 +101,23 @@ func (fixture *cutoverFixture) activation(t *testing.T) controlplane.ActivationS
 		t.Fatal(err)
 	}
 	return state
+}
+
+// sortedRecords orders records by Plan so two activations can be compared
+// as sets: the persisted order is canonical only from the first cutover on.
+func sortedRecords(records []controlplane.PlanActivationRecord) []controlplane.PlanActivationRecord {
+	sorted := append([]controlplane.PlanActivationRecord(nil), records...)
+	sort.Slice(sorted, func(i, j int) bool {
+		left, right := sorted[i].Fact.Plan, sorted[j].Fact.Plan
+		if left.TenantID != right.TenantID {
+			return left.TenantID < right.TenantID
+		}
+		if left.BusinessID != right.BusinessID {
+			return left.BusinessID < right.BusinessID
+		}
+		return left.StrategyID < right.StrategyID
+	})
+	return sorted
 }
 
 func recordsOf(state controlplane.ActivationState, group controlplane.QueryGroup) []controlplane.PlanActivationRecord {
@@ -297,7 +315,7 @@ func TestOutputContextEditRevisesReferencesWithoutCuttingTheSegment(t *testing.T
 	if after.Current != secondSnapshot.Publication {
 		t.Fatalf("activation current=%+v want %+v", after.Current, secondSnapshot.Publication)
 	}
-	if !reflect.DeepEqual(after.Plans, before.Plans) {
+	if !reflect.DeepEqual(sortedRecords(after.Plans), sortedRecords(before.Plans)) {
 		t.Fatalf("a rename must carry every Plan record over verbatim:\n before=%+v\n after=%+v", before.Plans, after.Plans)
 	}
 	if exists, err := fixture.client.Exists(fixture.ctx, fixture.prefix+":outctx:"+string(wantContext)).Result(); err != nil || exists != 1 {

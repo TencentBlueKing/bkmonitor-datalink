@@ -46,6 +46,25 @@ type SourceReconciler struct {
 	compiler        RuntimePlanCompiler
 	stateSemantics  strategy.StateSemantics
 	validateCatalog func(Catalog) error
+	outputProtocol  string
+}
+
+// ConfigureOutputProtocol sets the deployment's wire format choice, once, at
+// assembly. Empty leaves the pre-choice behaviour, where the frozen revision
+// decides. It is set rather than passed because the reconciler is built before
+// the configuration reaches this layer, and a Plan built with the wrong choice
+// would publish the wrong bytes for as long as it is cached.
+func (reconciler *SourceReconciler) ConfigureOutputProtocol(protocol string) error {
+	if reconciler == nil {
+		return errors.New("alarmd controlplane: no source reconciler")
+	}
+	switch protocol {
+	case "", outputProtocolAuto, outputProtocolLegacy, outputProtocolNative:
+		reconciler.outputProtocol = protocol
+		return nil
+	default:
+		return errors.New("alarmd controlplane: unknown output protocol")
+	}
 }
 
 func NewSourceReconciler(
@@ -97,6 +116,7 @@ func (reconciler *SourceReconciler) Refresh(
 	}
 	catalog, err := BuildCatalog(ctx, BuildRequest{
 		Strategies: cycle.strategies, Planner: planner, LastGood: current, PreviousDispositions: previousDispositions,
+		OutputProtocol: reconciler.outputProtocol,
 	})
 	if err != nil {
 		return SourceRefreshResult{}, err

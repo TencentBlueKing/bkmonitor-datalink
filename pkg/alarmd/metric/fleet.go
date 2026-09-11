@@ -95,10 +95,13 @@ func newFleetCollector(source FleetVerdictSource) *fleetCollector {
 			[]string{"kind"}),
 		stalled: descriptor("fleet_stalled_objects",
 			"Objects whose rounds stopped finishing for longer than the deployment's own budget for "+
-				"terminating a Slot that cannot complete. Unlike the other counts here this one does not "+
-				"resolve on its own. It is derived from how long the anomaly has been observed, so it "+
-				"under-reports after a restart rather than over-reporting: zero is weaker evidence than "+
-				"non-zero.",
+				"terminating a Slot that cannot complete, counted from the first round of the current "+
+				"unbroken sequence that reached execution and did not finish. Any round that ends, even "+
+				"degraded, or that is blocked before execution, ends the sequence and drops the object "+
+				"from this count; how long the object has been anomalous overall does not enter into "+
+				"it. Unlike the other counts here this one does not resolve on its own. It is derived from "+
+				"how long the failing sequence has been observed, so it under-reports after a restart "+
+				"rather than over-reporting: zero is weaker evidence than non-zero.",
 			nil),
 		gaps: descriptor("fleet_gaps",
 			"Reasons the view is incomplete, by closed kind; unknown kinds are counted as OTHER. "+

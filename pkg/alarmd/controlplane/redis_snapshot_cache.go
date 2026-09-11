@@ -168,6 +168,13 @@ func (cache *verifiedSnapshotCache) load(
 		defer allocation.release()
 	}
 	// The byte conversion is live alongside the Redis string during decode.
+	//
+	// The decode stays under the mutex on purpose. Callers that shared one
+	// complete read (snapshotReadFlight) hold the same string and take the
+	// byte-equal branch above, which is a pointer comparison for them, so the
+	// mutex costs them nothing. Moving the decode out would let callers that
+	// each read their own copy decode at once, one temporary conversion each,
+	// which is the memory the serialisation bounds.
 	temporary, err := reserveSnapshotAllocation(ctx, cache.admit, uint64(len(payload)))
 	if err != nil {
 		return verifiedSnapshotCacheEntry{}, nil, err

@@ -252,6 +252,11 @@ func TestCustomMetricFamilySeriesDevelopmentLimits(t *testing.T) {
 		"bkmonitor_alarmd_worker_query_permit_seconds_total": 4,
 		"bkmonitor_alarmd_worker_query_permit_budget":        2,
 		"bkmonitor_alarmd_worker_query_admission_total":      20,
+		// One series per alert level this build has no name for, plus "other"
+		// for anything past the bound. The platform states its levels in
+		// strategy configuration and today has three named ones, so this family
+		// is empty in a healthy build and grows one series when it is not.
+		"bkmonitor_alarmd_unmapped_severity_total": 65,
 		// Redis command names are the bounded redisCommandNames set plus
 		// "other", each with pipelined true/false, for each named client plus
 		// "other". The client dimension multiplies this family, which is the
@@ -311,6 +316,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_control_cache_bytes_limit":                    "variableLabels: {object}",
 		"bkmonitor_alarmd_legacy_pod_cache_total":                       "variableLabels: {result}",
 		"bkmonitor_alarmd_series_admission_total":                       "variableLabels: {filter,result,reason}",
+		"bkmonitor_alarmd_unmapped_severity_total":                      "variableLabels: {level}",
 		"bkmonitor_alarmd_cmdb_host_index_hosts":                        "variableLabels: {}",
 		"bkmonitor_alarmd_host_disable_monitor_states":                  "variableLabels: {}",
 		"bkmonitor_alarmd_cmdb_host_index_age_seconds":                  "variableLabels: {kind}",
@@ -475,6 +481,9 @@ func equalFloats(left, right []float64) bool {
 }
 
 func populateAllCustomLabelCombinations(recorder *Recorder) {
+	for level := uint32(1); level <= 65; level++ {
+		recorder.RecordUnmappedSeverity(level)
+	}
 	for filter := range admissionFilters {
 		for result := range admissionResults {
 			for reason := range admissionReasons {
@@ -646,7 +655,11 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("control_cache_bytes_limit"): 4,
 		fqName("legacy_pod_cache_total"):    3,
 		// Filters and reasons are closed vocabularies in the recorder.
-		fqName("series_admission_total"):      len(admissionFilters) * len(admissionResults) * len(admissionReasons),
+		fqName("series_admission_total"): len(admissionFilters) * len(admissionResults) * len(admissionReasons),
+		// Levels 1..64 plus "other". Empty in a healthy build: the platform's
+		// three levels all have names here, so a series appearing at all is the
+		// signal.
+		fqName("unmapped_severity_total"):     65,
 		fqName("cmdb_host_index_hosts"):       1,
 		fqName("host_disable_monitor_states"): 1,
 		fqName("cmdb_host_index_age_seconds"): 2,

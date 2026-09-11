@@ -814,3 +814,29 @@ func TestThePlatformKeyPrefixIsOneFactWithOneSpelling(t *testing.T) {
 		t.Fatalf("Validate() error = %v, want the missing platform prefix rejected", err)
 	}
 }
+
+// The wire format is a deployment choice with exactly three words, and an
+// unrecognised one has to be refused at load: a typo that fell through to the
+// default would publish a format the deployment did not ask for, and nothing
+// downstream would say so.
+func TestTheOutputProtocolIsOneOfThreeWords(t *testing.T) {
+	for _, protocol := range []string{"", "auto", "legacy", "native"} {
+		cfg := validGoAccessConfigObject()
+		cfg.PhaseTwo.Output.Protocol = protocol
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate() rejected protocol %q: %v", protocol, err)
+		}
+	}
+	for _, protocol := range []string{"linkd", "Native", "python", "off"} {
+		cfg := validGoAccessConfigObject()
+		cfg.PhaseTwo.Output.Protocol = protocol
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "protocol") {
+			t.Fatalf("Validate() error = %v, want protocol %q rejected", err, protocol)
+		}
+	}
+	// Unset is auto, which is the behaviour that was already in force.
+	cfg := validGoAccessConfigObject()
+	if got := cfg.OutputProtocol(); got != "auto" {
+		t.Fatalf("default protocol = %q, want auto", got)
+	}
+}

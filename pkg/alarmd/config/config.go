@@ -342,6 +342,12 @@ func (c Config) PlatformKeyPrefix() string {
 	return c.Kafka.LegacyAdapter.SnapshotPrefix
 }
 
+// OutputProtocol is the deployment's choice of wire format for published
+// events. It is resolved per strategy when a Plan is built, and frozen there.
+func (c Config) OutputProtocol() string {
+	return c.PhaseTwo.Output.protocol()
+}
+
 // CMDBCacheRedis is where the platform's host cache is read from.
 func (c Config) CMDBCacheRedis() RedisConnectionConfig {
 	if c.PlatformCache.CMDB != nil {

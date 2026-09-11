@@ -323,11 +323,23 @@ func handlerWithStallBudget(t *testing.T, snapshots []Snapshot, budget time.Dura
 	return handler
 }
 
+// agedAnomaly is an object that has been anomalous for age. When the reason is
+// an execution that did not finish, the object has also been failing to finish
+// for the whole of that age; use failingFor to give the two clocks different
+// values.
 func agedAnomaly(queryGroup, reason string, age time.Duration) Anomaly {
 	item := anomaly(queryGroup)
 	item.Kind = "DEGRADED_RUN"
 	item.ReasonCode = reason
 	item.Since = now.Add(-age)
+	if failedExecution(reason) {
+		item.FailingSince = item.Since
+	}
+	return item
+}
+
+func failingFor(item Anomaly, age time.Duration) Anomaly {
+	item.FailingSince = now.Add(-age)
 	return item
 }
 
@@ -342,6 +354,7 @@ func TestListFlagsObjectsWhoseRoundsStoppedFinishing(t *testing.T) {
 		agedAnomaly("stuck", "error", 2*time.Hour),
 		agedAnomaly("failing-briefly", "error", 2*time.Minute),
 		agedAnomaly("degraded-for-hours", "COMPLETED_WITH_UNAVAILABLE", 2*time.Hour),
+		failingFor(agedAnomaly("degraded-for-hours-then-retrying", "retrying", 2*time.Hour), 2*time.Minute),
 	}
 	snapshots[1].TotalAnomalies = len(snapshots[1].Anomalies)
 
@@ -363,6 +376,9 @@ func TestListFlagsObjectsWhoseRoundsStoppedFinishing(t *testing.T) {
 	}
 	if stalled["degraded-for-hours"] {
 		t.Fatal("a completed degraded round is flagged; that Slot ended and the cursor moved")
+	}
+	if stalled["degraded-for-hours-then-retrying"] {
+		t.Fatal("two minutes of not finishing is flagged because the object was degraded for hours before; the stall clock is not the anomaly clock")
 	}
 	summary := body["summary"].(map[string]any)
 	if summary["stalled"].(float64) != 1 {

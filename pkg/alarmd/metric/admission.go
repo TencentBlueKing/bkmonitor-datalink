@@ -5,6 +5,8 @@
 
 package metric
 
+import "strconv"
+
 // Series admission is on the hot path - once per series per plan - so it is
 // counted directly rather than through an observation per decision. Only the
 // filter name, the outcome and a bounded reason are recorded; no host, plan or
@@ -74,6 +76,20 @@ func (r *Recorder) SetCMDBHostIndex(hosts int, ageSeconds float64, sourceAgeSeco
 	}
 	r.phaseTwo.cmdbIndexDegraded.Reset()
 	r.phaseTwo.cmdbIndexDegraded.WithLabelValues(reason).Set(value)
+}
+
+// RecordUnmappedSeverity counts one event whose alert level had no name in
+// this build. The level is a small bounded number stated in strategy
+// configuration, so it is safe as a label; anything outside that is folded.
+func (r *Recorder) RecordUnmappedSeverity(level uint32) {
+	if r == nil {
+		return
+	}
+	name := "other"
+	if level <= 64 {
+		name = strconv.FormatUint(uint64(level), 10)
+	}
+	r.phaseTwo.unmappedSeverity.WithLabelValues(name).Inc()
 }
 
 // SetHostDisableMonitorStates publishes how many host states the access path

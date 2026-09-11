@@ -1932,6 +1932,10 @@ type recordingPhaseTwoEventSink struct {
 	closed bool
 }
 
+func (s *recordingPhaseTwoEventSink) ConfigureStandardOutput(enginekafka.StandardEventConverter) error {
+	return nil
+}
+
 func (s *recordingPhaseTwoEventSink) ConfigureLegacyOutput(enginekafka.LegacyEventConverter, string, int) error {
 	return nil
 }
@@ -1942,6 +1946,10 @@ type selectiveRetryablePhaseTwoEventSink struct {
 	attempted        map[string]int
 	acknowledged     map[string]int
 	closed           bool
+}
+
+func (s *selectiveRetryablePhaseTwoEventSink) ConfigureStandardOutput(enginekafka.StandardEventConverter) error {
+	return nil
 }
 
 func (s *selectiveRetryablePhaseTwoEventSink) ConfigureLegacyOutput(enginekafka.LegacyEventConverter, string, int) error {

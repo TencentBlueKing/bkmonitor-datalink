@@ -35,7 +35,12 @@ func buildBusinessReference(input GoFrozenEvidenceInputV2, e *contract.FinalResu
 		Native: contract.BusinessNativeV1{EventID: e.Native.EventID, SnapshotKey: e.Context.SnapshotRevision, RecordID: input.Event.RecordRef.RecordID}}
 	for _, l := range e.Native.LevelResults {
 		if l.LevelID == r.Primary.LevelID {
-			r.Primary.Trigger = l.DecisionWindow.Trigger
+			r.Primary.Trigger = contract.BusinessTriggerWindowV1{
+				WindowStart: l.DecisionWindow.Trigger.WindowStart, WindowEnd: l.DecisionWindow.Trigger.WindowEnd,
+				WindowSize:        l.DecisionWindow.Trigger.WindowSize,
+				RequiredAnomalies: l.DecisionWindow.Trigger.RequiredAnomalies,
+				ObservedAnomalies: l.DecisionWindow.Trigger.ObservedAnomalies,
+			}
 		}
 	}
 	r.SemanticDigest, err = contract.BusinessSemanticDigestV1(*r)

@@ -366,6 +366,7 @@ type evaluationPlanWirePartsV2 struct {
 	SubjectFacts        *MonitorSubjectFacts   `json:"subject_facts,omitempty"`
 	LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
 	StrategyIR          json.RawMessage        `json:"strategy_ir"`
+	WireFormat          string                 `json:"wire_format,omitempty"`
 	TerminalReasonCode  string                 `json:"terminal_reason_code,omitempty"`
 }
 
@@ -437,7 +438,8 @@ func decodeEvaluationPlanBestEffortV2(raw json.RawMessage) EvaluationPlanV2 {
 	plan := EvaluationPlanV2{
 		PlanID: wire.PlanID, StrategyRef: wire.StrategyRef, InputProjection: wire.InputProjection,
 		SourceCompatibility: wire.SourceCompatibility, OutputIdentity: wire.OutputIdentity,
-		SubjectFacts: wire.SubjectFacts, LegacyOutput: wire.LegacyOutput, TerminalReasonCode: wire.TerminalReasonCode,
+		SubjectFacts: wire.SubjectFacts, LegacyOutput: wire.LegacyOutput,
+		WireFormat: wire.WireFormat, TerminalReasonCode: wire.TerminalReasonCode,
 	}
 	if wire.TerminalReasonCode != "" {
 		return plan
@@ -681,7 +683,7 @@ func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) 
 	object, err := validatePrevalidatedJSONObjectFieldsV2(
 		raw, path,
 		[]string{"plan_id", "strategy_ref", "input_projection", "strategy_ir"},
-		[]string{"source_compatibility", "output_identity", "subject_facts", "legacy_output"}, allowUnknown,
+		[]string{"source_compatibility", "output_identity", "subject_facts", "legacy_output", "wire_format"}, allowUnknown,
 	)
 	if err != nil {
 		return framing(ReasonMalformedJSON, path, err.Error())

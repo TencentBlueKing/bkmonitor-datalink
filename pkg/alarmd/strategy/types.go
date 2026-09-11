@@ -487,6 +487,7 @@ type CompiledPlan struct {
 	strategyRef         contract.StrategyRefV2
 	outputIdentity      *contract.MonitorOutputIdentity
 	subjectFacts        *contract.MonitorSubjectFacts
+	wireFormat          string
 	legacyOutput        *contract.FrozenLegacyOutput
 	projection          contract.InputProjectionV2
 	evaluationSemantics contract.ExecutionSemanticsV2
@@ -520,6 +521,26 @@ func (p *CompiledPlan) OutputIdentity() *contract.MonitorOutputIdentity {
 		return nil
 	}
 	return &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, p.outputIdentity.DimensionFields...)}
+}
+
+// PublishesCompatibleProtocol reports whether this Plan's events go out as the
+// Python-compatible event.
+func (p *CompiledPlan) PublishesCompatibleProtocol() bool {
+	if p == nil {
+		return false
+	}
+	if p.wireFormat != "" {
+		return p.wireFormat == contract.WireFormatPythonCompatible
+	}
+	return p.strategyRef.SnapshotRevision == 0
+}
+
+// WireFormat returns the format this Plan's events are published as.
+func (p *CompiledPlan) WireFormat() string {
+	if p == nil {
+		return ""
+	}
+	return p.wireFormat
 }
 
 // SubjectFacts returns the frozen strategy facts the subject projection reads.

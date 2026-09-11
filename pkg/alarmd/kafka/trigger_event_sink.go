@@ -16,20 +16,40 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Shopify/sarama"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 )
+
+// StandardEventConverter writes a decision as the standard raw event.
+type StandardEventConverter interface {
+	Convert(*contract.TriggerEventV1) (linkdoutput.Event, error)
+}
 
 // TriggerEventSink is the critical Kafka output for Trigger events.
 // A successful WriteBatch means every event received a synchronous broker ACK.
 type TriggerEventSink struct {
-	core            *DecisionSink
-	legacyConverter LegacyEventConverter
-	legacyTopic     string
-	maxLegacyBytes  int
+	core              *DecisionSink
+	legacyConverter   LegacyEventConverter
+	standardConverter StandardEventConverter
+	legacyTopic       string
+	maxLegacyBytes    int
+}
+
+// ConfigureStandardOutput replaces the standard raw event converter, once, at
+// assembly. The default one is complete; this exists so the assembly can give
+// it the observation callback that reports an alert level this build has no
+// name for, which the sink has no recorder to report itself.
+func (sink *TriggerEventSink) ConfigureStandardOutput(converter StandardEventConverter) error {
+	if converter == nil {
+		return errors.New("invalid standard output configuration")
+	}
+	sink.standardConverter = converter
+	return nil
 }
 
 // ConfigureLegacyOutput is called once during assembly, before any writes.
@@ -92,7 +112,14 @@ func newTriggerEventSink(
 	if err != nil {
 		return nil, err
 	}
-	return &TriggerEventSink{core: core, legacyConverter: &legacyoutput.Converter{}, legacyTopic: "alarmd_0bkmonitor_backend_event", maxLegacyBytes: 524288}, nil
+	standard, err := linkdoutput.NewConverter(time.Now, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &TriggerEventSink{
+		core: core, legacyConverter: &legacyoutput.Converter{}, standardConverter: standard,
+		legacyTopic: "alarmd_0bkmonitor_backend_event", maxLegacyBytes: 524288,
+	}, nil
 }
 
 func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.TriggerEventV1) error {
@@ -108,6 +135,20 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 	messages := make([]*sarama.ProducerMessage, len(events))
 	groups := make(map[string][]int)
 	for index := range events {
+		if events[index].WireFormat == contract.WireFormatStandardRawEvent {
+			converted, convertErr := sink.standardConverter.Convert(&events[index])
+			if convertErr != nil {
+				return &triggerEventDependencyError{err: convertErr}
+			}
+			// Keyed by the alert identity, so one alert's history stays on one
+			// partition and its trigger and its resolution arrive in order.
+			messages[index] = &sarama.ProducerMessage{
+				Topic: sink.core.outputTopic,
+				Key:   sarama.StringEncoder(converted.AlertID),
+				Value: sarama.ByteEncoder(converted.Payload),
+			}
+			continue
+		}
 		payload, err := contract.EncodeTriggerEventV1(&events[index])
 		if err != nil {
 			return fmt.Errorf("kafka trigger event sink: encode event %d: %w", index, err)
@@ -122,9 +163,12 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 			// lowercase hex text, not the decoded 16-byte digest.
 			messages[index].Key = sarama.StringEncoder(events[index].DedupeMD5)
 		}
-		// The frozen revision alone selects the wire protocol. Missing Python
-		// snapshot dependencies must never change that choice to native output.
-		if events[index].StrategyRef == nil {
+		// The Plan's frozen format selects the protocol, and for a Plan built
+		// before the choice existed that is still the frozen revision: a
+		// compatibility context is attached only where the compatibility
+		// protocol is what the Plan publishes. Missing Python snapshot
+		// dependencies must never change that choice to native output.
+		if events[index].LegacyOutput != nil || events[index].StrategyRef == nil {
 			if events[index].LegacyOutput == nil || events[index].LegacyOutput.Configuration == nil {
 				return errors.New("legacy event has no frozen compatibility context")
 			}

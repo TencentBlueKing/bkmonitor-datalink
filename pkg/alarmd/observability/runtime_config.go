@@ -37,6 +37,10 @@ type RuntimeStorageFacts struct {
 	// The prefixes matter alongside the addresses: the right instance read
 	// with the wrong prefix returns nothing, and looks exactly like the right
 	// prefix read on the wrong instance.
+	// OutputProtocol is the deployment's wire format choice. It decides what
+	// bytes land on the output topic, which is the first thing a consumer that
+	// reads nothing usable will be asked about.
+	OutputProtocol      string `json:"output_protocol"`
 	PlatformKeyPrefix   string `json:"platform_key_prefix"`
 	StrategyCachePrefix string `json:"strategy_cache_prefix"`
 	OwnStorePrefix      string `json:"own_store_prefix"`

@@ -23,6 +23,12 @@ type ControlCacheCounts struct {
 	Hits      uint64
 	Misses    uint64
 	Refreshes uint64
+	// Shared is a miss or refresh that took the body from a complete read
+	// another caller of this process already had in flight. It is what says
+	// the coalescing works: bodies actually read are misses plus refreshes
+	// minus shared, and a follower whose workers all miss a new revision at
+	// once should show shared climbing with misses while reads stay at one.
+	Shared    uint64
 	Evictions uint64
 	// Clears is an all-or-nothing drop, which is a different fact from an
 	// eviction: an evicting cache is working inside its budget, while a clearing
@@ -67,7 +73,9 @@ func newControlCacheCollector() *controlCacheCollector {
 				"dropped to stay inside the byte budget; evictions rising while refreshes stay at zero "+
 				"means the budget cannot hold the working set, not that the control plane changed. A clear "+
 				"is the whole cache dropped at once, which only the key segment memos do: any clear at all "+
-				"means a population outgrew a bound its own design assumes it stays inside.",
+				"means a population outgrew a bound its own design assumes it stays inside. A share is a "+
+				"miss or refresh served from a complete read another caller of this process already had "+
+				"in flight, so bodies actually read are miss plus refresh minus share.",
 			[]string{"object", "result"}, nil,
 		),
 		entries: descriptor("control_cache_entries",
@@ -116,6 +124,7 @@ func (c *controlCacheCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Hits), counts.Object, "hit")
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Misses), counts.Object, "miss")
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Refreshes), counts.Object, "refresh")
+		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Shared), counts.Object, "share")
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Evictions), counts.Object, "evict")
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Clears), counts.Object, "clear")
 		if counts.Occupancy == nil {

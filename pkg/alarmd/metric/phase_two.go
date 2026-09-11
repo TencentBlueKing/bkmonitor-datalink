@@ -46,6 +46,7 @@ type phaseTwoMetrics struct {
 	seriesAdmission              *prometheus.CounterVec
 	cmdbIndexHosts               prometheus.Gauge
 	hostDisableMonitorStates     prometheus.Gauge
+	unmappedSeverity             *prometheus.CounterVec
 	cmdbIndexAge                 *prometheus.GaugeVec
 	cmdbIndexDegraded            *prometheus.GaugeVec
 	dueIndex                     dueIndexMetrics
@@ -177,6 +178,15 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "host_disable_monitor_states",
 		Help: "Host states the access path treats as not monitored; zero means the filter is not installed.",
 	})
+	// An alert level this build has no name for arrives at the consumer under
+	// its default severity: not an error anywhere, just an alert at the wrong
+	// level. The platform states its levels in the strategy snapshot and may
+	// grow more, so the moment one appears has to be visible here rather than
+	// in whatever noticed the alerts looked wrong.
+	metrics.unmappedSeverity = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "unmapped_severity_total",
+		Help: "Events published with a severity derived from the level number, because no name was known for it.",
+	}, []string{"level"})
 	metrics.cmdbIndexAge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "cmdb_host_index_age_seconds",
 		Help: "Age of the CMDB index alarmd holds, and of the platform refresh it was built from.",
@@ -195,7 +205,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.slotReadiness.slack, m.slotReadiness.boundary,
 		m.slotTiming,
 		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations, m.sourceRefreshes,
-		m.activationFailures,
+		m.activationFailures, m.unmappedSeverity,
 		m.ownedQueryGroups, m.ownershipTransitions,
 		m.queryAdmission,
 		m.activeQGSetCount, m.activeQGSetBytes, m.activeQGSetEncode, m.activeQGSetRedis,

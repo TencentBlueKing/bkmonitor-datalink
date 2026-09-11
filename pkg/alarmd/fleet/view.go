@@ -17,6 +17,7 @@
 package fleet
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -110,8 +111,20 @@ type Anomaly struct {
 	Cause     string      `json:"cause,omitempty"`
 	Since     time.Time   `json:"since"`
 	SinceFrom SinceSource `json:"since_from"`
-	Replica   string      `json:"replica"`
-	Failure   *FailureRef `json:"failure,omitempty"`
+	// FailingSince is when the current unbroken sequence of rounds that
+	// reached execution and did not finish began; zero while the last
+	// conclusive round ended, however it ended. It is not Since: an object
+	// can have been degraded for hours and failing to finish for a minute,
+	// and Stalled is judged against this clock, not that one, precisely so a
+	// long degraded history cannot turn one retrying round into a stall.
+	//
+	// A zero value is left off the wire by MarshalJSON below rather than by an
+	// omitzero tag: the release pipeline builds with Go 1.23, whose encoder
+	// does not know that option and would print a zero time on every object
+	// whose rounds are ending normally.
+	FailingSince time.Time   `json:"failing_since"`
+	Replica      string      `json:"replica"`
+	Failure      *FailureRef `json:"failure,omitempty"`
 	// Stalled says the rounds have been failing to finish for longer than the
 	// deployment's own budget for terminating an unfinishable Slot. The
 	// distinction it draws is the one that decides whether anyone has to act: a
@@ -120,10 +133,27 @@ type Anomaly struct {
 	// identical in a list that only shows how the last round went.
 	//
 	// Derived when the view is served rather than stored, so it is only as old as
-	// the uninterrupted run of snapshots behind Since: it under-reports after a
-	// restart rather than over-reports.
+	// the uninterrupted run of snapshots behind FailingSince: it under-reports
+	// after a restart rather than over-reports.
 	Stalled    bool          `json:"stalled,omitempty"`
 	Strategies []StrategyRef `json:"strategies,omitempty"`
+}
+
+// MarshalJSON leaves failing_since off the wire while it is zero. The outer
+// field shadows the embedded one of the same name, so a nil pointer is
+// omitted and a set one carries the time; nothing else about the encoding
+// changes, and decoding needs no counterpart because a missing field decodes
+// to the zero time.
+func (anomaly Anomaly) MarshalJSON() ([]byte, error) {
+	type wire Anomaly
+	encoded := struct {
+		wire
+		FailingSince *time.Time `json:"failing_since,omitempty"`
+	}{wire: wire(anomaly)}
+	if !anomaly.FailingSince.IsZero() {
+		encoded.FailingSince = &anomaly.FailingSince
+	}
+	return json.Marshal(encoded)
 }
 
 // Snapshot is one replica's contribution. Owned is the number of objects the

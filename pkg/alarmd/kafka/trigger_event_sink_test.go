@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/Shopify/sarama"
@@ -296,4 +297,93 @@ func legacyTriggerEventGolden(t testing.TB) contract.TriggerEventV1 {
 		t.Fatal(err)
 	}
 	return *event
+}
+
+// The switch has to reach the wire, not just the configuration: a Plan built as
+// native publishes the standard raw event, keyed by the alert identity so the
+// consumer's partitions hold one alert's history together.
+func TestTriggerEventSinkPublishesTheStandardRawEventWhenThePlanSaysSo(t *testing.T) {
+	t.Parallel()
+
+	event := triggerEventGolden(t)
+	event.WireFormat = contract.WireFormatStandardRawEvent
+	event.StrategyRef = &contract.StrategySnapshotRef{
+		TenantID: event.TenantID, BusinessID: 2, StrategyID: 123, Revision: 7,
+	}
+	event.DedupeMD5 = strings.Repeat("b", 32)
+	event.BusinessID = "2"
+	event.Schema.Minor = 2
+
+	sent := make(chan *sarama.ProducerMessage, 1)
+	producer := &fakeSyncProducer{send: func(message *sarama.ProducerMessage) (int32, int64, error) {
+		sent <- message
+		return 0, 1, nil
+	}}
+	sink, err := newTriggerEventSink("alarmd-trigger-event-shadow", producer, &fakeCloser{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sink.Close()
+
+	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{event}); err != nil {
+		t.Fatalf("WriteBatch() error = %v", err)
+	}
+	message := <-sent
+	if message.Topic != "alarmd-trigger-event-shadow" {
+		t.Fatalf("topic = %q, want the native topic", message.Topic)
+	}
+	key, err := message.Key.Encode()
+	if err != nil || string(key) != event.DedupeMD5 {
+		t.Fatalf("key = %s (err %v), want the alert identity", key, err)
+	}
+	value, err := message.Value.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written map[string]json.RawMessage
+	if err := json.Unmarshal(value, &written); err != nil {
+		t.Fatalf("written message is not the standard raw event: %v", err)
+	}
+	for _, field := range []string{"alert_id", "action", "severity", "occurred_at", "labels", "extra_data"} {
+		if _, present := written[field]; !present {
+			t.Fatalf("written message has no %s: %s", field, value)
+		}
+	}
+	// And it is not the decision event: that one has no alert_id at all.
+	if _, decision := written["event_kind"]; decision {
+		t.Fatalf("the decision event was written instead of the standard raw event: %s", value)
+	}
+}
+
+// A Plan that did not ask for it keeps publishing exactly what it published
+// before. This is what makes the switch releasable ahead of its consumer.
+func TestAPlanWithNoFormatStillPublishesTheDecisionEvent(t *testing.T) {
+	t.Parallel()
+
+	event := triggerEventGolden(t)
+	wantPayload, err := contract.EncodeTriggerEventV1(&event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := make(chan *sarama.ProducerMessage, 1)
+	producer := &fakeSyncProducer{send: func(message *sarama.ProducerMessage) (int32, int64, error) {
+		sent <- message
+		return 0, 1, nil
+	}}
+	sink, err := newTriggerEventSink("alarmd-trigger-event-shadow", producer, &fakeCloser{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sink.Close()
+
+	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{event}); err != nil {
+		t.Fatalf("WriteBatch() error = %v", err)
+	}
+	value, err := (<-sent).Value.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(value, wantPayload) {
+		t.Fatalf("value = %s, want the decision event unchanged", value)
+	}
 }

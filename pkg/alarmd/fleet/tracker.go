@@ -107,6 +107,18 @@ func failedExecution(outcome string) bool {
 type queryGroupState struct {
 	strategies   map[StrategyRef]struct{}
 	runStartedAt time.Time
+	// failingSince is when the current unbroken sequence of rounds that
+	// reached execution and did not finish began. It is kept apart from
+	// runStartedAt on purpose: that clock starts at the first degraded round
+	// and runs for as long as the object stays anomalous in any way, so an
+	// object that has completed degraded for hours already carries an old
+	// start point, and judging "the rounds stopped finishing" against it made
+	// a single retrying round flag the object as stalled and the next degraded
+	// completion clear it again. The flag is meant to say the rounds stopped
+	// ending and will not come back on their own; it needs its own clock,
+	// started by the first round that did not finish and stopped by any round
+	// that did, however it did.
+	failingSince time.Time
 	reasonCode   string
 	degradedRuns int
 	blockedRuns  int
@@ -237,17 +249,24 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 			tracker.resetRun(state)
 			return
 		}
+		// A degraded completion is still a round that ended and moved the
+		// cursor, which is exactly what a stalled object cannot do.
+		state.failingSince = time.Time{}
 		state.degradedRuns++
 		state.currentKind = KindDegradedRun
 		state.reasonCode = completion
 		state.cause = observation.ProgressCompletionCause
 	case blockedOutcome(runOutcome):
 		state.determined = true
+		state.failingSince = time.Time{}
 		state.blockedRuns++
 		state.currentKind = KindBlockedRun
 		state.reasonCode = runOutcome
 	case failedExecution(executeOutcome):
 		state.determined = true
+		if state.failingSince.IsZero() {
+			state.failingSince = at
+		}
 		state.degradedRuns++
 		state.currentKind = KindDegradedRun
 		state.reasonCode = executeOutcome
@@ -277,6 +296,7 @@ func (tracker *Tracker) resetRun(state *queryGroupState) {
 	state.currentKind = ""
 	state.reasonCode = ""
 	state.runStartedAt = time.Time{}
+	state.failingSince = time.Time{}
 }
 
 // Anomalies returns the query groups over threshold, ordered by how long their
@@ -296,10 +316,11 @@ func (tracker *Tracker) Anomalies() []Anomaly {
 			QueryGroup: queryGroup,
 			Kind:       state.currentKind,
 			ReasonCode: state.reasonCode, Cause: state.cause,
-			Since:     state.runStartedAt,
-			SinceFrom: SinceSnapshotContinuity,
-			Replica:   tracker.replica,
-			Failure:   state.lastFailure,
+			Since:        state.runStartedAt,
+			SinceFrom:    SinceSnapshotContinuity,
+			FailingSince: state.failingSince,
+			Replica:      tracker.replica,
+			Failure:      state.lastFailure,
 		}
 		for strategy := range state.strategies {
 			anomaly.Strategies = append(anomaly.Strategies, strategy)

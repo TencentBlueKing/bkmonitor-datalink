@@ -18,7 +18,23 @@ type BusinessPrimaryV1 struct {
 	Priority uint32                  `json:"priority"`
 	Values   map[string]string       `json:"normalized_values"`
 	Unit     string                  `json:"unit"`
-	Trigger  TriggerWindowEvidenceV1 `json:"trigger"`
+	Trigger  BusinessTriggerWindowV1 `json:"trigger"`
+}
+
+// BusinessTriggerWindowV1 is the trigger window as the Python comparison sees
+// it, and it is a separate type from the window the event carries on purpose.
+//
+// This profile is one half of a comparison against Python's own output: a field
+// with no Python counterpart cannot be compared, and putting one here makes
+// every record differ. Reusing the event's evidence struct meant the next field
+// added to that evidence would silently join this contract - which is how it
+// happened once. Declaring the compared fields makes the compiler ask.
+type BusinessTriggerWindowV1 struct {
+	WindowStart       int64  `json:"window_start"`
+	WindowEnd         int64  `json:"window_end"`
+	WindowSize        uint32 `json:"window_size"`
+	RequiredAnomalies uint32 `json:"required_anomalies"`
+	ObservedAnomalies uint32 `json:"observed_anomalies"`
 }
 
 type BusinessNativeV1 struct {

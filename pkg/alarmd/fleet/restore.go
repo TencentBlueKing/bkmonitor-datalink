@@ -89,6 +89,12 @@ func (tracker *Tracker) Restore(queryGroup string, restored RestoredState, at ti
 		if state.runStartedAt.IsZero() {
 			state.runStartedAt = at
 		}
+		// failingSince stays zero. Progress records completions, never the
+		// executions that did not finish, so nothing that survived the
+		// restart can say when a failing sequence began. The object is
+		// flagged stalled again once this process has watched it fail to
+		// finish for the budget, which under-reports rather than invents a
+		// start point.
 	}
 	tracker.groups[queryGroup] = state
 	return true

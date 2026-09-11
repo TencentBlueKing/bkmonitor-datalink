@@ -452,13 +452,16 @@ function loadObjects() {
       }
       // A long duration alone does not say whether the object is recovering
       // slowly or has stopped entirely; this chip is the only thing on the row
-      // that separates the two.
+      // that separates the two. The row's duration is how long the object has
+      // been anomalous; how long its rounds have not ended is a different,
+      // usually shorter, clock, and the chip carries that one.
       var held = cell(duration(a.since));
       if (a.stalled) {
         var chip = document.createElement('span');
         chip.className = 'stuck';
         chip.textContent = '自锁';
-        chip.title = '这一轮从来没有结束过，且已经超过本部署终结一个跑不完 Slot 的时限。它不会自己恢复。';
+        chip.title = '已连续 ' + duration(a.failing_since)
+          + ' 没有一轮结束，超过了本部署终结一个跑不完 Slot 的时限。它不会自己恢复。';
         held.appendChild(chip);
         tr.className = 'stuckrow';
       }
@@ -535,8 +538,9 @@ function renderStallNote(budgetSeconds, stalled, total, filtered) {
     ? (stalled ? '当前条件下 ' + stalled + ' 个' : '当前条件下没有')
       + '；全部署 ' + (total || 0) + ' 个。'
     : (total ? '当前 ' + total + ' 个。' : '当前没有。');
-  note.textContent = '标记为“自锁”的是：轮次一直没有结束，且已经超过本部署终结一个跑不完 Slot 的时限（'
-    + budget + '）。这类对象不会自己恢复，需要有人介入。降级完成的不算——那一轮结束了，游标也前进了。'
+  note.textContent = '标记为“自锁”的是：自上一轮结束以来再没有一轮结束过，且已经超过本部署终结一个跑不完 Slot 的时限（'
+    + budget + '）。这类对象不会自己恢复，需要有人介入。降级完成的不算——那一轮结束了，游标也前进了；'
+    + '之前降级了多久也不算，只看轮次是从什么时候起不再结束的。'
     + count;
   note.hidden = false;
 }

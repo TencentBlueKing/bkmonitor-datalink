@@ -48,13 +48,17 @@ func gatherControlCache(t *testing.T, counts []ControlCacheCounts) map[string]ma
 func TestControlCachePublishesOccupancyBesideItsBudget(t *testing.T) {
 	gathered := gatherControlCache(t, []ControlCacheCounts{
 		{Object: "version", Hits: 5, Misses: 1},
+		// A follower whose workers all missed one new revision at once: every
+		// worker counts a miss, all but the one that read count a share.
+		{Object: "snapshot", Misses: 128, Shared: 127},
 		{Object: "timeline", Hits: 497, Misses: 340, Refreshes: 0, Evictions: 12,
 			Occupancy: &ControlCacheOccupancy{Entries: 931, Bytes: 160 << 20, BytesLimit: 512 << 20}},
 	})
 	outcomes := gathered["bkmonitor_alarmd_control_cache_total"]
 	for key, want := range map[string]float64{
 		"timeline/hit": 497, "timeline/miss": 340, "timeline/refresh": 0, "timeline/evict": 12,
-		"version/hit": 5, "version/miss": 1, "version/evict": 0,
+		"version/hit": 5, "version/miss": 1, "version/evict": 0, "version/share": 0,
+		"snapshot/miss": 128, "snapshot/share": 127,
 	} {
 		if got, ok := outcomes[key]; !ok || got != want {
 			t.Fatalf("control_cache_total{%s} = %v (present=%v), want %v", key, got, ok, want)

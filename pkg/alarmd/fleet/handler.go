@@ -154,18 +154,27 @@ func summarize(anomalies []Anomaly) Summary {
 // progressing at all, and nothing left in the deployment will end the round for
 // it.
 //
-// Blocked rounds are excluded on purpose: they say a round never started, which
-// an ordinary lease handover produces, and counting them would put a permanent
-// label on a transient event. A zero budget turns the flag off rather than
-// marking everything, so a deployment that has not wired one shows no flag
-// instead of a wrong one.
+// The clock is FailingSince, the start of the current unbroken sequence of
+// rounds that did not finish, and not Since, the start of the anomaly as a
+// whole. Judging against Since flagged every object with a long degraded
+// history the moment one round retried, and cleared it on the next degraded
+// completion, so the count rose and fell with the last round's luck instead
+// of saying which objects had stopped ending rounds. Completed rounds reset
+// that clock because the round ended; blocked rounds reset it because they
+// say a round never started, which an ordinary lease handover produces, and
+// counting them would put a permanent label on a transient event. A zero
+// FailingSince is therefore what an object whose last conclusive round ended
+// looks like; it is also what a replica that does not report the field yet
+// looks like, which under-reports during a rollout rather than over-reports.
+// A zero budget turns the flag off rather than marking everything, so a
+// deployment that has not wired one shows no flag instead of a wrong one.
 func MarkStalled(anomalies []Anomaly, at time.Time, stallAfter time.Duration) {
 	if stallAfter <= 0 {
 		return
 	}
 	for index := range anomalies {
-		anomalies[index].Stalled = failedExecution(anomalies[index].ReasonCode) &&
-			at.Sub(anomalies[index].Since) > stallAfter
+		failingSince := anomalies[index].FailingSince
+		anomalies[index].Stalled = !failingSince.IsZero() && at.Sub(failingSince) > stallAfter
 	}
 }
 

@@ -108,6 +108,7 @@ type RedisCatalogRepository struct {
 	prefix                     string
 	ttl                        time.Duration
 	snapshotCache              *verifiedSnapshotCache
+	snapshotFlights            snapshotReadFlights
 	activationCache            parsedActivationCache
 	controlCache               *controlReadCache
 	controlReads               controlReadCounters

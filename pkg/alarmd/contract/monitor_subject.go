@@ -42,6 +42,14 @@ type MonitorSubject struct {
 	Additional map[string]json.RawMessage
 }
 
+// MonitorSubjectContext is the projected object and the dimensions that were
+// left after its identity was taken out - what an output writes as the subject
+// and the dimensions of one event.
+type MonitorSubjectContext struct {
+	Subject    MonitorSubject
+	Dimensions map[string]json.RawMessage
+}
+
 // The five target types Python added after the original three. Their identity
 // is deliberately absent from the dedupe fingerprint - see ProjectMonitorTarget.
 const (

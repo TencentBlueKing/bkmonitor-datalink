@@ -141,6 +141,7 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 	if request.Plan.OutputIdentity != nil {
 		compiled.outputIdentity = &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, request.Plan.OutputIdentity.DimensionFields...)}
 	}
+	compiled.wireFormat = request.Plan.WireFormat
 	if request.Plan.SubjectFacts != nil {
 		compiled.subjectFacts = &contract.MonitorSubjectFacts{
 			Labels:        append([]string{}, request.Plan.SubjectFacts.Labels...),
@@ -196,7 +197,12 @@ func (c *PlanCompiler) validatePlan(request CompileRequest) *Terminal {
 	if err := plan.LegacyOutput.Validate(); err != nil {
 		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "legacy_output"}
 	}
-	if plan.LegacyOutput != nil && plan.StrategyRef.SnapshotRevision > 0 {
+	// The conversion context belongs to the Plans that publish that protocol
+	// and to no others: carrying it elsewhere means a Plan that could be
+	// converted two ways. This read the frozen revision until a deployment
+	// could force the choice, which made a forced compatibility choice reject
+	// every strategy that had one.
+	if plan.LegacyOutput != nil && !plan.PublishesCompatibleProtocol() {
 		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "legacy_output"}
 	}
 	if plan.OutputIdentity != nil && plan.OutputIdentity.DimensionFields == nil {

@@ -116,7 +116,13 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 			return EvaluationResultV2{}, invariantV2("build TriggerEvent", 0, err)
 		}
 		result.TriggerEvent = event
-		if legacy := request.Plan.LegacyOutput(); legacy != nil && event.StrategyRef == nil {
+		// The compatibility context is attached whenever the Plan publishes that
+		// protocol. Before the format was stated, the only Plans that did were
+		// the ones with no frozen revision, so the two conditions were the same
+		// one; a forced compatibility choice makes them different, and reading
+		// the revision here would leave those Plans without the context their
+		// conversion needs.
+		if legacy := request.Plan.LegacyOutput(); legacy != nil && request.Plan.PublishesCompatibleProtocol() {
 			var timestamps []int64
 			for _, outcome := range event.LevelResults {
 				if outcome.LevelID != event.PrimaryLevelID {
@@ -139,6 +145,16 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 				}
 			}
 			event.LegacyOutput = &contract.LegacyEventContext{Configuration: legacy, AnomalyTimestamps: append([]int64{}, timestamps...)}
+		}
+		event.WireFormat = request.Plan.WireFormat()
+		if identity := request.Plan.OutputIdentity(); identity != nil {
+			subject, remaining, subjectErr := contract.ProjectMonitorSubject(
+				request.RecordRef.Dimensions, *identity, request.Plan.SubjectFacts(),
+			)
+			if subjectErr != nil {
+				return EvaluationResultV2{}, invariantV2("project event subject", 0, subjectErr)
+			}
+			event.Subject = &contract.MonitorSubjectContext{Subject: subject, Dimensions: remaining}
 		}
 		result.Counts.Events = 1
 	}
@@ -282,6 +298,7 @@ func evaluateLevelV2(
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("calculate Trigger window", definition.LevelID, errors.New("window time overflow"))
 	}
 	observedAnomalies := history.CountAnomalies(triggerStart, request.Record.SourceTime)
+	anomalyBeginTime, _ := history.FirstAnomaly(triggerStart, request.Record.SourceTime)
 	if observedAnomalies > triggerPlan.WindowSize {
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("count Trigger anomalies", definition.LevelID, errors.New("anomaly count exceeds window positions"))
 	}
@@ -324,6 +341,7 @@ func evaluateLevelV2(
 		Trigger: contract.TriggerWindowEvidenceV1{
 			WindowStart: triggerStart, WindowEnd: request.Record.SourceTime, WindowSize: triggerPlan.WindowSize,
 			RequiredAnomalies: triggerPlan.RequiredAnomalies, ObservedAnomalies: observedAnomalies,
+			AnomalyBeginTime: anomalyBeginTime,
 		},
 		Recovery: contract.RecoveryWindowEvidenceV1{
 			Enabled: recoveryPlan.Enabled, RequiredConsecutiveWindows: recoveryPlan.ConsecutiveWindows,

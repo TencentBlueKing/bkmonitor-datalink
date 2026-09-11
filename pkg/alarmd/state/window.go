@@ -387,6 +387,19 @@ func (view HistoryView) CountAnomalies(fromTime, untilTime int64) uint32 {
 	return count
 }
 
+// FirstAnomaly returns the earliest anomalous point in the range. The walk is
+// in ascending source time, so the first one visited is the earliest and the
+// rest of the range does not have to be read.
+func (view HistoryView) FirstAnomaly(fromTime, untilTime int64) (int64, bool) {
+	var first int64
+	found := false
+	view.ForEachAnomaly(fromTime, untilTime, func(sourceTime int64) bool {
+		first, found = sourceTime, true
+		return false
+	})
+	return first, found
+}
+
 func (view HistoryView) ForEachAnomaly(fromTime, untilTime int64, visit func(sourceTime int64) bool) {
 	if visit == nil || view.window == nil || fromTime > untilTime {
 		return

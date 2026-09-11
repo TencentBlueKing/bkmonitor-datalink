@@ -354,19 +354,23 @@ func TestRenewalKeepsTheCurrentCatalogAliveAndNoticesMissingObjects(t *testing.T
 	}
 }
 
-// TestManifestCollisionIsRefusedAndDoesNotFailThePublication: a manifest
-// stored under a revision with other bytes is left alone, the write is
-// observed as a failure, and the publication of the whole Snapshot proceeds.
-func TestManifestCollisionIsRefusedAndDoesNotFailThePublication(t *testing.T) {
+// TestManifestCollisionIsRefusedAndFailsThePublication: a manifest stored
+// under a revision with other bytes is left alone, the write is observed as
+// a failure, and the publication does not proceed: what a Worker reads for a
+// Segment kept across publications is the objects, so a publication whose
+// manifest cannot be stored names content that cannot be trusted.
+func TestManifestCollisionIsRefusedAndFailsThePublication(t *testing.T) {
 	harness := newObjectCatalogHarness(t)
 	catalog := objectCatalogTwoGroups(t, 80)
 	manifestKey := harness.prefix + ":manifest:" + string(catalog.SnapshotRevision)
 	if err := harness.client.Set(harness.ctx, manifestKey, `{"schema_version":"other"}`, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, created, err := harness.repository.PublishCatalog(harness.ctx, catalog)
-	if err != nil || !created || snapshot.Publication.SnapshotRevision != catalog.SnapshotRevision {
-		t.Fatalf("publication=(%+v,%t,%v)", snapshot, created, err)
+	if _, _, err := harness.repository.PublishCatalog(harness.ctx, catalog); err == nil {
+		t.Fatal("a publication whose manifest collides must not publish")
+	}
+	if _, err := harness.repository.LoadLatestPublication(harness.ctx); !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+		t.Fatalf("a refused publication must leave nothing published: err=%v", err)
 	}
 	if facts := harness.observer.last(t, "write"); facts.Result != "failure" {
 		t.Fatalf("write facts=%+v", facts)

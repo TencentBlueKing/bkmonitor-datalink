@@ -41,9 +41,12 @@ const (
 const ReasonWakeMissed = "WAKE_MISSED"
 
 // Thresholds are counted in rounds, not in wall-clock time, because query group
-// periods in the deployed population range from ten seconds to ten minutes. A
-// fixed duration would call a slow group broken while it is merely slow, and
-// would let a fast group fail dozens of times before saying anything.
+// periods in the deployed population range from ten seconds to one hour (read
+// from the persisted schedules of one deployment: most groups run every
+// minute, about a tenth of them faster, and a few every ten minutes to every
+// hour). A fixed duration would call a slow group broken while it is merely
+// slow, and would let a fast group fail dozens of times before saying
+// anything.
 //
 // A round here is an attempt that produced an outcome, not a period. A blocked
 // object spends most ticks in backoff, which produces no outcome and advances

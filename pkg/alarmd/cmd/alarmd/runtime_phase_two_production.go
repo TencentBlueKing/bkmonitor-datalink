@@ -321,6 +321,7 @@ type productionInitialScheduleActivator interface {
 
 type productionCatalogRepository interface {
 	LoadActivation(context.Context) (controlplane.ActivationState, error)
+	ControlVersionTag(context.Context) (string, bool, error)
 	LoadActiveQueryGroupSet(context.Context, controlplane.ActiveQueryGroupSetRef) ([]execution.QueryGroupIdentity, error)
 	RenewCurrentActivationObjects(context.Context) error
 	LoadSnapshot(context.Context, execution.SnapshotRevision) (controlplane.PublishedSnapshot, error)
@@ -418,6 +419,16 @@ func (runtime *productionPhaseTwoControl) LoadActive(
 	}
 	queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
 	return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, err
+}
+
+// ControlVersion serves the activation header for the due index. It reads live
+// every time: a caller polling for change has to see the current value, and a
+// cached one would answer "nothing has changed" for as long as the cache lasts.
+func (runtime *productionPhaseTwoControl) ControlVersion(ctx context.Context) (string, bool, error) {
+	if runtime == nil || runtime.dependencies.Repository == nil {
+		return "", false, errors.New("phase-two production Control repository is not initialized")
+	}
+	return runtime.dependencies.Repository.ControlVersionTag(ctx)
 }
 
 func (runtime *productionPhaseTwoControl) Close() error {
@@ -1285,14 +1296,14 @@ func (source observedProductionSlotSource) RangeCreationEnabled() bool {
 func (source observedProductionSlotSource) Next(
 	ctx context.Context,
 	queryGroup execution.QueryGroupIdentity,
-) (scheduler.FrozenSlot, bool, error) {
+) (scheduler.FrozenSlot, bool, scheduler.SlotDueFacts, error) {
 	defer startSlotTiming(ctx, source.observer, observability.StageSlotSourceCompleted, time.Now)()
 	// One Slot decision reads the activation header several times over. Scoping
 	// it to this call reads it live once and reuses it, so a publication is
 	// still observed on the next call while every read inside this one observes
 	// the same control version.
 	ctx = controlplane.WithControlVersionScope(ctx)
-	slot, due, err := source.next.Next(ctx, queryGroup)
+	slot, due, facts, err := source.next.Next(ctx, queryGroup)
 	var retry *scheduler.SourceRetryError
 	var blocked *scheduler.SourceBlockedError
 	if errors.As(err, &retry) || errors.As(err, &blocked) {
@@ -1317,7 +1328,7 @@ func (source observedProductionSlotSource) Next(
 			Trace: frozenSlotTrace(slot.Contract, slot.Dispatch.OwnerFence),
 		})
 	}
-	return slot, due, err
+	return slot, due, facts, err
 }
 
 type observedProductionSlotExecutor struct {
@@ -1403,6 +1414,13 @@ func (runtime *productionPhaseTwoQueryGroup) NextReadyAt() time.Time {
 		return time.Time{}
 	}
 	return runtime.runner.NextReadyAt()
+}
+
+func (runtime *productionPhaseTwoQueryGroup) DueBound() scheduler.RunnerDueBound {
+	if runtime == nil || runtime.runner == nil {
+		return scheduler.RunnerDueBound{}
+	}
+	return runtime.runner.DueBound()
 }
 
 // MaintainLease renews the Query Group lease every interval. A failure to

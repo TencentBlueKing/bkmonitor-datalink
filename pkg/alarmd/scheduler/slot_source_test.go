@@ -30,7 +30,7 @@ func TestProductionSlotSourceColdStartUsesFirstSegment(t *testing.T) {
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
 	source := newProductionSlotSourceForTest(t, catalog, missingProgress(), time.Unix(200, 0))
 
-	slot, due, err := source.Next(context.Background(), "query-group-1")
+	slot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("Next() due=%v error=%v", due, err)
 	}
@@ -61,7 +61,7 @@ func TestProductionSlotSourceDoesNotConstructFirstSlotWhenSnapshotIsUnavailable(
 	}
 	source := newProductionSlotSourceForTest(t, catalog, missingProgress(), time.Unix(200, 0))
 
-	slot, due, err := source.Next(context.Background(), "query-group-1")
+	slot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if !errors.Is(err, controlplane.ErrSnapshotUnavailable) || due || !reflect.DeepEqual(slot, FrozenSlot{}) {
 		t.Fatalf("Next(snapshot unavailable) = (%+v, %v, %v)", slot, due, err)
 	}
@@ -78,7 +78,7 @@ func TestProductionSlotSourceRestoresUnfinishedProjectionWhenSnapshotIsUnavailab
 	schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
 	first := newProductionSlotSourceForTest(t, catalog, missingProgress(), time.Unix(200, 0))
-	slot, due, err := first.Next(context.Background(), "query-group-1")
+	slot, due, _, err := first.Next(context.Background(), "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("Next(first) = (%+v, %t, %v)", slot, due, err)
 	}
@@ -91,7 +91,7 @@ func TestProductionSlotSourceRestoresUnfinishedProjectionWhenSnapshotIsUnavailab
 	load.Progress.UnfinishedSlot = &projection
 	catalog.freezeErr = controlplane.ErrSnapshotUnavailable
 	restarted := newProductionSlotSourceForTest(t, catalog, load, time.Unix(200, 0))
-	restored, due, err := restarted.Next(context.Background(), "query-group-1")
+	restored, due, _, err := restarted.Next(context.Background(), "query-group-1")
 	if err != nil || !due || restored.Contract != slot.Contract ||
 		!restored.DuePlanTargets.Equal(slot.DuePlanTargets) || restored.KeepUntilUnixMilli != slot.KeepUntilUnixMilli {
 		t.Fatalf("Next(restarted) = (%+v, %t, %v)", restored, due, err)
@@ -103,7 +103,7 @@ func TestProductionSlotSourceBlocksCorruptSnapshotWithoutProjection(t *testing.T
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule},
 		freezeErr: &controlplane.PersistedSnapshotCorruptError{Err: errors.New("bad digest")}}
 	source := newProductionSlotSourceForTest(t, catalog, missingProgress(), time.Unix(116, 0))
-	_, due, err := source.Next(context.Background(), "query-group-1")
+	_, due, _, err := source.Next(context.Background(), "query-group-1")
 	var blocked *SourceBlockedError
 	if due || !errors.As(err, &blocked) {
 		t.Fatalf("Next(corrupt snapshot) due=%t error=%v", due, err)
@@ -208,7 +208,7 @@ func TestProductionSlotSourceRejectsCandidateOutsideSnapshotRetention(t *testing
 	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, missingProgress(), time.Unix(116, 0), testRecoveryLimits())
 	source.snapshotRetention = 10 * time.Minute
 	source.publicationDelayAllowance = time.Minute
-	if _, _, err := source.Next(context.Background(), "query-group-1"); !errors.Is(err, ErrSnapshotRetentionInsufficient) {
+	if _, _, _, err := source.Next(context.Background(), "query-group-1"); !errors.Is(err, ErrSnapshotRetentionInsufficient) {
 		t.Fatalf("Next(insufficient retention) error=%v", err)
 	}
 }
@@ -220,7 +220,7 @@ func TestProductionSlotSourceColdStartSkipsClosedZeroSlotSegment(t *testing.T) {
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{oldSchedule, newSchedule}}
 	source := newProductionSlotSourceForTest(t, catalog, missingProgress(), time.Unix(200, 0))
 
-	slot, due, err := source.Next(context.Background(), "query-group-1")
+	slot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("Next() due=%v error=%v", due, err)
 	}
@@ -238,7 +238,7 @@ func TestProductionSlotSourceCrossesCutoverWithoutSecondProgressIdentity(t *test
 	progress := foundProgress(60, 0)
 	source := newProductionSlotSourceForTest(t, catalog, progress, time.Unix(200, 0))
 
-	oldSlot, due, err := source.Next(context.Background(), "query-group-1")
+	oldSlot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("old Next() due=%v error=%v", due, err)
 	}
@@ -252,7 +252,7 @@ func TestProductionSlotSourceCrossesCutoverWithoutSecondProgressIdentity(t *test
 	catalog.readTimes = nil
 	catalog.requests = nil
 	source = newProductionSlotSourceForTest(t, catalog, foundProgress(90, 60), time.Unix(200, 0))
-	newSlot, due, err := source.Next(context.Background(), "query-group-1")
+	newSlot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("new Next() due=%v error=%v", due, err)
 	}
@@ -283,7 +283,7 @@ func TestProductionSlotSourceReloadsContinuousNextSlotAfterInflightCutover(t *te
 		&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog, store, time.Unix(200, 0))
 
-	oldSlot, due, err := source.Next(context.Background(), "query-group-1")
+	oldSlot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due || oldSlot.Contract.Slot.EvaluationTime != 60 {
 		t.Fatalf("freeze old Slot = (%+v, %v, %v)", oldSlot, due, err)
 	}
@@ -309,7 +309,7 @@ func TestProductionSlotSourceReloadsContinuousNextSlotAfterInflightCutover(t *te
 		t.Fatalf("LoadProgress() after cutover = (%+v, %v), want next Slot 90", loaded, err)
 	}
 
-	nextSlot, due, err := source.Next(context.Background(), "query-group-1")
+	nextSlot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("Next() after cutover due=%v error=%v", due, err)
 	}
@@ -333,7 +333,7 @@ func TestProductionSlotSourcePrefersValidProgressCursorWhenCompletedSegmentIsUna
 			catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{currentSchedule}}
 			source := newProductionSlotSourceForTest(t, catalog, test.load, time.Unix(200, 0))
 
-			slot, due, err := source.Next(context.Background(), "query-group-1")
+			slot, due, _, err := source.Next(context.Background(), "query-group-1")
 			if err != nil || !due {
 				t.Fatalf("Next() due=%v error=%v", due, err)
 			}
@@ -356,7 +356,7 @@ func TestProductionSlotSourceBlocksInvalidProgressCursorWithoutSuccessorProof(t 
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{currentSchedule}}
 	source := newProductionSlotSourceForTest(t, catalog, foundProgress(210, 60), time.Unix(240, 0))
 
-	_, due, err := source.Next(context.Background(), "query-group-1")
+	_, due, _, err := source.Next(context.Background(), "query-group-1")
 	var blocked *SourceBlockedError
 	if due || !errors.As(err, &blocked) || !errors.Is(err, ErrProgressOffSchedule) {
 		t.Fatalf("Next(invalid cursor) due=%v error=%T %v, want typed fail-closed progress error", due, err, err)
@@ -378,7 +378,7 @@ func TestProductionSlotSourceDoesNotMaskCorruptProgressCursorSchedule(t *testing
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{corruptSchedule}}
 	source := newProductionSlotSourceForTest(t, catalog, foundProgress(180, 60), time.Unix(200, 0))
 
-	_, due, err := source.Next(context.Background(), "query-group-1")
+	_, due, _, err := source.Next(context.Background(), "query-group-1")
 	var blocked *SourceBlockedError
 	if due || !errors.As(err, &blocked) || !errors.Is(err, ErrScheduleFactsInvalid) {
 		t.Fatalf("Next(corrupt cursor schedule) due=%v error=%T %v, want typed schedule corruption", due, err, err)
@@ -397,7 +397,7 @@ func TestProductionSlotSourceUsesFirstLegalSlotOnNewCutoverGrid(t *testing.T) {
 		execution.ReasonCode(contract.ReasonHistoryWarming))
 	source := newProductionSlotSourceForTest(t, catalog, load, time.Unix(200, 0))
 
-	slot, due, err := source.Next(context.Background(), "query-group-1")
+	slot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("Next() due=%v error=%v", due, err)
 	}
@@ -422,7 +422,7 @@ func TestProductionSlotSourceTimelineSuccessorCanBeginUnfinishedProgress(t *test
 		&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog, store, time.Unix(200, 0))
 
-	oldSlot, due, err := source.Next(context.Background(), "query-group-1")
+	oldSlot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due || oldSlot.ExpectedNextSlot != 60 {
 		t.Fatalf("freeze old Slot = (%+v, %v, %v)", oldSlot, due, err)
 	}
@@ -447,7 +447,7 @@ func TestProductionSlotSourceTimelineSuccessorCanBeginUnfinishedProgress(t *test
 	oldSchedule.Segment.End = &boundary
 	newSchedule := schedulerSchedule(t, 90, boundary, nil, "snapshot-new", 8)
 	catalog.schedules = []execution.FrozenQueryGroupSchedule{oldSchedule, newSchedule}
-	successor, due, err := source.Next(context.Background(), "query-group-1")
+	successor, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due || successor.ExpectedNextSlot != 90 ||
 		successor.Contract.ScheduleRevision != newSchedule.Segment.ScheduleRevision {
 		t.Fatalf("freeze timeline successor = (%+v, %v, %v)", successor, due, err)
@@ -489,7 +489,7 @@ func TestProductionSlotSourceCrossesReactivationForEveryNonFullCompletion(t *tes
 			source := newProductionSlotSourceForTest(t, catalog,
 				nonFullProgress(retiredAt, 60, test.kind, test.reason), time.Unix(240, 0))
 
-			slot, due, err := source.Next(context.Background(), "query-group-1")
+			slot, due, _, err := source.Next(context.Background(), "query-group-1")
 			if err != nil || !due {
 				t.Fatalf("Next() due=%v error=%v", due, err)
 			}
@@ -510,7 +510,7 @@ func TestProductionSlotSourceBoundaryBelongsOnlyToNewSegment(t *testing.T) {
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{oldSchedule, newSchedule}}
 	source := newProductionSlotSourceForTest(t, catalog, foundProgress(boundary, 60), time.Unix(200, 0))
 
-	slot, due, err := source.Next(context.Background(), "query-group-1")
+	slot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("Next() due=%v error=%v", due, err)
 	}
@@ -525,7 +525,7 @@ func TestProductionSlotSourceRetiredProgressHasNoSuccessorSlot(t *testing.T) {
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}, retiredAt: &boundary}
 	source := newProductionSlotSourceForTest(t, catalog, foundProgress(boundary, 60), time.Unix(200, 0))
 
-	_, due, err := source.Next(context.Background(), "query-group-1")
+	_, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || due {
 		t.Fatalf("retired Next() due=%v error=%v", due, err)
 	}
@@ -540,7 +540,7 @@ func TestProductionSlotSourceRetiredZeroSlotSegmentHasNoFabricatedSlot(t *testin
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}, retiredAt: &boundary}
 	source := newProductionSlotSourceForTest(t, catalog, missingProgress(), time.Unix(200, 0))
 
-	_, due, err := source.Next(context.Background(), "query-group-1")
+	_, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || due {
 		t.Fatalf("zero-Slot retired Next() due=%v error=%v", due, err)
 	}
@@ -557,8 +557,8 @@ func TestProductionSlotSourceRestartFreezesSameContract(t *testing.T) {
 	first := newProductionSlotSourceForTest(t, firstCatalog, load, time.Unix(200, 0))
 	second := newProductionSlotSourceForTest(t, secondCatalog, load, time.Unix(200, 0))
 
-	firstSlot, firstDue, firstErr := first.Next(context.Background(), "query-group-1")
-	secondSlot, secondDue, secondErr := second.Next(context.Background(), "query-group-1")
+	firstSlot, firstDue, _, firstErr := first.Next(context.Background(), "query-group-1")
+	secondSlot, secondDue, _, secondErr := second.Next(context.Background(), "query-group-1")
 	if firstErr != nil || secondErr != nil || !firstDue || !secondDue {
 		t.Fatalf("restart first=(%v,%v) second=(%v,%v)", firstDue, firstErr, secondDue, secondErr)
 	}
@@ -574,7 +574,7 @@ func TestProductionSlotSourceRechecksOwnershipAfterFreeze(t *testing.T) {
 	source := mustProductionSlotSource(t, assignments, &sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}},
 		catalog, &fakeProgressReader{result: missingProgress(), catalog: catalog}, time.Unix(200, 0))
 
-	if _, _, err := source.Next(context.Background(), "query-group-1"); !errors.Is(err, ErrSlotOwnershipChanged) {
+	if _, _, _, err := source.Next(context.Background(), "query-group-1"); !errors.Is(err, ErrSlotOwnershipChanged) {
 		t.Fatalf("Next() error = %v, want ErrSlotOwnershipChanged", err)
 	}
 }
@@ -584,7 +584,7 @@ func TestProductionSlotSourceDoesNotFreezeFutureSlot(t *testing.T) {
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
 	source := newProductionSlotSourceForTest(t, catalog, missingProgress(), time.Unix(59, 0))
 
-	if _, due, err := source.Next(context.Background(), "query-group-1"); err != nil || due {
+	if _, due, _, err := source.Next(context.Background(), "query-group-1"); err != nil || due {
 		t.Fatalf("Next() due=%v error=%v", due, err)
 	}
 	if len(catalog.requests) != 0 {
@@ -598,7 +598,7 @@ func TestProductionSlotSourceMarksEligibleBacklogAsReplayWithoutChangingContract
 	limits := testRecoveryLimits()
 	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, missingProgress(), time.Unix(200, 0), limits)
 
-	slot, due, err := source.Next(context.Background(), "query-group-1")
+	slot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("Next() due=%v error=%v", due, err)
 	}
@@ -617,7 +617,7 @@ func TestProductionSlotSourceStartsReplayAtFrozenQueryDeadline(t *testing.T) {
 	limits := testRecoveryLimits()
 	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, missingProgress(), time.Unix(116, 0), limits)
 
-	slot, due, err := source.Next(context.Background(), "query-group-1")
+	slot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("Next() due=%v error=%v", due, err)
 	}
@@ -634,7 +634,7 @@ func TestProductionSlotSourceLeavesExpiredBacklogForExistingGapFinalizer(t *test
 	limits.MaxReplaySlots = 2
 	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, missingProgress(), time.Unix(200, 0), limits)
 
-	slot, due, err := source.Next(context.Background(), "query-group-1")
+	slot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("Next() due=%v error=%v", due, err)
 	}
@@ -651,7 +651,7 @@ func TestProductionSlotSourceExpiresRetiredBacklogByAgeWithoutReadingPastBoundar
 	limits := testRecoveryLimits()
 	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, foundProgress(120, 60), time.Unix(1000, 0), limits)
 
-	slot, due, err := source.Next(context.Background(), "query-group-1")
+	slot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("Next() due=%v error=%v", due, err)
 	}
@@ -670,7 +670,7 @@ func TestProductionSlotSourceReplayDistanceStopsAtRetirementBoundary(t *testing.
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}, retiredAt: &boundary}
 	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, foundProgress(120, 60), time.Unix(200, 0), testRecoveryLimits())
 
-	slot, due, err := source.Next(context.Background(), "query-group-1")
+	slot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("Next() due=%v error=%v", due, err)
 	}

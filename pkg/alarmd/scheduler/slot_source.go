@@ -265,12 +265,12 @@ func NewProductionSlotSource(
 func (source *ProductionSlotSource) Next(
 	ctx context.Context,
 	queryGroup execution.QueryGroupIdentity,
-) (FrozenSlot, bool, error) {
+) (FrozenSlot, bool, SlotDueFacts, error) {
 	if source == nil || queryGroup == "" || queryGroup != source.queryGroup {
-		return FrozenSlot{}, false, errors.New("alarmd scheduler: SlotSource Query Group mismatch")
+		return FrozenSlot{}, false, SlotDueFacts{}, errors.New("alarmd scheduler: SlotSource Query Group mismatch")
 	}
 	if err := ctx.Err(); err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	decision := "ownership"
 	trace := observability.TraceFields{QueryGroupKey: string(queryGroup)}
@@ -280,11 +280,11 @@ func (source *ProductionSlotSource) Next(
 	}
 	at := source.now()
 	if at.IsZero() {
-		return FrozenSlot{}, false, errors.New("alarmd scheduler: current time is required")
+		return FrozenSlot{}, false, SlotDueFacts{}, errors.New("alarmd scheduler: current time is required")
 	}
 	initialAssignment, initialFence, err := source.initialOwnership(ctx, at)
 	if err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	decision = "progress_load"
 	identity := execution.ProgressIdentity{QueryGroup: source.queryGroup}
@@ -292,15 +292,19 @@ func (source *ProductionSlotSource) Next(
 	if err != nil {
 		var deterministic interface{ DeterministicControlFact() }
 		if errors.As(err, &deterministic) {
-			return FrozenSlot{}, false, &SourceBlockedError{Err: err}
+			return FrozenSlot{}, false, SlotDueFacts{}, &SourceBlockedError{Err: err}
 		}
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	if err := load.Validate(identity); err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	if load.Progress != nil && load.Progress.UnfinishedRange != nil {
-		return source.resumeExpiredRange(ctx, *load.Progress.UnfinishedRange, initialAssignment, initialFence)
+		// A restored range is backlog by construction: its cursor is in the past,
+		// so it is due now and carries no bound. This is the structural reason the
+		// index cannot hold back recovery work.
+		slot, due, err := source.resumeExpiredRange(ctx, *load.Progress.UnfinishedRange, initialAssignment, initialFence)
+		return slot, due, SlotDueFacts{}, err
 	}
 	decision = "schedule_navigation"
 	if load.Progress != nil {
@@ -316,25 +320,25 @@ func (source *ProductionSlotSource) Next(
 			schedule, nextSlot, retired, err = source.firstAvailableSchedule(ctx, schedule)
 			if retired {
 				decision = "retired"
-				return FrozenSlot{}, false, nil
+				return FrozenSlot{}, false, SlotDueFacts{Retired: true}, nil
 			}
 		}
 	} else {
 		retired, retirementErr := source.isRetiredBoundary(ctx, load.Progress.NextSlot)
 		if retirementErr != nil {
-			return FrozenSlot{}, false, retirementErr
+			return FrozenSlot{}, false, SlotDueFacts{}, retirementErr
 		}
 		if retired {
 			decision = "retired"
-			return FrozenSlot{}, false, nil
+			return FrozenSlot{}, false, SlotDueFacts{Retired: true}, nil
 		}
 		schedule, nextSlot, err = source.nextSlotAfterProgress(ctx, *load.Progress)
 	}
 	if err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	if err := source.validateSchedule(schedule, nextSlot); err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	decision = "schedule_validated"
 	trace.EvaluationTime = int64(nextSlot)
@@ -354,11 +358,15 @@ func (source *ProductionSlotSource) Next(
 	}
 	duePlans := schedule.DuePlanRefs(nextSlot)
 	if len(duePlans) == 0 {
-		return FrozenSlot{}, false, ErrProgressOffSchedule
+		return FrozenSlot{}, false, SlotDueFacts{}, ErrProgressOffSchedule
 	}
+	// Derived here rather than at the cohort call below so the not-due return
+	// below can carry it out. An empty due Plan set has already returned, so a
+	// Slot that reaches this line always has an interval to report.
+	dueInterval := minimumAlignedInterval(schedule, nextSlot)
 	if at.Unix() < int64(nextSlot) {
 		decision = "future_slot"
-		return FrozenSlot{}, false, nil
+		return FrozenSlot{}, false, SlotDueFacts{NotDueUntilUnix: int64(nextSlot), IntervalSeconds: dueInterval}, nil
 	}
 	request := execution.FreezeSlotContractRequest{
 		QueryGroup: source.queryGroup, ScheduleRevision: schedule.Segment.ScheduleRevision,
@@ -371,17 +379,17 @@ func (source *ProductionSlotSource) Next(
 			decision = "projection_fallback"
 			slot, due, err := source.slotFromProjection(ctx, initialAssignment, initialFence, *load.Progress.UnfinishedSlot, at)
 			if err == nil && slot.Contract.ScheduleRevision == schedule.Segment.ScheduleRevision && slot.Contract.ScheduleSegmentStart == schedule.Segment.Start && slot.Contract.Slot.EvaluationTime == nextSlot {
-				slot.ShortPeriodCohort = shortPeriodCohort(schedule, nextSlot)
+				slot.ShortPeriodCohort = shortPeriodCohortForInterval(dueInterval)
 			}
-			return slot, due, err
+			return slot, due, SlotDueFacts{IntervalSeconds: dueInterval}, err
 		}
 		deadline, deadlineErr := source.scheduleQueryDeadline(schedule, nextSlot)
 		if deadlineErr != nil {
-			return FrozenSlot{}, false, deadlineErr
+			return FrozenSlot{}, false, SlotDueFacts{}, deadlineErr
 		}
 		recoveryUntil, _, boundaryErr := source.recoveryBoundaries(deadline)
 		if boundaryErr != nil {
-			return FrozenSlot{}, false, boundaryErr
+			return FrozenSlot{}, false, SlotDueFacts{}, boundaryErr
 		}
 		var corrupt *controlplane.PersistedSnapshotCorruptError
 		cause := classifySlotFreezeFailure(err)
@@ -395,46 +403,47 @@ func (source *ProductionSlotSource) Next(
 			// never freeze that Slot, never advance and stayed blocked with
 			// BLOCKED_EXACT_SET_UNAVAILABLE on every attempt.
 			decision = "snapshot_unavailable_finalization"
-			return source.snapshotUnavailableSlot(ctx, schedule, nextSlot, duePlans, deadline, recoveryUntil, initialAssignment, initialFence, at)
+			slot, due, finalizeErr := source.snapshotUnavailableSlot(ctx, schedule, nextSlot, duePlans, deadline, recoveryUntil, initialAssignment, initialFence, at)
+			return slot, due, SlotDueFacts{IntervalSeconds: dueInterval}, finalizeErr
 		}
 		if errors.As(err, &corrupt) || at.UnixMilli() >= recoveryUntil {
-			return FrozenSlot{}, false, &SourceBlockedError{Err: cause}
+			return FrozenSlot{}, false, SlotDueFacts{}, &SourceBlockedError{Err: cause}
 		}
-		return FrozenSlot{}, false, &SourceRetryError{Err: cause}
+		return FrozenSlot{}, false, SlotDueFacts{}, &SourceRetryError{Err: cause}
 	}
 	decision = "frozen_contract_validate"
 	if err := fact.Validate(request); err != nil {
-		return FrozenSlot{}, false, fmt.Errorf("%w: %v", ErrSlotContractDrift, err)
+		return FrozenSlot{}, false, SlotDueFacts{}, fmt.Errorf("%w: %v", ErrSlotContractDrift, err)
 	}
 	if fact.Contract.SnapshotRevision != schedule.Segment.Publication.SnapshotRevision ||
 		fact.Contract.QueryRevision != schedule.Segment.QueryRevision {
-		return FrozenSlot{}, false, ErrSlotContractDrift
+		return FrozenSlot{}, false, SlotDueFacts{}, ErrSlotContractDrift
 	}
 	targets, queryDeadline, err := frozenSlotExecutionFacts(fact)
 	if err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	recoveryUntil, keepUntil, err := source.recoveryBoundaries(queryDeadline)
 	if err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	if err := source.validateSnapshotRetention(fact.Contract.Slot.EvaluationTime, queryDeadline); err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	operation, recovery, err := source.classifyRecovery(ctx, fact.Contract.Slot.EvaluationTime, queryDeadline, at)
 	if err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	currentAssignment, currentFence, err := source.currentOwnership(ctx, source.now())
 	if err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	if !sameAssignment(initialAssignment, currentAssignment) || initialFence != currentFence {
-		return FrozenSlot{}, false, ErrSlotOwnershipChanged
+		return FrozenSlot{}, false, SlotDueFacts{}, ErrSlotOwnershipChanged
 	}
 	slot := FrozenSlot{
 		Contract:                       fact.Contract,
-		ShortPeriodCohort:              shortPeriodCohort(schedule, nextSlot),
+		ShortPeriodCohort:              shortPeriodCohortForInterval(dueInterval),
 		DuePlanTargets:                 targets.Clone(),
 		EarliestQueryDeadlineUnixMilli: queryDeadline,
 		RecoveryUntilUnixMilli:         recoveryUntil,
@@ -447,18 +456,18 @@ func (source *ProductionSlotSource) Next(
 	if source.expiredRangeEnabled && load.Progress != nil && load.Progress.NextSlot == nextSlot && load.Progress.UnfinishedSlot == nil &&
 		ctx.Value(rangeFlightContextKey{}) == queryGroup && recovery.Disposition == ReplayExpired {
 		if rangeSlot, eligible, rangeErr := source.buildExpiredRange(ctx, slot, schedule, at); rangeErr != nil {
-			return FrozenSlot{}, false, rangeErr
+			return FrozenSlot{}, false, SlotDueFacts{}, rangeErr
 		} else if eligible && rangeFitsProgress(*load.Progress, rangeSlot.ExpiredRange) {
 			slot = rangeSlot
 		}
 	}
 	if err := slot.Validate(queryGroup); err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	decision = "selected"
 	trace.OwnerID = currentFence.OwnerID
 	trace.OwnerEpoch = currentFence.OwnerEpoch
-	return slot, true, nil
+	return slot, true, SlotDueFacts{IntervalSeconds: dueInterval}, nil
 }
 
 func (source *ProductionSlotSource) scheduleQueryDeadline(schedule execution.FrozenQueryGroupSchedule, slot execution.EvaluationTime) (int64, error) {
@@ -488,14 +497,25 @@ func (source *ProductionSlotSource) scheduleQueryDeadline(schedule execution.Fro
 	return deadline, nil
 }
 
-// One QG Slot receives at most one cohort, including mixed-cadence due sets.
-func shortPeriodCohort(schedule execution.FrozenQueryGroupSchedule, slot execution.EvaluationTime) string {
+// minimumAlignedInterval is the shortest evaluation interval among the Plans
+// due at this Slot. The cohort is one reading of it and the due index is
+// another, so it is derived once rather than twice from the same Plan walk.
+func minimumAlignedInterval(schedule execution.FrozenQueryGroupSchedule, slot execution.EvaluationTime) int64 {
 	minimum := int64(0)
 	for _, plan := range schedule.Plans {
 		if plan.Spec.IsAligned(slot) && (minimum == 0 || plan.Spec.EvaluationIntervalSeconds < minimum) {
 			minimum = plan.Spec.EvaluationIntervalSeconds
 		}
 	}
+	return minimum
+}
+
+// One QG Slot receives at most one cohort, including mixed-cadence due sets.
+func shortPeriodCohort(schedule execution.FrozenQueryGroupSchedule, slot execution.EvaluationTime) string {
+	return shortPeriodCohortForInterval(minimumAlignedInterval(schedule, slot))
+}
+
+func shortPeriodCohortForInterval(minimum int64) string {
 	// 30 belongs here for the same reason 10 and 15 do: its completion deadline
 	// is thirty seconds. It reaches that by the offset defaulting to the
 	// interval, which makes its deadline exactly one interval wide - less

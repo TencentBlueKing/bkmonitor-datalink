@@ -2038,6 +2038,10 @@ func (runtime *recordingPhaseTwoQueryGroupRuntime) NextReadyAt() time.Time {
 	return runtime.next.NextReadyAt()
 }
 
+func (runtime *recordingPhaseTwoQueryGroupRuntime) DueBound() scheduler.RunnerDueBound {
+	return scheduler.RunnerDueBound{}
+}
+
 func (runtime *recordingPhaseTwoQueryGroupRuntime) MaintainLease(ctx context.Context, interval, ttl time.Duration) error {
 	return runtime.next.MaintainLease(ctx, interval, ttl)
 }

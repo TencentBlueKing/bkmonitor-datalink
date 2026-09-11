@@ -2217,6 +2217,13 @@ type fakePhaseTwoControl struct {
 	loadActiveCalls      int
 	loadActiveErr        error
 	closeCalls           int
+	// The activation header the due index polls. The zero value is an unknown
+	// header, which is the fail-open state: a bundle put together for a test
+	// that says nothing about publications gets the no-index behaviour rather
+	// than a fabricated anchor.
+	versionTag   string
+	versionKnown bool
+	versionErr   error
 }
 
 type signalingPhaseTwoControl struct {
@@ -2271,6 +2278,10 @@ func (control *fakePhaseTwoControl) Refresh(context.Context) (phaseTwoControlRef
 func clonePhaseTwoControlRefreshResult(result phaseTwoControlRefreshResult) phaseTwoControlRefreshResult {
 	result.QueryGroups = append([]execution.QueryGroupIdentity(nil), result.QueryGroups...)
 	return result
+}
+
+func (control *fakePhaseTwoControl) ControlVersion(context.Context) (string, bool, error) {
+	return control.versionTag, control.versionKnown, control.versionErr
 }
 
 func (control *fakePhaseTwoControl) LoadActive(context.Context) (phaseTwoControlRefreshResult, error) {
@@ -2509,6 +2520,10 @@ func (runner *callbackPhaseTwoQueryGroup) NextReadyAt() time.Time {
 	return runner.nextReadyAt()
 }
 
+func (runner *callbackPhaseTwoQueryGroup) DueBound() scheduler.RunnerDueBound {
+	return scheduler.RunnerDueBound{}
+}
+
 func (*callbackPhaseTwoQueryGroup) MaintainLease(ctx context.Context, _, _ time.Duration) error {
 	<-ctx.Done()
 	return ctx.Err()
@@ -2550,6 +2565,10 @@ func (runner *fakePhaseTwoQueryGroup) RunOneAdmitted(
 }
 
 func (*fakePhaseTwoQueryGroup) NextReadyAt() time.Time { return time.Time{} }
+
+func (*fakePhaseTwoQueryGroup) DueBound() scheduler.RunnerDueBound {
+	return scheduler.RunnerDueBound{}
+}
 
 func (runner *fakePhaseTwoQueryGroup) MaintainLease(ctx context.Context, _, _ time.Duration) error {
 	close(runner.leaseStarted)

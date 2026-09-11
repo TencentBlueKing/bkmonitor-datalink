@@ -36,7 +36,7 @@ func TestProductionSlotSourceProjectionFollowsTerminalDelayConfiguration(t *test
 		if err != nil {
 			t.Fatal(err)
 		}
-		slot, due, err := source.Next(context.Background(), "query-group-1")
+		slot, due, _, err := source.Next(context.Background(), "query-group-1")
 		if err != nil || !due {
 			t.Fatalf("Next(terminal delay %s) = (%+v, %t, %v), want a due Slot", terminalDelay, slot, due, err)
 		}

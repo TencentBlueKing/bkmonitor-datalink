@@ -33,7 +33,7 @@ func TestProductionSlotSourceFinalizesExpiredSlotQueryFreeWhenSegmentSnapshotIsU
 	limits := testRecoveryLimits()
 	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, foundProgress(120, 60), time.Unix(100_000, 0), limits)
 
-	slot, due, err := source.Next(context.Background(), "query-group-1")
+	slot, due, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("Next(expired Slot in unretained Segment) = (%+v, %t, %v), want a query-free Slot", slot, due, err)
 	}
@@ -66,7 +66,7 @@ func TestProductionSlotSourceFinalizesExpiredSlotQueryFreeWhenSegmentSnapshotIsU
 		t.Fatalf("the runner request built from the query-free Slot does not validate: %v", err)
 	}
 
-	again, _, err := source.Next(context.Background(), "query-group-1")
+	again, _, _, err := source.Next(context.Background(), "query-group-1")
 	if err != nil || again.Contract != slot.Contract {
 		t.Fatalf("second attempt contract = %+v error=%v, want the identical contract", again.Contract, err)
 	}
@@ -74,7 +74,7 @@ func TestProductionSlotSourceFinalizesExpiredSlotQueryFreeWhenSegmentSnapshotIsU
 	// Within the recovery window the freeze failure keeps its retry semantics
 	// so a transient Snapshot read problem never skips a live Slot.
 	live := newProductionSlotSourceWithRecoveryForTest(t, catalog, foundProgress(120, 60), time.Unix(200, 0), limits)
-	_, due, err = live.Next(context.Background(), "query-group-1")
+	_, due, _, err = live.Next(context.Background(), "query-group-1")
 	var retry *SourceRetryError
 	if due || !errors.As(err, &retry) || fmt.Sprintf("%T", retry.Err) != "*scheduler.slotFreezeSnapshotUnavailableFailure" {
 		t.Fatalf("Next(live Slot, snapshot unavailable) due=%t error=%v, want a retry with the snapshot-unavailable class", due, err)

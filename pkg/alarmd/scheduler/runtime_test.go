@@ -317,17 +317,18 @@ type fakeSlotSource struct {
 	due   bool
 	calls int
 	err   error
+	facts SlotDueFacts
 }
 
-func (source *fakeSlotSource) Next(context.Context, execution.QueryGroupIdentity) (FrozenSlot, bool, error) {
+func (source *fakeSlotSource) Next(context.Context, execution.QueryGroupIdentity) (FrozenSlot, bool, SlotDueFacts, error) {
 	source.calls++
 	if source.err != nil {
-		return FrozenSlot{}, false, source.err
+		return FrozenSlot{}, false, SlotDueFacts{}, source.err
 	}
 	if !source.due && source.slot.Contract.Slot.QueryGroup != "" {
-		return source.slot, true, nil
+		return source.slot, true, source.facts, nil
 	}
-	return source.slot, source.due, nil
+	return source.slot, source.due, source.facts, nil
 }
 
 type blockingExecutor struct {

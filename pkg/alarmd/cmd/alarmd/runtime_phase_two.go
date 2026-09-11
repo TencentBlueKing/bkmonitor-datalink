@@ -285,6 +285,12 @@ type phaseTwoControlRuntime interface {
 	InitialRefresh(context.Context) (phaseTwoControlRefreshResult, error)
 	Refresh(context.Context) (phaseTwoControlRefreshResult, error)
 	LoadActive(context.Context) (phaseTwoControlRefreshResult, error)
+	// ControlVersion reads the activation header live. Every publication stamps
+	// it, so one read answers "did any Query Group's schedule change" for the
+	// whole replica. The second result is false when there is no header, which
+	// is as untrustworthy as a failed read: with no header nothing downstream is
+	// anchored to a published version.
+	ControlVersion(context.Context) (string, bool, error)
 	Close() error
 }
 
@@ -313,6 +319,10 @@ type phaseTwoQueryGroupRuntime interface {
 	RunOne(context.Context) (execution.SlotExecutionResult, bool, error)
 	RunOneAdmitted(context.Context, scheduler.ExecutionAdmission) (execution.SlotExecutionResult, bool, bool, error)
 	NextReadyAt() time.Time
+	// DueBound is what the round that has just returned concluded about when
+	// this Query Group is worth running again. It is read at the same point
+	// NextReadyAt is, because the two answers belong to the same moment.
+	DueBound() scheduler.RunnerDueBound
 	MaintainLease(context.Context, time.Duration, time.Duration) error
 	Release(context.Context) error
 }
@@ -385,19 +395,34 @@ type phaseTwoWorkerBundle struct {
 	// pass only clears the flag when no new failure happened during the pass.
 	dependencyDegraded   bool
 	dependencyFailureSeq uint64
+	// dueIndex is this replica's view of when each owned Query Group can next
+	// become due. It lives on the bundle rather than on the dispatcher so a
+	// reader outside the dispatch loop can ask it which objects are overdue.
+	dueIndex *phaseTwoDueIndex
 }
 
 type phaseTwoScheduledRunner struct {
 	queuedAt   time.Time
 	queryGroup execution.QueryGroupIdentity
 	lifecycle  *phaseTwoQueryGroupLifecycle
+	// predictedDue is what the due index said when this Query Group was offered
+	// a place, and dueEpoch is the publication the prediction was made under.
+	// Both are carried on the entry rather than looked up again on return: the
+	// index is what the prediction has to be checked against, and reading it a
+	// second time would be checking the answer against itself.
+	predictedDue bool
+	dueEpoch     uint64
 }
 
 type phaseTwoScheduledResult struct {
 	scheduled       phaseTwoScheduledRunner
 	attempted       bool
 	admissionDenied bool
-	err             error
+	// ran says the Runner was actually entered. A dispatch that found the
+	// context cancelled or the lifecycle replaced returns without running, and
+	// the bound such a return would carry belongs to the previous round.
+	ran bool
+	err error
 }
 
 type phaseTwoQueuedRunner struct {
@@ -421,6 +446,17 @@ type phaseTwoRunnerDispatcher struct {
 	jobs    chan phaseTwoScheduledRunner
 	results chan phaseTwoScheduledResult
 	workers sync.WaitGroup
+
+	// dueIndex predicts which Query Groups are worth dispatching. controlVersion
+	// serves the latest activation header sample; it is read off the dispatch
+	// loop because a loop waiting on Redis stops collecting results, and results
+	// are what free the queue. A nil sample means no reading has come back yet,
+	// which is not the same as a failed reading and is not treated as one.
+	dueIndex        *phaseTwoDueIndex
+	controlVersion  atomic.Pointer[phaseTwoControlVersionSample]
+	versionStop     chan struct{}
+	versionStopOnce sync.Once
+	versionPolling  sync.WaitGroup
 
 	generation uint64
 	cursor     execution.QueryGroupIdentity
@@ -699,8 +735,13 @@ func newPhaseTwoRunnerDispatcher(
 	if schedulerConfig.ReadyQueueCapacity > 0 && schedulerConfig.ReadyQueueCapacity < fanout {
 		fanout = schedulerConfig.ReadyQueueCapacity
 	}
+	// A fresh dispatcher starts with no bounds. Entries carried over from a
+	// previous one would be answers about a schedule nobody has looked at since,
+	// and starting empty reproduces exactly what the first tick does today.
+	dueIndex := bundle.ensureDueIndex()
+	dueIndex.Clear()
 	return &phaseTwoRunnerDispatcher{
-		bundle: bundle, fanout: fanout,
+		bundle: bundle, fanout: fanout, dueIndex: dueIndex,
 		jobs: make(chan phaseTwoScheduledRunner), results: make(chan phaseTwoScheduledResult, schedulerConfig.ReadyQueueCapacity),
 		lastQueued:    make(map[execution.QueryGroupIdentity]phaseTwoRunnerGeneration),
 		queued:        make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
@@ -709,7 +750,56 @@ func newPhaseTwoRunnerDispatcher(
 	}
 }
 
+// phaseTwoControlVersionSample is one reading of the activation header. A
+// failed or absent reading is published too, and published as unknown: the
+// index then falls back to the behaviour of a deployment with no index, which
+// is a load this deployment already carries, rather than holding Slots back on
+// bounds it can no longer vouch for.
+type phaseTwoControlVersionSample struct {
+	tag   string
+	known bool
+}
+
+// pollControlVersion keeps one activation header reading current, off the
+// dispatch loop.
+//
+// Each reading is bounded by the tick it belongs to. A reading that cannot
+// finish inside its own cadence is abandoned and published as unknown, so a
+// slow control plane degrades into the no-index behaviour instead of leaving
+// the dispatcher acting on an anchor it cannot re-confirm.
+func (dispatcher *phaseTwoRunnerDispatcher) pollControlVersion(ctx context.Context, interval time.Duration) {
+	defer dispatcher.versionPolling.Done()
+	control := dispatcher.bundle.dependencies.Control
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		readCtx, cancel := context.WithTimeout(ctx, interval)
+		tag, known, err := control.ControlVersion(readCtx)
+		cancel()
+		if err != nil {
+			tag, known = "", false
+		}
+		dispatcher.controlVersion.Store(&phaseTwoControlVersionSample{tag: tag, known: known})
+		select {
+		case <-ctx.Done():
+			return
+		case <-dispatcher.versionStop:
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
 func (dispatcher *phaseTwoRunnerDispatcher) start(ctx context.Context) {
+	if dispatcher.bundle.dependencies.Control != nil {
+		interval := dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.TickInterval.Duration()
+		if interval <= 0 {
+			interval = time.Second
+		}
+		dispatcher.versionStop = make(chan struct{})
+		dispatcher.versionPolling.Add(1)
+		go dispatcher.pollControlVersion(ctx, interval)
+	}
 	// One goroutine per slot, each running its Query Group to completion. The
 	// alternative this replaces spawned a goroutine per dispatch instead, which
 	// made the fanout whatever the loop could reach; the dispatcher active map
@@ -737,6 +827,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) executeScheduled(ctx context.Context
 	func() {
 		defer dispatcher.changeExecuting(-1)
 		if ctx.Err() == nil && dispatcher.bundle.isCurrentScheduledRunner(scheduled) {
+			result.ran = true
 			func() {
 				defer startSlotTiming(runCtx, dispatcher.bundle.dependencies.Observer, observability.StageRunnerCompleted, time.Now)()
 				_, result.attempted, result.admissionDenied, result.err =
@@ -753,6 +844,10 @@ func (dispatcher *phaseTwoRunnerDispatcher) executeScheduled(ctx context.Context
 }
 
 func (dispatcher *phaseTwoRunnerDispatcher) stop() {
+	if dispatcher.versionStop != nil {
+		dispatcher.versionStopOnce.Do(func() { close(dispatcher.versionStop) })
+		dispatcher.versionPolling.Wait()
+	}
 	close(dispatcher.jobs)
 	dispatcher.workers.Wait()
 }
@@ -836,6 +931,14 @@ func (dispatcher *phaseTwoRunnerDispatcher) run(ctx context.Context, wake <-chan
 
 func (dispatcher *phaseTwoRunnerDispatcher) beginGeneration() {
 	dispatcher.generation++
+	// One header comparison for the whole replica, once per tick. It is here
+	// rather than per Query Group because the header is global: a publication
+	// stamps it regardless of which Query Groups it touched, so one reading
+	// answers the question for all of them.
+	if sample := dispatcher.controlVersion.Load(); sample != nil {
+		dispatcher.dueIndex.ObserveControlVersion(sample.tag, sample.known, dispatcher.bundle.schedulerNow())
+	}
+	dispatcher.bundle.dependencies.Recorder.SetDueIndexEntries(dispatcher.dueIndex.Len())
 	if dispatcher.oneShot && dispatcher.generation == 1 {
 		dispatcher.oneShotTargets = make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle)
 		runners, _ := dispatcher.bundle.snapshotScheduledRunners()
@@ -860,6 +963,11 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 	// "deferred climbing while completed stays flat" is readable while it is
 	// happening. It is once per pass rather than per deferral: the pass is the
 	// dispatcher loop's own unit, and the walk itself must stay clean.
+	// One reading of the clock for the whole pass. The walk carries across
+	// passes, so a later pass takes its own reading; within one pass every Query
+	// Group must be judged against the same instant or the order of the walk
+	// would decide who counts as due.
+	now := dispatcher.bundle.schedulerNow()
 	deferredAtEntry := dispatcher.rotation.deferred
 	defer func() {
 		if dispatcher.rotation.deferred != deferredAtEntry {
@@ -914,6 +1022,14 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 			advance()
 			continue
 		}
+		// What the index would decide, recorded but not yet acted on. Reading it
+		// here rather than anywhere else is deliberate: this is the point at
+		// which a Query Group is either offered a place or not, so a prediction
+		// taken here is the prediction that suppressing dispatch would act on,
+		// and the comparison against what the round actually finds is a
+		// comparison of the real decision rather than a re-derivation of it.
+		scheduled.predictedDue, scheduled.dueEpoch =
+			dispatcher.dueIndex.Predict(scheduled.queryGroup, scheduled.lifecycle, now)
 		if dispatcher.bundle.dependencies.TargetFlow.Selected(string(scheduled.queryGroup)) {
 			scheduled.queuedAt = time.Now()
 		}
@@ -1021,6 +1137,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) handleResult(
 	if dispatcher.active[scheduled.queryGroup] == scheduled.lifecycle {
 		delete(dispatcher.active, scheduled.queryGroup)
 	}
+	dispatcher.recordDueBound(result)
 	if dispatcher.oneShotTargets[scheduled.queryGroup] == scheduled.lifecycle {
 		delete(dispatcher.oneShotTargets, scheduled.queryGroup)
 	}
@@ -1083,6 +1200,33 @@ func (dispatcher *phaseTwoRunnerDispatcher) handleResult(
 	dispatcher.queued[scheduled.queryGroup] = scheduled.lifecycle
 }
 
+// recordDueBound rewrites the index entry from the round that has just
+// returned, and checks the prediction the dispatcher made about it.
+//
+// A dispatch that never entered the Runner is skipped: the bound such a return
+// would carry belongs to the previous round, and writing it again would restate
+// an old answer as if it were fresh.
+//
+// The prediction is only checked when the round reached a verdict on dueness. A
+// round that lost a single-flight race, was cancelled, or failed its ownership
+// check says nothing about the schedule, and counting its silence as either
+// answer would put non-violations into the one counter whose whole job is to
+// prove the index wrong.
+func (dispatcher *phaseTwoRunnerDispatcher) recordDueBound(result phaseTwoScheduledResult) {
+	if !result.ran {
+		return
+	}
+	scheduled := result.scheduled
+	bound := scheduled.lifecycle.runner.DueBound()
+	dispatcher.dueIndex.Record(scheduled.queryGroup, scheduled.lifecycle, scheduled.dueEpoch,
+		bound, dispatcher.bundle.schedulerNow())
+	if bound.Verdict == scheduler.DueVerdictUnknown {
+		return
+	}
+	dispatcher.bundle.dependencies.Recorder.RecordDueIndexPrediction(
+		scheduled.predictedDue, bound.Verdict == scheduler.DueVerdictDue)
+}
+
 func (dispatcher *phaseTwoRunnerDispatcher) sortDelayed() {
 	sort.SliceStable(dispatcher.delayed, func(left, right int) bool {
 		return delayedBefore(dispatcher.delayed[left], dispatcher.delayed[right])
@@ -1111,6 +1255,14 @@ func (dispatcher *phaseTwoRunnerDispatcher) dropStaleQueued(revision uint64) {
 		return
 	}
 	dispatcher.prunedRunners = revision
+	dispatcher.dueIndex.DropLostLifecycles(func(
+		queryGroup execution.QueryGroupIdentity,
+		lifecycle *phaseTwoQueryGroupLifecycle,
+	) bool {
+		return dispatcher.bundle.isCurrentScheduledRunner(phaseTwoScheduledRunner{
+			queryGroup: queryGroup, lifecycle: lifecycle,
+		})
+	})
 	drop := func(queue []phaseTwoQueuedRunner) []phaseTwoQueuedRunner {
 		kept := queue[:0]
 		for _, queued := range queue {
@@ -1165,6 +1317,18 @@ func (bundle *phaseTwoWorkerBundle) snapshotScheduledRunners() ([]phaseTwoSchedu
 	})
 	bundle.scheduledRunners = runners
 	return runners, bundle.runnersRevision
+}
+
+// ensureDueIndex returns this replica's due index, building it on first use.
+// It is built here rather than at assembly so a bundle put together field by
+// field - which is how the dispatcher is exercised - still has one.
+func (bundle *phaseTwoWorkerBundle) ensureDueIndex() *phaseTwoDueIndex {
+	bundle.mu.Lock()
+	defer bundle.mu.Unlock()
+	if bundle.dueIndex == nil {
+		bundle.dueIndex = newPhaseTwoDueIndex(bundle.dependencies.Recorder)
+	}
+	return bundle.dueIndex
 }
 
 func (bundle *phaseTwoWorkerBundle) isCurrentScheduledRunner(scheduled phaseTwoScheduledRunner) bool {

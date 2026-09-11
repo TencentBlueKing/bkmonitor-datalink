@@ -33,23 +33,39 @@ const (
 	// single slow round does not make a live replica look missing, while a
 	// stopped replica disappears rather than lingering as stale truth.
 	DefaultTTL = 2 * time.Minute
-	// DefaultMaxAnomalies bounds one replica's published list. The full count
-	// travels alongside it, so exceeding the bound is visible as truncation
-	// instead of silently shortening the list.
-	DefaultMaxAnomalies = 200
+	// DefaultMaxAnomalyBytes bounds the encoded anomaly list rather than its
+	// length, because length does not bound what actually gets written: one
+	// anomaly carries up to maxStrategiesPerQueryGroup strategy references, so
+	// records differ in size by about four times.
+	//
+	// The budget is set above what a replica can realistically produce and below
+	// what the tracker's own bound allows. A replica owning every object of a
+	// deployment this size reports at most a few hundred anomalies at roughly
+	// 500 bytes each, and under two megabytes even if every one of them carried
+	// a full strategy list; the tracker permits far more objects than that, and
+	// that case is what this stops.
+	//
+	// The previous bound was a flat 200 records, which sat below the population
+	// a healthy deployment reports during an incident -- so it truncated during
+	// normal operation, which is when the list is worth reading. A bound that
+	// fires routinely is not a safety valve.
+	//
+	// The full count travels alongside the list either way, so reaching the
+	// bound is visible as truncation instead of silently shortening it.
+	DefaultMaxAnomalyBytes = 2 << 20
 )
 
 // RedisStore publishes and reads replica snapshots on the control plane.
 type RedisStore struct {
-	client       redis.Cmdable
-	prefix       string
-	ttl          time.Duration
-	maxAnomalies int
+	client          redis.Cmdable
+	prefix          string
+	ttl             time.Duration
+	maxAnomalyBytes int
 }
 
 // NewRedisStore builds a store. A non-positive ttl or cap falls back to the
 // package default rather than meaning "unbounded".
-func NewRedisStore(client redis.Cmdable, prefix string, ttl time.Duration, maxAnomalies int) (*RedisStore, error) {
+func NewRedisStore(client redis.Cmdable, prefix string, ttl time.Duration, maxAnomalyBytes int) (*RedisStore, error) {
 	if client == nil {
 		return nil, errors.New("alarmd fleet: Redis client is required")
 	}
@@ -59,10 +75,10 @@ func NewRedisStore(client redis.Cmdable, prefix string, ttl time.Duration, maxAn
 	if ttl <= 0 {
 		ttl = DefaultTTL
 	}
-	if maxAnomalies <= 0 {
-		maxAnomalies = DefaultMaxAnomalies
+	if maxAnomalyBytes <= 0 {
+		maxAnomalyBytes = DefaultMaxAnomalyBytes
 	}
-	return &RedisStore{client: client, prefix: prefix, ttl: ttl, maxAnomalies: maxAnomalies}, nil
+	return &RedisStore{client: client, prefix: prefix, ttl: ttl, maxAnomalyBytes: maxAnomalyBytes}, nil
 }
 
 // TTL reports how long a published snapshot stays readable. Callers use it to
@@ -75,9 +91,36 @@ func (store *RedisStore) snapshotKey(replica string) string {
 	return store.prefix + ":fleet-snapshot:" + hex.EncodeToString(digest[:])
 }
 
+// withinAnomalyBudget keeps the longest prefix of the list that fits the budget.
+// The caller has already sorted by age, so the prefix is the oldest objects --
+// the ones that have been wrong longest -- rather than an arbitrary subset that
+// changes on every tick.
+func withinAnomalyBudget(anomalies []Anomaly, budget int) []Anomaly {
+	if budget <= 0 {
+		return anomalies
+	}
+	spent := 0
+	for index, anomaly := range anomalies {
+		encoded, err := json.Marshal(anomaly)
+		if err != nil {
+			// Cut here rather than publish a list whose size cannot be accounted
+			// for. The count beside it still reports the untruncated total, so
+			// the gap stays visible.
+			return anomalies[:index]
+		}
+		// The separator that joins this record to the previous one counts too;
+		// a budget that ignores it is not the size of what gets written.
+		spent += len(encoded) + 1
+		if spent > budget {
+			return anomalies[:index]
+		}
+	}
+	return anomalies
+}
+
 // Publish writes this replica's snapshot, truncating the anomaly list to the
-// configured bound. TotalAnomalies always carries the untruncated count so the
-// reader can tell a short list from a complete one.
+// configured byte budget. TotalAnomalies always carries the untruncated count so
+// the reader can tell a short list from a complete one.
 func (store *RedisStore) Publish(ctx context.Context, snapshot Snapshot) error {
 	if snapshot.Replica == "" {
 		return errors.New("alarmd fleet: snapshot requires a replica identity")
@@ -88,9 +131,7 @@ func (store *RedisStore) Publish(ctx context.Context, snapshot Snapshot) error {
 	if snapshot.TotalAnomalies < len(snapshot.Anomalies) {
 		snapshot.TotalAnomalies = len(snapshot.Anomalies)
 	}
-	if len(snapshot.Anomalies) > store.maxAnomalies {
-		snapshot.Anomalies = snapshot.Anomalies[:store.maxAnomalies]
-	}
+	snapshot.Anomalies = withinAnomalyBudget(snapshot.Anomalies, store.maxAnomalyBytes)
 	payload, err := json.Marshal(snapshot)
 	if err != nil {
 		return fmt.Errorf("alarmd fleet: encode snapshot: %w", err)

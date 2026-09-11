@@ -11,6 +11,8 @@ package fleet
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -50,9 +52,9 @@ func (client *fakeRedis) MGet(_ context.Context, keys ...string) *redis.SliceCmd
 	return redis.NewSliceResult(result, nil)
 }
 
-func mustStore(t *testing.T, client redis.Cmdable, ttl time.Duration, cap int) *RedisStore {
+func mustStore(t *testing.T, client redis.Cmdable, ttl time.Duration, budget int) *RedisStore {
 	t.Helper()
-	store, err := NewRedisStore(client, "alarmd:test", ttl, cap)
+	store, err := NewRedisStore(client, "alarmd:test", ttl, budget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,10 +71,18 @@ func snapshotWith(anomalies int) Snapshot {
 
 // A cap that is announced but not applied is worse than no cap: it reads as a
 // guarantee and is discovered to be absent only once the data has grown.
-func TestPublishEnforcesTheAnomalyCapAndReportsTruncation(t *testing.T) {
+func TestPublishEnforcesTheAnomalyBudgetAndReportsTruncation(t *testing.T) {
 	client := newFakeRedis()
-	store := mustStore(t, client, time.Minute, 3)
-	if err := store.Publish(context.Background(), snapshotWith(10)); err != nil {
+	// Sized from the records themselves rather than guessed, so the test states
+	// how many fit instead of depending on the encoding staying byte-identical.
+	full := snapshotWith(10)
+	encoded, err := json.Marshal(full.Anomalies[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	budget := (len(encoded) + 1) * 3
+	store := mustStore(t, client, time.Minute, budget)
+	if err := store.Publish(context.Background(), full); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := store.Load(context.Background(), []string{"pod-a"})
@@ -83,13 +93,73 @@ func TestPublishEnforcesTheAnomalyCapAndReportsTruncation(t *testing.T) {
 		t.Fatalf("loaded %d snapshots, want 1", len(loaded))
 	}
 	if got := len(loaded[0].Anomalies); got != 3 {
-		t.Fatalf("published anomalies = %d, want the cap of 3", got)
+		t.Fatalf("published anomalies = %d, want the 3 that fit the budget", got)
 	}
 	if loaded[0].TotalAnomalies != 10 {
 		t.Fatalf("total anomalies = %d, want the untruncated 10", loaded[0].TotalAnomalies)
 	}
 	if !loaded[0].Truncated() {
 		t.Fatal("snapshot does not report itself as truncated")
+	}
+}
+
+// The bound exists to stop a pathological list, not to fire during an incident.
+// A flat count of 200 sat below what a replica reports when a few hundred
+// objects are degraded at once -- which is exactly when the list is read.
+func TestTheDefaultBudgetHoldsEveryObjectOfADeploymentThisSize(t *testing.T) {
+	client := newFakeRedis()
+	store := mustStore(t, client, time.Minute, 0)
+	full := snapshotWith(943)
+	if err := store.Publish(context.Background(), full); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(context.Background(), []string{"pod-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(loaded[0].Anomalies); got != 943 {
+		t.Fatalf("published anomalies = %d, want all 943 kept under the default budget", got)
+	}
+	if loaded[0].Truncated() {
+		t.Fatal("a population this deployment produces normally was reported as truncated")
+	}
+}
+
+// Records differ in size by about four times with the strategy list, so a list
+// that fits by count can still exceed what gets written. Budgeting by bytes is
+// the point of the change; budgeting by count would pass this with a payload
+// several times larger.
+func TestTheBudgetCountsBytesRatherThanRecords(t *testing.T) {
+	client := newFakeRedis()
+	heavy := Snapshot{Replica: "pod-a", TakenAt: now, Owned: 500}
+	for index := 0; index < 10; index++ {
+		one := anomaly(string(rune('a' + index%26)))
+		for strategy := 0; strategy < 32; strategy++ {
+			one.Strategies = append(one.Strategies, StrategyRef{
+				StrategyID: fmt.Sprintf("strategy-%d-%d", index, strategy),
+				BusinessID: fmt.Sprintf("business-%d", strategy),
+			})
+		}
+		heavy.Anomalies = append(heavy.Anomalies, one)
+	}
+	light, err := json.Marshal(anomaly("a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A budget that would hold ten of the small records holds far fewer of these.
+	store := mustStore(t, client, time.Minute, (len(light)+1)*10)
+	if err := store.Publish(context.Background(), heavy); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(context.Background(), []string{"pod-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(loaded[0].Anomalies); got >= 10 {
+		t.Fatalf("published %d heavy anomalies under a ten-small-record budget", got)
+	}
+	if loaded[0].TotalAnomalies != 10 {
+		t.Fatalf("total anomalies = %d, want the untruncated 10", loaded[0].TotalAnomalies)
 	}
 }
 
@@ -110,18 +180,29 @@ func TestPublishAppliesTheTTLSoAStoppedReplicaDisappears(t *testing.T) {
 func TestNonPositiveBoundsFallBackToDefaultsRatherThanUnbounded(t *testing.T) {
 	client := newFakeRedis()
 	store := mustStore(t, client, 0, 0)
-	if store.ttl != DefaultTTL || store.maxAnomalies != DefaultMaxAnomalies {
-		t.Fatalf("bounds = (%v, %d), want the defaults (%v, %d)", store.ttl, store.maxAnomalies, DefaultTTL, DefaultMaxAnomalies)
+	if store.ttl != DefaultTTL || store.maxAnomalyBytes != DefaultMaxAnomalyBytes {
+		t.Fatalf("bounds = (%v, %d), want the defaults (%v, %d)",
+			store.ttl, store.maxAnomalyBytes, DefaultTTL, DefaultMaxAnomalyBytes)
 	}
-	if err := store.Publish(context.Background(), snapshotWith(DefaultMaxAnomalies+5)); err != nil {
+	// Enough records that the default budget must cut them, so "zero falls back
+	// to the default" is proved by the bound acting rather than by reading it.
+	encoded, err := json.Marshal(anomaly("a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fits := DefaultMaxAnomalyBytes / (len(encoded) + 1)
+	if err := store.Publish(context.Background(), snapshotWith(fits+5)); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := store.Load(context.Background(), []string{"pod-a"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded[0].Anomalies) != DefaultMaxAnomalies {
-		t.Fatalf("published anomalies = %d, want the default cap", len(loaded[0].Anomalies))
+	if got := len(loaded[0].Anomalies); got >= fits+5 {
+		t.Fatalf("published anomalies = %d, want the default budget to have cut them", got)
+	}
+	if !loaded[0].Truncated() {
+		t.Fatal("the default budget cut the list without reporting truncation")
 	}
 }
 

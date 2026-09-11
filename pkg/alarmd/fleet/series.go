@@ -54,6 +54,14 @@ type SeriesDefinition struct {
 // seriesCatalog is fixed at build time. The page cannot add to it and cannot
 // pass an expression: the expressions live next to the thresholds they
 // illustrate, so a curve cannot drift from the judgment it explains.
+//
+// Every metric read here is the deployment-wide judgment, and every replica
+// exports the whole of it -- the judgment is computed once per replica over all
+// the snapshots, so two replicas publish the same numbers rather than their own
+// halves. So each expression has to collapse the replica dimension before it
+// adds anything up. Summing over a replicated total multiplies it by the replica
+// count, which looks like a real curve, moves when the deployment moves, and is
+// wrong by a factor nobody can see from the shape.
 var seriesCatalog = []SeriesDefinition{
 	{
 		Key: "expected", Label: "应有对象",
@@ -71,7 +79,11 @@ var seriesCatalog = []SeriesDefinition{
 	},
 	{
 		Key: "anomalies", Label: "异常对象",
-		PromQL: `sum(bkmonitor_alarmd_fleet_anomalies)`,
+		// The inner max collapses the replicas, the outer sum adds up the kinds.
+		// Both are needed and they are not interchangeable: this metric is split
+		// by kind, so a bare max would report only the largest kind, and a bare
+		// sum would count every kind once per replica.
+		PromQL: `sum(max by (kind) (bkmonitor_alarmd_fleet_anomalies))`,
 		Help:   "当前有多少对象处于异常。持续上升说明问题在扩散，不是单点抖动。",
 	},
 	{

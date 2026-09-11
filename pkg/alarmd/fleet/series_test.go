@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
 	"time"
 )
@@ -82,7 +83,7 @@ func TestSeriesCarryTheExpressionThatProducedThem(t *testing.T) {
 // take the working curves down with it, exactly when someone came to look.
 func TestOneBrokenCurveDoesNotTakeTheOthersDown(t *testing.T) {
 	provider := &stubRange{
-		errFor: `sum(bkmonitor_alarmd_fleet_anomalies)`,
+		errFor: `sum(max by (kind) (bkmonitor_alarmd_fleet_anomalies))`,
 		byExpression: map[string]SeriesRange{
 			`max(bkmonitor_alarmd_fleet_objects{state="expected"})`: {
 				Points: []SeriesPoint{{AtUnixMilli: 1789006260000, Value: 931}},
@@ -136,6 +137,41 @@ func TestTheWindowComesFromAFixedList(t *testing.T) {
 	status, _ := get(t, handler, "/api/series?window=90d")
 	if status != http.StatusBadRequest {
 		t.Fatalf("an unlisted window returned %d", status)
+	}
+}
+
+// Every metric these curves read is the deployment-wide judgment, and every
+// replica exports all of it rather than its own share. So the aggregation that
+// touches the raw metric has to be one that collapses the replicas; adding up
+// first multiplies a real number by the replica count.
+//
+// That is invisible on the page. The curve has the right shape, moves when the
+// deployment moves, and is simply twice the truth on two replicas -- which also
+// means it silently changes when the deployment is scaled, with no code change
+// and nothing to notice. The anomaly curve shipped that way.
+func TestEveryCurveCollapsesTheReplicasBeforeAddingAnythingUp(t *testing.T) {
+	// Captures the aggregation applied directly to the metric selector, which is
+	// the one that decides whether the replicas were collapsed. An outer sum over
+	// an inner max is fine; an outer sum over the selector itself is the defect.
+	innermost := regexp.MustCompile(`([a-z_]+)\s*(?:by\s*\([^)]*\)\s*)?\(\s*(bkmonitor_alarmd_[a-z_]+)`)
+	checked := 0
+	for _, definition := range seriesCatalog {
+		matches := innermost.FindAllStringSubmatch(definition.PromQL, -1)
+		if len(matches) == 0 {
+			t.Errorf("curve %q reads no alarmd metric through an aggregation: %s", definition.Key, definition.PromQL)
+			continue
+		}
+		for _, match := range matches {
+			checked++
+			if match[1] != "max" {
+				t.Errorf("curve %q applies %s directly to %s: every replica exports the whole deployment's "+
+					"number, so this reports it multiplied by the replica count",
+					definition.Key, match[1], match[2])
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no expression was checked; the guard would pass vacuously")
 	}
 }
 

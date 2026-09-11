@@ -248,6 +248,12 @@ func (c *PlanCompiler) validatePlan(request CompileRequest) *Terminal {
 // Group would stop evaluating with nothing but an evaluation failure to show
 // for it. A trigger window, a recovery window and a level connector are
 // ordinary edits, and each of them moves one of those inputs.
+//
+// Changing what this hash closes over changes every Plan's state generation
+// at once: at the rollout of such a change every Plan is forced through
+// WARMING once and every event id changes namespace once. That is the price
+// of every edit to this function, not only of the one that added the Level
+// contract inputs.
 func (c *PlanCompiler) deriveStateCompatibilityHash(request CompileRequest, levels []CompiledLevel) (string, error) {
 	semantics := request.StateSemantics
 	levelClosure := make([]struct {

@@ -108,8 +108,13 @@ func TestG4DefaultRegistryCompilesThreeIndependentAlgorithmKinds(t *testing.T) {
 // The state hash was re-pinned once on purpose, when the Level contract
 // inputs (detect and trigger fingerprints, state requirement) were folded
 // into it so that a trigger, recovery or connector edit re-warms the Plan
-// instead of failing its loaded state. That change flips every state
-// generation once at rollout; the other five values did not move.
+// instead of failing its loaded state. The cost of moving this value is
+// paid by the whole deployment at rollout: every Plan's state generation
+// changes once, so every Plan is forced through WARMING once and detects
+// nothing for RequiredFullSlots of its evaluation interval, and every
+// event id changes namespace once, since it closes over the hash. Move it
+// only with that cost in mind, and never alone in a release. The other
+// five values did not move.
 func TestG4ProcPortDeclaresSeriesFoldPolicyWithoutChangingFingerprints(t *testing.T) {
 	projection := AlgorithmInputProjection{
 		ValueFields:     []string{"value"},

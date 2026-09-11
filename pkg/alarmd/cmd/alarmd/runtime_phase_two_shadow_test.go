@@ -395,6 +395,10 @@ type legacyConvertingTestSink struct {
 	converter enginekafka.LegacyEventConverter
 }
 
+func (s *legacyConvertingTestSink) ConfigureStandardOutput(enginekafka.StandardEventConverter) error {
+	return nil
+}
+
 func (s *legacyConvertingTestSink) ConfigureLegacyOutput(converter enginekafka.LegacyEventConverter, topic string, _ int) error {
 	if topic != "alarmd_0bkmonitor_backend_event" {
 		return fmt.Errorf("unexpected Python output topic: %s", topic)

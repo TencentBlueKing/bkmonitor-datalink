@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -45,6 +46,7 @@ type productionStrategySourceFactory func(
 type productionPhaseTwoEventSink interface {
 	execution.EventSink
 	ConfigureLegacyOutput(enginekafka.LegacyEventConverter, string, int) error
+	ConfigureStandardOutput(enginekafka.StandardEventConverter) error
 	Shutdown(context.Context) error
 	Close() error
 }
@@ -519,6 +521,13 @@ func openProductionPhaseTwoBundleWithDependencies(
 				return nil, err
 			}
 			converter.Pods = resolver
+		}
+		standard, standardErr := linkdoutput.NewConverter(external.Now, recorder.RecordUnmappedSeverity)
+		if standardErr != nil {
+			return nil, standardErr
+		}
+		if err := events.ConfigureStandardOutput(standard); err != nil {
+			return nil, err
 		}
 		if err := events.ConfigureLegacyOutput(converter, cfg.Kafka.LegacyAdapter.Topic, cfg.Kafka.TriggerEvent.MaxMessageBytes); err != nil {
 			return nil, err

@@ -40,6 +40,18 @@ type TriggerEventSink struct {
 	maxLegacyBytes    int
 }
 
+// ConfigureStandardOutput replaces the standard raw event converter, once, at
+// assembly. The default one is complete; this exists so the assembly can give
+// it the observation callback that reports an alert level this build has no
+// name for, which the sink has no recorder to report itself.
+func (sink *TriggerEventSink) ConfigureStandardOutput(converter StandardEventConverter) error {
+	if converter == nil {
+		return errors.New("invalid standard output configuration")
+	}
+	sink.standardConverter = converter
+	return nil
+}
+
 // ConfigureLegacyOutput is called once during assembly, before any writes.
 func (sink *TriggerEventSink) ConfigureLegacyOutput(converter LegacyEventConverter, topic string, maxBytes int) error {
 	if converter == nil || !strings.HasPrefix(topic, "alarmd_") || maxBytes <= 0 {
@@ -100,7 +112,7 @@ func newTriggerEventSink(
 	if err != nil {
 		return nil, err
 	}
-	standard, err := linkdoutput.NewConverter(time.Now)
+	standard, err := linkdoutput.NewConverter(time.Now, nil)
 	if err != nil {
 		return nil, err
 	}

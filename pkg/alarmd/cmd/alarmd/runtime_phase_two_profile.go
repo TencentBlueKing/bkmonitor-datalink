@@ -140,6 +140,7 @@ func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (obs
 			CMDBCache:     cfg.CMDBCacheRedis().Destination(),
 			LegacyService: cfg.Kafka.LegacyAdapter.ServiceRedis.Destination(),
 
+			OutputProtocol:      cfg.OutputProtocol(),
 			PlatformKeyPrefix:   cfg.PlatformKeyPrefix(),
 			StrategyCachePrefix: cfg.PhaseTwo.Control.StrategyCachePrefix,
 			OwnStorePrefix:      cfg.Redis.StatePrefix,

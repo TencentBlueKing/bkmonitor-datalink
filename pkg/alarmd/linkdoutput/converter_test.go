@@ -43,7 +43,7 @@ func decision(mutate func(*contract.TriggerEventV1)) *contract.TriggerEventV1 {
 
 func convert(t *testing.T, event *contract.TriggerEventV1) map[string]json.RawMessage {
 	t.Helper()
-	converter, err := NewConverter(func() time.Time { return time.Unix(1756684860, 0).UTC() })
+	converter, err := NewConverter(func() time.Time { return time.Unix(1756684860, 0).UTC() }, nil)
 	if err != nil {
 		t.Fatalf("NewConverter() error = %v", err)
 	}
@@ -158,7 +158,7 @@ func TestADecisionWithNoAlertIdentityIsRefused(t *testing.T) {
 		"no strategy revision": func(e *contract.TriggerEventV1) { e.StrategyRef = nil },
 		"no series identity":   func(e *contract.TriggerEventV1) { e.DedupeMD5 = "" },
 	} {
-		converter, err := NewConverter(time.Now)
+		converter, err := NewConverter(time.Now, nil)
 		if err != nil {
 			t.Fatalf("NewConverter() error = %v", err)
 		}

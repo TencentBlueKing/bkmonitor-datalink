@@ -98,13 +98,18 @@ type wireEvent struct {
 // produced_at is the only field whose value is the moment of writing.
 type Converter struct {
 	now func() time.Time
+	// onUnmappedSeverity is called for each event whose level had no name in
+	// this build. Such an event still ships - refusing it would silence an
+	// alert over a naming gap - but it arrives at the consumer under a default
+	// severity, and that is the only place the gap is visible.
+	onUnmappedSeverity func(level uint32)
 }
 
-func NewConverter(now func() time.Time) (*Converter, error) {
+func NewConverter(now func() time.Time, onUnmappedSeverity func(level uint32)) (*Converter, error) {
 	if now == nil {
 		return nil, errors.New("alarmd linkdoutput: a clock is required")
 	}
-	return &Converter{now: now}, nil
+	return &Converter{now: now, onUnmappedSeverity: onUnmappedSeverity}, nil
 }
 
 // Convert writes one decision.
@@ -148,6 +153,9 @@ func (converter *Converter) Convert(event *contract.TriggerEventV1) (Event, erro
 		dimensions = map[string]json.RawMessage{}
 	}
 	severity := severityFor(primary)
+	if !SeverityIsBuiltIn(primary) && converter.onUnmappedSeverity != nil {
+		converter.onUnmappedSeverity(primary.LevelID)
+	}
 	message := wireEvent{
 		TenantID: event.TenantID, EventID: event.EventID, AlertID: event.DedupeMD5,
 		Title: title(event, primary, action), Content: content(event, primary),

@@ -48,14 +48,30 @@ func TestHowLateIsLateIsMeasuredInTheObjectsOwnPeriod(t *testing.T) {
 // An object with no period stated still has to be reported once its wake time
 // has passed. Dropping it would turn a missing field into silence about the
 // object, and silence here is what health looks like.
-func TestAnObjectWithNoStatedPeriodIsStillReported(t *testing.T) {
+// It is also counted separately. No ordinary path produces an entry without a
+// period -- an object with no due Plans never gets a wake time written at all --
+// so one arriving means the writer is broken, and the defensive default that
+// keeps the object visible would otherwise make that indistinguishable from
+// ordinary reporting.
+func TestAnObjectWithNoStatedPeriodIsStillReportedAndCounted(t *testing.T) {
 	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
-	anomalies, _ := OverdueAnomalies([]OverdueWake{
+	anomalies, facts := OverdueAnomalies([]OverdueWake{
 		{QueryGroup: "unknown-period", WakeAt: now.Add(-time.Second)},
 	}, 1, now, "pod-a", nil)
 
 	if len(anomalies) != 1 {
 		t.Fatalf("anomalies = %+v, want the object kept rather than silently dropped", anomalies)
+	}
+	if facts.MissingPeriod != 1 {
+		t.Fatalf("missing_period = %d, want the defect counted rather than absorbed", facts.MissingPeriod)
+	}
+
+	// And it stays zero on the ordinary path, or it says nothing.
+	_, healthy := OverdueAnomalies([]OverdueWake{
+		{QueryGroup: "normal", WakeAt: now.Add(-time.Hour), IntervalSeconds: 60},
+	}, 1, now, "pod-a", nil)
+	if healthy.MissingPeriod != 0 {
+		t.Fatalf("missing_period = %d on a well-formed entry", healthy.MissingPeriod)
 	}
 }
 

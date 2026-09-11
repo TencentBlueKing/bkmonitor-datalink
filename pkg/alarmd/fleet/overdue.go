@@ -77,6 +77,14 @@ type OverdueFacts struct {
 	Truncated bool `json:"truncated,omitempty"`
 	// OldestSeconds is how long the worst one has been waiting.
 	OldestSeconds float64 `json:"oldest_seconds,omitempty"`
+	// MissingPeriod counts entries that arrived without the object's own
+	// evaluation period. There is no ordinary path that produces one -- an
+	// object with no due Plans never gets a wake time written at all -- so a
+	// non-zero here is a defect in whatever wrote the entry, not a state of the
+	// deployment. It is counted rather than left to the defensive default alone,
+	// because that default keeps the object visible and would otherwise make the
+	// defect indistinguishable from ordinary reporting.
+	MissingPeriod int `json:"missing_period,omitempty"`
 }
 
 // OverdueAnomalies turns parked objects into list entries, keeping the ones a
@@ -114,8 +122,12 @@ func OverdueAnomalies(
 		if late <= 0 {
 			continue
 		}
-		if period := time.Duration(wake.IntervalSeconds) * time.Second; period > 0 && late <= period {
-			continue
+		if period := time.Duration(wake.IntervalSeconds) * time.Second; period > 0 {
+			if late <= period {
+				continue
+			}
+		} else {
+			facts.MissingPeriod++
 		}
 		if late.Seconds() > facts.OldestSeconds {
 			facts.OldestSeconds = late.Seconds()
@@ -164,6 +176,7 @@ func aggregateOverdue(view *View, snapshots []Snapshot) {
 			overdue = &OverdueFacts{}
 		}
 		overdue.Total += facts.Total
+		overdue.MissingPeriod += facts.MissingPeriod
 		overdue.Truncated = overdue.Truncated || facts.Truncated
 		if facts.OldestSeconds > overdue.OldestSeconds {
 			overdue.OldestSeconds = facts.OldestSeconds

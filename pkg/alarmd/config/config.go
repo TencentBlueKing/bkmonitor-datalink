@@ -71,13 +71,19 @@ type KafkaOutputConfig struct {
 }
 
 type KafkaConfig struct {
-	LegacyAdapter       LegacyAdapterConfig `yaml:"legacy_adapter"`
-	Brokers             []string            `yaml:"brokers"`
-	InputTopic          string              `yaml:"input_topic"`
-	TriggerEvent        KafkaOutputConfig   `yaml:"trigger_event"`
-	MessageReceipt      KafkaOutputConfig   `yaml:"message_receipt"`
-	AllowedOutputTopics []string            `yaml:"allowed_output_topics"`
-	GroupID             string              `yaml:"group_id"`
+	LegacyAdapter  LegacyAdapterConfig `yaml:"legacy_adapter"`
+	Brokers        []string            `yaml:"brokers"`
+	InputTopic     string              `yaml:"input_topic"`
+	TriggerEvent   KafkaOutputConfig   `yaml:"trigger_event"`
+	MessageReceipt KafkaOutputConfig   `yaml:"message_receipt"`
+	// Deprecated: accepted and ignored. It required every output topic to be
+	// repeated in a list, which protected nothing the topics themselves did not
+	// already state, and turned "add an output topic" into a startup failure
+	// when the second place was forgotten. The field stays only so a rendered
+	// configuration that still carries it keeps loading; it is removed once no
+	// deployment states it.
+	AllowedOutputTopics []string `yaml:"allowed_output_topics"`
+	GroupID             string   `yaml:"group_id"`
 	// ClientID and BrokerVersion identify this producer to the broker and fix
 	// the protocol it speaks. Neither is something a deployment knows better
 	// than the product: the identity is the product's name and the version is
@@ -108,13 +114,12 @@ func (c KafkaConfig) MessageReceiptCoordinates() enginekafka.DecisionSinkConfig 
 
 func (c KafkaConfig) outputCoordinates(output KafkaOutputConfig) enginekafka.DecisionSinkConfig {
 	return enginekafka.DecisionSinkConfig{
-		Brokers:             append([]string(nil), c.Brokers...),
-		InputTopic:          c.InputTopic,
-		OutputTopic:         output.Topic,
-		AllowedOutputTopics: append([]string(nil), c.AllowedOutputTopics...),
-		ClientID:            c.ClientID,
-		BrokerVersion:       c.BrokerVersion,
-		MaxMessageBytes:     output.MaxMessageBytes,
+		Brokers:         append([]string(nil), c.Brokers...),
+		InputTopic:      c.InputTopic,
+		OutputTopic:     output.Topic,
+		ClientID:        c.ClientID,
+		BrokerVersion:   c.BrokerVersion,
+		MaxMessageBytes: output.MaxMessageBytes,
 	}
 }
 
@@ -198,10 +203,9 @@ func Default() Config {
 		},
 		Kafka: KafkaConfig{
 			ClientID: "alarmd", BrokerVersion: "0.10.2.0",
-			TriggerEvent:        KafkaOutputConfig{Topic: "alarmd_event", MaxMessageBytes: defaultOutputMaxMessageBytes},
-			LegacyAdapter:       LegacyAdapterConfig{Topic: "alarmd_0bkmonitor_backend_event"},
-			AllowedOutputTopics: []string{"alarmd_event", "alarmd_0bkmonitor_backend_event"},
-			MessageReceipt:      KafkaOutputConfig{MaxMessageBytes: defaultOutputMaxMessageBytes},
+			TriggerEvent:   KafkaOutputConfig{Topic: "alarmd_event", MaxMessageBytes: defaultOutputMaxMessageBytes},
+			LegacyAdapter:  LegacyAdapterConfig{Topic: "alarmd_0bkmonitor_backend_event"},
+			MessageReceipt: KafkaOutputConfig{MaxMessageBytes: defaultOutputMaxMessageBytes},
 		},
 		Redis: RedisConfig{
 			RedisConnectionConfig: RedisConnectionConfig{Mode: RedisModeStandalone,

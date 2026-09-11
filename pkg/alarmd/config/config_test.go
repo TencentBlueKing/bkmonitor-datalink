@@ -148,12 +148,10 @@ func TestGoAccessValidatesOnlyTriggerEventKafkaTopology(t *testing.T) {
 		"invalid broker":        func(cfg *Config) { cfg.Kafka.Brokers = []string{"missing-port"} },
 		"duplicate broker":      func(cfg *Config) { cfg.Kafka.Brokers = append(cfg.Kafka.Brokers, cfg.Kafka.Brokers[0]) },
 		"invalid trigger topic": func(cfg *Config) { cfg.Kafka.TriggerEvent.Topic = "invalid topic" },
-		"missing allowlist":     func(cfg *Config) { cfg.Kafka.AllowedOutputTopics = nil },
-		"output not allowlisted": func(cfg *Config) {
-			cfg.Kafka.AllowedOutputTopics = []string{"different-output"}
-		},
-		"duplicate allowlist": func(cfg *Config) {
-			cfg.Kafka.AllowedOutputTopics = append(cfg.Kafka.AllowedOutputTopics, cfg.Kafka.TriggerEvent.Topic)
+		// The two output topics carry different wire formats, so one topic
+		// named twice is a stream whose consumer can only read half of it.
+		"native and compatibility topics are the same": func(cfg *Config) {
+			cfg.Kafka.LegacyAdapter.Topic = cfg.Kafka.TriggerEvent.Topic
 		},
 		"missing client":    func(cfg *Config) { cfg.Kafka.ClientID = "" },
 		"invalid version":   func(cfg *Config) { cfg.Kafka.BrokerVersion = "not-a-version" },
@@ -316,16 +314,7 @@ func TestLoadRejectsLegacyAndPhaseTwoFields(t *testing.T) {
 
 func TestLoadRejectsUnsafeKafkaTopicTopology(t *testing.T) {
 	tests := map[string]func(*Config){
-		"same output topics": func(cfg *Config) { cfg.Kafka.MessageReceipt.Topic = cfg.Kafka.TriggerEvent.Topic },
-		"input allowlisted": func(cfg *Config) {
-			cfg.Kafka.AllowedOutputTopics = append(cfg.Kafka.AllowedOutputTopics, cfg.Kafka.InputTopic)
-		},
-		"trigger event not allowlisted": func(cfg *Config) {
-			cfg.Kafka.AllowedOutputTopics = []string{cfg.Kafka.MessageReceipt.Topic}
-		},
-		"receipt not allowlisted": func(cfg *Config) {
-			cfg.Kafka.AllowedOutputTopics = []string{cfg.Kafka.TriggerEvent.Topic}
-		},
+		"same output topics":       func(cfg *Config) { cfg.Kafka.MessageReceipt.Topic = cfg.Kafka.TriggerEvent.Topic },
 		"zero trigger event bytes": func(cfg *Config) { cfg.Kafka.TriggerEvent.MaxMessageBytes = 0 },
 		"zero receipt bytes":       func(cfg *Config) { cfg.Kafka.MessageReceipt.MaxMessageBytes = 0 },
 	}

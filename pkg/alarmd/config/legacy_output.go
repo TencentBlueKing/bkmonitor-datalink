@@ -2,7 +2,6 @@ package config
 
 import (
 	"errors"
-	"fmt"
 )
 
 // LegacyAdapterConfig carries the environment coordinates the built-in
@@ -40,17 +39,8 @@ func (c KafkaConfig) validateCompatibilityOutput() error {
 	if adapter.Topic == "" {
 		return errors.New("legacy_adapter.topic is required: every strategy without a frozen revision publishes to it")
 	}
-	allowed := false
-	for _, topic := range c.AllowedOutputTopics {
-		if topic == adapter.Topic {
-			allowed = true
-		}
-	}
-	if !allowed {
-		return fmt.Errorf(
-			"legacy_adapter.topic %q is not in allowed_output_topics %v",
-			adapter.Topic, c.AllowedOutputTopics,
-		)
+	if err := validatePhaseTwoTopic("legacy_adapter.topic", adapter.Topic); err != nil {
+		return err
 	}
 	if adapter.SnapshotPrefix == "" {
 		return errors.New("legacy_adapter.snapshot_prefix is required: it names the keys every converted event writes to the service Redis")

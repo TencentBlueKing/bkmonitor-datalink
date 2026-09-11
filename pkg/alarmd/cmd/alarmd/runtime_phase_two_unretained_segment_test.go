@@ -63,13 +63,40 @@ func TestProductionPhaseTwoQueryGroupBehindUnretainedSegmentRecovers(t *testing.
 			}
 
 			// Step 3: the initial publication ages out of the Catalog retention:
-			// its Snapshot objects are gone while the Segment still references it.
+			// its Snapshot objects are gone while the Segment still references
+			// it. The catalog objects the Segment names by content age out
+			// with it - nothing renews an object the current manifest does not
+			// name - so the test removes them as well; otherwise the Segment
+			// would still be readable by content, which is the case the
+			// retention is designed to make possible, not the one under test.
 			oldRevision := string(closed.Segment.Publication.SnapshotRevision)
 			keys, err := fixture.redisClient.Keys(ctx, "*"+oldRevision+"*").Result()
 			if err != nil || len(keys) == 0 {
 				t.Fatalf("Snapshot objects of the initial publication = %v error=%v, want at least one key", keys, err)
 			}
+			if closed.Segment.ObjectDigest == "" || len(closed.Segment.OutputContextRefs) == 0 {
+				t.Fatalf("the closed Segment names no catalog object: %+v", closed.Segment)
+			}
+			keys = append(keys, "*:qgobj:"+string(closed.Segment.ObjectDigest))
+			objectKeys, err := fixture.redisClient.Keys(ctx, "*:qgobj:"+string(closed.Segment.ObjectDigest)).Result()
+			if err != nil || len(objectKeys) != 1 {
+				t.Fatalf("catalog object of the initial publication = %v error=%v, want exactly one key", objectKeys, err)
+			}
+			keys = append(keys[:len(keys)-1], objectKeys...)
+			for _, ref := range closed.Segment.OutputContextRefs {
+				contextKeys, err := fixture.redisClient.Keys(ctx, "*:outctx:"+string(ref.Digest)).Result()
+				if err != nil || len(contextKeys) != 1 {
+					t.Fatalf("output context of the initial publication = %v error=%v, want exactly one key", contextKeys, err)
+				}
+				keys = append(keys, contextKeys...)
+			}
 			if err := fixture.redisClient.Del(ctx, keys...).Err(); err != nil {
+				t.Fatal(err)
+			}
+			// A process that read the objects before they aged out still holds
+			// them - they are immutable, so that is correct - which is not the
+			// process under test: this one comes to the Segment cold.
+			if err := fixture.repository.ConfigureObjectCache(1, 1); err != nil {
 				t.Fatal(err)
 			}
 			_, freezeErr := catalog.FreezeSlotContract(ctx, execution.FreezeSlotContractRequest{

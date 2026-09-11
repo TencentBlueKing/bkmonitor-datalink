@@ -295,6 +295,11 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err := repository.ConfigureControlTimelineCache(timelineCache.MaxEntries, timelineCache.MaxBytes); err != nil {
 		return nil, err
 	}
+	// Catalog objects are a few kilobytes each and immutable; they take the
+	// same container-derived budget as the timelines they are read next to.
+	if err := repository.ConfigureObjectCache(timelineCache.MaxEntries, timelineCache.MaxBytes); err != nil {
+		return nil, err
+	}
 	repository.ConfigureObserver(observer)
 	// The cache counters are what said a decoded-timeline cache was worth
 	// building, and nothing consumed them before. The timeline occupancy joins

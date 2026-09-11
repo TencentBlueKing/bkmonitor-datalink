@@ -44,6 +44,10 @@ func controlObjectOfKey(key string) string {
 		return "publication"
 	case strings.Contains(key, ":active_qg_set:"):
 		return "active_set"
+	case strings.Contains(key, ":qgobj:"):
+		return "object"
+	case strings.Contains(key, ":outctx:"):
+		return "context"
 	default:
 		return "other"
 	}
@@ -400,6 +404,55 @@ func TestControlReadCacheMissingActivationSurfacesUnavailable(t *testing.T) {
 	}
 }
 
+// A Segment that names its content is frozen from the catalog objects: the
+// whole Snapshot body is never read, the object and the Plan's output context
+// are read from the network once and served from the process cache after.
+func TestControlReadCacheFreezesFromCatalogObjectsWithoutTheSnapshotBody(t *testing.T) {
+	fixture := newControlReadCacheFixture(t, "snapshot-objects")
+	ctx := context.Background()
+	repository, runtime := fixture.coldRepository(t)
+	if err := repository.ConfigureObjectCache(64, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	fixture.hook.reset()
+	freeze := func() (execution.FrozenSlotContractFact, error) {
+		scoped, done := controlplane.WithSnapshotReadScope(ctx)
+		defer done()
+		return runtime.FreezeSlotContract(scoped, fixture.request)
+	}
+	const runs = 5
+	for i := 0; i < runs; i++ {
+		fact, err := freeze()
+		if err != nil || fact.Contract != fixture.contract.Contract {
+			t.Fatalf("FreezeSlotContract #%d = (%+v, %v)", i, fact.Contract, err)
+		}
+	}
+	hook := fixture.hook
+	if got := hook.bodyReads("snapshot"); got != 0 {
+		t.Fatalf("snapshot body reads=%d, want none when the Segment names its content", got)
+	}
+	if got := hook.bodyReads("object"); got != 1 {
+		t.Fatalf("object reads=%d, want 1 for %d runs", got, runs)
+	}
+	if got := hook.bodyReads("context"); got != 1 {
+		t.Fatalf("output context reads=%d, want 1 for %d runs", got, runs)
+	}
+	snapshotKey := fixture.prefix + ":snapshot:" + string(fixture.snapshot.Publication.SnapshotRevision)
+	body, err := fixture.client.Get(ctx, snapshotKey).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One Query Group's object is most of a one-Query-Group Snapshot; the
+	// saving is per Query Group of the population, not visible here.
+	if transferred := hook.objectBytes("object") + hook.objectBytes("context"); transferred == 0 {
+		t.Fatal("no object bytes were read")
+	}
+	t.Logf("snapshot body=%d bytes never read; object+context=%d bytes read once for %d runs", len(body), hook.objectBytes("object")+hook.objectBytes("context"), runs)
+}
+
+// A Segment whose objects are gone, or that predates the catalog, is frozen
+// the way it always was: from the Snapshot body, read once per revision and
+// probed cheaply after.
 func TestControlReadCacheReadsSnapshotBodyOncePerRevision(t *testing.T) {
 	fixture := newControlReadCacheFixture(t, "snapshot-revision")
 	ctx := context.Background()
@@ -413,6 +466,16 @@ func TestControlReadCacheReadsSnapshotBodyOncePerRevision(t *testing.T) {
 	epochText, err := fixture.client.Get(ctx, epochKey).Result()
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Age the catalog objects out so the Segment falls back to the body.
+	for _, pattern := range []string{"*:qgobj:*", "*:outctx:*"} {
+		keys, err := fixture.client.Keys(ctx, fixture.prefix+pattern).Result()
+		if err != nil || len(keys) == 0 {
+			t.Fatalf("catalog objects %s = %v (%v), want some to age out", pattern, keys, err)
+		}
+		if err := fixture.client.Del(ctx, keys...).Err(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// The one complete read is an MGET of body and epoch value together.
 	coldReadBytes := len(body) + len(epochText)

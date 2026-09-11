@@ -600,7 +600,11 @@ func (cleanup *TemporaryLegacyDrainingCleanup) openCandidateSchedule(
 	group QueryGroup,
 	boundary execution.EvaluationTime,
 ) (execution.FrozenQueryGroupSchedule, []PlanActivationRecord, error) {
-	opened, err := cleanup.repository.materializeSchedule(ctx, scheduleSegmentForGroup(candidate.Publication, group, boundary))
+	segment, err := scheduleSegmentForGroup(candidate.Publication, group, boundary)
+	if err != nil {
+		return execution.FrozenQueryGroupSchedule{}, nil, err
+	}
+	opened, err := cleanup.repository.materializeSchedule(ctx, segment)
 	if err != nil {
 		return execution.FrozenQueryGroupSchedule{}, nil, err
 	}

@@ -123,7 +123,10 @@ func compilePublishedActivation(
 					ScheduleRevision: plan.ScheduleRevision, RequiredFullSlots: requiredFullSlots}}
 			records = append(records, PlanActivationRecord{Fact: fact, Publication: snapshot.Publication})
 		}
-		segment := scheduleSegmentForGroup(snapshot.Publication, group, boundary)
+		segment, err := scheduleSegmentForGroup(snapshot.Publication, group, boundary)
+		if err != nil {
+			return nil, nil, err
+		}
 		if err := (execution.FrozenQueryGroupSchedule{Segment: segment, Plans: plans}).Validate(); err != nil {
 			return nil, nil, err
 		}

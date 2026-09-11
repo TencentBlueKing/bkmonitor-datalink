@@ -42,6 +42,7 @@ type phaseTwoMetrics struct {
 	objectCatalogObjects         *prometheus.CounterVec
 	objectCatalogRedis           *prometheus.HistogramVec
 	objectCatalogManifestBytes   prometheus.Gauge
+	objectReads                  *prometheus.CounterVec
 	legacyMigration              *prometheus.CounterVec
 	legacyMigrationScan          prometheus.Histogram
 	legacyMigrationTime          *prometheus.HistogramVec
@@ -176,6 +177,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.objectCatalogObjects = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "object_catalog_objects_total", Help: "Content-addressed catalog objects by what a write or renewal did with them: written, present (already stored under their digest) or missing (referenced but not found on renewal)."}, []string{"operation", "outcome"})
 	metrics.objectCatalogRedis = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "object_catalog_redis_duration_seconds", Help: "Object catalog write or renewal duration.", Buckets: activeQGSetDurationBuckets}, []string{"operation", "result"})
 	metrics.objectCatalogManifestBytes = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "object_catalog_manifest_bytes", Help: "Encoded bytes of the manifest written for the latest publication."})
+	metrics.objectReads = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "object_read_total", Help: "Catalog object reads by a Worker, by object kind and outcome; for a Segment, whether its Query Group was read by content and if not, why."}, []string{"kind", "result"})
 	metrics.legacyMigration = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_total", Help: "One-time legacy Active QG migration outcomes."}, []string{"result", "reason_class"})
 	metrics.legacyMigrationScan = prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_scan_keys", Help: "Redis keys scanned by one-time legacy Active QG migration.", Buckets: legacyMigrationScanBuckets})
 	metrics.legacyMigrationTime = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_duration_seconds", Help: "One-time legacy Active QG migration duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
@@ -235,7 +237,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.queryAdmission,
 		m.activeQGSetCount, m.activeQGSetBytes, m.activeQGSetEncode, m.activeQGSetRedis,
 		m.scheduleCutoverPayload, m.scheduleCutoverTimelineMax, m.scheduleTimelineBytes, m.scheduleSegmentsPruned, m.schedulePruneSkipped, m.scheduleCutoverDuration,
-		m.objectCatalogObjects, m.objectCatalogRedis, m.objectCatalogManifestBytes,
+		m.objectCatalogObjects, m.objectCatalogRedis, m.objectCatalogManifestBytes, m.objectReads,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 		m.undrainedDrainingQueryGroups,
 		m.algorithmEvaluations, m.algorithmInputs,
@@ -292,6 +294,9 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 		if facts.Operation == "write" && facts.Result == "success" {
 			m.objectCatalogManifestBytes.Set(float64(facts.ManifestBytes))
 		}
+	}
+	if facts := observation.ObjectRead; facts != nil {
+		m.objectReads.WithLabelValues(facts.Kind, facts.Result).Inc()
 	}
 	if facts := observation.LegacyMigration; facts != nil {
 		m.legacyMigration.WithLabelValues(facts.Result, facts.ReasonClass).Inc()

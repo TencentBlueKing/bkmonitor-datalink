@@ -111,6 +111,8 @@ type RedisCatalogRepository struct {
 	snapshotFlights            snapshotReadFlights
 	activationCache            parsedActivationCache
 	objectCatalog              objectCatalogState
+	objectCache                *objectReadCache
+	objectFlights              objectReadFlights
 	controlCache               *controlReadCache
 	controlReads               controlReadCounters
 	legacyMigrationMaxScanKeys int

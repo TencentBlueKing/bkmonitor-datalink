@@ -485,6 +485,32 @@ func (runtime *productionPhaseTwoControl) refresh(
 		if err != nil {
 			return phaseTwoControlRefreshResult{}, false, err
 		}
+		// A publication an earlier round published and never activated (the
+		// process stopped between the two) is still the one the fleet should
+		// execute, and this round's candidate does not change that: the
+		// candidate needs its own confirmation, and a source that changes on
+		// every round never gives one. Returning here left the activation on
+		// the previous publication for as long as that went on, past the point
+		// where its payload expired, with nothing that could move it - only
+		// InitialRefresh loops on pending. The activation is caught up now,
+		// with the same failure handling as a round that published.
+		if result.Latest != (controlplane.SnapshotPublicationRef{}) && result.Latest != state.Current {
+			activated, activationResult, ok := runtime.activate(ctx, result.Latest)
+			if !ok {
+				return activationResult.result, false, activationResult.err
+			}
+			queryGroups, err := runtime.loadActiveQueryGroups(ctx, activated)
+			if err != nil {
+				return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, false, err
+			}
+			sourceRefresh.ActivatedRevision = string(activated.Current.SnapshotRevision)
+			sourceRefresh.ActivatedEpoch = activated.Current.PublicationEpoch
+			sourceRefresh.ActivationCaughtUp = true
+			runtime.enrichSourceRefreshCounts(ctx, sourceRefresh, state, nil, activated, sourceRefreshCurrentCount(activated, queryGroups))
+			return phaseTwoControlRefreshResult{
+				QueryGroups: queryGroups, Status: phaseTwoControlHealthy, SourceRefreshObserved: true,
+			}, false, nil
+		}
 		queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
 		if err != nil {
 			return phaseTwoControlRefreshResult{}, false, err
@@ -531,39 +557,9 @@ func (runtime *productionPhaseTwoControl) refresh(
 	if result.Status != controlplane.SourceRefreshUnchanged {
 		previous, previousErr = runtime.dependencies.Repository.LoadActivation(ctx)
 	}
-	state, err := runtime.dependencies.Activator.Ensure(ctx, result.Publication)
-	if err != nil {
-		if failure, ok := controlplane.ActivationFailureFromError(err); ok {
-			var samples []string
-			samplesTruncated := false
-			if failure.Class == controlplane.ActivationFailureClassNotDrained {
-				samples = make([]string, len(failure.ReappearedQueryGroupSamples))
-				for index, identity := range failure.ReappearedQueryGroupSamples {
-					samples[index] = string(identity)
-				}
-				samplesTruncated = failure.ReappearedQueryGroupSamplesTruncated
-			}
-			observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
-				Component:  observability.ComponentControlPlane,
-				Stage:      observability.StageActivationFailed,
-				Result:     observability.ResultDegraded,
-				Operation:  observability.OperationTransition,
-				Direction:  observability.DirectionInternal,
-				ReasonCode: observability.ReasonContractRetryable,
-				ActivationFailure: &observability.ActivationFailureFacts{
-					Stage:                                observability.ActivationFailureStage(failure.Stage),
-					Class:                                observability.ActivationFailureClass(failure.Class),
-					DrainingQueryGroups:                  failure.DrainingQueryGroups,
-					CandidateQueryGroups:                 failure.CandidateQueryGroups,
-					ReappearedQueryGroups:                failure.ReappearedQueryGroups,
-					ReappearedQueryGroupSamples:          samples,
-					ReappearedQueryGroupSamplesTruncated: samplesTruncated,
-				},
-				Err: err,
-			})
-		}
-		fallback, fallbackErr := runtime.keepLastGood(ctx, observability.SourceKindCompiledSnapshot, err)
-		return fallback, false, fallbackErr
+	state, activationResult, ok := runtime.activate(ctx, result.Publication)
+	if !ok {
+		return activationResult.result, false, activationResult.err
 	}
 	if result.Status == controlplane.SourceRefreshUnchanged {
 		previous, previousErr = state, nil
@@ -577,6 +573,55 @@ func (runtime *productionPhaseTwoControl) refresh(
 	return phaseTwoControlRefreshResult{
 		QueryGroups: queryGroups, Status: phaseTwoControlHealthy, SourceRefreshObserved: true,
 	}, false, nil
+}
+
+type phaseTwoActivationFallback struct {
+	result phaseTwoControlRefreshResult
+	err    error
+}
+
+// activate brings the activation to publication. A failure is reported on
+// the activation_failed stage with its bounded classification and answered
+// with the last good activation, whichever round asked.
+func (runtime *productionPhaseTwoControl) activate(
+	ctx context.Context,
+	publication controlplane.SnapshotPublicationRef,
+) (controlplane.ActivationState, phaseTwoActivationFallback, bool) {
+	state, err := runtime.dependencies.Activator.Ensure(ctx, publication)
+	if err == nil {
+		return state, phaseTwoActivationFallback{}, true
+	}
+	if failure, ok := controlplane.ActivationFailureFromError(err); ok {
+		var samples []string
+		samplesTruncated := false
+		if failure.Class == controlplane.ActivationFailureClassNotDrained {
+			samples = make([]string, len(failure.ReappearedQueryGroupSamples))
+			for index, identity := range failure.ReappearedQueryGroupSamples {
+				samples[index] = string(identity)
+			}
+			samplesTruncated = failure.ReappearedQueryGroupSamplesTruncated
+		}
+		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+			Component:  observability.ComponentControlPlane,
+			Stage:      observability.StageActivationFailed,
+			Result:     observability.ResultDegraded,
+			Operation:  observability.OperationTransition,
+			Direction:  observability.DirectionInternal,
+			ReasonCode: observability.ReasonContractRetryable,
+			ActivationFailure: &observability.ActivationFailureFacts{
+				Stage:                                observability.ActivationFailureStage(failure.Stage),
+				Class:                                observability.ActivationFailureClass(failure.Class),
+				DrainingQueryGroups:                  failure.DrainingQueryGroups,
+				CandidateQueryGroups:                 failure.CandidateQueryGroups,
+				ReappearedQueryGroups:                failure.ReappearedQueryGroups,
+				ReappearedQueryGroupSamples:          samples,
+				ReappearedQueryGroupSamplesTruncated: samplesTruncated,
+			},
+			Err: err,
+		})
+	}
+	fallback, fallbackErr := runtime.keepLastGood(ctx, observability.SourceKindCompiledSnapshot, err)
+	return controlplane.ActivationState{}, phaseTwoActivationFallback{result: fallback, err: fallbackErr}, false
 }
 
 func (runtime *productionPhaseTwoControl) enrichSourceRefreshCounts(

@@ -237,6 +237,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		if facts.ActivatedEpoch > 0 {
 			attributes = append(attributes, slog.Uint64("activated_publication_epoch", facts.ActivatedEpoch))
 		}
+		if facts.ActivationCaughtUp {
+			attributes = append(attributes, slog.Bool("activation_caught_up", true))
+		}
 		if facts.ActiveQueryGroupsKnown {
 			attributes = append(attributes, slog.Int("active_query_groups", facts.ActiveQueryGroups))
 		}

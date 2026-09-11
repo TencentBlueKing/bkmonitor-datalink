@@ -182,7 +182,12 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
     <p class="basis">
       时间口径：与上面的判定同一次读取，来自各副本快照，不经时序库。
       占用是各副本相加，上限是每副本一份、不相加。
+      运维只设了两个数——容器的 CPU limit 和内存 limit；下面所有许可、队列、体量预算都是程序按这两个数算出来的，不是可以单独调的旋钮。
     </p>
+    <div class="verdict" id="capVerdict" hidden>
+      <span id="capBadge" class="badge b-UNKNOWN">…</span>
+      <span id="capWhy" class="why"></span>
+    </div>
     <div id="capErr" class="err" hidden></div>
     <div class="empty" id="capEmpty" hidden>本次读取没有副本上报容量。</div>
     <div class="grid" id="capCards"></div>
@@ -619,6 +624,97 @@ var KIND_TEXT = {
 };
 function kindText(kind) { return KIND_TEXT[kind] || kind || '—'; }
 
+// limitState reads a cumulative "times the limit was reached" counter.
+//
+// Zero is the strong answer and the common one: the container has never
+// reached this limit since it started. Non-zero needs the rate to say whether
+// it is happening now or happened earlier, and before the second read there is
+// no honest way to tell those apart -- so it says so instead of picking one.
+function limitState(cumulative, rate) {
+  if (!cumulative) return 'never';
+  if (!rate) return 'unknown_now';
+  return rate.rate > 0 ? 'now' : 'past';
+}
+
+// capacityVerdict answers "要不要扩容" rather than handing over the raw
+// material for someone else to answer it.
+//
+// It needs no threshold, and that is the point. The operator sets exactly two
+// numbers -- the container's CPU limit and its memory limit -- and everything
+// else here is this program's arithmetic on those two. So the question is not
+// "is 30 out of 64 permits a lot", which nobody reading this page can answer;
+// it is "did the container reach the limits it was given", which the container
+// reports about itself. A derived budget that refused work is the same kind of
+// fact one level up: this resource shape cannot hold the current load.
+function capacityVerdict(cap, rate) {
+  var now = [], past = [], pending = false;
+  if (cap.memory_oom_kills) {
+    now.push('内存被杀过 ' + cap.memory_oom_kills + ' 次');
+  }
+  var memory = limitState(cap.memory_limit_hits, rate.memoryHits);
+  if (memory === 'now') now.push('正在撞内存上限');
+  if (memory === 'past' || memory === 'unknown_now') {
+    past.push('撞过 ' + count(cap.memory_limit_hits) + ' 次内存上限');
+    if (memory === 'unknown_now') pending = true;
+  }
+
+  var cpu = limitState(cap.throttled_seconds, rate.throttled);
+  if (cpu === 'now') now.push('正在被 CPU 限流');
+  if (cpu === 'past' || cpu === 'unknown_now') {
+    past.push('被 CPU 限流过');
+    if (cpu === 'unknown_now') pending = true;
+  }
+
+  var rejected = 0;
+  Object.keys(cap.rejections || {}).forEach(function (b) { rejected += cap.rejections[b]; });
+  if (rejected) now.push('体量预算拦下过 ' + rejected + ' 次');
+
+  // A counter that was never read reports zero, and zero is what the whole
+  // verdict rests on. Without this the panel would be at its most confident --
+  // "没撞过上限，够用" -- precisely when it measured nothing at all, which is
+  // the one wrong answer worth going out of the way to prevent.
+  var blind = [];
+  if (!cap.memory_limit_known) blind.push('内存有没有撞上限');
+  if (!cap.throttled_known) blind.push('CPU 有没有被限流');
+
+  var badge = document.getElementById('capBadge');
+  var why = document.getElementById('capWhy');
+  show('capVerdict', true);
+  // The only two things anyone can actually change: the limits the operator
+  // set, or how many objects these replicas have to work through. Saying so is
+  // the difference between a panel that reports a problem and one that says
+  // what to do about it -- none of the derived ceilings is adjustable, and a
+  // reader who goes looking for the knob will not find one.
+  var whatToDo = '能改的只有运维给的 CPU / 内存 limit（或副本数），或者减少这批副本要算的对象——中间那些许可、队列、体量预算都是按 limit 算出来的，调不了。';
+  if (now.length) {
+    badge.className = 'badge b-ERROR';
+    badge.textContent = '资源不够';
+    why.textContent = now.join('；') + '。' + whatToDo;
+    return;
+  }
+  if (past.length) {
+    badge.className = 'badge b-DEGRADED';
+    // Two different claims, so two different words. "曾经不够" says it is over;
+    // when only one read has happened nobody can say that yet, and the earlier
+    // wording asserted "此刻没有" in the same breath as "要再读一次才确定".
+    badge.textContent = pending ? '撞过上限' : '曾经不够';
+    why.textContent = pending
+      ? past.join('；') + '，此刻还撞不撞要等下一次读取，约 30 秒后。' + whatToDo
+      : past.join('；') + '，但此刻没有。' + whatToDo;
+    return;
+  }
+  if (blind.length) {
+    badge.className = 'badge b-UNKNOWN';
+    badge.textContent = '测不到';
+    why.textContent = '这批副本没报上来' + blind.join('、') +
+      '——多半是 cgroup 文件在这个环境里读不到。缺了这个就没法判断资源够不够，别把它读成“够用”。';
+    return;
+  }
+  badge.className = 'badge b-HEALTHY';
+  badge.textContent = '够用';
+  why.textContent = '没撞过内存上限、没被 CPU 限流、没有任何体量预算拦下过东西——按运维给的这套资源，当前负载装得下。';
+}
+
 function renderCapacity(cap, gaps) {
   var box = document.getElementById('capCards');
   box.textContent = '';
@@ -633,6 +729,7 @@ function renderCapacity(cap, gaps) {
       ? '副本的上报都太旧了，这里不显示旧的占用——它描述的是上报那一刻，不是此刻。见上方“证据不全”里的 SNAPSHOT_STALE。'
       : '本次读取没有副本上报容量。');
     show('capEmpty', true);
+    show('capVerdict', false);
     text('capNote', '');
     return;
   }
@@ -648,19 +745,94 @@ function renderCapacity(cap, gaps) {
   }
   var permitCeiling = cap.permit_budget * cap.replicas;
   var at = Date.now();
-  // The instant answers "is anything running right now", which a page load
-  // lands on at an arbitrary moment. It cannot answer "how busy is this", and
-  // the number that can was already being published and never shown: cumulative
-  // permit-hold seconds. Two reads of it over the wall time between them give
-  // the mean number of permits occupied, and the page makes a read every thirty
-  // seconds -- so the useful figure costs nothing but remembering the last one.
-  var held = betweenReads('permit_seconds', cap.permit_seconds, at);
+  // Every cumulative figure is turned into a rate exactly once per render.
+  // betweenReads records the value it was handed, so asking it a second time in
+  // the same render gives that caller a zero-length interval and therefore no
+  // answer -- and the verdict and the cells both need these.
+  var rate = {
+    permits: betweenReads('permit_seconds', cap.permit_seconds, at),
+    throttled: betweenReads('throttled_seconds', cap.throttled_seconds || 0, at),
+    memoryHits: betweenReads('memory_limit_hits', cap.memory_limit_hits || 0, at),
+    series: cap.pulled ? betweenReads('pulled_series', cap.pulled.series, at) : null,
+    points: cap.pulled ? betweenReads('pulled_records', cap.pulled.records, at) : null
+  };
+  capacityVerdict(cap, rate);
+
+  // The two limits the operator actually set come first, because every ceiling
+  // after them is arithmetic on these two.
+  //
+  // The field names carry the _bytes suffix the API actually uses. Dropping
+  // that suffix read undefined, the guard in front of this cell was then false,
+  // and the cell simply never appeared -- with the numbers present in every
+  // response the whole time.
+  if (cap.memory_limit_bytes) {
+    var memHint = '上限来源 ' + (cap.memory_source || '未知') + '；cgroup 用量，不是 Go 堆';
+    if (cap.memory_oom_kills) {
+      memHint = '被杀过 ' + cap.memory_oom_kills + ' 次；' + memHint;
+    } else if (cap.memory_limit_hits) {
+      memHint = '撞过 ' + count(cap.memory_limit_hits) + ' 次上限' +
+        (rate.memoryHits ? (rate.memoryHits.rate > 0 ? '，此刻仍在撞' : '，此刻没在撞') : '') + '；' + memHint;
+    } else {
+      memHint = '没撞过上限；' + memHint;
+    }
+    cell('内存', bytes(cap.memory_used_bytes) + ' / ' + bytes(cap.memory_limit_bytes * cap.replicas),
+      memHint, cap.memory_oom_kills > 0 || (rate.memoryHits && rate.memoryHits.rate > 0));
+  }
+  if (cap.cpu_cores) {
+    // Same problem as the permits, same fix. "累计被限流 2 秒" counts from a
+    // start nobody can see, so it says nothing about whether this deployment is
+    // being throttled now -- two seconds could be all of yesterday or the last
+    // minute.
+    var throttled = rate.throttled;
+    // Named, not assumed. Every ceiling below is derived from this core count,
+    // so a process that fell back to the host's cores publishes a table that
+    // looks authoritative and is several times too large; without the source
+    // there is nothing on the page that could tell you.
+    var cpuFrom = cap.cpu_source === 'cpu_quota' || cap.cpu_source === 'cpu_quota_minimum'
+      ? '来自容器 CPU limit'
+      : (cap.cpu_source === 'environment_override' ? '来自 GOMAXPROCS 环境变量，不是容器 limit'
+        : (cap.cpu_source ? '没读到容器 limit（' + cap.cpu_source + '），按宿主机核数算的，下面的上限都偏大'
+          : '来源未知'));
+    cell('CPU', cap.cpu_cores + ' 核 × ' + cap.replicas,
+      cpuFrom + '；' + (throttled
+        // cgroup counts throttling as wall time the container was held back,
+        // and this figure is the sum over replicas -- so the share of time one
+        // replica spends throttled is the rate divided by how many reported.
+        ? (throttled.rate > 0
+            ? '最近 ' + Math.round(throttled.elapsed) + ' 秒里，每个副本平均有 ' +
+              (throttled.rate / cap.replicas * 100).toFixed(0) + '% 的时间被限流'
+            : '最近 ' + Math.round(throttled.elapsed) + ' 秒没被限流')
+        : (cap.throttled_seconds
+            ? '启动至今累计被限流 ' + Math.round(cap.throttled_seconds) + ' 秒；此刻还限不限要等下一次读取'
+            : '启动至今没被限流')),
+      (throttled && throttled.rate > 0) ||
+        (cap.cpu_source !== 'cpu_quota' && cap.cpu_source !== 'cpu_quota_minimum'));
+  }
+  // The load the ceilings have to be read against. Printing "series 524288"
+  // with nothing beside it says the same thing to a deployment pulling two
+  // hundred series a second and one pulling two hundred thousand -- a limit
+  // without a measured load is not a capacity statement.
+  if (cap.pulled) {
+    cell('Access 拉取', rate.series ? rate.series.rate.toFixed(0) + ' 条/秒' : '等下一次读取',
+      rate.series
+        ? (rate.points ? '每秒 ' + rate.points.rate.toFixed(0) + ' 个点；累计 ' + count(cap.pulled.series) + ' 条'
+                       : '累计 ' + count(cap.pulled.series) + ' 条')
+        : '全部副本相加，两次读取才算得出，约 30 秒后出现');
+  }
+  // Derived from the two above. The instant answers "is anything running right
+  // now", which a page load lands on at an arbitrary moment. It cannot answer
+  // "how busy is this", and the number that can was already being published and
+  // never shown: cumulative permit-hold seconds. Two reads of it over the wall
+  // time between them give the mean number of permits occupied, and the page
+  // makes a read every thirty seconds -- so the useful figure costs nothing but
+  // remembering the last one.
+  var held = rate.permits;
   // One cell, not two. Showing the instant beside the mean puts two different
   // numbers under one name and makes the reader work out which one to believe;
   // that a page load lands on an arbitrary moment is this page's problem to
   // solve, not the reader's to know about. The instant stays in the hint, where
   // it answers the one question it can: is anything running right this second.
-  cell('查询许可',
+  cell('查询许可（按 CPU 派生）',
     held ? held.rate.toFixed(1) + ' / ' + permitCeiling : '等下一次读取',
     held ? '最近 ' + Math.round(held.elapsed) + ' 秒的平均占用；此刻 ' + cap.permits_held +
            '，' + cap.replicas + ' 个副本各 ' + cap.permit_budget
@@ -668,43 +840,6 @@ function renderCapacity(cap, gaps) {
     held && held.rate > permitCeiling * 0.8);
   cell('排队等许可', String(cap.waiting),
     '非零说明此刻许可就是瓶颈；为零不代表有余量', cap.waiting > 0);
-  // The field names carry the _bytes suffix the API actually uses. Dropping
-  // that suffix read undefined, the guard in front of this cell was then false,
-  // and the cell simply never appeared -- with the numbers present in every
-  // response the whole time.
-  if (cap.memory_limit_bytes) {
-    cell('内存', bytes(cap.memory_used_bytes) + ' / ' + bytes(cap.memory_limit_bytes * cap.replicas),
-      '上限来源 ' + (cap.memory_source || '未知') + '；这是 cgroup 用量，不是 Go 堆');
-  }
-  if (cap.cpu_cores) {
-    // Same problem as the permits, same fix. "累计被限流 2 秒" counts from a
-    // start nobody can see, so it says nothing about whether this deployment is
-    // being throttled now -- two seconds could be all of yesterday or the last
-    // minute.
-    var throttled = betweenReads('throttled_seconds', cap.throttled_seconds, at);
-    cell('CPU', cap.cpu_cores + ' 核 × ' + cap.replicas,
-      throttled
-        ? (throttled.rate > 0
-            ? '最近 ' + Math.round(throttled.elapsed) + ' 秒里被限流 ' + throttled.rate.toFixed(2) + ' 核·秒/秒'
-            : '最近 ' + Math.round(throttled.elapsed) + ' 秒没有被限流')
-        : (cap.throttled_seconds
-            ? '启动至今累计被限流 ' + Math.round(cap.throttled_seconds) + ' 秒；现在还限不限要等下一次读取'
-            : '启动至今未观察到限流'),
-      throttled && throttled.rate > 0);
-  }
-  // The load the ceilings have to be read against. Printing "series 524288"
-  // with nothing beside it says the same thing to a deployment pulling two
-  // hundred series a second and one pulling two hundred thousand -- a limit
-  // without a measured load is not a capacity statement.
-  if (cap.pulled) {
-    var series = betweenReads('pulled_series', cap.pulled.series, at);
-    var points = betweenReads('pulled_records', cap.pulled.records, at);
-    cell('Access 拉取', series ? series.rate.toFixed(0) + ' 条/秒' : '等下一次读取',
-      series
-        ? (points ? '每秒 ' + points.rate.toFixed(0) + ' 个点；累计 ' + count(cap.pulled.series) + ' 条'
-                  : '累计 ' + count(cap.pulled.series) + ' 条')
-        : '全部副本相加，两次读取才算得出，约 30 秒后出现');
-  }
   // Round coverage answers the one question the object list structurally
   // cannot: an object nobody reached has no round to report on, so it appears
   // nowhere in that list, healthy or otherwise.
@@ -735,10 +870,11 @@ function renderCapacity(cap, gaps) {
     rejected += cap.rejections[b];
     if (!worst || cap.rejections[b] > cap.rejections[worst]) worst = b;
   });
-  cell('预算被拒', rejected ? (rejected + ' 次') : '0 次',
-    rejected ? ('最多的是 ' + worst) : '没有任何体量预算拦下过东西', rejected > 0);
+  cell('预算被拒（按内存派生）', rejected ? (rejected + ' 次') : '0 次',
+    rejected ? ('最多的是 ' + worst + '；这是这套资源装不下当前负载，不是这条预算配小了')
+             : '没有任何体量预算拦下过东西', rejected > 0);
 
-  var note = '体量预算是每个 Slot 的上限而不是池子，所以不给占用率——正确读法是“最大的 Slot 逼近到几成”。';
+  var note = '体量预算由内存 limit 派生，是每个 Slot 的上限而不是池子，所以不给占用率——正确读法是“最大的 Slot 逼近到几成”。';
   var ceilings = Object.keys(cap.budgets || {}).sort().map(function (b) {
     return b + ' ' + cap.budgets[b];
   }).join(' · ');

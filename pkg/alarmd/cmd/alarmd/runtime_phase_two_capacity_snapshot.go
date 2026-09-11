@@ -43,11 +43,17 @@ func capacitySnapshotSource(
 		MemoryLimitBytes uint64
 		MemorySource     string
 		GOMAXPROCS       int
+		CPUSource        string
 	}{
 		Capacity:         observabilityCapacity(derived),
 		MemoryLimitBytes: inputs.MemoryLimitBytes,
 		MemorySource:     inputs.MemorySource,
 		GOMAXPROCS:       runtime.GOMAXPROCS(0),
+		// Read here rather than resolved here, and read once on the
+		// construction path rather than per snapshot: resolution happens at
+		// startup before the configuration is read, and repeating it from a
+		// snapshot read would change the running process's core count.
+		CPUSource: phaseTwoResolvedCPUSource(),
 	}
 	budgets := snapshotBudgets(facts.Capacity)
 	return func() *fleet.Capacity {
@@ -70,8 +76,8 @@ func capacitySnapshotSource(
 			// container's would make every budget derived from it look
 			// authoritative.
 			MemoryLimit: facts.MemoryLimitBytes, MemorySource: facts.MemorySource,
-			CPUCores: facts.GOMAXPROCS,
-			Budgets:  budgets, Rejections: rejections.Counts(),
+			CPUCores: facts.GOMAXPROCS, CPUSource: facts.CPUSource,
+			Budgets: budgets, Rejections: rejections.Counts(),
 		}
 		if rotation != nil {
 			capacity.Rotation = rotation()
@@ -80,8 +86,21 @@ func capacitySnapshotSource(
 		if usage.MemoryKnown {
 			capacity.MemoryUsed = usage.MemoryBytes
 		}
+		capacity.ThrottledKnown = usage.ThrottledKnown
 		if usage.ThrottledKnown {
 			capacity.ThrottledSeconds = usage.ThrottledSeconds
+		}
+		// Whether the counter was readable travels with it. A zero that was
+		// measured says this container never reached its memory limit, which is
+		// the answer the page is built on; a zero that stands in for an
+		// unreadable file says nothing at all, and the two must not arrive
+		// looking the same.
+		capacity.MemoryLimitKnown = usage.MemoryLimitHitsKnown
+		if usage.MemoryLimitHitsKnown {
+			capacity.MemoryLimitHits = usage.MemoryLimitHits
+		}
+		if usage.MemoryOOMKillsKnown {
+			capacity.MemoryOOMKills = usage.MemoryOOMKills
 		}
 		return capacity
 	}

@@ -33,6 +33,23 @@ type ContainerUsage struct {
 	// being held back.
 	ThrottledSeconds float64
 	ThrottledKnown   bool
+	// MemoryLimitHits counts the times the container was actually held at its
+	// memory limit: an allocation that had to reclaim rather than be served.
+	//
+	// It is the memory counterpart of ThrottledSeconds and exists for the same
+	// reason. Used-over-limit is a ratio, and a ratio needs somebody to decide
+	// what "close" means -- a decision nobody reading the page is equipped to
+	// make and nobody should be asked to. This is the container saying it got
+	// there, which needs no threshold at all.
+	MemoryLimitHits      uint64
+	MemoryLimitHitsKnown bool
+	// MemoryOOMKills counts processes the kernel killed for exceeding the
+	// limit. A hit was survived; a kill restarted the container, and that
+	// restart zeroes every cumulative figure reported beside it -- so a
+	// deployment being killed repeatedly reads as a quiet one unless the kills
+	// are counted separately.
+	MemoryOOMKills      uint64
+	MemoryOOMKillsKnown bool
 }
 
 // ReadContainerUsage reads current consumption. Anything unreadable is reported
@@ -52,7 +69,48 @@ func ReadContainerUsage() ContainerUsage {
 	if seconds, ok := readThrottledSeconds(); ok {
 		usage.ThrottledSeconds, usage.ThrottledKnown = seconds, true
 	}
+	readMemoryLimitEvents(&usage)
 	return usage
+}
+
+// readMemoryLimitEvents reads how often the limit was actually reached. v2
+// keeps both counts in one file; v1 keeps a hit count and no kill count, and
+// the missing one is reported as unknown rather than as zero, because "nothing
+// was killed" and "this kernel does not say" are different answers and only one
+// of them is reassuring.
+func readMemoryLimitEvents(usage *ContainerUsage) {
+	if raw, err := os.ReadFile("/sys/fs/cgroup/memory.events"); err == nil {
+		parseMemoryEvents(string(raw), usage)
+		return
+	}
+	if raw, err := os.ReadFile("/sys/fs/cgroup/memory/memory.failcnt"); err == nil {
+		if hits, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64); err == nil {
+			usage.MemoryLimitHits, usage.MemoryLimitHitsKnown = hits, true
+		}
+	}
+}
+
+// parseMemoryEvents reads the v2 event counters. Unrecognised lines are skipped
+// rather than treated as a malformed file: the kernel adds counters to this file
+// over time, and a version that reports one more of them must not cost the page
+// the two counts it came for.
+func parseMemoryEvents(raw string, usage *ContainerUsage) {
+	for _, line := range strings.Split(raw, "\n") {
+		name, value, found := strings.Cut(strings.TrimSpace(line), " ")
+		if !found {
+			continue
+		}
+		count, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+		if err != nil {
+			continue
+		}
+		switch name {
+		case "max":
+			usage.MemoryLimitHits, usage.MemoryLimitHitsKnown = count, true
+		case "oom_kill":
+			usage.MemoryOOMKills, usage.MemoryOOMKillsKnown = count, true
+		}
+	}
 }
 
 // readThrottledSeconds reads CFS throttling from either cgroup version. v2

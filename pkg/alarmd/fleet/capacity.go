@@ -36,11 +36,36 @@ type Capacity struct {
 	MemoryUsed   uint64 `json:"memory_used_bytes,omitempty"`
 	MemoryLimit  uint64 `json:"memory_limit_bytes,omitempty"`
 	MemorySource string `json:"memory_source,omitempty"`
+	// MemoryLimitHits and MemoryOOMKills are the container's own account of
+	// having reached the memory limit, as opposed to a ratio somebody has to
+	// judge. The operator set the limit; these say whether the process ran into
+	// it, so "is memory enough" has an answer nobody has to pick a threshold
+	// for.
+	MemoryLimitHits uint64 `json:"memory_limit_hits,omitempty"`
+	MemoryOOMKills  uint64 `json:"memory_oom_kills,omitempty"`
+	// MemoryLimitKnown and ThrottledKnown say the counters above were actually
+	// read.
+	//
+	// Without them a zero means two different things -- "this container never
+	// reached its limit" and "these files were not readable here" -- and the
+	// page would answer the capacity question most confidently in exactly the
+	// case where it measured nothing. A deployment outside a container, or on a
+	// cgroup layout this build does not handle, would read as comfortably
+	// within its limits.
+	MemoryLimitKnown bool `json:"memory_limit_known,omitempty"`
+	ThrottledKnown   bool `json:"throttled_known,omitempty"`
 	// ThrottledSeconds separates "busy" from "not allowed to run". A process
 	// sitting at its CPU quota and an idle one being held back are identical in
 	// any busy-time measure, and only this tells them apart.
 	ThrottledSeconds float64 `json:"throttled_seconds,omitempty"`
 	CPUCores         int     `json:"cpu_cores,omitempty"`
+	// CPUSource says where the core count came from, the way MemorySource does
+	// for memory -- and it matters more, because every ceiling below is derived
+	// from it. A process that failed to read the container's quota sizes itself
+	// for the host, and then reports a whole table of ceilings that look
+	// authoritative and are several times too large. Without this the page has
+	// no way to tell that apart from a correctly sized deployment.
+	CPUSource string `json:"cpu_source,omitempty"`
 	// Budgets are the derived per-Slot ceilings, keyed the way rejections are
 	// labelled so a rejection can be read against the limit it hit. They are
 	// per-Slot caps rather than a pool, so the honest reading is how close the
@@ -102,8 +127,13 @@ type CapacityView struct {
 	MemoryUsed       uint64            `json:"memory_used_bytes,omitempty"`
 	MemoryLimit      uint64            `json:"memory_limit_bytes,omitempty"`
 	MemorySource     string            `json:"memory_source,omitempty"`
+	MemoryLimitHits  uint64            `json:"memory_limit_hits,omitempty"`
+	MemoryOOMKills   uint64            `json:"memory_oom_kills,omitempty"`
+	MemoryLimitKnown bool              `json:"memory_limit_known,omitempty"`
+	ThrottledKnown   bool              `json:"throttled_known,omitempty"`
 	ThrottledSeconds float64           `json:"throttled_seconds,omitempty"`
 	CPUCores         int               `json:"cpu_cores,omitempty"`
+	CPUSource        string            `json:"cpu_source,omitempty"`
 	Budgets          map[string]uint64 `json:"budgets,omitempty"`
 	Rejections       map[string]uint64 `json:"rejections,omitempty"`
 	// Rotation is summed across replicas for the counts and reported as the
@@ -133,6 +163,12 @@ func aggregateCapacity(view *View, snapshots []Snapshot) {
 		capacity.Waiting += facts.Waiting
 		capacity.MemoryUsed += facts.MemoryUsed
 		capacity.ThrottledSeconds += facts.ThrottledSeconds
+		// Summed, like the throttling: reaching the limit is something each
+		// container does on its own, and a deployment where one replica keeps
+		// hitting it is a deployment hitting it. Averaging would divide one
+		// replica's trouble by the replicas that are fine.
+		capacity.MemoryLimitHits += facts.MemoryLimitHits
+		capacity.MemoryOOMKills += facts.MemoryOOMKills
 		// Ceilings are per replica and expected to be identical. The first one
 		// seen sets the value; a later one that differs is named rather than
 		// silently overwritten.
@@ -150,8 +186,26 @@ func aggregateCapacity(view *View, snapshots []Snapshot) {
 		setCeiling("cpu_cores", &capacity.CPUCores, facts.CPUCores)
 		if capacity.Replicas == 1 {
 			capacity.MemoryLimit, capacity.MemorySource = facts.MemoryLimit, facts.MemorySource
-		} else if capacity.MemoryLimit != facts.MemoryLimit {
-			disagreed["memory_limit"] = struct{}{}
+			capacity.CPUSource = facts.CPUSource
+			capacity.MemoryLimitKnown, capacity.ThrottledKnown = facts.MemoryLimitKnown, facts.ThrottledKnown
+		} else {
+			// Every replica has to have measured, because the counts are summed:
+			// a replica that read nothing contributes a silent zero, and calling
+			// the total "measured" would let one unreadable container make the
+			// deployment look like it never reached its limits.
+			capacity.MemoryLimitKnown = capacity.MemoryLimitKnown && facts.MemoryLimitKnown
+			capacity.ThrottledKnown = capacity.ThrottledKnown && facts.ThrottledKnown
+			if capacity.MemoryLimit != facts.MemoryLimit {
+				disagreed["memory_limit"] = struct{}{}
+			}
+			// Named even when the core counts agree. Two replicas that arrived
+			// at the same number by different routes -- one reading the quota,
+			// one falling back to the host it happens to share a size with --
+			// are one node reschedule away from disagreeing, and only the
+			// source says so.
+			if capacity.CPUSource != facts.CPUSource {
+				disagreed["cpu_source"] = struct{}{}
+			}
 		}
 		for budget, ceiling := range facts.Budgets {
 			if existing, seen := capacity.Budgets[budget]; seen && existing != ceiling {

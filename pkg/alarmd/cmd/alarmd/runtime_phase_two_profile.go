@@ -38,6 +38,12 @@ func configurePhaseTwoCPU() (string, error) {
 	return cpuBudgetSource, cpuBudgetErr
 }
 
+// phaseTwoResolvedCPUSource reports where GOMAXPROCS came from without
+// resolving it. It is the one fact that says whether the capacity table below
+// it describes this container or the host it landed on, and a process that
+// never resolved a quota reports an empty source rather than claiming one.
+func phaseTwoResolvedCPUSource() string { return cpuBudgetSource }
+
 func setMaxprocsFromCPUQuota(log func(string, ...interface{})) error {
 	_, err := maxprocs.Set(maxprocs.Logger(log))
 	return err

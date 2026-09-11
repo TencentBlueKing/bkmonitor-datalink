@@ -254,6 +254,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	cutover := newCutoverFacts()
 	defer func() { repository.observeCutover(ctx, cutover, err) }()
 	updates := make([]scheduleTimelineUpdate, 0, len(oldGroups)+len(newGroups))
+	candidates := make([]pruneCandidate, 0, len(oldGroups))
 	coverage := make([]persistedScheduleTimeline, 0, len(newGroups))
 	for queryGroup, oldGroup := range oldGroups {
 		timeline, raw, err := repository.loadScheduleTimelineForUpdate(ctx, queryGroup)
@@ -299,9 +300,11 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 			retiredAt := boundary
 			timeline.RetiredAt = &retiredAt
 		}
-		cutover.prune(repository.pruneClosedSegments(ctx, &timeline, now, progress))
 		if err := validateScheduleTimeline(timeline); err != nil {
 			return err
+		}
+		if dead := repository.deadSegmentPrefix(timeline, now); dead > 0 {
+			candidates = append(candidates, pruneCandidate{update: len(updates), dead: dead})
 		}
 		updates = append(updates, scheduleTimelineUpdate{expected: raw, next: timeline})
 	}
@@ -333,7 +336,9 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 			timeline.Segments = append(timeline.Segments, persistedScheduleSegment{
 				Schedule: opened, Plans: records, ReactivatedAfter: &retiredAt,
 			})
-			cutover.prune(repository.pruneClosedSegments(ctx, &timeline, now, progress))
+			if dead := repository.deadSegmentPrefix(timeline, now); dead > 0 {
+				candidates = append(candidates, pruneCandidate{update: len(updates), dead: dead})
+			}
 		} else {
 			timeline = persistedScheduleTimeline{SchemaVersion: scheduleTimelineSchemaVersion,
 				RecordRevision: 1, QueryGroup: queryGroup,
@@ -354,6 +359,9 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		if err := validateInitialActivationCoverage(next, coverage); err != nil {
 			return err
 		}
+	}
+	if err := repository.pruneTimelines(ctx, updates, candidates, progress, cutover); err != nil {
+		return err
 	}
 	return repository.persistCutoverActivation(ctx, expected, next, updates, cutover)
 }

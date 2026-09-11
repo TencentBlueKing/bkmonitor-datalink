@@ -487,3 +487,123 @@ func TestCutoverFenceDistinguishesAbsentKeyFromChangedAndEmptyContent(t *testing
 		}
 	})
 }
+
+// batchedProgressReader offers the batched read on top of the per-Query
+// Group fixture and counts how it was called.
+type batchedProgressReader struct {
+	*activationProgressReader
+	batches int
+	singles int
+	sizes   []int
+}
+
+func (reader *batchedProgressReader) LoadProgress(ctx context.Context, identity execution.ProgressIdentity) (execution.ProgressLoadResult, error) {
+	reader.singles++
+	return reader.activationProgressReader.LoadProgress(ctx, identity)
+}
+
+func (reader *batchedProgressReader) LoadProgressBatch(ctx context.Context, identities []execution.ProgressIdentity) ([]execution.ProgressLoadResult, []error) {
+	reader.batches++
+	reader.sizes = append(reader.sizes, len(identities))
+	results := make([]execution.ProgressLoadResult, len(identities))
+	errs := make([]error, len(identities))
+	for index, identity := range identities {
+		results[index], errs[index] = reader.activationProgressReader.LoadProgress(ctx, identity)
+	}
+	return results, errs
+}
+
+// TestPublicationCutoverReadsProgressInOneBatch: with two Query Groups both
+// carrying dead Segments, a cutover asks the Progress reader once for both
+// and never one at a time; a per-entry failure leaves only that Query
+// Group's timeline unpruned.
+func TestPublicationCutoverReadsProgressInOneBatch(t *testing.T) {
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	prefix := "alarmd:control:timeline-prune-batch"
+	observer := &cutoverObserver{}
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository.ConfigureObserver(observer)
+	if err := repository.ConfigureSegmentRetention(pruneRetention); err != nil {
+		t.Fatal(err)
+	}
+	reader := &batchedProgressReader{activationProgressReader: &activationProgressReader{byGroup: map[execution.QueryGroupIdentity]execution.ProgressLoadResult{}, errorsByGroup: map[execution.QueryGroupIdentity]error{}}}
+	compiler, semantics := runtimePlanCompiler(t)
+	at := time.Unix(60, 0)
+	reconciler, err := controlplane.NewScheduleActivationReconcilerWithProgress(repository, compiler, semantics, reader, func() time.Time { return at })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var a, b execution.QueryGroupIdentity
+	activate := func(threshold int, boundary int64) {
+		t.Helper()
+		catalog := twoGroupCatalog(t, threshold, true, true)
+		for _, group := range catalog.QueryGroups {
+			if group.QueryPlan.BusinessID == "2" {
+				a = group.Identity
+			} else {
+				b = group.Identity
+			}
+		}
+		snapshot, _, err := repository.PublishCatalog(ctx, catalog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		at = time.Unix(boundary, 0)
+		if _, err := reconciler.Ensure(ctx, snapshot.Publication); err != nil {
+			t.Fatalf("activation at %d: %v", boundary, err)
+		}
+	}
+	activate(80, 60)
+	progressAt := func(queryGroup execution.QueryGroupIdentity, nextSlot execution.EvaluationTime) {
+		reader.byGroup[queryGroup] = execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+			Identity: execution.ProgressIdentity{QueryGroup: queryGroup}, NextSlot: nextSlot, LastFullSlot: nextSlot - 60, LastCompletionKind: execution.CompletionFull,
+		}}
+	}
+	for index := 1; index < 14; index++ {
+		boundary := int64(60 + 60*index)
+		progressAt(a, execution.EvaluationTime(boundary))
+		progressAt(b, execution.EvaluationTime(boundary))
+		activate(80+index, boundary)
+	}
+	// From 780 s on every cutover finds a dead Segment on both timelines.
+	if reader.singles != 0 || reader.batches == 0 {
+		t.Fatalf("progress was read one at a time: singles=%d batches=%d", reader.singles, reader.batches)
+	}
+	for _, size := range reader.sizes {
+		if size != 2 {
+			t.Fatalf("a cutover batched %d Query Groups, want both: %v", size, reader.sizes)
+		}
+	}
+	batchesBefore := reader.batches
+	reader.errorsByGroup[b] = errors.New("progress store unreachable")
+	progressAt(a, 900)
+	activate(100, 900)
+	if reader.batches != batchesBefore+1 || reader.singles != 0 {
+		t.Fatalf("progress reads after a per-entry failure: singles=%d batches=%d", reader.singles, reader.batches)
+	}
+	facts := observer.last(t)
+	if facts.Result != "success" || facts.SegmentsPruned == 0 || facts.PrunesSkipped["progress_unavailable"] != 1 {
+		t.Fatalf("cutover facts=%+v", facts)
+	}
+	key := func(queryGroup execution.QueryGroupIdentity) string {
+		return prefix + ":schedule_timeline:" + string(queryGroup)
+	}
+	var timelineA, timelineB struct {
+		Segments []json.RawMessage `json:"segments"`
+	}
+	rawA, _ := client.Get(ctx, key(a)).Bytes()
+	rawB, _ := client.Get(ctx, key(b)).Bytes()
+	if err := json.Unmarshal(rawA, &timelineA); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rawB, &timelineB); err != nil {
+		t.Fatal(err)
+	}
+	if len(timelineA.Segments) >= len(timelineB.Segments) {
+		t.Fatalf("the Query Group whose Progress failed must keep every Segment: a=%d b=%d", len(timelineA.Segments), len(timelineB.Segments))
+	}
+}

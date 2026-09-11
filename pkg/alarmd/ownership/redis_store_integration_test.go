@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os/exec"
 	"strconv"
@@ -423,4 +424,63 @@ func startRedis(t *testing.T, executable, address string) *exec.Cmd {
 		t.Fatalf("redis-server start error = %v", err)
 	}
 	return command
+}
+
+// ReadControlBatch answers exactly what ReadControl answers for each Query
+// Group, in one pipelined round trip per batch: a stored value comes back as
+// its bytes, an absent key as missing, and neither shadows the other.
+func TestRedisStoreReadControlBatchMatchesReadControl(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	namespace := "progress"
+	now := time.UnixMilli(1_700_000_000_000)
+	authority, err := store.AcquireControlLeader(ctx, "control-1", now, time.Minute)
+	if err != nil {
+		t.Fatalf("AcquireControlLeader() error = %v", err)
+	}
+	stored := map[execution.QueryGroupIdentity][]byte{}
+	var queryGroups []execution.QueryGroupIdentity
+	for index := 0; index < 600; index++ {
+		queryGroup := execution.QueryGroupIdentity(fmt.Sprintf("query-group-%03d", index))
+		queryGroups = append(queryGroups, queryGroup)
+		if index%3 == 2 {
+			continue
+		}
+		if _, err := store.PublishAssignment(ctx, authority, AssignmentDecision{
+			QueryGroup: queryGroup, DesiredWorkerID: "worker-1", ExpectedRecordRevision: 0,
+			PlacementReason: PlacementRendezvous, DecidedAt: now,
+		}); err != nil {
+			t.Fatalf("PublishAssignment(%s) error = %v", queryGroup, err)
+		}
+		lease, err := store.Acquire(ctx, queryGroup, "worker-1", now, time.Minute)
+		if err != nil {
+			t.Fatalf("Acquire(%s) error = %v", queryGroup, err)
+		}
+		value := []byte("progress-" + string(queryGroup))
+		if status, err := store.FencedCompareAndSet(ctx, FencedCASRequest{
+			Fence: lease.Fence, At: now, Namespace: namespace, ExpectedMissing: true, Value: value,
+		}); err != nil || status != FencedCASApplied {
+			t.Fatalf("FencedCompareAndSet(%s) = (%s, %v)", queryGroup, status, err)
+		}
+		stored[queryGroup] = value
+	}
+	reads, err := store.ReadControlBatch(ctx, queryGroups, namespace)
+	if err != nil || len(reads) != len(queryGroups) {
+		t.Fatalf("ReadControlBatch() = (%d reads, %v)", len(reads), err)
+	}
+	for index, queryGroup := range queryGroups {
+		single, missing, err := store.ReadControl(ctx, queryGroup, namespace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reads[index].Missing != missing || !bytes.Equal(reads[index].Raw, single) {
+			t.Fatalf("batch read of %s = %+v, single read = (%q, %t)", queryGroup, reads[index], single, missing)
+		}
+		if want, ok := stored[queryGroup]; ok != !reads[index].Missing || (ok && !bytes.Equal(want, reads[index].Raw)) {
+			t.Fatalf("batch read of %s = %+v, want stored=%q present=%t", queryGroup, reads[index], want, ok)
+		}
+	}
+	if _, err := store.ReadControlBatch(ctx, []execution.QueryGroupIdentity{"query-group-000", ""}, namespace); err == nil {
+		t.Fatal("an empty Query Group identity must be refused")
+	}
 }

@@ -74,23 +74,28 @@ func progressFloor(progress *execution.ScheduleProgress) execution.EvaluationTim
 	return floor
 }
 
-// pruneClosedSegments drops the leading closed Segments of a timeline that no
-// Slot will read anymore. It returns how many it dropped and, when it dropped
-// nothing because the Query Group's Progress could not be consulted, the
-// reason. The final Segment is never dropped: an open timeline reads it as
-// the current Segment and a retired one closes exactly at it.
-func (repository *RedisCatalogRepository) pruneClosedSegments(
-	ctx context.Context,
-	timeline *persistedScheduleTimeline,
-	now time.Time,
-	progress ScheduleActivationProgressReader,
-) (dropped int, skipped string) {
-	if repository == nil || timeline == nil || repository.segmentRetention.Validate() != nil || progress == nil {
-		return 0, ""
+// ScheduleActivationProgressBatchReader is the optional batched form of
+// ScheduleActivationProgressReader. The cutover consults the Progress of
+// every Query Group with a dead Segment prefix, which on a large deployment
+// is most of them, and it sits on the path that already runs close to the
+// Redis write timeout; a reader that offers the batch answers in a few round
+// trips instead of one per Query Group.
+type ScheduleActivationProgressBatchReader interface {
+	ScheduleActivationProgressReader
+	LoadProgressBatch(context.Context, []execution.ProgressIdentity) ([]execution.ProgressLoadResult, []error)
+}
+
+// deadSegmentPrefix counts the leading closed Segments of a timeline whose
+// every Slot is past its keep-until instant at now. Segments are
+// chronological, so the first one still read bounds the count and nothing
+// after it is examined. The final Segment is never counted: an open
+// timeline reads it as the current Segment and a retired one closes exactly
+// at it.
+func (repository *RedisCatalogRepository) deadSegmentPrefix(timeline persistedScheduleTimeline, now time.Time) int {
+	if repository == nil || repository.segmentRetention.Validate() != nil {
+		return 0
 	}
 	nowMillis := now.UnixMilli()
-	// Segments are chronological, so the first one still read bounds the
-	// prefix that can go; nothing after it is examined.
 	dead := 0
 	for index := 0; index+1 < len(timeline.Segments); index++ {
 		schedule := timeline.Segments[index].Schedule
@@ -103,32 +108,93 @@ func (repository *RedisCatalogRepository) pruneClosedSegments(
 		}
 		dead++
 	}
-	if dead == 0 {
-		return 0, ""
+	return dead
+}
+
+// prunePrefix drops up to dead leading Segments of a timeline, stopping at
+// the first one that ends after floor, the earliest Slot the Worker still
+// reads. It returns how many it dropped.
+func prunePrefix(timeline *persistedScheduleTimeline, dead int, floor execution.EvaluationTime) int {
+	if timeline == nil || dead <= 0 || floor <= 0 {
+		return 0
 	}
-	load, err := progress.LoadProgress(ctx, execution.ProgressIdentity{QueryGroup: timeline.QueryGroup})
-	if err != nil {
-		return 0, pruneSkipProgressUnavailable
-	}
-	if load.Status != execution.ProgressFound || load.Progress == nil {
-		return 0, pruneSkipProgressMissing
-	}
-	floor := progressFloor(load.Progress)
-	for dropped < dead {
+	dropped := 0
+	for dropped < dead && dropped+1 < len(timeline.Segments) {
 		end := timeline.Segments[dropped].Schedule.Segment.End
-		if end == nil || floor <= 0 || *end > floor {
+		if end == nil || *end > floor {
 			break
 		}
 		dropped++
 	}
 	if dropped == 0 {
-		return 0, ""
+		return 0
 	}
 	timeline.Segments = append([]persistedScheduleSegment(nil), timeline.Segments[dropped:]...)
 	// The tombstone only records the gap to the Segment that preceded it,
 	// which is gone; a timeline's first Segment carries none.
 	timeline.Segments[0].ReactivatedAfter = nil
-	return dropped, ""
+	return dropped
+}
+
+// pruneCandidate is one timeline of a cutover with a dead Segment prefix,
+// waiting for its Query Group's Progress to bound the pruning.
+type pruneCandidate struct {
+	update int
+	dead   int
+}
+
+// pruneTimelines applies the Progress floor to every candidate timeline of a
+// cutover. Progress is read in one batch when the reader offers it. A
+// timeline whose Progress could not be read, or is missing, is left whole
+// and the reason counted; pruning never blocks an activation and never
+// guesses. Pruned timelines are validated again before they are written.
+func (repository *RedisCatalogRepository) pruneTimelines(
+	ctx context.Context,
+	updates []scheduleTimelineUpdate,
+	candidates []pruneCandidate,
+	progress ScheduleActivationProgressReader,
+	facts *cutoverFacts,
+) error {
+	if len(candidates) == 0 || progress == nil {
+		return nil
+	}
+	identities := make([]execution.ProgressIdentity, len(candidates))
+	for index, candidate := range candidates {
+		identities[index] = execution.ProgressIdentity{QueryGroup: updates[candidate.update].next.QueryGroup}
+	}
+	var loads []execution.ProgressLoadResult
+	var errs []error
+	if batched, ok := progress.(ScheduleActivationProgressBatchReader); ok {
+		loads, errs = batched.LoadProgressBatch(ctx, identities)
+	} else {
+		loads, errs = make([]execution.ProgressLoadResult, len(identities)), make([]error, len(identities))
+		for index, identity := range identities {
+			loads[index], errs[index] = progress.LoadProgress(ctx, identity)
+		}
+	}
+	if len(loads) != len(candidates) || len(errs) != len(candidates) {
+		return errors.New("alarmd controlplane: batched Progress load returned the wrong shape")
+	}
+	for index, candidate := range candidates {
+		switch {
+		case errs[index] != nil:
+			facts.prune(0, pruneSkipProgressUnavailable)
+			continue
+		case loads[index].Status != execution.ProgressFound || loads[index].Progress == nil:
+			facts.prune(0, pruneSkipProgressMissing)
+			continue
+		}
+		timeline := &updates[candidate.update].next
+		dropped := prunePrefix(timeline, candidate.dead, progressFloor(loads[index].Progress))
+		if dropped == 0 {
+			continue
+		}
+		if err := validateScheduleTimeline(*timeline); err != nil {
+			return err
+		}
+		facts.prune(dropped, "")
+	}
+	return nil
 }
 
 // timelineFence is what the cutover script compares a stored timeline

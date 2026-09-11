@@ -31,7 +31,7 @@ func TestDistanceExpiredPrefixRetainsReplayTail(t *testing.T) {
 	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, foundProgress(120, 60), time.Unix(700, 0), testRecoveryLimits())
 	source.expiredRangeEnabled = true
 	ctx := context.WithValue(context.Background(), rangeFlightContextKey{}, execution.QueryGroupIdentity("query-group-1"))
-	slot, due, err := source.Next(ctx, "query-group-1")
+	slot, due, _, err := source.Next(ctx, "query-group-1")
 	if err != nil || !due {
 		t.Fatalf("Next: due=%v err=%v", due, err)
 	}
@@ -63,7 +63,7 @@ func TestDistanceExpiredPrefixKeepsBoundaryAndOriginalPending(t *testing.T) {
 			source := newProductionSlotSourceWithRecoveryForTest(t, catalog, load, time.Unix(700, 0), testRecoveryLimits())
 			source.expiredRangeEnabled = true
 			ctx := context.WithValue(context.Background(), rangeFlightContextKey{}, execution.QueryGroupIdentity("query-group-1"))
-			slot, due, err := source.Next(ctx, "query-group-1")
+			slot, due, _, err := source.Next(ctx, "query-group-1")
 			if err != nil || !due || (slot.ExpiredRange != nil) != tc.wantRange || slot.Recovery.Disposition != tc.wantDisposition {
 				t.Fatalf("slot=%+v due=%v err=%v", slot, due, err)
 			}
@@ -74,7 +74,7 @@ func TestDistanceExpiredPrefixKeepsBoundaryAndOriginalPending(t *testing.T) {
 			load.Progress.UnfinishedRange = &proof
 			catalog.freezeErr = errors.New("Snapshot must not be read for persisted proof")
 			restarted := newProductionSlotSourceWithRecoveryForTest(t, catalog, load, time.Unix(2000, 0), testRecoveryLimits())
-			resumed, due, err := restarted.Next(context.Background(), "query-group-1")
+			resumed, due, _, err := restarted.Next(context.Background(), "query-group-1")
 			if err != nil || !due || resumed.ExpiredRange == nil || !resumed.ExpiredRange.Equal(proof) || resumed.ExpiredRange.CompletionKind() != execution.CompletionGapSkipped {
 				t.Fatalf("restart changed original distance proof: %+v due=%v err=%v", resumed, due, err)
 			}

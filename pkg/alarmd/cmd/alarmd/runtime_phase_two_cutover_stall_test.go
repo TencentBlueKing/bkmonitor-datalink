@@ -460,7 +460,7 @@ func (probe cutoverStallProbe) run(
 	if err != nil {
 		t.Fatal(err)
 	}
-	slot, due, err := source.Next(ctx, queryGroup)
+	slot, due, _, err := source.Next(ctx, queryGroup)
 	if err != nil || !due {
 		t.Fatalf("[%s] SlotSource.Next = (%+v, %t, %v), want a due Slot", probe.label, slot, due, err)
 	}

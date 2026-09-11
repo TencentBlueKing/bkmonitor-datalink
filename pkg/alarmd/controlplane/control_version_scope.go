@@ -7,6 +7,7 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"sync"
 )
 
@@ -45,6 +46,27 @@ func WithControlVersionScope(ctx context.Context) context.Context {
 		return ctx
 	}
 	return context.WithValue(ctx, controlVersionScopeKey{}, &controlVersionScope{})
+}
+
+// ControlVersionTag serves the activation header on its own, for a caller whose
+// only question is whether a publication happened since it last looked.
+//
+// It deliberately does not join a version scope. A caller polling for change
+// has to see the live value every time; reusing an operation's cached one would
+// make it answer "no change" for as long as that operation lasts. The second
+// result is false when there is no header at all, which is the same
+// not-to-be-trusted state as a failed read: with no header the caches
+// downstream are disabled, so nothing a reader remembers under it is anchored
+// to a published version.
+func (repository *RedisCatalogRepository) ControlVersionTag(ctx context.Context) (string, bool, error) {
+	if repository == nil {
+		return "", false, errors.New("alarmd controlplane: catalog repository is required")
+	}
+	version, err := repository.fetchControlVersion(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	return version.header, version.known, nil
 }
 
 func controlVersionScopeFrom(ctx context.Context) *controlVersionScope {

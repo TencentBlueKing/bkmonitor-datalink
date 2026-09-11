@@ -264,8 +264,8 @@ func (session scopeTestSession) ValidateCurrentWithAssignment(
 
 type scopeTestSlotSource struct{ slot scheduler.FrozenSlot }
 
-func (source scopeTestSlotSource) Next(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, error) {
-	return source.slot, true, nil
+func (source scopeTestSlotSource) Next(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, scheduler.SlotDueFacts, error) {
+	return source.slot, true, scheduler.SlotDueFacts{IntervalSeconds: 60}, nil
 }
 
 type countingExecutor struct {
@@ -298,6 +298,10 @@ func (group *schedulerRunnerQueryGroup) RunOneAdmitted(
 }
 
 func (group *schedulerRunnerQueryGroup) NextReadyAt() time.Time { return group.runner.NextReadyAt() }
+
+func (group *schedulerRunnerQueryGroup) DueBound() scheduler.RunnerDueBound {
+	return group.runner.DueBound()
+}
 
 func (*schedulerRunnerQueryGroup) MaintainLease(ctx context.Context, _, _ time.Duration) error {
 	<-ctx.Done()

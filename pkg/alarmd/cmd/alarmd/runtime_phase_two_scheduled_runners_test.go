@@ -100,7 +100,10 @@ func TestSnapshotScheduledRunnersIsSharedAndOrdered(t *testing.T) {
 
 // walkRunner reports a fixed next-ready time and is never invoked: these tests
 // drive the queue-filling walk on its own.
-type walkRunner struct{ readyAt time.Time }
+type walkRunner struct {
+	readyAt time.Time
+	bound   scheduler.RunnerDueBound
+}
 
 func (walkRunner) RunOne(context.Context) (execution.SlotExecutionResult, bool, error) {
 	return execution.SlotExecutionResult{}, false, nil
@@ -114,6 +117,8 @@ func (walkRunner) RunOneAdmitted(
 }
 
 func (runner walkRunner) NextReadyAt() time.Time { return runner.readyAt }
+
+func (runner walkRunner) DueBound() scheduler.RunnerDueBound { return runner.bound }
 
 func (walkRunner) MaintainLease(context.Context, time.Duration, time.Duration) error { return nil }
 

@@ -245,8 +245,13 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 }
 
 func (i *Instance) fieldMapWithPhysicalIndexes(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (metadata.FieldsMap, []string, error) {
+	fields, indexes, _, err := i.fieldMapWithIndexFields(ctx, fieldAlias, aliases...)
+	return fields, indexes, err
+}
+
+func (i *Instance) fieldMapWithIndexFields(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (metadata.FieldsMap, []string, map[string]map[string]bool, error) {
 	if len(aliases) == 0 {
-		return nil, nil, fmt.Errorf("query indexes is empty")
+		return nil, nil, nil, fmt.Errorf("query indexes is empty")
 	}
 
 	var err error
@@ -260,23 +265,24 @@ func (i *Instance) fieldMapWithPhysicalIndexes(ctx context.Context, fieldAlias m
 	span.Set("aliases", aliases)
 	cli, err := i.getClient(ctx, i.connect)
 	if err != nil {
-		return nil, nil, fmt.Errorf("get client error: %w", err)
+		return nil, nil, nil, fmt.Errorf("get client error: %w", err)
 	}
 	defer cli.Stop()
 
 	settings, mappings, physicalIndexes, err := resolveIndexMetadata(ctx, span, cli, aliases...)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	span.Set("mapping-length", len(mappings))
 	span.Set("physical-index-length", len(physicalIndexes))
 
 	iof := NewIndexOptionFormat(fieldAlias)
+	indexFields := make(map[string]map[string]bool, len(mappings))
 
 	// 忽略 mapping 为空的情况的报错
 	if len(mappings) == 0 {
 		span.Set("field-map-length", 0)
-		return iof.FieldsMap(), physicalIndexes, nil
+		return iof.FieldsMap(), physicalIndexes, indexFields, nil
 	}
 
 	indexes := make([]string, 0)
@@ -291,11 +297,12 @@ func (i *Instance) fieldMapWithPhysicalIndexes(ctx context.Context, fieldAlias m
 		index := indexes[idx]
 		if in, ok := mappings[index]; ok && in != nil {
 			iof.Parse(settings[index], in)
+			indexFields[index] = mappingFieldNames(in)
 		}
 	}
 
 	span.Set("field-map-length", len(iof.FieldsMap()))
-	return iof.FieldsMap(), physicalIndexes, nil
+	return iof.FieldsMap(), physicalIndexes, indexFields, nil
 }
 
 func buildESQuerySource(ctx context.Context, qb *metadata.Query, fact *FormatFactory, forceUnmappedTypes map[string]string) (*elastic.SearchSource, elastic.Query, string, error) {

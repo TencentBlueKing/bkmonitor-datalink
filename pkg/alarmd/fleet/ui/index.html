@@ -655,12 +655,17 @@ function renderCapacity(cap, gaps) {
   // the mean number of permits occupied, and the page makes a read every thirty
   // seconds -- so the useful figure costs nothing but remembering the last one.
   var held = betweenReads('permit_seconds', cap.permit_seconds, at);
-  cell('查询许可（平均占用）',
+  // One cell, not two. Showing the instant beside the mean puts two different
+  // numbers under one name and makes the reader work out which one to believe;
+  // that a page load lands on an arbitrary moment is this page's problem to
+  // solve, not the reader's to know about. The instant stays in the hint, where
+  // it answers the one question it can: is anything running right this second.
+  cell('查询许可',
     held ? held.rate.toFixed(1) + ' / ' + permitCeiling : '等下一次读取',
-    held ? '最近 ' + Math.round(held.elapsed) + ' 秒的平均占用——判"忙不忙"看这个'
-         : '要两次读取才算得出，约 30 秒后出现', held && held.rate > permitCeiling * 0.8);
-  cell('查询许可（此刻）', cap.permits_held + ' / ' + permitCeiling,
-    cap.replicas + ' 个副本各 ' + cap.permit_budget + '；这是某一瞬间的值，判占用看上一格');
+    held ? '最近 ' + Math.round(held.elapsed) + ' 秒的平均占用；此刻 ' + cap.permits_held +
+           '，' + cap.replicas + ' 个副本各 ' + cap.permit_budget
+         : '平均占用要两次读取才算得出，约 30 秒后出现；此刻 ' + cap.permits_held,
+    held && held.rate > permitCeiling * 0.8);
   cell('排队等许可', String(cap.waiting),
     '非零说明此刻许可就是瓶颈；为零不代表有余量', cap.waiting > 0);
   // The field names carry the _bytes suffix the API actually uses. Dropping

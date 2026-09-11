@@ -380,25 +380,25 @@ var SINCE_SOURCE = {
 };
 
 function loadHealth() {
-  return api('health').then(function (d) {
+  return api('health').then(function (deployment) {
     show('healthErr', false);
-    var h = d.health || 'UNKNOWN';
+    var h = deployment.health || 'UNKNOWN';
     var badge = document.getElementById('health');
     badge.textContent = h;
     badge.className = 'badge b-' + h;
-    text('expected', d.expected === null || d.expected === undefined ? '未知' : d.expected);
-    text('covered', d.covered);
-    text('determined', d.determined);
-    text('unknown', d.unknown);
-    text('healthy', d.healthy);
-    text('ownBad', d.anomalies_total);
-    text('demoted', d.demoted_total);
+    text('expected', deployment.expected === null || deployment.expected === undefined ? '未知' : deployment.expected);
+    text('covered', deployment.covered);
+    text('determined', deployment.determined);
+    text('unknown', deployment.unknown);
+    text('healthy', deployment.healthy);
+    text('ownBad', deployment.anomalies_total);
+    text('demoted', deployment.demoted_total);
     // The equation is printed with its own arithmetic rather than asserted in
     // prose. A reader who can only be told the columns partition the objects has
     // no way to notice the day they stop doing so.
-    var parts = [d.healthy, d.anomalies_total, d.demoted_total, d.unknown];
+    var parts = [deployment.healthy, deployment.anomalies_total, deployment.demoted_total, deployment.unknown];
     var sum = parts.reduce(function (a, b) { return a + (b || 0); }, 0);
-    var total = (d.expected === null || d.expected === undefined) ? d.covered : d.expected;
+    var total = (deployment.expected === null || deployment.expected === undefined) ? deployment.covered : deployment.expected;
     text('splitBasis', '每个对象只落一栏：' + parts.join(' + ') + ' = ' + sum +
       (sum === total ? '，等于应有的 ' + total : '，但应有的是 ' + total + ' —— 对不上，先别信这四个数'));
     // Demotion is the one mechanism here that makes a deployment look better by
@@ -406,8 +406,8 @@ function loadHealth() {
     // only its size. A pool with members and no exits is a way out that has
     // stopped working, and its occupancy reads exactly like a backend that is
     // still down.
-    var exits = d.demotion_exits || 0;
-    var entries = d.demotion_entries || 0;
+    var exits = deployment.demotion_exits || 0;
+    var entries = deployment.demotion_entries || 0;
     text('poolExits', entries ? exits + ' / ' + entries : '—');
     var flow = [];
     if (!entries) {
@@ -417,27 +417,27 @@ function loadHealth() {
       // there is nothing to recover to, so nothing exits either. Extensions are
       // what separates the two -- a pool being extended is being retried and
       // failing, a pool with nothing moving is not being touched.
-      flow.push((d.demotion_extensions || 0)
-        ? '进过 ' + entries + ' 个，一个都没出来过，但还在被重试（延长 ' + d.demotion_extensions + ' 次）——后端大概还没好'
+      flow.push((deployment.demotion_extensions || 0)
+        ? '进过 ' + entries + ' 个，一个都没出来过，但还在被重试（延长 ' + deployment.demotion_extensions + ' 次）——后端大概还没好'
         : '进过 ' + entries + ' 个，既没出来过也没被重试过——出池路径可能已经不工作了');
     } else {
       flow.push('进过 ' + entries + ' 个，出来过 ' + exits + ' 个');
-      if (d.last_demotion_exit) {
-        flow.push('最近一次出池 ' + new Date(d.last_demotion_exit).toLocaleTimeString());
+      if (deployment.last_demotion_exit) {
+        flow.push('最近一次出池 ' + new Date(deployment.last_demotion_exit).toLocaleTimeString());
       }
     }
-    if (d.demoted_due) {
-      flow.push('其中 ' + d.demoted_due + ' 个的冷却时间已经到了还没被重试');
+    if (deployment.demoted_due) {
+      flow.push('其中 ' + deployment.demoted_due + ' 个的冷却时间已经到了还没被重试');
     }
     flow.push('计数从本次进程启动起算，重启归零');
     text('poolFlowHint', flow.join('；'));
-    text('demotedHint', d.demoted_total
+    text('demotedHint', deployment.demoted_total
       ? '后端持续查不到，已降级不再反复查；不计入部署健康判定'
       : '当前没有对象被降级');
     // Shown only where something actually holds wake times. A zero here on a
     // deployment that holds none would report "nothing is being missed" for one
     // where nothing is watching, which is the failure this whole cell is for.
-    var overdue = d.overdue;
+    var overdue = deployment.overdue;
     show('overdueCell', !!overdue);
     if (overdue) {
       // Three states, not two. While the due index runs in shadow it decides
@@ -447,13 +447,13 @@ function loadHealth() {
       // is whether the deployment reports suppression at all: the code that
       // reports it is the code that parks objects, so a build that parks
       // nothing cannot produce the field.
-      if (!d.dispatch) {
+      if (!deployment.dispatch) {
         text('overdue', '未启用');
         text('overdueHint', '到期索引在影子模式，还不会拦下任何对象——所以这里结构上只可能是 0，不代表“没有对象漏掉”');
       } else {
         // A truncated count is a floor, and writing it as a plain number would
         // state the sample as the total.
-        var parked = '当前有 ' + (d.dispatch.parked || 0) + ' 个对象被到期索引拦下，没到点、本来就不该跑';
+        var parked = '当前有 ' + (deployment.dispatch.parked || 0) + ' 个对象被到期索引拦下，没到点、本来就不该跑';
         if (overdue.truncated) {
           // "≥ 0" is every number, so it tells nobody anything, and the old
           // wording then branched on the count alone and reassured off it --
@@ -470,7 +470,7 @@ function loadHealth() {
         }
       }
     }
-    var gaps = d.gaps || [];
+    var gaps = deployment.gaps || [];
     text('why', gaps.length
       ? '证据不全：' + (GAP_MEANING[gaps[0].kind] || gaps[0].kind) +
         (gaps.length > 1 ? '，另有 ' + (gaps.length - 1) + ' 项' : '')
@@ -493,7 +493,7 @@ function loadHealth() {
     // from the same read rather than fetched separately: two reads would let
     // the page show a verdict from one moment beside occupancy from another.
     show('capErr', false);
-    renderCapacity(d.capacity, gaps);
+    renderCapacity(deployment.capacity, gaps);
   }).catch(function (e) { fail('healthErr', e); fail('capErr', e); });
 }
 

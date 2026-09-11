@@ -69,7 +69,7 @@ helm-check:
 
 release-check:
 	python3 scripts/test_ci_release.py
-	NODE_PATH="$(CURDIR)/$(CONSOLE_DIR)/node_modules" node --test scripts/test-prepare-release-chart.cjs
+	NODE_PATH="$(CURDIR)/$(CONSOLE_DIR)/node_modules" node --test scripts/test-release-chart.cjs
 	NODE_PATH="$(CURDIR)/$(CONSOLE_DIR)/node_modules" node --test scripts/test-image-workflow.cjs
 
 check:

@@ -135,6 +135,20 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 	messages := make([]*sarama.ProducerMessage, len(events))
 	groups := make(map[string][]int)
 	for index := range events {
+		if events[index].WireFormat == contract.WireFormatStandardRawEvent {
+			converted, convertErr := sink.standardConverter.Convert(&events[index])
+			if convertErr != nil {
+				return &triggerEventDependencyError{err: convertErr}
+			}
+			// Keyed by the alert identity, so one alert's history stays on one
+			// partition and its trigger and its resolution arrive in order.
+			messages[index] = &sarama.ProducerMessage{
+				Topic: sink.core.outputTopic,
+				Key:   sarama.StringEncoder(converted.AlertID),
+				Value: sarama.ByteEncoder(converted.Payload),
+			}
+			continue
+		}
 		payload, err := contract.EncodeTriggerEventV1(&events[index])
 		if err != nil {
 			return fmt.Errorf("kafka trigger event sink: encode event %d: %w", index, err)
@@ -148,15 +162,6 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 			// Keep a series on the same hash partition using the protocol's
 			// lowercase hex text, not the decoded 16-byte digest.
 			messages[index].Key = sarama.StringEncoder(events[index].DedupeMD5)
-		}
-		if events[index].WireFormat == contract.WireFormatStandardRawEvent {
-			converted, convertErr := sink.standardConverter.Convert(&events[index])
-			if convertErr != nil {
-				return &triggerEventDependencyError{err: convertErr}
-			}
-			messages[index].Value = sarama.ByteEncoder(converted.Payload)
-			messages[index].Key = sarama.StringEncoder(converted.AlertID)
-			continue
 		}
 		// The Plan's frozen format selects the protocol, and for a Plan built
 		// before the choice existed that is still the frozen revision: a

@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
@@ -252,6 +253,13 @@ type scopeTestSession struct{ fence execution.OwnerFence }
 
 func (session scopeTestSession) ValidateCurrent(context.Context, time.Time) (execution.OwnerFence, error) {
 	return session.fence, nil
+}
+
+func (session scopeTestSession) ValidateCurrentWithAssignment(
+	context.Context,
+	time.Time,
+) (execution.OwnerFence, ownership.AssignmentRecord, error) {
+	return session.fence, ownership.AssignmentRecord{}, nil
 }
 
 type scopeTestSlotSource struct{ slot scheduler.FrozenSlot }

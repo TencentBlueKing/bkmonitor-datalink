@@ -18,6 +18,14 @@ type LeaseStore interface {
 	Acquire(context.Context, execution.QueryGroupIdentity, string, time.Time, time.Duration) (Lease, error)
 	Renew(context.Context, execution.OwnerFence, time.Time, time.Duration) (Lease, error)
 	CheckFence(context.Context, execution.OwnerFence, time.Time) error
+	// CheckFenceWithAssignment is the fence check plus the Assignment record it
+	// already had to consult, in one round trip. It is on the interface rather
+	// than behind a type assertion because a Session reaches its store only
+	// through this interface: an assertion would let a store without it fall
+	// back to the two-round-trip path silently, which is exactly the regression
+	// this method exists to prevent, and it would do so with no compile error
+	// and no failing test.
+	CheckFenceWithAssignment(context.Context, execution.OwnerFence, time.Time) (AssignmentRecord, error)
 	Release(context.Context, execution.OwnerFence) error
 }
 
@@ -51,20 +59,53 @@ func OpenSession(
 }
 
 func (session *Session) ValidateCurrent(ctx context.Context, at time.Time) (execution.OwnerFence, error) {
-	if session == nil {
-		return execution.OwnerFence{}, ErrStaleFence
-	}
-	session.mu.RLock()
-	lease, accepting := session.lease, session.accepting
-	session.mu.RUnlock()
-	if !accepting || !lease.Deadline.After(at) {
-		return execution.OwnerFence{}, ErrStaleFence
+	lease, err := session.admittedLease(at)
+	if err != nil {
+		return execution.OwnerFence{}, err
 	}
 	if err := session.store.CheckFence(ctx, lease.Fence, at); err != nil {
 		session.stopAccepting()
 		return execution.OwnerFence{}, err
 	}
 	return lease.Fence, nil
+}
+
+// ValidateCurrentWithAssignment answers ValidateCurrent and, from the same
+// store round trip, hands back the Assignment record naming the fence owner.
+// A caller that needs both -- the scheduler does, before every attempt -- can
+// then act on two facts taken at one instant instead of stitching together two
+// readings taken at two.
+func (session *Session) ValidateCurrentWithAssignment(
+	ctx context.Context,
+	at time.Time,
+) (execution.OwnerFence, AssignmentRecord, error) {
+	lease, err := session.admittedLease(at)
+	if err != nil {
+		return execution.OwnerFence{}, AssignmentRecord{}, err
+	}
+	record, err := session.store.CheckFenceWithAssignment(ctx, lease.Fence, at)
+	if err != nil {
+		session.stopAccepting()
+		return execution.OwnerFence{}, AssignmentRecord{}, err
+	}
+	return lease.Fence, record, nil
+}
+
+// admittedLease is the local half of a fence validation: the lease this Session
+// still admits work on, or the reason it no longer does. It is separate so the
+// two validation entry points cannot drift on when a Session stops admitting,
+// which is a correctness rule and not a property of what the caller asked for.
+func (session *Session) admittedLease(at time.Time) (Lease, error) {
+	if session == nil {
+		return Lease{}, ErrStaleFence
+	}
+	session.mu.RLock()
+	lease, accepting := session.lease, session.accepting
+	session.mu.RUnlock()
+	if !accepting || !lease.Deadline.After(at) {
+		return Lease{}, ErrStaleFence
+	}
+	return lease, nil
 }
 
 func (session *Session) Renew(ctx context.Context, at time.Time, ttl time.Duration) error {

@@ -158,6 +158,7 @@ type fakeLeaseStore struct {
 	renewCalls   int
 	releaseCalls int
 	checkErr     error
+	assignment   AssignmentRecord
 }
 
 func (store *fakeLeaseStore) Acquire(
@@ -188,6 +189,17 @@ func (store *fakeLeaseStore) Renew(
 
 func (store *fakeLeaseStore) CheckFence(context.Context, execution.OwnerFence, time.Time) error {
 	return store.checkErr
+}
+
+func (store *fakeLeaseStore) CheckFenceWithAssignment(
+	context.Context,
+	execution.OwnerFence,
+	time.Time,
+) (AssignmentRecord, error) {
+	if store.checkErr != nil {
+		return AssignmentRecord{}, store.checkErr
+	}
+	return store.assignment, nil
 }
 
 func (store *fakeLeaseStore) Release(context.Context, execution.OwnerFence) error {

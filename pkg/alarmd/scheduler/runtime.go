@@ -97,6 +97,56 @@ func (slot FrozenSlot) Validate(queryGroup execution.QueryGroupIdentity) error {
 
 type OwnerSession interface {
 	ValidateCurrent(context.Context, time.Time) (execution.OwnerFence, error)
+	// ValidateCurrentWithAssignment is ValidateCurrent plus the Assignment
+	// record naming the fence owner, from one store round trip. The Runner
+	// opens every attempt with it and hands the result to the SlotSource, which
+	// is what lets an idle attempt cost one round trip instead of three. It is
+	// a required method rather than an optional one a type assertion discovers,
+	// because a session without it would quietly restore the old cost on the
+	// hottest path in the process with nothing failing to say so.
+	ValidateCurrentWithAssignment(context.Context, time.Time) (execution.OwnerFence, ownership.AssignmentRecord, error)
+}
+
+// verifiedOwnership carries ownership facts the Runner has already confirmed
+// with the store into the SlotSource call that runs inside the same attempt.
+//
+// It travels on the context rather than on the SlotSource interface because it
+// is an optimization one particular pairing can make, not a fact every
+// SlotSource has to accept: a source that does not know about it, or a session
+// that cannot produce a record, still reads the facts itself and behaves as it
+// always did.
+type verifiedOwnership struct {
+	queryGroup execution.QueryGroupIdentity
+	assignment ownership.AssignmentRecord
+	fence      execution.OwnerFence
+}
+
+type verifiedOwnershipKey struct{}
+
+// withVerifiedOwnership publishes facts only if they are complete and internally
+// consistent. Anything less is dropped rather than passed on, so a partial
+// reading can never reach a Slot decision as if it had been confirmed: the
+// source simply reads for itself, exactly as it did before this hand-off.
+func withVerifiedOwnership(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	assignment ownership.AssignmentRecord,
+	fence execution.OwnerFence,
+) context.Context {
+	if assignment.Validate() != nil || assignment.QueryGroup != queryGroup ||
+		assignment.DesiredWorkerID != fence.OwnerID || fence.QueryGroup != queryGroup {
+		return ctx
+	}
+	return context.WithValue(ctx, verifiedOwnershipKey{},
+		verifiedOwnership{queryGroup: queryGroup, assignment: assignment, fence: fence})
+}
+
+func verifiedOwnershipFrom(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+) (verifiedOwnership, bool) {
+	verified, ok := ctx.Value(verifiedOwnershipKey{}).(verifiedOwnership)
+	return verified, ok && verified.queryGroup == queryGroup
 }
 
 type SlotSource interface {
@@ -379,15 +429,28 @@ func (runner *Runner) runOneTracked(
 		ctx = context.WithValue(ctx, rangeFlightContextKey{}, runner.queryGroup)
 	}
 
-	if _, err := runner.session.ValidateCurrent(ctx, runner.now()); err != nil {
-		decision = "ownership_rejected"
-		return execution.SlotExecutionResult{}, false, err
-	}
+	// The local backoff decision comes first because it needs nothing from the
+	// store. It is free today -- a normal Query Group has no source backoff
+	// pending, so the comparison is against a zero time -- but once due Slots
+	// are indexed, every Query Group the index suppresses would otherwise pay a
+	// round trip to be told what this comparison already knew.
 	if !runner.sourceNextAt.IsZero() && runner.now().Before(runner.sourceNextAt) {
 		decision = "source_backoff"
 		diagnosticReadyAt = runner.sourceNextAt.UnixMilli()
 		return execution.SlotExecutionResult{}, false, nil
 	}
+	// This stays the Runner's own gate rather than moving into the source. It
+	// is what separates losing the Query Group from failing to read it: an
+	// ownership rejection surfaced from inside Next would be counted as a Slot
+	// source failure, and the run_one return mix would stop distinguishing the
+	// two. The SlotSource opens with the same question, so the answer is
+	// carried into it instead of being asked again.
+	confirmedFence, confirmedAssignment, err := runner.session.ValidateCurrentWithAssignment(ctx, runner.now())
+	if err != nil {
+		decision = "ownership_rejected"
+		return execution.SlotExecutionResult{}, false, err
+	}
+	ctx = withVerifiedOwnership(ctx, runner.queryGroup, confirmedAssignment, confirmedFence)
 	decision = "source_next"
 	slot, due, err := runner.source.Next(ctx, runner.queryGroup)
 	if err != nil {

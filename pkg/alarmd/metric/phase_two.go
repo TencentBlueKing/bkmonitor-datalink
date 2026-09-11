@@ -17,6 +17,7 @@ type phaseTwoMetrics struct {
 	workflow                     workflowMetrics
 	shortPeriod                  shortPeriodMetrics
 	queryStatus                  queryStatusMetrics
+	slotReadiness                slotReadinessMetrics
 	slotTiming                   *prometheus.HistogramVec
 	work                         *prometheus.CounterVec
 	busy                         *prometheus.CounterVec
@@ -140,6 +141,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.redisPool = newRedisPoolCollector()
 	metrics.shortPeriod = newShortPeriodMetrics()
 	metrics.queryStatus = newQueryStatusMetrics()
+	metrics.slotReadiness = newSlotReadinessMetrics()
 	metrics.slotTiming = newSlotTimingMetrics()
 	metrics.workflow = newWorkflowMetrics()
 	metrics.activeQGSetCount = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "active_qg_set_query_groups", Help: "Query groups in the current immutable Active Set."})
@@ -188,6 +190,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 	return append(append(m.workflow.collectors(), []prometheus.Collector{
 		m.shortPeriod.completed, m.shortPeriod.duration, m.shortPeriod.lag,
 		m.queryStatus.responses,
+		m.slotReadiness.slack, m.slotReadiness.boundary,
 		m.slotTiming,
 		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations, m.sourceRefreshes,
 		m.activationFailures,
@@ -205,6 +208,7 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 	m.workflow.observe(observation)
 	m.shortPeriod.observe(observation)
 	m.queryStatus.observe(observation)
+	m.slotReadiness.observe(observation)
 	m.observeSlotTiming(observation)
 	if facts := observation.SourceRefresh; facts != nil {
 		m.sourceRefreshes.WithLabelValues(string(facts.Status)).Inc()

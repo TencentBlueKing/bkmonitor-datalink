@@ -117,9 +117,13 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	if err := request.Validate(); err != nil {
 		return execution.QueryExecutionCompletion{}, err
 	}
+	// Read once, before anything this call does can take time. It is what "how
+	// late did we arrive" is measured from, and a clock read taken after the
+	// plan resolve would fold that resolve into the answer.
+	arrivedAt := source.now()
 	var recoveryStartedAt time.Time
 	if request.Operation != execution.OperationNormal {
-		recoveryStartedAt = source.now()
+		recoveryStartedAt = arrivedAt
 		if recoveryStartedAt.IsZero() {
 			return execution.QueryExecutionCompletion{}, errors.New("alarmd access: recovery query start time is required")
 		}
@@ -143,6 +147,11 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	if readyAt := sharedPendingReadiness(prepared.Queries, source.now()); !readyAt.IsZero() {
 		return execution.QueryExecutionCompletion{}, &ReadinessDeferredError{readyAt: readyAt}
 	}
+	// Past the turn-away, so this arrival is one that goes on to do the work.
+	// Deferred arrivals are already counted as deferrals; recording them here
+	// too would count one round of work twice and put the early arrivals and
+	// the late ones in the same distribution, where they cancel.
+	source.observeSlotReadiness(ctx, request, prepared, arrivedAt)
 	var permits PhysicalQueryPermitAcquirer = source.permits
 	if request.Operation != execution.OperationNormal {
 		maximum := len(prepared.Queries)

@@ -81,10 +81,16 @@ type TargetFlowFacts struct {
 	QueueWaitNS        int64   `json:"queue_wait_ns,omitempty"`
 	Evaluations        uint64  `json:"evaluations_observed"`
 	ReadyAtMS          int64   `json:"ready_at_ms,omitempty"`
-	Completion         string  `json:"completion,omitempty"`
-	Attempted          bool    `json:"attempted"`
-	Completed          bool    `json:"completed"`
-	PlansTruncated     bool    `json:"plans_truncated,omitempty"`
+	// ReadinessBoundary and ReadinessSlackSeconds say how long this Slot's data
+	// had already been readable when the round arrived to read it. A deferral in
+	// the same window says the opposite mistake -- arrived too early -- and the
+	// two together are what a round's timing actually looks like.
+	ReadinessBoundary     string  `json:"readiness_boundary,omitempty"`
+	ReadinessSlackSeconds float64 `json:"readiness_slack_seconds,omitempty"`
+	Completion            string  `json:"completion,omitempty"`
+	Attempted             bool    `json:"attempted"`
+	Completed             bool    `json:"completed"`
+	PlansTruncated        bool    `json:"plans_truncated,omitempty"`
 }
 type targetFlowRecord struct {
 	SlotIdentityKnown bool   `json:"slot_identity_known"`
@@ -345,7 +351,7 @@ func (f *TargetFlow) Observe(ctx context.Context, o Observation) {
 		return
 	}
 	switch o.Stage {
-	case StageAssignmentAcquired, StageAssignmentLost, StageTakeoverStarted, StageTakeoverCompleted, StageScheduleDue, StageSlotStarted, StageSlotCompleted, StageQueryCompleted, StageProgressCommitted, StageRunnerCompleted, StageSlotSourceCompleted:
+	case StageAssignmentAcquired, StageAssignmentLost, StageTakeoverStarted, StageTakeoverCompleted, StageScheduleDue, StageSlotStarted, StageSlotCompleted, StageQueryCompleted, StageProgressCommitted, StageRunnerCompleted, StageSlotSourceCompleted, StageSlotReadinessArrival:
 	case StageResourceHard:
 		// Only a capacity rejection names the Query Group it stopped; process
 		// level resource stops carry no Slot coordinates and stay in the
@@ -383,6 +389,12 @@ func (f *TargetFlow) Observe(ctx context.Context, o Observation) {
 		facts.FailureStage = o.QueryFailure.Stage
 		facts.FailureCategory = o.QueryFailure.Category
 		facts.FailureCode = o.QueryFailure.Code
+	}
+	if r := o.SlotReadiness; r != nil {
+		facts.ReadinessBoundary = r.Boundary
+		if r.Slack {
+			facts.ReadinessSlackSeconds = r.SlackSeconds
+		}
 	}
 	f.emit(string(o.Stage), string(o.Result), string(o.ReasonCode), trace, facts, o.Duration)
 }

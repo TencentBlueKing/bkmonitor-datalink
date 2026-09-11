@@ -677,6 +677,7 @@ var STAGE_TEXT = {
   slot_completed: '时间点结束',
   slot_selection: '选定要算的时间点',
   slot_source_completed: '取到这一轮要算什么',
+  slot_readiness_arrival: '到达查询层',
   schedule_due: '到点了',
   slot_started: '开始算这个时间点',
   query_completed: '查询结束',
@@ -901,7 +902,29 @@ function runFacts(run) {
   FACT_NANOS.forEach(function (pair) {
     if (totals[pair[0]]) tags.push(pair[1] + ' ' + nanos(totals[pair[0]]));
   });
+  // Deliberately next to 排队等了, because neither number names a cause on its
+  // own: a round that started late because it slept too long and one that
+  // started late because it queued behind capacity show the same delay, and
+  // only the pair tells them apart.
+  if (totals.readiness_slack_seconds) {
+    tags.push('数据就绪后又等了 ' + totals.readiness_slack_seconds.toFixed(1) + ' 秒');
+  } else if (runBoundary(run) === 'mixed') {
+    // Says why there is no number rather than leaving the tag out, which reads
+    // as "nothing to report".
+    tags.push('这轮各查询的就绪时刻不一致，没有统一的“等了多久”');
+  }
   return tags;
+}
+
+// runBoundary reports whether this round's queries agreed on one moment their
+// data became readable.
+function runBoundary(run) {
+  var boundary = '';
+  run.steps.forEach(function (record) {
+    var facts = record.facts || {};
+    if (facts.readiness_boundary) boundary = facts.readiness_boundary;
+  });
+  return boundary;
 }
 
 function renderRuns(host, runs, manyProcesses) {

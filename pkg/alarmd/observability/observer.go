@@ -89,6 +89,7 @@ const (
 	StagePlanCompiled         = "plan_compiled"
 	StageQueryCompleted       = "query_completed"
 	StageQueryBudgetResolved  = "query_budget_resolved"
+	StageSlotReadinessArrival = "slot_readiness_arrival"
 	StageStatePreflight       = "state_preflight"
 	StageGapLoaded            = "gap_loaded"
 	StageEvaluationCompleted  = "evaluation_completed"
@@ -443,6 +444,7 @@ type Observation struct {
 	QueryFailure            *QueryFailureFacts
 	QueryStatus             []QueryStatusFacts
 	QueryTiming             *QueryTimingFacts
+	SlotReadiness           *SlotReadinessFacts
 	ShortPeriodCompletion   *ShortPeriodCompletionFacts
 	StateApplyChunk         *StateApplyChunkFacts
 	ActiveQGSet             *ActiveQGSetFacts
@@ -521,6 +523,7 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.StateApplyChunk = normalizeStateApplyChunk(observation)
 	observation.QueryFailure = normalizeQueryFailure(observation.Component, observation.Stage, observation.QueryFailure)
 	observation.QueryStatus = normalizeQueryStatus(observation.Component, observation.Stage, observation.QueryStatus)
+	observation.SlotReadiness = normalizeSlotReadiness(observation.SlotReadiness)
 	if observation.RuntimeConfig != nil {
 		if observation.Component != ComponentRuntime || observation.Stage != StageConfigLoaded {
 			observation.RuntimeConfig = nil
@@ -1109,6 +1112,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentScheduler, StageRunnerCompleted}, {ComponentScheduler, StageSlotSourceCompleted},
 	{ComponentAccess, StageQueryCompleted},
 	{ComponentAccess, StageQueryBudgetResolved},
+	{ComponentAccess, StageSlotReadinessArrival},
 	{ComponentEvaluation, StageEvaluationCompleted},
 	{ComponentState, StageStatePreflight}, {ComponentState, StageGapLoaded},
 	{ComponentState, StageSideEffectAdmission}, {ComponentState, StageGapGuardCommitted},

@@ -55,6 +55,14 @@ type ActivationFailureError struct {
 
 // ActivationDependencyIOError marks an activation dependency call that did
 // not complete. Unwrap preserves the original Redis, Progress or context error.
+//
+// Build it through activationDependencyIO, which refuses a nil cause. A literal
+// with no Err renders as the bare sentence, and that sentence is how a reader
+// tells an old build's log line from a new one -- every record a current build
+// emits carries its cause after a colon, so a bare one means the build predates
+// that change. One instance constructed directly here would put a record that
+// looks like an old build's into a new build's logs, and the reader has no way
+// to see the difference.
 type ActivationDependencyIOError struct{ Err error }
 
 // Error names the dependency that failed, not just that one did.

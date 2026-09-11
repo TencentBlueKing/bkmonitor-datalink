@@ -126,6 +126,25 @@ type RedisConfig struct {
 	RestartMargin         Duration `yaml:"restart_margin"`
 }
 
+// PlatformCacheConfig names the platform's own caches that alarmd reads. They
+// are separate connections because the platform routes them separately: its
+// cache backend can be redirected per module, so the strategy cache and the
+// CMDB cache may each live somewhere other than the instance the rest of the
+// deployment points at. Reading them off one connection is correct only where
+// a deployment happens not to use that routing, and where it does, the reads
+// land on an instance nothing writes - which reads back as "no strategies" and
+// "no hosts" rather than as an error.
+//
+// Neither is alarmd's own storage. Top-level redis is, and these stay out of
+// it so that one key does not have to mean two different things.
+type PlatformCacheConfig struct {
+	// Strategy is where the platform writes the strategy cache alarmd reads.
+	Strategy *RedisConnectionConfig `yaml:"strategy,omitempty"`
+	// CMDB is where the platform writes the host cache the target filter and
+	// the host status filter decide on.
+	CMDB *RedisConnectionConfig `yaml:"cmdb,omitempty"`
+}
+
 type DependencyRetryConfig struct {
 	MinDelay Duration `yaml:"min_delay"`
 	MaxDelay Duration `yaml:"max_delay"`
@@ -151,6 +170,7 @@ type Config struct {
 	HTTP             HTTPConfig             `yaml:"http"`
 	Kafka            KafkaConfig            `yaml:"kafka"`
 	Redis            RedisConfig            `yaml:"redis"`
+	PlatformCache    PlatformCacheConfig    `yaml:"platform_cache"`
 	Limits           LimitsConfig           `yaml:"limits"`
 	DependencyRetry  DependencyRetryConfig  `yaml:"dependency_retry"`
 	ReceiptQueue     ReceiptQueueConfig     `yaml:"receipt_queue"`
@@ -265,6 +285,14 @@ func redisPoolCPUBudget() int {
 func (c Config) WithResolvedRedisPoolSize() Config {
 	cpuBudget := redisPoolCPUBudget()
 	c.Redis.PoolSize = c.Redis.Connection().EffectivePoolSize(cpuBudget)
+	for _, platform := range []**RedisConnectionConfig{&c.PlatformCache.Strategy, &c.PlatformCache.CMDB} {
+		if *platform == nil {
+			continue
+		}
+		resolved := (*platform).clone()
+		resolved.PoolSize = resolved.EffectivePoolSize(cpuBudget)
+		*platform = &resolved
+	}
 	if c.PhaseTwo.RuntimeRedis != nil {
 		runtimeRedis := c.PhaseTwo.RuntimeRedis.clone()
 		runtimeRedis.PoolSize = runtimeRedis.EffectivePoolSize(cpuBudget)
@@ -292,8 +320,58 @@ func (c RedisConfig) Connection() RedisConnectionConfig {
 	return c.RedisConnectionConfig.clone()
 }
 
+// StrategySourceRedis is where the platform's strategy cache is read from.
 func (c Config) StrategySourceRedis() RedisConnectionConfig {
+	if c.PlatformCache.Strategy != nil {
+		return c.PlatformCache.Strategy.clone()
+	}
 	return c.Redis.Connection()
+}
+
+// CMDBCacheRedis is where the platform's host cache is read from.
+func (c Config) CMDBCacheRedis() RedisConnectionConfig {
+	if c.PlatformCache.CMDB != nil {
+		return c.PlatformCache.CMDB.clone()
+	}
+	return c.Redis.Connection()
+}
+
+// resolvePlatformCacheRedis writes down which connection each platform cache
+// actually resolved to, rather than leaving it to be worked out again at every
+// call site. The resolved configuration is what a release check reads and what
+// an incident is reconstructed from, and "inherited" is not an answer to the
+// question of where a read went.
+func (c *Config) resolvePlatformCacheRedis() {
+	if c == nil || c.Input.Mode != InputModeGoAccess {
+		return
+	}
+	for _, cache := range []**RedisConnectionConfig{&c.PlatformCache.Strategy, &c.PlatformCache.CMDB} {
+		if *cache == nil {
+			resolved := c.Redis.Connection()
+			*cache = &resolved
+			continue
+		}
+		// A stated cache says where to read, not how long to wait for it.
+		// Timeouts and pool size are one operational setting for this process,
+		// so they are inherited rather than restated per location - the same
+		// choice the compatibility service Redis already makes, and for the
+		// same reason: a deployment that has to repeat them will eventually
+		// repeat them differently.
+		resolved := (*cache).clone()
+		if resolved.DialTimeout == 0 {
+			resolved.DialTimeout = c.Redis.DialTimeout
+		}
+		if resolved.ReadTimeout == 0 {
+			resolved.ReadTimeout = c.Redis.ReadTimeout
+		}
+		if resolved.WriteTimeout == 0 {
+			resolved.WriteTimeout = c.Redis.WriteTimeout
+		}
+		if resolved.PoolSize == 0 {
+			resolved.PoolSize = c.Redis.PoolSize
+		}
+		*cache = &resolved
+	}
 }
 
 func (c Config) ResolvedRuntimeRedis() RedisConnectionConfig {
@@ -393,6 +471,7 @@ func Load(path string) (Config, error) {
 	cfg := Default().WithContainerCapacity()
 	if path == "" {
 		cfg.resolvePhaseTwoRuntimeRedis()
+		cfg.resolvePlatformCacheRedis()
 		cfg.resolveCompatibilityServiceTimeouts()
 		cfg.resolveCompatibilityPodCache()
 		return cfg, cfg.Validate()
@@ -418,6 +497,7 @@ func Load(path string) (Config, error) {
 	}
 
 	cfg.resolvePhaseTwoRuntimeRedis()
+	cfg.resolvePlatformCacheRedis()
 	cfg.resolveCompatibilityServiceTimeouts()
 	cfg.resolveCompatibilityPodCache()
 	cfg.resolvePhaseTwoWorkerIDFromEnvironment()
@@ -551,6 +631,12 @@ func (c Config) validateGoAccessRuntime() error {
 		return err
 	}
 	if err := c.ResolvedRuntimeRedis().validate("phase_two.runtime_redis"); err != nil {
+		return err
+	}
+	if err := c.StrategySourceRedis().validate("platform_cache.strategy"); err != nil {
+		return err
+	}
+	if err := c.CMDBCacheRedis().validate("platform_cache.cmdb"); err != nil {
 		return err
 	}
 	if err := validateRuntimePrefixIsolation(c.Redis.StatePrefix, c.PhaseTwo.Control.StrategyCachePrefix); err != nil {

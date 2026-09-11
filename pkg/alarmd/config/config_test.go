@@ -728,3 +728,112 @@ func TestWithResolvedRedisPoolSizeResolvesEveryConnection(t *testing.T) {
 		t.Fatal("WithResolvedRedisPoolSize mutated its receiver")
 	}
 }
+
+// The platform routes its cache backend per module, so the strategy cache and
+// the host cache may each be somewhere other than the instance the rest of the
+// deployment points at. Reading either off the wrong connection returns no
+// error - it returns nothing, which reads back as "no strategies" or "no
+// hosts". Each therefore has its own stated location.
+func TestEachPlatformCacheIsReadWhereThePlatformWritesIt(t *testing.T) {
+	loaded, err := Load(writeConfig(t, platformCacheConfigContents(`
+platform_cache:
+  strategy:
+    mode: standalone
+    address: strategy-cache:6379
+    db: 8
+  cmdb:
+    mode: standalone
+    address: cmdb-cache:6379
+    db: 8
+`)))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := loaded.StrategySourceRedis().Address; got != "strategy-cache:6379" {
+		t.Fatalf("strategy source = %q, want the stated strategy cache", got)
+	}
+	if got := loaded.CMDBCacheRedis().Address; got != "cmdb-cache:6379" {
+		t.Fatalf("cmdb cache = %q, want the stated host cache", got)
+	}
+	// alarmd's own store is a third location and is untouched by either.
+	if got := loaded.ResolvedRuntimeRedis().Address; got != "runtime-store:6379" {
+		t.Fatalf("runtime = %q, want alarmd's own store", got)
+	}
+	// Stating where to read must not mean restating how long to wait: a
+	// deployment that has to repeat the timeouts will eventually repeat them
+	// differently, and a shorter one on the host cache alone reads back as a
+	// CMDB gap rather than as a timeout.
+	for name, connection := range map[string]RedisConnectionConfig{
+		"strategy": loaded.StrategySourceRedis(), "cmdb": loaded.CMDBCacheRedis(),
+	} {
+		if connection.ReadTimeout != loaded.Redis.ReadTimeout || connection.DialTimeout != loaded.Redis.DialTimeout {
+			t.Fatalf("%s cache timeouts = %+v, want the process-wide ones", name, connection)
+		}
+	}
+}
+
+// Unstated means "the same instance as the rest of the deployment", which is
+// what a platform that does not use the per-module routing looks like. It is
+// resolved at load rather than worked out again at each call site, so the
+// resolved configuration a release check reads says where each read went
+// instead of saying "inherited".
+func TestAnUnstatedPlatformCacheResolvesToTheTopLevelConnection(t *testing.T) {
+	loaded, err := Load(writeConfig(t, platformCacheConfigContents("")))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.PlatformCache.Strategy == nil || loaded.PlatformCache.CMDB == nil {
+		t.Fatalf("platform cache = %+v, want both resolved rather than left unstated", loaded.PlatformCache)
+	}
+	for name, address := range map[string]string{
+		"strategy": loaded.StrategySourceRedis().Address,
+		"cmdb":     loaded.CMDBCacheRedis().Address,
+	} {
+		if address != "runtime-store:6379" {
+			t.Fatalf("%s cache = %q, want the top-level connection", name, address)
+		}
+	}
+}
+
+func platformCacheConfigContents(platformCache string) string {
+	return `mode: shadow
+input:
+  mode: go_access
+http:
+  listen: 127.0.0.1:8080
+kafka:
+  brokers: [127.0.0.1:9092]
+  trigger_event:
+    topic: alarmd-trigger-event
+  allowed_output_topics: [alarmd-trigger-event, alarmd_0bkmonitor_backend_event]
+  legacy_adapter:
+    topic: alarmd_0bkmonitor_backend_event
+    snapshot_prefix: alarmd-test
+    service_redis:
+      mode: standalone
+      address: redis.test:6379
+redis:
+  mode: standalone
+  address: runtime-store:6379
+  db: 8
+  state_prefix: alarmd:phase-two:g1:v1` + platformCache + `
+phase_two:
+  worker:
+    id: alarmd-worker-0
+  control:
+    strategy_cache_prefix: alarm-config
+    timezone: Asia/Shanghai
+    legacy_query_runtime:
+      access_bk_data: false
+      bkdata_cmdb_level_tables: []
+      system_disk_filter:
+        field_name: device_type
+        values: []
+      system_network_filter:
+        field_name: device_name
+        values: []
+  access:
+    uq_endpoint: http://unify-query.service
+    query_source: alarmd
+`
+}

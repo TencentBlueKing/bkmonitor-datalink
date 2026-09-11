@@ -185,6 +185,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 
 	sourceConnection := cfg.StrategySourceRedis()
 	runtimeConnection := cfg.ResolvedRuntimeRedis()
+	cmdbConnection := cfg.CMDBCacheRedis()
 	controlClient, err := openProductionRedisWithHook(ctx, sourceConnection, recorder.RedisHook("source"))
 	if err != nil {
 		return nil, err
@@ -208,13 +209,38 @@ func openProductionPhaseTwoBundleWithDependencies(
 			}
 		}()
 	}
-	// Report both pools by their role. When the runtime connection resolves to
-	// the source connection there is a single client, and reporting it twice
-	// would double count the same connections.
+	// The platform's host cache is a third location, and whether it is a third
+	// connection is the deployment's answer, not an assumption: the platform
+	// routes its cache backend per module, so this may be the instance the
+	// strategy cache is on, the one alarmd's own state is on, or neither.
+	cmdbClient := controlClient
+	cmdbClientOwned := false
+	switch {
+	case reflect.DeepEqual(cmdbConnection, sourceConnection):
+	case reflect.DeepEqual(cmdbConnection, runtimeConnection):
+		cmdbClient = runtimeClient
+	default:
+		cmdbClient, err = openProductionRedisWithHook(ctx, cmdbConnection, recorder.RedisHook("cmdb"))
+		if err != nil {
+			return nil, err
+		}
+		cmdbClientOwned = true
+		defer func() {
+			if resultErr != nil {
+				resultErr = errors.Join(resultErr, cmdbClient.Close())
+			}
+		}()
+	}
+	// Report each pool by its role. Where two roles resolve to one connection
+	// there is a single client, and reporting it twice would double count the
+	// same connections.
 	recorder.SetRedisPoolSource(func() []metric.RedisPoolCounts {
 		counts := []metric.RedisPoolCounts{redisPoolCounts("source", sourceConnection.PoolSize, controlClient)}
 		if !runtimeClientIsSource {
 			counts = append(counts, redisPoolCounts("runtime", runtimeConnection.PoolSize, runtimeClient))
+		}
+		if cmdbClientOwned {
+			counts = append(counts, redisPoolCounts("cmdb", cmdbConnection.PoolSize, cmdbClient))
 		}
 		return counts
 	})
@@ -391,7 +417,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// A series is evaluated for a strategy only inside that strategy's
 	// monitoring target. The facts it is decided on come from the platform's
 	// CMDB host cache, on the database this client already uses.
-	seriesAdmission, cmdbIndex, err := buildSeriesAdmission(ctx, cfg, runtimeClient, recorder)
+	seriesAdmission, cmdbIndex, err := buildSeriesAdmission(ctx, cfg, cmdbClient, recorder)
 	if err != nil {
 		return nil, err
 	}
@@ -694,10 +720,14 @@ func openProductionPhaseTwoBundleWithDependencies(
 			if finalEmitter != nil && finalEmitter.publisher != nil {
 				finalEmitter.shutdown(shutdownCtx)
 			}
-			if runtimeClientIsSource {
-				return errors.Join(events.Shutdown(shutdownCtx), closeLegacyClients())
+			closers := []error{events.Shutdown(shutdownCtx)}
+			if !runtimeClientIsSource {
+				closers = append(closers, runtimeClient.Close())
 			}
-			return errors.Join(events.Shutdown(shutdownCtx), runtimeClient.Close(), closeLegacyClients())
+			if cmdbClientOwned {
+				closers = append(closers, cmdbClient.Close())
+			}
+			return errors.Join(append(closers, closeLegacyClients())...)
 		},
 	})
 	if err != nil {

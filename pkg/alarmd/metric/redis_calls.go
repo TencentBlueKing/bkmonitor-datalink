@@ -34,7 +34,7 @@ import (
 // series nobody notices. The values match the pool metrics so command load and
 // connection load join on the same label.
 var redisClientNames = map[string]struct{}{
-	"source": {}, "runtime": {}, "legacy_output": {}, "legacy_pod_cache": {}, "diagnostics": {},
+	"source": {}, "runtime": {}, "cmdb": {}, "legacy_output": {}, "legacy_pod_cache": {}, "diagnostics": {},
 }
 
 var redisCommandNames = map[string]struct{}{

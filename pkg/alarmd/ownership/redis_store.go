@@ -342,23 +342,78 @@ func (store *RedisStore) renew(
 }
 
 func (store *RedisStore) CheckFence(ctx context.Context, fence execution.OwnerFence, at time.Time) error {
+	_, err := store.checkFence(ctx, fence, at)
+	return err
+}
+
+// CheckFenceWithAssignment validates the fence and returns the Assignment
+// record that names its owner, both decided by the same script run.
+//
+// It exists because the scheduler's idle path used to ask for the two facts
+// separately -- one script run for the fence, one HGETALL for the record --
+// with nothing but a local time comparison in between. Two round trips for two
+// facts that belong to the same instant is both the slower and the weaker
+// answer, since an Assignment published between them would be read against a
+// fence checked before it.
+//
+// The record is assembled and validated exactly as ReadAssignment assembles it
+// from HGETALL, so a caller cannot tell the two apart by what it gets back.
+// A fence the store rejects returns the rejection and no record: there is no
+// state in which a worker should act on an Assignment its fence does not cover.
+func (store *RedisStore) CheckFenceWithAssignment(
+	ctx context.Context,
+	fence execution.OwnerFence,
+	at time.Time,
+) (AssignmentRecord, error) {
+	if fence.QueryGroup == ControlLeaderIdentity {
+		return AssignmentRecord{}, errors.New("alarmd ownership: control leader identity has no Assignment record")
+	}
+	values, err := store.checkFence(ctx, fence, at)
+	if err != nil {
+		return AssignmentRecord{}, err
+	}
+	record := AssignmentRecord{
+		QueryGroup: fence.QueryGroup, DesiredWorkerID: scriptText(values[1]),
+		AssignmentGeneration: parseUint(scriptText(values[2])), RecordRevision: parseUint(scriptText(values[3])),
+		ControlEpoch: parseUint(scriptText(values[4])), PlacementReason: PlacementReason(scriptText(values[5])),
+		AssignedAt: time.UnixMilli(parseInt(scriptText(values[6]))),
+	}
+	if err := record.Validate(); err != nil {
+		return AssignmentRecord{}, err
+	}
+	return record, nil
+}
+
+// checkFence returns the whole script reply so the two exported entry points
+// share one decision. Only a VALID fence yields values; every rejection is
+// mapped to the same error the caller has always seen.
+func (store *RedisStore) checkFence(
+	ctx context.Context,
+	fence execution.OwnerFence,
+	at time.Time,
+) ([]interface{}, error) {
 	requireAssignment := fence.QueryGroup != ControlLeaderIdentity
 	if err := validateFence(fence); err != nil || at.IsZero() {
-		return ErrStaleFence
+		return nil, ErrStaleFence
 	}
 	result, err := checkFenceScript.Run(ctx, store.client, []string{
 		store.assignmentKey(fence.QueryGroup), store.ownershipKey(fence.QueryGroup),
-	}, boolText(requireAssignment), fence.OwnerID, fence.OwnerEpoch, fence.LeaseToken, at.UnixMilli()).Text()
+	}, boolText(requireAssignment), fence.OwnerID, fence.OwnerEpoch, fence.LeaseToken, at.UnixMilli()).Result()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if result == "VALID" {
-		return nil
+	values, err := scriptValues(result, 7)
+	if err != nil {
+		return nil, err
 	}
-	if result == "NOT_DESIRED" {
-		return ErrNotDesired
+	switch scriptText(values[0]) {
+	case "VALID":
+		return values, nil
+	case "NOT_DESIRED":
+		return nil, ErrNotDesired
+	default:
+		return nil, ErrStaleFence
 	}
-	return ErrStaleFence
 }
 
 func (store *RedisStore) Release(ctx context.Context, fence execution.OwnerFence) error {
@@ -598,22 +653,41 @@ redis.call('HSET', KEYS[2], 'deadline_ms', deadline_ms)
 return 'RENEWED'
 `)
 
+// checkFenceScript answers both questions a fenced worker asks before it acts:
+// is this lease still the live one, and which Assignment record names its
+// owner. It had to read desired_worker_id to answer the first anyway, so the
+// second costs it one HMGET where it used to do one HGET -- and saves the
+// caller the separate HGETALL that ReadAssignment would have sent. The two
+// facts then describe one instant, which two round trips cannot promise: the
+// Control Leader can publish a new Assignment between them.
+//
+// Every branch returns a seven element array so one reply shape covers every
+// outcome. Absent hash fields are returned as empty strings rather than left
+// out: a Lua table stops converting at its first nil and a missing HMGET
+// element is nil, so an unguarded record would silently shorten the reply for
+// the control leader identity, which carries no Assignment record at all.
 var checkFenceScript = redis.NewScript(`
 local require_assignment = ARGV[1]
 local owner_id = ARGV[2]
 local epoch = ARGV[3]
 local token = ARGV[4]
 local now_ms = tonumber(ARGV[5])
+local record = {'', '', '', '', '', ''}
 if require_assignment == '1' then
-  local desired = redis.call('HGET', KEYS[1], 'desired_worker_id')
-  if not desired or desired ~= owner_id then return 'NOT_DESIRED' end
+  local fields = redis.call('HMGET', KEYS[1], 'desired_worker_id', 'assignment_generation',
+    'record_revision', 'control_epoch', 'placement_reason', 'assigned_at_ms')
+  local desired = fields[1]
+  if not desired or desired ~= owner_id then return {'NOT_DESIRED', '', '', '', '', '', ''} end
+  for index = 1, 6 do
+    if fields[index] then record[index] = fields[index] end
+  end
 end
-if redis.call('HGET', KEYS[2], 'execution_disposition') ~= 'ACTIVE' then return 'STALE' end
+if redis.call('HGET', KEYS[2], 'execution_disposition') ~= 'ACTIVE' then return {'STALE', '', '', '', '', '', ''} end
 if redis.call('HGET', KEYS[2], 'owner_id') ~= owner_id or
    redis.call('HGET', KEYS[2], 'owner_epoch') ~= epoch or
    redis.call('HGET', KEYS[2], 'lease_token') ~= token or
-   tonumber(redis.call('HGET', KEYS[2], 'deadline_ms') or '0') <= now_ms then return 'STALE' end
-return 'VALID'
+   tonumber(redis.call('HGET', KEYS[2], 'deadline_ms') or '0') <= now_ms then return {'STALE', '', '', '', '', '', ''} end
+return {'VALID', record[1], record[2], record[3], record[4], record[5], record[6]}
 `)
 
 var releaseScript = redis.NewScript(`

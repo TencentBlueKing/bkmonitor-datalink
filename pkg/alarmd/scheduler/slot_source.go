@@ -282,7 +282,7 @@ func (source *ProductionSlotSource) Next(
 	if at.IsZero() {
 		return FrozenSlot{}, false, errors.New("alarmd scheduler: current time is required")
 	}
-	initialAssignment, initialFence, err := source.currentOwnership(ctx, at)
+	initialAssignment, initialFence, err := source.initialOwnership(ctx, at)
 	if err != nil {
 		return FrozenSlot{}, false, err
 	}
@@ -862,6 +862,27 @@ func (source *ProductionSlotSource) firstAvailableSchedule(
 	}
 }
 
+// initialOwnership resolves the ownership facts a Slot decision opens with.
+//
+// It is a separate entry point from currentOwnership because only this one
+// reading may be inherited. The Runner confirms the same two facts immediately
+// before calling Next, with nothing but a local time comparison in between, so
+// this reading and that one describe the same instant and asking twice buys
+// nothing. Every other currentOwnership call in this file sits behind real
+// elapsed work -- a Progress load, a retirement decision, a Snapshot read and a
+// Plan compilation -- and is there to find out whether ownership survived that
+// work, so none of them may be answered from a cache.
+func (source *ProductionSlotSource) initialOwnership(
+	ctx context.Context,
+	at time.Time,
+) (ownership.AssignmentRecord, execution.OwnerFence, error) {
+	if verified, ok := verifiedOwnershipFrom(ctx, source.queryGroup); ok &&
+		source.acceptAssignment(verified.assignment) == nil && source.acceptFence(verified.fence) == nil {
+		return verified.assignment, verified.fence, nil
+	}
+	return source.currentOwnership(ctx, at)
+}
+
 func (source *ProductionSlotSource) currentOwnership(
 	ctx context.Context,
 	at time.Time,
@@ -870,20 +891,41 @@ func (source *ProductionSlotSource) currentOwnership(
 	if err != nil {
 		return ownership.AssignmentRecord{}, execution.OwnerFence{}, err
 	}
-	if err := assignment.Validate(); err != nil {
+	// The Assignment is judged before the fence is read so a Query Group this
+	// worker no longer owns costs one round trip to discover, not two.
+	if err := source.acceptAssignment(assignment); err != nil {
 		return ownership.AssignmentRecord{}, execution.OwnerFence{}, err
-	}
-	if assignment.QueryGroup != source.queryGroup || assignment.DesiredWorkerID != source.workerID {
-		return ownership.AssignmentRecord{}, execution.OwnerFence{}, ownership.ErrNotDesired
 	}
 	fence, err := source.session.ValidateCurrent(ctx, at)
 	if err != nil {
 		return ownership.AssignmentRecord{}, execution.OwnerFence{}, err
 	}
-	if fence.QueryGroup != source.queryGroup || fence.OwnerID != source.workerID || fence.OwnerEpoch == 0 || fence.LeaseToken == "" {
-		return ownership.AssignmentRecord{}, execution.OwnerFence{}, ownership.ErrStaleFence
+	if err := source.acceptFence(fence); err != nil {
+		return ownership.AssignmentRecord{}, execution.OwnerFence{}, err
 	}
 	return assignment, fence, nil
+}
+
+// acceptAssignment and acceptFence hold the rules for what this worker may act
+// on. They are named so an inherited reading is judged by the same rules as a
+// freshly read one; if the two ever drifted, the inherited path would be
+// trusting facts the read path would have refused.
+func (source *ProductionSlotSource) acceptAssignment(assignment ownership.AssignmentRecord) error {
+	if err := assignment.Validate(); err != nil {
+		return err
+	}
+	if assignment.QueryGroup != source.queryGroup || assignment.DesiredWorkerID != source.workerID {
+		return ownership.ErrNotDesired
+	}
+	return nil
+}
+
+func (source *ProductionSlotSource) acceptFence(fence execution.OwnerFence) error {
+	if fence.QueryGroup != source.queryGroup || fence.OwnerID != source.workerID ||
+		fence.OwnerEpoch == 0 || fence.LeaseToken == "" {
+		return ownership.ErrStaleFence
+	}
+	return nil
 }
 
 func sameAssignment(left, right ownership.AssignmentRecord) bool {

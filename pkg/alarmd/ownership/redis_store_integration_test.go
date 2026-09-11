@@ -283,6 +283,72 @@ func TestRedisStoreReadControlComposesWithFencedCompareAndSet(t *testing.T) {
 	}
 }
 
+// The fence check carries the Assignment record so a caller that needs both
+// spends one round trip. The record has to be indistinguishable from the one
+// HGETALL would have produced, or callers would start to care which way they
+// asked -- so this compares the two answers against the same stored record
+// rather than against a hand-written expectation.
+func TestRedisStoreCheckFenceCarriesTheAssignmentItAlreadyRead(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	now := time.UnixMilli(1_700_000_000_000)
+	authority, err := store.AcquireControlLeader(ctx, "control-1", now, time.Minute)
+	if err != nil {
+		t.Fatalf("AcquireControlLeader() error = %v", err)
+	}
+	// The control leader identity has no Assignment hash at all. It is the
+	// branch that breaks first if the record fields are returned unguarded,
+	// because a Lua reply stops at its first nil.
+	if err := store.CheckFence(ctx, authority.Fence, now.Add(time.Second)); err != nil {
+		t.Fatalf("CheckFence(control leader) error = %v", err)
+	}
+	if _, err := store.CheckFenceWithAssignment(ctx, authority.Fence, now.Add(time.Second)); err == nil {
+		t.Fatal("CheckFenceWithAssignment(control leader) returned a record, want a refusal")
+	}
+
+	if _, err := store.PublishAssignment(ctx, authority, AssignmentDecision{
+		QueryGroup: "query-group-1", DesiredWorkerID: "worker-1", ExpectedRecordRevision: 0,
+		PlacementReason: PlacementRendezvous, DecidedAt: now,
+	}); err != nil {
+		t.Fatalf("PublishAssignment() error = %v", err)
+	}
+	lease, err := store.Acquire(ctx, "query-group-1", "worker-1", now, time.Minute)
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	read, err := store.ReadAssignment(ctx, "query-group-1")
+	if err != nil {
+		t.Fatalf("ReadAssignment() error = %v", err)
+	}
+	merged, err := store.CheckFenceWithAssignment(ctx, lease.Fence, now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("CheckFenceWithAssignment() error = %v", err)
+	}
+	if merged.QueryGroup != read.QueryGroup || merged.DesiredWorkerID != read.DesiredWorkerID ||
+		merged.AssignmentGeneration != read.AssignmentGeneration || merged.RecordRevision != read.RecordRevision ||
+		merged.ControlEpoch != read.ControlEpoch || merged.PlacementReason != read.PlacementReason ||
+		!merged.AssignedAt.Equal(read.AssignedAt) {
+		t.Fatalf("CheckFenceWithAssignment() = %+v, ReadAssignment() = %+v", merged, read)
+	}
+
+	// A rejected fence yields the rejection and nothing else: an Assignment a
+	// worker cannot act on must not reach it looking like one it can.
+	foreign := execution.OwnerFence{
+		QueryGroup: "query-group-1", OwnerID: "worker-2", OwnerEpoch: 1, LeaseToken: "lease-token",
+	}
+	if record, err := store.CheckFenceWithAssignment(ctx, foreign, now.Add(time.Second)); !errors.Is(err, ErrNotDesired) ||
+		record != (AssignmentRecord{}) {
+		t.Fatalf("CheckFenceWithAssignment(other worker) = (%+v, %v), want (zero, ErrNotDesired)", record, err)
+	}
+	if err := store.Release(ctx, lease.Fence); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+	if record, err := store.CheckFenceWithAssignment(ctx, lease.Fence, now.Add(2*time.Second)); !errors.Is(err, ErrStaleFence) ||
+		record != (AssignmentRecord{}) {
+		t.Fatalf("CheckFenceWithAssignment(released) = (%+v, %v), want (zero, ErrStaleFence)", record, err)
+	}
+}
+
 func newIntegrationStore(t *testing.T) *RedisStore {
 	t.Helper()
 	executable, err := exec.LookPath("redis-server")

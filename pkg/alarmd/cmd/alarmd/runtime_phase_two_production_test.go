@@ -2486,6 +2486,22 @@ func (store *fakePhaseTwoOwnershipStore) CheckFence(context.Context, execution.O
 	return store.checkErr
 }
 
+func (store *fakePhaseTwoOwnershipStore) CheckFenceWithAssignment(
+	context.Context,
+	execution.OwnerFence,
+	time.Time,
+) (ownership.AssignmentRecord, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.checkErr != nil {
+		return ownership.AssignmentRecord{}, store.checkErr
+	}
+	if store.assignment.QueryGroup == "" {
+		return ownership.AssignmentRecord{}, ownership.ErrAssignmentAbsent
+	}
+	return store.assignment, nil
+}
+
 func (store *fakePhaseTwoOwnershipStore) Release(context.Context, execution.OwnerFence) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()

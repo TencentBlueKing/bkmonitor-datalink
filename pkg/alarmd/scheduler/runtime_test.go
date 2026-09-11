@@ -293,12 +293,23 @@ func frozenSlot(queryGroup execution.QueryGroupIdentity) FrozenSlot {
 }
 
 type fakeSession struct {
-	fence execution.OwnerFence
-	err   error
+	fence      execution.OwnerFence
+	assignment ownership.AssignmentRecord
+	err        error
 }
 
 func (session *fakeSession) ValidateCurrent(context.Context, time.Time) (execution.OwnerFence, error) {
 	return session.fence, session.err
+}
+
+// The zero Assignment record is deliberate: this fake has no Assignment facts,
+// so the Runner has nothing worth handing to the source and the source reads
+// for itself, which is what these tests have always exercised.
+func (session *fakeSession) ValidateCurrentWithAssignment(
+	context.Context,
+	time.Time,
+) (execution.OwnerFence, ownership.AssignmentRecord, error) {
+	return session.fence, session.assignment, session.err
 }
 
 type fakeSlotSource struct {

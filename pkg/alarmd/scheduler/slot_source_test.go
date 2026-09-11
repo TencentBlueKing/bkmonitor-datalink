@@ -831,6 +831,18 @@ func (session *sequenceOwnerSession) ValidateCurrent(context.Context, time.Time)
 	return session.fences[index], nil
 }
 
+// This fake feeds a SlotSource directly, without a Runner in front of it, so it
+// carries no Assignment facts to hand forward and the source keeps reading the
+// Assignment itself. Consuming a fence from the sequence here would move the
+// sequence the ownership recheck tests depend on.
+func (session *sequenceOwnerSession) ValidateCurrentWithAssignment(
+	ctx context.Context,
+	at time.Time,
+) (execution.OwnerFence, ownership.AssignmentRecord, error) {
+	fence, err := session.ValidateCurrent(ctx, at)
+	return fence, ownership.AssignmentRecord{}, err
+}
+
 type fakeSlotCatalog struct {
 	t                  *testing.T
 	schedules          []execution.FrozenQueryGroupSchedule

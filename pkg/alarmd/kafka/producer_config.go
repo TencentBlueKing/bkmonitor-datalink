@@ -31,13 +31,12 @@ var kafkaTopicNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 // DecisionSinkConfig contains the immutable coordinates and application-level
 // output policy for the isolated Shadow decision producer.
 type DecisionSinkConfig struct {
-	Brokers             []string
-	InputTopic          string
-	OutputTopic         string
-	AllowedOutputTopics []string
-	ClientID            string
-	BrokerVersion       string
-	MaxMessageBytes     int
+	Brokers         []string
+	InputTopic      string
+	OutputTopic     string
+	ClientID        string
+	BrokerVersion   string
+	MaxMessageBytes int
 }
 
 func (c DecisionSinkConfig) Validate() error {
@@ -49,11 +48,6 @@ func (c DecisionSinkConfig) Validate() error {
 	}
 	if c.InputTopic == c.OutputTopic {
 		return errors.New("kafka decision producer: input_topic and output_topic must differ")
-	}
-	for _, topic := range c.AllowedOutputTopics {
-		if topic == c.InputTopic {
-			return errors.New("kafka decision producer: input topic must not appear in output allowlist")
-		}
 	}
 	return nil
 }
@@ -76,22 +70,6 @@ func (c DecisionSinkConfig) ValidateProducerOnly() error {
 	}
 	if err := validateKafkaTopicName("output_topic", c.OutputTopic); err != nil {
 		return err
-	}
-	if len(c.AllowedOutputTopics) == 0 {
-		return errors.New("kafka decision producer: output topic allowlist must be non-empty")
-	}
-	seenTopics := make(map[string]struct{}, len(c.AllowedOutputTopics))
-	for _, topic := range c.AllowedOutputTopics {
-		if err := validateKafkaTopicName("allowed_output_topics", topic); err != nil {
-			return err
-		}
-		if _, exists := seenTopics[topic]; exists {
-			return fmt.Errorf("kafka decision producer: duplicate allowed output topic %q", topic)
-		}
-		seenTopics[topic] = struct{}{}
-	}
-	if _, allowed := seenTopics[c.OutputTopic]; !allowed {
-		return fmt.Errorf("kafka decision producer: output topic %q is not allowlisted", c.OutputTopic)
 	}
 	for name, value := range map[string]string{"client_id": c.ClientID, "broker_version": c.BrokerVersion} {
 		if value == "" || strings.TrimSpace(value) != value {

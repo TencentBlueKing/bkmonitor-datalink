@@ -866,10 +866,16 @@ func (adapter *seriesAdapter) admittedPlans(batch execution.ProviderSeriesBatch)
 			admit, filter, reason := adapter.admission.Admit(plan, &facts)
 			decisions[identity] = admit
 			if adapter.observe != nil {
-				if admit {
-					adapter.observe("target_scope", "admitted", "in_scope")
-				} else {
+				switch {
+				case !admit:
 					adapter.observe(filter, "rejected", reason)
+				case reason != "":
+					// Admitted, but the filter said why it could not decide.
+					// That is the case worth separating from an ordinary
+					// admission: it is what a degraded CMDB cache looks like.
+					adapter.observe(filter, "admitted", reason)
+				default:
+					adapter.observe("target_scope", "admitted", "in_scope")
 				}
 			}
 		}

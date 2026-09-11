@@ -486,6 +486,7 @@ type CompiledPlan struct {
 	planRef             contract.RuntimePlanRefV1
 	strategyRef         contract.StrategyRefV2
 	outputIdentity      *contract.MonitorOutputIdentity
+	subjectFacts        *contract.MonitorSubjectFacts
 	legacyOutput        *contract.FrozenLegacyOutput
 	projection          contract.InputProjectionV2
 	evaluationSemantics contract.ExecutionSemanticsV2
@@ -519,6 +520,17 @@ func (p *CompiledPlan) OutputIdentity() *contract.MonitorOutputIdentity {
 		return nil
 	}
 	return &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, p.outputIdentity.DimensionFields...)}
+}
+
+// SubjectFacts returns the frozen strategy facts the subject projection reads.
+func (p *CompiledPlan) SubjectFacts() *contract.MonitorSubjectFacts {
+	if p == nil || p.subjectFacts == nil {
+		return nil
+	}
+	return &contract.MonitorSubjectFacts{
+		Labels:        append([]string{}, p.subjectFacts.Labels...),
+		ResultTableID: p.subjectFacts.ResultTableID,
+	}
 }
 
 func (p *CompiledPlan) LegacyOutput() *contract.FrozenLegacyOutput {

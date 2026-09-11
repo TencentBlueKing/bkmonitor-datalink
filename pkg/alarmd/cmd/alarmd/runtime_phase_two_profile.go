@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -47,6 +48,37 @@ func phaseTwoResolvedCPUSource() string { return cpuBudgetSource }
 func setMaxprocsFromCPUQuota(log func(string, ...interface{})) error {
 	_, err := maxprocs.Set(maxprocs.Logger(log))
 	return err
+}
+
+// goRuntimeBudgetSetters is what applyPhaseTwoGoRuntime writes through. The
+// production pair are the runtime's own, and a test supplies its own so that
+// asserting the process configures itself does not require mutating the
+// collector for every other test in the binary.
+type goRuntimeBudgetSetters struct {
+	setMemoryLimit func(int64) int64
+	setGCPercent   func(int) int
+}
+
+func runtimeGoBudgetSetters() goRuntimeBudgetSetters {
+	return goRuntimeBudgetSetters{setMemoryLimit: debug.SetMemoryLimit, setGCPercent: debug.SetGCPercent}
+}
+
+// applyPhaseTwoGoRuntime installs the collector budget derived from the
+// container. It is deliberately unconditional: no environment variable is
+// consulted and none can override the result.
+//
+// The reason is not doctrine. A setting that quietly returns the collector to
+// one cycle every 0.65 seconds, while the preflight table and config_loaded
+// both go on reporting the derived limit, is a knob whose effect nobody can
+// see - and this deployment has already been bitten once by exactly that
+// shape. The derived pair is printed at startup and carried in the facts, so
+// what the process runs under is stated rather than negotiated.
+func applyPhaseTwoGoRuntime(derived config.DerivedGoRuntime, setters goRuntimeBudgetSetters) {
+	if !derived.Applied || setters.setMemoryLimit == nil || setters.setGCPercent == nil {
+		return
+	}
+	setters.setMemoryLimit(derived.MemoryLimitBytes)
+	setters.setGCPercent(derived.GCPercent)
 }
 
 // Match the pinned library's diagnostic formats without retaining raw values
@@ -108,6 +140,16 @@ func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (obs
 		Profile: "standard-conservative-v1", Source: "container_derived", CPUSource: cpuSource, GOMAXPROCS: procs,
 		MemorySource: inputs.MemorySource, MemoryLimitBytes: inputs.MemoryLimitBytes,
 		Capacity: phaseTwoRuntimeCapacity(cfg, inputs),
+		Storage: observability.RuntimeStorageFacts{
+			OwnStore:      cfg.Redis.Connection().Destination(),
+			StrategyCache: cfg.StrategySourceRedis().Destination(),
+			CMDBCache:     cfg.CMDBCacheRedis().Destination(),
+			LegacyService: cfg.Kafka.LegacyAdapter.ServiceRedis.Destination(),
+
+			PlatformKeyPrefix:   cfg.PlatformKeyPrefix(),
+			StrategyCachePrefix: cfg.PhaseTwo.Control.StrategyCachePrefix,
+			OwnStorePrefix:      cfg.Redis.StatePrefix,
+		},
 	}
 	// Digest the exact logged safe values, with the digest field still empty.
 	digest, err := contract.DeriveCanonicalDigestV2("alarmd-runtime-config-v2", facts)
@@ -125,10 +167,12 @@ func phaseTwoRuntimeCapacity(cfg config.Config, inputs config.CapacityInputs) ob
 	c := cfg.PhaseTwo.Coordinator
 	uq := phaseTwoUQLimits(cfg)
 	timelineCache := config.DeriveControlTimelineCache(inputs)
+	goRuntime := config.DeriveGoRuntime(inputs)
 	return observability.RuntimeCapacityFacts{
-		ExpiredRangeEnabled: s.ExpiredRangeEnabled,
-		ActiveExecutions:    min(s.ActiveExecutionLimit, s.ReadyQueueCapacity), ConfiguredActiveExecutions: s.ActiveExecutionLimit,
-		QueryPermits: s.ProcessQueryPermits, RecoveryQueryPermits: s.RecoveryQueryPermits,
+		ExpiredRangeEnabled:       s.ExpiredRangeEnabled,
+		DerivedActiveExecutions:   s.ActiveExecutionLimit,
+		EffectiveActiveExecutions: min(s.ActiveExecutionLimit, s.ReadyQueueCapacity),
+		QueryPermits:              s.ProcessQueryPermits, RecoveryQueryPermits: s.RecoveryQueryPermits,
 		RedisPoolSize: cfg.Redis.PoolSize,
 		ReadyQueue:    s.ReadyQueueCapacity, RecoveryQueue: s.RecoveryQueueCapacity, QueuedPerQG: s.MaxQueuedItemsPerQG,
 		TickNS: int64(s.TickInterval), ReplaySlots: s.MaxReplaySlots, ReplayAgeNS: int64(s.MaxReplayAge),
@@ -141,6 +185,8 @@ func phaseTwoRuntimeCapacity(cfg config.Config, inputs config.CapacityInputs) ob
 		StoreMaxValueBytes: cfg.Limits.Codec.MaxEncodedBytes, StoreMaxItems: cfg.Limits.Store.MaxKeysPerBatch,
 		ControlTimelineCacheBytes:   timelineCache.MaxBytes,
 		ControlTimelineCacheEntries: timelineCache.MaxEntries,
+		GoMemoryLimitBytes:          goRuntime.MemoryLimitBytes,
+		GoGCPercent:                 goRuntime.GCPercent,
 		EvaluatorMaxPlans:           cfg.Limits.Detect.MaxPlans, EvaluatorMaxRecords: cfg.Limits.Detect.MaxRecordsPerSeries,
 		EvaluatorMaxLevels: uint64(cfg.Limits.Compiler.MaxLevelsPerPlan), EvidenceBytes: cfg.TriggerLimits().MaxEvidenceBytesPerEvent,
 		OutputMessageBytes: cfg.Kafka.TriggerEvent.MaxMessageBytes,

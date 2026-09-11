@@ -153,3 +153,95 @@ func TestControlTimelineCacheBudgetHoldsAnOwnedWorkingSet(t *testing.T) {
 		}
 	}
 }
+
+// The dispatcher bound has to be derived, not left at a value that means "no
+// bound". Production ran unbounded and peaked at 452 outstanding Runner
+// invocations against 32 query permits, so the 420 in between were prepared
+// executions parked on a semaphore rather than work in progress.
+//
+// The floor below is the measurement that decides the multiple. One Worker's
+// batch has 30 seconds between the ready delay and the completion deadline,
+// and 1,207 execute-seconds land in it. The executions running longer than 15
+// seconds - 11.8 a minute at about 39 seconds each - are resident occupancy
+// rather than batch work, so they take roughly 7.6 slots out and 368 seconds
+// of work with them. List scheduling then needs
+// 839/(N-7.6) <= 30-15, which is N >= 63.5. Four per permit clears that on
+// every shape while staying inside the ready queue.
+func TestActiveExecutionsClearTheMeasuredBatchFloor(t *testing.T) {
+	const (
+		productionCPU      = 8
+		measuredBatchFloor = 64
+	)
+	for _, inputs := range containerShapes() {
+		derived := DeriveScheduler(inputs)
+		if derived.ActiveExecutions <= 0 {
+			t.Fatalf("%d CPU: active executions = %d, want a bound rather than none",
+				inputs.CPUBudget, derived.ActiveExecutions)
+		}
+		// Below the permit budget the slots cannot keep the permits fed; above
+		// the ready queue the queue would bind first and the pair would be
+		// describing two different limits.
+		if admitted := derived.AdmittedConcurrency(); derived.ActiveExecutions <= admitted {
+			t.Fatalf("%d CPU: active executions %d cannot keep %d permits fed",
+				inputs.CPUBudget, derived.ActiveExecutions, admitted)
+		}
+		if derived.ActiveExecutions > derived.ReadyQueueCapacity {
+			t.Fatalf("%d CPU: active executions %d exceed the %d ready queue",
+				inputs.CPUBudget, derived.ActiveExecutions, derived.ReadyQueueCapacity)
+		}
+		if inputs.CPUBudget == productionCPU && derived.ActiveExecutions < measuredBatchFloor {
+			t.Fatalf("%d CPU: active executions %d are below the measured batch floor of %d",
+				inputs.CPUBudget, derived.ActiveExecutions, measuredBatchFloor)
+		}
+	}
+}
+
+// The collector's budget is the other half of the same idea: a container states
+// its memory and everything the process does inside it follows. Production ran
+// with neither setting, so next_gc sat at exactly twice a 430 MiB live heap,
+// a collection ran every 0.65 seconds and the collector took 17.7% of the
+// process while 87% of the container's 8 GiB went unused.
+func TestGoRuntimeBudgetFollowsTheContainerAndClearsItsOwnCeilings(t *testing.T) {
+	for _, inputs := range containerShapes() {
+		inputs.MemorySource = "pod_limit"
+		derived := DeriveGoRuntime(inputs)
+		if !derived.Applied || derived.MemoryLimitBytes <= 0 || derived.GCPercent <= 100 {
+			t.Fatalf("%d MiB container: go runtime budget = %+v, want an applied limit and a target above the Go default",
+				inputs.MemoryLimitBytes>>20, derived)
+		}
+		// A soft limit at or below a ceiling the process already derives from
+		// the same number would put a Slot admitted at its cap straight into
+		// the collector's limit.
+		coordinator := DeriveCoordinator(inputs, 1, 0)
+		if uint64(derived.MemoryLimitBytes) <= coordinator.MaxRetainedBytes {
+			t.Fatalf("%d MiB container: soft limit %d does not clear the %d retained ceiling",
+				inputs.MemoryLimitBytes>>20, derived.MemoryLimitBytes, coordinator.MaxRetainedBytes)
+		}
+		if uint64(derived.MemoryLimitBytes) <= uint64(DeriveControlTimelineCache(inputs).MaxBytes) {
+			t.Fatalf("%d MiB container: soft limit %d does not clear the timeline cache budget",
+				inputs.MemoryLimitBytes>>20, derived.MemoryLimitBytes)
+		}
+		// And it has to leave the container enough room that the runtime's own
+		// collector CPU limiter can overshoot into the remainder instead of the
+		// kernel reclaiming the process.
+		if uint64(derived.MemoryLimitBytes) > inputs.MemoryLimitBytes/2 {
+			t.Fatalf("%d MiB container: soft limit %d leaves no reserve",
+				inputs.MemoryLimitBytes>>20, derived.MemoryLimitBytes)
+		}
+	}
+}
+
+// A limit nobody stated must not become a limit the collector enforces. The
+// fallback describes a machine no deployment measured, so budgets that only
+// refuse work above a ceiling may use it and settings that make the runtime
+// act on a number may not.
+func TestGoRuntimeBudgetRefusesAGuessedContainer(t *testing.T) {
+	guessed := CapacityInputs{CPUBudget: 8, MemoryLimitBytes: fallbackMemoryLimitBytes, MemorySource: memorySourceFallback}
+	if derived := DeriveGoRuntime(guessed); derived.Applied ||
+		derived.MemoryLimitBytes != 0 || derived.GCPercent != 0 {
+		t.Fatalf("go runtime budget from a fallback limit = %+v, want none", derived)
+	}
+	if derived := DeriveGoRuntime(CapacityInputs{CPUBudget: 8, MemoryLimitBytes: 8 << 30}); derived.Applied {
+		t.Fatalf("go runtime budget from an unnamed memory source = %+v, want none", derived)
+	}
+}

@@ -48,10 +48,9 @@ func buildSeriesAdmission(
 	client redis.Cmdable,
 	recorder *metric.Recorder,
 ) (*admission.Chain, *cmdbcache.Store, error) {
-	// The platform key prefix is already stated once, for the strategy
-	// snapshot the compatibility output reads. Deriving the CMDB cache key
-	// from the same value keeps one spelling of one location.
-	prefix := cfg.Kafka.LegacyAdapter.SnapshotPrefix
+	// The platform states its key prefix once and both of its caches hang off
+	// it, so the CMDB cache key comes from that one spelling.
+	prefix := cfg.PlatformKeyPrefix()
 	reader, err := cmdbcache.NewReader(client, prefix)
 	if err != nil {
 		return nil, nil, err

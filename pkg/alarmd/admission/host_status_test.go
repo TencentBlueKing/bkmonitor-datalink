@@ -207,23 +207,20 @@ func TestAnEmptyTargetAddressIsInvalidEvenWithTheAlternativeSpelling(t *testing.
 
 // Production case that the shadow reconcile caught: a collector config whose
 // cloud id placeholder was never rendered ships the literal template text as
-// bk_target_cloud_id. Python coerces it with safe_int, so it looks the host up
-// in the direct area and finds it; taking the text at face value builds a key
-// no host can have, reads as "CMDB does not know this host", and drops every
-// series of that strategy - 8484 went from 134 matched points to zero.
-func TestAnUnrenderedCloudPlaceholderResolvesToTheDirectArea(t *testing.T) {
+// bk_target_cloud_id. Python's host status filter coerces it with safe_int, so
+// it looks the host up in the direct area and finds it; taking the text at face
+// value builds a key no host can have, reads as "CMDB does not know this host",
+// and drops every series of that strategy - 8484 went from 134 matched points
+// to zero. The coercion belongs to the lookup that filter performs, which is
+// the one Python coerces.
+func TestAnUnrenderedCloudPlaceholderIsLookedUpInTheDirectArea(t *testing.T) {
 	facts := factsFor(map[string]json.RawMessage{
 		"bk_target_ip":       raw(`"192.0.2.10"`),
 		"bk_target_cloud_id": raw(`"{{ cmdb_instance.host.bk_cloud_id[0].id }}"`),
 	}, nil)
-	found := false
-	for _, key := range facts.HostKeys {
-		if key == "192.0.2.10|0" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("host keys = %v, want the address in the direct area", facts.HostKeys)
+	key, looked := facts.HostNaming.LookupKey()
+	if !looked || key != "192.0.2.10|0" {
+		t.Fatalf("lookup key = %q/%v, want the address in the direct area", key, looked)
 	}
 }
 
@@ -241,14 +238,97 @@ func TestCloudIdentityIsCoercedTheWayThePlatformDoes(t *testing.T) {
 			"bk_target_ip":       raw(`"192.0.2.10"`),
 			"bk_target_cloud_id": raw(test.cloud),
 		}, nil)
-		found := false
-		for _, key := range facts.HostKeys {
-			if key == test.want {
-				found = true
-			}
+		if key, _ := facts.HostNaming.LookupKey(); key != test.want {
+			t.Fatalf("cloud %s produced lookup key %q, want %q", test.cloud, key, test.want)
 		}
-		if !found {
-			t.Fatalf("cloud %s produced keys %v, want %q", test.cloud, facts.HostKeys, test.want)
+	}
+}
+
+// And the other side of that split: the key a target is matched on, and the key
+// the topology lookup uses, keep the dimension as it stands. Python coerces in
+// exactly one of its three call sites - filters.py - while fullers.py's address
+// branch and target.py's is_match both build the key raw. Coercing here would
+// resolve topology Python leaves unresolved and match targets Python does not
+// match; the error is extra alerts, which is why it survived review.
+func TestTheTargetMatchKeyKeepsTheCloudDimensionAsItStands(t *testing.T) {
+	facts := factsFor(map[string]json.RawMessage{
+		"bk_target_ip":       raw(`"192.0.2.10"`),
+		"bk_target_cloud_id": raw(`"{{ cmdb_instance.host.bk_cloud_id[0].id }}"`),
+	}, nil)
+	want := "192.0.2.10|{{ cmdb_instance.host.bk_cloud_id[0].id }}"
+	found := false
+	for _, key := range facts.HostKeys {
+		if key == want {
+			found = true
 		}
+		if key == "192.0.2.10|0" {
+			t.Fatalf("host keys = %v, want no coerced key for target matching", facts.HostKeys)
+		}
+	}
+	if !found {
+		t.Fatalf("host keys = %v, want %q", facts.HostKeys, want)
+	}
+}
+
+// An absent cloud is still the direct area on both sides: Python's enrichment
+// falls back to bk_cloud_id and then to "0" before it builds the key, so this
+// is not the coercion above but the default underneath it.
+func TestAnAbsentCloudIsTheDirectAreaOnBothKeys(t *testing.T) {
+	facts := factsFor(map[string]json.RawMessage{
+		"bk_target_ip":       raw(`"192.0.2.10"`),
+		"bk_target_cloud_id": raw(`""`),
+	}, nil)
+	found := false
+	for _, key := range facts.HostKeys {
+		if key == "192.0.2.10|0" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("host keys = %v, want the direct area", facts.HostKeys)
+	}
+}
+
+// Python branches on bk_host_id's value rather than on the dimension being
+// present, so an empty one names no id and the record follows the address
+// branch - where, with no cloud alongside the address, Python looks nothing up
+// and keeps the record. Reading presence instead would send it down the id
+// branch and drop it as an unknown host. That is a missed alert.
+func TestAnEmptyHostIDLeavesTheRecordOnTheAddressBranch(t *testing.T) {
+	filter := hostStatusFilter(t, "备用机")
+	facts := factsFor(map[string]json.RawMessage{
+		"bk_host_id":   raw(`""`),
+		"bk_target_ip": raw(`"192.0.2.10"`),
+	}, nil)
+	if decision := filter.Admit(PlanContext{}, facts); !decision.Admit {
+		t.Fatalf("decision = %+v, want the record admitted: Python looks nothing up", decision)
+	}
+}
+
+// The lookup the filter branches on is the lookup the enrichment performs, and
+// it is built from bk_target_ip and bk_target_cloud_id only. The ip /
+// bk_cloud_id spellings build target-scope keys, which Python never looks a
+// host up by; a lookup key taken from those would decide this filter on a host
+// Python never consulted.
+func TestTheLookupKeyIsThePlatformsOwnSpellingsOnly(t *testing.T) {
+	facts := factsFor(map[string]json.RawMessage{
+		"bk_target_ip":       raw(`"192.0.2.10"`),
+		"bk_target_cloud_id": raw(`""`),
+		"bk_cloud_id":        raw(`5`),
+	}, nil)
+	key, looked := facts.HostNaming.LookupKey()
+	if !looked || key != "192.0.2.10|0" {
+		t.Fatalf("lookup key = %q/%v, want the target cloud coerced to the direct area", key, looked)
+	}
+	// The alternative spelling still builds a target-scope key, so the two
+	// readings really are separate.
+	found := false
+	for _, candidate := range facts.HostKeys {
+		if candidate == "192.0.2.10|5" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("host keys = %v, want the alternative spelling kept for target matching", facts.HostKeys)
 	}
 }

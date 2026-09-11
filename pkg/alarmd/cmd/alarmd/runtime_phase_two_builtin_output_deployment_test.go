@@ -23,23 +23,25 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-// The built-in Python protocol is selected by strategy data, so its topic is a
-// topic this process can publish to. A deployment that narrowed the allowlist to
-// what it publishes today has not permitted it, and the allowlist is what says
-// so. The failure has to name the topic, because the operator reading the
-// message never wrote that name anywhere.
-func TestBuiltInPythonOutputTopicRejectedByAllowlistNamesTheTopic(t *testing.T) {
+// The two protocols are different wire formats and the protocol is chosen per
+// event, so a deployment that points both at one topic produces a stream whose
+// consumer can only read half of it - and neither half fails, they are just
+// wrong. The failure has to name the topic, because that is the only thing the
+// operator can act on.
+func TestOneTopicCannotCarryBothWireFormats(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
-	cfg.Kafka.AllowedOutputTopics = []string{cfg.Kafka.TriggerEvent.Topic}
+	cfg.Kafka.LegacyAdapter.Topic = cfg.Kafka.TriggerEvent.Topic
 	err := cfg.Validate()
 	if err == nil {
-		t.Fatal("a deployment that allowlists no compatibility topic must not validate")
+		t.Fatal("a deployment publishing both protocols to one topic must not validate")
 	}
-	if !strings.Contains(err.Error(), cfg.Kafka.LegacyAdapter.Topic) {
-		t.Fatalf("failure does not name the rejected topic: %v", err)
+	if !strings.Contains(err.Error(), cfg.Kafka.TriggerEvent.Topic) {
+		t.Fatalf("failure does not name the shared topic: %v", err)
 	}
-	if !strings.Contains(err.Error(), "allowed_output_topics") {
-		t.Fatalf("failure does not name the setting the operator must change: %v", err)
+	for _, setting := range []string{"trigger_event.topic", "legacy_adapter.topic"} {
+		if !strings.Contains(err.Error(), setting) {
+			t.Fatalf("failure does not name %s, which the operator must change: %v", setting, err)
+		}
 	}
 }
 
@@ -93,12 +95,16 @@ func TestBuiltInPythonOutputUnreachableServiceRedisStopsStartup(t *testing.T) {
 	defer uqServer.Close()
 
 	cfg := validGoAccessRuntimeConfig()
-	cfg.Redis.Address = sourceAddress
+	cfg.Redis.Address = runtimeAddress
 	withCompatibilityOutput(&cfg, sourceAddress)
 	cfg.Redis.StatePrefix = "alarmd:phase-two:builtin-output:v1"
-	runtimeRedis := cfg.Redis.Connection()
-	runtimeRedis.Address = runtimeAddress
-	cfg.PhaseTwo.RuntimeRedis = &runtimeRedis
+	// The platform's caches are one instance here and alarmd's own store is
+	// another, which is the split the wiring has to keep: the top-level
+	// connection carries alarmd's state, not the platform's reads.
+	platformCache := cfg.Redis.Connection()
+	platformCache.Address = sourceAddress
+	cfg.PlatformCache.Strategy = &platformCache
+	cfg.PlatformCache.CMDB = &platformCache
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
 	// A port nothing listens on: the configuration is complete and only the

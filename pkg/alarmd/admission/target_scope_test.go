@@ -196,3 +196,27 @@ func TestAnAbsentCloudDefaultsToTheDirectArea(t *testing.T) {
 		t.Fatalf("host keys = %v", facts.HostKeys)
 	}
 }
+
+// A filter that admits because it could not decide has to be told apart from
+// one that admitted because the record is in scope. The chain carries that
+// reason out; without it the only thing a deployment sees is an ordinary
+// admission, which is precisely what a filter that has given up looks like.
+func TestAnAdmissionThatCouldNotDecideCarriesItsReasonOut(t *testing.T) {
+	chain := NewChain(nil, []Filter{TargetScopeFilter{}})
+	scope := &TargetScope{Groups: []TargetScopeGroup{{
+		Conditions: []TargetScopeCondition{{
+			Field: TargetScopeTopoNode, Method: TargetScopeInclude,
+			Keys: map[string]struct{}{"module|85": {}},
+		}},
+	}}}
+	facts := &Facts{HostFactsUnavailable: true}
+	admitted, name, reason := chain.Admit(PlanContext{TargetScope: scope}, facts)
+	if !admitted || name != "target_scope" || reason != "host_facts_unavailable" {
+		t.Fatalf("decision = %v/%s/%s, want the gap named on an admitted record", admitted, name, reason)
+	}
+	// An ordinary admission still reports nothing, so the two are distinct.
+	plain := &Facts{TopoNodes: []string{"module|85"}}
+	if _, _, reason := chain.Admit(PlanContext{TargetScope: scope}, plain); reason != "" {
+		t.Fatalf("reason = %q, want an in-scope record to carry none", reason)
+	}
+}

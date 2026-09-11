@@ -1746,6 +1746,9 @@ type fakeProductionCatalogRepository struct {
 	renewErr       error
 	renewErrs      []error
 	renewCalls     int
+	versionTag     string
+	versionKnown   bool
+	versionErr     error
 }
 
 func (repository *fakeProductionCatalogRepository) RenewCurrentActivationObjects(context.Context) error {
@@ -1798,6 +1801,12 @@ func (repository *fakeProductionCatalogRepository) LoadActivation(
 	context.Context,
 ) (controlplane.ActivationState, error) {
 	return repository.activation, repository.activationErr
+}
+
+func (repository *fakeProductionCatalogRepository) ControlVersionTag(
+	context.Context,
+) (string, bool, error) {
+	return repository.versionTag, repository.versionKnown, repository.versionErr
 }
 
 func (repository *fakeProductionCatalogRepository) LoadSnapshot(
@@ -2152,7 +2161,7 @@ func TestProductionSlotObservationsBracketRealExecutionWithFrozenProvenance(t *t
 		observations = append(observations, observation)
 	})
 	source := observedProductionSlotSource{
-		next: slotSourceFunc(func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, error) {
+		next: slotSourceFunc(func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, scheduler.SlotDueFacts, error) {
 			return scheduler.FrozenSlot{
 				Contract: contractRef,
 				DuePlanTargets: execution.FrozenDuePlanTargets{
@@ -2166,11 +2175,11 @@ func TestProductionSlotObservationsBracketRealExecutionWithFrozenProvenance(t *t
 					Operation: execution.OperationNormal, OwnerFence: fence, AssignmentGeneration: 1,
 				},
 				ExpectedNextSlot: contractRef.Slot.EvaluationTime,
-			}, true, nil
+			}, true, scheduler.SlotDueFacts{IntervalSeconds: 60}, nil
 		}),
 		observer: observer,
 	}
-	slot, due, err := source.Next(context.Background(), contractRef.Slot.QueryGroup)
+	slot, due, _, err := source.Next(context.Background(), contractRef.Slot.QueryGroup)
 	if err != nil || !due {
 		t.Fatalf("observed SlotSource.Next() due=%v error=%v", due, err)
 	}
@@ -2214,12 +2223,12 @@ func TestProductionSlotObservationsBracketRealExecutionWithFrozenProvenance(t *t
 
 	observations = nil
 	notDue := observedProductionSlotSource{
-		next: slotSourceFunc(func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, error) {
-			return scheduler.FrozenSlot{}, false, nil
+		next: slotSourceFunc(func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, scheduler.SlotDueFacts, error) {
+			return scheduler.FrozenSlot{}, false, scheduler.SlotDueFacts{NotDueUntilUnix: 180, IntervalSeconds: 60}, nil
 		}),
 		observer: observer,
 	}
-	if _, due, err := notDue.Next(context.Background(), "query-group-1"); err != nil || due {
+	if _, due, _, err := notDue.Next(context.Background(), "query-group-1"); err != nil || due {
 		t.Fatalf("not-due SlotSource.Next() due=%v error=%v", due, err)
 	}
 	if len(observations) != 1 || observations[0].Stage != observability.StageSlotSourceCompleted {
@@ -2231,14 +2240,14 @@ func TestObservedProductionSlotSourcePreservesRetryCauseBeforeRunnerReduction(t 
 	wantErr := errors.New("test source cause")
 	var observations []observability.Observation
 	source := observedProductionSlotSource{
-		next: slotSourceFunc(func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, error) {
-			return scheduler.FrozenSlot{}, false, &scheduler.SourceRetryError{Err: wantErr}
+		next: slotSourceFunc(func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, scheduler.SlotDueFacts, error) {
+			return scheduler.FrozenSlot{}, false, scheduler.SlotDueFacts{}, &scheduler.SourceRetryError{Err: wantErr}
 		}),
 		observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			observations = append(observations, observation)
 		}),
 	}
-	if _, due, err := source.Next(context.Background(), "query-group-1"); due || !errors.Is(err, wantErr) {
+	if _, due, _, err := source.Next(context.Background(), "query-group-1"); due || !errors.Is(err, wantErr) {
 		t.Fatalf("Next() due=%t error=%v", due, err)
 	}
 	if len(observations) != 2 || observations[1].Stage != observability.StageSlotSourceCompleted || observations[0].Stage != observability.StageScheduleDue ||
@@ -2253,14 +2262,14 @@ func TestObservedProductionSlotSourcePreservesBlockedCauseBeforeRunnerReduction(
 	wantErr := errors.New("test classified source cause")
 	var observations []observability.Observation
 	source := observedProductionSlotSource{
-		next: slotSourceFunc(func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, error) {
-			return scheduler.FrozenSlot{}, false, &scheduler.SourceBlockedError{Err: wantErr}
+		next: slotSourceFunc(func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, scheduler.SlotDueFacts, error) {
+			return scheduler.FrozenSlot{}, false, scheduler.SlotDueFacts{}, &scheduler.SourceBlockedError{Err: wantErr}
 		}),
 		observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			observations = append(observations, observation)
 		}),
 	}
-	if _, due, err := source.Next(context.Background(), "query-group-1"); due || !errors.Is(err, wantErr) {
+	if _, due, _, err := source.Next(context.Background(), "query-group-1"); due || !errors.Is(err, wantErr) {
 		t.Fatalf("Next() due=%t error=%v", due, err)
 	}
 	if len(observations) != 2 || observations[1].Stage != observability.StageSlotSourceCompleted || observations[0].Stage != observability.StageScheduleDue ||
@@ -2486,6 +2495,22 @@ func (store *fakePhaseTwoOwnershipStore) CheckFence(context.Context, execution.O
 	return store.checkErr
 }
 
+func (store *fakePhaseTwoOwnershipStore) CheckFenceWithAssignment(
+	context.Context,
+	execution.OwnerFence,
+	time.Time,
+) (ownership.AssignmentRecord, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.checkErr != nil {
+		return ownership.AssignmentRecord{}, store.checkErr
+	}
+	if store.assignment.QueryGroup == "" {
+		return ownership.AssignmentRecord{}, ownership.ErrAssignmentAbsent
+	}
+	return store.assignment, nil
+}
+
 func (store *fakePhaseTwoOwnershipStore) Release(context.Context, execution.OwnerFence) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -2544,12 +2569,12 @@ func (rejectingSlotExecutor) Execute(context.Context, execution.SlotExecutionReq
 	return execution.SlotExecutionResult{}, errors.New("stale fence reached executor")
 }
 
-type slotSourceFunc func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, error)
+type slotSourceFunc func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, scheduler.SlotDueFacts, error)
 
 func (function slotSourceFunc) Next(
 	ctx context.Context,
 	queryGroup execution.QueryGroupIdentity,
-) (scheduler.FrozenSlot, bool, error) {
+) (scheduler.FrozenSlot, bool, scheduler.SlotDueFacts, error) {
 	return function(ctx, queryGroup)
 }
 

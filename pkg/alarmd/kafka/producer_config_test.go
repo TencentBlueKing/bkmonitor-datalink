@@ -154,25 +154,12 @@ func TestDecisionSinkConfigRejectsInvalidCoordinatesAndPolicy(t *testing.T) {
 		"missing output topic": func(config *DecisionSinkConfig) { config.OutputTopic = "" },
 		"same input and output": func(config *DecisionSinkConfig) {
 			config.OutputTopic = config.InputTopic
-			config.AllowedOutputTopics = []string{config.InputTopic}
-		},
-		"missing allowlist": func(config *DecisionSinkConfig) { config.AllowedOutputTopics = nil },
-		"output not allowed": func(config *DecisionSinkConfig) {
-			config.AllowedOutputTopics = []string{"another-shadow-output"}
-		},
-		"allowlist contains input": func(config *DecisionSinkConfig) {
-			config.AllowedOutputTopics = append(config.AllowedOutputTopics, config.InputTopic)
-		},
-		"duplicate allowlist entry": func(config *DecisionSinkConfig) {
-			config.AllowedOutputTopics = append(config.AllowedOutputTopics, config.OutputTopic)
 		},
 		"non-canonical topic": func(config *DecisionSinkConfig) {
 			config.OutputTopic = " shadow-output"
-			config.AllowedOutputTopics = []string{config.OutputTopic}
 		},
 		"invalid topic characters": func(config *DecisionSinkConfig) {
 			config.OutputTopic = "shadow/output"
-			config.AllowedOutputTopics = []string{config.OutputTopic}
 		},
 		"missing client":         func(config *DecisionSinkConfig) { config.ClientID = "" },
 		"missing version":        func(config *DecisionSinkConfig) { config.BrokerVersion = "" },
@@ -197,18 +184,16 @@ func TestDecisionSinkConfigRejectsInvalidCoordinatesAndPolicy(t *testing.T) {
 
 func validDecisionSinkConfig() DecisionSinkConfig {
 	return DecisionSinkConfig{
-		Brokers:             []string{"kafka-1.example:9092"},
-		InputTopic:          "alarmd-trigger-input-shadow",
-		OutputTopic:         "alarmd-trigger-decision-shadow",
-		AllowedOutputTopics: []string{"alarmd-trigger-decision-shadow"},
-		ClientID:            "alarmd",
-		BrokerVersion:       "2.6.0",
-		MaxMessageBytes:     128 * 1024,
+		Brokers:         []string{"kafka-1.example:9092"},
+		InputTopic:      "alarmd-trigger-input-shadow",
+		OutputTopic:     "alarmd-trigger-decision-shadow",
+		ClientID:        "alarmd",
+		BrokerVersion:   "2.6.0",
+		MaxMessageBytes: 128 * 1024,
 	}
 }
 
 func cloneDecisionSinkConfig(config DecisionSinkConfig) DecisionSinkConfig {
 	config.Brokers = append([]string(nil), config.Brokers...)
-	config.AllowedOutputTopics = append([]string(nil), config.AllowedOutputTopics...)
 	return config
 }

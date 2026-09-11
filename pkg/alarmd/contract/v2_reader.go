@@ -363,6 +363,7 @@ type evaluationPlanWirePartsV2 struct {
 	InputProjection     InputProjectionV2      `json:"input_projection"`
 	SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
 	OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
+	SubjectFacts        *MonitorSubjectFacts   `json:"subject_facts,omitempty"`
 	LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
 	StrategyIR          json.RawMessage        `json:"strategy_ir"`
 	TerminalReasonCode  string                 `json:"terminal_reason_code,omitempty"`
@@ -435,7 +436,8 @@ func decodeEvaluationPlanBestEffortV2(raw json.RawMessage) EvaluationPlanV2 {
 	}
 	plan := EvaluationPlanV2{
 		PlanID: wire.PlanID, StrategyRef: wire.StrategyRef, InputProjection: wire.InputProjection,
-		SourceCompatibility: wire.SourceCompatibility, OutputIdentity: wire.OutputIdentity, LegacyOutput: wire.LegacyOutput, TerminalReasonCode: wire.TerminalReasonCode,
+		SourceCompatibility: wire.SourceCompatibility, OutputIdentity: wire.OutputIdentity,
+		SubjectFacts: wire.SubjectFacts, LegacyOutput: wire.LegacyOutput, TerminalReasonCode: wire.TerminalReasonCode,
 	}
 	if wire.TerminalReasonCode != "" {
 		return plan
@@ -679,7 +681,7 @@ func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) 
 	object, err := validatePrevalidatedJSONObjectFieldsV2(
 		raw, path,
 		[]string{"plan_id", "strategy_ref", "input_projection", "strategy_ir"},
-		[]string{"source_compatibility", "output_identity", "legacy_output"}, allowUnknown,
+		[]string{"source_compatibility", "output_identity", "subject_facts", "legacy_output"}, allowUnknown,
 	)
 	if err != nil {
 		return framing(ReasonMalformedJSON, path, err.Error())
@@ -702,6 +704,15 @@ func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) 
 		var typed MonitorOutputIdentity
 		if err := json.Unmarshal(identity, &typed); err != nil || typed.DimensionFields == nil {
 			return invalid(path+".output_identity.dimension_fields", "must be a string array")
+		}
+	}
+	if facts, ok := object["subject_facts"]; ok {
+		if _, err := validatePrevalidatedJSONObjectFieldsV2(facts, path+".subject_facts", nil, []string{"labels", "result_table_id"}, false); err != nil {
+			return err
+		}
+		var typed MonitorSubjectFacts
+		if err := json.Unmarshal(facts, &typed); err != nil {
+			return invalid(path+".subject_facts", "must be an object of labels and result_table_id")
 		}
 	}
 	if legacy, ok := object["legacy_output"]; ok {

@@ -141,21 +141,18 @@ func validatePhaseTwoKafkaOutput(c KafkaConfig) error {
 	if err := validatePhaseTwoTopic("trigger_event.topic", c.TriggerEvent.Topic); err != nil {
 		return err
 	}
-	if len(c.AllowedOutputTopics) == 0 {
-		return errors.New("kafka producer: output topic allowlist must be non-empty")
-	}
-	seenTopics := make(map[string]struct{}, len(c.AllowedOutputTopics))
-	for _, topic := range c.AllowedOutputTopics {
-		if err := validatePhaseTwoTopic("allowed_output_topics", topic); err != nil {
-			return err
-		}
-		if _, exists := seenTopics[topic]; exists {
-			return fmt.Errorf("kafka producer: duplicate allowed output topic %q", topic)
-		}
-		seenTopics[topic] = struct{}{}
-	}
-	if _, allowed := seenTopics[c.TriggerEvent.Topic]; !allowed {
-		return fmt.Errorf("kafka producer: output topic %q is not allowlisted", c.TriggerEvent.Topic)
+	// The two output topics carry different wire formats. Publishing both to
+	// one topic puts a native event and a Python-compatible event side by side
+	// on a stream whose consumer knows only one of them, and the consumer that
+	// guesses wrong either drops alerts or misreads them. There was an output
+	// allowlist here that could not catch this - a configuration naming one
+	// topic twice passes an allowlist containing it - while everything the
+	// allowlist did check was already checked from the topic itself.
+	if c.LegacyAdapter.Topic != "" && c.LegacyAdapter.Topic == c.TriggerEvent.Topic {
+		return fmt.Errorf(
+			"kafka producer: trigger_event.topic and legacy_adapter.topic must differ, both are %q",
+			c.TriggerEvent.Topic,
+		)
 	}
 	for name, value := range map[string]string{"client_id": c.ClientID, "broker_version": c.BrokerVersion} {
 		if value == "" || strings.TrimSpace(value) != value {

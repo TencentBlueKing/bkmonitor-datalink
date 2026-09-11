@@ -71,13 +71,19 @@ type KafkaOutputConfig struct {
 }
 
 type KafkaConfig struct {
-	LegacyAdapter       LegacyAdapterConfig `yaml:"legacy_adapter"`
-	Brokers             []string            `yaml:"brokers"`
-	InputTopic          string              `yaml:"input_topic"`
-	TriggerEvent        KafkaOutputConfig   `yaml:"trigger_event"`
-	MessageReceipt      KafkaOutputConfig   `yaml:"message_receipt"`
-	AllowedOutputTopics []string            `yaml:"allowed_output_topics"`
-	GroupID             string              `yaml:"group_id"`
+	LegacyAdapter  LegacyAdapterConfig `yaml:"legacy_adapter"`
+	Brokers        []string            `yaml:"brokers"`
+	InputTopic     string              `yaml:"input_topic"`
+	TriggerEvent   KafkaOutputConfig   `yaml:"trigger_event"`
+	MessageReceipt KafkaOutputConfig   `yaml:"message_receipt"`
+	// Deprecated: accepted and ignored. It required every output topic to be
+	// repeated in a list, which protected nothing the topics themselves did not
+	// already state, and turned "add an output topic" into a startup failure
+	// when the second place was forgotten. The field stays only so a rendered
+	// configuration that still carries it keeps loading; it is removed once no
+	// deployment states it.
+	AllowedOutputTopics []string `yaml:"allowed_output_topics"`
+	GroupID             string   `yaml:"group_id"`
 	// ClientID and BrokerVersion identify this producer to the broker and fix
 	// the protocol it speaks. Neither is something a deployment knows better
 	// than the product: the identity is the product's name and the version is
@@ -108,13 +114,12 @@ func (c KafkaConfig) MessageReceiptCoordinates() enginekafka.DecisionSinkConfig 
 
 func (c KafkaConfig) outputCoordinates(output KafkaOutputConfig) enginekafka.DecisionSinkConfig {
 	return enginekafka.DecisionSinkConfig{
-		Brokers:             append([]string(nil), c.Brokers...),
-		InputTopic:          c.InputTopic,
-		OutputTopic:         output.Topic,
-		AllowedOutputTopics: append([]string(nil), c.AllowedOutputTopics...),
-		ClientID:            c.ClientID,
-		BrokerVersion:       c.BrokerVersion,
-		MaxMessageBytes:     output.MaxMessageBytes,
+		Brokers:         append([]string(nil), c.Brokers...),
+		InputTopic:      c.InputTopic,
+		OutputTopic:     output.Topic,
+		ClientID:        c.ClientID,
+		BrokerVersion:   c.BrokerVersion,
+		MaxMessageBytes: output.MaxMessageBytes,
 	}
 }
 
@@ -124,6 +129,25 @@ type RedisConfig struct {
 	MinTTL                Duration `yaml:"min_ttl"`
 	MaxTTL                Duration `yaml:"max_ttl"`
 	RestartMargin         Duration `yaml:"restart_margin"`
+}
+
+// PlatformCacheConfig names the platform's own caches that alarmd reads. They
+// are separate connections because the platform routes them separately: its
+// cache backend can be redirected per module, so the strategy cache and the
+// CMDB cache may each live somewhere other than the instance the rest of the
+// deployment points at. Reading them off one connection is correct only where
+// a deployment happens not to use that routing, and where it does, the reads
+// land on an instance nothing writes - which reads back as "no strategies" and
+// "no hosts" rather than as an error.
+//
+// Neither is alarmd's own storage. Top-level redis is, and these stay out of
+// it so that one key does not have to mean two different things.
+type PlatformCacheConfig struct {
+	// Strategy is where the platform writes the strategy cache alarmd reads.
+	Strategy *RedisConnectionConfig `yaml:"strategy,omitempty"`
+	// CMDB is where the platform writes the host cache the target filter and
+	// the host status filter decide on.
+	CMDB *RedisConnectionConfig `yaml:"cmdb,omitempty"`
 }
 
 type DependencyRetryConfig struct {
@@ -151,6 +175,7 @@ type Config struct {
 	HTTP             HTTPConfig             `yaml:"http"`
 	Kafka            KafkaConfig            `yaml:"kafka"`
 	Redis            RedisConfig            `yaml:"redis"`
+	PlatformCache    PlatformCacheConfig    `yaml:"platform_cache"`
 	Limits           LimitsConfig           `yaml:"limits"`
 	DependencyRetry  DependencyRetryConfig  `yaml:"dependency_retry"`
 	ReceiptQueue     ReceiptQueueConfig     `yaml:"receipt_queue"`
@@ -178,10 +203,9 @@ func Default() Config {
 		},
 		Kafka: KafkaConfig{
 			ClientID: "alarmd", BrokerVersion: "0.10.2.0",
-			TriggerEvent:        KafkaOutputConfig{Topic: "alarmd_event", MaxMessageBytes: defaultOutputMaxMessageBytes},
-			LegacyAdapter:       LegacyAdapterConfig{Topic: "alarmd_0bkmonitor_backend_event"},
-			AllowedOutputTopics: []string{"alarmd_event", "alarmd_0bkmonitor_backend_event"},
-			MessageReceipt:      KafkaOutputConfig{MaxMessageBytes: defaultOutputMaxMessageBytes},
+			TriggerEvent:   KafkaOutputConfig{Topic: "alarmd_event", MaxMessageBytes: defaultOutputMaxMessageBytes},
+			LegacyAdapter:  LegacyAdapterConfig{Topic: "alarmd_0bkmonitor_backend_event"},
+			MessageReceipt: KafkaOutputConfig{MaxMessageBytes: defaultOutputMaxMessageBytes},
 		},
 		Redis: RedisConfig{
 			RedisConnectionConfig: RedisConnectionConfig{Mode: RedisModeStandalone,
@@ -209,6 +233,7 @@ func Default() Config {
 // from one container's CPU and memory.
 func (c Config) withDerivedCapacity(inputs CapacityInputs) Config {
 	derived := DeriveScheduler(inputs)
+	c.PhaseTwo.Scheduler.ActiveExecutionLimit = derived.ActiveExecutions
 	c.PhaseTwo.Scheduler.ProcessQueryPermits = derived.ProcessQueryPermits
 	c.PhaseTwo.Scheduler.RecoveryQueryPermits = derived.RecoveryQueryPermits
 	c.PhaseTwo.Scheduler.ReadyQueueCapacity = derived.ReadyQueueCapacity
@@ -264,10 +289,13 @@ func redisPoolCPUBudget() int {
 func (c Config) WithResolvedRedisPoolSize() Config {
 	cpuBudget := redisPoolCPUBudget()
 	c.Redis.PoolSize = c.Redis.Connection().EffectivePoolSize(cpuBudget)
-	if c.PhaseTwo.RuntimeRedis != nil {
-		runtimeRedis := c.PhaseTwo.RuntimeRedis.clone()
-		runtimeRedis.PoolSize = runtimeRedis.EffectivePoolSize(cpuBudget)
-		c.PhaseTwo.RuntimeRedis = &runtimeRedis
+	for _, platform := range []**RedisConnectionConfig{&c.PlatformCache.Strategy, &c.PlatformCache.CMDB} {
+		if *platform == nil {
+			continue
+		}
+		resolved := (*platform).clone()
+		resolved.PoolSize = resolved.EffectivePoolSize(cpuBudget)
+		*platform = &resolved
 	}
 	return c
 }
@@ -291,23 +319,84 @@ func (c RedisConfig) Connection() RedisConnectionConfig {
 	return c.RedisConnectionConfig.clone()
 }
 
+// StrategySourceRedis is where the platform's strategy cache is read from.
 func (c Config) StrategySourceRedis() RedisConnectionConfig {
-	return c.Redis.Connection()
-}
-
-func (c Config) ResolvedRuntimeRedis() RedisConnectionConfig {
-	if c.PhaseTwo.RuntimeRedis != nil {
-		return c.PhaseTwo.RuntimeRedis.clone()
+	if c.PlatformCache.Strategy != nil {
+		return c.PlatformCache.Strategy.clone()
 	}
 	return c.Redis.Connection()
 }
 
-func (c *Config) resolvePhaseTwoRuntimeRedis() {
-	if c == nil || c.Input.Mode != InputModeGoAccess || c.PhaseTwo.RuntimeRedis != nil {
+// PlatformKeyPrefix is the platform's own key prefix - the root every cache it
+// writes hangs off. Both the host cache this process reads and the strategy
+// snapshot the compatibility output writes are keyed under it.
+//
+// It is stated once, under the compatibility adapter, because that is where the
+// platform's key space was first needed. The field is misnamed for this second
+// use and the name is worth moving, but not by stating the same value twice:
+// two keys for one platform fact drift, and the failure of a drifted prefix is
+// a read that returns nothing rather than an error. This accessor exists so the
+// read sites say which fact they want instead of reaching into a neighbouring
+// feature's configuration.
+func (c Config) PlatformKeyPrefix() string {
+	return c.Kafka.LegacyAdapter.SnapshotPrefix
+}
+
+// CMDBCacheRedis is where the platform's host cache is read from.
+func (c Config) CMDBCacheRedis() RedisConnectionConfig {
+	if c.PlatformCache.CMDB != nil {
+		return c.PlatformCache.CMDB.clone()
+	}
+	return c.Redis.Connection()
+}
+
+// resolvePlatformCacheRedis writes down which connection each platform cache
+// actually resolved to, rather than leaving it to be worked out again at every
+// call site. The resolved configuration is what a release check reads and what
+// an incident is reconstructed from, and "inherited" is not an answer to the
+// question of where a read went.
+func (c *Config) resolvePlatformCacheRedis() {
+	if c == nil || c.Input.Mode != InputModeGoAccess {
 		return
 	}
-	resolved := c.Redis.Connection()
-	c.PhaseTwo.RuntimeRedis = &resolved
+	for _, cache := range []**RedisConnectionConfig{&c.PlatformCache.Strategy, &c.PlatformCache.CMDB} {
+		if *cache == nil {
+			resolved := c.Redis.Connection()
+			*cache = &resolved
+			continue
+		}
+		// A stated cache says where to read, not how long to wait for it.
+		// Timeouts and pool size are one operational setting for this process,
+		// so they are inherited rather than restated per location - the same
+		// choice the compatibility service Redis already makes, and for the
+		// same reason: a deployment that has to repeat them will eventually
+		// repeat them differently.
+		resolved := (*cache).clone()
+		if resolved.DialTimeout == 0 {
+			resolved.DialTimeout = c.Redis.DialTimeout
+		}
+		if resolved.ReadTimeout == 0 {
+			resolved.ReadTimeout = c.Redis.ReadTimeout
+		}
+		if resolved.WriteTimeout == 0 {
+			resolved.WriteTimeout = c.Redis.WriteTimeout
+		}
+		if resolved.PoolSize == 0 {
+			resolved.PoolSize = c.Redis.PoolSize
+		}
+		*cache = &resolved
+	}
+}
+
+// RuntimeStoreRedis is where alarmd's own runtime state lives: catalog,
+// ownership, state, fleet and progress. It is the top-level redis and nothing
+// else - there was once a second key that could move this connection on its
+// own, which left the prefix and the TTLs that parameterise these keys stated
+// under a different key from the connection they applied to. The way to put
+// alarmd's state somewhere of its own is externalRedis.alarmd, which moves
+// this whole section together.
+func (c Config) RuntimeStoreRedis() RedisConnectionConfig {
+	return c.Redis.Connection()
 }
 
 // resolveCompatibilityServiceTimeouts lets the compatibility service Redis
@@ -391,7 +480,7 @@ func (c Config) EvaluationRunnerLimits() coordinator.ConcurrentRunnerLimits {
 func Load(path string) (Config, error) {
 	cfg := Default().WithContainerCapacity()
 	if path == "" {
-		cfg.resolvePhaseTwoRuntimeRedis()
+		cfg.resolvePlatformCacheRedis()
 		cfg.resolveCompatibilityServiceTimeouts()
 		cfg.resolveCompatibilityPodCache()
 		return cfg, cfg.Validate()
@@ -416,7 +505,7 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
 
-	cfg.resolvePhaseTwoRuntimeRedis()
+	cfg.resolvePlatformCacheRedis()
 	cfg.resolveCompatibilityServiceTimeouts()
 	cfg.resolveCompatibilityPodCache()
 	cfg.resolvePhaseTwoWorkerIDFromEnvironment()
@@ -549,7 +638,10 @@ func (c Config) validateGoAccessRuntime() error {
 	if err := c.PhaseTwo.validate(); err != nil {
 		return err
 	}
-	if err := c.ResolvedRuntimeRedis().validate("phase_two.runtime_redis"); err != nil {
+	if err := c.StrategySourceRedis().validate("platform_cache.strategy"); err != nil {
+		return err
+	}
+	if err := c.CMDBCacheRedis().validate("platform_cache.cmdb"); err != nil {
 		return err
 	}
 	if err := validateRuntimePrefixIsolation(c.Redis.StatePrefix, c.PhaseTwo.Control.StrategyCachePrefix); err != nil {
@@ -600,9 +692,6 @@ func (c Config) validateGoAccessRuntime() error {
 }
 
 func (c Config) validatePhaseOneRuntime() error {
-	if c.PhaseTwo.RuntimeRedis != nil {
-		return errors.New("phase-one Kafka compatibility must not configure phase_two runtime_redis")
-	}
 	if c.Redis.Mode != RedisModeStandalone {
 		return errors.New("phase-one Kafka compatibility requires standalone Redis")
 	}

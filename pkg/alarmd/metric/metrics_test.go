@@ -315,6 +315,11 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_host_disable_monitor_states":                  "variableLabels: {}",
 		"bkmonitor_alarmd_cmdb_host_index_age_seconds":                  "variableLabels: {kind}",
 		"bkmonitor_alarmd_cmdb_host_index_degraded":                     "variableLabels: {reason}",
+		"bkmonitor_alarmd_due_index_entries":                            "variableLabels: {}",
+		"bkmonitor_alarmd_due_index_prediction_total":                   "variableLabels: {prediction,actual}",
+		"bkmonitor_alarmd_due_index_recomputed_total":                   "variableLabels: {trigger}",
+		"bkmonitor_alarmd_due_index_version_check_total":                "variableLabels: {result}",
+		"bkmonitor_alarmd_due_index_horizon_seconds":                    "variableLabels: {}",
 		"bkmonitor_alarmd_redis_operation_total":                        "variableLabels: {client}",
 		"bkmonitor_alarmd_redis_pool_size":                              "variableLabels: {client}",
 		"bkmonitor_alarmd_redis_pool_connections":                       "variableLabels: {client,state}",
@@ -646,6 +651,14 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("host_disable_monitor_states"): 1,
 		fqName("cmdb_host_index_age_seconds"): 2,
 		fqName("cmdb_host_index_degraded"):    len(cmdbIndexReasons),
+		// Every combination is created at construction, so these are exact rather
+		// than an upper bound: a series that has never happened still publishes a
+		// zero, which is what lets "no violations" be told apart from "not wired".
+		fqName("due_index_entries"):             1,
+		fqName("due_index_prediction_total"):    len(dueIndexPredictionValues) * len(dueIndexPredictionValues),
+		fqName("due_index_recomputed_total"):    len(dueIndexTriggers),
+		fqName("due_index_version_check_total"): len(dueIndexVersionResults),
+		fqName("due_index_horizon_seconds"):     histogramSeries(1, len(dueIndexHorizonBuckets)),
 		// Two clients at most: the control plane connection and, when it resolves
 		// to a different endpoint, the runtime connection.
 		// One unlabelled series; connection acquisitions minus it is the retries.

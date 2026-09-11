@@ -66,6 +66,16 @@ func (TargetScopeFilter) Admit(plan PlanContext, facts *Facts) Decision {
 		// built by hand; refusing is the safe reading either way.
 		return Decision{Reason: "scope_empty"}
 	}
+	if facts != nil && facts.HostFactsUnavailable {
+		// The CMDB facts a target is matched on could not be consulted, so
+		// this scope cannot be evaluated at all: with no topology no topology
+		// target can match, and with nothing resolved a record never learns
+		// the other identity a host target may name it by. Deciding anyway
+		// would put every scoped strategy out of scope at once. The record is
+		// admitted and the gap is named - the same choice the host status
+		// filter makes, and for the same reason.
+		return Decision{Admit: true, Reason: "host_facts_unavailable"}
+	}
 	for _, group := range scope.Groups {
 		if group.matches(facts) {
 			return Decision{Admit: true}

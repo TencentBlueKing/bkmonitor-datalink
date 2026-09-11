@@ -22,11 +22,13 @@ import (
 )
 
 type ComparatorKafkaConfig struct {
-	Brokers                  []string `yaml:"brokers"`
-	DetectInputTopic         string   `yaml:"detect_input_topic"`
-	GoDecisionTopic          string   `yaml:"go_decision_topic"`
-	PythonDecisionTopic      string   `yaml:"python_decision_topic"`
-	AuditOutputTopic         string   `yaml:"audit_output_topic"`
+	Brokers             []string `yaml:"brokers"`
+	DetectInputTopic    string   `yaml:"detect_input_topic"`
+	GoDecisionTopic     string   `yaml:"go_decision_topic"`
+	PythonDecisionTopic string   `yaml:"python_decision_topic"`
+	AuditOutputTopic    string   `yaml:"audit_output_topic"`
+	// Deprecated: accepted and ignored, for the reason on
+	// KafkaConfig.AllowedOutputTopics.
 	AllowedAuditOutputTopics []string `yaml:"allowed_audit_output_topics"`
 	GroupID                  string   `yaml:"group_id"`
 	ClientID                 string   `yaml:"client_id"`
@@ -55,12 +57,11 @@ func (c ComparatorKafkaConfig) ServiceCoordinates() enginekafka.ComparatorServic
 
 func (c ComparatorKafkaConfig) AuditSinkCoordinates() enginekafka.ComparisonAuditSinkConfig {
 	return enginekafka.ComparisonAuditSinkConfig{
-		Brokers:             append([]string(nil), c.Brokers...),
-		InputTopics:         c.ServiceCoordinates().Topics(),
-		OutputTopic:         c.AuditOutputTopic,
-		AllowedOutputTopics: append([]string(nil), c.AllowedAuditOutputTopics...),
-		ClientID:            c.ClientID,
-		BrokerVersion:       c.BrokerVersion,
+		Brokers:       append([]string(nil), c.Brokers...),
+		InputTopics:   c.ServiceCoordinates().Topics(),
+		OutputTopic:   c.AuditOutputTopic,
+		ClientID:      c.ClientID,
+		BrokerVersion: c.BrokerVersion,
 	}
 }
 

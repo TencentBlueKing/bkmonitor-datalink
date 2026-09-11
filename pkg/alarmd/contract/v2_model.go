@@ -222,7 +222,11 @@ type EvaluationPlanV2 struct {
 	InputProjection     InputProjectionV2      `json:"input_projection"`
 	SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
 	OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
-	LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
+	// SubjectFacts are the strategy facts the subject projection reads when a
+	// record's own dimensions do not name its object. Absent means the
+	// projection answers from the dimensions alone.
+	SubjectFacts *MonitorSubjectFacts `json:"subject_facts,omitempty"`
+	LegacyOutput *LegacyOutputContext `json:"legacy_output,omitempty"`
 	// TargetScope is the strategy's monitoring target, frozen. Absent means
 	// the strategy names no target and every series is in scope; it never
 	// means "a scope existed and was dropped" - compilation rejects the Plan
@@ -248,10 +252,11 @@ func (plan EvaluationPlanV2) MarshalJSON() ([]byte, error) {
 		InputProjection     InputProjectionV2      `json:"input_projection"`
 		SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
 		OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
+		SubjectFacts        *MonitorSubjectFacts   `json:"subject_facts,omitempty"`
 		LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
 		TargetScope         *TargetScopeV2         `json:"target_scope,omitempty"`
 		StrategyIR          StrategyIRV2           `json:"strategy_ir"`
-	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.LegacyOutput, plan.TargetScope, plan.StrategyIR})
+	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.SubjectFacts, plan.LegacyOutput, plan.TargetScope, plan.StrategyIR})
 }
 
 type PlanSetV2 struct {

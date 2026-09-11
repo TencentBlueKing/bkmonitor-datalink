@@ -97,10 +97,92 @@ func (slot FrozenSlot) Validate(queryGroup execution.QueryGroupIdentity) error {
 
 type OwnerSession interface {
 	ValidateCurrent(context.Context, time.Time) (execution.OwnerFence, error)
+	// ValidateCurrentWithAssignment is ValidateCurrent plus the Assignment
+	// record naming the fence owner, from one store round trip. The Runner
+	// opens every attempt with it and hands the result to the SlotSource, which
+	// is what lets an idle attempt cost one round trip instead of three. It is
+	// a required method rather than an optional one a type assertion discovers,
+	// because a session without it would quietly restore the old cost on the
+	// hottest path in the process with nothing failing to say so.
+	ValidateCurrentWithAssignment(context.Context, time.Time) (execution.OwnerFence, ownership.AssignmentRecord, error)
+}
+
+// verifiedOwnership carries ownership facts the Runner has already confirmed
+// with the store into the SlotSource call that runs inside the same attempt.
+//
+// It travels on the context rather than on the SlotSource interface because it
+// is an optimization one particular pairing can make, not a fact every
+// SlotSource has to accept: a source that does not know about it, or a session
+// that cannot produce a record, still reads the facts itself and behaves as it
+// always did.
+type verifiedOwnership struct {
+	queryGroup execution.QueryGroupIdentity
+	assignment ownership.AssignmentRecord
+	fence      execution.OwnerFence
+}
+
+type verifiedOwnershipKey struct{}
+
+// withVerifiedOwnership publishes facts only if they are complete and internally
+// consistent. Anything less is dropped rather than passed on, so a partial
+// reading can never reach a Slot decision as if it had been confirmed: the
+// source simply reads for itself, exactly as it did before this hand-off.
+func withVerifiedOwnership(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	assignment ownership.AssignmentRecord,
+	fence execution.OwnerFence,
+) context.Context {
+	if assignment.Validate() != nil || assignment.QueryGroup != queryGroup ||
+		assignment.DesiredWorkerID != fence.OwnerID || fence.QueryGroup != queryGroup {
+		return ctx
+	}
+	return context.WithValue(ctx, verifiedOwnershipKey{},
+		verifiedOwnership{queryGroup: queryGroup, assignment: assignment, fence: fence})
+}
+
+func verifiedOwnershipFrom(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+) (verifiedOwnership, bool) {
+	verified, ok := ctx.Value(verifiedOwnershipKey{}).(verifiedOwnership)
+	return verified, ok && verified.queryGroup == queryGroup
+}
+
+// SlotDueFacts is what one Next call learned about its Query Group's schedule,
+// over and above the Slot itself. A caller that indexes Query Groups by when
+// they can next become due reads it instead of paying for a second call to
+// find out.
+//
+// It is a return value rather than something a caller discovers with a type
+// assertion. A source that did not fill it in would leave every Query Group it
+// serves without a bound, every idle dispatch would be paid in full again, and
+// no metric would separate that from a deployment where the index is simply
+// not helping.
+type SlotDueFacts struct {
+	// NotDueUntilUnix is the wall-clock second before which the facts this call
+	// read say Next cannot return a due Slot. It is filled in only on a not-due
+	// return; zero means the call carries no bound and the Query Group must be
+	// treated as due now. Truncation to the second is toward the past, which is
+	// the safe direction: an early bound costs one more call, a late one would
+	// hold back a Slot that is already due.
+	NotDueUntilUnix int64
+	// IntervalSeconds is the shortest evaluation interval among the Plans due at
+	// the Slot this call resolved. It is the number shortPeriodCohort already
+	// derives its cohort from, so carrying it out costs no extra read, and it is
+	// what tells a reader how late a wake that has not happened really is: sixty
+	// seconds is nothing to an hourly Plan and six missed evaluations to a
+	// ten-second one.
+	IntervalSeconds int64
+	// Retired reports that this Query Group has no successor Slot because its
+	// schedule is retired. A retirement can be revoked by a later publication,
+	// so how long to wait before asking again is the caller's decision; the
+	// source only says that this, and not a future Slot, is why it is not due.
+	Retired bool
 }
 
 type SlotSource interface {
-	Next(context.Context, execution.QueryGroupIdentity) (FrozenSlot, bool, error)
+	Next(context.Context, execution.QueryGroupIdentity) (FrozenSlot, bool, SlotDueFacts, error)
 }
 
 type Executor interface {
@@ -259,6 +341,113 @@ type Runner struct {
 	attempt        *recoveryAttempt
 	sourceFailures uint32
 	sourceNextAt   time.Time
+	dueBound       RunnerDueBound
+}
+
+// DueVerdict is what one round was able to say about whether its Query Group
+// was due.
+//
+// A round that never reached the schedule - it lost a single-flight race, it
+// was cancelled, its ownership check failed - says nothing about dueness.
+// Counting that silence as either answer would put noise into the one counter
+// whose whole purpose is to falsify the index, and a falsifier that also counts
+// non-violations cannot be read.
+type DueVerdict uint8
+
+const (
+	DueVerdictUnknown DueVerdict = iota
+	DueVerdictDue
+	DueVerdictNotDue
+)
+
+// RunnerDueBound is what the Runner knows, once a round has returned, about
+// when this Query Group is worth running again.
+//
+// It is read after the round rather than returned by it for the same reason
+// NextReadyAt is: the dispatcher already reads the Runner's own view of its
+// next attempt at exactly that point, and the two answers belong together.
+type RunnerDueBound struct {
+	// NotDueUntilUnix is the wall-clock second before which nothing this Runner
+	// can do will produce a due Slot. Zero means due now, which is what every
+	// round that could not establish a bound reports.
+	NotDueUntilUnix int64
+	// IntervalSeconds is the shortest evaluation interval among the Plans due at
+	// that second, when the round got far enough to know it.
+	IntervalSeconds int64
+	// Deferred says the bound came from this Runner's own backoff rather than
+	// from the schedule. The distinction decides two things: a publication can
+	// only make a schedule bound arrive earlier, never a backoff one, and a
+	// matured backoff belongs in the recovery queue, not the ready queue.
+	Deferred bool
+	// Retired says the Query Group has no successor Slot at all. A revocation
+	// can bring it back, so the caller bounds how long it waits.
+	Retired bool
+	// Executed says this round resolved a frozen Slot and went on to run it.
+	Executed bool
+	Verdict  DueVerdict
+}
+
+// DueBound reports what the last completed round concluded. A Runner that has
+// not run yet reports the zero bound, which reads as due now - the same answer
+// as no entry at all, which is what a caller that indexes these will see for a
+// Query Group it has just taken over.
+func (runner *Runner) DueBound() RunnerDueBound {
+	if runner == nil {
+		return RunnerDueBound{}
+	}
+	return runner.dueBound
+}
+
+// recordDueBound turns the decision the round reached into the bound a
+// dispatcher can act on. Every return path is named here on purpose: a path
+// that fell through to the default would be given "due now", which costs a
+// round trip and never hides a Slot, but it should be a decision rather than an
+// omission.
+func (runner *Runner) recordDueBound(decision string, facts SlotDueFacts) {
+	bound := RunnerDueBound{IntervalSeconds: facts.IntervalSeconds}
+	switch decision {
+	case "source_not_due":
+		// The source read the authoritative cursor and the Slot is in the future,
+		// or the schedule is retired. This is the bound worth having.
+		bound.Verdict = DueVerdictNotDue
+		bound.NotDueUntilUnix, bound.Retired = facts.NotDueUntilUnix, facts.Retired
+	case "source_backoff":
+		// The local gate answered before any store read. The Query Group is not
+		// due for a reason of its own, which is exactly what deferred means.
+		bound.Verdict = DueVerdictNotDue
+		bound.Deferred = true
+		bound.NotDueUntilUnix = runnerBoundSecond(runner.NextReadyAt())
+	case "source_retry", "source_blocked":
+		// A failed read says nothing about the schedule, so there is no verdict
+		// to compare against. The retry backoff is still a real bound.
+		bound.Deferred = true
+		bound.NotDueUntilUnix = runnerBoundSecond(runner.NextReadyAt())
+	case "query_readiness_deferred":
+		bound.Verdict, bound.Executed, bound.Deferred = DueVerdictDue, true, true
+		bound.NotDueUntilUnix = runnerBoundSecond(runner.NextReadyAt())
+	case "execute", "execution_returned", "operation_not_ready", "admission_denied":
+		bound.Verdict, bound.Executed = DueVerdictDue, true
+		// A completed Slot leaves no backoff and therefore no bound: the cursor
+		// has moved and the next call is what establishes the new one. A failed
+		// one leaves an attempt backoff, and that is a deferred bound.
+		if readyAt := runner.NextReadyAt(); !readyAt.IsZero() {
+			bound.Deferred, bound.NotDueUntilUnix = true, runnerBoundSecond(readyAt)
+		}
+	default:
+		// preflight, cancelled, single_flight_busy, ownership_rejected,
+		// source_error: no verdict and no bound, so the Query Group is due now.
+	}
+	runner.dueBound = bound
+}
+
+// runnerBoundSecond floors to the second. Flooring is the safe direction: a
+// bound one second early costs one extra call, a bound one second late holds
+// back a Slot that is already due.
+func runnerBoundSecond(at time.Time) int64 {
+	if at.IsZero() {
+		return 0
+	}
+	return at.Unix()
 }
 
 func NewRunner(
@@ -365,6 +554,13 @@ func (runner *Runner) runOneTracked(
 	if runner == nil {
 		return execution.SlotExecutionResult{}, false, errors.New("alarmd scheduler: initialized Runner is required")
 	}
+	// Every round rewrites the bound, including the rounds that establish none.
+	// Rewriting on return rather than on dispatch is what lets one reading also
+	// answer "was this Query Group dispatched and never seen again": a Runner
+	// that hangs leaves its old bound standing and falls behind the wall clock,
+	// where a scheme that cleared the entry on dispatch would show nothing at all.
+	var sourceFacts SlotDueFacts
+	defer func() { runner.recordDueBound(decision, sourceFacts) }()
 	if err := ctx.Err(); err != nil {
 		decision = "cancelled"
 		return execution.SlotExecutionResult{}, false, err
@@ -379,17 +575,31 @@ func (runner *Runner) runOneTracked(
 		ctx = context.WithValue(ctx, rangeFlightContextKey{}, runner.queryGroup)
 	}
 
-	if _, err := runner.session.ValidateCurrent(ctx, runner.now()); err != nil {
-		decision = "ownership_rejected"
-		return execution.SlotExecutionResult{}, false, err
-	}
+	// The local backoff decision comes first because it needs nothing from the
+	// store. It is free today -- a normal Query Group has no source backoff
+	// pending, so the comparison is against a zero time -- but once due Slots
+	// are indexed, every Query Group the index suppresses would otherwise pay a
+	// round trip to be told what this comparison already knew.
 	if !runner.sourceNextAt.IsZero() && runner.now().Before(runner.sourceNextAt) {
 		decision = "source_backoff"
 		diagnosticReadyAt = runner.sourceNextAt.UnixMilli()
 		return execution.SlotExecutionResult{}, false, nil
 	}
+	// This stays the Runner's own gate rather than moving into the source. It
+	// is what separates losing the Query Group from failing to read it: an
+	// ownership rejection surfaced from inside Next would be counted as a Slot
+	// source failure, and the run_one return mix would stop distinguishing the
+	// two. The SlotSource opens with the same question, so the answer is
+	// carried into it instead of being asked again.
+	confirmedFence, confirmedAssignment, err := runner.session.ValidateCurrentWithAssignment(ctx, runner.now())
+	if err != nil {
+		decision = "ownership_rejected"
+		return execution.SlotExecutionResult{}, false, err
+	}
+	ctx = withVerifiedOwnership(ctx, runner.queryGroup, confirmedAssignment, confirmedFence)
 	decision = "source_next"
-	slot, due, err := runner.source.Next(ctx, runner.queryGroup)
+	slot, due, facts, err := runner.source.Next(ctx, runner.queryGroup)
+	sourceFacts = facts
 	if err != nil {
 		var retry *SourceRetryError
 		var blocked *SourceBlockedError

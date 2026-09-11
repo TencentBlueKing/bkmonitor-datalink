@@ -265,12 +265,12 @@ func NewProductionSlotSource(
 func (source *ProductionSlotSource) Next(
 	ctx context.Context,
 	queryGroup execution.QueryGroupIdentity,
-) (FrozenSlot, bool, error) {
+) (FrozenSlot, bool, SlotDueFacts, error) {
 	if source == nil || queryGroup == "" || queryGroup != source.queryGroup {
-		return FrozenSlot{}, false, errors.New("alarmd scheduler: SlotSource Query Group mismatch")
+		return FrozenSlot{}, false, SlotDueFacts{}, errors.New("alarmd scheduler: SlotSource Query Group mismatch")
 	}
 	if err := ctx.Err(); err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	decision := "ownership"
 	trace := observability.TraceFields{QueryGroupKey: string(queryGroup)}
@@ -280,11 +280,11 @@ func (source *ProductionSlotSource) Next(
 	}
 	at := source.now()
 	if at.IsZero() {
-		return FrozenSlot{}, false, errors.New("alarmd scheduler: current time is required")
+		return FrozenSlot{}, false, SlotDueFacts{}, errors.New("alarmd scheduler: current time is required")
 	}
-	initialAssignment, initialFence, err := source.currentOwnership(ctx, at)
+	initialAssignment, initialFence, err := source.initialOwnership(ctx, at)
 	if err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	decision = "progress_load"
 	identity := execution.ProgressIdentity{QueryGroup: source.queryGroup}
@@ -292,15 +292,19 @@ func (source *ProductionSlotSource) Next(
 	if err != nil {
 		var deterministic interface{ DeterministicControlFact() }
 		if errors.As(err, &deterministic) {
-			return FrozenSlot{}, false, &SourceBlockedError{Err: err}
+			return FrozenSlot{}, false, SlotDueFacts{}, &SourceBlockedError{Err: err}
 		}
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	if err := load.Validate(identity); err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	if load.Progress != nil && load.Progress.UnfinishedRange != nil {
-		return source.resumeExpiredRange(ctx, *load.Progress.UnfinishedRange, initialAssignment, initialFence)
+		// A restored range is backlog by construction: its cursor is in the past,
+		// so it is due now and carries no bound. This is the structural reason the
+		// index cannot hold back recovery work.
+		slot, due, err := source.resumeExpiredRange(ctx, *load.Progress.UnfinishedRange, initialAssignment, initialFence)
+		return slot, due, SlotDueFacts{}, err
 	}
 	decision = "schedule_navigation"
 	if load.Progress != nil {
@@ -316,25 +320,25 @@ func (source *ProductionSlotSource) Next(
 			schedule, nextSlot, retired, err = source.firstAvailableSchedule(ctx, schedule)
 			if retired {
 				decision = "retired"
-				return FrozenSlot{}, false, nil
+				return FrozenSlot{}, false, SlotDueFacts{Retired: true}, nil
 			}
 		}
 	} else {
 		retired, retirementErr := source.isRetiredBoundary(ctx, load.Progress.NextSlot)
 		if retirementErr != nil {
-			return FrozenSlot{}, false, retirementErr
+			return FrozenSlot{}, false, SlotDueFacts{}, retirementErr
 		}
 		if retired {
 			decision = "retired"
-			return FrozenSlot{}, false, nil
+			return FrozenSlot{}, false, SlotDueFacts{Retired: true}, nil
 		}
 		schedule, nextSlot, err = source.nextSlotAfterProgress(ctx, *load.Progress)
 	}
 	if err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	if err := source.validateSchedule(schedule, nextSlot); err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	decision = "schedule_validated"
 	trace.EvaluationTime = int64(nextSlot)
@@ -354,11 +358,15 @@ func (source *ProductionSlotSource) Next(
 	}
 	duePlans := schedule.DuePlanRefs(nextSlot)
 	if len(duePlans) == 0 {
-		return FrozenSlot{}, false, ErrProgressOffSchedule
+		return FrozenSlot{}, false, SlotDueFacts{}, ErrProgressOffSchedule
 	}
+	// Derived here rather than at the cohort call below so the not-due return
+	// below can carry it out. An empty due Plan set has already returned, so a
+	// Slot that reaches this line always has an interval to report.
+	dueInterval := minimumAlignedInterval(schedule, nextSlot)
 	if at.Unix() < int64(nextSlot) {
 		decision = "future_slot"
-		return FrozenSlot{}, false, nil
+		return FrozenSlot{}, false, SlotDueFacts{NotDueUntilUnix: int64(nextSlot), IntervalSeconds: dueInterval}, nil
 	}
 	request := execution.FreezeSlotContractRequest{
 		QueryGroup: source.queryGroup, ScheduleRevision: schedule.Segment.ScheduleRevision,
@@ -371,17 +379,17 @@ func (source *ProductionSlotSource) Next(
 			decision = "projection_fallback"
 			slot, due, err := source.slotFromProjection(ctx, initialAssignment, initialFence, *load.Progress.UnfinishedSlot, at)
 			if err == nil && slot.Contract.ScheduleRevision == schedule.Segment.ScheduleRevision && slot.Contract.ScheduleSegmentStart == schedule.Segment.Start && slot.Contract.Slot.EvaluationTime == nextSlot {
-				slot.ShortPeriodCohort = shortPeriodCohort(schedule, nextSlot)
+				slot.ShortPeriodCohort = shortPeriodCohortForInterval(dueInterval)
 			}
-			return slot, due, err
+			return slot, due, SlotDueFacts{IntervalSeconds: dueInterval}, err
 		}
 		deadline, deadlineErr := source.scheduleQueryDeadline(schedule, nextSlot)
 		if deadlineErr != nil {
-			return FrozenSlot{}, false, deadlineErr
+			return FrozenSlot{}, false, SlotDueFacts{}, deadlineErr
 		}
 		recoveryUntil, _, boundaryErr := source.recoveryBoundaries(deadline)
 		if boundaryErr != nil {
-			return FrozenSlot{}, false, boundaryErr
+			return FrozenSlot{}, false, SlotDueFacts{}, boundaryErr
 		}
 		var corrupt *controlplane.PersistedSnapshotCorruptError
 		cause := classifySlotFreezeFailure(err)
@@ -395,46 +403,47 @@ func (source *ProductionSlotSource) Next(
 			// never freeze that Slot, never advance and stayed blocked with
 			// BLOCKED_EXACT_SET_UNAVAILABLE on every attempt.
 			decision = "snapshot_unavailable_finalization"
-			return source.snapshotUnavailableSlot(ctx, schedule, nextSlot, duePlans, deadline, recoveryUntil, initialAssignment, initialFence, at)
+			slot, due, finalizeErr := source.snapshotUnavailableSlot(ctx, schedule, nextSlot, duePlans, deadline, recoveryUntil, initialAssignment, initialFence, at)
+			return slot, due, SlotDueFacts{IntervalSeconds: dueInterval}, finalizeErr
 		}
 		if errors.As(err, &corrupt) || at.UnixMilli() >= recoveryUntil {
-			return FrozenSlot{}, false, &SourceBlockedError{Err: cause}
+			return FrozenSlot{}, false, SlotDueFacts{}, &SourceBlockedError{Err: cause}
 		}
-		return FrozenSlot{}, false, &SourceRetryError{Err: cause}
+		return FrozenSlot{}, false, SlotDueFacts{}, &SourceRetryError{Err: cause}
 	}
 	decision = "frozen_contract_validate"
 	if err := fact.Validate(request); err != nil {
-		return FrozenSlot{}, false, fmt.Errorf("%w: %v", ErrSlotContractDrift, err)
+		return FrozenSlot{}, false, SlotDueFacts{}, fmt.Errorf("%w: %v", ErrSlotContractDrift, err)
 	}
 	if fact.Contract.SnapshotRevision != schedule.Segment.Publication.SnapshotRevision ||
 		fact.Contract.QueryRevision != schedule.Segment.QueryRevision {
-		return FrozenSlot{}, false, ErrSlotContractDrift
+		return FrozenSlot{}, false, SlotDueFacts{}, ErrSlotContractDrift
 	}
 	targets, queryDeadline, err := frozenSlotExecutionFacts(fact)
 	if err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	recoveryUntil, keepUntil, err := source.recoveryBoundaries(queryDeadline)
 	if err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	if err := source.validateSnapshotRetention(fact.Contract.Slot.EvaluationTime, queryDeadline); err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	operation, recovery, err := source.classifyRecovery(ctx, fact.Contract.Slot.EvaluationTime, queryDeadline, at)
 	if err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	currentAssignment, currentFence, err := source.currentOwnership(ctx, source.now())
 	if err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	if !sameAssignment(initialAssignment, currentAssignment) || initialFence != currentFence {
-		return FrozenSlot{}, false, ErrSlotOwnershipChanged
+		return FrozenSlot{}, false, SlotDueFacts{}, ErrSlotOwnershipChanged
 	}
 	slot := FrozenSlot{
 		Contract:                       fact.Contract,
-		ShortPeriodCohort:              shortPeriodCohort(schedule, nextSlot),
+		ShortPeriodCohort:              shortPeriodCohortForInterval(dueInterval),
 		DuePlanTargets:                 targets.Clone(),
 		EarliestQueryDeadlineUnixMilli: queryDeadline,
 		RecoveryUntilUnixMilli:         recoveryUntil,
@@ -447,18 +456,18 @@ func (source *ProductionSlotSource) Next(
 	if source.expiredRangeEnabled && load.Progress != nil && load.Progress.NextSlot == nextSlot && load.Progress.UnfinishedSlot == nil &&
 		ctx.Value(rangeFlightContextKey{}) == queryGroup && recovery.Disposition == ReplayExpired {
 		if rangeSlot, eligible, rangeErr := source.buildExpiredRange(ctx, slot, schedule, at); rangeErr != nil {
-			return FrozenSlot{}, false, rangeErr
+			return FrozenSlot{}, false, SlotDueFacts{}, rangeErr
 		} else if eligible && rangeFitsProgress(*load.Progress, rangeSlot.ExpiredRange) {
 			slot = rangeSlot
 		}
 	}
 	if err := slot.Validate(queryGroup); err != nil {
-		return FrozenSlot{}, false, err
+		return FrozenSlot{}, false, SlotDueFacts{}, err
 	}
 	decision = "selected"
 	trace.OwnerID = currentFence.OwnerID
 	trace.OwnerEpoch = currentFence.OwnerEpoch
-	return slot, true, nil
+	return slot, true, SlotDueFacts{IntervalSeconds: dueInterval}, nil
 }
 
 func (source *ProductionSlotSource) scheduleQueryDeadline(schedule execution.FrozenQueryGroupSchedule, slot execution.EvaluationTime) (int64, error) {
@@ -488,19 +497,36 @@ func (source *ProductionSlotSource) scheduleQueryDeadline(schedule execution.Fro
 	return deadline, nil
 }
 
-// One QG Slot receives at most one cohort, including mixed-cadence due sets.
-func shortPeriodCohort(schedule execution.FrozenQueryGroupSchedule, slot execution.EvaluationTime) string {
+// minimumAlignedInterval is the shortest evaluation interval among the Plans
+// due at this Slot. The cohort is one reading of it and the due index is
+// another, so it is derived once rather than twice from the same Plan walk.
+func minimumAlignedInterval(schedule execution.FrozenQueryGroupSchedule, slot execution.EvaluationTime) int64 {
 	minimum := int64(0)
 	for _, plan := range schedule.Plans {
 		if plan.Spec.IsAligned(slot) && (minimum == 0 || plan.Spec.EvaluationIntervalSeconds < minimum) {
 			minimum = plan.Spec.EvaluationIntervalSeconds
 		}
 	}
+	return minimum
+}
+
+// One QG Slot receives at most one cohort, including mixed-cadence due sets.
+func shortPeriodCohort(schedule execution.FrozenQueryGroupSchedule, slot execution.EvaluationTime) string {
+	return shortPeriodCohortForInterval(minimumAlignedInterval(schedule, slot))
+}
+
+func shortPeriodCohortForInterval(minimum int64) string {
+	// 30 belongs here for the same reason 10 and 15 do: its completion deadline
+	// is thirty seconds. It reaches that by the offset defaulting to the
+	// interval, which makes its deadline exactly one interval wide - less
+	// headroom than either of the others, not more.
 	switch minimum {
 	case 10:
 		return "10s"
 	case 15:
 		return "15s"
+	case 30:
+		return "30s"
 	default:
 		return ""
 	}
@@ -856,6 +882,27 @@ func (source *ProductionSlotSource) firstAvailableSchedule(
 	}
 }
 
+// initialOwnership resolves the ownership facts a Slot decision opens with.
+//
+// It is a separate entry point from currentOwnership because only this one
+// reading may be inherited. The Runner confirms the same two facts immediately
+// before calling Next, with nothing but a local time comparison in between, so
+// this reading and that one describe the same instant and asking twice buys
+// nothing. Every other currentOwnership call in this file sits behind real
+// elapsed work -- a Progress load, a retirement decision, a Snapshot read and a
+// Plan compilation -- and is there to find out whether ownership survived that
+// work, so none of them may be answered from a cache.
+func (source *ProductionSlotSource) initialOwnership(
+	ctx context.Context,
+	at time.Time,
+) (ownership.AssignmentRecord, execution.OwnerFence, error) {
+	if verified, ok := verifiedOwnershipFrom(ctx, source.queryGroup); ok &&
+		source.acceptAssignment(verified.assignment) == nil && source.acceptFence(verified.fence) == nil {
+		return verified.assignment, verified.fence, nil
+	}
+	return source.currentOwnership(ctx, at)
+}
+
 func (source *ProductionSlotSource) currentOwnership(
 	ctx context.Context,
 	at time.Time,
@@ -864,20 +911,41 @@ func (source *ProductionSlotSource) currentOwnership(
 	if err != nil {
 		return ownership.AssignmentRecord{}, execution.OwnerFence{}, err
 	}
-	if err := assignment.Validate(); err != nil {
+	// The Assignment is judged before the fence is read so a Query Group this
+	// worker no longer owns costs one round trip to discover, not two.
+	if err := source.acceptAssignment(assignment); err != nil {
 		return ownership.AssignmentRecord{}, execution.OwnerFence{}, err
-	}
-	if assignment.QueryGroup != source.queryGroup || assignment.DesiredWorkerID != source.workerID {
-		return ownership.AssignmentRecord{}, execution.OwnerFence{}, ownership.ErrNotDesired
 	}
 	fence, err := source.session.ValidateCurrent(ctx, at)
 	if err != nil {
 		return ownership.AssignmentRecord{}, execution.OwnerFence{}, err
 	}
-	if fence.QueryGroup != source.queryGroup || fence.OwnerID != source.workerID || fence.OwnerEpoch == 0 || fence.LeaseToken == "" {
-		return ownership.AssignmentRecord{}, execution.OwnerFence{}, ownership.ErrStaleFence
+	if err := source.acceptFence(fence); err != nil {
+		return ownership.AssignmentRecord{}, execution.OwnerFence{}, err
 	}
 	return assignment, fence, nil
+}
+
+// acceptAssignment and acceptFence hold the rules for what this worker may act
+// on. They are named so an inherited reading is judged by the same rules as a
+// freshly read one; if the two ever drifted, the inherited path would be
+// trusting facts the read path would have refused.
+func (source *ProductionSlotSource) acceptAssignment(assignment ownership.AssignmentRecord) error {
+	if err := assignment.Validate(); err != nil {
+		return err
+	}
+	if assignment.QueryGroup != source.queryGroup || assignment.DesiredWorkerID != source.workerID {
+		return ownership.ErrNotDesired
+	}
+	return nil
+}
+
+func (source *ProductionSlotSource) acceptFence(fence execution.OwnerFence) error {
+	if fence.QueryGroup != source.queryGroup || fence.OwnerID != source.workerID ||
+		fence.OwnerEpoch == 0 || fence.LeaseToken == "" {
+		return ownership.ErrStaleFence
+	}
+	return nil
 }
 
 func sameAssignment(left, right ownership.AssignmentRecord) bool {

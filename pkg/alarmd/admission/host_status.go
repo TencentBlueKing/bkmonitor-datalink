@@ -79,9 +79,11 @@ func (filter *HostStatusFilter) Admit(_ PlanContext, facts *Facts) Decision {
 	if !naming.Usable {
 		return Decision{Reason: "host_identity_invalid"}
 	}
-	if !naming.NamedID && !naming.NamedCloud {
+	if _, looked := naming.LookupKey(); !looked {
 		// Python only looks a host up by address when the cloud came with it;
 		// otherwise it leaves the record alone rather than guessing an area.
+		// The same method picks the lookup the enrichment performed, so this
+		// branch and the host the attributes came from cannot disagree.
 		return Decision{Admit: true}
 	}
 	if facts.HostFactsUnavailable {

@@ -301,3 +301,97 @@ func TestHostAttributesComeFromTheAddressWhenNoIDIsNamed(t *testing.T) {
 		t.Fatalf("host state = %q, want the address's host", facts.HostState)
 	}
 }
+
+// The counter-example the precedence has to survive: the record names a host
+// id CMDB does not know alongside an address it does know. Python looks the id
+// up, gets nothing, and drops the record as an unknown host - filters.py
+// branches on the dimension and never falls back to the address, so resolving
+// the address here would answer "CMDB knows this host" out of a different
+// host's entry and keep a series Python drops.
+func TestAnUnknownHostIDIsNotRescuedByTheAddress(t *testing.T) {
+	builder := newIndexBuilder(time.Unix(1700000000, 0).UTC())
+	builder.addFields([]string{"10.0.0.7|0", disabledByAddressHost, "700001", disabledByAddressHost})
+	store := &Store{index: builder.index, now: time.Now, maxAge: time.Hour, interval: time.Minute}
+
+	statusFilter, installed := admission.NewHostStatusFilter([]string{"备用机"})
+	if !installed {
+		t.Fatal("NewHostStatusFilter declined to install")
+	}
+	chain := admission.NewChain(
+		[]admission.Fuller{admission.IdentityFuller{}, NewHostTopologyFuller(store)},
+		[]admission.Filter{statusFilter},
+	)
+	facts := chain.Enrich(map[string]json.RawMessage{
+		"bk_target_ip":       json.RawMessage(`"10.0.0.7"`),
+		"bk_target_cloud_id": json.RawMessage(`0`),
+		"bk_host_id":         json.RawMessage(`700009`),
+	})
+	if facts.HostResolved {
+		t.Fatalf("facts = %+v, want the host Python looks up to stay unresolved", facts)
+	}
+	if facts.HostState != "" {
+		t.Fatalf("host state = %q, want no state from a host Python never consulted", facts.HostState)
+	}
+	admitted, name, reason := chain.Admit(admission.PlanContext{}, &facts)
+	if admitted || name != "host_status" || reason != "host_unknown" {
+		t.Fatalf("decision = %v/%s/%s, want the unknown id rejected as Python does", admitted, name, reason)
+	}
+
+	// Target matching is the other question and it keeps both identities.
+	// Python's own enrichment falls back here - TopoNodeFuller branches on the
+	// host it found rather than on the dimension - so the address's topology
+	// and its key have to survive the id that resolved to nothing.
+	if len(facts.TopoNodes) == 0 {
+		t.Fatalf("topo nodes = %v, want the address's topology kept for target matching", facts.TopoNodes)
+	}
+	address := false
+	for _, key := range facts.HostKeys {
+		if key == "10.0.0.7|0" {
+			address = true
+		}
+	}
+	if !address {
+		t.Fatalf("host keys = %v, want the address kept for target matching", facts.HostKeys)
+	}
+}
+
+// The failure a wrong CMDB coordinate produces: the cache reads fine and is
+// empty. Every individual decision then looks ordinary - this host is unknown,
+// this record has no topology - while together they silence every scoped
+// strategy at once. An empty cache is reported as facts unavailable so the
+// filters keep the alerts instead.
+func TestAnEmptyHostCacheIsNotAFleetWithNoHosts(t *testing.T) {
+	// Built now, so the emptiness is what degrades it rather than its age.
+	builder := newIndexBuilder(time.Now())
+	store := &Store{index: builder.index, now: time.Now, maxAge: time.Hour, interval: time.Minute}
+
+	statusFilter, installed := admission.NewHostStatusFilter([]string{"备用机"})
+	if !installed {
+		t.Fatal("NewHostStatusFilter declined to install")
+	}
+	chain := admission.NewChain(
+		[]admission.Fuller{admission.IdentityFuller{}, NewHostTopologyFuller(store)},
+		[]admission.Filter{admission.TargetScopeFilter{}, statusFilter},
+	)
+	facts := chain.Enrich(map[string]json.RawMessage{
+		"bk_target_ip":       json.RawMessage(`"10.0.0.7"`),
+		"bk_target_cloud_id": json.RawMessage(`0`),
+	})
+	if !facts.HostFactsUnavailable {
+		t.Fatalf("facts = %+v, want an empty cache reported as unavailable facts", facts)
+	}
+	// A topology target is exactly what an empty cache would silence.
+	scope := &admission.TargetScope{Groups: []admission.TargetScopeGroup{{
+		Conditions: []admission.TargetScopeCondition{{
+			Field: admission.TargetScopeTopoNode, Method: admission.TargetScopeInclude,
+			Keys: map[string]struct{}{"module|85": {}},
+		}},
+	}}}
+	admitted, name, reason := chain.Admit(admission.PlanContext{TargetScope: scope}, &facts)
+	if !admitted || reason != "host_facts_unavailable" {
+		t.Fatalf("decision = %v/%s/%s, want the record kept and the gap named", admitted, name, reason)
+	}
+	if health := store.Health(); !health.Degraded || health.DegradedReason != "index_empty" {
+		t.Fatalf("health = %+v, want the empty cache reported as degraded", health)
+	}
+}

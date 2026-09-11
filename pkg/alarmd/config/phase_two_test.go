@@ -64,7 +64,18 @@ func TestDefaultPhaseTwoRuntimeHasBoundedLifecycleBudgets(t *testing.T) {
 		cfg.Coordinator.MaxEvents == 0 || cfg.Coordinator.MaxGapMutations == 0 {
 		t.Fatalf("phase-two Coordinator budgets = %+v, want positive values", cfg.Coordinator)
 	}
-	if cfg.Scheduler.ActiveExecutionLimit != 0 || cfg.Scheduler.ProcessQueryPermits <= cfg.Scheduler.RecoveryQueryPermits ||
+	// The execution limit is derived like the permits beside it, so the default
+	// carries a positive bound rather than the zero that used to mean no bound
+	// at all. It has to leave room above the permit budget it keeps fed and
+	// stay inside the ready queue, which is the pair a hand-written combination
+	// could put in either wrong order.
+	if cfg.Scheduler.ActiveExecutionLimit <= cfg.Scheduler.ProcessQueryPermits+cfg.Scheduler.RecoveryQueryPermits ||
+		cfg.Scheduler.ActiveExecutionLimit > cfg.Scheduler.ReadyQueueCapacity {
+		t.Fatalf("active execution limit = %d, want between the %d permits it feeds and the %d ready queue",
+			cfg.Scheduler.ActiveExecutionLimit,
+			cfg.Scheduler.ProcessQueryPermits+cfg.Scheduler.RecoveryQueryPermits, cfg.Scheduler.ReadyQueueCapacity)
+	}
+	if cfg.Scheduler.ProcessQueryPermits <= cfg.Scheduler.RecoveryQueryPermits ||
 		cfg.Scheduler.RecoveryQueryPermits <= 0 || cfg.Scheduler.ReadyQueueCapacity <= 0 ||
 		cfg.Scheduler.RecoveryQueueCapacity <= 0 || cfg.Scheduler.MaxQueuedItemsPerQG <= 0 ||
 		cfg.Scheduler.MaxReplaySlots == 0 || cfg.Scheduler.MaxReplayAge.Duration() <= 0 ||

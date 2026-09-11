@@ -37,12 +37,39 @@ type HostNaming struct {
 	NamedCloud bool
 	// Usable is true when an identity could actually be built from them.
 	Usable bool
-	// IDKey is the host id the record supplied, as an index key. It is kept
-	// because Python looks a host up by its id whenever the record carries
-	// one and never falls back to the address, so the attributes a filter
-	// acts on have to come from that host and not from whichever identity
-	// happened to resolve first.
+	// IDKey is the host id the record supplied, as an index key, and is empty
+	// when it supplied none. Python branches on the dimension's value rather
+	// than its presence, so a bk_host_id that is there but empty names no id.
 	IDKey string
+	// AddressKey is the "ip|cloud" key Python's address lookup builds, from
+	// bk_target_ip and bk_target_cloud_id. It is kept apart from the keys in
+	// Facts.HostKeys because those also carry the ip / bk_cloud_id spellings,
+	// which build target-scope keys but which Python never looks a host up by.
+	AddressKey string
+}
+
+// LookupKey returns the identity Python would look this host up by, and
+// whether it would look at all.
+//
+// The precedence is Python's, and it is not a preference between two answers
+// to the same question: an id is used whenever the record carries one, and an
+// id CMDB does not know is a host CMDB does not know. Falling back to the
+// address there answers a question about one host out of another host's entry,
+// and keeps a series Python drops as unknown. The address is used only when
+// its cloud came with it, because Python would rather leave the record alone
+// than guess an area.
+//
+// The filter that branches on whether the host was looked up and the fuller
+// that performs the lookup both read this one method, so the two cannot drift
+// into disagreeing about which host the record is even about.
+func (naming HostNaming) LookupKey() (string, bool) {
+	if naming.IDKey != "" {
+		return naming.IDKey, true
+	}
+	if naming.NamedAddress && naming.NamedCloud && naming.AddressKey != "" {
+		return naming.AddressKey, true
+	}
+	return "", false
 }
 
 type Facts struct {
@@ -54,9 +81,10 @@ type Facts struct {
 	ServiceInstanceKeys []string
 	// TopoNodes are the "obj|inst" nodes the series belongs to.
 	TopoNodes []string
-	// HostResolved records whether a host identity was found in CMDB. A series
-	// whose host is unknown is not the same as one with no host dimensions,
-	// and filters need to tell them apart.
+	// HostResolved records whether the host the record names was found in CMDB
+	// - the one HostNaming.LookupKey picks, not any identity that happens to
+	// resolve. A series whose host is unknown is not the same as one with no
+	// host dimensions, and filters need to tell them apart.
 	HostResolved bool
 	// HostState is the CMDB operational state, for the filter that acts on it.
 	HostState string
@@ -182,13 +210,22 @@ func (chain *Chain) Admit(plan PlanContext, facts *Facts) (bool, string, string)
 	if chain == nil {
 		return true, "", ""
 	}
+	// An admitted decision may still carry a reason, and that is the one worth
+	// reporting: it says the filter did not actually decide. Dropping it here
+	// is how "the gap is visible in the counter" quietly stops being true -
+	// the counter would only ever see an ordinary admission, which is exactly
+	// what a filter that has given up looks like from the outside.
+	admittedFilter, admittedReason := "", ""
 	for _, filter := range chain.filters {
 		decision := filter.Admit(plan, facts)
 		if !decision.Admit {
 			return false, filter.Name(), decision.Reason
 		}
+		if decision.Reason != "" && admittedReason == "" {
+			admittedFilter, admittedReason = filter.Name(), decision.Reason
+		}
 	}
-	return true, "", ""
+	return true, admittedFilter, admittedReason
 }
 
 // FilterNames reports the chain's composition, for the resolved-configuration

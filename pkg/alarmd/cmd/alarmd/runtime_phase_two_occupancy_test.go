@@ -32,6 +32,8 @@ func (r occupancyRunner) RunOneAdmitted(
 }
 
 func (r occupancyRunner) NextReadyAt() time.Time { return time.Time{} }
+
+func (r occupancyRunner) DueBound() scheduler.RunnerDueBound { return scheduler.RunnerDueBound{} }
 func (r occupancyRunner) MaintainLease(context.Context, time.Duration, time.Duration) error {
 	return nil
 }
@@ -39,7 +41,9 @@ func (r occupancyRunner) Release(context.Context) error { return nil }
 
 func occupancyDispatcher(observer observability.Observer) (*phaseTwoRunnerDispatcher, phaseTwoScheduledRunner) {
 	cfg := config.Config{}
-	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 0
+	// One owned Query Group and one slot: occupancy is what is under test here,
+	// not fanout.
+	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 1
 	cfg.PhaseTwo.Scheduler.ReadyQueueCapacity = 8
 	cfg.PhaseTwo.Scheduler.RecoveryQueueCapacity = 8
 	cfg.PhaseTwo.Scheduler.TickInterval = config.Duration(time.Second)

@@ -40,6 +40,7 @@ func (IdentityFuller) Fill(dimensions map[string]json.RawMessage, facts *Facts) 
 	facts.HostNaming = HostNaming{
 		NamedID: hostIDNamed, NamedAddress: addressNamed, NamedCloud: cloudNamed,
 		Usable: targetAddress != "" || hostIDText != "", IDKey: hostIDText,
+		AddressKey: lookupAddressKey(targetAddress, dimensionText(dimensions, "bk_target_cloud_id")),
 	}
 
 	address := targetAddress
@@ -50,19 +51,20 @@ func (IdentityFuller) Fill(dimensions map[string]json.RawMessage, facts *Facts) 
 	if cloud == "" {
 		cloud = dimensionText(dimensions, "bk_cloud_id")
 	}
-	// Python coerces the cloud id with safe_int, so anything that is not a
-	// number becomes the direct area. Production really produces such values:
-	// a collector config whose cloud id placeholder was never rendered ships
-	// the literal template text as the dimension, and taking it at face value
-	// builds a key no host can have - which reads as "CMDB does not know this
-	// host" and drops series Python keeps.
-	cloud = safeIntText(cloud, "0")
 	if address != "" {
 		if cloud == "" {
 			// Python defaults an absent cloud to the direct area, and the
 			// CMDB cache keys hosts the same way.
 			cloud = "0"
 		}
+		// Deliberately not coerced. Three places in Python build a key from
+		// this dimension and only one of them coerces it: the host status
+		// filter does (safe_int), while the topology enrichment and the target
+		// match both take the value as it stands. This key feeds the other two,
+		// so coercing it here would resolve topology Python never resolves and
+		// match targets Python never matches - extra alerts rather than missing
+		// ones, which is why it went unnoticed. The coerced spelling lives on
+		// HostNaming.AddressKey, where the filter that wants it reads it.
 		facts.AddHostKey(address + "|" + cloud)
 	}
 	if hostIDText != "" {
@@ -74,6 +76,19 @@ func (IdentityFuller) Fill(dimensions map[string]json.RawMessage, facts *Facts) 
 		serviceInstance = dimensionText(dimensions, "service_instance_id")
 	}
 	facts.AddServiceInstanceKey(serviceInstance)
+}
+
+// lookupAddressKey builds the key Python's address lookup uses: the target
+// address with its target cloud coerced by safe_int. The ip / bk_cloud_id
+// spellings are deliberately not read here even though the target-scope key
+// below falls back to them - Python never looks a host up by those, and a
+// lookup key that differs from Python's decides the host status filter on a
+// host Python never consulted.
+func lookupAddressKey(address string, cloud string) string {
+	if address == "" {
+		return ""
+	}
+	return address + "|" + safeIntText(cloud, "0")
 }
 
 // safeIntText mirrors bkmonitor.utils.common_utils.safe_int: an integer, else

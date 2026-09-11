@@ -355,7 +355,6 @@ func TestOpenReceiptPublisherPrimesOnlyReceiptTopic(t *testing.T) {
 	coordinates := validDecisionSinkConfig()
 	coordinates.Brokers = []string{broker.Addr()}
 	coordinates.OutputTopic = "alarmd-message-receipt-shadow"
-	coordinates.AllowedOutputTopics = []string{coordinates.OutputTopic}
 	broker.SetHandlerByMap(map[string]sarama.MockResponse{
 		"MetadataRequest": sarama.NewMockMetadataResponse(t).
 			SetBroker(broker.Addr(), broker.BrokerID()).

@@ -141,6 +141,12 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 	if request.Plan.OutputIdentity != nil {
 		compiled.outputIdentity = &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, request.Plan.OutputIdentity.DimensionFields...)}
 	}
+	if request.Plan.SubjectFacts != nil {
+		compiled.subjectFacts = &contract.MonitorSubjectFacts{
+			Labels:        append([]string{}, request.Plan.SubjectFacts.Labels...),
+			ResultTableID: request.Plan.SubjectFacts.ResultTableID,
+		}
+	}
 	var triggerComputeCost uint64
 	for _, rawLevel := range request.Plan.StrategyIR.Levels {
 		level, normalizers, terminal, err := c.compileLevel(

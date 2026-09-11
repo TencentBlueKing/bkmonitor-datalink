@@ -500,6 +500,7 @@ type legacyStrategy struct {
 	SnapshotRevision json.RawMessage `json:"strategy_revision,omitempty"`
 	Priority         json.RawMessage `json:"priority"`
 	PriorityGroupKey string          `json:"priority_group_key"`
+	Labels           []string        `json:"labels"`
 	Items            []legacyItem    `json:"items"`
 	Detects          []legacyDetect  `json:"detects"`
 }
@@ -570,6 +571,30 @@ type compiledPlanInputs struct {
 	requirements     []execution.DataRequirementTemplate
 	queryPlans       map[execution.LogicalQueryRef]execution.QueryPlanFacts
 	seenRequirements map[execution.RequirementID]struct{}
+}
+
+// frozenSubjectFacts freezes the strategy facts the subject projection reads
+// when a record's own dimensions do not name its object: the strategy's labels,
+// and the result table of its first query config - which is the only one Python
+// inspects. Freezing them keeps the object a Slot reports inside the frozen
+// revision, so it cannot change because the strategy was edited between two
+// evaluations of the same Slot.
+func frozenSubjectFacts(source legacyStrategy, item legacyItem) *contract.MonitorSubjectFacts {
+	facts := contract.MonitorSubjectFacts{Labels: append([]string{}, source.Labels...)}
+	if len(item.QueryConfigs) > 0 {
+		var first struct {
+			ResultTableID string `json:"result_table_id"`
+		}
+		if err := json.Unmarshal(item.QueryConfigs[0], &first); err == nil {
+			facts.ResultTableID = first.ResultTableID
+		}
+	}
+	if len(facts.Labels) == 0 && facts.ResultTableID == "" {
+		// Nothing to freeze. An absent section says the projection answers from
+		// the dimensions alone, which is not the same as an empty one.
+		return nil
+	}
+	return &facts
 }
 
 func compilePlan(
@@ -718,6 +743,7 @@ func compilePlan(
 	plan.TargetScope = targetScope
 	if ref.SnapshotRevision > 0 {
 		plan.OutputIdentity = &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, dataset.IdentityFields...)}
+		plan.SubjectFacts = frozenSubjectFacts(source, item)
 	}
 	scheduleSpec := execution.ScheduleSpec{EvaluationIntervalSeconds: interval, Alignment: 0, Timezone: "UTC"}
 	if interval == 10 || interval == 15 {

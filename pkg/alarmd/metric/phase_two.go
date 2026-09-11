@@ -48,6 +48,7 @@ type phaseTwoMetrics struct {
 	hostDisableMonitorStates     prometheus.Gauge
 	cmdbIndexAge                 *prometheus.GaugeVec
 	cmdbIndexDegraded            *prometheus.GaugeVec
+	dueIndex                     dueIndexMetrics
 }
 
 var activeQGSetDurationBuckets = []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 30}
@@ -135,6 +136,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			Help: "Process-wide physical query permit admission outcomes by fixed operation and result.",
 		}, []string{"operation", "result"}),
 	}
+	metrics.dueIndex = newDueIndexMetrics()
 	metrics.redisCalls = newRedisCallMetrics()
 	metrics.controlCache = newControlCacheCollector()
 	metrics.legacyPodCache = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_pod_cache_total", Help: "Existing Python Pod cache reads by bounded result."}, []string{"result"})
@@ -200,7 +202,8 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 		m.undrainedDrainingQueryGroups,
 		m.algorithmEvaluations, m.algorithmInputs,
-	}...), append(m.redisCalls.collectors(), m.controlCache, m.redisPool, m.legacyPodCache,
+	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
+		m.controlCache, m.redisPool, m.legacyPodCache,
 		m.seriesAdmission, m.cmdbIndexHosts, m.hostDisableMonitorStates, m.cmdbIndexAge, m.cmdbIndexDegraded)...)
 }
 

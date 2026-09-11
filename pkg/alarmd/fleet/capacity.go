@@ -54,6 +54,9 @@ type Capacity struct {
 	// owns, and how long that takes. An object list can say an object is
 	// degraded; only this says an object is never reached.
 	Rotation *Rotation `json:"rotation,omitempty"`
+	// Pulled is how much this replica actually read. Absent on a replica that
+	// does not report it.
+	Pulled *SeriesPull `json:"pulled,omitempty"`
 }
 
 // Rotation is one pass of the dispatcher over everything a replica owns.
@@ -107,6 +110,9 @@ type CapacityView struct {
 	// slowest for the duration: a deployment covers its objects only as fast as
 	// its slowest replica gets round its own share.
 	Rotation *Rotation `json:"rotation,omitempty"`
+	// Pulled adds up across replicas: the work is split between them, so what
+	// the deployment read is what its replicas read.
+	Pulled *SeriesPull `json:"pulled,omitempty"`
 	// Disagreement names ceilings the replicas do not agree on. Two replicas
 	// running different limits is a real condition -- a half-finished rollout --
 	// and averaging it would hide exactly the thing worth seeing.
@@ -156,6 +162,13 @@ func aggregateCapacity(view *View, snapshots []Snapshot) {
 		}
 		for budget, count := range facts.Rejections {
 			capacity.Rejections[budget] += count
+		}
+		if facts.Pulled != nil {
+			if capacity.Pulled == nil {
+				capacity.Pulled = &SeriesPull{}
+			}
+			capacity.Pulled.Series += facts.Pulled.Series
+			capacity.Pulled.Records += facts.Pulled.Records
 		}
 		if facts.Rotation != nil {
 			if capacity.Rotation == nil {

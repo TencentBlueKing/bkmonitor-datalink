@@ -29,6 +29,7 @@ func capacitySnapshotSource(
 	cfg config.Config,
 	rejections *fleet.RejectionTally,
 	rotation func() *fleet.Rotation,
+	pulled *fleet.SeriesPullTally,
 ) func() *fleet.Capacity {
 	// The same derivation the startup profile and check-config print, so the
 	// page cannot report a ceiling the process is not actually running with.
@@ -75,6 +76,7 @@ func capacitySnapshotSource(
 		if rotation != nil {
 			capacity.Rotation = rotation()
 		}
+		capacity.Pulled = pulled.Counts()
 		if usage.MemoryKnown {
 			capacity.MemoryUsed = usage.MemoryBytes
 		}

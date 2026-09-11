@@ -165,6 +165,10 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// the replica's snapshot, so "no budget refused anything" must be sayable
 	// without collection having run.
 	rejectionTally := fleet.NewRejectionTally()
+	// Counted in the replica's own snapshot rather than read back from a
+	// metric, for the same reason the rejections are: the page answers from the
+	// snapshot and has to be right one minute after a restart.
+	seriesPullTally := fleet.NewSeriesPullTally()
 	observer = observability.Multi(observer, external.AdditionalObserver, targetFlow, rejectionTally)
 	observer = phaseTwoRuntimeObserver(observer)
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), cfg.CompilerLimits())
@@ -405,11 +409,12 @@ func openProductionPhaseTwoBundleWithDependencies(
 	}()
 	go maintainCMDBIndex(cmdbIndexCtx, cmdbIndex, recorder)
 	querySource, err := access.NewSource(frozenSource, queryClient, productionQueryPermitAcquirer{flights: flights}, access.Config{
-		MinReadyDelay:    cfg.PhaseTwo.Access.MinReadyDelay.Duration(),
-		Now:              external.Now,
-		Observer:         observer,
-		Admission:        seriesAdmission,
-		ObserveAdmission: recorder.RecordSeriesAdmission,
+		MinReadyDelay:       cfg.PhaseTwo.Access.MinReadyDelay.Duration(),
+		Now:                 external.Now,
+		Observer:            observer,
+		Admission:           seriesAdmission,
+		ObserveAdmission:    recorder.RecordSeriesAdmission,
+		ObserveSeriesPulled: seriesPullTally.Add,
 	})
 	if err != nil {
 		return nil, err
@@ -714,7 +719,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		// that cannot complete has already been promised an end, so a Progress
 		// cursor older than that describes an object that stopped rather than
 		// one between rounds.
-		capacity:      capacitySnapshotSource(flights, cfg, rejectionTally, bundle.rotationFacts),
+		capacity:      capacitySnapshotSource(flights, cfg, rejectionTally, bundle.rotationFacts, seriesPullTally),
 		restore:       progressRestoreSource(progressStore),
 		staleAfter:    stallAfter,
 		restoreBudget: fleetRestoreBudgetPerPublish,

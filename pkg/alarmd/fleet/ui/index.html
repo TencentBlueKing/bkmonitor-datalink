@@ -582,6 +582,28 @@ function renderSummary(summary, total) {
     });
 }
 
+// betweenReads turns a cumulative figure into what happened since the last
+// read of this page.
+//
+// A cumulative number on a single read is not readable: "被限流 2 秒" counts
+// from a start nobody can see, and could be all of last week or the last
+// minute. The page already reads twice a minute, so the answer only costs
+// remembering the previous read -- and nothing here is stored anywhere else,
+// so a reload legitimately starts over.
+var previousReads = {};
+function betweenReads(key, value, at) {
+  var previous = previousReads[key];
+  if (typeof value === 'number') previousReads[key] = {at: at, value: value};
+  if (typeof value !== 'number' || !previous) return null;
+  var elapsed = (at - previous.at) / 1000;
+  var delta = value - previous.value;
+  // A restart resets the counter, and a replica leaving the deployment lowers
+  // the sum. Either way a negative delta is a changed population, not idleness,
+  // and reporting it as zero load would be the wrong direction to be wrong in.
+  if (elapsed <= 0 || delta < 0) return null;
+  return {rate: delta / elapsed, elapsed: elapsed};
+}
+
 // Capacity comes from the same read as the verdict, so the page never has to
 // ask the time series database what this deployment's limits are -- and the two
 // cannot disagree.
@@ -625,8 +647,20 @@ function renderCapacity(cap, gaps) {
     box.appendChild(d);
   }
   var permitCeiling = cap.permit_budget * cap.replicas;
+  var at = Date.now();
+  // The instant answers "is anything running right now", which a page load
+  // lands on at an arbitrary moment. It cannot answer "how busy is this", and
+  // the number that can was already being published and never shown: cumulative
+  // permit-hold seconds. Two reads of it over the wall time between them give
+  // the mean number of permits occupied, and the page makes a read every thirty
+  // seconds -- so the useful figure costs nothing but remembering the last one.
+  var held = betweenReads('permit_seconds', cap.permit_seconds, at);
+  cell('查询许可（平均占用）',
+    held ? held.rate.toFixed(1) + ' / ' + permitCeiling : '等下一次读取',
+    held ? '最近 ' + Math.round(held.elapsed) + ' 秒的平均占用——判"忙不忙"看这个'
+         : '要两次读取才算得出，约 30 秒后出现', held && held.rate > permitCeiling * 0.8);
   cell('查询许可（此刻）', cap.permits_held + ' / ' + permitCeiling,
-    cap.replicas + ' 个副本各 ' + cap.permit_budget + '；这是瞬时值，不是占用率');
+    cap.replicas + ' 个副本各 ' + cap.permit_budget + '；这是某一瞬间的值，判占用看上一格');
   cell('排队等许可', String(cap.waiting),
     '非零说明此刻许可就是瓶颈；为零不代表有余量', cap.waiting > 0);
   // The field names carry the _bytes suffix the API actually uses. Dropping
@@ -638,8 +672,33 @@ function renderCapacity(cap, gaps) {
       '上限来源 ' + (cap.memory_source || '未知') + '；这是 cgroup 用量，不是 Go 堆');
   }
   if (cap.cpu_cores) {
+    // Same problem as the permits, same fix. "累计被限流 2 秒" counts from a
+    // start nobody can see, so it says nothing about whether this deployment is
+    // being throttled now -- two seconds could be all of yesterday or the last
+    // minute.
+    var throttled = betweenReads('throttled_seconds', cap.throttled_seconds, at);
     cell('CPU', cap.cpu_cores + ' 核 × ' + cap.replicas,
-      cap.throttled_seconds ? ('累计被限流 ' + Math.round(cap.throttled_seconds) + ' 秒') : '未观察到限流');
+      throttled
+        ? (throttled.rate > 0
+            ? '最近 ' + Math.round(throttled.elapsed) + ' 秒里被限流 ' + throttled.rate.toFixed(2) + ' 核·秒/秒'
+            : '最近 ' + Math.round(throttled.elapsed) + ' 秒没有被限流')
+        : (cap.throttled_seconds
+            ? '启动至今累计被限流 ' + Math.round(cap.throttled_seconds) + ' 秒；现在还限不限要等下一次读取'
+            : '启动至今未观察到限流'),
+      throttled && throttled.rate > 0);
+  }
+  // The load the ceilings have to be read against. Printing "series 524288"
+  // with nothing beside it says the same thing to a deployment pulling two
+  // hundred series a second and one pulling two hundred thousand -- a limit
+  // without a measured load is not a capacity statement.
+  if (cap.pulled) {
+    var series = betweenReads('pulled_series', cap.pulled.series, at);
+    var points = betweenReads('pulled_records', cap.pulled.records, at);
+    cell('Access 拉取', series ? series.rate.toFixed(0) + ' 条/秒' : '等下一次读取',
+      series
+        ? (points ? '每秒 ' + points.rate.toFixed(0) + ' 个点；累计 ' + count(cap.pulled.series) + ' 条'
+                  : '累计 ' + count(cap.pulled.series) + ' 条')
+        : '全部副本相加，两次读取才算得出，约 30 秒后出现');
   }
   // Round coverage answers the one question the object list structurally
   // cannot: an object nobody reached has no round to report on, so it appears
@@ -690,6 +749,15 @@ function bytes(n) {
   var u = ['B', 'KiB', 'MiB', 'GiB', 'TiB'], i = 0;
   while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
   return (i ? n.toFixed(1) : String(n)) + ' ' + u[i];
+}
+
+// Cumulative counts run to the hundreds of millions within a day, and at that
+// size the digits stop being read at all.
+function count(n) {
+  if (!n) return '0';
+  var u = ['', ' 万', ' 亿'], i = 0;
+  while (n >= 10000 && i < u.length - 1) { n /= 10000; i++; }
+  return (i ? n.toFixed(1) : String(n)) + u[i];
 }
 
 // The identifiers below are the code's own, and they are shown beside a plain
@@ -958,6 +1026,29 @@ function runBoundary(run) {
   return boundary;
 }
 
+// A window on a busy object records the same step over and over -- one "queued"
+// per generation, thirteen in a row with nothing to tell them apart. Printing
+// each one is not detail, it is the same row thirteen times, and it pushes
+// whatever did differ off the screen. Consecutive identical steps become one
+// row that says how many and over what span.
+function collapseSteps(steps) {
+  var collapsed = [];
+  steps.forEach(function (record) {
+    var facts = record.facts || {};
+    var key = [record.stage, record.result, record.reason_code,
+      facts.decision, facts.failure_code].join('|');
+    var last = collapsed[collapsed.length - 1];
+    if (last && last.key === key) {
+      last.count++;
+      if (record.time_unix_ms) last.last = record.time_unix_ms;
+      return;
+    }
+    collapsed.push({key: key, record: record, count: 1,
+      first: record.time_unix_ms || 0, last: record.time_unix_ms || 0});
+  });
+  return collapsed;
+}
+
 function renderRuns(host, runs, manyProcesses) {
   host.textContent = '';
   runs.forEach(function (run) {
@@ -1005,7 +1096,8 @@ function renderRuns(host, runs, manyProcesses) {
 
     var list = document.createElement('ol');
     list.className = 'steps';
-    run.steps.forEach(function (record) {
+    collapseSteps(run.steps).forEach(function (group) {
+      var record = group.record;
       var facts = record.facts || {};
       var item = document.createElement('li');
       // A bare terminal with no reason is not evidence of anything -- the
@@ -1016,7 +1108,7 @@ function renderRuns(host, runs, manyProcesses) {
       }
       var stage = document.createElement('span');
       stage.className = 'st';
-      stage.textContent = say(STAGE_TEXT, record.stage);
+      stage.textContent = say(STAGE_TEXT, record.stage) + (group.count > 1 ? ' ×' + group.count : '');
       // The identifier stays reachable without spending a column on it.
       stage.title = record.stage;
       item.appendChild(stage);
@@ -1038,7 +1130,12 @@ function renderRuns(host, runs, manyProcesses) {
       item.appendChild(detail);
       var timing = document.createElement('span');
       timing.className = 'ns';
-      timing.textContent = nanos(record.duration_ns);
+      // Repeats report the span they happened over. A maximum of thirteen
+      // identical zero-length records says nothing; "over four minutes" says
+      // whether this is one burst or a condition that persists.
+      timing.textContent = group.count > 1 && group.first && group.last > group.first
+        ? '跨 ' + nanos((group.last - group.first) * 1e6)
+        : nanos(record.duration_ns);
       item.appendChild(timing);
       list.appendChild(item);
     });

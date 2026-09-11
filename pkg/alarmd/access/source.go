@@ -83,6 +83,12 @@ type Config struct {
 	Admission SeriesAdmission
 	// ObserveAdmission counts decisions. Optional.
 	ObserveAdmission AdmissionObserver
+	// ObserveSeriesPulled counts what this process actually read: one call per
+	// series handed into the pipeline, carrying the datapoints it held. It is
+	// the load figure the per-Slot ceilings have to be read against -- a limit
+	// printed with no measured load beside it says nothing about whether
+	// anything is near it. Optional.
+	ObserveSeriesPulled func(records uint64)
 }
 
 type Source struct {
@@ -275,7 +281,8 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		go func(index int, query PlannedQuery, attempt execution.QueryAttempt, permit QueryPermit) {
 			defer running.Done()
 			adapter := &seriesAdapter{consumer: consumer, query: query, attemptNo: attempt.AttemptNo,
-				admission: source.config.Admission, observe: source.config.ObserveAdmission, scopes: scopes}
+				admission: source.config.Admission, observe: source.config.ObserveAdmission,
+				pulled: source.config.ObserveSeriesPulled, scopes: scopes}
 			completion, err := source.executeWithPermit(queryCtx, attempt, adapter, permit)
 			if err != nil {
 				err = fmt.Errorf("alarmd access: execute physical query: %w", err)
@@ -752,7 +759,9 @@ type seriesAdapter struct {
 	attemptNo uint32
 	admission SeriesAdmission
 	observe   AdmissionObserver
-	scopes    planScopes
+	// pulled counts the series this query actually handed on. Optional.
+	pulled func(records uint64)
+	scopes planScopes
 
 	// forwarded accumulates the delivery proofs of the batches that actually
 	// reached the consumer, and withheld counts the ones the monitoring target
@@ -786,6 +795,13 @@ func (adapter *seriesAdapter) ConsumeProviderSeries(ctx context.Context, batch e
 		QueryRevision: adapter.query.Spec.PlanFacts.QueryRevision, CompletionRef: batch.CompletionRef,
 		Dataset: batch.Dataset, Inputs: bindings, Delivery: batch.Delivery}); err != nil {
 		return err
+	}
+	// Counted here rather than at the provider: this is the point a series
+	// becomes work for this process. One call is one series -- the batch
+	// contract fixes Delivery.Series at 1 -- so the count needs no arithmetic
+	// and cannot drift from what the pipeline was actually handed.
+	if adapter.pulled != nil {
+		adapter.pulled(batch.Delivery.Records)
 	}
 	// Fold the same proof the worker folds, in the same order, so the two
 	// accumulations stay identical down to the chained digest.

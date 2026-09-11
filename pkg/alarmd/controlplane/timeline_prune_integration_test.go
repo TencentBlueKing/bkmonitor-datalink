@@ -424,18 +424,38 @@ func TestCutoverFenceDistinguishesAbsentKeyFromChangedAndEmptyContent(t *testing
 		if added == "" {
 			t.Fatal("the second catalog adds no Query Group")
 		}
-		if err := client.Set(ctx, prefix+":schedule_timeline:"+string(added), "", 0).Err(); err != nil {
-			t.Fatal(err)
-		}
 		snapshot, _, err = repository.PublishCatalog(ctx, both)
 		if err != nil {
+			t.Fatal(err)
+		}
+		addedKey := prefix + ":schedule_timeline:" + string(added)
+		// The leader reads a new Query Group's timeline before it decides to
+		// open a fresh one, so a key that already holds empty content is
+		// refused there, as a corrupt timeline, before any CAS is sent.
+		if err := client.Set(ctx, addedKey, "", 0).Err(); err != nil {
 			t.Fatal(err)
 		}
 		at = time.Unix(120, 0)
 		_, err = reconciler.Ensure(ctx, snapshot.Publication)
 		failure, _ := controlplane.ActivationFailureFromError(err)
+		if err == nil || failure.Class != controlplane.ActivationFailureClassCorrupt {
+			t.Fatalf("activation over a pre-existing empty key: err=%v failure=%+v", err, failure)
+		}
+		if err := client.Del(ctx, addedKey).Err(); err != nil {
+			t.Fatal(err)
+		}
+		// The fence's own branch is reached when the key appears between that
+		// read and the write: the empty expectation must then find the key
+		// absent, and a key holding empty content is present.
+		auxiliary := redis.NewClient(&redis.Options{Addr: client.Options().Addr})
+		t.Cleanup(func() { _ = auxiliary.Close() })
+		client.AddHook(&beforeEvalHook{run: func() error {
+			return auxiliary.Set(ctx, addedKey, "", 0).Err()
+		}})
+		_, err = reconciler.Ensure(ctx, snapshot.Publication)
+		failure, _ = controlplane.ActivationFailureFromError(err)
 		if !errors.Is(err, controlplane.ErrActivationConflict) || failure.Class != controlplane.ActivationFailureClassCASConflict {
-			t.Fatalf("activation over an existing empty key: err=%v failure=%+v", err, failure)
+			t.Fatalf("activation over a key that appeared with empty content: err=%v failure=%+v", err, failure)
 		}
 	})
 	t.Run("a timeline changed between read and write is a conflict", func(t *testing.T) {

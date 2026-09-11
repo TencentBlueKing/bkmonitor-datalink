@@ -215,6 +215,18 @@ func DeriveCanonicalDigestV2(domain string, value any) (string, error) {
 	return digestCanonicalV2("canonical_digest", domain, value)
 }
 
+// DeriveCanonicalDigestV2OverCanonical is DeriveCanonicalDigestV2 for a value
+// that has already been encoded with CanonicalJSONV2. A store that keeps the
+// canonical bytes of an object next to the digest that names it can verify
+// the bytes it reads back by hashing them, without decoding the object first.
+// The two functions agree only on canonical input; the caller owns that.
+func DeriveCanonicalDigestV2OverCanonical(domain string, canonical []byte) (string, error) {
+	if !isOpaqueASCII(domain) {
+		return "", invalid("canonical_digest.domain", "must be non-empty opaque ASCII")
+	}
+	return deriveLengthPrefixedSHA256("canonical_digest", domain, canonical)
+}
+
 func digestJSONObjectWithoutV2(field, domain string, payload []byte, omitted string) (string, error) {
 	var object map[string]json.RawMessage
 	if err := decodeJSONObject(payload, &object); err != nil {

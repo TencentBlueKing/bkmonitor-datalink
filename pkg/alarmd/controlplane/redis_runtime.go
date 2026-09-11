@@ -77,6 +77,17 @@ type persistedScheduleTimeline struct {
 	RetiredAt      *execution.EvaluationTime    `json:"retired_at,omitempty"`
 }
 
+// retiredBefore reports whether activating this Query Group at boundary
+// reopens a retired timeline. It is the one predicate behind reactivation:
+// the CAS side uses it to append a ReactivatedAfter Segment instead of
+// creating a fresh timeline, and the reconciler uses it to restart the Query
+// Group's Plans through WARMING. Both read the persisted timeline, so the
+// answer does not depend on whether the Draining projection still remembers
+// the Query Group.
+func (timeline persistedScheduleTimeline) retiredBefore(boundary execution.EvaluationTime) bool {
+	return timeline.RetiredAt != nil && *timeline.RetiredAt < boundary
+}
+
 type scheduleTimelineUpdate struct {
 	expected []byte
 	next     persistedScheduleTimeline
@@ -88,6 +99,28 @@ type scheduleTimelineUpdate struct {
 // Snapshot it describes serves nobody; the Control Leader renews the
 // timelines the current Activation still references on the same tick that
 // renews the Snapshot, and every other timeline expires with its publication.
+//
+// The per-key EXISTS guard below runs only on the first activation a
+// deployment ever performs: CompareAndSetInitialScheduleActivation rejects
+// every expectation whose RecordRevision is not zero, so a running cluster
+// never executes this script. A timeline left behind by a retired Query
+// Group can only exist after at least one activation, so a retired key cannot
+// reach this path through any code path. The one way to reach it is an
+// administrative deletion of the activation header and records while the
+// timeline keys are left in place: the header is then unavailable, this
+// script refuses the leftover keys, InitialScheduleActivator.Ensure swallows
+// that conflict and reads the header back, and every tick fails as
+// unavailable until the leftover timelines expire with their Catalog TTL.
+// That is the intended outcome of a partial deletion, not a gap, and "the key
+// must not exist" is the right guard here. It is deliberately not relaxed to
+// look symmetric with the branch of the cutover script that takes an empty
+// expected value: relaxing it would let a stale timeline be silently
+// overwritten on first activation with no test able to catch it. A retired
+// Query Group that returns is handled by the caller of the cutover script,
+// the reactivation branch of CompareAndSetPublicationScheduleActivation,
+// which reads the persisted timeline and appends a ReactivatedAfter Segment
+// instead of creating a fresh timeline, so expected carries the real prior
+// bytes.
 const compareAndSetInitialSchedulesScript = `
 local header = redis.call('GET', KEYS[1])
 if ARGV[1] == '' then
@@ -320,14 +353,31 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		if err != nil {
 			return err
 		}
-		var timeline persistedScheduleTimeline
-		var raw []byte
-		if _, reactivated := reactivating[queryGroup]; reactivated {
-			timeline, raw, err = repository.loadScheduleTimelineForUpdate(ctx, queryGroup)
-			if err != nil {
-				return err
-			}
-			if timeline.RetiredAt == nil || *timeline.RetiredAt >= boundary {
+		// Whether this Query Group is new or returning is decided by its
+		// persisted timeline, not by the Draining projection. The projection
+		// drops a Query Group as soon as one activation sees it drained, while
+		// its retired timeline lives on for the Catalog TTL; a Query Group
+		// returning in that window is one the projection no longer knows.
+		// Writing it a fresh timeline with an empty expectation would be
+		// refused by the CAS script, which requires the key to be absent, and
+		// since the whole publication is one CAS it would stay unactivated
+		// until the old key expired. Teaching the script to accept a retired
+		// key instead would overwrite the retired Segments, which a Slot
+		// replayed from before the retirement boundary still reads. Appending
+		// keeps them, and hands the script the real prior bytes to fence on.
+		// The cost for a genuinely new Query Group is one GET per publication,
+		// next to the one this cutover already spends on every carried-over
+		// Query Group.
+		timeline, raw, err := repository.loadScheduleTimelineForUpdate(ctx, queryGroup)
+		switch {
+		case errors.Is(err, ErrScheduleUnavailable):
+			timeline = persistedScheduleTimeline{SchemaVersion: scheduleTimelineSchemaVersion,
+				RecordRevision: 1, QueryGroup: queryGroup,
+				Segments: []persistedScheduleSegment{{Schedule: opened, Plans: records}}}
+		case err != nil:
+			return err
+		default:
+			if !timeline.retiredBefore(boundary) {
 				return ErrScheduleConflict
 			}
 			retiredAt := *timeline.RetiredAt
@@ -339,10 +389,6 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 			if dead := repository.deadSegmentPrefix(timeline, now); dead > 0 {
 				candidates = append(candidates, pruneCandidate{update: len(updates), dead: dead})
 			}
-		} else {
-			timeline = persistedScheduleTimeline{SchemaVersion: scheduleTimelineSchemaVersion,
-				RecordRevision: 1, QueryGroup: queryGroup,
-				Segments: []persistedScheduleSegment{{Schedule: opened, Plans: records}}}
 		}
 		if err := validateScheduleTimeline(timeline); err != nil {
 			return err
@@ -991,6 +1037,57 @@ func (repository *RedisCatalogRepository) drainingReactivatable(
 		return false, errors.New("alarmd controlplane: reactivation requires the single Progress reader")
 	}
 	return repository.queryGroupDrained(ctx, draining.QueryGroup, draining.RetiredBoundary, progress)
+}
+
+// retiredQueryGroupsReturning lists the Query Groups of the new publication
+// that are absent from the old one but still hold a timeline retired before
+// boundary. Activating such a Query Group appends a ReactivatedAfter Segment
+// to that timeline rather than opening a fresh one, and every Plan it carries
+// restarts through WARMING as a tombstoned interval requires. The Draining
+// projection cannot answer this: it forgets a Query Group as soon as one
+// activation sees it drained, while the timeline outlives it for the Catalog
+// TTL. A missing timeline means a genuinely new Query Group.
+//
+// The reads go through loadScheduleTimeline, the cached path keyed on the
+// activation header, and must stay there: a live read per candidate would
+// turn every publication into a keyspace walk. The header changes on every
+// activation, so the activation that follows a publication runs on a cold
+// cache and this loop costs one GET per candidate. The candidate set is the
+// Query Groups the new publication adds, bounded by the size of the new
+// publication itself; it is a handful under ordinary editing and reaches the
+// whole population only when a publication onboards it at once. The cutover
+// that follows already reads every carried-over timeline live, and
+// CompareAndSetPublicationScheduleActivation reads each added Query Group
+// live as well, so a publication costs at most one read per old Query Group
+// plus two per added one. That is the same order as the existing floor, which
+// is why this loop is a plain sequential walk rather than a pipeline.
+func (repository *RedisCatalogRepository) retiredQueryGroupsReturning(
+	ctx context.Context,
+	oldGroups map[execution.QueryGroupIdentity]QueryGroup,
+	newGroups map[execution.QueryGroupIdentity]QueryGroup,
+	boundary execution.EvaluationTime,
+) (map[execution.QueryGroupIdentity]struct{}, error) {
+	candidates := make([]execution.QueryGroupIdentity, 0, len(newGroups))
+	for queryGroup := range newGroups {
+		if _, existed := oldGroups[queryGroup]; !existed {
+			candidates = append(candidates, queryGroup)
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i] < candidates[j] })
+	returning := make(map[execution.QueryGroupIdentity]struct{})
+	for _, queryGroup := range candidates {
+		timeline, err := repository.loadScheduleTimeline(ctx, queryGroup)
+		if errors.Is(err, ErrScheduleUnavailable) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if timeline.retiredBefore(boundary) {
+			returning[queryGroup] = struct{}{}
+		}
+	}
+	return returning, nil
 }
 
 // drainingRetirement decides whether one previously draining Query Group may

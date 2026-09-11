@@ -719,8 +719,7 @@ func testProductionFullTargetFlow(t *testing.T, diagnostic bool) {
 		t.Fatal(err)
 	}
 
-	base := time.Now().Unix()
-	base -= base % 300
+	base := phaseTwoQueryableSlotBoundary()
 	var clock atomic.Int64
 	clock.Store(base)
 	now := func() time.Time { return time.Unix(clock.Load(), 0) }
@@ -939,8 +938,7 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingEventACKIsRetr
 		t.Fatal(err)
 	}
 
-	base := time.Now().Unix()
-	base -= base % 300
+	base := phaseTwoQueryableSlotBoundary()
 	var clock atomic.Int64
 	clock.Store(base)
 	now := func() time.Time { return time.Unix(clock.Load(), 0) }
@@ -2533,4 +2531,26 @@ func TestPhaseTwoRedisFixtureRefusesAServerItDidNotStart(t *testing.T) {
 	if !strings.Contains(refused, port) {
 		t.Fatalf("refusal %q does not name the port it was refused on", refused)
 	}
+}
+
+// phaseTwoQueryableSlotBoundary picks the Slot boundary these production tests
+// freeze their clock at.
+//
+// It is the next boundary, not the one just passed, and the difference is not
+// cosmetic. The frozen Slot's query deadline is derived from the clock the test
+// injects, and the UQ client turns that deadline into a context deadline -
+// which the runtime measures against the real clock, not the injected one. A
+// base taken from the boundary just passed therefore stays usable only while
+// real time is still inside that period: a run that starts in the last second
+// of one issues no query at all, because the deadline it computes is already in
+// the real past. That is one second in three hundred, which is how a suite that
+// starts its run wherever it happens to start fails a few runs in a hundred.
+//
+// Anchoring to the next boundary puts every clock-derived deadline a full
+// period into the real future, so where in a period the run starts stops
+// mattering. Nothing else about the Slot changes: it is still a boundary, and
+// the test still advances the injected clock past it to make the Slot due.
+func phaseTwoQueryableSlotBoundary() int64 {
+	seconds := time.Now().Unix()
+	return seconds + (300 - seconds%300)
 }

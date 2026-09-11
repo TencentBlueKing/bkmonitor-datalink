@@ -184,7 +184,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	}
 
 	sourceConnection := cfg.StrategySourceRedis()
-	runtimeConnection := cfg.ResolvedRuntimeRedis()
+	runtimeConnection := cfg.RuntimeStoreRedis()
 	cmdbConnection := cfg.CMDBCacheRedis()
 	controlClient, err := openProductionRedisWithHook(ctx, sourceConnection, recorder.RedisHook("source"))
 	if err != nil {

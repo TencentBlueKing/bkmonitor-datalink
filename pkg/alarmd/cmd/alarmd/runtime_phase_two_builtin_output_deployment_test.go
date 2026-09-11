@@ -93,12 +93,16 @@ func TestBuiltInPythonOutputUnreachableServiceRedisStopsStartup(t *testing.T) {
 	defer uqServer.Close()
 
 	cfg := validGoAccessRuntimeConfig()
-	cfg.Redis.Address = sourceAddress
+	cfg.Redis.Address = runtimeAddress
 	withCompatibilityOutput(&cfg, sourceAddress)
 	cfg.Redis.StatePrefix = "alarmd:phase-two:builtin-output:v1"
-	runtimeRedis := cfg.Redis.Connection()
-	runtimeRedis.Address = runtimeAddress
-	cfg.PhaseTwo.RuntimeRedis = &runtimeRedis
+	// The platform's caches are one instance here and alarmd's own store is
+	// another, which is the split the wiring has to keep: the top-level
+	// connection carries alarmd's state, not the platform's reads.
+	platformCache := cfg.Redis.Connection()
+	platformCache.Address = sourceAddress
+	cfg.PlatformCache.Strategy = &platformCache
+	cfg.PlatformCache.CMDB = &platformCache
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
 	// A port nothing listens on: the configuration is complete and only the

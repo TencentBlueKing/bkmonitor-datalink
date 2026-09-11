@@ -12,7 +12,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -64,94 +63,27 @@ func TestRedisConnectionSupportsStandaloneAndSentinel(t *testing.T) {
 	}
 }
 
-func TestPhaseTwoRuntimeRedisExplicitlyInheritsTopLevelConnection(t *testing.T) {
+// Stating where a platform cache lives moves that read and nothing else.
+// alarmd's own store is the top-level connection, and the way to move it is to
+// move the top-level connection.
+func TestAPlatformCacheOverrideDoesNotMoveAlarmdsOwnStore(t *testing.T) {
 	cfg := validGoAccessConfigObject()
-	cfg.Redis.Mode = RedisModeSentinel
-	cfg.Redis.Address = ""
-	cfg.Redis.SentinelAddress = []string{"sentinel-a:26379", "sentinel-b:26379"}
-	cfg.Redis.MasterName = "monitor-master"
-	cfg.Redis.SentinelPassword = "sentinel-secret"
-
-	cfg.resolvePhaseTwoRuntimeRedis()
-	if cfg.PhaseTwo.RuntimeRedis == nil {
-		t.Fatal("runtime Redis inheritance was not resolved during configuration parsing")
-	}
-	want := cfg.Redis.Connection()
-	if !reflect.DeepEqual(*cfg.PhaseTwo.RuntimeRedis, want) {
-		t.Fatalf("resolved runtime Redis = %+v, want top-level %+v", *cfg.PhaseTwo.RuntimeRedis, want)
-	}
-	cfg.Redis.SentinelAddress[0] = "mutated:26379"
-	if cfg.PhaseTwo.RuntimeRedis.SentinelAddress[0] != "sentinel-a:26379" {
-		t.Fatal("runtime Redis inheritance aliases top-level address storage")
-	}
-}
-
-func TestLoadResolvesPhaseTwoRuntimeRedisInheritance(t *testing.T) {
-	loaded, err := Load(writeConfig(t, `mode: shadow
-input:
-  mode: go_access
-http:
-  listen: 127.0.0.1:8080
-kafka:
-  brokers: [127.0.0.1:9092]
-  trigger_event:
-    topic: alarmd-trigger-event
-  allowed_output_topics: [alarmd-trigger-event, alarmd_0bkmonitor_backend_event]
-  legacy_adapter:
-    topic: alarmd_0bkmonitor_backend_event
-    snapshot_prefix: alarmd-test
-    service_redis:
-      mode: standalone
-      address: redis.test:6379
-redis:
-  mode: sentinel
-  sentinel_address: [sentinel-a:26379, sentinel-b:26379]
-  master_name: monitor-master
-  db: 8
-  state_prefix: alarmd:phase-two:g1:v1
-phase_two:
-  worker:
-    id: alarmd-worker-0
-  control:
-    strategy_cache_prefix: alarm-config
-    timezone: Asia/Shanghai
-    legacy_query_runtime:
-      access_bk_data: false
-      bkdata_cmdb_level_tables: []
-      system_disk_filter:
-        field_name: device_type
-        values: []
-      system_network_filter:
-        field_name: device_name
-        values: []
-  access:
-    uq_endpoint: http://unify-query.service
-    query_source: alarmd
-`))
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if loaded.PhaseTwo.RuntimeRedis == nil ||
-		!reflect.DeepEqual(*loaded.PhaseTwo.RuntimeRedis, loaded.Redis.Connection()) {
-		t.Fatalf("loaded runtime Redis = %+v, top-level = %+v", loaded.PhaseTwo.RuntimeRedis, loaded.Redis.Connection())
-	}
-}
-
-func TestPhaseTwoRuntimeRedisOverrideDoesNotChangeStrategySourceConnection(t *testing.T) {
-	cfg := validGoAccessConfigObject()
-	cfg.PhaseTwo.RuntimeRedis = &RedisConnectionConfig{
-		Mode: RedisModeStandalone, Address: "runtime.redis:6379", DB: 9,
-		DialTimeout: Duration(time.Second), ReadTimeout: Duration(2 * time.Second),
-		WriteTimeout: Duration(3 * time.Second), PoolSize: 8,
-	}
+	strategyCache := cfg.Redis.Connection()
+	strategyCache.Address = "strategy-cache:6379"
+	cfg.PlatformCache.Strategy = &strategyCache
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() rejected runtime Redis override: %v", err)
+		t.Fatalf("Validate() rejected a stated platform cache: %v", err)
 	}
-	if got := cfg.StrategySourceRedis(); got.Address != "redis.test:6379" || got.DB != cfg.Redis.DB {
-		t.Fatalf("StrategySource Redis = %+v, want top-level Redis", got)
+	if got := cfg.StrategySourceRedis(); got.Address != "strategy-cache:6379" {
+		t.Fatalf("strategy source = %+v, want the stated platform cache", got)
 	}
-	if got := cfg.ResolvedRuntimeRedis(); got.Address != "runtime.redis:6379" || got.DB != 9 {
-		t.Fatalf("resolved runtime Redis = %+v, want explicit override", got)
+	if got := cfg.RuntimeStoreRedis(); got.Address != "redis.test:6379" {
+		t.Fatalf("runtime store = %+v, want the top-level connection", got)
+	}
+	// An unstated host cache follows the top-level connection, not the cache
+	// that happened to be stated next to it.
+	if got := cfg.CMDBCacheRedis(); got.Address != "redis.test:6379" {
+		t.Fatalf("cmdb cache = %+v, want the top-level connection", got)
 	}
 }
 
@@ -290,15 +222,6 @@ func TestPhaseOneCompatibilityRejectsSentinelRedis(t *testing.T) {
 
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "standalone") {
 		t.Fatalf("Validate() error = %v, want phase-one standalone Redis rejection", err)
-	}
-}
-
-func TestPhaseOneCompatibilityRejectsPhaseTwoRuntimeRedis(t *testing.T) {
-	cfg := validConfigObject()
-	runtimeRedis := cfg.Redis.Connection()
-	cfg.PhaseTwo.RuntimeRedis = &runtimeRedis
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "phase_two") {
-		t.Fatalf("Validate() error = %v, want ignored phase-two config rejection", err)
 	}
 }
 
@@ -714,17 +637,22 @@ func TestDerivedRedisPoolClearsAdmittedConcurrencyWithRoom(t *testing.T) {
 func TestWithResolvedRedisPoolSizeResolvesEveryConnection(t *testing.T) {
 	cfg := Default()
 	cfg.Input.Mode = InputModeGoAccess
-	runtimeRedis := cfg.Redis.Connection()
-	cfg.PhaseTwo.RuntimeRedis = &runtimeRedis
+	platformCache := cfg.Redis.Connection()
+	cfg.PlatformCache.Strategy = &platformCache
+	cfg.PlatformCache.CMDB = &platformCache
 	resolved := cfg.WithResolvedRedisPoolSize()
 	want := DeriveRedisPoolSize(runtime.GOMAXPROCS(0))
 	if resolved.Redis.PoolSize != want {
-		t.Fatalf("source pool size = %d, want %d", resolved.Redis.PoolSize, want)
+		t.Fatalf("own store pool size = %d, want %d", resolved.Redis.PoolSize, want)
 	}
-	if resolved.PhaseTwo.RuntimeRedis == nil || resolved.PhaseTwo.RuntimeRedis.PoolSize != want {
-		t.Fatalf("runtime pool size was not resolved: %+v", resolved.PhaseTwo.RuntimeRedis)
+	for name, connection := range map[string]*RedisConnectionConfig{
+		"strategy": resolved.PlatformCache.Strategy, "cmdb": resolved.PlatformCache.CMDB,
+	} {
+		if connection == nil || connection.PoolSize != want {
+			t.Fatalf("%s pool size was not resolved: %+v", name, connection)
+		}
 	}
-	if cfg.Redis.PoolSize != 0 || cfg.PhaseTwo.RuntimeRedis.PoolSize != 0 {
+	if cfg.Redis.PoolSize != 0 || cfg.PlatformCache.Strategy.PoolSize != 0 {
 		t.Fatal("WithResolvedRedisPoolSize mutated its receiver")
 	}
 }
@@ -756,7 +684,7 @@ platform_cache:
 		t.Fatalf("cmdb cache = %q, want the stated host cache", got)
 	}
 	// alarmd's own store is a third location and is untouched by either.
-	if got := loaded.ResolvedRuntimeRedis().Address; got != "runtime-store:6379" {
+	if got := loaded.RuntimeStoreRedis().Address; got != "runtime-store:6379" {
 		t.Fatalf("runtime = %q, want alarmd's own store", got)
 	}
 	// Stating where to read must not mean restating how long to wait: a
@@ -862,5 +790,20 @@ func TestTheResolvedDestinationNamesCoordinatesAndNoCredentials(t *testing.T) {
 				t.Fatalf("destination %q carries a credential", connection.Destination())
 			}
 		}
+	}
+}
+
+// The key that used to move alarmd's own state on its own is gone, and a
+// configuration still carrying it is refused rather than silently ignored: it
+// moved the connection while the prefix and the TTLs that parameterise those
+// keys stayed under the key it moved away from, so accepting it quietly would
+// write to the new instance with the old instance's shape.
+func TestTheRemovedRuntimeRedisKeyIsRefusedRatherThanIgnored(t *testing.T) {
+	_, err := Load(writeConfig(t, platformCacheConfigContents("")+`  runtime_redis:
+    mode: standalone
+    address: somewhere-else:6379
+`))
+	if err == nil || !strings.Contains(err.Error(), "runtime_redis") {
+		t.Fatalf("Load() error = %v, want the removed key named", err)
 	}
 }

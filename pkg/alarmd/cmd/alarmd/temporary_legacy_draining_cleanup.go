@@ -72,7 +72,7 @@ func runTemporaryLegacyDrainingCleanup(
 	if err != nil {
 		return err
 	}
-	runtimeConnection := cfg.ResolvedRuntimeRedis()
+	runtimeConnection := cfg.RuntimeStoreRedis()
 	runtimeScopeDigest, err := temporaryLegacyDrainingRuntimeScopeDigest(runtimeConnection, cfg.Redis.StatePrefix)
 	if err != nil {
 		return err

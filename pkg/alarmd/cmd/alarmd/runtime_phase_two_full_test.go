@@ -59,7 +59,7 @@ func (*phaseTwoScanCountingHook) AfterProcessPipeline(context.Context, []redis.C
 	return nil
 }
 
-func TestProductionPhaseTwoBundleUsesCanonicalSourceAndRuntimeRedisOverride(t *testing.T) {
+func TestProductionPhaseTwoBundleKeepsThePlatformCacheApartFromItsOwnStore(t *testing.T) {
 	sourceAddress, sourceClient := startPhaseTwoRedis(t)
 	runtimeAddress, runtimeClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
@@ -79,12 +79,16 @@ func TestProductionPhaseTwoBundleUsesCanonicalSourceAndRuntimeRedisOverride(t *t
 	}))
 	defer uqServer.Close()
 	cfg := validGoAccessRuntimeConfig()
-	cfg.Redis.Address = sourceAddress
+	cfg.Redis.Address = runtimeAddress
 	withCompatibilityOutput(&cfg, sourceAddress)
 	cfg.Redis.StatePrefix = "alarmd:phase-two:g1:v1"
-	runtimeRedis := cfg.Redis.Connection()
-	runtimeRedis.Address = runtimeAddress
-	cfg.PhaseTwo.RuntimeRedis = &runtimeRedis
+	// The platform's caches are one instance here and alarmd's own store is
+	// another, which is the split the wiring has to keep: the top-level
+	// connection carries alarmd's state, not the platform's reads.
+	platformCache := cfg.Redis.Connection()
+	platformCache.Address = sourceAddress
+	cfg.PlatformCache.Strategy = &platformCache
+	cfg.PlatformCache.CMDB = &platformCache
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = uqServer.URL
 

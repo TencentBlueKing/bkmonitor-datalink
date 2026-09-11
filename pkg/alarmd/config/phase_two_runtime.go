@@ -135,7 +135,6 @@ type PhaseTwoRuntimeConfig struct {
 	Scheduler          PhaseTwoSchedulerConfig   `yaml:"scheduler"`
 	Access             PhaseTwoAccessConfig      `yaml:"access"`
 	Coordinator        PhaseTwoCoordinatorConfig `yaml:"-"`
-	RuntimeRedis       *RedisConnectionConfig    `yaml:"runtime_redis,omitempty"`
 }
 
 func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {

@@ -293,11 +293,6 @@ func (c Config) WithResolvedRedisPoolSize() Config {
 		resolved.PoolSize = resolved.EffectivePoolSize(cpuBudget)
 		*platform = &resolved
 	}
-	if c.PhaseTwo.RuntimeRedis != nil {
-		runtimeRedis := c.PhaseTwo.RuntimeRedis.clone()
-		runtimeRedis.PoolSize = runtimeRedis.EffectivePoolSize(cpuBudget)
-		c.PhaseTwo.RuntimeRedis = &runtimeRedis
-	}
 	return c
 }
 
@@ -374,19 +369,15 @@ func (c *Config) resolvePlatformCacheRedis() {
 	}
 }
 
-func (c Config) ResolvedRuntimeRedis() RedisConnectionConfig {
-	if c.PhaseTwo.RuntimeRedis != nil {
-		return c.PhaseTwo.RuntimeRedis.clone()
-	}
+// RuntimeStoreRedis is where alarmd's own runtime state lives: catalog,
+// ownership, state, fleet and progress. It is the top-level redis and nothing
+// else - there was once a second key that could move this connection on its
+// own, which left the prefix and the TTLs that parameterise these keys stated
+// under a different key from the connection they applied to. The way to put
+// alarmd's state somewhere of its own is externalRedis.alarmd, which moves
+// this whole section together.
+func (c Config) RuntimeStoreRedis() RedisConnectionConfig {
 	return c.Redis.Connection()
-}
-
-func (c *Config) resolvePhaseTwoRuntimeRedis() {
-	if c == nil || c.Input.Mode != InputModeGoAccess || c.PhaseTwo.RuntimeRedis != nil {
-		return
-	}
-	resolved := c.Redis.Connection()
-	c.PhaseTwo.RuntimeRedis = &resolved
 }
 
 // resolveCompatibilityServiceTimeouts lets the compatibility service Redis
@@ -470,7 +461,6 @@ func (c Config) EvaluationRunnerLimits() coordinator.ConcurrentRunnerLimits {
 func Load(path string) (Config, error) {
 	cfg := Default().WithContainerCapacity()
 	if path == "" {
-		cfg.resolvePhaseTwoRuntimeRedis()
 		cfg.resolvePlatformCacheRedis()
 		cfg.resolveCompatibilityServiceTimeouts()
 		cfg.resolveCompatibilityPodCache()
@@ -496,7 +486,6 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
 
-	cfg.resolvePhaseTwoRuntimeRedis()
 	cfg.resolvePlatformCacheRedis()
 	cfg.resolveCompatibilityServiceTimeouts()
 	cfg.resolveCompatibilityPodCache()
@@ -630,9 +619,6 @@ func (c Config) validateGoAccessRuntime() error {
 	if err := c.PhaseTwo.validate(); err != nil {
 		return err
 	}
-	if err := c.ResolvedRuntimeRedis().validate("phase_two.runtime_redis"); err != nil {
-		return err
-	}
 	if err := c.StrategySourceRedis().validate("platform_cache.strategy"); err != nil {
 		return err
 	}
@@ -687,9 +673,6 @@ func (c Config) validateGoAccessRuntime() error {
 }
 
 func (c Config) validatePhaseOneRuntime() error {
-	if c.PhaseTwo.RuntimeRedis != nil {
-		return errors.New("phase-one Kafka compatibility must not configure phase_two runtime_redis")
-	}
 	if c.Redis.Mode != RedisModeStandalone {
 		return errors.New("phase-one Kafka compatibility requires standalone Redis")
 	}

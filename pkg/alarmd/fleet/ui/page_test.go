@@ -112,6 +112,22 @@ func TestEveryDetailFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "objectDetail", reflect.TypeOf(fleet.DetailResponse{}))
 }
 
+// A kind the page has no wording for does not render as an error. It renders as
+// whichever word the fallback reaches for, so a new classification appears as an
+// ordinary row of a familiar kind -- and the page was doing exactly that, asking
+// "is it BLOCKED_RUN, otherwise it is degraded", which quietly renamed every
+// kind that came after those two.
+func TestThePageHasWordingForEveryAnomalyKind(t *testing.T) {
+	if len(fleet.AnomalyKinds) == 0 {
+		t.Fatal("no anomaly kinds declared; the check would pass vacuously")
+	}
+	for _, kind := range fleet.AnomalyKinds {
+		if !strings.Contains(string(page), kind+":") {
+			t.Errorf("the page has no wording for anomaly kind %q: it would render as another kind's word", kind)
+		}
+	}
+}
+
 // assertFieldsExist checks every `<object>.<field>` the page reads against the
 // JSON the Go type actually sends.
 func assertFieldsExist(t *testing.T, object string, response reflect.Type) {

@@ -25,14 +25,23 @@ const (
 	LabelOther = "OTHER"
 )
 
+// AnomalyKinds is the closed set of kinds this build produces.
+//
+// It is one list with two readers on purpose: the metric label set below, and
+// the page's own wording for each kind. Two lists drift, and the way they drift
+// is silent -- a kind the page has no word for renders as whichever word the
+// fallback happens to be, which reads as an ordinary row of a familiar kind.
+// That is worse than showing the raw name, so the page is checked against this.
+var AnomalyKinds = []string{KindDegradedRun, KindBlockedRun, KindOverdueWake}
+
 // MetricKind maps an anomaly kind onto the closed label set.
 func MetricKind(kind string) string {
-	switch kind {
-	case KindDegradedRun, KindBlockedRun:
-		return kind
-	default:
-		return LabelOther
+	for _, known := range AnomalyKinds {
+		if kind == known {
+			return kind
+		}
 	}
+	return LabelOther
 }
 
 // MetricGapKind maps a gap onto the closed label set.

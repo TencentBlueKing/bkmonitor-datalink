@@ -27,7 +27,18 @@ const (
 	// KindBlockedRun is a query group whose recent rounds never reached
 	// execution at all.
 	KindBlockedRun = "BLOCKED_RUN"
+	// KindOverdueWake is a query group whose wake time has passed with nothing
+	// coming back for it. Unlike the other two it does not come from the
+	// observation stream, because there is nothing to observe: the condition is
+	// the absence of rounds, and the only thing that can report it is whatever
+	// is holding the object's next wake time.
+	KindOverdueWake = "OVERDUE_WAKE"
 )
+
+// ReasonWakeMissed is the reason code carried by an overdue object. The other
+// kinds carry the pipeline's own completion or outcome string; this one has no
+// round to take a string from, so it states the condition itself.
+const ReasonWakeMissed = "WAKE_MISSED"
 
 // Thresholds are counted in rounds, not in wall-clock time, because query group
 // periods in the deployed population range from ten seconds to ten minutes. A

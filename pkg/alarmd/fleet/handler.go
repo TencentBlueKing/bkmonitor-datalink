@@ -269,7 +269,12 @@ func NewHandler(
 			"covered":    view.Covered,
 			"determined": view.Determined,
 			"unknown":    view.Unknown,
-			"gaps":       view.Gaps,
+			// Objects nothing came back for. It rides here rather than only in
+			// the list because the list can be paged or truncated, and "how many
+			// objects are not being evaluated" must not depend on how much of the
+			// list fitted.
+			"overdue": view.Overdue,
+			"gaps":    view.Gaps,
 			// Capacity rides on the verdict rather than getting an endpoint of
 			// its own: the two are answers from one read, and splitting them
 			// would let a page show a verdict from one moment beside occupancy

@@ -122,6 +122,11 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <div class="cell"><div class="k">已覆盖 (covered)</div><div class="v" id="covered">–</div></div>
       <div class="cell"><div class="k">已知状态 (determined)</div><div class="v" id="determined">–</div></div>
       <div class="cell hl"><div class="k">未知 (unknown)</div><div class="v" id="unknown">–</div></div>
+      <div class="cell hl" id="overdueCell" hidden>
+        <div class="k">没被调度 (overdue)</div>
+        <div class="v" id="overdue">–</div>
+        <div class="k" id="overdueHint"></div>
+      </div>
     </div>
     <ul class="gaps" id="gaps"></ul>
     <div class="err" id="healthErr" hidden></div>
@@ -352,6 +357,20 @@ function loadHealth() {
     text('covered', d.covered);
     text('determined', d.determined);
     text('unknown', d.unknown);
+    // Shown only where something actually holds wake times. A zero here on a
+    // deployment that holds none would report "nothing is being missed" for one
+    // where nothing is watching, which is the failure this whole cell is for.
+    var overdue = d.overdue;
+    show('overdueCell', !!overdue);
+    if (overdue) {
+      // A truncated count is a floor, and writing it as a plain number would
+      // state the sample as the total.
+      text('overdue', (overdue.truncated ? '≥ ' : '') + overdue.total);
+      text('overdueHint', overdue.total
+        ? '唤醒时刻已过、没有轮次回来；最久的 ' + Math.round(overdue.oldest_seconds || 0) +
+          ' 秒。可能没被派发，也可能派出去没回来'
+        : '每个对象都在按自己的周期被处理');
+    }
     var gaps = d.gaps || [];
     text('why', gaps.length
       ? '证据不全：' + (GAP_MEANING[gaps[0].kind] || gaps[0].kind) +
@@ -400,7 +419,7 @@ function loadObjects() {
       qg.addEventListener('click', function () {
         document.getElementById('qg').value = a.query_group;
       });
-      cell(a.kind === 'BLOCKED_RUN' ? '被阻塞' : '降级');
+      cell(kindText(a.kind));
       cell(a.reason_code || '—');
       // The completion kind alone folds four conditions together, and they call
       // for opposite responses. Without this column the list reads as hundreds
@@ -551,7 +570,7 @@ function renderSummary(summary, total) {
         }
         var label = pair[0] === '副本' ? shortReplica(c.value)
           : pair[0] === '失败在哪' ? (FAILURE_CATEGORY[c.value] || c.value)
-          : pair[0] === '种类' ? (c.value === 'BLOCKED_RUN' ? '被阻塞' : '降级')
+          : pair[0] === '种类' ? kindText(c.value)
           : c.value;
         div.appendChild(document.createTextNode(label + ' '));
         var b = document.createElement('b');
@@ -566,6 +585,18 @@ function renderSummary(summary, total) {
 // Capacity comes from the same read as the verdict, so the page never has to
 // ask the time series database what this deployment's limits are -- and the two
 // cannot disagree.
+// Anomaly kinds, looked up rather than branched. The page used to ask "is it
+// BLOCKED_RUN, otherwise it is degraded", which is a lie the moment a third
+// kind exists -- and one that reads as a normal row, so nothing looks wrong.
+// An unknown kind shows its own name: being told a word you do not recognise
+// is a far better outcome than being told the wrong familiar one.
+var KIND_TEXT = {
+  DEGRADED_RUN: '降级',
+  BLOCKED_RUN: '被阻塞',
+  OVERDUE_WAKE: '没被调度'
+};
+function kindText(kind) { return KIND_TEXT[kind] || kind || '—'; }
+
 function renderCapacity(cap, gaps) {
   var box = document.getElementById('capCards');
   box.textContent = '';

@@ -85,7 +85,19 @@ func (session *Session) ValidateCurrentWithAssignment(
 	}
 	record, err := session.store.CheckFenceWithAssignment(ctx, lease.Fence, at)
 	if err != nil {
-		session.stopAccepting()
+		// Only an authoritative answer about the fence ends admission here.
+		// This call can also fail for reasons that say nothing about the lease:
+		// an Assignment record the store read but could not accept, or a caller
+		// asking for a record on an identity that carries none. Ending the
+		// Session on those would turn one bad record into a rebuild loop -- the
+		// Runner is stopped, the control plane reconciles a new Session, it
+		// reads the same record and dies again, once per reconcile -- and would
+		// report each of those attempts as an ownership rejection, which is
+		// precisely what that outcome is supposed to distinguish. Renewal draws
+		// the same line for the same reason.
+		if IsLeaseDecision(err) {
+			session.stopAccepting()
+		}
 		return execution.OwnerFence{}, AssignmentRecord{}, err
 	}
 	return lease.Fence, record, nil

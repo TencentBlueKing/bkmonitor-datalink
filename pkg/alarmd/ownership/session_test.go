@@ -151,6 +151,62 @@ func TestSessionStopsAcceptingOnAuthoritativeRenewDecision(t *testing.T) {
 	}
 }
 
+// A merged fence check can fail for reasons that are not answers about the
+// fence: an Assignment record the store read but could not accept, or a caller
+// asking for a record on an identity that has none. Those are one bad attempt,
+// not the end of the lease. Ending the Session on them would turn a single data
+// fault into a rebuild loop -- the Runner is torn down, the control plane
+// reconciles a new Session, it reads the same bad record and dies again -- and
+// would count each of those attempts as an ownership rejection, which is the
+// one thing that counter is supposed to mean.
+func TestSessionKeepsAcceptingAfterNonDecisionFenceCheckFailure(t *testing.T) {
+	now := time.UnixMilli(1_700_000_000_000)
+	fence := execution.OwnerFence{QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "token-1"}
+	store := &fakeLeaseStore{lease: Lease{Fence: fence, Deadline: now.Add(time.Minute)}}
+	session, err := OpenSession(context.Background(), store, "query-group-1", "worker-1", now, time.Minute)
+	if err != nil {
+		t.Fatalf("OpenSession() error = %v", err)
+	}
+	unacceptable := errors.New("alarmd ownership: incomplete Assignment record")
+	store.assignmentErr = unacceptable
+	if _, _, err := session.ValidateCurrentWithAssignment(context.Background(), now.Add(time.Second)); !errors.Is(err, unacceptable) {
+		t.Fatalf("ValidateCurrentWithAssignment(unacceptable record) error = %v, want the store error", err)
+	}
+	store.assignmentErr = nil
+	if got, err := session.ValidateCurrent(context.Background(), now.Add(2*time.Second)); err != nil || got != fence {
+		t.Fatalf("ValidateCurrent(after non-decision failure) fence=%+v error=%v, want the lease still accepted", got, err)
+	}
+	record := AssignmentRecord{
+		QueryGroup: "query-group-1", DesiredWorkerID: "worker-1", AssignmentGeneration: 1, RecordRevision: 1,
+		ControlEpoch: 1, PlacementReason: PlacementRendezvous, AssignedAt: now,
+	}
+	store.assignment = record
+	if got, gotRecord, err := session.ValidateCurrentWithAssignment(context.Background(), now.Add(3*time.Second)); err != nil ||
+		got != fence || gotRecord != record {
+		t.Fatalf("ValidateCurrentWithAssignment(recovered) = (%+v, %+v, %v), want the live fence and record", got, gotRecord, err)
+	}
+}
+
+func TestSessionStopsAcceptingOnAuthoritativeFenceCheckDecision(t *testing.T) {
+	now := time.UnixMilli(1_700_000_000_000)
+	for _, decision := range []error{ErrStaleFence, ErrNotDesired} {
+		fence := execution.OwnerFence{QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "token-1"}
+		store := &fakeLeaseStore{lease: Lease{Fence: fence, Deadline: now.Add(time.Minute)}}
+		session, err := OpenSession(context.Background(), store, "query-group-1", "worker-1", now, time.Minute)
+		if err != nil {
+			t.Fatalf("OpenSession() error = %v", err)
+		}
+		store.checkErr = decision
+		if _, _, err := session.ValidateCurrentWithAssignment(context.Background(), now.Add(time.Second)); !errors.Is(err, decision) {
+			t.Fatalf("ValidateCurrentWithAssignment(%v) error = %v", decision, err)
+		}
+		store.checkErr = nil
+		if _, err := session.ValidateCurrent(context.Background(), now.Add(2*time.Second)); !errors.Is(err, ErrStaleFence) {
+			t.Fatalf("ValidateCurrent(after %v) error = %v, want ErrStaleFence", decision, err)
+		}
+	}
+}
+
 type fakeLeaseStore struct {
 	lease        Lease
 	renewed      Lease
@@ -159,6 +215,9 @@ type fakeLeaseStore struct {
 	releaseCalls int
 	checkErr     error
 	assignment   AssignmentRecord
+	// assignmentErr fails only the Assignment half of the merged fence check,
+	// which is how the store reports a record it read but could not accept.
+	assignmentErr error
 }
 
 func (store *fakeLeaseStore) Acquire(
@@ -198,6 +257,9 @@ func (store *fakeLeaseStore) CheckFenceWithAssignment(
 ) (AssignmentRecord, error) {
 	if store.checkErr != nil {
 		return AssignmentRecord{}, store.checkErr
+	}
+	if store.assignmentErr != nil {
+		return AssignmentRecord{}, store.assignmentErr
 	}
 	return store.assignment, nil
 }

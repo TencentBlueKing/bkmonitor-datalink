@@ -104,6 +104,17 @@ func TestG4DefaultRegistryCompilesThreeIndependentAlgorithmKinds(t *testing.T) {
 // fixtures are pinned to the values recorded before the policy existed, so a
 // change that started to digest the policy (and would flip state generations
 // in production) fails here. Other algorithm kinds declare no policy.
+//
+// The state hash was re-pinned once on purpose, when the Level contract
+// inputs (detect and trigger fingerprints, state requirement) were folded
+// into it so that a trigger, recovery or connector edit re-warms the Plan
+// instead of failing its loaded state. The cost of moving this value is
+// paid by the whole deployment at rollout: every Plan's state generation
+// changes once, so every Plan is forced through WARMING once and detects
+// nothing for RequiredFullSlots of its evaluation interval, and every
+// event id changes namespace once, since it closes over the hash. Move it
+// only with that cost in mind, and never alone in a release. The other
+// five values did not move.
 func TestG4ProcPortDeclaresSeriesFoldPolicyWithoutChangingFingerprints(t *testing.T) {
 	projection := AlgorithmInputProjection{
 		ValueFields:     []string{"value"},
@@ -117,7 +128,7 @@ func TestG4ProcPortDeclaresSeriesFoldPolicyWithoutChangingFingerprints(t *testin
 	const (
 		wantDetect         = "9218eb1b3507104a392a86d45a0314e6ac21a964ce39a420832412ba8f0b72ce"
 		wantTrigger        = "5177aa852128e953a9ed687682e39d2d7cdb99d892678da8bd52df3416f202f1"
-		wantStateHash      = "28a9629ea70d94d8fdd638245ee2716ba8c5a4733e76b5b9f9c59bb83c8ba9eb"
+		wantStateHash      = "98c79a7d7ab6cdcba964bd22e00439a0b904c154807d0ff52d68d435e804f54b"
 		wantAlgorithmState = "30a7dc0134d5035922831e1b21dd043aa702fd39466e098a072dc34f696620e7"
 		wantConfigDigest   = "fb4176edfb5c4e8b3fc317904a61ba93fab57f132a9132225d68e1055890a06f"
 		wantPlanID         = "f80484f463a5f2948e71bb9ef6e83c84687befe58d787db348be49d833510362"

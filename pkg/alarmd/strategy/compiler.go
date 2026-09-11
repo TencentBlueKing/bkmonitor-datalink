@@ -238,24 +238,46 @@ func (c *PlanCompiler) validatePlan(request CompileRequest) *Terminal {
 	return nil
 }
 
+// deriveStateCompatibilityHash closes the state generation over everything a
+// persisted Runtime State is later checked against. The Level contract a
+// Worker validates loaded state with (execution.DeriveRuntimeLevelContractRefs)
+// is built from the detect and trigger fingerprints and the state requirement
+// of each Level, so each of them is an input here: a Plan whose generation
+// stayed while one of them moved would be activated without WARMING under the
+// same generation, its loaded state would then fail that check, and the Query
+// Group would stop evaluating with nothing but an evaluation failure to show
+// for it. A trigger window, a recovery window and a level connector are
+// ordinary edits, and each of them moves one of those inputs.
+//
+// Changing what this hash closes over changes every Plan's state generation
+// at once: at the rollout of such a change every Plan is forced through
+// WARMING once and every event id changes namespace once. That is the price
+// of every edit to this function, not only of the one that added the Level
+// contract inputs.
 func (c *PlanCompiler) deriveStateCompatibilityHash(request CompileRequest, levels []CompiledLevel) (string, error) {
 	semantics := request.StateSemantics
-	algorithmClosure := make([]struct {
-		LevelID    uint32                      `json:"level_id"`
-		Algorithms []compiledAlgorithmSemantic `json:"algorithms"`
+	levelClosure := make([]struct {
+		LevelID            uint32                      `json:"level_id"`
+		Algorithms         []compiledAlgorithmSemantic `json:"algorithms"`
+		DetectFingerprint  string                      `json:"detect_fingerprint"`
+		TriggerFingerprint string                      `json:"trigger_fingerprint"`
+		StateRequirement   StateRequirement            `json:"state_requirement"`
 	}, len(levels))
 	for levelIndex, level := range levels {
-		algorithmClosure[levelIndex].LevelID = level.definition.LevelID
-		algorithmClosure[levelIndex].Algorithms = make([]compiledAlgorithmSemantic, len(level.algorithms))
+		levelClosure[levelIndex].LevelID = level.definition.LevelID
+		levelClosure[levelIndex].Algorithms = make([]compiledAlgorithmSemantic, len(level.algorithms))
 		for algorithmIndex, algorithm := range level.algorithms {
-			algorithmClosure[levelIndex].Algorithms[algorithmIndex] = algorithm.semantic()
+			levelClosure[levelIndex].Algorithms[algorithmIndex] = algorithm.semantic()
 		}
+		levelClosure[levelIndex].DetectFingerprint = level.fingerprints.Detect
+		levelClosure[levelIndex].TriggerFingerprint = level.fingerprints.Trigger
+		levelClosure[levelIndex].StateRequirement = level.stateRequirement
 	}
-	identityAndAlgorithmDigest, err := contract.DeriveCanonicalDigestV2("strategy-state-input-closure-v1", struct {
+	identityAndAlgorithmDigest, err := contract.DeriveCanonicalDigestV2("strategy-state-input-closure-v2", struct {
 		IdentitySchemaDigest  string   `json:"identity_schema_digest"`
 		DatasetIdentityFields []string `json:"dataset_identity_fields"`
-		AlgorithmClosure      any      `json:"algorithm_closure"`
-	}{semantics.IdentitySchemaDigest, request.DatasetContract.IdentityFields, algorithmClosure})
+		LevelClosure          any      `json:"level_closure"`
+	}{semantics.IdentitySchemaDigest, request.DatasetContract.IdentityFields, levelClosure})
 	if err != nil {
 		return "", err
 	}

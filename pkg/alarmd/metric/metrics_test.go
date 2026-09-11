@@ -363,6 +363,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_schedule_prune_skipped_total":                 "variableLabels: {reason}",
 		"bkmonitor_alarmd_schedule_cutover_query_groups_total":          "variableLabels: {decision}",
 		"bkmonitor_alarmd_schedule_cutover_timelines_read":              "variableLabels: {}",
+		"bkmonitor_alarmd_query_failure_total":                          "variableLabels: {stage,category}",
 		"bkmonitor_alarmd_schedule_cutover_duration_seconds":            "variableLabels: {result}",
 		"bkmonitor_alarmd_object_catalog_objects_total":                 "variableLabels: {operation,outcome}",
 		"bkmonitor_alarmd_object_catalog_redis_duration_seconds":        "variableLabels: {operation,result}",
@@ -729,6 +730,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("schedule_prune_skipped_total"):                 len(observability.SchedulePruneSkipReasons),
 		fqName("schedule_cutover_query_groups_total"):          len(observability.ScheduleCutoverDecisions),
 		fqName("schedule_cutover_timelines_read"):              1,
+		fqName("query_failure_total"):                          len(observability.QueryFailureStages) * len(observability.QueryFailureCategories),
 		fqName("schedule_cutover_duration_seconds"):            histogramSeries(2, len(activeQGSetDurationBuckets)),
 		// Two operations (write, renew) by three outcomes (written, present,
 		// missing); two operations by two results for the duration.

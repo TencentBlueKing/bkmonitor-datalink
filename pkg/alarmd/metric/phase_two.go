@@ -42,6 +42,7 @@ type phaseTwoMetrics struct {
 	scheduleCutoverDuration      *prometheus.HistogramVec
 	scheduleCutoverQueryGroups   *prometheus.CounterVec
 	scheduleCutoverTimelinesRead prometheus.Gauge
+	queryFailures                *prometheus.CounterVec
 	objectCatalogObjects         *prometheus.CounterVec
 	objectCatalogRedis           *prometheus.HistogramVec
 	objectCatalogManifestBytes   prometheus.Gauge
@@ -183,6 +184,15 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 		metrics.scheduleCutoverQueryGroups.WithLabelValues(decision)
 	}
 	metrics.scheduleCutoverTimelinesRead = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "schedule_cutover_timelines_read", Help: "Schedule timelines the last publication cutover read to decide. Equal to the population on the first cutover of a Control Leader process, the changed set afterwards."})
+	// The failure code itself is an open vocabulary and stays in the log and
+	// the fleet view; the counter carries the bounded stage and category so a
+	// family of failures that produces no completion at all still has a rate.
+	metrics.queryFailures = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "query_failure_total", Help: "Slot attempts that failed before producing a completion, by the Coordinator stage that failed and the failure category. The failure code is in the log line and the fleet view."}, []string{"stage", "category"})
+	for _, stage := range observability.QueryFailureStages {
+		for _, category := range observability.QueryFailureCategories {
+			metrics.queryFailures.WithLabelValues(stage, category)
+		}
+	}
 	metrics.objectCatalogObjects = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "object_catalog_objects_total", Help: "Content-addressed catalog objects by what a write or renewal did with them: written, present (already stored under their digest) or missing (referenced but not found on renewal)."}, []string{"operation", "outcome"})
 	metrics.objectCatalogRedis = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "object_catalog_redis_duration_seconds", Help: "Object catalog write or renewal duration.", Buckets: activeQGSetDurationBuckets}, []string{"operation", "result"})
 	metrics.objectCatalogManifestBytes = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "object_catalog_manifest_bytes", Help: "Encoded bytes of the manifest written for the latest publication."})
@@ -248,6 +258,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.activeQGSetCount, m.activeQGSetBytes, m.activeQGSetEncode, m.activeQGSetRedis,
 		m.scheduleCutoverPayload, m.scheduleCutoverTimelineMax, m.scheduleTimelineBytes, m.scheduleSegmentsPruned, m.schedulePruneSkipped, m.scheduleCutoverDuration,
 		m.scheduleCutoverQueryGroups, m.scheduleCutoverTimelinesRead,
+		m.queryFailures,
 		m.objectCatalogObjects, m.objectCatalogRedis, m.objectCatalogManifestBytes, m.objectReads,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 		m.undrainedDrainingQueryGroups,
@@ -285,6 +296,9 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 				m.activeQGSetBytes.Set(float64(facts.ObjectBytes))
 			}
 		}
+	}
+	if facts := observation.QueryFailure; facts != nil && observation.Result == observability.ResultFailed {
+		m.queryFailures.WithLabelValues(facts.Stage, facts.Category).Inc()
 	}
 	if facts := observation.ScheduleCutover; facts != nil {
 		m.scheduleCutoverDuration.WithLabelValues(facts.Result).Observe(facts.Duration.Seconds())

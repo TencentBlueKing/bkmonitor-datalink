@@ -353,6 +353,44 @@ func twoGroupCatalog(t *testing.T, threshold int, includeA, includeB bool) contr
 	return catalog
 }
 
+// twoGroupCatalogBothEdited builds the two-Query-Group catalog with the
+// threshold edited on both strategies, so one publication changes the
+// execution content of both Query Groups.
+func twoGroupCatalogBothEdited(t *testing.T, threshold int) controlplane.Catalog {
+	t.Helper()
+	documents := realThresholdDocuments(t)
+	// The two fixture strategies carry thresholds 80 and 90; the same edit
+	// is applied to both so that both Query Groups change on each call.
+	edited := func(document json.RawMessage, original string) []byte {
+		replaced := strings.Replace(string(document), `"threshold":`+original, `"threshold":`+strconv.Itoa(threshold), 1)
+		if replaced == string(document) && strconv.Itoa(threshold) != original {
+			t.Fatalf("fixture strategy carries no threshold %s to edit", original)
+		}
+		return []byte(replaced)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(withWireIdentity(t, documents[1], "tenant-a", "bkcc__3"), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	decoded["bk_biz_id"] = float64(3)
+	documentB, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planner := &perBusinessPlanner{facts: map[string]execution.QueryPlanFacts{"2": queryFactsFor(t, "2", "bkcc__2"), "3": queryFactsFor(t, "3", "bkcc__3")}}
+	catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{Strategies: []controlplane.SourceStrategy{
+		{SourceID: "1001", Document: edited(documents[0], "80"), Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}},
+		{SourceID: "1002", Document: edited(documentB, "90"), Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "3", SpaceScope: "bkcc__3"}},
+	}, Planner: planner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.QueryGroups) != 2 {
+		t.Fatalf("expected two Query Groups, got %d with dispositions %+v", len(catalog.QueryGroups), catalog.Dispositions)
+	}
+	return catalog
+}
+
 // publishAndActivateCatalog publishes and activates a prepared catalog and
 // returns the identity of the Query Group on business 2 when present.
 func (harness *pruneHarness) publishAndActivateCatalog(t *testing.T, catalog controlplane.Catalog, boundary int64) execution.QueryGroupIdentity {
@@ -558,9 +596,12 @@ func TestPublicationCutoverReadsProgressInOneBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	var a, b execution.QueryGroupIdentity
+	// Both Query Groups change content on every publication: a cutover only
+	// writes, and so only prunes, the timelines of Query Groups whose content
+	// changed, and the batch under test must hold both.
 	activate := func(threshold int, boundary int64) {
 		t.Helper()
-		catalog := twoGroupCatalog(t, threshold, true, true)
+		catalog := twoGroupCatalogBothEdited(t, threshold)
 		for _, group := range catalog.QueryGroups {
 			if group.QueryPlan.BusinessID == "2" {
 				a = group.Identity

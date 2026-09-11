@@ -198,7 +198,7 @@ func TestActivatedSegmentIsReadByContent(t *testing.T) {
 		fallbackCalls++
 		return repository.LoadQueryGroup(ctx, segment.Publication.SnapshotRevision, group.Identity)
 	}
-	read, err := repository.LoadSegmentQueryGroup(ctx, segment, fallback)
+	read, err := repository.LoadSegmentQueryGroup(ctx, segment, 60, fallback)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestActivatedSegmentIsReadByContent(t *testing.T) {
 	if observer.count("segment", "object") != 1 || observer.count("query_group", "miss") != 1 || observer.count("output_context", "miss") != 1 {
 		t.Fatalf("first read counters=%+v", observer.reads)
 	}
-	if _, err := repository.LoadSegmentQueryGroup(ctx, segment, fallback); err != nil || fallbackCalls != 0 {
+	if _, err := repository.LoadSegmentQueryGroup(ctx, segment, 60, fallback); err != nil || fallbackCalls != 0 {
 		t.Fatalf("second read: err=%v fallback calls=%d", err, fallbackCalls)
 	}
 	if observer.count("query_group", "hit") != 1 || observer.count("output_context", "hit") != 1 || observer.count("segment", "object") != 2 {
@@ -222,13 +222,13 @@ func TestActivatedSegmentIsReadByContent(t *testing.T) {
 	// A Segment without a digest is read the way it always was.
 	legacy := segment
 	legacy.ObjectDigest, legacy.OutputContextRefs = "", nil
-	if _, err := repository.LoadSegmentQueryGroup(ctx, legacy, fallback); err != nil || fallbackCalls != 1 || observer.count("segment", "legacy_segment") != 1 {
+	if _, err := repository.LoadSegmentQueryGroup(ctx, legacy, 60, fallback); err != nil || fallbackCalls != 1 || observer.count("segment", "legacy_segment") != 1 {
 		t.Fatalf("legacy segment: err=%v fallback calls=%d counters=%+v", err, fallbackCalls, observer.reads)
 	}
 	// A Segment naming an object but no context for a Plan falls back too.
 	withoutRef := segment
 	withoutRef.OutputContextRefs = nil
-	if _, err := repository.LoadSegmentQueryGroup(ctx, withoutRef, fallback); err != nil || fallbackCalls != 2 || observer.count("segment", "segment_without_ref") != 1 {
+	if _, err := repository.LoadSegmentQueryGroup(ctx, withoutRef, 60, fallback); err != nil || fallbackCalls != 2 || observer.count("segment", "segment_without_ref") != 1 {
 		t.Fatalf("segment without ref: err=%v fallback calls=%d counters=%+v", err, fallbackCalls, observer.reads)
 	}
 	// A missing object falls back; a fresh process is used so no cache hides
@@ -246,14 +246,14 @@ func TestActivatedSegmentIsReadByContent(t *testing.T) {
 	if err := client.Del(ctx, objectKey).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cold.LoadSegmentQueryGroup(ctx, segment, fallback); err != nil || fallbackCalls != 3 || observer.count("segment", "object_missing") != 1 {
+	if _, err := cold.LoadSegmentQueryGroup(ctx, segment, 60, fallback); err != nil || fallbackCalls != 3 || observer.count("segment", "object_missing") != 1 {
 		t.Fatalf("missing object: err=%v fallback calls=%d counters=%+v", err, fallbackCalls, observer.reads)
 	}
 	// Corrupt bytes under the digest are refused and fall back.
 	if err := client.Set(ctx, objectKey, append(append([]byte(nil), stored...), ' '), 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cold.LoadSegmentQueryGroup(ctx, segment, fallback); err != nil || fallbackCalls != 4 || observer.count("segment", "object_invalid") != 1 || observer.count("query_group", "invalid") != 1 {
+	if _, err := cold.LoadSegmentQueryGroup(ctx, segment, 60, fallback); err != nil || fallbackCalls != 4 || observer.count("segment", "object_invalid") != 1 || observer.count("query_group", "invalid") != 1 {
 		t.Fatalf("corrupt object: err=%v fallback calls=%d counters=%+v", err, fallbackCalls, observer.reads)
 	}
 	if err := client.Set(ctx, objectKey, stored, 0).Err(); err != nil {
@@ -263,13 +263,13 @@ func TestActivatedSegmentIsReadByContent(t *testing.T) {
 	failing := func(context.Context) (controlplane.QueryGroup, error) {
 		return controlplane.QueryGroup{}, errors.New("snapshot gone")
 	}
-	if _, err := cold.LoadSegmentQueryGroup(ctx, legacy, failing); err == nil || err.Error() != "snapshot gone" {
+	if _, err := cold.LoadSegmentQueryGroup(ctx, legacy, 60, failing); err == nil || err.Error() != "snapshot gone" {
 		t.Fatalf("failing fallback: err=%v", err)
 	}
 	// A Segment naming an object of another Query Group is refused.
 	other := segment
 	other.QueryGroup = catalog.QueryGroups[1].Identity
-	if _, err := cold.LoadSegmentQueryGroup(ctx, other, fallback); err != nil || fallbackCalls != 5 || observer.count("segment", "object_mismatch") != 1 {
+	if _, err := cold.LoadSegmentQueryGroup(ctx, other, 60, fallback); err != nil || fallbackCalls != 5 || observer.count("segment", "object_mismatch") != 1 {
 		t.Fatalf("mismatched object: err=%v fallback calls=%d counters=%+v", err, fallbackCalls, observer.reads)
 	}
 }

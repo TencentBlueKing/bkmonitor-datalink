@@ -185,15 +185,17 @@ return 1
 // are not stored yet. It is idempotent per revision: a second call for the
 // revision this process last wrote does nothing, and a call for a new
 // revision asks Redis only about the digests the previous revision did not
-// already prove present. Failure is observed, not returned: the caller is a
-// publication that must not depend on the catalog while the whole Snapshot is
-// still what execution reads.
-func (repository *RedisCatalogRepository) ensureObjectCatalog(ctx context.Context, catalog Catalog) {
+// already prove present. Failure is returned, and the publication that
+// called does not publish: a Query Group whose content does not change
+// keeps its Segment across publications, past the retention of the Snapshot
+// that Segment was opened under, so the objects are what execution reads
+// and a publication without them would run Workers into nothing.
+func (repository *RedisCatalogRepository) ensureObjectCatalog(ctx context.Context, catalog Catalog) error {
 	if repository == nil || repository.client == nil || catalog.SnapshotRevision == "" {
-		return
+		return errors.New("alarmd controlplane: object catalog write requires a catalog revision")
 	}
 	if revision, _, _ := repository.objectCatalog.snapshot(); revision == catalog.SnapshotRevision {
-		return
+		return nil
 	}
 	started := time.Now()
 	facts := &observability.ObjectCatalogFacts{Operation: "write", Result: "failure", QueryGroups: len(catalog.QueryGroups)}
@@ -203,9 +205,10 @@ func (repository *RedisCatalogRepository) ensureObjectCatalog(ctx context.Contex
 			Result: observability.Result(facts.Result), ObjectCatalog: facts})
 	}()
 	if err := repository.writeObjectCatalog(ctx, catalog, facts); err != nil {
-		return
+		return fmt.Errorf("alarmd controlplane: write object catalog: %w", err)
 	}
 	facts.Result = "success"
+	return nil
 }
 
 func (repository *RedisCatalogRepository) writeObjectCatalog(ctx context.Context, catalog Catalog, facts *observability.ObjectCatalogFacts) error {

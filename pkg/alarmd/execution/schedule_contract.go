@@ -197,15 +197,25 @@ func (ref SnapshotPublicationRef) Validate() error {
 // names; a Segment written before they existed carries neither, and is read
 // the way it always was. Both are metadata of the Segment: they take no part
 // in whether two Segments are the same Segment.
+//
+// A Segment is cut only when its execution content changes. An edit that
+// changes a Plan's rendering context and nothing it executes does not cut
+// the Segment; it appends one OutputContextRevision, and the refs a Slot
+// renders with are the latest revision whose Since is at or before the
+// Slot's evaluation time, or OutputContextRefs when there is none. That is
+// a pure function of the evaluation time, so a retry, a replay, a restart
+// and a takeover of one Slot all resolve the same context, whatever moment
+// they run at.
 type ScheduleSegmentFact struct {
-	Publication       SnapshotPublicationRef
-	QueryGroup        QueryGroupIdentity
-	QueryRevision     QueryRevision
-	ScheduleRevision  ScheduleRevision
-	Start             EvaluationTime
-	End               *EvaluationTime
-	ObjectDigest      ObjectDigest       `json:",omitempty"`
-	OutputContextRefs []OutputContextRef `json:",omitempty"`
+	Publication            SnapshotPublicationRef
+	QueryGroup             QueryGroupIdentity
+	QueryRevision          QueryRevision
+	ScheduleRevision       ScheduleRevision
+	Start                  EvaluationTime
+	End                    *EvaluationTime
+	ObjectDigest           ObjectDigest            `json:",omitempty"`
+	OutputContextRefs      []OutputContextRef      `json:",omitempty"`
+	OutputContextRevisions []OutputContextRevision `json:",omitempty"`
 }
 
 // OutputContextRef names the output context one Plan renders with.
@@ -214,8 +224,39 @@ type OutputContextRef struct {
 	Digest OutputContextDigest
 }
 
-// OutputContextRefFor returns the output context digest the Segment names
-// for plan, or an empty digest when the Segment names none.
+// OutputContextRevision replaces the Segment's output context refs for every
+// evaluation time at or after Since.
+type OutputContextRevision struct {
+	Since EvaluationTime
+	Refs  []OutputContextRef
+}
+
+// OutputContextRefsAt returns the output context refs in force at the
+// evaluation time.
+func (segment ScheduleSegmentFact) OutputContextRefsAt(at EvaluationTime) []OutputContextRef {
+	refs := segment.OutputContextRefs
+	for _, revision := range segment.OutputContextRevisions {
+		if revision.Since > at {
+			break
+		}
+		refs = revision.Refs
+	}
+	return refs
+}
+
+// At returns the Segment as a Slot at the evaluation time sees it: the refs
+// in force at that time stand as OutputContextRefs and the revision history
+// is dropped. Readers that resolve a Plan's context go through it so that no
+// caller resolves against the base refs by accident.
+func (segment ScheduleSegmentFact) At(at EvaluationTime) ScheduleSegmentFact {
+	segment.OutputContextRefs = segment.OutputContextRefsAt(at)
+	segment.OutputContextRevisions = nil
+	return segment
+}
+
+// OutputContextRefFor returns the output context digest the Segment's base
+// refs name for plan, or an empty digest when they name none. Call At first
+// to resolve the refs a Slot renders with.
 func (segment ScheduleSegmentFact) OutputContextRefFor(plan PlanIdentity) OutputContextDigest {
 	for _, ref := range segment.OutputContextRefs {
 		if ref.Plan == plan {
@@ -223,6 +264,24 @@ func (segment ScheduleSegmentFact) OutputContextRefFor(plan PlanIdentity) Output
 		}
 	}
 	return ""
+}
+
+// SameOutputContextRefs reports whether two ref lists name the same context
+// for the same Plans, in any order.
+func SameOutputContextRefs(left, right []OutputContextRef) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	byPlan := make(map[PlanIdentity]OutputContextDigest, len(left))
+	for _, ref := range left {
+		byPlan[ref.Plan] = ref.Digest
+	}
+	for _, ref := range right {
+		if digest, ok := byPlan[ref.Plan]; !ok || digest != ref.Digest {
+			return false
+		}
+	}
+	return true
 }
 
 func (segment ScheduleSegmentFact) Validate() error {
@@ -234,6 +293,13 @@ func (segment ScheduleSegmentFact) Validate() error {
 	}
 	if segment.End != nil && *segment.End <= segment.Start {
 		return errors.New("alarmd execution: Schedule Segment end must follow its start")
+	}
+	previous := segment.Start
+	for _, revision := range segment.OutputContextRevisions {
+		if revision.Since <= previous || len(revision.Refs) == 0 {
+			return errors.New("alarmd execution: output context revisions must advance past the Segment start in order")
+		}
+		previous = revision.Since
 	}
 	return nil
 }

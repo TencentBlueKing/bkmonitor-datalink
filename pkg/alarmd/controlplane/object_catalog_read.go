@@ -291,18 +291,25 @@ func AssembleQueryGroup(object QueryGroupObject, contexts map[execution.PlanIden
 	return group, nil
 }
 
-// LoadSegmentQueryGroup reads the Query Group a Segment was activated with:
-// by content when the Segment names it and the content is stored, and from
-// the Snapshot the Segment's Publication names otherwise. Every way the
-// content path is not taken is counted under its own reason.
+// LoadSegmentQueryGroup reads the Query Group a Slot at the evaluation time
+// executes under its Segment: by content when the Segment names it and the
+// content is stored, and from the Snapshot the Segment's Publication names
+// otherwise. The output contexts are the ones in force at the evaluation
+// time, so every attempt at one Slot renders with the same context. Every
+// way the content path is not taken is counted under its own reason.
 func (repository *RedisCatalogRepository) LoadSegmentQueryGroup(
 	ctx context.Context,
 	segment execution.ScheduleSegmentFact,
+	at execution.EvaluationTime,
 	fallback func(context.Context) (QueryGroup, error),
 ) (QueryGroup, error) {
 	if repository == nil || fallback == nil {
 		return QueryGroup{}, errors.New("alarmd controlplane: Segment Query Group read requires a fallback")
 	}
+	if !segment.Contains(at) {
+		return QueryGroup{}, errors.New("alarmd controlplane: Segment Query Group read is outside the Segment")
+	}
+	segment = segment.At(at)
 	if segment.ObjectDigest == "" {
 		repository.observeObjectRead(ctx, objectReadKindSegment, segmentReadLegacySegment)
 		return fallback(ctx)

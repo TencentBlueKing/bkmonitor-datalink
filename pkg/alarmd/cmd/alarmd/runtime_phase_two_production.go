@@ -37,7 +37,7 @@ type productionFrozenCatalog interface {
 
 type productionSnapshotReader interface {
 	LoadQueryGroup(context.Context, execution.SnapshotRevision, execution.QueryGroupIdentity) (controlplane.QueryGroup, error)
-	LoadSegmentQueryGroup(context.Context, execution.ScheduleSegmentFact, func(context.Context) (controlplane.QueryGroup, error)) (controlplane.QueryGroup, error)
+	LoadSegmentQueryGroup(context.Context, execution.ScheduleSegmentFact, execution.EvaluationTime, func(context.Context) (controlplane.QueryGroup, error)) (controlplane.QueryGroup, error)
 }
 
 type productionFrozenExecution struct {
@@ -65,7 +65,7 @@ func (source *productionFrozenExecution) ResolveFrozenPlan(
 	if err != nil {
 		return access.FrozenPlan{}, err
 	}
-	group, err := source.repository.LoadSegmentQueryGroup(ctx, segment, func(ctx context.Context) (controlplane.QueryGroup, error) {
+	group, err := source.repository.LoadSegmentQueryGroup(ctx, segment, contractRef.Slot.EvaluationTime, func(ctx context.Context) (controlplane.QueryGroup, error) {
 		return source.repository.LoadQueryGroup(ctx, contractRef.SnapshotRevision, contractRef.Slot.QueryGroup)
 	})
 	if err != nil {

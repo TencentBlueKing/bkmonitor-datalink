@@ -40,6 +40,8 @@ type phaseTwoMetrics struct {
 	scheduleSegmentsPruned       prometheus.Counter
 	schedulePruneSkipped         *prometheus.CounterVec
 	scheduleCutoverDuration      *prometheus.HistogramVec
+	scheduleCutoverQueryGroups   *prometheus.CounterVec
+	scheduleCutoverTimelinesRead prometheus.Gauge
 	objectCatalogObjects         *prometheus.CounterVec
 	objectCatalogRedis           *prometheus.HistogramVec
 	objectCatalogManifestBytes   prometheus.Gauge
@@ -176,6 +178,11 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	for _, reason := range observability.SchedulePruneSkipReasons {
 		metrics.schedulePruneSkipped.WithLabelValues(reason)
 	}
+	metrics.scheduleCutoverQueryGroups = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "schedule_cutover_query_groups_total", Help: "Query Groups by what a publication cutover did with them: kept (content and contexts unchanged, no write), revised (contexts changed, one output context revision appended), cut (content changed, Segment closed and reopened), legacy_cut (Segment named no content and was cut once), retired, added."}, []string{"decision"})
+	for _, decision := range observability.ScheduleCutoverDecisions {
+		metrics.scheduleCutoverQueryGroups.WithLabelValues(decision)
+	}
+	metrics.scheduleCutoverTimelinesRead = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "schedule_cutover_timelines_read", Help: "Schedule timelines the last publication cutover read to decide. Equal to the population on the first cutover of a Control Leader process, the changed set afterwards."})
 	metrics.objectCatalogObjects = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "object_catalog_objects_total", Help: "Content-addressed catalog objects by what a write or renewal did with them: written, present (already stored under their digest) or missing (referenced but not found on renewal)."}, []string{"operation", "outcome"})
 	metrics.objectCatalogRedis = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "object_catalog_redis_duration_seconds", Help: "Object catalog write or renewal duration.", Buckets: activeQGSetDurationBuckets}, []string{"operation", "result"})
 	metrics.objectCatalogManifestBytes = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "object_catalog_manifest_bytes", Help: "Encoded bytes of the manifest written for the latest publication."})
@@ -240,6 +247,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.queryAdmission,
 		m.activeQGSetCount, m.activeQGSetBytes, m.activeQGSetEncode, m.activeQGSetRedis,
 		m.scheduleCutoverPayload, m.scheduleCutoverTimelineMax, m.scheduleTimelineBytes, m.scheduleSegmentsPruned, m.schedulePruneSkipped, m.scheduleCutoverDuration,
+		m.scheduleCutoverQueryGroups, m.scheduleCutoverTimelinesRead,
 		m.objectCatalogObjects, m.objectCatalogRedis, m.objectCatalogManifestBytes, m.objectReads,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 		m.undrainedDrainingQueryGroups,
@@ -290,6 +298,10 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 		if facts.Result == "success" {
 			m.scheduleCutoverPayload.Set(float64(facts.PayloadBytes))
 			m.scheduleCutoverTimelineMax.Set(float64(facts.MaxTimelineBytes))
+			m.scheduleCutoverTimelinesRead.Set(float64(facts.TimelinesRead))
+			for decision, count := range facts.QueryGroups {
+				m.scheduleCutoverQueryGroups.WithLabelValues(decision).Add(float64(count))
+			}
 		}
 	}
 	if facts := observation.ObjectCatalog; facts != nil {

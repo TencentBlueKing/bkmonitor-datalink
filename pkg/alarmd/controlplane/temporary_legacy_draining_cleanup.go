@@ -402,7 +402,8 @@ func (cleanup *TemporaryLegacyDrainingCleanup) loadCurrentGroups(
 	for _, identity := range active {
 		candidates[identity] = QueryGroup{Identity: identity}
 	}
-	return cleanup.repository.loadActivatedGroupsFromOpenSchedules(ctx, activation, candidates)
+	groups, _, err := cleanup.repository.loadActivatedGroupsFromOpenSchedules(ctx, activation, candidates)
+	return groups, err
 }
 
 func validateTemporaryLegacyDrainingCleanupRequest(request TemporaryLegacyDrainingCleanupRequest) error {
@@ -503,9 +504,10 @@ func (cleanup *TemporaryLegacyDrainingCleanup) buildScheduleUpdates(
 			return nil, nil, nil, nil, ErrScheduleConflict
 		}
 		open := timeline.Segments[last]
+		// An open Segment names the publication it was opened under, which
+		// is older than the current one whenever its content did not change
+		// since; only openness and the revisions are checked.
 		if open.Schedule.Segment.End != nil || open.Schedule.Segment.Start >= request.CutoverBoundary ||
-			open.Schedule.Segment.Publication.SnapshotRevision != previous.Current.SnapshotRevision ||
-			open.Schedule.Segment.Publication.PublicationEpoch != execution.PublicationEpoch(previous.Current.PublicationEpoch) ||
 			open.Schedule.Segment.QueryRevision != oldGroup.QueryPlan.QueryRevision ||
 			open.Schedule.Segment.ScheduleRevision != oldGroup.ScheduleRevision {
 			return nil, nil, nil, nil, ErrScheduleConflict

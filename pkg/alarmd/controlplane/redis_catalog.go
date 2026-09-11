@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -119,8 +120,13 @@ type RedisCatalogRepository struct {
 	legacyMigrationTimeout     time.Duration
 	drainingRetireAfter        time.Duration
 	segmentRetention           execution.SlotRetention
-	observer                   observability.Observer
-	snapshotAdmission          SnapshotMemoryAdmission
+	// contentCutoverVerified is set once this process has read every open
+	// Segment in one cutover and found each naming the content its manifest
+	// names; later cutovers then read only the Query Groups whose content
+	// changed. See content_cutover.go.
+	contentCutoverVerified atomic.Bool
+	observer               observability.Observer
+	snapshotAdmission      SnapshotMemoryAdmission
 }
 
 // ConfigureDrainingTermination bounds how long a retired Query Group may stay
@@ -370,7 +376,9 @@ func (repository *RedisCatalogRepository) restoreCatalogPublicationIfActivationC
 	} else if latestErr != nil {
 		return PublishedSnapshot{}, latestErr
 	}
-	repository.ensureObjectCatalog(ctx, catalog)
+	if err := repository.ensureObjectCatalog(ctx, catalog); err != nil {
+		return PublishedSnapshot{}, err
+	}
 	changed, err := repository.client.Eval(ctx, restoreSnapshotPublicationScript, []string{
 		repository.activationHeaderKey(), repository.latestPublicationKey(),
 		repository.snapshotKey(catalog.SnapshotRevision), repository.epochForRevisionKey(catalog.SnapshotRevision),
@@ -438,10 +446,13 @@ func (repository *RedisCatalogRepository) PublishCatalogIfCurrent(
 	if expected != (SnapshotPublicationRef{}) {
 		expectedValue = publicationValue(expected)
 	}
-	// The objects and the manifest are written next to the whole Snapshot
-	// while execution still reads the latter; they are content-addressed,
-	// so writing them before the publication decides is harmless either way.
-	repository.ensureObjectCatalog(ctx, catalog)
+	// The objects and the manifest are written before the publication
+	// decides: they are content-addressed, so a publication that then loses
+	// its compare-and-set leaves nothing wrong behind, and a publication that
+	// wins never names content that is not stored.
+	if err := repository.ensureObjectCatalog(ctx, catalog); err != nil {
+		return PublishedSnapshot{}, false, err
+	}
 	result, err := repository.client.Eval(ctx, publishSnapshotScript, []string{
 		repository.epochCounterKey(), repository.epochForRevisionKey(catalog.SnapshotRevision),
 		repository.snapshotKey(catalog.SnapshotRevision), repository.latestPublicationKey(), repository.publicationKeyPrefix(),
@@ -814,13 +825,12 @@ func (repository *RedisCatalogRepository) validateClosedHistoricalContract(
 			schedule.Segment.QueryRevision != contractRef.QueryRevision {
 			return false, errors.New("alarmd controlplane: activation request does not reference its persisted Schedule Segment")
 		}
-		currentOccurrence := schedule.Segment.Publication.SnapshotRevision == current.SnapshotRevision &&
-			uint64(schedule.Segment.Publication.PublicationEpoch) == current.PublicationEpoch
-		if currentOccurrence {
-			return false, nil
-		}
+		// The current occurrence of a Query Group is its open Segment. It
+		// need not name the current publication: a Query Group whose content
+		// did not change keeps its Segment across publications, so naming
+		// an older publication is the normal case, not a historical one.
 		if schedule.Segment.End == nil {
-			return false, errors.New("alarmd controlplane: activation request does not reference a closed historical Segment")
+			return false, nil
 		}
 		return true, nil
 	}
@@ -856,8 +866,14 @@ func validateActivationState(state ActivationState) error {
 		}
 		switch record.Fact.Selection {
 		case execution.ActivationCurrent:
-			if record.Publication != state.Current {
-				return errors.New("alarmd controlplane: current Plan references another snapshot")
+			// A current record names the publication its Segment was opened
+			// under. That is the current publication for a Plan whose Query
+			// Group was cut or added by the latest activation, and an older
+			// one for a Plan carried over because its content did not
+			// change; it is never a newer one.
+			if record.Publication.PublicationEpoch > state.Current.PublicationEpoch ||
+				(record.Publication.PublicationEpoch == state.Current.PublicationEpoch && record.Publication != state.Current) {
+				return errors.New("alarmd controlplane: current Plan references a publication past the current one")
 			}
 		case execution.ActivationPending:
 			if state.Pending == nil || record.Publication != *state.Pending {

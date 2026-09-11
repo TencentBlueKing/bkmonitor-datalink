@@ -19,7 +19,7 @@ import (
 // them apart. Unwrap served errors.Is and errors.As and nothing else: every log
 // line renders the error as text, so on the wire all three were one sentence.
 //
-// Measured on bkop before this changed: 75 consecutive failures on one build,
+// Measured in production before this changed: 75 consecutive failures on one build,
 // one distinct message. That reads as "the same deterministic thing happening
 // over and over", which is a conclusion the data could not support -- the
 // messages were identical because the type made them identical.

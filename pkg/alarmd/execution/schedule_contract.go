@@ -189,13 +189,40 @@ func (ref SnapshotPublicationRef) Validate() error {
 
 // ScheduleSegmentFact gives one schedule revision the half-open ownership
 // interval [Start, End) on a Query Group's single logical timeline.
+//
+// ObjectDigest names the execution content the Query Group was activated
+// with for this Segment, and OutputContextRefs name, per Plan, the rendering
+// context its Slots publish with. A Worker that finds them reads the Query
+// Group by content instead of reading the whole Snapshot the Publication
+// names; a Segment written before they existed carries neither, and is read
+// the way it always was. Both are metadata of the Segment: they take no part
+// in whether two Segments are the same Segment.
 type ScheduleSegmentFact struct {
-	Publication      SnapshotPublicationRef
-	QueryGroup       QueryGroupIdentity
-	QueryRevision    QueryRevision
-	ScheduleRevision ScheduleRevision
-	Start            EvaluationTime
-	End              *EvaluationTime
+	Publication       SnapshotPublicationRef
+	QueryGroup        QueryGroupIdentity
+	QueryRevision     QueryRevision
+	ScheduleRevision  ScheduleRevision
+	Start             EvaluationTime
+	End               *EvaluationTime
+	ObjectDigest      ObjectDigest       `json:",omitempty"`
+	OutputContextRefs []OutputContextRef `json:",omitempty"`
+}
+
+// OutputContextRef names the output context one Plan renders with.
+type OutputContextRef struct {
+	Plan   PlanIdentity
+	Digest OutputContextDigest
+}
+
+// OutputContextRefFor returns the output context digest the Segment names
+// for plan, or an empty digest when the Segment names none.
+func (segment ScheduleSegmentFact) OutputContextRefFor(plan PlanIdentity) OutputContextDigest {
+	for _, ref := range segment.OutputContextRefs {
+		if ref.Plan == plan {
+			return ref.Digest
+		}
+	}
+	return ""
 }
 
 func (segment ScheduleSegmentFact) Validate() error {

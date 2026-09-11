@@ -1113,6 +1113,7 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingInitialFreezeL
 
 	production := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
 	queryGroupsByStrategy := make(map[string]execution.QueryGroupIdentity, 2)
+	objectKeys := make(map[execution.QueryGroupIdentity]string, 2)
 	var snapshotRevision execution.SnapshotRevision
 	for _, queryGroup := range bundle.queryGroups {
 		schedule, scheduleErr := production.dependencies.Catalog.ReadInitialFrozenSchedule(ctx, queryGroup)
@@ -1121,6 +1122,10 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingInitialFreezeL
 		}
 		queryGroupsByStrategy[schedule.Plans[0].Identity.StrategyID] = queryGroup
 		snapshotRevision = schedule.Segment.Publication.SnapshotRevision
+		if schedule.Segment.ObjectDigest == "" {
+			t.Fatalf("Query Group %s Segment names no catalog object: %+v", queryGroup, schedule.Segment)
+		}
+		objectKeys[queryGroup] = productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog") + ":qgobj:" + string(schedule.Segment.ObjectDigest)
 	}
 	clock.Store((base + 1) * 1000)
 	healthy := queryGroupsByStrategy["1002"]
@@ -1131,12 +1136,18 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingInitialFreezeL
 	}
 	queryCallsBeforeFailure := uqCalls.Load()
 	eventsBeforeFailure := len(events.snapshot())
+	// The Snapshot facts of the failed Query Group are lost as a whole: the
+	// Snapshot body and the catalog object its Segment names by content.
 	snapshotKey := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog") + ":snapshot:" + string(snapshotRevision)
 	snapshotPayload, err := redisClient.Get(ctx, snapshotKey).Bytes()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := redisClient.Del(ctx, snapshotKey).Err(); err != nil {
+	objectPayload, err := redisClient.Get(ctx, objectKeys[failed]).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.Del(ctx, snapshotKey, objectKeys[failed]).Err(); err != nil {
 		t.Fatal(err)
 	}
 	failedResult, failedAttempted, failedErr := bundle.runners[failed].runner.RunOne(ctx)
@@ -1164,6 +1175,9 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingInitialFreezeL
 	// coordinator first rebuilds the missing projection with BeginSlot and then
 	// finalizes query-free. A recovered Snapshot must not reopen Query.
 	if err := redisClient.Set(ctx, snapshotKey, snapshotPayload, cfg.PhaseTwo.Control.CatalogTTL.Duration()).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.Set(ctx, objectKeys[failed], objectPayload, cfg.PhaseTwo.Control.CatalogTTL.Duration()).Err(); err != nil {
 		t.Fatal(err)
 	}
 	clock.Store((base + int64((30*time.Minute)/time.Second)) * 1000)
@@ -2328,12 +2342,17 @@ func TestProductionRunOneReadsControlBodiesOncePerRevisionAndVersion(t *testing.
 		// its revision digest exceeds that, so match it by prefix.
 		epochProbes := countCommands(entries, lastID, epochKey[:len(catalogPrefix)+len(":snapshot_epoch:")], true, "get")
 		lengthProbes := countCommands(entries, lastID, snapshotKey, false, "strlen")
+		objectReads := countCommands(entries, lastID, catalogPrefix+":qgobj:", true, "get") +
+			countCommands(entries, lastID, catalogPrefix+":outctx:", true, "get")
 		activationBodyReads := countCommands(entries, lastID, activationKey, false, "get")
 		headerProbes := countCommands(entries, lastID, headerKey, false, "get")
 		timelineBodyReads := countCommands(entries, lastID, timelinePrefix, true, "get")
-		if bodyReads != 0 || epochProbes < 1 || lengthProbes < 1 {
-			t.Fatalf("RunOne(%s) Snapshot body reads=%d epoch probes=%d length probes=%d, want 0 body reads validated by probes (Start read the body %d times)",
-				strategyID, bodyReads, epochProbes, lengthProbes, startBodyReads)
+		// The Segment names its content, so the Snapshot is neither read nor
+		// probed; the Query Group's object and its Plan's context are read
+		// once on the first touch of the Query Group and never again.
+		if bodyReads != 0 || epochProbes != 0 || lengthProbes != 0 || objectReads > 2 {
+			t.Fatalf("RunOne(%s) Snapshot body reads=%d epoch probes=%d length probes=%d object reads=%d, want the Snapshot untouched and at most one object and one context read (Start read the body %d times)",
+				strategyID, bodyReads, epochProbes, lengthProbes, objectReads, startBodyReads)
 		}
 		// Guard and Progress re-read the activation before acting; each re-read
 		// probes the live header and transfers no activation body.
@@ -2352,9 +2371,9 @@ func TestProductionRunOneReadsControlBodiesOncePerRevisionAndVersion(t *testing.
 			headerProbes, headerBytes, epochProbes, lengthProbes)
 	}
 	statsAfter := repository.ControlReadCacheStats()
-	if statsAfter.Snapshot.Hits-statsBefore.Snapshot.Hits < 2 || statsAfter.Activation.Hits-statsBefore.Activation.Hits < 4 ||
-		statsAfter.Snapshot.Misses != statsBefore.Snapshot.Misses || statsAfter.Activation.Refreshes != statsBefore.Activation.Refreshes {
-		t.Fatalf("cache stats before=%+v after=%+v, want only hits during two RunOnes", statsBefore, statsAfter)
+	if statsAfter.Snapshot != statsBefore.Snapshot || statsAfter.Activation.Hits-statsBefore.Activation.Hits < 4 ||
+		statsAfter.Activation.Refreshes != statsBefore.Activation.Refreshes {
+		t.Fatalf("cache stats before=%+v after=%+v, want the Snapshot cache untouched and only activation hits during two RunOnes", statsBefore, statsAfter)
 	}
 	beforeDeferredCalls := uqCalls.Load()
 	beforeDeferred, err := redisClient.SlowLogGet(ctx, 1).Result()
@@ -2378,7 +2397,16 @@ func TestProductionRunOneReadsControlBodiesOncePerRevisionAndVersion(t *testing.
 		countCommands(deferredEntries, deferredLastID, timelinePrefix, true, "get"); reads != 0 {
 		t.Fatalf("second RunOne of the same Query Group transferred %d control bodies, want 0", reads)
 	}
-	if err := redisClient.Del(ctx, snapshotKey).Err(); err != nil {
+	// The Snapshot facts are lost as a whole - the body and the catalog
+	// object the Segment names - and this process has not kept the object.
+	deferredSchedule, err := production.dependencies.Catalog.ReadInitialFrozenSchedule(ctx, queryGroupsByStrategy["1002"])
+	if err != nil || deferredSchedule.Segment.ObjectDigest == "" {
+		t.Fatalf("deferred Query Group schedule=(%+v, %v), want a Segment naming its object", deferredSchedule.Segment, err)
+	}
+	if err := redisClient.Del(ctx, snapshotKey, catalogPrefix+":qgobj:"+string(deferredSchedule.Segment.ObjectDigest)).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ConfigureObjectCache(1, 1); err != nil {
 		t.Fatal(err)
 	}
 	clock.Store(bundle.runners[queryGroupsByStrategy["1002"]].runner.NextReadyAt().UnixMilli())

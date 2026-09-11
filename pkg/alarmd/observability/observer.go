@@ -63,6 +63,7 @@ const (
 	StageActivationFailed     = "activation_failed"
 	StageActiveQGSet          = "active_qg_set"
 	StageObjectCatalog        = "object_catalog"
+	StageObjectRead           = "object_read"
 	StageScheduleCutover      = "schedule_cutover"
 	StageLegacyQGMigration    = "legacy_active_qg_migration"
 	StageDrainingQGReconciled = "draining_query_groups"
@@ -326,6 +327,21 @@ type ObjectCatalogFacts struct {
 	Duration      time.Duration
 }
 
+// ObjectReadFacts describe one read of a catalog object by a Worker: the
+// kind of object and how the read went, or, for a Segment, whether the
+// Query Group was read by content and if not, why.
+type ObjectReadFacts struct {
+	Kind   string
+	Result string
+}
+
+// ObjectReadKinds and ObjectReadResults are the closed vocabularies of
+// ObjectReadFacts; a value outside them is reported as "other".
+var (
+	ObjectReadKinds   = []string{"query_group", "output_context", "segment"}
+	ObjectReadResults = []string{"hit", "miss", "share", "missing", "invalid", "object", "legacy_segment", "segment_without_ref", "object_missing", "object_invalid", "object_mismatch"}
+)
+
 type LegacyQGMigrationFacts struct {
 	Result      string
 	ReasonClass string
@@ -486,6 +502,7 @@ type Observation struct {
 	ActiveQGSet             *ActiveQGSetFacts
 	ScheduleCutover         *ScheduleCutoverFacts
 	ObjectCatalog           *ObjectCatalogFacts
+	ObjectRead              *ObjectReadFacts
 	LegacyMigration         *LegacyQGMigrationFacts
 	DrainingQG              *DrainingQGFacts
 	SourceRefresh           *SourceRefreshFacts
@@ -573,6 +590,7 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.ActiveQGSet = normalizeActiveQGSetFacts(observation.ActiveQGSet)
 	observation.ScheduleCutover = normalizeScheduleCutoverFacts(observation.ScheduleCutover)
 	observation.ObjectCatalog = normalizeObjectCatalogFacts(observation.ObjectCatalog)
+	observation.ObjectRead = normalizeObjectReadFacts(observation.ObjectRead)
 	observation.LegacyMigration = normalizeLegacyQGMigrationFacts(observation.LegacyMigration)
 	observation.DrainingQG = normalizeDrainingQGFacts(observation.DrainingQG)
 	observation.SourceRefresh = normalizeSourceRefreshFacts(observation.Component, observation.Stage, observation.SourceRefresh)
@@ -845,6 +863,24 @@ func normalizeScheduleCutoverFacts(facts *ScheduleCutoverFacts) *ScheduleCutover
 	normalized.PrunesSkipped = skipped
 	if normalized.Duration < 0 {
 		normalized.Duration = 0
+	}
+	return &normalized
+}
+
+func normalizeObjectReadFacts(facts *ObjectReadFacts) *ObjectReadFacts {
+	if facts == nil {
+		return nil
+	}
+	normalized := ObjectReadFacts{Kind: "other", Result: "other"}
+	for _, kind := range ObjectReadKinds {
+		if facts.Kind == kind {
+			normalized.Kind = kind
+		}
+	}
+	for _, result := range ObjectReadResults {
+		if facts.Result == result {
+			normalized.Result = result
+		}
 	}
 	return &normalized
 }

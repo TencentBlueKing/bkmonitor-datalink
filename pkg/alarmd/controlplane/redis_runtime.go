@@ -317,7 +317,11 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		timeline.Segments[last].Schedule = closed
 		timeline.RecordRevision++
 		if newGroup, remains := newGroups[queryGroup]; remains {
-			opened, err := repository.materializeSchedule(ctx, scheduleSegmentForGroup(newSnapshot.Publication, newGroup, boundary))
+			segment, err := scheduleSegmentForGroup(newSnapshot.Publication, newGroup, boundary)
+			if err != nil {
+				return err
+			}
+			opened, err := repository.materializeSchedule(ctx, segment)
 			if err != nil {
 				return err
 			}
@@ -345,7 +349,11 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		if _, existed := oldGroups[queryGroup]; existed {
 			continue
 		}
-		opened, err := repository.materializeSchedule(ctx, scheduleSegmentForGroup(newSnapshot.Publication, newGroup, boundary))
+		segment, err := scheduleSegmentForGroup(newSnapshot.Publication, newGroup, boundary)
+		if err != nil {
+			return err
+		}
+		opened, err := repository.materializeSchedule(ctx, segment)
 		if err != nil {
 			return err
 		}
@@ -818,17 +826,34 @@ func openVersion(segment execution.ScheduleSegmentFact) execution.ScheduleSegmen
 	return segment
 }
 
+// scheduleSegmentForGroup opens the Segment a Query Group runs under from
+// start, naming the execution content and the per-Plan output contexts it
+// was activated with so a Worker can read them by content.
 func scheduleSegmentForGroup(
 	publication SnapshotPublicationRef,
 	group QueryGroup,
 	start execution.EvaluationTime,
-) execution.ScheduleSegmentFact {
+) (execution.ScheduleSegmentFact, error) {
+	objectDigest, err := DeriveQueryGroupObjectDigest(group)
+	if err != nil {
+		return execution.ScheduleSegmentFact{}, err
+	}
+	refs := make([]execution.OutputContextRef, 0, len(group.Plans))
+	for _, plan := range group.Plans {
+		digest, err := DeriveOutputContextDigest(plan)
+		if err != nil {
+			return execution.ScheduleSegmentFact{}, err
+		}
+		refs = append(refs, execution.OutputContextRef{Plan: plan.Identity, Digest: digest})
+	}
+	sort.Slice(refs, func(i, j int) bool { return lessPlanIdentity(refs[i].Plan, refs[j].Plan) })
 	return execution.ScheduleSegmentFact{
 		Publication: execution.SnapshotPublicationRef{SnapshotRevision: publication.SnapshotRevision,
 			PublicationEpoch: execution.PublicationEpoch(publication.PublicationEpoch)},
 		QueryGroup: group.Identity, QueryRevision: group.QueryPlan.QueryRevision,
 		ScheduleRevision: group.ScheduleRevision, Start: start,
-	}
+		ObjectDigest: objectDigest, OutputContextRefs: refs,
+	}, nil
 }
 
 func queryGroupMap(groups []QueryGroup) (map[execution.QueryGroupIdentity]QueryGroup, error) {
@@ -1571,7 +1596,9 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 	}
 	publication := SnapshotPublicationRef{SnapshotRevision: schedule.Segment.Publication.SnapshotRevision,
 		PublicationEpoch: uint64(schedule.Segment.Publication.PublicationEpoch)}
-	group, err := runtime.repository.loadPublishedQueryGroup(ctx, publication, request.QueryGroup)
+	group, err := runtime.repository.LoadSegmentQueryGroup(ctx, schedule.Segment, func(ctx context.Context) (QueryGroup, error) {
+		return runtime.repository.loadPublishedQueryGroup(ctx, publication, request.QueryGroup)
+	})
 	if err != nil {
 		if errors.Is(err, ErrCatalogObjectUnavailable) {
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)

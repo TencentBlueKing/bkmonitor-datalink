@@ -1819,6 +1819,16 @@ func (repository *fakeProductionCatalogRepository) LoadSnapshot(
 	return repository.snapshot, nil
 }
 
+// The fake has no object catalog: a Segment is always read the way a Segment
+// without a digest is, from the Snapshot the caller falls back to.
+func (repository *fakeProductionCatalogRepository) LoadSegmentQueryGroup(
+	ctx context.Context,
+	_ execution.ScheduleSegmentFact,
+	fallback func(context.Context) (controlplane.QueryGroup, error),
+) (controlplane.QueryGroup, error) {
+	return fallback(ctx)
+}
+
 func (repository *fakeProductionCatalogRepository) LoadQueryGroup(
 	_ context.Context,
 	revision execution.SnapshotRevision,

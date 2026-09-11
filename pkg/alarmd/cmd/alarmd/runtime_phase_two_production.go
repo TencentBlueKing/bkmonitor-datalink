@@ -37,6 +37,7 @@ type productionFrozenCatalog interface {
 
 type productionSnapshotReader interface {
 	LoadQueryGroup(context.Context, execution.SnapshotRevision, execution.QueryGroupIdentity) (controlplane.QueryGroup, error)
+	LoadSegmentQueryGroup(context.Context, execution.ScheduleSegmentFact, func(context.Context) (controlplane.QueryGroup, error)) (controlplane.QueryGroup, error)
 }
 
 type productionFrozenExecution struct {
@@ -60,11 +61,13 @@ func (source *productionFrozenExecution) ResolveFrozenPlan(
 	ctx context.Context,
 	contractRef execution.FrozenExecutionContractRef,
 ) (access.FrozenPlan, error) {
-	fact, err := source.resolveFrozenFact(ctx, contractRef)
+	fact, segment, err := source.resolveFrozenFact(ctx, contractRef)
 	if err != nil {
 		return access.FrozenPlan{}, err
 	}
-	group, err := source.repository.LoadQueryGroup(ctx, contractRef.SnapshotRevision, contractRef.Slot.QueryGroup)
+	group, err := source.repository.LoadSegmentQueryGroup(ctx, segment, func(ctx context.Context) (controlplane.QueryGroup, error) {
+		return source.repository.LoadQueryGroup(ctx, contractRef.SnapshotRevision, contractRef.Slot.QueryGroup)
+	})
 	if err != nil {
 		if errors.Is(err, controlplane.ErrCatalogObjectUnavailable) {
 			return access.FrozenPlan{}, errors.New("phase-two frozen Query Group is absent from Snapshot")
@@ -128,7 +131,7 @@ func (source *productionFrozenExecution) ResolveFinalization(
 			Targets:    request.DuePlanTargets.Clone(),
 		}, nil
 	}
-	fact, err := source.resolveFrozenFact(ctx, request.Contract)
+	fact, _, err := source.resolveFrozenFact(ctx, request.Contract)
 	if err != nil {
 		if errors.Is(err, controlplane.ErrSnapshotUnavailable) {
 			if source.now().UnixMilli() < request.RecoveryUntilUnixMilli {
@@ -221,27 +224,30 @@ func frozenExecutionFacts(
 	return targets, deadline, nil
 }
 
+// resolveFrozenFact reads the persisted Segment a frozen contract was taken
+// from and returns the contract fact with the Segment itself, which names
+// the content the Query Group is then read by.
 func (source *productionFrozenExecution) resolveFrozenFact(
 	ctx context.Context,
 	contractRef execution.FrozenExecutionContractRef,
-) (execution.FrozenSlotContractFact, error) {
+) (execution.FrozenSlotContractFact, execution.ScheduleSegmentFact, error) {
 	if source == nil || source.catalog == nil || source.repository == nil {
-		return execution.FrozenSlotContractFact{}, errors.New("phase-two frozen execution is not initialized")
+		return execution.FrozenSlotContractFact{}, execution.ScheduleSegmentFact{}, errors.New("phase-two frozen execution is not initialized")
 	}
 	if err := contractRef.Validate(); err != nil {
-		return execution.FrozenSlotContractFact{}, err
+		return execution.FrozenSlotContractFact{}, execution.ScheduleSegmentFact{}, err
 	}
 	schedule, err := source.catalog.ReadFrozenSchedule(
 		ctx, contractRef.Slot.QueryGroup, contractRef.Slot.EvaluationTime,
 	)
 	if err != nil {
-		return execution.FrozenSlotContractFact{}, err
+		return execution.FrozenSlotContractFact{}, execution.ScheduleSegmentFact{}, err
 	}
 	segment := schedule.Segment
 	if segment.QueryGroup != contractRef.Slot.QueryGroup || segment.QueryRevision != contractRef.QueryRevision ||
 		segment.ScheduleRevision != contractRef.ScheduleRevision || segment.Start != contractRef.ScheduleSegmentStart ||
 		segment.Publication.SnapshotRevision != contractRef.SnapshotRevision || !segment.Contains(contractRef.Slot.EvaluationTime) {
-		return execution.FrozenSlotContractFact{}, errors.New("phase-two persisted Schedule Segment differs from frozen contract")
+		return execution.FrozenSlotContractFact{}, execution.ScheduleSegmentFact{}, errors.New("phase-two persisted Schedule Segment differs from frozen contract")
 	}
 	request := execution.FreezeSlotContractRequest{
 		QueryGroup: segment.QueryGroup, ScheduleRevision: segment.ScheduleRevision,
@@ -250,12 +256,12 @@ func (source *productionFrozenExecution) resolveFrozenFact(
 	}
 	fact, err := source.catalog.FreezeSlotContract(ctx, request)
 	if err != nil {
-		return execution.FrozenSlotContractFact{}, err
+		return execution.FrozenSlotContractFact{}, execution.ScheduleSegmentFact{}, err
 	}
 	if fact.Contract != contractRef {
-		return execution.FrozenSlotContractFact{}, errors.New("phase-two re-frozen Slot differs from execution contract")
+		return execution.FrozenSlotContractFact{}, execution.ScheduleSegmentFact{}, errors.New("phase-two re-frozen Slot differs from execution contract")
 	}
-	return fact, nil
+	return fact, segment, nil
 }
 
 var _ access.FrozenPlanSource = (*productionFrozenExecution)(nil)

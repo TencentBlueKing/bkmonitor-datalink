@@ -153,6 +153,10 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	if err != nil {
 		return ActivationState{}, err
 	}
+	returning, err := reconciler.repository.retiredQueryGroupsReturning(ctx, oldGroups, newGroups, boundary)
+	if err != nil {
+		return ActivationState{}, err
+	}
 	failureClass = ActivationFailureClassProjectionConflict
 	draining, err := expectedDrainingProjection(
 		previous.Draining, oldGroups, newGroups, reactivating, boundary,
@@ -178,7 +182,13 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 			records[index].Fact.Selected.ForceWarming = true
 		}
 	}
-	if len(reactivating) > 0 {
+	// A Query Group that reopens a retired timeline restarts every Plan it
+	// carries through WARMING, including a Plan that stayed active under
+	// other Query Groups in between and so is not caught above. The set is
+	// read from the persisted timelines rather than from the Draining
+	// projection, which forgets a drained Query Group before its timeline
+	// expires; the CAS side appends to the same timelines.
+	if len(returning) > 0 {
 		planGroups := make(map[execution.PlanIdentity]execution.QueryGroupIdentity)
 		for _, group := range snapshot.QueryGroups {
 			for _, plan := range group.Plans {
@@ -186,7 +196,7 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 			}
 		}
 		for index := range records {
-			if _, reactivated := reactivating[planGroups[records[index].Fact.Plan]]; reactivated {
+			if _, returned := returning[planGroups[records[index].Fact.Plan]]; returned {
 				records[index].Fact.Selected.ForceWarming = true
 			}
 		}

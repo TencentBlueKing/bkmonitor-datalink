@@ -3673,6 +3673,188 @@ func TestScheduleActivationReconcilerReactivatesDrainedQueryGroupOnSameProgressT
 	}
 }
 
+// persistedTimelineSegments is the raw shape of one Schedule timeline key.
+// Each Segment is kept as the bytes Redis holds so a test can assert that
+// history survived a write unchanged, not merely equivalent after decoding.
+type persistedTimelineSegments struct {
+	RecordRevision uint64                    `json:"record_revision"`
+	Segments       []json.RawMessage         `json:"segments"`
+	RetiredAt      *execution.EvaluationTime `json:"retired_at"`
+}
+
+func readPersistedTimelineSegments(t *testing.T, ctx context.Context, client *redis.Client, key string) persistedTimelineSegments {
+	t.Helper()
+	var timeline persistedTimelineSegments
+	if err := json.Unmarshal(readRedisValue(t, ctx, client, key), &timeline); err != nil {
+		t.Fatal(err)
+	}
+	return timeline
+}
+
+// A drained Query Group leaves the Draining projection at the next activation
+// that observes it, while its retired Schedule timeline stays persisted for
+// the Catalog TTL. When that Query Group returns in a later publication the
+// activation must treat it exactly as one still tracked as Draining: append
+// to the persisted timeline, because the retired Segments are what a Slot
+// replayed from before the retirement boundary reads and a fresh timeline
+// cannot be written over an existing key, and restart its Plans through
+// WARMING. The second scenario keeps the strategy continuously active under
+// other Query Groups in between, which is the case where the forced WARMING
+// cannot come from the Plan having left the activation.
+func TestScheduleActivationReconcilerReactivatesRetiredQueryGroupAfterDrainingForgotIt(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		intermediate string
+	}{
+		{name: "strategy removed and re-enabled", intermediate: "1002"},
+		{name: "strategy retargeted and back", intermediate: "1001"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := newControlplaneRedis(t)
+			prefix := "alarmd:control:forgotten-retired-reactivation"
+			repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			progress := &activationProgressReader{byGroup: map[execution.QueryGroupIdentity]execution.ProgressLoadResult{}}
+			compiler, semantics := runtimePlanCompiler(t)
+			at := time.Unix(60, 0)
+			reconciler, err := controlplane.NewScheduleActivationReconcilerWithProgress(
+				repository, compiler, semantics, progress, func() time.Time { return at },
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			publish := func(sourceID, tableID string) (controlplane.SnapshotPublicationRef, execution.QueryGroupIdentity) {
+				t.Helper()
+				catalog := catalogWithStrategyQueryTable(t, sourceID, tableID)
+				snapshot, _, err := repository.PublishCatalog(ctx, catalog)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return snapshot.Publication, catalog.QueryGroups[0].Identity
+			}
+			drainingOf := func(state controlplane.ActivationState) map[execution.QueryGroupIdentity]execution.EvaluationTime {
+				draining := make(map[execution.QueryGroupIdentity]execution.EvaluationTime, len(state.Draining))
+				for _, entry := range state.Draining {
+					draining[entry.QueryGroup] = entry.RetiredBoundary
+				}
+				return draining
+			}
+			ensure := func(publication controlplane.SnapshotPublicationRef, boundary int64) controlplane.ActivationState {
+				t.Helper()
+				at = time.Unix(boundary, 0)
+				state, err := reconciler.Ensure(ctx, publication)
+				if err != nil {
+					t.Fatalf("activation at %d: %v", boundary, err)
+				}
+				return state
+			}
+
+			cpuPublication, cpu := publish("1001", "system.cpu")
+			ensure(cpuPublication, 60)
+			memPublication, mem := publish(test.intermediate, "system.mem")
+			if draining := drainingOf(ensure(memPublication, 90)); !reflect.DeepEqual(draining, map[execution.QueryGroupIdentity]execution.EvaluationTime{cpu: 90}) {
+				t.Fatalf("retirement draining=%v", draining)
+			}
+			// Once Progress shows the retired Query Group drained, the next
+			// activation prunes it from Draining; nothing in memory refers to
+			// it any more.
+			progress.byGroup[cpu] = execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+				Identity: execution.ProgressIdentity{QueryGroup: cpu}, NextSlot: 90, LastFullSlot: 60,
+				LastCompletionKind: execution.CompletionFull,
+			}}
+			diskPublication, disk := publish(test.intermediate, "system.disk")
+			if draining := drainingOf(ensure(diskPublication, 180)); !reflect.DeepEqual(draining, map[execution.QueryGroupIdentity]execution.EvaluationTime{mem: 180}) {
+				t.Fatalf("drained entry was not pruned: draining=%v", draining)
+			}
+			timelineKey := prefix + ":schedule_timeline:" + string(cpu)
+			before := readPersistedTimelineSegments(t, ctx, client, timelineKey)
+			if before.RetiredAt == nil || *before.RetiredAt != 90 || len(before.Segments) != 1 {
+				t.Fatalf("forgotten Query Group timeline=%+v, want one Segment retired at 90", before)
+			}
+
+			returnedPublication, returned := publish("1001", "system.cpu")
+			if returned != cpu {
+				t.Fatalf("query identity changed across reactivation: old=%s new=%s", cpu, returned)
+			}
+			at = time.Unix(300, 0)
+			state, err := reconciler.Ensure(ctx, returnedPublication)
+			if err != nil {
+				failure, _ := controlplane.ActivationFailureFromError(err)
+				t.Fatalf("reactivation of a forgotten retired Query Group failed: stage=%s class=%s err=%v",
+					failure.Stage, failure.Class, err)
+			}
+			if state.Current != returnedPublication || state.RecordRevision != 4 || len(state.Plans) != 1 {
+				t.Fatalf("reactivation=%#v", state)
+			}
+			if draining := drainingOf(state); !reflect.DeepEqual(draining, map[execution.QueryGroupIdentity]execution.EvaluationTime{mem: 180, disk: 300}) {
+				t.Fatalf("reactivation draining=%v", draining)
+			}
+			if !state.Plans[0].Fact.Selected.ForceWarming ||
+				state.Plans[0].Fact.Selected.StateApplyEpoch != execution.StateApplyEpoch(returnedPublication.PublicationEpoch) {
+				t.Fatalf("reactivated Plan activation=%#v, want ForceWarming at the new epoch", state.Plans[0])
+			}
+
+			// The retired Segments must survive one for one and byte for
+			// byte; only a Segment carrying the reactivation tombstone may be
+			// appended after them.
+			after := readPersistedTimelineSegments(t, ctx, client, timelineKey)
+			if after.RetiredAt != nil || after.RecordRevision != before.RecordRevision+1 {
+				t.Fatalf("reactivated timeline revision=%d retired_at=%v, want revision %d and no retirement",
+					after.RecordRevision, after.RetiredAt, before.RecordRevision+1)
+			}
+			if len(after.Segments) != len(before.Segments)+1 {
+				t.Fatalf("reactivated timeline holds %d Segments, want the %d retired Segments plus one appended:\nbefore=%s\nafter=%s",
+					len(after.Segments), len(before.Segments), before.Segments, after.Segments)
+			}
+			for index, segment := range before.Segments {
+				if !bytes.Equal(segment, after.Segments[index]) {
+					t.Fatalf("retired Segment %d changed on reactivation:\nbefore=%s\nafter=%s", index, segment, after.Segments[index])
+				}
+			}
+			var appended struct {
+				Schedule         execution.FrozenQueryGroupSchedule `json:"schedule"`
+				ReactivatedAfter *execution.EvaluationTime          `json:"reactivated_after"`
+			}
+			if err := json.Unmarshal(after.Segments[len(after.Segments)-1], &appended); err != nil {
+				t.Fatal(err)
+			}
+			if appended.ReactivatedAfter == nil || *appended.ReactivatedAfter != 90 ||
+				appended.Schedule.Segment.Start != 300 || appended.Schedule.Segment.End != nil ||
+				appended.Schedule.Segment.Publication.SnapshotRevision != returnedPublication.SnapshotRevision ||
+				uint64(appended.Schedule.Segment.Publication.PublicationEpoch) != returnedPublication.PublicationEpoch {
+				t.Fatalf("appended Segment=%s, want ReactivatedAfter 90 opening at 300 under the returned publication", after.Segments[len(after.Segments)-1])
+			}
+
+			runtime, err := controlplane.NewRedisCatalogRuntime(repository, compiler, semantics, 5*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, retiredNow, err := runtime.ReadScheduleRetirement(ctx, cpu); err != nil || retiredNow {
+				t.Fatalf("reactivated retirement=(%t,%v)", retiredNow, err)
+			}
+			reopened, err := runtime.ReadFrozenSchedule(ctx, cpu, 300)
+			if err != nil || reopened.Segment.Start != 300 || reopened.Segment.Publication.SnapshotRevision != returnedPublication.SnapshotRevision {
+				t.Fatalf("reactivated Schedule=(%#v,%v)", reopened, err)
+			}
+			historical, err := runtime.ReadFrozenSchedule(ctx, cpu, 60)
+			if err != nil || historical.Segment.Start != 60 || historical.Segment.End == nil || *historical.Segment.End != 90 ||
+				historical.Segment.Publication.SnapshotRevision != cpuPublication.SnapshotRevision ||
+				uint64(historical.Segment.Publication.PublicationEpoch) != cpuPublication.PublicationEpoch {
+				t.Fatalf("retired Schedule replay=(%#v,%v), want the original closed Segment", historical, err)
+			}
+			if _, err := runtime.ReadFrozenSchedule(ctx, cpu, 120); !errors.Is(err, controlplane.ErrScheduleUnavailable) {
+				t.Fatalf("inactive tombstone interval error=%v", err)
+			}
+			if next, err := runtime.NextSlotAfter(ctx, cpu, 60); err != nil || next != 300 {
+				t.Fatalf("same Progress successor=(%d,%v), want 300", next, err)
+			}
+		})
+	}
+}
+
 type reactivationProgressFailureFixture struct {
 	client      *redis.Client
 	prefix      string
@@ -4164,7 +4346,24 @@ func twoQueryGroupCatalog(t *testing.T) controlplane.Catalog {
 
 func catalogWithQueryTable(t *testing.T, tableID string) controlplane.Catalog {
 	t.Helper()
-	document := realThresholdDocuments(t)[0]
+	return catalogWithStrategyQueryTable(t, "1001", tableID)
+}
+
+// catalogWithStrategyQueryTable builds a one-strategy Catalog whose Query
+// Group identity follows tableID alone, so the same table under either test
+// strategy lands in the same Query Group.
+func catalogWithStrategyQueryTable(t *testing.T, sourceID, tableID string) controlplane.Catalog {
+	t.Helper()
+	documents := realThresholdDocuments(t)
+	var document json.RawMessage
+	switch sourceID {
+	case "1001":
+		document = documents[0]
+	case "1002":
+		document = documents[1]
+	default:
+		t.Fatalf("no test strategy document for source %s", sourceID)
+	}
 	planner := queryPlannerFunc(func(context.Context, controlplane.PrimaryQuerySource) (execution.QueryPlanFacts, error) {
 		facts := queryFacts(t)
 		facts.QueryRevision = ""
@@ -4173,7 +4372,7 @@ func catalogWithQueryTable(t *testing.T, tableID string) controlplane.Catalog {
 		return execution.BuildQueryPlanFacts(facts)
 	})
 	catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
-		Strategies: []controlplane.SourceStrategy{{SourceID: "1001", Document: document,
+		Strategies: []controlplane.SourceStrategy{{SourceID: sourceID, Document: document,
 			Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}}},
 		Planner: planner,
 	})

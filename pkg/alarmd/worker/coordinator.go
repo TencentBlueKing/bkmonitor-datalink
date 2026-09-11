@@ -784,12 +784,28 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	changedPlans, changedActivations := changedDuePlanActivations(header.DuePlans, guardActivations)
 	forced := unsatisfiedForcedWarmingActivations(guardActivations, loadedGaps, changedPlans)
 	if len(forced.Facts) > 0 {
+		// The forced WARMING marker is written at this Slot's ApplyVersion,
+		// and the Gap store accepts one write per version: a retry of this
+		// same Slot would evaluate under the marker and try to advance it
+		// with its own mutation at the same version, which the store refuses
+		// as a conflict, on every retry, until the Slot ages out. So this
+		// Slot is the one the marker consumes: it completes query-free with
+		// the drift completion, and warming starts at the next Slot, whose
+		// version is newer than the marker's.
 		if _, err := coordinator.ensureActivatedPlanGaps(
 			ctx, request, execution.ReasonCode(contract.ReasonConfigDrift), forced, false,
 		); err != nil {
 			return execution.SlotExecutionResult{}, err
 		}
-		return activationRetry(execution.ReasonCode(contract.ReasonConfigDrift)), nil
+		primary, err := execution.DeriveStreamingPrimaryInputFact(header, bindings)
+		if err != nil {
+			return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive PRIMARY input fact: %w", err)
+		}
+		if err := coordinator.admitActivatedPlans(ctx, request, guardActivations); err != nil {
+			return execution.SlotExecutionResult{}, err
+		}
+		driftCompletion, driftCause := configDriftCompletion(request.Contract, &primary)
+		return coordinator.commitProgress(ctx, request, driftCompletion, string(driftCause))
 	}
 
 	planResults := append([]execution.PlanEvaluationResult(nil), evaluated.Plans...)

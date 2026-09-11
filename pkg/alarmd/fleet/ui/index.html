@@ -117,23 +117,41 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <span id="health" class="badge b-UNKNOWN">…</span>
       <span id="why" class="why"></span>
     </div>
+    <p class="basis" id="splitBasis">每个对象只落一栏，四栏相加等于应有总数。</p>
     <div class="grid">
-      <div class="cell"><div class="k">应有 (expected)</div><div class="v" id="expected">–</div></div>
-      <div class="cell"><div class="k">已覆盖 (covered)</div><div class="v" id="covered">–</div></div>
-      <div class="cell"><div class="k">已知状态 (determined)</div><div class="v" id="determined">–</div></div>
-      <div class="cell hl"><div class="k">未知 (unknown)</div><div class="v" id="unknown">–</div></div>
+      <div class="cell"><div class="k">正常</div><div class="v" id="healthy">–</div>
+        <div class="k">跑完了，结果完整</div></div>
+      <div class="cell hl"><div class="k">自身异常</div><div class="v" id="ownBad">–</div>
+        <div class="k">alarmd 自己没跑好，是真问题</div></div>
+      <div class="cell"><div class="k">策略本身不可用</div><div class="v" id="demoted">–</div>
+        <div class="k" id="demotedHint">后端持续查不到，已降级不再反复查</div></div>
+      <div class="cell hl"><div class="k">状态未知</div><div class="v" id="unknown">–</div>
+        <div class="k">没人能替它说话，不算正常</div></div>
       <div class="cell hl" id="overdueCell" hidden>
         <div class="k">没被调度 (overdue)</div>
         <div class="v" id="overdue">–</div>
         <div class="k" id="overdueHint"></div>
       </div>
     </div>
+    <div class="grid">
+      <div class="cell"><div class="k">应有 (expected)</div><div class="v" id="expected">–</div></div>
+      <div class="cell"><div class="k">已覆盖 (covered)</div><div class="v" id="covered">–</div></div>
+      <div class="cell"><div class="k">已知状态 (determined)</div><div class="v" id="determined">–</div></div>
+      <div class="cell">
+        <div class="k">出过降级池</div>
+        <div class="v" id="poolExits">–</div>
+        <div class="k" id="poolFlowHint"></div>
+      </div>
+    </div>
     <ul class="gaps" id="gaps"></ul>
     <div class="err" id="healthErr" hidden></div>
     <p class="note">
       <b>判定规则</b>：证据不全 → <span class="s b-UNKNOWN">UNKNOWN</span>；
-      证据齐全且有异常对象 → <span class="s b-DEGRADED">DEGRADED</span>；
-      证据齐全且无异常 → <span class="s b-HEALTHY">HEALTHY</span>。
+      证据齐全且有<b>自身异常</b> → <span class="s b-DEGRADED">DEGRADED</span>；
+      证据齐全且无自身异常 → <span class="s b-HEALTHY">HEALTHY</span>。
+      <br><b>降级池不参与判定</b>：后端持续查不到的对象已知不是 alarmd 的问题，留在判定里只会让后端故障面越大、
+      alarmd 看着越差。代价是这是个<b>把对象移出分母</b>的机制，所以池必须有出口——
+      “出过降级池”那一栏就是用来看出口还在不在的：<b>只进不出说明出池路径坏了</b>，而这时池子大小看起来和后端还没好完全一样。
       <br><b>未知怎么来</b>：未知 = 应有 − 已知状态。它同时包含“没有副本认领”和“认领了但还说不出结论”两种。
       只要未知不为零，判定就停在 UNKNOWN——<b>不知道不等于健康</b>。
     </p>
@@ -148,10 +166,13 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
   </section>
 
   <section class="panel">
-    <h2>异常对象</h2>
+    <h2 id="listTitle">异常对象</h2>
     <p class="basis">按已持续时长排序，最久的在最前；因此第一页就是坏得最久的一批。时间口径：持续时长按每条自身的起算点，见“起算来源”列。</p>
+    <p class="basis" id="listBasis"></p>
     <p class="basis" id="stallNote" hidden></p>
     <div class="filters">
+      <button id="colOwn" class="primary">自身异常</button>
+      <button id="colDemoted">策略本身不可用（降级池）</button>
       <input id="fReplica" list="replicaList" placeholder="副本" size="10">
       <datalist id="replicaList"></datalist>
       <input id="fStrategy" placeholder="策略 ID" size="9">
@@ -169,7 +190,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       </tr></thead>
       <tbody id="rows"></tbody>
     </table>
-    <div class="empty" id="objEmpty" hidden>当前没有异常对象。</div>
+    <div class="empty" id="objEmpty" hidden>当前这一栏没有对象。</div>
     <div class="pager">
       <button id="prev" disabled>上一页</button>
       <button id="next" disabled>下一页</button>
@@ -245,9 +266,13 @@ var total = 0;
 // paged, so narrowing on screen would only narrow the twenty rows that happen
 // to be loaded.
 var filters = { replica: '', strategy: '', business: '' };
+// Which of the two columns the table is about. Sent with every request rather
+// than filtered on the page, for the same reason the filters are: the list is
+// paged, and a page cannot separate two lists it only holds twenty rows of.
+var column = 'anomalies';
 
 function query() {
-  var parts = ['offset=' + offset, 'limit=' + LIMIT];
+  var parts = ['offset=' + offset, 'limit=' + LIMIT, 'column=' + column];
   Object.keys(filters).forEach(function (k) {
     if (filters[k]) parts.push(k + '=' + encodeURIComponent(filters[k]));
   });
@@ -343,9 +368,15 @@ var FAILURE_CATEGORY = {
   evaluation: '评估失败'
 };
 
+// What the timestamp in the previous column actually is. Three of these are not
+// a start time at all, and the column renders identically either way, so the
+// wording is the only thing carrying the difference.
 var SINCE_SOURCE = {
   BUSINESS_STATE: '业务状态（跨重启保留）',
-  SNAPSHOT_CONTINUITY: '快照连续观察（重启重置）'
+  SNAPSHOT_CONTINUITY: '本进程看着它开始出问题的时刻',
+  RESTORED_LAST_FULL: '上次完整跑完的时刻；真正变坏的时刻没保留，所以实际没这么久',
+  RESTORED_AT_RESTART: '本进程接手的时刻；之前有多久没人知道，只会比这更久',
+  REFUSED_FUTURE: '记录的时刻比现在还晚，已拒绝——这是缺陷，请上报'
 };
 
 function loadHealth() {
@@ -359,6 +390,50 @@ function loadHealth() {
     text('covered', d.covered);
     text('determined', d.determined);
     text('unknown', d.unknown);
+    text('healthy', d.healthy);
+    text('ownBad', d.anomalies_total);
+    text('demoted', d.demoted_total);
+    // The equation is printed with its own arithmetic rather than asserted in
+    // prose. A reader who can only be told the columns partition the objects has
+    // no way to notice the day they stop doing so.
+    var parts = [d.healthy, d.anomalies_total, d.demoted_total, d.unknown];
+    var sum = parts.reduce(function (a, b) { return a + (b || 0); }, 0);
+    var total = (d.expected === null || d.expected === undefined) ? d.covered : d.expected;
+    text('splitBasis', '每个对象只落一栏：' + parts.join(' + ') + ' = ' + sum +
+      (sum === total ? '，等于应有的 ' + total : '，但应有的是 ' + total + ' —— 对不上，先别信这四个数'));
+    // Demotion is the one mechanism here that makes a deployment look better by
+    // removing objects from the denominator, so the pool never gets to report
+    // only its size. A pool with members and no exits is a way out that has
+    // stopped working, and its occupancy reads exactly like a backend that is
+    // still down.
+    var exits = d.demotion_exits || 0;
+    var entries = d.demotion_entries || 0;
+    text('poolExits', entries ? exits + ' / ' + entries : '—');
+    var flow = [];
+    if (!entries) {
+      flow.push('本次进程还没有对象进过降级池');
+    } else if (!exits) {
+      // Exits alone would call a real outage a broken mechanism: during one
+      // there is nothing to recover to, so nothing exits either. Extensions are
+      // what separates the two -- a pool being extended is being retried and
+      // failing, a pool with nothing moving is not being touched.
+      flow.push((d.demotion_extensions || 0)
+        ? '进过 ' + entries + ' 个，一个都没出来过，但还在被重试（延长 ' + d.demotion_extensions + ' 次）——后端大概还没好'
+        : '进过 ' + entries + ' 个，既没出来过也没被重试过——出池路径可能已经不工作了');
+    } else {
+      flow.push('进过 ' + entries + ' 个，出来过 ' + exits + ' 个');
+      if (d.last_demotion_exit) {
+        flow.push('最近一次出池 ' + new Date(d.last_demotion_exit).toLocaleTimeString());
+      }
+    }
+    if (d.demoted_due) {
+      flow.push('其中 ' + d.demoted_due + ' 个的冷却时间已经到了还没被重试');
+    }
+    flow.push('计数从本次进程启动起算，重启归零');
+    text('poolFlowHint', flow.join('；'));
+    text('demotedHint', d.demoted_total
+      ? '后端持续查不到，已降级不再反复查；不计入部署健康判定'
+      : '当前没有对象被降级');
     // Shown only where something actually holds wake times. A zero here on a
     // deployment that holds none would report "nothing is being missed" for one
     // where nothing is watching, which is the failure this whole cell is for.
@@ -425,6 +500,18 @@ function loadHealth() {
 function loadObjects() {
   return api('objects?' + query()).then(function (d) {
     show('objErr', false);
+    // Which list came back is read off the response, never assumed from what was
+    // asked for. A page that labels the rows by its own request state shows the
+    // previous column's heading over the new column's rows for one refresh, and
+    // the two columns mean opposite things about whose fault the objects are.
+    var served = d.column || 'anomalies';
+    var pool = served === 'demoted';
+    text('listTitle', pool ? '策略本身不可用（降级池）' : '自身异常对象');
+    text('listBasis', pool
+      ? '这些对象的后端持续查不到，已被降级、不再反复查询，也不计入部署健康判定。列在这里是因为“不算我们的问题”是一个需要能被核对的说法——每条都带着它最近一次失败在哪。'
+      : 'alarmd 自己没有把这些对象跑好，是需要处理的真问题。后端查不到而被降级的对象不在这里，在另一栏。');
+    document.getElementById('colOwn').className = pool ? '' : 'primary';
+    document.getElementById('colDemoted').className = pool ? 'primary' : '';
     var rows = d.anomalies || [];
     total = (d.page && d.page.total) || 0;
     var tb = document.getElementById('rows');
@@ -1468,6 +1555,17 @@ document.getElementById('recRaw').addEventListener('click', function () {
   this.textContent = showing ? '收起原文' : '看原文';
 });
 
+function showColumn(next) {
+  if (column === next) return;
+  column = next;
+  // The offset belongs to the list that produced it. Carrying it across means
+  // asking the pool for page four of a list that has one page, and getting an
+  // empty table that reads as "nothing is demoted".
+  offset = 0;
+  loadObjects();
+}
+document.getElementById('colOwn').addEventListener('click', function () { showColumn('anomalies'); });
+document.getElementById('colDemoted').addEventListener('click', function () { showColumn('demoted'); });
 document.getElementById('apply').addEventListener('click', applyFilters);
 document.getElementById('clear').addEventListener('click', function () {
   ['fReplica', 'fStrategy', 'fBusiness'].forEach(function (id) {

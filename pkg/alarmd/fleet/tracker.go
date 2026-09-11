@@ -114,6 +114,11 @@ type queryGroupState struct {
 	cooldownExposed bool
 	strategies      map[StrategyRef]struct{}
 	runStartedAt    time.Time
+	// sinceFrom says what runStartedAt actually is. A run this process watched
+	// begin has a start time; a run restored from a persisted cursor has only a
+	// bound, and the two are indistinguishable once they are both a timestamp
+	// in the same column.
+	sinceFrom SinceSource
 	// failingSince is when the current unbroken sequence of rounds that
 	// reached execution and did not finish began. It is kept apart from
 	// runStartedAt on purpose: that clock starts at the first degraded round
@@ -161,6 +166,14 @@ type Tracker struct {
 
 	mu     sync.Mutex
 	groups map[string]*queryGroupState
+	// Cumulative since this process started, never reset by anything the pool
+	// does. They are a pair on purpose: the size of the pool alone cannot tell a
+	// backend that is still down from an exit path that has stopped working, and
+	// the second reads as the first on every panel that shows only occupancy.
+	demotionEntries    int
+	demotionExtensions int
+	demotionExits      int
+	lastDemotionExit   time.Time
 }
 
 // NewTracker wraps an observer. A nil next observer is allowed; the tracker is
@@ -242,9 +255,33 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		switch facts.Event {
 		case "entered", "extended":
 			copy := *facts
+			if state.queryCooldown == nil {
+				tracker.demotionEntries++
+			} else {
+				// Counted apart from entries because it is the only thing that
+				// separates a pool that is still working from one that is stuck.
+				// During a real outage nothing exits -- there is nothing to
+				// recover to -- so exits alone would call a genuine outage a
+				// broken mechanism. A pool being extended is being retried and
+				// failing; a pool with deadlines in the past and no entries,
+				// extensions or exits is not being touched at all.
+				tracker.demotionExtensions++
+			}
 			state.queryCooldown = &copy
 			state.cooldownExposed = true
 		case "recovered", "config_changed", "disabled":
+			// Counted only on the way out of the pool, not on every event that
+			// could clear one. Demotion takes objects out of the health
+			// denominator, so the number that matters is not how big the pool is
+			// -- a pool that only fills reports a perfectly steady size once it
+			// has swallowed everything it can. It is whether anything ever comes
+			// back out. Zero exits beside a non-empty pool is the shape of an
+			// exit path that has stopped working, and nothing else in the view
+			// distinguishes that from a backend that is genuinely still down.
+			if state.queryCooldown != nil {
+				tracker.demotionExits++
+				tracker.lastDemotionExit = at
+			}
 			state.queryCooldown = nil
 		}
 	}
@@ -300,6 +337,10 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 	if !state.inAnomalyRun {
 		state.inAnomalyRun = true
 		state.runStartedAt = at
+		// This process watched the run begin, so the timestamp is a start time
+		// rather than a bound. A restored object overwrites neither, because
+		// Restore leaves a determined object alone.
+		state.sinceFrom = SinceSnapshotContinuity
 	}
 }
 
@@ -314,12 +355,55 @@ func (tracker *Tracker) resetRun(state *queryGroupState) {
 	state.currentKind = ""
 	state.reasonCode = ""
 	state.runStartedAt = time.Time{}
+	state.sinceFrom = ""
 	state.failingSince = time.Time{}
 }
 
-// Anomalies returns the query groups over threshold, ordered by how long their
-// current run has lasted.
+// Anomalies returns the query groups this deployment's own execution is failing
+// on, ordered by how long their current run has lasted.
+//
+// Objects held in the demotion pool are not here. They are in Demoted, because
+// their backend is the thing that is not answering and counting them as this
+// deployment's anomalies makes a bigger pool read as a sicker deployment -- the
+// exact inversion that makes the health number useless during a backend outage.
+// Every object lands in exactly one of the two, which is what lets the counts
+// add up against Determined; TestTheFourColumnsAccountForEveryObject is what
+// keeps that true rather than this sentence.
 func (tracker *Tracker) Anomalies() []Anomaly {
+	return tracker.listed(false)
+}
+
+// Demoted returns the query groups held back because their backend kept
+// answering unavailable.
+//
+// It carries the same evidence an anomaly does -- reason, cause, last failure --
+// because "this is not our fault" is a claim a reader has to be able to check.
+// A pool whose members explain nothing is indistinguishable from a pool that
+// swallowed a real failure.
+func (tracker *Tracker) Demoted() []Anomaly {
+	return tracker.listed(true)
+}
+
+// DemotionFlow reports how many objects have entered and left the pool since
+// this process started, and when the last one left.
+//
+// Occupancy alone cannot be read: a pool that only fills settles at a steady
+// size, which looks exactly like a backend that is still down. Exits are the
+// positive control -- if they stay at zero while the pool is not empty, the way
+// out has stopped working and everything else on the page still says fine.
+//
+// Extensions are what keeps that control honest in the other direction. A real
+// outage produces no exits either, because there is nothing to recover to, so
+// exits alone would report every sustained outage as a broken mechanism. A pool
+// being extended is being retried and failing; a pool whose deadlines have
+// passed with no entries, extensions or exits is not being touched at all.
+func (tracker *Tracker) DemotionFlow() (entries, extensions, exits int, lastExit time.Time) {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	return tracker.demotionEntries, tracker.demotionExtensions, tracker.demotionExits, tracker.lastDemotionExit
+}
+
+func (tracker *Tracker) listed(demoted bool) []Anomaly {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
@@ -330,13 +414,22 @@ func (tracker *Tracker) Anomalies() []Anomaly {
 		if !over && state.queryCooldown == nil && !(state.cooldownExposed && state.inAnomalyRun) {
 			continue
 		}
+		// The pool decides the column, ahead of the threshold. An object can be
+		// both over threshold and held back, and attributing it to this
+		// deployment while its backend is the thing not answering is the reading
+		// the split exists to prevent. An object that has left the pool and has
+		// not yet completed a healthy round comes back here rather than counting
+		// as healthy: leaving the pool is not evidence of recovery.
+		if (state.queryCooldown != nil) != demoted {
+			continue
+		}
 		anomaly := Anomaly{
 			QueryGroup:    queryGroup,
 			QueryCooldown: state.queryCooldown,
 			Kind:          state.currentKind,
 			ReasonCode:    state.reasonCode, Cause: state.cause,
 			Since:        state.runStartedAt,
-			SinceFrom:    SinceSnapshotContinuity,
+			SinceFrom:    state.sinceFrom,
 			FailingSince: state.failingSince,
 			Replica:      tracker.replica,
 			Failure:      state.lastFailure,
@@ -345,7 +438,18 @@ func (tracker *Tracker) Anomalies() []Anomaly {
 			anomaly.Kind = KindQueryCooldown
 			if anomaly.Since.IsZero() {
 				anomaly.Since = state.queryCooldown.LastQueryAt
+				anomaly.SinceFrom = SinceSnapshotContinuity
 			}
+		}
+		// Nothing can have started later than the moment it is being read, so a
+		// start time in the future is a defect in whatever produced it, not a
+		// long-running object. Refusing it here rather than letting the sort
+		// absorb it is deliberate: ordered oldest-first, a future timestamp
+		// sorts last, which is where a shortened list stops showing rows -- the
+		// mis-stamped object disappears exactly when the list gets interesting.
+		if now := tracker.now(); anomaly.Since.After(now) {
+			anomaly.Since = now
+			anomaly.SinceFrom = SinceRefusedFuture
 		}
 		for strategy := range state.strategies {
 			anomaly.Strategies = append(anomaly.Strategies, strategy)

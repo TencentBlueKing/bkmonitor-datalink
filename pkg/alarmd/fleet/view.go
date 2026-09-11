@@ -70,8 +70,13 @@ const (
 	GapUndetermined GapKind = "UNDETERMINED"
 )
 
-// SinceSource records where an anomaly's start time came from, because the two
-// sources do not survive the same events.
+// SinceSource records where an anomaly's start time came from, because the
+// sources do not survive the same events and do not mean the same thing.
+//
+// A restored object is the reason this has to be carried per anomaly rather
+// than stamped on the whole list: an object this process watched go wrong has a
+// start time, and an object restored from a persisted cursor has a bound. Both
+// render as a timestamp, and nothing else in the row tells them apart.
 type SinceSource string
 
 const (
@@ -81,6 +86,39 @@ const (
 	// SinceSnapshotContinuity is only as old as the uninterrupted run of
 	// snapshots that observed it, and resets when that run breaks.
 	SinceSnapshotContinuity SinceSource = "SNAPSHOT_CONTINUITY"
+	// SinceRestoredLastFull is the last round the object is known to have
+	// completed in full, read back after a restart. It is not when the object
+	// started going wrong: that moment is not persisted anywhere. It is the
+	// latest moment the object is known to have been fine, so the duration
+	// beside it is an upper bound on how long this has been going on.
+	SinceRestoredLastFull SinceSource = "RESTORED_LAST_FULL"
+	// SinceRestoredAtRestart is this process taking over an object whose
+	// persisted state records no full completion to anchor against. The clock
+	// starts at the handover, so the duration is a lower bound -- possibly a
+	// far lower one -- rather than a measurement.
+	SinceRestoredAtRestart SinceSource = "RESTORED_AT_RESTART"
+	// SinceRefusedFuture marks a row whose start time was later than the moment
+	// it was read. Nothing can have started after now, so the timestamp was
+	// refused and the clock reset to the read.
+	//
+	// This should never appear. It exists because the previous way of getting it
+	// wrong was silent: a future timestamp renders as a negative age, and the
+	// list is ordered oldest-first, so it sorted to the end -- where a truncated
+	// list drops it first. The rule meant to keep the worst objects visible
+	// pushed the mis-stamped ones out of view instead. A row that says it was
+	// refused is a bug report; a row that quietly sorts last is not.
+	SinceRefusedFuture SinceSource = "REFUSED_FUTURE"
+)
+
+// The two columns the object list can be about. An object is in exactly one.
+const (
+	// ColumnAnomalies is what this deployment's own execution is failing at.
+	ColumnAnomalies = "anomalies"
+	// ColumnDemoted is what it has stopped asking for because the backend kept
+	// answering unavailable. These are held out of the health verdict, which is
+	// the whole reason they have to be listable: a mechanism that removes
+	// objects from the denominator has to show which ones.
+	ColumnDemoted = "demoted"
 )
 
 // StrategyRef ties an object back to something an operator recognises.
@@ -174,6 +212,23 @@ type Snapshot struct {
 	Determined     int       `json:"determined"`
 	Anomalies      []Anomaly `json:"anomalies"`
 	TotalAnomalies int       `json:"total_anomalies"`
+	// Demoted are the objects held back because their backend kept answering
+	// unavailable. They are published apart from Anomalies, not folded into
+	// them, because they answer a different question: Anomalies is what this
+	// deployment is failing at, Demoted is what it has stopped asking for.
+	Demoted      []Anomaly `json:"demoted"`
+	TotalDemoted int       `json:"total_demoted"`
+	// DemotionEntries and DemotionExits are cumulative since this replica
+	// started. The pair is the check on the pool: demotion removes objects from
+	// the health denominator, so a pool with entries and no exits is a mechanism
+	// that only hides, and its occupancy alone cannot show that.
+	DemotionEntries    int `json:"demotion_entries"`
+	DemotionExtensions int `json:"demotion_extensions"`
+	DemotionExits      int `json:"demotion_exits"`
+	// LastDemotionExit is when this replica last saw an object leave the pool.
+	// Zero means it has not seen one, which is not the same as "none left
+	// recently" and must not be rendered as a duration.
+	LastDemotionExit time.Time `json:"last_demotion_exit,omitempty"`
 	// Capacity is how close this replica is to its own limits. Absent on a
 	// replica that does not report it, which is why the aggregate counts the
 	// replicas it actually heard from rather than assuming every one answered.
@@ -240,7 +295,35 @@ type View struct {
 	// all. See DispatchSuppression: its absence, not its value, is the answer.
 	Dispatch  *DispatchSuppression `json:"dispatch,omitempty"`
 	Anomalies []Anomaly            `json:"anomalies"`
-	Replicas  []string             `json:"replicas"`
+	// Healthy is Determined minus the two listed columns. It is computed here
+	// rather than left to the page because it is the column a reader trusts
+	// most, and a page that derives it by subtraction can be made to show a
+	// healthy count that nothing produced.
+	Healthy int `json:"healthy"`
+	// Demoted are objects whose backend kept answering unavailable. They are
+	// out of the health verdict on purpose -- that is what demotion is for --
+	// which is exactly why the flow numbers below travel with them.
+	Demoted      []Anomaly `json:"demoted"`
+	DemotedTotal int       `json:"demoted_total"`
+	// DemotionEntries, DemotionExits and LastDemotionExit are summed over the
+	// counted replicas. Exits is the one that matters: demotion takes objects
+	// out of the denominator, so a pool that fills and never drains is a
+	// mechanism for making a deployment look well, and only this number says so.
+	DemotionEntries    int       `json:"demotion_entries"`
+	DemotionExtensions int       `json:"demotion_extensions"`
+	DemotionExits      int       `json:"demotion_exits"`
+	LastDemotionExit   time.Time `json:"last_demotion_exit,omitempty"`
+	// DemotedDue counts pooled objects whose own cooldown window has already
+	// elapsed at the moment of this read: they are due to be tried again and are
+	// still in the pool.
+	//
+	// It is derived from each object's own deadline rather than from a threshold
+	// chosen here, which is why it can be reported before anyone has decided
+	// what number is too many. A pool where this keeps climbing is one whose way
+	// out has stopped working, and that is the failure demotion can cause and
+	// occupancy cannot show.
+	DemotedDue int      `json:"demoted_due"`
+	Replicas   []string `json:"replicas"`
 }
 
 // Aggregate folds the published snapshots into one view.
@@ -251,7 +334,7 @@ type View struct {
 // the denominator locally would make three replicas out of four report full
 // coverage of nothing.
 func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas []string, now time.Time, freshness time.Duration) View {
-	view := View{Health: HealthHealthy, Anomalies: []Anomaly{}, Replicas: []string{}}
+	view := View{Health: HealthHealthy, Anomalies: []Anomaly{}, Demoted: []Anomaly{}, Replicas: []string{}}
 	ownedByReplica := make([]string, 0, len(expectedReplicas))
 	// The snapshots this view is willing to speak for. Every other number below
 	// is built from these and not from the argument, because the argument
@@ -288,9 +371,34 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		view.Determined += snapshot.Determined
 		view.AnomaliesTotal += snapshot.TotalAnomalies
 		view.Anomalies = append(view.Anomalies, snapshot.Anomalies...)
+		view.DemotedTotal += snapshot.TotalDemoted
+		view.Demoted = append(view.Demoted, snapshot.Demoted...)
+		view.DemotionEntries += snapshot.DemotionEntries
+		view.DemotionExtensions += snapshot.DemotionExtensions
+		view.DemotionExits += snapshot.DemotionExits
+		if snapshot.LastDemotionExit.After(view.LastDemotionExit) {
+			view.LastDemotionExit = snapshot.LastDemotionExit
+		}
 		if snapshot.Truncated() {
 			view.Gaps = append(view.Gaps, Gap{Kind: GapListTruncated, Replica: replica})
 		}
+	}
+	// Determined is what the replicas can speak for, and every object they can
+	// speak for is in exactly one of the three. Subtracting rather than counting
+	// healthy objects directly is deliberate: a healthy count built by its own
+	// walk can drift from the lists beside it, and the drift shows up as a
+	// column that adds up to slightly more than the deployment has.
+	view.Healthy = view.Determined - view.AnomaliesTotal - view.DemotedTotal
+	if view.Healthy < 0 {
+		// The three columns claim more objects than the replicas said they can
+		// speak for. Something is being counted twice, so no column can be
+		// trusted -- including the healthy one, which would otherwise absorb the
+		// error silently as a smaller number.
+		view.Gaps = append(view.Gaps, Gap{Kind: GapCoverageInconsistent,
+			Detail: fmt.Sprintf("%d anomalies and %d demoted against %d determined; the columns claim more "+
+				"objects than the replicas can speak for, so none of them adds up",
+				view.AnomaliesTotal, view.DemotedTotal, view.Determined)})
+		view.Healthy = 0
 	}
 
 	// Built from the same snapshots as the verdict, for the same reason the
@@ -356,12 +464,14 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		}
 	}
 
-	sort.Slice(view.Anomalies, func(left, right int) bool {
-		if view.Anomalies[left].Since.Equal(view.Anomalies[right].Since) {
-			return view.Anomalies[left].QueryGroup < view.Anomalies[right].QueryGroup
+	sortAnomalies(view.Anomalies)
+	sortAnomalies(view.Demoted)
+	for _, demoted := range view.Demoted {
+		if demoted.QueryCooldown != nil && !demoted.QueryCooldown.Until.IsZero() &&
+			demoted.QueryCooldown.Until.Before(now) {
+			view.DemotedDue++
 		}
-		return view.Anomalies[left].Since.Before(view.Anomalies[right].Since)
-	})
+	}
 
 	// Order matters: an incomplete view cannot be called healthy, and it cannot
 	// be called degraded either, because the anomalies it does show are not the
@@ -375,6 +485,19 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		view.Health = HealthHealthy
 	}
 	return view
+}
+
+// sortAnomalies orders a column oldest-first. Both columns use it, because a
+// reader comparing them is comparing two lists and an ordering that differs
+// between them turns "which has been wrong longer" into a question about the
+// page.
+func sortAnomalies(anomalies []Anomaly) {
+	sort.Slice(anomalies, func(left, right int) bool {
+		if anomalies[left].Since.Equal(anomalies[right].Since) {
+			return anomalies[left].QueryGroup < anomalies[right].QueryGroup
+		}
+		return anomalies[left].Since.Before(anomalies[right].Since)
+	})
 }
 
 // shortReplicaName keeps the part of a Pod name that differs between replicas.

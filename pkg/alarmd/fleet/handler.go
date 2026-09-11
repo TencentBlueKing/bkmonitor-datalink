@@ -48,7 +48,12 @@ type listResponse struct {
 	// Applied says a filter narrowed this response. An empty table means
 	// something different when it was filtered, and the caller cannot tell the
 	// two apart from the rows alone.
-	Applied bool    `json:"filtered"`
+	Applied bool `json:"filtered"`
+	// Column says which of the two lists the rows and the summary are about.
+	// Always sent, never inferred from the request: a response that does not say
+	// looks identical either way, and the two lists mean opposite things about
+	// whose fault the objects are.
+	Column  string  `json:"column"`
 	Summary Summary `json:"summary"`
 	// StallAfterSeconds is the budget an object's rounds have to finish in before
 	// the list calls it stalled. It is reported rather than assumed by the reader
@@ -305,14 +310,35 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 		writeJSON(response, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	// Which column this request is about. It is a parameter rather than a second
+	// route because the two lists are two answers from one read: served apart,
+	// a reader could hold a pool from one moment beside anomalies from another
+	// and find objects in both, or in neither.
+	column := request.URL.Query().Get("column")
+	if column != "" && column != ColumnAnomalies && column != ColumnDemoted {
+		writeJSON(response, http.StatusBadRequest,
+			map[string]string{"error": "column must be " + ColumnAnomalies + " or " + ColumnDemoted})
+		return
+	}
+	if column == "" {
+		column = ColumnAnomalies
+	}
 	view := service.View(request.Context())
+	if column == ColumnDemoted {
+		// The demoted list takes the anomaly list's place for the rest of this
+		// request. The deployment-wide counts on the view are untouched, so the
+		// response still carries both totals and a reader paging the pool can
+		// still see how many objects are not in it.
+		view.Anomalies = view.Demoted
+		view.AnomaliesTotal = view.DemotedTotal
+	}
 	// Marked before filtering so a filtered response reports the same flag for the
 	// same object as an unfiltered one, and counted here so the deployment-wide
 	// total survives whatever filter follows.
 	MarkStalled(view.Anomalies, now(), stallAfter)
-	// A replica publishes at most DefaultMaxAnomalies of its own, so on a bad
-	// enough deployment the list this summary counts is already a sample. The
-	// counts stay useful for "which of these is it", and stop being usable as a
+	// A replica publishes at most what fits its byte budget, so on a bad enough
+	// deployment the list this summary counts is already a sample. The counts
+	// stay useful for "which of these is it", and stop being usable as a
 	// distribution -- and nothing in the summary said so, leaving that to a
 	// reader who thought to compare two other fields.
 	summaryPartial := view.AnomaliesTotal > len(view.Anomalies)
@@ -359,7 +385,7 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	view.Anomalies = pageOf(view.Anomalies, offset, limit)
 	writeJSON(response, http.StatusOK, listResponse{
 		Summary: summary,
-		View:    view, Replica: replica, Strategy: strategy, Business: business,
+		View:    view, Replica: replica, Strategy: strategy, Business: business, Column: column,
 		Applied:           replica != "" || strategy != "" || business != "",
 		StallAfterSeconds: int(stallAfter / time.Second),
 		StalledTotal:      stalledTotal,

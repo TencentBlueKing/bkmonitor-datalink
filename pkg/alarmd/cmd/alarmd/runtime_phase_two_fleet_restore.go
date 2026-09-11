@@ -37,10 +37,17 @@ func progressRestoreSource(store *progress.Store) func(context.Context, executio
 		if result.Progress == nil {
 			return fleet.RestoredState{}, nil
 		}
-		return fleet.RestoredState{
+		restored := fleet.RestoredState{
 			LastCompletion: string(result.Progress.LastCompletionKind),
 			NextSlot:       time.Unix(int64(result.Progress.NextSlot), 0),
-		}, nil
+		}
+		// Zero means no round has ever completed in full, which is a different
+		// statement from "it last completed in full at the epoch". Converting it
+		// would hand the tracker a timestamp from 1970 and an age to match.
+		if result.Progress.LastFullSlot > 0 {
+			restored.LastFullSlot = time.Unix(int64(result.Progress.LastFullSlot), 0)
+		}
+		return restored, nil
 	}
 }
 

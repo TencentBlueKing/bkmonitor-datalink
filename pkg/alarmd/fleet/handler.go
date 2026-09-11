@@ -185,7 +185,14 @@ func rank(counts map[string]int) []Count {
 	return ranked
 }
 
-type detailResponse struct {
+// DetailResponse is what one object's route answers with.
+//
+// Exported, unlike the other response bodies here, so the page's own tests can
+// check that every field the page reads off it is a field this actually sends.
+// Nothing else catches a name that does not match: it reads as undefined, the
+// page renders a zero or a blank, and the response carried the right number the
+// whole time.
+type DetailResponse struct {
 	Found      bool     `json:"found"`
 	Anomaly    *Anomaly `json:"anomaly,omitempty"`
 	Health     Health   `json:"health"`
@@ -199,6 +206,10 @@ type detailResponse struct {
 	Records      []json.RawMessage `json:"records,omitempty"`
 	Diagnostics  *DiagnosticHealth `json:"diagnostics,omitempty"`
 	RecordsError string            `json:"records_error,omitempty"`
+	// RetentionSeconds is how long these records survive. It is sent rather than
+	// written into the page, so the sentence the page puts under them cannot
+	// outlive the constant it describes.
+	RetentionSeconds int `json:"retention_seconds,omitempty"`
 }
 
 // NewHandler mounts the object API. The routes are deliberately few: a list,
@@ -357,12 +368,15 @@ func objectDetail(response http.ResponseWriter, request *http.Request, service *
 	records, health, recordErr := objectRecords(request, queryGroup, diagnostics)
 	view := service.View(request.Context())
 	MarkStalled(view.Anomalies, now(), stallAfter)
-	body := detailResponse{
+	body := DetailResponse{
 		Records: records, Diagnostics: health, RecordsError: recordErr,
 		Health:     view.Health,
 		Gaps:       view.Gaps,
 		Complete:   view.Health != HealthUnknown,
 		QueryGroup: queryGroup,
+	}
+	if health != nil {
+		body.RetentionSeconds = int(DiagnosticRetention / time.Second)
 	}
 	for index := range view.Anomalies {
 		if view.Anomalies[index].QueryGroup == queryGroup {
@@ -372,8 +386,23 @@ func objectDetail(response http.ResponseWriter, request *http.Request, service *
 			return
 		}
 	}
-	// Absent from an incomplete view does not mean healthy. The status says not
-	// found; the body says whether that answer can be trusted.
+	// Absent from the anomaly list is not absent from the deployment, and an
+	// observation window is not restricted to objects that are going wrong --
+	// the ordinary reason to open one is an object behaving in a way nobody can
+	// explain yet. Those records have already been read by the time we get here,
+	// and refusing the response as a missing resource throws them away at the
+	// caller: the page's fetch treats a non-2xx as a failed read and shows the
+	// error instead of the very output the window was opened to produce.
+	//
+	// The status still says not found when there is nothing to return. This view
+	// holds anomalies rather than the owned set, so it cannot tell a healthy
+	// object from an identity belonging to no object at all, and with no records
+	// either there is nothing to say -- the body reports how far that answer can
+	// be trusted.
+	if len(records) > 0 {
+		writeJSON(response, http.StatusOK, body)
+		return
+	}
 	writeJSON(response, http.StatusNotFound, body)
 }
 

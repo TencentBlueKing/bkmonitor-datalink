@@ -253,8 +253,17 @@ function api(path, init) {
       var body = null;
       try { body = text ? JSON.parse(text) : null; } catch (e) { /* keep raw */ }
       if (!r.ok) {
-        var reason = (body && body.error) || text || ('HTTP ' + r.status);
-        throw new Error(reason);
+        // A body that parsed but carries no error field is a structured
+        // response, not an explanation. Pasting the whole JSON into a sentence
+        // is not a message -- it is the raw response with a prefix on it, which
+        // is what a reader saw whenever a route answered in its own shape.
+        var reason = (body && body.error) || (body ? 'HTTP ' + r.status : (text || ('HTTP ' + r.status)));
+        var failure = new Error(reason);
+        // Carried rather than matched out of the text later: a provider message
+        // that happens to contain "404" is not a missing route, and deciding
+        // that from the sentence gets it wrong in whichever direction is worse.
+        failure.status = r.status;
+        throw failure;
       }
       return body;
     });
@@ -742,21 +751,46 @@ function nanos(ns) {
 // one run the order that reads is the order it happened, and the timestamps are
 // no help -- a whole run is usually emitted inside one millisecond -- so
 // arrival order is what gets reversed, not the clock.
+// The process is part of the key, not decoration. run_id counts rounds inside
+// one process and starts again at one when that process does, while these
+// records outlive it: they are kept per object, retained past the window that
+// produced them, and every replica writes the same object's records to the same
+// place. So after a restart or a handover the list holds two round 1s, and
+// grouping on run_id alone welds them into one round that shows a query starting
+// in one process and finishing in another.
 function groupRuns(records) {
   var runs = [], byKey = {};
   records.slice().reverse().forEach(function (record) {
     var facts = record.facts || {};
+    var process = record.process_id || '';
     // Records made before a run exists -- queue decisions, for one -- still
     // matter, so they group under their stage instead of being dropped.
-    var key = facts.run_id ? 'run:' + facts.run_id : 'norun:' + (record.stage || '?');
+    var key = facts.run_id
+      ? 'run:' + process + ':' + facts.run_id
+      : 'norun:' + process + ':' + (record.stage || '?');
     var run = byKey[key];
     if (!run) {
-      run = byKey[key] = {id: facts.run_id || 0, at: record.time_unix_ms || 0, steps: []};
+      run = byKey[key] = {
+        id: facts.run_id || 0, process: process, at: record.time_unix_ms || 0, steps: []
+      };
       runs.push(run);
     }
     run.steps.push(record);
   });
   return runs.reverse();
+}
+
+// How many processes wrote this object's records. More than one means a restart
+// or a handover happened inside the retention, which the reader has to know:
+// round numbers repeat across processes, so two rounds numbered the same are not
+// the same round and a gap between them is a change of process, not a stall.
+function processesIn(records) {
+  var seen = {}, count = 0;
+  records.forEach(function (record) {
+    var process = (record && record.process_id) || '';
+    if (process && !seen[process]) { seen[process] = true; count++; }
+  });
+  return count;
 }
 
 // One line saying what happened in this run, chosen so the most actionable
@@ -870,7 +904,7 @@ function runFacts(run) {
   return tags;
 }
 
-function renderRuns(host, runs) {
+function renderRuns(host, runs, manyProcesses) {
   host.textContent = '';
   runs.forEach(function (run) {
     var verdict = runVerdict(run);
@@ -885,7 +919,10 @@ function renderRuns(host, runs) {
       span.textContent = content;
       head.appendChild(span);
     }
-    part('no', run.id ? '第 ' + run.id + ' 轮' : '轮次之外');
+    // The process is shown only when there is more than one, because that is
+    // when the round number stops identifying the round on its own.
+    part('no', (run.id ? '第 ' + run.id + ' 轮' : '轮次之外') +
+      (manyProcesses && run.process ? '（进程 ' + run.process + '）' : ''));
     part('rv', verdict.text);
     part('when', run.at ? new Date(run.at).toLocaleTimeString() : '');
     var took = 0;
@@ -983,11 +1020,15 @@ function loadRecords(queryGroup) {
   // Read through the object rather than an endpoint of its own: the API is
   // capped at five capabilities, and "what did my window record for this
   // object" is part of looking at the object.
-  return api('objects/' + encodeURIComponent(queryGroup) + '?records=200').then(function (d) {
-    var rs = d.records || [];
-    var h = d.diagnostics || {};
-    if (d.records_error) {
-      runsHost.textContent = d.records_error;
+  // Named distinctly rather than reusing the page's one-letter response
+  // variable: every field read off it is checked against the detail response's
+  // own shape, and that check finds the reads by the name in front of the dot --
+  // so the name has to belong to this response and nothing else on the page.
+  return api('objects/' + encodeURIComponent(queryGroup) + '?records=200').then(function (objectDetail) {
+    var rs = objectDetail.records || [];
+    var h = objectDetail.diagnostics || {};
+    if (objectDetail.records_error) {
+      runsHost.textContent = objectDetail.records_error;
       return;
     }
     if (!rs.length) {
@@ -1001,28 +1042,50 @@ function loadRecords(queryGroup) {
           : '窗口开启后这个对象还没有产生记录。它按轮次产生，慢周期对象要等下一轮。';
       return;
     }
+    // Both of these change how the runs below should be read, so both are
+    // collected and both are shown. Writing one over the other would silently
+    // drop a caveat -- and the pair of them together is the worst case, where a
+    // gap could be a dropped record or a change of process and the reader has to
+    // know both are possible.
+    var caveats = [];
     // A dropped record makes this an incomplete sample, and a reader who does
     // not know that will read "the run stopped here" off a gap the channel
     // made. It goes above the runs rather than beside them.
     var dropped = 0;
     rs.forEach(function (r) { dropped = Math.max(dropped, (r && r.dropped_total) || 0); });
     if (dropped || h.dropped || h.failed) {
-      text('recDrop', '这份记录不完整：诊断通道丢了 ' + (dropped || h.dropped || 0) + ' 条' +
+      caveats.push('这份记录不完整：诊断通道丢了 ' + (dropped || h.dropped || 0) + ' 条' +
         (h.failed ? '、写失败 ' + h.failed + ' 条' : '') +
         '。下面缺的一步可能是没发生，也可能是没记下来——不要当作完整证据。');
+    }
+    var processes = processesIn(rs);
+    if (processes > 1) {
+      caveats.push('这段记录来自 ' + processes + ' 个进程：期间发生过重启或对象被别的副本接管。' +
+        '轮次编号在每个进程里各自从 1 开始，已按进程分开——编号相同的不是同一轮，中间的空档是换了进程，不是卡住。');
+    }
+    if (caveats.length) {
+      text('recDrop', caveats.join(' '));
       show('recDrop', true);
     }
     var runs = groupRuns(rs);
-    renderRuns(runsHost, runs);
+    renderRuns(runsHost, runs, processes > 1);
     show('recTools', true);
     document.getElementById('recBody').textContent = rs.map(function (r) {
       return JSON.stringify(r);
     }).join('\n');
     text('recBasis', '对象 ' + queryGroup.slice(0, 12) + '… 共 ' + rs.length + ' 条，归成 ' + runs.length +
-      ' 轮，最新在前；保留 ' + Math.round((d.retention || 0) / 60) +
+      ' 轮，最新在前；保留 ' + Math.round((objectDetail.retention_seconds || 0) / 60) +
       ' 分钟，窗口结束后仍可看一段时间。每轮里按发生顺序排。');
   }).catch(function (e) {
     runsHost.textContent = '';
+    // The detail route says not found when this object is neither in the anomaly
+    // list nor has any recorded output. For this panel that is not a failure --
+    // it is the same answer as an empty list, and showing it as a broken read
+    // sends the reader looking for a problem with the page.
+    if (e.status === 404) {
+      runsHost.textContent = '窗口开启后这个对象还没有产生记录。它按轮次产生，慢周期对象要等下一轮。';
+      return;
+    }
     fail('recErr', e);
   });
 }
@@ -1311,7 +1374,7 @@ function loadTrend() {
     // A deployment that was never told where its own metrics live has no curves
     // to show. That is a missing route, not a broken page, so the section stays
     // out of the way instead of showing an error nobody can act on.
-    if (String(e).indexOf('404') >= 0) {
+    if (e.status === 404) {
       show('trendPanel', false);
       return;
     }

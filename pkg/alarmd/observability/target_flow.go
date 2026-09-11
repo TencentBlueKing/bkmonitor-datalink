@@ -2,9 +2,11 @@ package observability
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -85,28 +87,37 @@ type TargetFlowFacts struct {
 	PlansTruncated     bool    `json:"plans_truncated,omitempty"`
 }
 type targetFlowRecord struct {
-	SlotIdentityKnown bool            `json:"slot_identity_known"`
-	Diagnostic        bool            `json:"target_flow"`
-	Component         string          `json:"component"`
-	Time              int64           `json:"time_unix_ms"`
-	Stage             string          `json:"stage"`
-	Result            string          `json:"result,omitempty"`
-	Reason            string          `json:"reason_code,omitempty"`
-	QueryGroup        string          `json:"query_group_key"`
-	Strategy          string          `json:"strategy_id,omitempty"`
-	Snapshot          string          `json:"snapshot_revision,omitempty"`
-	QueryRevision     string          `json:"query_revision,omitempty"`
-	ScheduleRevision  string          `json:"schedule_revision,omitempty"`
-	SegmentStart      int64           `json:"schedule_segment_start,omitempty"`
-	Slot              int64           `json:"evaluation_time,omitempty"`
-	Owner             string          `json:"owner_id,omitempty"`
-	OwnerEpoch        uint64          `json:"owner_epoch,omitempty"`
-	DurationNS        int64           `json:"duration_ns,omitempty"`
-	Facts             TargetFlowFacts `json:"facts"`
-	Dropped           uint64          `json:"dropped_total"`
-	QueueSuppressed   uint64          `json:"queue_suppressed_total,omitempty"`
-	RecordLimit       int             `json:"record_limit"`
-	ByteLimit         int             `json:"byte_limit"`
+	SlotIdentityKnown bool   `json:"slot_identity_known"`
+	Diagnostic        bool   `json:"target_flow"`
+	Component         string `json:"component"`
+	// Process identifies the process that wrote this record, because run_id
+	// alone does not identify a round. The sequence behind run_id is per
+	// process and starts again at one, while the records outlive the process
+	// that wrote them -- they are kept per object, under a retention longer
+	// than a window, and every replica writes an object's records to the same
+	// place. So after a restart, or after the object moves to another replica,
+	// two unrelated rounds carry the same run_id, and anything grouping by it
+	// alone folds them into one.
+	Process          string          `json:"process_id"`
+	Time             int64           `json:"time_unix_ms"`
+	Stage            string          `json:"stage"`
+	Result           string          `json:"result,omitempty"`
+	Reason           string          `json:"reason_code,omitempty"`
+	QueryGroup       string          `json:"query_group_key"`
+	Strategy         string          `json:"strategy_id,omitempty"`
+	Snapshot         string          `json:"snapshot_revision,omitempty"`
+	QueryRevision    string          `json:"query_revision,omitempty"`
+	ScheduleRevision string          `json:"schedule_revision,omitempty"`
+	SegmentStart     int64           `json:"schedule_segment_start,omitempty"`
+	Slot             int64           `json:"evaluation_time,omitempty"`
+	Owner            string          `json:"owner_id,omitempty"`
+	OwnerEpoch       uint64          `json:"owner_epoch,omitempty"`
+	DurationNS       int64           `json:"duration_ns,omitempty"`
+	Facts            TargetFlowFacts `json:"facts"`
+	Dropped          uint64          `json:"dropped_total"`
+	QueueSuppressed  uint64          `json:"queue_suppressed_total,omitempty"`
+	RecordLimit      int             `json:"record_limit"`
+	ByteLimit        int             `json:"byte_limit"`
 }
 
 // targetFlowSelection is the set of query groups whose lifecycle is recorded.
@@ -115,7 +126,11 @@ type targetFlowRecord struct {
 type targetFlowSelection map[string]struct{}
 
 type TargetFlow struct {
-	sequence        atomic.Uint64
+	sequence atomic.Uint64
+	// process tells this process's records apart from those an earlier one left
+	// behind. It cannot be the replica name: a container restarted in place
+	// keeps that name, and the sequence behind run_id starts over anyway.
+	process         string
 	logger          *Logger
 	groups          atomic.Pointer[targetFlowSelection]
 	now             func() time.Time
@@ -161,9 +176,25 @@ func NewTargetFlow(logger *Logger) (*TargetFlow, error) {
 	if logger == nil || logger.writer == nil {
 		return nil, errors.New("target flow: logger required")
 	}
-	flow := &TargetFlow{logger: logger, now: time.Now, queueSeen: make(map[string]uint8, TargetFlowMaxGroups)}
+	flow := &TargetFlow{
+		logger: logger, now: time.Now, process: newProcessIdentity(),
+		queueSeen: make(map[string]uint8, TargetFlowMaxGroups),
+	}
 	flow.selectGroups(nil)
 	return flow, nil
+}
+
+// newProcessIdentity returns something short that no other process is likely to
+// produce. It is a label, never a key: it only has to make two processes'
+// records distinguishable in the same list, so a failed read of the random
+// source falls back to the start time rather than failing construction and
+// taking the whole diagnostic path down with it.
+func newProcessIdentity() string {
+	var raw [4]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 16)
+	}
+	return hex.EncodeToString(raw[:])
 }
 
 func (f *TargetFlow) selectGroups(queryGroups []string) {
@@ -400,7 +431,7 @@ func (f *TargetFlow) emit(stage, result, reason string, t TraceFields, facts Tar
 		f.dropLocked(now, "byte_limit")
 		return
 	}
-	record := targetFlowRecord{SlotIdentityKnown: t.EvaluationTime > 0 && t.QueryRevision != "" && t.SnapshotRevision != "" && t.ScheduleRevision != "", Diagnostic: true, Component: "runtime", Time: now.UnixMilli(), Stage: stage, Result: result, Reason: reason, QueryGroup: t.QueryGroupKey, Strategy: t.StrategyID, Snapshot: t.SnapshotRevision, QueryRevision: t.QueryRevision, ScheduleRevision: t.ScheduleRevision, SegmentStart: t.ScheduleSegmentStart, Slot: t.EvaluationTime, Owner: t.OwnerID, OwnerEpoch: t.OwnerEpoch, DurationNS: int64(d), Facts: facts, Dropped: f.dropped, RecordLimit: TargetFlowMaxRecords, ByteLimit: TargetFlowMaxBytes}
+	record := targetFlowRecord{SlotIdentityKnown: t.EvaluationTime > 0 && t.QueryRevision != "" && t.SnapshotRevision != "" && t.ScheduleRevision != "", Diagnostic: true, Component: "runtime", Process: f.process, Time: now.UnixMilli(), Stage: stage, Result: result, Reason: reason, QueryGroup: t.QueryGroupKey, Strategy: t.StrategyID, Snapshot: t.SnapshotRevision, QueryRevision: t.QueryRevision, ScheduleRevision: t.ScheduleRevision, SegmentStart: t.ScheduleSegmentStart, Slot: t.EvaluationTime, Owner: t.OwnerID, OwnerEpoch: t.OwnerEpoch, DurationNS: int64(d), Facts: facts, Dropped: f.dropped, RecordLimit: TargetFlowMaxRecords, ByteLimit: TargetFlowMaxBytes}
 	record.QueueSuppressed = f.queueSuppressed
 	wire, _ := json.Marshal(record)
 	wire = append(wire, '\n')

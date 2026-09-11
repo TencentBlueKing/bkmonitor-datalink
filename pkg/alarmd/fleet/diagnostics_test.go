@@ -148,6 +148,47 @@ func TestObjectDetailCarriesWindowRecordsOnlyWhenAsked(t *testing.T) {
 	}
 }
 
+// A window can be opened on any object, and the usual reason to open one is
+// that the object is *not* in the anomaly list: it is behaving, or it recovered,
+// and nobody can say why. Answering that read as a missing resource throws the
+// window's own output away at the caller -- the page reads a non-2xx as a failed
+// read and shows an error in place of the records the response was carrying.
+func TestRecordsComeBackForAnObjectThatIsNotAnomalous(t *testing.T) {
+	client := &fakeDiagnosticRedis{lists: map[string][]string{
+		"alarmd:test:diag:v1:qg-quiet": {`{"stage":"runner_decision"}`},
+	}}
+	store, err := NewDiagnosticStore(client, "alarmd:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := diagnosticsTestHandler(t, store)
+
+	status, body := get(t, handler, "/api/objects/qg-quiet?records=50")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want the window's output returned for an object that is behaving", status)
+	}
+	if body["found"] != false {
+		t.Fatalf("found = %v, want false: the object is not in the anomaly list and the body has to say so",
+			body["found"])
+	}
+	if records, ok := body["records"].([]any); !ok || len(records) != 1 {
+		t.Fatalf("records = %v, want the object's own", body["records"])
+	}
+	// The page states how long these survive. Sent rather than written into the
+	// page, so the sentence cannot outlive the constant.
+	if body["retention_seconds"] != float64(DiagnosticRetention/time.Second) {
+		t.Fatalf("retention_seconds = %v, want %v", body["retention_seconds"], DiagnosticRetention/time.Second)
+	}
+
+	// With nothing to return, not found is still the honest answer: this view
+	// holds anomalies rather than the owned set, so a healthy object and an
+	// identity belonging to nothing look the same from here.
+	status, _ = get(t, handler, "/api/objects/qg-never-observed?records=50")
+	if status != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 when there is nothing at all to return", status)
+	}
+}
+
 // A deployment with no store must say so rather than answer with an empty list,
 // which reads as "nothing happened" and is a different next step.
 func TestObjectDetailSaysWhenRecordsAreNotWired(t *testing.T) {

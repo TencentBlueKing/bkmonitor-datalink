@@ -97,26 +97,45 @@ func TestEveryIdentifiedButtonIsWired(t *testing.T) {
 // build and vet are clean, and the only symptom is a cell that is not there,
 // which looks exactly like a deployment that has no such data.
 func TestEveryCapacityFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	assertFieldsExist(t, "cap", reflect.TypeOf(fleet.CapacityView{}))
+}
+
+// The same failure on the other response, and it shipped too: the records panel
+// promised "保留 0 分钟" because the JSON carries retention_seconds and the page
+// asked for retention. A missing field is not an error in JavaScript, so the
+// page renders the zero and reads as a deployment whose records expire
+// instantly.
+//
+// This is why the detail response is the one response body in that package that
+// is exported.
+func TestEveryDetailFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	assertFieldsExist(t, "objectDetail", reflect.TypeOf(fleet.DetailResponse{}))
+}
+
+// assertFieldsExist checks every `<object>.<field>` the page reads against the
+// JSON the Go type actually sends.
+func assertFieldsExist(t *testing.T, object string, response reflect.Type) {
+	t.Helper()
 	sent := map[string]bool{}
-	view := reflect.TypeOf(fleet.CapacityView{})
-	for index := 0; index < view.NumField(); index++ {
-		tag := view.Field(index).Tag.Get("json")
+	for index := 0; index < response.NumField(); index++ {
+		tag := response.Field(index).Tag.Get("json")
 		if name, _, _ := strings.Cut(tag, ","); name != "" && name != "-" {
 			sent[name] = true
 		}
 	}
 	if len(sent) == 0 {
-		t.Fatal("no JSON fields found on CapacityView; the check would pass vacuously")
+		t.Fatalf("no JSON fields found on %s; the check would pass vacuously", response.Name())
 	}
 
-	read := regexp.MustCompile(`\bcap\.([a-z0-9_]+)`)
+	read := regexp.MustCompile(`\b` + object + `\.([a-z0-9_]+)`)
 	matches := read.FindAllStringSubmatch(string(page), -1)
 	if len(matches) == 0 {
-		t.Fatal("the page reads no capacity fields; the check would pass vacuously")
+		t.Fatalf("the page reads no %s fields; the check would pass vacuously", object)
 	}
 	for _, match := range matches {
 		if !sent[match[1]] {
-			t.Errorf("the page reads cap.%s, which the API does not send: that cell renders nothing", match[1])
+			t.Errorf("the page reads %s.%s, which %s does not send: it reads as undefined and renders nothing",
+				object, match[1], response.Name())
 		}
 	}
 }

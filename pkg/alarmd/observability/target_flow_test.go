@@ -313,6 +313,60 @@ func BenchmarkTargetFlowMixedBrother(b *testing.B) {
 	}
 }
 
+// run_id is a per-process sequence that starts again at one, and the records it
+// labels outlive the process: they are kept per object, retained for longer than
+// a window lasts, and every replica writes an object's records to the same
+// place. So a restart or a handover puts two unrelated rounds in one list under
+// the same run_id, and anything grouping by run_id alone folds them into a
+// single round -- one that shows a query starting in one process and finishing
+// in another, which no round ever did.
+//
+// The record therefore has to say which process wrote it.
+func TestARecordSaysWhichProcessWroteItSoRunIDsCannotBeConfused(t *testing.T) {
+	var first, second bytes.Buffer
+	restarted, err := newSelectedFlow(&first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	successor, err := newSelectedFlow(&second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Both processes are on their first observed round, so both call it run 1.
+	firstRun := restarted.Context(context.Background(), flowQG)
+	secondRun := successor.Context(context.Background(), flowQG)
+	EmitTargetFlow(firstRun, "runner_decision", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{})
+	EmitTargetFlow(secondRun, "runner_decision", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{})
+
+	before := decodeOneRecord(t, first.Bytes())
+	after := decodeOneRecord(t, second.Bytes())
+	if before["facts"].(map[string]any)["run_id"] != after["facts"].(map[string]any)["run_id"] {
+		t.Fatalf("the two rounds did not collide on run_id, so this test proves nothing: %v and %v",
+			before["facts"], after["facts"])
+	}
+	if before["process_id"] == "" || before["process_id"] == nil {
+		t.Fatalf("record carries no process: %v", before)
+	}
+	if before["process_id"] == after["process_id"] {
+		t.Fatalf("two processes wrote the same process_id %v, so their identical run_ids stay indistinguishable",
+			before["process_id"])
+	}
+}
+
+func decodeOneRecord(t *testing.T, raw []byte) map[string]any {
+	t.Helper()
+	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
+	if len(lines) != 1 {
+		t.Fatalf("want exactly one record, got %d: %s", len(lines), raw)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(lines[0], &record); err != nil {
+		t.Fatalf("decode %s: %v", lines[0], err)
+	}
+	return record
+}
+
 // newSelectedFlow builds a flow already observing the fixture object. Selecting
 // is a separate act from constructing now: a window decides what is observed,
 // and construction happens long before anyone opens one.

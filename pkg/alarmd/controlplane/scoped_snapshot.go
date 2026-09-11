@@ -103,7 +103,7 @@ func (repository *RedisCatalogRepository) loadScopedSnapshotPayload(ctx context.
 	if payload, epoch, allocation, ok := repository.loadRevisionCachedSnapshotPayload(ctx, revision); ok {
 		return payload, epoch, allocation, nil
 	}
-	return repository.loadAdmittedSnapshotPayload(ctx, revision)
+	return repository.loadSharedSnapshotPayload(ctx, revision)
 }
 
 // loadRevisionCachedSnapshotPayload reuses a Snapshot body that a complete read

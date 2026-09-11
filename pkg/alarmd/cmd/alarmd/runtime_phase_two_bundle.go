@@ -288,7 +288,8 @@ func openProductionPhaseTwoBundleWithDependencies(
 		occupancy := stats.TimelineOccupancy
 		counts := []metric.ControlCacheCounts{
 			{Object: "version", Hits: stats.Version.Hits, Misses: stats.Version.Misses, Refreshes: stats.Version.Refreshes},
-			{Object: "snapshot", Hits: stats.Snapshot.Hits, Misses: stats.Snapshot.Misses, Refreshes: stats.Snapshot.Refreshes},
+			{Object: "snapshot", Hits: stats.Snapshot.Hits, Misses: stats.Snapshot.Misses,
+				Refreshes: stats.Snapshot.Refreshes, Shared: stats.Snapshot.Shared},
 			{Object: "activation", Hits: stats.Activation.Hits, Misses: stats.Activation.Misses, Refreshes: stats.Activation.Refreshes},
 			{Object: "timeline", Hits: stats.Timeline.Hits, Misses: stats.Timeline.Misses,
 				Refreshes: stats.Timeline.Refreshes, Evictions: occupancy.Evictions,

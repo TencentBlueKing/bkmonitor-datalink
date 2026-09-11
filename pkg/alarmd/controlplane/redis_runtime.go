@@ -105,15 +105,22 @@ type scheduleTimelineUpdate struct {
 // every expectation whose RecordRevision is not zero, so a running cluster
 // never executes this script. A timeline left behind by a retired Query
 // Group can only exist after at least one activation, so a retired key cannot
-// reach this path, and "the key must not exist" is the right guard here. It is
-// deliberately not relaxed to look symmetric with the branch of the cutover
-// script that takes an empty expected value: relaxing it would let a stale
-// timeline be silently overwritten on first activation with no test able to
-// catch it. A retired Query Group that returns is handled by the caller of
-// the cutover script, the reactivation branch of
-// CompareAndSetPublicationScheduleActivation, which reads the persisted
-// timeline and appends a ReactivatedAfter Segment instead of creating a fresh
-// timeline, so expected carries the real prior bytes.
+// reach this path through any code path. The one way to reach it is an
+// administrative deletion of the activation header and records while the
+// timeline keys are left in place: the header is then unavailable, this
+// script refuses the leftover keys, InitialScheduleActivator.Ensure swallows
+// that conflict and reads the header back, and every tick fails as
+// unavailable until the leftover timelines expire with their Catalog TTL.
+// That is the intended outcome of a partial deletion, not a gap, and "the key
+// must not exist" is the right guard here. It is deliberately not relaxed to
+// look symmetric with the branch of the cutover script that takes an empty
+// expected value: relaxing it would let a stale timeline be silently
+// overwritten on first activation with no test able to catch it. A retired
+// Query Group that returns is handled by the caller of the cutover script,
+// the reactivation branch of CompareAndSetPublicationScheduleActivation,
+// which reads the persisted timeline and appends a ReactivatedAfter Segment
+// instead of creating a fresh timeline, so expected carries the real prior
+// bytes.
 const compareAndSetInitialSchedulesScript = `
 local header = redis.call('GET', KEYS[1])
 if ARGV[1] == '' then
@@ -1040,6 +1047,20 @@ func (repository *RedisCatalogRepository) drainingReactivatable(
 // projection cannot answer this: it forgets a Query Group as soon as one
 // activation sees it drained, while the timeline outlives it for the Catalog
 // TTL. A missing timeline means a genuinely new Query Group.
+//
+// The reads go through loadScheduleTimeline, the cached path keyed on the
+// activation header, and must stay there: a live read per candidate would
+// turn every publication into a keyspace walk. The header changes on every
+// activation, so the activation that follows a publication runs on a cold
+// cache and this loop costs one GET per candidate. The candidate set is the
+// Query Groups the new publication adds, bounded by the size of the new
+// publication itself; it is a handful under ordinary editing and reaches the
+// whole population only when a publication onboards it at once. The cutover
+// that follows already reads every carried-over timeline live, and
+// CompareAndSetPublicationScheduleActivation reads each added Query Group
+// live as well, so a publication costs at most one read per old Query Group
+// plus two per added one. That is the same order as the existing floor, which
+// is why this loop is a plain sequential walk rather than a pipeline.
 func (repository *RedisCatalogRepository) retiredQueryGroupsReturning(
 	ctx context.Context,
 	oldGroups map[execution.QueryGroupIdentity]QueryGroup,

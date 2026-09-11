@@ -57,8 +57,25 @@ type ActivationFailureError struct {
 // not complete. Unwrap preserves the original Redis, Progress or context error.
 type ActivationDependencyIOError struct{ Err error }
 
+// Error names the dependency that failed, not just that one did.
+//
+// It used to return a constant. Unwrap kept the original error, which serves
+// errors.Is and errors.As, and loses it for everything that renders the error
+// as text -- which is every log line. Three unrelated paths land in this class:
+// the cutover CAS Eval failing, the Progress read that decides whether a Query
+// Group has drained, and the schedule timeline read. On the wire they were the
+// same sentence, so a deployment producing this failure hundreds of times gave
+// no way to tell one cause from three, or a real dependency wobble from a
+// condition that cannot resolve.
+//
+// Worse than missing: the constant made the failures look identical, and
+// identical reads as "the same deterministic thing" to anyone counting distinct
+// messages. The field meant to discriminate could not, by construction.
 func (failure *ActivationDependencyIOError) Error() string {
-	return "alarmd controlplane: activation dependency I/O failed"
+	if failure == nil || failure.Err == nil {
+		return "alarmd controlplane: activation dependency I/O failed"
+	}
+	return "alarmd controlplane: activation dependency I/O failed: " + failure.Err.Error()
 }
 
 func (failure *ActivationDependencyIOError) Unwrap() error {

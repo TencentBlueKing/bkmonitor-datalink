@@ -220,7 +220,7 @@ func DeriveStreamingCompletion(
 	header InternalExecutionHeader,
 	bindings []NamedInputBinding,
 	result EvaluationResult,
-) (CompletionKind, UnavailableCause, error) {
+) (CompletionKind, CompletionCause, error) {
 	kind, cause, _, err := DeriveStreamingCompletionDetail(header, bindings, result)
 	return kind, cause, err
 }
@@ -233,7 +233,7 @@ func DeriveStreamingCompletionDetail(
 	header InternalExecutionHeader,
 	bindings []NamedInputBinding,
 	result EvaluationResult,
-) (CompletionKind, UnavailableCause, ReasonCode, error) {
+) (CompletionKind, CompletionCause, ReasonCode, error) {
 	return DeriveCompletionDetail(InternalExecution{
 		Contract: header.Contract, DuePlans: header.DuePlans, Requirements: header.Requirements, Inputs: bindings,
 	}, result)

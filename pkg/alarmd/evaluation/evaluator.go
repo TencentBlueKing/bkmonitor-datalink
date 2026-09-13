@@ -257,6 +257,22 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		}
 		outcomes[i] = execution.LevelOutcome{Plan: due.Identity, LevelID: o.LevelID, SeriesIdentityDigest: series, Record: execution.RecordAnchor{RecordID: record.RecordID(), SourceTime: record.SourceTime()}, Outcome: kind, ReasonCode: reason}
 	}
+	// A Level the trigger would advance while its outcome is UNKNOWN records
+	// a business fact into a history the guard has not yet released. The
+	// result contract admits that only when every input of the Level was
+	// complete: a fact detected on a missing or partial dependency must not
+	// become the history a warm-up completes on. The trigger sees facts, not
+	// inputs, so the Level is held back here, by the contract's own
+	// predicate, and stays frozen for this record: no fact, no advance, its
+	// guard as it was.
+	for i, outcome := range tr.LevelOutcomes {
+		if outcome.StateDisposition != trigger.StateAdvance || outcomes[i].Outcome != execution.LevelOutcomeUnknown {
+			continue
+		}
+		if !execution.InputAllowsStateAdvance(evaluationBindings(request), outcomes[i]) {
+			tr.LevelOutcomes[i].StateDisposition = trigger.StateFreeze
+		}
+	}
 	advance := false
 	for _, outcome := range tr.LevelOutcomes {
 		if outcome.StateDisposition == trigger.StateAdvance {
@@ -351,7 +367,10 @@ func (e *Evaluator) evaluateSeries(
 	if err != nil {
 		return execution.PlanEvaluationResult{}, err
 	}
-	legacy := execution.EvaluationRequest{Header: header, State: stateResult, Gaps: gaps}
+	// The record evaluator judges a Level's inputs by the same bindings the
+	// result contract will, so the series' named inputs travel with the
+	// request rather than only its header.
+	legacy := execution.EvaluationRequest{Header: header, Inputs: inputs, State: stateResult, Gaps: gaps}
 	result := execution.PlanEvaluationResult{Plan: due.Identity, Disposition: execution.PlanDecided, ReasonCode: observability.ReasonNone}
 	var final *execution.StateEvaluation
 	var events []contract.TriggerEventV1
@@ -627,6 +646,17 @@ func guardStaysActive(outcome trigger.LevelOutcomeV2, summary execution.HistoryC
 		completeness = execution.HistoryCompleteness(outcome.HistoryCompleteness)
 	}
 	return completeness == execution.HistoryWarming || completeness == execution.HistoryGapped
+}
+
+// evaluationBindings is every named input the request binds, across its
+// series requests, which is the set the result contract judges a Level's
+// inputs by; the predicate filters it to one Plan and Level itself.
+func evaluationBindings(request execution.EvaluationRequest) []execution.NamedInputBinding {
+	var bindings []execution.NamedInputBinding
+	for _, input := range request.Inputs {
+		bindings = append(bindings, input.Inputs...)
+	}
+	return bindings
 }
 
 func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, facts []detect.LevelFact, outcomes []trigger.LevelOutcomeV2, summaries map[uint32]execution.HistoryCompleteness, durableGuardReasons, missingInputGuards map[uint32]execution.ReasonCode) (execution.StateMutation, error) {

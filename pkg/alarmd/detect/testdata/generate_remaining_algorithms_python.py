@@ -109,7 +109,7 @@ def load_source(repo):
 
     extract(
         "bkmonitor/core/unit/models.py",
-        ["ScaledUnits", "Percent", "BinarySIPrefix", "TimeUnit"],
+        ["ScaledUnits", "Percent", "BinarySIPrefix", "DecimalSIPrefix", "TimeUnit"],
     )
     # The registry mapping is copied from core/unit/init_data.py; actual conversion
     # classes and unit_convert_min are executed from source. Hash the mapping source.
@@ -122,6 +122,9 @@ def load_source(repo):
         "percent": env["Percent"](0),
         "percentunit": env["Percent"](1),
         "ms": env["TimeUnit"](suffix_idx=2),
+        "m": env["TimeUnit"](suffix_idx=4),
+        "h": env["TimeUnit"](suffix_idx=5),
+        "decmbytes": env["DecimalSIPrefix"]("B", 2),
     }
     # Unknown unit ids are fixed units in load_unit (including the prefix "Ki"
     # passed as an id by RingRatioAmplitude's first threshold expression).
@@ -488,6 +491,27 @@ def cases():
             dict(ratio=ratio, shock=shock, days=1, method=method),
             current,
             {0: current, 60: previous, DAY: day_current, DAY + 60: day_previous},
+        )
+    # Float multiplication is deliberately sequential in ScaledUnits.convert.
+    # Collapsing steps into a single factor changes these strict comparisons.
+    for label, data_unit, current, shock, method in [
+        (
+            "decimal-multistep-ulp",
+            "decmbytes",
+            460962.39720386924,
+            460962397203.8692,
+            "gt",
+        ),
+        ("minutes-multistep-ulp", "m", 996.6545213275606, 59799271279653.64, "lt"),
+        ("hours-multistep-ulp", "h", 574.7520803491104, 2069107489256797.8, "lt"),
+    ]:
+        add(
+            f"range-{label}",
+            "YearRoundRange",
+            dict(ratio=0, shock=shock, days=1, method=method),
+            current,
+            {DAY: 1},
+            data_unit=data_unit,
         )
     return result
 

@@ -3186,6 +3186,78 @@
       "precision": 6,
       "query_state": "FULL",
       "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "gt",
+        "ratio": 0,
+        "shock": 460962397203.8692
+      },
+      "current": 460962.39720386924,
+      "data_unit": "decmbytes",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "86400": 1
+      },
+      "history_mode": "raw",
+      "id": "range-decimal-multistep-ulp",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "lt",
+        "ratio": 0,
+        "shock": 59799271279653.64
+      },
+      "current": 996.6545213275606,
+      "data_unit": "m",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "86400": 1
+      },
+      "history_mode": "raw",
+      "id": "range-minutes-multistep-ulp",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "lt",
+        "ratio": 0,
+        "shock": 2069107489256797.8
+      },
+      "current": 574.7520803491104,
+      "data_unit": "h",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "86400": 1
+      },
+      "history_mode": "raw",
+      "id": "range-hours-multistep-ulp",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
     }
   ],
   "schema_version": 1,

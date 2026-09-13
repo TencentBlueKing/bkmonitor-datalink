@@ -225,6 +225,7 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Int("draining_undrained", facts.Undrained),
 			slog.Int("draining_isolated", facts.Isolated),
 			slog.Int("draining_retired", facts.Retired),
+			slog.Int("draining_cursor_pruned", facts.CursorPruned),
 			slog.Bool("draining_samples_truncated", facts.Truncated),
 			slog.Any("draining_samples", facts.Samples),
 		)

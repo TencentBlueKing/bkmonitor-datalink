@@ -15,64 +15,65 @@ import (
 )
 
 type phaseTwoMetrics struct {
-	workflow                     workflowMetrics
-	shortPeriod                  shortPeriodMetrics
-	queryStatus                  queryStatusMetrics
-	queryCooldown                *prometheus.CounterVec
-	slotReadiness                slotReadinessMetrics
-	slotTiming                   *prometheus.HistogramVec
-	work                         *prometheus.CounterVec
-	busy                         *prometheus.CounterVec
-	lastProgress                 *prometheus.GaugeVec
-	capacity                     *prometheus.CounterVec
-	sourceObservations           *prometheus.CounterVec
-	sourceRefreshes              *prometheus.CounterVec
-	sourceCompiles               *prometheus.CounterVec
-	sourceReads                  *prometheus.CounterVec
-	sourceStrategiesRead         prometheus.Counter
-	sourceChangeSignalAge        prometheus.Gauge
-	activationFailures           *prometheus.CounterVec
-	ownedQueryGroups             *prometheus.GaugeVec
-	ownershipTransitions         *prometheus.CounterVec
-	queryAdmission               *prometheus.CounterVec
-	activeQGSetCount             prometheus.Gauge
-	activeQGSetBytes             prometheus.Gauge
-	activeQGSetEncode            *prometheus.HistogramVec
-	activeQGSetRedis             *prometheus.HistogramVec
-	scheduleCutoverPayload       prometheus.Gauge
-	scheduleCutoverTimelineMax   prometheus.Gauge
-	scheduleTimelineBytes        prometheus.Histogram
-	scheduleSegmentsPruned       prometheus.Counter
-	schedulePruneSkipped         *prometheus.CounterVec
-	scheduleCutoverDuration      *prometheus.HistogramVec
-	scheduleCutoverQueryGroups   *prometheus.CounterVec
-	scheduleCutoverTimelinesRead prometheus.Gauge
-	queryFailures                *prometheus.CounterVec
-	objectCatalogObjects         *prometheus.CounterVec
-	objectCatalogRedis           *prometheus.HistogramVec
-	objectCatalogManifestBytes   prometheus.Gauge
-	objectReads                  *prometheus.CounterVec
-	stateGenerationSkew          *prometheus.CounterVec
-	legacyMigration              *prometheus.CounterVec
-	legacyMigrationScan          prometheus.Histogram
-	legacyMigrationTime          *prometheus.HistogramVec
-	undrainedDrainingQueryGroups prometheus.Gauge
-	activationHeldQueryGroups    prometheus.Gauge
-	activationHeldAgeSecondsMax  prometheus.Gauge
-	algorithmEvaluations         *prometheus.CounterVec
-	redisCalls                   redisCallMetrics
-	controlCache                 *controlCacheCollector
-	legacyPodCache               *prometheus.CounterVec
-	redisPool                    *redisPoolCollector
-	canonicalEncoding            *canonicalEncodingCollector
-	algorithmInputs              *prometheus.CounterVec
-	seriesAdmission              *prometheus.CounterVec
-	cmdbIndexHosts               prometheus.Gauge
-	hostDisableMonitorStates     prometheus.Gauge
-	unmappedSeverity             *prometheus.CounterVec
-	cmdbIndexAge                 *prometheus.GaugeVec
-	cmdbIndexDegraded            *prometheus.GaugeVec
-	dueIndex                     dueIndexMetrics
+	workflow                        workflowMetrics
+	shortPeriod                     shortPeriodMetrics
+	queryStatus                     queryStatusMetrics
+	queryCooldown                   *prometheus.CounterVec
+	slotReadiness                   slotReadinessMetrics
+	slotTiming                      *prometheus.HistogramVec
+	work                            *prometheus.CounterVec
+	busy                            *prometheus.CounterVec
+	lastProgress                    *prometheus.GaugeVec
+	capacity                        *prometheus.CounterVec
+	sourceObservations              *prometheus.CounterVec
+	sourceRefreshes                 *prometheus.CounterVec
+	sourceCompiles                  *prometheus.CounterVec
+	sourceReads                     *prometheus.CounterVec
+	sourceStrategiesRead            prometheus.Counter
+	sourceChangeSignalAge           prometheus.Gauge
+	activationFailures              *prometheus.CounterVec
+	ownedQueryGroups                *prometheus.GaugeVec
+	ownershipTransitions            *prometheus.CounterVec
+	queryAdmission                  *prometheus.CounterVec
+	activeQGSetCount                prometheus.Gauge
+	activeQGSetBytes                prometheus.Gauge
+	activeQGSetEncode               *prometheus.HistogramVec
+	activeQGSetRedis                *prometheus.HistogramVec
+	scheduleCutoverPayload          prometheus.Gauge
+	scheduleCutoverTimelineMax      prometheus.Gauge
+	scheduleTimelineBytes           prometheus.Histogram
+	scheduleSegmentsPruned          prometheus.Counter
+	schedulePruneSkipped            *prometheus.CounterVec
+	scheduleCutoverDuration         *prometheus.HistogramVec
+	scheduleCutoverQueryGroups      *prometheus.CounterVec
+	scheduleCutoverTimelinesRead    prometheus.Gauge
+	queryFailures                   *prometheus.CounterVec
+	objectCatalogObjects            *prometheus.CounterVec
+	objectCatalogRedis              *prometheus.HistogramVec
+	objectCatalogManifestBytes      prometheus.Gauge
+	objectReads                     *prometheus.CounterVec
+	stateGenerationSkew             *prometheus.CounterVec
+	legacyMigration                 *prometheus.CounterVec
+	legacyMigrationScan             prometheus.Histogram
+	legacyMigrationTime             *prometheus.HistogramVec
+	undrainedDrainingQueryGroups    prometheus.Gauge
+	drainingCursorPrunedQueryGroups prometheus.Gauge
+	activationHeldQueryGroups       prometheus.Gauge
+	activationHeldAgeSecondsMax     prometheus.Gauge
+	algorithmEvaluations            *prometheus.CounterVec
+	redisCalls                      redisCallMetrics
+	controlCache                    *controlCacheCollector
+	legacyPodCache                  *prometheus.CounterVec
+	redisPool                       *redisPoolCollector
+	canonicalEncoding               *canonicalEncodingCollector
+	algorithmInputs                 *prometheus.CounterVec
+	seriesAdmission                 *prometheus.CounterVec
+	cmdbIndexHosts                  prometheus.Gauge
+	hostDisableMonitorStates        prometheus.Gauge
+	unmappedSeverity                *prometheus.CounterVec
+	cmdbIndexAge                    *prometheus.GaugeVec
+	cmdbIndexDegraded               *prometheus.GaugeVec
+	dueIndex                        dueIndexMetrics
 }
 
 var activeQGSetDurationBuckets = []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 30}
@@ -238,6 +239,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.legacyMigration = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_total", Help: "One-time legacy Active QG migration outcomes."}, []string{"result", "reason_class"})
 	metrics.legacyMigrationScan = prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_scan_keys", Help: "Redis keys scanned by one-time legacy Active QG migration.", Buckets: legacyMigrationScanBuckets})
 	metrics.legacyMigrationTime = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_duration_seconds", Help: "One-time legacy Active QG migration duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
+	metrics.drainingCursorPrunedQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "draining_cursor_pruned_query_groups", Help: "Replicated per-Pod view of draining Query Groups whose Progress cursor lies before the earliest Slot their Schedule timeline still holds. Such a Query Group can never find the Slot its cursor asks for, so it cannot drain by itself; the count is reported before anything acts on it. Aggregate replicas with max, not sum."})
 	metrics.undrainedDrainingQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "undrained_draining_query_groups", Help: "Replicated per-Pod view of retired Query Groups still requiring ownership until their retirement boundary is drained; aggregate replicas with max, not sum."})
 	metrics.activationHeldQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "activation_held_query_groups", Help: "Query Groups the latest activation attempt brought back from retirement that had not drained; today any of them fails the whole activation (activation_failure_total{reactivation,not_drained}), so an attempt with a non-zero value is an attempt that failed for them. Set by the Control Leader on every attempt that reached the reactivation check."})
 	metrics.sourceStrategiesRead = prometheus.NewCounter(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_strategies_read_total", Help: "Strategy documents source refresh rounds asked the source for. A skipped round adds nothing; a full read adds the whole active set."})
@@ -304,7 +306,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.queryFailures,
 		m.objectCatalogObjects, m.objectCatalogRedis, m.objectCatalogManifestBytes, m.objectReads, m.stateGenerationSkew,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
-		m.undrainedDrainingQueryGroups, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
+		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
 		m.algorithmEvaluations, m.algorithmInputs,
 	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
 		m.controlCache, m.redisPool, m.canonicalEncoding, m.legacyPodCache,
@@ -345,6 +347,7 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 	}
 	if facts := observation.DrainingQG; facts != nil {
 		m.undrainedDrainingQueryGroups.Set(float64(facts.Undrained))
+		m.drainingCursorPrunedQueryGroups.Set(float64(facts.CursorPruned))
 	}
 	if facts := observation.ActivationHold; facts != nil && observation.Stage == observability.StageActivationHold {
 		m.activationHeldQueryGroups.Set(float64(facts.Held))

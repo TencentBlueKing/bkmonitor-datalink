@@ -458,3 +458,24 @@ func TestPhaseTwoSourceReadCounterAndSignalAgeFollowTheRound(t *testing.T) {
 		t.Fatalf("an impossible read outcome added to strategies read: %v", testutil.ToFloat64(recorder.phaseTwo.sourceStrategiesRead))
 	}
 }
+
+// The pruned-cursor count is a gauge of the latest draining view, beside the
+// undrained count it is a subset of.
+func TestPhaseTwoDrainingCursorPrunedGaugeFollowsTheLatestView(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	observe := func(undrained, pruned int) {
+		recorder.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentControlPlane, Stage: observability.StageDrainingQGReconciled,
+			Result: observability.ResultSuccess, Operation: observability.OperationLoad,
+			DrainingQG: &observability.DrainingQGFacts{Total: undrained, Undrained: undrained, CursorPruned: pruned},
+		})
+	}
+	observe(12, 12)
+	if got := testutil.ToFloat64(recorder.phaseTwo.drainingCursorPrunedQueryGroups); got != 12 {
+		t.Fatalf("draining_cursor_pruned_query_groups = %v, want 12", got)
+	}
+	observe(3, 0)
+	if got := testutil.ToFloat64(recorder.phaseTwo.drainingCursorPrunedQueryGroups); got != 0 {
+		t.Fatalf("draining_cursor_pruned_query_groups after a view with none = %v, want 0", got)
+	}
+}

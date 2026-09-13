@@ -203,6 +203,17 @@ func TestEveryReplicaFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "replica", reflect.TypeOf(fleet.ReplicaView{}))
 }
 
+// The fourth response, and the first where the variable was never the problem:
+// summary was always unambiguous, the check simply was never pointed at it.
+//
+// Which is its own lesson. The other three needed a rename first, so the work
+// of adding them made it obvious they were missing; this one needed nothing,
+// and stayed missing longer for exactly that reason. A misspelled count here
+// renders a sentence that omits a whole bucket of objects without saying so.
+func TestEverySummaryFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	assertFieldsExist(t, "summary", reflect.TypeOf(fleet.Summary{}))
+}
+
 // The anomaly row is the busiest object on the page -- every cell in the table
 // reads it -- and it had no field check at all, for the same reason the list
 // response had none: it was read into a variable named a, which matches too

@@ -697,6 +697,17 @@ func DecideHealth(view *View) {
 		view.Health = HealthUnknown
 	case OursCount(view.Anomalies) > 0:
 		view.Health = HealthDegraded
+	// An object whose cause was never recorded is missing evidence about a real
+	// anomaly. This package already refuses to call a view with missing evidence
+	// either healthy or degraded, and that rule does not stop applying because
+	// the evidence is missing per object rather than per replica.
+	//
+	// It clears itself: each of these has a cause again as soon as it completes
+	// one more round, and one that never completes another is marked stalled,
+	// which is ours. So a rollout reads UNKNOWN for a minute or two instead of
+	// reading DEGRADED, and neither reads as well.
+	case UnattributedCount(view.Anomalies) > 0:
+		view.Health = HealthUnknown
 	default:
 		view.Health = HealthHealthy
 	}

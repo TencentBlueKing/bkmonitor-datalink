@@ -614,11 +614,16 @@ function loadObjects() {
       // The same field the verdict reads. Deriving it again here from the
       // reason code would be a second copy of the rule, and the two would agree
       // until the day one of them was updated.
-      var who = cell(anomaly.attribution === 'EXTERNAL' ? '数据源/策略' : 'alarmd');
-      if (anomaly.attribution !== 'EXTERNAL') { who.className = 'stuck'; }
-      who.title = anomaly.attribution === 'EXTERNAL'
-        ? '扩容或改架构都不会让它变好——要找策略配置或数据源的人'
-        : '容量或架构能避免的，判定就看这一类；未归类的也算在这里，宁可多看一眼';
+      var WHO = {EXTERNAL: '数据源/策略', UNKNOWN: '还看不出', OURS: 'alarmd'};
+      var WHY_WHO = {
+        EXTERNAL: '扩容或改架构都不会让它变好——要找策略配置或数据源的人',
+        UNKNOWN: '这一条是重启后从记录里恢复的，成因没有被持久化——等它跑完下一轮才知道是谁的',
+        OURS: '容量或架构能避免的，判定就看这一类；报了成因但没人归类过的也算在这里，宁可多看一眼'
+      };
+      var side = anomaly.attribution || 'OURS';
+      var who = cell(WHO[side] || side);
+      if (side === 'OURS') { who.className = 'stuck'; }
+      who.title = WHY_WHO[side] || '';
       cell(kindText(anomaly.kind));
       cell(anomaly.reason_code || '—');
       // The completion kind alone folds four conditions together, and they call
@@ -956,13 +961,22 @@ function spreadLine(noun, dist, total) {
 function attributionLine(summary) {
   var ours = summary.ours || 0;
   var external = summary.external || 0;
-  if (!ours && !external) return '';
+  var unknown = summary.unattributed || 0;
+  if (!ours && !external && !unknown) return '';
+  var tail = '';
+  if (unknown) {
+    // Counted apart on purpose. The first live read of this split put seven of
+    // these on the deployment's own side four minutes after a rollout, which
+    // would have made every deploy look like a regression.
+    tail = '；还有 ' + unknown + ' 个暂时看不出是谁的（重启后恢复的，成因没保留，'
+      + '跑完下一轮就知道）';
+  }
   if (!ours) {
     return '这些里没有一个是 alarmd 自己的问题（容量或架构）——' + external
-      + ' 个都是数据源没答或策略配置的事，要找策略和数据源的人';
+      + ' 个都是数据源没答或策略配置的事，要找策略和数据源的人' + tail;
   }
   return 'alarmd 自己该负责的有 ' + ours + ' 个（容量或架构，判定就看这个数）；'
-    + '另外 ' + external + ' 个是数据源没答或策略配置的事，不由扩容或改架构解决';
+    + '另外 ' + external + ' 个是数据源没答或策略配置的事，不由扩容或改架构解决' + tail;
 }
 
 // What changed since the last refresh, by identity rather than by count.

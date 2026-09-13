@@ -59,7 +59,7 @@ func TestEvaluateSeriesProducesOneAbnormalAndRecoveryForNamedInputs(t *testing.T
 	}
 }
 
-func TestEvaluateSeriesKeepsMissingHistoryLocalAndDoesNotAdvanceState(t *testing.T) {
+func TestEvaluateSeriesKeepsMissingHistoryLocalWithDurableGap(t *testing.T) {
 	plan := compiledG4Plan(t, strategy.DetectorKindSimpleRingRatio, map[string]any{"floor": 20, "ceil": nil},
 		strategy.AlgorithmInputProjection{ValueFields: []string{"value"}, IdentityFields: []string{"host"}})
 	request := requestFixtureForPlan(t, plan, []contract.CanonicalRecordV2{g4Record(99, `80`, nil)}, nil)
@@ -72,7 +72,7 @@ func TestEvaluateSeriesKeepsMissingHistoryLocalAndDoesNotAdvanceState(t *testing
 	}
 	if result.Disposition != execution.PlanDecidedDegraded || len(result.LevelOutcomes) != 1 ||
 		result.LevelOutcomes[0].Outcome != execution.LevelOutcomeUnknown ||
-		result.LevelOutcomes[0].ReasonCode != execution.ReasonCode(contract.ReasonHistoryGapped) || len(result.StateResults) != 0 {
+		result.LevelOutcomes[0].ReasonCode != execution.ReasonCode(contract.ReasonHistoryGapped) || len(result.StateResults) != 1 || len(result.StateResults[0].Events) != 0 || result.StateResults[0].Mutation.Levels[0].HistoryCompleteness != execution.HistoryGapped {
 		t.Fatalf("missing-history result = %+v", result)
 	}
 

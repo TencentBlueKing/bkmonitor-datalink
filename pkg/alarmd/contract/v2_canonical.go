@@ -50,7 +50,7 @@ func CanonicalJSONV2(value any) (result []byte, err error) {
 		return nil, err
 	}
 	valueType := reflect.TypeOf(value)
-	closed := canonicalClosedType(valueType, nil)
+	closed := canonicalClosedTypeCached(valueType)
 
 	// A closed string of valid UTF-8 has nothing left to canonicalize: no object
 	// keys to sort and no number tokens to preserve, and the decode and
@@ -199,8 +199,12 @@ var (
 	textMarshalerType = reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
 )
 
-// Recursive types conservatively use the existing strict path. This check is
-// local to one call; it neither caches types nor inspects mutable values.
+// Recursive types conservatively use the existing strict path. The walk itself
+// inspects no values and holds no state; the top-level verdict is memoised in
+// v2_canonical_type_cache.go, deliberately not here, so that this file's rule
+// -- the file that defines persisted identity holds no cross-call state --
+// stays true by inspection. Moving that cache into this file would break the
+// rule silently, so do not.
 func canonicalClosedType(t reflect.Type, path map[reflect.Type]bool) bool {
 	if t == nil || t == jsonNumberType || t == jsonRawType || t == byteSliceType {
 		return false

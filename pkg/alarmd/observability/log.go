@@ -247,6 +247,17 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Int("source_compiled_strategies", facts.CompiledStrategies),
 			slog.Int("source_reused_strategies", facts.ReusedStrategies),
 		)
+		if facts.ReadMode != "" {
+			attributes = append(attributes,
+				slog.String("source_read_mode", string(facts.ReadMode)),
+				slog.String("source_read_reason", string(facts.ReadReason)),
+				slog.Int("source_strategies_read", facts.StrategiesRead),
+				slog.Bool("source_change_signal_present", facts.ChangeSignalPresent),
+			)
+			if facts.ChangeSignalPresent {
+				attributes = append(attributes, slog.Int64("source_change_signal_age_seconds", facts.ChangeSignalAgeSeconds))
+			}
+		}
 		// Named apart from snapshot_revision on purpose: a round that published
 		// nothing still knows what the fleet is executing, and writing that under
 		// the published name is what makes a normal lag read as a stall.

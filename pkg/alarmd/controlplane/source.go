@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
@@ -13,6 +14,24 @@ var ErrObservationUnstable = errors.New("alarmd controlplane: source observation
 type StrategySource interface {
 	ActiveStrategyIDs(context.Context) ([]string, error)
 	Strategies(context.Context, []string) ([]SourceStrategy, error)
+}
+
+// SourceChangeSignal is the marker a source's publisher leaves after every
+// change it makes to the source, and only then. Value is compared verbatim
+// from one round to the next. WrittenAt is what the marker says about when
+// the publisher wrote it, for reporting its age, and is zero when it says
+// nothing. Present false means the source had no marker to read this round.
+type SourceChangeSignal struct {
+	Present   bool
+	Value     string
+	WrittenAt time.Time
+}
+
+// ChangeSignalSource is a StrategySource whose publisher leaves a
+// SourceChangeSignal. A reconciler uses it to decide whether a round has to
+// read the strategy documents at all; the signal never enters an observation.
+type ChangeSignalSource interface {
+	ChangeSignal(context.Context) (SourceChangeSignal, error)
 }
 
 type StableObservation struct {

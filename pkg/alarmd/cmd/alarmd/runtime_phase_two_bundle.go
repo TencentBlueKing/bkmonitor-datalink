@@ -361,6 +361,9 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err := reconciler.ConfigureOutputProtocol(cfg.OutputProtocol()); err != nil {
 		return nil, err
 	}
+	if err := reconciler.ConfigureClock(external.Now); err != nil {
+		return nil, err
+	}
 	catalog, err := controlplane.NewRedisCatalogRuntime(
 		repository, compiler, strategySemantics, cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration(),
 	)

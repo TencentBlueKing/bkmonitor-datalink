@@ -8,6 +8,7 @@ package metric
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -408,5 +409,52 @@ func TestPhaseTwoActivationHoldGaugesFollowTheLatestAttempt(t *testing.T) {
 	observe(0, 0)
 	if held, age := testutil.ToFloat64(recorder.phaseTwo.activationHeldQueryGroups), testutil.ToFloat64(recorder.phaseTwo.activationHeldAgeSecondsMax); held != 0 || age != 0 {
 		t.Fatalf("held=%v age=%v, want the gauges cleared by an attempt that held nothing", held, age)
+	}
+}
+
+// A refresh round says how it read its source. The counter splits rounds by
+// mode and reason, the strategies-read counter grows only on rounds that read,
+// and the signal age follows the latest round: a value while the round found
+// a signal, NaN when it found none, so a signal that disappears does not leave
+// its last age standing as if it were still being measured.
+func TestPhaseTwoSourceReadCounterAndSignalAgeFollowTheRound(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	observe := func(facts observability.SourceRefreshFacts) {
+		facts.Status = observability.SourceRefreshUnchanged
+		recorder.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotRefreshed,
+			Result: observability.ResultSuccess, SourceRefresh: &facts,
+		})
+	}
+	reads := func(mode observability.SourceReadMode, reason observability.SourceReadReason) float64 {
+		return testutil.ToFloat64(recorder.phaseTwo.sourceReads.WithLabelValues(string(mode), string(reason)))
+	}
+	observe(observability.SourceRefreshFacts{ReadMode: observability.SourceReadFull, ReadReason: observability.SourceReadElected,
+		StrategiesRead: 2, ChangeSignalPresent: true, ChangeSignalAgeSeconds: 30})
+	if reads(observability.SourceReadFull, observability.SourceReadElected) != 1 ||
+		testutil.ToFloat64(recorder.phaseTwo.sourceStrategiesRead) != 2 ||
+		testutil.ToFloat64(recorder.phaseTwo.sourceChangeSignalAge) != 30 {
+		t.Fatalf("after a full read: reads=%v strategies=%v age=%v", reads(observability.SourceReadFull, observability.SourceReadElected),
+			testutil.ToFloat64(recorder.phaseTwo.sourceStrategiesRead), testutil.ToFloat64(recorder.phaseTwo.sourceChangeSignalAge))
+	}
+	observe(observability.SourceRefreshFacts{ReadMode: observability.SourceReadSkipped, ReadReason: observability.SourceReadUnchanged,
+		ChangeSignalPresent: true, ChangeSignalAgeSeconds: 90})
+	if reads(observability.SourceReadSkipped, observability.SourceReadUnchanged) != 1 ||
+		testutil.ToFloat64(recorder.phaseTwo.sourceStrategiesRead) != 2 ||
+		testutil.ToFloat64(recorder.phaseTwo.sourceChangeSignalAge) != 90 {
+		t.Fatalf("after a skipped round: strategies=%v age=%v, want nothing read and the age moved on",
+			testutil.ToFloat64(recorder.phaseTwo.sourceStrategiesRead), testutil.ToFloat64(recorder.phaseTwo.sourceChangeSignalAge))
+	}
+	observe(observability.SourceRefreshFacts{ReadMode: observability.SourceReadFull, ReadReason: observability.SourceReadMissing, StrategiesRead: 2})
+	if reads(observability.SourceReadFull, observability.SourceReadMissing) != 1 ||
+		testutil.ToFloat64(recorder.phaseTwo.sourceStrategiesRead) != 4 ||
+		!math.IsNaN(testutil.ToFloat64(recorder.phaseTwo.sourceChangeSignalAge)) {
+		t.Fatalf("after a round without a signal: strategies=%v age=%v, want the age unset",
+			testutil.ToFloat64(recorder.phaseTwo.sourceStrategiesRead), testutil.ToFloat64(recorder.phaseTwo.sourceChangeSignalAge))
+	}
+	// A pair no round can report is not counted and does not add to what was read.
+	observe(observability.SourceRefreshFacts{ReadMode: observability.SourceReadSkipped, ReadReason: observability.SourceReadChanged, StrategiesRead: 5})
+	if testutil.ToFloat64(recorder.phaseTwo.sourceStrategiesRead) != 4 {
+		t.Fatalf("an impossible read outcome added to strategies read: %v", testutil.ToFloat64(recorder.phaseTwo.sourceStrategiesRead))
 	}
 }

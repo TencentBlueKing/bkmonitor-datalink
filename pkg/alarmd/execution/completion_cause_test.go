@@ -173,3 +173,27 @@ func TestDeriveCompletionKindStillAgreesWithTheCombinedDerivation(t *testing.T) 
 		}
 	}
 }
+
+// The streaming path marks a Plan unavailable precisely when its primary input
+// was, so on every such Slot both causes are noted. The input is the one
+// reported: it is the cause an operator can act on, and the undecided Plan is
+// its consequence. Before this ordering every Slot whose query came back with
+// nothing usable was listed as a Plan that could not be decided. A Plan
+// unavailable on its own still reports itself, being the only cause noted.
+func TestDeriveCompletionNamesTheInputBeforeThePlanItLeftUndecided(t *testing.T) {
+	starved := validInternalExecution()
+	starved.Inputs[0].Completeness = execution.CompletenessUnavailable
+	starved.Inputs[0].DataState = execution.DataStateUnknown
+	undecided := execution.EvaluationResult{Plans: []execution.PlanEvaluationResult{{Disposition: execution.PlanUnavailable}}}
+	kind, cause, err := execution.DeriveCompletion(starved, undecided)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != execution.CompletionUnavailable || cause != execution.CausePrimaryInputUnavailable {
+		t.Fatalf("undecided Plan beside an unavailable primary: kind=%q cause=%q, want the input named", kind, cause)
+	}
+	_, alone, err := execution.DeriveCompletion(validInternalExecution(), undecided)
+	if err != nil || alone != execution.CausePlanUnavailable {
+		t.Fatalf("undecided Plan beside a FULL primary: cause=%q err=%v, want the Plan named", alone, err)
+	}
+}

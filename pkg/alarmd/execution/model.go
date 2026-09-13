@@ -2349,11 +2349,19 @@ func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 // DATA_NOT_READY is lowest of the upper four because nothing needs doing: it
 // clears when the data lands. Everything above it is something that did not
 // work. CONFIG_DRIFT is lowest of the partial pair for the same reason.
+//
+// PRIMARY_INPUT_UNAVAILABLE outranks PLAN_UNAVAILABLE because the streaming
+// path marks a Plan unavailable precisely when its primary input was, so on
+// every such Slot the two are noted together; reporting the Plan named the
+// consequence and hid the cause an operator can act on, and on a running
+// deployment every Slot whose query came back with nothing usable was listed
+// as a Plan that could not be decided. A Plan unavailable for a reason of its
+// own is still reported as such, because it is then the only cause noted.
 func causeRank(cause CompletionCause) int {
 	switch cause {
-	case CausePlanUnavailable:
-		return 6
 	case CausePrimaryInputUnavailable:
+		return 6
+	case CausePlanUnavailable:
 		return 5
 	case CauseLevelOutcomeUnknown:
 		return 4

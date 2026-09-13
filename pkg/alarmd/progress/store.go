@@ -500,11 +500,8 @@ func (store *Store) resolveCurrentNextSlot(
 	ctx context.Context,
 	current execution.ScheduleProgress,
 ) (execution.EvaluationTime, error) {
-	completed := current.LastFullSlot
-	if current.CurrentOrRecentGap != nil && current.CurrentOrRecentGap.LastSlot > completed {
-		completed = current.CurrentOrRecentGap.LastSlot
-	}
-	if completed <= 0 {
+	completed, anchored := current.ContinuityAnchor()
+	if !anchored {
 		return current.NextSlot, nil
 	}
 	next, err := store.options.Slots.NextSlotAfter(ctx, current.Identity.QueryGroup, completed)
@@ -608,3 +605,61 @@ func retryable() execution.ProgressCommitResult {
 }
 
 var _ execution.ProgressStore = (*Store)(nil)
+
+// SkipPrunedRange moves a cursor that points into a pruned part of the
+// timeline to the earliest Slot the timeline still holds, under the owner's
+// fence and against the cursor the caller read. The skipped span becomes a
+// GAP_SKIPPED gap with reason SCHEDULE_PRUNED and the last full Slot is
+// cleared, because both would otherwise anchor continuity to Slots that no
+// longer exist; the cursor the skip sets stands on its own until the first
+// completion after it. Nothing is skipped while a Slot or range is in
+// flight, and a cursor that moved since the caller read it is a conflict.
+func (store *Store) SkipPrunedRange(ctx context.Context, request execution.ProgressSkipPrunedRequest) (execution.ProgressCommitResult, error) {
+	if err := request.Validate(); err != nil {
+		return execution.ProgressCommitResult{}, err
+	}
+	name, err := store.namespace(request.Identity)
+	if err != nil {
+		return execution.ProgressCommitResult{}, err
+	}
+	raw, missing, err := store.options.Control.ReadControl(ctx, request.Identity.QueryGroup, name)
+	if err != nil {
+		return retryable(), nil
+	}
+	if missing {
+		return execution.ProgressCommitResult{Status: execution.ProgressConflict}, nil
+	}
+	current, decodeErr := decode(raw)
+	if decodeErr != nil {
+		return execution.ProgressCommitResult{}, &DeterministicInvalidError{Err: decodeErr}
+	}
+	if current.Identity != request.Identity {
+		return execution.ProgressCommitResult{}, &DeterministicInvalidError{Err: fmt.Errorf("persisted identity does not match skip identity")}
+	}
+	if current.UnfinishedRange != nil || current.UnfinishedSlot != nil || current.NextSlot != request.ExpectedNextSlot {
+		return execution.ProgressCommitResult{Status: execution.ProgressConflict}, nil
+	}
+	next := execution.ScheduleProgress{
+		Identity: request.Identity, NextSlot: request.ResumeAt, LastCompletionKind: execution.CompletionGapSkipped,
+		CurrentOrRecentGap: execution.PrunedSkipGap(request.ExpectedNextSlot),
+	}
+	encoded, err := encode(next)
+	if err != nil {
+		return execution.ProgressCommitResult{}, err
+	}
+	status, applyErr := store.options.Control.FencedCompareAndSet(ctx, ownership.FencedCASRequest{
+		Fence: request.OwnerFence, At: store.options.Now(), Namespace: name,
+		ExpectedMissing: false, Expected: raw, Value: encoded, TTL: 0,
+	})
+	switch status {
+	case ownership.FencedCASApplied:
+		return execution.ProgressCommitResult{Status: execution.ProgressCommitted}, nil
+	case ownership.FencedCASConflict:
+		return execution.ProgressCommitResult{Status: execution.ProgressConflict}, nil
+	case ownership.FencedCASStaleOwner:
+		return execution.ProgressCommitResult{Status: execution.ProgressStaleOwner}, nil
+	default:
+		_ = applyErr
+		return retryable(), nil
+	}
+}

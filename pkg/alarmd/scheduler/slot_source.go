@@ -174,6 +174,14 @@ type ScheduleProgressReader interface {
 	LoadProgress(context.Context, execution.ProgressIdentity) (execution.ProgressLoadResult, error)
 }
 
+// PrunedCursorAdvancer is the optional write side a Progress reader may
+// offer: moving a cursor that points into a pruned part of the timeline to
+// the earliest retained Slot. A reader without it leaves such a cursor
+// blocked, which is the behaviour before the advance existed.
+type PrunedCursorAdvancer interface {
+	SkipPrunedRange(context.Context, execution.ProgressSkipPrunedRequest) (execution.ProgressCommitResult, error)
+}
+
 // ProductionSlotSource is bound to one owned Query Group. It reads current
 // control facts and returns one normal due Slot; it never executes queries,
 type ProductionSlotSource struct {
@@ -190,9 +198,20 @@ type ProductionSlotSource struct {
 	queryReserve              time.Duration
 	snapshotRetention         time.Duration
 	publicationDelayAllowance time.Duration
+	observer                  observability.Observer
 }
 
 type ProductionSlotSourceOption func(*ProductionSlotSource) error
+
+// WithObserver lets the source report the facts it acts on itself, such
+// as a cursor it advanced past a pruned range; without it those facts are
+// not reported.
+func WithObserver(observer observability.Observer) ProductionSlotSourceOption {
+	return func(source *ProductionSlotSource) error {
+		source.observer = observer
+		return nil
+	}
+}
 
 func WithRecoveryLimits(limits RecoveryLimits) ProductionSlotSourceOption {
 	return func(source *ProductionSlotSource) error {
@@ -333,6 +352,23 @@ func (source *ProductionSlotSource) Next(
 			return FrozenSlot{}, false, SlotDueFacts{Retired: true}, nil
 		}
 		schedule, nextSlot, err = source.nextSlotAfterProgress(ctx, *load.Progress)
+		if err != nil {
+			resumed, advanced, advanceErr := source.advancePrunedCursor(ctx, *load.Progress, initialFence, err)
+			if advanceErr != nil {
+				return FrozenSlot{}, false, SlotDueFacts{}, advanceErr
+			}
+			if advanced {
+				retired, retirementErr := source.isRetiredBoundary(ctx, resumed.NextSlot)
+				if retirementErr != nil {
+					return FrozenSlot{}, false, SlotDueFacts{}, retirementErr
+				}
+				if retired {
+					decision = "retired"
+					return FrozenSlot{}, false, SlotDueFacts{Retired: true}, nil
+				}
+				schedule, nextSlot, err = source.nextSlotAfterProgress(ctx, resumed)
+			}
+		}
 	}
 	if err != nil {
 		return FrozenSlot{}, false, SlotDueFacts{}, err
@@ -779,11 +815,8 @@ func (source *ProductionSlotSource) nextSlotAfterProgress(
 		return execution.FrozenQueryGroupSchedule{}, 0, failClosedScheduleNavigation(err)
 	}
 
-	completed := progress.LastFullSlot
-	if progress.CurrentOrRecentGap != nil && progress.CurrentOrRecentGap.LastSlot > completed {
-		completed = progress.CurrentOrRecentGap.LastSlot
-	}
-	if completed <= 0 {
+	completed, anchored := progress.ContinuityAnchor()
+	if !anchored {
 		schedule, err = source.catalog.ReadSuccessorFrozenSchedule(ctx, source.queryGroup, progress.NextSlot)
 		if err != nil {
 			return execution.FrozenQueryGroupSchedule{}, 0, failClosedScheduleNavigation(err)
@@ -815,6 +848,83 @@ func (source *ProductionSlotSource) nextSlotAfterProgress(
 		return execution.FrozenQueryGroupSchedule{}, 0, &SourceBlockedError{Err: ErrProgressOffSchedule}
 	}
 	return schedule, next, nil
+}
+
+// advancePrunedCursor acts on one positive fact: navigation from the cursor
+// failed because no segment holds it, and the first Slot the timeline still
+// holds lies after it. Then the Slots between the cursor and that Slot were
+// pruned before they could be evaluated, no read will ever find them, and
+// the cursor is moved to that Slot with the span recorded as a gap. Any other failure, a timeline that cannot be
+// read, or a reader without the write side leaves the original error in
+// place. The advance is reported whatever its outcome; a conflict or a
+// stale owner leaves the cursor for the next attempt.
+func (source *ProductionSlotSource) advancePrunedCursor(
+	ctx context.Context,
+	progress execution.ScheduleProgress,
+	fence execution.OwnerFence,
+	cause error,
+) (execution.ScheduleProgress, bool, error) {
+	var blocked *SourceBlockedError
+	if !errors.As(cause, &blocked) ||
+		(!errors.Is(cause, controlplane.ErrScheduleUnavailable) && !errors.Is(cause, ErrProgressOffSchedule)) {
+		return progress, false, nil
+	}
+	advancer, ok := source.progress.(PrunedCursorAdvancer)
+	if !ok {
+		return progress, false, nil
+	}
+	initial, err := source.catalog.ReadInitialFrozenSchedule(ctx, source.queryGroup)
+	if err != nil || initial.Validate() != nil || initial.Segment.QueryGroup != source.queryGroup {
+		return progress, false, nil
+	}
+	// The resume point is the first Slot the retained timeline would hand a
+	// cold start, walking successors the same way, so the cursor lands on a
+	// Slot navigation can begin at rather than on a segment start that may
+	// hold no due Slot. A retired boundary reached on the way is a valid
+	// resume point too: the caller sees the retirement at the new cursor.
+	_, earliest, _, err := source.firstAvailableSchedule(ctx, initial)
+	if err != nil || earliest <= progress.NextSlot {
+		return progress, false, nil
+	}
+	request := execution.ProgressSkipPrunedRequest{
+		Identity: execution.ProgressIdentity{QueryGroup: source.queryGroup}, OwnerFence: fence,
+		ExpectedNextSlot: progress.NextSlot, ResumeAt: earliest,
+	}
+	result, err := advancer.SkipPrunedRange(ctx, request)
+	facts := &observability.CursorAdvanceFacts{From: int64(progress.NextSlot), To: int64(earliest)}
+	observed := observability.Observation{
+		Component: observability.ComponentScheduler, Stage: observability.StageScheduleCursorAdvanced,
+		Operation: observability.OperationWrite, Direction: observability.DirectionInternal,
+		Trace: observability.TraceFields{QueryGroupKey: string(source.queryGroup)}, CursorAdvance: facts,
+	}
+	switch {
+	case err != nil:
+		facts.Status = observability.CursorAdvanceFailed
+		observed.Result, observed.Err = observability.ResultFailed, err
+	case result.Status == execution.ProgressCommitted:
+		facts.Status = observability.CursorAdvanceApplied
+		observed.Result = observability.ResultSuccess
+	case result.Status == execution.ProgressConflict:
+		facts.Status = observability.CursorAdvanceConflict
+		observed.Result = observability.ResultRetrying
+	case result.Status == execution.ProgressStaleOwner:
+		facts.Status = observability.CursorAdvanceStaleOwner
+		observed.Result = observability.ResultRetrying
+	default:
+		facts.Status = observability.CursorAdvanceRetryable
+		observed.Result = observability.ResultRetrying
+	}
+	if source.observer != nil {
+		source.observer.Observe(ctx, observed)
+	}
+	if facts.Status != observability.CursorAdvanceApplied {
+		return progress, false, nil
+	}
+	resumed := execution.ScheduleProgress{
+		Identity: request.Identity, NextSlot: earliest, LastCompletionKind: execution.CompletionGapSkipped,
+		CurrentOrRecentGap: execution.PrunedSkipGap(progress.NextSlot),
+	}
+	return resumed, true, nil
 }
 
 func failClosedScheduleNavigation(err error) error {

@@ -155,6 +155,12 @@ var ourReasons = map[string]bool{
 	// hours. That is a design gap in this deployment, not the strategy's doing.
 	"BLOCKED_EXACT_SET_UNAVAILABLE": true,
 	"SLOT_SOURCE_RETRY":             true,
+	// The Progress cursor of those same objects pointed into a part of the
+	// timeline this control plane had already pruned, so no read could ever
+	// find the Slot it asked for. The gap this records is the deployment
+	// moving its own cursor past what it pruned before the runner got there;
+	// the strategy did nothing to cause it.
+	"SCHEDULE_PRUNED": true,
 
 	// The tracker's own outcome words, which is what actually reaches the page
 	// in reason_code -- the contract codes above sit one layer further in and

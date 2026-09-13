@@ -322,6 +322,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 			{Object: "snapshot", Hits: stats.Snapshot.Hits, Misses: stats.Snapshot.Misses,
 				Refreshes: stats.Snapshot.Refreshes, Shared: stats.Snapshot.Shared},
 			{Object: "activation", Hits: stats.Activation.Hits, Misses: stats.Activation.Misses, Refreshes: stats.Activation.Refreshes},
+			{Object: "activation_delta", Hits: stats.Delta.Hits, Misses: stats.Delta.Misses},
 			{Object: "timeline", Hits: stats.Timeline.Hits, Misses: stats.Timeline.Misses,
 				Refreshes: stats.Timeline.Refreshes, Evictions: occupancy.Evictions,
 				Occupancy: &metric.ControlCacheOccupancy{

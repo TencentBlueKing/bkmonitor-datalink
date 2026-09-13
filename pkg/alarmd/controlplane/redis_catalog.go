@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -116,6 +117,7 @@ type RedisCatalogRepository struct {
 	objectFlights              objectReadFlights
 	controlCache               *controlReadCache
 	controlReads               controlReadCounters
+	adoptMu                    sync.Mutex
 	legacyMigrationMaxScanKeys int
 	legacyMigrationTimeout     time.Duration
 	drainingRetireAfter        time.Duration

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -147,13 +148,20 @@ return 1
 // past what the write timeout allows. An empty expectation still means the
 // key must be absent, and an existing key with empty content is present
 // (an empty Lua string is true), so the two cases stay apart.
+// compareAndSetCutoverSchedulesScript writes one activation: the header,
+// the activation record, the Active Set's expiry, the activation delta and
+// every Schedule timeline the activation changed, fenced on the bytes each
+// timeline had when it was read. KEYS[4] is the delta of this record
+// revision: the Query Groups whose timelines this same script writes, so a
+// Worker that sees the new header knows which cached timelines to drop and
+// which to keep, from the same write that changed them.
 const compareAndSetCutoverSchedulesScript = `
 local header = redis.call('GET', KEYS[1])
 if not header or header ~= ARGV[1] then return 0 end
 if redis.call('GET', KEYS[3]) ~= ARGV[4] then return 0 end
-for index = 4, #KEYS do
+for index = 5, #KEYS do
   local current = redis.call('GET', KEYS[index])
-  local expected_index = 2 * index - 2
+  local expected_index = 2 * index - 3
   local expected = ARGV[expected_index]
   if expected == '' then
     if current then return 0 end
@@ -164,12 +172,67 @@ end
 redis.call('PEXPIRE', KEYS[3], ARGV[5])
 redis.call('SET', KEYS[1], ARGV[2])
 redis.call('SET', KEYS[2], ARGV[3])
-for index = 4, #KEYS do
-  local next_index = 2 * index - 1
+redis.call('SET', KEYS[4], ARGV[6], 'PX', ARGV[5])
+for index = 5, #KEYS do
+  local next_index = 2 * index - 2
   redis.call('SET', KEYS[index], ARGV[next_index], 'PX', ARGV[5])
 end
 return 1
 `
+
+const (
+	activationDeltaSchemaVersion = "alarmd-control-activation-delta-v1"
+	// activationDeltaMaxQueryGroups bounds the delta a Worker reads after a
+	// header change. Past it the delta says "full" and the Worker drops every
+	// cached timeline, which is what it did before deltas existed and is
+	// cheaper than reading a list that size.
+	activationDeltaMaxQueryGroups = 2000
+)
+
+// activationDelta is what one activation changed, keyed by its record
+// revision: the Query Groups whose Schedule timelines it wrote. A Worker
+// keeps every other cached timeline across the header change. Full means the
+// list was too long to be worth carrying, and reads as "drop everything".
+type activationDelta struct {
+	SchemaVersion  string                         `json:"schema_version"`
+	RecordRevision uint64                         `json:"record_revision"`
+	Full           bool                           `json:"full,omitempty"`
+	QueryGroups    []execution.QueryGroupIdentity `json:"query_groups,omitempty"`
+}
+
+func encodeActivationDelta(revision uint64, changed []execution.QueryGroupIdentity) ([]byte, error) {
+	delta := activationDelta{SchemaVersion: activationDeltaSchemaVersion, RecordRevision: revision}
+	if len(changed) > activationDeltaMaxQueryGroups {
+		delta.Full = true
+	} else {
+		delta.QueryGroups = append([]execution.QueryGroupIdentity(nil), changed...)
+		sort.Slice(delta.QueryGroups, func(i, j int) bool { return delta.QueryGroups[i] < delta.QueryGroups[j] })
+	}
+	return json.Marshal(delta)
+}
+
+func (repository *RedisCatalogRepository) activationDeltaKey(revision uint64) string {
+	return repository.prefix + ":activation_delta:" + strconv.FormatUint(revision, 10)
+}
+
+// loadActivationDelta reads the delta of one record revision. Absent, or
+// unreadable, or written by another schema, it reports not present, and the
+// reader drops everything as it would have without deltas.
+func (repository *RedisCatalogRepository) loadActivationDelta(ctx context.Context, revision uint64) (activationDelta, bool, error) {
+	payload, err := repository.client.Get(ctx, repository.activationDeltaKey(revision)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return activationDelta{}, false, nil
+	}
+	if err != nil {
+		return activationDelta{}, false, activationDependencyIO(err)
+	}
+	var delta activationDelta
+	if err := json.Unmarshal(payload, &delta); err != nil ||
+		delta.SchemaVersion != activationDeltaSchemaVersion || delta.RecordRevision != revision {
+		return activationDelta{}, false, nil
+	}
+	return delta, true, nil
+}
 
 func (repository *RedisCatalogRepository) persistActivationRefUpgrade(ctx context.Context, expected ActivationExpectation, next ActivationState, activePayload []byte) error {
 	expectedHeader, err := activationHeader(expected.RecordRevision, expected.Current, expected.Pending)
@@ -184,9 +247,16 @@ func (repository *RedisCatalogRepository) persistActivationRefUpgrade(ctx contex
 	if err != nil {
 		return err
 	}
+	// A ref upgrade rewrites the activation record and nothing else: the delta
+	// it leaves names no Query Group, so a Worker keeps every cached timeline.
+	delta, err := encodeActivationDelta(next.RecordRevision, nil)
+	if err != nil {
+		return err
+	}
 	changed, err := repository.client.Eval(ctx, compareAndSetCutoverSchedulesScript,
-		[]string{repository.activationHeaderKey(), repository.activationKey(), repository.activeQGSetKey(next.ActiveQGSetRef.Digest)},
-		expectedHeader, nextHeader, payload, activePayload, repository.ttl.Milliseconds()).Int()
+		[]string{repository.activationHeaderKey(), repository.activationKey(), repository.activeQGSetKey(next.ActiveQGSetRef.Digest),
+			repository.activationDeltaKey(next.RecordRevision)},
+		expectedHeader, nextHeader, payload, activePayload, repository.ttl.Milliseconds(), delta).Int()
 	if err != nil {
 		return activationDependencyIO(fmt.Errorf("persist activation ref upgrade: %w", err))
 	}
@@ -855,9 +925,18 @@ func (repository *RedisCatalogRepository) persistCutoverActivation(
 		return err
 	}
 	sort.Slice(updates, func(i, j int) bool { return updates[i].next.QueryGroup < updates[j].next.QueryGroup })
-	keys := []string{repository.activationHeaderKey(), repository.activationKey(), repository.activeQGSetKey(ref.Digest)}
-	args := []interface{}{expectedHeader, nextHeader, activationPayload, activePayload, repository.ttl.Milliseconds()}
-	payloadBytes := len(expectedHeader) + len(nextHeader) + len(activationPayload) + len(activePayload)
+	changedGroups := make([]execution.QueryGroupIdentity, 0, len(updates))
+	for _, update := range updates {
+		changedGroups = append(changedGroups, update.next.QueryGroup)
+	}
+	deltaPayload, err := encodeActivationDelta(next.RecordRevision, changedGroups)
+	if err != nil {
+		return err
+	}
+	keys := []string{repository.activationHeaderKey(), repository.activationKey(), repository.activeQGSetKey(ref.Digest),
+		repository.activationDeltaKey(next.RecordRevision)}
+	args := []interface{}{expectedHeader, nextHeader, activationPayload, activePayload, repository.ttl.Milliseconds(), deltaPayload}
+	payloadBytes := len(expectedHeader) + len(nextHeader) + len(activationPayload) + len(activePayload) + len(deltaPayload)
 	timelineBytes := make([]int, 0, len(updates))
 	for _, update := range updates {
 		payload, err := json.Marshal(update.next)

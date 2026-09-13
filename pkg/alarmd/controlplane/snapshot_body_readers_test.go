@@ -16,12 +16,10 @@ import (
 
 // Before the Control Leader may stop writing the whole snapshot body, every
 // reader that a worker or a Leader of this build runs must be known to
-// either read the object catalog instead or still need the body. This test
-// is that inventory, run against a real Redis: a normal publication and
-// activation, then the snapshot body deleted, then every reader exercised.
-// The readers listed as needing the body are the work that must happen
-// before the body stops being written; each one that is converted moves to
-// the other list here.
+// read the object catalog instead. This test is that inventory, run against
+// a real Redis: a normal publication and activation, then the snapshot body
+// deleted, then every reader exercised. A reader that needs the body fails
+// here, and the body cannot stop being written while one does.
 func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 	harness := newObjectCatalogHarness(t)
 	ctx := harness.ctx
@@ -47,15 +45,18 @@ func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 	// A second publication, activated by nobody yet, for the readers that
 	// activate a new publication.
 	next := harness.publish(t, catalogWithSchedule(t, validCatalog(t, 81), 60, 0))
-	// Positive control: both bodies existed until now.
+	// The whole snapshot body is never written: only the manifest and the
+	// objects name a publication's content.
 	for _, rev := range []string{string(revision), string(next.Publication.SnapshotRevision)} {
-		bodyKey := harness.prefix + ":snapshot:" + rev
-		if deleted := harness.client.Del(ctx, bodyKey).Val(); deleted != 1 {
-			t.Fatalf("snapshot body key %q was not present to delete (deleted=%d)", bodyKey, deleted)
+		if exists := harness.client.Exists(ctx, harness.prefix+":snapshot:"+rev).Val(); exists != 0 {
+			t.Fatalf("a snapshot body was written for revision %s", rev)
+		}
+		if exists := harness.client.Exists(ctx, harness.prefix+":manifest:"+rev).Val(); exists != 1 {
+			t.Fatalf("no manifest was written for revision %s", rev)
 		}
 	}
 
-	// Readers that answer from the object catalog: the worker's steady state.
+	// Every reader answers from the object catalog.
 	objectReaders := []struct {
 		name string
 		read func() error
@@ -101,6 +102,10 @@ func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 			}
 			return err
 		}},
+		{"LoadQueryGroup", func() error {
+			_, err := harness.repository.LoadQueryGroup(ctx, revision, manifest.QueryGroups[0].QueryGroup)
+			return err
+		}},
 	}
 	for _, reader := range objectReaders {
 		if err := reader.read(); err != nil {
@@ -109,39 +114,5 @@ func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 		} else {
 			t.Logf("%s answers without the snapshot body", reader.name)
 		}
-	}
-
-	// Readers that still load the whole body. Each is a prerequisite of
-	// stopping the body write; a converted reader belongs in the list above.
-	bodyReaders := []struct {
-		name string
-		read func() error
-	}{
-		{"LoadPublishedSnapshot", func() error { _, err := harness.repository.LoadPublishedSnapshot(ctx, state.Current); return err }},
-		{"LoadQueryGroup", func() error {
-			_, err := harness.repository.LoadQueryGroup(ctx, revision, manifest.QueryGroups[0].QueryGroup)
-			return err
-		}},
-		{"LoadPlan", func() error { _, err := harness.repository.LoadPlan(ctx, revision, manifest.Plans[0].Plan); return err }},
-	}
-	for _, reader := range bodyReaders {
-		err := reader.read()
-		switch {
-		case err == nil:
-			t.Errorf("%s no longer needs the snapshot body: move it to the object-catalog list", reader.name)
-		case errors.Is(err, controlplane.ErrSnapshotUnavailable):
-			t.Logf("%s still needs the snapshot body (prerequisite for stopping the body write)", reader.name)
-		default:
-			t.Errorf("%s failed without the snapshot body for another reason: %v", reader.name, err)
-		}
-	}
-	// Every body read is counted at its attempt, by the reader that made
-	// it. The first activation audited the index against the body (one in
-	// sixteen, by design), the inventory above read one Query Group and one
-	// Plan, and nothing fell back to the body for a publication without a
-	// manifest or ran the legacy cleanup.
-	reads := harness.repository.ControlReadCacheStats().BodyReads
-	if reads != (controlplane.ControlSnapshotBodyReads{IndexAudit: 1, QueryGroup: 1, Plan: 1}) {
-		t.Fatalf("snapshot body reads = %+v, want one audit, one Query Group and one Plan read", reads)
 	}
 }

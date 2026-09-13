@@ -81,9 +81,8 @@ type phaseTwoApplicationDependencies struct {
 }
 
 type runtimeModeDependencies struct {
-	phaseOne                       applicationDependencies
-	phaseTwo                       phaseTwoApplicationDependencies
-	temporaryLegacyDrainingCleanup temporaryLegacyDrainingCleanupRunner
+	phaseOne applicationDependencies
+	phaseTwo phaseTwoApplicationDependencies
 }
 
 func defaultPhaseTwoApplicationDependencies() phaseTwoApplicationDependencies {

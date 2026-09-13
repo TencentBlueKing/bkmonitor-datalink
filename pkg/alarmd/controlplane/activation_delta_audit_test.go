@@ -153,3 +153,23 @@ func TestSampledDeltaAuditTellsMissedFromOverNamed(t *testing.T) {
 		})
 	}
 }
+
+// catalogWithAllSchedules gives every Query Group of source the same
+// schedule, the way catalogWithSchedule does for the first one.
+func catalogWithAllSchedules(
+	t *testing.T,
+	source controlplane.Catalog,
+	interval int64,
+	alignment execution.EvaluationTime,
+) controlplane.Catalog {
+	t.Helper()
+	result := source
+	result.QueryGroups = append([]controlplane.QueryGroup(nil), source.QueryGroups...)
+	for groupIndex := range result.QueryGroups {
+		groupCatalog := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{result.QueryGroups[groupIndex]}}
+		groupCatalog = catalogWithSchedule(t, groupCatalog, interval, alignment)
+		result.QueryGroups[groupIndex] = groupCatalog.QueryGroups[0]
+	}
+	result.SnapshotRevision = execution.SnapshotRevision(mustDigest(t, "alarmd-strategy-snapshot-v1", result.QueryGroups))
+	return result
+}

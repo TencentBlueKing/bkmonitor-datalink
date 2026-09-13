@@ -8,7 +8,6 @@ package progress
 import (
 	"context"
 	"errors"
-	"reflect"
 	"testing"
 	"time"
 
@@ -19,12 +18,11 @@ import (
 )
 
 type controlFake struct {
-	value             []byte
-	missing           bool
-	status            ownership.FencedCASStatus
-	group             execution.QueryGroupIdentity
-	name              string
-	temporaryCASReads int
+	value   []byte
+	missing bool
+	status  ownership.FencedCASStatus
+	group   execution.QueryGroupIdentity
+	name    string
 }
 
 func TestBeginSlotPersistsIdempotentlyAndCompletionClearsProjection(t *testing.T) {
@@ -1039,11 +1037,6 @@ func (fake *controlFake) ReadControl(_ context.Context, group execution.QueryGro
 	fake.group, fake.name = group, name
 	return append([]byte(nil), fake.value...), fake.missing, nil
 }
-func (fake *controlFake) ReadControlForTemporaryLegacyDrainingCAS(_ context.Context, group execution.QueryGroupIdentity, name string) (ownership.TemporaryLegacyDrainingCASRead, error) {
-	fake.group, fake.name = group, name
-	fake.temporaryCASReads++
-	return ownership.TemporaryLegacyDrainingCASRead{RedisKey: "redis:progress:key", Raw: append([]byte(nil), fake.value...), Missing: fake.missing}, nil
-}
 func (fake *controlFake) FencedCompareAndSet(_ context.Context, request ownership.FencedCASRequest) (ownership.FencedCASStatus, error) {
 	status := fake.status
 	if status == "" {
@@ -1053,25 +1046,6 @@ func (fake *controlFake) FencedCompareAndSet(_ context.Context, request ownershi
 		fake.value, fake.missing = append([]byte(nil), request.Value...), false
 	}
 	return status, nil
-}
-
-func TestLoadProgressForTemporaryLegacyDrainingCASReturnsExactRawReadWithoutMutation(t *testing.T) {
-	identity := execution.ProgressIdentity{QueryGroup: "q"}
-	persisted := execution.ScheduleProgress{
-		Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull,
-	}
-	raw := mustEncode(t, persisted)
-	fake := &controlFake{value: append([]byte(nil), raw...)}
-	store := mustStore(t, fake)
-
-	result, err := store.LoadProgressForTemporaryLegacyDrainingCAS(context.Background(), identity)
-	if err != nil || result.RedisKey != "redis:progress:key" || !reflect.DeepEqual(result.Raw, raw) ||
-		result.Load.Status != execution.ProgressFound || result.Load.Progress == nil || *result.Load.Progress != persisted {
-		t.Fatalf("LoadProgressForTemporaryLegacyDrainingCAS()=(%#v,%v)", result, err)
-	}
-	if !reflect.DeepEqual(fake.value, raw) {
-		t.Fatalf("LoadProgressForTemporaryLegacyDrainingCAS() changed raw Progress: got=%q want=%q", fake.value, raw)
-	}
 }
 
 func TestLoadProgressDistinguishesMissingAndFound(t *testing.T) {
@@ -1084,9 +1058,6 @@ func TestLoadProgressDistinguishesMissingAndFound(t *testing.T) {
 	}
 	if fake.group != "q" || fake.name != "alarmd:progress" {
 		t.Fatalf("Progress control location = (%q, %q)", fake.group, fake.name)
-	}
-	if fake.temporaryCASReads != 0 {
-		t.Fatalf("normal LoadProgress used temporary CAS read %d times", fake.temporaryCASReads)
 	}
 	fake.value = mustEncode(t, execution.ScheduleProgress{Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull})
 	fake.missing = false

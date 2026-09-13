@@ -319,19 +319,13 @@ func openProductionPhaseTwoBundleWithDependencies(
 		occupancy := stats.TimelineOccupancy
 		counts := []metric.ControlCacheCounts{
 			{Object: "version", Hits: stats.Version.Hits, Misses: stats.Version.Misses, Refreshes: stats.Version.Refreshes},
-			{Object: "snapshot", Hits: stats.Snapshot.Hits, Misses: stats.Snapshot.Misses,
-				Refreshes: stats.Snapshot.Refreshes, Shared: stats.Snapshot.Shared},
 			{Object: "activation", Hits: stats.Activation.Hits, Misses: stats.Activation.Misses, Refreshes: stats.Activation.Refreshes},
 			{Object: "activation_delta", Hits: stats.Delta.Hits, Misses: stats.Delta.Misses,
 				Audit: &metric.ControlCacheAudit{
 					Samples: stats.DeltaAudit.Samples, Agreed: stats.DeltaAudit.Agreed,
 					OverNamed: stats.DeltaAudit.OverNamed, Missed: stats.DeltaAudit.Missed,
 				}},
-			{Object: "catalog_index", Hits: stats.Index.Hits, Misses: stats.Index.Misses,
-				Audit: &metric.ControlCacheAudit{
-					Samples: stats.IndexAudit.Samples, Agreed: stats.IndexAudit.Agreed,
-					OverNamed: stats.IndexAudit.OverNamed, Missed: stats.IndexAudit.Missed,
-				}},
+			{Object: "catalog_index", Hits: stats.Index.Hits, Misses: stats.Index.Misses},
 			{Object: "timeline", Hits: stats.Timeline.Hits, Misses: stats.Timeline.Misses,
 				Refreshes: stats.Timeline.Refreshes, Evictions: occupancy.Evictions,
 				Occupancy: &metric.ControlCacheOccupancy{
@@ -359,16 +353,6 @@ func openProductionPhaseTwoBundleWithDependencies(
 			})
 		}
 		return counts
-	})
-	recorder.SetSnapshotBodyReadSource(func() []metric.SnapshotBodyReadCounts {
-		reads := repository.ControlReadCacheStats().BodyReads
-		return []metric.SnapshotBodyReadCounts{
-			{Reader: metric.SnapshotBodyReaderActivationContent, Reads: reads.ActivationContent},
-			{Reader: metric.SnapshotBodyReaderIndexAudit, Reads: reads.IndexAudit},
-			{Reader: metric.SnapshotBodyReaderQueryGroup, Reads: reads.QueryGroup},
-			{Reader: metric.SnapshotBodyReaderPlan, Reads: reads.Plan},
-			{Reader: metric.SnapshotBodyReaderLegacyCleanup, Reads: reads.LegacyCleanup},
-		}
 	})
 	if cfg.PhaseTwo.Control.CatalogTTL.Duration() < phaseTwoSnapshotMinimumRetention(cfg, 0) {
 		return nil, scheduler.ErrSnapshotRetentionInsufficient
@@ -633,7 +617,6 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	repository.ConfigureSnapshotMemory(worker.PreparationByteAdmission(coordinator), worker.PreparationObjectBytes)
 	// Only the static compatibility is read from this one; the heartbeat that
 	// carries acknowledgement and load is written by the bundle once it exists.
 	registration, err := phaseTwoWorkerRegistration(cfg, ownership.WorkerStarting, external.Now(), nil, nil)
@@ -784,7 +767,6 @@ func openProductionPhaseTwoBundleWithDependencies(
 		CloseResources: func(shutdownCtx context.Context) error {
 			stopDiagnosticWriter()
 			stopCMDBIndex()
-			repository.ReleaseSnapshotCache()
 			eventsClosed = true
 			if finalEmitter != nil && finalEmitter.publisher != nil {
 				finalEmitter.shutdown(shutdownCtx)

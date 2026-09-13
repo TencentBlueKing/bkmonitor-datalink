@@ -137,7 +137,7 @@ func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsC
 	// The payload the fleet executes expires, the way a publication that is no
 	// longer current stops being renewed.
 	catalogPrefix := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog")
-	if err := redisClient.Del(ctx, catalogPrefix+":snapshot:"+string(initial.Current.SnapshotRevision)).Err(); err != nil {
+	if err := redisClient.Del(ctx, catalogPrefix+":manifest:"+string(initial.Current.SnapshotRevision)).Err(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -155,7 +155,7 @@ func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsC
 	if activation.Current != stranded.Publication || activation.RecordRevision != initial.RecordRevision+1 {
 		t.Fatalf("activation = %+v, want the stranded publication %+v at revision %d", activation, stranded.Publication, initial.RecordRevision+1)
 	}
-	if _, err := repository.LoadPublishedSnapshot(ctx, activation.Current); err != nil {
+	if _, err := loadPublishedSnapshot(ctx, repository, activation.Current); err != nil {
 		t.Fatalf("the activated publication must be readable: %v", err)
 	}
 	refreshMu.Lock()

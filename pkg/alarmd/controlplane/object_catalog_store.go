@@ -329,10 +329,10 @@ func (repository *RedisCatalogRepository) LoadCatalogManifest(ctx context.Contex
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&manifest); err != nil {
-		return CatalogManifest{}, fmt.Errorf("alarmd controlplane: decode catalog manifest: %w", err)
+		return CatalogManifest{}, &PersistedSnapshotCorruptError{Err: fmt.Errorf("decode catalog manifest: %w", err)}
 	}
 	if manifest.SchemaVersion != catalogManifestSchemaVersion || manifest.SnapshotRevision != revision {
-		return CatalogManifest{}, errors.New("alarmd controlplane: catalog manifest does not match its revision")
+		return CatalogManifest{}, &PersistedSnapshotCorruptError{Err: errors.New("catalog manifest does not match its revision")}
 	}
 	return manifest, nil
 }

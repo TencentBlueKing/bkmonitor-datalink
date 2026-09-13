@@ -119,7 +119,6 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	if err != nil {
 		return ActivationState{}, err
 	}
-	reconciler.repository.maybeAuditCatalogIndex(ctx, publication)
 	failureStage, failureClass = ActivationFailureStageCompile, ActivationFailureClassOther
 	boundary := execution.EvaluationTime(reconciler.now().Unix())
 	if boundary <= 0 {

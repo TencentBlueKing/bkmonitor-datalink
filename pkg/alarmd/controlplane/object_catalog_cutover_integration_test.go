@@ -379,7 +379,11 @@ func TestCutoverDecidesByPersistedSegmentsWhenTheOldSnapshotIsGone(t *testing.T)
 	firstSnapshot := fixture.publish(t, first, 60)
 	segmentA := fixture.openSegment(t, groupA.Identity, 60)
 	bytesB := fixture.timelineBytes(t, groupB.Identity)
-	if err := fixture.client.Del(fixture.ctx, fixture.prefix+":snapshot:"+string(firstSnapshot.Publication.SnapshotRevision)).Err(); err != nil {
+	// The previous publication's manifest is gone. What the cutover knows
+	// about the previous content it then reads from the open Segments
+	// themselves.
+	firstRevision := string(firstSnapshot.Publication.SnapshotRevision)
+	if err := fixture.client.Del(fixture.ctx, fixture.prefix+":manifest:"+firstRevision).Err(); err != nil {
 		t.Fatal(err)
 	}
 

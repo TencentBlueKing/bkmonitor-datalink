@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -59,11 +60,10 @@ func TestScheduleActivationReconcilerUpgradesLegacyByScanWhenNoManifestExists(t 
 	if err := client.Set(ctx, prefix+":activation", legacyPayload, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	// A publication from before the object catalog has neither a manifest
-	// nor, once it aged, a body; the timelines are all that name its
-	// population.
+	// A publication from before the object catalog has no manifest; the
+	// timelines are all that name its population.
 	revision := string(oldSnapshot.Publication.SnapshotRevision)
-	if err := client.Del(ctx, prefix+":manifest:"+revision, prefix+":snapshot:"+revision).Err(); err != nil {
+	if err := client.Del(ctx, prefix+":manifest:"+revision).Err(); err != nil {
 		t.Fatal(err)
 	}
 	emptyCatalog := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{}}
@@ -126,12 +126,6 @@ func TestScheduleActivationReconcilerUpgradesLegacyByScanWhenNoManifestExists(t 
 		migrationObservations[1].LegacyMigration.Result != "fail_closed" || migrationObservations[2].LegacyMigration.Result != "success" ||
 		migrationObservations[2].LegacyMigration.ScanKeys == 0 {
 		t.Fatalf("legacy migration observations=%#v", migrationObservations)
-	}
-	// A publication without a manifest is the one shape that still sends
-	// the activation's content read to the body; the attempt is counted
-	// even though the body is gone too.
-	if reads := repository.ControlReadCacheStats().BodyReads; reads.ActivationContent == 0 {
-		t.Fatalf("snapshot body reads = %+v, want the manifest-less fallback counted", reads)
 	}
 }
 
@@ -237,5 +231,49 @@ func TestScheduleActivationReconcilerCompilesAReturningQueryGroupAndCarriesTheRe
 		if record.Publication != first.Publication || record.Fact.Selected.ForceWarming {
 			t.Fatalf("staying record = %+v, want it carried from %+v without a restart", record, first.Publication)
 		}
+	}
+}
+
+// One Query Group of one revision is read through the manifest of that
+// revision: its object and the output context of each of its Plans, field
+// for field the Query Group that was published, PlanRevision aside. The
+// revision's manifest gone reads as an unavailable snapshot; a Query Group
+// the manifest does not name, or whose object is gone, as an unavailable
+// object.
+func TestLoadQueryGroupReadsTheManifestAndObjects(t *testing.T) {
+	harness := newObjectCatalogHarness(t)
+	ctx := harness.ctx
+	catalog := twoQueryGroupCatalog(t)
+	published := harness.publish(t, catalog)
+	revision := published.Publication.SnapshotRevision
+	repository := harness.newRepository(t)
+	for _, group := range catalog.QueryGroups {
+		read, err := repository.LoadQueryGroup(ctx, revision, group.Identity)
+		if err != nil {
+			t.Fatalf("LoadQueryGroup(%s) error = %v", group.Identity, err)
+		}
+		if want := withoutPlanRevisions([]controlplane.QueryGroup{group})[0]; !reflect.DeepEqual(read, want) {
+			t.Fatalf("LoadQueryGroup(%s) = %+v, want %+v", group.Identity, read, want)
+		}
+	}
+	if _, err := repository.LoadQueryGroup(ctx, revision, "not-a-query-group"); !errors.Is(err, controlplane.ErrCatalogObjectUnavailable) {
+		t.Fatalf("LoadQueryGroup(unnamed) error = %v, want unavailable object", err)
+	}
+	manifest, err := repository.LoadCatalogManifest(ctx, revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectKey := harness.prefix + ":qgobj:" + string(manifest.QueryGroups[0].ObjectDigest)
+	if deleted := harness.client.Del(ctx, objectKey).Val(); deleted != 1 {
+		t.Fatalf("object key %q was not present to delete", objectKey)
+	}
+	if _, err := repository.LoadQueryGroup(ctx, revision, manifest.QueryGroups[0].QueryGroup); !errors.Is(err, controlplane.ErrCatalogObjectUnavailable) {
+		t.Fatalf("LoadQueryGroup(object gone) error = %v, want unavailable object", err)
+	}
+	if deleted := harness.client.Del(ctx, harness.prefix+":manifest:"+string(revision)).Val(); deleted != 1 {
+		t.Fatal("manifest key was not present to delete")
+	}
+	if _, err := repository.LoadQueryGroup(ctx, revision, manifest.QueryGroups[1].QueryGroup); !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+		t.Fatalf("LoadQueryGroup(manifest gone) error = %v, want unavailable snapshot", err)
 	}
 }

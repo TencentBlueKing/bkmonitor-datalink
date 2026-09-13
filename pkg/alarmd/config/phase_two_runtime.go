@@ -181,7 +181,18 @@ func (c PhaseTwoOutputConfig) protocol() string {
 //	the branches that production never sends have been written down as a
 //	  conclusion, so that a coverage figure short of the offline corpus is
 //	  known to be "will never arrive" rather than "has not arrived yet";
-//	stream has been the default for one release without a rollback.
+//	the terminal mode has been the default for one release without a rollback;
+//	and, checked at that moment rather than remembered from this one, no
+//	  deployment is still relying on the derived default for something other
+//	  than the terminal rate -- removing these keys is what makes that default
+//	  live everywhere, so the blast radius has to be read the day it changes.
+//
+// The terminal mode is stream_shadow at the derived stride, not stream. The
+// single-pass form answers and the established one keeps checking a sparse
+// sample of it, forever. Stopping at stream would trade a guard that costs
+// about a thousandth of the canonical path for the sentence "it was verified
+// once" -- and the thing it guards is every future change to this package,
+// not the one change that has already been proven.
 //
 // Until then the answer to "does the operator know better than the program"
 // is still no for what the encoder should do, and yes only for when a given
@@ -198,10 +209,25 @@ type PhaseTwoCanonicalConfig struct {
 	ShadowSampleStride uint64 `yaml:"shadow_sample_stride,omitempty"`
 }
 
-// defaultCanonicalShadowStride samples about one call in sixty-four. At the
-// observed rate that is still thousands of comparisons a minute, which reaches
-// full branch coverage long before it costs anything worth measuring.
-const defaultCanonicalShadowStride = 64
+// defaultCanonicalShadowStride is derived from what the comparison costs, not
+// chosen for feeling about right.
+//
+// The comparison runs the other form once every stride calls. Measured, the
+// established form costs about five times the single-pass one, so with the
+// single-pass form answering, the comparison adds 5/stride of one canonical
+// call. Holding that under a thousandth of the canonical path gives
+// stride > 5000/5 = 1000, and 1024 is the next power of two.
+//
+// Only the cost sets the bound; detection does not push back. A systematic
+// divergence recurs, so at the observed 52,000 canonical calls a second, one
+// affecting even a hundredth of one per cent of calls is seen within minutes.
+// The thing sparse sampling cannot do is a census -- stride 64 missed six call
+// site types that stride 1 found -- and a census is not what this is for.
+//
+// A transient window that wants dense sampling says so explicitly; this is the
+// value a deployment gets when it says nothing, which after the two rollout
+// keys retire is every deployment.
+const defaultCanonicalShadowStride = 1024
 
 func (c PhaseTwoCanonicalConfig) mode() string {
 	if c.Mode == "" {

@@ -223,6 +223,11 @@ type Summary struct {
 	// Unattributed is the objects carrying no evidence either way, which is
 	// neither of the other two and must not be folded into either.
 	Unattributed int `json:"unattributed"`
+	// OursUnclassified is how many of Ours got there by the fall-through. It is
+	// the number that says the classification table has fallen behind what the
+	// build emits, and it is the only signal for that: no test here can cover an
+	// open input.
+	OursUnclassified int `json:"ours_unclassified"`
 }
 
 // Onset splits the list by how long ago each object went wrong.
@@ -265,7 +270,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 	strategies := map[StrategyRef]struct{}{}
 	replicas := map[string]int{}
 	stalled := 0
-	ours, external, unattributed := 0, 0, 0
+	ours, external, unattributed, oursUnclassified := 0, 0, 0, 0
 	onset := Onset{}
 	for _, anomaly := range anomalies {
 		if anomaly.Stalled {
@@ -295,6 +300,9 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 			unattributed++
 		default:
 			ours++
+			if anomaly.Unclassified {
+				oursUnclassified++
+			}
 		}
 		kinds[anomaly.Kind]++
 		if anomaly.ReasonCode != "" {
@@ -335,6 +343,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 		ByBusiness: rank(businesses), Strategies: len(strategies),
 		ByReplica: rank(replicas), Stalled: stalled, Onset: onset,
 		Ours: ours, External: external, Unattributed: unattributed,
+		OursUnclassified: oursUnclassified,
 	}
 }
 

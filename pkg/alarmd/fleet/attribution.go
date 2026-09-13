@@ -150,6 +150,35 @@ var ourReasons = map[string]bool{
 // checked first, because an object that has stopped progressing is ours
 // whatever its last reason code said. A stalled object's last recorded reason
 // is often the external thing that happened before it got stuck.
+// attributedByRule reports whether a rule decided this, rather than the
+// fall-through.
+//
+// The two are different confidence levels and the difference is what goes
+// stale. attributionOf reads four sources and only one of them -- the reason
+// catalogue -- is a closed list this package can check itself against; a
+// failure code is open by construction, and a release can add a whole
+// vocabulary that reaches here without touching the catalogue at all.
+//
+// Checked against a batch of 47 rejection codes due in the next release: the
+// completeness test stays green while every one of them falls through, because
+// they arrive in a different vocabulary than the one it iterates. A guard
+// anchored to one closed list cannot cover an open input, so the fall-through
+// is counted and shown instead of being silently absorbed.
+func attributedByRule(anomaly Anomaly) bool {
+	for _, code := range []string{anomaly.CauseReason, string(anomaly.Cause), anomaly.ReasonCode} {
+		if code != "" && (externalReasons[code] || ourReasons[code]) {
+			return true
+		}
+	}
+	if anomaly.Failure != nil {
+		if externalReasons[anomaly.Failure.Code] || ourReasons[anomaly.Failure.Code] {
+			return true
+		}
+	}
+	// The two rules that do not read a code at all still decide by a rule.
+	return anomaly.Stalled || anomaly.Kind == KindOverdueWake
+}
+
 func attributionOf(anomaly Anomaly) Attribution {
 	// Rounds have stopped ending. Nothing outside this deployment can produce
 	// that, and nothing outside it will end them.
@@ -249,6 +278,10 @@ func UnattributedCount(anomalies []Anomaly) int {
 func Attribute(anomalies []Anomaly) {
 	for index := range anomalies {
 		anomalies[index].Attribution = attributionOf(anomalies[index])
+		// Recorded per object rather than derived twice, so the page and the
+		// counts cannot disagree about which of these was actually decided.
+		anomalies[index].Unclassified = anomalies[index].Attribution == AttributionOurs &&
+			!attributedByRule(anomalies[index])
 	}
 }
 

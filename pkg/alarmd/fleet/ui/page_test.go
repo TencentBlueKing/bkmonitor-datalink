@@ -47,19 +47,57 @@ func TestNoPageFunctionIsDefinedWithoutACallSite(t *testing.T) {
 
 // Every panel the page declares has to be filled by something. An element id
 // that no script ever writes is a heading with nothing under it.
+//
+// This asked whether the id appeared anywhere in the file twice, which is not
+// the same question. Any id that is also an ordinary word passed on the word:
+// removing every script reference to the object table's container left this
+// green, because "rows" occurs in the code around it. That is the one container
+// on the page it most needed to cover, and the check exists because a panel
+// shipped blank with everything green -- so it was failing at the job it was
+// written for, in the same way, for a whole class of ids.
+//
+// It requires one of the forms the page actually addresses an element by now.
+var addressedByScript = regexp.MustCompile(`(?:getElementById|\btext|\bshow|\bfail)\('([A-Za-z0-9_]+)'`)
+
+// stageWording returns the body of the map that turns a stage into words, so a
+// question about wording cannot be answered by a different map keyed the same
+// way.
+func stageWording(t *testing.T, body string) string {
+	t.Helper()
+	block := regexp.MustCompile(`var STAGE_TEXT = \{([^}]*)\}`).FindStringSubmatch(body)
+	if block == nil {
+		t.Fatal("the page no longer declares STAGE_TEXT: every trace row renders as a raw stage name")
+	}
+	return block[1]
+}
+
 func TestEveryPanelContainerIsWrittenBySomeScript(t *testing.T) {
 	body := string(page)
+	written := map[string]bool{}
+	for _, match := range addressedByScript.FindAllStringSubmatch(body, -1) {
+		written[match[1]] = true
+	}
+	if len(written) == 0 {
+		t.Fatal("the page addresses no elements at all; the check would pass vacuously")
+	}
 	container := regexp.MustCompile(`id="([A-Za-z0-9_]+)"`)
+	matches := container.FindAllStringSubmatch(body, -1)
+	if len(matches) == 0 {
+		t.Fatal("no element ids found; the check would pass vacuously")
+	}
 	seen := map[string]bool{}
-	for _, match := range container.FindAllStringSubmatch(body, -1) {
+	for _, match := range matches {
 		id := match[1]
 		if seen[id] {
 			continue
 		}
 		seen[id] = true
-		// The declaration plus at least one script reference.
-		if strings.Count(body, id) < 2 {
-			t.Errorf("element %q is declared but never written by any script", id)
+		// An input the page only ever reads through a variable it captured once
+		// is still addressed by one of the forms above at capture time, so this
+		// stays a question about whether any script reaches the element.
+		if !written[id] {
+			t.Errorf("element %q is declared but no script addresses it: it renders empty, "+
+				"which looks exactly like a deployment with no such data", id)
 		}
 	}
 }
@@ -253,8 +291,13 @@ func TestThePageKnowsEveryStageThatCarriesOnlyADuration(t *testing.T) {
 		// A row whose only content is its duration still needs a name, and the
 		// name has to say that is what it is -- "this round finished: success"
 		// over a round that did not finish is how this was read wrong.
-		if !strings.Contains(body, stage+": '") {
-			t.Errorf("the page has no wording for stage %q", stage)
+		//
+		// Scoped to the wording map, not the file: these stages are keys in two
+		// maps, and asking the file whether the key exists is a question the
+		// other map can answer. That is how the provenance version of this check
+		// passed on wording that had been renamed away.
+		if !strings.Contains(stageWording(t, body), stage+": '") {
+			t.Errorf("STAGE_TEXT has no wording for stage %q", stage)
 		}
 	}
 	for stage := range listed {

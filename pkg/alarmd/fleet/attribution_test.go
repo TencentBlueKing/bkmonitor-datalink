@@ -19,6 +19,14 @@ import (
 // Every code in the catalogue has to be on one side or the other, decided here
 // rather than by the runtime default.
 //
+// What this cannot cover, established by probe rather than assumed: it iterates
+// one vocabulary, and attributionOf reads four. A failure code is open by
+// construction, and a release can introduce a whole vocabulary that reaches
+// attribution without touching this catalogue -- 47 rejection codes are due in
+// the next one, and this test stays green while every one of them falls
+// through. That gap is covered at runtime instead, by counting the objects held
+// against the deployment by the default alone.
+//
 // The default exists so an unclassified code cannot read as healthy, but a
 // default that quietly absorbs new codes is a decision nobody made: the code
 // would be filed against this deployment forever without anyone having asked
@@ -231,5 +239,67 @@ func TestObjectsWeCannotYetSpeakForMakeTheVerdictUnknownNotDegraded(t *testing.T
 	}
 	if got := OursCount(view.Anomalies); got != 0 {
 		t.Errorf("ours = %d, want 0: it must not be counted against the deployment", got)
+	}
+}
+
+// The next release adds 47 rejection codes in a vocabulary this package's
+// completeness test does not iterate, so every one of them will fall through to
+// the default and that test will stay green while it happens. Verified by
+// probe, not assumed: the expectation was that it would go red.
+//
+// A guard anchored to one closed list cannot cover an open input -- a failure
+// code is open by construction. So the fall-through is counted instead, and a
+// batch of new codes shows up on the first read after the deploy as objects
+// held against the deployment by nothing but the default.
+func TestObjectsHeldAgainstUsByTheDefaultAloneAreCountedApart(t *testing.T) {
+	byRule := Anomaly{QueryGroup: "qg-rule", Kind: KindDegradedRun,
+		CauseReason: "EXECUTION_BUDGET_EXHAUSTED"}
+	fellThrough := Anomaly{QueryGroup: "qg-new", Kind: KindDegradedRun,
+		CauseReason: "STATE_FACT_CONTRADICTS_OUTCOME"}
+	anomalies := []Anomaly{byRule, fellThrough}
+	Attribute(anomalies)
+
+	for _, anomaly := range anomalies {
+		if anomaly.Attribution != AttributionOurs {
+			t.Fatalf("%s = %q, want both against the deployment for this test to say anything",
+				anomaly.QueryGroup, anomaly.Attribution)
+		}
+	}
+	if anomalies[0].Unclassified {
+		t.Error("an object a rule matched is marked as having fallen through")
+	}
+	if !anomalies[1].Unclassified {
+		t.Error("an object no rule matched is not marked: a whole vocabulary could arrive " +
+			"and be absorbed into the deployment's own count with nothing saying so")
+	}
+	summary := summarize(anomalies, now)
+	if summary.Ours != 2 {
+		t.Errorf("ours = %d, want 2", summary.Ours)
+	}
+	if summary.OursUnclassified != 1 {
+		t.Errorf("ours_unclassified = %d, want exactly the one no rule matched",
+			summary.OursUnclassified)
+	}
+}
+
+// The two rules that read no code at all still count as rules. A stalled object
+// is decided by a rule about stalling, and marking it "nobody classified this"
+// would send someone looking for a missing table entry that should not exist.
+func TestTheRulesThatReadNoCodeAreStillRules(t *testing.T) {
+	at := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	anomalies := []Anomaly{
+		{QueryGroup: "qg-stuck", Kind: KindDegradedRun, FailingSince: at.Add(-2 * time.Hour)},
+		{QueryGroup: "qg-missed", Kind: KindOverdueWake},
+	}
+	MarkStalled(anomalies, at, time.Hour)
+	Attribute(anomalies)
+	MarkStalled(anomalies, at, time.Hour)
+	for _, anomaly := range anomalies {
+		if anomaly.Attribution != AttributionOurs {
+			t.Errorf("%s = %q, want %q", anomaly.QueryGroup, anomaly.Attribution, AttributionOurs)
+		}
+		if anomaly.Unclassified {
+			t.Errorf("%s is marked as unclassified, but a rule decided it", anomaly.QueryGroup)
+		}
 	}
 }

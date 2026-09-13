@@ -196,6 +196,11 @@ type Anomaly struct {
 	// for someone else. Filled in by Attribute rather than by the tracker, so
 	// the page and the verdict read one field instead of each deriving it.
 	Attribution Attribution `json:"attribution,omitempty"`
+	// Unclassified says this object is counted against the deployment because
+	// no rule matched, not because a rule said so. A release that adds a
+	// vocabulary of failure codes puts every one of them here until somebody
+	// classifies them, and that has to be visible rather than absorbed.
+	Unclassified bool `json:"unclassified,omitempty"`
 	// FailingSince is when the current unbroken sequence of rounds that
 	// reached execution and did not finish began; zero while the last
 	// conclusive round ended, however it ended. It is not Since: an object

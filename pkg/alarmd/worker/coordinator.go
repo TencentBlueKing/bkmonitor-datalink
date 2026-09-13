@@ -79,7 +79,7 @@ type activationProtectionRequiredError struct {
 	// commits that completion rather than deriving its own. Without it the
 	// whole path reported the completion and dropped the one field that says
 	// which of the conditions folded into UNAVAILABLE actually happened.
-	completionCause execution.UnavailableCause
+	completionCause execution.CompletionAttribution
 }
 
 func (*activationProtectionRequiredError) Error() string {
@@ -300,7 +300,7 @@ func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(
 		result, err = coordinator.commitProgress(sequenceCtx, request, execution.SlotCompletion{
 			Contract: request.Contract, Kind: completionKind,
 			Result: observability.ResultDegraded, ReasonCode: finalization.ReasonCode,
-		}, "")
+		}, execution.CompletionAttribution{})
 		return err
 	})
 	if err != nil {
@@ -501,7 +501,7 @@ func (coordinator *SlotExecutionCoordinator) convergeNormalActivation(
 				return err
 			}
 			result, err = coordinator.commitProgress(
-				sequenceCtx, request, protection.completion, string(protection.completionCause))
+				sequenceCtx, request, protection.completion, protection.completionCause)
 			return err
 		},
 	)
@@ -806,7 +806,8 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			return execution.SlotExecutionResult{}, err
 		}
 		driftCompletion, driftCause := configDriftCompletion(request.Contract, &primary)
-		return coordinator.commitProgress(ctx, request, driftCompletion, string(driftCause))
+		return coordinator.commitProgress(ctx, request, driftCompletion,
+			execution.CompletionAttribution{Cause: driftCause})
 	}
 
 	planResults := append([]execution.PlanEvaluationResult(nil), evaluated.Plans...)
@@ -948,11 +949,14 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	// completion.ReasonCode, which is persisted and decides how consecutive gaps
 	// fold into a Progress gap summary; changing that is a separate decision
 	// about a durable structure.
-	var cause execution.UnavailableCause
+	var attribution execution.CompletionAttribution
 	if len(changedPlans) > 0 {
+		var cause execution.CompletionCause
 		completion, cause = configDriftCompletion(request.Contract, &primary)
+		attribution.Cause = cause
 	} else {
-		completion.Kind, cause, err = execution.DeriveStreamingCompletion(header, bindings, evaluated)
+		completion.Kind, attribution.Cause, attribution.Reason, err =
+			execution.DeriveStreamingCompletionDetail(header, bindings, evaluated)
 		if err != nil {
 			return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive completion: %w", err)
 		}
@@ -967,7 +971,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		// traversal was about to say is now about a completion that did not
 		// happen. deriveCompletion reports no cause for TERMINAL for the same
 		// reason; the override has to follow it or the two disagree here.
-		cause = ""
+		attribution = execution.CompletionAttribution{}
 	}
 	if len(changedPlans) > 0 {
 		return execution.SlotExecutionResult{}, &activationProtectionRequiredError{
@@ -975,7 +979,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			currentFacts:      guardActivations,
 			activations:       changedActivations,
 			completion:        completion,
-			completionCause:   cause,
+			completionCause:   attribution,
 		}
 	}
 	progressActivations, err := coordinator.loadActivations(ctx, activationRequest)
@@ -989,14 +993,14 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			currentFacts:      progressActivations,
 			activations:       changedSelectedActivations(guardActivations, progressActivations),
 			completion:        driftCompletion,
-			completionCause:   driftCause,
+			completionCause:   execution.CompletionAttribution{Cause: driftCause},
 		}
 	}
 	if err := coordinator.admitDuePlans(ctx, request, header.DuePlans); err != nil {
 		return execution.SlotExecutionResult{}, err
 	}
 
-	result, err := coordinator.commitProgress(ctx, request, completion, string(cause))
+	result, err := coordinator.commitProgress(ctx, request, completion, attribution)
 	if err == nil && result.Completed {
 		result.QueryAvailability = queryAvailability
 	}
@@ -1037,7 +1041,7 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 	ctx context.Context,
 	request execution.SlotExecutionRequest,
 	completion execution.SlotCompletion,
-	completionCause string,
+	completionCause execution.CompletionAttribution,
 ) (execution.SlotExecutionResult, error) {
 	if request.ExpiredRange != nil {
 		return coordinator.commitExpiredRange(ctx, request, completion)
@@ -1076,7 +1080,7 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 		}
 	})
 	coordinator.observeCommittedProgress(ctx, request.Operation, started, observationResult, observationReason,
-		string(completion.Kind), completionCause)
+		string(completion.Kind), string(completionCause.Cause), string(completionCause.Reason))
 	return execution.SlotExecutionResult{Completed: true, CompletionKind: completion.Kind, Result: completion.Result, ReasonCode: completion.ReasonCode}, nil
 }
 
@@ -1600,7 +1604,7 @@ func indexStatePreflight(result execution.StatePreflightResult) map[execution.St
 }
 
 // Called only after this invocation received and validated ProgressCommitted.
-func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx context.Context, operation execution.Operation, started time.Time, result observability.Result, reason observability.ReasonCode, kind, cause string) {
+func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx context.Context, operation execution.Operation, started time.Time, result observability.Result, reason observability.ReasonCode, kind, cause, causeReason string) {
 	if reason == "" {
 		reason = observability.ReasonNone
 	}
@@ -1609,7 +1613,7 @@ func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx contex
 		Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
 		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
 		Result: result, ReasonCode: reason, Duration: time.Since(started), ProgressCompletionKind: kind,
-		ProgressCompletionCause: cause,
+		ProgressCompletionCause: cause, ProgressCompletionReason: causeReason,
 	})
 }
 
@@ -1636,12 +1640,18 @@ func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx contex
 // same Slot will eventually disagree, and then the page explains a completion
 // that did not happen. Here the two answers come from the one fact this
 // constructor already reads.
+//
+// With a usable primary the Slot completes as COMPLETED_WITH_PARTIAL_GAP and
+// names CONFIG_DRIFT as its cause. That kind used to reach the commit line
+// with no cause at all, listed beside the partial gaps a provider caused;
+// the two call for opposite responses, since an edited strategy needs nobody
+// and clears on the next Slot.
 func configDriftCompletion(
 	contractRef execution.FrozenExecutionContractRef,
 	primary *execution.PrimaryInputFact,
-) (execution.SlotCompletion, execution.UnavailableCause) {
+) (execution.SlotCompletion, execution.CompletionCause) {
 	kind := execution.CompletionPartialGap
-	cause := execution.UnavailableCause("")
+	cause := execution.CauseConfigDrift
 	if primary != nil && primary.Completeness == execution.CompletenessUnavailable {
 		kind = execution.CompletionUnavailable
 		cause = execution.CausePrimaryInputUnavailable

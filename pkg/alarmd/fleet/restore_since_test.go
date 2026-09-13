@@ -21,6 +21,13 @@ import (
 // the pipeline does, so these tests exercise the observed path rather than
 // reaching into the state behind it.
 func degradeUntilListed(tracker *Tracker, queryGroup string) {
+	// A healthy round first, so this object has been seen before it goes wrong.
+	// Without it the tracker is right to say the run only looks as old as the
+	// process: its first conclusive round would be the bad one.
+	tracker.Observe(context.Background(), observability.Observation{
+		Trace:                  observability.TraceFields{QueryGroupKey: queryGroup},
+		ProgressCompletionKind: "FULL_COMPLETED",
+	})
 	for round := 0; round < DefaultDegradedRounds; round++ {
 		tracker.Observe(context.Background(), observability.Observation{
 			Trace:                  observability.TraceFields{QueryGroupKey: queryGroup},
@@ -184,5 +191,40 @@ func TestEverySinceSourceTheTrackerProducesIsInTheClosedList(t *testing.T) {
 		if !listed[source] {
 			t.Errorf("the tracker produces %q but SinceSources does not list it", source)
 		}
+	}
+}
+
+// A deployment showed 55 pooled objects all reporting "wrong for 39 hours 55
+// minutes", which was the age of the process. Every one of them was already
+// wrong when the replica picked it up: their first conclusive round was the bad
+// one, so the run appeared to begin at startup and the duration measured how
+// long this process had been watching.
+//
+// The number is a lower bound and reads exactly like a measurement, so the row
+// has to say which it is.
+func TestAnObjectAlreadyWrongWhenTheProcessStartedSaysSo(t *testing.T) {
+	at := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	tracker := NewTracker(nil, "replica-a", func() time.Time { return at })
+
+	// Picked up already broken: nothing healthy was ever seen for it.
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), observability.Observation{
+			Trace:                  observability.TraceFields{QueryGroupKey: "qg-preexisting"},
+			ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE",
+		})
+	}
+	// Watched going wrong: healthy first, then not.
+	degradeUntilListed(tracker, "qg-watched")
+
+	sources := map[string]SinceSource{}
+	for _, anomaly := range tracker.Anomalies() {
+		sources[anomaly.QueryGroup] = anomaly.SinceFrom
+	}
+	if got := sources["qg-preexisting"]; got != SinceProcessStart {
+		t.Errorf("an object that was already wrong reports %q, want %q: its duration is how long "+
+			"this process has watched, not how long it has been wrong", got, SinceProcessStart)
+	}
+	if got := sources["qg-watched"]; got != SinceSnapshotContinuity {
+		t.Errorf("an object this process watched go wrong reports %q, want %q", got, SinceSnapshotContinuity)
 	}
 }

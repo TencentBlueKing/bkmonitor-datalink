@@ -327,6 +327,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_due_index_version_check_total":                "variableLabels: {result}",
 		"bkmonitor_alarmd_due_index_horizon_seconds":                    "variableLabels: {}",
 		"bkmonitor_alarmd_dispatch_skipped_total":                       "variableLabels: {reason}",
+		"bkmonitor_alarmd_dispatch_crowded_out_total":                   "variableLabels: {by}",
 		"bkmonitor_alarmd_redis_operation_total":                        "variableLabels: {client}",
 		"bkmonitor_alarmd_redis_pool_size":                              "variableLabels: {client}",
 		"bkmonitor_alarmd_redis_pool_connections":                       "variableLabels: {client,state}",
@@ -689,6 +690,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("due_index_version_check_total"): len(dueIndexVersionResults),
 		fqName("due_index_horizon_seconds"):     histogramSeries(1, len(dueIndexHorizonBuckets)),
 		fqName("dispatch_skipped_total"):        len(dispatchSkipReasons),
+		fqName("dispatch_crowded_out_total"):    len(dispatchCrowdedOutHolders),
 		// Two clients at most: the control plane connection and, when it resolves
 		// to a different endpoint, the runtime connection.
 		// One unlabelled series; connection acquisitions minus it is the retries.

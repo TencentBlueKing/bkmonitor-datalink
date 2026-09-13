@@ -24,7 +24,7 @@ func TestDeriveCompletionSeparatesTheCausesThatShareOneKind(t *testing.T) {
 	for _, testCase := range []struct {
 		name  string
 		plan  execution.PlanDisposition
-		cause execution.UnavailableCause
+		cause execution.CompletionCause
 	}{
 		{"readiness gap clears itself", execution.PlanReadinessGap, execution.CauseDataNotReady},
 		{"plan could not be decided", execution.PlanUnavailable, execution.CausePlanUnavailable},
@@ -79,9 +79,64 @@ func TestDeriveCompletionReportsTheMostActionableCause(t *testing.T) {
 	}
 }
 
-// A completion that is not UNAVAILABLE has no cause to report. Inventing one
-// would put a reason on a Slot that completed normally.
-func TestDeriveCompletionLeavesTheCauseEmptyWhenNothingWasUnavailable(t *testing.T) {
+// COMPLETED_WITH_PARTIAL_GAP folds two things into one word the way UNAVAILABLE
+// folds four, and it used to reach the page with no cause at all. The one this
+// derivation can see is a primary input the provider answered with a stretch
+// missing; the other, an edited strategy, is decided by the Worker's drift
+// constructor from the same fact and is covered there.
+func TestDeriveCompletionSaysWhichConditionMadeThePartialGap(t *testing.T) {
+	input := validInternalExecution()
+	input.Inputs[0].Completeness = execution.CompletenessPartial
+	for _, disposition := range []execution.PlanDisposition{execution.PlanDecided, execution.PlanDecidedDegraded} {
+		kind, cause, err := execution.DeriveCompletion(input, execution.EvaluationResult{
+			Plans: []execution.PlanEvaluationResult{{Disposition: disposition}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if kind != execution.CompletionPartialGap || cause != execution.CausePrimaryInputPartial {
+			t.Fatalf("%s beside a partial primary: kind=%q cause=%q, want a partial gap caused by the primary input", disposition, kind, cause)
+		}
+	}
+}
+
+// A Plan degraded beside a FULL primary has no producer today, so no cause is
+// minted for it. If a producer appears, its Slots show up as the shortfall from
+// a full cause rate, which is where unidentified paths are meant to land;
+// naming it in advance would hide that a path nobody knows about exists.
+func TestDeriveCompletionLeavesAnUnproducedPartialGapWithoutACause(t *testing.T) {
+	kind, cause, err := execution.DeriveCompletion(validInternalExecution(), execution.EvaluationResult{
+		Plans: []execution.PlanEvaluationResult{{Disposition: execution.PlanDecidedDegraded}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != execution.CompletionPartialGap || cause != "" {
+		t.Fatalf("degraded Plan beside a FULL primary: kind=%q cause=%q, want a partial gap with no cause", kind, cause)
+	}
+}
+
+// The causes of the two kinds never compete: a Slot that hits a condition of
+// each completes as UNAVAILABLE and reports an UNAVAILABLE cause, even the
+// least actionable one. A partial cause on an UNAVAILABLE Slot would explain a
+// completion that did not happen.
+func TestDeriveCompletionKeepsPartialCausesOffAnUnavailableSlot(t *testing.T) {
+	input := validInternalExecution()
+	input.Inputs[0].Completeness = execution.CompletenessPartial
+	kind, cause, err := execution.DeriveCompletion(input, execution.EvaluationResult{
+		Plans: []execution.PlanEvaluationResult{{Disposition: execution.PlanReadinessGap}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != execution.CompletionUnavailable || cause != execution.CauseDataNotReady {
+		t.Fatalf("readiness gap beside a partial primary: kind=%q cause=%q, want UNAVAILABLE with DATA_NOT_READY", kind, cause)
+	}
+}
+
+// A FULL completion has no cause to report. Inventing one would put a reason
+// on a Slot that completed normally.
+func TestDeriveCompletionLeavesTheCauseEmptyWhenTheSlotCompletedFull(t *testing.T) {
 	input := validInternalExecution()
 	_, cause, err := execution.DeriveCompletion(input, execution.EvaluationResult{
 		Plans: []execution.PlanEvaluationResult{{Disposition: execution.PlanDecided}},
@@ -90,7 +145,7 @@ func TestDeriveCompletionLeavesTheCauseEmptyWhenNothingWasUnavailable(t *testing
 		t.Fatal(err)
 	}
 	if cause != "" {
-		t.Fatalf("cause = %q, want none for a Slot that was not unavailable", cause)
+		t.Fatalf("cause = %q, want none for a Slot that completed FULL", cause)
 	}
 }
 
@@ -98,20 +153,47 @@ func TestDeriveCompletionLeavesTheCauseEmptyWhenNothingWasUnavailable(t *testing
 // the cause must not have changed it. The two come from one traversal for the
 // same reason: derived separately they could disagree about the same Slot.
 func TestDeriveCompletionKindStillAgreesWithTheCombinedDerivation(t *testing.T) {
-	input := validInternalExecution()
-	for _, plans := range [][]execution.PlanEvaluationResult{
-		{{Disposition: execution.PlanReadinessGap}},
-		{{Disposition: execution.PlanUnavailable}},
-		{{Disposition: execution.PlanDecided}},
-		{{Disposition: execution.PlanTerminal}},
-		{{Disposition: execution.PlanDecidedDegraded}},
-	} {
-		result := execution.EvaluationResult{Plans: plans}
-		kindOnly, errOnly := execution.DeriveCompletionKind(input, result)
-		kind, _, err := execution.DeriveCompletion(input, result)
-		if kindOnly != kind || (errOnly == nil) != (err == nil) {
-			t.Fatalf("the two derivations disagreed for %+v: %q/%v vs %q/%v",
-				plans, kindOnly, errOnly, kind, err)
+	for _, completeness := range []execution.Completeness{execution.CompletenessFull, execution.CompletenessPartial} {
+		input := validInternalExecution()
+		input.Inputs[0].Completeness = completeness
+		for _, plans := range [][]execution.PlanEvaluationResult{
+			{{Disposition: execution.PlanReadinessGap}},
+			{{Disposition: execution.PlanUnavailable}},
+			{{Disposition: execution.PlanDecided}},
+			{{Disposition: execution.PlanTerminal}},
+			{{Disposition: execution.PlanDecidedDegraded}},
+		} {
+			result := execution.EvaluationResult{Plans: plans}
+			kindOnly, errOnly := execution.DeriveCompletionKind(input, result)
+			kind, _, err := execution.DeriveCompletion(input, result)
+			if kindOnly != kind || (errOnly == nil) != (err == nil) {
+				t.Fatalf("the two derivations disagreed for %s primary and %+v: %q/%v vs %q/%v",
+					completeness, plans, kindOnly, errOnly, kind, err)
+			}
 		}
+	}
+}
+
+// The streaming path marks a Plan unavailable precisely when its primary input
+// was, so on every such Slot both causes are noted. The input is the one
+// reported: it is the cause an operator can act on, and the undecided Plan is
+// its consequence. Before this ordering every Slot whose query came back with
+// nothing usable was listed as a Plan that could not be decided. A Plan
+// unavailable on its own still reports itself, being the only cause noted.
+func TestDeriveCompletionNamesTheInputBeforeThePlanItLeftUndecided(t *testing.T) {
+	starved := validInternalExecution()
+	starved.Inputs[0].Completeness = execution.CompletenessUnavailable
+	starved.Inputs[0].DataState = execution.DataStateUnknown
+	undecided := execution.EvaluationResult{Plans: []execution.PlanEvaluationResult{{Disposition: execution.PlanUnavailable}}}
+	kind, cause, err := execution.DeriveCompletion(starved, undecided)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != execution.CompletionUnavailable || cause != execution.CausePrimaryInputUnavailable {
+		t.Fatalf("undecided Plan beside an unavailable primary: kind=%q cause=%q, want the input named", kind, cause)
+	}
+	_, alone, err := execution.DeriveCompletion(validInternalExecution(), undecided)
+	if err != nil || alone != execution.CausePlanUnavailable {
+		t.Fatalf("undecided Plan beside a FULL primary: cause=%q err=%v, want the Plan named", alone, err)
 	}
 }

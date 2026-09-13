@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -44,7 +45,14 @@ func (source controlPlaneExpectation) Expectation(ctx context.Context) (fleet.Ex
 	if err != nil {
 		return fleet.Expectation{}, err
 	}
-	return fleet.Expectation{QueryGroups: len(groups), Known: true}, nil
+	// The set is already in hand; returning only its size is what left the
+	// coverage gap unable to say which kind of disagreement it had.
+	ids := make([]string, 0, len(groups))
+	for _, group := range groups {
+		ids = append(ids, string(group))
+	}
+	sort.Strings(ids)
+	return fleet.Expectation{QueryGroups: len(groups), Known: true, IDs: ids}, nil
 }
 
 // registryReplicas lists the workers that should have published a snapshot.
@@ -310,7 +318,12 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 		// Read after Forget, so it counts only objects this replica still owns.
 		// The difference between the two is what the replica owns but cannot
 		// speak for, which the aggregate counts as unknown rather than healthy.
-		Determined:     publisher.tracker.Determined(),
+		Determined: publisher.tracker.Determined(),
+		// Which objects, not only how many. A sum cannot tell two replicas
+		// holding distinct shares from two replicas holding the same object,
+		// and that ambiguity sat unresolved on a running deployment for over a
+		// day because the sum was all anyone published.
+		OwnedObjects:   ownedObjectIDs(owned),
 		Anomalies:      anomalies,
 		TotalAnomalies: len(anomalies),
 		Overdue:        overdue,
@@ -331,6 +344,26 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 		snapshot.Dispatch = publisher.dispatch()
 	}
 	return snapshot
+}
+
+// ownedObjectIDs lists what this replica holds, for the aggregate to compare
+// against the catalogue and against the other replicas.
+//
+// Full identifiers rather than a digest: the reader's next question after "the
+// two sides disagree by twelve" is "which twelve", and a hash cannot answer it.
+// The cost is bounded and small -- a replica of this deployment holds a few
+// hundred objects, so the list is tens of kilobytes against the snapshot's
+// megabyte budget.
+func ownedObjectIDs(owned []execution.QueryGroupIdentity) []string {
+	if len(owned) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(owned))
+	for _, queryGroup := range owned {
+		ids = append(ids, string(queryGroup))
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // onlyUnlisted keeps the anomalies whose object no column already carries.

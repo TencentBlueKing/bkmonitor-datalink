@@ -26,3 +26,24 @@ func TestCursorAdvanceFactsKeepAClosedStatusVocabulary(t *testing.T) {
 		t.Fatalf("valid facts were altered: %+v", kept.CursorAdvance)
 	}
 }
+
+// A refusal belongs to a conflict only; a conflict whose refusal is not a
+// word of the vocabulary is reported as OTHER rather than losing the
+// count, and the Slot in flight never goes negative.
+func TestCursorAdvanceFactsKeepAClosedRefusalVocabulary(t *testing.T) {
+	observe := func(status, refusal string, slot int64) *CursorAdvanceFacts {
+		return NormalizeObservation(Observation{
+			Component: ComponentScheduler, Stage: StageScheduleCursorAdvanced, Result: ResultRetrying, Operation: OperationWrite,
+			CursorAdvance: &CursorAdvanceFacts{From: 120, To: 600, Status: status, Refusal: refusal, InFlightSlot: slot},
+		}).CursorAdvance
+	}
+	if got := observe(CursorAdvanceConflict, CursorRefusalCASConflict, 120); got.Refusal != CursorRefusalCASConflict || got.InFlightSlot != 120 {
+		t.Fatalf("a named refusal was altered: %+v", got)
+	}
+	if got := observe(CursorAdvanceConflict, "because", -1); got.Refusal != CursorRefusalOther || got.InFlightSlot != 0 {
+		t.Fatalf("an unknown refusal was not reported as OTHER: %+v", got)
+	}
+	if got := observe(CursorAdvanceApplied, CursorRefusalCASConflict, 120); got.Refusal != "" || got.InFlightSlot != 120 {
+		t.Fatalf("a refusal survived on an applied advance: %+v", got)
+	}
+}

@@ -612,32 +612,43 @@ var _ execution.ProgressStore = (*Store)(nil)
 // GAP_SKIPPED gap with reason SCHEDULE_PRUNED and the last full Slot is
 // cleared, because both would otherwise anchor continuity to Slots that no
 // longer exist; the cursor the skip sets stands on its own until the first
-// completion after it. Nothing is skipped while a Slot or range is in
-// flight, and a cursor that moved since the caller read it is a conflict.
-func (store *Store) SkipPrunedRange(ctx context.Context, request execution.ProgressSkipPrunedRequest) (execution.ProgressCommitResult, error) {
+// completion after it. A Slot in flight goes with the span: a persisted
+// projection always stands at the cursor (the decoder refuses any other
+// record as corrupt), so it lies inside the span, its Segment is gone, and
+// nothing can finish or rebuild it. A range in flight, an absent record and
+// a cursor that moved since the caller read it each refuse the skip, and
+// the refusal says which.
+func (store *Store) SkipPrunedRange(ctx context.Context, request execution.ProgressSkipPrunedRequest) (execution.ProgressSkipResult, error) {
 	if err := request.Validate(); err != nil {
-		return execution.ProgressCommitResult{}, err
+		return execution.ProgressSkipResult{}, err
 	}
 	name, err := store.namespace(request.Identity)
 	if err != nil {
-		return execution.ProgressCommitResult{}, err
+		return execution.ProgressSkipResult{}, err
 	}
 	raw, missing, err := store.options.Control.ReadControl(ctx, request.Identity.QueryGroup, name)
 	if err != nil {
-		return retryable(), nil
+		return execution.ProgressSkipResult{Status: execution.ProgressRetryableIO}, nil
 	}
 	if missing {
-		return execution.ProgressCommitResult{Status: execution.ProgressConflict}, nil
+		return execution.ProgressSkipResult{Status: execution.ProgressConflict, Refusal: execution.SkipRefusalProgressMissing}, nil
 	}
 	current, decodeErr := decode(raw)
 	if decodeErr != nil {
-		return execution.ProgressCommitResult{}, &DeterministicInvalidError{Err: decodeErr}
+		return execution.ProgressSkipResult{}, &DeterministicInvalidError{Err: decodeErr}
 	}
 	if current.Identity != request.Identity {
-		return execution.ProgressCommitResult{}, &DeterministicInvalidError{Err: fmt.Errorf("persisted identity does not match skip identity")}
+		return execution.ProgressSkipResult{}, &DeterministicInvalidError{Err: fmt.Errorf("persisted identity does not match skip identity")}
 	}
-	if current.UnfinishedRange != nil || current.UnfinishedSlot != nil || current.NextSlot != request.ExpectedNextSlot {
-		return execution.ProgressCommitResult{Status: execution.ProgressConflict}, nil
+	if current.UnfinishedRange != nil {
+		return execution.ProgressSkipResult{Status: execution.ProgressConflict, Refusal: execution.SkipRefusalRangeInFlight}, nil
+	}
+	if current.NextSlot != request.ExpectedNextSlot {
+		return execution.ProgressSkipResult{Status: execution.ProgressConflict, Refusal: execution.SkipRefusalCursorMoved}, nil
+	}
+	var inFlight execution.EvaluationTime
+	if current.UnfinishedSlot != nil {
+		inFlight = current.UnfinishedSlot.Contract.Slot.EvaluationTime
 	}
 	next := execution.ScheduleProgress{
 		Identity: request.Identity, NextSlot: request.ResumeAt, LastCompletionKind: execution.CompletionGapSkipped,
@@ -645,7 +656,7 @@ func (store *Store) SkipPrunedRange(ctx context.Context, request execution.Progr
 	}
 	encoded, err := encode(next)
 	if err != nil {
-		return execution.ProgressCommitResult{}, err
+		return execution.ProgressSkipResult{}, err
 	}
 	status, applyErr := store.options.Control.FencedCompareAndSet(ctx, ownership.FencedCASRequest{
 		Fence: request.OwnerFence, At: store.options.Now(), Namespace: name,
@@ -653,13 +664,13 @@ func (store *Store) SkipPrunedRange(ctx context.Context, request execution.Progr
 	})
 	switch status {
 	case ownership.FencedCASApplied:
-		return execution.ProgressCommitResult{Status: execution.ProgressCommitted}, nil
+		return execution.ProgressSkipResult{Status: execution.ProgressCommitted, InFlightSlot: inFlight}, nil
 	case ownership.FencedCASConflict:
-		return execution.ProgressCommitResult{Status: execution.ProgressConflict}, nil
+		return execution.ProgressSkipResult{Status: execution.ProgressConflict, Refusal: execution.SkipRefusalCASConflict, InFlightSlot: inFlight}, nil
 	case ownership.FencedCASStaleOwner:
-		return execution.ProgressCommitResult{Status: execution.ProgressStaleOwner}, nil
+		return execution.ProgressSkipResult{Status: execution.ProgressStaleOwner, InFlightSlot: inFlight}, nil
 	default:
 		_ = applyErr
-		return retryable(), nil
+		return execution.ProgressSkipResult{Status: execution.ProgressRetryableIO}, nil
 	}
 }

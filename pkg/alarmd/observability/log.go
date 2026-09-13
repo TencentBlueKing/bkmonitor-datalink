@@ -268,6 +268,8 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Int64("cursor_advance_from", facts.From),
 			slog.Int64("cursor_advance_to", facts.To),
 			slog.String("cursor_advance_status", facts.Status),
+			slog.String("cursor_advance_refusal", facts.Refusal),
+			slog.Int64("cursor_advance_in_flight_slot", facts.InFlightSlot),
 		)
 	}
 	if facts := observation.SourceRefresh; facts != nil {

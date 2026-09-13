@@ -2462,9 +2462,9 @@ func TestProductionRunOneReadsControlBodiesOncePerRevisionAndVersion(t *testing.
 			headerProbes, headerBytes, epochProbes, lengthProbes)
 	}
 	statsAfter := repository.ControlReadCacheStats()
-	if statsAfter.Snapshot != statsBefore.Snapshot || statsAfter.Activation.Hits-statsBefore.Activation.Hits < 4 ||
+	if statsAfter.Activation.Hits-statsBefore.Activation.Hits < 4 ||
 		statsAfter.Activation.Refreshes != statsBefore.Activation.Refreshes {
-		t.Fatalf("cache stats before=%+v after=%+v, want the Snapshot cache untouched and only activation hits during two RunOnes", statsBefore, statsAfter)
+		t.Fatalf("cache stats before=%+v after=%+v, want only activation hits during two RunOnes", statsBefore, statsAfter)
 	}
 	beforeDeferredCalls := uqCalls.Load()
 	beforeDeferred, err := redisClient.SlowLogGet(ctx, 1).Result()

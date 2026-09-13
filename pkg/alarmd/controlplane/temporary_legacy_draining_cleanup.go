@@ -227,7 +227,6 @@ func (cleanup *TemporaryLegacyDrainingCleanup) prepare(
 		}
 		return temporaryLegacyDrainingPrepared{}, ErrTemporaryLegacyDrainingCleanupConflict
 	}
-	repository.controlReads.bodyReads.legacyCleanup.Add(1)
 	candidateSnapshot, err := repository.LoadPublishedSnapshot(ctx, request.ExpectedCandidate)
 	if err != nil {
 		return temporaryLegacyDrainingPrepared{}, err
@@ -392,7 +391,6 @@ func (cleanup *TemporaryLegacyDrainingCleanup) loadCurrentGroups(
 	activation ActivationState,
 	active []execution.QueryGroupIdentity,
 ) (map[execution.QueryGroupIdentity]QueryGroup, error) {
-	cleanup.repository.controlReads.bodyReads.legacyCleanup.Add(1)
 	snapshot, err := cleanup.repository.LoadPublishedSnapshot(ctx, activation.Current)
 	if err == nil {
 		return queryGroupMap(snapshot.QueryGroups)

@@ -185,32 +185,6 @@ func (repository *RedisCatalogRepository) loadPublicationContent(ctx context.Con
 	if !errors.Is(err, ErrCatalogManifestUnavailable) {
 		return activatedContent{}, err
 	}
-	repository.controlReads.bodyReads.activationContent.Add(1)
-	snapshot, err := repository.LoadPublishedSnapshot(ctx, activation.Current)
-	if err == nil {
-		groups, err := queryGroupMap(snapshot.QueryGroups)
-		if err != nil {
-			return activatedContent{}, err
-		}
-		content := activatedContent{groups: groups,
-			digests:  make(map[execution.QueryGroupIdentity]execution.ObjectDigest, len(groups)),
-			contexts: make(map[execution.PlanIdentity]execution.OutputContextDigest),
-			complete: true, source: "snapshot"}
-		for identity, group := range groups {
-			named, err := contentOf(group)
-			if err != nil {
-				return activatedContent{}, err
-			}
-			content.digests[identity] = named.digest
-			for _, ref := range named.refs {
-				content.contexts[ref.Plan] = ref.Digest
-			}
-		}
-		return content, nil
-	}
-	if !errors.Is(err, ErrSnapshotUnavailable) {
-		return activatedContent{}, err
-	}
 	var groups map[execution.QueryGroupIdentity]QueryGroup
 	digests := map[execution.QueryGroupIdentity]execution.ObjectDigest{}
 	if activation.SchemaVersion == activationSchemaVersion {

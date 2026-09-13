@@ -228,101 +228,15 @@ func TestRedisCatalogRepositoryTypesPersistedSnapshotCorruption(t *testing.T) {
 	if _, _, err := repository.PublishCatalog(context.Background(), catalog); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Set(context.Background(), prefix+":snapshot:"+string(catalog.SnapshotRevision), []byte("{"), time.Hour).Err(); err != nil {
+	// The manifest is the persisted fact a revision's content hangs from;
+	// one that cannot be decoded is deterministic corruption, not a retry.
+	if err := client.Set(context.Background(), prefix+":manifest:"+string(catalog.SnapshotRevision), []byte("{"), time.Hour).Err(); err != nil {
 		t.Fatal(err)
 	}
 	_, err = repository.LoadSnapshot(context.Background(), catalog.SnapshotRevision)
 	var corrupt *controlplane.PersistedSnapshotCorruptError
 	if !errors.As(err, &corrupt) {
 		t.Fatalf("LoadSnapshot(corrupt) error=%v", err)
-	}
-}
-
-func TestRedisCatalogRepositorySnapshotCachePreservesCurrentRedisFactsAndCallerIsolation(t *testing.T) {
-	client := newControlplaneRedis(t)
-	ctx := context.Background()
-	prefix := "alarmd:control:verified-snapshot-cache"
-	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	catalog := validCatalog(t, 80)
-	published, _, err := repository.PublishCatalog(ctx, catalog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reads := &snapshotReadCountingHook{}
-	client.AddHook(reads)
-
-	loaded, err := repository.LoadPublishedSnapshot(ctx, published.Publication)
-	if err != nil {
-		t.Fatal(err)
-	}
-	loaded.QueryGroups[0].QueryPlan.QueryList[0].FieldName = "caller-mutated-field"
-	loaded.QueryGroups[0].Plans[0].Plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0].Config[0] ^= 1
-	if loaded.QueryGroups[0].Plans[0].Plan.SourceCompatibility == nil {
-		t.Fatal("test fixture is missing SourceCompatibility")
-	}
-	loaded.QueryGroups[0].Plans[0].Plan.SourceCompatibility.ItemID = "caller-mutated-item"
-	if _, err := repository.LoadPublishedSnapshot(ctx, published.Publication); err != nil {
-		t.Fatal(err)
-	}
-	// The first read fetches the payload (one MGET) and the publication
-	// occurrence (one GET). The second read reuses the verified entry for the
-	// revision after checking Redis still holds it under the same epoch at the
-	// same size (one GET, one STRLEN), and reads the occurrence again (one
-	// GET): the payload travels once per revision, the current facts are
-	// re-read every time.
-	if reads.mget.Load() != 1 || reads.get.Load() != 3 {
-		t.Fatalf("repeated published reads commands mget=%d get=%d, want the payload read once and the facts re-read", reads.mget.Load(), reads.get.Load())
-	}
-
-	group, err := repository.LoadQueryGroup(ctx, catalog.SnapshotRevision, catalog.QueryGroups[0].Identity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(group, catalog.QueryGroups[0]) {
-		t.Fatal("caller mutation polluted a later cached Query Group read")
-	}
-	group.QueryPlan.QueryList[0].FieldName = "second-caller-mutation"
-	again, err := repository.LoadQueryGroup(ctx, catalog.SnapshotRevision, catalog.QueryGroups[0].Identity)
-	if err != nil || !reflect.DeepEqual(again, catalog.QueryGroups[0]) {
-		t.Fatalf("cached Query Group was not isolated: err=%v", err)
-	}
-
-	epochKey := prefix + ":snapshot_epoch:" + string(catalog.SnapshotRevision)
-	if err := client.Set(ctx, epochKey, "999", time.Hour).Err(); err != nil {
-		t.Fatal(err)
-	}
-	current, err := repository.LoadSnapshot(ctx, catalog.SnapshotRevision)
-	if err != nil || current.Publication.PublicationEpoch != 999 {
-		t.Fatalf("current publication epoch=(%d,%v), want 999", current.Publication.PublicationEpoch, err)
-	}
-
-	// A Redis that fails is not answered from memory: the size check that
-	// admits the reused entry fails first, the full read that follows fails
-	// too, and the caller sees the I/O failure.
-	snapshotKey := prefix + ":snapshot:" + string(catalog.SnapshotRevision)
-	client.AddHook(&oneCommandErrorHook{name: "strlen", argContains: snapshotKey, err: errors.New("injected snapshot size failure")})
-	client.AddHook(&oneCommandErrorHook{name: "mget", argContains: snapshotKey, err: errors.New("injected snapshot read failure")})
-	_, err = repository.LoadSnapshot(ctx, catalog.SnapshotRevision)
-	var dependencyIO *controlplane.ActivationDependencyIOError
-	if !errors.As(err, &dependencyIO) {
-		t.Fatalf("Snapshot cache hid current Redis I/O failure: %v", err)
-	}
-	if err := client.Set(ctx, snapshotKey, []byte("{"), time.Hour).Err(); err != nil {
-		t.Fatal(err)
-	}
-	_, err = repository.LoadSnapshot(ctx, catalog.SnapshotRevision)
-	var corrupt *controlplane.PersistedSnapshotCorruptError
-	if !errors.As(err, &corrupt) {
-		t.Fatalf("changed corrupt Redis payload was hidden by cache: %v", err)
-	}
-	if err := client.Del(ctx, snapshotKey).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repository.LoadSnapshot(ctx, catalog.SnapshotRevision); !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
-		t.Fatalf("missing Redis payload was hidden by cache: %v", err)
 	}
 }
 
@@ -357,7 +271,7 @@ func TestRedisCatalogRepositoryRepublishesHistoricalSnapshotWithNewOccurrence(t 
 	}
 	for _, publication := range []controlplane.SnapshotPublicationRef{first.Publication, republished.Publication} {
 		loaded, err := repository.LoadPublishedSnapshot(ctx, publication)
-		if err != nil || loaded.Publication != publication || !reflect.DeepEqual(loaded.QueryGroups, first.QueryGroups) {
+		if err != nil || loaded.Publication != publication || !reflect.DeepEqual(loaded.QueryGroups, withoutPlanRevisions(first.QueryGroups)) {
 			t.Fatalf("loaded occurrence %v=(%#v, %v)", publication, loaded, err)
 		}
 	}
@@ -448,7 +362,7 @@ func TestRedisCatalogRepositoryLoadsHistoricalOccurrenceFromLegacyHashWithoutRen
 		t.Fatalf("legacy Hash TTL before=(%s,%v)", before, err)
 	}
 	loaded, err := repository.LoadPublishedSnapshot(ctx, first.Publication)
-	if err != nil || loaded.Publication != first.Publication || !reflect.DeepEqual(loaded.QueryGroups, first.QueryGroups) {
+	if err != nil || loaded.Publication != first.Publication || !reflect.DeepEqual(loaded.QueryGroups, withoutPlanRevisions(first.QueryGroups)) {
 		t.Fatalf("legacy historical occurrence=(%#v,%v), first=%#v", loaded, err, first)
 	}
 	after, err := client.PTTL(ctx, legacyHash).Result()
@@ -4704,12 +4618,35 @@ func newRedisStrategySource(t *testing.T, client redis.Cmdable) *controlplane.Le
 	return source
 }
 
+// plansByStrategy indexes a snapshot's Plans by strategy. A snapshot
+// assembled from the object catalog carries no PlanRevision (the object
+// excludes the digest on purpose); the tests that compare revisions across
+// reads get it derived from the Plan the same way the catalog derives it.
 func plansByStrategy(snapshot controlplane.PublishedSnapshot) map[string]controlplane.FrozenPlan {
 	result := make(map[string]controlplane.FrozenPlan)
 	for _, group := range snapshot.QueryGroups {
 		for _, plan := range group.Plans {
+			if plan.PlanRevision == "" {
+				if revision, err := contract.DeriveCanonicalDigestV2("alarmd-plan-semantics-v1", plan.Plan); err == nil {
+					plan.PlanRevision = revision
+				}
+			}
 			result[plan.Identity.StrategyID] = plan
 		}
+	}
+	return result
+}
+
+// withoutPlanRevisions is a published catalog's Query Groups the way the
+// object catalog hands them back: field for field, PlanRevision aside.
+func withoutPlanRevisions(groups []controlplane.QueryGroup) []controlplane.QueryGroup {
+	result := make([]controlplane.QueryGroup, len(groups))
+	for index, group := range groups {
+		group.Plans = append([]controlplane.FrozenPlan(nil), group.Plans...)
+		for p := range group.Plans {
+			group.Plans[p].PlanRevision = ""
+		}
+		result[index] = group
 	}
 	return result
 }

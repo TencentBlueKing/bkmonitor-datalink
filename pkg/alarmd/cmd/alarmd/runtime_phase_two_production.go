@@ -281,9 +281,6 @@ func (acquirer productionQueryPermitAcquirer) AcquireQueryPermit(
 	if acquirer.flights == nil {
 		return nil, errors.New("phase-two production query permits are not initialized")
 	}
-	// Preparation has extracted the frozen QG facts. Do not retain the full
-	// Snapshot body while waiting for downstream capacity or consuming it.
-	controlplane.ClearSnapshotReadScope(ctx)
 	return acquirer.flights.AcquireQueryPermit(ctx, slot, operation, deadline)
 }
 
@@ -1834,8 +1831,6 @@ func frozenSlotTrace(
 func (runtime *productionPhaseTwoQueryGroup) RunOne(
 	ctx context.Context,
 ) (execution.SlotExecutionResult, bool, error) {
-	ctx, releaseSnapshot := controlplane.WithSnapshotReadScope(ctx)
-	defer releaseSnapshot()
 	return runtime.runner.RunOne(ctx)
 }
 
@@ -1843,8 +1838,6 @@ func (runtime *productionPhaseTwoQueryGroup) RunOneAdmitted(
 	ctx context.Context,
 	admission scheduler.ExecutionAdmission,
 ) (execution.SlotExecutionResult, bool, bool, error) {
-	ctx, releaseSnapshot := controlplane.WithSnapshotReadScope(ctx)
-	defer releaseSnapshot()
 	return runtime.runner.RunOneAdmitted(ctx, admission)
 }
 
@@ -1976,7 +1969,7 @@ func executeReturnOutcome(result execution.SlotExecutionResult, err error) strin
 }
 
 func (acquirer productionQueryPermitAcquirer) AcquireRecoveryChannels(ctx context.Context, slot execution.SlotIdentity, operation execution.Operation, deadline time.Time, maximum int, beforeWait func()) (access.RecoveryChannels, error) {
-	channels, err := acquirer.flights.AcquireRecoveryChannels(ctx, slot, operation, deadline, maximum, func() { controlplane.ClearSnapshotReadScope(ctx); beforeWait() })
+	channels, err := acquirer.flights.AcquireRecoveryChannels(ctx, slot, operation, deadline, maximum, beforeWait)
 	if err != nil {
 		return nil, err
 	}
@@ -1987,7 +1980,6 @@ type productionRecoveryChannels struct{ channels *scheduler.RecoveryChannels }
 
 func (channels productionRecoveryChannels) Release() { channels.channels.Release() }
 func (channels productionRecoveryChannels) AcquireQueryPermit(ctx context.Context, slot execution.SlotIdentity, operation execution.Operation, deadline time.Time) (access.QueryPermit, error) {
-	controlplane.ClearSnapshotReadScope(ctx)
 	return channels.channels.AcquireQueryPermit(ctx, slot, operation, deadline)
 }
 

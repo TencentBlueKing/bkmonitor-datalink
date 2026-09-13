@@ -416,9 +416,7 @@ func TestControlReadCacheFreezesFromCatalogObjectsWithoutTheSnapshotBody(t *test
 	}
 	fixture.hook.reset()
 	freeze := func() (execution.FrozenSlotContractFact, error) {
-		scoped, done := controlplane.WithSnapshotReadScope(ctx)
-		defer done()
-		return runtime.FreezeSlotContract(scoped, fixture.request)
+		return runtime.FreezeSlotContract(ctx, fixture.request)
 	}
 	const runs = 5
 	for i := 0; i < runs; i++ {
@@ -458,7 +456,7 @@ func TestControlReadCacheFreezesFromCatalogObjectsWithoutTheSnapshotBody(t *test
 func TestControlReadCacheNeverFallsBackToTheSnapshotBody(t *testing.T) {
 	fixture := newControlReadCacheFixture(t, "snapshot-revision")
 	ctx := context.Background()
-	repository, runtime := fixture.coldRepository(t)
+	_, runtime := fixture.coldRepository(t)
 	snapshotKey := fixture.prefix + ":snapshot:" + string(fixture.snapshot.Publication.SnapshotRevision)
 	body, err := fixture.client.Get(ctx, snapshotKey).Bytes()
 	if err != nil {
@@ -466,9 +464,7 @@ func TestControlReadCacheNeverFallsBackToTheSnapshotBody(t *testing.T) {
 	}
 	fixture.hook.reset()
 	freeze := func() (execution.FrozenSlotContractFact, error) {
-		scoped, done := controlplane.WithSnapshotReadScope(ctx)
-		defer done()
-		return runtime.FreezeSlotContract(scoped, fixture.request)
+		return runtime.FreezeSlotContract(ctx, fixture.request)
 	}
 	const runs = 5
 	for i := 0; i < runs; i++ {
@@ -524,8 +520,5 @@ func TestControlReadCacheNeverFallsBackToTheSnapshotBody(t *testing.T) {
 	}
 	if got := hook.bodyReads("snapshot"); got != 0 {
 		t.Fatalf("snapshot body reads=%d after the objects were deleted, want none", got)
-	}
-	if stats := repository.ControlReadCacheStats().Snapshot; stats != (controlplane.ControlReadCacheObjectStats{}) {
-		t.Fatalf("snapshot revision cache stats=%+v, want the cache never entered", stats)
 	}
 }

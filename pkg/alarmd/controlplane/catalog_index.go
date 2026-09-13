@@ -13,13 +13,11 @@ import (
 	"sort"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // The catalog index is the Control Leader's in-memory knowledge of what a
@@ -130,15 +128,6 @@ type PublishedContent struct {
 // catalogIndexBatch bounds one pipelined read of Query Group objects during
 // a cold load of the index.
 const catalogIndexBatch = 500
-
-// catalogIndexAuditEvery is how often an activation audits the index
-// against the snapshot body while the body is still written: the first
-// activation of a process, because a cold-loaded index is the one most
-// worth checking, and every sixteenth after it, the same stride the delta
-// audit uses. An audit costs one whole-body read, which is exactly the
-// read the index exists to remove, so it cannot run every time. A body
-// that is no longer written skips the audit rather than failing it.
-const catalogIndexAuditEvery = 16
 
 // publishedContentMemo remembers the content of the publication read last:
 // an activation asks for the same publication many times in one round (the
@@ -424,112 +413,4 @@ func (repository *RedisCatalogRepository) LoadContentQueryGroups(
 		groups[identity] = group
 	}
 	return groups, nil
-}
-
-// Audit outcomes of one Query Group, in the vocabulary the delta audit
-// uses so the two read alike on the same counter.
-const (
-	catalogIndexAuditAgreed    = "agreed"
-	catalogIndexAuditOverNamed = "over_named"
-	catalogIndexAuditMissed    = "missed"
-)
-
-// classifyCatalogIndexAudit compares what the index says about one Query
-// Group with the truth taken from the snapshot body. agreed: the entry in
-// force has the truth's digest and Plans. missed: it does not, whether the
-// entry was reused or just read, so a reader trusting it would compile or
-// keep the wrong content; this is the harmful direction and must stay at
-// zero. over_named: the entry was read from the object catalog although
-// the entry the index already held equalled the truth, a wasted read that
-// can only come from the manifest naming a digest the body does not derive
-// to; harmless, and never added to missed.
-func classifyCatalogIndexAudit(
-	entry catalogIndexEntry,
-	reread bool,
-	previous *catalogIndexEntry,
-	truthDigest execution.ObjectDigest,
-	truthPlans []execution.PlanIdentity,
-) string {
-	if entry.Digest != truthDigest || !entry.samePlans(truthPlans) {
-		return catalogIndexAuditMissed
-	}
-	if reread && previous != nil && previous.Digest == truthDigest && previous.samePlans(truthPlans) {
-		return catalogIndexAuditOverNamed
-	}
-	return catalogIndexAuditAgreed
-}
-
-// maybeAuditCatalogIndex runs the body audit on the activations the stride
-// selects; see catalogIndexAuditEvery.
-func (repository *RedisCatalogRepository) maybeAuditCatalogIndex(ctx context.Context, publication SnapshotPublicationRef) {
-	if repository == nil || repository.client == nil {
-		return
-	}
-	if activations := repository.catalogIndexActivations.Add(1); activations%catalogIndexAuditEvery != 1 {
-		return
-	}
-	repository.controlReads.bodyReads.indexAudit.Add(1)
-	snapshot, err := repository.LoadPublishedSnapshot(ctx, publication)
-	if err != nil {
-		return
-	}
-	repository.auditCatalogIndex(ctx, publication, snapshot)
-}
-
-// auditCatalogIndex brings the index up to the publication being activated
-// and reconciles every entry against the snapshot body the activation just
-// loaded, which is the truth for as long as the body is still written. It
-// only counts; an index that cannot be built is reported and the activation
-// proceeds on the body as before.
-func (repository *RedisCatalogRepository) auditCatalogIndex(
-	ctx context.Context,
-	publication SnapshotPublicationRef,
-	snapshot PublishedSnapshot,
-) {
-	if repository == nil || repository.client == nil {
-		return
-	}
-	started := time.Now()
-	facts := &observability.ObjectCatalogFacts{Operation: "index", Result: "failure", QueryGroups: len(snapshot.QueryGroups)}
-	defer func() {
-		facts.Duration = time.Since(started)
-		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageObjectCatalog,
-			Result: observability.Result(facts.Result), ObjectCatalog: facts})
-	}()
-	manifest, err := repository.LoadCatalogManifest(ctx, publication.SnapshotRevision)
-	if err != nil {
-		return
-	}
-	ensured, err := repository.ensureCatalogIndex(ctx, manifest)
-	if err != nil {
-		return
-	}
-	facts.Present, facts.Missing = len(ensured.entries)-len(ensured.reread), len(ensured.reread)
-	counters := &repository.controlReads.indexAudit
-	for _, group := range snapshot.QueryGroups {
-		truthDigest, err := DeriveQueryGroupObjectDigest(group)
-		if err != nil {
-			return
-		}
-		entry, indexed := ensured.entries[group.Identity]
-		counters.samples.Add(1)
-		if !indexed {
-			counters.missed.Add(1)
-			continue
-		}
-		_, reread := ensured.reread[group.Identity]
-		var previous *catalogIndexEntry
-		if held, ok := ensured.previous[group.Identity]; ok {
-			previous = &held
-		}
-		switch classifyCatalogIndexAudit(entry, reread, previous, truthDigest, planIdentities(group)) {
-		case catalogIndexAuditAgreed:
-			counters.agreed.Add(1)
-		case catalogIndexAuditOverNamed:
-			counters.overNamed.Add(1)
-		default:
-			counters.missed.Add(1)
-		}
-	}
-	facts.Result = "success"
 }

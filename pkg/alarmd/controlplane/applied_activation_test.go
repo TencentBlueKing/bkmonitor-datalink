@@ -20,7 +20,7 @@ import (
 // parsed, which is the one the process executes by: zero before it parsed
 // one, the published record's revision after.
 func TestRepositoryReportsTheActivationRevisionItLastParsed(t *testing.T) {
-	harness, state, _, _ := activatedHarness(t)
+	harness, state := activatedHarness(t)
 	if applied := harness.repository.AppliedActivationRevision(); applied != state.RecordRevision {
 		t.Fatalf("applied revision after activation = %d, want the record's %d", applied, state.RecordRevision)
 	}

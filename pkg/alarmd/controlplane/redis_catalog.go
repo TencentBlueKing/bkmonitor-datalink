@@ -109,12 +109,9 @@ type RedisCatalogRepository struct {
 	client                     redis.Cmdable
 	prefix                     string
 	ttl                        time.Duration
-	snapshotCache              *verifiedSnapshotCache
-	snapshotFlights            snapshotReadFlights
 	activationCache            parsedActivationCache
 	objectCatalog              objectCatalogState
 	catalogIndex               catalogIndex
-	catalogIndexActivations    atomic.Uint64
 	contentMemo                publishedContentMemo
 	objectCache                *objectReadCache
 	objectFlights              objectReadFlights
@@ -131,7 +128,6 @@ type RedisCatalogRepository struct {
 	// changed. See content_cutover.go.
 	contentCutoverVerified atomic.Bool
 	observer               observability.Observer
-	snapshotAdmission      SnapshotMemoryAdmission
 }
 
 // ConfigureDrainingTermination bounds how long a retired Query Group may stay
@@ -146,12 +142,6 @@ func (repository *RedisCatalogRepository) ConfigureDrainingTermination(maxReplay
 	}
 	repository.drainingRetireAfter = DrainingTerminationWindow(maxReplayAge)
 	return nil
-}
-
-// ConfigureSnapshotMemory is called before starting repository users.
-func (repository *RedisCatalogRepository) ConfigureSnapshotMemory(admit SnapshotMemoryAdmission, size func(any) uint64) {
-	repository.snapshotAdmission = admit
-	repository.snapshotCache.admit, repository.snapshotCache.objectBytes = admit, size
 }
 
 func (repository *RedisCatalogRepository) ConfigureObserver(observer observability.Observer) {
@@ -171,7 +161,6 @@ func NewRedisCatalogRepository(client redis.Cmdable, prefix string, ttl time.Dur
 		return nil, errors.New("alarmd controlplane: invalid Redis catalog repository")
 	}
 	return &RedisCatalogRepository{client: client, prefix: prefix, ttl: ttl,
-		snapshotCache: newVerifiedSnapshotCache(verifiedSnapshotCacheMaxEntries, verifiedSnapshotCacheMaxBytes),
 		controlCache: newControlReadCache(
 			controlTimelineCacheDefaultMaxEntries, controlTimelineCacheDefaultMaxBytes)}, nil
 }
@@ -588,67 +577,25 @@ func (repository *RedisCatalogRepository) PublishAudit(ctx context.Context, audi
 	return nil
 }
 
+// LoadSnapshot assembles the content of one Snapshot revision from the
+// object catalog, under the publication epoch the revision currently
+// carries. A revision whose epoch or manifest is gone reads as unavailable.
 func (repository *RedisCatalogRepository) LoadSnapshot(ctx context.Context, revision execution.SnapshotRevision) (PublishedSnapshot, error) {
 	if repository == nil || repository.client == nil || revision == "" {
 		return PublishedSnapshot{}, errors.New("alarmd controlplane: snapshot revision is required")
 	}
-	// A revision this repository already verified is reused as long as Redis
-	// still holds it under the same epoch at the same size, the way the scoped
-	// Query Group reads do; only a revision it has not seen is read in full.
-	// The leader loads the current Snapshot on every refresh round and the
-	// renewal loads it again, and neither has to carry the content for that.
-	payload, epoch, allocation, ok := repository.loadRevisionCachedSnapshotPayload(ctx, revision)
-	if !ok {
-		var err error
-		if payload, epoch, allocation, err = repository.loadAdmittedSnapshotPayload(ctx, revision); err != nil {
-			allocation.release()
-			return PublishedSnapshot{}, err
-		}
+	epochText, err := repository.client.Get(ctx, repository.epochForRevisionKey(revision)).Result()
+	if errors.Is(err, redis.Nil) {
+		return PublishedSnapshot{}, ErrSnapshotUnavailable
 	}
-	defer allocation.release()
-	snapshot, err := repository.snapshotCache.loadSnapshot(ctx, revision, payload, epoch, allocation)
 	if err != nil {
-		return PublishedSnapshot{}, err
-	}
-	snapshot.Publication = SnapshotPublicationRef{SnapshotRevision: revision, PublicationEpoch: epoch}
-	return snapshot, nil
-}
-
-func (repository *RedisCatalogRepository) loadSnapshotPayload(
-	ctx context.Context,
-	revision execution.SnapshotRevision,
-) (string, uint64, error) {
-	values, err := repository.client.MGet(ctx, repository.snapshotKey(revision), repository.epochForRevisionKey(revision)).Result()
-	if err != nil {
-		return "", 0, activationDependencyIO(err)
-	}
-	return decodeSnapshotRead(values)
-}
-
-func decodeSnapshotRead(values []interface{}) (string, uint64, error) {
-	if len(values) != 2 || values[0] == nil || values[1] == nil {
-		return "", 0, ErrSnapshotUnavailable
-	}
-	// go-redis returns immutable strings. Keep that representation through a
-	// warm verified-cache lookup rather than copying the entire Snapshot.
-	var payload string
-	switch value := values[0].(type) {
-	case string:
-		payload = value
-	case []byte:
-		payload = string(value)
-	default:
-		return "", 0, &PersistedSnapshotCorruptError{Err: errors.New("invalid payload")}
-	}
-	epochText, ok := values[1].(string)
-	if !ok {
-		return "", 0, &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
+		return PublishedSnapshot{}, activationDependencyIO(err)
 	}
 	epoch, err := strconv.ParseUint(epochText, 10, 64)
 	if err != nil || epoch == 0 {
-		return "", 0, &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
+		return PublishedSnapshot{}, &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
 	}
-	return payload, epoch, nil
+	return repository.LoadPublishedSnapshot(ctx, SnapshotPublicationRef{SnapshotRevision: revision, PublicationEpoch: epoch})
 }
 
 // LoadPublishedSnapshot resolves one exact publication occurrence without
@@ -660,15 +607,11 @@ func (repository *RedisCatalogRepository) LoadPublishedSnapshot(
 	if publication.validate() != nil {
 		return PublishedSnapshot{}, errors.New("alarmd controlplane: complete publication is required")
 	}
-	snapshot, err := repository.LoadSnapshot(ctx, publication.SnapshotRevision)
+	published, err := repository.loadPublishedGroups(ctx, publication)
 	if err != nil {
 		return PublishedSnapshot{}, err
 	}
-	if err := repository.validatePublicationOccurrence(ctx, publication, snapshot.Publication); err != nil {
-		return PublishedSnapshot{}, err
-	}
-	snapshot.Publication = publication
-	return snapshot, nil
+	return repository.snapshotOf(ctx, published)
 }
 
 func (repository *RedisCatalogRepository) validatePublicationOccurrence(
@@ -719,32 +662,60 @@ func (repository *RedisCatalogRepository) LoadLatestPublication(ctx context.Cont
 	return reference, reference.validate()
 }
 
-// LoadQueryGroup resolves only immutable content from the explicitly selected
-// Snapshot. It never falls forward to the latest publication.
+// LoadQueryGroup reads one Query Group of one Snapshot revision from the
+// object catalog: the manifest names its object and the output context of
+// each of its Plans. It never falls forward to the latest publication. A
+// revision whose manifest is gone reads as an unavailable snapshot; a
+// Query Group the manifest does not name, or whose objects are gone, reads
+// as an unavailable object.
 func (repository *RedisCatalogRepository) LoadQueryGroup(ctx context.Context, revision execution.SnapshotRevision, identity execution.QueryGroupIdentity) (QueryGroup, error) {
 	if identity == "" {
 		return QueryGroup{}, errors.New("alarmd controlplane: query group identity is required")
 	}
-	repository.controlReads.bodyReads.queryGroup.Add(1)
-	payload, epoch, allocation, err := repository.loadScopedSnapshotPayload(ctx, revision, identity)
-	defer allocation.release()
+	manifest, err := repository.LoadCatalogManifest(ctx, revision)
+	if errors.Is(err, ErrCatalogManifestUnavailable) {
+		return QueryGroup{}, ErrSnapshotUnavailable
+	}
 	if err != nil {
-		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
-	entry, _, err := repository.snapshotCache.load(ctx, revision, payload, epoch, allocation)
-	defer entry.allocation.release()
+	var digest execution.ObjectDigest
+	for _, entry := range manifest.QueryGroups {
+		if entry.QueryGroup == identity {
+			digest = entry.ObjectDigest
+		}
+	}
+	if digest == "" {
+		return QueryGroup{}, fmt.Errorf("%w: revision does not name Query Group %s", ErrCatalogObjectUnavailable, identity)
+	}
+	object, err := repository.LoadQueryGroupObject(ctx, digest)
 	if err != nil {
-		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
-	group, err := decodeCachedQueryGroup(entry, identity)
+	if object.Identity != identity {
+		return QueryGroup{}, errors.New("alarmd controlplane: catalog object belongs to another Query Group")
+	}
+	named := make(map[execution.PlanIdentity]execution.OutputContextDigest, len(manifest.Plans))
+	for _, entry := range manifest.Plans {
+		named[entry.Plan] = entry.ContextDigest
+	}
+	refs := make([]execution.OutputContextRef, 0, len(object.Plans))
+	for _, plan := range object.Plans {
+		ref, ok := named[plan.Identity]
+		if !ok {
+			return QueryGroup{}, fmt.Errorf("%w: revision names no output context for Plan %s", ErrCatalogObjectUnavailable, plan.Identity.StrategyID)
+		}
+		refs = append(refs, execution.OutputContextRef{Plan: plan.Identity, Digest: ref})
+	}
+	contexts, err := repository.loadOutputContexts(ctx, refs)
 	if err != nil {
-		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
-	repository.retainScopedSnapshot(ctx, revision, identity, entry.payload, epoch, entry.allocation)
-	return group, nil
+	byPlan := make(map[execution.PlanIdentity]OutputContextObject, len(refs))
+	for _, ref := range refs {
+		byPlan[ref.Plan] = contexts[ref.Digest]
+	}
+	return AssembleQueryGroup(object, byPlan)
 }
 
 // loadPublishedQueryGroup reads one Query Group of a publication from the
@@ -780,7 +751,6 @@ func (repository *RedisCatalogRepository) LoadPlan(ctx context.Context, revision
 	if err := identity.Validate(); err != nil {
 		return FrozenPlan{}, err
 	}
-	repository.controlReads.bodyReads.plan.Add(1)
 	snapshot, err := repository.LoadSnapshot(ctx, revision)
 	if err != nil {
 		return FrozenPlan{}, err

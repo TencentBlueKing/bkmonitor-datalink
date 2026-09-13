@@ -359,10 +359,8 @@ type ControlReadCacheObjectStats struct {
 }
 
 // ControlReadCacheStats is the low-cardinality view intended for a counter
-// such as control_cache_total{object, result}. The snapshot object counts only
-// cross-call revision cache outcomes, not reuse inside one RunOne scope.
+// such as control_cache_total{object, result}.
 type ControlReadCacheStats struct {
-	Snapshot   ControlReadCacheObjectStats
 	Activation ControlReadCacheObjectStats
 	Timeline   ControlReadCacheObjectStats
 	Version    ControlReadCacheObjectStats
@@ -371,58 +369,12 @@ type ControlReadCacheStats struct {
 	Delta      ControlReadCacheObjectStats
 	DeltaAudit ControlDeltaAuditStats
 	// Index counts catalog index entries reused (Hits) and read from the
-	// object catalog (Misses); IndexAudit reconciles the index against the
-	// snapshot body with the same vocabulary as DeltaAudit, and its Missed is
-	// the one number that must stay at zero before a reader may depend on
-	// the index.
-	Index      ControlReadCacheObjectStats
-	IndexAudit ControlDeltaAuditStats
+	// object catalog (Misses).
+	Index ControlReadCacheObjectStats
 	// TimelineOccupancy answers whether the derived budget actually holds the
 	// Query Groups this Worker owns. Without it a miss rate cannot be told
 	// apart from a version change, and the budget's formula stays unfalsifiable.
 	TimelineOccupancy ControlTimelineCacheOccupancy
-	// BodyReads counts the readers of the whole snapshot body that remain
-	// now that activation reads the catalog index; see ControlSnapshotBodyReads.
-	BodyReads ControlSnapshotBodyReads
-}
-
-// ControlSnapshotBodyReads counts, per reader, the reads of the whole
-// snapshot body that remain after the Leader's activation moved to the
-// catalog index. Each is counted at its entry, the attempt and not the
-// success, so a read the body could not serve still shows. The body can
-// stop being written only when every reader but IndexAudit has stayed at
-// zero for a whole cycle; IndexAudit reads one activation in sixteen by
-// design and is the one reader expected to move, which is what tells a
-// counter at zero from a counter not wired.
-type ControlSnapshotBodyReads struct {
-	// ActivationContent is loadActivatedContent falling back to the body of
-	// a previous publication that has no manifest.
-	ActivationContent uint64
-	// IndexAudit is maybeAuditCatalogIndex reading the body to reconcile
-	// the catalog index against it.
-	IndexAudit uint64
-	// QueryGroup is LoadQueryGroup, the worker's read of a Segment that
-	// names no content, or whose objects or contexts are gone.
-	QueryGroup uint64
-	// Plan is LoadPlan.
-	Plan uint64
-	// LegacyCleanup is the one-time legacy draining cleanup tool.
-	LegacyCleanup uint64
-}
-
-type snapshotBodyReadCounters struct {
-	activationContent atomic.Uint64
-	indexAudit        atomic.Uint64
-	queryGroup        atomic.Uint64
-	plan              atomic.Uint64
-	legacyCleanup     atomic.Uint64
-}
-
-func (counters *snapshotBodyReadCounters) snapshot() ControlSnapshotBodyReads {
-	return ControlSnapshotBodyReads{
-		ActivationContent: counters.activationContent.Load(), IndexAudit: counters.indexAudit.Load(),
-		QueryGroup: counters.queryGroup.Load(), Plan: counters.plan.Load(), LegacyCleanup: counters.legacyCleanup.Load(),
-	}
 }
 
 // ControlTimelineCacheOccupancy is what the timeline cache holds against what
@@ -452,7 +404,6 @@ func (counters *controlReadObjectCounters) snapshot() ControlReadCacheObjectStat
 }
 
 type controlReadCounters struct {
-	snapshot   controlReadObjectCounters
 	activation controlReadObjectCounters
 	timeline   controlReadObjectCounters
 	version    controlReadObjectCounters
@@ -464,14 +415,8 @@ type controlReadCounters struct {
 	// timelines actually did; see auditDelta.
 	audit deltaAuditCounters
 	// index counts catalog index entries reused (hits) and read from the
-	// object catalog (misses) while bringing the index up to a publication;
-	// indexAudit reconciles the index against the snapshot body, see
-	// auditCatalogIndex.
-	index      controlReadObjectCounters
-	indexAudit deltaAuditCounters
-	// bodyReads counts the remaining readers of the whole snapshot body; see
-	// ControlSnapshotBodyReads.
-	bodyReads snapshotBodyReadCounters
+	// object catalog (misses) while bringing the index up to a publication.
+	index controlReadObjectCounters
 }
 
 type deltaAuditCounters struct {
@@ -499,7 +444,6 @@ func (repository *RedisCatalogRepository) ControlReadCacheStats() ControlReadCac
 		return ControlReadCacheStats{}
 	}
 	return ControlReadCacheStats{
-		Snapshot:   repository.controlReads.snapshot.snapshot(),
 		Activation: repository.controlReads.activation.snapshot(),
 		Timeline:   repository.controlReads.timeline.snapshot(),
 		Version:    repository.controlReads.version.snapshot(),
@@ -508,12 +452,7 @@ func (repository *RedisCatalogRepository) ControlReadCacheStats() ControlReadCac
 			Samples: repository.controlReads.audit.samples.Load(), Agreed: repository.controlReads.audit.agreed.Load(),
 			OverNamed: repository.controlReads.audit.overNamed.Load(), Missed: repository.controlReads.audit.missed.Load(),
 		},
-		Index:     repository.controlReads.index.snapshot(),
-		BodyReads: repository.controlReads.bodyReads.snapshot(),
-		IndexAudit: ControlDeltaAuditStats{
-			Samples: repository.controlReads.indexAudit.samples.Load(), Agreed: repository.controlReads.indexAudit.agreed.Load(),
-			OverNamed: repository.controlReads.indexAudit.overNamed.Load(), Missed: repository.controlReads.indexAudit.missed.Load(),
-		},
+		Index:             repository.controlReads.index.snapshot(),
 		TimelineOccupancy: repository.controlCache.timelineOccupancy(),
 	}
 }

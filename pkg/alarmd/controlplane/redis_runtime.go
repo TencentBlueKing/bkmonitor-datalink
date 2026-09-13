@@ -312,19 +312,23 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		return err
 	}
 	oldGroups := previousContent.groups
-	reactivating := make(map[execution.QueryGroupIdentity]struct{})
-	for _, draining := range previous.Draining {
-		if _, reappeared := newGroups[draining.QueryGroup]; !reappeared {
-			continue
+	reactivating, held, _, err := repository.partitionReactivations(ctx, previous.Draining, newGroups, boundary, progress)
+	if err != nil {
+		return err
+	}
+	// A held Query Group is in the publication and stays in Draining: it
+	// gets no Segment now, its Plans are not activated, and it is not part
+	// of the population this activation must cover. It comes back through
+	// the same-publication reactivation once it has drained.
+	activeGroups := newGroups
+	if len(held) > 0 {
+		activeGroups = make(map[execution.QueryGroupIdentity]QueryGroup, len(newGroups))
+		for identity, group := range newGroups {
+			activeGroups[identity] = group
 		}
-		reactivatable, err := repository.drainingReactivatable(ctx, draining, boundary, progress)
-		if err != nil {
-			return err
+		for _, projection := range held {
+			delete(activeGroups, projection.QueryGroup)
 		}
-		if !reactivatable {
-			return ErrReactivationNotDrained
-		}
-		reactivating[draining.QueryGroup] = struct{}{}
 	}
 	wantedDraining, err := expectedDrainingProjection(
 		previous.Draining, oldGroups, newGroups, reactivating, boundary, repository.drainingRetirement(ctx, progress, boundary),
@@ -505,73 +509,25 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	if readAll && len(coveredPrevious) != len(carried) {
 		return fmt.Errorf("%w: current activation names Plans no open Segment carries", ErrSnapshotUnavailable)
 	}
-	newIdentities := make([]execution.QueryGroupIdentity, 0, len(newGroups))
-	for identity := range newGroups {
+	newIdentities := make([]execution.QueryGroupIdentity, 0, len(activeGroups))
+	for identity := range activeGroups {
 		if _, existed := oldGroups[identity]; !existed {
 			newIdentities = append(newIdentities, identity)
 		}
 	}
 	sort.Slice(newIdentities, func(i, j int) bool { return newIdentities[i] < newIdentities[j] })
 	for _, queryGroup := range newIdentities {
-		newGroup := newGroups[queryGroup]
-		segment, err := scheduleSegmentForGroup(newSnapshot.Publication, newGroup, boundary)
+		opened, err := repository.openQueryGroupTimeline(ctx, newSnapshot.Publication, newGroups[queryGroup], boundary, candidate, now, cutover)
 		if err != nil {
 			return err
 		}
-		opened, err := repository.materializeSchedule(ctx, segment)
-		if err != nil {
-			return err
+		if opened.dead > 0 {
+			candidates = append(candidates, pruneCandidate{update: len(updates), dead: opened.dead})
 		}
-		records, err := activationRecordsForSchedule(candidate, opened)
-		if err != nil {
-			return err
-		}
-		// Whether this Query Group is new or returning is decided by its
-		// persisted timeline, not by the Draining projection. The projection
-		// drops a Query Group as soon as one activation sees it drained, while
-		// its retired timeline lives on for the Catalog TTL; a Query Group
-		// returning in that window is one the projection no longer knows.
-		// Writing it a fresh timeline with an empty expectation would be
-		// refused by the CAS script, which requires the key to be absent, and
-		// since the whole publication is one CAS it would stay unactivated
-		// until the old key expired. Teaching the script to accept a retired
-		// key instead would overwrite the retired Segments, which a Slot
-		// replayed from before the retirement boundary still reads. Appending
-		// keeps them, and hands the script the real prior bytes to fence on.
-		// The cost for a genuinely new Query Group is one GET per publication,
-		// next to the one this cutover already spends on every carried-over
-		// Query Group.
-		timeline, raw, err := repository.loadScheduleTimelineForUpdate(ctx, queryGroup)
-		cutover.read++
-		switch {
-		case errors.Is(err, ErrScheduleUnavailable):
-			timeline = persistedScheduleTimeline{SchemaVersion: scheduleTimelineSchemaVersion,
-				RecordRevision: 1, QueryGroup: queryGroup,
-				Segments: []persistedScheduleSegment{{Schedule: opened, Plans: records}}}
-		case err != nil:
-			return err
-		default:
-			if !timeline.retiredBefore(boundary) {
-				return ErrScheduleConflict
-			}
-			retiredAt := *timeline.RetiredAt
-			timeline.RetiredAt = nil
-			timeline.RecordRevision++
-			timeline.Segments = append(timeline.Segments, persistedScheduleSegment{
-				Schedule: opened, Plans: records, ReactivatedAfter: &retiredAt,
-			})
-			if dead := repository.deadSegmentPrefix(timeline, now); dead > 0 {
-				candidates = append(candidates, pruneCandidate{update: len(updates), dead: dead})
-			}
-		}
-		if err := validateScheduleTimeline(timeline); err != nil {
-			return err
-		}
-		updates = append(updates, scheduleTimelineUpdate{expected: raw, next: timeline})
-		plans = append(plans, records...)
-		cutover.decided(cutoverAdded)
+		updates = append(updates, opened.update)
+		plans = append(plans, opened.records...)
 	}
-	if err := validateContentCoverage(plans, newGroups); err != nil {
+	if err := validateContentCoverage(plans, activeGroups); err != nil {
 		return err
 	}
 	sort.Slice(plans, func(i, j int) bool { return lessPlanIdentity(plans[i].Fact.Plan, plans[j].Fact.Plan) })
@@ -598,6 +554,208 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 // CompareAndSetInitialScheduleActivation establishes zero or more first
 // Schedule Segments together with their Plan activation facts. Module 02 owns
 // the choice of facts; this method only validates and atomically persists them.
+// openedQueryGroupTimeline is one Query Group's timeline with a Segment opened
+// for the publication: new when the Query Group had none, reopened after its
+// retirement otherwise.
+type openedQueryGroupTimeline struct {
+	update  scheduleTimelineUpdate
+	records []PlanActivationRecord
+	dead    int
+}
+
+// openQueryGroupTimeline opens the publication's Segment for a Query Group
+// that the current activation does not run: one the publication adds, one
+// that returns from a retirement its Draining projection has forgotten, or
+// one that was held out of an earlier activation and has now drained. A
+// retired timeline may only be reopened once its retirement lies before the
+// boundary.
+func (repository *RedisCatalogRepository) openQueryGroupTimeline(
+	ctx context.Context,
+	publication SnapshotPublicationRef,
+	group QueryGroup,
+	boundary execution.EvaluationTime,
+	candidate ActivationState,
+	now time.Time,
+	cutover *cutoverFacts,
+) (openedQueryGroupTimeline, error) {
+	segment, err := scheduleSegmentForGroup(publication, group, boundary)
+	if err != nil {
+		return openedQueryGroupTimeline{}, err
+	}
+	opened, err := repository.materializeSchedule(ctx, segment)
+	if err != nil {
+		return openedQueryGroupTimeline{}, err
+	}
+	records, err := activationRecordsForSchedule(candidate, opened)
+	if err != nil {
+		return openedQueryGroupTimeline{}, err
+	}
+	result := openedQueryGroupTimeline{records: records}
+	timeline, raw, err := repository.loadScheduleTimelineForUpdate(ctx, group.Identity)
+	cutover.read++
+	switch {
+	case errors.Is(err, ErrScheduleUnavailable):
+		timeline = persistedScheduleTimeline{SchemaVersion: scheduleTimelineSchemaVersion,
+			RecordRevision: 1, QueryGroup: group.Identity,
+			Segments: []persistedScheduleSegment{{Schedule: opened, Plans: records}}}
+	case err != nil:
+		return openedQueryGroupTimeline{}, err
+	default:
+		// Whether the Query Group is new or returning is decided by its
+		// persisted timeline, not by the Draining projection: the projection
+		// drops a Query Group as soon as one activation sees it drained, while
+		// its retired timeline lives on for the Catalog TTL. Appending to the
+		// retired timeline keeps the Segments a Slot replayed from before the
+		// retirement still reads, and hands the CAS the real prior bytes to
+		// fence on.
+		if !timeline.retiredBefore(boundary) {
+			return openedQueryGroupTimeline{}, ErrScheduleConflict
+		}
+		retiredAt := *timeline.RetiredAt
+		timeline.RetiredAt = nil
+		timeline.RecordRevision++
+		timeline.Segments = append(timeline.Segments, persistedScheduleSegment{
+			Schedule: opened, Plans: records, ReactivatedAfter: &retiredAt,
+		})
+		result.dead = repository.deadSegmentPrefix(timeline, now)
+	}
+	if err := validateScheduleTimeline(timeline); err != nil {
+		return openedQueryGroupTimeline{}, err
+	}
+	result.update = scheduleTimelineUpdate{expected: raw, next: timeline}
+	cutover.decided(cutoverAdded)
+	return result, nil
+}
+
+// partitionReactivations splits the Draining Query Groups the publication
+// brings back into the ones whose retirement has drained (reactivating) and
+// the ones whose has not (held), and says how many reappeared in all. The
+// reconciler and both CAS paths decide by it, so the Draining projection the
+// reconciler proposes is the one the CAS accepts.
+func (repository *RedisCatalogRepository) partitionReactivations(
+	ctx context.Context,
+	draining []DrainingQueryGroup,
+	newGroups map[execution.QueryGroupIdentity]QueryGroup,
+	boundary execution.EvaluationTime,
+	progress ScheduleActivationProgressReader,
+) (map[execution.QueryGroupIdentity]struct{}, []DrainingQueryGroup, int, error) {
+	reactivating := make(map[execution.QueryGroupIdentity]struct{})
+	var held []DrainingQueryGroup
+	reappeared := 0
+	for _, projection := range draining {
+		if _, exists := newGroups[projection.QueryGroup]; !exists {
+			continue
+		}
+		reappeared++
+		reactivatable, err := repository.drainingReactivatable(ctx, projection, boundary, progress)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		if !reactivatable {
+			held = append(held, projection)
+			continue
+		}
+		reactivating[projection.QueryGroup] = struct{}{}
+	}
+	return reactivating, held, reappeared, nil
+}
+
+// CompareAndSetHeldReactivation brings Query Groups that an earlier
+// activation held out of the current publication back into it, once their
+// retirement has drained. The publication does not change: the record
+// revision advances by one, the reactivated Query Groups leave Draining and
+// get their Segment opened, and their Plans join the activation. Nothing
+// else about the activation moves. next carries the reconciler's proposal;
+// reactivating names the Query Groups it decided have drained, and the CAS
+// decides the same way before it writes.
+func (repository *RedisCatalogRepository) CompareAndSetHeldReactivation(
+	ctx context.Context,
+	expected ActivationExpectation,
+	next ActivationState,
+	reactivating map[execution.QueryGroupIdentity]struct{},
+	boundary execution.EvaluationTime,
+	progress ScheduleActivationProgressReader,
+) (err error) {
+	if repository == nil || repository.client == nil || boundary <= 0 || len(reactivating) == 0 {
+		return errors.New("alarmd controlplane: held reactivation is required")
+	}
+	if err := validateActivationTransition(expected, next); err != nil {
+		return err
+	}
+	previous, err := repository.LoadActivation(ctx)
+	if err != nil {
+		return err
+	}
+	if !activationMatchesExpectation(previous, expected) {
+		return ErrActivationConflict
+	}
+	if next.Pending != nil || next.Current != previous.Current {
+		return errors.New("alarmd controlplane: held reactivation must keep the current publication")
+	}
+	snapshot, err := repository.LoadPublishedSnapshot(ctx, previous.Current)
+	if err != nil {
+		return err
+	}
+	groups, err := queryGroupMap(snapshot.QueryGroups)
+	if err != nil {
+		return err
+	}
+	drained, _, _, err := repository.partitionReactivations(ctx, previous.Draining, groups, boundary, progress)
+	if err != nil {
+		return err
+	}
+	for identity := range reactivating {
+		if _, ok := drained[identity]; !ok {
+			return ErrReactivationNotDrained
+		}
+	}
+	wantedDraining := make([]DrainingQueryGroup, 0, len(previous.Draining))
+	for _, projection := range previous.Draining {
+		if _, reactivated := reactivating[projection.QueryGroup]; reactivated {
+			continue
+		}
+		wantedDraining = append(wantedDraining, projection)
+	}
+	if !sameDrainingProjection(wantedDraining, next.Draining) {
+		return errors.New("alarmd controlplane: held reactivation has an invalid draining projection")
+	}
+	next.SchemaVersion = activationSchemaVersion
+	now := time.Unix(int64(boundary), 0)
+	cutover := newCutoverFacts()
+	cutover.contentSource = "held"
+	defer func() { repository.observeCutover(ctx, cutover, err) }()
+	identities := make([]execution.QueryGroupIdentity, 0, len(reactivating))
+	for identity := range reactivating {
+		identities = append(identities, identity)
+	}
+	sort.Slice(identities, func(i, j int) bool { return identities[i] < identities[j] })
+	updates := make([]scheduleTimelineUpdate, 0, len(identities))
+	candidates := make([]pruneCandidate, 0, len(identities))
+	plans := append([]PlanActivationRecord(nil), previous.Plans...)
+	for _, identity := range identities {
+		opened, err := repository.openQueryGroupTimeline(ctx, previous.Current, groups[identity], boundary, next, now, cutover)
+		if err != nil {
+			return err
+		}
+		if opened.dead > 0 {
+			candidates = append(candidates, pruneCandidate{update: len(updates), dead: opened.dead})
+		}
+		updates = append(updates, opened.update)
+		plans = append(plans, opened.records...)
+	}
+	sort.Slice(plans, func(i, j int) bool { return lessPlanIdentity(plans[i].Fact.Plan, plans[j].Fact.Plan) })
+	next.Plans = plans
+	assembled := next
+	assembled.SchemaVersion = ""
+	if err := validateActivationState(assembled); err != nil {
+		return err
+	}
+	if err := repository.pruneTimelines(ctx, updates, candidates, progress, cutover); err != nil {
+		return err
+	}
+	return repository.persistCutoverActivation(ctx, expected, next, updates, cutover)
+}
+
 func (repository *RedisCatalogRepository) CompareAndSetInitialScheduleActivation(
 	ctx context.Context,
 	expected ActivationExpectation,

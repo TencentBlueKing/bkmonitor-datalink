@@ -3574,26 +3574,41 @@ func TestScheduleActivationReconcilerReactivationHonoursDrainingTermination(t *t
 			if hold.Reappeared != 1 {
 				t.Fatalf("hold facts=%+v, want the one reappearing Query Group counted", hold)
 			}
+			wantRevision := uint64(3)
 			if !test.wantReactivated {
-				failure, ok := controlplane.ActivationFailureFromError(err)
-				if !errors.Is(err, controlplane.ErrReactivationNotDrained) || !ok ||
-					failure.Class != controlplane.ActivationFailureClassNotDrained {
-					t.Fatalf("in-window undrained reactivation=(%#v,%v), want not drained", state, err)
+				// The undrained Query Group is held out: the publication
+				// activates without it, and it stays in Draining with no
+				// Segment and no activated Plan until it drains.
+				if err != nil || state.RecordRevision != 3 || state.Current != reenabledSnapshot.Publication ||
+					len(state.Draining) != 1 || state.Draining[0].QueryGroup != queryGroup ||
+					state.Draining[0].RetiredBoundary != 90 || len(state.Plans) != 0 {
+					t.Fatalf("held activation=(%#v,%v), want the publication current with the Query Group still draining", state, err)
 				}
 				if hold.Held != 1 || hold.MaxAgeSeconds != test.boundary-90 || len(hold.Samples) != 1 ||
 					hold.Samples[0] != string(queryGroup) || hold.Truncated {
 					t.Fatalf("hold facts=%+v, want the undrained Query Group held for %d seconds", hold, test.boundary-90)
 				}
-				current, loadErr := repository.LoadActivation(ctx)
-				if loadErr != nil || current.Current != emptySnapshot.Publication || len(current.Draining) != 1 {
-					t.Fatalf("blocked reactivation changed activation: (%#v,%v)", current, loadErr)
+				if active, loadErr := repository.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef); loadErr != nil || len(active) != 0 {
+					t.Fatalf("active set with the Query Group held = (%v, %v), want empty", active, loadErr)
 				}
-				return
+				heldRuntime, runtimeErr := controlplane.NewRedisCatalogRuntime(repository, compiler, semantics, 5*time.Second)
+				if runtimeErr != nil {
+					t.Fatal(runtimeErr)
+				}
+				if _, retiredNow, retiredErr := heldRuntime.ReadScheduleRetirement(ctx, queryGroup); retiredErr != nil || !retiredNow {
+					t.Fatalf("held Query Group retirement=(%t,%v), want still retired", retiredNow, retiredErr)
+				}
+				// Once it drains, the next reconcile of the same publication
+				// brings it back; no new publication is needed for that.
+				progress.byGroup[queryGroup] = drained(queryGroup)
+				state, err = reconciler.Ensure(ctx, reenabledSnapshot.Publication)
+				hold = holds[len(holds)-1]
+				wantRevision = 4
 			}
 			if hold.Held != 0 || hold.MaxAgeSeconds != 0 || len(hold.Samples) != 0 {
 				t.Fatalf("hold facts=%+v, want nothing held when the Query Group may be reactivated", hold)
 			}
-			if err != nil || state.RecordRevision != 3 || state.Current != reenabledSnapshot.Publication ||
+			if err != nil || state.RecordRevision != wantRevision || state.Current != reenabledSnapshot.Publication ||
 				len(state.Draining) != 0 || len(state.Plans) != 1 {
 				t.Fatalf("reactivation=(%#v,%v)", state, err)
 			}
@@ -3668,24 +3683,20 @@ func TestScheduleActivationReconcilerReactivatesDrainedQueryGroupOnSameProgressT
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reconciler.Ensure(context.Background(), reenabledSnapshot.Publication); err == nil {
-		t.Fatal("undrained Query Group reactivation unexpectedly succeeded")
-	} else if failure, ok := controlplane.ActivationFailureFromError(err); !ok ||
-		failure.Stage != controlplane.ActivationFailureStageReactivation ||
-		failure.Class != controlplane.ActivationFailureClassNotDrained ||
-		failure.DrainingQueryGroups != 1 || failure.CandidateQueryGroups != 1 || failure.ReappearedQueryGroups != 1 ||
-		!reflect.DeepEqual(failure.ReappearedQueryGroupSamples, []execution.QueryGroupIdentity{queryGroup}) ||
-		failure.ReappearedQueryGroupSamplesTruncated ||
-		!errors.Is(err, controlplane.ErrReactivationNotDrained) {
-		t.Fatalf("undrained reactivation classification=(%#v,%t)", failure, ok)
+	// The Query Group has not drained: the publication becomes current
+	// without it, and it stays in Draining with nothing activated.
+	held, err := reconciler.Ensure(context.Background(), reenabledSnapshot.Publication)
+	if err != nil || held.RecordRevision != 3 || held.Current != reenabledSnapshot.Publication ||
+		len(held.Draining) != 1 || held.Draining[0].QueryGroup != queryGroup || len(held.Plans) != 0 {
+		t.Fatalf("held activation=(%#v,%v)", held, err)
 	}
 	progress.byGroup[queryGroup] = execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
 		Identity: execution.ProgressIdentity{QueryGroup: queryGroup}, NextSlot: 90, LastFullSlot: 60,
 		LastCompletionKind: execution.CompletionFull,
 	}}
 	active, err := reconciler.Ensure(context.Background(), reenabledSnapshot.Publication)
-	if err != nil || active.RecordRevision != 3 || len(active.Draining) != 0 || len(active.Plans) != 1 {
-		t.Fatalf("reactivation=(%#v,%v)", active, err)
+	if err != nil || active.RecordRevision != 4 || len(active.Draining) != 0 || len(active.Plans) != 1 {
+		t.Fatalf("reactivation on the same publication=(%#v,%v)", active, err)
 	}
 	if !active.Plans[0].Fact.Selected.ForceWarming ||
 		active.Plans[0].Fact.Selected.StateApplyEpoch != execution.StateApplyEpoch(reenabledSnapshot.Publication.PublicationEpoch) {

@@ -102,7 +102,11 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		if _, loadErr := reconciler.repository.LoadActiveQueryGroupSet(ctx, previous.ActiveQGSetRef); loadErr != nil {
 			return ActivationState{}, loadErr
 		}
-		return previous, nil
+		if len(previous.Draining) == 0 {
+			return previous, nil
+		}
+		failureStage, failureClass = ActivationFailureStageReactivation, ActivationFailureClassDependencyIO
+		return reconciler.reactivateHeld(ctx, previous)
 	}
 	if publication.PublicationEpoch < previous.Current.PublicationEpoch {
 		return previous, nil
@@ -289,40 +293,98 @@ func (reconciler *ScheduleActivationReconciler) upgradeLegacyActivation(
 	return reconciler.repository.LoadActivation(ctx)
 }
 
+// reactivatingQueryGroups says which of the Draining Query Groups the
+// publication brings back may be reactivated by this activation. The ones
+// that have not drained are held: they stay in Draining, get no Segment and
+// no activated Plans, and the activation goes ahead for everyone else. One
+// undrained Query Group used to fail the whole activation, and on a
+// deployment of any size there is nearly always one. A held Query Group
+// comes back through reactivateHeld once it has drained.
 func (reconciler *ScheduleActivationReconciler) reactivatingQueryGroups(
 	ctx context.Context,
 	draining []DrainingQueryGroup,
 	newGroups map[execution.QueryGroupIdentity]QueryGroup,
 	boundary execution.EvaluationTime,
 ) (map[execution.QueryGroupIdentity]struct{}, error) {
-	result := make(map[execution.QueryGroupIdentity]struct{})
-	// Every reappearing Query Group is checked, not just up to the first one
-	// that has not drained: the held set is reported whole, so that the
-	// decision a per-Query-Group activation would take (hold these, activate
-	// the rest) can be read on a running deployment before it is taken. The
-	// outcome is unchanged: one held Query Group still fails the activation.
-	var held []DrainingQueryGroup
-	reappeared := 0
-	for _, projection := range draining {
-		if _, exists := newGroups[projection.QueryGroup]; !exists {
-			continue
-		}
-		reappeared++
-		reactivatable, err := reconciler.repository.drainingReactivatable(ctx, projection, boundary, reconciler.progress)
-		if err != nil {
-			return nil, err
-		}
-		if !reactivatable {
-			held = append(held, projection)
-			continue
-		}
-		result[projection.QueryGroup] = struct{}{}
+	reactivating, held, reappeared, err := reconciler.repository.partitionReactivations(ctx, draining, newGroups, boundary, reconciler.progress)
+	if err != nil {
+		return nil, err
 	}
 	reconciler.repository.observeActivationHold(ctx, reappeared, held, boundary)
-	if len(held) > 0 {
-		return nil, ErrReactivationNotDrained
+	return reactivating, nil
+}
+
+// reactivateHeld runs on every reconcile of a publication that is already
+// current and still lists Query Groups as draining. Those that are in the
+// publication were held out of it; the ones that have drained since are
+// brought back without a new publication: the record revision advances, they
+// leave Draining, their Segment opens and their Plans join the activation
+// restarting through WARMING. The held set is reported on every attempt, so
+// the gauge follows it down to zero.
+func (reconciler *ScheduleActivationReconciler) reactivateHeld(
+	ctx context.Context,
+	previous ActivationState,
+) (ActivationState, error) {
+	snapshot, err := reconciler.repository.LoadPublishedSnapshot(ctx, previous.Current)
+	if err != nil {
+		return ActivationState{}, err
 	}
-	return result, nil
+	groups, err := queryGroupMap(snapshot.QueryGroups)
+	if err != nil {
+		return ActivationState{}, err
+	}
+	boundary := execution.EvaluationTime(reconciler.now().Unix())
+	if boundary <= 0 {
+		return ActivationState{}, errors.New("alarmd controlplane: Schedule activation clock must produce a positive Unix second")
+	}
+	reactivating, held, reappeared, err := reconciler.repository.partitionReactivations(ctx, previous.Draining, groups, boundary, reconciler.progress)
+	if err != nil {
+		return ActivationState{}, err
+	}
+	if reappeared == 0 {
+		return previous, nil
+	}
+	reconciler.repository.observeActivationHold(ctx, reappeared, held, boundary)
+	if len(reactivating) == 0 {
+		return previous, nil
+	}
+	compiled, _, err := compilePublishedActivation(ctx, reconciler.compiler, reconciler.stateSemantics, snapshot, boundary)
+	if err != nil {
+		return ActivationState{}, err
+	}
+	returningPlans := make(map[execution.PlanIdentity]struct{})
+	for identity := range reactivating {
+		for _, plan := range groups[identity].Plans {
+			returningPlans[plan.Identity] = struct{}{}
+		}
+	}
+	next := previous
+	next.RecordRevision = previous.RecordRevision + 1
+	next.Plans = append([]PlanActivationRecord(nil), previous.Plans...)
+	for _, record := range compiled {
+		if _, returning := returningPlans[record.Fact.Plan]; !returning {
+			continue
+		}
+		record.Fact.Selected.ForceWarming = true
+		next.Plans = append(next.Plans, record)
+	}
+	sort.Slice(next.Plans, func(i, j int) bool { return lessPlanIdentity(next.Plans[i].Fact.Plan, next.Plans[j].Fact.Plan) })
+	next.Draining = make([]DrainingQueryGroup, 0, len(previous.Draining))
+	for _, projection := range previous.Draining {
+		if _, reactivated := reactivating[projection.QueryGroup]; reactivated {
+			continue
+		}
+		next.Draining = append(next.Draining, projection)
+	}
+	expected := ActivationExpectation{RecordRevision: previous.RecordRevision, Current: previous.Current, Pending: previous.Pending}
+	if err := reconciler.repository.CompareAndSetHeldReactivation(ctx, expected, next, reactivating, boundary, reconciler.progress); err != nil {
+		winner, loadErr := reconciler.repository.LoadActivation(ctx)
+		if loadErr == nil && winner.RecordRevision > previous.RecordRevision {
+			return winner, nil
+		}
+		return ActivationState{}, err
+	}
+	return reconciler.repository.LoadActivation(ctx)
 }
 
 // observeActivationHold reports the reappearing Query Groups an activation

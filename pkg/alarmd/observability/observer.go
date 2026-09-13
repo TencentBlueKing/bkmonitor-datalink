@@ -411,13 +411,12 @@ type StateGenerationSkewFacts struct {
 var StateGenerationSkewKinds = []string{"formula", "record"}
 
 // ActivationHoldFacts report, for one activation attempt, the Query Groups
-// the new publication brings back from an earlier retirement. Reappeared
-// counts all of them; Held counts the ones that have not drained their
-// retired Slots yet. Today one held Query Group fails the whole activation
-// (reactivation / not_drained), so Held is what a per-Query-Group activation
-// would hold back instead of failing everyone: the count is reported before
-// that behaviour exists, so the decision can be read against what actually
-// happens. MaxAgeSeconds is how long the oldest held retirement has waited.
+// the publication brings back from an earlier retirement. Reappeared counts
+// all of them; Held counts the ones that have not drained their retired
+// Slots yet and were therefore held out of the activation, which went ahead
+// for everyone else. A held Query Group is reported again on every reconcile
+// until it drains and is brought back, so the count follows it down to zero.
+// MaxAgeSeconds is how long the oldest held retirement has waited.
 type ActivationHoldFacts struct {
 	Reappeared    int
 	Held          int

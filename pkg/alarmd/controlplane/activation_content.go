@@ -289,6 +289,13 @@ func compilePublishedGroups(
 // ones the previous activation acted on, every one of its Plans has a
 // record in previous, and it is neither returning from retirement nor
 // being reactivated from a hold; everything else is compiled.
+//
+// The last two exclusions do not decide anything today: a returning or a
+// reactivating Query Group was not part of the previous activation, so
+// previousContent knows no digest for it and it is compiled on that alone
+// (a test pins the behaviour, not this guard). They stay for the day
+// previousContent learns about Draining Query Groups; until then a change
+// to either is a change nothing can observe.
 func carriedActivationRecords(
 	published *publishedGroups,
 	previous ActivationState,

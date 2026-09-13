@@ -107,6 +107,13 @@ const (
 	// list drops it first. The rule meant to keep the worst objects visible
 	// pushed the mis-stamped ones out of view instead. A row that says it was
 	// refused is a bug report; a row that quietly sorts last is not.
+	// SinceProcessStart is a run whose first observed round was this process's
+	// own first round. The object was already in this state when the replica
+	// started, so the duration is how long this process has been watching, not
+	// how long the object has been wrong -- a lower bound, and often a very low
+	// one. It reads identically to a measured duration, which is why it needs
+	// its own name.
+	SinceProcessStart  SinceSource = "PROCESS_START"
 	SinceRefusedFuture SinceSource = "REFUSED_FUTURE"
 )
 

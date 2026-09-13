@@ -173,7 +173,17 @@ type Summary struct {
 	// cause to carry a reason of either the coverage class or the retryable
 	// class, and those need opposite responses.
 	ByCauseReason []Count `json:"by_cause_reason"`
-	ByReplica     []Count `json:"by_replica"`
+	// ByBusiness is the unit someone can act on. The rows are objects, which are
+	// alarmd's own identities: an operator cannot look one up, cannot mention one
+	// to the person who configured the strategy, and cannot tell from a list of
+	// them whether this is one misconfiguration or fifty. Rolling the same
+	// population up by business answers the question the list raises.
+	ByBusiness []Count `json:"by_business"`
+	// Strategies is how many distinct strategies the rows cover. Fifty-five
+	// objects over sixty-two strategies and over five strategies are the same
+	// table and different conversations.
+	Strategies int     `json:"strategies"`
+	ByReplica  []Count `json:"by_replica"`
 	// Stalled counts the objects that are stuck rather than merely degraded. The
 	// other three say how badly the last round went; this one says the rounds
 	// stopped ending, which is the only one of the four that cannot resolve on
@@ -198,6 +208,8 @@ func summarize(anomalies []Anomaly) Summary {
 	codes := map[string]int{}
 	details := map[string]int{}
 	causeReasons := map[string]int{}
+	businesses := map[string]int{}
+	strategies := map[StrategyRef]struct{}{}
 	replicas := map[string]int{}
 	stalled := 0
 	for _, anomaly := range anomalies {
@@ -221,10 +233,26 @@ func summarize(anomalies []Anomaly) Summary {
 			causeReasons[anomaly.CauseReason]++
 		}
 		replicas[anomaly.Replica]++
+		// Counted per object, not per reference: one object naming the same
+		// business twice must not make that business look twice as affected.
+		seenBusiness := map[string]struct{}{}
+		for _, strategy := range anomaly.Strategies {
+			strategies[strategy] = struct{}{}
+			label := strategy.BusinessID
+			if label == "" {
+				label = "(未标业务)"
+			}
+			if _, dup := seenBusiness[label]; dup {
+				continue
+			}
+			seenBusiness[label] = struct{}{}
+			businesses[label]++
+		}
 	}
 	return Summary{
 		ByKind: rank(kinds), ByReason: rank(reasons),
 		ByFailure: rank(failures), ByFailureCode: rank(codes), ByFailureDetail: rank(details), ByCauseReason: rank(causeReasons),
+		ByBusiness: rank(businesses), Strategies: len(strategies),
 		ByReplica: rank(replicas), Stalled: stalled,
 	}
 }

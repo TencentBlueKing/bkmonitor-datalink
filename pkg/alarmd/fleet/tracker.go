@@ -254,6 +254,10 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		tracker.groups[queryGroup] = state
 	}
 	at := tracker.now()
+	// Captured before this round is folded in: by the time the run-start block
+	// runs, this round has already made the object determined, and the question
+	// is whether anything came before it.
+	seenBefore := state.determined
 	if facts := observation.QueryCooldown; facts != nil {
 		switch facts.Event {
 		case "entered", "extended":
@@ -346,6 +350,21 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		// rather than a bound. A restored object overwrites neither, because
 		// Restore leaves a determined object alone.
 		state.sinceFrom = SinceSnapshotContinuity
+		// Unless this object's very first conclusive round was already the bad
+		// one. Then nothing was watched going wrong: the object was in this
+		// state when the replica picked it up, and the clock is measuring how
+		// long this process has been watching. That is the difference between
+		// "wrong for 40 hours" and "wrong for at least 40 hours", and a
+		// deployment showed 55 objects reporting the first when the number was
+		// simply the age of the process.
+		//
+		// Tested on whether a conclusive round had been seen before this one,
+		// not on how soon after startup it happened. A time window would also
+		// catch an object that completed healthily and then genuinely failed
+		// minutes after startup -- a transition this process did watch.
+		if !seenBefore {
+			state.sinceFrom = SinceProcessStart
+		}
 	}
 }
 

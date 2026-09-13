@@ -218,10 +218,11 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <span class="applied" id="applied"></span>
     </div>
     <div id="objErr" class="err" hidden></div>
+    <p class="basis" id="rollup"></p>
     <div class="summary" id="summary"></div>
     <table>
       <thead><tr>
-        <th>对象</th><th>种类</th><th>最近原因</th><th>是什么情况</th><th>下一层原因</th><th>失败在哪</th><th>已持续</th>
+        <th>对象</th><th>种类</th><th>最近原因</th><th>是什么情况</th><th>下一层原因</th><th>后端症状</th><th>失败在哪</th><th>已持续</th>
         <th>起算来源</th><th>副本</th><th>关联策略</th>
       </tr></thead>
       <tbody id="rows"></tbody>
@@ -410,6 +411,7 @@ var FAILURE_CATEGORY = {
 var SINCE_SOURCE = {
   BUSINESS_STATE: '业务状态（跨重启保留）',
   SNAPSHOT_CONTINUITY: '本进程看着它开始出问题的时刻',
+  PROCESS_START: '本副本接手时它就已经这样了——"已持续"是本进程看了多久，不是它坏了多久，只会更久',
   RESTORED_LAST_FULL: '上次完整跑完的时刻；真正变坏的时刻没保留，所以实际没这么久',
   RESTORED_AT_RESTART: '本进程接手的时刻；之前有多久没人知道，只会比这更久',
   REFUSED_FUTURE: '记录的时刻比现在还晚，已拒绝——这是缺陷，请上报'
@@ -581,6 +583,11 @@ function loadObjects() {
       // made 61 of 62 objects one indistinguishable population.
       var reason = cell(a.cause_reason || '—');
       if (a.cause_reason) { reason.title = a.cause_reason; }
+      // The symptom was only in the summary line, so a reader could see that 53
+      // of 55 hit one thing and still not tell which one this row is. It is the
+      // only cell on the row that says what to do about it.
+      var symptom = cell(symptomText((a.failure || {}).detail));
+      if (a.failure && a.failure.detail) { symptom.title = a.failure.detail; }
       // The completion kind says a round ended badly; this says what went wrong.
       // Both are shown because they answer different questions.
       var f = a.failure;
@@ -717,6 +724,25 @@ function renderCoverage(coverage) {
   text('coverIds', named.length ? named.join('；') + '（最多列 6 个，完整列表在接口的 coverage 字段里）' : '');
 }
 
+// The raw detail is a bounded key=value from the emitter, which is right for a
+// machine and useless to the person who has to go and fix the strategy. These
+// say what the finding is; anything unrecognised is shown verbatim rather than
+// bucketed, because a wrong plain sentence is worse than a raw string.
+var SYMPTOM_TEXT = {
+  'response=status_space_table_id_field_is_not_exists':
+    '这个业务空间里没有这张表或这个字段——策略查的对象不存在',
+  'transport=connection_refused': '连不上数据源',
+  'http_status=400': '数据源说请求本身不合法（400）',
+  'http_status=403': '没有权限读这个数据源（403）',
+  'http_status=500': '数据源内部错误（500）',
+  'http_status=503': '数据源暂时不可用（503）'
+};
+
+function symptomText(detail) {
+  if (!detail) return '—';
+  return SYMPTOM_TEXT[detail] || detail;
+}
+
 function shortId(id) { return String(id).slice(0, 12) + '…'; }
 
 // One row per replica, from the replicas' own snapshots rather than by dividing
@@ -758,7 +784,28 @@ function renderReplicas(rows) {
   });
 }
 
+// The rows are objects, which are alarmd's own identities: nobody can look one
+// up, nobody can say one to the person who configured the strategy, and a list
+// of them cannot say whether this is one misconfiguration or fifty. This is the
+// same population counted in the unit a conversation happens in.
+function renderRollup(summary, total) {
+  if (!summary || !total) { text('rollup', ''); return; }
+  var parts = ['这 ' + total + ' 个对象背后是 ' + (summary.strategies || 0) + ' 条策略'];
+  var byBiz = summary.by_business || [];
+  if (byBiz.length) {
+    parts.push('分布在 ' + byBiz.length + ' 个业务：'
+      + byBiz.slice(0, 5).map(function (c) { return '业务 ' + c.value + ' ' + c.count + ' 个'; }).join(' · ')
+      + (byBiz.length > 5 ? ' 等' : ''));
+  }
+  var symptom = (summary.by_failure_detail || [])[0];
+  if (symptom) {
+    parts.push('其中 ' + symptom.count + ' 个是同一个后端症状：' + symptomText(symptom.value));
+  }
+  text('rollup', parts.join('；') + '。');
+}
+
 function renderSummary(summary, total) {
+  renderRollup(summary, total);
   var host = document.getElementById('summary');
   host.textContent = '';
   if (!summary || !total) return;

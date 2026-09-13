@@ -31,28 +31,36 @@ func (d traditionalComparisonDetector) Evaluate(_ context.Context, algorithm str
 	if current != 0 {
 		history[0] = &current
 	}
+	bindings := make(map[string]execution.NamedInputBinding, len(input.Inputs))
+	for _, binding := range input.Inputs {
+		bindings[string(binding.RequirementID)] = binding
+	}
 	for _, r := range algorithm.InputRequirements() {
 		if r.Role != strategy.AlgorithmInputDependency {
 			continue
 		}
-		var binding execution.NamedInputBinding
-		for _, candidate := range input.Inputs {
-			if string(candidate.RequirementID) == r.RequirementID {
-				binding = candidate
-				break
-			}
-		}
+		binding := bindings[r.RequirementID]
 		if !namedInputTrusted(binding) {
 			return unavailableFromBinding(binding)
 		}
+		wanted := make(map[int64]bool, len(r.PointOffsetsSeconds))
 		for _, offset := range r.PointOffsetsSeconds {
-			point, found, err := exactPoint(binding, primary.SourceTime()-offset)
-			if err != nil {
+			wanted[offset] = false
+		}
+		for index := 0; index < binding.View.Len(); index++ {
+			point, found := binding.View.Record(index)
+			if !found {
 				return namedTerminal(contract.ReasonRecordInvalid)
 			}
-			if !found {
+			offset := primary.SourceTime() - point.SourceTime()
+			seen, required := wanted[offset]
+			if !required {
 				continue
 			}
+			if seen {
+				return namedTerminal(contract.ReasonRecordInvalid)
+			}
+			wanted[offset] = true
 			if raw, ok := point.Value(c.ValueField); ok && strings.TrimSpace(string(raw)) == "null" {
 				continue
 			}
@@ -82,23 +90,6 @@ func pythonRound(value float64, precision int) float64 {
 	return rounded
 }
 
-func comparisonUnitRounds(unit string) bool {
-	if parts := strings.Split(unit, "||"); len(parts) == 2 {
-		unit = parts[1]
-	}
-	switch unit {
-	case "", "none", "short", "celsius", "fahrenheit", "kelvin":
-		return false
-	}
-	// Unknown prefixes in RingRatioAmplitude's first threshold call create a
-	// custom unit with no conversion or rounding.
-	switch unit {
-	case "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "k", "M", "G", "T", "P", "E", "K", "B", "%", "x100%":
-		return false
-	}
-	return true
-}
-
 func evaluateTraditionalComparison(kind string, c strategy.TraditionalComparisonConfig, current float64, history map[int64]*float64) pureDetectionStatus {
 	number := func(n *json.Number) float64 {
 		if n == nil {
@@ -107,15 +98,17 @@ func evaluateTraditionalComparison(kind string, c strategy.TraditionalComparison
 		v, _ := strconv.ParseFloat(n.String(), 64)
 		return v
 	}
-	convert := func(v float64, multiplier int64, unit string) float64 {
-		v *= float64(multiplier)
-		if comparisonUnitRounds(unit) {
+	convert := func(v float64, conversion strategy.ComparisonUnitConversion) float64 {
+		for _, factor := range conversion.Factors {
+			v *= float64(factor)
+		}
+		if conversion.Round {
 			return pythonRound(v, c.Precision)
 		}
 		return v
 	}
-	data := func(v float64) float64 { return convert(v, c.DataMultiplier, c.DataUnit) }
-	parameter := func(v float64) float64 { return convert(v, c.AlgorithmMultiplier, c.DataUnit) }
+	data := func(v float64) float64 { return convert(v, c.DataConversion) }
+	parameter := func(v float64) float64 { return convert(v, c.AlgorithmConversion) }
 	currentValue := data(current)
 	compare := func(left, right float64) bool {
 		switch c.Method {
@@ -214,7 +207,7 @@ func evaluateTraditionalComparison(kind string, c strategy.TraditionalComparison
 			return pureDetectionUnknown
 		}
 		threshold := number(c.Threshold)
-		return result(currentValue >= convert(threshold, c.ThresholdMultiplier, c.AlgorithmUnit) && data(*previous) >= parameter(threshold) && data(math.Abs(*previous-current)) >= data(*previous)*number(c.Ratio)+parameter(number(c.Shock)))
+		return result(currentValue >= convert(threshold, c.ThresholdConversion) && data(*previous) >= parameter(threshold) && data(math.Abs(*previous-current)) >= data(*previous)*number(c.Ratio)+parameter(number(c.Shock)))
 	case strategy.DetectorKindYearRoundRange:
 		// The source fetcher compacts missing days; expression indices still run
 		// to configured days. A match before the first out-of-range index wins.

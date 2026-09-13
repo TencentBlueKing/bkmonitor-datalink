@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
@@ -46,14 +47,48 @@ type TraditionalComparisonParameters struct {
 
 type TraditionalComparisonConfig struct {
 	TraditionalComparisonParameters
-	ValueField          string `json:"value_field"`
-	DataUnit            string `json:"data_unit"`
-	AlgorithmUnit       string `json:"algorithm_unit"`
-	Precision           int    `json:"precision"`
-	AggregationInterval int64  `json:"aggregation_interval"`
-	DataMultiplier      int64  `json:"data_multiplier"`
-	AlgorithmMultiplier int64  `json:"algorithm_multiplier"`
-	ThresholdMultiplier int64  `json:"threshold_multiplier"`
+	ValueField          string                   `json:"value_field"`
+	DataUnit            string                   `json:"data_unit"`
+	AlgorithmUnit       string                   `json:"algorithm_unit"`
+	Precision           int                      `json:"precision"`
+	AggregationInterval int64                    `json:"aggregation_interval"`
+	DataConversion      ComparisonUnitConversion `json:"data_conversion"`
+	AlgorithmConversion ComparisonUnitConversion `json:"algorithm_conversion"`
+	ThresholdConversion ComparisonUnitConversion `json:"threshold_conversion"`
+}
+
+// ComparisonUnitConversion freezes the multiplication order as well as the
+// final rounding. Multiplying once by the combined factor can change a binary
+// float by one ULP and reverse a comparison at the threshold.
+type ComparisonUnitConversion struct {
+	Factors []int64 `json:"factors"`
+	Round   bool    `json:"round"`
+}
+
+func comparisonUnitConversion(unit string, prefix *string) (ComparisonUnitConversion, bool) {
+	if parts := strings.Split(unit, "||"); len(parts) == 2 {
+		unit = parts[1]
+	}
+	spec, ok := unitSpecFor(unit)
+	if !ok {
+		return ComparisonUnitConversion{}, false
+	}
+	index := spec.defaultIndex
+	if prefix != nil {
+		index = -1
+		for i, suffix := range spec.suffixes {
+			if suffix == *prefix {
+				index = i
+				break
+			}
+		}
+	}
+	conversion := ComparisonUnitConversion{Round: len(spec.suffixes) > 1, Factors: []int64{}}
+	for index > 0 {
+		conversion.Factors = append(conversion.Factors, spec.factorsToBase[index]/spec.factorsToBase[index-1])
+		index--
+	}
+	return conversion, true
 }
 
 func (plan CompiledAlgorithmPlan) TraditionalComparisonConfig() (TraditionalComparisonConfig, bool) {
@@ -61,6 +96,9 @@ func (plan CompiledAlgorithmPlan) TraditionalComparisonConfig() (TraditionalComp
 		return TraditionalComparisonConfig{}, false
 	}
 	c := *plan.config.TraditionalComparison
+	c.DataConversion.Factors = append([]int64(nil), c.DataConversion.Factors...)
+	c.AlgorithmConversion.Factors = append([]int64(nil), c.AlgorithmConversion.Factors...)
+	c.ThresholdConversion.Factors = append([]int64(nil), c.ThresholdConversion.Factors...)
 	// Config views cannot mutate the frozen plan through optional operands.
 	clone := func(p *json.Number) *json.Number {
 		if p == nil {
@@ -267,14 +305,15 @@ func (compiler traditionalComparisonCompiler) Compile(_ context.Context, ctx Alg
 	if wire.Precision != 6 {
 		return AlgorithmCompileResult{}, configErrorf("unsupported point precision")
 	}
-	normalizer, multiplier, ok := compileUnitNormalizer(wire.DataUnit, wire.AlgorithmUnit)
+	_, _, ok := compileUnitNormalizer(wire.DataUnit, wire.AlgorithmUnit)
 	if !ok {
 		return AlgorithmCompileResult{}, configErrorf("unsupported comparison unit")
 	}
-	thresholdMultiplier := int64(1)
-	if n, _, ok := compileUnitNormalizer(wire.AlgorithmUnit, ""); ok {
-		thresholdMultiplier = n.sourceMultiplier
-	}
+	dataConversion, _ := comparisonUnitConversion(wire.DataUnit, nil)
+	algorithmConversion, _ := comparisonUnitConversion(wire.DataUnit, &wire.AlgorithmUnit)
+	// Unknown unit ids (including most prefixes) are Python custom units with
+	// no suffix list, conversion, or rounding in the first threshold expression.
+	thresholdConversion, _ := comparisonUnitConversion(wire.AlgorithmUnit, nil)
 	nonnegative := func(n *json.Number) bool {
 		if n == nil {
 			return false
@@ -315,6 +354,6 @@ func (compiler traditionalComparisonCompiler) Compile(_ context.Context, ctx Alg
 			return AlgorithmCompileResult{}, configErrorf("invalid comparison method")
 		}
 	}
-	config := &TraditionalComparisonConfig{TraditionalComparisonParameters: params, ValueField: wire.InputProjection.ValueFields[0], DataUnit: wire.DataUnit, AlgorithmUnit: wire.AlgorithmUnit, Precision: wire.Precision, AggregationInterval: int64(ctx.ExecutionSemantics.AggregationInterval), DataMultiplier: normalizer.sourceMultiplier, AlgorithmMultiplier: multiplier, ThresholdMultiplier: thresholdMultiplier}
+	config := &TraditionalComparisonConfig{TraditionalComparisonParameters: params, ValueField: wire.InputProjection.ValueFields[0], DataUnit: wire.DataUnit, AlgorithmUnit: wire.AlgorithmUnit, Precision: wire.Precision, AggregationInterval: int64(ctx.ExecutionSemantics.AggregationInterval), DataConversion: dataConversion, AlgorithmConversion: algorithmConversion, ThresholdConversion: thresholdConversion}
 	return g4CompileResult(compiledAlgorithmConfig{TraditionalComparison: config}, wire.InputProjection, requirements, "traditional-comparison-compiler-v1", "python-ordered-history-v1", len(offsets)+1), nil
 }

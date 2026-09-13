@@ -204,6 +204,15 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	if observation.RuntimeConfig != nil {
 		attributes = append(attributes, slog.Any("runtime_config", observation.RuntimeConfig))
 	}
+	if facts := observation.ActivationHold; facts != nil {
+		attributes = append(attributes,
+			slog.Int("activation_reappeared", facts.Reappeared),
+			slog.Int("activation_held", facts.Held),
+			slog.Int64("activation_held_max_age_seconds", facts.MaxAgeSeconds),
+			slog.Bool("activation_held_samples_truncated", facts.Truncated),
+			slog.Any("activation_held_samples", facts.Samples),
+		)
+	}
 	if facts := observation.DrainingQG; facts != nil {
 		attributes = append(attributes,
 			slog.Int("draining_total", facts.Total),

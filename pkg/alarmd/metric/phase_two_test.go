@@ -389,3 +389,24 @@ func TestPhaseTwoSourceCompileCounterSplitsCompiledFromReused(t *testing.T) {
 		t.Fatalf("compile series = %d, want the %d fixed results and nothing else", got, len(sourceCompileResults))
 	}
 }
+
+// The activation hold gauges follow the latest attempt: an attempt that held
+// Query Groups sets them, and the next attempt that held none clears them.
+func TestPhaseTwoActivationHoldGaugesFollowTheLatestAttempt(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	observe := func(held int, age int64) {
+		recorder.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentControlPlane, Stage: observability.StageActivationHold,
+			Result:         observability.ResultSuccess,
+			ActivationHold: &observability.ActivationHoldFacts{Reappeared: 3, Held: held, MaxAgeSeconds: age},
+		})
+	}
+	observe(2, 540)
+	if held, age := testutil.ToFloat64(recorder.phaseTwo.activationHeldQueryGroups), testutil.ToFloat64(recorder.phaseTwo.activationHeldAgeSecondsMax); held != 2 || age != 540 {
+		t.Fatalf("held=%v age=%v, want 2 held for 540 s", held, age)
+	}
+	observe(0, 0)
+	if held, age := testutil.ToFloat64(recorder.phaseTwo.activationHeldQueryGroups), testutil.ToFloat64(recorder.phaseTwo.activationHeldAgeSecondsMax); held != 0 || age != 0 {
+		t.Fatalf("held=%v age=%v, want the gauges cleared by an attempt that held nothing", held, age)
+	}
+}

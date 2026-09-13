@@ -65,6 +65,7 @@ const (
 	StageObjectCatalog        = "object_catalog"
 	StageObjectRead           = "object_read"
 	StageFrozenPlanGeneration = "frozen_plan_generation"
+	StageActivationHold       = "activation_hold"
 	StageScheduleCutover      = "schedule_cutover"
 	StageLegacyQGMigration    = "legacy_active_qg_migration"
 	StageDrainingQGReconciled = "draining_query_groups"
@@ -371,6 +372,26 @@ type StateGenerationSkewFacts struct {
 // StateGenerationSkewFacts; a value outside it is reported as "other".
 var StateGenerationSkewKinds = []string{"formula", "record"}
 
+// ActivationHoldFacts report, for one activation attempt, the Query Groups
+// the new publication brings back from an earlier retirement. Reappeared
+// counts all of them; Held counts the ones that have not drained their
+// retired Slots yet. Today one held Query Group fails the whole activation
+// (reactivation / not_drained), so Held is what a per-Query-Group activation
+// would hold back instead of failing everyone: the count is reported before
+// that behaviour exists, so the decision can be read against what actually
+// happens. MaxAgeSeconds is how long the oldest held retirement has waited.
+type ActivationHoldFacts struct {
+	Reappeared    int
+	Held          int
+	MaxAgeSeconds int64
+	Samples       []string
+	Truncated     bool
+}
+
+// MaxActivationHoldSamples bounds the Query Group identities an activation
+// hold observation carries.
+const MaxActivationHoldSamples = 8
+
 type LegacyQGMigrationFacts struct {
 	Result      string
 	ReasonClass string
@@ -565,6 +586,7 @@ type Observation struct {
 	ObjectCatalog           *ObjectCatalogFacts
 	ObjectRead              *ObjectReadFacts
 	StateGenerationSkew     *StateGenerationSkewFacts
+	ActivationHold          *ActivationHoldFacts
 	LegacyMigration         *LegacyQGMigrationFacts
 	DrainingQG              *DrainingQGFacts
 	SourceRefresh           *SourceRefreshFacts
@@ -655,6 +677,7 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.ObjectCatalog = normalizeObjectCatalogFacts(observation.ObjectCatalog)
 	observation.ObjectRead = normalizeObjectReadFacts(observation.ObjectRead)
 	observation.StateGenerationSkew = normalizeStateGenerationSkewFacts(observation.StateGenerationSkew)
+	observation.ActivationHold = normalizeActivationHoldFacts(observation.ActivationHold)
 	observation.LegacyMigration = normalizeLegacyQGMigrationFacts(observation.LegacyMigration)
 	observation.DrainingQG = normalizeDrainingQGFacts(observation.DrainingQG)
 	observation.SourceRefresh = normalizeSourceRefreshFacts(observation.Component, observation.Stage, observation.SourceRefresh)
@@ -945,6 +968,30 @@ func normalizeObjectReadFacts(facts *ObjectReadFacts) *ObjectReadFacts {
 		if facts.Result == result {
 			normalized.Result = result
 		}
+	}
+	return &normalized
+}
+
+func normalizeActivationHoldFacts(facts *ActivationHoldFacts) *ActivationHoldFacts {
+	if facts == nil {
+		return nil
+	}
+	normalized := *facts
+	if normalized.Reappeared < 0 {
+		normalized.Reappeared = 0
+	}
+	if normalized.Held < 0 {
+		normalized.Held = 0
+	}
+	if normalized.Held > normalized.Reappeared {
+		normalized.Reappeared = normalized.Held
+	}
+	if normalized.MaxAgeSeconds < 0 {
+		normalized.MaxAgeSeconds = 0
+	}
+	if len(normalized.Samples) > MaxActivationHoldSamples {
+		normalized.Samples = append([]string(nil), normalized.Samples[:MaxActivationHoldSamples]...)
+		normalized.Truncated = true
 	}
 	return &normalized
 }
@@ -1315,6 +1362,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentControlPlane, StageActivationFailed},
 	{ComponentControlPlane, StageActiveQGSet}, {ComponentControlPlane, StageLegacyQGMigration},
 	{ComponentControlPlane, StageDrainingQGReconciled},
+	{ComponentControlPlane, StageFrozenPlanGeneration}, {ComponentControlPlane, StageActivationHold},
 	{ComponentOwnership, StageAssignmentAcquired}, {ComponentOwnership, StageAssignmentLost},
 	{ComponentOwnership, StageTakeoverStarted}, {ComponentOwnership, StageTakeoverCompleted},
 	{ComponentOwnership, StageLeaseRenewed}, {ComponentOwnership, StageFenceChecked},

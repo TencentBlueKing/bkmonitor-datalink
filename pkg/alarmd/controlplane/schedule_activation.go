@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -295,20 +296,63 @@ func (reconciler *ScheduleActivationReconciler) reactivatingQueryGroups(
 	boundary execution.EvaluationTime,
 ) (map[execution.QueryGroupIdentity]struct{}, error) {
 	result := make(map[execution.QueryGroupIdentity]struct{})
+	// Every reappearing Query Group is checked, not just up to the first one
+	// that has not drained: the held set is reported whole, so that the
+	// decision a per-Query-Group activation would take (hold these, activate
+	// the rest) can be read on a running deployment before it is taken. The
+	// outcome is unchanged: one held Query Group still fails the activation.
+	var held []DrainingQueryGroup
+	reappeared := 0
 	for _, projection := range draining {
-		if _, reappeared := newGroups[projection.QueryGroup]; !reappeared {
+		if _, exists := newGroups[projection.QueryGroup]; !exists {
 			continue
 		}
+		reappeared++
 		reactivatable, err := reconciler.repository.drainingReactivatable(ctx, projection, boundary, reconciler.progress)
 		if err != nil {
 			return nil, err
 		}
 		if !reactivatable {
-			return nil, ErrReactivationNotDrained
+			held = append(held, projection)
+			continue
 		}
 		result[projection.QueryGroup] = struct{}{}
 	}
+	reconciler.repository.observeActivationHold(ctx, reappeared, held, boundary)
+	if len(held) > 0 {
+		return nil, ErrReactivationNotDrained
+	}
 	return result, nil
+}
+
+// observeActivationHold reports the reappearing Query Groups an activation
+// attempt found, and which of them had not drained, as ActivationHoldFacts.
+// It is emitted on every attempt that reached the check, with zero counts
+// when nothing was held, so the gauge it feeds goes back to zero on its own.
+func (repository *RedisCatalogRepository) observeActivationHold(
+	ctx context.Context,
+	reappeared int,
+	held []DrainingQueryGroup,
+	boundary execution.EvaluationTime,
+) {
+	facts := &observability.ActivationHoldFacts{Reappeared: reappeared, Held: len(held)}
+	samples := make([]string, 0, len(held))
+	for _, projection := range held {
+		if age := int64(boundary - projection.RetiredBoundary); age > facts.MaxAgeSeconds {
+			facts.MaxAgeSeconds = age
+		}
+		samples = append(samples, string(projection.QueryGroup))
+	}
+	sort.Strings(samples)
+	if len(samples) > observability.MaxActivationHoldSamples {
+		samples = samples[:observability.MaxActivationHoldSamples]
+		facts.Truncated = true
+	}
+	facts.Samples = samples
+	repository.observe(ctx, observability.Observation{
+		Component: observability.ComponentControlPlane, Stage: observability.StageActivationHold,
+		Result: observability.ResultSuccess, ActivationHold: facts,
+	})
 }
 
 func activationReconciliationCounts(

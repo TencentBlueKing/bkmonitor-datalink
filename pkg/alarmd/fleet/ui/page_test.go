@@ -160,6 +160,68 @@ func TestEveryOnsetFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "onset", reflect.TypeOf(fleet.Onset{}))
 }
 
+// Anomaly kinds had this check and start-time provenances did not, although the
+// consequence is worse: an unmapped kind renders the wrong familiar word, an
+// unmapped provenance renders a raw enum beside a timestamp whose meaning that
+// name was the only thing explaining -- and three of the six are not a
+// measurement at all.
+//
+// SinceProcessStart went in without either half being updated. The page did get
+// wording, by hand; the closed list did not, and nothing failed.
+func TestThePageHasWordingForEveryStartTimeProvenance(t *testing.T) {
+	if len(fleet.SinceSources) == 0 {
+		t.Fatal("no start-time provenances declared; the check would pass vacuously")
+	}
+	// The wording map specifically, not the page anywhere. A first pass of this
+	// asked whether the page contained "<NAME>: '" and passed on a provenance
+	// whose wording had been renamed away, because the same key also appears in
+	// the map that puts the bound direction on the number. A check satisfied by
+	// a different map is satisfied by the wrong thing.
+	block := regexp.MustCompile(`var SINCE_SOURCE = \{([^}]*)\}`).FindStringSubmatch(string(page))
+	if block == nil {
+		t.Fatal("the page no longer declares SINCE_SOURCE: every provenance renders as a raw enum")
+	}
+	for _, source := range fleet.SinceSources {
+		if !strings.Contains(block[1], string(source)+": '") {
+			t.Errorf("SINCE_SOURCE has no wording for start-time provenance %q: it renders the raw "+
+				"name beside a timestamp that name was supposed to explain", source)
+		}
+	}
+}
+
+// The page tells a reader that a blank cause means the cause was not kept
+// rather than that there is none, and it decides that from the provenance. Its
+// list of which provenances mean "rebuilt from a record" is a copy of one in
+// fleet, and getting it wrong in either direction states something false: a
+// missing entry goes back to reading as "no cause", and a spurious one claims a
+// watched object was restored.
+func TestThePageAgreesOnWhichProvenancesMeanRestored(t *testing.T) {
+	body := string(page)
+	block := regexp.MustCompile(`var RESTORED_SOURCES = \{([^}]*)\}`).FindStringSubmatch(body)
+	if block == nil {
+		t.Fatal("the page no longer declares RESTORED_SOURCES: a restored object's blank cause " +
+			"reads as having no cause again")
+	}
+	listed := map[string]bool{}
+	for _, match := range regexp.MustCompile(`([A-Z_]+):\s*true`).FindAllStringSubmatch(block[1], -1) {
+		listed[match[1]] = true
+	}
+	declared := map[string]bool{}
+	for _, source := range fleet.RestoredSinceSources {
+		declared[string(source)] = true
+		if !listed[string(source)] {
+			t.Errorf("%q is a restored provenance but the page does not treat it as one: "+
+				"its blank cause reads as \"there is no cause\"", source)
+		}
+	}
+	for source := range listed {
+		if !declared[source] {
+			t.Errorf("the page calls %q a restored provenance and fleet does not: it would tell a "+
+				"reader a watched object's cause was lost", source)
+		}
+	}
+}
+
 // The page suppresses the result word on records that carry only a duration,
 // and it held its own copy of which stages those are. A copy is the arrangement
 // that goes stale: a third timing call would emit a stage the page does not

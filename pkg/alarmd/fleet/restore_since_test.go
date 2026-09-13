@@ -11,6 +11,10 @@ package fleet
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -180,16 +184,72 @@ func TestAStartTimeInTheFutureIsRefusedRatherThanSortedToTheEnd(t *testing.T) {
 // list is what the page's wording is checked against. A value that is produced
 // but unlisted renders as its raw name next to a timestamp whose meaning that
 // name was supposed to explain.
+// It reads the package's own source for the assignments rather than naming the
+// values, because the version that named them missed one: SinceProcessStart was
+// added to the tracker and to the page and never to SinceSources, and this test
+// passed the whole time -- it was checking a hand-copied list against the list
+// it was copied from. A closed set whose guard holds its own copy of the set is
+// not guarded.
 func TestEverySinceSourceTheTrackerProducesIsInTheClosedList(t *testing.T) {
-	listed := map[SinceSource]bool{}
+	listed := map[string]bool{}
 	for _, source := range SinceSources {
-		listed[source] = true
+		listed[string(source)] = true
 	}
-	for _, source := range []SinceSource{
-		SinceSnapshotContinuity, SinceRestoredLastFull, SinceRestoredAtRestart, SinceRefusedFuture,
-	} {
-		if !listed[source] {
-			t.Errorf("the tracker produces %q but SinceSources does not list it", source)
+	if len(listed) == 0 {
+		t.Fatal("SinceSources is empty; the check would pass vacuously")
+	}
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package directory: %v", err)
+	}
+	// sinceFrom is only ever set from one of these constants.
+	assignment := regexp.MustCompile(`sinceFrom\s*=\s*(Since[A-Za-z0-9_]+)`)
+	produced := map[string]bool{}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(filepath.Clean(entry.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", entry.Name(), err)
+		}
+		for _, match := range assignment.FindAllStringSubmatch(string(source), -1) {
+			produced[match[1]] = true
+		}
+	}
+	if len(produced) == 0 {
+		t.Fatal("no sinceFrom assignments found; the check would pass vacuously")
+	}
+
+	// Constant name to the value it holds: comparing names would pass on a
+	// constant whose value was changed underneath it.
+	byName := map[string]SinceSource{
+		"SinceBusinessState":      SinceBusinessState,
+		"SinceSnapshotContinuity": SinceSnapshotContinuity,
+		"SinceProcessStart":       SinceProcessStart,
+		"SinceRestoredLastFull":   SinceRestoredLastFull,
+		"SinceRestoredAtRestart":  SinceRestoredAtRestart,
+		"SinceRefusedFuture":      SinceRefusedFuture,
+	}
+	for name := range produced {
+		value, known := byName[name]
+		if !known {
+			t.Errorf("the tracker assigns sinceFrom = %s, a constant this test does not know: "+
+				"add it here and to SinceSources", name)
+			continue
+		}
+		if !listed[string(value)] {
+			t.Errorf("the tracker produces %q but SinceSources does not list it: the page falls "+
+				"back to printing the raw name beside a timestamp that name was to explain", value)
+		}
+	}
+
+	// Every restored provenance has to be one of the declared sources, or the
+	// page decides "this was rebuilt from a record" on a value nothing produces.
+	for _, restored := range RestoredSinceSources {
+		if !listed[string(restored)] {
+			t.Errorf("RestoredSinceSources names %q, which SinceSources does not list", restored)
 		}
 	}
 }

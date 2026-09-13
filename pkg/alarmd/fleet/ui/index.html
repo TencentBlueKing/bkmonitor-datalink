@@ -606,13 +606,19 @@ function loadObjects() {
       // The completion kind alone folds four conditions together, and they call
       // for opposite responses. Without this column the list reads as hundreds
       // of equally urgent objects, which is the same as reading as none.
-      cell(causeText(a.cause));
+      // A blank cause reads as "there is no cause", and on a restored object
+      // that is false: the cause was never persisted. Those two say opposite
+      // things to a reader -- one is "nothing to chase", the other is "the
+      // answer existed and we lost it, it comes back next round" -- and the row
+      // has to say which. On a live read 8 of 63 degraded objects were in the
+      // second case, all of them restored, thirteen minutes after a rollout.
+      cell(missingCauseText(a) || causeText(a.cause));
       // The cause stops one level short of the answer. LEVEL_OUTCOME_UNKNOWN is
       // required by contract to carry a reason of either the coverage class --
       // the data does not reach this window, which is nobody here's doing -- or
       // the retryable class, which clears on its own. Showing the cause alone
       // made 61 of 62 objects one indistinguishable population.
-      var reason = cell(a.cause_reason || '—');
+      var reason = cell(a.cause_reason || missingCauseText(a) || '—');
       if (a.cause_reason) { reason.title = a.cause_reason; }
       // The symptom was only in the summary line, so a reader could see that 53
       // of 55 hit one thing and still not tell which one this row is. It is the
@@ -1782,6 +1788,26 @@ var CAUSE_TEXT = {
 function causeText(cause) {
   if (!cause) return '—';
   return CAUSE_TEXT[cause] || cause;
+}
+
+// The provenances that mean the object was rebuilt from what was written down
+// rather than watched. What gets written down is the completion kind; the cause
+// and the reason below it are not persisted, so a restored object has no cause
+// by construction -- not because it has none, but because this process never
+// saw the round that produced it.
+//
+// So after every rollout, every restored anomalous object reads as causeless
+// until it completes a fresh round. That is the state the deployment is in for
+// the first minutes of every release, which is exactly when someone is looking.
+var RESTORED_SOURCES = {
+  RESTORED_LAST_FULL: true,
+  RESTORED_AT_RESTART: true
+};
+
+function missingCauseText(anomaly) {
+  if (anomaly.cause || anomaly.cause_reason) return '';
+  if (!RESTORED_SOURCES[anomaly.since_from]) return '';
+  return '成因没保留——这一条是重启后从记录里恢复的，等它跑完下一轮才会有';
 }
 
 function loadWindows() {

@@ -114,3 +114,19 @@ func TestFleetVerdictSourceIsBoundOnce(t *testing.T) {
 		t.Fatal("a nil judgment source was accepted")
 	}
 }
+
+// The acknowledgement partition is exported by state so an alert can watch
+// lagging directly; unknown is exported as its own value rather than being
+// folded into either side.
+func TestFleetVerdictExportsTheWorkerAcknowledgementByState(t *testing.T) {
+	gathered := gatherFleet(t, FleetVerdict{
+		Health:  "HEALTHY",
+		Workers: []FleetCount{{Value: "acked", Count: 2}, {Value: "lagging", Count: 1}, {Value: "unknown", Count: 0}},
+	})
+	workers := gathered["bkmonitor_alarmd_fleet_workers"]
+	for state, want := range map[string]float64{"acked": 2, "lagging": 1, "unknown": 0} {
+		if got, ok := workers[state]; !ok || got != want {
+			t.Fatalf("fleet_workers[%s] = %v (present %v), want %v", state, got, ok, want)
+		}
+	}
+}

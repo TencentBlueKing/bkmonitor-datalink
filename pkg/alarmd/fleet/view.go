@@ -289,6 +289,10 @@ type Snapshot struct {
 	// TestSnapshotOmitsDispatchOnAReplicaThatDoesNotSuppress rather than a note
 	// here: it asserts on the encoded form, which is where the page reads this.
 	Dispatch *DispatchSuppression `json:"dispatch,omitempty"`
+	// AppliedActivationRecordRevision is the Activation this replica executes
+	// by, as its record revision. Zero means the replica did not report it,
+	// which the aggregate keeps apart from any lag.
+	AppliedActivationRecordRevision uint64 `json:"applied_activation_record_revision,omitempty"`
 }
 
 // Truncated reports whether the replica had more anomalies than it published.
@@ -318,6 +322,11 @@ type Expectation struct {
 	// it; the arithmetic below then falls back to comparing sizes, which is
 	// what it did before.
 	IDs []string
+	// ActivationRecordRevision is the record revision of the Activation the
+	// control plane has published, the version every replica is expected to
+	// have applied. Zero means it could not be read, and no replica is then
+	// called lagging.
+	ActivationRecordRevision uint64
 }
 
 // Disagreement names which kind of coverage disagreement a deployment has,
@@ -372,6 +381,23 @@ type ReplicaView struct {
 	// Capacity is this replica's own occupancy. Present only where the replica
 	// reports it; absent is different from zero and stays absent.
 	Capacity *Capacity `json:"capacity,omitempty"`
+	// AckedVersion is the Activation record revision this replica reported
+	// executing by, absent when it reported none. Lag is the difference
+	// between it and the deployment's PublishedVersion, two persisted
+	// versions; it is never derived from when the report was made.
+	AckedVersion *uint64 `json:"acked_version,omitempty"`
+}
+
+// WorkerAcknowledgement partitions the replicas the view counted by whether
+// they have applied the Activation the control plane published: Ready is the
+// counted replicas and equals Acked + Lagging + Unknown. Unknown is a replica
+// that reported no version, or a deployment whose published version could
+// not be read; it is never folded into either side.
+type WorkerAcknowledgement struct {
+	Ready   int `json:"ready"`
+	Acked   int `json:"acked"`
+	Lagging int `json:"lagging"`
+	Unknown int `json:"unknown"`
 }
 
 // View is the aggregated answer returned to callers.
@@ -448,6 +474,11 @@ type View struct {
 	// the page: the page can only divide totals, which cannot recover which
 	// replica an anomaly came from.
 	PerReplica []ReplicaView `json:"per_replica"`
+	// PublishedVersion is the Activation record revision the control plane
+	// published, the version the replicas' acked_version columns are read
+	// against; absent when it could not be read.
+	PublishedVersion uint64                `json:"published_version,omitempty"`
+	Workers          WorkerAcknowledgement `json:"workers"`
 }
 
 // Aggregate folds the published snapshots into one view.
@@ -474,6 +505,7 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	for _, snapshot := range snapshots {
 		byReplica[snapshot.Replica] = snapshot
 	}
+	view.PublishedVersion = expectation.ActivationRecordRevision
 
 	// No replica means no evidence. Reporting healthy here would turn the whole
 	// deployment being gone into the quietest possible answer.
@@ -520,6 +552,21 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			Anomalies: snapshot.TotalAnomalies, Demoted: snapshot.TotalDemoted,
 			AgeSeconds: now.Sub(snapshot.TakenAt).Seconds(),
 			Truncated:  snapshot.Truncated(), Capacity: snapshot.Capacity,
+		}
+		view.Workers.Ready++
+		switch {
+		case snapshot.AppliedActivationRecordRevision == 0 || expectation.ActivationRecordRevision == 0:
+			view.Workers.Unknown++
+		case snapshot.AppliedActivationRecordRevision >= expectation.ActivationRecordRevision:
+			// Ahead of the published version can only be a read of the two
+			// facts straddling an activation; the replica is not behind.
+			view.Workers.Acked++
+		default:
+			view.Workers.Lagging++
+		}
+		if snapshot.AppliedActivationRecordRevision != 0 {
+			acked := snapshot.AppliedActivationRecordRevision
+			perReplica.AckedVersion = &acked
 		}
 		// Same subtraction as the deployment view, for the same reason: a
 		// healthy count built by its own walk drifts from the lists beside it.

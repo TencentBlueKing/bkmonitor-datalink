@@ -614,7 +614,9 @@ func openProductionPhaseTwoBundleWithDependencies(
 		return nil, err
 	}
 	repository.ConfigureSnapshotMemory(worker.PreparationByteAdmission(coordinator), worker.PreparationObjectBytes)
-	registration, err := phaseTwoWorkerRegistration(cfg, ownership.WorkerStarting, external.Now())
+	// Only the static compatibility is read from this one; the heartbeat that
+	// carries acknowledgement and load is written by the bundle once it exists.
+	registration, err := phaseTwoWorkerRegistration(cfg, ownership.WorkerStarting, external.Now(), nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -792,6 +794,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		// cursor older than that describes an object that stopped rather than
 		// one between rounds.
 		capacity: capacitySnapshotSource(flights, cfg, rejectionTally, bundle.rotationFacts, seriesPullTally),
+		applied:  repository.AppliedActivationRevision,
 		// The due index is the only thing that knows an object was passed over
 		// rather than evaluated. It lives on the bundle precisely so a reader
 		// outside the dispatch loop can ask it.
@@ -805,6 +808,10 @@ func openProductionPhaseTwoBundleWithDependencies(
 		staleAfter:    stallAfter,
 		restoreBudget: fleetRestoreBudgetPerPublish,
 	}
+	// The heartbeat reports the same acknowledgement and occupancy the fleet
+	// snapshot publishes, from the same sources.
+	bundle.applied = publisher.applied
+	bundle.capacity = publisher.capacity
 	return bundle, nil
 }
 

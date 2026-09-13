@@ -116,6 +116,11 @@ type HealthResponse struct {
 	DemotionExtensions int       `json:"demotion_extensions"`
 	DemotionExits      int       `json:"demotion_exits"`
 	LastDemotionExit   time.Time `json:"last_demotion_exit,omitempty"`
+	// PublishedVersion and Workers are the acknowledgement view: which
+	// Activation the control plane published and how many counted replicas
+	// have applied it. Per-replica versions are on PerReplica.
+	PublishedVersion uint64                `json:"published_version,omitempty"`
+	Workers          WorkerAcknowledgement `json:"workers"`
 	// Overdue rides here rather than only in the list because the list can be
 	// paged or truncated, and "how many objects are not being evaluated" must
 	// not depend on how much of the list fitted.
@@ -451,6 +456,7 @@ func NewHandler(
 			DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
 			LastDemotionExit: view.LastDemotionExit,
 			Coverage:         view.Coverage, PerReplica: view.PerReplica,
+			PublishedVersion: view.PublishedVersion, Workers: view.Workers,
 			Overdue: view.Overdue, Dispatch: view.Dispatch,
 			Gaps: view.Gaps, Capacity: view.Capacity,
 		})

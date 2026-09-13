@@ -365,3 +365,27 @@ func TestWorkerWorkCountsOnlyCompletedEventACKAndProgress(t *testing.T) {
 		t.Fatalf("committed degraded progress work = %v, want 1", got)
 	}
 }
+
+// The compile counter splits the strategies of a refresh round by whether the
+// round compiled them or took them from an earlier round's compilation of the
+// same document; the two series add up to the strategies of the round.
+func TestPhaseTwoSourceCompileCounterSplitsCompiledFromReused(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentControlPlane,
+		Stage:     observability.StageSnapshotRefreshed,
+		Result:    observability.ResultSuccess,
+		SourceRefresh: &observability.SourceRefreshFacts{
+			Status: observability.AllSourceRefreshStatuses()[0], CompiledStrategies: 3, ReusedStrategies: 7,
+		},
+	})
+	if got := testutil.ToFloat64(recorder.phaseTwo.sourceCompiles.WithLabelValues("compiled")); got != 3 {
+		t.Fatalf("compiled = %v, want 3", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.sourceCompiles.WithLabelValues("reused")); got != 7 {
+		t.Fatalf("reused = %v, want 7", got)
+	}
+	if got := testutil.CollectAndCount(recorder.phaseTwo.sourceCompiles); got != len(sourceCompileResults) {
+		t.Fatalf("compile series = %d, want the %d fixed results and nothing else", got, len(sourceCompileResults))
+	}
+}

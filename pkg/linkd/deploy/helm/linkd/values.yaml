@@ -11,7 +11,7 @@ commonAnnotations: {}
 image:
   registry: ghcr.io
   repository: tencentblueking/bkmonitor-datalink/linkd
-  tag: "0.1.4"
+  tag: "0.1.5"
   digest: ""
   pullPolicy: IfNotPresent
   pullSecrets: []
@@ -61,7 +61,7 @@ eventgen:
   image:
     registry: ghcr.io
     repository: tencentblueking/bkmonitor-datalink/linkd-eventgen
-    tag: "0.1.1"
+    tag: "0.1.2"
     digest: ""
     pullPolicy: IfNotPresent
     pullSecrets: []
@@ -187,7 +187,7 @@ console:
   image:
     registry: ghcr.io
     repository: tencentblueking/bkmonitor-datalink/linkd-console
-    tag: "0.1.4"
+    tag: "0.1.5"
     digest: ""
     pullPolicy: IfNotPresent
     pullSecrets: []

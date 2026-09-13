@@ -27,7 +27,7 @@ import (
 // CanonicalJSONV2 produces the shared digest representation: sorted object
 // keys, preserved array order and number tokens, no insignificant whitespace,
 // no HTML escaping and no trailing newline.
-func CanonicalJSONV2(value any) ([]byte, error) {
+func CanonicalJSONV2(value any) (result []byte, err error) {
 	var raw []byte
 	switch typed := value.(type) {
 	case json.RawMessage:
@@ -51,18 +51,28 @@ func CanonicalJSONV2(value any) ([]byte, error) {
 	}
 	valueType := reflect.TypeOf(value)
 	closed := canonicalClosedType(valueType, nil)
-	// Only the standard encoder over a closed type can establish unique keys.
-	// Raw fragments, interfaces and custom marshalers retain the strict walk.
-	if !closed {
-		if err := rejectDuplicateJSONFields(raw); err != nil {
-			return nil, err
+
+	// Shadow runs after the answer is settled, whichever way it was settled,
+	// which is why it hangs off the named return rather than sitting next to
+	// one of the six places this function can leave from. It is skipped when
+	// the single-pass form is already authoritative, because comparing that
+	// path against itself would report agreement forever.
+	if canonicalStreamShadow.Load() && !canonicalStreamEnabled.Load() {
+		shadowRaw := raw
+		shadowType := "nil"
+		if valueType != nil {
+			shadowType = valueType.String()
 		}
+		defer func() { compareCanonicalShadow(shadowType, shadowRaw, result, err) }()
 	}
+
 	// A closed string of valid UTF-8 has nothing left to canonicalize: no object
 	// keys to sort and no number tokens to preserve, and the decode and
 	// re-encode below hand back exactly the bytes the encoder just produced.
 	// The identity keys of Runtime State are derived one per series from such a
-	// string, so the round trip is skipped rather than paid for.
+	// string, so the round trip is skipped rather than paid for. This stays
+	// ahead of the single-pass form, which would reach the same answer by
+	// decoding and re-emitting bytes that are already final.
 	//
 	// Invalid UTF-8 is the one case where the round trip is not the identity:
 	// the encoder writes an escaped replacement character, which the decode
@@ -70,6 +80,38 @@ func CanonicalJSONV2(value any) ([]byte, error) {
 	// string keeps the long path, which is what defines its canonical form.
 	if closed && valueType.Kind() == reflect.String && utf8.ValidString(reflect.ValueOf(value).String()) {
 		return restoreJSONLineSeparatorsV2(raw), nil
+	}
+
+	// The single-pass form is tried before the strict walk, not after it. It
+	// already refuses everything the walk refuses -- duplicate fields, a
+	// non-string key, a non-finite number, a trailing value, anything
+	// malformed -- so running the walk first would leave the saving on the
+	// table: the walk is a full decode of its own, and measured that way the
+	// two paths together were only 28% faster than the old one alone.
+	//
+	// It declines rather than reporting an error, and everything below then
+	// runs exactly as it did, strict walk included. So a decline can only cost
+	// time, and the rejection an input receives is still the one the
+	// established path writes.
+	if canonicalStreamEnabled.Load() {
+		if out, ok := canonicalStreamV2(make([]byte, 0, len(raw)), raw); ok {
+			canonicalStreamServed.Add(1)
+			// No line separator restoration. That pass undoes the encoder's
+			// escaping of U+2028 and U+2029; emitting from decoded runes never
+			// escapes them, and the only way those six characters reach this
+			// output is as an escaped backslash followed by text, which the
+			// pass leaves alone anyway.
+			return out, nil
+		}
+		canonicalStreamDeclined.Add(1)
+	}
+
+	// Only the standard encoder over a closed type can establish unique keys.
+	// Raw fragments, interfaces and custom marshalers retain the strict walk.
+	if !closed {
+		if err := rejectDuplicateJSONFields(raw); err != nil {
+			return nil, err
+		}
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(raw))

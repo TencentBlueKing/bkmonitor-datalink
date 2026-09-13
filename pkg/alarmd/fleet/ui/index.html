@@ -203,12 +203,14 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
 
   <section class="panel">
     <h2 id="listTitle">异常对象</h2>
-    <p class="basis">按已持续时长排序，最久的在最前；因此第一页就是坏得最久的一批。时间口径：持续时长按每条自身的起算点，见“起算来源”列。</p>
+    <p class="basis" id="orderBasis"></p>
     <p class="basis" id="listBasis"></p>
     <p class="basis" id="stallNote" hidden></p>
     <div class="filters">
       <button id="colOwn" class="primary">自身异常</button>
       <button id="colDemoted">策略本身不可用（降级池）</button>
+      <button id="ordOldest" class="primary">坏得最久的在前</button>
+      <button id="ordNewest">刚开始坏的在前</button>
       <input id="fReplica" list="replicaList" placeholder="副本" size="10">
       <datalist id="replicaList"></datalist>
       <input id="fStrategy" placeholder="策略 ID" size="9">
@@ -307,9 +309,13 @@ var filters = { replica: '', strategy: '', business: '' };
 // than filtered on the page, for the same reason the filters are: the list is
 // paged, and a page cannot separate two lists it only holds twenty rows of.
 var column = 'anomalies';
+// Which end of the list the first page is. Sorted on the server for the same
+// reason the filters are applied there: reordering twenty loaded rows would
+// reorder the page, not the list, and page two would continue the other order.
+var order = 'oldest';
 
 function query() {
-  var parts = ['offset=' + offset, 'limit=' + LIMIT, 'column=' + column];
+  var parts = ['offset=' + offset, 'limit=' + LIMIT, 'column=' + column, 'order=' + order];
   Object.keys(filters).forEach(function (k) {
     if (filters[k]) parts.push(k + '=' + encodeURIComponent(filters[k]));
   });
@@ -415,6 +421,23 @@ var SINCE_SOURCE = {
   RESTORED_LAST_FULL: '上次完整跑完的时刻；真正变坏的时刻没保留，所以实际没这么久',
   RESTORED_AT_RESTART: '本进程接手的时刻；之前有多久没人知道，只会比这更久',
   REFUSED_FUTURE: '记录的时刻比现在还晚，已拒绝——这是缺陷，请上报'
+};
+
+// Which direction each provenance is wrong in, rendered onto the duration
+// itself rather than only in the column beside it.
+//
+// The list is sorted by that duration, and three of the six sources are not a
+// measurement: a restored object's timestamp is an upper bound, a pre-existing
+// one's is a lower bound. Sorting them against each other as if they were the
+// same quantity puts the fifteen least trustworthy numbers at the top of page
+// one -- they are the largest precisely because their start times were pushed
+// back to the last thing on record. A reader would have to cross-reference the
+// provenance column row by row to know that, so it goes on the number.
+var SINCE_BOUND = {
+  PROCESS_START: '≥ ',
+  RESTORED_AT_RESTART: '≥ ',
+  RESTORED_LAST_FULL: '≤ ',
+  REFUSED_FUTURE: '? '
 };
 
 function loadHealth() {
@@ -538,13 +561,13 @@ function loadHealth() {
 }
 
 function loadObjects() {
-  return api('objects?' + query()).then(function (d) {
+  return api('objects?' + query()).then(function (objects) {
     show('objErr', false);
     // Which list came back is read off the response, never assumed from what was
     // asked for. A page that labels the rows by its own request state shows the
     // previous column's heading over the new column's rows for one refresh, and
     // the two columns mean opposite things about whose fault the objects are.
-    var served = d.column || 'anomalies';
+    var served = objects.column || 'anomalies';
     var pool = served === 'demoted';
     text('listTitle', pool ? '策略本身不可用（降级池）' : '自身异常对象');
     text('listBasis', pool
@@ -552,8 +575,16 @@ function loadObjects() {
       : 'alarmd 自己没有把这些对象跑好，是需要处理的真问题。后端查不到而被降级的对象不在这里，在另一栏。');
     document.getElementById('colOwn').className = pool ? '' : 'primary';
     document.getElementById('colDemoted').className = pool ? 'primary' : '';
-    var rows = d.anomalies || [];
-    total = (d.page && d.page.total) || 0;
+    // Read off the response, never from what was asked for: the buttons and the
+    // wording under them have to describe the rows that actually came back.
+    var served_order = objects.order || 'oldest';
+    document.getElementById('ordOldest').className = served_order === 'newest' ? '' : 'primary';
+    document.getElementById('ordNewest').className = served_order === 'newest' ? 'primary' : '';
+    text('orderBasis', served_order === 'newest'
+      ? '刚开始坏的在最前，因此第一页就是最近发生的一批。时间口径：持续时长按每条自身的起算点，见“起算来源”列——那一列有三种，含义不同，不能直接互相比大小。'
+      : '坏得最久的在最前，因此第一页是陈年的一批；刚开始坏的排在最后，要看正在发生的事请切到“刚开始坏的在前”。时间口径：持续时长按每条自身的起算点，见“起算来源”列——那一列有三种，含义不同，不能直接互相比大小。');
+    var rows = objects.anomalies || [];
+    total = (objects.page && objects.page.total) || 0;
     var tb = document.getElementById('rows');
     tb.textContent = '';
     rows.forEach(function (a) {
@@ -610,7 +641,10 @@ function loadObjects() {
       // that separates the two. The row's duration is how long the object has
       // been anomalous; how long its rounds have not ended is a different,
       // usually shorter, clock, and the chip carries that one.
-      var held = cell(duration(a.since));
+      var held = cell((SINCE_BOUND[a.since_from] || '') + duration(a.since));
+      if (SINCE_BOUND[a.since_from]) {
+        held.title = SINCE_SOURCE[a.since_from] || a.since_from;
+      }
       if (a.stalled) {
         var chip = document.createElement('span');
         chip.className = 'stuck';
@@ -640,28 +674,37 @@ function loadObjects() {
         });
         td.appendChild(span);
       });
-      if (!strategies.length) td.textContent = '未观察到';
+      // "未观察到" alone reads as "this object has no strategies", which would
+      // make the row unactionable and also untrue. A blocked round never got a
+      // Slot, and the strategy references come off the Slot -- so for this kind
+      // the cell is empty by construction, every time, and saying which of the
+      // two it is decides whether the reader goes looking for a strategy.
+      if (!strategies.length) {
+        td.textContent = a.kind === 'BLOCKED_RUN'
+          ? '未观察到（这一轮没取到 Slot，策略是从 Slot 上读的）'
+          : '未观察到';
+      }
       tr.appendChild(td);
       tb.appendChild(tr);
     });
-    renderSummary(d.summary, total);
-    renderStallNote(d.stall_after_seconds, d.summary && d.summary.stalled,
-      d.stalled_total, d.filtered);
+    renderSummary(objects.summary, total);
+    renderStallNote(objects.stall_after_seconds, objects.summary && objects.summary.stalled,
+      objects.stalled_total, objects.filtered);
     var list = document.getElementById('replicaList');
     list.textContent = '';
-    (d.replicas || []).forEach(function (r) {
+    (objects.replicas || []).forEach(function (r) {
       var option = document.createElement('option');
       option.value = r;
       list.appendChild(option);
     });
     // An empty table means something different once a filter is on, and the rows
     // alone cannot say which case this is.
-    text('applied', d.filtered ? '已按条件过滤' : '');
-    document.getElementById('objEmpty').textContent = d.filtered
+    text('applied', objects.filtered ? '已按条件过滤' : '');
+    document.getElementById('objEmpty').textContent = objects.filtered
       ? '当前过滤条件下没有异常对象。' : '当前没有异常对象。';
     show('objEmpty', rows.length === 0 && total === 0);
     var shown = rows.length ? '第 ' + (offset + 1) + '–' + (offset + rows.length) + ' 条' : '无';
-    var real = d.anomalies_total;
+    var real = objects.anomalies_total;
     text('pageInfo', shown + '，共 ' + total + ' 条' +
       (real !== undefined && real > total
         ? '（副本实际有 ' + real + ' 条，快照已截断，此处只能翻到 ' + total + ' 条）'
@@ -788,9 +831,46 @@ function renderReplicas(rows) {
 // up, nobody can say one to the person who configured the strategy, and a list
 // of them cannot say whether this is one misconfiguration or fifty. This is the
 // same population counted in the unit a conversation happens in.
+// When did this population start? The ordering cannot say -- it puts one end
+// on the first page and the other past the last -- and neither can a page of
+// twenty rows. A deployment read with 45 of 83 objects less than two hours old
+// showed none of them until page three, under a heading that said the first
+// page was the batch worth reading.
+//
+// The counts are over the whole filtered list, from the server, so this line
+// answers "is something happening right now" before any paging.
+function onsetLine(onset, total) {
+  if (!onset || !total) return '';
+  var parts = [];
+  if (onset.last_hour) { parts.push('最近 1 小时内新出现 ' + onset.last_hour + ' 个'); }
+  if (onset.last_day) { parts.push('1 小时到 1 天内 ' + onset.last_day + ' 个'); }
+  if (onset.older) { parts.push('超过 1 天的 ' + onset.older + ' 个'); }
+  if (!parts.length) return '';
+  var line = parts.join('，');
+  if (onset.newest_since) {
+    line += '；最新的一个是 ' + duration(onset.newest_since) + '前开始的';
+  }
+  // Two ends minutes apart is one event, and then the row order carries no
+  // information at all -- which is exactly what a duration-sorted first page
+  // reads as. Said once here rather than left for a reader to notice by
+  // comparing the top and bottom of a list they cannot see at once.
+  if (onset.newest_since && onset.oldest_since) {
+    var spreadMinutes = (new Date(onset.newest_since).getTime()
+      - new Date(onset.oldest_since).getTime()) / 60000;
+    if (isFinite(spreadMinutes) && spreadMinutes >= 0 && spreadMinutes < 10 && total > 1) {
+      line += '。这 ' + total + ' 个的起算时刻前后相差不到 '
+        + Math.max(1, Math.ceil(spreadMinutes)) + ' 分钟——它们是同时开始的，'
+        + '按持续时长排序在这里分不出轻重';
+    }
+  }
+  return line;
+}
+
 function renderRollup(summary, total) {
   if (!summary || !total) { text('rollup', ''); return; }
   var parts = ['这 ' + total + ' 个对象背后是 ' + (summary.strategies || 0) + ' 条策略'];
+  var onset = onsetLine(summary.onset, total);
+  if (onset) parts.unshift(onset);
   var byBiz = summary.by_business || [];
   if (byBiz.length) {
     parts.push('分布在 ' + byBiz.length + ' 个业务：'
@@ -865,6 +945,20 @@ function renderSummary(summary, total) {
         div.appendChild(b);
       });
       if (counts.length > 6) div.appendChild(document.createTextNode(' …还有 ' + (counts.length - 6) + ' 种'));
+      // A group only some objects carry reads as the distribution of the whole
+      // list. On a live read "失败在哪：查询链路传输 4 · 数据源后端 3 · 评估失败 1"
+      // sat above 83 objects and described 8 of them -- the other 75 carried no
+      // failure record at all, and nothing on the page said so. This is the
+      // group's own denominator, stated per group because each one is
+      // different.
+      var covered = 0;
+      counts.forEach(function (c) { covered += c.count; });
+      if (covered < total) {
+        var part = document.createElement('span');
+        part.className = 'sep';
+        part.textContent = '（只覆盖 ' + covered + '/' + total + ' 个对象，其余没有这一项）';
+        div.appendChild(part);
+      }
       host.appendChild(div);
     });
 }
@@ -1004,10 +1098,22 @@ function renderCapacity(cap, gaps) {
         : '用量要两次读取才算得出，约 30 秒后出现') +
       '；' + cpuFrom + '；' +
       (throttledShare !== null
-        // One decimal, not zero: rounding a real but small share to "0%" beside
-        // a number that says throttling is happening reads as a contradiction.
-        ? (throttledShare > 0 ? '被限流 ' + throttledShare.toFixed(1) + '% 的时间' : '没被限流')
-        : (cap.throttled_seconds ? '启动至今累计被限流 ' + Math.round(cap.throttled_seconds) + ' 秒'
+        // One decimal was not enough. A live read throttled 0.0017 seconds over
+        // 35, which is a share of 0.002% -- real, and it printed as "被限流
+        // 0.0% 的时间", a number that says throttling is happening and a figure
+        // that says it is not. Below what one decimal can show, the words carry
+        // it instead.
+        ? (throttledShare <= 0 ? '没被限流'
+          : (throttledShare < 0.05 ? '几乎没有被限流（不到 0.1%）'
+            : '被限流 ' + throttledShare.toFixed(1) + '% 的时间'))
+        // Cumulative seconds since process start is the wrong quantity: it has
+        // no denominator a reader can see, so 71 seconds says nothing about
+        // whether this deployment is being held back -- it could be a bad
+        // minute yesterday or a steady squeeze all week, and it grows forever
+        // without ever meaning more. The share needs two reads like every other
+        // rate on this card, so until then only the one bit that is decidable
+        // from a single read is stated.
+        : (cap.throttled_seconds ? '启动至今被限流过，占多少时间要两次读取才算得出，约 30 秒后出现'
                                  : '启动至今没被限流')),
       cap.cpu_source !== 'cpu_quota' && cap.cpu_source !== 'cpu_quota_minimum');
   }
@@ -1031,13 +1137,32 @@ function renderCapacity(cap, gaps) {
     // a single series, so a small minority of those drags the mean well above
     // what any ordinary round does. The mean hides exactly the part that
     // matters, which is that a few requirements cost tens of times the rest.
-    cell('Access 拉取',
-      rate.series ? rate.series.rate.toFixed(0) + ' 条时序/秒' : '等下一次读取',
-      rate.series
-        ? (rate.points
-            ? '这些时序里一共 ' + rate.points.rate.toFixed(0) + ' 个数据点/秒。两个不同的量：一个是拉了多少条曲线，一个是曲线里一共多少个点'
-            : '数据点速率要两次读取才算得出')
-        : '全部副本相加，两次读取才算得出，约 30 秒后出现');
+    // The two rates come out equal whenever every series pulled in the window
+    // carried a single point, and then a hint insisting they are two different
+    // quantities reads as the page contradicting its own numbers -- a live read
+    // showed "769 条时序/秒" above "一共 769 个数据点/秒".
+    //
+    // They were equal to the unit: 23011 series and 23011 points over the same
+    // 35 seconds, against a lifetime ratio of 1.76 points per series. That is
+    // not a coincidence and it is not nothing: it says no round in that window
+    // pulled a history window, every one of them fetched one point for its own
+    // period. So the equal case gets its own sentence, which is the reading, not
+    // a restatement of the definition.
+    var pointsPerSeries = rate.series && rate.points && rate.series.rate > 0
+      ? rate.points.rate / rate.series.rate : null;
+    var pullHint;
+    if (!rate.series) {
+      pullHint = '全部副本相加，两次读取才算得出，约 30 秒后出现';
+    } else if (!rate.points) {
+      pullHint = '数据点速率要两次读取才算得出';
+    } else if (pointsPerSeries !== null && Math.abs(pointsPerSeries - 1) < 0.005) {
+      pullHint = '这些时序里一共 ' + rate.points.rate.toFixed(0)
+        + ' 个数据点/秒——和条数一样，也就是这段时间每条时序只取了 1 个点，没有谁在拉历史窗口';
+    } else {
+      pullHint = '这些时序里一共 ' + rate.points.rate.toFixed(0) + ' 个数据点/秒，平均每条 '
+        + pointsPerSeries.toFixed(1) + ' 个点。条数是拉了多少条曲线，点数是曲线里一共多少个点';
+    }
+    cell('Access 拉取', rate.series ? rate.series.rate.toFixed(0) + ' 条时序/秒' : '等下一次读取', pullHint);
   }
   // Derived from the two above. The instant answers "is anything running right
   // now", which a page load lands on at an arbitrary moment. It cannot answer
@@ -1068,17 +1193,25 @@ function renderCapacity(cap, gaps) {
   // different clocks in one sentence: "2.2 of 64 running" next to "10 queued"
   // reads as a contradiction, when both can be true -- the average spans half a
   // minute during which the budget may well have been full.
-  var ceilingText = permitCeiling + ' 个（' + cap.replicas + ' 副本各 ' + cap.permit_budget + '）';
-  var average = held
-    ? '最近 ' + Math.round(held.elapsed) + ' 秒平均跑着 ' + held.rate.toFixed(1) + ' 个（均值会把短暂跑满抹平）。'
-    : '平均值要两次读取才算得出，约 30 秒后出现。';
+  // Four sentences, a parenthetical inside a parenthetical, and a caveat that
+  // undercut the number it was attached to without telling anyone what to do
+  // with it. Rewritten to one sentence of measurement and one of queue.
+  //
+  // The code's own word for these and where the ceiling comes from are both
+  // gone from the card: the panel's opening paragraph already says the operator
+  // sets two numbers and the program derives every ceiling below them, and
+  // saying it again on each card is what pushed the measurement to the end.
+  var ceilingText = '上限 ' + permitCeiling + ' 个（' + cap.replicas + ' 副本各 ' + cap.permit_budget + '）';
+  var queueText = cap.waiting > 0
+    ? '另有 ' + cap.waiting + ' 个在排队等位子。'
+    : '没有查询在排队。';
   cell('同时在跑的查询',
     cap.permits_held + ' / ' + permitCeiling,
-    '此刻在跑 ' + cap.permits_held + ' 个，最多能同时跑 ' + ceilingText + '。' +
-      (cap.waiting > 0
-        ? '此刻另有 ' + cap.waiting + ' 个在排队等位子。'
-        : '此刻没有查询在排队。') +
-      average + '（代码里叫查询许可，按 CPU limit 派生）',
+    (held
+      ? '最近 ' + Math.round(held.elapsed) + ' 秒平均跑着 ' + held.rate.toFixed(1)
+        + ' 个，此刻 ' + cap.permits_held + ' 个；' + ceilingText + '。'
+      : '此刻在跑 ' + cap.permits_held + ' 个，' + ceilingText + '；平均值约 30 秒后出现。')
+      + queueText,
     cap.waiting > 0);
   // Only shown when it says something is wrong.
   //
@@ -1149,11 +1282,11 @@ var STAGE_TEXT = {
   runner_decision: '决定这轮做什么',
   runner_dispatch: '派去执行',
   runner_return: '执行返回',
-  runner_completed: '这轮结束',
+  runner_completed: '这一轮总用时',
   execution_outcome: '本轮执行结果',
   slot_completed: '时间点结束',
   slot_selection: '选定要算的时间点',
-  slot_source_completed: '取到这一轮要算什么',
+  slot_source_completed: '取这一轮要算什么，用时',
   slot_readiness_arrival: '到达查询层',
   schedule_due: '到点了',
   slot_started: '开始算这个时间点',
@@ -1185,6 +1318,22 @@ var DECISION_TEXT = {
   waiting_P: '在等执行位',
   P_acquired: '拿到执行位'
 };
+// Two stages carry no outcome at all. Both are emitted by one timing wrapper
+// that records how long a call took and stamps every record success, on purpose
+// -- the failures on that path report themselves, with their own reasons, on
+// their own records.
+//
+// The page was printing that stamp as an outcome, so a round blocked inside the
+// Slot source rendered "取到这一轮要算什么：成功" directly above the record that
+// said it was blocked. A reader following the trace concluded the fetch had
+// worked and went looking one stage further down -- past the answer. The
+// duration is the whole content of these rows, and it is already in the last
+// column, so the word comes off and the names say what they are.
+var TIMING_ONLY_STAGES = {
+  slot_source_completed: true,
+  runner_completed: true
+};
+
 var RESULT_TEXT = {
   terminal: '终止', retrying: '会重试', success: '成功', ok: '成功',
   degraded: '降级', skipped: '跳过', started: '开始', retrying: '会重试'
@@ -1494,7 +1643,9 @@ function renderRuns(host, runs, manyProcesses) {
       detail.className = 'de';
       var parts = [];
       if (facts.decision) parts.push(say(DECISION_TEXT, facts.decision));
-      if (record.result) parts.push(say(RESULT_TEXT, record.result));
+      if (record.result && !TIMING_ONLY_STAGES[record.stage]) {
+        parts.push(say(RESULT_TEXT, record.result));
+      }
       var reason = reasonText(record.reason_code);
       // The failure code and the reason are often the same string; printing
       // both put "QUERY_TIMEOUT · QUERY_TIMEOUT" on the row.
@@ -1729,6 +1880,18 @@ function showColumn(next) {
 }
 document.getElementById('colOwn').addEventListener('click', function () { showColumn('anomalies'); });
 document.getElementById('colDemoted').addEventListener('click', function () { showColumn('demoted'); });
+
+// Same reset as showColumn, for the same reason: offset 60 of oldest-first and
+// offset 60 of newest-first are different objects, and carrying it over lands
+// the reader in the middle of a list they asked to see the start of.
+function showOrder(next) {
+  if (order === next) return;
+  order = next;
+  offset = 0;
+  loadObjects();
+}
+document.getElementById('ordOldest').addEventListener('click', function () { showOrder('oldest'); });
+document.getElementById('ordNewest').addEventListener('click', function () { showOrder('newest'); });
 document.getElementById('apply').addEventListener('click', applyFilters);
 document.getElementById('clear').addEventListener('click', function () {
   ['fReplica', 'fStrategy', 'fBusiness'].forEach(function (id) {

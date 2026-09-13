@@ -186,7 +186,7 @@ func TestTheSymptomSurvivesAllTheWayToTheSummary(t *testing.T) {
 			t.Fatalf("%s carries no symptom: %+v", anomaly.QueryGroup, anomaly.Failure)
 		}
 	}
-	summary := summarize(anomalies)
+	summary := summarize(anomalies, time.Now())
 	got := map[string]int{}
 	for _, count := range summary.ByFailureDetail {
 		got[count.Value] = count.Count

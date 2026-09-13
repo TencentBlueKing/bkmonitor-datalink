@@ -206,7 +206,7 @@ func TestTheReasonBelowTheCauseSurvivesToTheSummary(t *testing.T) {
 	}
 
 	got := map[string]int{}
-	for _, count := range summarize(anomalies).ByCauseReason {
+	for _, count := range summarize(anomalies, at).ByCauseReason {
 		got[count.Value] = count.Count
 	}
 	// One cause, two reasons. That split is the whole reason the column exists:

@@ -135,4 +135,13 @@ func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 			t.Errorf("%s failed without the snapshot body for another reason: %v", reader.name, err)
 		}
 	}
+	// Every body read is counted at its attempt, by the reader that made
+	// it. The first activation audited the index against the body (one in
+	// sixteen, by design), the inventory above read one Query Group and one
+	// Plan, and nothing fell back to the body for a publication without a
+	// manifest or ran the legacy cleanup.
+	reads := harness.repository.ControlReadCacheStats().BodyReads
+	if reads != (controlplane.ControlSnapshotBodyReads{IndexAudit: 1, QueryGroup: 1, Plan: 1}) {
+		t.Fatalf("snapshot body reads = %+v, want one audit, one Query Group and one Plan read", reads)
+	}
 }

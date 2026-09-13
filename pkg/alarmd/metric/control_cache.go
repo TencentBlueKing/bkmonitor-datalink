@@ -66,14 +66,37 @@ type ControlCacheOccupancy struct {
 	BytesLimit float64
 }
 
+// Closed vocabulary of snapshot_body_read_total's reader label: the readers
+// of the whole snapshot body that remain after the Leader's activation moved
+// to the catalog index. Every reader publishes from the start.
+const (
+	SnapshotBodyReaderActivationContent = "activation_content"
+	SnapshotBodyReaderIndexAudit        = "index_audit"
+	SnapshotBodyReaderQueryGroup        = "query_group"
+	SnapshotBodyReaderPlan              = "plan"
+	SnapshotBodyReaderLegacyCleanup     = "legacy_cleanup"
+)
+
+// SnapshotBodyReaders lists the readers in the order they are published.
+var SnapshotBodyReaders = []string{SnapshotBodyReaderActivationContent, SnapshotBodyReaderIndexAudit,
+	SnapshotBodyReaderQueryGroup, SnapshotBodyReaderPlan, SnapshotBodyReaderLegacyCleanup}
+
+// SnapshotBodyReadCounts is one reader's count of whole snapshot body reads.
+type SnapshotBodyReadCounts struct {
+	Reader string
+	Reads  uint64
+}
+
 type controlCacheCollector struct {
 	mu         sync.Mutex
 	source     func() []ControlCacheCounts
+	bodySource func() []SnapshotBodyReadCounts
 	desc       *prometheus.Desc
 	entries    *prometheus.Desc
 	bytes      *prometheus.Desc
 	bytesLimit *prometheus.Desc
 	audit      *prometheus.Desc
+	bodyReads  *prometheus.Desc
 }
 
 func newControlCacheCollector() *controlCacheCollector {
@@ -112,7 +135,31 @@ func newControlCacheCollector() *controlCacheCollector {
 				"opposite failures and are never added together.",
 			[]string{"object", "result"}, nil,
 		),
+		bodyReads: prometheus.NewDesc(
+			prometheus.BuildFQName(metricNamespace, metricSubsystem, "snapshot_body_read_total"),
+			"Reads of the whole snapshot body by the reader that made them, counted at the attempt. Since the "+
+				"Leader's activation moved to the catalog index these are the readers that remain: activation_content "+
+				"when a previous publication has no manifest, query_group when a Segment names no content or its "+
+				"objects are gone, plan, legacy_cleanup for the one-time tool, and index_audit, which reads one "+
+				"activation in sixteen by design and is the one reader expected to move. The body can stop being "+
+				"written only once every other reader has stayed at zero for a whole cycle; index_audit moving is "+
+				"what tells that zero from a counter that is not wired.",
+			[]string{"reader"}, nil,
+		),
 	}
+}
+
+// SetSnapshotBodyReadSource binds the collector to the repository's count of
+// whole snapshot body reads. Every reader of the closed vocabulary is
+// published whether or not a source is bound, so a reader that never read
+// shows a zero and not an absence.
+func (r *Recorder) SetSnapshotBodyReadSource(source func() []SnapshotBodyReadCounts) {
+	if r == nil || r.phaseTwo.controlCache == nil {
+		return
+	}
+	r.phaseTwo.controlCache.mu.Lock()
+	r.phaseTwo.controlCache.bodySource = source
+	r.phaseTwo.controlCache.mu.Unlock()
 }
 
 // SetControlCacheSource binds the collector to the repository snapshot. It is
@@ -133,12 +180,22 @@ func (c *controlCacheCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.bytes
 	ch <- c.bytesLimit
 	ch <- c.audit
+	ch <- c.bodyReads
 }
 
 func (c *controlCacheCollector) Collect(ch chan<- prometheus.Metric) {
 	c.mu.Lock()
-	source := c.source
+	source, bodySource := c.source, c.bodySource
 	c.mu.Unlock()
+	reads := make(map[string]uint64, len(SnapshotBodyReaders))
+	if bodySource != nil {
+		for _, counts := range bodySource() {
+			reads[counts.Reader] = counts.Reads
+		}
+	}
+	for _, reader := range SnapshotBodyReaders {
+		ch <- prometheus.MustNewConstMetric(c.bodyReads, prometheus.CounterValue, float64(reads[reader]), reader)
+	}
 	if source == nil {
 		return
 	}

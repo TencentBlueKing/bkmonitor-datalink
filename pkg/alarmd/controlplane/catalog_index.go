@@ -468,6 +468,7 @@ func (repository *RedisCatalogRepository) maybeAuditCatalogIndex(ctx context.Con
 	if activations := repository.catalogIndexActivations.Add(1); activations%catalogIndexAuditEvery != 1 {
 		return
 	}
+	repository.controlReads.bodyReads.indexAudit.Add(1)
 	snapshot, err := repository.LoadPublishedSnapshot(ctx, publication)
 	if err != nil {
 		return

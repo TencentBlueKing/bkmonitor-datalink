@@ -725,6 +725,7 @@ func (repository *RedisCatalogRepository) LoadQueryGroup(ctx context.Context, re
 	if identity == "" {
 		return QueryGroup{}, errors.New("alarmd controlplane: query group identity is required")
 	}
+	repository.controlReads.bodyReads.queryGroup.Add(1)
 	payload, epoch, allocation, err := repository.loadScopedSnapshotPayload(ctx, revision, identity)
 	defer allocation.release()
 	if err != nil {
@@ -779,6 +780,7 @@ func (repository *RedisCatalogRepository) LoadPlan(ctx context.Context, revision
 	if err := identity.Validate(); err != nil {
 		return FrozenPlan{}, err
 	}
+	repository.controlReads.bodyReads.plan.Add(1)
 	snapshot, err := repository.LoadSnapshot(ctx, revision)
 	if err != nil {
 		return FrozenPlan{}, err

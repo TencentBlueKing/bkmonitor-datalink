@@ -127,6 +127,12 @@ func TestScheduleActivationReconcilerUpgradesLegacyByScanWhenNoManifestExists(t 
 		migrationObservations[2].LegacyMigration.ScanKeys == 0 {
 		t.Fatalf("legacy migration observations=%#v", migrationObservations)
 	}
+	// A publication without a manifest is the one shape that still sends
+	// the activation's content read to the body; the attempt is counted
+	// even though the body is gone too.
+	if reads := repository.ControlReadCacheStats().BodyReads; reads.ActivationContent == 0 {
+		t.Fatalf("snapshot body reads = %+v, want the manifest-less fallback counted", reads)
+	}
 }
 
 // A Query Group whose retirement drained and that a publication brings

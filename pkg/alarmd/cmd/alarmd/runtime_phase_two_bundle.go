@@ -360,6 +360,16 @@ func openProductionPhaseTwoBundleWithDependencies(
 		}
 		return counts
 	})
+	recorder.SetSnapshotBodyReadSource(func() []metric.SnapshotBodyReadCounts {
+		reads := repository.ControlReadCacheStats().BodyReads
+		return []metric.SnapshotBodyReadCounts{
+			{Reader: metric.SnapshotBodyReaderActivationContent, Reads: reads.ActivationContent},
+			{Reader: metric.SnapshotBodyReaderIndexAudit, Reads: reads.IndexAudit},
+			{Reader: metric.SnapshotBodyReaderQueryGroup, Reads: reads.QueryGroup},
+			{Reader: metric.SnapshotBodyReaderPlan, Reads: reads.Plan},
+			{Reader: metric.SnapshotBodyReaderLegacyCleanup, Reads: reads.LegacyCleanup},
+		}
+	})
 	if cfg.PhaseTwo.Control.CatalogTTL.Duration() < phaseTwoSnapshotMinimumRetention(cfg, 0) {
 		return nil, scheduler.ErrSnapshotRetentionInsufficient
 	}

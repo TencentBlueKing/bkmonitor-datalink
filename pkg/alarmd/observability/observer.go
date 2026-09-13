@@ -195,16 +195,28 @@ const (
 	QueryQueueNormal   QueryQueueKind = "normal"
 	QueryQueueRecovery QueryQueueKind = "recovery"
 
-	AlgorithmFamilyThreshold       AlgorithmFamily = "threshold"
-	AlgorithmFamilySimpleRingRatio AlgorithmFamily = "simple_ring_ratio"
-	AlgorithmFamilyOsRestart       AlgorithmFamily = "os_restart"
-	AlgorithmFamilyProcPort        AlgorithmFamily = "proc_port"
-	AlgorithmFamilyPingUnreachable AlgorithmFamily = "ping_unreachable"
+	AlgorithmFamilyThreshold          AlgorithmFamily = "threshold"
+	AlgorithmFamilySimpleRingRatio    AlgorithmFamily = "simple_ring_ratio"
+	AlgorithmFamilyOsRestart          AlgorithmFamily = "os_restart"
+	AlgorithmFamilyProcPort           AlgorithmFamily = "proc_port"
+	AlgorithmFamilyPingUnreachable    AlgorithmFamily = "ping_unreachable"
+	AlgorithmFamilySimpleYearRound    AlgorithmFamily = "simple_year_round"
+	AlgorithmFamilyAdvancedRingRatio  AlgorithmFamily = "advanced_ring_ratio"
+	AlgorithmFamilyAdvancedYearRound  AlgorithmFamily = "advanced_year_round"
+	AlgorithmFamilyRingRatioAmplitude AlgorithmFamily = "ring_ratio_amplitude"
+	AlgorithmFamilyYearRoundAmplitude AlgorithmFamily = "year_round_amplitude"
+	AlgorithmFamilyYearRoundRange     AlgorithmFamily = "year_round_range"
 
-	AlgorithmDetectorKindThreshold       AlgorithmDetectorKind = "Threshold"
-	AlgorithmDetectorKindSimpleRingRatio AlgorithmDetectorKind = "SimpleRingRatio"
-	AlgorithmDetectorKindOsRestart       AlgorithmDetectorKind = "OsRestart"
-	AlgorithmDetectorKindProcPort        AlgorithmDetectorKind = "ProcPort"
+	AlgorithmDetectorKindThreshold          AlgorithmDetectorKind = "Threshold"
+	AlgorithmDetectorKindSimpleRingRatio    AlgorithmDetectorKind = "SimpleRingRatio"
+	AlgorithmDetectorKindOsRestart          AlgorithmDetectorKind = "OsRestart"
+	AlgorithmDetectorKindProcPort           AlgorithmDetectorKind = "ProcPort"
+	AlgorithmDetectorKindSimpleYearRound    AlgorithmDetectorKind = "SimpleYearRound"
+	AlgorithmDetectorKindAdvancedRingRatio  AlgorithmDetectorKind = "AdvancedRingRatio"
+	AlgorithmDetectorKindAdvancedYearRound  AlgorithmDetectorKind = "AdvancedYearRound"
+	AlgorithmDetectorKindRingRatioAmplitude AlgorithmDetectorKind = "RingRatioAmplitude"
+	AlgorithmDetectorKindYearRoundAmplitude AlgorithmDetectorKind = "YearRoundAmplitude"
+	AlgorithmDetectorKindYearRoundRange     AlgorithmDetectorKind = "YearRoundRange"
 
 	AlgorithmEvaluationResultNormal      AlgorithmEvaluationResult = "normal"
 	AlgorithmEvaluationResultAbnormal    AlgorithmEvaluationResult = "abnormal"
@@ -219,6 +231,8 @@ const (
 	AlgorithmDependencyPointPrevious         AlgorithmDependencyPoint = "previous"
 	AlgorithmDependencyPointTenMinute        AlgorithmDependencyPoint = "ten_minute"
 	AlgorithmDependencyPointTwentyFiveMinute AlgorithmDependencyPoint = "twenty_five_minute"
+	// Historical offsets stay in provenance; the metric label remains bounded.
+	AlgorithmDependencyPointHistorical AlgorithmDependencyPoint = "historical"
 
 	AlgorithmInputResultAvailable   AlgorithmInputResult = "available"
 	AlgorithmInputResultMissing     AlgorithmInputResult = "missing"
@@ -802,6 +816,18 @@ func validAlgorithmFamilyDetector(family AlgorithmFamily, detector AlgorithmDete
 		return detector == AlgorithmDetectorKindOsRestart
 	case AlgorithmFamilyProcPort:
 		return detector == AlgorithmDetectorKindProcPort
+	case AlgorithmFamilySimpleYearRound:
+		return detector == AlgorithmDetectorKindSimpleYearRound
+	case AlgorithmFamilyAdvancedRingRatio:
+		return detector == AlgorithmDetectorKindAdvancedRingRatio
+	case AlgorithmFamilyAdvancedYearRound:
+		return detector == AlgorithmDetectorKindAdvancedYearRound
+	case AlgorithmFamilyRingRatioAmplitude:
+		return detector == AlgorithmDetectorKindRingRatioAmplitude
+	case AlgorithmFamilyYearRoundAmplitude:
+		return detector == AlgorithmDetectorKindYearRoundAmplitude
+	case AlgorithmFamilyYearRoundRange:
+		return detector == AlgorithmDetectorKindYearRoundRange
 	default:
 		return false
 	}
@@ -824,7 +850,7 @@ func validAlgorithmInputName(name AlgorithmInputName) bool {
 func validAlgorithmDependencyPoint(point AlgorithmDependencyPoint) bool {
 	switch point {
 	case AlgorithmDependencyPointCurrent, AlgorithmDependencyPointPrevious,
-		AlgorithmDependencyPointTenMinute, AlgorithmDependencyPointTwentyFiveMinute:
+		AlgorithmDependencyPointTenMinute, AlgorithmDependencyPointTwentyFiveMinute, AlgorithmDependencyPointHistorical:
 		return true
 	default:
 		return false

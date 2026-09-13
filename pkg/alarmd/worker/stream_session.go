@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -1275,6 +1277,24 @@ func observeAlgorithm(algorithm strategy.CompiledAlgorithmPlan) (observedAlgorit
 	case strategy.DetectorKindProcPort:
 		observed.family = observability.AlgorithmFamilyProcPort
 		observed.detector = observability.AlgorithmDetectorKindProcPort
+	case strategy.DetectorKindSimpleYearRound:
+		observed.family = observability.AlgorithmFamilySimpleYearRound
+		observed.detector = observability.AlgorithmDetectorKindSimpleYearRound
+	case strategy.DetectorKindAdvancedRingRatio:
+		observed.family = observability.AlgorithmFamilyAdvancedRingRatio
+		observed.detector = observability.AlgorithmDetectorKindAdvancedRingRatio
+	case strategy.DetectorKindAdvancedYearRound:
+		observed.family = observability.AlgorithmFamilyAdvancedYearRound
+		observed.detector = observability.AlgorithmDetectorKindAdvancedYearRound
+	case strategy.DetectorKindRingRatioAmplitude:
+		observed.family = observability.AlgorithmFamilyRingRatioAmplitude
+		observed.detector = observability.AlgorithmDetectorKindRingRatioAmplitude
+	case strategy.DetectorKindYearRoundAmplitude:
+		observed.family = observability.AlgorithmFamilyYearRoundAmplitude
+		observed.detector = observability.AlgorithmDetectorKindYearRoundAmplitude
+	case strategy.DetectorKindYearRoundRange:
+		observed.family = observability.AlgorithmFamilyYearRoundRange
+		observed.detector = observability.AlgorithmDetectorKindYearRoundRange
 	default:
 		return observedAlgorithm{}, false
 	}
@@ -1470,6 +1490,11 @@ func observedDependencyPoint(name string) (observability.AlgorithmDependencyPoin
 	case "previous_25m":
 		return observability.AlgorithmDependencyPointTwentyFiveMinute, true
 	default:
+		if raw, ok := strings.CutPrefix(name, "history_"); ok {
+			if offset, err := strconv.ParseInt(raw, 10, 64); err == nil && offset > 0 {
+				return observability.AlgorithmDependencyPointHistorical, true
+			}
+		}
 		return "", false
 	}
 }

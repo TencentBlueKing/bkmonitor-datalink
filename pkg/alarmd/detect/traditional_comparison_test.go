@@ -49,6 +49,29 @@ func TestTraditionalComparisonPythonOracle(t *testing.T) {
 			}
 			config.Precision = tc.Precision
 			config.AggregationInterval = tc.AggregationInterval
+			if tc.QueryState != "FULL" {
+				algorithm := plan.Levels()[0].Algorithms()[0]
+				const sourceTime = int64(864000)
+				records := map[string][]contract.CanonicalRecordV2{
+					"primary": {namedRecord(t, sourceTime, strconv.FormatFloat(tc.Current, 'g', -1, 64), nil)},
+				}
+				bindings, primary := namedBindings(t, algorithm.InputRequirements(), records)
+				for i := range bindings {
+					if bindings[i].Role != execution.InputRoleAlgorithmDependency {
+						continue
+					}
+					bindings[i].Completeness = execution.CompletenessUnavailable
+					if tc.QueryState == "PARTIAL" {
+						bindings[i].Completeness = execution.CompletenessPartial
+					}
+				}
+				got := (traditionalComparisonDetector{tc.Kind}).Evaluate(context.Background(), algorithm,
+					execution.SeriesEvaluationInputRequest{Inputs: bindings}, primary)
+				if got.result != FactResultUnavailable || tc.Expected.Status != "UNAVAILABLE" {
+					t.Fatalf("provider %s produced %+v, Python %s", tc.QueryState, got, tc.Expected.Status)
+				}
+				return
+			}
 			history := map[int64]*float64{}
 			offsets, err := strategy.TraditionalHistoryOffsets(tc.Kind, config.TraditionalComparisonParameters, tc.AggregationInterval)
 			if err != nil {
@@ -72,11 +95,6 @@ func TestTraditionalComparisonPythonOracle(t *testing.T) {
 			got := string(status)
 			if status == pureDetectionUnknown {
 				got = "UNAVAILABLE"
-			}
-			// Query failures are verified through named input tests; the pure predicate
-			// deliberately has no provider status or infrastructure policy.
-			if tc.QueryState != "FULL" {
-				return
 			}
 			if got != tc.Expected.Status {
 				t.Fatalf("got %s, Python %s", got, tc.Expected.Status)

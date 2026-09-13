@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -138,7 +139,7 @@ func TestTargetFlowGlobalRecordAndByteBoundsIncludingDrop(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 1000; j++ {
-				f.emit("slot_selection", "success", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
+				f.emit("slot_selection", "success", "", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
 			}
 		}()
 	}
@@ -151,7 +152,7 @@ func TestTargetFlowGlobalRecordAndByteBoundsIncludingDrop(t *testing.T) {
 	}
 	oldDropped := f.dropped
 	f.now = func() time.Time { return time.Unix(161, 0) }
-	f.emit("slot_selection", "success", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
+	f.emit("slot_selection", "success", "", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
 	lines := bytes.Split(bytes.TrimSpace(b.Bytes()), []byte("\n"))
 	var last targetFlowRecord
 	json.Unmarshal(lines[len(lines)-1], &last)
@@ -161,7 +162,7 @@ func TestTargetFlowGlobalRecordAndByteBoundsIncludingDrop(t *testing.T) {
 	f2, b2 := newTestFlow(t)
 	tr := TraceFields{QueryGroupKey: flowQG, StrategyID: strings.Repeat("x", 128), SnapshotRevision: strings.Repeat("s", 128), QueryRevision: strings.Repeat("q", 128), ScheduleRevision: strings.Repeat("r", 128), OwnerID: strings.Repeat("o", 128)}
 	for i := 0; i < TargetFlowMaxRecords; i++ {
-		f2.emit("slot_selection", "success", "", tr, TargetFlowFacts{BusinessID: strings.Repeat("b", 128), TenantID: strings.Repeat("t", 128)}, 0)
+		f2.emit("slot_selection", "success", "", "", tr, TargetFlowFacts{BusinessID: strings.Repeat("b", 128), TenantID: strings.Repeat("t", 128)}, 0)
 	}
 	if f2.bytes > TargetFlowMaxBytes || f2.records >= TargetFlowMaxRecords || !bytes.Contains(b2.Bytes(), []byte("target_flow_dropped")) {
 		t.Fatal("byte bound not exercised")
@@ -171,14 +172,14 @@ func TestTargetFlowGlobalRecordAndByteBoundsIncludingDrop(t *testing.T) {
 func TestTargetFlowReservesBudgetForCriticalCompletionStages(t *testing.T) {
 	f, b := newTestFlow(t)
 	for i := 0; i < TargetFlowMaxRecords*2; i++ {
-		f.emit("slot_selection", "success", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
+		f.emit("slot_selection", "success", "", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
 	}
 	if f.windowDropped == 0 {
 		t.Fatal("non-critical flow did not reach its reserve boundary")
 	}
 	droppedBeforeCritical := f.dropped
 	for i := 0; i < 960; i++ {
-		f.emit("progress_committed", "success", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{Completed: true}, 0)
+		f.emit("progress_committed", "success", "", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{Completed: true}, 0)
 	}
 	output := b.String()
 	if got := strings.Count(output, `"stage":"progress_committed"`); got != 960 {
@@ -195,7 +196,7 @@ func TestTargetFlowReservesBudgetForCriticalCompletionStages(t *testing.T) {
 func TestTargetFlowDropMarkerExplainsWindowAndReserve(t *testing.T) {
 	f, b := newTestFlow(t)
 	for i := 0; i < TargetFlowMaxRecords; i++ {
-		f.emit("slot_selection", "success", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
+		f.emit("slot_selection", "success", "", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
 	}
 	lines := bytes.Split(bytes.TrimSpace(b.Bytes()), []byte("\n"))
 	var marker map[string]any
@@ -243,7 +244,7 @@ func TestTargetFlowDisabledValidationAndOversize(t *testing.T) {
 		}
 	}
 	f, b := newTestFlow(t)
-	f.emit("slot_selection", "success", "", TraceFields{QueryGroupKey: flowQG, OwnerID: strings.Repeat("z", 10000)}, TargetFlowFacts{}, 0)
+	f.emit("slot_selection", "success", "", "", TraceFields{QueryGroupKey: flowQG, OwnerID: strings.Repeat("z", 10000)}, TargetFlowFacts{}, 0)
 	if bytes.Contains(b.Bytes(), []byte(strings.Repeat("z", 100))) {
 		t.Fatal("oversize identity logged")
 	}
@@ -260,7 +261,7 @@ func TestTargetFlowWriterPanicIsolation(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	f.emit("slot_selection", "success", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
+	f.emit("slot_selection", "success", "", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
 }
 func BenchmarkTargetFlowBrother(b *testing.B) {
 	f, _ := newSelectedFlow(io.Discard)
@@ -280,7 +281,7 @@ func BenchmarkTargetFlowSelected(b *testing.B) {
 			f.bytes = 0
 			f.mu.Unlock()
 		}
-		f.emit("slot_selection", "success", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
+		f.emit("slot_selection", "success", "", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
 	}
 }
 
@@ -305,7 +306,7 @@ func BenchmarkTargetFlowMixedBrother(b *testing.B) {
 					f.mu.Unlock()
 				}
 				if enabled && i%100 == 0 {
-					f.emit("slot_selection", "success", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
+					f.emit("slot_selection", "success", "", "", TraceFields{QueryGroupKey: flowQG}, TargetFlowFacts{}, 0)
 				}
 				f.Observe(context.Background(), o)
 			}
@@ -379,4 +380,49 @@ func newSelectedFlow(writer io.Writer) (*TargetFlow, error) {
 		return nil, err
 	}
 	return flow, nil
+}
+
+// The error the observation carried has to reach the record, because the reason
+// code beside it stops one level above the answer.
+//
+// A Query Group blocked in the Slot source reports BLOCKED_EXACT_SET_UNAVAILABLE
+// on every round, and that one code covers a retired schedule, a corrupt
+// projection and a store that would not answer. Someone opened the deepest view
+// this page has on exactly that object, read every row of two rounds, and could
+// not say which of the three it was -- while the sentence that answered it was
+// in the process log, on the same observation, dropped on the way to the record.
+func TestTheErrorOnAnObservationReachesTheDiagnosticRecord(t *testing.T) {
+	flow, buffer := newTestFlow(t)
+	ctx := flow.Context(context.Background(), flowQG)
+	flow.Observe(ctx, Observation{
+		Component: ComponentScheduler, Stage: StageScheduleDue, Result: ResultRetrying,
+		ReasonCode: "BLOCKED_EXACT_SET_UNAVAILABLE",
+		Trace:      TraceFields{QueryGroupKey: flowQG},
+		Err:        errors.New("alarmd controlplane: schedule unavailable"),
+	})
+	if !bytes.Contains(buffer.Bytes(), []byte("schedule unavailable")) {
+		t.Errorf("the record does not carry the error, so the deepest view on this object "+
+			"still stops at the reason code: %s", buffer.String())
+	}
+}
+
+// Bounded, and the truncation marked. An error string has no length anyone
+// controls, and these records live under a byte budget shared with the records
+// around them. A silently cut error reads as a complete but different sentence,
+// with the identifying part being exactly the part removed.
+func TestALongErrorIsBoundedAndSaysItWasCut(t *testing.T) {
+	long := strings.Repeat("x", targetFlowMaxFailureBytes*3)
+	got := failureText(errors.New(long))
+	if len(got) > targetFlowMaxFailureBytes+len("…") {
+		t.Errorf("failure text is %d bytes, past the %d bound", len(got), targetFlowMaxFailureBytes)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Error("a truncated error does not say it was truncated")
+	}
+	if short := failureText(errors.New("schedule unavailable")); short != "schedule unavailable" {
+		t.Errorf("a short error was altered: %q", short)
+	}
+	if failureText(nil) != "" {
+		t.Error("no error rendered as something")
+	}
 }

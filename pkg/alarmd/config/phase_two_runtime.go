@@ -181,11 +181,19 @@ func (c PhaseTwoOutputConfig) protocol() string {
 //	the branches that production never sends have been written down as a
 //	  conclusion, so that a coverage figure short of the offline corpus is
 //	  known to be "will never arrive" rather than "has not arrived yet";
-//	the terminal mode has been the default for one release without a rollback;
-//	and, checked at that moment rather than remembered from this one, no
-//	  deployment is still relying on the derived default for something other
-//	  than the terminal rate -- removing these keys is what makes that default
-//	  live everywhere, so the blast radius has to be read the day it changes.
+//	the terminal mode has been the default for one release without a rollback.
+//
+// The two keys do not retire together, so their conditions are not written
+// together either. shadow_sample_stride can go as soon as its deployment wants
+// the terminal rate: the default beneath it already is that rate. mode cannot
+// go until the default beneath it has been changed, and that change reaches
+// every deployment at once -- so it waits on the first condition above being
+// true everywhere, not just here.
+//
+// Whichever goes first: check on the day, not from memory, that nothing else
+// was relying on the default it falls back to. Removing a key is what makes
+// that default live, so the blast radius has to be read when it changes rather
+// than recalled from when it was written.
 //
 // The terminal mode is stream_shadow at the derived stride, not stream. The
 // single-pass form answers and the established one keeps checking a sparse
@@ -229,6 +237,22 @@ type PhaseTwoCanonicalConfig struct {
 // keys retire is every deployment.
 const defaultCanonicalShadowStride = 1024
 
+// The default mode is deliberately still the established encoder, and it is
+// deliberately NOT the terminal one, which makes this pair of defaults
+// asymmetric: defaultCanonicalShadowStride below already describes the
+// terminal rate, this does not describe the terminal mode.
+//
+// Read them together and it is natural to assume both describe the end state.
+// They do not, and acting on that assumption is not hypothetical: an
+// instruction to "remove the two rollout keys" was issued on exactly that
+// reading. Carried out, it would have returned the reference deployment to
+// the established encoder with no error and no alert -- an action named "enter
+// the terminal state" whose effect is to return to the start.
+//
+// What it takes to move this: shadow evidence from each deployment, not from
+// the reference one. The first retirement condition says every deployment, and
+// at least one has not run its own shadow yet. Changing this default is what
+// makes the new encoder answer in an environment that never proved it there.
 func (c PhaseTwoCanonicalConfig) mode() string {
 	if c.Mode == "" {
 		return contract.CanonicalModeEstablished

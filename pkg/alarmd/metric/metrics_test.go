@@ -318,6 +318,11 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_control_cache_entries":                        "variableLabels: {object}",
 		"bkmonitor_alarmd_control_cache_bytes":                          "variableLabels: {object}",
 		"bkmonitor_alarmd_control_cache_bytes_limit":                    "variableLabels: {object}",
+		"bkmonitor_alarmd_heap_inuse_site_bytes":                        "variableLabels: {site}",
+		"bkmonitor_alarmd_heap_inuse_site_objects":                      "variableLabels: {site}",
+		"bkmonitor_alarmd_heap_inuse_profiled_bytes":                    "variableLabels: {}",
+		"bkmonitor_alarmd_heap_inuse_profile_records":                   "variableLabels: {}",
+		"bkmonitor_alarmd_heap_inuse_live_bytes":                        "variableLabels: {}",
 		"bkmonitor_alarmd_control_cache_audit_total":                    "variableLabels: {object,result}",
 		"bkmonitor_alarmd_legacy_pod_cache_total":                       "variableLabels: {result}",
 		"bkmonitor_alarmd_series_admission_total":                       "variableLabels: {filter,result,reason}",
@@ -691,12 +696,17 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		// Four cached objects: version, snapshot, activation, timeline; four
 		// outcomes each. Only an object bounded by a derived budget reports
 		// occupancy, which today is the timeline alone.
-		fqName("control_cache_total"):       16,
-		fqName("control_cache_entries"):     4,
-		fqName("control_cache_bytes"):       4,
-		fqName("control_cache_bytes_limit"): 4,
-		fqName("control_cache_audit_total"): 4,
-		fqName("legacy_pod_cache_total"):    3,
+		fqName("control_cache_total"):        16,
+		fqName("control_cache_entries"):      4,
+		fqName("control_cache_bytes"):        4,
+		fqName("control_cache_bytes_limit"):  4,
+		fqName("heap_inuse_site_bytes"):      heapSiteTop,
+		fqName("heap_inuse_site_objects"):    heapSiteTop,
+		fqName("heap_inuse_profiled_bytes"):  1,
+		fqName("heap_inuse_profile_records"): 1,
+		fqName("heap_inuse_live_bytes"):      1,
+		fqName("control_cache_audit_total"):  4,
+		fqName("legacy_pod_cache_total"):     3,
 		// Filters and reasons are closed vocabularies in the recorder.
 		fqName("series_admission_total"): len(admissionFilters) * len(admissionResults) * len(admissionReasons),
 		// Levels 1..64 plus "other". Empty in a healthy build: the platform's

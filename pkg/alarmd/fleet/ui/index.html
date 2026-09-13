@@ -727,6 +727,7 @@ function loadObjects() {
     var churn = churnSince(served + '|' + query(),
       rows.map(function (r) { return r.query_group; }), Date.now());
     text('churn', churnLine(churn, rows.length, total));
+    currentPerReplica = objects.per_replica || [];
     text('ceiling', continuityLine(objects.per_replica));
     renderSummary(objects.summary, total);
     renderStallNote(objects.stall_after_seconds, objects.summary && objects.summary.stalled,
@@ -993,7 +994,27 @@ function spreadLine(noun, dist, total) {
 // a different fix, and mixing them into one count is what made the number
 // unusable -- ninety-nine of anything is either an emergency or noise, and the
 // reader had no way to tell which.
-function attributionLine(summary) {
+// youngDeployment reports that the replicas have not been up long enough for
+// many rounds to have run.
+//
+// It qualifies one number in particular. The fall-through count only rises when
+// a round fails for a reason nobody has classified, and after a restart the
+// list is what was restored from persisted state -- codes that only appear once
+// rounds run have not appeared yet. So a zero here shortly after a rollout is
+// "nothing has fallen through yet", not "the table covers everything", and
+// those read identically.
+//
+// Same shape as a gauge that reports 0 before it has loaded: the value is
+// legitimate, it lands inside the range someone is checking against, and the
+// conclusion it supports is wrong. It is worst right after a release, which is
+// when the table is most likely to be stale and when everyone is looking.
+function youngDeployment(perReplica) {
+  var known = (perReplica || []).filter(function (replica) { return replica.uptime_seconds > 0; });
+  if (!known.length) return false;
+  return known.some(function (replica) { return replica.uptime_seconds < 900; });
+}
+
+function attributionLine(summary, perReplica) {
   var ours = summary.ours || 0;
   var external = summary.external || 0;
   var unknown = summary.unattributed || 0;
@@ -1015,6 +1036,9 @@ function attributionLine(summary) {
     tail += '。其中 ' + fell + ' 个是没有对应规则、按保守默认算进来的'
       + (fell === ours ? '——也就是这一批全都没被归过类，多半是新出现的失败类型'
                        : '，新出现的失败类型多半在这里');
+  } else if (youngDeployment(perReplica)) {
+    tail += '。（刚重启不久，还没跑几轮——"没有兜底进来的"此刻说明不了分类表是全的，'
+      + '新失败类型要等轮次跑起来才会出现）';
   }
   if (!ours) {
     return '这些里没有一个是 alarmd 自己的问题（容量或架构）——' + external
@@ -1131,10 +1155,14 @@ function continuityLine(perReplica) {
   return parts.join('；') + (parts.length ? '。' : '');
 }
 
+// Held from the last response so the roll-up can qualify its own numbers by how
+// long the replicas have been up.
+var currentPerReplica = [];
+
 function renderRollup(summary, total) {
   if (!summary || !total) { text('rollup', ''); return; }
   var parts = ['这 ' + total + ' 个对象背后是 ' + (summary.strategies || 0) + ' 条策略'];
-  var split = attributionLine(summary);
+  var split = attributionLine(summary, currentPerReplica);
   if (split) parts.unshift(split);
   var onset = onsetLine(summary.onset, total);
   if (onset) parts.unshift(onset);
@@ -2284,7 +2312,7 @@ function sharedUnavailableCard(code, series) {
   return card;
 }
 
-function trendCard(item) {
+function trendCard(item, siblingsWithData) {
   var card = document.createElement('div');
   card.className = 'tcard';
   var title = document.createElement('h3');
@@ -2305,7 +2333,11 @@ function trendCard(item) {
   } else if (!points.length) {
     var empty = document.createElement('div');
     empty.className = 'range';
-    empty.textContent = '这段窗口内没有数据点';
+    empty.textContent = '这段窗口内没有数据点'
+      + (siblingsWithData > 0
+          ? '——同批另外 ' + siblingsWithData + ' 条有数据，所以取数是通的：'
+            + '要么这段时间真的没有发生，要么这条指标在这一代还没开始上报'
+          : '——同批没有一条有数据，先怀疑取数本身，不要读成"什么都没发生"');
     card.appendChild(empty);
   } else {
     var values = points.map(function (p) { return p.value; });
@@ -2373,7 +2405,20 @@ function loadTrend() {
       host.appendChild(sharedUnavailableCard(shared, series));
       return;
     }
-    series.forEach(function (item) { host.appendChild(trendCard(item)); });
+    // Whether any sibling curve came back with points, which is what tells an
+    // empty curve apart from an endpoint nobody could reach.
+    //
+    // "No points in this window" used to mean one thing: nothing happened. A
+    // change landing upstream makes several gauges emit no series at all until
+    // they have loaded, deliberately -- reporting a zero before loading is how
+    // a legitimate value lands inside somebody's threshold and supports the
+    // wrong conclusion. The trade is only worth it if "not loaded" can be told
+    // from "could not read anything", and the way to tell is that everything
+    // else came back.
+    var siblingsWithData = series.filter(function (item) {
+      return !item.unavailable && (item.points || []).length > 0;
+    }).length;
+    series.forEach(function (item) { host.appendChild(trendCard(item, siblingsWithData)); });
   }).catch(function (e) {
     // A deployment that was never told where its own metrics live has no curves
     // to show. That is a missing route, not a broken page, so the section stays

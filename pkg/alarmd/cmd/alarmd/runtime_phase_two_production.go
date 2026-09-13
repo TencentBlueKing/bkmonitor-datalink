@@ -1201,18 +1201,60 @@ func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 	}
 	ordered := append([]execution.QueryGroupIdentity(nil), queryGroups...)
 	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
+	owners := make(map[execution.QueryGroupIdentity]string, len(ordered))
 	for index, queryGroup := range ordered {
 		if queryGroup == "" || (index > 0 && ordered[index-1] == queryGroup) {
 			return newPhaseTwoInvariantError("phase-two production reconcile contains an invalid Query Group set")
 		}
-		if _, err := runtime.reconciler.Reconcile(ctx, authority, queryGroup, at); err != nil {
+		record, err := runtime.reconciler.Reconcile(ctx, authority, queryGroup, at)
+		if err != nil {
 			if errors.Is(err, ownership.ErrStaleFence) {
 				runtime.clearControlAuthority(authority)
 			}
 			return err
 		}
+		owners[queryGroup] = record.DesiredWorkerID
 	}
+	runtime.planRebalance(ctx, owners, at)
 	return nil
+}
+
+// planRebalance reports what one rebalance round would move given the
+// desired owners this round just reconciled. It only computes: the plan is
+// observed for the shadow period and nothing publishes its moves, so the
+// reconcile above stays the only writer of Assignments. The ready set is
+// read once per round here, after the per-Query-Group reconcile; a read
+// that fails is reported as such rather than planned over stale workers.
+func (runtime *productionPhaseTwoOwnership) planRebalance(
+	ctx context.Context,
+	owners map[execution.QueryGroupIdentity]string,
+	at time.Time,
+) {
+	workers, err := runtime.dependencies.Store.ListReadyWorkers(ctx, at)
+	if err != nil {
+		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+			Component: observability.ComponentOwnership, Stage: observability.StageRebalancePlanned,
+			Result: observability.ResultFailed, Operation: observability.OperationLoad, Err: err,
+		})
+		return
+	}
+	plan := runtime.reconciler.PlanRebalance(owners, workers, at)
+	facts := &observability.RebalanceFacts{
+		ReadyWorkers: plan.ReadyWorkers, Assigned: plan.Assigned, Target: plan.Target,
+		MostOwned: plan.MostOwned, LeastOwned: plan.LeastOwned, Batch: plan.Batch, PlannedMoves: len(plan.Moves),
+	}
+	workerIDs := make([]string, 0, len(plan.Owned))
+	for workerID := range plan.Owned {
+		workerIDs = append(workerIDs, workerID)
+	}
+	sort.Strings(workerIDs)
+	for _, workerID := range workerIDs {
+		facts.Owned = append(facts.Owned, observability.RebalanceOwnedSample{WorkerID: workerID, Owned: plan.Owned[workerID]})
+	}
+	observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+		Component: observability.ComponentOwnership, Stage: observability.StageRebalancePlanned,
+		Result: observability.ResultSuccess, Operation: observability.OperationLoad, Rebalance: facts,
+	})
 }
 
 func (runtime *productionPhaseTwoOwnership) AssignedQueryGroups(

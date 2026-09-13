@@ -230,6 +230,19 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Any("draining_samples", facts.Samples),
 		)
 	}
+	if facts := observation.Rebalance; facts != nil {
+		attributes = append(attributes,
+			slog.Int("rebalance_ready_workers", facts.ReadyWorkers),
+			slog.Int("rebalance_assigned", facts.Assigned),
+			slog.Int("rebalance_target", facts.Target),
+			slog.Int("rebalance_most_owned", facts.MostOwned),
+			slog.Int("rebalance_least_owned", facts.LeastOwned),
+			slog.Int("rebalance_batch", facts.Batch),
+			slog.Int("rebalance_planned_moves", facts.PlannedMoves),
+			slog.Bool("rebalance_owned_truncated", facts.Truncated),
+			slog.Any("rebalance_owned", facts.Owned),
+		)
+	}
 	if facts := observation.SourceRefresh; facts != nil {
 		attributes = append(attributes,
 			slog.String("source_refresh_status", string(facts.Status)),

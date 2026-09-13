@@ -71,6 +71,7 @@ const (
 	StageDrainingQGReconciled = "draining_query_groups"
 	StageAssignmentAcquired   = "assignment_acquired"
 	StageAssignmentLost       = "assignment_lost"
+	StageRebalancePlanned     = "rebalance_planned"
 	StageTakeoverStarted      = "takeover_started"
 	StageTakeoverCompleted    = "takeover_completed"
 	StageLeaseRenewed         = "lease_renewed"
@@ -441,6 +442,62 @@ const (
 	MaxActivationFailureQGLogSamples = 8
 )
 
+// MaxRebalanceOwnedSamples bounds the per-worker owned counts one rebalance
+// planning log line carries; a fleet larger than this still reports its
+// counts and marks the list truncated.
+const MaxRebalanceOwnedSamples = 64
+
+// RebalanceOwnedSample is the desired-owner count of one ready worker at
+// planning time, zero included.
+type RebalanceOwnedSample struct {
+	WorkerID string `json:"worker_id"`
+	Owned    int    `json:"owned"`
+}
+
+// RebalanceFacts describes one rebalance planning round on the Control
+// Leader. It is a shadow measurement: PlannedMoves says how many
+// Assignments the round would move from the most to the least loaded ready
+// worker, and nothing publishes those moves. Owned lists every ready
+// worker, sorted by identity, so the distribution the plan reacted to can
+// be read beside the count.
+type RebalanceFacts struct {
+	ReadyWorkers int                    `json:"ready_workers"`
+	Assigned     int                    `json:"assigned"`
+	Target       int                    `json:"target"`
+	MostOwned    int                    `json:"most_owned"`
+	LeastOwned   int                    `json:"least_owned"`
+	Batch        int                    `json:"batch"`
+	PlannedMoves int                    `json:"planned_moves"`
+	Owned        []RebalanceOwnedSample `json:"owned,omitempty"`
+	Truncated    bool                   `json:"truncated"`
+}
+
+func normalizeRebalanceFacts(facts *RebalanceFacts) *RebalanceFacts {
+	if facts == nil {
+		return nil
+	}
+	normalized := *facts
+	for _, count := range []*int{
+		&normalized.ReadyWorkers, &normalized.Assigned, &normalized.Target, &normalized.MostOwned,
+		&normalized.LeastOwned, &normalized.Batch, &normalized.PlannedMoves,
+	} {
+		if *count < 0 {
+			*count = 0
+		}
+	}
+	normalized.Owned = append([]RebalanceOwnedSample(nil), facts.Owned...)
+	if len(normalized.Owned) > MaxRebalanceOwnedSamples {
+		normalized.Owned = normalized.Owned[:MaxRebalanceOwnedSamples]
+		normalized.Truncated = true
+	}
+	for index := range normalized.Owned {
+		if normalized.Owned[index].Owned < 0 {
+			normalized.Owned[index].Owned = 0
+		}
+	}
+	return &normalized
+}
+
 // DrainingQGSampleRetired marks a sample whose Query Group left the active set
 // because it is past the draining termination window without draining.
 // Undrained samples carry no marker so their log shape is unchanged.
@@ -705,6 +762,7 @@ type Observation struct {
 	ActivationHold           *ActivationHoldFacts
 	LegacyMigration          *LegacyQGMigrationFacts
 	DrainingQG               *DrainingQGFacts
+	Rebalance                *RebalanceFacts
 	SourceRefresh            *SourceRefreshFacts
 	ActivationFailure        *ActivationFailureFacts
 	AlgorithmEvaluations     []AlgorithmEvaluationFact
@@ -796,6 +854,7 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.ActivationHold = normalizeActivationHoldFacts(observation.ActivationHold)
 	observation.LegacyMigration = normalizeLegacyQGMigrationFacts(observation.LegacyMigration)
 	observation.DrainingQG = normalizeDrainingQGFacts(observation.DrainingQG)
+	observation.Rebalance = normalizeRebalanceFacts(observation.Rebalance)
 	observation.SourceRefresh = normalizeSourceRefreshFacts(observation.Component, observation.Stage, observation.SourceRefresh)
 	observation.ActivationFailure = normalizeActivationFailureFacts(
 		observation.Component, observation.Stage, observation.ActivationFailure,
@@ -1503,6 +1562,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentControlPlane, StageDrainingQGReconciled},
 	{ComponentControlPlane, StageFrozenPlanGeneration}, {ComponentControlPlane, StageActivationHold},
 	{ComponentOwnership, StageAssignmentAcquired}, {ComponentOwnership, StageAssignmentLost},
+	{ComponentOwnership, StageRebalancePlanned},
 	{ComponentOwnership, StageTakeoverStarted}, {ComponentOwnership, StageTakeoverCompleted},
 	{ComponentOwnership, StageLeaseRenewed}, {ComponentOwnership, StageFenceChecked},
 	{ComponentScheduler, StageScheduleDue}, {ComponentScheduler, StageSlotStarted},

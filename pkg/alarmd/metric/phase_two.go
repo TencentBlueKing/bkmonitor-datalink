@@ -58,6 +58,7 @@ type phaseTwoMetrics struct {
 	legacyMigrationTime             *prometheus.HistogramVec
 	undrainedDrainingQueryGroups    prometheus.Gauge
 	drainingCursorPrunedQueryGroups prometheus.Gauge
+	rebalancePlannedMoves           prometheus.Gauge
 	activationHeldQueryGroups       prometheus.Gauge
 	activationHeldAgeSecondsMax     prometheus.Gauge
 	algorithmEvaluations            *prometheus.CounterVec
@@ -240,6 +241,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.legacyMigrationScan = prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_scan_keys", Help: "Redis keys scanned by one-time legacy Active QG migration.", Buckets: legacyMigrationScanBuckets})
 	metrics.legacyMigrationTime = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_duration_seconds", Help: "One-time legacy Active QG migration duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
 	metrics.drainingCursorPrunedQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "draining_cursor_pruned_query_groups", Help: "Replicated per-Pod view of draining Query Groups whose Progress cursor lies before the earliest Slot their Schedule timeline still holds. Such a Query Group can never find the Slot its cursor asks for, so it cannot drain by itself; the count is reported before anything acts on it. Aggregate replicas with max, not sum."})
+	metrics.rebalancePlannedMoves = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "rebalance_planned_moves", Help: "Assignments the latest rebalance planning round on this Control Leader would move from the most to the least loaded ready worker. Shadow measurement: only computed, never published. Meaningful on the Control Leader only; aggregate replicas with max, not sum."})
 	metrics.undrainedDrainingQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "undrained_draining_query_groups", Help: "Replicated per-Pod view of retired Query Groups still requiring ownership until their retirement boundary is drained; aggregate replicas with max, not sum."})
 	metrics.activationHeldQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "activation_held_query_groups", Help: "Query Groups the publication brings back from retirement that have not drained and were held out of the activation, which went ahead for everyone else. Reported by the Control Leader on every activation attempt and on every reconcile of a publication that still holds some, so it follows the held set down to zero; a value that does not fall is a retirement that is not draining."})
 	metrics.sourceStrategiesRead = prometheus.NewCounter(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_strategies_read_total", Help: "Strategy documents source refresh rounds asked the source for. A skipped round adds nothing; a full read adds the whole active set."})
@@ -306,7 +308,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.queryFailures,
 		m.objectCatalogObjects, m.objectCatalogRedis, m.objectCatalogManifestBytes, m.objectReads, m.stateGenerationSkew,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
-		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
+		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
 		m.algorithmEvaluations, m.algorithmInputs,
 	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
 		m.controlCache, m.redisPool, m.canonicalEncoding, m.legacyPodCache,
@@ -348,6 +350,9 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 	if facts := observation.DrainingQG; facts != nil {
 		m.undrainedDrainingQueryGroups.Set(float64(facts.Undrained))
 		m.drainingCursorPrunedQueryGroups.Set(float64(facts.CursorPruned))
+	}
+	if facts := observation.Rebalance; facts != nil && observation.Result == observability.ResultSuccess {
+		m.rebalancePlannedMoves.Set(float64(facts.PlannedMoves))
 	}
 	if facts := observation.ActivationHold; facts != nil && observation.Stage == observability.StageActivationHold {
 		m.activationHeldQueryGroups.Set(float64(facts.Held))

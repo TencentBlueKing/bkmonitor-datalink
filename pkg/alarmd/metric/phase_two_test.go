@@ -479,3 +479,24 @@ func TestPhaseTwoDrainingCursorPrunedGaugeFollowsTheLatestView(t *testing.T) {
 		t.Fatalf("draining_cursor_pruned_query_groups after a view with none = %v, want 0", got)
 	}
 }
+
+// The planned-move count is a gauge of the latest successful rebalance
+// planning round; a failed round leaves the last plan in place rather than
+// reporting zero moves it never computed.
+func TestPhaseTwoRebalancePlannedMovesGaugeFollowsTheLatestPlan(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	observe := func(result observability.Result, facts *observability.RebalanceFacts) {
+		recorder.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentOwnership, Stage: observability.StageRebalancePlanned,
+			Result: result, Operation: observability.OperationLoad, Rebalance: facts,
+		})
+	}
+	observe(observability.ResultSuccess, &observability.RebalanceFacts{ReadyWorkers: 2, Assigned: 18, PlannedMoves: 3})
+	if got := testutil.ToFloat64(recorder.phaseTwo.rebalancePlannedMoves); got != 3 {
+		t.Fatalf("rebalance_planned_moves = %v, want 3", got)
+	}
+	observe(observability.ResultSuccess, &observability.RebalanceFacts{ReadyWorkers: 2, Assigned: 18})
+	if got := testutil.ToFloat64(recorder.phaseTwo.rebalancePlannedMoves); got != 0 {
+		t.Fatalf("rebalance_planned_moves after an even round = %v, want 0", got)
+	}
+}

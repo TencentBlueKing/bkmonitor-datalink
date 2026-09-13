@@ -184,22 +184,64 @@ type CanonicalShadowCounts struct {
 	Compared, Agreed, Declined uint64
 	BytesDiffer, VerdictDiffer uint64
 	PanicDiffer                uint64
+	// CoveredCallSites is how many distinct Go types have been compared. A
+	// comparison total answers "how much"; only this answers "how widely".
+	CoveredCallSites int
 }
 
 func ReadCanonicalShadowCounts() CanonicalShadowCounts {
 	served, declined := CanonicalStreamCounts()
 	return CanonicalShadowCounts{
-		Mode:           CanonicalMode(),
-		Stride:         canonicalShadowStride.Load(),
-		StreamServed:   served,
-		StreamDeclined: declined,
-		Compared:       canonicalShadowCompared.Load(),
-		Agreed:         canonicalShadowAgreed.Load(),
-		Declined:       canonicalShadowDeclined.Load(),
-		BytesDiffer:    canonicalShadowBytes.Load(),
-		VerdictDiffer:  canonicalShadowVerdict.Load(),
-		PanicDiffer:    canonicalShadowPanic.Load(),
+		Mode:             CanonicalMode(),
+		Stride:           canonicalShadowStride.Load(),
+		StreamServed:     served,
+		StreamDeclined:   declined,
+		Compared:         canonicalShadowCompared.Load(),
+		Agreed:           canonicalShadowAgreed.Load(),
+		Declined:         canonicalShadowDeclined.Load(),
+		BytesDiffer:      canonicalShadowBytes.Load(),
+		VerdictDiffer:    canonicalShadowVerdict.Load(),
+		PanicDiffer:      canonicalShadowPanic.Load(),
+		CoveredCallSites: len(ReadCanonicalCoverage()),
 	}
+}
+
+// Coverage is a set of call sites, not a count of comparisons. A million
+// comparisons that all came from one caller prove one caller, and the exit
+// criterion for this rollout is about which shapes of input were actually
+// seen. The Go type of the value handed to CanonicalJSONV2 is the closest
+// bounded stand-in for a call site that costs nothing to record: there are a
+// few dozen of them across this package's callers, they are compile-time
+// constants, and they carry no payload.
+//
+// Recorded on agreement, not only on divergence. A type that only ever
+// appears in the divergence table is a type nobody can show was checked.
+var (
+	canonicalCoverageMu    sync.Mutex
+	canonicalCoverageTypes = map[string]uint64{}
+)
+
+const canonicalCoverageCap = 256
+
+func recordCanonicalCoverage(goType string) {
+	canonicalCoverageMu.Lock()
+	defer canonicalCoverageMu.Unlock()
+	if _, seen := canonicalCoverageTypes[goType]; !seen && len(canonicalCoverageTypes) >= canonicalCoverageCap {
+		return
+	}
+	canonicalCoverageTypes[goType]++
+}
+
+// ReadCanonicalCoverage returns how many comparisons each call-site type
+// contributed.
+func ReadCanonicalCoverage() map[string]uint64 {
+	canonicalCoverageMu.Lock()
+	defer canonicalCoverageMu.Unlock()
+	out := make(map[string]uint64, len(canonicalCoverageTypes))
+	for goType, count := range canonicalCoverageTypes {
+		out[goType] = count
+	}
+	return out
 }
 
 // canonicalShadowFingerprint identifies a divergence without carrying any
@@ -291,6 +333,7 @@ func compareCanonicalShadow(in canonicalShadowInput) {
 		}
 	}()
 	canonicalShadowCompared.Add(1)
+	recordCanonicalCoverage(in.GoType)
 	if in.ComparedDeclined {
 		// The single-pass form handed the input back. That is neither
 		// agreement nor divergence: the established path stayed in charge,

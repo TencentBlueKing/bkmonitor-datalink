@@ -372,6 +372,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_canonical_encoding_calls_total":               "variableLabels: {outcome}",
 		"bkmonitor_alarmd_canonical_encoding_shadow_total":              "variableLabels: {outcome}",
 		"bkmonitor_alarmd_canonical_encoding_distinct_findings":         "variableLabels: {}",
+		"bkmonitor_alarmd_canonical_encoding_covered_call_sites":        "variableLabels: {}",
 		"bkmonitor_alarmd_object_catalog_redis_duration_seconds":        "variableLabels: {operation,result}",
 		"bkmonitor_alarmd_object_catalog_manifest_bytes":                "variableLabels: {}",
 		"bkmonitor_alarmd_object_read_total":                            "variableLabels: {kind,result}",
@@ -750,6 +751,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("canonical_encoding_calls_total"):          2,
 		fqName("canonical_encoding_shadow_total"):         5,
 		fqName("canonical_encoding_distinct_findings"):    1,
+		fqName("canonical_encoding_covered_call_sites"):   1,
 		fqName("object_catalog_redis_duration_seconds"):   histogramSeries(2*2, len(activeQGSetDurationBuckets)),
 		fqName("object_catalog_manifest_bytes"):           1,
 		// Kinds and results are closed vocabularies plus "other" for each.

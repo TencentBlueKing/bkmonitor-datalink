@@ -34,6 +34,7 @@ type canonicalEncodingCollector struct {
 	calls    *prometheus.Desc
 	shadow   *prometheus.Desc
 	findings *prometheus.Desc
+	coverage *prometheus.Desc
 }
 
 func newCanonicalEncodingCollector() *canonicalEncodingCollector {
@@ -60,6 +61,10 @@ func newCanonicalEncodingCollector() *canonicalEncodingCollector {
 				"container shape and offset kind, and capped. At the cap the count stops rising while the "+
 				"totals keep climbing, so the two together say whether new shapes are still appearing.",
 			nil, nil),
+		coverage: prometheus.NewDesc(name("covered_call_sites"),
+			"Distinct Go types that have actually been compared. A comparison total says how much was "+
+				"checked; only this says how widely. A million comparisons from one caller prove one caller.",
+			nil, nil),
 	}
 }
 
@@ -69,6 +74,7 @@ func (c *canonicalEncodingCollector) Describe(out chan<- *prometheus.Desc) {
 	out <- c.calls
 	out <- c.shadow
 	out <- c.findings
+	out <- c.coverage
 }
 
 func (c *canonicalEncodingCollector) Collect(out chan<- prometheus.Metric) {
@@ -93,4 +99,5 @@ func (c *canonicalEncodingCollector) Collect(out chan<- prometheus.Metric) {
 	out <- prometheus.MustNewConstMetric(c.shadow, prometheus.CounterValue, float64(counts.PanicDiffer), "panic_differ")
 	out <- prometheus.MustNewConstMetric(c.findings, prometheus.GaugeValue,
 		float64(len(contract.ReadCanonicalShadowSamples())))
+	out <- prometheus.MustNewConstMetric(c.coverage, prometheus.GaugeValue, float64(counts.CoveredCallSites))
 }

@@ -181,7 +181,11 @@ func (c PhaseTwoOutputConfig) protocol() string {
 //	the branches that production never sends have been written down as a
 //	  conclusion, so that a coverage figure short of the offline corpus is
 //	  known to be "will never arrive" rather than "has not arrived yet";
-//	the terminal mode has been the default for one release without a rollback.
+//	the terminal mode has been the default for one release without a rollback;
+//	and, checked at that moment rather than remembered from this one, no
+//	  deployment is still relying on the derived default for something other
+//	  than the terminal rate -- removing these keys is what makes that default
+//	  live everywhere, so the blast radius has to be read the day it changes.
 //
 // The terminal mode is stream_shadow at the derived stride, not stream. The
 // single-pass form answers and the established one keeps checking a sparse

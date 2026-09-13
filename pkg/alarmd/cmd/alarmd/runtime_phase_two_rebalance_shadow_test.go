@@ -25,10 +25,12 @@ type rebalanceOwnershipStore struct {
 	workers     []ownership.WorkerRegistration
 	assignments map[execution.QueryGroupIdentity]ownership.AssignmentRecord
 	listErr     error
+	listCalls   int
 	published   int
 }
 
 func (store *rebalanceOwnershipStore) ListReadyWorkers(context.Context, time.Time) ([]ownership.WorkerRegistration, error) {
+	store.listCalls++
 	if store.listErr != nil {
 		return nil, store.listErr
 	}
@@ -58,10 +60,11 @@ func (store *rebalanceOwnershipStore) PublishAssignment(
 	return record, nil
 }
 
-// After reconciling every Query Group the Control Leader plans one
-// rebalance round over the owners it just confirmed and reports the plan;
-// it publishes nothing for it. A ready-set read that fails is reported as
-// a failed planning round, not planned over nothing.
+// After reconciling every Query Group against one ready set the Control
+// Leader plans one rebalance round over the owners it just confirmed and
+// reports the plan; it publishes nothing for it. The ready set is listed
+// once per round, and a listing that fails fails the round before any
+// Query Group is touched, with nothing planned or published.
 func TestProductionPhaseTwoOwnershipReportsARebalancePlanWithoutPublishingIt(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	worker := func(id string) ownership.WorkerRegistration {
@@ -146,6 +149,9 @@ func TestProductionPhaseTwoOwnershipReportsARebalancePlanWithoutPublishingIt(t *
 		if store.published != 0 {
 			t.Fatalf("PublishAssignment called %d times; the plan must not publish", store.published)
 		}
+		if store.listCalls != 1 {
+			t.Fatalf("ready set listed %d times for one round of %d Query Groups, want once", store.listCalls, len(groups))
+		}
 		for _, queryGroup := range groups {
 			if store.assignments[queryGroup].DesiredWorkerID != "worker-1" {
 				t.Fatalf("%s moved to %q during a shadow round", queryGroup, store.assignments[queryGroup].DesiredWorkerID)
@@ -157,11 +163,14 @@ func TestProductionPhaseTwoOwnershipReportsARebalancePlanWithoutPublishingIt(t *
 		production, observations := newOwnership(t, store)
 		store.listErr = errors.New("registry unavailable")
 		if err := production.PublishAssignments(context.Background(), groups, now); err == nil || !errors.Is(err, store.listErr) {
-			// Reconcile itself lists ready workers per Query Group and fails first.
+			// The round lists the ready set once, before any Query Group, and fails there.
 			t.Fatalf("PublishAssignments() error = %v, want the registry failure", err)
 		}
 		if reports := planned(*observations); len(reports) != 0 {
-			t.Fatalf("rebalance observations = %+v, want none when reconcile failed", reports)
+			t.Fatalf("rebalance observations = %+v, want none when the round failed", reports)
+		}
+		if store.listCalls != 1 || store.published != 0 {
+			t.Fatalf("listed %d times and published %d after a failed listing, want one failed listing and no publication", store.listCalls, store.published)
 		}
 	})
 }

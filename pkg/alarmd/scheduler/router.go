@@ -135,18 +135,42 @@ func NewReconciler(router *Router, store AssignmentStore) (*Reconciler, error) {
 	return &Reconciler{router: router, store: store}, nil
 }
 
-// Reconcile publishes the Assignment of one Query Group under the Control
-// Leader authority. The incumbent is sticky: when a current Assignment exists
-// and its desired Worker is still in the ready set (and passes the
-// additional eligibility, if any), the current record is returned as-is and
-// Rendezvous is not re-run. Rendezvous runs only when there is no Assignment
-// yet or the incumbent is no longer ready. Assignments therefore stay put
-// when another Worker joins or re-registers, and move only when their owner
-// drops out of the ready set.
+// ListReadyWorkers reads the ready set once for a reconcile round. A round
+// reconciles every Query Group against this one set: listing per Query
+// Group costs a registry read per Query Group and, worse, lets one round
+// decide different Query Groups on different ready sets, a world state that
+// never existed at any instant.
+func (reconciler *Reconciler) ListReadyWorkers(ctx context.Context, at time.Time) ([]ownership.WorkerRegistration, error) {
+	if reconciler == nil {
+		return nil, errors.New("alarmd scheduler: initialized reconciler is required")
+	}
+	return reconciler.store.ListReadyWorkers(ctx, at)
+}
+
+// Reconcile settles one Query Group on its own, listing the ready set for
+// it. A round over many Query Groups must list once and use ReconcileWith.
 func (reconciler *Reconciler) Reconcile(
 	ctx context.Context,
 	authority ownership.PublicationAuthority,
 	queryGroup execution.QueryGroupIdentity,
+	at time.Time,
+) (ownership.AssignmentRecord, error) {
+	workers, err := reconciler.ListReadyWorkers(ctx, at)
+	if err != nil {
+		return ownership.AssignmentRecord{}, err
+	}
+	return reconciler.ReconcileWith(ctx, authority, queryGroup, workers, at)
+}
+
+// ReconcileWith settles one Query Group against a ready set the caller read
+// for the round: a ready, eligible incumbent keeps its Assignment; otherwise
+// rendezvous placement over that set publishes a new one under the given
+// authority. It never lists workers itself.
+func (reconciler *Reconciler) ReconcileWith(
+	ctx context.Context,
+	authority ownership.PublicationAuthority,
+	queryGroup execution.QueryGroupIdentity,
+	workers []ownership.WorkerRegistration,
 	at time.Time,
 ) (ownership.AssignmentRecord, error) {
 	if reconciler == nil {
@@ -158,10 +182,6 @@ func (reconciler *Reconciler) Reconcile(
 	if hasCurrent {
 		expectedRevision = current.RecordRevision
 	} else if !errors.Is(err, ownership.ErrAssignmentAbsent) {
-		return ownership.AssignmentRecord{}, err
-	}
-	workers, err := reconciler.store.ListReadyWorkers(ctx, at)
-	if err != nil {
 		return ownership.AssignmentRecord{}, err
 	}
 	if hasCurrent && reconciler.router.incumbentEligible(queryGroup, current.DesiredWorkerID, workers, at) {

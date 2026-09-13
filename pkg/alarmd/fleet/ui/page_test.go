@@ -189,6 +189,20 @@ func TestEveryObjectListFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "objects", reflect.TypeOf(fleet.ListResponse{}))
 }
 
+// The third response this check could not be pointed at, and the third for the
+// same reason: the per-replica view was read into a variable named r, which
+// eight callbacks in this page bind to five unrelated types. It is named
+// replica now.
+//
+// This one carries the uptime the object list states as a ceiling on every
+// duration below it. A misspelling there does not render a blank -- the guard
+// in front of the sentence goes false and the whole sentence disappears, so
+// the page silently stops warning that its durations are bounded, which is the
+// state it was in before any of this was added.
+func TestEveryReplicaFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	assertFieldsExist(t, "replica", reflect.TypeOf(fleet.ReplicaView{}))
+}
+
 // The anomaly row is the busiest object on the page -- every cell in the table
 // reads it -- and it had no field check at all, for the same reason the list
 // response had none: it was read into a variable named a, which matches too

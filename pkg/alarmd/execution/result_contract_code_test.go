@@ -89,6 +89,30 @@ func TestEveryResultContractRefusalIsInTheClosedVocabulary(t *testing.T) {
 	if sites == 0 {
 		t.Fatal("found no result contract refusals to check; the parser is looking at the wrong thing")
 	}
+
+	// Checking the codes that are declared says nothing about a rule that
+	// declares none. A refusal written as a plain error still compiles, still
+	// reads correctly at the call site, and still collapses into the single
+	// wrap-site code -- the exact state this change exists to end, arriving one
+	// rule at a time and with every other test green.
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "New" {
+			return true
+		}
+		pkg, ok := selector.X.(*ast.Ident)
+		if !ok || pkg.Name != "errors" {
+			return true
+		}
+		t.Errorf("a refusal at %s is a plain error; every rule in this contract has to name itself, "+
+			"or it reaches the page as the one code that means \"some rule\"",
+			fileSet.Position(call.Pos()))
+		return true
+	})
 }
 
 // TestResultContractRefusalCarriesItsCodeThroughAWrap checks the route the code

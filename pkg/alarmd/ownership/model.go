@@ -136,9 +136,22 @@ func (worker WorkerRegistration) Validate() error {
 	return worker.Load.validate()
 }
 
+// PlacementReason says why an Assignment names the worker it names.
+// RENDEZVOUS is the sticky hash every Assignment carries today. REBALANCE is
+// a move the Control Leader makes to even the owned counts out after the
+// ready set changed; nothing writes it yet. Readers accept it one release
+// ahead of any writer, so that a rollout never has a new Leader publish a
+// record an old Worker refuses.
 type PlacementReason string
 
-const PlacementRendezvous PlacementReason = "RENDEZVOUS"
+const (
+	PlacementRendezvous PlacementReason = "RENDEZVOUS"
+	PlacementRebalance  PlacementReason = "REBALANCE"
+)
+
+func (reason PlacementReason) valid() bool {
+	return reason == PlacementRendezvous || reason == PlacementRebalance
+}
 
 type AssignmentRecord struct {
 	QueryGroup           execution.QueryGroupIdentity
@@ -162,7 +175,7 @@ type AssignmentDecision struct {
 
 func (decision AssignmentDecision) Validate() error {
 	if decision.QueryGroup == "" || decision.DesiredWorkerID == "" || decision.DecidedAt.IsZero() ||
-		decision.PlacementReason != PlacementRendezvous {
+		!decision.PlacementReason.valid() {
 		return errors.New("alarmd ownership: invalid Assignment decision")
 	}
 	return nil
@@ -173,7 +186,7 @@ func (record AssignmentRecord) Validate() error {
 		record.RecordRevision == 0 || record.ControlEpoch == 0 || record.AssignedAt.IsZero() {
 		return errors.New("alarmd ownership: incomplete Assignment record")
 	}
-	if record.PlacementReason != PlacementRendezvous {
+	if !record.PlacementReason.valid() {
 		return fmt.Errorf("alarmd ownership: unsupported placement reason %q", record.PlacementReason)
 	}
 	return nil

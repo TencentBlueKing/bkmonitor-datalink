@@ -145,7 +145,10 @@ type queryGroupState struct {
 	lastCompleted string
 	// cause separates the conditions that share one completion kind, so the
 	// object list can say which entries anyone can act on.
-	cause       string
+	cause string
+	// causeReason is the cause's own reason, which is where the answer to
+	// "whose problem is this" actually lives.
+	causeReason string
 	lastFailure *FailureRef
 }
 
@@ -311,6 +314,7 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		state.currentKind = KindDegradedRun
 		state.reasonCode = completion
 		state.cause = observation.ProgressCompletionCause
+		state.causeReason = observation.ProgressCompletionReason
 	case blockedOutcome(runOutcome):
 		state.determined = true
 		state.failingSince = time.Time{}
@@ -350,6 +354,7 @@ func (tracker *Tracker) resetRun(state *queryGroupState) {
 	// recovered object still explain itself with the last thing that went wrong.
 	state.cooldownExposed = false
 	state.cause = ""
+	state.causeReason = ""
 	state.degradedRuns = 0
 	state.blockedRuns = 0
 	state.inAnomalyRun = false
@@ -428,7 +433,7 @@ func (tracker *Tracker) listed(demoted bool) []Anomaly {
 			QueryGroup:    queryGroup,
 			QueryCooldown: state.queryCooldown,
 			Kind:          state.currentKind,
-			ReasonCode:    state.reasonCode, Cause: state.cause,
+			ReasonCode:    state.reasonCode, Cause: state.cause, CauseReason: state.causeReason,
 			Since:        state.runStartedAt,
 			SinceFrom:    state.sinceFrom,
 			FailingSince: state.failingSince,

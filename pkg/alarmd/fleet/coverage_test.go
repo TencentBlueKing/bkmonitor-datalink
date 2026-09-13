@@ -10,9 +10,12 @@
 package fleet
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 func objectSet(prefix string, from, to int) []string {
@@ -159,5 +162,60 @@ func TestWithoutTheSetsTheGapStillSaysItCannotTell(t *testing.T) {
 	if !strings.Contains(detail, "could not compare the sets") {
 		t.Errorf("the fallback wording is gone, so a reader cannot tell an unanswerable "+
 			"gap from an answered one: %q", detail)
+	}
+}
+
+// The cause stops one level short of the answer, and the page was showing only
+// the cause: on a running deployment 61 of 62 objects carried
+// LEVEL_OUTCOME_UNKNOWN, which the contract requires to mean either "the data
+// does not reach this window" (nobody here's doing) or "this clears on its own".
+// Those need opposite responses and the cause cannot tell them apart.
+func TestTheReasonBelowTheCauseSurvivesToTheSummary(t *testing.T) {
+	at := time.Date(2026, 9, 13, 11, 0, 0, 0, time.UTC)
+	tracker := NewTracker(nil, "replica-a", func() time.Time { return at })
+	// Driven through the observation stream rather than by building the rows,
+	// because the defect was the reason being dropped in transit. A first pass
+	// of this test built Anomaly values directly and passed against the broken
+	// wiring -- the same way a test earlier today tested a helper instead of the
+	// call site that was wrong.
+	degrade := func(queryGroup, reason string) {
+		for round := 0; round < DefaultDegradedRounds; round++ {
+			tracker.Observe(context.Background(), observability.Observation{
+				Trace:                    observability.TraceFields{QueryGroupKey: queryGroup},
+				ProgressCompletionKind:   "COMPLETED_WITH_UNAVAILABLE",
+				ProgressCompletionCause:  "LEVEL_OUTCOME_UNKNOWN",
+				ProgressCompletionReason: reason,
+			})
+		}
+	}
+	degrade("a", "EFFECTIVE_TIME_UNKNOWN")
+	degrade("b", "EFFECTIVE_TIME_UNKNOWN")
+	degrade("c", "STATE_RETRYABLE_IO")
+
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 3 {
+		t.Fatalf("anomalies = %d, want 3", len(anomalies))
+	}
+	for _, anomaly := range anomalies {
+		if anomaly.Cause != "LEVEL_OUTCOME_UNKNOWN" {
+			t.Fatalf("%s carries cause %q, want the one being split", anomaly.QueryGroup, anomaly.Cause)
+		}
+		if anomaly.CauseReason == "" {
+			t.Fatalf("%s lost its reason in transit: %+v", anomaly.QueryGroup, anomaly)
+		}
+	}
+
+	got := map[string]int{}
+	for _, count := range summarize(anomalies).ByCauseReason {
+		got[count.Value] = count.Count
+	}
+	// One cause, two reasons. That split is the whole reason the column exists:
+	// without it these three objects are one population that cannot say whose
+	// problem it is.
+	if len(got) != 2 {
+		t.Errorf("one cause split into %d reasons, want 2: %v", len(got), got)
+	}
+	if got["EFFECTIVE_TIME_UNKNOWN"] != 2 || got["STATE_RETRYABLE_IO"] != 1 {
+		t.Errorf("reason counts = %v, want two of one reason and one of the other", got)
 	}
 }

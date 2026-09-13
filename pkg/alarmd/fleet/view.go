@@ -162,9 +162,15 @@ type Anomaly struct {
 	// a page can list hundreds of objects as degraded and give the reader no
 	// way to tell which ones anyone can do something about, which is the same
 	// as listing none.
-	Cause     string      `json:"cause,omitempty"`
-	Since     time.Time   `json:"since"`
-	SinceFrom SinceSource `json:"since_from"`
+	Cause string `json:"cause,omitempty"`
+	// CauseReason is one level below Cause and is usually where the answer is.
+	// A cause of LEVEL_OUTCOME_UNKNOWN carries a reason of either the coverage
+	// class -- the data does not reach this window, nobody here did anything
+	// wrong -- or the retryable class, which clears on its own. Neither is what
+	// the column heading claims, and the cause alone cannot tell them apart.
+	CauseReason string      `json:"cause_reason,omitempty"`
+	Since       time.Time   `json:"since"`
+	SinceFrom   SinceSource `json:"since_from"`
 	// FailingSince is when the current unbroken sequence of rounds that
 	// reached execution and did not finish began; zero while the last
 	// conclusive round ended, however it ended. It is not Since: an object

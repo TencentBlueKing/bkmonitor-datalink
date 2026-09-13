@@ -121,8 +121,9 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
     <div class="grid">
       <div class="cell"><div class="k">正常</div><div class="v" id="healthy">–</div>
         <div class="k">跑完了，结果完整</div></div>
-      <div class="cell hl"><div class="k">自身异常</div><div class="v" id="ownBad">–</div>
-        <div class="k">alarmd 自己没跑好，是真问题</div></div>
+      <div class="cell hl"><div class="k">没归到后端</div><div class="v" id="ownBad">–</div>
+        <div class="k">这一轮没跑成，而且没有证据说是后端造成的——不等于就是 alarmd 的问题，
+          要看每条的"下一层原因"</div></div>
       <div class="cell"><div class="k">策略本身不可用</div><div class="v" id="demoted">–</div>
         <div class="k" id="demotedHint">后端持续查不到，已降级不再反复查</div></div>
       <div class="cell hl"><div class="k">状态未知</div><div class="v" id="unknown">–</div>
@@ -210,7 +211,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
     <div class="summary" id="summary"></div>
     <table>
       <thead><tr>
-        <th>对象</th><th>种类</th><th>最近原因</th><th>是什么情况</th><th>失败在哪</th><th>已持续</th>
+        <th>对象</th><th>种类</th><th>最近原因</th><th>是什么情况</th><th>下一层原因</th><th>失败在哪</th><th>已持续</th>
         <th>起算来源</th><th>副本</th><th>关联策略</th>
       </tr></thead>
       <tbody id="rows"></tbody>
@@ -563,6 +564,13 @@ function loadObjects() {
       // for opposite responses. Without this column the list reads as hundreds
       // of equally urgent objects, which is the same as reading as none.
       cell(causeText(a.cause));
+      // The cause stops one level short of the answer. LEVEL_OUTCOME_UNKNOWN is
+      // required by contract to carry a reason of either the coverage class --
+      // the data does not reach this window, which is nobody here's doing -- or
+      // the retryable class, which clears on its own. Showing the cause alone
+      // made 61 of 62 objects one indistinguishable population.
+      var reason = cell(a.cause_reason || '—');
+      if (a.cause_reason) { reason.title = a.cause_reason; }
       // The completion kind says a round ended badly; this says what went wrong.
       // Both are shown because they answer different questions.
       var f = a.failure;
@@ -775,6 +783,7 @@ function renderSummary(summary, total) {
   [['种类', summary.by_kind], ['原因', summary.by_reason],
    ['失败在哪', summary.by_failure], ['具体是哪种', summary.by_failure_code],
    ['后端症状', summary.by_failure_detail],
+   ['下一层原因', summary.by_cause_reason],
    ['副本', summary.by_replica]]
     .forEach(function (pair) {
       var counts = pair[1] || [];
@@ -1559,7 +1568,7 @@ var CAUSE_TEXT = {
   DATA_NOT_READY: '数据还没入库，会自愈',
   PLAN_UNAVAILABLE: '策略判不出来，要看',
   PRIMARY_INPUT_UNAVAILABLE: '查询没拿到可用数据，要看',
-  LEVEL_OUTCOME_UNKNOWN: '级别结论未知，要看'
+  LEVEL_OUTCOME_UNKNOWN: '级别结论未知，看下一层原因'
 };
 
 function causeText(cause) {

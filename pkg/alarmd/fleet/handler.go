@@ -167,7 +167,13 @@ type Summary struct {
 	// population that splits into "the backend returned 503" and "the connection
 	// was refused" is two problems for two people rather than one number.
 	ByFailureDetail []Count `json:"by_failure_detail"`
-	ByReplica       []Count `json:"by_replica"`
+	// ByCauseReason is the level below the cause and is where the answer to
+	// "whose problem is this" lives. A column of objects sharing
+	// LEVEL_OUTCOME_UNKNOWN is not one population: the contract requires that
+	// cause to carry a reason of either the coverage class or the retryable
+	// class, and those need opposite responses.
+	ByCauseReason []Count `json:"by_cause_reason"`
+	ByReplica     []Count `json:"by_replica"`
 	// Stalled counts the objects that are stuck rather than merely degraded. The
 	// other three say how badly the last round went; this one says the rounds
 	// stopped ending, which is the only one of the four that cannot resolve on
@@ -191,6 +197,7 @@ func summarize(anomalies []Anomaly) Summary {
 	failures := map[string]int{}
 	codes := map[string]int{}
 	details := map[string]int{}
+	causeReasons := map[string]int{}
 	replicas := map[string]int{}
 	stalled := 0
 	for _, anomaly := range anomalies {
@@ -210,11 +217,14 @@ func summarize(anomalies []Anomaly) Summary {
 		if anomaly.Failure != nil && anomaly.Failure.Detail != "" {
 			details[anomaly.Failure.Detail]++
 		}
+		if anomaly.CauseReason != "" {
+			causeReasons[anomaly.CauseReason]++
+		}
 		replicas[anomaly.Replica]++
 	}
 	return Summary{
 		ByKind: rank(kinds), ByReason: rank(reasons),
-		ByFailure: rank(failures), ByFailureCode: rank(codes), ByFailureDetail: rank(details),
+		ByFailure: rank(failures), ByFailureCode: rank(codes), ByFailureDetail: rank(details), ByCauseReason: rank(causeReasons),
 		ByReplica: rank(replicas), Stalled: stalled,
 	}
 }

@@ -125,6 +125,19 @@ func canonicalBranchProbes() []canonicalBranchProbe {
 		{"key that is a prefix of another", raw(`{"ab":1,"a":2}`)},
 		{"duplicate keys surrogate pair versus literal", raw(`{"` + esc("d83d") + esc("de00") + `":1,"` + lit(0x1f600) + `":2}`)},
 		{"keys sorted across literal astral and ascii", raw(`{"` + lit(0x1f600) + `":1,"a":2}`)},
+		// third round: the non-finite check in walkJSONValue, which only runs on
+		// the strict path and which the first two rounds walked straight past.
+		// Its guard is "the token contains . e or E", so a number without one
+		// never reaches it however long it is - which is why the long integer
+		// probe above could not stand in for these.
+		{"exponent overflowing float64", raw(`1e999`)},
+		{"negative exponent overflowing float64", raw(`-1e999`)},
+		{"decimal exponent overflowing float64", raw(`1.5e999`)},
+		{"exponent underflowing to zero", raw(`1e-999`)},
+		{"exponent overflow inside object", raw(`{"a":1e999}`)},
+		{"exponent overflow inside array", raw(`[1e999]`)},
+		{"exponent at the float64 boundary", raw(`1.7976931348623157e308`)},
+		{"exponent just past the float64 boundary", raw(`1.8e308`)},
 		// rejection branches
 		{"empty payload", raw(``)},
 		{"whitespace only", raw(`   `)},

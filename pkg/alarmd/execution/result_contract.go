@@ -461,6 +461,7 @@ func validateStateOutcomes(
 ) error {
 	facts := make(map[levelOutcomeIdentity]LevelFactResult)
 	for _, state := range result.StateResults {
+		loaded, _ := states.Find(state.Mutation.Identity)
 		anchors := make(map[RecordAnchor]struct{}, len(state.Mutation.AffectedRecords))
 		for _, anchor := range state.Mutation.AffectedRecords {
 			anchors[anchor] = struct{}{}
@@ -504,7 +505,8 @@ func validateStateOutcomes(
 				if !levelFactMatchesOutcome(fact.Result, outcome.Outcome) &&
 					!stateFactMayAdvanceUnknown(
 						fact.Result, outcome, state.Mutation, effectiveStatus, stateInputAllowsAdvance(input, outcome),
-					) {
+					) &&
+					!stateFactCarriedFromLoadedHistory(loaded.History, anchor, fact, outcome) {
 					return errors.New("alarmd execution: State Level fact contradicts its Level outcome")
 				}
 				identity := levelOutcomeIdentity{
@@ -642,6 +644,43 @@ func stateFactMayAdvanceUnknown(
 	}
 	return effectiveStatus == strategy.EffectiveTimeInactive &&
 		outcome.ReasonCode == ReasonCode(contract.ReasonEffectiveTimeInactive)
+}
+
+// stateFactCarriedFromLoadedHistory reports whether the fact is one the
+// history already held at this anchor before the round, and this round's
+// outcome for its Level is not a business outcome.
+//
+// The point a round writes for a record it evaluates again is the stored
+// point with the round's fresh facts merged in, and a fresh fact is only
+// written for a Level the round advanced or guarded. A Level the round did
+// neither for keeps the stored fact, so the point carries a statement an
+// earlier round made and checked against its own outcome. This round's
+// outcome for that Level can be UNKNOWN or TERMINAL under thinner input
+// without either statement being wrong, and judging the carried fact by it
+// rejected every re-evaluation of such a record. A business outcome is never
+// exempt: the round advanced that Level, wrote a fresh fact for it, and the
+// merge already required the two to agree, so the fact is the round's own.
+func stateFactCarriedFromLoadedHistory(
+	history []StateHistoryPoint,
+	anchor RecordAnchor,
+	fact StateLevelFact,
+	outcome LevelOutcome,
+) bool {
+	if outcome.Outcome != LevelOutcomeUnknown && outcome.Outcome != LevelOutcomeTerminal {
+		return false
+	}
+	for _, point := range history {
+		if point.RecordID != anchor.RecordID || point.SourceTime != anchor.SourceTime {
+			continue
+		}
+		for _, held := range point.Levels {
+			if held == fact {
+				return true
+			}
+		}
+		return false
+	}
+	return false
 }
 
 func stateInputAllowsAdvance(input InternalExecution, outcome LevelOutcome) bool {

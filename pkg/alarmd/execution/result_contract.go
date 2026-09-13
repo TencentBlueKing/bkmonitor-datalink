@@ -392,9 +392,13 @@ func loadedGuardReasons(
 }
 
 func validateLocalizedInputOutcome(input InternalExecution, plan PlanIdentity, outcome LevelOutcome) (bool, error) {
+	return localizedInputOutcome(input.Inputs, plan, outcome)
+}
+
+func localizedInputOutcome(bindings []NamedInputBinding, plan PlanIdentity, outcome LevelOutcome) (bool, error) {
 	terminalReasons := make(map[ReasonCode]struct{})
 	qualityReasons := make(map[ReasonCode]struct{})
-	for _, binding := range affectedBindings(input, plan, outcome.LevelID) {
+	for _, binding := range affectedBindingsOf(bindings, plan, outcome.LevelID) {
 		for _, terminal := range binding.Terminals {
 			if inputFactMatchesOutcome(terminal.ImpactScope, terminal.RecordID, terminal.SourceTime, terminal.SeriesIdentity, outcome) {
 				terminalReasons[terminal.ReasonCode] = struct{}{}
@@ -442,8 +446,12 @@ func inputFactMatchesOutcome(
 }
 
 func affectedBindings(input InternalExecution, plan PlanIdentity, levelID uint32) []NamedInputBinding {
+	return affectedBindingsOf(input.Inputs, plan, levelID)
+}
+
+func affectedBindingsOf(all []NamedInputBinding, plan PlanIdentity, levelID uint32) []NamedInputBinding {
 	var bindings []NamedInputBinding
-	for _, binding := range input.Inputs {
+	for _, binding := range all {
 		if binding.Consumer.Plan != plan || (binding.Consumer.HasLevel && binding.Consumer.LevelID != levelID) {
 			continue
 		}
@@ -645,7 +653,18 @@ func stateFactMayAdvanceUnknown(
 }
 
 func stateInputAllowsAdvance(input InternalExecution, outcome LevelOutcome) bool {
-	bindings := affectedBindings(input, outcome.Plan, outcome.LevelID)
+	return InputAllowsStateAdvance(input.Inputs, outcome)
+}
+
+// InputAllowsStateAdvance says whether the named inputs bound to the
+// outcome's Level were complete enough for a fact detected on them to enter
+// the Level's history while the outcome itself is UNKNOWN: every binding of
+// the Level is FULL, carries data, is available, and localizes nothing to
+// this record. The contract judges a State fact under an UNKNOWN outcome by
+// it, and the evaluator asks it before it lets such a fact advance, so the
+// two never disagree about the same round.
+func InputAllowsStateAdvance(all []NamedInputBinding, outcome LevelOutcome) bool {
+	bindings := affectedBindingsOf(all, outcome.Plan, outcome.LevelID)
 	if len(bindings) == 0 {
 		return false
 	}
@@ -655,7 +674,7 @@ func stateInputAllowsAdvance(input InternalExecution, outcome LevelOutcome) bool
 			return false
 		}
 	}
-	localized, err := validateLocalizedInputOutcome(input, outcome.Plan, outcome)
+	localized, err := localizedInputOutcome(all, outcome.Plan, outcome)
 	return err == nil && !localized
 }
 

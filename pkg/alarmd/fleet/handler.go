@@ -155,13 +155,13 @@ type Count struct {
 // cover is still reported the same way: a truncated snapshot shows up in the
 // gaps and in anomalies_total, and these counts inherit that limit.
 type Summary struct {
-	ByKind   []Count `json:"by_kind"`
-	ByReason []Count `json:"by_reason"`
+	ByKind   Distribution `json:"by_kind"`
+	ByReason Distribution `json:"by_reason"`
 	// ByFailure is usually the most informative of the three. A completion kind
 	// is shared by everything that ended badly, so counting it answers "how
 	// many" and not "how many of what"; the failure classification separates one
 	// broken dependency from a scattering of unrelated problems.
-	ByFailure []Count `json:"by_failure"`
+	ByFailure Distribution `json:"by_failure"`
 	// ByFailureCode is the same classification one level down, and it is the
 	// level the answer usually lives at: a category such as "evaluation" groups
 	// conditions that call for opposite responses, and telling them apart from
@@ -174,29 +174,29 @@ type Summary struct {
 	// It is not a metric label: the code set is open and would break the
 	// cardinality bound in 07 section 9. Here it is bounded by the anomalies
 	// actually present.
-	ByFailureCode []Count `json:"by_failure_code"`
+	ByFailureCode Distribution `json:"by_failure_code"`
 	// ByFailureDetail is the level the answer usually stops at. A column of
 	// objects sharing one code says how many; the symptom says what, and a
 	// population that splits into "the backend returned 503" and "the connection
 	// was refused" is two problems for two people rather than one number.
-	ByFailureDetail []Count `json:"by_failure_detail"`
+	ByFailureDetail Distribution `json:"by_failure_detail"`
 	// ByCauseReason is the level below the cause and is where the answer to
 	// "whose problem is this" lives. A column of objects sharing
 	// LEVEL_OUTCOME_UNKNOWN is not one population: the contract requires that
 	// cause to carry a reason of either the coverage class or the retryable
 	// class, and those need opposite responses.
-	ByCauseReason []Count `json:"by_cause_reason"`
+	ByCauseReason Distribution `json:"by_cause_reason"`
 	// ByBusiness is the unit someone can act on. The rows are objects, which are
 	// alarmd's own identities: an operator cannot look one up, cannot mention one
 	// to the person who configured the strategy, and cannot tell from a list of
 	// them whether this is one misconfiguration or fifty. Rolling the same
 	// population up by business answers the question the list raises.
-	ByBusiness []Count `json:"by_business"`
+	ByBusiness Distribution `json:"by_business"`
 	// Strategies is how many distinct strategies the rows cover. Fifty-five
 	// objects over sixty-two strategies and over five strategies are the same
 	// table and different conversations.
-	Strategies int     `json:"strategies"`
-	ByReplica  []Count `json:"by_replica"`
+	Strategies int          `json:"strategies"`
+	ByReplica  Distribution `json:"by_replica"`
 	// Stalled counts the objects that are stuck rather than merely degraded. The
 	// other three say how badly the last round went; this one says the rounds
 	// stopped ending, which is the only one of the four that cannot resolve on
@@ -214,6 +214,12 @@ type Summary struct {
 	Partial bool `json:"partial"`
 	// Onset says when this population started, which the ordering cannot.
 	Onset Onset `json:"onset"`
+	// Ours and External split the list by whether capacity or design could have
+	// prevented it. Ours is the one that decides the verdict; External is real
+	// work that belongs to whoever owns the strategy or the data, and counting
+	// them together is what made the verdict permanently DEGRADED.
+	Ours     int `json:"ours"`
+	External int `json:"external"`
 }
 
 // Onset splits the list by how long ago each object went wrong.
@@ -256,6 +262,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 	strategies := map[StrategyRef]struct{}{}
 	replicas := map[string]int{}
 	stalled := 0
+	ours, external := 0, 0
 	onset := Onset{}
 	for _, anomaly := range anomalies {
 		if anomaly.Stalled {
@@ -277,6 +284,12 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 			if onset.OldestSince.IsZero() || anomaly.Since.Before(onset.OldestSince) {
 				onset.OldestSince = anomaly.Since
 			}
+		}
+		switch anomaly.Attribution {
+		case AttributionExternal:
+			external++
+		default:
+			ours++
 		}
 		kinds[anomaly.Kind]++
 		if anomaly.ReasonCode != "" {
@@ -316,6 +329,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 		ByFailure: rank(failures), ByFailureCode: rank(codes), ByFailureDetail: rank(details), ByCauseReason: rank(causeReasons),
 		ByBusiness: rank(businesses), Strategies: len(strategies),
 		ByReplica: rank(replicas), Stalled: stalled, Onset: onset,
+		Ours: ours, External: external,
 	}
 }
 
@@ -346,12 +360,62 @@ func MarkStalled(anomalies []Anomaly, at time.Time, stallAfter time.Duration) {
 	for index := range anomalies {
 		failingSince := anomalies[index].FailingSince
 		anomalies[index].Stalled = !failingSince.IsZero() && at.Sub(failingSince) > stallAfter
+		if anomalies[index].Stalled {
+			// Whatever this object's last reason code was, it has stopped
+			// progressing, and nothing outside this deployment stops rounds from
+			// ending or will start them again. The last code is usually the
+			// external thing that happened just before it got stuck, so leaving
+			// the attribution alone would file a stalled object under someone
+			// else's work -- and stalling is the one condition here that never
+			// clears on its own.
+			anomalies[index].Attribution = AttributionOurs
+		}
 	}
 }
 
 // rank orders by count and then by value, so equal counts do not reorder
 // between two reads of an unchanged deployment.
-func rank(counts map[string]int) []Count {
+// MaxDistributionValues bounds how many groups a distribution ships.
+//
+// Some of these group by a vocabulary declared in code -- anomaly kinds,
+// contract reason codes, failure categories -- and those are small and fixed.
+// Others group by something sized by the installation: business or space,
+// strategy, the backend's own failure code and symptom string. Those have no
+// bound in this codebase at all, and on an install with tens of thousands of
+// spaces the second kind would put one entry per space in every response, on a
+// page that refreshes every few seconds.
+//
+// The bound clears the largest closed vocabulary here -- 55 contract reason
+// codes -- so grouping by a vocabulary still ships whole, and grouping by an
+// installation-sized set is cut with the remainder counted rather than
+// silently dropped.
+const MaxDistributionValues = 64
+
+// Distribution is a grouped count whose size does not follow the deployment's.
+//
+// Distinct is the whole answer to the question the head cannot answer: five
+// businesses with the objects spread over them and five thousand look nearly
+// the same in a list of the top five, and they are completely different
+// situations. It is counted before the cut, so it is right even when Top is not
+// the whole story.
+type Distribution struct {
+	Top      []Count `json:"top"`
+	Distinct int     `json:"distinct"`
+	// TailObjects counts what the values past the cut hold between them, so the
+	// head can be read as a share of the whole rather than as the whole.
+	TailObjects int `json:"tail_objects,omitempty"`
+}
+
+// Total is how many objects this distribution accounts for, head and tail.
+func (distribution Distribution) Total() int {
+	total := distribution.TailObjects
+	for _, count := range distribution.Top {
+		total += count.Count
+	}
+	return total
+}
+
+func rank(counts map[string]int) Distribution {
 	ranked := make([]Count, 0, len(counts))
 	for value, count := range counts {
 		ranked = append(ranked, Count{Value: value, Count: count})
@@ -362,7 +426,15 @@ func rank(counts map[string]int) []Count {
 		}
 		return ranked[left].Count > ranked[right].Count
 	})
-	return ranked
+	distribution := Distribution{Distinct: len(ranked)}
+	if len(ranked) > MaxDistributionValues {
+		for _, count := range ranked[MaxDistributionValues:] {
+			distribution.TailObjects += count.Count
+		}
+		ranked = ranked[:MaxDistributionValues]
+	}
+	distribution.Top = ranked
+	return distribution
 }
 
 // DetailResponse is what one object's route answers with.
@@ -504,6 +576,10 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	// same object as an unfiltered one, and counted here so the deployment-wide
 	// total survives whatever filter follows.
 	MarkStalled(view.Anomalies, now(), stallAfter)
+	// Stalling can only move an object towards ours, so the verdict is decided
+	// again with that known. Deciding it once, before the marking, would call a
+	// deployment with nothing but stuck objects healthy.
+	DecideHealth(&view)
 	// A replica publishes at most what fits its byte budget, so on a bad enough
 	// deployment the list this summary counts is already a sample. The counts
 	// stay useful for "which of these is it", and stop being usable as a
@@ -586,6 +662,10 @@ func objectDetail(response http.ResponseWriter, request *http.Request, service *
 	records, health, recordErr := objectRecords(request, queryGroup, diagnostics)
 	view := service.View(request.Context())
 	MarkStalled(view.Anomalies, now(), stallAfter)
+	// Stalling can only move an object towards ours, so the verdict is decided
+	// again with that known. Deciding it once, before the marking, would call a
+	// deployment with nothing but stuck objects healthy.
+	DecideHealth(&view)
 	body := DetailResponse{
 		Records: records, Diagnostics: health, RecordsError: recordErr,
 		Health:     view.Health,

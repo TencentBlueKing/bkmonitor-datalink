@@ -44,9 +44,23 @@ var AnomalyKinds = []string{KindDegradedRun, KindBlockedRun, KindOverdueWake, Ki
 var SinceSources = []SinceSource{
 	SinceBusinessState,
 	SinceSnapshotContinuity,
+	SinceProcessStart,
 	SinceRestoredLastFull,
 	SinceRestoredAtRestart,
 	SinceRefusedFuture,
+}
+
+// RestoredSinceSources are the provenances that mean the object was rebuilt
+// from what was written down rather than watched going wrong.
+//
+// The distinction is not cosmetic on the page. What gets persisted is the
+// completion kind; the cause and the reason below it are not, so a restored
+// object carries no cause -- and a blank cause reads as "there is no cause"
+// when the truth is "the cause was not kept". Those tell a reader to do
+// opposite things, and after every rollout the second one is most of the list.
+var RestoredSinceSources = []SinceSource{
+	SinceRestoredLastFull,
+	SinceRestoredAtRestart,
 }
 
 // MetricKind maps an anomaly kind onto the closed label set.

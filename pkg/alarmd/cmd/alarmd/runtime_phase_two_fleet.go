@@ -418,6 +418,9 @@ func fleetVerdictSource(
 		at := now()
 		view := service.View(ctx)
 		fleet.MarkStalled(view.Anomalies, at, stallAfter)
+		// Same as the HTTP path: stalling can only move an object towards
+		// ours, so the verdict is decided again once it is known.
+		fleet.DecideHealth(&view)
 		return fleetVerdictOf(view, at)
 	}
 }

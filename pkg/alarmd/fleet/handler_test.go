@@ -230,7 +230,7 @@ func TestSummaryCountsTheWholeListRatherThanThePage(t *testing.T) {
 		t.Fatalf("page = %d rows, want the 5 that were asked for", len(anomalies))
 	}
 	summary, _ := body["summary"].(map[string]any)
-	byKind, _ := summary["by_kind"].([]any)
+	byKind := topOf(summary["by_kind"])
 	if len(byKind) != 1 {
 		t.Fatalf("by_kind = %+v, want one kind", byKind)
 	}
@@ -244,7 +244,7 @@ func TestSummaryFollowsTheReplicaFilter(t *testing.T) {
 	handler := handlerWith(t, snapshotsWithAnomalies(4), Expectation{QueryGroups: 949, Known: true}, replicas())
 	_, body := get(t, handler, "/api/objects?replica=pod-a")
 	summary, _ := body["summary"].(map[string]any)
-	if byReplica, _ := summary["by_replica"].([]any); len(byReplica) != 0 {
+	if byReplica := topOf(summary["by_replica"]); len(byReplica) != 0 {
 		t.Fatalf("by_replica = %+v, want nothing: pod-a reported no anomalies", byReplica)
 	}
 }
@@ -288,7 +288,7 @@ func TestSummaryFollowsTheStrategyFilter(t *testing.T) {
 	handler := handlerWithStrategies(t)
 	_, body := get(t, handler, "/api/objects?business=7")
 	summary, _ := body["summary"].(map[string]any)
-	byKind, _ := summary["by_kind"].([]any)
+	byKind := topOf(summary["by_kind"])
 	if len(byKind) != 1 || byKind[0].(map[string]any)["count"].(float64) != 2 {
 		t.Fatalf("by_kind = %+v, want the two objects of business 7", byKind)
 	}
@@ -516,7 +516,7 @@ func TestSummaryCountsFailureCodesAndNotJustCategories(t *testing.T) {
 	summary, _ := body["summary"].(map[string]any)
 
 	counts := map[string]float64{}
-	byCode, _ := summary["by_failure_code"].([]any)
+	byCode := topOf(summary["by_failure_code"])
 	for _, entry := range byCode {
 		row, _ := entry.(map[string]any)
 		counts[row["value"].(string)] = row["count"].(float64)
@@ -529,7 +529,7 @@ func TestSummaryCountsFailureCodesAndNotJustCategories(t *testing.T) {
 	}
 	// The category counts must be unchanged: the code is an extra level, not a
 	// replacement, and a reader comparing the two needs both to still add up.
-	byCategory, _ := summary["by_failure"].([]any)
+	byCategory := topOf(summary["by_failure"])
 	total := 0.0
 	for _, entry := range byCategory {
 		total += entry.(map[string]any)["count"].(float64)
@@ -582,4 +582,15 @@ func TestSummaryIsNotMarkedPartialWhenNothingWasTruncated(t *testing.T) {
 	if partial, _ := summary["partial"].(bool); partial {
 		t.Fatal("paging a complete list was reported as a truncated sample")
 	}
+}
+
+// topOf reads a Distribution's ranked head out of a decoded response. The
+// grouped counts are objects rather than bare lists because they carry the
+// distinct count and the tail beside them -- a top-five over five groups and a
+// top-five over five thousand are not the same answer, and the list alone
+// cannot say which it is.
+func topOf(field any) []any {
+	group, _ := field.(map[string]any)
+	top, _ := group["top"].([]any)
+	return top
 }

@@ -144,6 +144,18 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       </div>
     </div>
     <ul class="gaps" id="gaps"></ul>
+    <div id="coverWrap" hidden>
+      <p class="basis" id="coverBasis"></p>
+      <div class="grid">
+        <div class="cell hl"><div class="k">被两个副本同时持有</div><div class="v" id="covDup">–</div>
+          <div class="k">已覆盖是求和，这些被数了两遍</div></div>
+        <div class="cell hl"><div class="k">目录里已经没有了，副本还拿着</div><div class="v" id="covStale">–</div>
+          <div class="k">该释放的归属</div></div>
+        <div class="cell hl"><div class="k">目录里有，没人认领</div><div class="v" id="covMissing">–</div>
+          <div class="k">没有副本在跑它</div></div>
+      </div>
+      <p class="basis" id="coverIds"></p>
+    </div>
     <div class="err" id="healthErr" hidden></div>
     <p class="note">
       <b>判定规则</b>：证据不全 → <span class="s b-UNKNOWN">UNKNOWN</span>；
@@ -155,6 +167,19 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <br><b>未知怎么来</b>：未知 = 应有 − 已知状态。它同时包含“没有副本认领”和“认领了但还说不出结论”两种。
       只要未知不为零，判定就停在 UNKNOWN——<b>不知道不等于健康</b>。
     </p>
+  </section>
+
+  <section class="panel" id="replicaPanel" hidden>
+    <h2>按副本下钻</h2>
+    <p class="basis">部署总数回答"这个部署好不好"，回答不了"是不是某一个副本在扛"。
+      同样是七十个异常，均摊和全压在一个副本上要做的事不一样。点某一行可以把下面的对象列表限定到那个副本。</p>
+    <table>
+      <thead><tr>
+        <th>副本</th><th>持有</th><th>正常</th><th>自身异常</th><th>降级池</th><th>状态未知</th>
+        <th>快照新鲜度</th><th>内存</th><th>CPU</th><th>同时在跑</th>
+      </tr></thead>
+      <tbody id="repRows"></tbody>
+    </table>
   </section>
 
   <section class="panel" id="trendPanel" hidden>
@@ -431,6 +456,8 @@ function loadHealth() {
     }
     flow.push('计数从本次进程启动起算，重启归零');
     text('poolFlowHint', flow.join('；'));
+    renderCoverage(deployment.coverage);
+    renderReplicas(deployment.per_replica);
     text('demotedHint', deployment.demoted_total
       ? '后端持续查不到，已降级不再反复查；不计入部署健康判定'
       : '当前没有对象被降级');
@@ -646,6 +673,71 @@ function renderStallNote(budgetSeconds, stalled, total, filtered) {
     + '之前降级了多久也不算，只看轮次是从什么时候起不再结束的。'
     + count;
   note.hidden = false;
+}
+
+// The coverage gap used to state its own two hypotheses and stop. Both are
+// still possible, but the sets that tell them apart are published now, so the
+// page shows which one it is instead of asking the reader to guess.
+function renderCoverage(coverage) {
+  show('coverWrap', !!coverage);
+  if (!coverage) return;
+  var dup = (coverage.held_by_several || []).length;
+  var stale = (coverage.held_not_expected || []).length;
+  var missing = (coverage.expected_not_held || []).length;
+  text('covDup', dup);
+  text('covStale', stale);
+  text('covMissing', missing);
+  text('coverBasis', coverage.comparable
+    ? '两边的对象集合都拿到了，下面三个数是数出来的，不是推测的。'
+    : '有副本没能把它持有的整份集合发上来，下面三个数只覆盖了发上来的那部分——'
+      + '这里的 0 是"这次没数到"，不是"没有"。');
+  // Naming them is the whole point: "多出 12 个" is not actionable, a list is.
+  var named = [];
+  if (stale) { named.push('目录里没有、副本还拿着：' + (coverage.held_not_expected || []).slice(0, 6).map(function (id) { return shortId(id); }).join(' ')); }
+  if (dup) { named.push('两个副本都拿着：' + (coverage.held_by_several || []).slice(0, 6).map(function (id) { return shortId(id); }).join(' ')); }
+  if (missing) { named.push('没人认领：' + (coverage.expected_not_held || []).slice(0, 6).map(function (id) { return shortId(id); }).join(' ')); }
+  text('coverIds', named.length ? named.join('；') + '（最多列 6 个，完整列表在接口的 coverage 字段里）' : '');
+}
+
+function shortId(id) { return String(id).slice(0, 12) + '…'; }
+
+// One row per replica, from the replicas' own snapshots rather than by dividing
+// totals -- dividing cannot recover which replica an anomaly came from.
+function renderReplicas(rows) {
+  rows = rows || [];
+  show('replicaPanel', rows.length > 0);
+  var host = document.getElementById('repRows');
+  host.textContent = '';
+  rows.forEach(function (r) {
+    var tr = document.createElement('tr');
+    function cell(t, cls) {
+      var td = document.createElement('td');
+      if (cls) td.className = cls;
+      td.textContent = t;
+      tr.appendChild(td);
+      return td;
+    }
+    var name = cell(shortReplica(r.replica), 'mono qg');
+    name.title = r.replica + '（点击把下面的对象列表限定到这个副本）';
+    name.addEventListener('click', function () {
+      document.getElementById('fReplica').value = r.replica;
+      applyFilters();
+    });
+    cell(r.owned + (r.truncated ? '（列表被截断，下面几个数是下界）' : ''));
+    cell(r.healthy);
+    cell(r.anomalies);
+    cell(r.demoted);
+    cell(r.unknown);
+    // A replica publishing late describes a past it has not updated, and that
+    // is invisible in every other number on this row.
+    var age = cell(Math.round(r.age_seconds) + ' 秒前');
+    if (r.age_seconds > 60) { age.className = 'stuck'; }
+    var cap = r.capacity;
+    cell(cap ? bytes(cap.memory_used_bytes) + ' / ' + bytes(cap.memory_limit_bytes) : '—');
+    cell(cap && cap.cpu_cores ? (cap.cpu_seconds !== undefined ? '上限 ' + cap.cpu_cores + ' 核' : '—') : '—');
+    cell(cap ? (cap.permits_held + ' / ' + cap.permit_budget) : '—');
+    host.appendChild(tr);
+  });
 }
 
 function renderSummary(summary, total) {

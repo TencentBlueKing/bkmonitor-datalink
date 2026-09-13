@@ -106,7 +106,15 @@ type HealthResponse struct {
 	// Overdue rides here rather than only in the list because the list can be
 	// paged or truncated, and "how many objects are not being evaluated" must
 	// not depend on how much of the list fitted.
-	Overdue *OverdueFacts `json:"overdue"`
+	// Coverage says which kind of coverage disagreement this deployment has,
+	// when the sets were available to compare. It is the difference between a
+	// verdict a reader can act on and one that only says "do not trust this".
+	Coverage *Disagreement `json:"coverage"`
+	// PerReplica breaks the deployment back down. Present on the verdict route
+	// because that is where a reader lands first, and "which replica" is the
+	// question the totals raise and cannot answer.
+	PerReplica []ReplicaView `json:"per_replica"`
+	Overdue    *OverdueFacts `json:"overdue"`
 	// Dispatch says whether anything can be parked at all. Without it the zero
 	// above is unreadable: a build that suppresses nothing reports the same zero
 	// as one where every object is being reached on time.
@@ -342,7 +350,8 @@ func NewHandler(
 			DemotedDue: view.DemotedDue, DemotionEntries: view.DemotionEntries,
 			DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
 			LastDemotionExit: view.LastDemotionExit,
-			Overdue:          view.Overdue, Dispatch: view.Dispatch,
+			Coverage:         view.Coverage, PerReplica: view.PerReplica,
+			Overdue: view.Overdue, Dispatch: view.Dispatch,
 			Gaps: view.Gaps, Capacity: view.Capacity,
 		})
 	})

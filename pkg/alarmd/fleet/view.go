@@ -219,9 +219,14 @@ func (anomaly Anomaly) MarshalJSON() ([]byte, error) {
 // knows nothing, and an empty anomaly list from it is indistinguishable from a
 // healthy one unless the two counts are reported separately.
 type Snapshot struct {
-	Replica        string    `json:"replica"`
-	TakenAt        time.Time `json:"taken_at"`
-	Owned          int       `json:"owned"`
+	Replica string    `json:"replica"`
+	TakenAt time.Time `json:"taken_at"`
+	Owned   int       `json:"owned"`
+	// OwnedObjects is which objects, not how many. Owned stays authoritative
+	// for the count: the list is bounded like the anomaly list, so a replica
+	// holding more than the budget publishes a short list beside a full count
+	// rather than a smaller count.
+	OwnedObjects   []string  `json:"owned_objects,omitempty"`
 	Determined     int       `json:"determined"`
 	Anomalies      []Anomaly `json:"anomalies"`
 	TotalAnomalies int       `json:"total_anomalies"`
@@ -277,6 +282,70 @@ type Gap struct {
 type Expectation struct {
 	QueryGroups int
 	Known       bool
+	// IDs is the catalogue's own object set, not just its size. Carrying it
+	// costs one already-loaded slice and is what turns "the two sides disagree
+	// by twelve" into "these twelve objects, and here is which kind of
+	// disagreement they are". Without it the gap can only name its own two
+	// hypotheses, which it did on a running deployment for over a day.
+	//
+	// Empty is allowed and means the caller could count the set but not carry
+	// it; the arithmetic below then falls back to comparing sizes, which is
+	// what it did before.
+	IDs []string
+}
+
+// Disagreement names which kind of coverage disagreement a deployment has,
+// computed from the sets rather than from their sizes.
+//
+// The two kinds need opposite responses -- one is ownership to clean up, the
+// other is this view double counting -- and a difference of counts cannot tell
+// them apart. Saying so was honest and useless: it left a reader with "do not
+// trust this" and no way to find out.
+type Disagreement struct {
+	// HeldBySeveral are objects more than one replica claims. Covered is a sum,
+	// so each of these inflates it by one without any object being left over.
+	HeldBySeveral []string `json:"held_by_several,omitempty"`
+	// HeldNotExpected are objects some replica holds that the catalogue does
+	// not list: ownership that outlived the object.
+	HeldNotExpected []string `json:"held_not_expected,omitempty"`
+	// ExpectedNotHeld are catalogue objects no replica claims.
+	ExpectedNotHeld []string `json:"expected_not_held,omitempty"`
+	// Comparable is false when some replica could not publish its object set,
+	// so the three lists above are not the whole story. A zero from an
+	// incomparable read means "not established", not "none".
+	Comparable bool `json:"comparable"`
+}
+
+// ReplicaView is one replica's own numbers, kept beside the deployment totals
+// rather than only summed into them.
+//
+// The totals answer "is this deployment well". They cannot answer "is one
+// replica carrying the problem", and that is usually the next question: a
+// deployment reporting seventy anomalies looks the same whether they are spread
+// evenly or all on one replica, and those need different actions. Summing first
+// and offering no way back down is what made every investigation start by
+// reading the object list one row at a time.
+type ReplicaView struct {
+	Replica string `json:"replica"`
+	Owned   int    `json:"owned"`
+	// Determined, Anomalies and Demoted partition Owned the same way the
+	// deployment columns partition Expected, so a replica row adds up on its own
+	// and a reader can see which replica breaks the sum.
+	Determined int `json:"determined"`
+	Anomalies  int `json:"anomalies"`
+	Demoted    int `json:"demoted"`
+	Healthy    int `json:"healthy"`
+	Unknown    int `json:"unknown"`
+	// AgeSeconds is how old this replica's snapshot was at the moment of the
+	// read. A replica publishing late is reporting about a past it has not
+	// updated, and that is invisible in any of the numbers above.
+	AgeSeconds float64 `json:"age_seconds"`
+	// Truncated says this replica published a shorter list than it had, so its
+	// own counts are floors.
+	Truncated bool `json:"truncated"`
+	// Capacity is this replica's own occupancy. Present only where the replica
+	// reports it; absent is different from zero and stays absent.
+	Capacity *Capacity `json:"capacity,omitempty"`
 }
 
 // View is the aggregated answer returned to callers.
@@ -344,8 +413,15 @@ type View struct {
 	// Anyone can draw the line from two reads of these; nobody can draw a
 	// defensible one today, and a number invented now would be obeyed later as
 	// though it had been measured.
-	DemotedDue int      `json:"demoted_due"`
-	Replicas   []string `json:"replicas"`
+	DemotedDue int `json:"demoted_due"`
+	// Coverage says which kind of disagreement the counts have, when the sets
+	// were available to compare. Absent when no replica published its set.
+	Coverage *Disagreement `json:"coverage,omitempty"`
+	Replicas []string      `json:"replicas"`
+	// PerReplica is the same deployment broken back down. It is not derived by
+	// the page: the page can only divide totals, which cannot recover which
+	// replica an anomaly came from.
+	PerReplica []ReplicaView `json:"per_replica"`
 }
 
 // Aggregate folds the published snapshots into one view.
@@ -356,7 +432,8 @@ type View struct {
 // the denominator locally would make three replicas out of four report full
 // coverage of nothing.
 func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas []string, now time.Time, freshness time.Duration) View {
-	view := View{Health: HealthHealthy, Anomalies: []Anomaly{}, Demoted: []Anomaly{}, Replicas: []string{}}
+	view := View{Health: HealthHealthy, Anomalies: []Anomaly{}, Demoted: []Anomaly{},
+		Replicas: []string{}, PerReplica: []ReplicaView{}}
 	ownedByReplica := make([]string, 0, len(expectedReplicas))
 	// The snapshots this view is willing to speak for. Every other number below
 	// is built from these and not from the argument, because the argument
@@ -364,6 +441,8 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	// deployment now, and one from a replica that is no longer part of it and
 	// whose key has simply not expired yet.
 	counted := make([]Snapshot, 0, len(expectedReplicas))
+	ownedSets := make([][]string, 0, len(expectedReplicas))
+	setsComplete := true
 
 	byReplica := make(map[string]Snapshot, len(snapshots))
 	for _, snapshot := range snapshots {
@@ -390,6 +469,12 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		counted = append(counted, snapshot)
 		ownedByReplica = append(ownedByReplica, fmt.Sprintf("%s %d", shortReplicaName(replica), snapshot.Owned))
 		view.Covered += snapshot.Owned
+		ownedSets = append(ownedSets, snapshot.OwnedObjects)
+		if len(snapshot.OwnedObjects) < snapshot.Owned {
+			// A replica that published a short set cannot be compared, and a
+			// zero from an incomparable read is not "none".
+			setsComplete = false
+		}
 		view.Determined += snapshot.Determined
 		view.AnomaliesTotal += snapshot.TotalAnomalies
 		view.Anomalies = append(view.Anomalies, snapshot.Anomalies...)
@@ -404,6 +489,23 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		if snapshot.Truncated() {
 			view.Gaps = append(view.Gaps, Gap{Kind: GapListTruncated, Replica: replica})
 		}
+		perReplica := ReplicaView{
+			Replica: replica, Owned: snapshot.Owned, Determined: snapshot.Determined,
+			Anomalies: snapshot.TotalAnomalies, Demoted: snapshot.TotalDemoted,
+			AgeSeconds: now.Sub(snapshot.TakenAt).Seconds(),
+			Truncated:  snapshot.Truncated(), Capacity: snapshot.Capacity,
+		}
+		// Same subtraction as the deployment view, for the same reason: a
+		// healthy count built by its own walk drifts from the lists beside it.
+		perReplica.Unknown = snapshot.Owned - snapshot.Determined
+		if perReplica.Unknown < 0 {
+			perReplica.Unknown = 0
+		}
+		perReplica.Healthy = snapshot.Determined - snapshot.TotalAnomalies - snapshot.TotalDemoted
+		if perReplica.Healthy < 0 {
+			perReplica.Healthy = 0
+		}
+		view.PerReplica = append(view.PerReplica, perReplica)
 	}
 	// Determined is what the replicas can speak for, and every object they can
 	// speak for is in exactly one of the three. Subtracting rather than counting
@@ -461,6 +563,7 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		view.Gaps = append(view.Gaps, Gap{Kind: GapUndetermined})
 	}
 
+	view.Coverage = compareCoverage(ownedSets, expectation, setsComplete)
 	if !expectation.Known {
 		view.Gaps = append(view.Gaps, Gap{Kind: GapDenominatorUnavailable})
 	} else {
@@ -486,9 +589,7 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			// ownership to clean up, the other is this view double counting --
 			// and stating only the difference asserts the first.
 			view.Gaps = append(view.Gaps, Gap{Kind: GapCoverageInconsistent,
-				Detail: fmt.Sprintf("%d owned (%s) against %d expected, %d more; Covered is a sum, so replicas "+
-					"holding the same object during a rendezvous change look the same as objects left over",
-					view.Covered, strings.Join(ownedByReplica, ", "), expected, view.Covered-expected)})
+				Detail: coverageDetail(view.Coverage, view.Covered, expected, ownedByReplica)})
 		case expected > view.Covered:
 			// Added rather than assigned: objects nobody owns and objects owned
 			// by a replica that cannot speak for them are both unknown, and they
@@ -519,6 +620,72 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		view.Health = HealthHealthy
 	}
 	return view
+}
+
+// compareCoverage works out which kind of disagreement the counts have.
+//
+// Nil when nothing can be compared -- no replica published a set, or the
+// catalogue did not carry one. Nil is the honest answer there: the previous
+// behaviour was to state both hypotheses and let the reader pick, which on a
+// running deployment meant a gap that said the same ambiguous thing for over a
+// day while nobody could act on it.
+func compareCoverage(ownedSets [][]string, expectation Expectation, setsComplete bool) *Disagreement {
+	held := make(map[string]int)
+	for _, set := range ownedSets {
+		// Counted per replica, not per row, so one replica listing an object
+		// twice cannot look like two replicas holding it.
+		seen := make(map[string]struct{}, len(set))
+		for _, object := range set {
+			if _, repeat := seen[object]; repeat {
+				continue
+			}
+			seen[object] = struct{}{}
+			held[object]++
+		}
+	}
+	if len(held) == 0 {
+		return nil
+	}
+	result := &Disagreement{Comparable: setsComplete && expectation.Known && len(expectation.IDs) > 0}
+	for object, holders := range held {
+		if holders > 1 {
+			result.HeldBySeveral = append(result.HeldBySeveral, object)
+		}
+	}
+	if len(expectation.IDs) > 0 {
+		expected := make(map[string]struct{}, len(expectation.IDs))
+		for _, object := range expectation.IDs {
+			expected[object] = struct{}{}
+		}
+		for object := range held {
+			if _, listed := expected[object]; !listed {
+				result.HeldNotExpected = append(result.HeldNotExpected, object)
+			}
+		}
+		for object := range expected {
+			if _, owned := held[object]; !owned {
+				result.ExpectedNotHeld = append(result.ExpectedNotHeld, object)
+			}
+		}
+	}
+	sort.Strings(result.HeldBySeveral)
+	sort.Strings(result.HeldNotExpected)
+	sort.Strings(result.ExpectedNotHeld)
+	return result
+}
+
+// coverageDetail states what the disagreement is, falling back to naming the
+// two possibilities only when the sets were not available to tell them apart.
+func coverageDetail(coverage *Disagreement, covered, expected int, ownedByReplica []string) string {
+	head := fmt.Sprintf("%d owned (%s) against %d expected, %d more",
+		covered, strings.Join(ownedByReplica, ", "), expected, covered-expected)
+	if coverage == nil || !coverage.Comparable {
+		return head + "; Covered is a sum, so replicas holding the same object during a rendezvous " +
+			"change look the same as objects left over, and this read could not compare the sets to say which"
+	}
+	return fmt.Sprintf("%s: %d held by more than one replica (Covered double counts these), "+
+		"%d held but no longer in the catalogue (ownership to release), %d in the catalogue that nobody holds",
+		head, len(coverage.HeldBySeveral), len(coverage.HeldNotExpected), len(coverage.ExpectedNotHeld))
 }
 
 // sortAnomalies orders a column oldest-first. Both columns use it, because a

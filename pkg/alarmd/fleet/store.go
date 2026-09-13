@@ -118,6 +118,23 @@ func withinAnomalyBudget(anomalies []Anomaly, budget int) []Anomaly {
 	return anomalies
 }
 
+// withinObjectBudget keeps the longest prefix of the identifier list that fits.
+// The list is sorted, so the prefix is stable between ticks rather than an
+// arbitrary subset that changes on every publish.
+func withinObjectBudget(objects []string, budget int) []string {
+	if budget <= 0 {
+		return objects
+	}
+	spent := 0
+	for index, object := range objects {
+		spent += len(object) + 3 // quotes and separator
+		if spent > budget {
+			return objects[:index]
+		}
+	}
+	return objects
+}
+
 // Publish writes this replica's snapshot, truncating the anomaly list to the
 // configured byte budget. TotalAnomalies always carries the untruncated count so
 // the reader can tell a short list from a complete one.
@@ -138,6 +155,11 @@ func (store *RedisStore) Publish(ctx context.Context, snapshot Snapshot) error {
 	// let a long pool shorten the anomaly list, which is the reading this package
 	// exists to prevent -- and it would do it during exactly the backend outage
 	// that fills the pool.
+	// The owned set gets the same budget and the same treatment: Owned keeps the
+	// true count, so a replica past the budget publishes a short set beside a
+	// full count. The aggregate notices the shortfall and refuses to compare,
+	// rather than reporting set arithmetic done on half the objects.
+	snapshot.OwnedObjects = withinObjectBudget(snapshot.OwnedObjects, store.maxAnomalyBytes)
 	snapshot.Anomalies = withinAnomalyBudget(snapshot.Anomalies, store.maxAnomalyBytes)
 	snapshot.Demoted = withinAnomalyBudget(snapshot.Demoted, store.maxAnomalyBytes)
 	payload, err := json.Marshal(snapshot)

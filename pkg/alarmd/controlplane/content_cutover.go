@@ -143,7 +143,25 @@ func (content activatedContent) refsFor(group QueryGroup) ([]execution.OutputCon
 	return refs, true
 }
 
+// loadActivatedContent is the population the activation runs: the content
+// of its publication without the Query Groups it still lists as draining. A
+// Query Group in both is one an activation held out of the publication for
+// not having drained; it has no open Segment and its Plans are not
+// activated, so it is not an old Query Group for the next cutover to keep or
+// cut, and it is not part of the coverage the activation owes.
 func (repository *RedisCatalogRepository) loadActivatedContent(ctx context.Context, activation ActivationState) (activatedContent, error) {
+	content, err := repository.loadPublicationContent(ctx, activation)
+	if err != nil {
+		return activatedContent{}, err
+	}
+	for _, projection := range activation.Draining {
+		delete(content.groups, projection.QueryGroup)
+		delete(content.digests, projection.QueryGroup)
+	}
+	return content, nil
+}
+
+func (repository *RedisCatalogRepository) loadPublicationContent(ctx context.Context, activation ActivationState) (activatedContent, error) {
 	manifest, err := repository.LoadCatalogManifest(ctx, activation.Current.SnapshotRevision)
 	if err == nil {
 		content := activatedContent{

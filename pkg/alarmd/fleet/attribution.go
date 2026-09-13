@@ -56,6 +56,22 @@ const (
 // deployment. Everything in the catalogue that is not listed here counts
 // against it -- see attributionOf for why that is the safe direction.
 //
+// The question that decides a row is "would capacity or a different design
+// have prevented this", never "what set it off". Those come apart constantly
+// and only the first one is the split this table exists to make.
+//
+// A code describing something this deployment did wrong while reacting to an
+// external event belongs on our side, however plainly external the trigger
+// was: an upstream being unavailable is not ours, and writing a
+// self-contradictory state in response to it is. The other reading -- that a
+// visible external trigger makes the outcome external -- would let any defect
+// out of this column as soon as somebody found the thing that provoked it, and
+// almost every defect has one.
+//
+// Symmetrically, a code is not ours merely because our process emitted it.
+// Every code here was emitted by this process; that is what makes "who
+// emitted it" useless as the question and "who can fix it" the one that works.
+//
 // Grouped by who acts on it, because that is what the split is for.
 var externalReasons = map[string]bool{
 	// The data does not reach the window the algorithm needs. Nothing about

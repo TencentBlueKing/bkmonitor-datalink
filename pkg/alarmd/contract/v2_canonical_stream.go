@@ -13,37 +13,9 @@ import (
 	"math"
 	"sort"
 	"strconv"
-	"sync/atomic"
 	"unicode/utf16"
 	"unicode/utf8"
 )
-
-// canonicalStreamEnabled switches the single-pass form on. It is off until the
-// shadow comparison has run in both directions, and it stays in the binary
-// afterwards so the old path remains one setting away.
-var canonicalStreamEnabled atomic.Bool
-
-// A decline and an agreement are indistinguishable from outside: both end with
-// the established path's bytes being returned. Without these two counters a
-// switch that had quietly stopped accepting anything would still report zero
-// divergence, and the saving would be reported as delivered while every call
-// paid for both paths.
-var (
-	canonicalStreamServed   atomic.Uint64
-	canonicalStreamDeclined atomic.Uint64
-)
-
-// CanonicalStreamCounts reports how many calls the single-pass form answered
-// and how many it handed back, for the observation layer to publish.
-func CanonicalStreamCounts() (served, declined uint64) {
-	return canonicalStreamServed.Load(), canonicalStreamDeclined.Load()
-}
-
-// SetCanonicalStreamEnabled turns the single-pass form on or off and reports
-// what it was.
-func SetCanonicalStreamEnabled(enabled bool) bool {
-	return canonicalStreamEnabled.Swap(enabled)
-}
 
 // The canonical form of a JSON payload in one pass over its bytes.
 //

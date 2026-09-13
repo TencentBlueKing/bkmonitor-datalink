@@ -205,6 +205,8 @@ func TestCanonicalShadowComparesWithoutChangingAnswers(t *testing.T) {
 	defer SetCanonicalStreamShadow(previousShadow)
 	previousStream := SetCanonicalStreamEnabled(false)
 	defer SetCanonicalStreamEnabled(previousStream)
+	previousStride := SetCanonicalShadowStride(1)
+	defer SetCanonicalShadowStride(previousStride)
 
 	before := ReadCanonicalShadowCounts()
 	for _, probe := range canonicalBranchProbes() {
@@ -251,7 +253,14 @@ func TestCanonicalShadowDetectsADivergenceItIsGiven(t *testing.T) {
 	wrong[len(wrong)-2] = '9' // change the last value
 
 	before := ReadCanonicalShadowCounts()
-	compareCanonicalShadow("test.Injected", raw, wrong, nil)
+	streamed, ok := canonicalStreamV2(nil, raw)
+	if !ok {
+		t.Fatal("the single-pass form declined a plain object")
+	}
+	compareCanonicalShadow(canonicalShadowInput{
+		GoType: "test.Injected", Direction: "forward", Raw: raw,
+		Served: wrong, Compared: streamed,
+	})
 	after := ReadCanonicalShadowCounts()
 	if after.BytesDiffer != before.BytesDiffer+1 {
 		t.Fatalf("detector did not fire on a planted difference: %+v", after)
@@ -274,5 +283,100 @@ func TestCanonicalShadowDetectsADivergenceItIsGiven(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no fingerprint recorded for the planted difference")
+	}
+}
+
+// The reverse direction: the single-pass form answers and the established one
+// compares. This is the claim the first cut of this change could not make at
+// all, because it skipped the comparison whenever the new path was
+// authoritative, which reads as "no divergence" for the same reason an unread
+// meter reads as no consumption.
+func TestCanonicalShadowComparesInReverse(t *testing.T) {
+	defer SetCanonicalShadowStride(SetCanonicalShadowStride(1))
+	previous, err := SetCanonicalMode(CanonicalModeStreamShadow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer SetCanonicalMode(previous)
+
+	before := ReadCanonicalShadowCounts()
+	for _, probe := range canonicalBranchProbes() {
+		want := canonicalBranchExpectations[probe.name]
+		out, err := CanonicalJSONV2(probe.value)
+		if want.accept {
+			if err != nil {
+				t.Fatalf("%s: %v", probe.name, err)
+			}
+			if got := hex.EncodeToString(out); got != want.wantHex {
+				t.Fatalf("%s: bytes moved:\n want %s\n got  %s", probe.name, want.wantHex, got)
+			}
+			continue
+		}
+		if err == nil {
+			t.Fatalf("%s: rejection became an accept", probe.name)
+		}
+	}
+	after := ReadCanonicalShadowCounts()
+	if after.Compared == before.Compared {
+		t.Fatal("reverse comparison never ran; this is exactly the gap being closed")
+	}
+	if after.Agreed == before.Agreed {
+		t.Fatal("reverse comparison agreed on nothing")
+	}
+	if after.BytesDiffer != before.BytesDiffer ||
+		after.VerdictDiffer != before.VerdictDiffer ||
+		after.PanicDiffer != before.PanicDiffer {
+		t.Fatalf("reverse divergence on the pinned branches: %+v", after)
+	}
+}
+
+// Sampling has to actually reduce the comparisons, or the cost control is a
+// comment rather than a mechanism.
+func TestCanonicalShadowStrideLimitsComparisons(t *testing.T) {
+	defer SetCanonicalShadowStride(SetCanonicalShadowStride(8))
+	previous, err := SetCanonicalMode(CanonicalModeShadow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer SetCanonicalMode(previous)
+
+	input := json.RawMessage(`{"a":1,"b":2}`)
+	before := ReadCanonicalShadowCounts()
+	const calls = 64
+	for range calls {
+		if _, err := CanonicalJSONV2(input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	compared := ReadCanonicalShadowCounts().Compared - before.Compared
+	if compared == 0 {
+		t.Fatal("stride 8 compared nothing at all")
+	}
+	if compared > calls/4 {
+		t.Fatalf("stride 8 compared %d of %d calls; sampling is not limiting anything", compared, calls)
+	}
+}
+
+// A mode with no comparison must not pay for one, and an unknown name must not
+// silently land somewhere.
+func TestCanonicalModeNaming(t *testing.T) {
+	previous, err := SetCanonicalMode(CanonicalModeStream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer SetCanonicalMode(previous)
+	if CanonicalMode() != CanonicalModeStream {
+		t.Fatalf("got %q", CanonicalMode())
+	}
+	for _, name := range CanonicalModeNames() {
+		if _, err := SetCanonicalMode(name); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if CanonicalMode() != name {
+			t.Fatalf("set %q, read %q", name, CanonicalMode())
+		}
+	}
+	if _, err := SetCanonicalMode("streem"); err == nil {
+		t.Fatal("a misspelled mode was accepted")
 	}
 }

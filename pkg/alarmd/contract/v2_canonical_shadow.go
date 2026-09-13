@@ -10,38 +10,150 @@
 package contract
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
 )
 
-// Shadow mode runs the single-pass form alongside the established one and
-// reports where they differ, while the established one keeps answering. It is
-// the only way to learn what production inputs actually look like: the pinned
-// table and the fuzz corpus both cover what somebody thought of, and the
-// rejection boundary is exactly where an unthought-of input would land.
+// The four states a rollout of the single-pass canonical form passes through,
+// held as two independent bits so that an unreachable combination cannot be
+// named:
 //
-// The comparison serves the established bytes in every case, including when
-// the single-pass form panics, so turning shadow on cannot change an answer.
-// The reverse direction -- new authoritative, old shadow -- is the same switch
-// with canonicalStreamEnabled on, and has to be proven separately, because
-// agreeing on the inputs production happens to send is not the same claim as
-// agreeing on the inputs it sends after the switch changes which of the two is
-// deciding what gets stored.
+//	established    the established form answers, nothing compares
+//	shadow         the established form answers, the single-pass form compares
+//	stream_shadow  the single-pass form answers, the established form compares
+//	stream         the single-pass form answers, nothing compares
+//
+// Both comparison directions have to be proven, and they are different claims.
+// Forward says the two agree on what production sends today. Reverse says they
+// agree on what production sends once stored digests are coming from the new
+// path -- which is when the callers' own inputs start depending on it. A first
+// cut of this change compared only forward and silently skipped the comparison
+// whenever the new path was authoritative, which made the reverse claim
+// unprovable while looking like it was covered.
+const (
+	canonicalBitServeStream uint32 = 1 << iota
+	canonicalBitCompare
+)
 
-var canonicalStreamShadow atomic.Bool
+type canonicalMode uint32
 
-// SetCanonicalStreamShadow turns the comparison on or off and reports what it
-// was.
-func SetCanonicalStreamShadow(enabled bool) bool {
-	return canonicalStreamShadow.Swap(enabled)
+func (m canonicalMode) servesStream() bool { return uint32(m)&canonicalBitServeStream != 0 }
+func (m canonicalMode) compares() bool     { return uint32(m)&canonicalBitCompare != 0 }
+
+func (m canonicalMode) String() string {
+	switch {
+	case m.servesStream() && m.compares():
+		return CanonicalModeStreamShadow
+	case m.servesStream():
+		return CanonicalModeStream
+	case m.compares():
+		return CanonicalModeShadow
+	default:
+		return CanonicalModeEstablished
+	}
 }
 
-// Divergence classes. Kept as three separate counters rather than one with a
-// label so that a class nobody has seen still reads as zero rather than as a
-// missing series.
+// Mode names as they appear in configuration.
+const (
+	CanonicalModeEstablished  = "established"
+	CanonicalModeShadow       = "shadow"
+	CanonicalModeStreamShadow = "stream_shadow"
+	CanonicalModeStream       = "stream"
+)
+
+var canonicalModeBits atomic.Uint32
+
+func loadCanonicalMode() canonicalMode { return canonicalMode(canonicalModeBits.Load()) }
+
+// CanonicalModeNames lists the accepted values, so that configuration
+// validation and its error message cannot drift apart from this file.
+func CanonicalModeNames() []string {
+	return []string{CanonicalModeEstablished, CanonicalModeShadow, CanonicalModeStreamShadow, CanonicalModeStream}
+}
+
+// SetCanonicalMode selects a rollout state by name and reports the previous
+// one. An unknown name changes nothing.
+func SetCanonicalMode(name string) (string, error) {
+	var bits uint32
+	switch name {
+	case CanonicalModeEstablished:
+	case CanonicalModeShadow:
+		bits = canonicalBitCompare
+	case CanonicalModeStreamShadow:
+		bits = canonicalBitServeStream | canonicalBitCompare
+	case CanonicalModeStream:
+		bits = canonicalBitServeStream
+	default:
+		return loadCanonicalMode().String(), errors.New("alarmd contract: unknown canonical mode " + name)
+	}
+	return canonicalMode(canonicalModeBits.Swap(bits)).String(), nil
+}
+
+// CanonicalMode reports the current rollout state by name.
+func CanonicalMode() string { return loadCanonicalMode().String() }
+
+func setCanonicalBit(bit uint32, on bool) bool {
+	for {
+		current := canonicalModeBits.Load()
+		next := current &^ bit
+		if on {
+			next = current | bit
+		}
+		if canonicalModeBits.CompareAndSwap(current, next) {
+			return current&bit != 0
+		}
+	}
+}
+
+// SetCanonicalStreamEnabled makes the single-pass form authoritative, and
+// SetCanonicalStreamShadow turns the comparison on. They set the two bits
+// independently, so setting both is the reverse direction rather than a
+// contradiction.
+func SetCanonicalStreamEnabled(enabled bool) bool {
+	return setCanonicalBit(canonicalBitServeStream, enabled)
+}
+
+func SetCanonicalStreamShadow(enabled bool) bool {
+	return setCanonicalBit(canonicalBitCompare, enabled)
+}
+
+// Sampling. Running both forms on every call doubles the work this change
+// exists to remove, so the comparison covers one call in every stride. The
+// counter is deterministic rather than random: a reproducible sample is worth
+// more than an unbiased one here, because a divergence has to be findable
+// again after it is reported.
+//
+// Zero means never compare, and is what a mode without comparison leaves it
+// at. One means compare everything.
 var (
+	canonicalShadowStride atomic.Uint64
+	canonicalShadowTick   atomic.Uint64
+)
+
+// SetCanonicalShadowStride sets how often the comparison runs: one call in
+// every stride. It reports the previous value.
+func SetCanonicalShadowStride(stride uint64) uint64 {
+	return canonicalShadowStride.Swap(stride)
+}
+
+func shouldSampleCanonicalShadow() bool {
+	stride := canonicalShadowStride.Load()
+	switch stride {
+	case 0:
+		return false
+	case 1:
+		return true
+	}
+	return canonicalShadowTick.Add(1)%stride == 0
+}
+
+var (
+	canonicalStreamServed   atomic.Uint64
+	canonicalStreamDeclined atomic.Uint64
+
 	canonicalShadowCompared atomic.Uint64
 	canonicalShadowAgreed   atomic.Uint64
 	canonicalShadowDeclined atomic.Uint64
@@ -50,25 +162,43 @@ var (
 	canonicalShadowPanic    atomic.Uint64
 )
 
-// CanonicalShadowCounts reports the comparison tallies for the observation
-// layer. Declined is reported beside agreed on purpose: an input the
-// single-pass form hands back is not evidence that the two agree on it, and
-// counting it as agreement is how a switch that had stopped doing anything
-// would still show a clean sheet.
+// CanonicalStreamCounts reports how many calls the single-pass form answered
+// and how many it handed back.
+func CanonicalStreamCounts() (served, declined uint64) {
+	return canonicalStreamServed.Load(), canonicalStreamDeclined.Load()
+}
+
+// CanonicalShadowCounts reports the comparison tallies.
+//
+// Declined is reported beside Agreed on purpose. An input the shadow hands
+// back is not evidence that the two agree on it, and folding it into agreement
+// is how a comparison that had stopped covering anything would still show a
+// clean sheet. The pair Compared and Agreed answers "how much was checked";
+// the three divergence counters answer "what was wrong"; neither question can
+// be answered from the other's numbers.
 type CanonicalShadowCounts struct {
+	Mode                       string
+	Stride                     uint64
+	StreamServed               uint64
+	StreamDeclined             uint64
 	Compared, Agreed, Declined uint64
 	BytesDiffer, VerdictDiffer uint64
 	PanicDiffer                uint64
 }
 
 func ReadCanonicalShadowCounts() CanonicalShadowCounts {
+	served, declined := CanonicalStreamCounts()
 	return CanonicalShadowCounts{
-		Compared:      canonicalShadowCompared.Load(),
-		Agreed:        canonicalShadowAgreed.Load(),
-		Declined:      canonicalShadowDeclined.Load(),
-		BytesDiffer:   canonicalShadowBytes.Load(),
-		VerdictDiffer: canonicalShadowVerdict.Load(),
-		PanicDiffer:   canonicalShadowPanic.Load(),
+		Mode:           CanonicalMode(),
+		Stride:         canonicalShadowStride.Load(),
+		StreamServed:   served,
+		StreamDeclined: declined,
+		Compared:       canonicalShadowCompared.Load(),
+		Agreed:         canonicalShadowAgreed.Load(),
+		Declined:       canonicalShadowDeclined.Load(),
+		BytesDiffer:    canonicalShadowBytes.Load(),
+		VerdictDiffer:  canonicalShadowVerdict.Load(),
+		PanicDiffer:    canonicalShadowPanic.Load(),
 	}
 }
 
@@ -78,6 +208,7 @@ func ReadCanonicalShadowCounts() CanonicalShadowCounts {
 // which is enough to find the code path and not enough to leak a dimension.
 type canonicalShadowFingerprint struct {
 	Class      string
+	Direction  string
 	GoType     string
 	Chain      string
 	OffsetKind string
@@ -125,66 +256,89 @@ func recordCanonicalShadowSample(sample canonicalShadowSample) {
 	canonicalShadowSamples[sample.canonicalShadowFingerprint] = &sample
 }
 
-// compareCanonicalShadow runs the single-pass form over the same bytes and
-// records how it differed from the answer already produced. It never returns
-// anything: the caller's result is unchanged whatever happens here.
+// canonicalShadowInput carries one comparison. Served is the answer the caller
+// is about to receive; Compared is the other form's answer, which is discarded
+// whatever it says.
+type canonicalShadowInput struct {
+	GoType           string
+	Direction        string
+	Raw              []byte
+	Served           []byte
+	ServedErr        error
+	Compared         []byte
+	ComparedErr      error
+	ComparedDeclined bool
+}
+
+// compareCanonicalShadow records how the two forms differed on one input. It
+// returns nothing: the caller's answer is already decided and is not touched
+// here whatever happens.
 //
-// A panic in the shadow is caught and counted. A shadow that could take the
-// process down would be a strictly worse trade than not running it, since the
-// whole point is to learn without risking the answer.
-func compareCanonicalShadow(goType string, raw []byte, established []byte, establishedErr error) {
+// A panic in the comparison is caught and counted. A shadow that could take
+// the process down would be a strictly worse trade than not running it, since
+// the point is to learn without risking the answer.
+func compareCanonicalShadow(in canonicalShadowInput) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			canonicalShadowPanic.Add(1)
 			recordCanonicalShadowSample(canonicalShadowSample{
 				canonicalShadowFingerprint: canonicalShadowFingerprint{
-					Class: "panic_differ", GoType: goType, OffsetKind: "n/a",
+					Class: "panic_differ", Direction: in.Direction, GoType: in.GoType, OffsetKind: "n/a",
 				},
-				InputLen: len(raw),
+				InputLen: len(in.Raw),
 				Old:      fmt.Sprint(recovered),
 			})
 		}
 	}()
 	canonicalShadowCompared.Add(1)
-	out, ok := canonicalStreamV2(make([]byte, 0, len(raw)), raw)
-	if !ok {
-		// Declined. That is neither agreement nor divergence: it means the
-		// established path stayed in charge, which it would have done anyway.
-		// Counted separately so the coverage figure cannot be read off the
-		// agreement figure alone.
+	if in.ComparedDeclined {
+		// The single-pass form handed the input back. That is neither
+		// agreement nor divergence: the established path stayed in charge,
+		// which it would have done anyway.
 		canonicalShadowDeclined.Add(1)
 		return
 	}
-	if establishedErr != nil {
-		// The single-pass form produced bytes for input the established path
-		// refuses. This is the direction that is silent in production: the
-		// query succeeds and nobody reports it.
+	servedRejected := in.ServedErr != nil
+	comparedRejected := in.ComparedErr != nil
+	if servedRejected != comparedRejected {
 		canonicalShadowVerdict.Add(1)
+		kind := "rejected-what-was-accepted"
+		if comparedRejected {
+			// The served answer accepted input the other form refuses. In the
+			// reverse direction that is the silent one: the query succeeds and
+			// nobody reports it.
+			kind = "accepted-what-was-rejected"
+		}
 		recordCanonicalShadowSample(canonicalShadowSample{
 			canonicalShadowFingerprint: canonicalShadowFingerprint{
-				Class: "verdict_differ", GoType: goType, OffsetKind: "accepted-what-was-rejected",
+				Class: "verdict_differ", Direction: in.Direction, GoType: in.GoType, OffsetKind: kind,
 			},
-			InputLen: len(raw),
+			InputLen: len(in.Raw),
 		})
 		return
 	}
-	if string(out) == string(established) {
+	if servedRejected {
+		canonicalShadowAgreed.Add(1) // both refuse it
+		return
+	}
+	if string(in.Served) == string(in.Compared) {
 		canonicalShadowAgreed.Add(1)
 		return
 	}
 	canonicalShadowBytes.Add(1)
-	offset := firstDifferingOffset(established, out)
+	offset := firstDifferingOffset(in.Served, in.Compared)
 	recordCanonicalShadowSample(canonicalShadowSample{
 		canonicalShadowFingerprint: canonicalShadowFingerprint{
 			Class:      "bytes_differ",
-			GoType:     goType,
-			Chain:      canonicalContainerChain(established, offset),
-			OffsetKind: canonicalOffsetKind(established, offset),
+			Direction:  in.Direction,
+			GoType:     in.GoType,
+			Chain:      canonicalContainerChain(in.Served, offset),
+			OffsetKind: canonicalOffsetKind(in.Served, offset),
 		},
-		InputLen: len(raw),
+		InputLen: len(in.Raw),
 		Offset:   offset,
-		Old:      byteAt(established, offset),
-		New:      byteAt(out, offset),
+		Old:      byteAt(in.Served, offset),
+		New:      byteAt(in.Compared, offset),
 	})
 }
 
@@ -208,7 +362,7 @@ func byteAt(payload []byte, offset int) string {
 // canonicalContainerChain describes the containers the offset sits inside, as
 // a string of o and a with no key names in it. A divergence at the same depth
 // in the same shape of container is the same finding however many Query Groups
-// hit it, which is what makes the sample table bounded.
+// hit it, which is what keeps the sample table bounded.
 func canonicalContainerChain(payload []byte, offset int) string {
 	chain := make([]byte, 0, 16)
 	inString := false

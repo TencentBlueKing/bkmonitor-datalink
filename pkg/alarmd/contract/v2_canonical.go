@@ -52,27 +52,13 @@ func CanonicalJSONV2(value any) (result []byte, err error) {
 	valueType := reflect.TypeOf(value)
 	closed := canonicalClosedType(valueType, nil)
 
-	// Shadow runs after the answer is settled, whichever way it was settled,
-	// which is why it hangs off the named return rather than sitting next to
-	// one of the six places this function can leave from. It is skipped when
-	// the single-pass form is already authoritative, because comparing that
-	// path against itself would report agreement forever.
-	if canonicalStreamShadow.Load() && !canonicalStreamEnabled.Load() {
-		shadowRaw := raw
-		shadowType := "nil"
-		if valueType != nil {
-			shadowType = valueType.String()
-		}
-		defer func() { compareCanonicalShadow(shadowType, shadowRaw, result, err) }()
-	}
-
 	// A closed string of valid UTF-8 has nothing left to canonicalize: no object
 	// keys to sort and no number tokens to preserve, and the decode and
 	// re-encode below hand back exactly the bytes the encoder just produced.
 	// The identity keys of Runtime State are derived one per series from such a
 	// string, so the round trip is skipped rather than paid for. This stays
-	// ahead of the single-pass form, which would reach the same answer by
-	// decoding and re-emitting bytes that are already final.
+	// ahead of both forms, which would reach the same answer by decoding and
+	// re-emitting bytes that are already final.
 	//
 	// Invalid UTF-8 is the one case where the round trip is not the identity:
 	// the encoder writes an escaped replacement character, which the decode
@@ -82,6 +68,12 @@ func CanonicalJSONV2(value any) (result []byte, err error) {
 		return restoreJSONLineSeparatorsV2(raw), nil
 	}
 
+	mode := loadCanonicalMode()
+	goType := "nil"
+	if valueType != nil {
+		goType = valueType.String()
+	}
+
 	// The single-pass form is tried before the strict walk, not after it. It
 	// already refuses everything the walk refuses -- duplicate fields, a
 	// non-string key, a non-finite number, a trailing value, anything
@@ -89,13 +81,24 @@ func CanonicalJSONV2(value any) (result []byte, err error) {
 	// table: the walk is a full decode of its own, and measured that way the
 	// two paths together were only 28% faster than the old one alone.
 	//
-	// It declines rather than reporting an error, and everything below then
-	// runs exactly as it did, strict walk included. So a decline can only cost
-	// time, and the rejection an input receives is still the one the
-	// established path writes.
-	if canonicalStreamEnabled.Load() {
+	// It declines rather than reporting an error, and the established path then
+	// runs exactly as it did. So a decline can only cost time, and the rejection
+	// an input receives is still the one the established path writes.
+	if mode.servesStream() {
 		if out, ok := canonicalStreamV2(make([]byte, 0, len(raw)), raw); ok {
 			canonicalStreamServed.Add(1)
+			if mode.compares() && shouldSampleCanonicalShadow() {
+				// Reverse: the single-pass form is answering, so the established
+				// one is the shadow. This is a different claim from the forward
+				// direction and has to be proven on its own, because what the
+				// callers send changes once their stored digests come from here.
+				established, establishedErr := canonicalEstablishedV2(raw, closed)
+				compareCanonicalShadow(canonicalShadowInput{
+					GoType: goType, Direction: "reverse", Raw: raw,
+					Served: out, ServedErr: nil,
+					Compared: established, ComparedErr: establishedErr,
+				})
+			}
 			// No line separator restoration. That pass undoes the encoder's
 			// escaping of U+2028 and U+2029; emitting from decoded runes never
 			// escapes them, and the only way those six characters reach this
@@ -106,6 +109,28 @@ func CanonicalJSONV2(value any) (result []byte, err error) {
 		canonicalStreamDeclined.Add(1)
 	}
 
+	result, err = canonicalEstablishedV2(raw, closed)
+	if mode.compares() && !mode.servesStream() && shouldSampleCanonicalShadow() {
+		// Forward: the established form is answering and the single-pass one is
+		// the shadow.
+		out, ok := canonicalStreamV2(make([]byte, 0, len(raw)), raw)
+		compareCanonicalShadow(canonicalShadowInput{
+			GoType: goType, Direction: "forward", Raw: raw,
+			Served: result, ServedErr: err,
+			Compared: out, ComparedErr: nil, ComparedDeclined: !ok,
+		})
+	}
+	return result, err
+}
+
+// canonicalEstablishedV2 is the path this package has always taken: a strict
+// walk for anything the standard encoder did not produce, a decode into Go
+// values preserving number tokens, and a re-encode with sorted keys.
+//
+// It is a function of its own so that it can be the comparison arm as well as
+// the answer. Without that the reverse direction cannot be checked at all,
+// which is the gap that shipped in the first cut of this change.
+func canonicalEstablishedV2(raw []byte, closed bool) ([]byte, error) {
 	// Only the standard encoder over a closed type can establish unique keys.
 	// Raw fragments, interfaces and custom marshalers retain the strict walk.
 	if !closed {
@@ -113,7 +138,6 @@ func CanonicalJSONV2(value any) (result []byte, err error) {
 			return nil, err
 		}
 	}
-
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	var normalized any

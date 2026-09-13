@@ -57,6 +57,7 @@ type phaseTwoMetrics struct {
 	controlCache                 *controlCacheCollector
 	legacyPodCache               *prometheus.CounterVec
 	redisPool                    *redisPoolCollector
+	canonicalEncoding            *canonicalEncodingCollector
 	algorithmInputs              *prometheus.CounterVec
 	seriesAdmission              *prometheus.CounterVec
 	cmdbIndexHosts               prometheus.Gauge
@@ -161,6 +162,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.controlCache = newControlCacheCollector()
 	metrics.legacyPodCache = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_pod_cache_total", Help: "Existing Python Pod cache reads by bounded result."}, []string{"result"})
 	metrics.redisPool = newRedisPoolCollector()
+	metrics.canonicalEncoding = newCanonicalEncodingCollector()
 	metrics.shortPeriod = newShortPeriodMetrics()
 	metrics.queryStatus = newQueryStatusMetrics()
 	metrics.queryCooldown = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "query_cooldown_events_total", Help: "External source_backend query cooldown transitions and failed real probes by bounded event."}, []string{"event"})
@@ -270,7 +272,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.undrainedDrainingQueryGroups,
 		m.algorithmEvaluations, m.algorithmInputs,
 	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
-		m.controlCache, m.redisPool, m.legacyPodCache,
+		m.controlCache, m.redisPool, m.canonicalEncoding, m.legacyPodCache,
 		m.seriesAdmission, m.cmdbIndexHosts, m.hostDisableMonitorStates, m.cmdbIndexAge, m.cmdbIndexDegraded)...)
 }
 

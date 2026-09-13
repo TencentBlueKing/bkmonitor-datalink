@@ -216,6 +216,19 @@ def evaluate(case, env):
         IndexError,
         ConnectionError,
     ) as exc:
+        if isinstance(exc, NameError):
+            # Only the original Advanced comparator's empty-history variables
+            # are expected to be undefined. A missing harness symbol must fail
+            # generation rather than silently become an UNAVAILABLE fixture.
+            assert str(exc) in {
+                "name 'floor_history_value' is not defined",
+                "name 'ceil_history_value' is not defined",
+            }, str(exc)
+            return {
+                "status": "UNAVAILABLE",
+                "reason": type(exc).__name__,
+                "reason_detail": str(exc),
+            }
         return {"status": "UNAVAILABLE", "reason": type(exc).__name__}
 
 
@@ -437,6 +450,44 @@ def cases():
             {DAY: 1.003},
             data_unit="percent",
             precision=precision,
+        )
+    # These FloatField parameters have no min_value in the Python serializers.
+    # Exercise signed parameters independently from signed observations.
+    for label, config, current, previous in [
+        ("negative-ratio", dict(ratio=-0.5, shock=0, threshold=-10), 0, -5),
+        ("negative-shock", dict(ratio=1, shock=-3, threshold=-10), -2, 2),
+        ("negative-threshold", dict(ratio=2, shock=12, threshold=-10), -4, -5),
+    ]:
+        add(
+            f"ring-amplitude-{label}",
+            "RingRatioAmplitude",
+            config,
+            current,
+            {60: previous},
+        )
+    for label, ratio, shock, method, current, previous in [
+        ("negative-ratio", -1, 0, "gt", 0, -10),
+        ("negative-shock", 1, -2, "eq", -3, 5),
+        ("signed-cross-zero", -1, 20, "gt", 0, -10),
+    ]:
+        add(
+            f"range-{label}",
+            "YearRoundRange",
+            dict(ratio=ratio, shock=shock, days=1, method=method),
+            current,
+            {DAY: previous},
+        )
+    for label, ratio, shock, method, current, previous, day_current, day_previous in [
+        ("negative-ratio", -1, 0, "gt", -2, 2, -10, 10),
+        ("negative-shock", 3, -2, "eq", -2, 2, -1, 1),
+        ("signed-cross-zero", -1, 4, "gt", 0, -1, -1, 1),
+    ]:
+        add(
+            f"amplitude-{label}",
+            "YearRoundAmplitude",
+            dict(ratio=ratio, shock=shock, days=1, method=method),
+            current,
+            {0: current, 60: previous, DAY: day_current, DAY + 60: day_previous},
         )
     return result
 

@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
@@ -159,6 +161,72 @@ func (c PhaseTwoOutputConfig) protocol() string {
 	return c.Protocol
 }
 
+// PhaseTwoCanonicalConfig selects how the shared canonical encoder runs. It
+// exists because the replacement of that encoder has to be rolled out in
+// stages that a deployment chooses, not that the program can decide for
+// itself: only the operator of a given cluster knows whether its digests have
+// already been proven to match on that cluster's own traffic.
+//
+// Everything else about the encoder stays derived. There is no tuning here,
+// only a position in the rollout and how much of the traffic the comparison
+// covers.
+//
+// Retirement, stated here because a temporary switch with no written exit
+// condition is a permanent one. Both keys come out, together with the
+// established encoder and the mode machinery behind them, once all four hold:
+//
+//	every deployment has run stream_shadow and reported zero divergence
+//	  in all three classes over a window that covered its own call sites;
+//	the covered call-site count has stopped rising on each of them;
+//	the branches that production never sends have been written down as a
+//	  conclusion, so that a coverage figure short of the offline corpus is
+//	  known to be "will never arrive" rather than "has not arrived yet";
+//	stream has been the default for one release without a rollback.
+//
+// Until then the answer to "does the operator know better than the program"
+// is still no for what the encoder should do, and yes only for when a given
+// cluster is ready to move -- which is the whole and only reason these exist.
+type PhaseTwoCanonicalConfig struct {
+	// Mode is one of established, shadow, stream_shadow, stream. Empty means
+	// established, which is what every deployment runs until its own shadow
+	// evidence says otherwise.
+	Mode string `yaml:"mode,omitempty"`
+	// ShadowSampleStride compares one call in every stride. Running both forms
+	// on all traffic doubles the work the replacement exists to remove, so a
+	// mode that compares needs a stride, and the default is derived rather
+	// than asked for.
+	ShadowSampleStride uint64 `yaml:"shadow_sample_stride,omitempty"`
+}
+
+// defaultCanonicalShadowStride samples about one call in sixty-four. At the
+// observed rate that is still thousands of comparisons a minute, which reaches
+// full branch coverage long before it costs anything worth measuring.
+const defaultCanonicalShadowStride = 64
+
+func (c PhaseTwoCanonicalConfig) mode() string {
+	if c.Mode == "" {
+		return contract.CanonicalModeEstablished
+	}
+	return c.Mode
+}
+
+// Stride is zero for a mode that does not compare, so that a leftover setting
+// cannot quietly keep paying for a comparison nobody is reading.
+func (c PhaseTwoCanonicalConfig) Stride() uint64 {
+	switch c.mode() {
+	case contract.CanonicalModeShadow, contract.CanonicalModeStreamShadow:
+	default:
+		return 0
+	}
+	if c.ShadowSampleStride == 0 {
+		return defaultCanonicalShadowStride
+	}
+	return c.ShadowSampleStride
+}
+
+// Mode reports the rollout position this deployment asked for.
+func (c PhaseTwoCanonicalConfig) SelectedMode() string { return c.mode() }
+
 type PhaseTwoRuntimeConfig struct {
 	// Empty disables final Shadow evidence; the file is the frozen Epoch manifest.
 	ShadowManifestPath string                    `yaml:"shadow_manifest_path,omitempty"`
@@ -169,6 +237,7 @@ type PhaseTwoRuntimeConfig struct {
 	Scheduler          PhaseTwoSchedulerConfig   `yaml:"scheduler"`
 	Access             PhaseTwoAccessConfig      `yaml:"access"`
 	Coordinator        PhaseTwoCoordinatorConfig `yaml:"-"`
+	Canonical          PhaseTwoCanonicalConfig   `yaml:"canonical"`
 }
 
 func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
@@ -220,6 +289,10 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 	// no longer configuration at all.
 	if !canonicalText(c.Worker.ID) {
 		return errors.New("phase_two worker identity must be canonical text")
+	}
+	if !slices.Contains(contract.CanonicalModeNames(), c.Canonical.mode()) {
+		return fmt.Errorf("phase_two.canonical.mode %q must be one of %s",
+			c.Canonical.Mode, strings.Join(contract.CanonicalModeNames(), ", "))
 	}
 	switch c.Output.protocol() {
 	case OutputProtocolAuto, OutputProtocolLegacy, OutputProtocolNative:

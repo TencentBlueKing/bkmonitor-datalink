@@ -53,6 +53,10 @@ type FleetVerdict struct {
 	// broken dependency or scattered unrelated causes is the question that
 	// decides who gets called.
 	Failures []FleetCount
+	// Workers counts the replicas the view could count by whether they have
+	// applied the Activation the control plane published: acked, lagging or
+	// unknown. Their sum is the counted replicas.
+	Workers []FleetCount
 }
 
 // FleetVerdictSource returns the current judgment. Reading it costs one control
@@ -70,6 +74,7 @@ type fleetCollector struct {
 	stalled    *prometheus.Desc
 	gaps       *prometheus.Desc
 	failures   *prometheus.Desc
+	workers    *prometheus.Desc
 }
 
 func newFleetCollector(source FleetVerdictSource) *fleetCollector {
@@ -107,6 +112,13 @@ func newFleetCollector(source FleetVerdictSource) *fleetCollector {
 				"how long the failing sequence has been observed, so it under-reports after a restart "+
 				"rather than over-reporting: zero is weaker evidence than non-zero.",
 			nil),
+		workers: descriptor("fleet_workers",
+			"Replicas the fleet view counted, by whether they have applied the Activation the control plane "+
+				"published: acked, lagging or unknown. Unknown is a replica that reported no version or a "+
+				"published version that could not be read; it is never folded into acked. The three sum to "+
+				"the counted replicas. Written by every replica from the same shared facts, so aggregate with "+
+				"max, not sum.",
+			[]string{"state"}),
 		gaps: descriptor("fleet_gaps",
 			"Reasons the view is incomplete, by closed kind; unknown kinds are counted as OTHER. "+
 				"Any of these means the judgment is UNKNOWN rather than green. A gap is not itself a "+
@@ -122,6 +134,7 @@ func newFleetCollector(source FleetVerdictSource) *fleetCollector {
 }
 
 func (c *fleetCollector) Describe(descriptions chan<- *prometheus.Desc) {
+	descriptions <- c.workers
 	descriptions <- c.queryCooldown
 	descriptions <- c.health
 	descriptions <- c.objects
@@ -170,6 +183,12 @@ func (c *fleetCollector) Collect(metrics chan<- prometheus.Metric) {
 			continue
 		}
 		metrics <- prometheus.MustNewConstMetric(c.failures, prometheus.GaugeValue, float64(count.Count), count.Value)
+	}
+	for _, count := range verdict.Workers {
+		if count.Value == "" {
+			continue
+		}
+		metrics <- prometheus.MustNewConstMetric(c.workers, prometheus.GaugeValue, float64(count.Count), count.Value)
 	}
 }
 

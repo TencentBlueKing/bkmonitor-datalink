@@ -52,7 +52,8 @@ func (source controlPlaneExpectation) Expectation(ctx context.Context) (fleet.Ex
 		ids = append(ids, string(group))
 	}
 	sort.Strings(ids)
-	return fleet.Expectation{QueryGroups: len(groups), Known: true, IDs: ids}, nil
+	return fleet.Expectation{QueryGroups: len(groups), Known: true, IDs: ids,
+		ActivationRecordRevision: activation.RecordRevision}, nil
 }
 
 // registryReplicas lists the workers that should have published a snapshot.
@@ -165,6 +166,10 @@ type fleetPublisher struct {
 	// use, so the page can answer "how close are we" from the same read that
 	// produced the verdict instead of waiting on collection.
 	capacity func() *fleet.Capacity
+	// applied is the Activation record revision this replica executes by,
+	// published on every snapshot so the page can compare it with what the
+	// control plane published.
+	applied func() uint64
 	// overdue is the scheduler's due index, asked which owned objects are past
 	// a wake time nothing corrected. Nil on a deployment with no index, and the
 	// snapshot then carries no overdue facts at all -- which is a different
@@ -344,6 +349,9 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	if publisher.capacity != nil {
 		snapshot.Capacity = publisher.capacity()
 	}
+	if publisher.applied != nil {
+		snapshot.AppliedActivationRecordRevision = publisher.applied()
+	}
 	if publisher.dispatch != nil {
 		snapshot.Dispatch = publisher.dispatch()
 	}
@@ -461,6 +469,11 @@ func fleetVerdictOf(view fleet.View, at time.Time) metric.FleetVerdict {
 		verdict.QueryCooldown = &cooldown
 	}
 	verdict.Failures = failures.counts()
+	verdict.Workers = []metric.FleetCount{
+		{Value: "acked", Count: view.Workers.Acked},
+		{Value: "lagging", Count: view.Workers.Lagging},
+		{Value: "unknown", Count: view.Workers.Unknown},
+	}
 
 	gaps := newCountIndex()
 	for _, gap := range view.Gaps {

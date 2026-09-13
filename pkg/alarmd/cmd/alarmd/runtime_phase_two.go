@@ -370,6 +370,11 @@ type phaseTwoWorkerBundleDependencies struct {
 type phaseTwoWorkerBundle struct {
 	runtimeConfig *observability.RuntimeConfigFacts
 	dependencies  phaseTwoWorkerBundleDependencies
+	// applied and capacity feed the heartbeat's acknowledgement and load.
+	// Both are set at assembly and may be nil, in which case the heartbeat
+	// carries neither, which readers take as unknown.
+	applied  func() uint64
+	capacity func() *fleet.Capacity
 
 	registrationMu sync.Mutex
 	mu             sync.RWMutex
@@ -1559,7 +1564,9 @@ func (bundle *phaseTwoWorkerBundle) register(ctx context.Context, readiness owne
 			return nil
 		}
 	}
-	registration, err := phaseTwoWorkerRegistration(bundle.dependencies.Config, readiness, bundle.dependencies.Now())
+	registration, err := phaseTwoWorkerRegistration(
+		bundle.dependencies.Config, readiness, bundle.dependencies.Now(), bundle.appliedFacts(), bundle.loadFacts(),
+	)
 	if err != nil {
 		return err
 	}
@@ -1569,10 +1576,41 @@ func (bundle *phaseTwoWorkerBundle) register(ctx context.Context, readiness owne
 	return nil
 }
 
+// appliedFacts is what this worker reports executing by. Nil when the bundle
+// has no source for it, so the heartbeat carries no acknowledgement rather
+// than a zero one.
+func (bundle *phaseTwoWorkerBundle) appliedFacts() *ownership.AppliedControlFacts {
+	if bundle.applied == nil {
+		return nil
+	}
+	return &ownership.AppliedControlFacts{ActivationRecordRevision: bundle.applied()}
+}
+
+// loadFacts copies the occupancy the fleet snapshot already measures into the
+// heartbeat, plus the owned count. Nil when the bundle has no capacity source
+// or the source has nothing to say.
+func (bundle *phaseTwoWorkerBundle) loadFacts() *ownership.WorkerLoad {
+	if bundle.capacity == nil {
+		return nil
+	}
+	capacity := bundle.capacity()
+	if capacity == nil {
+		return nil
+	}
+	return &ownership.WorkerLoad{
+		OwnedQueryGroups: len(bundle.ownedQueryGroups()),
+		PermitsHeld:      capacity.PermitsHeld, PermitBudget: capacity.PermitBudget,
+		PermitSeconds: capacity.PermitSeconds, Waiting: capacity.Waiting,
+		MemoryUsedBytes: capacity.MemoryUsed, MemoryLimitBytes: capacity.MemoryLimit,
+	}
+}
+
 func phaseTwoWorkerRegistration(
 	cfg config.Config,
 	readiness ownership.AssignmentReadiness,
 	at time.Time,
+	applied *ownership.AppliedControlFacts,
+	load *ownership.WorkerLoad,
 ) (ownership.WorkerRegistration, error) {
 	capabilitiesDigest, err := phaseTwoCapabilitiesDigest(cfg)
 	if err != nil {
@@ -1583,6 +1621,7 @@ func phaseTwoWorkerRegistration(
 		DependencyStatus: ownership.DependencyHealthy, DeploymentProfile: cfg.DeploymentProfile(),
 		CapabilitiesDigest: capabilitiesDigest,
 		ExpiresAt:          at.Add(cfg.PhaseTwo.Worker.RegistrationTTL.Duration()),
+		Applied:            applied, Load: load,
 	}
 	if err := registration.Validate(); err != nil {
 		return ownership.WorkerRegistration{}, err

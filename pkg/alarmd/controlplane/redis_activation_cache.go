@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
@@ -23,6 +24,10 @@ type parsedActivation struct {
 type parsedActivationCache struct {
 	mu    sync.Mutex
 	entry *parsedActivation
+	// applied is the record revision of the Activation last parsed through
+	// this cache, kept apart from entry because an Activation too large to
+	// cache is still the one this process executes by.
+	applied atomic.Uint64
 }
 
 func (cache *parsedActivationCache) clear() {
@@ -34,7 +39,12 @@ func (cache *parsedActivationCache) clear() {
 func (cache *parsedActivationCache) load(payload string) (*parsedActivation, error) {
 	if len(payload) > parsedActivationMaxPayloadBytes {
 		cache.clear()
-		return parseActivation(payload)
+		entry, err := parseActivation(payload)
+		if err != nil {
+			return nil, err
+		}
+		cache.applied.Store(entry.state.RecordRevision)
+		return entry, nil
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
@@ -48,7 +58,19 @@ func (cache *parsedActivationCache) load(payload string) (*parsedActivation, err
 	}
 	entry.payload = payload
 	cache.entry = entry
+	cache.applied.Store(entry.state.RecordRevision)
 	return entry, nil
+}
+
+// AppliedActivationRevision is the record revision of the Activation this
+// process last parsed: the one its Slot reads execute by and its fleet page
+// reports. Zero before the first parse. A worker writes it into its heartbeat
+// as the acknowledgement the control plane can compare with what it published.
+func (repository *RedisCatalogRepository) AppliedActivationRevision() uint64 {
+	if repository == nil {
+		return 0
+	}
+	return repository.activationCache.applied.Load()
 }
 
 func parseActivation(payload string) (*parsedActivation, error) {

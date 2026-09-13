@@ -56,6 +56,46 @@ type WorkerRegistration struct {
 	DeploymentProfile   string              `json:"deployment_profile"`
 	CapabilitiesDigest  string              `json:"capabilities_digest"`
 	ExpiresAt           time.Time           `json:"expires_at"`
+	// Applied and Load are the worker's acknowledgement and occupancy as of
+	// this heartbeat. Both are optional: a registration written by a worker
+	// that does not report them decodes with nil, which a reader takes as
+	// unknown and never as lagging or idle. Nothing in routing reads them.
+	Applied *AppliedControlFacts `json:"applied,omitempty"`
+	Load    *WorkerLoad          `json:"load,omitempty"`
+}
+
+// AppliedControlFacts says which version of each versioned control fact the
+// worker executes by. ActivationRecordRevision is the record revision of the
+// Activation it last parsed, zero before it parsed one. SettingsVersion is
+// reserved for settings published by the control plane and stays empty until
+// they exist.
+type AppliedControlFacts struct {
+	ActivationRecordRevision uint64 `json:"activation_record_revision"`
+	SettingsVersion          string `json:"settings_version,omitempty"`
+}
+
+// WorkerLoad is the worker's own occupancy at the heartbeat, copied from the
+// capacity its fleet snapshot already reports; it adds no measurement. It is
+// written for a scheduler that will weigh it later, and read by nothing yet.
+type WorkerLoad struct {
+	OwnedQueryGroups int     `json:"owned_query_groups"`
+	PermitsHeld      int     `json:"permits_held"`
+	PermitBudget     int     `json:"permit_budget"`
+	PermitSeconds    float64 `json:"permit_seconds"`
+	Waiting          int     `json:"waiting"`
+	MemoryUsedBytes  uint64  `json:"memory_used_bytes,omitempty"`
+	MemoryLimitBytes uint64  `json:"memory_limit_bytes,omitempty"`
+}
+
+func (load *WorkerLoad) validate() error {
+	if load == nil {
+		return nil
+	}
+	if load.OwnedQueryGroups < 0 || load.PermitsHeld < 0 || load.PermitBudget < 0 || load.Waiting < 0 ||
+		load.PermitSeconds < 0 || load.PermitSeconds != load.PermitSeconds {
+		return errors.New("alarmd ownership: invalid worker load")
+	}
+	return nil
 }
 
 // WorkerCompatibility is the static deployment contract used before
@@ -93,7 +133,7 @@ func (worker WorkerRegistration) Validate() error {
 	default:
 		return errors.New("alarmd ownership: invalid dependency status")
 	}
-	return nil
+	return worker.Load.validate()
 }
 
 type PlacementReason string

@@ -303,3 +303,96 @@ func TestTheRulesThatReadNoCodeAreStillRules(t *testing.T) {
 		}
 	}
 }
+
+// The per-replica split has to agree with the deployment total, and it has to
+// be the split the verdict is decided on rather than the anomaly count beside
+// it. A live read showed 33 anomalies against 53, which reads as one replica
+// being much worse; the pair that decides the verdict was 5 against 8, and most
+// of the difference was work that is not either replica's doing.
+//
+// Measured on another line the same day: two pods 66% apart in cost per Slot
+// with near-identical throughput. A deployment-level number cannot show that,
+// and if the busy one goes quiet the total improves while nothing happened.
+func TestThePerReplicaSplitIsTheOneTheVerdictUses(t *testing.T) {
+	at := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	on := func(replica, id, reason string) Anomaly {
+		return Anomaly{QueryGroup: id, Replica: replica, Kind: KindDegradedRun,
+			Since: at.Add(-time.Hour), Cause: "LEVEL_OUTCOME_UNKNOWN", CauseReason: reason}
+	}
+	names := replicas()
+	snapshots := healthySnapshots()
+	snapshots[0].Anomalies = []Anomaly{
+		on(names[0], "qg-a1", "HISTORY_WARMING"),
+		on(names[0], "qg-a2", "HISTORY_GAPPED"),
+	}
+	snapshots[0].TotalAnomalies = 2
+	snapshots[1].Anomalies = []Anomaly{
+		on(names[1], "qg-b1", "HISTORY_WARMING"),
+		on(names[1], "qg-b2", "EXECUTION_BUDGET_EXHAUSTED"),
+		{QueryGroup: "qg-b3", Replica: names[1], Kind: KindDegradedRun, Since: at.Add(-time.Hour),
+			ReasonCode: "COMPLETED_WITH_UNAVAILABLE", SinceFrom: SinceRestoredLastFull},
+	}
+	snapshots[1].TotalAnomalies = 3
+
+	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, names, now, time.Minute)
+	got := map[string]ReplicaView{}
+	for _, replica := range view.PerReplica {
+		got[replica.Replica] = replica
+	}
+	if first := got[names[0]]; first.Ours != 0 || first.External != 2 || first.Unattributed != 0 {
+		t.Errorf("%s = ours %d / external %d / unattributed %d, want 0/2/0",
+			names[0], first.Ours, first.External, first.Unattributed)
+	}
+	if second := got[names[1]]; second.Ours != 1 || second.External != 1 || second.Unattributed != 1 {
+		t.Errorf("%s = ours %d / external %d / unattributed %d, want 1/1/1: the replica carrying "+
+			"the budget exhaustion is the one the verdict is about",
+			names[1], second.Ours, second.External, second.Unattributed)
+	}
+	// And the parts add up to the whole, in every column. A per-replica split
+	// that does not sum to the deployment total is two answers to one question.
+	summary := summarize(view.Anomalies, now)
+	var ours, external, unattributed int
+	for _, replica := range view.PerReplica {
+		ours += replica.Ours
+		external += replica.External
+		unattributed += replica.Unattributed
+	}
+	if ours != summary.Ours || external != summary.External || unattributed != summary.Unattributed {
+		t.Errorf("per-replica sums to %d/%d/%d, deployment reports %d/%d/%d",
+			ours, external, unattributed, summary.Ours, summary.External, summary.Unattributed)
+	}
+}
+
+// Settle runs twice on the HTTP path -- once when the view is built, and again
+// once the caller has marked which objects are stalled, because stalling moves
+// an object to ours. So it has to be safe to run twice, and the per-replica
+// counts it fills in have to be the counts and not the counts plus the previous
+// pass.
+//
+// Nothing else would catch this. Doubling looks entirely plausible on a page:
+// the numbers are still ordered the same way, still sum to each other, and only
+// disagree with the deployment total -- which a reader has no reason to add up.
+func TestSettleIsSafeToRunTwiceTheWayTheHandlerRunsIt(t *testing.T) {
+	at := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	names := replicas()
+	snapshots := healthySnapshots()
+	snapshots[1].Anomalies = []Anomaly{{
+		QueryGroup: "qg-budget", Replica: names[1], Kind: KindDegradedRun, Since: at.Add(-time.Hour),
+		Cause: "LEVEL_OUTCOME_UNKNOWN", CauseReason: "EXECUTION_BUDGET_EXHAUSTED",
+	}}
+	snapshots[1].TotalAnomalies = 1
+
+	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, names, now, time.Minute)
+	// Exactly what the handler does next.
+	MarkStalled(view.Anomalies, now, time.Hour)
+	Settle(&view)
+
+	var ours int
+	for _, replica := range view.PerReplica {
+		ours += replica.Ours
+	}
+	if ours != 1 {
+		t.Errorf("per-replica ours sums to %d after two passes, want 1: the counts are being "+
+			"added to rather than replaced", ours)
+	}
+}

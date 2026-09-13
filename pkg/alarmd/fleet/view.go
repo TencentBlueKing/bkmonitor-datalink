@@ -405,6 +405,16 @@ type ReplicaView struct {
 	// is what every duration this replica reports is bounded by. Zero means the
 	// replica did not publish it, which is not the same as "just started".
 	UptimeSeconds float64 `json:"uptime_seconds,omitempty"`
+	// The same three-way split the verdict is decided on, per replica.
+	//
+	// Anomalies alone cannot answer "which replica is unwell". A live read had
+	// 33 against 53, which reads as one replica being sixty percent worse, while
+	// the split that actually decides the verdict was 5 against 8 -- most of the
+	// difference was external work that is not either replica's doing. The
+	// deployment total cannot show that and neither can the anomaly count.
+	Ours         int `json:"ours"`
+	External     int `json:"external"`
+	Unattributed int `json:"unattributed"`
 	// Truncated says this replica published a shorter list than it had, so its
 	// own counts are floors.
 	Truncated bool `json:"truncated"`
@@ -678,11 +688,12 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	}
 
 	Attribute(view.Anomalies)
-	DecideHealth(&view)
+	Settle(&view)
 	return view
 }
 
-// DecideHealth sets the verdict from the anomalies as currently attributed.
+// Settle sets the verdict, and the per-replica breakdown of what it is about,
+// from the anomalies as currently attributed.
 //
 // It is a function rather than inline code because it runs twice: once when the
 // view is built, and again once the caller has marked which objects are stalled
@@ -693,7 +704,33 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 // rest stay in the list, counted and visible, because they are real work; they
 // are just not this deployment's work, and a verdict that cannot come back
 // while they exist tells nobody anything.
-func DecideHealth(view *View) {
+func Settle(view *View) {
+	// The per-replica split is refreshed in the same pass that decides the
+	// verdict, because they are two readings of one classification: computed
+	// separately they can disagree, and the disagreement would be invisible --
+	// a deployment reported DEGRADED with every replica showing zero of the
+	// thing that made it so.
+	byReplica := map[string]*ReplicaView{}
+	for index := range view.PerReplica {
+		replica := &view.PerReplica[index]
+		replica.Ours, replica.External, replica.Unattributed = 0, 0, 0
+		byReplica[replica.Replica] = replica
+	}
+	for _, anomaly := range view.Anomalies {
+		replica, known := byReplica[anomaly.Replica]
+		if !known {
+			continue
+		}
+		switch anomaly.Attribution {
+		case AttributionExternal:
+			replica.External++
+		case AttributionUnknown:
+			replica.Unattributed++
+		default:
+			replica.Ours++
+		}
+	}
+
 	// Order matters: an incomplete view cannot be called healthy, and it cannot
 	// be called degraded either, because the anomalies it does show are not the
 	// whole story.

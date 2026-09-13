@@ -200,7 +200,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       同样是七十个异常，均摊和全压在一个副本上要做的事不一样。点某一行可以把下面的对象列表限定到那个副本。</p>
     <table>
       <thead><tr>
-        <th>副本</th><th>持有</th><th>正常</th><th>自身异常</th><th>降级池</th><th>状态未知</th>
+        <th>副本</th><th>持有</th><th>正常</th><th>自身异常</th><th>其中 alarmd 的</th><th>降级池</th><th>状态未知</th>
         <th>快照新鲜度</th><th>已运行</th><th>内存</th><th>CPU</th><th>同时在跑</th>
       </tr></thead>
       <tbody id="repRows"></tbody>
@@ -859,6 +859,13 @@ function renderReplicas(rows) {
     cell(replica.owned + (replica.truncated ? '（列表被截断，下面几个数是下界）' : ''));
     cell(replica.healthy);
     cell(replica.anomalies);
+    // The column the verdict is actually decided on. The anomaly count beside
+    // it answers a different question: a live read showed 33 against 53, which
+    // reads as one replica being much worse, while this pair was 5 against 8.
+    var repOurs = cell(replica.ours);
+    if (replica.ours > 0) { repOurs.className = 'stuck'; }
+    repOurs.title = '容量或架构能避免的那部分，判定看的就是这个数'
+      + (replica.unattributed ? '；另有 ' + replica.unattributed + ' 个暂时看不出是谁的' : '');
     cell(replica.demoted);
     cell(replica.unknown);
     // A replica publishing late describes a past it has not updated, and that

@@ -529,43 +529,51 @@ type Observation struct {
 	// tell "the data has not landed yet", which clears itself, from "a Plan
 	// could not be decided", which does not.
 	ProgressCompletionCause string
-	Dispatcher              *DispatcherFacts
-	PermitWait              *PermitWaitFacts
-	ExpiredRange            *ExpiredRangeFacts
-	Component               Component
-	Stage                   Stage
-	Result                  Result
-	Operation               Operation
-	Direction               Direction
-	ReasonCode              ReasonCode
-	Duration                time.Duration
-	Counts                  Counts
-	Trace                   TraceFields
-	Err                     error
-	CapacityBudget          CapacityBudget
-	CapacityRejection       *CapacityRejectionFacts
-	SourceKind              SourceKind
-	QueryPermit             *QueryPermitFacts
-	RuntimeConfig           *RuntimeConfigFacts
-	QueryFailure            *QueryFailureFacts
-	QueryStatus             []QueryStatusFacts
-	QueryTiming             *QueryTimingFacts
-	SlotReadiness           *SlotReadinessFacts
-	ShortPeriodCompletion   *ShortPeriodCompletionFacts
-	StateApplyChunk         *StateApplyChunkFacts
-	ActiveQGSet             *ActiveQGSetFacts
-	ScheduleCutover         *ScheduleCutoverFacts
-	ObjectCatalog           *ObjectCatalogFacts
-	ObjectRead              *ObjectReadFacts
-	StateGenerationSkew     *StateGenerationSkewFacts
-	LegacyMigration         *LegacyQGMigrationFacts
-	DrainingQG              *DrainingQGFacts
-	SourceRefresh           *SourceRefreshFacts
-	ActivationFailure       *ActivationFailureFacts
-	AlgorithmEvaluations    []AlgorithmEvaluationFact
-	AlgorithmInputs         []AlgorithmInputFact
-	normalized              bool
-	stageReasonBucket       bool
+	// ProgressCompletionReason is the reason belonging to that cause, one level
+	// further down. LEVEL_OUTCOME_UNKNOWN is required by contract to carry a
+	// reason of either the coverage class or the retryable class, and those need
+	// opposite responses: coverage means the data does not reach this window,
+	// retryable means it clears on its own. Without this the two are one
+	// population -- on a running deployment, 61 of 62 objects sharing a label
+	// that could not say whose problem they were.
+	ProgressCompletionReason string
+	Dispatcher               *DispatcherFacts
+	PermitWait               *PermitWaitFacts
+	ExpiredRange             *ExpiredRangeFacts
+	Component                Component
+	Stage                    Stage
+	Result                   Result
+	Operation                Operation
+	Direction                Direction
+	ReasonCode               ReasonCode
+	Duration                 time.Duration
+	Counts                   Counts
+	Trace                    TraceFields
+	Err                      error
+	CapacityBudget           CapacityBudget
+	CapacityRejection        *CapacityRejectionFacts
+	SourceKind               SourceKind
+	QueryPermit              *QueryPermitFacts
+	RuntimeConfig            *RuntimeConfigFacts
+	QueryFailure             *QueryFailureFacts
+	QueryStatus              []QueryStatusFacts
+	QueryTiming              *QueryTimingFacts
+	SlotReadiness            *SlotReadinessFacts
+	ShortPeriodCompletion    *ShortPeriodCompletionFacts
+	StateApplyChunk          *StateApplyChunkFacts
+	ActiveQGSet              *ActiveQGSetFacts
+	ScheduleCutover          *ScheduleCutoverFacts
+	ObjectCatalog            *ObjectCatalogFacts
+	ObjectRead               *ObjectReadFacts
+	StateGenerationSkew      *StateGenerationSkewFacts
+	LegacyMigration          *LegacyQGMigrationFacts
+	DrainingQG               *DrainingQGFacts
+	SourceRefresh            *SourceRefreshFacts
+	ActivationFailure        *ActivationFailureFacts
+	AlgorithmEvaluations     []AlgorithmEvaluationFact
+	AlgorithmInputs          []AlgorithmInputFact
+	normalized               bool
+	stageReasonBucket        bool
 }
 
 type Observer interface {

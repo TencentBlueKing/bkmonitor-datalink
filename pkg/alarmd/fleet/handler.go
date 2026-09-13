@@ -106,7 +106,15 @@ type HealthResponse struct {
 	// Overdue rides here rather than only in the list because the list can be
 	// paged or truncated, and "how many objects are not being evaluated" must
 	// not depend on how much of the list fitted.
-	Overdue *OverdueFacts `json:"overdue"`
+	// Coverage says which kind of coverage disagreement this deployment has,
+	// when the sets were available to compare. It is the difference between a
+	// verdict a reader can act on and one that only says "do not trust this".
+	Coverage *Disagreement `json:"coverage"`
+	// PerReplica breaks the deployment back down. Present on the verdict route
+	// because that is where a reader lands first, and "which replica" is the
+	// question the totals raise and cannot answer.
+	PerReplica []ReplicaView `json:"per_replica"`
+	Overdue    *OverdueFacts `json:"overdue"`
 	// Dispatch says whether anything can be parked at all. Without it the zero
 	// above is unreadable: a build that suppresses nothing reports the same zero
 	// as one where every object is being reached on time.
@@ -159,7 +167,23 @@ type Summary struct {
 	// population that splits into "the backend returned 503" and "the connection
 	// was refused" is two problems for two people rather than one number.
 	ByFailureDetail []Count `json:"by_failure_detail"`
-	ByReplica       []Count `json:"by_replica"`
+	// ByCauseReason is the level below the cause and is where the answer to
+	// "whose problem is this" lives. A column of objects sharing
+	// LEVEL_OUTCOME_UNKNOWN is not one population: the contract requires that
+	// cause to carry a reason of either the coverage class or the retryable
+	// class, and those need opposite responses.
+	ByCauseReason []Count `json:"by_cause_reason"`
+	// ByBusiness is the unit someone can act on. The rows are objects, which are
+	// alarmd's own identities: an operator cannot look one up, cannot mention one
+	// to the person who configured the strategy, and cannot tell from a list of
+	// them whether this is one misconfiguration or fifty. Rolling the same
+	// population up by business answers the question the list raises.
+	ByBusiness []Count `json:"by_business"`
+	// Strategies is how many distinct strategies the rows cover. Fifty-five
+	// objects over sixty-two strategies and over five strategies are the same
+	// table and different conversations.
+	Strategies int     `json:"strategies"`
+	ByReplica  []Count `json:"by_replica"`
 	// Stalled counts the objects that are stuck rather than merely degraded. The
 	// other three say how badly the last round went; this one says the rounds
 	// stopped ending, which is the only one of the four that cannot resolve on
@@ -183,6 +207,9 @@ func summarize(anomalies []Anomaly) Summary {
 	failures := map[string]int{}
 	codes := map[string]int{}
 	details := map[string]int{}
+	causeReasons := map[string]int{}
+	businesses := map[string]int{}
+	strategies := map[StrategyRef]struct{}{}
 	replicas := map[string]int{}
 	stalled := 0
 	for _, anomaly := range anomalies {
@@ -202,11 +229,30 @@ func summarize(anomalies []Anomaly) Summary {
 		if anomaly.Failure != nil && anomaly.Failure.Detail != "" {
 			details[anomaly.Failure.Detail]++
 		}
+		if anomaly.CauseReason != "" {
+			causeReasons[anomaly.CauseReason]++
+		}
 		replicas[anomaly.Replica]++
+		// Counted per object, not per reference: one object naming the same
+		// business twice must not make that business look twice as affected.
+		seenBusiness := map[string]struct{}{}
+		for _, strategy := range anomaly.Strategies {
+			strategies[strategy] = struct{}{}
+			label := strategy.BusinessID
+			if label == "" {
+				label = "(未标业务)"
+			}
+			if _, dup := seenBusiness[label]; dup {
+				continue
+			}
+			seenBusiness[label] = struct{}{}
+			businesses[label]++
+		}
 	}
 	return Summary{
 		ByKind: rank(kinds), ByReason: rank(reasons),
-		ByFailure: rank(failures), ByFailureCode: rank(codes), ByFailureDetail: rank(details),
+		ByFailure: rank(failures), ByFailureCode: rank(codes), ByFailureDetail: rank(details), ByCauseReason: rank(causeReasons),
+		ByBusiness: rank(businesses), Strategies: len(strategies),
 		ByReplica: rank(replicas), Stalled: stalled,
 	}
 }
@@ -342,7 +388,8 @@ func NewHandler(
 			DemotedDue: view.DemotedDue, DemotionEntries: view.DemotionEntries,
 			DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
 			LastDemotionExit: view.LastDemotionExit,
-			Overdue:          view.Overdue, Dispatch: view.Dispatch,
+			Coverage:         view.Coverage, PerReplica: view.PerReplica,
+			Overdue: view.Overdue, Dispatch: view.Dispatch,
 			Gaps: view.Gaps, Capacity: view.Capacity,
 		})
 	})

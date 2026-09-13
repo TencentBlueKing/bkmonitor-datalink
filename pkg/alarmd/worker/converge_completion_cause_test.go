@@ -74,7 +74,7 @@ func TestConvergedSlotStillSaysWhyItWasUnavailable(t *testing.T) {
 		currentFacts:      deselected,
 		activations:       deselected,
 		completion:        completion,
-		completionCause:   cause,
+		completionCause:   execution.CompletionAttribution{Cause: cause},
 	}
 	result, err := coordinator.convergeNormalActivation(context.Background(), request, protection)
 	if err != nil {

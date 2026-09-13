@@ -2199,27 +2199,67 @@ func DeriveCompletion(input InternalExecution, result EvaluationResult) (Complet
 }
 
 func deriveCompletion(input InternalExecution, result EvaluationResult) (CompletionKind, UnavailableCause, error) {
+	kind, cause, _, err := deriveCompletionDetail(input, result)
+	return kind, cause, err
+}
+
+// CompletionAttribution is why a Slot completed the way it did: the condition
+// that folded into the kind, and that condition's own reason.
+//
+// The two travel as one value rather than as two parameters for the reason the
+// derivation returns them from a single traversal -- carried separately they
+// become two things that must agree about the same Slot, and the first time
+// they disagree the page explains a completion that did not happen.
+type CompletionAttribution struct {
+	Cause  UnavailableCause
+	Reason ReasonCode
+}
+
+// DeriveCompletionDetail adds the reason that belongs to the reported cause.
+//
+// Separate from DeriveCompletion so the existing callers keep their signature,
+// and one traversal still decides all three: derived apart they would be
+// functions that must agree about the same Slot.
+func DeriveCompletionDetail(input InternalExecution, result EvaluationResult) (
+	CompletionKind, UnavailableCause, ReasonCode, error) {
+	return deriveCompletionDetail(input, result)
+}
+
+func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
+	CompletionKind, UnavailableCause, ReasonCode, error) {
 	if len(result.Plans) == 0 {
-		return "", "", errors.New("alarmd execution: no Plan results to complete")
+		return "", "", "", errors.New("alarmd execution: no Plan results to complete")
 	}
 	primary, err := DerivePrimaryInputFact(input)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	// A Slot can hit several of these at once. The cause reported is the most
 	// actionable one rather than the first or the commonest: a readiness gap
 	// beside a Plan that could not be decided is a Slot someone should look at,
 	// and reporting the gap would say the opposite.
 	cause := UnavailableCause("")
-	note := func(candidate UnavailableCause) {
+	// The reason travels with the cause it belongs to, decided by the same
+	// comparison, so the two cannot end up describing different findings.
+	//
+	// It is carried at all because the cause alone stops one level short of the
+	// answer: LEVEL_OUTCOME_UNKNOWN is required by contract to carry a reason of
+	// either the coverage class or the retryable class, and those point in
+	// opposite directions -- coverage means the data does not reach this window,
+	// retryable means it will clear on its own. Reporting only the cause makes
+	// them one indistinguishable population, which on a running deployment was
+	// 61 of 62 objects sharing a single label that could not say whose problem
+	// they were.
+	reason := ReasonCode("")
+	note := func(candidate UnavailableCause, candidateReason ReasonCode) {
 		if causeRank(candidate) > causeRank(cause) {
-			cause = candidate
+			cause, reason = candidate, candidateReason
 		}
 	}
 	hasPartial := primary.Completeness == CompletenessPartial
 	hasUnavailable := primary.Completeness == CompletenessUnavailable
 	if hasUnavailable {
-		note(CausePrimaryInputUnavailable)
+		note(CausePrimaryInputUnavailable, "")
 	}
 	allFullEmpty := primary.Completeness == CompletenessFull && primary.DataState == DataStateEmpty
 	hasTerminal := false
@@ -2229,12 +2269,12 @@ func deriveCompletion(input InternalExecution, result EvaluationResult) (Complet
 			hasTerminal = true
 		case PlanUnavailable:
 			hasUnavailable = true
-			note(CausePlanUnavailable)
+			note(CausePlanUnavailable, plan.ReasonCode)
 		case PlanReadinessGap:
 			hasUnavailable = true
-			note(CauseDataNotReady)
+			note(CauseDataNotReady, plan.ReasonCode)
 		case PlanRetryPending:
-			return "", "", errors.New("alarmd execution: retry-pending Plan cannot derive a completed Slot")
+			return "", "", "", errors.New("alarmd execution: retry-pending Plan cannot derive a completed Slot")
 		case PlanDecided, PlanDecidedDegraded:
 			if plan.Disposition == PlanDecidedDegraded {
 				hasPartial = true
@@ -2245,24 +2285,24 @@ func deriveCompletion(input InternalExecution, result EvaluationResult) (Complet
 					hasTerminal = true
 				case LevelOutcomeUnknown:
 					hasUnavailable = true
-					note(CauseLevelOutcomeUnknown)
+					note(CauseLevelOutcomeUnknown, outcome.ReasonCode)
 				}
 			}
 		default:
-			return "", "", errors.New("alarmd execution: invalid Plan disposition for completion")
+			return "", "", "", errors.New("alarmd execution: invalid Plan disposition for completion")
 		}
 	}
 	switch {
 	case hasTerminal:
-		return CompletionTerminal, "", nil
+		return CompletionTerminal, "", "", nil
 	case hasUnavailable:
-		return CompletionUnavailable, cause, nil
+		return CompletionUnavailable, cause, reason, nil
 	case hasPartial:
-		return CompletionPartialGap, "", nil
+		return CompletionPartialGap, "", "", nil
 	case allFullEmpty:
-		return CompletionFullEmpty, "", nil
+		return CompletionFullEmpty, "", "", nil
 	default:
-		return CompletionFull, "", nil
+		return CompletionFull, "", "", nil
 	}
 }
 

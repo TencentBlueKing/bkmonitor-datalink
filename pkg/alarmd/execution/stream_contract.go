@@ -221,7 +221,20 @@ func DeriveStreamingCompletion(
 	bindings []NamedInputBinding,
 	result EvaluationResult,
 ) (CompletionKind, UnavailableCause, error) {
-	return DeriveCompletion(InternalExecution{
+	kind, cause, _, err := DeriveStreamingCompletionDetail(header, bindings, result)
+	return kind, cause, err
+}
+
+// DeriveStreamingCompletionDetail adds the reason belonging to the cause, which
+// is the level the answer usually lives at: the cause says a Level could not be
+// decided, the reason says whether that is the data not reaching this window or
+// something that clears on its own.
+func DeriveStreamingCompletionDetail(
+	header InternalExecutionHeader,
+	bindings []NamedInputBinding,
+	result EvaluationResult,
+) (CompletionKind, UnavailableCause, ReasonCode, error) {
+	return DeriveCompletionDetail(InternalExecution{
 		Contract: header.Contract, DuePlans: header.DuePlans, Requirements: header.Requirements, Inputs: bindings,
 	}, result)
 }

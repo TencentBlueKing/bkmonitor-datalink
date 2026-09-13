@@ -139,6 +139,10 @@ func TestHealthyCompletionsKeepAQueryGroupOffTheList(t *testing.T) {
 func TestDegradedRunsMustReachTheThresholdBeforeBeingReported(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
+	// Seen healthy once, before the run: the continuity label means this process
+	// watched the object go wrong, which it cannot claim about one whose first
+	// conclusive round was already the bad one.
+	tracker.Observe(context.Background(), completion("qg-1", "FULL_COMPLETED", "8930"))
 	for round := 0; round < DefaultDegradedRounds-1; round++ {
 		tracker.Observe(context.Background(), completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "8930"))
 	}

@@ -818,7 +818,10 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 	drainingFacts := &observability.DrainingQGFacts{Total: len(state.Draining)}
 	now := execution.EvaluationTime(runtime.dependencies.Now().Unix())
 	terminationWindow := controlplane.DrainingTerminationWindow(runtime.dependencies.MaxReplayAge)
-	addSample := func(draining controlplane.DrainingQueryGroup, load execution.ProgressLoadResult, disposition string) {
+	addSample := func(draining controlplane.DrainingQueryGroup, load execution.ProgressLoadResult, disposition string, retention prunedCursor) {
+		if retention.pruned {
+			drainingFacts.CursorPruned++
+		}
 		if len(drainingFacts.Samples) >= observability.MaxDrainingQGLogSamples {
 			drainingFacts.Truncated = true
 			return
@@ -830,6 +833,7 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 		drainingFacts.Samples = append(drainingFacts.Samples, observability.DrainingQGSample{
 			QueryGroupKey: string(draining.QueryGroup), RetiredBoundary: int64(draining.RetiredBoundary),
 			NextSlot: nextSlot, ProgressStatus: string(load.Status), Disposition: disposition,
+			EarliestRetainedSlot: retention.earliest, CursorPruned: retention.pruned,
 		})
 	}
 	for _, draining := range state.Draining {
@@ -931,14 +935,15 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 		// execute. Past the termination window every retired Slot is older
 		// than the replay age, so keeping it active would only source-block
 		// the Query Group on every tick without ever advancing Progress.
+		retention := runtime.prunedCursor(ctx, draining.QueryGroup, load)
 		if controlplane.DrainingQueryGroupTerminated(draining, now, terminationWindow) {
 			drainingFacts.Retired++
-			addSample(draining, load, observability.DrainingQGSampleRetired)
+			addSample(draining, load, observability.DrainingQGSampleRetired, retention)
 			continue
 		}
 		active[draining.QueryGroup] = struct{}{}
 		drainingFacts.Undrained++
-		addSample(draining, load, "")
+		addSample(draining, load, "", retention)
 	}
 	runtime.dependencies.Observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentControlPlane, Stage: observability.StageDrainingQGReconciled,
@@ -987,6 +992,40 @@ func (runtime *productionPhaseTwoControl) loadCurrentActiveQueryGroups(
 		}
 	}
 	return queryGroups, nil
+}
+
+// prunedCursor is what a draining Query Group's timeline says about the
+// Progress cursor: the earliest Slot the timeline still holds, and whether
+// the cursor lies before it. A cursor in that position asks for a Slot no
+// read can find, so the Query Group blocks on every attempt and never
+// drains; a retirement that keeps returning it then holds it for as long as
+// the projection lives. The claim is made only from a timeline that was
+// read: a read that fails, or a Progress that carries no cursor, says
+// nothing, because "could not read" must not be mistaken for "pruned".
+// Nothing acts on the answer yet; it is reported so the move it would
+// justify can be read against real numbers first.
+type prunedCursor struct {
+	earliest int64
+	pruned   bool
+}
+
+func (runtime *productionPhaseTwoControl) prunedCursor(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	load execution.ProgressLoadResult,
+) prunedCursor {
+	if load.Status != execution.ProgressFound || load.Progress == nil {
+		return prunedCursor{}
+	}
+	initial, err := runtime.dependencies.Schedules.ReadInitialFrozenSchedule(ctx, queryGroup)
+	if err != nil || initial.Validate() != nil || initial.Segment.QueryGroup != queryGroup {
+		return prunedCursor{}
+	}
+	earliest := initial.Segment.Start
+	if first, ok := initial.FirstSlot(); ok {
+		earliest = first
+	}
+	return prunedCursor{earliest: int64(earliest), pruned: load.Progress.NextSlot < earliest}
 }
 
 func (runtime *productionPhaseTwoControl) isLocalDrainingError(

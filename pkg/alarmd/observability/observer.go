@@ -428,7 +428,7 @@ type ActivationHoldFacts struct {
 
 // MaxActivationHoldSamples bounds the Query Group identities an activation
 // hold observation carries.
-const MaxActivationHoldSamples = 8
+const MaxActivationHoldSamples = 12
 
 type LegacyQGMigrationFacts struct {
 	Result      string
@@ -438,7 +438,7 @@ type LegacyQGMigrationFacts struct {
 }
 
 const (
-	MaxDrainingQGLogSamples          = 8
+	MaxDrainingQGLogSamples          = 12
 	MaxActivationFailureQGLogSamples = 8
 )
 
@@ -453,18 +453,30 @@ type DrainingQGSample struct {
 	NextSlot        int64  `json:"next_slot"`
 	ProgressStatus  string `json:"progress_status"`
 	Disposition     string `json:"disposition,omitempty"`
+	// EarliestRetainedSlot is the first Slot the Query Group's timeline still
+	// holds, read from the timeline itself; CursorPruned says the Progress
+	// cursor (NextSlot) lies before it, so no read can ever find the Slot the
+	// cursor asks for and the Query Group cannot drain on its own. Both are
+	// reported only when the timeline was read; a timeline that could not be
+	// read makes no claim either way.
+	EarliestRetainedSlot int64 `json:"earliest_retained_slot,omitempty"`
+	CursorPruned         bool  `json:"cursor_pruned,omitempty"`
 }
 
 // DrainingQGFacts carries bounded counts of one draining reconciliation.
 // Retired counts undrained Query Groups past the termination window; they are
 // no longer active and are not counted as Undrained.
 type DrainingQGFacts struct {
-	Total     int                `json:"total"`
-	Undrained int                `json:"undrained"`
-	Isolated  int                `json:"isolated"`
-	Retired   int                `json:"retired"`
-	Samples   []DrainingQGSample `json:"samples,omitempty"`
-	Truncated bool               `json:"truncated"`
+	Total     int `json:"total"`
+	Undrained int `json:"undrained"`
+	Isolated  int `json:"isolated"`
+	Retired   int `json:"retired"`
+	// CursorPruned counts the draining Query Groups whose Progress cursor lies
+	// before the earliest Slot their timeline still holds; see
+	// DrainingQGSample.CursorPruned. Reported before anything acts on it.
+	CursorPruned int                `json:"cursor_pruned"`
+	Samples      []DrainingQGSample `json:"samples,omitempty"`
+	Truncated    bool               `json:"truncated"`
 }
 
 // SourceRefreshFacts carries one bounded source refresh outcome. Snapshot

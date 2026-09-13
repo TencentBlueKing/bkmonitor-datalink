@@ -239,6 +239,53 @@ func digestJSONObjectWithoutV2(field, domain string, payload []byte, omitted str
 	return digestCanonicalV2(field, domain, object)
 }
 
+// isCanonicalScalarJSONV2 answers the only question this loop asks of a
+// dimension value - is it a scalar - while refusing everything the canonical
+// form refused.
+//
+// It replaces a CanonicalJSONV2 call whose output was read for one byte and
+// dropped. Those bytes never reached a digest: the digest below is derived
+// from the canonical form of the whole slice, which canonicalises every value
+// again. So the value was being canonicalised twice per series, and one of the
+// two results was only ever used as a type test.
+//
+// The rejections are the same set, and the caller collapses every reason into
+// one message, so neither the digest nor the error text can move:
+//
+//	empty, invalid UTF-8, a BOM, a bad surrogate escape, malformed JSON, a
+//	trailing second value, and any object or array.
+//
+// Duplicate object keys need no check of their own here. A payload that has
+// them is an object, and an object is refused for being one. What reaches the
+// digest still goes through the full strict path, so a duplicate key nested
+// inside a value cannot slip past: CanonicalJSONV2 over the whole slice walks
+// every value it contains.
+//
+// json.Valid rather than a decode: it runs the same scanner over the same
+// bytes without building a Decoder, a read buffer or a generic value, which is
+// where the cost being removed actually was.
+func isCanonicalScalarJSONV2(payload []byte) bool {
+	if len(payload) == 0 || !utf8.Valid(payload) || bytes.HasPrefix(payload, []byte{0xef, 0xbb, 0xbf}) {
+		return false
+	}
+	if err := validateJSONSurrogateEscapes(payload); err != nil {
+		return false
+	}
+	index := 0
+	for index < len(payload) {
+		switch payload[index] {
+		case ' ', '\t', '\r', '\n':
+			index++
+			continue
+		}
+		break
+	}
+	if index == len(payload) || payload[index] == '{' || payload[index] == '[' {
+		return false
+	}
+	return json.Valid(payload)
+}
+
 func DeriveDimensionIdentityDigestV2(tenantID, businessID string, fields []DimensionFieldV2) (string, error) {
 	if tenantID == "" || !utf8.ValidString(tenantID) {
 		return "", invalid("dimension_identity.tenant_id", "must be non-empty valid UTF-8")
@@ -254,8 +301,7 @@ func DeriveDimensionIdentityDigestV2(tenantID, businessID string, fields []Dimen
 		if dimension.Name == "" || !utf8.ValidString(dimension.Name) || (index > 0 && dimension.Name <= previous) {
 			return "", invalid("dimension_identity.fields", "names must be non-empty, sorted and unique")
 		}
-		canonical, err := CanonicalJSONV2(dimension.Value)
-		if err != nil || len(canonical) == 0 || canonical[0] == '{' || canonical[0] == '[' {
+		if !isCanonicalScalarJSONV2(dimension.Value) {
 			return "", invalid("dimension_identity.fields.value", "must be a scalar or null JSON value")
 		}
 		previous = dimension.Name

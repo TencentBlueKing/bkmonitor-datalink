@@ -179,7 +179,7 @@ type ScheduleProgressReader interface {
 // the earliest retained Slot. A reader without it leaves such a cursor
 // blocked, which is the behaviour before the advance existed.
 type PrunedCursorAdvancer interface {
-	SkipPrunedRange(context.Context, execution.ProgressSkipPrunedRequest) (execution.ProgressCommitResult, error)
+	SkipPrunedRange(context.Context, execution.ProgressSkipPrunedRequest) (execution.ProgressSkipResult, error)
 }
 
 // ProductionSlotSource is bound to one owned Query Group. It reads current
@@ -891,7 +891,8 @@ func (source *ProductionSlotSource) advancePrunedCursor(
 		ExpectedNextSlot: progress.NextSlot, ResumeAt: earliest,
 	}
 	result, err := advancer.SkipPrunedRange(ctx, request)
-	facts := &observability.CursorAdvanceFacts{From: int64(progress.NextSlot), To: int64(earliest)}
+	facts := &observability.CursorAdvanceFacts{From: int64(progress.NextSlot), To: int64(earliest),
+		Refusal: string(result.Refusal), InFlightSlot: int64(result.InFlightSlot)}
 	observed := observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageScheduleCursorAdvanced,
 		Operation: observability.OperationWrite, Direction: observability.DirectionInternal,

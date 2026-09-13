@@ -252,7 +252,18 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.assignmentIndexWrites = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "assignment_index_write_total", Help: "Assignment index rounds the Control Leader attempted, by result."}, []string{"result"})
 	metrics.assignmentIndexReads = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "assignment_index_read_total", Help: "Assignment index reads by this worker, by result: fresh (round advanced), stale (same round), missing (no index or no set), invalid (unreadable)."}, []string{"result"})
 	metrics.assignmentIndexShadow = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "assignment_index_shadow_total", Help: "Shadow comparison of the index-derived candidate set with the record-derived set, by result: agreed, transient (records changed this round, the index may lag one round), disagreed (records unchanged and the sets differ), skipped (no usable index)."}, []string{"result"})
-	metrics.scheduleCursorAdvances = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "schedule_cursor_advance_total", Help: "Attempts to move a Progress cursor that points into a pruned part of the Schedule timeline to the earliest retained Slot, by outcome: applied, conflict, stale_owner, retryable, failed. Each applied advance records the skipped span as a gap."}, []string{"result"})
+	metrics.scheduleCursorAdvances = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "schedule_cursor_advance_total", Help: "Attempts to move a Progress cursor that points into a pruned part of its timeline to the earliest Slot the timeline still holds, by outcome; a conflict also carries the one fact that refused it (refusal), which is empty for every other outcome."}, []string{"result", "refusal"})
+	// Every outcome and every refusal of a conflict publishes a zero from the
+	// start, so a refusal that never happens reads as zero and not as absent.
+	for _, status := range observability.CursorAdvanceStatuses {
+		if status == observability.CursorAdvanceConflict {
+			for _, refusal := range observability.CursorRefusals {
+				metrics.scheduleCursorAdvances.WithLabelValues(status, refusal)
+			}
+			continue
+		}
+		metrics.scheduleCursorAdvances.WithLabelValues(status, "")
+	}
 	metrics.undrainedDrainingQueryGroups = newLoadedGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "undrained_draining_query_groups", Help: "Replicated per-Pod view of retired Query Groups still requiring ownership until their retirement boundary is drained; aggregate replicas with max, not sum."})
 	metrics.activationHeldQueryGroups = newLoadedGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "activation_held_query_groups", Help: "Query Groups the publication brings back from retirement that have not drained and were held out of the activation, which went ahead for everyone else. Reported by the Control Leader on every activation attempt and on every reconcile of a publication that still holds some, so it follows the held set down to zero; a value that does not fall is a retirement that is not draining."})
 	metrics.sourceStrategiesRead = prometheus.NewCounter(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_strategies_read_total", Help: "Strategy documents source refresh rounds asked the source for. A skipped round adds nothing; a full read adds the whole active set."})
@@ -380,7 +391,7 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 		}
 	}
 	if facts := observation.CursorAdvance; facts != nil {
-		m.scheduleCursorAdvances.WithLabelValues(facts.Status).Inc()
+		m.scheduleCursorAdvances.WithLabelValues(facts.Status, facts.Refusal).Inc()
 	}
 	if facts := observation.ActivationHold; facts != nil && observation.Stage == observability.StageActivationHold {
 		m.activationHeldQueryGroups.Set(float64(facts.Held))

@@ -570,6 +570,15 @@ type CursorAdvanceFacts struct {
 	From   int64  `json:"from"`
 	To     int64  `json:"to"`
 	Status string `json:"status"`
+	// Refusal names the fact the store checked and found against a skip it
+	// reports as a conflict, so a conflict that keeps happening says which
+	// of its premises fails instead of that one of them does. Empty for
+	// every other status.
+	Refusal string `json:"refusal,omitempty"`
+	// InFlightSlot is the evaluation time of the Slot the store found in
+	// flight and an applied skip discarded with the pruned span; a conflict
+	// from the compare-and-set names it too. Zero when there was none.
+	InFlightSlot int64 `json:"in_flight_slot,omitempty"`
 }
 
 // Closed vocabulary of cursor advance outcomes.
@@ -579,6 +588,31 @@ const (
 	CursorAdvanceStaleOwner = "stale_owner"
 	CursorAdvanceRetryable  = "retryable"
 	CursorAdvanceFailed     = "failed"
+)
+
+// Closed vocabulary of the fact that refused a cursor advance, carried only
+// by a conflict. A value outside it is reported as OTHER rather than
+// dropped, so a refusal the store learns to name later is still counted.
+const (
+	CursorRefusalProgressMissing = "PROGRESS_MISSING"
+	CursorRefusalRangeInFlight   = "RANGE_IN_FLIGHT"
+	CursorRefusalCursorMoved     = "CURSOR_MOVED"
+	CursorRefusalCASConflict     = "CAS_CONFLICT"
+	CursorRefusalOther           = "OTHER"
+)
+
+// CursorRefusals lists the refusals a conflict can carry, OTHER included.
+var CursorRefusals = []string{CursorRefusalProgressMissing, CursorRefusalRangeInFlight, CursorRefusalCursorMoved,
+	CursorRefusalCASConflict, CursorRefusalOther}
+
+// CursorAdvanceStatuses lists the outcomes a cursor advance reports.
+var CursorAdvanceStatuses = []string{CursorAdvanceApplied, CursorAdvanceConflict, CursorAdvanceStaleOwner, CursorAdvanceRetryable, CursorAdvanceFailed}
+
+// In-flight markers of a draining sample: what the Progress record carries
+// besides its cursor, because a skip refuses to move a cursor past it.
+const (
+	DrainingInFlightSlot  = "slot"
+	DrainingInFlightRange = "range"
 )
 
 func normalizeCursorAdvanceFacts(facts *CursorAdvanceFacts) *CursorAdvanceFacts {
@@ -596,6 +630,18 @@ func normalizeCursorAdvanceFacts(facts *CursorAdvanceFacts) *CursorAdvanceFacts 
 	case CursorAdvanceApplied, CursorAdvanceConflict, CursorAdvanceStaleOwner, CursorAdvanceRetryable, CursorAdvanceFailed:
 	default:
 		normalized.Status = CursorAdvanceFailed
+	}
+	if normalized.InFlightSlot < 0 {
+		normalized.InFlightSlot = 0
+	}
+	if normalized.Status != CursorAdvanceConflict {
+		normalized.Refusal = ""
+		return &normalized
+	}
+	switch normalized.Refusal {
+	case CursorRefusalProgressMissing, CursorRefusalRangeInFlight, CursorRefusalCursorMoved, CursorRefusalCASConflict:
+	default:
+		normalized.Refusal = CursorRefusalOther
 	}
 	return &normalized
 }
@@ -619,6 +665,10 @@ type DrainingQGSample struct {
 	// read makes no claim either way.
 	EarliestRetainedSlot int64 `json:"earliest_retained_slot,omitempty"`
 	CursorPruned         bool  `json:"cursor_pruned,omitempty"`
+	// InFlight says whether the Progress record carries a Slot or a range
+	// that was begun and not finished, which a pruned skip refuses to move
+	// past when it lies in the retained span. Empty when it carries none.
+	InFlight string `json:"in_flight,omitempty"`
 }
 
 // DrainingQGFacts carries bounded counts of one draining reconciliation.
@@ -1217,6 +1267,9 @@ func normalizeDrainingQGFacts(facts *DrainingQGFacts) *DrainingQGFacts {
 		}
 		if sample.Disposition != DrainingQGSampleRetired {
 			sample.Disposition = ""
+		}
+		if sample.InFlight != DrainingInFlightSlot && sample.InFlight != DrainingInFlightRange {
+			sample.InFlight = ""
 		}
 	}
 	return &normalized

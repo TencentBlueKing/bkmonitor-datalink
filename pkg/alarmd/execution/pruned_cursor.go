@@ -9,7 +9,33 @@ import (
 	"errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
+
+// ProgressSkipRefusal names the fact a pruned skip checked and found
+// against it. The vocabulary is the observability one, so the store, the
+// log line and the counter say the same word.
+type ProgressSkipRefusal string
+
+const (
+	SkipRefusalProgressMissing ProgressSkipRefusal = observability.CursorRefusalProgressMissing
+	SkipRefusalRangeInFlight   ProgressSkipRefusal = observability.CursorRefusalRangeInFlight
+	SkipRefusalCursorMoved     ProgressSkipRefusal = observability.CursorRefusalCursorMoved
+	SkipRefusalCASConflict     ProgressSkipRefusal = observability.CursorRefusalCASConflict
+)
+
+// ProgressSkipResult is what a pruned skip reports: the store's usual
+// commit status, and for a conflict the one fact that refused it, so a
+// conflict that keeps happening can be read instead of inferred.
+type ProgressSkipResult struct {
+	Status ProgressCommitStatus
+	// Refusal is set only when Status is ProgressConflict.
+	Refusal ProgressSkipRefusal
+	// InFlightSlot is the evaluation time of the Slot found in flight, the
+	// one a committed skip discarded with the pruned span. Zero when there
+	// was none.
+	InFlightSlot EvaluationTime
+}
 
 // ProgressSkipPrunedRequest moves a Progress cursor that points into a part
 // of the Schedule timeline that has been pruned to the earliest Slot the

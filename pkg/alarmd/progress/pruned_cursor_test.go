@@ -64,35 +64,69 @@ func TestSkipPrunedRangeMovesTheCursorAndRestoresContinuity(t *testing.T) {
 	}
 }
 
-// Nothing is skipped over a cursor that moved, a Slot in flight, an absent
-// Progress or a stale owner; each is reported as the store's usual status.
+// Nothing is skipped over a cursor that moved, a range in flight, an
+// absent Progress, a write that lost the compare-and-set or a stale owner;
+// each conflict names the one fact that refused it, and a stale owner is
+// the store's usual status.
 func TestSkipPrunedRangeRefusesWhatItCannotProve(t *testing.T) {
 	identity := execution.ProgressIdentity{QueryGroup: "q"}
 	fence := execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"}
 	ctx := context.Background()
 	skip := execution.ProgressSkipPrunedRequest{Identity: identity, OwnerFence: fence, ExpectedNextSlot: 120, ResumeAt: 600}
-	moved := execution.ScheduleProgress{Identity: identity, NextSlot: 180, LastFullSlot: 120}
-	if result, err := mustStore(t, &controlFake{value: mustEncode(t, moved)}).SkipPrunedRange(ctx, skip); err != nil ||
-		result.Status != execution.ProgressConflict {
-		t.Fatalf("SkipPrunedRange(moved cursor) = (%+v, %v), want conflict", result, err)
+	refused := func(name string, fake *controlFake, want execution.ProgressSkipRefusal, wantSlot execution.EvaluationTime) {
+		t.Helper()
+		result, err := mustStore(t, fake).SkipPrunedRange(ctx, skip)
+		if err != nil || result.Status != execution.ProgressConflict || result.Refusal != want || result.InFlightSlot != wantSlot {
+			t.Fatalf("SkipPrunedRange(%s) = (%+v, %v), want conflict refused by %s naming Slot %d", name, result, err, want, wantSlot)
+		}
 	}
+	moved := execution.ScheduleProgress{Identity: identity, NextSlot: 180, LastFullSlot: 120}
+	refused("moved cursor", &controlFake{value: mustEncode(t, moved)}, execution.SkipRefusalCursorMoved, 0)
+	pending := rangeFixture(t)
+	inRange := execution.ScheduleProgress{Identity: identity, NextSlot: 60, UnfinishedRange: &pending}
+	refused("range in flight", &controlFake{value: mustEncode(t, inRange)}, execution.SkipRefusalRangeInFlight, 0)
+	refused("absent", &controlFake{missing: true}, execution.SkipRefusalProgressMissing, 0)
+	current := execution.ScheduleProgress{Identity: identity, NextSlot: 120, LastFullSlot: 60}
+	refused("lost compare-and-set", &controlFake{value: mustEncode(t, current), status: ownership.FencedCASConflict}, execution.SkipRefusalCASConflict, 0)
+	// A lost compare-and-set still names the Slot the skip would have
+	// discarded, so the report of a conflict that keeps happening is whole.
 	projection := progressProjectionAt(120)
 	inFlight := execution.ScheduleProgress{Identity: identity, NextSlot: 120, UnfinishedSlot: &projection}
-	if result, err := mustStore(t, &controlFake{value: mustEncode(t, inFlight)}).SkipPrunedRange(ctx, skip); err != nil ||
-		result.Status != execution.ProgressConflict {
-		t.Fatalf("SkipPrunedRange(slot in flight) = (%+v, %v), want conflict", result, err)
-	}
-	if result, err := mustStore(t, &controlFake{missing: true}).SkipPrunedRange(ctx, skip); err != nil ||
-		result.Status != execution.ProgressConflict {
-		t.Fatalf("SkipPrunedRange(absent) = (%+v, %v), want conflict", result, err)
-	}
-	current := execution.ScheduleProgress{Identity: identity, NextSlot: 120, LastFullSlot: 60}
+	refused("lost compare-and-set with a slot in flight", &controlFake{value: mustEncode(t, inFlight), status: ownership.FencedCASConflict}, execution.SkipRefusalCASConflict, 120)
 	stale := &controlFake{value: mustEncode(t, current), status: ownership.FencedCASStaleOwner}
-	if result, err := mustStore(t, stale).SkipPrunedRange(ctx, skip); err != nil || result.Status != execution.ProgressStaleOwner {
-		t.Fatalf("SkipPrunedRange(stale owner) = (%+v, %v), want stale owner", result, err)
+	if result, err := mustStore(t, stale).SkipPrunedRange(ctx, skip); err != nil || result.Status != execution.ProgressStaleOwner || result.Refusal != "" {
+		t.Fatalf("SkipPrunedRange(stale owner) = (%+v, %v), want stale owner without a refusal", result, err)
 	}
 	if _, err := mustStore(t, &controlFake{value: mustEncode(t, current)}).SkipPrunedRange(ctx,
 		execution.ProgressSkipPrunedRequest{Identity: identity, OwnerFence: fence, ExpectedNextSlot: 120, ResumeAt: 120}); err == nil {
 		t.Fatal("a skip that does not move forward was accepted")
+	}
+}
+
+// A Slot in flight that lies inside the pruned span goes with the skip: its
+// Segment is gone, so nothing can finish it and nothing can rebuild it. The
+// skip reports which Slot it discarded, and the Progress it leaves carries
+// no projection.
+func TestSkipPrunedRangeDiscardsASlotInFlightInsideThePrunedSpan(t *testing.T) {
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	fence := execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"}
+	ctx := context.Background()
+	projection := progressProjectionAt(120)
+	current := execution.ScheduleProgress{Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull, UnfinishedSlot: &projection}
+	store := mustStore(t, &controlFake{value: mustEncode(t, current)})
+	skip := execution.ProgressSkipPrunedRequest{Identity: identity, OwnerFence: fence, ExpectedNextSlot: 120, ResumeAt: 600}
+	result, err := store.SkipPrunedRange(ctx, skip)
+	if err != nil || result.Status != execution.ProgressCommitted || result.Refusal != "" || result.InFlightSlot != 120 {
+		t.Fatalf("SkipPrunedRange() = (%+v, %v), want committed naming the discarded Slot 120", result, err)
+	}
+	loaded, err := store.LoadProgress(ctx, identity)
+	if err != nil || loaded.Progress == nil {
+		t.Fatalf("LoadProgress() = (%+v, %v)", loaded, err)
+	}
+	wantGap := &execution.ProgressGapSummary{Kind: execution.CompletionGapSkipped,
+		ReasonCode: execution.ReasonCode(contract.ReasonSchedulePruned), FirstSlot: 120, LastSlot: 120, Count: 1}
+	if got := loaded.Progress; got.NextSlot != 600 || got.UnfinishedSlot != nil || got.UnfinishedRange != nil || got.LastFullSlot != 0 ||
+		got.CurrentOrRecentGap == nil || *got.CurrentOrRecentGap != *wantGap {
+		t.Fatalf("progress after skip = %+v, want cursor 600, nothing in flight and the pruned gap %+v", got, wantGap)
 	}
 }

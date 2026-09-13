@@ -827,14 +827,20 @@ func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
 			drainingFacts.Truncated = true
 			return
 		}
-		nextSlot := int64(0)
+		nextSlot, inFlight := int64(0), ""
 		if load.Progress != nil {
 			nextSlot = int64(load.Progress.NextSlot)
+			switch {
+			case load.Progress.UnfinishedRange != nil:
+				inFlight = observability.DrainingInFlightRange
+			case load.Progress.UnfinishedSlot != nil:
+				inFlight = observability.DrainingInFlightSlot
+			}
 		}
 		drainingFacts.Samples = append(drainingFacts.Samples, observability.DrainingQGSample{
 			QueryGroupKey: string(draining.QueryGroup), RetiredBoundary: int64(draining.RetiredBoundary),
 			NextSlot: nextSlot, ProgressStatus: string(load.Status), Disposition: disposition,
-			EarliestRetainedSlot: retention.earliest, CursorPruned: retention.pruned,
+			EarliestRetainedSlot: retention.earliest, CursorPruned: retention.pruned, InFlight: inFlight,
 		})
 	}
 	for _, draining := range state.Draining {

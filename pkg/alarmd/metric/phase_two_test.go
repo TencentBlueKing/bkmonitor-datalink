@@ -571,10 +571,23 @@ func TestPhaseTwoScheduleCursorAdvanceCountsByOutcome(t *testing.T) {
 			CursorAdvance: &observability.CursorAdvanceFacts{From: 120, To: 600, Status: status},
 		})
 	}
-	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceApplied)); got != 2 {
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentScheduler, Stage: observability.StageScheduleCursorAdvanced,
+		Result: observability.ResultRetrying, Operation: observability.OperationWrite,
+		CursorAdvance: &observability.CursorAdvanceFacts{From: 120, To: 600, Status: observability.CursorAdvanceConflict, Refusal: observability.CursorRefusalCASConflict, InFlightSlot: 120},
+	})
+	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceApplied, "")); got != 2 {
 		t.Fatalf("schedule_cursor_advance_total{applied} = %v, want 2", got)
 	}
-	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceConflict)); got != 1 {
-		t.Fatalf("schedule_cursor_advance_total{conflict} = %v, want 1", got)
+	// A conflict without a refusal is one the store did not name: OTHER.
+	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceConflict, observability.CursorRefusalOther)); got != 1 {
+		t.Fatalf("schedule_cursor_advance_total{conflict,OTHER} = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceConflict, observability.CursorRefusalCASConflict)); got != 1 {
+		t.Fatalf("schedule_cursor_advance_total{conflict,CAS_CONFLICT} = %v, want 1", got)
+	}
+	// Every refusal publishes from the start, so a zero is a fact.
+	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceConflict, observability.CursorRefusalCursorMoved)); got != 0 {
+		t.Fatalf("schedule_cursor_advance_total{conflict,CURSOR_MOVED} = %v, want a published zero", got)
 	}
 }

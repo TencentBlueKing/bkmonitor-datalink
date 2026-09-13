@@ -40,27 +40,45 @@ func TestProductionPhaseTwoDrainingViewReportsACursorTheTimelineNoLongerHolds(t 
 		},
 		retired: map[execution.QueryGroupIdentity]execution.EvaluationTime{retired: boundary},
 	}
-	cursorAt := func(slot execution.EvaluationTime) *fakeProductionProgressReader {
+	cursorAt := func(slot execution.EvaluationTime, inFlight *execution.UnfinishedSlotProjection) *fakeProductionProgressReader {
 		return &fakeProductionProgressReader{byGroup: map[execution.QueryGroupIdentity]execution.ProgressLoadResult{
 			retired: {Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
-				Identity: execution.ProgressIdentity{QueryGroup: retired}, NextSlot: slot,
+				Identity: execution.ProgressIdentity{QueryGroup: retired}, NextSlot: slot, UnfinishedSlot: inFlight,
 			}},
 		}}
+	}
+	inFlightAt := func(slot execution.EvaluationTime) *execution.UnfinishedSlotProjection {
+		contract := execution.FrozenExecutionContractRef{
+			Slot: execution.SlotIdentity{QueryGroup: retired, EvaluationTime: slot}, SnapshotRevision: "s", QueryRevision: "query",
+			ScheduleRevision: "r", ScheduleSegmentStart: 60, DuePlanSetDigest: "plans",
+		}
+		return &execution.UnfinishedSlotProjection{
+			Contract: contract,
+			DuePlanTargets: execution.FrozenDuePlanTargets{DuePlanSetDigest: contract.DuePlanSetDigest,
+				Plans: []execution.PlanIdentity{{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy"}}},
+			EarliestQueryDeadlineUnixMilli: int64(slot)*1000 + 1_000, KeepUntilUnixMilli: int64(slot)*1000 + 601_000,
+		}
 	}
 	for _, test := range []struct {
 		name         string
 		cursor       execution.EvaluationTime
+		inFlight     *execution.UnfinishedSlotProjection
 		wantPruned   bool
 		wantEarliest int64
+		wantInFlight string
 	}{
 		{name: "a cursor before the retained range is reported pruned", cursor: 60, wantPruned: true, wantEarliest: 600},
 		{name: "a cursor inside the retained range is not", cursor: 660, wantPruned: false, wantEarliest: 600},
+		// A pruned cursor with a Slot in flight is the record a skip refuses
+		// to move past; the sample says so instead of leaving it to be
+		// inferred from a refusal that keeps happening.
+		{name: "a slot in flight is reported with the pruned cursor", cursor: 60, inFlight: inFlightAt(60), wantPruned: true, wantEarliest: 600, wantInFlight: observability.DrainingInFlightSlot},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var observations []observability.Observation
 			control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
 				Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: &fakeSourceReconciler{},
-				Activator: &fakeInitialScheduleActivator{}, Repository: repository, Schedules: schedules, Progress: cursorAt(test.cursor),
+				Activator: &fakeInitialScheduleActivator{}, Repository: repository, Schedules: schedules, Progress: cursorAt(test.cursor, test.inFlight),
 				Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 					observations = append(observations, observation)
 				}),
@@ -87,9 +105,9 @@ func TestProductionPhaseTwoDrainingViewReportsACursorTheTimelineNoLongerHolds(t 
 			}
 			sample := facts.Samples[0]
 			if facts.CursorPruned != wantCount || sample.CursorPruned != test.wantPruned || sample.EarliestRetainedSlot != test.wantEarliest ||
-				sample.NextSlot != int64(test.cursor) {
-				t.Fatalf("draining view = %+v (sample %+v), want cursor_pruned=%v earliest=%d next_slot=%d",
-					facts, sample, test.wantPruned, test.wantEarliest, test.cursor)
+				sample.NextSlot != int64(test.cursor) || sample.InFlight != test.wantInFlight {
+				t.Fatalf("draining view = %+v (sample %+v), want cursor_pruned=%v earliest=%d next_slot=%d in_flight=%q",
+					facts, sample, test.wantPruned, test.wantEarliest, test.cursor, test.wantInFlight)
 			}
 		})
 	}

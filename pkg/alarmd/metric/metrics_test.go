@@ -392,7 +392,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_assignment_index_write_total":                 "variableLabels: {result}",
 		"bkmonitor_alarmd_assignment_index_read_total":                  "variableLabels: {result}",
 		"bkmonitor_alarmd_assignment_index_shadow_total":                "variableLabels: {result}",
-		"bkmonitor_alarmd_schedule_cursor_advance_total":                "variableLabels: {result}",
+		"bkmonitor_alarmd_schedule_cursor_advance_total":                "variableLabels: {result,refusal}",
 		"bkmonitor_alarmd_activation_held_query_groups":                 "variableLabels: {}",
 		"bkmonitor_alarmd_activation_held_age_seconds_max":              "variableLabels: {}",
 		"bkmonitor_alarmd_ready":                                        "variableLabels: {}",
@@ -786,9 +786,11 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("assignment_index_write_total"):                2,
 		fqName("assignment_index_read_total"):                 4,
 		fqName("assignment_index_shadow_total"):               4,
-		fqName("schedule_cursor_advance_total"):               5,
-		fqName("activation_held_query_groups"):                1,
-		fqName("activation_held_age_seconds_max"):             1,
+		// Four outcomes without a refusal, plus a conflict for each refusal
+		// OTHER included, all created at construction.
+		fqName("schedule_cursor_advance_total"):   len(observability.CursorAdvanceStatuses) - 1 + len(observability.CursorRefusals),
+		fqName("activation_held_query_groups"):    1,
+		fqName("activation_held_age_seconds_max"): 1,
 		fqName("ready"):                                  1,
 		fqName("assigned_claims"):                        1,
 		fqName("fatal_total"):                            1,

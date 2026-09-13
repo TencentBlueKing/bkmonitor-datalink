@@ -4,6 +4,8 @@ import (
 	"container/list"
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -153,6 +155,88 @@ func (cache *controlReadCache) enterLocked(version string) {
 	}
 }
 
+// advance moves the cache to a new header keeping every timeline except the
+// ones the activation changed. The activation entry always goes: the header
+// changed because the activation record did. It reports whether the cache
+// was actually moved, so a caller that raced another can tell, and the
+// record revisions of the timelines it dropped and kept, for the audit.
+func (cache *controlReadCache) advance(
+	version string, changed []execution.QueryGroupIdentity,
+) (moved bool, dropped, kept map[execution.QueryGroupIdentity]uint64) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.version == version {
+		return false, nil, nil
+	}
+	if cache.version == "" {
+		cache.resetLocked(version)
+		return true, nil, nil
+	}
+	cache.version = version
+	cache.activation = nil
+	dropped = make(map[execution.QueryGroupIdentity]uint64, len(changed))
+	for _, queryGroup := range changed {
+		element, ok := cache.timelines[queryGroup]
+		if !ok {
+			continue
+		}
+		entry := element.Value.(*cachedTimeline)
+		dropped[queryGroup] = entry.timeline.RecordRevision
+		cache.bytes -= entry.bytes
+		cache.order.Remove(element)
+		delete(cache.timelines, queryGroup)
+	}
+	kept = make(map[execution.QueryGroupIdentity]uint64, len(cache.timelines))
+	for queryGroup, element := range cache.timelines {
+		kept[queryGroup] = element.Value.(*cachedTimeline).timeline.RecordRevision
+	}
+	return true, dropped, kept
+}
+
+// deltaAuditEvery is how often a header change crossed by delta is audited
+// against the timelines themselves: every sixteenth crossing of a process.
+// The audit costs one read of every cached timeline, so it costs 1/16 of
+// what every header change cost before deltas. Retire it once deployments
+// have reported zero missed timelines across a month of header changes;
+// over-named ones are a wasted read and do not keep it alive.
+const deltaAuditEvery = 16
+
+// auditDelta checks one applied delta against the timelines it spoke for. A
+// delta names what its activation wrote; a Worker needs to know what changed.
+// The two are the same only while that activation's script is the only
+// writer of timelines, and that is a claim about the whole system, not about
+// the script. So a sample of crossings reads every cached timeline back: a
+// kept timeline whose persisted record revision moved is one the delta
+// missed, and a dropped one whose revision did not move is one it over-named.
+// The audit only counts; it never changes what the cache holds.
+func (repository *RedisCatalogRepository) auditDelta(ctx context.Context, dropped, kept map[execution.QueryGroupIdentity]uint64) {
+	counters := &repository.controlReads.audit
+	counters.samples.Add(1)
+	var missed, overNamed uint64
+	for queryGroup, revision := range kept {
+		timeline, _, err := repository.readScheduleTimeline(ctx, queryGroup)
+		switch {
+		case errors.Is(err, ErrScheduleUnavailable):
+			missed++
+		case err != nil:
+			continue
+		case timeline.RecordRevision != revision:
+			missed++
+		}
+	}
+	for queryGroup, revision := range dropped {
+		timeline, _, err := repository.readScheduleTimeline(ctx, queryGroup)
+		if err == nil && timeline.RecordRevision == revision {
+			overNamed++
+		}
+	}
+	counters.missed.Add(missed)
+	counters.overNamed.Add(overNamed)
+	if missed == 0 && overNamed == 0 {
+		counters.agreed.Add(1)
+	}
+}
+
 func (cache *controlReadCache) lookupActivation(version string, payloadLen int64) (*parsedActivation, bool) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
@@ -282,6 +366,10 @@ type ControlReadCacheStats struct {
 	Activation ControlReadCacheObjectStats
 	Timeline   ControlReadCacheObjectStats
 	Version    ControlReadCacheObjectStats
+	// Delta counts header changes: Hits crossed one keeping the timelines the
+	// activation did not change, Misses dropped every cached timeline.
+	Delta      ControlReadCacheObjectStats
+	DeltaAudit ControlDeltaAuditStats
 	// TimelineOccupancy answers whether the derived budget actually holds the
 	// Query Groups this Worker owns. Without it a miss rate cannot be told
 	// apart from a version change, and the budget's formula stays unfalsifiable.
@@ -319,6 +407,33 @@ type controlReadCounters struct {
 	activation controlReadObjectCounters
 	timeline   controlReadObjectCounters
 	version    controlReadObjectCounters
+	// delta counts header changes by how the cache crossed them: hits kept
+	// the timelines the activation's delta did not name, misses dropped every
+	// timeline because no usable delta was found or it said full.
+	delta controlReadObjectCounters
+	// audit counts the sampled reconciliations of a delta against what the
+	// timelines actually did; see auditDelta.
+	audit deltaAuditCounters
+}
+
+type deltaAuditCounters struct {
+	samples   atomic.Uint64
+	agreed    atomic.Uint64
+	overNamed atomic.Uint64
+	missed    atomic.Uint64
+}
+
+// ControlDeltaAuditStats are the sampled reconciliations of activation deltas.
+// Samples is how many header changes were audited; Agreed how many of those
+// found the delta exact. OverNamed counts timelines a delta named that had
+// not changed (a wasted read, harmless) and Missed counts timelines a delta
+// did not name that had changed (a Worker running on stale content, harmful).
+// The two directions are never added together: their remedies are opposite.
+type ControlDeltaAuditStats struct {
+	Samples   uint64
+	Agreed    uint64
+	OverNamed uint64
+	Missed    uint64
 }
 
 func (repository *RedisCatalogRepository) ControlReadCacheStats() ControlReadCacheStats {
@@ -326,10 +441,15 @@ func (repository *RedisCatalogRepository) ControlReadCacheStats() ControlReadCac
 		return ControlReadCacheStats{}
 	}
 	return ControlReadCacheStats{
-		Snapshot:          repository.controlReads.snapshot.snapshot(),
-		Activation:        repository.controlReads.activation.snapshot(),
-		Timeline:          repository.controlReads.timeline.snapshot(),
-		Version:           repository.controlReads.version.snapshot(),
+		Snapshot:   repository.controlReads.snapshot.snapshot(),
+		Activation: repository.controlReads.activation.snapshot(),
+		Timeline:   repository.controlReads.timeline.snapshot(),
+		Version:    repository.controlReads.version.snapshot(),
+		Delta:      repository.controlReads.delta.snapshot(),
+		DeltaAudit: ControlDeltaAuditStats{
+			Samples: repository.controlReads.audit.samples.Load(), Agreed: repository.controlReads.audit.agreed.Load(),
+			OverNamed: repository.controlReads.audit.overNamed.Load(), Missed: repository.controlReads.audit.missed.Load(),
+		},
 		TimelineOccupancy: repository.controlCache.timelineOccupancy(),
 	}
 }
@@ -370,8 +490,63 @@ func (repository *RedisCatalogRepository) clearActivationCaches() {
 // activation body is read only when the cache has no copy for that version or
 // its persisted length changed. A missing activation surfaces
 // ErrActivationUnavailable before any cached copy is consulted.
+// adoptControlVersion moves the control read cache to a header it has not
+// seen, before anything is stored under it. The activation's delta says which
+// timelines that activation wrote; those are dropped and the rest are kept,
+// so a header change costs one small read instead of every owned timeline.
+// Without a usable delta the cache is reset, which is what every header
+// change cost before. Concurrent readers of the same new header adopt it
+// once: the first to take the lock moves the cache, the others find it moved.
+func (repository *RedisCatalogRepository) adoptControlVersion(ctx context.Context, version controlVersion) {
+	if !version.known || !repository.controlCache.supersedes(version.header) {
+		return
+	}
+	repository.adoptMu.Lock()
+	defer repository.adoptMu.Unlock()
+	if !repository.controlCache.supersedes(version.header) {
+		return
+	}
+	counters := &repository.controlReads.delta
+	revision, ok := activationHeaderRevision(version.header)
+	if ok {
+		delta, present, err := repository.loadActivationDelta(ctx, revision)
+		if err == nil && present && !delta.Full {
+			moved, dropped, kept := repository.controlCache.advance(version.header, delta.QueryGroups)
+			if moved {
+				if crossings := counters.hits.Add(1); crossings%deltaAuditEvery == 0 && (len(dropped) > 0 || len(kept) > 0) {
+					repository.auditDelta(ctx, dropped, kept)
+				}
+			}
+			return
+		}
+	}
+	repository.controlCache.mu.Lock()
+	repository.controlCache.enterLocked(version.header)
+	repository.controlCache.mu.Unlock()
+	counters.misses.Add(1)
+}
+
+// activationHeaderRevision reads the record revision off the front of an
+// activation header, which activationHeader writes as "<revision>|...".
+func activationHeaderRevision(header string) (uint64, bool) {
+	end := strings.IndexByte(header, '|')
+	if end <= 0 {
+		return 0, false
+	}
+	revision, err := strconv.ParseUint(header[:end], 10, 64)
+	if err != nil || revision == 0 {
+		return 0, false
+	}
+	return revision, true
+}
+
 func (repository *RedisCatalogRepository) loadParsedActivationAt(ctx context.Context, version controlVersion) (*parsedActivation, error) {
 	counters := &repository.controlReads.activation
+	// Whether this read refreshes an entry or misses is decided before the
+	// cache crosses the header: crossing it drops the activation entry, and
+	// that drop is the refresh, not a miss.
+	hadActivation := repository.controlCache.hasActivation()
+	repository.adoptControlVersion(ctx, version)
 	if version.known {
 		size, err := repository.client.StrLen(ctx, repository.activationKey()).Result()
 		if err != nil {
@@ -401,7 +576,7 @@ func (repository *RedisCatalogRepository) loadParsedActivationAt(ctx context.Con
 		return nil, err
 	}
 	if version.known {
-		if repository.controlCache.hasActivation() {
+		if hadActivation {
 			counters.refreshes.Add(1)
 		} else {
 			counters.misses.Add(1)
@@ -444,6 +619,8 @@ func (repository *RedisCatalogRepository) loadScheduleTimelineAt(
 		return persistedScheduleTimeline{}, errors.New("alarmd controlplane: Query Group schedule is required")
 	}
 	counters := &repository.controlReads.timeline
+	superseded := version.known && repository.controlCache.supersedes(version.header)
+	repository.adoptControlVersion(ctx, version)
 	if version.known {
 		if timeline, ok := repository.controlCache.lookupTimeline(version.header, queryGroup); ok {
 			counters.hits.Add(1)
@@ -455,7 +632,7 @@ func (repository *RedisCatalogRepository) loadScheduleTimelineAt(
 		return persistedScheduleTimeline{}, err
 	}
 	if version.known {
-		if repository.controlCache.supersedes(version.header) {
+		if superseded {
 			counters.refreshes.Add(1)
 		} else {
 			counters.misses.Add(1)

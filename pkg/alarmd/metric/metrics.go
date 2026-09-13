@@ -203,6 +203,8 @@ func NewRecorder(build BuildInfo) *Recorder {
 			collectors.GoRuntimeMetricsRule{Matcher: regexp.MustCompile(`^/sched/latencies:seconds$`)},
 		)),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		// Where the live heap comes from, by allocating function; see heap_sites.go.
+		newHeapSiteCollector(time.Now),
 		buildInfo,
 		processDuration,
 		processTotal,

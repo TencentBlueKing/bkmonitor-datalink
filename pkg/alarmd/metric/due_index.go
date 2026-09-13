@@ -34,6 +34,7 @@ type dueIndexMetrics struct {
 	versionChecks *prometheus.CounterVec
 	horizon       prometheus.Histogram
 	skipped       *prometheus.CounterVec
+	crowdedOut    *prometheus.CounterVec
 }
 
 // The horizon is how far ahead a bound sits. The buckets are the evaluation
@@ -80,6 +81,19 @@ var dueIndexVersionResults = []string{"unchanged", "changed", "unknown"}
 // them together would hide a deployment where the second was climbing.
 var dispatchSkipReasons = []string{"not_due", "backoff", "query_cooldown"}
 
+// A crowded-out turn is not a skip and must not be counted as one. The three
+// skip reasons all say the object was not supposed to run; this says it was
+// supposed to run and the dispatcher's own pipeline took its turn away, because
+// the previous round's result had not been collected yet. Merging the two would
+// put an operator looking at a starving deployment in front of three counters
+// that all read zero.
+//
+//	active  the previous invocation has not returned. Look at how long rounds
+//	        are taking, not at capacity.
+//	queued  the object already has a place in the queue and has not started.
+//	        Look at capacity, not at round duration.
+var dispatchCrowdedOutHolders = []string{"active", "queued"}
+
 func newDueIndexMetrics() dueIndexMetrics {
 	metrics := dueIndexMetrics{
 		entries: prometheus.NewGauge(prometheus.GaugeOpts{
@@ -105,6 +119,12 @@ func newDueIndexMetrics() dueIndexMetrics {
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "dispatch_skipped_total",
 			Help: "Dispatches the due index held back, by why the Query Group was not worth dispatching.",
 		}, []string{"reason"}),
+		crowdedOut: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "dispatch_crowded_out_total",
+			Help: "Turns a Query Group lost because the dispatcher still held it from a previous round, " +
+				"by what held it. These are not skips: the object was due and the pipeline took its turn, " +
+				"so a deployment starving this way reads zero on every dispatch_skipped_total reason.",
+		}, []string{"by"}),
 		horizon: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "due_index_horizon_seconds",
 			Help:    "How far ahead of now a newly written due index bound sits.",
@@ -125,12 +145,15 @@ func newDueIndexMetrics() dueIndexMetrics {
 	for _, reason := range dispatchSkipReasons {
 		metrics.skipped.WithLabelValues(reason)
 	}
+	for _, holder := range dispatchCrowdedOutHolders {
+		metrics.crowdedOut.WithLabelValues(holder)
+	}
 	return metrics
 }
 
 func (m dueIndexMetrics) collectors() []prometheus.Collector {
 	return []prometheus.Collector{
-		m.entries, m.predictions, m.recomputes, m.versionChecks, m.horizon, m.skipped,
+		m.entries, m.predictions, m.recomputes, m.versionChecks, m.horizon, m.skipped, m.crowdedOut,
 	}
 }
 
@@ -216,6 +239,23 @@ func (r *Recorder) RecordDispatchSkipped(reason string) {
 	for _, known := range dispatchSkipReasons {
 		if reason == known {
 			r.phaseTwo.dueIndex.skipped.WithLabelValues(reason).Inc()
+			return
+		}
+	}
+}
+
+// RecordDispatchCrowdedOut counts one turn the dispatcher took away from a
+// Query Group it was still holding from an earlier round. It is called from the
+// branch that takes the turn, not reconstructed afterwards: the whole reason
+// this count exists is that the branch returns silently, and a count assembled
+// somewhere else would be the same silence with more steps.
+func (r *Recorder) RecordDispatchCrowdedOut(holder string) {
+	if r == nil {
+		return
+	}
+	for _, known := range dispatchCrowdedOutHolders {
+		if holder == known {
+			r.phaseTwo.dueIndex.crowdedOut.WithLabelValues(holder).Inc()
 			return
 		}
 	}

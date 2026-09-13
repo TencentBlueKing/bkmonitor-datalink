@@ -1063,6 +1063,17 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 	for dispatcher.walked < len(runners) {
 		scheduled := runners[dispatcher.walkIndex%len(runners)]
 		if dispatcher.active[scheduled.queryGroup] != nil || dispatcher.queued[scheduled.queryGroup] != nil {
+			// The object was reached and lost its turn to a round that has not
+			// been collected yet. This is not one of the three skip reasons:
+			// those say the object was not supposed to run. Counted here rather
+			// than inferred later, because this branch is the only place that
+			// knows the turn was taken, and which of the two holders took it
+			// decides where an operator looks.
+			holder := "queued"
+			if dispatcher.active[scheduled.queryGroup] != nil {
+				holder = "active"
+			}
+			dispatcher.bundle.dependencies.Recorder.RecordDispatchCrowdedOut(holder)
 			advance()
 			continue
 		}

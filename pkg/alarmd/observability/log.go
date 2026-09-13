@@ -204,6 +204,12 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	if observation.RuntimeConfig != nil {
 		attributes = append(attributes, slog.Any("runtime_config", observation.RuntimeConfig))
 	}
+	if facts := observation.StateGenerationSkew; facts != nil {
+		attributes = append(attributes,
+			slog.String("state_generation_skew_kind", facts.Kind),
+			slog.String("state_generation_skew_strategy_id", facts.StrategyID),
+		)
+	}
 	if facts := observation.ActivationHold; facts != nil {
 		attributes = append(attributes,
 			slog.Int("activation_reappeared", facts.Reappeared),

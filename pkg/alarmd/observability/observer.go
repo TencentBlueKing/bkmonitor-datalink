@@ -366,6 +366,9 @@ var (
 // the Query Group object published with it does not carry (refused).
 type StateGenerationSkewFacts struct {
 	Kind string
+	// StrategyID names the Plan the skew was found on; the Slot and Segment
+	// travel in the observation's trace fields.
+	StrategyID string
 }
 
 // StateGenerationSkewKinds is the closed vocabulary of
@@ -1000,7 +1003,7 @@ func normalizeStateGenerationSkewFacts(facts *StateGenerationSkewFacts) *StateGe
 	if facts == nil {
 		return nil
 	}
-	normalized := StateGenerationSkewFacts{Kind: "other"}
+	normalized := StateGenerationSkewFacts{Kind: "other", StrategyID: facts.StrategyID}
 	for _, kind := range StateGenerationSkewKinds {
 		if facts.Kind == kind {
 			normalized.Kind = kind

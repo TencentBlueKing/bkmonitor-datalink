@@ -25,6 +25,36 @@ import (
 // TestConfigDriftCompletionDoesNotHideAnUnavailablePrimary against the one
 // constructor that makes both.
 func TestConvergedSlotStillSaysWhyItWasUnavailable(t *testing.T) {
+	result, causes := convergeDriftedSlot(t, execution.CompletenessUnavailable)
+	if !result.Completed || result.CompletionKind != execution.CompletionUnavailable {
+		t.Fatalf("convergence result=%+v, want a completed unavailable Slot", result)
+	}
+	if len(causes) != 1 || causes[0] != string(execution.CausePrimaryInputUnavailable) {
+		t.Fatalf("observed completion causes=%q, want one %q", causes, execution.CausePrimaryInputUnavailable)
+	}
+}
+
+// The same convergence with a usable primary completes the Slot as
+// COMPLETED_WITH_PARTIAL_GAP, and that kind used to reach the commit line with
+// no cause at all: the page listed it beside the partial gaps a provider
+// caused and could not tell an edited strategy from a hole in storage.
+func TestConvergedDriftedSlotSaysItsPlansMoved(t *testing.T) {
+	for _, completeness := range []execution.Completeness{execution.CompletenessFull, execution.CompletenessPartial} {
+		result, causes := convergeDriftedSlot(t, completeness)
+		if !result.Completed || result.CompletionKind != execution.CompletionPartialGap {
+			t.Fatalf("%s primary: convergence result=%+v, want a completed partial-gap Slot", completeness, result)
+		}
+		if len(causes) != 1 || causes[0] != string(execution.CauseConfigDrift) {
+			t.Fatalf("%s primary: observed completion causes=%q, want one %q", completeness, causes, execution.CauseConfigDrift)
+		}
+	}
+}
+
+// convergeDriftedSlot drives the converge path for a Slot whose only Plan was
+// deselected while it ran, and returns the result together with every cause
+// the Progress commit line reported.
+func convergeDriftedSlot(t *testing.T, completeness execution.Completeness) (execution.SlotExecutionResult, []string) {
+	t.Helper()
 	contractRef := execution.FrozenExecutionContractRef{
 		Slot:             execution.SlotIdentity{QueryGroup: "query-group", EvaluationTime: 1_788_000_000},
 		SnapshotRevision: "snapshot-v1", QueryRevision: "query-v1", ScheduleRevision: "schedule-v1",
@@ -41,10 +71,13 @@ func TestConvergedSlotStillSaysWhyItWasUnavailable(t *testing.T) {
 		EarliestQueryDeadlineUnixMilli: 1_788_000_060_000,
 		KeepUntilUnixMilli:             1_788_000_600_000,
 	}
-	primary := execution.PrimaryInputFact{Completeness: execution.CompletenessUnavailable}
+	primary := execution.PrimaryInputFact{Completeness: completeness, DataState: execution.DataStateData}
+	if completeness == execution.CompletenessUnavailable {
+		primary.DataState = execution.DataStateUnknown
+	}
 	completion, cause := configDriftCompletion(contractRef, &primary)
 	if cause == "" {
-		t.Fatal("the constructor produced an unavailable completion with no cause; the rest of this test proves nothing")
+		t.Fatal("the constructor produced a completion with no cause; the rest of this test proves nothing")
 	}
 
 	ports := &convergeObservingPorts{}
@@ -80,12 +113,7 @@ func TestConvergedSlotStillSaysWhyItWasUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("convergeNormalActivation() error: %v", err)
 	}
-	if !result.Completed || result.CompletionKind != execution.CompletionUnavailable {
-		t.Fatalf("convergence result=%+v, want a completed unavailable Slot", result)
-	}
-	if len(ports.committedCauses) != 1 || ports.committedCauses[0] != string(cause) {
-		t.Fatalf("observed completion causes=%q, want one %q", ports.committedCauses, cause)
-	}
+	return result, ports.committedCauses
 }
 
 type convergeObservingPorts struct {

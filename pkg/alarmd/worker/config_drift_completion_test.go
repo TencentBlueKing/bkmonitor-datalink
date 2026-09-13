@@ -30,14 +30,20 @@ func TestConfigDriftCompletionDoesNotHideAnUnavailablePrimary(t *testing.T) {
 		name         string
 		completeness execution.Completeness
 		want         execution.CompletionKind
-		wantCause    execution.UnavailableCause
+		wantCause    execution.CompletionCause
 	}{
 		{
 			name: "unavailable primary", completeness: execution.CompletenessUnavailable,
 			want: execution.CompletionUnavailable, wantCause: execution.CausePrimaryInputUnavailable,
 		},
-		{name: "full primary", completeness: execution.CompletenessFull, want: execution.CompletionPartialGap},
-		{name: "partial primary", completeness: execution.CompletenessPartial, want: execution.CompletionPartialGap},
+		{
+			name: "full primary", completeness: execution.CompletenessFull,
+			want: execution.CompletionPartialGap, wantCause: execution.CauseConfigDrift,
+		},
+		{
+			name: "partial primary", completeness: execution.CompletenessPartial,
+			want: execution.CompletionPartialGap, wantCause: execution.CauseConfigDrift,
+		},
 	} {
 		t.Run(one.name, func(t *testing.T) {
 			primary := execution.PrimaryInputFact{Completeness: one.completeness}
@@ -45,11 +51,12 @@ func TestConfigDriftCompletionDoesNotHideAnUnavailablePrimary(t *testing.T) {
 			if got.Kind != one.want {
 				t.Errorf("completion kind = %q, want %q", got.Kind, one.want)
 			}
-			// An UNAVAILABLE that cannot say which of the four conditions it
-			// was is the shape operators already learned to ignore, so the
-			// constructor answers both from the same fact.
+			// A completion that cannot say which condition it was is the shape
+			// operators already learned to ignore, so the constructor answers
+			// kind and cause from the same fact: the unavailable input when
+			// there was one, the drift itself when the input was usable.
 			if cause != one.wantCause {
-				t.Errorf("unavailable cause = %q, want %q", cause, one.wantCause)
+				t.Errorf("cause = %q, want %q", cause, one.wantCause)
 			}
 			// Drift stays the reason and the result stays degraded whichever
 			// kind it is: only the claim about the data moves.

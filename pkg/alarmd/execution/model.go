@@ -2153,33 +2153,53 @@ func derivePrimaryInputFact(input InternalExecution, plan *PlanIdentity) (Primar
 	return fact, nil
 }
 
-// UnavailableCause names which of the several conditions that all complete a
-// Slot as UNAVAILABLE actually occurred.
+// CompletionCause names which of the several conditions that all complete a
+// Slot as UNAVAILABLE, or all complete it as COMPLETED_WITH_PARTIAL_GAP,
+// actually occurred.
 //
-// The completion kind folds four different things into one word, and they call
+// Each of the two kinds folds different things into one word, and they call
 // for opposite responses: data that has not landed in storage yet resolves
-// itself, while a Plan that could not be decided does not. Operators reading a
-// list of hundreds of "degraded" objects could not tell which was which, so the
-// list was not actionable and taught them to ignore it.
+// itself, while a Plan that could not be decided does not; a primary input
+// the provider returned with a stretch of the window missing is the data
+// link's to explain, while a Slot whose Plans moved under it clears on the
+// next Slot by itself. Operators reading a list of hundreds of "degraded"
+// objects could not tell which was which, so the list was not actionable and
+// taught them to ignore it.
+//
+// The type was named UnavailableCause while only the UNAVAILABLE kind carried
+// one. The rename changes nothing outside this process: every consumer holds
+// the value as a plain string and nothing persisted holds it at all.
 //
 // This is carried as observation only. Putting it on the persisted completion
 // would change how consecutive gaps fold into a Progress gap summary, which is
 // a durable structure and a separate decision.
-type UnavailableCause string
+type CompletionCause string
 
 const (
 	// CauseDataNotReady is a readiness gap: the data for this evaluation has
 	// not arrived in storage yet. It resolves without anyone doing anything,
 	// and it is the majority of what the page currently shows as degraded.
-	CauseDataNotReady UnavailableCause = "DATA_NOT_READY"
+	CauseDataNotReady CompletionCause = "DATA_NOT_READY"
 	// CausePlanUnavailable is a Plan that could not be decided at all.
-	CausePlanUnavailable UnavailableCause = "PLAN_UNAVAILABLE"
+	CausePlanUnavailable CompletionCause = "PLAN_UNAVAILABLE"
 	// CausePrimaryInputUnavailable is the query for the primary input coming
 	// back with nothing usable.
-	CausePrimaryInputUnavailable UnavailableCause = "PRIMARY_INPUT_UNAVAILABLE"
+	CausePrimaryInputUnavailable CompletionCause = "PRIMARY_INPUT_UNAVAILABLE"
 	// CauseLevelOutcomeUnknown is a Level whose outcome could not be determined
 	// even though its Plan was.
-	CauseLevelOutcomeUnknown UnavailableCause = "LEVEL_OUTCOME_UNKNOWN"
+	CauseLevelOutcomeUnknown CompletionCause = "LEVEL_OUTCOME_UNKNOWN"
+	// CausePrimaryInputPartial is the provider answering the primary input's
+	// query with a stretch of the window missing. The Slot completes as
+	// COMPLETED_WITH_PARTIAL_GAP, and the missing stretch is the data link's or
+	// the storage's to explain, not this process's.
+	CausePrimaryInputPartial CompletionCause = "PRIMARY_INPUT_PARTIAL"
+	// CauseConfigDrift is a Slot whose activated Plans changed while it was
+	// executing. It also completes as COMPLETED_WITH_PARTIAL_GAP, but nobody
+	// needs to look: the strategy was edited, and the next Slot runs under the
+	// new selection. The Worker's drift constructor decides it from the same
+	// primary fact this derivation reads; it is listed here so the ranking
+	// covers every cause a completion can carry.
+	CauseConfigDrift CompletionCause = "CONFIG_DRIFT"
 )
 
 // DeriveCompletionKind reports the completion kind alone, which is what the
@@ -2194,11 +2214,11 @@ func DeriveCompletionKind(input InternalExecution, result EvaluationResult) (Com
 // The two come from one traversal on purpose: derived separately they would be
 // two functions that must agree about the same Slot, and the first time they
 // disagreed the page would explain a completion that did not happen.
-func DeriveCompletion(input InternalExecution, result EvaluationResult) (CompletionKind, UnavailableCause, error) {
+func DeriveCompletion(input InternalExecution, result EvaluationResult) (CompletionKind, CompletionCause, error) {
 	return deriveCompletion(input, result)
 }
 
-func deriveCompletion(input InternalExecution, result EvaluationResult) (CompletionKind, UnavailableCause, error) {
+func deriveCompletion(input InternalExecution, result EvaluationResult) (CompletionKind, CompletionCause, error) {
 	kind, cause, _, err := deriveCompletionDetail(input, result)
 	return kind, cause, err
 }
@@ -2211,7 +2231,7 @@ func deriveCompletion(input InternalExecution, result EvaluationResult) (Complet
 // become two things that must agree about the same Slot, and the first time
 // they disagree the page explains a completion that did not happen.
 type CompletionAttribution struct {
-	Cause  UnavailableCause
+	Cause  CompletionCause
 	Reason ReasonCode
 }
 
@@ -2221,12 +2241,12 @@ type CompletionAttribution struct {
 // and one traversal still decides all three: derived apart they would be
 // functions that must agree about the same Slot.
 func DeriveCompletionDetail(input InternalExecution, result EvaluationResult) (
-	CompletionKind, UnavailableCause, ReasonCode, error) {
+	CompletionKind, CompletionCause, ReasonCode, error) {
 	return deriveCompletionDetail(input, result)
 }
 
 func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
-	CompletionKind, UnavailableCause, ReasonCode, error) {
+	CompletionKind, CompletionCause, ReasonCode, error) {
 	if len(result.Plans) == 0 {
 		return "", "", "", errors.New("alarmd execution: no Plan results to complete")
 	}
@@ -2238,7 +2258,7 @@ func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 	// actionable one rather than the first or the commonest: a readiness gap
 	// beside a Plan that could not be decided is a Slot someone should look at,
 	// and reporting the gap would say the opposite.
-	cause := UnavailableCause("")
+	cause := CompletionCause("")
 	// The reason travels with the cause it belongs to, decided by the same
 	// comparison, so the two cannot end up describing different findings.
 	//
@@ -2251,7 +2271,7 @@ func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 	// 61 of 62 objects sharing a single label that could not say whose problem
 	// they were.
 	reason := ReasonCode("")
-	note := func(candidate UnavailableCause, candidateReason ReasonCode) {
+	note := func(candidate CompletionCause, candidateReason ReasonCode) {
 		if causeRank(candidate) > causeRank(cause) {
 			cause, reason = candidate, candidateReason
 		}
@@ -2260,6 +2280,9 @@ func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 	hasUnavailable := primary.Completeness == CompletenessUnavailable
 	if hasUnavailable {
 		note(CausePrimaryInputUnavailable, "")
+	}
+	if hasPartial {
+		note(CausePrimaryInputPartial, "")
 	}
 	allFullEmpty := primary.Completeness == CompletenessFull && primary.DataState == DataStateEmpty
 	hasTerminal := false
@@ -2277,6 +2300,14 @@ func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 			return "", "", "", errors.New("alarmd execution: retry-pending Plan cannot derive a completed Slot")
 		case PlanDecided, PlanDecidedDegraded:
 			if plan.Disposition == PlanDecidedDegraded {
+				// A Plan degraded beside a FULL primary input would complete
+				// the Slot as COMPLETED_WITH_PARTIAL_GAP with no cause. Nothing
+				// produces that today: every producer of DECIDED_DEGRADED sets
+				// it beside a PARTIAL or UNAVAILABLE primary, or beside a Level
+				// outcome that decides another kind. No cause is minted for a
+				// path without a producer; if one appears, its Slots count in
+				// the shortfall from a full cause rate, which is where paths
+				// nobody has identified yet belong.
 				hasPartial = true
 			}
 			for _, outcome := range plan.LevelOutcomes {
@@ -2298,7 +2329,7 @@ func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 	case hasUnavailable:
 		return CompletionUnavailable, cause, reason, nil
 	case hasPartial:
-		return CompletionPartialGap, "", "", nil
+		return CompletionPartialGap, cause, reason, nil
 	case allFullEmpty:
 		return CompletionFullEmpty, "", "", nil
 	default:
@@ -2309,17 +2340,36 @@ func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 // causeRank orders the causes by how much a human can do about them. A higher
 // rank wins when a Slot hits several at once.
 //
-// DATA_NOT_READY is lowest because nothing needs doing: it clears when the data
-// lands. Everything above it is something that did not work.
-func causeRank(cause UnavailableCause) int {
+// The causes of the two kinds never compete for a Slot: an UNAVAILABLE
+// completion always has one of the upper four noted, and a PARTIAL_GAP
+// completion never has any of them. Ranking the partial causes strictly below
+// DATA_NOT_READY is what keeps that true when the conditions of both kinds
+// are noted on one Slot, which a partial primary beside a readiness gap is.
+//
+// DATA_NOT_READY is lowest of the upper four because nothing needs doing: it
+// clears when the data lands. Everything above it is something that did not
+// work. CONFIG_DRIFT is lowest of the partial pair for the same reason.
+//
+// PRIMARY_INPUT_UNAVAILABLE outranks PLAN_UNAVAILABLE because the streaming
+// path marks a Plan unavailable precisely when its primary input was, so on
+// every such Slot the two are noted together; reporting the Plan named the
+// consequence and hid the cause an operator can act on, and on a running
+// deployment every Slot whose query came back with nothing usable was listed
+// as a Plan that could not be decided. A Plan unavailable for a reason of its
+// own is still reported as such, because it is then the only cause noted.
+func causeRank(cause CompletionCause) int {
 	switch cause {
-	case CausePlanUnavailable:
-		return 4
 	case CausePrimaryInputUnavailable:
-		return 3
+		return 6
+	case CausePlanUnavailable:
+		return 5
 	case CauseLevelOutcomeUnknown:
-		return 2
+		return 4
 	case CauseDataNotReady:
+		return 3
+	case CausePrimaryInputPartial:
+		return 2
+	case CauseConfigDrift:
 		return 1
 	default:
 		return 0

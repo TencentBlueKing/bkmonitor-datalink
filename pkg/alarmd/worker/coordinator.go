@@ -951,7 +951,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	// about a durable structure.
 	var attribution execution.CompletionAttribution
 	if len(changedPlans) > 0 {
-		var cause execution.UnavailableCause
+		var cause execution.CompletionCause
 		completion, cause = configDriftCompletion(request.Contract, &primary)
 		attribution.Cause = cause
 	} else {
@@ -1640,12 +1640,18 @@ func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx contex
 // same Slot will eventually disagree, and then the page explains a completion
 // that did not happen. Here the two answers come from the one fact this
 // constructor already reads.
+//
+// With a usable primary the Slot completes as COMPLETED_WITH_PARTIAL_GAP and
+// names CONFIG_DRIFT as its cause. That kind used to reach the commit line
+// with no cause at all, listed beside the partial gaps a provider caused;
+// the two call for opposite responses, since an edited strategy needs nobody
+// and clears on the next Slot.
 func configDriftCompletion(
 	contractRef execution.FrozenExecutionContractRef,
 	primary *execution.PrimaryInputFact,
-) (execution.SlotCompletion, execution.UnavailableCause) {
+) (execution.SlotCompletion, execution.CompletionCause) {
 	kind := execution.CompletionPartialGap
-	cause := execution.UnavailableCause("")
+	cause := execution.CauseConfigDrift
 	if primary != nil && primary.Completeness == execution.CompletenessUnavailable {
 		kind = execution.CompletionUnavailable
 		cause = execution.CausePrimaryInputUnavailable

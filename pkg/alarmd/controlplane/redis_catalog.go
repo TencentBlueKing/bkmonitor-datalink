@@ -114,6 +114,8 @@ type RedisCatalogRepository struct {
 	activationCache            parsedActivationCache
 	objectCatalog              objectCatalogState
 	catalogIndex               catalogIndex
+	catalogIndexActivations    atomic.Uint64
+	contentMemo                publishedContentMemo
 	objectCache                *objectReadCache
 	objectFlights              objectReadFlights
 	controlCache               *controlReadCache
@@ -204,6 +206,7 @@ redis.call('PEXPIRE', KEYS[2], ARGV[2])
 redis.call('PEXPIRE', KEYS[3], ARGV[2])
 redis.call('PEXPIRE', KEYS[4], ARGV[2])
 redis.call('PEXPIRE', KEYS[5], ARGV[2])
+if redis.call('EXISTS', KEYS[6]) == 1 then redis.call('PEXPIRE', KEYS[6], ARGV[2]) end
 return {1, redis.call('STRLEN', KEYS[5])}
 `
 
@@ -231,19 +234,25 @@ func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx cont
 	if err != nil {
 		return err
 	}
-	if _, err := repository.LoadPublishedSnapshot(ctx, state.Current); err != nil {
+	if _, err := repository.LoadCatalogManifest(ctx, state.Current.SnapshotRevision); err != nil {
+		if errors.Is(err, ErrCatalogManifestUnavailable) {
+			return ErrSnapshotUnavailable
+		}
 		return err
 	}
 	groups, err := repository.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef)
 	if err != nil {
 		return err
 	}
+	// The manifest is the current content that must still be there; the
+	// snapshot body is renewed only for as long as one is written.
 	result, err := repository.client.Eval(ctx, renewCurrentActivationObjectsScript, []string{
 		repository.activationHeaderKey(),
-		repository.snapshotKey(state.Current.SnapshotRevision),
+		repository.catalogManifestKey(state.Current.SnapshotRevision),
 		repository.epochForRevisionKey(state.Current.SnapshotRevision),
 		repository.publicationKey(state.Current.PublicationEpoch),
 		repository.activeQGSetKey(state.ActiveQGSetRef.Digest),
+		repository.snapshotKey(state.Current.SnapshotRevision),
 	}, header, repository.ttl.Milliseconds(), strconv.FormatUint(state.Current.PublicationEpoch, 10), string(state.Current.SnapshotRevision)).Slice()
 	if err != nil {
 		return fmt.Errorf("alarmd controlplane: renew current activation objects: %w", err)
@@ -737,6 +746,11 @@ func (repository *RedisCatalogRepository) LoadQueryGroup(ctx context.Context, re
 	return group, nil
 }
 
+// loadPublishedQueryGroup reads one Query Group of a publication from the
+// object catalog: its content entry from the manifest and the catalog
+// index, then its object and output contexts, all served from the object
+// cache when an activation already read them. The snapshot body is not
+// consulted.
 func (repository *RedisCatalogRepository) loadPublishedQueryGroup(
 	ctx context.Context,
 	publication SnapshotPublicationRef,
@@ -745,29 +759,18 @@ func (repository *RedisCatalogRepository) loadPublishedQueryGroup(
 	if publication.validate() != nil || identity == "" {
 		return QueryGroup{}, errors.New("alarmd controlplane: complete publication and Query Group are required")
 	}
-	payload, epoch, allocation, err := repository.loadScopedSnapshotPayload(ctx, publication.SnapshotRevision, identity)
-	defer allocation.release()
+	content, err := repository.LoadPublishedContent(ctx, publication)
 	if err != nil {
-		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
-	entry, _, err := repository.snapshotCache.load(ctx, publication.SnapshotRevision, payload, epoch, allocation)
-	defer entry.allocation.release()
+	groups, err := repository.LoadContentQueryGroups(ctx, content, []execution.QueryGroupIdentity{identity})
 	if err != nil {
-		clearSnapshotScope(ctx)
 		return QueryGroup{}, err
 	}
-	current := SnapshotPublicationRef{SnapshotRevision: publication.SnapshotRevision, PublicationEpoch: epoch}
-	if err := repository.validatePublicationOccurrence(ctx, publication, current); err != nil {
-		clearSnapshotScope(ctx)
-		return QueryGroup{}, err
+	group, ok := groups[identity]
+	if !ok {
+		return QueryGroup{}, ErrCatalogObjectUnavailable
 	}
-	group, err := decodeCachedQueryGroup(entry, identity)
-	if err != nil {
-		clearSnapshotScope(ctx)
-		return QueryGroup{}, err
-	}
-	repository.retainScopedSnapshot(ctx, publication.SnapshotRevision, identity, entry.payload, epoch, entry.allocation)
 	return group, nil
 }
 

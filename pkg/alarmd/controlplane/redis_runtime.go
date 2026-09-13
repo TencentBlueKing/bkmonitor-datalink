@@ -297,16 +297,13 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		next.Current.SnapshotRevision == previous.Current.SnapshotRevision {
 		return errors.New("alarmd controlplane: publication activation must advance to one new current publication")
 	}
-	newSnapshot, err := repository.LoadPublishedSnapshot(ctx, next.Current)
+	published, err := repository.loadPublishedGroups(ctx, next.Current)
 	if err != nil {
 		return err
 	}
 	next.SchemaVersion = activationSchemaVersion
 
-	newGroups, err := queryGroupMap(newSnapshot.QueryGroups)
-	if err != nil {
-		return err
-	}
+	newGroups := published.groups
 	previousContent, err := repository.loadActivatedContent(ctx, previous)
 	if err != nil {
 		return err
@@ -349,14 +346,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	if err != nil {
 		return err
 	}
-	newContent := make(map[execution.QueryGroupIdentity]segmentContent, len(newGroups))
-	for identity, group := range newGroups {
-		named, err := contentOf(group)
-		if err != nil {
-			return err
-		}
-		newContent[identity] = named
-	}
+	newContent := published.segmentContents()
 	// Until this process has read every open Segment once and found each one
 	// naming the content the manifest says it names, it trusts no manifest
 	// entry: the first cutover of a process reads every carried-over Query
@@ -364,6 +354,23 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	// the manifest shows changed. Every writer keeps the open Segments and
 	// the manifest in step, and the activation header serializes writers.
 	readAll := !previousContent.complete || !repository.contentCutoverVerified.Load()
+	// Only the Query Groups this cutover opens or re-cuts need their content:
+	// the ones it keeps are decided from the content entries alone.
+	needed := make([]execution.QueryGroupIdentity, 0)
+	for identity, newGroup := range activeGroups {
+		if _, existed := oldGroups[identity]; !existed {
+			needed = append(needed, identity)
+			continue
+		}
+		previousRefs, known := previousContent.refsFor(newGroup)
+		if readAll || previousContent.digests[identity] != newContent[identity].digest || !known ||
+			!execution.SameOutputContextRefs(previousRefs, newContent[identity].refs) {
+			needed = append(needed, identity)
+		}
+	}
+	if err := repository.materialize(ctx, published, needed); err != nil {
+		return err
+	}
 
 	now := time.Unix(int64(boundary), 0)
 	cutover := newCutoverFacts()
@@ -474,7 +481,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		timeline.Segments[last].Schedule = closed
 		timeline.RecordRevision++
 		if remains {
-			segment, err := scheduleSegmentForGroup(newSnapshot.Publication, newGroup, boundary)
+			segment, err := scheduleSegmentForGroup(published.content.Publication, newGroup, boundary)
 			if err != nil {
 				return err
 			}
@@ -517,7 +524,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	}
 	sort.Slice(newIdentities, func(i, j int) bool { return newIdentities[i] < newIdentities[j] })
 	for _, queryGroup := range newIdentities {
-		opened, err := repository.openQueryGroupTimeline(ctx, newSnapshot.Publication, newGroups[queryGroup], boundary, candidate, now, cutover)
+		opened, err := repository.openQueryGroupTimeline(ctx, published.content.Publication, newGroups[queryGroup], boundary, candidate, now, cutover)
 		if err != nil {
 			return err
 		}
@@ -692,14 +699,11 @@ func (repository *RedisCatalogRepository) CompareAndSetHeldReactivation(
 	if next.Pending != nil || next.Current != previous.Current {
 		return errors.New("alarmd controlplane: held reactivation must keep the current publication")
 	}
-	snapshot, err := repository.LoadPublishedSnapshot(ctx, previous.Current)
+	published, err := repository.loadPublishedGroups(ctx, previous.Current)
 	if err != nil {
 		return err
 	}
-	groups, err := queryGroupMap(snapshot.QueryGroups)
-	if err != nil {
-		return err
-	}
+	groups := published.groups
 	drained, _, _, err := repository.partitionReactivations(ctx, previous.Draining, groups, boundary, progress)
 	if err != nil {
 		return err
@@ -729,6 +733,9 @@ func (repository *RedisCatalogRepository) CompareAndSetHeldReactivation(
 		identities = append(identities, identity)
 	}
 	sort.Slice(identities, func(i, j int) bool { return identities[i] < identities[j] })
+	if err := repository.materialize(ctx, published, identities); err != nil {
+		return err
+	}
 	updates := make([]scheduleTimelineUpdate, 0, len(identities))
 	candidates := make([]pruneCandidate, 0, len(identities))
 	plans := append([]PlanActivationRecord(nil), previous.Plans...)

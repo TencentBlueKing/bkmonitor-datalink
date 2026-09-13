@@ -209,11 +209,19 @@ func TestActivationRenewalMovesNoSnapshotContent(t *testing.T) {
 		t.Fatalf("Snapshot TTL after renewal = (%s, %v), want renewed", ttl, err)
 	}
 	// A Snapshot that is gone is still not renewed, and says so.
+	// The body is renewed while it is there but no longer required; the
+	// manifest is the current content whose absence refuses the renewal.
 	if err := harness.client.Del(harness.ctx, snapshotKey).Err(); err != nil {
 		t.Fatal(err)
 	}
+	if err := harness.repository.RenewCurrentActivationObjects(harness.ctx); err != nil {
+		t.Fatalf("renewal without the Snapshot body error = %v, want success", err)
+	}
+	if err := harness.client.Del(harness.ctx, harness.prefix+":manifest:"+string(state.Current.SnapshotRevision)).Err(); err != nil {
+		t.Fatal(err)
+	}
 	if err := harness.repository.RenewCurrentActivationObjects(harness.ctx); err == nil {
-		t.Fatalf("renewal without the Snapshot succeeded for revision %s", state.Current.SnapshotRevision)
+		t.Fatalf("renewal without the manifest succeeded for revision %s", state.Current.SnapshotRevision)
 	}
 }
 

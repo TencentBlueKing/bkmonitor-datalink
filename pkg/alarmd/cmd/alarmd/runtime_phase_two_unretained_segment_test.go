@@ -64,30 +64,52 @@ func TestProductionPhaseTwoQueryGroupBehindUnretainedSegmentRecovers(t *testing.
 			}
 
 			// Step 3: the initial publication ages out of the Catalog retention:
-			// its Snapshot objects are gone while the Segment still references
-			// it. The catalog objects the Segment names by content age out
-			// with it - nothing renews an object the current manifest does not
-			// name - so the test removes them as well; otherwise the Segment
-			// would still be readable by content, which is the case the
-			// retention is designed to make possible, not the one under test.
+			// its manifest, epoch and body are gone while the Segment still
+			// references it. The catalog objects the Segment named by content
+			// age out with it only when the current manifest does not name
+			// them: objects are addressed by content, the renewal keeps every
+			// object the current manifest names, and here the cutover changed
+			// nothing in this Query Group, so its object and output contexts
+			// are the current publication's and stay. The Segment does not
+			// read by content anyway: the cut stripped the content it named
+			// (stripSegmentContent), so it reads through its publication,
+			// which is what ages out.
 			oldRevision := string(closed.Segment.Publication.SnapshotRevision)
 			keys, err := fixture.redisClient.Keys(ctx, "*"+oldRevision+"*").Result()
 			if err != nil || len(keys) == 0 {
 				t.Fatalf("Snapshot objects of the initial publication = %v error=%v, want at least one key", keys, err)
 			}
-			// The cut stripped the content the Segment named (stripSegmentContent),
-			// so the digests are taken from the Segment as it was first read.
 			named := fixture.initialSchedule.Segment
 			if named.ObjectDigest == "" || len(named.OutputContextRefs) == 0 {
 				t.Fatalf("the initial Segment names no catalog object: %+v", named)
 			}
-			keys = append(keys, "*:qgobj:"+string(named.ObjectDigest))
-			objectKeys, err := fixture.redisClient.Keys(ctx, "*:qgobj:"+string(named.ObjectDigest)).Result()
-			if err != nil || len(objectKeys) != 1 {
-				t.Fatalf("catalog object of the initial publication = %v error=%v, want exactly one key", objectKeys, err)
+			activation, err := fixture.repository.LoadActivation(ctx)
+			if err != nil {
+				t.Fatal(err)
 			}
-			keys = append(keys[:len(keys)-1], objectKeys...)
+			currentManifest, err := fixture.repository.LoadCatalogManifest(ctx, activation.Current.SnapshotRevision)
+			if err != nil {
+				t.Fatal(err)
+			}
+			currentObjects := make(map[execution.ObjectDigest]struct{}, len(currentManifest.QueryGroups))
+			for _, entry := range currentManifest.QueryGroups {
+				currentObjects[entry.ObjectDigest] = struct{}{}
+			}
+			currentContexts := make(map[execution.OutputContextDigest]struct{}, len(currentManifest.Plans))
+			for _, entry := range currentManifest.Plans {
+				currentContexts[entry.ContextDigest] = struct{}{}
+			}
+			if _, shared := currentObjects[named.ObjectDigest]; !shared {
+				objectKeys, err := fixture.redisClient.Keys(ctx, "*:qgobj:"+string(named.ObjectDigest)).Result()
+				if err != nil || len(objectKeys) != 1 {
+					t.Fatalf("catalog object of the initial publication = %v error=%v, want exactly one key", objectKeys, err)
+				}
+				keys = append(keys, objectKeys...)
+			}
 			for _, ref := range named.OutputContextRefs {
+				if _, shared := currentContexts[ref.Digest]; shared {
+					continue
+				}
 				contextKeys, err := fixture.redisClient.Keys(ctx, "*:outctx:"+string(ref.Digest)).Result()
 				if err != nil || len(contextKeys) != 1 {
 					t.Fatalf("output context of the initial publication = %v error=%v, want exactly one key", contextKeys, err)

@@ -115,21 +115,18 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		return ActivationState{}, ErrActivationEpochCollision
 	}
 	failureStage, failureClass = ActivationFailureStageCandidateLoad, ActivationFailureClassDependencyIO
-	snapshot, err := reconciler.repository.LoadPublishedSnapshot(ctx, publication)
+	published, err := reconciler.repository.loadPublishedGroups(ctx, publication)
 	if err != nil {
 		return ActivationState{}, err
 	}
-	reconciler.repository.auditCatalogIndex(ctx, publication, snapshot)
+	reconciler.repository.maybeAuditCatalogIndex(ctx, publication)
 	failureStage, failureClass = ActivationFailureStageCompile, ActivationFailureClassOther
 	boundary := execution.EvaluationTime(reconciler.now().Unix())
 	if boundary <= 0 {
 		return ActivationState{}, errors.New("alarmd controlplane: Schedule activation clock must produce a positive Unix second")
 	}
 	failureClass = ActivationFailureClassCorrupt
-	newGroups, err := queryGroupMap(snapshot.QueryGroups)
-	if err != nil {
-		return ActivationState{}, err
-	}
+	newGroups := published.groups
 	failureStage, failureClass = ActivationFailureStageCurrentRecovery, ActivationFailureClassProjectionConflict
 	// The population the current activation runs comes from its manifest
 	// when one is stored: the reconciler needs the identities, not the
@@ -158,10 +155,27 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		return ActivationState{}, err
 	}
 	failureStage, failureClass = ActivationFailureStageCompile, ActivationFailureClassCorrupt
-	records, _, err := compilePublishedActivation(ctx, reconciler.compiler, reconciler.stateSemantics, snapshot, boundary)
+	// Query Groups whose content the previous activation already acted on
+	// keep their records; only the rest are read from the object catalog
+	// and compiled.
+	records, compile, err := carriedActivationRecords(published, previous, previousContent, returning, reactivating)
 	if err != nil {
 		return ActivationState{}, err
 	}
+	failureClass = ActivationFailureClassDependencyIO
+	if err := reconciler.repository.materialize(ctx, published, compile); err != nil {
+		return ActivationState{}, err
+	}
+	failureClass = ActivationFailureClassCorrupt
+	changed, err := published.loaded(compile)
+	if err != nil {
+		return ActivationState{}, err
+	}
+	compiled, _, err := compilePublishedGroups(ctx, reconciler.compiler, reconciler.stateSemantics, publication, changed, boundary)
+	if err != nil {
+		return ActivationState{}, err
+	}
+	records = append(records, compiled...)
 	failureStage, failureClass = ActivationFailureStageCurrentRecovery, ActivationFailureClassCoverageConflict
 	previousRecords, err := activationRecordMap(previous.Plans)
 	if err != nil {
@@ -182,9 +196,9 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	// expires; the CAS side appends to the same timelines.
 	if len(returning) > 0 {
 		planGroups := make(map[execution.PlanIdentity]execution.QueryGroupIdentity)
-		for _, group := range snapshot.QueryGroups {
+		for identity, group := range newGroups {
 			for _, plan := range group.Plans {
-				planGroups[plan.Identity] = group.Identity
+				planGroups[plan.Identity] = identity
 			}
 		}
 		for index := range records {
@@ -229,12 +243,12 @@ func (reconciler *ScheduleActivationReconciler) upgradeLegacyActivation(
 	failureClass := ActivationFailureClassProjectionConflict
 	defer func() { err = wrapActivationFailure(failureStage, failureClass, err) }()
 
-	snapshot, err := reconciler.repository.LoadPublishedSnapshot(ctx, previous.Current)
+	published, err := reconciler.repository.loadPublishedGroups(ctx, previous.Current)
 	var groups map[execution.QueryGroupIdentity]QueryGroup
 	if errors.Is(err, ErrSnapshotUnavailable) {
 		groups, err = reconciler.repository.loadActivatedGroupsFromScheduleScan(ctx, previous)
 	} else if err == nil {
-		groups, err = queryGroupMap(snapshot.QueryGroups)
+		groups = published.groups
 	}
 	if err != nil {
 		return ActivationState{}, err
@@ -326,14 +340,11 @@ func (reconciler *ScheduleActivationReconciler) reactivateHeld(
 	ctx context.Context,
 	previous ActivationState,
 ) (ActivationState, error) {
-	snapshot, err := reconciler.repository.LoadPublishedSnapshot(ctx, previous.Current)
+	published, err := reconciler.repository.loadPublishedGroups(ctx, previous.Current)
 	if err != nil {
 		return ActivationState{}, err
 	}
-	groups, err := queryGroupMap(snapshot.QueryGroups)
-	if err != nil {
-		return ActivationState{}, err
-	}
+	groups := published.groups
 	boundary := execution.EvaluationTime(reconciler.now().Unix())
 	if boundary <= 0 {
 		return ActivationState{}, errors.New("alarmd controlplane: Schedule activation clock must produce a positive Unix second")
@@ -349,7 +360,18 @@ func (reconciler *ScheduleActivationReconciler) reactivateHeld(
 	if len(reactivating) == 0 {
 		return previous, nil
 	}
-	compiled, _, err := compilePublishedActivation(ctx, reconciler.compiler, reconciler.stateSemantics, snapshot, boundary)
+	reactivated := make([]execution.QueryGroupIdentity, 0, len(reactivating))
+	for identity := range reactivating {
+		reactivated = append(reactivated, identity)
+	}
+	if err := reconciler.repository.materialize(ctx, published, reactivated); err != nil {
+		return ActivationState{}, err
+	}
+	changed, err := published.loaded(reactivated)
+	if err != nil {
+		return ActivationState{}, err
+	}
+	compiled, _, err := compilePublishedGroups(ctx, reconciler.compiler, reconciler.stateSemantics, previous.Current, changed, boundary)
 	if err != nil {
 		return ActivationState{}, err
 	}

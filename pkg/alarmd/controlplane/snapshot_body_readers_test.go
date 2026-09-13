@@ -89,6 +89,8 @@ func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 			}
 			return err
 		}},
+		{"RenewCurrentActivationObjects", func() error { return harness.repository.RenewCurrentActivationObjects(ctx) }},
+		{"ScheduleActivationReconciler.Ensure(next publication)", func() error { _, err := reconciler.Ensure(ctx, next.Publication); return err }},
 		{"LoadActiveQueryGroupSet", func() error {
 			if state.ActiveQGSetRef.Digest == "" {
 				return errors.New("initial activation wrote no active Query Group set reference")
@@ -102,7 +104,8 @@ func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 	}
 	for _, reader := range objectReaders {
 		if err := reader.read(); err != nil {
-			t.Errorf("%s needs the snapshot body: %v", reader.name, err)
+			failure, typed := controlplane.ActivationFailureFromError(err)
+			t.Errorf("%s needs the snapshot body: %v (activation failure %#v typed=%v)", reader.name, err, failure, typed)
 		} else {
 			t.Logf("%s answers without the snapshot body", reader.name)
 		}
@@ -120,8 +123,6 @@ func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 			return err
 		}},
 		{"LoadPlan", func() error { _, err := harness.repository.LoadPlan(ctx, revision, manifest.Plans[0].Plan); return err }},
-		{"RenewCurrentActivationObjects", func() error { return harness.repository.RenewCurrentActivationObjects(ctx) }},
-		{"ScheduleActivationReconciler.Ensure(next publication)", func() error { _, err := reconciler.Ensure(ctx, next.Publication); return err }},
 	}
 	for _, reader := range bodyReaders {
 		err := reader.read()

@@ -450,35 +450,20 @@ func TestControlReadCacheFreezesFromCatalogObjectsWithoutTheSnapshotBody(t *test
 	t.Logf("snapshot body=%d bytes never read; object+context=%d bytes read once for %d runs", len(body), hook.objectBytes("object")+hook.objectBytes("context"), runs)
 }
 
-// A Segment whose objects are gone, or that predates the catalog, is frozen
-// the way it always was: from the Snapshot body, read once per revision and
-// probed cheaply after.
-func TestControlReadCacheReadsSnapshotBodyOncePerRevision(t *testing.T) {
+// A Segment is frozen from the catalog objects alone. The Snapshot body is
+// not read when the objects are there, not when the body is gone or changed,
+// and not when the objects are gone either: that the freeze reports as the
+// objects being unavailable, the class a Worker retries, instead of reading
+// the body it once fell back to.
+func TestControlReadCacheNeverFallsBackToTheSnapshotBody(t *testing.T) {
 	fixture := newControlReadCacheFixture(t, "snapshot-revision")
 	ctx := context.Background()
 	repository, runtime := fixture.coldRepository(t)
 	snapshotKey := fixture.prefix + ":snapshot:" + string(fixture.snapshot.Publication.SnapshotRevision)
-	epochKey := fixture.prefix + ":snapshot_epoch:" + string(fixture.snapshot.Publication.SnapshotRevision)
 	body, err := fixture.client.Get(ctx, snapshotKey).Bytes()
 	if err != nil {
 		t.Fatal(err)
 	}
-	epochText, err := fixture.client.Get(ctx, epochKey).Result()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Age the catalog objects out so the Segment falls back to the body.
-	for _, pattern := range []string{"*:qgobj:*", "*:outctx:*"} {
-		keys, err := fixture.client.Keys(ctx, fixture.prefix+pattern).Result()
-		if err != nil || len(keys) == 0 {
-			t.Fatalf("catalog objects %s = %v (%v), want some to age out", pattern, keys, err)
-		}
-		if err := fixture.client.Del(ctx, keys...).Err(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// The one complete read is an MGET of body and epoch value together.
-	coldReadBytes := len(body) + len(epochText)
 	fixture.hook.reset()
 	freeze := func() (execution.FrozenSlotContractFact, error) {
 		scoped, done := controlplane.WithSnapshotReadScope(ctx)
@@ -493,87 +478,54 @@ func TestControlReadCacheReadsSnapshotBodyOncePerRevision(t *testing.T) {
 		}
 	}
 	hook := fixture.hook
-	if got := hook.bodyReads("snapshot"); got != 1 {
-		t.Fatalf("snapshot body reads=%d, want 1 for %d separate RunOne scopes", got, runs)
+	if got := hook.bodyReads("snapshot"); got != 0 {
+		t.Fatalf("snapshot body reads=%d, want none for %d runs", got, runs)
 	}
-	if got := hook.objectBytes("snapshot"); got != coldReadBytes {
-		t.Fatalf("snapshot bytes transferred=%d, want one body (%d) instead of %d", got, coldReadBytes, runs*coldReadBytes)
-	}
-	if got := hook.count("get", "epoch"); got != runs-1 {
-		t.Fatalf("epoch probes=%d, want one per warm run (%d)", got, runs-1)
-	}
-	if got := hook.count("strlen", "snapshot"); got != runs-1 {
-		t.Fatalf("body length probes=%d, want one per warm run (%d)", got, runs-1)
-	}
-	if got := hook.count("get", "publication"); got != runs {
-		t.Fatalf("publication occurrence reads=%d, want one per run (%d)", got, runs)
-	}
-	t.Logf("snapshot body=%d bytes: before %d bytes per %d runs, after %d bytes plus %d small probes",
-		len(body), runs*len(body), runs, hook.objectBytes("snapshot"), hook.count("get", "epoch")+hook.count("strlen", "snapshot"))
-	if stats := repository.ControlReadCacheStats().Snapshot; stats != (controlplane.ControlReadCacheObjectStats{Hits: runs - 1, Misses: 1}) {
-		t.Fatalf("snapshot cache stats=%+v, want %d hits and 1 miss", stats, runs-1)
+	if got := hook.bodyReads("object"); got == 0 {
+		t.Fatal("no catalog object was read")
 	}
 
-	// A missing body must surface exactly as before: the length probe fails
-	// and the complete read path reports the unavailable Snapshot.
+	// A deleted or changed body changes nothing: nothing reads it.
 	if err := fixture.client.Del(ctx, snapshotKey).Err(); err != nil {
 		t.Fatal(err)
 	}
 	hook.reset()
-	_, err = freeze()
-	var classified *controlplane.FreezeSlotContractError
-	if !errors.As(err, &classified) || classified.Class != controlplane.FreezeSlotFailureSnapshotRead || !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
-		t.Fatalf("deleted body error=%v, want snapshot_read ErrSnapshotUnavailable", err)
-	}
-	// The fallback MGET returns only the epoch value next to the missing body.
-	if got := hook.objectBytes("snapshot"); got != len(epochText) {
-		t.Fatalf("deleted body still transferred %d bytes, want only the %d byte epoch", got, len(epochText))
-	}
-	if err := fixture.client.Set(ctx, snapshotKey, body, time.Hour).Err(); err != nil {
-		t.Fatal(err)
-	}
-	hook.reset()
 	if _, err := freeze(); err != nil {
-		t.Fatalf("restored body: %v", err)
+		t.Fatalf("deleted body: %v", err)
 	}
-	if got := hook.objectBytes("snapshot"); got != 0 {
-		t.Fatalf("restored identical body was transferred again (%d bytes)", got)
-	}
-
-	// A body whose length changed is re-read and classified as corrupt.
 	if err := fixture.client.Set(ctx, snapshotKey, "{", time.Hour).Err(); err != nil {
 		t.Fatal(err)
 	}
-	_, err = freeze()
-	var corrupt *controlplane.PersistedSnapshotCorruptError
-	if !errors.As(err, &corrupt) {
-		t.Fatalf("changed body error=%v, want persisted corruption", err)
+	if _, err := freeze(); err != nil {
+		t.Fatalf("changed body: %v", err)
+	}
+	if got := hook.bodyReads("snapshot"); got != 0 {
+		t.Fatalf("snapshot body reads=%d after the body was deleted and changed, want none", got)
 	}
 	if err := fixture.client.Set(ctx, snapshotKey, body, time.Hour).Err(); err != nil {
 		t.Fatal(err)
 	}
 
-	// A changed publication epoch forces one complete verified read, after
-	// which the revision cache serves again under the new epoch.
-	if err := fixture.client.Set(ctx, epochKey, "999", time.Hour).Err(); err != nil {
-		t.Fatal(err)
+	// Aged-out objects surface as unavailable objects, never as a body read.
+	for _, pattern := range []string{"*:qgobj:*", "*:outctx:*"} {
+		keys, err := fixture.client.Keys(ctx, fixture.prefix+pattern).Result()
+		if err != nil || len(keys) == 0 {
+			t.Fatalf("catalog objects %s = %v (%v), want some to age out", pattern, keys, err)
+		}
+		if err := fixture.client.Del(ctx, keys...).Err(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	hook.reset()
-	if _, err := freeze(); err != nil {
-		t.Fatalf("changed epoch: %v", err)
-	}
-	if got := hook.bodyReads("snapshot"); got != 1 {
-		t.Fatalf("changed epoch body reads=%d, want exactly one re-verification", got)
-	}
-	hook.reset()
-	if _, err := freeze(); err != nil {
-		t.Fatal(err)
+	_, err = freeze()
+	var classified *controlplane.FreezeSlotContractError
+	if !errors.As(err, &classified) || classified.Class != controlplane.FreezeSlotFailurePlanMaterialize || !errors.Is(err, controlplane.ErrCatalogObjectUnavailable) {
+		t.Fatalf("deleted objects error=%v, want plan_materialize ErrCatalogObjectUnavailable", err)
 	}
 	if got := hook.bodyReads("snapshot"); got != 0 {
-		t.Fatalf("re-verified epoch still re-reads the body (%d)", got)
+		t.Fatalf("snapshot body reads=%d after the objects were deleted, want none", got)
 	}
-	stats := repository.ControlReadCacheStats().Snapshot
-	if stats.Refreshes != 3 {
-		t.Fatalf("snapshot cache stats=%+v, want 3 refreshes (deleted body, changed body, changed epoch)", stats)
+	if stats := repository.ControlReadCacheStats().Snapshot; stats != (controlplane.ControlReadCacheObjectStats{}) {
+		t.Fatalf("snapshot revision cache stats=%+v, want the cache never entered", stats)
 	}
 }

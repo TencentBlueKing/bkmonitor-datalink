@@ -1163,8 +1163,11 @@ func TestProductionPhaseTwoControlKeepsCurrentActivationWhileCandidateIsPending(
 	if repository.renewCalls != 2 {
 		t.Fatalf("pending refresh renew calls=%d, want 2", repository.renewCalls)
 	}
-	if repository.snapshotLoads != 2 {
-		t.Fatalf("pending legacy refresh Snapshot reads=%d, want only the two execution reads", repository.snapshotLoads)
+	// The active set of a legacy activation is read from the publication's
+	// content description, never from the snapshot body.
+	if repository.contentLoads != 2 || repository.snapshotLoads != 0 {
+		t.Fatalf("pending legacy refresh content reads=%d body reads=%d, want only the two execution reads and no body read",
+			repository.contentLoads, repository.snapshotLoads)
 	}
 	pending := sourceRefreshObservations(observations, observability.SourceRefreshPending)
 	// A pending round reports the size of the active set. It used to report a
@@ -1325,8 +1328,9 @@ func TestProductionPhaseTwoControlLegacyUnchangedRefreshAddsNoDiagnosticSnapshot
 		unchanged[0].SourceRefresh.OldQueryGroups != 1 || unchanged[0].SourceRefresh.NewQueryGroups != 1 {
 		t.Fatalf("legacy unchanged source observations=%#v", unchanged)
 	}
-	if repository.snapshotLoads != 2 {
-		t.Fatalf("unchanged legacy refresh Snapshot reads=%d, want only the two execution reads", repository.snapshotLoads)
+	if repository.contentLoads != 2 || repository.snapshotLoads != 0 {
+		t.Fatalf("unchanged legacy refresh content reads=%d body reads=%d, want only the two execution reads and no body read",
+			repository.contentLoads, repository.snapshotLoads)
 	}
 }
 
@@ -1743,6 +1747,7 @@ type fakeProductionCatalogRepository struct {
 	snapshot       controlplane.PublishedSnapshot
 	snapshotErr    error
 	snapshotLoads  int
+	contentLoads   int
 	snapshots      map[controlplane.SnapshotPublicationRef]controlplane.PublishedSnapshot
 	activeGroups   []execution.QueryGroupIdentity
 	activeSetErr   error

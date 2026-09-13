@@ -58,8 +58,11 @@ func TestScopedSnapshotLifetimeAndAuthority(t *testing.T) {
 	client.values[repo.epochForRevisionKey(rev)] = "1"
 	ctx, closeScope := WithSnapshotReadScope(context.Background())
 	defer closeScope()
+	// The scoped body read now serves only LoadQueryGroup, the revision read
+	// a worker falls back to for a segment without an object digest; the
+	// publication-validated read answers from the object catalog instead.
 	for i := 0; i < 4; i++ {
-		g, e := repo.loadPublishedQueryGroup(ctx, SnapshotPublicationRef{rev, 1}, "qg-a")
+		g, e := repo.LoadQueryGroup(ctx, rev, "qg-a")
 		if e != nil || g.Identity != "qg-a" {
 			t.Fatal(g, e)
 		}
@@ -67,17 +70,6 @@ func TestScopedSnapshotLifetimeAndAuthority(t *testing.T) {
 	}
 	if client.mgets != 1 {
 		t.Fatalf("payload reads %d", client.mgets)
-	}
-	client.values[repo.publicationKey(1)] = "changed-after-first-read"
-	if _, err := repo.loadPublishedQueryGroup(ctx, SnapshotPublicationRef{rev, 1}, "qg-a"); err == nil {
-		t.Fatal("cached content masked changed publication")
-	}
-	if snapshotScope(ctx).entry.payload != "" {
-		t.Fatal("publication failure retained content")
-	}
-	delete(client.values, repo.publicationKey(1))
-	if _, err := repo.loadPublishedQueryGroup(ctx, SnapshotPublicationRef{rev, 1}, "qg-a"); err != nil {
-		t.Fatal(err)
 	}
 	delete(client.values, repo.snapshotKey(rev))
 	if _, e := repo.LoadQueryGroup(ctx, rev, "qg-a"); e != nil {

@@ -209,13 +209,19 @@ func TestActivatedSegmentIsReadByContent(t *testing.T) {
 	if !reflect.DeepEqual(read, want) || fallbackCalls != 0 {
 		t.Fatalf("Query Group read by content differs from the Snapshot's (fallback calls=%d):\n got=%+v\nwant=%+v", fallbackCalls, read, want)
 	}
-	if observer.count("segment", "object") != 1 || observer.count("query_group", "miss") != 1 || observer.count("output_context", "miss") != 1 {
+	// The activation reads each of the two Query Group objects and output
+	// contexts once to compile them and files them in the object cache; the
+	// two schedule materializations of the cutover and the worker's first
+	// read of the segment are all served from the cache.
+	if observer.count("segment", "object") != 1 || observer.count("query_group", "miss") != 2 || observer.count("output_context", "miss") != 2 ||
+		observer.count("query_group", "hit") != 3 || observer.count("output_context", "hit") != 3 {
 		t.Fatalf("first read counters=%+v", observer.reads)
 	}
 	if _, err := repository.LoadSegmentQueryGroup(ctx, segment, 60, fallback); err != nil || fallbackCalls != 0 {
 		t.Fatalf("second read: err=%v fallback calls=%d", err, fallbackCalls)
 	}
-	if observer.count("query_group", "hit") != 1 || observer.count("output_context", "hit") != 1 || observer.count("segment", "object") != 2 {
+	if observer.count("query_group", "hit") != 4 || observer.count("output_context", "hit") != 4 || observer.count("segment", "object") != 2 ||
+		observer.count("query_group", "miss") != 2 || observer.count("output_context", "miss") != 2 {
 		t.Fatalf("second read counters=%+v", observer.reads)
 	}
 

@@ -170,6 +170,22 @@ func (c PhaseTwoOutputConfig) protocol() string {
 // Everything else about the encoder stays derived. There is no tuning here,
 // only a position in the rollout and how much of the traffic the comparison
 // covers.
+//
+// Retirement, stated here because a temporary switch with no written exit
+// condition is a permanent one. Both keys come out, together with the
+// established encoder and the mode machinery behind them, once all four hold:
+//
+//	every deployment has run stream_shadow and reported zero divergence
+//	  in all three classes over a window that covered its own call sites;
+//	the covered call-site count has stopped rising on each of them;
+//	the branches that production never sends have been written down as a
+//	  conclusion, so that a coverage figure short of the offline corpus is
+//	  known to be "will never arrive" rather than "has not arrived yet";
+//	stream has been the default for one release without a rollback.
+//
+// Until then the answer to "does the operator know better than the program"
+// is still no for what the encoder should do, and yes only for when a given
+// cluster is ready to move -- which is the whole and only reason these exist.
 type PhaseTwoCanonicalConfig struct {
 	// Mode is one of established, shadow, stream_shadow, stream. Empty means
 	// established, which is what every deployment runs until its own shadow

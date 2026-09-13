@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-redis/redis/v8"
 )
@@ -19,12 +20,13 @@ type legacyRedisCommands interface {
 }
 
 // LegacyRedisStrategySource adapts only the Python StrategyCacheManager String
-// contract: <prefix>.strategy_ids and <prefix>.strategy_<id>. Legacy DTOs do
-// not escape this adapter.
+// contract: <prefix>.strategy_ids, <prefix>.strategy_<id> and, as its change
+// signal, <prefix>.last_updated. Legacy DTOs do not escape this adapter.
 type LegacyRedisStrategySource struct {
 	client          legacyRedisCommands
 	strategyIDsKey  string
 	strategyKeyStem string
+	lastUpdatedKey  string
 }
 
 func NewLegacyRedisStrategySource(client redis.Cmdable, cachePrefix string) (*LegacyRedisStrategySource, error) {
@@ -34,6 +36,7 @@ func NewLegacyRedisStrategySource(client redis.Cmdable, cachePrefix string) (*Le
 	return &LegacyRedisStrategySource{
 		client: client, strategyIDsKey: cachePrefix + ".strategy_ids",
 		strategyKeyStem: cachePrefix + ".strategy_",
+		lastUpdatedKey:  cachePrefix + ".last_updated",
 	}, nil
 }
 
@@ -141,6 +144,33 @@ func (source *LegacyRedisStrategySource) Strategies(ctx context.Context, ids []s
 		strategies = append(strategies, strategy)
 	}
 	return strategies, nil
+}
+
+// ChangeSignal reads <prefix>.last_updated. The cache manager's incremental
+// refresh writes it, as the integer second the run started, after it has
+// written every strategy document of a run that found changes, and returns
+// before touching it when a run finds none; its full refresh never writes it.
+// So an unchanged value means no strategy was saved since the previous read,
+// and says nothing about content the manager derives from other tables and
+// rewrites in place. A marker that is absent or cannot be read is reported as
+// absent: the round then reads everything, as it did before the marker was
+// consulted.
+func (source *LegacyRedisStrategySource) ChangeSignal(ctx context.Context) (SourceChangeSignal, error) {
+	if source == nil || source.client == nil {
+		return SourceChangeSignal{}, errors.New("alarmd controlplane: legacy Redis strategy source is required")
+	}
+	payload, err := source.client.Get(ctx, source.lastUpdatedKey).Result()
+	if errors.Is(err, redis.Nil) {
+		return SourceChangeSignal{}, nil
+	}
+	if err != nil {
+		return SourceChangeSignal{}, fmt.Errorf("alarmd controlplane: read legacy strategy change signal: %w", err)
+	}
+	seconds, parseErr := strconv.ParseInt(strings.TrimSpace(payload), 10, 64)
+	if parseErr != nil || seconds <= 0 {
+		return SourceChangeSignal{}, nil
+	}
+	return SourceChangeSignal{Present: true, Value: payload, WrittenAt: time.Unix(seconds, 0)}, nil
 }
 
 func decodeRequiredIdentityString(payload json.RawMessage) (string, bool) {

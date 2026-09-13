@@ -510,6 +510,65 @@ type SourceRefreshFacts struct {
 	// source did not change reports all of them as reused.
 	CompiledStrategies int
 	ReusedStrategies   int
+	// ReadMode and ReadReason say whether the round read the strategy
+	// documents from the source or reused an earlier round's observation, and
+	// why; StrategiesRead is how many documents it asked the source for. Only
+	// the pairs in AllSourceReadOutcomes occur; both are empty for a producer
+	// that does not report how it read.
+	ReadMode       SourceReadMode
+	ReadReason     SourceReadReason
+	StrategiesRead int
+	// ChangeSignalPresent says the source offered a change signal this round;
+	// ChangeSignalAgeSeconds is how long ago its publisher moved it, by the
+	// reporting process's clock, and means nothing when not present.
+	ChangeSignalPresent    bool
+	ChangeSignalAgeSeconds int64
+}
+
+// SourceReadMode and SourceReadReason mirror the control plane's vocabulary
+// for how a refresh round read its source. They are closed: the metric is
+// labelled by them.
+type (
+	SourceReadMode   string
+	SourceReadReason string
+)
+
+const (
+	SourceReadFull    SourceReadMode = "full"
+	SourceReadSkipped SourceReadMode = "skipped"
+
+	SourceReadChanged   SourceReadReason = "changed"
+	SourceReadPending   SourceReadReason = "pending"
+	SourceReadPeriodic  SourceReadReason = "periodic"
+	SourceReadMissing   SourceReadReason = "missing"
+	SourceReadElected   SourceReadReason = "elected"
+	SourceReadUnchanged SourceReadReason = "unchanged"
+)
+
+// SourceReadOutcome is one (mode, reason) pair a refresh round can report.
+type SourceReadOutcome struct {
+	Mode   SourceReadMode
+	Reason SourceReadReason
+}
+
+// AllSourceReadOutcomes lists every pair a round can report: a full read has
+// one of five reasons, a skipped round exactly one.
+func AllSourceReadOutcomes() []SourceReadOutcome {
+	return []SourceReadOutcome{
+		{SourceReadFull, SourceReadChanged}, {SourceReadFull, SourceReadPending}, {SourceReadFull, SourceReadPeriodic},
+		{SourceReadFull, SourceReadMissing}, {SourceReadFull, SourceReadElected},
+		{SourceReadSkipped, SourceReadUnchanged},
+	}
+}
+
+// ValidSourceReadOutcome reports whether the pair is one a round can report.
+func ValidSourceReadOutcome(mode SourceReadMode, reason SourceReadReason) bool {
+	for _, outcome := range AllSourceReadOutcomes() {
+		if outcome.Mode == mode && outcome.Reason == reason {
+			return true
+		}
+	}
+	return false
 }
 
 // ActivationFailureFacts carries fixed classification, bounded counts and a
@@ -823,6 +882,17 @@ func normalizeSourceRefreshFacts(component Component, stage Stage, facts *Source
 		normalized.NewQueryGroups = 0
 		normalized.AddedQueryGroups = 0
 		normalized.RetiredQueryGroups = 0
+	}
+	if (normalized.ReadMode != "" || normalized.ReadReason != "") &&
+		!ValidSourceReadOutcome(normalized.ReadMode, normalized.ReadReason) {
+		normalized.ReadMode = ""
+		normalized.ReadReason = ""
+	}
+	if normalized.StrategiesRead < 0 {
+		normalized.StrategiesRead = 0
+	}
+	if !normalized.ChangeSignalPresent {
+		normalized.ChangeSignalAgeSeconds = 0
 	}
 	return &normalized
 }

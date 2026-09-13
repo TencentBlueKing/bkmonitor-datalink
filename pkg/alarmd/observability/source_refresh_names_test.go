@@ -85,3 +85,29 @@ func TestAnUncountedActiveSetIsAbsentRatherThanZero(t *testing.T) {
 		t.Fatalf("uncounted active set reported as a number: %#v", event["active_query_groups"])
 	}
 }
+
+// How a round read its source travels on the refresh line: mode and reason,
+// how many documents it asked for, and the change signal's age only when the
+// round found a signal, so an absent signal is not logged as an age of zero.
+func TestHowTheRoundReadItsSourceTravelsOnTheRefreshLine(t *testing.T) {
+	event := refreshEvent(t, &SourceRefreshFacts{
+		Status: SourceRefreshUnchanged, ObservationID: "observation-steady",
+		ReadMode: SourceReadSkipped, ReadReason: SourceReadUnchanged,
+		ChangeSignalPresent: true, ChangeSignalAgeSeconds: 75,
+	})
+	if event["source_read_mode"] != "skipped" || event["source_read_reason"] != "unchanged" ||
+		event["source_strategies_read"] != float64(0) || event["source_change_signal_present"] != true ||
+		event["source_change_signal_age_seconds"] != float64(75) {
+		t.Fatalf("skipped round on the refresh line = %#v", event)
+	}
+	event = refreshEvent(t, &SourceRefreshFacts{
+		Status: SourceRefreshUnchanged, ReadMode: SourceReadFull, ReadReason: SourceReadMissing, StrategiesRead: 943,
+	})
+	if event["source_read_mode"] != "full" || event["source_read_reason"] != "missing" ||
+		event["source_strategies_read"] != float64(943) || event["source_change_signal_present"] != false {
+		t.Fatalf("round without a signal on the refresh line = %#v", event)
+	}
+	if _, present := event["source_change_signal_age_seconds"]; present {
+		t.Fatalf("a round that found no signal logged an age: %#v", event["source_change_signal_age_seconds"])
+	}
+}

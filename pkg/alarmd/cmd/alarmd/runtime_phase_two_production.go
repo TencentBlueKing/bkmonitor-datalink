@@ -709,6 +709,10 @@ func sourceRefreshIdentity(
 		Status: observability.SourceRefreshStatus(result.Status), ObservationID: result.Observation,
 		SnapshotRevision: string(publication.SnapshotRevision), PublicationEpoch: publication.PublicationEpoch,
 		CompiledStrategies: result.CompiledStrategies, ReusedStrategies: result.ReusedStrategies,
+		ReadMode:            observability.SourceReadMode(result.ReadMode),
+		ReadReason:          observability.SourceReadReason(result.ReadReason),
+		StrategiesRead:      result.StrategiesRead,
+		ChangeSignalPresent: result.ChangeSignalPresent, ChangeSignalAgeSeconds: result.ChangeSignalAgeSeconds,
 	}
 }
 

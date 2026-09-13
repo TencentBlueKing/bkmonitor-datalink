@@ -6,6 +6,7 @@
 package metric
 
 import (
+	"math"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -27,6 +28,9 @@ type phaseTwoMetrics struct {
 	sourceObservations           *prometheus.CounterVec
 	sourceRefreshes              *prometheus.CounterVec
 	sourceCompiles               *prometheus.CounterVec
+	sourceReads                  *prometheus.CounterVec
+	sourceStrategiesRead         prometheus.Counter
+	sourceChangeSignalAge        prometheus.Gauge
 	activationFailures           *prometheus.CounterVec
 	ownedQueryGroups             *prometheus.GaugeVec
 	ownershipTransitions         *prometheus.CounterVec
@@ -146,6 +150,13 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_refresh_total",
 			Help: "Phase-two source refresh outcomes by fixed status.",
 		}, []string{"status"}),
+		sourceReads: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_read_total",
+			Help: "Source refresh rounds by whether they read the strategy documents (full) or reused the previous " +
+				"round's observation (skipped), and why: the change signal or active set moved (changed), the previous " +
+				"round did not end unchanged (pending), the periodic bound on unsignalled changes passed (periodic), " +
+				"the source offered no change signal (missing), or the process remembered no earlier read (elected).",
+		}, []string{"mode", "reason"}),
 		sourceCompiles: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_compile_total",
 			Help: "Strategies a source refresh round asked the compiler about, by whether they were compiled " +
@@ -219,11 +230,16 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	for _, result := range sourceCompileResults {
 		metrics.sourceCompiles.WithLabelValues(result)
 	}
+	for _, outcome := range observability.AllSourceReadOutcomes() {
+		metrics.sourceReads.WithLabelValues(string(outcome.Mode), string(outcome.Reason))
+	}
 	metrics.legacyMigration = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_total", Help: "One-time legacy Active QG migration outcomes."}, []string{"result", "reason_class"})
 	metrics.legacyMigrationScan = prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_scan_keys", Help: "Redis keys scanned by one-time legacy Active QG migration.", Buckets: legacyMigrationScanBuckets})
 	metrics.legacyMigrationTime = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_duration_seconds", Help: "One-time legacy Active QG migration duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
 	metrics.undrainedDrainingQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "undrained_draining_query_groups", Help: "Replicated per-Pod view of retired Query Groups still requiring ownership until their retirement boundary is drained; aggregate replicas with max, not sum."})
 	metrics.activationHeldQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "activation_held_query_groups", Help: "Query Groups the latest activation attempt brought back from retirement that had not drained; today any of them fails the whole activation (activation_failure_total{reactivation,not_drained}), so an attempt with a non-zero value is an attempt that failed for them. Set by the Control Leader on every attempt that reached the reactivation check."})
+	metrics.sourceStrategiesRead = prometheus.NewCounter(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_strategies_read_total", Help: "Strategy documents source refresh rounds asked the source for. A skipped round adds nothing; a full read adds the whole active set."})
+	metrics.sourceChangeSignalAge = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_change_signal_age_seconds", Help: "How long ago the source's publisher last moved its change signal, in seconds by the Control Leader's clock, as of the latest refresh round. NaN when the latest round found no signal. A value that keeps growing while strategies are being saved means the signal has stopped following the source, and every skipped round since is a round that read nothing for a wrong reason."})
 	metrics.activationHeldAgeSecondsMax = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "activation_held_age_seconds_max", Help: "How long the oldest held retirement of the latest activation attempt has waited, in seconds; zero when nothing is held."})
 	metrics.algorithmEvaluations = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "algorithm_evaluation_total",
@@ -276,6 +292,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.slotReadiness.slack, m.slotReadiness.boundary,
 		m.slotTiming,
 		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations, m.sourceRefreshes, m.sourceCompiles,
+		m.sourceReads, m.sourceStrategiesRead, m.sourceChangeSignalAge,
 		m.activationFailures, m.unmappedSeverity,
 		m.ownedQueryGroups, m.ownershipTransitions,
 		m.queryAdmission,
@@ -308,6 +325,17 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 		}
 		if facts.ReusedStrategies > 0 {
 			m.sourceCompiles.WithLabelValues("reused").Add(float64(facts.ReusedStrategies))
+		}
+		if observability.ValidSourceReadOutcome(facts.ReadMode, facts.ReadReason) {
+			m.sourceReads.WithLabelValues(string(facts.ReadMode), string(facts.ReadReason)).Inc()
+			if facts.StrategiesRead > 0 {
+				m.sourceStrategiesRead.Add(float64(facts.StrategiesRead))
+			}
+			if facts.ChangeSignalPresent {
+				m.sourceChangeSignalAge.Set(float64(facts.ChangeSignalAgeSeconds))
+			} else {
+				m.sourceChangeSignalAge.Set(math.NaN())
+			}
 		}
 	}
 	if facts := observation.ActivationFailure; facts != nil {

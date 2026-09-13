@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/go-redis/redis/v8"
 
@@ -24,6 +25,48 @@ const (
 	SourceRefreshPublicationConflict SourceRefreshStatus = "PUBLICATION_CONFLICT"
 )
 
+// SourceReadMode says whether a refresh round read the strategy documents
+// from the source or reused the observation of an earlier round.
+type SourceReadMode string
+
+const (
+	SourceReadFull    SourceReadMode = "full"
+	SourceReadSkipped SourceReadMode = "skipped"
+)
+
+// SourceReadReason says why a round read in the mode it did. A full read
+// names the condition that forced it; a skipped round has only one reason.
+type SourceReadReason string
+
+const (
+	// SourceReadChanged: the change signal or the active set moved since the
+	// documents were last read.
+	SourceReadChanged SourceReadReason = "changed"
+	// SourceReadPending: the previous round did not end UNCHANGED, because a
+	// candidate awaits confirmation, a publication just happened, or the round
+	// failed. Confirmation is two independent reads of the source, so a
+	// remembered observation never confirms anything.
+	SourceReadPending SourceReadReason = "pending"
+	// SourceReadPeriodic: sourceFullReadInterval passed since the last read.
+	SourceReadPeriodic SourceReadReason = "periodic"
+	// SourceReadMissing: the source offered no change signal this round.
+	SourceReadMissing SourceReadReason = "missing"
+	// SourceReadElected: this reconciler remembers no earlier read; the first
+	// round of a process, or of a leader term.
+	SourceReadElected SourceReadReason = "elected"
+	// SourceReadUnchanged is the one reason of a skipped round: the signal and
+	// the active set are what they were when the documents were last read.
+	SourceReadUnchanged SourceReadReason = "unchanged"
+)
+
+// sourceFullReadInterval bounds how stale the Catalog may get for a change
+// the source's publisher makes without moving its change signal: content it
+// derives from other tables and rewrites in place. Six minutes is the
+// staleness accepted for those changes. The bound is this reconciler's own:
+// whatever the publisher rewrites, the next periodic read sees, so the number
+// does not follow how often the publisher runs and need not move with it.
+const sourceFullReadInterval = 6 * time.Minute
+
 type SourceRefreshResult struct {
 	Status      SourceRefreshStatus
 	Observation string
@@ -40,6 +83,34 @@ type SourceRefreshResult struct {
 	// add up to the strategies the round asked the compiler about.
 	CompiledStrategies int
 	ReusedStrategies   int
+	// ReadMode and ReadReason say whether the round read the strategy
+	// documents from the source or reused the previous round's observation,
+	// and why. StrategiesRead is how many documents it asked the source for.
+	ReadMode       SourceReadMode
+	ReadReason     SourceReadReason
+	StrategiesRead int
+	// ChangeSignalPresent says the source offered a change signal this round,
+	// and ChangeSignalAgeSeconds how long ago its publisher moved it, by this
+	// process's clock. A signal that stops moving while strategies keep being
+	// saved is the failure the age makes visible: without it, a reconciler
+	// that skips forever and a source that never changes look the same.
+	ChangeSignalPresent    bool
+	ChangeSignalAgeSeconds int64
+}
+
+// sourceRoundMemory is what this reconciler last read from the source, kept
+// so that a round the source signals nothing new for can reuse it instead of
+// reading every document again. It is process memory only: a new leader term
+// starts without one and reads everything, and nothing about it is written
+// anywhere a later process could read back and compare against.
+type sourceRoundMemory struct {
+	signal SourceChangeSignal
+	cycle  observedCycle
+	readAt time.Time
+	// steady marks that the round which last used this observation ended
+	// UNCHANGED. Only a steady observation is reused: confirmation takes two
+	// independent reads, and a round that failed proves nothing for the next.
+	steady bool
 }
 
 type persistedSourceCandidate struct {
@@ -64,6 +135,23 @@ type SourceReconciler struct {
 	// reconciler because that is the object that survives between rounds; a
 	// follower's reconciler holds an empty one, as it never refreshes.
 	candidates *CandidateCache
+	// now paces the periodic full read and measures the change signal's age.
+	now    func() time.Time
+	memory *sourceRoundMemory
+}
+
+// ConfigureClock sets the clock the reconciler paces its periodic full reads
+// and measures the change signal's age by. It is set at assembly, where the
+// process clock lives, so that a test can move it.
+func (reconciler *SourceReconciler) ConfigureClock(now func() time.Time) error {
+	if reconciler == nil {
+		return errors.New("alarmd controlplane: no source reconciler")
+	}
+	if now == nil {
+		return errors.New("alarmd controlplane: source reconciler clock is required")
+	}
+	reconciler.now = now
+	return nil
 }
 
 // ConfigureOutputProtocol sets the deployment's wire format choice, once, at
@@ -103,7 +191,8 @@ func NewSourceReconciler(
 		validateCatalog = validators[0]
 	}
 	return &SourceReconciler{repository: repository, publisher: publisher, compiler: compiler,
-		stateSemantics: stateSemantics, validateCatalog: validateCatalog, candidates: NewCandidateCache()}, nil
+		stateSemantics: stateSemantics, validateCatalog: validateCatalog, candidates: NewCandidateCache(),
+		now: time.Now}, nil
 }
 
 func (reconciler *SourceReconciler) Refresh(
@@ -115,14 +204,21 @@ func (reconciler *SourceReconciler) Refresh(
 		source == nil || planner == nil {
 		return SourceRefreshResult{}, errors.New("alarmd controlplane: incomplete source refresh request")
 	}
-	// Every outcome of a round that built a Catalog reports how it was built;
-	// the counts are read at the end rather than copied into each return.
+	// Every outcome of a round that built a Catalog reports how it was built
+	// and how its source was read; both are filled at the end rather than
+	// copied into each return. A round that fails leaves its observation
+	// unsettled, so the next round reads the source again.
+	cycle, read, err := reconciler.observe(ctx, source)
 	defer func() {
-		if err == nil {
-			result.CompiledStrategies, result.ReusedStrategies = reconciler.candidates.Stats()
+		if err != nil {
+			reconciler.unsettle()
+			return
 		}
+		result.CompiledStrategies, result.ReusedStrategies = reconciler.candidates.Stats()
+		result.ReadMode, result.ReadReason, result.StrategiesRead = read.mode, read.reason, read.strategies
+		result.ChangeSignalPresent, result.ChangeSignalAgeSeconds = read.signalPresent, read.signalAgeSeconds
+		reconciler.memory.steady = result.Status == SourceRefreshUnchanged
 	}()
-	cycle, err := observeCycle(ctx, source)
 	if err != nil {
 		return SourceRefreshResult{}, err
 	}
@@ -199,6 +295,92 @@ func (reconciler *SourceReconciler) Refresh(
 		pendingResult.Latest = current.Publication
 	}
 	return pendingResult, nil
+}
+
+type sourceRead struct {
+	mode             SourceReadMode
+	reason           SourceReadReason
+	strategies       int
+	signalPresent    bool
+	signalAgeSeconds int64
+}
+
+// observe returns the round's observation: read from the source when
+// something forces it, the previous round's otherwise. Every round reads the
+// change signal and, when it may skip, the active set; neither costs more
+// than one small read, and together they are what the skip is decided on.
+func (reconciler *SourceReconciler) observe(ctx context.Context, source StrategySource) (observedCycle, sourceRead, error) {
+	now := reconciler.now()
+	var signal SourceChangeSignal
+	if signalled, ok := source.(ChangeSignalSource); ok {
+		read, err := signalled.ChangeSignal(ctx)
+		if err != nil {
+			return observedCycle{}, sourceRead{}, err
+		}
+		signal = read
+	}
+	read := sourceRead{signalPresent: signal.Present}
+	if signal.Present {
+		read.signalAgeSeconds = int64(now.Sub(signal.WrittenAt) / time.Second)
+	}
+	reason, err := reconciler.fullReadReason(ctx, source, signal, now)
+	if err != nil {
+		return observedCycle{}, sourceRead{}, err
+	}
+	if reason == "" {
+		read.mode, read.reason = SourceReadSkipped, SourceReadUnchanged
+		return reconciler.memory.cycle, read, nil
+	}
+	cycle, err := observeCycle(ctx, source)
+	if err != nil {
+		return observedCycle{}, sourceRead{}, err
+	}
+	reconciler.memory = &sourceRoundMemory{signal: signal, cycle: cycle, readAt: now}
+	read.mode, read.reason, read.strategies = SourceReadFull, reason, len(cycle.strategies)
+	return cycle, read, nil
+}
+
+// fullReadReason names the condition that makes this round read every
+// document; empty means the previous round's observation still stands. The
+// conditions are checked from the ones that need no read to the one that
+// does, so a round that must read anyway does not read the active set twice.
+func (reconciler *SourceReconciler) fullReadReason(
+	ctx context.Context,
+	source StrategySource,
+	signal SourceChangeSignal,
+	now time.Time,
+) (SourceReadReason, error) {
+	memory := reconciler.memory
+	switch {
+	case memory == nil:
+		return SourceReadElected, nil
+	case !signal.Present:
+		return SourceReadMissing, nil
+	case !memory.steady:
+		return SourceReadPending, nil
+	case !now.Before(memory.readAt.Add(sourceFullReadInterval)):
+		return SourceReadPeriodic, nil
+	case signal.Value != memory.signal.Value:
+		return SourceReadChanged, nil
+	}
+	ids, err := source.ActiveStrategyIDs(ctx)
+	if err != nil {
+		return "", err
+	}
+	ids, err = canonicalActiveSet(ids)
+	if err != nil {
+		return "", err
+	}
+	if !equalStrings(ids, memory.cycle.ids) {
+		return SourceReadChanged, nil
+	}
+	return "", nil
+}
+
+func (reconciler *SourceReconciler) unsettle() {
+	if reconciler.memory != nil {
+		reconciler.memory.steady = false
+	}
 }
 
 func (reconciler *SourceReconciler) publish(

@@ -380,3 +380,43 @@ func TestCanonicalModeNaming(t *testing.T) {
 		t.Fatal("a misspelled mode was accepted")
 	}
 }
+
+// The level arenas are reused across objects and, through the pool, across
+// calls. If one stops being truncated, every answer stays correct -- the
+// members hold absolute offsets, so the spans still point at the right bytes
+// -- and the buffer grows without bound for the life of the process.
+//
+// That is why this test exists at all. Removing the truncation was tried as a
+// mutation and the whole suite stayed green, correctly: nothing about the
+// output is wrong. A leak that produces right answers cannot be caught by
+// checking answers, so it has to be checked where it happens.
+func TestCanonicalStreamLevelArenasAreTruncatedBetweenObjects(t *testing.T) {
+	stream := &canonicalStream{}
+	run := func(payload string) {
+		t.Helper()
+		stream.src, stream.pos = []byte(payload), 0
+		if _, ok := stream.value(nil, 0); !ok {
+			t.Fatalf("declined %s", payload)
+		}
+	}
+	// Two objects with keys of the same total length. If the arena were not
+	// truncated the second call would leave twice the bytes behind.
+	run(`{"alpha":1,"bravo":2}`)
+	after := len(stream.levels[0].keys)
+	run(`{"charl":1,"delta":2}`)
+	if grown := len(stream.levels[0].keys); grown != after {
+		t.Fatalf("key arena carried %d bytes into the next object, expected %d; "+
+			"answers stay correct and the buffer grows for the life of the process",
+			grown, after)
+	}
+
+	// Siblings inside one call use the same level and must not accumulate
+	// either. Three objects at depth 1, each with one short key.
+	stream.src, stream.pos = []byte(`{"a":{"k":1},"b":{"k":2},"c":{"k":3}}`), 0
+	if _, ok := stream.value(nil, 0); !ok {
+		t.Fatal("declined the nested payload")
+	}
+	if held := len(stream.levels[1].keys); held != 1 {
+		t.Fatalf("depth-1 arena holds %d key bytes after three one-key siblings, expected 1", held)
+	}
+}

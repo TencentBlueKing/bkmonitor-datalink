@@ -258,6 +258,27 @@ const (
 	ReasonOther                 ReasonCode = "_other"
 )
 
+// DurationOnlyStages are the stages whose records carry a duration and nothing
+// else. They are emitted by a timing wrapper that stamps every record success,
+// deliberately: the failures on those paths report themselves on their own
+// records, with their own reasons, so a duration record has no outcome to add.
+//
+// The list is here, beside the stage names, because two places have to agree
+// with it and neither of them is where the records are produced. The object
+// page renders a trace and was printing that success stamp as an outcome, so a
+// round blocked inside the Slot source showed "fetched what to compute:
+// success" directly above the record that said it was blocked -- a reader
+// following the trace went one stage past the answer.
+//
+// The page held its own copy of this list, which is the arrangement that goes
+// stale the first time a third timing call is added: the new stage would print
+// as an outcome again, with nothing failing. Both sides are checked against
+// this one instead.
+var DurationOnlyStages = []string{
+	StageSlotSourceCompleted,
+	StageRunnerCompleted,
+}
+
 type ComponentStage struct {
 	Component Component
 	Stage     Stage

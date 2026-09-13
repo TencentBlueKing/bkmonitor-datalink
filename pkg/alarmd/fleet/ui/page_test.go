@@ -13,6 +13,7 @@ import (
 	"reflect"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"regexp"
 	"strings"
 	"testing"
@@ -157,6 +158,55 @@ func TestEveryObjectListFieldThePageReadsExistsInTheAPI(t *testing.T) {
 // though none of it is.
 func TestEveryOnsetFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "onset", reflect.TypeOf(fleet.Onset{}))
+}
+
+// The page suppresses the result word on records that carry only a duration,
+// and it held its own copy of which stages those are. A copy is the arrangement
+// that goes stale: a third timing call would emit a stage the page does not
+// know about, its unconditional success stamp would print as an outcome, and a
+// reader following a failed round would be told the failing step succeeded --
+// with nothing failing anywhere.
+//
+// The producing side is checked against the same list in cmd/alarmd, so the two
+// ends cannot drift apart without one of them failing.
+func TestThePageKnowsEveryStageThatCarriesOnlyADuration(t *testing.T) {
+	if len(observability.DurationOnlyStages) == 0 {
+		t.Fatal("no duration-only stages declared; the check would pass vacuously")
+	}
+	body := string(page)
+	block := regexp.MustCompile(`var TIMING_ONLY_STAGES = \{([^}]*)\}`).FindStringSubmatch(body)
+	if block == nil {
+		t.Fatal("the page no longer declares TIMING_ONLY_STAGES: every timing record's " +
+			"success stamp is being printed as an outcome again")
+	}
+	listed := map[string]bool{}
+	for _, match := range regexp.MustCompile(`([a-z0-9_]+):\s*true`).FindAllStringSubmatch(block[1], -1) {
+		listed[match[1]] = true
+	}
+	for _, stage := range observability.DurationOnlyStages {
+		if !listed[stage] {
+			t.Errorf("stage %q carries only a duration but the page does not list it: "+
+				"its unconditional success stamp renders as an outcome", stage)
+		}
+		// A row whose only content is its duration still needs a name, and the
+		// name has to say that is what it is -- "this round finished: success"
+		// over a round that did not finish is how this was read wrong.
+		if !strings.Contains(body, stage+": '") {
+			t.Errorf("the page has no wording for stage %q", stage)
+		}
+	}
+	for stage := range listed {
+		known := false
+		for _, declared := range observability.DurationOnlyStages {
+			if declared == stage {
+				known = true
+			}
+		}
+		if !known {
+			t.Errorf("the page suppresses the outcome on stage %q, which is not a duration-only "+
+				"stage: a real result is being hidden", stage)
+		}
+	}
 }
 
 // The container check runs one way: it finds ids in the markup and looks for a

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,7 +54,7 @@ func TestQueryContractErrorsKeepTextAndChainWhileExposingCodes(t *testing.T) {
 		codeCompletionOnlyExactSetInvalid, codeNamedInputExactSetInvalid, codePhysicalCompletionMissing, codePhysicalCompletenessInvalid,
 		codeRequirementQueryAmbiguous, codeRequirementQueryMissing, codeSeriesBeforeBegin, codeSeriesBatchInvalid,
 		codeSeriesBatchNotSingleSeries, codeSeriesBindingOutsideRequirements, codeSeriesBindingDuplicate, codeSeriesBindingMismatch,
-		codeSeriesRecordOutsideWindow, codeStreamedNamedInputDuplicate,
+		codeSeriesRecordOutsideWindow, codeStreamedNamedInputDuplicate, codeGapScopeReasonConflict,
 	} {
 		if !observability.ValidQueryFailureCode(code) {
 			t.Fatalf("worker failure code %q violates the log code grammar", code)
@@ -84,4 +85,50 @@ func TestProviderFailureFactsProjectLastFailedAttempt(t *testing.T) {
 	if facts == nil || *facts != want {
 		t.Fatalf("bare facts=%+v, want %+v", facts, want)
 	}
+}
+
+// A Plan whose incomplete named inputs of one gap scope carry different
+// completion reasons is refused under its own name, with both reasons: the
+// code goes to the counter's category, the pair to the bounded detail, and
+// the inputs to the text, so the shape can be read off one line instead of
+// inferred from an internal_unknown.
+func TestCompletionGapMutationNamesTheConflictingReasons(t *testing.T) {
+	plan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "1001"}
+	due := execution.DuePlan{Identity: plan}
+	consumer := execution.ConsumerRef{Plan: plan, LevelID: 3, HasLevel: true}
+	bindings := []execution.NamedInputBinding{
+		{Consumer: consumer, RequirementID: "req-a", DatasetName: "primary", Completeness: execution.CompletenessPartial, ReasonCode: "QUERY_PARTIAL"},
+		{Consumer: consumer, RequirementID: "req-b", DatasetName: "baseline", Completeness: execution.CompletenessUnavailable, ReasonCode: "QUERY_TIMEOUT"},
+	}
+	var stream *streamedExecution
+	_, err := stream.completionGapMutation(due, bindings)
+	var conflict *gapScopeReasonConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("completionGapMutation error = %v, want the gap scope conflict", err)
+	}
+	text := err.Error()
+	for _, want := range []string{"strategy 1001", "level 3", "req-a", "req-b", "QUERY_PARTIAL", "QUERY_TIMEOUT"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("error text %q does not name %q", text, want)
+		}
+	}
+	var got observability.Observation
+	c := &SlotExecutionCoordinator{ports: Ports{Observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { got = observability.NormalizeObservation(o) })}}
+	c.observeQueryFailure(context.Background(), execution.OperationNormal, time.Now(), observability.QueryFailureStageStreamComplete, err)
+	if got.QueryFailure == nil || got.QueryFailure.Category != observability.QueryFailureCategoryNamedInput ||
+		got.QueryFailure.Code != codeGapScopeReasonConflict || got.QueryFailure.Detail != "level=3-first=query_partial-second=query_timeout" {
+		t.Fatalf("failure facts = %+v, want the named input conflict with both reasons in the detail", got.QueryFailure)
+	}
+	// The same reason twice in one scope is not a conflict.
+	agreeing := []execution.NamedInputBinding{bindings[0], {Consumer: consumer, RequirementID: "req-b", DatasetName: "baseline", Completeness: execution.CompletenessPartial, ReasonCode: "QUERY_PARTIAL"}}
+	func() {
+		defer func() {
+			// The nil stream cannot build the mutation; reaching that step is
+			// the assertion, so the panic it causes is the expected end.
+			if recover() == nil {
+				t.Fatal("agreeing reasons were refused before the mutation was built")
+			}
+		}()
+		_, _ = stream.completionGapMutation(due, agreeing)
+	}()
 }

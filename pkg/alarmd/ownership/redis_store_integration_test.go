@@ -484,3 +484,112 @@ func TestRedisStoreReadControlBatchMatchesReadControl(t *testing.T) {
 		t.Fatal("an empty Query Group identity must be refused")
 	}
 }
+
+// Two workers that both believe they own a Query Group, the shape a rolling
+// update produces when a new replica is assigned a Query Group an old one
+// still runs: the Assignment and the lease keep the two apart. From the
+// moment the Assignment names the new worker, every write the old worker
+// attempts under its fence is refused as a stale owner and changes
+// nothing, and its next renewal tells it the Assignment moved; the new
+// worker cannot acquire while the old lease lives (busy), and once it
+// holds the lease, by release or by expiry, its writes apply. No write of
+// the old worker lands after the move, and no window has two writers.
+func TestRedisStoreOverlappingOwnersOldWriteIsRefused(t *testing.T) {
+	for _, handover := range []struct {
+		name     string
+		takeover func(t *testing.T, store *RedisStore, old Lease, now time.Time) time.Time
+	}{
+		{name: "old worker releases on shutdown", takeover: func(t *testing.T, store *RedisStore, old Lease, now time.Time) time.Time {
+			t.Helper()
+			if err := store.Release(context.Background(), old.Fence); err != nil {
+				t.Fatalf("Release(old) error = %v", err)
+			}
+			return now.Add(11 * time.Second)
+		}},
+		{name: "old worker vanishes and its lease expires", takeover: func(_ *testing.T, _ *RedisStore, _ Lease, now time.Time) time.Time {
+			return now.Add(61 * time.Second)
+		}},
+	} {
+		t.Run(handover.name, func(t *testing.T) {
+			store := newIntegrationStore(t)
+			ctx := context.Background()
+			queryGroup := execution.QueryGroupIdentity("query-group-1")
+			now := time.UnixMilli(1_700_000_000_000)
+			authority, err := store.AcquireControlLeader(ctx, "control-1", now, time.Minute)
+			if err != nil {
+				t.Fatalf("AcquireControlLeader() error = %v", err)
+			}
+			first, err := store.PublishAssignment(ctx, authority, AssignmentDecision{
+				QueryGroup: queryGroup, DesiredWorkerID: "worker-old", ExpectedRecordRevision: 0,
+				PlacementReason: PlacementRendezvous, DecidedAt: now,
+			})
+			if err != nil {
+				t.Fatalf("PublishAssignment(old) error = %v", err)
+			}
+			old, err := store.Acquire(ctx, queryGroup, "worker-old", now, time.Minute)
+			if err != nil || old.Fence.OwnerEpoch != 1 {
+				t.Fatalf("Acquire(old) = (%+v, %v)", old, err)
+			}
+			if result, err := store.FencedCompareAndSet(ctx, FencedCASRequest{
+				Fence: old.Fence, At: now, Namespace: "progress", ExpectedMissing: true, Value: []byte("cursor-1"),
+			}); err != nil || result != FencedCASApplied {
+				t.Fatalf("FencedCompareAndSet(old, first write) = (%s, %v)", result, err)
+			}
+
+			// The Leader moves the Assignment to the new worker while the
+			// old lease still lives.
+			moved := now.Add(10 * time.Second)
+			if _, err := store.PublishAssignment(ctx, authority, AssignmentDecision{
+				QueryGroup: queryGroup, DesiredWorkerID: "worker-new", ExpectedRecordRevision: first.RecordRevision,
+				PlacementReason: PlacementRendezvous, DecidedAt: moved,
+			}); err != nil {
+				t.Fatalf("PublishAssignment(new) error = %v", err)
+			}
+			if _, err := store.Renew(ctx, old.Fence, moved, time.Minute); !errors.Is(err, ErrNotDesired) {
+				t.Fatalf("Renew(old after the move) error = %v, want ErrNotDesired", err)
+			}
+			if _, err := store.Acquire(ctx, queryGroup, "worker-new", moved, time.Minute); !errors.Is(err, ErrLeaseBusy) {
+				t.Fatalf("Acquire(new while the old lease lives) error = %v, want ErrLeaseBusy", err)
+			}
+			// The old lease still lives, but the fence it carries is no
+			// longer the one the Assignment names: the old worker's writes
+			// are refused from the move on, before anyone else can write.
+			if result, err := store.FencedCompareAndSet(ctx, FencedCASRequest{
+				Fence: old.Fence, At: moved, Namespace: "progress", Expected: []byte("cursor-1"), Value: []byte("cursor-old-2"),
+			}); !errors.Is(err, ErrStaleFence) || result != FencedCASStaleOwner {
+				t.Fatalf("FencedCompareAndSet(old during the handover window) = (%s, %v), want stale owner", result, err)
+			}
+			// The fence check answers the same way, and says why: the
+			// Assignment names another worker.
+			if err := store.CheckFence(ctx, old.Fence, moved); !errors.Is(err, ErrNotDesired) {
+				t.Fatalf("CheckFence(old during the handover window) error = %v, want ErrNotDesired", err)
+			}
+
+			at := handover.takeover(t, store, old, now)
+			replacement, err := store.Acquire(ctx, queryGroup, "worker-new", at, time.Minute)
+			if err != nil || replacement.Fence.OwnerEpoch != old.Fence.OwnerEpoch+1 {
+				t.Fatalf("Acquire(new) = (%+v, %v), want the next owner epoch", replacement, err)
+			}
+			// The old worker still believes it owns the Query Group and
+			// writes under its fence: refused, and the value stands.
+			result, err := store.FencedCompareAndSet(ctx, FencedCASRequest{
+				Fence: old.Fence, At: at, Namespace: "progress", Expected: []byte("cursor-1"), Value: []byte("cursor-old-3"),
+			})
+			if !errors.Is(err, ErrStaleFence) || result != FencedCASStaleOwner {
+				t.Fatalf("FencedCompareAndSet(old after takeover) = (%s, %v), want stale owner", result, err)
+			}
+			if err := store.CheckFence(ctx, old.Fence, at); !errors.Is(err, ErrNotDesired) {
+				t.Fatalf("CheckFence(old after takeover) error = %v, want ErrNotDesired", err)
+			}
+			value, missing, err := store.ReadControl(ctx, queryGroup, "progress")
+			if err != nil || missing || !bytes.Equal(value, []byte("cursor-1")) {
+				t.Fatalf("ReadControl(after the refused writes) = (%q, %t, %v), want cursor-1 untouched", value, missing, err)
+			}
+			if result, err := store.FencedCompareAndSet(ctx, FencedCASRequest{
+				Fence: replacement.Fence, At: at, Namespace: "progress", Expected: []byte("cursor-1"), Value: []byte("cursor-2"),
+			}); err != nil || result != FencedCASApplied {
+				t.Fatalf("FencedCompareAndSet(new) = (%s, %v), want applied", result, err)
+			}
+		})
+	}
+}

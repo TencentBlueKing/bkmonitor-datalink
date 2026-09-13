@@ -34,6 +34,12 @@ type SourceRefreshResult struct {
 	// (the process stopped in between) stays latest through any number of
 	// pending rounds, and only the activation step can bring the fleet to it.
 	Latest SnapshotPublicationRef
+	// CompiledStrategies and ReusedStrategies say how the round's Catalog was
+	// built: how many strategies went through the compiler and how many were
+	// taken from an earlier round's compilation of the same document. They
+	// add up to the strategies the round asked the compiler about.
+	CompiledStrategies int
+	ReusedStrategies   int
 }
 
 type persistedSourceCandidate struct {
@@ -53,6 +59,11 @@ type SourceReconciler struct {
 	stateSemantics  strategy.StateSemantics
 	validateCatalog func(Catalog) error
 	outputProtocol  string
+	// candidates carries the compiler's output from one round to the next,
+	// so a round compiles only the documents that changed. It lives on the
+	// reconciler because that is the object that survives between rounds; a
+	// follower's reconciler holds an empty one, as it never refreshes.
+	candidates *CandidateCache
 }
 
 // ConfigureOutputProtocol sets the deployment's wire format choice, once, at
@@ -92,18 +103,25 @@ func NewSourceReconciler(
 		validateCatalog = validators[0]
 	}
 	return &SourceReconciler{repository: repository, publisher: publisher, compiler: compiler,
-		stateSemantics: stateSemantics, validateCatalog: validateCatalog}, nil
+		stateSemantics: stateSemantics, validateCatalog: validateCatalog, candidates: NewCandidateCache()}, nil
 }
 
 func (reconciler *SourceReconciler) Refresh(
 	ctx context.Context,
 	source StrategySource,
 	planner PrimaryQueryCompiler,
-) (SourceRefreshResult, error) {
+) (result SourceRefreshResult, err error) {
 	if reconciler == nil || reconciler.repository == nil || reconciler.publisher == nil || reconciler.compiler == nil ||
 		source == nil || planner == nil {
 		return SourceRefreshResult{}, errors.New("alarmd controlplane: incomplete source refresh request")
 	}
+	// Every outcome of a round that built a Catalog reports how it was built;
+	// the counts are read at the end rather than copied into each return.
+	defer func() {
+		if err == nil {
+			result.CompiledStrategies, result.ReusedStrategies = reconciler.candidates.Stats()
+		}
+	}()
 	cycle, err := observeCycle(ctx, source)
 	if err != nil {
 		return SourceRefreshResult{}, err
@@ -122,7 +140,7 @@ func (reconciler *SourceReconciler) Refresh(
 	}
 	catalog, err := BuildCatalog(ctx, BuildRequest{
 		Strategies: cycle.strategies, Planner: planner, LastGood: current, PreviousDispositions: previousDispositions,
-		OutputProtocol: reconciler.outputProtocol,
+		OutputProtocol: reconciler.outputProtocol, Cache: reconciler.candidates,
 	})
 	if err != nil {
 		return SourceRefreshResult{}, err

@@ -49,7 +49,7 @@ func deriveObservationID(strategies []SourceStrategy) (string, error) {
 		if !validObservedStrategy(strategy) {
 			return "", ErrObservationUnstable
 		}
-		digest, err := sourceFactsDigest(strategy)
+		digest, err := strategyDigest(strategy)
 		if err != nil {
 			return "", err
 		}
@@ -109,6 +109,7 @@ func observeCycle(ctx context.Context, source StrategySource) (observedCycle, er
 		if err != nil {
 			return observedCycle{}, ErrObservationUnstable
 		}
+		strategy.digest = digest
 		ordered = append(ordered, strategy)
 		digests = append(digests, digest)
 	}
@@ -125,6 +126,15 @@ func validObservedStrategy(strategy SourceStrategy) bool {
 	return strategy.SourceDisposition != nil && strategy.SourceDisposition.SourceID == strategy.SourceID &&
 		strategy.SourceDisposition.Scope == "STRATEGY" && strategy.SourceDisposition.Reason != "" &&
 		strategy.SourceDisposition.Disposition == DispositionSourceIncomplete
+}
+
+// strategyDigest returns the source facts digest, computing it only when the
+// observation has not already.
+func strategyDigest(strategy SourceStrategy) (string, error) {
+	if strategy.digest != "" {
+		return strategy.digest, nil
+	}
+	return sourceFactsDigest(strategy)
 }
 
 func sourceFactsDigest(strategy SourceStrategy) (string, error) {

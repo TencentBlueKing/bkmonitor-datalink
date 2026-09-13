@@ -579,7 +579,22 @@ func TestSourceReconcilerReturnsPublicationConflictWinner(t *testing.T) {
 		t.Fatal(err)
 	}
 	compiler, stateSemantics := runtimePlanCompiler(t)
-	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, stateSemantics)
+	// The competing publication is injected between the round's build and its
+	// publish, through the Catalog validator: that hook runs every round,
+	// whereas the planner is not consulted for a document the reconciler
+	// compiled in an earlier round, so a race injected through the planner
+	// would silently never happen on the confirming round.
+	winnerCatalog := validCatalog(t, 81)
+	var winner controlplane.PublishedSnapshot
+	raceArmed := false
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, stateSemantics, func(controlplane.Catalog) error {
+		if !raceArmed || winner.Publication != (controlplane.SnapshotPublicationRef{}) {
+			return nil
+		}
+		var publishErr error
+		winner, _, publishErr = repository.PublishCatalog(ctx, winnerCatalog)
+		return publishErr
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -598,19 +613,8 @@ func TestSourceReconcilerReturnsPublicationConflictWinner(t *testing.T) {
 	if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
 		t.Fatalf("changed pending=(%#v, %v)", result, err)
 	}
-	winnerCatalog := validCatalog(t, 81)
-	var winner controlplane.PublishedSnapshot
-	winnerPlanner := queryPlannerFunc(func(ctx context.Context, source controlplane.PrimaryQuerySource) (execution.QueryPlanFacts, error) {
-		if winner.Publication == (controlplane.SnapshotPublicationRef{}) {
-			var publishErr error
-			winner, _, publishErr = repository.PublishCatalog(ctx, winnerCatalog)
-			if publishErr != nil {
-				return execution.QueryPlanFacts{}, publishErr
-			}
-		}
-		return queryFacts(t), nil
-	})
-	result, err := reconciler.Refresh(ctx, source, winnerPlanner)
+	raceArmed = true
+	result, err := reconciler.Refresh(ctx, source, planner)
 	if err != nil || result.Status != controlplane.SourceRefreshPublicationConflict || result.Publication != winner.Publication {
 		t.Fatalf("publication conflict=(%#v, %v), winner=%#v", result, err, winner)
 	}

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -27,6 +28,11 @@ type SourceStrategy struct {
 	Document          json.RawMessage
 	Identity          SourceIdentity
 	SourceDisposition *ObjectDisposition
+	// digest is the source facts digest the observation computed for this
+	// strategy, kept so that neither the observation id nor the candidate
+	// cache hashes the document a second time. Empty means not computed yet;
+	// strategyDigest then computes it.
+	digest string
 }
 
 type PrimaryQuerySource struct {
@@ -51,6 +57,10 @@ type AlgorithmDependencyQueryCompiler interface {
 type BuildRequest struct {
 	Strategies []SourceStrategy
 	Planner    PrimaryQueryCompiler
+	// Cache, when set, hands back what an earlier round compiled from the
+	// same source document instead of compiling it again. Nil compiles every
+	// strategy, which is what every round did before the cache existed.
+	Cache *CandidateCache
 	// OutputProtocol is the deployment's wire format choice, frozen into every
 	// Plan this build produces. Empty means the revision decides, which is what
 	// the process did before the choice existed.
@@ -114,6 +124,7 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 	if request.Planner == nil || request.Strategies == nil {
 		return Catalog{}, errors.New("alarmd controlplane: incomplete catalog build request")
 	}
+	request.Cache.beginRound(request.OutputProtocol)
 	observationID, err := deriveObservationID(request.Strategies)
 	if err != nil {
 		return Catalog{}, err
@@ -173,7 +184,7 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 			catalog.Dispositions = append(catalog.Dispositions, disposition)
 			continue
 		}
-		candidate, err := buildCandidate(ctx, request.Planner, source, request.OutputProtocol)
+		candidate, err := request.Cache.build(ctx, request.Planner, source, request.OutputProtocol)
 		if err != nil {
 			if len(candidate.dispositions) > 0 {
 				catalog.Dispositions = append(catalog.Dispositions, candidate.dispositions...)
@@ -252,7 +263,140 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 	if err != nil {
 		return Catalog{}, err
 	}
+	request.Cache.endRound()
 	return catalog, nil
+}
+
+// CandidateCache keeps what buildCandidate produced for each source document
+// across rounds, keyed by the source facts digest.
+//
+// Every round used to compile every active strategy again, although the
+// document of almost all of them had not changed since the previous round:
+// on the shadow deployment that is a thousand compilations per refresh, and
+// on the largest target deployment it is tens of thousands and more CPU than
+// one leader has. The digest already decides the observation id, so a
+// strategy whose digest is unchanged is by definition the same input to the
+// compiler, and the compiler is a pure function of that input, the wire
+// protocol and the binary.
+//
+// What is cached is the compiler's output before the retention pass. That
+// pass takes a copy of the Plan, replaces its slices with fresh ones before
+// it appends to any of them, and never writes into the cached copy, which is
+// what allows the round's Catalog and the cache to share the compiled Plan
+// rather than copy it.
+//
+// The cache holds exactly the strategies the last successful round saw: a
+// strategy that left the active set, or whose document changed and so got
+// another digest, is dropped at the end of the round. A round that fails
+// part-way leaves the cache as it was.
+//
+// One round runs at a time by construction (the control leader's refresh
+// loop); the mutex only keeps a stray concurrent build from corrupting the
+// maps.
+type CandidateCache struct {
+	mu       sync.Mutex
+	protocol string
+	entries  map[string]cachedCandidate
+	seen     map[string]struct{}
+	compiled int
+	reused   int
+}
+
+type cachedCandidate struct {
+	candidate sourceCandidate
+	err       error
+}
+
+func NewCandidateCache() *CandidateCache {
+	return &CandidateCache{entries: make(map[string]cachedCandidate)}
+}
+
+// beginRound opens the round's bookkeeping. The wire protocol is part of
+// what the compiler closes over, so a change of protocol empties the cache
+// rather than keying entries by it: the protocol is set once at assembly and
+// a second value here means a misconfiguration worth paying one full round.
+func (cache *CandidateCache) beginRound(protocol string) {
+	if cache == nil {
+		return
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.protocol != protocol {
+		cache.entries = make(map[string]cachedCandidate)
+		cache.protocol = protocol
+	}
+	cache.seen = make(map[string]struct{}, len(cache.entries))
+	cache.compiled, cache.reused = 0, 0
+}
+
+// build returns what the compiler produces for source, from the cache when an
+// earlier round compiled the same document. Errors are cached with the
+// candidate: a document the compiler rejects is rejected the same way every
+// round, and recompiling it each time only to reject it again is the cost
+// this cache exists to remove.
+func (cache *CandidateCache) build(ctx context.Context, planner PrimaryQueryCompiler, source SourceStrategy, protocol string) (sourceCandidate, error) {
+	if cache == nil {
+		return buildCandidate(ctx, planner, source, protocol)
+	}
+	digest, err := strategyDigest(source)
+	if err != nil {
+		return buildCandidate(ctx, planner, source, protocol)
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.seen != nil {
+		cache.seen[digest] = struct{}{}
+	}
+	if entry, ok := cache.entries[digest]; ok {
+		cache.reused++
+		return entry.candidate, entry.err
+	}
+	candidate, err := buildCandidate(ctx, planner, source, protocol)
+	cache.entries[digest] = cachedCandidate{candidate: candidate, err: err}
+	cache.compiled++
+	return candidate, err
+}
+
+// endRound drops every entry the round did not ask for, so the cache holds
+// exactly the active strategies and nothing that left or changed.
+func (cache *CandidateCache) endRound() {
+	if cache == nil {
+		return
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.seen == nil {
+		return
+	}
+	for digest := range cache.entries {
+		if _, ok := cache.seen[digest]; !ok {
+			delete(cache.entries, digest)
+		}
+	}
+	cache.seen = nil
+}
+
+// Stats reports how many strategies the last round compiled and how many it
+// took from an earlier round. The two add up to the strategies the round
+// asked the compiler about, which excludes the ones the source itself
+// reported as incomplete.
+func (cache *CandidateCache) Stats() (compiled, reused int) {
+	if cache == nil {
+		return 0, 0
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return cache.compiled, cache.reused
+}
+
+// Len reports how many compiled strategies the cache holds.
+func (cache *CandidateCache) Len() int {
+	if cache == nil {
+		return 0
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return len(cache.entries)
 }
 
 type lastGoodPlan struct {

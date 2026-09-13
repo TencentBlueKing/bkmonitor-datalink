@@ -26,6 +26,7 @@ type phaseTwoMetrics struct {
 	capacity                     *prometheus.CounterVec
 	sourceObservations           *prometheus.CounterVec
 	sourceRefreshes              *prometheus.CounterVec
+	sourceCompiles               *prometheus.CounterVec
 	activationFailures           *prometheus.CounterVec
 	ownedQueryGroups             *prometheus.GaugeVec
 	ownershipTransitions         *prometheus.CounterVec
@@ -96,6 +97,10 @@ var phaseTwoBudgets = func() []string {
 }()
 var phaseTwoCapacityResults = []string{"admitted", "rejected", "other"}
 var phaseTwoSourceResults = []string{"degraded", "recovered"}
+
+// sourceCompileResults is the closed vocabulary of how a refresh round
+// obtained each strategy's compilation.
+var sourceCompileResults = []string{"compiled", "reused"}
 var phaseTwoReadyQueueKinds = []string{"normal", "recovery"}
 var phaseTwoQueryInflightKinds = []string{"normal", "retry", "replay", "probe"}
 var phaseTwoQueryAdmissionResults = []observability.Result{
@@ -139,6 +144,12 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_refresh_total",
 			Help: "Phase-two source refresh outcomes by fixed status.",
 		}, []string{"status"}),
+		sourceCompiles: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_compile_total",
+			Help: "Strategies a source refresh round asked the compiler about, by whether they were compiled " +
+				"or taken from an earlier round's compilation of the same document; the two add up to the " +
+				"strategies of the round, and a round whose source did not change is all reused.",
+		}, []string{"result"}),
 		activationFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "activation_failure_total",
 			Help: "Control activation failures by fixed stage and class.",
@@ -203,6 +214,9 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	for _, kind := range observability.StateGenerationSkewKinds {
 		metrics.stateGenerationSkew.WithLabelValues(kind)
 	}
+	for _, result := range sourceCompileResults {
+		metrics.sourceCompiles.WithLabelValues(result)
+	}
 	metrics.legacyMigration = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_total", Help: "One-time legacy Active QG migration outcomes."}, []string{"result", "reason_class"})
 	metrics.legacyMigrationScan = prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_scan_keys", Help: "Redis keys scanned by one-time legacy Active QG migration.", Buckets: legacyMigrationScanBuckets})
 	metrics.legacyMigrationTime = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_duration_seconds", Help: "One-time legacy Active QG migration duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
@@ -257,7 +271,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.queryCooldown,
 		m.slotReadiness.slack, m.slotReadiness.boundary,
 		m.slotTiming,
-		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations, m.sourceRefreshes,
+		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations, m.sourceRefreshes, m.sourceCompiles,
 		m.activationFailures, m.unmappedSeverity,
 		m.ownedQueryGroups, m.ownershipTransitions,
 		m.queryAdmission,
@@ -285,6 +299,12 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 	m.observeSlotTiming(observation)
 	if facts := observation.SourceRefresh; facts != nil {
 		m.sourceRefreshes.WithLabelValues(string(facts.Status)).Inc()
+		if facts.CompiledStrategies > 0 {
+			m.sourceCompiles.WithLabelValues("compiled").Add(float64(facts.CompiledStrategies))
+		}
+		if facts.ReusedStrategies > 0 {
+			m.sourceCompiles.WithLabelValues("reused").Add(float64(facts.ReusedStrategies))
+		}
 	}
 	if facts := observation.ActivationFailure; facts != nil {
 		m.activationFailures.WithLabelValues(string(facts.Stage), string(facts.Class)).Inc()

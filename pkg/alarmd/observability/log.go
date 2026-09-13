@@ -228,6 +228,10 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		if facts.PublicationEpoch > 0 {
 			attributes = append(attributes, slog.Uint64("publication_epoch", facts.PublicationEpoch))
 		}
+		attributes = append(attributes,
+			slog.Int("source_compiled_strategies", facts.CompiledStrategies),
+			slog.Int("source_reused_strategies", facts.ReusedStrategies),
+		)
 		// Named apart from snapshot_revision on purpose: a round that published
 		// nothing still knows what the fleet is executing, and writing that under
 		// the published name is what makes a normal lag read as a stall.

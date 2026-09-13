@@ -708,6 +708,7 @@ func sourceRefreshIdentity(
 	return &observability.SourceRefreshFacts{
 		Status: observability.SourceRefreshStatus(result.Status), ObservationID: result.Observation,
 		SnapshotRevision: string(publication.SnapshotRevision), PublicationEpoch: publication.PublicationEpoch,
+		CompiledStrategies: result.CompiledStrategies, ReusedStrategies: result.ReusedStrategies,
 	}
 }
 

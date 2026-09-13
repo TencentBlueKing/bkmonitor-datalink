@@ -479,6 +479,13 @@ type SourceRefreshFacts struct {
 	NewQueryGroups         int
 	AddedQueryGroups       int
 	RetiredQueryGroups     int
+	// CompiledStrategies and ReusedStrategies say how the round's Catalog was
+	// built: how many strategies went through the compiler and how many were
+	// taken from an earlier round's compilation of the same document. Their
+	// sum is the strategies the round asked the compiler about; a round whose
+	// source did not change reports all of them as reused.
+	CompiledStrategies int
+	ReusedStrategies   int
 }
 
 // ActivationFailureFacts carries fixed classification, bounded counts and a

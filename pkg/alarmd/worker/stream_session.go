@@ -1148,7 +1148,7 @@ func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry
 		if len(evaluated.Plans) != 1 || evaluated.Plans[0].Plan != due.Identity {
 			return errors.New("alarmd worker: incomplete named input produced an invalid Plan result")
 		}
-		mutation, mutationErr := stream.completionGapMutation(due, incomplete)
+		mutation, mutationErr := stream.completionGapMutationForOutcomes(due, incomplete, evaluated.Plans[0].LevelOutcomes)
 		if mutationErr != nil {
 			return mutationErr
 		}
@@ -1596,10 +1596,9 @@ func planCompletedFullEmpty(bindings []execution.NamedInputBinding, plan executi
 }
 
 // gapScopeReasonConflictError is the rejection of a Plan whose incomplete
-// named inputs of one gap scope carry different completion reasons. It names
-// the scope, the two inputs and their reasons: which pairs occur decides
-// whether one scope should carry several reasons or the inputs should be
-// scoped apart, and until they are read either change is a guess.
+// named inputs of one gap scope carry different completion reasons and no
+// evaluated outcome of that scope decides between them; see
+// completionGapReasons. It names the scope, the two inputs and their reasons.
 type gapScopeReasonConflictError struct {
 	plan          execution.PlanIdentity
 	scope         execution.GapScope
@@ -1639,25 +1638,128 @@ func (stream *streamedExecution) completionGapMutation(
 	due execution.DuePlan,
 	bindings []execution.NamedInputBinding,
 ) (execution.PlanGapMutation, error) {
-	reasons := make(map[execution.GapScope]execution.ReasonCode)
-	first := make(map[execution.GapScope]execution.NamedInputBinding)
+	return stream.completionGapMutationForOutcomes(due, bindings, nil)
+}
+
+// completionGapMutationForOutcomes builds the Plan gap mutation for a set of
+// incomplete bindings, deciding each scope's reason against the Level
+// outcomes the evaluator produced for the same Slot.
+func (stream *streamedExecution) completionGapMutationForOutcomes(
+	due execution.DuePlan,
+	bindings []execution.NamedInputBinding,
+	outcomes []execution.LevelOutcome,
+) (execution.PlanGapMutation, error) {
+	reasons, err := completionGapReasons(due, bindings, outcomes)
+	if err != nil {
+		return execution.PlanGapMutation{}, err
+	}
+	return stream.gapMutationForReasons(due, reasons)
+}
+
+// completionGapReasons decides the one reason each gap scope carries for a
+// set of incomplete bindings. A marker carries one reason per scope, and the
+// result contract reads it in two places: a degraded Level outcome needs a
+// marker of its scope with the outcome's own reason, and a PARTIAL input
+// needs a marker of its scope with that input's reason. Inputs of one scope
+// that agree decide the scope directly. Inputs that disagree, which two
+// inputs of one Level failing for different transient reasons do on every
+// replay after a restart, are decided by what the contract will compare the
+// marker with: the reason of the Level's UNKNOWN outcome, which the evaluator
+// took from one of these same inputs. That reason is taken when exactly one
+// outcome of the Level names it, it is one an input of the scope gave, and
+// no PARTIAL input of the scope carries another. Anything else is the
+// conflict, named with the two inputs it saw, since a marker that satisfies
+// one of the contract's comparisons would fail the other.
+func completionGapReasons(
+	due execution.DuePlan,
+	bindings []execution.NamedInputBinding,
+	outcomes []execution.LevelOutcome,
+) (map[execution.GapScope]execution.ReasonCode, error) {
+	members := make(map[execution.GapScope][]execution.NamedInputBinding)
+	order := make([]execution.GapScope, 0)
 	for _, binding := range bindings {
 		if binding.Consumer.Plan != due.Identity || binding.Completeness == execution.CompletenessFull {
 			continue
 		}
 		scope := execution.GapScope{LevelID: binding.Consumer.LevelID, HasLevel: binding.Consumer.HasLevel}
-		if previous, duplicate := reasons[scope]; duplicate && previous != binding.ReasonCode {
-			return execution.PlanGapMutation{}, &gapScopeReasonConflictError{plan: due.Identity, scope: scope, first: first[scope], second: binding}
+		if _, seen := members[scope]; !seen {
+			order = append(order, scope)
 		}
-		if _, seen := reasons[scope]; !seen {
-			first[scope] = binding
+		members[scope] = append(members[scope], binding)
+	}
+	if len(order) == 0 {
+		return nil, errors.New("alarmd worker: incomplete named input requires a gap scope")
+	}
+	reasons := make(map[execution.GapScope]execution.ReasonCode, len(order))
+	for _, scope := range order {
+		inputs := members[scope]
+		first := inputs[0]
+		disagreeing, found := firstDisagreeingReason(inputs)
+		if !found {
+			reasons[scope] = first.ReasonCode
+			continue
 		}
-		reasons[scope] = binding.ReasonCode
+		conflict := &gapScopeReasonConflictError{plan: due.Identity, scope: scope, first: first, second: disagreeing}
+		decided, ok := unknownOutcomeReason(due.Identity, outcomes, scope)
+		if !ok {
+			return nil, conflict
+		}
+		var carrier *execution.NamedInputBinding
+		for index := range inputs {
+			if inputs[index].ReasonCode == decided {
+				carrier = &inputs[index]
+				break
+			}
+		}
+		if carrier == nil {
+			return nil, conflict
+		}
+		for _, input := range inputs {
+			if input.Completeness == execution.CompletenessPartial && input.ReasonCode != decided {
+				return nil, &gapScopeReasonConflictError{plan: due.Identity, scope: scope, first: input, second: *carrier}
+			}
+		}
+		reasons[scope] = decided
 	}
-	if len(reasons) == 0 {
-		return execution.PlanGapMutation{}, errors.New("alarmd worker: incomplete named input requires a gap scope")
+	return reasons, nil
+}
+
+func firstDisagreeingReason(inputs []execution.NamedInputBinding) (execution.NamedInputBinding, bool) {
+	for _, input := range inputs[1:] {
+		if input.ReasonCode != inputs[0].ReasonCode {
+			return input, true
+		}
 	}
-	return stream.gapMutationForReasons(due, reasons)
+	return execution.NamedInputBinding{}, false
+}
+
+// unknownOutcomeReason is the reason of the one UNKNOWN outcome the evaluator
+// gave a Level scope, if the outcomes of that Level all say the same thing. A
+// Plan scope has no outcome of its own, and a Level whose series were given
+// different reasons decides nothing.
+func unknownOutcomeReason(
+	plan execution.PlanIdentity,
+	outcomes []execution.LevelOutcome,
+	scope execution.GapScope,
+) (execution.ReasonCode, bool) {
+	if !scope.HasLevel {
+		return "", false
+	}
+	decided := execution.ReasonCode("")
+	for _, outcome := range outcomes {
+		if outcome.Plan != plan || outcome.LevelID != scope.LevelID {
+			continue
+		}
+		if outcome.Outcome != execution.LevelOutcomeUnknown || outcome.ReasonCode == "" ||
+			outcome.ReasonCode == execution.ReasonCode(observability.ReasonNone) {
+			return "", false
+		}
+		if decided != "" && decided != outcome.ReasonCode {
+			return "", false
+		}
+		decided = outcome.ReasonCode
+	}
+	return decided, decided != ""
 }
 
 // gapMutationForReasons builds the Plan gap mutation that opens or

@@ -1663,11 +1663,14 @@ func TestRedisCatalogRepositoryRenewCurrentObjectsFailsAtomicallyOnInvalidMappin
 		missingIndex int
 		mutate       func(context.Context, *redis.Client, []string) error
 	}{
-		{name: "missing Snapshot payload", missingIndex: 0, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
-			return client.Del(ctx, keys[0]).Err()
+		// The current content renewal proves present is the catalog manifest;
+		// the snapshot body is renewed only while one is still written and
+		// its absence or corruption no longer decides the renewal.
+		{name: "missing catalog manifest", missingIndex: 4, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Del(ctx, keys[4]).Err()
 		}},
-		{name: "corrupt Snapshot payload", missingIndex: -1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
-			return client.Set(ctx, keys[0], "{", 2*time.Second).Err()
+		{name: "corrupt catalog manifest", missingIndex: -1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Set(ctx, keys[4], "{", 2*time.Second).Err()
 		}},
 		{name: "missing revision epoch mapping", missingIndex: 1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
 			return client.Del(ctx, keys[1]).Err()
@@ -1712,6 +1715,7 @@ func TestRedisCatalogRepositoryRenewCurrentObjectsFailsAtomicallyOnInvalidMappin
 				prefix + ":snapshot_epoch:" + string(state.Current.SnapshotRevision),
 				prefix + ":publication:" + strconv.FormatUint(state.Current.PublicationEpoch, 10),
 				prefix + ":active_qg_set:" + state.ActiveQGSetRef.Digest,
+				prefix + ":manifest:" + string(state.Current.SnapshotRevision),
 			}
 			for _, key := range keys {
 				if err := client.PExpire(ctx, key, 2*time.Second).Err(); err != nil {
@@ -1812,7 +1816,9 @@ func TestScheduleActivationReconcilerClassifiesInjectedDependencyIOByStage(t *te
 			publication: func(f activationFailureFixture) controlplane.SnapshotPublicationRef { return f.current },
 		},
 		{
-			name: "candidate snapshot load", command: "mget", argContains: ":snapshot:",
+			// The candidate is described through its manifest since the catalog
+			// index replaced the body read; the injection point moves with it.
+			name: "candidate manifest load", command: "get", argContains: ":manifest:",
 			wantStage:   controlplane.ActivationFailureStageCandidateLoad,
 			publication: func(f activationFailureFixture) controlplane.SnapshotPublicationRef { return f.candidate },
 		},
@@ -2107,35 +2113,11 @@ func TestScheduleActivationReconcilerMigratesLegacyAfterOldSnapshotExpiresAndQGI
 	if !bytes.Equal(activationBefore, activationAfterCancel) || !bytes.Equal(scheduleBefore, scheduleAfterCancel) {
 		t.Fatal("parent context cancellation changed Activation or Schedule")
 	}
-	if err := repository.ConfigureLegacyMigration(50000, time.Nanosecond); err != nil {
-		t.Fatal(err)
-	}
-	timeoutReconciler, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time { return time.Unix(180, 0) })
-	if _, err := timeoutReconciler.Ensure(ctx, emptySnapshot.Publication); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("migration timeout error=%v", err)
-	}
-	activationAfterTimeout, _ := client.Get(ctx, prefix+":activation").Bytes()
-	scheduleAfterTimeout, _ := client.Get(ctx, scheduleKey).Bytes()
-	if !bytes.Equal(activationBefore, activationAfterTimeout) || !bytes.Equal(scheduleBefore, scheduleAfterTimeout) {
-		t.Fatal("migration timeout changed Activation or Schedule")
-	}
-	if err := client.Set(ctx, prefix+":schedule_timeline:extra", `{}`, 0).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := repository.ConfigureLegacyMigration(1, 30*time.Second); err != nil {
-		t.Fatal(err)
-	}
+	// A legacy activation whose body expired is upgraded through the catalog
+	// manifest that every publication since the object catalog carries, so no
+	// timeline scan runs and neither the scan timeout nor its key limit is
+	// reached; the scan stays the path for a publication without a manifest.
 	reconciler, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time { return time.Unix(180, 0) })
-	if _, err := reconciler.Ensure(ctx, emptySnapshot.Publication); err == nil {
-		t.Fatal("max_scan_keys overflow must fail closed")
-	}
-	activationAfter, _ := client.Get(ctx, prefix+":activation").Bytes()
-	scheduleAfter, _ := client.Get(ctx, scheduleKey).Bytes()
-	if !bytes.Equal(activationBefore, activationAfter) || !bytes.Equal(scheduleBefore, scheduleAfter) {
-		t.Fatal("scan overflow changed Activation or Schedule")
-	}
-	_ = client.Del(ctx, prefix+":schedule_timeline:extra").Err()
-	_ = repository.ConfigureLegacyMigration(50000, 30*time.Second)
 	state, err := reconciler.Ensure(ctx, emptySnapshot.Publication)
 	if err != nil {
 		t.Fatal(err)
@@ -2147,10 +2129,8 @@ func TestScheduleActivationReconcilerMigratesLegacyAfterOldSnapshotExpiresAndQGI
 	if err != nil || len(groups) != 0 {
 		t.Fatalf("active set=(%#v,%v)", groups, err)
 	}
-	if len(migrationObservations) != 3 || migrationObservations[0].LegacyMigration.Result != "canceled" ||
-		migrationObservations[1].LegacyMigration.Result != "fail_closed" || migrationObservations[2].LegacyMigration.Result != "success" ||
-		migrationObservations[2].LegacyMigration.ScanKeys == 0 {
-		t.Fatalf("legacy migration observations=%#v", migrationObservations)
+	if len(migrationObservations) != 0 {
+		t.Fatalf("legacy migration scanned timelines although the manifest was present: %#v", migrationObservations)
 	}
 }
 

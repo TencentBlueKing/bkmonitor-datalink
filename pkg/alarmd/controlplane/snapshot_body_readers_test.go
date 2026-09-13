@@ -89,6 +89,8 @@ func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 			}
 			return err
 		}},
+		{"RenewCurrentActivationObjects", func() error { return harness.repository.RenewCurrentActivationObjects(ctx) }},
+		{"ScheduleActivationReconciler.Ensure(next publication)", func() error { _, err := reconciler.Ensure(ctx, next.Publication); return err }},
 		{"LoadActiveQueryGroupSet", func() error {
 			if state.ActiveQGSetRef.Digest == "" {
 				return errors.New("initial activation wrote no active Query Group set reference")
@@ -102,7 +104,8 @@ func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 	}
 	for _, reader := range objectReaders {
 		if err := reader.read(); err != nil {
-			t.Errorf("%s needs the snapshot body: %v", reader.name, err)
+			failure, typed := controlplane.ActivationFailureFromError(err)
+			t.Errorf("%s needs the snapshot body: %v (activation failure %#v typed=%v)", reader.name, err, failure, typed)
 		} else {
 			t.Logf("%s answers without the snapshot body", reader.name)
 		}
@@ -120,8 +123,6 @@ func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 			return err
 		}},
 		{"LoadPlan", func() error { _, err := harness.repository.LoadPlan(ctx, revision, manifest.Plans[0].Plan); return err }},
-		{"RenewCurrentActivationObjects", func() error { return harness.repository.RenewCurrentActivationObjects(ctx) }},
-		{"ScheduleActivationReconciler.Ensure(next publication)", func() error { _, err := reconciler.Ensure(ctx, next.Publication); return err }},
 	}
 	for _, reader := range bodyReaders {
 		err := reader.read()
@@ -133,5 +134,14 @@ func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 		default:
 			t.Errorf("%s failed without the snapshot body for another reason: %v", reader.name, err)
 		}
+	}
+	// Every body read is counted at its attempt, by the reader that made
+	// it. The first activation audited the index against the body (one in
+	// sixteen, by design), the inventory above read one Query Group and one
+	// Plan, and nothing fell back to the body for a publication without a
+	// manifest or ran the legacy cleanup.
+	reads := harness.repository.ControlReadCacheStats().BodyReads
+	if reads != (controlplane.ControlSnapshotBodyReads{IndexAudit: 1, QueryGroup: 1, Plan: 1}) {
+		t.Fatalf("snapshot body reads = %+v, want one audit, one Query Group and one Plan read", reads)
 	}
 }

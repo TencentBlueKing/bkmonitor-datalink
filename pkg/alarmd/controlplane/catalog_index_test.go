@@ -7,7 +7,9 @@ package controlplane_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -50,9 +52,9 @@ func TestCatalogIndexReadsOnlyWhatItDoesNotKnowAndAuditsAgainstTheBody(t *testin
 		t.Fatalf("Ensure(first) on the publisher error = %v", err)
 	}
 	stats := publisher.ControlReadCacheStats()
-	if stats.Index.Hits != 2 || stats.Index.Misses != 0 || stats.IndexAudit.Samples != 2 || stats.IndexAudit.Agreed != 2 ||
+	if stats.Index.Hits == 0 || stats.Index.Misses != 0 || stats.IndexAudit.Samples != 2 || stats.IndexAudit.Agreed != 2 ||
 		stats.IndexAudit.Missed != 0 || stats.IndexAudit.OverNamed != 0 {
-		t.Fatalf("publisher index stats after its own publication = %+v / %+v, want two reused entries and two agreed audits", stats.Index, stats.IndexAudit)
+		t.Fatalf("publisher index stats after its own publication = %+v / %+v, want no object read and two agreed audits", stats.Index, stats.IndexAudit)
 	}
 
 	// A second process inherits the publication: cold, it reads both
@@ -64,7 +66,7 @@ func TestCatalogIndexReadsOnlyWhatItDoesNotKnowAndAuditsAgainstTheBody(t *testin
 		t.Fatalf("Ensure(second) on the inheritor error = %v", err)
 	}
 	stats = inheritor.ControlReadCacheStats()
-	if stats.Index.Hits != 0 || stats.Index.Misses != 2 || stats.IndexAudit.Samples != 2 || stats.IndexAudit.Agreed != 2 || stats.IndexAudit.Missed != 0 {
+	if stats.Index.Misses != 2 || stats.IndexAudit.Samples != 2 || stats.IndexAudit.Agreed != 2 || stats.IndexAudit.Missed != 0 {
 		t.Fatalf("inheritor index stats after a cold load = %+v / %+v, want two objects read and two agreed audits", stats.Index, stats.IndexAudit)
 	}
 	// A later publication changes one Query Group: one entry is reused, one
@@ -74,8 +76,10 @@ func TestCatalogIndexReadsOnlyWhatItDoesNotKnowAndAuditsAgainstTheBody(t *testin
 		t.Fatalf("Ensure(third) on the inheritor error = %v", err)
 	}
 	stats = inheritor.ControlReadCacheStats()
-	if stats.Index.Hits != 1 || stats.Index.Misses != 3 || stats.IndexAudit.Samples != 4 || stats.IndexAudit.Agreed != 4 || stats.IndexAudit.Missed != 0 {
-		t.Fatalf("inheritor index stats after a one-group change = %+v / %+v, want one reuse, one more read, four agreed audits", stats.Index, stats.IndexAudit)
+	// The audit is sampled: the first activation of a process and every
+	// sixteenth after it, so this activation adds no sample.
+	if stats.Index.Misses != 3 || stats.IndexAudit.Samples != 2 || stats.IndexAudit.Agreed != 2 || stats.IndexAudit.Missed != 0 {
+		t.Fatalf("inheritor index stats after a one-group change = %+v / %+v, want one more object read and no new audit sample", stats.Index, stats.IndexAudit)
 	}
 
 	// The content the index describes is the content the body carries:
@@ -165,5 +169,66 @@ func TestActivationRecordsAreAPureFunctionOfPublishedContent(t *testing.T) {
 			states[0].Plans[index].Fact.Selected.StateGeneration != states[1].Plans[index].Fact.Selected.StateGeneration {
 			t.Fatalf("state generation differs for %+v", states[0].Plans[index].Fact.Plan)
 		}
+	}
+}
+
+// Content a process remembers for a publication is served only while the
+// publication stands: a manifest that is gone, or an occurrence that names
+// another revision, is found on the very next read, as the body read found
+// them.
+func TestRememberedPublishedContentIsProbedOnEveryRead(t *testing.T) {
+	harness := newObjectCatalogHarness(t)
+	ctx := harness.ctx
+	snapshot := harness.publish(t, catalogWithSchedule(t, objectCatalogTwoGroups(t, 80), 60, 0))
+	publication := snapshot.Publication
+	repository := harness.newRepository(t)
+	first, err := repository.LoadPublishedContent(ctx, publication)
+	if err != nil || len(first.Groups) != 2 {
+		t.Fatalf("cold LoadPublishedContent = (%d groups, %v), want both Query Groups", len(first.Groups), err)
+	}
+	misses := repository.ControlReadCacheStats().Index.Misses
+	if misses != 2 {
+		t.Fatalf("cold read object misses=%d, want both objects read once", misses)
+	}
+	second, err := repository.LoadPublishedContent(ctx, publication)
+	if err != nil || !reflect.DeepEqual(first, second) || repository.ControlReadCacheStats().Index.Misses != misses {
+		t.Fatalf("second read = (%+v, %v) misses=%d, want the remembered content and no object read", second, err, repository.ControlReadCacheStats().Index.Misses)
+	}
+
+	manifestKey := harness.prefix + ":manifest:" + string(publication.SnapshotRevision)
+	manifest, err := harness.client.Get(ctx, manifestKey).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := harness.client.Del(ctx, manifestKey).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.LoadPublishedContent(ctx, publication); !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+		t.Fatalf("read without the manifest error = %v, want snapshot unavailable", err)
+	}
+	if err := harness.client.Set(ctx, manifestKey, manifest, time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.LoadPublishedContent(ctx, publication); err != nil {
+		t.Fatalf("read with the manifest restored error = %v", err)
+	}
+
+	occurrenceKey := harness.prefix + ":publication:" + strconv.FormatUint(publication.PublicationEpoch, 10)
+	occurrence, err := harness.client.Get(ctx, occurrenceKey).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := harness.client.Set(ctx, occurrenceKey, "another-revision", time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	var corrupt *controlplane.PersistedSnapshotCorruptError
+	if _, err := repository.LoadPublishedContent(ctx, publication); !errors.As(err, &corrupt) {
+		t.Fatalf("read under an occurrence naming another revision error = %v, want persisted corruption", err)
+	}
+	if err := harness.client.Set(ctx, occurrenceKey, occurrence, time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.LoadPublishedContent(ctx, publication); err != nil {
+		t.Fatalf("read with the occurrence restored error = %v", err)
 	}
 }

@@ -79,3 +79,47 @@ func TestControlCachePublishesOccupancyBesideItsBudget(t *testing.T) {
 		}
 	}
 }
+
+// The remaining readers of the snapshot body are published as one series
+// each, from the bound source when there is one and as zeros before any is
+// bound, so a reader that never read shows a zero and not an absence.
+func TestSnapshotBodyReadsPublishEveryReader(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	gather := func() map[string]float64 {
+		t.Helper()
+		families, err := recorder.registry.Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		series := map[string]float64{}
+		for _, family := range families {
+			if family.GetName() != "bkmonitor_alarmd_snapshot_body_read_total" {
+				continue
+			}
+			for _, metric := range family.Metric {
+				series[metric.Label[0].GetValue()] = metric.GetCounter().GetValue()
+			}
+		}
+		return series
+	}
+	unbound := gather()
+	if len(unbound) != len(SnapshotBodyReaders) {
+		t.Fatalf("unbound readers published = %v, want every reader at zero", unbound)
+	}
+	for reader, value := range unbound {
+		if value != 0 {
+			t.Fatalf("unbound reader %s = %v, want 0", reader, value)
+		}
+	}
+	recorder.SetSnapshotBodyReadSource(func() []SnapshotBodyReadCounts {
+		return []SnapshotBodyReadCounts{
+			{Reader: SnapshotBodyReaderIndexAudit, Reads: 3},
+			{Reader: SnapshotBodyReaderQueryGroup, Reads: 1},
+		}
+	})
+	bound := gather()
+	if bound[SnapshotBodyReaderIndexAudit] != 3 || bound[SnapshotBodyReaderQueryGroup] != 1 ||
+		bound[SnapshotBodyReaderActivationContent] != 0 || bound[SnapshotBodyReaderPlan] != 0 || bound[SnapshotBodyReaderLegacyCleanup] != 0 {
+		t.Fatalf("bound readers published = %v", bound)
+	}
+}

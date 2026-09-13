@@ -333,6 +333,7 @@ type productionCatalogRepository interface {
 	RenewCurrentActivationObjects(context.Context) error
 	LoadSnapshot(context.Context, execution.SnapshotRevision) (controlplane.PublishedSnapshot, error)
 	LoadPublishedSnapshot(context.Context, controlplane.SnapshotPublicationRef) (controlplane.PublishedSnapshot, error)
+	LoadPublishedContent(context.Context, controlplane.SnapshotPublicationRef) (controlplane.PublishedContent, error)
 }
 
 type productionScheduleProjection interface {
@@ -977,15 +978,15 @@ func (runtime *productionPhaseTwoControl) loadCurrentActiveQueryGroups(
 		// Followers never migrate legacy Activation state. They may read its
 		// current immutable Snapshot while the Control Leader performs the
 		// one-time v1-to-v2 upgrade.
-		var snapshot controlplane.PublishedSnapshot
-		snapshot, err = runtime.dependencies.Repository.LoadPublishedSnapshot(ctx, state.Current)
+		var content controlplane.PublishedContent
+		content, err = runtime.dependencies.Repository.LoadPublishedContent(ctx, state.Current)
 		if err == nil {
-			queryGroups = make([]execution.QueryGroupIdentity, len(snapshot.QueryGroups))
-			for index, queryGroup := range snapshot.QueryGroups {
-				if queryGroup.Identity == "" {
+			queryGroups = make([]execution.QueryGroupIdentity, 0, len(content.Groups))
+			for identity := range content.Groups {
+				if identity == "" {
 					return nil, errors.New("phase-two active Snapshot contains an empty Query Group")
 				}
-				queryGroups[index] = queryGroup.Identity
+				queryGroups = append(queryGroups, identity)
 			}
 		}
 	}

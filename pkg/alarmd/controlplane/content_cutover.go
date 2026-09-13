@@ -185,6 +185,7 @@ func (repository *RedisCatalogRepository) loadPublicationContent(ctx context.Con
 	if !errors.Is(err, ErrCatalogManifestUnavailable) {
 		return activatedContent{}, err
 	}
+	repository.controlReads.bodyReads.activationContent.Add(1)
 	snapshot, err := repository.LoadPublishedSnapshot(ctx, activation.Current)
 	if err == nil {
 		groups, err := queryGroupMap(snapshot.QueryGroups)

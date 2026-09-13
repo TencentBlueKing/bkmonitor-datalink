@@ -1177,6 +1177,13 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingInitialFreezeL
 	if err := redisClient.Del(ctx, snapshotKey, objectKeys[failed]).Err(); err != nil {
 		t.Fatal(err)
 	}
+	// The Leader of this bundle compiled the object and still holds it in
+	// the process cache, as it should: the object is immutable. The Worker
+	// under test is one on another replica, which comes to the Segment cold.
+	repository := bundle.dependencies.Control.(*productionPhaseTwoControl).dependencies.Repository.(*controlplane.RedisCatalogRepository)
+	if err := repository.ConfigureObjectCache(1, 1); err != nil {
+		t.Fatal(err)
+	}
 	failedResult, failedAttempted, failedErr := bundle.runners[failed].runner.RunOne(ctx)
 	if failedErr != nil || !failedAttempted || failedResult.Completed || failedResult.Result != observability.ResultRetrying ||
 		failedResult.ReasonCode != execution.ReasonCode(contract.ReasonSlotSourceRetry) {

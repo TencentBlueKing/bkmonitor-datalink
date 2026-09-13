@@ -55,11 +55,14 @@ func (activator *InitialScheduleActivator) Ensure(
 	}
 
 	failureStage = ActivationFailureStageCandidateLoad
-	snapshot, err := activator.repository.LoadPublishedSnapshot(ctx, publication)
+	published, err := activator.repository.loadPublishedGroups(ctx, publication)
 	if err != nil {
 		return ActivationState{}, err
 	}
-	activator.repository.auditCatalogIndex(ctx, publication, snapshot)
+	if err := activator.repository.materialize(ctx, published, published.identities()); err != nil {
+		return ActivationState{}, err
+	}
+	activator.repository.maybeAuditCatalogIndex(ctx, publication)
 	failureStage, failureClass = ActivationFailureStageCompile, ActivationFailureClassOther
 	boundary := execution.EvaluationTime(activator.now().Unix())
 	if boundary <= 0 {
@@ -67,7 +70,11 @@ func (activator *InitialScheduleActivator) Ensure(
 	}
 
 	failureClass = ActivationFailureClassCorrupt
-	records, segments, err := compilePublishedActivation(ctx, activator.compiler, activator.stateSemantics, snapshot, boundary)
+	groups, err := published.loaded(published.identities())
+	if err != nil {
+		return ActivationState{}, err
+	}
+	records, segments, err := compilePublishedGroups(ctx, activator.compiler, activator.stateSemantics, publication, groups, boundary)
 	if err != nil {
 		return ActivationState{}, err
 	}

@@ -131,11 +131,45 @@ type PublishedContent struct {
 // a cold load of the index.
 const catalogIndexBatch = 500
 
+// catalogIndexAuditEvery is how often an activation audits the index
+// against the snapshot body while the body is still written: the first
+// activation of a process, because a cold-loaded index is the one most
+// worth checking, and every sixteenth after it, the same stride the delta
+// audit uses. An audit costs one whole-body read, which is exactly the
+// read the index exists to remove, so it cannot run every time. A body
+// that is no longer written skips the audit rather than failing it.
+const catalogIndexAuditEvery = 16
+
+// publishedContentMemo remembers the content of the publication read last:
+// an activation asks for the same publication many times in one round (the
+// reconcile, the cutover, every schedule it materializes), and a
+// publication's content never changes once written.
+type publishedContentMemo struct {
+	mu          sync.Mutex
+	publication SnapshotPublicationRef
+	content     PublishedContent
+}
+
+func (memo *publishedContentMemo) lookup(publication SnapshotPublicationRef) (PublishedContent, bool) {
+	memo.mu.Lock()
+	defer memo.mu.Unlock()
+	if memo.publication != publication || memo.publication == (SnapshotPublicationRef{}) {
+		return PublishedContent{}, false
+	}
+	return memo.content, true
+}
+
+func (memo *publishedContentMemo) store(content PublishedContent) {
+	memo.mu.Lock()
+	defer memo.mu.Unlock()
+	memo.publication, memo.content = content.Publication, content
+}
+
 // LoadPublishedContent describes a publication from its manifest and the
 // catalog index, reading from the object catalog only the Query Groups the
 // index does not know for this revision. A missing manifest reads as an
 // unavailable snapshot, so callers keep the error they had when they read
-// the body.
+// the body. The content read last is served from memory.
 func (repository *RedisCatalogRepository) LoadPublishedContent(
 	ctx context.Context,
 	publication SnapshotPublicationRef,
@@ -145,6 +179,21 @@ func (repository *RedisCatalogRepository) LoadPublishedContent(
 	}
 	if publication.validate() != nil {
 		return PublishedContent{}, errors.New("alarmd controlplane: complete publication is required")
+	}
+	if content, ok := repository.contentMemo.lookup(publication); ok {
+		// The remembered content is immutable, but it stands only while the
+		// manifest it came from is still there and the publication still
+		// occurs; both are probed on every read, as the body read did.
+		present, err := repository.client.Exists(ctx, repository.catalogManifestKey(publication.SnapshotRevision)).Result()
+		if err != nil {
+			return PublishedContent{}, activationDependencyIO(err)
+		}
+		if present == 1 {
+			if err := repository.validateMemoizedPublication(ctx, publication); err != nil {
+				return PublishedContent{}, err
+			}
+			return content, nil
+		}
 	}
 	manifest, err := repository.LoadCatalogManifest(ctx, publication.SnapshotRevision)
 	if errors.Is(err, ErrCatalogManifestUnavailable) {
@@ -172,7 +221,30 @@ func (repository *RedisCatalogRepository) LoadPublishedContent(
 	if err != nil {
 		return PublishedContent{}, err
 	}
-	return contentFromManifest(publication, manifest, indexed.entries)
+	content, err := contentFromManifest(publication, manifest, indexed.entries)
+	if err != nil {
+		return PublishedContent{}, err
+	}
+	repository.contentMemo.store(content)
+	return content, nil
+}
+
+// validateMemoizedPublication re-checks the epoch mapping and the
+// publication occurrence of a remembered publication.
+func (repository *RedisCatalogRepository) validateMemoizedPublication(ctx context.Context, publication SnapshotPublicationRef) error {
+	epochText, err := repository.client.Get(ctx, repository.epochForRevisionKey(publication.SnapshotRevision)).Result()
+	if errors.Is(err, redis.Nil) {
+		return ErrSnapshotUnavailable
+	}
+	if err != nil {
+		return activationDependencyIO(err)
+	}
+	epoch, err := strconv.ParseUint(epochText, 10, 64)
+	if err != nil || epoch == 0 {
+		return &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
+	}
+	return repository.validatePublicationOccurrence(ctx, publication,
+		SnapshotPublicationRef{SnapshotRevision: publication.SnapshotRevision, PublicationEpoch: epoch})
 }
 
 func contentFromManifest(
@@ -385,6 +457,23 @@ func classifyCatalogIndexAudit(
 		return catalogIndexAuditOverNamed
 	}
 	return catalogIndexAuditAgreed
+}
+
+// maybeAuditCatalogIndex runs the body audit on the activations the stride
+// selects; see catalogIndexAuditEvery.
+func (repository *RedisCatalogRepository) maybeAuditCatalogIndex(ctx context.Context, publication SnapshotPublicationRef) {
+	if repository == nil || repository.client == nil {
+		return
+	}
+	if activations := repository.catalogIndexActivations.Add(1); activations%catalogIndexAuditEvery != 1 {
+		return
+	}
+	repository.controlReads.bodyReads.indexAudit.Add(1)
+	snapshot, err := repository.LoadPublishedSnapshot(ctx, publication)
+	if err != nil {
+		return
+	}
+	repository.auditCatalogIndex(ctx, publication, snapshot)
 }
 
 // auditCatalogIndex brings the index up to the publication being activated

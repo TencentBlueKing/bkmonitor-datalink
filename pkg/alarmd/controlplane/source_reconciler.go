@@ -138,6 +138,11 @@ type SourceReconciler struct {
 	// now paces the periodic full read and measures the change signal's age.
 	now    func() time.Time
 	memory *sourceRoundMemory
+	// lastGood is the content of the latest publication this process knows,
+	// kept in memory from the catalog it published or assembled once from
+	// the object catalog after a restart; the whole snapshot body is no
+	// longer read for it.
+	lastGood *PublishedSnapshot
 }
 
 // ConfigureClock sets the clock the reconciler paces its periodic full reads
@@ -395,6 +400,7 @@ func (reconciler *SourceReconciler) publish(
 		if loadErr != nil {
 			return SourceRefreshResult{}, loadErr
 		}
+		reconciler.rememberLastGood(snapshot.Publication, catalog)
 		if clearErr := reconciler.clearPending(ctx); clearErr != nil {
 			return SourceRefreshResult{}, clearErr
 		}
@@ -409,6 +415,9 @@ func (reconciler *SourceReconciler) publish(
 		expected = current.Publication
 	}
 	snapshot, _, err := reconciler.publisher.PublishIfCurrent(ctx, expected, catalog)
+	if err == nil {
+		reconciler.rememberLastGood(snapshot.Publication, catalog)
+	}
 	if errors.Is(err, ErrPublicationConflict) {
 		winner, loadErr := reconciler.repository.LoadLatestPublication(ctx)
 		if loadErr != nil {
@@ -437,7 +446,7 @@ func (reconciler *SourceReconciler) loadCurrent(ctx context.Context) (*Published
 	if err != nil {
 		return nil, nil, err
 	}
-	snapshot, err := reconciler.repository.LoadPublishedSnapshot(ctx, publication)
+	snapshot, err := reconciler.currentSnapshot(ctx, publication)
 	if errors.Is(err, ErrSnapshotUnavailable) {
 		// Keep the latest publication as the CAS expectation even when its
 		// immutable payload expired. A confirmed source observation can then
@@ -499,4 +508,31 @@ func (reconciler *SourceReconciler) clearPending(ctx context.Context) error {
 
 func (repository *RedisCatalogRepository) sourceCandidateKey() string {
 	return repository.prefix + ":source_candidate"
+}
+
+// rememberLastGood keeps the content of a publication this process just
+// made, so the next round's last-good catalog costs no read at all.
+func (reconciler *SourceReconciler) rememberLastGood(publication SnapshotPublicationRef, catalog Catalog) {
+	reconciler.lastGood = &PublishedSnapshot{SchemaVersion: snapshotSchemaVersion, Publication: publication,
+		QueryGroups: append([]QueryGroup(nil), catalog.QueryGroups...)}
+}
+
+// currentSnapshot is the content of the latest publication: from memory
+// when this process published it, otherwise assembled once from the object
+// catalog and kept. A publication whose manifest is gone reads as an
+// unavailable snapshot, as the body did.
+func (reconciler *SourceReconciler) currentSnapshot(ctx context.Context, publication SnapshotPublicationRef) (PublishedSnapshot, error) {
+	if reconciler.lastGood != nil && reconciler.lastGood.Publication == publication {
+		return *reconciler.lastGood, nil
+	}
+	published, err := reconciler.repository.loadPublishedGroups(ctx, publication)
+	if err != nil {
+		return PublishedSnapshot{}, err
+	}
+	snapshot, err := reconciler.repository.snapshotOf(ctx, published)
+	if err != nil {
+		return PublishedSnapshot{}, err
+	}
+	reconciler.lastGood = &snapshot
+	return snapshot, nil
 }

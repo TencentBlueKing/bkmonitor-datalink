@@ -76,8 +76,36 @@ const (
 // the job it exists for. FULL_EMPTY counts: no data is a correct business
 // answer, while every other kind means the round produced something less than
 // its own contract promises.
+// HealthyCompletions, BlockedOutcomes and FailedExecutions are the tracker's
+// own vocabularies: the words it writes into an anomaly's reason code, which is
+// what reaches the page.
+//
+// Declared rather than written inline in the switches they drive, because two
+// other places have to agree with them -- the attribution table and the test
+// that checks the table is complete -- and neither can see inside a switch. The
+// twelve retired-strategy objects were being attributed by a fall-through for
+// exactly this reason: the rule written for them names a contract code, and
+// this is the vocabulary the field actually carries.
+var (
+	// HealthyCompletions end a round with a result.
+	HealthyCompletions = []string{"FULL_COMPLETED", "FULL_EMPTY_COMPLETED"}
+	// BlockedOutcomes are rounds that produced nothing at all.
+	BlockedOutcomes = []string{"source_blocked", "source_error", "source_retry", "panic", "other_error"}
+	// FailedExecutions are rounds that reached execution and did not finish.
+	FailedExecutions = []string{"error", "retrying", "incomplete"}
+)
+
+func inVocabulary(value string, vocabulary []string) bool {
+	for _, known := range vocabulary {
+		if value == known {
+			return true
+		}
+	}
+	return false
+}
+
 func healthyCompletion(kind string) bool {
-	return kind == "FULL_COMPLETED" || kind == "FULL_EMPTY_COMPLETED"
+	return inVocabulary(kind, HealthyCompletions)
 }
 
 // blockedOutcome reports whether a round produced nothing at all.
@@ -87,12 +115,7 @@ func healthyCompletion(kind string) bool {
 // runner is torn down immediately after, and can never occur twice in a row.
 // Listing it would be a branch that cannot fire.
 func blockedOutcome(outcome string) bool {
-	switch outcome {
-	case "source_blocked", "source_error", "source_retry", "panic", "other_error":
-		return true
-	default:
-		return false
-	}
+	return inVocabulary(outcome, BlockedOutcomes)
 }
 
 // failedExecution reports whether a round reached execution and did not finish.
@@ -100,12 +123,7 @@ func blockedOutcome(outcome string) bool {
 // reports execute_returned, which is not blocked, and commits no progress, so
 // it never produces a completion kind either.
 func failedExecution(outcome string) bool {
-	switch outcome {
-	case "error", "retrying", "incomplete":
-		return true
-	default:
-		return false
-	}
+	return inVocabulary(outcome, FailedExecutions)
 }
 
 type queryGroupState struct {

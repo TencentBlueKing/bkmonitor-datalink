@@ -197,10 +197,13 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
   <section class="panel" id="replicaPanel" hidden>
     <h2>按副本下钻</h2>
     <p class="basis">部署总数回答"这个部署好不好"，回答不了"是不是某一个副本在扛"。
-      同样是七十个异常，均摊和全压在一个副本上要做的事不一样。点某一行可以把下面的对象列表限定到那个副本。</p>
+      同样是七十个异常，均摊和全压在一个副本上要做的事不一样。点某一行可以把下面的对象列表限定到那个副本。
+      <b>两个副本持有的对象数往往不一样</b>（一次实测 452 对 527），所以计数后面都带了占比——
+      裸计数会把持有量的差异算进"谁更差"里。<b>"其中 alarmd 的"这一列要按"有没有副本大于 0"看，不要拿两个副本互相比</b>：
+      对象归谁每次再平衡都会变，劈分会在什么都没发生的情况下移动。</p>
     <table>
       <thead><tr>
-        <th>副本</th><th>持有</th><th>正常</th><th>自身异常</th><th>降级池</th><th>状态未知</th>
+        <th>副本</th><th>持有</th><th>正常</th><th>自身异常</th><th>其中 alarmd 的</th><th>降级池</th><th>状态未知</th>
         <th>快照新鲜度</th><th>已运行</th><th>内存</th><th>CPU</th><th>同时在跑</th>
       </tr></thead>
       <tbody id="repRows"></tbody>
@@ -836,6 +839,14 @@ function shortId(id) { return String(id).slice(0, 12) + '…'; }
 
 // One row per replica, from the replicas' own snapshots rather than by dividing
 // totals -- dividing cannot recover which replica an anomaly came from.
+// share renders a count as a percentage of what the replica holds, which is
+// the only way two replicas' counts can be read against each other when they
+// hold different numbers of objects.
+function share(count, owned) {
+  if (!owned || !count) return '';
+  return '（' + (count / owned * 100).toFixed(1) + '%）';
+}
+
 function renderReplicas(rows) {
   rows = rows || [];
   show('replicaPanel', rows.length > 0);
@@ -858,7 +869,28 @@ function renderReplicas(rows) {
     });
     cell(replica.owned + (replica.truncated ? '（列表被截断，下面几个数是下界）' : ''));
     cell(replica.healthy);
-    cell(replica.anomalies);
+    // Counts beside their share of what the replica holds. Two replicas rarely
+    // hold the same number -- a live read had 452 against 527 -- so a bare pair
+    // of counts folds a 17% ownership imbalance into what reads as "which one
+    // is worse". 33 against 53 looks like sixty percent apart and is 7.3%
+    // against 10.1%.
+    //
+    // The share is not a caveat that erases the signal: on the next read the
+    // same pair was 0.4% against 2.0%, still five times apart. It separates a
+    // replica actually doing worse from one that simply holds more.
+    cell(replica.anomalies + share(replica.anomalies, replica.owned));
+    // The column the verdict is decided on. Read as "is any replica above
+    // zero", not as a comparison: which replica holds which object moves at
+    // every rendezvous, so the split between them shifts without anything
+    // having happened. Measured elsewhere the same day -- two pods' CPU split
+    // moved 25% and 9% in opposite directions over twenty minutes with nothing
+    // changed and the deployment total flat to 3%.
+    var repOurs = cell(replica.ours + share(replica.ours, replica.owned));
+    if (replica.ours > 0) { repOurs.className = 'stuck'; }
+    repOurs.title = '容量或架构能避免的那部分，判定看的就是这个数。'
+      + '看法是"有没有副本大于 0"，不是"哪个副本更大"——对象归谁每次再平衡都会变，'
+      + '两个副本之间的劈分会在什么都没发生的情况下移动。'
+      + (replica.unattributed ? '\n另有 ' + replica.unattributed + ' 个暂时看不出是谁的' : '');
     cell(replica.demoted);
     cell(replica.unknown);
     // A replica publishing late describes a past it has not updated, and that

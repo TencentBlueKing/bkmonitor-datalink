@@ -599,7 +599,7 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	// Stalling can only move an object towards ours, so the verdict is decided
 	// again with that known. Deciding it once, before the marking, would call a
 	// deployment with nothing but stuck objects healthy.
-	DecideHealth(&view)
+	Settle(&view)
 	// A replica publishes at most what fits its byte budget, so on a bad enough
 	// deployment the list this summary counts is already a sample. The counts
 	// stay useful for "which of these is it", and stop being usable as a
@@ -685,7 +685,7 @@ func objectDetail(response http.ResponseWriter, request *http.Request, service *
 	// Stalling can only move an object towards ours, so the verdict is decided
 	// again with that known. Deciding it once, before the marking, would call a
 	// deployment with nothing but stuck objects healthy.
-	DecideHealth(&view)
+	Settle(&view)
 	body := DetailResponse{
 		Records: records, Diagnostics: health, RecordsError: recordErr,
 		Health:     view.Health,

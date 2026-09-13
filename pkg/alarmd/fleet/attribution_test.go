@@ -33,6 +33,19 @@ import (
 // whether it belongs there. This is what makes adding a reason code a moment
 // where somebody answers the question.
 func TestEveryReasonCodeIsAttributedToOneSideOrTheOther(t *testing.T) {
+	// Every word the tracker can write into reason_code has to be decided too:
+	// classified, or explicitly carrying no attribution information. Falling
+	// through is for codes nobody has looked at yet, not for the vocabulary
+	// this package defines itself.
+	for _, vocabulary := range [][]string{HealthyCompletions, BlockedOutcomes, FailedExecutions} {
+		for _, word := range vocabulary {
+			if !externalReasons[word] && !ourReasons[word] && !uninformativeReasons[word] {
+				t.Errorf("the tracker writes %q into reason_code and nothing decides it: "+
+					"it would reach the page as an object held against the deployment "+
+					"by the fall-through", word)
+			}
+		}
+	}
 	catalogue := contract.ReasonCatalogV2()
 	if len(catalogue) == 0 {
 		t.Fatal("the reason catalogue is empty; the check would pass vacuously")
@@ -49,11 +62,23 @@ func TestEveryReasonCodeIsAttributedToOneSideOrTheOther(t *testing.T) {
 				definition.Code)
 		}
 	}
-	// And nothing on either list that the catalogue does not have, which would be
-	// a rule kept alive for a code that no longer exists.
+	// And nothing on either list that no vocabulary declares, which would be a
+	// rule kept alive for a code nothing emits.
+	//
+	// There are two vocabularies, not one. The contract catalogue is what the
+	// cause and the reason beneath it are drawn from; the tracker has its own
+	// words -- what a round's outcome was -- and those are what reach the page
+	// in reason_code. Checking only the first is how a rule written for the
+	// twelve retired-strategy objects sat there naming a code that field never
+	// carries, while the objects it was for went through the fall-through.
 	known := map[string]bool{}
 	for _, definition := range catalogue {
 		known[definition.Code] = true
+	}
+	for _, vocabulary := range [][]string{HealthyCompletions, BlockedOutcomes, FailedExecutions} {
+		for _, word := range vocabulary {
+			known[word] = true
+		}
 	}
 	for code := range externalReasons {
 		if !known[code] {
@@ -300,6 +325,171 @@ func TestTheRulesThatReadNoCodeAreStillRules(t *testing.T) {
 		}
 		if anomaly.Unclassified {
 			t.Errorf("%s is marked as unclassified, but a rule decided it", anomaly.QueryGroup)
+		}
+	}
+}
+
+// The per-replica split has to agree with the deployment total, and it has to
+// be the split the verdict is decided on rather than the anomaly count beside
+// it. A live read showed 33 anomalies against 53, which reads as one replica
+// being much worse; the pair that decides the verdict was 5 against 8, and most
+// of the difference was work that is not either replica's doing.
+//
+// Measured on another line the same day: two pods 66% apart in cost per Slot
+// with near-identical throughput. A deployment-level number cannot show that,
+// and if the busy one goes quiet the total improves while nothing happened.
+func TestThePerReplicaSplitIsTheOneTheVerdictUses(t *testing.T) {
+	at := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	on := func(replica, id, reason string) Anomaly {
+		return Anomaly{QueryGroup: id, Replica: replica, Kind: KindDegradedRun,
+			Since: at.Add(-time.Hour), Cause: "LEVEL_OUTCOME_UNKNOWN", CauseReason: reason}
+	}
+	names := replicas()
+	snapshots := healthySnapshots()
+	snapshots[0].Anomalies = []Anomaly{
+		on(names[0], "qg-a1", "HISTORY_WARMING"),
+		on(names[0], "qg-a2", "HISTORY_GAPPED"),
+	}
+	snapshots[0].TotalAnomalies = 2
+	snapshots[1].Anomalies = []Anomaly{
+		on(names[1], "qg-b1", "HISTORY_WARMING"),
+		on(names[1], "qg-b2", "EXECUTION_BUDGET_EXHAUSTED"),
+		{QueryGroup: "qg-b3", Replica: names[1], Kind: KindDegradedRun, Since: at.Add(-time.Hour),
+			ReasonCode: "COMPLETED_WITH_UNAVAILABLE", SinceFrom: SinceRestoredLastFull},
+	}
+	snapshots[1].TotalAnomalies = 3
+
+	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, names, now, time.Minute)
+	got := map[string]ReplicaView{}
+	for _, replica := range view.PerReplica {
+		got[replica.Replica] = replica
+	}
+	if first := got[names[0]]; first.Ours != 0 || first.External != 2 || first.Unattributed != 0 {
+		t.Errorf("%s = ours %d / external %d / unattributed %d, want 0/2/0",
+			names[0], first.Ours, first.External, first.Unattributed)
+	}
+	if second := got[names[1]]; second.Ours != 1 || second.External != 1 || second.Unattributed != 1 {
+		t.Errorf("%s = ours %d / external %d / unattributed %d, want 1/1/1: the replica carrying "+
+			"the budget exhaustion is the one the verdict is about",
+			names[1], second.Ours, second.External, second.Unattributed)
+	}
+	// And the parts add up to the whole, in every column. A per-replica split
+	// that does not sum to the deployment total is two answers to one question.
+	summary := summarize(view.Anomalies, now)
+	var ours, external, unattributed int
+	for _, replica := range view.PerReplica {
+		ours += replica.Ours
+		external += replica.External
+		unattributed += replica.Unattributed
+	}
+	if ours != summary.Ours || external != summary.External || unattributed != summary.Unattributed {
+		t.Errorf("per-replica sums to %d/%d/%d, deployment reports %d/%d/%d",
+			ours, external, unattributed, summary.Ours, summary.External, summary.Unattributed)
+	}
+}
+
+// Settle runs twice on the HTTP path -- once when the view is built, and again
+// once the caller has marked which objects are stalled, because stalling moves
+// an object to ours. So it has to be safe to run twice, and the per-replica
+// counts it fills in have to be the counts and not the counts plus the previous
+// pass.
+//
+// Nothing else would catch this. Doubling looks entirely plausible on a page:
+// the numbers are still ordered the same way, still sum to each other, and only
+// disagree with the deployment total -- which a reader has no reason to add up.
+func TestSettleIsSafeToRunTwiceTheWayTheHandlerRunsIt(t *testing.T) {
+	at := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	names := replicas()
+	snapshots := healthySnapshots()
+	snapshots[1].Anomalies = []Anomaly{{
+		QueryGroup: "qg-budget", Replica: names[1], Kind: KindDegradedRun, Since: at.Add(-time.Hour),
+		Cause: "LEVEL_OUTCOME_UNKNOWN", CauseReason: "EXECUTION_BUDGET_EXHAUSTED",
+	}}
+	snapshots[1].TotalAnomalies = 1
+
+	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, names, now, time.Minute)
+	// Exactly what the handler does next.
+	MarkStalled(view.Anomalies, now, time.Hour)
+	Settle(&view)
+
+	var ours int
+	for _, replica := range view.PerReplica {
+		ours += replica.Ours
+	}
+	if ours != 1 {
+		t.Errorf("per-replica ours sums to %d after two passes, want 1: the counts are being "+
+			"added to rather than replaced", ours)
+	}
+}
+
+// The twelve retired-strategy objects, as they actually arrive. The rule
+// written for them names a contract code; the field carries the tracker's own
+// outcome word, so for two releases they were classified by the fall-through
+// rather than by the rule meant for them -- same answer, no rule.
+//
+// Invisible until the fall-through was counted, and the first live read after
+// that showed every one of "ours" arriving that way.
+func TestABlockedObjectIsClassifiedByTheWordItsFieldActuallyCarries(t *testing.T) {
+	blocked := Anomaly{QueryGroup: "qg-retired", Kind: KindBlockedRun,
+		ReasonCode: "source_blocked"}
+	Attribute([]Anomaly{blocked})
+	anomalies := []Anomaly{blocked}
+	Attribute(anomalies)
+	if anomalies[0].Attribution != AttributionOurs {
+		t.Errorf("attribution = %q, want %q", anomalies[0].Attribution, AttributionOurs)
+	}
+	if anomalies[0].Unclassified {
+		t.Error("a blocked object is still reaching the fall-through: the rule for it names a " +
+			"code this field does not carry")
+	}
+}
+
+// A round that failed on a backend timeout reports the outcome word "error" and
+// the specific code beside it. The outcome word says a round failed, which is
+// true of either side; the code says which. Reading the coarse word first
+// decided these against the deployment before the specific one was ever looked
+// at.
+func TestTheSpecificFailureCodeBeatsTheCoarseOutcomeWord(t *testing.T) {
+	timedOut := Anomaly{QueryGroup: "qg-slow", Kind: KindDegradedRun, ReasonCode: "error",
+		Failure: &FailureRef{Category: "provider_transport", Code: "QUERY_TIMEOUT"}}
+	if got := attributionOf(timedOut); got != AttributionExternal {
+		t.Errorf("attribution = %q, want %q: the backend timed out, and \"error\" only says "+
+			"the round did not finish", got, AttributionExternal)
+	}
+	// The same shape with an evaluation fault stays ours, so this is not the
+	// failure code simply overriding everything.
+	badResult := Anomaly{QueryGroup: "qg-bad", Kind: KindDegradedRun, ReasonCode: "error",
+		Failure: &FailureRef{Category: "evaluation", Code: "STATE_CORRUPT"}}
+	if got := attributionOf(badResult); got != AttributionOurs {
+		t.Errorf("attribution = %q, want %q", got, AttributionOurs)
+	}
+}
+
+// The three sets have to be disjoint, and this is the only place that says so.
+//
+// A word cannot both carry no attribution information and be classified; if one
+// ever appeared in two sets the reading would depend on which check ran first,
+// which is not a thing anyone should have to know. This is also what lets
+// attributionOf skip the uninformative check entirely -- a listed word is in
+// neither classification map, so the search passes over it anyway.
+func TestAWordIsEitherClassifiedOrExplicitlyUninformativeNeverBoth(t *testing.T) {
+	if len(uninformativeReasons) == 0 {
+		t.Fatal("no uninformative words declared; the check would pass vacuously")
+	}
+	for word := range uninformativeReasons {
+		if externalReasons[word] {
+			t.Errorf("%q is declared to carry no attribution information and is also "+
+				"classified as external", word)
+		}
+		if ourReasons[word] {
+			t.Errorf("%q is declared to carry no attribution information and is also "+
+				"classified as ours: attributionOf skips no words, so this one would be "+
+				"read as evidence", word)
+		}
+	}
+	for word := range externalReasons {
+		if ourReasons[word] {
+			t.Errorf("%q is on both classification lists", word)
 		}
 	}
 }

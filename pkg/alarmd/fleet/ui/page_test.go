@@ -189,6 +189,18 @@ func TestEveryObjectListFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "objects", reflect.TypeOf(fleet.ListResponse{}))
 }
 
+// The anomaly row is the busiest object on the page -- every cell in the table
+// reads it -- and it had no field check at all, for the same reason the list
+// response had none: it was read into a variable named a, which matches too
+// much to point a check at. It is named anomaly now.
+//
+// The gap was not theoretical. A misspelled attribution field renders the "谁的
+// 问题" cell as though every object were alarmd's own, which is the opposite of
+// what that column exists to say, and nothing would have failed.
+func TestEveryAnomalyFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	assertFieldsExist(t, "anomaly", reflect.TypeOf(fleet.Anomaly{}))
+}
+
 // One level further down, and the level a reader trusts instead of paging: the
 // onset line says how much of the list started recently. A misspelled bucket
 // reads as undefined, the guard in front of it is false, and the line simply

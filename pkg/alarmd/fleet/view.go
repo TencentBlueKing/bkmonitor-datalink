@@ -191,6 +191,11 @@ type Anomaly struct {
 	CauseReason string      `json:"cause_reason,omitempty"`
 	Since       time.Time   `json:"since"`
 	SinceFrom   SinceSource `json:"since_from"`
+	// Attribution says whether capacity or design could have prevented this.
+	// Only the ones where it could decide the verdict; the rest are real work
+	// for someone else. Filled in by Attribute rather than by the tracker, so
+	// the page and the verdict read one field instead of each deriving it.
+	Attribution Attribution `json:"attribution,omitempty"`
 	// FailingSince is when the current unbroken sequence of rounds that
 	// reached execution and did not finish began; zero while the last
 	// conclusive round ended, however it ended. It is not Since: an object
@@ -327,6 +332,12 @@ type Expectation struct {
 // other is this view double counting -- and a difference of counts cannot tell
 // them apart. Saying so was honest and useless: it left a reader with "do not
 // trust this" and no way to find out.
+// The three lists are samples, not the whole set. Each is one object identity
+// per entry and the sets are sized by the installation, so on a deployment with
+// tens of thousands of objects a rendezvous going wrong would put every one of
+// them in a response that is polled every few seconds. The counts beside them
+// are the full figures, which is what a reader acts on; the identities are
+// there so the reader has somewhere to start looking.
 type Disagreement struct {
 	// HeldBySeveral are objects more than one replica claims. Covered is a sum,
 	// so each of these inflates it by one without any object being left over.
@@ -336,6 +347,11 @@ type Disagreement struct {
 	HeldNotExpected []string `json:"held_not_expected,omitempty"`
 	// ExpectedNotHeld are catalogue objects no replica claims.
 	ExpectedNotHeld []string `json:"expected_not_held,omitempty"`
+	// The full sizes, which the lists above may not reach. A reader deciding
+	// what to do needs the count; the identities only say where to start.
+	HeldBySeveralTotal   int `json:"held_by_several_total"`
+	HeldNotExpectedTotal int `json:"held_not_expected_total"`
+	ExpectedNotHeldTotal int `json:"expected_not_held_total"`
 	// Comparable is false when some replica could not publish its object set,
 	// so the three lists above are not the whole story. A zero from an
 	// incomparable read means "not established", not "none".
@@ -634,18 +650,34 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		}
 	}
 
+	Attribute(view.Anomalies)
+	DecideHealth(&view)
+	return view
+}
+
+// DecideHealth sets the verdict from the anomalies as currently attributed.
+//
+// It is a function rather than inline code because it runs twice: once when the
+// view is built, and again once the caller has marked which objects are stalled
+// -- and a stalled object is ours whatever its last reason code said. Two
+// copies of this rule would be two verdicts that agree until they do not.
+//
+// Only the objects this deployment could have prevented decide the verdict. The
+// rest stay in the list, counted and visible, because they are real work; they
+// are just not this deployment's work, and a verdict that cannot come back
+// while they exist tells nobody anything.
+func DecideHealth(view *View) {
 	// Order matters: an incomplete view cannot be called healthy, and it cannot
 	// be called degraded either, because the anomalies it does show are not the
 	// whole story.
 	switch {
 	case len(view.Gaps) > 0:
 		view.Health = HealthUnknown
-	case len(view.Anomalies) > 0:
+	case OursCount(view.Anomalies) > 0:
 		view.Health = HealthDegraded
 	default:
 		view.Health = HealthHealthy
 	}
-	return view
 }
 
 // compareCoverage works out which kind of disagreement the counts have.
@@ -697,7 +729,28 @@ func compareCoverage(ownedSets [][]string, expectation Expectation, setsComplete
 	sort.Strings(result.HeldBySeveral)
 	sort.Strings(result.HeldNotExpected)
 	sort.Strings(result.ExpectedNotHeld)
+	// Counted before the cut, so the numbers are the real ones however many
+	// identities travel. Sorted first, so the sample is the same objects on
+	// every read rather than whichever the map happened to yield.
+	result.HeldBySeveralTotal = len(result.HeldBySeveral)
+	result.HeldNotExpectedTotal = len(result.HeldNotExpected)
+	result.ExpectedNotHeldTotal = len(result.ExpectedNotHeld)
+	result.HeldBySeveral = firstN(result.HeldBySeveral, MaxCoverageSample)
+	result.HeldNotExpected = firstN(result.HeldNotExpected, MaxCoverageSample)
+	result.ExpectedNotHeld = firstN(result.ExpectedNotHeld, MaxCoverageSample)
 	return result
+}
+
+// MaxCoverageSample bounds how many object identities a coverage disagreement
+// carries. The page shows six; the rest is headroom for someone reading the
+// JSON, not a second copy of the catalogue.
+const MaxCoverageSample = 32
+
+func firstN(values []string, limit int) []string {
+	if len(values) <= limit {
+		return values
+	}
+	return values[:limit]
 }
 
 // coverageDetail states what the disagreement is, falling back to naming the
@@ -709,9 +762,13 @@ func coverageDetail(coverage *Disagreement, covered, expected int, ownedByReplic
 		return head + "; Covered is a sum, so replicas holding the same object during a rendezvous " +
 			"change look the same as objects left over, and this read could not compare the sets to say which"
 	}
+	// The totals, not the lengths of the lists beside them. Those lists are a
+	// bounded sample now, so reading their length would report the size of the
+	// sample as the size of the problem -- and it would do it only once the
+	// problem grew past the bound, which is when the number matters most.
 	return fmt.Sprintf("%s: %d held by more than one replica (Covered double counts these), "+
 		"%d held but no longer in the catalogue (ownership to release), %d in the catalogue that nobody holds",
-		head, len(coverage.HeldBySeveral), len(coverage.HeldNotExpected), len(coverage.ExpectedNotHeld))
+		head, coverage.HeldBySeveralTotal, coverage.HeldNotExpectedTotal, coverage.ExpectedNotHeldTotal)
 }
 
 // sortAnomalies orders a column oldest-first. Both columns use it, because a

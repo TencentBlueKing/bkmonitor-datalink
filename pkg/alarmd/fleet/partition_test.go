@@ -188,7 +188,7 @@ func TestTheSymptomSurvivesAllTheWayToTheSummary(t *testing.T) {
 	}
 	summary := summarize(anomalies, time.Now())
 	got := map[string]int{}
-	for _, count := range summary.ByFailureDetail {
+	for _, count := range summary.ByFailureDetail.Top {
 		got[count.Value] = count.Count
 	}
 	if got["http_status=503"] != 2 || got["transport=connection_refused"] != 1 {
@@ -196,7 +196,7 @@ func TestTheSymptomSurvivesAllTheWayToTheSummary(t *testing.T) {
 	}
 	// One code across all three, which is exactly why the code alone cannot
 	// answer "what is wrong with these".
-	if len(summary.ByFailureCode) != 1 {
+	if len(summary.ByFailureCode.Top) != 1 {
 		t.Errorf("failure codes = %+v, want the single code the symptom has to split",
 			summary.ByFailureCode)
 	}

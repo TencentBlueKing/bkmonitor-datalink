@@ -33,6 +33,19 @@ import (
 // whether it belongs there. This is what makes adding a reason code a moment
 // where somebody answers the question.
 func TestEveryReasonCodeIsAttributedToOneSideOrTheOther(t *testing.T) {
+	// Every word the tracker can write into reason_code has to be decided too:
+	// classified, or explicitly carrying no attribution information. Falling
+	// through is for codes nobody has looked at yet, not for the vocabulary
+	// this package defines itself.
+	for _, vocabulary := range [][]string{HealthyCompletions, BlockedOutcomes, FailedExecutions} {
+		for _, word := range vocabulary {
+			if !externalReasons[word] && !ourReasons[word] && !uninformativeReasons[word] {
+				t.Errorf("the tracker writes %q into reason_code and nothing decides it: "+
+					"it would reach the page as an object held against the deployment "+
+					"by the fall-through", word)
+			}
+		}
+	}
 	catalogue := contract.ReasonCatalogV2()
 	if len(catalogue) == 0 {
 		t.Fatal("the reason catalogue is empty; the check would pass vacuously")
@@ -49,11 +62,23 @@ func TestEveryReasonCodeIsAttributedToOneSideOrTheOther(t *testing.T) {
 				definition.Code)
 		}
 	}
-	// And nothing on either list that the catalogue does not have, which would be
-	// a rule kept alive for a code that no longer exists.
+	// And nothing on either list that no vocabulary declares, which would be a
+	// rule kept alive for a code nothing emits.
+	//
+	// There are two vocabularies, not one. The contract catalogue is what the
+	// cause and the reason beneath it are drawn from; the tracker has its own
+	// words -- what a round's outcome was -- and those are what reach the page
+	// in reason_code. Checking only the first is how a rule written for the
+	// twelve retired-strategy objects sat there naming a code that field never
+	// carries, while the objects it was for went through the fall-through.
 	known := map[string]bool{}
 	for _, definition := range catalogue {
 		known[definition.Code] = true
+	}
+	for _, vocabulary := range [][]string{HealthyCompletions, BlockedOutcomes, FailedExecutions} {
+		for _, word := range vocabulary {
+			known[word] = true
+		}
 	}
 	for code := range externalReasons {
 		if !known[code] {
@@ -394,5 +419,77 @@ func TestSettleIsSafeToRunTwiceTheWayTheHandlerRunsIt(t *testing.T) {
 	if ours != 1 {
 		t.Errorf("per-replica ours sums to %d after two passes, want 1: the counts are being "+
 			"added to rather than replaced", ours)
+	}
+}
+
+// The twelve retired-strategy objects, as they actually arrive. The rule
+// written for them names a contract code; the field carries the tracker's own
+// outcome word, so for two releases they were classified by the fall-through
+// rather than by the rule meant for them -- same answer, no rule.
+//
+// Invisible until the fall-through was counted, and the first live read after
+// that showed every one of "ours" arriving that way.
+func TestABlockedObjectIsClassifiedByTheWordItsFieldActuallyCarries(t *testing.T) {
+	blocked := Anomaly{QueryGroup: "qg-retired", Kind: KindBlockedRun,
+		ReasonCode: "source_blocked"}
+	Attribute([]Anomaly{blocked})
+	anomalies := []Anomaly{blocked}
+	Attribute(anomalies)
+	if anomalies[0].Attribution != AttributionOurs {
+		t.Errorf("attribution = %q, want %q", anomalies[0].Attribution, AttributionOurs)
+	}
+	if anomalies[0].Unclassified {
+		t.Error("a blocked object is still reaching the fall-through: the rule for it names a " +
+			"code this field does not carry")
+	}
+}
+
+// A round that failed on a backend timeout reports the outcome word "error" and
+// the specific code beside it. The outcome word says a round failed, which is
+// true of either side; the code says which. Reading the coarse word first
+// decided these against the deployment before the specific one was ever looked
+// at.
+func TestTheSpecificFailureCodeBeatsTheCoarseOutcomeWord(t *testing.T) {
+	timedOut := Anomaly{QueryGroup: "qg-slow", Kind: KindDegradedRun, ReasonCode: "error",
+		Failure: &FailureRef{Category: "provider_transport", Code: "QUERY_TIMEOUT"}}
+	if got := attributionOf(timedOut); got != AttributionExternal {
+		t.Errorf("attribution = %q, want %q: the backend timed out, and \"error\" only says "+
+			"the round did not finish", got, AttributionExternal)
+	}
+	// The same shape with an evaluation fault stays ours, so this is not the
+	// failure code simply overriding everything.
+	badResult := Anomaly{QueryGroup: "qg-bad", Kind: KindDegradedRun, ReasonCode: "error",
+		Failure: &FailureRef{Category: "evaluation", Code: "STATE_CORRUPT"}}
+	if got := attributionOf(badResult); got != AttributionOurs {
+		t.Errorf("attribution = %q, want %q", got, AttributionOurs)
+	}
+}
+
+// The three sets have to be disjoint, and this is the only place that says so.
+//
+// A word cannot both carry no attribution information and be classified; if one
+// ever appeared in two sets the reading would depend on which check ran first,
+// which is not a thing anyone should have to know. This is also what lets
+// attributionOf skip the uninformative check entirely -- a listed word is in
+// neither classification map, so the search passes over it anyway.
+func TestAWordIsEitherClassifiedOrExplicitlyUninformativeNeverBoth(t *testing.T) {
+	if len(uninformativeReasons) == 0 {
+		t.Fatal("no uninformative words declared; the check would pass vacuously")
+	}
+	for word := range uninformativeReasons {
+		if externalReasons[word] {
+			t.Errorf("%q is declared to carry no attribution information and is also "+
+				"classified as external", word)
+		}
+		if ourReasons[word] {
+			t.Errorf("%q is declared to carry no attribution information and is also "+
+				"classified as ours: attributionOf skips no words, so this one would be "+
+				"read as evidence", word)
+		}
+	}
+	for word := range externalReasons {
+		if ourReasons[word] {
+			t.Errorf("%q is on both classification lists", word)
+		}
 	}
 }

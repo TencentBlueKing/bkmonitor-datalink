@@ -155,9 +155,65 @@ var ourReasons = map[string]bool{
 	// hours. That is a design gap in this deployment, not the strategy's doing.
 	"BLOCKED_EXACT_SET_UNAVAILABLE": true,
 	"SLOT_SOURCE_RETRY":             true,
-	"SNAPSHOT_UNAVAILABLE":          true,
-	"SNAPSHOT_RETRY_PENDING":        true,
-	"ACTIVATION_READ_FAILED":        true,
+
+	// The tracker's own outcome words, which is what actually reaches the page
+	// in reason_code -- the contract codes above sit one layer further in and
+	// never appear there. The twelve retired-strategy objects were being caught
+	// by the fall-through for exactly this reason: the rule written for them
+	// names BLOCKED_EXACT_SET_UNAVAILABLE and the field says "source_blocked".
+	//
+	// Found by the count of fall-throughs on its first live read, which is what
+	// that count is for.
+	//
+	// The words themselves are folded in from BlockedOutcomes in init rather
+	// than retyped here. A retyped copy is what caused this in the first place.
+	"SNAPSHOT_UNAVAILABLE":   true,
+	"SNAPSHOT_RETRY_PENDING": true,
+	"ACTIVATION_READ_FAILED": true,
+}
+
+// uninformativeReasons are values that appear in these fields and say nothing
+// about which side an object is on.
+//
+// Nothing reads this at runtime, and that is correct rather than an oversight:
+// a word listed here is in neither classification map, so the search skips it
+// either way. Checking it in the loop as well was dead code that read as a
+// guard -- the invariant it appeared to enforce is enforced by the disjointness
+// test instead, where it is real.
+//
+// What it is for is making "decided" three-valued for the completeness check:
+// classified as ours, classified as external, or deliberately carrying no
+// attribution information. Without the third value every completion kind would
+// have to be filed on one side or the other, and both would be wrong.
+//
+// A completion kind says a round ended with something unavailable, and an
+// execution outcome says a round failed; both are true of either side. They are
+// listed rather than left to fall through because the two are different: a code
+// that carries no attribution information should let the other fields answer,
+// while a code nobody has classified should count against the deployment and be
+// reported as unclassified. Folding them together would fill the fall-through
+// count with words that will never be classifiable, and a count full of noise
+// stops being read.
+var uninformativeReasons = map[string]bool{
+	// A completion kind that is not healthy. The healthy ones are added from
+	// HealthyCompletions in init; this is the one the page sees most.
+	"COMPLETED_WITH_UNAVAILABLE": true,
+}
+
+// The tracker's vocabularies are folded in here rather than retyped, because a
+// retyped copy is what put the retired-strategy objects on the fall-through
+// path in the first place: the rule named a contract code and the field carried
+// an outcome word.
+func init() {
+	for _, outcome := range BlockedOutcomes {
+		ourReasons[outcome] = true
+	}
+	for _, outcome := range FailedExecutions {
+		uninformativeReasons[outcome] = true
+	}
+	for _, kind := range HealthyCompletions {
+		uninformativeReasons[kind] = true
+	}
 }
 
 // attributionOf decides which side one anomaly falls on.
@@ -181,13 +237,14 @@ var ourReasons = map[string]bool{
 // anchored to one closed list cannot cover an open input, so the fall-through
 // is counted and shown instead of being silently absorbed.
 func attributedByRule(anomaly Anomaly) bool {
-	for _, code := range []string{anomaly.CauseReason, string(anomaly.Cause), anomaly.ReasonCode} {
-		if code != "" && (externalReasons[code] || ourReasons[code]) {
-			return true
-		}
-	}
+	failureCode := ""
 	if anomaly.Failure != nil {
-		if externalReasons[anomaly.Failure.Code] || ourReasons[anomaly.Failure.Code] {
+		failureCode = anomaly.Failure.Code
+	}
+	for _, code := range []string{
+		anomaly.CauseReason, string(anomaly.Cause), failureCode, anomaly.ReasonCode,
+	} {
+		if code != "" && (externalReasons[code] || ourReasons[code]) {
 			return true
 		}
 	}
@@ -206,9 +263,18 @@ func attributionOf(anomaly Anomaly) Attribution {
 	if anomaly.Kind == KindOverdueWake {
 		return AttributionOurs
 	}
-	// The most specific reason available wins, innermost first: the reason under
-	// the cause says more than the completion kind above it.
-	for _, code := range []string{anomaly.CauseReason, string(anomaly.Cause), anomaly.ReasonCode} {
+	// Most specific first. The failure record classifies what went wrong and
+	// sits ahead of the run outcome, which used to be the other way round: an
+	// object whose execution failed on a backend timeout reports reason_code
+	// "error" and failure code QUERY_TIMEOUT, and checking the outcome word
+	// first would have decided it before the specific code was ever read.
+	failureCode := ""
+	if anomaly.Failure != nil {
+		failureCode = anomaly.Failure.Code
+	}
+	for _, code := range []string{
+		anomaly.CauseReason, string(anomaly.Cause), failureCode, anomaly.ReasonCode,
+	} {
 		if code == "" {
 			continue
 		}
@@ -216,14 +282,6 @@ func attributionOf(anomaly Anomaly) Attribution {
 			return AttributionExternal
 		}
 		if ourReasons[code] {
-			return AttributionOurs
-		}
-	}
-	if anomaly.Failure != nil {
-		if externalReasons[anomaly.Failure.Code] {
-			return AttributionExternal
-		}
-		if ourReasons[anomaly.Failure.Code] {
 			return AttributionOurs
 		}
 	}

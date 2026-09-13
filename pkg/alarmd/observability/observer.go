@@ -457,12 +457,31 @@ type RebalanceOwnedSample struct {
 	Owned    int    `json:"owned"`
 }
 
+// MaxRebalanceMoveSamples bounds the moves one rebalance round names. A
+// round moves at most one hundredth of the population, nine on the
+// reference deployment, so the bound is reached only on a very large
+// fleet, and the truncation is then made visible.
+const MaxRebalanceMoveSamples = 32
+
+// RebalanceMoveSample is one Assignment the plan would move: the Query
+// Group and the workers it would leave and join. Moves are listed so that
+// a plan can be checked one Query Group at a time against the Assignments
+// and the ready set, which the counts alone cannot support; the shadow
+// still publishes nothing.
+type RebalanceMoveSample struct {
+	QueryGroup string `json:"query_group"`
+	From       string `json:"from"`
+	To         string `json:"to"`
+}
+
 // RebalanceFacts describes one rebalance planning round on the Control
 // Leader. It is a shadow measurement: PlannedMoves says how many
 // Assignments the round would move from the most to the least loaded ready
 // worker, and nothing publishes those moves. Owned lists every ready
 // worker, sorted by identity, so the distribution the plan reacted to can
-// be read beside the count.
+// be read beside the count, and Moves names each Assignment the plan would
+// move, in the planner's order, so the plan can be checked one Query Group
+// at a time.
 type RebalanceFacts struct {
 	ReadyWorkers int                    `json:"ready_workers"`
 	Assigned     int                    `json:"assigned"`
@@ -473,6 +492,10 @@ type RebalanceFacts struct {
 	PlannedMoves int                    `json:"planned_moves"`
 	Owned        []RebalanceOwnedSample `json:"owned,omitempty"`
 	Truncated    bool                   `json:"truncated"`
+	Moves        []RebalanceMoveSample  `json:"moves,omitempty"`
+	// MovesTruncated says the moves were cut at MaxRebalanceMoveSamples;
+	// PlannedMoves still counts them all.
+	MovesTruncated bool `json:"moves_truncated"`
 }
 
 func normalizeRebalanceFacts(facts *RebalanceFacts) *RebalanceFacts {
@@ -497,6 +520,11 @@ func normalizeRebalanceFacts(facts *RebalanceFacts) *RebalanceFacts {
 		if normalized.Owned[index].Owned < 0 {
 			normalized.Owned[index].Owned = 0
 		}
+	}
+	normalized.Moves = append([]RebalanceMoveSample(nil), facts.Moves...)
+	if len(normalized.Moves) > MaxRebalanceMoveSamples {
+		normalized.Moves = normalized.Moves[:MaxRebalanceMoveSamples]
+		normalized.MovesTruncated = true
 	}
 	return &normalized
 }

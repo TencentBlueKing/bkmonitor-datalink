@@ -241,6 +241,8 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Int("rebalance_planned_moves", facts.PlannedMoves),
 			slog.Bool("rebalance_owned_truncated", facts.Truncated),
 			slog.Any("rebalance_owned", facts.Owned),
+			slog.Bool("rebalance_moves_truncated", facts.MovesTruncated),
+			slog.Any("rebalance_moves", facts.Moves),
 		)
 	}
 	if facts := observation.AssignmentIndex; facts != nil {

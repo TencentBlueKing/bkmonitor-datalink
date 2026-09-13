@@ -36,3 +36,30 @@ func TestRebalanceFactsAreNormalizedAndBounded(t *testing.T) {
 		t.Fatal("normalization mutated the caller's samples")
 	}
 }
+
+// The moves a plan names are bounded like the owned counts, with their own
+// truncation flag, and the count of planned moves is not cut with them.
+func TestRebalanceMovesAreBoundedWithTheirOwnTruncation(t *testing.T) {
+	moves := make([]RebalanceMoveSample, 0, MaxRebalanceMoveSamples+1)
+	for index := 0; index <= MaxRebalanceMoveSamples; index++ {
+		moves = append(moves, RebalanceMoveSample{QueryGroup: fmt.Sprintf("query-group-%03d", index), From: "worker-1", To: "worker-2"})
+	}
+	got := NormalizeObservation(Observation{
+		Component: ComponentOwnership, Stage: StageRebalancePlanned, Result: ResultSuccess, Operation: OperationLoad,
+		Rebalance: &RebalanceFacts{ReadyWorkers: 2, Assigned: 40, PlannedMoves: len(moves), Moves: moves,
+			Owned: []RebalanceOwnedSample{{WorkerID: "worker-1", Owned: 40}, {WorkerID: "worker-2", Owned: 0}}},
+	})
+	facts := got.Rebalance
+	if len(facts.Moves) != MaxRebalanceMoveSamples || !facts.MovesTruncated || facts.Truncated ||
+		facts.Moves[0] != moves[0] || facts.PlannedMoves != MaxRebalanceMoveSamples+1 {
+		t.Fatalf("moves were not bounded on their own: len=%d moves_truncated=%v owned_truncated=%v planned=%d", len(facts.Moves), facts.MovesTruncated, facts.Truncated, facts.PlannedMoves)
+	}
+	within := NormalizeObservation(Observation{Component: ComponentOwnership, Stage: StageRebalancePlanned, Result: ResultSuccess, Operation: OperationLoad,
+		Rebalance: &RebalanceFacts{PlannedMoves: 2, Moves: moves[:2]}}).Rebalance
+	if len(within.Moves) != 2 || within.MovesTruncated || within.Moves[1] != moves[1] {
+		t.Fatalf("moves within the bound were changed: %+v", within)
+	}
+	if len(moves) != MaxRebalanceMoveSamples+1 {
+		t.Fatal("normalization mutated the caller's moves")
+	}
+}

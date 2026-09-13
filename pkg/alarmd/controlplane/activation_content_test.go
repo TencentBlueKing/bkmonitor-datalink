@@ -60,11 +60,10 @@ func TestScheduleActivationReconcilerUpgradesLegacyByScanWhenNoManifestExists(t 
 	if err := client.Set(ctx, prefix+":activation", legacyPayload, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	// A publication from before the object catalog has neither a manifest
-	// nor, once it aged, a body; the timelines are all that name its
-	// population.
+	// A publication from before the object catalog has no manifest; the
+	// timelines are all that name its population.
 	revision := string(oldSnapshot.Publication.SnapshotRevision)
-	if err := client.Del(ctx, prefix+":manifest:"+revision, prefix+":snapshot:"+revision).Err(); err != nil {
+	if err := client.Del(ctx, prefix+":manifest:"+revision).Err(); err != nil {
 		t.Fatal(err)
 	}
 	emptyCatalog := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{}}

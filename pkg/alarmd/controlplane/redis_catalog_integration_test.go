@@ -1169,7 +1169,9 @@ func TestRedisCatalogRepositoryRejectsRevisionMismatchAndCollision(t *testing.T)
 		t.Fatal("tampered snapshot revision was accepted")
 	}
 
-	key := "alarmd:control:test:snapshot:" + string(catalog.SnapshotRevision)
+	// The manifest is content-addressed by the revision: one already stored
+	// under the revision with other content refuses the publication.
+	key := "alarmd:control:test:manifest:" + string(catalog.SnapshotRevision)
 	if err := client.Set(context.Background(), key, `{"different":"content"}`, time.Hour).Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -1306,13 +1308,13 @@ func TestRedisCatalogRepositoryRenewsOnlyActivationGuardedCurrentObjects(t *test
 		t.Fatal(err)
 	}
 	oldKeys := []string{
-		prefix + ":snapshot:" + string(oldState.Current.SnapshotRevision),
+		prefix + ":manifest:" + string(oldState.Current.SnapshotRevision),
 		prefix + ":snapshot_epoch:" + string(oldState.Current.SnapshotRevision),
 		prefix + ":publication:" + strconv.FormatUint(oldState.Current.PublicationEpoch, 10),
 		prefix + ":active_qg_set:" + oldState.ActiveQGSetRef.Digest,
 	}
 	currentKeys := []string{
-		prefix + ":snapshot:" + string(currentState.Current.SnapshotRevision),
+		prefix + ":manifest:" + string(currentState.Current.SnapshotRevision),
 		prefix + ":snapshot_epoch:" + string(currentState.Current.SnapshotRevision),
 		prefix + ":publication:" + strconv.FormatUint(currentState.Current.PublicationEpoch, 10),
 		prefix + ":active_qg_set:" + currentState.ActiveQGSetRef.Digest,
@@ -1576,32 +1578,31 @@ func TestRedisCatalogRepositoryRenewCurrentObjectsFailsAtomicallyOnInvalidMappin
 		missingIndex int
 		mutate       func(context.Context, *redis.Client, []string) error
 	}{
-		// The current content renewal proves present is the catalog manifest;
-		// the snapshot body is renewed only while one is still written and
-		// its absence or corruption no longer decides the renewal.
-		{name: "missing catalog manifest", missingIndex: 4, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
-			return client.Del(ctx, keys[4]).Err()
-		}},
-		{name: "corrupt catalog manifest", missingIndex: -1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
-			return client.Set(ctx, keys[4], "{", 2*time.Second).Err()
-		}},
-		{name: "missing revision epoch mapping", missingIndex: 1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
-			return client.Del(ctx, keys[1]).Err()
-		}},
-		{name: "wrong revision epoch mapping", missingIndex: -1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
-			return client.Set(ctx, keys[1], "999", 2*time.Second).Err()
-		}},
-		{name: "missing publication occurrence", missingIndex: 2, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
-			return client.Del(ctx, keys[2]).Err()
-		}},
-		{name: "wrong publication occurrence", missingIndex: -1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
-			return client.Set(ctx, keys[2], "wrong-revision", 2*time.Second).Err()
-		}},
-		{name: "missing Active Set", missingIndex: 3, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+		// The current content the renewal proves present is the catalog
+		// manifest.
+		{name: "missing catalog manifest", missingIndex: 3, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
 			return client.Del(ctx, keys[3]).Err()
 		}},
+		{name: "corrupt catalog manifest", missingIndex: -1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Set(ctx, keys[3], "{", 2*time.Second).Err()
+		}},
+		{name: "missing revision epoch mapping", missingIndex: 0, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Del(ctx, keys[0]).Err()
+		}},
+		{name: "wrong revision epoch mapping", missingIndex: -1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Set(ctx, keys[0], "999", 2*time.Second).Err()
+		}},
+		{name: "missing publication occurrence", missingIndex: 1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Del(ctx, keys[1]).Err()
+		}},
+		{name: "wrong publication occurrence", missingIndex: -1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Set(ctx, keys[1], "wrong-revision", 2*time.Second).Err()
+		}},
+		{name: "missing Active Set", missingIndex: 2, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
+			return client.Del(ctx, keys[2]).Err()
+		}},
 		{name: "corrupt Active Set", missingIndex: -1, mutate: func(ctx context.Context, client *redis.Client, keys []string) error {
-			return client.Set(ctx, keys[3], `{"schema_version":"alarmd-active-qg-set-v1","query_groups":[]}`, 2*time.Second).Err()
+			return client.Set(ctx, keys[2], `{"schema_version":"alarmd-active-qg-set-v1","query_groups":[]}`, 2*time.Second).Err()
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1624,7 +1625,6 @@ func TestRedisCatalogRepositoryRenewCurrentObjectsFailsAtomicallyOnInvalidMappin
 				t.Fatal(err)
 			}
 			keys := []string{
-				prefix + ":snapshot:" + string(state.Current.SnapshotRevision),
 				prefix + ":snapshot_epoch:" + string(state.Current.SnapshotRevision),
 				prefix + ":publication:" + strconv.FormatUint(state.Current.PublicationEpoch, 10),
 				prefix + ":active_qg_set:" + state.ActiveQGSetRef.Digest,
@@ -2003,9 +2003,6 @@ func TestScheduleActivationReconcilerMigratesLegacyAfterOldSnapshotExpiresAndQGI
 	if err := client.Set(ctx, prefix+":activation", legacyPayload, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Del(ctx, prefix+":snapshot:"+string(oldSnapshot.Publication.SnapshotRevision)).Err(); err != nil {
-		t.Fatal(err)
-	}
 	emptyCatalog := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{}}
 	emptyCatalog.SnapshotRevision = execution.SnapshotRevision(mustDigest(t, "alarmd-strategy-snapshot-v1", emptyCatalog.QueryGroups))
 	emptySnapshot, _, err := repository.PublishCatalog(ctx, emptyCatalog)
@@ -2116,9 +2113,6 @@ func TestScheduleActivationReconcilerLegacyMigrationRejectsUnprovableCoverage(t 
 			state.SchemaVersion = "alarmd-control-activation-v1"
 			state.ActiveQGSetRef = controlplane.ActiveQueryGroupSetRef{}
 			writeLegacyActivation(t, ctx, client, prefix, state)
-			if err := client.Del(ctx, prefix+":snapshot:"+string(snapshot.Publication.SnapshotRevision)).Err(); err != nil {
-				t.Fatal(err)
-			}
 			scheduleKeys := make([]string, 0, len(catalog.QueryGroups))
 			for _, group := range catalog.QueryGroups {
 				scheduleKeys = append(scheduleKeys, prefix+":schedule_timeline:"+string(group.Identity))
@@ -2198,7 +2192,7 @@ func TestScheduleActivationReconcilerLegacyMigrationResumesAfterObjectWriteBefor
 	state.SchemaVersion = "alarmd-control-activation-v1"
 	state.ActiveQGSetRef = controlplane.ActiveQueryGroupSetRef{}
 	writeLegacyActivation(t, ctx, client, prefix, state)
-	if err := client.Del(ctx, prefix+":snapshot:"+string(snapshot.Publication.SnapshotRevision), activeSetKey).Err(); err != nil {
+	if err := client.Del(ctx, activeSetKey).Err(); err != nil {
 		t.Fatal(err)
 	}
 	scheduleKeys := scheduleTimelineKeys(prefix, catalog)
@@ -2282,7 +2276,7 @@ func TestScheduleActivationReconcilerConcurrentLegacyMigrationReadsSingleWinner(
 	state.SchemaVersion = "alarmd-control-activation-v1"
 	state.ActiveQGSetRef = controlplane.ActiveQueryGroupSetRef{}
 	writeLegacyActivation(t, ctx, client, prefix, state)
-	if err := client.Del(ctx, prefix+":snapshot:"+string(snapshot.Publication.SnapshotRevision), activeSetKey).Err(); err != nil {
+	if err := client.Del(ctx, activeSetKey).Err(); err != nil {
 		t.Fatal(err)
 	}
 	scheduleKeys := scheduleTimelineKeys(prefix, catalog)

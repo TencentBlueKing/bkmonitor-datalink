@@ -137,7 +137,7 @@ func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsC
 	// The payload the fleet executes expires, the way a publication that is no
 	// longer current stops being renewed.
 	catalogPrefix := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog")
-	if err := redisClient.Del(ctx, catalogPrefix+":snapshot:"+string(initial.Current.SnapshotRevision)).Err(); err != nil {
+	if err := redisClient.Del(ctx, catalogPrefix+":manifest:"+string(initial.Current.SnapshotRevision)).Err(); err != nil {
 		t.Fatal(err)
 	}
 

@@ -435,32 +435,23 @@ func TestControlReadCacheFreezesFromCatalogObjectsWithoutTheSnapshotBody(t *test
 	if got := hook.bodyReads("context"); got != 1 {
 		t.Fatalf("output context reads=%d, want 1 for %d runs", got, runs)
 	}
-	snapshotKey := fixture.prefix + ":snapshot:" + string(fixture.snapshot.Publication.SnapshotRevision)
-	body, err := fixture.client.Get(ctx, snapshotKey).Bytes()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// One Query Group's object is most of a one-Query-Group Snapshot; the
-	// saving is per Query Group of the population, not visible here.
 	if transferred := hook.objectBytes("object") + hook.objectBytes("context"); transferred == 0 {
 		t.Fatal("no object bytes were read")
 	}
-	t.Logf("snapshot body=%d bytes never read; object+context=%d bytes read once for %d runs", len(body), hook.objectBytes("object")+hook.objectBytes("context"), runs)
+	t.Logf("object+context=%d bytes read once for %d runs", hook.objectBytes("object")+hook.objectBytes("context"), runs)
 }
 
-// A Segment is frozen from the catalog objects alone. The Snapshot body is
-// not read when the objects are there, not when the body is gone or changed,
-// and not when the objects are gone either: that the freeze reports as the
-// objects being unavailable, the class a Worker retries, instead of reading
-// the body it once fell back to.
+// A Segment is frozen from the catalog objects alone. No snapshot body is
+// written, none is read, and when the objects are gone the freeze reports
+// the objects as unavailable, the class a Worker retries, instead of the
+// body it once fell back to.
 func TestControlReadCacheNeverFallsBackToTheSnapshotBody(t *testing.T) {
 	fixture := newControlReadCacheFixture(t, "snapshot-revision")
 	ctx := context.Background()
 	_, runtime := fixture.coldRepository(t)
 	snapshotKey := fixture.prefix + ":snapshot:" + string(fixture.snapshot.Publication.SnapshotRevision)
-	body, err := fixture.client.Get(ctx, snapshotKey).Bytes()
-	if err != nil {
-		t.Fatal(err)
+	if exists := fixture.client.Exists(ctx, snapshotKey).Val(); exists != 0 {
+		t.Fatal("a snapshot body was written")
 	}
 	fixture.hook.reset()
 	freeze := func() (execution.FrozenSlotContractFact, error) {
@@ -481,25 +472,16 @@ func TestControlReadCacheNeverFallsBackToTheSnapshotBody(t *testing.T) {
 		t.Fatal("no catalog object was read")
 	}
 
-	// A deleted or changed body changes nothing: nothing reads it.
-	if err := fixture.client.Del(ctx, snapshotKey).Err(); err != nil {
+	// A body planted under the revision key is not read either.
+	if err := fixture.client.Set(ctx, snapshotKey, "{", time.Hour).Err(); err != nil {
 		t.Fatal(err)
 	}
 	hook.reset()
 	if _, err := freeze(); err != nil {
-		t.Fatalf("deleted body: %v", err)
-	}
-	if err := fixture.client.Set(ctx, snapshotKey, "{", time.Hour).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := freeze(); err != nil {
-		t.Fatalf("changed body: %v", err)
+		t.Fatalf("planted body: %v", err)
 	}
 	if got := hook.bodyReads("snapshot"); got != 0 {
-		t.Fatalf("snapshot body reads=%d after the body was deleted and changed, want none", got)
-	}
-	if err := fixture.client.Set(ctx, snapshotKey, body, time.Hour).Err(); err != nil {
-		t.Fatal(err)
+		t.Fatalf("snapshot body reads=%d with a body planted, want none", got)
 	}
 
 	// Aged-out objects surface as unavailable objects, never as a body read.
@@ -513,7 +495,7 @@ func TestControlReadCacheNeverFallsBackToTheSnapshotBody(t *testing.T) {
 		}
 	}
 	hook.reset()
-	_, err = freeze()
+	_, err := freeze()
 	var classified *controlplane.FreezeSlotContractError
 	if !errors.As(err, &classified) || classified.Class != controlplane.FreezeSlotFailurePlanMaterialize || !errors.Is(err, controlplane.ErrCatalogObjectUnavailable) {
 		t.Fatalf("deleted objects error=%v, want plan_materialize ErrCatalogObjectUnavailable", err)

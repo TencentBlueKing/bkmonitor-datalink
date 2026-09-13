@@ -617,8 +617,9 @@ func testProductionPhaseTwoStrandedLatest(
 			t.Fatal(err)
 		}
 	}
-	oldSnapshotKey := catalogPrefix + ":snapshot:" + string(oldActivation.Current.SnapshotRevision)
-	if err := redisClient.Del(ctx, oldSnapshotKey).Err(); err != nil {
+	// The publication the fleet executes expires: its manifest is gone.
+	oldManifestKey := catalogPrefix + ":manifest:" + string(oldActivation.Current.SnapshotRevision)
+	if err := redisClient.Del(ctx, oldManifestKey).Err(); err != nil {
 		t.Fatal(err)
 	}
 	result, refreshErr := firstControl.Refresh(ctx)
@@ -1141,14 +1142,12 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingInitialFreezeL
 	production := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
 	queryGroupsByStrategy := make(map[string]execution.QueryGroupIdentity, 2)
 	objectKeys := make(map[execution.QueryGroupIdentity]string, 2)
-	var snapshotRevision execution.SnapshotRevision
 	for _, queryGroup := range bundle.queryGroups {
 		schedule, scheduleErr := production.dependencies.Catalog.ReadInitialFrozenSchedule(ctx, queryGroup)
 		if scheduleErr != nil || len(schedule.Plans) != 1 {
 			t.Fatalf("Query Group %s schedule=%+v error=%v", queryGroup, schedule, scheduleErr)
 		}
 		queryGroupsByStrategy[schedule.Plans[0].Identity.StrategyID] = queryGroup
-		snapshotRevision = schedule.Segment.Publication.SnapshotRevision
 		if schedule.Segment.ObjectDigest == "" {
 			t.Fatalf("Query Group %s Segment names no catalog object: %+v", queryGroup, schedule.Segment)
 		}
@@ -1163,18 +1162,13 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingInitialFreezeL
 	}
 	queryCallsBeforeFailure := uqCalls.Load()
 	eventsBeforeFailure := len(events.snapshot())
-	// The Snapshot facts of the failed Query Group are lost as a whole: the
-	// Snapshot body and the catalog object its Segment names by content.
-	snapshotKey := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog") + ":snapshot:" + string(snapshotRevision)
-	snapshotPayload, err := redisClient.Get(ctx, snapshotKey).Bytes()
-	if err != nil {
-		t.Fatal(err)
-	}
+	// The catalog object the failed Query Group's Segment names by content
+	// is lost.
 	objectPayload, err := redisClient.Get(ctx, objectKeys[failed]).Bytes()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := redisClient.Del(ctx, snapshotKey, objectKeys[failed]).Err(); err != nil {
+	if err := redisClient.Del(ctx, objectKeys[failed]).Err(); err != nil {
 		t.Fatal(err)
 	}
 	// The Leader of this bundle compiled the object and still holds it in
@@ -1208,9 +1202,6 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingInitialFreezeL
 	// Once the same immutable Snapshot fact returns after recovery_until, the
 	// coordinator first rebuilds the missing projection with BeginSlot and then
 	// finalizes query-free. A recovered Snapshot must not reopen Query.
-	if err := redisClient.Set(ctx, snapshotKey, snapshotPayload, cfg.PhaseTwo.Control.CatalogTTL.Duration()).Err(); err != nil {
-		t.Fatal(err)
-	}
 	if err := redisClient.Set(ctx, objectKeys[failed], objectPayload, cfg.PhaseTwo.Control.CatalogTTL.Duration()).Err(); err != nil {
 		t.Fatal(err)
 	}

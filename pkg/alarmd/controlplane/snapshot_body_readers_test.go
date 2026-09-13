@@ -45,11 +45,14 @@ func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 	// A second publication, activated by nobody yet, for the readers that
 	// activate a new publication.
 	next := harness.publish(t, catalogWithSchedule(t, validCatalog(t, 81), 60, 0))
-	// Positive control: both bodies existed until now.
+	// The whole snapshot body is never written: only the manifest and the
+	// objects name a publication's content.
 	for _, rev := range []string{string(revision), string(next.Publication.SnapshotRevision)} {
-		bodyKey := harness.prefix + ":snapshot:" + rev
-		if deleted := harness.client.Del(ctx, bodyKey).Val(); deleted != 1 {
-			t.Fatalf("snapshot body key %q was not present to delete (deleted=%d)", bodyKey, deleted)
+		if exists := harness.client.Exists(ctx, harness.prefix+":snapshot:"+rev).Val(); exists != 0 {
+			t.Fatalf("a snapshot body was written for revision %s", rev)
+		}
+		if exists := harness.client.Exists(ctx, harness.prefix+":manifest:"+rev).Val(); exists != 1 {
+			t.Fatalf("no manifest was written for revision %s", rev)
 		}
 	}
 

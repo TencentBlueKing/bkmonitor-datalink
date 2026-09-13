@@ -1625,6 +1625,7 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 		scheduler.WithQueryDeadlineReserve(runtime.dependencies.QueryDeadlineReserve),
 		scheduler.WithSnapshotRetention(runtime.dependencies.SnapshotRetention, runtime.dependencies.PublicationDelayAllowance),
 		scheduler.WithExpiredRangeCreation(runtime.dependencies.ExpiredRangeEnabled),
+		scheduler.WithObserver(runtime.dependencies.Observer),
 	)
 	if err != nil {
 		_ = session.Release(ctx)

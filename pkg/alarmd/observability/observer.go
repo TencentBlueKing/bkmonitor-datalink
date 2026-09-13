@@ -83,6 +83,7 @@ const (
 	StageSlotCompleted          = "slot_completed"
 	StageRunnerCompleted        = "runner_completed"
 	StageSlotSourceCompleted    = "slot_source_completed"
+	StageScheduleCursorAdvanced = "schedule_cursor_advanced"
 	StageQueryAdmission         = "query_admission"
 	StageRestartRecovered       = "restart_recovered"
 	StageFleetSnapshotPublish   = "fleet_snapshot_publish"
@@ -562,6 +563,43 @@ func normalizeAssignmentIndexFacts(facts *AssignmentIndexFacts) *AssignmentIndex
 	return &normalized
 }
 
+// CursorAdvanceFacts describes one attempt to move a Progress cursor that
+// points into a pruned part of the timeline to the earliest retained Slot:
+// where it stood, where it was moved to, and what the store said.
+type CursorAdvanceFacts struct {
+	From   int64  `json:"from"`
+	To     int64  `json:"to"`
+	Status string `json:"status"`
+}
+
+// Closed vocabulary of cursor advance outcomes.
+const (
+	CursorAdvanceApplied    = "applied"
+	CursorAdvanceConflict   = "conflict"
+	CursorAdvanceStaleOwner = "stale_owner"
+	CursorAdvanceRetryable  = "retryable"
+	CursorAdvanceFailed     = "failed"
+)
+
+func normalizeCursorAdvanceFacts(facts *CursorAdvanceFacts) *CursorAdvanceFacts {
+	if facts == nil {
+		return nil
+	}
+	normalized := *facts
+	if normalized.From < 0 {
+		normalized.From = 0
+	}
+	if normalized.To < 0 {
+		normalized.To = 0
+	}
+	switch normalized.Status {
+	case CursorAdvanceApplied, CursorAdvanceConflict, CursorAdvanceStaleOwner, CursorAdvanceRetryable, CursorAdvanceFailed:
+	default:
+		normalized.Status = CursorAdvanceFailed
+	}
+	return &normalized
+}
+
 // DrainingQGSampleRetired marks a sample whose Query Group left the active set
 // because it is past the draining termination window without draining.
 // Undrained samples carry no marker so their log shape is unchanged.
@@ -828,6 +866,7 @@ type Observation struct {
 	DrainingQG               *DrainingQGFacts
 	Rebalance                *RebalanceFacts
 	AssignmentIndex          *AssignmentIndexFacts
+	CursorAdvance            *CursorAdvanceFacts
 	SourceRefresh            *SourceRefreshFacts
 	ActivationFailure        *ActivationFailureFacts
 	AlgorithmEvaluations     []AlgorithmEvaluationFact
@@ -921,6 +960,7 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.DrainingQG = normalizeDrainingQGFacts(observation.DrainingQG)
 	observation.Rebalance = normalizeRebalanceFacts(observation.Rebalance)
 	observation.AssignmentIndex = normalizeAssignmentIndexFacts(observation.AssignmentIndex)
+	observation.CursorAdvance = normalizeCursorAdvanceFacts(observation.CursorAdvance)
 	observation.SourceRefresh = normalizeSourceRefreshFacts(observation.Component, observation.Stage, observation.SourceRefresh)
 	observation.ActivationFailure = normalizeActivationFailureFacts(
 		observation.Component, observation.Stage, observation.ActivationFailure,
@@ -1637,6 +1677,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentScheduler, StageQueryCooldown}, {ComponentScheduler, StageRunnerReturned}, {ComponentScheduler, StageDispatcherSnapshot}, {ComponentScheduler, StageQueryPermitWait},
 	{ComponentScheduler, StageExpiredRangeReturned},
 	{ComponentScheduler, StageRunnerCompleted}, {ComponentScheduler, StageSlotSourceCompleted},
+	{ComponentScheduler, StageScheduleCursorAdvanced},
 	{ComponentAccess, StageQueryCompleted},
 	{ComponentAccess, StageQueryBudgetResolved},
 	{ComponentAccess, StageSlotReadinessArrival},

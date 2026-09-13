@@ -259,6 +259,13 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Int("assignment_index_difference", facts.Difference),
 		)
 	}
+	if facts := observation.CursorAdvance; facts != nil {
+		attributes = append(attributes,
+			slog.Int64("cursor_advance_from", facts.From),
+			slog.Int64("cursor_advance_to", facts.To),
+			slog.String("cursor_advance_status", facts.Status),
+		)
+	}
 	if facts := observation.SourceRefresh; facts != nil {
 		attributes = append(attributes,
 			slog.String("source_refresh_status", string(facts.Status)),

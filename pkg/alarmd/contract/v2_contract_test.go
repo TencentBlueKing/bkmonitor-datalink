@@ -1085,6 +1085,12 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 		ReasonAllowedForV2(ReasonGapSkipped, ReasonDomainQueryResult) {
 		t.Fatalf("Gap-skipped reason definition = (%#v, %t)", gapSkipped, ok)
 	}
+	schedulePruned, ok := LookupReasonV2(ReasonSchedulePruned)
+	if !ok || schedulePruned.Class != ReasonClassCoverage || schedulePruned.Domains != ReasonDomainObservation ||
+		ReasonAllowedForV2(ReasonSchedulePruned, ReasonDomainReceipt) ||
+		ReasonAllowedForV2(ReasonSchedulePruned, ReasonDomainQueryResult) {
+		t.Fatalf("Schedule-pruned reason definition = (%#v, %t)", schedulePruned, ok)
+	}
 	if !ReasonAllowedForV2(ReasonQueryPartial, ReasonDomainQueryResult) ||
 		ReasonAllowedForV2(ReasonRecordInvalid, ReasonDomainQueryResult) {
 		t.Fatal("QueryResult Reason domain accepted an invalid mapping")

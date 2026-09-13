@@ -561,3 +561,20 @@ func TestPhaseTwoAssignmentIndexMetricsFollowObservations(t *testing.T) {
 		t.Fatalf("assignment_index_write_total{failed} = %v, want 1", got)
 	}
 }
+
+func TestPhaseTwoScheduleCursorAdvanceCountsByOutcome(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	for _, status := range []string{observability.CursorAdvanceApplied, observability.CursorAdvanceApplied, observability.CursorAdvanceConflict} {
+		recorder.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentScheduler, Stage: observability.StageScheduleCursorAdvanced,
+			Result: observability.ResultSuccess, Operation: observability.OperationWrite,
+			CursorAdvance: &observability.CursorAdvanceFacts{From: 120, To: 600, Status: status},
+		})
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceApplied)); got != 2 {
+		t.Fatalf("schedule_cursor_advance_total{applied} = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceConflict)); got != 1 {
+		t.Fatalf("schedule_cursor_advance_total{conflict} = %v, want 1", got)
+	}
+}

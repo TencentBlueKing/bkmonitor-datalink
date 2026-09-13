@@ -71,10 +71,14 @@ const (
 	// query is not in yet. It is the normal pacing of every Slot, and the
 	// highest-volume observation alarmd makes, so it needs its own name:
 	// without one it normalizes to internal_unknown and reads as a fault.
-	ReasonQueryNotReady              = "QUERY_NOT_READY"
-	ReasonExecutionBudgetExhausted   = "EXECUTION_BUDGET_EXHAUSTED"
-	ReasonSnapshotUnavailable        = "SNAPSHOT_UNAVAILABLE"
-	ReasonGapSkipped                 = "GAP_SKIPPED"
+	ReasonQueryNotReady            = "QUERY_NOT_READY"
+	ReasonExecutionBudgetExhausted = "EXECUTION_BUDGET_EXHAUSTED"
+	ReasonSnapshotUnavailable      = "SNAPSHOT_UNAVAILABLE"
+	ReasonGapSkipped               = "GAP_SKIPPED"
+	// ReasonSchedulePruned names a Progress cursor moved past a part of the
+	// Schedule timeline that was pruned before the cursor could be evaluated.
+	// The skipped Slots were never observed, which is a coverage fact.
+	ReasonSchedulePruned             = "SCHEDULE_PRUNED"
 	ReasonEffectiveTimeInactive      = "EFFECTIVE_TIME_INACTIVE"
 	ReasonEffectiveTimeUnknown       = "EFFECTIVE_TIME_UNKNOWN"
 	ReasonHistoryWarming             = "HISTORY_WARMING"

@@ -116,6 +116,9 @@ func NewAlgorithmCompilerRegistry(compilers ...AlgorithmCompiler) (*AlgorithmCom
 func NewDefaultAlgorithmCompilerRegistry() *AlgorithmCompilerRegistry {
 	registry, err := NewAlgorithmCompilerRegistry(
 		thresholdAlgorithmCompiler{}, simpleRingRatioAlgorithmCompiler{}, osRestartAlgorithmCompiler{},
+		traditionalComparisonCompiler{DetectorKindSimpleYearRound}, traditionalComparisonCompiler{DetectorKindAdvancedRingRatio},
+		traditionalComparisonCompiler{DetectorKindAdvancedYearRound}, traditionalComparisonCompiler{DetectorKindRingRatioAmplitude},
+		traditionalComparisonCompiler{DetectorKindYearRoundAmplitude}, traditionalComparisonCompiler{DetectorKindYearRoundRange},
 		procPortAlgorithmCompiler{},
 	)
 	if err != nil {

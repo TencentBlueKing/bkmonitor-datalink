@@ -163,11 +163,12 @@ type AlgorithmSourceProvenance struct {
 }
 
 type compiledAlgorithmConfig struct {
-	Threshold        *detectorSemantic          `json:"threshold,omitempty"`
-	SimpleRingRatio  *SimpleRingRatioConfig     `json:"simple_ring_ratio,omitempty"`
-	OsRestart        *OsRestartConfig           `json:"os_restart,omitempty"`
-	ProcPort         *ProcPortConfig            `json:"proc_port,omitempty"`
-	SourceProvenance *AlgorithmSourceProvenance `json:"source_provenance,omitempty"`
+	TraditionalComparison *TraditionalComparisonConfig `json:"traditional_comparison,omitempty"`
+	Threshold             *detectorSemantic            `json:"threshold,omitempty"`
+	SimpleRingRatio       *SimpleRingRatioConfig       `json:"simple_ring_ratio,omitempty"`
+	OsRestart             *OsRestartConfig             `json:"os_restart,omitempty"`
+	ProcPort              *ProcPortConfig              `json:"proc_port,omitempty"`
+	SourceProvenance      *AlgorithmSourceProvenance   `json:"source_provenance,omitempty"`
 }
 
 type CompiledAlgorithmPlan struct {

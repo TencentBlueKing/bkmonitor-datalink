@@ -56,79 +56,81 @@ const (
 	ComponentPythonProducer = "python_producer"
 	ComponentOther          = "_other"
 
-	StageConfigLoaded         = "config_loaded"
-	StageLegacyPodCache       = "legacy_pod_cache"
-	StageSnapshotRefreshed    = "snapshot_refreshed"
-	StageSnapshotUnavailable  = "snapshot_unavailable"
-	StageActivationFailed     = "activation_failed"
-	StageActiveQGSet          = "active_qg_set"
-	StageObjectCatalog        = "object_catalog"
-	StageObjectRead           = "object_read"
-	StageFrozenPlanGeneration = "frozen_plan_generation"
-	StageActivationHold       = "activation_hold"
-	StageScheduleCutover      = "schedule_cutover"
-	StageLegacyQGMigration    = "legacy_active_qg_migration"
-	StageDrainingQGReconciled = "draining_query_groups"
-	StageAssignmentAcquired   = "assignment_acquired"
-	StageAssignmentLost       = "assignment_lost"
-	StageRebalancePlanned     = "rebalance_planned"
-	StageTakeoverStarted      = "takeover_started"
-	StageTakeoverCompleted    = "takeover_completed"
-	StageLeaseRenewed         = "lease_renewed"
-	StageFenceChecked         = "fence_checked"
-	StageScheduleDue          = "schedule_due"
-	StageSlotStarted          = "slot_started"
-	StageSlotCompleted        = "slot_completed"
-	StageRunnerCompleted      = "runner_completed"
-	StageSlotSourceCompleted  = "slot_source_completed"
-	StageQueryAdmission       = "query_admission"
-	StageRestartRecovered     = "restart_recovered"
-	StageFleetSnapshotPublish = "fleet_snapshot_publish"
-	StageObservationWindow    = "observation_window"
-	StageKafkaAssigned        = "kafka_assigned"
-	StageExecutionReceived    = "execution_received"
-	StageOffsetGap            = "offset_gap"
-	StageOffsetMarked         = "offset_marked"
-	StageMessageDecoded       = "message_decoded"
-	StageRecordBatchReady     = "record_batch_ready"
-	StageRejected             = "rejected"
-	StagePlanCompiled         = "plan_compiled"
-	StageQueryCompleted       = "query_completed"
-	StageQueryBudgetResolved  = "query_budget_resolved"
-	StageSlotReadinessArrival = "slot_readiness_arrival"
-	StageStatePreflight       = "state_preflight"
-	StageGapLoaded            = "gap_loaded"
-	StageEvaluationCompleted  = "evaluation_completed"
-	StageSideEffectAdmission  = "side_effect_admission"
-	StageStateAdmission       = "state_admission"
-	StageGapGuardCommitted    = "gap_guard_committed"
-	StageMutationCompared     = "mutation_compared"
-	StageEventACKed           = "event_acked"
-	StageStateApplied         = "state_applied"
-	StageProgressCommitted    = "progress_committed"
-	StageDependencyLoaded     = "dependency_loaded"
-	StageStateCommitted       = "state_committed"
-	StageDetectCompleted      = "detect_completed"
-	StageTriggerCompleted     = "trigger_completed"
-	StageOutputACKed          = "output_acked"
-	StageCoverageCompleted    = "coverage_completed"
-	StageCoverageGap          = "coverage_gap"
-	StageReceiptQueued        = "receipt_queued"
-	StageFinalEvidenceQueued  = "final_evidence_queued"
-	StageFinalEvidenceACKed   = "final_evidence_acked"
-	StageFinalEvidenceDropped = "final_evidence_dropped"
-	StageResourceSoft         = "resource_soft"
-	StageResourceHard         = "resource_hard"
-	StageResourceResumed      = "resource_resumed"
-	StageComparisonCompleted  = "comparison_completed"
-	StageComparisonAuditACKed = "comparison_audit_acked"
-	StagePythonSource         = "source"
-	StagePythonBuilt          = "built"
-	StagePythonEnqueued       = "enqueued"
-	StagePythonPublished      = "published"
-	StagePythonACKed          = "acked"
-	StagePythonDropped        = "dropped"
-	StageOther                = "_other"
+	StageConfigLoaded           = "config_loaded"
+	StageLegacyPodCache         = "legacy_pod_cache"
+	StageSnapshotRefreshed      = "snapshot_refreshed"
+	StageSnapshotUnavailable    = "snapshot_unavailable"
+	StageActivationFailed       = "activation_failed"
+	StageActiveQGSet            = "active_qg_set"
+	StageObjectCatalog          = "object_catalog"
+	StageObjectRead             = "object_read"
+	StageFrozenPlanGeneration   = "frozen_plan_generation"
+	StageActivationHold         = "activation_hold"
+	StageScheduleCutover        = "schedule_cutover"
+	StageLegacyQGMigration      = "legacy_active_qg_migration"
+	StageDrainingQGReconciled   = "draining_query_groups"
+	StageAssignmentAcquired     = "assignment_acquired"
+	StageAssignmentLost         = "assignment_lost"
+	StageRebalancePlanned       = "rebalance_planned"
+	StageAssignmentIndexWritten = "assignment_index_written"
+	StageAssignmentIndexRead    = "assignment_index_read"
+	StageTakeoverStarted        = "takeover_started"
+	StageTakeoverCompleted      = "takeover_completed"
+	StageLeaseRenewed           = "lease_renewed"
+	StageFenceChecked           = "fence_checked"
+	StageScheduleDue            = "schedule_due"
+	StageSlotStarted            = "slot_started"
+	StageSlotCompleted          = "slot_completed"
+	StageRunnerCompleted        = "runner_completed"
+	StageSlotSourceCompleted    = "slot_source_completed"
+	StageQueryAdmission         = "query_admission"
+	StageRestartRecovered       = "restart_recovered"
+	StageFleetSnapshotPublish   = "fleet_snapshot_publish"
+	StageObservationWindow      = "observation_window"
+	StageKafkaAssigned          = "kafka_assigned"
+	StageExecutionReceived      = "execution_received"
+	StageOffsetGap              = "offset_gap"
+	StageOffsetMarked           = "offset_marked"
+	StageMessageDecoded         = "message_decoded"
+	StageRecordBatchReady       = "record_batch_ready"
+	StageRejected               = "rejected"
+	StagePlanCompiled           = "plan_compiled"
+	StageQueryCompleted         = "query_completed"
+	StageQueryBudgetResolved    = "query_budget_resolved"
+	StageSlotReadinessArrival   = "slot_readiness_arrival"
+	StageStatePreflight         = "state_preflight"
+	StageGapLoaded              = "gap_loaded"
+	StageEvaluationCompleted    = "evaluation_completed"
+	StageSideEffectAdmission    = "side_effect_admission"
+	StageStateAdmission         = "state_admission"
+	StageGapGuardCommitted      = "gap_guard_committed"
+	StageMutationCompared       = "mutation_compared"
+	StageEventACKed             = "event_acked"
+	StageStateApplied           = "state_applied"
+	StageProgressCommitted      = "progress_committed"
+	StageDependencyLoaded       = "dependency_loaded"
+	StageStateCommitted         = "state_committed"
+	StageDetectCompleted        = "detect_completed"
+	StageTriggerCompleted       = "trigger_completed"
+	StageOutputACKed            = "output_acked"
+	StageCoverageCompleted      = "coverage_completed"
+	StageCoverageGap            = "coverage_gap"
+	StageReceiptQueued          = "receipt_queued"
+	StageFinalEvidenceQueued    = "final_evidence_queued"
+	StageFinalEvidenceACKed     = "final_evidence_acked"
+	StageFinalEvidenceDropped   = "final_evidence_dropped"
+	StageResourceSoft           = "resource_soft"
+	StageResourceHard           = "resource_hard"
+	StageResourceResumed        = "resource_resumed"
+	StageComparisonCompleted    = "comparison_completed"
+	StageComparisonAuditACKed   = "comparison_audit_acked"
+	StagePythonSource           = "source"
+	StagePythonBuilt            = "built"
+	StagePythonEnqueued         = "enqueued"
+	StagePythonPublished        = "published"
+	StagePythonACKed            = "acked"
+	StagePythonDropped          = "dropped"
+	StageOther                  = "_other"
 
 	ResultTerminal = "terminal"
 	ResultRetrying = "retrying"
@@ -498,6 +500,68 @@ func normalizeRebalanceFacts(facts *RebalanceFacts) *RebalanceFacts {
 	return &normalized
 }
 
+// AssignmentIndexFacts describes one Assignment index round: written by
+// the Control Leader (Round, ControlEpoch, Workers, Rewritten, Missing) or
+// read by a worker (Round, Result, StaleRounds, SetRead, Candidates,
+// Assigned, Shadow, Difference). The index is an accelerator, so the read
+// side reports what the index would have yielded next to what the records
+// gave; Shadow classifies the comparison and Difference is the size of the
+// symmetric difference.
+type AssignmentIndexFacts struct {
+	Round        uint64 `json:"round"`
+	ControlEpoch uint64 `json:"control_epoch,omitempty"`
+	Workers      int    `json:"workers,omitempty"`
+	Rewritten    int    `json:"rewritten,omitempty"`
+	Missing      int    `json:"missing,omitempty"`
+	Result       string `json:"result,omitempty"`
+	StaleRounds  int    `json:"stale_rounds"`
+	SetRead      bool   `json:"set_read,omitempty"`
+	Candidates   int    `json:"candidates"`
+	Assigned     int    `json:"assigned"`
+	Shadow       string `json:"shadow,omitempty"`
+	Difference   int    `json:"difference"`
+}
+
+// Closed vocabularies of the index read side; anything else normalizes to
+// the value that says "do not trust this read".
+const (
+	AssignmentIndexFresh   = "fresh"
+	AssignmentIndexStale   = "stale"
+	AssignmentIndexMissing = "missing"
+	AssignmentIndexInvalid = "invalid"
+
+	AssignmentIndexShadowAgreed    = "agreed"
+	AssignmentIndexShadowTransient = "transient"
+	AssignmentIndexShadowDisagreed = "disagreed"
+	AssignmentIndexShadowSkipped   = "skipped"
+)
+
+func normalizeAssignmentIndexFacts(facts *AssignmentIndexFacts) *AssignmentIndexFacts {
+	if facts == nil {
+		return nil
+	}
+	normalized := *facts
+	for _, count := range []*int{
+		&normalized.Workers, &normalized.Rewritten, &normalized.Missing, &normalized.StaleRounds,
+		&normalized.Candidates, &normalized.Assigned, &normalized.Difference,
+	} {
+		if *count < 0 {
+			*count = 0
+		}
+	}
+	switch normalized.Result {
+	case "", AssignmentIndexFresh, AssignmentIndexStale, AssignmentIndexMissing, AssignmentIndexInvalid:
+	default:
+		normalized.Result = AssignmentIndexInvalid
+	}
+	switch normalized.Shadow {
+	case "", AssignmentIndexShadowAgreed, AssignmentIndexShadowTransient, AssignmentIndexShadowDisagreed, AssignmentIndexShadowSkipped:
+	default:
+		normalized.Shadow = AssignmentIndexShadowSkipped
+	}
+	return &normalized
+}
+
 // DrainingQGSampleRetired marks a sample whose Query Group left the active set
 // because it is past the draining termination window without draining.
 // Undrained samples carry no marker so their log shape is unchanged.
@@ -763,6 +827,7 @@ type Observation struct {
 	LegacyMigration          *LegacyQGMigrationFacts
 	DrainingQG               *DrainingQGFacts
 	Rebalance                *RebalanceFacts
+	AssignmentIndex          *AssignmentIndexFacts
 	SourceRefresh            *SourceRefreshFacts
 	ActivationFailure        *ActivationFailureFacts
 	AlgorithmEvaluations     []AlgorithmEvaluationFact
@@ -855,6 +920,7 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.LegacyMigration = normalizeLegacyQGMigrationFacts(observation.LegacyMigration)
 	observation.DrainingQG = normalizeDrainingQGFacts(observation.DrainingQG)
 	observation.Rebalance = normalizeRebalanceFacts(observation.Rebalance)
+	observation.AssignmentIndex = normalizeAssignmentIndexFacts(observation.AssignmentIndex)
 	observation.SourceRefresh = normalizeSourceRefreshFacts(observation.Component, observation.Stage, observation.SourceRefresh)
 	observation.ActivationFailure = normalizeActivationFailureFacts(
 		observation.Component, observation.Stage, observation.ActivationFailure,
@@ -1563,6 +1629,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentControlPlane, StageFrozenPlanGeneration}, {ComponentControlPlane, StageActivationHold},
 	{ComponentOwnership, StageAssignmentAcquired}, {ComponentOwnership, StageAssignmentLost},
 	{ComponentOwnership, StageRebalancePlanned},
+	{ComponentOwnership, StageAssignmentIndexWritten}, {ComponentOwnership, StageAssignmentIndexRead},
 	{ComponentOwnership, StageTakeoverStarted}, {ComponentOwnership, StageTakeoverCompleted},
 	{ComponentOwnership, StageLeaseRenewed}, {ComponentOwnership, StageFenceChecked},
 	{ComponentScheduler, StageScheduleDue}, {ComponentScheduler, StageSlotStarted},

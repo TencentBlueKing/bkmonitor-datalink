@@ -243,6 +243,22 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Any("rebalance_owned", facts.Owned),
 		)
 	}
+	if facts := observation.AssignmentIndex; facts != nil {
+		attributes = append(attributes,
+			slog.Uint64("assignment_index_round", facts.Round),
+			slog.Uint64("assignment_index_control_epoch", facts.ControlEpoch),
+			slog.Int("assignment_index_workers", facts.Workers),
+			slog.Int("assignment_index_rewritten", facts.Rewritten),
+			slog.Int("assignment_index_missing", facts.Missing),
+			slog.String("assignment_index_result", facts.Result),
+			slog.Int("assignment_index_stale_rounds", facts.StaleRounds),
+			slog.Bool("assignment_index_set_read", facts.SetRead),
+			slog.Int("assignment_index_candidates", facts.Candidates),
+			slog.Int("assignment_index_assigned", facts.Assigned),
+			slog.String("assignment_index_shadow", facts.Shadow),
+			slog.Int("assignment_index_difference", facts.Difference),
+		)
+	}
 	if facts := observation.SourceRefresh; facts != nil {
 		attributes = append(attributes,
 			slog.String("source_refresh_status", string(facts.Status)),

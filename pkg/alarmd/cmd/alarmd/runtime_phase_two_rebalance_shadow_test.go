@@ -27,6 +27,12 @@ type rebalanceOwnershipStore struct {
 	listErr     error
 	listCalls   int
 	published   int
+
+	indexRounds      [][]ownership.AssignedSetWrite
+	indexMissingOnce []string
+	indexErr         error
+	index            *ownership.AssignmentIndex
+	sets             map[string]ownership.AssignedSet
 }
 
 func (store *rebalanceOwnershipStore) ListReadyWorkers(context.Context, time.Time) ([]ownership.WorkerRegistration, error) {

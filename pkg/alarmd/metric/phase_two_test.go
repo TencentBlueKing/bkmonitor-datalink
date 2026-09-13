@@ -500,3 +500,64 @@ func TestPhaseTwoRebalancePlannedMovesGaugeFollowsTheLatestPlan(t *testing.T) {
 		t.Fatalf("rebalance_planned_moves after an even round = %v, want 0", got)
 	}
 }
+
+// Gauges of the observe-only family emit no series until their first
+// observation: a zero before the first computation would read exactly like
+// a healthy steady state.
+func TestPhaseTwoObserveOnlyGaugesEmitNoSeriesUntilFirstObservation(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	family := map[string]*loadedGauge{
+		"undrained_draining_query_groups":     recorder.phaseTwo.undrainedDrainingQueryGroups,
+		"draining_cursor_pruned_query_groups": recorder.phaseTwo.drainingCursorPrunedQueryGroups,
+		"rebalance_planned_moves":             recorder.phaseTwo.rebalancePlannedMoves,
+		"activation_held_query_groups":        recorder.phaseTwo.activationHeldQueryGroups,
+		"activation_held_age_seconds_max":     recorder.phaseTwo.activationHeldAgeSecondsMax,
+		"assignment_index_stale_rounds":       recorder.phaseTwo.assignmentIndexStaleRounds,
+	}
+	for name, gauge := range family {
+		if got := testutil.CollectAndCount(gauge); got != 0 {
+			t.Fatalf("%s emitted %d series before any observation", name, got)
+		}
+	}
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentControlPlane, Stage: observability.StageDrainingQGReconciled,
+		Result: observability.ResultSuccess, Operation: observability.OperationLoad,
+		DrainingQG: &observability.DrainingQGFacts{},
+	})
+	for _, name := range []string{"undrained_draining_query_groups", "draining_cursor_pruned_query_groups"} {
+		if got := testutil.CollectAndCount(family[name]); got != 1 || testutil.ToFloat64(family[name]) != 0 {
+			t.Fatalf("%s after its first observation emitted %d series", name, got)
+		}
+	}
+	if got := testutil.CollectAndCount(family["rebalance_planned_moves"]); got != 0 {
+		t.Fatalf("an unrelated observation loaded rebalance_planned_moves (%d series)", got)
+	}
+}
+
+// Index reads count by result and shadow class, the stale-round gauge
+// follows the latest read, and writes count by success or failure.
+func TestPhaseTwoAssignmentIndexMetricsFollowObservations(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentOwnership, Stage: observability.StageAssignmentIndexRead,
+		Result: observability.ResultSuccess, Operation: observability.OperationLoad,
+		AssignmentIndex: &observability.AssignmentIndexFacts{Result: observability.AssignmentIndexStale, StaleRounds: 4, Shadow: observability.AssignmentIndexShadowAgreed},
+	})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentOwnership, Stage: observability.StageAssignmentIndexWritten,
+		Result: observability.ResultFailed, Operation: observability.OperationWrite,
+		AssignmentIndex: &observability.AssignmentIndexFacts{Workers: 2},
+	})
+	if got := testutil.ToFloat64(recorder.phaseTwo.assignmentIndexStaleRounds); got != 4 {
+		t.Fatalf("assignment_index_stale_rounds = %v, want 4", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.assignmentIndexReads.WithLabelValues(observability.AssignmentIndexStale)); got != 1 {
+		t.Fatalf("assignment_index_read_total{stale} = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.assignmentIndexShadow.WithLabelValues(observability.AssignmentIndexShadowAgreed)); got != 1 {
+		t.Fatalf("assignment_index_shadow_total{agreed} = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.assignmentIndexWrites.WithLabelValues("failed")); got != 1 {
+		t.Fatalf("assignment_index_write_total{failed} = %v, want 1", got)
+	}
+}

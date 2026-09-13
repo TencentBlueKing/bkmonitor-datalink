@@ -7,6 +7,7 @@ package metric
 
 import (
 	"math"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -56,11 +57,15 @@ type phaseTwoMetrics struct {
 	legacyMigration                 *prometheus.CounterVec
 	legacyMigrationScan             prometheus.Histogram
 	legacyMigrationTime             *prometheus.HistogramVec
-	undrainedDrainingQueryGroups    prometheus.Gauge
-	drainingCursorPrunedQueryGroups prometheus.Gauge
-	rebalancePlannedMoves           prometheus.Gauge
-	activationHeldQueryGroups       prometheus.Gauge
-	activationHeldAgeSecondsMax     prometheus.Gauge
+	undrainedDrainingQueryGroups    *loadedGauge
+	drainingCursorPrunedQueryGroups *loadedGauge
+	rebalancePlannedMoves           *loadedGauge
+	assignmentIndexStaleRounds      *loadedGauge
+	assignmentIndexWrites           *prometheus.CounterVec
+	assignmentIndexReads            *prometheus.CounterVec
+	assignmentIndexShadow           *prometheus.CounterVec
+	activationHeldQueryGroups       *loadedGauge
+	activationHeldAgeSecondsMax     *loadedGauge
 	algorithmEvaluations            *prometheus.CounterVec
 	redisCalls                      redisCallMetrics
 	controlCache                    *controlCacheCollector
@@ -240,13 +245,17 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.legacyMigration = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_total", Help: "One-time legacy Active QG migration outcomes."}, []string{"result", "reason_class"})
 	metrics.legacyMigrationScan = prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_scan_keys", Help: "Redis keys scanned by one-time legacy Active QG migration.", Buckets: legacyMigrationScanBuckets})
 	metrics.legacyMigrationTime = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_duration_seconds", Help: "One-time legacy Active QG migration duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
-	metrics.drainingCursorPrunedQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "draining_cursor_pruned_query_groups", Help: "Replicated per-Pod view of draining Query Groups whose Progress cursor lies before the earliest Slot their Schedule timeline still holds. Such a Query Group can never find the Slot its cursor asks for, so it cannot drain by itself; the count is reported before anything acts on it. Aggregate replicas with max, not sum."})
-	metrics.rebalancePlannedMoves = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "rebalance_planned_moves", Help: "Assignments the latest rebalance planning round on this Control Leader would move from the most to the least loaded ready worker. Shadow measurement: only computed, never published. Meaningful on the Control Leader only; aggregate replicas with max, not sum."})
-	metrics.undrainedDrainingQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "undrained_draining_query_groups", Help: "Replicated per-Pod view of retired Query Groups still requiring ownership until their retirement boundary is drained; aggregate replicas with max, not sum."})
-	metrics.activationHeldQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "activation_held_query_groups", Help: "Query Groups the publication brings back from retirement that have not drained and were held out of the activation, which went ahead for everyone else. Reported by the Control Leader on every activation attempt and on every reconcile of a publication that still holds some, so it follows the held set down to zero; a value that does not fall is a retirement that is not draining."})
+	metrics.drainingCursorPrunedQueryGroups = newLoadedGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "draining_cursor_pruned_query_groups", Help: "Replicated per-Pod view of draining Query Groups whose Progress cursor lies before the earliest Slot their Schedule timeline still holds. Such a Query Group can never find the Slot its cursor asks for, so it cannot drain by itself; the count is reported before anything acts on it. Aggregate replicas with max, not sum."})
+	metrics.rebalancePlannedMoves = newLoadedGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "rebalance_planned_moves", Help: "Assignments the latest rebalance planning round on this Control Leader would move from the most to the least loaded ready worker. Shadow measurement: only computed, never published. Meaningful on the Control Leader only; aggregate replicas with max, not sum."})
+	metrics.assignmentIndexStaleRounds = newLoadedGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "assignment_index_stale_rounds", Help: "Consecutive reconcile rounds in which this worker read the same Assignment index round number. Zero or one while a Control Leader is writing; a climbing value means the index has stopped advancing, which reads exactly like an unchanged fleet otherwise. Per worker; aggregate with max."})
+	metrics.assignmentIndexWrites = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "assignment_index_write_total", Help: "Assignment index rounds the Control Leader attempted, by result."}, []string{"result"})
+	metrics.assignmentIndexReads = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "assignment_index_read_total", Help: "Assignment index reads by this worker, by result: fresh (round advanced), stale (same round), missing (no index or no set), invalid (unreadable)."}, []string{"result"})
+	metrics.assignmentIndexShadow = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "assignment_index_shadow_total", Help: "Shadow comparison of the index-derived candidate set with the record-derived set, by result: agreed, transient (records changed this round, the index may lag one round), disagreed (records unchanged and the sets differ), skipped (no usable index)."}, []string{"result"})
+	metrics.undrainedDrainingQueryGroups = newLoadedGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "undrained_draining_query_groups", Help: "Replicated per-Pod view of retired Query Groups still requiring ownership until their retirement boundary is drained; aggregate replicas with max, not sum."})
+	metrics.activationHeldQueryGroups = newLoadedGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "activation_held_query_groups", Help: "Query Groups the publication brings back from retirement that have not drained and were held out of the activation, which went ahead for everyone else. Reported by the Control Leader on every activation attempt and on every reconcile of a publication that still holds some, so it follows the held set down to zero; a value that does not fall is a retirement that is not draining."})
 	metrics.sourceStrategiesRead = prometheus.NewCounter(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_strategies_read_total", Help: "Strategy documents source refresh rounds asked the source for. A skipped round adds nothing; a full read adds the whole active set."})
 	metrics.sourceChangeSignalAge = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_change_signal_age_seconds", Help: "How long ago the source's publisher last moved its change signal, in seconds by the Control Leader's clock, as of the latest refresh round. NaN when the latest round found no signal. A value that keeps growing while strategies are being saved means the signal has stopped following the source, and every skipped round since is a round that read nothing for a wrong reason."})
-	metrics.activationHeldAgeSecondsMax = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "activation_held_age_seconds_max", Help: "How long the oldest held retirement of the latest activation attempt has waited, in seconds; zero when nothing is held."})
+	metrics.activationHeldAgeSecondsMax = newLoadedGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "activation_held_age_seconds_max", Help: "How long the oldest held retirement of the latest activation attempt has waited, in seconds; zero when nothing is held."})
 	metrics.algorithmEvaluations = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "algorithm_evaluation_total",
 		Help: "Algorithm evaluation outcomes by fixed source family and result.",
@@ -308,7 +317,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.queryFailures,
 		m.objectCatalogObjects, m.objectCatalogRedis, m.objectCatalogManifestBytes, m.objectReads, m.stateGenerationSkew,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
-		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
+		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.assignmentIndexStaleRounds, m.assignmentIndexWrites, m.assignmentIndexReads, m.assignmentIndexShadow, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
 		m.algorithmEvaluations, m.algorithmInputs,
 	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
 		m.controlCache, m.redisPool, m.canonicalEncoding, m.legacyPodCache,
@@ -353,6 +362,20 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 	}
 	if facts := observation.Rebalance; facts != nil && observation.Result == observability.ResultSuccess {
 		m.rebalancePlannedMoves.Set(float64(facts.PlannedMoves))
+	}
+	if facts := observation.AssignmentIndex; facts != nil {
+		switch observation.Stage {
+		case observability.StageAssignmentIndexWritten:
+			result := "failed"
+			if observation.Result == observability.ResultSuccess {
+				result = "success"
+			}
+			m.assignmentIndexWrites.WithLabelValues(result).Inc()
+		case observability.StageAssignmentIndexRead:
+			m.assignmentIndexReads.WithLabelValues(facts.Result).Inc()
+			m.assignmentIndexShadow.WithLabelValues(facts.Shadow).Inc()
+			m.assignmentIndexStaleRounds.Set(float64(facts.StaleRounds))
+		}
 	}
 	if facts := observation.ActivationHold; facts != nil && observation.Stage == observability.StageActivationHold {
 		m.activationHeldQueryGroups.Set(float64(facts.Held))
@@ -588,5 +611,49 @@ func normalizePhaseTwoBudget(budget observability.CapacityBudget) string {
 		return string(budget)
 	default:
 		return "other"
+	}
+}
+
+// loadedGauge is a Gauge that emits no series until it has been set once.
+// The gauges of the observe-only family have zero as their healthy value,
+// and a zero emitted before the first computation reads exactly like a
+// healthy steady state: a reader checking "is the count below what it
+// should be" right after a rollout gets a confident wrong answer. Holding
+// the series back until the first Set turns "not loaded yet" from a wrong
+// answer into no answer. Describe is unchanged so the descriptor catalogue
+// still lists the family.
+//
+// This trades one ambiguity for another: before, zero meant "healthy" or
+// "not loaded yet"; now an absent series means "not loaded yet" or "the
+// endpoint was not scraped at all". The trade only pays because the second
+// pair is separable by companion series: when the endpoint is missing every
+// series is missing, so a reader that sees the rest of this registry but not
+// one of these gauges knows it is looking at a process that has not loaded
+// that fact yet. Not emitting is therefore readable only while other series
+// of the same registry are always present, the principle stated at the top
+// of due_index.go for zero-valued counters, now a precondition of this
+// family. Acceptance reads must check a companion series before concluding
+// anything from an absent one.
+type loadedGauge struct {
+	gauge  prometheus.Gauge
+	loaded atomic.Bool
+}
+
+func newLoadedGauge(opts prometheus.GaugeOpts) *loadedGauge {
+	return &loadedGauge{gauge: prometheus.NewGauge(opts)}
+}
+
+func (gauge *loadedGauge) Set(value float64) {
+	gauge.gauge.Set(value)
+	gauge.loaded.Store(true)
+}
+
+func (gauge *loadedGauge) Describe(ch chan<- *prometheus.Desc) {
+	gauge.gauge.Describe(ch)
+}
+
+func (gauge *loadedGauge) Collect(ch chan<- prometheus.Metric) {
+	if gauge.loaded.Load() {
+		gauge.gauge.Collect(ch)
 	}
 }

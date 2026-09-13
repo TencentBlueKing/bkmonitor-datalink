@@ -255,6 +255,9 @@ const defaultCanonicalShadowStride = 1024
 // the reference one. The first retirement condition says every deployment, and
 // at least one has not run its own shadow yet. Changing this default is what
 // makes the new encoder answer in an environment that never proved it there.
+//
+// Deployments are named by role rather than by environment: this file is
+// public.
 func (c PhaseTwoCanonicalConfig) mode() string {
 	if c.Mode == "" {
 		return contract.CanonicalModeEstablished

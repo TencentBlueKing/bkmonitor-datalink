@@ -95,6 +95,8 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
 .tcard svg .zero{stroke:var(--line);stroke-width:1;stroke-dasharray:3 3}
 .wpick{display:flex;gap:6px;align-items:center;margin-bottom:10px}
 .wpick button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.age{margin-left:8px;opacity:.75}
+.age.stale{color:#e0a33e;opacity:1}
 .summary{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:10px}
 .sgroup{font-size:11px;color:var(--muted)}
 .sgroup b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
@@ -108,6 +110,14 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
   <div class="sub">
     对象清单与判定不经时序库，直接读控制面与各副本快照。
     <span id="stamp"></span>
+    <span id="age" class="age"></span>
+  </div>
+  <div class="form">
+    <span>自动刷新：每</span>
+    <input id="every" type="number" min="5" step="5" size="3">
+    <span>秒</span>
+    <button id="refreshNow">立即刷新</button>
+    <span class="basis" id="refreshNote"></span>
   </div>
 
   <section class="panel">
@@ -1866,15 +1876,81 @@ function loadTrend() {
   });
 }
 
+// How often the page re-reads, and how old what is on screen already is.
+//
+// Both are shown because the second is the one a reader needs and neither was
+// available: every number on this page is a point read, the page refreshed on a
+// fixed thirty-second timer, and nothing said so -- so a verdict could be
+// twenty-nine seconds old while being read as "now". During a rollout that is
+// the difference between watching a deployment recover and watching a stale
+// frame of it.
+var MIN_REFRESH_SECONDS = 5;
+var DEFAULT_REFRESH_SECONDS = 30;
+var refreshSeconds = DEFAULT_REFRESH_SECONDS;
+var lastRead = 0;
+var refreshTimer = 0;
+
+function storedRefreshSeconds() {
+  // The URL wins over the stored value so a link can carry a cadence, which is
+  // what someone shares when they want another person to watch the same thing.
+  var fromUrl = new URLSearchParams(location.search).get('every');
+  var raw = fromUrl;
+  if (raw === null) {
+    // Reading storage throws outright in some browsers rather than returning
+    // null, and a page that cannot render because of a preference is worse than
+    // one that forgets it.
+    try { raw = localStorage.getItem('alarmd.every'); } catch (e) { raw = null; }
+  }
+  var parsed = parseInt(raw, 10);
+  // Unreadable falls back to the default; too small is clamped to the floor, the
+  // same as typing it into the box. Sending one to the default and the other to
+  // the floor would make the same number mean two different things depending on
+  // where it came from.
+  if (!isFinite(parsed)) return DEFAULT_REFRESH_SECONDS;
+  return Math.max(MIN_REFRESH_SECONDS, parsed);
+}
+
+function applyRefreshSeconds(seconds) {
+  refreshSeconds = Math.max(MIN_REFRESH_SECONDS, Math.floor(seconds) || DEFAULT_REFRESH_SECONDS);
+  document.getElementById('every').value = refreshSeconds;
+  try { localStorage.setItem('alarmd.every', String(refreshSeconds)); } catch (e) { /* preference only */ }
+  if (refreshTimer) { clearInterval(refreshTimer); }
+  refreshTimer = setInterval(refresh, refreshSeconds * 1000);
+  // The floor is not a round number picked for looks: one refresh is four reads
+  // of the control plane and every replica snapshot, and under five seconds the
+  // page costs the deployment more than it tells the reader.
+  text('refreshNote', '最短 ' + MIN_REFRESH_SECONDS + ' 秒——一次刷新是四个接口、'
+    + '每个都直读控制面和各副本快照，再快下去这个页面对部署的开销比它给的信息多。');
+}
+
+function tickAge() {
+  if (!lastRead) return;
+  var seconds = Math.round((Date.now() - lastRead) / 1000);
+  var host = document.getElementById('age');
+  host.textContent = '· 屏幕上的数是 ' + seconds + ' 秒前读的';
+  // Past one interval the page should already have refreshed; if it has not,
+  // what is on screen is older than the reader has any reason to expect.
+  host.className = seconds > refreshSeconds + 2 ? 'age stale' : 'age';
+}
+
 function refresh() {
+  lastRead = Date.now();
   text('stamp', '读取于 ' + new Date().toLocaleTimeString());
+  tickAge();
   loadHealth();
   loadObjects();
   loadWindows();
   loadTrend();
 }
+
+document.getElementById('every').addEventListener('change', function () {
+  applyRefreshSeconds(parseInt(this.value, 10));
+  refresh();
+});
+document.getElementById('refreshNow').addEventListener('click', refresh);
+applyRefreshSeconds(storedRefreshSeconds());
+setInterval(tickAge, 1000);
 refresh();
-setInterval(refresh, 30000);
 </script>
 </body>
 </html>

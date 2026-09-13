@@ -38,7 +38,16 @@ type Page struct {
 	Total  int `json:"total"`
 }
 
-type listResponse struct {
+// ListResponse is the object list, and it is exported for the same reason
+// DetailResponse is: the page's field names are checked against the Go type
+// that produces them, and a type the check cannot see is a response whose
+// fields can be renamed out from under the page with everything green.
+//
+// This one went uncovered longer than the others because the page read it into
+// a variable named d, shared with three unrelated responses -- so the check
+// could not be pointed at it without failing on every other response's fields.
+// The variable is named objects now.
+type ListResponse struct {
 	View
 	// Replica echoes the filter, so a caller cannot mistake a filtered response
 	// for a deployment-wide one. The coverage numbers stay deployment-wide.
@@ -53,7 +62,11 @@ type listResponse struct {
 	// Always sent, never inferred from the request: a response that does not say
 	// looks identical either way, and the two lists mean opposite things about
 	// whose fault the objects are.
-	Column  string  `json:"column"`
+	Column string `json:"column"`
+	// Order says which end of the population the first page is, for the same
+	// reason Column is echoed: the two orderings return disjoint first pages
+	// from one list, and a response that does not say looks the same either way.
+	Order   string  `json:"order"`
 	Summary Summary `json:"summary"`
 	// StallAfterSeconds is the budget an object's rounds have to finish in before
 	// the list calls it stalled. It is reported rather than assumed by the reader
@@ -199,9 +212,40 @@ type Summary struct {
 	// already in the response -- anomalies_total against the list length -- and
 	// an inference nobody makes is not a warning.
 	Partial bool `json:"partial"`
+	// Onset says when this population started, which the ordering cannot.
+	Onset Onset `json:"onset"`
 }
 
-func summarize(anomalies []Anomaly) Summary {
+// Onset splits the list by how long ago each object went wrong.
+//
+// The list is ordered oldest-first so the longest-running objects stay visible,
+// and that ordering puts whatever is happening right now at the very end. A
+// deployment read while 45 of 83 objects had appeared within the last two hours
+// showed none of them until page three: every row on the first two pages had
+// been wrong for more than a day, and the page asserted in its own wording that
+// the first page was the batch worth reading.
+//
+// Both readings are legitimate and one ordering cannot serve them, so the shape
+// is stated before the rows: a reader asking "is something happening now" gets
+// an answer without paging to the end to find it. It is counted over the whole
+// filtered list, not the visible page, because a count taken from one page
+// answers with whatever happened to be on screen.
+type Onset struct {
+	LastHour int `json:"last_hour"`
+	LastDay  int `json:"last_day"`
+	Older    int `json:"older"`
+	// NewestSince is the most recent start time in the list. Zero when the list
+	// is empty; a reader compares it against now to see whether the population
+	// is still growing.
+	NewestSince time.Time `json:"newest_since,omitempty"`
+	// OldestSince is the other end, so the spread is readable without paging.
+	// A population whose two ends are minutes apart started together, and then
+	// the ordering between its rows carries no information at all -- which is
+	// exactly the case the first page reads as a ranking.
+	OldestSince time.Time `json:"oldest_since,omitempty"`
+}
+
+func summarize(anomalies []Anomaly, at time.Time) Summary {
 	kinds := map[string]int{}
 	reasons := map[string]int{}
 	failures := map[string]int{}
@@ -212,9 +256,27 @@ func summarize(anomalies []Anomaly) Summary {
 	strategies := map[StrategyRef]struct{}{}
 	replicas := map[string]int{}
 	stalled := 0
+	onset := Onset{}
 	for _, anomaly := range anomalies {
 		if anomaly.Stalled {
 			stalled++
+		}
+		if !anomaly.Since.IsZero() {
+			age := at.Sub(anomaly.Since)
+			switch {
+			case age < time.Hour:
+				onset.LastHour++
+			case age < 24*time.Hour:
+				onset.LastDay++
+			default:
+				onset.Older++
+			}
+			if onset.NewestSince.IsZero() || anomaly.Since.After(onset.NewestSince) {
+				onset.NewestSince = anomaly.Since
+			}
+			if onset.OldestSince.IsZero() || anomaly.Since.Before(onset.OldestSince) {
+				onset.OldestSince = anomaly.Since
+			}
 		}
 		kinds[anomaly.Kind]++
 		if anomaly.ReasonCode != "" {
@@ -253,7 +315,7 @@ func summarize(anomalies []Anomaly) Summary {
 		ByKind: rank(kinds), ByReason: rank(reasons),
 		ByFailure: rank(failures), ByFailureCode: rank(codes), ByFailureDetail: rank(details), ByCauseReason: rank(causeReasons),
 		ByBusiness: rank(businesses), Strategies: len(strategies),
-		ByReplica: rank(replicas), Stalled: stalled,
+		ByReplica: rank(replicas), Stalled: stalled, Onset: onset,
 	}
 }
 
@@ -416,6 +478,19 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	if column == "" {
 		column = ColumnAnomalies
 	}
+	// Refused rather than defaulted, for the same reason an unknown column is:
+	// a typo that silently falls back returns the other ordering under the
+	// heading the caller asked for, and the two orderings put opposite ends of
+	// the population on the first page.
+	order := request.URL.Query().Get("order")
+	if order != "" && order != OrderOldest && order != OrderNewest {
+		writeJSON(response, http.StatusBadRequest,
+			map[string]string{"error": "order must be " + OrderOldest + " or " + OrderNewest})
+		return
+	}
+	if order == "" {
+		order = OrderOldest
+	}
 	view := service.View(request.Context())
 	if column == ColumnDemoted {
 		// The demoted list takes the anomaly list's place for the rest of this
@@ -473,15 +548,21 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	// page. A reader's first question is whether a long list is one problem or
 	// many, and counting only the visible page would answer it with whatever
 	// happened to be on screen.
-	summary := summarize(view.Anomalies)
+	summary := summarize(view.Anomalies, now())
 	summary.Partial = summaryPartial
+	// Ordered after filtering and before paging, so page two of a newest-first
+	// read continues page one rather than resorting a slice of the list.
+	if order == OrderNewest {
+		SortAnomaliesNewestFirst(view.Anomalies)
+	}
 	view.Anomalies = pageOf(view.Anomalies, offset, limit)
-	writeJSON(response, http.StatusOK, listResponse{
+	writeJSON(response, http.StatusOK, ListResponse{
 		Summary: summary,
 		View:    view, Replica: replica, Strategy: strategy, Business: business, Column: column,
 		Applied:           replica != "" || strategy != "" || business != "",
 		StallAfterSeconds: int(stallAfter / time.Second),
 		StalledTotal:      stalledTotal,
+		Order:             order,
 		Page:              Page{Offset: offset, Limit: limit, Total: total},
 	})
 }

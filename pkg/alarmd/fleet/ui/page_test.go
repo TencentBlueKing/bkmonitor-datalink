@@ -13,6 +13,7 @@ import (
 	"reflect"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"regexp"
 	"strings"
 	"testing"
@@ -139,17 +140,134 @@ func TestEveryVerdictFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "deployment", reflect.TypeOf(fleet.HealthResponse{}))
 }
 
+// The object list is the response the whole table is built from, and it was the
+// one this check could not be pointed at: the page read it into a variable
+// named d, which three unrelated responses also used, so every field of those
+// would have been reported as missing from this one. The variable is named
+// objects now, and this is the check that could not run before -- a misspelled
+// field on this response renders an empty cell or a silently wrong default in
+// the busiest part of the page.
+func TestEveryObjectListFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	assertFieldsExist(t, "objects", reflect.TypeOf(fleet.ListResponse{}))
+}
+
+// One level further down, and the level a reader trusts instead of paging: the
+// onset line says how much of the list started recently. A misspelled bucket
+// reads as undefined, the guard in front of it is false, and the line simply
+// omits that bucket -- so a population that is half an hour old renders as
+// though none of it is.
+func TestEveryOnsetFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	assertFieldsExist(t, "onset", reflect.TypeOf(fleet.Onset{}))
+}
+
+// The page suppresses the result word on records that carry only a duration,
+// and it held its own copy of which stages those are. A copy is the arrangement
+// that goes stale: a third timing call would emit a stage the page does not
+// know about, its unconditional success stamp would print as an outcome, and a
+// reader following a failed round would be told the failing step succeeded --
+// with nothing failing anywhere.
+//
+// The producing side is checked against the same list in cmd/alarmd, so the two
+// ends cannot drift apart without one of them failing.
+func TestThePageKnowsEveryStageThatCarriesOnlyADuration(t *testing.T) {
+	if len(observability.DurationOnlyStages) == 0 {
+		t.Fatal("no duration-only stages declared; the check would pass vacuously")
+	}
+	body := string(page)
+	block := regexp.MustCompile(`var TIMING_ONLY_STAGES = \{([^}]*)\}`).FindStringSubmatch(body)
+	if block == nil {
+		t.Fatal("the page no longer declares TIMING_ONLY_STAGES: every timing record's " +
+			"success stamp is being printed as an outcome again")
+	}
+	listed := map[string]bool{}
+	for _, match := range regexp.MustCompile(`([a-z0-9_]+):\s*true`).FindAllStringSubmatch(block[1], -1) {
+		listed[match[1]] = true
+	}
+	for _, stage := range observability.DurationOnlyStages {
+		if !listed[stage] {
+			t.Errorf("stage %q carries only a duration but the page does not list it: "+
+				"its unconditional success stamp renders as an outcome", stage)
+		}
+		// A row whose only content is its duration still needs a name, and the
+		// name has to say that is what it is -- "this round finished: success"
+		// over a round that did not finish is how this was read wrong.
+		if !strings.Contains(body, stage+": '") {
+			t.Errorf("the page has no wording for stage %q", stage)
+		}
+	}
+	for stage := range listed {
+		known := false
+		for _, declared := range observability.DurationOnlyStages {
+			if declared == stage {
+				known = true
+			}
+		}
+		if !known {
+			t.Errorf("the page suppresses the outcome on stage %q, which is not a duration-only "+
+				"stage: a real result is being hidden", stage)
+		}
+	}
+}
+
+// The container check runs one way: it finds ids in the markup and looks for a
+// script that writes them. The other direction was open, and it is the one that
+// throws -- text() and show() call getElementById(id).something, so a script
+// addressing an id the markup does not declare does not render a blank panel,
+// it stops the whole render at that line and leaves every panel after it as it
+// was on the previous refresh.
+func TestEveryElementTheScriptAddressesIsDeclaredInTheMarkup(t *testing.T) {
+	body := string(page)
+	declared := map[string]bool{}
+	for _, match := range regexp.MustCompile(`id="([A-Za-z0-9_]+)"`).FindAllStringSubmatch(body, -1) {
+		declared[match[1]] = true
+	}
+	if len(declared) == 0 {
+		t.Fatal("no element ids found in the markup; the check would pass vacuously")
+	}
+	// The three ways the page addresses an element by a literal id.
+	addressed := regexp.MustCompile(`(?:getElementById|\btext|\bshow|\bfail)\('([A-Za-z0-9_]+)'`)
+	matches := addressed.FindAllStringSubmatch(body, -1)
+	if len(matches) == 0 {
+		t.Fatal("the page addresses no element ids; the check would pass vacuously")
+	}
+	for _, match := range matches {
+		if !declared[match[1]] {
+			t.Errorf("a script addresses element %q, which the markup does not declare: "+
+				"the call throws and the rest of that render never happens", match[1])
+		}
+	}
+}
+
 // assertFieldsExist checks every `<object>.<field>` the page reads against the
 // JSON the Go type actually sends.
 func assertFieldsExist(t *testing.T, object string, response reflect.Type) {
 	t.Helper()
 	sent := map[string]bool{}
-	for index := 0; index < response.NumField(); index++ {
-		tag := response.Field(index).Tag.Get("json")
-		if name, _, _ := strings.Cut(tag, ","); name != "" && name != "-" {
-			sent[name] = true
+	var collect func(reflect.Type)
+	collect = func(structType reflect.Type) {
+		for index := 0; index < structType.NumField(); index++ {
+			field := structType.Field(index)
+			name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+			// An embedded struct with no tag is flattened into the same JSON
+			// object, so its fields are sent under this name too. Without this
+			// the check reports every one of them as missing, which is how the
+			// list response ended up with no check at all.
+			if field.Anonymous && name == "" {
+				embedded := field.Type
+				if embedded.Kind() == reflect.Ptr {
+					embedded = embedded.Elem()
+				}
+				if embedded.Kind() == reflect.Struct {
+					collect(embedded)
+					continue
+				}
+			}
+			if name != "" && name != "-" {
+				sent[name] = true
+			}
 		}
 	}
+	collect(response)
 	if len(sent) == 0 {
 		t.Fatalf("no JSON fields found on %s; the check would pass vacuously", response.Name())
 	}

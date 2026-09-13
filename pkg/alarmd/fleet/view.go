@@ -128,6 +128,19 @@ const (
 	ColumnDemoted = "demoted"
 )
 
+// The two ends of the list. Both are legitimate readings of the same
+// population, and which one the first page shows decides what an operator sees
+// during an incident.
+const (
+	// OrderOldest keeps the longest-running objects on the first page, which is
+	// what a chronic backlog needs and what the list has always done.
+	OrderOldest = "oldest"
+	// OrderNewest puts what has just started there instead. On a deployment read
+	// with 45 of 83 objects less than two hours old, none of them appeared
+	// before page three under OrderOldest.
+	OrderNewest = "newest"
+)
+
 // StrategyRef ties an object back to something an operator recognises.
 type StrategyRef struct {
 	StrategyID string `json:"strategy_id"`
@@ -711,6 +724,27 @@ func sortAnomalies(anomalies []Anomaly) {
 			return anomalies[left].QueryGroup < anomalies[right].QueryGroup
 		}
 		return anomalies[left].Since.Before(anomalies[right].Since)
+	})
+}
+
+// SortAnomaliesNewestFirst is the other end of the same list.
+//
+// Oldest-first exists so an object that has been wrong for days cannot be
+// pushed off the end by a burst of new ones. It has the symmetric failure: a
+// burst of new ones lands past the end instead. Neither ordering is wrong and
+// neither answers both questions, so the reader picks -- rather than the page
+// picking and then asserting in its own wording that its choice is the batch
+// worth reading.
+//
+// The tiebreak is reversed too. Reversing only the timestamp would leave
+// same-instant objects in the same relative order in both directions, which
+// reads as an ordering that did not fully apply.
+func SortAnomaliesNewestFirst(anomalies []Anomaly) {
+	sort.Slice(anomalies, func(left, right int) bool {
+		if anomalies[left].Since.Equal(anomalies[right].Since) {
+			return anomalies[left].QueryGroup > anomalies[right].QueryGroup
+		}
+		return anomalies[left].Since.After(anomalies[right].Since)
 	})
 }
 

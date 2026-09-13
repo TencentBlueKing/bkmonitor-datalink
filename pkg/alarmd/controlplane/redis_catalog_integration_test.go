@@ -3504,6 +3504,17 @@ func TestScheduleActivationReconcilerReactivationHonoursDrainingTermination(t *t
 			if err := repository.ConfigureDrainingTermination(10 * time.Minute); err != nil {
 				t.Fatal(err)
 			}
+			// Every attempt that reaches the reactivation check says what it
+			// found: how many Query Groups reappeared and how many of them were
+			// held for not having drained. The outcome is unchanged by the
+			// report; the report is what a later per-Query-Group activation is
+			// read against.
+			var holds []observability.ActivationHoldFacts
+			repository.ConfigureObserver(observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+				if observation.Stage == observability.StageActivationHold && observation.ActivationHold != nil {
+					holds = append(holds, *observation.ActivationHold)
+				}
+			}))
 			initialCatalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
 			initialSnapshot, _, err := repository.PublishCatalog(ctx, initialCatalog)
 			if err != nil {
@@ -3546,17 +3557,31 @@ func TestScheduleActivationReconcilerReactivationHonoursDrainingTermination(t *t
 
 			at = time.Unix(test.boundary, 0)
 			state, err := reconciler.Ensure(ctx, reenabledSnapshot.Publication)
+			if len(holds) == 0 {
+				t.Fatal("the attempt reached the reactivation check and reported nothing")
+			}
+			hold := holds[len(holds)-1]
+			if hold.Reappeared != 1 {
+				t.Fatalf("hold facts=%+v, want the one reappearing Query Group counted", hold)
+			}
 			if !test.wantReactivated {
 				failure, ok := controlplane.ActivationFailureFromError(err)
 				if !errors.Is(err, controlplane.ErrReactivationNotDrained) || !ok ||
 					failure.Class != controlplane.ActivationFailureClassNotDrained {
 					t.Fatalf("in-window undrained reactivation=(%#v,%v), want not drained", state, err)
 				}
+				if hold.Held != 1 || hold.MaxAgeSeconds != test.boundary-90 || len(hold.Samples) != 1 ||
+					hold.Samples[0] != string(queryGroup) || hold.Truncated {
+					t.Fatalf("hold facts=%+v, want the undrained Query Group held for %d seconds", hold, test.boundary-90)
+				}
 				current, loadErr := repository.LoadActivation(ctx)
 				if loadErr != nil || current.Current != emptySnapshot.Publication || len(current.Draining) != 1 {
 					t.Fatalf("blocked reactivation changed activation: (%#v,%v)", current, loadErr)
 				}
 				return
+			}
+			if hold.Held != 0 || hold.MaxAgeSeconds != 0 || len(hold.Samples) != 0 {
+				t.Fatalf("hold facts=%+v, want nothing held when the Query Group may be reactivated", hold)
 			}
 			if err != nil || state.RecordRevision != 3 || state.Current != reenabledSnapshot.Publication ||
 				len(state.Draining) != 0 || len(state.Plans) != 1 {

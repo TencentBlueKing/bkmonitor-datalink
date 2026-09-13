@@ -130,8 +130,8 @@ func (publication generationSkewPublication) workerRuntime(t *testing.T, semanti
 }
 
 type generationSkewSink struct {
-	mu    sync.Mutex
-	kinds []string
+	mu           sync.Mutex
+	observations []observability.Observation
 }
 
 func (sink *generationSkewSink) Observe(_ context.Context, observation observability.Observation) {
@@ -140,13 +140,25 @@ func (sink *generationSkewSink) Observe(_ context.Context, observation observabi
 	}
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
-	sink.kinds = append(sink.kinds, observation.StateGenerationSkew.Kind)
+	sink.observations = append(sink.observations, observation)
 }
 
 func (sink *generationSkewSink) reported() []string {
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
-	return append([]string(nil), sink.kinds...)
+	kinds := make([]string, 0, len(sink.observations))
+	for _, observation := range sink.observations {
+		kinds = append(kinds, observation.StateGenerationSkew.Kind)
+	}
+	return kinds
+}
+
+// last returns the most recent skew observation whole: the line has to name
+// the Slot and the Plan, not only count the kind.
+func (sink *generationSkewSink) last() observability.Observation {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	return sink.observations[len(sink.observations)-1]
 }
 
 // otherFormula stands for a release that derives the state generation
@@ -261,5 +273,11 @@ func TestFreezeSlotContractRefusesARecordItsOwnObjectDoesNotVouchFor(t *testing.
 	}
 	if reported := sink.reported(); len(reported) != 1 || reported[0] != "record" {
 		t.Fatalf("record skew must be reported once: %v", reported)
+	}
+	// A refused Slot is only findable from this line: it has to say which
+	// Query Group, which Slot and which Plan the record it refused belongs to.
+	if last := sink.last(); last.Trace.QueryGroupKey != string(publication.queryGroup) || last.Trace.EvaluationTime == 0 ||
+		last.Trace.ScheduleSegmentStart == 0 || last.StateGenerationSkew.StrategyID == "" {
+		t.Fatalf("record skew line must name the Slot and the Plan: trace=%+v facts=%+v", last.Trace, last.StateGenerationSkew)
 	}
 }

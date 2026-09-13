@@ -1744,7 +1744,7 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 				errors.New("alarmd controlplane: frozen Plan cannot be compiled for G1 FULL execution"))
 		}
 		compiledGeneration := execution.StateGeneration(compiled.StateCompatibilityHash())
-		if err := runtime.checkFrozenPlanGeneration(ctx, plan, record, segment, compiledGeneration); err != nil {
+		if err := runtime.checkFrozenPlanGeneration(ctx, request, plan, record, segment, compiledGeneration); err != nil {
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)
 		}
 		deadline, err := completionDeadline(request.EvaluationTime, plan.ScheduleSpec)
@@ -1823,6 +1823,7 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 // legitimately carry; an open Segment must be cut by the Leader first.
 func (runtime *RedisCatalogRuntime) checkFrozenPlanGeneration(
 	ctx context.Context,
+	request execution.FreezeSlotContractRequest,
 	plan FrozenPlan,
 	record PlanActivationRecord,
 	segment persistedScheduleSegment,
@@ -1831,11 +1832,11 @@ func (runtime *RedisCatalogRuntime) checkFrozenPlanGeneration(
 	recorded := record.Fact.Selected.StateGeneration
 	if plan.StateGeneration != "" {
 		if plan.StateGeneration != recorded {
-			runtime.observeStateGenerationSkew(ctx, "record")
+			runtime.observeStateGenerationSkew(ctx, request, segment, plan, "record")
 			return errors.New("alarmd controlplane: Plan activation state generation differs from the frozen Plan")
 		}
 		if compiled != plan.StateGeneration {
-			runtime.observeStateGenerationSkew(ctx, "formula")
+			runtime.observeStateGenerationSkew(ctx, request, segment, plan, "formula")
 		}
 		return nil
 	}
@@ -1862,10 +1863,26 @@ func (runtime *RedisCatalogRuntime) checkFrozenPlanGeneration(
 	return nil
 }
 
-func (runtime *RedisCatalogRuntime) observeStateGenerationSkew(ctx context.Context, kind string) {
+// observeStateGenerationSkew names the Slot, the Segment and the Plan the
+// skew was found on. The counter alone says how many; the line has to say
+// which, because a "record" skew is a refused Slot and the only way to find
+// the record it refused is from here.
+func (runtime *RedisCatalogRuntime) observeStateGenerationSkew(
+	ctx context.Context,
+	request execution.FreezeSlotContractRequest,
+	segment persistedScheduleSegment,
+	plan FrozenPlan,
+	kind string,
+) {
 	runtime.repository.observe(ctx, observability.Observation{
 		Component: observability.ComponentControlPlane, Stage: observability.StageFrozenPlanGeneration,
-		Result: observability.ResultSuccess, StateGenerationSkew: &observability.StateGenerationSkewFacts{Kind: kind},
+		Result: observability.ResultSuccess,
+		Trace: observability.TraceFields{
+			QueryGroupKey: string(request.QueryGroup), EvaluationTime: int64(request.EvaluationTime),
+			ScheduleSegmentStart: int64(segment.Schedule.Segment.Start),
+			SnapshotRevision:     string(segment.Schedule.Segment.Publication.SnapshotRevision),
+		},
+		StateGenerationSkew: &observability.StateGenerationSkewFacts{Kind: kind, StrategyID: plan.Identity.StrategyID},
 	})
 }
 

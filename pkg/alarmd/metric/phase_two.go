@@ -53,6 +53,8 @@ type phaseTwoMetrics struct {
 	legacyMigrationScan          prometheus.Histogram
 	legacyMigrationTime          *prometheus.HistogramVec
 	undrainedDrainingQueryGroups prometheus.Gauge
+	activationHeldQueryGroups    prometheus.Gauge
+	activationHeldAgeSecondsMax  prometheus.Gauge
 	algorithmEvaluations         *prometheus.CounterVec
 	redisCalls                   redisCallMetrics
 	controlCache                 *controlCacheCollector
@@ -221,6 +223,8 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.legacyMigrationScan = prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_scan_keys", Help: "Redis keys scanned by one-time legacy Active QG migration.", Buckets: legacyMigrationScanBuckets})
 	metrics.legacyMigrationTime = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_active_qg_migration_duration_seconds", Help: "One-time legacy Active QG migration duration.", Buckets: activeQGSetDurationBuckets}, []string{"result"})
 	metrics.undrainedDrainingQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "undrained_draining_query_groups", Help: "Replicated per-Pod view of retired Query Groups still requiring ownership until their retirement boundary is drained; aggregate replicas with max, not sum."})
+	metrics.activationHeldQueryGroups = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "activation_held_query_groups", Help: "Query Groups the latest activation attempt brought back from retirement that had not drained; today any of them fails the whole activation (activation_failure_total{reactivation,not_drained}), so an attempt with a non-zero value is an attempt that failed for them. Set by the Control Leader on every attempt that reached the reactivation check."})
+	metrics.activationHeldAgeSecondsMax = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "activation_held_age_seconds_max", Help: "How long the oldest held retirement of the latest activation attempt has waited, in seconds; zero when nothing is held."})
 	metrics.algorithmEvaluations = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "algorithm_evaluation_total",
 		Help: "Algorithm evaluation outcomes by fixed source family and result.",
@@ -281,7 +285,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.queryFailures,
 		m.objectCatalogObjects, m.objectCatalogRedis, m.objectCatalogManifestBytes, m.objectReads, m.stateGenerationSkew,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
-		m.undrainedDrainingQueryGroups,
+		m.undrainedDrainingQueryGroups, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
 		m.algorithmEvaluations, m.algorithmInputs,
 	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
 		m.controlCache, m.redisPool, m.legacyPodCache,
@@ -311,6 +315,10 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 	}
 	if facts := observation.DrainingQG; facts != nil {
 		m.undrainedDrainingQueryGroups.Set(float64(facts.Undrained))
+	}
+	if facts := observation.ActivationHold; facts != nil && observation.Stage == observability.StageActivationHold {
+		m.activationHeldQueryGroups.Set(float64(facts.Held))
+		m.activationHeldAgeSecondsMax.Set(float64(facts.MaxAgeSeconds))
 	}
 	if facts := observation.ActiveQGSet; facts != nil {
 		if facts.Operation == "encode" {

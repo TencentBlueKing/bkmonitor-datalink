@@ -138,6 +138,35 @@ func canonicalJSONPrevalidatedV2(value any) ([]byte, error) {
 	return restoreJSONLineSeparatorsV2(bytes.TrimSuffix(output.Bytes(), []byte{'\n'})), nil
 }
 
+// isPrevalidatedScalarJSONV2 answers the only question the loop above asked of
+// the canonical form: is this value a scalar rather than an object or array.
+//
+// It used to canonicalise the value, read one byte of the result and discard
+// the rest. That was the same defect as the one removed from
+// DeriveDimensionIdentityDigestV2 in e9be4cf2, sitting in the reader's own
+// copy of that deriver -- one pattern, two places, and only the visible one
+// was fixed at the time.
+//
+// It deliberately does not reuse isCanonicalScalarJSONV2: that helper also
+// checks UTF-8, the byte order mark and surrogate escapes, which this path
+// skips on purpose because its caller has already validated them. Adding them
+// back here would tighten a rejection boundary rather than leave it alone.
+func isPrevalidatedScalarJSONV2(payload []byte) bool {
+	index := 0
+	for index < len(payload) {
+		switch payload[index] {
+		case ' ', '\t', '\r', '\n':
+			index++
+			continue
+		}
+		break
+	}
+	if index == len(payload) || payload[index] == '{' || payload[index] == '[' {
+		return false
+	}
+	return json.Valid(payload)
+}
+
 func digestPrevalidatedJSONObjectWithoutV2(field, domain string, payload []byte, omitted string) (string, error) {
 	var object map[string]json.RawMessage
 	if err := decodePrevalidatedJSONV2(payload, &object); err != nil {
@@ -169,8 +198,7 @@ func deriveDimensionIdentityDigestPrevalidatedV2(tenantID, businessID string, fi
 		if dimension.Name == "" || !utf8.ValidString(dimension.Name) || (index > 0 && dimension.Name <= previous) {
 			return "", invalid("dimension_identity.fields", "names must be non-empty, sorted and unique")
 		}
-		canonical, err := canonicalJSONPrevalidatedV2(dimension.Value)
-		if err != nil || len(canonical) == 0 || canonical[0] == '{' || canonical[0] == '[' {
+		if !isPrevalidatedScalarJSONV2(dimension.Value) {
 			return "", invalid("dimension_identity.fields.value", "must be a scalar or null JSON value")
 		}
 		previous = dimension.Name

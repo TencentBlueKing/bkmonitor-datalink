@@ -370,7 +370,7 @@ func TestProductionPhaseTwoBundleRebuildsExpiredSnapshotReferencedByPersistentAc
 		t.Fatalf("expired publication restoration mutated frozen Activation: old=%+v new=%+v",
 			oldActivation, newActivation)
 	}
-	if _, err := recoveredControl.dependencies.Repository.LoadPublishedSnapshot(ctx, newActivation.Current); err != nil {
+	if _, err := loadPublishedSnapshot(ctx, recoveredControl.dependencies.Repository, newActivation.Current); err != nil {
 		t.Fatalf("recovered active Snapshot is unreadable: %v", err)
 	}
 	if len(recovered.queryGroups) != 1 || len(recovered.runners) != 1 {
@@ -579,11 +579,11 @@ func testProductionPhaseTwoStrandedLatest(
 	}
 
 	catalogPrefix := productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog")
-	oldSnapshot, err := firstControl.dependencies.Repository.LoadPublishedSnapshot(ctx, oldActivation.Current)
+	oldSnapshot, err := loadPublishedSnapshot(ctx, firstControl.dependencies.Repository, oldActivation.Current)
 	if err != nil || len(oldSnapshot.QueryGroups) != 1 {
 		t.Fatalf("old Snapshot=(%+v,%v), want one Query Group", oldSnapshot, err)
 	}
-	latestSnapshot, err := firstControl.dependencies.Repository.LoadPublishedSnapshot(ctx, latest.Publication)
+	latestSnapshot, err := loadPublishedSnapshot(ctx, firstControl.dependencies.Repository, latest.Publication)
 	if err != nil || len(latestSnapshot.QueryGroups) != 1 {
 		t.Fatalf("latest Snapshot=(%+v,%v), want one Query Group", latestSnapshot, err)
 	}
@@ -670,7 +670,7 @@ func testProductionPhaseTwoStrandedLatest(
 		if activation.Current != wantPublication || activation.RecordRevision != wantRevision {
 			t.Fatalf("recovered activation = %+v, want publication %+v revision %d", activation, wantPublication, wantRevision)
 		}
-		if _, err := firstControl.dependencies.Repository.LoadPublishedSnapshot(ctx, activation.Current); err != nil {
+		if _, err := loadPublishedSnapshot(ctx, firstControl.dependencies.Repository, activation.Current); err != nil {
 			t.Fatalf("recovered current Snapshot is unreadable: %v", err)
 		}
 		if revertToOld {

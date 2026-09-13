@@ -189,17 +189,13 @@ func TestRedisCatalogRepositoryPublishesImmutableContentAddressedSnapshot(t *tes
 	if err != nil || created || second.Publication != first.Publication {
 		t.Fatalf("idempotent publish=(%#v, %t, %v), first=%#v", second, created, err, first)
 	}
-	loaded, err := repository.LoadSnapshot(context.Background(), catalog.SnapshotRevision)
+	loaded, err := loadPublishedSnapshot(context.Background(), repository, first.Publication)
 	if err != nil || loaded.Publication != first.Publication || len(loaded.QueryGroups) != 1 {
 		t.Fatalf("loaded snapshot=(%#v, %v)", loaded, err)
 	}
 	group, err := repository.LoadQueryGroup(context.Background(), catalog.SnapshotRevision, catalog.QueryGroups[0].Identity)
 	if err != nil || group.Identity != catalog.QueryGroups[0].Identity {
 		t.Fatalf("loaded query group=(%#v, %v)", group, err)
-	}
-	plan, err := repository.LoadPlan(context.Background(), catalog.SnapshotRevision, catalog.QueryGroups[0].Plans[0].Identity)
-	if err != nil || plan.Identity != catalog.QueryGroups[0].Plans[0].Identity {
-		t.Fatalf("loaded plan=(%#v, %v)", plan, err)
 	}
 	audit, err := repository.LoadLatestAudit(context.Background())
 	if err != nil || audit.ObservationID != catalog.ObservationID || len(audit.Dispositions) != len(catalog.Dispositions) {
@@ -225,7 +221,8 @@ func TestRedisCatalogRepositoryTypesPersistedSnapshotCorruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	catalog := validCatalog(t, 80)
-	if _, _, err := repository.PublishCatalog(context.Background(), catalog); err != nil {
+	published, _, err := repository.PublishCatalog(context.Background(), catalog)
+	if err != nil {
 		t.Fatal(err)
 	}
 	// The manifest is the persisted fact a revision's content hangs from;
@@ -233,7 +230,7 @@ func TestRedisCatalogRepositoryTypesPersistedSnapshotCorruption(t *testing.T) {
 	if err := client.Set(context.Background(), prefix+":manifest:"+string(catalog.SnapshotRevision), []byte("{"), time.Hour).Err(); err != nil {
 		t.Fatal(err)
 	}
-	_, err = repository.LoadSnapshot(context.Background(), catalog.SnapshotRevision)
+	_, err = loadPublishedSnapshot(context.Background(), repository, published.Publication)
 	var corrupt *controlplane.PersistedSnapshotCorruptError
 	if !errors.As(err, &corrupt) {
 		t.Fatalf("LoadSnapshot(corrupt) error=%v", err)
@@ -270,7 +267,7 @@ func TestRedisCatalogRepositoryRepublishesHistoricalSnapshotWithNewOccurrence(t 
 		t.Fatalf("latest publication=(%#v, %v), want %#v", latest, err, republished.Publication)
 	}
 	for _, publication := range []controlplane.SnapshotPublicationRef{first.Publication, republished.Publication} {
-		loaded, err := repository.LoadPublishedSnapshot(ctx, publication)
+		loaded, err := loadPublishedSnapshot(ctx, repository, publication)
 		if err != nil || loaded.Publication != publication || !reflect.DeepEqual(loaded.QueryGroups, withoutPlanRevisions(first.QueryGroups)) {
 			t.Fatalf("loaded occurrence %v=(%#v, %v)", publication, loaded, err)
 		}
@@ -311,10 +308,10 @@ func TestRedisCatalogRepositoryExpiresPublicationOccurrencesIndependently(t *tes
 	if expired, err := client.PExpire(ctx, firstKey, -time.Millisecond).Result(); err != nil || !expired {
 		t.Fatalf("expire first occurrence=(%t,%v)", expired, err)
 	}
-	if _, err := repository.LoadPublishedSnapshot(ctx, first.Publication); !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
+	if _, err := loadPublishedSnapshot(ctx, repository, first.Publication); !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
 		t.Fatalf("expired first occurrence error=%v", err)
 	}
-	loaded, err := repository.LoadPublishedSnapshot(ctx, republished.Publication)
+	loaded, err := loadPublishedSnapshot(ctx, repository, republished.Publication)
 	if err != nil || loaded.Publication != republished.Publication {
 		t.Fatalf("republished occurrence=(%#v,%v)", loaded, err)
 	}
@@ -361,7 +358,7 @@ func TestRedisCatalogRepositoryLoadsHistoricalOccurrenceFromLegacyHashWithoutRen
 	if err != nil || before <= 0 {
 		t.Fatalf("legacy Hash TTL before=(%s,%v)", before, err)
 	}
-	loaded, err := repository.LoadPublishedSnapshot(ctx, first.Publication)
+	loaded, err := loadPublishedSnapshot(ctx, repository, first.Publication)
 	if err != nil || loaded.Publication != first.Publication || !reflect.DeepEqual(loaded.QueryGroups, withoutPlanRevisions(first.QueryGroups)) {
 		t.Fatalf("legacy historical occurrence=(%#v,%v), first=%#v", loaded, err, first)
 	}
@@ -406,8 +403,10 @@ func TestRedisCatalogRepositoryRejectsStalePublicationExpectations(t *testing.T)
 				t.Fatalf("latest after stale publish=(%#v, %v), want %#v", latest, err, winner.Publication)
 			}
 			if candidate.SnapshotRevision != first.Publication.SnapshotRevision {
-				if _, err := repository.LoadSnapshot(ctx, candidate.SnapshotRevision); !errors.Is(err, controlplane.ErrSnapshotUnavailable) {
-					t.Fatalf("stale new candidate was persisted: %v", err)
+				// A candidate that lost its compare-and-set has no publication
+				// epoch, whatever objects the attempt left behind.
+				if exists, err := client.Exists(ctx, "alarmd:control:stale::snapshot_epoch:"+string(candidate.SnapshotRevision)).Result(); err != nil || exists != 0 {
+					t.Fatalf("stale new candidate was persisted: exists=%d err=%v", exists, err)
 				}
 			}
 			next, _, err := repository.PublishCatalog(ctx, validCatalog(t, 83))
@@ -738,7 +737,7 @@ func TestSourceReconcilerPublishesOnlyRuntimeExecutablePlans(t *testing.T) {
 	if err != nil || published.Status != controlplane.SourceRefreshPublished {
 		t.Fatalf("published=(%#v, %v)", published, err)
 	}
-	snapshot, err := repository.LoadSnapshot(ctx, published.Publication.SnapshotRevision)
+	snapshot, err := loadPublishedSnapshot(ctx, repository, published.Publication)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -803,7 +802,7 @@ func TestSourceReconcilerRuntimeCompilerKeepsOnlyInvalidLastGood(t *testing.T) {
 	if err != nil || initial.Status != controlplane.SourceRefreshPublished {
 		t.Fatalf("initial publish=(%#v, %v)", initial, err)
 	}
-	initialSnapshot, err := repository.LoadSnapshot(ctx, initial.Publication.SnapshotRevision)
+	initialSnapshot, err := loadPublishedSnapshot(ctx, repository, initial.Publication)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -825,7 +824,7 @@ func TestSourceReconcilerRuntimeCompilerKeepsOnlyInvalidLastGood(t *testing.T) {
 	if err != nil || published.Status != controlplane.SourceRefreshPublished {
 		t.Fatalf("changed publish=(%#v, %v)", published, err)
 	}
-	snapshot, err := repository.LoadSnapshot(ctx, published.Publication.SnapshotRevision)
+	snapshot, err := loadPublishedSnapshot(ctx, repository, published.Publication)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -872,7 +871,7 @@ func TestSourceReconcilerMergesInvalidLevelLastGoodWithoutUnsupportedLevel(t *te
 	if err != nil || initial.Status != controlplane.SourceRefreshPublished {
 		t.Fatalf("initial publish=(%#v, %v)", initial, err)
 	}
-	initialSnapshot, err := repository.LoadSnapshot(ctx, initial.Publication.SnapshotRevision)
+	initialSnapshot, err := loadPublishedSnapshot(ctx, repository, initial.Publication)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -902,7 +901,7 @@ func TestSourceReconcilerMergesInvalidLevelLastGoodWithoutUnsupportedLevel(t *te
 	if err != nil || published.Status != controlplane.SourceRefreshPublished {
 		t.Fatalf("changed publish=(%#v, %v)", published, err)
 	}
-	snapshot, err := repository.LoadSnapshot(ctx, published.Publication.SnapshotRevision)
+	snapshot, err := loadPublishedSnapshot(ctx, repository, published.Publication)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -989,7 +988,7 @@ func TestSourceReconcilerExcludesMergedPlanWhenAuthoritativeRecompileFails(t *te
 	if err != nil || initial.Status != controlplane.SourceRefreshPublished {
 		t.Fatalf("initial publish=(%#v, %v)", initial, err)
 	}
-	initialSnapshot, err := repository.LoadSnapshot(ctx, initial.Publication.SnapshotRevision)
+	initialSnapshot, err := loadPublishedSnapshot(ctx, repository, initial.Publication)
 	if err != nil || len(initialSnapshot.QueryGroups) != 2 {
 		t.Fatalf("initial Query Groups=(%#v, %v)", initialSnapshot.QueryGroups, err)
 	}
@@ -1006,7 +1005,7 @@ func TestSourceReconcilerExcludesMergedPlanWhenAuthoritativeRecompileFails(t *te
 	if err != nil || published.Status != controlplane.SourceRefreshPublished {
 		t.Fatalf("changed publish=(%#v, %v)", published, err)
 	}
-	snapshot, err := repository.LoadSnapshot(ctx, published.Publication.SnapshotRevision)
+	snapshot, err := loadPublishedSnapshot(ctx, repository, published.Publication)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1059,7 +1058,7 @@ func TestSourceReconcilerRetainsLastGoodForMissingAndInvalidObjectWhileHealthySi
 	if err != nil || initial.Status != controlplane.SourceRefreshPublished {
 		t.Fatalf("initial publish=(%#v, %v)", initial, err)
 	}
-	initialSnapshot, err := repository.LoadSnapshot(ctx, initial.Publication.SnapshotRevision)
+	initialSnapshot, err := loadPublishedSnapshot(ctx, repository, initial.Publication)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1095,7 +1094,7 @@ func TestSourceReconcilerRetainsLastGoodForMissingAndInvalidObjectWhileHealthySi
 	if err != nil || identityMissingResult.Status != controlplane.SourceRefreshPublished {
 		t.Fatalf("identity missing publish=(%#v, %v)", identityMissingResult, err)
 	}
-	identityMissingSnapshot, err := repository.LoadSnapshot(ctx, identityMissingResult.Publication.SnapshotRevision)
+	identityMissingSnapshot, err := loadPublishedSnapshot(ctx, repository, identityMissingResult.Publication)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1120,7 +1119,7 @@ func TestSourceReconcilerRetainsLastGoodForMissingAndInvalidObjectWhileHealthySi
 	if err != nil || missing.Status != controlplane.SourceRefreshPublished {
 		t.Fatalf("missing publish=(%#v, %v)", missing, err)
 	}
-	missingSnapshot, err := repository.LoadSnapshot(ctx, missing.Publication.SnapshotRevision)
+	missingSnapshot, err := loadPublishedSnapshot(ctx, repository, missing.Publication)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1145,7 +1144,7 @@ func TestSourceReconcilerRetainsLastGoodForMissingAndInvalidObjectWhileHealthySi
 	if err != nil || invalid.Status != controlplane.SourceRefreshPublished {
 		t.Fatalf("invalid publish=(%#v, %v)", invalid, err)
 	}
-	invalidSnapshot, err := repository.LoadSnapshot(ctx, invalid.Publication.SnapshotRevision)
+	invalidSnapshot, err := loadPublishedSnapshot(ctx, repository, invalid.Publication)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1199,7 +1198,7 @@ func TestRedisCatalogRepositoryPublishesEmptySnapshot(t *testing.T) {
 	if err != nil || !created {
 		t.Fatalf("empty publish=(%#v, %t, %v)", snapshot, created, err)
 	}
-	loaded, err := repository.LoadSnapshot(context.Background(), catalog.SnapshotRevision)
+	loaded, err := loadPublishedSnapshot(context.Background(), repository, snapshot.Publication)
 	if err != nil || loaded.QueryGroups == nil || len(loaded.QueryGroups) != 0 || loaded.Publication != snapshot.Publication {
 		t.Fatalf("empty loaded=(%#v, %v)", loaded, err)
 	}
@@ -3129,7 +3128,7 @@ func TestSourceReconcilerRemovesAbsentStrategyAfterOnePublishedGraceCycle(t *tes
 			}
 			publishedPlans := func(publication controlplane.SnapshotPublicationRef) ([]string, []controlplane.QueryGroup) {
 				t.Helper()
-				snapshot, err := repository.LoadPublishedSnapshot(ctx, publication)
+				snapshot, err := loadPublishedSnapshot(ctx, repository, publication)
 				if err != nil {
 					t.Fatal(err)
 				}

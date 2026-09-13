@@ -1165,9 +1165,8 @@ func TestProductionPhaseTwoControlKeepsCurrentActivationWhileCandidateIsPending(
 	}
 	// The active set of a legacy activation is read from the publication's
 	// content description, never from the snapshot body.
-	if repository.contentLoads != 2 || repository.snapshotLoads != 0 {
-		t.Fatalf("pending legacy refresh content reads=%d body reads=%d, want only the two execution reads and no body read",
-			repository.contentLoads, repository.snapshotLoads)
+	if repository.contentLoads != 2 {
+		t.Fatalf("pending legacy refresh content reads=%d, want only the two execution reads", repository.contentLoads)
 	}
 	pending := sourceRefreshObservations(observations, observability.SourceRefreshPending)
 	// A pending round reports the size of the active set. It used to report a
@@ -1328,9 +1327,8 @@ func TestProductionPhaseTwoControlLegacyUnchangedRefreshAddsNoDiagnosticSnapshot
 		unchanged[0].SourceRefresh.OldQueryGroups != 1 || unchanged[0].SourceRefresh.NewQueryGroups != 1 {
 		t.Fatalf("legacy unchanged source observations=%#v", unchanged)
 	}
-	if repository.contentLoads != 2 || repository.snapshotLoads != 0 {
-		t.Fatalf("unchanged legacy refresh content reads=%d body reads=%d, want only the two execution reads and no body read",
-			repository.contentLoads, repository.snapshotLoads)
+	if repository.contentLoads != 2 {
+		t.Fatalf("unchanged legacy refresh content reads=%d, want only the two execution reads", repository.contentLoads)
 	}
 }
 
@@ -1746,7 +1744,6 @@ type fakeProductionCatalogRepository struct {
 	activationErr  error
 	snapshot       controlplane.PublishedSnapshot
 	snapshotErr    error
-	snapshotLoads  int
 	contentLoads   int
 	snapshots      map[controlplane.SnapshotPublicationRef]controlplane.PublishedSnapshot
 	activeGroups   []execution.QueryGroupIdentity
@@ -1776,23 +1773,6 @@ func (repository *fakeProductionCatalogRepository) LoadActiveQueryGroupSet(
 	return append([]execution.QueryGroupIdentity{}, repository.activeGroups...), repository.activeSetErr
 }
 
-func (repository *fakeProductionCatalogRepository) LoadPublishedSnapshot(
-	_ context.Context,
-	publication controlplane.SnapshotPublicationRef,
-) (controlplane.PublishedSnapshot, error) {
-	repository.snapshotLoads++
-	if repository.snapshotErr != nil {
-		return controlplane.PublishedSnapshot{}, repository.snapshotErr
-	}
-	if snapshot, ok := repository.snapshots[publication]; ok {
-		return snapshot, nil
-	}
-	if repository.snapshot.Publication != publication {
-		return controlplane.PublishedSnapshot{}, errors.New("unexpected Snapshot publication")
-	}
-	return repository.snapshot, nil
-}
-
 func sourceRefreshObservations(
 	observations []observability.Observation,
 	status observability.SourceRefreshStatus,
@@ -1816,16 +1796,6 @@ func (repository *fakeProductionCatalogRepository) ControlVersionTag(
 	context.Context,
 ) (string, bool, error) {
 	return repository.versionTag, repository.versionKnown, repository.versionErr
-}
-
-func (repository *fakeProductionCatalogRepository) LoadSnapshot(
-	_ context.Context,
-	revision execution.SnapshotRevision,
-) (controlplane.PublishedSnapshot, error) {
-	if repository.snapshot.Publication.SnapshotRevision != revision {
-		return controlplane.PublishedSnapshot{}, errors.New("unexpected Snapshot revision")
-	}
-	return repository.snapshot, nil
 }
 
 // The fake has no object catalog: a Segment is always read the way a Segment

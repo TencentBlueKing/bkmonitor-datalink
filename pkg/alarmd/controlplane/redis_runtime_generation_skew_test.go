@@ -85,7 +85,8 @@ func publishWithSemantics(t *testing.T, semantics strategy.StateSemantics) gener
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := repository.LoadSnapshot(ctx, execution.SnapshotRevision(published.Publication.SnapshotRevision))
+	snapshot, err := loadPublishedSnapshot(ctx, repository, controlplane.SnapshotPublicationRef{
+		SnapshotRevision: execution.SnapshotRevision(published.Publication.SnapshotRevision), PublicationEpoch: uint64(published.Publication.PublicationEpoch)})
 	if err != nil || len(snapshot.QueryGroups) != 1 {
 		t.Fatalf("published snapshot = (%+v, %v)", snapshot.QueryGroups, err)
 	}

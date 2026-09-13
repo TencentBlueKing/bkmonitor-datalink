@@ -155,7 +155,7 @@ func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsC
 	if activation.Current != stranded.Publication || activation.RecordRevision != initial.RecordRevision+1 {
 		t.Fatalf("activation = %+v, want the stranded publication %+v at revision %d", activation, stranded.Publication, initial.RecordRevision+1)
 	}
-	if _, err := repository.LoadPublishedSnapshot(ctx, activation.Current); err != nil {
+	if _, err := loadPublishedSnapshot(ctx, repository, activation.Current); err != nil {
 		t.Fatalf("the activated publication must be readable: %v", err)
 	}
 	refreshMu.Lock()

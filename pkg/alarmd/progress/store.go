@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -35,17 +34,6 @@ type ControlStore interface {
 type ControlBatchStore interface {
 	ControlStore
 	ReadControlBatch(context.Context, []execution.QueryGroupIdentity, string) ([]ownership.ControlRead, error)
-}
-
-type TemporaryLegacyDrainingCASStore interface {
-	ControlStore
-	ReadControlForTemporaryLegacyDrainingCAS(context.Context, execution.QueryGroupIdentity, string) (ownership.TemporaryLegacyDrainingCASRead, error)
-}
-
-type TemporaryLegacyDrainingCASLoadResult struct {
-	RedisKey string
-	Raw      []byte
-	Load     execution.ProgressLoadResult
 }
 
 type ContinuousSlotResolver interface {
@@ -152,39 +140,6 @@ func (store *Store) decodeLoaded(identity execution.ProgressIdentity, raw []byte
 	}
 	result := execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &value}
 	return result, result.Validate(identity)
-}
-
-// LoadProgressForTemporaryLegacyDrainingCAS returns the decoded Progress and
-// exact Redis bytes for the approved one-shot legacy Draining cleanup. Remove
-// it together with that temporary administrative command.
-func (store *Store) LoadProgressForTemporaryLegacyDrainingCAS(ctx context.Context, identity execution.ProgressIdentity) (TemporaryLegacyDrainingCASLoadResult, error) {
-	name, err := store.namespace(identity)
-	if err != nil {
-		return TemporaryLegacyDrainingCASLoadResult{}, err
-	}
-	control, ok := store.options.Control.(TemporaryLegacyDrainingCASStore)
-	if !ok {
-		return TemporaryLegacyDrainingCASLoadResult{}, errors.New("progress: control store does not expose temporary legacy Draining CAS read facts")
-	}
-	fact, err := control.ReadControlForTemporaryLegacyDrainingCAS(ctx, identity.QueryGroup, name)
-	if err != nil {
-		return TemporaryLegacyDrainingCASLoadResult{}, err
-	}
-	if fact.Missing {
-		return TemporaryLegacyDrainingCASLoadResult{RedisKey: fact.RedisKey, Load: execution.ProgressLoadResult{Status: execution.ProgressMissing}}, nil
-	}
-	value, err := decode(fact.Raw)
-	if err != nil {
-		return TemporaryLegacyDrainingCASLoadResult{}, &DeterministicInvalidError{Err: err}
-	}
-	if value.Identity != identity {
-		return TemporaryLegacyDrainingCASLoadResult{}, &DeterministicInvalidError{Err: fmt.Errorf("persisted identity does not match requested identity")}
-	}
-	load := execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &value}
-	if err := load.Validate(identity); err != nil {
-		return TemporaryLegacyDrainingCASLoadResult{}, err
-	}
-	return TemporaryLegacyDrainingCASLoadResult{RedisKey: fact.RedisKey, Raw: fact.Raw, Load: load}, nil
 }
 
 func (store *Store) BeginSlot(ctx context.Context, request execution.ProgressBeginRequest) (execution.ProgressBeginResult, error) {

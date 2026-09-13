@@ -77,7 +77,7 @@ func TestPhaseTwoSnapshotPreparationProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := repository.LoadSnapshot(ctx, activation.Current.SnapshotRevision)
+	snapshot, err := loadPublishedSnapshot(ctx, repository, activation.Current)
 	if err != nil {
 		t.Fatal(err)
 	}

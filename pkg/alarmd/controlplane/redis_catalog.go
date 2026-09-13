@@ -577,43 +577,6 @@ func (repository *RedisCatalogRepository) PublishAudit(ctx context.Context, audi
 	return nil
 }
 
-// LoadSnapshot assembles the content of one Snapshot revision from the
-// object catalog, under the publication epoch the revision currently
-// carries. A revision whose epoch or manifest is gone reads as unavailable.
-func (repository *RedisCatalogRepository) LoadSnapshot(ctx context.Context, revision execution.SnapshotRevision) (PublishedSnapshot, error) {
-	if repository == nil || repository.client == nil || revision == "" {
-		return PublishedSnapshot{}, errors.New("alarmd controlplane: snapshot revision is required")
-	}
-	epochText, err := repository.client.Get(ctx, repository.epochForRevisionKey(revision)).Result()
-	if errors.Is(err, redis.Nil) {
-		return PublishedSnapshot{}, ErrSnapshotUnavailable
-	}
-	if err != nil {
-		return PublishedSnapshot{}, activationDependencyIO(err)
-	}
-	epoch, err := strconv.ParseUint(epochText, 10, 64)
-	if err != nil || epoch == 0 {
-		return PublishedSnapshot{}, &PersistedSnapshotCorruptError{Err: errors.New("invalid publication epoch")}
-	}
-	return repository.LoadPublishedSnapshot(ctx, SnapshotPublicationRef{SnapshotRevision: revision, PublicationEpoch: epoch})
-}
-
-// LoadPublishedSnapshot resolves one exact publication occurrence without
-// falling forward to another epoch that reused the same Snapshot content.
-func (repository *RedisCatalogRepository) LoadPublishedSnapshot(
-	ctx context.Context,
-	publication SnapshotPublicationRef,
-) (PublishedSnapshot, error) {
-	if publication.validate() != nil {
-		return PublishedSnapshot{}, errors.New("alarmd controlplane: complete publication is required")
-	}
-	published, err := repository.loadPublishedGroups(ctx, publication)
-	if err != nil {
-		return PublishedSnapshot{}, err
-	}
-	return repository.snapshotOf(ctx, published)
-}
-
 func (repository *RedisCatalogRepository) validatePublicationOccurrence(
 	ctx context.Context,
 	publication SnapshotPublicationRef,
@@ -744,25 +707,6 @@ func (repository *RedisCatalogRepository) loadPublishedQueryGroup(
 		return QueryGroup{}, ErrCatalogObjectUnavailable
 	}
 	return group, nil
-}
-
-// LoadPlan resolves a Plan by its stable identity inside one frozen Snapshot.
-func (repository *RedisCatalogRepository) LoadPlan(ctx context.Context, revision execution.SnapshotRevision, identity execution.PlanIdentity) (FrozenPlan, error) {
-	if err := identity.Validate(); err != nil {
-		return FrozenPlan{}, err
-	}
-	snapshot, err := repository.LoadSnapshot(ctx, revision)
-	if err != nil {
-		return FrozenPlan{}, err
-	}
-	for _, group := range snapshot.QueryGroups {
-		for _, plan := range group.Plans {
-			if plan.Identity == identity {
-				return plan, nil
-			}
-		}
-	}
-	return FrozenPlan{}, ErrCatalogObjectUnavailable
 }
 
 func (repository *RedisCatalogRepository) LoadLatestAudit(ctx context.Context) (SourceAuditState, error) {

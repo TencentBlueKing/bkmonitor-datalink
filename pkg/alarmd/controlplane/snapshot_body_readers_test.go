@@ -99,12 +99,10 @@ func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 			}
 			return err
 		}},
-		{"LoadPublishedSnapshot", func() error { _, err := harness.repository.LoadPublishedSnapshot(ctx, state.Current); return err }},
 		{"LoadQueryGroup", func() error {
 			_, err := harness.repository.LoadQueryGroup(ctx, revision, manifest.QueryGroups[0].QueryGroup)
 			return err
 		}},
-		{"LoadPlan", func() error { _, err := harness.repository.LoadPlan(ctx, revision, manifest.Plans[0].Plan); return err }},
 	}
 	for _, reader := range objectReaders {
 		if err := reader.read(); err != nil {

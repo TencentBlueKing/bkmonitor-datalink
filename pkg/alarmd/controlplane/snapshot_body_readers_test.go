@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
 // Before the Control Leader may stop writing the whole snapshot body, every
@@ -71,6 +72,21 @@ func TestReadersInventoryWithoutTheSnapshotBody(t *testing.T) {
 		{"LoadActivation", func() error { _, err := harness.repository.LoadActivation(ctx); return err }},
 		{"ScheduleActivationReconciler.Ensure(current publication)", func() error {
 			_, err := reconciler.Ensure(ctx, published.Publication)
+			return err
+		}},
+		{"LoadPublishedContent+LoadContentQueryGroups", func() error {
+			content, err := harness.repository.LoadPublishedContent(ctx, state.Current)
+			if err != nil {
+				return err
+			}
+			identities := make([]execution.QueryGroupIdentity, 0, len(content.Groups))
+			for identity := range content.Groups {
+				identities = append(identities, identity)
+			}
+			groups, err := harness.repository.LoadContentQueryGroups(ctx, content, identities)
+			if err == nil && len(groups) != len(manifest.QueryGroups) {
+				return errors.New("content did not assemble every Query Group")
+			}
 			return err
 		}},
 		{"LoadActiveQueryGroupSet", func() error {

@@ -59,6 +59,7 @@ func (activator *InitialScheduleActivator) Ensure(
 	if err != nil {
 		return ActivationState{}, err
 	}
+	activator.repository.auditCatalogIndex(ctx, publication, snapshot)
 	failureStage, failureClass = ActivationFailureStageCompile, ActivationFailureClassOther
 	boundary := execution.EvaluationTime(activator.now().Unix())
 	if boundary <= 0 {

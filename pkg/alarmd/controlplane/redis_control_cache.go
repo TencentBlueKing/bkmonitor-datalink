@@ -370,6 +370,13 @@ type ControlReadCacheStats struct {
 	// activation did not change, Misses dropped every cached timeline.
 	Delta      ControlReadCacheObjectStats
 	DeltaAudit ControlDeltaAuditStats
+	// Index counts catalog index entries reused (Hits) and read from the
+	// object catalog (Misses); IndexAudit reconciles the index against the
+	// snapshot body with the same vocabulary as DeltaAudit, and its Missed is
+	// the one number that must stay at zero before a reader may depend on
+	// the index.
+	Index      ControlReadCacheObjectStats
+	IndexAudit ControlDeltaAuditStats
 	// TimelineOccupancy answers whether the derived budget actually holds the
 	// Query Groups this Worker owns. Without it a miss rate cannot be told
 	// apart from a version change, and the budget's formula stays unfalsifiable.
@@ -414,6 +421,12 @@ type controlReadCounters struct {
 	// audit counts the sampled reconciliations of a delta against what the
 	// timelines actually did; see auditDelta.
 	audit deltaAuditCounters
+	// index counts catalog index entries reused (hits) and read from the
+	// object catalog (misses) while bringing the index up to a publication;
+	// indexAudit reconciles the index against the snapshot body, see
+	// auditCatalogIndex.
+	index      controlReadObjectCounters
+	indexAudit deltaAuditCounters
 }
 
 type deltaAuditCounters struct {
@@ -449,6 +462,11 @@ func (repository *RedisCatalogRepository) ControlReadCacheStats() ControlReadCac
 		DeltaAudit: ControlDeltaAuditStats{
 			Samples: repository.controlReads.audit.samples.Load(), Agreed: repository.controlReads.audit.agreed.Load(),
 			OverNamed: repository.controlReads.audit.overNamed.Load(), Missed: repository.controlReads.audit.missed.Load(),
+		},
+		Index: repository.controlReads.index.snapshot(),
+		IndexAudit: ControlDeltaAuditStats{
+			Samples: repository.controlReads.indexAudit.samples.Load(), Agreed: repository.controlReads.indexAudit.agreed.Load(),
+			OverNamed: repository.controlReads.indexAudit.overNamed.Load(), Missed: repository.controlReads.indexAudit.missed.Load(),
 		},
 		TimelineOccupancy: repository.controlCache.timelineOccupancy(),
 	}

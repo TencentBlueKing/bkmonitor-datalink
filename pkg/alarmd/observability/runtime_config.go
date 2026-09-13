@@ -49,6 +49,14 @@ type RuntimeStorageFacts struct {
 type RuntimeCapacityFacts struct {
 	ExpiredRangeEnabled      bool `json:"expired_range_enabled"`
 	QueryUnavailableCooldown bool `json:"query_unavailable_cooldown"`
+	// CanonicalEncoding is which form of the shared canonical encoder this
+	// process will run, and how much of the traffic the shadow compares. It
+	// belongs on a preflight-and-incident surface for one reason: it decides
+	// the provenance of every digest the process writes. The first question a
+	// digest that does not match will be asked is which encoder produced it,
+	// and by then the process may already be gone.
+	CanonicalEncoding     string `json:"canonical_encoding"`
+	CanonicalShadowStride uint64 `json:"canonical_shadow_stride"`
 	// The two execution-limit fields are the derivation and what the dispatcher
 	// actually runs with, and they differ only when the ready queue clamps the
 	// derived value down. Both are here so that a clamp which really did take

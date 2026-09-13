@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
@@ -212,5 +213,46 @@ func TestResolvedRuntimeFactsCarryTheDerivedTimelineCacheBudget(t *testing.T) {
 		if !strings.Contains(printed.String(), field) {
 			t.Fatalf("--check-config table has no %s:\n%s", field, printed.String())
 		}
+	}
+}
+
+// The preflight table has to name which canonical encoder the process will
+// run. It decides the provenance of every digest written, and a digest that
+// later fails to match will be asked which encoder produced it at a point
+// where the process is gone and only this record survives.
+//
+// The digest over this table moves when the table gains a field. That is safe
+// here only because nothing freezes it: the one place that asserts equality is
+// the shadow epoch manifest at runtime_phase_two_shadow.go, and no deployment
+// sets shadow_manifest_path. This test pins the reasoning next to the field so
+// the next person to add one checks the same thing rather than the tests.
+func TestRuntimeProfileNamesTheCanonicalEncoder(t *testing.T) {
+	cfg := config.Default()
+	facts, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts.Capacity.CanonicalEncoding != contract.CanonicalModeEstablished {
+		t.Fatalf("default deployment should preflight as the established encoder, got %q",
+			facts.Capacity.CanonicalEncoding)
+	}
+	if facts.Capacity.CanonicalShadowStride != 0 {
+		t.Fatalf("nothing compares by default, so nothing should be sampling; got %d",
+			facts.Capacity.CanonicalShadowStride)
+	}
+
+	cfg.PhaseTwo.Canonical.Mode = contract.CanonicalModeStreamShadow
+	shadowed, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shadowed.Capacity.CanonicalEncoding != contract.CanonicalModeStreamShadow {
+		t.Fatalf("preflight did not follow the selected mode, got %q", shadowed.Capacity.CanonicalEncoding)
+	}
+	if shadowed.Capacity.CanonicalShadowStride == 0 {
+		t.Fatal("a comparing mode preflighted with no sampling at all")
+	}
+	if shadowed.Digest == facts.Digest {
+		t.Fatal("two deployments running different encoders share a runtime config digest")
 	}
 }

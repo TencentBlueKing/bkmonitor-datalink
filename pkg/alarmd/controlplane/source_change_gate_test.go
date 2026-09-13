@@ -20,6 +20,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
 // countingStrategySource counts the document reads a reconciler asks of the
@@ -47,8 +48,12 @@ type changeGateHarness struct {
 	t          *testing.T
 	ctx        context.Context
 	client     *redis.Client
+	prefix     string
 	source     *countingStrategySource
 	planner    controlplane.PrimaryQueryCompiler
+	repository *controlplane.RedisCatalogRepository
+	compiler   *strategy.PlanCompiler
+	semantics  strategy.StateSemantics
 	reconciler *controlplane.SourceReconciler
 	documents  []json.RawMessage
 	clock      time.Time
@@ -81,8 +86,10 @@ func newChangeGateHarness(t *testing.T) *changeGateHarness {
 		t.Fatal(err)
 	}
 	harness := &changeGateHarness{
-		t: t, ctx: ctx, client: client, source: &countingStrategySource{inner: newRedisStrategySource(t, client)},
-		planner: planner, reconciler: reconciler, documents: documents, clock: time.Unix(1_700_000_000, 0),
+		t: t, ctx: ctx, client: client, prefix: "alarmd:control:change-gate",
+		source:  &countingStrategySource{inner: newRedisStrategySource(t, client)},
+		planner: planner, repository: repository, compiler: compiler, semantics: semantics,
+		reconciler: reconciler, documents: documents, clock: time.Unix(1_700_000_000, 0),
 	}
 	if err := reconciler.ConfigureClock(func() time.Time { return harness.clock }); err != nil {
 		t.Fatal(err)

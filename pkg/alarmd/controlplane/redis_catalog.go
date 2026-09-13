@@ -186,21 +186,31 @@ func (repository *RedisCatalogRepository) Ping(ctx context.Context) error {
 	return repository.client.Ping(ctx).Err()
 }
 
+// renewCurrentActivationObjectsScript moves the expiry of the objects one
+// Activation header names, and of nothing else. The Snapshot and the Active
+// Set are content-addressed, so their presence is all the script needs to
+// know about them; the two small mappings are compared by value, and a header
+// that moved means another Activation owns the objects now. The reply carries
+// the Active Set's size for the renewal facts, so the caller never reads it
+// to learn that.
 const renewCurrentActivationObjectsScript = `
-if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
-if redis.call('GET', KEYS[2]) ~= ARGV[5] or redis.call('GET', KEYS[3]) ~= ARGV[3] or
-   redis.call('GET', KEYS[4]) ~= ARGV[4] or redis.call('GET', KEYS[5]) ~= ARGV[6] then return -1 end
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return {0, 0} end
+if redis.call('EXISTS', KEYS[2]) == 0 or redis.call('GET', KEYS[3]) ~= ARGV[3] or
+   redis.call('GET', KEYS[4]) ~= ARGV[4] or redis.call('EXISTS', KEYS[5]) == 0 then return {-1, 0} end
 redis.call('PEXPIRE', KEYS[2], ARGV[2])
 redis.call('PEXPIRE', KEYS[3], ARGV[2])
 redis.call('PEXPIRE', KEYS[4], ARGV[2])
 redis.call('PEXPIRE', KEYS[5], ARGV[2])
-return 1
+return {1, redis.call('STRLEN', KEYS[5])}
 `
 
 // RenewCurrentActivationObjects renews only the complete Snapshot occurrence
 // and Active Set named by the same Activation header, together with the
 // Schedule timelines that Activation still references. A concurrent cutover
-// cannot renew stale facts.
+// cannot renew stale facts. It runs on every refresh round, so it moves no
+// content: the Snapshot and Active Set are proved readable through the
+// repository's own verified reads, which reuse what an earlier round loaded,
+// and the script only checks that the keys are still there.
 func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx context.Context) error {
 	started := time.Now()
 	metricResult := "failure"
@@ -218,20 +228,6 @@ func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx cont
 	if err != nil {
 		return err
 	}
-	snapshotPayload, err := repository.client.Get(ctx, repository.snapshotKey(state.Current.SnapshotRevision)).Bytes()
-	if errors.Is(err, redis.Nil) {
-		return ErrSnapshotUnavailable
-	}
-	if err != nil {
-		return err
-	}
-	activePayload, err := repository.client.Get(ctx, repository.activeQGSetKey(state.ActiveQGSetRef.Digest)).Bytes()
-	if errors.Is(err, redis.Nil) {
-		return ErrSnapshotUnavailable
-	}
-	if err != nil {
-		return err
-	}
 	if _, err := repository.LoadPublishedSnapshot(ctx, state.Current); err != nil {
 		return err
 	}
@@ -245,12 +241,19 @@ func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx cont
 		repository.epochForRevisionKey(state.Current.SnapshotRevision),
 		repository.publicationKey(state.Current.PublicationEpoch),
 		repository.activeQGSetKey(state.ActiveQGSetRef.Digest),
-	}, header, repository.ttl.Milliseconds(), strconv.FormatUint(state.Current.PublicationEpoch, 10), string(state.Current.SnapshotRevision),
-		snapshotPayload, activePayload).Int()
+	}, header, repository.ttl.Milliseconds(), strconv.FormatUint(state.Current.PublicationEpoch, 10), string(state.Current.SnapshotRevision)).Slice()
 	if err != nil {
 		return fmt.Errorf("alarmd controlplane: renew current activation objects: %w", err)
 	}
-	switch result {
+	if len(result) != 2 {
+		return errors.New("alarmd controlplane: invalid activation renewal result")
+	}
+	outcome, err := redisInteger(result[0])
+	if err != nil {
+		return errors.New("alarmd controlplane: invalid activation renewal result")
+	}
+	activeBytes, _ := redisInteger(result[1])
+	switch outcome {
 	case 1:
 		// The Schedule timelines of the renewed Active Set and of the Draining
 		// projection are renewed only after the guarded CAS proved that the
@@ -260,7 +263,7 @@ func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx cont
 		}
 		repository.renewObjectCatalog(ctx, state.Current.SnapshotRevision)
 		metricResult = "success"
-		queryGroups, objectBytes = len(groups), len(activePayload)
+		queryGroups, objectBytes = len(groups), int(activeBytes)
 		return nil
 	case 0:
 		return ErrActivationConflict
@@ -318,6 +321,32 @@ redis.call('PSETEX', KEYS[4], ARGV[2], tostring(epoch) .. '\n' .. ARGV[3])
 return {tonumber(epoch), 1}
 `
 
+// renewSnapshotPublicationScript extends the life of the Snapshot occurrence
+// the persistent Activation still selects without carrying the Snapshot's
+// content. The Snapshot key is content-addressed by its revision and every
+// reader derives that revision from what it decodes, so a key that exists
+// needs only its expiry moved; the small keys beside it are rewritten exactly
+// as the content path writes them. 2 says the Snapshot is gone and the caller
+// has to bring the content, the one case that pays for encoding it.
+const renewSnapshotPublicationScript = `
+local header = redis.call('GET', KEYS[1])
+if not header or header ~= ARGV[1] then return 0 end
+local latest = redis.call('GET', KEYS[2])
+if ARGV[6] == '' then
+  if latest then return 0 end
+elseif not latest or latest ~= ARGV[6] then
+  return 0
+end
+if redis.call('EXISTS', KEYS[3]) == 0 then return 2 end
+local occurrence = redis.call('GET', KEYS[5])
+if occurrence and occurrence ~= ARGV[5] then return -2 end
+redis.call('PEXPIRE', KEYS[3], ARGV[2])
+redis.call('PSETEX', KEYS[4], ARGV[2], ARGV[3])
+redis.call('PSETEX', KEYS[5], ARGV[2], ARGV[5])
+redis.call('PSETEX', KEYS[2], ARGV[2], ARGV[4])
+return 1
+`
+
 const restoreSnapshotPublicationScript = `
 local header = redis.call('GET', KEYS[1])
 if not header or header ~= ARGV[1] then return 0 end
@@ -338,10 +367,14 @@ redis.call('PSETEX', KEYS[2], ARGV[3], ARGV[5])
 return 1
 `
 
-// restoreCatalogPublicationIfActivationCurrent recreates expired immutable
-// Catalog facts only when the persistent Activation still selects the exact
-// same content-addressed Snapshot occurrence. It does not create a new epoch
-// or mutate Schedule/Activation provenance.
+// restoreCatalogPublicationIfActivationCurrent keeps the immutable Catalog
+// facts of the Snapshot occurrence the persistent Activation still selects
+// alive, and recreates them only once they expired. It does not create a new
+// epoch or mutate Schedule/Activation provenance. Every round whose source did
+// not change comes through here, so the common case moves no content: the
+// Snapshot key only has its expiry extended, and the content is encoded and
+// sent only when the key is gone. The bytes Redis holds after a round that
+// found the key are therefore the bytes it held before it.
 func (repository *RedisCatalogRepository) restoreCatalogPublicationIfActivationCurrent(
 	ctx context.Context,
 	activation ActivationState,
@@ -351,19 +384,6 @@ func (repository *RedisCatalogRepository) restoreCatalogPublicationIfActivationC
 		validateActivationState(activation) != nil || catalog.SnapshotRevision == "" ||
 		activation.Current.SnapshotRevision != catalog.SnapshotRevision {
 		return PublishedSnapshot{}, errors.New("alarmd controlplane: invalid expired Snapshot restoration")
-	}
-	revision, err := deriveSnapshotRevision(catalog.QueryGroups)
-	if err != nil || revision != catalog.SnapshotRevision {
-		return PublishedSnapshot{}, errors.New("alarmd controlplane: restored Snapshot revision does not match Catalog")
-	}
-	content := struct {
-		SchemaVersion    string       `json:"schema_version"`
-		SnapshotRevision string       `json:"snapshot_revision"`
-		QueryGroups      []QueryGroup `json:"query_groups"`
-	}{SchemaVersion: snapshotSchemaVersion, SnapshotRevision: string(catalog.SnapshotRevision), QueryGroups: catalog.QueryGroups}
-	payload, err := json.Marshal(content)
-	if err != nil {
-		return PublishedSnapshot{}, fmt.Errorf("alarmd controlplane: encode restored Snapshot: %w", err)
 	}
 	header, err := activationHeader(activation.RecordRevision, activation.Current, activation.Pending)
 	if err != nil {
@@ -379,11 +399,47 @@ func (repository *RedisCatalogRepository) restoreCatalogPublicationIfActivationC
 	if err := repository.ensureObjectCatalog(ctx, catalog); err != nil {
 		return PublishedSnapshot{}, err
 	}
-	changed, err := repository.client.Eval(ctx, restoreSnapshotPublicationScript, []string{
+	keys := []string{
 		repository.activationHeaderKey(), repository.latestPublicationKey(),
 		repository.snapshotKey(catalog.SnapshotRevision), repository.epochForRevisionKey(catalog.SnapshotRevision),
 		repository.publicationKey(activation.Current.PublicationEpoch),
-	}, header, payload, repository.ttl.Milliseconds(), epoch, publicationValue(activation.Current),
+	}
+	restored := PublishedSnapshot{SchemaVersion: snapshotSchemaVersion, Publication: activation.Current,
+		QueryGroups: append([]QueryGroup(nil), catalog.QueryGroups...)}
+	renewed, err := repository.client.Eval(ctx, renewSnapshotPublicationScript, keys,
+		header, repository.ttl.Milliseconds(), epoch, publicationValue(activation.Current),
+		string(catalog.SnapshotRevision), latest).Int()
+	if err != nil {
+		return PublishedSnapshot{}, fmt.Errorf("alarmd controlplane: renew Snapshot publication: %w", err)
+	}
+	switch renewed {
+	case 1:
+		return restored, nil
+	case 2:
+	case -2:
+		return PublishedSnapshot{}, ErrPublicationOccurrenceCollision
+	case 0:
+		return PublishedSnapshot{}, ErrPublicationConflict
+	default:
+		return PublishedSnapshot{}, errors.New("alarmd controlplane: invalid Snapshot renewal result")
+	}
+	// The Snapshot expired. This is the one path that encodes the content, and
+	// the one that proves the revision names that content before writing it.
+	revision, err := deriveSnapshotRevision(catalog.QueryGroups)
+	if err != nil || revision != catalog.SnapshotRevision {
+		return PublishedSnapshot{}, errors.New("alarmd controlplane: restored Snapshot revision does not match Catalog")
+	}
+	content := struct {
+		SchemaVersion    string       `json:"schema_version"`
+		SnapshotRevision string       `json:"snapshot_revision"`
+		QueryGroups      []QueryGroup `json:"query_groups"`
+	}{SchemaVersion: snapshotSchemaVersion, SnapshotRevision: string(catalog.SnapshotRevision), QueryGroups: catalog.QueryGroups}
+	payload, err := json.Marshal(content)
+	if err != nil {
+		return PublishedSnapshot{}, fmt.Errorf("alarmd controlplane: encode restored Snapshot: %w", err)
+	}
+	changed, err := repository.client.Eval(ctx, restoreSnapshotPublicationScript, keys,
+		header, payload, repository.ttl.Milliseconds(), epoch, publicationValue(activation.Current),
 		string(catalog.SnapshotRevision), latest).Int()
 	if err != nil {
 		return PublishedSnapshot{}, fmt.Errorf("alarmd controlplane: restore expired Snapshot: %w", err)
@@ -397,8 +453,7 @@ func (repository *RedisCatalogRepository) restoreCatalogPublicationIfActivationC
 	if changed != 1 {
 		return PublishedSnapshot{}, ErrPublicationConflict
 	}
-	return PublishedSnapshot{SchemaVersion: snapshotSchemaVersion, Publication: activation.Current,
-		QueryGroups: append([]QueryGroup(nil), catalog.QueryGroups...)}, nil
+	return restored, nil
 }
 
 func (repository *RedisCatalogRepository) PublishCatalog(ctx context.Context, catalog Catalog) (PublishedSnapshot, bool, error) {
@@ -519,11 +574,20 @@ func (repository *RedisCatalogRepository) LoadSnapshot(ctx context.Context, revi
 	if repository == nil || repository.client == nil || revision == "" {
 		return PublishedSnapshot{}, errors.New("alarmd controlplane: snapshot revision is required")
 	}
-	payload, epoch, allocation, err := repository.loadAdmittedSnapshotPayload(ctx, revision)
-	defer allocation.release()
-	if err != nil {
-		return PublishedSnapshot{}, err
+	// A revision this repository already verified is reused as long as Redis
+	// still holds it under the same epoch at the same size, the way the scoped
+	// Query Group reads do; only a revision it has not seen is read in full.
+	// The leader loads the current Snapshot on every refresh round and the
+	// renewal loads it again, and neither has to carry the content for that.
+	payload, epoch, allocation, ok := repository.loadRevisionCachedSnapshotPayload(ctx, revision)
+	if !ok {
+		var err error
+		if payload, epoch, allocation, err = repository.loadAdmittedSnapshotPayload(ctx, revision); err != nil {
+			allocation.release()
+			return PublishedSnapshot{}, err
+		}
 	}
+	defer allocation.release()
 	snapshot, err := repository.snapshotCache.loadSnapshot(ctx, revision, payload, epoch, allocation)
 	if err != nil {
 		return PublishedSnapshot{}, err

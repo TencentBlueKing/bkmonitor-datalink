@@ -1595,18 +1595,62 @@ func planCompletedFullEmpty(bindings []execution.NamedInputBinding, plan executi
 	return found
 }
 
+// gapScopeReasonConflictError is the rejection of a Plan whose incomplete
+// named inputs of one gap scope carry different completion reasons. It names
+// the scope, the two inputs and their reasons: which pairs occur decides
+// whether one scope should carry several reasons or the inputs should be
+// scoped apart, and until they are read either change is a guess.
+type gapScopeReasonConflictError struct {
+	plan          execution.PlanIdentity
+	scope         execution.GapScope
+	first, second execution.NamedInputBinding
+}
+
+func (e *gapScopeReasonConflictError) Error() string {
+	level := "plan"
+	if e.scope.HasLevel {
+		level = strconv.FormatUint(uint64(e.scope.LevelID), 10)
+	}
+	return fmt.Sprintf("alarmd worker: one gap scope has conflicting completion reasons: strategy %s level %s: %s/%s %s %s vs %s/%s %s %s",
+		e.plan.StrategyID, level,
+		e.first.RequirementID, e.first.DatasetName, e.first.Completeness, e.first.ReasonCode,
+		e.second.RequirementID, e.second.DatasetName, e.second.Completeness, e.second.ReasonCode)
+}
+
+func (e *gapScopeReasonConflictError) QueryFailure() (string, string) {
+	return observability.QueryFailureCategoryNamedInput, codeGapScopeReasonConflict
+}
+
+// QueryFailureDetail is the two reasons and the scope in the bounded detail
+// grammar (lower case, at most 96 bytes), so the pair survives rate limiting.
+func (e *gapScopeReasonConflictError) QueryFailureDetail() string {
+	level := "plan"
+	if e.scope.HasLevel {
+		level = strconv.FormatUint(uint64(e.scope.LevelID), 10)
+	}
+	detail := "level=" + level + "-first=" + strings.ToLower(string(e.first.ReasonCode)) + "-second=" + strings.ToLower(string(e.second.ReasonCode))
+	if len(detail) > 96 {
+		detail = detail[:96]
+	}
+	return detail
+}
+
 func (stream *streamedExecution) completionGapMutation(
 	due execution.DuePlan,
 	bindings []execution.NamedInputBinding,
 ) (execution.PlanGapMutation, error) {
 	reasons := make(map[execution.GapScope]execution.ReasonCode)
+	first := make(map[execution.GapScope]execution.NamedInputBinding)
 	for _, binding := range bindings {
 		if binding.Consumer.Plan != due.Identity || binding.Completeness == execution.CompletenessFull {
 			continue
 		}
 		scope := execution.GapScope{LevelID: binding.Consumer.LevelID, HasLevel: binding.Consumer.HasLevel}
 		if previous, duplicate := reasons[scope]; duplicate && previous != binding.ReasonCode {
-			return execution.PlanGapMutation{}, errors.New("alarmd worker: one gap scope has conflicting completion reasons")
+			return execution.PlanGapMutation{}, &gapScopeReasonConflictError{plan: due.Identity, scope: scope, first: first[scope], second: binding}
+		}
+		if _, seen := reasons[scope]; !seen {
+			first[scope] = binding
 		}
 		reasons[scope] = binding.ReasonCode
 	}

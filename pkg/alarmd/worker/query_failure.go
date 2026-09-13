@@ -47,6 +47,10 @@ const (
 	codeStreamedNamedInputFoldInvalid     = "STREAMED_NAMED_INPUT_FOLD_INVALID"
 	codeEvaluationFailed                  = "EVALUATION_FAILED"
 	codeEvaluationResultInvalid           = "EVALUATION_RESULT_INVALID"
+	// codeGapScopeReasonConflict names a Plan whose incomplete named inputs of
+	// one gap scope carry different completion reasons; the error's detail
+	// says which two, so the shape can be read before either side is changed.
+	codeGapScopeReasonConflict = "GAP_SCOPE_REASON_CONFLICT"
 )
 
 // queryContractError is a typed worker failure. It keeps the historical error
@@ -108,6 +112,13 @@ func (coordinator *SlotExecutionCoordinator) observeQueryFailure(ctx context.Con
 		facts.Code = string(exceeded.budget)
 	} else if errors.As(err, &diagnostic) {
 		facts.Category, facts.Code = diagnostic.QueryFailure()
+	}
+	// A failure that can say more than its code, in the bounded detail
+	// grammar, does so here: the detail is what the rate-limited line keeps
+	// when the free text is gone.
+	var detailed interface{ QueryFailureDetail() string }
+	if errors.As(err, &detailed) {
+		facts.Detail = detailed.QueryFailureDetail()
 	}
 	observation := observability.Observation{Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted, Result: observability.ResultFailed, Operation: observability.Operation(operation), Direction: observability.DirectionInternal, ReasonCode: observability.ReasonInternalUnknown, Duration: time.Since(started), Err: err, QueryFailure: &facts}
 	defer func() { _ = recover() }()

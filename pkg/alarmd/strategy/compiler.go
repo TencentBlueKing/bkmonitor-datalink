@@ -494,7 +494,7 @@ func compiledConfigMatchesKind(config compiledAlgorithmConfig, kind string) bool
 	count := 0
 	for _, configured := range []bool{
 		config.Threshold != nil, config.SimpleRingRatio != nil, config.OsRestart != nil,
-		config.ProcPort != nil,
+		config.ProcPort != nil, config.TraditionalComparison != nil,
 	} {
 		if configured {
 			count++
@@ -502,6 +502,9 @@ func compiledConfigMatchesKind(config compiledAlgorithmConfig, kind string) bool
 	}
 	if count != 1 {
 		return false
+	}
+	if IsTraditionalComparison(kind) {
+		return config.TraditionalComparison != nil
 	}
 	switch kind {
 	case DetectorKindThreshold:

@@ -777,6 +777,9 @@ func compilePlan(
 }
 
 func supportedAlgorithmKind(kind string) bool {
+	if strategy.IsTraditionalComparison(kind) {
+		return true
+	}
 	switch kind {
 	case strategy.DetectorKindThreshold, strategy.DetectorKindSimpleRingRatio, strategy.DetectorKindOsRestart,
 		strategy.DetectorKindProcPort, SourceAlgorithmTypePingUnreachable:
@@ -810,6 +813,33 @@ func compileAlgorithmConfig(
 	if err != nil {
 		return nil, err
 	}
+	if strategy.IsTraditionalComparison(raw.Type) {
+		var parameters strategy.TraditionalComparisonParameters
+		if err := json.Unmarshal(raw.Config, &parameters); err != nil {
+			return nil, err
+		}
+		offsets, err := strategy.TraditionalHistoryOffsets(raw.Type, parameters, interval)
+		if err != nil {
+			return nil, err
+		}
+		for _, group := range strategy.TraditionalHistoryGroups(raw.Type, offsets) {
+			name := strategy.TraditionalHistoryDataset(raw.Type, group)
+			points := make([]execution.NamedInputPoint, len(group))
+			for i, offset := range group {
+				points[i] = execution.NamedInputPoint{Name: strategy.TraditionalHistoryName(offset), OffsetSeconds: offset}
+			}
+			dependency, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
+				DatasetName: execution.DatasetName(name), Role: execution.InputRoleAlgorithmDependency, ConsumerLevelID: levelID, LogicalQueryRef: execution.LogicalQueryRef(inputs.primary.QueryRevision),
+				RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -(group[len(group)-1] + interval), EndOffsetSeconds: -group[0], HalfOpen: true}, StepMillis: inputs.primary.StepMillis, AlignmentMillis: inputs.primary.AlignmentMillis,
+				ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessFinalizedRequired, InputProjection: inputProjection, PointOffsetsSeconds: group, NamedPoints: points,
+			})
+			if err != nil {
+				return nil, err
+			}
+			requirements = append(requirements, dependency)
+			inputs.addRequirement(dependency)
+		}
+	}
 	algorithmProjection := strategy.AlgorithmInputProjection{
 		ValueFields:     append([]string(nil), inputProjection.ValueFields...),
 		DimensionFields: append([]string(nil), inputProjection.DimensionFields...),
@@ -837,6 +867,19 @@ func compileAlgorithmConfig(
 				Name: point.Name, OffsetSeconds: point.OffsetSeconds,
 			}
 		}
+	}
+	if strategy.IsTraditionalComparison(raw.Type) {
+		var sourceConfig map[string]json.RawMessage
+		if err := json.Unmarshal(raw.Config, &sourceConfig); err != nil {
+			return nil, err
+		}
+		for key, value := range map[string]any{"data_unit": unit, "algorithm_unit": raw.UnitPrefix, "precision": 6, "input_projection": algorithmProjection, "requirements": algorithmRequirements} {
+			sourceConfig[key], err = json.Marshal(value)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return json.Marshal(sourceConfig)
 	}
 	if raw.Type == strategy.DetectorKindSimpleRingRatio {
 		var sourceConfig struct {

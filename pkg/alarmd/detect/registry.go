@@ -76,6 +76,10 @@ func NewDefaultRegistry() *Registry {
 	for _, detector := range []namedInputDetector{simpleRingRatioDetector{}, osRestartDetector{}, procPortDetector{}} {
 		registry.namedInputDetectors[detector.Key()] = detector
 	}
+	for _, kind := range []string{strategy.DetectorKindSimpleYearRound, strategy.DetectorKindAdvancedRingRatio, strategy.DetectorKindAdvancedYearRound, strategy.DetectorKindRingRatioAmplitude, strategy.DetectorKindYearRoundAmplitude, strategy.DetectorKindYearRoundRange} {
+		detector := traditionalComparisonDetector{kind}
+		registry.namedInputDetectors[detector.Key()] = detector
+	}
 	return registry
 }
 

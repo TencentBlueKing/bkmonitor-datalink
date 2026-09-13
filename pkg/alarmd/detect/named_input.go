@@ -482,6 +482,9 @@ func validNumericPoint(record execution.RecordView, field string) (bool, error) 
 }
 
 func namedValueField(algorithm strategy.CompiledAlgorithmPlan) string {
+	if config, ok := algorithm.TraditionalComparisonConfig(); ok {
+		return config.ValueField
+	}
 	if config, ok := algorithm.SimpleRingRatioConfig(); ok {
 		return config.ValueField
 	}

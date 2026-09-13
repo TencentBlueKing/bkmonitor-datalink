@@ -214,6 +214,26 @@ func TestNamedInputPathKeepsThresholdAndPingMappingOnCanonicalDetector(t *testin
 func compileNamedInputPlan(t *testing.T, kind string, config map[string]any, projection strategy.AlgorithmInputProjection) *strategy.CompiledPlan {
 	t.Helper()
 	requirements := []strategy.AlgorithmInputRequirement{namedAlgorithmRequirement(t, "primary", strategy.AlgorithmInputPrimary, -60, 0, nil, projection)}
+	if strategy.IsTraditionalComparison(kind) {
+		payload, _ := json.Marshal(config)
+		var parameters strategy.TraditionalComparisonParameters
+		if err := json.Unmarshal(payload, &parameters); err != nil {
+			t.Fatal(err)
+		}
+		offsets, err := strategy.TraditionalHistoryOffsets(kind, parameters, 60)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, group := range strategy.TraditionalHistoryGroups(kind, offsets) {
+			points := make([]strategy.AlgorithmNamedInputPoint, len(group))
+			for i, offset := range group {
+				points[i] = strategy.AlgorithmNamedInputPoint{Name: strategy.TraditionalHistoryName(offset), OffsetSeconds: offset}
+			}
+			requirement := namedAlgorithmRequirement(t, strategy.TraditionalHistoryDataset(kind, group), strategy.AlgorithmInputDependency, -(group[len(group)-1] + 60), -group[0], points, projection)
+			requirement.LogicalQueryRef = requirements[0].LogicalQueryRef
+			requirements = append(requirements, requirement)
+		}
+	}
 	switch kind {
 	case strategy.DetectorKindSimpleRingRatio:
 		requirements = append(requirements, namedAlgorithmRequirement(t, "previous", strategy.AlgorithmInputDependency, -120, -60,

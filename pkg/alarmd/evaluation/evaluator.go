@@ -219,6 +219,25 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		return recordResult{}, err
 	}
 	outcomes := make([]execution.LevelOutcome, len(tr.LevelOutcomes))
+	// A FULL query may legitimately contain no historical point for this
+	// series. Detection then freezes business evaluation, but its UNKNOWN
+	// outcome still needs an exact durable Level guard. Existing guards keep
+	// their original reason; schedule suppression alone never creates a gap.
+	missingInputGuards := make(map[uint32]execution.ReasonCode)
+	for _, outcome := range tr.LevelOutcomes {
+		if outcome.UnavailableReason == "" {
+			continue
+		}
+		if _, guarded := durableGuardReasons[outcome.LevelID]; guarded {
+			continue
+		}
+		for _, fact := range facts {
+			if fact.Definition.LevelID == outcome.LevelID && fact.Result == detect.FactResultUnavailable && fact.ReasonCode == outcome.UnavailableReason {
+				missingInputGuards[outcome.LevelID] = execution.ReasonCode(fact.ReasonCode)
+				break
+			}
+		}
+	}
 	for i, o := range tr.LevelOutcomes {
 		kind := execution.LevelOutcomeKind(o.Result)
 		reason := execution.ReasonCode(observability.ReasonNone)
@@ -249,8 +268,8 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		events = []contract.TriggerEventV1{*tr.TriggerEvent}
 	}
 	result := recordResult{outcomes: outcomes}
-	if advance {
-		mutation, err := buildMutation(request, due, record, view, facts, tr.LevelOutcomes, historyCompleteness, durableGuardReasons)
+	if advance || len(missingInputGuards) > 0 {
+		mutation, err := buildMutation(request, due, record, view, facts, tr.LevelOutcomes, historyCompleteness, durableGuardReasons, missingInputGuards)
 		if err != nil {
 			return recordResult{}, err
 		}
@@ -610,13 +629,17 @@ func guardStaysActive(outcome trigger.LevelOutcomeV2, summary execution.HistoryC
 	return completeness == execution.HistoryWarming || completeness == execution.HistoryGapped
 }
 
-func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, facts []detect.LevelFact, outcomes []trigger.LevelOutcomeV2, summaries map[uint32]execution.HistoryCompleteness, durableGuardReasons map[uint32]execution.ReasonCode) (execution.StateMutation, error) {
+func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, facts []detect.LevelFact, outcomes []trigger.LevelOutcomeV2, summaries map[uint32]execution.HistoryCompleteness, durableGuardReasons, missingInputGuards map[uint32]execution.ReasonCode) (execution.StateMutation, error) {
 	refs, err := execution.DeriveRuntimeLevelContractRefs(due.CompiledPlan)
 	if err != nil {
 		return execution.StateMutation{}, err
 	}
 	levels := make([]execution.RuntimeLevelStateMutation, len(refs))
 	for i, r := range refs {
+		if reason, missing := missingInputGuards[r.LevelID]; missing {
+			levels[i] = execution.RuntimeLevelStateMutation{LevelID: r.LevelID, LevelStateCompatibility: r.LevelStateCompatibility, HistoryCompleteness: execution.HistoryGapped, GapReasonCode: reason, WarmupRequirementRef: r.WarmupRequirementRef, LastProcessedEventTime: record.SourceTime()}
+			continue
+		}
 		advances := false
 		for _, outcome := range outcomes {
 			if outcome.LevelID == r.LevelID && outcome.StateDisposition == trigger.StateAdvance {
@@ -659,7 +682,8 @@ func buildMutation(request execution.EvaluationRequest, due execution.DuePlan, r
 	}
 	lf := make([]execution.StateLevelFact, 0, len(facts))
 	for _, f := range facts {
-		if advancing[f.Definition.LevelID] {
+		_, missing := missingInputGuards[f.Definition.LevelID]
+		if advancing[f.Definition.LevelID] || missing {
 			lf = append(lf, execution.StateLevelFact{LevelID: f.Definition.LevelID, DetectFingerprint: f.DetectFingerprint, Result: execution.LevelFactResult(f.Result)})
 		}
 	}

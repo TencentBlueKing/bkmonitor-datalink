@@ -2312,7 +2312,7 @@ function sharedUnavailableCard(code, series) {
   return card;
 }
 
-function trendCard(item) {
+function trendCard(item, siblingsWithData) {
   var card = document.createElement('div');
   card.className = 'tcard';
   var title = document.createElement('h3');
@@ -2333,7 +2333,11 @@ function trendCard(item) {
   } else if (!points.length) {
     var empty = document.createElement('div');
     empty.className = 'range';
-    empty.textContent = '这段窗口内没有数据点';
+    empty.textContent = '这段窗口内没有数据点'
+      + (siblingsWithData > 0
+          ? '——同批另外 ' + siblingsWithData + ' 条有数据，所以取数是通的：'
+            + '要么这段时间真的没有发生，要么这条指标在这一代还没开始上报'
+          : '——同批没有一条有数据，先怀疑取数本身，不要读成"什么都没发生"');
     card.appendChild(empty);
   } else {
     var values = points.map(function (p) { return p.value; });
@@ -2401,7 +2405,20 @@ function loadTrend() {
       host.appendChild(sharedUnavailableCard(shared, series));
       return;
     }
-    series.forEach(function (item) { host.appendChild(trendCard(item)); });
+    // Whether any sibling curve came back with points, which is what tells an
+    // empty curve apart from an endpoint nobody could reach.
+    //
+    // "No points in this window" used to mean one thing: nothing happened. A
+    // change landing upstream makes several gauges emit no series at all until
+    // they have loaded, deliberately -- reporting a zero before loading is how
+    // a legitimate value lands inside somebody's threshold and supports the
+    // wrong conclusion. The trade is only worth it if "not loaded" can be told
+    // from "could not read anything", and the way to tell is that everything
+    // else came back.
+    var siblingsWithData = series.filter(function (item) {
+      return !item.unavailable && (item.points || []).length > 0;
+    }).length;
+    series.forEach(function (item) { host.appendChild(trendCard(item, siblingsWithData)); });
   }).catch(function (e) {
     // A deployment that was never told where its own metrics live has no curves
     // to show. That is a missing route, not a broken page, so the section stays

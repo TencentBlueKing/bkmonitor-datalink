@@ -15,7 +15,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -51,14 +54,17 @@ const (
 type Logger struct {
 	component string
 	next      *slog.Logger
+	writer    *serializedLogWriter
 }
 
 // BoundedLogPolicy always records one-time lifecycle transitions. Routine
 // success is omitted. Repeated transitions, recovery and exceptional results
-// use a concrete limiter with fixed per-reason or reason-empty stage buckets;
-// M8 does not hard-code a sampling rate or time window before G3 calibration.
+// use a concrete limiter: phase one buckets by reason or reason-empty stage,
+// phase two additionally buckets by Query Group scope and reports suppressed
+// counts. M8 does not hard-code a sampling rate or time window before G3
+// calibration.
 type BoundedLogPolicy struct {
-	repeated *WindowLogLimiter
+	repeated RepeatedLogLimiter
 }
 
 func NewBoundedLogPolicy(limiter *WindowLogLimiter) (*BoundedLogPolicy, error) {
@@ -68,14 +74,29 @@ func NewBoundedLogPolicy(limiter *WindowLogLimiter) (*BoundedLogPolicy, error) {
 	return &BoundedLogPolicy{repeated: limiter}, nil
 }
 
+// NewScopedBoundedLogPolicy builds the phase-two policy that limits repeated
+// lines per (reason, Query Group) bucket and records merged counts.
+func NewScopedBoundedLogPolicy(limiter *ScopedLogLimiter) (*BoundedLogPolicy, error) {
+	if limiter == nil {
+		return nil, errors.New("observability: bounded log policy requires a scoped limiter")
+	}
+	return &BoundedLogPolicy{repeated: limiter}, nil
+}
+
 func (p *BoundedLogPolicy) ShouldLog(observation Observation) bool {
+	return p.Admit(observation).Allowed
+}
+
+// Admit decides whether the observation is logged and how many earlier lines
+// of the same bucket were merged into it.
+func (p *BoundedLogPolicy) Admit(observation Observation) LogAdmission {
 	if mandatoryLogStage(observation.Stage) {
-		return true
+		return LogAdmission{Allowed: true}
 	}
 	if !repeatedLogObservation(observation) || p == nil || p.repeated == nil {
-		return false
+		return LogAdmission{}
 	}
-	return p.repeated.Allow(observation)
+	return p.repeated.Admit(observation)
 }
 
 type LoggingObserver struct {
@@ -91,9 +112,11 @@ func New(component string, writer io.Writer) *Logger {
 	if writer == nil {
 		writer = io.Discard
 	}
+	locked := &serializedLogWriter{next: writer}
 	return &Logger{
+		writer:    locked,
 		component: component,
-		next: slog.New(slog.NewJSONHandler(writer, &slog.HandlerOptions{
+		next: slog.New(slog.NewJSONHandler(locked, &slog.HandlerOptions{
 			Level: slog.LevelInfo,
 		})),
 	}
@@ -112,17 +135,30 @@ func (l *Logger) Error(stage, result string, records int, duration time.Duration
 }
 
 func (l *LoggingObserver) Observe(ctx context.Context, observation Observation) {
+	// These facts feed complete counters/gauges. TargetFlow already carries the
+	// selected run's decision; do not spend ordinary log quota on every update.
+	if observation.Component == ComponentScheduler {
+		switch observation.Stage {
+		case StageRunnerReturned, StageDispatcherSnapshot, StageQueryPermitWait, StageExpiredRangeReturned:
+			return
+		}
+	}
 	if l == nil || l.logger == nil || l.logger.next == nil || l.policy == nil {
 		return
 	}
 	observation = NormalizeObservation(observation)
-	if !l.policy.ShouldLog(observation) {
+	// Merge the context coordinates before admission so a scoped limiter sees
+	// the Query Group the Coordinator attached to ctx.
+	observation.Trace = mergeTraceFields(observation.Trace, TraceFieldsFromContext(ctx))
+	admission := l.policy.Admit(observation)
+	if !admission.Allowed {
 		return
 	}
-	l.logger.logObservation(ctx, observation)
+	l.logger.logObservation(ctx, observation, admission)
 }
 
-func (l *Logger) logObservation(ctx context.Context, observation Observation) {
+func (l *Logger) logObservation(ctx context.Context, observation Observation, admission LogAdmission) {
+	observation.Trace = mergeTraceFields(observation.Trace, TraceFieldsFromContext(ctx))
 	attributes := []slog.Attr{
 		slog.String("component", string(observation.Component)),
 		slog.String("stage", string(observation.Stage)),
@@ -132,10 +168,145 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation) {
 		slog.String("direction", string(observation.Direction)),
 		slog.Int64("duration_ms", observation.Duration.Milliseconds()),
 	}
+	if f := observation.QueryCooldown; f != nil {
+		attributes = append(attributes, slog.Any("query_cooldown", f))
+	}
+	if f := observation.QueryTiming; f != nil {
+		attributes = append(attributes, slog.Any("query_timing", f))
+	}
+	if f := observation.ShortPeriodCompletion; f != nil {
+		attributes = append(attributes, slog.Any("short_period_completion", f))
+	}
+	if f := observation.StateApplyChunk; f != nil {
+		attributes = append(attributes, slog.Int("chunk_index", f.Index), slog.Int("chunk_count", f.Count),
+			slog.Int64("applied_keys", f.AppliedKeys), slog.Int64("applied_bytes", f.AppliedBytes), slog.Int64("elapsed_ms", f.ElapsedMillis))
+	}
+	if f := observation.CapacityRejection; f != nil {
+		attributes = append(attributes, slog.String("capacity_phase", f.Phase), slog.Uint64("capacity_shared_used", f.SharedUsed), slog.Uint64("capacity_requested", f.Requested), slog.Uint64("capacity_limit", f.Limit))
+		if f.OwnUsed != nil {
+			attributes = append(attributes, slog.Uint64("capacity_own_used", *f.OwnUsed))
+		}
+	}
+	if observation.CapacityBudget != "" {
+		attributes = append(attributes, slog.String("capacity_budget", string(observation.CapacityBudget)))
+	}
+	if observation.SourceKind != "" {
+		attributes = append(attributes, slog.String("source_kind", string(observation.SourceKind)))
+	}
 	attributes = appendObservationCounts(attributes, observation.Counts)
 	attributes = appendTraceFields(attributes, observation.Trace)
+	if f := observation.QueryFailure; f != nil {
+		attributes = append(attributes, slog.String("failure_stage", f.Stage), slog.String("failure_category", f.Category), slog.String("failure_code", f.Code))
+		if f.Detail != "" {
+			attributes = append(attributes, slog.String("failure_detail", f.Detail))
+		}
+	}
+	if observation.RuntimeConfig != nil {
+		attributes = append(attributes, slog.Any("runtime_config", observation.RuntimeConfig))
+	}
+	if facts := observation.StateGenerationSkew; facts != nil {
+		attributes = append(attributes,
+			slog.String("state_generation_skew_kind", facts.Kind),
+			slog.String("state_generation_skew_strategy_id", facts.StrategyID),
+		)
+	}
+	if facts := observation.ActivationHold; facts != nil {
+		attributes = append(attributes,
+			slog.Int("activation_reappeared", facts.Reappeared),
+			slog.Int("activation_held", facts.Held),
+			slog.Int64("activation_held_max_age_seconds", facts.MaxAgeSeconds),
+			slog.Bool("activation_held_samples_truncated", facts.Truncated),
+			slog.Any("activation_held_samples", facts.Samples),
+		)
+	}
+	if facts := observation.DrainingQG; facts != nil {
+		attributes = append(attributes,
+			slog.Int("draining_total", facts.Total),
+			slog.Int("draining_undrained", facts.Undrained),
+			slog.Int("draining_isolated", facts.Isolated),
+			slog.Int("draining_retired", facts.Retired),
+			slog.Bool("draining_samples_truncated", facts.Truncated),
+			slog.Any("draining_samples", facts.Samples),
+		)
+	}
+	if facts := observation.SourceRefresh; facts != nil {
+		attributes = append(attributes,
+			slog.String("source_refresh_status", string(facts.Status)),
+			slog.Bool("source_refresh_counts_known", facts.CountsKnown),
+		)
+		if facts.ObservationID != "" {
+			attributes = append(attributes, slog.String("source_observation_id", facts.ObservationID))
+		}
+		if facts.SnapshotRevision != "" {
+			attributes = append(attributes, slog.String("snapshot_revision", facts.SnapshotRevision))
+		}
+		if facts.PublicationEpoch > 0 {
+			attributes = append(attributes, slog.Uint64("publication_epoch", facts.PublicationEpoch))
+		}
+		attributes = append(attributes,
+			slog.Int("source_compiled_strategies", facts.CompiledStrategies),
+			slog.Int("source_reused_strategies", facts.ReusedStrategies),
+		)
+		// Named apart from snapshot_revision on purpose: a round that published
+		// nothing still knows what the fleet is executing, and writing that under
+		// the published name is what makes a normal lag read as a stall.
+		if facts.ActivatedRevision != "" {
+			attributes = append(attributes, slog.String("activated_snapshot_revision", facts.ActivatedRevision))
+		}
+		if facts.ActivatedEpoch > 0 {
+			attributes = append(attributes, slog.Uint64("activated_publication_epoch", facts.ActivatedEpoch))
+		}
+		if facts.ActivationCaughtUp {
+			attributes = append(attributes, slog.Bool("activation_caught_up", true))
+		}
+		if facts.ActiveQueryGroupsKnown {
+			attributes = append(attributes, slog.Int("active_query_groups", facts.ActiveQueryGroups))
+		}
+		if facts.CountsKnown {
+			attributes = append(attributes,
+				slog.Int("old_query_groups", facts.OldQueryGroups),
+				slog.Int("new_query_groups", facts.NewQueryGroups),
+				slog.Int("added_query_groups", facts.AddedQueryGroups),
+				slog.Int("retired_query_groups", facts.RetiredQueryGroups),
+			)
+		}
+	}
+	if facts := observation.ActivationFailure; facts != nil {
+		attributes = append(attributes,
+			slog.String("activation_failure_stage", string(facts.Stage)),
+			slog.String("activation_failure_class", string(facts.Class)),
+		)
+		if facts.Stage == ActivationFailureStageReactivation {
+			attributes = append(attributes,
+				slog.Int("draining_query_groups", facts.DrainingQueryGroups),
+				slog.Int("candidate_query_groups", facts.CandidateQueryGroups),
+				slog.Int("reappeared_query_groups", facts.ReappearedQueryGroups),
+			)
+			if facts.Class == ActivationFailureClassNotDrained {
+				attributes = append(attributes,
+					slog.Bool("reappeared_query_group_samples_truncated", facts.ReappearedQueryGroupSamplesTruncated),
+					slog.Any("reappeared_query_group_samples", facts.ReappearedQueryGroupSamples),
+				)
+			}
+		}
+	}
+	if len(observation.AlgorithmEvaluations) > 0 {
+		attributes = append(attributes, slog.Any("algorithm_evaluations", observation.AlgorithmEvaluations))
+	}
+	if len(observation.AlgorithmInputs) > 0 {
+		attributes = append(attributes, slog.Any("algorithm_inputs", observation.AlgorithmInputs))
+	}
 	if observation.Err != nil {
-		attributes = append(attributes, slog.String("error_type", fmt.Sprintf("%T", observation.Err)))
+		attributes = append(attributes,
+			slog.String("error_type", fmt.Sprintf("%T", observation.Err)),
+			slog.String("error", SanitizeErrorText(observation.Err.Error())),
+		)
+	}
+	if admission.Suppressed > 0 {
+		attributes = append(attributes, slog.Uint64("suppressed_logs", admission.Suppressed))
+	}
+	if admission.SuppressedEvicted > 0 {
+		attributes = append(attributes, slog.Uint64("suppressed_logs_evicted", admission.SuppressedEvicted))
 	}
 	level := slog.LevelInfo
 	if observation.Result == Result(ResultFailed) || observation.Result == Result(ResultTimeout) {
@@ -170,6 +341,87 @@ func (l *Logger) log(
 	l.next.LogAttrs(context.Background(), level, "alarmd event", append(fixed, attrs...)...)
 }
 
+// maxLoggedErrorBytes bounds the sanitized error text in one log line.
+const maxLoggedErrorBytes = 512
+
+// SanitizeErrorText prepares an error message for a structured log line.
+// Internal alarmd errors are static strings or carry plan identities, which
+// are acceptable log coordinates. Anything shaped like a URL is replaced with
+// "<url>" so endpoints, credentials and query strings never reach the log, and
+// the result is truncated to maxLoggedErrorBytes on a rune boundary.
+func SanitizeErrorText(text string) string {
+	text = redactURLs(text)
+	if len(text) <= maxLoggedErrorBytes {
+		return text
+	}
+	cut := maxLoggedErrorBytes
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + "..."
+}
+
+func redactURLs(text string) string {
+	const marker = "://"
+	var builder strings.Builder
+	rest := text
+	for {
+		index := strings.Index(rest, marker)
+		if index < 0 {
+			builder.WriteString(rest)
+			return builder.String()
+		}
+		schemeStart := index
+		for schemeStart > 0 && isURLSchemeByte(rest[schemeStart-1]) {
+			schemeStart--
+		}
+		if schemeStart == index || !isASCIILetter(rest[schemeStart]) {
+			// A bare "://" or a scheme that does not start with a letter is not
+			// a URL; keep scanning after it.
+			builder.WriteString(rest[:index+len(marker)])
+			rest = rest[index+len(marker):]
+			continue
+		}
+		end := index + len(marker)
+		for end < len(rest) && !isURLTerminatorByte(rest[end]) {
+			end++
+		}
+		// Sentence punctuation directly after a URL belongs to the message.
+		for end > index+len(marker) && isURLTrailingPunctuation(rest[end-1]) {
+			end--
+		}
+		builder.WriteString(rest[:schemeStart])
+		builder.WriteString("<url>")
+		rest = rest[end:]
+	}
+}
+
+func isASCIILetter(char byte) bool {
+	return char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z'
+}
+
+func isURLSchemeByte(char byte) bool {
+	return isASCIILetter(char) || char >= '0' && char <= '9' || char == '+' || char == '-' || char == '.'
+}
+
+func isURLTrailingPunctuation(char byte) bool {
+	switch char {
+	case ':', '.', ',', ';':
+		return true
+	default:
+		return false
+	}
+}
+
+func isURLTerminatorByte(char byte) bool {
+	switch char {
+	case ' ', '\t', '\n', '\r', '"', '\'', '<', '>', ')', ']', '}', ',', ';':
+		return true
+	default:
+		return false
+	}
+}
+
 func appendObservationCounts(attributes []slog.Attr, counts Counts) []slog.Attr {
 	values := []struct {
 		name  string
@@ -192,8 +444,11 @@ func appendTraceFields(attributes []slog.Attr, trace TraceFields) []slog.Attr {
 		name  string
 		value string
 	}{
-		{"execution_id", trace.ExecutionID}, {"message_id", trace.MessageID},
-		{"query_group_key", trace.QueryGroupKey}, {"strategy_id", trace.StrategyID},
+		{"trace_id", trace.TraceID}, {"execution_id", trace.ExecutionID}, {"message_id", trace.MessageID},
+		{"query_group_key", trace.QueryGroupKey}, {"strategy_id", trace.StrategyID}, {"business_id", trace.BusinessID},
+		{"snapshot_revision", trace.SnapshotRevision}, {"query_revision", trace.QueryRevision},
+		{"schedule_revision", trace.ScheduleRevision}, {"due_plan_set_digest", trace.DuePlanSetDigest},
+		{"owner_id", trace.OwnerID},
 		{"level_id", trace.LevelID}, {"terminal_scope", trace.TerminalScope},
 		{"field_path", trace.TerminalFieldPath}, {"record_id", trace.RecordID},
 		{"dimension_identity_digest", trace.DimensionIdentityDigest}, {"topic", trace.Topic},
@@ -210,12 +465,24 @@ func appendTraceFields(attributes []slog.Attr, trace TraceFields) []slog.Attr {
 	if trace.OffsetKnown {
 		attributes = append(attributes, slog.Int64("offset", trace.Offset))
 	}
+	if trace.OwnerEpoch > 0 {
+		attributes = append(attributes, slog.Uint64("owner_epoch", trace.OwnerEpoch))
+	}
+	if trace.EvaluationTime > 0 {
+		attributes = append(attributes, slog.Int64("evaluation_time", trace.EvaluationTime))
+	}
+	if trace.ScheduleSegmentStart > 0 {
+		attributes = append(attributes, slog.Int64("schedule_segment_start", trace.ScheduleSegmentStart))
+	}
 	return attributes
 }
 
 func mandatoryLogStage(stage Stage) bool {
 	switch stage {
 	case StageStartup, StageConfigLoaded, StageKafkaAssigned, StageShutdown, StageFatal:
+		return true
+	case StageSnapshotRefreshed, StageSnapshotUnavailable, StageAssignmentAcquired, StageAssignmentLost,
+		StageTakeoverStarted, StageTakeoverCompleted:
 		return true
 	default:
 		return false
@@ -227,8 +494,17 @@ func repeatedLogObservation(observation Observation) bool {
 	case StageOffsetGap, StageResourceSoft, StageResourceHard, StageResourceResumed, StageRestartRecovered:
 		return true
 	default:
-		return observation.Result == ResultResumed || exceptionalLogResult(observation.Result)
+		return isPhaseTwoWorkflowStage(observation.Stage) || observation.Result == ResultResumed || exceptionalLogResult(observation.Result)
 	}
+}
+
+func isPhaseTwoWorkflowStage(stage Stage) bool {
+	for _, pair := range phaseTwoComponentStages {
+		if pair.Stage == stage {
+			return true
+		}
+	}
+	return false
 }
 
 func exceptionalLogResult(result Result) bool {
@@ -241,3 +517,14 @@ func exceptionalLogResult(result Result) bool {
 }
 
 var _ Observer = (*LoggingObserver)(nil)
+
+type serializedLogWriter struct {
+	mu   sync.Mutex
+	next io.Writer
+}
+
+func (w *serializedLogWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.next.Write(p)
+}

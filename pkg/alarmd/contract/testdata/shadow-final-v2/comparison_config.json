@@ -1,0 +1,314 @@
+{
+  "note": "Synthetic v2 schema vectors; real frozen adapter cases are tested separately. Not production cross-chain acceptance.",
+  "vectors": [
+    {
+      "name": "base",
+      "canonical_input": {
+        "schema_version": "comparison-config-v2",
+        "primary_selection_mapping_version": "effective-order-v1",
+        "selection_order": [
+          1,
+          5
+        ],
+        "levels": [
+          {
+            "level_id": 1,
+            "connector": "AND",
+            "detectors": [
+              {
+                "kind": "Threshold",
+                "operator": "GTE",
+                "threshold": "1",
+                "mapping_version": "canonical-threshold-v2",
+                "source_algorithm_family": "",
+                "source_mapping_version": ""
+              }
+            ],
+            "trigger": {
+              "window_points": 3,
+              "required_anomalies": 2,
+              "step_seconds": 60
+            },
+            "recovery": {
+              "enabled": true,
+              "consecutive_windows": 2,
+              "mode": "CONTINUOUS_TRIGGER_MISS",
+              "input_requirement": "DATA_DRIVEN"
+            },
+            "priority": 1
+          },
+          {
+            "level_id": 5,
+            "connector": "AND",
+            "detectors": [
+              {
+                "kind": "Threshold",
+                "operator": "GTE",
+                "threshold": "2",
+                "mapping_version": "canonical-threshold-v2",
+                "source_algorithm_family": "",
+                "source_mapping_version": ""
+              }
+            ],
+            "trigger": {
+              "window_points": 3,
+              "required_anomalies": 2,
+              "step_seconds": 60
+            },
+            "recovery": {
+              "enabled": true,
+              "consecutive_windows": 2,
+              "mode": "CONTINUOUS_TRIGGER_MISS",
+              "input_requirement": "DATA_DRIVEN"
+            },
+            "priority": 5
+          }
+        ],
+        "selector": {
+          "table": "synthetic.metric",
+          "metric": "value",
+          "aggregation": "MAX",
+          "filters": [],
+          "step_millis": 60000,
+          "query_alignment_millis": 60000,
+          "timezone": "UTC",
+          "not_time_align": false,
+          "filter_connectors": [],
+          "data_source": "",
+          "expression": "value"
+        },
+        "projection": {
+          "value_fields": [
+            "value"
+          ],
+          "identity_fields": [
+            "host"
+          ],
+          "required_dimensions": []
+        },
+        "numeric": {
+          "source_unit": "",
+          "target_unit": "",
+          "multiplier": "1",
+          "decimal_places": 6,
+          "rounding": "HALF_EVEN"
+        },
+        "effective_time": "ALWAYS",
+        "schedule": {
+          "interval_seconds": 60,
+          "window_seconds": 60,
+          "alignment_seconds": 0,
+          "timezone": "UTC"
+        }
+      },
+      "expected_canonical_utf8": "{\"effective_time\":\"ALWAYS\",\"levels\":[{\"connector\":\"AND\",\"detectors\":[{\"kind\":\"Threshold\",\"mapping_version\":\"canonical-threshold-v2\",\"operator\":\"GTE\",\"source_algorithm_family\":\"\",\"source_mapping_version\":\"\",\"threshold\":\"1\"}],\"level_id\":1,\"priority\":1,\"recovery\":{\"consecutive_windows\":2,\"enabled\":true,\"input_requirement\":\"DATA_DRIVEN\",\"mode\":\"CONTINUOUS_TRIGGER_MISS\"},\"trigger\":{\"required_anomalies\":2,\"step_seconds\":60,\"window_points\":3}},{\"connector\":\"AND\",\"detectors\":[{\"kind\":\"Threshold\",\"mapping_version\":\"canonical-threshold-v2\",\"operator\":\"GTE\",\"source_algorithm_family\":\"\",\"source_mapping_version\":\"\",\"threshold\":\"2\"}],\"level_id\":5,\"priority\":5,\"recovery\":{\"consecutive_windows\":2,\"enabled\":true,\"input_requirement\":\"DATA_DRIVEN\",\"mode\":\"CONTINUOUS_TRIGGER_MISS\"},\"trigger\":{\"required_anomalies\":2,\"step_seconds\":60,\"window_points\":3}}],\"numeric\":{\"decimal_places\":6,\"multiplier\":\"1\",\"rounding\":\"HALF_EVEN\",\"source_unit\":\"\",\"target_unit\":\"\"},\"primary_selection_mapping_version\":\"effective-order-v1\",\"projection\":{\"identity_fields\":[\"host\"],\"required_dimensions\":[],\"value_fields\":[\"value\"]},\"schedule\":{\"alignment_seconds\":0,\"interval_seconds\":60,\"timezone\":\"UTC\",\"window_seconds\":60},\"schema_version\":\"comparison-config-v2\",\"selection_order\":[1,5],\"selector\":{\"aggregation\":\"MAX\",\"data_source\":\"\",\"expression\":\"value\",\"filter_connectors\":[],\"filters\":[],\"metric\":\"value\",\"not_time_align\":false,\"query_alignment_millis\":60000,\"step_millis\":60000,\"table\":\"synthetic.metric\",\"timezone\":\"UTC\"}}",
+      "expected_sha256": "11e504f84b0a43bba080e611df8b0ac51343a97a8ee18a94ee1ef3bc383b38e9"
+    },
+    {
+      "name": "sibling_threshold_changed",
+      "canonical_input": {
+        "schema_version": "comparison-config-v2",
+        "primary_selection_mapping_version": "effective-order-v1",
+        "selection_order": [
+          1,
+          5
+        ],
+        "levels": [
+          {
+            "level_id": 1,
+            "connector": "AND",
+            "detectors": [
+              {
+                "kind": "Threshold",
+                "operator": "GTE",
+                "threshold": "1",
+                "mapping_version": "canonical-threshold-v2",
+                "source_algorithm_family": "",
+                "source_mapping_version": ""
+              }
+            ],
+            "trigger": {
+              "window_points": 3,
+              "required_anomalies": 2,
+              "step_seconds": 60
+            },
+            "recovery": {
+              "enabled": true,
+              "consecutive_windows": 2,
+              "mode": "CONTINUOUS_TRIGGER_MISS",
+              "input_requirement": "DATA_DRIVEN"
+            },
+            "priority": 1
+          },
+          {
+            "level_id": 5,
+            "connector": "AND",
+            "detectors": [
+              {
+                "kind": "Threshold",
+                "operator": "GTE",
+                "threshold": "3",
+                "mapping_version": "canonical-threshold-v2",
+                "source_algorithm_family": "",
+                "source_mapping_version": ""
+              }
+            ],
+            "trigger": {
+              "window_points": 3,
+              "required_anomalies": 2,
+              "step_seconds": 60
+            },
+            "recovery": {
+              "enabled": true,
+              "consecutive_windows": 2,
+              "mode": "CONTINUOUS_TRIGGER_MISS",
+              "input_requirement": "DATA_DRIVEN"
+            },
+            "priority": 5
+          }
+        ],
+        "selector": {
+          "table": "synthetic.metric",
+          "metric": "value",
+          "aggregation": "MAX",
+          "filters": [],
+          "step_millis": 60000,
+          "query_alignment_millis": 60000,
+          "timezone": "UTC",
+          "not_time_align": false,
+          "filter_connectors": [],
+          "data_source": "",
+          "expression": "value"
+        },
+        "projection": {
+          "value_fields": [
+            "value"
+          ],
+          "identity_fields": [
+            "host"
+          ],
+          "required_dimensions": []
+        },
+        "numeric": {
+          "source_unit": "",
+          "target_unit": "",
+          "multiplier": "1",
+          "decimal_places": 6,
+          "rounding": "HALF_EVEN"
+        },
+        "effective_time": "ALWAYS",
+        "schedule": {
+          "interval_seconds": 60,
+          "window_seconds": 60,
+          "alignment_seconds": 0,
+          "timezone": "UTC"
+        }
+      },
+      "expected_canonical_utf8": "{\"effective_time\":\"ALWAYS\",\"levels\":[{\"connector\":\"AND\",\"detectors\":[{\"kind\":\"Threshold\",\"mapping_version\":\"canonical-threshold-v2\",\"operator\":\"GTE\",\"source_algorithm_family\":\"\",\"source_mapping_version\":\"\",\"threshold\":\"1\"}],\"level_id\":1,\"priority\":1,\"recovery\":{\"consecutive_windows\":2,\"enabled\":true,\"input_requirement\":\"DATA_DRIVEN\",\"mode\":\"CONTINUOUS_TRIGGER_MISS\"},\"trigger\":{\"required_anomalies\":2,\"step_seconds\":60,\"window_points\":3}},{\"connector\":\"AND\",\"detectors\":[{\"kind\":\"Threshold\",\"mapping_version\":\"canonical-threshold-v2\",\"operator\":\"GTE\",\"source_algorithm_family\":\"\",\"source_mapping_version\":\"\",\"threshold\":\"3\"}],\"level_id\":5,\"priority\":5,\"recovery\":{\"consecutive_windows\":2,\"enabled\":true,\"input_requirement\":\"DATA_DRIVEN\",\"mode\":\"CONTINUOUS_TRIGGER_MISS\"},\"trigger\":{\"required_anomalies\":2,\"step_seconds\":60,\"window_points\":3}}],\"numeric\":{\"decimal_places\":6,\"multiplier\":\"1\",\"rounding\":\"HALF_EVEN\",\"source_unit\":\"\",\"target_unit\":\"\"},\"primary_selection_mapping_version\":\"effective-order-v1\",\"projection\":{\"identity_fields\":[\"host\"],\"required_dimensions\":[],\"value_fields\":[\"value\"]},\"schedule\":{\"alignment_seconds\":0,\"interval_seconds\":60,\"timezone\":\"UTC\",\"window_seconds\":60},\"schema_version\":\"comparison-config-v2\",\"selection_order\":[1,5],\"selector\":{\"aggregation\":\"MAX\",\"data_source\":\"\",\"expression\":\"value\",\"filter_connectors\":[],\"filters\":[],\"metric\":\"value\",\"not_time_align\":false,\"query_alignment_millis\":60000,\"step_millis\":60000,\"table\":\"synthetic.metric\",\"timezone\":\"UTC\"}}",
+      "expected_sha256": "cffaaf19b73ac5200dcff957a8e1de02fe61124f19eae4ff8a9c1898c3f0260d"
+    },
+    {
+      "name": "priority_order_changed",
+      "canonical_input": {
+        "schema_version": "comparison-config-v2",
+        "primary_selection_mapping_version": "effective-order-v1",
+        "selection_order": [
+          5,
+          1
+        ],
+        "levels": [
+          {
+            "level_id": 1,
+            "connector": "AND",
+            "detectors": [
+              {
+                "kind": "Threshold",
+                "operator": "GTE",
+                "threshold": "1",
+                "mapping_version": "canonical-threshold-v2",
+                "source_algorithm_family": "",
+                "source_mapping_version": ""
+              }
+            ],
+            "trigger": {
+              "window_points": 3,
+              "required_anomalies": 2,
+              "step_seconds": 60
+            },
+            "recovery": {
+              "enabled": true,
+              "consecutive_windows": 2,
+              "mode": "CONTINUOUS_TRIGGER_MISS",
+              "input_requirement": "DATA_DRIVEN"
+            },
+            "priority": 5
+          },
+          {
+            "level_id": 5,
+            "connector": "AND",
+            "detectors": [
+              {
+                "kind": "Threshold",
+                "operator": "GTE",
+                "threshold": "2",
+                "mapping_version": "canonical-threshold-v2",
+                "source_algorithm_family": "",
+                "source_mapping_version": ""
+              }
+            ],
+            "trigger": {
+              "window_points": 3,
+              "required_anomalies": 2,
+              "step_seconds": 60
+            },
+            "recovery": {
+              "enabled": true,
+              "consecutive_windows": 2,
+              "mode": "CONTINUOUS_TRIGGER_MISS",
+              "input_requirement": "DATA_DRIVEN"
+            },
+            "priority": 1
+          }
+        ],
+        "selector": {
+          "table": "synthetic.metric",
+          "metric": "value",
+          "aggregation": "MAX",
+          "filters": [],
+          "step_millis": 60000,
+          "query_alignment_millis": 60000,
+          "timezone": "UTC",
+          "not_time_align": false,
+          "filter_connectors": [],
+          "data_source": "",
+          "expression": "value"
+        },
+        "projection": {
+          "value_fields": [
+            "value"
+          ],
+          "identity_fields": [
+            "host"
+          ],
+          "required_dimensions": []
+        },
+        "numeric": {
+          "source_unit": "",
+          "target_unit": "",
+          "multiplier": "1",
+          "decimal_places": 6,
+          "rounding": "HALF_EVEN"
+        },
+        "effective_time": "ALWAYS",
+        "schedule": {
+          "interval_seconds": 60,
+          "window_seconds": 60,
+          "alignment_seconds": 0,
+          "timezone": "UTC"
+        }
+      },
+      "expected_canonical_utf8": "{\"effective_time\":\"ALWAYS\",\"levels\":[{\"connector\":\"AND\",\"detectors\":[{\"kind\":\"Threshold\",\"mapping_version\":\"canonical-threshold-v2\",\"operator\":\"GTE\",\"source_algorithm_family\":\"\",\"source_mapping_version\":\"\",\"threshold\":\"1\"}],\"level_id\":1,\"priority\":5,\"recovery\":{\"consecutive_windows\":2,\"enabled\":true,\"input_requirement\":\"DATA_DRIVEN\",\"mode\":\"CONTINUOUS_TRIGGER_MISS\"},\"trigger\":{\"required_anomalies\":2,\"step_seconds\":60,\"window_points\":3}},{\"connector\":\"AND\",\"detectors\":[{\"kind\":\"Threshold\",\"mapping_version\":\"canonical-threshold-v2\",\"operator\":\"GTE\",\"source_algorithm_family\":\"\",\"source_mapping_version\":\"\",\"threshold\":\"2\"}],\"level_id\":5,\"priority\":1,\"recovery\":{\"consecutive_windows\":2,\"enabled\":true,\"input_requirement\":\"DATA_DRIVEN\",\"mode\":\"CONTINUOUS_TRIGGER_MISS\"},\"trigger\":{\"required_anomalies\":2,\"step_seconds\":60,\"window_points\":3}}],\"numeric\":{\"decimal_places\":6,\"multiplier\":\"1\",\"rounding\":\"HALF_EVEN\",\"source_unit\":\"\",\"target_unit\":\"\"},\"primary_selection_mapping_version\":\"effective-order-v1\",\"projection\":{\"identity_fields\":[\"host\"],\"required_dimensions\":[],\"value_fields\":[\"value\"]},\"schedule\":{\"alignment_seconds\":0,\"interval_seconds\":60,\"timezone\":\"UTC\",\"window_seconds\":60},\"schema_version\":\"comparison-config-v2\",\"selection_order\":[5,1],\"selector\":{\"aggregation\":\"MAX\",\"data_source\":\"\",\"expression\":\"value\",\"filter_connectors\":[],\"filters\":[],\"metric\":\"value\",\"not_time_align\":false,\"query_alignment_millis\":60000,\"step_millis\":60000,\"table\":\"synthetic.metric\",\"timezone\":\"UTC\"}}",
+      "expected_sha256": "241f95248e9e9ba86a5fdf77d1031c7edd642dd6034f35ac6936dbbb370f83b3"
+    }
+  ]
+}

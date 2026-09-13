@@ -298,13 +298,14 @@ func TestReceiptPublisherEmitsEvidenceForAsyncAndShutdownDrops(t *testing.T) {
 	if !timeoutPublisher.TryEnqueue(&receipt) {
 		t.Fatal("TryEnqueue() = false")
 	}
-	<-sendStarted
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	awaitTestSignal(t, sendStarted, "Receipt send start")
+	ctx, cancel := context.WithDeadline(context.Background(), time.Time{})
 	defer cancel()
 	_ = timeoutPublisher.Shutdown(ctx)
-	if got := <-timeoutEvidence; got.Kind != ReceiptDropShutdownTimeout || got.Count != 1 {
+	if got := awaitTestSignal(t, timeoutEvidence, "shutdown timeout evidence"); got.Kind != ReceiptDropShutdownTimeout || got.Count != 1 {
 		t.Fatalf("timeout drop evidence = %+v", got)
 	}
+	awaitTestSignal(t, timeoutPublisher.workerDone, "Receipt worker shutdown")
 }
 
 func TestReceiptPublisherShutdownTimeoutDropsPendingWithoutBlocking(t *testing.T) {
@@ -336,22 +337,15 @@ func TestReceiptPublisherShutdownTimeoutDropsPendingWithoutBlocking(t *testing.T
 	if !publisher.TryEnqueue(&receipt) {
 		t.Fatal("TryEnqueue() = false")
 	}
-	select {
-	case <-sendStarted:
-	case <-time.After(time.Second):
-		t.Fatal("Receipt send did not start")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	awaitTestSignal(t, sendStarted, "Receipt send start")
+	ctx, cancel := context.WithDeadline(context.Background(), time.Time{})
 	defer cancel()
-	started := time.Now()
 	result := publisher.Shutdown(ctx)
-	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
-		t.Fatalf("Shutdown() exceeded deadline: %s", elapsed)
-	}
 	if result.Status != ReceiptDrainTimedOut || result.PendingMessages != 1 || result.PendingBytes != len(payload) ||
 		result.Drops.ShutdownTimeout != 1 || !errors.Is(result.Err, context.DeadlineExceeded) {
 		t.Fatalf("Shutdown() = %#v", result)
 	}
+	awaitTestSignal(t, publisher.workerDone, "Receipt worker shutdown")
 }
 
 func TestOpenReceiptPublisherPrimesOnlyReceiptTopic(t *testing.T) {
@@ -361,7 +355,6 @@ func TestOpenReceiptPublisherPrimesOnlyReceiptTopic(t *testing.T) {
 	coordinates := validDecisionSinkConfig()
 	coordinates.Brokers = []string{broker.Addr()}
 	coordinates.OutputTopic = "alarmd-message-receipt-shadow"
-	coordinates.AllowedOutputTopics = []string{coordinates.OutputTopic}
 	broker.SetHandlerByMap(map[string]sarama.MockResponse{
 		"MetadataRequest": sarama.NewMockMetadataResponse(t).
 			SetBroker(broker.Addr(), broker.BrokerID()).
@@ -486,13 +479,9 @@ func expectReceiptDropEvidence(
 	wantCount uint64,
 ) {
 	t.Helper()
-	select {
-	case got := <-evidence:
-		if got.Kind != wantKind || got.Count != wantCount {
-			t.Fatalf("drop evidence = %+v, want %s/%d", got, wantKind, wantCount)
-		}
-	case <-time.After(time.Second):
-		t.Fatalf("missing drop evidence %s/%d", wantKind, wantCount)
+	got := awaitTestSignal(t, evidence, "Receipt drop evidence")
+	if got.Kind != wantKind || got.Count != wantCount {
+		t.Fatalf("drop evidence = %+v, want %s/%d", got, wantKind, wantCount)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -84,8 +85,28 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 			return EvaluationResultV2{}, invariantV2("admit event Level results", 0, errors.New("compiled result exceeds admitted limit"))
 		}
 		fingerprints := request.Plan.Fingerprints()
+		var snapshotRef *contract.StrategySnapshotRef
+		var dedupeMD5 string
+		ref := request.Plan.StrategyRef()
+		if ref.SnapshotRevision > 0 {
+			strategyID, strategyErr := strconv.ParseInt(ref.StrategyID, 10, 64)
+			businessID, businessErr := strconv.ParseInt(request.BusinessID, 10, 64)
+			if strategyErr != nil || businessErr != nil || ref.TenantID != request.TenantID {
+				return EvaluationResultV2{}, invariantV2("build strategy snapshot reference", 0, errors.New("invalid frozen strategy identity"))
+			}
+			snapshotRef = &contract.StrategySnapshotRef{TenantID: ref.TenantID, BusinessID: businessID, StrategyID: strategyID, Revision: ref.SnapshotRevision}
+			if identity := request.Plan.OutputIdentity(); identity != nil {
+				var err error
+				dedupeMD5, err = contract.MonitorDedupeMD5(ref.StrategyID, request.BusinessID, request.RecordRef.Dimensions, *identity)
+				if err != nil {
+					return EvaluationResultV2{}, invariantV2("build monitor dedupe identity", 0, err)
+				}
+			}
+		}
 		event, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{
-			EventKind: result.RecordResult, TenantID: request.TenantID, BusinessID: request.BusinessID,
+			StrategyRef: snapshotRef,
+			DedupeMD5:   dedupeMD5,
+			EventKind:   result.RecordResult, TenantID: request.TenantID, BusinessID: request.BusinessID,
 			PlanRef: request.Plan.PlanRef(), RecordRef: request.RecordRef, Observed: request.Observed,
 			LevelResults: levelResults, EvaluationTime: request.EvaluationTime,
 			DetectPlanFingerprint: fingerprints.Detect, TriggerStateFingerprint: fingerprints.Trigger,
@@ -95,6 +116,46 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 			return EvaluationResultV2{}, invariantV2("build TriggerEvent", 0, err)
 		}
 		result.TriggerEvent = event
+		// The compatibility context is attached whenever the Plan publishes that
+		// protocol. Before the format was stated, the only Plans that did were
+		// the ones with no frozen revision, so the two conditions were the same
+		// one; a forced compatibility choice makes them different, and reading
+		// the revision here would leave those Plans without the context their
+		// conversion needs.
+		if legacy := request.Plan.LegacyOutput(); legacy != nil && request.Plan.PublishesCompatibleProtocol() {
+			var timestamps []int64
+			for _, outcome := range event.LevelResults {
+				if outcome.LevelID != event.PrimaryLevelID {
+					continue
+				}
+				for _, history := range request.Histories {
+					if history.LevelID != event.PrimaryLevelID {
+						continue
+					}
+					iterator, ok := history.View.(interface {
+						ForEachAnomaly(int64, int64, func(int64) bool)
+					})
+					if !ok {
+						return EvaluationResultV2{}, invariantV2("legacy anomaly history", event.PrimaryLevelID, errors.New("history cannot expose actual anomaly timestamps"))
+					}
+					iterator.ForEachAnomaly(outcome.DecisionWindow.Trigger.WindowStart, request.RecordRef.SourceTime, func(ts int64) bool { timestamps = append(timestamps, ts); return true })
+				}
+				if len(timestamps) != int(outcome.DecisionWindow.Trigger.ObservedAnomalies) {
+					return EvaluationResultV2{}, invariantV2("legacy anomaly history", event.PrimaryLevelID, errors.New("actual anomaly timestamps disagree with trigger evidence"))
+				}
+			}
+			event.LegacyOutput = &contract.LegacyEventContext{Configuration: legacy, AnomalyTimestamps: append([]int64{}, timestamps...)}
+		}
+		event.WireFormat = request.Plan.WireFormat()
+		if identity := request.Plan.OutputIdentity(); identity != nil {
+			subject, remaining, subjectErr := contract.ProjectMonitorSubject(
+				request.RecordRef.Dimensions, *identity, request.Plan.SubjectFacts(),
+			)
+			if subjectErr != nil {
+				return EvaluationResultV2{}, invariantV2("project event subject", 0, subjectErr)
+			}
+			event.Subject = &contract.MonitorSubjectContext{Subject: subject, Dimensions: remaining}
+		}
 		result.Counts.Events = 1
 	}
 	return result, nil
@@ -237,6 +298,7 @@ func evaluateLevelV2(
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("calculate Trigger window", definition.LevelID, errors.New("window time overflow"))
 	}
 	observedAnomalies := history.CountAnomalies(triggerStart, request.Record.SourceTime)
+	anomalyBeginTime, _ := history.FirstAnomaly(triggerStart, request.Record.SourceTime)
 	if observedAnomalies > triggerPlan.WindowSize {
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("count Trigger anomalies", definition.LevelID, errors.New("anomaly count exceeds window positions"))
 	}
@@ -279,6 +341,7 @@ func evaluateLevelV2(
 		Trigger: contract.TriggerWindowEvidenceV1{
 			WindowStart: triggerStart, WindowEnd: request.Record.SourceTime, WindowSize: triggerPlan.WindowSize,
 			RequiredAnomalies: triggerPlan.RequiredAnomalies, ObservedAnomalies: observedAnomalies,
+			AnomalyBeginTime: anomalyBeginTime,
 		},
 		Recovery: contract.RecoveryWindowEvidenceV1{
 			Enabled: recoveryPlan.Enabled, RequiredConsecutiveWindows: recoveryPlan.ConsecutiveWindows,

@@ -66,17 +66,36 @@ const (
 	ReasonQueryPartial                     = "QUERY_PARTIAL"
 	ReasonQueryTimeout                     = "QUERY_TIMEOUT"
 	ReasonQueryUnavailable                 = "QUERY_UNAVAILABLE"
-	ReasonEffectiveTimeInactive            = "EFFECTIVE_TIME_INACTIVE"
-	ReasonEffectiveTimeUnknown             = "EFFECTIVE_TIME_UNKNOWN"
-	ReasonHistoryWarming                   = "HISTORY_WARMING"
-	ReasonHistoryGapped                    = "HISTORY_GAPPED"
-	ReasonKafkaUnavailable                 = "KAFKA_UNAVAILABLE"
-	ReasonRedisUnavailable                 = "REDIS_UNAVAILABLE"
-	ReasonProviderUnavailable              = "PROVIDER_UNAVAILABLE"
-	ReasonResourceHardStop                 = "RESOURCE_HARD_STOP"
-	ReasonOutputACKUnknown                 = "OUTPUT_ACK_UNKNOWN"
-	ReasonStateWriteRetryable              = "STATE_WRITE_RETRYABLE"
-	ReasonAuditDrop                        = "AUDIT_DROP"
+	ReasonReadinessBudgetInvalid           = "READINESS_BUDGET_INVALID"
+	// ReasonQueryNotReady names a Slot deferred because the window it would
+	// query is not in yet. It is the normal pacing of every Slot, and the
+	// highest-volume observation alarmd makes, so it needs its own name:
+	// without one it normalizes to internal_unknown and reads as a fault.
+	ReasonQueryNotReady              = "QUERY_NOT_READY"
+	ReasonExecutionBudgetExhausted   = "EXECUTION_BUDGET_EXHAUSTED"
+	ReasonSnapshotUnavailable        = "SNAPSHOT_UNAVAILABLE"
+	ReasonGapSkipped                 = "GAP_SKIPPED"
+	ReasonEffectiveTimeInactive      = "EFFECTIVE_TIME_INACTIVE"
+	ReasonEffectiveTimeUnknown       = "EFFECTIVE_TIME_UNKNOWN"
+	ReasonHistoryWarming             = "HISTORY_WARMING"
+	ReasonHistoryGapped              = "HISTORY_GAPPED"
+	ReasonKafkaUnavailable           = "KAFKA_UNAVAILABLE"
+	ReasonRedisUnavailable           = "REDIS_UNAVAILABLE"
+	ReasonProviderUnavailable        = "PROVIDER_UNAVAILABLE"
+	ReasonProgressBeginRejected      = "PROGRESS_BEGIN_REJECTED"
+	ReasonProgressBeginFailed        = "PROGRESS_BEGIN_FAILED"
+	ReasonActivationReadFailed       = "ACTIVATION_READ_FAILED"
+	ReasonSnapshotRetryPending       = "SNAPSHOT_RETRY_PENDING"
+	ReasonSlotSourceRetry            = "SLOT_SOURCE_RETRY"
+	ReasonBlockedExactSetUnavailable = "BLOCKED_EXACT_SET_UNAVAILABLE"
+	ReasonResourceHardStop           = "RESOURCE_HARD_STOP"
+	ReasonSlotBudgetExceeded         = "SLOT_BUDGET_EXCEEDED"
+	ReasonOutputACKUnknown           = "OUTPUT_ACK_UNKNOWN"
+	ReasonStateWriteRetryable        = "STATE_WRITE_RETRYABLE"
+	ReasonStateCorrupt               = "STATE_CORRUPT"
+	ReasonStateSchemaUnsupported     = "STATE_SCHEMA_UNSUPPORTED"
+	ReasonStateBudgetExceeded        = "STATE_BUDGET_EXCEEDED"
+	ReasonAuditDrop                  = "AUDIT_DROP"
 
 	CompatibilityModeLegacyGroupOfOne = "LEGACY_GROUP_OF_ONE"
 
@@ -104,6 +123,9 @@ type StrategyRefV2 struct {
 	TenantID   string `json:"tenant_id"`
 	StrategyID string `json:"strategy_id"`
 	Revision   string `json:"revision"`
+	// SnapshotRevision is the authoritative immutable snapshot version. Zero
+	// means the legacy source did not publish one; Revision is execution-only.
+	SnapshotRevision int64 `json:"snapshot_revision,omitempty"`
 }
 
 type QueryGroupV2 struct {
@@ -199,9 +221,53 @@ type EvaluationPlanV2 struct {
 	StrategyRef         StrategyRefV2          `json:"strategy_ref"`
 	InputProjection     InputProjectionV2      `json:"input_projection"`
 	SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
-	StrategyIR          StrategyIRV2           `json:"strategy_ir"`
-	TerminalReasonCode  string                 `json:"terminal_reason_code,omitempty"`
+	OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
+	// SubjectFacts are the strategy facts the subject projection reads when a
+	// record's own dimensions do not name its object. Absent means the
+	// projection answers from the dimensions alone.
+	SubjectFacts *MonitorSubjectFacts `json:"subject_facts,omitempty"`
+	LegacyOutput *LegacyOutputContext `json:"legacy_output,omitempty"`
+	// TargetScope is the strategy's monitoring target, frozen. Absent means
+	// the strategy names no target and every series is in scope; it never
+	// means "a scope existed and was dropped" - compilation rejects the Plan
+	// in that case rather than publish one that alerts outside its target.
+	TargetScope *TargetScopeV2 `json:"target_scope,omitempty"`
+	StrategyIR  StrategyIRV2   `json:"strategy_ir"`
+	// WireFormat is the format this Plan's events are published as, decided
+	// when the Plan was built and frozen with it so a retried Slot cannot
+	// change format between attempts. Empty means the pre-choice behaviour:
+	// the frozen revision decides.
+	WireFormat         string `json:"wire_format,omitempty"`
+	TerminalReasonCode string `json:"terminal_reason_code,omitempty"`
 }
+
+// PublishesCompatibleProtocol reports whether this Plan's events go out as the
+// Python-compatible event.
+//
+// It is one function because three places need the answer - the compiler, which
+// requires the conversion context to be present exactly where it is used; the
+// evaluator, which attaches it; and the sink, which reads it - and they were a
+// repeated condition on the frozen revision until a deployment could force the
+// choice. A Plan with no stated format predates the choice, where the revision
+// was the whole rule.
+func (plan EvaluationPlanV2) PublishesCompatibleProtocol() bool {
+	if plan.WireFormat != "" {
+		return plan.WireFormat == WireFormatPythonCompatible
+	}
+	return plan.StrategyRef.SnapshotRevision == 0
+}
+
+// The formats an event can be published as. They name bytes on a topic, not a
+// deployment's intent - the configuration's three words resolve into these.
+const (
+	// WireFormatPythonCompatible is the event the Python alert builder reads.
+	WireFormatPythonCompatible = "python_compatible"
+	// WireFormatTriggerEvent is alarmd's own decision event.
+	WireFormatTriggerEvent = "trigger_event_v1"
+	// WireFormatStandardRawEvent is the standard raw event the alert pipeline
+	// consumes.
+	WireFormatStandardRawEvent = "standard_raw_event"
+)
 
 // MarshalJSON keeps the 2.0 wire union flat: a producer emits either the
 // executable Plan body or the bounded terminal Plan identity, never both.
@@ -218,8 +284,13 @@ func (plan EvaluationPlanV2) MarshalJSON() ([]byte, error) {
 		StrategyRef         StrategyRefV2          `json:"strategy_ref"`
 		InputProjection     InputProjectionV2      `json:"input_projection"`
 		SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
+		OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
+		SubjectFacts        *MonitorSubjectFacts   `json:"subject_facts,omitempty"`
+		LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
+		TargetScope         *TargetScopeV2         `json:"target_scope,omitempty"`
 		StrategyIR          StrategyIRV2           `json:"strategy_ir"`
-	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.StrategyIR})
+		WireFormat          string                 `json:"wire_format,omitempty"`
+	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.SubjectFacts, plan.LegacyOutput, plan.TargetScope, plan.StrategyIR, plan.WireFormat})
 }
 
 type PlanSetV2 struct {
@@ -366,6 +437,18 @@ type TriggerWindowEvidenceV1 struct {
 	WindowSize        uint32 `json:"window_size"`
 	RequiredAnomalies uint32 `json:"required_anomalies"`
 	ObservedAnomalies uint32 `json:"observed_anomalies"`
+	// AnomalyBeginTime is the source time of the earliest anomalous point in
+	// this window, or zero when the window holds none.
+	//
+	// The window otherwise reports only how many anomalies it saw, and the
+	// timestamps themselves are deliberately reduced to a digest - they are
+	// evidence of a decision, not a fact a consumer needs. This one is the
+	// exception: a downstream that owns an alert's lifetime needs a point in
+	// time to open it from, and the window's own edges are not that point. It
+	// is the earliest anomaly in this window, not the first of an ongoing
+	// anomalous stretch; keeping the latter would mean keeping state about
+	// stretches, which is the downstream's job and not this one's.
+	AnomalyBeginTime int64 `json:"anomaly_begin_time,omitempty"`
 }
 
 type RecoveryWindowEvidenceV1 struct {
@@ -414,23 +497,43 @@ type TriggerEventTraceV1 struct {
 	ExecutionID string `json:"execution_id"`
 }
 
+// StrategySnapshotRef is the complete downstream immutable strategy identity.
+type StrategySnapshotRef struct {
+	TenantID   string `json:"bk_tenant_id"`
+	BusinessID int64  `json:"strategy_bk_biz_id"`
+	StrategyID int64  `json:"strategy_id"`
+	Revision   int64  `json:"strategy_revision"`
+}
+
 type TriggerEventV1 struct {
-	Schema                  Schema              `json:"schema"`
-	RequiredFeatures        []string            `json:"required_features"`
-	EventID                 string              `json:"event_id"`
-	EventSemanticDigest     string              `json:"event_semantic_digest"`
-	EventKind               string              `json:"event_kind"`
-	PrimaryLevelID          uint32              `json:"primary_level_id"`
-	TenantID                string              `json:"tenant_id"`
-	BusinessID              string              `json:"business_id"`
-	PlanRef                 RuntimePlanRefV1    `json:"plan_ref"`
-	RecordRef               TriggerRecordRefV1  `json:"record_ref"`
-	Observed                TriggerObservedV1   `json:"observed"`
-	LevelResults            []LevelResultV1     `json:"level_results"`
-	EvaluationTime          int64               `json:"evaluation_time"`
-	DetectPlanFingerprint   string              `json:"detect_plan_fingerprint"`
-	TriggerStateFingerprint string              `json:"trigger_state_fingerprint"`
-	Trace                   TriggerEventTraceV1 `json:"trace"`
+	LegacyOutput *LegacyEventContext `json:"-"`
+	// Subject is the object this event is about, projected where the Plan was
+	// still in hand. The projection needs the strategy's aggregation dimensions
+	// and its frozen facts, and a Kafka sink has neither, so it cannot be left
+	// to the place that writes the message.
+	Subject *MonitorSubjectContext `json:"-"`
+	// WireFormat is the format this event is published as, taken from the Plan
+	// it was evaluated for. It travels beside the event rather than inside it:
+	// a consumer reads one format and never has to be told which.
+	WireFormat              string               `json:"-"`
+	Schema                  Schema               `json:"schema"`
+	RequiredFeatures        []string             `json:"required_features"`
+	EventID                 string               `json:"event_id"`
+	EventSemanticDigest     string               `json:"event_semantic_digest"`
+	EventKind               string               `json:"event_kind"`
+	PrimaryLevelID          uint32               `json:"primary_level_id"`
+	TenantID                string               `json:"tenant_id"`
+	BusinessID              string               `json:"business_id"`
+	PlanRef                 RuntimePlanRefV1     `json:"plan_ref"`
+	StrategyRef             *StrategySnapshotRef `json:"strategy_ref,omitempty"`
+	DedupeMD5               string               `json:"dedupe_md5,omitempty"`
+	RecordRef               TriggerRecordRefV1   `json:"record_ref"`
+	Observed                TriggerObservedV1    `json:"observed"`
+	LevelResults            []LevelResultV1      `json:"level_results"`
+	EvaluationTime          int64                `json:"evaluation_time"`
+	DetectPlanFingerprint   string               `json:"detect_plan_fingerprint"`
+	TriggerStateFingerprint string               `json:"trigger_state_fingerprint"`
+	Trace                   TriggerEventTraceV1  `json:"trace"`
 }
 
 type TriggerEventBuildInputV1 struct {
@@ -438,6 +541,8 @@ type TriggerEventBuildInputV1 struct {
 	TenantID                string
 	BusinessID              string
 	PlanRef                 RuntimePlanRefV1
+	StrategyRef             *StrategySnapshotRef
+	DedupeMD5               string
 	RecordRef               TriggerRecordRefV1
 	Observed                TriggerObservedV1
 	LevelResults            []LevelResultV1

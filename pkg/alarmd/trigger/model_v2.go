@@ -120,6 +120,10 @@ type HistorySummary struct {
 type HistoryView interface {
 	Summarize(endTime int64, requiredPositions uint32) HistorySummary
 	CountAnomalies(fromTime, untilTime int64) uint32
+	// FirstAnomaly reports the earliest anomalous source time in the range, and
+	// whether the range held one at all. Zero is a valid source time, so the
+	// answer cannot be carried by the value alone.
+	FirstAnomaly(fromTime, untilTime int64) (int64, bool)
 }
 
 type LevelHistory struct {

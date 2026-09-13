@@ -12,11 +12,13 @@ package contract
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"unicode/utf8"
@@ -47,8 +49,27 @@ func CanonicalJSONV2(value any) ([]byte, error) {
 	if err := validateJSONSurrogateEscapes(raw); err != nil {
 		return nil, err
 	}
-	if err := rejectDuplicateJSONFields(raw); err != nil {
-		return nil, err
+	valueType := reflect.TypeOf(value)
+	closed := canonicalClosedType(valueType, nil)
+	// Only the standard encoder over a closed type can establish unique keys.
+	// Raw fragments, interfaces and custom marshalers retain the strict walk.
+	if !closed {
+		if err := rejectDuplicateJSONFields(raw); err != nil {
+			return nil, err
+		}
+	}
+	// A closed string of valid UTF-8 has nothing left to canonicalize: no object
+	// keys to sort and no number tokens to preserve, and the decode and
+	// re-encode below hand back exactly the bytes the encoder just produced.
+	// The identity keys of Runtime State are derived one per series from such a
+	// string, so the round trip is skipped rather than paid for.
+	//
+	// Invalid UTF-8 is the one case where the round trip is not the identity:
+	// the encoder writes an escaped replacement character, which the decode
+	// turns into that character and the re-encode then writes literally. Such a
+	// string keeps the long path, which is what defines its canonical form.
+	if closed && valueType.Kind() == reflect.String && utf8.ValidString(reflect.ValueOf(value).String()) {
+		return restoreJSONLineSeparatorsV2(raw), nil
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -73,6 +94,9 @@ func CanonicalJSONV2(value any) ([]byte, error) {
 // keeps non-ASCII UTF-8 literal; an even preceding backslash count represents
 // a literal "\\u2028" string and must remain escaped.
 func restoreJSONLineSeparatorsV2(encoded []byte) []byte {
+	if !bytes.Contains(encoded, []byte(`\u2028`)) && !bytes.Contains(encoded, []byte(`\u2029`)) {
+		return encoded[:len(encoded):len(encoded)]
+	}
 	result := make([]byte, 0, len(encoded))
 	for index := 0; index < len(encoded); {
 		if encoded[index] != '\\' {
@@ -99,6 +123,58 @@ func restoreJSONLineSeparatorsV2(encoded []byte) []byte {
 		result = append(result, encoded[start:index]...)
 	}
 	return result
+}
+
+var (
+	jsonNumberType    = reflect.TypeOf(json.Number(""))
+	jsonRawType       = reflect.TypeOf(json.RawMessage(nil))
+	byteSliceType     = reflect.TypeOf([]byte(nil))
+	jsonMarshalerType = reflect.TypeOf((*json.Marshaler)(nil)).Elem()
+	textMarshalerType = reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
+)
+
+// Recursive types conservatively use the existing strict path. This check is
+// local to one call; it neither caches types nor inspects mutable values.
+func canonicalClosedType(t reflect.Type, path map[reflect.Type]bool) bool {
+	if t == nil || t == jsonNumberType || t == jsonRawType || t == byteSliceType {
+		return false
+	}
+	if t.Implements(jsonMarshalerType) || reflect.PointerTo(t).Implements(jsonMarshalerType) ||
+		t.Implements(textMarshalerType) || reflect.PointerTo(t).Implements(textMarshalerType) {
+		return false
+	}
+	switch t.Kind() {
+	case reflect.Bool, reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64:
+		return true
+	case reflect.Struct, reflect.Pointer, reflect.Slice, reflect.Array:
+		if path[t] {
+			return false
+		}
+		if path == nil {
+			path = make(map[reflect.Type]bool)
+		}
+		path[t] = true
+		defer delete(path, t)
+		if t.Kind() != reflect.Struct {
+			return canonicalClosedType(t.Elem(), path)
+		}
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			if field.Anonymous {
+				return false
+			}
+			if field.PkgPath != "" || field.Tag.Get("json") == "-" {
+				continue
+			}
+			if !canonicalClosedType(field.Type, path) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 func deriveLengthPrefixedSHA256(field string, version string, values ...[]byte) (string, error) {
@@ -139,6 +215,18 @@ func DeriveCanonicalDigestV2(domain string, value any) (string, error) {
 	return digestCanonicalV2("canonical_digest", domain, value)
 }
 
+// DeriveCanonicalDigestV2OverCanonical is DeriveCanonicalDigestV2 for a value
+// that has already been encoded with CanonicalJSONV2. A store that keeps the
+// canonical bytes of an object next to the digest that names it can verify
+// the bytes it reads back by hashing them, without decoding the object first.
+// The two functions agree only on canonical input; the caller owns that.
+func DeriveCanonicalDigestV2OverCanonical(domain string, canonical []byte) (string, error) {
+	if !isOpaqueASCII(domain) {
+		return "", invalid("canonical_digest.domain", "must be non-empty opaque ASCII")
+	}
+	return deriveLengthPrefixedSHA256("canonical_digest", domain, canonical)
+}
+
 func digestJSONObjectWithoutV2(field, domain string, payload []byte, omitted string) (string, error) {
 	var object map[string]json.RawMessage
 	if err := decodeJSONObject(payload, &object); err != nil {
@@ -149,6 +237,53 @@ func digestJSONObjectWithoutV2(field, domain string, payload []byte, omitted str
 	}
 	delete(object, omitted)
 	return digestCanonicalV2(field, domain, object)
+}
+
+// isCanonicalScalarJSONV2 answers the only question this loop asks of a
+// dimension value - is it a scalar - while refusing everything the canonical
+// form refused.
+//
+// It replaces a CanonicalJSONV2 call whose output was read for one byte and
+// dropped. Those bytes never reached a digest: the digest below is derived
+// from the canonical form of the whole slice, which canonicalises every value
+// again. So the value was being canonicalised twice per series, and one of the
+// two results was only ever used as a type test.
+//
+// The rejections are the same set, and the caller collapses every reason into
+// one message, so neither the digest nor the error text can move:
+//
+//	empty, invalid UTF-8, a BOM, a bad surrogate escape, malformed JSON, a
+//	trailing second value, and any object or array.
+//
+// Duplicate object keys need no check of their own here. A payload that has
+// them is an object, and an object is refused for being one. What reaches the
+// digest still goes through the full strict path, so a duplicate key nested
+// inside a value cannot slip past: CanonicalJSONV2 over the whole slice walks
+// every value it contains.
+//
+// json.Valid rather than a decode: it runs the same scanner over the same
+// bytes without building a Decoder, a read buffer or a generic value, which is
+// where the cost being removed actually was.
+func isCanonicalScalarJSONV2(payload []byte) bool {
+	if len(payload) == 0 || !utf8.Valid(payload) || bytes.HasPrefix(payload, []byte{0xef, 0xbb, 0xbf}) {
+		return false
+	}
+	if err := validateJSONSurrogateEscapes(payload); err != nil {
+		return false
+	}
+	index := 0
+	for index < len(payload) {
+		switch payload[index] {
+		case ' ', '\t', '\r', '\n':
+			index++
+			continue
+		}
+		break
+	}
+	if index == len(payload) || payload[index] == '{' || payload[index] == '[' {
+		return false
+	}
+	return json.Valid(payload)
 }
 
 func DeriveDimensionIdentityDigestV2(tenantID, businessID string, fields []DimensionFieldV2) (string, error) {
@@ -166,8 +301,7 @@ func DeriveDimensionIdentityDigestV2(tenantID, businessID string, fields []Dimen
 		if dimension.Name == "" || !utf8.ValidString(dimension.Name) || (index > 0 && dimension.Name <= previous) {
 			return "", invalid("dimension_identity.fields", "names must be non-empty, sorted and unique")
 		}
-		canonical, err := CanonicalJSONV2(dimension.Value)
-		if err != nil || len(canonical) == 0 || canonical[0] == '{' || canonical[0] == '[' {
+		if !isCanonicalScalarJSONV2(dimension.Value) {
 			return "", invalid("dimension_identity.fields.value", "must be a scalar or null JSON value")
 		}
 		previous = dimension.Name

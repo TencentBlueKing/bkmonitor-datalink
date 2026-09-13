@@ -11,21 +11,57 @@ package kafka
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/Shopify/sarama"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/legacyoutput"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 )
 
-// TriggerEventSink is the critical Kafka output for phase-one Trigger events.
-// A successful WriteBatch means every event received a synchronous broker ACK.
-type TriggerEventSink struct {
-	core *DecisionSink
+// StandardEventConverter writes a decision as the standard raw event.
+type StandardEventConverter interface {
+	Convert(*contract.TriggerEventV1) (linkdoutput.Event, error)
 }
 
-// triggerEventDependencyError marks only an attempted broker write whose ACK
+// TriggerEventSink is the critical Kafka output for Trigger events.
+// A successful WriteBatch means every event received a synchronous broker ACK.
+type TriggerEventSink struct {
+	core              *DecisionSink
+	legacyConverter   LegacyEventConverter
+	standardConverter StandardEventConverter
+	legacyTopic       string
+	maxLegacyBytes    int
+}
+
+// ConfigureStandardOutput replaces the standard raw event converter, once, at
+// assembly. The default one is complete; this exists so the assembly can give
+// it the observation callback that reports an alert level this build has no
+// name for, which the sink has no recorder to report itself.
+func (sink *TriggerEventSink) ConfigureStandardOutput(converter StandardEventConverter) error {
+	if converter == nil {
+		return errors.New("invalid standard output configuration")
+	}
+	sink.standardConverter = converter
+	return nil
+}
+
+// ConfigureLegacyOutput is called once during assembly, before any writes.
+func (sink *TriggerEventSink) ConfigureLegacyOutput(converter LegacyEventConverter, topic string, maxBytes int) error {
+	if converter == nil || !strings.HasPrefix(topic, "alarmd_") || maxBytes <= 0 {
+		return errors.New("invalid legacy output configuration")
+	}
+	sink.legacyConverter, sink.legacyTopic, sink.maxLegacyBytes = converter, topic, maxBytes
+	return nil
+}
+
+// triggerEventDependencyError marks a conversion dependency or broker write whose ACK
 // failed or is unknown. Encoding and local lifecycle errors remain ordinary.
 type triggerEventDependencyError struct {
 	err error
@@ -48,7 +84,7 @@ func (err *triggerEventDependencyError) Unwrap() error {
 func (err *triggerEventDependencyError) RetryableOutputDependency() {}
 
 func OpenTriggerEventSink(coordinates DecisionSinkConfig) (*TriggerEventSink, error) {
-	config, err := NewDecisionProducerConfig(coordinates)
+	config, err := NewDecisionProducerOnlyConfig(coordinates)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +112,14 @@ func newTriggerEventSink(
 	if err != nil {
 		return nil, err
 	}
-	return &TriggerEventSink{core: core}, nil
+	standard, err := linkdoutput.NewConverter(time.Now, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &TriggerEventSink{
+		core: core, legacyConverter: &legacyoutput.Converter{}, standardConverter: standard,
+		legacyTopic: "alarmd_0bkmonitor_backend_event", maxLegacyBytes: 524288,
+	}, nil
 }
 
 func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.TriggerEventV1) error {
@@ -90,7 +133,22 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 		return err
 	}
 	messages := make([]*sarama.ProducerMessage, len(events))
+	groups := make(map[string][]int)
 	for index := range events {
+		if events[index].WireFormat == contract.WireFormatStandardRawEvent {
+			converted, convertErr := sink.standardConverter.Convert(&events[index])
+			if convertErr != nil {
+				return &triggerEventDependencyError{err: convertErr}
+			}
+			// Keyed by the alert identity, so one alert's history stays on one
+			// partition and its trigger and its resolution arrive in order.
+			messages[index] = &sarama.ProducerMessage{
+				Topic: sink.core.outputTopic,
+				Key:   sarama.StringEncoder(converted.AlertID),
+				Value: sarama.ByteEncoder(converted.Payload),
+			}
+			continue
+		}
 		payload, err := contract.EncodeTriggerEventV1(&events[index])
 		if err != nil {
 			return fmt.Errorf("kafka trigger event sink: encode event %d: %w", index, err)
@@ -100,6 +158,69 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 			Key:   nil,
 			Value: sarama.ByteEncoder(payload),
 		}
+		if events[index].DedupeMD5 != "" {
+			// Keep a series on the same hash partition using the protocol's
+			// lowercase hex text, not the decoded 16-byte digest.
+			messages[index].Key = sarama.StringEncoder(events[index].DedupeMD5)
+		}
+		// The Plan's frozen format selects the protocol, and for a Plan built
+		// before the choice existed that is still the frozen revision: a
+		// compatibility context is attached only where the compatibility
+		// protocol is what the Plan publishes. Missing Python snapshot
+		// dependencies must never change that choice to native output.
+		if events[index].LegacyOutput != nil || events[index].StrategyRef == nil {
+			if events[index].LegacyOutput == nil || events[index].LegacyOutput.Configuration == nil {
+				return errors.New("legacy event has no frozen compatibility context")
+			}
+			// The Python protocol carries anomaly points and nothing else: its
+			// producer builds every message from the anomaly list and stamps
+			// ABNORMAL, and recovery is decided downstream from the absence of
+			// anomalies. alarmd's own Recovery is a steady-state result, so
+			// every healthy series produces one every cycle - converting those
+			// put a hundred times Python's volume on the topic. A Recovery
+			// event has no representation in this protocol, so it produces no
+			// message here and no snapshot; the native protocol still carries
+			// it, because the choice of protocol is the revision's, not the
+			// event kind's.
+			if events[index].EventKind != contract.TriggerEventAbnormal {
+				messages[index] = nil
+				continue
+			}
+			key := events[index].TenantID + "\x00" + events[index].BusinessID
+			groups[key] = append(groups[key], index)
+		}
+	}
+	for _, indices := range groups {
+		batch := make([]contract.TriggerEventV1, len(indices))
+		for i, index := range indices {
+			batch[i] = events[index]
+		}
+		converted, err := sink.legacyConverter.ConvertBatch(ctx, batch)
+		if err != nil {
+			return &triggerEventDependencyError{err: fmt.Errorf("legacy conversion failed: %w", err)}
+		}
+		if len(converted) != len(batch) {
+			return &triggerEventDependencyError{err: errors.New("legacy conversion result count mismatch")}
+		}
+		for i, item := range converted {
+			if item.EventID != batch[i].EventID || len(item.Payload) == 0 || len(item.Payload) > sink.maxLegacyBytes || !json.Valid(item.Payload) || len(item.DedupeMD5) != 32 || strings.ToLower(item.DedupeMD5) != item.DedupeMD5 {
+				return &triggerEventDependencyError{err: errors.New("legacy conversion returned invalid event identity/payload")}
+			}
+			if _, err := hex.DecodeString(item.DedupeMD5); err != nil {
+				return &triggerEventDependencyError{err: err}
+			}
+			messages[indices[i]] = &sarama.ProducerMessage{Topic: sink.legacyTopic, Key: sarama.StringEncoder(item.DedupeMD5), Value: sarama.ByteEncoder(item.Payload)}
+		}
+	}
+	published := messages[:0]
+	for _, message := range messages {
+		if message != nil {
+			published = append(published, message)
+		}
+	}
+	messages = published
+	if len(messages) == 0 {
+		return nil
 	}
 	if err := sink.core.writeMessages(ctx, messages); err != nil {
 		publishErr := fmt.Errorf("kafka trigger event sink: publish batch: %w", err)

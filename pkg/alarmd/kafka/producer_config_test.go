@@ -94,6 +94,53 @@ func TestNewDecisionProducerConfigSupportsDatalinkKafkaBaseline(t *testing.T) {
 	}
 }
 
+func TestNewDecisionProducerOnlyConfigDoesNotRequireInputTopic(t *testing.T) {
+	t.Parallel()
+
+	coordinates := validDecisionSinkConfig()
+	coordinates.InputTopic = ""
+	config, err := NewDecisionProducerOnlyConfig(coordinates)
+	if err != nil {
+		t.Fatalf("NewDecisionProducerOnlyConfig() error = %v", err)
+	}
+	if config.Producer.RequiredAcks != sarama.WaitForAll || !config.Producer.Return.Successes {
+		t.Fatal("producer-only config must preserve synchronous broker acknowledgement")
+	}
+}
+
+func TestNewDecisionProducerOnlyConfigRejectsMissingOutputCoordinates(t *testing.T) {
+	t.Parallel()
+
+	valid := validDecisionSinkConfig()
+	valid.InputTopic = ""
+	tests := map[string]func(*DecisionSinkConfig){
+		"missing brokers":      func(config *DecisionSinkConfig) { config.Brokers = nil },
+		"missing output topic": func(config *DecisionSinkConfig) { config.OutputTopic = "" },
+	}
+	for name, mutate := range tests {
+		name, mutate := name, mutate
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			coordinates := cloneDecisionSinkConfig(valid)
+			mutate(&coordinates)
+			if _, err := NewDecisionProducerOnlyConfig(coordinates); err == nil {
+				t.Fatal("NewDecisionProducerOnlyConfig() accepted invalid output coordinates")
+			}
+		})
+	}
+}
+
+func TestNewDecisionProducerConfigStillRequiresInputTopic(t *testing.T) {
+	t.Parallel()
+
+	coordinates := validDecisionSinkConfig()
+	coordinates.InputTopic = ""
+	if _, err := NewDecisionProducerConfig(coordinates); err == nil {
+		t.Fatal("NewDecisionProducerConfig() accepted missing phase-one input topic")
+	}
+}
+
 func TestDecisionSinkConfigRejectsInvalidCoordinatesAndPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -107,25 +154,12 @@ func TestDecisionSinkConfigRejectsInvalidCoordinatesAndPolicy(t *testing.T) {
 		"missing output topic": func(config *DecisionSinkConfig) { config.OutputTopic = "" },
 		"same input and output": func(config *DecisionSinkConfig) {
 			config.OutputTopic = config.InputTopic
-			config.AllowedOutputTopics = []string{config.InputTopic}
-		},
-		"missing allowlist": func(config *DecisionSinkConfig) { config.AllowedOutputTopics = nil },
-		"output not allowed": func(config *DecisionSinkConfig) {
-			config.AllowedOutputTopics = []string{"another-shadow-output"}
-		},
-		"allowlist contains input": func(config *DecisionSinkConfig) {
-			config.AllowedOutputTopics = append(config.AllowedOutputTopics, config.InputTopic)
-		},
-		"duplicate allowlist entry": func(config *DecisionSinkConfig) {
-			config.AllowedOutputTopics = append(config.AllowedOutputTopics, config.OutputTopic)
 		},
 		"non-canonical topic": func(config *DecisionSinkConfig) {
 			config.OutputTopic = " shadow-output"
-			config.AllowedOutputTopics = []string{config.OutputTopic}
 		},
 		"invalid topic characters": func(config *DecisionSinkConfig) {
 			config.OutputTopic = "shadow/output"
-			config.AllowedOutputTopics = []string{config.OutputTopic}
 		},
 		"missing client":         func(config *DecisionSinkConfig) { config.ClientID = "" },
 		"missing version":        func(config *DecisionSinkConfig) { config.BrokerVersion = "" },
@@ -150,18 +184,16 @@ func TestDecisionSinkConfigRejectsInvalidCoordinatesAndPolicy(t *testing.T) {
 
 func validDecisionSinkConfig() DecisionSinkConfig {
 	return DecisionSinkConfig{
-		Brokers:             []string{"kafka-1.example:9092"},
-		InputTopic:          "alarmd-trigger-input-shadow",
-		OutputTopic:         "alarmd-trigger-decision-shadow",
-		AllowedOutputTopics: []string{"alarmd-trigger-decision-shadow"},
-		ClientID:            "alarmd",
-		BrokerVersion:       "2.6.0",
-		MaxMessageBytes:     128 * 1024,
+		Brokers:         []string{"kafka-1.example:9092"},
+		InputTopic:      "alarmd-trigger-input-shadow",
+		OutputTopic:     "alarmd-trigger-decision-shadow",
+		ClientID:        "alarmd",
+		BrokerVersion:   "2.6.0",
+		MaxMessageBytes: 128 * 1024,
 	}
 }
 
 func cloneDecisionSinkConfig(config DecisionSinkConfig) DecisionSinkConfig {
 	config.Brokers = append([]string(nil), config.Brokers...)
-	config.AllowedOutputTopics = append([]string(nil), config.AllowedOutputTopics...)
 	return config
 }

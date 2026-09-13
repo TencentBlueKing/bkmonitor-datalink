@@ -22,12 +22,11 @@ import (
 // ComparisonAuditSinkConfig freezes the three comparator inputs and the only
 // permitted isolated audit output.
 type ComparisonAuditSinkConfig struct {
-	Brokers             []string
-	InputTopics         []string
-	OutputTopic         string
-	AllowedOutputTopics []string
-	ClientID            string
-	BrokerVersion       string
+	Brokers       []string
+	InputTopics   []string
+	OutputTopic   string
+	ClientID      string
+	BrokerVersion string
 }
 
 func (c ComparisonAuditSinkConfig) Validate() error {
@@ -47,11 +46,6 @@ func (c ComparisonAuditSinkConfig) Validate() error {
 			return errors.New("kafka comparison audit sink: input and output topics must differ")
 		}
 	}
-	for _, topic := range c.AllowedOutputTopics {
-		if _, input := seen[topic]; input {
-			return errors.New("kafka comparison audit sink: input topic must not appear in output allowlist")
-		}
-	}
 	return c.decisionCoordinates().Validate()
 }
 
@@ -61,13 +55,12 @@ func (c ComparisonAuditSinkConfig) decisionCoordinates() DecisionSinkConfig {
 		inputTopic = c.InputTopics[0]
 	}
 	return DecisionSinkConfig{
-		Brokers:             append([]string(nil), c.Brokers...),
-		InputTopic:          inputTopic,
-		OutputTopic:         c.OutputTopic,
-		AllowedOutputTopics: append([]string(nil), c.AllowedOutputTopics...),
-		ClientID:            c.ClientID,
-		BrokerVersion:       c.BrokerVersion,
-		MaxMessageBytes:     contract.MaxComparisonAuditBytesV1,
+		Brokers:         append([]string(nil), c.Brokers...),
+		InputTopic:      inputTopic,
+		OutputTopic:     c.OutputTopic,
+		ClientID:        c.ClientID,
+		BrokerVersion:   c.BrokerVersion,
+		MaxMessageBytes: contract.MaxComparisonAuditBytesV1,
 	}
 }
 

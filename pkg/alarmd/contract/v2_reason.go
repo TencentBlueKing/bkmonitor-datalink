@@ -76,10 +76,21 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonRequiredValueTypeMismatch:        {ReasonRequiredValueTypeMismatch, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
 	ReasonRequiredValueNormalizationFailed: {ReasonRequiredValueNormalizationFailed, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
 
-	ReasonConfigDrift:           {ReasonConfigDrift, ReasonClassCoverage, reasonQueryDomainsV2},
-	ReasonQueryPartial:          {ReasonQueryPartial, ReasonClassCoverage, reasonQueryDomainsV2},
-	ReasonQueryTimeout:          {ReasonQueryTimeout, ReasonClassCoverage, reasonQueryDomainsV2},
-	ReasonQueryUnavailable:      {ReasonQueryUnavailable, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonConfigDrift:      {ReasonConfigDrift, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonQueryPartial:     {ReasonQueryPartial, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonQueryTimeout:     {ReasonQueryTimeout, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonQueryUnavailable: {ReasonQueryUnavailable, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonReadinessBudgetInvalid: {
+		ReasonReadinessBudgetInvalid, ReasonClassCoverage, reasonQueryDomainsV2,
+	},
+	// Observation only: a deferral never reaches a receipt or a query result,
+	// it just says the Slot will come back when its window is in.
+	ReasonQueryNotReady: {ReasonQueryNotReady, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonExecutionBudgetExhausted: {
+		ReasonExecutionBudgetExhausted, ReasonClassCoverage, ReasonDomainQueryResult | ReasonDomainObservation,
+	},
+	ReasonSnapshotUnavailable:   {ReasonSnapshotUnavailable, ReasonClassCoverage, ReasonDomainObservation},
+	ReasonGapSkipped:            {ReasonGapSkipped, ReasonClassCoverage, ReasonDomainObservation},
 	ReasonEffectiveTimeInactive: {ReasonEffectiveTimeInactive, ReasonClassCoverage, ReasonDomainReceipt | ReasonDomainObservation},
 	ReasonEffectiveTimeUnknown:  {ReasonEffectiveTimeUnknown, ReasonClassCoverage, ReasonDomainReceipt | ReasonDomainObservation},
 	ReasonHistoryWarming:        {ReasonHistoryWarming, ReasonClassCoverage, ReasonDomainReceipt | ReasonDomainObservation},
@@ -87,12 +98,25 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonRecordTooLarge:        {ReasonRecordTooLarge, ReasonClassCoverage, ReasonDomainSummary | ReasonDomainObservation},
 	ReasonAuditDrop:             {ReasonAuditDrop, ReasonClassCoverage, ReasonDomainObservation},
 
-	ReasonKafkaUnavailable:    {ReasonKafkaUnavailable, ReasonClassRetryable, ReasonDomainSummary | ReasonDomainObservation},
-	ReasonRedisUnavailable:    {ReasonRedisUnavailable, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonProviderUnavailable: {ReasonProviderUnavailable, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonResourceHardStop:    {ReasonResourceHardStop, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonOutputACKUnknown:    {ReasonOutputACKUnknown, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonStateWriteRetryable: {ReasonStateWriteRetryable, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonKafkaUnavailable:           {ReasonKafkaUnavailable, ReasonClassRetryable, ReasonDomainSummary | ReasonDomainObservation},
+	ReasonRedisUnavailable:           {ReasonRedisUnavailable, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonProviderUnavailable:        {ReasonProviderUnavailable, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonProgressBeginRejected:      {ReasonProgressBeginRejected, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonProgressBeginFailed:        {ReasonProgressBeginFailed, ReasonClassDeterministic, ReasonDomainObservation},
+	ReasonActivationReadFailed:       {ReasonActivationReadFailed, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonSnapshotRetryPending:       {ReasonSnapshotRetryPending, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonSlotSourceRetry:            {ReasonSlotSourceRetry, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonBlockedExactSetUnavailable: {ReasonBlockedExactSetUnavailable, ReasonClassDeterministic, ReasonDomainObservation},
+	ReasonResourceHardStop:           {ReasonResourceHardStop, ReasonClassRetryable, ReasonDomainObservation},
+	// One Slot's own State, Event or Gap output exceeds the per-Slot cap the
+	// process can ever apply; the Slot completes deterministically. The code
+	// is observation-only: Progress records the coverage completion reason.
+	ReasonSlotBudgetExceeded:     {ReasonSlotBudgetExceeded, ReasonClassCoverage, ReasonDomainObservation},
+	ReasonOutputACKUnknown:       {ReasonOutputACKUnknown, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonStateWriteRetryable:    {ReasonStateWriteRetryable, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonStateCorrupt:           {ReasonStateCorrupt, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	ReasonStateSchemaUnsupported: {ReasonStateSchemaUnsupported, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	ReasonStateBudgetExceeded:    {ReasonStateBudgetExceeded, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
 }
 
 func ReasonCatalogV2() []ReasonDefinitionV2 {

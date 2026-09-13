@@ -23,7 +23,13 @@ import (
 )
 
 const (
-	DetectorKindThreshold = "Threshold"
+	DetectorKindThreshold       = "Threshold"
+	DetectorKindSimpleRingRatio = "SimpleRingRatio"
+	DetectorKindOsRestart       = "OsRestart"
+	DetectorKindProcPort        = "ProcPort"
+
+	SourceAlgorithmFamilyPingUnreachable = "ping_unreachable"
+	SourceMappingPingUnreachableV1       = "ping-unreachable-to-threshold-v1"
 
 	TriggerPlanTypeNOfM                   = "N_OF_M"
 	RecoveryPlanTypeContinuousTriggerMiss = "CONTINUOUS_TRIGGER_MISS"
@@ -218,6 +224,28 @@ type predicateNode struct {
 	children  []predicateNode
 }
 
+// PredicateFacts is a detached view of the compiled predicate, never a new
+// executable predicate. Changing its slices cannot change the frozen plan.
+type PredicateFacts struct {
+	Kind                string
+	Operator            string
+	NormalizedThreshold string
+	Children            []PredicateFacts
+}
+
+func (p Predicate) Facts() PredicateFacts { return p.root.facts() }
+
+func (n predicateNode) facts() PredicateFacts {
+	f := PredicateFacts{Kind: n.kind, Operator: n.operator}
+	if n.kind == PredicateCompare {
+		f.NormalizedThreshold = n.threshold.CanonicalDecimal()
+	}
+	for _, child := range n.children {
+		f.Children = append(f.Children, child.facts())
+	}
+	return f
+}
+
 type PredicateEvaluation struct {
 	matched         bool
 	matchedGroup    int
@@ -381,6 +409,8 @@ func (s NumericNormalizerSpec) SourceUnit() string {
 	return s.sourceUnit
 }
 
+func (s NumericNormalizerSpec) SourceMultiplier() int64 { return s.sourceMultiplier }
+
 func (s NumericNormalizerSpec) TargetUnit() string {
 	return s.targetUnit
 }
@@ -396,6 +426,7 @@ func (s NumericNormalizerSpec) Rounding() string {
 type CompiledLevel struct {
 	definition       contract.LevelDefinitionV2
 	connector        string
+	algorithms       []CompiledAlgorithmPlan
 	detectors        []DetectorSpec
 	trigger          TriggerPlan
 	recovery         RecoveryPlan
@@ -415,6 +446,10 @@ func (l CompiledLevel) Connector() string {
 
 func (l CompiledLevel) Detectors() []DetectorSpec {
 	return append([]DetectorSpec(nil), l.detectors...)
+}
+
+func (l CompiledLevel) Algorithms() []CompiledAlgorithmPlan {
+	return append([]CompiledAlgorithmPlan(nil), l.algorithms...)
 }
 
 func (l CompiledLevel) Trigger() TriggerPlan {
@@ -449,6 +484,11 @@ func (l CompiledLevel) ResourceEstimate() ResourceEstimate { return l.resourceEs
 
 type CompiledPlan struct {
 	planRef             contract.RuntimePlanRefV1
+	strategyRef         contract.StrategyRefV2
+	outputIdentity      *contract.MonitorOutputIdentity
+	subjectFacts        *contract.MonitorSubjectFacts
+	wireFormat          string
+	legacyOutput        *contract.FrozenLegacyOutput
 	projection          contract.InputProjectionV2
 	evaluationSemantics contract.ExecutionSemanticsV2
 	levels              []CompiledLevel
@@ -456,6 +496,69 @@ type CompiledPlan struct {
 	fingerprints        PlanFingerprints
 	resourceEstimate    ResourceEstimate
 	datasetDigest       string
+	targetScope         *contract.TargetScopeV2
+}
+
+// TargetScope is the strategy's monitoring target, frozen with the Plan. Nil
+// means the strategy names no target; it never means one was dropped, because
+// a target the catalog cannot reduce rejects the Plan instead.
+func (p *CompiledPlan) TargetScope() *contract.TargetScopeV2 {
+	if p == nil {
+		return nil
+	}
+	return p.targetScope
+}
+
+func (p *CompiledPlan) StrategyRef() contract.StrategyRefV2 {
+	if p == nil {
+		return contract.StrategyRefV2{}
+	}
+	return p.strategyRef
+}
+
+func (p *CompiledPlan) OutputIdentity() *contract.MonitorOutputIdentity {
+	if p == nil || p.outputIdentity == nil {
+		return nil
+	}
+	return &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, p.outputIdentity.DimensionFields...)}
+}
+
+// PublishesCompatibleProtocol reports whether this Plan's events go out as the
+// Python-compatible event.
+func (p *CompiledPlan) PublishesCompatibleProtocol() bool {
+	if p == nil {
+		return false
+	}
+	if p.wireFormat != "" {
+		return p.wireFormat == contract.WireFormatPythonCompatible
+	}
+	return p.strategyRef.SnapshotRevision == 0
+}
+
+// WireFormat returns the format this Plan's events are published as.
+func (p *CompiledPlan) WireFormat() string {
+	if p == nil {
+		return ""
+	}
+	return p.wireFormat
+}
+
+// SubjectFacts returns the frozen strategy facts the subject projection reads.
+func (p *CompiledPlan) SubjectFacts() *contract.MonitorSubjectFacts {
+	if p == nil || p.subjectFacts == nil {
+		return nil
+	}
+	return &contract.MonitorSubjectFacts{
+		Labels:        append([]string{}, p.subjectFacts.Labels...),
+		ResultTableID: p.subjectFacts.ResultTableID,
+	}
+}
+
+func (p *CompiledPlan) LegacyOutput() *contract.FrozenLegacyOutput {
+	if p == nil {
+		return nil
+	}
+	return p.legacyOutput
 }
 
 func (p *CompiledPlan) PlanRef() contract.RuntimePlanRefV1 {
@@ -537,11 +640,16 @@ func (p *CompiledPlan) DatasetContractDigest() string {
 }
 
 type thresholdConfigV1 struct {
-	ValueField          string             `json:"value_field"`
-	DataUnit            string             `json:"data_unit"`
-	ThresholdUnitPrefix *string            `json:"threshold_unit_prefix"`
-	Precision           thresholdPrecision `json:"precision"`
-	Groups              []thresholdGroup   `json:"groups"`
+	ValueField            string                      `json:"value_field"`
+	DataUnit              string                      `json:"data_unit"`
+	ThresholdUnitPrefix   *string                     `json:"threshold_unit_prefix"`
+	Precision             thresholdPrecision          `json:"precision"`
+	Groups                []thresholdGroup            `json:"groups"`
+	SourceAlgorithmFamily string                      `json:"source_algorithm_family,omitempty"`
+	SourceMappingVersion  string                      `json:"source_mapping_version,omitempty"`
+	CanonicalQueryDigest  string                      `json:"canonical_query_digest,omitempty"`
+	InputProjection       *AlgorithmInputProjection   `json:"input_projection,omitempty"`
+	Requirements          []AlgorithmInputRequirement `json:"requirements,omitempty"`
 }
 
 type thresholdPrecision struct {

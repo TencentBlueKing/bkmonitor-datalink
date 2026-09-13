@@ -703,3 +703,7 @@ func (view triggerHistoryView) Summarize(endTime int64, requiredPositions uint32
 func (view triggerHistoryView) CountAnomalies(fromTime, untilTime int64) uint32 {
 	return view.view.CountAnomalies(fromTime, untilTime)
 }
+
+func (view triggerHistoryView) FirstAnomaly(fromTime, untilTime int64) (int64, bool) {
+	return view.view.FirstAnomaly(fromTime, untilTime)
+}

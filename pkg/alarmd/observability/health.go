@@ -34,6 +34,8 @@ type HealthSnapshot struct {
 	AssignmentReady    bool          `json:"assignment_ready"`
 	RuntimeStateReady  bool          `json:"runtime_state_ready"`
 	OutputSinkReady    bool          `json:"output_sink_ready"`
+	PhaseTwo           bool          `json:"phase_two,omitempty"`
+	SnapshotReady      bool          `json:"snapshot_ready,omitempty"`
 	ResourceState      ResourceState `json:"resource_state"`
 	AssignedClaims     int           `json:"assigned_claims,omitempty"`
 	InflightMessages   int           `json:"inflight_messages,omitempty"`
@@ -108,8 +110,12 @@ func NormalizeHealthSnapshot(snapshot HealthSnapshot) HealthSnapshot {
 }
 
 func healthPrerequisitesReady(snapshot HealthSnapshot) bool {
-	return snapshot.ConfigLoaded && snapshot.SchemaReady && snapshot.AssignmentReady &&
+	ready := snapshot.ConfigLoaded && snapshot.SchemaReady && snapshot.AssignmentReady &&
 		snapshot.RuntimeStateReady && snapshot.OutputSinkReady
+	if snapshot.PhaseTwo {
+		ready = ready && snapshot.SnapshotReady
+	}
+	return ready
 }
 
 func AllHealthStates() []HealthState {

@@ -29,10 +29,13 @@ func TestServiceRepeatsConsumeAfterRebalanceAndClosesNormally(t *testing.T) {
 	t.Parallel()
 
 	var consumeCalls atomic.Int32
+	consumeStarted := make(chan int32, 2)
 	order := make([]string, 0, 2)
 	var orderMu sync.Mutex
 	group := newFakeConsumerGroup(func(ctx context.Context, _ []string, _ sarama.ConsumerGroupHandler) error {
-		if consumeCalls.Add(1) == 1 {
+		call := consumeCalls.Add(1)
+		consumeStarted <- call
+		if call == 1 {
 			return nil
 		}
 		<-ctx.Done()
@@ -50,13 +53,21 @@ func TestServiceRepeatsConsumeAfterRebalanceAndClosesNormally(t *testing.T) {
 		orderMu.Unlock()
 		return nil
 	}}
-	service := newTestService(t, group, client, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
+	// This test exercises the rebalance loop and close ordering, not the
+	// production drain deadline. Keep that deadline out of the scheduling path.
+	service := newTestService(t, group, client, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Hour)
 	runContext, cancelRun := context.WithCancel(context.Background())
+	t.Cleanup(cancelRun)
 	done := make(chan error, 1)
 	go func() { done <- service.Run(runContext) }()
-	waitFor(t, func() bool { return consumeCalls.Load() >= 2 }, "second Consume call")
+	if call := awaitTestSignal(t, consumeStarted, "first Consume call"); call != 1 {
+		t.Fatalf("first Consume call = %d, want 1", call)
+	}
+	if call := awaitTestSignal(t, consumeStarted, "second Consume call"); call != 2 {
+		t.Fatalf("second Consume call = %d, want 2", call)
+	}
 	cancelRun()
-	if err := waitError(t, done); err != nil {
+	if err := awaitTestSignal(t, done, "service shutdown"); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	orderMu.Lock()
@@ -116,35 +127,39 @@ func TestServiceRecoversTransientErrorsChannelWithoutDoubleConsumeLoop(t *testin
 	t.Parallel()
 
 	var consumeCalls atomic.Int32
+	consumeStarted := make(chan int32, 2)
 	group := newFakeConsumerGroup(func(ctx context.Context, _ []string, _ sarama.ConsumerGroupHandler) error {
-		consumeCalls.Add(1)
+		call := consumeCalls.Add(1)
+		consumeStarted <- call
 		<-ctx.Done()
 		return ctx.Err()
 	})
 	observed := make(chan ConsumerRetry, 1)
-	service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
+	// Retry-cycle correctness is synchronized by consumeStarted below; a wall
+	// clock drain deadline is outside this test's contract.
+	service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Hour)
 	service.consumeRetryDelay = time.Nanosecond
 	service.diagnostics.OnConsumeRetry = func(event ConsumerRetry) { observed <- event }
 	runContext, cancelRun := context.WithCancel(context.Background())
+	t.Cleanup(cancelRun)
 	done := make(chan error, 1)
 	go func() { done <- service.Run(runContext) }()
-	waitFor(t, func() bool { return consumeCalls.Load() == 1 }, "first Consume call")
-	groupErrorChannel(group) <- &sarama.ConsumerError{Err: sarama.ErrOutOfBrokers}
-	waitFor(t, func() bool { return consumeCalls.Load() == 2 }, "single recovered Consume call")
-	time.Sleep(10 * time.Millisecond)
-	if consumeCalls.Load() != 2 {
-		t.Fatalf("Consume calls = %d, want exactly one recovered cycle", consumeCalls.Load())
+	if call := awaitTestSignal(t, consumeStarted, "first Consume call"); call != 1 {
+		t.Fatalf("first Consume call = %d, want 1", call)
 	}
-	select {
-	case event := <-observed:
-		if event.Source != ConsumerRetrySourceErrorsChannel || !errors.Is(event.Err, sarama.ErrOutOfBrokers) {
-			t.Fatalf("consumer retry = %#v", event)
-		}
-	default:
-		t.Fatal("transient group error was not observed")
+	groupErrorChannel(group) <- &sarama.ConsumerError{Err: sarama.ErrOutOfBrokers}
+	event := awaitTestSignal(t, observed, "transient group error observation")
+	if event.Source != ConsumerRetrySourceErrorsChannel || !errors.Is(event.Err, sarama.ErrOutOfBrokers) {
+		t.Fatalf("consumer retry = %#v", event)
+	}
+	if call := awaitTestSignal(t, consumeStarted, "recovered Consume call"); call != 2 {
+		t.Fatalf("recovered Consume call = %d, want 2", call)
+	}
+	if calls := consumeCalls.Load(); calls != 2 {
+		t.Fatalf("Consume calls = %d, want exactly one recovered cycle", calls)
 	}
 	cancelRun()
-	if err := waitError(t, done); err != nil {
+	if err := awaitTestSignal(t, done, "service shutdown"); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 }
@@ -155,20 +170,18 @@ func TestServiceCancellationStopsConsumeRetryAndPreservesObservedRoot(t *testing
 	root := sarama.ErrOutOfBrokers
 	group := newFakeConsumerGroup(func(context.Context, []string, sarama.ConsumerGroupHandler) error { return root })
 	observed := make(chan ConsumerRetry, 1)
-	service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Second)
+	// The callback is the deterministic retry observation. This test does not
+	// exercise the production drain deadline.
+	service := newTestService(t, group, &fakeServiceClient{}, noopProcessorFactory(), fakeSyncOffsetCommitter{}, time.Hour)
 	service.consumeRetryDelay = time.Hour
 	service.diagnostics.OnConsumeRetry = func(event ConsumerRetry) { observed <- event }
 	runContext, cancelRun := context.WithCancel(context.Background())
+	t.Cleanup(cancelRun)
 	done := make(chan error, 1)
 	go func() { done <- service.Run(runContext) }()
-	var event ConsumerRetry
-	select {
-	case event = <-observed:
-	case <-time.After(time.Second):
-		t.Fatal("transient Consume return was not observed")
-	}
+	event := awaitTestSignal(t, observed, "transient Consume return observation")
 	cancelRun()
-	if err := waitError(t, done); err != nil {
+	if err := awaitTestSignal(t, done, "service shutdown"); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if event.Source != ConsumerRetrySourceConsumeReturn || !errors.Is(event.Err, root) {
@@ -707,27 +720,18 @@ func TestServiceNormalCloseTimeoutUsesClientToInterruptGroup(t *testing.T) {
 
 	groupStarted := make(chan struct{})
 	clientClosed := make(chan struct{})
-	order := make([]string, 0, 3)
-	var orderMu sync.Mutex
+	groupFinished := make(chan struct{})
 	group := newFakeConsumerGroup(func(ctx context.Context, _ []string, _ sarama.ConsumerGroupHandler) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})
 	group.closeFunc = func() error {
-		orderMu.Lock()
-		order = append(order, "group-start")
-		orderMu.Unlock()
 		close(groupStarted)
 		<-clientClosed
-		orderMu.Lock()
-		order = append(order, "group-end")
-		orderMu.Unlock()
+		close(groupFinished)
 		return sarama.ErrClosedClient
 	}
 	client := &fakeServiceClient{closeFunc: func() error {
-		orderMu.Lock()
-		order = append(order, "client")
-		orderMu.Unlock()
 		close(clientClosed)
 		return nil
 	}}
@@ -737,24 +741,23 @@ func TestServiceNormalCloseTimeoutUsesClientToInterruptGroup(t *testing.T) {
 	go func() { done <- service.Run(runContext) }()
 	waitFor(t, func() bool { return group.consumeCalls.Load() > 0 }, "Consume call")
 	cancelRun()
-	select {
-	case <-groupStarted:
-	case <-time.After(time.Second):
-		t.Fatal("normal group close did not start")
-	}
+	awaitTestSignal(t, groupStarted, "normal group close start")
 	err := waitError(t, done)
 	if !errors.Is(err, ErrDrainTimeout) || errors.Is(err, sarama.ErrClosedClient) {
 		t.Fatalf("Run() error = %v, want timeout without derived ErrClosedClient", err)
 	}
-	waitFor(t, func() bool {
-		orderMu.Lock()
-		defer orderMu.Unlock()
-		return len(order) == 3
-	}, "forced client interrupt and group close")
-	orderMu.Lock()
-	defer orderMu.Unlock()
-	if !reflect.DeepEqual(order, []string{"group-start", "client", "group-end"}) {
-		t.Fatalf("close order = %v, want group-start/client/group-end", order)
+	select {
+	case <-service.forcedCloseStarted:
+	default:
+		t.Fatal("drain timeout did not start forced close")
+	}
+	awaitTestSignal(t, clientClosed, "forced client close")
+	awaitTestSignal(t, groupFinished, "forced group close")
+	if group.closeCalls.Load() != 1 || client.closeCalls.Load() != 1 {
+		t.Fatalf("close calls group=%d client=%d, want 1/1", group.closeCalls.Load(), client.closeCalls.Load())
+	}
+	if snapshot := service.LifecycleSnapshot(); snapshot.DrainTotal[lifecycle.DrainTimeout] != 1 {
+		t.Fatalf("shutdown snapshot = %+v, want one timeout drain", snapshot)
 	}
 }
 
@@ -881,6 +884,9 @@ func TestServiceForcedCloseReturnsKnownClientErrorAtDeadline(t *testing.T) {
 
 	want := errors.New("client close failed")
 	releaseGroup := make(chan struct{})
+	var releaseGroupOnce sync.Once
+	release := func() { releaseGroupOnce.Do(func() { close(releaseGroup) }) }
+	t.Cleanup(release)
 	group := newFakeConsumerGroup(func(ctx context.Context, _ []string, _ sarama.ConsumerGroupHandler) error {
 		<-ctx.Done()
 		return ctx.Err()
@@ -891,6 +897,8 @@ func TestServiceForcedCloseReturnsKnownClientErrorAtDeadline(t *testing.T) {
 	}
 	client := &fakeServiceClient{closeFunc: func() error { return want }}
 	service := newTestService(t, group, client, noopProcessorFactory(), fakeSyncOffsetCommitter{}, 20*time.Millisecond)
+	service.startForcedClose()
+	awaitTestSignal(t, service.forcedClientDone, "forced client close")
 	err := service.Close()
 	if !errors.Is(err, ErrDrainTimeout) || !errors.Is(err, want) {
 		t.Fatalf("Close() error = %v, want timeout joined with client error", err)
@@ -898,7 +906,11 @@ func TestServiceForcedCloseReturnsKnownClientErrorAtDeadline(t *testing.T) {
 	if snapshot := service.LifecycleSnapshot(); snapshot.Draining || snapshot.DrainTotal[lifecycle.DrainFailed] != 1 {
 		t.Fatalf("failed forced close snapshot = %+v, want one failed drain", snapshot)
 	}
-	close(releaseGroup)
+	release()
+	awaitTestSignal(t, service.forcedCloseDone, "forced group close")
+	if group.closeCalls.Load() != 1 || client.closeCalls.Load() != 1 {
+		t.Fatalf("close calls group=%d client=%d, want 1/1", group.closeCalls.Load(), client.closeCalls.Load())
+	}
 }
 
 func noopProcessorFactory() consumer.ProcessorFactory {
@@ -1005,5 +1017,33 @@ func waitError(t *testing.T, errors <-chan error) error {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for service")
 		return nil
+	}
+}
+
+func awaitTestSignal[T any](t testing.TB, signal <-chan T, description string) T {
+	t.Helper()
+	wait := 30 * time.Second
+	if deadlineTest, ok := t.(interface{ Deadline() (time.Time, bool) }); ok {
+		if deadline, hasDeadline := deadlineTest.Deadline(); hasDeadline {
+			remaining := time.Until(deadline) - time.Second
+			if remaining < wait {
+				wait = remaining
+			}
+		}
+	}
+	if wait <= 0 {
+		var zero T
+		t.Fatalf("test deadline reached while waiting for %s", description)
+		return zero
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case value := <-signal:
+		return value
+	case <-timer.C:
+		var zero T
+		t.Fatalf("timed out waiting for %s", description)
+		return zero
 	}
 }

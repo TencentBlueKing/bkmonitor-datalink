@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,7 +126,7 @@ func TestRunRejectsUnknownFlag(t *testing.T) {
 	}
 }
 
-func TestRunUsesV2RuntimeAfterConfigurationLoads(t *testing.T) {
+func TestRunExplicitCompatibilityUsesPhaseOneRuntime(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "alarmd.yaml")
@@ -133,11 +134,15 @@ func TestRunUsesV2RuntimeAfterConfigurationLoads(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	want := errors.New("sink open failed")
+	compatibilityCoordinatesObserved := false
 	dependencies := applicationDependencies{
-		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
+		openBundle: func(_ context.Context, cfg config.Config, _ *metric.Recorder, _ *observability.Logger) (*applicationBundle, error) {
+			compatibilityCoordinatesObserved = cfg.Kafka.InputTopic == "alarmd-shadow-input-v2" &&
+				cfg.Kafka.GroupID == "alarmd-shadow-v2" && cfg.Kafka.InitialOffset == "oldest" &&
+				cfg.Redis.StatePrefix == "alarmd-shadow"
 			return nil, want
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
 				<-ctx.Done()
 				return nil
@@ -150,17 +155,109 @@ func TestRunUsesV2RuntimeAfterConfigurationLoads(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr.String(), want.Error()) {
 		t.Fatalf("runWithDependencies() code=%d stderr=%q, want sink open failure", code, stderr.String())
 	}
+	if !compatibilityCoordinatesObserved {
+		t.Fatal("explicit compatibility coordinates were not mapped into the phase-one runtime")
+	}
+}
+
+func TestRunDefaultGoAccessDoesNotConstructPhaseOneBundle(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "alarmd.yaml")
+	if err := os.WriteFile(path, []byte(validGoAccessApplicationYAML()), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	want := errors.New("phase-two runner reached")
+	phaseOneOpened := false
+	dependencies := runtimeModeDependencies{
+		phaseOne: applicationDependencies{
+			openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
+				phaseOneOpened = true
+				return nil, errors.New("phase-one bundle must not open")
+			},
+		},
+		phaseTwo: phaseTwoApplicationDependencies{
+			run: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) error {
+				return want
+			},
+		},
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runWithRuntimeModeDependencies(
+		context.Background(), []string{"--config", path}, &stdout, &stderr, dependencies,
+	)
+	if code != 1 || !strings.Contains(stderr.String(), want.Error()) {
+		t.Fatalf("runWithRuntimeModeDependencies() code=%d stderr=%q", code, stderr.String())
+	}
+	if phaseOneOpened {
+		t.Fatal("default Go Access opened the phase-one application bundle")
+	}
+}
+
+func TestRunTemporaryLegacyDrainingCleanupIsAnExplicitTerminalMode(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "alarmd.yaml")
+	if err := os.WriteFile(path, []byte(validGoAccessApplicationYAML()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	phaseTwoStarted := false
+	cleanupStarted := false
+	digest := strings.Repeat("a", 64)
+	dependencies := runtimeModeDependencies{
+		phaseTwo: phaseTwoApplicationDependencies{run: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) error {
+			phaseTwoStarted = true
+			return errors.New("phase-two must not start")
+		}},
+		temporaryLegacyDrainingCleanup: func(
+			_ context.Context,
+			cfg config.Config,
+			requestPath string,
+			planDigest string,
+			stdout io.Writer,
+		) error {
+			cleanupStarted = cfg.Input.Mode == config.InputModeGoAccess && requestPath == "/tmp/request.json" && planDigest == digest
+			_, err := io.WriteString(stdout, `{"status":"APPLIED"}`+"\n")
+			return err
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	code := runWithRuntimeModeDependencies(context.Background(), []string{
+		"--config", path,
+		"--temporary-admin-legacy-draining-cleanup-request", "/tmp/request.json",
+		"--temporary-admin-legacy-draining-cleanup-apply-digest", digest,
+	}, &stdout, &stderr, dependencies)
+	if code != 0 || !cleanupStarted || phaseTwoStarted || !strings.Contains(stdout.String(), `"APPLIED"`) {
+		t.Fatalf("temporary cleanup code=%d cleanup=%t phaseTwo=%t stdout=%q stderr=%q", code, cleanupStarted, phaseTwoStarted, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunTemporaryLegacyDrainingCleanupRejectsDigestWithoutRequest(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runWithRuntimeModeDependencies(context.Background(), []string{
+		"--temporary-admin-legacy-draining-cleanup-apply-digest", strings.Repeat("a", 64),
+	}, &stdout, &stderr, runtimeModeDependencies{})
+	if code != 2 || !strings.Contains(stderr.String(), "requires") {
+		t.Fatalf("digest without request code=%d stderr=%q", code, stderr.String())
+	}
 }
 
 func validApplicationYAML() string {
 	return `mode: shadow
+input:
+  mode: phase_one_kafka_compatibility
+  phase_one_kafka:
+    input_topic: alarmd-shadow-input-v2
+    consumer_group: alarmd-shadow-v2
+    initial_offset: oldest
+    state_prefix: alarmd-shadow
 http:
   listen: 127.0.0.1:8080
 shutdown_timeout: 1s
 kafka:
   brokers:
     - 127.0.0.1:9092
-  input_topic: alarmd-shadow-input-v2
   trigger_event:
     topic: alarmd-shadow-trigger-event-v1
     max_message_bytes: 524288
@@ -170,12 +267,58 @@ kafka:
   allowed_output_topics:
     - alarmd-shadow-trigger-event-v1
     - alarmd-shadow-message-receipt-v1
-  group_id: alarmd-shadow-v2
-  client_id: alarmd
-  broker_version: 2.6.0
-  initial_offset: oldest
+    - alarmd_0bkmonitor_backend_event
+  legacy_adapter:
+    topic: alarmd_0bkmonitor_backend_event
+    snapshot_prefix: alarmd-compatibility-test
+    service_redis:
+      mode: standalone
+      address: 127.0.0.1:6379
 redis:
   address: 127.0.0.1:6379
-  state_prefix: alarmd-shadow
+`
+}
+
+func validGoAccessApplicationYAML() string {
+	return `mode: shadow
+http:
+  listen: 127.0.0.1:8080
+shutdown_timeout: 1s
+kafka:
+  brokers:
+    - 127.0.0.1:9092
+  trigger_event:
+    topic: alarmd-shadow-trigger-event-v2
+    max_message_bytes: 524288
+  allowed_output_topics:
+    - alarmd-shadow-trigger-event-v2
+    - alarmd_0bkmonitor_backend_event
+  legacy_adapter:
+    topic: alarmd_0bkmonitor_backend_event
+    snapshot_prefix: alarmd-compatibility-test
+    service_redis:
+      mode: standalone
+      address: 127.0.0.1:6379
+redis:
+  address: 127.0.0.1:6379
+  state_prefix: alarmd-phase-two
+phase_two:
+  worker:
+    id: alarmd-worker-0
+  control:
+    strategy_cache_prefix: alarm-config
+    timezone: Asia/Shanghai
+    legacy_query_runtime:
+      access_bk_data: false
+      bkdata_cmdb_level_tables: []
+      system_disk_filter:
+        field_name: device_type
+        values: []
+      system_network_filter:
+        field_name: device_name
+        values: []
+  access:
+    uq_endpoint: http://unify-query.service
+    query_source: alarmd
 `
 }

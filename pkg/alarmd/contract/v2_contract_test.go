@@ -349,6 +349,7 @@ func TestReadExecutionEnvelopeV2QueryCompleteness(t *testing.T) {
 		{name: "full empty", result: QueryResultV2{Completeness: QueryCompletenessFull}, empty: true},
 		{name: "partial", result: QueryResultV2{Completeness: QueryCompletenessPartial, ReasonCode: ReasonQueryPartial}},
 		{name: "unavailable", result: QueryResultV2{Completeness: QueryCompletenessUnavailable, ReasonCode: ReasonQueryUnavailable}, empty: true},
+		{name: "unavailable exhausted budget", result: QueryResultV2{Completeness: QueryCompletenessUnavailable, ReasonCode: ReasonExecutionBudgetExhausted}, empty: true},
 		{name: "partial missing reason", result: QueryResultV2{Completeness: QueryCompletenessPartial}, wantFraming: true},
 	}
 	for _, test := range tests {
@@ -1047,9 +1048,58 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 		ReasonAllowedForV2(ReasonProviderUnavailable, ReasonDomainReceipt) {
 		t.Fatalf("Provider reason definition = (%#v, %t)", provider, ok)
 	}
+	blockedExactSet, ok := LookupReasonV2(ReasonBlockedExactSetUnavailable)
+	if !ok || blockedExactSet.Class != ReasonClassDeterministic || blockedExactSet.Domains != ReasonDomainObservation {
+		t.Fatalf("Blocked exact-set reason definition = (%#v, %t)", blockedExactSet, ok)
+	}
+	// A deterministic BeginSlot failure is named by its own observation-only
+	// reason so it is never confused with an exact-set or transport condition.
+	beginFailed, ok := LookupReasonV2(ReasonProgressBeginFailed)
+	if !ok || beginFailed.Class != ReasonClassDeterministic || beginFailed.Domains != ReasonDomainObservation ||
+		ReasonAllowedForV2(ReasonProgressBeginFailed, ReasonDomainReceipt) || ReasonAllowedForV2(ReasonProgressBeginFailed, ReasonDomainQueryResult) {
+		t.Fatalf("Progress begin failed reason definition = (%#v, %t)", beginFailed, ok)
+	}
+	// PROVIDER_UNAVAILABLE used to stand in for every retryable control
+	// condition; these split it by cause. They are observation-only: they
+	// appear on non-committed Retrying results and are never persisted or
+	// carried by receipts.
+	for _, reason := range []string{
+		ReasonProgressBeginRejected, ReasonActivationReadFailed, ReasonSnapshotRetryPending, ReasonSlotSourceRetry,
+	} {
+		definition, ok := LookupReasonV2(reason)
+		if !ok || definition.Class != ReasonClassRetryable || definition.Domains != ReasonDomainObservation ||
+			ReasonAllowedForV2(reason, ReasonDomainReceipt) || ReasonAllowedForV2(reason, ReasonDomainQueryResult) {
+			t.Fatalf("split provider reason %q definition = (%#v, %t)", reason, definition, ok)
+		}
+	}
+	snapshotUnavailable, ok := LookupReasonV2(ReasonSnapshotUnavailable)
+	if !ok || snapshotUnavailable.Class != ReasonClassCoverage ||
+		snapshotUnavailable.Domains != ReasonDomainObservation ||
+		ReasonAllowedForV2(ReasonSnapshotUnavailable, ReasonDomainReceipt) ||
+		ReasonAllowedForV2(ReasonSnapshotUnavailable, ReasonDomainQueryResult) {
+		t.Fatalf("Snapshot unavailable reason definition = (%#v, %t)", snapshotUnavailable, ok)
+	}
+	gapSkipped, ok := LookupReasonV2(ReasonGapSkipped)
+	if !ok || gapSkipped.Class != ReasonClassCoverage || gapSkipped.Domains != ReasonDomainObservation ||
+		ReasonAllowedForV2(ReasonGapSkipped, ReasonDomainReceipt) ||
+		ReasonAllowedForV2(ReasonGapSkipped, ReasonDomainQueryResult) {
+		t.Fatalf("Gap-skipped reason definition = (%#v, %t)", gapSkipped, ok)
+	}
 	if !ReasonAllowedForV2(ReasonQueryPartial, ReasonDomainQueryResult) ||
 		ReasonAllowedForV2(ReasonRecordInvalid, ReasonDomainQueryResult) {
 		t.Fatal("QueryResult Reason domain accepted an invalid mapping")
+	}
+	readinessBudget, ok := LookupReasonV2(ReasonReadinessBudgetInvalid)
+	if !ok || readinessBudget.Class != ReasonClassCoverage || readinessBudget.Domains != reasonQueryDomainsV2 ||
+		!ReasonAllowedForV2(ReasonReadinessBudgetInvalid, ReasonDomainQueryResult) ||
+		!ReasonAllowedForV2(ReasonReadinessBudgetInvalid, ReasonDomainReceipt) {
+		t.Fatalf("readiness budget reason definition = (%#v, %t)", readinessBudget, ok)
+	}
+	executionBudget, ok := LookupReasonV2(ReasonExecutionBudgetExhausted)
+	if !ok || executionBudget.Class != ReasonClassCoverage ||
+		executionBudget.Domains != ReasonDomainQueryResult|ReasonDomainObservation ||
+		!ReasonAllowedForV2(ReasonExecutionBudgetExhausted, ReasonDomainQueryResult) {
+		t.Fatalf("execution budget reason definition = (%#v, %t)", executionBudget, ok)
 	}
 	for _, reason := range []string{
 		ReasonEffectiveTimeInactive,
@@ -1062,6 +1112,13 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 			!definition.Domains.Has(ReasonDomainReceipt) || !definition.Domains.Has(ReasonDomainObservation) ||
 			definition.Domains.Has(ReasonDomainQueryResult) || definition.Domains.Has(ReasonDomainSummary) {
 			t.Fatalf("runtime coverage reason %q definition = (%#v, %t)", reason, definition, ok)
+		}
+	}
+	for _, reason := range []string{ReasonStateCorrupt, ReasonStateSchemaUnsupported, ReasonStateBudgetExceeded} {
+		definition, ok := LookupReasonV2(reason)
+		if !ok || definition.Class != ReasonClassDeterministic ||
+			!definition.Domains.Has(ReasonDomainReceipt) || !definition.Domains.Has(ReasonDomainObservation) {
+			t.Fatalf("state deterministic reason %q definition = (%#v, %t)", reason, definition, ok)
 		}
 	}
 	firstCode := catalog[0].Code

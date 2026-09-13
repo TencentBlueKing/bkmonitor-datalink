@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
@@ -30,7 +31,19 @@ var (
 	schemaVersion = "none"
 )
 
+// Contention is the one dimension the profiles cannot answer with the defaults:
+// mutex and block sampling are off unless the process turns them on. Both rates
+// are deliberately coarse — one in a hundred contention events, and one blocking
+// event per millisecond of blocking — so the samples identify which lock is
+// contended without the sampling itself distorting the measurement.
+const (
+	mutexProfileFraction = 100
+	blockProfileRateNS   = 1_000_000
+)
+
 func main() {
+	runtime.SetMutexProfileFraction(mutexProfileFraction)
+	runtime.SetBlockProfileRate(blockProfileRateNS)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()
@@ -48,11 +61,34 @@ func runWithDependencies(
 	stdout, stderr io.Writer,
 	dependencies applicationDependencies,
 ) int {
+	return runWithRuntimeModeDependencies(ctx, args, stdout, stderr, runtimeModeDependencies{
+		phaseOne:                       dependencies,
+		phaseTwo:                       defaultPhaseTwoApplicationDependencies(),
+		temporaryLegacyDrainingCleanup: runTemporaryLegacyDrainingCleanup,
+	})
+}
+
+func runWithRuntimeModeDependencies(
+	ctx context.Context,
+	args []string,
+	stdout, stderr io.Writer,
+	dependencies runtimeModeDependencies,
+) int {
 	flags := flag.NewFlagSet("alarmd", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	configPath := flags.String("config", "", "path to alarmd YAML configuration")
 	checkConfig := flags.Bool("check-config", false, "validate configuration and exit")
 	showVersion := flags.Bool("version", false, "print build information and exit")
+	temporaryCleanupRequest := flags.String(
+		"temporary-admin-legacy-draining-cleanup-request",
+		"",
+		"path to the approved one-shot legacy Draining cleanup request JSON",
+	)
+	temporaryCleanupDigest := flags.String(
+		"temporary-admin-legacy-draining-cleanup-apply-digest",
+		"",
+		"dry-run plan digest to apply; omit for dry-run",
+	)
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -60,13 +96,33 @@ func runWithDependencies(
 		fmt.Fprintf(stderr, "unexpected arguments: %v\n", flags.Args())
 		return 2
 	}
-	if *showVersion && *checkConfig {
-		fmt.Fprintln(stderr, "--version and --check-config cannot be used together")
+	if *temporaryCleanupDigest != "" && *temporaryCleanupRequest == "" {
+		fmt.Fprintln(stderr, "--temporary-admin-legacy-draining-cleanup-apply-digest requires --temporary-admin-legacy-draining-cleanup-request")
+		return 2
+	}
+	terminalModes := 0
+	for _, enabled := range []bool{*showVersion, *checkConfig, *temporaryCleanupRequest != ""} {
+		if enabled {
+			terminalModes++
+		}
+	}
+	if terminalModes > 1 {
+		fmt.Fprintln(stderr, "--version, --check-config, and temporary legacy Draining cleanup cannot be used together")
 		return 2
 	}
 	if *showVersion {
 		fmt.Fprintf(stdout, "alarmd version=%s commit=%s schema_version=%s\n", version, commit, schemaVersion)
 		return 0
+	}
+
+	// Resolve the CPU quota before the configuration is read: the capacity
+	// budgets are derived from the container's CPU budget, and reading them
+	// off an unadjusted GOMAXPROCS would size the process for the host.
+	if dependencies.phaseTwo.configureCPU != nil {
+		if _, err := dependencies.phaseTwo.configureCPU(); err != nil {
+			fmt.Fprintf(stderr, "configure CPU budget: %v\n", err)
+			return 1
+		}
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -75,6 +131,23 @@ func runWithDependencies(
 		return 1
 	}
 	if *checkConfig {
+		if err := printResolvedRuntimeFacts(cfg, stdout); err != nil {
+			fmt.Fprintf(stderr, "report resolved configuration: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	if *temporaryCleanupRequest != "" {
+		if dependencies.temporaryLegacyDrainingCleanup == nil {
+			fmt.Fprintln(stderr, "temporary legacy Draining cleanup is not assembled")
+			return 1
+		}
+		if err := dependencies.temporaryLegacyDrainingCleanup(
+			ctx, cfg, *temporaryCleanupRequest, *temporaryCleanupDigest, stdout,
+		); err != nil {
+			fmt.Fprintf(stderr, "run temporary legacy Draining cleanup: %v\n", err)
+			return 1
+		}
 		return 0
 	}
 
@@ -83,8 +156,26 @@ func runWithDependencies(
 		Commit:        commit,
 		SchemaVersion: schemaVersion,
 	})
-	if err := runApplication(ctx, cfg, recorder, dependencies); err != nil {
-		fmt.Fprintf(stderr, "run alarmd: %v\n", err)
+	var runErr error
+	switch cfg.Input.Mode {
+	case config.InputModeGoAccess:
+		if dependencies.phaseTwo.run == nil {
+			runErr = errPhaseTwoWorkerBundleNotAssembled
+		} else {
+			runErr = dependencies.phaseTwo.run(ctx, cfg, recorder, dependencies.phaseOne.logger)
+		}
+	case config.InputModePhaseOneKafkaCompatibility:
+		runtimeConfig, err := cfg.PhaseOneCompatibilityRuntimeConfig()
+		if err != nil {
+			runErr = err
+		} else {
+			runErr = runApplication(ctx, runtimeConfig, recorder, dependencies.phaseOne)
+		}
+	default:
+		runErr = fmt.Errorf("unsupported input mode %q", cfg.Input.Mode)
+	}
+	if runErr != nil {
+		fmt.Fprintf(stderr, "run alarmd: %v\n", runErr)
 		return 1
 	}
 	return 0
@@ -94,8 +185,8 @@ func defaultApplicationDependencies(eventLogger *observability.Logger) applicati
 	return applicationDependencies{
 		logger:     eventLogger,
 		openBundle: openApplicationBundle,
-		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource) (httpRuntime, error) {
-			return httpservice.NewWithHealth(recorder, source)
+		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource, diagnosticsAddress string) (httpRuntime, error) {
+			return httpservice.NewWithHealth(recorder, source, httpservice.WithDiagnosticsAddress(diagnosticsAddress))
 		},
 	}
 }

@@ -362,7 +362,11 @@ type evaluationPlanWirePartsV2 struct {
 	StrategyRef         StrategyRefV2          `json:"strategy_ref"`
 	InputProjection     InputProjectionV2      `json:"input_projection"`
 	SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
+	OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
+	SubjectFacts        *MonitorSubjectFacts   `json:"subject_facts,omitempty"`
+	LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
 	StrategyIR          json.RawMessage        `json:"strategy_ir"`
+	WireFormat          string                 `json:"wire_format,omitempty"`
 	TerminalReasonCode  string                 `json:"terminal_reason_code,omitempty"`
 }
 
@@ -433,7 +437,9 @@ func decodeEvaluationPlanBestEffortV2(raw json.RawMessage) EvaluationPlanV2 {
 	}
 	plan := EvaluationPlanV2{
 		PlanID: wire.PlanID, StrategyRef: wire.StrategyRef, InputProjection: wire.InputProjection,
-		SourceCompatibility: wire.SourceCompatibility, TerminalReasonCode: wire.TerminalReasonCode,
+		SourceCompatibility: wire.SourceCompatibility, OutputIdentity: wire.OutputIdentity,
+		SubjectFacts: wire.SubjectFacts, LegacyOutput: wire.LegacyOutput,
+		WireFormat: wire.WireFormat, TerminalReasonCode: wire.TerminalReasonCode,
 	}
 	if wire.TerminalReasonCode != "" {
 		return plan
@@ -638,6 +644,20 @@ func validateEnvelopeNestedShapeV2(object map[string]json.RawMessage, allowUnkno
 	return nil
 }
 
+func validateStrategyRefWireV2(raw json.RawMessage, path string, allowUnknown bool) (map[string]json.RawMessage, error) {
+	object, err := validatePrevalidatedJSONObjectFieldsV2(raw, path, []string{"tenant_id", "strategy_id", "revision"}, []string{"snapshot_revision"}, allowUnknown)
+	if err != nil {
+		return nil, err
+	}
+	if value, ok := object["snapshot_revision"]; ok {
+		var revision int64
+		if err := json.Unmarshal(value, &revision); err != nil || revision <= 0 {
+			return nil, invalid(path+".snapshot_revision", "must be a positive int64 JSON number")
+		}
+	}
+	return object, nil
+}
+
 func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) error {
 	path := fmt.Sprintf("execution_envelope.plan_set.evaluation_plans[%d]", index)
 	var variant map[string]json.RawMessage
@@ -651,7 +671,7 @@ func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) 
 		if err != nil {
 			return framing(ReasonMalformedJSON, path, err.Error())
 		}
-		if _, err := validatePrevalidatedJSONObjectFieldsV2(object["strategy_ref"], path+".strategy_ref", []string{"tenant_id", "strategy_id", "revision"}, nil, allowUnknown); err != nil {
+		if _, err := validateStrategyRefWireV2(object["strategy_ref"], path+".strategy_ref", allowUnknown); err != nil {
 			return framing(ReasonMalformedJSON, path+".strategy_ref", err.Error())
 		}
 		var typed evaluationPlanWirePartsV2
@@ -663,12 +683,12 @@ func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) 
 	object, err := validatePrevalidatedJSONObjectFieldsV2(
 		raw, path,
 		[]string{"plan_id", "strategy_ref", "input_projection", "strategy_ir"},
-		[]string{"source_compatibility"}, allowUnknown,
+		[]string{"source_compatibility", "output_identity", "subject_facts", "legacy_output", "wire_format"}, allowUnknown,
 	)
 	if err != nil {
 		return framing(ReasonMalformedJSON, path, err.Error())
 	}
-	if _, err := validatePrevalidatedJSONObjectFieldsV2(object["strategy_ref"], path+".strategy_ref", []string{"tenant_id", "strategy_id", "revision"}, nil, allowUnknown); err != nil {
+	if _, err := validateStrategyRefWireV2(object["strategy_ref"], path+".strategy_ref", allowUnknown); err != nil {
 		return framing(ReasonMalformedJSON, path+".strategy_ref", err.Error())
 	}
 	if _, err := validatePrevalidatedJSONObjectFieldsV2(object["input_projection"], path+".input_projection", []string{"value_fields", "dimension_fields", "business_identity_field", "multi_value_alignment", "data_unit", "missing_value_policy"}, nil, allowUnknown); err != nil {
@@ -677,6 +697,36 @@ func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) 
 	if source, ok := object["source_compatibility"]; ok {
 		if _, err := validatePrevalidatedJSONObjectFieldsV2(source, path+".source_compatibility", []string{"item_id"}, nil, allowUnknown); err != nil {
 			return framing(ReasonMalformedJSON, path+".source_compatibility", err.Error())
+		}
+	}
+	if identity, ok := object["output_identity"]; ok {
+		if _, err := validatePrevalidatedJSONObjectFieldsV2(identity, path+".output_identity", []string{"dimension_fields"}, nil, false); err != nil {
+			return err
+		}
+		var typed MonitorOutputIdentity
+		if err := json.Unmarshal(identity, &typed); err != nil || typed.DimensionFields == nil {
+			return invalid(path+".output_identity.dimension_fields", "must be a string array")
+		}
+	}
+	if facts, ok := object["subject_facts"]; ok {
+		if _, err := validatePrevalidatedJSONObjectFieldsV2(facts, path+".subject_facts", nil, []string{"labels", "result_table_id"}, false); err != nil {
+			return err
+		}
+		var typed MonitorSubjectFacts
+		if err := json.Unmarshal(facts, &typed); err != nil {
+			return invalid(path+".subject_facts", "must be an object of labels and result_table_id")
+		}
+	}
+	if legacy, ok := object["legacy_output"]; ok {
+		if _, err := validatePrevalidatedJSONObjectFieldsV2(legacy, path+".legacy_output", []string{"strategy", "dimension_fields", "item_id"}, nil, false); err != nil {
+			return err
+		}
+		var typed LegacyOutputContext
+		if err := json.Unmarshal(legacy, &typed); err != nil {
+			return err
+		}
+		if err := typed.Validate(); err != nil {
+			return err
 		}
 	}
 	var typed evaluationPlanWirePartsV2
@@ -703,7 +753,7 @@ func validateStrategyIRWireShapeV2(raw json.RawMessage, path string) error {
 	if err := validateRequiredFeaturesRawV2(base["required_features"], path+".required_features"); err != nil {
 		return err
 	}
-	if _, err := validatePrevalidatedJSONObjectFieldsV2(base["strategy_ref"], path+".strategy_ref", []string{"tenant_id", "strategy_id", "revision"}, nil, allowUnknown); err != nil {
+	if _, err := validateStrategyRefWireV2(base["strategy_ref"], path+".strategy_ref", allowUnknown); err != nil {
 		return framing(ReasonMalformedJSON, path+".strategy_ref", err.Error())
 	}
 	_, err = validatePrevalidatedJSONObjectFieldsV2(base["execution_semantics"], path+".execution_semantics", []string{"evaluation_scope", "query_window", "aggregation_interval", "evaluation_interval", "lateness_tolerance"}, nil, allowUnknown)

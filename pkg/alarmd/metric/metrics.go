@@ -11,6 +11,7 @@ package metric
 
 import (
 	"math"
+	"regexp"
 	"sync"
 	"time"
 
@@ -19,10 +20,9 @@ import (
 )
 
 const (
-	metricNamespace    = "bkmonitor"
-	metricSubsystem    = "alarmd"
-	otherLabel         = "_other"
-	CustomSeriesBudget = 19000
+	metricNamespace = "bkmonitor"
+	metricSubsystem = "alarmd"
+	otherLabel      = "_other"
 )
 
 var (
@@ -106,20 +106,27 @@ type BuildInfo struct {
 }
 
 type Recorder struct {
-	registry        *prometheus.Registry
-	lifecycleMu     sync.Mutex
-	lifecycleBound  bool
-	healthMu        sync.Mutex
-	healthBound     bool
-	resourceMu      sync.Mutex
-	resourceBound   bool
-	processDuration *prometheus.HistogramVec
-	processTotal    *prometheus.CounterVec
-	recordsTotal    *prometheus.CounterVec
-	pipelineLatency *prometheus.HistogramVec
-	shadowCompare   *prometheus.CounterVec
-	observations    observationMetrics
-	receipts        receiptMetrics
+	registry          *prometheus.Registry
+	lifecycleMu       sync.Mutex
+	lifecycleBound    bool
+	healthMu          sync.Mutex
+	healthBound       bool
+	fleetMu           sync.Mutex
+	fleetBound        bool
+	queryPermitMu     sync.Mutex
+	queryPermitBound  bool
+	capacityLoadMu    sync.Mutex
+	capacityLoadBound bool
+	resourceMu        sync.Mutex
+	resourceBound     bool
+	processDuration   *prometheus.HistogramVec
+	processTotal      *prometheus.CounterVec
+	recordsTotal      *prometheus.CounterVec
+	pipelineLatency   *prometheus.HistogramVec
+	shadowCompare     *prometheus.CounterVec
+	observations      observationMetrics
+	receipts          receiptMetrics
+	phaseTwo          phaseTwoMetrics
 }
 
 func NewRecorder(build BuildInfo) *Recorder {
@@ -183,9 +190,18 @@ func NewRecorder(build BuildInfo) *Recorder {
 	buildInfo.WithLabelValues(build.Version, build.Commit, build.SchemaVersion).Set(1)
 	observations := newObservationMetrics()
 	receipts := newReceiptMetrics()
+	phaseTwo := newPhaseTwoMetrics()
 
 	collectorsToRegister := []prometheus.Collector{
-		collectors.NewGoCollector(),
+		// The legacy Go collector exports memstats but no CPU split, so the
+		// share of CPU spent in GC versus user code is not observable. alarmd
+		// is allocation driven (hundreds of MB/s), which makes that split the
+		// first question of any CPU work; add the bounded rule rather than
+		// MetricsAll so the series count stays predictable.
+		collectors.NewGoCollector(collectors.WithGoCollectorRuntimeMetrics(
+			collectors.GoRuntimeMetricsRule{Matcher: regexp.MustCompile(`^/cpu/classes/`)},
+			collectors.GoRuntimeMetricsRule{Matcher: regexp.MustCompile(`^/sched/latencies:seconds$`)},
+		)),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		buildInfo,
 		processDuration,
@@ -196,6 +212,7 @@ func NewRecorder(build BuildInfo) *Recorder {
 	}
 	collectorsToRegister = append(collectorsToRegister, observations.collectors()...)
 	collectorsToRegister = append(collectorsToRegister, receipts.collectors()...)
+	collectorsToRegister = append(collectorsToRegister, phaseTwo.collectors()...)
 	registry.MustRegister(collectorsToRegister...)
 
 	return &Recorder{
@@ -207,6 +224,7 @@ func NewRecorder(build BuildInfo) *Recorder {
 		shadowCompare:   shadowCompare,
 		observations:    observations,
 		receipts:        receipts,
+		phaseTwo:        phaseTwo,
 	}
 }
 
@@ -245,21 +263,6 @@ func (r *Recorder) RecordPipelineLatency(from, to Stage, mode Mode, duration tim
 
 func (r *Recorder) RecordShadowCompare(component Component, result CompareResult) {
 	r.shadowCompare.WithLabelValues(string(normalizeComponent(component)), string(normalizeCompareResult(result))).Inc()
-}
-
-func MaxCustomSeries() int {
-	histogramSeries := func(bucketCount int) int {
-		return bucketCount + 1 + 2 // explicit buckets, +Inf, sum and count
-	}
-
-	processTotal := len(allStages) * len(allModes) * len(allStatuses) * len(allErrors)
-	processDuration := len(allStages) * len(allModes) * histogramSeries(len(processDurationBuckets))
-	recordsTotal := len(allStages) * len(allModes) * len(allDirections) * len(allRecordTypes)
-	pipelineLatency := len(allEdges) * len(allModes) * histogramSeries(len(pipelineLatencyBuckets))
-	shadowCompare := len(allComponents) * len(allCompareResults)
-	buildInfo := 1
-	return processTotal + processDuration + recordsTotal + pipelineLatency + shadowCompare + buildInfo +
-		lifecycleCustomSeries() + observationCustomSeries() + healthResourceCustomSeries() + receiptCustomSeries()
 }
 
 var (

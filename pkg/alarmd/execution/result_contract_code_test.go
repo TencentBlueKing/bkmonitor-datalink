@@ -6,6 +6,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -137,5 +139,43 @@ func TestResultContractRefusalCarriesItsCodeThroughAWrap(t *testing.T) {
 	}
 	if wrapped.Error() != "alarmd worker: invalid series evaluation: alarmd execution: State Level fact contradicts its Level outcome" {
 		t.Fatalf("the message changed: %s", wrapped.Error())
+	}
+}
+
+// TestTheContradictionRefusalNamesEveryPredicateThatFailed keeps the diagnostic
+// halves of that message from being trimmed back one at a time.
+//
+// Three predicates have to fail together to produce the refusal, and while the
+// message named none of them, a deployment producing it could not be told apart
+// from a deployment producing it for the opposite reason: a freshly written
+// fact that really disagrees, and a carried fact the exemption did not reach,
+// arrive as the same sentence. This asserts the message still distinguishes
+// them, and that each value it carries comes from a closed vocabulary, because
+// the reason this detail is safe to log at all is that none of it is identity.
+func TestTheContradictionRefusalNamesEveryPredicateThatFailed(t *testing.T) {
+	source, err := os.ReadFile("result_contract.go")
+	if err != nil {
+		t.Fatalf("read the result contract: %v", err)
+	}
+	text := string(source)
+	for _, part := range []string{
+		`"State Level fact contradicts its Level outcome"+`,
+		`" (fact "+string(fact.Result)+`,
+		`", outcome "+string(outcome.Outcome)+`,
+		`", input full "+formatContractBool(stateInputAllowsAdvance(input, outcome))+`,
+		`", loaded point found "+formatContractBool(loadedHistoryHasAnchor(loaded.History, anchor))+`,
+		`", mutation guards outcome "+formatContractBool(stateMutationGuardsOutcome(state.Mutation, outcome, true))+")"`,
+	} {
+		if !strings.Contains(text, part) {
+			t.Errorf("the contradiction refusal no longer carries %s; without it the message cannot say "+
+				"which of the three predicates failed, which is the only thing it is for", part)
+		}
+	}
+
+	// The words are fixed, so a reader greps for the same text whichever way the
+	// predicate went; a formatter that rendered true as "true" one release and
+	// "1" the next would break every saved query without failing anything.
+	if formatContractBool(true) != "yes" || formatContractBool(false) != "no" {
+		t.Fatalf("predicate rendering changed: %q/%q", formatContractBool(true), formatContractBool(false))
 	}
 }

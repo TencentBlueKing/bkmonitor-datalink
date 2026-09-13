@@ -126,3 +126,26 @@ func (err *ResultContractError) QueryFailure() (string, string) { return "", err
 func resultContractViolation(code string, what string) error {
 	return &ResultContractError{code: code, what: what}
 }
+
+// formatContractBool renders a predicate for a refusal message. The words are
+// fixed so the text a reader greps for does not change with the formatter.
+func formatContractBool(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
+}
+
+// loadedHistoryHasAnchor reports whether the loaded history held any point for
+// this record. It separates the two ways a carried-fact exemption misses: the
+// loaded state had no point at this anchor at all, or it had one that held a
+// different fact. Without the split both read as "not carried", and they send
+// a reader to opposite places.
+func loadedHistoryHasAnchor(history []StateHistoryPoint, anchor RecordAnchor) bool {
+	for _, point := range history {
+		if point.RecordID == anchor.RecordID && point.SourceTime == anchor.SourceTime {
+			return true
+		}
+	}
+	return false
+}

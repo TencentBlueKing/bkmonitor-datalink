@@ -506,7 +506,22 @@ func validateStateOutcomes(
 						fact.Result, outcome, state.Mutation, effectiveStatus, stateInputAllowsAdvance(input, outcome),
 					) &&
 					!stateFactCarriedFromLoadedHistory(loaded.History, anchor, fact, outcome) {
-					return resultContractViolation(codeStateFactContradictsOutcome, "State Level fact contradicts its Level outcome")
+					// Three predicates have to fail together to get here, and the
+					// message named none of them: a deployment producing this
+					// refusal said only that some fact disagreed with some
+					// outcome, so telling "the fact is freshly written and really
+					// disagrees" from "the fact was carried and the exemption did
+					// not reach it" needed a reproduction nobody had. Each value
+					// below is a closed vocabulary or a bool, so the text stays
+					// bounded and carries no identity; who it happened to is on
+					// the observation already.
+					return resultContractViolation(codeStateFactContradictsOutcome,
+						"State Level fact contradicts its Level outcome"+
+							" (fact "+string(fact.Result)+
+							", outcome "+string(outcome.Outcome)+
+							", input full "+formatContractBool(stateInputAllowsAdvance(input, outcome))+
+							", loaded point found "+formatContractBool(loadedHistoryHasAnchor(loaded.History, anchor))+
+							", mutation guards outcome "+formatContractBool(stateMutationGuardsOutcome(state.Mutation, outcome, true))+")")
 				}
 				identity := levelOutcomeIdentity{
 					Plan: state.Mutation.Identity.Plan, LevelID: fact.LevelID,

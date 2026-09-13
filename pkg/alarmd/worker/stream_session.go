@@ -813,7 +813,7 @@ func (stream *streamedExecution) noSeriesPlanResult(due execution.DuePlan) (exec
 			ReasonCode: observability.ReasonNone,
 			Plans:      []execution.PlanEvaluationResult{{Plan: due.Identity, Disposition: execution.PlanDecided}}}, nil
 	}
-	mutation, err := stream.completionGapMutation(due, bindings)
+	mutation, err := stream.completionGapMutationFor(due, bindings, nil, primary.ReasonCode)
 	if err != nil {
 		return execution.EvaluationResult{}, err
 	}
@@ -1070,10 +1070,6 @@ func (stream *streamedExecution) mergePrimaryIncompleteSeries(
 	due execution.DuePlan,
 	primaryIncomplete []execution.NamedInputBinding,
 ) error {
-	mutation, err := stream.completionGapMutation(due, primaryIncomplete)
-	if err != nil {
-		return err
-	}
 	disposition := execution.PlanDecidedDegraded
 	reason := primaryIncomplete[0].ReasonCode
 	for _, binding := range primaryIncomplete {
@@ -1082,6 +1078,10 @@ func (stream *streamedExecution) mergePrimaryIncompleteSeries(
 			reason = binding.ReasonCode
 			break
 		}
+	}
+	mutation, err := stream.completionGapMutationFor(due, primaryIncomplete, nil, reason)
+	if err != nil {
+		return err
 	}
 	return stream.mergeProvisional(ctx, execution.EvaluationResult{Contract: stream.header.Contract,
 		Result: observability.ResultDegraded, ReasonCode: reason,
@@ -1148,7 +1148,7 @@ func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry
 		if len(evaluated.Plans) != 1 || evaluated.Plans[0].Plan != due.Identity {
 			return errors.New("alarmd worker: incomplete named input produced an invalid Plan result")
 		}
-		mutation, mutationErr := stream.completionGapMutationForOutcomes(due, incomplete, evaluated.Plans[0].LevelOutcomes)
+		mutation, mutationErr := stream.completionGapMutationFor(due, incomplete, evaluated.Plans[0].LevelOutcomes, evaluated.Plans[0].ReasonCode)
 		if mutationErr != nil {
 			return mutationErr
 		}
@@ -1596,22 +1596,34 @@ func planCompletedFullEmpty(bindings []execution.NamedInputBinding, plan executi
 }
 
 // gapScopeReasonConflictError is the rejection of a Plan whose incomplete
-// named inputs of one gap scope carry different completion reasons and no
-// evaluated outcome of that scope decides between them; see
-// completionGapReasons. It names the scope, the two inputs and their reasons.
+// named inputs of one gap scope carry different completion reasons and
+// neither the scope's evaluated outcome nor the Plan's own reason decides
+// between them, or a PARTIAL input disagrees with what would; see
+// completionGapReasons. It names the scope, the two inputs, their reasons
+// and which of the two refusals it is.
 type gapScopeReasonConflictError struct {
 	plan          execution.PlanIdentity
 	scope         execution.GapScope
 	first, second execution.NamedInputBinding
+	why           string
 }
+
+// The two refusals a gapScopeReasonConflictError names in its detail:
+// undecided, nothing the contract compares the marker with named one of the
+// inputs' reasons; partial, a PARTIAL input carries a reason other than the
+// one decided, and the contract would compare its marker with that input.
+const (
+	gapScopeConflictUndecided = "undecided"
+	gapScopeConflictPartial   = "partial"
+)
 
 func (e *gapScopeReasonConflictError) Error() string {
 	level := "plan"
 	if e.scope.HasLevel {
 		level = strconv.FormatUint(uint64(e.scope.LevelID), 10)
 	}
-	return fmt.Sprintf("alarmd worker: one gap scope has conflicting completion reasons: strategy %s level %s: %s/%s %s %s vs %s/%s %s %s",
-		e.plan.StrategyID, level,
+	return fmt.Sprintf("alarmd worker: one gap scope has conflicting completion reasons (%s): strategy %s level %s: %s/%s %s %s vs %s/%s %s %s",
+		e.why, e.plan.StrategyID, level,
 		e.first.RequirementID, e.first.DatasetName, e.first.Completeness, e.first.ReasonCode,
 		e.second.RequirementID, e.second.DatasetName, e.second.Completeness, e.second.ReasonCode)
 }
@@ -1620,36 +1632,32 @@ func (e *gapScopeReasonConflictError) QueryFailure() (string, string) {
 	return observability.QueryFailureCategoryNamedInput, codeGapScopeReasonConflict
 }
 
-// QueryFailureDetail is the two reasons and the scope in the bounded detail
-// grammar (lower case, at most 96 bytes), so the pair survives rate limiting.
+// QueryFailureDetail is the scope, the two reasons and which refusal it is,
+// in the bounded detail grammar (lower case, at most 96 bytes), so the shape
+// survives rate limiting and the branch that refused can be read off the line.
 func (e *gapScopeReasonConflictError) QueryFailureDetail() string {
 	level := "plan"
 	if e.scope.HasLevel {
 		level = strconv.FormatUint(uint64(e.scope.LevelID), 10)
 	}
-	detail := "level=" + level + "-first=" + strings.ToLower(string(e.first.ReasonCode)) + "-second=" + strings.ToLower(string(e.second.ReasonCode))
+	detail := "level=" + level + "-first=" + strings.ToLower(string(e.first.ReasonCode)) + "-second=" + strings.ToLower(string(e.second.ReasonCode)) + "-why=" + e.why
 	if len(detail) > 96 {
 		detail = detail[:96]
 	}
 	return detail
 }
 
-func (stream *streamedExecution) completionGapMutation(
-	due execution.DuePlan,
-	bindings []execution.NamedInputBinding,
-) (execution.PlanGapMutation, error) {
-	return stream.completionGapMutationForOutcomes(due, bindings, nil)
-}
-
-// completionGapMutationForOutcomes builds the Plan gap mutation for a set of
+// completionGapMutationFor builds the Plan gap mutation for a set of
 // incomplete bindings, deciding each scope's reason against the Level
-// outcomes the evaluator produced for the same Slot.
-func (stream *streamedExecution) completionGapMutationForOutcomes(
+// outcomes the evaluator produced for the same Slot and the reason the Plan
+// result itself carries.
+func (stream *streamedExecution) completionGapMutationFor(
 	due execution.DuePlan,
 	bindings []execution.NamedInputBinding,
 	outcomes []execution.LevelOutcome,
+	planReason execution.ReasonCode,
 ) (execution.PlanGapMutation, error) {
-	reasons, err := completionGapReasons(due, bindings, outcomes)
+	reasons, err := completionGapReasons(due, bindings, outcomes, planReason)
 	if err != nil {
 		return execution.PlanGapMutation{}, err
 	}
@@ -1663,17 +1671,22 @@ func (stream *streamedExecution) completionGapMutationForOutcomes(
 // needs a marker of its scope with that input's reason. Inputs of one scope
 // that agree decide the scope directly. Inputs that disagree, which two
 // inputs of one Level failing for different transient reasons do on every
-// replay after a restart, are decided by what the contract will compare the
-// marker with: the reason of the Level's UNKNOWN outcome, which the evaluator
-// took from one of these same inputs. That reason is taken when exactly one
-// outcome of the Level names it, it is one an input of the scope gave, and
-// no PARTIAL input of the scope carries another. Anything else is the
-// conflict, named with the two inputs it saw, since a marker that satisfies
-// one of the contract's comparisons would fail the other.
+// Slot of an outage and on the replay after a restart, are decided by what
+// the contract will compare the marker with, or by what the Plan result
+// itself says when the contract compares nothing: first the reason of the
+// Level's UNKNOWN outcome, which the evaluator took from one of these same
+// inputs; then, when the Level has no outcome, as on the no-series and
+// PRIMARY paths, the reason the Plan result carries, which those paths take
+// from the PRIMARY input. Either is taken only when it is one an input of
+// the scope gave, and no PARTIAL input of the scope carries another. Anything
+// else is the conflict, named with the two inputs it saw and which of the
+// two refusals it is, since a marker that satisfies one of the contract's
+// comparisons would fail the other.
 func completionGapReasons(
 	due execution.DuePlan,
 	bindings []execution.NamedInputBinding,
 	outcomes []execution.LevelOutcome,
+	planReason execution.ReasonCode,
 ) (map[execution.GapScope]execution.ReasonCode, error) {
 	members := make(map[execution.GapScope][]execution.NamedInputBinding)
 	order := make([]execution.GapScope, 0)
@@ -1699,8 +1712,11 @@ func completionGapReasons(
 			reasons[scope] = first.ReasonCode
 			continue
 		}
-		conflict := &gapScopeReasonConflictError{plan: due.Identity, scope: scope, first: first, second: disagreeing}
+		conflict := &gapScopeReasonConflictError{plan: due.Identity, scope: scope, first: first, second: disagreeing, why: gapScopeConflictUndecided}
 		decided, ok := unknownOutcomeReason(due.Identity, outcomes, scope)
+		if !ok && planReason != "" && planReason != execution.ReasonCode(observability.ReasonNone) {
+			decided, ok = planReason, true
+		}
 		if !ok {
 			return nil, conflict
 		}
@@ -1716,7 +1732,7 @@ func completionGapReasons(
 		}
 		for _, input := range inputs {
 			if input.Completeness == execution.CompletenessPartial && input.ReasonCode != decided {
-				return nil, &gapScopeReasonConflictError{plan: due.Identity, scope: scope, first: input, second: *carrier}
+				return nil, &gapScopeReasonConflictError{plan: due.Identity, scope: scope, first: input, second: *carrier, why: gapScopeConflictPartial}
 			}
 		}
 		reasons[scope] = decided

@@ -267,8 +267,14 @@ func TestRedisCatalogRepositorySnapshotCachePreservesCurrentRedisFactsAndCallerI
 	if _, err := repository.LoadPublishedSnapshot(ctx, published.Publication); err != nil {
 		t.Fatal(err)
 	}
-	if reads.mget.Load() != 2 || reads.get.Load() != 2 {
-		t.Fatalf("repeated published reads commands mget=%d get=%d, want 2 each", reads.mget.Load(), reads.get.Load())
+	// The first read fetches the payload (one MGET) and the publication
+	// occurrence (one GET). The second read reuses the verified entry for the
+	// revision after checking Redis still holds it under the same epoch at the
+	// same size (one GET, one STRLEN), and reads the occurrence again (one
+	// GET): the payload travels once per revision, the current facts are
+	// re-read every time.
+	if reads.mget.Load() != 1 || reads.get.Load() != 3 {
+		t.Fatalf("repeated published reads commands mget=%d get=%d, want the payload read once and the facts re-read", reads.mget.Load(), reads.get.Load())
 	}
 
 	group, err := repository.LoadQueryGroup(ctx, catalog.SnapshotRevision, catalog.QueryGroups[0].Identity)
@@ -293,7 +299,11 @@ func TestRedisCatalogRepositorySnapshotCachePreservesCurrentRedisFactsAndCallerI
 		t.Fatalf("current publication epoch=(%d,%v), want 999", current.Publication.PublicationEpoch, err)
 	}
 
+	// A Redis that fails is not answered from memory: the size check that
+	// admits the reused entry fails first, the full read that follows fails
+	// too, and the caller sees the I/O failure.
 	snapshotKey := prefix + ":snapshot:" + string(catalog.SnapshotRevision)
+	client.AddHook(&oneCommandErrorHook{name: "strlen", argContains: snapshotKey, err: errors.New("injected snapshot size failure")})
 	client.AddHook(&oneCommandErrorHook{name: "mget", argContains: snapshotKey, err: errors.New("injected snapshot read failure")})
 	_, err = repository.LoadSnapshot(ctx, catalog.SnapshotRevision)
 	var dependencyIO *controlplane.ActivationDependencyIOError

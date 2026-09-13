@@ -208,6 +208,9 @@ func init() {
 	for _, outcome := range BlockedOutcomes {
 		ourReasons[outcome] = true
 	}
+	for _, refusal := range ResultContractRefusals {
+		ourReasons[refusal] = true
+	}
 	for _, outcome := range FailedExecutions {
 		uninformativeReasons[outcome] = true
 	}

@@ -103,3 +103,68 @@ func MetricFailureCategory(category string) string {
 		return observability.QueryFailureCategoryOther
 	}
 }
+
+// ResultContractRefusals is the closed vocabulary of the result contract's
+// refusal codes, as this package needs to see them.
+//
+// The contract refuses a mutation this deployment itself produced, so the whole
+// family is ours by construction: an external condition may be what the
+// evaluation met, but writing a result that contradicts itself in the face of
+// it is this code. Classifying any of them as external would let a defect
+// escape attribution as soon as someone finds an outside trigger for it.
+//
+// It is a copy: the vocabulary is declared in execution, which this package
+// does not import, and the alternative -- importing it for a list of strings --
+// would tie the fleet view to the execution contract for nothing else.
+// TestEveryResultContractCodeIsClassified compares this list with that
+// vocabulary in both directions, so the copy cannot fall behind the original
+// without a test saying so. A copy nothing compares is what this file already
+// learned not to keep.
+var ResultContractRefusals = []string{
+	"OUTCOME_PRIMARY_RECORD_MISSING",
+	"OUTCOME_NOT_A_SELECTED_LEVEL",
+	"OUTCOME_DUPLICATE",
+	"OUTCOME_MISSING_FOR_LEVEL",
+	"OUTCOME_IDENTITY_INCOMPLETE",
+	"OUTCOME_KIND_INVALID",
+	"OUTCOME_RETRYABLE_SERIES_NOT_UNKNOWN",
+	"OUTCOME_INVALID_SERIES_NOT_TERMINAL",
+	"OUTCOME_BUSINESS_UNDER_ACTIVE_GUARD",
+	"OUTCOME_UNKNOWN_DROPS_GUARD_REASON",
+	"OUTCOME_EFFECTIVE_TIME_FACT_MISSING",
+	"OUTCOME_EFFECTIVE_TIME_UNKNOWN_MISSED",
+	"OUTCOME_TERMINAL_DEPENDENCY_MISSED",
+	"OUTCOME_UNAVAILABLE_DEPENDENCY_BUSINESS",
+	"PROOF_ON_FULL_OUTCOME",
+	"OUTCOME_PARTIAL_NORMAL_OR_RECOVERY",
+	"PROOF_ON_NON_ABNORMAL_PARTIAL",
+	"PROOF_CAPABILITY_MISSING",
+	"PROOF_DUPLICATE",
+	"PROOF_DOES_NOT_CLOSE_EVIDENCE",
+	"PROOF_MISSING_FOR_PARTIAL_INPUT",
+	"STATE_LOADED_VIEW_MISSING",
+	"LOCALIZED_TERMINAL_NOT_TERMINAL",
+	"LOCALIZED_TERMINAL_REASON_DIFFERS",
+	"LOCALIZED_QUALITY_NOT_UNKNOWN",
+	"LOCALIZED_QUALITY_REASON_DIFFERS",
+	"STATE_ANCHOR_UNJUSTIFIED",
+	"STATE_FACT_OUTCOME_MISSING",
+	"STATE_FACT_CONTRADICTS_OUTCOME",
+	"STATE_FACT_DUPLICATE",
+	"STATE_PARTIAL_ABNORMAL_DROPS_PROVENANCE",
+	"STATE_FACT_MISSING_FOR_OUTCOME",
+	"HISTORY_RETENTION_BOUND_MISSING",
+	"HISTORY_LOADED_POINT_CHANGED",
+	"HISTORY_LOADED_POINT_CHANGED_OR_INVENTED",
+	"HISTORY_SNAPSHOT_INCOMPLETE",
+	"GUARD_MISSING_FOR_PARTIAL_ABNORMAL",
+	"GUARD_MISSING_FOR_DEGRADED_OUTCOME",
+	"GUARD_MISSING_PRE_EVENT",
+	"EVENT_EFFECTIVE_TIME_FACT_MISSING",
+	"EVENT_DUPLICATE",
+	"EVENT_KIND_MISMATCH",
+	"EVENT_LEVEL_RESULT_CONTRADICTS_OUTCOME",
+	"EVENT_OMITS_SIBLING_OUTCOME",
+	"EVENT_ENVELOPE_COUNT_INVALID",
+	"EVENT_MISSING_FOR_BUSINESS_OUTCOME",
+}

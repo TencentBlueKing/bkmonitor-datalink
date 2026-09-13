@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	resultcontract "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
 // Every code in the catalogue has to be on one side or the other, decided here
@@ -37,7 +38,7 @@ func TestEveryReasonCodeIsAttributedToOneSideOrTheOther(t *testing.T) {
 	// classified, or explicitly carrying no attribution information. Falling
 	// through is for codes nobody has looked at yet, not for the vocabulary
 	// this package defines itself.
-	for _, vocabulary := range [][]string{HealthyCompletions, BlockedOutcomes, FailedExecutions} {
+	for _, vocabulary := range [][]string{HealthyCompletions, BlockedOutcomes, FailedExecutions, ResultContractRefusals} {
 		for _, word := range vocabulary {
 			if !externalReasons[word] && !ourReasons[word] && !uninformativeReasons[word] {
 				t.Errorf("the tracker writes %q into reason_code and nothing decides it: "+
@@ -75,7 +76,7 @@ func TestEveryReasonCodeIsAttributedToOneSideOrTheOther(t *testing.T) {
 	for _, definition := range catalogue {
 		known[definition.Code] = true
 	}
-	for _, vocabulary := range [][]string{HealthyCompletions, BlockedOutcomes, FailedExecutions} {
+	for _, vocabulary := range [][]string{HealthyCompletions, BlockedOutcomes, FailedExecutions, ResultContractRefusals} {
 		for _, word := range vocabulary {
 			known[word] = true
 		}
@@ -279,8 +280,14 @@ func TestObjectsWeCannotYetSpeakForMakeTheVerdictUnknownNotDegraded(t *testing.T
 func TestObjectsHeldAgainstUsByTheDefaultAloneAreCountedApart(t *testing.T) {
 	byRule := Anomaly{QueryGroup: "qg-rule", Kind: KindDegradedRun,
 		CauseReason: "EXECUTION_BUDGET_EXHAUSTED"}
+	// A word no vocabulary declares, rather than a real code that happens to be
+	// unclassified today. A real one is a moving target: this fixture used
+	// STATE_FACT_CONTRADICTS_OUTCOME until the result contract refusals were
+	// classified, and then the test that guards the fall-through started
+	// failing because the fall-through had correctly stopped happening. What is
+	// under test is the path, not any particular code that takes it.
 	fellThrough := Anomaly{QueryGroup: "qg-new", Kind: KindDegradedRun,
-		CauseReason: "STATE_FACT_CONTRADICTS_OUTCOME"}
+		CauseReason: "A_FAILURE_MODE_NOBODY_HAS_CLASSIFIED_YET"}
 	anomalies := []Anomaly{byRule, fellThrough}
 	Attribute(anomalies)
 
@@ -490,6 +497,58 @@ func TestAWordIsEitherClassifiedOrExplicitlyUninformativeNeverBoth(t *testing.T)
 	for word := range externalReasons {
 		if ourReasons[word] {
 			t.Errorf("%q is on both classification lists", word)
+		}
+	}
+}
+
+// TestEveryResultContractCodeIsClassified exhausts the result contract's
+// refusal codes rather than waiting for one to reach a live page.
+//
+// Those codes are a closed subset of an otherwise open input. A guard anchored
+// to a closed list cannot cover a failure code in general -- that is why the
+// fall-through is counted at runtime -- but these are declared in one place, so
+// exhausting them is available, and it is strictly earlier than waiting.
+//
+// Waiting is not a plan for this family: the codes are produced only when the
+// result contract refuses a mutation, and that was just driven to near zero, so
+// in normal running they may never appear at all. A plan whose trigger may
+// never fire and a plan that was forgotten look the same afterwards.
+func TestEveryResultContractCodeIsClassified(t *testing.T) {
+	codes := resultcontract.ResultContractCodes()
+	if len(codes) == 0 {
+		t.Fatal("no result contract codes are declared; this check would pass without testing anything")
+	}
+
+	// The copy this package keeps is compared with the original in both
+	// directions. One direction alone is the failure this file already learned:
+	// a list that only has to be a subset agrees with its source on the day it
+	// is written and drifts silently afterwards.
+	declared := map[string]bool{}
+	for _, code := range ResultContractRefusals {
+		declared[code] = true
+	}
+	for _, code := range codes {
+		if !declared[code] {
+			t.Errorf("the result contract declares %s and ResultContractRefusals does not list it: "+
+				"a refusal this deployment can produce would reach the page unclassified", code)
+		}
+	}
+	original := map[string]bool{}
+	for _, code := range codes {
+		original[code] = true
+	}
+	for _, code := range ResultContractRefusals {
+		if !original[code] {
+			t.Errorf("ResultContractRefusals lists %s, which the result contract no longer declares: "+
+				"a rule kept alive for a code nothing emits", code)
+		}
+	}
+	for _, code := range codes {
+		graded := []Anomaly{{Kind: KindDegradedRun, CauseReason: code}}
+		Attribute(graded)
+		if graded[0].Unclassified {
+			t.Errorf("%s reaches attribution and no rule matches it: it counts against the deployment "+
+				"by the fall-through, which is the safe direction but is nobody's decision", code)
 		}
 	}
 }

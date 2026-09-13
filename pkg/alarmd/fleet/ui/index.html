@@ -201,7 +201,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
     <table>
       <thead><tr>
         <th>副本</th><th>持有</th><th>正常</th><th>自身异常</th><th>降级池</th><th>状态未知</th>
-        <th>快照新鲜度</th><th>内存</th><th>CPU</th><th>同时在跑</th>
+        <th>快照新鲜度</th><th>已运行</th><th>内存</th><th>CPU</th><th>同时在跑</th>
       </tr></thead>
       <tbody id="repRows"></tbody>
     </table>
@@ -235,6 +235,8 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
     </div>
     <div id="objErr" class="err" hidden></div>
     <p class="basis" id="rollup"></p>
+    <p class="basis" id="churn"></p>
+    <p class="basis" id="ceiling"></p>
     <div class="summary" id="summary"></div>
     <table>
       <thead><tr>
@@ -612,11 +614,16 @@ function loadObjects() {
       // The same field the verdict reads. Deriving it again here from the
       // reason code would be a second copy of the rule, and the two would agree
       // until the day one of them was updated.
-      var who = cell(anomaly.attribution === 'EXTERNAL' ? '数据源/策略' : 'alarmd');
-      if (anomaly.attribution !== 'EXTERNAL') { who.className = 'stuck'; }
-      who.title = anomaly.attribution === 'EXTERNAL'
-        ? '扩容或改架构都不会让它变好——要找策略配置或数据源的人'
-        : '容量或架构能避免的，判定就看这一类；未归类的也算在这里，宁可多看一眼';
+      var WHO = {EXTERNAL: '数据源/策略', UNKNOWN: '还看不出', OURS: 'alarmd'};
+      var WHY_WHO = {
+        EXTERNAL: '扩容或改架构都不会让它变好——要找策略配置或数据源的人',
+        UNKNOWN: '这一条是重启后从记录里恢复的，成因没有被持久化——等它跑完下一轮才知道是谁的',
+        OURS: '容量或架构能避免的，判定就看这一类；报了成因但没人归类过的也算在这里，宁可多看一眼'
+      };
+      var side = anomaly.attribution || 'OURS';
+      var who = cell(WHO[side] || side);
+      if (side === 'OURS') { who.className = 'stuck'; }
+      who.title = WHY_WHO[side] || '';
       cell(kindText(anomaly.kind));
       cell(anomaly.reason_code || '—');
       // The completion kind alone folds four conditions together, and they call
@@ -709,6 +716,12 @@ function loadObjects() {
       tr.appendChild(td);
       tb.appendChild(tr);
     });
+    // Keyed by column and filter, so switching lists does not report the other
+    // list's objects as having vanished.
+    var churn = churnSince(served + '|' + query(),
+      rows.map(function (r) { return r.query_group; }), Date.now());
+    text('churn', churnLine(churn, rows.length, total));
+    text('ceiling', continuityLine(objects.per_replica));
     renderSummary(objects.summary, total);
     renderStallNote(objects.stall_after_seconds, objects.summary && objects.summary.stalled,
       objects.stalled_total, objects.filtered);
@@ -825,7 +838,7 @@ function renderReplicas(rows) {
   show('replicaPanel', rows.length > 0);
   var host = document.getElementById('repRows');
   host.textContent = '';
-  rows.forEach(function (r) {
+  rows.forEach(function (replica) {
     var tr = document.createElement('tr');
     function cell(t, cls) {
       var td = document.createElement('td');
@@ -834,22 +847,28 @@ function renderReplicas(rows) {
       tr.appendChild(td);
       return td;
     }
-    var name = cell(shortReplica(r.replica), 'mono qg');
-    name.title = r.replica + '（点击把下面的对象列表限定到这个副本）';
+    var name = cell(shortReplica(replica.replica), 'mono qg');
+    name.title = replica.replica + '（点击把下面的对象列表限定到这个副本）';
     name.addEventListener('click', function () {
-      document.getElementById('fReplica').value = r.replica;
+      document.getElementById('fReplica').value = replica.replica;
       applyFilters();
     });
-    cell(r.owned + (r.truncated ? '（列表被截断，下面几个数是下界）' : ''));
-    cell(r.healthy);
-    cell(r.anomalies);
-    cell(r.demoted);
-    cell(r.unknown);
+    cell(replica.owned + (replica.truncated ? '（列表被截断，下面几个数是下界）' : ''));
+    cell(replica.healthy);
+    cell(replica.anomalies);
+    cell(replica.demoted);
+    cell(replica.unknown);
     // A replica publishing late describes a past it has not updated, and that
     // is invisible in every other number on this row.
-    var age = cell(Math.round(r.age_seconds) + ' 秒前');
-    if (r.age_seconds > 60) { age.className = 'stuck'; }
-    var cap = r.capacity;
+    var age = cell(Math.round(replica.age_seconds) + ' 秒前');
+    if (replica.age_seconds > 60) { age.className = 'stuck'; }
+    // How long this replica's process has been up, which is the ceiling on
+    // every duration it reports. Zero means it did not publish one -- an older
+    // build -- and that is not the same as "just started", so it says so.
+    var up = cell(replica.uptime_seconds ? duration(new Date(Date.now() - replica.uptime_seconds * 1000).toISOString()) : '未上报');
+    if (replica.uptime_seconds && replica.uptime_seconds < 1800) { up.className = 'stuck'; }
+    up.title = '这个副本上报的所有"已持续"都不会超过这个数——刚重启时页面上的时长量的是进程年龄';
+    var cap = replica.capacity;
     cell(cap ? bytes(cap.memory_used_bytes) + ' / ' + bytes(cap.memory_limit_bytes) : '—');
     cell(cap && cap.cpu_cores ? (cap.cpu_seconds !== undefined ? '上限 ' + cap.cpu_cores + ' 核' : '—') : '—');
     cell(cap ? (cap.permits_held + ' / ' + cap.permit_budget) : '—');
@@ -942,13 +961,129 @@ function spreadLine(noun, dist, total) {
 function attributionLine(summary) {
   var ours = summary.ours || 0;
   var external = summary.external || 0;
-  if (!ours && !external) return '';
+  var unknown = summary.unattributed || 0;
+  if (!ours && !external && !unknown) return '';
+  var tail = '';
+  if (unknown) {
+    // Counted apart on purpose. The first live read of this split put seven of
+    // these on the deployment's own side four minutes after a rollout, which
+    // would have made every deploy look like a regression.
+    tail = '；还有 ' + unknown + ' 个暂时看不出是谁的（重启后恢复的，成因没保留，'
+      + '跑完下一轮就知道）';
+  }
   if (!ours) {
     return '这些里没有一个是 alarmd 自己的问题（容量或架构）——' + external
-      + ' 个都是数据源没答或策略配置的事，要找策略和数据源的人';
+      + ' 个都是数据源没答或策略配置的事，要找策略和数据源的人' + tail;
   }
   return 'alarmd 自己该负责的有 ' + ours + ' 个（容量或架构，判定就看这个数）；'
-    + '另外 ' + external + ' 个是数据源没答或策略配置的事，不由扩容或改架构解决';
+    + '另外 ' + external + ' 个是数据源没答或策略配置的事，不由扩容或改架构解决' + tail;
+}
+
+// What changed since the last refresh, by identity rather than by count.
+//
+// A count cannot tell a population apart from a turnover of the same size:
+// eighteen objects staying eighteen is either eighteen objects stuck or
+// eighteen recovering while eighteen new ones arrive, and those are opposite
+// situations. Establishing which took a script, two reads pinned to a list of
+// object ids, and an hour of waiting -- and the page had the second read in
+// hand the whole time, thirty seconds after the first.
+//
+// It compares the rows actually rendered, so on a paged list it describes this
+// page. That is stated rather than hidden: a churn figure over a slice is still
+// the answer to "are these the same objects", which is what it is for.
+//
+// The previous read is kept only in this tab, and a reload legitimately starts
+// over -- the same terms as the capacity rates beside it.
+var previousObjects = {};
+function churnSince(key, ids, at) {
+  var previous = previousObjects[key];
+  previousObjects[key] = {at: at, ids: ids};
+  if (!previous) return null;
+  var before = {};
+  previous.ids.forEach(function (id) { before[id] = true; });
+  var now = {};
+  ids.forEach(function (id) { now[id] = true; });
+  var arrived = ids.filter(function (id) { return !before[id]; }).length;
+  var left = previous.ids.filter(function (id) { return !now[id]; }).length;
+  return {arrived: arrived, left: left, elapsed: (at - previous.at) / 1000,
+          before: previous.ids.length};
+}
+
+function churnLine(churn, shown, total) {
+  if (!churn || (!churn.arrived && !churn.left)) return '';
+  var scope = shown < total ? '本页 ' + shown + ' 行里' : '';
+  return '自上次刷新（' + Math.round(churn.elapsed) + ' 秒前）' + scope
+    + '：新增 ' + churn.arrived + ' 个，消失 ' + churn.left + ' 个'
+    + (churn.arrived === churn.left && churn.arrived > 0
+        ? '——总数没变，但换了一批，不是同一批对象卡在这里'
+        : '');
+}
+
+// The pod name is prefix + generation + instance, so the middle segment names
+// the build a replica is running. It costs nothing to read and the page had no
+// notion of it at all.
+//
+// Two things it makes sayable. Mid-rollout the deployment holds replicas from
+// two generations at once, and every total on this page is then a sum across
+// two builds -- which is exactly when someone is looking, and exactly when a
+// comparison against a reading from ten minutes ago is meaningless. And a
+// generation that changes between two refreshes means everything below it
+// restarted: the durations reset, the causes were not persisted, and a reader
+// who does not know that reads a rollout as a recovery.
+function generationOf(name) {
+  var parts = String(name || '').split('-');
+  return parts.length > 2 ? parts[parts.length - 2] : '';
+}
+
+// The ceiling the object list has to state, because the durations it bounds are
+// in the object list and the number itself was in another panel.
+//
+// That is the same defect as putting the backend symptom only in the summary:
+// true where it is written, and not where it is read. A reader looking at "已
+// 持续 6 分钟" has no reason to go to the replica table and cross-reference an
+// uptime.
+function uptimeCeiling(perReplica) {
+  var known = (perReplica || []).filter(function (replica) { return replica.uptime_seconds > 0; });
+  if (!known.length) return null;
+  var youngest = known.reduce(function (a, b) {
+    return a.uptime_seconds <= b.uptime_seconds ? a : b;
+  });
+  return {seconds: youngest.uptime_seconds, replica: youngest.replica,
+          all: known.length === (perReplica || []).length};
+}
+
+// What the reader has to know before trusting any duration below this line.
+//
+// Kept to the cases where it changes the reading: a young deployment caps every
+// duration under it, a mixed rollout means the totals span two builds, and a
+// generation that changed since the last refresh means everything reset.
+var previousGeneration = null;
+function continuityLine(perReplica) {
+  var parts = [];
+  var generations = {};
+  (perReplica || []).forEach(function (replica) {
+    var g = generationOf(replica.replica);
+    if (g) generations[g] = true;
+  });
+  var names = Object.keys(generations);
+  if (names.length > 1) {
+    parts.push('此刻有 ' + names.length + ' 个版本的副本同时在跑（正在滚动）——下面的合计是跨两个版本相加的，'
+      + '不要和滚动之前的读数比');
+  } else if (names.length === 1) {
+    if (previousGeneration && previousGeneration !== names[0]) {
+      parts.push('副本已经换代（' + previousGeneration + ' → ' + names[0] + '）：下面所有时长都从这一代重新起算，'
+        + '成因没有被持久化，和换代之前的读数不可比');
+    }
+    previousGeneration = names[0];
+  }
+  var ceiling = uptimeCeiling(perReplica);
+  if (ceiling && ceiling.seconds < 3 * 3600) {
+    parts.push('最年轻的副本只运行了 '
+      + duration(new Date(Date.now() - ceiling.seconds * 1000).toISOString())
+      + '，所以下面的"已持续"最多只能到这个数——不是问题只存在了这么久'
+      + (ceiling.all ? '' : '（有副本没上报运行时长，这个上限可能更松）'));
+  }
+  return parts.join('；') + (parts.length ? '。' : '');
 }
 
 function renderRollup(summary, total) {
@@ -1745,6 +1880,13 @@ function renderRuns(host, runs, manyProcesses) {
       // both put "QUERY_TIMEOUT · QUERY_TIMEOUT" on the row.
       if (reason && reason !== facts.failure_code) parts.push(reason);
       if (facts.failure_code) parts.push(facts.failure_code);
+      // The sentence that says which failure this actually was. The reason code
+      // above it is one level too coarse: BLOCKED_EXACT_SET_UNAVAILABLE covers a
+      // retired schedule, a corrupt projection and a store that would not
+      // answer, and someone read every row of this view on exactly that object
+      // and still could not say which. It goes last because it is the longest
+      // and the most specific -- the row reads coarse to fine.
+      if (record.error) parts.push(record.error);
       // A step that carries no decision and no result still happened, and a
       // blank row reads as missing data rather than as a step with nothing to
       // report. Say the one thing it did establish.

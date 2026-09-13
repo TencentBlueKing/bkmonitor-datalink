@@ -257,7 +257,21 @@ type Snapshot struct {
 	// for the count: the list is bounded like the anomaly list, so a replica
 	// holding more than the budget publishes a short list beside a full count
 	// rather than a smaller count.
-	OwnedObjects   []string  `json:"owned_objects,omitempty"`
+	OwnedObjects []string `json:"owned_objects,omitempty"`
+	// StartedAt is when this replica's process started.
+	//
+	// It is the ceiling on every duration this replica reports. A run this
+	// process watched begin cannot predate the process, so after a rollout every
+	// "wrong for N minutes" on the page is really "this process has been
+	// watching for N minutes" -- and the page had no way to say so, because
+	// nothing published the one number that bounds them all.
+	//
+	// Read three times in one investigation before anyone noticed: 55 pooled
+	// objects all reporting the same duration, 83 anomalies all reporting the
+	// same duration, and a scheduled comparison that turned out to be measuring
+	// a rollout. The per-row provenance says which durations are bounds; this
+	// says what they are bounded by.
+	StartedAt      time.Time `json:"started_at,omitempty"`
 	Determined     int       `json:"determined"`
 	Anomalies      []Anomaly `json:"anomalies"`
 	TotalAnomalies int       `json:"total_anomalies"`
@@ -382,6 +396,10 @@ type ReplicaView struct {
 	// read. A replica publishing late is reporting about a past it has not
 	// updated, and that is invisible in any of the numbers above.
 	AgeSeconds float64 `json:"age_seconds"`
+	// UptimeSeconds is how long this replica's process has been running, and it
+	// is what every duration this replica reports is bounded by. Zero means the
+	// replica did not publish it, which is not the same as "just started".
+	UptimeSeconds float64 `json:"uptime_seconds,omitempty"`
 	// Truncated says this replica published a shorter list than it had, so its
 	// own counts are floors.
 	Truncated bool `json:"truncated"`
@@ -535,7 +553,11 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			Replica: replica, Owned: snapshot.Owned, Determined: snapshot.Determined,
 			Anomalies: snapshot.TotalAnomalies, Demoted: snapshot.TotalDemoted,
 			AgeSeconds: now.Sub(snapshot.TakenAt).Seconds(),
-			Truncated:  snapshot.Truncated(), Capacity: snapshot.Capacity,
+			// Left at zero when the replica did not publish a start time, which
+			// an older build will not. Zero has to read as "not reported" rather
+			// than "started just now", so the page checks before using it.
+			UptimeSeconds: uptimeSeconds(snapshot.StartedAt, now),
+			Truncated:     snapshot.Truncated(), Capacity: snapshot.Capacity,
 		}
 		// Same subtraction as the deployment view, for the same reason: a
 		// healthy count built by its own walk drifts from the lists beside it.
@@ -675,6 +697,17 @@ func DecideHealth(view *View) {
 		view.Health = HealthUnknown
 	case OursCount(view.Anomalies) > 0:
 		view.Health = HealthDegraded
+	// An object whose cause was never recorded is missing evidence about a real
+	// anomaly. This package already refuses to call a view with missing evidence
+	// either healthy or degraded, and that rule does not stop applying because
+	// the evidence is missing per object rather than per replica.
+	//
+	// It clears itself: each of these has a cause again as soon as it completes
+	// one more round, and one that never completes another is marked stalled,
+	// which is ours. So a rollout reads UNKNOWN for a minute or two instead of
+	// reading DEGRADED, and neither reads as well.
+	case UnattributedCount(view.Anomalies) > 0:
+		view.Health = HealthUnknown
 	default:
 		view.Health = HealthHealthy
 	}
@@ -769,6 +802,21 @@ func coverageDetail(coverage *Disagreement, covered, expected int, ownedByReplic
 	return fmt.Sprintf("%s: %d held by more than one replica (Covered double counts these), "+
 		"%d held but no longer in the catalogue (ownership to release), %d in the catalogue that nobody holds",
 		head, coverage.HeldBySeveralTotal, coverage.HeldNotExpectedTotal, coverage.ExpectedNotHeldTotal)
+}
+
+// uptimeSeconds turns a published start time into an age, refusing the two
+// values that are not one.
+//
+// A zero start time is a replica that did not publish one; a start time in the
+// future is a clock disagreement. Both would render as a very small uptime,
+// which is the reading that matters most here -- a small uptime is what tells
+// the page every duration below it is capped. Getting that wrong invents a
+// restart that did not happen.
+func uptimeSeconds(startedAt time.Time, now time.Time) float64 {
+	if startedAt.IsZero() || startedAt.After(now) {
+		return 0
+	}
+	return now.Sub(startedAt).Seconds()
 }
 
 // sortAnomalies orders a column oldest-first. Both columns use it, because a

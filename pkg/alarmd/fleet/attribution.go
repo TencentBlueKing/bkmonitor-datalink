@@ -35,6 +35,21 @@ const (
 	// still could not produce a result for: the data is not there, the backend
 	// did not answer, the strategy says something this build cannot evaluate.
 	AttributionExternal Attribution = "EXTERNAL"
+	// AttributionUnknown is an object with no evidence recorded either way.
+	//
+	// It exists because the first live read of this split had nineteen objects
+	// against the deployment and seven of them were only there for want of a
+	// record: restored from persisted state, which keeps the completion kind and
+	// not the cause, four minutes after a rollout. Counting those as ours makes
+	// the verdict DEGRADED after every deploy for as long as it takes each object
+	// to finish one more round -- which is the failure this split was built to
+	// remove, arriving by a different route.
+	//
+	// It is not the same as an unrecognised code. A code nobody has classified
+	// is a failure mode this build is producing and counts against it; no code at
+	// all, on an object this process never watched fail, is missing evidence. The
+	// first is a verdict, the second is the absence of one.
+	AttributionUnknown Attribution = "UNKNOWN"
 )
 
 // externalReasons are the reason codes that are not evidence against this
@@ -167,8 +182,23 @@ func attributionOf(anomaly Anomaly) Attribution {
 			return AttributionOurs
 		}
 	}
-	// Unclassified counts against the deployment, and that is the whole point of
-	// choosing a default rather than leaving one.
+	// Nothing said which side this is. Two very different cases reach here.
+	//
+	// An object rebuilt from persisted state has no cause because the cause was
+	// never written down, not because there is nothing to say -- this process
+	// has not seen it fail yet. Reporting that as a fault of the deployment
+	// would make every rollout look like a regression for a few minutes.
+	// Only the restored case. An object this process watched fail and recorded
+	// nothing about is a different thing: the evidence was not missing, it was
+	// never produced, and that is this deployment's own observability failing.
+	// Merging the two would let a real hole in what we record hide behind the
+	// same word as a known persistence gap.
+	if restoredWithoutEvidence(anomaly) {
+		return AttributionUnknown
+	}
+	// Otherwise something was reported and nobody has classified it. That counts
+	// against the deployment, and that is the whole point of choosing a default
+	// rather than leaving one.
 	//
 	// The other direction is the dangerous one: a failure mode nobody has
 	// classified yet is exactly the kind this deployment has just started
@@ -176,6 +206,39 @@ func attributionOf(anomaly Anomaly) Attribution {
 	// arrive as a HEALTHY verdict. Defaulting it to ours costs a look at
 	// something that turns out to be external; the reverse costs the signal.
 	return AttributionOurs
+}
+
+// restoredWithoutEvidence reports an object rebuilt from a record that does not
+// carry why it was failing.
+//
+// The completion kind is persisted and the cause below it is not, so a restored
+// object arrives with a kind and nothing else. That is missing evidence about a
+// real anomaly, not evidence of a healthy one and not evidence against the
+// deployment.
+func restoredWithoutEvidence(anomaly Anomaly) bool {
+	if anomaly.Cause != "" || anomaly.CauseReason != "" {
+		return false
+	}
+	if anomaly.Failure != nil && anomaly.Failure.Code != "" {
+		return false
+	}
+	for _, restored := range RestoredSinceSources {
+		if anomaly.SinceFrom == restored {
+			return true
+		}
+	}
+	return false
+}
+
+// UnattributedCount returns how many carry no evidence either way.
+func UnattributedCount(anomalies []Anomaly) int {
+	unknown := 0
+	for _, anomaly := range anomalies {
+		if anomaly.Attribution == AttributionUnknown {
+			unknown++
+		}
+	}
+	return unknown
 }
 
 // Attribute fills in the attribution on every anomaly in the list.

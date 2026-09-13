@@ -220,6 +220,9 @@ type Summary struct {
 	// them together is what made the verdict permanently DEGRADED.
 	Ours     int `json:"ours"`
 	External int `json:"external"`
+	// Unattributed is the objects carrying no evidence either way, which is
+	// neither of the other two and must not be folded into either.
+	Unattributed int `json:"unattributed"`
 }
 
 // Onset splits the list by how long ago each object went wrong.
@@ -262,7 +265,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 	strategies := map[StrategyRef]struct{}{}
 	replicas := map[string]int{}
 	stalled := 0
-	ours, external := 0, 0
+	ours, external, unattributed := 0, 0, 0
 	onset := Onset{}
 	for _, anomaly := range anomalies {
 		if anomaly.Stalled {
@@ -288,6 +291,8 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 		switch anomaly.Attribution {
 		case AttributionExternal:
 			external++
+		case AttributionUnknown:
+			unattributed++
 		default:
 			ours++
 		}
@@ -329,7 +334,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 		ByFailure: rank(failures), ByFailureCode: rank(codes), ByFailureDetail: rank(details), ByCauseReason: rank(causeReasons),
 		ByBusiness: rank(businesses), Strategies: len(strategies),
 		ByReplica: rank(replicas), Stalled: stalled, Onset: onset,
-		Ours: ours, External: external,
+		Ours: ours, External: external, Unattributed: unattributed,
 	}
 }
 

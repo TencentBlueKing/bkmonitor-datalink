@@ -138,8 +138,11 @@ type fleetPublisher struct {
 	tracker *fleet.Tracker
 	store   *fleet.RedisStore
 	replica string
-	owned   func() []execution.QueryGroupIdentity
-	now     func() time.Time
+	// startedAt is this process's start, captured once. It bounds every
+	// duration this replica reports: a run it watched begin cannot predate it.
+	startedAt time.Time
+	owned     func() []execution.QueryGroupIdentity
+	now       func() time.Time
 	// observe reports each publish outcome. A failure is retried on the next
 	// tick rather than propagated: the snapshot is diagnostics, and diagnostics
 	// must not be able to stop the pipeline whose facts they describe.
@@ -312,9 +315,10 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	parked, overdue := publisherOverdue(publisher.overdue, at, publisher.replica, publisher.strategies)
 	anomalies = append(anomalies, onlyUnlisted(parked, anomalies, demoted)...)
 	snapshot := fleet.Snapshot{
-		Replica: publisher.replica,
-		TakenAt: at,
-		Owned:   len(owned),
+		Replica:   publisher.replica,
+		TakenAt:   at,
+		StartedAt: publisher.startedAt,
+		Owned:     len(owned),
 		// Read after Forget, so it counts only objects this replica still owns.
 		// The difference between the two is what the replica owns but cannot
 		// speak for, which the aggregate counts as unknown rather than healthy.

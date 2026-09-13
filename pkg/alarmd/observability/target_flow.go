@@ -104,11 +104,25 @@ type targetFlowRecord struct {
 	// place. So after a restart, or after the object moves to another replica,
 	// two unrelated rounds carry the same run_id, and anything grouping by it
 	// alone folds them into one.
-	Process          string          `json:"process_id"`
-	Time             int64           `json:"time_unix_ms"`
-	Stage            string          `json:"stage"`
-	Result           string          `json:"result,omitempty"`
-	Reason           string          `json:"reason_code,omitempty"`
+	Process string `json:"process_id"`
+	Time    int64  `json:"time_unix_ms"`
+	Stage   string `json:"stage"`
+	Result  string `json:"result,omitempty"`
+	Reason  string `json:"reason_code,omitempty"`
+	// Failure is the error the observation carried, which the log has always
+	// printed and the diagnostic record has never held.
+	//
+	// The reason code stops one level above the answer. A Query Group blocked in
+	// the Slot source reports BLOCKED_EXACT_SET_UNAVAILABLE on every round, and
+	// that one code covers a retired schedule, a corrupt projection and a store
+	// that would not answer -- three different people's work. Someone opened the
+	// deepest view this page has on exactly that object, read every row, and
+	// still could not say what was wrong; the sentence that answered it,
+	// "schedule unavailable", was in the process log the whole time.
+	//
+	// Bounded, because an error string has no length anyone controls and these
+	// records live under a byte budget.
+	Failure          string          `json:"error,omitempty"`
 	QueryGroup       string          `json:"query_group_key"`
 	Strategy         string          `json:"strategy_id,omitempty"`
 	Snapshot         string          `json:"snapshot_revision,omitempty"`
@@ -307,7 +321,7 @@ func EmitTargetFlow(ctx context.Context, stage string, trace TraceFields, facts 
 		facts.Evaluations = v.evaluations.Load()
 		facts.EvaluationNS = v.evaluationNS.Load()
 	}
-	v.flow.emit(stage, "", "", trace, facts, 0)
+	v.flow.emit(stage, "", "", "", trace, facts, 0)
 }
 
 // Observe records the facts a selected round accumulates.
@@ -396,9 +410,9 @@ func (f *TargetFlow) Observe(ctx context.Context, o Observation) {
 			facts.ReadinessSlackSeconds = r.SlackSeconds
 		}
 	}
-	f.emit(string(o.Stage), string(o.Result), string(o.ReasonCode), trace, facts, o.Duration)
+	f.emit(string(o.Stage), string(o.Result), string(o.ReasonCode), failureText(o.Err), trace, facts, o.Duration)
 }
-func (f *TargetFlow) emit(stage, result, reason string, t TraceFields, facts TargetFlowFacts, d time.Duration) {
+func (f *TargetFlow) emit(stage, result, reason, failure string, t TraceFields, facts TargetFlowFacts, d time.Duration) {
 	defer func() { _ = recover() }() // diagnostics never change ACK, lease or execution returns
 	if !f.Selected(t.QueryGroupKey) {
 		return
@@ -443,7 +457,7 @@ func (f *TargetFlow) emit(stage, result, reason string, t TraceFields, facts Tar
 		f.dropLocked(now, "byte_limit")
 		return
 	}
-	record := targetFlowRecord{SlotIdentityKnown: t.EvaluationTime > 0 && t.QueryRevision != "" && t.SnapshotRevision != "" && t.ScheduleRevision != "", Diagnostic: true, Component: "runtime", Process: f.process, Time: now.UnixMilli(), Stage: stage, Result: result, Reason: reason, QueryGroup: t.QueryGroupKey, Strategy: t.StrategyID, Snapshot: t.SnapshotRevision, QueryRevision: t.QueryRevision, ScheduleRevision: t.ScheduleRevision, SegmentStart: t.ScheduleSegmentStart, Slot: t.EvaluationTime, Owner: t.OwnerID, OwnerEpoch: t.OwnerEpoch, DurationNS: int64(d), Facts: facts, Dropped: f.dropped, RecordLimit: TargetFlowMaxRecords, ByteLimit: TargetFlowMaxBytes}
+	record := targetFlowRecord{SlotIdentityKnown: t.EvaluationTime > 0 && t.QueryRevision != "" && t.SnapshotRevision != "" && t.ScheduleRevision != "", Diagnostic: true, Component: "runtime", Process: f.process, Time: now.UnixMilli(), Stage: stage, Result: result, Reason: reason, Failure: failure, QueryGroup: t.QueryGroupKey, Strategy: t.StrategyID, Snapshot: t.SnapshotRevision, QueryRevision: t.QueryRevision, ScheduleRevision: t.ScheduleRevision, SegmentStart: t.ScheduleSegmentStart, Slot: t.EvaluationTime, Owner: t.OwnerID, OwnerEpoch: t.OwnerEpoch, DurationNS: int64(d), Facts: facts, Dropped: f.dropped, RecordLimit: TargetFlowMaxRecords, ByteLimit: TargetFlowMaxBytes}
 	record.QueueSuppressed = f.queueSuppressed
 	wire, _ := json.Marshal(record)
 	wire = append(wire, '\n')
@@ -551,6 +565,27 @@ func (f *TargetFlow) dropLocked(now time.Time, reason string) {
 	}
 }
 
+// targetFlowMaxFailureBytes bounds the error text one record carries. Long
+// enough for the sentence that identifies the failure, short enough that it
+// cannot crowd out the records around it under the byte budget.
+const targetFlowMaxFailureBytes = 200
+
+// failureText renders an observation's error for the record, bounded.
+//
+// Truncation is marked. A silently cut error reads as a complete but different
+// sentence, and the reader has no way to know the part that would have
+// identified it is the part that was removed.
+func failureText(err error) string {
+	if err == nil {
+		return ""
+	}
+	text := err.Error()
+	if len(text) > targetFlowMaxFailureBytes {
+		return text[:targetFlowMaxFailureBytes] + "…"
+	}
+	return text
+}
+
 func targetFlowCritical(stage string, facts TargetFlowFacts) bool {
 	switch stage {
 	case string(StageQueryCompleted), string(StageProgressCommitted), string(StageSlotCompleted), string(StageRunnerCompleted), string(StageSlotSourceCompleted), string(StageResourceHard), "execution_outcome", "runner_return", "expired_range_returned":
@@ -565,6 +600,6 @@ func targetFlowCritical(stage string, facts TargetFlowFacts) bool {
 // Record emits only selected QG lifecycle facts outside a Runner invocation.
 func (f *TargetFlow) Record(stage, q string, facts TargetFlowFacts) {
 	if f.Selected(q) {
-		f.emit(stage, "", "", TraceFields{QueryGroupKey: q}, facts, 0)
+		f.emit(stage, "", "", "", TraceFields{QueryGroupKey: q}, facts, 0)
 	}
 }

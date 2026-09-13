@@ -145,3 +145,91 @@ func TestAStalledObjectIsOursEvenWhenItsLastReasonWasExternal(t *testing.T) {
 			anomalies[0].Attribution, AttributionOurs)
 	}
 }
+
+// The case the first live read of this split produced, four minutes after a
+// rollout: seven objects restored from persisted state, which keeps the
+// completion kind and not the cause. They were reported against the deployment,
+// and would have been after every deploy until each finished one more round --
+// the failure this split exists to remove, arriving by another route.
+//
+// Missing evidence about a real anomaly is neither side. This package already
+// refuses to call a view with missing evidence healthy or degraded, and that
+// rule does not stop applying because the evidence is missing per object.
+func TestARestoredObjectWithNoRecordedCauseIsNotHeldAgainstTheDeployment(t *testing.T) {
+	restored := Anomaly{
+		QueryGroup: "qg-restored", Kind: KindDegradedRun,
+		ReasonCode: "COMPLETED_WITH_UNAVAILABLE", SinceFrom: SinceRestoredLastFull,
+	}
+	Attribute([]Anomaly{restored})
+	if got := attributionOf(restored); got != AttributionUnknown {
+		t.Errorf("a restored object with no recorded cause reports %q, want %q: it would make "+
+			"every rollout read as a regression", got, AttributionUnknown)
+	}
+
+	// The distinction that must not collapse: an object this process watched
+	// fail and recorded nothing about is the deployment's own observability
+	// failing, not a known persistence gap.
+	watched := Anomaly{
+		QueryGroup: "qg-watched", Kind: KindDegradedRun,
+		ReasonCode: "COMPLETED_WITH_UNAVAILABLE", SinceFrom: SinceSnapshotContinuity,
+	}
+	if got := attributionOf(watched); got != AttributionOurs {
+		t.Errorf("an object we watched fail with nothing recorded reports %q, want %q",
+			got, AttributionOurs)
+	}
+
+	// And a restored object that does carry evidence is classified on it --
+	// either level of evidence, because both survive different things.
+	withCause := restored
+	withCause.CauseReason = "HISTORY_WARMING"
+	if got := attributionOf(withCause); got != AttributionExternal {
+		t.Errorf("a restored object carrying a cause reports %q, want it classified on the "+
+			"cause (%q)", got, AttributionExternal)
+	}
+	// A restored object whose failure record survived is not unknowable: we know
+	// exactly what happened to it. Calling it unknown would drop a classifiable
+	// object out of the verdict, which is the same mistake as the one above with
+	// the sign flipped.
+	withFailure := restored
+	withFailure.Failure = &FailureRef{Category: "source_backend", Code: "QUERY_UNAVAILABLE"}
+	if got := attributionOf(withFailure); got != AttributionExternal {
+		t.Errorf("a restored object carrying a failure code reports %q, want it classified on "+
+			"that code (%q): the evidence is there", got, AttributionExternal)
+	}
+	// And the case that separates "no evidence" from "evidence nobody has
+	// classified", which is the whole reason the two are different words. A
+	// recognised code returns above this point, so only an unrecognised one
+	// reaches the restored check -- and it must not be treated as absent.
+	withUnknownCode := restored
+	withUnknownCode.Failure = &FailureRef{Category: "evaluation", Code: "SOMETHING_NEW_WE_EMIT"}
+	if got := attributionOf(withUnknownCode); got != AttributionOurs {
+		t.Errorf("a restored object carrying an unrecognised failure code reports %q, want %q: "+
+			"a code nobody has classified is evidence, and this build produced it", got, AttributionOurs)
+	}
+}
+
+// A deployment holding nothing but objects it cannot yet speak for is not well
+// and is not broken. Calling it degraded pages someone for a rollout; calling
+// it healthy claims something no evidence supports.
+func TestObjectsWeCannotYetSpeakForMakeTheVerdictUnknownNotDegraded(t *testing.T) {
+	snapshots := healthySnapshots()
+	snapshots[1].Anomalies = []Anomaly{{
+		QueryGroup: "qg-restored", Kind: KindDegradedRun, Since: now.Add(-time.Hour),
+		ReasonCode: "COMPLETED_WITH_UNAVAILABLE", SinceFrom: SinceRestoredLastFull,
+	}}
+	snapshots[1].TotalAnomalies = 1
+	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, replicas(), now, time.Minute)
+	if len(view.Gaps) > 0 {
+		t.Fatalf("unexpected gaps decide the verdict regardless: %+v", view.Gaps)
+	}
+	if view.Health != HealthUnknown {
+		t.Errorf("health = %q, want %q: the evidence about this object was never recorded, "+
+			"which is not evidence of a fault and not evidence of health", view.Health, HealthUnknown)
+	}
+	if got := UnattributedCount(view.Anomalies); got != 1 {
+		t.Errorf("unattributed = %d, want 1", got)
+	}
+	if got := OursCount(view.Anomalies); got != 0 {
+		t.Errorf("ours = %d, want 0: it must not be counted against the deployment", got)
+	}
+}

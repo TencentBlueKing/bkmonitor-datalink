@@ -318,6 +318,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_control_cache_entries":                        "variableLabels: {object}",
 		"bkmonitor_alarmd_control_cache_bytes":                          "variableLabels: {object}",
 		"bkmonitor_alarmd_control_cache_bytes_limit":                    "variableLabels: {object}",
+		"bkmonitor_alarmd_control_cache_audit_total":                    "variableLabels: {object,result}",
 		"bkmonitor_alarmd_legacy_pod_cache_total":                       "variableLabels: {result}",
 		"bkmonitor_alarmd_series_admission_total":                       "variableLabels: {filter,result,reason}",
 		"bkmonitor_alarmd_unmapped_severity_total":                      "variableLabels: {level}",
@@ -686,6 +687,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("control_cache_entries"):     4,
 		fqName("control_cache_bytes"):       4,
 		fqName("control_cache_bytes_limit"): 4,
+		fqName("control_cache_audit_total"): 4,
 		fqName("legacy_pod_cache_total"):    3,
 		// Filters and reasons are closed vocabularies in the recorder.
 		fqName("series_admission_total"): len(admissionFilters) * len(admissionResults) * len(admissionReasons),

@@ -39,6 +39,20 @@ type ControlCacheCounts struct {
 	// budget derived from the container. Absent for the rest, because a
 	// ceiling reported as zero would read as a cache that can hold nothing.
 	Occupancy *ControlCacheOccupancy
+	// Audit is present only for a cached object whose reads are sampled
+	// against the store itself; see ControlCacheAudit.
+	Audit *ControlCacheAudit
+}
+
+// ControlCacheAudit is a sampled reconciliation of a cached object against
+// what the store holds. Samples and Agreed count audits; OverNamed and Missed
+// count objects, in opposite directions that are never summed: an over-named
+// object cost a read it did not need, a missed one served stale content.
+type ControlCacheAudit struct {
+	Samples   uint64
+	Agreed    uint64
+	OverNamed uint64
+	Missed    uint64
 }
 
 // ControlCacheOccupancy is what one cached object holds against what it is
@@ -59,6 +73,7 @@ type controlCacheCollector struct {
 	entries    *prometheus.Desc
 	bytes      *prometheus.Desc
 	bytesLimit *prometheus.Desc
+	audit      *prometheus.Desc
 }
 
 func newControlCacheCollector() *controlCacheCollector {
@@ -88,6 +103,15 @@ func newControlCacheCollector() *controlCacheCollector {
 			"The derived ceiling for the same, a share of the container's memory limit. It is a "+
 				"ceiling and not a target: occupancy well below it is the cache holding a working set "+
 				"smaller than the container allows for."),
+		audit: prometheus.NewDesc(
+			prometheus.BuildFQName(metricNamespace, metricSubsystem, "control_cache_audit_total"),
+			"Sampled reconciliations of a cached object against the store, by result. sample counts audits "+
+				"run and agreed the ones that found nothing wrong, so a zero elsewhere can be told from no "+
+				"audit having run. over_named counts objects the cache dropped that had not changed (a wasted "+
+				"read) and missed counts objects it kept that had changed (stale content served); the two are "+
+				"opposite failures and are never added together.",
+			[]string{"object", "result"}, nil,
+		),
 	}
 }
 
@@ -108,6 +132,7 @@ func (c *controlCacheCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.entries
 	ch <- c.bytes
 	ch <- c.bytesLimit
+	ch <- c.audit
 }
 
 func (c *controlCacheCollector) Collect(ch chan<- prometheus.Metric) {
@@ -127,6 +152,12 @@ func (c *controlCacheCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Shared), counts.Object, "share")
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Evictions), counts.Object, "evict")
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Clears), counts.Object, "clear")
+		if audit := counts.Audit; audit != nil {
+			ch <- prometheus.MustNewConstMetric(c.audit, prometheus.CounterValue, float64(audit.Samples), counts.Object, "sample")
+			ch <- prometheus.MustNewConstMetric(c.audit, prometheus.CounterValue, float64(audit.Agreed), counts.Object, "agreed")
+			ch <- prometheus.MustNewConstMetric(c.audit, prometheus.CounterValue, float64(audit.OverNamed), counts.Object, "over_named")
+			ch <- prometheus.MustNewConstMetric(c.audit, prometheus.CounterValue, float64(audit.Missed), counts.Object, "missed")
+		}
 		if counts.Occupancy == nil {
 			continue
 		}

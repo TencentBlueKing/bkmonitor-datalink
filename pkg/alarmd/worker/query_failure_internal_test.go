@@ -227,3 +227,21 @@ func TestCompletionGapReasonsStillRefuseWhatTheOutcomeCannotDecide(t *testing.T)
 		}
 	}
 }
+
+// An evaluation result the contract refuses for disagreeing with its loads
+// reaches the query failure facts under the refusal's own code and detail,
+// through the evaluation wrapper, the way a State contract mismatch does.
+func TestLoadedFactDispositionRefusalKeepsItsCodeThroughTheEvaluationWrapper(t *testing.T) {
+	refused := &execution.LoadedFactDispositionError{Code: execution.QueryFailureCodeRetryableLoadNotRetryPending,
+		Plan: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "1001"}, Disposition: execution.PlanDecided,
+		PlanReason: "none", RetryableStates: 3, LoadReasons: []execution.ReasonCode{"REDIS_UNAVAILABLE"}}
+	wrapped := wrapEvaluationError(codeEvaluationResultInvalid, refused)
+	var got observability.Observation
+	c := &SlotExecutionCoordinator{ports: Ports{Observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { got = observability.NormalizeObservation(o) })}}
+	c.observeQueryFailure(context.Background(), execution.OperationNormal, time.Now(), "execute", wrapped)
+	if got.QueryFailure == nil || got.QueryFailure.Category != observability.QueryFailureCategoryEvaluation ||
+		got.QueryFailure.Code != execution.QueryFailureCodeRetryableLoadNotRetryPending ||
+		got.QueryFailure.Detail != "plan=decided-reason=none-states=3-gaps=0-terminal=0-load=redis_unavailable" {
+		t.Fatalf("failure facts = %+v, want the evaluation category with the refusal's code and detail", got.QueryFailure)
+	}
+}

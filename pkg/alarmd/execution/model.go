@@ -15,6 +15,9 @@ package execution
 import (
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -1732,6 +1735,7 @@ func validateLoadedFactDisposition(
 ) error {
 	terminalReasons := make(map[ReasonCode]struct{})
 	unavailableReasons := make(map[ReasonCode]struct{})
+	loads := LoadedFactDispositionError{Plan: plan.Plan, Disposition: plan.Disposition, PlanReason: plan.ReasonCode}
 	for _, item := range gaps.Items {
 		if item.Identity.Plan != plan.Plan {
 			continue
@@ -1739,22 +1743,37 @@ func validateLoadedFactDisposition(
 		switch item.Status {
 		case GapTerminal:
 			terminalReasons[item.ReasonCode] = struct{}{}
+			loads.TerminalGaps++
 		case GapUnavailable:
 			unavailableReasons[item.ReasonCode] = struct{}{}
+			loads.UnavailableGaps++
 		}
 	}
 	for _, item := range states.Items {
 		if item.Identity.Plan == plan.Plan && item.Status == StateRetryableIO {
 			unavailableReasons[item.ReasonCode] = struct{}{}
+			loads.RetryableStates++
 		}
+	}
+	refuse := func(code string) error {
+		refused := loads
+		refused.Code = code
+		for reason := range terminalReasons {
+			refused.LoadReasons = append(refused.LoadReasons, reason)
+		}
+		for reason := range unavailableReasons {
+			refused.LoadReasons = append(refused.LoadReasons, reason)
+		}
+		sort.Slice(refused.LoadReasons, func(i, j int) bool { return refused.LoadReasons[i] < refused.LoadReasons[j] })
+		return &refused
 	}
 	if len(terminalReasons) > 0 {
 		if plan.Disposition != PlanTerminal && plan.Disposition != PlanRetryPending {
-			return errors.New("alarmd execution: terminal State/Gap load cannot be ignored")
+			return refuse(QueryFailureCodeTerminalLoadIgnored)
 		}
 		if plan.Disposition == PlanTerminal {
 			if _, ok := terminalReasons[plan.ReasonCode]; !ok {
-				return errors.New("alarmd execution: terminal Plan reason does not match State/Gap load")
+				return refuse(QueryFailureCodeTerminalLoadReasonMismatch)
 			}
 		}
 		if len(unavailableReasons) == 0 {
@@ -1763,15 +1782,91 @@ func validateLoadedFactDisposition(
 	}
 	if len(unavailableReasons) > 0 {
 		if plan.Disposition != PlanRetryPending {
-			return errors.New("alarmd execution: retryable State/Gap load requires retry-pending Plan")
+			return refuse(QueryFailureCodeRetryableLoadNotRetryPending)
 		}
 		if _, ok := unavailableReasons[plan.ReasonCode]; !ok {
-			return errors.New("alarmd execution: retry-pending Plan reason does not match State/Gap load")
+			return refuse(QueryFailureCodeRetryPendingReasonMismatch)
 		}
 	} else if plan.Disposition == PlanRetryPending {
-		return errors.New("alarmd execution: retry-pending Plan lacks a retryable State/Gap load")
+		return refuse(QueryFailureCodeRetryPendingWithoutRetryableLoad)
 	}
 	return nil
+}
+
+// The five failure codes a LoadedFactDispositionError reports, one per way
+// a Plan result can disagree with the State and gap loads of its Slot.
+const (
+	QueryFailureCodeTerminalLoadIgnored              = "TERMINAL_LOAD_IGNORED"
+	QueryFailureCodeTerminalLoadReasonMismatch       = "TERMINAL_LOAD_REASON_MISMATCH"
+	QueryFailureCodeRetryableLoadNotRetryPending     = "RETRYABLE_LOAD_NOT_RETRY_PENDING"
+	QueryFailureCodeRetryPendingReasonMismatch       = "RETRY_PENDING_REASON_MISMATCH"
+	QueryFailureCodeRetryPendingWithoutRetryableLoad = "RETRY_PENDING_WITHOUT_RETRYABLE_LOAD"
+)
+
+// LoadedFactDispositionError reports a Plan result whose disposition
+// disagrees with what the State and gap loads of the same Slot said: a
+// terminal load the result ignored or named another reason for, a retryable
+// load the result did not answer with a retry-pending Plan or answered with
+// another reason, or a retry-pending Plan with no retryable load behind it.
+// On the reference deployment it appears on the replica a rollout is
+// replacing, where loads are cut off by the cancelled context while the
+// evaluator still decides. It carries its own code, so the fleet view and
+// the log tell the five apart, and the Plan's disposition and reason with
+// the loads by kind and their reasons, so that which side is wrong, the
+// evaluator or the loads, can be read from the line instead of guessed.
+type LoadedFactDispositionError struct {
+	Code            string
+	Plan            PlanIdentity
+	Disposition     PlanDisposition
+	PlanReason      ReasonCode
+	RetryableStates int
+	UnavailableGaps int
+	TerminalGaps    int
+	// LoadReasons is every distinct reason the terminal and retryable loads
+	// carried, sorted.
+	LoadReasons []ReasonCode
+}
+
+func (err *LoadedFactDispositionError) Error() string {
+	what := map[string]string{
+		QueryFailureCodeTerminalLoadIgnored:              "terminal State/Gap load cannot be ignored",
+		QueryFailureCodeTerminalLoadReasonMismatch:       "terminal Plan reason does not match State/Gap load",
+		QueryFailureCodeRetryableLoadNotRetryPending:     "retryable State/Gap load requires retry-pending Plan",
+		QueryFailureCodeRetryPendingReasonMismatch:       "retry-pending Plan reason does not match State/Gap load",
+		QueryFailureCodeRetryPendingWithoutRetryableLoad: "retry-pending Plan lacks a retryable State/Gap load",
+	}[err.Code]
+	if what == "" {
+		what = "Plan disposition does not match State/Gap load"
+	}
+	return fmt.Sprintf("alarmd execution: %s: strategy %s disposition %s reason %s; loaded %d retryable State, %d unavailable gap, %d terminal gap, reasons %v",
+		what, err.Plan.StrategyID, err.Disposition, err.PlanReason, err.RetryableStates, err.UnavailableGaps, err.TerminalGaps, err.LoadReasons)
+}
+
+// QueryFailure names the failure for the query failure facts: the category
+// is left to the stage that wraps it, the code is this error's own.
+func (err *LoadedFactDispositionError) QueryFailure() (string, string) {
+	return "", err.Code
+}
+
+// QueryFailureDetail is the disposition, the Plan's reason, the loads by
+// kind and the first loaded reason in the bounded detail grammar (lower
+// case, at most 96 bytes), so the shape survives rate limiting.
+func (err *LoadedFactDispositionError) QueryFailureDetail() string {
+	planReason := strings.ToLower(string(err.PlanReason))
+	if planReason == "" {
+		planReason = "none"
+	}
+	load := "none"
+	if len(err.LoadReasons) > 0 {
+		load = strings.ToLower(string(err.LoadReasons[0]))
+	}
+	detail := "plan=" + strings.ToLower(string(err.Disposition)) + "-reason=" + planReason +
+		"-states=" + strconv.Itoa(err.RetryableStates) + "-gaps=" + strconv.Itoa(err.UnavailableGaps) +
+		"-terminal=" + strconv.Itoa(err.TerminalGaps) + "-load=" + load
+	if len(detail) > 96 {
+		detail = detail[:96]
+	}
+	return detail
 }
 
 // StateContractMismatchError reports loaded Runtime State whose Level contract,

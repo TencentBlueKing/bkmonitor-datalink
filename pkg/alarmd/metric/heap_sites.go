@@ -41,6 +41,19 @@ import (
 // holder that keeps what another function allocated shows under that other
 // function. That is the question this answers: which code allocates what
 // stays.
+//
+// The profile is up to two collections old by design: an allocation enters
+// it only once a collection has had the chance to free it. The live heap is
+// what the latest collection marked. Against a heap that oscillates faster
+// than that, as a Control Leader's does around every source refresh and a
+// worker's around every Slot, the two describe different phases of the
+// oscillation, and on the reference deployment the first reading came out
+// at 2.3 and 0.55 of the live heap on two replicas of the same build. So a
+// collection is forced before every reading, which publishes the profile of
+// the cycle that just completed, the same thing pprof's heap endpoint does
+// when asked to. Measured on heaps of a quarter to one gigabyte, a forced
+// collection costs six to twenty milliseconds of the collector's goroutine,
+// once a minute, and stops the world for no longer than any other cycle.
 const (
 	heapSiteTop          = 10
 	heapSiteRefresh      = time.Minute
@@ -73,6 +86,7 @@ type heapSiteSample struct {
 type heapSiteCollector struct {
 	mu      sync.Mutex
 	now     func() time.Time
+	collect func()
 	profile func() []runtime.MemProfileRecord
 	last    *heapSiteSample
 
@@ -89,6 +103,7 @@ func newHeapSiteCollector(now func() time.Time) *heapSiteCollector {
 	}
 	return &heapSiteCollector{
 		now:     now,
+		collect: runtime.GC,
 		profile: readHeapProfile,
 		siteBytes: descriptor("heap_inuse_site_bytes",
 			"Live heap charged to the alarmd function that allocated it, for the ten largest such sites, "+
@@ -105,18 +120,18 @@ func newHeapSiteCollector(now func() time.Time) *heapSiteCollector {
 				"is the average object size at the site, which tells many small objects from few large ones.",
 			[]string{"site"}),
 		profiled: descriptor("heap_inuse_profiled_bytes",
-			"Live heap the allocation samples add up to after scaling, every site included. It estimates "+
-				"heap_inuse_live_bytes, and go_memstats_heap_alloc_bytes is never below either; the estimate "+
-				"agreeing with the live heap is the condition for trusting heap_inuse_site_bytes at all. A ratio "+
-				"far from one means the samples do not describe the heap, as when the sampling rate was changed.",
+			"Live heap the allocation samples add up to after scaling, every site included, read right after "+
+				"a forced collection so that it and heap_inuse_live_bytes describe the same cycle. The two "+
+				"agreeing, within a few percent, is the condition for trusting heap_inuse_site_bytes at all; a "+
+				"ratio far from one is the instrument failing, not a lag to be explained away.",
 			nil),
 		records: descriptor("heap_inuse_profile_records",
 			"Allocation stacks with live memory in the last profile read, the population the sites were "+
 				"chosen from.",
 			nil),
 		live: descriptor("heap_inuse_live_bytes",
-			"Live heap the runtime reports after its last collection, read with the profile so the two "+
-				"describe the same moment.",
+			"Live heap the runtime marked in the collection forced before the profile was read, so the two "+
+				"describe the same cycle.",
 			nil),
 	}
 }
@@ -142,10 +157,10 @@ func (c *heapSiteCollector) Collect(metrics chan<- prometheus.Metric) {
 	}
 }
 
-// sample reads the profile once a minute and serves that reading in between.
-// A scrape every few seconds must not pay for symbolizing every live stack,
-// and a profile that only moves at collections has nothing new to say that
-// often.
+// sample forces a collection and reads the profile once a minute, and serves
+// that reading in between. A scrape every few seconds must not pay for a
+// collection and for symbolizing every live stack, and a profile that only
+// moves at collections has nothing new to say that often.
 func (c *heapSiteCollector) sample() heapSiteSample {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -153,6 +168,7 @@ func (c *heapSiteCollector) sample() heapSiteSample {
 	if c.last != nil && now.Sub(c.last.taken) < heapSiteRefresh {
 		return *c.last
 	}
+	c.collect()
 	records := c.profile()
 	sites, profiled := chargeHeapSites(records, runtime.MemProfileRate, heapSiteTop)
 	sample := heapSiteSample{sites: sites, profiled: profiled, records: len(records), taken: now}
